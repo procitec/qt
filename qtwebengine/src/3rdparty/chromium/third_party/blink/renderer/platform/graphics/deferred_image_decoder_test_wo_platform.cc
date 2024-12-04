@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,6 +6,7 @@
 
 #include <memory>
 #include "base/memory/scoped_refptr.h"
+#include "base/test/task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/platform/image-decoders/image_decoder_test_helpers.h"
 #include "third_party/blink/renderer/platform/wtf/shared_buffer.h"
@@ -18,9 +19,10 @@ namespace blink {
 namespace {
 
 sk_sp<SkImage> CreateFrameAtIndex(DeferredImageDecoder* decoder, size_t index) {
-  return SkImage::MakeFromGenerator(std::make_unique<SkiaPaintImageGenerator>(
-      decoder->CreateGenerator(), index,
-      cc::PaintImage::kDefaultGeneratorClientId));
+  return SkImages::DeferredFromGenerator(
+      std::make_unique<SkiaPaintImageGenerator>(
+          decoder->CreateGenerator(), index,
+          cc::PaintImage::kDefaultGeneratorClientId));
 }
 
 }  // namespace
@@ -45,13 +47,14 @@ sk_sp<SkImage> CreateFrameAtIndex(DeferredImageDecoder* decoder, size_t index) {
 static void MixImages(const char* file_name,
                       size_t bytes_for_first_frame,
                       size_t later_frame) {
+  base::test::SingleThreadTaskEnvironment task_environment;
   const Vector<char> file = ReadFile(file_name)->CopyAs<Vector<char>>();
 
   scoped_refptr<SharedBuffer> partial_file =
       SharedBuffer::Create(file.data(), bytes_for_first_frame);
   std::unique_ptr<DeferredImageDecoder> decoder = DeferredImageDecoder::Create(
       partial_file, false, ImageDecoder::kAlphaPremultiplied,
-      ColorBehavior::Ignore());
+      ColorBehavior::kIgnore);
   ASSERT_NE(decoder, nullptr);
   sk_sp<SkImage> partial_image = CreateFrameAtIndex(decoder.get(), 0);
 
@@ -63,7 +66,7 @@ static void MixImages(const char* file_name,
 
   // we now want to ensure we don't crash if we access these in this order
   SkImageInfo info = SkImageInfo::MakeN32Premul(10, 10);
-  sk_sp<SkSurface> surf = SkSurface::MakeRaster(info);
+  sk_sp<SkSurface> surf = SkSurfaces::Raster(info);
   surf->getCanvas()->drawImage(image_with_more_data, 0, 0);
   surf->getCanvas()->drawImage(partial_image, 0, 0);
 }
@@ -93,6 +96,7 @@ TEST(DeferredImageDecoderTestWoPlatform, mixImagesIco) {
 }
 
 TEST(DeferredImageDecoderTestWoPlatform, fragmentedSignature) {
+  base::test::SingleThreadTaskEnvironment task_environment;
   const char* test_files[] = {
       "/images/resources/animated.gif",
       "/images/resources/mu.png",
@@ -102,7 +106,7 @@ TEST(DeferredImageDecoderTestWoPlatform, fragmentedSignature) {
       "/images/resources/wrong-frame-dimensions.ico",
   };
 
-  for (size_t i = 0; i < SK_ARRAY_COUNT(test_files); ++i) {
+  for (size_t i = 0; i < std::size(test_files); ++i) {
     scoped_refptr<SharedBuffer> file_buffer = ReadFile(test_files[i]);
     ASSERT_NE(file_buffer, nullptr);
     // We need contiguous data, which SharedBuffer doesn't guarantee.
@@ -115,7 +119,7 @@ TEST(DeferredImageDecoderTestWoPlatform, fragmentedSignature) {
     EXPECT_FALSE(ImageDecoder::HasSufficientDataToSniffMimeType(*buffer));
     EXPECT_EQ(nullptr, DeferredImageDecoder::Create(
                            buffer, false, ImageDecoder::kAlphaPremultiplied,
-                           ColorBehavior::Ignore()));
+                           ColorBehavior::kIgnore));
 
     // Append the rest of the data.  We should be able to sniff the signature
     // now, even if segmented.
@@ -124,7 +128,7 @@ TEST(DeferredImageDecoderTestWoPlatform, fragmentedSignature) {
     std::unique_ptr<DeferredImageDecoder> decoder =
         DeferredImageDecoder::Create(buffer, false,
                                      ImageDecoder::kAlphaPremultiplied,
-                                     ColorBehavior::Ignore());
+                                     ColorBehavior::kIgnore);
     ASSERT_NE(decoder, nullptr);
     EXPECT_TRUE(String(test_files[i]).EndsWith(decoder->FilenameExtension()));
   }

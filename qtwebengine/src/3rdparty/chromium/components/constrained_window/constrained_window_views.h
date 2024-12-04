@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,6 +14,10 @@ namespace content {
 class WebContents;
 }
 
+namespace ui {
+class DialogModel;
+}
+
 namespace views {
 class DialogDelegate;
 class Widget;
@@ -26,6 +30,8 @@ class WebContentsModalDialogHost;
 }
 
 namespace constrained_window {
+
+extern const void* kConstrainedWindowWidgetIdentifier;
 
 class ConstrainedWindowViewsClient;
 
@@ -57,6 +63,11 @@ views::Widget* ShowWebModalDialogViews(
     views::WidgetDelegate* dialog,
     content::WebContents* initiator_web_contents);
 
+// As above, but with an owned widget.
+std::unique_ptr<views::Widget> ShowWebModalDialogViewsOwned(
+    views::WidgetDelegate* dialog,
+    content::WebContents* initiator_web_contents);
+
 // Create a widget for |dialog| that is modal to |web_contents|.
 // The modal type of |dialog->GetModalType()| must be ui::MODAL_TYPE_CHILD.
 views::Widget* CreateWebModalDialogViews(views::WidgetDelegate* dialog,
@@ -76,8 +87,29 @@ views::Widget* CreateWebModalDialogViews(views::WidgetDelegate* dialog,
 // suppress the normal behavior of choosing a focused-by-default button. This is
 // especially important if the action of the default button has consequences on
 // the user's task at hand.
+views::Widget* CreateBrowserModalDialogViews(
+    std::unique_ptr<views::DialogDelegate> dialog,
+    gfx::NativeWindow parent);
+
+// TODO(pbos): Transition calls to this to the unique_ptr<> version above.
 views::Widget* CreateBrowserModalDialogViews(views::DialogDelegate* dialog,
                                              gfx::NativeWindow parent);
+
+// Shows a browser-modal dialog based on `dialog_model`, returns pointer
+// to the created widget.
+views::Widget* ShowBrowserModal(std::unique_ptr<ui::DialogModel> dialog_model,
+                                gfx::NativeWindow parent);
+
+// Shows a web/tab-modal dialog based on `dialog_model` and returns its widget.
+views::Widget* ShowWebModal(std::unique_ptr<ui::DialogModel> dialog_model,
+                            content::WebContents* web_contents);
+
+// True if the platform supports global screen coordinates. This is typically
+// supported by most platforms except linux-wayland.
+bool SupportsGlobalScreenCoordinates();
+
+// True if the platform clips child widgets to their parent's viewport.
+bool PlatformClipsChildrenToViewport();
 
 }  // namespace constrained_window
 

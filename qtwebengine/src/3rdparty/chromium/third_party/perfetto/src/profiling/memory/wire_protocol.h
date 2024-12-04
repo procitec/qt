@@ -20,24 +20,19 @@
 #ifndef SRC_PROFILING_MEMORY_WIRE_PROTOCOL_H_
 #define SRC_PROFILING_MEMORY_WIRE_PROTOCOL_H_
 
-#include <inttypes.h>
+#include <algorithm>
+#include <cinttypes>
+
 #include <unwindstack/Elf.h>
 #include <unwindstack/MachineArm.h>
 #include <unwindstack/MachineArm64.h>
-#include <unwindstack/MachineMips.h>
-#include <unwindstack/MachineMips64.h>
+#include <unwindstack/MachineRiscv64.h>
 #include <unwindstack/MachineX86.h>
 #include <unwindstack/MachineX86_64.h>
 
-#include "perfetto/profiling/memory/heap_profile.h"
+#include "perfetto/heap_profile.h"
 #include "src/profiling/memory/shared_ring_buffer.h"
-
-// Make sure the alignment is the same on 32 and 64 bit architectures. This
-// is to ensure the structs below are laid out in exactly the same way for
-// both of those, at the same build.
-// The maximum alignment of every type T is sizeof(T), so we overalign that.
-// E.g., the alignment for uint64_t is 4 bytes on 32, and 8 bytes on 64 bit.
-#define PERFETTO_CROSS_ABI_ALIGNED(type) alignas(sizeof(type)) type
+#include "src/profiling/memory/util.h"
 
 namespace perfetto {
 
@@ -47,9 +42,28 @@ class UnixSocketRaw;
 
 namespace profiling {
 
+constexpr size_t kMaxRegisterDataSize =
+    std::max({sizeof(uint32_t) * unwindstack::ARM_REG_LAST,
+              sizeof(uint64_t) * unwindstack::ARM64_REG_LAST,
+              sizeof(uint32_t) * unwindstack::X86_REG_LAST,
+              sizeof(uint64_t) * unwindstack::X86_64_REG_LAST,
+              sizeof(uint64_t) * unwindstack::RISCV64_REG_MAX});
+
+// Types needed for the wire format used for communication between the client
+// and heapprofd. The basic format of a record sent by the client is
+// record size (uint64_t) | record type (RecordType = uint64_t) | record
+// If record type is Malloc, the record format is AllocMetdata | raw stack.
+// If the record type is Free, the record is a FreeEntry.
+// If record type is HeapName, the record is a HeapName.
+// On connect, heapprofd sends one ClientConfiguration struct over the control
+// socket.
+
+// Use uint64_t to make sure the following data is aligned as 64bit is the
+// strongest alignment requirement.
+
 struct ClientConfigurationHeap {
   char name[HEAPPROFD_HEAP_NAME_SZ];
-  uint64_t interval;
+  PERFETTO_CROSS_ABI_ALIGNED(uint64_t) interval;
 };
 
 struct ClientConfiguration {
@@ -59,6 +73,9 @@ struct ClientConfiguration {
   PERFETTO_CROSS_ABI_ALIGNED(uint64_t) default_interval;
   PERFETTO_CROSS_ABI_ALIGNED(uint64_t) block_client_timeout_us;
   PERFETTO_CROSS_ABI_ALIGNED(uint64_t) num_heaps;
+  PERFETTO_CROSS_ABI_ALIGNED(uint64_t) adaptive_sampling_shmem_threshold;
+  PERFETTO_CROSS_ABI_ALIGNED(uint64_t)
+  adaptive_sampling_max_sampling_interval_bytes;
   alignas(8) ClientConfigurationHeap heaps[64];
   PERFETTO_CROSS_ABI_ALIGNED(bool) block_client;
   PERFETTO_CROSS_ABI_ALIGNED(bool) disable_fork_teardown;
@@ -66,37 +83,6 @@ struct ClientConfiguration {
   PERFETTO_CROSS_ABI_ALIGNED(bool) all_heaps;
   // Just double check that the array sizes are in correct order.
 };
-
-// Types needed for the wire format used for communication between the client
-// and heapprofd. The basic format of a record is
-// record size (uint64_t) | record type (RecordType = uint64_t) | record
-// If record type is malloc, the record format is AllocMetdata | raw stack.
-// If the record type is free, the record is a sequence of FreeBatchEntry.
-
-// Use uint64_t to make sure the following data is aligned as 64bit is the
-// strongest alignment requirement.
-
-// C++11 std::max is not constexpr.
-constexpr size_t constexpr_max(size_t x, size_t y) {
-  return x > y ? x : y;
-}
-
-// clang-format makes this unreadable. Turning it off for this block.
-// clang-format off
-constexpr size_t kMaxRegisterDataSize =
-  constexpr_max(
-    constexpr_max(
-      constexpr_max(
-        constexpr_max(
-            constexpr_max(
-              sizeof(uint32_t) * unwindstack::ARM_REG_LAST,
-              sizeof(uint64_t) * unwindstack::ARM64_REG_LAST),
-            sizeof(uint32_t) * unwindstack::X86_REG_LAST),
-          sizeof(uint64_t) * unwindstack::X86_64_REG_LAST),
-        sizeof(uint32_t) * unwindstack::MIPS_REG_LAST),
-      sizeof(uint64_t) * unwindstack::MIPS64_REG_LAST
-  );
-// clang-format on
 
 enum class RecordType : uint64_t {
   Free = 0,
@@ -131,23 +117,24 @@ struct FreeEntry {
 };
 
 struct HeapName {
+  PERFETTO_CROSS_ABI_ALIGNED(uint64_t) sample_interval;
   PERFETTO_CROSS_ABI_ALIGNED(uint32_t) heap_id;
   PERFETTO_CROSS_ABI_ALIGNED(char) heap_name[HEAPPROFD_HEAP_NAME_SZ];
 };
 
+// Make sure the sizes do not change on different architectures.
 static_assert(sizeof(AllocMetadata) == 328,
               "AllocMetadata needs to be the same size across ABIs.");
 static_assert(sizeof(FreeEntry) == 24,
               "FreeEntry needs to be the same size across ABIs.");
-static_assert(sizeof(HeapName) == 68,
+static_assert(sizeof(HeapName) == 80,
               "HeapName needs to be the same size across ABIs.");
-static_assert(sizeof(ClientConfiguration) == 4640,
+static_assert(sizeof(ClientConfiguration) == 4656,
               "ClientConfiguration needs to be the same size across ABIs.");
 
 enum HandshakeFDs : size_t {
   kHandshakeMaps = 0,
   kHandshakeMem,
-  kHandshakePageIdle,
   kHandshakeSize,
 };
 

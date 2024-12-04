@@ -1,17 +1,26 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/viz/client/client_resource_provider.h"
 
+#include <algorithm>
 #include <memory>
+#include <utility>
 
-#include "base/bind.h"
-#include "base/bind_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
+#include "base/task/sequenced_task_runner.h"
+#include "base/task/thread_pool.h"
 #include "base/test/gtest_util.h"
+#include "base/test/scoped_feature_list.h"
+#include "components/viz/common/features.h"
+#include "components/viz/common/resources/release_callback.h"
 #include "components/viz/common/resources/returned_resource.h"
-#include "components/viz/common/resources/single_release_callback.h"
 #include "components/viz/test/test_context_provider.h"
+#include "components/viz/test/viz_test_suite.h"
+#include "gpu/command_buffer/client/client_shared_image.h"
+#include "gpu/command_buffer/client/raster_interface.h"
 #include "gpu/command_buffer/common/shared_image_usage.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -22,18 +31,35 @@ using testing::Each;
 namespace viz {
 namespace {
 
+// Mocks ResourceFlushCallback
+class MockFlushCallback {
+ public:
+  MOCK_METHOD0(FlushCallback, void());
+};
+
 class ClientResourceProviderTest : public testing::TestWithParam<bool> {
  protected:
   ClientResourceProviderTest()
       : use_gpu_(GetParam()),
         context_provider_(TestContextProvider::Create()),
-        bound_(context_provider_->BindToCurrentThread()) {
+        bound_(context_provider_->BindToCurrentSequence()) {
     DCHECK_EQ(bound_, gpu::ContextResult::kSuccess);
   }
 
-  void SetUp() override {
-    provider_ = std::make_unique<ClientResourceProvider>();
+  // Some tests want to override feature flags that are checked at construction
+  // time. Allow them to recreate the provider.
+  void InitProvider() {
+    // VizTestSuite::task_environment is set for us. We use the default
+    // TaskRunner for the Main thread. We then create a second TaskRunner which
+    // is built on a separate thread for the Compositor thread.
+    provider_ = std::make_unique<ClientResourceProvider>(
+        base::SingleThreadTaskRunner::GetCurrentDefault(),
+        base::ThreadPool::CreateSequencedTaskRunner({}),
+        base::BindRepeating(&MockFlushCallback::FlushCallback,
+                            base::Unretained(&mock_flush_callback_)));
   }
+
+  void SetUp() override { InitProvider(); }
 
   void TearDown() override { provider_ = nullptr; }
 
@@ -52,9 +78,8 @@ class ClientResourceProviderTest : public testing::TestWithParam<bool> {
                                                 char mailbox_char,
                                                 uint32_t sync_token_value) {
     TransferableResource r;
-    r.id = mailbox_char;
+    r.id = ResourceId(mailbox_char);
     r.is_software = !gpu;
-    r.filter = 456;
     r.size = gfx::Size(10, 11);
     r.mailbox_holder.mailbox = MailboxFromChar(mailbox_char);
     if (gpu) {
@@ -66,14 +91,20 @@ class ClientResourceProviderTest : public testing::TestWithParam<bool> {
 
   bool use_gpu() const { return use_gpu_; }
   ClientResourceProvider& provider() const { return *provider_; }
-  ContextProvider* context_provider() const { return context_provider_.get(); }
+  RasterContextProvider* context_provider() const {
+    return context_provider_.get();
+  }
 
   void DestroyProvider() {
     provider_->ShutdownAndReleaseAllResources();
     provider_ = nullptr;
   }
 
+  void ExpectFlush() { EXPECT_CALL(mock_flush_callback_, FlushCallback()); }
+
  private:
+  MockFlushCallback mock_flush_callback_;
+
   bool use_gpu_;
   scoped_refptr<TestContextProvider> context_provider_;
   gpu::ContextResult bound_;
@@ -89,14 +120,15 @@ class MockReleaseCallback {
   MOCK_METHOD2(Released, void(const gpu::SyncToken& token, bool lost));
   MOCK_METHOD3(ReleasedWithId,
                void(ResourceId id, const gpu::SyncToken& token, bool lost));
+  MOCK_METHOD0(Evicted, void());
 };
 
 TEST_P(ClientResourceProviderTest, TransferableResourceReleased) {
   MockReleaseCallback release;
   TransferableResource tran = MakeTransferableResource(use_gpu(), 'a', 15);
   ResourceId id = provider().ImportResource(
-      tran, SingleReleaseCallback::Create(base::BindOnce(
-                &MockReleaseCallback::Released, base::Unretained(&release))));
+      tran, base::BindOnce(&MockReleaseCallback::Released,
+                           base::Unretained(&release)));
   // The local id is different.
   EXPECT_NE(id, tran.id);
 
@@ -111,8 +143,8 @@ TEST_P(ClientResourceProviderTest, TransferableResourceSendToParent) {
   MockReleaseCallback release;
   TransferableResource tran = MakeTransferableResource(use_gpu(), 'a', 15);
   ResourceId id = provider().ImportResource(
-      tran, SingleReleaseCallback::Create(base::BindOnce(
-                &MockReleaseCallback::Released, base::Unretained(&release))));
+      tran, base::BindOnce(&MockReleaseCallback::Released,
+                           base::Unretained(&release)));
 
   // Export the resource.
   std::vector<ResourceId> to_send = {id};
@@ -128,7 +160,6 @@ TEST_P(ClientResourceProviderTest, TransferableResourceSendToParent) {
     verified_sync_token.SetVerifyFlush();
   EXPECT_EQ(exported[0].id, id);
   EXPECT_EQ(exported[0].is_software, tran.is_software);
-  EXPECT_EQ(exported[0].filter, tran.filter);
   EXPECT_EQ(exported[0].size, tran.size);
   EXPECT_EQ(exported[0].mailbox_holder.mailbox, tran.mailbox_holder.mailbox);
   EXPECT_EQ(exported[0].mailbox_holder.sync_token, verified_sync_token);
@@ -141,7 +172,7 @@ TEST_P(ClientResourceProviderTest, TransferableResourceSendToParent) {
 
   // Return the resource, with a sync token if using gpu.
   std::vector<ReturnedResource> returned;
-  returned.push_back({});
+  returned.emplace_back();
   returned.back().id = exported[0].id;
   if (use_gpu())
     returned.back().sync_token = SyncTokenFromUInt(31);
@@ -150,16 +181,14 @@ TEST_P(ClientResourceProviderTest, TransferableResourceSendToParent) {
 
   // The sync token is given to the ReleaseCallback.
   EXPECT_CALL(release, Released(returned[0].sync_token, false));
-  provider().ReceiveReturnsFromParent(returned);
+  provider().ReceiveReturnsFromParent(std::move(returned));
 }
 
 TEST_P(ClientResourceProviderTest, TransferableResourceSendTwoToParent) {
   TransferableResource tran[] = {MakeTransferableResource(use_gpu(), 'a', 15),
                                  MakeTransferableResource(use_gpu(), 'b', 16)};
-  ResourceId id1 = provider().ImportResource(
-      tran[0], SingleReleaseCallback::Create(base::DoNothing()));
-  ResourceId id2 = provider().ImportResource(
-      tran[1], SingleReleaseCallback::Create(base::DoNothing()));
+  ResourceId id1 = provider().ImportResource(tran[0], base::DoNothing());
+  ResourceId id2 = provider().ImportResource(tran[1], base::DoNothing());
 
   // Export the resource.
   std::vector<ResourceId> to_send = {id1, id2};
@@ -176,7 +205,6 @@ TEST_P(ClientResourceProviderTest, TransferableResourceSendTwoToParent) {
       verified_sync_token.SetVerifyFlush();
     EXPECT_EQ(exported[i].id, to_send[i]);
     EXPECT_EQ(exported[i].is_software, tran[i].is_software);
-    EXPECT_EQ(exported[i].filter, tran[i].filter);
     EXPECT_EQ(exported[i].size, tran[i].size);
     EXPECT_EQ(exported[i].mailbox_holder.mailbox,
               tran[i].mailbox_holder.mailbox);
@@ -192,8 +220,7 @@ TEST_P(ClientResourceProviderTest, TransferableResourceSendTwoToParent) {
 
 TEST_P(ClientResourceProviderTest, TransferableResourceSendToParentTwoTimes) {
   TransferableResource tran = MakeTransferableResource(use_gpu(), 'a', 15);
-  ResourceId id = provider().ImportResource(
-      tran, SingleReleaseCallback::Create(base::DoNothing()));
+  ResourceId id = provider().ImportResource(tran, base::DoNothing());
 
   // Export the resource.
   std::vector<ResourceId> to_send = {id};
@@ -204,13 +231,13 @@ TEST_P(ClientResourceProviderTest, TransferableResourceSendToParentTwoTimes) {
 
   // Return the resource, with a sync token if using gpu.
   std::vector<ReturnedResource> returned;
-  returned.push_back({});
+  returned.emplace_back();
   returned.back().id = exported[0].id;
   if (use_gpu())
     returned.back().sync_token = SyncTokenFromUInt(31);
   returned.back().count = 1;
   returned.back().lost = false;
-  provider().ReceiveReturnsFromParent(returned);
+  provider().ReceiveReturnsFromParent(std::move(returned));
 
   // Then export again, it still sends.
   exported.clear();
@@ -227,8 +254,8 @@ TEST_P(ClientResourceProviderTest,
   MockReleaseCallback release;
   TransferableResource tran = MakeTransferableResource(use_gpu(), 'a', 15);
   ResourceId id = provider().ImportResource(
-      tran, SingleReleaseCallback::Create(base::BindOnce(
-                &MockReleaseCallback::Released, base::Unretained(&release))));
+      tran, base::BindOnce(&MockReleaseCallback::Released,
+                           base::Unretained(&release)));
 
   // Export the resource.
   std::vector<ResourceId> to_send = {id};
@@ -256,9 +283,8 @@ TEST_P(ClientResourceProviderTest, TransferableResourceSendToParentManyUnsent) {
   for (int i = 0; i < 5; ++i) {
     data[i].tran = MakeTransferableResource(use_gpu(), 'a', 15);
     data[i].id = provider().ImportResource(
-        data[i].tran,
-        SingleReleaseCallback::Create(base::BindOnce(
-            &MockReleaseCallback::Released, base::Unretained(&release))));
+        data[i].tran, base::BindOnce(&MockReleaseCallback::Released,
+                                     base::Unretained(&release)));
   }
   std::sort(std::begin(data), std::end(data),
             [](const Data& a, const Data& b) { return a.id < b.id; });
@@ -282,7 +308,7 @@ TEST_P(ClientResourceProviderTest, TransferableResourceSendToParentManyUnsent) {
 
   // Return the resource, with a sync token if using gpu.
   std::vector<ReturnedResource> returned;
-  returned.push_back({});
+  returned.emplace_back();
   returned.back().id = exported[0].id;
   if (use_gpu())
     returned.back().sync_token = SyncTokenFromUInt(31);
@@ -291,7 +317,7 @@ TEST_P(ClientResourceProviderTest, TransferableResourceSendToParentManyUnsent) {
 
   // The sync token is given to the ReleaseCallback.
   EXPECT_CALL(release, Released(returned[0].sync_token, false));
-  provider().ReceiveReturnsFromParent(returned);
+  provider().ReceiveReturnsFromParent(std::move(returned));
 
   EXPECT_CALL(release, Released(_, false)).Times(4);
   provider().RemoveImportedResource(data[0].id);
@@ -304,8 +330,8 @@ TEST_P(ClientResourceProviderTest, TransferableResourceRemovedAfterReturn) {
   MockReleaseCallback release;
   TransferableResource tran = MakeTransferableResource(use_gpu(), 'a', 15);
   ResourceId id = provider().ImportResource(
-      tran, SingleReleaseCallback::Create(base::BindOnce(
-                &MockReleaseCallback::Released, base::Unretained(&release))));
+      tran, base::BindOnce(&MockReleaseCallback::Released,
+                           base::Unretained(&release)));
 
   // Export the resource.
   std::vector<ResourceId> to_send = {id};
@@ -315,7 +341,7 @@ TEST_P(ClientResourceProviderTest, TransferableResourceRemovedAfterReturn) {
   // Return the resource. This does not release the resource back to
   // the client.
   std::vector<ReturnedResource> returned;
-  returned.push_back({});
+  returned.emplace_back();
   returned.back().id = exported[0].id;
   if (use_gpu())
     returned.back().sync_token = SyncTokenFromUInt(31);
@@ -323,10 +349,12 @@ TEST_P(ClientResourceProviderTest, TransferableResourceRemovedAfterReturn) {
   returned.back().lost = false;
 
   EXPECT_CALL(release, Released(_, _)).Times(0);
-  provider().ReceiveReturnsFromParent(returned);
+  auto sync_token = returned.back().sync_token;
+  provider().ReceiveReturnsFromParent(std::move(returned));
+  testing::Mock::VerifyAndClearExpectations(&release);
 
   // Once removed, the resource is released.
-  EXPECT_CALL(release, Released(returned[0].sync_token, false));
+  EXPECT_CALL(release, Released(sync_token, false));
   provider().RemoveImportedResource(id);
 }
 
@@ -334,8 +362,8 @@ TEST_P(ClientResourceProviderTest, TransferableResourceExportedTwice) {
   MockReleaseCallback release;
   TransferableResource tran = MakeTransferableResource(use_gpu(), 'a', 15);
   ResourceId id = provider().ImportResource(
-      tran, SingleReleaseCallback::Create(base::BindOnce(
-                &MockReleaseCallback::Released, base::Unretained(&release))));
+      tran, base::BindOnce(&MockReleaseCallback::Released,
+                           base::Unretained(&release)));
 
   // Export the resource once.
   std::vector<ResourceId> to_send = {id};
@@ -351,30 +379,39 @@ TEST_P(ClientResourceProviderTest, TransferableResourceExportedTwice) {
   exported = {};
   provider().PrepareSendToParent(to_send, &exported, context_provider());
 
-  // Return the resource the first time.
-  std::vector<ReturnedResource> returned;
-  returned.push_back({});
-  returned.back().id = exported[0].id;
-  if (use_gpu())
-    returned.back().sync_token = SyncTokenFromUInt(31);
-  returned.back().count = 1;
-  returned.back().lost = false;
-  provider().ReceiveReturnsFromParent(returned);
+  {
+    // Return the resource the first time.
+    std::vector<ReturnedResource> returned;
+    returned.emplace_back();
+    returned.back().id = exported[0].id;
+    if (use_gpu())
+      returned.back().sync_token = SyncTokenFromUInt(31);
+    returned.back().count = 1;
+    returned.back().lost = false;
+    provider().ReceiveReturnsFromParent(std::move(returned));
+  }
 
-  // And a second time, with a different sync token. Now the ReleaseCallback can
-  // happen, using the latest sync token.
-  if (use_gpu())
-    returned.back().sync_token = SyncTokenFromUInt(47);
-  EXPECT_CALL(release, Released(returned[0].sync_token, false));
-  provider().ReceiveReturnsFromParent(returned);
+  {
+    // And a second time, with a different sync token. Now the ReleaseCallback
+    // can happen, using the latest sync token.
+    std::vector<ReturnedResource> returned;
+    returned.emplace_back();
+    returned.back().id = exported[0].id;
+    if (use_gpu())
+      returned.back().sync_token = SyncTokenFromUInt(47);
+    returned.back().count = 1;
+    returned.back().lost = false;
+    EXPECT_CALL(release, Released(returned[0].sync_token, false));
+    provider().ReceiveReturnsFromParent(std::move(returned));
+  }
 }
 
 TEST_P(ClientResourceProviderTest, TransferableResourceReturnedTwiceAtOnce) {
   MockReleaseCallback release;
   TransferableResource tran = MakeTransferableResource(use_gpu(), 'a', 15);
   ResourceId id = provider().ImportResource(
-      tran, SingleReleaseCallback::Create(base::BindOnce(
-                &MockReleaseCallback::Released, base::Unretained(&release))));
+      tran, base::BindOnce(&MockReleaseCallback::Released,
+                           base::Unretained(&release)));
 
   // Export the resource once.
   std::vector<ResourceId> to_send = {id};
@@ -392,7 +429,7 @@ TEST_P(ClientResourceProviderTest, TransferableResourceReturnedTwiceAtOnce) {
 
   // Return both exports at once.
   std::vector<ReturnedResource> returned;
-  returned.push_back({});
+  returned.emplace_back();
   returned.back().id = exported[0].id;
   if (use_gpu())
     returned.back().sync_token = SyncTokenFromUInt(31);
@@ -401,15 +438,15 @@ TEST_P(ClientResourceProviderTest, TransferableResourceReturnedTwiceAtOnce) {
 
   // When returned, the ReleaseCallback can happen, using the latest sync token.
   EXPECT_CALL(release, Released(returned[0].sync_token, false));
-  provider().ReceiveReturnsFromParent(returned);
+  provider().ReceiveReturnsFromParent(std::move(returned));
 }
 
 TEST_P(ClientResourceProviderTest, TransferableResourceLostOnReturn) {
   MockReleaseCallback release;
   TransferableResource tran = MakeTransferableResource(use_gpu(), 'a', 15);
   ResourceId id = provider().ImportResource(
-      tran, SingleReleaseCallback::Create(base::BindOnce(
-                &MockReleaseCallback::Released, base::Unretained(&release))));
+      tran, base::BindOnce(&MockReleaseCallback::Released,
+                           base::Unretained(&release)));
 
   // Export the resource once.
   std::vector<ResourceId> to_send = {id};
@@ -425,27 +462,35 @@ TEST_P(ClientResourceProviderTest, TransferableResourceLostOnReturn) {
   exported = {};
   provider().PrepareSendToParent(to_send, &exported, context_provider());
 
-  // Return the resource the first time, not lost.
-  std::vector<ReturnedResource> returned;
-  returned.push_back({});
-  returned.back().id = exported[0].id;
-  returned.back().count = 1;
-  returned.back().lost = false;
-  provider().ReceiveReturnsFromParent(returned);
+  {
+    // Return the resource the first time, not lost.
+    std::vector<ReturnedResource> returned;
+    returned.emplace_back();
+    returned.back().id = exported[0].id;
+    returned.back().count = 1;
+    returned.back().lost = false;
+    provider().ReceiveReturnsFromParent(std::move(returned));
+  }
 
-  // Return a second time, as lost. The ReturnCallback should report it
-  // lost.
-  returned.back().lost = true;
-  EXPECT_CALL(release, Released(_, true));
-  provider().ReceiveReturnsFromParent(returned);
+  {
+    // Return a second time, as lost. The ReturnCallback should report it
+    // lost.
+    std::vector<ReturnedResource> returned;
+    returned.emplace_back();
+    returned.back().id = exported[0].id;
+    returned.back().count = 1;
+    returned.back().lost = true;
+    EXPECT_CALL(release, Released(_, true));
+    provider().ReceiveReturnsFromParent(std::move(returned));
+  }
 }
 
 TEST_P(ClientResourceProviderTest, TransferableResourceLostOnFirstReturn) {
   MockReleaseCallback release;
   TransferableResource tran = MakeTransferableResource(use_gpu(), 'a', 15);
   ResourceId id = provider().ImportResource(
-      tran, SingleReleaseCallback::Create(base::BindOnce(
-                &MockReleaseCallback::Released, base::Unretained(&release))));
+      tran, base::BindOnce(&MockReleaseCallback::Released,
+                           base::Unretained(&release)));
 
   // Export the resource once.
   std::vector<ResourceId> to_send = {id};
@@ -461,18 +506,26 @@ TEST_P(ClientResourceProviderTest, TransferableResourceLostOnFirstReturn) {
   exported = {};
   provider().PrepareSendToParent(to_send, &exported, context_provider());
 
-  // Return the resource the first time, marked as lost.
-  std::vector<ReturnedResource> returned;
-  returned.push_back({});
-  returned.back().id = exported[0].id;
-  returned.back().count = 1;
-  returned.back().lost = true;
-  provider().ReceiveReturnsFromParent(returned);
+  {
+    // Return the resource the first time, marked as lost.
+    std::vector<ReturnedResource> returned;
+    returned.emplace_back();
+    returned.back().id = exported[0].id;
+    returned.back().count = 1;
+    returned.back().lost = true;
+    provider().ReceiveReturnsFromParent(std::move(returned));
+  }
 
-  // Return a second time, not lost. The first lost signal should not be lost.
-  returned.back().lost = false;
-  EXPECT_CALL(release, Released(_, true));
-  provider().ReceiveReturnsFromParent(returned);
+  {
+    // Return a second time, not lost. The first lost signal should not be lost.
+    std::vector<ReturnedResource> returned;
+    returned.emplace_back();
+    returned.back().id = exported[0].id;
+    returned.back().count = 1;
+    returned.back().lost = false;
+    EXPECT_CALL(release, Released(_, true));
+    provider().ReceiveReturnsFromParent(std::move(returned));
+  }
 }
 
 TEST_P(ClientResourceProviderTest, ReturnedSyncTokensArePassedToClient) {
@@ -483,20 +536,24 @@ TEST_P(ClientResourceProviderTest, ReturnedSyncTokensArePassedToClient) {
   MockReleaseCallback release;
 
   auto* sii = context_provider()->SharedImageInterface();
-  gpu::Mailbox mailbox = sii->CreateSharedImage(
-      ResourceFormat::RGBA_8888, gfx::Size(1, 1), gfx::ColorSpace(),
-      kTopLeft_GrSurfaceOrigin, kPremul_SkAlphaType,
-      gpu::SHARED_IMAGE_USAGE_GLES2 | gpu::SHARED_IMAGE_USAGE_DISPLAY,
-      gpu::kNullSurfaceHandle);
+  gpu::Mailbox mailbox =
+      sii->CreateSharedImage(SinglePlaneFormat::kRGBA_8888, gfx::Size(1, 1),
+                             gfx::ColorSpace(), kTopLeft_GrSurfaceOrigin,
+                             kPremul_SkAlphaType,
+                             gpu::SHARED_IMAGE_USAGE_RASTER_READ |
+                                 gpu::SHARED_IMAGE_USAGE_RASTER_WRITE |
+                                 gpu::SHARED_IMAGE_USAGE_DISPLAY_READ,
+                             "TestLabel", gpu::kNullSurfaceHandle)
+          ->mailbox();
   gpu::SyncToken sync_token = sii->GenUnverifiedSyncToken();
 
   constexpr gfx::Size size(64, 64);
-  auto tran = TransferableResource::MakeGL(mailbox, GL_LINEAR, GL_TEXTURE_2D,
-                                           sync_token, size,
-                                           false /* is_overlay_candidate */);
+  auto tran = TransferableResource::MakeGpu(mailbox, GL_TEXTURE_2D, sync_token,
+                                            size, SinglePlaneFormat::kRGBA_8888,
+                                            false /* is_overlay_candidate */);
   ResourceId resource = provider().ImportResource(
-      tran, SingleReleaseCallback::Create(base::BindOnce(
-                &MockReleaseCallback::Released, base::Unretained(&release))));
+      tran, base::BindOnce(&MockReleaseCallback::Released,
+                           base::Unretained(&release)));
 
   EXPECT_TRUE(tran.mailbox_holder.sync_token.HasData());
   // All the logic below assumes that the sync token releases are all positive.
@@ -512,14 +569,9 @@ TEST_P(ClientResourceProviderTest, ReturnedSyncTokensArePassedToClient) {
                       sizeof(mailbox.name)));
 
   // Make a new texture id from the mailbox.
-  context_provider()->ContextGL()->WaitSyncTokenCHROMIUM(
+  context_provider()->RasterInterface()->WaitSyncTokenCHROMIUM(
       list[0].mailbox_holder.sync_token.GetConstData());
-  unsigned other_texture =
-      context_provider()->ContextGL()->CreateAndConsumeTextureCHROMIUM(
-          mailbox.name);
-  // Then delete it and make a new SyncToken.
-  context_provider()->ContextGL()->DeleteTextures(1, &other_texture);
-  context_provider()->ContextGL()->GenSyncTokenCHROMIUM(
+  context_provider()->RasterInterface()->GenSyncTokenCHROMIUM(
       list[0].mailbox_holder.sync_token.GetData());
   EXPECT_TRUE(list[0].mailbox_holder.sync_token.HasData());
 
@@ -540,8 +592,8 @@ TEST_P(ClientResourceProviderTest, LostResourcesAreReturnedLost) {
   MockReleaseCallback release;
   TransferableResource tran = MakeTransferableResource(use_gpu(), 'a', 15);
   ResourceId resource = provider().ImportResource(
-      tran, SingleReleaseCallback::Create(base::BindOnce(
-                &MockReleaseCallback::Released, base::Unretained(&release))));
+      tran, base::BindOnce(&MockReleaseCallback::Released,
+                           base::Unretained(&release)));
 
   // Transfer the resource to the parent.
   std::vector<TransferableResource> list;
@@ -552,7 +604,7 @@ TEST_P(ClientResourceProviderTest, LostResourcesAreReturnedLost) {
   std::vector<ReturnedResource> returned_to_child;
   returned_to_child.push_back(list[0].ToReturnedResource());
   returned_to_child.back().lost = true;
-  provider().ReceiveReturnsFromParent(returned_to_child);
+  provider().ReceiveReturnsFromParent(std::move(returned_to_child));
 
   // Delete the resource in the child. Expect the resource to be lost.
   EXPECT_CALL(release, Released(_, true));
@@ -563,8 +615,8 @@ TEST_P(ClientResourceProviderTest, ShutdownLosesExportedResources) {
   MockReleaseCallback release;
   TransferableResource tran = MakeTransferableResource(use_gpu(), 'a', 15);
   ResourceId resource = provider().ImportResource(
-      tran, SingleReleaseCallback::Create(base::BindOnce(
-                &MockReleaseCallback::Released, base::Unretained(&release))));
+      tran, base::BindOnce(&MockReleaseCallback::Released,
+                           base::Unretained(&release)));
 
   // Transfer the resource to the parent.
   std::vector<TransferableResource> list;
@@ -584,8 +636,8 @@ TEST_P(ClientResourceProviderTest, ReleaseExportedResources) {
   MockReleaseCallback release;
   TransferableResource tran = MakeTransferableResource(use_gpu(), 'a', 15);
   ResourceId resource = provider().ImportResource(
-      tran, SingleReleaseCallback::Create(base::BindOnce(
-                &MockReleaseCallback::Released, base::Unretained(&release))));
+      tran, base::BindOnce(&MockReleaseCallback::Released,
+                           base::Unretained(&release)));
 
   // Transfer the resource to the parent.
   std::vector<TransferableResource> list;
@@ -609,8 +661,8 @@ TEST_P(ClientResourceProviderTest, ReleaseExportedResourcesThenRemove) {
   MockReleaseCallback release;
   TransferableResource tran = MakeTransferableResource(use_gpu(), 'a', 15);
   ResourceId resource = provider().ImportResource(
-      tran, SingleReleaseCallback::Create(base::BindOnce(
-                &MockReleaseCallback::Released, base::Unretained(&release))));
+      tran, base::BindOnce(&MockReleaseCallback::Released,
+                           base::Unretained(&release)));
 
   // Transfer the resource to the parent.
   std::vector<TransferableResource> list;
@@ -638,9 +690,8 @@ TEST_P(ClientResourceProviderTest, ReleaseMultipleResources) {
   for (int i = 0; i < 5; ++i) {
     TransferableResource tran = MakeTransferableResource(use_gpu(), 'a', 1 + i);
     resources[i] = provider().ImportResource(
-        tran, SingleReleaseCallback::Create(
-                  base::BindOnce(&MockReleaseCallback::ReleasedWithId,
-                                 base::Unretained(&release), i)));
+        tran, base::BindOnce(&MockReleaseCallback::ReleasedWithId,
+                             base::Unretained(&release), ResourceId(i)));
   }
 
   // Transfer some resources to the parent, but not in the sorted order.
@@ -657,20 +708,20 @@ TEST_P(ClientResourceProviderTest, ReleaseMultipleResources) {
   returned_to_child.push_back(list[0].ToReturnedResource());
   returned_to_child.push_back(list[1].ToReturnedResource());
   returned_to_child.push_back(list[2].ToReturnedResource());
-  provider().ReceiveReturnsFromParent(returned_to_child);
+  provider().ReceiveReturnsFromParent(std::move(returned_to_child));
 
   // Remove them from the ClientResourceProvider, they should be returned as
   // they're no longer exported.
-  EXPECT_CALL(release, ReleasedWithId(0, _, false));
+  EXPECT_CALL(release, ReleasedWithId(kInvalidResourceId, _, false));
   provider().RemoveImportedResource(resources[0]);
-  EXPECT_CALL(release, ReleasedWithId(2, _, false));
+  EXPECT_CALL(release, ReleasedWithId(ResourceId(2), _, false));
   provider().RemoveImportedResource(resources[2]);
-  EXPECT_CALL(release, ReleasedWithId(4, _, false));
+  EXPECT_CALL(release, ReleasedWithId(ResourceId(4), _, false));
   provider().RemoveImportedResource(resources[4]);
 
   // These were never exported.
-  EXPECT_CALL(release, ReleasedWithId(1, _, false));
-  EXPECT_CALL(release, ReleasedWithId(3, _, false));
+  EXPECT_CALL(release, ReleasedWithId(ResourceId(1), _, false));
+  EXPECT_CALL(release, ReleasedWithId(ResourceId(3), _, false));
   provider().RemoveImportedResource(resources[1]);
   provider().RemoveImportedResource(resources[3]);
 
@@ -685,9 +736,8 @@ TEST_P(ClientResourceProviderTest, ReleaseMultipleResourcesBeforeReturn) {
   for (int i = 0; i < 5; ++i) {
     TransferableResource tran = MakeTransferableResource(use_gpu(), 'a', 1 + i);
     resources[i] = provider().ImportResource(
-        tran, SingleReleaseCallback::Create(
-                  base::BindOnce(&MockReleaseCallback::ReleasedWithId,
-                                 base::Unretained(&release), i)));
+        tran, base::BindOnce(&MockReleaseCallback::ReleasedWithId,
+                             base::Unretained(&release), ResourceId(i)));
   }
 
   // Transfer some resources to the parent, but not in the sorted order.
@@ -711,14 +761,14 @@ TEST_P(ClientResourceProviderTest, ReleaseMultipleResourcesBeforeReturn) {
   returned_to_child.push_back(list[1].ToReturnedResource());
   returned_to_child.push_back(list[2].ToReturnedResource());
   // The resources are returned immediately since they were previously removed.
-  EXPECT_CALL(release, ReleasedWithId(0, _, false));
-  EXPECT_CALL(release, ReleasedWithId(2, _, false));
-  EXPECT_CALL(release, ReleasedWithId(4, _, false));
-  provider().ReceiveReturnsFromParent(returned_to_child);
+  EXPECT_CALL(release, ReleasedWithId(kInvalidResourceId, _, false));
+  EXPECT_CALL(release, ReleasedWithId(ResourceId(2), _, false));
+  EXPECT_CALL(release, ReleasedWithId(ResourceId(4), _, false));
+  provider().ReceiveReturnsFromParent(std::move(returned_to_child));
 
   // These were never exported.
-  EXPECT_CALL(release, ReleasedWithId(1, _, false));
-  EXPECT_CALL(release, ReleasedWithId(3, _, false));
+  EXPECT_CALL(release, ReleasedWithId(ResourceId(1), _, false));
+  EXPECT_CALL(release, ReleasedWithId(ResourceId(3), _, false));
   provider().RemoveImportedResource(resources[1]);
   provider().RemoveImportedResource(resources[3]);
 
@@ -733,9 +783,8 @@ TEST_P(ClientResourceProviderTest, ReturnDuplicateResourceBeforeRemove) {
   for (int i = 0; i < 5; ++i) {
     TransferableResource tran = MakeTransferableResource(use_gpu(), 'a', 1 + i);
     resources[i] = provider().ImportResource(
-        tran, SingleReleaseCallback::Create(
-                  base::BindOnce(&MockReleaseCallback::ReleasedWithId,
-                                 base::Unretained(&release), i)));
+        tran, base::BindOnce(&MockReleaseCallback::ReleasedWithId,
+                             base::Unretained(&release), ResourceId(i)));
   }
 
   // Transfer a resource to the parent, do it twice.
@@ -750,18 +799,18 @@ TEST_P(ClientResourceProviderTest, ReturnDuplicateResourceBeforeRemove) {
   std::vector<ReturnedResource> returned_to_child;
   returned_to_child.push_back(list[0].ToReturnedResource());
   returned_to_child.push_back(list[0].ToReturnedResource());
-  provider().ReceiveReturnsFromParent(returned_to_child);
+  provider().ReceiveReturnsFromParent(std::move(returned_to_child));
 
   // Remove it from the ClientResourceProvider, it should be returned as
   // it's no longer exported.
-  EXPECT_CALL(release, ReleasedWithId(2, _, false));
+  EXPECT_CALL(release, ReleasedWithId(ResourceId(2), _, false));
   provider().RemoveImportedResource(resources[2]);
 
   // These were never exported.
-  EXPECT_CALL(release, ReleasedWithId(0, _, false));
-  EXPECT_CALL(release, ReleasedWithId(1, _, false));
-  EXPECT_CALL(release, ReleasedWithId(3, _, false));
-  EXPECT_CALL(release, ReleasedWithId(4, _, false));
+  EXPECT_CALL(release, ReleasedWithId(kInvalidResourceId, _, false));
+  EXPECT_CALL(release, ReleasedWithId(ResourceId(1), _, false));
+  EXPECT_CALL(release, ReleasedWithId(ResourceId(3), _, false));
+  EXPECT_CALL(release, ReleasedWithId(ResourceId(4), _, false));
   provider().RemoveImportedResource(resources[0]);
   provider().RemoveImportedResource(resources[1]);
   provider().RemoveImportedResource(resources[3]);
@@ -778,9 +827,8 @@ TEST_P(ClientResourceProviderTest, ReturnDuplicateResourceAfterRemove) {
   for (int i = 0; i < 5; ++i) {
     TransferableResource tran = MakeTransferableResource(use_gpu(), 'a', 1 + i);
     resources[i] = provider().ImportResource(
-        tran, SingleReleaseCallback::Create(
-                  base::BindOnce(&MockReleaseCallback::ReleasedWithId,
-                                 base::Unretained(&release), i)));
+        tran, base::BindOnce(&MockReleaseCallback::ReleasedWithId,
+                             base::Unretained(&release), ResourceId(i)));
   }
 
   // Transfer a resource to the parent, do it twice.
@@ -801,20 +849,244 @@ TEST_P(ClientResourceProviderTest, ReturnDuplicateResourceAfterRemove) {
   returned_to_child.push_back(list[0].ToReturnedResource());
   // Once no longer exported, since it was removed earlier, it will be returned
   // immediately.
-  EXPECT_CALL(release, ReleasedWithId(2, _, false));
-  provider().ReceiveReturnsFromParent(returned_to_child);
+  EXPECT_CALL(release, ReleasedWithId(ResourceId(2), _, false));
+  provider().ReceiveReturnsFromParent(std::move(returned_to_child));
 
   // These were never exported.
-  EXPECT_CALL(release, ReleasedWithId(0, _, false));
-  EXPECT_CALL(release, ReleasedWithId(1, _, false));
-  EXPECT_CALL(release, ReleasedWithId(3, _, false));
-  EXPECT_CALL(release, ReleasedWithId(4, _, false));
+  EXPECT_CALL(release, ReleasedWithId(kInvalidResourceId, _, false));
+  EXPECT_CALL(release, ReleasedWithId(ResourceId(1), _, false));
+  EXPECT_CALL(release, ReleasedWithId(ResourceId(3), _, false));
+  EXPECT_CALL(release, ReleasedWithId(ResourceId(4), _, false));
   provider().RemoveImportedResource(resources[0]);
   provider().RemoveImportedResource(resources[1]);
   provider().RemoveImportedResource(resources[3]);
   provider().RemoveImportedResource(resources[4]);
 
   EXPECT_CALL(release, Released(_, false)).Times(0);
+}
+
+// Tests that resources which are locked, are released after eviction has
+// occurred, once they are also returned.
+TEST_P(ClientResourceProviderTest, EvictionUnlocksResources) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitWithFeatures({features::kEvictionUnlocksResources},
+                                       {});
+  // Mark visible so eviction path is not inadvertently triggered.
+  provider().SetVisible(true);
+
+  MockReleaseCallback release;
+  const uint32_t sync_token_value = 1u;
+  TransferableResource resource =
+      MakeTransferableResource(use_gpu(), 'a', sync_token_value);
+  ResourceId id =
+      provider().ImportResource(resource,
+                                base::BindOnce(&MockReleaseCallback::Released,
+                                               base::Unretained(&release)),
+                                ReleaseCallback(),
+                                base::BindOnce(&MockReleaseCallback::Evicted,
+                                               base::Unretained(&release)));
+
+  std::vector<TransferableResource> list;
+  provider().PrepareSendToParent({id}, &list, context_provider());
+  EXPECT_EQ(list.size(), 1u);
+  EXPECT_EQ(list[0].id, id);
+
+  // Eviction alone should not delete the resource, nor have called the Eviction
+  // callback.
+  EXPECT_CALL(release, Evicted).Times(0);
+  EXPECT_CALL(release, Released(_, _)).Times(0);
+  provider().SetEvicted(true);
+  EXPECT_EQ(provider().num_resources_for_testing(), 1u);
+
+  // Becoming hidden and evicted should trigger the callback. The resource
+  // should not be deleted yet, until it has bene returned.
+  EXPECT_CALL(release, Evicted).Times(1);
+  EXPECT_CALL(release, Released(_, _)).Times(0);
+  provider().SetVisible(false);
+  EXPECT_EQ(provider().num_resources_for_testing(), 1u);
+
+  // Clients are expected to call RemoveImportedResource in response to Evicted.
+  // However being exported, should not trigger a Released callback.
+  EXPECT_CALL(release, Released(_, _)).Times(0);
+  provider().RemoveImportedResource(id);
+
+  // Returning of resources should release the previously locked resource.
+  std::vector<ReturnedResource> returned;
+  returned.push_back(list[0].ToReturnedResource());
+  EXPECT_CALL(release, Released(_, false));
+  provider().ReceiveReturnsFromParent(std::move(returned));
+  EXPECT_EQ(provider().num_resources_for_testing(), 0u);
+}
+
+// Tests that when resources are returned in the middle of an eviction process,
+// that we release any locked resources once the eviction has completed.
+TEST_P(ClientResourceProviderTest,
+       LockedReturnedResourcesReleasedDuringEviction) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitWithFeatures({features::kEvictionUnlocksResources},
+                                       {});
+  // Mark visible so eviction path is not inadvertently triggered.
+  provider().SetVisible(true);
+
+  MockReleaseCallback release;
+  const uint32_t sync_token_value = 1u;
+  TransferableResource resource =
+      MakeTransferableResource(use_gpu(), 'a', sync_token_value);
+  ResourceId id =
+      provider().ImportResource(resource,
+                                base::BindOnce(&MockReleaseCallback::Released,
+                                               base::Unretained(&release)),
+                                ReleaseCallback(),
+                                base::BindOnce(&MockReleaseCallback::Evicted,
+                                               base::Unretained(&release)));
+
+  std::vector<TransferableResource> list;
+  provider().PrepareSendToParent({id}, &list, context_provider());
+  EXPECT_EQ(list.size(), 1u);
+  EXPECT_EQ(list[0].id, id);
+
+  // Eviction alone should not delete the resource, nor have called the Eviction
+  // callback.
+  EXPECT_CALL(release, Evicted).Times(0);
+  EXPECT_CALL(release, Released(_, _)).Times(0);
+  provider().SetEvicted(true);
+  EXPECT_EQ(provider().num_resources_for_testing(), 1u);
+
+  // Returning of resources will not return them while we are still visible.
+  std::vector<ReturnedResource> returned;
+  returned.push_back(list[0].ToReturnedResource());
+  EXPECT_CALL(release, Released(_, _)).Times(0);
+  provider().ReceiveReturnsFromParent(std::move(returned));
+  EXPECT_EQ(provider().num_resources_for_testing(), 1u);
+
+  // Becoming hidden and evicted should trigger the callback. The resources
+  // having previously been returned, should now be released.
+  EXPECT_CALL(release, Evicted).Times(1);
+  provider().SetVisible(false);
+
+  // Clients are expected to call RemoveImportedResource in response to Evicted.
+  // Being no longer exported, this should call Released.
+  EXPECT_CALL(release, Released(_, false));
+  provider().RemoveImportedResource(id);
+  EXPECT_EQ(provider().num_resources_for_testing(), 0u);
+}
+
+// Tests that when a Client has removed a resource, which has not yet been
+// returned, that we do not notify the Client of eviction.
+TEST_P(ClientResourceProviderTest, RemovedEvictedResourcesDoNotNotifyClient) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitWithFeatures({features::kEvictionUnlocksResources},
+                                       {});
+  // Mark visible so eviction path is not inadvertently triggered.
+  provider().SetVisible(true);
+
+  MockReleaseCallback release;
+  const uint32_t sync_token_value = 1u;
+  TransferableResource resource =
+      MakeTransferableResource(use_gpu(), 'a', sync_token_value);
+  ResourceId id =
+      provider().ImportResource(resource,
+                                base::BindOnce(&MockReleaseCallback::Released,
+                                               base::Unretained(&release)),
+                                ReleaseCallback(),
+                                base::BindOnce(&MockReleaseCallback::Evicted,
+                                               base::Unretained(&release)));
+
+  std::vector<TransferableResource> list;
+  provider().PrepareSendToParent({id}, &list, context_provider());
+  EXPECT_EQ(list.size(), 1u);
+  EXPECT_EQ(list[0].id, id);
+  EXPECT_EQ(provider().num_resources_for_testing(), 1u);
+
+  // After removing the resource should still exist, as it has yet to be
+  // returned.
+  provider().RemoveImportedResource(id);
+  EXPECT_EQ(provider().num_resources_for_testing(), 1u);
+
+  // Eviction alone should not delete the resource, nor have called the Eviction
+  // callback.
+  EXPECT_CALL(release, Evicted).Times(0);
+  EXPECT_CALL(release, Released(_, _)).Times(0);
+  provider().SetEvicted(true);
+  EXPECT_EQ(provider().num_resources_for_testing(), 1u);
+
+  // Becoming hidden and evicted would normally call `Evicted` however it
+  // should not, since the Client removed it earlier. The resource should not be
+  // deleted yet, until it has bene returned.
+  EXPECT_CALL(release, Evicted).Times(0);
+  EXPECT_CALL(release, Released(_, _)).Times(0);
+  provider().SetVisible(false);
+  EXPECT_EQ(provider().num_resources_for_testing(), 1u);
+
+  // Returning of resources should release the previously locked resource.
+  std::vector<ReturnedResource> returned;
+  returned.push_back(list[0].ToReturnedResource());
+  EXPECT_CALL(release, Released(_, false));
+  provider().ReceiveReturnsFromParent(std::move(returned));
+  EXPECT_EQ(provider().num_resources_for_testing(), 0u);
+}
+
+// Tests that when we provide Main thread callbacks, that they are ran after
+// the resources have returned. Also confirming that we Flush resources once
+// callbacks are processed.
+TEST_P(ClientResourceProviderTest, EvictionNotifiesMainAndFlushes) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitWithFeatures(
+      {features::kEvictionUnlocksResources,
+       features::kBatchMainThreadReleaseCallbacks},
+      {});
+  // Recreate to support `features::kBatchMainThreadReleaseCallbacks`.
+  InitProvider();
+  // Mark visible so eviction path is not inadvertently triggered.
+  provider().SetVisible(true);
+
+  MockReleaseCallback release;
+  const uint32_t sync_token_value = 1u;
+  TransferableResource resource =
+      MakeTransferableResource(use_gpu(), 'a', sync_token_value);
+  ResourceId id =
+      provider().ImportResource(resource, ReleaseCallback(),
+                                base::BindOnce(&MockReleaseCallback::Released,
+                                               base::Unretained(&release)),
+                                base::BindOnce(&MockReleaseCallback::Evicted,
+                                               base::Unretained(&release)));
+
+  std::vector<TransferableResource> list;
+  provider().PrepareSendToParent({id}, &list, context_provider());
+  EXPECT_EQ(list.size(), 1u);
+  EXPECT_EQ(list[0].id, id);
+
+  // Eviction alone should not delete the resource, nor have called the Eviction
+  // callback.
+  EXPECT_CALL(release, Evicted).Times(0);
+  EXPECT_CALL(release, Released(_, _)).Times(0);
+  provider().SetEvicted(true);
+  EXPECT_EQ(provider().num_resources_for_testing(), 1u);
+
+  // Becoming hidden and evicted should trigger the callback. The resource
+  // should not be deleted yet, until it has bene returned.
+  EXPECT_CALL(release, Evicted).Times(1);
+  EXPECT_CALL(release, Released(_, _)).Times(0);
+  provider().SetVisible(false);
+  EXPECT_EQ(provider().num_resources_for_testing(), 1u);
+
+  // Clients are expected to call RemoveImportedResource in response to Evicted.
+  // However being exported, should not trigger a Released callback.
+  EXPECT_CALL(release, Released(_, _)).Times(0);
+  provider().RemoveImportedResource(id);
+
+  // Returning of resources will enqueue main callbacks. The internal resource
+  // should have been deleted.
+  std::vector<ReturnedResource> returned;
+  returned.push_back(list[0].ToReturnedResource());
+  EXPECT_CALL(release, Released(_, _)).Times(0);
+  provider().ReceiveReturnsFromParent(std::move(returned));
+  EXPECT_EQ(provider().num_resources_for_testing(), 0u);
+
+  // The enqueued Released callback should be invoked, along with the Flush.
+  EXPECT_CALL(release, Released(_, false));
+  ExpectFlush();
+  VizTestSuite::RunUntilIdle();
 }
 
 }  // namespace

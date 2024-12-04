@@ -89,13 +89,15 @@ offline viewing: HTML links display an icon
 -----------
 */
 
-a[href*="http://"], a[href*="ftp://"], a[href*="https://"] {
-    text-decoration: none;
-    background-image: url(../images/ico_out.png);
-    background-repeat: no-repeat;
-    background-position: left;
-    padding-left: 20px;
-    text-align: left;
+a[href*="http://"]::before,
+a[href*="ftp://"]::before,
+a[href*="https://"]::before {
+    content: url(../images/ico_out.png);
+    padding-right: 5px;
+}
+
+.video a {
+    background: none;
 }
 
 .flags {
@@ -145,7 +147,7 @@ Top navigation
     display: block;
     position: relative;
     text-align: right;
-    top: -47px;
+    top: -30px;
     float: right;
     height: 20px;
     z-index: 1;
@@ -367,9 +369,18 @@ h3.fn, span.fn {
 .fngroup h3.fngroupitem {
     margin-bottom: 5px;
 }
-h3.fn code {
+
+h3.fn code,
+h3.flags code,
+td.tblQmlFuncNode > p > code,
+td.tblQmlPropNode > p > code {
     float: right;
 }
+
+code.extra.summary {
+    font-size: 12px;
+}
+
 h3.fn:target {
     background-color: #F6F6D6;
 }
@@ -524,11 +535,27 @@ ol.a > li{
     list-style-type: lower-alpha;
 }
 
- ol > li {
+ol > li {
      margin-left: 30px;
      padding-left: 8px;
-     list-style: decimal;
- }
+     list-style-type: decimal;
+}
+
+ol.A > li {
+    list-style-type: upper-alpha;
+}
+
+ol.a > li {
+    list-style-type: lower-alpha;
+}
+
+ol.i > li {
+    list-style-type: lower-roman;
+}
+
+ol.I > li {
+    list-style-type: upper-roman;
+}
 
 .centerAlign {
     text-align: left
@@ -556,6 +583,20 @@ ol.a > li{
     padding: 3px 15px 3px 0
 }
 
+span.status.technical-preview {
+    display: inline-block;
+    position: relative;
+    background: center/contain no-repeat url(tech_preview.svg);
+    width: 26px;
+    height: 23px;
+}
+
+td.memItemRight span.status {
+    margin-top: -10px;
+    right: -10px;
+    top: 6px;
+}
+
 .qml {
     display: block;
     margin: 10px;
@@ -563,13 +604,7 @@ ol.a > li{
     padding: 20px 20px 20px 20px;
 }
 
-.qmldefault {
-    padding-left: 5px;
-    float: right;
-    color: red;
-}
-
-.qmlreadonly {
+.qmlextra {
     padding-left: 5px;
     float: right;
     color: #254117;
@@ -607,14 +642,7 @@ Content table
 
 @media print {
     .toc {
-        float: right;
-        clear: right;
-        padding-bottom: 10px;
-        padding-top: 50px;
-        width: 100%;
-        background-image: url(../images/bgrContent.png);
-        background-position: top;
-        background-repeat: no-repeat;
+        display: none;
     }
 }
 
@@ -696,6 +724,9 @@ Landing page
     vertical-align: top;
 }
 
+.landing {
+    display: flex;
+}
 
 .landing h2 {
     background-color: transparent;
@@ -710,19 +741,14 @@ Landing page
 }
 
 .col-1 {
-    display: inline-block;
     white-space: normal;
     width: 70%;
-    height: 100%;
-    float: left;
 }
 
 .col-2 {
-    display: inline-block;
     white-space: normal;
     width: 20%;
     margin-left: 5%;
-    position: relative;
     top: -20px;
 }
 
@@ -773,10 +799,6 @@ div.multi-column div {
   display:table
 }
 
-.mainContent .video > .vspan {
-  padding-top:60%;
-  display:block
-}
 .mainContent .video iframe {
   width:100%;
   height:100%;

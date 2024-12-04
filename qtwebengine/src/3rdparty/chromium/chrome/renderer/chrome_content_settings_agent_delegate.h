@@ -1,10 +1,12 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef CHROME_RENDERER_CHROME_CONTENT_SETTINGS_AGENT_DELEGATE_H_
 #define CHROME_RENDERER_CHROME_CONTENT_SETTINGS_AGENT_DELEGATE_H_
 
+#include "base/gtest_prod_util.h"
+#include "base/memory/raw_ptr.h"
 #include "components/content_settings/renderer/content_settings_agent_impl.h"
 #include "extensions/buildflags/buildflags.h"
 
@@ -32,27 +34,27 @@ class ChromeContentSettingsAgentDelegate
 #endif
 
   bool IsPluginTemporarilyAllowed(const std::string& identifier);
+  void AllowPluginTemporarily(const std::string& identifier);
 
   // content_settings::ContentSettingsAgentImpl::Delegate:
-  bool IsSchemeWhitelisted(const std::string& scheme) override;
-  base::Optional<bool> AllowReadFromClipboard() override;
-  base::Optional<bool> AllowWriteToClipboard() override;
-  base::Optional<bool> AllowMutationEvents() override;
-  void PassiveInsecureContentFound(const blink::WebURL&) override;
+  bool IsSchemeAllowlisted(const std::string& scheme) override;
+  bool AllowReadFromClipboard() override;
+  bool AllowWriteToClipboard() override;
+  std::optional<bool> AllowMutationEvents() override;
 
  private:
   FRIEND_TEST_ALL_PREFIXES(ChromeContentSettingsAgentDelegateBrowserTest,
                            PluginsTemporarilyAllowed);
 
   // RenderFrameObserver:
-  bool OnMessageReceived(const IPC::Message& message) override;
   void DidCommitProvisionalLoad(ui::PageTransition transition) override;
   void OnDestruct() override;
 
-  void OnLoadBlockedPlugins(const std::string& identifier);
-
   // Whether the observed RenderFrame is for a platform app.
   bool IsPlatformApp();
+
+  // Whether the observed RenderFrame is an allow-listed System Web App.
+  bool IsAllowListedSystemWebApp();
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
   // If |origin| corresponds to an installed extension, returns that extension.
@@ -61,12 +63,13 @@ class ChromeContentSettingsAgentDelegate
       const blink::WebSecurityOrigin& origin) const;
 
   // Owned by ChromeContentRendererClient and outlive us.
-  extensions::Dispatcher* extension_dispatcher_ = nullptr;
+  raw_ptr<extensions::Dispatcher, ExperimentalRenderer> extension_dispatcher_ =
+      nullptr;
 #endif
 
   base::flat_set<std::string> temporarily_allowed_plugins_;
 
-  content::RenderFrame* render_frame_ = nullptr;
+  raw_ptr<content::RenderFrame, ExperimentalRenderer> render_frame_ = nullptr;
 };
 
 #endif  // CHROME_RENDERER_CHROME_CONTENT_SETTINGS_AGENT_DELEGATE_H_

@@ -14,6 +14,8 @@
 
 #include "third_party/private_membership/src/internal/hashed_bucket_id.h"
 
+#include <string>
+
 #include "third_party/private_membership/src/private_membership.pb.h"
 #include "third_party/private_membership/src/private_membership_rlwe.pb.h"
 #include <gmock/gmock.h>
@@ -74,7 +76,7 @@ TEST(HashedBucketIdTest, CreateWithHashingSuccess) {
   plaintext_id.set_non_sensitive_id("nsid");
   plaintext_id.set_sensitive_id("sid");
 
-  private_join_and_compute::Context ctx;
+  ::private_join_and_compute::Context ctx;
 
   ASSERT_OK_AND_ASSIGN(auto bucket1,
                        HashedBucketId::Create(plaintext_id, params, &ctx));
@@ -96,7 +98,7 @@ TEST(HashedBucketIdTest, CreateWithHashingError) {
   plaintext_id.set_non_sensitive_id("nsid-test");
   plaintext_id.set_sensitive_id("sid-test");
 
-  private_join_and_compute::Context ctx;
+  ::private_join_and_compute::Context ctx;
 
   EXPECT_THAT(
       HashedBucketId::Create(plaintext_id, params, nullptr),
@@ -115,20 +117,12 @@ TEST(HashedBucketId, CreateEmptyBucketId) {
   plaintext_id.set_non_sensitive_id("nsid-empty");
   plaintext_id.set_sensitive_id("sid-empty");
 
-  private_join_and_compute::Context ctx;
+  ::private_join_and_compute::Context ctx;
 
   ASSERT_OK_AND_ASSIGN(HashedBucketId id1,
                        HashedBucketId::Create(plaintext_id, params, &ctx));
   ASSERT_OK_AND_ASSIGN(HashedBucketId id2, HashedBucketId::Create("", 0));
   EXPECT_THAT(id1, Eq(id2));
-}
-
-TEST(HashedBucketId, ToApiProto) {
-  private_membership::rlwe::PrivateMembershipRlweQuery::HashedBucketId
-      api_proto = ApiHashedBucketId("abcd", 32);
-  ASSERT_OK_AND_ASSIGN(HashedBucketId id,
-                       HashedBucketId::CreateFromApiProto(api_proto));
-  EXPECT_EQ(id.ToApiProto().SerializeAsString(), api_proto.SerializeAsString());
 }
 
 TEST(HashedBucketIdTest, EqualsFalse) {

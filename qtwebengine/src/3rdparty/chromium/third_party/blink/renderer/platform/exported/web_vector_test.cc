@@ -1,10 +1,8 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/public/platform/web_vector.h"
-
-#include "base/stl_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/platform/web_string.h"
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
@@ -61,14 +59,14 @@ TEST(WebVectorTest, Empty) {
 TEST(WebVectorTest, Swap) {
   const int kFirstData[] = {1, 2, 3, 4, 5};
   const int kSecondData[] = {6, 5, 8};
-  const size_t kFirstDataLength = base::size(kFirstData);
-  const size_t kSecondDataLength = base::size(kSecondData);
+  const size_t kFirstDataLength = std::size(kFirstData);
+  const size_t kSecondDataLength = std::size(kSecondData);
 
   WebVector<int> first(kFirstData, kFirstDataLength);
   WebVector<int> second(kSecondData, kSecondDataLength);
   ASSERT_EQ(kFirstDataLength, first.size());
   ASSERT_EQ(kSecondDataLength, second.size());
-  first.Swap(second);
+  first.swap(second);
   ASSERT_EQ(kSecondDataLength, first.size());
   ASSERT_EQ(kFirstDataLength, second.size());
   for (size_t i = 0; i < first.size(); ++i)
@@ -137,9 +135,10 @@ TEST(WebVectorTest, EmplaceBackArgumentForwarding) {
   WebVector<WebString> vector;
   vector.reserve(1);
   WebUChar buffer[] = {'H', 'e', 'l', 'l', 'o', ' ', 'b', 'l', 'i', 'n', 'k'};
-  vector.emplace_back(buffer, base::size(buffer));
+  std::u16string_view view(buffer, std::size(buffer));
+  vector.emplace_back(view);
   ASSERT_EQ(1U, vector.size());
-  EXPECT_EQ(WebString(buffer, base::size(buffer)), vector[0]);
+  EXPECT_EQ(WebString(view), vector[0]);
 }
 
 TEST(WebVectorTest, EmplaceBackElementPlacement) {

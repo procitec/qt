@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -60,7 +60,7 @@ class PageAgentViewsTest : public views::ViewsTestBase {
           return false;
       }
 
-      for (auto* child : cur_element->children()) {
+      for (ui_devtools::UIElement* child : cur_element->children()) {
         elements.emplace(child);
       }
     }
@@ -80,8 +80,8 @@ class PageAgentViewsTest : public views::ViewsTestBase {
  protected:
   PageAgentViews* page_agent() { return page_agent_.get(); }
   DOMAgentViews* dom_agent() { return dom_agent_.get(); }
-  bool devtools_dismiss_override() {
-    return page_agent()->devtools_dismiss_override();
+  bool devtools_dismiss_override() const {
+    return page_agent_->GetDevtoolsDismissOverrideForTesting();
   }
 
  private:

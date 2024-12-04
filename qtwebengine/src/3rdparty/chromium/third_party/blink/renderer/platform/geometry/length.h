@@ -23,9 +23,12 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_GEOMETRY_LENGTH_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_GEOMETRY_LENGTH_H_
 
+#include <cmath>
 #include <cstring>
 
+#include "base/check_op.h"
 #include "base/notreached.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/renderer/platform/geometry/layout_unit.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
@@ -33,22 +36,70 @@
 
 namespace blink {
 
-enum ValueRange { kValueRangeAll, kValueRangeNonNegative };
-
 struct PixelsAndPercent {
   DISALLOW_NEW();
-  PixelsAndPercent(float pixels, float percent)
-      : pixels(pixels), percent(percent) {}
+  explicit PixelsAndPercent(float pixels)
+      : pixels(pixels),
+        percent(0.0f),
+        has_explicit_pixels(true),
+        has_explicit_percent(false) {}
+  PixelsAndPercent(float pixels,
+                   float percent,
+                   bool has_explicit_pixels,
+                   bool has_explicit_percent)
+      : pixels(pixels),
+        percent(percent),
+        has_explicit_pixels(has_explicit_pixels),
+        has_explicit_percent(has_explicit_percent) {}
+
+  PixelsAndPercent& operator+=(const PixelsAndPercent& rhs) {
+    pixels += rhs.pixels;
+    percent += rhs.percent;
+    has_explicit_pixels |= rhs.has_explicit_pixels;
+    has_explicit_percent |= rhs.has_explicit_percent;
+    return *this;
+  }
+  friend PixelsAndPercent operator+(PixelsAndPercent lhs,
+                                    const PixelsAndPercent& rhs) {
+    lhs += rhs;
+    return lhs;
+  }
+  PixelsAndPercent& operator-=(const PixelsAndPercent& rhs) {
+    pixels -= rhs.pixels;
+    percent -= rhs.percent;
+    has_explicit_pixels |= rhs.has_explicit_pixels;
+    has_explicit_percent |= rhs.has_explicit_percent;
+    return *this;
+  }
+  PixelsAndPercent& operator*=(float number) {
+    pixels *= number;
+    percent *= number;
+    return *this;
+  }
+
   float pixels;
   float percent;
+  bool has_explicit_pixels;
+  bool has_explicit_percent;
 };
 
+class CalculationExpressionNode;
 class CalculationValue;
+class Length;
+
+PLATFORM_EXPORT extern const Length& g_auto_length;
+PLATFORM_EXPORT extern const Length& g_none_length;
+PLATFORM_EXPORT extern const Length& g_fixed_zero_length;
 
 class PLATFORM_EXPORT Length {
   DISALLOW_NEW();
 
  public:
+  // Initializes global instances.
+  static void Initialize();
+
+  enum class ValueRange { kAll, kNonNegative };
+
   // FIXME: This enum makes it hard to tell in general what values may be
   // appropriate for any given Length.
   enum Type : unsigned char {
@@ -61,40 +112,40 @@ class PLATFORM_EXPORT Length {
     kFillAvailable,
     kFitContent,
     kCalculated,
+    kFlex,
     kExtendToZoom,
     kDeviceWidth,
     kDeviceHeight,
-    kNone
+    kNone,    // only valid for max-width, max-height, or contain-intrinsic-size
+    kContent  // only valid for flex-basis
   };
 
-  Length() : int_value_(0), quirk_(false), type_(kAuto), is_float_(false) {}
+  Length() : value_(0), type_(kAuto) {}
 
-  explicit Length(Length::Type t)
-      : int_value_(0), quirk_(false), type_(t), is_float_(false) {
+  explicit Length(Length::Type t) : value_(0), type_(t) {
     DCHECK_NE(t, kCalculated);
   }
 
-  Length(int v, Length::Type t, bool q = false)
-      : int_value_(v), quirk_(q), type_(t), is_float_(false) {
+  Length(int v, Length::Type t) : value_(v), type_(t) {
     DCHECK_NE(t, kCalculated);
   }
 
-  Length(LayoutUnit v, Length::Type t, bool q = false)
-      : float_value_(v.ToFloat()), quirk_(q), type_(t), is_float_(true) {
+  Length(LayoutUnit v, Length::Type t) : value_(v.ToFloat()), type_(t) {
+    DCHECK(std::isfinite(v.ToFloat()));
     DCHECK_NE(t, kCalculated);
   }
 
-  Length(float v, Length::Type t, bool q = false)
-      : float_value_(v), quirk_(q), type_(t), is_float_(true) {
+  Length(float v, Length::Type t) : value_(v), type_(t) {
+    DCHECK(std::isfinite(v));
     DCHECK_NE(t, kCalculated);
   }
 
-  Length(double v, Length::Type t, bool q = false)
-      : quirk_(q), type_(t), is_float_(true) {
-    float_value_ = clampTo<float>(v);
+  Length(double v, Length::Type t) : type_(t) {
+    DCHECK(std::isfinite(v));
+    value_ = ClampTo<float>(v);
   }
 
-  explicit Length(scoped_refptr<CalculationValue>);
+  explicit Length(scoped_refptr<const CalculationValue>);
 
   Length(const Length& length) {
     memcpy(this, &length, sizeof(Length));
@@ -117,32 +168,26 @@ class PLATFORM_EXPORT Length {
   }
 
   bool operator==(const Length& o) const {
-    return (type_ == o.type_) && (quirk_ == o.quirk_) &&
-           (IsNone() || (GetFloatValue() == o.GetFloatValue()) ||
-            IsCalculatedEqual(o));
+    if (type_ != o.type_ || quirk_ != o.quirk_) {
+      return false;
+    }
+    if (type_ == kCalculated) {
+      return IsCalculatedEqual(o);
+    } else {
+      // For everything that doesn't use value_, it is defined to be zero,
+      // so we can compare here unconditionally.
+      return value_ == o.value_;
+    }
   }
   bool operator!=(const Length& o) const { return !(*this == o); }
-
-  const Length& operator*=(float v) {
-    if (IsCalculated()) {
-      NOTREACHED();
-      return *this;
-    }
-
-    if (is_float_)
-      float_value_ = static_cast<float>(float_value_ * v);
-    else
-      int_value_ = static_cast<int>(int_value_ * v);
-
-    return *this;
-  }
 
   template <typename NUMBER_TYPE>
   static Length Fixed(NUMBER_TYPE number) {
     return Length(number, kFixed);
   }
   static Length Fixed() { return Length(kFixed); }
-  static Length Auto() { return Length(kAuto); }
+  static const Length& FixedZero() { return g_fixed_zero_length; }
+  static const Length& Auto() { return g_auto_length; }
   static Length FillAvailable() { return Length(kFillAvailable); }
   static Length MinContent() { return Length(kMinContent); }
   static Length MaxContent() { return Length(kMaxContent); }
@@ -150,12 +195,14 @@ class PLATFORM_EXPORT Length {
   static Length ExtendToZoom() { return Length(kExtendToZoom); }
   static Length DeviceWidth() { return Length(kDeviceWidth); }
   static Length DeviceHeight() { return Length(kDeviceHeight); }
-  static Length None() { return Length(kNone); }
+  static const Length& None() { return g_none_length; }
   static Length FitContent() { return Length(kFitContent); }
+  static Length Content() { return Length(kContent); }
   template <typename NUMBER_TYPE>
   static Length Percent(NUMBER_TYPE number) {
     return Length(number, kPercent);
   }
+  static Length Flex(float value) { return Length(value, kFlex); }
 
   // FIXME: Make this private (if possible) or at least rename it
   // (http://crbug.com/432707).
@@ -169,7 +216,8 @@ class PLATFORM_EXPORT Length {
       NOTREACHED();
       return 0;
     }
-    return GetIntValue();
+    DCHECK(!IsNone());
+    return static_cast<int>(value_);
   }
 
   float Pixels() const {
@@ -184,12 +232,12 @@ class PLATFORM_EXPORT Length {
 
   PixelsAndPercent GetPixelsAndPercent() const;
 
-  CalculationValue& GetCalculationValue() const;
+  const CalculationValue& GetCalculationValue() const;
 
   // If |this| is calculated, returns the underlying |CalculationValue|. If not,
   // returns a |CalculationValue| constructed from |GetPixelsAndPercent()|. Hits
   // a DCHECK if |this| is not a specified value (e.g., 'auto').
-  scoped_refptr<CalculationValue> AsCalculationValue() const;
+  scoped_refptr<const CalculationValue> AsCalculationValue() const;
 
   Length::Type GetType() const { return static_cast<Length::Type>(type_); }
   bool Quirk() const { return quirk_; }
@@ -207,7 +255,7 @@ class PLATFORM_EXPORT Length {
     if (IsCalculated())
       return false;
 
-    return is_float_ ? !float_value_ : !int_value_;
+    return !value_;
   }
   bool IsPositive() const {
     if (IsNone())
@@ -225,26 +273,31 @@ class PLATFORM_EXPORT Length {
   }
 
   // For the layout purposes, if this |Length| is a block-axis size, see
-  // |IsIntrinsicOrAuto()|, it is usually a better choice.
+  // |IsAutoOrContentOrIntrinsic()|, it is usually a better choice.
   bool IsAuto() const { return GetType() == kAuto; }
   bool IsFixed() const { return GetType() == kFixed; }
+
   // For the block axis, intrinsic sizes such as `min-content` behave the same
   // as `auto`. https://www.w3.org/TR/css-sizing-3/#valdef-width-min-content
-  bool IsIntrinsicOrAuto() const { return GetType() == kAuto || IsIntrinsic(); }
-  bool IsIntrinsic() const {
+  bool IsContentOrIntrinsic() const {
     return GetType() == kMinContent || GetType() == kMaxContent ||
-           GetType() == kMinIntrinsic || GetType() == kFillAvailable ||
-           GetType() == kFitContent;
+           GetType() == kFitContent || GetType() == kMinIntrinsic ||
+           GetType() == kContent;
   }
+  bool IsAutoOrContentOrIntrinsic() const {
+    return GetType() == kAuto || IsContentOrIntrinsic();
+  }
+
   bool IsSpecified() const {
     return GetType() == kFixed || GetType() == kPercent ||
            GetType() == kCalculated;
   }
-  bool IsSpecifiedOrIntrinsic() const { return IsSpecified() || IsIntrinsic(); }
+
   bool IsCalculated() const { return GetType() == kCalculated; }
   bool IsCalculatedEqual(const Length&) const;
   bool IsMinContent() const { return GetType() == kMinContent; }
   bool IsMaxContent() const { return GetType() == kMaxContent; }
+  bool IsContent() const { return GetType() == kContent; }
   bool IsMinIntrinsic() const { return GetType() == kMinIntrinsic; }
   bool IsFillAvailable() const { return GetType() == kFillAvailable; }
   bool IsFitContent() const { return GetType() == kFitContent; }
@@ -252,9 +305,16 @@ class PLATFORM_EXPORT Length {
   bool IsPercentOrCalc() const {
     return GetType() == kPercent || GetType() == kCalculated;
   }
+  bool IsPercentOrCalcOrStretch() const {
+    return GetType() == kPercent || GetType() == kCalculated ||
+           GetType() == kFillAvailable;
+  }
+  bool IsFlex() const { return GetType() == kFlex; }
   bool IsExtendToZoom() const { return GetType() == kExtendToZoom; }
   bool IsDeviceWidth() const { return GetType() == kDeviceWidth; }
   bool IsDeviceHeight() const { return GetType() == kDeviceHeight; }
+  bool HasAnchorQueries() const;
+  bool HasAutoAnchorPositioning() const;
 
   Length Blend(const Length& from, double progress, ValueRange range) const {
     DCHECK(IsSpecified());
@@ -280,39 +340,53 @@ class PLATFORM_EXPORT Length {
 
   float GetFloatValue() const {
     DCHECK(!IsNone());
-    return is_float_ ? float_value_ : int_value_;
+    DCHECK(!IsCalculated());
+    return value_;
   }
-  float NonNanCalculatedValue(LayoutUnit max_value) const;
+
+  class PLATFORM_EXPORT AnchorEvaluator {
+   public:
+    // Evaluates an anchor() or anchor-size() function given by the
+    // CalculationExpressionNode. Returns |nullopt| if the query is invalid
+    // (e.g., no targets or wrong axis.)
+    virtual absl::optional<LayoutUnit> Evaluate(
+        const CalculationExpressionNode&) const = 0;
+  };
+  float NonNanCalculatedValue(float max_value,
+                              const AnchorEvaluator* = nullptr) const;
 
   Length SubtractFromOneHundredPercent() const;
 
+  Length Add(const Length& other) const;
+
   Length Zoom(double factor) const;
 
- private:
-  int GetIntValue() const {
-    DCHECK(!IsNone());
-    return is_float_ ? static_cast<int>(float_value_) : int_value_;
-  }
+  String ToString() const;
 
+ private:
   Length BlendMixedTypes(const Length& from, double progress, ValueRange) const;
 
   Length BlendSameTypes(const Length& from, double progress, ValueRange) const;
 
   int CalculationHandle() const {
     DCHECK(IsCalculated());
-    return GetIntValue();
+    return calculation_handle_;
   }
   void IncrementCalculatedRef() const;
   void DecrementCalculatedRef() const;
 
   union {
-    int int_value_;
-    float float_value_;
+    // If kType == kCalculated.
+    int calculation_handle_;
+
+    // Otherwise. Must be zero if not in use (e.g., for kAuto or kNone).
+    float value_;
   };
-  bool quirk_;
+  bool quirk_ = false;
   unsigned char type_;
-  bool is_float_;
 };
+
+PLATFORM_EXPORT std::ostream& operator<<(std::ostream&, const Length&);
 
 }  // namespace blink
 

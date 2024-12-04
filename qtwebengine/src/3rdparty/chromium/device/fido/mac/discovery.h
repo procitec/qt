@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,9 +12,7 @@
 #include "device/fido/fido_discovery_base.h"
 #include "device/fido/mac/authenticator_config.h"
 
-namespace device {
-namespace fido {
-namespace mac {
+namespace device::fido::mac {
 
 class TouchIdAuthenticator;
 
@@ -29,15 +27,13 @@ class COMPONENT_EXPORT(DEVICE_FIDO) FidoTouchIdDiscovery
   void Start() override;
 
  private:
-  void AddAuthenticator();
+  void OnAuthenticatorAvailable(bool is_available);
 
   AuthenticatorConfig authenticator_config_;
   std::unique_ptr<TouchIdAuthenticator> authenticator_;
   base::WeakPtrFactory<FidoTouchIdDiscovery> weak_factory_;
 };
 
-}  // namespace mac
-}  // namespace fido
-}  // namespace device
+}  // namespace device::fido::mac
 
 #endif  // DEVICE_FIDO_MAC_DISCOVERY_H_

@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,18 +6,23 @@
 
 #include <memory>
 #include <utility>
-#include "base/bind.h"
+
+#include "base/functional/bind.h"
 #include "base/run_loop.h"
 #include "base/test/task_environment.h"
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/public/mojom/blob/blob.mojom-blink.h"
 #include "third_party/blink/public/mojom/blob/blob_registry.mojom-blink.h"
+#include "third_party/blink/public/mojom/blob/file_backed_blob_factory.mojom-blink.h"
 #include "third_party/blink/public/platform/file_path_conversion.h"
 #include "third_party/blink/renderer/platform/blob/blob_bytes_provider.h"
 #include "third_party/blink/renderer/platform/blob/testing/fake_blob_registry.h"
+#include "third_party/blink/renderer/platform/blob/testing/fake_file_backed_blob_factory.h"
 #include "third_party/blink/renderer/platform/testing/testing_platform_support.h"
+#include "third_party/blink/renderer/platform/wtf/functional.h"
 #include "third_party/blink/renderer/platform/wtf/uuid.h"
 
 namespace blink {
@@ -28,8 +33,8 @@ using mojom::blink::DataElement;
 using mojom::blink::DataElementBlob;
 using mojom::blink::DataElementBytes;
 using mojom::blink::DataElementFile;
-using mojom::blink::DataElementFilesystemURL;
 using mojom::blink::DataElementPtr;
+using mojom::blink::FileBackedBlobFactory;
 
 namespace {
 
@@ -47,7 +52,7 @@ struct ExpectedElement {
   static ExpectedElement LargeBytes(Vector<uint8_t> data) {
     uint64_t size = data.size();
     return ExpectedElement{DataElement::NewBytes(DataElementBytes::New(
-                               size, base::nullopt, mojo::NullRemote())),
+                               size, absl::nullopt, mojo::NullRemote())),
                            String(), std::move(data)};
   }
 
@@ -57,14 +62,6 @@ struct ExpectedElement {
                               base::Time time) {
     return ExpectedElement{DataElement::NewFile(
         DataElementFile::New(WebStringToFilePath(path), offset, length, time))};
-  }
-
-  static ExpectedElement FileFilesystem(const KURL& url,
-                                        uint64_t offset,
-                                        uint64_t length,
-                                        base::Time time) {
-    return ExpectedElement{DataElement::NewFileFilesystem(
-        DataElementFilesystemURL::New(url, offset, length, time))};
   }
 
   static ExpectedElement Blob(const String& uuid,
@@ -97,11 +94,11 @@ class BlobDataHandleTest : public testing::Test {
     small_test_data_.resize(1024);
     medium_test_data_.resize(1024 * 32);
     large_test_data_.resize(1024 * 512);
-    for (size_t i = 0; i < small_test_data_.size(); ++i)
+    for (wtf_size_t i = 0; i < small_test_data_.size(); ++i)
       small_test_data_[i] = i;
-    for (size_t i = 0; i < medium_test_data_.size(); ++i)
+    for (wtf_size_t i = 0; i < medium_test_data_.size(); ++i)
       medium_test_data_[i] = i % 191;
-    for (size_t i = 0; i < large_test_data_.size(); ++i)
+    for (wtf_size_t i = 0; i < large_test_data_.size(); ++i)
       large_test_data_[i] = i % 251;
 
     ASSERT_LT(small_test_data_.size(),
@@ -152,7 +149,7 @@ class BlobDataHandleTest : public testing::Test {
     EXPECT_EQ(type.IsNull() ? "" : type, reg.content_type);
     EXPECT_EQ("", reg.content_disposition);
     ASSERT_EQ(expected_elements.size(), reg.elements.size());
-    for (size_t i = 0; i < expected_elements.size(); ++i) {
+    for (wtf_size_t i = 0; i < expected_elements.size(); ++i) {
       const auto& expected = expected_elements[i].element;
       auto& actual = reg.elements[i];
       if (expected->is_bytes()) {
@@ -165,7 +162,7 @@ class BlobDataHandleTest : public testing::Test {
         Vector<uint8_t> received_bytes;
         mojo::Remote<mojom::blink::BytesProvider> actual_data(
             std::move(actual->get_bytes()->data));
-        actual_data->RequestAsReply(WTF::Bind(
+        actual_data->RequestAsReply(WTF::BindOnce(
             [](base::RepeatingClosure quit_closure, Vector<uint8_t>* bytes_out,
                const Vector<uint8_t>& bytes) {
               *bytes_out = bytes;
@@ -184,16 +181,6 @@ class BlobDataHandleTest : public testing::Test {
         EXPECT_EQ(expected->get_file()->offset, actual->get_file()->offset);
         EXPECT_EQ(expected->get_file()->expected_modification_time,
                   actual->get_file()->expected_modification_time);
-      } else if (expected->is_file_filesystem()) {
-        ASSERT_TRUE(actual->is_file_filesystem());
-        EXPECT_EQ(expected->get_file_filesystem()->url,
-                  actual->get_file_filesystem()->url);
-        EXPECT_EQ(expected->get_file_filesystem()->length,
-                  actual->get_file_filesystem()->length);
-        EXPECT_EQ(expected->get_file_filesystem()->offset,
-                  actual->get_file_filesystem()->offset);
-        EXPECT_EQ(expected->get_file_filesystem()->expected_modification_time,
-                  actual->get_file_filesystem()->expected_modification_time);
       } else if (expected->is_blob()) {
         ASSERT_TRUE(actual->is_blob());
         EXPECT_EQ(expected->get_blob()->length, actual->get_blob()->length);
@@ -279,12 +266,41 @@ TEST_F(BlobDataHandleTest, CreateFromUUID) {
   EXPECT_EQ(kUuid, mock_blob_registry_.owned_receivers[0].uuid);
 }
 
+TEST_F(BlobDataHandleTest, CreateFromFile) {
+  String kPath = "path";
+  uint64_t kOffset = 0;
+  uint64_t kSize = 1234;
+  base::Time kModificationTime = base::Time();
+  String kType = "content/type";
+
+  FakeFileBackedBlobFactory file_factory;
+  mojo::Remote<FileBackedBlobFactory> file_factory_remote;
+  mojo::Receiver<FileBackedBlobFactory> file_factory_receiver(
+      &file_factory, file_factory_remote.BindNewPipeAndPassReceiver());
+
+  scoped_refptr<BlobDataHandle> handle =
+      BlobDataHandle::CreateForFile(file_factory_remote.get(), kPath, kOffset,
+                                    kSize, kModificationTime, kType);
+
+  EXPECT_EQ(kType, handle->GetType());
+  EXPECT_EQ(kSize, handle->size());
+  EXPECT_FALSE(handle->IsSingleUnknownSizeFile());
+
+  file_factory_remote.FlushForTesting();
+  EXPECT_EQ(1u, file_factory.registrations.size());
+  const auto& reg = file_factory.registrations[0];
+  EXPECT_EQ(handle->Uuid(), reg.uuid);
+  EXPECT_EQ(kType, reg.content_type);
+  EXPECT_EQ(WebStringToFilePath(kPath), reg.file->path);
+  EXPECT_EQ(kSize, reg.file->length);
+  EXPECT_EQ(kOffset, reg.file->offset);
+  EXPECT_EQ(kModificationTime, reg.file->expected_modification_time);
+}
+
 TEST_F(BlobDataHandleTest, CreateFromEmptyElements) {
   auto data = std::make_unique<BlobData>();
   data->AppendBytes(small_test_data_.data(), 0);
   data->AppendBlob(empty_blob_, 0, 0);
-  data->AppendFile("path", 0, 0, base::Time::UnixEpoch());
-  data->AppendFileSystemURL(NullURL(), 0, 0, base::Time::UnixEpoch());
 
   TestCreateBlob(std::move(data), {});
 }
@@ -313,7 +329,7 @@ TEST_F(BlobDataHandleTest, CreateFromMergedBytes) {
   auto data = std::make_unique<BlobData>();
   data->AppendBytes(medium_test_data_.data(), medium_test_data_.size());
   data->AppendBytes(small_test_data_.data(), small_test_data_.size());
-  EXPECT_EQ(1u, data->Elements().size());
+  EXPECT_EQ(1u, data->ElementsForTesting().size());
 
   Vector<uint8_t> expected_data = medium_test_data_;
   expected_data.AppendVector(small_test_data_);
@@ -329,7 +345,7 @@ TEST_F(BlobDataHandleTest, CreateFromMergedLargeAndSmallBytes) {
   auto data = std::make_unique<BlobData>();
   data->AppendBytes(large_test_data_.data(), large_test_data_.size());
   data->AppendBytes(small_test_data_.data(), small_test_data_.size());
-  EXPECT_EQ(1u, data->Elements().size());
+  EXPECT_EQ(1u, data->ElementsForTesting().size());
 
   Vector<uint8_t> expected_data = large_test_data_;
   expected_data.AppendVector(small_test_data_);
@@ -345,7 +361,7 @@ TEST_F(BlobDataHandleTest, CreateFromMergedSmallAndLargeBytes) {
   auto data = std::make_unique<BlobData>();
   data->AppendBytes(small_test_data_.data(), small_test_data_.size());
   data->AppendBytes(large_test_data_.data(), large_test_data_.size());
-  EXPECT_EQ(1u, data->Elements().size());
+  EXPECT_EQ(1u, data->ElementsForTesting().size());
 
   Vector<uint8_t> expected_data = small_test_data_;
   expected_data.AppendVector(large_test_data_);
@@ -355,43 +371,6 @@ TEST_F(BlobDataHandleTest, CreateFromMergedSmallAndLargeBytes) {
       ExpectedElement::LargeBytes(std::move(expected_data)));
 
   TestCreateBlob(std::move(data), std::move(expected_elements));
-}
-
-TEST_F(BlobDataHandleTest, CreateFromFileAndFileSystemURL) {
-  base::Time timestamp1 = base::Time::Now();
-  base::Time timestamp2 = timestamp1 + base::TimeDelta::FromSeconds(1);
-  KURL url(NullURL(), "http://example.com/");
-  auto data = std::make_unique<BlobData>();
-  data->AppendFile("path", 4, 32, timestamp1);
-  data->AppendFileSystemURL(url, 15, 876, timestamp2);
-
-  Vector<ExpectedElement> expected_elements;
-  expected_elements.push_back(ExpectedElement::File("path", 4, 32, timestamp1));
-  expected_elements.push_back(
-      ExpectedElement::FileFilesystem(url, 15, 876, timestamp2));
-
-  TestCreateBlob(std::move(data), std::move(expected_elements));
-}
-
-TEST_F(BlobDataHandleTest, CreateFromFileWithUnknownSize) {
-  Vector<ExpectedElement> expected_elements;
-  expected_elements.push_back(
-      ExpectedElement::File("path", 0, uint64_t(-1), base::Time()));
-
-  TestCreateBlob(BlobData::CreateForFileWithUnknownSize("path"),
-                 std::move(expected_elements));
-}
-
-TEST_F(BlobDataHandleTest, CreateFromFilesystemFileWithUnknownSize) {
-  base::Time timestamp = base::Time::Now();
-  KURL url(NullURL(), "http://example.com/");
-  Vector<ExpectedElement> expected_elements;
-  expected_elements.push_back(
-      ExpectedElement::FileFilesystem(url, 0, uint64_t(-1), timestamp));
-
-  TestCreateBlob(
-      BlobData::CreateForFileSystemURLWithUnknownSize(url, timestamp),
-      std::move(expected_elements));
 }
 
 TEST_F(BlobDataHandleTest, CreateFromBlob) {

@@ -1,10 +1,9 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/modules/sensor/sensor_proxy.h"
 
-#include "third_party/blink/public/common/widget/screen_info.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/platform/task_type.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
@@ -15,6 +14,7 @@
 #include "third_party/blink/renderer/modules/sensor/sensor_reading_remapper.h"
 #include "third_party/blink/renderer/platform/web_test_support.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
+#include "ui/display/screen_info.h"
 
 namespace blink {
 
@@ -27,10 +27,9 @@ SensorProxy::SensorProxy(device::mojom::blink::SensorType sensor_type,
     : PageVisibilityObserver(page),
       FocusChangedObserver(page),
       type_(sensor_type),
-      state_(SensorProxy::kUninitialized),
       provider_(provider) {}
 
-SensorProxy::~SensorProxy() {}
+SensorProxy::~SensorProxy() = default;
 
 void SensorProxy::Trace(Visitor* visitor) const {
   visitor->Trace(observers_);
@@ -62,29 +61,14 @@ void SensorProxy::ReportError(DOMExceptionCode code, const String& message) {
   }
 }
 
-namespace {
-
-uint16_t GetScreenOrientationAngle(LocalFrame& frame) {
-  if (WebTestSupport::IsRunningWebTest()) {
-    // Simulate that the device is turned 90 degrees on the right.
-    // 'orientation_angle' must be 270 as per
-    // https://w3c.github.io/screen-orientation/#dfn-update-the-orientation-information.
-    return 270;
-  }
-  return frame.GetChromeClient().GetScreenInfo(frame).orientation_angle;
-}
-
-}  // namespace
-
 const device::SensorReading& SensorProxy::GetReading(bool remapped) const {
   DCHECK(IsInitialized());
   if (remapped) {
     if (remapped_reading_.timestamp() != reading_.timestamp()) {
       remapped_reading_ = reading_;
+      LocalFrame& frame = *provider_->GetSupplementable()->GetFrame();
       SensorReadingRemapper::RemapToScreenCoords(
-          type_,
-          GetScreenOrientationAngle(
-              *provider_->GetSupplementable()->GetFrame()),
+          type_, frame.GetChromeClient().GetScreenInfo(frame).orientation_angle,
           &remapped_reading_);
     }
     return remapped_reading_;
@@ -114,7 +98,12 @@ bool SensorProxy::ShouldSuspendUpdates() const {
   if (!GetPage()->IsPageVisible())
     return true;
 
-  LocalFrame* focused_frame = GetPage()->GetFocusController().FocusedFrame();
+  const FocusController& focus_controller = GetPage()->GetFocusController();
+  if (!focus_controller.IsFocused()) {
+    return true;
+  }
+
+  LocalFrame* focused_frame = focus_controller.FocusedFrame();
   LocalFrame* this_frame = provider_->GetSupplementable()->GetFrame();
 
   if (!focused_frame || !this_frame)

@@ -1,7 +1,7 @@
 <style>
   :host {
     -webkit-mask: center / contain no-repeat;
-    background-color: currentColor;
+    background-color: var(--indicator-color);
     display: block;
     height: 100%;
     overflow: hidden;
@@ -9,6 +9,8 @@
   }
 
   :host([alert-state_='media-recording']),
+  :host([alert-state_='audio-recording']),
+  :host([alert-state_='video-recording']),
   :host([alert-state_='desktop-capturing']) {
     -webkit-mask-image: url(alert_indicators/tab_media_recording.svg);
     background-color: var(--tabstrip-indicator-recording-color);
@@ -47,7 +49,7 @@
 
   :host([alert-state_='pip-playing']) {
     -webkit-mask-image: url(alert_indicators/picture_in_picture_alt.svg);
-    background-color: var(--tabstrip-indicator-pip-color);
+    background-color: var(--color-web-ui-tab-strip-indicator-pip);
   }
 
   :host([alert-state_='vr-presenting']) {

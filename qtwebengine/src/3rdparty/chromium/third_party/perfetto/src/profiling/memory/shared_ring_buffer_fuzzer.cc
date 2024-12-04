@@ -16,9 +16,11 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <unistd.h>
 
 #include "perfetto/ext/base/file_utils.h"
 #include "perfetto/ext/base/temp_file.h"
+#include "perfetto/ext/base/utils.h"
 #include "src/profiling/memory/shared_ring_buffer.h"
 
 namespace perfetto {
@@ -54,7 +56,7 @@ int FuzzRingBuffer(const uint8_t* data, size_t size) {
   size_t payload_size = size - sizeof(SharedRingBuffer::MetadataPage);
   const uint8_t* payload = data + sizeof(SharedRingBuffer::MetadataPage);
   size_t payload_size_pages =
-      (payload_size + base::kPageSize - 1) / base::kPageSize;
+      (payload_size + base::GetSysPageSize() - 1) / base::GetSysPageSize();
   // Upsize test buffer to be 2^n data pages (precondition of the impl) + 1 page
   // for the metadata.
   size_t total_size_pages = 1 + RoundToPow2(payload_size_pages);
@@ -63,12 +65,14 @@ int FuzzRingBuffer(const uint8_t* data, size_t size) {
   // defaults to indefinite blocking mode).
   SharedRingBuffer::MetadataPage header = {};
   memcpy(&header, data, sizeof(header));
-  header.spinlock = 0;
+  header.spinlock.locked = false;
+  header.spinlock.poisoned = false;
 
   PERFETTO_CHECK(ftruncate(*fd, static_cast<off_t>(total_size_pages *
-                                                   base::kPageSize)) == 0);
+                                                   base::GetSysPageSize())) ==
+                 0);
   PERFETTO_CHECK(base::WriteAll(*fd, &header, sizeof(header)) != -1);
-  PERFETTO_CHECK(lseek(*fd, base::kPageSize, SEEK_SET) != -1);
+  PERFETTO_CHECK(lseek(*fd, base::GetSysPageSize(), SEEK_SET) != -1);
   PERFETTO_CHECK(base::WriteAll(*fd, payload, payload_size) != -1);
 
   auto buf = SharedRingBuffer::Attach(std::move(fd));

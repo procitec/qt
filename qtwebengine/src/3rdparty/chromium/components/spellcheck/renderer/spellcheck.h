@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,14 +8,14 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "base/files/file.h"
 #include "base/gtest_prod_util.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
-#include "base/strings/string16.h"
 #include "build/build_config.h"
 #include "components/spellcheck/common/spellcheck.mojom.h"
 #include "components/spellcheck/common/spellcheck_common.h"
@@ -25,6 +25,7 @@
 #include "mojo/public/cpp/bindings/receiver_set.h"
 
 class SpellcheckLanguage;
+class SpellCheckProvider;
 struct SpellCheckResult;
 
 namespace blink {
@@ -51,8 +52,7 @@ class DictionaryUpdateObserver {
 // See http://crbug.com/73699.
 // Shared spellchecking logic/data for a RenderProcess. All RenderViews use
 // this object to perform spellchecking tasks.
-class SpellCheck : public base::SupportsWeakPtr<SpellCheck>,
-                   public spellcheck::mojom::SpellChecker {
+class SpellCheck : public spellcheck::mojom::SpellChecker {
  public:
   // TODO(groby): I wonder if this can be private, non-mac only.
   class SpellcheckRequest;
@@ -72,6 +72,10 @@ class SpellCheck : public base::SupportsWeakPtr<SpellCheck>,
 
   explicit SpellCheck(
       service_manager::LocalInterfaceProvider* embedder_provider);
+
+  SpellCheck(const SpellCheck&) = delete;
+  SpellCheck& operator=(const SpellCheck&) = delete;
+
   ~SpellCheck() override;
 
   void AddSpellcheckLanguage(base::File file, const std::string& language);
@@ -89,40 +93,32 @@ class SpellCheck : public base::SupportsWeakPtr<SpellCheck>,
   // Returns true if spelled correctly for any language in |languages_|, false
   // otherwise.
   // If any spellcheck languages failed to initialize, always returns true.
-  // The |tag| parameter should either be a unique identifier for the document
-  // that the word came from (if the current platform requires it), or 0.
   // In addition, finds the suggested words for a given word
   // and puts them into |*optional_suggestions|.
   // If the word is spelled correctly, the vector is empty.
   // If optional_suggestions is NULL, suggested words will not be looked up.
   // Note that doing suggest lookups can be slow.
-  bool SpellCheckWord(const base::char16* text_begin,
-                      size_t position_in_text,
-                      size_t text_length,
-                      int tag,
+  bool SpellCheckWord(std::u16string_view text,
+                      spellcheck::mojom::SpellCheckHost& host,
                       size_t* misspelling_start,
                       size_t* misspelling_len,
-                      std::vector<base::string16>* optional_suggestions);
+                      std::vector<std::u16string>* optional_suggestions);
 
   // Overload of SpellCheckWord where the replacement suggestions are kept
   // separately per language, instead of combined into a single list. This is
   // useful if the suggestions must be merged with another list of suggestions,
   // for example in the case of the Windows hybrid spellchecker.
   bool SpellCheckWord(
-      const base::char16* text_begin,
-      size_t position_in_text,
-      size_t text_length,
-      int tag,
+      std::u16string_view text,
+      spellcheck::mojom::SpellCheckHost& host,
       size_t* misspelling_start,
       size_t* misspelling_len,
       spellcheck::PerLanguageSuggestions* optional_per_language_suggestions);
 
   // Overload of SpellCheckWord for skipping optional suggestions with a
   // nullptr, used to disambiguate between the other two overloads.
-  bool SpellCheckWord(const base::char16* text_begin,
-                      size_t position_in_text,
-                      size_t text_length,
-                      int tag,
+  bool SpellCheckWord(std::u16string_view text,
+                      spellcheck::mojom::SpellCheckHost& host,
                       size_t* misspelling_start,
                       size_t* misspelling_len,
                       std::nullptr_t null_suggestions_ptr);
@@ -132,14 +128,16 @@ class SpellCheck : public base::SupportsWeakPtr<SpellCheck>,
   // Returns true if |text| is correctly spelled, false otherwise.
   // If the spellchecker failed to initialize, always returns true.
   bool SpellCheckParagraph(
-      const base::string16& text,
+      const std::u16string& text,
+      spellcheck::mojom::SpellCheckHost& host,
       blink::WebVector<blink::WebTextCheckingResult>* results);
 
   // Requests to spellcheck the specified text in the background. This function
   // posts a background task and calls SpellCheckParagraph() in the task.
   void RequestTextChecking(
-      const base::string16& text,
-      std::unique_ptr<blink::WebTextCheckingCompletion> completion);
+      const std::u16string& text,
+      std::unique_ptr<blink::WebTextCheckingCompletion> completion,
+      base::WeakPtr<SpellCheckProvider> provider);
 #endif
 
   // Creates a list of WebTextCheckingResult objects (used by WebKit) from a
@@ -148,8 +146,9 @@ class SpellCheck : public base::SupportsWeakPtr<SpellCheck>,
   // underline colors of contextually-misspelled words.
   void CreateTextCheckingResults(
       ResultFilter filter,
+      spellcheck::mojom::SpellCheckHost& host,
       int line_offset,
-      const base::string16& line_text,
+      const std::u16string& line_text,
       const std::vector<SpellCheckResult>& spellcheck_results,
       blink::WebVector<blink::WebTextCheckingResult>* textcheck_results);
 
@@ -199,7 +198,7 @@ class SpellCheck : public base::SupportsWeakPtr<SpellCheck>,
 
    // Returns whether a word is in the script of one of the enabled spellcheck
    // languages.
-   bool IsWordInSupportedScript(const base::string16& word) const;
+   bool IsWordInSupportedScript(const std::u16string& word) const;
 
 #if BUILDFLAG(USE_RENDERER_SPELLCHECKER)
    // Posts delayed spellcheck task and clear it if any.
@@ -227,7 +226,8 @@ class SpellCheck : public base::SupportsWeakPtr<SpellCheck>,
   // Custom dictionary spelling engine.
   CustomDictionaryEngine custom_dictionary_;
 
-  service_manager::LocalInterfaceProvider* embedder_provider_;
+  raw_ptr<service_manager::LocalInterfaceProvider, ExperimentalRenderer>
+      embedder_provider_;
 
   // Remember state for spellchecking.
   bool spellcheck_enabled_;
@@ -237,8 +237,6 @@ class SpellCheck : public base::SupportsWeakPtr<SpellCheck>,
       dictionary_update_observers_;
 
   base::WeakPtrFactory<SpellCheck> weak_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(SpellCheck);
 };
 
 #endif  // COMPONENTS_SPELLCHECK_RENDERER_SPELLCHECK_H_

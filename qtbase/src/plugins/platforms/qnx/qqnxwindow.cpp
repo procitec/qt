@@ -1,41 +1,7 @@
-/***************************************************************************
-**
-** Copyright (C) 2011 - 2013 BlackBerry Limited. All rights reserved.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the plugins of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2011 - 2013 BlackBerry Limited. All rights reserved.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+
+#undef QT_NO_FOREACH // this file contains unported legacy Q_FOREACH uses
 
 #include "qqnxglobal.h"
 
@@ -55,13 +21,9 @@
 
 #include <errno.h>
 
-#if defined(QQNXWINDOW_DEBUG)
-#define qWindowDebug qDebug
-#else
-#define qWindowDebug QT_NO_QDEBUG_MACRO
-#endif
-
 QT_BEGIN_NAMESPACE
+
+Q_LOGGING_CATEGORY(lcQpaWindow, "qt.qpa.window");
 
 #define DECLARE_DEBUG_VAR(variable) \
     static bool debug_ ## variable() \
@@ -157,10 +119,9 @@ QQnxWindow::QQnxWindow(QWindow *window, screen_context_t context, bool needRootW
       m_exposed(true),
       m_foreign(false),
       m_windowState(Qt::WindowNoState),
-      m_mmRendererWindow(0),
       m_firstActivateHandled(false)
 {
-    qWindowDebug() << "window =" << window << ", size =" << window->size();
+    qCDebug(lcQpaWindow) << "window =" << window << ", size =" << window->size();
 
     QQnxScreen *platformScreen = static_cast<QQnxScreen *>(window->screen()->handle());
 
@@ -230,13 +191,13 @@ QQnxWindow::QQnxWindow(QWindow *window, screen_context_t context, bool needRootW
         bool ok = false;
         int pipeline = pipelineValue.toInt(&ok);
         if (ok) {
-            qWindowDebug() << "Set pipeline value to" << pipeline;
+            qCDebug(lcQpaWindow) << "Set pipeline value to" << pipeline;
 
             Q_SCREEN_CHECKERROR(
                 screen_set_window_property_iv(m_window, SCREEN_PROPERTY_PIPELINE, &pipeline),
                 "Failed to set window pipeline");
         } else {
-            qWindowDebug() << "Invalid pipeline value:" << pipelineValue;
+            qCDebug(lcQpaWindow) << "Invalid pipeline value:" << pipelineValue;
         }
     }
 
@@ -266,7 +227,7 @@ QQnxWindow::QQnxWindow(QWindow *window, screen_context_t context, bool needRootW
     if (debug > 0) {
         Q_SCREEN_CHECKERROR(screen_set_window_property_iv(nativeHandle(), SCREEN_PROPERTY_DEBUG, &debug),
                             "Could not set SCREEN_PROPERTY_DEBUG");
-        qWindowDebug() << "window SCREEN_PROPERTY_DEBUG= " << debug;
+        qCDebug(lcQpaWindow) << "window SCREEN_PROPERTY_DEBUG= " << debug;
     }
 }
 
@@ -280,11 +241,10 @@ QQnxWindow::QQnxWindow(QWindow *window, screen_context_t context, screen_window_
     , m_exposed(true)
     , m_foreign(true)
     , m_windowState(Qt::WindowNoState)
-    , m_mmRendererWindow(0)
     , m_parentGroupName(256, 0)
     , m_isTopLevel(false)
 {
-    qWindowDebug() << "window =" << window << ", size =" << window->size();
+    qCDebug(lcQpaWindow) << "window =" << window << ", size =" << window->size();
 
     collectWindowGroup();
 
@@ -305,7 +265,7 @@ QQnxWindow::QQnxWindow(QWindow *window, screen_context_t context, screen_window_
 
 QQnxWindow::~QQnxWindow()
 {
-    qWindowDebug() << "window =" << window();
+    qCDebug(lcQpaWindow) << "window =" << window();
 
     // Qt should have already deleted the children before deleting the parent.
     Q_ASSERT(m_childWindows.size() == 0);
@@ -341,9 +301,9 @@ void QQnxWindow::setGeometry(const QRect &rect)
 
 void QQnxWindow::setGeometryHelper(const QRect &rect)
 {
-    qWindowDebug() << "window =" << window()
-                   << ", (" << rect.x() << "," << rect.y()
-                   << "," << rect.width() << "," << rect.height() << ")";
+    qCDebug(lcQpaWindow) << "window =" << window()
+                         << ", (" << rect.x() << "," << rect.y()
+                         << "," << rect.width() << "," << rect.height() << ")";
 
     // Call base class method
     QPlatformWindow::setGeometry(rect);
@@ -371,7 +331,7 @@ void QQnxWindow::setGeometryHelper(const QRect &rect)
 
 void QQnxWindow::setVisible(bool visible)
 {
-    qWindowDebug() << "window =" << window() << "visible =" << visible;
+    qCDebug(lcQpaWindow) << "window =" << window() << "visible =" << visible;
 
     if (m_visible == visible || window()->type() == Qt::Desktop)
         return;
@@ -410,7 +370,7 @@ void QQnxWindow::setVisible(bool visible)
 
 void QQnxWindow::updateVisibility(bool parentVisible)
 {
-    qWindowDebug() << "parentVisible =" << parentVisible << "window =" << window();
+    qCDebug(lcQpaWindow) << "parentVisible =" << parentVisible << "window =" << window();
     // Set window visibility
     int val = (m_visible && parentVisible) ? 1 : 0;
     Q_SCREEN_CHECKERROR(screen_set_window_property_iv(m_window, SCREEN_PROPERTY_VISIBLE, &val),
@@ -422,7 +382,7 @@ void QQnxWindow::updateVisibility(bool parentVisible)
 
 void QQnxWindow::setOpacity(qreal level)
 {
-    qWindowDebug() << "window =" << window() << "opacity =" << level;
+    qCDebug(lcQpaWindow) << "window =" << window() << "opacity =" << level;
     // Set window global alpha
     int val = (int)(level * 255);
     Q_SCREEN_CHECKERROR(screen_set_window_property_iv(m_window, SCREEN_PROPERTY_GLOBAL_ALPHA, &val),
@@ -433,7 +393,7 @@ void QQnxWindow::setOpacity(qreal level)
 
 void QQnxWindow::setExposed(bool exposed)
 {
-    qWindowDebug() << "window =" << window() << "expose =" << exposed;
+    qCDebug(lcQpaWindow) << "window =" << window() << "expose =" << exposed;
 
     if (m_exposed != exposed) {
         m_exposed = exposed;
@@ -448,7 +408,7 @@ bool QQnxWindow::isExposed() const
 
 void QQnxWindow::setBufferSize(const QSize &size)
 {
-    qWindowDebug() << "window =" << window() << "size =" << size;
+    qCDebug(lcQpaWindow) << "window =" << window() << "size =" << size;
 
     // libscreen fails when creating empty buffers
     const QSize nonEmptySize = size.isEmpty() ? QSize(1, 1) : size;
@@ -515,7 +475,7 @@ void QQnxWindow::setBufferSize(const QSize &size)
 
 void QQnxWindow::setScreen(QQnxScreen *platformScreen)
 {
-    qWindowDebug() << "window =" << window() << "platformScreen =" << platformScreen;
+    qCDebug(lcQpaWindow) << "window =" << window() << "platformScreen =" << platformScreen;
 
     if (platformScreen == 0) { // The screen has been destroyed
         m_screen = 0;
@@ -529,7 +489,7 @@ void QQnxWindow::setScreen(QQnxScreen *platformScreen)
         return;
 
     if (m_screen) {
-        qWindowDebug("Moving window to different screen");
+        qCDebug(lcQpaWindow) << "Moving window to different screen";
         m_screen->removeWindow(this);
 
         if ((QQnxIntegration::instance()->options() & QQnxIntegration::RootWindow)) {
@@ -560,13 +520,13 @@ void QQnxWindow::setScreen(QQnxScreen *platformScreen)
 
 void QQnxWindow::removeFromParent()
 {
-    qWindowDebug() << "window =" << window();
+    qCDebug(lcQpaWindow) << Q_FUNC_INFO << "window =" << window();
     // Remove from old Hierarchy position
     if (m_parentWindow) {
         if (Q_UNLIKELY(!m_parentWindow->m_childWindows.removeAll(this)))
             qFatal("QQnxWindow: Window Hierarchy broken; window has parent, but parent hasn't got child.");
         else
-            m_parentWindow = 0;
+            m_parentWindow = nullptr;
     } else if (m_screen) {
         m_screen->removeWindow(this);
     }
@@ -574,7 +534,7 @@ void QQnxWindow::removeFromParent()
 
 void QQnxWindow::setParent(const QPlatformWindow *window)
 {
-    qWindowDebug() << "window =" << this->window() << "platformWindow =" << window;
+    qCDebug(lcQpaWindow) << "window =" << this->window() << "platformWindow =" << window;
     // Cast away the const, we need to modify the hierarchy.
     QQnxWindow* const newParent = static_cast<QQnxWindow*>(const_cast<QPlatformWindow*>(window));
 
@@ -606,7 +566,7 @@ void QQnxWindow::setParent(const QPlatformWindow *window)
 
 void QQnxWindow::raise()
 {
-    qWindowDebug() << "window =" << window();
+    qCDebug(lcQpaWindow) << Q_FUNC_INFO << "window =" << window();
 
     if (m_parentWindow) {
         m_parentWindow->m_childWindows.removeAll(this);
@@ -620,7 +580,7 @@ void QQnxWindow::raise()
 
 void QQnxWindow::lower()
 {
-    qWindowDebug() << "window =" << window();
+    qCDebug(lcQpaWindow) << Q_FUNC_INFO << "window =" << window();
 
     if (m_parentWindow) {
         m_parentWindow->m_childWindows.removeAll(this);
@@ -634,7 +594,7 @@ void QQnxWindow::lower()
 
 void QQnxWindow::requestActivateWindow()
 {
-    QQnxWindow *focusWindow = 0;
+    QQnxWindow *focusWindow = nullptr;
     if (QGuiApplication::focusWindow())
         focusWindow = static_cast<QQnxWindow*>(QGuiApplication::focusWindow()->handle());
 
@@ -664,7 +624,7 @@ void QQnxWindow::requestActivateWindow()
                   platformScreen->rootWindow()->m_windowGroupName == currentWindow->m_parentGroupName) {
                 currentWindow = platformScreen->rootWindow();
             } else {
-                currentWindow = 0;
+                currentWindow = nullptr;
             }
         }
 
@@ -734,7 +694,7 @@ void QQnxWindow::setFocus(screen_window_t newFocusWindow)
 
 void QQnxWindow::setWindowState(Qt::WindowStates state)
 {
-    qWindowDebug() << "state =" << state;
+    qCDebug(lcQpaWindow) << Q_FUNC_INFO << "state =" << state;
 
     // Prevent two calls with Qt::WindowFullScreen from changing m_unmaximizedGeometry
     if (m_windowState == state)
@@ -749,23 +709,7 @@ void QQnxWindow::setWindowState(Qt::WindowStates state)
 void QQnxWindow::propagateSizeHints()
 {
     // nothing to do; silence base class warning
-    qWindowDebug("ignored");
-}
-
-void QQnxWindow::setMMRendererWindowName(const QString &name)
-{
-    m_mmRendererWindowName = name;
-}
-
-void QQnxWindow::setMMRendererWindow(screen_window_t handle)
-{
-    m_mmRendererWindow = handle;
-}
-
-void QQnxWindow::clearMMRendererWindow()
-{
-    m_mmRendererWindowName.clear();
-    m_mmRendererWindow = 0;
+    // qWindowDebug("ignored");
 }
 
 QPlatformScreen *QQnxWindow::screen() const
@@ -794,7 +738,7 @@ void QQnxWindow::minimize()
 
 void QQnxWindow::setRotation(int rotation)
 {
-    qWindowDebug() << "angle =" << rotation;
+    qCDebug(lcQpaWindow) << Q_FUNC_INFO << "angle =" << rotation;
     Q_SCREEN_CHECKERROR(
             screen_set_window_property_iv(m_window, SCREEN_PROPERTY_ROTATION, &rotation),
             "Failed to set window rotation");
@@ -870,7 +814,7 @@ void QQnxWindow::joinWindowGroup(const QByteArray &groupName)
 {
     bool changed = false;
 
-    qWindowDebug() << "group:" << groupName;
+    qCDebug(lcQpaWindow) << Q_FUNC_INFO << "group:" << groupName;
 
     // screen has this annoying habit of generating a CLOSE/CREATE when the owner context of
     // the parent group moves a foreign window to another group that it also owns.  The
@@ -912,9 +856,6 @@ void QQnxWindow::updateZorder(int &topZorder)
 {
     updateZorder(m_window, topZorder);
 
-    if (m_mmRendererWindow)
-        updateZorder(m_mmRendererWindow, topZorder);
-
     Q_FOREACH (QQnxWindow *childWindow, m_childWindows)
         childWindow->updateZorder(topZorder);
 }
@@ -946,10 +887,12 @@ void QQnxWindow::applyWindowState()
 
 void QQnxWindow::windowPosted()
 {
-    if (m_cover)
+    if (m_cover) {
         m_cover->updateCover();
-
-    qqnxLgmonFramePosted(m_cover);  // for performance measurements
+        qqnxLgmonFramePosted(true);  // for performance measurements
+    } else {
+        qqnxLgmonFramePosted(false);  // for performance measurements
+    }
 }
 
 bool QQnxWindow::shouldMakeFullScreen() const

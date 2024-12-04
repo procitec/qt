@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,11 +9,12 @@
 #include <stdint.h>
 
 #include <string>
+#include <string_view>
 #include <vector>
 
+#include <optional>
 #include "base/containers/span.h"
-#include "base/optional.h"
-#include "base/strings/string_piece.h"
+#include "base/memory/raw_ptr.h"
 #include "crypto/crypto_export.h"
 
 struct evp_aead_st;
@@ -22,7 +23,7 @@ namespace crypto {
 
 // This class exposes the AES-128-CTR-HMAC-SHA256 and AES_256_GCM AEAD. Note
 // that there are two versions of most methods: an historical version based
-// around |StringPiece| and a more modern version that takes |base::span|.
+// around |std::string_view| and a more modern version that takes |base::span|.
 // Prefer the latter in new code.
 class CRYPTO_EXPORT Aead {
  public:
@@ -50,19 +51,19 @@ class CRYPTO_EXPORT Aead {
                             base::span<const uint8_t> nonce,
                             base::span<const uint8_t> additional_data) const;
 
-  bool Seal(base::StringPiece plaintext,
-            base::StringPiece nonce,
-            base::StringPiece additional_data,
+  bool Seal(std::string_view plaintext,
+            std::string_view nonce,
+            std::string_view additional_data,
             std::string* ciphertext) const;
 
-  base::Optional<std::vector<uint8_t>> Open(
+  std::optional<std::vector<uint8_t>> Open(
       base::span<const uint8_t> ciphertext,
       base::span<const uint8_t> nonce,
       base::span<const uint8_t> additional_data) const;
 
-  bool Open(base::StringPiece ciphertext,
-            base::StringPiece nonce,
-            base::StringPiece additional_data,
+  bool Open(std::string_view ciphertext,
+            std::string_view nonce,
+            std::string_view additional_data,
             std::string* plaintext) const;
 
   size_t KeyLength() const;
@@ -84,8 +85,8 @@ class CRYPTO_EXPORT Aead {
             size_t* output_length,
             size_t max_output_length) const;
 
-  base::Optional<base::span<const uint8_t>> key_;
-  const evp_aead_st* aead_;
+  std::optional<base::span<const uint8_t>> key_;
+  raw_ptr<const evp_aead_st> aead_;
 };
 
 }  // namespace crypto

@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -23,7 +23,9 @@ AXTextSelection AXTextSelection::FromDirectionAndGranularity(
     case ax::mojom::TextBoundary::kCharacter:
       granularity = AXTextSelectionGranularity::kCharacter;
       break;
-    case ax::mojom::TextBoundary::kFormat:
+    case ax::mojom::TextBoundary::kFormatEnd:
+    case ax::mojom::TextBoundary::kFormatStart:
+    case ax::mojom::TextBoundary::kFormatStartOrEnd:
       break;  // Not supported on Mac.
     case ax::mojom::TextBoundary::kLineEnd:
       granularity = AXTextSelectionGranularity::kLine;
@@ -51,6 +53,9 @@ AXTextSelection AXTextSelection::FromDirectionAndGranularity(
       granularity = AXTextSelectionGranularity::kParagraph;
       break;
     case ax::mojom::TextBoundary::kParagraphStart:
+      granularity = AXTextSelectionGranularity::kParagraph;
+      break;
+    case ax::mojom::TextBoundary::kParagraphStartSkippingEmptyParagraphs:
       granularity = AXTextSelectionGranularity::kParagraph;
       break;
     case ax::mojom::TextBoundary::kParagraphStartOrEnd:
@@ -102,7 +107,7 @@ AXTextSelection AXTextSelection::FromDirectionAndGranularity(
       break;
   }
 
-  return AXTextSelection(direction, granularity, /* focus_change */ false);
+  return AXTextSelection(direction, granularity, /*focus_change=*/false);
 }
 
 AXTextSelection::AXTextSelection() = default;
@@ -128,7 +133,7 @@ AXTextStateChangeIntent::DefaultFocusTextStateChangeIntent() {
       AXTextStateChangeType::kSelectionMove,
       AXTextSelection(AXTextSelectionDirection::kDiscontiguous,
                       AXTextSelectionGranularity::kUnknown,
-                      /* focus_change */ true));
+                      /*focus_change=*/true));
 }
 
 // static
@@ -138,7 +143,7 @@ AXTextStateChangeIntent::DefaultSelectionChangeIntent() {
       AXTextStateChangeType::kSelectionMove,
       AXTextSelection(AXTextSelectionDirection::kDiscontiguous,
                       AXTextSelectionGranularity::kUnknown,
-                      /* focus_change */ false));
+                      /*focus_change=*/false));
 }
 
 AXTextStateChangeIntent::AXTextStateChangeIntent() = default;
@@ -172,7 +177,6 @@ AXTextStateChangeIntent FromEventIntent(const AXEventIntent& event_intent) {
         default:
           return AXTextStateChangeIntent(AXTextEditType::kDelete);
       }
-      break;
     case ax::mojom::Command::kDictate:
       return AXTextStateChangeIntent(AXTextEditType::kDictation);
     case ax::mojom::Command::kExtendSelection:
@@ -198,7 +202,6 @@ AXTextStateChangeIntent FromEventIntent(const AXEventIntent& event_intent) {
         default:
           return AXTextStateChangeIntent(AXTextEditType::kInsert);
       }
-      break;
     case ax::mojom::Command::kMarker:
       return AXTextStateChangeIntent();  // Not currently implemented on Mac.
     case ax::mojom::Command::kMoveSelection:

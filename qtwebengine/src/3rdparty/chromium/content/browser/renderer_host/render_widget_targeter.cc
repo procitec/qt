@@ -1,20 +1,18 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "content/browser/renderer_host/render_widget_targeter.h"
 
-#include "base/bind.h"
+#include <memory>
+
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/rand_util.h"
-#include "components/viz/common/features.h"
-#include "components/viz/host/host_frame_sink_manager.h"
-#include "content/browser/compositor/surface_utils.h"
-#include "content/browser/renderer_host/input/one_shot_timeout_monitor.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
 #include "content/browser/renderer_host/render_widget_host_view_base.h"
-#include "content/public/browser/site_isolation_policy.h"
 #include "third_party/blink/public/common/input/web_input_event.h"
 #include "ui/events/blink/blink_event_util.h"
 
@@ -44,47 +42,9 @@ bool IsMouseMiddleClick(const blink::WebInputEvent& event) {
               blink::WebPointerProperties::Button::kMiddle);
 }
 
-constexpr const char kTracingCategory[] = "input,latency";
-
-constexpr base::TimeDelta kAsyncHitTestTimeout =
-    base::TimeDelta::FromSeconds(5);
+constexpr base::TimeDelta kAsyncHitTestTimeout = base::Seconds(5);
 
 }  // namespace
-
-class TracingUmaTracker {
- public:
-  explicit TracingUmaTracker(const char* metric_name)
-      : id_(next_id_++),
-        start_time_(base::TimeTicks::Now()),
-        metric_name_(metric_name) {
-    TRACE_EVENT_ASYNC_BEGIN0(
-        kTracingCategory, metric_name_,
-        TRACE_ID_WITH_SCOPE("UmaTracker", TRACE_ID_LOCAL(id_)));
-  }
-  ~TracingUmaTracker() = default;
-  TracingUmaTracker(TracingUmaTracker&& tracker) = default;
-
-  void StopAndRecord() {
-    TRACE_EVENT_ASYNC_END0(
-        kTracingCategory, metric_name_,
-        TRACE_ID_WITH_SCOPE("UmaTracker", TRACE_ID_LOCAL(id_)));
-    UmaHistogramTimes(metric_name_, base::TimeTicks::Now() - start_time_);
-  }
-
- private:
-  const int id_;
-  const base::TimeTicks start_time_;
-
-  // These variables must be string literals and live for the duration
-  // of the program since tracing stores pointers.
-  const char* metric_name_;
-
-  static int next_id_;
-
-  DISALLOW_COPY_AND_ASSIGN(TracingUmaTracker);
-};
-
-int TracingUmaTracker::next_id_ = 1;
 
 RenderWidgetTargetResult::RenderWidgetTargetResult() = default;
 
@@ -94,7 +54,7 @@ RenderWidgetTargetResult::RenderWidgetTargetResult(
 RenderWidgetTargetResult::RenderWidgetTargetResult(
     RenderWidgetHostViewBase* in_view,
     bool in_should_query_view,
-    base::Optional<gfx::PointF> in_location,
+    std::optional<gfx::PointF> in_location,
     bool in_latched_target)
     : view(in_view),
       should_query_view(in_should_query_view),
@@ -132,7 +92,7 @@ RenderWidgetTargeter::TargetingRequest::~TargetingRequest() = default;
 
 void RenderWidgetTargeter::TargetingRequest::RunCallback(
     RenderWidgetHostViewBase* target,
-    base::Optional<gfx::PointF> point) {
+    std::optional<gfx::PointF> point) {
   if (!callback.is_null()) {
     std::move(callback).Run(target ? target->GetWeakPtr() : nullptr, point);
   }
@@ -174,8 +134,6 @@ const ui::LatencyInfo& RenderWidgetTargeter::TargetingRequest::GetLatency()
 RenderWidgetTargeter::RenderWidgetTargeter(Delegate* delegate)
     : async_hit_test_timeout_delay_(kAsyncHitTestTimeout),
       trace_id_(base::RandUint64()),
-      is_viz_hit_testing_debug_enabled_(
-          features::IsVizHitTestingDebugEnabled()),
       delegate_(delegate) {
   DCHECK(delegate_);
 }
@@ -247,7 +205,6 @@ void RenderWidgetTargeter::ResolveTargetingRequest(TargetingRequest request) {
                                                        request_target_location);
   }
   RenderWidgetHostViewBase* target = result.view;
-  async_depth_ = 0;
   if (!is_autoscroll_in_progress_ && result.should_query_view) {
     TRACE_EVENT_WITH_FLOW2(
         "viz,benchmark", "Event.Pipeline", TRACE_ID_GLOBAL(trace_id_),
@@ -265,8 +222,7 @@ void RenderWidgetTargeter::ResolveTargetingRequest(TargetingRequest request) {
     QueryClient(request_target, request_target_location, nullptr, gfx::PointF(),
                 std::move(request));
   } else {
-    FoundTarget(target, result.target_location, result.latched_target,
-                &request);
+    FoundTarget(target, result.target_location, &request);
   }
 }
 
@@ -301,24 +257,22 @@ void RenderWidgetTargeter::QueryClient(
   // |target_client| may not be set yet for this |target| on Mac, need to
   // understand why this happens. https://crbug.com/859492.
   // We do not verify hit testing result under this circumstance.
-  if (!target_client.get() || !target_client.is_connected()) {
-    FoundTarget(target, target_location, false, &request);
+  if (!target_client.is_bound() || !target_client.is_connected()) {
+    FoundTarget(target, target_location, &request);
     return;
   }
 
   const gfx::PointF location = request.GetLocation();
 
   request_in_flight_ = std::move(request);
-  async_depth_++;
 
-  TracingUmaTracker tracker("Event.AsyncTargeting.ResponseTime");
-  async_hit_test_timeout_.reset(new OneShotTimeoutMonitor(
+  async_hit_test_timeout_.Start(
+      FROM_HERE, async_hit_test_timeout_delay_,
       base::BindOnce(
           &RenderWidgetTargeter::AsyncHitTestTimedOut,
           weak_ptr_factory_.GetWeakPtr(), target->GetWeakPtr(), target_location,
           last_request_target ? last_request_target->GetWeakPtr() : nullptr,
-          last_target_location),
-      async_hit_test_timeout_delay_));
+          last_target_location));
 
   target_client.set_disconnect_handler(base::BindOnce(
       &RenderWidgetTargeter::OnInputTargetDisconnect,
@@ -333,7 +287,7 @@ void RenderWidgetTargeter::QueryClient(
       target_location, trace_id_,
       base::BindOnce(&RenderWidgetTargeter::FoundFrameSinkId,
                      weak_ptr_factory_.GetWeakPtr(), target->GetWeakPtr(),
-                     ++last_request_id_, target_location, std::move(tracker)));
+                     ++last_request_id_, target_location));
 }
 
 void RenderWidgetTargeter::FlushEventQueue() {
@@ -361,13 +315,11 @@ void RenderWidgetTargeter::FoundFrameSinkId(
     base::WeakPtr<RenderWidgetHostViewBase> target,
     uint32_t request_id,
     const gfx::PointF& target_location,
-    TracingUmaTracker tracker,
     const viz::FrameSinkId& frame_sink_id,
     const gfx::PointF& transformed_location) {
-  if (!target)
+  if (!target) {
     return;
-
-  tracker.StopAndRecord();
+  }
 
   uint32_t last_id = last_request_id_;
   bool in_flight = request_in_flight_.has_value();
@@ -382,18 +334,14 @@ void RenderWidgetTargeter::FoundFrameSinkId(
   TargetingRequest request = std::move(request_in_flight_.value());
 
   request_in_flight_.reset();
-  async_hit_test_timeout_.reset(nullptr);
+  async_hit_test_timeout_.Stop();
   target->host()->input_target_client().set_disconnect_handler(
       base::OnceClosure());
 
-  if (is_viz_hit_testing_debug_enabled_ && request.IsWebInputEventRequest() &&
-      request.GetEvent()->GetType() == blink::WebInputEvent::Type::kMouseDown) {
-    hit_test_async_queried_debug_queue_.push_back(target->GetFrameSinkId());
-  }
-
   auto* view = delegate_->FindViewFromFrameSinkId(frame_sink_id);
-  if (!view)
+  if (!view) {
     view = target.get();
+  }
 
   // If a client returned an embedded target, then it might be necessary to
   // continue asking the clients until a client claims an event for itself.
@@ -413,7 +361,7 @@ void RenderWidgetTargeter::FoundFrameSinkId(
       middle_click_result_ = {view, false, transformed_location, false};
     }
 
-    FoundTarget(view, transformed_location, false, &request);
+    FoundTarget(view, transformed_location, &request);
   } else {
     QueryClient(view, transformed_location, target.get(), target_location,
                 std::move(request));
@@ -422,29 +370,13 @@ void RenderWidgetTargeter::FoundFrameSinkId(
 
 void RenderWidgetTargeter::FoundTarget(
     RenderWidgetHostViewBase* target,
-    const base::Optional<gfx::PointF>& target_location,
-    bool latched_target,
+    const std::optional<gfx::PointF>& target_location,
     TargetingRequest* request) {
   DCHECK(request);
-
-  if (SiteIsolationPolicy::UseDedicatedProcessesForAllSites() &&
-      !latched_target) {
-    UMA_HISTOGRAM_COUNTS_100("Event.AsyncTargeting.AsyncClientDepth",
-                             async_depth_);
-  }
-
   // RenderWidgetHostViewMac can be deleted asynchronously, in which case the
   // View will be valid but there will no longer be a RenderWidgetHostImpl.
   if (!request->GetRootView() || !request->GetRootView()->GetRenderWidgetHost())
     return;
-
-  if (is_viz_hit_testing_debug_enabled_ &&
-      !hit_test_async_queried_debug_queue_.empty()) {
-    GetHostFrameSinkManager()->SetHitTestAsyncQueriedDebugRegions(
-        request->GetRootView()->GetRootFrameSinkId(),
-        hit_test_async_queried_debug_queue_);
-    hit_test_async_queried_debug_queue_.clear();
-  }
 
   if (request->IsWebInputEventRequest()) {
     delegate_->DispatchEventToTarget(request->GetRootView(), target,
@@ -484,27 +416,26 @@ void RenderWidgetTargeter::AsyncHitTestTimedOut(
     // When a request to the top-level frame times out then the event gets
     // sent there anyway. It will trigger the hung renderer dialog if the
     // renderer fails to process it.
-    FoundTarget(current_request_target.get(), current_target_location, false,
+    FoundTarget(current_request_target.get(), current_target_location,
                 &request);
   } else {
-    FoundTarget(last_request_target.get(), last_target_location, false,
-                &request);
+    FoundTarget(last_request_target.get(), last_target_location, &request);
   }
 }
 
 void RenderWidgetTargeter::OnInputTargetDisconnect(
     base::WeakPtr<RenderWidgetHostViewBase> target,
     const gfx::PointF& location) {
-  if (!async_hit_test_timeout_)
+  if (!async_hit_test_timeout_.IsRunning())
     return;
 
-  async_hit_test_timeout_.reset(nullptr);
+  async_hit_test_timeout_.Stop();
   TargetingRequest request = std::move(request_in_flight_.value());
   request_in_flight_.reset();
 
   // Since we couldn't find the target frame among the child-frames
   // we process the event in the current frame.
-  FoundTarget(target.get(), location, false, &request);
+  FoundTarget(target.get(), location, &request);
 }
 
 }  // namespace content

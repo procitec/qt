@@ -1,34 +1,35 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef GPU_CONFIG_GPU_PREFERENCES_H_
 #define GPU_CONFIG_GPU_PREFERENCES_H_
 
-#include <cstdint>
 #include <stddef.h>
 #include <string>
 #include <vector>
 
-#include "base/macros.h"
 #include "build/build_config.h"
+#include "build/chromeos_buildflags.h"
 #include "gpu/gpu_export.h"
 #include "media/media_buildflags.h"
 #include "ui/gfx/buffer_types.h"
 
-#if defined(USE_OZONE)
+#if BUILDFLAG(IS_OZONE)
 #include "base/message_loop/message_pump_type.h"
 #endif
 
 namespace gpu {
 
 // The size to set for the program cache for default and low-end device cases.
-#if !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID)
 const size_t kDefaultMaxProgramCacheMemoryBytes = 6 * 1024 * 1024;
 #else
 const size_t kDefaultMaxProgramCacheMemoryBytes = 2 * 1024 * 1024;
 const size_t kLowEndMaxProgramCacheMemoryBytes = 128 * 1024;
 #endif
+
+GPU_EXPORT size_t GetDefaultGpuDiskCacheSize();
 
 enum class VulkanImplementationName : uint32_t {
   kNone = 0,
@@ -38,12 +39,39 @@ enum class VulkanImplementationName : uint32_t {
   kLast = kSwiftshader,
 };
 
+enum class WebGPUAdapterName : uint32_t {
+  kDefault = 0,
+  kD3D11 = 1,
+  kOpenGLES = 2,
+  kSwiftShader = 3,
+};
+
+// Affecting how chromium handles GPUPowerPreference in
+// GPURequestAdapterOptions.
+enum class WebGPUPowerPreference : uint32_t {
+  // No explicit power preference.
+  kNone = 0,
+  // Choose the preferred adapter when GPUPowerPreference is not given.
+  // Has no impact when GPUPowerPreference is given.
+  kDefaultLowPower = 1,
+  kDefaultHighPerformance = 2,
+  // Choose the forced adapter regardless of whether GPUPowerPreference is set
+  // or not.
+  kForceLowPower = 3,
+  kForceHighPerformance = 4,
+};
+
 enum class GrContextType : uint32_t {
-  kGL = 0,
-  kVulkan = 1,
-  kMetal = 2,
-  kDawn = 3,
-  kLast = kDawn,
+  kGL,      // Ganesh
+  kVulkan,  // Ganesh
+  kGraphiteDawn,
+  kGraphiteMetal,
+};
+
+enum class DawnBackendValidationLevel : uint32_t {
+  kDisabled = 0,
+  kPartial = 1,
+  kFull = 2,
 };
 
 // NOTE: if you modify this structure then you must also modify the
@@ -71,7 +99,7 @@ struct GPU_EXPORT GpuPreferences {
   // Disables hardware acceleration of video decode, where available.
   bool disable_accelerated_video_decode = false;
 
-  // Disables hardware acceleration of video decode, where available.
+  // Disables hardware acceleration of video encode, where available.
   bool disable_accelerated_video_encode = false;
 
   // Causes the GPU process to display a dialog on launch.
@@ -92,11 +120,6 @@ struct GPU_EXPORT GpuPreferences {
 
   // Enables support for outputting NV12 video frames. Windows only.
   bool enable_nv12_dxgi_video = false;
-
-  // Enables MediaFoundationVideoEncoderAccelerator on Windows 7. Windows 7 does
-  // not support some of the attributes which may impact the performance or the
-  // quality of output. So this flag is disabled by default. Windows only.
-  bool enable_media_foundation_vea_on_windows7 = false;
 
   // Disables the use of a 3D software rasterizer, for example, SwiftShader.
   bool disable_software_rasterizer = false;
@@ -159,10 +182,6 @@ struct GPU_EXPORT GpuPreferences {
   // compilation info logs.
   bool gl_shader_interm_output = false;
 
-  // Emulate ESSL lowp and mediump float precisions by mutating the shaders to
-  // round intermediate values in ANGLE.
-  bool emulate_shader_precision = false;
-
   // ===================================
   // Settings from //gpu/config/gpu_switches.h
 
@@ -196,27 +215,20 @@ struct GPU_EXPORT GpuPreferences {
   // Ignores GPU blocklist.
   bool ignore_gpu_blocklist = false;
 
-  // Oop rasterization preferences in the GPU process.  disable wins over
-  // enable, and neither means use defaults from GpuFeatureInfo.
-  bool enable_oop_rasterization = false;
-  bool disable_oop_rasterization = false;
-
-  bool enable_oop_rasterization_ddl = false;
-
   // Start the watchdog suspended, as the app is already backgrounded and won't
   // send a background/suspend signal.
   bool watchdog_starts_backgrounded = false;
 
   // ===================================
   // Settings from //gpu/command_buffer/service/gpu_switches.h
-  // The type of the GrContext.
+  // The type of the GrContext or Graphite Context.
   GrContextType gr_context_type = GrContextType::kGL;
 
   // Use Vulkan for rasterization and display compositing.
   VulkanImplementationName use_vulkan = VulkanImplementationName::kNone;
 
-  // Enforce using vulkan protected memory.
-  bool enforce_vulkan_protected_memory = false;
+  // Enable using vulkan protected memory.
+  bool enable_vulkan_protected_memory = false;
 
   // Use vulkan VK_KHR_surface for presenting.
   bool disable_vulkan_surface = false;
@@ -225,9 +237,14 @@ struct GPU_EXPORT GpuPreferences {
   // testing in order to detect regressions which crash Vulkan.
   bool disable_vulkan_fallback_to_gl_for_testing = false;
 
-  // Use Metal for rasterization and Skia-based display compositing. Note that
-  // this is compatible with GL-based display compositing.
-  bool enable_metal = false;
+  // Heap memory limit for Vulkan. Allocations will fail when this limit is
+  // reached for a heap.
+  uint32_t vulkan_heap_memory_limit = 0u;
+
+  // Sync CPU memory limit for Vulkan. Submission of GPU work will be
+  // synchronize with the CPU in order to free released memory immediately
+  // when this limit is reached.
+  uint32_t vulkan_sync_cpu_memory_limit = 0u;
 
   // ===================================
   // Settings from //cc/base/switches.h
@@ -237,8 +254,31 @@ struct GPU_EXPORT GpuPreferences {
   // Enable the WebGPU command buffer.
   bool enable_webgpu = false;
 
+  // Enable usage of unsafe WebGPU features.
+  bool enable_unsafe_webgpu = false;
+
+  // Enable usage of WebGPU features intended only for use during development.
+  bool enable_webgpu_developer_features = false;
+
   // Enable validation layers in Dawn backends.
-  bool enable_dawn_backend_validation = false;
+  DawnBackendValidationLevel enable_dawn_backend_validation =
+      DawnBackendValidationLevel::kDisabled;
+
+  // The adapter to use for WebGPU content.
+  WebGPUAdapterName use_webgpu_adapter = WebGPUAdapterName::kDefault;
+
+  // The adapter selecting strategy related to GPUPowerPreference.
+  WebGPUPowerPreference use_webgpu_power_preference =
+      WebGPUPowerPreference::kNone;
+
+  // Force the use of WebGPU Compatibility mode for all WebGPU content.
+  bool force_webgpu_compat = false;
+
+  // The Dawn features(toggles) enabled on the creation of Dawn devices.
+  std::vector<std::string> enabled_dawn_features_list;
+
+  // The Dawn features(toggles) disabled on the creation of Dawn devices.
+  std::vector<std::string> disabled_dawn_features_list;
 
   // Enable measuring blocked time on GPU Main thread
   bool enable_gpu_blocked_time_metric = false;
@@ -247,7 +287,7 @@ struct GPU_EXPORT GpuPreferences {
   // only enabled on Windows platform for the info collection GPU process.
   bool enable_perf_data_collection = false;
 
-#if defined(USE_OZONE)
+#if BUILDFLAG(IS_OZONE)
   // Determines message pump type for the GPU thread.
   base::MessagePumpType message_pump_type = base::MessagePumpType::DEFAULT;
 #endif
@@ -261,14 +301,17 @@ struct GPU_EXPORT GpuPreferences {
   // ===================================
   // Settings from //media/base/media_switches.h
 
-#if defined(OS_CHROMEOS)
-  // The direct VideoDecoder is disallowed in this particular SoC/platform. This
-  // flag is a reflection of whatever ChromeOS command line builder says.
-  bool platform_disallows_chromeos_direct_video_decoder = false;
+#if BUILDFLAG(IS_CHROMEOS)
+  // Enable the hardware-accelerated direct video decoder on ChromeOS.
+  bool enable_chromeos_direct_video_decoder = false;
 #endif
 
   // Disables oppr debug crash dumps.
   bool disable_oopr_debug_crash_dump = false;
+
+  // Forces the use of a separate EGL display for WebGL contexts even when one
+  // GPU is used.
+  bool force_separate_egl_display_for_webgl_testing = false;
 
   // Please update gpu_preferences_unittest.cc when making additions or
   // changes to this struct.

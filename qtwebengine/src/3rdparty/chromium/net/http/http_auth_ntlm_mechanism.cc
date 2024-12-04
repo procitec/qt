@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -50,11 +50,8 @@ int SetAuthTokenFromBinaryToken(std::string* auth_token,
   if (next_token.empty())
     return ERR_UNEXPECTED;
 
-  std::string encode_output;
-  base::Base64Encode(
-      base::StringPiece(reinterpret_cast<const char*>(next_token.data()),
-                        next_token.size()),
-      &encode_output);
+  std::string encode_output = base::Base64Encode(base::StringPiece(
+      reinterpret_cast<const char*>(next_token.data()), next_token.size()));
 
   *auth_token = std::string("NTLM ") + encode_output;
   return OK;
@@ -133,12 +130,12 @@ int HttpAuthNtlmMechanism::GenerateAuthToken(
 
   // The username may be in the form "DOMAIN\user".  Parse it into the two
   // components.
-  base::string16 domain;
-  base::string16 user;
-  const base::string16& username = credentials->username();
-  const base::char16 backslash_character = '\\';
+  std::u16string domain;
+  std::u16string user;
+  const std::u16string& username = credentials->username();
+  const char16_t backslash_character = '\\';
   size_t backslash_idx = username.find(backslash_character);
-  if (backslash_idx == base::string16::npos) {
+  if (backslash_idx == std::u16string::npos) {
     user = username;
   } else {
     domain = username.substr(0, backslash_idx);
@@ -155,7 +152,7 @@ int HttpAuthNtlmMechanism::GenerateAuthToken(
   auto next_token = ntlm_client_.GenerateAuthenticateMessage(
       domain, user, credentials->password(), hostname, channel_bindings, spn,
       g_get_ms_time_proc(), client_challenge,
-      base::as_bytes(base::make_span(challenge_token_)));
+      base::as_byte_span(challenge_token_));
 
   return SetAuthTokenFromBinaryToken(auth_token, next_token);
 }

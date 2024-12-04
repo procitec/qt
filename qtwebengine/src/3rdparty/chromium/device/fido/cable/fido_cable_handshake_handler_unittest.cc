@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,12 +8,13 @@
 #include <limits>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/optional.h"
+#include "base/functional/bind.h"
+#include "base/memory/raw_ptr.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/test/task_environment.h"
-#include "base/threading/sequenced_task_runner_handle.h"
 #include "components/cbor/reader.h"
 #include "components/cbor/values.h"
 #include "components/cbor/writer.h"
@@ -29,6 +30,7 @@
 #include "device/fido/test_callback_receiver.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace device {
 
@@ -38,7 +40,7 @@ using ::testing::_;
 using ::testing::Invoke;
 using ::testing::Test;
 using TestDeviceCallbackReceiver =
-    test::ValueCallbackReceiver<base::Optional<std::vector<uint8_t>>>;
+    test::ValueCallbackReceiver<absl::optional<std::vector<uint8_t>>>;
 using NiceMockBluetoothAdapter = ::testing::NiceMock<MockBluetoothAdapter>;
 
 // Sufficiently large test control point length as we are not interested
@@ -133,14 +135,14 @@ std::vector<uint8_t> GetExpectedEncryptionKey(
 // derived from |handshake_key|.
 std::vector<uint8_t> ConstructAuthenticatorHelloReply(
     base::span<const uint8_t> hello_msg,
-    base::StringPiece handshake_key) {
+    std::string_view handshake_key) {
   auto reply = fido_parsing_utils::Materialize(hello_msg);
   crypto::HMAC hmac(crypto::HMAC::SHA256);
   if (!hmac.Init(handshake_key))
     return std::vector<uint8_t>();
 
   std::array<uint8_t, 32> authenticator_hello_mac;
-  if (!hmac.Sign(fido_parsing_utils::ConvertToStringPiece(hello_msg),
+  if (!hmac.Sign(fido_parsing_utils::ConvertToStringView(hello_msg),
                  authenticator_hello_mac.data(),
                  authenticator_hello_mac.size())) {
     return std::vector<uint8_t>();
@@ -176,8 +178,8 @@ class FakeCableAuthenticator {
  public:
   FakeCableAuthenticator() {
     handshake_key_ = crypto::HkdfSha256(
-        fido_parsing_utils::ConvertToStringPiece(kTestSessionPreKey),
-        fido_parsing_utils::ConvertToStringPiece(kTestNonce),
+        fido_parsing_utils::ConvertToStringView(kTestSessionPreKey),
+        fido_parsing_utils::ConvertToStringView(kTestNonce),
         kCableHandshakeKeyInfo, 32);
   }
 
@@ -200,8 +202,8 @@ class FakeCableAuthenticator {
 
     const auto client_hello = handshake_message.first(42);
     if (!hmac.VerifyTruncated(
-            fido_parsing_utils::ConvertToStringPiece(client_hello),
-            fido_parsing_utils::ConvertToStringPiece(
+            fido_parsing_utils::ConvertToStringView(client_hello),
+            fido_parsing_utils::ConvertToStringView(
                 handshake_message.subspan(42)))) {
       return false;
     }
@@ -291,7 +293,7 @@ class FidoCableHandshakeHandlerTest : public Test {
   scoped_refptr<MockBluetoothAdapter> adapter_ =
       base::MakeRefCounted<NiceMockBluetoothAdapter>();
   FakeCableAuthenticator authenticator_;
-  MockFidoBleConnection* connection_;
+  raw_ptr<MockFidoBleConnection, DanglingUntriaged> connection_;
   std::unique_ptr<FidoCableDevice> device_;
   TestDeviceCallbackReceiver callback_receiver_;
 };
@@ -308,12 +310,12 @@ TEST_F(FidoCableHandshakeHandlerTest, HandShakeSuccess) {
 
   EXPECT_CALL(*connection(), WriteControlPointPtr(IsControlFrame(), _))
       .WillOnce(Invoke([this](const auto& data, auto* cb) {
-        base::SequencedTaskRunnerHandle::Get()->PostTask(
+        base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
             FROM_HERE, base::BindOnce(std::move(*cb), true));
 
         const auto client_ble_handshake_message =
             base::make_span(data).subspan(3);
-        base::SequencedTaskRunnerHandle::Get()->PostTask(
+        base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
             FROM_HERE,
             base::BindOnce(
                 connection()->read_callback(),
@@ -340,12 +342,12 @@ TEST_F(FidoCableHandshakeHandlerTest, HandShakeWithIncorrectSessionPreKey) {
 
   EXPECT_CALL(*connection(), WriteControlPointPtr(IsControlFrame(), _))
       .WillOnce(Invoke([this](const auto& data, auto* cb) {
-        base::SequencedTaskRunnerHandle::Get()->PostTask(
+        base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
             FROM_HERE, base::BindOnce(std::move(*cb), true));
 
         const auto client_ble_handshake_message =
             base::make_span(data).subspan(3);
-        base::SequencedTaskRunnerHandle::Get()->PostTask(
+        base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
             FROM_HERE,
             base::BindOnce(
                 connection()->read_callback(),
@@ -367,12 +369,12 @@ TEST_F(FidoCableHandshakeHandlerTest, HandshakeFailWithIncorrectNonce) {
 
   EXPECT_CALL(*connection(), WriteControlPointPtr(IsControlFrame(), _))
       .WillOnce(Invoke([this](const auto& data, auto* cb) {
-        base::SequencedTaskRunnerHandle::Get()->PostTask(
+        base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
             FROM_HERE, base::BindOnce(std::move(*cb), true));
 
         const auto client_ble_handshake_message =
             base::make_span(data).subspan(3);
-        base::SequencedTaskRunnerHandle::Get()->PostTask(
+        base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
             FROM_HERE,
             base::BindOnce(
                 connection()->read_callback(),

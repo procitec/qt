@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -29,20 +29,20 @@ TEST(PlatformAcceleratorCocoaTest,
        // into U+232B.
        @"\x08",
        NSEventModifierFlagCommand | NSEventModifierFlagShift},
-      {{ui::VKEY_F, ui::EF_COMMAND_DOWN | ui::EF_CONTROL_DOWN},
+      {{ui::VKEY_F,
+        ui::EF_COMMAND_DOWN | ui::EF_CONTROL_DOWN | ui::EF_FUNCTION_DOWN},
        @"f",
-       NSEventModifierFlagCommand | NSEventModifierFlagControl},
+       NSEventModifierFlagCommand | NSEventModifierFlagControl |
+           NSEventModifierFlagFunction},
   };
 
   for (const auto& test : kTestCases) {
     SCOPED_TRACE(base::StringPrintf("key_code='%c', modifiers=0x%x",
                                     test.accelerator.key_code(),
                                     test.accelerator.modifiers()));
-    NSString* actual_key_equivalent;
-    NSUInteger actual_modifier_mask;
-    ui::GetKeyEquivalentAndModifierMaskFromAccelerator(
-        test.accelerator, &actual_key_equivalent, &actual_modifier_mask);
-    EXPECT_NSEQ(test.expected_key_equivalent, actual_key_equivalent);
-    EXPECT_EQ(test.expected_modifier_mask, actual_modifier_mask);
+    KeyEquivalentAndModifierMask* equivalent =
+        ui::GetKeyEquivalentAndModifierMaskFromAccelerator(test.accelerator);
+    EXPECT_NSEQ(test.expected_key_equivalent, equivalent.keyEquivalent);
+    EXPECT_EQ(test.expected_modifier_mask, equivalent.modifierMask);
   }
 }

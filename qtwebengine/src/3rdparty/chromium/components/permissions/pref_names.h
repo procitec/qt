@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,17 +7,34 @@
 
 #include "build/build_config.h"
 
+namespace user_prefs {
+class PrefRegistrySyncable;
+}
+
 namespace permissions {
 namespace prefs {
 
-#if defined(OS_ANDROID)
+extern const char kPermissionActions[];
+#if BUILDFLAG(IS_ANDROID)
 extern const char kLocationSettingsBackoffLevelDSE[];
 extern const char kLocationSettingsBackoffLevelDefault[];
 extern const char kLocationSettingsNextShowDSE[];
 extern const char kLocationSettingsNextShowDefault[];
 #endif
 
+extern const char kOneTimePermissionPromptsDecidedCount[];
+
+// The pref is used only when kSafetyHub flag is on.
+// Currently Safety Hub is available only on desktop.
+#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
+extern const char kUnusedSitePermissionsRevocationEnabled[];
+#endif  // !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
+
 }  // namespace prefs
+
+// Registers user preferences related to permissions.
+void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry);
+
 }  // namespace permissions
 
-#endif  // COMPONENTS_PROXIMITY_AUTH_BLE_PREF_NAMES_H
+#endif  // COMPONENTS_PERMISSIONS_PREF_NAMES_H_

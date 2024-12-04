@@ -1,7 +1,7 @@
 ﻿// © 2016 and later: Unicode, Inc. and others.
-// License & terms of use: http://www.unicode.org/copyright.html#License
+// License & terms of use: http://www.unicode.org/copyright.html
+// Generated using tools/cldr/cldr-to-icu/build-icu-data.xml
 lo{
-    Version{"37"}
     zoneStrings{
         "Africa:Abidjan"{
             ec{"ອາບິດແຈນ"}
@@ -257,6 +257,9 @@ lo{
         }
         "America:Chihuahua"{
             ec{"ຊິວາວາ"}
+        }
+        "America:Ciudad_Juarez"{
+            ec{"ຊີອູດັດ ຄົວເຣຊ"}
         }
         "America:Coral_Harbour"{
             ec{"ອາທິໂຄຄານ"}
@@ -1223,6 +1226,9 @@ lo{
         "Pacific:Johnston"{
             ec{"ຈອນສະໂຕນ"}
         }
+        "Pacific:Kanton"{
+            ec{"ແຄນຕອນ"}
+        }
         "Pacific:Kiritimati"{
             ec{"ຄີຣິທີມາຕີ"}
         }
@@ -1924,6 +1930,9 @@ lo{
             ld{"ເວລາລະດູຮ້ອນເຢກາເຕລິນເບີກ"}
             lg{"ເວລາເຢກາເຕລິນເບີກ"}
             ls{"ເວລາມາດຕະຖານເຢກາເຕລິນເບີກ"}
+        }
+        "meta:Yukon"{
+            ls{"ເວລາຢູຄອນ"}
         }
         fallbackFormat{"{1} ({0})"}
         gmtFormat{"GMT{0}"}

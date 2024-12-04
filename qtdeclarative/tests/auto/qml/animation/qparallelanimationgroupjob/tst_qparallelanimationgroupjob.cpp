@@ -1,30 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the test suite of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:GPL-EXCEPT$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 3 as published by the Free Software
-** Foundation with exceptions as appearing in the file LICENSE.GPL3-EXCEPT
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
 #include <QtTest/QtTest>
 
@@ -78,7 +53,7 @@ class TestAnimation : public QAbstractAnimationJob
 {
 public:
     TestAnimation(int duration = 250) : m_duration(duration) {}
-    int duration() const { return m_duration; }
+    int duration() const override { return m_duration; }
 
 private:
     int m_duration;
@@ -92,10 +67,10 @@ public:
     {
     }
 
-    int duration() const { return -1; /* not time driven */ }
+    int duration() const override { return -1; /* not time driven */ }
 
 protected:
-    void timerEvent(QTimerEvent *event)
+    void timerEvent(QTimerEvent *event) override
     {
         if (event->timerId() == id)
             stop();
@@ -118,13 +93,13 @@ private:
 class StateChangeListener: public QAnimationJobChangeListener
 {
 public:
-    virtual void animationStateChanged(QAbstractAnimationJob *, QAbstractAnimationJob::State newState, QAbstractAnimationJob::State)
+    void animationStateChanged(QAbstractAnimationJob *, QAbstractAnimationJob::State newState, QAbstractAnimationJob::State) override
     {
         states << newState;
     }
 
     void clear() { states.clear(); }
-    int count() { return states.count(); }
+    int count() { return states.size(); }
 
     QList<QAbstractAnimationJob::State> states;
 };
@@ -134,7 +109,7 @@ class FinishedListener: public QAnimationJobChangeListener
 public:
     FinishedListener() {}
 
-    virtual void animationFinished(QAbstractAnimationJob *) { ++m_count; }
+    void animationFinished(QAbstractAnimationJob *) override { ++m_count; }
     void clear() { m_count = 0; }
     int count() { return m_count; }
 
@@ -321,14 +296,11 @@ void tst_QParallelAnimationGroupJob::clearGroup()
         group.appendAnimation(new QParallelAnimationGroupJob);
     }
 
-    int count = 0;
-    for (QAbstractAnimationJob *anim = group.firstChild(); anim; anim = anim->nextSibling())
-        ++count;
-    QCOMPARE(count, animationCount);
+    QCOMPARE(group.children()->count(), animationCount);
 
     group.clear();
 
-    QVERIFY(!group.firstChild() && !group.lastChild());
+    QVERIFY(group.children()->isEmpty());
     QCOMPARE(group.currentLoopTime(), 0);
 }
 
@@ -423,8 +395,8 @@ void tst_QParallelAnimationGroupJob::deleteChildrenWithRunningGroup()
     // test if children can be activated when their group is stopped
     QParallelAnimationGroupJob group;
 
-    TestAnimation *anim1 = new TestAnimation(200);
-    group.appendAnimation(anim1);
+    std::unique_ptr<TestAnimation> anim1 = std::make_unique<TestAnimation>(200);
+    group.appendAnimation(anim1.get());
 
     QCOMPARE(group.duration(), anim1->duration());
 
@@ -432,11 +404,10 @@ void tst_QParallelAnimationGroupJob::deleteChildrenWithRunningGroup()
     QCOMPARE(group.state(), QAnimationGroupJob::Running);
     QCOMPARE(anim1->state(), QAnimationGroupJob::Running);
 
-    QTest::qWait(80);
-    QVERIFY(group.currentLoopTime() > 0);
+    QTRY_VERIFY(group.currentLoopTime() > 0);
 
-    delete anim1;
-    QVERIFY(!group.firstChild());
+    anim1.reset();
+    QVERIFY(group.children()->isEmpty());
     QCOMPARE(group.duration(), 0);
     QCOMPARE(group.state(), QAnimationGroupJob::Stopped);
     QCOMPARE(group.currentLoopTime(), 0); //that's the invariant
@@ -822,34 +793,34 @@ void tst_QParallelAnimationGroupJob::addAndRemoveDuration()
 {
     QParallelAnimationGroupJob group;
     QCOMPARE(group.duration(), 0);
-    TestAnimation *test = new TestAnimation(250);      // 0, duration = 250;
-    group.appendAnimation(test);
+    std::unique_ptr<TestAnimation> test = std::make_unique<TestAnimation>(250);      // 0, duration = 250;
+    group.appendAnimation(test.get());
     QCOMPARE(test->group(), static_cast<QAnimationGroupJob*>(&group));
     QCOMPARE(test->duration(), 250);
     QCOMPARE(group.duration(), 250);
 
-    TestAnimation *test2 = new TestAnimation(750);     // 1
-    group.appendAnimation(test2);
+    std::unique_ptr<TestAnimation> test2 = std::make_unique<TestAnimation>(750);     // 1
+    group.appendAnimation(test2.get());
     QCOMPARE(test2->group(), static_cast<QAnimationGroupJob*>(&group));
     QCOMPARE(group.duration(), 750);
 
-    TestAnimation *test3 = new TestAnimation(500);     // 2
-    group.appendAnimation(test3);
+    std::unique_ptr<TestAnimation> test3 = std::make_unique<TestAnimation>(500);     // 2
+    group.appendAnimation(test3.get());
     QCOMPARE(test3->group(), static_cast<QAnimationGroupJob*>(&group));
     QCOMPARE(group.duration(), 750);
 
-    group.removeAnimation(test2);    // remove the one with duration = 750
-    delete test2;
+    group.removeAnimation(test2.get());    // remove the one with duration = 750
+    test2.reset();
     QCOMPARE(group.duration(), 500);
 
-    group.removeAnimation(test3);    // remove the one with duration = 500
-    delete test3;
+    group.removeAnimation(test3.get());    // remove the one with duration = 500
+    test3.reset();
     QCOMPARE(group.duration(), 250);
 
-    group.removeAnimation(test);    // remove the last one (with duration = 250)
+    group.removeAnimation(test.get());    // remove the last one (with duration = 250)
     QCOMPARE(test->group(), static_cast<QAnimationGroupJob*>(nullptr));
     QCOMPARE(group.duration(), 0);
-    delete test;
+    test.reset();
 }
 
 void tst_QParallelAnimationGroupJob::pauseResume()
@@ -907,16 +878,16 @@ void tst_QParallelAnimationGroupJob::pauseResume()
 void tst_QParallelAnimationGroupJob::crashWhenRemovingUncontrolledAnimation()
 {
     QParallelAnimationGroupJob group;
-    TestAnimation *anim = new TestAnimation;
+    std::unique_ptr<TestAnimation> anim = std::make_unique<TestAnimation>();
     anim->setLoopCount(-1);
-    TestAnimation *anim2 = new TestAnimation;
+    std::unique_ptr<TestAnimation> anim2 = std::make_unique<TestAnimation>();
     anim2->setLoopCount(-1);
-    group.appendAnimation(anim);
-    group.appendAnimation(anim2);
+    group.appendAnimation(anim.get());
+    group.appendAnimation(anim2.get());
     group.start();
-    delete anim;
+    anim.reset();
     // it would crash here because the internals of the group would still have a reference to anim
-    delete anim2;
+    anim2.reset();
 }
 
 void tst_QParallelAnimationGroupJob::uncontrolledWithLoops()

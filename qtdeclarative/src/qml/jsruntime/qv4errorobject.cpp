@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtQml module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 
 #include "qv4errorobject_p.h"
@@ -45,7 +9,6 @@
 #include <QtCore/QStringList>
 #include <QtCore/QDebug>
 
-#include "qv4string_p.h"
 #include <private/qv4mm_p.h>
 #include <private/qv4codegen_p.h>
 
@@ -57,7 +20,7 @@
 #    include "qplatformdefs.h"
 #  endif
 #else
-#  include <windows.h>
+#  include <qt_windows.h>
 #endif
 
 using namespace QV4;
@@ -93,7 +56,7 @@ void Heap::ErrorObject::init(const Value &message, ErrorType t)
     e->d()->stackTrace = new StackTrace(scope.engine->stackTrace());
     if (!e->d()->stackTrace->isEmpty()) {
         setProperty(scope.engine, QV4::ErrorObject::Index_FileName, scope.engine->newString(e->d()->stackTrace->at(0).source));
-        setProperty(scope.engine, QV4::ErrorObject::Index_LineNumber, Value::fromInt32(e->d()->stackTrace->at(0).line));
+        setProperty(scope.engine, QV4::ErrorObject::Index_LineNumber, Value::fromInt32(qAbs(e->d()->stackTrace->at(0).line)));
     }
 
     if (!message.isUndefined())
@@ -121,7 +84,7 @@ void Heap::ErrorObject::init(const Value &message, const QString &fileName, int 
 
     Q_ASSERT(!e->d()->stackTrace->isEmpty());
     setProperty(scope.engine, QV4::ErrorObject::Index_FileName, scope.engine->newString(e->d()->stackTrace->at(0).source));
-    setProperty(scope.engine, QV4::ErrorObject::Index_LineNumber, Value::fromInt32(e->d()->stackTrace->at(0).line));
+    setProperty(scope.engine, QV4::ErrorObject::Index_LineNumber, Value::fromInt32(qAbs(e->d()->stackTrace->at(0).line)));
 
     if (!message.isUndefined())
         setProperty(scope.engine, QV4::ErrorObject::Index_Message, message);
@@ -156,7 +119,7 @@ ReturnedValue ErrorObject::method_get_stack(const FunctionObject *b, const Value
         return v4->throwTypeError();
     if (!This->d()->stack) {
         QString trace;
-        for (int i = 0; i < This->d()->stackTrace->count(); ++i) {
+        for (int i = 0; i < This->d()->stackTrace->size(); ++i) {
             if (i > 0)
                 trace += QLatin1Char('\n');
             const StackFrame &frame = This->d()->stackTrace->at(i);
@@ -219,14 +182,14 @@ DEFINE_OBJECT_VTABLE(SyntaxErrorCtor);
 DEFINE_OBJECT_VTABLE(TypeErrorCtor);
 DEFINE_OBJECT_VTABLE(URIErrorCtor);
 
-void Heap::ErrorCtor::init(QV4::ExecutionContext *scope)
+void Heap::ErrorCtor::init(QV4::ExecutionEngine *engine)
 {
-    Heap::FunctionObject::init(scope, QStringLiteral("Error"));
+    Heap::FunctionObject::init(engine, QStringLiteral("Error"));
 }
 
-void Heap::ErrorCtor::init(QV4::ExecutionContext *scope, const QString &name)
+void Heap::ErrorCtor::init(QV4::ExecutionEngine *engine, const QString &name)
 {
-    Heap::FunctionObject::init(scope, name);
+    Heap::FunctionObject::init(engine, name);
 }
 
 ReturnedValue ErrorCtor::virtualCallAsConstructor(const FunctionObject *f, const Value *argv, int argc, const Value *newTarget)
@@ -240,9 +203,9 @@ ReturnedValue ErrorCtor::virtualCall(const FunctionObject *f, const Value *, con
     return f->callAsConstructor(argv, argc);
 }
 
-void Heap::EvalErrorCtor::init(QV4::ExecutionContext *scope)
+void Heap::EvalErrorCtor::init(QV4::ExecutionEngine *engine)
 {
-    Heap::FunctionObject::init(scope, QStringLiteral("EvalError"));
+    Heap::FunctionObject::init(engine, QStringLiteral("EvalError"));
 }
 
 ReturnedValue EvalErrorCtor::virtualCallAsConstructor(const FunctionObject *f, const Value *argv, int argc, const Value *newTarget)
@@ -251,9 +214,9 @@ ReturnedValue EvalErrorCtor::virtualCallAsConstructor(const FunctionObject *f, c
     return ErrorObject::create<EvalErrorObject>(f->engine(), v, newTarget)->asReturnedValue();
 }
 
-void Heap::RangeErrorCtor::init(QV4::ExecutionContext *scope)
+void Heap::RangeErrorCtor::init(QV4::ExecutionEngine *engine)
 {
-    Heap::FunctionObject::init(scope, QStringLiteral("RangeError"));
+    Heap::FunctionObject::init(engine, QStringLiteral("RangeError"));
 }
 
 ReturnedValue RangeErrorCtor::virtualCallAsConstructor(const FunctionObject *f, const Value *argv, int argc, const Value *newTarget)
@@ -262,9 +225,9 @@ ReturnedValue RangeErrorCtor::virtualCallAsConstructor(const FunctionObject *f, 
     return ErrorObject::create<RangeErrorObject>(f->engine(), v, newTarget)->asReturnedValue();
 }
 
-void Heap::ReferenceErrorCtor::init(QV4::ExecutionContext *scope)
+void Heap::ReferenceErrorCtor::init(QV4::ExecutionEngine *engine)
 {
-    Heap::FunctionObject::init(scope, QStringLiteral("ReferenceError"));
+    Heap::FunctionObject::init(engine, QStringLiteral("ReferenceError"));
 }
 
 ReturnedValue ReferenceErrorCtor::virtualCallAsConstructor(const FunctionObject *f, const Value *argv, int argc, const Value *newTarget)
@@ -273,9 +236,9 @@ ReturnedValue ReferenceErrorCtor::virtualCallAsConstructor(const FunctionObject 
     return ErrorObject::create<ReferenceErrorObject>(f->engine(), v, newTarget)->asReturnedValue();
 }
 
-void Heap::SyntaxErrorCtor::init(QV4::ExecutionContext *scope)
+void Heap::SyntaxErrorCtor::init(QV4::ExecutionEngine *engine)
 {
-    Heap::FunctionObject::init(scope, QStringLiteral("SyntaxError"));
+    Heap::FunctionObject::init(engine, QStringLiteral("SyntaxError"));
 }
 
 ReturnedValue SyntaxErrorCtor::virtualCallAsConstructor(const FunctionObject *f, const Value *argv, int argc, const Value *newTarget)
@@ -284,9 +247,9 @@ ReturnedValue SyntaxErrorCtor::virtualCallAsConstructor(const FunctionObject *f,
     return ErrorObject::create<SyntaxErrorObject>(f->engine(), v, newTarget)->asReturnedValue();
 }
 
-void Heap::TypeErrorCtor::init(QV4::ExecutionContext *scope)
+void Heap::TypeErrorCtor::init(QV4::ExecutionEngine *engine)
 {
-    Heap::FunctionObject::init(scope, QStringLiteral("TypeError"));
+    Heap::FunctionObject::init(engine, QStringLiteral("TypeError"));
 }
 
 ReturnedValue TypeErrorCtor::virtualCallAsConstructor(const FunctionObject *f, const Value *argv, int argc, const Value *newTarget)
@@ -295,9 +258,9 @@ ReturnedValue TypeErrorCtor::virtualCallAsConstructor(const FunctionObject *f, c
     return ErrorObject::create<TypeErrorObject>(f->engine(), v, newTarget)->asReturnedValue();
 }
 
-void Heap::URIErrorCtor::init(QV4::ExecutionContext *scope)
+void Heap::URIErrorCtor::init(QV4::ExecutionEngine *engine)
 {
-    Heap::FunctionObject::init(scope, QStringLiteral("URIError"));
+    Heap::FunctionObject::init(engine, QStringLiteral("URIError"));
 }
 
 ReturnedValue URIErrorCtor::virtualCallAsConstructor(const FunctionObject *f, const Value *argv, int argc, const Value *newTarget)

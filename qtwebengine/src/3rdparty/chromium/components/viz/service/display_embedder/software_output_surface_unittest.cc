@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,9 +6,8 @@
 
 #include <utility>
 
-#include "base/bind.h"
-#include "base/macros.h"
-#include "base/test/bind_test_util.h"
+#include "base/functional/bind.h"
+#include "base/test/bind.h"
 #include "cc/test/fake_output_surface_client.h"
 #include "components/viz/service/display/output_surface_frame.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -20,6 +19,10 @@ namespace {
 class FakeVSyncProvider : public gfx::VSyncProvider {
  public:
   FakeVSyncProvider() = default;
+
+  FakeVSyncProvider(const FakeVSyncProvider&) = delete;
+  FakeVSyncProvider& operator=(const FakeVSyncProvider&) = delete;
+
   ~FakeVSyncProvider() override = default;
 
   int call_count() const { return call_count_; }
@@ -40,13 +43,16 @@ class FakeVSyncProvider : public gfx::VSyncProvider {
 
  private:
   int call_count_ = 0;
-
-  DISALLOW_COPY_AND_ASSIGN(FakeVSyncProvider);
 };
 
 class VSyncSoftwareOutputDevice : public SoftwareOutputDevice {
  public:
   VSyncSoftwareOutputDevice() = default;
+
+  VSyncSoftwareOutputDevice(const VSyncSoftwareOutputDevice&) = delete;
+  VSyncSoftwareOutputDevice& operator=(const VSyncSoftwareOutputDevice&) =
+      delete;
+
   ~VSyncSoftwareOutputDevice() override = default;
 
   // SoftwareOutputDevice implementation.
@@ -54,16 +60,14 @@ class VSyncSoftwareOutputDevice : public SoftwareOutputDevice {
 
  private:
   FakeVSyncProvider vsync_provider_;
-
-  DISALLOW_COPY_AND_ASSIGN(VSyncSoftwareOutputDevice);
 };
 
 }  // namespace
 
 TEST(SoftwareOutputSurfaceTest, NoVSyncProvider) {
+  cc::FakeOutputSurfaceClient output_surface_client;
   auto output_surface = std::make_unique<SoftwareOutputSurface>(
       std::make_unique<SoftwareOutputDevice>());
-  cc::FakeOutputSurfaceClient output_surface_client;
   output_surface->BindToClient(&output_surface_client);
 
   // Verify the callback is never called.
@@ -77,9 +81,9 @@ TEST(SoftwareOutputSurfaceTest, NoVSyncProvider) {
 }
 
 TEST(SoftwareOutputSurfaceTest, VSyncProviderUpdates) {
+  cc::FakeOutputSurfaceClient output_surface_client;
   auto output_surface = std::make_unique<SoftwareOutputSurface>(
       std::make_unique<VSyncSoftwareOutputDevice>());
-  cc::FakeOutputSurfaceClient output_surface_client;
   output_surface->BindToClient(&output_surface_client);
 
   int update_vsync_parameters_call_count = 0;

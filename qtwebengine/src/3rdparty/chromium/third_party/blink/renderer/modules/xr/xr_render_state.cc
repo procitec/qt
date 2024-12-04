@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -21,7 +21,7 @@ namespace {
 constexpr double kMinFieldOfView = 0.01;
 constexpr double kMaxFieldOfView = 3.13;
 constexpr double kDefaultFieldOfView = M_PI * 0.5;
-}  // anonymous namespace
+}  // namespace
 
 XRRenderState::XRRenderState(bool immersive) : immersive_(immersive) {
   if (!immersive_)
@@ -37,6 +37,13 @@ void XRRenderState::Update(const XRRenderStateInit* init) {
   }
   if (init->hasBaseLayer()) {
     base_layer_ = init->baseLayer();
+    layers_ = MakeGarbageCollected<FrozenArray<XRLayer>>();
+  }
+  if (init->hasLayers()) {
+    base_layer_ = nullptr;
+    layers_ = init->layers()
+                  ? MakeGarbageCollected<FrozenArray<XRLayer>>(*init->layers())
+                  : MakeGarbageCollected<FrozenArray<XRLayer>>();
   }
   if (init->hasInlineVerticalFieldOfView()) {
     double fov = init->inlineVerticalFieldOfView();
@@ -55,15 +62,15 @@ HTMLCanvasElement* XRRenderState::output_canvas() const {
   return nullptr;
 }
 
-base::Optional<double> XRRenderState::inlineVerticalFieldOfView() const {
+absl::optional<double> XRRenderState::inlineVerticalFieldOfView() const {
   if (immersive_)
-    return base::nullopt;
+    return absl::nullopt;
   return inline_vertical_fov_;
 }
 
 void XRRenderState::Trace(Visitor* visitor) const {
   visitor->Trace(base_layer_);
-  visitor->Trace(inline_vertical_fov_);
+  visitor->Trace(layers_);
   ScriptWrappable::Trace(visitor);
 }
 

@@ -1,36 +1,20 @@
-# Copyright 2016 The Chromium Authors. All rights reserved.
+# Copyright 2016 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
 import("//remoting/build/config/remoting_build.gni")
 
-# This file depends on the legacy global sources assignment filter. It should
-# be converted to check target platform before assigning source files to the
-# sources variable. Remove this import and set_sources_assignment_filter call
-# when the file has been converted. See https://crbug.com/1018739 for details.
-import("//build/config/deprecated_default_sources_assignment_filter.gni")
-set_sources_assignment_filter(deprecated_default_sources_assignment_filter)
-
 source_set("security_key") {
   sources = [
     "security_key_auth_handler.h",
-    "security_key_auth_handler_win.cc",
     "security_key_extension.cc",
     "security_key_extension.h",
     "security_key_extension_session.cc",
     "security_key_extension_session.h",
-    "security_key_ipc_client.cc",
-    "security_key_ipc_client.h",
     "security_key_ipc_constants.cc",
     "security_key_ipc_constants.h",
-    "security_key_ipc_server.cc",
-    "security_key_ipc_server.h",
-    "security_key_ipc_server_impl.cc",
-    "security_key_ipc_server_impl.h",
     "security_key_message.cc",
     "security_key_message.h",
-    "security_key_message_handler.cc",
-    "security_key_message_handler.h",
     "security_key_message_reader.h",
     "security_key_message_reader_impl.cc",
     "security_key_message_reader_impl.h",
@@ -42,36 +26,54 @@ source_set("security_key") {
   ]
 
   deps = [
-    "//ipc",
     "//mojo/public/cpp/platform",
     "//mojo/public/cpp/system",
+    "//net:net",
+    "//net/traffic_annotation:traffic_annotation",
+    "//remoting/base:logging",
+    "//remoting/host:host_extension",
+    "//remoting/host/mojom",
     "//remoting/proto",
+    "//remoting/protocol:protocol",
     "//third_party/webrtc_overrides:webrtc_component",
   ]
+  public_deps = [ "//remoting/host:common_headers" ]
 
   if (is_posix) {
     sources += [ "security_key_auth_handler_posix.cc" ]
   }
-}
-
-source_set("main") {
-  defines = [ "HOST_IMPLEMENTATION" ]
 
   if (is_win) {
-    defines += host_predefines
+    sources += [
+      "security_key_auth_handler_win.cc",
+      "security_key_ipc_client.cc",
+      "security_key_ipc_client.h",
+      "security_key_message_handler.cc",
+      "security_key_message_handler.h",
+    ]
+    deps += [ "//remoting/host:chromoting_host_services_client" ]
   }
-
-  sources = [
-    "remote_security_key_main.cc",
-    "remote_security_key_main.h",
-  ]
-  deps = [
-    "//base:debugging_buildflags",
-    "//mojo/core/embedder",
-  ]
 }
 
 if (is_win) {
+  source_set("main") {
+    configs += [ "//remoting/build/config:host_implementation" ]
+
+    sources = [ "remote_security_key_main.cc" ]
+    deps = [
+      ":remote_security_key_main_headers",
+      ":security_key",
+      "//base:debugging_buildflags",
+      "//mojo/core/embedder",
+      "//remoting/base",
+      "//remoting/base:breakpad",
+      "//remoting/host:chromoting_host_services_client",
+      "//remoting/host:common",
+      "//remoting/host/base",
+      "//remoting/host/win:acl_util",
+    ]
+  }
+
   executable("remote_security_key") {
     configs += [ "//build/config/compiler:wexit_time_destructors" ]
 
@@ -79,6 +81,7 @@ if (is_win) {
         host_predefines + [ "REMOTING_HOST_BINARY=BINARY_REMOTE_SECURITY_KEY" ]
 
     deps = [
+      ":remote_security_key_main_headers",
       "//build/win:default_exe_manifest",
       "//remoting/host/win:remoting_core",
       "//remoting/host/win:remoting_windows_resources",
@@ -89,29 +92,47 @@ if (is_win) {
       "remote_security_key_entry_point.cc",
     ]
   }
+
+  source_set("remote_security_key_main_headers") {
+    sources = [ "remote_security_key_main.h" ]
+    deps = [ "//remoting/host:host_main_headers" ]
+  }
 }
 
 source_set("unit_tests") {
   testonly = true
 
   sources = [
-    "security_key_auth_handler_win_unittest.cc",
     "security_key_extension_session_unittest.cc",
-    "security_key_ipc_client_unittest.cc",
-    "security_key_ipc_server_unittest.cc",
-    "security_key_message_handler_unittest.cc",
     "security_key_message_reader_impl_unittest.cc",
     "security_key_message_writer_impl_unittest.cc",
   ]
 
   public_deps = [ ":test_support" ]
   deps = [
+    ":security_key",
     "//mojo/core/test:test_support",
+    "//net:net",
+    "//net:test_support",
+    "//net/traffic_annotation:test_support",
     "//remoting:test_support",
+    "//remoting/host:common",
+    "//remoting/host:test_support",
+    "//remoting/host/mojom",
+    "//remoting/host/setup:common",
+    "//remoting/protocol:protocol",
   ]
 
   if (is_posix) {
     sources += [ "security_key_auth_handler_posix_unittest.cc" ]
+  }
+
+  if (is_win) {
+    sources += [
+      "security_key_auth_handler_win_unittest.cc",
+      "security_key_ipc_client_unittest.cc",
+      "security_key_message_handler_unittest.cc",
+    ]
   }
 }
 
@@ -119,18 +140,23 @@ static_library("test_support") {
   testonly = true
 
   sources = [
-    "fake_security_key_ipc_client.cc",
-    "fake_security_key_ipc_client.h",
-    "fake_security_key_ipc_server.cc",
-    "fake_security_key_ipc_server.h",
     "fake_security_key_message_reader.cc",
     "fake_security_key_message_reader.h",
     "fake_security_key_message_writer.cc",
     "fake_security_key_message_writer.h",
   ]
 
+  if (is_win) {
+    sources += [
+      "fake_security_key_ipc_client.cc",
+      "fake_security_key_ipc_client.h",
+    ]
+  }
+
   deps = [
-    "//ipc",
+    ":security_key",
+    "//remoting/host:common",
+    "//remoting/host/mojom",
     "//remoting/proto",
     "//testing/gtest",
   ]

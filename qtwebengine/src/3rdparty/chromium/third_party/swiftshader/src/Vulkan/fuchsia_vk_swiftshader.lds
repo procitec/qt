@@ -3,11 +3,10 @@
 # that is specific to the Fuchsia Vulkan loader implementation.
 {
 global:
-	vkGetInstanceProcAddr;
-
 	# Loader-ICD interface functions
 	vk_icdGetInstanceProcAddr;
 	vk_icdNegotiateLoaderICDInterfaceVersion;
+	vk_icdGetPhysicalDeviceProcAddr;
 	vk_icdInitializeConnectToServiceCallback;
 
 local:

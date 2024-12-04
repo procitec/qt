@@ -16,9 +16,13 @@
 #ifndef AGG_ARRAY_INCLUDED
 #define AGG_ARRAY_INCLUDED
 
+#include <string.h>
+
 #include "agg_basics.h"
 #include "core/fxcrt/fx_memory.h"  // For FXSYS_* macros.
 
+namespace pdfium
+{
 namespace agg
 {
 template <class T>
@@ -499,4 +503,5 @@ template<class T> inline void swap_elements(T& a, T& b)
     b = temp;
 }
 }
+}  // namespace pdfium
 #endif

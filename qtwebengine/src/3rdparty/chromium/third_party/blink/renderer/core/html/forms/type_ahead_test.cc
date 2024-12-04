@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,6 +8,7 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/common/input/web_keyboard_event.h"
 #include "third_party/blink/renderer/core/events/keyboard_event.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 
 namespace blink {
 namespace {
@@ -42,14 +43,14 @@ class TypeAheadTest : public ::testing::Test {
  protected:
   TypeAheadTest() : type_ahead_(&test_source_) {}
 
+  test::TaskEnvironment task_environment_;
   TestTypeAheadDataSource test_source_;
   TypeAhead type_ahead_;
 };
 
 TEST_F(TypeAheadTest, HasActiveSessionAtStart) {
-  WebKeyboardEvent web_event(
-      WebInputEvent::Type::kChar, 0,
-      base::TimeTicks() + base::TimeDelta::FromMilliseconds(500));
+  WebKeyboardEvent web_event(WebInputEvent::Type::kChar, 0,
+                             base::TimeTicks() + base::Milliseconds(500));
   web_event.text[0] = ' ';
   auto& event = *KeyboardEvent::Create(web_event, nullptr);
 
@@ -58,13 +59,13 @@ TEST_F(TypeAheadTest, HasActiveSessionAtStart) {
 
 TEST_F(TypeAheadTest, HasActiveSessionAfterHandleEvent) {
   {
-    WebKeyboardEvent web_event(
-        WebInputEvent::Type::kChar, 0,
-        base::TimeTicks() + base::TimeDelta::FromMilliseconds(500));
+    WebKeyboardEvent web_event(WebInputEvent::Type::kChar, 0,
+                               base::TimeTicks() + base::Milliseconds(500));
     web_event.text[0] = ' ';
     auto& event = *KeyboardEvent::Create(web_event, nullptr);
     type_ahead_.HandleEvent(
-        event, TypeAhead::kMatchPrefix | TypeAhead::kCycleFirstChar);
+        event, event.charCode(),
+        TypeAhead::kMatchPrefix | TypeAhead::kCycleFirstChar);
 
     // A session should now be in progress.
     EXPECT_TRUE(type_ahead_.HasActiveSession(event));
@@ -72,9 +73,8 @@ TEST_F(TypeAheadTest, HasActiveSessionAfterHandleEvent) {
 
   {
     // Should still be active after 1 second elapses.
-    WebKeyboardEvent web_event(
-        WebInputEvent::Type::kChar, 0,
-        base::TimeTicks() + base::TimeDelta::FromMilliseconds(1500));
+    WebKeyboardEvent web_event(WebInputEvent::Type::kChar, 0,
+                               base::TimeTicks() + base::Milliseconds(1500));
     web_event.text[0] = ' ';
     auto& event = *KeyboardEvent::Create(web_event, nullptr);
     EXPECT_TRUE(type_ahead_.HasActiveSession(event));
@@ -82,9 +82,8 @@ TEST_F(TypeAheadTest, HasActiveSessionAfterHandleEvent) {
 
   {
     // But more than 1 second should be considered inactive.
-    WebKeyboardEvent web_event(
-        WebInputEvent::Type::kChar, 0,
-        base::TimeTicks() + base::TimeDelta::FromMilliseconds(1501));
+    WebKeyboardEvent web_event(WebInputEvent::Type::kChar, 0,
+                               base::TimeTicks() + base::Milliseconds(1501));
     web_event.text[0] = ' ';
     auto& event = *KeyboardEvent::Create(web_event, nullptr);
     EXPECT_FALSE(type_ahead_.HasActiveSession(event));
@@ -92,12 +91,11 @@ TEST_F(TypeAheadTest, HasActiveSessionAfterHandleEvent) {
 }
 
 TEST_F(TypeAheadTest, HasActiveSessionAfterResetSession) {
-  WebKeyboardEvent web_event(
-      WebInputEvent::Type::kChar, 0,
-      base::TimeTicks() + base::TimeDelta::FromMilliseconds(500));
+  WebKeyboardEvent web_event(WebInputEvent::Type::kChar, 0,
+                             base::TimeTicks() + base::Milliseconds(500));
   web_event.text[0] = ' ';
   auto& event = *KeyboardEvent::Create(web_event, nullptr);
-  type_ahead_.HandleEvent(event,
+  type_ahead_.HandleEvent(event, event.charCode(),
                           TypeAhead::kMatchPrefix | TypeAhead::kCycleFirstChar);
 
   // A session should now be in progress.

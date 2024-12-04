@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,11 +7,15 @@
 
 #include <stdint.h>
 #include <memory>
-#include <random>
 #include <vector>
 
+#include "base/memory/raw_ptr.h"
+#include "base/rand_util.h"
 #include "base/time/time.h"
 #include "cc/raster/raster_buffer_provider.h"
+#include "cc/raster/raster_query_queue.h"
+#include "cc/trees/raster_capabilities.h"
+#include "components/viz/common/resources/shared_image_format.h"
 #include "gpu/command_buffer/common/sync_token.h"
 
 namespace gpu {
@@ -21,7 +25,6 @@ class RasterInterface;
 }  // namespace gpu
 
 namespace viz {
-class ContextProvider;
 class RasterContextProvider;
 }  // namespace viz
 
@@ -31,13 +34,12 @@ class CC_EXPORT GpuRasterBufferProvider : public RasterBufferProvider {
  public:
   static constexpr float kRasterMetricProbability = 0.01;
   GpuRasterBufferProvider(
-      viz::ContextProvider* compositor_context_provider,
+      viz::RasterContextProvider* compositor_context_provider,
       viz::RasterContextProvider* worker_context_provider,
-      bool use_gpu_memory_buffer_resources,
-      viz::ResourceFormat tile_format,
+      const RasterCapabilities& raster_caps,
       const gfx::Size& max_tile_size,
       bool unpremultiply_and_dither_low_bit_depth_tiles,
-      bool enable_oop_rasterization,
+      RasterQueryQueue* const pending_raster_queries,
       float raster_metric_probability = kRasterMetricProbability);
   GpuRasterBufferProvider(const GpuRasterBufferProvider&) = delete;
   ~GpuRasterBufferProvider() override;
@@ -52,39 +54,19 @@ class CC_EXPORT GpuRasterBufferProvider : public RasterBufferProvider {
       bool depends_on_at_raster_decodes,
       bool depends_on_hardware_accelerated_jpeg_candidates,
       bool depends_on_hardware_accelerated_webp_candidates) override;
-  void Flush() override;
-  viz::ResourceFormat GetResourceFormat() const override;
+  viz::SharedImageFormat GetFormat() const override;
   bool IsResourcePremultiplied() const override;
   bool CanPartialRasterIntoProvidedResource() const override;
   bool IsResourceReadyToDraw(
-      const ResourcePool::InUsePoolResource& resource) const override;
+      const ResourcePool::InUsePoolResource& resource) override;
   uint64_t SetReadyToDrawCallback(
       const std::vector<const ResourcePool::InUsePoolResource*>& resources,
       base::OnceClosure callback,
-      uint64_t pending_callback_id) const override;
+      uint64_t pending_callback_id) override;
   void Shutdown() override;
-  bool CheckRasterFinishedQueries() override;
 
-  gpu::SyncToken PlaybackOnWorkerThread(
-      gpu::Mailbox* mailbox,
-      GLenum texture_target,
-      bool texture_is_overlay_candidate,
-      const gpu::SyncToken& sync_token,
-      const gfx::Size& resource_size,
-      viz::ResourceFormat resource_format,
-      const gfx::ColorSpace& color_space,
-      bool resource_has_previous_content,
-      const RasterSource* raster_source,
-      const gfx::Rect& raster_full_rect,
-      const gfx::Rect& raster_dirty_rect,
-      uint64_t new_content_id,
-      const gfx::AxisTransform2d& transform,
-      const RasterSource::PlaybackSettings& playback_settings,
-      const GURL& url,
-      base::TimeTicks raster_buffer_creation_time,
-      bool depends_on_at_raster_decodes,
-      bool depends_on_hardware_accelerated_jpeg_candidates,
-      bool depends_on_hardware_accelerated_webp_candidates);
+ protected:
+  void Flush() override;
 
  private:
   class GpuRasterBacking;
@@ -114,87 +96,64 @@ class CC_EXPORT GpuRasterBufferProvider : public RasterBufferProvider {
     bool SupportsBackgroundThreadPriority() const override;
 
    private:
+    void PlaybackOnWorkerThread(
+        const RasterSource* raster_source,
+        const gfx::Rect& raster_full_rect,
+        const gfx::Rect& raster_dirty_rect,
+        uint64_t new_content_id,
+        const gfx::AxisTransform2d& transform,
+        const RasterSource::PlaybackSettings& playback_settings,
+        const GURL& url);
+
+    void PlaybackOnWorkerThreadInternal(
+        const RasterSource* raster_source,
+        const gfx::Rect& raster_full_rect,
+        const gfx::Rect& raster_dirty_rect,
+        uint64_t new_content_id,
+        const gfx::AxisTransform2d& transform,
+        const RasterSource::PlaybackSettings& playback_settings,
+        const GURL& url,
+        RasterQuery* query);
+
+    void RasterizeSource(
+        const RasterSource* raster_source,
+        const gfx::Rect& raster_full_rect,
+        const gfx::Rect& playback_rect,
+        const gfx::AxisTransform2d& transform,
+        const RasterSource::PlaybackSettings& playback_settings);
+
     // These fields may only be used on the compositor thread.
-    GpuRasterBufferProvider* const client_;
-    GpuRasterBacking* backing_;
+    const raw_ptr<GpuRasterBufferProvider> client_;
+    raw_ptr<GpuRasterBacking> backing_;
 
     // These fields are for use on the worker thread.
     const gfx::Size resource_size_;
-    const viz::ResourceFormat resource_format_;
+    const viz::SharedImageFormat shared_image_format_;
     const gfx::ColorSpace color_space_;
     const bool resource_has_previous_content_;
     const bool depends_on_at_raster_decodes_;
     const bool depends_on_hardware_accelerated_jpeg_candidates_;
     const bool depends_on_hardware_accelerated_webp_candidates_;
-    const gpu::SyncToken before_raster_sync_token_;
-    const GLenum texture_target_;
-    const bool texture_is_overlay_candidate_;
-
-    gpu::Mailbox mailbox_;
-    // A SyncToken to be returned from the worker thread, and waited on before
-    // using the rastered resource.
-    gpu::SyncToken after_raster_sync_token_;
-
     base::TimeTicks creation_time_;
   };
 
-  struct PendingRasterQuery {
-    // The id for querying the duration in executing the GPU side work.
-    GLuint raster_duration_query_id = 0u;
+  bool ShouldUnpremultiplyAndDitherResource(
+      viz::SharedImageFormat format) const;
 
-    // The duration for executing the work on the raster worker thread.
-    base::TimeDelta worker_raster_duration;
-
-    // The id for querying the time at which we're about to start issuing raster
-    // work to the driver.
-    GLuint raster_start_query_id = 0u;
-
-    // The time at which the raster buffer was created.
-    base::TimeTicks raster_buffer_creation_time;
-
-    // Whether the raster work depends on candidates for hardware accelerated
-    // JPEG or WebP decodes.
-    bool depends_on_hardware_accelerated_jpeg_candidates = false;
-    bool depends_on_hardware_accelerated_webp_candidates = false;
-  };
-
-  bool ShouldUnpremultiplyAndDitherResource(viz::ResourceFormat format) const;
-  gpu::SyncToken PlaybackOnWorkerThreadInternal(
-      gpu::Mailbox* mailbox,
-      GLenum texture_target,
-      bool texture_is_overlay_candidate,
-      const gpu::SyncToken& sync_token,
-      const gfx::Size& resource_size,
-      viz::ResourceFormat resource_format,
-      const gfx::ColorSpace& color_space,
-      bool resource_has_previous_content,
-      const RasterSource* raster_source,
-      const gfx::Rect& raster_full_rect,
-      const gfx::Rect& raster_dirty_rect,
-      uint64_t new_content_id,
-      const gfx::AxisTransform2d& transform,
-      const RasterSource::PlaybackSettings& playback_settings,
-      const GURL& url,
-      bool depends_on_at_raster_decodes,
-      PendingRasterQuery* query);
-
-  viz::ContextProvider* const compositor_context_provider_;
-  viz::RasterContextProvider* const worker_context_provider_;
-  const bool use_gpu_memory_buffer_resources_;
-  const viz::ResourceFormat tile_format_;
+  const raw_ptr<viz::RasterContextProvider> compositor_context_provider_;
+  const raw_ptr<viz::RasterContextProvider> worker_context_provider_;
+  const viz::SharedImageFormat tile_format_;
+  const bool tile_overlay_candidate_;
+  const uint32_t tile_texture_target_;
   const gfx::Size max_tile_size_;
-  const bool unpremultiply_and_dither_low_bit_depth_tiles_;
-  const bool enable_oop_rasterization_;
 
-  // Note that this lock should never be acquired while holding the raster
-  // context lock.
-  base::Lock pending_raster_queries_lock_;
-  base::circular_deque<PendingRasterQuery> pending_raster_queries_
-      GUARDED_BY(pending_raster_queries_lock_);
+  const raw_ptr<RasterQueryQueue, DanglingUntriaged> pending_raster_queries_;
 
+  const double raster_metric_probability_;
   // Accessed with the worker context lock acquired.
-  std::mt19937 random_generator_;
-  std::bernoulli_distribution bernoulli_distribution_;
+  base::MetricsSubSampler metrics_subsampler_;
+  const bool is_using_raw_draw_;
+  bool is_using_dmsaa_ = false;
 };
 
 }  // namespace cc

@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -18,26 +18,28 @@
 #ifndef COMPONENTS_SIGNIN_INTERNAL_IDENTITY_MANAGER_PRIMARY_ACCOUNT_MANAGER_H_
 #define COMPONENTS_SIGNIN_INTERNAL_IDENTITY_MANAGER_PRIMARY_ACCOUNT_MANAGER_H_
 
-#include <memory>
 #include <string>
+#include <utility>
 
-#include "base/macros.h"
+#include "base/feature_list.h"
+#include "base/functional/callback_helpers.h"
+#include "base/memory/raw_ptr.h"
 #include "base/observer_list.h"
 #include "base/observer_list_types.h"
-#include "base/optional.h"
+#include "build/chromeos_buildflags.h"
 #include "components/signin/internal/identity_manager/profile_oauth2_token_service_observer.h"
-#include "components/signin/public/base/account_consistency_method.h"
+#include "components/signin/public/base/consent_level.h"
 #include "components/signin/public/base/signin_client.h"
 #include "components/signin/public/identity_manager/account_info.h"
+#include "components/signin/public/identity_manager/primary_account_change_event.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 class AccountTrackerService;
 class PrefRegistrySimple;
-class PrefService;
-class PrimaryAccountPolicyManager;
 class ProfileOAuth2TokenService;
 
 namespace signin_metrics {
-enum ProfileSignout : int;
+enum class ProfileSignout;
 enum class SignoutDelete;
 }  // namespace signin_metrics
 
@@ -45,17 +47,10 @@ class PrimaryAccountManager : public ProfileOAuth2TokenServiceObserver {
  public:
   class Observer : public base::CheckedObserver {
    public:
-    // Called whenever a user signs into Google services such as sync.
-    // Not called during a reauth.
-    virtual void GoogleSigninSucceeded(const CoreAccountInfo& info) {}
-
-    // Called whenever the unconsented primary account changes. This includes
-    // the changes for the consented primary account as well.
-    virtual void UnconsentedPrimaryAccountChanged(const CoreAccountInfo& info) {
-    }
-
-    // Called whenever the currently signed-in user has been signed out.
-    virtual void GoogleSignedOut(const CoreAccountInfo& info) {}
+    // Called when there is a change in the primary account or in the consent
+    // level for the primary account.
+    virtual void OnPrimaryAccountChanged(
+        const signin::PrimaryAccountChangeEvent& event_details) = 0;
   };
 
   // Used to remove accounts from the token service and the account tracker.
@@ -64,16 +59,30 @@ class PrimaryAccountManager : public ProfileOAuth2TokenServiceObserver {
     kKeepAllAccounts = 0,
     // Remove all the accounts.
     kRemoveAllAccounts,
-    // Removes the authenticated account if it is in authentication error.
-    kRemoveAuthenticatedAccountIfInError
+    // Remove the primary account, but keep the accounts in the
+    // `IdentityManager`.
+    kKeepAllAccountsAndClearPrimary,
   };
 
-  PrimaryAccountManager(
-      SigninClient* client,
-      ProfileOAuth2TokenService* token_service,
-      AccountTrackerService* account_tracker_service,
-      signin::AccountConsistencyMethod account_consistency,
-      std::unique_ptr<PrimaryAccountPolicyManager> policy_manager);
+  // Enum for histogram 'Signin.PAMInitialize.PrimaryAccountInfoState'.
+  enum class InitializeAccountInfoState {
+    kAccountInfoAvailable = 0,
+    kEmptyAccountInfo_RestoreFailedNotSyncConsented = 1,
+    kEmptyAccountInfo_RestoreFailedNoLastSyncGaiaId = 2,
+    kEmptyAccountInfo_RestoreFailedNoLastSyncEmail = 3,
+    kEmptyAccountInfo_RestoreFailedAccountIdDontMatch = 4,
+    kEmptyAccountInfo_RestoreFailedAsRestoreFeatureIsDisabled = 5,
+    kEmptyAccountInfo_RestoreSuccessFromLastSyncInfo = 6,
+    kMaxValue = kEmptyAccountInfo_RestoreSuccessFromLastSyncInfo,
+  };
+
+  PrimaryAccountManager(SigninClient* client,
+                        ProfileOAuth2TokenService* token_service,
+                        AccountTrackerService* account_tracker_service);
+
+  PrimaryAccountManager(const PrimaryAccountManager&) = delete;
+  PrimaryAccountManager& operator=(const PrimaryAccountManager&) = delete;
+
   ~PrimaryAccountManager() override;
 
   // Registers per-profile prefs.
@@ -82,149 +91,170 @@ class PrimaryAccountManager : public ProfileOAuth2TokenServiceObserver {
   // Registers per-install prefs.
   static void RegisterPrefs(PrefRegistrySimple* registry);
 
-  // If user was signed in, load tokens from DB if available.
-  void Initialize(PrefService* local_state);
-  bool IsInitialized() const;
+  // If user was signed in, load the primary account and then load credentials
+  // in the token service.
+  void Initialize();
 
-  // If a user has previously signed in (and has not signed out), this returns
-  // the know information of the account. Otherwise, it returns an empty struct.
-  CoreAccountInfo GetAuthenticatedAccountInfo() const;
+  // Returns whether the user's primary account is available. If consent is
+  // |ConsentLevel::kSync| then true implies that the user has blessed this
+  // account for sync.
+  bool HasPrimaryAccount(signin::ConsentLevel consent_level) const;
 
-  // If a user has previously signed in (and has not signed out), this returns
-  // the account id. Otherwise, it returns an empty CoreAccountId.  This id is
-  // the G+/Focus obfuscated gaia id of the user. It can be used to uniquely
-  // identify an account, so for example as a key to map accounts to data. For
-  // code that needs a unique id to represent the connected account, call this
-  // method. Example: the AccountStatusMap type in
-  // MutableProfileOAuth2TokenService. For code that needs to know the
-  // normalized email address of the connected account, use
-  // GetAuthenticatedAccountInfo().email.  Example: to show the string
-  // "Signed in as XXX" in the hotdog menu.
-  CoreAccountId GetAuthenticatedAccountId() const;
+  // Provides access to the core information of the user's primary account.
+  // The primary account may or may not be blessed with the sync consent.
+  // Returns an empty struct if no such info is available, either because there
+  // is no primary account yet or because the user signed out or the |consent|
+  // level required |ConsentLevel::kSync| was not granted.
+  // Returns a non-empty struct if the primary account exists and was granted
+  // the required consent level.
+  CoreAccountInfo GetPrimaryAccountInfo(
+      signin::ConsentLevel consent_level) const;
 
-  // Returns true if there is an authenticated user.
-  bool IsAuthenticated() const;
+  // Provides access to the account ID of the user's primary account. Simple
+  // convenience wrapper over GetPrimaryAccountInfo().account_id.
+  CoreAccountId GetPrimaryAccountId(signin::ConsentLevel consent_level) const;
 
-  // Signs a user in. PrimaryAccountManager assumes that |username| can be used
-  // to look up the corresponding account_id and gaia_id for this email.
-  void SignIn(const std::string& username);
+  // Sets the primary account with the required consent level. The primary
+  // account can only be changed if the user has not consented for sync. If the
+  // user has consented for sync already, then use ClearPrimaryAccount() or
+  // RevokeSync() instead.
+  // `prefs_committed_callback` is called once the primary account preferences
+  // are written to the persistent storage.
+  void SetPrimaryAccountInfo(
+      const CoreAccountInfo& account_info,
+      signin::ConsentLevel consent_level,
+      signin_metrics::AccessPoint access_point,
+      base::OnceClosure prefs_committed_callback = base::NullCallback());
 
-  // Updates the authenticated account information from AccountTrackerService.
-  void UpdateAuthenticatedAccountInfo();
+  // Updates the primary account information from AccountTrackerService.
+  void UpdatePrimaryAccountInfo();
 
   // Signout API surfaces (not supported on ChromeOS, where signout is not
   // permitted).
-#if !defined(OS_CHROMEOS)
-  // Signs a user out, removing the preference, erasing all keys
-  // associated with the authenticated user, and canceling all auth in progress.
-  // On mobile and on desktop pre-DICE, this also removes all accounts from
-  // Chrome by revoking all refresh tokens.
-  // On desktop with DICE enabled, this will remove the authenticated account
-  // from Chrome only if it is in authentication error. No other accounts are
-  // removed.
-  void SignOut(signin_metrics::ProfileSignout signout_source_metric,
-               signin_metrics::SignoutDelete signout_delete_metric);
-
-  // Signs a user out, removing the preference, erasing all keys
-  // associated with the authenticated user, and canceling all auth in progress.
-  // It removes all accounts from Chrome by revoking all refresh tokens.
-  void SignOutAndRemoveAllAccounts(
+#if !BUILDFLAG(IS_CHROMEOS_ASH)
+  // Clears the primary account, erasing all keys associated with the primary
+  // account (also cancels all auth in progress).
+  // It removes all accounts from the identity manager by revoking all refresh
+  // tokens.
+  void ClearPrimaryAccount(signin_metrics::ProfileSignout signout_source_metric,
+                           signin_metrics::SignoutDelete signout_delete_metric);
+  // Clears the primary account, erasing all keys associated with the primary
+  // account (also cancels all auth in progress).
+  // It keeps all accounts in the identity manager.
+  void RemovePrimaryAccountButKeepTokens(
       signin_metrics::ProfileSignout signout_source_metric,
       signin_metrics::SignoutDelete signout_delete_metric);
 
-  // Signs a user out, removing the preference, erasing all keys
-  // associated with the authenticated user, and canceling all auth in progress.
-  // Does not remove the accounts from the token service.
-  void SignOutAndKeepAllAccounts(
-      signin_metrics::ProfileSignout signout_source_metric,
-      signin_metrics::SignoutDelete signout_delete_metric);
-#endif  // !defined(OS_CHROMEOS)
+#endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
 
-#if defined(OS_CHROMEOS)
-  // Revokes sync consent from the primary account. The primary account must
-  // have sync consent. After the call a primary account will remain but it will
-  // not have sync consent.
-  void RevokeSyncConsent();
-#endif  // defined(OS_CHROMEOS)
+  // Rovokes the sync consent but leaves the primary account and the rest of
+  // the accounts untouched.
+  void RevokeSyncConsent(signin_metrics::ProfileSignout signout_source_metric,
+                         signin_metrics::SignoutDelete signout_delete_metric);
 
   // Adds and removes observers.
   void AddObserver(Observer* observer);
   void RemoveObserver(Observer* observer);
 
-  // Provides access to the core information of the user's unconsented primary
-  // account. Returns an empty info, if there is no such account.
-  CoreAccountInfo GetUnconsentedPrimaryAccountInfo() const;
-
-  // Returns whether the user's unconsented primary account is available.
-  bool HasUnconsentedPrimaryAccount() const;
-
-  // Sets the unconsented primary account. The unconsented primary account can
-  // only be changed if the user is not authenticated. If the user is
-  // authenticated, use Signout() instead.
-  void SetUnconsentedPrimaryAccountInfo(CoreAccountInfo account_info);
-
  private:
-  // Sets the authenticated user's account id, when the user has consented to
-  // sync.
-  // If the user is already authenticated with the same account id, then this
-  // method is a no-op.
-  // It is forbidden to call this method if the user is already authenticated
-  // with a different account (this method will DCHECK in that case).
-  // |account_id| must not be empty. To log the user out, use
-  // ClearAuthenticatedAccountId() instead.
-  void SetAuthenticatedAccountInfo(const CoreAccountInfo& account_info);
+  class ScopedPrefCommit;
+
+  // The primary account information. The account may or may not be consented
+  // for Sync.
+  struct PrimaryAccount {
+    const CoreAccountInfo account_info;
+    const bool consented_to_sync;
+    PrimaryAccount(const CoreAccountInfo& account_info, bool consented_to_sync);
+  };
+
+  // Prepares the primary account and consented preferences before loading them.
+  void PrepareToLoadPrefs();
+
+  // Returns the primary account info to be used during initialization. If the
+  // primary account info is not available in the account tracker service, then
+  // it attempts to restore.
+  std::pair<CoreAccountInfo, InitializeAccountInfoState>
+  GetOrRestorePrimaryAccountInfoOnInitialize(const std::string& pref_account_id,
+                                             bool pref_consented_to_sync);
+
+  // Sets the primary account id, when the user has consented to sync.
+  // If the user has consented for sync with the same account, then this method
+  // is a no-op.
+  // It is forbidden to call this method if the user has already consented for
+  // sync  with a different account (this method will DCHECK in that case).
+  // |account_id| must not be empty.
+  void SetSyncPrimaryAccountInternal(const CoreAccountInfo& account_info,
+                                     ScopedPrefCommit& scoped_pref_commit);
 
   // Sets |primary_account_info_| and updates the associated preferences.
   void SetPrimaryAccountInternal(const CoreAccountInfo& account_info,
-                                 bool consented_to_sync);
+                                 bool consented_to_sync,
+                                 ScopedPrefCommit& scoped_pref_commit);
 
-  // Starts the sign out process. If |assert_signout_allowed| is true then
-  // the sign out process will DCHECK if user sign out is not allowed.
+  // Invoked during initialization, it logs metrics to understand what fraction
+  // of users have a sync-enabled primary account in the past, on the same
+  // profile.
+  void RecordHadPreviousSyncAccount() const;
+
+  // Starts the sign out process.
   void StartSignOut(signin_metrics::ProfileSignout signout_source_metric,
                     signin_metrics::SignoutDelete signout_delete_metric,
-                    RemoveAccountsOption remove_option,
-                    bool assert_signout_allowed = false);
+                    RemoveAccountsOption remove_option);
 
   // The sign out process which is started by SigninClient::PreSignOut()
   void OnSignoutDecisionReached(
       signin_metrics::ProfileSignout signout_source_metric,
       signin_metrics::SignoutDelete signout_delete_metric,
       RemoveAccountsOption remove_option,
-      bool assert_signout_allowed,
       SigninClient::SignoutDecision signout_decision);
 
-#if !defined(OS_CHROMEOS)
+  // Returns the current state of the primary account.
+  signin::PrimaryAccountChangeEvent::State GetPrimaryAccountState() const;
+
+  // Fires OnPrimaryAccountChanged() notifications on all observers.
+  void FirePrimaryAccountChanged(
+      const signin::PrimaryAccountChangeEvent::State& previous_state,
+      absl::variant<signin_metrics::AccessPoint, signin_metrics::ProfileSignout>
+          event_source,
+      ScopedPrefCommit& scoped_pref_commit);
+
   // ProfileOAuth2TokenServiceObserver:
   void OnRefreshTokensLoaded() override;
-#endif
 
-  const CoreAccountInfo& primary_account_info() const {
-    return primary_account_info_;
-  }
+  // Sets the value for `pref::kExplicitBrowserSignin` pref based on the access
+  // point when signing in.
+  void ComputeExplicitBrowserSignin(
+      const signin::PrimaryAccountChangeEvent& event_details,
+      const absl::variant<signin_metrics::AccessPoint,
+                          signin_metrics::ProfileSignout>& event_source,
+      ScopedPrefCommit& scoped_pref_commit);
 
-  SigninClient* client_;
+  // Returns the primary account. Crashes if it is called before the primary
+  // account was initialized.
+  const PrimaryAccount& GetPrimaryAccount() const;
+
+  // The SigninClient instance associated with this object. Must outlive this
+  // object.
+  raw_ptr<SigninClient> client_;
 
   // The ProfileOAuth2TokenService instance associated with this object. Must
   // outlive this object.
-  ProfileOAuth2TokenService* token_service_ = nullptr;
-  AccountTrackerService* account_tracker_service_ = nullptr;
+  raw_ptr<ProfileOAuth2TokenService> token_service_ = nullptr;
 
-  bool initialized_ = false;
+  // The AccountTrackerService instance associated with this object. Must
+  // outlive this object.
+  raw_ptr<AccountTrackerService> account_tracker_service_ = nullptr;
 
-  // Account id after successful authentication. The account may or may not be
-  // consented to Sync.
+  // The primary account information. The account may or may not be consented
+  // for Sync.
   // Must be kept in sync with prefs. Use SetPrimaryAccountInternal() to change
   // this field.
-  CoreAccountInfo primary_account_info_;
+  absl::optional<PrimaryAccount> primary_account_;
 
-#if !defined(OS_CHROMEOS)
-  signin::AccountConsistencyMethod account_consistency_;
-#endif
-
-  std::unique_ptr<PrimaryAccountPolicyManager> policy_manager_;
   base::ObserverList<Observer> observers_;
-
-  DISALLOW_COPY_AND_ASSIGN(PrimaryAccountManager);
 };
+
+// Internal feature - exposed only unit testing.
+BASE_DECLARE_FEATURE(kRestorePrimaryAccountInfo);
 
 #endif  // COMPONENTS_SIGNIN_INTERNAL_IDENTITY_MANAGER_PRIMARY_ACCOUNT_MANAGER_H_

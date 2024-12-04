@@ -1,30 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the test suite of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:GPL-EXCEPT$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 3 as published by the Free Software
-** Foundation with exceptions as appearing in the file LICENSE.GPL3-EXCEPT
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 #include <qtest.h>
 #include <QtCore/qdebug.h>
 #include <QtCore/qtimer.h>
@@ -38,13 +13,13 @@
 
 #include <private/qquickworkerscript_p.h>
 #include <private/qqmlengine_p.h>
-#include "../../shared/util.h"
+#include <QtQuickTestUtils/private/qmlutils_p.h>
 
 class tst_QQuickWorkerScript : public QQmlDataTest
 {
     Q_OBJECT
 public:
-    tst_QQuickWorkerScript() {}
+    tst_QQuickWorkerScript() : QQmlDataTest(QT_QMLTEST_DATADIR) {}
 private slots:
     void source();
     void ready();
@@ -127,31 +102,20 @@ void tst_QQuickWorkerScript::messaging()
     QFETCH(QVariant, value);
 
     QQmlComponent component(&m_engine, testFileUrl("worker.qml"));
-    QQuickWorkerScript *worker = qobject_cast<QQuickWorkerScript*>(component.create());
-    QVERIFY(worker != nullptr);
+    std::unique_ptr<QQuickWorkerScript> worker { qobject_cast<QQuickWorkerScript*>(component.create()) };
+    QVERIFY(worker);
 
-    QVERIFY(QMetaObject::invokeMethod(worker, "testSend", Q_ARG(QVariant, value)));
-    waitForEchoMessage(worker);
+    QVERIFY(QMetaObject::invokeMethod(worker.get(), "testSend", Q_ARG(QVariant, value)));
+    waitForEchoMessage(worker.get());
 
     const QMetaObject *mo = worker->metaObject();
-    QVariant response = mo->property(mo->indexOfProperty("response")).read(worker).value<QVariant>();
+    QVariant response = mo->property(mo->indexOfProperty("response")).read(worker.get()).value<QVariant>();
     if (response.userType() == qMetaTypeId<QJSValue>())
         response = response.value<QJSValue>().toVariant();
 
-    if (value.type() == QMetaType::QRegExp && response.type() == QMetaType::QRegularExpression) {
-        // toVariant() doesn't know if we want QRegExp or QRegularExpression. It always creates
-        // a QRegularExpression from a JavaScript regular expression.
-        const QRegularExpression responseRegExp = response.toRegularExpression();
-        const QRegExp valueRegExp = value.toRegExp();
-        QCOMPARE(responseRegExp.pattern(), valueRegExp.pattern());
-        QCOMPARE(bool(responseRegExp.patternOptions() & QRegularExpression::CaseInsensitiveOption),
-                 bool(valueRegExp.caseSensitivity() == Qt::CaseInsensitive));
-    } else {
-        QCOMPARE(response, value);
-    }
+    QCOMPARE(response, value);
 
     qApp->processEvents();
-    delete worker;
 }
 
 void tst_QQuickWorkerScript::messaging_data()
@@ -165,8 +129,6 @@ void tst_QQuickWorkerScript::messaging_data()
     QTest::newRow("string") << QVariant::fromValue(QString("More cheeeese, Gromit!"));
     QTest::newRow("variant list") << QVariant::fromValue((QVariantList() << "a" << "b" << "c"));
     QTest::newRow("date time") << QVariant::fromValue(QDateTime::currentDateTime());
-    QTest::newRow("regexp") << QVariant::fromValue(QRegExp("^\\d\\d?$", Qt::CaseInsensitive,
-                                                         QRegExp::RegExp2));
     QTest::newRow("regularexpression") << QVariant::fromValue(QRegularExpression(
             "^\\d\\d?$", QRegularExpression::CaseInsensitiveOption));
     QTest::newRow("url") << QVariant::fromValue(QUrl("http://example.com/foo/bar"));
@@ -179,29 +141,28 @@ void tst_QQuickWorkerScript::messaging_sendQObjectList()
     // js values.
 
     QQmlComponent component(&m_engine, testFileUrl("worker.qml"));
-    QQuickWorkerScript *worker = qobject_cast<QQuickWorkerScript*>(component.create());
-    QVERIFY(worker != nullptr);
+    std::unique_ptr<QQuickWorkerScript> worker { qobject_cast<QQuickWorkerScript*>(component.create()) };
+    QVERIFY(worker);
 
     QVariantList objects;
     for (int i=0; i<3; i++)
         objects << QVariant::fromValue(new QObject(this));
 
-    QVERIFY(QMetaObject::invokeMethod(worker, "testSend", Q_ARG(QVariant, QVariant::fromValue(objects))));
-    waitForEchoMessage(worker);
+    QVERIFY(QMetaObject::invokeMethod(worker.get(), "testSend", Q_ARG(QVariant, QVariant::fromValue(objects))));
+    waitForEchoMessage(worker.get());
 
     const QMetaObject *mo = worker->metaObject();
-    QVariantList result = mo->property(mo->indexOfProperty("response")).read(worker).value<QVariantList>();
+    QVariantList result = mo->property(mo->indexOfProperty("response")).read(worker.get()).value<QVariantList>();
     QCOMPARE(result, (QVariantList() << QVariant() << QVariant() << QVariant()));
 
     qApp->processEvents();
-    delete worker;
 }
 
 void tst_QQuickWorkerScript::messaging_sendJsObject()
 {
     QQmlComponent component(&m_engine, testFileUrl("worker.qml"));
-    QQuickWorkerScript *worker = qobject_cast<QQuickWorkerScript*>(component.create());
-    QVERIFY(worker != nullptr);
+    std::unique_ptr<QQuickWorkerScript> worker { qobject_cast<QQuickWorkerScript*>(component.create()) };
+    QVERIFY(worker);
 
     // Properties are in alphabetical order to enable string-based comparison after
     // QVariant roundtrip, since the properties will be stored in a QVariantMap.
@@ -212,26 +173,24 @@ void tst_QQuickWorkerScript::messaging_sendJsObject()
     map.insert("name", "zyz");
     map.insert("spell power", 3101);
 
-    QVERIFY(QMetaObject::invokeMethod(worker, "testSend", Q_ARG(QVariant, QVariant::fromValue(map))));
-    waitForEchoMessage(worker);
+    QVERIFY(QMetaObject::invokeMethod(worker.get(), "testSend", Q_ARG(QVariant, QVariant::fromValue(map))));
+    waitForEchoMessage(worker.get());
 
     QVariant result = QVariant::fromValue(false);
-    QVERIFY(QMetaObject::invokeMethod(worker, "compareLiteralResponse", Qt::DirectConnection,
+    QVERIFY(QMetaObject::invokeMethod(worker.get(), "compareLiteralResponse", Qt::DirectConnection,
             Q_RETURN_ARG(QVariant, result), Q_ARG(QVariant, jsObject)));
     QVERIFY(result.toBool());
 
     qApp->processEvents();
-    delete worker;
 }
 
 void tst_QQuickWorkerScript::messaging_sendExternalObject()
 {
     QQmlComponent component(&m_engine, testFileUrl("externalObjectWorker.qml"));
-    QObject *obj = component.create();
-    QVERIFY(obj);
-    QMetaObject::invokeMethod(obj, "testExternalObject");
+    std::unique_ptr<QObject> obj { component.create() };
+    QVERIFY(obj.get());
+    QMetaObject::invokeMethod(obj.get(), "testExternalObject");
     QTest::qWait(100); // shouldn't crash.
-    delete obj;
 }
 
 void tst_QQuickWorkerScript::script_with_pragma()
@@ -239,35 +198,33 @@ void tst_QQuickWorkerScript::script_with_pragma()
     QVariant value(100);
 
     QQmlComponent component(&m_engine, testFileUrl("worker_pragma.qml"));
-    QQuickWorkerScript *worker = qobject_cast<QQuickWorkerScript*>(component.create());
-    QVERIFY(worker != nullptr);
+    std::unique_ptr<QQuickWorkerScript> worker { qobject_cast<QQuickWorkerScript*>(component.create()) };
+    QVERIFY(worker);
 
-    QVERIFY(QMetaObject::invokeMethod(worker, "testSend", Q_ARG(QVariant, value)));
-    waitForEchoMessage(worker);
+    QVERIFY(QMetaObject::invokeMethod(worker.get(), "testSend", Q_ARG(QVariant, value)));
+    waitForEchoMessage(worker.get());
 
     const QMetaObject *mo = worker->metaObject();
-    QCOMPARE(mo->property(mo->indexOfProperty("response")).read(worker).value<QVariant>(), value);
+    QCOMPARE(mo->property(mo->indexOfProperty("response")).read(worker.get()).value<QVariant>(), value);
 
     qApp->processEvents();
-    delete worker;
 }
 
 void tst_QQuickWorkerScript::script_included()
 {
     QQmlComponent component(&m_engine, testFileUrl("worker_include.qml"));
-    QQuickWorkerScript *worker = qobject_cast<QQuickWorkerScript*>(component.create());
-    QVERIFY(worker != nullptr);
+    std::unique_ptr<QQuickWorkerScript> worker { qobject_cast<QQuickWorkerScript*>(component.create()) };
+    QVERIFY(worker);
 
     QString value("Hello");
 
-    QVERIFY(QMetaObject::invokeMethod(worker, "testSend", Q_ARG(QVariant, value)));
-    waitForEchoMessage(worker);
+    QVERIFY(QMetaObject::invokeMethod(worker.get(), "testSend", Q_ARG(QVariant, value)));
+    waitForEchoMessage(worker.get());
 
     const QMetaObject *mo = worker->metaObject();
-    QCOMPARE(mo->property(mo->indexOfProperty("response")).read(worker).toString(), value + " World");
+    QCOMPARE(mo->property(mo->indexOfProperty("response")).read(worker.get()).toString(), value + " World");
 
     qApp->processEvents();
-    delete worker;
 }
 
 static QString qquickworkerscript_lastWarning;
@@ -282,69 +239,65 @@ void tst_QQuickWorkerScript::scriptError_onLoad()
     QQmlComponent component(&m_engine, testFileUrl("worker_error_onLoad.qml"));
 
     QtMessageHandler previousMsgHandler = qInstallMessageHandler(qquickworkerscript_warningsHandler);
-    QQuickWorkerScript *worker = qobject_cast<QQuickWorkerScript*>(component.create());
-    QVERIFY(worker != nullptr);
+    std::unique_ptr<QQuickWorkerScript> worker { qobject_cast<QQuickWorkerScript*>(component.create()) };
+    QVERIFY(worker);
 
     QTRY_COMPARE(qquickworkerscript_lastWarning,
             testFileUrl("script_error_onLoad.js").toString() + QLatin1String(":3:10: SyntaxError: Expected token `,'"));
 
     qInstallMessageHandler(previousMsgHandler);
     qApp->processEvents();
-    delete worker;
 }
 
 void tst_QQuickWorkerScript::scriptError_onCall()
 {
     QQmlComponent component(&m_engine, testFileUrl("worker_error_onCall.qml"));
-    QQuickWorkerScript *worker = qobject_cast<QQuickWorkerScript*>(component.create());
-    QVERIFY(worker != nullptr);
+    std::unique_ptr<QQuickWorkerScript> worker { qobject_cast<QQuickWorkerScript*>(component.create()) };
+    QVERIFY(worker);
 
     QtMessageHandler previousMsgHandler = qInstallMessageHandler(qquickworkerscript_warningsHandler);
     QVariant value;
-    QVERIFY(QMetaObject::invokeMethod(worker, "testSend", Q_ARG(QVariant, value)));
+    QVERIFY(QMetaObject::invokeMethod(worker.get(), "testSend", Q_ARG(QVariant, value)));
 
     QTRY_COMPARE(qquickworkerscript_lastWarning,
             testFileUrl("script_error_onCall.js").toString() + QLatin1String(":4: ReferenceError: getData is not defined"));
 
     qInstallMessageHandler(previousMsgHandler);
     qApp->processEvents();
-    delete worker;
 }
 
 void tst_QQuickWorkerScript::script_function()
 {
     QQmlComponent component(&m_engine, testFileUrl("worker_function.qml"));
-    QQuickWorkerScript *worker = qobject_cast<QQuickWorkerScript*>(component.create());
-    QVERIFY(worker != nullptr);
+    std::unique_ptr<QQuickWorkerScript> worker { qobject_cast<QQuickWorkerScript*>(component.create()) };
+    QVERIFY(worker);
 
     QString value("Hello");
 
-    QVERIFY(QMetaObject::invokeMethod(worker, "testSend", Q_ARG(QVariant, value)));
-    waitForEchoMessage(worker);
+    QVERIFY(QMetaObject::invokeMethod(worker.get(), "testSend", Q_ARG(QVariant, value)));
+    waitForEchoMessage(worker.get());
 
     const QMetaObject *mo = worker->metaObject();
-    QCOMPARE(mo->property(mo->indexOfProperty("response")).read(worker).toString(), value + " World");
+    QCOMPARE(mo->property(mo->indexOfProperty("response")).read(worker.get()).toString(), value + " World");
 
     qApp->processEvents();
-    delete worker;
 }
 
 void tst_QQuickWorkerScript::script_var()
 {
     QQmlComponent component(&m_engine, testFileUrl("worker_var.qml"));
-    QQuickWorkerScript *worker = qobject_cast<QQuickWorkerScript*>(component.create());
-    QVERIFY(worker != nullptr);
+    std::unique_ptr<QQuickWorkerScript> worker { qobject_cast<QQuickWorkerScript*>(component.create()) };
+    QVERIFY(worker);
 
     QString value("Hello");
 
-    QVERIFY(QMetaObject::invokeMethod(worker, "testSend", Q_ARG(QVariant, value)));
-    waitForEchoMessage(worker);
+    QVERIFY(QMetaObject::invokeMethod(worker.get(), "testSend", Q_ARG(QVariant, value)));
+    waitForEchoMessage(worker.get());
 
     const QMetaObject *mo = worker->metaObject();
-    QCOMPARE(mo->property(mo->indexOfProperty("response")).read(worker).toString(), value + " World");
+    QCOMPARE(mo->property(mo->indexOfProperty("response")).read(worker.get()).toString(), value + " World");
 
     qApp->processEvents();
-    delete worker;
 }
 
 // Rapidly create and destroy worker scripts to test resources are being disposed
@@ -354,9 +307,8 @@ void tst_QQuickWorkerScript::stressDispose()
     for (int ii = 0; ii < 100; ++ii) {
         QQmlEngine engine;
         QQmlComponent component(&engine, testFileUrl("stressDispose.qml"));
-        QObject *o = component.create();
-        QVERIFY(o);
-        delete o;
+        std::unique_ptr<QObject> o { component.create() };
+        QVERIFY(o.get());
     }
 }
 

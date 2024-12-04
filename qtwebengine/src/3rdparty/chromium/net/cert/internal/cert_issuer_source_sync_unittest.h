@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,11 +7,11 @@
 
 #include <algorithm>
 
-#include "net/cert/internal/cert_errors.h"
-#include "net/cert/internal/cert_issuer_source.h"
 #include "net/cert/internal/test_helpers.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/boringssl/src/include/openssl/pool.h"
+#include "third_party/boringssl/src/pki/cert_errors.h"
+#include "third_party/boringssl/src/pki/cert_issuer_source.h"
 
 namespace net {
 
@@ -29,15 +29,16 @@ namespace {
 
 ::testing::AssertionResult ReadTestCert(
     const std::string& file_name,
-    scoped_refptr<ParsedCertificate>* result) {
+    std::shared_ptr<const bssl::ParsedCertificate>* result) {
   std::string der;
   ::testing::AssertionResult r =
       ReadTestPem("net/data/cert_issuer_source_static_unittest/" + file_name,
                   "CERTIFICATE", &der);
-  if (!r)
+  if (!r) {
     return r;
-  CertErrors errors;
-  *result = ParsedCertificate::Create(
+  }
+  bssl::CertErrors errors;
+  *result = bssl::ParsedCertificate::Create(
       bssl::UniquePtr<CRYPTO_BUFFER>(CRYPTO_BUFFER_new(
           reinterpret_cast<const uint8_t*>(der.data()), der.size(), nullptr)),
       {}, &errors);
@@ -68,7 +69,7 @@ class CertIssuerSourceSyncTest : public ::testing::Test {
     ASSERT_TRUE(ReadTestCert("e2.pem", &e2_));
   }
 
-  void AddCert(scoped_refptr<ParsedCertificate> cert) {
+  void AddCert(std::shared_ptr<const bssl::ParsedCertificate> cert) {
     delegate_.AddCert(std::move(cert));
   }
 
@@ -86,26 +87,29 @@ class CertIssuerSourceSyncTest : public ::testing::Test {
     AddCert(e2_);
   }
 
-  CertIssuerSource& source() { return delegate_.source(); }
+  bssl::CertIssuerSource& source() { return delegate_.source(); }
 
  protected:
-  bool IssuersMatch(scoped_refptr<ParsedCertificate> cert,
-                    ParsedCertificateList expected_matches) {
-    ParsedCertificateList matches;
+  bool IssuersMatch(std::shared_ptr<const bssl::ParsedCertificate> cert,
+                    bssl::ParsedCertificateList expected_matches) {
+    bssl::ParsedCertificateList matches;
     source().SyncGetIssuersOf(cert.get(), &matches);
 
-    std::vector<der::Input> der_result_matches;
-    for (const auto& it : matches)
+    std::vector<bssl::der::Input> der_result_matches;
+    for (const auto& it : matches) {
       der_result_matches.push_back(it->der_cert());
+    }
     std::sort(der_result_matches.begin(), der_result_matches.end());
 
-    std::vector<der::Input> der_expected_matches;
-    for (const auto& it : expected_matches)
+    std::vector<bssl::der::Input> der_expected_matches;
+    for (const auto& it : expected_matches) {
       der_expected_matches.push_back(it->der_cert());
+    }
     std::sort(der_expected_matches.begin(), der_expected_matches.end());
 
-    if (der_expected_matches == der_result_matches)
+    if (der_expected_matches == der_result_matches) {
       return true;
+    }
 
     // Print some extra information for debugging.
     EXPECT_EQ(der_expected_matches, der_result_matches);
@@ -113,17 +117,17 @@ class CertIssuerSourceSyncTest : public ::testing::Test {
   }
 
   TestDelegate delegate_;
-  scoped_refptr<ParsedCertificate> root_;
-  scoped_refptr<ParsedCertificate> i1_1_;
-  scoped_refptr<ParsedCertificate> i1_2_;
-  scoped_refptr<ParsedCertificate> i2_;
-  scoped_refptr<ParsedCertificate> i3_1_;
-  scoped_refptr<ParsedCertificate> i3_2_;
-  scoped_refptr<ParsedCertificate> c1_;
-  scoped_refptr<ParsedCertificate> c2_;
-  scoped_refptr<ParsedCertificate> d_;
-  scoped_refptr<ParsedCertificate> e1_;
-  scoped_refptr<ParsedCertificate> e2_;
+  std::shared_ptr<const bssl::ParsedCertificate> root_;
+  std::shared_ptr<const bssl::ParsedCertificate> i1_1_;
+  std::shared_ptr<const bssl::ParsedCertificate> i1_2_;
+  std::shared_ptr<const bssl::ParsedCertificate> i2_;
+  std::shared_ptr<const bssl::ParsedCertificate> i3_1_;
+  std::shared_ptr<const bssl::ParsedCertificate> i3_2_;
+  std::shared_ptr<const bssl::ParsedCertificate> c1_;
+  std::shared_ptr<const bssl::ParsedCertificate> c2_;
+  std::shared_ptr<const bssl::ParsedCertificate> d_;
+  std::shared_ptr<const bssl::ParsedCertificate> e1_;
+  std::shared_ptr<const bssl::ParsedCertificate> e2_;
 };
 
 TYPED_TEST_SUITE_P(CertIssuerSourceSyncTest);
@@ -131,7 +135,7 @@ TYPED_TEST_SUITE_P(CertIssuerSourceSyncTest);
 TYPED_TEST_P(CertIssuerSourceSyncTest, NoMatch) {
   this->AddCert(this->root_);
 
-  EXPECT_TRUE(this->IssuersMatch(this->c1_, ParsedCertificateList()));
+  EXPECT_TRUE(this->IssuersMatch(this->c1_, {}));
 }
 
 TYPED_TEST_P(CertIssuerSourceSyncTest, OneMatch) {
@@ -161,7 +165,7 @@ TYPED_TEST_P(CertIssuerSourceSyncTest, SelfIssued) {
 // CertIssuerSourceStatic never returns results asynchronously.
 TYPED_TEST_P(CertIssuerSourceSyncTest, IsNotAsync) {
   this->AddCert(this->i1_1_);
-  std::unique_ptr<CertIssuerSource::Request> request;
+  std::unique_ptr<bssl::CertIssuerSource::Request> request;
   this->source().AsyncGetIssuersOf(this->c1_.get(), &request);
   EXPECT_EQ(nullptr, request);
 }

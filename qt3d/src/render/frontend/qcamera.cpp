@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2014 Klaralvdalens Datakonsult AB (KDAB).
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt3D module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2014 Klaralvdalens Datakonsult AB (KDAB).
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qcamera.h"
 #include "qcamera_p.h"
@@ -94,7 +58,7 @@ void QCameraPrivate::updateViewMatrixAndTransform(bool doEmit)
 
 /*!
  * \qmltype Camera
- * \instantiates Qt3DRender::QCamera
+ * \nativetype Qt3DRender::QCamera
  * \inherits Entity
  * \inqmlmodule Qt3D.Render
  * \since 5.5
@@ -281,13 +245,13 @@ void QCameraPrivate::updateViewMatrixAndTransform(bool doEmit)
  */
 
 /*!
- * \qmlproperty Qt3DRender::QCameraLens QCamera::lens
+ * \qmlproperty CameraLens Qt3D.Render::Camera::lens
  * Holds the CameraLens component of the camera.
  * \since 5.14
  */
 
 /*!
- * \qmlproperty Qt3DCore::QTransform QCamera::transform
+ * \qmlproperty Transform Qt3D.Render::Camera::transform
  * Holds the Transform component of the camera.
  * \since 5.14
  */
@@ -406,7 +370,7 @@ void QCameraPrivate::updateViewMatrixAndTransform(bool doEmit)
  */
 
 /*!
- * \property QCamera::projectionType
+ * \property Qt3DRender::QCamera::projectionType
  *
  * Holds the type of the camera projection. The default value is
  * QCameraLens::PerspectiveProjection.
@@ -423,31 +387,31 @@ void QCameraPrivate::updateViewMatrixAndTransform(bool doEmit)
  */
 
 /*!
- * \property QCamera::nearPlane
+ * \property Qt3DRender::QCamera::nearPlane
  * Holds the current camera near plane. Objects that are closer to the
  * camera than the nearPlane will not be rendered.
  */
 
 /*!
- * \property QCamera::farPlane
+ * \property Qt3DRender::QCamera::farPlane
  * Holds the current camera far plane. Objects that are farther from the
  * camera than the farPlane will not be rendered.
  */
 
 /*!
- * \property QCamera::lens
+ * \property Qt3DRender::QCamera::lens
  * Holds the Qt3DRender::QCameraLens component of the camera.
  * \since 5.14
  */
 
 /*!
- * \property QCamera::transform
+ * \property Qt3DRender::QCamera::transform
  * Holds the Qt3DCore::QTransform component of the camera.
  * \since 5.14
  */
 
 /*!
- * \property QCamera::fieldOfView
+ * \property Qt3DRender::QCamera::fieldOfView
  * Holds the current vertical field of view in degrees.
  *
  * Along with \l aspectRatio, this property determines how much of
@@ -461,12 +425,12 @@ void QCameraPrivate::updateViewMatrixAndTransform(bool doEmit)
  */
 
 /*!
- * \property QCamera::aspectRatio
+ * \property Qt3DRender::QCamera::aspectRatio
  * Holds the current aspect ratio.
  */
 
 /*!
- *\property QCamera::left
+ *\property Qt3DRender::QCamera::left
  * Holds the current left of the camera.
  *
  * This property is only relevant when \l projectionType is
@@ -474,7 +438,7 @@ void QCameraPrivate::updateViewMatrixAndTransform(bool doEmit)
  */
 
 /*!
- * \property QCamera::right
+ * \property Qt3DRender::QCamera::right
  * Holds the current right of the camera.
  *
  * This property is only relevant when \l projectionType is
@@ -482,7 +446,7 @@ void QCameraPrivate::updateViewMatrixAndTransform(bool doEmit)
  */
 
 /*!
- * \property QCamera::bottom
+ * \property Qt3DRender::QCamera::bottom
  * Holds the current bottom of the camera.
  *
  * This property is only relevant when \l projectionType is
@@ -490,7 +454,7 @@ void QCameraPrivate::updateViewMatrixAndTransform(bool doEmit)
  */
 
 /*!
- * \property QCamera::top
+ * \property Qt3DRender::QCamera::top
  * Holds the current top of the camera.
  *
  * This property is only relevant when \l projectionType is
@@ -498,12 +462,12 @@ void QCameraPrivate::updateViewMatrixAndTransform(bool doEmit)
  */
 
 /*!
- * \property QCamera::projectionMatrix
+ * \property Qt3DRender::QCamera::projectionMatrix
  * Holds the current projection matrix of the camera.
  */
 
 /*!
- * \property QCamera::exposure
+ * \property Qt3DRender::QCamera::exposure
  * Holds the current exposure of the camera.
  *
  * The default value is 0.0.
@@ -516,13 +480,13 @@ void QCameraPrivate::updateViewMatrixAndTransform(bool doEmit)
  */
 
 /*!
- * \property QCamera::position
+ * \property Qt3DRender::QCamera::position
  * Holds the camera's position in coordinates relative to
  * the parent entity.
  */
 
 /*!
- * \property QCamera::upVector
+ * \property Qt3DRender::QCamera::upVector
  * Holds the camera's up vector in coordinates relative to
  * the parent entity.
  *
@@ -534,7 +498,7 @@ void QCameraPrivate::updateViewMatrixAndTransform(bool doEmit)
  */
 
 /*!
- * \property QCamera::viewCenter
+ * \property Qt3DRender::QCamera::viewCenter
  * Holds the camera's view center in coordinates relative to
  * the parent entity.
  *
@@ -542,7 +506,7 @@ void QCameraPrivate::updateViewMatrixAndTransform(bool doEmit)
  */
 
 /*!
- * \property QCamera::viewVector
+ * \property Qt3DRender::QCamera::viewVector
  * Holds the camera's view vector in coordinates relative to
  * the parent entity.
  *
@@ -551,7 +515,7 @@ void QCameraPrivate::updateViewMatrixAndTransform(bool doEmit)
  */
 
 /*!
- * \property QCamera::viewMatrix
+ * \property Qt3DRender::QCamera::viewMatrix
  * \deprecated
  * Holds the camera's view matrix in coordinates relative to
  * the parent entity.
@@ -1127,3 +1091,5 @@ QMatrix4x4 QCamera::viewMatrix() const
 } // Qt3DRender
 
 QT_END_NAMESPACE
+
+#include "moc_qcamera.cpp"

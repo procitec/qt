@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,7 +7,7 @@
 
 #include <memory>
 
-#include "base/macros.h"
+#include "base/check_op.h"
 #include "third_party/blink/renderer/core/animation/typed_interpolation_value.h"
 #include "third_party/blink/renderer/core/animation/underlying_value.h"
 #include "third_party/blink/renderer/core/core_export.h"
@@ -25,6 +25,8 @@ class CORE_EXPORT UnderlyingValueOwner : public UnderlyingValue {
  public:
   UnderlyingValueOwner()
       : type_(nullptr), value_owner_(nullptr), value_(nullptr) {}
+  UnderlyingValueOwner(const UnderlyingValueOwner&) = delete;
+  UnderlyingValueOwner& operator=(const UnderlyingValueOwner&) = delete;
 
   operator bool() const {
     DCHECK_EQ(static_cast<bool>(type_), static_cast<bool>(value_));
@@ -33,7 +35,7 @@ class CORE_EXPORT UnderlyingValueOwner : public UnderlyingValue {
 
   // UnderlyingValue
   InterpolableValue& MutableInterpolableValue() final;
-  void SetInterpolableValue(std::unique_ptr<InterpolableValue>) final;
+  void SetInterpolableValue(InterpolableValue*) final;
   const NonInterpolableValue* GetNonInterpolableValue() const final;
   void SetNonInterpolableValue(scoped_refptr<const NonInterpolableValue>) final;
 
@@ -47,7 +49,7 @@ class CORE_EXPORT UnderlyingValueOwner : public UnderlyingValue {
   void Set(std::nullptr_t);
   void Set(const InterpolationType&, const InterpolationValue&);
   void Set(const InterpolationType&, InterpolationValue&&);
-  void Set(std::unique_ptr<TypedInterpolationValue>);
+  void Set(TypedInterpolationValue*);
   void Set(const TypedInterpolationValue*);
 
   InterpolationValue& MutableValue();
@@ -56,7 +58,6 @@ class CORE_EXPORT UnderlyingValueOwner : public UnderlyingValue {
   const InterpolationType* type_;
   InterpolationValue value_owner_;
   const InterpolationValue* value_;
-  DISALLOW_COPY_AND_ASSIGN(UnderlyingValueOwner);
 };
 
 }  // namespace blink

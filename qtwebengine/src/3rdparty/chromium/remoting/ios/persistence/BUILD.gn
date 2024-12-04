@@ -1,4 +1,4 @@
-# Copyright 2017 The Chromium Authors. All rights reserved.
+# Copyright 2017 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -22,8 +22,6 @@ source_set("persistence") {
     "//base",
     "//remoting/ios/domain",
   ]
-
-  configs += [ "//build/config/compiler:enable_arc" ]
 }
 
 source_set("test_support") {
@@ -36,8 +34,10 @@ source_set("test_support") {
   ]
 
   public_deps = [ "//testing/gmock" ]
-
-  configs += [ "//build/config/compiler:enable_arc" ]
+  deps = [
+    ":persistence",
+    "//base",
+  ]
 }
 
 source_set("unit_tests") {
@@ -49,11 +49,10 @@ source_set("unit_tests") {
   deps = [
     ":persistence",
     ":test_support",
+    "//base",
     "//testing/gmock",
     "//testing/gtest",
   ]
 
   frameworks = [ "Security.framework" ]
-
-  configs += [ "//build/config/compiler:enable_arc" ]
 }

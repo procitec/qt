@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,39 +16,41 @@ namespace metrics_internal {
 // TODO(crbug.com/916420): separate out client / annotation types when we have
 //                         more use cases for the service.
 constexpr char kCacheHit[] = "ImageAnnotationService.AccessibilityV1.CacheHit";
+constexpr char kClientResult[] =
+    "ImageAnnotationService.AccessibilityV1.ClientResult";
+constexpr char kDescFailure[] =
+    "ImageAnnotationService.AccessibilityV1.DescFailure";
+constexpr char kDescType[] = "ImageAnnotationService.AccessibilityV1.DescType";
+constexpr char kEncodedJpegSize[] =
+    "ImageAnnotationService.AccessibilityV1.EncodedJpegSizeKB";
+constexpr char kEngineKnown[] =
+    "ImageAnnotationService.AccessibilityV1.EngineKnown";
+constexpr char kImageRequestIncludesDesc[] =
+    "ImageAnnotationService.AccessibilityV1.ImageRequestIncludesDesc";
+constexpr char kImageRequestIncludesIcon[] =
+    "ImageAnnotationService.AccessibilityV1.ImageRequestIncludesIcon";
 constexpr char kJsonParseSuccess[] =
     "ImageAnnotationService.AccessibilityV1.JsonParseSuccess";
 constexpr char kPixelFetchSuccess[] =
     "ImageAnnotationService.AccessibilityV1.PixelFetchSuccess";
-constexpr char kAnnotationConfidence[] =
-    "ImageAnnotationService.AccessibilityV1.%s.Confidence";
-constexpr char kAnnotationEmpty[] =
-    "ImageAnnotationService.AccessibilityV1.%s.Empty";
-constexpr char kAnnotationStatus[] =
-    "ImageAnnotationService.AccessibilityV1.%s.Status";
-constexpr char kDescType[] = "ImageAnnotationService.AccessibilityV1.DescType";
-constexpr char kDescFailure[] =
-    "ImageAnnotationService.AccessibilityV1.DescFailure";
-constexpr char kEngineKnown[] =
-    "ImageAnnotationService.AccessibilityV1.EngineKnown";
-constexpr char kServerNetError[] =
-    "ImageAnnotationService.AccessibilityV1.ServerNetError";
 constexpr char kServerHttpResponseCode[] =
     "ImageAnnotationService.AccessibilityV1.ServerHttpResponseCode";
 constexpr char kServerLatency[] =
     "ImageAnnotationService.AccessibilityV1.ServerLatencyMs";
-constexpr char kImageRequestIncludesDesc[] =
-    "ImageAnnotationService.AccessibilityV1.ImageRequestIncludesDesc";
+constexpr char kServerNetError[] =
+    "ImageAnnotationService.AccessibilityV1.ServerNetError";
 constexpr char kServerRequestSize[] =
     "ImageAnnotationService.AccessibilityV1.ServerRequestSizeKB";
 constexpr char kServerResponseSize[] =
     "ImageAnnotationService.AccessibilityV1.ServerResponseSizeBytes";
 constexpr char kSourcePixelCount[] =
     "ImageAnnotationService.AccessibilityV1.SourcePixelCount";
-constexpr char kEncodedJpegSize[] =
-    "ImageAnnotationService.AccessibilityV1.EncodedJpegSizeKB";
-constexpr char kClientResult[] =
-    "ImageAnnotationService.AccessibilityV1.ClientResult";
+constexpr char kAnnotationConfidence[] =
+    "ImageAnnotationService.%sAccessibilityV1.Confidence";
+constexpr char kAnnotationEmpty[] =
+    "ImageAnnotationService.%sAccessibilityV1.Empty";
+constexpr char kAnnotationStatus[] =
+    "ImageAnnotationService.%sAccessibilityV1.Status";
 
 }  // namespace metrics_internal
 
@@ -99,6 +101,11 @@ void ReportServerLatency(base::TimeDelta latency);
 // the description engine; requests for images that violate the description
 // engine policy (e.g. are too small) will not.
 void ReportImageRequestIncludesDesc(bool includes_desc);
+
+// Report whether or not a request for image annotation includes parameters for
+// the icon engine; requests for images that violate the description
+// engine policy (e.g. are too large) will not.
+void ReportImageRequestIncludesIcon(bool includes_icon);
 
 // Report the size of the request sent to the image annotation server.
 void ReportServerRequestSizeKB(size_t size_kb);

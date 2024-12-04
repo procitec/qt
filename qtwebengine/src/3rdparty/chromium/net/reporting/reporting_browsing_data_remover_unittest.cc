@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,9 +7,10 @@
 #include <memory>
 #include <string>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
+#include "base/memory/raw_ptr.h"
 #include "base/test/simple_test_tick_clock.h"
-#include "net/base/network_isolation_key.h"
+#include "net/base/network_anonymization_key.h"
 #include "net/reporting/reporting_cache.h"
 #include "net/reporting/reporting_context.h"
 #include "net/reporting/reporting_report.h"
@@ -31,7 +32,7 @@ class ReportingBrowsingDataRemoverTest : public ReportingTestBase {
       data_type_mask |= ReportingBrowsingDataRemover::DATA_TYPE_CLIENTS;
 
     if (!host.empty()) {
-      base::RepeatingCallback<bool(const GURL&)> origin_filter =
+      base::RepeatingCallback<bool(const url::Origin&)> origin_filter =
           base::BindRepeating(&ReportingBrowsingDataRemoverTest::HostIs, host);
       ReportingBrowsingDataRemover::RemoveBrowsingData(cache(), data_type_mask,
                                                        origin_filter);
@@ -41,26 +42,26 @@ class ReportingBrowsingDataRemoverTest : public ReportingTestBase {
     }
   }
 
-  // TODO(chlily): Take NIK.
+  // TODO(chlily): Take NAK.
   void AddReport(const GURL& url) {
-    cache()->AddReport(NetworkIsolationKey(), url, kUserAgent_, kGroup_, kType_,
-                       std::make_unique<base::DictionaryValue>(), 0,
+    cache()->AddReport(absl::nullopt, NetworkAnonymizationKey(), url,
+                       kUserAgent_, kGroup_, kType_, base::Value::Dict(), 0,
                        tick_clock()->NowTicks(), 0);
   }
 
-  // TODO(chlily): Take NIK.
+  // TODO(chlily): Take NAK.
   void SetEndpoint(const url::Origin& origin) {
     SetEndpointInCache(
-        ReportingEndpointGroupKey(NetworkIsolationKey(), origin, kGroup_),
-        kEndpoint_, base::Time::Now() + base::TimeDelta::FromDays(7));
+        ReportingEndpointGroupKey(NetworkAnonymizationKey(), origin, kGroup_),
+        kEndpoint_, base::Time::Now() + base::Days(7));
   }
 
-  static bool HostIs(std::string host, const GURL& url) {
-    return url.host() == host;
+  static bool HostIs(std::string host, const url::Origin& origin) {
+    return origin.host() == host;
   }
 
   size_t report_count() {
-    std::vector<const ReportingReport*> reports;
+    std::vector<raw_ptr<const ReportingReport, VectorExperimental>> reports;
     cache()->GetReports(&reports);
     return reports.size();
   }
@@ -138,7 +139,7 @@ TEST_F(ReportingBrowsingDataRemoverTest, RemoveSomeReports) {
                      /* host= */ kUrl1_.host());
   EXPECT_EQ(2u, cache()->GetEndpointCount());
 
-  std::vector<const ReportingReport*> reports;
+  std::vector<raw_ptr<const ReportingReport, VectorExperimental>> reports;
   cache()->GetReports(&reports);
   ASSERT_EQ(1u, reports.size());
   EXPECT_EQ(kUrl2_, reports[0]->url);
@@ -155,10 +156,10 @@ TEST_F(ReportingBrowsingDataRemoverTest, RemoveSomeClients) {
                      /* host= */ kUrl1_.host());
   EXPECT_EQ(2u, report_count());
   EXPECT_FALSE(FindEndpointInCache(
-      ReportingEndpointGroupKey(NetworkIsolationKey(), kOrigin1_, kGroup_),
+      ReportingEndpointGroupKey(NetworkAnonymizationKey(), kOrigin1_, kGroup_),
       kEndpoint_));
   EXPECT_TRUE(FindEndpointInCache(
-      ReportingEndpointGroupKey(NetworkIsolationKey(), kOrigin2_, kGroup_),
+      ReportingEndpointGroupKey(NetworkAnonymizationKey(), kOrigin2_, kGroup_),
       kEndpoint_));
 }
 

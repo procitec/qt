@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtQuick module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qquickrectangle_p.h"
 #include "qquickrectangle_p_p.h"
@@ -95,7 +59,7 @@ void QQuickPen::setWidth(qreal w)
     m_width = w;
     m_valid = m_color.alpha() && (qRound(m_width) >= 1 || (!m_aligned && m_width > 0));
     static_cast<QQuickItem*>(parent())->update();
-    emit penChanged();
+    emit widthChanged();
 }
 
 QColor QQuickPen::color() const
@@ -108,7 +72,7 @@ void QQuickPen::setColor(const QColor &c)
     m_color = c;
     m_valid = m_color.alpha() && (qRound(m_width) >= 1 || (!m_aligned && m_width > 0));
     static_cast<QQuickItem*>(parent())->update();
-    emit penChanged();
+    emit colorChanged();
 }
 
 bool QQuickPen::pixelAligned() const
@@ -123,7 +87,7 @@ void QQuickPen::setPixelAligned(bool aligned)
     m_aligned = aligned;
     m_valid = m_color.alpha() && (qRound(m_width) >= 1 || (!m_aligned && m_width > 0));
     static_cast<QQuickItem*>(parent())->update();
-    emit penChanged();
+    emit pixelAlignedChanged();
 }
 
 bool QQuickPen::isValid() const
@@ -133,7 +97,7 @@ bool QQuickPen::isValid() const
 
 /*!
     \qmltype GradientStop
-    \instantiates QQuickGradientStop
+    \nativetype QQuickGradientStop
     \inqmlmodule QtQuick
     \ingroup qtquick-visual-utility
     \brief Defines the color at a position in a Gradient.
@@ -185,7 +149,7 @@ void QQuickGradientStop::updateGradient()
 
 /*!
     \qmltype Gradient
-    \instantiates QQuickGradient
+    \nativetype QQuickGradient
     \inqmlmodule QtQuick
     \ingroup qtquick-visual-utility
     \brief Defines a gradient fill.
@@ -238,7 +202,7 @@ void QQuickGradientStop::updateGradient()
 
 /*!
     \qmlproperty list<GradientStop> QtQuick::Gradient::stops
-    \default
+    \qmldefault
 
     This property holds the gradient stops describing the gradient.
 
@@ -265,10 +229,9 @@ QQmlListProperty<QQuickGradientStop> QQuickGradient::stops()
     \since 5.12
 
     Set this property to define the direction of the gradient.
-    \list
-    \li Gradient.Vertical - a vertical gradient
-    \li Gradient.Horizontal - a horizontal gradient
-    \endlist
+
+    \value Gradient.Vertical    a vertical gradient
+    \value Gradient.Horizontal  a horizontal gradient
 
     The default is Gradient.Vertical.
 */
@@ -301,9 +264,20 @@ void QQuickGradient::doUpdate()
 
 int QQuickRectanglePrivate::doUpdateSlotIdx = -1;
 
+void QQuickRectanglePrivate::maybeSetImplicitAntialiasing()
+{
+    bool implicitAA = (radius != 0);
+    if (extraRectangle.isAllocated() && !implicitAA) {
+        implicitAA = extraRectangle.value().topLeftRadius > 0.0
+            || extraRectangle.value().topRightRadius > 0.0
+            || extraRectangle.value().bottomLeftRadius > 0.0
+            || extraRectangle.value().bottomRightRadius > 0.0;
+    }
+    setImplicitAntialiasing(implicitAA);
+}
 /*!
     \qmltype Rectangle
-    \instantiates QQuickRectangle
+    \nativetype QQuickRectangle
     \inqmlmodule QtQuick
     \inherits Item
     \ingroup qtquick-visual
@@ -325,7 +299,10 @@ int QQuickRectanglePrivate::doUpdateSlotIdx = -1;
 
     You can also create rounded rectangles using the \l radius property. Since this
     introduces curved edges to the corners of a rectangle, it may be appropriate to
-    set the \l Item::antialiasing property to improve its appearance.
+    set the \l Item::antialiasing property to improve its appearance.  To set the
+    radii individually for different corners, you can use the properties
+    \l topLeftRadius, \l topRightRadius, \l bottomLeftRadius and
+    \l bottomRightRadius.
 
     \section1 Example Usage
 
@@ -376,6 +353,7 @@ void QQuickRectangle::doUpdate()
     \qmlpropertygroup QtQuick::Rectangle::border
     \qmlproperty int QtQuick::Rectangle::border.width
     \qmlproperty color QtQuick::Rectangle::border.color
+    \qmlproperty bool QtQuick::Rectangle::border.pixelAligned
 
     The width and color used to draw the border of the rectangle.
 
@@ -385,6 +363,10 @@ void QQuickRectangle::doUpdate()
     rectangle itself or its position relative to other items if anchors are used.
 
     The border is rendered within the rectangle's boundaries.
+
+    If \c pixelAligned is \c true (the default), the rendered border width is rounded to a whole
+    number of pixels, after device pixel ratio scaling. Setting \c pixelAligned to \c false will
+    allow fractional border widths, which may be desirable when \c antialiasing is enabled.
 */
 QQuickPen *QQuickRectangle::border()
 {
@@ -397,7 +379,7 @@ QQuickPen *QQuickRectangle::border()
 }
 
 /*!
-    \qmlproperty any QtQuick::Rectangle::gradient
+    \qmlproperty var QtQuick::Rectangle::gradient
 
     The gradient to use to fill the rectangle.
 
@@ -499,9 +481,12 @@ void QQuickRectangle::resetGradient()
     \qmlproperty real QtQuick::Rectangle::radius
     This property holds the corner radius used to draw a rounded rectangle.
 
-    If radius is non-zero, the rectangle will be painted as a rounded rectangle, otherwise it will be
-    painted as a normal rectangle. The same radius is used by all 4 corners; there is currently
-    no way to specify different radii for different corners.
+    If radius is non-zero, the rectangle will be painted as a rounded rectangle,
+    otherwise it will be painted as a normal rectangle. Individual corner radii
+    can be set as well (see below). These values will override \l radius. If
+    they are unset (by setting them to \c undefined), \l radius will be used instead.
+
+    \sa topLeftRadius, topRightRadius, bottomLeftRadius, bottomRightRadius
 */
 qreal QQuickRectangle::radius() const
 {
@@ -516,10 +501,240 @@ void QQuickRectangle::setRadius(qreal radius)
         return;
 
     d->radius = radius;
-    d->setImplicitAntialiasing(radius != 0.0);
+    d->maybeSetImplicitAntialiasing();
 
     update();
     emit radiusChanged();
+
+    if (d->extraRectangle.isAllocated()) {
+        if (d->extraRectangle->topLeftRadius < 0.)
+            emit topLeftRadiusChanged();
+        if (d->extraRectangle->topRightRadius < 0.)
+            emit topRightRadiusChanged();
+        if (d->extraRectangle->bottomLeftRadius < 0.)
+            emit bottomLeftRadiusChanged();
+        if (d->extraRectangle->bottomRightRadius < 0.)
+            emit bottomRightRadiusChanged();
+    } else {
+        emit topLeftRadiusChanged();
+        emit topRightRadiusChanged();
+        emit bottomLeftRadiusChanged();
+        emit bottomRightRadiusChanged();
+    }
+}
+
+/*!
+    \since 6.7
+    \qmlproperty real QtQuick::Rectangle::topLeftRadius
+    This property holds the radius used to draw the top left corner.
+
+    If \l topLeftRadius is not set, \l radius will be used instead.
+    If \l topLeftRadius is zero, the corner will be sharp.
+
+    \note This API is considered tech preview and may change or be removed in
+    future versions of Qt.
+
+    \sa radius, topRightRadius, bottomLeftRadius, bottomRightRadius
+*/
+qreal QQuickRectangle::topLeftRadius() const
+{
+    Q_D(const QQuickRectangle);
+    if (d->extraRectangle.isAllocated() && d->extraRectangle->topLeftRadius >= 0.)
+        return d->extraRectangle.value().topLeftRadius;
+    return d->radius;
+}
+
+void QQuickRectangle::setTopLeftRadius(qreal radius)
+{
+    Q_D(QQuickRectangle);
+    if (d->extraRectangle.value().topLeftRadius == radius)
+        return;
+
+    if (radius < 0) { // use the fact that radius < 0 resets the radius.
+        qmlWarning(this) << "topLeftRadius (" << radius << ") cannot be less than 0.";
+        return;
+    }
+    d->extraRectangle.value().topLeftRadius = radius;
+    d->maybeSetImplicitAntialiasing();
+
+    update();
+    emit topLeftRadiusChanged();
+}
+
+void QQuickRectangle::resetTopLeftRadius()
+{
+    Q_D(QQuickRectangle);
+    if (!d->extraRectangle.isAllocated())
+        return;
+    if (d->extraRectangle.value().topLeftRadius < 0)
+        return;
+
+    d->extraRectangle.value().topLeftRadius = -1.;
+    d->maybeSetImplicitAntialiasing();
+
+    update();
+    emit topLeftRadiusChanged();
+}
+
+/*!
+    \since 6.7
+    \qmlproperty real QtQuick::Rectangle::topRightRadius
+    This property holds the radius used to draw the top right corner.
+
+    If \l topRightRadius is not set, \l radius will be used instead.
+    If \l topRightRadius is zero, the corner will be sharp.
+
+    \note This API is considered tech preview and may change or be removed in
+    future versions of Qt.
+
+    \sa radius, topLeftRadius, bottomLeftRadius, bottomRightRadius
+*/
+qreal QQuickRectangle::topRightRadius() const
+{
+    Q_D(const QQuickRectangle);
+    if (d->extraRectangle.isAllocated()  && d->extraRectangle->topRightRadius >= 0.)
+        return d->extraRectangle.value().topRightRadius;
+    return d->radius;
+}
+
+void QQuickRectangle::setTopRightRadius(qreal radius)
+{
+    Q_D(QQuickRectangle);
+    if (d->extraRectangle.value().topRightRadius == radius)
+        return;
+
+    if (radius < 0) { // use the fact that radius < 0 resets the radius.
+        qmlWarning(this) << "topRightRadius (" << radius << ") cannot be less than 0.";
+        return;
+    }
+    d->extraRectangle.value().topRightRadius = radius;
+    d->maybeSetImplicitAntialiasing();
+
+    update();
+    emit topRightRadiusChanged();
+}
+
+void QQuickRectangle::resetTopRightRadius()
+{
+    Q_D(QQuickRectangle);
+    if (!d->extraRectangle.isAllocated())
+        return;
+    if (d->extraRectangle.value().topRightRadius < 0)
+        return;
+
+    d->extraRectangle.value().topRightRadius = -1.;
+    d->maybeSetImplicitAntialiasing();
+
+    update();
+    emit topRightRadiusChanged();
+}
+
+/*!
+    \since 6.7
+    \qmlproperty real QtQuick::Rectangle::bottomLeftRadius
+    This property holds the radius used to draw the bottom left corner.
+
+    If \l bottomLeftRadius is not set, \l radius will be used instead.
+    If \l bottomLeftRadius is zero, the corner will be sharp.
+
+    \note This API is considered tech preview and may change or be removed in
+    future versions of Qt.
+
+    \sa radius, topLeftRadius, topRightRadius, bottomRightRadius
+*/
+qreal QQuickRectangle::bottomLeftRadius() const
+{
+    Q_D(const QQuickRectangle);
+    if (d->extraRectangle.isAllocated() && d->extraRectangle->bottomLeftRadius >= 0.)
+        return d->extraRectangle.value().bottomLeftRadius;
+    return d->radius;
+}
+
+void QQuickRectangle::setBottomLeftRadius(qreal radius)
+{
+    Q_D(QQuickRectangle);
+    if (d->extraRectangle.value().bottomLeftRadius == radius)
+        return;
+
+    if (radius < 0) { // use the fact that radius < 0 resets the radius.
+        qmlWarning(this) << "bottomLeftRadius (" << radius << ") cannot be less than 0.";
+        return;
+    }
+
+    d->extraRectangle.value().bottomLeftRadius = radius;
+    d->maybeSetImplicitAntialiasing();
+
+    update();
+    emit bottomLeftRadiusChanged();
+}
+
+void QQuickRectangle::resetBottomLeftRadius()
+{
+    Q_D(QQuickRectangle);
+    if (!d->extraRectangle.isAllocated())
+        return;
+    if (d->extraRectangle.value().bottomLeftRadius < 0)
+        return;
+
+    d->extraRectangle.value().bottomLeftRadius = -1.;
+    d->maybeSetImplicitAntialiasing();
+
+    update();
+    emit bottomLeftRadiusChanged();
+}
+
+/*!
+    \since 6.7
+    \qmlproperty real QtQuick::Rectangle::bottomRightRadius
+    This property holds the radius used to draw the bottom right corner.
+
+    If \l bottomRightRadius is not set, \l radius will be used instead.
+    If \l bottomRightRadius is zero, the corner will be sharp.
+
+    \note This API is considered tech preview and may change or be removed in
+    future versions of Qt.
+
+    \sa radius, topLeftRadius, topRightRadius, bottomLeftRadius
+*/
+qreal QQuickRectangle::bottomRightRadius() const
+{
+    Q_D(const QQuickRectangle);
+    if (d->extraRectangle.isAllocated() && d->extraRectangle->bottomRightRadius >= 0.)
+        return d->extraRectangle.value().bottomRightRadius;
+    return d->radius;
+}
+
+void QQuickRectangle::setBottomRightRadius(qreal radius)
+{
+    Q_D(QQuickRectangle);
+    if (d->extraRectangle.value().bottomRightRadius == radius)
+        return;
+
+    if (radius < 0) { // use the fact that radius < 0 resets the radius.
+        qmlWarning(this) << "bottomRightRadius (" << radius << ") cannot be less than 0.";
+        return;
+    }
+
+    d->extraRectangle.value().bottomRightRadius = radius;
+    d->maybeSetImplicitAntialiasing();
+
+    update();
+    emit bottomRightRadiusChanged();
+}
+
+void QQuickRectangle::resetBottomRightRadius()
+{
+    Q_D(QQuickRectangle);
+    if (!d->extraRectangle.isAllocated())
+        return;
+    if (d->extraRectangle.value().bottomRightRadius < 0)
+        return;
+
+    d->extraRectangle.value().bottomRightRadius = -1.;
+    d->maybeSetImplicitAntialiasing();
+
+    update();
+    emit bottomRightRadiusChanged();
 }
 
 /*!
@@ -578,13 +793,29 @@ QSGNode *QQuickRectangle::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData 
 
     if (d->pen && d->pen->isValid()) {
         rectangle->setPenColor(d->pen->color());
-        rectangle->setPenWidth(d->pen->width());
-        rectangle->setAligned(d->pen->pixelAligned());
+        qreal penWidth = d->pen->width();
+        if (d->pen->pixelAligned()) {
+            qreal dpr = window() ? window()->effectiveDevicePixelRatio() : 1.0;
+            penWidth = qRound(penWidth * dpr) / dpr; // Ensures integer width after dpr scaling
+        }
+        rectangle->setPenWidth(penWidth);
+        rectangle->setAligned(false); // width rounding already done, so the Node should not do it
     } else {
         rectangle->setPenWidth(0);
     }
 
     rectangle->setRadius(d->radius);
+    if (d->extraRectangle.isAllocated()) {
+        rectangle->setTopLeftRadius(d->extraRectangle.value().topLeftRadius);
+        rectangle->setTopRightRadius(d->extraRectangle.value().topRightRadius);
+        rectangle->setBottomLeftRadius(d->extraRectangle.value().bottomLeftRadius);
+        rectangle->setBottomRightRadius(d->extraRectangle.value().bottomRightRadius);
+    } else {
+        rectangle->setTopLeftRadius(-1.);
+        rectangle->setTopRightRadius(-1.);
+        rectangle->setBottomLeftRadius(-1.);
+        rectangle->setBottomRightRadius(-1.);
+    }
     rectangle->setAntialiasing(antialiasing());
 
     QGradientStops stops;
@@ -606,7 +837,7 @@ QSGNode *QQuickRectangle::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData 
                 // QSGInternalRectangleNode doesn't support stops in the wrong order,
                 // so we need to manually reverse them here.
                 QGradientStops reverseStops;
-                for (auto it = stops.crbegin(); it != stops.crend(); ++it) {
+                for (auto it = stops.rbegin(); it != stops.rend(); ++it) {
                     auto stop = *it;
                     stop.first = 1 - stop.first;
                     reverseStops.append(stop);

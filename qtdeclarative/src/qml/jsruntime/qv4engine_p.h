@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtQml module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 #ifndef QV4ENGINE_H
 #define QV4ENGINE_H
 
@@ -50,20 +14,21 @@
 // We mean it.
 //
 
-#include "qv4global_p.h"
-#include "qv4managed_p.h"
-#include "qv4context_p.h"
-#include "qv4stackframe_p.h"
 #include <private/qintrusivelist_p.h>
-#include "qv4enginebase_p.h"
-#include <private/qqmlrefcount_p.h>
 #include <private/qqmldelayedcallqueue_p.h>
+#include <private/qqmlrefcount_p.h>
+#include <private/qv4compileddata_p.h>
+#include <private/qv4context_p.h>
+#include <private/qv4enginebase_p.h>
+#include <private/qv4executablecompilationunit_p.h>
+#include <private/qv4function_p.h>
+#include <private/qv4global_p.h>
+#include <private/qv4stacklimits_p.h>
+
 #include <QtCore/qelapsedtimer.h>
 #include <QtCore/qmutex.h>
-
-#include "qv4function_p.h"
-#include <private/qv4compileddata_p.h>
-#include <private/qv4executablecompilationunit_p.h>
+#include <QtCore/qprocessordetection.h>
+#include <QtCore/qset.h>
 
 namespace WTF {
 class BumpPointerAllocator;
@@ -110,7 +75,7 @@ namespace QV4 { struct QObjectMethod; }
 //     class MyClass : public QObject {
 //         Q_OBJECT
 //         ...
-//         Q_INVOKABLE void myMethod(QQmlV4Function*);
+//         Q_INVOKABLE void myMethod(QQmlV4FunctionPtr);
 //     };
 // The QQmlV8Function - and consequently the arguments and return value - only remains
 // valid during the call.  If the return value isn't set within myMethod(), the will return
@@ -144,6 +109,7 @@ class QQmlError;
 class QJSEngine;
 class QQmlEngine;
 class QQmlContextData;
+class QQmlTypeLoader;
 
 namespace QV4 {
 namespace Debugging {
@@ -169,12 +135,24 @@ class ReactionHandler;
 struct Q_QML_EXPORT ExecutionEngine : public EngineBase
 {
 private:
-    static qint32 maxCallDepth;
-
     friend struct ExecutionContextSaver;
     friend struct ExecutionContext;
     friend struct Heap::ExecutionContext;
 public:
+    enum class DiskCache {
+        Disabled    = 0,
+        AotByteCode = 1 << 0,
+        AotNative   = 1 << 1,
+        QmlcRead    = 1 << 2,
+        QmlcWrite   = 1 << 3,
+        Aot         = AotByteCode | AotNative,
+        Qmlc        = QmlcRead | QmlcWrite,
+        Enabled     = Aot | Qmlc,
+
+    };
+
+    Q_DECLARE_FLAGS(DiskCacheOptions, DiskCache);
+
     ExecutableAllocator *executableAllocator;
     ExecutableAllocator *regExpAllocator;
 
@@ -195,6 +173,14 @@ public:
     QJSEngine *jsEngine() const { return publicEngine; }
     QQmlEngine *qmlEngine() const { return m_qmlEngine; }
     QJSEngine *publicEngine;
+
+    template<typename TypeLoader = QQmlTypeLoader>
+    TypeLoader *typeLoader()
+    {
+        if (m_qmlEngine)
+            return TypeLoader::get(m_qmlEngine);
+        return nullptr;
+    }
 
     enum JSObjects {
         RootContext,
@@ -221,9 +207,7 @@ public:
         URIErrorProto,
         PromiseProto,
         VariantProto,
-#if QT_CONFIG(qml_sequence_object)
         SequenceProto,
-#endif
         SharedArrayBufferProto,
         ArrayBufferProto,
         DataViewProto,
@@ -233,6 +217,7 @@ public:
         MapProto,
         IntrinsicTypedArrayProto,
         ValueTypeProto,
+        TypeWrapperProto,
         SignalHandlerProto,
         IteratorProto,
         ForInIteratorProto,
@@ -240,6 +225,8 @@ public:
         MapIteratorProto,
         ArrayIteratorProto,
         StringIteratorProto,
+        UrlProto,
+        UrlSearchParamsProto,
 
         Object_Ctor,
         String_Ctor,
@@ -267,6 +254,8 @@ public:
         WeakMap_Ctor,
         Map_Ctor,
         IntrinsicTypedArray_Ctor,
+        Url_Ctor,
+        UrlSearchParams_Ctor,
 
         GetSymbolSpecies,
 
@@ -307,6 +296,14 @@ public:
     FunctionObject *weakMapCtor() const { return reinterpret_cast<FunctionObject *>(jsObjects + WeakMap_Ctor); }
     FunctionObject *mapCtor() const { return reinterpret_cast<FunctionObject *>(jsObjects + Map_Ctor); }
     FunctionObject *intrinsicTypedArrayCtor() const { return reinterpret_cast<FunctionObject *>(jsObjects + IntrinsicTypedArray_Ctor); }
+    FunctionObject *urlCtor() const
+    {
+        return reinterpret_cast<FunctionObject *>(jsObjects + Url_Ctor);
+    }
+    FunctionObject *urlSearchParamsCtor() const
+    {
+        return reinterpret_cast<FunctionObject *>(jsObjects + UrlSearchParams_Ctor);
+    }
     FunctionObject *typedArrayCtors;
 
     FunctionObject *getSymbolSpecies() const { return reinterpret_cast<FunctionObject *>(jsObjects + GetSymbolSpecies); }
@@ -332,9 +329,7 @@ public:
     Object *uRIErrorPrototype() const { return reinterpret_cast<Object *>(jsObjects + URIErrorProto); }
     Object *promisePrototype() const { return reinterpret_cast<Object *>(jsObjects + PromiseProto); }
     Object *variantPrototype() const { return reinterpret_cast<Object *>(jsObjects + VariantProto); }
-#if QT_CONFIG(qml_sequence_object)
     Object *sequencePrototype() const { return reinterpret_cast<Object *>(jsObjects + SequenceProto); }
-#endif
 
     Object *sharedArrayBufferPrototype() const { return reinterpret_cast<Object *>(jsObjects + SharedArrayBufferProto); }
     Object *arrayBufferPrototype() const { return reinterpret_cast<Object *>(jsObjects + ArrayBufferProto); }
@@ -348,12 +343,15 @@ public:
 
     Object *valueTypeWrapperPrototype() const { return reinterpret_cast<Object *>(jsObjects + ValueTypeProto); }
     Object *signalHandlerPrototype() const { return reinterpret_cast<Object *>(jsObjects + SignalHandlerProto); }
+    Object *typeWrapperPrototype() const { return reinterpret_cast<Object *>(jsObjects + TypeWrapperProto); }
     Object *iteratorPrototype() const { return reinterpret_cast<Object *>(jsObjects + IteratorProto); }
     Object *forInIteratorPrototype() const { return reinterpret_cast<Object *>(jsObjects + ForInIteratorProto); }
     Object *setIteratorPrototype() const { return reinterpret_cast<Object *>(jsObjects + SetIteratorProto); }
     Object *mapIteratorPrototype() const { return reinterpret_cast<Object *>(jsObjects + MapIteratorProto); }
     Object *arrayIteratorPrototype() const { return reinterpret_cast<Object *>(jsObjects + ArrayIteratorProto); }
     Object *stringIteratorPrototype() const { return reinterpret_cast<Object *>(jsObjects + StringIteratorProto); }
+    Object *urlPrototype() const { return reinterpret_cast<Object *>(jsObjects + UrlProto); }
+    Object *urlSearchParamsPrototype() const { return reinterpret_cast<Object *>(jsObjects + UrlSearchParamsProto); }
 
     EvalFunction *evalFunction() const { return reinterpret_cast<EvalFunction *>(jsObjects + Eval_Function); }
     FunctionObject *getStackFunction() const { return reinterpret_cast<FunctionObject *>(jsObjects + GetStack_Function); }
@@ -500,8 +498,6 @@ public:
     Symbol *symbol_unscopables() const { return reinterpret_cast<Symbol *>(jsSymbols + Symbol_unscopables); }
     Symbol *symbol_revokableProxy() const { return reinterpret_cast<Symbol *>(jsSymbols + Symbol_revokableProxy); }
 
-    QIntrusiveList<ExecutableCompilationUnit, &ExecutableCompilationUnit::nextCompilationUnit> compilationUnits;
-
     quint32 m_engineId;
 
     RegExpCache *regExpCache;
@@ -514,7 +510,8 @@ public:
     // calling preserve() on the object which removes it from this scarceResource list.
     class ScarceResourceData {
     public:
-        ScarceResourceData(const QVariant &data = QVariant()) : data(data) {}
+        ScarceResourceData() = default;
+        ScarceResourceData(const QMetaType type, const void *data) : data(type, data) {}
         QVariant data;
         QIntrusiveListNode node;
     };
@@ -539,15 +536,24 @@ public:
 
     void setDebugger(Debugging::Debugger *) {}
     void setProfiler(Profiling::Profiler *) {}
+    static void setPreviewing(bool) {}
 #else
     QV4::Debugging::Debugger *debugger() const { return m_debugger.data(); }
     QV4::Profiling::Profiler *profiler() const { return m_profiler.data(); }
 
     void setDebugger(Debugging::Debugger *debugger);
     void setProfiler(Profiling::Profiler *profiler);
+    static void setPreviewing(bool enabled);
 #endif // QT_CONFIG(qml_debug)
 
-    ExecutionContext *currentContext() const;
+    // We don't want to #include <private/qv4stackframe_p.h> here, but we still want
+    // currentContext() to be inline. Therefore we shift the requirement to provide the
+    // complete type of CppStackFrame to the caller by making this a template.
+    template<typename StackFrame = CppStackFrame>
+    ExecutionContext *currentContext() const
+    {
+        return static_cast<const StackFrame *>(currentStackFrame)->context();
+    }
 
     // ensure we always get odd prototype IDs. This helps make marking in QV4::Lookup fast
     quintptr newProtoId() { return (protoIdCount += 2); }
@@ -557,6 +563,7 @@ public:
     Heap::Object *newObject();
     Heap::Object *newObject(Heap::InternalClass *internalClass);
 
+    Heap::String *newString(char16_t c) { return newString(QChar(c)); }
     Heap::String *newString(const QString &s = QString());
     Heap::String *newIdentifier(const QString &text);
 
@@ -573,16 +580,21 @@ public:
     Heap::ArrayBuffer *newArrayBuffer(const QByteArray &array);
     Heap::ArrayBuffer *newArrayBuffer(size_t length);
 
-    Heap::DateObject *newDateObject(const Value &value);
-    Heap::DateObject *newDateObject(const QDateTime &dt);
-    Heap::DateObject *newDateObjectFromTime(const QTime &t);
+    Heap::DateObject *newDateObject(double dateTime);
+    Heap::DateObject *newDateObject(const QDateTime &dateTime);
+    Heap::DateObject *newDateObject(QDate date, Heap::Object *parent, int index, uint flags);
+    Heap::DateObject *newDateObject(QTime time, Heap::Object *parent, int index, uint flags);
+    Heap::DateObject *newDateObject(QDateTime dateTime, Heap::Object *parent, int index, uint flags);
 
     Heap::RegExpObject *newRegExpObject(const QString &pattern, int flags);
     Heap::RegExpObject *newRegExpObject(RegExp *re);
-    Heap::RegExpObject *newRegExpObject(const QRegExp &re);
 #if QT_CONFIG(regularexpression)
     Heap::RegExpObject *newRegExpObject(const QRegularExpression &re);
 #endif
+
+    Heap::UrlObject *newUrlObject();
+    Heap::UrlObject *newUrlObject(const QUrl &url);
+    Heap::UrlSearchParamsObject *newUrlSearchParamsObject();
 
     Heap::Object *newErrorObject(const Value &value);
     Heap::Object *newErrorObject(const QString &message);
@@ -600,16 +612,35 @@ public:
     Heap::Object *newPromiseObject(const QV4::FunctionObject *thisObject, const QV4::PromiseCapability *capability);
     Promise::ReactionHandler *getPromiseReactionHandler();
 
-    Heap::Object *newVariantObject(const QVariant &v);
+    Heap::Object *newVariantObject(const QMetaType type, const void *data);
 
     Heap::Object *newForInIteratorObject(Object *o);
     Heap::Object *newSetIteratorObject(Object *o);
     Heap::Object *newMapIteratorObject(Object *o);
     Heap::Object *newArrayIteratorObject(Object *o);
 
+    static Heap::ExecutionContext *qmlContext(Heap::ExecutionContext *ctx)
+    {
+        Heap::ExecutionContext *outer = ctx->outer;
+
+        if (ctx->type != Heap::ExecutionContext::Type_QmlContext && !outer)
+            return nullptr;
+
+        while (outer && outer->type != Heap::ExecutionContext::Type_GlobalContext) {
+            ctx = outer;
+            outer = ctx->outer;
+        }
+
+        Q_ASSERT(ctx);
+        if (ctx->type != Heap::ExecutionContext::Type_QmlContext)
+            return nullptr;
+
+        return ctx;
+    }
+
     Heap::QmlContext *qmlContext() const;
     QObject *qmlScopeObject() const;
-    QQmlContextData *callingQmlContext() const;
+    QQmlRefPointer<QQmlContextData> callingQmlContext() const;
 
 
     StackTrace stackTrace(int frameLimit = -1) const;
@@ -643,26 +674,34 @@ public:
     QQmlError catchExceptionAsQmlError();
 
     // variant conversions
-    QVariant toVariant(const QV4::Value &value, int typeHint, bool createJSValueForObjects = true);
+    static QVariant toVariant(
+        const QV4::Value &value, QMetaType typeHint, bool createJSValueForObjectsAndSymbols = true);
+    static QVariant toVariantLossy(const QV4::Value &value);
     QV4::ReturnedValue fromVariant(const QVariant &);
+    QV4::ReturnedValue fromVariant(
+            const QVariant &variant, Heap::Object *parent, int property, uint flags);
 
-    QVariantMap variantMapFromJS(const QV4::Object *o);
+    static QVariantMap variantMapFromJS(const QV4::Object *o);
 
-    bool metaTypeFromJS(const Value *value, int type, void *data);
-    QV4::ReturnedValue metaTypeToJS(int type, const void *data);
+    static bool metaTypeFromJS(const Value &value, QMetaType type, void *data);
+    QV4::ReturnedValue metaTypeToJS(QMetaType type, const void *data);
 
     int maxJSStackSize() const;
     int maxGCStackSize() const;
 
     bool checkStackLimits();
+    int safeForAllocLength(qint64 len64);
 
     bool canJIT(Function *f = nullptr)
     {
 #if QT_CONFIG(qml_jit)
         if (!m_canAllocateExecutableMemory)
             return false;
-        if (f)
-            return !f->isGenerator() && f->interpreterCallCount >= jitCallCountThreshold;
+        if (f) {
+            return f->kind != Function::AotCompiled
+                    && !f->isGenerator()
+                    && f->interpreterCallCount >= s_jitCallCountThreshold;
+        }
         return true;
 #else
         Q_UNUSED(f);
@@ -673,8 +712,10 @@ public:
     QV4::ReturnedValue global();
     void initQmlGlobalObject();
     void initializeGlobal();
+    void createQtObject();
 
     void freezeObject(const QV4::Value &value);
+    void lockObject(const QV4::Value &value);
 
     // Return the list of illegal id names (the names of the properties on the global object)
     const QSet<QString> &illegalNames() const;
@@ -704,7 +745,7 @@ public:
     void setExtensionData(int, Deletable *);
     Deletable *extensionData(int index) const
     {
-        if (index < m_extensionData.count())
+        if (index < m_extensionData.size())
             return m_extensionData[index];
         else
             return nullptr;
@@ -716,19 +757,124 @@ public:
     QQmlRefPointer<ExecutableCompilationUnit> compileModule(
             const QUrl &url, const QString &sourceCode, const QDateTime &sourceTimeStamp);
 
-    mutable QMutex moduleMutex;
-    QHash<QUrl, QQmlRefPointer<ExecutableCompilationUnit>> modules;
-    void injectModule(const QQmlRefPointer<ExecutableCompilationUnit> &moduleUnit);
-    QQmlRefPointer<ExecutableCompilationUnit> moduleForUrl(const QUrl &_url, const ExecutableCompilationUnit *referrer = nullptr) const;
-    QQmlRefPointer<ExecutableCompilationUnit> loadModule(const QUrl &_url, const ExecutableCompilationUnit *referrer = nullptr);
+    QQmlRefPointer<ExecutableCompilationUnit> compilationUnitForUrl(const QUrl &url) const;
+
+    QQmlRefPointer<ExecutableCompilationUnit> executableCompilationUnit(
+            QQmlRefPointer<QV4::CompiledData::CompilationUnit> &&unit);
+
+    QQmlRefPointer<ExecutableCompilationUnit> insertCompilationUnit(
+            QQmlRefPointer<QV4::CompiledData::CompilationUnit> &&unit);
+
+    QMultiHash<QUrl, QQmlRefPointer<ExecutableCompilationUnit>> compilationUnits() const
+    {
+        return m_compilationUnits;
+    }
+    void trimCompilationUnits();
+
+    QV4::Value *registerNativeModule(const QUrl &url, const QV4::Value &module);
+
+    struct Module {
+        QQmlRefPointer<ExecutableCompilationUnit> compiled;
+
+        // We can pass a raw value pointer here, but nowhere else. See below.
+        Value *native = nullptr;
+    };
+
+    Module moduleForUrl(const QUrl &_url, const ExecutableCompilationUnit *referrer = nullptr) const;
+    Module loadModule(const QUrl &_url, const ExecutableCompilationUnit *referrer = nullptr);
+
+    DiskCacheOptions diskCacheOptions() const;
+
+    void callInContext(QV4::Function *function, QObject *self, QV4::ExecutionContext *ctxt,
+                       int argc, void **args, QMetaType *types);
+    QV4::ReturnedValue callInContext(QV4::Function *function, QObject *self,
+                                     QV4::ExecutionContext *ctxt, int argc, const QV4::Value *argv);
+
+    QV4::ReturnedValue fromData(
+            QMetaType type, const void *ptr,
+            Heap::Object *parent = nullptr, int property = -1, uint flags = 0);
+
+
+    static void setMaxCallDepth(int maxCallDepth) { s_maxCallDepth = maxCallDepth; }
+    static int maxCallDepth() { return s_maxCallDepth; }
+
+    template<typename Value>
+    static QJSPrimitiveValue createPrimitive(const Value &v)
+    {
+        if (v->isUndefined())
+            return QJSPrimitiveValue(QJSPrimitiveUndefined());
+        if (v->isNull())
+            return QJSPrimitiveValue(QJSPrimitiveNull());
+        if (v->isBoolean())
+            return QJSPrimitiveValue(v->toBoolean());
+        if (v->isInteger())
+            return QJSPrimitiveValue(v->integerValue());
+        if (v->isDouble())
+            return QJSPrimitiveValue(v->doubleValue());
+        bool ok;
+        const QString result = v->toQString(&ok);
+        return ok ? QJSPrimitiveValue(result) : QJSPrimitiveValue(QJSPrimitiveUndefined());
+    }
+
+    ReturnedValue nativeModule(const QUrl &url) const
+    {
+        const auto it = nativeModules.find(url);
+        return it == nativeModules.end()
+                ? QV4::Value::emptyValue().asReturnedValue()
+                : (*it)->asReturnedValue();
+    }
 
 private:
+    template<int Frames>
+    friend struct ExecutionEngineCallDepthRecorder;
+
+    static void initializeStaticMembers();
+
+    bool inStack(const void *current) const
+    {
+#if Q_STACK_GROWTH_DIRECTION > 0
+        return current < cppStackLimit && current >= cppStackBase;
+#else
+        return current > cppStackLimit && current <= cppStackBase;
+#endif
+    }
+
+    bool hasCppStackOverflow()
+    {
+        if (s_maxCallDepth >= 0)
+            return callDepth >= s_maxCallDepth;
+
+        if (inStack(currentStackPointer()))
+            return false;
+
+        // Double check the stack limits on failure.
+        // We may have moved to a different thread.
+        const StackProperties stack = stackProperties();
+        cppStackBase = stack.base;
+        cppStackLimit = stack.softLimit;
+        return !inStack(currentStackPointer());
+    }
+
+    bool hasJsStackOverflow() const
+    {
+        return jsStackTop > jsStackLimit;
+    }
+
+    bool hasStackOverflow()
+    {
+        return hasJsStackOverflow() || hasCppStackOverflow();
+    }
+
+    static int s_maxCallDepth;
+    static int s_jitCallCountThreshold;
+    static int s_maxJSStackSize;
+    static int s_maxGCStackSize;
+
 #if QT_CONFIG(qml_debug)
     QScopedPointer<QV4::Debugging::Debugger> m_debugger;
     QScopedPointer<QV4::Profiling::Profiler> m_profiler;
 #endif
     QSet<QString> m_illegalNames;
-    int jitCallCountThreshold;
 
     // used by generated Promise objects to handle 'then' events
     QScopedPointer<QV4::Promise::ReactionHandler> m_reactionHandler;
@@ -748,30 +894,54 @@ private:
 
     QVector<Deletable *> m_extensionData;
 
-    int m_maxJSStackSize = 4 * 1024 * 1024;
-    int m_maxGCStackSize = 2 * 1024 * 1024;
+    QMultiHash<QUrl, QQmlRefPointer<ExecutableCompilationUnit>> m_compilationUnits;
+
+    // QV4::PersistentValue would be preferred, but using QHash will create copies,
+    // and QV4::PersistentValue doesn't like creating copies.
+    // Instead, we allocate a raw pointer using the same manual memory management
+    // technique in QV4::PersistentValue.
+    QHash<QUrl, Value *> nativeModules;
 };
 
-#define CHECK_STACK_LIMITS(v4) if ((v4)->checkStackLimits()) return Encode::undefined(); \
+#define CHECK_STACK_LIMITS(v4) \
+    if (v4->checkStackLimits()) \
+        return Encode::undefined(); \
     ExecutionEngineCallDepthRecorder _executionEngineCallDepthRecorder(v4);
 
+template<int Frames = 1>
 struct ExecutionEngineCallDepthRecorder
 {
     ExecutionEngine *ee;
 
-    ExecutionEngineCallDepthRecorder(ExecutionEngine *e): ee(e) { ++ee->callDepth; }
-    ~ExecutionEngineCallDepthRecorder() { --ee->callDepth; }
+    ExecutionEngineCallDepthRecorder(ExecutionEngine *e): ee(e)
+    {
+        if (ExecutionEngine::s_maxCallDepth >= 0)
+            ee->callDepth += Frames;
+    }
+
+    ~ExecutionEngineCallDepthRecorder()
+    {
+        if (ExecutionEngine::s_maxCallDepth >= 0)
+            ee->callDepth -= Frames;
+    }
+
+    bool hasOverflow() const
+    {
+        return ee->hasCppStackOverflow();
+    }
 };
 
 inline bool ExecutionEngine::checkStackLimits()
 {
-    if (Q_UNLIKELY((jsStackTop > jsStackLimit) || (callDepth >= maxCallDepth))) {
+    if (Q_UNLIKELY(hasStackOverflow())) {
         throwRangeError(QStringLiteral("Maximum call stack size exceeded."));
         return true;
     }
 
     return false;
 }
+
+Q_DECLARE_OPERATORS_FOR_FLAGS(ExecutionEngine::DiskCacheOptions);
 
 } // namespace QV4
 

@@ -22,6 +22,8 @@
 #define FTS5_DEFAULT_CRISISMERGE   16
 #define FTS5_DEFAULT_HASHSIZE    (1024*1024)
 
+#define FTS5_DEFAULT_DELETE_AUTOMERGE 10      /* default 10% */
+
 /* Maximum allowed page size */
 #define FTS5_MAX_PAGE_SIZE (64*1024)
 
@@ -352,6 +354,16 @@ static int fts5ConfigParseSpecial(
     return rc;
   }
 
+  if( sqlite3_strnicmp("contentless_delete", zCmd, nCmd)==0 ){
+    if( (zArg[0]!='0' && zArg[0]!='1') || zArg[1]!='\0' ){
+      *pzErr = sqlite3_mprintf("malformed contentless_delete=... directive");
+      rc = SQLITE_ERROR;
+    }else{
+      pConfig->bContentlessDelete = (zArg[0]=='1');
+    }
+    return rc;
+  }
+
   if( sqlite3_strnicmp("content_rowid", zCmd, nCmd)==0 ){
     if( pConfig->zContentRowid ){
       *pzErr = sqlite3_mprintf("multiple content_rowid=... directives");
@@ -537,7 +549,7 @@ int sqlite3Fts5ConfigParse(
 
   nByte = nArg * (sizeof(char*) + sizeof(u8));
   pRet->azCol = (char**)sqlite3Fts5MallocZero(&rc, nByte);
-  pRet->abUnindexed = (u8*)&pRet->azCol[nArg];
+  pRet->abUnindexed = pRet->azCol ? (u8*)&pRet->azCol[nArg] : 0;
   pRet->zDb = sqlite3Fts5Strndup(&rc, azArg[1], -1);
   pRet->zName = sqlite3Fts5Strndup(&rc, azArg[2], -1);
   pRet->bColumnsize = 1;
@@ -550,6 +562,7 @@ int sqlite3Fts5ConfigParse(
     rc = SQLITE_ERROR;
   }
 
+  assert( (pRet->abUnindexed && pRet->azCol) || rc!=SQLITE_OK );
   for(i=3; rc==SQLITE_OK && i<nArg; i++){
     const char *zOrig = azArg[i];
     const char *z;
@@ -562,6 +575,7 @@ int sqlite3Fts5ConfigParse(
     z = fts5ConfigSkipWhitespace(z);
     if( z && *z=='=' ){
       bOption = 1;
+      assert( zOne!=0 );
       z++;
       if( bMustBeCol ) z = 0;
     }
@@ -578,7 +592,11 @@ int sqlite3Fts5ConfigParse(
         rc = SQLITE_ERROR;
       }else{
         if( bOption ){
-          rc = fts5ConfigParseSpecial(pGlobal, pRet, zOne, zTwo?zTwo:"", pzErr);
+          rc = fts5ConfigParseSpecial(pGlobal, pRet, 
+            ALWAYS(zOne)?zOne:"",
+            zTwo?zTwo:"",
+            pzErr
+          );
         }else{
           rc = fts5ConfigParseColumn(pRet, zOne, zTwo, pzErr);
           zOne = 0;
@@ -588,6 +606,28 @@ int sqlite3Fts5ConfigParse(
 
     sqlite3_free(zOne);
     sqlite3_free(zTwo);
+  }
+
+  /* We only allow contentless_delete=1 if the table is indeed contentless. */
+  if( rc==SQLITE_OK 
+   && pRet->bContentlessDelete 
+   && pRet->eContent!=FTS5_CONTENT_NONE 
+  ){
+    *pzErr = sqlite3_mprintf(
+        "contentless_delete=1 requires a contentless table"
+    );
+    rc = SQLITE_ERROR;
+  }
+
+  /* We only allow contentless_delete=1 if columnsize=0 is not present. 
+  **
+  ** This restriction may be removed at some point. 
+  */
+  if( rc==SQLITE_OK && pRet->bContentlessDelete && pRet->bColumnsize==0 ){
+    *pzErr = sqlite3_mprintf(
+        "contentless_delete=1 is incompatible with columnsize=0"
+    );
+    rc = SQLITE_ERROR;
   }
 
   /* If a tokenizer= option was successfully parsed, the tokenizer has
@@ -884,6 +924,18 @@ int sqlite3Fts5ConfigSetValue(
     }
   }
 
+  else if( 0==sqlite3_stricmp(zKey, "deletemerge") ){
+    int nVal = -1;
+    if( SQLITE_INTEGER==sqlite3_value_numeric_type(pVal) ){
+      nVal = sqlite3_value_int(pVal);
+    }else{
+      *pbBadkey = 1;
+    }
+    if( nVal<0 ) nVal = FTS5_DEFAULT_DELETE_AUTOMERGE;
+    if( nVal>100 ) nVal = 0;
+    pConfig->nDeleteMerge = nVal;
+  }
+
   else if( 0==sqlite3_stricmp(zKey, "rank") ){
     const char *zIn = (const char*)sqlite3_value_text(pVal);
     char *zRank;
@@ -897,6 +949,18 @@ int sqlite3Fts5ConfigSetValue(
     }else if( rc==SQLITE_ERROR ){
       rc = SQLITE_OK;
       *pbBadkey = 1;
+    }
+  }
+
+  else if( 0==sqlite3_stricmp(zKey, "secure-delete") ){
+    int bVal = -1;
+    if( SQLITE_INTEGER==sqlite3_value_numeric_type(pVal) ){
+      bVal = sqlite3_value_int(pVal);
+    }
+    if( bVal<0 ){
+      *pbBadkey = 1;
+    }else{
+      pConfig->bSecureDelete = (bVal ? 1 : 0);
     }
   }else{
     *pbBadkey = 1;
@@ -920,6 +984,7 @@ int sqlite3Fts5ConfigLoad(Fts5Config *pConfig, int iCookie){
   pConfig->nUsermerge = FTS5_DEFAULT_USERMERGE;
   pConfig->nCrisisMerge = FTS5_DEFAULT_CRISISMERGE;
   pConfig->nHashSize = FTS5_DEFAULT_HASHSIZE;
+  pConfig->nDeleteMerge = FTS5_DEFAULT_DELETE_AUTOMERGE;
 
   zSql = sqlite3Fts5Mprintf(&rc, zSelect, pConfig->zDb, pConfig->zName);
   if( zSql ){
@@ -942,15 +1007,20 @@ int sqlite3Fts5ConfigLoad(Fts5Config *pConfig, int iCookie){
     rc = sqlite3_finalize(p);
   }
   
-  if( rc==SQLITE_OK && iVersion!=FTS5_CURRENT_VERSION ){
+  if( rc==SQLITE_OK 
+   && iVersion!=FTS5_CURRENT_VERSION
+   && iVersion!=FTS5_CURRENT_VERSION_SECUREDELETE
+  ){
     rc = SQLITE_ERROR;
     if( pConfig->pzErrmsg ){
       assert( 0==*pConfig->pzErrmsg );
-      *pConfig->pzErrmsg = sqlite3_mprintf(
-          "invalid fts5 file format (found %d, expected %d) - run 'rebuild'",
-          iVersion, FTS5_CURRENT_VERSION
+      *pConfig->pzErrmsg = sqlite3_mprintf("invalid fts5 file format "
+          "(found %d, expected %d or %d) - run 'rebuild'",
+          iVersion, FTS5_CURRENT_VERSION, FTS5_CURRENT_VERSION_SECUREDELETE
       );
     }
+  }else{
+    pConfig->iVersion = iVersion;
   }
 
   if( rc==SQLITE_OK ){

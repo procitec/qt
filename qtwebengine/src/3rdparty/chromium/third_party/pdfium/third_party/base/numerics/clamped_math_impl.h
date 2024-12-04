@@ -26,7 +26,7 @@ template <typename T,
           typename std::enable_if<std::is_integral<T>::value &&
                                   std::is_signed<T>::value>::type* = nullptr>
 constexpr T SaturatedNegWrapper(T value) {
-  return MustTreatAsConstexpr(value) || !ClampedNegFastOp<T>::is_supported
+  return IsConstantEvaluated() || !ClampedNegFastOp<T>::is_supported
              ? (NegateWrapper(value) != std::numeric_limits<T>::lowest()
                     ? NegateWrapper(value)
                     : std::numeric_limits<T>::max())
@@ -58,8 +58,9 @@ constexpr T SaturatedAbsWrapper(T value) {
   // special case of numeric_limits<T>::min(), by evaluating the bit pattern as
   // a signed integer value. If it is the overflow case, we end up subtracting
   // one from the unsigned result, thus saturating to numeric_limits<T>::max().
-  return static_cast<T>(SafeUnsignedAbs(value) -
-                        IsValueNegative<T>(SafeUnsignedAbs(value)));
+  return static_cast<T>(
+      SafeUnsignedAbs(value) -
+      IsValueNegative<T>(static_cast<T>(SafeUnsignedAbs(value))));
 }
 
 template <
@@ -80,7 +81,7 @@ struct ClampedAddOp<T,
   using result_type = typename MaxExponentPromotion<T, U>::type;
   template <typename V = result_type>
   static constexpr V Do(T x, U y) {
-    if (ClampedAddFastOp<T, U>::is_supported)
+    if (!IsConstantEvaluated() && ClampedAddFastOp<T, U>::is_supported)
       return ClampedAddFastOp<T, U>::template Do<V>(x, y);
 
     static_assert(std::is_same<V, result_type>::value ||
@@ -106,8 +107,7 @@ struct ClampedSubOp<T,
   using result_type = typename MaxExponentPromotion<T, U>::type;
   template <typename V = result_type>
   static constexpr V Do(T x, U y) {
-    // TODO(jschuh) Make this "constexpr if" once we're C++17.
-    if (ClampedSubFastOp<T, U>::is_supported)
+    if (!IsConstantEvaluated() && ClampedSubFastOp<T, U>::is_supported)
       return ClampedSubFastOp<T, U>::template Do<V>(x, y);
 
     static_assert(std::is_same<V, result_type>::value ||
@@ -133,8 +133,7 @@ struct ClampedMulOp<T,
   using result_type = typename MaxExponentPromotion<T, U>::type;
   template <typename V = result_type>
   static constexpr V Do(T x, U y) {
-    // TODO(jschuh) Make this "constexpr if" once we're C++17.
-    if (ClampedMulFastOp<T, U>::is_supported)
+    if (!IsConstantEvaluated() && ClampedMulFastOp<T, U>::is_supported)
       return ClampedMulFastOp<T, U>::template Do<V>(x, y);
 
     V result = {};

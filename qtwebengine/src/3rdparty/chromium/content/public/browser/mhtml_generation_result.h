@@ -1,14 +1,14 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef CONTENT_PUBLIC_BROWSER_MHTML_GENERATION_RESULT_H_
 #define CONTENT_PUBLIC_BROWSER_MHTML_GENERATION_RESULT_H_
 
+#include <optional>
 #include <string>
 
-#include "base/callback_forward.h"
-#include "base/optional.h"
+#include "base/functional/callback_forward.h"
 #include "content/common/content_export.h"
 
 namespace content {
@@ -31,8 +31,8 @@ struct CONTENT_EXPORT MHTMLGenerationResult {
 
   // The SHA-256 digest of the generated file. On success, |file_digest|
   // contains the digest of the generated file, otherwise |file_digest| is
-  // base::nullopt.
-  base::Optional<std::string> file_digest;
+  // std::nullopt.
+  std::optional<std::string> file_digest;
 };
 
 }  // namespace content

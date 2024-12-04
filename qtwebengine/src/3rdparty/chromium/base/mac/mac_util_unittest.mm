@@ -1,29 +1,25 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#import <Cocoa/Cocoa.h>
-#include <stddef.h>
-#include <stdint.h>
-
 #include "base/mac/mac_util.h"
 
+#import <Cocoa/Cocoa.h>
+#include <errno.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <sys/xattr.h>
+
+#include "base/apple/foundation_util.h"
+#include "base/apple/scoped_cftyperef.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/mac/foundation_util.h"
-#include "base/mac/scoped_cftyperef.h"
-#include "base/mac/scoped_nsobject.h"
-#include "base/stl_util.h"
 #include "base/system/sys_info.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/platform_test.h"
 
-#include <errno.h>
-#include <sys/xattr.h>
-
-namespace base {
-namespace mac {
+namespace base::mac {
 
 namespace {
 
@@ -32,21 +28,21 @@ using MacUtilTest = PlatformTest;
 TEST_F(MacUtilTest, GetUserDirectoryTest) {
   // Try a few keys, make sure they come back with non-empty paths.
   FilePath caches_dir;
-  EXPECT_TRUE(GetUserDirectory(NSCachesDirectory, &caches_dir));
+  EXPECT_TRUE(apple::GetUserDirectory(NSCachesDirectory, &caches_dir));
   EXPECT_FALSE(caches_dir.empty());
 
   FilePath application_support_dir;
-  EXPECT_TRUE(GetUserDirectory(NSApplicationSupportDirectory,
-                               &application_support_dir));
+  EXPECT_TRUE(apple::GetUserDirectory(NSApplicationSupportDirectory,
+                                      &application_support_dir));
   EXPECT_FALSE(application_support_dir.empty());
 
   FilePath library_dir;
-  EXPECT_TRUE(GetUserDirectory(NSLibraryDirectory, &library_dir));
+  EXPECT_TRUE(apple::GetUserDirectory(NSLibraryDirectory, &library_dir));
   EXPECT_FALSE(library_dir.empty());
 }
 
 TEST_F(MacUtilTest, TestLibraryPath) {
-  FilePath library_dir = GetUserLibraryPath();
+  FilePath library_dir = apple::GetUserLibraryPath();
   // Make sure the string isn't empty.
   EXPECT_FALSE(library_dir.value().empty());
 }
@@ -55,7 +51,7 @@ TEST_F(MacUtilTest, TestGetAppBundlePath) {
   FilePath out;
 
   // Make sure it doesn't crash.
-  out = GetAppBundlePath(FilePath());
+  out = apple::GetAppBundlePath(FilePath());
   EXPECT_TRUE(out.empty());
 
   // Some more invalid inputs.
@@ -63,8 +59,8 @@ TEST_F(MacUtilTest, TestGetAppBundlePath) {
     "/", "/foo", "foo", "/foo/bar.", "foo/bar.", "/foo/bar./bazquux",
     "foo/bar./bazquux", "foo/.app", "//foo",
   };
-  for (size_t i = 0; i < base::size(invalid_inputs); i++) {
-    out = GetAppBundlePath(FilePath(invalid_inputs[i]));
+  for (size_t i = 0; i < std::size(invalid_inputs); i++) {
+    out = apple::GetAppBundlePath(FilePath(invalid_inputs[i]));
     EXPECT_TRUE(out.empty()) << "loop: " << i;
   }
 
@@ -87,213 +83,102 @@ TEST_F(MacUtilTest, TestGetAppBundlePath) {
     { "/Applications/Google Foo.app/bar/Foo Helper.app/quux/Foo Helper",
         "/Applications/Google Foo.app" },
   };
-  for (size_t i = 0; i < base::size(valid_inputs); i++) {
-    out = GetAppBundlePath(FilePath(valid_inputs[i].in));
+  for (size_t i = 0; i < std::size(valid_inputs); i++) {
+    out = apple::GetAppBundlePath(FilePath(valid_inputs[i].in));
     EXPECT_FALSE(out.empty()) << "loop: " << i;
     EXPECT_STREQ(valid_inputs[i].expected_out,
         out.value().c_str()) << "loop: " << i;
   }
 }
 
-TEST_F(MacUtilTest, TestExcludeFileFromBackups) {
-  // The file must already exist in order to set its exclusion property.
-  ScopedTempDir temp_dir_;
-  ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
-  FilePath dummy_file_path = temp_dir_.GetPath().Append("DummyFile");
-  const char dummy_data[] = "All your base are belong to us!";
-  // Dump something real into the file.
-  ASSERT_EQ(static_cast<int>(base::size(dummy_data)),
-            WriteFile(dummy_file_path, dummy_data, base::size(dummy_data)));
-  // Initial state should be non-excluded.
-  EXPECT_FALSE(GetFileBackupExclusion(dummy_file_path));
-  // Exclude the file.
-  ASSERT_TRUE(SetFileBackupExclusion(dummy_file_path));
-  EXPECT_TRUE(GetFileBackupExclusion(dummy_file_path));
+TEST_F(MacUtilTest, TestGetInnermostAppBundlePath) {
+  FilePath out;
 
-  // Ensure that SetFileBackupExclusion never excludes by path.
-  base::ScopedCFTypeRef<CFURLRef> file_url =
-      base::mac::FilePathToCFURL(dummy_file_path);
-  Boolean excluded_by_path = FALSE;
-  Boolean excluded = CSBackupIsItemExcluded(file_url, &excluded_by_path);
-  EXPECT_TRUE(excluded);
-  EXPECT_FALSE(excluded_by_path);
-}
+  // Make sure it doesn't crash.
+  out = apple::GetInnermostAppBundlePath(FilePath());
+  EXPECT_TRUE(out.empty());
 
-TEST_F(MacUtilTest, NSObjectRetainRelease) {
-  base::scoped_nsobject<NSArray> array(
-      [[NSArray alloc] initWithObjects:@"foo", nil]);
-  EXPECT_EQ(1U, [array retainCount]);
+  // Some more invalid inputs.
+  const char* const invalid_inputs[] = {
+      "/",
+      "/foo",
+      "foo",
+      "/foo/bar.",
+      "foo/bar.",
+      "/foo/bar./bazquux",
+      "foo/bar./bazquux",
+      "foo/.app",
+      "//foo",
+  };
+  for (size_t i = 0; i < std::size(invalid_inputs); i++) {
+    SCOPED_TRACE(testing::Message()
+                 << "case #" << i << ", input: " << invalid_inputs[i]);
+    out = apple::GetInnermostAppBundlePath(FilePath(invalid_inputs[i]));
+    EXPECT_TRUE(out.empty());
+  }
 
-  NSObjectRetain(array);
-  EXPECT_EQ(2U, [array retainCount]);
-
-  NSObjectRelease(array);
-  EXPECT_EQ(1U, [array retainCount]);
-}
-
-TEST_F(MacUtilTest, IsOSEllipsis) {
-  int32_t major, minor, bugfix;
-  base::SysInfo::OperatingSystemVersionNumbers(&major, &minor, &bugfix);
-
-  // The patterns here are:
-  // - FALSE/FALSE/TRUE (it is not the earlier version, it is not "at most" the
-  //   earlier version, it is "at least" the earlier version)
-  // - TRUE/TRUE/TRUE (it is the same version, it is "at most" the same version,
-  //   it is "at least" the same version)
-  // - FALSE/TRUE/FALSE (it is not the later version, it is "at most" the later
-  //   version, it is not "at least" the later version)
-
-#define TEST_FOR_PAST_10_OS(V)      \
-  EXPECT_FALSE(IsOS10_##V());       \
-  EXPECT_FALSE(IsAtMostOS10_##V()); \
-  EXPECT_TRUE(IsAtLeastOS10_##V());
-
-#define TEST_FOR_PAST_OS(V)      \
-  EXPECT_FALSE(IsOS##V());       \
-  EXPECT_FALSE(IsAtMostOS##V()); \
-  EXPECT_TRUE(IsAtLeastOS##V());
-
-#define TEST_FOR_SAME_10_OS(V)     \
-  EXPECT_TRUE(IsOS10_##V());       \
-  EXPECT_TRUE(IsAtMostOS10_##V()); \
-  EXPECT_TRUE(IsAtLeastOS10_##V());
-
-#define TEST_FOR_SAME_OS(V)     \
-  EXPECT_TRUE(IsOS##V());       \
-  EXPECT_TRUE(IsAtMostOS##V()); \
-  EXPECT_TRUE(IsAtLeastOS##V());
-
-#define TEST_FOR_FUTURE_10_OS(V)   \
-  EXPECT_FALSE(IsOS10_##V());      \
-  EXPECT_TRUE(IsAtMostOS10_##V()); \
-  EXPECT_FALSE(IsAtLeastOS10_##V());
-
-#define TEST_FOR_FUTURE_OS(V)   \
-  EXPECT_FALSE(IsOS##V());      \
-  EXPECT_TRUE(IsAtMostOS##V()); \
-  EXPECT_FALSE(IsAtLeastOS##V());
-
-  if (major == 10) {
-    if (minor == 10) {
-      EXPECT_TRUE(IsOS10_10());
-      EXPECT_TRUE(IsAtMostOS10_10());
-
-      TEST_FOR_FUTURE_10_OS(11);
-      TEST_FOR_FUTURE_10_OS(12);
-      TEST_FOR_FUTURE_10_OS(13);
-      TEST_FOR_FUTURE_10_OS(14);
-      TEST_FOR_FUTURE_10_OS(15);
-      TEST_FOR_FUTURE_OS(11);
-
-      EXPECT_FALSE(IsOSLaterThan11_DontCallThis());
-    } else if (minor == 11) {
-      EXPECT_FALSE(IsOS10_10());
-      EXPECT_FALSE(IsAtMostOS10_10());
-
-      TEST_FOR_SAME_10_OS(11);
-      TEST_FOR_FUTURE_10_OS(12);
-      TEST_FOR_FUTURE_10_OS(13);
-      TEST_FOR_FUTURE_10_OS(14);
-      TEST_FOR_FUTURE_10_OS(15);
-      TEST_FOR_FUTURE_OS(11);
-
-      EXPECT_FALSE(IsOSLaterThan11_DontCallThis());
-    } else if (minor == 12) {
-      EXPECT_FALSE(IsOS10_10());
-      EXPECT_FALSE(IsAtMostOS10_10());
-
-      TEST_FOR_PAST_10_OS(11);
-      TEST_FOR_SAME_10_OS(12);
-      TEST_FOR_FUTURE_10_OS(13);
-      TEST_FOR_FUTURE_10_OS(14);
-      TEST_FOR_FUTURE_10_OS(15);
-      TEST_FOR_FUTURE_OS(11);
-
-      EXPECT_FALSE(IsOSLaterThan11_DontCallThis());
-    } else if (minor == 13) {
-      EXPECT_FALSE(IsOS10_10());
-      EXPECT_FALSE(IsAtMostOS10_10());
-
-      TEST_FOR_PAST_10_OS(11);
-      TEST_FOR_PAST_10_OS(12);
-      TEST_FOR_SAME_10_OS(13);
-      TEST_FOR_FUTURE_10_OS(14);
-      TEST_FOR_FUTURE_10_OS(15);
-      TEST_FOR_FUTURE_OS(11);
-
-      EXPECT_FALSE(IsOSLaterThan11_DontCallThis());
-    } else if (minor == 14) {
-      EXPECT_FALSE(IsOS10_10());
-      EXPECT_FALSE(IsAtMostOS10_10());
-
-      TEST_FOR_PAST_10_OS(11);
-      TEST_FOR_PAST_10_OS(12);
-      TEST_FOR_PAST_10_OS(13);
-      TEST_FOR_SAME_10_OS(14);
-      TEST_FOR_FUTURE_10_OS(15);
-      TEST_FOR_FUTURE_OS(11);
-
-      EXPECT_FALSE(IsOSLaterThan11_DontCallThis());
-    } else if (minor == 15) {
-      EXPECT_FALSE(IsOS10_10());
-      EXPECT_FALSE(IsAtMostOS10_10());
-
-      TEST_FOR_PAST_10_OS(11);
-      TEST_FOR_PAST_10_OS(12);
-      TEST_FOR_PAST_10_OS(13);
-      TEST_FOR_PAST_10_OS(14);
-      TEST_FOR_SAME_10_OS(15);
-      TEST_FOR_FUTURE_OS(11);
-
-      EXPECT_FALSE(IsOSLaterThan11_DontCallThis());
-    } else {
-      // macOS 10.15 was the end of the line.
-      EXPECT_TRUE(false);
-    }
-  } else if (major == 11) {
-    EXPECT_FALSE(IsOS10_10());
-    EXPECT_FALSE(IsAtMostOS10_10());
-
-    TEST_FOR_PAST_10_OS(11);
-    TEST_FOR_PAST_10_OS(12);
-    TEST_FOR_PAST_10_OS(13);
-    TEST_FOR_PAST_10_OS(14);
-    TEST_FOR_PAST_10_OS(15);
-    TEST_FOR_SAME_OS(11);
-
-    EXPECT_FALSE(IsOSLaterThan11_DontCallThis());
-  } else {
-    // The spooky future.
-    EXPECT_FALSE(true);
+  // Some valid inputs; this and |expected_outputs| should be in sync.
+  struct {
+    const char* in;
+    const char* expected_out;
+  } valid_inputs[] = {
+      {"FooBar.app/", "FooBar.app"},
+      {"/FooBar.app", "/FooBar.app"},
+      {"/FooBar.app/", "/FooBar.app"},
+      {"//FooBar.app", "//FooBar.app"},
+      {"/Foo/Bar.app", "/Foo/Bar.app"},
+      {"/Foo/Bar.app/", "/Foo/Bar.app"},
+      {"/F/B.app", "/F/B.app"},
+      {"/F/B.app/", "/F/B.app"},
+      {"/Foo/Bar.app/baz", "/Foo/Bar.app"},
+      {"/Foo/Bar.app/baz/", "/Foo/Bar.app"},
+      {"/Foo/Bar.app/baz/quux.app/quuux", "/Foo/Bar.app/baz/quux.app"},
+      {"/Applications/Google Foo.app/bar/Foo Helper.app/quux/Foo Helper",
+       "/Applications/Google Foo.app/bar/Foo Helper.app"},
+  };
+  for (size_t i = 0; i < std::size(valid_inputs); i++) {
+    SCOPED_TRACE(testing::Message()
+                 << "case #" << i << ", input " << valid_inputs[i].in);
+    out = apple::GetInnermostAppBundlePath(FilePath(valid_inputs[i].in));
+    EXPECT_FALSE(out.empty());
+    EXPECT_STREQ(valid_inputs[i].expected_out, out.value().c_str());
   }
 }
 
-#undef TEST_FOR_PAST_10_OS
-#undef TEST_FOR_PAST_OS
-#undef TEST_FOR_SAME_10_OS
-#undef TEST_FOR_SAME_OS
-#undef TEST_FOR_FUTURE_10_OS
-#undef TEST_FOR_FUTURE_OS
+TEST_F(MacUtilTest, MacOSVersion) {
+  int32_t major, minor, bugfix;
+  base::SysInfo::OperatingSystemVersionNumbers(&major, &minor, &bugfix);
 
-TEST_F(MacUtilTest, ParseModelIdentifier) {
-  std::string model;
-  int32_t major = 1, minor = 2;
+  EXPECT_EQ(major * 1'00'00 + minor * 1'00 + bugfix, MacOSVersion());
+  EXPECT_EQ(major, MacOSMajorVersion());
+}
 
-  EXPECT_FALSE(ParseModelIdentifier("", &model, &major, &minor));
-  EXPECT_EQ(0U, model.length());
-  EXPECT_EQ(1, major);
-  EXPECT_EQ(2, minor);
-  EXPECT_FALSE(ParseModelIdentifier("FooBar", &model, &major, &minor));
+TEST_F(MacUtilTest, ParseOSProductVersion) {
+  // Various strings in shapes that would be expected to be returned from the
+  // API that would need to be parsed.
+  EXPECT_EQ(10'06'02, ParseOSProductVersionForTesting("10.6.2"));
+  EXPECT_EQ(10'15'00, ParseOSProductVersionForTesting("10.15"));
+  EXPECT_EQ(13'05'01, ParseOSProductVersionForTesting("13.5.1"));
+  EXPECT_EQ(14'00'00, ParseOSProductVersionForTesting("14.0"));
 
-  EXPECT_TRUE(ParseModelIdentifier("MacPro4,1", &model, &major, &minor));
-  EXPECT_EQ(model, "MacPro");
-  EXPECT_EQ(4, major);
-  EXPECT_EQ(1, minor);
+  // Various strings in shapes that would not be expected, but that should parse
+  // without CHECKing.
+  EXPECT_EQ(13'04'01, ParseOSProductVersionForTesting("13.4.1 (c)"));
+  EXPECT_EQ(14'00'00, ParseOSProductVersionForTesting("14.0.0"));
+  EXPECT_EQ(18'00'00, ParseOSProductVersionForTesting("18"));
+  EXPECT_EQ(18'03'04, ParseOSProductVersionForTesting("18.3.4.3.2.5"));
 
-  EXPECT_TRUE(ParseModelIdentifier("MacBookPro6,2", &model, &major, &minor));
-  EXPECT_EQ(model, "MacBookPro");
-  EXPECT_EQ(6, major);
-  EXPECT_EQ(2, minor);
+  // Various strings in shapes that are so unexpected that they should not
+  // parse.
+  EXPECT_DEATH_IF_SUPPORTED(ParseOSProductVersionForTesting("Mac OS X 10.0"),
+                            "");
+  EXPECT_DEATH_IF_SUPPORTED(ParseOSProductVersionForTesting(""), "");
+  EXPECT_DEATH_IF_SUPPORTED(ParseOSProductVersionForTesting("  "), "");
+  EXPECT_DEATH_IF_SUPPORTED(ParseOSProductVersionForTesting("."), "");
+  EXPECT_DEATH_IF_SUPPORTED(ParseOSProductVersionForTesting("10.a.5"), "");
+  EXPECT_DEATH_IF_SUPPORTED(ParseOSProductVersionForTesting("१०.१५.७"), "");
+  EXPECT_DEATH_IF_SUPPORTED(ParseOSProductVersionForTesting("7.6.1"), "");
+  EXPECT_DEATH_IF_SUPPORTED(ParseOSProductVersionForTesting("10.16"), "");
 }
 
 TEST_F(MacUtilTest, TestRemoveQuarantineAttribute) {
@@ -306,10 +191,12 @@ TEST_F(MacUtilTest, TestRemoveQuarantineAttribute) {
   EXPECT_EQ(0, setxattr(file_path_str, "com.apple.quarantine",
       quarantine_str, strlen(quarantine_str), 0, 0));
   EXPECT_EQ(static_cast<long>(strlen(quarantine_str)),
-      getxattr(file_path_str, "com.apple.quarantine",
-          NULL, 0, 0, 0));
+            getxattr(file_path_str, "com.apple.quarantine", /*value=*/nullptr,
+                     /*size=*/0, /*position=*/0, /*options=*/0));
   EXPECT_TRUE(RemoveQuarantineAttribute(dummy_folder_path));
-  EXPECT_EQ(-1, getxattr(file_path_str, "com.apple.quarantine", NULL, 0, 0, 0));
+  EXPECT_EQ(-1,
+            getxattr(file_path_str, "com.apple.quarantine", /*value=*/nullptr,
+                     /*size=*/0, /*position=*/0, /*options=*/0));
   EXPECT_EQ(ENOATTR, errno);
 }
 
@@ -319,7 +206,9 @@ TEST_F(MacUtilTest, TestRemoveQuarantineAttributeTwice) {
   FilePath dummy_folder_path = temp_dir_.GetPath().Append("DummyFolder");
   const char* file_path_str = dummy_folder_path.value().c_str();
   ASSERT_TRUE(base::CreateDirectory(dummy_folder_path));
-  EXPECT_EQ(-1, getxattr(file_path_str, "com.apple.quarantine", NULL, 0, 0, 0));
+  EXPECT_EQ(-1,
+            getxattr(file_path_str, "com.apple.quarantine", /*value=*/nullptr,
+                     /*size=*/0, /*position=*/0, /*options=*/0));
   // No quarantine attribute to begin with, but RemoveQuarantineAttribute still
   // succeeds because in the end the folder still doesn't have the quarantine
   // attribute set.
@@ -338,5 +227,4 @@ TEST_F(MacUtilTest, TestRemoveQuarantineAttributeNonExistentPath) {
 
 }  // namespace
 
-}  // namespace mac
-}  // namespace base
+}  // namespace base::mac

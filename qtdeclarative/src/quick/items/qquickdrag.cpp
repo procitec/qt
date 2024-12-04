@@ -1,126 +1,36 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtQuick module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qquickdrag_p.h"
+#include "qquickdrag_p_p.h"
 
 #include <private/qguiapplication_p.h>
 #include <qpa/qplatformintegration.h>
 #include <private/qquickitem_p.h>
 #include <QtQuick/private/qquickevents_p_p.h>
 #include <private/qquickitemchangelistener_p.h>
-#include <private/qquickpixmapcache_p.h>
+#include <private/qquickpixmap_p.h>
 #include <private/qv4scopedvalue_p.h>
+#include <QtCore/qbuffer.h>
 #include <QtCore/qmimedata.h>
+#include <QtCore/qstringconverter.h>
 #include <QtQml/qqmlinfo.h>
 #include <QtGui/qevent.h>
 #include <QtGui/qstylehints.h>
 #include <QtGui/qguiapplication.h>
+#include <QtGui/qimagewriter.h>
 
 #include <qpa/qplatformdrag.h>
 #include <QtGui/qdrag.h>
 
 QT_BEGIN_NAMESPACE
 
-class QQuickDragAttachedPrivate : public QObjectPrivate, public QQuickItemChangeListener
-{
-    Q_DECLARE_PUBLIC(QQuickDragAttached)
-    QML_ANONYMOUS
+using namespace Qt::StringLiterals;
 
-public:
-    static QQuickDragAttachedPrivate *get(QQuickDragAttached *attached) {
-        return static_cast<QQuickDragAttachedPrivate *>(QObjectPrivate::get(attached)); }
-
-    QQuickDragAttachedPrivate()
-        : attachedItem(nullptr)
-        , mimeData(nullptr)
-        , proposedAction(Qt::MoveAction)
-        , supportedActions(Qt::MoveAction | Qt::CopyAction | Qt::LinkAction)
-        , active(false)
-        , listening(false)
-        , inEvent(false)
-        , dragRestarted(false)
-        , itemMoved(false)
-        , eventQueued(false)
-        , overrideActions(false)
-        , dragType(QQuickDrag::Internal)
-    {
-    }
-
-    void itemGeometryChanged(QQuickItem *, QQuickGeometryChange, const QRectF &) override;
-    void itemParentChanged(QQuickItem *, QQuickItem *parent) override;
-    void updatePosition();
-    void restartDrag();
-    void deliverEnterEvent();
-    void deliverMoveEvent();
-    void deliverLeaveEvent();
-    void deliverEvent(QQuickWindow *window, QEvent *event);
-    void start(Qt::DropActions supportedActions);
-    Qt::DropAction startDrag(Qt::DropActions supportedActions);
-    void setTarget(QQuickItem *item);
-
-    QQuickDragGrabber dragGrabber;
-
-    QPointer<QObject> source;
-    QPointer<QObject> target;
-    QPointer<QQuickWindow> window;
-    QQuickItem *attachedItem;
-    QQuickDragMimeData *mimeData;
-    Qt::DropAction proposedAction;
-    Qt::DropActions supportedActions;
-    bool active : 1;
-    bool listening : 1;
-    bool inEvent : 1;
-    bool dragRestarted : 1;
-    bool itemMoved : 1;
-    bool eventQueued : 1;
-    bool overrideActions : 1;
-    QPointF hotSpot;
-    QUrl imageSource;
-    QQuickPixmap pixmapLoader;
-    QStringList keys;
-    QVariantMap externalMimeData;
-    QQuickDrag::DragType dragType;
-};
 
 /*!
     \qmltype Drag
-    \instantiates QQuickDrag
+    \nativetype QQuickDrag
     \inqmlmodule QtQuick
     \ingroup qtquick-input
     \brief For specifying drag and drop events for moved Items.
@@ -145,7 +55,7 @@ public:
     \l {supportedActions}{drop action} chosen by the recipient of the event,
     otherwise it will return Qt.IgnoreAction.
 
-    \sa {Qt Quick Examples - Drag and Drop}, {Qt Quick Examples - externaldraganddrop}
+    \sa {Qt Quick Examples - Drag and Drop}
 */
 
 void QQuickDragAttachedPrivate::itemGeometryChanged(QQuickItem *, QQuickGeometryChange change,
@@ -239,7 +149,7 @@ void QQuickDragAttachedPrivate::deliverEvent(QQuickWindow *window, QEvent *event
 {
     Q_ASSERT(!inEvent);
     inEvent = true;
-    QQuickWindowPrivate::get(window)->deliverDragEvent(&dragGrabber, event);
+    QQuickWindowPrivate::get(window)->deliveryAgentPrivate()->deliverDragEvent(&dragGrabber, event);
     inEvent = false;
 }
 
@@ -444,10 +354,63 @@ void QQuickDragAttached::setImageSource(const QUrl &url)
         if (url.isEmpty()) {
             d->pixmapLoader.clear();
         } else {
-            d->pixmapLoader.load(qmlEngine(parent()), url);
+            d->loadPixmap();
         }
 
         Q_EMIT imageSourceChanged();
+    }
+}
+
+/*!
+    \qmlattachedproperty size QtQuick::Drag::imageSourceSize
+    \since 6.8
+
+    This property holds the size of the image that will be used to represent
+    the data during the drag and drop operation. Changing this property after
+    the drag operation has started will have no effect.
+
+    This property sets the maximum number of pixels stored for the loaded
+    image so that large images do not use more memory than necessary.
+    See \l {QtQuick::Image::sourceSize}{Image.sourceSize} for more details.
+
+    The example below shows an SVG image rendered at one size, and re-renders
+    it at a different size for the drag image:
+
+    \snippet qml/externalDragScaledImage.qml 0
+
+    \sa imageSource, Item::grabToImage()
+*/
+
+QSize QQuickDragAttached::imageSourceSize() const
+{
+    Q_D(const QQuickDragAttached);
+    int width = d->imageSourceSize.width();
+    int height = d->imageSourceSize.height();
+    // If width or height is invalid, check whether the size is valid from the loaded image.
+    // If it ends up 0x0 though, leave it as an invalid QSize instead (-1 x -1).
+    if (width == -1) {
+        width = d->pixmapLoader.width();
+        if (!width)
+            width = -1;
+    }
+    if (height == -1) {
+        height = d->pixmapLoader.height();
+        if (!height)
+            height = -1;
+    }
+    return QSize(width, height);
+}
+
+void QQuickDragAttached::setImageSourceSize(const QSize &size)
+{
+    Q_D(QQuickDragAttached);
+    if (d->imageSourceSize != size) {
+        d->imageSourceSize = size;
+
+        if (!d->imageSource.isEmpty())
+            d->loadPixmap();
+
+        Q_EMIT imageSourceSizeChanged();
     }
 }
 
@@ -478,10 +441,13 @@ void QQuickDragAttached::setKeys(const QStringList &keys)
 }
 
 /*!
-    \qmlattachedproperty stringlist QtQuick::Drag::mimeData
+    \qmlattachedproperty var QtQuick::Drag::mimeData
     \since 5.2
 
-    This property holds a map of mimeData that is used during startDrag.
+    This property holds a map from mime type to data that is used during startDrag.
+    The mime data needs to be of a type that matches the mime type (e.g. a string if
+    the mime type is "text/plain", or an image if the mime type is "image/png"), or
+    an \c ArrayBuffer with the data encoded according to the mime type.
 */
 
 QVariantMap QQuickDragAttached::mimeData() const
@@ -564,11 +530,9 @@ void QQuickDragAttached::setProposedAction(Qt::DropAction action)
 
     A drag can also be started manually using \l startDrag.
 
-    \list
-    \li Drag.None - do not start drags automatically
-    \li Drag.Automatic - start drags automatically
-    \li Drag.Internal (default) - start backwards compatible drags automatically
-    \endlist
+    \value Drag.None        do not start drags automatically
+    \value Drag.Automatic   start drags automatically
+    \value Drag.Internal    (default) start backwards compatible drags automatically
 
     When using \c Drag.Automatic you should also define \l mimeData and bind the
     \l active property to the active property of MouseArea : \l {MouseArea::drag.active}
@@ -627,7 +591,7 @@ void QQuickDragAttachedPrivate::start(Qt::DropActions supportedActions)
     property for the started sequence.
 */
 
-void QQuickDragAttached::start(QQmlV4Function *args)
+void QQuickDragAttached::start(QQmlV4FunctionPtr args)
 {
     Q_D(QQuickDragAttached);
     if (d->inEvent) {
@@ -663,12 +627,10 @@ void QQuickDragAttached::start(QQmlV4Function *args)
 
     The returned drop action may be one of:
 
-    \list
-    \li Qt.CopyAction Copy the data to the target
-    \li Qt.MoveAction Move the data from the source to the target
-    \li Qt.LinkAction Create a link from the source to the target.
-    \li Qt.IgnoreAction Ignore the action (do nothing with the data).
-    \endlist
+    \value Qt.CopyAction    Copy the data to the target
+    \value Qt.MoveAction    Move the data from the source to the target
+    \value Qt.LinkAction    Create a link from the source to the target.
+    \value Qt.IgnoreAction  Ignore the action (do nothing with the data).
 */
 
 int QQuickDragAttached::drop()
@@ -759,20 +721,125 @@ void QQuickDragAttached::cancel()
     \sa drop()
  */
 
+QMimeData *QQuickDragAttachedPrivate::createMimeData() const
+{
+    Q_Q(const QQuickDragAttached);
+    QMimeData *mimeData = new QMimeData();
+
+    for (const auto [mimeType, value] : externalMimeData.asKeyValueRange()) {
+        switch (value.typeId()) {
+        case QMetaType::QByteArray:
+            // byte array assumed to already be correctly encoded
+            mimeData->setData(mimeType, value.toByteArray());
+            break;
+        case QMetaType::QString: {
+            const QString text = value.toString();
+            if (mimeType == u"text/plain"_s) {
+                mimeData->setText(text);
+            } else if (mimeType == u"text/html"_s) {
+                mimeData->setHtml(text);
+            } else if (mimeType == u"text/uri-list"_s) {
+                QList<QUrl> urls;
+                // parse and split according to RFC2483
+                const auto lines = text.split(u"\r\n"_s, Qt::SkipEmptyParts);
+                for (const auto &line : lines) {
+                    const QUrl url(line);
+                    if (url.isValid())
+                        urls.push_back(url);
+                    else
+                        qmlWarning(q) << line << " is not a valid URI";
+
+                }
+                mimeData->setUrls(urls);
+            } else if (mimeType.startsWith(u"text/"_s)) {
+                if (qsizetype charsetIdx = mimeType.lastIndexOf(u";charset="_s); charsetIdx != -1) {
+                    charsetIdx += sizeof(";charset=") - 1;
+                    const QByteArray encoding = mimeType.mid(charsetIdx).toUtf8();
+                    QStringEncoder encoder(encoding);
+                    if (encoder.isValid())
+                        mimeData->setData(mimeType, encoder.encode(text));
+                    else
+                        qmlWarning(q) << "Don't know how to encode text as " << mimeType;
+                } else {
+                    mimeData->setData(mimeType, text.toUtf8());
+                }
+            } else {
+                mimeData->setData(mimeType, text.toUtf8());
+            }
+            break;
+        }
+        case QMetaType::QVariantList:
+        case QMetaType::QStringList:
+            if (mimeType == u"text/uri-list"_s) {
+                const QVariantList values = value.toList();
+                QList<QUrl> urls;
+                urls.reserve(values.size());
+                bool error = false;
+                for (qsizetype index = 0; index < values.size(); ++index) {
+                    const QUrl url = values.at(index).value<QUrl>();
+                    if (url.isValid()) {
+                        urls += url;
+                    } else {
+                        error = true;
+                        qmlWarning(q) << "Value '" << values.at(index) << "' at index " << index
+                                      << " is not a valid URI";
+                    }
+                }
+                if (!error)
+                    mimeData->setUrls(urls);
+            }
+            break;
+        case QMetaType::QImage:
+            if (const QByteArray mimeTypeUtf8 = mimeType.toUtf8();
+                QImageWriter::supportedMimeTypes().contains(mimeTypeUtf8)) {
+                const auto imageFormats = QImageWriter::imageFormatsForMimeType(mimeTypeUtf8);
+                if (imageFormats.isEmpty()) { // shouldn't happen, but we can fall back
+                    mimeData->setImageData(value);
+                    break;
+                }
+                const QImage image = value.value<QImage>();
+                QByteArray bytes;
+                {
+                    QBuffer buffer(&bytes);
+                    QImageWriter encoder(&buffer, imageFormats.first());
+                    encoder.write(image);
+                }
+                mimeData->setData(mimeType, bytes);
+                break;
+            }
+            Q_FALLTHROUGH();
+        default:
+            qmlWarning(q) << "Don't know how to encode variant of type " << value.metaType()
+                          << " as mime type " << mimeType;
+            // compatibility with pre-6.5 - probably a bad idea
+            mimeData->setData(mimeType, value.toString().toUtf8());
+            break;
+        }
+    }
+
+    return mimeData;
+}
+
+void QQuickDragAttachedPrivate::loadPixmap()
+{
+    Q_Q(QQuickDragAttached);
+
+    QUrl loadUrl = imageSource;
+    const QQmlContext *context = qmlContext(q->parent());
+    if (context)
+        loadUrl = context->resolvedUrl(imageSource);
+    pixmapLoader.load(context ? context->engine() : nullptr, loadUrl, QRect(), q->imageSourceSize());
+}
+
 Qt::DropAction QQuickDragAttachedPrivate::startDrag(Qt::DropActions supportedActions)
 {
     Q_Q(QQuickDragAttached);
 
     QDrag *drag = new QDrag(source ? source : q);
-    QMimeData *mimeData = new QMimeData();
 
-    for (auto it = externalMimeData.cbegin(), end = externalMimeData.cend(); it != end; ++it)
-        mimeData->setData(it.key(), it.value().toString().toUtf8());
-
-    drag->setMimeData(mimeData);
-    if (pixmapLoader.isReady()) {
+    drag->setMimeData(createMimeData());
+    if (pixmapLoader.isReady())
         drag->setPixmap(QPixmap::fromImage(pixmapLoader.image()));
-    }
 
     drag->setHotSpot(hotSpot.toPoint());
     emit q->dragStarted();
@@ -807,7 +874,7 @@ Qt::DropAction QQuickDragAttachedPrivate::startDrag(Qt::DropActions supportedAct
     property for the started sequence.
 */
 
-void QQuickDragAttached::startDrag(QQmlV4Function *args)
+void QQuickDragAttached::startDrag(QQmlV4FunctionPtr args)
 {
     Q_D(QQuickDragAttached);
 

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,20 +6,18 @@
 
 #include <utility>
 
-#include "base/atomic_sequence_num.h"
-#include "base/json/json_writer.h"
+#include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/strings/string_util.h"
 #include "base/values.h"
+#include "media/base/media_switches.h"
 
 namespace media {
 
+// Static declaration for dictionary keys that we expect to be used inside
+// different |MediaLogRecord|s. We declare them here so if they change, its
+// only in one spot.
 const char MediaLog::kEventKey[] = "event";
-const char MediaLog::kStatusText[] = "pipeline_error";
-
-// A count of all MediaLogs created in the current process. Used to generate
-// unique IDs.
-static base::AtomicSequenceNumber g_media_log_count;
 
 MediaLog::MediaLog() : MediaLog(new ParentLogRecord(this)) {}
 
@@ -48,26 +46,24 @@ std::string MediaLog::GetErrorMessageLocked() {
   return "";
 }
 
+// Default implementation.
+void MediaLog::Stop() {}
+
+bool MediaLog::ShouldLogToDebugConsole() const {
+#if DCHECK_IS_ON()
+  return true;
+#else
+  return false;
+#endif
+}
+
 void MediaLog::AddMessage(MediaLogMessageLevel level, std::string message) {
   std::unique_ptr<MediaLogRecord> record(
       CreateRecord(MediaLogRecord::Type::kMessage));
-  record->params.SetStringPath(MediaLogMessageLevelToString(level),
-                               std::move(message));
+  if (!base::IsStringUTF8AllowingNoncharacters(message))
+    message = "WARNING: system message could not be rendered!";
+  record->params.Set(MediaLogMessageLevelToString(level), std::move(message));
   AddLogRecord(std::move(record));
-}
-
-void MediaLog::NotifyError(PipelineStatus status) {
-  std::unique_ptr<MediaLogRecord> record(
-      CreateRecord(MediaLogRecord::Type::kMediaStatus));
-  record->params.SetIntPath(MediaLog::kStatusText, status);
-  AddLogRecord(std::move(record));
-}
-
-void MediaLog::NotifyError(Status status) {
-  DCHECK(!status.is_ok());
-  std::string output_str;
-  base::JSONWriter::Write(MediaSerialize(status), &output_str);
-  AddMessage(MediaLogMessageLevel::kERROR, output_str);
 }
 
 void MediaLog::OnWebMediaPlayerDestroyedLocked() {}
@@ -103,7 +99,9 @@ void MediaLog::AddLogRecord(std::unique_ptr<MediaLogRecord> record) {
 std::unique_ptr<MediaLogRecord> MediaLog::CreateRecord(
     MediaLogRecord::Type type) {
   auto record = std::make_unique<MediaLogRecord>();
-  record->id = id();
+  // Record IDs are populated by event handlers before they are sent to various
+  // log viewers, such as the media-internals page, or devtools.
+  record->id = 0;
   record->type = type;
   record->time = base::TimeTicks::Now();
   return record;
@@ -118,21 +116,54 @@ void MediaLog::InvalidateLog() {
   // Keep |parent_log_record_| around, since the lock must keep working.
 }
 
-MediaLog::ParentLogRecord::ParentLogRecord(MediaLog* log)
-    : id(g_media_log_count.GetNext()), media_log(log) {}
+MediaLog::ParentLogRecord::ParentLogRecord(MediaLog* log) : media_log(log) {}
 MediaLog::ParentLogRecord::~ParentLogRecord() = default;
 
-LogHelper::LogHelper(MediaLogMessageLevel level, MediaLog* media_log)
-    : level_(level), media_log_(media_log) {
+LogHelper::LogHelper(MediaLogMessageLevel level,
+                     MediaLog* media_log,
+                     const char* file,
+                     int line)
+    : file_(file), line_(line), level_(level), media_log_(media_log) {
   DCHECK(media_log_);
 }
 
 LogHelper::LogHelper(MediaLogMessageLevel level,
-                     const std::unique_ptr<MediaLog>& media_log)
-    : LogHelper(level, media_log.get()) {}
+                     const std::unique_ptr<MediaLog>& media_log,
+                     const char* file,
+                     int line)
+    : LogHelper(level, media_log.get(), file, line) {}
 
 LogHelper::~LogHelper() {
-  media_log_->AddMessage(level_, stream_.str());
+  const auto log = stream_.str();
+
+  if (media_log_->ShouldLogToDebugConsole()) {
+    switch (level_) {
+      case MediaLogMessageLevel::kERROR:
+        // ERRORs are always logged regardless of kMediaLogToConsole value.
+        if (DLOG_IS_ON(ERROR)) {
+          logging::LogMessage(file_, line_, logging::LOGGING_ERROR).stream()
+              << log;
+        }
+        break;
+      case MediaLogMessageLevel::kWARNING:
+        if (DLOG_IS_ON(WARNING) &&
+            base::FeatureList::IsEnabled(kMediaLogToConsole)) {
+          logging::LogMessage(file_, line_, logging::LOGGING_WARNING).stream()
+              << log;
+        }
+        break;
+      case MediaLogMessageLevel::kINFO:
+      case MediaLogMessageLevel::kDEBUG:
+        if (DLOG_IS_ON(INFO) &&
+            base::FeatureList::IsEnabled(kMediaLogToConsole)) {
+          logging::LogMessage(file_, line_, logging::LOGGING_INFO).stream()
+              << log;
+        }
+        break;
+    }
+  }
+
+  media_log_->AddMessage(level_, log);
 }
 
-}  //namespace media
+}  // namespace media

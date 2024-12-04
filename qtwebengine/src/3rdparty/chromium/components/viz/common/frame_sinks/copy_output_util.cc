@@ -1,12 +1,14 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/viz/common/frame_sinks/copy_output_util.h"
 
 #include <stdint.h>
+#include <string>
 
 #include "base/check_op.h"
+#include "base/strings/stringprintf.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/vector2d.h"
 
@@ -35,6 +37,14 @@ int64_t FloorScale(int32_t t, int32_t numerator, int32_t denominator) {
 }
 
 }  // namespace
+
+std::string RenderPassGeometry::ToString() const {
+  return base::StringPrintf(
+      "sampling_bounds: %s, result_bounds: %s, result_selection: %s, "
+      "readback_offset: %s",
+      sampling_bounds.ToString().c_str(), result_bounds.ToString().c_str(),
+      result_selection.ToString().c_str(), readback_offset.ToString().c_str());
+}
 
 gfx::Rect ComputeResultRect(const gfx::Rect& area,
                             const gfx::Vector2d& scale_from,

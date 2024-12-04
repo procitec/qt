@@ -1,4 +1,4 @@
-// Copyright (c) 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,9 +13,10 @@
 
 #include "base/component_export.h"
 #include "base/files/file_path.h"
-#include "base/macros.h"
-#include "base/memory/ref_counted.h"
+#include "base/functional/callback_helpers.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/numerics/checked_math.h"
+#include "components/file_access/scoped_file_access_delegate.h"
 #include "components/services/storage/public/mojom/blob_storage_context.mojom.h"
 #include "storage/browser/blob/blob_data_item.h"
 #include "storage/browser/blob/blob_data_snapshot.h"
@@ -41,6 +42,10 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) BlobDataBuilder {
   using ItemCopyEntry = BlobEntry::ItemCopyEntry;
 
   explicit BlobDataBuilder(const std::string& uuid);
+
+  BlobDataBuilder(const BlobDataBuilder&) = delete;
+  BlobDataBuilder& operator=(const BlobDataBuilder&) = delete;
+
   ~BlobDataBuilder();
 
   const std::string& uuid() const { return uuid_; }
@@ -58,6 +63,10 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) BlobDataBuilder {
    public:
     FutureData(FutureData&&);
     FutureData& operator=(FutureData&&);
+
+    FutureData(const FutureData&) = delete;
+    FutureData& operator=(const FutureData&) = delete;
+
     ~FutureData();
 
     // Populates a part of an item previously allocated with AppendFutureData.
@@ -80,7 +89,6 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) BlobDataBuilder {
     FutureData(scoped_refptr<BlobDataItem>);
 
     scoped_refptr<BlobDataItem> item_;
-    DISALLOW_COPY_AND_ASSIGN(FutureData);
   };
 
   // Adds an item that is flagged for future data population. The memory is not
@@ -93,6 +101,10 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) BlobDataBuilder {
    public:
     FutureFile(FutureFile&&);
     FutureFile& operator=(FutureFile&&);
+
+    FutureFile(const FutureFile&) = delete;
+    FutureFile& operator=(const FutureFile&) = delete;
+
     ~FutureFile();
 
     // Populates a part of an item previously allocated with AppendFutureFile.
@@ -106,7 +118,6 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) BlobDataBuilder {
     FutureFile(scoped_refptr<BlobDataItem>);
 
     scoped_refptr<BlobDataItem> item_;
-    DISALLOW_COPY_AND_ASSIGN(FutureFile);
   };
 
   // Adds an item that is flagged for future data population. Use
@@ -123,11 +134,17 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) BlobDataBuilder {
 
   // You must know the length of the file, you cannot use kuint64max to specify
   // the whole file.  This method creates a ShareableFileReference to the given
-  // file, which is stored in this builder.
-  void AppendFile(const base::FilePath& file_path,
-                  uint64_t offset,
-                  uint64_t length,
-                  const base::Time& expected_modification_time);
+  // file, which is stored in this builder. The callback `file_access` is used
+  // to grant or deny access to files under dlp restrictions. Passing a
+  // NullCallback will lead to default behaviour of
+  // ScopedFileAccessDelegate::RequestDefaultFilesAccessIO.
+  void AppendFile(
+      const base::FilePath& file_path,
+      uint64_t offset,
+      uint64_t length,
+      const base::Time& expected_modification_time,
+      file_access::ScopedFileAccessDelegate::RequestFilesAccessIOCallback
+          file_access = base::NullCallback());
 
   void AppendBlob(const std::string& uuid,
                   uint64_t offset,
@@ -141,7 +158,9 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) BlobDataBuilder {
       uint64_t offset,
       uint64_t length,
       const base::Time& expected_modification_time,
-      scoped_refptr<FileSystemContext> file_system_context);
+      scoped_refptr<FileSystemContext> file_system_context,
+      file_access::ScopedFileAccessDelegate::RequestFilesAccessIOCallback
+          file_access = base::NullCallback());
 
   void AppendReadableDataHandle(scoped_refptr<DataHandle> data_handle) {
     auto length = data_handle->GetSize();
@@ -241,8 +260,6 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) BlobDataBuilder {
   std::vector<scoped_refptr<ShareableBlobDataItem>> pending_transport_items_;
   std::set<std::string> dependent_blob_uuids_;
   std::vector<ItemCopyEntry> copies_;
-
-  DISALLOW_COPY_AND_ASSIGN(BlobDataBuilder);
 };
 
 #if defined(UNIT_TEST)

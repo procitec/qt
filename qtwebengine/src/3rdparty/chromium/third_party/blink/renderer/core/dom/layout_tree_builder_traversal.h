@@ -30,7 +30,6 @@
 #include <cstdint>
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/dom/element.h"
-#include "third_party/blink/renderer/core/dom/v0_insertion_point.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 
 namespace blink {
@@ -42,28 +41,9 @@ class CORE_EXPORT LayoutTreeBuilderTraversal {
 
  public:
   static const int32_t kTraverseAllSiblings = -2;
-  class ParentDetails {
-    STACK_ALLOCATED();
 
-   public:
-    ParentDetails() : insertion_point_(nullptr) {}
-
-    const V0InsertionPoint* GetInsertionPoint() const {
-      return insertion_point_;
-    }
-
-    void DidTraverseInsertionPoint(const V0InsertionPoint*);
-
-    bool operator==(const ParentDetails& other) {
-      return insertion_point_ == other.insertion_point_;
-    }
-
-   private:
-    const V0InsertionPoint* insertion_point_;
-  };
-
-  static ContainerNode* Parent(const Node&, ParentDetails* = nullptr);
-  static ContainerNode* LayoutParent(const Node&, ParentDetails* = nullptr);
+  static ContainerNode* Parent(const Node&);
+  static ContainerNode* LayoutParent(const Node&);
   static Node* FirstChild(const Node&);
   static Node* LastChild(const Node&);
   static Node* NextSibling(const Node&);
@@ -93,6 +73,13 @@ class CORE_EXPORT LayoutTreeBuilderTraversal {
   static inline Element* ParentElement(const Node& node) {
     return DynamicTo<Element>(Parent(node));
   }
+  static inline Element* LayoutParentElement(const Node& node) {
+    return DynamicTo<Element>(LayoutParent(node));
+  }
+  // Compares positions of two nodes in preorder tree traversal.
+  // Return -1 if the first one goes first, 0 if they are the same
+  // and 1 if the second goes first.
+  static int ComparePreorderTreePosition(const Node&, const Node&);
 
  private:
   static Node* NextLayoutSibling(const Node&, int32_t& limit);
@@ -101,4 +88,4 @@ class CORE_EXPORT LayoutTreeBuilderTraversal {
 
 }  // namespace blink
 
-#endif
+#endif  // THIRD_PARTY_BLINK_RENDERER_CORE_DOM_LAYOUT_TREE_BUILDER_TRAVERSAL_H_

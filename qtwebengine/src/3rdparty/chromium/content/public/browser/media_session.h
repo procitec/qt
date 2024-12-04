@@ -1,11 +1,12 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef CONTENT_PUBLIC_BROWSER_MEDIA_SESSION_H_
 #define CONTENT_PUBLIC_BROWSER_MEDIA_SESSION_H_
 
-#include "base/macros.h"
+#include <string>
+
 #include "base/time/time.h"
 #include "base/unguessable_token.h"
 #include "content/common/content_export.h"
@@ -29,12 +30,30 @@ class MediaSession : public media_session::mojom::MediaSession {
   // none is currently available.
   CONTENT_EXPORT static MediaSession* Get(WebContents* contents);
 
+  // Returns the MediaSession associated to this WebContents if it already
+  // exists. Returns null otherwise.
+  CONTENT_EXPORT static MediaSession* GetIfExists(WebContents* contents);
+
   // Returns the source identity for the given BrowserContext.
   CONTENT_EXPORT static const base::UnguessableToken& GetSourceId(
       BrowserContext* browser_context);
 
   CONTENT_EXPORT static WebContents* GetWebContentsFromRequestId(
       const base::UnguessableToken& request_id);
+
+  // Media item IDs have a shared namespace including both UnguessableTokens and
+  // strings.
+  // TODO(https://crbug.com/1260385): Use UnguessableToken only and remove this
+  // API.
+  CONTENT_EXPORT static WebContents* GetWebContentsFromRequestId(
+      const std::string& request_id);
+
+  CONTENT_EXPORT static const base::UnguessableToken&
+  GetRequestIdFromWebContents(WebContents* web_contents);
+
+  // Test method to flush all MediaSessionObservers for synchronization during
+  // tests.  Static so that it can be optimized away outside of tests.
+  CONTENT_EXPORT static void FlushObserversForTesting(WebContents* contents);
 
   // Tell the media session a user action has performed.
   virtual void DidReceiveAction(

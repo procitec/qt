@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtQuick module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #ifndef QQUICKSTATE_H
 #define QQUICKSTATE_H
@@ -57,6 +21,9 @@
 #include <QtCore/qsharedpointer.h>
 #include <private/qtquickglobal_p.h>
 #include <private/qqmlabstractbinding_p.h>
+#include <private/qqmlanybinding_p.h>
+
+#include <QtCore/private/qproperty_p.h>
 
 QT_BEGIN_NAMESPACE
 
@@ -64,7 +31,7 @@ class QQuickStateActionEvent;
 class QQmlBinding;
 class QQmlExpression;
 
-class Q_QUICK_PRIVATE_EXPORT QQuickStateAction
+class Q_QUICK_EXPORT QQuickStateAction
 {
 public:
     QQuickStateAction();
@@ -81,8 +48,8 @@ public:
     QVariant fromValue;
     QVariant toValue;
 
-    QQmlAbstractBinding::Ptr fromBinding;
-    QQmlAbstractBinding::Ptr toBinding;
+    QQmlAnyBinding fromBinding;
+    QQmlAnyBinding toBinding;
     QQuickStateActionEvent *event;
 
     //strictly for matching
@@ -122,10 +89,11 @@ public:
 class QQuickStateGroup;
 class QQuickState;
 class QQuickStateOperationPrivate;
-class Q_QUICK_PRIVATE_EXPORT QQuickStateOperation : public QObject
+class Q_QUICK_EXPORT QQuickStateOperation : public QObject
 {
     Q_OBJECT
     QML_ANONYMOUS
+    QML_ADDED_IN_VERSION(2, 0)
 public:
     QQuickStateOperation(QObject *parent = nullptr)
         : QObject(parent) {}
@@ -148,7 +116,7 @@ typedef QQuickStateOperation::ActionList QQuickStateActions;
 
 class QQuickTransition;
 class QQuickStatePrivate;
-class Q_QUICK_PRIVATE_EXPORT QQuickState : public QObject
+class Q_QUICK_EXPORT QQuickState : public QObject
 {
     Q_OBJECT
 
@@ -159,6 +127,7 @@ class Q_QUICK_PRIVATE_EXPORT QQuickState : public QObject
     Q_CLASSINFO("DefaultProperty", "changes")
     Q_CLASSINFO("DeferredPropertyNames", "changes")
     QML_NAMED_ELEMENT(State)
+    QML_ADDED_IN_VERSION(2, 0)
 
 public:
     QQuickState(QObject *parent=nullptr);
@@ -189,13 +158,13 @@ public:
 
     bool containsPropertyInRevertList(QObject *target, const QString &name) const;
     bool changeValueInRevertList(QObject *target, const QString &name, const QVariant &revertValue);
-    bool changeBindingInRevertList(QObject *target, const QString &name, QQmlAbstractBinding *binding);
+    bool changeBindingInRevertList(QObject *target, const QString &name, QQmlAnyBinding binding);
     bool removeEntryFromRevertList(QObject *target, const QString &name);
     void addEntryToRevertList(const QQuickStateAction &action);
     void removeAllEntriesFromRevertList(QObject *target);
     void addEntriesToRevertList(const QList<QQuickStateAction> &actions);
     QVariant valueInRevertList(QObject *target, const QString &name) const;
-    QQmlAbstractBinding *bindingInRevertList(QObject *target, const QString &name) const;
+    QQmlAnyBinding bindingInRevertList(QObject *target, const QString &name) const;
 
     bool isStateActive() const;
 
@@ -208,8 +177,5 @@ private:
 };
 
 QT_END_NAMESPACE
-
-QML_DECLARE_TYPE(QQuickStateOperation)
-QML_DECLARE_TYPE(QQuickState)
 
 #endif // QQUICKSTATE_H

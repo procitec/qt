@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -44,7 +44,7 @@ class EmfPrintingTest : public testing::Test, public PrintingContext::Delegate {
   }
 
   // PrintingContext::Delegate methods.
-  gfx::NativeView GetParentView() override { return nullptr; }
+  gfx::NativeView GetParentView() override { return gfx::NativeView(); }
   std::string GetAppLocale() override { return std::string(); }
 };
 
@@ -70,7 +70,7 @@ TEST(EmfTest, DC) {
 
   // Playback the data.
   Emf emf;
-  // TODO(thestig): Make |data| uint8_t and avoid the base::as_bytes() call.
+  // TODO(thestig): Make `data` uint8_t and avoid the base::as_bytes() call.
   EXPECT_TRUE(emf.InitFromData(base::as_bytes(base::make_span(data))));
   HDC hdc = CreateCompatibleDC(nullptr);
   EXPECT_TRUE(hdc);
@@ -87,15 +87,16 @@ TEST_F(EmfPrintingTest, Enumerate) {
   auto settings = std::make_unique<PrintSettings>();
 
   // My test case is a HP Color LaserJet 4550 PCL.
-  settings->set_device_name(L"UnitTest Printer");
+  settings->set_device_name(u"UnitTest Printer");
 
   // Initialize it.
-  PrintingContextWin context(this);
-  EXPECT_EQ(PrintingContext::OK,
+  PrintingContextWin context(this,
+                             PrintingContext::ProcessBehavior::kOopDisabled);
+  EXPECT_EQ(mojom::ResultCode::kSuccess,
             context.InitWithSettingsForTest(std::move(settings)));
 
   base::FilePath emf_file;
-  EXPECT_TRUE(base::PathService::Get(base::DIR_SOURCE_ROOT, &emf_file));
+  EXPECT_TRUE(base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &emf_file));
   emf_file = emf_file.Append(FILE_PATH_LITERAL("printing"))
                  .Append(FILE_PATH_LITERAL("test"))
                  .Append(FILE_PATH_LITERAL("data"))
@@ -114,8 +115,7 @@ TEST_F(EmfPrintingTest, Enumerate) {
   // unit_test, PrintingContext automatically dumps its files to the
   // current directory.
   // TODO(maruel):  Clean the .PRN file generated in current directory.
-  context.NewDocument(L"EmfTest.Enumerate");
-  context.NewPage();
+  context.NewDocument(u"EmfTest.Enumerate");
   // Process one at a time.
   RECT page_bounds = emf.GetPageBounds(1).ToRECT();
   Emf::Enumerator emf_enum(emf, context.context(), &page_bounds);
@@ -129,7 +129,6 @@ TEST_F(EmfPrintingTest, Enumerate) {
     EXPECT_TRUE(itr->SafePlayback(&emf_enum.context_))
         << " index: " << index << " type: " << itr->record()->iType;
   }
-  context.PageDone();
   context.DocumentDone();
 }
 
@@ -165,7 +164,7 @@ TEST_F(EmfPrintingTest, PageBreak) {
   di.lpszDocName = L"Test Job";
   int job_id = ::StartDoc(dc.Get(), &di);
   Emf emf;
-  // TODO(thestig): Make |data| uint8_t and avoid the base::as_bytes() call.
+  // TODO(thestig): Make `data` uint8_t and avoid the base::as_bytes() call.
   EXPECT_TRUE(emf.InitFromData(base::as_bytes(base::make_span(data))));
   EXPECT_TRUE(emf.SafePlayback(dc.Get()));
   ::EndDoc(dc.Get());

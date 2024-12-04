@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,14 +6,15 @@
 
 #include <memory>
 
-#include "base/bind.h"
-#include "base/callback.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/run_loop.h"
 #include "crypto/nss_util_internal.h"
 #include "crypto/scoped_test_nss_chromeos_user.h"
 #include "crypto/scoped_test_nss_db.h"
 #include "net/cert/cert_database.h"
 #include "net/cert/x509_util_nss.h"
+#include "net/test/cert_builder.h"
 #include "net/test/cert_test_util.h"
 #include "net/test/test_data_directory.h"
 #include "net/test/test_with_task_environment.h"
@@ -53,11 +54,7 @@ void SwapCertLists(ScopedCERTCertificateList* destination,
 class NSSCertDatabaseChromeOSTest : public TestWithTaskEnvironment,
                                     public CertDatabase::Observer {
  public:
-  NSSCertDatabaseChromeOSTest()
-      : observer_added_(false),
-        db_changed_count_(0),
-        user_1_("user1"),
-        user_2_("user2") {}
+  NSSCertDatabaseChromeOSTest() : user_1_("user1"), user_2_("user2") {}
 
   void SetUp() override {
     // Initialize nss_util slots.
@@ -67,18 +64,18 @@ class NSSCertDatabaseChromeOSTest : public TestWithTaskEnvironment,
     user_2_.FinishInit();
 
     // Create NSSCertDatabaseChromeOS for each user.
-    db_1_.reset(new NSSCertDatabaseChromeOS(
+    db_1_ = std::make_unique<NSSCertDatabaseChromeOS>(
         crypto::GetPublicSlotForChromeOSUser(user_1_.username_hash()),
         crypto::GetPrivateSlotForChromeOSUser(
             user_1_.username_hash(),
-            base::OnceCallback<void(crypto::ScopedPK11Slot)>())));
+            base::OnceCallback<void(crypto::ScopedPK11Slot)>()));
     db_1_->SetSystemSlot(
         crypto::ScopedPK11Slot(PK11_ReferenceSlot(system_db_.slot())));
-    db_2_.reset(new NSSCertDatabaseChromeOS(
+    db_2_ = std::make_unique<NSSCertDatabaseChromeOS>(
         crypto::GetPublicSlotForChromeOSUser(user_2_.username_hash()),
         crypto::GetPrivateSlotForChromeOSUser(
             user_2_.username_hash(),
-            base::OnceCallback<void(crypto::ScopedPK11Slot)>())));
+            base::OnceCallback<void(crypto::ScopedPK11Slot)>()));
 
     // Add observer to CertDatabase for checking that notifications from
     // NSSCertDatabaseChromeOS are proxied to the CertDatabase.
@@ -92,11 +89,13 @@ class NSSCertDatabaseChromeOSTest : public TestWithTaskEnvironment,
   }
 
   // CertDatabase::Observer:
-  void OnCertDBChanged() override { db_changed_count_++; }
+  void OnTrustStoreChanged() override { trust_store_changed_count_++; }
+  void OnClientCertStoreChanged() override { client_cert_changed_count_++; }
 
  protected:
-  bool observer_added_;
-  int db_changed_count_;
+  bool observer_added_ = false;
+  int trust_store_changed_count_ = 0;
+  int client_cert_changed_count_ = 0;
 
   crypto::ScopedTestNSSChromeOSUser user_1_;
   crypto::ScopedTestNSSChromeOSUser user_2_;
@@ -144,9 +143,10 @@ TEST_F(NSSCertDatabaseChromeOSTest, ImportCACerts) {
       X509Certificate::FORMAT_AUTO);
   ASSERT_EQ(1U, certs_1.size());
 
-  ScopedCERTCertificateList certs_2 = CreateCERTCertificateListFromFile(
-      GetTestCertsDirectory(), "2048-rsa-root.pem",
-      X509Certificate::FORMAT_AUTO);
+  auto [leaf2, root2] = CertBuilder::CreateSimpleChain2();
+  ScopedCERTCertificateList certs_2 =
+      x509_util::CreateCERTCertificateListFromX509Certificate(
+          root2->GetX509Certificate().get());
   ASSERT_EQ(1U, certs_2.size());
 
   // Import one cert for each user.
@@ -170,8 +170,9 @@ TEST_F(NSSCertDatabaseChromeOSTest, ImportCACerts) {
   // Run the message loop so the observer notifications get processed and
   // lookups are completed.
   RunUntilIdle();
-  // Should have gotten two OnCertDBChanged notifications.
-  ASSERT_EQ(2, db_changed_count_);
+  // Should have gotten two OnTrustStoreChanged notifications.
+  EXPECT_EQ(2, trust_store_changed_count_);
+  EXPECT_EQ(0, client_cert_changed_count_);
 
   EXPECT_TRUE(IsCertInCertificateList(certs_1[0].get(), user_1_certlist));
   EXPECT_FALSE(IsCertInCertificateList(certs_1[0].get(), user_2_certlist));
@@ -189,9 +190,10 @@ TEST_F(NSSCertDatabaseChromeOSTest, ImportServerCert) {
       GetTestCertsDirectory(), "ok_cert.pem", X509Certificate::FORMAT_AUTO);
   ASSERT_EQ(1U, certs_1.size());
 
-  ScopedCERTCertificateList certs_2 = CreateCERTCertificateListFromFile(
-      GetTestCertsDirectory(), "2048-rsa-ee-by-2048-rsa-intermediate.pem",
-      X509Certificate::FORMAT_AUTO);
+  auto [leaf2, root2] = CertBuilder::CreateSimpleChain2();
+  ScopedCERTCertificateList certs_2 =
+      x509_util::CreateCERTCertificateListFromX509Certificate(
+          leaf2->GetX509Certificate().get());
   ASSERT_EQ(1U, certs_2.size());
 
   // Import one cert for each user.
@@ -215,9 +217,10 @@ TEST_F(NSSCertDatabaseChromeOSTest, ImportServerCert) {
   // Run the message loop so the observer notifications get processed and
   // lookups are completed.
   RunUntilIdle();
-  // TODO(mattm): ImportServerCert doesn't actually cause any observers to
-  // fire. Is that correct?
-  EXPECT_EQ(0, db_changed_count_);
+  // TODO(mattm): this should be 2, but ImportServerCert doesn't currently
+  // generate notifications.
+  EXPECT_EQ(0, trust_store_changed_count_);
+  EXPECT_EQ(0, client_cert_changed_count_);
 
   EXPECT_TRUE(IsCertInCertificateList(certs_1[0].get(), user_1_certlist));
   EXPECT_FALSE(IsCertInCertificateList(certs_1[0].get(), user_2_certlist));
@@ -277,6 +280,95 @@ TEST_F(NSSCertDatabaseChromeOSTest, ListCertsDoesNotCrossReadSystemSlot) {
   RunUntilIdle();
   EXPECT_TRUE(IsCertInCertificateList(cert_1.get(), certs));
   EXPECT_FALSE(IsCertInCertificateList(cert_2.get(), certs));
+}
+
+TEST_F(NSSCertDatabaseChromeOSTest, SetCertTrustCertIsAlreadyOnPublicSlot) {
+  // Import a certificate onto the public slot (and safety check that it ended
+  // up there).
+  ScopedCERTCertificateList certs = CreateCERTCertificateListFromFile(
+      GetTestCertsDirectory(), "root_ca_cert.pem",
+      X509Certificate::FORMAT_AUTO);
+  ASSERT_EQ(1U, certs.size());
+
+  NSSCertDatabase::ImportCertFailureList failed;
+  EXPECT_TRUE(
+      db_1_->ImportCACerts(certs, NSSCertDatabase::TRUST_DEFAULT, &failed));
+  EXPECT_EQ(0U, failed.size());
+
+  ASSERT_TRUE(NSSCertDatabase::IsCertificateOnSlot(
+      certs[0].get(), db_1_->GetPublicSlot().get()));
+
+  // Check that trust settings modification works.
+  EXPECT_EQ(NSSCertDatabase::TRUST_DEFAULT,
+            db_1_->GetCertTrust(certs[0].get(), CA_CERT));
+
+  EXPECT_TRUE(db_1_->SetCertTrust(certs[0].get(), CA_CERT,
+                                  NSSCertDatabase::TRUSTED_SSL));
+
+  EXPECT_EQ(NSSCertDatabase::TRUSTED_SSL,
+            db_1_->GetCertTrust(certs[0].get(), CA_CERT));
+}
+
+TEST_F(NSSCertDatabaseChromeOSTest, SetCertTrustCertIsOnlyOnOtherSlot) {
+  crypto::ScopedTestNSSDB other_slot;
+
+  // Import a certificate onto a slot known by NSS which is not the
+  // NSSCertDatabase's public slot.
+  ScopedCERTCertificateList certs = CreateCERTCertificateListFromFile(
+      GetTestCertsDirectory(), "root_ca_cert.pem",
+      X509Certificate::FORMAT_AUTO);
+  ASSERT_EQ(1U, certs.size());
+  ASSERT_EQ(SECSuccess, PK11_ImportCert(other_slot.slot(), certs[0].get(),
+                                        CK_INVALID_HANDLE, "cert0",
+                                        PR_FALSE /* includeTrust (unused) */));
+  ASSERT_FALSE(NSSCertDatabase::IsCertificateOnSlot(
+      certs[0].get(), db_1_->GetPublicSlot().get()));
+
+  // Check that trust settings modification works.
+  EXPECT_EQ(NSSCertDatabase::TRUST_DEFAULT,
+            db_1_->GetCertTrust(certs[0].get(), CA_CERT));
+
+  EXPECT_TRUE(db_1_->SetCertTrust(certs[0].get(), CA_CERT,
+                                  NSSCertDatabase::TRUSTED_SSL));
+
+  EXPECT_EQ(NSSCertDatabase::TRUSTED_SSL,
+            db_1_->GetCertTrust(certs[0].get(), CA_CERT));
+
+  // Check that the certificate has been put onto the public slot as a side
+  // effect of changing trust.
+  EXPECT_TRUE(NSSCertDatabase::IsCertificateOnSlot(
+      certs[0].get(), db_1_->GetPublicSlot().get()));
+}
+
+TEST_F(NSSCertDatabaseChromeOSTest, SetCertTrustPublicSlotIsSystemSlot) {
+  // Create a NSSCertDatabase with |public_slot|==|system_slot|.
+  NSSCertDatabaseChromeOS test_db_for_system_slot(
+      /*public_slot=*/crypto::ScopedPK11Slot(
+          PK11_ReferenceSlot(system_db_.slot())),
+      /*private_slot=*/{});
+  test_db_for_system_slot.SetSystemSlot(
+      crypto::ScopedPK11Slot(PK11_ReferenceSlot(system_db_.slot())));
+
+  // Import a certificate onto a slot known by NSS which is not the
+  // NSSCertDatabase's public slot.
+  crypto::ScopedTestNSSDB other_slot;
+  ScopedCERTCertificateList certs = CreateCERTCertificateListFromFile(
+      GetTestCertsDirectory(), "root_ca_cert.pem",
+      X509Certificate::FORMAT_AUTO);
+  ASSERT_EQ(1U, certs.size());
+  ASSERT_EQ(SECSuccess, PK11_ImportCert(other_slot.slot(), certs[0].get(),
+                                        CK_INVALID_HANDLE, "cert0",
+                                        PR_FALSE /* includeTrust (unused) */));
+  ASSERT_FALSE(NSSCertDatabase::IsCertificateOnSlot(
+      certs[0].get(), test_db_for_system_slot.GetPublicSlot().get()));
+
+  // Changing trust through |test_db_for_system_slot| should fail and not do
+  // anything, because the database is not allowed to put the certificate onto
+  // its public slot (because it is also the system slot).
+  EXPECT_FALSE(test_db_for_system_slot.SetCertTrust(
+      certs[0].get(), CA_CERT, NSSCertDatabase::TRUSTED_SSL));
+  EXPECT_FALSE(NSSCertDatabase::IsCertificateOnSlot(
+      certs[0].get(), test_db_for_system_slot.GetPublicSlot().get()));
 }
 
 }  // namespace net

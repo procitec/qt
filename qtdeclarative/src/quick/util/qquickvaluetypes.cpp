@@ -1,62 +1,49 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtQuick module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include <private/qquickvaluetypes_p.h>
 
 #include <qtquickglobal.h>
 #include <private/qqmlvaluetype_p.h>
+#include <private/qqmlstringconverters_p.h>
 #include <private/qcolorspace_p.h>
 #include <private/qfont_p.h>
 
-
 QT_BEGIN_NAMESPACE
 
-namespace QQuickValueTypes {
-    void registerValueTypes()
-    {
-        QQmlValueTypeFactory::registerValueTypes("QtQuick", 2, 0);
-    }
+QQuickColorValueType::QQuickColorValueType(const QString &string)
+    : v(QColor::fromString(string))
+{
+}
+
+QVariant QQuickColorValueType::create(const QJSValue &params)
+{
+    return params.isString() ? QColor::fromString(params.toString()) : QVariant();
 }
 
 QString QQuickColorValueType::toString() const
 {
     return v.name(v.alpha() != 255 ? QColor::HexArgb : QColor::HexRgb);
+}
+
+QVariant QQuickColorValueType::lighter(qreal factor) const
+{
+    return QQml_colorProvider()->lighter(this->v, factor);
+}
+
+QVariant QQuickColorValueType::darker(qreal factor) const
+{
+    return QQml_colorProvider()->darker(this->v, factor);
+}
+
+QVariant QQuickColorValueType::alpha(qreal value) const
+{
+    return QQml_colorProvider()->alpha(this->v, value);
+}
+
+QVariant QQuickColorValueType::tint(QVariant tintColor) const
+{
+    return QQml_colorProvider()->tint(this->v, tintColor);
 }
 
 qreal QQuickColorValueType::r() const
@@ -136,44 +123,53 @@ void QQuickColorValueType::setA(qreal a)
 
 void QQuickColorValueType::setHsvHue(qreal hsvHue)
 {
-    qreal hue, saturation, value, alpha;
+    float hue, saturation, value, alpha;
     v.getHsvF(&hue, &saturation, &value, &alpha);
     v.setHsvF(hsvHue, saturation, value, alpha);
 }
 
 void QQuickColorValueType::setHsvSaturation(qreal hsvSaturation)
 {
-    qreal hue, saturation, value, alpha;
+    float hue, saturation, value, alpha;
     v.getHsvF(&hue, &saturation, &value, &alpha);
     v.setHsvF(hue, hsvSaturation, value, alpha);
 }
 
 void QQuickColorValueType::setHsvValue(qreal hsvValue)
 {
-    qreal hue, saturation, value, alpha;
+    float hue, saturation, value, alpha;
     v.getHsvF(&hue, &saturation, &value, &alpha);
     v.setHsvF(hue, saturation, hsvValue, alpha);
 }
 
 void QQuickColorValueType::setHslHue(qreal hslHue)
 {
-    qreal hue, saturation, lightness, alpha;
+    float hue, saturation, lightness, alpha;
     v.getHslF(&hue, &saturation, &lightness, &alpha);
     v.setHslF(hslHue, saturation, lightness, alpha);
 }
 
 void QQuickColorValueType::setHslSaturation(qreal hslSaturation)
 {
-    qreal hue, saturation, lightness, alpha;
+    float hue, saturation, lightness, alpha;
     v.getHslF(&hue, &saturation, &lightness, &alpha);
     v.setHslF(hue, hslSaturation, lightness, alpha);
 }
 
 void QQuickColorValueType::setHslLightness(qreal hslLightness)
 {
-    qreal hue, saturation, lightness, alpha;
+    float hue, saturation, lightness, alpha;
     v.getHslF(&hue, &saturation, &lightness, &alpha);
     v.setHslF(hue, saturation, hslLightness, alpha);
+}
+
+QVariant QQuickVector2DValueType::create(const QJSValue &params)
+{
+    if (params.isString())
+        return QQmlStringConverters::valueTypeFromNumberString<QVector2D, 2, u','>(params.toString());
+    if (params.isArray())
+        return QVector2D(params.property(0).toNumber(), params.property(1).toNumber());
+    return QVariant();
 }
 
 QString QQuickVector2DValueType::toString() const
@@ -261,6 +257,20 @@ bool QQuickVector2DValueType::fuzzyEquals(const QVector2D &vec) const
     return qFuzzyCompare(v, vec);
 }
 
+QVariant QQuickVector3DValueType::create(const QJSValue &params)
+{
+    if (params.isString()) {
+        return QQmlStringConverters::valueTypeFromNumberString<QVector3D, 3, u',', u','>(
+                params.toString());
+    }
+
+    if (params.isArray()) {
+        return QVector3D(params.property(0).toNumber(), params.property(1).toNumber(),
+                         params.property(2).toNumber());
+    }
+    return QVariant();
+}
+
 QString QQuickVector3DValueType::toString() const
 {
     return QString(QLatin1String("QVector3D(%1, %2, %3)")).arg(v.x()).arg(v.y()).arg(v.z());
@@ -308,7 +318,7 @@ qreal QQuickVector3DValueType::dotProduct(const QVector3D &vec) const
 
 QVector3D QQuickVector3DValueType::times(const QMatrix4x4 &m) const
 {
-    return v * m;
+    return (QVector4D(v, 1) * m).toVector3DAffine();
 }
 
 QVector3D QQuickVector3DValueType::times(const QVector3D &vec) const
@@ -366,6 +376,21 @@ bool QQuickVector3DValueType::fuzzyEquals(const QVector3D &vec, qreal epsilon) c
 bool QQuickVector3DValueType::fuzzyEquals(const QVector3D &vec) const
 {
     return qFuzzyCompare(v, vec);
+}
+
+QVariant QQuickVector4DValueType::create(const QJSValue &params)
+{
+    if (params.isString()) {
+        return QQmlStringConverters::valueTypeFromNumberString<QVector4D, 4, u',', u',', u','>(
+                params.toString());
+    }
+
+    if (params.isArray()) {
+        return QVector4D(params.property(0).toNumber(), params.property(1).toNumber(),
+                         params.property(2).toNumber(), params.property(3).toNumber());
+    }
+
+    return QVariant();
 }
 
 QString QQuickVector4DValueType::toString() const
@@ -482,6 +507,21 @@ bool QQuickVector4DValueType::fuzzyEquals(const QVector4D &vec) const
     return qFuzzyCompare(v, vec);
 }
 
+QVariant QQuickQuaternionValueType::create(const QJSValue &params)
+{
+    if (params.isString()) {
+        return QQmlStringConverters::valueTypeFromNumberString<QQuaternion, 4, u',', u',', u','>(
+                params.toString());
+    }
+
+    if (params.isArray()) {
+        return QQuaternion(params.property(0).toNumber(), params.property(1).toNumber(),
+                           params.property(2).toNumber(), params.property(3).toNumber());
+    }
+
+    return QVariant();
+}
+
 QString QQuickQuaternionValueType::toString() const
 {
     return QString(QLatin1String("QQuaternion(%1, %2, %3, %4)")).arg(v.scalar()).arg(v.x()).arg(v.y()).arg(v.z());
@@ -527,6 +567,119 @@ void QQuickQuaternionValueType::setZ(qreal z)
     v.setZ(z);
 }
 
+qreal QQuickQuaternionValueType::dotProduct(const QQuaternion &q) const
+{
+    return QQuaternion::dotProduct(v, q);
+}
+
+QQuaternion QQuickQuaternionValueType::times(const QQuaternion &q) const
+{
+    return v * q;
+}
+
+QVector3D QQuickQuaternionValueType::times(const QVector3D &vec) const
+{
+    return v * vec;
+}
+
+QQuaternion QQuickQuaternionValueType::times(qreal factor) const
+{
+    return v * factor;
+}
+
+QQuaternion QQuickQuaternionValueType::plus(const QQuaternion &q) const
+{
+    return v + q;
+}
+
+QQuaternion QQuickQuaternionValueType::minus(const QQuaternion &q) const
+{
+    return v - q;
+}
+
+QQuaternion QQuickQuaternionValueType::normalized() const
+{
+    return v.normalized();
+}
+
+QQuaternion QQuickQuaternionValueType::inverted() const
+{
+    return v.inverted();
+}
+
+QQuaternion QQuickQuaternionValueType::conjugated() const
+{
+    return v.conjugated();
+}
+
+qreal QQuickQuaternionValueType::length() const
+{
+    return v.length();
+}
+
+QVector3D QQuickQuaternionValueType::toEulerAngles() const
+{
+    return v.toEulerAngles();
+}
+
+QVector4D QQuickQuaternionValueType::toVector4d() const
+{
+    return v.toVector4D();
+}
+
+bool QQuickQuaternionValueType::fuzzyEquals(const QQuaternion &q, qreal epsilon) const
+{
+    qreal absEps = qAbs(epsilon);
+    if (qAbs(v.scalar() - q.scalar()) > absEps)
+        return false;
+    if (qAbs(v.x() - q.x()) > absEps)
+        return false;
+    if (qAbs(v.y() - q.y()) > absEps)
+        return false;
+    if (qAbs(v.z() - q.z()) > absEps)
+        return false;
+    return true;
+}
+
+bool QQuickQuaternionValueType::fuzzyEquals(const QQuaternion &q) const
+{
+    return qFuzzyCompare(v, q);
+}
+
+QVariant QQuickMatrix4x4ValueType::create(const QJSValue &params)
+{
+    if (params.isNull() || params.isUndefined())
+        return QMatrix4x4();
+
+    if (params.isString()) {
+        return QQmlStringConverters::valueTypeFromNumberString<QMatrix4x4, 16, u',', u',', u',',
+                                                               u',', u',', u',', u',', u',', u',',
+                                                               u',', u',', u',', u',', u',', u','>(
+                params.toString());
+    }
+
+    if (params.isArray() && params.property(QStringLiteral("length")).toInt() == 16) {
+        return QMatrix4x4(params.property(0).toNumber(),
+                          params.property(1).toNumber(),
+                          params.property(2).toNumber(),
+                          params.property(3).toNumber(),
+                          params.property(4).toNumber(),
+                          params.property(5).toNumber(),
+                          params.property(6).toNumber(),
+                          params.property(7).toNumber(),
+                          params.property(8).toNumber(),
+                          params.property(9).toNumber(),
+                          params.property(10).toNumber(),
+                          params.property(11).toNumber(),
+                          params.property(12).toNumber(),
+                          params.property(13).toNumber(),
+                          params.property(14).toNumber(),
+                          params.property(15).toNumber());
+    }
+
+    return QVariant();
+}
+
 QMatrix4x4 QQuickMatrix4x4ValueType::times(const QMatrix4x4 &m) const
 {
     return v * m;
@@ -539,7 +692,7 @@ QVector4D QQuickMatrix4x4ValueType::times(const QVector4D &vec) const
 
 QVector3D QQuickMatrix4x4ValueType::times(const QVector3D &vec) const
 {
-    return v * vec;
+    return v.map(vec);
 }
 
 QMatrix4x4 QQuickMatrix4x4ValueType::times(qreal factor) const
@@ -582,6 +735,16 @@ QMatrix4x4 QQuickMatrix4x4ValueType::transposed() const
     return v.transposed();
 }
 
+QPointF QQuickMatrix4x4ValueType::map(const QPointF p) const
+{
+    return v.map(p);
+}
+
+QRectF QQuickMatrix4x4ValueType::mapRect(const QRectF r) const
+{
+    return v.mapRect(r);
+}
+
 bool QQuickMatrix4x4ValueType::fuzzyEquals(const QMatrix4x4 &m, qreal epsilon) const
 {
     qreal absEps = qAbs(epsilon);
@@ -598,6 +761,285 @@ bool QQuickMatrix4x4ValueType::fuzzyEquals(const QMatrix4x4 &m, qreal epsilon) c
 bool QQuickMatrix4x4ValueType::fuzzyEquals(const QMatrix4x4 &m) const
 {
     return qFuzzyCompare(v, m);
+}
+
+/*!
+    \qmltype PlanarTransform
+    \inqmlmodule QtQuick
+    \since 6.8
+
+    \brief Provides utility functions for matrix4x4 when used for 2D transforms.
+
+    The \c PlanarTransform is a global object with utility functions.
+
+    It is not instantiable; to use it, call the members of the global \c PlanarTransform object
+    directly. For example:
+
+    \qml
+    Item {
+        transform: Matrix4x4 { matrix: PlanarTransform.fromAffineMatrix(1, 0, 0.36, 1, -36, 0) }
+    }
+    \endqml
+*/
+
+QQuickPlanarTransform::QQuickPlanarTransform(QObject *parent)
+    : QObject(parent)
+{
+}
+
+/*!
+    \qmlmethod matrix4x4 PlanarTransform::identity()
+
+    Returns a matrix4x4 for the identity transform.
+
+    This is equivalent to \l Qt::matrix4x4().
+*/
+
+QMatrix4x4 QQuickPlanarTransform::identity()
+{
+    return QMatrix4x4();
+}
+
+/*!
+    \qmlmethod matrix4x4 PlanarTransform::fromAffineMatrix(real scaleX, real shearY,
+                                                           real shearX, real scaleY,
+                                                           real translateX, real translateY)
+
+    Returns a matrix4x4 for an affine (non-projecting) 2D transform with the specified values.
+
+    This method and its argument order correspond to SVG's \c matrix() function and the
+    six-argument QTransform constructor. The result is this 4x4 matrix:
+
+    \table
+    \row \li \a scaleX \li \a shearX \li 0 \li \a translateX
+    \row \li \a shearY \li \a scaleY \li 0 \li \a translateY
+    \row \li 0 \li 0 \li 1 \li 0
+    \row \li 0 \li 0 \li 0 \li 1
+    \endtable
+*/
+
+QMatrix4x4 QQuickPlanarTransform::fromAffineMatrix(float scaleX, float shearY,
+                                                   float shearX, float scaleY,
+                                                   float translateX, float translateY)
+{
+    return QMatrix4x4(scaleX, shearX, 0, translateX,
+                      shearY, scaleY, 0, translateY,
+                      0, 0, 1, 0,
+                      0, 0, 0, 1);
+}
+
+/*!
+    \qmlmethod matrix4x4 PlanarTransform::fromTranslate(real translateX, real translateY)
+
+    Returns a matrix4x4 for a 2D transform that translates by \a translateX horizontally and
+    \a translateY vertically.
+*/
+QMatrix4x4 QQuickPlanarTransform::fromTranslate(float translateX, float translateY)
+{
+    QMatrix4x4 xf;
+    xf.translate(translateX, translateY);
+    return xf;
+}
+
+/*!
+    \qmlmethod matrix4x4 PlanarTransform::fromScale(real scaleX, real scaleY, real originX, real originY)
+
+    Returns a matrix4x4 for a 2D transform that scales by \a scaleX horizontally and \a scaleY
+    vertically, centered at the point (\a originX, \a originY).
+
+    \a originX and \a originY are optional and default to (0, 0).
+*/
+QMatrix4x4 QQuickPlanarTransform::fromScale(float scaleX, float scaleY, float originX, float originY)
+{
+    QMatrix4x4 xf;
+    xf.translate(originX, originY);
+    xf.scale(scaleX, scaleY);
+    xf.translate(-originX, -originY);
+    return xf;
+}
+
+/*!
+    \qmlmethod matrix4x4 PlanarTransform::fromRotate(real angle, real originX, real originY)
+
+    Returns a matrix4x4 for a 2D transform that rotates by \a angle degrees around the point (\a
+    originX, \a originY).
+
+    \a originX and \a originY are optional and default to (0, 0).
+*/
+QMatrix4x4 QQuickPlanarTransform::fromRotate(float angle, float originX, float originY)
+{
+    QMatrix4x4 xf;
+    xf.translate(originX, originY);
+    xf.rotate(angle, 0, 0, 1);
+    xf.translate(-originX, -originY);
+    return xf;
+}
+
+/*!
+    \qmlmethod matrix4x4 PlanarTransform::fromShear(float shearX, float shearY, float originX, float originY)
+
+    Returns a matrix4x4 for a 2D transform that shears by \a shearX horizontally and \a shearY
+    vertically, centered at the point (\a originX, \a originY).
+
+    \a originX and \a originY are optional and default to (0, 0).
+*/
+QMatrix4x4 QQuickPlanarTransform::fromShear(float shearX, float shearY, float originX, float originY)
+{
+    QMatrix4x4 xf;
+    xf.translate(originX, originY);
+    xf *= QMatrix4x4(1, shearX, 0, 0, shearY, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1);
+    xf.translate(-originX, -originY);
+    return xf;
+}
+
+template<typename T>
+void setFontProperty(QFont &font, void (QFont::*setter)(T value), QString name,
+                     const QJSValue &params, bool *ok)
+{
+    const QJSValue value = params.property(name);
+
+    if constexpr (std::is_same_v<T, bool>) {
+        if (value.isBool()) {
+            (font.*setter)(value.toBool());
+            *ok = true;
+        }
+    } else if constexpr (std::is_same_v<
+            typename std::remove_cv<typename std::remove_reference<T>::type>::type,
+            QString>) {
+        if (value.isString()) {
+            (font.*setter)(value.toString());
+            *ok = true;
+        }
+    } else if constexpr (std::is_integral_v<T> || std::is_enum_v<T>) {
+        if (value.isNumber()) {
+            (font.*setter)(T(value.toInt()));
+            *ok = true;
+        }
+    } else if constexpr (std::is_floating_point_v<T>) {
+        if (value.isNumber()) {
+            (font.*setter)(value.toNumber());
+            *ok = true;
+        }
+    }
+}
+
+QVariant QQuickFontValueType::create(const QJSValue &params)
+{
+    if (!params.isObject())
+        return QVariant();
+
+    bool ok = false;
+    QFont ret;
+
+    setFontProperty(ret, &QFont::setBold, QStringLiteral("bold"), params, &ok);
+    setFontProperty(ret, &QFont::setCapitalization, QStringLiteral("capitalization"), params, &ok);
+    setFontProperty(ret, &QFont::setFamily, QStringLiteral("family"), params, &ok);
+    setFontProperty(ret, &QFont::setItalic, QStringLiteral("italic"), params, &ok);
+    setFontProperty(ret, &QFont::setPixelSize, QStringLiteral("pixelSize"), params, &ok);
+    setFontProperty(ret, &QFont::setPointSize, QStringLiteral("pointSize"), params, &ok);
+    setFontProperty(ret, &QFont::setStrikeOut, QStringLiteral("strikeout"), params, &ok);
+    setFontProperty(ret, &QFont::setUnderline, QStringLiteral("underline"), params, &ok);
+    setFontProperty(ret, &QFont::setWeight, QStringLiteral("weight"), params, &ok);
+    setFontProperty(ret, &QFont::setWordSpacing, QStringLiteral("wordSpacing"), params, &ok);
+    setFontProperty(ret, &QFont::setHintingPreference, QStringLiteral("hintingPreference"), params, &ok);
+    setFontProperty(ret, &QFont::setKerning, QStringLiteral("kerning"), params, &ok);
+
+    {
+        const QJSValue vlspac = params.property(QStringLiteral("letterSpacing"));
+        if (vlspac.isNumber()) {
+            ret.setLetterSpacing(QFont::AbsoluteSpacing, vlspac.toNumber());
+            ok = true;
+        }
+    }
+
+    {
+        const QJSValue vshaping = params.property(QStringLiteral("preferShaping"));
+        if (vshaping.isBool()) {
+            const bool enable = vshaping.toBool();
+            const QFont::StyleStrategy strategy = ret.styleStrategy();
+            if (enable)
+                ret.setStyleStrategy(QFont::StyleStrategy(strategy & ~QFont::PreferNoShaping));
+            else
+                ret.setStyleStrategy(QFont::StyleStrategy(strategy | QFont::PreferNoShaping));
+            ok = true;
+        }
+    }
+
+    {
+        const QJSValue typoMetrics = params.property(QStringLiteral("preferTypoLineMetrics"));
+        if (typoMetrics.isBool()) {
+            const bool enable = typoMetrics.toBool();
+            const QFont::StyleStrategy strategy = ret.styleStrategy();
+            if (enable)
+                ret.setStyleStrategy(QFont::StyleStrategy(strategy & ~QFont::PreferTypoLineMetrics));
+            else
+                ret.setStyleStrategy(QFont::StyleStrategy(strategy | QFont::PreferTypoLineMetrics));
+            ok = true;
+        }
+    }
+
+    {
+        const QJSValue ctxFontMerging = params.property(QStringLiteral("contextFontMerging"));
+        if (ctxFontMerging.isBool()) {
+            const bool enable = ctxFontMerging.toBool();
+            const QFont::StyleStrategy strategy = ret.styleStrategy();
+            if (enable)
+                ret.setStyleStrategy(QFont::StyleStrategy(strategy | QFont::ContextFontMerging));
+            else
+                ret.setStyleStrategy(QFont::StyleStrategy(strategy & ~QFont::ContextFontMerging));
+            ok = true;
+        }
+    }
+
+    {
+        const QJSValue variableAxes = params.property(QStringLiteral("variableAxes"));
+        if (variableAxes.isObject()) {
+            QVariantMap variantMap = variableAxes.toVariant().toMap();
+            for (auto [variableAxisName, variableAxisValue] : variantMap.asKeyValueRange()) {
+                const auto maybeTag = QFont::Tag::fromString(variableAxisName);
+                if (!maybeTag) {
+                    qWarning() << "Invalid variable axis" << variableAxisName << "ignored";
+                    continue;
+                }
+
+                bool valueOk;
+                float value = variableAxisValue.toFloat(&valueOk);
+                if (!valueOk) {
+                    qWarning() << "Variable axis" << variableAxisName << "value" << variableAxisValue << "is not a floating point value.";
+                    continue;
+                }
+
+                ret.setVariableAxis(*maybeTag, value);
+                ok = true;
+            }
+        }
+    }
+
+    {
+        const QJSValue features = params.property(QStringLiteral("features"));
+        if (features.isObject()) {
+            QVariantMap variantMap = features.toVariant().toMap();
+            for (auto [featureName, featureValue] : variantMap.asKeyValueRange()) {
+                const auto maybeTag = QFont::Tag::fromString(featureName);
+                if (!maybeTag) {
+                    qWarning() << "Invalid font feature" << featureName << "ignored";
+                    continue;
+                }
+
+                bool valueOk;
+                quint32 value = featureValue.toUInt(&valueOk);
+                if (!valueOk) {
+                    qWarning() << "Font feature" << featureName << "value" << featureValue << "is not an integer.";
+                    continue;
+                }
+
+                ret.setFeature(*maybeTag, value);
+                ok = true;
+            }
+        }
+    }
+
+    return ok ? ret : QVariant();
 }
 
 QString QQuickFontValueType::toString() const
@@ -635,14 +1077,14 @@ void QQuickFontValueType::setBold(bool b)
     v.setBold(b);
 }
 
-QQuickFontValueType::FontWeight QQuickFontValueType::weight() const
+int QQuickFontValueType::weight() const
 {
-    return (QQuickFontValueType::FontWeight)v.weight();
+    return v.weight();
 }
 
-void QQuickFontValueType::setWeight(QQuickFontValueType::FontWeight w)
+void QQuickFontValueType::setWeight(int w)
 {
-    v.setWeight((QFont::Weight)w);
+    v.setWeight(QFont::Weight(w));
 }
 
 bool QQuickFontValueType::italic() const
@@ -695,7 +1137,7 @@ qreal QQuickFontValueType::pointSize() const
 
 void QQuickFontValueType::setPointSize(qreal size)
 {
-    if ((v.resolve() & QFont::SizeResolved) && v.pixelSize() != -1) {
+    if ((v.resolveMask() & QFont::SizeResolved) && v.pixelSize() != -1) {
         qWarning() << "Both point size and pixel size set. Using pixel size.";
         return;
     }
@@ -716,18 +1158,18 @@ int QQuickFontValueType::pixelSize() const
 void QQuickFontValueType::setPixelSize(int size)
 {
     if (size >0) {
-        if ((v.resolve() & QFont::SizeResolved) && v.pointSizeF() != -1)
+        if ((v.resolveMask() & QFont::SizeResolved) && v.pointSizeF() != -1)
             qWarning() << "Both point size and pixel size set. Using pixel size.";
         v.setPixelSize(size);
     }
 }
 
-QQuickFontValueType::Capitalization QQuickFontValueType::capitalization() const
+QQuickFontEnums::Capitalization QQuickFontValueType::capitalization() const
 {
-    return (QQuickFontValueType::Capitalization)v.capitalization();
+    return (QQuickFontEnums::Capitalization)v.capitalization();
 }
 
-void QQuickFontValueType::setCapitalization(QQuickFontValueType::Capitalization c)
+void QQuickFontValueType::setCapitalization(QQuickFontEnums::Capitalization c)
 {
     v.setCapitalization((QFont::Capitalization)c);
 }
@@ -752,12 +1194,12 @@ void QQuickFontValueType::setWordSpacing(qreal size)
     v.setWordSpacing(size);
 }
 
-QQuickFontValueType::HintingPreference QQuickFontValueType::hintingPreference() const
+QQuickFontEnums::HintingPreference QQuickFontValueType::hintingPreference() const
 {
-    return QQuickFontValueType::HintingPreference(v.hintingPreference());
+    return QQuickFontEnums::HintingPreference(v.hintingPreference());
 }
 
-void QQuickFontValueType::setHintingPreference(QQuickFontValueType::HintingPreference hintingPreference)
+void QQuickFontValueType::setHintingPreference(QQuickFontEnums::HintingPreference hintingPreference)
 {
     v.setHintingPreference(QFont::HintingPreference(hintingPreference));
 }
@@ -785,33 +1227,147 @@ void QQuickFontValueType::setPreferShaping(bool enable)
         v.setStyleStrategy(static_cast<QFont::StyleStrategy>(v.styleStrategy() | QFont::PreferNoShaping));
 }
 
-QQuickColorSpaceValueType::NamedColorSpace QQuickColorSpaceValueType::namedColorSpace() const noexcept
+void QQuickFontValueType::setVariableAxes(const QVariantMap &variableAxes)
+{
+    v.clearVariableAxes();
+    for (auto [variableAxisName, variableAxisValue] : variableAxes.asKeyValueRange()) {
+        const auto maybeTag = QFont::Tag::fromString(variableAxisName);
+        if (!maybeTag) {
+            qWarning() << "Invalid variable axis" << variableAxisName << "ignored";
+            continue;
+        }
+
+        bool ok;
+        float value = variableAxisValue.toFloat(&ok);
+        if (!ok) {
+            qWarning() << "Variable axis" << variableAxisName << "value" << variableAxisValue << "is not a floating point value.";
+            continue;
+        }
+
+        v.setVariableAxis(*maybeTag, value);
+    }
+}
+
+QVariantMap QQuickFontValueType::variableAxes() const
+{
+    QVariantMap ret;
+    for (const auto &tag : v.variableAxisTags())
+        ret.insert(QString::fromUtf8(tag.toString()), v.variableAxisValue(tag));
+
+    return ret;
+}
+
+void QQuickFontValueType::setFeatures(const QVariantMap &features)
+{
+    v.clearFeatures();
+    for (auto [featureName, featureValue] : features.asKeyValueRange()) {
+        const auto maybeTag = QFont::Tag::fromString(featureName);
+        if (!maybeTag) {
+            qWarning() << "Invalid font feature" << featureName << "ignored";
+            continue;
+        }
+
+        bool ok;
+        quint32 value = featureValue.toUInt(&ok);
+        if (!ok) {
+            qWarning() << "Font feature" << featureName << "value" << featureValue << "is not an integer.";
+            continue;
+        }
+
+        v.setFeature(*maybeTag, value);
+    }
+}
+
+QVariantMap QQuickFontValueType::features() const
+{
+    QVariantMap ret;
+    for (const auto &tag : v.featureTags())
+        ret.insert(QString::fromUtf8(tag.toString()), v.featureValue(tag));
+
+    return ret;
+}
+
+bool QQuickFontValueType::contextFontMerging() const
+{
+    return (v.styleStrategy() & QFont::ContextFontMerging) != 0;
+}
+
+void QQuickFontValueType::setContextFontMerging(bool enable)
+{
+    if (enable)
+        v.setStyleStrategy(static_cast<QFont::StyleStrategy>(v.styleStrategy() | QFont::ContextFontMerging));
+    else
+        v.setStyleStrategy(static_cast<QFont::StyleStrategy>(v.styleStrategy() & ~QFont::ContextFontMerging));
+}
+
+bool QQuickFontValueType::preferTypoLineMetrics() const
+{
+    return (v.styleStrategy() & QFont::PreferTypoLineMetrics) != 0;
+}
+
+void QQuickFontValueType::setPreferTypoLineMetrics(bool enable)
+{
+    if (enable)
+        v.setStyleStrategy(static_cast<QFont::StyleStrategy>(v.styleStrategy() | QFont::PreferTypoLineMetrics));
+    else
+        v.setStyleStrategy(static_cast<QFont::StyleStrategy>(v.styleStrategy() & ~QFont::PreferTypoLineMetrics));
+}
+
+QVariant QQuickColorSpaceValueType::create(const QJSValue &params)
+{
+    if (!params.isObject())
+        return QVariant();
+
+
+    const QJSValue vName = params.property(QStringLiteral("namedColorSpace"));
+    if (vName.isNumber())
+        return QColorSpace((QColorSpace::NamedColorSpace)vName.toInt());
+
+    const QJSValue vPri = params.property(QStringLiteral("primaries"));
+    const QJSValue vTra = params.property(QStringLiteral("transferFunction"));
+    if (!vPri.isNumber() || !vTra.isNumber())
+        return QVariant();
+
+    QColorSpace::Primaries pri = static_cast<QColorSpace::Primaries>(vPri.toInt());
+    QColorSpace::TransferFunction tra = static_cast<QColorSpace::TransferFunction>(vTra.toInt());
+    float gamma = 0.0f;
+    if (tra == QColorSpace::TransferFunction::Gamma) {
+        const QJSValue vGam = params.property(QStringLiteral("gamma"));
+        if (!vGam.isNumber())
+            return QVariant();
+        gamma = vGam.toNumber();
+    }
+
+    return QColorSpace(pri, tra, gamma);
+}
+
+QQuickColorSpaceEnums::NamedColorSpace QQuickColorSpaceValueType::namedColorSpace() const noexcept
 {
     if (const auto *p = QColorSpacePrivate::get(v))
-        return (QQuickColorSpaceValueType::NamedColorSpace)p->namedColorSpace;
-    return QQuickColorSpaceValueType::Unknown;
+        return (QQuickColorSpaceEnums::NamedColorSpace)p->namedColorSpace;
+    return QQuickColorSpaceEnums::Unknown;
 }
-void QQuickColorSpaceValueType::setNamedColorSpace(QQuickColorSpaceValueType::NamedColorSpace namedColorSpace)
+void QQuickColorSpaceValueType::setNamedColorSpace(QQuickColorSpaceEnums::NamedColorSpace namedColorSpace)
 {
     v = { (QColorSpace::NamedColorSpace)namedColorSpace };
 }
 
-QQuickColorSpaceValueType::Primaries QQuickColorSpaceValueType::primaries() const noexcept
+QQuickColorSpaceEnums::Primaries QQuickColorSpaceValueType::primaries() const noexcept
 {
-    return (QQuickColorSpaceValueType::Primaries)v.primaries();
+    return (QQuickColorSpaceEnums::Primaries)v.primaries();
 }
 
-void QQuickColorSpaceValueType::setPrimaries(QQuickColorSpaceValueType::Primaries primariesId)
+void QQuickColorSpaceValueType::setPrimaries(QQuickColorSpaceEnums::Primaries primariesId)
 {
     v.setPrimaries((QColorSpace::Primaries)primariesId);
 }
 
-QQuickColorSpaceValueType::TransferFunction QQuickColorSpaceValueType::transferFunction() const noexcept
+QQuickColorSpaceEnums::TransferFunction QQuickColorSpaceValueType::transferFunction() const noexcept
 {
-    return (QQuickColorSpaceValueType::TransferFunction)v.transferFunction();
+    return (QQuickColorSpaceEnums::TransferFunction)v.transferFunction();
 }
 
-void QQuickColorSpaceValueType::setTransferFunction(QQuickColorSpaceValueType::TransferFunction transferFunction)
+void QQuickColorSpaceValueType::setTransferFunction(QQuickColorSpaceEnums::TransferFunction transferFunction)
 {
     v.setTransferFunction((QColorSpace::TransferFunction)transferFunction, v.gamma());
 }

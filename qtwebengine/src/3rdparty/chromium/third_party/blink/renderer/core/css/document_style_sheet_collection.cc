@@ -28,12 +28,13 @@
 
 #include "third_party/blink/renderer/core/css/document_style_sheet_collection.h"
 
+#include "third_party/blink/renderer/bindings/core/v8/v8_observable_array_css_style_sheet.h"
 #include "third_party/blink/renderer/core/css/document_style_sheet_collector.h"
 #include "third_party/blink/renderer/core/css/resolver/style_resolver.h"
-#include "third_party/blink/renderer/core/css/resolver/viewport_style_resolver.h"
 #include "third_party/blink/renderer/core/css/style_change_reason.h"
 #include "third_party/blink/renderer/core/css/style_engine.h"
 #include "third_party/blink/renderer/core/css/style_sheet_candidate.h"
+#include "third_party/blink/renderer/core/css/style_sheet_contents.h"
 #include "third_party/blink/renderer/core/css/style_sheet_list.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/processing_instruction.h"
@@ -50,49 +51,46 @@ DocumentStyleSheetCollection::DocumentStyleSheetCollection(
 void DocumentStyleSheetCollection::CollectStyleSheetsFromCandidates(
     StyleEngine& engine,
     DocumentStyleSheetCollector& collector) {
-  CHECK(ThreadState::Current()->IsOnThreadHeap(this));
+  StyleEngine::RuleSetScope rule_set_scope;
+
   for (Node* n : style_sheet_candidate_nodes_) {
-    CHECK(ThreadState::Current()->IsOnThreadHeap(n));
     StyleSheetCandidate candidate(*n);
 
     DCHECK(!candidate.IsXSL());
-    if (candidate.IsImport()) {
-      Document* document = candidate.ImportedDocument();
-      if (!document)
-        continue;
-      if (collector.HasVisited(document))
-        continue;
-      collector.WillVisit(document);
-
-      document->GetStyleEngine().UpdateActiveStyleSheetsInImport(engine,
-                                                                 collector);
+    if (candidate.IsEnabledAndLoading()) {
       continue;
     }
 
-    if (candidate.IsEnabledAndLoading())
-      continue;
-
     StyleSheet* sheet = candidate.Sheet();
-    if (!sheet)
+    if (!sheet) {
       continue;
+    }
 
     collector.AppendSheetForList(sheet);
     if (!candidate.CanBeActivated(
-            GetDocument().GetStyleEngine().PreferredStylesheetSetName()))
+            GetDocument().GetStyleEngine().PreferredStylesheetSetName())) {
       continue;
+    }
 
     CSSStyleSheet* css_sheet = To<CSSStyleSheet>(sheet);
-    collector.AppendActiveStyleSheet(
-        std::make_pair(css_sheet, engine.RuleSetForSheet(*css_sheet)));
-  }
-  if (!GetTreeScope().HasAdoptedStyleSheets())
-    return;
+    collector.AppendActiveStyleSheet(std::make_pair(
+        css_sheet, rule_set_scope.RuleSetForSheet(engine, css_sheet)));
 
-  for (CSSStyleSheet* sheet : GetTreeScope().AdoptedStyleSheets()) {
+    if (css_sheet->Contents()->GetRuleSetDiff()) {
+      collector.AppendRuleSetDiff(css_sheet->Contents()->GetRuleSetDiff());
+      css_sheet->Contents()->ClearRuleSetDiff();
+    }
+  }
+  if (!GetTreeScope().HasAdoptedStyleSheets()) {
+    return;
+  }
+
+  for (CSSStyleSheet* sheet : *GetTreeScope().AdoptedStyleSheets()) {
     if (!sheet ||
         !sheet->CanBeActivated(
-            GetDocument().GetStyleEngine().PreferredStylesheetSetName()))
+            GetDocument().GetStyleEngine().PreferredStylesheetSetName())) {
       continue;
+    }
     DCHECK_EQ(GetDocument(), sheet->ConstructorDocument());
     collector.AppendSheetForList(sheet);
     collector.AppendActiveStyleSheet(
@@ -125,24 +123,6 @@ void DocumentStyleSheetCollection::UpdateActiveStyleSheets(
   ActiveDocumentStyleSheetCollector collector(*collection);
   CollectStyleSheets(engine, collector);
   ApplyActiveStyleSheetChanges(*collection);
-}
-
-void DocumentStyleSheetCollection::CollectViewportRules(
-    ViewportStyleResolver& viewport_resolver) {
-  for (Node* node : style_sheet_candidate_nodes_) {
-    StyleSheetCandidate candidate(*node);
-
-    if (candidate.IsImport())
-      continue;
-    StyleSheet* sheet = candidate.Sheet();
-    if (!sheet)
-      continue;
-    if (!candidate.CanBeActivated(
-            GetDocument().GetStyleEngine().PreferredStylesheetSetName()))
-      continue;
-    viewport_resolver.CollectViewportRulesFromAuthorSheet(
-        To<CSSStyleSheet>(*sheet));
-  }
 }
 
 }  // namespace blink

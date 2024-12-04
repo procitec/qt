@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,47 +8,46 @@
 #include <map>
 #include <string>
 
-#include "content/common/content_export.h"
+#include "content/public/browser/child_process_host.h"
 #include "content/public/browser/desktop_media_id.h"
 #include "content/public/browser/desktop_streams_registry.h"
 #include "url/origin.h"
 
 namespace content {
 
-class CONTENT_EXPORT DesktopStreamsRegistryImpl
-    : public DesktopStreamsRegistry {
+class DesktopStreamsRegistryImpl : public DesktopStreamsRegistry {
  public:
   DesktopStreamsRegistryImpl();
+
+  DesktopStreamsRegistryImpl(const DesktopStreamsRegistryImpl&) = delete;
+  DesktopStreamsRegistryImpl& operator=(const DesktopStreamsRegistryImpl&) =
+      delete;
+
   ~DesktopStreamsRegistryImpl() override;
 
   // Returns the DesktopStreamRegistryImpl singleton.
   static DesktopStreamsRegistryImpl* GetInstance();
 
+  // DesktopStreamsRegistry:
   std::string RegisterStream(int render_process_id,
-                             int render_frame_id,
+                             std::optional<int> restrict_to_render_frame_id,
                              const url::Origin& origin,
                              const DesktopMediaID& source,
-                             const std::string& extension_name,
                              const DesktopStreamRegistryType type) override;
-
   DesktopMediaID RequestMediaForStreamId(
       const std::string& id,
       int render_process_id,
       int render_frame_id,
       const url::Origin& origin,
-      std::string* extension_name,
       const DesktopStreamRegistryType type) override;
 
  private:
   // Type used to store list of accepted desktop media streams.
   struct ApprovedDesktopMediaStream {
-    ApprovedDesktopMediaStream();
-
-    int render_process_id;
-    int render_frame_id;
+    int render_process_id = content::ChildProcessHost::kInvalidUniqueID;
+    std::optional<int> restrict_to_render_frame_id;
     url::Origin origin;
     DesktopMediaID source;
-    std::string extension_name;
     DesktopStreamRegistryType type;
   };
   typedef std::map<std::string, ApprovedDesktopMediaStream> StreamsMap;
@@ -57,8 +56,6 @@ class CONTENT_EXPORT DesktopStreamsRegistryImpl
   void CleanupStream(const std::string& id);
 
   StreamsMap approved_streams_;
-
-  DISALLOW_COPY_AND_ASSIGN(DesktopStreamsRegistryImpl);
 };
 
 }  // namespace content

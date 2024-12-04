@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,6 +7,7 @@
 
 #include "base/memory/ref_counted.h"
 #include "media/capture/capture_export.h"
+#include "media/capture/mojom/video_capture_buffer.mojom.h"
 #include "media/capture/mojom/video_capture_types.mojom.h"
 #include "media/capture/video/video_capture_device.h"
 #include "media/capture/video_capture_types.h"
@@ -49,11 +50,6 @@ class CAPTURE_EXPORT VideoCaptureBufferPool
   // create regions.
   virtual base::UnsafeSharedMemoryRegion DuplicateAsUnsafeRegion(
       int buffer_id) = 0;
-  virtual mojo::ScopedSharedBufferHandle DuplicateAsMojoBuffer(
-      int buffer_id) = 0;
-
-  virtual mojom::SharedMemoryViaRawFileDescriptorPtr
-  CreateSharedMemoryViaRawFileDescriptorStruct(int buffer_id) = 0;
 
   // Try and obtain a read/write access to the buffer.
   virtual std::unique_ptr<VideoCaptureBufferHandle> GetHandleForInProcessAccess(
@@ -61,6 +57,10 @@ class CAPTURE_EXPORT VideoCaptureBufferPool
 
   virtual gfx::GpuMemoryBufferHandle GetGpuMemoryBufferHandle(
       int buffer_id) = 0;
+
+  // Returns the buffer type of the buffer. Useful when deciding whether to
+  // serialize the buffer for IPC either as shared memory or GMB.
+  virtual VideoCaptureBufferType GetBufferType(int buffer_id) = 0;
 
   // Reserve or allocate a buffer to support a packed frame of |dimensions| of
   // pixel |format| and return its id. If the pool is already at maximum
@@ -88,17 +88,26 @@ class CAPTURE_EXPORT VideoCaptureBufferPool
   // of ReserveForProducer().
   virtual void RelinquishProducerReservation(int buffer_id) = 0;
 
-  // Reserve a buffer id to use for an external buffer (one that isn't in this
-  // pool). This is needed to ensure that ids for external buffers don't
-  // conflict with ids from the pool. This call cannot fail (no allocation is
-  // done). The behavior of |buffer_id_to_drop| is the same as
-  // ReserveForProducer.
-  virtual int ReserveIdForExternalBuffer(
-      std::vector<int>* buffer_ids_to_drop) = 0;
+  // Reserve a buffer id to use for a buffer specified by |handle| (which was
+  // allocated by some external source).
 
-  // Notify the pool that a buffer id is no longer in use, and can be returned
-  // via ReserveIdForExternalBuffer.
-  virtual void RelinquishExternalBufferReservation(int buffer_id) = 0;
+  // |buffer.handle| is used to create buffer on windows, mac doesn't create
+  // buffer but holds io_surface. |buffer.format| is the source texture format,
+  // currently it should be NV12. Buffer tracker will hold |buffer.imf_buffer|
+  // for reusing the texture in right timing on Windows since once the
+  // imf_buffer is released, Windows capture pipeline assumes the application
+  // has finished reading from the texture and the capture pipeline will perform
+  // the write operation(i.e. reusing texture). |dimensions| is used for
+  // creating buffer on Windows.
+
+  // If the pool is already at maximum capacity, return the reused ID based on
+  // LRU strategy. Otherwise, return a new tracker ID via |buffer_id|. The
+  // behavior of |buffer_id_to_drop| is the same as ReserveForProducer.
+  virtual VideoCaptureDevice::Client::ReserveResult ReserveIdForExternalBuffer(
+      CapturedExternalVideoBuffer buffer,
+      const gfx::Size& dimensions,
+      int* buffer_id_to_drop,
+      int* buffer_id) = 0;
 
   // Returns a snapshot of the current number of buffers in-use divided by the
   // maximum |count_|.

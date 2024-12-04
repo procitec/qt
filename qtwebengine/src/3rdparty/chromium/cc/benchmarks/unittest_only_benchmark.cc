@@ -1,30 +1,26 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "cc/benchmarks/unittest_only_benchmark.h"
 
-#include "base/bind.h"
+#include <utility>
+
+#include <optional>
+#include "base/functional/bind.h"
 #include "base/memory/ptr_util.h"
-#include "base/single_thread_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/values.h"
 #include "cc/benchmarks/unittest_only_benchmark_impl.h"
 
 namespace cc {
 
-UnittestOnlyBenchmark::UnittestOnlyBenchmark(std::unique_ptr<base::Value> value,
+UnittestOnlyBenchmark::UnittestOnlyBenchmark(base::Value::Dict settings,
                                              DoneCallback callback)
     : MicroBenchmark(std::move(callback)), create_impl_benchmark_(false) {
-  if (!value)
-    return;
-
-  base::DictionaryValue* settings = nullptr;
-  value->GetAsDictionary(&settings);
-  if (!settings)
-    return;
-
-  if (settings->HasKey("run_benchmark_impl"))
-    settings->GetBoolean("run_benchmark_impl", &create_impl_benchmark_);
+  auto run_benchmark_impl = settings.FindBool("run_benchmark_impl");
+  if (run_benchmark_impl.has_value())
+    create_impl_benchmark_ = *run_benchmark_impl;
 }
 
 UnittestOnlyBenchmark::~UnittestOnlyBenchmark() {
@@ -32,23 +28,14 @@ UnittestOnlyBenchmark::~UnittestOnlyBenchmark() {
 }
 
 void UnittestOnlyBenchmark::DidUpdateLayers(LayerTreeHost* layer_tree_host) {
-  NotifyDone(nullptr);
+  NotifyDone(base::Value::Dict());
 }
 
-bool UnittestOnlyBenchmark::ProcessMessage(std::unique_ptr<base::Value> value) {
-  base::DictionaryValue* message = nullptr;
-  value->GetAsDictionary(&message);
-  bool can_handle;
-  if (message->HasKey("can_handle")) {
-    message->GetBoolean("can_handle", &can_handle);
-    if (can_handle)
-      return true;
-  }
-  return false;
+bool UnittestOnlyBenchmark::ProcessMessage(base::Value::Dict message) {
+  return message.FindBool("can_handle").value_or(false);
 }
 
-void UnittestOnlyBenchmark::RecordImplResults(
-    std::unique_ptr<base::Value> results) {
+void UnittestOnlyBenchmark::RecordImplResults(base::Value::Dict results) {
   NotifyDone(std::move(results));
 }
 
@@ -58,7 +45,7 @@ std::unique_ptr<MicroBenchmarkImpl> UnittestOnlyBenchmark::CreateBenchmarkImpl(
     return base::WrapUnique<MicroBenchmarkImpl>(nullptr);
 
   return base::WrapUnique(new UnittestOnlyBenchmarkImpl(
-      origin_task_runner, nullptr,
+      origin_task_runner,
       base::BindOnce(&UnittestOnlyBenchmark::RecordImplResults,
                      weak_ptr_factory_.GetWeakPtr())));
 }

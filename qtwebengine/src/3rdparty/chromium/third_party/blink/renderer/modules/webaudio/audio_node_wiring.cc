@@ -1,9 +1,10 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/modules/webaudio/audio_node_wiring.h"
 
+#include "base/memory/raw_ref.h"
 #include "third_party/blink/renderer/modules/webaudio/audio_node_input.h"
 #include "third_party/blink/renderer/modules/webaudio/audio_node_output.h"
 #include "third_party/blink/renderer/modules/webaudio/deferred_task_handler.h"
@@ -16,7 +17,7 @@ namespace {
 using AudioNodeOutputSet = HashSet<AudioNodeOutput*>;
 
 struct FindOutputResult {
-  AudioNodeOutputSet& output_set;
+  const raw_ref<AudioNodeOutputSet, ExperimentalRenderer> output_set;
   AudioNodeOutputSet::const_iterator iterator;
   bool is_disabled;
 };
@@ -32,15 +33,17 @@ FindOutputResult FindOutput(AudioNodeOutput& output,
                             AudioNodeOutputSet& outputs,
                             AudioNodeOutputSet& disabled_outputs) {
   auto it = outputs.find(&output);
-  if (it != outputs.end())
-    return {outputs, it, false};
+  if (it != outputs.end()) {
+    return {raw_ref(outputs), it, false};
+  }
 
   it = disabled_outputs.find(&output);
-  if (it != disabled_outputs.end())
-    return {disabled_outputs, it, true};
+  if (it != disabled_outputs.end()) {
+    return {raw_ref(disabled_outputs), it, true};
+  }
 
   NOTREACHED() << "The output must be connected to the input.";
-  return {outputs, {}, false};
+  return {raw_ref(outputs), {}, false};
 }
 
 }  // namespace
@@ -55,8 +58,9 @@ void AudioNodeWiring::Connect(AudioNodeOutput& output, AudioNodeInput& input) {
   DCHECK_EQ(input_connected_to_output, output_connected_to_input);
 
   // Do nothing if already connected.
-  if (input_connected_to_output)
+  if (input_connected_to_output) {
     return;
+  }
 
   (output.is_enabled_ ? input.outputs_ : input.disabled_outputs_)
       .insert(&output);
@@ -64,8 +68,9 @@ void AudioNodeWiring::Connect(AudioNodeOutput& output, AudioNodeInput& input) {
 
   // If it has gained an active connection, the input may need to have its
   // rendering state updated.
-  if (output.is_enabled_)
+  if (output.is_enabled_) {
     input.ChangedOutputs();
+  }
 
   // The input node's handler needs to know about this connection. This may
   // cause it to re-enable itself.
@@ -81,8 +86,9 @@ void AudioNodeWiring::Connect(AudioNodeOutput& output,
   DCHECK_EQ(param_connected_to_output, output_connected_to_param);
 
   // Do nothing if already connected.
-  if (param_connected_to_output)
+  if (param_connected_to_output) {
     return;
+  }
 
   param.outputs_.insert(&output);
   output.params_.insert(&param);
@@ -104,13 +110,14 @@ void AudioNodeWiring::Disconnect(AudioNodeOutput& output,
   auto result = FindOutput(output, input.outputs_, input.disabled_outputs_);
 
   // Erase the pointers from both sets.
-  result.output_set.erase(result.iterator);
+  result.output_set->erase(result.iterator);
   output.inputs_.erase(&input);
 
   // If an active connection was disconnected, the input may need to have its
   // rendering state updated.
-  if (!result.is_disabled)
+  if (!result.is_disabled) {
     input.ChangedOutputs();
+  }
 
   // The input node's handler may try to disable itself if this was the last
   // connection. This must happen after the set erasures above, or the disabling
@@ -146,8 +153,9 @@ void AudioNodeWiring::Disable(AudioNodeOutput& output, AudioNodeInput& input) {
 
   // Move from the active list to the disabled list.
   // Do nothing if this is the current state.
-  if (!input.disabled_outputs_.insert(&output).is_new_entry)
+  if (!input.disabled_outputs_.insert(&output).is_new_entry) {
     return;
+  }
   input.outputs_.erase(&output);
 
   // Since it has lost an active connection, the input may need to have its
@@ -173,8 +181,9 @@ void AudioNodeWiring::Enable(AudioNodeOutput& output, AudioNodeInput& input) {
 
   // Move from the disabled list to the active list.
   // Do nothing if this is the current state.
-  if (!input.outputs_.insert(&output).is_new_entry)
+  if (!input.outputs_.insert(&output).is_new_entry) {
     return;
+  }
   input.disabled_outputs_.erase(&output);
 
   // Since it has gained an active connection, the input may need to have its
@@ -213,14 +222,16 @@ void AudioNodeWiring::WillBeDestroyed(AudioNodeInput& input) {
   // changes to its connections.
   //
   // What does matter, however, is ensuring that no AudioNodeOutput holds a
-  // dangling pointer to |input|.
+  // dangling pointer to `input`.
 
   input.GetDeferredTaskHandler().AssertGraphOwner();
 
-  for (AudioNodeOutput* output : input.outputs_)
+  for (AudioNodeOutput* output : input.outputs_) {
     output->inputs_.erase(&input);
-  for (AudioNodeOutput* output : input.disabled_outputs_)
+  }
+  for (AudioNodeOutput* output : input.disabled_outputs_) {
     output->inputs_.erase(&input);
+  }
   input.outputs_.clear();
   input.disabled_outputs_.clear();
 }

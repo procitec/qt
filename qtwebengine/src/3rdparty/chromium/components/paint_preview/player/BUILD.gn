@@ -1,9 +1,11 @@
-# Copyright 2019 The Chromium Authors.All rights reserved.
-# Use of this source code is governed by a BSD - style license that can be
+# Copyright 2019 The Chromium Authors
+# Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
 source_set("player") {
   sources = [
+    "bitmap_request.cc",
+    "bitmap_request.h",
     "compositor_status.h",
     "player_compositor_delegate.cc",
     "player_compositor_delegate.h",
@@ -15,7 +17,9 @@ source_set("player") {
     "//components/paint_preview/common",
     "//components/paint_preview/common/proto",
     "//components/paint_preview/public",
+    "//components/version_info",
     "//mojo/public/cpp/bindings",
+    "//ui/accessibility",
     "//ui/gfx/geometry",
     "//url",
   ]
@@ -33,6 +37,7 @@ source_set("unit_tests") {
     ":player",
     "//base",
     "//base/test:test_support",
+    "//components/memory_pressure:test_support",
     "//components/paint_preview/browser",
     "//components/paint_preview/common",
     "//components/paint_preview/common/proto",

@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,9 +8,21 @@ namespace blink {
 namespace switches {
 
 // Allows processing of input before a frame has been committed.
-// TODO(schenney): crbug.com/987626. Used by headless. Look for a way not
+// TODO(crbug.com/987626): Used by headless. Look for a way not
 // involving a command line switch.
 const char kAllowPreCommitInput[] = "allow-pre-commit-input";
+
+// Used to communicate managed policy for the
+// BeforeunloadEventCancelByPreventDefault feature. This feature is typically
+// controlled by base::Feature (see blink/common/features.*) but requires an
+// enterprise policy override. This is implicitly a tri-state, and can be either
+// unset, or set to "1" for force enable, or "0" for force disable.
+extern const char kBeforeunloadEventCancelByPreventDefaultPolicy[] =
+    "beforeunload-event-cancel-by-prevent-default-policy";
+extern const char
+    kBeforeunloadEventCancelByPreventDefaultPolicy_ForceDisable[] = "0";
+extern const char kBeforeunloadEventCancelByPreventDefaultPolicy_ForceEnable[] =
+    "1";
 
 // Set blink settings. Format is <name>[=<value],<name>[=<value>],...
 // The names are declared in Settings.json5. For boolean type, use "true",
@@ -23,18 +35,22 @@ const char kBlinkSettings[] = "blink-settings";
 // the default dark mode settings is used. Valid params are given below.
 // "InversionAlgorithm" takes int value of DarkModeInversionAlgorithm enum.
 // "ImagePolicy" takes int value of DarkModeImagePolicy enum.
-// "IsGrayScale" takes 1 or 0, 1 means grayscale is true, false otherwise.
-// "TextBrightnessThreshold" takes 0 to 255 int value.
+// "ForegroundBrightnessThreshold" takes 0 to 255 int value.
 // "BackgroundBrightnessThreshold" takes 0 to 255 int value.
 // "ContrastPercent" takes -1.0 to 1.0 float value. Higher the value, more
 // the contrast.
-// "ImageGrayScalePercent" takes 0.0 to 1.0 float value. Higher the value,
-// image would be more grayish.
 const char kDarkModeSettings[] = "dark-mode-settings";
+
+// Overrides data: URLs in SVGUseElement deprecation through enterprise policy.
+const char kDataUrlInSvgUseEnabled[] = "data-url-in-svg-use-enabled";
 
 // Sets the tile size used by composited layers.
 const char kDefaultTileWidth[] = "default-tile-width";
 const char kDefaultTileHeight[] = "default-tile-height";
+
+// If set, the unload event cannot be disabled by default by Permissions-Policy.
+const char kForcePermissionPolicyUnloadDefaultEnabled[] =
+    "force-permission-policy-unload-default-enabled";
 
 // Disallow image animations to be reset to the beginning to avoid skipping
 // many frames. Only effective if compositor image animations are enabled.
@@ -44,6 +60,10 @@ const char kDisableImageAnimationResync[] = "disable-image-animation-resync";
 // less power, particularly during animations, but more white may be seen
 // during fast scrolling especially on slower devices.
 const char kDisableLowResTiling[] = "disable-low-res-tiling";
+
+// Disallow use of the feature NewBaseUrlInheritanceBehavior.
+const char kDisableNewBaseUrlInheritanceBehavior[] =
+    "disable-new-base-url-inheritance-behavior";
 
 // Disable partial raster in the renderer. Disabling this switch also disables
 // the use of persistent gpu memory buffers.
@@ -56,11 +76,12 @@ const char kDisablePreferCompositingToLCDText[] =
 // Disables RGBA_4444 textures.
 const char kDisableRGBA4444Textures[] = "disable-rgba-4444-textures";
 
-// Disable multithreaded, compositor scrolling of web content.
-const char kDisableThreadedScrolling[] = "disable-threaded-scrolling";
-
 // Disable rasterizer that writes directly to GPU memory associated with tiles.
 const char kDisableZeroCopy[] = "disable-zero-copy";
+
+// Logs Runtime Call Stats. --single-process also needs to be used along with
+// this for the stats to be logged.
+const char kDumpRuntimeCallStats[] = "dump-blink-runtime-call-stats";
 
 // Specify that all compositor resources should be backed by GPU memory buffers.
 const char kEnableGpuMemoryBufferCompositorResources[] =
@@ -77,15 +98,12 @@ const char kEnablePreferCompositingToLCDText[] =
 // Enables RGBA_4444 textures.
 const char kEnableRGBA4444Textures[] = "enable-rgba-4444-textures";
 
+// Enables raster side dark mode for images.
+const char kEnableRasterSideDarkModeForImages[] =
+    "enable-raster-side-dark-mode-for-images";
+
 // Enable rasterizer that writes directly to GPU memory associated with tiles.
 const char kEnableZeroCopy[] = "enable-zero-copy";
-
-// Pins the default referrer policy to the pre-M80 value of
-// no-referrer-when-downgrade.
-// TODO(crbug.com/1016541): After M88, remove when the corresponding
-// enterprise policy has been deleted.
-const char kForceLegacyDefaultReferrerPolicy[] =
-    "force-legacy-default-referrer-policy";
 
 // The number of multisample antialiasing samples for GPU rasterization.
 // Requires MSAA support on GPU to have an effect. 0 disables MSAA.
@@ -102,6 +120,11 @@ extern const char kIntensiveWakeUpThrottlingPolicy[] =
 extern const char kIntensiveWakeUpThrottlingPolicy_ForceDisable[] = "0";
 extern const char kIntensiveWakeUpThrottlingPolicy_ForceEnable[] = "1";
 
+// A command line to indicate if there ia any legacy tech report urls being set.
+// If so, we will send report from blink to browser process.
+extern const char kLegacyTechReportPolicyEnabled[] =
+    "legacy-tech-report-policy-enabled";
+
 // Sets the width and height above which a composited layer will get tiled.
 const char kMaxUntiledLayerHeight[] = "max-untiled-layer-height";
 const char kMaxUntiledLayerWidth[] = "max-untiled-layer-width";
@@ -116,13 +139,6 @@ const char kMinHeightForGpuRasterTile[] = "min-height-for-gpu-raster-tile";
 // signal to dismiss a splash screen.
 const char kNetworkQuietTimeout[] = "network-quiet-timeout";
 
-// Override the default value for the 'passive' field in javascript
-// addEventListener calls. Values are defined as:
-//  'documentonlytrue' to set the default be true only for document level nodes.
-//  'true' to set the default to be true on all nodes (when not specified).
-//  'forcealltrue' to force the value on all nodes.
-const char kPassiveListenersDefault[] = "passive-listeners-default";
-
 // Visibly render a border around layout shift rects in the web page to help
 // debug and study layout shifts.
 const char kShowLayoutShiftRegions[] = "show-layout-shift-regions";
@@ -131,18 +147,31 @@ const char kShowLayoutShiftRegions[] = "show-layout-shift-regions";
 // and study painting behavior.
 const char kShowPaintRects[] = "show-paint-rects";
 
+// Used to override the ThrottleDisplayNoneAndVisibilityHiddenCrossOrigin
+// feature from an enterprise policy.
+const char kDisableThrottleNonVisibleCrossOriginIframes[] =
+    "disable-throttle-non-visible-cross-origin-iframes";
+
 // Controls how text selection granularity changes when touch text selection
 // handles are dragged. Should be "character" or "direction". If not specified,
 // the platform default is used.
 const char kTouchTextSelectionStrategy[] = "touch-selection-strategy";
+const char kTouchTextSelectionStrategy_Character[] = "character";
+const char kTouchTextSelectionStrategy_Direction[] = "direction";
 
-// Used to communicate managed policy for the UserAgentClientHint feature.
-// This feature is typically controlled by base::Feature (see
-// renderer/platform/scheduler/common/features.*) but requires an enterprise
-// policy override.
+// Comma-separated list of origins that can use SharedArrayBuffer without
+// enabling cross-origin isolation.
+const char kSharedArrayBufferAllowedOrigins[] =
+    "shared-array-buffer-allowed-origins";
 
-extern const char kUserAgentClientHintDisable[] =
-    "user-agent-client-hint-disable";
+// Allows overriding the conditional focus window's length.
+const char kConditionalFocusWindowMs[] = "conditional-focus-window-ms";
+
+// Specifies the flags passed to JS engine.
+const char kJavaScriptFlags[] = "js-flags";
+
+// Controls whether WebSQL is force enabled.
+const char kWebSQLAccess[] = "web-sql-access";
 
 }  // namespace switches
 }  // namespace blink

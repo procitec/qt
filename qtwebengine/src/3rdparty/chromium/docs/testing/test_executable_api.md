@@ -109,6 +109,15 @@ This argument is required, and should be set to the directory created
 by the swarming task for the task to write outputs into.
 
 ```
+--out-dir=[PATH]
+```
+
+This argument mirrors `--isolated-outdir`, but may appear in addition to
+it depending on the bot configuration (e.g. IOS bots that specify the
+`out_dir_arg` mixin in //testing/buildbot/waterfalls.pyl). It only needs
+to be handled in these cases.
+
+```
 --isolated-script-test-output=[FILENAME]
 ```
 
@@ -178,6 +187,20 @@ provided, it is an error to also pass
 `--isolated-script-test-launcher-retry-limit` (since -repeat specifies an
 explicit number of times to run the test, it makes no sense to also pass
 -retry-limit).
+
+```
+--xcode-build-version [VERSION]
+```
+
+This flag is passed to scripts on IOS bots only, due to the `xcode_14_main`
+mixin in //testing/builtbot/waterfalls.pyl.
+
+```
+--xctest
+```
+
+This flag is passed to scripts on IOS bots only, due to the `xctest`
+mixin in //testing/builtbot/waterfalls.pyl.
 
 If "`--`" is passed as an argument:
 
@@ -441,7 +464,7 @@ but pointed it at the wrong document by accident. bit.ly URLs can't easily be
 updated :(.
 
 [1]: https://bit.ly/chromium-test-runner-api
-[2]: https://chromium.googlesource.com/infra/infra/+/master/doc/users/services/about_luci.md
+[2]: https://chromium.googlesource.com/infra/infra/+/main/doc/users/services/about_luci.md
 [3]: https://docs.google.com/document/d/1MwnIx8kavuLSpZo3JmL9T7nkjTz1rpaJA4Vdj_9cRYw/edit?usp=sharing
 [4]: ../../testing/buildbot/test_suites.pyl
 [5]: ../../testing/buildbot/gn_isolate_map.pyl

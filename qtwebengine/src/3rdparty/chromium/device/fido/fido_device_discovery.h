@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,13 +9,12 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 #include "base/component_export.h"
-#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "base/strings/string_piece.h"
 #include "device/fido/fido_discovery_base.h"
 #include "device/fido/fido_transport_protocol.h"
 
@@ -27,15 +26,6 @@ class FidoDeviceAuthenticator;
 class COMPONENT_EXPORT(DEVICE_FIDO) FidoDeviceDiscovery
     : public FidoDiscoveryBase {
  public:
-  // BLEObserver is an interface for discoveries that watch for BLE adverts.
-  class BLEObserver {
-   public:
-    virtual ~BLEObserver();
-
-    virtual void OnBLEAdvertSeen(const std::string& address,
-                                 const std::array<uint8_t, 16>& eid) = 0;
-  };
-
   enum class State {
     kIdle,
     kStarting,
@@ -43,36 +33,39 @@ class COMPONENT_EXPORT(DEVICE_FIDO) FidoDeviceDiscovery
     kStopped,
   };
 
+  FidoDeviceDiscovery(const FidoDeviceDiscovery&) = delete;
+  FidoDeviceDiscovery& operator=(const FidoDeviceDiscovery&) = delete;
+
   ~FidoDeviceDiscovery() override;
 
   bool is_start_requested() const { return state_ != State::kIdle; }
   bool is_running() const { return state_ == State::kRunning; }
 
-  std::vector<FidoDeviceAuthenticator*> GetAuthenticatorsForTesting();
   std::vector<const FidoDeviceAuthenticator*> GetAuthenticatorsForTesting()
       const;
   FidoDeviceAuthenticator* GetAuthenticatorForTesting(
-      base::StringPiece authenticator_id);
+      std::string_view authenticator_id);
 
   // FidoDiscoveryBase:
   void Start() override;
-  bool MaybeStop() override;
+  void Stop() override;
 
  protected:
-  FidoDeviceDiscovery(FidoTransportProtocol transport);
+  explicit FidoDeviceDiscovery(FidoTransportProtocol transport);
 
   void NotifyDiscoveryStarted(bool success);
 
+  // Convenience method that adds a FidoDeviceAuthenticator with the given
+  // |device|.
   bool AddDevice(std::unique_ptr<FidoDevice> device);
-  bool RemoveDevice(base::StringPiece device_id);
-
-  FidoDeviceAuthenticator* GetAuthenticator(base::StringPiece authenticator_id);
+  bool AddAuthenticator(std::unique_ptr<FidoDeviceAuthenticator> authenticator);
+  bool RemoveDevice(std::string_view device_id);
 
   // Subclasses should implement this to actually start the discovery when it is
   // requested.
   //
   // The implementation should asynchronously invoke NotifyDiscoveryStarted when
-  // the discovery is s tarted.
+  // the discovery is started.
   virtual void StartInternal() = 0;
 
   // Map of ID to authenticator. It is a guarantee to subclasses that the ID of
@@ -86,8 +79,6 @@ class COMPONENT_EXPORT(DEVICE_FIDO) FidoDeviceDiscovery
 
   State state_ = State::kIdle;
   base::WeakPtrFactory<FidoDeviceDiscovery> weak_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(FidoDeviceDiscovery);
 };
 
 }  // namespace device

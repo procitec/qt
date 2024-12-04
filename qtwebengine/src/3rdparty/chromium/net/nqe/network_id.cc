@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,9 +10,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "net/nqe/proto/network_id_proto.pb.h"
 
-namespace net {
-namespace nqe {
-namespace internal {
+namespace net::nqe::internal {
 
 // static
 NetworkID NetworkID::FromString(const std::string& network_id) {
@@ -74,12 +72,7 @@ std::string NetworkID::ToString() const {
   if (!network_id_proto.SerializeToString(&serialized_network_id))
     return "";
 
-  std::string base64_encoded;
-  base::Base64Encode(serialized_network_id, &base64_encoded);
-
-  return base64_encoded;
+  return base::Base64Encode(serialized_network_id);
 }
 
-}  // namespace internal
-}  // namespace nqe
-}  // namespace net
+}  // namespace net::nqe::internal

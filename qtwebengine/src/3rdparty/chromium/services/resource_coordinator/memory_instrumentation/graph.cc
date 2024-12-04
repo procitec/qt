@@ -1,10 +1,13 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "services/resource_coordinator/memory_instrumentation/graph.h"
 
-#include "base/callback.h"
+#include "base/containers/adapters.h"
+#include "base/containers/contains.h"
+#include "base/functional/callback.h"
+#include "base/memory/raw_ptr.h"
 #include "base/strings/string_tokenizer.h"
 
 namespace memory_instrumentation {
@@ -50,20 +53,20 @@ Node* GlobalDumpGraph::CreateNode(Process* process_graph, Node* parent) {
 }
 
 PreOrderIterator GlobalDumpGraph::VisitInDepthFirstPreOrder() {
-  std::vector<Node*> roots;
-  for (auto it = process_dump_graphs_.rbegin();
-       it != process_dump_graphs_.rend(); it++) {
-    roots.push_back(it->second->root());
+  std::vector<raw_ptr<Node, VectorExperimental>> roots;
+  for (const auto& [process_id, process] :
+       base::Reversed(process_dump_graphs_)) {
+    roots.push_back(process->root());
   }
   roots.push_back(shared_memory_graph_->root());
   return PreOrderIterator(std::move(roots));
 }
 
 PostOrderIterator GlobalDumpGraph::VisitInDepthFirstPostOrder() {
-  std::vector<Node*> roots;
-  for (auto it = process_dump_graphs_.rbegin();
-       it != process_dump_graphs_.rend(); it++) {
-    roots.push_back(it->second->root());
+  std::vector<raw_ptr<Node, VectorExperimental>> roots;
+  for (const auto& [process_id, process] :
+       base::Reversed(process_dump_graphs_)) {
+    roots.push_back(process->root());
   }
   roots.push_back(shared_memory_graph_->root());
   return PostOrderIterator(std::move(roots));
@@ -76,18 +79,18 @@ Process::Process(base::ProcessId pid, GlobalDumpGraph* global_graph)
 Process::~Process() {}
 
 Node* Process::CreateNode(MemoryAllocatorDumpGuid guid,
-                          base::StringPiece path,
+                          std::string_view path,
                           bool weak) {
   DCHECK(!path.empty());
 
-  std::string path_string = path.as_string();
+  std::string path_string(path);
   base::StringTokenizer tokenizer(path_string, "/");
 
   // Perform a tree traversal, creating the nodes if they do not
   // already exist on the path to the child.
   Node* current = root_;
   while (tokenizer.GetNext()) {
-    base::StringPiece key = tokenizer.token_piece();
+    std::string_view key = tokenizer.token_piece();
     Node* parent = current;
     current = current->GetChild(key);
     if (!current) {
@@ -111,14 +114,14 @@ Node* Process::CreateNode(MemoryAllocatorDumpGuid guid,
   return current;
 }
 
-Node* Process::FindNode(base::StringPiece path) {
+Node* Process::FindNode(std::string_view path) {
   DCHECK(!path.empty());
 
-  std::string path_string = path.as_string();
+  std::string path_string(path);
   base::StringTokenizer tokenizer(path_string, "/");
   Node* current = root_;
   while (tokenizer.GetNext()) {
-    base::StringPiece key = tokenizer.token_piece();
+    std::string_view key = tokenizer.token_piece();
     current = current->GetChild(key);
     if (!current)
       return nullptr;
@@ -130,22 +133,22 @@ Node::Node(Process* dump_graph, Node* parent)
     : dump_graph_(dump_graph), parent_(parent), owns_edge_(nullptr) {}
 Node::~Node() {}
 
-Node* Node::GetChild(base::StringPiece name) {
+Node* Node::GetChild(std::string_view name) {
   DCHECK(!name.empty());
   DCHECK_EQ(std::string::npos, name.find('/'));
 
-  auto child = children_.find(name.as_string());
+  auto child = children_.find(std::string(name));
   return child == children_.end() ? nullptr : child->second;
 }
 
-void Node::InsertChild(base::StringPiece name, Node* node) {
+void Node::InsertChild(std::string_view name, Node* node) {
   DCHECK(!name.empty());
   DCHECK_EQ(std::string::npos, name.find('/'));
 
-  children_.emplace(name.as_string(), node);
+  children_.emplace(std::string(name), node);
 }
 
-Node* Node::CreateChild(base::StringPiece name) {
+Node* Node::CreateChild(std::string_view name) {
   Node* new_child = dump_graph_->global_graph()->CreateNode(dump_graph_, this);
   InsertChild(name, new_child);
   return new_child;
@@ -191,7 +194,8 @@ Node::Entry::Entry(std::string value)
 Edge::Edge(Node* source, Node* target, int priority)
     : source_(source), target_(target), priority_(priority) {}
 
-PreOrderIterator::PreOrderIterator(std::vector<Node*> roots)
+PreOrderIterator::PreOrderIterator(
+    std::vector<raw_ptr<Node, VectorExperimental>> roots)
     : to_visit_(std::move(roots)) {}
 PreOrderIterator::PreOrderIterator(PreOrderIterator&& other) = default;
 PreOrderIterator::~PreOrderIterator() {}
@@ -216,15 +220,14 @@ Node* PreOrderIterator::next() {
       continue;
 
     // Visit all children of this node.
-    for (auto it = node->children()->rbegin(); it != node->children()->rend();
-         it++) {
-      to_visit_.push_back(it->second);
+    for (const auto& [name, child] : base::Reversed(*node->children())) {
+      to_visit_.push_back(child);
     }
 
     // Visit all owners of this node.
-    for (auto it = node->owned_by_edges()->rbegin();
-         it != node->owned_by_edges()->rend(); it++) {
-      to_visit_.push_back((*it)->source());
+    for (memory_instrumentation::GlobalDumpGraph::Edge* edge :
+         base::Reversed(*node->owned_by_edges())) {
+      to_visit_.push_back(edge->source());
     }
 
     // Add this node to the visited set.
@@ -234,7 +237,8 @@ Node* PreOrderIterator::next() {
   return nullptr;
 }
 
-PostOrderIterator::PostOrderIterator(std::vector<Node*> roots)
+PostOrderIterator::PostOrderIterator(
+    std::vector<raw_ptr<Node, VectorExperimental>> roots)
     : to_visit_(std::move(roots)) {}
 PostOrderIterator::PostOrderIterator(PostOrderIterator&& other) = default;
 PostOrderIterator::~PostOrderIterator() = default;
@@ -264,22 +268,21 @@ Node* PostOrderIterator::next() {
 
     // If the node is not at the front, it should also certainly not be
     // anywhere else in the path. If it is, there is a cycle in the graph.
-    DCHECK(std::find(path_.begin(), path_.end(), node) == path_.end());
+    DCHECK(!base::Contains(path_, node));
     path_.push_back(node);
 
     // Add this node back to the queue of nodes to visit.
     to_visit_.push_back(node);
 
     // Visit all children of this node.
-    for (auto it = node->children()->rbegin(); it != node->children()->rend();
-         it++) {
-      to_visit_.push_back(it->second);
+    for (const auto& [name, child] : base::Reversed(*node->children())) {
+      to_visit_.push_back(child);
     }
 
     // Visit all owners of this node.
-    for (auto it = node->owned_by_edges()->rbegin();
-         it != node->owned_by_edges()->rend(); it++) {
-      to_visit_.push_back((*it)->source());
+    for (memory_instrumentation::GlobalDumpGraph::Edge* edge :
+         base::Reversed(*node->owned_by_edges())) {
+      to_visit_.push_back(edge->source());
     }
   }
   return nullptr;

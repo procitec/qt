@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,14 +9,16 @@
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_testing.h"
 #include "third_party/blink/renderer/core/streams/promise_handler.h"
 #include "third_party/blink/renderer/platform/bindings/v8_binding.h"
-#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/heap/visitor.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 
 namespace blink {
 
 namespace {
 
 TEST(StreamPromiseResolverTest, Construct) {
+  test::TaskEnvironment task_environment;
   V8TestingScope scope;
   auto* promise =
       MakeGarbageCollected<StreamPromiseResolver>(scope.GetScriptState());
@@ -25,6 +27,7 @@ TEST(StreamPromiseResolverTest, Construct) {
 }
 
 TEST(StreamPromiseResolverTest, Resolve) {
+  test::TaskEnvironment task_environment;
   V8TestingScope scope;
   auto* isolate = scope.GetIsolate();
   auto* promise =
@@ -36,6 +39,7 @@ TEST(StreamPromiseResolverTest, Resolve) {
 }
 
 TEST(StreamPromiseResolverTest, ResolveWithUndefined) {
+  test::TaskEnvironment task_environment;
   V8TestingScope scope;
   auto* isolate = scope.GetIsolate();
   auto* promise =
@@ -47,6 +51,7 @@ TEST(StreamPromiseResolverTest, ResolveWithUndefined) {
 }
 
 TEST(StreamPromiseResolverTest, Reject) {
+  test::TaskEnvironment task_environment;
   V8TestingScope scope;
   auto* isolate = scope.GetIsolate();
   auto* promise =
@@ -60,6 +65,7 @@ TEST(StreamPromiseResolverTest, Reject) {
 }
 
 TEST(StreamPromiseResolverTest, RejectDoesNothingAfterResolve) {
+  test::TaskEnvironment task_environment;
   V8TestingScope scope;
   auto* isolate = scope.GetIsolate();
   auto* promise =
@@ -71,6 +77,7 @@ TEST(StreamPromiseResolverTest, RejectDoesNothingAfterResolve) {
 }
 
 TEST(StreamPromiseResolverTest, ResolveDoesNothingAfterReject) {
+  test::TaskEnvironment task_environment;
   V8TestingScope scope;
   auto* isolate = scope.GetIsolate();
   auto* promise =
@@ -82,6 +89,7 @@ TEST(StreamPromiseResolverTest, ResolveDoesNothingAfterReject) {
 }
 
 TEST(StreamPromiseResolverTest, ResolveDoesNothingInsideResolve) {
+  test::TaskEnvironment task_environment;
   V8TestingScope scope;
   auto* isolate = scope.GetIsolate();
   auto* promise =
@@ -94,36 +102,33 @@ TEST(StreamPromiseResolverTest, ResolveDoesNothingInsideResolve) {
   //     runMicrotasks();
   //   }
   // }
-  class ThenGetter final : public ScriptFunction {
+  class ThenGetter final : public ScriptFunction::Callable {
    public:
-    static v8::Local<v8::Function> Create(ScriptState* script_state,
-                                          StreamPromiseResolver* promise) {
-      return MakeGarbageCollected<ThenGetter>(script_state, promise)
-          ->BindToV8Function();
-    }
-
-    ThenGetter(ScriptState* script_state, StreamPromiseResolver* promise)
-        : ScriptFunction(script_state), promise_(promise) {}
+    explicit ThenGetter(StreamPromiseResolver* promise) : promise_(promise) {}
 
     void Trace(Visitor* visitor) const override {
       visitor->Trace(promise_);
-      ScriptFunction::Trace(visitor);
+      ScriptFunction::Callable::Trace(visitor);
+    }
+
+    void CallRaw(ScriptState* script_state,
+                 const v8::FunctionCallbackInfo<v8::Value>&) override {
+      auto* isolate = script_state->GetIsolate();
+      EXPECT_TRUE(promise_->IsSettled());
+      promise_->Resolve(script_state, v8::Undefined(isolate));
+      script_state->GetContext()->GetMicrotaskQueue()->PerformCheckpoint(
+          isolate);
     }
 
    private:
-    void CallRaw(const v8::FunctionCallbackInfo<v8::Value>&) override {
-      auto* isolate = GetScriptState()->GetIsolate();
-      EXPECT_TRUE(promise_->IsSettled());
-      promise_->Resolve(GetScriptState(), v8::Undefined(isolate));
-      v8::MicrotasksScope::PerformCheckpoint(isolate);
-    }
-
     Member<StreamPromiseResolver> promise_;
   };
 
   auto value = v8::Object::New(isolate);
   v8::PropertyDescriptor property_descriptor(
-      ThenGetter::Create(scope.GetScriptState(), promise),
+      MakeGarbageCollected<ScriptFunction>(
+          scope.GetScriptState(), MakeGarbageCollected<ThenGetter>(promise))
+          ->V8Function(),
       v8::Undefined(isolate));
   const auto then = V8String(isolate, "then");
   value->DefineProperty(scope.GetContext(), then, property_descriptor).Check();
@@ -135,6 +140,7 @@ TEST(StreamPromiseResolverTest, ResolveDoesNothingInsideResolve) {
 }
 
 TEST(StreamPromiseResolverTest, GetScriptPromise) {
+  test::TaskEnvironment task_environment;
   V8TestingScope scope;
   auto* promise =
       MakeGarbageCollected<StreamPromiseResolver>(scope.GetScriptState());
@@ -144,6 +150,7 @@ TEST(StreamPromiseResolverTest, GetScriptPromise) {
 }
 
 TEST(StreamPromiseResolverTest, MarkAsHandled) {
+  test::TaskEnvironment task_environment;
   V8TestingScope scope;
   auto* promise =
       MakeGarbageCollected<StreamPromiseResolver>(scope.GetScriptState());
@@ -153,6 +160,7 @@ TEST(StreamPromiseResolverTest, MarkAsHandled) {
 }
 
 TEST(StreamPromiseResolverTest, CreateResolved) {
+  test::TaskEnvironment task_environment;
   V8TestingScope scope;
   auto* isolate = scope.GetIsolate();
   auto* promise = StreamPromiseResolver::CreateResolved(scope.GetScriptState(),
@@ -163,6 +171,7 @@ TEST(StreamPromiseResolverTest, CreateResolved) {
 }
 
 TEST(StreamPromiseResolverTest, CreateResolvedWithUndefined) {
+  test::TaskEnvironment task_environment;
   V8TestingScope scope;
   auto* isolate = scope.GetIsolate();
   auto* promise = StreamPromiseResolver::CreateResolvedWithUndefined(
@@ -173,6 +182,7 @@ TEST(StreamPromiseResolverTest, CreateResolvedWithUndefined) {
 }
 
 TEST(StreamPromiseResolverTest, CreateRejected) {
+  test::TaskEnvironment task_environment;
   V8TestingScope scope;
   auto* isolate = scope.GetIsolate();
   auto* promise = StreamPromiseResolver::CreateRejected(scope.GetScriptState(),

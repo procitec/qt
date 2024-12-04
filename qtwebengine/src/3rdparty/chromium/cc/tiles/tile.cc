@@ -1,4 +1,4 @@
-// Copyright 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -34,11 +34,7 @@ Tile::Tile(TileManager* tile_manager,
       flags_(flags),
       tiling_i_index_(info.tiling_i_index),
       tiling_j_index_(info.tiling_j_index),
-      required_for_activation_(false),
-      required_for_draw_(false),
-      is_solid_color_analysis_performed_(false),
       can_use_lcd_text_(info.can_use_lcd_text),
-      raster_task_scheduled_with_checker_images_(false),
       id_(tile_manager->GetUniqueTileId()) {
   raster_rects_.emplace_back(info.content_rect, info.raster_transform);
 }
@@ -55,11 +51,16 @@ void Tile::AsValueInto(base::trace_event::TracedValue* value) const {
       TRACE_DISABLED_BY_DEFAULT("cc.debug"), value, "cc::Tile", this);
   value->SetDouble("contents_scale", contents_scale_key());
 
-  value->BeginArray("raster_transform");
-  value->AppendDouble(raster_transform_.scale());
+  value->BeginDictionary("raster_transform");
+  value->BeginArray("scale");
+  value->AppendDouble(raster_transform_.scale().x());
+  value->AppendDouble(raster_transform_.scale().y());
+  value->EndArray();
+  value->BeginArray("translation");
   value->AppendDouble(raster_transform_.translation().x());
   value->AppendDouble(raster_transform_.translation().y());
   value->EndArray();
+  value->EndDictionary();
 
   MathUtil::AddToTracedValue("content_rect", content_rect_, value);
 
@@ -78,12 +79,16 @@ void Tile::AsValueInto(base::trace_event::TracedValue* value) const {
                     base::saturated_cast<int>(GPUMemoryUsageInBytes()));
 }
 
+bool Tile::HasMissingLCPCandidateImages() const {
+  return HasRasterTask() && raster_task_->TaskContainsLCPCandidateImages();
+}
+
 size_t Tile::GPUMemoryUsageInBytes() const {
   if (draw_info_.resource_) {
-    // We can use UncheckedSizeInBytes, since the tile size is determined by the
-    // compositor.
-    return viz::ResourceSizes::UncheckedSizeInBytes<size_t>(
-        draw_info_.resource_size(), draw_info_.resource_format());
+    // We don't need to validate the computed size, since the tile size is
+    // determined by the compositor.
+    return draw_info_.resource_shared_image_format().EstimatedSizeInBytes(
+        draw_info_.resource_size());
   }
   return 0;
 }

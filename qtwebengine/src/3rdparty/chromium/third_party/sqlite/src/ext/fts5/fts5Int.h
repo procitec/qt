@@ -35,8 +35,20 @@ typedef sqlite3_uint64 u64;
 #endif
 
 #define testcase(x)
-#define ALWAYS(x) 1
-#define NEVER(x) 0
+
+#if defined(SQLITE_COVERAGE_TEST) || defined(SQLITE_MUTATION_TEST)
+# define SQLITE_OMIT_AUXILIARY_SAFETY_CHECKS 1
+#endif
+#if defined(SQLITE_OMIT_AUXILIARY_SAFETY_CHECKS)
+# define ALWAYS(X)      (1)
+# define NEVER(X)       (0)
+#elif !defined(NDEBUG)
+# define ALWAYS(X)      ((X)?1:(assert(0),0))
+# define NEVER(X)       ((X)?(assert(0),1):0)
+#else
+# define ALWAYS(X)      (X)
+# define NEVER(X)       (X)
+#endif
 
 #define MIN(x,y) (((x) < (y)) ? (x) : (y))
 #define MAX(x,y) (((x) > (y)) ? (x) : (y))
@@ -96,7 +108,7 @@ extern int sqlite3_fts5_may_be_corrupt;
 ** A version of memcmp() that does not cause asan errors if one of the pointer
 ** parameters is NULL and the number of bytes to compare is zero.
 */
-#define fts5Memcmp(s1, s2, n) ((n)==0 ? 0 : memcmp((s1), (s2), (n)))
+#define fts5Memcmp(s1, s2, n) ((n)<=0 ? 0 : memcmp((s1), (s2), (n)))
 
 /* Mark a function parameter as unused, to suppress nuisance compiler
 ** warnings. */
@@ -142,6 +154,10 @@ typedef struct Fts5Config Fts5Config;
 **   attempt to merge together. A value of 1 sets the object to use the 
 **   compile time default. Zero disables auto-merge altogether.
 **
+** bContentlessDelete:
+**   True if the contentless_delete option was present in the CREATE 
+**   VIRTUAL TABLE statement.
+**
 ** zContent:
 **
 ** zContentRowid:
@@ -176,6 +192,7 @@ struct Fts5Config {
   int nPrefix;                    /* Number of prefix indexes */
   int *aPrefix;                   /* Sizes in bytes of nPrefix prefix indexes */
   int eContent;                   /* An FTS5_CONTENT value */
+  int bContentlessDelete;         /* "contentless_delete=" option (dflt==0) */
   char *zContent;                 /* content table */ 
   char *zContentRowid;            /* "content_rowid=" option value */ 
   int bColumnsize;                /* "columnsize=" option value (dflt==1) */
@@ -187,6 +204,7 @@ struct Fts5Config {
   int ePattern;                   /* FTS_PATTERN_XXX constant */
 
   /* Values loaded from the %_config table */
+  int iVersion;                   /* fts5 file format 'version' */
   int iCookie;                    /* Incremented when %_config is modified */
   int pgsz;                       /* Approximate page size used in %_data */
   int nAutomerge;                 /* 'automerge' setting */
@@ -195,6 +213,8 @@ struct Fts5Config {
   int nHashSize;                  /* Bytes of memory for in-memory hash */
   char *zRank;                    /* Name of rank function */
   char *zRankArgs;                /* Arguments to rank function */
+  int bSecureDelete;              /* 'secure-delete' */
+  int nDeleteMerge;           /* 'deletemerge' */
 
   /* If non-NULL, points to sqlite3_vtab.base.zErrmsg. Often NULL. */
   char **pzErrmsg;
@@ -204,8 +224,11 @@ struct Fts5Config {
 #endif
 };
 
-/* Current expected value of %_config table 'version' field */
-#define FTS5_CURRENT_VERSION  4
+/* Current expected value of %_config table 'version' field. And
+** the expected version if the 'secure-delete' option has ever been
+** set on the table.  */
+#define FTS5_CURRENT_VERSION               4
+#define FTS5_CURRENT_VERSION_SECUREDELETE  5
 
 #define FTS5_CONTENT_NORMAL   0
 #define FTS5_CONTENT_NONE     1
@@ -274,7 +297,7 @@ void sqlite3Fts5BufferAppendPrintf(int *, Fts5Buffer*, char *zFmt, ...);
 char *sqlite3Fts5Mprintf(int *pRc, const char *zFmt, ...);
 
 #define fts5BufferZero(x)             sqlite3Fts5BufferZero(x)
-#define fts5BufferAppendVarint(a,b,c) sqlite3Fts5BufferAppendVarint(a,b,c)
+#define fts5BufferAppendVarint(a,b,c) sqlite3Fts5BufferAppendVarint(a,b,(i64)c)
 #define fts5BufferFree(a)             sqlite3Fts5BufferFree(a)
 #define fts5BufferAppendBlob(a,b,c,d) sqlite3Fts5BufferAppendBlob(a,b,c,d)
 #define fts5BufferSet(a,b,c,d)        sqlite3Fts5BufferSet(a,b,c,d)
@@ -371,6 +394,7 @@ struct Fts5IndexIter {
 ** above. */
 #define FTS5INDEX_QUERY_SKIPEMPTY  0x0010
 #define FTS5INDEX_QUERY_NOOUTPUT   0x0020
+#define FTS5INDEX_QUERY_SKIPHASH   0x0040
 
 /*
 ** Create/destroy an Fts5Index object.
@@ -435,6 +459,9 @@ void sqlite3Fts5IndexCloseReader(Fts5Index*);
 */
 const char *sqlite3Fts5IterTerm(Fts5IndexIter*, int*);
 int sqlite3Fts5IterNextScan(Fts5IndexIter*);
+void *sqlite3Fts5StructureRef(Fts5Index*);
+void sqlite3Fts5StructureRelease(void*);
+int sqlite3Fts5StructureTest(Fts5Index*, void*);
 
 
 /*
@@ -510,6 +537,9 @@ int sqlite3Fts5IndexReset(Fts5Index *p);
 
 int sqlite3Fts5IndexLoadConfig(Fts5Index *p);
 
+int sqlite3Fts5IndexGetOrigin(Fts5Index *p, i64 *piOrigin);
+int sqlite3Fts5IndexContentlessDelete(Fts5Index *p, i64 iOrigin, i64 iRowid);
+
 /*
 ** End of interface to code in fts5_index.c.
 **************************************************************************/
@@ -522,7 +552,7 @@ int sqlite3Fts5GetVarintLen(u32 iVal);
 u8 sqlite3Fts5GetVarint(const unsigned char*, u64*);
 int sqlite3Fts5PutVarint(unsigned char *p, u64 v);
 
-#define fts5GetVarint32(a,b) sqlite3Fts5GetVarint32(a,(u32*)&b)
+#define fts5GetVarint32(a,b) sqlite3Fts5GetVarint32(a,(u32*)&(b))
 #define fts5GetVarint    sqlite3Fts5GetVarint
 
 #define fts5FastGetVarint32(a, iOff, nVal) {      \
@@ -594,6 +624,11 @@ int sqlite3Fts5HashWrite(
 */
 void sqlite3Fts5HashClear(Fts5Hash*);
 
+/*
+** Return true if the hash is empty, false otherwise.
+*/
+int sqlite3Fts5HashIsEmpty(Fts5Hash*);
+
 int sqlite3Fts5HashQuery(
   Fts5Hash*,                      /* Hash table to query */
   int nPre,
@@ -613,6 +648,7 @@ void sqlite3Fts5HashScanEntry(Fts5Hash *,
   const u8 **ppDoclist,           /* OUT: pointer to doclist */
   int *pnDoclist                  /* OUT: size of doclist in bytes */
 );
+
 
 
 /*

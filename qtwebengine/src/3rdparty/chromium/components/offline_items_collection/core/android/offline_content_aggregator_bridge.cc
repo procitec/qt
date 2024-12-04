@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,7 +10,7 @@
 
 #include "base/android/callback_android.h"
 #include "base/android/jni_string.h"
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/memory/ptr_util.h"
 #include "components/offline_items_collection/core/android/offline_item_bridge.h"
 #include "components/offline_items_collection/core/android/offline_item_share_info_bridge.h"
@@ -71,20 +71,21 @@ void ForwardShareInfoToJavaCallback(
 
 void RenameItemCallback(ScopedJavaGlobalRef<jobject> j_callback,
                         RenameResult result) {
-  base::android::RunIntCallbackAndroid(j_callback, static_cast<int>(result));
+  base::android::RunIntCallbackAndroid(j_callback,
+                                       static_cast<int32_t>(result));
 }
 
 void RunGetAllItemsCallback(const base::android::JavaRef<jobject>& j_callback,
                             const std::vector<OfflineItem>& items) {
   JNIEnv* env = AttachCurrentThread();
-  RunObjectCallbackAndroid(
+  base::android::RunObjectCallbackAndroid(
       j_callback, OfflineItemBridge::CreateOfflineItemList(env, items));
 }
 
 void RunGetItemByIdCallback(const base::android::JavaRef<jobject>& j_callback,
-                            const base::Optional<OfflineItem>& item) {
+                            const absl::optional<OfflineItem>& item) {
   JNIEnv* env = AttachCurrentThread();
-  RunObjectCallbackAndroid(
+  base::android::RunObjectCallbackAndroid(
       j_callback, item.has_value()
                       ? OfflineItemBridge::CreateOfflineItem(env, item.value())
                       : nullptr);
@@ -172,11 +173,9 @@ void OfflineContentAggregatorBridge::ResumeDownload(
     JNIEnv* env,
     const JavaParamRef<jobject>& jobj,
     const JavaParamRef<jstring>& j_namespace,
-    const JavaParamRef<jstring>& j_id,
-    jboolean j_has_user_gesture) {
+    const JavaParamRef<jstring>& j_id) {
   provider_->ResumeDownload(JNI_OfflineContentAggregatorBridge_CreateContentId(
-                                env, j_namespace, j_id),
-                            j_has_user_gesture);
+      env, j_namespace, j_id));
 }
 
 void OfflineContentAggregatorBridge::GetItemById(
@@ -248,26 +247,6 @@ void OfflineContentAggregatorBridge::RenameItem(
                         std::move(callback));
 }
 
-void OfflineContentAggregatorBridge::ChangeSchedule(
-    JNIEnv* env,
-    const base::android::JavaParamRef<jobject>& jobj,
-    const base::android::JavaParamRef<jstring>& j_namespace,
-    const base::android::JavaParamRef<jstring>& j_id,
-    jboolean j_only_on_wifi,
-    jlong j_start_time_ms) {
-  base::Optional<OfflineItemSchedule> schedule;
-  if (j_only_on_wifi)
-    schedule = base::make_optional<OfflineItemSchedule>(true, base::nullopt);
-  else if (j_start_time_ms > 0) {
-    schedule = base::make_optional<OfflineItemSchedule>(
-        false, base::Time::FromJavaTime(j_start_time_ms));
-  }
-
-  provider_->ChangeSchedule(JNI_OfflineContentAggregatorBridge_CreateContentId(
-                                env, j_namespace, j_id),
-                            std::move(schedule));
-}
-
 void OfflineContentAggregatorBridge::OnItemsAdded(
     const OfflineContentProvider::OfflineItemList& items) {
   if (java_ref_.is_null())
@@ -290,7 +269,7 @@ void OfflineContentAggregatorBridge::OnItemRemoved(const ContentId& id) {
 
 void OfflineContentAggregatorBridge::OnItemUpdated(
     const OfflineItem& item,
-    const base::Optional<UpdateDelta>& update_delta) {
+    const absl::optional<UpdateDelta>& update_delta) {
   if (java_ref_.is_null())
     return;
 
@@ -298,6 +277,13 @@ void OfflineContentAggregatorBridge::OnItemUpdated(
   Java_OfflineContentAggregatorBridge_onItemUpdated(
       env, java_ref_, OfflineItemBridge::CreateOfflineItem(env, item),
       OfflineItemBridge::CreateUpdateDelta(env, update_delta));
+}
+
+void OfflineContentAggregatorBridge::OnContentProviderGoingDown() {
+  // TODO(crbug.com/1177397): This event is only needed for desktop Chrome,
+  // so we didn't add an onContentProviderGoingDown() method yet. If Java
+  // observers need to listen for this event in the future, we should add some
+  // plumbing here.
 }
 
 }  // namespace android

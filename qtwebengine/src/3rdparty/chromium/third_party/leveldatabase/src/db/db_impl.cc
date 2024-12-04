@@ -197,6 +197,9 @@ Status DBImpl::NewDB() {
     new_db.EncodeTo(&record);
     s = log.AddRecord(record);
     if (s.ok()) {
+      s = file->Sync();
+    }
+    if (s.ok()) {
       s = file->Close();
     }
   }
@@ -301,6 +304,8 @@ Status DBImpl::Recover(VersionEdit* edit, bool* save_manifest) {
 
   if (!env_->FileExists(CurrentFileName(dbname_))) {
     if (options_.create_if_missing) {
+      Log(options_.info_log, "Creating DB %s since it was missing.",
+          dbname_.c_str());
       s = NewDB();
       if (!s.ok()) {
         return s;
@@ -1363,8 +1368,22 @@ Status DBImpl::MakeRoomForWrite(bool force) {
         versions_->ReuseFileNumber(new_log_number);
         break;
       }
+
       delete log_;
+
+      s = logfile_->Close();
+      if (!s.ok()) {
+        // We may have lost some data written to the previous log file.
+        // Switch to the new log file anyway, but record as a background
+        // error so we do not attempt any more writes.
+        //
+        // We could perhaps attempt to save the memtable corresponding
+        // to log file and suppress the error if that works, but that
+        // would add more complexity in a critical code path.
+        RecordBackgroundError(s);
+      }
       delete logfile_;
+
       logfile_ = lfile;
       logfile_number_ = new_log_number;
       log_ = new log::Writer(lfile);

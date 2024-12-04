@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,11 +10,13 @@
 #include <set>
 
 #include "base/base_switches.h"
+#include "base/check.h"
 #include "base/command_line.h"
 #include "base/feature_list.h"
+#include "base/logging.h"
 #include "base/memory/ref_counted.h"
-#include "base/single_thread_task_runner.h"
 #include "base/synchronization/waitable_event.h"
+#include "base/task/single_thread_task_runner.h"
 #include "build/build_config.h"
 #include "ipc/ipc_channel_handle.h"
 #include "ipc/ipc_logging.h"
@@ -45,9 +47,9 @@ PpapiDispatcher::PpapiDispatcher(
   // Delay initializing the SyncChannel until after we add filters. This
   // ensures that the filters won't miss any messages received by
   // the channel.
-  channel_ = IPC::SyncChannel::Create(this, GetIPCTaskRunner(),
-                                      base::ThreadTaskRunnerHandle::Get(),
-                                      GetShutdownEvent());
+  channel_ = IPC::SyncChannel::Create(
+      this, GetIPCTaskRunner(),
+      base::SingleThreadTaskRunner::GetCurrentDefault(), GetShutdownEvent());
   scoped_refptr<ppapi::proxy::PluginMessageFilter> plugin_filter(
       new ppapi::proxy::PluginMessageFilter(
           NULL, globals->resource_reply_thread_registrar()));
@@ -120,10 +122,6 @@ std::string PpapiDispatcher::GetUILanguage() {
   return std::string();
 }
 
-void PpapiDispatcher::PreCacheFontForFlash(const void* logfontw) {
-  NOTIMPLEMENTED();
-}
-
 void PpapiDispatcher::SetActiveURL(const std::string& url) {
   NOTIMPLEMENTED();
 }
@@ -158,10 +156,8 @@ bool PpapiDispatcher::Send(IPC::Message* msg) {
 void PpapiDispatcher::OnMsgInitializeNaClDispatcher(
     const PpapiNaClPluginArgs& args) {
   static bool command_line_and_logging_initialized = false;
-  if (command_line_and_logging_initialized) {
-    LOG(FATAL) << "InitializeNaClDispatcher must be called once per plugin.";
-    return;
-  }
+  CHECK(!command_line_and_logging_initialized)
+      << "InitializeNaClDispatcher must be called once per plugin.";
 
   command_line_and_logging_initialized = true;
   base::CommandLine::Init(0, NULL);
@@ -176,7 +172,7 @@ void PpapiDispatcher::OnMsgInitializeNaClDispatcher(
   logging::InitLogging(settings);
 
   base::FeatureList::ClearInstanceForTesting();
-  base::FeatureList::InitializeInstance(
+  base::FeatureList::InitInstance(
       base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
           switches::kEnableFeatures),
       base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(

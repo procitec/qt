@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtQml module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #ifndef QQMLLISTWRAPPER_P_H
 #define QQMLLISTWRAPPER_P_H
@@ -61,23 +25,40 @@
 
 QT_BEGIN_NAMESPACE
 
+Q_DECLARE_LOGGING_CATEGORY(lcIncompatibleElement)
+
 namespace QV4 {
 
 namespace Heap {
 
-struct QmlListWrapper : Object {
-    void init();
+struct QmlListWrapper : Object
+{
+    void init(QMetaType propertyType);
+    void init(QObject *object, int propertyId, QMetaType propertyType);
+    void init(QObject *object, const QQmlListProperty<QObject> &list, QMetaType propertyType);
     void destroy();
-    QQmlQPointer<QObject> object;
 
-    QQmlListProperty<QObject> &property() {
-        return *reinterpret_cast<QQmlListProperty<QObject>*>(propertyData);
+    QObject *object() const { return m_object.data(); }
+    QMetaType propertyType() const { return QMetaType(m_propertyType); }
+    QMetaType elementType() const { return QQmlMetaType::listValueType(propertyType()); }
+
+    const QQmlListProperty<QObject> *property() const
+    {
+        return reinterpret_cast<const QQmlListProperty<QObject>*>(m_propertyData);
     }
 
-    int propertyType;
+    QQmlListProperty<QObject> *property()
+    {
+        return reinterpret_cast<QQmlListProperty<QObject>*>(m_propertyData);
+    }
 
 private:
-    void *propertyData[sizeof(QQmlListProperty<QObject>)/sizeof(void*)];
+    void *m_propertyData[sizeof(QQmlListProperty<QObject>)/sizeof(void*)];
+
+    QV4QPointer<QObject> m_object;
+
+    // interface instead of QMetaType to keep class a POD
+    const QtPrivate::QMetaTypeInterface *m_propertyType;
 };
 
 }
@@ -87,22 +68,37 @@ struct Q_QML_EXPORT QmlListWrapper : Object
     V4_OBJECT2(QmlListWrapper, Object)
     V4_NEEDS_DESTROY
     V4_PROTOTYPE(propertyListPrototype)
+    Q_MANAGED_TYPE(QmlListProperty)
 
-    static ReturnedValue create(ExecutionEngine *engine, QObject *object, int propId, int propType);
-    static ReturnedValue create(ExecutionEngine *engine, const QQmlListProperty<QObject> &prop, int propType);
+    static ReturnedValue create(ExecutionEngine *engine, QObject *object, int propId, QMetaType propType);
+    static ReturnedValue create(ExecutionEngine *engine, const QQmlListProperty<QObject> &prop, QMetaType propType);
+    static ReturnedValue create(ExecutionEngine *engine, QMetaType propType);
 
     QVariant toVariant() const;
+    QQmlListReference toListReference() const;
 
     static ReturnedValue virtualGet(const Managed *m, PropertyKey id, const Value *receiver, bool *hasProperty);
+    static qint64 virtualGetLength(const Managed *m);
     static bool virtualPut(Managed *m, PropertyKey id, const Value &value, Value *receiver);
     static OwnPropertyKeyIterator *virtualOwnPropertyKeys(const Object *m, Value *target);
 };
 
 struct PropertyListPrototype : Object
 {
-    void init(ExecutionEngine *engine);
+    V4_PROTOTYPE(arrayPrototype)
 
+    void init();
+
+    static ReturnedValue method_pop(const FunctionObject *, const Value *thisObject, const Value *argv, int argc);
     static ReturnedValue method_push(const FunctionObject *, const Value *thisObject, const Value *argv, int argc);
+    static ReturnedValue method_shift(const FunctionObject *, const Value *thisObject, const Value *argv, int argc);
+    static ReturnedValue method_splice(const FunctionObject *, const Value *thisObject, const Value *argv, int argc);
+    static ReturnedValue method_unshift(const FunctionObject *, const Value *thisObject, const Value *argv, int argc);
+    static ReturnedValue method_indexOf(const FunctionObject *, const Value *thisObject, const Value *argv, int argc);
+    static ReturnedValue method_lastIndexOf(const FunctionObject *, const Value *thisObject, const Value *argv, int argc);
+    static ReturnedValue method_sort(const FunctionObject *, const Value *thisObject, const Value *argv, int argc);
+    static ReturnedValue method_get_length(const FunctionObject *, const Value *thisObject, const Value *argv, int argc);
+    static ReturnedValue method_set_length(const FunctionObject *, const Value *thisObject, const Value *argv, int argc);
 };
 
 }

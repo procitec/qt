@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,15 +8,13 @@
 #include <stdint.h>
 #include <string>
 
-#include "base/callback_forward.h"
-#include "base/compiler_specific.h"
-#include "base/files/file_util.h"
-#include "base/macros.h"
+#include "base/functional/callback_forward.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/singleton.h"
-#include "base/memory/weak_ptr.h"
-#include "content/common/content_export.h"
 #include "content/public/browser/download_manager_delegate.h"
+
+namespace base {
+class FilePath;
+}
 
 namespace content {
 
@@ -24,7 +22,7 @@ class DownloadManager;
 
 namespace protocol {
 
-class CONTENT_EXPORT DevToolsDownloadManagerDelegate
+class DevToolsDownloadManagerDelegate
     : public base::SupportsUserData::Data,
       public content::DownloadManagerDelegate {
  public:
@@ -45,13 +43,19 @@ class CONTENT_EXPORT DevToolsDownloadManagerDelegate
   // Takes over the |browser_Context|'s download manager.
   // When existing delegate is set, this proxy will use the original's
   // |GetNextId| function to ensure compatibility. It will also call its
-  // |Shutdown| method when sutting down and it will fallback to the original
+  // |Shutdown| method when shutting down and it will fallback to the original
   // delegate if it cannot find any DevToolsDownloadManagerHelper associated
   // with the download.
   static DevToolsDownloadManagerDelegate* GetOrCreateInstance(
       content::BrowserContext* browser_Context);
   static DevToolsDownloadManagerDelegate* GetInstance(
       content::BrowserContext* browser_Context);
+
+  DevToolsDownloadManagerDelegate(const DevToolsDownloadManagerDelegate&) =
+      delete;
+  DevToolsDownloadManagerDelegate& operator=(
+      const DevToolsDownloadManagerDelegate&) = delete;
+
   ~DevToolsDownloadManagerDelegate() override = default;
 
   void set_download_behavior(DownloadBehavior behavior) {
@@ -63,11 +67,12 @@ class CONTENT_EXPORT DevToolsDownloadManagerDelegate
   void Shutdown() override;
   bool DetermineDownloadTarget(
       download::DownloadItem* download,
-      content::DownloadTargetCallback* callback) override;
+      download::DownloadTargetCallback* callback) override;
   bool ShouldOpenDownload(
       download::DownloadItem* item,
       content::DownloadOpenDelayedCallback callback) override;
   void GetNextId(content::DownloadIdCallback callback) override;
+  download::DownloadItem* GetDownloadByGuid(const std::string& guid) override;
 
  private:
   friend class base::RefCounted<DevToolsDownloadManagerDelegate>;
@@ -85,15 +90,13 @@ class CONTENT_EXPORT DevToolsDownloadManagerDelegate
                                FilenameDeterminedCallback callback);
 
   void OnDownloadPathGenerated(uint32_t download_id,
-                               content::DownloadTargetCallback callback,
+                               download::DownloadTargetCallback callback,
                                const base::FilePath& suggested_path);
 
   content::DownloadManager* download_manager_;
   content::DownloadManagerDelegate* original_download_delegate_;
   DownloadBehavior download_behavior_ = DownloadBehavior::DEFAULT;
   std::string download_path_;
-
-  DISALLOW_COPY_AND_ASSIGN(DevToolsDownloadManagerDelegate);
 };
 
 }  // namespace protocol

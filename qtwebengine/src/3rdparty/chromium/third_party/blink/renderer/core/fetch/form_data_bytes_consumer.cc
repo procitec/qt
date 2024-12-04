@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,6 +8,7 @@
 #include "third_party/blink/public/platform/task_type.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/fetch/blob_bytes_consumer.h"
+#include "third_party/blink/renderer/core/fileapi/file_backed_blob_factory_dispatcher.h"
 #include "third_party/blink/renderer/core/typed_arrays/dom_array_buffer.h"
 #include "third_party/blink/renderer/core/typed_arrays/dom_array_buffer_view.h"
 #include "third_party/blink/renderer/platform/blob/blob_data.h"
@@ -190,16 +191,16 @@ class DataPipeAndDataBytesConsumer final : public BytesConsumer {
 
         mojo::ScopedDataPipeProducerHandle pipe_producer_handle;
         mojo::ScopedDataPipeConsumerHandle pipe_consumer_handle;
-        MojoResult rv = mojo::CreateDataPipe(nullptr, &pipe_producer_handle,
-                                             &pipe_consumer_handle);
+        MojoResult rv = mojo::CreateDataPipe(nullptr, pipe_producer_handle,
+                                             pipe_consumer_handle);
         if (rv != MOJO_RESULT_OK) {
           return Result::kError;
         }
 
         data_pipe_getter->Read(
             std::move(pipe_producer_handle),
-            WTF::Bind(&DataPipeAndDataBytesConsumer::DataPipeGetterCallback,
-                      WrapWeakPersistent(this)));
+            WTF::BindOnce(&DataPipeAndDataBytesConsumer::DataPipeGetterCallback,
+                          WrapWeakPersistent(this)));
         DataPipeBytesConsumer::CompletionNotifier* completion_notifier =
             nullptr;
         data_pipe_consumer_ = MakeGarbageCollected<DataPipeBytesConsumer>(
@@ -408,16 +409,22 @@ class ComplexFormDataBytesConsumer final : public BytesConsumer {
         case FormDataElement::kEncodedFile: {
           auto file_length = element.file_length_;
           if (file_length < 0) {
-            if (!GetFileSize(element.filename_, file_length)) {
+            if (!GetFileSize(element.filename_, *execution_context,
+                             file_length)) {
               form_data_ = nullptr;
               blob_bytes_consumer_ = BytesConsumer::CreateErrored(
                   Error("Cannot determine a file size"));
               return;
             }
           }
-          blob_data->AppendFile(element.filename_, element.file_start_,
-                                file_length,
-                                element.expected_file_modification_time_);
+          blob_data->AppendBlob(
+              BlobDataHandle::CreateForFile(
+                  FileBackedBlobFactoryDispatcher::GetFileBackedBlobFactory(
+                      execution_context),
+                  element.filename_, element.file_start_, file_length,
+                  element.expected_file_modification_time_,
+                  /*content_type=*/""),
+              0, file_length);
           break;
         }
         case FormDataElement::kEncodedBlob:
@@ -499,12 +506,12 @@ FormDataBytesConsumer::FormDataBytesConsumer(const String& string)
 FormDataBytesConsumer::FormDataBytesConsumer(DOMArrayBuffer* buffer)
     : FormDataBytesConsumer(
           buffer->Data(),
-          base::checked_cast<wtf_size_t>(buffer->ByteLengthAsSizeT())) {}
+          base::checked_cast<wtf_size_t>(buffer->ByteLength())) {}
 
 FormDataBytesConsumer::FormDataBytesConsumer(DOMArrayBufferView* view)
     : FormDataBytesConsumer(
           view->BaseAddress(),
-          base::checked_cast<wtf_size_t>(view->byteLengthAsSizeT())) {}
+          base::checked_cast<wtf_size_t>(view->byteLength())) {}
 
 FormDataBytesConsumer::FormDataBytesConsumer(const void* data, wtf_size_t size)
     : impl_(MakeGarbageCollected<SimpleFormDataBytesConsumer>(

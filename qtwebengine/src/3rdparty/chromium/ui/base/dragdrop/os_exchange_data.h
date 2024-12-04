@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,14 +13,10 @@
 
 #include "build/build_config.h"
 
-#if defined(OS_WIN) && !defined(TOOLKIT_QT)
-#include <objidl.h>
-#endif
-
-#include "base/callback_forward.h"
 #include "base/component_export.h"
 #include "base/files/file_path.h"
-#include "base/macros.h"
+#include "base/functional/callback_forward.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/base/dragdrop/os_exchange_data_provider.h"
 
 class GURL;
@@ -29,9 +25,14 @@ namespace base {
 class Pickle;
 }
 
+namespace url {
+class Origin;
+}
+
 namespace ui {
 
 class ClipboardFormatType;
+class DataTransferEndpoint;
 struct FileInfo;
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -52,15 +53,16 @@ class COMPONENT_EXPORT(UI_BASE) OSExchangeData {
  public:
   // Enumeration of the known formats.
   enum Format {
-    STRING         = 1 << 0,
-    URL            = 1 << 1,
-    FILE_NAME      = 1 << 2,
-    PICKLED_DATA   = 1 << 3,
-#if defined(OS_WIN) && !defined(TOOLKIT_QT)
-    FILE_CONTENTS  = 1 << 4,
-#endif
+    STRING = 1 << 0,
+    URL = 1 << 1,
+    FILE_NAME = 1 << 2,
+    PICKLED_DATA = 1 << 3,
+    FILE_CONTENTS = 1 << 4,
 #if defined(USE_AURA)
-    HTML           = 1 << 5,
+    HTML = 1 << 5,
+#endif
+#if BUILDFLAG(IS_CHROMEOS)
+    DATA_TRANSFER_ENDPOINT = 1 << 6,
 #endif
   };
 
@@ -69,17 +71,29 @@ class COMPONENT_EXPORT(UI_BASE) OSExchangeData {
   // takes ownership of the supplied provider.
   explicit OSExchangeData(std::unique_ptr<OSExchangeDataProvider> provider);
 
+  OSExchangeData(const OSExchangeData&) = delete;
+  OSExchangeData& operator=(const OSExchangeData&) = delete;
+
   ~OSExchangeData();
 
   // Returns the Provider, which actually stores and manages the data.
   const OSExchangeDataProvider& provider() const { return *provider_; }
   OSExchangeDataProvider& provider() { return *provider_; }
 
-  // Marks drag data as tainted if it originates from the renderer. This is used
-  // to avoid granting privileges to a renderer when dragging in tainted data,
-  // since it could allow potential escalation of privileges.
-  void MarkOriginatedFromRenderer();
-  bool DidOriginateFromRenderer() const;
+  // Marks drag data as tainted by the renderer, with `origin` as the source of
+  // the data. This is used to:
+  // - avoid granting privileges to a renderer when dragging in tainted data,
+  //   since it could allow potential escalation of privileges.
+  // - track the origin where the drag data came from.
+  void MarkRendererTaintedFromOrigin(const url::Origin& origin);
+  bool IsRendererTainted() const;
+  absl::optional<url::Origin> GetRendererTaintedOrigin() const;
+
+  // Marks drag data as from privileged WebContents. This is used to
+  // make sure non-privileged WebContents will not accept drop data from
+  // privileged WebContents or vise versa.
+  void MarkAsFromPrivileged();
+  bool IsFromPrivileged() const;
 
   // These functions add data to the OSExchangeData object of various Chrome
   // types. The OSExchangeData object takes care of translating the data into
@@ -91,9 +105,9 @@ class COMPONENT_EXPORT(UI_BASE) OSExchangeData {
   //            the order of enumeration in our IEnumFORMATETC implementation!
   //            This comes into play when selecting the best (most preferable)
   //            data type for insertion into a DropTarget.
-  void SetString(const base::string16& data);
+  void SetString(const std::u16string& data);
   // A URL can have an optional title in some exchange formats.
-  void SetURL(const GURL& url, const base::string16& title);
+  void SetURL(const GURL& url, const std::u16string& title);
   // A full path to a file.
   void SetFilename(const base::FilePath& path);
   // Full path to one or more files. See also SetFilenames() in Provider.
@@ -109,12 +123,11 @@ class COMPONENT_EXPORT(UI_BASE) OSExchangeData {
   // NULL.
   // GetString() returns the plain text representation of the pasteboard
   // contents.
-  bool GetString(base::string16* data) const;
+  bool GetString(std::u16string* data) const;
   bool GetURLAndTitle(FilenameToURLPolicy policy,
                       GURL* url,
-                      base::string16* title) const;
-  // Return the path of a file, if available.
-  bool GetFilename(base::FilePath* path) const;
+                      std::u16string* title) const;
+  // Return information about the contained files, if any.
   bool GetFilenames(std::vector<FileInfo>* file_names) const;
   bool GetPickledData(const ClipboardFormatType& format,
                       base::Pickle* data) const;
@@ -124,6 +137,7 @@ class COMPONENT_EXPORT(UI_BASE) OSExchangeData {
   bool HasString() const;
   bool HasURL(FilenameToURLPolicy policy) const;
   bool HasFile() const;
+  bool HasFileContents() const;
   bool HasCustomFormat(const ClipboardFormatType& format) const;
 
   // Returns true if this OSExchangeData has data in any of the formats in
@@ -131,7 +145,6 @@ class COMPONENT_EXPORT(UI_BASE) OSExchangeData {
   bool HasAnyFormat(int formats,
                     const std::set<ClipboardFormatType>& types) const;
 
-#if defined(OS_WIN) && !defined(TOOLKIT_QT)
   // Adds the bytes of a file (CFSTR_FILECONTENTS and CFSTR_FILEDESCRIPTOR on
   // Windows).
   void SetFileContents(const base::FilePath& filename,
@@ -139,6 +152,7 @@ class COMPONENT_EXPORT(UI_BASE) OSExchangeData {
   bool GetFileContents(base::FilePath* filename,
                        std::string* file_contents) const;
 
+#if BUILDFLAG(IS_WIN)
   // Methods used to query and retrieve file data from a drag source
   // IDataObject implementation packaging the data with the
   // CFSTR_FILEDESCRIPTOR/CFSTR_FILECONTENTS clipboard formats instead of the
@@ -165,13 +179,13 @@ class COMPONENT_EXPORT(UI_BASE) OSExchangeData {
   // Method is called on dropping on the Chromium drop target. Since creating
   // the temp files involves file I/O, the method is asynchronous and the caller
   // must provide a callback function that receives a vector of pairs of temp
-  // file paths and display names. Method immediately returns false if there are
-  // no virtual files in the data object, in which case the callback will never
-  // be invoked.
+  // file paths and display names. The method will invoke the callback with an
+  // empty vector if there are no virtual files in the data object.
+  //
   // TODO(https://crbug.com/951574): Implement virtual file extraction to
   // dynamically stream data to the renderer when File's bytes are actually
   // requested
-  bool GetVirtualFilesAsTempFiles(
+  void GetVirtualFilesAsTempFiles(
       base::OnceCallback<void(const std::vector</*temp path*/ std::pair<
                                   base::FilePath,
                                   /*display name*/ base::FilePath>>&)> callback)
@@ -181,16 +195,20 @@ class COMPONENT_EXPORT(UI_BASE) OSExchangeData {
 #if defined(USE_AURA)
   // Adds a snippet of HTML.  |html| is just raw html but this sets both
   // text/html and CF_HTML.
-  void SetHtml(const base::string16& html, const GURL& base_url);
-  bool GetHtml(base::string16* html, GURL* base_url) const;
+  void SetHtml(const std::u16string& html, const GURL& base_url);
+  bool GetHtml(std::u16string* html, GURL* base_url) const;
   bool HasHtml() const;
 #endif
+
+  // Adds a DataTransferEndpoint to represent the source of the data.
+  // TODO(crbug.com/1142406): Update all drag-and-drop references to set the
+  // source of the data.
+  void SetSource(std::unique_ptr<DataTransferEndpoint> data_source);
+  DataTransferEndpoint* GetSource() const;
 
  private:
   // Provides the actual data.
   std::unique_ptr<OSExchangeDataProvider> provider_;
-
-  DISALLOW_COPY_AND_ASSIGN(OSExchangeData);
 };
 
 }  // namespace ui

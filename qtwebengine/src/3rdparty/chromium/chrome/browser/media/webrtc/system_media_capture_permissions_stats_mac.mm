@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -56,22 +56,20 @@ void MaybeLogAdditionalMicSystemPermissionStats(SystemPermission permission) {
     base::Time stored_time =
         prefs->GetTime(kSystemPermissionMicFirstBlockedTimePref);
     base::TimeDelta time_delta = base::Time::Now() - stored_time;
-    if (time_delta > base::TimeDelta()) {
+    if (time_delta.is_positive()) {
       base::UmaHistogramCustomTimes(
           "Media.Audio.Capture.Mac.MicSystemPermission."
           "FixedTime.SinceFirstFailure",
-          time_delta, base::TimeDelta::FromSeconds(1),
-          base::TimeDelta::FromHours(1), 50);
+          time_delta, base::Seconds(1), base::Hours(1), 50);
     }
 
     stored_time = prefs->GetTime(kSystemPermissionMicLastBlockedTimePref);
     time_delta = base::Time::Now() - stored_time;
-    if (time_delta > base::TimeDelta()) {
+    if (time_delta.is_positive()) {
       base::UmaHistogramCustomTimes(
           "Media.Audio.Capture.Mac.MicSystemPermission."
           "FixedTime.SinceLastFailure",
-          time_delta, base::TimeDelta::FromSeconds(1),
-          base::TimeDelta::FromHours(1), 50);
+          time_delta, base::Seconds(1), base::Hours(1), 50);
     }
   }
 
@@ -104,22 +102,20 @@ void MaybeLogAdditionalCameraSystemPermissionStats(
     base::Time stored_time =
         prefs->GetTime(kSystemPermissionCameraFirstBlockedTimePref);
     base::TimeDelta time_delta = base::Time::Now() - stored_time;
-    if (time_delta > base::TimeDelta()) {
+    if (time_delta.is_positive()) {
       base::UmaHistogramCustomTimes(
           "Media.Video.Capture.Mac.CameraSystemPermission.FixedTime."
           "SinceFirstFailure",
-          time_delta, base::TimeDelta::FromSeconds(1),
-          base::TimeDelta::FromHours(1), 50);
+          time_delta, base::Seconds(1), base::Hours(1), 50);
     }
 
     stored_time = prefs->GetTime(kSystemPermissionCameraLastBlockedTimePref);
     time_delta = base::Time::Now() - stored_time;
-    if (time_delta > base::TimeDelta()) {
+    if (time_delta.is_positive()) {
       base::UmaHistogramCustomTimes(
           "Media.Video.Capture.Mac.CameraSystemPermission.FixedTime."
           "SinceLastFailure",
-          time_delta, base::TimeDelta::FromSeconds(1),
-          base::TimeDelta::FromHours(1), 50);
+          time_delta, base::Seconds(1), base::Hours(1), 50);
     }
   }
 
@@ -130,67 +126,59 @@ void MaybeLogAdditionalCameraSystemPermissionStats(
 }  // namespace
 
 void RegisterSystemMediaPermissionStatesPrefs(PrefRegistrySimple* registry) {
-  if (@available(macOS 10.14, *)) {
-    registry->RegisterTimePref(kSystemPermissionMicFirstBlockedTimePref,
-                               base::Time());
-    registry->RegisterTimePref(kSystemPermissionMicLastBlockedTimePref,
-                               base::Time());
-    registry->RegisterTimePref(kSystemPermissionCameraFirstBlockedTimePref,
-                               base::Time());
-    registry->RegisterTimePref(kSystemPermissionCameraLastBlockedTimePref,
-                               base::Time());
-  }
+  registry->RegisterTimePref(kSystemPermissionMicFirstBlockedTimePref,
+                             base::Time());
+  registry->RegisterTimePref(kSystemPermissionMicLastBlockedTimePref,
+                             base::Time());
+  registry->RegisterTimePref(kSystemPermissionCameraFirstBlockedTimePref,
+                             base::Time());
+  registry->RegisterTimePref(kSystemPermissionCameraLastBlockedTimePref,
+                             base::Time());
 }
 
 void LogSystemMediaPermissionsStartupStats() {
-  if (@available(macOS 10.14, *)) {
-    const SystemPermission audio_permission =
-        CheckSystemAudioCapturePermission();
-    LogStartupMicSystemPermission(audio_permission);
-    MaybeLogAdditionalMicSystemPermissionStats(audio_permission);
+  const SystemPermission audio_permission = CheckSystemAudioCapturePermission();
+  LogStartupMicSystemPermission(audio_permission);
+  MaybeLogAdditionalMicSystemPermissionStats(audio_permission);
 
-    const SystemPermission video_permission =
-        CheckSystemVideoCapturePermission();
-    LogStartupCameraSystemPermission(video_permission);
-    MaybeLogAdditionalCameraSystemPermissionStats(video_permission);
-  }  // (@available(macOS 10.14, *))
+  const SystemPermission video_permission = CheckSystemVideoCapturePermission();
+  LogStartupCameraSystemPermission(video_permission);
+  MaybeLogAdditionalCameraSystemPermissionStats(video_permission);
+
+  // CheckSystemScreenCapturePermission() will log a sample of the permission.
+  CheckSystemScreenCapturePermission();
 }
 
 void SystemAudioCapturePermissionDetermined(SystemPermission permission) {
-  if (@available(macOS 10.14, *)) {
-    DCHECK_NE(permission, SystemPermission::kNotDetermined);
-    LogStartupMicSystemPermission(permission);
-  }
+  DCHECK_NE(permission, SystemPermission::kNotDetermined);
+  LogStartupMicSystemPermission(permission);
 }
 
 void SystemVideoCapturePermissionDetermined(SystemPermission permission) {
-  if (@available(macOS 10.14, *)) {
-    DCHECK_NE(permission, SystemPermission::kNotDetermined);
-    LogStartupCameraSystemPermission(permission);
-  }
+  DCHECK_NE(permission, SystemPermission::kNotDetermined);
+  LogStartupCameraSystemPermission(permission);
+}
+
+void LogSystemScreenCapturePermission(bool allowed) {
+  base::UmaHistogramBoolean(
+      "Media.Video.Capture.Mac.ScreenCaptureSystemPermission", allowed);
 }
 
 void SystemAudioCapturePermissionBlocked() {
-  if (@available(macOS 10.14, *)) {
-    PrefService* prefs = g_browser_process->local_state();
-    if (!prefs->HasPrefPath(kSystemPermissionMicFirstBlockedTimePref)) {
-      prefs->SetTime(kSystemPermissionMicFirstBlockedTimePref,
-                     base::Time::Now());
-    }
-    prefs->SetTime(kSystemPermissionMicLastBlockedTimePref, base::Time::Now());
+  PrefService* prefs = g_browser_process->local_state();
+  if (!prefs->HasPrefPath(kSystemPermissionMicFirstBlockedTimePref)) {
+    prefs->SetTime(kSystemPermissionMicFirstBlockedTimePref, base::Time::Now());
   }
+  prefs->SetTime(kSystemPermissionMicLastBlockedTimePref, base::Time::Now());
 }
 
 void SystemVideoCapturePermissionBlocked() {
-  if (@available(macOS 10.14, *)) {
-    PrefService* prefs = g_browser_process->local_state();
-    if (!prefs->HasPrefPath(kSystemPermissionCameraFirstBlockedTimePref)) {
-      prefs->SetTime(kSystemPermissionCameraFirstBlockedTimePref,
-                     base::Time::Now());
-    }
-    prefs->SetTime(kSystemPermissionCameraLastBlockedTimePref,
+  PrefService* prefs = g_browser_process->local_state();
+  if (!prefs->HasPrefPath(kSystemPermissionCameraFirstBlockedTimePref)) {
+    prefs->SetTime(kSystemPermissionCameraFirstBlockedTimePref,
                    base::Time::Now());
   }
+  prefs->SetTime(kSystemPermissionCameraLastBlockedTimePref, base::Time::Now());
 }
 
 }  // namespace system_media_permissions

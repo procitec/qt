@@ -1,4 +1,4 @@
-// Copyright (c) 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,11 +7,13 @@
 #include <memory>
 #include <utility>
 
-#include "base/macros.h"
+#include "base/functional/bind.h"
+#include "base/memory/raw_ptr.h"
 #include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/events/event_utils.h"
 #include "ui/events/test/event_generator.h"
+#include "ui/views/animation/ink_drop.h"
 #include "ui/views/test/views_test_base.h"
 #include "ui/views/widget/widget_utils.h"
 
@@ -20,36 +22,40 @@ namespace views {
 class TestToggleButton : public ToggleButton {
  public:
   explicit TestToggleButton(int* counter) : counter_(counter) {}
+
+  TestToggleButton(const TestToggleButton&) = delete;
+  TestToggleButton& operator=(const TestToggleButton&) = delete;
+
   ~TestToggleButton() override {
-    // Calling SetInkDropMode() in this subclass allows this class's
-    // implementation of RemoveInkDropLayer() to be called. The same
-    // call is made in ~ToggleButton() so this is testing the general technique.
-    SetInkDropMode(InkDropMode::OFF);
+    // TODO(pbos): Revisit explicit removal of InkDrop for classes that override
+    // Add/RemoveLayerFromRegions(). This is done so that the InkDrop doesn't
+    // access the non-override versions in ~View.
+    views::InkDrop::Remove(this);
+  }
+
+  void AddLayerToRegion(ui::Layer* layer, views::LayerRegion region) override {
+    ++(*counter_);
+    ToggleButton::AddLayerToRegion(layer, region);
+  }
+
+  void RemoveLayerFromRegions(ui::Layer* layer) override {
+    --(*counter_);
+    ToggleButton::RemoveLayerFromRegions(layer);
   }
 
   using View::Focus;
 
- protected:
-  // ToggleButton:
-  void AddInkDropLayer(ui::Layer* ink_drop_layer) override {
-    ++(*counter_);
-    ToggleButton::AddInkDropLayer(ink_drop_layer);
-  }
-
-  void RemoveInkDropLayer(ui::Layer* ink_drop_layer) override {
-    ToggleButton::RemoveInkDropLayer(ink_drop_layer);
-    --(*counter_);
-  }
-
  private:
-  int* counter_;
-
-  DISALLOW_COPY_AND_ASSIGN(TestToggleButton);
+  const raw_ptr<int> counter_;
 };
 
 class ToggleButtonTest : public ViewsTestBase {
  public:
   ToggleButtonTest() = default;
+
+  ToggleButtonTest(const ToggleButtonTest&) = delete;
+  ToggleButtonTest& operator=(const ToggleButtonTest&) = delete;
+
   ~ToggleButtonTest() override = default;
 
   void SetUp() override {
@@ -64,9 +70,7 @@ class ToggleButtonTest : public ViewsTestBase {
     params.bounds = gfx::Rect(0, 0, 650, 650);
     widget_->Init(std::move(params));
     widget_->Show();
-
-    button_ =
-        widget_->SetContentsView(std::make_unique<TestToggleButton>(&counter_));
+    widget_->SetContentsView(std::make_unique<TestToggleButton>(&counter_));
   }
 
   void TearDown() override {
@@ -77,21 +81,19 @@ class ToggleButtonTest : public ViewsTestBase {
  protected:
   int counter() const { return counter_; }
   Widget* widget() { return widget_.get(); }
-  TestToggleButton* button() { return button_; }
+  TestToggleButton* button() {
+    return static_cast<TestToggleButton*>(widget_->GetContentsView());
+  }
 
  private:
   std::unique_ptr<Widget> widget_;
-  TestToggleButton* button_ = nullptr;
   int counter_ = 0;
-
-  DISALLOW_COPY_AND_ASSIGN(ToggleButtonTest);
 };
 
 // Starts ink drop animation on a ToggleButton and destroys the button.
 // The test verifies that the ink drop layer is removed properly when the
 // ToggleButton gets destroyed.
 TEST_F(ToggleButtonTest, ToggleButtonDestroyed) {
-  EXPECT_EQ(0, counter());
   gfx::Point center(10, 10);
   button()->OnMousePressed(ui::MouseEvent(
       ui::ET_MOUSE_PRESSED, center, center, ui::EventTimeForNow(),
@@ -105,13 +107,13 @@ TEST_F(ToggleButtonTest, ToggleButtonDestroyed) {
 // ToggleButton has focus (and is showing a ripple).
 TEST_F(ToggleButtonTest, ShutdownWithFocus) {
   button()->RequestFocus();
-  EXPECT_EQ(1, counter());
 }
 
 // Verify that ToggleButton::accepts_events_ works as expected.
 TEST_F(ToggleButtonTest, AcceptEvents) {
   EXPECT_FALSE(button()->GetIsOn());
   ui::test::EventGenerator generator(GetRootWindow(widget()));
+  generator.MoveMouseTo(widget()->GetClientAreaBoundsInScreen().CenterPoint());
 
   // Clicking toggles.
   generator.ClickLeftButton();

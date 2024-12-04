@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,23 +10,32 @@
 #include "third_party/blink/renderer/platform/geometry/layout_size.h"
 #include "third_party/blink/renderer/platform/geometry/layout_unit.h"
 #include "third_party/blink/renderer/platform/text/writing_mode.h"
+#include "ui/gfx/geometry/size.h"
+#include "ui/gfx/geometry/size_f.h"
 
 namespace blink {
 
-class LayoutSize;
+enum AspectRatioFit { kAspectRatioFitShrink, kAspectRatioFitGrow };
+
 struct LogicalSize;
 
 // PhysicalSize is the size of a rect (typically a fragment) in the physical
 // coordinate system.
 // For more information about physical and logical coordinate systems, see:
-// https://chromium.googlesource.com/chromium/src/+/master/third_party/blink/renderer/core/layout/README.md#coordinate-spaces
+// https://chromium.googlesource.com/chromium/src/+/main/third_party/blink/renderer/core/layout/README.md#coordinate-spaces
 struct CORE_EXPORT PhysicalSize {
   constexpr PhysicalSize() = default;
   constexpr PhysicalSize(LayoutUnit width, LayoutUnit height)
       : width(width), height(height) {}
 
-  // For testing only. It's defined in core/testing/core_unit_test_helpers.h.
-  inline PhysicalSize(int width, int height);
+  // This is deleted to avoid unwanted lossy conversion from float or double to
+  // LayoutUnit or int. Use explicit LayoutUnit constructor for each parameter,
+  // or use FromSizeF*() instead.
+  PhysicalSize(double, double) = delete;
+
+  // For testing only. It's defined in core/testing/core_unit_test_helper.h.
+  // 'constexpr' is to let compiler detect usage from production code.
+  constexpr PhysicalSize(int width, int height);
 
   LayoutUnit width;
   LayoutUnit height;
@@ -55,8 +64,14 @@ struct CORE_EXPORT PhysicalSize {
     return *this;
   }
 
+  // Returns a new PhysicalSize scaling `this` by `scale`.
+  PhysicalSize operator*(float scale) const {
+    return PhysicalSize(LayoutUnit(this->width * scale),
+                        LayoutUnit(this->height * scale));
+  }
+
   constexpr bool operator==(const PhysicalSize& other) const {
-    return other.width == width && other.height == height;
+    return std::tie(other.width, other.height) == std::tie(width, height);
   }
   constexpr bool operator!=(const PhysicalSize& other) const {
     return !(*this == other);
@@ -81,6 +96,20 @@ struct CORE_EXPORT PhysicalSize {
     height *= s;
   }
 
+  // Returns a new PhysicalSize with the maximum width of `this` and `other`,
+  // and the maximum height of `this` and `other`.
+  PhysicalSize ExpandedTo(const PhysicalSize& other) const {
+    return {std::max(this->width, other.width),
+            std::max(this->height, other.height)};
+  }
+
+  // Returns a new PhysicalSize with the minimum width of `this` and `other`,
+  // and the minimum height of `this` and `other`.
+  PhysicalSize ShrunkTo(const PhysicalSize& other) const {
+    return {std::min(this->width, other.width),
+            std::min(this->height, other.height)};
+  }
+
   void ClampNegativeToZero() {
     width = std::max(width, LayoutUnit());
     height = std::max(height, LayoutUnit());
@@ -91,22 +120,25 @@ struct CORE_EXPORT PhysicalSize {
 
   // Conversions from/to existing code. New code prefers type safety for
   // logical/physical distinctions.
-  constexpr explicit PhysicalSize(const LayoutSize& size)
+  constexpr explicit PhysicalSize(const DeprecatedLayoutSize& size)
       : width(size.Width()), height(size.Height()) {}
-  constexpr LayoutSize ToLayoutSize() const { return {width, height}; }
-
-  static PhysicalSize FromFloatSizeRound(const FloatSize& size) {
-    return {LayoutUnit::FromFloatRound(size.Width()),
-            LayoutUnit::FromFloatRound(size.Height())};
+  constexpr DeprecatedLayoutSize ToLayoutSize() const {
+    return {width, height};
   }
-  static PhysicalSize FromFloatSizeFloor(const FloatSize& size) {
-    return {LayoutUnit::FromFloatFloor(size.Width()),
-            LayoutUnit::FromFloatFloor(size.Height())};
-  }
-  constexpr explicit operator FloatSize() const { return {width, height}; }
 
-  explicit PhysicalSize(const IntSize& size)
-      : width(size.Width()), height(size.Height()) {}
+  constexpr explicit operator gfx::SizeF() const { return {width, height}; }
+
+  static PhysicalSize FromSizeFRound(const gfx::SizeF& size) {
+    return {LayoutUnit::FromFloatRound(size.width()),
+            LayoutUnit::FromFloatRound(size.height())};
+  }
+  static PhysicalSize FromSizeFFloor(const gfx::SizeF& size) {
+    return {LayoutUnit::FromFloatFloor(size.width()),
+            LayoutUnit::FromFloatFloor(size.height())};
+  }
+
+  explicit PhysicalSize(const gfx::Size& size)
+      : width(size.width()), height(size.height()) {}
 
   String ToString() const;
 };
@@ -121,20 +153,20 @@ inline PhysicalSize ToPhysicalSize(const LogicalSize& other, WritingMode mode) {
 
 // TODO(crbug.com/962299): These functions should upgraded to force correct
 // pixel snapping in a type-safe way.
-inline IntSize RoundedIntSize(const PhysicalSize& s) {
+inline gfx::Size ToRoundedSize(const PhysicalSize& s) {
   return {s.width.Round(), s.height.Round()};
 }
-inline IntSize FlooredIntSize(const PhysicalSize& s) {
+inline gfx::Size ToFlooredSize(const PhysicalSize& s) {
   return {s.width.Floor(), s.height.Floor()};
 }
-inline IntSize CeiledIntSize(const PhysicalSize& s) {
+inline gfx::Size ToCeiledSize(const PhysicalSize& s) {
   return {s.width.Ceil(), s.height.Ceil()};
 }
 
-// TODO(wangxianzhu): For temporary conversion from LayoutSize to PhysicalSize,
-// where the input will be changed to PhysicalSize soon, to avoid redundant
-// PhysicalSize() which can't be discovered by the compiler.
-inline PhysicalSize PhysicalSizeToBeNoop(const LayoutSize& s) {
+// TODO(wangxianzhu): For temporary conversion from DeprecatedLayoutSize to
+// PhysicalSize, where the input will be changed to PhysicalSize soon, to avoid
+// redundant PhysicalSize() which can't be discovered by the compiler.
+inline PhysicalSize PhysicalSizeToBeNoop(const DeprecatedLayoutSize& s) {
   return PhysicalSize(s);
 }
 

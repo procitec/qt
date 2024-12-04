@@ -43,23 +43,26 @@
 #include <libweston/libweston.h>
 #include "backend.h"
 #include "libweston-internal.h"
+#include "pixel-formats.h"
 #include "weston.h"
 #include "shared/helpers.h"
 #include "shared/os-compatibility.h"
 #include "shared/timespec-util.h"
+#include <libweston/shell-utils.h>
 #include "fullscreen-shell-unstable-v1-client-protocol.h"
 
 struct shared_output {
 	struct weston_output *output;
 	struct wl_listener output_destroyed;
 	struct wl_list seat_list;
+	struct wl_list output_link;	/** screen_share::output_list */
 
 	struct {
 		struct wl_display *display;
 		struct wl_registry *registry;
 		struct wl_compositor *compositor;
 		struct wl_shm *shm;
-		uint32_t shm_formats;
+		bool shm_formats_has_xrgb;
 		struct zwp_fullscreen_shell_v1 *fshell;
 		struct wl_output *output;
 		struct wl_surface *surface;
@@ -114,6 +117,8 @@ struct ss_shm_buffer {
 
 struct screen_share {
 	struct weston_compositor *compositor;
+	struct wl_listener compositor_destroy_listener;
+	struct wl_list output_list;
 	char *command;
 };
 
@@ -127,7 +132,7 @@ ss_seat_handle_pointer_enter(void *data, struct wl_pointer *pointer,
 	/* No transformation of input position is required here because we are
 	 * always receiving the input in the same coordinates as the output. */
 
-	notify_pointer_focus(&seat->base, NULL, 0, 0);
+	clear_pointer_focus(&seat->base);
 }
 
 static void
@@ -136,7 +141,7 @@ ss_seat_handle_pointer_leave(void *data, struct wl_pointer *pointer,
 {
 	struct ss_seat *seat = data;
 
-	notify_pointer_focus(&seat->base, NULL, 0, 0);
+	clear_pointer_focus(&seat->base);
 }
 
 static void
@@ -145,14 +150,15 @@ ss_seat_handle_motion(void *data, struct wl_pointer *pointer,
 {
 	struct ss_seat *seat = data;
 	struct timespec ts;
+	struct weston_coord_global pos;
 
 	timespec_from_msec(&ts, time);
 
 	/* No transformation of input position is required here because we are
 	 * always receiving the input in the same coordinates as the output. */
 
-	notify_motion_absolute(&seat->base, &ts,
-			       wl_fixed_to_double(x), wl_fixed_to_double(y));
+	pos.c = weston_coord_from_fixed(x, y);
+	notify_motion_absolute(&seat->base, &ts, pos);
 	notify_pointer_frame(&seat->base);
 }
 
@@ -365,7 +371,7 @@ ss_seat_create(struct shared_output *so, uint32_t id)
 	if (seat == NULL)
 		return NULL;
 
-	weston_seat_init(&seat->base, so->output->compositor, "default");
+	weston_seat_init(&seat->base, so->output->compositor, "screen-share");
 	seat->output = so;
 	seat->id = id;
 	seat->parent.seat = wl_registry_bind(so->parent.registry, id,
@@ -482,7 +488,6 @@ shared_output_get_shm_buffer(struct shared_output *so)
 
 	sb->output = so;
 	wl_list_init(&sb->free_link);
-	wl_list_insert(&so->shm.buffers, &sb->link);
 
 	pixman_region32_init_rect(&sb->damage, 0, 0, width, height);
 
@@ -507,10 +512,13 @@ shared_output_get_shm_buffer(struct shared_output *so)
 	if (!sb->pm_image)
 		goto out_pixman_error;
 
+	wl_list_insert(&so->shm.buffers, &sb->link);
 	return sb;
 
 out_pixman_error:
+	wl_buffer_destroy(sb->buffer);
 	pixman_region32_fini(&sb->damage);
+	free(sb);
 out_unmap:
 	munmap(data, height * stride);
 out_close:
@@ -548,8 +556,8 @@ output_compute_transform(struct weston_output *output,
 		break;
 	case WL_OUTPUT_TRANSFORM_90:
 	case WL_OUTPUT_TRANSFORM_FLIPPED_90:
-		pixman_transform_rotate(transform, NULL, 0, pixman_fixed_1);
-		pixman_transform_translate(transform, NULL, fh, 0);
+		pixman_transform_rotate(transform, NULL, 0, -pixman_fixed_1);
+		pixman_transform_translate(transform, NULL, 0, fw);
 		break;
 	case WL_OUTPUT_TRANSFORM_180:
 	case WL_OUTPUT_TRANSFORM_FLIPPED_180:
@@ -558,8 +566,8 @@ output_compute_transform(struct weston_output *output,
 		break;
 	case WL_OUTPUT_TRANSFORM_270:
 	case WL_OUTPUT_TRANSFORM_FLIPPED_270:
-		pixman_transform_rotate(transform, NULL, 0, -pixman_fixed_1);
-		pixman_transform_translate(transform, NULL, 0, fw);
+		pixman_transform_rotate(transform, NULL, 0, pixman_fixed_1);
+		pixman_transform_translate(transform, NULL, fh, 0);
 		break;
 	}
 
@@ -697,7 +705,8 @@ shm_handle_format(void *data, struct wl_shm *wl_shm, uint32_t format)
 {
 	struct shared_output *so = data;
 
-	so->parent.shm_formats |= (1 << format);
+	if (format == WL_SHM_FORMAT_XRGB8888)
+		so->parent.shm_formats_has_xrgb = true;
 }
 
 struct wl_shm_listener shm_listener = {
@@ -815,28 +824,18 @@ shared_output_repainted(struct wl_listener *listener, void *data)
 {
 	struct shared_output *so =
 		container_of(listener, struct shared_output, frame_listener);
-	pixman_region32_t damage;
+	pixman_region32_t sb_damage;
+	pixman_region32_t output_damage;
+	pixman_region32_t *global_output_damage;
 	struct ss_shm_buffer *sb;
 	int32_t x, y, width, height, stride;
-	int i, nrects, do_yflip;
+	int i, nrects, do_yflip, y_orig;
 	pixman_box32_t *r;
-	uint32_t *cache_data;
-
-	/* Damage in output coordinates */
-	pixman_region32_init(&damage);
-	pixman_region32_intersect(&damage, &so->output->region,
-				  &so->output->previous_damage);
-	pixman_region32_translate(&damage, -so->output->x, -so->output->y);
-
-	/* Apply damage to all buffers */
-	wl_list_for_each(sb, &so->shm.buffers, link)
-		pixman_region32_union(&sb->damage, &sb->damage, &damage);
-
-	/* Transform to buffer coordinates */
-	weston_transformed_region(so->output->width, so->output->height,
-				  so->output->transform,
-				  so->output->current_scale,
-				  &damage, &damage);
+	pixman_image_t *damaged_image;
+	pixman_transform_t transform;
+	const struct pixel_format_info *read_format =
+		so->output->compositor->read_format;
+	const pixman_format_code_t pixman_format = read_format->pixman_format;
 
 	width = so->output->current_mode->width;
 	height = so->output->current_mode->height;
@@ -852,57 +851,107 @@ shared_output_repainted(struct wl_listener *listener, void *data)
 			pixman_image_create_bits(PIXMAN_a8r8g8b8,
 						 width, height, NULL,
 						 stride);
-		if (!so->cache_image) {
-			shared_output_destroy(so);
-			return;
-		}
+		if (!so->cache_image)
+			goto err_shared_output;
 
-		pixman_region32_fini(&damage);
-		pixman_region32_init_rect(&damage, 0, 0, width, height);
+		global_output_damage = &so->output->region;
+	} else {
+		global_output_damage = data;
 	}
+	/* We want to calculate surface damage and store it for later.
+	 * The buffers we use for the remote connection's surface are
+	 * scale=1 and transform=normal, and cover the region the output
+	 * covers in the compositor's global space. So if the output
+	 * has a different scale or rotation, this is effectively undone
+	 * (possibly by throwing away pixels in a later step).
+	 *
+	 * First, translate damage so the output's corner is the origin
+	 * and store that in sb_damage.
+	 */
+	pixman_region32_init(&sb_damage);
+	pixman_region32_copy(&sb_damage, global_output_damage);
+	pixman_region32_translate(&sb_damage, -so->output->x, -so->output->y);
 
-	if (shared_output_ensure_tmp_data(so, &damage) < 0) {
-		shared_output_destroy(so);
-		return;
-	}
+	/* Apply damage to all buffers */
+	wl_list_for_each(sb, &so->shm.buffers, link)
+		pixman_region32_union(&sb->damage, &sb->damage, &sb_damage);
+
+	pixman_region32_fini(&sb_damage);
+
+	/* Get damage in output coordinates */
+	pixman_region32_init(&output_damage);
+	weston_region_global_to_output(&output_damage, so->output,
+				       global_output_damage);
+
+	if (shared_output_ensure_tmp_data(so, &output_damage) < 0)
+		goto err_pixman_init;
 
 	do_yflip = !!(so->output->compositor->capabilities & WESTON_CAP_CAPTURE_YFLIP);
 
-	cache_data = pixman_image_get_data(so->cache_image);
-	r = pixman_region32_rectangles(&damage, &nrects);
+	/* Create our cache image - a 1:1 copy of the output of interest's
+	 * pixels from the output space.
+	 */
+	r = pixman_region32_rectangles(&output_damage, &nrects);
 	for (i = 0; i < nrects; ++i) {
 		x = r[i].x1;
 		y = r[i].y1;
 		width = r[i].x2 - r[i].x1;
 		height = r[i].y2 - r[i].y1;
 
+		if (do_yflip)
+			y_orig = so->output->current_mode->height - r[i].y2;
+		else
+			y_orig = y;
+
+		so->output->compositor->renderer->read_pixels(
+			so->output, read_format,
+			so->tmp_data, x, y_orig, width, height);
+
+		damaged_image = pixman_image_create_bits(pixman_format,
+							 width, height,
+							 so->tmp_data,
+				(PIXMAN_FORMAT_BPP(pixman_format) / 8) * width);
+		if (!damaged_image)
+			goto err_pixman_init;
+
 		if (do_yflip) {
-			so->output->compositor->renderer->read_pixels(
-				so->output, PIXMAN_a8r8g8b8, so->tmp_data,
-				x, so->output->current_mode->height - r[i].y2,
-				width, height);
+			pixman_transform_init_scale(&transform,
+						    pixman_fixed_1,
+						    pixman_fixed_minus_1);
 
-			pixman_blt(so->tmp_data, cache_data, -width, stride,
-				   32, 32, 0, 1 - height, x, y, width, height);
-		} else {
-			so->output->compositor->renderer->read_pixels(
-				so->output, PIXMAN_a8r8g8b8, so->tmp_data,
-				x, y, width, height);
+			pixman_transform_translate(&transform, NULL,
+						   0,
+						   pixman_int_to_fixed(height));
 
-			pixman_blt(so->tmp_data, cache_data, width, stride,
-				   32, 32, 0, 0, x, y, width, height);
+			pixman_image_set_transform(damaged_image, &transform);
 		}
-	}
 
-	pixman_region32_fini(&damage);
+		pixman_image_composite32(PIXMAN_OP_SRC,
+					 damaged_image,
+					 NULL,
+					 so->cache_image,
+					 0, 0,
+					 0, 0,
+					 x, y,
+					 width, height);
+		pixman_image_unref(damaged_image);
+	}
 
 	so->cache_dirty = 1;
 
+	pixman_region32_fini(&output_damage);
 	shared_output_update(so);
+
+	return;
+
+err_pixman_init:
+	pixman_region32_fini(&output_damage);
+err_shared_output:
+	shared_output_destroy(so);
 }
 
 static struct shared_output *
-shared_output_create(struct weston_output *output, int parent_fd)
+shared_output_create(struct weston_output *output, struct screen_share *ss, int parent_fd)
 {
 	struct shared_output *so;
 	struct wl_event_loop *loop;
@@ -941,7 +990,7 @@ shared_output_create(struct weston_output *output, int parent_fd)
 
 	/* Get SHM formats */
 	wl_display_roundtrip(so->parent.display);
-	if (!(so->parent.shm_formats & (1 << WL_SHM_FORMAT_XRGB8888))) {
+	if (!so->parent.shm_formats_has_xrgb) {
 		weston_log("Screen share failed: "
 			   "WL_SHM_FORMAT_XRGB8888 not available\n");
 		goto err_display;
@@ -988,8 +1037,10 @@ shared_output_create(struct weston_output *output, int parent_fd)
 
 	so->frame_listener.notify = shared_output_repainted;
 	wl_signal_add(&output->frame_signal, &so->frame_listener);
-	output->disable_planes++;
+	weston_output_disable_planes_incr(output);
 	weston_output_damage(output);
+
+	wl_list_insert(&ss->output_list, &so->output_link);
 
 	return so;
 
@@ -1008,13 +1059,17 @@ static void
 shared_output_destroy(struct shared_output *so)
 {
 	struct ss_shm_buffer *buffer, *bnext;
+	struct ss_seat *seat, *tmp;
 
-	so->output->disable_planes--;
+	weston_output_disable_planes_decr(so->output);
 
 	wl_list_for_each_safe(buffer, bnext, &so->shm.buffers, link)
 		ss_shm_buffer_destroy(buffer);
 	wl_list_for_each_safe(buffer, bnext, &so->shm.free_buffers, free_link)
 		ss_shm_buffer_destroy(buffer);
+
+	wl_list_for_each_safe(seat, tmp, &so->seat_list, link)
+		ss_seat_destroy(seat);
 
 	wl_display_disconnect(so->parent.display);
 	wl_event_source_remove(so->event_source);
@@ -1029,7 +1084,7 @@ shared_output_destroy(struct shared_output *so)
 }
 
 static struct shared_output *
-weston_output_share(struct weston_output *output, const char* command)
+weston_output_share(struct weston_output *output, struct screen_share *ss)
 {
 	int sv[2];
 	char str[32];
@@ -1038,7 +1093,7 @@ weston_output_share(struct weston_output *output, const char* command)
 	char *const argv[] = {
 	  "/bin/sh",
 	  "-c",
-	  (char*)command,
+	  (char*)ss->command,
 	  NULL
 	};
 
@@ -1087,7 +1142,7 @@ weston_output_share(struct weston_output *output, const char* command)
 		abort();
 	} else {
 		close(sv[1]);
-		return shared_output_create(output, sv[0]);
+		return shared_output_create(output, ss, sv[0]);
 	}
 
 	return NULL;
@@ -1098,12 +1153,9 @@ weston_output_find(struct weston_compositor *c, int32_t x, int32_t y)
 {
 	struct weston_output *output;
 
-	wl_list_for_each(output, &c->output_list, link) {
-		if (x >= output->x && y >= output->y &&
-		    x < output->x + output->width &&
-		    y < output->y + output->height)
+	wl_list_for_each(output, &c->output_list, link)
+		if (weston_output_contains_point(output, x, y))
 			return output;
-	}
 
 	return NULL;
 }
@@ -1117,20 +1169,39 @@ share_output_binding(struct weston_keyboard *keyboard,
 	struct screen_share *ss = data;
 
 	pointer = weston_seat_get_pointer(keyboard->seat);
-	if (!pointer) {
-		weston_log("Cannot pick output: Seat does not have pointer\n");
-		return;
+	if (pointer) {
+		output = weston_output_find(pointer->seat->compositor,
+					    pointer->pos.c.x,
+					    pointer->pos.c.y);
+	} else {
+		output = weston_shell_utils_get_focused_output(keyboard->seat->compositor);
+		if (!output)
+			output = weston_shell_utils_get_default_output(keyboard->seat->compositor);
 	}
 
-	output = weston_output_find(pointer->seat->compositor,
-				    wl_fixed_to_int(pointer->x),
-				    wl_fixed_to_int(pointer->y));
 	if (!output) {
-		weston_log("Cannot pick output: Pointer not on any output\n");
+		weston_log("Cannot pick output: Pointer not on any output, "
+			    "or no focused/default output found\n");
 		return;
 	}
 
-	weston_output_share(output, ss->command);
+	weston_output_share(output, ss);
+}
+
+static void
+compositor_destroy_listener(struct wl_listener *listener, void *data)
+{
+	struct shared_output *so, *so_next;
+	struct screen_share *ss =
+		wl_container_of(listener, ss, compositor_destroy_listener);
+
+	wl_list_for_each_safe(so, so_next, &ss->output_list, output_link)
+		shared_output_destroy(so);
+
+	wl_list_remove(&ss->compositor_destroy_listener.link);
+
+	free(ss->command);
+	free(ss);
 }
 
 WL_EXPORT int
@@ -1138,20 +1209,38 @@ wet_module_init(struct weston_compositor *compositor,
 		int *argc, char *argv[])
 {
 	struct screen_share *ss;
-	struct weston_config *config = wet_get_config(compositor);
+	struct weston_output *output;
+	struct weston_config *config;
 	struct weston_config_section *section;
+	bool start_on_startup = false;
 
 	ss = zalloc(sizeof *ss);
 	if (ss == NULL)
 		return -1;
 	ss->compositor = compositor;
 
+	wl_list_init(&ss->compositor_destroy_listener.link);
+	wl_list_init(&ss->output_list);
+
+	ss->compositor_destroy_listener.notify = compositor_destroy_listener;
+	wl_signal_add(&compositor->destroy_signal, &ss->compositor_destroy_listener);
+
+	config = wet_get_config(compositor);
+
 	section = weston_config_get_section(config, "screen-share", NULL, NULL);
 
-	weston_config_section_get_string(section, "command", &ss->command, "");
+	weston_config_section_get_string(section, "command", &ss->command, NULL);
 
 	weston_compositor_add_key_binding(compositor, KEY_S,
 				          MODIFIER_CTRL | MODIFIER_ALT,
 					  share_output_binding, ss);
+
+	weston_config_section_get_bool(section, "start-on-startup",
+				       &start_on_startup, false);
+	if (start_on_startup) {
+		wl_list_for_each(output, &compositor->output_list, link)
+			weston_output_share(output, ss);
+	}
+
 	return 0;
 }

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,10 +16,14 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/notreached.h"
 #include "base/numerics/safe_conversions.h"
-#include "base/strings/string16.h"
+#include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
+#include "base/strings/stringprintf.h"
+#include "base/time/time.h"
 #include "build/build_config.h"
 #include "ui/events/base_event_utils.h"
+#include "ui/events/event_constants.h"
 #include "ui/events/event_utils.h"
 #include "ui/events/keycodes/dom/dom_code.h"
 #include "ui/events/keycodes/dom/dom_key.h"
@@ -27,16 +31,17 @@
 #include "ui/events/keycodes/keyboard_code_conversion.h"
 #include "ui/gfx/geometry/point3_f.h"
 #include "ui/gfx/geometry/point_conversions.h"
-#include "ui/gfx/transform.h"
-#include "ui/gfx/transform_util.h"
+#include "ui/gfx/geometry/transform.h"
+#include "ui/gfx/geometry/transform_util.h"
 
-#if defined(USE_OZONE)
+#if BUILDFLAG(IS_OZONE)
 #include "ui/base/ui_base_features.h"                               // nogncheck
+#include "ui/events/ozone/events_ozone.h"                           // nogncheck
 #include "ui/events/ozone/layout/keyboard_layout_engine.h"          // nogncheck
 #include "ui/events/ozone/layout/keyboard_layout_engine_manager.h"  // nogncheck
 #endif
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 #include "ui/events/keycodes/platform_key_map_win.h"
 #endif
 
@@ -66,6 +71,7 @@ SourceEventType EventTypeToLatencySourceEventType(EventType type) {
     case ET_GESTURE_PINCH_BEGIN:
     case ET_GESTURE_PINCH_END:
     case ET_GESTURE_PINCH_UPDATE:
+    case ET_GESTURE_SHORT_PRESS:
     case ET_GESTURE_LONG_PRESS:
     case ET_GESTURE_LONG_TAP:
     case ET_GESTURE_SWIPE:
@@ -142,65 +148,46 @@ std::string ScrollEventPhaseToString(ScrollEventPhase phase) {
   }
 }
 
-#if defined(USE_OZONE)
+#if BUILDFLAG(IS_OZONE)
 uint32_t ScanCodeFromNative(const PlatformEvent& native_event) {
   const KeyEvent* event = static_cast<const KeyEvent*>(native_event);
   DCHECK(event->IsKeyEvent());
   return event->scan_code();
 }
-#endif  // defined(USE_OZONE)
+#endif  // BUILDFLAG(IS_OZONE)
+
+bool IsNearZero(const float num) {
+  // Epsilon of 1e-10 at 0.
+  return (std::fabs(num) < 1e-10);
+}
+
+bool IsRepeatedClickTimes(const base::TimeTicks& time_stamp1,
+                          const base::TimeTicks& time_stamp2) {
+  // The new event has been created from the same native event.
+  if (time_stamp1 == time_stamp2) {
+    return false;
+  }
+
+  base::TimeDelta time_difference = time_stamp2 - time_stamp1;
+  return time_difference <= base::Milliseconds(ui::kDoubleClickTimeMs);
+}
 
 }  // namespace
 
 ////////////////////////////////////////////////////////////////////////////////
 // Event
 
-// static
-std::unique_ptr<Event> Event::Clone(const Event& event) {
-  if (event.IsKeyEvent()) {
-    return std::make_unique<KeyEvent>(static_cast<const KeyEvent&>(event));
-  }
-
-  if (event.IsMouseEvent()) {
-    if (event.IsMouseWheelEvent()) {
-      return std::make_unique<MouseWheelEvent>(
-          static_cast<const MouseWheelEvent&>(event));
-    }
-
-    return std::make_unique<MouseEvent>(static_cast<const MouseEvent&>(event));
-  }
-
-  if (event.IsTouchEvent()) {
-    return std::make_unique<TouchEvent>(static_cast<const TouchEvent&>(event));
-  }
-
-  if (event.IsGestureEvent()) {
-    return std::make_unique<GestureEvent>(
-        static_cast<const GestureEvent&>(event));
-  }
-
-  if (event.IsScrollEvent()) {
-    return std::make_unique<ScrollEvent>(
-        static_cast<const ScrollEvent&>(event));
-  }
-
-  return base::WrapUnique(new Event(event));
-}
-
-Event::~Event() {
-  if (delete_native_event_)
-    ReleaseCopiedNativeEvent(native_event_);
-}
+Event::~Event() = default;
 
 void Event::SetNativeEvent(const PlatformEvent& event) {
-  if (delete_native_event_)
-    ReleaseCopiedNativeEvent(native_event_);
-  native_event_ = CopyNativeEvent(event);
-  delete_native_event_ = true;
+  if (!ShouldCopyPlatformEvents()) {
+    return;
+  }
+  native_event_ = event;
 }
 
 const char* Event::GetName() const {
-  return EventTypeName(type_);
+  return EventTypeName(type_).data();
 }
 
 void Event::SetProperties(const Properties& properties) {
@@ -288,9 +275,7 @@ const TouchEvent* Event::AsTouchEvent() const {
 }
 
 bool Event::HasNativeEvent() const {
-  PlatformEvent null_event;
-  std::memset(&null_event, 0, sizeof(null_event));
-  return !!std::memcmp(&native_event_, &null_event, sizeof(null_event));
+  return IsPlatformEventValid(native_event_);
 }
 
 void Event::StopPropagation() {
@@ -309,24 +294,28 @@ void Event::SetHandled() {
   result_ = static_cast<EventResult>(result_ | ER_HANDLED);
 }
 
+void Event::SetSkipped() {
+  CHECK(cancelable_);
+  result_ = static_cast<EventResult>(result_ | ER_CONSUMED | ER_SKIPPED);
+}
+
+void Event::SetFlags(int flags) {
+  flags_ = flags;
+  OnFlagsUpdated();
+}
+
 std::string Event::ToString() const {
-  std::string s = GetName();
-  s += " time_stamp ";
-  s += base::NumberToString(time_stamp_.since_origin().InSecondsF());
-  return s;
+  return base::StrCat(
+      {GetName(), " time_stamp=",
+       base::NumberToString(time_stamp_.since_origin().InSecondsF()),
+       " source_device_id=", base::NumberToString(source_device_id_)});
 }
 
 Event::Event(EventType type, base::TimeTicks time_stamp, int flags)
     : type_(type),
       time_stamp_(time_stamp.is_null() ? EventTimeForNow() : time_stamp),
       flags_(flags),
-      native_event_(PlatformEvent()),
-      delete_native_event_(false),
-      cancelable_(true),
-      target_(nullptr),
-      phase_(EP_PREDISPATCH),
-      result_(ER_UNHANDLED),
-      source_device_id_(ED_UNKNOWN_DEVICE) {
+      native_event_(CreateInvalidPlatformEvent()) {
   if (type_ < ET_LAST)
     latency()->set_source_event_type(EventTypeToLatencySourceEventType(type));
 }
@@ -335,23 +324,17 @@ Event::Event(const PlatformEvent& native_event, EventType type, int flags)
     : type_(type),
       time_stamp_(EventTimeFromNative(native_event)),
       flags_(flags),
-      native_event_(native_event),
-      delete_native_event_(false),
-      cancelable_(true),
-      target_(nullptr),
-      phase_(EP_PREDISPATCH),
-      result_(ER_UNHANDLED),
-      source_device_id_(ED_UNKNOWN_DEVICE) {
+      // Note that the construction of an Event directly from a PlatformEvent
+      // is the only time that ShouldCopyPlatformEvents() is not consulted.
+      native_event_(native_event) {
   if (type_ < ET_LAST)
     latency()->set_source_event_type(EventTypeToLatencySourceEventType(type));
   ComputeEventLatencyOS(native_event);
 
-#if defined(USE_OZONE)
-  if (features::IsUsingOzonePlatform()) {
-    source_device_id_ = native_event->source_device_id();
-    if (auto* properties = native_event->properties())
-      properties_ = std::make_unique<Properties>(*properties);
-  }
+#if BUILDFLAG(IS_OZONE)
+  source_device_id_ = native_event->source_device_id();
+  if (auto* properties = native_event->properties())
+    properties_ = std::make_unique<Properties>(*properties);
 #endif
 }
 
@@ -360,12 +343,8 @@ Event::Event(const Event& copy)
       time_stamp_(copy.time_stamp_),
       latency_(copy.latency_),
       flags_(copy.flags_),
-      native_event_(CopyNativeEvent(copy.native_event_)),
-      delete_native_event_(true),
-      cancelable_(true),
-      target_(nullptr),
-      phase_(EP_PREDISPATCH),
-      result_(ER_UNHANDLED),
+      native_event_(ShouldCopyPlatformEvents() ? copy.native_event_
+                                               : CreateInvalidPlatformEvent()),
       source_device_id_(copy.source_device_id_),
       properties_(copy.properties_
                       ? std::make_unique<Properties>(*copy.properties_)
@@ -373,17 +352,13 @@ Event::Event(const Event& copy)
 
 Event& Event::operator=(const Event& rhs) {
   if (this != &rhs) {
-    if (delete_native_event_)
-      ReleaseCopiedNativeEvent(native_event_);
-
     type_ = rhs.type_;
     time_stamp_ = rhs.time_stamp_;
     latency_ = rhs.latency_;
     flags_ = rhs.flags_;
-    native_event_ = CopyNativeEvent(rhs.native_event_);
-    delete_native_event_ = true;
+    native_event_ = ShouldCopyPlatformEvents() ? rhs.native_event_
+                                               : CreateInvalidPlatformEvent();
     cancelable_ = rhs.cancelable_;
-    target_ = rhs.target_;
     phase_ = rhs.phase_;
     result_ = rhs.result_;
     source_device_id_ = rhs.source_device_id_;
@@ -412,6 +387,10 @@ CancelModeEvent::CancelModeEvent()
 
 CancelModeEvent::~CancelModeEvent() = default;
 
+std::unique_ptr<Event> CancelModeEvent::Clone() const {
+  return std::make_unique<CancelModeEvent>(*this);
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // LocatedEvent
 
@@ -439,28 +418,18 @@ void LocatedEvent::UpdateForRootTransform(
     const gfx::Transform& reversed_root_transform,
     const gfx::Transform& reversed_local_transform) {
   if (target()) {
-    gfx::Point3F transformed_location(location_);
-    reversed_local_transform.TransformPoint(&transformed_location);
-    location_ = transformed_location.AsPointF();
-
-    gfx::Point3F transformed_root_location(root_location_);
-    reversed_root_transform.TransformPoint(&transformed_root_location);
-    root_location_ = transformed_root_location.AsPointF();
+    location_ = reversed_local_transform.MapPoint(location_);
+    root_location_ = reversed_root_transform.MapPoint(root_location_);
   } else {
     // This mirrors what the code previously did.
-    gfx::Point3F transformed_location(location_);
-    reversed_root_transform.TransformPoint(&transformed_location);
-    root_location_ = location_ = transformed_location.AsPointF();
+    location_ = reversed_root_transform.MapPoint(location_);
+    root_location_ = location_;
   }
 }
 
 std::string LocatedEvent::ToString() const {
-  std::string s = Event::ToString();
-  s += " location ";
-  s += location_.ToString();
-  s += " root_location ";
-  s += root_location_.ToString();
-  return s;
+  return base::StrCat({Event::ToString(), " location=", location_.ToString(),
+                       " root_location=", root_location_.ToString()});
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -469,7 +438,7 @@ std::string LocatedEvent::ToString() const {
 MouseEvent::MouseEvent(const PlatformEvent& native_event)
     : LocatedEvent(native_event),
       changed_button_flags_(GetChangedMouseButtonFlagsFromNative(native_event)),
-#if defined(OS_CHROMEOS) || defined(OS_LINUX)
+#if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_LINUX)
       movement_(GetMouseMovementFromNative(native_event)),
 #endif
       pointer_details_(GetMousePointerDetailsFromNative(native_event)) {
@@ -528,7 +497,6 @@ void MouseEvent::InitializeNative() {
 bool MouseEvent::IsRepeatedClickEvent(const MouseEvent& event1,
                                       const MouseEvent& event2) {
   // These values match the Windows defaults.
-  static const int kDoubleClickTimeMS = 500;
   static const int kDoubleClickWidth = 4;
   static const int kDoubleClickHeight = 4;
 
@@ -540,14 +508,9 @@ bool MouseEvent::IsRepeatedClickEvent(const MouseEvent& event1,
       (event2.flags() & ~EF_IS_DOUBLE_CLICK))
     return false;
 
-  // The new event has been created from the same native event.
-  if (event1.time_stamp() == event2.time_stamp())
+  if (!IsRepeatedClickTimes(event1.time_stamp(), event2.time_stamp())) {
     return false;
-
-  base::TimeDelta time_difference = event2.time_stamp() - event1.time_stamp();
-
-  if (time_difference.InMilliseconds() > kDoubleClickTimeMS)
-    return false;
+  }
 
   if (std::abs(event2.x() - event1.x()) > kDoubleClickWidth / 2)
     return false;
@@ -631,7 +594,20 @@ void MouseEvent::SetClickCount(int click_count) {
       f |= EF_IS_TRIPLE_CLICK;
       break;
   }
-  set_flags(f);
+  SetFlags(f);
+}
+
+std::string MouseEvent::ToString() const {
+  return base::StrCat({
+      LocatedEvent::ToString(),
+      " flags=",
+      base::JoinString(base::make_span(MouseEventFlagsNames(flags())), "|"),
+      base::StringPrintf("(0x%04x)", flags()),
+  });
+}
+
+std::unique_ptr<Event> MouseEvent::Clone() const {
+  return std::make_unique<MouseEvent>(*this);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -670,7 +646,7 @@ MouseWheelEvent::MouseWheelEvent(
     base::TimeTicks time_stamp,
     int flags,
     int changed_button_flags,
-    const base::Optional<gfx::Vector2d> tick_120ths)
+    const absl::optional<gfx::Vector2d> tick_120ths)
     : MouseEvent(ET_UNKNOWN,
                  location,
                  root_location,
@@ -709,12 +685,21 @@ MouseWheelEvent::MouseWheelEvent(const gfx::Vector2d& offset,
 
 MouseWheelEvent::~MouseWheelEvent() = default;
 
-#if defined(OS_WIN)
-// This value matches windows WHEEL_DELTA.
+std::unique_ptr<Event> MouseWheelEvent::Clone() const {
+  return std::make_unique<MouseWheelEvent>(*this);
+}
+
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_FUCHSIA) || BUILDFLAG(IS_LINUX)
+// This value matches Windows, Fuchsia WHEEL_DELTA, and (roughly) Firefox on
+// Linux.
 // static
 const int MouseWheelEvent::kWheelDelta = 120;
 #else
-// This value matches GTK+ wheel scroll amount.
+// This is a legacy value that matches GTK+ wheel scroll amount.  Although being
+// inherited from Linux, it is no longer used on Linux itself, but is still used
+// on some other platforms.
+// See https://crbug.com/1270089 for the detailed reasoning.
+// static
 const int MouseWheelEvent::kWheelDelta = 53;
 #endif
 
@@ -724,8 +709,6 @@ const int MouseWheelEvent::kWheelDelta = 53;
 TouchEvent::TouchEvent(const PlatformEvent& native_event)
     : LocatedEvent(native_event),
       unique_event_id_(ui::GetNextTouchEventId()),
-      may_cause_scrolling_(false),
-      hovering_(false),
       pointer_details_(GetTouchPointerDetailsFromNative(native_event)) {
   latency()->AddLatencyNumberWithTimestamp(
       INPUT_EVENT_LATENCY_ORIGINAL_COMPONENT, time_stamp());
@@ -740,8 +723,6 @@ TouchEvent::TouchEvent(EventType type,
                        int flags)
     : LocatedEvent(type, location, root_location, time_stamp, flags),
       unique_event_id_(ui::GetNextTouchEventId()),
-      may_cause_scrolling_(false),
-      hovering_(false),
       pointer_details_(pointer_details) {
   latency()->AddLatencyNumber(INPUT_EVENT_LATENCY_UI_COMPONENT);
 }
@@ -776,19 +757,56 @@ void TouchEvent::UpdateForRootTransform(
     const gfx::Transform& inverted_local_transform) {
   LocatedEvent::UpdateForRootTransform(inverted_root_transform,
                                        inverted_local_transform);
-  gfx::DecomposedTransform decomp;
-  bool success = gfx::DecomposeTransform(&decomp, inverted_root_transform);
-  DCHECK(success);
-  if (decomp.scale[0])
-    pointer_details_.radius_x *= decomp.scale[0];
-  if (decomp.scale[1])
-    pointer_details_.radius_y *= decomp.scale[1];
+
+  // We could create a vector and then rely on Transform::MapVector, but
+  // that ends up creating a 4 dimensional vector and applying a 4 dim
+  // transform. Really what we're looking at is only in the (x,y) plane, and
+  // given that we can run this relatively frequently we will inline execute the
+  // matrix here.
+  const double new_x =
+      fabs(pointer_details_.radius_x * inverted_root_transform.rc(0, 0) +
+           pointer_details_.radius_y * inverted_root_transform.rc(0, 1));
+  const double new_y =
+      fabs(pointer_details_.radius_x * inverted_root_transform.rc(1, 0) +
+           pointer_details_.radius_y * inverted_root_transform.rc(1, 1));
+  pointer_details_.radius_x = new_x;
+  pointer_details_.radius_y = new_y;
+
+  // for stylus touches, tilt needs to be rotated appropriately. We don't handle
+  // screen rotations other than 0/90/180/270, but those should be handled and
+  // translated appropriately. Other rotations leave tilts untouched for now. We
+  // add a small check that tilt is set at all before looking through this
+  // section.
+  if (!IsNearZero(pointer_details_.tilt_x) ||
+      !IsNearZero(pointer_details_.tilt_y)) {
+    if (IsNearZero(inverted_root_transform.rc(0, 1)) &&
+        IsNearZero(inverted_root_transform.rc(1, 0))) {
+      pointer_details_.tilt_x *=
+          std::copysign(1, inverted_root_transform.rc(0, 0));
+      pointer_details_.tilt_y *=
+          std::copysign(1, inverted_root_transform.rc(1, 1));
+    } else if (IsNearZero(inverted_root_transform.rc(0, 0)) &&
+               IsNearZero(inverted_root_transform.rc(1, 1))) {
+      double new_tilt_x = pointer_details_.tilt_y *
+                          std::copysign(1, inverted_root_transform.rc(0, 1));
+      double new_tilt_y = pointer_details_.tilt_x *
+                          std::copysign(1, inverted_root_transform.rc(1, 0));
+      pointer_details_.tilt_x = new_tilt_x;
+      pointer_details_.tilt_y = new_tilt_y;
+    }
+  }
 }
 
 void TouchEvent::DisableSynchronousHandling() {
   DispatcherApi dispatcher_api(this);
   dispatcher_api.set_result(
       static_cast<EventResult>(result() | ER_DISABLE_SYNC_HANDLING));
+}
+
+void TouchEvent::ForceProcessGesture() {
+  DispatcherApi dispatcher_api(this);
+  dispatcher_api.set_result(
+      static_cast<EventResult>(result() | ER_FORCE_PROCESS_GESTURE));
 }
 
 void TouchEvent::SetPointerDetailsForTest(
@@ -806,12 +824,16 @@ float TouchEvent::ComputeRotationAngle() const {
   return rotation_angle;
 }
 
+std::unique_ptr<Event> TouchEvent::Clone() const {
+  return std::make_unique<TouchEvent>(*this);
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // KeyEvent
 
 // static
 KeyEvent* KeyEvent::last_key_event_ = nullptr;
-#if defined(USE_X11) || defined(USE_OZONE)
+#if BUILDFLAG(IS_OZONE)
 KeyEvent* KeyEvent::last_ibus_key_event_ = nullptr;
 #endif
 
@@ -821,11 +843,15 @@ KeyEvent::KeyEvent(const PlatformEvent& native_event)
 KeyEvent::KeyEvent(const PlatformEvent& native_event, int event_flags)
     : Event(native_event, EventTypeFromNative(native_event), event_flags),
       key_code_(KeyboardCodeFromNative(native_event)),
-#if defined(USE_OZONE)
+#if BUILDFLAG(IS_OZONE)
       scan_code_(ScanCodeFromNative(native_event)),
-#endif  // defined(USE_OZONE)
+#endif  // BUILDFLAG(IS_OZONE)
       code_(CodeFromNative(native_event)),
       is_char_(IsCharFromNative(native_event)) {
+#if BUILDFLAG(IS_OZONE)
+  DCHECK(native_event->IsKeyEvent());
+  key_ = native_event->AsKeyEvent()->key_;
+#endif
   InitializeNative();
 }
 
@@ -856,23 +882,19 @@ KeyEvent::KeyEvent(EventType type,
       is_char_(is_char),
       key_(key) {}
 
-KeyEvent::KeyEvent(base::char16 character,
+KeyEvent::KeyEvent(EventType type,
                    KeyboardCode key_code,
                    DomCode code,
                    int flags,
                    base::TimeTicks time_stamp)
-    : Event(ET_KEY_PRESSED, time_stamp, flags),
-      key_code_(key_code),
-      code_(code),
-      is_char_(true),
-      key_(DomKey::FromCharacter(character)) {}
+    : Event(type, time_stamp, flags), key_code_(key_code), code_(code) {}
 
 KeyEvent::KeyEvent(const KeyEvent& rhs)
     : Event(rhs),
       key_code_(rhs.key_code_),
-#if defined(USE_OZONE)
+#if BUILDFLAG(IS_OZONE)
       scan_code_(rhs.scan_code_),
-#endif  // defined(USE_OZONE)
+#endif  // BUILDFLAG(IS_OZONE)
       code_(rhs.code_),
       is_char_(rhs.is_char_),
       key_(rhs.key_) {
@@ -882,9 +904,9 @@ KeyEvent& KeyEvent::operator=(const KeyEvent& rhs) {
   if (this != &rhs) {
     Event::operator=(rhs);
     key_code_ = rhs.key_code_;
-#if defined(USE_OZONE)
+#if BUILDFLAG(IS_OZONE)
     scan_code_ = rhs.scan_code_;
-#endif  // defined(USE_OZONE)
+#endif  // BUILDFLAG(IS_OZONE)
     code_ = rhs.code_;
     key_ = rhs.key_;
     is_char_ = rhs.is_char_;
@@ -894,6 +916,29 @@ KeyEvent& KeyEvent::operator=(const KeyEvent& rhs) {
 
 KeyEvent::~KeyEvent() = default;
 
+// static
+// For compatibility, this is enabled by default.
+bool KeyEvent::synthesize_key_repeat_enabled_ = true;
+
+// static
+bool KeyEvent::IsSynthesizeKeyRepeatEnabled() {
+  return synthesize_key_repeat_enabled_;
+}
+
+// static
+void KeyEvent::SetSynthesizeKeyRepeatEnabled(bool enabled) {
+  synthesize_key_repeat_enabled_ = enabled;
+}
+
+KeyEvent KeyEvent::FromCharacter(char16_t character,
+                                 KeyboardCode key_code,
+                                 DomCode code,
+                                 int flags,
+                                 base::TimeTicks time_stamp) {
+  return KeyEvent(ET_KEY_PRESSED, key_code, code, flags,
+                  DomKey::FromCharacter(character), time_stamp, true);
+}
+
 void KeyEvent::InitializeNative() {
   latency()->AddLatencyNumberWithTimestamp(
       INPUT_EVENT_LATENCY_ORIGINAL_COMPONENT, time_stamp());
@@ -901,20 +946,20 @@ void KeyEvent::InitializeNative() {
 
   // Check if this is a key repeat. This must be called before initial flags
   // processing, e.g: NormalizeFlags(), to avoid issues like crbug.com/1069690.
-  if (IsRepeated(GetLastKeyEvent()))
-    set_flags(flags() | EF_IS_REPEAT);
+  if (synthesize_key_repeat_enabled_ && IsRepeated(GetLastKeyEvent()))
+    SetFlags(flags() | EF_IS_REPEAT);
 
-#if defined(USE_X11)
+#if BUILDFLAG(IS_LINUX)
   NormalizeFlags();
-#elif defined(OS_WIN)
+#elif BUILDFLAG(IS_WIN)
   // Only Windows has native character events.
   if (is_char_) {
     key_ = DomKey::FromCharacter(static_cast<int32_t>(native_event().wParam));
-    set_flags(PlatformKeyMap::ReplaceControlAndAltWithAltGraph(flags()));
+    SetFlags(PlatformKeyMap::ReplaceControlAndAltWithAltGraph(flags()));
   } else {
     int adjusted_flags = flags();
     key_ = PlatformKeyMap::DomKeyFromKeyboardCode(key_code(), &adjusted_flags);
-    set_flags(adjusted_flags);
+    SetFlags(adjusted_flags);
   }
 #endif
 }
@@ -932,21 +977,23 @@ void KeyEvent::ApplyLayout() const {
       return;
     }
   }
-  KeyboardCode dummy_key_code;
 
-#if defined(USE_OZONE)
-  if (features::IsUsingOzonePlatform() &&
-      KeyboardLayoutEngineManager::GetKeyboardLayoutEngine()->Lookup(
+  if (key_ != DomKey::NONE)
+    return;
+
+  KeyboardCode dummy_key_code;
+#if BUILDFLAG(IS_OZONE)
+  if (KeyboardLayoutEngineManager::GetKeyboardLayoutEngine()->Lookup(
           code, flags(), &key_, &dummy_key_code)) {
     return;
   }
 #endif
 
-#if !defined(OS_WIN)
+#if !BUILDFLAG(IS_WIN)
   // Native Windows character events always have is_char_ == true,
   // so this is a synthetic or native keystroke event.
   // Therefore, perform only the fallback action.
-  if (native_event()) {
+  if (IsPlatformEventValid(native_event())) {
     DCHECK(EventTypeFromNative(native_event()) == ET_KEY_PRESSED ||
            EventTypeFromNative(native_event()) == ET_KEY_RELEASED);
   }
@@ -985,7 +1032,7 @@ bool KeyEvent::IsRepeated(KeyEvent** last_key_event) {
   DCHECK(last);
   bool is_repeat = false;
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   if (HasNativeEvent()) {
     // Bit 30 of lParam represents the "previous key state". If set, the key
     // was already down, therefore this is an auto-repeat.
@@ -1004,7 +1051,7 @@ bool KeyEvent::IsRepeated(KeyEvent** last_key_event) {
 
   if (is_repeat) {
     last->set_time_stamp(time_stamp());
-    last->set_flags(last->flags() | EF_IS_REPEAT);
+    last->SetFlags(last->flags() | EF_IS_REPEAT);
     return true;
   }
 
@@ -1015,11 +1062,11 @@ bool KeyEvent::IsRepeated(KeyEvent** last_key_event) {
 }
 
 KeyEvent** KeyEvent::GetLastKeyEvent() {
-#if defined(USE_X11) || defined(USE_OZONE)
+#if BUILDFLAG(IS_OZONE)
   // Use a different static variable for key events that have non standard
-  // state masks as it may be reposted by an IME. IBUS-GTK uses this field
-  // to detect the re-posted event for example. crbug.com/385873.
-  return properties() && properties()->contains(kPropertyKeyboardIBusFlag)
+  // state masks as it may be reposted by an IME. IBUS-GTK and fcitx-GTK uses
+  // this field to detect the re-posted event for example. crbug.com/385873.
+  return properties() && properties()->contains(kPropertyKeyboardImeFlag)
              ? &last_ibus_key_event_
              : &last_key_event_;
 #else
@@ -1034,7 +1081,14 @@ DomKey KeyEvent::GetDomKey() const {
   return key_;
 }
 
-base::char16 KeyEvent::GetCharacter() const {
+void KeyEvent::OnFlagsUpdated() {
+  // TODO(https://crbug.com/324462727): this is problematic on windows.
+#if BUILDFLAG(IS_CHROMEOS)
+  key_ = DomKey::NONE;
+#endif
+}
+
+char16_t KeyEvent::GetCharacter() const {
   // Determination of key_ may be done lazily.
   if (key_ == DomKey::NONE)
     ApplyLayout();
@@ -1042,7 +1096,7 @@ base::char16 KeyEvent::GetCharacter() const {
     // Historically ui::KeyEvent has held only BMP characters.
     // Until this explicitly changes, require |key_| to hold a BMP character.
     DomKey::Base utf32_character = key_.ToCharacter();
-    base::char16 ucs2_character = static_cast<base::char16>(utf32_character);
+    char16_t ucs2_character = static_cast<char16_t>(utf32_character);
     DCHECK_EQ(static_cast<DomKey::Base>(ucs2_character), utf32_character);
     // Check if the control character is down. Note that ALTGR is represented
     // on Windows as CTRL|ALT, so we need to make sure that is not set.
@@ -1060,7 +1114,7 @@ base::char16 KeyEvent::GetCharacter() const {
   return 0;
 }
 
-base::char16 KeyEvent::GetText() const {
+char16_t KeyEvent::GetText() const {
   if ((flags() & EF_CONTROL_DOWN) != 0) {
     DomKey key;
     KeyboardCode key_code;
@@ -1070,14 +1124,14 @@ base::char16 KeyEvent::GetText() const {
   return GetUnmodifiedText();
 }
 
-base::char16 KeyEvent::GetUnmodifiedText() const {
+char16_t KeyEvent::GetUnmodifiedText() const {
   if (!is_char_ && (key_code_ == VKEY_RETURN))
     return '\r';
   return GetCharacter();
 }
 
 bool KeyEvent::IsUnicodeKeyCode() const {
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   if (!IsAltDown())
     return false;
   const int key = key_code();
@@ -1112,9 +1166,35 @@ void KeyEvent::NormalizeFlags() {
       return;
   }
   if (type() == ET_KEY_PRESSED)
-    set_flags(flags() | mask);
+    SetFlags(flags() | mask);
   else
-    set_flags(flags() & ~mask);
+    SetFlags(flags() & ~mask);
+}
+
+std::string KeyEvent::ToString() const {
+  auto dom_key = GetDomKey();
+  return base::StrCat({
+      Event::ToString(),
+      " code=",
+      KeycodeConverter::DomCodeToCodeString(code()),
+      base::StringPrintf("(0x%04x)", static_cast<uint32_t>(code_)),
+      " key=",
+      KeycodeConverter::DomKeyToKeyString(dom_key),
+      base::StringPrintf("(0x%04x)", static_cast<uint32_t>(dom_key)),
+      " keycode=",
+      base::StringPrintf("(0x%04x)", key_code_),
+#if BUILDFLAG(IS_OZONE)
+      " scan_code=",
+      base::StringPrintf("(0x%04x)", scan_code_),
+#endif  // BUILDFLAG(IS_OZONE)
+      " flags=",
+      base::JoinString(base::make_span(KeyEventFlagsNames(flags())), "|"),
+      base::StringPrintf("(0x%04x)", flags()),
+  });
+}
+
+std::unique_ptr<Event> KeyEvent::Clone() const {
+  return std::make_unique<KeyEvent>(*this);
 }
 
 KeyboardCode KeyEvent::GetLocatedWindowsKeyboardCode() const {
@@ -1222,14 +1302,20 @@ void ScrollEvent::Scale(const float factor) {
 }
 
 std::string ScrollEvent::ToString() const {
-  std::string s = MouseEvent::ToString();
-  s += " offset " + base::NumberToString(x_offset_) + "," +
-       base::NumberToString(y_offset_);
-  s += " offset_ordinal " + base::NumberToString(x_offset_ordinal_) + "," +
-       base::NumberToString(y_offset_ordinal_);
-  s += " momentum_phase " + MomentumPhaseToString(momentum_phase_);
-  s += " event_phase " + ScrollEventPhaseToString(scroll_event_phase_);
-  return s;
+  return base::StrCat({
+      MouseEvent::ToString(),
+      base::StringPrintf(" offset=%g,%g", x_offset_, y_offset_),
+      base::StringPrintf(" offset_ordinal=%g,%g", x_offset_ordinal_,
+                         y_offset_ordinal_),
+      " momentum_phase=",
+      MomentumPhaseToString(momentum_phase_),
+      " event_phase=",
+      ScrollEventPhaseToString(scroll_event_phase_),
+  });
+}
+
+std::unique_ptr<Event> ScrollEvent::Clone() const {
+  return std::make_unique<ScrollEvent>(*this);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1259,5 +1345,17 @@ GestureEvent::GestureEvent(float x,
 GestureEvent::GestureEvent(const GestureEvent& other) = default;
 
 GestureEvent::~GestureEvent() = default;
+
+std::string GestureEvent::ToString() const {
+  return base::StrCat({
+      LocatedEvent::ToString(),
+      " touch_event_id=",
+      base::NumberToString(unique_touch_event_id_),
+  });
+}
+
+std::unique_ptr<Event> GestureEvent::Clone() const {
+  return std::make_unique<GestureEvent>(*this);
+}
 
 }  // namespace ui

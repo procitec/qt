@@ -1,18 +1,18 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef CAST_RECEIVER_PUBLIC_RECEIVER_SOCKET_FACTORY_H_
 #define CAST_RECEIVER_PUBLIC_RECEIVER_SOCKET_FACTORY_H_
 
+#include <memory>
 #include <vector>
 
 #include "cast/common/public/cast_socket.h"
 #include "platform/api/tls_connection_factory.h"
 #include "platform/base/ip_address.h"
 
-namespace openscreen {
-namespace cast {
+namespace openscreen::cast {
 
 class ReceiverSocketFactory final : public TlsConnectionFactory::Client {
  public:
@@ -22,6 +22,9 @@ class ReceiverSocketFactory final : public TlsConnectionFactory::Client {
                              const IPEndpoint& endpoint,
                              std::unique_ptr<CastSocket> socket) = 0;
     virtual void OnError(ReceiverSocketFactory* factory, Error error) = 0;
+
+   protected:
+    virtual ~Client();
   };
 
   // |client| and |socket_client| must outlive |this|.
@@ -45,7 +48,6 @@ class ReceiverSocketFactory final : public TlsConnectionFactory::Client {
   CastSocket::Client* const socket_client_;
 };
 
-}  // namespace cast
-}  // namespace openscreen
+}  // namespace openscreen::cast
 
 #endif  // CAST_RECEIVER_PUBLIC_RECEIVER_SOCKET_FACTORY_H_

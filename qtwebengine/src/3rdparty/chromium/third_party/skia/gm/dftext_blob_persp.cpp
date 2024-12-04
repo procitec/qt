@@ -22,10 +22,15 @@
 #include "include/core/SkSurfaceProps.h"
 #include "include/core/SkTextBlob.h"
 #include "include/core/SkTypes.h"
-#include "include/private/SkTArray.h"
+#include "include/gpu/GpuTypes.h"
+#include "include/gpu/ganesh/SkSurfaceGanesh.h"
+#include "include/private/base/SkTArray.h"
 #include "tools/ToolUtils.h"
+#include "tools/fonts/FontToolUtils.h"
 
 #include <initializer_list>
+
+using namespace skia_private;
 
 /**
  * This GM tests reusing the same text blobs with distance fields rendering using various
@@ -37,15 +42,13 @@ public:
     DFTextBlobPerspGM() { this->setBGColor(0xFFFFFFFF); }
 
 protected:
-    SkString onShortName() override {
-        return SkString("dftext_blob_persp");
-    }
+    SkString getName() const override { return SkString("dftext_blob_persp"); }
 
-    SkISize onISize() override { return SkISize::Make(900, 350); }
+    SkISize getISize() override { return SkISize::Make(900, 350); }
 
     void onOnceBeforeDraw() override {
         for (int i = 0; i < 3; ++i) {
-            SkFont font;
+            SkFont font = ToolUtils::DefaultPortableFont();
             font.setSize(32);
             font.setEdging(i == 0 ? SkFont::Edging::kAlias :
                            (i == 1 ? SkFont::Edging::kAntiAlias :
@@ -60,18 +63,20 @@ protected:
     void onDraw(SkCanvas* inputCanvas) override {
         // set up offscreen rendering with distance field text
         auto ctx = inputCanvas->recordingContext();
-        SkISize size = this->onISize();
+        SkISize size = this->getISize();
         if (!inputCanvas->getBaseLayerSize().isEmpty()) {
             size = inputCanvas->getBaseLayerSize();
         }
         SkImageInfo info = SkImageInfo::MakeN32(size.width(), size.height(), kPremul_SkAlphaType,
                                                 inputCanvas->imageInfo().refColorSpace());
-        SkSurfaceProps props(SkSurfaceProps::kUseDeviceIndependentFonts_Flag,
-                             SkSurfaceProps::kLegacyFontHost_InitType);
-        auto surface = SkSurface::MakeRenderTarget(ctx, SkBudgeted::kNo, info, 0, &props);
+        SkSurfaceProps inputProps;
+        inputCanvas->getProps(&inputProps);
+        SkSurfaceProps props(SkSurfaceProps::kUseDeviceIndependentFonts_Flag | inputProps.flags(),
+                             inputProps.pixelGeometry());
+        auto surface = SkSurfaces::RenderTarget(ctx, skgpu::Budgeted::kNo, info, 0, &props);
         SkCanvas* canvas = surface ? surface->getCanvas() : inputCanvas;
         // init our new canvas with the old canvas's matrix
-        canvas->setMatrix(inputCanvas->getTotalMatrix());
+        canvas->setMatrix(inputCanvas->getLocalToDeviceAs3x3());
         SkScalar x = 0, y = 0;
         SkScalar maxH = 0;
         for (auto twm : {TranslateWithMatrix::kNo, TranslateWithMatrix::kYes}) {
@@ -102,7 +107,7 @@ protected:
             SkAutoCanvasRestore acr(inputCanvas, true);
             // since we prepended this matrix already, we blit using identity
             inputCanvas->resetMatrix();
-            inputCanvas->drawImage(surface->makeImageSnapshot().get(), 0, 0, nullptr);
+            inputCanvas->drawImage(surface->makeImageSnapshot().get(), 0, 0);
         }
     }
 
@@ -143,7 +148,7 @@ private:
         canvas->restore();
     }
 
-    SkTArray<sk_sp<SkTextBlob>> fBlobs;
+    TArray<sk_sp<SkTextBlob>> fBlobs;
     using INHERITED = skiagm::GM;
 };
 

@@ -1,17 +1,18 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include <stddef.h>
 
-#include "base/bind.h"
 #include "base/containers/circular_deque.h"
+#include "base/functional/bind.h"
+#include "base/memory/raw_ptr.h"
 #include "base/threading/thread_restrictions.h"
+#include "chrome/browser/ash/accessibility/accessibility_manager.h"
+#include "chrome/browser/ash/login/lock/screen_locker.h"
+#include "chrome/browser/ash/login/lock/screen_locker_tester.h"
+#include "chrome/browser/ash/profiles/profile_helper.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/chromeos/accessibility/accessibility_manager.h"
-#include "chrome/browser/chromeos/login/lock/screen_locker.h"
-#include "chrome/browser/chromeos/login/lock/screen_locker_tester.h"
-#include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/extensions/api/braille_display_private/braille_controller_brlapi.h"
 #include "chrome/browser/extensions/api/braille_display_private/braille_display_private_api.h"
 #include "chrome/browser/extensions/api/braille_display_private/brlapi_connection.h"
@@ -19,7 +20,6 @@
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/test/base/testing_profile.h"
-#include "chromeos/constants/chromeos_switches.h"
 #include "components/session_manager/core/session_manager.h"
 #include "components/user_manager/user_names.h"
 #include "content/public/browser/browser_task_traits.h"
@@ -65,9 +65,10 @@ class MockBrlapiConnection : public BrlapiConnection {
  public:
   explicit MockBrlapiConnection(MockBrlapiConnectionData* data)
       : data_(data) {}
-  ConnectResult Connect(const OnDataReadyCallback& on_data_ready) override {
+
+  ConnectResult Connect(OnDataReadyCallback on_data_ready) override {
     data_->connected = true;
-    on_data_ready_ = on_data_ready;
+    on_data_ready_ = std::move(on_data_ready);
     if (!data_->pending_keys.empty()) {
       content::GetIOThreadTaskRunner({})->PostTask(
           FROM_HERE, base::BindOnce(&MockBrlapiConnection::NotifyDataReady,
@@ -140,7 +141,7 @@ class MockBrlapiConnection : public BrlapiConnection {
     }
   }
 
-  MockBrlapiConnectionData* data_;
+  raw_ptr<MockBrlapiConnectionData, LeakedDanglingUntriaged> data_;
   OnDataReadyCallback on_data_ready_;
 };
 
@@ -153,10 +154,10 @@ class BrailleDisplayPrivateApiTest : public ExtensionApiTest {
     connection_data_.display_columns = 0;
     connection_data_.error.brlerrno = BRLAPI_ERROR_SUCCESS;
     connection_data_.reappear_on_disconnect = false;
+    BrailleControllerImpl::GetInstance()->use_self_in_tests_ = true;
     BrailleControllerImpl::GetInstance()->SetCreateBrlapiConnectionForTesting(
-        base::Bind(
-            &BrailleDisplayPrivateApiTest::CreateBrlapiConnection,
-            base::Unretained(this)));
+        base::BindOnce(&BrailleDisplayPrivateApiTest::CreateBrlapiConnection,
+                       base::Unretained(this)));
     BrailleControllerImpl::GetInstance()->skip_libbrlapi_so_load_ = true;
     DisableAccessibilityManagerBraille();
   }
@@ -168,7 +169,7 @@ class BrailleDisplayPrivateApiTest : public ExtensionApiTest {
   // steal events.  Some tests override this to keep the normal behaviour
   // of the accessibility manager.
   virtual void DisableAccessibilityManagerBraille() {
-    chromeos::AccessibilityManager::SetBrailleControllerForTest(
+    ash::AccessibilityManager::SetBrailleControllerForTest(
         &stub_braille_controller_);
   }
 
@@ -185,18 +186,62 @@ IN_PROC_BROWSER_TEST_F(BrailleDisplayPrivateApiTest, WriteDots) {
   connection_data_.display_columns = 11;
   connection_data_.display_rows = 1;
   connection_data_.cell_size = 6;
-  ASSERT_TRUE(RunComponentExtensionTest("braille_display_private/write_dots"))
+  ASSERT_TRUE(RunExtensionTest("braille_display_private/write_dots", {},
+                               {.load_as_component = true}))
       << message_;
-  ASSERT_EQ(3U, connection_data_.written_content.size());
-  const std::string expected_content(
-      connection_data_.display_columns * connection_data_.display_rows, '\0');
-  for (size_t i = 0; i < connection_data_.written_content.size(); ++i) {
-    ASSERT_EQ(std::string(connection_data_.display_columns *
-                              connection_data_.display_rows,
-                          static_cast<char>(i)),
-              connection_data_.written_content[i])
-        << "String " << i << " doesn't match";
-  }
+  ASSERT_EQ(4U, connection_data_.written_content.size());
+
+  // testWriteEmptyCells.
+  EXPECT_EQ(std::string(11, 0), connection_data_.written_content[0]);
+
+  // testWriteOversizedCells.
+  EXPECT_EQ(std::string(11, 1), connection_data_.written_content[1]);
+  EXPECT_EQ(std::string(11, 2), connection_data_.written_content[2]);
+
+  // testWriteUndersizedCellsNoCrash.
+  EXPECT_EQ(std::string(9, 3) + std::string(2, 0),
+            connection_data_.written_content[3]);
+}
+
+IN_PROC_BROWSER_TEST_F(BrailleDisplayPrivateApiTest, WriteDotsMultiLine) {
+  connection_data_.display_columns = 20;
+  connection_data_.display_rows = 7;
+  connection_data_.cell_size = 6;
+  ASSERT_TRUE(RunExtensionTest("braille_display_private/write_dots_multi_line",
+                               {}, {.load_as_component = true}))
+      << message_;
+  ASSERT_EQ(6U, connection_data_.written_content.size());
+
+  // testWriteEmptyCells.
+  EXPECT_EQ(std::string(140, 0), connection_data_.written_content[0]);
+  EXPECT_EQ(std::string(140, 0), connection_data_.written_content[1]);
+  EXPECT_EQ(std::string(140, 0), connection_data_.written_content[2]);
+
+  // testWriteOversizedCells.
+
+  // The test passes a grid of cells 19x9 on a display of 20x7. (cols x rows).
+  // Thus, the last two rows get truncated, and the last column is unfilled
+  // (0s).
+  std::string grid;
+  grid += std::string(19, 1) + std::string(1, 0);
+  grid += std::string(19, 1) + std::string(1, 0);
+  grid += std::string(19, 1) + std::string(1, 0);
+  grid += std::string(19, 1) + std::string(1, 0);
+  grid += std::string(19, 1) + std::string(1, 0);
+  grid += std::string(19, 1) + std::string(1, 0);
+  grid += std::string(19, 1) + std::string(1, 0);
+  EXPECT_EQ(grid, connection_data_.written_content[3]);
+
+  // This one is 21x8, so only the last row is truncated.
+  EXPECT_EQ(std::string(140, 2), connection_data_.written_content[4]);
+
+  // testWriteUndersizedCellsNoCrash.
+
+  // 10x2.
+  std::string grid2 = std::string(10, 3) + std::string(10, 0) +
+                      std::string(10, 3) + std::string(10, 0) +
+                      std::string(100, 0);
+  EXPECT_EQ(grid2, connection_data_.written_content[5]);
 }
 
 IN_PROC_BROWSER_TEST_F(BrailleDisplayPrivateApiTest, KeyEvents) {
@@ -261,7 +306,8 @@ IN_PROC_BROWSER_TEST_F(BrailleDisplayPrivateApiTest, KeyEvents) {
                                             BRLAPI_KEY_CMD_PASSDOTS | i);
   }
 
-  ASSERT_TRUE(RunComponentExtensionTest("braille_display_private/key_events"));
+  ASSERT_TRUE(RunExtensionTest("braille_display_private/key_events", {},
+                               {.load_as_component = true}));
 }
 
 IN_PROC_BROWSER_TEST_F(BrailleDisplayPrivateApiTest, DisplayStateChanges) {
@@ -270,8 +316,8 @@ IN_PROC_BROWSER_TEST_F(BrailleDisplayPrivateApiTest, DisplayStateChanges) {
   connection_data_.cell_size = 6;
   connection_data_.pending_keys.push_back(kErrorKeyCode);
   connection_data_.reappear_on_disconnect = true;
-  ASSERT_TRUE(RunComponentExtensionTest(
-      "braille_display_private/display_state_changes"));
+  ASSERT_TRUE(RunExtensionTest("braille_display_private/display_state_changes",
+                               {}, {.load_as_component = true}));
 }
 
 class BrailleDisplayPrivateAPIUserTest : public BrailleDisplayPrivateApiTest {
@@ -279,9 +325,11 @@ class BrailleDisplayPrivateAPIUserTest : public BrailleDisplayPrivateApiTest {
   class MockEventDelegate : public BrailleDisplayPrivateAPI::EventDelegate {
    public:
     MockEventDelegate() = default;
+    MockEventDelegate(const MockEventDelegate&) = delete;
+    MockEventDelegate& operator=(const MockEventDelegate&) = delete;
     ~MockEventDelegate() override = default;
 
-    int GetEventCount() { return event_count_; }
+    int GetEventCount() const { return event_count_; }
 
     // BrailleDisplayPrivateAPI::EventDelegate:
     void BroadcastEvent(std::unique_ptr<Event> event) override {
@@ -291,11 +339,13 @@ class BrailleDisplayPrivateAPIUserTest : public BrailleDisplayPrivateApiTest {
 
    private:
     int event_count_ = 0;
-
-    DISALLOW_COPY_AND_ASSIGN(MockEventDelegate);
   };
 
   BrailleDisplayPrivateAPIUserTest() = default;
+  BrailleDisplayPrivateAPIUserTest(const BrailleDisplayPrivateAPIUserTest&) =
+      delete;
+  BrailleDisplayPrivateAPIUserTest& operator=(
+      const BrailleDisplayPrivateAPIUserTest&) = delete;
   ~BrailleDisplayPrivateAPIUserTest() override = default;
 
   MockEventDelegate* SetMockEventDelegate(BrailleDisplayPrivateAPI* api) {
@@ -320,15 +370,13 @@ class BrailleDisplayPrivateAPIUserTest : public BrailleDisplayPrivateApiTest {
 
  protected:
   std::unique_ptr<ui::ScopedAnimationDurationScaleMode> zero_duration_mode_;
-
-  DISALLOW_COPY_AND_ASSIGN(BrailleDisplayPrivateAPIUserTest);
 };
 
 IN_PROC_BROWSER_TEST_F(BrailleDisplayPrivateAPIUserTest, KeyEventOnLockScreen) {
-  chromeos::ScreenLockerTester tester;
+  ash::ScreenLockerTester tester;
 
   // Make sure the signin profile and active profile are different.
-  Profile* signin_profile = chromeos::ProfileHelper::GetSigninProfile();
+  Profile* signin_profile = ash::ProfileHelper::GetSigninProfile();
   Profile* user_profile = ProfileManager::GetActiveUserProfile();
   ASSERT_FALSE(signin_profile->IsSameOrParent(user_profile))
       << signin_profile->GetDebugName() << " vs "
@@ -344,7 +392,7 @@ IN_PROC_BROWSER_TEST_F(BrailleDisplayPrivateAPIUserTest, KeyEventOnLockScreen) {
 
   // Send key event to both profiles.
   KeyEvent key_event;
-  key_event.command = KEY_COMMAND_LINE_UP;
+  key_event.command = KeyCommand::kLineUp;
   signin_api.OnBrailleKeyEvent(key_event);
   user_api.OnBrailleKeyEvent(key_event);
   EXPECT_EQ(0, signin_delegate->GetEventCount());

@@ -1,47 +1,12 @@
-/****************************************************************************
-**
-** Copyright (C) 2017 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtWebEngine module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2017 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "url_request_custom_job_proxy.h"
 #include "url_request_custom_job_delegate.h"
 
 #include "content/public/browser/browser_thread.h"
 #include "net/base/net_errors.h"
+#include "services/network/public/cpp/resource_request_body.h"
 
 #include "api/qwebengineurlrequestjob.h"
 #include "profile_adapter.h"
@@ -76,27 +41,30 @@ void URLRequestCustomJobProxy::release()
     }
 }
 
-// Fix me: this is  never used
-/*
-void URLRequestCustomJobProxy::setReplyCharset(const std::string &charset)
-{
-    DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
-    if (!m_job)
-        return;
-    m_job->m_charset = charset;
-}
-*/
-void URLRequestCustomJobProxy::reply(std::string mimeType, QIODevice *device)
+void URLRequestCustomJobProxy::reply(std::string contentType, QIODevice *device,
+                                     QMultiMap<QByteArray, QByteArray> additionalResponseHeaders)
 {
     if (!m_client)
         return;
     DCHECK (!m_ioTaskRunner || m_ioTaskRunner->RunsTasksInCurrentSequence());
-    m_client->m_mimeType = mimeType;
+    QByteArray qcontentType = QByteArray::fromStdString(contentType).toLower();
+    const int sidx = qcontentType.indexOf(';');
+    if (sidx > 0) {
+        const int cidx = qcontentType.indexOf("charset=", sidx);
+        if (cidx > 0) {
+            m_client->m_charset = qcontentType.mid(cidx + 8).trimmed().toStdString();
+            qcontentType = qcontentType.first(sidx);
+        } else {
+            qWarning() << "QWebEngineUrlRequestJob::reply(): Unrecognized content-type format with ';'" << qcontentType;
+        }
+    }
+    m_client->m_mimeType = qcontentType.trimmed().toStdString();
     m_client->m_device = device;
+    m_client->m_additionalResponseHeaders = std::move(additionalResponseHeaders);
     if (m_client->m_device && !m_client->m_device->isReadable())
         m_client->m_device->open(QIODevice::ReadOnly);
 
-    if (m_client->m_firstBytePosition > 0)
+    if (m_client->m_device && m_client->m_firstBytePosition > 0)
         m_client->m_device->seek(m_client->m_firstBytePosition);
 
     qint64 deviceSize = m_client->m_device ? m_client->m_device->size() : -1;
@@ -150,6 +118,11 @@ void URLRequestCustomJobProxy::fail(int error)
     // else we fail on the next read, or the read that might already be in progress
 }
 
+void URLRequestCustomJobProxy::succeed()
+{
+    m_client->notifySuccess();
+}
+
 void URLRequestCustomJobProxy::readyRead()
 {
     DCHECK (m_ioTaskRunner->RunsTasksInCurrentSequence());
@@ -158,8 +131,9 @@ void URLRequestCustomJobProxy::readyRead()
 }
 
 void URLRequestCustomJobProxy::initialize(GURL url, std::string method,
-                                          base::Optional<url::Origin> initiator,
-                                          std::map<std::string, std::string> headers)
+                                          absl::optional<url::Origin> initiator,
+                                          std::map<std::string, std::string> headers,
+                                          scoped_refptr<network::ResourceRequestBody> requestBody)
 {
     DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
     Q_ASSERT(!m_delegate);
@@ -177,10 +151,9 @@ void URLRequestCustomJobProxy::initialize(GURL url, std::string method,
         qHeaders.insert(toQByteArray(it->first), toQByteArray(it->second));
 
     if (schemeHandler) {
-        m_delegate = new URLRequestCustomJobDelegate(this, toQt(url),
-                                                     QByteArray::fromStdString(method),
-                                                     initiatorOrigin,
-                                                     qHeaders);
+        m_delegate =
+                new URLRequestCustomJobDelegate(this, toQt(url), QByteArray::fromStdString(method),
+                                                initiatorOrigin, qHeaders, requestBody.get());
         QWebEngineUrlRequestJob *requestJob = new QWebEngineUrlRequestJob(m_delegate);
         schemeHandler->requestStarted(requestJob);
     }

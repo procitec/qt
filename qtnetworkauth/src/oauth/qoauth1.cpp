@@ -1,31 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2017 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt Network Auth module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:GPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 3 or (at your option) any later version
-** approved by the KDE Free Qt Foundation. The licenses are as published by
-** the Free Software Foundation and appearing in the file LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2017 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
 #include <QtNetwork/qtnetwork-config.h>
 
@@ -34,7 +8,6 @@
 #include "qoauth1.h"
 #include "qoauth1_p.h"
 #include "qoauth1signature.h"
-#include "qoauthoobreplyhandler.h"
 #include "qoauthhttpserverreplyhandler.h"
 
 #include <QtCore/qmap.h>
@@ -50,6 +23,8 @@
 #include <QtNetwork/qnetworkaccessmanager.h>
 
 QT_BEGIN_NAMESPACE
+
+using namespace Qt::StringLiterals;
 
 /*!
     \class QOAuth1
@@ -100,18 +75,18 @@ QT_BEGIN_NAMESPACE
     {PLAINTEXT} signature method.
 */
 
-using Key = QOAuth1Private::OAuth1KeyString;
-const QString Key::oauthCallback =           QStringLiteral("oauth_callback");
-const QString Key::oauthCallbackConfirmed =  QStringLiteral("oauth_callback_confirmed");
-const QString Key::oauthConsumerKey =        QStringLiteral("oauth_consumer_key");
-const QString Key::oauthNonce =              QStringLiteral("oauth_nonce");
-const QString Key::oauthSignature =          QStringLiteral("oauth_signature");
-const QString Key::oauthSignatureMethod =    QStringLiteral("oauth_signature_method");
-const QString Key::oauthTimestamp =          QStringLiteral("oauth_timestamp");
-const QString Key::oauthToken =              QStringLiteral("oauth_token");
-const QString Key::oauthTokenSecret =        QStringLiteral("oauth_token_secret");
-const QString Key::oauthVerifier =           QStringLiteral("oauth_verifier");
-const QString Key::oauthVersion =            QStringLiteral("oauth_version");
+using OAuth1 = QOAuth1Private::OAuth1KeyString;
+const QString OAuth1::oauthCallback =           u"oauth_callback"_s;
+const QString OAuth1::oauthCallbackConfirmed =  u"oauth_callback_confirmed"_s;
+const QString OAuth1::oauthConsumerKey =        u"oauth_consumer_key"_s;
+const QString OAuth1::oauthNonce =              u"oauth_nonce"_s;
+const QString OAuth1::oauthSignature =          u"oauth_signature"_s;
+const QString OAuth1::oauthSignatureMethod =    u"oauth_signature_method"_s;
+const QString OAuth1::oauthTimestamp =          u"oauth_timestamp"_s;
+const QString OAuth1::oauthToken =              u"oauth_token"_s;
+const QString OAuth1::oauthTokenSecret =        u"oauth_token_secret"_s;
+const QString OAuth1::oauthVerifier =           u"oauth_verifier"_s;
+const QString OAuth1::oauthVersion =            u"oauth_version"_s;
 
 QOAuth1Private::QOAuth1Private(const QPair<QString, QString> &clientCredentials,
                                QNetworkAccessManager *networkAccessManager) :
@@ -129,28 +104,28 @@ void QOAuth1Private::appendCommonHeaders(QVariantMap *headers)
 {
     const auto currentDateTime = QDateTime::currentDateTimeUtc();
 
-    headers->insert(Key::oauthNonce, QOAuth1::nonce());
-    headers->insert(Key::oauthConsumerKey, clientIdentifier);
-    headers->insert(Key::oauthTimestamp, QString::number(currentDateTime.toSecsSinceEpoch()));
-    headers->insert(Key::oauthVersion, oauthVersion);
-    headers->insert(Key::oauthSignatureMethod, signatureMethodString().toUtf8());
+    headers->insert(OAuth1::oauthNonce, QOAuth1::nonce());
+    headers->insert(OAuth1::oauthConsumerKey, clientIdentifier);
+    headers->insert(OAuth1::oauthTimestamp, QString::number(currentDateTime.toSecsSinceEpoch()));
+    headers->insert(OAuth1::oauthVersion, oauthVersion);
+    headers->insert(OAuth1::oauthSignatureMethod, signatureMethodString().toUtf8());
 }
 
 void QOAuth1Private::appendSignature(QAbstractOAuth::Stage stage,
                                      QVariantMap *headers,
                                      const QUrl &url,
                                      QNetworkAccessManager::Operation operation,
-                                     const QVariantMap parameters)
+                                     const QMultiMap<QString, QVariant> parameters)
 {
     QByteArray signature;
     {
-        QMultiMap<QString, QVariant> headerCopy = *headers;
-        QVariantMap allParameters = headerCopy.unite(parameters);
+        QMultiMap<QString, QVariant> allParameters(*headers);
+        allParameters.unite(parameters);
         if (modifyParametersFunction)
             modifyParametersFunction(stage, &allParameters);
         signature = generateSignature(allParameters, url, operation);
     }
-    headers->insert(Key::oauthSignature, signature);
+    headers->insert(OAuth1::oauthSignature, signature);
 }
 
 QNetworkReply *QOAuth1Private::requestToken(QNetworkAccessManager::Operation operation,
@@ -173,11 +148,10 @@ QNetworkReply *QOAuth1Private::requestToken(QNetworkAccessManager::Operation ope
     }
 
     QNetworkRequest request(url);
-    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
 
     QAbstractOAuth::Stage stage = QAbstractOAuth::Stage::RequestingTemporaryCredentials;
     QVariantMap headers;
-    QVariantMap remainingParameters;
+    QMultiMap<QString, QVariant> remainingParameters;
     appendCommonHeaders(&headers);
     for (auto it = parameters.begin(), end = parameters.end(); it != end; ++it) {
         const auto key = it.key();
@@ -188,7 +162,7 @@ QNetworkReply *QOAuth1Private::requestToken(QNetworkAccessManager::Operation ope
             remainingParameters.insert(key, value);
     }
     if (!token.first.isEmpty()) {
-        headers.insert(Key::oauthToken, token.first);
+        headers.insert(OAuth1::oauthToken, token.first);
         stage = QAbstractOAuth::Stage::RequestingAccessToken;
     }
     appendSignature(stage, &headers, url, operation, remainingParameters);
@@ -217,7 +191,7 @@ QNetworkReply *QOAuth1Private::requestToken(QNetworkAccessManager::Operation ope
 
     QAbstractOAuthReplyHandler *handler = replyHandler ? replyHandler.data()
                                                        : defaultReplyHandler.data();
-    QObject::connect(reply, &QNetworkReply::finished,
+    QObject::connect(reply, &QNetworkReply::finished, handler,
                      [handler, reply]() { handler->networkReplyFinished(reply); });
     connect(handler, &QAbstractOAuthReplyHandler::tokensReceived, this,
             &QOAuth1Private::_q_tokensReceived);
@@ -240,7 +214,7 @@ QString QOAuth1Private::signatureMethodString() const
     return QString();
 }
 
-QByteArray QOAuth1Private::generateSignature(const QVariantMap &parameters,
+QByteArray QOAuth1Private::generateSignature(const QMultiMap<QString, QVariant> &parameters,
                                              const QUrl &url,
                                              QNetworkAccessManager::Operation operation) const
 {
@@ -252,7 +226,7 @@ QByteArray QOAuth1Private::generateSignature(const QVariantMap &parameters,
     return formatSignature(signature);
 }
 
-QByteArray QOAuth1Private::generateSignature(const QVariantMap &parameters,
+QByteArray QOAuth1Private::generateSignature(const QMultiMap<QString, QVariant> &parameters,
                                              const QUrl &url,
                                              const QByteArray &verb) const
 {
@@ -284,21 +258,22 @@ QVariantMap QOAuth1Private::createOAuthBaseParams() const
 
     const auto currentDateTime = QDateTime::currentDateTimeUtc();
 
-    oauthParams.insert(Key::oauthConsumerKey, clientIdentifier);
-    oauthParams.insert(Key::oauthVersion, QStringLiteral("1.0"));
-    oauthParams.insert(Key::oauthToken, token);
-    oauthParams.insert(Key::oauthSignatureMethod, signatureMethodString());
-    oauthParams.insert(Key::oauthNonce, QOAuth1::nonce());
-    oauthParams.insert(Key::oauthTimestamp, QString::number(currentDateTime.toSecsSinceEpoch()));
+    oauthParams.insert(OAuth1::oauthConsumerKey, clientIdentifier);
+    oauthParams.insert(OAuth1::oauthVersion, QStringLiteral("1.0"));
+    oauthParams.insert(OAuth1::oauthToken, token);
+    oauthParams.insert(OAuth1::oauthSignatureMethod, signatureMethodString());
+    oauthParams.insert(OAuth1::oauthNonce, QOAuth1::nonce());
+    oauthParams.insert(OAuth1::oauthTimestamp, QString::number(currentDateTime.toSecsSinceEpoch()));
 
     return oauthParams;
 }
 
-void QOAuth1Private::prepareRequestImpl(QNetworkRequest *request,
-                                        const QByteArray &verb,
-                                        const QByteArray &body)
+/*!
+    \reimp
+*/
+void QOAuth1::prepareRequest(QNetworkRequest *request, const QByteArray &verb,
+                                 const QByteArray &body)
 {
-    Q_Q(QOAuth1);
     QVariantMap signingParams;
     if (verb == "POST" &&
         request->header(QNetworkRequest::ContentTypeHeader).toByteArray()
@@ -307,7 +282,7 @@ void QOAuth1Private::prepareRequestImpl(QNetworkRequest *request,
         for (const auto &item : query.queryItems(QUrl::FullyDecoded))
             signingParams.insert(item.first, item.second);
     }
-    q->setup(request, signingParams, verb);
+    setup(request, signingParams, verb);
 }
 
 void QOAuth1Private::_q_onTokenRequestError(QNetworkReply::NetworkError error)
@@ -330,11 +305,11 @@ void QOAuth1Private::_q_tokensReceived(const QVariantMap &tokens)
     if (tokenRequested) // 'Reset' tokenRequested now that we've gotten new tokens
         tokenRequested = false;
 
-    QPair<QString, QString> credential(tokens.value(Key::oauthToken).toString(),
-                                       tokens.value(Key::oauthTokenSecret).toString());
+    QPair<QString, QString> credential(tokens.value(OAuth1::oauthToken).toString(),
+                                       tokens.value(OAuth1::oauthTokenSecret).toString());
     switch (status) {
     case QAbstractOAuth::Status::NotAuthenticated:
-        if (tokens.value(Key::oauthCallbackConfirmed, true).toBool()) {
+        if (tokens.value(OAuth1::oauthCallbackConfirmed, true).toBool()) {
             q->setTokenCredentials(credential);
             setStatus(QAbstractOAuth::Status::TemporaryCredentialsReceived);
         } else {
@@ -425,6 +400,8 @@ QPair<QString, QString> QOAuth1::clientCredentials() const
 }
 
 /*!
+    \fn void QOAuth1::setClientCredentials(const std::pair<QString, QString> &clientCredentials)
+
     Sets \a clientCredentials as the pair of QString used to identify
     the application and sign requests to the web server.
 
@@ -477,6 +454,8 @@ void QOAuth1::setTokenSecret(const QString &tokenSecret)
 }
 
 /*!
+    \fn std::pair<QString, QString> QOAuth1::tokenCredentials() const
+
     Returns the pair of QString used to identify and sign
     authenticated requests to the web server.
 
@@ -489,6 +468,8 @@ QPair<QString, QString> QOAuth1::tokenCredentials() const
 }
 
 /*!
+    \fn void QOAuth1::setTokenCredentials(const std::pair<QString, QString> &tokenCredentials)
+
     Sets \a tokenCredentials as the pair of QString used to identify
     and sign authenticated requests to the web server.
 
@@ -633,7 +614,7 @@ QNetworkReply *QOAuth1::get(const QUrl &url, const QVariantMap &parameters)
     QNetworkRequest request(url);
     setup(&request, parameters, QNetworkAccessManager::GetOperation);
     QNetworkReply *reply = d->networkAccessManager()->get(request);
-    connect(reply, &QNetworkReply::finished, [this, reply]() { emit finished(reply); });
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() { emit finished(reply); });
     return reply;
 }
 
@@ -658,7 +639,7 @@ QNetworkReply *QOAuth1::post(const QUrl &url, const QVariantMap &parameters)
 
     const QByteArray data = d->convertParameters(parameters);
     QNetworkReply *reply = d->networkAccessManager()->post(request, data);
-    connect(reply, &QNetworkReply::finished, [this, reply]() { emit finished(reply); });
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() { emit finished(reply); });
     return reply;
 }
 
@@ -683,7 +664,7 @@ QNetworkReply *QOAuth1::put(const QUrl &url, const QVariantMap &parameters)
 
     const QByteArray data = d->convertParameters(parameters);
     QNetworkReply *reply = d->networkAccessManager()->put(request, data);
-    connect(reply, &QNetworkReply::finished, std::bind(&QAbstractOAuth::finished, this, reply));
+    connect(reply, &QNetworkReply::finished, this, std::bind(&QAbstractOAuth::finished, this, reply));
     return reply;
 }
 
@@ -705,7 +686,7 @@ QNetworkReply *QOAuth1::deleteResource(const QUrl &url, const QVariantMap &param
     QNetworkRequest request(url);
     setup(&request, parameters, QNetworkAccessManager::DeleteOperation);
     QNetworkReply *reply = d->networkAccessManager()->deleteResource(request);
-    connect(reply, &QNetworkReply::finished, [this, reply]() { emit finished(reply); });
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() { emit finished(reply); });
     return reply;
 }
 
@@ -725,11 +706,16 @@ QNetworkReply *QOAuth1::requestTemporaryCredentials(QNetworkAccessManager::Opera
     d->token.clear();
     d->tokenSecret.clear();
     QVariantMap allParameters(parameters);
-    allParameters.insert(Key::oauthCallback, callback());
+    allParameters.insert(OAuth1::oauthCallback, callback());
     return d->requestToken(operation, url, qMakePair(d->token, d->tokenSecret), allParameters);
 }
 
 /*!
+    \fn QNetworkReply *QOAuth1::requestTokenCredentials(QNetworkAccessManager::Operation operation,
+                                                const QUrl &url,
+                                                const std::pair<QString, QString> &temporaryToken,
+                                                const QVariantMap &parameters)
+
     Starts a request for token credentials using the request
     method \a operation. The request URL is \a url and the
     \a parameters shall be encoded and sent during the
@@ -764,10 +750,10 @@ void QOAuth1::setup(QNetworkRequest *request,
 
     // Add signature parameter
     {
-        QMultiMap<QString, QVariant> oauthParamsCopy(oauthParams);
-        const auto parameters = oauthParamsCopy.unite(signingParameters);
+        QMultiMap<QString, QVariant> parameters(oauthParams);
+        parameters.unite(QMultiMap<QString, QVariant>(signingParameters));
         const auto signature = d->generateSignature(parameters, request->url(), operation);
-        oauthParams.insert(Key::oauthSignature, signature);
+        oauthParams.insert(OAuth1::oauthSignature, signature);
     }
 
     if (operation == QNetworkAccessManager::GetOperation) {
@@ -805,10 +791,10 @@ void QOAuth1::setup(QNetworkRequest *request, const QVariantMap &signingParamete
 
     // Add signature parameter
     {
-        QMultiMap<QString, QVariant> oauthParamsCopy(oauthParams);
-        const auto parameters = oauthParamsCopy.unite(signingParameters);
+        QMultiMap<QString, QVariant> parameters(oauthParams);
+        parameters.unite(QMultiMap<QString, QVariant>(signingParameters));
         const auto signature = d->generateSignature(parameters, request->url(), operationVerb);
-        oauthParams.insert(Key::oauthSignature, signature);
+        oauthParams.insert(OAuth1::oauthSignature, signature);
     }
 
     request->setRawHeader("Authorization", generateAuthorizationHeader(oauthParams));
@@ -865,8 +851,6 @@ QByteArray QOAuth1::generateAuthorizationHeader(const QVariantMap &oauthParams)
 void QOAuth1::grant()
 {
     Q_D(QOAuth1);
-    using Key = QOAuth1Private::OAuth1KeyString;
-
     if (d->temporaryCredentialsUrl.isEmpty()) {
         qCWarning(d->loggingCategory, "requestTokenUrl is empty");
         return;
@@ -881,7 +865,7 @@ void QOAuth1::grant()
     }
 
     QMetaObject::Connection connection;
-    connection = connect(this, &QAbstractOAuth::statusChanged, [&](Status status) {
+    connection = connect(this, &QAbstractOAuth::statusChanged, this, [&](Status status) {
         Q_D(QOAuth1);
 
         if (status == Status::TemporaryCredentialsReceived) {
@@ -892,8 +876,8 @@ void QOAuth1::grant()
                                                      qMakePair(d->token, d->tokenSecret));
                 connect(reply, &QNetworkReply::finished, reply, &QNetworkReply::deleteLater);
             } else {
-                QVariantMap parameters;
-                parameters.insert(Key::oauthToken, d->token);
+                QMultiMap<QString, QVariant> parameters;
+                parameters.insert(OAuth1::oauthToken, d->token);
                 if (d->modifyParametersFunction)
                     d->modifyParametersFunction(Stage::RequestingAuthorization, &parameters);
 
@@ -909,16 +893,17 @@ void QOAuth1::grant()
 
     auto httpReplyHandler = qobject_cast<QOAuthHttpServerReplyHandler*>(replyHandler());
     if (httpReplyHandler) {
-        connect(httpReplyHandler, &QOAuthHttpServerReplyHandler::callbackReceived, [&](
-                const QVariantMap &values) {
-            QString verifier = values.value(Key::oauthVerifier).toString();
+        auto func = [this](const QVariantMap &values) {
+            Q_D(QOAuth1);
+            QString verifier = values.value(OAuth1::oauthVerifier).toString();
             if (verifier.isEmpty()) {
                 qCWarning(d->loggingCategory, "%s not found in the callback",
-                          qPrintable(Key::oauthVerifier));
+                          qPrintable(OAuth1::oauthVerifier));
                 return;
             }
             continueGrantWithVerifier(verifier);
-        });
+        };
+        connect(httpReplyHandler, &QOAuthHttpServerReplyHandler::callbackReceived, this, func);
     }
 
     // requesting temporary credentials
@@ -938,7 +923,7 @@ void QOAuth1::continueGrantWithVerifier(const QString &verifier)
     Q_D(QOAuth1);
 
     QVariantMap parameters;
-    parameters.insert(Key::oauthVerifier, verifier);
+    parameters.insert(OAuth1::oauthVerifier, verifier);
     auto reply = requestTokenCredentials(QNetworkAccessManager::PostOperation,
                                          d->tokenCredentialsUrl,
                                          qMakePair(d->token, d->tokenSecret),

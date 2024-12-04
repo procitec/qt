@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,18 +10,20 @@
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/html/html_element.h"
 #include "third_party/blink/renderer/core/testing/dummy_page_holder.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 
 namespace blink {
 
 class StyleInvalidatorTest : public testing::Test {
  protected:
   void SetUp() override {
-    dummy_page_holder_ = std::make_unique<DummyPageHolder>(IntSize(800, 600));
+    dummy_page_holder_ = std::make_unique<DummyPageHolder>(gfx::Size(800, 600));
   }
 
   Document& GetDocument() { return dummy_page_holder_->GetDocument(); }
 
  private:
+  test::TaskEnvironment task_environment_;
   std::unique_ptr<DummyPageHolder> dummy_page_holder_;
 };
 
@@ -35,16 +37,16 @@ TEST_F(StyleInvalidatorTest, SkipDisplayNone) {
     </div>
   )HTML");
 
-  GetDocument().View()->UpdateAllLifecyclePhases(DocumentUpdateReason::kTest);
+  GetDocument().View()->UpdateAllLifecyclePhasesForTest();
 
   PendingInvalidations pending;
   {
     InvalidationLists lists;
     scoped_refptr<InvalidationSet> set = DescendantInvalidationSet::Create();
-    set->AddClass("a");
+    set->AddClass(AtomicString("a"));
     lists.descendants.push_back(set);
     pending.ScheduleInvalidationSetsForNode(
-        lists, *GetDocument().getElementById("root"));
+        lists, *GetDocument().getElementById(AtomicString("root")));
   }
 
   StyleInvalidator invalidator(pending.GetPendingInvalidationMap());
@@ -64,33 +66,36 @@ TEST_F(StyleInvalidatorTest, SkipDisplayNoneClearPendingNth) {
     </div>
   )HTML");
 
-  GetDocument().View()->UpdateAllLifecyclePhases(DocumentUpdateReason::kTest);
+  GetDocument().View()->UpdateAllLifecyclePhasesForTest();
 
   PendingInvalidations pending;
   {
     InvalidationLists lists;
     scoped_refptr<InvalidationSet> set = NthSiblingInvalidationSet::Create();
-    set->AddClass("a");
+    set->AddClass(AtomicString("a"));
     lists.siblings.push_back(set);
     pending.ScheduleInvalidationSetsForNode(
-        lists, *GetDocument().getElementById("none"));
+        lists, *GetDocument().getElementById(AtomicString("none")));
   }
   {
     InvalidationLists lists;
     scoped_refptr<InvalidationSet> set = DescendantInvalidationSet::Create();
-    set->AddClass("a");
+    set->AddClass(AtomicString("a"));
     lists.descendants.push_back(set);
     pending.ScheduleInvalidationSetsForNode(
-        lists, *GetDocument().getElementById("descendant"));
+        lists, *GetDocument().getElementById(AtomicString("descendant")));
   }
 
   StyleInvalidator invalidator(pending.GetPendingInvalidationMap());
   invalidator.Invalidate(GetDocument(), GetDocument().body());
 
   EXPECT_TRUE(GetDocument().NeedsLayoutTreeUpdate());
-  EXPECT_FALSE(GetDocument().getElementById("none")->ChildNeedsStyleRecalc());
-  EXPECT_TRUE(
-      GetDocument().getElementById("descendant")->ChildNeedsStyleRecalc());
+  EXPECT_FALSE(GetDocument()
+                   .getElementById(AtomicString("none"))
+                   ->ChildNeedsStyleRecalc());
+  EXPECT_TRUE(GetDocument()
+                  .getElementById(AtomicString("descendant"))
+                  ->ChildNeedsStyleRecalc());
 }
 
 }  // namespace blink

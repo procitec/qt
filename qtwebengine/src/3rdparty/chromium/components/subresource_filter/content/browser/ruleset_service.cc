@@ -1,24 +1,24 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/subresource_filter/content/browser/ruleset_service.h"
 
+#include <string_view>
 #include <utility>
 
-#include "base/bind.h"
 #include "base/check_op.h"
+#include "base/containers/span.h"
 #include "base/files/file_enumerator.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/functional/bind.h"
 #include "base/location.h"
-#include "base/macros.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/numerics/safe_conversions.h"
-#include "base/sequenced_task_runner.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/task/post_task.h"
-#include "base/task_runner_util.h"
+#include "base/task/sequenced_task_runner.h"
+#include "base/task/thread_pool.h"
 #include "base/threading/scoped_blocking_call.h"
 #include "base/trace_event/trace_event.h"
 #include "base/trace_event/traced_value.h"
@@ -26,7 +26,7 @@
 #include "components/prefs/pref_service.h"
 #include "components/subresource_filter/content/browser/ruleset_publisher.h"
 #include "components/subresource_filter/content/browser/ruleset_publisher_impl.h"
-#include "components/subresource_filter/content/common/subresource_filter_messages.h"
+#include "components/subresource_filter/content/browser/unindexed_ruleset_stream_generator.h"
 #include "components/subresource_filter/core/browser/copying_file_stream.h"
 #include "components/subresource_filter/core/browser/subresource_filter_constants.h"
 #include "components/subresource_filter/core/browser/subresource_filter_features.h"
@@ -75,14 +75,15 @@ class SentinelFile {
   explicit SentinelFile(const base::FilePath& version_directory)
       : path_(IndexedRulesetLocator::GetSentinelFilePath(version_directory)) {}
 
+  SentinelFile(const SentinelFile&) = delete;
+  SentinelFile& operator=(const SentinelFile&) = delete;
+
   bool IsPresent() { return base::PathExists(path_); }
-  bool Create() { return base::WriteFile(path_, nullptr, 0) == 0; }
+  bool Create() { return base::WriteFile(path_, std::string_view()); }
   bool Remove() { return base::DeleteFile(path_); }
 
  private:
   base::FilePath path_;
-
-  DISALLOW_COPY_AND_ASSIGN(SentinelFile);
 };
 
 }  // namespace
@@ -220,8 +221,8 @@ RulesetService::RulesetService(
 
   DCHECK(publisher_->BestEffortTaskRunner()->BelongsToCurrentThread());
   publisher_->BestEffortTaskRunner()->PostTask(
-      FROM_HERE,
-      base::BindOnce(&RulesetService::FinishInitialization, AsWeakPtr()));
+      FROM_HERE, base::BindOnce(&RulesetService::FinishInitialization,
+                                weak_ptr_factory_.GetWeakPtr()));
 }
 
 RulesetService::~RulesetService() {}
@@ -250,9 +251,9 @@ void RulesetService::IndexAndStoreAndPublishRulesetIfNeeded(
     return;
   }
 
-  IndexAndStoreRuleset(
-      unindexed_ruleset_info,
-      base::BindOnce(&RulesetService::OpenAndPublishRuleset, AsWeakPtr()));
+  IndexAndStoreRuleset(unindexed_ruleset_info,
+                       base::BindOnce(&RulesetService::OpenAndPublishRuleset,
+                                      weak_ptr_factory_.GetWeakPtr()));
 }
 
 IndexedRulesetVersion RulesetService::GetMostRecentlyIndexedVersion() const {
@@ -268,10 +269,10 @@ IndexedRulesetVersion RulesetService::IndexAndWriteRuleset(
   base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
                                                 base::BlockingType::MAY_BLOCK);
 
-  base::File unindexed_ruleset_file(
-      unindexed_ruleset_info.ruleset_path,
-      base::File::FLAG_OPEN | base::File::FLAG_READ);
-  if (!unindexed_ruleset_file.IsValid()) {
+  UnindexedRulesetStreamGenerator unindexed_ruleset_stream_generator(
+      unindexed_ruleset_info);
+
+  if (!unindexed_ruleset_stream_generator.ruleset_stream()) {
     RecordIndexAndWriteRulesetResult(
         IndexAndWriteRulesetResult::FAILED_OPENING_UNINDEXED_RULESET);
     return IndexedRulesetVersion();
@@ -309,7 +310,7 @@ IndexedRulesetVersion RulesetService::IndexAndWriteRuleset(
   // will prevent this version of the ruleset from ever being indexed again.
 
   RulesetIndexer indexer;
-  if (!(*g_index_ruleset_func)(std::move(unindexed_ruleset_file), &indexer)) {
+  if (!(*g_index_ruleset_func)(&unindexed_ruleset_stream_generator, &indexer)) {
     RecordIndexAndWriteRulesetResult(
         IndexAndWriteRulesetResult::FAILED_PARSING_UNINDEXED_RULESET);
     return IndexedRulesetVersion();
@@ -323,9 +324,9 @@ IndexedRulesetVersion RulesetService::IndexAndWriteRuleset(
     return IndexedRulesetVersion();
   }
 
-  IndexAndWriteRulesetResult result = WriteRuleset(
-      indexed_ruleset_version_dir, unindexed_ruleset_info.license_path,
-      indexer.data(), indexer.size());
+  IndexAndWriteRulesetResult result =
+      WriteRuleset(indexed_ruleset_version_dir,
+                   unindexed_ruleset_info.license_path, indexer.data());
   RecordIndexAndWriteRulesetResult(result);
   if (result != IndexAndWriteRulesetResult::SUCCESS)
     return IndexedRulesetVersion();
@@ -335,19 +336,19 @@ IndexedRulesetVersion RulesetService::IndexAndWriteRuleset(
 }
 
 // static
-bool RulesetService::IndexRuleset(base::File unindexed_ruleset_file,
-                                  RulesetIndexer* indexer) {
+bool RulesetService::IndexRuleset(
+    UnindexedRulesetStreamGenerator* unindexed_ruleset_stream_generator,
+    RulesetIndexer* indexer) {
   SCOPED_UMA_HISTOGRAM_TIMER("SubresourceFilter.IndexRuleset.WallDuration");
   SCOPED_UMA_HISTOGRAM_THREAD_TIMER(
       "SubresourceFilter.IndexRuleset.CPUDuration");
 
-  int64_t unindexed_ruleset_size = unindexed_ruleset_file.GetLength();
+  int64_t unindexed_ruleset_size =
+      unindexed_ruleset_stream_generator->ruleset_size();
   if (unindexed_ruleset_size < 0)
     return false;
-  CopyingFileInputStream copying_stream(std::move(unindexed_ruleset_file));
-  google::protobuf::io::CopyingInputStreamAdaptor zero_copy_stream_adaptor(
-      &copying_stream, 4096 /* buffer_size */);
-  UnindexedRulesetReader reader(&zero_copy_stream_adaptor);
+  UnindexedRulesetReader reader(
+      unindexed_ruleset_stream_generator->ruleset_stream());
 
   size_t num_unsupported_rules = 0;
   url_pattern_index::proto::FilteringRules ruleset_chunk;
@@ -370,8 +371,7 @@ bool RulesetService::IndexRuleset(base::File unindexed_ruleset_file,
 RulesetService::IndexAndWriteRulesetResult RulesetService::WriteRuleset(
     const base::FilePath& indexed_ruleset_version_dir,
     const base::FilePath& license_source_path,
-    const uint8_t* indexed_ruleset_data,
-    size_t indexed_ruleset_size) {
+    base::span<const uint8_t> indexed_ruleset_data) {
   base::ScopedTempDir scratch_dir;
   if (!scratch_dir.CreateUniqueTempDirUnderPath(
           indexed_ruleset_version_dir.DirName())) {
@@ -379,11 +379,9 @@ RulesetService::IndexAndWriteRulesetResult RulesetService::WriteRuleset(
   }
 
   static_assert(sizeof(uint8_t) == sizeof(char), "Expected char = byte.");
-  const int data_size_in_chars = base::checked_cast<int>(indexed_ruleset_size);
-  if (base::WriteFile(
+  if (!base::WriteFile(
           IndexedRulesetLocator::GetRulesetDataFilePath(scratch_dir.GetPath()),
-          reinterpret_cast<const char*>(indexed_ruleset_data),
-          data_size_in_chars) != data_size_in_chars) {
+          indexed_ruleset_data)) {
     return IndexAndWriteRulesetResult::FAILED_WRITING_RULESET_DATA;
   }
 
@@ -411,10 +409,6 @@ RulesetService::IndexAndWriteRulesetResult RulesetService::WriteRuleset(
   if (!(*g_replace_file_func)(scratch_dir_with_new_indexed_ruleset,
                               indexed_ruleset_version_dir, &error)) {
     base::DeletePathRecursively(scratch_dir_with_new_indexed_ruleset);
-    // While enumerators of base::File::Error all have negative values, the
-    // histogram records the absolute values.
-    UMA_HISTOGRAM_ENUMERATION("SubresourceFilter.WriteRuleset.ReplaceFileError",
-                              -error, -base::File::FILE_ERROR_MAX);
     return IndexAndWriteRulesetResult::FAILED_REPLACE_FILE;
   }
 
@@ -432,9 +426,9 @@ void RulesetService::FinishInitialization() {
                      indexed_ruleset_base_dir_, most_recently_indexed_version));
 
   if (!queued_unindexed_ruleset_info_.content_version.empty()) {
-    IndexAndStoreRuleset(
-        queued_unindexed_ruleset_info_,
-        base::BindOnce(&RulesetService::OpenAndPublishRuleset, AsWeakPtr()));
+    IndexAndStoreRuleset(queued_unindexed_ruleset_info_,
+                         base::BindOnce(&RulesetService::OpenAndPublishRuleset,
+                                        weak_ptr_factory_.GetWeakPtr()));
     queued_unindexed_ruleset_info_ = UnindexedRulesetInfo();
   }
 }
@@ -443,11 +437,12 @@ void RulesetService::IndexAndStoreRuleset(
     const UnindexedRulesetInfo& unindexed_ruleset_info,
     WriteRulesetCallback success_callback) {
   DCHECK(!unindexed_ruleset_info.content_version.empty());
-  base::PostTaskAndReplyWithResult(
-      background_task_runner_.get(), FROM_HERE,
+  background_task_runner_->PostTaskAndReplyWithResult(
+      FROM_HERE,
       base::BindOnce(&RulesetService::IndexAndWriteRuleset,
                      indexed_ruleset_base_dir_, unindexed_ruleset_info),
-      base::BindOnce(&RulesetService::OnWrittenRuleset, AsWeakPtr(),
+      base::BindOnce(&RulesetService::OnWrittenRuleset,
+                     weak_ptr_factory_.GetWeakPtr(),
                      std::move(success_callback)));
 }
 
@@ -469,15 +464,16 @@ void RulesetService::OpenAndPublishRuleset(
 
   publisher_->TryOpenAndSetRulesetFile(
       file_path, version.checksum,
-      base::BindOnce(&RulesetService::OnRulesetSet, AsWeakPtr()));
+      base::BindOnce(&RulesetService::OnRulesetSet,
+                     weak_ptr_factory_.GetWeakPtr()));
 }
 
-void RulesetService::OnRulesetSet(base::File file) {
+void RulesetService::OnRulesetSet(RulesetFilePtr file) {
   // The file has just been successfully written, so a failure here is unlikely
   // unless |indexed_ruleset_base_dir_| has been tampered with or there are disk
   // errors. Still, restore the invariant that a valid version in preferences
   // always points to an existing version of disk by invalidating the prefs.
-  if (!file.IsValid()) {
+  if (!file->IsValid()) {
     IndexedRulesetVersion().SaveToPrefs(local_state_);
     return;
   }

@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,10 +6,13 @@
 
 #include "base/test/launcher/unit_test_launcher.h"
 #include "base/test/test_suite.h"
+#include "base/time/time.h"
 #include "components/viz/common/quads/compositor_frame.h"
 #include "components/viz/common/quads/solid_color_draw_quad.h"
 #include "components/viz/common/quads/texture_draw_quad.h"
 #include "components/viz/common/quads/tile_draw_quad.h"
+#include "components/viz/common/surfaces/region_capture_bounds.h"
+#include "components/viz/common/surfaces/subtree_capture_id.h"
 #include "components/viz/test/compositor_frame_helpers.h"
 #include "gpu/ipc/common/mailbox_holder_mojom_traits.h"
 #include "gpu/ipc/common/mailbox_mojom_traits.h"
@@ -27,7 +30,7 @@
 namespace viz {
 namespace {
 
-static const auto kTimeLimit = base::TimeDelta::FromSeconds(2);
+static const auto kTimeLimit = base::Seconds(2);
 static const int kNumWarmupRuns = 20;
 static const int kNumRunsPerTimeRecord = 10;
 
@@ -177,19 +180,21 @@ class VizSerializationPerfTest : public testing::Test {
     bool arbitrary_bool4 = true;
     bool arbitrary_bool5 = false;
     bool arbitrary_bool6 = true;
+    bool arbitrary_bool7 = false;
     gfx::ProtectedVideoType arbitrary_protected_video_type =
         gfx::ProtectedVideoType::kClear;
     int arbitrary_context_id1 = 12;
     int arbitrary_context_id2 = 57;
     int arbitrary_context_id3 = -503;
-    SkColor arbitrary_color = SkColorSetARGB(25, 36, 47, 58);
+    SkColor4f arbitrary_color =
+        SkColor4f::FromColor(SkColorSetARGB(25, 36, 47, 58));
     SkBlendMode arbitrary_blend_mode1 = SkBlendMode::kScreen;
     SkBlendMode arbitrary_blend_mode2 = SkBlendMode::kLighten;
     SkBlendMode arbitrary_blend_mode3 = SkBlendMode::kOverlay;
-    ResourceId arbitrary_resourceid1 = 55;
-    ResourceId arbitrary_resourceid2 = 47;
-    ResourceId arbitrary_resourceid3 = 23;
-    ResourceId arbitrary_resourceid4 = 16;
+    ResourceId arbitrary_resourceid1(55);
+    ResourceId arbitrary_resourceid2(47);
+    ResourceId arbitrary_resourceid3(23);
+    ResourceId arbitrary_resourceid4(16);
     SkScalar arbitrary_sigma = SkFloatToScalar(2.0f);
     CompositorRenderPassId root_id{14};
 
@@ -197,9 +202,8 @@ class VizSerializationPerfTest : public testing::Test {
     arbitrary_filters1.Append(
         cc::FilterOperation::CreateGrayscaleFilter(arbitrary_float1));
     arbitrary_filters1.Append(cc::FilterOperation::CreateReferenceFilter(
-        sk_make_sp<cc::BlurPaintFilter>(
-            arbitrary_sigma, arbitrary_sigma,
-            cc::BlurPaintFilter::TileMode::kClampToBlack_TileMode, nullptr)));
+        sk_make_sp<cc::BlurPaintFilter>(arbitrary_sigma, arbitrary_sigma,
+                                        SkTileMode::kDecal, nullptr)));
 
     cc::FilterOperations arbitrary_filters2;
     arbitrary_filters2.Append(
@@ -208,8 +212,10 @@ class VizSerializationPerfTest : public testing::Test {
     auto pass_in = CompositorRenderPass::Create();
     pass_in->SetAll(root_id, arbitrary_rect1, arbitrary_rect2,
                     arbitrary_matrix1, arbitrary_filters2, arbitrary_filters1,
-                    arbitrary_rrectf1, arbitrary_bool1, arbitrary_bool1,
-                    arbitrary_bool1, arbitrary_bool1);
+                    arbitrary_rrectf1, SubtreeCaptureId(),
+                    arbitrary_rect1.size(), ViewTransitionElementResourceId(),
+                    arbitrary_bool1, arbitrary_bool1, arbitrary_bool1,
+                    arbitrary_bool1, arbitrary_bool7);
 
     // Texture quads
     for (uint32_t i = 0; i < 10; ++i) {
@@ -217,40 +223,46 @@ class VizSerializationPerfTest : public testing::Test {
           pass_in->CreateAndAppendSharedQuadState();
       shared_state1_in->SetAll(
           arbitrary_matrix1, arbitrary_rect1, arbitrary_rect1,
-          arbitrary_rrectf1, arbitrary_rect2, arbitrary_bool1, arbitrary_bool1,
-          arbitrary_float1, arbitrary_blend_mode1, arbitrary_context_id1);
+          gfx::MaskFilterInfo(arbitrary_rrectf1), arbitrary_rect2,
+          arbitrary_bool1, arbitrary_float1, arbitrary_blend_mode1,
+          arbitrary_context_id1, /*layer_id=*/0u,
+          /*fast_rounded_corner=*/false);
 
       auto* texture_in = pass_in->CreateAndAppendDrawQuad<TextureDrawQuad>();
-      texture_in->SetAll(
-          shared_state1_in, arbitrary_rect2, arbitrary_rect1_inside_rect2,
-          arbitrary_bool1, arbitrary_resourceid1, arbitrary_size1,
-          arbitrary_bool1, arbitrary_pointf1, arbitrary_pointf2,
-          arbitrary_color, arbitrary_float_array, arbitrary_bool4,
-          arbitrary_bool5, arbitrary_bool6, arbitrary_protected_video_type);
+      texture_in->SetAll(shared_state1_in, arbitrary_rect2,
+                         arbitrary_rect1_inside_rect2, arbitrary_bool1,
+                         arbitrary_resourceid1, arbitrary_size1,
+                         arbitrary_bool1, arbitrary_pointf1, arbitrary_pointf2,
+                         arbitrary_color, arbitrary_bool4, arbitrary_bool5,
+                         arbitrary_bool6, arbitrary_protected_video_type);
+      texture_in->set_vertex_opacity(arbitrary_float_array);
 
       auto* texture_in2 = pass_in->CreateAndAppendDrawQuad<TextureDrawQuad>();
-      texture_in2->SetAll(
-          shared_state1_in, arbitrary_rect2, arbitrary_rect1_inside_rect2,
-          arbitrary_bool1, arbitrary_resourceid2, arbitrary_size1,
-          arbitrary_bool3, arbitrary_pointf1, arbitrary_pointf2,
-          arbitrary_color, arbitrary_float_array, arbitrary_bool4,
-          arbitrary_bool5, arbitrary_bool6, arbitrary_protected_video_type);
+      texture_in2->SetAll(shared_state1_in, arbitrary_rect2,
+                          arbitrary_rect1_inside_rect2, arbitrary_bool1,
+                          arbitrary_resourceid2, arbitrary_size1,
+                          arbitrary_bool3, arbitrary_pointf1, arbitrary_pointf2,
+                          arbitrary_color, arbitrary_bool4, arbitrary_bool5,
+                          arbitrary_bool6, arbitrary_protected_video_type);
+      texture_in2->set_vertex_opacity(arbitrary_float_array);
 
       auto* texture_in3 = pass_in->CreateAndAppendDrawQuad<TextureDrawQuad>();
-      texture_in3->SetAll(
-          shared_state1_in, arbitrary_rect2, arbitrary_rect1_inside_rect2,
-          arbitrary_bool1, arbitrary_resourceid3, arbitrary_size1,
-          arbitrary_bool2, arbitrary_pointf1, arbitrary_pointf2,
-          arbitrary_color, arbitrary_float_array, arbitrary_bool4,
-          arbitrary_bool6, arbitrary_bool6, arbitrary_protected_video_type);
+      texture_in3->SetAll(shared_state1_in, arbitrary_rect2,
+                          arbitrary_rect1_inside_rect2, arbitrary_bool1,
+                          arbitrary_resourceid3, arbitrary_size1,
+                          arbitrary_bool2, arbitrary_pointf1, arbitrary_pointf2,
+                          arbitrary_color, arbitrary_bool4, arbitrary_bool6,
+                          arbitrary_bool6, arbitrary_protected_video_type);
+      texture_in3->set_vertex_opacity(arbitrary_float_array);
 
       auto* texture_in4 = pass_in->CreateAndAppendDrawQuad<TextureDrawQuad>();
-      texture_in4->SetAll(
-          shared_state1_in, arbitrary_rect2, arbitrary_rect1_inside_rect2,
-          arbitrary_bool1, arbitrary_resourceid4, arbitrary_size2,
-          arbitrary_bool4, arbitrary_pointf1, arbitrary_pointf2,
-          arbitrary_color, arbitrary_float_array, arbitrary_bool4,
-          arbitrary_bool5, arbitrary_bool6, arbitrary_protected_video_type);
+      texture_in4->SetAll(shared_state1_in, arbitrary_rect2,
+                          arbitrary_rect1_inside_rect2, arbitrary_bool1,
+                          arbitrary_resourceid4, arbitrary_size2,
+                          arbitrary_bool4, arbitrary_pointf1, arbitrary_pointf2,
+                          arbitrary_color, arbitrary_bool4, arbitrary_bool5,
+                          arbitrary_bool6, arbitrary_protected_video_type);
+      texture_in4->set_vertex_opacity(arbitrary_float_array);
     }
 
     // Tiled quads
@@ -259,8 +271,10 @@ class VizSerializationPerfTest : public testing::Test {
           pass_in->CreateAndAppendSharedQuadState();
       shared_state2_in->SetAll(
           arbitrary_matrix2, arbitrary_rect2, arbitrary_rect2,
-          arbitrary_rrectf2, arbitrary_rect3, arbitrary_bool1, arbitrary_bool1,
-          arbitrary_float2, arbitrary_blend_mode2, arbitrary_context_id2);
+          gfx::MaskFilterInfo(arbitrary_rrectf2), arbitrary_rect3,
+          arbitrary_bool1, arbitrary_float2, arbitrary_blend_mode2,
+          arbitrary_context_id2, /*layer_id=*/0u,
+          /*fast_rounded_corner=*/false);
       for (uint32_t j = 0; j < 6; ++j) {
         auto* tile_in = pass_in->CreateAndAppendDrawQuad<TileDrawQuad>();
         tile_in->SetAll(
@@ -276,8 +290,10 @@ class VizSerializationPerfTest : public testing::Test {
           pass_in->CreateAndAppendSharedQuadState();
       shared_state3_in->SetAll(
           arbitrary_matrix1, arbitrary_rect3, arbitrary_rect3,
-          arbitrary_rrectf3, arbitrary_rect1, arbitrary_bool1, arbitrary_bool1,
-          arbitrary_float3, arbitrary_blend_mode3, arbitrary_context_id3);
+          gfx::MaskFilterInfo(arbitrary_rrectf3), arbitrary_rect1,
+          arbitrary_bool1, arbitrary_float3, arbitrary_blend_mode3,
+          arbitrary_context_id3, /*layer_id=*/0u,
+          /*fast_rounded_corner=*/false);
       for (uint32_t j = 0; j < 5; ++j) {
         auto* solidcolor_in =
             pass_in->CreateAndAppendDrawQuad<SolidColorDrawQuad>();
@@ -308,7 +324,7 @@ class VizSerializationPerfTest : public testing::Test {
         const bool kForceAntiAliasingOff = true;
         auto* quad = render_pass->CreateAndAppendDrawQuad<SolidColorDrawQuad>();
         quad->SetNew(render_pass->shared_quad_state_list.back(), bounds, bounds,
-                     SK_ColorRED, kForceAntiAliasingOff);
+                     SkColors::kRed, kForceAntiAliasingOff);
       }
       frame.render_pass_list.push_back(std::move(render_pass));
     }

@@ -1,10 +1,11 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef CONTENT_PUBLIC_BROWSER_RENDER_PROCESS_HOST_OBSERVER_H_
 #define CONTENT_PUBLIC_BROWSER_RENDER_PROCESS_HOST_OBSERVER_H_
 
+#include "base/observer_list_types.h"
 #include "base/process/kill.h"
 #include "base/process/process_handle.h"
 #include "content/common/content_export.h"
@@ -18,7 +19,7 @@ struct ChildProcessTerminationInfo;
 // in RenderProcessHost lifecycle events. Note that this does not allow
 // observing the creation of a RenderProcessHost. There is a separate observer
 // for that: RenderProcessHostCreationObserver.
-class CONTENT_EXPORT RenderProcessHostObserver {
+class CONTENT_EXPORT RenderProcessHostObserver : public base::CheckedObserver {
  public:
   // This method is invoked when the process was launched and the channel was
   // connected. This is the earliest time it is safe to call Shutdown on the
@@ -38,8 +39,17 @@ class CONTENT_EXPORT RenderProcessHostObserver {
   // active renderer process for the top-level frame; for code that needs to be
   // a WebContentsObserver anyway, consider whether that API might be a better
   // choice.
+  //
+  // This is not called in --single-process mode.
   virtual void RenderProcessExited(RenderProcessHost* host,
                                    const ChildProcessTerminationInfo& info) {}
+
+  // This is the equivalent to the `RenderProcessExited` notification above but
+  // for --single-process mode only. This is invoked just before calling
+  // `RenderProcessHostDestroyed`. Useful for observers that needs the two-step
+  // destruction mechanism of RenderProcessHost objects, even in
+  // --single--process mode, allowing the logic to be shared between both modes.
+  virtual void InProcessRendererExiting(RenderProcessHost* host) {}
 
   // This method is invoked when the observed RenderProcessHost itself is
   // destroyed. This is guaranteed to be the last call made to the observer, so
@@ -48,7 +58,7 @@ class CONTENT_EXPORT RenderProcessHostObserver {
   virtual void RenderProcessHostDestroyed(RenderProcessHost* host) {}
 
  protected:
-  virtual ~RenderProcessHostObserver() {}
+  ~RenderProcessHostObserver() override;
 };
 
 }  // namespace content

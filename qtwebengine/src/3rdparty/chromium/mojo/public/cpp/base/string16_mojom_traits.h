@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,7 +9,6 @@
 
 #include "base/component_export.h"
 #include "base/containers/span.h"
-#include "base/strings/string_piece.h"
 #include "mojo/public/cpp/base/big_buffer.h"
 #include "mojo/public/cpp/bindings/struct_traits.h"
 #include "mojo/public/mojom/base/string16.mojom-shared.h"
@@ -27,23 +26,23 @@ struct COMPONENT_EXPORT(MOJO_BASE_TRAITS)
 
 template <>
 struct COMPONENT_EXPORT(MOJO_BASE_TRAITS)
-    StructTraits<mojo_base::mojom::String16DataView, base::string16> {
-  static base::span<const uint16_t> data(const base::string16& str) {
+    StructTraits<mojo_base::mojom::String16DataView, std::u16string> {
+  static base::span<const uint16_t> data(const std::u16string& str) {
     return StructTraits<mojo_base::mojom::String16DataView,
                         base::StringPiece16>::data(str);
   }
 
   static bool Read(mojo_base::mojom::String16DataView data,
-                   base::string16* out);
+                   std::u16string* out);
 };
 
 template <>
 struct COMPONENT_EXPORT(MOJO_BASE_TRAITS)
-    StructTraits<mojo_base::mojom::BigString16DataView, base::string16> {
-  static mojo_base::BigBuffer data(const base::string16& str);
+    StructTraits<mojo_base::mojom::BigString16DataView, std::u16string> {
+  static mojo_base::BigBuffer data(const std::u16string& str);
 
   static bool Read(mojo_base::mojom::BigString16DataView data,
-                   base::string16* out);
+                   std::u16string* out);
 };
 
 }  // namespace mojo

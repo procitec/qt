@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,8 +11,9 @@ import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.robolectric.annotation.Config;
 
-import org.chromium.base.test.BaseJUnit4ClassRunner;
+import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Feature;
 import org.chromium.components.minidump_uploader.CrashTestRule.MockCrashReportingPermissionManager;
 import org.chromium.components.minidump_uploader.MinidumpUploadCallable.MinidumpUploadStatus;
@@ -23,16 +24,14 @@ import java.io.File;
 import java.io.FileReader;
 import java.io.IOException;
 
-/**
- * Unittests for {@link MinidumpUploadCallable}.
- */
-@RunWith(BaseJUnit4ClassRunner.class)
+/** Unittests for {@link MinidumpUploadCallable}. */
+@RunWith(BaseRobolectricTestRunner.class)
+@Config(manifest = Config.NONE)
 public class MinidumpUploadCallableTest {
     private static final String LOCAL_CRASH_ID = "123_log";
     private static final String LOG_FILE_NAME = "chromium_renderer-123_log.dmp224";
 
-    @Rule
-    public CrashTestRule mTestRule = new CrashTestRule();
+    @Rule public CrashTestRule mTestRule = new CrashTestRule();
 
     private File mTestUpload;
     private File mUploadLog;
@@ -42,7 +41,8 @@ public class MinidumpUploadCallableTest {
         private Result mMockResult;
 
         public static MinidumpUploader returnsSuccess() {
-            return new MockMinidumpUploader(Result.success(MinidumpUploaderTest.UPLOAD_CRASH_ID));
+            return new MockMinidumpUploader(
+                    Result.success(MinidumpUploaderTestConstants.UPLOAD_CRASH_ID));
         }
 
         public static MinidumpUploader returnsFailure(String message) {
@@ -66,7 +66,7 @@ public class MinidumpUploadCallableTest {
 
     private void createMinidumpFile() throws Exception {
         mTestUpload = new File(mTestRule.getCrashDir(), LOG_FILE_NAME);
-        CrashTestRule.setUpMinidumpFile(mTestUpload, MinidumpUploaderTest.BOUNDARY);
+        CrashTestRule.setUpMinidumpFile(mTestUpload, MinidumpUploaderTestConstants.BOUNDARY);
     }
 
     private void setForcedUpload() {
@@ -95,10 +95,16 @@ public class MinidumpUploadCallableTest {
     public void testSuccessfulUpload() throws Exception {
         final CrashReportingPermissionManager testPermManager =
                 new MockCrashReportingPermissionManager() {
-                    { mIsEnabledForTests = true; }
+                    {
+                        mIsEnabledForTests = true;
+                    }
                 };
-        MinidumpUploadCallable minidumpUploadCallable = new MinidumpUploadCallable(
-                mTestUpload, mUploadLog, MockMinidumpUploader.returnsSuccess(), testPermManager);
+        MinidumpUploadCallable minidumpUploadCallable =
+                new MinidumpUploadCallable(
+                        mTestUpload,
+                        mUploadLog,
+                        MockMinidumpUploader.returnsSuccess(),
+                        testPermManager);
         Assert.assertEquals(MinidumpUploadStatus.SUCCESS, minidumpUploadCallable.call().intValue());
         Assert.assertTrue(mExpectedFileAfterUpload.exists());
         assertValidUploadLogEntry();
@@ -110,10 +116,16 @@ public class MinidumpUploadCallableTest {
     public void testFailedUploadLocalError() throws Exception {
         final CrashReportingPermissionManager testPermManager =
                 new MockCrashReportingPermissionManager() {
-                    { mIsEnabledForTests = true; }
+                    {
+                        mIsEnabledForTests = true;
+                    }
                 };
-        MinidumpUploadCallable minidumpUploadCallable = new MinidumpUploadCallable(mTestUpload,
-                mUploadLog, MockMinidumpUploader.returnsFailure("Failed"), testPermManager);
+        MinidumpUploadCallable minidumpUploadCallable =
+                new MinidumpUploadCallable(
+                        mTestUpload,
+                        mUploadLog,
+                        MockMinidumpUploader.returnsFailure("Failed"),
+                        testPermManager);
         Assert.assertEquals(MinidumpUploadStatus.FAILURE, minidumpUploadCallable.call().intValue());
         Assert.assertFalse(mExpectedFileAfterUpload.exists());
     }
@@ -124,11 +136,16 @@ public class MinidumpUploadCallableTest {
     public void testFailedUploadRemoteError() throws Exception {
         final CrashReportingPermissionManager testPermManager =
                 new MockCrashReportingPermissionManager() {
-                    { mIsEnabledForTests = true; }
+                    {
+                        mIsEnabledForTests = true;
+                    }
                 };
         MinidumpUploadCallable minidumpUploadCallable =
-                new MinidumpUploadCallable(mTestUpload, mUploadLog,
-                        MockMinidumpUploader.returnsUploadError(404, "Not Found"), testPermManager);
+                new MinidumpUploadCallable(
+                        mTestUpload,
+                        mUploadLog,
+                        MockMinidumpUploader.returnsUploadError(404, "Not Found"),
+                        testPermManager);
         Assert.assertEquals(MinidumpUploadStatus.FAILURE, minidumpUploadCallable.call().intValue());
         Assert.assertFalse(mExpectedFileAfterUpload.exists());
     }
@@ -147,8 +164,12 @@ public class MinidumpUploadCallableTest {
                     }
                 };
 
-        MinidumpUploadCallable minidumpUploadCallable = new MinidumpUploadCallable(
-                mTestUpload, mUploadLog, MockMinidumpUploader.returnsSuccess(), testPermManager);
+        MinidumpUploadCallable minidumpUploadCallable =
+                new MinidumpUploadCallable(
+                        mTestUpload,
+                        mUploadLog,
+                        MockMinidumpUploader.returnsSuccess(),
+                        testPermManager);
         Assert.assertEquals(MinidumpUploadStatus.SUCCESS, minidumpUploadCallable.call().intValue());
         Assert.assertTrue(mExpectedFileAfterUpload.exists());
         assertValidUploadLogEntry();
@@ -168,13 +189,18 @@ public class MinidumpUploadCallableTest {
                     }
                 };
 
-        MinidumpUploadCallable minidumpUploadCallable = new MinidumpUploadCallable(
-                mTestUpload, mUploadLog, MockMinidumpUploader.returnsSuccess(), testPermManager);
+        MinidumpUploadCallable minidumpUploadCallable =
+                new MinidumpUploadCallable(
+                        mTestUpload,
+                        mUploadLog,
+                        MockMinidumpUploader.returnsSuccess(),
+                        testPermManager);
         Assert.assertEquals(
                 MinidumpUploadStatus.USER_DISABLED, minidumpUploadCallable.call().intValue());
 
-        File expectedSkippedFileAfterUpload = new File(
-                mTestRule.getCrashDir(), mTestUpload.getName().replace(".dmp", ".skipped"));
+        File expectedSkippedFileAfterUpload =
+                new File(
+                        mTestRule.getCrashDir(), mTestUpload.getName().replace(".dmp", ".skipped"));
         Assert.assertTrue(expectedSkippedFileAfterUpload.exists());
         Assert.assertFalse(mExpectedFileAfterUpload.exists());
     }
@@ -193,13 +219,19 @@ public class MinidumpUploadCallableTest {
                     }
                 };
 
-        MinidumpUploadCallable minidumpUploadCallable = new MinidumpUploadCallable(
-                mTestUpload, mUploadLog, MockMinidumpUploader.returnsSuccess(), testPermManager);
-        Assert.assertEquals(MinidumpUploadStatus.DISABLED_BY_SAMPLING,
+        MinidumpUploadCallable minidumpUploadCallable =
+                new MinidumpUploadCallable(
+                        mTestUpload,
+                        mUploadLog,
+                        MockMinidumpUploader.returnsSuccess(),
+                        testPermManager);
+        Assert.assertEquals(
+                MinidumpUploadStatus.DISABLED_BY_SAMPLING,
                 minidumpUploadCallable.call().intValue());
 
-        File expectedSkippedFileAfterUpload = new File(
-                mTestRule.getCrashDir(), mTestUpload.getName().replace(".dmp", ".skipped"));
+        File expectedSkippedFileAfterUpload =
+                new File(
+                        mTestRule.getCrashDir(), mTestUpload.getName().replace(".dmp", ".skipped"));
         Assert.assertTrue(expectedSkippedFileAfterUpload.exists());
         Assert.assertFalse(mExpectedFileAfterUpload.exists());
     }
@@ -218,8 +250,12 @@ public class MinidumpUploadCallableTest {
                     }
                 };
 
-        MinidumpUploadCallable minidumpUploadCallable = new MinidumpUploadCallable(
-                mTestUpload, mUploadLog, MockMinidumpUploader.returnsSuccess(), testPermManager);
+        MinidumpUploadCallable minidumpUploadCallable =
+                new MinidumpUploadCallable(
+                        mTestUpload,
+                        mUploadLog,
+                        MockMinidumpUploader.returnsSuccess(),
+                        testPermManager);
         Assert.assertEquals(MinidumpUploadStatus.FAILURE, minidumpUploadCallable.call().intValue());
         Assert.assertFalse(mExpectedFileAfterUpload.exists());
     }
@@ -238,8 +274,12 @@ public class MinidumpUploadCallableTest {
                     }
                 };
 
-        MinidumpUploadCallable minidumpUploadCallable = new MinidumpUploadCallable(
-                mTestUpload, mUploadLog, MockMinidumpUploader.returnsSuccess(), testPermManager);
+        MinidumpUploadCallable minidumpUploadCallable =
+                new MinidumpUploadCallable(
+                        mTestUpload,
+                        mUploadLog,
+                        MockMinidumpUploader.returnsSuccess(),
+                        testPermManager);
         Assert.assertEquals(MinidumpUploadStatus.SUCCESS, minidumpUploadCallable.call().intValue());
         Assert.assertTrue(mExpectedFileAfterUpload.exists());
         assertValidUploadLogEntry();
@@ -260,8 +300,12 @@ public class MinidumpUploadCallableTest {
                     }
                 };
 
-        MinidumpUploadCallable minidumpUploadCallable = new MinidumpUploadCallable(
-                mTestUpload, mUploadLog, MockMinidumpUploader.returnsSuccess(), testPermManager);
+        MinidumpUploadCallable minidumpUploadCallable =
+                new MinidumpUploadCallable(
+                        mTestUpload,
+                        mUploadLog,
+                        MockMinidumpUploader.returnsSuccess(),
+                        testPermManager);
         Assert.assertEquals(MinidumpUploadStatus.SUCCESS, minidumpUploadCallable.call().intValue());
         Assert.assertTrue(mExpectedFileAfterUpload.exists());
         assertValidUploadLogEntry();
@@ -282,12 +326,18 @@ public class MinidumpUploadCallableTest {
                     }
                 };
 
-        MinidumpUploadCallable minidumpUploadCallable = new MinidumpUploadCallable(
-                mTestUpload, mUploadLog, MockMinidumpUploader.returnsSuccess(), testPermManager);
+        MinidumpUploadCallable minidumpUploadCallable =
+                new MinidumpUploadCallable(
+                        mTestUpload,
+                        mUploadLog,
+                        MockMinidumpUploader.returnsSuccess(),
+                        testPermManager);
         Assert.assertEquals(MinidumpUploadStatus.SUCCESS, minidumpUploadCallable.call().intValue());
 
-        File expectedSkippedFileAfterUpload = new File(
-                mTestRule.getCrashDir(), mTestUpload.getName().replace(".forced", ".skipped"));
+        File expectedSkippedFileAfterUpload =
+                new File(
+                        mTestRule.getCrashDir(),
+                        mTestUpload.getName().replace(".forced", ".skipped"));
         Assert.assertFalse(expectedSkippedFileAfterUpload.exists());
         Assert.assertTrue(mExpectedFileAfterUpload.exists());
     }
@@ -307,12 +357,18 @@ public class MinidumpUploadCallableTest {
                     }
                 };
 
-        MinidumpUploadCallable minidumpUploadCallable = new MinidumpUploadCallable(
-                mTestUpload, mUploadLog, MockMinidumpUploader.returnsSuccess(), testPermManager);
+        MinidumpUploadCallable minidumpUploadCallable =
+                new MinidumpUploadCallable(
+                        mTestUpload,
+                        mUploadLog,
+                        MockMinidumpUploader.returnsSuccess(),
+                        testPermManager);
         Assert.assertEquals(MinidumpUploadStatus.SUCCESS, minidumpUploadCallable.call().intValue());
 
-        File expectedSkippedFileAfterUpload = new File(
-                mTestRule.getCrashDir(), mTestUpload.getName().replace(".forced", ".skipped"));
+        File expectedSkippedFileAfterUpload =
+                new File(
+                        mTestRule.getCrashDir(),
+                        mTestUpload.getName().replace(".forced", ".skipped"));
         Assert.assertFalse(expectedSkippedFileAfterUpload.exists());
         Assert.assertTrue(mExpectedFileAfterUpload.exists());
     }
@@ -332,19 +388,25 @@ public class MinidumpUploadCallableTest {
                     }
                 };
 
-        MinidumpUploadCallable minidumpUploadCallable = new MinidumpUploadCallable(
-                mTestUpload, mUploadLog, MockMinidumpUploader.returnsSuccess(), testPermManager);
+        MinidumpUploadCallable minidumpUploadCallable =
+                new MinidumpUploadCallable(
+                        mTestUpload,
+                        mUploadLog,
+                        MockMinidumpUploader.returnsSuccess(),
+                        testPermManager);
         Assert.assertEquals(MinidumpUploadStatus.SUCCESS, minidumpUploadCallable.call().intValue());
 
-        File expectedSkippedFileAfterUpload = new File(
-                mTestRule.getCrashDir(), mTestUpload.getName().replace(".forced", ".skipped"));
+        File expectedSkippedFileAfterUpload =
+                new File(
+                        mTestRule.getCrashDir(),
+                        mTestUpload.getName().replace(".forced", ".skipped"));
         Assert.assertFalse(expectedSkippedFileAfterUpload.exists());
         Assert.assertTrue(mExpectedFileAfterUpload.exists());
     }
 
     private void assertValidUploadLogEntry() throws IOException {
         File logfile = new File(mTestRule.getCrashDir(), CrashFileManager.CRASH_DUMP_LOGFILE);
-        BufferedReader input =  new BufferedReader(new FileReader(logfile));
+        BufferedReader input = new BufferedReader(new FileReader(logfile));
         String line = null;
         String lastEntry = null;
         while ((line = input.readLine()) != null) {
@@ -355,7 +417,8 @@ public class MinidumpUploadCallableTest {
         Assert.assertNotNull("We do not have a single entry in uploads.log", lastEntry);
         String[] components = lastEntry.split(",");
         Assert.assertTrue(
-                "Log entry is expected to have exactly 3 components <upload-time>,<upload-id>,<local-id>",
+                "Log entry is expected to have exactly 3 components"
+                        + " <upload-time>,<upload-id>,<local-id>",
                 components.length == 3);
 
         String uploadTimeString = components[0];
@@ -370,7 +433,7 @@ public class MinidumpUploadCallableTest {
         Assert.assertTrue(time <= now);
         Assert.assertTrue(time > now - 60 * 60);
 
-        Assert.assertEquals(uploadId, MinidumpUploaderTest.UPLOAD_CRASH_ID);
+        Assert.assertEquals(uploadId, MinidumpUploaderTestConstants.UPLOAD_CRASH_ID);
         Assert.assertEquals(localId, LOCAL_CRASH_ID);
     }
 }

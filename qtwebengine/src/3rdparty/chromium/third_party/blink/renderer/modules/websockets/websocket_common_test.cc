@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,6 +9,7 @@
 #include <algorithm>
 
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
 namespace blink {
@@ -20,6 +21,7 @@ namespace {
 
 // This test also indirectly tests IsValidSubprotocolCharacter.
 TEST(WebSocketCommonTest, IsValidSubprotocolString) {
+  test::TaskEnvironment task_environment;
   EXPECT_TRUE(WebSocketCommon::IsValidSubprotocolString("Helloworld!!"));
   EXPECT_FALSE(WebSocketCommon::IsValidSubprotocolString("Hello, world!!"));
   EXPECT_FALSE(WebSocketCommon::IsValidSubprotocolString(String()));
@@ -38,18 +40,20 @@ TEST(WebSocketCommonTest, IsValidSubprotocolString) {
                   static_cast<char>(i)) != kValidCharacters + length) {
       continue;
     }
-    char to_check = char{i};
+    char to_check = static_cast<char>(i);
     String s(&to_check, 1u);
     EXPECT_FALSE(WebSocketCommon::IsValidSubprotocolString(s));
   }
 }
 
 TEST(WebSocketCommonTest, EncodeSubprotocolString) {
+  test::TaskEnvironment task_environment;
   EXPECT_EQ("\\\\\\u0009\\u000D\\uFE0F ~hello\\u000A",
             WebSocketCommon::EncodeSubprotocolString(u"\\\t\r\uFE0F ~hello\n"));
 }
 
 TEST(WebSocketCommonTest, JoinStrings) {
+  test::TaskEnvironment task_environment;
   EXPECT_EQ("", WebSocketCommon::JoinStrings({}, ","));
   EXPECT_EQ("ab", WebSocketCommon::JoinStrings({"ab"}, ","));
   EXPECT_EQ("ab,c", WebSocketCommon::JoinStrings({"ab", "c"}, ","));

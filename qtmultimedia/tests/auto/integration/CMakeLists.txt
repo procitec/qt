@@ -1,0 +1,40 @@
+# Copyright (C) 2022 The Qt Company Ltd.
+# SPDX-License-Identifier: BSD-3-Clause
+
+# Generated from integration.pro.
+
+# special case begin
+add_subdirectory(qaudiodecoderbackend)
+add_subdirectory(qaudiodevice)
+add_subdirectory(qaudiosource)
+add_subdirectory(qaudiosink)
+add_subdirectory(qmediaformatbackend)
+add_subdirectory(qmediaplayerbackend)
+if (QT_FEATURE_wmf)
+    add_subdirectory(qmediaplayer_concurrent)
+endif()
+add_subdirectory(qmediaplayerformatsupport)
+add_subdirectory(qmediarecorderbackend)
+add_subdirectory(qsoundeffect)
+if (QT_FEATURE_wmf)
+    add_subdirectory(qsoundeffect_concurrent)
+endif()
+add_subdirectory(qvideoframebackend)
+add_subdirectory(backends)
+if(QT_FEATURE_process)
+    add_subdirectory(multiapp)
+endif()
+add_subdirectory(qmediaframeinputsbackend)
+if(TARGET Qt::Widgets)
+    add_subdirectory(qmediacapturesession)
+    add_subdirectory(qcamerabackend)
+    add_subdirectory(qscreencapturebackend)
+    if(QT_FEATURE_process)
+        add_subdirectory(qwindowcapturebackend)
+    endif()
+endif()
+if(TARGET Qt::Quick)
+    add_subdirectory(qquickvideooutput)
+    add_subdirectory(qquickvideooutput_window)
+endif()
+# special case end

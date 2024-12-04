@@ -1,112 +1,98 @@
-/****************************************************************************
-**
-** Copyright (C) 2017 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the examples of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:BSD$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** BSD License Usage
-** Alternatively, you may use this file under the terms of the BSD license
-** as follows:
-**
-** "Redistribution and use in source and binary forms, with or without
-** modification, are permitted provided that the following conditions are
-** met:
-**   * Redistributions of source code must retain the above copyright
-**     notice, this list of conditions and the following disclaimer.
-**   * Redistributions in binary form must reproduce the above copyright
-**     notice, this list of conditions and the following disclaimer in
-**     the documentation and/or other materials provided with the
-**     distribution.
-**   * Neither the name of The Qt Company Ltd nor the names of its
-**     contributors may be used to endorse or promote products derived
-**     from this software without specific prior written permission.
-**
-**
-** THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-** "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-** LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-** A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-** OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-** SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-** LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-** DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-** THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-** (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-** OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE."
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2023 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR BSD-3-Clause
 
-var curVal = 0
-var memory = 0
-var lastOp = ""
-var previousOperator = ""
-var digits = ""
+.pragma library
 
-function disabled(op) {
-    if (digits == "" && !((op >= "0" && op <= "9") || op == "."))
+let curVal = 0
+let previousOperator = ""
+let lastOp = ""
+let digits = ""
+
+function isOperationDisabled(op, display) {
+    if (digits !== "" && lastOp !== "=" && (op === "π" || op === "e"))
         return true
-    else if (op == '=' && previousOperator.length != 1)
+    if (digits === "" && !((op >= "0" && op <= "9") || op === "π" || op === "e" || op === "AC"))
         return true
-    else if (op == "." && digits.toString().search(/\./) != -1) {
+    if (op === "bs" && (display.isOperandEmpty() || !((lastOp >= "0" && lastOp <= "9")
+                                                      || lastOp === "π" || lastOp === "e" || lastOp === ".")))
         return true
-    } else if (op == "√" &&  digits.toString().search(/-/) != -1) {
+    if (op === '=' && previousOperator.length != 1)
         return true
-    } else {
-        return false
-    }
+    if (op === "." && digits.search(/\./) != -1)
+        return true
+    if (op === "√" &&  digits.search(/-/) != -1)
+        return true
+    if (op === "AC" && display.isDisplayEmpty())
+        return true
+
+    return false
 }
 
-function digitPressed(op)
-{
-    if (disabled(op))
+function digitPressed(op, display) {
+    if (isOperationDisabled(op, display))
         return
-    if (digits.toString().length >= display.maxDigits)
+    if (lastOp === "π" || lastOp === "e")
         return
-    if (lastOp.toString().length == 1 && ((lastOp >= "0" && lastOp <= "9") || lastOp == ".") ) {
+    // handle mathematical constants
+    if (op === "π") {
+        lastOp = op
+        digits = Math.PI.toPrecision(display.maxDigits - 1).toString()
+        display.appendDigit(digits)
+        return
+    }
+    if (op === "e") {
+        lastOp = op
+        digits = Math.E.toPrecision(display.maxDigits - 1).toString()
+        display.appendDigit(digits)
+        return
+    }
+
+    // append a digit to another digit or decimal point
+    if (lastOp.toString().length === 1 && ((lastOp >= "0" && lastOp <= "9") || lastOp === ".") ) {
+        if (digits.length >= display.maxDigits)
+            return
         digits = digits + op.toString()
         display.appendDigit(op.toString())
+    // else just write a single digit to display
     } else {
-        digits = op
-        display.appendDigit(op.toString())
+        digits = op.toString()
+        display.appendDigit(digits)
     }
     lastOp = op
 }
 
-function operatorPressed(op)
-{
-    if (disabled(op))
+function operatorPressed(op, display) {
+    if (isOperationDisabled(op, display))
         return
-    lastOp = op
 
-    if (op == "±") {
-            digits = Number(digits.valueOf() * -1)
-            display.setDigit(display.displayNumber(digits))
-            return
-        }
-
-    if (previousOperator == "+") {
-        digits = Number(digits.valueOf()) + Number(curVal.valueOf())
-    } else if (previousOperator == "−") {
-        digits = Number(curVal.valueOf()) - Number(digits.valueOf())
-    } else if (previousOperator == "×") {
-        digits = Number(curVal) * Number(digits.valueOf())
-    } else if (previousOperator == "÷") {
-        digits = Number(curVal) / Number(digits.valueOf())
+    if (op === "±") {
+        digits = Number(digits.valueOf() * -1).toString()
+        display.setDigit(display.displayNumber(Number(digits)))
+        return
     }
 
-    if (op == "+" || op == "−" || op == "×" || op == "÷") {
+    if (op === "bs") {
+        digits = digits.slice(0, -1)
+        if (digits === "-")
+            digits = ""
+        display.backspace()
+        return
+    }
+
+    lastOp = op
+
+    if (previousOperator === "+") {
+        digits = (Number(curVal) + Number(digits.valueOf())).toString()
+    } else if (previousOperator === "−") {
+        digits = (Number(curVal) - Number(digits.valueOf())).toString()
+    } else if (previousOperator === "×") {
+        digits = (Number(curVal) * Number(digits.valueOf())).toString()
+    } else if (previousOperator === "÷") {
+        digits = (Number(curVal) / Number(digits.valueOf())).toString()
+    }
+
+
+    if (op === "+" || op === "−" || op === "×" || op === "÷") {
         previousOperator = op
         curVal = digits.valueOf()
         digits = ""
@@ -114,48 +100,53 @@ function operatorPressed(op)
         return
     }
 
-    if (op == "=") {
-        display.newLine("=", digits.valueOf())
-    }
-
     curVal = 0
     previousOperator = ""
 
-    if (op == "1/x") {
-        digits = (1 / digits.valueOf()).toString()
-    } else if (op == "x^2") {
-        digits = (digits.valueOf() * digits.valueOf()).toString()
-    } else if (op == "Abs") {
-        digits = (Math.abs(digits.valueOf())).toString()
-    } else if (op == "Int") {
-        digits = (Math.floor(digits.valueOf())).toString()
-    } else if (op == "√") {
-        digits = Number(Math.sqrt(digits.valueOf()))
-        display.newLine("√", digits.valueOf())
-    } else if (op == "mc") {
-        memory = 0;
-    } else if (op == "m+") {
-        memory += digits.valueOf()
-    } else if (op == "mr") {
-        digits = memory.toString()
-    } else if (op == "m-") {
-        memory = digits.valueOf()
-    } else if (op == "backspace") {
-        digits = digits.toString().slice(0, -1)
-        display.clear()
-        display.appendDigit(digits)
-    } else if (op == "Off") {
-        Qt.quit();
+    if (op === "=") {
+        display.newLine("=", Number(digits))
     }
 
-    // Reset the state on 'C' operator or after
-    // an error occurred
-    if (op == "C" || display.isError) {
-        display.clear()
+    if (op === "√") {
+        digits = (Math.sqrt(digits.valueOf())).toString()
+        display.newLine("√", Number(digits))
+    } else if (op === "⅟x") {
+        digits = (1 / digits.valueOf()).toString()
+        display.newLine("⅟x", Number(digits))
+    } else if (op === "x²") {
+        digits = (digits.valueOf() * digits.valueOf()).toString()
+        display.newLine("x²", Number(digits))
+    } else if (op === "x³") {
+        digits = (digits.valueOf() * digits.valueOf() * digits.valueOf()).toString()
+        display.newLine("x³", Number(digits))
+    } else if (op === "|x|") {
+        digits = (Math.abs(digits.valueOf())).toString()
+        display.newLine("|x|", Number(digits))
+    } else if (op === "⌊x⌋") {
+        digits = (Math.floor(digits.valueOf())).toString()
+        display.newLine("⌊x⌋", Number(digits))
+    } else if (op === "sin") {
+        digits = Number(Math.sin(digits.valueOf())).toString()
+        display.newLine("sin", Number(digits))
+    } else if (op === "cos") {
+        digits = Number(Math.cos(digits.valueOf())).toString()
+        display.newLine("cos", Number(digits))
+    } else if (op === "tan") {
+        digits = Number(Math.tan(digits.valueOf())).toString()
+        display.newLine("tan", Number(digits))
+    } else if (op === "log") {
+        digits = Number(Math.log10(digits.valueOf())).toString()
+        display.newLine("log", Number(digits))
+    } else if (op === "ln") {
+        digits = Number(Math.log(digits.valueOf())).toString()
+        display.newLine("ln", Number(digits))
+    }
+
+    if (op === "AC") {
+        display.allClear()
         curVal = 0
-        memory = 0
         lastOp = ""
         digits = ""
+        previousOperator = ""
     }
 }
-

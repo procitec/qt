@@ -10,9 +10,10 @@
 
 #include <stdint.h>
 #include <string.h>
-#include <unordered_map>
 #include <utility>
 
+#include "absl/base/macros.h"
+#include "absl/container/flat_hash_map.h"
 #include "util/logging.h"
 #include "util/utf.h"
 #include "re2/pod_array.h"
@@ -79,9 +80,11 @@ static const PatchList kNullPatchList = {0, 0};
 struct Frag {
   uint32_t begin;
   PatchList end;
+  bool nullable;
 
-  Frag() : begin(0) { end.head = 0; }  // needed so Frag can go in vector
-  Frag(uint32_t begin, PatchList end) : begin(begin), end(end) {}
+  Frag() : begin(0), end(kNullPatchList), nullable(false) {}
+  Frag(uint32_t begin, PatchList end, bool nullable)
+      : begin(begin), end(end), nullable(nullable) {}
 };
 
 // Input encodings.
@@ -209,7 +212,7 @@ class Compiler : public Regexp::Walker<Frag> {
 
   int64_t max_mem_;    // Total memory budget.
 
-  std::unordered_map<uint64_t, int> rune_cache_;
+  absl::flat_hash_map<uint64_t, int> rune_cache_;
   Frag rune_range_;
 
   RE2::Anchor anchor_;  // anchor mode for RE2::Set
@@ -264,7 +267,7 @@ int Compiler::AllocInst(int n) {
 
 // Returns an unmatchable fragment.
 Frag Compiler::NoMatch() {
-  return Frag(0, kNullPatchList);
+  return Frag();
 }
 
 // Is a an unmatchable fragment?
@@ -290,11 +293,11 @@ Frag Compiler::Cat(Frag a, Frag b) {
   // To run backward over string, reverse all concatenations.
   if (reversed_) {
     PatchList::Patch(inst_.data(), b.end, a.begin);
-    return Frag(b.begin, a.end);
+    return Frag(b.begin, a.end, b.nullable && a.nullable);
   }
 
   PatchList::Patch(inst_.data(), a.end, b.begin);
-  return Frag(a.begin, b.end);
+  return Frag(a.begin, b.end, a.nullable && b.nullable);
 }
 
 // Given fragments for a and b, returns fragment for a|b.
@@ -310,7 +313,8 @@ Frag Compiler::Alt(Frag a, Frag b) {
     return NoMatch();
 
   inst_[id].InitAlt(a.begin, b.begin);
-  return Frag(id, PatchList::Append(inst_.data(), a.end, b.end));
+  return Frag(id, PatchList::Append(inst_.data(), a.end, b.end),
+              a.nullable || b.nullable);
 }
 
 // When capturing submatches in like-Perl mode, a kOpAlt Inst
@@ -320,27 +324,44 @@ Frag Compiler::Alt(Frag a, Frag b) {
 // then the operator is greedy.  If out1_ is the repetition
 // (and out_ moves forward), then the operator is non-greedy.
 
-// Given a fragment a, returns a fragment for a* or a*? (if nongreedy)
-Frag Compiler::Star(Frag a, bool nongreedy) {
+// Given a fragment for a, returns a fragment for a+ or a+? (if nongreedy)
+Frag Compiler::Plus(Frag a, bool nongreedy) {
   int id = AllocInst(1);
   if (id < 0)
     return NoMatch();
-  inst_[id].InitAlt(0, 0);
-  PatchList::Patch(inst_.data(), a.end, id);
+  PatchList pl;
   if (nongreedy) {
-    inst_[id].out1_ = a.begin;
-    return Frag(id, PatchList::Mk(id << 1));
+    inst_[id].InitAlt(0, a.begin);
+    pl = PatchList::Mk(id << 1);
   } else {
-    inst_[id].set_out(a.begin);
-    return Frag(id, PatchList::Mk((id << 1) | 1));
+    inst_[id].InitAlt(a.begin, 0);
+    pl = PatchList::Mk((id << 1) | 1);
   }
+  PatchList::Patch(inst_.data(), a.end, id);
+  return Frag(a.begin, pl, a.nullable);
 }
 
-// Given a fragment for a, returns a fragment for a+ or a+? (if nongreedy)
-Frag Compiler::Plus(Frag a, bool nongreedy) {
-  // a+ is just a* with a different entry point.
-  Frag f = Star(a, nongreedy);
-  return Frag(a.begin, f.end);
+// Given a fragment for a, returns a fragment for a* or a*? (if nongreedy)
+Frag Compiler::Star(Frag a, bool nongreedy) {
+  // When the subexpression is nullable, one Alt isn't enough to guarantee
+  // correct priority ordering within the transitive closure. The simplest
+  // solution is to handle it as (a+)? instead, which adds the second Alt.
+  if (a.nullable)
+    return Quest(Plus(a, nongreedy), nongreedy);
+
+  int id = AllocInst(1);
+  if (id < 0)
+    return NoMatch();
+  PatchList pl;
+  if (nongreedy) {
+    inst_[id].InitAlt(0, a.begin);
+    pl = PatchList::Mk(id << 1);
+  } else {
+    inst_[id].InitAlt(a.begin, 0);
+    pl = PatchList::Mk((id << 1) | 1);
+  }
+  PatchList::Patch(inst_.data(), a.end, id);
+  return Frag(id, pl, true);
 }
 
 // Given a fragment for a, returns a fragment for a? or a?? (if nongreedy)
@@ -358,7 +379,7 @@ Frag Compiler::Quest(Frag a, bool nongreedy) {
     inst_[id].InitAlt(a.begin, 0);
     pl = PatchList::Mk((id << 1) | 1);
   }
-  return Frag(id, PatchList::Append(inst_.data(), pl, a.end));
+  return Frag(id, PatchList::Append(inst_.data(), pl, a.end), true);
 }
 
 // Returns a fragment for the byte range lo-hi.
@@ -367,7 +388,7 @@ Frag Compiler::ByteRange(int lo, int hi, bool foldcase) {
   if (id < 0)
     return NoMatch();
   inst_[id].InitByteRange(lo, hi, foldcase, 0);
-  return Frag(id, PatchList::Mk(id << 1));
+  return Frag(id, PatchList::Mk(id << 1), false);
 }
 
 // Returns a no-op fragment.  Sometimes unavoidable.
@@ -376,7 +397,7 @@ Frag Compiler::Nop() {
   if (id < 0)
     return NoMatch();
   inst_[id].InitNop(0);
-  return Frag(id, PatchList::Mk(id << 1));
+  return Frag(id, PatchList::Mk(id << 1), true);
 }
 
 // Returns a fragment that signals a match.
@@ -385,7 +406,7 @@ Frag Compiler::Match(int32_t match_id) {
   if (id < 0)
     return NoMatch();
   inst_[id].InitMatch(match_id);
-  return Frag(id, kNullPatchList);
+  return Frag(id, kNullPatchList, false);
 }
 
 // Returns a fragment matching a particular empty-width op (like ^ or $)
@@ -394,7 +415,7 @@ Frag Compiler::EmptyWidth(EmptyOp empty) {
   if (id < 0)
     return NoMatch();
   inst_[id].InitEmptyWidth(empty, 0);
-  return Frag(id, PatchList::Mk(id << 1));
+  return Frag(id, PatchList::Mk(id << 1), true);
 }
 
 // Given a fragment a, returns a fragment with capturing parens around a.
@@ -408,7 +429,7 @@ Frag Compiler::Capture(Frag a, int n) {
   inst_[id+1].InitCapture(2*n+1, 0);
   PatchList::Patch(inst_.data(), a.end, id+1);
 
-  return Frag(id, PatchList::Mk((id+1) << 1));
+  return Frag(id, PatchList::Mk((id+1) << 1), a.nullable);
 }
 
 // A Rune is a name for a Unicode code point.
@@ -458,7 +479,7 @@ static uint64_t MakeRuneCacheKey(uint8_t lo, uint8_t hi, bool foldcase,
 int Compiler::CachedRuneByteSuffix(uint8_t lo, uint8_t hi, bool foldcase,
                                    int next) {
   uint64_t key = MakeRuneCacheKey(lo, hi, foldcase, next);
-  std::unordered_map<uint64_t, int>::const_iterator it = rune_cache_.find(key);
+  absl::flat_hash_map<uint64_t, int>::const_iterator it = rune_cache_.find(key);
   if (it != rune_cache_.end())
     return it->second;
   int id = UncachedRuneByteSuffix(lo, hi, foldcase, next);
@@ -567,7 +588,7 @@ bool Compiler::ByteRangeEqual(int id1, int id2) {
 Frag Compiler::FindByteRange(int root, int id) {
   if (inst_[root].opcode() == kInstByteRange) {
     if (ByteRangeEqual(root, id))
-      return Frag(root, kNullPatchList);
+      return Frag(root, kNullPatchList, false);
     else
       return NoMatch();
   }
@@ -575,7 +596,7 @@ Frag Compiler::FindByteRange(int root, int id) {
   while (inst_[root].opcode() == kInstAlt) {
     int out1 = inst_[root].out1();
     if (ByteRangeEqual(out1, id))
-      return Frag(root, PatchList::Mk((root << 1) | 1));
+      return Frag(root, PatchList::Mk((root << 1) | 1), false);
 
     // CharClass is a sorted list of ranges, so if out1 of the root Alt wasn't
     // what we're looking for, then we can stop immediately. Unfortunately, we
@@ -587,7 +608,7 @@ Frag Compiler::FindByteRange(int root, int id) {
     if (inst_[out].opcode() == kInstAlt)
       root = out;
     else if (ByteRangeEqual(out, id))
-      return Frag(root, PatchList::Mk(root << 1));
+      return Frag(root, PatchList::Mk(root << 1), false);
     else
       return NoMatch();
   }
@@ -769,8 +790,8 @@ void Compiler::AddRuneRangeUTF8(Rune lo, Rune hi, bool foldcase) {
 // Should not be called.
 Frag Compiler::Copy(Frag arg) {
   // We're using WalkExponential; there should be no copying.
-  LOG(DFATAL) << "Compiler::Copy called!";
   failed_ = true;
+  LOG(DFATAL) << "Compiler::Copy called!";
   return NoMatch();
 }
 
@@ -896,8 +917,8 @@ Frag Compiler::PostVisit(Regexp* re, Frag, Frag, Frag* child_frags,
       CharClass* cc = re->cc();
       if (cc->empty()) {
         // This can't happen.
-        LOG(DFATAL) << "No ranges in char class";
         failed_ = true;
+        LOG(DFATAL) << "No ranges in char class";
         return NoMatch();
       }
 
@@ -954,8 +975,8 @@ Frag Compiler::PostVisit(Regexp* re, Frag, Frag, Frag* child_frags,
     case kRegexpNoWordBoundary:
       return EmptyWidth(kEmptyNonWordBoundary);
   }
-  LOG(DFATAL) << "Missing case in Compiler: " << re->op();
   failed_ = true;
+  LOG(DFATAL) << "Missing case in Compiler: " << re->op();
   return NoMatch();
 }
 
@@ -1156,12 +1177,8 @@ Prog* Compiler::Finish(Regexp* re) {
   if (!prog_->reversed()) {
     std::string prefix;
     bool prefix_foldcase;
-    if (re->RequiredPrefixForAccel(&prefix, &prefix_foldcase) &&
-        !prefix_foldcase) {
-      prog_->prefix_size_ = prefix.size();
-      prog_->prefix_front_ = prefix.front();
-      prog_->prefix_back_ = prefix.back();
-    }
+    if (re->RequiredPrefixForAccel(&prefix, &prefix_foldcase))
+      prog_->ConfigurePrefixAccel(prefix, prefix_foldcase);
   }
 
   // Record remaining memory for DFA.
@@ -1227,7 +1244,7 @@ Prog* Compiler::CompileSet(Regexp* re, RE2::Anchor anchor, int64_t max_mem) {
   // Make sure DFA has enough memory to operate,
   // since we're not going to fall back to the NFA.
   bool dfa_failed = false;
-  StringPiece sp = "hello, world";
+  absl::string_view sp = "hello, world";
   prog->SearchDFA(sp, sp, Prog::kAnchored, Prog::kManyMatch,
                   NULL, &dfa_failed, NULL);
   if (dfa_failed) {

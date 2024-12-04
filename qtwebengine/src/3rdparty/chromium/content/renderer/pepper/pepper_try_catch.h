@@ -1,16 +1,17 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef CONTENT_RENDERER_PEPPER_PEPPER_TRY_CATCH_H_
 #define CONTENT_RENDERER_PEPPER_PEPPER_TRY_CATCH_H_
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "content/common/content_export.h"
 #include "ppapi/c/pp_var.h"
 #include "ppapi/shared_impl/scoped_pp_var.h"
-#include "v8/include/v8.h"
+#include "v8/include/v8-exception.h"
+#include "v8/include/v8-forward.h"
 
 namespace content {
 
@@ -47,7 +48,7 @@ class CONTENT_EXPORT PepperTryCatch {
   // shouldn't keep the instance around for too long.
   scoped_refptr<PepperPluginInstanceImpl> instance_;
 
-  V8VarConverter* var_converter_;
+  raw_ptr<V8VarConverter, ExperimentalRenderer> var_converter_;
 };
 
 // Catches var exceptions and emits a v8 exception.
@@ -56,6 +57,10 @@ class PepperTryCatchV8 : public PepperTryCatch {
   PepperTryCatchV8(PepperPluginInstanceImpl* instance,
                    V8VarConverter* var_converter,
                    v8::Isolate* isolate);
+
+  PepperTryCatchV8(const PepperTryCatchV8&) = delete;
+  PepperTryCatchV8& operator=(const PepperTryCatchV8&) = delete;
+
   ~PepperTryCatchV8() override;
 
   bool ThrowException();
@@ -69,8 +74,6 @@ class PepperTryCatchV8 : public PepperTryCatch {
 
  private:
   PP_Var exception_;
-
-  DISALLOW_COPY_AND_ASSIGN(PepperTryCatchV8);
 };
 
 // Catches v8 exceptions and emits a var exception.
@@ -82,6 +85,10 @@ class PepperTryCatchVar : public PepperTryCatch {
   PepperTryCatchVar(PepperPluginInstanceImpl* instance,
                     V8VarConverter* var_converter,
                     PP_Var* exception);
+
+  PepperTryCatchVar(const PepperTryCatchVar&) = delete;
+  PepperTryCatchVar& operator=(const PepperTryCatchVar&) = delete;
+
   ~PepperTryCatchVar() override;
 
   // PepperTryCatch
@@ -98,10 +105,8 @@ class PepperTryCatchVar : public PepperTryCatch {
 
   v8::TryCatch try_catch_;
 
-  PP_Var* exception_;
+  raw_ptr<PP_Var, ExperimentalRenderer> exception_;
   bool exception_is_set_;
-
-  DISALLOW_COPY_AND_ASSIGN(PepperTryCatchVar);
 };
 
 }  // namespace content

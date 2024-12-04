@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,10 +6,11 @@
 #define CHROME_BROWSER_EXTENSIONS_API_SETTINGS_PRIVATE_GENERATED_PREFS_H_
 
 #include <memory>
+#include <optional>
 #include <string>
-#include <unordered_map>
 
-#include "base/macros.h"
+#include "base/containers/flat_map.h"
+#include "base/memory/raw_ptr.h"
 #include "chrome/browser/extensions/api/settings_private/generated_pref.h"
 #include "chrome/browser/extensions/api/settings_private/prefs_util_enums.h"
 #include "components/keyed_service/core/keyed_service.h"
@@ -21,11 +22,10 @@ class Value;
 }
 
 namespace extensions {
-namespace api {
-namespace settings_private {
+
+namespace api::settings_private {
 struct PrefObject;
-}  // namespace settings_private
-}  // namespace api
+}  // namespace api::settings_private
 
 namespace settings_private {
 
@@ -35,17 +35,20 @@ namespace settings_private {
 class GeneratedPrefs : public KeyedService {
  public:
   // Preference name to implementation map.
-  using PrefsMap =
-      std::unordered_map<std::string, std::unique_ptr<GeneratedPref>>;
+  using PrefsMap = base::flat_map<std::string, std::unique_ptr<GeneratedPref>>;
 
   explicit GeneratedPrefs(Profile* profile);
+
+  GeneratedPrefs(const GeneratedPrefs&) = delete;
+  GeneratedPrefs& operator=(const GeneratedPrefs&) = delete;
+
   ~GeneratedPrefs() override;
 
   // Returns true if preference is supported.
   bool HasPref(const std::string& pref_name);
 
-  // Returns fully populated PrefObject or nullptr if not supported.
-  std::unique_ptr<api::settings_private::PrefObject> GetPref(
+  // Returns fully populated PrefObject or nullopt if not supported.
+  std::optional<api::settings_private::PrefObject> GetPref(
       const std::string& pref_name);
 
   // Updates preference value.
@@ -71,9 +74,7 @@ class GeneratedPrefs : public KeyedService {
   // Preference object map.
   PrefsMap prefs_;
 
-  Profile* profile_;
-
-  DISALLOW_COPY_AND_ASSIGN(GeneratedPrefs);
+  raw_ptr<Profile> profile_;
 };
 
 }  // namespace settings_private

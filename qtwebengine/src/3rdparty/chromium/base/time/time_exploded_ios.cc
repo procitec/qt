@@ -1,4 +1,4 @@
-// Copyright (c) 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,7 +8,8 @@
 #include <CoreFoundation/CFCalendar.h>
 #include <CoreFoundation/CFTimeZone.h>
 
-#include "base/mac/scoped_cftyperef.h"
+#include "base/apple/scoped_cftyperef.h"
+#include "base/numerics/safe_conversions.h"
 
 #if __LP64__
 #error Use posix implementation on 64-bit platforms.
@@ -25,11 +26,11 @@ namespace base {
 
 // static
 bool Time::FromExploded(bool is_local, const Exploded& exploded, Time* time) {
-  base::ScopedCFTypeRef<CFTimeZoneRef> time_zone(
+  ScopedCFTypeRef<CFTimeZoneRef> time_zone(
       is_local
           ? CFTimeZoneCopySystem()
           : CFTimeZoneCreateWithTimeIntervalFromGMT(kCFAllocatorDefault, 0));
-  base::ScopedCFTypeRef<CFCalendarRef> gregorian(CFCalendarCreateWithIdentifier(
+  ScopedCFTypeRef<CFCalendarRef> gregorian(CFCalendarCreateWithIdentifier(
       kCFAllocatorDefault, kCFGregorianCalendar));
   CFCalendarSetTimeZone(gregorian, time_zone);
   CFAbsoluteTime absolute_time;
@@ -46,8 +47,7 @@ bool Time::FromExploded(bool is_local, const Exploded& exploded, Time* time) {
   // it cannot be suited to int64, then fail to avoid overflows.
   double microseconds =
       (seconds * kMicrosecondsPerSecond) + kTimeTToMicrosecondsOffset;
-  if (microseconds > std::numeric_limits<int64_t>::max() ||
-      microseconds < std::numeric_limits<int64_t>::min()) {
+  if (!IsValueInRangeForNumericType<int64_t>(microseconds)) {
     *time = Time(0);
     return false;
   }
@@ -83,11 +83,11 @@ void Time::Explode(bool is_local, Exploded* exploded) const {
                             kMicrosecondsPerSecond) -
                            kCFAbsoluteTimeIntervalSince1970;
 
-  base::ScopedCFTypeRef<CFTimeZoneRef> time_zone(
+  ScopedCFTypeRef<CFTimeZoneRef> time_zone(
       is_local
           ? CFTimeZoneCopySystem()
           : CFTimeZoneCreateWithTimeIntervalFromGMT(kCFAllocatorDefault, 0));
-  base::ScopedCFTypeRef<CFCalendarRef> gregorian(CFCalendarCreateWithIdentifier(
+  ScopedCFTypeRef<CFCalendarRef> gregorian(CFCalendarCreateWithIdentifier(
       kCFAllocatorDefault, kCFGregorianCalendar));
   CFCalendarSetTimeZone(gregorian, time_zone);
   int second, day_of_week;

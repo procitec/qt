@@ -9,7 +9,6 @@
 #include "include/core/SkBitmap.h"
 #include "include/core/SkCanvas.h"
 #include "include/core/SkColor.h"
-#include "include/core/SkFilterQuality.h"
 #include "include/core/SkFont.h"
 #include "include/core/SkFontTypes.h"
 #include "include/core/SkMatrix.h"
@@ -24,6 +23,7 @@
 #include "include/core/SkTypes.h"
 #include "include/effects/SkGradientShader.h"
 #include "tools/ToolUtils.h"
+#include "tools/fonts/FontToolUtils.h"
 
 #include <string.h>
 
@@ -45,10 +45,10 @@ static void makebm(SkBitmap* bm, int w, int h) {
     SkPaint     paint;
 
     paint.setShader(SkGradientShader::MakeLinear(kPts0, kColors0, kPos,
-                    SK_ARRAY_COUNT(kColors0), SkTileMode::kClamp));
+                    std::size(kColors0), SkTileMode::kClamp));
     canvas.drawPaint(paint);
     paint.setShader(SkGradientShader::MakeLinear(kPts1, kColors1, kPos,
-                    SK_ARRAY_COUNT(kColors1), SkTileMode::kClamp));
+                    std::size(kColors1), SkTileMode::kClamp));
     canvas.drawPaint(paint);
 }
 
@@ -68,12 +68,9 @@ public:
     }
 
 protected:
+    SkString getName() const override { return SkString("shadertext3"); }
 
-    SkString onShortName() override {
-        return SkString("shadertext3");
-    }
-
-    SkISize onISize() override { return SkISize::Make(820, 930); }
+    SkISize getISize() override { return SkISize::Make(820, 930); }
 
     void onOnceBeforeDraw() override {
         makebm(&fBmp, kPointSize / 4, kPointSize / 4);
@@ -83,11 +80,12 @@ protected:
 
         SkPaint bmpPaint;
         bmpPaint.setAntiAlias(true);
-        bmpPaint.setFilterQuality(kLow_SkFilterQuality);
         bmpPaint.setAlphaf(0.5f);
-        canvas->drawBitmap(fBmp, 5.f, 5.f, &bmpPaint);
+        SkSamplingOptions sampling(SkFilterMode::kLinear);
 
-        SkFont  font(ToolUtils::create_portable_typeface(), SkIntToScalar(kPointSize));
+        canvas->drawImage(fBmp.asImage(), 5.f, 5.f, sampling, &bmpPaint);
+
+        SkFont  font(ToolUtils::DefaultPortableTypeface(), SkIntToScalar(kPointSize));
         SkPaint outlinePaint;
         outlinePaint.setStyle(SkPaint::kStroke_Style);
         outlinePaint.setStrokeWidth(0.f);
@@ -107,8 +105,8 @@ protected:
 
         canvas->save();
         int i = 0;
-        for (size_t tm0 = 0; tm0 < SK_ARRAY_COUNT(kTileModes); ++tm0) {
-            for (size_t tm1 = 0; tm1 < SK_ARRAY_COUNT(kTileModes); ++tm1) {
+        for (size_t tm0 = 0; tm0 < std::size(kTileModes); ++tm0) {
+            for (size_t tm1 = 0; tm1 < std::size(kTileModes); ++tm1) {
                 SkMatrix localM;
                 localM.setTranslate(5.f, 5.f);
                 localM.postRotate(20);
@@ -116,8 +114,8 @@ protected:
 
                 SkPaint fillPaint;
                 fillPaint.setAntiAlias(true);
-                fillPaint.setFilterQuality(kLow_SkFilterQuality);
-                fillPaint.setShader(fBmp.makeShader(kTileModes[tm0], kTileModes[tm1], &localM));
+                fillPaint.setShader(fBmp.makeShader(kTileModes[tm0], kTileModes[tm1],
+                                                    sampling, localM));
 
                 constexpr char kText[] = "B";
                 canvas->drawString(kText, 0, 0, font, fillPaint);

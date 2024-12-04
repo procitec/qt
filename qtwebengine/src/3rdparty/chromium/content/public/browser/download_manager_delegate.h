@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,13 +7,14 @@
 
 #include <stdint.h>
 
-#include "base/callback.h"
+#include <optional>
+
 #include "base/files/file_path.h"
-#include "base/optional.h"
-#include "base/time/time.h"
+#include "base/functional/callback.h"
+#include "build/build_config.h"
 #include "components/download/public/common/download_danger_type.h"
 #include "components/download/public/common/download_item.h"
-#include "components/download/public/common/download_schedule.h"
+#include "components/download/public/common/download_target_info.h"
 #include "components/download/public/common/download_url_parameters.h"
 #include "components/download/public/common/quarantine_connection.h"
 #include "content/common/content_export.h"
@@ -36,39 +37,25 @@ using SavePackageDownloadCreatedCallback =
 // operation.  If the delegate wants notification of the download item created
 // in response to this operation, the SavePackageDownloadCreatedCallback will be
 // non-null.
-using SavePackagePathPickedCallback =
-    base::OnceCallback<void(const base::FilePath&,
-                            SavePageType,
-                            SavePackageDownloadCreatedCallback)>;
+struct CONTENT_EXPORT SavePackagePathPickedParams {
+  SavePackagePathPickedParams();
+  ~SavePackagePathPickedParams();
 
-// Called with the results of DetermineDownloadTarget().
-//
-// |target_path| should be set to a non-empty path which is taken to be the
-//     final target path for the download. Any file already at this path will be
-//     overwritten.
-//
-// |disposition| and |danger_type| are attributes associated with the download
-//     item and can be accessed via the download::DownloadItem accessors.
-//
-// |intermediate_path| specifies the path to the intermediate file. The download
-//     will be written to this path until all the bytes have been written. Upon
-//     completion, the file will be renamed to |target_path|.
-//     |intermediate_path| could be the same as |target_path|. Both paths must
-//     be in the same directory.
-//
-// |interrupt_reason| should be set to DOWNLOAD_INTERRUPT_REASON_NONE in
-//     order to proceed with the download. DOWNLOAD_INTERRUPT_REASON_USER_CANCEL
-//     results in the download being marked cancelled. Any other value results
-//     in the download being marked as interrupted. The other fields are only
-//     considered valid if |interrupt_reason| is NONE.
-using DownloadTargetCallback = base::OnceCallback<void(
-    const base::FilePath& target_path,
-    download::DownloadItem::TargetDisposition disposition,
-    download::DownloadDangerType danger_type,
-    download::DownloadItem::MixedContentStatus mixed_content_status,
-    const base::FilePath& intermediate_path,
-    base::Optional<download::DownloadSchedule> download_schedule,
-    download::DownloadInterruptReason interrupt_reason)>;
+  SavePackagePathPickedParams(const SavePackagePathPickedParams& other);
+  SavePackagePathPickedParams& operator=(
+      const SavePackagePathPickedParams& other);
+  SavePackagePathPickedParams(SavePackagePathPickedParams&& other);
+  SavePackagePathPickedParams& operator=(SavePackagePathPickedParams&& other);
+
+  base::FilePath file_path;
+  SavePageType save_type;
+#if BUILDFLAG(IS_MAC)
+  std::vector<std::string> file_tags;
+#endif
+};
+using SavePackagePathPickedCallback =
+    base::OnceCallback<void(SavePackagePathPickedParams,
+                            SavePackageDownloadCreatedCallback)>;
 
 // Called when a download delayed by the delegate has completed.
 using DownloadOpenDelayedCallback = base::OnceCallback<void(bool)>;
@@ -78,6 +65,10 @@ using DownloadIdCallback = base::OnceCallback<void(uint32_t /* next_id */)>;
 
 // Called on whether a download is allowed to continue.
 using CheckDownloadAllowedCallback = base::OnceCallback<void(bool /*allow*/)>;
+
+// Called by CheckSavePackageAllowed when the content of a save package is known
+// to be allowed or not.
+using SavePackageAllowedCallback = base::OnceCallback<void(bool /*allow*/)>;
 
 // Browser's download manager: manages all downloads and destination view.
 class CONTENT_EXPORT DownloadManagerDelegate {
@@ -102,9 +93,10 @@ class CONTENT_EXPORT DownloadManagerDelegate {
   // SetExternalData()).
   //
   // If the download should be canceled, |callback| should be invoked with an
-  // empty |target_path| argument.
-  virtual bool DetermineDownloadTarget(download::DownloadItem* item,
-                                       DownloadTargetCallback* callback);
+  // empty |DownloadTargetInfo::target_path| argument.
+  virtual bool DetermineDownloadTarget(
+      download::DownloadItem* item,
+      download::DownloadTargetCallback* callback);
 
   // Tests if a file type should be opened automatically. This consider both
   // user and policy settings, and should be called when it doesn't matter
@@ -172,7 +164,10 @@ class CONTENT_EXPORT DownloadManagerDelegate {
   // |filename| contains a basename with an extension, but without a path. This
   // should be the case on return as well. I.e. |filename| cannot specify a
   // relative path.
-  virtual void SanitizeSavePackageResourceName(base::FilePath* filename) {}
+  // |source_url| contains the URL from which the download originates and is
+  // needed to determine the file's danger level.
+  virtual void SanitizeSavePackageResourceName(base::FilePath* filename,
+                                               const GURL& source_url) {}
 
   // Sanitize a download parameters
   //
@@ -202,7 +197,7 @@ class CONTENT_EXPORT DownloadManagerDelegate {
       const WebContents::Getter& web_contents_getter,
       const GURL& url,
       const std::string& request_method,
-      base::Optional<url::Origin> request_initiator,
+      std::optional<url::Origin> request_initiator,
       bool from_download_cross_origin_redirect,
       bool content_initiated,
       CheckDownloadAllowedCallback check_download_allowed_cb);
@@ -212,6 +207,23 @@ class CONTENT_EXPORT DownloadManagerDelegate {
   virtual download::QuarantineConnectionCallback
   GetQuarantineConnectionCallback();
 
+  // Gets a |DownloadItem| from the GUID, or null if no such GUID is available.
+  virtual download::DownloadItem* GetDownloadByGuid(const std::string& guid);
+
+  // Allows the delegate to delay completion of a SavePackage's final renaming
+  // step so it can be disallowed.
+  virtual void CheckSavePackageAllowed(
+      download::DownloadItem* download_item,
+      base::flat_map<base::FilePath, base::FilePath> save_package_files,
+      SavePackageAllowedCallback callback);
+
+  // Attaches any extra per-DownloadItem info.
+  virtual void AttachExtraInfo(download::DownloadItem* item) {}
+
+#if BUILDFLAG(IS_ANDROID)
+  // Returns whether download is triggered by an external app.
+  virtual bool IsFromExternalApp(download::DownloadItem* item);
+#endif  // BUILDFLAG(IS_ANDROID)
  protected:
   virtual ~DownloadManagerDelegate();
 };

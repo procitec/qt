@@ -1,14 +1,14 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef CONTENT_PUBLIC_BROWSER_BACKGROUND_FETCH_RESPONSE_H_
 #define CONTENT_PUBLIC_BROWSER_BACKGROUND_FETCH_RESPONSE_H_
 
+#include <optional>
 #include <vector>
 
 #include "base/files/file_path.h"
-#include "base/optional.h"
 #include "base/time/time.h"
 #include "content/common/content_export.h"
 #include "net/http/http_response_headers.h"
@@ -23,13 +23,13 @@ struct CONTENT_EXPORT BackgroundFetchResponse {
       const std::vector<GURL>& url_chain,
       const scoped_refptr<const net::HttpResponseHeaders>& headers);
 
+  BackgroundFetchResponse(const BackgroundFetchResponse&) = delete;
+  BackgroundFetchResponse& operator=(const BackgroundFetchResponse&) = delete;
+
   ~BackgroundFetchResponse();
 
   const std::vector<GURL> url_chain;
   const scoped_refptr<const net::HttpResponseHeaders> headers;  // May be null.
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(BackgroundFetchResponse);
 };
 
 struct CONTENT_EXPORT BackgroundFetchResult {
@@ -66,20 +66,20 @@ struct CONTENT_EXPORT BackgroundFetchResult {
   BackgroundFetchResult(std::unique_ptr<BackgroundFetchResponse> response,
                         base::Time response_time,
                         const base::FilePath& path,
-                        base::Optional<storage::BlobDataHandle> blob_handle,
+                        std::optional<storage::BlobDataHandle> blob_handle,
                         uint64_t file_size);
+
+  BackgroundFetchResult(const BackgroundFetchResult&) = delete;
+  BackgroundFetchResult& operator=(const BackgroundFetchResult&) = delete;
 
   ~BackgroundFetchResult();
 
   std::unique_ptr<BackgroundFetchResponse> response;
   const base::Time response_time;
   const base::FilePath file_path;
-  base::Optional<storage::BlobDataHandle> blob_handle;
+  std::optional<storage::BlobDataHandle> blob_handle;
   const uint64_t file_size = 0;
   FailureReason failure_reason;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(BackgroundFetchResult);
 };
 
 }  // namespace content

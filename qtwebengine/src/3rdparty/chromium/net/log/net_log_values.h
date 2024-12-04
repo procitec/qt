@@ -1,29 +1,30 @@
-// Copyright (c) 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef NET_LOG_NET_LOG_VALUES_H_
 #define NET_LOG_NET_LOG_VALUES_H_
 
+#include <stddef.h>
 #include <stdint.h>
 
-#include "base/strings/string_piece_forward.h"
+#include "base/containers/span.h"
+#include "base/strings/string_piece.h"
+#include "base/values.h"
 #include "net/base/net_export.h"
-
-namespace base {
-class Value;
-}
 
 namespace net {
 
 // Helpers to construct dictionaries with a single key and value. Useful for
 // building parameters to include in a NetLog.
-NET_EXPORT base::Value NetLogParamsWithInt(base::StringPiece name, int value);
-NET_EXPORT base::Value NetLogParamsWithInt64(base::StringPiece name,
-                                             int64_t value);
-NET_EXPORT base::Value NetLogParamsWithBool(base::StringPiece name, bool value);
-NET_EXPORT base::Value NetLogParamsWithString(base::StringPiece name,
-                                              base::StringPiece value);
+NET_EXPORT base::Value::Dict NetLogParamsWithInt(base::StringPiece name,
+                                                 int value);
+NET_EXPORT base::Value::Dict NetLogParamsWithInt64(base::StringPiece name,
+                                                   int64_t value);
+NET_EXPORT base::Value::Dict NetLogParamsWithBool(base::StringPiece name,
+                                                  bool value);
+NET_EXPORT base::Value::Dict NetLogParamsWithString(base::StringPiece name,
+                                                    base::StringPiece value);
 
 // Creates a base::Value() to represent the byte string |raw| when adding it to
 // the NetLog.
@@ -46,6 +47,7 @@ NET_EXPORT base::Value NetLogStringValue(base::StringPiece raw);
 // serializing them.
 //
 // This wrapper encodes |bytes| as a Base64 encoded string.
+NET_EXPORT base::Value NetLogBinaryValue(base::span<const uint8_t> bytes);
 NET_EXPORT base::Value NetLogBinaryValue(const void* bytes, size_t length);
 
 // Creates a base::Value() to represent integers, including 64-bit ones.

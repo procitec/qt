@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,8 +10,8 @@
 #include <sstream>
 #include <string>
 
+#include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
-#include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/platform_thread.h"
 #include "build/build_config.h"
@@ -22,17 +22,18 @@
 
 #define IPC_MESSAGE_IMPL
 #include "ipc/ipc_message_macros.h"
+#include "ipc/ipc_message_start.h"
 
 #define IPC_MESSAGE_START TestMsgStart
 
 // Generic message class that is an int followed by a string16.
-IPC_MESSAGE_CONTROL2(MsgClassIS, int, base::string16)
+IPC_MESSAGE_CONTROL2(MsgClassIS, int, std::u16string)
 
 // Generic message class that is a string16 followed by an int.
-IPC_MESSAGE_CONTROL2(MsgClassSI, base::string16, int)
+IPC_MESSAGE_CONTROL2(MsgClassSI, std::u16string, int)
 
 // Message to create a mutex in the IPC server, using the received name.
-IPC_MESSAGE_CONTROL2(MsgDoMutex, base::string16, int)
+IPC_MESSAGE_CONTROL2(MsgDoMutex, std::u16string, int)
 
 // Used to generate an ID for a message that should not exist.
 IPC_MESSAGE_CONTROL0(MsgUnhandled)
@@ -63,7 +64,7 @@ TEST(IPCMessageIntegrity, ReadBeyondBufferStr16) {
   m.WriteInt(v2);
 
   base::PickleIterator iter(m);
-  base::string16 vs;
+  std::u16string vs;
   EXPECT_FALSE(iter.ReadString16(&vs));
 }
 
@@ -93,7 +94,7 @@ TEST(IPCMessageIntegrity, ReadVectorNegativeSize) {
   EXPECT_FALSE(ReadParam(&m, &iter, &vec));
 }
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
 #define MAYBE_ReadVectorTooLarge1 DISABLED_ReadVectorTooLarge1
 #else
 #define MAYBE_ReadVectorTooLarge1 ReadVectorTooLarge1
@@ -141,12 +142,17 @@ TEST(IPCMessageIntegrity, DISABLED_ReadVectorTooLarge3) {
 
 class SimpleListener : public IPC::Listener {
  public:
-  SimpleListener() : other_(nullptr) {}
-  void Init(IPC::Sender* s) {
-    other_ = s;
+  SimpleListener() = default;
+  void Init(IPC::Sender* s) { other_ = s; }
+  void set_run_loop(base::RunLoop* loop) { loop_ = loop; }
+  void Reset() {
+    other_ = nullptr;
+    loop_ = nullptr;
   }
+
  protected:
-  IPC::Sender* other_;
+  raw_ptr<base::RunLoop> loop_ = nullptr;
+  raw_ptr<IPC::Sender> other_ = nullptr;
 };
 
 enum {
@@ -176,13 +182,13 @@ class FuzzerServerListener : public SimpleListener {
   }
 
  private:
-  void OnMsgClassISMessage(int value, const base::string16& text) {
+  void OnMsgClassISMessage(int value, const std::u16string& text) {
     UseData(MsgClassIS::ID, value, text);
     RoundtripAckReply(FUZZER_ROUTING_ID, MsgClassIS::ID, value);
     Cleanup();
   }
 
-  void OnMsgClassSIMessage(const base::string16& text, int value) {
+  void OnMsgClassSIMessage(const std::u16string& text, int value) {
     UseData(MsgClassSI::ID, value, text);
     RoundtripAckReply(FUZZER_ROUTING_ID, MsgClassSI::ID, value);
     Cleanup();
@@ -200,7 +206,7 @@ class FuzzerServerListener : public SimpleListener {
     --message_count_;
     --pending_messages_;
     if (0 == message_count_)
-      base::RunLoop::QuitCurrentWhenIdleDeprecated();
+      loop_->QuitWhenIdle();
   }
 
   void ReplyMsgNotHandled(uint32_t type_id) {
@@ -208,7 +214,7 @@ class FuzzerServerListener : public SimpleListener {
     Cleanup();
   }
 
-  void UseData(int caller, int value, const base::string16& text) {
+  void UseData(int caller, int value, const std::u16string& text) {
     std::ostringstream os;
     os << "IPC fuzzer:" << caller << " [" << value << " "
        << base::UTF16ToUTF8(text) << "]\n";
@@ -222,11 +228,11 @@ class FuzzerServerListener : public SimpleListener {
 
 class FuzzerClientListener : public SimpleListener {
  public:
-  FuzzerClientListener() : last_msg_(nullptr) {}
+  FuzzerClientListener() = default;
 
   bool OnMessageReceived(const IPC::Message& msg) override {
-    last_msg_ = new IPC::Message(msg);
-    base::RunLoop::QuitCurrentWhenIdleDeprecated();
+    last_msg_ = std::make_unique<IPC::Message>(msg);
+    loop_->QuitWhenIdle();
     return true;
   }
 
@@ -244,9 +250,7 @@ class FuzzerClientListener : public SimpleListener {
       return false;
     if (msg_value2 != value)
       return false;
-
-    delete last_msg_;
-    last_msg_ = nullptr;
+    last_msg_.reset();
     return true;
   }
 
@@ -256,7 +260,7 @@ class FuzzerClientListener : public SimpleListener {
 
  private:
   bool MsgHandlerInternal(uint32_t type_id) {
-    base::RunLoop().Run();
+    loop_->Run();
     if (!last_msg_)
       return false;
     if (FUZZER_ROUTING_ID != last_msg_->routing_id())
@@ -264,16 +268,18 @@ class FuzzerClientListener : public SimpleListener {
     return (type_id == last_msg_->type());
   }
 
-  IPC::Message* last_msg_;
+  std::unique_ptr<IPC::Message> last_msg_;
 };
 
 // Runs the fuzzing server child mode. Returns when the preset number of
 // messages have been received.
 DEFINE_IPC_CHANNEL_MOJO_TEST_CLIENT(FuzzServerClient) {
   FuzzerServerListener listener;
+  base::RunLoop loop;
   Connect(&listener);
   listener.Init(channel());
-  base::RunLoop().Run();
+  listener.set_run_loop(&loop);
+  loop.Run();
   Close();
 }
 
@@ -283,22 +289,26 @@ using IPCFuzzingTest = IPCChannelMojoTestBase;
 // are working properly by generating two well formed IPC calls.
 TEST_F(IPCFuzzingTest, SanityTest) {
   Init("FuzzServerClient");
-
+  base::RunLoop loop1;
+  base::RunLoop loop2;
   FuzzerClientListener listener;
   CreateChannel(&listener);
   listener.Init(channel());
+  listener.set_run_loop(&loop1);
   ASSERT_TRUE(ConnectChannel());
 
   IPC::Message* msg = nullptr;
   int value = 43;
-  msg = new MsgClassIS(value, base::ASCIIToUTF16("expect 43"));
+  msg = new MsgClassIS(value, u"expect 43");
   sender()->Send(msg);
   EXPECT_TRUE(listener.ExpectMessage(value, MsgClassIS::ID));
 
-  msg = new MsgClassSI(base::ASCIIToUTF16("expect 44"), ++value);
+  listener.set_run_loop(&loop2);
+  msg = new MsgClassSI(u"expect 44", ++value);
   sender()->Send(msg);
   EXPECT_TRUE(listener.ExpectMessage(value, MsgClassSI::ID));
 
+  listener.Reset();
   EXPECT_TRUE(WaitForClientShutdown());
   DestroyChannel();
 }
@@ -308,10 +318,12 @@ TEST_F(IPCFuzzingTest, SanityTest) {
 // IPC to make sure framing is working properly.
 TEST_F(IPCFuzzingTest, MsgBadPayloadShort) {
   Init("FuzzServerClient");
-
+  base::RunLoop loop1;
+  base::RunLoop loop2;
   FuzzerClientListener listener;
   CreateChannel(&listener);
   listener.Init(channel());
+  listener.set_run_loop(&loop1);
   ASSERT_TRUE(ConnectChannel());
 
   IPC::Message* msg = new IPC::Message(MSG_ROUTING_CONTROL, MsgClassIS::ID,
@@ -320,10 +332,12 @@ TEST_F(IPCFuzzingTest, MsgBadPayloadShort) {
   sender()->Send(msg);
   EXPECT_TRUE(listener.ExpectMsgNotHandled(MsgClassIS::ID));
 
-  msg = new MsgClassSI(base::ASCIIToUTF16("expect one"), 1);
+  listener.set_run_loop(&loop2);
+  msg = new MsgClassSI(u"expect one", 1);
   sender()->Send(msg);
   EXPECT_TRUE(listener.ExpectMessage(1, MsgClassSI::ID));
 
+  listener.Reset();
   EXPECT_TRUE(WaitForClientShutdown());
   DestroyChannel();
 }
@@ -334,27 +348,31 @@ TEST_F(IPCFuzzingTest, MsgBadPayloadShort) {
 // as by design we don't carry type information on the IPC message.
 TEST_F(IPCFuzzingTest, MsgBadPayloadArgs) {
   Init("FuzzServerClient");
-
+  base::RunLoop loop1;
+  base::RunLoop loop2;
   FuzzerClientListener listener;
   CreateChannel(&listener);
   listener.Init(channel());
+  listener.set_run_loop(&loop1);
   ASSERT_TRUE(ConnectChannel());
 
   IPC::Message* msg = new IPC::Message(MSG_ROUTING_CONTROL, MsgClassSI::ID,
                                        IPC::Message::PRIORITY_NORMAL);
-  msg->WriteString16(base::ASCIIToUTF16("d"));
+  msg->WriteString16(u"d");
   msg->WriteInt(0);
   msg->WriteInt(0x65);  // Extra argument.
 
   sender()->Send(msg);
   EXPECT_TRUE(listener.ExpectMessage(0, MsgClassSI::ID));
 
+  listener.set_run_loop(&loop2);
   // Now send a well formed message to make sure the receiver wasn't
   // thrown out of sync by the extra argument.
-  msg = new MsgClassIS(3, base::ASCIIToUTF16("expect three"));
+  msg = new MsgClassIS(3, u"expect three");
   sender()->Send(msg);
   EXPECT_TRUE(listener.ExpectMessage(3, MsgClassIS::ID));
 
+  listener.Reset();
   EXPECT_TRUE(WaitForClientShutdown());
   DestroyChannel();
 }

@@ -10,14 +10,38 @@
 
 #include "test/pc/e2e/analyzer/video/video_quality_metrics_reporter.h"
 
+#include <map>
+#include <string>
+
 #include "api/stats/rtc_stats.h"
 #include "api/stats/rtcstats_objects.h"
+#include "api/test/metrics/metric.h"
 #include "api/units/data_rate.h"
 #include "api/units/time_delta.h"
 #include "api/units/timestamp.h"
+#include "rtc_base/checks.h"
+#include "test/pc/e2e/metric_metadata_keys.h"
 
 namespace webrtc {
 namespace webrtc_pc_e2e {
+namespace {
+
+using ::webrtc::test::ImprovementDirection;
+using ::webrtc::test::Unit;
+using ::webrtc::webrtc_pc_e2e::MetricMetadataKey;
+
+SamplesStatsCounter BytesPerSecondToKbps(const SamplesStatsCounter& counter) {
+  return counter * 0.008;
+}
+
+}  // namespace
+
+VideoQualityMetricsReporter::VideoQualityMetricsReporter(
+    Clock* const clock,
+    test::MetricsLogger* const metrics_logger)
+    : clock_(clock), metrics_logger_(metrics_logger) {
+  RTC_CHECK(metrics_logger_);
+}
 
 void VideoQualityMetricsReporter::Start(
     absl::string_view test_case_name,
@@ -34,38 +58,40 @@ void VideoQualityMetricsReporter::OnStatsReports(
 
   auto transport_stats = report->GetStatsOfType<RTCTransportStats>();
   if (transport_stats.size() == 0u ||
-      !transport_stats[0]->selected_candidate_pair_id.is_defined()) {
+      !transport_stats[0]->selected_candidate_pair_id.has_value()) {
     return;
   }
   RTC_DCHECK_EQ(transport_stats.size(), 1);
   std::string selected_ice_id =
-      transport_stats[0]->selected_candidate_pair_id.ValueToString();
+      transport_stats[0]
+          ->GetAttribute(transport_stats[0]->selected_candidate_pair_id)
+          .ToString();
   // Use the selected ICE candidate pair ID to get the appropriate ICE stats.
   const RTCIceCandidatePairStats ice_candidate_pair_stats =
       report->Get(selected_ice_id)->cast_to<const RTCIceCandidatePairStats>();
 
-  auto outbound_rtp_stats = report->GetStatsOfType<RTCOutboundRTPStreamStats>();
+  auto outbound_rtp_stats = report->GetStatsOfType<RTCOutboundRtpStreamStats>();
   StatsSample sample;
   for (auto& s : outbound_rtp_stats) {
-    if (!s->media_type.is_defined()) {
+    if (!s->kind.has_value()) {
       continue;
     }
-    if (!(*s->media_type == RTCMediaStreamTrackKind::kVideo)) {
+    if (!(*s->kind == "video")) {
       continue;
     }
-    if (s->timestamp_us() > sample.sample_time.us()) {
-      sample.sample_time = Timestamp::Micros(s->timestamp_us());
+    if (s->timestamp() > sample.sample_time) {
+      sample.sample_time = s->timestamp();
     }
     sample.retransmitted_bytes_sent +=
-        DataSize::Bytes(s->retransmitted_bytes_sent.ValueOrDefault(0ul));
-    sample.bytes_sent += DataSize::Bytes(s->bytes_sent.ValueOrDefault(0ul));
+        DataSize::Bytes(s->retransmitted_bytes_sent.value_or(0ul));
+    sample.bytes_sent += DataSize::Bytes(s->bytes_sent.value_or(0ul));
     sample.header_bytes_sent +=
-        DataSize::Bytes(s->header_bytes_sent.ValueOrDefault(0ul));
+        DataSize::Bytes(s->header_bytes_sent.value_or(0ul));
   }
 
   MutexLock lock(&video_bwe_stats_lock_);
   VideoBweStats& video_bwe_stats = video_bwe_stats_[std::string(pc_label)];
-  if (ice_candidate_pair_stats.available_outgoing_bitrate.is_defined()) {
+  if (ice_candidate_pair_stats.available_outgoing_bitrate.has_value()) {
     video_bwe_stats.available_send_bandwidth.AddSample(
         DataRate::BitsPerSec(
             *ice_candidate_pair_stats.available_outgoing_bitrate)
@@ -99,34 +125,39 @@ void VideoQualityMetricsReporter::OnStatsReports(
 void VideoQualityMetricsReporter::StopAndReportResults() {
   MutexLock video_bwemutex_(&video_bwe_stats_lock_);
   for (const auto& item : video_bwe_stats_) {
-    ReportVideoBweResults(GetTestCaseName(item.first), item.second);
+    ReportVideoBweResults(item.first, item.second);
   }
 }
 
 std::string VideoQualityMetricsReporter::GetTestCaseName(
-    const std::string& stream_label) const {
-  return test_case_name_ + "/" + stream_label;
+    const std::string& peer_name) const {
+  return test_case_name_ + "/" + peer_name;
 }
 
 void VideoQualityMetricsReporter::ReportVideoBweResults(
-    const std::string& test_case_name,
+    const std::string& peer_name,
     const VideoBweStats& video_bwe_stats) {
-  ReportResult("available_send_bandwidth", test_case_name,
-               video_bwe_stats.available_send_bandwidth, "bytesPerSecond");
-  ReportResult("transmission_bitrate", test_case_name,
-               video_bwe_stats.transmission_bitrate, "bytesPerSecond");
-  ReportResult("retransmission_bitrate", test_case_name,
-               video_bwe_stats.retransmission_bitrate, "bytesPerSecond");
-}
+  std::string test_case_name = GetTestCaseName(peer_name);
+  // TODO(bugs.webrtc.org/14757): Remove kExperimentalTestNameMetadataKey.
+  std::map<std::string, std::string> metric_metadata{
+      {MetricMetadataKey::kPeerMetadataKey, peer_name},
+      {MetricMetadataKey::kExperimentalTestNameMetadataKey, test_case_name_}};
 
-void VideoQualityMetricsReporter::ReportResult(
-    const std::string& metric_name,
-    const std::string& test_case_name,
-    const SamplesStatsCounter& counter,
-    const std::string& unit,
-    webrtc::test::ImproveDirection improve_direction) {
-  test::PrintResult(metric_name, /*modifier=*/"", test_case_name, counter, unit,
-                    /*important=*/false, improve_direction);
+  metrics_logger_->LogMetric(
+      "available_send_bandwidth", test_case_name,
+      BytesPerSecondToKbps(video_bwe_stats.available_send_bandwidth),
+      Unit::kKilobitsPerSecond, ImprovementDirection::kNeitherIsBetter,
+      metric_metadata);
+  metrics_logger_->LogMetric(
+      "transmission_bitrate", test_case_name,
+      BytesPerSecondToKbps(video_bwe_stats.transmission_bitrate),
+      Unit::kKilobitsPerSecond, ImprovementDirection::kNeitherIsBetter,
+      metric_metadata);
+  metrics_logger_->LogMetric(
+      "retransmission_bitrate", test_case_name,
+      BytesPerSecondToKbps(video_bwe_stats.retransmission_bitrate),
+      Unit::kKilobitsPerSecond, ImprovementDirection::kNeitherIsBetter,
+      metric_metadata);
 }
 
 }  // namespace webrtc_pc_e2e

@@ -1,31 +1,7 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt Data Visualization module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:GPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 3 or (at your option) any later version
-** approved by the KDE Free Qt Foundation. The licenses are as published by
-** the Free Software Foundation and appearing in the file LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
+
+#undef QT_NO_FOREACH // this file contains unported legacy Q_FOREACH uses
 
 #include "bars3dcontroller_p.h"
 #include "bars3drenderer_p.h"
@@ -37,7 +13,7 @@
 #include "q3dtheme_p.h"
 #include <QtCore/QMutexLocker>
 
-QT_BEGIN_NAMESPACE_DATAVISUALIZATION
+QT_BEGIN_NAMESPACE
 
 Bars3DController::Bars3DController(QRect boundRect, Q3DScene *scene)
     : Abstract3DController(boundRect, scene),
@@ -49,6 +25,7 @@ Bars3DController::Bars3DController(QRect boundRect, Q3DScene *scene)
       m_barThicknessRatio(1.0f),
       m_barSpacing(QSizeF(1.0, 1.0)),
       m_floorLevel(0.0f),
+      m_barSeriesMargin(0.0f, 0.0f),
       m_renderer(0)
 {
     // Setting a null axis creates a new default axis according to orientation and graph type.
@@ -106,6 +83,11 @@ void Bars3DController::synchDataToRenderer()
     if (m_changeTracker.floorLevelChanged) {
         m_renderer->updateFloorLevel(m_floorLevel);
         m_changeTracker.floorLevelChanged = false;
+    }
+
+    if (m_changeTracker.barSeriesMarginChanged) {
+        m_renderer->updateBarSeriesMargin(m_barSeriesMargin);
+        m_changeTracker.barSeriesMarginChanged = false;
     }
 
     Abstract3DController::synchDataToRenderer();
@@ -167,8 +149,8 @@ void Bars3DController::handleArrayReset()
 
 void Bars3DController::handleRowsAdded(int startIndex, int count)
 {
-    Q_UNUSED(startIndex)
-    Q_UNUSED(count)
+    Q_UNUSED(startIndex);
+    Q_UNUSED(count);
     QBar3DSeries *series = static_cast<QBarDataProxy *>(sender())->series();
     if (series->isVisible()) {
         adjustAxisRanges();
@@ -217,8 +199,8 @@ void Bars3DController::handleRowsChanged(int startIndex, int count)
 
 void Bars3DController::handleRowsRemoved(int startIndex, int count)
 {
-    Q_UNUSED(startIndex)
-    Q_UNUSED(count)
+    Q_UNUSED(startIndex);
+    Q_UNUSED(count);
 
     QBar3DSeries *series = static_cast<QBarDataProxy *>(sender())->series();
     if (series == m_selectedBarSeries) {
@@ -246,8 +228,8 @@ void Bars3DController::handleRowsRemoved(int startIndex, int count)
 
 void Bars3DController::handleRowsInserted(int startIndex, int count)
 {
-    Q_UNUSED(startIndex)
-    Q_UNUSED(count)
+    Q_UNUSED(startIndex);
+    Q_UNUSED(count);
     QBar3DSeries *series = static_cast<QBarDataProxy *>(sender())->series();
     if (series == m_selectedBarSeries) {
         // If rows inserted to selected series before the selection, adjust the selection
@@ -322,11 +304,16 @@ void Bars3DController::handleDataColumnLabelsChanged()
     }
 }
 
+void Bars3DController::handleRowColorsChanged()
+{
+    emitNeedRender();
+}
+
 void Bars3DController::handleAxisAutoAdjustRangeChangedInOrientation(
         QAbstract3DAxis::AxisOrientation orientation, bool autoAdjust)
 {
-    Q_UNUSED(orientation)
-    Q_UNUSED(autoAdjust)
+    Q_UNUSED(orientation);
+    Q_UNUSED(autoAdjust);
     adjustAxisRanges();
 }
 
@@ -508,6 +495,18 @@ GLfloat Bars3DController::barThickness()
 QSizeF Bars3DController::barSpacing()
 {
     return m_barSpacing;
+}
+
+void Bars3DController::setBarSeriesMargin(const QSizeF &margin)
+{
+    m_barSeriesMargin = margin;
+    m_changeTracker.barSeriesMarginChanged = true;
+    emitNeedRender();
+}
+
+QSizeF Bars3DController::barSeriesMargin()
+{
+    return m_barSeriesMargin;
 }
 
 bool Bars3DController::isBarSpecRelative()
@@ -730,4 +729,4 @@ QAbstract3DAxis *Bars3DController::createDefaultAxis(QAbstract3DAxis::AxisOrient
     return defaultAxis;
 }
 
-QT_END_NAMESPACE_DATAVISUALIZATION
+QT_END_NAMESPACE

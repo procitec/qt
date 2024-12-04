@@ -26,12 +26,11 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_INPUT_EVENT_HANDLER_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_INPUT_EVENT_HANDLER_H_
 
-#include "base/memory/scoped_refptr.h"
-#include "base/optional.h"
+#include "base/gtest_prod_util.h"
+#include "base/time/time.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/common/input/web_input_event.h"
 #include "third_party/blink/public/common/input/web_menu_source_type.h"
-#include "third_party/blink/public/common/page/drag_operation.h"
-#include "third_party/blink/public/mojom/input/focus_type.mojom-blink-forward.h"
 #include "third_party/blink/public/platform/web_input_event_result.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/events/text_event_input_type.h"
@@ -42,17 +41,14 @@
 #include "third_party/blink/renderer/core/input/pointer_event_manager.h"
 #include "third_party/blink/renderer/core/input/scroll_manager.h"
 #include "third_party/blink/renderer/core/layout/hit_test_request.h"
-#include "third_party/blink/renderer/core/page/drag_actions.h"
 #include "third_party/blink/renderer/core/page/event_with_hit_test_results.h"
-#include "third_party/blink/renderer/core/scroll/scroll_types.h"
-#include "third_party/blink/renderer/core/style/computed_style_constants.h"
-#include "third_party/blink/renderer/platform/geometry/layout_point.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
-#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
-#include "third_party/blink/renderer/platform/wtf/forward.h"
-#include "third_party/blink/renderer/platform/wtf/hash_map.h"
-#include "third_party/blink/renderer/platform/wtf/hash_traits.h"
-#include "ui/base/cursor/cursor.h"
+#include "third_party/blink/renderer/core/page/touch_adjustment.h"
+#include "third_party/blink/renderer/core/style/computed_style.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
+
+namespace ui {
+class Cursor;
+}
 
 namespace blink {
 
@@ -99,11 +95,11 @@ class CORE_EXPORT EventHandler final : public GarbageCollected<EventHandler> {
 
   HitTestResult HitTestResultAtLocation(
       const HitTestLocation&,
-      HitTestRequest::HitTestRequestType hit_type =
-          HitTestRequest::kReadOnly | HitTestRequest::kActive |
-          HitTestRequest::kRetargetForInert,
+      HitTestRequest::HitTestRequestType hit_type = HitTestRequest::kReadOnly |
+                                                    HitTestRequest::kActive,
       const LayoutObject* stop_node = nullptr,
-      bool no_lifecycle_update = false);
+      bool no_lifecycle_update = false,
+      std::optional<HitTestRequest::HitNodeCb> hit_node_cb = std::nullopt);
 
   bool MousePressed() const { return mouse_event_manager_->MousePressed(); }
   bool IsMousePositionUnknown() const {
@@ -123,19 +119,21 @@ class CORE_EXPORT EventHandler final : public GarbageCollected<EventHandler> {
   // testing.
   bool CursorUpdatePending();
 
+  bool IsHandlingKeyEvent() const;
+
   void SetResizingFrameSet(HTMLFrameSetElement*);
 
   void ResizeScrollableAreaDestroyed();
 
-  FloatPoint LastKnownMousePositionInRootFrame() const;
-  FloatPoint LastKnownMouseScreenPosition() const;
+  gfx::PointF LastKnownMousePositionInRootFrame() const;
+  gfx::PointF LastKnownMouseScreenPosition() const;
 
-  IntPoint DragDataTransferLocationForTesting();
+  gfx::Point DragDataTransferLocationForTesting();
 
   // Performs a logical scroll that chains, crossing frames, starting from
   // the given node or a reasonable default (focus/last clicked).
   bool BubblingScroll(mojom::blink::ScrollDirection,
-                      ScrollGranularity,
+                      ui::ScrollGranularity,
                       Node* starting_node = nullptr);
 
   WebInputEventResult HandleMouseMoveEvent(
@@ -160,8 +158,7 @@ class CORE_EXPORT EventHandler final : public GarbageCollected<EventHandler> {
       const WebMouseEvent&,
       const AtomicString& event_type,
       const Vector<WebMouseEvent>& coalesced_events,
-      const Vector<WebMouseEvent>& predicted_events,
-      const String& canvas_node_id = String());
+      const Vector<WebMouseEvent>& predicted_events);
 
   // Called on the local root frame exactly once per gesture event.
   WebInputEventResult HandleGestureEvent(const WebGestureEvent&);
@@ -185,25 +182,13 @@ class CORE_EXPORT EventHandler final : public GarbageCollected<EventHandler> {
   GestureEventWithHitTestResults HitTestResultForGestureEvent(
       const WebGestureEvent&,
       HitTestRequest::HitTestRequestType);
-  // Handle the provided non-scroll gesture event. Should be called only on the
-  // inner frame.
-  WebInputEventResult HandleGestureEventInFrame(
-      const GestureEventWithHitTestResults&);
 
-  // Handle the provided scroll gesture event, propagating down to child frames
-  // as necessary.
-  WebInputEventResult HandleGestureScrollEvent(const WebGestureEvent&);
-  bool IsScrollbarHandlingGestures() const;
-
-  bool BestClickableNodeForHitTestResult(const HitTestLocation& location,
-                                         const HitTestResult&,
-                                         IntPoint& target_point,
-                                         Node*& target_node);
-  bool BestContextMenuNodeForHitTestResult(const HitTestLocation& location,
-                                           const HitTestResult&,
-                                           IntPoint& target_point,
-                                           Node*& target_node);
-  void CacheTouchAdjustmentResult(uint32_t, FloatPoint);
+  bool BestNodeForHitTestResult(TouchAdjustmentCandidateType candidate_type,
+                                const HitTestLocation& location,
+                                const HitTestResult&,
+                                gfx::Point& adjusted_point,
+                                Node*& adjusted_node);
+  void CacheTouchAdjustmentResult(uint32_t, gfx::PointF);
 
   // Dispatch a context menu event. If |override_target_element| is provided,
   // the context menu event will use that, so that the browser-generated context
@@ -220,7 +205,7 @@ class CORE_EXPORT EventHandler final : public GarbageCollected<EventHandler> {
   // Returns whether pointerId is active or not
   bool IsPointerEventActive(PointerId);
 
-  void SetPointerCapture(PointerId, Element*);
+  void SetPointerCapture(PointerId, Element*, bool explicit_capture = false);
   void ReleasePointerCapture(PointerId, Element*);
   void ReleaseMousePointerCapture();
   bool HasPointerCapture(PointerId, const Element*) const;
@@ -238,11 +223,11 @@ class CORE_EXPORT EventHandler final : public GarbageCollected<EventHandler> {
                             TextEventInputType = kTextEventInputKeyboard);
   void DefaultTextInputEventHandler(TextEvent*);
 
-  void DragSourceEndedAt(const WebMouseEvent&, DragOperation);
+  void DragSourceEndedAt(const WebMouseEvent&, ui::mojom::blink::DragOperation);
 
   void CapsLockStateMayHaveChanged();  // Only called by FrameSelection
 
-  bool UseHandCursor(Node*, bool is_over_link);
+  static bool UsesHandCursor(const Node*);
 
   void NotifyElementActivated();
 
@@ -262,7 +247,11 @@ class CORE_EXPORT EventHandler final : public GarbageCollected<EventHandler> {
     return *event_handler_registry_;
   }
 
-  void AnimateSnapFling(base::TimeTicks monotonic_time);
+  GestureManager& GetGestureManager() const { return *gesture_manager_; }
+
+  KeyboardEventManager& GetKeyboardEventManager() const {
+    return *keyboard_event_manager_;
+  }
 
   void RecomputeMouseHoverStateIfNeeded();
 
@@ -276,7 +265,22 @@ class CORE_EXPORT EventHandler final : public GarbageCollected<EventHandler> {
 
   void UpdateCursor();
 
+  float cursor_accessibility_scale_factor() const {
+    return cursor_accessibility_scale_factor_;
+  }
+  void set_cursor_accessibility_scale_factor(float scale) {
+    cursor_accessibility_scale_factor_ = scale;
+  }
+
+  void OnScrollbarDestroyed(const Scrollbar& scrollbar);
+
   Element* GetElementUnderMouse();
+
+  Element* CurrentTouchDownElement();
+
+  void SetDelayedNavigationTaskHandle(TaskHandle task_handle);
+
+  TaskHandle& GetDelayedNavigationTaskHandle();
 
  private:
   WebInputEventResult HandleMouseMoveOrLeaveEvent(
@@ -287,7 +291,7 @@ class CORE_EXPORT EventHandler final : public GarbageCollected<EventHandler> {
       HitTestLocation* hit_test_location = nullptr);
 
   // Updates the event, location and result to the adjusted target.
-  void ApplyTouchAdjustment(WebGestureEvent*, HitTestLocation&, HitTestResult*);
+  void ApplyTouchAdjustment(WebGestureEvent*, HitTestLocation&, HitTestResult&);
 
   void PerformHitTest(const HitTestLocation& location,
                       HitTestResult&,
@@ -296,14 +300,19 @@ class CORE_EXPORT EventHandler final : public GarbageCollected<EventHandler> {
   void UpdateGestureTargetNodeForMouseEvent(
       const GestureEventWithHitTestResults&);
 
+  // Handle the provided non-scroll gesture event. Should be called only on the
+  // inner frame.
+  WebInputEventResult HandleGestureEventInFrame(
+      const GestureEventWithHitTestResults&);
+
   bool ShouldApplyTouchAdjustment(const WebGestureEvent&) const;
   bool GestureCorrespondsToAdjustedTouch(const WebGestureEvent&);
   bool IsSelectingLink(const HitTestResult&);
   bool ShouldShowIBeamForNode(const Node*, const HitTestResult&);
-  bool ShouldShowResizeForNode(const Node*, const HitTestLocation&);
-  base::Optional<ui::Cursor> SelectCursor(const HitTestLocation& location,
+  bool ShouldShowResizeForNode(const LayoutObject&, const HitTestLocation&);
+  absl::optional<ui::Cursor> SelectCursor(const HitTestLocation& location,
                                           const HitTestResult&);
-  base::Optional<ui::Cursor> SelectAutoCursor(const HitTestResult&,
+  absl::optional<ui::Cursor> SelectAutoCursor(const HitTestResult&,
                                               Node*,
                                               const ui::Cursor& i_beam);
 
@@ -315,13 +324,27 @@ class CORE_EXPORT EventHandler final : public GarbageCollected<EventHandler> {
 
   Element* EffectiveMouseEventTargetElement(Element*);
 
+  // Task handle used to distinguish single/double click with some modifiers.
+  //
+  // When single click with some modifiers occurred, this task handle is set.
+  // If double click follows, this is cancelled and renderer emit double click
+  // event. (By default, it is handled by renderer as text selection.) If not,
+  // the delayed navigation is emitted.
+  //
+  // Currently, the target navigations are the followings:
+  //
+  // - Download (Alt-click with/without some other modifiers.)
+  // - Link Preview (Alt-click)
+  //
+  // For more details, see https://crbug.com/1428816.
+  TaskHandle delayed_navigation_task_handle_;
+
   // Dispatches ME after corresponding PE provided the PE has not been
   // canceled. The |mouse_event_type| arg must be one of {mousedown,
   // mousemove, mouseup}.
   WebInputEventResult DispatchMousePointerEvent(
       const WebInputEvent::Type,
       Element* target,
-      const String& canvas_region_id,
       const WebMouseEvent&,
       const Vector<WebMouseEvent>& coalesced_events,
       const Vector<WebMouseEvent>& predicted_events,
@@ -343,20 +366,12 @@ class CORE_EXPORT EventHandler final : public GarbageCollected<EventHandler> {
 
   bool PassMousePressEventToScrollbar(MouseEventWithHitTestResults&);
 
-  void DefaultSpaceEventHandler(KeyboardEvent*);
-  void DefaultBackspaceEventHandler(KeyboardEvent*);
-  void DefaultTabEventHandler(KeyboardEvent*);
-  void DefaultEscapeEventHandler(KeyboardEvent*);
-  void DefaultArrowEventHandler(mojom::blink::FocusType, KeyboardEvent*);
-
   // |last_scrollbar_under_mouse_| is set when the mouse moves off of a
   // scrollbar, and used to notify it of MouseUp events to release mouse
   // capture.
   void UpdateLastScrollbarUnderMouse(Scrollbar*, bool);
 
   WebInputEventResult HandleGestureShowPress();
-
-  bool ShouldBrowserControlsConsumeScroll(FloatSize) const;
 
   bool RootFrameTrackedActivePointerInCurrentFrame(PointerId pointer_id) const;
 
@@ -369,7 +384,8 @@ class CORE_EXPORT EventHandler final : public GarbageCollected<EventHandler> {
       const HitTestRequest& request,
       const WebMouseEvent& mev);
 
-  IntRect GetFocusedElementRectForNonLocatedContextMenu(
+  // Returned rect is in local root frame coordinates.
+  gfx::Rect GetFocusedElementRectForNonLocatedContextMenu(
       Element* focused_element);
 
   // NOTE: If adding a new field to this class please ensure that it is
@@ -380,12 +396,12 @@ class CORE_EXPORT EventHandler final : public GarbageCollected<EventHandler> {
   const Member<SelectionController> selection_controller_;
 
   // TODO(lanwei): Remove the below timers for updating hover and cursor.
-  TaskRunnerTimer<EventHandler> hover_timer_;
+  HeapTaskRunnerTimer<EventHandler> hover_timer_;
 
   // TODO(rbyers): Mouse cursor update is page-wide, not per-frame.  Page-wide
   // state should move out of EventHandler to a new PageEventHandler class.
   // crbug.com/449649
-  TaskRunnerTimer<EventHandler> cursor_update_timer_;
+  HeapTaskRunnerTimer<EventHandler> cursor_update_timer_;
 
   Member<Element> capturing_mouse_events_element_;
   // |capturing_subframe_element_| has similar functionality as
@@ -416,13 +432,15 @@ class CORE_EXPORT EventHandler final : public GarbageCollected<EventHandler> {
 
   double max_mouse_moved_duration_;
 
-  TaskRunnerTimer<EventHandler> active_interval_timer_;
+  float cursor_accessibility_scale_factor_ = 1.f;
+
+  HeapTaskRunnerTimer<EventHandler> active_interval_timer_;
 
   // last_show_press_timestamp_ prevents the active state rewrited by
   // following events too soon (less than 0.15s). It is ok we only record
   // last_show_press_timestamp_ in root frame since root frame will have
   // subframe as active element if subframe has active element.
-  base::Optional<base::TimeTicks> last_show_press_timestamp_;
+  absl::optional<base::TimeTicks> last_show_press_timestamp_;
   Member<Element> last_deferred_tap_element_;
 
   // Set on GestureTapDown if unique_touch_event_id_ matches cached adjusted
@@ -432,6 +450,13 @@ class CORE_EXPORT EventHandler final : public GarbageCollected<EventHandler> {
   // Stored the last touch type primary pointer down adjustment result.
   // This is used in gesture event hit test.
   TouchAdjustmentResult touch_adjustment_result_;
+
+  struct {
+    DOMNodeId mouse_down_target = kInvalidDOMNodeId;
+    DOMNodeId tap_target = kInvalidDOMNodeId;
+    base::TimeTicks mouse_down_time;
+    base::TimeTicks tap_time;
+  } discarded_events_;
 
   // ShouldShowIBeamForNode's unit tests:
   FRIEND_TEST_ALL_PREFIXES(EventHandlerTest, HitOnNothingDoesNotShowIBeam);

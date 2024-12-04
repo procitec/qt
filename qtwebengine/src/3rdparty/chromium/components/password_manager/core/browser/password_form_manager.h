@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,7 +9,8 @@
 #include <memory>
 #include <vector>
 
-#include "base/macros.h"
+#include "base/containers/lru_cache.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/utf_string_conversions.h"
@@ -17,15 +18,20 @@
 #include "build/build_config.h"
 #include "components/autofill/core/common/field_data_manager.h"
 #include "components/autofill/core/common/form_data.h"
-#include "components/autofill/core/common/renderer_id.h"
+#include "components/autofill/core/common/password_generation_util.h"
 #include "components/autofill/core/common/signatures.h"
+#include "components/autofill/core/common/unique_ids.h"
 #include "components/password_manager/core/browser/form_fetcher.h"
-#include "components/password_manager/core/browser/form_parsing/form_parser.h"
+#include "components/password_manager/core/browser/form_parsing/form_data_parser.h"
 #include "components/password_manager/core/browser/form_parsing/password_field_prediction.h"
+#include "components/password_manager/core/browser/password_form.h"
+#include "components/password_manager/core/browser/password_form_digest.h"
 #include "components/password_manager/core/browser/password_form_manager_for_ui.h"
 #include "components/password_manager/core/browser/password_form_metrics_recorder.h"
+#include "components/password_manager/core/browser/password_form_prediction_waiter.h"
+#include "components/password_manager/core/browser/password_manager_metrics_recorder.h"
 #include "components/password_manager/core/browser/password_save_manager.h"
-#include "components/password_manager/core/browser/password_store.h"
+#include "components/password_manager/core/browser/possible_username_data.h"
 #include "components/password_manager/core/browser/votes_uploader.h"
 #include "third_party/abseil-cpp/absl/types/variant.h"
 
@@ -36,9 +42,12 @@ class PasswordManagerClient;
 class PasswordManagerDriver;
 struct PossibleUsernameData;
 
+using FormOrDigest = absl::variant<autofill::FormData, PasswordFormDigest>;
+
 // This class helps with filling the observed form and with saving/updating the
 // stored information about it.
 class PasswordFormManager : public PasswordFormManagerForUI,
+                            public PasswordFormPredictionWaiter::Client,
                             public FormFetcher::Consumer {
  public:
   // TODO(crbug.com/621355): So far, |form_fetcher| can be null. In that case
@@ -58,9 +67,12 @@ class PasswordFormManager : public PasswordFormManagerForUI,
   // Constructor for http authentication (aka basic authentication).
   PasswordFormManager(
       PasswordManagerClient* client,
-      PasswordStore::FormDigest observed_http_auth_digest,
+      PasswordFormDigest observed_http_auth_digest,
       FormFetcher* form_fetcher,
       std::unique_ptr<PasswordSaveManager> password_save_manager);
+
+  PasswordFormManager(const PasswordFormManager&) = delete;
+  PasswordFormManager& operator=(const PasswordFormManager&) = delete;
 
   ~PasswordFormManager() override;
 
@@ -68,36 +80,27 @@ class PasswordFormManager : public PasswordFormManagerForUI,
   // form.
   static constexpr int kMaxTimesAutofill = 5;
 
-  // Compares |observed_form()| with |form| and returns true if they are the
-  // same and if |driver| is the same as |driver_|.
-  bool DoesManage(const autofill::FormData& form,
-                  const PasswordManagerDriver* driver) const;
-
   // Returns whether the form identified by |form_renderer_id| and |driver|
-  // is managed by this password form manager. Don't call this on iOS.
-  bool DoesManageAccordingToRendererId(
-      autofill::FormRendererId form_renderer_id,
-      const PasswordManagerDriver* driver) const;
+  // is managed by this password form manager.
+  bool DoesManage(autofill::FormRendererId form_renderer_id,
+                  const PasswordManagerDriver* driver) const;
 
   // Check that |submitted_form_| is equal to |form| from the user point of
   // view. It is used for detecting that a form is reappeared after navigation
   // for success detection.
   bool IsEqualToSubmittedForm(const autofill::FormData& form) const;
 
-  // Clears potentially submitted or pending form. Used to forget the state when
-  // Autofill Assistant has handled a submission.
-  void ResetState();
-
   // If |submitted_form| is managed by *this (i.e. DoesManage returns true for
   // |submitted_form| and |driver|) then saves |submitted_form| to
   // |submitted_form_| field, sets |is_submitted| = true and returns true.
   // Otherwise returns false.
-  // If as a result of the parsing the username is not found, the
-  // |possible_username->value| is chosen as username if it looks like an
-  // username and came from the same domain as |submitted_form|.
-  bool ProvisionallySave(const autofill::FormData& submitted_form,
-                         const PasswordManagerDriver* driver,
-                         const PossibleUsernameData* possible_username);
+  // In case a username is missed from the form, heuristically determines if one
+  // of the |possible_usernames| outside of the form can be used as a username.
+  bool ProvisionallySave(
+      const autofill::FormData& submitted_form,
+      const PasswordManagerDriver* driver,
+      const base::LRUCache<PossibleUsernameFieldIdentifier,
+                           PossibleUsernameData>* possible_usernames);
 
   // If |submitted_form| is managed by *this then saves |submitted_form| to
   // |submitted_form_| field, sets |is_submitted| = true and returns true.
@@ -106,6 +109,8 @@ class PasswordFormManager : public PasswordFormManagerForUI,
 
   bool is_submitted() { return is_submitted_; }
   void set_not_submitted() { is_submitted_ = false; }
+
+  bool IsSavingAllowed() const { return is_saving_allowed_; }
 
   // Returns true if |*this| manages http authentication.
   bool IsHttpAuth() const;
@@ -123,11 +128,16 @@ class PasswordFormManager : public PasswordFormManagerForUI,
   void ProcessServerPredictions(
       const std::map<autofill::FormSignature, FormPredictions>& predictions);
 
-  // Sends fill data to the renderer.
+  // Sends fill data to the renderer. If no server predictions exist, it
+  // schedules to fill when they become available (or the wait times out).
   void Fill();
 
-  // Sends fill data to the renderer to fill |observed_form_data|.
-  void FillForm(const autofill::FormData& observed_form_data);
+  // Updates `observed_form_or_digest_` and form predictions stored in
+  // `parser_`, resets the amount of autofills left and stops the timer waiting
+  // for server predictions.
+  void UpdateFormManagerWithFormChanges(
+      const autofill::FormData& observed_form_data,
+      const std::map<autofill::FormSignature, FormPredictions>& predictions);
 
   void UpdateSubmissionIndicatorEvent(
       autofill::mojom::SubmissionIndicatorEvent event);
@@ -137,78 +147,75 @@ class PasswordFormManager : public PasswordFormManagerForUI,
   void OnGeneratedPasswordAccepted(
       autofill::FormData form_data,
       autofill::FieldRendererId generation_element_id,
-      const base::string16& password);
+      const std::u16string& password);
 
-  // Sets |was_unblacklisted_while_on_page| to true.
-  void MarkWasUnblacklisted();
+  // Check if the field identified by |driver_id| and |field_id| is present in
+  // the |observed_form()|.
+  bool ObservedFormHasField(int driver_id,
+                            autofill::FieldRendererId field_id) const;
 
   // PasswordFormManagerForUI:
   const GURL& GetURL() const override;
-  const std::vector<const PasswordForm*>& GetBestMatches() const override;
-  std::vector<const PasswordForm*> GetFederatedMatches() const override;
+  const std::vector<raw_ptr<const PasswordForm, VectorExperimental>>&
+  GetBestMatches() const override;
+  std::vector<raw_ptr<const PasswordForm, VectorExperimental>>
+  GetFederatedMatches() const override;
   const PasswordForm& GetPendingCredentials() const override;
   metrics_util::CredentialSourceType GetCredentialSource() const override;
   PasswordFormMetricsRecorder* GetMetricsRecorder() override;
   base::span<const InteractionsStats> GetInteractionsStats() const override;
-  base::span<const CompromisedCredentials> GetCompromisedCredentials()
-      const override;
-  bool IsBlacklisted() const override;
-  bool WasUnblacklisted() const override;
+  std::vector<raw_ptr<const PasswordForm, VectorExperimental>>
+  GetInsecureCredentials() const override;
+  bool IsBlocklisted() const override;
   bool IsMovableToAccountStore() const override;
 
   void Save() override;
   void Update(const PasswordForm& credentials_to_update) override;
-  void OnUpdateUsernameFromPrompt(const base::string16& new_username) override;
-  void OnUpdatePasswordFromPrompt(const base::string16& new_password) override;
+  void OnUpdateUsernameFromPrompt(const std::u16string& new_username) override;
+  void OnUpdatePasswordFromPrompt(const std::u16string& new_password) override;
 
   void OnNopeUpdateClicked() override;
   void OnNeverClicked() override;
   void OnNoInteraction(bool is_update) override;
-  void PermanentlyBlacklist() override;
+  void Blocklist() override;
   void OnPasswordsRevealed() override;
   void MoveCredentialsToAccountStore() override;
   void BlockMovingCredentialsToAccountStore() override;
 
   bool IsNewLogin() const;
   FormFetcher* GetFormFetcher();
-  bool IsPendingCredentialsPublicSuffixMatch() const;
   void PresaveGeneratedPassword(const autofill::FormData& form_data,
-                                const base::string16& generated_password);
+                                const std::u16string& generated_password);
   void PasswordNoLongerGenerated();
   bool HasGeneratedPassword() const;
-  void SetGenerationPopupWasShown(bool is_manual_generation);
+  void SetGenerationPopupWasShown(
+      autofill::password_generation::PasswordGenerationType type);
   void SetGenerationElement(autofill::FieldRendererId generation_element);
-  bool IsPossibleChangePasswordFormWithoutUsername() const;
+  bool HasLikelyChangeOrResetFormSubmitted() const;
   bool IsPasswordUpdate() const;
   base::WeakPtr<PasswordManagerDriver> GetDriver() const;
   const PasswordForm* GetSubmittedForm() const;
 
-  int driver_id() { return driver_id_; }
+  // Returns the frame id of the corresponding PasswordManagerDriver. See
+  // `GetFrameId()` in PasswordManagerDriver for more details.
+  int GetFrameId();
 
-#if defined(OS_IOS)
-  // Presaves the form with |generated_password|. This function is called once
-  // when the user accepts the generated password. The password was generated in
-  // the field with identifier |generation_element|. |driver| corresponds to the
-  // |form| parent frame.
-  void PresaveGeneratedPassword(PasswordManagerDriver* driver,
-                                const autofill::FormData& form,
-                                const base::string16& generated_password,
-                                autofill::FieldRendererId generation_element);
-
-  // Return false and do nothing if |form_identifier| does not correspond to
-  // |observed_form()|. Otherwise set a value of the field with
-  // |field_identifier| of |observed_form()| to |field_value|. In case if there
-  // is a presaved credential this function updates the presaved credential.
-  bool UpdateStateOnUserInput(autofill::FormRendererId form_id,
+#if BUILDFLAG(IS_IOS)
+  // Sets a value of the field with |field_identifier| of |observed_form()|
+  // to |field_value|. In case if there is a presaved credential this function
+  // updates the presaved credential.
+  void UpdateStateOnUserInput(autofill::FormRendererId form_id,
                               autofill::FieldRendererId field_id,
-                              const base::string16& field_value);
+                              const std::u16string& field_value);
 
   void SetDriver(const base::WeakPtr<PasswordManagerDriver>& driver);
 
-  // Copies all known field data from FieldDataManager to |observed_form()|.
-  void UpdateObservedFormDataWithFieldDataManagerInfo(
-      const autofill::FieldDataManager* field_data_manager);
-#endif  // defined(OS_IOS)
+  // Copies all known field data from FieldDataManager to |observed_form()|
+  // and provisionally saves the manager if the relevant data is found.
+  void ProvisionallySaveFieldDataManagerInfo(
+      const autofill::FieldDataManager& field_data_manager,
+      const PasswordManagerDriver* driver);
+#endif  // BUILDFLAG(IS_IOS)
 
   // Create a copy of |*this| which can be passed to the code handling
   // save-password related UI. This omits some parts of the internal data, so
@@ -228,15 +235,21 @@ class PasswordFormManager : public PasswordFormManagerForUI,
     return absl::get_if<autofill::FormData>(&observed_form_or_digest_);
   }
 
+  // Saves username value from |pending_credentials_| to votes uploader.
+  void SaveSuggestedUsernameValueToVotesUploader();
+
 #if defined(UNIT_TEST)
   static void set_wait_for_server_predictions_for_filling(bool value) {
     wait_for_server_predictions_for_filling_ = value;
   }
 
-  FormSaver* form_saver() const {
-    return password_save_manager_->GetFormSaver();
+  FormSaver* profile_store_form_saver() const {
+    return password_save_manager_->GetProfileStoreFormSaverForTesting();
   }
 
+  const VotesUploader* votes_uploader() const {
+    return votes_uploader_.has_value() ? &votes_uploader_.value() : nullptr;
+  }
 #endif
 
  protected:
@@ -250,14 +263,15 @@ class PasswordFormManager : public PasswordFormManagerForUI,
   // FormFetcher::Consumer:
   void OnFetchCompleted() override;
 
+  // PasswordFormPredictionWaiter::Client:
+  void OnWaitCompleted() override;
+  void OnTimeout() override;
+
   // Create pending credentials from |parsed_submitted_form_| and forms received
   // from the password store.
   void CreatePendingCredentials();
 
  private:
-  using FormOrDigest =
-      absl::variant<autofill::FormData, PasswordStore::FormDigest>;
-
   // Delegating constructor.
   PasswordFormManager(
       PasswordManagerClient* client,
@@ -282,13 +296,14 @@ class PasswordFormManager : public PasswordFormManagerForUI,
 
   // Helper function for calling form parsing and logging results if logging is
   // active.
-  std::unique_ptr<PasswordForm> ParseFormAndMakeLogging(
-      const autofill::FormData& form,
-      FormDataParser::Mode mode);
+  std::tuple<std::unique_ptr<PasswordForm>,
+             FormDataParser::UsernameDetectionMethod>
+  ParseFormAndMakeLogging(const autofill::FormData& form,
+                          FormDataParser::Mode mode);
 
   void PresaveGeneratedPasswordInternal(
       const autofill::FormData& form,
-      const base::string16& generated_password);
+      const std::u16string& generated_password);
 
   // Returns a mutable pointer to the observed form if possible or nullptr
   // otherwise.
@@ -297,49 +312,110 @@ class PasswordFormManager : public PasswordFormManagerForUI,
   }
 
   // Returns a pointer to the observed digest if possible or nullptr otherwise.
-  const PasswordStore::FormDigest* observed_digest() const {
-    return absl::get_if<PasswordStore::FormDigest>(&observed_form_or_digest_);
+  const PasswordFormDigest* observed_digest() const {
+    return absl::get_if<PasswordFormDigest>(&observed_form_or_digest_);
   }
 
-  // Calculates FillingAssistance metric for |submitted_form|. The metric is
-  // recorded in case when the successful submission is detected.
+  // Calculates FillingAssistance metric for |parsed_submitted_form|.
   void CalculateFillingAssistanceMetric(
-      const autofill::FormData& submitted_form);
+      const PasswordForm& parsed_submitted_form);
+
+  // Calculates SubmittedPasswordFormFrame metric value (main frame, iframe,
+  // etc) for |submitted_form|. The metric is recorded when the form manager is
+  // destroyed.
+  void CalculateSubmittedFormFrameMetric();
+
+  // Calculates SubmittedFormType metric for |parsed_submitted_form_|. The
+  // metric is recorded when the form manager is destroyed.
+  void CalculateSubmittedFormTypeMetric();
 
   // Save/update |pending_credentials_| to the password store.
   void SavePendingToStore(bool update);
 
-  PasswordStore::FormDigest ConstructObservedFormDigest() const;
+  PasswordFormDigest ConstructObservedFormDigest() const;
 
-  // Returns whether |possible_username| should be used for offering the
-  // username to save on username first flow. The decision is based on server
-  // predictions, data from FieldInfoManager and whether |possible_username|
-  // looks valid.
-  bool UsePossibleUsername(const PossibleUsernameData* possible_username);
+  // Returns whether |possible_username| data can be used in username first
+  // flow.
+  bool IsPossibleSingleUsernameAvailable(
+      const PossibleUsernameData& possible_username) const;
+
+  // Finds best username candidate that is outside of the form. This is done
+  // according to priorities listed in `UsernameFoundOutsideOfFormType`.
+  // If there are more than one field in the same category, pick the one that is
+  // more recently modified by the user.
+  std::optional<UsernameFoundOutsideOfForm> FindBestPossibleUsernameCandidate(
+      const base::LRUCache<PossibleUsernameFieldIdentifier,
+                           PossibleUsernameData>& possible_usernames);
+
+  // Updates the predictions stored in `parser_` with predictions relevant for
+  // `observed_form_or_digest_`.
+  void UpdatePredictionsForObservedForm(
+      const std::map<autofill::FormSignature, FormPredictions>& predictions);
+
+  // Creates a timer to wait for server side predictions. On timeout (or on
+  // receiving server side predictions), `Fill()` is triggered.
+  void DelayFillForServerSidePredictions();
+
+  // Sends fill data to the renderer immediately regardless of whether server
+  // predictions are available.
+  void FillNow();
+
+  // Returns true if WebAuthn credential filling is enabled and there are
+  // credentials available to use.
+  bool WebAuthnCredentialsAvailable() const;
+
+  // Checks if `best_candidate` has better signal than the username
+  // found inside the password form.
+  bool ShouldPreferUsernameFoundOutsideOfForm(
+      const std::optional<UsernameFoundOutsideOfForm>& best_candidate,
+      FormDataParser::UsernameDetectionMethod
+          in_form_username_detection_method);
+
+  // Sets voting data and update `parsed_submitted_form_` with the correct
+  // username value for a password form without a username field.
+  void HandleUsernameFirstFlow(
+      const base::LRUCache<PossibleUsernameFieldIdentifier,
+                           PossibleUsernameData>& possible_usernames,
+      FormDataParser::UsernameDetectionMethod
+          in_form_username_detection_method);
+
+  // Sets voting data for a password form that is likely a forgot password form
+  // (a form, into which the user inputs their username to start the
+  // password recovery process).
+  void HandleForgotPasswordFormData();
+
+  // Returns non-empty, lower case stored usernames based on `GetBestMatches()`.
+  base::flat_set<std::u16string> GetStoredUsernames() const;
+
+  // Records provisional save failure using current |client_| and
+  // |main_frame_url_|.
+  void RecordProvisionalSaveFailure(
+      PasswordManagerMetricsRecorder::ProvisionalSaveFailure failure,
+      const GURL& form_origin);
 
   // The client which implements embedder-specific PasswordManager operations.
-  PasswordManagerClient* client_;
+  const raw_ptr<PasswordManagerClient> client_;
 
   base::WeakPtr<PasswordManagerDriver> driver_;
 
-  // Id of |driver_|. Cached since |driver_| might become null when frame is
-  // close.
+  // The frame id of |driver_|.  See `GetFrameId()` in PasswordManagerDriver for
+  // more details. This is cached since |driver_| might become null when the
+  // frame is deleted.
+  int cached_driver_frame_id_ = 0;
+
+  // The id of |driver_|. Cached since |driver_| might become null when the
+  // frame frame is deleted.
   int driver_id_ = 0;
 
   // The observed form or digest. These are mutually exclusive, hence the usage
   // of a variant.
   FormOrDigest observed_form_or_digest_;
 
-  // If the observed form gets blacklisted through |this|, we keep the
+  // If the observed form gets blocklisted through |this|, we keep the
   // information in this boolean flag until data is potentially refreshed by
   // reading from PasswordStore again. Upon reading from the store again, we set
   // this boolean to false again.
-  bool newly_blacklisted_ = false;
-
-  // Set to true when the user unblacklists the origin while on the page.
-  // This is used to decide when to record
-  // |PasswordManager.ResultOfSavingAfterUnblacklisting|.
-  bool was_unblacklisted_while_on_page_ = false;
+  bool newly_blocklisted_ = false;
 
   // Takes care of recording metrics and events for |*this|.
   scoped_refptr<PasswordFormMetricsRecorder> metrics_recorder_;
@@ -348,11 +424,13 @@ class PasswordFormManager : public PasswordFormManagerForUI,
   std::unique_ptr<FormFetcher> owned_form_fetcher_;
 
   // FormFetcher instance which owns the login data from PasswordStore.
-  FormFetcher* form_fetcher_;
+  const raw_ptr<FormFetcher> form_fetcher_;
 
   std::unique_ptr<PasswordSaveManager> password_save_manager_;
 
-  VotesUploader votes_uploader_;
+  // Uploads crowdsourcing votes. Is not set if votes shouldn't be uploaded for
+  // the observed form.
+  std::optional<VotesUploader> votes_uploader_;
 
   // |is_submitted_| = true means that |*this| is ready for saving.
   // TODO(https://crubg.com/875768): Come up with a better name.
@@ -366,8 +444,8 @@ class PasswordFormManager : public PasswordFormManagerForUI,
   // loop.
   int autofills_left_ = kMaxTimesAutofill;
 
-  // True until server predictions received or waiting for them timed out.
-  bool waiting_for_server_predictions_ = false;
+  // Closure to call when server predictions are received.
+  base::OnceClosure server_predictions_closure_;
 
   // Controls whether to wait or not server before filling. It is used in tests.
   static bool wait_for_server_predictions_for_filling_;
@@ -375,13 +453,25 @@ class PasswordFormManager : public PasswordFormManagerForUI,
   // Time when stored credentials are received from the store. Used for metrics.
   base::TimeTicks received_stored_credentials_time_;
 
+  PasswordFormPredictionWaiter async_predictions_waiter_;
+
   // Used to transform FormData into PasswordForms.
   FormDataParser parser_;
 
-  base::WeakPtrFactory<PasswordFormManager> weak_ptr_factory_{this};
+  // Used to indicate if password can be offered for saving.
+  // The decision is captured at the provisional save time while it can be
+  // already different for the landing page.
+  bool is_saving_allowed_ = true;
 
-  DISALLOW_COPY_AND_ASSIGN(PasswordFormManager);
+  // A password field that is used for generation.
+  autofill::FieldRendererId generation_element_;
 };
+
+// Returns whether `form_data` differs from the form observed by `form_manager`
+// in one of the following ways: 1) The number of form fields differ. 2) A form
+// field's renderer id, name, control type, or autocomplete attribute differs.
+bool HasObservedFormChanged(const autofill::FormData& form_data,
+                            PasswordFormManager& form_manager);
 
 }  // namespace password_manager
 

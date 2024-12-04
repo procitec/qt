@@ -56,8 +56,8 @@
 
 static int32_t option_red_mode;
 static int32_t option_triangle_mode;
-static int32_t option_no_triangle;
-static int32_t option_help;
+static bool option_no_triangle;
+static bool option_help;
 
 static const struct weston_option options[] = {
 	{ WESTON_OPTION_INTEGER, "red-mode", 'r', &option_red_mode },
@@ -296,7 +296,7 @@ create_shader(const char *source, GLenum shader_type)
 		char log[1000];
 		GLsizei len;
 		glGetShaderInfoLog(shader, 1000, &len, log);
-		fprintf(stderr, "Error: compiling %s: %*s\n",
+		fprintf(stderr, "Error: compiling %s: %.*s\n",
 			shader_type == GL_VERTEX_SHADER ? "vertex" : "fragment",
 			len, log);
 		exit(1);
@@ -325,7 +325,7 @@ triangle_init_gl(struct triangle_gl_state *trigl)
 		char log[1000];
 		GLsizei len;
 		glGetProgramInfoLog(program, 1000, &len, log);
-		fprintf(stderr, "Error: linking:\n%*s\n", len, log);
+		fprintf(stderr, "Error: linking:\n%.*s\n", len, log);
 		exit(1);
 	}
 
@@ -733,6 +733,8 @@ demoapp_create(struct display *display)
 	app->window = window_create(app->display);
 	app->widget = window_frame_create(app->window, app);
 	window_set_title(app->window, "Wayland Sub-surface Demo");
+	window_set_appid(app->window,
+			 "org.freedesktop.weston.wayland-sub-surface-demo");
 
 	window_set_key_handler(app->window, key_handler);
 	window_set_user_data(app->window, app);

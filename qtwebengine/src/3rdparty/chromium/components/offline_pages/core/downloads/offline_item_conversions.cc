@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -42,8 +42,7 @@ const std::string GetMimeType() {
 namespace offline_pages {
 
 OfflineItem OfflineItemConversions::CreateOfflineItem(
-    const OfflinePageItem& page,
-    bool is_suggested) {
+    const OfflinePageItem& page) {
   OfflineItem item;
   item.id = ContentId(kOfflinePageNamespace, page.client_id.id);
   item.title = GetDisplayName(page);
@@ -57,12 +56,11 @@ OfflineItem OfflineItemConversions::CreateOfflineItem(
   item.last_accessed_time = page.last_access_time;
   item.file_path = page.file_path;
   item.mime_type = GetMimeType();
-  item.page_url = page.url;
+  item.url = page.url;
   item.original_url = page.original_url_if_different;
   item.progress.value = 100;
   item.progress.max = 100;
   item.progress.unit = OfflineItemProgressUnit::PERCENTAGE;
-  item.is_suggested = is_suggested;
   item.is_openable = true;
   item.externally_removed = page.file_missing_time != base::Time();
   item.description = page.snippet;
@@ -82,7 +80,7 @@ OfflineItem OfflineItemConversions::CreateOfflineItem(
   item.total_size_bytes = -1L;
   item.received_bytes = 0;
   item.mime_type = GetMimeType();
-  item.page_url = request.url();
+  item.url = request.url();
   item.original_url = request.original_url();
   switch (request.request_state()) {
     case SavePageRequest::RequestState::AVAILABLE:

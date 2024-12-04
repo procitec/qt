@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -62,6 +62,9 @@ struct InterfaceInfo {
   // supported on this interface.
   IPAddress GetIpAddressV4() const;
   IPAddress GetIpAddressV6() const;
+
+  // Returns true if |hardware_address| is non-zero.
+  bool HasHardwareAddress() const;
 
   InterfaceInfo();
   InterfaceInfo(NetworkInterfaceIndex index,

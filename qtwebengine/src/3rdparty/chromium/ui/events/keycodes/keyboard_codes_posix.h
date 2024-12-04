@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -31,9 +31,14 @@
 #ifndef UI_EVENTS_KEYCODES_KEYBOARD_CODES_POSIX_H_
 #define UI_EVENTS_KEYCODES_KEYBOARD_CODES_POSIX_H_
 
+#include "build/build_config.h"
+#include "build/chromeos_buildflags.h"
+
 namespace ui {
 
-enum KeyboardCode {
+// When adding a new KeyboardCode, be sure to also update the associated mojom
+// file at ash/public/mojom/accelerator_keys.mojom.
+enum KeyboardCode : unsigned short {
   VKEY_CANCEL = 0x03,
   VKEY_BACK = 0x08,
   VKEY_TAB = 0x09,
@@ -221,8 +226,10 @@ enum KeyboardCode {
   VKEY_ASSISTANT = 0x99,
   VKEY_SETTINGS = 0x9A,
   VKEY_PRIVACY_SCREEN_TOGGLE = 0x9B,
+  VKEY_MICROPHONE_MUTE_TOGGLE = 0x9F,
   VKEY_BRIGHTNESS_DOWN = 0xD8,
   VKEY_BRIGHTNESS_UP = 0xD9,
+  VKEY_KBD_BACKLIGHT_TOGGLE = 0xB8,
   VKEY_KBD_BRIGHTNESS_DOWN = 0xDA,
   VKEY_KBD_BRIGHTNESS_UP = 0xE8,
 
@@ -238,6 +245,38 @@ enum KeyboardCode {
   // represent them.
   VKEY_MEDIA_PLAY = 0xE9,
   VKEY_MEDIA_PAUSE = 0xEA,
+
+  // Application keys.
+  VKEY_NEW = 0xEB,
+  VKEY_CLOSE = 0xEC,
+
+  // Emoji Picker.
+  VKEY_EMOJI_PICKER = 0xED,
+  // Start dictation.
+  VKEY_DICTATE = 0xEE,
+  // All applications - this also triggers the launcher in Chrome OS.
+  VKEY_ALL_APPLICATIONS = 0xEF,
+
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+  // The following values are used to be able to recognize button events within
+  // ChromeOS. They have no functionality by default.
+  VKEY_BUTTON_0 = 0xFF00,
+  VKEY_BUTTON_1 = 0xFF01,
+  VKEY_BUTTON_2 = 0xFF02,
+  VKEY_BUTTON_3 = 0xFF03,
+  VKEY_BUTTON_4 = 0xFF04,
+  VKEY_BUTTON_5 = 0xFF05,
+  VKEY_BUTTON_6 = 0xFF06,
+  VKEY_BUTTON_7 = 0xFF07,
+  VKEY_BUTTON_8 = 0xFF08,
+  VKEY_BUTTON_9 = 0xFF09,
+  VKEY_BUTTON_A = 0xFF0A,
+  VKEY_BUTTON_B = 0xFF0B,
+  VKEY_BUTTON_C = 0xFF0C,
+  VKEY_BUTTON_X = 0xFF0D,
+  VKEY_BUTTON_Y = 0xFF0E,
+  VKEY_BUTTON_Z = 0xFF0F,
+#endif
 };
 
 }  // namespace ui

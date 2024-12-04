@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -55,13 +55,13 @@ PP_Bool ReadImageData(PP_Resource graphics_2d,
 void RunMessageLoop(PP_Instance instance) {
   CHECK(PpapiGlobals::Get()->GetMainThreadMessageLoop()->
       BelongsToCurrentThread());
-  base::RunLoop(base::RunLoop::Type::kNestableTasksAllowed).Run();
+  PpapiGlobals::Get()->RunMsgLoop();
 }
 
 void QuitMessageLoop(PP_Instance instance) {
   CHECK(PpapiGlobals::Get()->GetMainThreadMessageLoop()->
             BelongsToCurrentThread());
-  base::RunLoop::QuitCurrentDeprecated();
+  PpapiGlobals::Get()->QuitMsgLoop();
 }
 
 uint32_t GetLiveObjectsForInstance(PP_Instance instance_id) {
@@ -78,27 +78,6 @@ uint32_t GetLiveObjectsForInstance(PP_Instance instance_id) {
 
 PP_Bool IsOutOfProcess() {
   return PP_TRUE;
-}
-
-void PostPowerSaverStatus(PP_Instance instance_id) {
-  ProxyAutoLock lock;
-  PluginDispatcher* dispatcher = PluginDispatcher::GetForInstance(instance_id);
-  if (!dispatcher)
-    return;
-
-  dispatcher->Send(new PpapiHostMsg_PPBTesting_PostPowerSaverStatus(
-      API_ID_PPB_TESTING, instance_id));
-}
-
-void SubscribeToPowerSaverNotifications(PP_Instance instance_id) {
-  ProxyAutoLock lock;
-  PluginDispatcher* dispatcher = PluginDispatcher::GetForInstance(instance_id);
-  if (!dispatcher)
-    return;
-
-  dispatcher->Send(
-      new PpapiHostMsg_PPBTesting_SubscribeToPowerSaverNotifications(
-          API_ID_PPB_TESTING, instance_id));
 }
 
 void SimulateInputEvent(PP_Instance instance_id, PP_Resource input_event) {
@@ -159,8 +138,6 @@ const PPB_Testing_Private testing_interface = {
     &QuitMessageLoop,
     &GetLiveObjectsForInstance,
     &IsOutOfProcess,
-    &PostPowerSaverStatus,
-    &SubscribeToPowerSaverNotifications,
     &SimulateInputEvent,
     &GetDocumentURL,
     &GetLiveVars,
@@ -196,11 +173,6 @@ bool PPB_Testing_Proxy::OnMessageReceived(const IPC::Message& msg) {
                         OnMsgReadImageData)
     IPC_MESSAGE_HANDLER(PpapiHostMsg_PPBTesting_GetLiveObjectsForInstance,
                         OnMsgGetLiveObjectsForInstance)
-    IPC_MESSAGE_HANDLER(PpapiHostMsg_PPBTesting_PostPowerSaverStatus,
-                        OnMsgPostPowerSaverStatus)
-    IPC_MESSAGE_HANDLER(
-        PpapiHostMsg_PPBTesting_SubscribeToPowerSaverNotifications,
-        OnMsgSubscribeToPowerSaverNotifications)
     IPC_MESSAGE_HANDLER(PpapiHostMsg_PPBTesting_SimulateInputEvent,
                         OnMsgSimulateInputEvent)
     IPC_MESSAGE_HANDLER(
@@ -231,15 +203,6 @@ void PPB_Testing_Proxy::OnMsgQuitMessageLoop(PP_Instance instance) {
 void PPB_Testing_Proxy::OnMsgGetLiveObjectsForInstance(PP_Instance instance,
                                                        uint32_t* result) {
   *result = ppb_testing_impl_->GetLiveObjectsForInstance(instance);
-}
-
-void PPB_Testing_Proxy::OnMsgPostPowerSaverStatus(PP_Instance instance) {
-  ppb_testing_impl_->PostPowerSaverStatus(instance);
-}
-
-void PPB_Testing_Proxy::OnMsgSubscribeToPowerSaverNotifications(
-    PP_Instance instance) {
-  ppb_testing_impl_->SubscribeToPowerSaverNotifications(instance);
 }
 
 void PPB_Testing_Proxy::OnMsgSimulateInputEvent(

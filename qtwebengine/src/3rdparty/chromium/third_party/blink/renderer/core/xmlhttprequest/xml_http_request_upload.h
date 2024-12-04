@@ -30,7 +30,7 @@
 #include "third_party/blink/renderer/core/xmlhttprequest/xml_http_request.h"
 #include "third_party/blink/renderer/core/xmlhttprequest/xml_http_request_event_target.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
 
 namespace blink {
@@ -43,7 +43,7 @@ class XMLHttpRequestUpload final : public XMLHttpRequestEventTarget {
  public:
   explicit XMLHttpRequestUpload(XMLHttpRequest*);
 
-  XMLHttpRequest* XmlHttpRequest() const { return xml_http_request_; }
+  XMLHttpRequest* XmlHttpRequest() const { return xml_http_request_.Get(); }
 
   const AtomicString& InterfaceName() const override;
   ExecutionContext* GetExecutionContext() const override;

@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,13 +10,13 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
-#include "base/single_thread_task_runner.h"
+#include "base/functional/bind.h"
+#include "base/memory/weak_ptr.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/task/single_thread_task_runner.h"
 #include "chrome/browser/local_discovery/service_discovery_shared_client.h"
-#include "content/public/browser/browser_task_traits.h"
+#include "content/public/browser/browser_thread.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/ip_address.h"
 
@@ -91,9 +91,8 @@ AndroidDeviceManager::DeviceInfo ServiceDescriptionToDeviceInfo(
 // different threads in undefined order.
 //
 // TODO(crbug.com/963216): Consolidate DNS-SD implementations for Cast.
-class CastDeviceProvider::DeviceListerDelegate
-    : public ServiceDiscoveryDeviceLister::Delegate,
-      public base::SupportsWeakPtr<DeviceListerDelegate> {
+class CastDeviceProvider::DeviceListerDelegate final
+    : public ServiceDiscoveryDeviceLister::Delegate {
  public:
   DeviceListerDelegate(base::WeakPtr<CastDeviceProvider> provider,
                        scoped_refptr<base::SingleThreadTaskRunner> runner)
@@ -137,6 +136,10 @@ class CastDeviceProvider::DeviceListerDelegate
                                      provider_, service_type));
   }
 
+  base::WeakPtr<DeviceListerDelegate> AsWeakPtr() {
+    return weak_ptr_factory_.GetWeakPtr();
+  }
+
  private:
   // The device provider to notify of device changes.
   base::WeakPtr<CastDeviceProvider> provider_;
@@ -145,16 +148,18 @@ class CastDeviceProvider::DeviceListerDelegate
   scoped_refptr<base::SingleThreadTaskRunner> runner_;
   scoped_refptr<ServiceDiscoverySharedClient> service_discovery_client_;
   std::unique_ptr<ServiceDiscoveryDeviceLister> device_lister_;
+  base::WeakPtrFactory<DeviceListerDelegate> weak_ptr_factory_{this};
 };
 
 CastDeviceProvider::CastDeviceProvider() {}
 
 CastDeviceProvider::~CastDeviceProvider() {}
 
-void CastDeviceProvider::QueryDevices(const SerialsCallback& callback) {
+void CastDeviceProvider::QueryDevices(SerialsCallback callback) {
   if (!lister_delegate_) {
     lister_delegate_.reset(new DeviceListerDelegate(
-        weak_factory_.GetWeakPtr(), base::ThreadTaskRunnerHandle::Get()));
+        weak_factory_.GetWeakPtr(),
+        base::SingleThreadTaskRunner::GetCurrentDefault()));
     content::GetUIThreadTaskRunner({})->PostTask(
         FROM_HERE, base::BindOnce(&DeviceListerDelegate::StartDiscovery,
                                   lister_delegate_->AsWeakPtr()));
@@ -163,21 +168,21 @@ void CastDeviceProvider::QueryDevices(const SerialsCallback& callback) {
   for (const auto& device_entry : device_info_map_)
     targets.insert(net::HostPortPair(device_entry.first, kCastInspectPort));
   tcp_provider_ = new TCPDeviceProvider(targets);
-  tcp_provider_->QueryDevices(callback);
+  tcp_provider_->QueryDevices(std::move(callback));
 }
 
 void CastDeviceProvider::QueryDeviceInfo(const std::string& serial,
-                                         const DeviceInfoCallback& callback) {
+                                         DeviceInfoCallback callback) {
   auto it_device = device_info_map_.find(serial);
   if (it_device == device_info_map_.end())
     return;
-  callback.Run(it_device->second);
+  std::move(callback).Run(it_device->second);
 }
 
 void CastDeviceProvider::OpenSocket(const std::string& serial,
                                     const std::string& socket_name,
-                                    const SocketCallback& callback) {
-  tcp_provider_->OpenSocket(serial, socket_name, callback);
+                                    SocketCallback callback) {
+  tcp_provider_->OpenSocket(serial, socket_name, std::move(callback));
 }
 
 void CastDeviceProvider::OnDeviceChanged(

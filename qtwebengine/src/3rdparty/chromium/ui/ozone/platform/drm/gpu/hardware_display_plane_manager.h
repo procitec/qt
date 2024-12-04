@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,20 +8,25 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <xf86drmMode.h>
+#include <cstdint>
+#include <map>
 #include <memory>
 #include <vector>
 
-#include "base/macros.h"
-#include "ui/display/types/gamma_ramp_rgb_entry.h"
+#include "base/containers/flat_set.h"
+#include "base/memory/raw_ptr.h"
+#include "base/memory/raw_ptr_exclusion.h"
+#include "third_party/perfetto/include/perfetto/tracing/traced_value_forward.h"
+#include "ui/display/types/display_color_management.h"
 #include "ui/ozone/platform/drm/common/scoped_drm_types.h"
 #include "ui/ozone/platform/drm/gpu/crtc_commit_request.h"
 #include "ui/ozone/platform/drm/gpu/drm_device.h"
 #include "ui/ozone/platform/drm/gpu/drm_overlay_plane.h"
-#include "ui/ozone/public/swap_completion_callback.h"
+#include "ui/ozone/public/hardware_capabilities.h"
 
 namespace gfx {
-class GpuFence;
 class Rect;
+struct GpuFenceHandle;
 }  // namespace gfx
 
 namespace ui {
@@ -36,9 +41,13 @@ struct HardwareDisplayPlaneList {
   ~HardwareDisplayPlaneList();
 
   // This is the list of planes to be committed this time.
-  std::vector<HardwareDisplayPlane*> plane_list;
+  // This field is not vector<raw_ptr<...>> due to interaction with third_party
+  // api.
+  RAW_PTR_EXCLUSION std::vector<HardwareDisplayPlane*> plane_list;
   // This is the list of planes that was committed last time.
-  std::vector<HardwareDisplayPlane*> old_plane_list;
+  // This field is not vector<raw_ptr<...>> due to interaction with third_party
+  // api.
+  RAW_PTR_EXCLUSION std::vector<HardwareDisplayPlane*> old_plane_list;
 
   struct PageFlipInfo {
     PageFlipInfo(uint32_t crtc_id, uint32_t framebuffer);
@@ -53,25 +62,32 @@ struct HardwareDisplayPlaneList {
   std::vector<PageFlipInfo> legacy_page_flips;
 
   ScopedDrmAtomicReqPtr atomic_property_set;
+
+  // Adds trace records to |context|.
+  void WriteIntoTrace(perfetto::TracedValue context) const;
 };
 
 class HardwareDisplayPlaneManager {
  public:
   struct CrtcProperties {
+    CrtcProperties();
+    CrtcProperties(const CrtcProperties& other);
+    ~CrtcProperties();
     // Unique identifier for the CRTC. This must be greater than 0 to be valid.
     uint32_t id;
     // Keeps track of the CRTC state. If a surface has been bound, then the
     // value is set to true. Otherwise it is false.
-    DrmDevice::Property active;
-    DrmDevice::Property mode_id;
+    DrmWrapper::Property active;
+    DrmWrapper::Property mode_id;
     // Optional properties.
-    DrmDevice::Property ctm;
-    DrmDevice::Property gamma_lut;
-    DrmDevice::Property gamma_lut_size;
-    DrmDevice::Property degamma_lut;
-    DrmDevice::Property degamma_lut_size;
-    DrmDevice::Property out_fence_ptr;
-    DrmDevice::Property background_color;
+    DrmWrapper::Property ctm;
+    DrmWrapper::Property gamma_lut;
+    DrmWrapper::Property gamma_lut_size;
+    DrmWrapper::Property degamma_lut;
+    DrmWrapper::Property degamma_lut_size;
+    DrmWrapper::Property out_fence_ptr;
+    DrmWrapper::Property background_color;
+    DrmWrapper::Property vrr_enabled;
   };
 
   struct CrtcState {
@@ -82,18 +98,31 @@ class HardwareDisplayPlaneManager {
     CrtcState(CrtcState&&);
 
     drmModeModeInfo mode = {};
-    scoped_refptr<DrmFramebuffer> modeset_framebuffer;
+    std::vector<scoped_refptr<DrmFramebuffer>> modeset_framebuffers;
 
     CrtcProperties properties = {};
 
-    // Cached blobs for the properties since the CRTC properties are applied on
-    // the next page flip and we need to keep the properties valid until then.
-    ScopedDrmPropertyBlob ctm_blob;
-    ScopedDrmPropertyBlob gamma_lut_blob;
-    ScopedDrmPropertyBlob degamma_lut_blob;
+    // The parameters most recently set from the browser. These are used to
+    // compute the CTM, GAMMA, and DEGAMMA blobs.
+    display::ColorTemperatureAdjustment color_temperature_adjustment;
+    display::ColorCalibration color_calibration;
+    display::GammaAdjustment gamma_adjustment;
+
+    // Cached blobs for the properties to commit in CommitCrtcProperties.
+    // * If a property is `absl::nullopt`, then it should be left unchanged.
+    // * If a property is `nullptr` then it should be set to 0.
+    // * If a property is a blob, then it should be set to that blob.
+    absl::optional<ScopedDrmPropertyBlob> pending_ctm_blob;
+    absl::optional<ScopedDrmPropertyBlob> pending_gamma_lut_blob;
+    absl::optional<ScopedDrmPropertyBlob> pending_degamma_lut_blob;
   };
 
   explicit HardwareDisplayPlaneManager(DrmDevice* drm);
+
+  HardwareDisplayPlaneManager(const HardwareDisplayPlaneManager&) = delete;
+  HardwareDisplayPlaneManager& operator=(const HardwareDisplayPlaneManager&) =
+      delete;
+
   virtual ~HardwareDisplayPlaneManager();
 
   // This parses information from the drm driver, adding any new planes
@@ -112,6 +141,19 @@ class HardwareDisplayPlaneManager {
   // calls.
   void BeginFrame(HardwareDisplayPlaneList* plane_list);
 
+  // Sets the color temperature adjustment for a given CRTC.
+  void SetColorTemperatureAdjustment(
+      uint32_t crtc_id,
+      const display::ColorTemperatureAdjustment& cta);
+
+  // Sets the color calibration information for a given CRTC.
+  void SetColorCalibration(uint32_t crtc_id,
+                           const display::ColorCalibration& calibration);
+
+  // Sets the gamma adjustment for a given CRTC.
+  void SetGammaAdjustment(uint32_t crtc_id,
+                          const display::GammaAdjustment& adjustment);
+
   // Sets the color transform matrix (a 3x3 matrix represented in vector form)
   // on the CRTC with ID |crtc_id|.
   bool SetColorMatrix(uint32_t crtc_id, const std::vector<float>& color_matrix);
@@ -120,10 +162,9 @@ class HardwareDisplayPlaneManager {
   void SetBackgroundColor(uint32_t crtc_id, const uint64_t background_color);
 
   // Sets the degamma/gamma luts on the CRTC object with ID |crtc_id|.
-  virtual bool SetGammaCorrection(
-      uint32_t crtc_id,
-      const std::vector<display::GammaRampRGBEntry>& degamma_lut,
-      const std::vector<display::GammaRampRGBEntry>& gamma_lut);
+  virtual bool SetGammaCorrection(uint32_t crtc_id,
+                                  const display::GammaCurve& degamma,
+                                  const display::GammaCurve& gamma);
 
   // Assign hardware planes from the |planes_| list to |overlay_list| entries,
   // recording the plane IDs in the |plane_list|. Only planes compatible with
@@ -133,7 +174,6 @@ class HardwareDisplayPlaneManager {
                                    uint32_t crtc_id);
 
   // Commit the plane states in |plane_list|.
-  // if |should_modeset| is set, it only modesets without page flipping.
   // If |page_flip_request| is null, this tests the plane configuration without
   // submitting it.
   // The fence returned in |out_fence| will signal when the currently scanned
@@ -141,25 +181,21 @@ class HardwareDisplayPlaneManager {
   // |page_flip_request|. Note that the returned fence may be a nullptr
   // if the system doesn't support out fences.
   virtual bool Commit(HardwareDisplayPlaneList* plane_list,
-                      bool should_modeset,
                       scoped_refptr<PageFlipRequest> page_flip_request,
-                      std::unique_ptr<gfx::GpuFence>* out_fence) = 0;
+                      gfx::GpuFenceHandle* release_fence) = 0;
 
   // Disable all the overlay planes previously submitted and now stored in
   // plane_list->old_plane_list.
   virtual bool DisableOverlayPlanes(HardwareDisplayPlaneList* plane_list) = 0;
-
-  // Set the drm_color_ctm contained in |ctm_blob_data| to all planes' KMS
-  // states
-  virtual bool SetColorCorrectionOnAllCrtcPlanes(
-      uint32_t crtc_id,
-      ScopedDrmColorCtmPtr ctm_blob_data) = 0;
 
   // Check that the primary plane is valid for this
   // PlaneManager. Specifically, legacy can't support primary planes
   // that don't have the same size as the current mode of the crtc.
   virtual bool ValidatePrimarySize(const DrmOverlayPlane& primary,
                                    const drmModeModeInfo& mode) = 0;
+
+  // Get the set of CRTC IDs from a plane's possible CRTCs bitmap
+  base::flat_set<uint32_t> CrtcMaskToCrtcIds(uint32_t crtc_mask) const;
 
   const std::vector<std::unique_ptr<HardwareDisplayPlane>>& planes() const {
     return planes_;
@@ -180,7 +216,9 @@ class HardwareDisplayPlaneManager {
 
   // Cache the most updated connectors found in DRM resources. This needs to be
   // called whenever a DRM hotplug event is received via UDEV.
-  void ResetConnectorsCache(const ScopedDrmResourcesPtr& resources);
+  // Return a list of the valid Connector IDs that we got.
+  base::flat_set<uint32_t> ResetConnectorsCacheAndGetValidIds(
+      const ScopedDrmResourcesPtr& resources);
 
   // Get Immutable CRTC State.
   const CrtcState& GetCrtcStateForCrtcId(uint32_t crtc_id);
@@ -189,12 +227,20 @@ class HardwareDisplayPlaneManager {
   // which resources needed to be tracked internally in
   // HardwareDisplayPlaneManager and which should be taken care of by the
   // caller.
-  void ResetModesetBufferOfCrtc(uint32_t crtc_id);
+  void ResetModesetStateForCrtc(uint32_t crtc_id);
+
+  // Gets `HardwareCapabilities` based on planes available to the specified
+  // CRTC. num_overlay_capable_planes counts both `DRM_PLANE_TYPE_PRIMARY` and
+  // `DRM_PLANE_TYPE_OVERLAY` planes.
+  HardwareCapabilities GetHardwareCapabilities(uint32_t crtc_id);
 
  protected:
   struct ConnectorProperties {
     uint32_t id;
-    DrmDevice::Property crtc_id;
+    drmModeConnection connection;
+    int count_modes;
+    DrmWrapper::Property crtc_id;
+    DrmWrapper::Property link_status;
   };
 
   bool InitializeCrtcState();
@@ -222,26 +268,19 @@ class HardwareDisplayPlaneManager {
 
   virtual std::unique_ptr<HardwareDisplayPlane> CreatePlane(uint32_t plane_id);
 
-  // Finds the plane located at or after |*index| that is not in use and can
-  // be used with |crtc_index|.
-  HardwareDisplayPlane* FindNextUnusedPlane(
-      size_t* index,
-      uint32_t crtc_index,
-      const DrmOverlayPlane& overlay) const;
-
-  // Convert |crtc/connector_id| into an index, returning -1 if the ID couldn't
-  // be found.
-  int LookupCrtcIndex(uint32_t crtc_id) const;
-  int LookupConnectorIndex(uint32_t connector_idx) const;
+  // Convert |crtc/connector_id| into an index, returning empty if the ID
+  // couldn't be found.
+  absl::optional<int> LookupCrtcIndex(uint32_t crtc_id) const;
+  absl::optional<int> LookupConnectorIndex(uint32_t connector_id) const;
 
   // Get Mutable CRTC State.
   CrtcState& CrtcStateForCrtcId(uint32_t crtc_id);
 
   // Returns true if |plane| can support |overlay| and compatible with
-  // |crtc_index|.
+  // |crtc_id|.
   virtual bool IsCompatible(HardwareDisplayPlane* plane,
                             const DrmOverlayPlane& overlay,
-                            uint32_t crtc_index) const;
+                            uint32_t crtc_id) const;
 
   // Resets |plane_list| setting all planes to unused.
   // Frees any temporary data structure in |plane_list| used for pageflipping.
@@ -254,13 +293,12 @@ class HardwareDisplayPlaneManager {
   // Populates scanout formats supported by all planes.
   void PopulateSupportedFormats();
 
-  virtual bool CommitColorMatrix(const CrtcProperties& crtc_props) = 0;
-
-  virtual bool CommitGammaCorrection(const CrtcProperties& crtc_props) = 0;
+  void UpdateAndCommitCrtcState(CrtcState* state);
+  virtual bool CommitPendingCrtcState(CrtcState* state) = 0;
 
   // Object containing the connection to the graphics device and wraps the API
   // calls to control it. Not owned.
-  DrmDevice* const drm_;
+  const raw_ptr<DrmDevice> drm_;
 
   bool has_universal_planes_ = false;
 
@@ -268,8 +306,6 @@ class HardwareDisplayPlaneManager {
   std::vector<CrtcState> crtc_state_;
   std::vector<ConnectorProperties> connectors_props_;
   std::vector<uint32_t> supported_formats_;
-
-  DISALLOW_COPY_AND_ASSIGN(HardwareDisplayPlaneManager);
 };
 
 }  // namespace ui

@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,6 +7,7 @@
 #include "cast/streaming/compound_rtcp_parser.h"
 #include "cast/streaming/frame_id.h"
 #include "cast/streaming/rtcp_session.h"
+#include "platform/base/span.h"
 
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   using openscreen::cast::CompoundRtcpParser;
@@ -17,6 +18,11 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   constexpr Ssrc kSenderSsrcInSeedCorpus = 1;
   constexpr Ssrc kReceiverSsrcInSeedCorpus = 2;
 
+  class ClientThatIgnoresEverything : public CompoundRtcpParser::Client {
+   public:
+    ClientThatIgnoresEverything() = default;
+    ~ClientThatIgnoresEverything() override = default;
+  };
   // Allocate the RtcpSession and CompoundRtcpParser statically (i.e., one-time
   // init) to improve the fuzzer's execution rate. This is because RtcpSession
   // also contains a NtpTimeConverter, which samples the system clock at
@@ -26,12 +32,12 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
 #pragma clang diagnostic ignored "-Wexit-time-destructors"
   static RtcpSession session(kSenderSsrcInSeedCorpus, kReceiverSsrcInSeedCorpus,
                              openscreen::Clock::time_point{});
-  static CompoundRtcpParser::Client client_that_ignores_everything;
+  static ClientThatIgnoresEverything client_that_ignores_everything;
   static CompoundRtcpParser parser(&session, &client_that_ignores_everything);
 #pragma clang diagnostic pop
 
   const auto max_feedback_frame_id = FrameId::first() + 100;
-  parser.Parse(absl::Span<const uint8_t>(data, size), max_feedback_frame_id);
+  parser.Parse(openscreen::ByteView(data, size), max_feedback_frame_id);
 
   return 0;
 }

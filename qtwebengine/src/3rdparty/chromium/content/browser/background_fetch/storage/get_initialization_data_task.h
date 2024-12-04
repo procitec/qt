@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,16 +6,18 @@
 #define CONTENT_BROWSER_BACKGROUND_FETCH_STORAGE_GET_INITIALIZATION_DATA_TASK_H_
 
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/memory/scoped_refptr.h"
 #include "content/browser/background_fetch/background_fetch_registration_id.h"
 #include "content/browser/background_fetch/storage/database_task.h"
 #include "content/browser/service_worker/service_worker_info.h"
 #include "content/common/background_fetch/background_fetch_types.h"
 #include "content/common/content_export.h"
+#include "net/base/isolation_info.h"
 #include "third_party/blink/public/common/service_worker/service_worker_status_code.h"
 #include "third_party/blink/public/mojom/background_fetch/background_fetch.mojom.h"
 #include "third_party/skia/include/core/SkBitmap.h"
@@ -30,7 +32,14 @@ namespace background_fetch {
 // after start-up.
 struct CONTENT_EXPORT BackgroundFetchInitializationData {
   BackgroundFetchInitializationData();
+
+  BackgroundFetchInitializationData(const BackgroundFetchInitializationData&) =
+      delete;
+  BackgroundFetchInitializationData& operator=(
+      const BackgroundFetchInitializationData&) = delete;
+
   BackgroundFetchInitializationData(BackgroundFetchInitializationData&&);
+
   ~BackgroundFetchInitializationData();
 
   BackgroundFetchRegistrationId registration_id;
@@ -48,7 +57,7 @@ struct CONTENT_EXPORT BackgroundFetchInitializationData {
   blink::mojom::BackgroundFetchError error =
       blink::mojom::BackgroundFetchError::NONE;
 
-  DISALLOW_COPY_AND_ASSIGN(BackgroundFetchInitializationData);
+  std::optional<net::IsolationInfo> isolation_info;
 };
 
 using GetInitializationDataCallback =
@@ -75,6 +84,10 @@ class GetInitializationDataTask : public DatabaseTask {
   GetInitializationDataTask(DatabaseTaskHost* host,
                             GetInitializationDataCallback callback);
 
+  GetInitializationDataTask(const GetInitializationDataTask&) = delete;
+  GetInitializationDataTask& operator=(const GetInitializationDataTask&) =
+      delete;
+
   ~GetInitializationDataTask() override;
 
   // DatabaseTask implementation:
@@ -87,8 +100,6 @@ class GetInitializationDataTask : public DatabaseTask {
 
   void FinishWithError(blink::mojom::BackgroundFetchError error) override;
 
-  std::string HistogramName() const override;
-
   GetInitializationDataCallback callback_;
 
   // Map from the unique_id to the initialization data.
@@ -96,8 +107,6 @@ class GetInitializationDataTask : public DatabaseTask {
 
   base::WeakPtrFactory<GetInitializationDataTask> weak_factory_{
       this};  // Keep as last.
-
-  DISALLOW_COPY_AND_ASSIGN(GetInitializationDataTask);
 };
 
 }  // namespace background_fetch

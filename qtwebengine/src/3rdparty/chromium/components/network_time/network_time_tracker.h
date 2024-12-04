@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,12 +10,13 @@
 
 #include "base/feature_list.h"
 #include "base/gtest_prod_util.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/threading/thread_checker.h"
 #include "base/time/clock.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
+#include "build/build_config.h"
 #include "url/gurl.h"
 
 class PrefRegistrySimple;
@@ -37,14 +38,14 @@ class SharedURLLoaderFactory;
 namespace network_time {
 
 // Clock resolution is platform dependent.
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 const int64_t kTicksResolutionMs = base::Time::kMinLowResolutionThresholdMs;
 #else
 const int64_t kTicksResolutionMs = 1;  // Assume 1ms for non-windows platforms.
 #endif
 
-// Variations Service feature that enables network time service querying.
-extern const base::Feature kNetworkTimeServiceQuerying;
+// Feature that enables network time service querying.
+BASE_DECLARE_FEATURE(kNetworkTimeServiceQuerying);
 
 // A class that receives network time updates and can provide the network time
 // for a corresponding local time. This class is not thread safe.
@@ -99,6 +100,10 @@ class NetworkTimeTracker {
       std::unique_ptr<const base::TickClock> tick_clock,
       PrefService* pref_service,
       scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory);
+
+  NetworkTimeTracker(const NetworkTimeTracker&) = delete;
+  NetworkTimeTracker& operator=(const NetworkTimeTracker&) = delete;
+
   ~NetworkTimeTracker();
 
   // Sets |network_time| to an estimate of the true time.  Returns
@@ -140,9 +145,12 @@ class NetworkTimeTracker {
   bool AreTimeFetchesEnabled() const;
   FetchBehavior GetFetchBehavior() const;
 
+  // Blocks until the the next time query completes.
+  void WaitForFetch();
+
   void SetMaxResponseSizeForTesting(size_t limit);
 
-  void SetPublicKeyForTesting(const base::StringPiece& key);
+  void SetPublicKeyForTesting(base::StringPiece key);
 
   void SetTimeServerURLForTesting(const GURL& url);
 
@@ -186,7 +194,6 @@ class NetworkTimeTracker {
   base::RepeatingTimer timer_;
   scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory_;
   std::unique_ptr<network::SimpleURLLoader> time_fetcher_;
-  base::TimeTicks fetch_started_;
   std::unique_ptr<client_update_protocol::Ecdsa> query_signer_;
 
   // The |Clock| and |TickClock| are used to sanity-check one another, allowing
@@ -195,7 +202,7 @@ class NetworkTimeTracker {
   std::unique_ptr<base::Clock> clock_;
   std::unique_ptr<const base::TickClock> tick_clock_;
 
-  PrefService* pref_service_;
+  raw_ptr<PrefService> pref_service_;
 
   // Network time based on last call to UpdateNetworkTime().
   mutable base::Time network_time_at_last_measurement_;
@@ -226,8 +233,6 @@ class NetworkTimeTracker {
   std::vector<base::OnceClosure> fetch_completion_callbacks_;
 
   base::ThreadChecker thread_checker_;
-
-  DISALLOW_COPY_AND_ASSIGN(NetworkTimeTracker);
 };
 
 }  // namespace network_time

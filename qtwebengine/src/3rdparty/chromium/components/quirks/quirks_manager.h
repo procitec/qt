@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,10 +8,10 @@
 #include <memory>
 #include <set>
 
-#include "base/callback.h"
 #include "base/containers/unique_ptr_adapters.h"
 #include "base/files/file_path.h"
-#include "base/macros.h"
+#include "base/functional/callback.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/thread_checker.h"
 #include "base/time/time.h"
@@ -50,6 +50,8 @@ class QUIRKS_EXPORT QuirksManager {
   // Delegate class, so implementation can access browser functionality.
   class Delegate {
    public:
+    Delegate& operator=(const Delegate&) = delete;
+
     virtual ~Delegate() = default;
 
     // Provides Chrome API key for quirks server.
@@ -61,9 +63,6 @@ class QUIRKS_EXPORT QuirksManager {
 
     // Whether downloads are allowed by enterprise device policy.
     virtual bool DevicePolicyEnabled() const = 0;
-
-   private:
-    DISALLOW_ASSIGN(Delegate);
   };
 
   static void Initialize(
@@ -73,6 +72,9 @@ class QUIRKS_EXPORT QuirksManager {
   static void Shutdown();
   static QuirksManager* Get();
   static bool HasInstance();
+
+  QuirksManager(const QuirksManager&) = delete;
+  QuirksManager& operator=(const QuirksManager&) = delete;
 
   static void RegisterPrefs(PrefRegistrySimple* registry);
 
@@ -132,13 +134,11 @@ class QUIRKS_EXPORT QuirksManager {
   // These objects provide resources from the browser.
   std::unique_ptr<Delegate> delegate_;  // Impl runs from chrome/browser.
   scoped_refptr<base::TaskRunner> task_runner_;
-  PrefService* local_state_;  // For local prefs.
+  raw_ptr<PrefService> local_state_;  // For local prefs.
   scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory_;
 
   // Factory for callbacks.
   base::WeakPtrFactory<QuirksManager> weak_ptr_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(QuirksManager);
 };
 
 }  // namespace quirks

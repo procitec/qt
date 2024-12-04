@@ -5,19 +5,24 @@
  * found in the LICENSE file.
  */
 
-#include "src/core/SkScalerCache.h"
+#include "src/core/SkStrike.h"
 
 #include "bench/Benchmark.h"
 #include "include/core/SkCanvas.h"
+#include "include/core/SkColorSpace.h"
+#include "include/core/SkFontMgr.h"
 #include "include/core/SkGraphics.h"
 #include "include/core/SkTypeface.h"
-#include "src/core/SkRemoteGlyphCache.h"
+#include "include/private/chromium/SkChromeRemoteGlyphCache.h"
+#include "src/base/SkTLazy.h"
 #include "src/core/SkStrikeSpec.h"
-#include "src/core/SkTLazy.h"
 #include "src/core/SkTaskGroup.h"
 #include "src/core/SkTextBlobTrace.h"
 #include "tools/Resources.h"
 #include "tools/ToolUtils.h"
+#include "tools/fonts/FontToolUtils.h"
+
+using namespace skia_private;
 
 static void do_font_stuff(SkFont* font) {
     SkPaint defaultPaint;
@@ -56,10 +61,10 @@ protected:
     void onDraw(int loops, SkCanvas*) override {
         size_t oldCacheLimitSize = SkGraphics::GetFontCacheLimit();
         SkGraphics::SetFontCacheLimit(fCacheSize);
-        SkFont font;
+        SkFont font = ToolUtils::DefaultFont();
         font.setEdging(SkFont::Edging::kAntiAlias);
         font.setSubpixel(true);
-        font.setTypeface(ToolUtils::create_portable_typeface("serif", SkFontStyle::Italic()));
+        font.setTypeface(ToolUtils::CreatePortableTypeface("serif", SkFontStyle::Italic()));
 
         for (int work = 0; work < loops; work++) {
             do_font_stuff(&font);
@@ -91,12 +96,12 @@ protected:
         size_t oldCacheLimitSize = SkGraphics::GetFontCacheLimit();
         SkGraphics::SetFontCacheLimit(fCacheSize);
         sk_sp<SkTypeface> typefaces[] = {
-                ToolUtils::create_portable_typeface("serif", SkFontStyle::Italic()),
-                ToolUtils::create_portable_typeface("sans-serif", SkFontStyle::Italic())};
+                ToolUtils::CreatePortableTypeface("serif", SkFontStyle::Italic()),
+                ToolUtils::CreatePortableTypeface("sans-serif", SkFontStyle::Italic())};
 
         for (int work = 0; work < loops; work++) {
             SkTaskGroup().batch(16, [&](int threadIndex) {
-                SkFont font;
+                SkFont font = ToolUtils::DefaultFont();
                 font.setEdging(SkFont::Edging::kAntiAlias);
                 font.setSubpixel(true);
                 font.setTypeface(typefaces[threadIndex % 2]);
@@ -147,7 +152,7 @@ public:
         return id <= fLastDeletedHandleId;
     }
 
-    void notifyCacheMiss(SkStrikeClient::CacheMissType type) override {
+    void notifyCacheMiss(SkStrikeClient::CacheMissType type, int fontSize) override {
         SkAutoMutexExclusive l(fMutex);
 
         fCacheMissCount[type]++;
@@ -169,7 +174,7 @@ public:
         fLockedHandles.reset();
         fLastDeletedHandleId = fNextHandleId;
     }
-    const SkTHashSet<SkDiscardableHandleId>& lockedHandles() const {
+    const THashSet<SkDiscardableHandleId>& lockedHandles() const {
         SkAutoMutexExclusive l(fMutex);
 
         return fLockedHandles;
@@ -205,7 +210,7 @@ private:
 
     SkDiscardableHandleId fNextHandleId = 0u;
     SkDiscardableHandleId fLastDeletedHandleId = 0u;
-    SkTHashSet<SkDiscardableHandleId> fLockedHandles;
+    THashSet<SkDiscardableHandleId> fLockedHandles;
     int fCacheMissCount[SkStrikeClient::CacheMissType::kLast + 1u];
 };
 
@@ -220,13 +225,15 @@ class DiffCanvasBench : public Benchmark {
 
     bool isSuitableFor(Backend b) override { return b == kNonRendering_Backend; }
 
-    void onDraw(int loops, SkCanvas*) override {
-        const SkSurfaceProps props(SkSurfaceProps::kLegacyFontHost_InitType);
-        SkTextBlobCacheDiffCanvas canvas{1024, 1024, props, fServer.get()};
+    void onDraw(int loops, SkCanvas* modelCanvas) override {
+        SkSurfaceProps props;
+        if (modelCanvas) { modelCanvas->getProps(&props); }
+        std::unique_ptr<SkCanvas> canvas = fServer->makeAnalysisCanvas(1024, 1024, props,
+                                                                       nullptr, true, true);
         loops *= 100;
         while (loops --> 0) {
             for (const auto& record : fTrace) {
-                canvas.drawTextBlob(
+                canvas->drawTextBlob(
                         record.blob.get(), record.offset.x(), record.offset.y(),record.paint);
             }
         }
@@ -236,7 +243,7 @@ class DiffCanvasBench : public Benchmark {
         auto stream = fDataProvider();
         fDiscardableManager = sk_make_sp<DiscardableManager>();
         fServer.init(fDiscardableManager.get());
-        fTrace = SkTextBlobTrace::CreateBlobTrace(stream.get());
+        fTrace = SkTextBlobTrace::CreateBlobTrace(stream.get(), nullptr);
     }
 
 public:

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2017 The Chromium Authors. All rights reserved.
+# Copyright 2017 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 """Extract source file information from .ninja files."""
@@ -18,8 +18,10 @@ import sys
 # build libmonochrome.so: __chrome_android_libmonochrome___rule | ...
 _REGEX = re.compile(r'build ([^:]+): \w+ (.*?)(?: *\||\n|$)')
 
+_RLIBS_REGEX = re.compile(r'  rlibs = (.*?)(?:\n|$)')
 
-class _SourceMapper(object):
+
+class _SourceMapper:
   def __init__(self, dep_map, parsed_file_count):
     self._dep_map = dep_map
     self.parsed_file_count = parsed_file_count
@@ -35,11 +37,20 @@ class _SourceMapper(object):
     obj_name = path[start_idx + 1:-1]
     by_basename = self._dep_map.get(lib_name)
     if not by_basename:
+      if lib_name.endswith('rlib') and 'std/' in lib_name:
+        # Currently we use binary prebuilt static libraries of the Rust
+        # stdlib so we can't get source paths. That may change in future.
+        return '(Rust stdlib)/%s' % lib_name
       return None
+    if lib_name.endswith('.rlib'):
+      # Rust doesn't really have the concept of an object file because
+      # the compilation unit is the whole 'crate'. Return whichever
+      # filename was the crate root.
+      return next(iter(by_basename.values()))
     obj_path = by_basename.get(obj_name)
     if not obj_path:
       # Found the library, but it doesn't list the .o file.
-      logging.warning('no obj basename for %s', path)
+      logging.warning('no obj basename for %s %s', path, obj_name)
       return None
     return self._dep_map.get(obj_path)
 
@@ -68,9 +79,15 @@ def _ParseNinjaPathList(path_list):
   return [s.replace('\b', ' ') for s in ret.split()]
 
 
+def _OutputsAreObject(outputs):
+  return (outputs.endswith('.a') or outputs.endswith('.o')
+          or outputs.endswith('.rlib'))
+
+
 def _ParseOneFile(lines, dep_map, elf_path):
   sub_ninjas = []
   elf_inputs = None
+  last_elf_paths = []
   for line in lines:
     if line.startswith('subninja '):
       sub_ninjas.append(line[9:-1])
@@ -78,7 +95,7 @@ def _ParseOneFile(lines, dep_map, elf_path):
     m = _REGEX.match(line)
     if m:
       outputs, srcs = m.groups()
-      if len(outputs) > 2 and outputs[-2] == '.' and outputs[-1] in 'ao':
+      if _OutputsAreObject(outputs):
         output = outputs.replace('\\ ', ' ')
         assert output not in dep_map, 'Duplicate output: ' + output
         if output[-1] == 'o':
@@ -86,11 +103,21 @@ def _ParseOneFile(lines, dep_map, elf_path):
         else:
           obj_paths = _ParseNinjaPathList(srcs)
           dep_map[output] = {os.path.basename(p): p for p in obj_paths}
-      elif elf_path and elf_path in outputs:
-        properly_parsed = [
-            os.path.normpath(p) for p in _ParseNinjaPathList(outputs)]
-        if elf_path in properly_parsed:
+      elif elf_path:
+        last_elf_paths = [
+            os.path.normpath(p) for p in _ParseNinjaPathList(outputs)
+        ]
+        if elf_path in last_elf_paths:
           elf_inputs = _ParseNinjaPathList(srcs)
+    # Rust .rlibs are listed as implicit dependencies of the main
+    # target linking rule, then are given as an extra
+    #   rlibs =
+    # variable on a subsequent line. Watch out for that line.
+    m = _RLIBS_REGEX.match(line)
+    if m:
+      if elf_path in last_elf_paths:
+        elf_inputs.extend(_ParseNinjaPathList(m.group(1)))
+
   return sub_ninjas, elf_inputs
 
 
@@ -115,7 +142,7 @@ def Parse(output_directory, elf_path):
   elf_inputs = None
   while to_parse:
     path = os.path.join(output_directory, to_parse.pop())
-    with open(path) as obj:
+    with open(path, encoding='utf-8', errors='ignore') as obj:
       sub_ninjas, found_elf_inputs = _ParseOneFile(obj, dep_map, elf_path)
       if found_elf_inputs:
         assert not elf_inputs, 'Found multiple inputs for elf_path ' + elf_path

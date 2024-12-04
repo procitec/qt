@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,7 +8,7 @@
 #include <string>
 
 #include "base/format_macros.h"
-#include "base/strings/stringprintf.h"
+#include "net/http/http_connection_info.h"
 #include "net/http/http_response_headers.h"
 
 namespace download {
@@ -24,15 +24,18 @@ DownloadCreateInfo::DownloadCreateInfo(
       offset(0),
       has_user_gesture(false),
       transient(false),
+      require_safety_checks(true),
       result(DOWNLOAD_INTERRUPT_REASON_NONE),
       save_info(std::move(save_info)),
       render_process_id(-1),
       render_frame_id(-1),
       accept_range(RangeRequestSupportType::kNoSupport),
-      connection_info(net::HttpResponseInfo::CONNECTION_INFO_UNKNOWN),
+      connection_info(net::HttpConnectionInfo::kUNKNOWN),
       method("GET"),
       ukm_source_id(ukm::kInvalidSourceId),
-      is_content_initiated(false) {}
+      is_content_initiated(false),
+      credentials_mode(::network::mojom::CredentialsMode::kInclude),
+      isolation_info(absl::nullopt) {}
 
 DownloadCreateInfo::DownloadCreateInfo()
     : DownloadCreateInfo(base::Time(), std::make_unique<DownloadSaveInfo>()) {}

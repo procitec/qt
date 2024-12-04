@@ -1,30 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the test suite of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:GPL-EXCEPT$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 3 as published by the Free Software
-** Foundation with exceptions as appearing in the file LICENSE.GPL3-EXCEPT
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 #include <qtest.h>
 #include <QtTest/QSignalSpy>
 
@@ -35,7 +10,7 @@
 #include <private/qquickitem_p.h>
 #include <private/qquickrectangle_p.h>
 
-#include "../../shared/util.h"
+#include <QtQuickTestUtils/private/qmlutils_p.h>
 
 class tst_qquickrectangle : public QQmlDataTest
 {
@@ -51,17 +26,23 @@ private slots:
     void gradient_multiple();
     void gradient_preset();
     void antialiasing();
+    void multiRadius();
 
 private:
     QQmlEngine engine;
 };
 
 tst_qquickrectangle::tst_qquickrectangle()
+    : QQmlDataTest(QT_QMLTEST_DATADIR)
 {
 }
 
 void tst_qquickrectangle::color()
 {
+#ifdef Q_OS_ANDROID
+    QSKIP("Test does not work on Android because of QTBUG-102345");
+#endif
+
     if (QGuiApplication::primaryScreen()->depth() < 24)
         QSKIP("This test does not work at display depths < 24");
 
@@ -71,9 +52,8 @@ void tst_qquickrectangle::color()
 
     QVERIFY(QTest::qWaitForWindowExposed(&view));
 
-    if ((QGuiApplication::platformName() == QLatin1String("offscreen"))
-        || (QGuiApplication::platformName() == QLatin1String("minimal")))
-        QEXPECT_FAIL("", "Failure due to grabWindow not functional on offscreen/minimal platforms", Abort);
+    if (QGuiApplication::platformName() == QLatin1String("minimal"))
+        QSKIP("Skipping due to grabWindow not functional on offscreen/minimal platforms");
 
     QImage image = view.grabWindow();
     QVERIFY(image.pixel(0,0) == QColor("#020202").rgba());
@@ -96,7 +76,7 @@ void tst_qquickrectangle::gradient()
     QCOMPARE(stops.at(&stops, 1)->color(), QColor("white"));
 
     QGradientStops gradientStops = grad->gradientStops();
-    QCOMPARE(gradientStops.count(), 2);
+    QCOMPARE(gradientStops.size(), 2);
     QCOMPARE(gradientStops.at(0).first, 0.0);
     QCOMPARE(gradientStops.at(0).second, QColor("gray"));
     QCOMPARE(gradientStops.at(1).first, 1.0);
@@ -210,46 +190,122 @@ void tst_qquickrectangle::antialiasing()
 
     rect->setAntialiasing(true);
     QCOMPARE(rect->antialiasing(), true);
-    QCOMPARE(spy.count(), 1);
+    QCOMPARE(spy.size(), 1);
 
     rect->setAntialiasing(true);
-    QCOMPARE(spy.count(), 1);
+    QCOMPARE(spy.size(), 1);
 
     rect->resetAntialiasing();
     QCOMPARE(rect->antialiasing(), false);
-    QCOMPARE(spy.count(), 2);
+    QCOMPARE(spy.size(), 2);
 
     rect->setRadius(5);
     QCOMPARE(rect->antialiasing(), true);
-    QCOMPARE(spy.count(), 3);
+    QCOMPARE(spy.size(), 3);
 
     rect->resetAntialiasing();
     QCOMPARE(rect->antialiasing(), true);
-    QCOMPARE(spy.count(), 3);
+    QCOMPARE(spy.size(), 3);
 
     rect->setRadius(0);
     QCOMPARE(rect->antialiasing(), false);
-    QCOMPARE(spy.count(), 4);
+    QCOMPARE(spy.size(), 4);
 
     rect->resetAntialiasing();
     QCOMPARE(rect->antialiasing(), false);
-    QCOMPARE(spy.count(), 4);
+    QCOMPARE(spy.size(), 4);
 
     rect->setRadius(5);
     QCOMPARE(rect->antialiasing(), true);
-    QCOMPARE(spy.count(), 5);
+    QCOMPARE(spy.size(), 5);
 
     rect->resetAntialiasing();
     QCOMPARE(rect->antialiasing(), true);
-    QCOMPARE(spy.count(), 5);
+    QCOMPARE(spy.size(), 5);
 
     rect->setAntialiasing(false);
     QCOMPARE(rect->antialiasing(), false);
-    QCOMPARE(spy.count(), 6);
+    QCOMPARE(spy.size(), 6);
 
     rect->resetAntialiasing();
     QCOMPARE(rect->antialiasing(), true);
-    QCOMPARE(spy.count(), 7);
+    QCOMPARE(spy.size(), 7);
+}
+
+void tst_qquickrectangle::multiRadius()
+{
+    QQuickView view;
+    view.setSource(testFileUrl("multi-radius.qml"));
+    view.show();
+
+    QVERIFY(QTest::qWaitForWindowExposed(&view));
+
+    QQuickRectangle *firstRect = qobject_cast<QQuickRectangle*>(view.rootObject()->property("firstRectangle").value<QObject*>());
+    QQuickRectangle *secondRect = qobject_cast<QQuickRectangle*>(view.rootObject()->property("secondRectangle").value<QObject*>());
+    QQuickRectangle *thirdRect = qobject_cast<QQuickRectangle*>(view.rootObject()->property("thirdRectangle").value<QObject*>());
+    QVERIFY(firstRect);
+    QVERIFY(secondRect);
+    QVERIFY(thirdRect);
+
+    QCOMPARE(firstRect->topLeftRadius(), 10.);
+    QCOMPARE(firstRect->topRightRadius(), 5.);
+    QCOMPARE(firstRect->bottomLeftRadius(), 5.);
+    QCOMPARE(firstRect->bottomRightRadius(), 2.);
+
+    QSignalSpy spytl(firstRect, SIGNAL(topLeftRadiusChanged()));
+    QSignalSpy spytr(firstRect, SIGNAL(topRightRadiusChanged()));
+    QSignalSpy spybl(firstRect, SIGNAL(bottomLeftRadiusChanged()));
+    QSignalSpy spybr(firstRect, SIGNAL(bottomRightRadiusChanged()));
+
+    firstRect->setRadius(12);
+
+    QCOMPARE(firstRect->topLeftRadius(), 10.);
+    QCOMPARE(firstRect->topRightRadius(), 12.);
+    QCOMPARE(firstRect->bottomLeftRadius(), 12.);
+    QCOMPARE(firstRect->bottomRightRadius(), 2.);
+
+    QCOMPARE(spytl.size(), 0);
+    QCOMPARE(spytr.size(), 1);
+    QCOMPARE(spybl.size(), 1);
+    QCOMPARE(spybr.size(), 0);
+
+    firstRect->resetTopLeftRadius();
+    firstRect->resetBottomRightRadius();
+    QCOMPARE(firstRect->topRightRadius(), 12.);
+    QCOMPARE(firstRect->bottomLeftRadius(), 12.);
+
+    QCOMPARE(secondRect->topLeftRadius(), 5.);
+    QCOMPARE(secondRect->topRightRadius(), 10.);
+    QCOMPARE(secondRect->bottomLeftRadius(), 2.);
+    QCOMPARE(secondRect->bottomRightRadius(), 5.);
+
+    QSignalSpy spytl2(secondRect, SIGNAL(topLeftRadiusChanged()));
+    QSignalSpy spytr2(secondRect, SIGNAL(topRightRadiusChanged()));
+    QSignalSpy spybl2(secondRect, SIGNAL(bottomLeftRadiusChanged()));
+    QSignalSpy spybr2(secondRect, SIGNAL(bottomRightRadiusChanged()));
+
+    secondRect->setRadius(12);
+
+    QCOMPARE(secondRect->topLeftRadius(), 12.);
+    QCOMPARE(secondRect->topRightRadius(), 10.);
+    QCOMPARE(secondRect->bottomLeftRadius(), 2.);
+    QCOMPARE(secondRect->bottomRightRadius(), 12.);
+
+    QCOMPARE(spytl2.size(), 1);
+    QCOMPARE(spytr2.size(), 0);
+    QCOMPARE(spybl2.size(), 0);
+    QCOMPARE(spybr2.size(), 1);
+
+    secondRect->resetTopRightRadius();
+    secondRect->resetBottomLeftRadius();
+    QCOMPARE(secondRect->topRightRadius(), 12.);
+    QCOMPARE(secondRect->bottomLeftRadius(), 12.);
+
+    QCOMPARE(thirdRect->topLeftRadius(), 5.);
+    QCOMPARE(thirdRect->topRightRadius(), 5.);
+    QCOMPARE(thirdRect->bottomLeftRadius(), 5.);
+    QCOMPARE(thirdRect->bottomRightRadius(), 5.);
+
 }
 
 QTEST_MAIN(tst_qquickrectangle)

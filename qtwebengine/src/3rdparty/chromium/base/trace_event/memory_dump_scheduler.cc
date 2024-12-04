@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,9 +7,10 @@
 #include <algorithm>
 #include <limits>
 
-#include "base/bind.h"
 #include "base/check_op.h"
-#include "base/threading/sequenced_task_runner_handle.h"
+#include "base/functional/bind.h"
+#include "base/task/sequenced_task_runner.h"
+#include "base/time/time.h"
 
 namespace base {
 namespace trace_event {
@@ -20,7 +21,7 @@ MemoryDumpScheduler* MemoryDumpScheduler::GetInstance() {
   return instance;
 }
 
-MemoryDumpScheduler::MemoryDumpScheduler() : period_ms_(0), generation_(0) {}
+MemoryDumpScheduler::MemoryDumpScheduler() = default;
 MemoryDumpScheduler::~MemoryDumpScheduler() {
   // Hit only in tests. Check that tests don't leave without stopping.
   DCHECK(!is_enabled_for_testing());
@@ -50,13 +51,13 @@ void MemoryDumpScheduler::StartInternal(MemoryDumpScheduler::Config config) {
   for (const Config::Trigger& trigger : config.triggers) {
     DCHECK_GT(trigger.period_ms, 0u);
     switch (trigger.level_of_detail) {
-      case MemoryDumpLevelOfDetail::BACKGROUND:
+      case MemoryDumpLevelOfDetail::kBackground:
         break;
-      case MemoryDumpLevelOfDetail::LIGHT:
+      case MemoryDumpLevelOfDetail::kLight:
         DCHECK_EQ(0u, light_dump_period_ms);
         light_dump_period_ms = trigger.period_ms;
         break;
-      case MemoryDumpLevelOfDetail::DETAILED:
+      case MemoryDumpLevelOfDetail::kDetailed:
         DCHECK_EQ(0u, heavy_dump_period_ms);
         heavy_dump_period_ms = trigger.period_ms;
         break;
@@ -77,10 +78,10 @@ void MemoryDumpScheduler::StartInternal(MemoryDumpScheduler::Config config) {
   // TODO(lalitm): this is a tempoarary hack to delay the first scheduled dump
   // so that the child processes get tracing enabled notification via IPC.
   // See crbug.com/770151.
-  SequencedTaskRunnerHandle::Get()->PostDelayedTask(
+  SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
       FROM_HERE,
       BindOnce(&MemoryDumpScheduler::Tick, Unretained(this), ++generation_),
-      TimeDelta::FromMilliseconds(200));
+      Milliseconds(200));
 }
 
 void MemoryDumpScheduler::StopInternal() {
@@ -93,20 +94,21 @@ void MemoryDumpScheduler::Tick(uint32_t expected_generation) {
   if (period_ms_ == 0 || generation_ != expected_generation)
     return;
 
-  MemoryDumpLevelOfDetail level_of_detail = MemoryDumpLevelOfDetail::BACKGROUND;
+  MemoryDumpLevelOfDetail level_of_detail =
+      MemoryDumpLevelOfDetail::kBackground;
   if (light_dump_rate_ > 0 && tick_count_ % light_dump_rate_ == 0)
-    level_of_detail = MemoryDumpLevelOfDetail::LIGHT;
+    level_of_detail = MemoryDumpLevelOfDetail::kLight;
   if (heavy_dump_rate_ > 0 && tick_count_ % heavy_dump_rate_ == 0)
-    level_of_detail = MemoryDumpLevelOfDetail::DETAILED;
+    level_of_detail = MemoryDumpLevelOfDetail::kDetailed;
   tick_count_++;
 
   callback_.Run(level_of_detail);
 
-  SequencedTaskRunnerHandle::Get()->PostDelayedTask(
+  SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
       FROM_HERE,
       BindOnce(&MemoryDumpScheduler::Tick, Unretained(this),
                expected_generation),
-      TimeDelta::FromMilliseconds(period_ms_));
+      Milliseconds(period_ms_));
 }
 
 MemoryDumpScheduler::Config::Config() = default;

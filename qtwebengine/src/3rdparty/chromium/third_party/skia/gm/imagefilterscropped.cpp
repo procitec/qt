@@ -24,6 +24,7 @@
 #include "include/effects/SkImageFilters.h"
 #include "include/utils/SkTextUtils.h"
 #include "tools/ToolUtils.h"
+#include "tools/fonts/FontToolUtils.h"
 
 #include <utility>
 
@@ -52,7 +53,7 @@ static void draw_text(SkCanvas* canvas, const SkRect& r, sk_sp<SkImageFilter> im
     paint.setImageFilter(std::move(imf));
     paint.setColor(SK_ColorGREEN);
 
-    SkFont font(ToolUtils::create_portable_typeface(), r.height() / 2);
+    SkFont font(ToolUtils::DefaultPortableTypeface(), r.height() / 2);
     SkTextUtils::DrawString(canvas, "Text", r.centerX(), r.centerY(), font, paint, SkTextUtils::kCenter_Align);
 }
 
@@ -62,14 +63,11 @@ static void draw_bitmap(SkCanvas* canvas, const SkRect& r, sk_sp<SkImageFilter> 
     SkIRect bounds;
     r.roundOut(&bounds);
 
-    SkBitmap bm;
-    bm.allocN32Pixels(bounds.width(), bounds.height());
-    bm.eraseColor(SK_ColorTRANSPARENT);
-    SkCanvas c(bm);
-    draw_path(&c, r, nullptr);
+    auto surf = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(bounds.width(), bounds.height()));
+    draw_path(surf->getCanvas(), r, nullptr);
 
     paint.setImageFilter(std::move(imf));
-    canvas->drawBitmap(bm, 0, 0, &paint);
+    surf->draw(canvas, 0, 0, SkSamplingOptions(), &paint);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -79,31 +77,29 @@ public:
     ImageFiltersCroppedGM () {}
 
 protected:
-    SkString onShortName() override {
-        return SkString("imagefilterscropped");
-    }
+    SkString getName() const override { return SkString("imagefilterscropped"); }
 
-    SkISize onISize() override { return SkISize::Make(400, 960); }
+    SkISize getISize() override { return SkISize::Make(400, 960); }
 
     void make_checkerboard() {
-        fCheckerboard.allocN32Pixels(80, 80);
-        SkCanvas canvas(fCheckerboard);
-        canvas.clear(SK_ColorTRANSPARENT);
+        auto surf = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(80, 80));
+        auto canvas = surf->getCanvas();
         SkPaint darkPaint;
         darkPaint.setColor(0xFF404040);
         SkPaint lightPaint;
         lightPaint.setColor(0xFFA0A0A0);
         for (int y = 0; y < 80; y += 16) {
             for (int x = 0; x < 80; x += 16) {
-                canvas.save();
-                canvas.translate(SkIntToScalar(x), SkIntToScalar(y));
-                canvas.drawRect(SkRect::MakeXYWH(0, 0, 8, 8), darkPaint);
-                canvas.drawRect(SkRect::MakeXYWH(8, 0, 8, 8), lightPaint);
-                canvas.drawRect(SkRect::MakeXYWH(0, 8, 8, 8), lightPaint);
-                canvas.drawRect(SkRect::MakeXYWH(8, 8, 8, 8), darkPaint);
-                canvas.restore();
+                canvas->save();
+                canvas->translate(SkIntToScalar(x), SkIntToScalar(y));
+                canvas->drawRect(SkRect::MakeXYWH(0, 0, 8, 8), darkPaint);
+                canvas->drawRect(SkRect::MakeXYWH(8, 0, 8, 8), lightPaint);
+                canvas->drawRect(SkRect::MakeXYWH(0, 8, 8, 8), lightPaint);
+                canvas->drawRect(SkRect::MakeXYWH(8, 8, 8, 8), darkPaint);
+                canvas->restore();
             }
         }
+        fCheckerboard = surf->makeImageSnapshot();
     }
 
     void draw_frame(SkCanvas* canvas, const SkRect& r) {
@@ -131,8 +127,10 @@ protected:
 
         sk_sp<SkImageFilter> cfOffset(SkImageFilters::ColorFilter(cf, std::move(offset)));
 
-        sk_sp<SkImageFilter> erodeX(SkImageFilters::Erode(8, 0, nullptr, &cropRect));
-        sk_sp<SkImageFilter> erodeY(SkImageFilters::Erode(0, 8, nullptr, &cropRect));
+        // These are composed with an outer erode along the other axis, so don't add a cropRect to
+        // them or it will interfere with the second filter evaluation.
+        sk_sp<SkImageFilter> erodeX(SkImageFilters::Erode(8, 0, nullptr));
+        sk_sp<SkImageFilter> erodeY(SkImageFilters::Erode(0, 8, nullptr));
 
         sk_sp<SkImageFilter> filters[] = {
             nullptr,
@@ -157,11 +155,11 @@ protected:
         SkScalar DY = r.height() + MARGIN;
 
         canvas->translate(MARGIN, MARGIN);
-        for (size_t j = 0; j < SK_ARRAY_COUNT(drawProc); ++j) {
+        for (size_t j = 0; j < std::size(drawProc); ++j) {
             canvas->save();
-            for (size_t i = 0; i < SK_ARRAY_COUNT(filters); ++i) {
+            for (size_t i = 0; i < std::size(filters); ++i) {
                 SkPaint paint;
-                canvas->drawBitmap(fCheckerboard, 0, 0);
+                canvas->drawImage(fCheckerboard, 0, 0);
                 drawProc[j](canvas, r, filters[i]);
                 canvas->translate(0, DY);
             }
@@ -171,7 +169,7 @@ protected:
     }
 
 private:
-    SkBitmap fCheckerboard;
+    sk_sp<SkImage> fCheckerboard;
     using INHERITED = GM;
 };
 

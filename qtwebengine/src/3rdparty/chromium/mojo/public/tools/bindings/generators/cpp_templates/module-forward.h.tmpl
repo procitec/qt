@@ -1,34 +1,11 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-{%- if variant -%}
-{%-   set variant_path = "%s-%s"|format(module.path, variant) -%}
-{%- else -%}
-{%-   set variant_path = module.path -%}
-{%- endif -%}
+{%- from 'cpp_macros.tmpl' import
+  include_guard, namespace_begin, namespace_end %}
 
-{%- set header_guard = "%s_FORWARD_H_"|format(
-        variant_path|upper|replace("/","_")|replace(".","_")|
-            replace("-", "_")) %}
-
-{%- macro namespace_begin() %}
-{%-   for namespace in namespaces_as_array %}
-namespace {{namespace}} {
-{%-   endfor %}
-{%-   if variant %}
-namespace {{variant}} {
-{%-   endif %}
-{%- endmacro %}
-
-{%- macro namespace_end() %}
-{%-   if variant %}
-}  // namespace {{variant}}
-{%-   endif %}
-{%-   for namespace in namespaces_as_array|reverse %}
-}  // namespace {{namespace}}
-{%-   endfor %}
-{%- endmacro %}
+{%- set header_guard = include_guard('FORWARD', module.path, variant) %}
 
 {%- macro kythe_annotation(name) %}
 {%- if enable_kythe_annotations %}
@@ -43,7 +20,7 @@ namespace {{variant}} {
 #include <stdint.h>
 {%- endif %}
 
-{% if structs|length -%}
+{% if structs|length or unions|length -%}
 #include "mojo/public/cpp/bindings/struct_forward.h"
 {%- endif %}
 
@@ -72,9 +49,7 @@ enum class NativeEnum;
 {%- endif %}
 
 {%- if variant %}
-{%-   for namespace in namespaces_as_array %}
-namespace {{namespace}} {
-{%-   endfor %}
+{{namespace_begin(namespaces_as_array)}}
 
 {%- from "enum_macros.tmpl" import enum_forward%}
 {%- for enum in all_enums %}
@@ -89,12 +64,10 @@ using {{enum|get_name_for_kind(flatten_nested_kind=True)}} = mojo::NativeEnum;
 class {{interface.name}}InterfaceBase;
 {%- endfor %}
 
-{%-   for namespace in namespaces_as_array %}
-}  // namespace {{namespace}}
-{%-   endfor %}
+{{namespace_end(namespaces_as_array)}}
 {%- endif %}
 
-{{namespace_begin()}}
+{{namespace_begin(namespaces_as_array, variant)}}
 
 {%- set module_prefix = "%s"|format(namespaces_as_array|join(".")) %}
 
@@ -140,10 +113,12 @@ using {{interface.name}}InterfaceBase = {{interface.name}}InterfaceBase;
 {%-   endfor %}
 {%- endif %}
 
-{#--- Constants #}
+{#--- Constants that do not rely on other headers (basic types) #}
 {%- for constant in module.constants %}
+{%-  if not constant.kind|is_enum_kind %}
 {{ kythe_annotation("%s.%s"|format(module_prefix, constant.name)) }}
 {{constant|format_constant_declaration}};
+{%- endif %}
 {%- endfor %}
 
 {#--- Struct Forward Declarations -#}
@@ -165,9 +140,9 @@ using {{struct.name}}Ptr = mojo::StructPtr<{{struct.name}}>;
 {%  for union in unions %}
 class {{union.name}};
 {%    if union|should_inline_union %}
-typedef mojo::InlinedStructPtr<{{union.name}}> {{union.name}}Ptr;
+using {{union.name}}Ptr = mojo::InlinedStructPtr<{{union.name}}>;
 {%    else %}
-typedef mojo::StructPtr<{{union.name}}> {{union.name}}Ptr;
+using {{union.name}}Ptr = mojo::StructPtr<{{union.name}}>;
 {%    endif %}
 {%- endfor %}
 
@@ -175,27 +150,10 @@ typedef mojo::StructPtr<{{union.name}}> {{union.name}}Ptr;
 {#--- Interface Forward Declarations -#}
 {%  for interface in interfaces %}
 class {{interface.name}};
-{{ kythe_annotation("%s.%s"|format(module_prefix, interface.name)) }}
-using {{interface.name}}Ptr = mojo::InterfacePtr<{{interface.name}}>;
-using {{interface.name}}PtrInfo = mojo::InterfacePtrInfo<{{interface.name}}>;
-using ThreadSafe{{interface.name}}Ptr =
-    mojo::ThreadSafeInterfacePtr<{{interface.name}}>;
-{{ kythe_annotation("%s.%s"|format(module_prefix, interface.name)) }}
-using {{interface.name}}Request = mojo::InterfaceRequest<{{interface.name}}>;
-{{ kythe_annotation("%s.%s"|format(module_prefix, interface.name)) }}
-using {{interface.name}}AssociatedPtr =
-    mojo::AssociatedInterfacePtr<{{interface.name}}>;
-using ThreadSafe{{interface.name}}AssociatedPtr =
-    mojo::ThreadSafeAssociatedInterfacePtr<{{interface.name}}>;
-using {{interface.name}}AssociatedPtrInfo =
-    mojo::AssociatedInterfacePtrInfo<{{interface.name}}>;
-{{ kythe_annotation("%s.%s"|format(module_prefix, interface.name)) }}
-using {{interface.name}}AssociatedRequest =
-    mojo::AssociatedInterfaceRequest<{{interface.name}}>;
 {%  endfor %}
 
 
-{{namespace_end()}}
+{{namespace_end(namespaces_as_array, variant)}}
 
 {#- TODO(tikuta): Use forward declaration of native enum/struct here. #}
 

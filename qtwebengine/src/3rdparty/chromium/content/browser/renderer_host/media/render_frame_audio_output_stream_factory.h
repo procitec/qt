@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,7 +8,6 @@
 #include <cstddef>
 #include <memory>
 
-#include "base/macros.h"
 #include "content/common/content_export.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "third_party/blink/public/mojom/media/renderer_audio_output_stream_factory.mojom.h"
@@ -39,7 +38,7 @@ class RenderFrameHost;
 // This class takes care of stream requests from a render frame. It verifies
 // that the stream creation is allowed and then forwards the request to the
 // appropriate ForwardingAudioStreamFactory. It should be constructed and
-// destructed on the UI thread, but will process mojo messages on the IO thread.
+// destructed on the UI thread, but will process Mojo messages on the IO thread.
 class CONTENT_EXPORT RenderFrameAudioOutputStreamFactory final {
  public:
   RenderFrameAudioOutputStreamFactory(
@@ -48,6 +47,11 @@ class CONTENT_EXPORT RenderFrameAudioOutputStreamFactory final {
       MediaStreamManager* media_stream_manager,
       mojo::PendingReceiver<blink::mojom::RendererAudioOutputStreamFactory>
           receiver);
+
+  RenderFrameAudioOutputStreamFactory(
+      const RenderFrameAudioOutputStreamFactory&) = delete;
+  RenderFrameAudioOutputStreamFactory& operator=(
+      const RenderFrameAudioOutputStreamFactory&) = delete;
 
   ~RenderFrameAudioOutputStreamFactory();
 
@@ -59,8 +63,6 @@ class CONTENT_EXPORT RenderFrameAudioOutputStreamFactory final {
  private:
   class Core;
   std::unique_ptr<Core> core_;
-
-  DISALLOW_COPY_AND_ASSIGN(RenderFrameAudioOutputStreamFactory);
 };
 
 }  // namespace content

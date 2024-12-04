@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -11,9 +11,11 @@
 
 #include <algorithm>
 #include <functional>
+#include <string_view>
 
 #include "base/check_op.h"
-#include "base/stl_util.h"
+#include "base/memory/raw_ptr.h"
+#include "base/ranges/algorithm.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/win/i18n.h"
@@ -30,16 +32,16 @@ using LangToOffset = LanguageSelector::LangToOffset;
 // targets of exceptions (where one language is mapped to another) or wildcards
 // (where a raw language identifier is mapped to a specific localization).
 struct AvailableLanguageAliases {
-  const LangToOffset* en_gb_language_offset;
-  const LangToOffset* en_us_language_offset;
-  const LangToOffset* es_language_offset;
-  const LangToOffset* es_419_language_offset;
-  const LangToOffset* fil_language_offset;
-  const LangToOffset* iw_language_offset;
-  const LangToOffset* no_language_offset;
-  const LangToOffset* pt_br_language_offset;
-  const LangToOffset* zh_cn_language_offset;
-  const LangToOffset* zh_tw_language_offset;
+  raw_ptr<const LangToOffset> en_gb_language_offset;
+  raw_ptr<const LangToOffset> en_us_language_offset;
+  raw_ptr<const LangToOffset> es_language_offset;
+  raw_ptr<const LangToOffset> es_419_language_offset;
+  raw_ptr<const LangToOffset> fil_language_offset;
+  raw_ptr<const LangToOffset> iw_language_offset;
+  raw_ptr<const LangToOffset> no_language_offset;
+  raw_ptr<const LangToOffset> pt_br_language_offset;
+  raw_ptr<const LangToOffset> zh_cn_language_offset;
+  raw_ptr<const LangToOffset> zh_tw_language_offset;
 };
 
 #if DCHECK_IS_ON()
@@ -47,11 +49,10 @@ struct AvailableLanguageAliases {
 bool IsArraySortedAndLowerCased(span<const LangToOffset> languages_to_offset) {
   return std::is_sorted(languages_to_offset.begin(),
                         languages_to_offset.end()) &&
-         std::all_of(languages_to_offset.begin(), languages_to_offset.end(),
-                     [](const auto& lang) {
-                       auto language = AsStringPiece16(lang.first);
-                       return ToLowerASCII(language) == language;
-                     });
+         base::ranges::all_of(languages_to_offset, [](const auto& lang) {
+           auto language = AsStringPiece16(lang.first);
+           return ToLowerASCII(language) == language;
+         });
 }
 #endif  // DCHECK_IS_ON()
 
@@ -261,14 +262,14 @@ bool SelectIf(const std::vector<std::wstring>& candidates,
 void SelectLanguageMatchingCandidate(
     const std::vector<std::wstring>& candidates,
     span<const LangToOffset> languages_to_offset,
-    int* selected_offset,
+    size_t* selected_offset,
     std::wstring* matched_candidate,
     std::wstring* selected_language) {
   DCHECK(selected_offset);
   DCHECK(matched_candidate);
   DCHECK(selected_language);
   DCHECK(!languages_to_offset.empty());
-  DCHECK_EQ(size_t(*selected_offset), languages_to_offset.size());
+  DCHECK_EQ(static_cast<size_t>(*selected_offset), languages_to_offset.size());
   DCHECK(matched_candidate->empty());
   DCHECK(selected_language->empty());
   // Note: While DCHECK_IS_ON() seems redundant here, this is required to avoid
@@ -304,10 +305,10 @@ void SelectLanguageMatchingCandidate(
 }
 
 std::vector<std::wstring> GetCandidatesFromSystem(
-    WStringPiece preferred_language) {
+    std::wstring_view preferred_language) {
   std::vector<std::wstring> candidates;
 
-  // Get the intitial candidate list for this particular implementation (if
+  // Get the initial candidate list for this particular implementation (if
   // applicable).
   if (!preferred_language.empty())
     candidates.emplace_back(preferred_language);
@@ -320,7 +321,7 @@ std::vector<std::wstring> GetCandidatesFromSystem(
 
 }  // namespace
 
-LanguageSelector::LanguageSelector(WStringPiece preferred_language,
+LanguageSelector::LanguageSelector(std::wstring_view preferred_language,
                                    span<const LangToOffset> languages_to_offset)
     : LanguageSelector(GetCandidatesFromSystem(preferred_language),
                        languages_to_offset) {}

@@ -1,13 +1,11 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "gpu/command_buffer/service/external_semaphore.h"
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
 #include "base/logging.h"
-#include "base/metrics/histogram_macros.h"
 #include "build/build_config.h"
 #include "components/viz/common/gpu/vulkan_context_provider.h"
 #include "gpu/vulkan/vulkan_device_queue.h"
@@ -29,17 +27,7 @@ GLuint ImportSemaphoreHandleToGLSemaphore(SemaphoreHandle handle) {
   if (!handle.is_valid())
     return 0;
 
-  RecordImportingVKSemaphoreIntoGL();
-  base::ScopedClosureRunner uma_runner(base::BindOnce(
-      [](base::Time time) {
-        UMA_HISTOGRAM_CUSTOM_MICROSECONDS_TIMES(
-            "GPU.Vulkan.ImportVkSemaphoreIntoGL", base::Time::Now() - time,
-            base::TimeDelta::FromMicroseconds(1),
-            base::TimeDelta::FromMicroseconds(200), 50);
-      },
-      base::Time::Now()));
-
-#if defined(OS_LINUX) || defined(OS_CHROMEOS) || defined(OS_ANDROID)
+#if BUILDFLAG(IS_POSIX)
   if (handle.vk_handle_type() !=
       VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT) {
     DLOG(ERROR) << "Importing semaphore handle of unexpected type:"
@@ -54,7 +42,7 @@ GLuint ImportSemaphoreHandleToGLSemaphore(SemaphoreHandle handle) {
                                 fd.release());
 
   return gl_semaphore;
-#elif defined(OS_WIN)
+#elif BUILDFLAG(IS_WIN)
   if (handle.vk_handle_type() !=
       VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_WIN32_BIT) {
     DLOG(ERROR) << "Importing semaphore handle of unexpected type:"
@@ -69,9 +57,9 @@ GLuint ImportSemaphoreHandleToGLSemaphore(SemaphoreHandle handle) {
       gl_semaphore, GL_HANDLE_TYPE_OPAQUE_WIN32_EXT, win32_handle.Take());
 
   return gl_semaphore;
-#elif defined(OS_FUCHSIA)
+#elif BUILDFLAG(IS_FUCHSIA)
   if (handle.vk_handle_type() !=
-      VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_TEMP_ZIRCON_EVENT_BIT_FUCHSIA) {
+      VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_ZIRCON_EVENT_BIT_FUCHSIA) {
     DLOG(ERROR) << "Importing semaphore handle of unexpected type:"
                 << handle.vk_handle_type();
     return 0;
@@ -93,20 +81,19 @@ GLuint ImportSemaphoreHandleToGLSemaphore(SemaphoreHandle handle) {
 // static
 ExternalSemaphore ExternalSemaphore::Create(
     viz::VulkanContextProvider* context_provider) {
-  auto* implementation = context_provider->GetVulkanImplementation();
   VkDevice device = context_provider->GetDeviceQueue()->GetVulkanDevice();
 
-  VkSemaphore semaphore = implementation->CreateExternalSemaphore(device);
+  VkSemaphore semaphore = CreateVkOpaqueExternalSemaphore(device);
   if (semaphore == VK_NULL_HANDLE)
     return {};
 
-  auto handle = implementation->GetSemaphoreHandle(device, semaphore);
+  auto handle = ExportVkOpaqueExternalSemaphore(device, semaphore);
   if (!handle.is_valid()) {
     vkDestroySemaphore(device, semaphore, /*pAllocator=*/nullptr);
     return {};
   }
 
-  return ExternalSemaphore(util::PassKey<ExternalSemaphore>(), context_provider,
+  return ExternalSemaphore(base::PassKey<ExternalSemaphore>(), context_provider,
                            semaphore, std::move(handle));
 }
 
@@ -125,7 +112,7 @@ ExternalSemaphore ExternalSemaphore::CreateFromHandle(
   if (semaphore == VK_NULL_HANDLE)
     return {};
 
-  return ExternalSemaphore(util::PassKey<ExternalSemaphore>(), context_provider,
+  return ExternalSemaphore(base::PassKey<ExternalSemaphore>(), context_provider,
                            semaphore, std::move(handle));
 }
 
@@ -136,7 +123,7 @@ ExternalSemaphore::ExternalSemaphore(ExternalSemaphore&& other) {
 }
 
 ExternalSemaphore::ExternalSemaphore(
-    util::PassKey<ExternalSemaphore>,
+    base::PassKey<ExternalSemaphore>,
     viz::VulkanContextProvider* context_provider,
     VkSemaphore semaphore,
     SemaphoreHandle handle)
@@ -165,13 +152,13 @@ void ExternalSemaphore::Reset() {
   }
 
   if (gl_semaphore_ != 0) {
-    auto* current_gl = gl::g_current_gl_context_tls->Get();
-    auto* api = current_gl->Driver ? current_gl->Api : nullptr;
     // We assume there is always one GL context current. If there isn't a
     // GL context current, we assume the last GL context is destroyed, in that
     // case, we will skip glDeleteSemaphoresEXT().
-    if (api)
+    if (gl::g_current_gl_driver) {
+      gl::GLApi* const api = gl::g_current_gl_context;
       api->glDeleteSemaphoresEXTFn(1, &gl_semaphore_);
+    }
   }
 
   context_provider_ = nullptr;
@@ -197,6 +184,13 @@ VkSemaphore ExternalSemaphore::GetVkSemaphore() {
         implementation->ImportSemaphoreHandle(device, handle_.Duplicate());
   }
   return semaphore_;
+}
+
+SemaphoreHandle ExternalSemaphore::TakeSemaphoreHandle() {
+  SemaphoreHandle handle = std::move(handle_);
+  DCHECK(!handle_.is_valid());
+  Reset();
+  return handle;
 }
 
 }  // namespace gpu

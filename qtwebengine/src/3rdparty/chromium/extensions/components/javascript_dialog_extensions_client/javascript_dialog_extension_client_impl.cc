@@ -1,18 +1,17 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "extensions/components/javascript_dialog_extensions_client/javascript_dialog_extension_client_impl.h"
 
-#include "base/macros.h"
-#include "base/memory/ptr_util.h"
+#include <memory>
+
 #include "components/javascript_dialogs/app_modal_dialog_manager.h"
 #include "components/javascript_dialogs/extensions_client.h"
 #include "content/public/browser/web_contents.h"
 #include "extensions/browser/process_manager.h"
 #include "extensions/common/extension.h"
 #include "ui/gfx/native_widget_types.h"
-#include "url/origin.h"
 
 namespace javascript_dialog_extensions_client {
 namespace {
@@ -38,6 +37,10 @@ class JavaScriptDialogExtensionsClientImpl
  public:
   JavaScriptDialogExtensionsClientImpl() = default;
   ~JavaScriptDialogExtensionsClientImpl() override = default;
+  JavaScriptDialogExtensionsClientImpl(
+      const JavaScriptDialogExtensionsClientImpl&) = delete;
+  JavaScriptDialogExtensionsClientImpl& operator=(
+      const JavaScriptDialogExtensionsClientImpl&) = delete;
 
   // JavaScriptDialogExtensionsClient:
   void OnDialogOpened(content::WebContents* web_contents) override {
@@ -64,28 +67,13 @@ class JavaScriptDialogExtensionsClientImpl
           extension, extensions::Activity::MODAL_DIALOG,
           web_contents->GetLastCommittedURL().spec());
   }
-  bool GetExtensionName(content::WebContents* web_contents,
-                        const GURL& alerting_frame_url,
-                        std::string* name_out) override {
-    const Extension* extension = GetExtensionForWebContents(web_contents);
-    if (extension &&
-        url::IsSameOriginWith(alerting_frame_url,
-                              web_contents->GetLastCommittedURL())) {
-      *name_out = extension->name();
-      return true;
-    }
-    return false;
-  }
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(JavaScriptDialogExtensionsClientImpl);
 };
 
 }  // namespace
 
 void InstallClient() {
   javascript_dialogs::AppModalDialogManager::GetInstance()->SetExtensionsClient(
-      base::WrapUnique(new JavaScriptDialogExtensionsClientImpl));
+      std::make_unique<JavaScriptDialogExtensionsClientImpl>());
 }
 
 }  // namespace javascript_dialog_extensions_client

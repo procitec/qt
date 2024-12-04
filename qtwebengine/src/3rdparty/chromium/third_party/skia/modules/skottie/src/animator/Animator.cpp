@@ -11,8 +11,7 @@
 #include "modules/skottie/src/SkottiePriv.h"
 #include "modules/skottie/src/animator/KeyframeAnimator.h"
 
-namespace skottie {
-namespace internal {
+namespace skottie::internal {
 
 Animator::StateChanged AnimatablePropertyContainer::onSeek(float t) {
     // The very first seek must trigger a sync, to ensure proper SG setup.
@@ -41,7 +40,7 @@ void AnimatablePropertyContainer::attachDiscardableAdapter(
         return;
     }
 
-    fAnimators.push_back(child);
+    fAnimators.push_back(std::move(child));
 }
 
 void AnimatablePropertyContainer::shrink_to_fit() {
@@ -50,16 +49,44 @@ void AnimatablePropertyContainer::shrink_to_fit() {
 
 bool AnimatablePropertyContainer::bindImpl(const AnimationBuilder& abuilder,
                                            const skjson::ObjectValue* jprop,
-                                           KeyframeAnimatorBuilder& builder) {
+                                           AnimatorBuilder& builder) {
     if (!jprop) {
         return false;
+    }
+
+    if (const skjson::StringValue* jpropSlotID = (*jprop)["sid"] ) {
+        if (!abuilder.getSlotsRoot()) {
+            abuilder.log(Logger::Level::kWarning, jprop,
+                         "Slotid found but no slots were found in the json. Using default values.");
+        } else {
+            const skjson::ObjectValue* slot = (*(abuilder.getSlotsRoot()))[jpropSlotID->begin()];
+            if (!slot) {
+                abuilder.log(Logger::Level::kWarning, jprop,
+                             "Specified slotID not found in 'slots'. Using default values.");
+            } else {
+                jprop = (*slot)["p"];
+            }
+        }
     }
 
     const auto& jpropA = (*jprop)["a"];
     const auto& jpropK = (*jprop)["k"];
 
-    if (!(*jprop)["x"].is<skjson::NullValue>()) {
-        abuilder.log(Logger::Level::kWarning, nullptr, "Unsupported expression.");
+    // Handle expressions on the property.
+    if (const skjson::StringValue* expr = (*jprop)["x"]) {
+        if (!abuilder.expression_manager()) {
+            abuilder.log(Logger::Level::kWarning, jprop,
+                         "Expression encountered but ExpressionManager not provided.");
+        } else {
+            builder.parseValue(abuilder, jpropK);
+            sk_sp<Animator> expression_animator = builder.makeFromExpression(
+                                                    *abuilder.expression_manager(),
+                                                    expr->begin());
+            if (expression_animator) {
+                fAnimators.push_back(std::move(expression_animator));
+                return true;
+            }
+        }
     }
 
     // Older Json versions don't have an "a" animation marker.
@@ -81,7 +108,7 @@ bool AnimatablePropertyContainer::bindImpl(const AnimationBuilder& abuilder,
     sk_sp<KeyframeAnimator> animator;
     const skjson::ArrayValue* jkfs = jpropK;
     if (jkfs && jkfs->size() > 0) {
-        animator = builder.make(abuilder, *jkfs);
+        animator = builder.makeFromKeyframes(abuilder, *jkfs);
     }
 
     if (!animator) {
@@ -100,4 +127,4 @@ bool AnimatablePropertyContainer::bindImpl(const AnimationBuilder& abuilder,
     return true;
 }
 
-}} // namespace skottie::internal
+} // namespace skottie::internal

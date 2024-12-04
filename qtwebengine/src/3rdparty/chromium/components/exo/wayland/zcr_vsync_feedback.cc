@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,6 +6,7 @@
 
 #include <vsync-feedback-unstable-v1-server-protocol.h>
 
+#include "base/memory/raw_ptr.h"
 #include "components/exo/vsync_timing_manager.h"
 #include "components/exo/wayland/server_util.h"
 
@@ -23,6 +24,10 @@ class VSyncTiming final : public VSyncTimingManager::Observer {
       : timing_resource_(timing_resource) {
     WMHelper::GetInstance()->GetVSyncTimingManager().AddObserver(this);
   }
+
+  VSyncTiming(const VSyncTiming&) = delete;
+  VSyncTiming& operator=(const VSyncTiming&) = delete;
+
   ~VSyncTiming() override {
     WMHelper::GetInstance()->GetVSyncTimingManager().RemoveObserver(this);
   }
@@ -41,9 +46,7 @@ class VSyncTiming final : public VSyncTimingManager::Observer {
 
  private:
   // The VSync timing resource.
-  wl_resource* const timing_resource_;
-
-  DISALLOW_COPY_AND_ASSIGN(VSyncTiming);
+  const raw_ptr<wl_resource> timing_resource_;
 };
 
 void vsync_timing_destroy(wl_client* client, wl_resource* resource) {

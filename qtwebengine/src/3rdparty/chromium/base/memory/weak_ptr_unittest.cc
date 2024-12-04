@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,11 +7,11 @@
 #include <memory>
 #include <string>
 
-#include "base/bind.h"
 #include "base/debug/leak_annotations.h"
+#include "base/functional/bind.h"
 #include "base/location.h"
-#include "base/single_thread_task_runner.h"
 #include "base/synchronization/waitable_event.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/test/gtest_util.h"
 #include "base/test/test_timeouts.h"
 #include "base/threading/thread.h"
@@ -318,13 +318,22 @@ TEST(WeakPtrTest, DerivedTargetWithNestedBase) {
 }
 
 TEST(WeakPtrTest, DerivedTargetMultipleInheritance) {
-  DerivedTargetMultipleInheritance d;
-  Target& b = d;
-  EXPECT_NE(static_cast<void*>(&d), static_cast<void*>(&b));
-  const WeakPtr<Target> pb = AsWeakPtr(&b);
-  EXPECT_EQ(pb.get(), &b);
-  const WeakPtr<DerivedTargetMultipleInheritance> pd = AsWeakPtr(&d);
-  EXPECT_EQ(pd.get(), &d);
+  DerivedTargetMultipleInheritance derived_target;
+  Target& target = derived_target;
+  EXPECT_NE(static_cast<void*>(&derived_target), static_cast<void*>(&target));
+
+  WeakPtr<Target> target_weak_ptr = AsWeakPtr(&target);
+  EXPECT_EQ(target_weak_ptr.get(), &target);
+
+  WeakPtr<DerivedTargetMultipleInheritance> derived_target_weak_ptr =
+      AsWeakPtr(&derived_target);
+  EXPECT_EQ(derived_target_weak_ptr.get(), &derived_target);
+
+  target_weak_ptr = derived_target_weak_ptr;
+  EXPECT_EQ(target_weak_ptr.get(), &target);
+
+  target_weak_ptr = std::move(derived_target_weak_ptr);
+  EXPECT_EQ(target_weak_ptr.get(), &target);
 }
 
 TEST(WeakPtrFactoryTest, BooleanTesting) {
@@ -369,6 +378,36 @@ TEST(WeakPtrFactoryTest, ComparisonToNull) {
   WeakPtr<int> null_ptr;
   EXPECT_EQ(null_ptr, nullptr);
   EXPECT_EQ(nullptr, null_ptr);
+}
+
+struct ReallyBaseClass {};
+struct BaseClass : ReallyBaseClass {
+  virtual ~BaseClass() = default;
+  void VirtualMethod() {}
+};
+struct OtherBaseClass {
+  virtual ~OtherBaseClass() = default;
+  virtual void VirtualMethod() {}
+};
+struct WithWeak final : BaseClass, OtherBaseClass {
+  WeakPtrFactory<WithWeak> factory{this};
+};
+
+TEST(WeakPtrTest, ConversionOffsetsPointer) {
+  WithWeak with;
+  WeakPtr<WithWeak> ptr(with.factory.GetWeakPtr());
+  {
+    // Copy construction.
+    WeakPtr<OtherBaseClass> base_ptr(ptr);
+    EXPECT_EQ(static_cast<WithWeak*>(&*base_ptr), &with);
+  }
+  {
+    // Move construction.
+    WeakPtr<OtherBaseClass> base_ptr(std::move(ptr));
+    EXPECT_EQ(static_cast<WithWeak*>(&*base_ptr), &with);
+  }
+
+  // WeakPtr doesn't have conversion operators for assignment.
 }
 
 TEST(WeakPtrTest, InvalidateWeakPtrs) {
@@ -687,10 +726,55 @@ TEST(WeakPtrTest, NonOwnerThreadCanDeleteWeakPtr) {
   background.DeleteArrow(arrow);
 }
 
+TEST(WeakPtrTest, ConstUpCast) {
+  Target target;
+
+  // WeakPtrs can upcast from non-const T to const T.
+  WeakPtr<const Target> const_weak_ptr = target.AsWeakPtr();
+
+  // WeakPtrs don't enable conversion from const T to nonconst T.
+  static_assert(
+      !std::is_constructible_v<WeakPtr<Target>, WeakPtr<const Target>>);
+}
+
+TEST(WeakPtrTest, ConstGetWeakPtr) {
+  struct TestTarget {
+    const char* Method() const { return "const method"; }
+    const char* Method() { return "non-const method"; }
+
+    WeakPtrFactory<TestTarget> weak_ptr_factory{this};
+  } non_const_test_target;
+
+  const TestTarget& const_test_target = non_const_test_target;
+
+  EXPECT_EQ(const_test_target.weak_ptr_factory.GetWeakPtr()->Method(),
+            "const method");
+  EXPECT_EQ(non_const_test_target.weak_ptr_factory.GetWeakPtr()->Method(),
+            "non-const method");
+  EXPECT_EQ(const_test_target.weak_ptr_factory.GetMutableWeakPtr()->Method(),
+            "non-const method");
+}
+
+TEST(WeakPtrTest, GetMutableWeakPtr) {
+  struct TestStruct {
+    int member = 0;
+    WeakPtrFactory<TestStruct> weak_ptr_factory{this};
+  };
+  TestStruct test_struct;
+  EXPECT_EQ(test_struct.member, 0);
+
+  // GetMutableWeakPtr() grants non-const access to T.
+  const TestStruct& const_test_struct = test_struct;
+  WeakPtr<TestStruct> weak_ptr =
+      const_test_struct.weak_ptr_factory.GetMutableWeakPtr();
+  weak_ptr->member = 1;
+  EXPECT_EQ(test_struct.member, 1);
+}
+
 TEST(WeakPtrDeathTest, WeakPtrCopyDoesNotChangeThreadBinding) {
   // The default style "fast" does not support multi-threaded tests
   // (introduces deadlock on Linux).
-  ::testing::FLAGS_gtest_death_test_style = "threadsafe";
+  GTEST_FLAG_SET(death_test_style, "threadsafe");
 
   BackgroundThread background;
   background.Start();
@@ -718,7 +802,7 @@ TEST(WeakPtrDeathTest, WeakPtrCopyDoesNotChangeThreadBinding) {
 TEST(WeakPtrDeathTest, NonOwnerThreadDereferencesWeakPtrAfterReference) {
   // The default style "fast" does not support multi-threaded tests
   // (introduces deadlock on Linux).
-  ::testing::FLAGS_gtest_death_test_style = "threadsafe";
+  GTEST_FLAG_SET(death_test_style, "threadsafe");
 
   // Main thread creates a Target object.
   Target target;
@@ -738,7 +822,7 @@ TEST(WeakPtrDeathTest, NonOwnerThreadDereferencesWeakPtrAfterReference) {
 TEST(WeakPtrDeathTest, NonOwnerThreadDeletesWeakPtrAfterReference) {
   // The default style "fast" does not support multi-threaded tests
   // (introduces deadlock on Linux).
-  ::testing::FLAGS_gtest_death_test_style = "threadsafe";
+  GTEST_FLAG_SET(death_test_style, "threadsafe");
 
   std::unique_ptr<Target> target(new Target());
 
@@ -762,7 +846,7 @@ TEST(WeakPtrDeathTest, NonOwnerThreadDeletesWeakPtrAfterReference) {
 TEST(WeakPtrDeathTest, NonOwnerThreadDeletesObjectAfterReference) {
   // The default style "fast" does not support multi-threaded tests
   // (introduces deadlock on Linux).
-  ::testing::FLAGS_gtest_death_test_style = "threadsafe";
+  GTEST_FLAG_SET(death_test_style, "threadsafe");
 
   std::unique_ptr<Target> target(new Target());
 
@@ -781,7 +865,7 @@ TEST(WeakPtrDeathTest, NonOwnerThreadDeletesObjectAfterReference) {
 TEST(WeakPtrDeathTest, NonOwnerThreadReferencesObjectAfterDeletion) {
   // The default style "fast" does not support multi-threaded tests
   // (introduces deadlock on Linux).
-  ::testing::FLAGS_gtest_death_test_style = "threadsafe";
+  GTEST_FLAG_SET(death_test_style, "threadsafe");
 
   std::unique_ptr<Target> target(new Target());
 
@@ -801,7 +885,7 @@ TEST(WeakPtrDeathTest, NonOwnerThreadReferencesObjectAfterDeletion) {
 TEST(WeakPtrDeathTest, ArrowOperatorChecksOnBadDereference) {
   // The default style "fast" does not support multi-threaded tests
   // (introduces deadlock on Linux).
-  ::testing::FLAGS_gtest_death_test_style = "threadsafe";
+  GTEST_FLAG_SET(death_test_style, "threadsafe");
 
   auto target = std::make_unique<Target>();
   WeakPtr<Target> weak = target->AsWeakPtr();
@@ -812,7 +896,7 @@ TEST(WeakPtrDeathTest, ArrowOperatorChecksOnBadDereference) {
 TEST(WeakPtrDeathTest, StarOperatorChecksOnBadDereference) {
   // The default style "fast" does not support multi-threaded tests
   // (introduces deadlock on Linux).
-  ::testing::FLAGS_gtest_death_test_style = "threadsafe";
+  GTEST_FLAG_SET(death_test_style, "threadsafe");
 
   auto target = std::make_unique<Target>();
   WeakPtr<Target> weak = target->AsWeakPtr();

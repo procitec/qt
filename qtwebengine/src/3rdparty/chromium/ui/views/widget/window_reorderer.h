@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,8 +7,8 @@
 
 #include <memory>
 
-#include "base/compiler_specific.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
+#include "base/scoped_observation.h"
 #include "ui/aura/window_observer.h"
 
 namespace aura {
@@ -27,6 +27,10 @@ class View;
 class WindowReorderer : public aura::WindowObserver {
  public:
   WindowReorderer(aura::Window* window, View* root_view);
+
+  WindowReorderer(const WindowReorderer&) = delete;
+  WindowReorderer& operator=(const WindowReorderer&) = delete;
+
   ~WindowReorderer() override;
 
   // Explicitly reorder the children of |window_| (and their layers). This
@@ -43,17 +47,16 @@ class WindowReorderer : public aura::WindowObserver {
   void OnWillRemoveWindow(aura::Window* window) override;
   void OnWindowDestroying(aura::Window* window) override;
 
-  // The window and the root view of the native widget which owns the
-  // WindowReorderer.
-  aura::Window* parent_window_;
-  View* root_view_;
+  // The observation of the window of native widget that owns `this`.
+  base::ScopedObservation<aura::Window, aura::WindowObserver>
+      parent_window_observation_{this};
+  // The root view of the native widget that owns `this`.
+  raw_ptr<View> root_view_;
 
   // Reorders windows as a result of the kHostViewKey being set on a child of
   // |parent_window_|.
   class AssociationObserver;
   std::unique_ptr<AssociationObserver> association_observer_;
-
-  DISALLOW_COPY_AND_ASSIGN(WindowReorderer);
 };
 
 }  // namespace views

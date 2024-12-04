@@ -6,6 +6,7 @@ include_rules = [
   "+components/keyed_service/core",
   "+components/safe_browsing/buildflags.h",
   "+content/public/browser",
+  "+content/test",
   "+net",
   "+services/service_manager/public/cpp",
   "+third_party/blink/public/common",

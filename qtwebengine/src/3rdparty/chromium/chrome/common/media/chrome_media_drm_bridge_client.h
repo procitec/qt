@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,13 +7,18 @@
 
 #include <stdint.h>
 
-#include "base/macros.h"
+#include "components/cdm/common/clearkey_drm_delegate_android.h"
 #include "components/cdm/common/widevine_drm_delegate_android.h"
 #include "media/base/android/media_drm_bridge_client.h"
 
 class ChromeMediaDrmBridgeClient : public media::MediaDrmBridgeClient {
  public:
   ChromeMediaDrmBridgeClient();
+
+  ChromeMediaDrmBridgeClient(const ChromeMediaDrmBridgeClient&) = delete;
+  ChromeMediaDrmBridgeClient& operator=(const ChromeMediaDrmBridgeClient&) =
+      delete;
+
   ~ChromeMediaDrmBridgeClient() override;
 
  private:
@@ -23,7 +28,7 @@ class ChromeMediaDrmBridgeClient : public media::MediaDrmBridgeClient {
 
   cdm::WidevineDrmDelegateAndroid widevine_delegate_;
 
-  DISALLOW_COPY_AND_ASSIGN(ChromeMediaDrmBridgeClient);
+  cdm::ClearKeyDrmDelegateAndroid clearkey_delegate_;
 };
 
 #endif  // CHROME_COMMON_MEDIA_CHROME_MEDIA_DRM_BRIDGE_CLIENT_H_

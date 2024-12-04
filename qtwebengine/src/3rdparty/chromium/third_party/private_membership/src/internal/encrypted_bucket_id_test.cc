@@ -14,6 +14,9 @@
 
 #include "third_party/private_membership/src/internal/encrypted_bucket_id.h"
 
+#include <cstdint>
+#include <string>
+
 #include "third_party/private_membership/src/private_membership_rlwe.pb.h"
 #include "third_party/private_membership/src/internal/rlwe_id_utils.h"
 #include "third_party/private_membership/src/internal/testing/constants.h"
@@ -51,11 +54,11 @@ TEST(EncryptedBucketIdTest, CreateWithHashingSuccess) {
   plaintext_id.set_non_sensitive_id("nsid");
   plaintext_id.set_sensitive_id("sid");
 
-  private_join_and_compute::Context ctx;
+  ::private_join_and_compute::Context ctx;
   ASSERT_OK_AND_ASSIGN(
       auto ec_cipher,
-      private_join_and_compute::ECCommutativeCipher::CreateWithNewKey(
-          kTestCurveId, private_join_and_compute::ECCommutativeCipher::HashType::SHA256));
+      ::private_join_and_compute::ECCommutativeCipher::CreateWithNewKey(
+          kTestCurveId, ::private_join_and_compute::ECCommutativeCipher::HashType::SHA256));
 
   std::string full_id = HashRlwePlaintextId(plaintext_id);
   ASSERT_OK_AND_ASSIGN(std::string encrypted_id, ec_cipher->Encrypt(full_id));
@@ -79,11 +82,11 @@ TEST(EncryptedBucketIdTest, CreateWithHashingError) {
   plaintext_id.set_non_sensitive_id("nsid-test");
   plaintext_id.set_sensitive_id("sid-test");
 
-  private_join_and_compute::Context ctx;
+  ::private_join_and_compute::Context ctx;
   ASSERT_OK_AND_ASSIGN(
       auto ec_cipher,
-      private_join_and_compute::ECCommutativeCipher::CreateWithNewKey(
-          kTestCurveId, private_join_and_compute::ECCommutativeCipher::HashType::SHA256));
+      ::private_join_and_compute::ECCommutativeCipher::CreateWithNewKey(
+          kTestCurveId, ::private_join_and_compute::ECCommutativeCipher::HashType::SHA256));
 
   EXPECT_THAT(
       EncryptedBucketId::Create(plaintext_id, params, nullptr, &ctx),

@@ -17,8 +17,8 @@
 #ifndef SRC_TRACED_PROBES_FTRACE_FTRACE_STATS_H_
 #define SRC_TRACED_PROBES_FTRACE_FTRACE_STATS_H_
 
-#include <inttypes.h>
-
+#include <cinttypes>
+#include <string>
 #include <vector>
 
 namespace perfetto {
@@ -35,7 +35,7 @@ struct FtraceCpuStats {
   uint64_t entries;
   uint64_t overrun;
   uint64_t commit_overrun;
-  uint64_t bytes_read;
+  uint64_t bytes;
   double oldest_event_ts;
   double now_ts;
   uint64_t dropped_events;
@@ -44,8 +44,17 @@ struct FtraceCpuStats {
   void Write(protos::pbzero::FtraceCpuStats*) const;
 };
 
+struct FtraceSetupErrors {
+  std::string atrace_errors;
+  std::vector<std::string> unknown_ftrace_events;
+  std::vector<std::string> failed_ftrace_events;
+};
+
 struct FtraceStats {
   std::vector<FtraceCpuStats> cpu_stats;
+  FtraceSetupErrors setup_errors;
+  uint32_t kernel_symbols_parsed = 0;
+  uint32_t kernel_symbols_mem_kb = 0;
 
   void Write(protos::pbzero::FtraceStats*) const;
 };

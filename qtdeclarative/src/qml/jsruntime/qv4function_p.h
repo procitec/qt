@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtQml module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 #ifndef QV4FUNCTION_H
 #define QV4FUNCTION_H
 
@@ -50,6 +14,7 @@
 // We mean it.
 //
 
+#include <qqmlprivate.h>
 #include "qv4global_p.h"
 #include <private/qv4executablecompilationunit_p.h>
 #include <private/qv4context_p.h>
@@ -65,33 +30,38 @@ struct QQmlSourceLocation;
 
 namespace QV4 {
 
-struct Q_QML_EXPORT FunctionData {
-    CompiledData::CompilationUnitBase *compilationUnit;
+struct Q_QML_EXPORT FunctionData
+{
+    WriteBarrier::HeapObjectWrapper<CompilationUnitRuntimeData, 1> compilationUnit;
 
     // Intentionally require an ExecutableCompilationUnit but save only a pointer to
     // CompilationUnitBase. This is so that we can take advantage of the standard layout
     // of CompilationUnitBase in the JIT. Furthermore we can safely static_cast to
     // ExecutableCompilationUnit where we need it.
-    FunctionData(ExecutableCompilationUnit *compilationUnit)
-        : compilationUnit(compilationUnit)
-    {}
+    FunctionData(EngineBase *engine, ExecutableCompilationUnit *compilationUnit_);
 };
 // Make sure this class can be accessed through offsetof (done by the assemblers):
 Q_STATIC_ASSERT(std::is_standard_layout< FunctionData >::value);
 
 struct Q_QML_EXPORT Function : public FunctionData {
-private:
+protected:
     Function(ExecutionEngine *engine, ExecutableCompilationUnit *unit,
-             const CompiledData::Function *function);
+             const CompiledData::Function *function, const QQmlPrivate::AOTCompiledFunction *aotFunction);
     ~Function();
 
 public:
-    const CompiledData::Function *compiledFunction;
+    struct JSTypedFunction {
+        QVarLengthArray<QQmlType, 4> types;
+    };
+
+    struct AOTCompiledFunction {
+        QVarLengthArray<QMetaType, 4> types;
+    };
 
     QV4::ExecutableCompilationUnit *executableCompilationUnit() const
     {
         // This is safe: We require an ExecutableCompilationUnit in the ctor.
-        return static_cast<QV4::ExecutableCompilationUnit *>(compilationUnit);
+        return static_cast<QV4::ExecutableCompilationUnit *>(compilationUnit.get());
     }
 
     QV4::Heap::String *runtimeString(uint i) const
@@ -99,23 +69,43 @@ public:
         return compilationUnit->runtimeStrings[i];
     }
 
-    ReturnedValue call(const Value *thisObject, const Value *argv, int argc, const ExecutionContext *context);
+    bool call(QObject *thisObject, void **a, const QMetaType *types, int argc,
+              ExecutionContext *context);
+    ReturnedValue call(const Value *thisObject, const Value *argv, int argc,
+                       ExecutionContext *context);
 
-    const char *codeData;
+    const CompiledData::Function *compiledFunction = nullptr;
+    const char *codeData = nullptr;
+    JSC::MacroAssemblerCodeRef *codeRef = nullptr;
 
     typedef ReturnedValue (*JittedCode)(CppStackFrame *, ExecutionEngine *);
-    JittedCode jittedCode;
-    JSC::MacroAssemblerCodeRef *codeRef;
+    typedef void (*AotCompiledCode)(const QQmlPrivate::AOTCompiledContext *context, void **argv);
+
+    union {
+        void *noFunction = nullptr;
+        JSTypedFunction jsTypedFunction;
+        AOTCompiledFunction aotCompiledFunction;
+    };
+
+    union {
+        JittedCode jittedCode = nullptr;
+        AotCompiledCode aotCompiledCode;
+    };
 
     // first nArguments names in internalClass are the actual arguments
-    Heap::InternalClass *internalClass;
-    uint nFormals;
+    QV4::WriteBarrier::Pointer<Heap::InternalClass> internalClass;
     int interpreterCallCount = 0;
-    bool isEval = false;
+    quint16 nFormals = 0;
+    enum Kind : quint8 { JsUntyped, JsTyped, AotCompiled, Eval };
+    Kind kind = JsUntyped;
+    bool detectedInjectedParameters = false;
 
     static Function *create(ExecutionEngine *engine, ExecutableCompilationUnit *unit,
-                            const CompiledData::Function *function);
+                            const CompiledData::Function *function,
+                            const QQmlPrivate::AOTCompiledFunction *aotFunction);
     void destroy();
+
+    void mark(QV4::MarkStack *ms);
 
     // used when dynamically assigning signal handlers (QQmlConnection)
     void updateInternalClass(ExecutionEngine *engine, const QList<QByteArray> &parameters);
@@ -132,6 +122,7 @@ public:
     inline bool isStrict() const { return compiledFunction->flags & CompiledData::Function::IsStrict; }
     inline bool isArrowFunction() const { return compiledFunction->flags & CompiledData::Function::IsArrowFunction; }
     inline bool isGenerator() const { return compiledFunction->flags & CompiledData::Function::IsGenerator; }
+    inline bool isClosureWrapper() const { return compiledFunction->flags & CompiledData::Function::IsClosureWrapper; }
 
     QQmlSourceLocation sourceLocation() const;
 

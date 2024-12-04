@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,23 +6,29 @@
 
 #include <stddef.h>
 
-#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <memory>
 
+#include "base/check.h"
 #include "base/check_op.h"
 #include "base/command_line.h"
+#include "base/containers/contains.h"
 #include "base/memory/ptr_util.h"
+#include "base/memory/ref_counted.h"
 #include "base/no_destructor.h"
 #include "base/sequence_checker.h"
+#include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
+#include "third_party/skia/include/core/SkBitmap.h"
+#include "ui/base/resource/resource_scale_factor.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/geometry/size_conversions.h"
+#include "ui/gfx/geometry/skia_conversions.h"
 #include "ui/gfx/image/image_skia_operations.h"
+#include "ui/gfx/image/image_skia_rep.h"
 #include "ui/gfx/image/image_skia_source.h"
-#include "ui/gfx/skia_util.h"
 #include "ui/gfx/switches.h"
 
 namespace gfx {
@@ -32,25 +38,6 @@ namespace {
 gfx::ImageSkiaRep& NullImageRep() {
   static base::NoDestructor<ImageSkiaRep> null_image_rep;
   return *null_image_rep;
-}
-
-std::vector<float>* g_supported_scales = NULL;
-
-// The difference to fall back to the smaller scale factor rather than the
-// larger one. For example, assume 1.20 is requested but only 1.0 and 2.0 are
-// supported. In that case, not fall back to 2.0 but 1.0, and then expand
-// the image to 1.25.
-const float kFallbackToSmallerScaleDiff = 0.20f;
-
-// Maps to the closest supported scale. Returns an exact match, a smaller
-// scale within 0.2 units, the nearest larger scale, or the min/max
-// supported scale.
-float MapToSupportedScale(float scale) {
-  for (float supported_scale : *g_supported_scales) {
-    if (supported_scale + kFallbackToSmallerScaleDiff >= scale)
-      return supported_scale;
-  }
-  return g_supported_scales->back();
 }
 
 }  // namespace
@@ -75,15 +62,21 @@ ImageSkiaRep ScaleImageSkiaRep(const ImageSkiaRep& rep, float target_scale) {
 
 // A helper class such that ImageSkia can be cheaply copied. ImageSkia holds a
 // refptr instance of ImageSkiaStorage, which in turn holds all of ImageSkia's
-// information. Using a |base::SequenceChecker| on a
-// |base::RefCountedThreadSafe| subclass may sound strange but is necessary to
-// turn the 'thread-non-safe modifiable ImageSkiaStorage' into the 'thread-safe
-// read-only ImageSkiaStorage'.
+// information.
+// The ImageSkia, and this class, are designed to be thread-safe in their const
+// methods, but also are bound to a single sequence for mutating methods.
+// NOTE: The FindRepresentation() method const and thread-safe *iff* it is
+// called with `fetch_new_image` set to true. Otherwise it may mutate the
+// class, which is not thread-safe. Internally, mutation is bound to a single
+// sequence with a `base::SequenceChecker`.
 class ImageSkiaStorage : public base::RefCountedThreadSafe<ImageSkiaStorage> {
  public:
   ImageSkiaStorage(std::unique_ptr<ImageSkiaSource> source,
                    const gfx::Size& size);
   ImageSkiaStorage(std::unique_ptr<ImageSkiaSource> source, float scale);
+
+  ImageSkiaStorage(const ImageSkiaStorage&) = delete;
+  ImageSkiaStorage& operator=(const ImageSkiaStorage&) = delete;
 
   bool has_source() const { return source_ != nullptr; }
   std::vector<gfx::ImageSkiaRep>& image_reps() { return image_reps_; }
@@ -122,7 +115,7 @@ class ImageSkiaStorage : public base::RefCountedThreadSafe<ImageSkiaStorage> {
   //   one and rescale the image.
   // Right now only Windows uses 2 and other platforms use 1 by default.
   // TODO(mukai, oshima): abandon 1 code path and use 2 for every platforms.
-  std::vector<ImageSkiaRep>::iterator FindRepresentation(
+  std::vector<ImageSkiaRep>::const_iterator FindRepresentation(
       float scale,
       bool fetch_new_image) const;
 
@@ -131,9 +124,12 @@ class ImageSkiaStorage : public base::RefCountedThreadSafe<ImageSkiaStorage> {
 
   virtual ~ImageSkiaStorage();
 
-  // Vector of bitmaps and their associated scale.
+  // Each entry in here has a different scale and is returned when looking for
+  // an ImageSkiaRep of that scale.
   std::vector<gfx::ImageSkiaRep> image_reps_;
 
+  // If no ImageSkiaRep exists in `image_reps_` for a given scale, the `source_`
+  // is queried to produce an ImageSkiaRep at that scale.
   std::unique_ptr<ImageSkiaSource> source_;
 
   // Size of the image in DIP.
@@ -141,9 +137,9 @@ class ImageSkiaStorage : public base::RefCountedThreadSafe<ImageSkiaStorage> {
 
   bool read_only_;
 
-  base::SequenceChecker sequence_checker_;
-
-  DISALLOW_COPY_AND_ASSIGN(ImageSkiaStorage);
+  // This isn't using SEQUENCE_CHECKER() macros because we use the sequence
+  // checker outside of DCHECKs to make branching decisions.
+  base::SequenceChecker sequence_checker_;  // nocheck
 };
 
 ImageSkiaStorage::ImageSkiaStorage(std::unique_ptr<ImageSkiaSource> source,
@@ -203,16 +199,14 @@ bool ImageSkiaStorage::HasRepresentationAtAllScales() const {
   return source_ && source_->HasRepresentationAtAllScales();
 }
 
-std::vector<ImageSkiaRep>::iterator ImageSkiaStorage::FindRepresentation(
+std::vector<ImageSkiaRep>::const_iterator ImageSkiaStorage::FindRepresentation(
     float scale,
     bool fetch_new_image) const {
-  ImageSkiaStorage* non_const = const_cast<ImageSkiaStorage*>(this);
-
-  auto closest_iter = non_const->image_reps().end();
-  auto exact_iter = non_const->image_reps().end();
+  TRACE_EVENT0("ui", "ImageSkiaStorage::FindRepresentation");
+  auto closest_iter = image_reps_.end();
+  auto exact_iter = image_reps_.end();
   float smallest_diff = std::numeric_limits<float>::max();
-  for (auto it = non_const->image_reps().begin(); it < image_reps_.end();
-       ++it) {
+  for (auto it = image_reps_.begin(); it < image_reps_.end(); ++it) {
     if (it->scale() == scale) {
       // found exact match
       fetch_new_image = false;
@@ -227,16 +221,22 @@ std::vector<ImageSkiaRep>::iterator ImageSkiaStorage::FindRepresentation(
       smallest_diff = diff;
     }
   }
-
-  if (fetch_new_image && source_.get()) {
+  if (fetch_new_image && source_) {
     DCHECK(sequence_checker_.CalledOnValidSequence())
         << "An ImageSkia with the source must be accessed by the same "
            "sequence.";
+    // This method is const and thread-safe, unless `fetch_new_image` is true,
+    // in which case the method is no longer considered const and we ensure
+    // that it is used in this way on a single sequence at a time with the above
+    // `sequence_checker_`.
+    auto* mutable_this = const_cast<ImageSkiaStorage*>(this);
 
     ImageSkiaRep image;
     float resource_scale = scale;
-    if (!HasRepresentationAtAllScales() && g_supported_scales)
-      resource_scale = MapToSupportedScale(scale);
+    if (!HasRepresentationAtAllScales()) {
+      resource_scale = ui::GetScaleForResourceScaleFactor(
+          ui::GetSupportedResourceScaleFactorForRescale(scale));
+    }
     if (scale != resource_scale) {
       auto iter = FindRepresentation(resource_scale, fetch_new_image);
       CHECK(iter != image_reps_.end());
@@ -252,21 +252,13 @@ std::vector<ImageSkiaRep>::iterator ImageSkiaStorage::FindRepresentation(
 
     // If the source returned the new image, store it.
     if (!image.is_null() &&
-        std::find_if(image_reps_.begin(), image_reps_.end(),
-                     [&image](const ImageSkiaRep& rep) {
-                       return rep.scale() == image.scale();
-                     }) == image_reps_.end()) {
-      non_const->image_reps().push_back(image);
+        !base::Contains(image_reps_, image.scale(), &ImageSkiaRep::scale)) {
+      mutable_this->image_reps_.push_back(image);
     }
 
-    // If the result image's scale isn't same as the expected scale, create a
-    // null ImageSkiaRep with the |scale| so that the next lookup will fall back
-    // to the closest scale.
-    if (image.is_null() || image.scale() != scale) {
-      non_const->image_reps().push_back(ImageSkiaRep(SkBitmap(), scale));
-    }
-
-    // image_reps_ must have the exact much now, so find again.
+    // image_reps_ should have the exact much now, or we will fallback
+    // to the new closest value. We pass false to prevent the generation step
+    // from running again and repeating the recursion.
     return FindRepresentation(scale, false);
   }
   return exact_iter != image_reps_.end() ? exact_iter : closest_iter;
@@ -299,6 +291,7 @@ ImageSkia::ImageSkia(std::unique_ptr<ImageSkiaSource> source, float scale)
 }
 
 ImageSkia::ImageSkia(const ImageSkiaRep& image_rep) {
+  DCHECK(!image_rep.is_null());
   Init(image_rep);
   // No other thread has reference to this, so it's safe to detach the sequence.
   DetachStorageFromSequence();
@@ -316,30 +309,23 @@ ImageSkia::~ImageSkia() {
 }
 
 // static
-void ImageSkia::SetSupportedScales(const std::vector<float>& supported_scales) {
-  if (g_supported_scales != NULL)
-    delete g_supported_scales;
-  g_supported_scales = new std::vector<float>(supported_scales);
-  std::sort(g_supported_scales->begin(), g_supported_scales->end());
-}
-
-// static
-const std::vector<float>& ImageSkia::GetSupportedScales() {
-  DCHECK(g_supported_scales != NULL);
-  return *g_supported_scales;
-}
-
-// static
-float ImageSkia::GetMaxSupportedScale() {
-  return g_supported_scales->back();
+ImageSkia ImageSkia::CreateFromBitmap(const SkBitmap& bitmap, float scale) {
+  // An uninitialized/empty/null bitmap makes a null ImageSkia.
+  if (bitmap.drawsNothing())
+    return ImageSkia();
+  return ImageSkia(ImageSkiaRep(bitmap, scale));
 }
 
 // static
 ImageSkia ImageSkia::CreateFrom1xBitmap(const SkBitmap& bitmap) {
+  // An uninitialized/empty/null bitmap makes a null ImageSkia.
+  if (bitmap.drawsNothing())
+    return ImageSkia();
   return ImageSkia(ImageSkiaRep(bitmap, 0.0f));
 }
 
 ImageSkia ImageSkia::DeepCopy() const {
+  TRACE_EVENT0("ui", "ImageSkia::DeepCopy");
   ImageSkia copy;
   if (isNull())
     return copy;
@@ -367,7 +353,6 @@ const void* ImageSkia::GetBackingObject() const {
 
 void ImageSkia::AddRepresentation(const ImageSkiaRep& image_rep) {
   DCHECK(!image_rep.is_null());
-
   // TODO(oshima): This method should be called |SetRepresentation|
   // and replace the existing rep if there is already one with the
   // same scale so that we can guarantee that a ImageSkia instance contains only
@@ -412,6 +397,7 @@ bool ImageSkia::HasRepresentation(float scale) const {
 }
 
 const ImageSkiaRep& ImageSkia::GetRepresentation(float scale) const {
+  TRACE_EVENT0("ui", "ImageSkia::GetRepresentation");
   if (isNull())
     return NullImageRep();
 
@@ -431,6 +417,7 @@ void ImageSkia::SetReadOnly() {
 }
 
 void ImageSkia::MakeThreadSafe() {
+  TRACE_EVENT0("ui", "ImageSkia::MakeThreadSafe");
   CHECK(storage_.get());
   EnsureRepsForSupportedScales();
   // Delete source as we no longer needs it.
@@ -476,36 +463,46 @@ std::vector<ImageSkiaRep> ImageSkia::image_reps() const {
 }
 
 void ImageSkia::EnsureRepsForSupportedScales() const {
-  DCHECK(g_supported_scales != NULL);
+  TRACE_EVENT0("ui", "ImageSkia::EnsureRepsForSupportedScales");
+  const std::vector<ui::ResourceScaleFactor>& supported_scales =
+      ui::GetSupportedResourceScaleFactors();
+
   // Don't check ReadOnly because the source may generate images even for read
   // only ImageSkia. Concurrent access will be protected by
-  // |DCHECK(sequence_checker_.CalledOnValidSequence())| in FindRepresentation.
+  // `DCHECK(sequence_checker_.CalledOnValidSequence())` in FindRepresentation.
   if (storage_.get() && storage_->has_source()) {
-    for (std::vector<float>::const_iterator it = g_supported_scales->begin();
-         it != g_supported_scales->end(); ++it)
-      storage_->FindRepresentation(*it, true);
+    for (const auto scale : supported_scales) {
+      storage_->FindRepresentation(ui::GetScaleForResourceScaleFactor(scale),
+                                   true);
+    }
   }
 }
 
 void ImageSkia::RemoveUnsupportedRepresentationsForScale(float scale) {
   for (const ImageSkiaRep& image_rep_to_test : image_reps()) {
     const float test_scale = image_rep_to_test.scale();
-    if (test_scale != scale && MapToSupportedScale(test_scale) == scale)
+    if (test_scale != scale &&
+        ui::GetScaleForResourceScaleFactor(
+            ui::GetSupportedResourceScaleFactorForRescale(test_scale)) ==
+            scale) {
       RemoveRepresentation(test_scale);
+    }
   }
 }
 
+bool ImageSkia::IsUniquelyOwned() const {
+  return storage_->HasOneRef();
+}
+
 void ImageSkia::Init(const ImageSkiaRep& image_rep) {
-  if (image_rep.GetBitmap().drawsNothing()) {
-    storage_.reset();
-    return;
-  }
+  DCHECK(!image_rep.is_null());
   storage_ = new internal::ImageSkiaStorage(
-      NULL, gfx::Size(image_rep.GetWidth(), image_rep.GetHeight()));
+      nullptr, gfx::Size(image_rep.GetWidth(), image_rep.GetHeight()));
   storage_->image_reps().push_back(image_rep);
 }
 
 const SkBitmap& ImageSkia::GetBitmap() const {
+  TRACE_EVENT0("ui", "ImageSkia::GetBitmap");
   if (isNull()) {
     // Callers expect a ImageSkiaRep even if it is |isNull()|.
     // TODO(pkotwicz): Fix this.
@@ -514,7 +511,7 @@ const SkBitmap& ImageSkia::GetBitmap() const {
 
   // TODO(oshima): This made a few tests flaky on Windows.
   // Fix the root cause and re-enable this. crbug.com/145623.
-#if !defined(OS_WIN)
+#if !BUILDFLAG(IS_WIN)
   CHECK(CanRead());
 #endif
 

@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,7 +9,7 @@
 #include <stdint.h>
 
 #include "base/big_endian.h"
-#include "base/macros.h"
+#include "base/containers/span.h"
 #include "media/cast/logging/logging_defines.h"
 #include "media/cast/net/cast_transport_config.h"
 #include "media/cast/net/rtcp/rtcp_defines.h"
@@ -40,6 +40,10 @@ struct RtcpCommonHeader {
 class RtcpParser {
  public:
   RtcpParser(uint32_t local_ssrc, uint32_t remote_ssrc);
+
+  RtcpParser(const RtcpParser&) = delete;
+  RtcpParser& operator=(const RtcpParser&) = delete;
+
   ~RtcpParser();
 
   // Gets/Sets the ID of the latest frame that could possibly be ACK'ed.  This
@@ -132,8 +136,6 @@ class RtcpParser {
 
   // Indicates if sender received the Pli message from the receiver.
   bool has_picture_loss_indicator_;
-
-  DISALLOW_COPY_AND_ASSIGN(RtcpParser);
 };
 
 // Converts a log event type to an integer value.
@@ -164,9 +166,9 @@ uint32_t ConvertToNtpDiff(uint32_t delay_seconds, uint32_t delay_fraction);
 base::TimeTicks ConvertNtpToTimeTicks(uint32_t ntp_seconds,
                                       uint32_t ntp_fractions);
 
-bool IsRtcpPacket(const uint8_t* packet, size_t length);
+bool IsRtcpPacket(base::span<const uint8_t> packet);
 
-uint32_t GetSsrcOfSender(const uint8_t* rtcp_buffer, size_t length);
+uint32_t GetSsrcOfSender(base::span<const uint8_t> rtcp_buffer);
 
 }  // namespace cast
 }  // namespace media

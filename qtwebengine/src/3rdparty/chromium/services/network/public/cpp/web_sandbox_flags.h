@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,8 +7,9 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
+
 #include "base/component_export.h"
-#include "base/strings/string_piece_forward.h"
 
 namespace network {
 namespace mojom {
@@ -43,9 +44,7 @@ inline constexpr WebSandboxFlags operator~(WebSandboxFlags flags) {
 
 // The output of |ParseSandboxPolicy(input)|.
 struct WebSandboxFlagsParsingResult {
-  // The complement of the parsed WebSandboxFlags policy.
-  // TODO(arthursonzogni): Update the caller of ParseWebSandboxPolicy(). They
-  // should directly use the policy instead of its complement.
+  // The parsed WebSandboxFlags policy.
   mojom::WebSandboxFlags flags;
 
   // The console error message to be displayed for invalid input. Empty when
@@ -64,9 +63,9 @@ struct WebSandboxFlagsParsingResult {
 // or from the network process. See: docs/security/rule-of-2.md.
 COMPONENT_EXPORT(NETWORK_CPP)
 WebSandboxFlagsParsingResult ParseWebSandboxPolicy(
-    const base::StringPiece& input,
+    std::string_view input,
     mojom::WebSandboxFlags ignored_flags);
 
 }  // namespace network
 
-#endif  // SERVICES_NETWORK_PUBLIC_CPP_SANDBOX_FLAGS_H_
+#endif  // SERVICES_NETWORK_PUBLIC_CPP_WEB_SANDBOX_FLAGS_H_

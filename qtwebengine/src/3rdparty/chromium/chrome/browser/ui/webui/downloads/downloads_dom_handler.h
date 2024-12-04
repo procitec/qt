@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,7 +10,7 @@
 #include <set>
 #include <vector>
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/download/download_danger_prompt.h"
 #include "chrome/browser/ui/webui/downloads/downloads.mojom-forward.h"
@@ -41,16 +41,25 @@ class DownloadsDOMHandler : public content::WebContentsObserver,
       mojo::PendingRemote<downloads::mojom::Page> page,
       content::DownloadManager* download_manager,
       content::WebUI* web_ui);
+
+  DownloadsDOMHandler(const DownloadsDOMHandler&) = delete;
+  DownloadsDOMHandler& operator=(const DownloadsDOMHandler&) = delete;
+
   ~DownloadsDOMHandler() override;
 
   // WebContentsObserver implementation.
-  void RenderProcessGone(base::TerminationStatus status) override;
+  void PrimaryMainFrameRenderProcessGone(
+      base::TerminationStatus status) override;
 
   // downloads::mojom::PageHandler:
   void GetDownloads(const std::vector<std::string>& search_terms) override;
   void OpenFileRequiringGesture(const std::string& id) override;
   void Drag(const std::string& id) override;
   void SaveDangerousRequiringGesture(const std::string& id) override;
+  void SaveSuspiciousRequiringGesture(const std::string& id) override;
+  void RecordOpenBypassWarningPrompt(const std::string& id) override;
+  void SaveDangerousFromPromptRequiringGesture(const std::string& id) override;
+  void RecordCancelBypassWarningPrompt(const std::string& id) override;
   void DiscardDangerous(const std::string& id) override;
   void RetryDownload(const std::string& id) override;
   void Show(const std::string& id) override;
@@ -62,6 +71,9 @@ class DownloadsDOMHandler : public content::WebContentsObserver,
   void ClearAll() override;
   void OpenDownloadsFolderRequiringGesture() override;
   void OpenDuringScanningRequiringGesture(const std::string& id) override;
+  void ReviewDangerousRequiringGesture(const std::string& id) override;
+  void DeepScan(const std::string& id) override;
+  void BypassDeepScanRequiringGesture(const std::string& id) override;
 
  protected:
   // These methods are for mocking so that most of this class does not actually
@@ -72,7 +84,8 @@ class DownloadsDOMHandler : public content::WebContentsObserver,
   // Actually remove downloads with an ID in |removals_|. This cannot be undone.
   void FinalizeRemovals();
 
-  using DownloadVector = std::vector<download::DownloadItem*>;
+  using DownloadVector =
+      std::vector<raw_ptr<download::DownloadItem, VectorExperimental>>;
 
   // Remove all downloads in |to_remove|. Safe downloads can be revived,
   // dangerous ones are immediately removed. Protected for testing.
@@ -125,13 +138,11 @@ class DownloadsDOMHandler : public content::WebContentsObserver,
   // Whether the render process has gone.
   bool render_process_gone_ = false;
 
-  content::WebUI* web_ui_;
+  raw_ptr<content::WebUI> web_ui_;
 
   mojo::Receiver<downloads::mojom::PageHandler> receiver_;
 
   base::WeakPtrFactory<DownloadsDOMHandler> weak_ptr_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(DownloadsDOMHandler);
 };
 
 #endif  // CHROME_BROWSER_UI_WEBUI_DOWNLOADS_DOWNLOADS_DOM_HANDLER_H_

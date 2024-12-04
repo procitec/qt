@@ -12,10 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import {Engine} from '../common/engine';
+import {publishTraceErrors} from '../frontend/publish';
+import {Engine} from '../trace_processor/engine';
+import {NUM} from '../trace_processor/query_result';
 
 import {Controller} from './controller';
-import {globals} from './globals';
 
 export interface TraceErrorControllerArgs {
   engine: Engine;
@@ -32,10 +33,13 @@ export class TraceErrorController extends Controller<'main'> {
       return;
     }
     this.hasRun = true;
-    this.args.engine
-        .queryOneRow(`SELECT sum(value) FROM stats WHERE severity != 'info'`)
-        .then(result => {
-          globals.publish('TraceErrors', result[0]);
+    const engine = this.args.engine;
+    engine
+        .query(
+            `SELECT sum(value) as sumValue FROM stats WHERE severity != 'info'`)
+        .then((result) => {
+          const errors = result.firstRow({sumValue: NUM}).sumValue;
+          publishTraceErrors(errors);
         });
   }
 }

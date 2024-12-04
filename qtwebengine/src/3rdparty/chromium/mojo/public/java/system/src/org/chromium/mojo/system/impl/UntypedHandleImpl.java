@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,14 +10,12 @@ import org.chromium.mojo.system.MessagePipeHandle;
 import org.chromium.mojo.system.SharedBufferHandle;
 import org.chromium.mojo.system.UntypedHandle;
 
-/**
- * Implementation of {@link UntypedHandle}.
- */
+/** Implementation of {@link UntypedHandle}. */
 class UntypedHandleImpl extends HandleBase implements UntypedHandle {
     /**
-     * @see HandleBase#HandleBase(CoreImpl, int)
+     * @see HandleBase#HandleBase(CoreImpl, long)
      */
-    UntypedHandleImpl(CoreImpl core, int mojoHandle) {
+    UntypedHandleImpl(CoreImpl core, long mojoHandle) {
         super(core, mojoHandle);
     }
 

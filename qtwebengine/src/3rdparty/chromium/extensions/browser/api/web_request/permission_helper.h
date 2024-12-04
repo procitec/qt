@@ -1,12 +1,13 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef EXTENSIONS_BROWSER_API_WEB_REQUEST_PERMISSION_HELPER_H_
 #define EXTENSIONS_BROWSER_API_WEB_REQUEST_PERMISSION_HELPER_H_
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "extensions/browser/browser_context_keyed_api_factory.h"
+#include "extensions/browser/process_map.h"
 
 namespace extensions {
 class ExtensionRegistry;
@@ -18,6 +19,10 @@ struct WebRequestInfo;
 class PermissionHelper : public BrowserContextKeyedAPI {
  public:
   explicit PermissionHelper(content::BrowserContext* context);
+
+  PermissionHelper(const PermissionHelper&) = delete;
+  PermissionHelper& operator=(const PermissionHelper&) = delete;
+
   ~PermissionHelper() override;
 
   // Convenience method to get the PermissionHelper for a profile.
@@ -29,7 +34,9 @@ class PermissionHelper : public BrowserContextKeyedAPI {
   bool ShouldHideBrowserNetworkRequest(const WebRequestInfo& request) const;
   bool CanCrossIncognito(const Extension* extension) const;
 
-  const ProcessMap* process_map() const { return process_map_; }
+  const ProcessMap* process_map() const {
+    return ProcessMap::Get(browser_context_);
+  }
 
   const ExtensionRegistry* extension_registry() const {
     return extension_registry_;
@@ -38,15 +45,12 @@ class PermissionHelper : public BrowserContextKeyedAPI {
  private:
   friend class BrowserContextKeyedAPIFactory<PermissionHelper>;
 
-  content::BrowserContext* const browser_context_;
-  ProcessMap* const process_map_;
-  ExtensionRegistry* const extension_registry_;
+  const raw_ptr<content::BrowserContext> browser_context_;
+  const raw_ptr<ExtensionRegistry> extension_registry_;
 
   // BrowserContextKeyedAPI implementation.
   static const char* service_name() { return "PermissionHelper"; }
   static const bool kServiceRedirectedInIncognito = true;
-
-  DISALLOW_COPY_AND_ASSIGN(PermissionHelper);
 };
 
 template <>

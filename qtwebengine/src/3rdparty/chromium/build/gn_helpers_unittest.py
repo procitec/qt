@@ -1,11 +1,16 @@
-# Copyright 2016 The Chromium Authors. All rights reserved.
+#!/usr/bin/env python3
+# Copyright 2016 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import mock
+import os
+import pathlib
+import shutil
 import sys
+import tempfile
 import textwrap
 import unittest
+from unittest import mock
 
 import gn_helpers
 
@@ -55,6 +60,18 @@ class UnitTest(unittest.TestCase):
             [[[], [[]]], []],
             '[ [ [  ], [ [  ] ] ], [  ] ]',
             '[\n  [\n    [],\n    [\n      []\n    ]\n  ],\n  []\n]\n',
+        ),
+        (
+            [{
+                'a': 1,
+                'c': {
+                    'z': 8
+                },
+                'b': []
+            }],
+            '[ { a = 1\nb = [  ]\nc = { z = 8 } } ]\n',
+            '[\n  {\n    a = 1\n    b = []\n    c = {\n' +
+            '      z = 8\n    }\n  }\n]\n',
         )
     ]
     for obj, exp_ugly, exp_pretty in test_cases:
@@ -128,6 +145,26 @@ class UnitTest(unittest.TestCase):
       parser = gn_helpers.GNValueParser('[1 2]')  # No separating comma.
       parser.ParseList()
 
+  def test_ParseScope(self):
+    parser = gn_helpers.GNValueParser('{a = 1}')
+    self.assertEqual(parser.ParseScope(), {'a': 1})
+
+    with self.assertRaises(gn_helpers.GNError):
+      parser = gn_helpers.GNValueParser('')  # Empty.
+      parser.ParseScope()
+    with self.assertRaises(gn_helpers.GNError):
+      parser = gn_helpers.GNValueParser('asdf')  # No {}.
+      parser.ParseScope()
+    with self.assertRaises(gn_helpers.GNError):
+      parser = gn_helpers.GNValueParser('{a = 1')  # Unterminated.
+      parser.ParseScope()
+    with self.assertRaises(gn_helpers.GNError):
+      parser = gn_helpers.GNValueParser('{"a" = 1}')  # Not identifier.
+      parser.ParseScope()
+    with self.assertRaises(gn_helpers.GNError):
+      parser = gn_helpers.GNValueParser('{a = }')  # No value.
+      parser.ParseScope()
+
   def test_FromGNArgs(self):
     # Booleans and numbers should work; whitespace is allowed works.
     self.assertEqual(gn_helpers.FromGNArgs('foo = true\nbar = 1\n'),
@@ -158,6 +195,51 @@ class UnitTest(unittest.TestCase):
     # Empty strings should return an empty dict.
     self.assertEqual(gn_helpers.FromGNArgs(''), {})
     self.assertEqual(gn_helpers.FromGNArgs(' \n '), {})
+
+    # Comments should work everywhere (and be ignored).
+    gn_args_lines = [
+        '# Top-level comment.',
+        '',
+        '# Variable comment.',
+        'foo = true',
+        'bar = [',
+        '    # Value comment in list.',
+        '    1,',
+        '    2,',
+        ']',
+        '',
+        'baz # Comment anywhere, really',
+        '  = # also here',
+        '    4',
+    ]
+    self.assertEqual(gn_helpers.FromGNArgs('\n'.join(gn_args_lines)), {
+        'foo': True,
+        'bar': [1, 2],
+        'baz': 4
+    })
+
+    # Scope should be parsed, even empty ones.
+    gn_args_lines = [
+        'foo = {',
+        '  a = 1',
+        '  b = [',
+        '    { },',
+        '    {',
+        '      c = 1',
+        '    },',
+        '  ]',
+        '}',
+    ]
+    self.assertEqual(gn_helpers.FromGNArgs('\n'.join(gn_args_lines)),
+                     {'foo': {
+                         'a': 1,
+                         'b': [
+                             {},
+                             {
+                                 'c': 1,
+                             },
+                         ]
+                     }})
 
     # Non-identifiers should raise an exception.
     with self.assertRaises(gn_helpers.GNError):
@@ -232,6 +314,39 @@ class UnitTest(unittest.TestCase):
       parser = gn_helpers.GNValueParser(
           textwrap.dedent('import("some/relative/args/file.gni")'))
       parser.ReplaceImports()
+
+  def test_CreateBuildCommand(self):
+    with tempfile.TemporaryDirectory() as temp_dir:
+      suffix = '.bat' if sys.platform.startswith('win32') else ''
+      self.assertEqual(f'autoninja{suffix}',
+                       gn_helpers.CreateBuildCommand(temp_dir)[0])
+
+      siso_deps = pathlib.Path(temp_dir) / '.siso_deps'
+      siso_deps.touch()
+      self.assertEqual(f'autoninja{suffix}',
+                       gn_helpers.CreateBuildCommand(temp_dir)[0])
+
+      with mock.patch('shutil.which', lambda x: None):
+        cmd = gn_helpers.CreateBuildCommand(temp_dir)
+        self.assertIn('third_party', cmd[0])
+        self.assertIn(f'{os.sep}siso', cmd[0])
+        self.assertEqual(['ninja', '-C', temp_dir], cmd[1:])
+
+      ninja_deps = pathlib.Path(temp_dir) / '.ninja_deps'
+      ninja_deps.touch()
+
+      with self.assertRaisesRegex(Exception, 'Found both'):
+        gn_helpers.CreateBuildCommand(temp_dir)
+
+      siso_deps.unlink()
+      self.assertEqual(f'autoninja{suffix}',
+                       gn_helpers.CreateBuildCommand(temp_dir)[0])
+
+      with mock.patch('shutil.which', lambda x: None):
+        cmd = gn_helpers.CreateBuildCommand(temp_dir)
+        self.assertIn('third_party', cmd[0])
+        self.assertIn(f'{os.sep}ninja', cmd[0])
+        self.assertEqual(['-C', temp_dir], cmd[1:])
 
 
 if __name__ == '__main__':

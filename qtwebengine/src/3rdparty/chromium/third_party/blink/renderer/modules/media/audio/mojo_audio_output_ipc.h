@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,11 +7,10 @@
 
 #include <string>
 
-#include "base/callback_helpers.h"
-#include "base/macros.h"
+#include "base/functional/callback_helpers.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
-#include "base/optional.h"
-#include "base/single_thread_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
 #include "media/audio/audio_output_ipc.h"
 #include "media/mojo/mojom/audio_data_pipe.mojom-blink.h"
@@ -41,16 +40,17 @@ class MODULES_EXPORT MojoAudioOutputIPC
       FactoryAccessorCB factory_accessor,
       scoped_refptr<base::SingleThreadTaskRunner> io_task_runner);
 
+  MojoAudioOutputIPC(const MojoAudioOutputIPC&) = delete;
+  MojoAudioOutputIPC& operator=(const MojoAudioOutputIPC&) = delete;
+
   ~MojoAudioOutputIPC() override;
 
   // AudioOutputIPC implementation.
   void RequestDeviceAuthorization(media::AudioOutputIPCDelegate* delegate,
                                   const base::UnguessableToken& session_id,
                                   const std::string& device_id) override;
-  void CreateStream(
-      media::AudioOutputIPCDelegate* delegate,
-      const media::AudioParameters& params,
-      const base::Optional<base::UnguessableToken>& processing_id) override;
+  void CreateStream(media::AudioOutputIPCDelegate* delegate,
+                    const media::AudioParameters& params) override;
   void PlayStream() override;
   void PauseStream() override;
   void FlushStream() override;
@@ -78,7 +78,7 @@ class MODULES_EXPORT MojoAudioOutputIPC
   MakeProviderReceiver();
 
   // Tries to acquire a RendererAudioOutputStreamFactory and requests device
-  // authorization. On failure to aquire a factory, |callback| is destructed
+  // authorization. On failure to acquire a factory, |callback| is destructed
   // asynchronously.
   void DoRequestDeviceAuthorization(const base::UnguessableToken& session_id,
                                     const std::string& device_id,
@@ -95,20 +95,19 @@ class MODULES_EXPORT MojoAudioOutputIPC
   // This is the state that |delegate_| expects the stream to be in. It is
   // maintained for when the stream is created.
   enum { kPaused, kPlaying } expected_state_ = kPaused;
-  base::Optional<double> volume_;
+  absl::optional<double> volume_;
 
   mojo::Receiver<media::mojom::blink::AudioOutputStreamProviderClient>
       receiver_{this};
   mojo::Remote<media::mojom::blink::AudioOutputStreamProvider> stream_provider_;
   mojo::Remote<media::mojom::blink::AudioOutputStream> stream_;
-  media::AudioOutputIPCDelegate* delegate_ = nullptr;
+  raw_ptr<media::AudioOutputIPCDelegate, ExperimentalRenderer> delegate_ =
+      nullptr;
   scoped_refptr<base::SingleThreadTaskRunner> io_task_runner_;
 
   // To make sure we don't send an "authorization completed" callback for a
   // stream after it's closed, we use this weak factory.
   base::WeakPtrFactory<MojoAudioOutputIPC> weak_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(MojoAudioOutputIPC);
 };
 
 }  // namespace blink

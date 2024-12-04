@@ -1,122 +1,97 @@
 [submodule "qtbase"]
 	path = qtbase
-	url = ../tqtc-qtbase.git
-	alias = qt/qtbase
-	branch = tqtc/lts-5.15-opensource
+	url = ../qtbase.git
+	branch = 6.8.1
 	status = essential
-	repoType = replaced
 [submodule "qtsvg"]
 	depends = qtbase
 	path = qtsvg
-	url = ../tqtc-qtsvg.git
-	alias = qt/qtsvg
-	branch = tqtc/lts-5.15-opensource
+	url = ../qtsvg.git
+	branch = 6.8.1
 	status = addon
-	repoType = replaced
 [submodule "qtdeclarative"]
 	depends = qtbase
-	recommends = qtsvg
+	recommends = qtimageformats qtshadertools qtsvg qtlanguageserver
 	path = qtdeclarative
-	url = ../tqtc-qtdeclarative.git
-	alias = qt/qtdeclarative
-	branch = tqtc/lts-5.15-opensource
+	url = ../qtdeclarative.git
+	branch = 6.8.1
 	status = essential
-	repoType = replaced
 [submodule "qtactiveqt"]
 	depends = qtbase
 	path = qtactiveqt
-	url = ../tqtc-qtactiveqt.git
-	alias = qt/qtactiveqt
-	branch = tqtc/lts-5.15-opensource
+	url = ../qtactiveqt.git
+	branch = 6.8.1
 	status = addon
-	repoType = replaced
-[submodule "qtscript"]
-	depends = qtbase
-	recommends = qttools
-	path = qtscript
-	url = ../qtscript.git
-	branch = 5.15.8
-	status = deprecated
-	repoType = replaced
 [submodule "qtmultimedia"]
-	depends = qtbase
-	recommends = qtdeclarative
+	depends = qtbase qtshadertools
+	recommends = qtdeclarative qtquick3d
 	path = qtmultimedia
-	url = ../tqtc-qtmultimedia.git
-	alias = qt/qtmultimedia
-	branch = tqtc/lts-5.15-opensource
-	status = essential
-	repoType = replaced
+	url = ../qtmultimedia.git
+	branch = 6.8.1
+	status = addon
 [submodule "qttools"]
 	depends = qtbase
 	recommends = qtdeclarative qtactiveqt
 	path = qttools
-	url = ../tqtc-qttools.git
-	alias = qt/qttools
-	branch = tqtc/lts-5.15-opensource
+	url = ../qttools.git
+	branch = 6.8.1
 	status = essential
-	repoType = replaced
 [submodule "qtxmlpatterns"]
 	depends = qtbase
 	recommends = qtdeclarative
 	path = qtxmlpatterns
-	url = ../tqtc-qtxmlpatterns.git
-	alias = qt/qtxmlpatterns
-	branch = tqtc/lts-5.15-opensource
-	status = deprecated
-	repoType = replaced
+	url = ../qtxmlpatterns.git
+	branch = dev
+	status = ignore
 [submodule "qttranslations"]
 	depends = qttools
 	path = qttranslations
-	url = ../tqtc-qttranslations.git
-	alias = qt/qttranslations
-	branch = tqtc/lts-5.15-opensource
+	url = ../qttranslations.git
+	branch = 6.8.1
 	status = essential
 	priority = 30
-	repoType = replaced
 [submodule "qtdoc"]
 	depends = qtdeclarative qttools
-	recommends = qtmultimedia qtquickcontrols qtquickcontrols2
+	recommends = qtmultimedia qtshadertools qtwebengine
 	path = qtdoc
-	url = ../tqtc-qtdoc.git
-	alias = qt/qtdoc
-	branch = tqtc/lts-5.15-opensource
+	url = ../qtdoc.git
+	branch = 6.8.1
 	status = essential
 	priority = 40
-	repoType = replaced
 [submodule "qtrepotools"]
 	path = qtrepotools
 	url = ../qtrepotools.git
 	branch = master
 	status = essential
 	project = -
-	repoType = inherited
 [submodule "qtqa"]
 	depends = qtbase
 	path = qtqa
 	url = ../qtqa.git
-	branch = master
+	branch = dev
 	status = essential
 	priority = 50
-	repoType = inherited
 [submodule "qtlocation"]
-	depends = qtbase
-	recommends = qtdeclarative qtquickcontrols qtquickcontrols2 qtserialport
+	depends = qtbase qtpositioning
+	recommends = qtdeclarative
 	path = qtlocation
-	url = ../tqtc-qtlocation.git
-	alias = qt/qtlocation
-	branch = tqtc/lts-5.15-opensource
+	url = ../qtlocation.git
+	branch = 6.8.1
+	status = preview
+[submodule "qtpositioning"]
+	depends = qtbase
+	recommends = qtdeclarative qtserialport
+	path = qtpositioning
+	url = ../qtpositioning.git
+	branch = 6.8.1
 	status = addon
-	repoType = replaced
 [submodule "qtsensors"]
 	depends = qtbase
 	recommends = qtdeclarative
 	path = qtsensors
-	url = ../tqtc-qtsensors.git
-	alias = qt/qtsensors
-	branch = tqtc/lts-5.15-opensource
+	url = ../qtsensors.git
+	branch = 6.8.1
 	status = addon
-	repoType = replaced
 [submodule "qtsystems"]
 	depends = qtbase
 	recommends = qtdeclarative
@@ -124,7 +99,6 @@
 	url = ../qtsystems.git
 	branch = dev
 	status = ignore
-	repoType = inherited
 [submodule "qtfeedback"]
 	depends = qtdeclarative
 	recommends = qtmultimedia
@@ -132,143 +106,74 @@
 	url = ../qtfeedback.git
 	branch = master
 	status = ignore
-	repoType = inherited
 [submodule "qtpim"]
 	depends = qtdeclarative
 	path = qtpim
 	url = ../qtpim.git
 	branch = dev
 	status = ignore
-	repoType = inherited
 [submodule "qtconnectivity"]
 	depends = qtbase
-	recommends = qtdeclarative qtandroidextras
+	recommends = qtdeclarative
 	path = qtconnectivity
-	url = ../tqtc-qtconnectivity.git
-	alias = qt/qtconnectivity
-	branch = tqtc/lts-5.15-opensource
+	url = ../qtconnectivity.git
+	branch = 6.8.1
 	status = addon
-	repoType = replaced
 [submodule "qtwayland"]
 	depends = qtbase
 	recommends = qtdeclarative
 	path = qtwayland
-	url = ../tqtc-qtwayland.git
-	alias = qt/qtwayland
-	branch = tqtc/lts-5.15-opensource
+	url = ../qtwayland.git
+	branch = 6.8.1
 	status = addon
-	repoType = replaced
 [submodule "qt3d"]
 	depends = qtbase
-	recommends = qtdeclarative qtimageformats qtgamepad
+	recommends = qtdeclarative qtshadertools qtmultimedia
 	path = qt3d
-	url = ../tqtc-qt3d.git
-	alias = qt/qt3d
-	branch = tqtc/lts-5.15-opensource
-	status = addon
-	repoType = replaced
+	url = ../qt3d.git
+	branch = 6.8.1
+	status = deprecated
 [submodule "qtimageformats"]
 	depends = qtbase
 	path = qtimageformats
-	url = ../tqtc-qtimageformats.git
-	alias = qt/qtimageformats
-	branch = tqtc/lts-5.15-opensource
+	url = ../qtimageformats.git
+	branch = 6.8.1
 	status = addon
-	repoType = replaced
-[submodule "qtgraphicaleffects"]
-	depends = qtdeclarative
-	path = qtgraphicaleffects
-	url = ../tqtc-qtgraphicaleffects.git
-	alias = qt/qtgraphicaleffects
-	branch = tqtc/lts-5.15-opensource
-	status = essential
-	repoType = replaced
-[submodule "qtquickcontrols"]
-	depends = qtdeclarative
-	recommends = qtgraphicaleffects
-	path = qtquickcontrols
-	url = ../tqtc-qtquickcontrols.git
-	alias = qt/qtquickcontrols
-	branch = tqtc/lts-5.15-opensource
-	status = addon
-	repoType = replaced
 [submodule "qtserialbus"]
 	depends = qtbase
 	recommends = qtserialport
 	path = qtserialbus
-	url = ../tqtc-qtserialbus.git
-	alias = qt/qtserialbus
-	branch = tqtc/lts-5.15-opensource
+	url = ../qtserialbus.git
+	branch = 6.8.1
 	status = addon
-	repoType = replaced
 [submodule "qtserialport"]
 	depends = qtbase
 	path = qtserialport
-	url = ../tqtc-qtserialport.git
-	alias = qt/qtserialport
-	branch = tqtc/lts-5.15-opensource
+	url = ../qtserialport.git
+	branch = 6.8.1
 	status = addon
-	repoType = replaced
-[submodule "qtx11extras"]
-	depends = qtbase
-	path = qtx11extras
-	url = ../tqtc-qtx11extras.git
-	alias = qt/qtx11extras
-	branch = tqtc/lts-5.15-opensource
-	status = addon
-	repoType = replaced
-[submodule "qtmacextras"]
-	depends = qtbase
-	path = qtmacextras
-	url = ../tqtc-qtmacextras.git
-	alias = qt/qtmacextras
-	branch = tqtc/lts-5.15-opensource
-	status = addon
-	repoType = replaced
-[submodule "qtwinextras"]
-	depends = qtbase
-	recommends = qtdeclarative qtmultimedia
-	path = qtwinextras
-	url = ../tqtc-qtwinextras.git
-	alias = qt/qtwinextras
-	branch = tqtc/lts-5.15-opensource
-	status = addon
-	repoType = replaced
-[submodule "qtandroidextras"]
-	depends = qtbase
-	path = qtandroidextras
-	url = ../tqtc-qtandroidextras.git
-	alias = qt/qtandroidextras
-	branch = tqtc/lts-5.15-opensource
-	status = addon
-	repoType = replaced
 [submodule "qtwebsockets"]
 	depends = qtbase
 	recommends = qtdeclarative
 	path = qtwebsockets
-	url = ../tqtc-qtwebsockets.git
-	alias = qt/qtwebsockets
-	branch = tqtc/lts-5.15-opensource
+	url = ../qtwebsockets.git
+	branch = 6.8.1
 	status = addon
-	repoType = replaced
 [submodule "qtwebchannel"]
 	depends = qtbase
 	recommends = qtdeclarative qtwebsockets
 	path = qtwebchannel
-	url = ../tqtc-qtwebchannel.git
-	alias = qt/qtwebchannel
-	branch = tqtc/lts-5.15-opensource
+	url = ../qtwebchannel.git
+	branch = 6.8.1
 	status = addon
-	repoType = replaced
 [submodule "qtwebengine"]
 	depends = qtdeclarative
-	recommends = qtquickcontrols qtquickcontrols2 qtlocation qtwebchannel qttools
+	recommends = qtwebchannel qttools qtpositioning
 	path = qtwebengine
 	url = ../qtwebengine.git
-	branch = 5.15.8
+	branch = 6.8.1
 	status = addon
 	priority = 10
-	repoType = replaced
 [submodule "qtcanvas3d"]
 	depends = qtdeclarative
 	path = qtcanvas3d
@@ -279,160 +184,155 @@
 	depends = qtdeclarative
 	recommends = qtwebengine
 	path = qtwebview
-	url = ../tqtc-qtwebview.git
-	alias = qt/qtwebview
-	branch = tqtc/lts-5.15-opensource
+	url = ../qtwebview.git
+	branch = 6.8.1
 	status = addon
-	repoType = replaced
-[submodule "qtquickcontrols2"]
-	depends = qtgraphicaleffects
-	recommends = qtimageformats
-	path = qtquickcontrols2
-	url = ../tqtc-qtquickcontrols2.git
-	alias = qt/qtquickcontrols2
-	branch = tqtc/lts-5.15-opensource
-	status = essential
-	repoType = replaced
-[submodule "qtpurchasing"]
-	depends = qtbase
-	recommends = qtdeclarative qtandroidextras
-	path = qtpurchasing
-	url = ../tqtc-qtpurchasing.git
-	alias = qt/qtpurchasing
-	branch = tqtc/lts-5.15-opensource
-	status = addon
-	repoType = replaced
 [submodule "qtcharts"]
 	depends = qtbase
 	recommends = qtdeclarative qtmultimedia
 	path = qtcharts
-	url = ../tqtc-qtcharts.git
-	alias = qt/qtcharts
-	branch = tqtc/lts-5.15-opensource
+	url = ../qtcharts.git
+	branch = 6.8.1
 	status = addon
-	repoType = replaced
 [submodule "qtdatavis3d"]
 	depends = qtbase
 	recommends = qtdeclarative qtmultimedia
 	path = qtdatavis3d
-	url = ../tqtc-qtdatavis3d.git
-	alias = qt/qtdatavis3d
-	branch = tqtc/lts-5.15-opensource
+	url = ../qtdatavis3d.git
+	branch = 6.8.1
 	status = addon
-	repoType = replaced
 [submodule "qtvirtualkeyboard"]
 	depends = qtbase qtdeclarative qtsvg
-	recommends = qtmultimedia qtquickcontrols
+	recommends = qtmultimedia
 	path = qtvirtualkeyboard
-	url = ../tqtc-qtvirtualkeyboard.git
-	alias = qt/qtvirtualkeyboard
-	branch = tqtc/lts-5.15-opensource
+	url = ../qtvirtualkeyboard.git
+	branch = 6.8.1
 	status = addon
-	repoType = replaced
 [submodule "qtgamepad"]
 	depends = qtbase
 	recommends = qtdeclarative
 	path = qtgamepad
-	url = ../tqtc-qtgamepad.git
-	alias = qt/qtgamepad
-	branch = tqtc/lts-5.15-opensource
-	status = addon
-	repoType = replaced
+	url = ../qtgamepad.git
+	branch = dev
+	status = ignore
 [submodule "qtscxml"]
 	depends = qtbase qtdeclarative
 	path = qtscxml
-	url = ../tqtc-qtscxml.git
-	alias = qt/qtscxml
-	branch = tqtc/lts-5.15-opensource
+	url = ../qtscxml.git
+	branch = 6.8.1
 	status = addon
-	repoType = replaced
 [submodule "qtspeech"]
-	depends = qtbase
-	recommends = qtdeclarative qtmultimedia
+	depends = qtbase qtmultimedia
+	recommends = qtdeclarative
 	path = qtspeech
-	url = ../tqtc-qtspeech.git
-	alias = qt/qtspeech
-	branch = tqtc/lts-5.15-opensource
+	url = ../qtspeech.git
+	branch = 6.8.1
 	status = addon
-	repoType = replaced
 [submodule "qtnetworkauth"]
 	depends = qtbase
 	path = qtnetworkauth
-	url = ../tqtc-qtnetworkauth.git
-	alias = qt/qtnetworkauth
-	branch = tqtc/lts-5.15-opensource
+	url = ../qtnetworkauth.git
+	branch = 6.8.1
 	status = addon
-	repoType = replaced
 [submodule "qtremoteobjects"]
 	depends = qtbase
 	recommends = qtdeclarative
 	path = qtremoteobjects
-	url = ../tqtc-qtremoteobjects.git
-	alias = qt/qtremoteobjects
-	branch = tqtc/lts-5.15-opensource
+	url = ../qtremoteobjects.git
+	branch = 6.8.1
 	status = addon
-	repoType = replaced
 [submodule "qtwebglplugin"]
 	depends = qtbase qtwebsockets
 	recommends = qtdeclarative
 	path = qtwebglplugin
-	url = ../tqtc-qtwebglplugin.git
-	alias = qt/qtwebglplugin
-	branch = tqtc/lts-5.15-opensource
-	status = addon
-	repoType = replaced
+	url = ../qtwebglplugin.git
+	branch = dev
+	status = ignore
 [submodule "qtlottie"]
 	depends = qtbase qtdeclarative
 	path = qtlottie
-	url = ../tqtc-qtlottie.git
-	alias = qt/qtlottie
-	branch = tqtc/lts-5.15-opensource
+	url = ../qtlottie.git
+	branch = 6.8.1
 	status = addon
-	repoType = replaced
 [submodule "qtquicktimeline"]
 	depends = qtbase qtdeclarative
 	path = qtquicktimeline
-	url = ../tqtc-qtquicktimeline
-	alias = qt/qtquicktimeline
-	branch = tqtc/lts-5.15-opensource
+	url = ../qtquicktimeline
+	branch = 6.8.1
 	status = addon
-	repoType = replaced
 [submodule "qtquick3d"]
-	depends = qtbase qtdeclarative
+	depends = qtbase qtdeclarative qtshadertools
+	recommends = qtquicktimeline
 	path = qtquick3d
-	url = ../tqtc-qtquick3d.git
-	alias = qt/qtquick3d
-	branch = tqtc/lts-5.15-opensource
+	url = ../qtquick3d.git
+	branch = 6.8.1
 	status = addon
-	repoType = replaced
-[submodule "qtknx"]
+[submodule "qtshadertools"]
 	depends = qtbase
-	recommends = qtdeclarative
-	path = qtknx
-	url = ../tqtc-qtknx.git
-	alias = qt/qtknx
-	branch = tqtc/lts-5.15-opensource
+	path = qtshadertools
+	url = ../qtshadertools.git
+	branch = 6.8.1
 	status = addon
-	project = qtknx.pro
-[submodule "qtmqtt"]
-	depends = qtbase
-	path = qtmqtt
-	url = ../tqtc-qtmqtt.git
-	alias = qt/qtmqtt
-	branch = tqtc/lts-5.15-opensource
-	status = addon
-	project = qtmqtt.pro
-[submodule "qtopcua"]
+[submodule "qt5compat"]
 	depends = qtbase qtdeclarative
-	path = qtopcua
-	url = ../tqtc-qtopcua.git
-	alias = qt/qtopcua
-	branch = tqtc/lts-5.15-opensource
-	status = preview
+	path = qt5compat
+	url = ../qt5compat.git
+	branch = 6.8.1
+	status = deprecated
 [submodule "qtcoap"]
 	depends = qtbase
 	path = qtcoap
-	url = ../tqtc-qtcoap.git
-	alias = qt/qtcoap
-	branch = tqtc/lts-5.15-opensource
+	url = ../qtcoap.git
+	branch = 6.8.1
+	status = addon
+[submodule "qtmqtt"]
+	depends = qtbase qtdeclarative
+	path = qtmqtt
+	url = ../qtmqtt.git
+	branch = 6.8.1
+	status = addon
+[submodule "qtopcua"]
+	depends = qtbase qtdeclarative
+	path = qtopcua
+	url = ../qtopcua.git
+	branch = 6.8.1
+	status = addon
+[submodule "qtlanguageserver"]
+	depends = qtbase
+	path = qtlanguageserver
+	url = ../qtlanguageserver.git
+	branch = 6.8.1
+	status = preview
+[submodule "qthttpserver"]
+	depends = qtbase
+	recommends = qtwebsockets
+	path = qthttpserver
+	url = ../qthttpserver.git
+	branch = 6.8.1
+	status = addon
+[submodule "qtquick3dphysics"]
+	depends = qtbase qtdeclarative qtquick3d qtshadertools
+	path = qtquick3dphysics
+	url = ../qtquick3dphysics.git
+	branch = 6.8.1
+	status = addon
+[submodule "qtgrpc"]
+	depends = qtbase
+	recommends = qtdeclarative
+	path = qtgrpc
+	url = ../qtgrpc.git
+	branch = 6.8.1
+	status = addon
+[submodule "qtquickeffectmaker"]
+	depends = qtbase qtdeclarative qtshadertools
+	recommends = qtquick3d
+	path = qtquickeffectmaker
+	url = ../qtquickeffectmaker.git
+	branch = 6.8.1
+	status = addon
+[submodule "qtgraphs"]
+	depends = qtbase qtdeclarative qtquick3d
+	path = qtgraphs
+	url = ../qtgraphs.git
+	branch = 6.8.1
 	status = addon

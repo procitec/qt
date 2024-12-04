@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 Klaralvdalens Datakonsult AB (KDAB).
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt3D module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 Klaralvdalens Datakonsult AB (KDAB).
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qpickingsettings.h"
 #include "qpickingsettings_p.h"
@@ -69,7 +33,7 @@ namespace Qt3DRender {
     \brief The PickingSettings class specifies how entity picking is handled.
     \since 5.7
     \inqmlmodule Qt3D.Render
-    \instantiates Qt3DRender::QPickingSettings
+    \nativetype Qt3DRender::QPickingSettings
 
     The picking settings determine how the entity picking is handled. For more details about
     entity picking, see Qt3D.Render::ObjectPicker or Qt3D.Render::RayCaster component documentation.
@@ -171,7 +135,7 @@ float QPickingSettings::worldSpaceTolerance() const
     \sa Qt3DRender::QPickingSettings::PickMethod
 */
 /*!
-    \property QPickingSettings::pickMethod
+    \property Qt3DRender::QPickingSettings::pickMethod
 
     Holds the current pick method.
 
@@ -220,7 +184,7 @@ void QPickingSettings::setPickMethod(QPickingSettings::PickMethod pickMethod)
     \sa Qt3DRender::QPickingSettings::PickResultMode
 */
 /*!
-    \property QPickingSettings::pickResultMode
+    \property Qt3DRender::QPickingSettings::pickResultMode
 
     Holds the current pick results mode.
 
@@ -268,7 +232,7 @@ void QPickingSettings::setPickResultMode(QPickingSettings::PickResultMode pickRe
     \endlist
 */
 /*!
-    \property QPickingSettings::faceOrientationPickingMode
+    \property Qt3DRender::QPickingSettings::faceOrientationPickingMode
 
     Specifies how face orientation affects triangle picking
 */
@@ -288,7 +252,7 @@ void QPickingSettings::setFaceOrientationPickingMode(QPickingSettings::FaceOrien
     Holds the threshold, in model space coordinates, used to evaluate line and point picking.
 */
 /*!
-    \property QPickingSettings::worldSpaceTolerance
+    \property Qt3DRender::QPickingSettings::worldSpaceTolerance
 
     Holds the threshold, in model space coordinates, used to evaluate line and point picking.
 */
@@ -308,3 +272,5 @@ void QPickingSettings::setWorldSpaceTolerance(float worldSpaceTolerance)
 } // namespace Qt3Drender
 
 QT_END_NAMESPACE
+
+#include "moc_qpickingsettings.cpp"

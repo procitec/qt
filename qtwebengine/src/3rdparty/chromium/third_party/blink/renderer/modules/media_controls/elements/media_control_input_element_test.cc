@@ -1,9 +1,10 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/modules/media_controls/elements/media_control_input_element.h"
 
+#include "base/test/metrics/histogram_tester.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/strings/grit/blink_strings.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
@@ -11,10 +12,10 @@
 #include "third_party/blink/renderer/core/html/media/html_video_element.h"
 #include "third_party/blink/renderer/core/html_names.h"
 #include "third_party/blink/renderer/core/input_type_names.h"
+#include "third_party/blink/renderer/core/style/computed_style.h"
 #include "third_party/blink/renderer/core/testing/page_test_base.h"
 #include "third_party/blink/renderer/modules/media_controls/media_controls_impl.h"
-#include "third_party/blink/renderer/platform/heap/heap.h"
-#include "third_party/blink/renderer/platform/testing/histogram_tester.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 
 namespace blink {
 
@@ -93,7 +94,7 @@ class MediaControlInputElementTest : public PageTestBase {
 };
 
 TEST_F(MediaControlInputElementTest, MaybeRecordDisplayed_IfNotWantedOrNoFit) {
-  HistogramTester histogram_tester_;
+  base::HistogramTester histogram_tester_;
 
   ControlInputElement().SetIsWanted(false);
   ControlInputElement().SetDoesFit(false);
@@ -111,7 +112,7 @@ TEST_F(MediaControlInputElementTest, MaybeRecordDisplayed_IfNotWantedOrNoFit) {
 }
 
 TEST_F(MediaControlInputElementTest, MaybeRecordDisplayed_WantedAndFit) {
-  HistogramTester histogram_tester_;
+  base::HistogramTester histogram_tester_;
 
   ControlInputElement().SetIsWanted(true);
   ControlInputElement().SetDoesFit(true);
@@ -121,7 +122,7 @@ TEST_F(MediaControlInputElementTest, MaybeRecordDisplayed_WantedAndFit) {
 }
 
 TEST_F(MediaControlInputElementTest, MaybeRecordDisplayed_TwiceDoesNotRecord) {
-  HistogramTester histogram_tester_;
+  base::HistogramTester histogram_tester_;
 
   ControlInputElement().SetIsWanted(true);
   ControlInputElement().SetDoesFit(true);
@@ -132,7 +133,7 @@ TEST_F(MediaControlInputElementTest, MaybeRecordDisplayed_TwiceDoesNotRecord) {
 }
 
 TEST_F(MediaControlInputElementTest, MaybeRecordInteracted_Basic) {
-  HistogramTester histogram_tester_;
+  base::HistogramTester histogram_tester_;
 
   // The element has to be displayed first.
   ControlInputElement().SetIsWanted(true);
@@ -147,7 +148,7 @@ TEST_F(MediaControlInputElementTest, MaybeRecordInteracted_Basic) {
 }
 
 TEST_F(MediaControlInputElementTest, MaybeRecordInteracted_TwiceDoesNotRecord) {
-  HistogramTester histogram_tester_;
+  base::HistogramTester histogram_tester_;
 
   // The element has to be displayed first.
   ControlInputElement().SetIsWanted(true);
@@ -163,7 +164,7 @@ TEST_F(MediaControlInputElementTest, MaybeRecordInteracted_TwiceDoesNotRecord) {
 }
 
 TEST_F(MediaControlInputElementTest, ClickRecordsInteraction) {
-  HistogramTester histogram_tester_;
+  base::HistogramTester histogram_tester_;
 
   // The element has to be displayed first.
   ControlInputElement().SetIsWanted(true);
@@ -171,7 +172,7 @@ TEST_F(MediaControlInputElementTest, ClickRecordsInteraction) {
   ControlInputElement().MaybeRecordDisplayed();
 
   ControlInputElement().DispatchSimulatedClick(
-      Event::CreateBubble(event_type_names::kClick), kSendNoEvents);
+      Event::CreateBubble(event_type_names::kClick));
 
   histogram_tester_.ExpectTotalCount(kControlInputElementHistogramName, 2);
   histogram_tester_.ExpectBucketCount(kControlInputElementHistogramName, 0, 1);
@@ -179,7 +180,7 @@ TEST_F(MediaControlInputElementTest, ClickRecordsInteraction) {
 }
 
 TEST_F(MediaControlInputElementTest, OverflowElement_DisplayFallback) {
-  HistogramTester histogram_tester_;
+  base::HistogramTester histogram_tester_;
 
   Persistent<HTMLElement> overflow_container =
       ControlInputElement().CreateOverflowElement(
@@ -196,7 +197,7 @@ TEST_F(MediaControlInputElementTest, OverflowElement_DisplayFallback) {
 }
 
 TEST_F(MediaControlInputElementTest, OverflowElement_DisplayRequiresWanted) {
-  HistogramTester histogram_tester_;
+  base::HistogramTester histogram_tester_;
 
   Persistent<HTMLElement> overflow_container =
       ControlInputElement().CreateOverflowElement(
@@ -218,7 +219,7 @@ TEST_F(MediaControlInputElementTest, OverflowElement_DisplayRequiresWanted) {
 }
 
 TEST_F(MediaControlInputElementTest, OverflowElement_DisplayAfterInline) {
-  HistogramTester histogram_tester_;
+  base::HistogramTester histogram_tester_;
 
   Persistent<HTMLElement> overflow_container =
       ControlInputElement().CreateOverflowElement(
@@ -238,7 +239,7 @@ TEST_F(MediaControlInputElementTest, OverflowElement_DisplayAfterInline) {
 }
 
 TEST_F(MediaControlInputElementTest, ShouldRecordDisplayStates_ReadyState) {
-  MediaElement().setAttribute(html_names::kPreloadAttr, "auto");
+  MediaElement().setAttribute(html_names::kPreloadAttr, AtomicString("auto"));
 
   SetReadyState(HTMLMediaElement::kHaveNothing);
   EXPECT_FALSE(
@@ -266,17 +267,48 @@ TEST_F(MediaControlInputElementTest, ShouldRecordDisplayStates_Preload) {
   // the result.
   SetReadyState(HTMLMediaElement::kHaveNothing);
 
-  MediaElement().setAttribute(html_names::kPreloadAttr, "none");
+  MediaElement().setAttribute(html_names::kPreloadAttr, AtomicString("none"));
   EXPECT_TRUE(
       MediaControlInputElement::ShouldRecordDisplayStates(MediaElement()));
 
-  MediaElement().setAttribute(html_names::kPreloadAttr, "preload");
+  MediaElement().setAttribute(html_names::kPreloadAttr,
+                              AtomicString("preload"));
   EXPECT_FALSE(
       MediaControlInputElement::ShouldRecordDisplayStates(MediaElement()));
 
-  MediaElement().setAttribute(html_names::kPreloadAttr, "auto");
+  MediaElement().setAttribute(html_names::kPreloadAttr, AtomicString("auto"));
   EXPECT_FALSE(
       MediaControlInputElement::ShouldRecordDisplayStates(MediaElement()));
+}
+
+TEST_F(MediaControlInputElementTest, StyleRecalcForIsWantedAndFit) {
+  GetDocument().body()->appendChild(&ControlInputElement());
+  ControlInputElement().SetIsWanted(false);
+  ControlInputElement().SetDoesFit(false);
+  UpdateAllLifecyclePhasesForTest();
+  EXPECT_FALSE(ControlInputElement().GetLayoutObject());
+
+  ControlInputElement().SetIsWanted(false);
+  ControlInputElement().SetDoesFit(false);
+  EXPECT_FALSE(ControlInputElement().NeedsStyleRecalc());
+
+  ControlInputElement().SetIsWanted(true);
+  ControlInputElement().SetDoesFit(false);
+  EXPECT_TRUE(ControlInputElement().NeedsStyleRecalc());
+  UpdateAllLifecyclePhasesForTest();
+  EXPECT_FALSE(ControlInputElement().GetLayoutObject());
+  EXPECT_FALSE(ControlInputElement().NeedsStyleRecalc());
+
+  ControlInputElement().SetIsWanted(true);
+  ControlInputElement().SetDoesFit(true);
+  EXPECT_TRUE(ControlInputElement().NeedsStyleRecalc());
+  UpdateAllLifecyclePhasesForTest();
+  EXPECT_TRUE(ControlInputElement().GetLayoutObject());
+  EXPECT_FALSE(ControlInputElement().NeedsStyleRecalc());
+
+  ControlInputElement().SetIsWanted(true);
+  ControlInputElement().SetDoesFit(true);
+  EXPECT_FALSE(ControlInputElement().NeedsStyleRecalc());
 }
 
 }  // namespace blink

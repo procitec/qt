@@ -28,10 +28,10 @@
 
 #include "third_party/blink/renderer/bindings/core/v8/script_regexp.h"
 
-#include "base/stl_util.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_script_runner.h"
 #include "third_party/blink/renderer/platform/bindings/script_forbidden_scope.h"
+#include "third_party/blink/renderer/platform/bindings/string_resource.h"
 #include "third_party/blink/renderer/platform/bindings/v8_per_isolate_data.h"
 
 namespace blink {
@@ -40,39 +40,46 @@ namespace {
 const uint32_t kBacktrackLimit = 1'000'000;
 }  // namespace
 
-ScriptRegexp::ScriptRegexp(const String& pattern,
+ScriptRegexp::ScriptRegexp(v8::Isolate* isolate,
+                           const String& pattern,
                            TextCaseSensitivity case_sensitivity,
                            MultilineMode multiline_mode,
-                           CharacterMode char_mode) {
-  v8::Isolate* isolate = v8::Isolate::GetCurrent();
-  v8::HandleScope handle_scope(isolate);
-  v8::Local<v8::Context> context =
-      V8PerIsolateData::From(isolate)->EnsureScriptRegexpContext();
-  v8::Context::Scope context_scope(context);
+                           UnicodeMode unicode_mode)
+    : script_state_(
+          V8PerIsolateData::From(isolate)->EnsureScriptRegexpScriptState()) {
+  ScriptState::Scope scope(script_state_);
   v8::TryCatch try_catch(isolate);
 
   unsigned flags = v8::RegExp::kNone;
-  if (case_sensitivity != kTextCaseSensitive)
+  if (case_sensitivity != kTextCaseSensitive) {
     flags |= v8::RegExp::kIgnoreCase;
-  if (multiline_mode == kMultilineEnabled)
+  }
+  if (multiline_mode == MultilineMode::kMultilineEnabled) {
     flags |= v8::RegExp::kMultiline;
-  if (char_mode == UTF16)
+  }
+  if (unicode_mode == UnicodeMode::kUnicode) {
     flags |= v8::RegExp::kUnicode;
+  } else if (unicode_mode == UnicodeMode::kUnicodeSets) {
+    flags |= v8::RegExp::kUnicodeSets;
+  }
 
   v8::Local<v8::RegExp> regex;
-  if (v8::RegExp::NewWithBacktrackLimit(context, V8String(isolate, pattern),
-                                        static_cast<v8::RegExp::Flags>(flags),
-                                        kBacktrackLimit)
-          .ToLocal(&regex))
-    regex_.Set(isolate, regex);
-  if (try_catch.HasCaught() && !try_catch.Message().IsEmpty())
-    exception_message_ =
-        ToCoreStringWithUndefinedOrNullCheck(try_catch.Message()->Get());
+  if (v8::RegExp::NewWithBacktrackLimit(
+          script_state_->GetContext(), V8String(isolate, pattern),
+          static_cast<v8::RegExp::Flags>(flags), kBacktrackLimit)
+          .ToLocal(&regex)) {
+    regex_.Reset(isolate, regex);
+  }
+  if (try_catch.HasCaught() && !try_catch.Message().IsEmpty()) {
+    exception_message_ = ToCoreStringWithUndefinedOrNullCheck(
+        isolate, try_catch.Message()->Get());
+  }
 }
 
-int ScriptRegexp::Match(const String& string,
+int ScriptRegexp::Match(StringView string,
                         int start_from,
-                        int* match_length) const {
+                        int* match_length,
+                        WTF::Vector<String>* group_list) const {
   if (match_length)
     *match_length = 0;
 
@@ -85,16 +92,14 @@ int ScriptRegexp::Match(const String& string,
 
   ScriptForbiddenScope::AllowUserAgentScript allow_script;
 
-  v8::Isolate* isolate = v8::Isolate::GetCurrent();
-  v8::HandleScope handle_scope(isolate);
-  v8::Local<v8::Context> context =
-      V8PerIsolateData::From(isolate)->EnsureScriptRegexpContext();
-  v8::Context::Scope context_scope(context);
+  auto* isolate = script_state_->GetIsolate();
+  ScriptState::Scope scope(script_state_);
   v8::TryCatch try_catch(isolate);
+  v8::Local<v8::Context> context = script_state_->GetContext();
 
-  v8::Local<v8::RegExp> regex = regex_.NewLocal(isolate);
+  v8::Local<v8::RegExp> regex = regex_.Get(isolate);
   v8::Local<v8::String> subject =
-      V8String(isolate, string.Substring(start_from));
+      V8String(isolate, StringView(string, start_from));
   v8::Local<v8::Value> return_value;
   if (!regex->Exec(context, subject).ToLocal(&return_value))
     return -1;
@@ -113,8 +118,9 @@ int ScriptRegexp::Match(const String& string,
   v8::Local<v8::Array> result = return_value.As<v8::Array>();
   v8::Local<v8::Value> match_offset;
   if (!result->Get(context, V8AtomicString(isolate, "index"))
-           .ToLocal(&match_offset))
+           .ToLocal(&match_offset)) {
     return -1;
+  }
   if (match_length) {
     v8::Local<v8::Value> match;
     if (!result->Get(context, 0).ToLocal(&match))
@@ -122,7 +128,27 @@ int ScriptRegexp::Match(const String& string,
     *match_length = match.As<v8::String>()->Length();
   }
 
+  if (group_list) {
+    DCHECK(group_list->empty());
+    for (uint32_t i = 1; i < result->Length(); ++i) {
+      v8::Local<v8::Value> group;
+      if (!result->Get(context, i).ToLocal(&group))
+        return -1;
+      String group_string;
+      if (group->IsString()) {
+        group_string = ToBlinkString<String>(isolate, group.As<v8::String>(),
+                                             kExternalize);
+      }
+      group_list->push_back(group_string);
+    }
+  }
+
   return match_offset.As<v8::Int32>()->Value() + start_from;
+}
+
+void ScriptRegexp::Trace(Visitor* visitor) const {
+  visitor->Trace(script_state_);
+  visitor->Trace(regex_);
 }
 
 }  // namespace blink

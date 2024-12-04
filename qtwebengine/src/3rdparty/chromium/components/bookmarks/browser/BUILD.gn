@@ -1,16 +1,9 @@
-# Copyright 2014 The Chromium Authors. All rights reserved.
+# Copyright 2014 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
 import("//build/config/ui.gni")
 import("//testing/libfuzzer/fuzzer_test.gni")
-
-# This file depends on the legacy global sources assignment filter. It should
-# be converted to check target platform before assigning source files to the
-# sources variable. Remove this import and set_sources_assignment_filter call
-# when the file has been converted. See https://crbug.com/1018739 for details.
-import("//build/config/deprecated_default_sources_assignment_filter.gni")
-set_sources_assignment_filter(deprecated_default_sources_assignment_filter)
 
 static_library("browser") {
   friend = [ "//components/bookmarks/test" ]
@@ -19,15 +12,14 @@ static_library("browser") {
     "base_bookmark_model_observer.h",
     "bookmark_client.h",
     "bookmark_codec.h",
-    "bookmark_expanded_state_tracker.h",
     "bookmark_model.h",
     "bookmark_model_observer.h",
     "bookmark_node.h",
     "bookmark_node_data.h",
     "bookmark_storage.h",
-    "bookmark_undo_delegate.h",
     "bookmark_undo_provider.h",
     "bookmark_utils.h",
+    "bookmark_uuids.h",
     "history_bookmark_model.h",
     "model_loader.h",
     "scoped_group_bookmark_actions.h",
@@ -42,15 +34,14 @@ static_library("browser") {
     "base_bookmark_model_observer.cc",
     "bookmark_client.cc",
     "bookmark_codec.cc",
-    "bookmark_expanded_state_tracker.cc",
     "bookmark_load_details.cc",
     "bookmark_load_details.h",
     "bookmark_model.cc",
     "bookmark_node.cc",
     "bookmark_node_data.cc",
-    "bookmark_node_data_ios.cc",
     "bookmark_storage.cc",
     "bookmark_utils.cc",
+    "bookmark_uuids.cc",
     "model_loader.cc",
     "scoped_group_bookmark_actions.cc",
     "titled_url_index.cc",
@@ -59,6 +50,7 @@ static_library("browser") {
     "typed_count_sorter.h",
     "url_index.cc",
     "url_index.h",
+    "uuid_index.h",
   ]
 
   public_deps = [ "//components/bookmarks/common" ]
@@ -72,6 +64,7 @@ static_library("browser") {
     "//components/prefs",
     "//components/query_parser",
     "//components/strings",
+    "//components/sync/base:features",
     "//components/url_formatter",
     "//net",
     "//third_party/icu",
@@ -101,6 +94,10 @@ static_library("browser") {
       "AppKit.framework",
       "Foundation.framework",
     ]
+  }
+
+  if (is_ios) {
+    sources += [ "bookmark_node_data_ios.cc" ]
   }
 }
 
@@ -132,24 +129,18 @@ source_set("unit_tests") {
   testonly = true
   sources = [
     "bookmark_codec_unittest.cc",
-    "bookmark_expanded_state_tracker_unittest.cc",
-    "bookmark_index_unittest.cc",
     "bookmark_model_unittest.cc",
     "bookmark_storage_unittest.cc",
     "bookmark_utils_unittest.cc",
+    "titled_url_index_unittest.cc",
     "titled_url_match_unittest.cc",
   ]
-
-  if (toolkit_views) {
-    sources += [ "bookmark_node_data_unittest.cc" ]
-  }
-
-  configs += [ "//build/config/compiler:no_size_t_to_int_warning" ]
 
   deps = [
     ":browser",
     ":unit_tests_bundle_data",
     "//base/test:test_support",
+    "//build:chromeos_buildflags",
     "//components/bookmarks/common",
     "//components/bookmarks/test",
     "//components/favicon_base",
@@ -157,12 +148,18 @@ source_set("unit_tests") {
     "//components/prefs",
     "//components/prefs:test_support",
     "//components/query_parser",
+    "//components/sync/base:features",
     "//testing/gtest",
     "//ui/base",
     "//ui/base:data_exchange",
     "//ui/base/clipboard",
     "//url",
   ]
+
+  if (toolkit_views) {
+    sources += [ "bookmark_node_data_unittest.cc" ]
+    deps += [ "//build:chromeos_buildflags" ]
+  }
 }
 
 # The fuzzer depends on code that is not built on Mac.

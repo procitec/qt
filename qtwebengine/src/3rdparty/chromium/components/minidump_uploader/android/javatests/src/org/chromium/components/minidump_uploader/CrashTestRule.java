@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,8 +10,6 @@ import org.junit.runners.model.Statement;
 
 import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
-import org.chromium.base.library_loader.LibraryLoader;
-import org.chromium.base.library_loader.LibraryProcessType;
 import org.chromium.components.minidump_uploader.util.CrashReportingPermissionManager;
 
 import java.io.File;
@@ -19,9 +17,7 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.io.PrintWriter;
 
-/**
- * TestRule for Crash upload related tests.
- */
+/** TestRule for Crash upload related tests. */
 public class CrashTestRule implements TestRule {
     private static final String TAG = "CrashTestRule";
 
@@ -49,8 +45,6 @@ public class CrashTestRule implements TestRule {
     }
 
     private void setUp() throws Exception {
-        LibraryLoader.getInstance().setLibraryProcessType(LibraryProcessType.PROCESS_BROWSER);
-        LibraryLoader.getInstance().ensureInitialized();
         if (mCacheDir == null) {
             mCacheDir = getExistingCacheDir();
         }
@@ -138,6 +132,11 @@ public class CrashTestRule implements TestRule {
         @Override
         public boolean isNetworkAvailableForCrashUploads() {
             return mIsNetworkAvailable;
+        }
+
+        @Override
+        public boolean isUsageAndCrashReportingPermittedByPolicy() {
+            return true;
         }
 
         @Override

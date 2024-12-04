@@ -33,7 +33,7 @@
 #include "third_party/blink/renderer/core/editing/forward.h"
 #include "third_party/blink/renderer/core/editing/serializers/create_markup_options.h"
 #include "third_party/blink/renderer/core/editing/serializers/html_interchange.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_set.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
 
 namespace blink {
@@ -62,11 +62,13 @@ DocumentFragment* CreateFragmentFromMarkupWithContext(Document&,
                                                       unsigned fragment_end,
                                                       const String& base_url,
                                                       ParserContentPolicy);
-DocumentFragment* CreateFragmentForInnerOuterHTML(const String&,
-                                                  Element*,
-                                                  ParserContentPolicy,
-                                                  const char* method,
-                                                  ExceptionState&);
+DocumentFragment* CreateFragmentForInnerOuterHTML(
+    const String&,
+    Element*,
+    ParserContentPolicy,
+    Element::IncludeShadowRoots include_shadow_roots,
+    Element::ForceHtml force_html,
+    ExceptionState&);
 DocumentFragment* CreateFragmentForTransformToFragment(
     const String&,
     const String& source_mime_type,
@@ -102,12 +104,31 @@ CreateMarkup(const PositionInFlatTree& start,
              const PositionInFlatTree& end,
              const CreateMarkupOptions& options = CreateMarkupOptions());
 
+// Creates a sanitized fragment from the given markup. While the sanitization is
+// done in an isolated document, the final fragment is created in the given
+// document, and should be eventually inserted into the document. Returns null
+// if sanitization fails.
 CORE_EXPORT DocumentFragment* CreateSanitizedFragmentFromMarkupWithContext(
     Document&,
     const String& raw_markup,
     unsigned fragment_start,
     unsigned fragment_end,
     const String& base_url);
+
+// Creates a sanitized fragment using the first few parameters, and then
+// re-serializes it with the last few parameters as the return value. The whole
+// process is done in an isolated document. Returns the null string if
+// sanitization fails, and otherwise returns the sanitized markup.
+CORE_EXPORT String
+CreateSanitizedMarkupWithContext(Document&,
+                                 const String& raw_markup,
+                                 unsigned fragment_start,
+                                 unsigned fragment_end,
+                                 const String& base_url,
+                                 ChildrenOnly = kIncludeNode,
+                                 AbsoluteURLs = kDoNotResolveURLs,
+                                 IncludeShadowRoots = kNoShadowRoots,
+                                 ClosedRootsSet = ClosedRootsSet());
 
 void MergeWithNextTextNode(Text*, ExceptionState&);
 

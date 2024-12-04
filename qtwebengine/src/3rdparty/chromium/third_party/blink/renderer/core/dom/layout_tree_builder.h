@@ -30,10 +30,12 @@
 
 #include "base/memory/scoped_refptr.h"
 #include "third_party/blink/renderer/core/dom/document.h"
+#include "third_party/blink/renderer/core/dom/flat_tree_traversal.h"
 #include "third_party/blink/renderer/core/dom/node.h"
 #include "third_party/blink/renderer/core/dom/text.h"
 #include "third_party/blink/renderer/core/layout/layout_inline.h"
 #include "third_party/blink/renderer/core/layout/layout_object.h"
+#include "third_party/blink/renderer/core/layout/layout_text.h"
 
 namespace blink {
 
@@ -80,32 +82,41 @@ class LayoutTreeBuilder {
     // next layout object. Otherwise we would need to add code to various
     // AddChild() implementations to walk up the tree to find the correct
     // layout tree parent/siblings.
-    if (next && next->IsText() && next->Parent()->IsAnonymous() &&
-        next->Parent()->IsInline()) {
-      return next->Parent();
+    if (!next || !next->IsText())
+      return next;
+    auto* const parent = next->Parent();
+    if (!IsAnonymousInline(parent))
+      return next;
+    if (!LIKELY(parent->IsLayoutTextCombine())) {
+      return parent;
     }
-    return next;
+    auto* const text_combine_parent = parent->Parent();
+    if (IsAnonymousInline(text_combine_parent))
+      return text_combine_parent;
+    return parent;
+  }
+
+  static bool IsAnonymousInline(const LayoutObject* layout_object) {
+    return layout_object && layout_object->IsAnonymous() &&
+           layout_object->IsInline();
   }
 
   NodeType* node_;
   Node::AttachContext& context_;
-  scoped_refptr<const ComputedStyle> style_;
+  const ComputedStyle* style_;
 };
 
 class LayoutTreeBuilderForElement : public LayoutTreeBuilder<Element> {
  public:
   LayoutTreeBuilderForElement(Element&,
                               Node::AttachContext&,
-                              const ComputedStyle*,
-                              LegacyLayout legacy);
+                              const ComputedStyle*);
 
   void CreateLayoutObject();
 
  private:
   LayoutObject* ParentLayoutObject() const;
   LayoutObject* NextLayoutObject() const;
-
-  LegacyLayout legacy_;
 };
 
 class LayoutTreeBuilderForText : public LayoutTreeBuilder<Text> {
@@ -118,9 +129,12 @@ class LayoutTreeBuilderForText : public LayoutTreeBuilder<Text> {
   void CreateLayoutObject();
 
  private:
-  LayoutObject* CreateInlineWrapperForDisplayContentsIfNeeded();
+  const ComputedStyle* CreateInlineWrapperStyleForDisplayContentsIfNeeded()
+      const;
+  LayoutObject* CreateInlineWrapperForDisplayContentsIfNeeded(
+      const ComputedStyle* wrapper_style) const;
 };
 
 }  // namespace blink
 
-#endif
+#endif  // THIRD_PARTY_BLINK_RENDERER_CORE_DOM_LAYOUT_TREE_BUILDER_H_

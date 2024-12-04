@@ -1,16 +1,20 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "services/device/geolocation/win/location_provider_winrt.h"
 
+#include <memory>
+#include <utility>
+
 #include "base/run_loop.h"
 #include "base/test/task_environment.h"
-#include "base/win/core_winrt_util.h"
+#include "base/win/scoped_winrt_initializer.h"
 #include "services/device/geolocation/win/fake_geocoordinate_winrt.h"
 #include "services/device/geolocation/win/fake_geolocator_winrt.h"
 #include "services/device/public/cpp/geolocation/geoposition.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace device {
 namespace {
@@ -19,29 +23,26 @@ using ABI::Windows::Devices::Geolocation::PositionStatus;
 
 class MockLocationObserver {
  public:
-  MockLocationObserver(base::OnceClosure update_called)
+  explicit MockLocationObserver(base::OnceClosure update_called)
       : update_called_(std::move(update_called)) {}
   ~MockLocationObserver() = default;
 
-  void InvalidateLastPosition() {
-    last_position_.error_code = mojom::Geoposition::ErrorCode::NONE;
-    EXPECT_FALSE(ValidateGeoposition(last_position_));
-  }
+  void InvalidateLastPosition() { last_result_.reset(); }
 
   void OnLocationUpdate(const LocationProvider* provider,
-                        const mojom::Geoposition& position) {
-    last_position_ = position;
+                        mojom::GeopositionResultPtr result) {
+    last_result_ = std::move(result);
     on_location_update_called_ = true;
     std::move(update_called_).Run();
   }
 
-  mojom::Geoposition last_position() { return last_position_; }
+  const mojom::GeopositionResult* GetLastResult() { return last_result_.get(); }
 
   bool on_location_update_called() { return on_location_update_called_; }
 
  private:
   base::OnceClosure update_called_;
-  mojom::Geoposition last_position_;
+  mojom::GeopositionResultPtr last_result_;
   bool on_location_update_called_ = false;
 };
 
@@ -59,11 +60,11 @@ class TestingLocationProviderWinrt : public LocationProviderWinrt {
 
   bool IsHighAccuracyEnabled() { return enable_high_accuracy_; }
 
-  base::Optional<EventRegistrationToken> GetStatusChangedToken() {
+  absl::optional<EventRegistrationToken> GetStatusChangedToken() {
     return status_changed_token_;
   }
 
-  base::Optional<EventRegistrationToken> GetPositionChangedToken() {
+  absl::optional<EventRegistrationToken> GetPositionChangedToken() {
     return position_changed_token_;
   }
 
@@ -80,17 +81,17 @@ class TestingLocationProviderWinrt : public LocationProviderWinrt {
 };
 
 class LocationProviderWinrtTest : public testing::Test {
- public:
-  static void SetUpTestSuite() {
-    base::win::RoInitialize(RO_INIT_TYPE::RO_INIT_MULTITHREADED);
-  }
-
  protected:
   LocationProviderWinrtTest()
       : observer_(
             std::make_unique<MockLocationObserver>(run_loop_.QuitClosure())),
         callback_(base::BindRepeating(&MockLocationObserver::OnLocationUpdate,
                                       base::Unretained(observer_.get()))) {}
+
+  void SetUp() override {
+    winrt_initializer_.emplace();
+    ASSERT_TRUE(winrt_initializer_->Succeeded());
+  }
 
   void InitializeProvider(
       PositionStatus position_status = PositionStatus::PositionStatus_Ready) {
@@ -110,8 +111,15 @@ class LocationProviderWinrtTest : public testing::Test {
     provider_->SetUpdateCallback(callback_);
   }
 
+  mojom::GeolocationDiagnostics::ProviderState GetProviderState() {
+    mojom::GeolocationDiagnostics diagnostics;
+    provider_->FillDiagnostics(diagnostics);
+    return diagnostics.provider_state;
+  }
+
   base::test::TaskEnvironment task_environment_;
   base::RunLoop run_loop_;
+  absl::optional<base::win::ScopedWinrtInitializer> winrt_initializer_;
   const std::unique_ptr<MockLocationObserver> observer_;
   const LocationProvider::LocationProviderUpdateCallback callback_;
   std::unique_ptr<TestingLocationProviderWinrt> provider_;
@@ -120,6 +128,8 @@ class LocationProviderWinrtTest : public testing::Test {
 TEST_F(LocationProviderWinrtTest, CreateDestroy) {
   InitializeProvider();
   EXPECT_TRUE(provider_);
+  EXPECT_EQ(GetProviderState(),
+            mojom::GeolocationDiagnostics::ProviderState::kStopped);
   provider_.reset();
 }
 
@@ -151,15 +161,19 @@ TEST_F(LocationProviderWinrtTest, HasPermissions) {
   provider_->StartProvider(/*enable_high_accuracy=*/false);
 
   EXPECT_FALSE(observer_->on_location_update_called());
-  EXPECT_FALSE(ValidateGeoposition(observer_->last_position()));
+  EXPECT_FALSE(observer_->GetLastResult());
 
+  EXPECT_EQ(GetProviderState(),
+            mojom::GeolocationDiagnostics::ProviderState::kLowAccuracy);
   EXPECT_TRUE(provider_->GetStatusChangedToken().has_value());
   EXPECT_TRUE(provider_->GetPositionChangedToken().has_value());
 
   run_loop_.Run();
 
   EXPECT_TRUE(observer_->on_location_update_called());
-  auto position = observer_->last_position();
+  auto* last_result = observer_->GetLastResult();
+  ASSERT_TRUE(last_result && last_result->is_position());
+  auto& position = *last_result->get_position();
   EXPECT_TRUE(ValidateGeoposition(position));
   EXPECT_EQ(position.latitude, test_data.latitude);
   EXPECT_EQ(position.longitude, test_data.longitude);
@@ -187,15 +201,19 @@ TEST_F(LocationProviderWinrtTest, HasPermissionsAllValues) {
   provider_->StartProvider(/*enable_high_accuracy=*/false);
 
   EXPECT_FALSE(observer_->on_location_update_called());
-  EXPECT_FALSE(ValidateGeoposition(observer_->last_position()));
+  EXPECT_FALSE(observer_->GetLastResult());
 
+  EXPECT_EQ(GetProviderState(),
+            mojom::GeolocationDiagnostics::ProviderState::kLowAccuracy);
   EXPECT_TRUE(provider_->GetStatusChangedToken().has_value());
   EXPECT_TRUE(provider_->GetPositionChangedToken().has_value());
 
   run_loop_.Run();
 
   EXPECT_TRUE(observer_->on_location_update_called());
-  auto position = observer_->last_position();
+  auto* last_result = observer_->GetLastResult();
+  ASSERT_TRUE(last_result && last_result->is_position());
+  auto& position = *last_result->get_position();
   EXPECT_TRUE(ValidateGeoposition(position));
   EXPECT_EQ(position.latitude, test_data.latitude);
   EXPECT_EQ(position.longitude, test_data.longitude);
@@ -212,10 +230,14 @@ TEST_F(LocationProviderWinrtTest, StartStopProviderRunTasks) {
   InitializeProvider();
   provider_->OnPermissionGranted();
   provider_->StartProvider(/*enable_high_accuracy=*/false);
+  EXPECT_EQ(GetProviderState(),
+            mojom::GeolocationDiagnostics::ProviderState::kLowAccuracy);
   provider_->StopProvider();
+  EXPECT_EQ(GetProviderState(),
+            mojom::GeolocationDiagnostics::ProviderState::kStopped);
 
   EXPECT_FALSE(observer_->on_location_update_called());
-  EXPECT_FALSE(ValidateGeoposition(observer_->last_position()));
+  EXPECT_FALSE(observer_->GetLastResult());
 
   run_loop_.RunUntilIdle();
 
@@ -230,8 +252,11 @@ TEST_F(LocationProviderWinrtTest, NoPermissions) {
   InitializeProvider();
   provider_->StartProvider(/*enable_high_accuracy=*/false);
 
+  EXPECT_EQ(
+      GetProviderState(),
+      mojom::GeolocationDiagnostics::ProviderState::kBlockedBySystemPermission);
   EXPECT_FALSE(observer_->on_location_update_called());
-  EXPECT_FALSE(ValidateGeoposition(observer_->last_position()));
+  EXPECT_FALSE(observer_->GetLastResult());
 
   run_loop_.RunUntilIdle();
 
@@ -247,8 +272,10 @@ TEST_F(LocationProviderWinrtTest, PositionStatusDisabledOsPermissions) {
   provider_->OnPermissionGranted();
   provider_->StartProvider(/*enable_high_accuracy=*/false);
 
+  EXPECT_EQ(GetProviderState(),
+            mojom::GeolocationDiagnostics::ProviderState::kLowAccuracy);
   EXPECT_FALSE(observer_->on_location_update_called());
-  EXPECT_FALSE(ValidateGeoposition(observer_->last_position()));
+  EXPECT_FALSE(observer_->GetLastResult());
 
   EXPECT_TRUE(provider_->GetStatusChangedToken().has_value());
   EXPECT_TRUE(provider_->GetPositionChangedToken().has_value());
@@ -256,9 +283,9 @@ TEST_F(LocationProviderWinrtTest, PositionStatusDisabledOsPermissions) {
   run_loop_.Run();
 
   EXPECT_TRUE(observer_->on_location_update_called());
-  auto position = observer_->last_position();
-  EXPECT_FALSE(ValidateGeoposition(position));
-  EXPECT_EQ(position.error_code,
-            mojom::Geoposition::ErrorCode::PERMISSION_DENIED);
+  auto* last_result = observer_->GetLastResult();
+  ASSERT_TRUE(last_result && last_result->is_error());
+  EXPECT_EQ(last_result->get_error()->error_code,
+            mojom::GeopositionErrorCode::kPermissionDenied);
 }
 }  // namespace device

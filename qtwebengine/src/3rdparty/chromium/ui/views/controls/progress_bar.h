@@ -1,4 +1,4 @@
-// Copyright (c) 2011 The Chromium Authors. All rights reserved.
+// Copyright 2011 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,10 +7,10 @@
 
 #include <memory>
 
-#include "base/compiler_specific.h"
-#include "base/macros.h"
-#include "base/optional.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "ui/color/color_id.h"
 #include "ui/gfx/animation/animation_delegate.h"
+#include "ui/gfx/geometry/rounded_corners_f.h"
 #include "ui/views/view.h"
 
 namespace gfx {
@@ -21,13 +21,14 @@ namespace views {
 
 // Progress bar is a control that indicates progress visually.
 class VIEWS_EXPORT ProgressBar : public View, public gfx::AnimationDelegate {
- public:
-  METADATA_HEADER(ProgressBar);
+  METADATA_HEADER(ProgressBar, View)
 
-  // The preferred height parameter makes it easier to use a ProgressBar with
-  // layout managers that size to preferred size.
-  explicit ProgressBar(int preferred_height = 5,
-                       bool allow_round_corner = true);
+ public:
+  ProgressBar();
+
+  ProgressBar(const ProgressBar&) = delete;
+  ProgressBar& operator=(const ProgressBar&) = delete;
+
   ~ProgressBar() override;
 
   // View:
@@ -42,13 +43,33 @@ class VIEWS_EXPORT ProgressBar : public View, public gfx::AnimationDelegate {
   // be displayed with an infinite loading animation.
   void SetValue(double value);
 
+  // Sets whether the progress bar is paused.
+  void SetPaused(bool is_paused);
+
   // The color of the progress portion.
   SkColor GetForegroundColor() const;
   void SetForegroundColor(SkColor color);
+  absl::optional<ui::ColorId> GetForegroundColorId() const;
+  void SetForegroundColorId(absl::optional<ui::ColorId> color_id);
 
   // The color of the portion that displays potential progress.
   SkColor GetBackgroundColor() const;
   void SetBackgroundColor(SkColor color);
+  absl::optional<ui::ColorId> GetBackgroundColorId() const;
+  void SetBackgroundColorId(absl::optional<ui::ColorId> color_id);
+
+  int GetPreferredHeight() const;
+  void SetPreferredHeight(const int preferred_height);
+
+  // Calculates the rounded corners of the view based on
+  // `preferred_corner_radii_`. If `preferred_corner_radii_` was not provided,
+  // empty corners will be returned . If any corner radius in
+  // `preferred_corner_radii_` is greater than the height of the bar, its value
+  // will be capped to the height of the bar.
+  gfx::RoundedCornersF GetPreferredCornerRadii() const;
+
+  void SetPreferredCornerRadii(
+      const absl::optional<gfx::RoundedCornersF> preferred_corner_radii);
 
  protected:
   int preferred_height() const { return preferred_height_; }
@@ -59,6 +80,7 @@ class VIEWS_EXPORT ProgressBar : public View, public gfx::AnimationDelegate {
   void AnimationEnded(const gfx::Animation* animation) override;
 
   bool IsIndeterminate();
+  bool GetPaused() const { return is_paused_; }
   void OnPaintIndeterminate(gfx::Canvas* canvas);
 
   // Fire an accessibility event if visible and the progress has changed.
@@ -67,19 +89,27 @@ class VIEWS_EXPORT ProgressBar : public View, public gfx::AnimationDelegate {
   // Current progress to display, should be in the range 0.0 to 1.0.
   double current_value_ = 0.0;
 
-  // In DP, the preferred height of this progress bar.
-  const int preferred_height_;
+  // Is the progress bar paused.
+  bool is_paused_ = false;
 
-  const bool allow_round_corner_;
+  // In DP, the preferred height of this progress bar. This makes it easier to
+  // use a ProgressBar with layout managers that size to preferred size.
+  int preferred_height_ = 5;
 
-  base::Optional<SkColor> foreground_color_;
-  base::Optional<SkColor> background_color_;
+  // The radii to round the progress bar corners with. A value of
+  // `absl::nullopt` will produce a bar with no rounded corners, otherwise a
+  // default value of 3 on all corners will be used.
+  absl::optional<gfx::RoundedCornersF> preferred_corner_radii_ =
+      gfx::RoundedCornersF(3);
+
+  absl::optional<SkColor> foreground_color_;
+  absl::optional<ui::ColorId> foreground_color_id_;
+  absl::optional<SkColor> background_color_;
+  absl::optional<ui::ColorId> background_color_id_;
 
   std::unique_ptr<gfx::LinearAnimation> indeterminate_bar_animation_;
 
   int last_announced_percentage_ = -1;
-
-  DISALLOW_COPY_AND_ASSIGN(ProgressBar);
 };
 
 }  // namespace views

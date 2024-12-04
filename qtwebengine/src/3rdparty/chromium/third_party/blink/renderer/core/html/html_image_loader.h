@@ -34,14 +34,12 @@ class CORE_EXPORT HTMLImageLoader final : public ImageLoader {
   ~HTMLImageLoader() override;
 
   void DispatchLoadEvent() override;
+  void NoImageResourceToLoad() override;
 
   void ImageNotifyFinished(ImageResourceContent*) override;
   String DebugName() const override { return "HTMLImageLoader"; }
-
- private:
-  void NoImageResourceToLoad() override;
 };
 
 }  // namespace blink
 
-#endif
+#endif  // THIRD_PARTY_BLINK_RENDERER_CORE_HTML_HTML_IMAGE_LOADER_H_

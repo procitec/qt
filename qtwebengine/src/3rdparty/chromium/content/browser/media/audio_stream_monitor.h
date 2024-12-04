@@ -1,27 +1,20 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef CONTENT_BROWSER_MEDIA_AUDIO_STREAM_MONITOR_H_
 #define CONTENT_BROWSER_MEDIA_AUDIO_STREAM_MONITOR_H_
 
-#include <map>
-#include <utility>
-
-#include "base/callback_forward.h"
 #include "base/containers/flat_map.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
+#include "base/memory/raw_ptr_exclusion.h"
 #include "base/threading/thread_checker.h"
-#include "base/time/default_tick_clock.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "build/build_config.h"
 #include "content/common/content_export.h"
+#include "content/public/browser/global_routing_id.h"
 #include "content/public/browser/web_contents_observer.h"
-
-namespace base {
-class TickClock;
-}
 
 namespace content {
 
@@ -42,6 +35,10 @@ class WebContents;
 class CONTENT_EXPORT AudioStreamMonitor : public WebContentsObserver {
  public:
   explicit AudioStreamMonitor(WebContents* contents);
+
+  AudioStreamMonitor(const AudioStreamMonitor&) = delete;
+  AudioStreamMonitor& operator=(const AudioStreamMonitor&) = delete;
+
   ~AudioStreamMonitor() override;
 
   // Returns true if audio has recently been audible from the tab.  This is
@@ -61,23 +58,23 @@ class CONTENT_EXPORT AudioStreamMonitor : public WebContentsObserver {
 
   // Starts or stops monitoring respectively for the stream owned by the
   // specified renderer.  Safe to call from any thread.
-  static void StartMonitoringStream(int render_process_id,
-                                    int render_frame_id,
-                                    int stream_id);
-  static void StopMonitoringStream(int render_process_id,
-                                   int render_frame_id,
+  static void StartMonitoringStream(
+      GlobalRenderFrameHostId render_frame_host_id,
+      int stream_id);
+  static void StopMonitoringStream(GlobalRenderFrameHostId render_frame_host_id,
                                    int stream_id);
   // Updates the audible state for the given stream. Safe to call from any
   // thread.
-  static void UpdateStreamAudibleState(int render_process_id,
-                                       int render_frame_id,
-                                       int stream_id,
-                                       bool is_audible);
+  static void UpdateStreamAudibleState(
+      GlobalRenderFrameHostId render_frame_host_id,
+      int stream_id,
+      bool is_audible);
 
   // WebContentsObserver implementation
   void RenderFrameDeleted(RenderFrameHost* render_frame_host) override;
   // Overloaded to avoid conflict with RenderProcessGone(int).
-  void RenderProcessGone(base::TerminationStatus status) override {}
+  void PrimaryMainFrameRenderProcessGone(
+      base::TerminationStatus status) override {}
 
   void set_was_recently_audible_for_testing(bool value) {
     indicator_is_on_ = value;
@@ -85,8 +82,26 @@ class CONTENT_EXPORT AudioStreamMonitor : public WebContentsObserver {
 
   void set_is_currently_audible_for_testing(bool value) { is_audible_ = value; }
 
+  // Class to help automatically remove audible client.
+  class CONTENT_EXPORT AudibleClientRegistration {
+   public:
+    AudibleClientRegistration(GlobalRenderFrameHostId render_frame_host_id,
+                              AudioStreamMonitor* audio_stream_monitor);
+    ~AudibleClientRegistration();
+
+   private:
+    GlobalRenderFrameHostId render_frame_host_id_;
+    raw_ptr<AudioStreamMonitor> audio_stream_monitor_;
+  };
+
+  // Registers an audible client, which will be unregistered when the returned
+  // AudibleClientRegistration is released.
+  std::unique_ptr<AudibleClientRegistration> RegisterAudibleClient(
+      GlobalRenderFrameHostId render_frame_host_id);
+
  private:
   friend class AudioStreamMonitorTest;
+  friend class AudibleClientRegistration;
 
   enum {
     // Minimum amount of time to hold a tab indicator on after it becomes
@@ -95,8 +110,7 @@ class CONTENT_EXPORT AudioStreamMonitor : public WebContentsObserver {
   };
 
   struct CONTENT_EXPORT StreamID {
-    int render_process_id;
-    int render_frame_id;
+    GlobalRenderFrameHostId render_frame_host_id;
     int stream_id;
     bool operator<(const StreamID& other) const;
     bool operator==(const StreamID& other) const;
@@ -117,15 +131,13 @@ class CONTENT_EXPORT AudioStreamMonitor : public WebContentsObserver {
   void MaybeToggle();
   void UpdateStreams();
 
-  // void OnStreamRemoved();
+  // Adds/Removes Audible clients.
+  void AddAudibleClient(GlobalRenderFrameHostId render_frame_host_id);
+  void RemoveAudibleClient(GlobalRenderFrameHostId render_frame_host_id);
 
-  // The WebContents instance to receive indicator toggle notifications.  This
+  // The WebContents instance to receive indicator toggle notifications. This
   // pointer should be valid for the lifetime of AudioStreamMonitor.
-  WebContents* const web_contents_;
-
-  // Note: |clock_| is always a DefaultTickClock, except during unit
-  // testing.
-  const base::TickClock* const clock_;
+  const raw_ptr<WebContents> web_contents_;
 
   // Confirms single-threaded access in debug builds.
   base::ThreadChecker thread_checker_;
@@ -134,21 +146,25 @@ class CONTENT_EXPORT AudioStreamMonitor : public WebContentsObserver {
   // streams will have an entry in this map.
   base::flat_map<StreamID, bool> streams_;
 
+  // Map of non-stream audible clients, e.g. players not using AudioServices.
+  // size_t is the number of audible clients associated with the
+  // GlobalRenderFrameHostId. If size_t count reaches 0 there are no
+  // remaining audible clients for the associated host id.
+  base::flat_map<GlobalRenderFrameHostId, size_t> audible_clients_;
+
   // Records the last time at which all streams became silent.
   base::TimeTicks last_became_silent_time_;
 
   // Set to true if the last call to MaybeToggle() determined the indicator
   // should be turned on.
-  bool indicator_is_on_;
+  bool indicator_is_on_ = false;
 
   // Whether the WebContents is currently audible.
-  bool is_audible_;
+  bool is_audible_ = false;
 
   // Started only when an indicator is toggled on, to turn it off again in the
   // future.
   base::OneShotTimer off_timer_;
-
-  DISALLOW_COPY_AND_ASSIGN(AudioStreamMonitor);
 };
 
 }  // namespace content

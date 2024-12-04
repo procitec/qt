@@ -1,6 +1,8 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+
+#include "base/memory/madv_free_discardable_memory_posix.h"
 
 #include <errno.h>
 #include <inttypes.h>
@@ -12,14 +14,19 @@
 
 #include "base/atomicops.h"
 #include "base/bits.h"
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/logging.h"
 #include "base/memory/madv_free_discardable_memory_allocator_posix.h"
-#include "base/memory/madv_free_discardable_memory_posix.h"
-#include "base/process/process_metrics.h"
+#include "base/memory/page_size.h"
+#include "base/notreached.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/tracing_buildflags.h"
+#include "build/build_config.h"
+
+#if BUILDFLAG(IS_ANDROID)
+#include <sys/prctl.h>
+#endif
 
 #if BUILDFLAG(ENABLE_BASE_TRACING)
 #include "base/trace_event/memory_allocator_dump.h"  // no-presubmit-check
@@ -35,9 +42,16 @@ namespace {
 constexpr intptr_t kPageMagicCookie = 1;
 
 void* AllocatePages(size_t size_in_pages) {
-  void* data = mmap(nullptr, size_in_pages * base::GetPageSize(),
-                    PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+  const size_t length = size_in_pages * base::GetPageSize();
+  void* data = mmap(nullptr, length, PROT_READ | PROT_WRITE,
+                    MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
   PCHECK(data != MAP_FAILED);
+
+#if BUILDFLAG(IS_ANDROID)
+  prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, data, length,
+        "madv-free-discardable");
+#endif
+
   return data;
 }
 
@@ -48,7 +62,7 @@ base::MadvFreeSupport ProbePlatformMadvFreeSupport() {
   // the MADV_FREE define will not exist and the probe will default to
   // unsupported, regardless of whether the target system actually supports
   // MADV_FREE.
-#if !defined(OS_APPLE) && defined(MADV_FREE)
+#if !BUILDFLAG(IS_APPLE) && defined(MADV_FREE)
   uint8_t* dummy_page = static_cast<uint8_t*>(AllocatePages(1));
   dummy_page[0] = 1;
 
@@ -165,9 +179,7 @@ bool MadvFreeDiscardableMemoryPosix::LockPage(size_t page_index) {
   // the same byte-level representation.
   static_assert(sizeof(intptr_t) == sizeof(std::atomic<intptr_t>),
                 "Incompatible layout of std::atomic.");
-#ifndef TOOLKIT_QT
   DCHECK(std::atomic<intptr_t>{}.is_lock_free());
-#endif
   std::atomic<intptr_t>* page_as_atomic =
       reinterpret_cast<std::atomic<intptr_t>*>(
           static_cast<uint8_t*>(data_) + page_index * base::GetPageSize());
@@ -189,9 +201,7 @@ bool MadvFreeDiscardableMemoryPosix::LockPage(size_t page_index) {
 }
 
 void MadvFreeDiscardableMemoryPosix::UnlockPage(size_t page_index) {
-#ifndef TOOLKIT_QT
   DCHECK(std::atomic<intptr_t>{}.is_lock_free());
-#endif
 
   std::atomic<intptr_t>* page_as_atomic =
       reinterpret_cast<std::atomic<intptr_t>*>(
@@ -296,7 +306,7 @@ void MadvFreeDiscardableMemoryPosix::SetKeepMemoryForTesting(bool keep_memory) {
 
 bool MadvFreeDiscardableMemoryPosix::IsResident() const {
   DFAKE_SCOPED_RECURSIVE_LOCK(thread_collision_warner_);
-#if defined(OS_APPLE)
+#if BUILDFLAG(IS_APPLE)
   std::vector<char> vec(allocated_pages_);
 #else
   std::vector<unsigned char> vec(allocated_pages_);

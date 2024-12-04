@@ -1,29 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2017 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the documentation of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:FDL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Free Documentation License Usage
-** Alternatively, this file may be used under the terms of the GNU Free
-** Documentation License version 1.3 as published by the Free Software
-** Foundation and appearing in the file included in the packaging of
-** this file. Please review the following information to ensure
-** the GNU Free Documentation License version 1.3 requirements
-** will be met: https://www.gnu.org/licenses/fdl-1.3.html.
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2017 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GFDL-1.3-no-invariants-only
 /*!
 \page qtqml-typesystem-topic.html
 \title The QML Type System
@@ -46,15 +22,44 @@ Wherever the type definitions come from, the engine will enforce type-safety
 for properties and instances of those types.
 
 
-\section1 Basic Types
+\section1 QML Value Types
 
 The QML language has built-in support for various primitive types including
 integers, double-precision floating point numbers, strings, and boolean values.
 Objects may have properties of these types, and values of these types may be
 passed as arguments to methods of objects.
 
-See the \l{qtqml-typesystem-basictypes.html}{QML Basic Types} documentation for
-more information about basic types.
+See the \l{qtqml-typesystem-valuetypes.html}{QML Value Types} documentation for
+more information about value types.
+
+\section1 QML Object Types
+
+A QML object type is a type from which a QML object can be instantiated. QML
+object types are derived from \l QtObject, and are provided by QML modules.
+Applications can import these modules to use the object types they provide.
+The \c QtQuick module provides the most common object types needed to create
+user interfaces in QML.
+
+Finally, every QML document implicitly defines a QML object type, which can be
+re-used in other QML documents.  See the documentation about
+\l{qtqml-typesystem-objecttypes.html}{object types in the QML type system} for
+in-depth information about object types.
+
+\section1 QML Sequence Types
+
+Sequence types can be used to store sequences of values or objects.
+
+See the documentation about
+\l{qtqml-typesystem-sequencetypes.html}{sequence types in the QML type system}
+for in-depth information about sequence types.
+
+\section1 QML Namespaces
+
+QML Namespaces can be used to expose enumerations from C++ namespaces.
+
+See the documentation about
+\l{qtqml-typesystem-namespaces.html}{namespaces in the QML type system}
+for in-depth information about namespaces.
 
 \section1 JavaScript Types
 
@@ -64,7 +69,7 @@ JavaScript type can be created and stored using the generic \l var type.
 For example, the standard \c Date and \c Array types are available, as below:
 
 \qml
-import QtQuick 2.0
+import QtQuick
 
 Item {
     property var theArray: []
@@ -81,18 +86,5 @@ Item {
 
 See \l {qtqml-javascript-expressions.html}{JavaScript Expressions in QML Documents} for more details.
 
-
-\section1 QML Object Types
-
-A QML object type is a type from which a QML object can be instantiated. QML
-object types are derived from \l QtObject, and are provided by QML modules.
-Applications can import these modules to use the object types they provide.
-The \c QtQuick module provides the most common object types needed to create
-user interfaces in QML.
-
-Finally, every QML document implicitly defines a QML object type, which can be
-re-used in other QML documents.  See the documentation about
-\l{qtqml-typesystem-objecttypes.html}{object types in the QML type system} for
-in-depth information about object types.
 
 */

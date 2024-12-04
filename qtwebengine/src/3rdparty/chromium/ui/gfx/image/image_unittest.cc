@@ -1,46 +1,69 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include <stddef.h>
 
 #include <utility>
+#include <vector>
 
 #include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkPaint.h"
+#include "ui/base/resource/resource_scale_factor.h"
+#include "ui/gfx/geometry/size.h"
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/image/image_png_rep.h"
 #include "ui/gfx/image/image_skia.h"
+#include "ui/gfx/image/image_skia_rep.h"
 #include "ui/gfx/image/image_unittest_util.h"
 
-#if defined(OS_IOS)
-#include "base/mac/foundation_util.h"
+#if BUILDFLAG(IS_IOS)
+#include "base/apple/foundation_util.h"
 #include "skia/ext/skia_utils_ios.h"
-#elif defined(OS_APPLE)
-#include "base/mac/foundation_util.h"
+#elif BUILDFLAG(IS_MAC)
+#include <CoreGraphics/CoreGraphics.h>
+
+#include "base/apple/foundation_util.h"
+#include "base/apple/scoped_cftyperef.h"
+#include "base/mac/mac_util.h"
 #include "skia/ext/skia_utils_mac.h"
 #endif
 
 namespace {
 
-#if defined(OS_APPLE)
+#if BUILDFLAG(IS_APPLE)
 const bool kUsesSkiaNatively = false;
 #else
 const bool kUsesSkiaNatively = true;
 #endif
 
+#if BUILDFLAG(IS_MAC)
+bool IsSystemColorSpaceSRGB() {
+  base::apple::ScopedCFTypeRef<CGColorSpaceRef> color_space(
+      CGDisplayCopyColorSpace(CGMainDisplayID()));
+  base::apple::ScopedCFTypeRef<CFStringRef> name(
+      CGColorSpaceCopyName(color_space.get()));
+  return name &&
+         CFStringCompare(name.get(), kCGColorSpaceSRGB, 0) == kCFCompareEqualTo;
+}
+#endif  // BUILDFLAG(IS_MAC)
+
 class ImageTest : public testing::Test {
  public:
-  ImageTest() {
-    std::vector<float> scales;
-    scales.push_back(1.0f);
-#if !defined(OS_IOS)
-    scales.push_back(2.0f);
+  ImageTest() = default;
+  ImageTest(const ImageTest&) = delete;
+  ImageTest& operator=(const ImageTest&) = delete;
+  ~ImageTest() override = default;
+
+ private:
+  ui::test::ScopedSetSupportedResourceScaleFactors
+      scoped_set_supported_scale_factors_{{ui::k100Percent,
+#if !BUILDFLAG(IS_IOS)
+                                           ui::k200Percent
 #endif
-    gfx::ImageSkia::SetSupportedScales(scales);
-  }
+      }};
 };
 
 namespace gt = gfx::test;
@@ -56,7 +79,7 @@ TEST_F(ImageTest, EmptyImage) {
 
 // Test constructing a gfx::Image from an empty PlatformImage.
 TEST_F(ImageTest, EmptyImageFromEmptyPlatformImage) {
-#if defined(OS_APPLE)
+#if BUILDFLAG(IS_APPLE)
   gfx::Image image1(nullptr);
   EXPECT_TRUE(image1.IsEmpty());
   EXPECT_EQ(0, image1.Width());
@@ -237,7 +260,7 @@ TEST_F(ImageTest, MultiResolutionPNGToImageSkia) {
       gt::MaxColorSpaceConversionColorShift()));
   EXPECT_TRUE(gt::ImageSkiaStructureMatches(image_skia, kSize1x, kSize1x,
                                             scales));
-#if !defined(OS_IOS)
+#if !BUILDFLAG(IS_IOS)
   // IOS does not support arbitrary scale factors.
   gfx::ImageSkiaRep rep_1_6x = image_skia.GetRepresentation(1.6f);
   ASSERT_FALSE(rep_1_6x.is_null());
@@ -263,25 +286,27 @@ TEST_F(ImageTest, MultiResolutionPNGToPlatform) {
 
   gfx::Image from_png(image_png_reps);
   gfx::Image from_platform(gt::CopyViaPlatformType(from_png));
-#if defined(OS_IOS)
+#if BUILDFLAG(IS_IOS)
   // On iOS the platform type (UIImage) only supports one resolution.
-  std::vector<float> scales = gfx::ImageSkia::GetSupportedScales();
+  const std::vector<ui::ResourceScaleFactor>& scales =
+      ui::GetSupportedResourceScaleFactors();
   EXPECT_EQ(scales.size(), 1U);
-  if (scales[0] == 1.0f)
+  if (scales[0] == ui::k100Percent) {
     EXPECT_TRUE(
         gt::ArePNGBytesCloseToBitmap(*bytes1x, from_platform.AsBitmap(),
                                      gt::MaxColorSpaceConversionColorShift()));
-  else if (scales[0] == 2.0f)
+  } else if (scales[0] == ui::k200Percent) {
     EXPECT_TRUE(
         gt::ArePNGBytesCloseToBitmap(*bytes2x, from_platform.AsBitmap(),
                                      gt::MaxColorSpaceConversionColorShift()));
-  else
+  } else {
     ADD_FAILURE() << "Unexpected platform scale factor.";
+  }
 #else
   EXPECT_TRUE(
       gt::ArePNGBytesCloseToBitmap(*bytes1x, from_platform.AsBitmap(),
                                    gt::MaxColorSpaceConversionColorShift()));
-#endif  // defined(OS_IOS)
+#endif  // BUILDFLAG(IS_IOS)
 }
 
 
@@ -430,6 +455,13 @@ TEST_F(ImageTest, CheckSkiaColor) {
 }
 
 TEST_F(ImageTest, SkBitmapConversionPreservesOrientation) {
+#if BUILDFLAG(IS_MAC)
+  LOG_IF(WARNING, !IsSystemColorSpaceSRGB())
+      << "This test is designed to pass with the sRGB color space, which is "
+         "not set for your main display currently. Thus, colors can be off by "
+         "too big a margin, and the test can fail.";
+#endif  // BUILDFLAG(IS_MAC)
+
   const int width = 50;
   const int height = 50;
   SkBitmap bitmap;
@@ -437,7 +469,7 @@ TEST_F(ImageTest, SkBitmapConversionPreservesOrientation) {
   bitmap.eraseARGB(255, 0, 255, 0);
 
   // Paint the upper half of the image in red (lower half is in green).
-  SkCanvas canvas(bitmap);
+  SkCanvas canvas(bitmap, SkSurfaceProps{});
   SkPaint red;
   red.setColor(SK_ColorRED);
   canvas.drawRect(SkRect::MakeWH(width, height / 2), red);
@@ -478,7 +510,7 @@ TEST_F(ImageTest, SkBitmapConversionPreservesTransparency) {
   bitmap.eraseARGB(0, 0, 255, 0);
 
   // Paint the upper half of the image in red (lower half is transparent).
-  SkCanvas canvas(bitmap);
+  SkCanvas canvas(bitmap, SkSurfaceProps{});
   SkPaint red;
   red.setColor(SK_ColorRED);
   canvas.drawRect(SkRect::MakeWH(width, height / 2), red);

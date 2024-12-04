@@ -1,4 +1,4 @@
-// Copyright (c) 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,11 +8,10 @@
 #include <memory>
 #include <vector>
 
-#include "base/callback.h"
 #include "base/compiler_specific.h"
 #include "base/component_export.h"
-#include "base/macros.h"
-#include "base/memory/ref_counted.h"
+#include "base/functional/callback.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/threading/thread_checker.h"
 #include "net/base/completion_once_callback.h"
 #include "net/cert/cert_verifier.h"
@@ -25,8 +24,8 @@ typedef std::vector<scoped_refptr<X509Certificate>> CertificateList;
 
 namespace network {
 
-// Wraps a net::CertVerifier to make it use the additional trust anchors
-// configured by the ONC user policy.
+// Wraps a net::CertVerifier to run a callback if the additional trust anchors
+// configured by the ONC user policy are used.
 class COMPONENT_EXPORT(NETWORK_SERVICE) CertVerifierWithTrustAnchors
     : public net::CertVerifier {
  public:
@@ -36,16 +35,16 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) CertVerifierWithTrustAnchors
   // used.
   explicit CertVerifierWithTrustAnchors(
       const base::RepeatingClosure& anchor_used_callback);
+
+  CertVerifierWithTrustAnchors(const CertVerifierWithTrustAnchors&) = delete;
+  CertVerifierWithTrustAnchors& operator=(const CertVerifierWithTrustAnchors&) =
+      delete;
+
   ~CertVerifierWithTrustAnchors() override;
 
   // TODO(jam): once the network service is the only path, rename or get rid of
   // this method.
   void InitializeOnIOThread(std::unique_ptr<net::CertVerifier> delegate);
-
-  // Sets the additional trust anchors and untrusted authorities to be
-  // considered as intermediates.
-  void SetAdditionalCerts(const net::CertificateList& trust_anchors,
-                          const net::CertificateList& untrusted_authorities);
 
   // CertVerifier:
   int Verify(const RequestParams& params,
@@ -54,16 +53,13 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) CertVerifierWithTrustAnchors
              std::unique_ptr<Request>* out_req,
              const net::NetLogWithSource& net_log) override;
   void SetConfig(const Config& config) override;
+  void AddObserver(Observer* observer) override;
+  void RemoveObserver(Observer* observer) override;
 
  private:
-  net::CertVerifier::Config orig_config_;
-  net::CertificateList trust_anchors_;
-  net::CertificateList untrusted_authorities_;
   base::RepeatingClosure anchor_used_callback_;
   std::unique_ptr<CertVerifier> delegate_;
   THREAD_CHECKER(thread_checker_);
-
-  DISALLOW_COPY_AND_ASSIGN(CertVerifierWithTrustAnchors);
 };
 
 }  // namespace network

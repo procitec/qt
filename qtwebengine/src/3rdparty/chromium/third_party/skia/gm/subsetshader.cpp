@@ -15,13 +15,14 @@
 #include "include/core/SkShader.h"
 #include "include/core/SkString.h"
 #include "include/core/SkTileMode.h"
+#include "tools/DecodeUtils.h"
 #include "tools/Resources.h"
 
 DEF_SIMPLE_GM_CAN_FAIL(bitmap_subset_shader, canvas, errorMsg, 256, 256) {
     canvas->clear(SK_ColorWHITE);
 
     SkBitmap source;
-    if (!GetResourceAsBitmap("images/color_wheel.png", &source)) {
+    if (!ToolUtils::GetResourceAsBitmap("images/color_wheel.png", &source)) {
         *errorMsg = "Could not load images/color_wheel.png. "
                     "Did you forget to set the resourcePath?";
         return skiagm::DrawResult::kFail;
@@ -38,9 +39,9 @@ DEF_SIMPLE_GM_CAN_FAIL(bitmap_subset_shader, canvas, errorMsg, 256, 256) {
     matrix.preRotate(30.0f);
     SkTileMode tm = SkTileMode::kRepeat;
     SkPaint paint;
-    paint.setShader(leftBitmap.makeShader(tm, tm, &matrix));
+    paint.setShader(leftBitmap.makeShader(tm, tm, SkSamplingOptions(), matrix));
     canvas->drawRect(SkRect::MakeWH(256.0f, 128.0f), paint);
-    paint.setShader(rightBitmap.makeShader(tm, tm, &matrix));
+    paint.setShader(rightBitmap.makeShader(tm, tm, SkSamplingOptions(), matrix));
     canvas->drawRect(SkRect::MakeXYWH(0, 128.0f, 256.0f, 128.0f), paint);
     return skiagm::DrawResult::kOk;
 }

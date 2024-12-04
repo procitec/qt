@@ -1,9 +1,9 @@
 project('harfbuzz', 'c', 'cpp',
-  meson_version: '>= 0.53.0',
-  version: '2.7.0',
+  meson_version: '>= 0.55.0',
+  version: '8.3.0',
   default_options: [
-    'cpp_eh=none',          # Just to support msvc, we are passing -fno-rtti also anyway
-    'cpp_rtti=false',       # Just to support msvc, we are passing -fno-exceptions also anyway
+    'cpp_eh=none',          # Just to support msvc, we are passing -fno-exceptions also anyway
+    # 'cpp_rtti=false',     # Do NOT enable, wraps inherit it and ICU needs RTTI
     'cpp_std=c++11',
     'wrap_mode=nofallback', # Use --wrap-mode=default to revert, https://github.com/harfbuzz/harfbuzz/pull/2548
   ],
@@ -15,22 +15,25 @@ hb_version_minor = hb_version_arr[1].to_int()
 hb_version_micro = hb_version_arr[2].to_int()
 
 # libtool versioning
-hb_version_int = hb_version_major*10000 + hb_version_minor*100 + hb_version_micro
+hb_version_int = 60000 + hb_version_major*100 + hb_version_minor*10 + hb_version_micro
+hb_libtool_version_info = '@0@:0:@0@'.format(hb_version_int)
 
 pkgmod = import('pkgconfig')
 cpp = meson.get_compiler('cpp')
 null_dep = dependency('', required: false)
 
-if cpp.get_id() == 'msvc'
+# Enforce C++14 requirement for MSVC STL
+if ['clang', 'clang-cl'].contains(cpp.get_id()) and cpp.get_define('_MSC_FULL_VER') != ''
+  add_project_arguments('-std=c++14', language: 'cpp')
+endif
+
+if cpp.get_argument_syntax() == 'msvc'
   # Ignore several spurious warnings for things HarfBuzz does very commonly.
   # If a warning is completely useless and spammy, use '/wdXXXX' to suppress it
   # If a warning is harmless but hard to fix, use '/woXXXX' so it's shown once
   # NOTE: Only add warnings here if you are sure they're spurious
   msvc_args = [
-    '/wd4018', # implicit signed/unsigned conversion
-    '/wd4146', # unary minus on unsigned (beware INT_MIN)
     '/wd4244', # lossy type conversion (e.g. double -> int)
-    '/wd4305', # truncating type conversion (e.g. double -> float)
     cpp.get_supported_arguments(['/utf-8']), # set the input encoding to utf-8
   ]
   add_project_arguments(msvc_args, language: ['c', 'cpp'])
@@ -55,65 +58,107 @@ if host_machine.cpu_family() == 'arm' and cpp.alignment('struct { char c; }') !=
   endif
 endif
 
+if host_machine.system() == 'windows'
+  add_project_arguments(cpp.get_supported_arguments([
+    '-Wa,-mbig-obj'
+  ]), language : 'cpp')
+endif
+
 check_headers = [
   ['unistd.h'],
   ['sys/mman.h'],
   ['stdbool.h'],
+  ['xlocale.h'],
 ]
 
 check_funcs = [
-  ['atexit'],
-  ['mprotect'],
-  ['sysconf'],
-  ['getpagesize'],
-  ['mmap'],
-  ['isatty'],
+  ['atexit', {'prefix': '#include <stdlib.h>'}],
+  ['mprotect', {'prefix': '#include <sys/mman.h>'}],
+  ['sysconf', {'prefix': '#include <unistd.h>'}],
+  ['getpagesize', {'prefix': '#include <unistd.h>'}],
+  ['mmap', {'prefix': '#include <sys/mman.h>'}],
+  ['isatty', {'prefix': '#include <unistd.h>'}],
+  ['uselocale', {'prefix': '#include <locale.h>'}],
+  ['newlocale', {'prefix': '#include <locale.h>'}],
+  ['sincosf', {'prefix': '#define _GNU_SOURCE\n#include <math.h>'}],
 ]
 
 m_dep = cpp.find_library('m', required: false)
 
-freetype_dep = null_dep
-if not get_option('freetype').disabled()
-  freetype_dep = dependency('freetype2', required: false)
-
-  if not freetype_dep.found() and cpp.get_id() == 'msvc'
-    freetype_dep = cpp.find_library('freetype', required: false,
-                                    has_headers: ['ft2build.h'])
+if meson.version().version_compare('>=0.60.0')
+  # pkg-config: freetype2, cmake: Freetype
+  freetype_dep = dependency('freetype2', 'Freetype',
+                            required: get_option('freetype'),
+                            default_options: ['harfbuzz=disabled'],
+                            allow_fallback: true)
+else
+  # painful hack to handle multiple dependencies but also respect options
+  freetype_opt = get_option('freetype')
+  # we want to handle enabled manually after fallbacks, but also handle disabled normally
+  if freetype_opt.enabled()
+    freetype_opt = false
   endif
-
-  if not freetype_dep.found()
-    # https://github.com/harfbuzz/harfbuzz/pull/2498
-    freetype_dep = dependency('freetype2', required: get_option('freetype'),
-                              fallback: ['freetype2', 'freetype_dep'],
-                              default_options: ['harfbuzz=disabled'])
+  # try pkg-config name
+  freetype_dep = dependency('freetype2', method: 'pkg-config', required: freetype_opt)
+  # when disabled, leave it not-found
+  if not freetype_dep.found() and not get_option('freetype').disabled()
+    # Try cmake name
+    freetype_dep = dependency('Freetype', method: 'cmake', required: false)
+    # Subproject fallback, `allow_fallback: true` means the fallback will be
+    # tried even if the freetype option is set to `auto`.
+    if not freetype_dep.found()
+      freetype_dep = dependency('freetype2',
+                                method: 'pkg-config',
+                                required: get_option('freetype'),
+                                default_options: ['harfbuzz=disabled'],
+                                allow_fallback: true)
+    endif
   endif
 endif
 
-glib_dep = dependency('glib-2.0', required: get_option('glib'),
-                      fallback: ['glib', 'libglib_dep'])
-gobject_dep = dependency('gobject-2.0', required: get_option('gobject'),
-                         fallback: ['glib', 'libgobject_dep'])
-fontconfig_dep = dependency('fontconfig', required: get_option('fontconfig'),
-                            fallback: ['fontconfig', 'fontconfig_dep'])
-graphite2_dep = dependency('graphite2', required: get_option('graphite'))
+glib_dep = dependency('glib-2.0', required: get_option('glib'))
+gobject_dep = dependency('gobject-2.0', required: get_option('gobject'))
+graphite2_dep = dependency('graphite2', required: get_option('graphite2'))
+graphite_dep = dependency('graphite2', required: get_option('graphite'))
+wasm_dep = cpp.find_library('iwasm', required: get_option('wasm'))
+# How to check whether iwasm was built, and hence requires, LLVM?
+#llvm_dep = cpp.find_library('LLVM-15', required: get_option('wasm'))
 
-icu_dep = null_dep
-if not get_option('icu').disabled()
-  icu_dep = dependency('icu-uc', required: false)
-
-  if not icu_dep.found() and get_option('icu').enabled()
-    icu_dep = dependency('icu-uc', required: cpp.get_id() != 'msvc')
+if meson.version().version_compare('>=0.60.0')
+  # pkg-config: icu-uc, cmake: ICU but with components
+  icu_dep = dependency('icu-uc', 'ICU',
+                            components: 'uc',
+                            required: get_option('icu'),
+                            allow_fallback: true)
+else
+  # painful hack to handle multiple dependencies but also respect options
+  icu_opt = get_option('icu')
+  # we want to handle enabled manually after fallbacks, but also handle disabled normally
+  if icu_opt.enabled()
+    icu_opt = false
   endif
+  # try pkg-config name
+  icu_dep = dependency('icu-uc', method: 'pkg-config', required: icu_opt)
+  # when disabled, leave it not-found
+  if not icu_dep.found() and not get_option('icu').disabled()
+    # Try cmake name
+    icu_dep = dependency('ICU', method: 'cmake', components: 'uc', required: false)
+    # Try again with subproject fallback. `allow_fallback: true` means the
+    # fallback will be tried even if the icu option is set to `auto`, but
+    # we cannot pass this option until Meson 0.59.0, because no wrap file
+    # is checked into git.
+    if not icu_dep.found()
+      icu_dep = dependency('icu-uc',
+                           method: 'pkg-config',
+                           required: get_option('icu'))
+    endif
+  endif
+endif
 
-  if not icu_dep.found() and cpp.get_id() == 'msvc'
-    icu_dep = cpp.find_library(get_option('buildtype') == 'debug' ? 'icuucd' : 'icuuc',
-                               required: get_option('icu'),
-                               has_headers: ['unicode/uchar.h',
-                                             'unicode/unorm2.h',
-                                             'unicode/ustring.h',
-                                             'unicode/utf16.h',
-                                             'unicode/uversion.h',
-                                             'unicode/uscript.h'])
+if icu_dep.found() and icu_dep.type_name() == 'pkgconfig'
+  icu_defs = icu_dep.get_variable(pkgconfig: 'DEFS', default_value: '').split()
+  if icu_defs.length() > 0
+    add_project_arguments(icu_defs, language: ['c', 'cpp'])
   endif
 endif
 
@@ -121,10 +166,17 @@ cairo_dep = null_dep
 cairo_ft_dep = null_dep
 if not get_option('cairo').disabled()
   cairo_dep = dependency('cairo', required: false)
+  cairo_ft_dep = dependency('cairo-ft', required: false)
 
-  if not cairo_dep.found() and cpp.get_id() == 'msvc'
-    cairo_dep = cpp.find_library('cairo', required: false,
-                                 has_headers: ['cairo.h'])
+  if (not cairo_dep.found() and
+      cpp.get_argument_syntax() == 'msvc' and
+      cpp.has_header('cairo.h'))
+    cairo_dep = cpp.find_library('cairo', required: false)
+    if cairo_dep.found() and cpp.has_function('cairo_ft_font_face_create_for_ft_face',
+                                              prefix: '#include <cairo-ft.h>',
+                                              dependencies: cairo_dep)
+      cairo_ft_dep = cairo_dep
+    endif
   endif
 
   if not cairo_dep.found()
@@ -132,25 +184,13 @@ if not get_option('cairo').disabled()
     # dependency cycle here because we have configured freetype2 above with
     # harfbuzz support disabled, so when cairo will lookup freetype2 dependency
     # it will be forced to use that one.
-    cairo_dep = dependency('cairo', fallback: ['cairo', 'libcairo_dep'],
-                           required: get_option('cairo'))
-  endif
-
-  # Ensure that cairo-ft is fetched from the same library as cairo itself
-  if cairo_dep.found()
-    if cairo_dep.type_name() == 'internal'
-      # It is true at least for the port we have
-      cairo_ft_dep = cairo_dep
-    elif cairo_dep.type_name() == 'library' and \
-         cpp.has_function('cairo_ft_font_face_create_for_ft_face',
-                          prefix: '#include <cairo-ft.h>',
-                          dependencies: cairo_dep)
-      cairo_ft_dep = cairo_dep
-    else # including the most important type for us, 'pkgconfig'
-      cairo_ft_dep = dependency('cairo-ft', required: get_option('cairo'))
-    endif
+    cairo_dep = dependency('cairo', required: get_option('cairo'))
+    cairo_ft_required = get_option('cairo').enabled() and get_option('freetype').enabled()
+    cairo_ft_dep = dependency('cairo-ft', required: cairo_ft_required)
   endif
 endif
+
+chafa_dep = dependency('chafa', version: '>= 1.6.0', required: get_option('chafa'))
 
 conf = configuration_data()
 incconfig = include_directories('.')
@@ -173,13 +213,36 @@ endif
 
 if cairo_dep.found()
   conf.set('HAVE_CAIRO', 1)
+  check_cairo_funcs = [
+    ['cairo_user_font_face_set_render_color_glyph_func', {'deps': cairo_dep}],
+    ['cairo_font_options_get_custom_palette_color', {'deps': cairo_dep}],
+    ['cairo_user_scaled_font_get_foreground_source', {'deps': cairo_dep}],
+  ]
+
+  if cairo_dep.type_name() == 'internal'
+    foreach func: check_cairo_funcs
+      name = func[0]
+      conf.set('HAVE_@0@'.format(name.to_upper()), 1)
+    endforeach
+  else
+    check_funcs += check_cairo_funcs
+  endif
 endif
 
 if cairo_ft_dep.found()
   conf.set('HAVE_CAIRO_FT', 1)
 endif
 
-if graphite2_dep.found()
+if chafa_dep.found()
+  conf.set('HAVE_CHAFA', 1)
+endif
+
+if wasm_dep.found()
+  conf.set('HAVE_WASM', 1)
+  conf.set('HB_WASM_MODULE_DIR', '"'+get_option('prefix')+'/'+get_option('libdir')+'/harfbuzz/wasm"')
+endif
+
+if graphite2_dep.found() or graphite_dep.found()
   conf.set('HAVE_GRAPHITE2', 1)
 endif
 
@@ -201,6 +264,7 @@ if freetype_dep.found()
     ['FT_Get_Var_Blend_Coordinates', {'deps': freetype_dep}],
     ['FT_Set_Var_Blend_Coordinates', {'deps': freetype_dep}],
     ['FT_Done_MM_Var', {'deps': freetype_dep}],
+    ['FT_Get_Transform', {'deps': freetype_dep}],
   ]
 
   if freetype_dep.type_name() == 'internal'
@@ -213,18 +277,17 @@ if freetype_dep.found()
   endif
 endif
 
-if fontconfig_dep.found()
-  conf.set('HAVE_FONTCONFIG', 1)
-endif
-
 gdi_uniscribe_deps = []
 # GDI (Uniscribe) (Windows)
 if host_machine.system() == 'windows' and not get_option('gdi').disabled()
-  gdi_deps_found = true
+  if (get_option('directwrite').enabled() and
+      not (cpp.has_header('usp10.h') and cpp.has_header('windows.h')))
+    error('GDI/Uniscribe was enabled explicitly, but required headers are missing.')
+  endif
 
+  gdi_deps_found = true
   foreach usplib : ['usp10', 'gdi32', 'rpcrt4']
-    dep = cpp.find_library(usplib, required: get_option('gdi'),
-                           has_headers: ['usp10.h', 'windows.h'])
+    dep = cpp.find_library(usplib, required: get_option('gdi'))
     gdi_deps_found = gdi_deps_found and dep.found()
     gdi_uniscribe_deps += dep
   endforeach
@@ -236,14 +299,12 @@ if host_machine.system() == 'windows' and not get_option('gdi').disabled()
 endif
 
 # DirectWrite (Windows)
-directwrite_dep = null_dep
 if host_machine.system() == 'windows' and not get_option('directwrite').disabled()
-  directwrite_dep = cpp.find_library('dwrite', required: get_option('directwrite'),
-                                     has_headers: ['dwrite_1.h'])
-
-  if directwrite_dep.found()
-    conf.set('HAVE_DIRECTWRITE', 1)
+  if get_option('directwrite').enabled() and not cpp.has_header('dwrite_1.h')
+    error('DirectWrite was enabled explicitly, but required header is missing.')
   endif
+
+  conf.set('HAVE_DIRECTWRITE', 1)
 endif
 
 # CoreText (macOS)
@@ -275,9 +336,6 @@ if host_machine.system() != 'windows'
 
   if thread_dep.found()
     conf.set('HAVE_PTHREAD', 1)
-  else
-    check_headers += ['sched.h']
-    check_funcs += ['sched_yield', {'link_with': 'rt'}]
   endif
 endif
 
@@ -298,11 +356,12 @@ foreach check : check_funcs
   opts = check.get(1, {})
   link_withs = opts.get('link_with', [])
   check_deps = opts.get('deps', [])
+  check_prefix = opts.get('prefix', '')
   extra_deps = []
   found = true
 
   # First try without linking
-  found = cpp.has_function(name, dependencies: check_deps)
+  found = cpp.has_function(name, prefix: check_prefix, dependencies: check_deps)
 
   if not found and link_withs.length() > 0
     found = true
@@ -317,7 +376,7 @@ foreach check : check_funcs
     endforeach
 
     if found
-      found = cpp.has_function(name, dependencies: check_deps + extra_deps)
+      found = cpp.has_function(name, prefix: check_prefix, dependencies: check_deps + extra_deps)
     endif
   endif
 
@@ -327,26 +386,37 @@ foreach check : check_funcs
   endif
 endforeach
 
-if cpp.links(files('meson-cc-tests/intel-atomic-primitives-test.c'), name: 'Intel atomics')
-  conf.set('HAVE_INTEL_ATOMIC_PRIMITIVES', 1)
-endif
+# CMake support (package install dir)
 
-if cpp.links(files('meson-cc-tests/solaris-atomic-operations.c'), name: 'Solaris atomic ops')
-  conf.set('HAVE_SOLARIS_ATOMIC_OPS', 1)
+# Equivalent to configure_package_config_file(INSTALL_DESTINATION ...), see
+# https://cmake.org/cmake/help/latest/module/CMakePackageConfigHelpers.html#command:configure_package_config_file.
+# In certain unusual packaging layouts such as Nixpkgs, the Harfbuzz package
+# is installed into two Nix store paths, "out" and "dev", where "out" contains
+# libraries only (i.e. lib/libharfbuzz.so) and "dev" contains development
+# files, i.e. include and lib/cmake. If CMake package files are installed to
+# "out", Nixpkgs will move them to "dev", which breaks assumptions about
+# our file paths. Since we need to figure out relative install paths here
+# to make a relocatable package, we do need to know the final path of our
+# CMake files to calculate the correct relative paths.
+# Of course, this still defaults to $libdir/cmake if unset, which works for
+# most packaging layouts.
+cmake_package_install_dir = get_option('cmakepackagedir')
+
+if cmake_package_install_dir == ''
+  cmake_package_install_dir = get_option('libdir') / 'cmake'
 endif
 
 subdir('src')
-subdir('util')
+
+if not get_option('utilities').disabled()
+  subdir('util')
+endif
 
 if not get_option('tests').disabled()
   subdir('test')
 endif
 
-if not get_option('benchmark').disabled() and \
-    get_option('wrap_mode') != 'nodownload' and \
-    host_machine.system() != 'windows' and \
-    not meson.is_subproject() and \
-    not meson.is_cross_build()
+if not get_option('benchmark').disabled()
   subdir('perf')
 endif
 
@@ -356,28 +426,52 @@ endif
 
 configure_file(output: 'config.h', configuration: conf)
 
-summary({'prefix': get_option('prefix'),
-         'bindir': get_option('bindir'),
-         'libdir': get_option('libdir'),
-         'includedir': get_option('includedir'),
-         'datadir': get_option('datadir'),
-        }, section: 'Directories')
-summary({'Builtin': true,
-         'Glib': conf.get('HAVE_GLIB', 0) == 1,
-         'ICU': conf.get('HAVE_ICU', 0) == 1,
-        }, bool_yn: true, section: 'Unicode callbacks (you want at least one)')
-summary({'FreeType': conf.get('HAVE_FREETYPE', 0) == 1,
-        }, bool_yn: true, section: 'Font callbacks (the more the merrier)')
-summary({'Cairo': conf.get('HAVE_CAIRO', 0) == 1,
-         'Fontconfig': conf.get('HAVE_FONTCONFIG', 0) == 1,
-        }, bool_yn: true, section: 'Dependencies used for command-line utilities')
-summary({'Graphite2': conf.get('HAVE_GRAPHITE2', 0) == 1,
-        }, bool_yn: true, section: 'Additional shapers')
-summary({'CoreText': conf.get('HAVE_CORETEXT', 0) == 1,
-         'DirectWrite': conf.get('HAVE_DIRECTWRITE', 0) == 1,
-         'GDI/Uniscribe': (conf.get('HAVE_GDI', 0) == 1) and (conf.get('HAVE_UNISCRIBE', 0) == 1),
-        }, bool_yn: true, section: 'Platform shapers (not normally needed)')
-summary({'Documentation': conf.get('HAVE_GTK_DOC', 0) == 1,
-         'GObject bindings': conf.get('HAVE_GOBJECT', 0) == 1,
-         'Introspection': conf.get('HAVE_INTROSPECTION', 0) == 1,
-        }, bool_yn: true, section: 'Other features')
+alias_target('lib', libharfbuzz)
+alias_target('libs', libharfbuzz, libharfbuzz_subset)
+
+build_summary = {
+  'Directories':
+    {'prefix': get_option('prefix'),
+     'bindir': get_option('bindir'),
+     'libdir': get_option('libdir'),
+     'includedir': get_option('includedir'),
+     'datadir': get_option('datadir'),
+     'cmakepackagedir': cmake_package_install_dir
+    },
+  'Unicode callbacks (you want at least one)':
+    {'Builtin': true,
+     'Glib': conf.get('HAVE_GLIB', 0) == 1,
+     'ICU': conf.get('HAVE_ICU', 0) == 1,
+    },
+  'Font callbacks (the more the merrier)':
+    {'Builtin' : true,
+     'FreeType': conf.get('HAVE_FREETYPE', 0) == 1,
+    },
+  'Dependencies used for command-line utilities':
+    {'Cairo': conf.get('HAVE_CAIRO', 0) == 1,
+     'Chafa': conf.get('HAVE_CHAFA', 0) == 1,
+    },
+  'Additional shapers':
+    {'Graphite2': conf.get('HAVE_GRAPHITE2', 0) == 1,
+     'WebAssembly (experimental)': conf.get('HAVE_WASM', 0) == 1,
+    },
+  'Platform shapers (not normally needed)':
+    {'CoreText': conf.get('HAVE_CORETEXT', 0) == 1,
+     'DirectWrite (experimental)': conf.get('HAVE_DIRECTWRITE', 0) == 1,
+     'GDI/Uniscribe': (conf.get('HAVE_GDI', 0) == 1) and (conf.get('HAVE_UNISCRIBE', 0) == 1),
+    },
+  'Other features':
+    {'Documentation': conf.get('HAVE_GTK_DOC', 0) == 1,
+     'GObject bindings': conf.get('HAVE_GOBJECT', 0) == 1,
+     'Cairo integration': conf.get('HAVE_CAIRO', 0) == 1,
+     'Introspection': conf.get('HAVE_INTROSPECTION', 0) == 1,
+     'Experimental APIs': conf.get('HB_EXPERIMENTAL_API', 0) == 1,
+    },
+  'Testing':
+    {'Tests': get_option('tests').enabled(),
+     'Benchmark': get_option('benchmark').enabled(),
+    },
+}
+foreach section_title, section : build_summary
+  summary(section, bool_yn: true, section: section_title)
+endforeach

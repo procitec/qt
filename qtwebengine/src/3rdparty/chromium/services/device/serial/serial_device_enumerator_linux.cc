@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,6 +7,7 @@
 #include <stdint.h>
 
 #include <memory>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -15,7 +16,6 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
-#include "base/strings/stringprintf.h"
 #include "base/threading/scoped_blocking_call.h"
 #include "components/device_event_log/device_event_log.h"
 #include "device/udev_linux/udev.h"
@@ -43,7 +43,7 @@ std::vector<SerialDriverInfo> ReadSerialDriverInfo(const base::FilePath& path) {
   for (const auto& line :
        base::SplitStringPiece(tty_drivers, "\n", base::KEEP_WHITESPACE,
                               base::SPLIT_WANT_NONEMPTY)) {
-    std::vector<base::StringPiece> fields = base::SplitStringPiece(
+    std::vector<std::string_view> fields = base::SplitStringPiece(
         line, " ", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
 
     // The format of each line is:
@@ -59,7 +59,7 @@ std::vector<SerialDriverInfo> ReadSerialDriverInfo(const base::FilePath& path) {
     if (!base::StringToInt(fields[2], &info.major))
       continue;
 
-    std::vector<base::StringPiece> minor_range = base::SplitStringPiece(
+    std::vector<std::string_view> minor_range = base::SplitStringPiece(
         fields[3], "-", base::KEEP_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
     if (minor_range.size() == 1) {
       if (!base::StringToInt(minor_range[0], &info.minor_start))

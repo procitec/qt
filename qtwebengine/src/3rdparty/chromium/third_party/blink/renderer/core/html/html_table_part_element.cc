@@ -24,12 +24,12 @@
 
 #include "third_party/blink/renderer/core/html/html_table_part_element.h"
 
-#include "third_party/blink/renderer/core/css/css_image_value.h"
 #include "third_party/blink/renderer/core/css/css_property_names.h"
 #include "third_party/blink/renderer/core/css/css_property_value_set.h"
 #include "third_party/blink/renderer/core/css_value_keywords.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/flat_tree_traversal.h"
+#include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/frame/web_feature.h"
 #include "third_party/blink/renderer/core/html/html_table_element.h"
 #include "third_party/blink/renderer/core/html/parser/html_parser_idioms.h"
@@ -55,19 +55,7 @@ void HTMLTablePartElement::CollectStyleForPresentationAttribute(
   if (name == html_names::kBgcolorAttr) {
     AddHTMLColorToStyle(style, CSSPropertyID::kBackgroundColor, value);
   } else if (name == html_names::kBackgroundAttr) {
-    String url = StripLeadingAndTrailingHTMLSpaces(value);
-    if (!url.IsEmpty()) {
-      UseCounter::Count(
-          GetDocument(),
-          WebFeature::kHTMLTableElementPresentationAttributeBackground);
-      CSSImageValue* image_value = MakeGarbageCollected<CSSImageValue>(
-          AtomicString(url), GetDocument().CompleteURL(url),
-          Referrer(GetExecutionContext()->OutgoingReferrer(),
-                   GetExecutionContext()->GetReferrerPolicy()),
-          OriginClean::kTrue, false /* is_ad_related */);
-      style->SetProperty(CSSPropertyValue(
-          CSSPropertyName(CSSPropertyID::kBackgroundImage), *image_value));
-    }
+    AddHTMLBackgroundImageToStyle(style, value);
   } else if (name == html_names::kValignAttr) {
     if (EqualIgnoringASCIICase(value, "top")) {
       AddPropertyToPresentationAttributeStyle(
@@ -104,7 +92,7 @@ void HTMLTablePartElement::CollectStyleForPresentationAttribute(
                                               value);
     }
   } else if (name == html_names::kHeightAttr) {
-    if (!value.IsEmpty())
+    if (!value.empty())
       AddHTMLLengthToStyle(style, CSSPropertyID::kHeight, value);
   } else {
     HTMLElement::CollectStyleForPresentationAttribute(name, value, style);

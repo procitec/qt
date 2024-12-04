@@ -22,6 +22,7 @@
 #include "include/core/SkString.h"
 #include "include/effects/SkImageFilters.h"
 #include "tools/ToolUtils.h"
+#include "tools/fonts/FontToolUtils.h"
 
 #include <utility>
 
@@ -30,22 +31,18 @@ public:
     ImageFiltersGraphGM() {}
 
 protected:
+    SkString getName() const override { return SkString("imagefiltersgraph"); }
 
-    SkString onShortName() override {
-        return SkString("imagefiltersgraph");
-    }
-
-    SkISize onISize() override { return SkISize::Make(600, 150); }
+    SkISize getISize() override { return SkISize::Make(600, 150); }
 
     void onOnceBeforeDraw() override {
-        fImage = SkImage::MakeFromBitmap(
-                ToolUtils::create_string_bitmap(100, 100, SK_ColorWHITE, 20, 70, 96, "e"));
+        fImage = ToolUtils::CreateStringImage(100, 100, SK_ColorWHITE, 20, 70, 96, "e");
     }
 
     void onDraw(SkCanvas* canvas) override {
         canvas->clear(SK_ColorBLACK);
         {
-            sk_sp<SkImageFilter> bitmapSource(SkImageFilters::Image(fImage));
+            sk_sp<SkImageFilter> bitmapSource(SkImageFilters::Image(fImage, SkFilterMode::kLinear));
             sk_sp<SkColorFilter> cf(SkColorFilters::Blend(SK_ColorRED,
                                                                   SkBlendMode::kSrcIn));
             sk_sp<SkImageFilter> blur(SkImageFilters::Blur(4.0f, 4.0f, std::move(bitmapSource)));
@@ -71,8 +68,8 @@ protected:
             sk_sp<SkImageFilter> colorMorph(SkImageFilters::ColorFilter(std::move(matrixFilter),
                                                                            std::move(morph)));
             SkPaint paint;
-            paint.setImageFilter(SkImageFilters::Xfermode(SkBlendMode::kSrcOver,
-                                                          std::move(colorMorph)));
+            paint.setImageFilter(SkImageFilters::Blend(SkBlendMode::kSrcOver,
+                                                       std::move(colorMorph)));
 
             DrawClippedImage(canvas, fImage.get(), paint);
             canvas->translate(SkIntToScalar(100), 0);
@@ -100,7 +97,7 @@ protected:
             SkIRect cropRect = SkIRect::MakeWH(95, 100);
             SkPaint paint;
             paint.setImageFilter(
-                SkImageFilters::Xfermode(SkBlendMode::kSrcIn, std::move(blur), nullptr, &cropRect));
+                SkImageFilters::Blend(SkBlendMode::kSrcIn, std::move(blur), nullptr, &cropRect));
             DrawClippedImage(canvas, fImage.get(), paint);
             canvas->translate(SkIntToScalar(100), 0);
         }
@@ -149,8 +146,8 @@ protected:
 private:
     static void DrawClippedImage(SkCanvas* canvas, const SkImage* image, const SkPaint& paint) {
         canvas->save();
-        canvas->clipRect(SkRect::MakeIWH(image->width(), image->height()));
-        canvas->drawImage(image, 0, 0, &paint);
+        canvas->clipIRect(image->bounds());
+        canvas->drawImage(image, 0, 0, SkSamplingOptions(), &paint);
         canvas->restore();
     }
 

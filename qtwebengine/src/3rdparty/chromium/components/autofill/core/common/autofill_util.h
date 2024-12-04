@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,16 +7,16 @@
 
 #include <stddef.h>
 
+#include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
-#include "base/strings/string16.h"
+#include "base/feature_list.h"
+#include "components/autofill/core/common/aliases.h"
 #include "components/autofill/core/common/form_field_data.h"
 #include "components/autofill/core/common/mojom/autofill_types.mojom-shared.h"
-
-namespace base {
-struct Feature;
-}
+#include "url/gurl.h"
 
 namespace autofill {
 
@@ -24,50 +24,26 @@ namespace autofill {
 // the length used for server autofill data.
 constexpr int kLocalGuidSize = 36;
 
-// Returns true when command line switch |kEnableSuggestionsWithSubstringMatch|
-// is on.
-bool IsFeatureSubstringMatchEnabled();
-
 // Returns true if showing autofill signature as HTML attributes is enabled.
 bool IsShowAutofillSignaturesEnabled();
-
-// Returns true when keyboard accessory is enabled.
-bool IsKeyboardAccessoryEnabled();
-
-// Returns whether the Touch To Fill feature is enabled.
-bool IsTouchToFillEnabled();
 
 // A token is a sequences of contiguous characters separated by any of the
 // characters that are part of delimiter set {' ', '.', ',', '-', '_', '@'}.
 
-// Returns true if the |field_contents| is a substring of the |suggestion|
-// starting at token boundaries. |field_contents| can span multiple |suggestion|
-// tokens.
-bool FieldIsSuggestionSubstringStartingOnTokenBoundary(
-    const base::string16& suggestion,
-    const base::string16& field_contents,
-    bool case_sensitive);
-
 // Currently, a token for the purposes of this method is defined as {'@'}.
 // Returns true if the |full_string| has a |prefix| as a prefix and the prefix
 // ends on a token.
-bool IsPrefixOfEmailEndingWithAtSign(const base::string16& full_string,
-                                     const base::string16& prefix);
+bool IsPrefixOfEmailEndingWithAtSign(const std::u16string& full_string,
+                                     const std::u16string& prefix);
 
 // Finds the first occurrence of a searched substring |field_contents| within
 // the string |suggestion| starting at token boundaries and returns the index to
-// the end of the located substring, or base::string16::npos if the substring is
+// the end of the located substring, or std::u16string::npos if the substring is
 // not found. "preview-on-hover" feature is one such use case where the
 // substring |field_contents| may not be found within the string |suggestion|.
-size_t GetTextSelectionStart(const base::string16& suggestion,
-                             const base::string16& field_contents,
+size_t GetTextSelectionStart(const std::u16string& suggestion,
+                             const std::u16string& field_contents,
                              bool case_sensitive);
-
-// Returns true if running on a desktop platform. Any platform that is not
-// Android or iOS is considered desktop.
-bool IsDesktopPlatform();
-
-bool ShouldSkipField(const FormFieldData& field);
 
 bool IsCheckable(const FormFieldData::CheckStatus& check_status);
 bool IsChecked(const FormFieldData::CheckStatus& check_status);
@@ -79,12 +55,15 @@ void SetCheckStatus(FormFieldData* form_field_data,
 // Considers any ASCII whitespace character as a possible separator.
 // Also ignores empty tokens, resulting in a collapsing of whitespace.
 std::vector<std::string> LowercaseAndTokenizeAttributeString(
-    const std::string& attribute);
+    std::string_view attribute);
+
+// Returns `value` stripped from its whitespaces.
+std::u16string RemoveWhitespace(const std::u16string& value);
 
 // Returns true if and only if the field value has no character except the
 // formatting characters. This means that the field value is a formatting string
 // entered by the website and not a real value entered by the user.
-bool SanitizedFieldIsEmpty(const base::string16& value);
+bool SanitizedFieldIsEmpty(const std::u16string& value);
 
 // Returns true if the first suggestion should be autoselected when the autofill
 // dropdown is shown due to an arrow down event. Enabled on desktop only.
@@ -95,6 +74,24 @@ bool IsFillable(mojom::FocusedFieldType focused_field_type);
 
 mojom::SubmissionIndicatorEvent ToSubmissionIndicatorEvent(
     mojom::SubmissionSource source);
+
+// Strips any authentication data, as well as query and ref portions of URL.
+GURL StripAuthAndParams(const GURL& gurl);
+
+// Checks if the user triggered Autofill on a field manually through the Chrome
+// context menu.
+bool IsAutofillManuallyTriggered(
+    AutofillSuggestionTriggerSource trigger_source);
+
+// Checks if the user triggered address Autofill on a field manually through the
+// Chrome context menu.
+bool IsAddressAutofillManuallyTriggered(
+    AutofillSuggestionTriggerSource trigger_source);
+
+// Checks if the user triggered payments Autofill on a field manually through
+// the Chrome context menu.
+bool IsPaymentsAutofillManuallyTriggered(
+    AutofillSuggestionTriggerSource trigger_source);
 
 }  // namespace autofill
 

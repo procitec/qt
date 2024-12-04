@@ -1,35 +1,12 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the documentation of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:FDL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Free Documentation License Usage
-** Alternatively, this file may be used under the terms of the GNU Free
-** Documentation License version 1.3 as published by the Free Software
-** Foundation and appearing in the file included in the packaging of
-** this file. Please review the following information to ensure
-** the GNU Free Documentation License version 1.3 requirements
-** will be met: https://www.gnu.org/licenses/fdl-1.3.html.
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GFDL-1.3-no-invariants-only
 
 /*!
     \example webenginewidgets/simplebrowser
     \title WebEngine Widgets Simple Browser Example
     \ingroup webengine-widgetexamples
     \brief A simple browser based on \QWE Widgets.
+    \examplecategory {Web Technologies}
 
     \image simplebrowser.png
 
@@ -91,6 +68,9 @@
     \skipto main
     \printuntil }
 
+    To suppress flicker when switching the window to OpenGL rendering, we call
+    show after the first browser tab has been added.
+
     \section1 Creating Tabs
 
     The \c BrowserWindow constructor initializes all the necessary user interface
@@ -122,6 +102,25 @@
     \quotefromfile webenginewidgets/simplebrowser/tabwidget.cpp
     \skipto TabWidget::setupView
     \printuntil /^\}/
+
+    \section1 Closing Tabs
+
+    When the user closes a tab, we first trigger the \l {QWebEnginePage::}{RequestClose} web action
+    on the corresponding \c WebView:
+
+    \quotefromfile webenginewidgets/simplebrowser/tabwidget.cpp
+    \skipto QTabBar::tabCloseRequested
+    \printuntil }
+
+    This allows any JavaScript \c beforeunload event listeners to fire, which may
+    prompt the user with a dialog to confirm that they want to close the page.
+    In this case, the user can reject the close request and leave the tab open,
+    otherwise the \l {QWebEnginePage::}{windowCloseRequested} signal is emitted and we close the
+    tab:
+
+    \quotefromfile webenginewidgets/simplebrowser/tabwidget.cpp
+    \skipto QWebEnginePage::windowCloseRequested
+    \printuntil }
 
     \section1 Implementing WebView Functionality
 
@@ -197,22 +196,26 @@
     \printuntil menu->popup
     \printline }
 
-    \section1 Implementing WebPage Functionality
+    \section1 Implementing WebPage and WebView Functionality
 
-    We implement \c WebPage as a subclass of QWebEnginePage to enable HTTP,
-    proxy authentication, and ignoring SSL certificate errors when accessing web
-    pages:
+    We implement \c WebPage as a subclass of QWebEnginePage and \c WebView as
+    as subclass of QWebEngineView to enable HTTP, proxy authentication, as well
+    as ignoring SSL certificate errors when accessing web pages:
 
     \quotefromfile webenginewidgets/simplebrowser/webpage.h
     \skipto WebPage :
+    \printuntil }
+
+    \quotefromfile webenginewidgets/simplebrowser/webview.h
+    \skipto WebView :
     \printuntil }
 
     In all the cases above, we display the appropriate dialog to the user. In
     case of authentication, we need to set the correct credential values on the
     QAuthenticator object:
 
-    \quotefromfile webenginewidgets/simplebrowser/webpage.cpp
-    \skipto WebPage::handleAuthenticationRequired(
+    \quotefromfile webenginewidgets/simplebrowser/webview.cpp
+    \skipto WebView::handleAuthenticationRequired(
     \printuntil }
     \printuntil }
     \printline }
@@ -220,11 +223,15 @@
     The \c handleProxyAuthenticationRequired signal handler implements the very same
     steps for the authentication of HTTP proxies.
 
-    In case of SSL errors, we just need to return a boolean value indicating
-    whether the certificate should be ignored.
+    In case of SSL errors, we check whether they come from the main frame, or
+    from a resource inside the page. Resource errors automatically trigger a
+    certificate rejection, since a user won't have enough context to make a
+    decision. For all other cases, we trigger a dialog where the user can
+    allow or reject the certificate.
 
     \quotefromfile webenginewidgets/simplebrowser/webpage.cpp
-    \skipto WebPage::certificateError(
+    \skipto WebPage::handleCertificateError(
+    \printuntil }
     \printuntil }
     \printuntil }
 
@@ -276,13 +283,15 @@
     \skipto /^class Browser$/
     \printuntil public:
     \dots
+    \skipto createHiddenWindow
+    \printline createHiddenWindow
     \skipto createWindow
     \printline createWindow
     \skipto private:
     \printline private:
     \dots
-    \skipto m_otrProfile
-    \printline m_otrProfile
+    \skipto m_profile
+    \printline m_profile
     \printline /^\};$/
 
     Required profile for \e{private browsing} is created together with its
@@ -291,8 +300,8 @@
 
     \quotefromfile webenginewidgets/simplebrowser/browser.cpp
 
-    \skipto Browser::createWindow
-    \printuntil m_otrProfile.reset
+    \skipto Browser::createHiddenWindow
+    \printuntil m_profile.reset
     \dots
 
     All that is left to do is to pass the appropriate profile down to the
@@ -302,7 +311,7 @@
     \e{off-the-record} profile instance:
 
     \dots
-    \skipto m_otrProfile.get
+    \skipto m_profile.get
     \printuntil mainWindow = new BrowserWindow
     \skipto return mainWindow
     \printuntil /^\}/
@@ -314,7 +323,7 @@
 
     Downloads are associated with a \l QWebEngineProfile. Whenever a download is
     triggered on a web page the \l QWebEngineProfile::downloadRequested signal is
-    emitted with a \l QWebEngineDownloadItem, which in this example is forwarded
+    emitted with a \l QWebEngineDownloadRequest, which in this example is forwarded
     to \c DownloadManagerWidget::downloadRequested:
 
     \quotefromfile webenginewidgets/simplebrowser/browser.cpp
@@ -329,12 +338,43 @@
     \skipto DownloadManagerWidget::downloadRequested
     \printuntil /^\}/
 
-    The \l QWebEngineDownloadItem object will periodically emit the \l
-    {QWebEngineDownloadItem::}{downloadProgress} signal to notify potential
+    The \l QWebEngineDownloadRequest object will periodically emit the \l
+    {QWebEngineDownloadRequest::}{receivedBytesChanged} signal to notify potential
     observers of the download progress and the \l
-    {QWebEngineDownloadItem::}{stateChanged} signal when the download is
+    {QWebEngineDownloadRequest::}{stateChanged} signal when the download is
     finished or when an error occurs. See \c downloadmanagerwidget.cpp for an
     example of how these signals can be handled.
+
+    \section1 Managing WebAuth/FIDO UX Requests
+
+    WebAuth UX requests are associated with \l QWebEnginePage. Whenever an authenticator
+    requires user interaction, a UX request is triggered on the QWebEnginePage and
+    the \l QWebEnginePage::webAuthUxRequested signal is emitted with
+    \l QWebEngineWebAuthUxRequest, which in this example is forwarded
+    to \c WebView::handleAuthenticatorRequired:
+
+    \quotefromfile webenginewidgets/simplebrowser/webview.cpp
+    \skipto connect(page, &QWebEnginePage::webAuthUxRequested
+    \printline connect(page, &QWebEnginePage::webAuthUxRequested
+
+    This method creates a WebAuth UX dialog and initiates the UX request flow.
+
+    \quotefromfile webenginewidgets/simplebrowser/webview.cpp
+    \skipto void WebView::handleWebAuthUxRequested(QWebEngineWebAuthUxRequest *request)
+    \printuntil /^\}/
+
+    The \l QWebEngineWebAuthUxRequest object periodically emits the \l
+    {QWebEngineWebAuthUxRequest::}{stateChanged} signal to notify potential
+    observers of the current WebAuth UX states. The observers update the WebAuth
+    dialog accordingly. See \c webview.cpp and \c webauthdialog.cpp for an example
+    of how these signals can be handled.
+
+    \section1 Signing Requirement for macOS
+
+    To allow web sites access to the location, camera, and microphone when running
+    \e {Simple Browser} on macOS, the application needs to be signed. This is
+    done automatically when building, but you need to set up a valid signing identity
+    for the build environment.
 
     \section1 Files and Attributions
 

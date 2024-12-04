@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,8 +9,7 @@
 #include <lib/fdio/io.h>
 #include <lib/fdio/unsafe.h>
 #include <lib/zx/time.h>
-#include <zircon/status.h>
-#include <zircon/syscalls.h>
+#include <zircon/errors.h>
 
 #include "base/auto_reset.h"
 #include "base/fuchsia/fuchsia_logging.h"
@@ -78,11 +77,21 @@ void MessagePumpFuchsia::ZxHandleWatchController::HandleSignal(
     async_wait_t* wait,
     zx_status_t status,
     const zx_packet_signal_t* signal) {
-  TRACE_EVENT0("toplevel", "ZxHandleSignal");
-
   ZxHandleWatchController* controller =
       static_cast<ZxHandleWatchController*>(wait);
   DCHECK_EQ(controller->handler, &HandleSignal);
+
+  // Inform ThreadController of this native work item for tracking purposes.
+  // This call must precede the "ZxHandleSignal" trace event below as
+  // BeginWorkItem() might generate a top-level trace event for the thread if
+  // this is the first work item post-wakeup.
+  Delegate::ScopedDoWorkItem scoped_do_work_item;
+  if (controller->weak_pump_ && controller->weak_pump_->run_state_) {
+    scoped_do_work_item =
+        controller->weak_pump_->run_state_->delegate->BeginWorkItem();
+  }
+
+  TRACE_EVENT0("toplevel", "ZxHandleSignal");
 
   if (status != ZX_OK) {
     ZX_DLOG(WARNING, status) << "async wait failed: "
@@ -122,17 +131,20 @@ void MessagePumpFuchsia::FdWatchController::OnZxHandleSignalled(
   // case, we don't want to call both the CanWrite and CanRead callback,
   // when the caller asked for only, for example, readable callbacks. So,
   // mask with the events that we actually wanted to know about.
-  events &= desired_events_;
-  DCHECK_NE(0u, events);
+  //
+  // Note that errors are always included.
+  const uint32_t desired_events = desired_events_ | FDIO_EVT_ERROR;
+  const uint32_t filtered_events = events & desired_events;
+  DCHECK_NE(filtered_events, 0u) << events << " & " << desired_events;
 
   // Each |watcher_| callback we invoke may stop or delete |this|. The pump has
   // set |was_stopped_| to point to a safe location on the calling stack, so we
   // can use that to detect being stopped mid-callback and avoid doing further
   // work that would touch |this|.
   bool* was_stopped = was_stopped_;
-  if (events & FDIO_EVT_WRITABLE)
+  if (filtered_events & FDIO_EVT_WRITABLE)
     watcher_->OnFileCanWriteWithoutBlocking(fd_);
-  if (!*was_stopped && (events & FDIO_EVT_READABLE))
+  if (!*was_stopped && (filtered_events & FDIO_EVT_READABLE))
     watcher_->OnFileCanReadWithoutBlocking(fd_);
 
   // Don't add additional work here without checking |*was_stopped_| again.
@@ -263,22 +275,25 @@ bool MessagePumpFuchsia::HandleIoEventsUntil(zx_time_t deadline) {
       return false;
 
     default:
-      ZX_DLOG(DCHECK, status) << "unexpected wait status";
+      ZX_DLOG(FATAL, status) << "unexpected wait status";
       return false;
   }
 }
 
 void MessagePumpFuchsia::Run(Delegate* delegate) {
-  AutoReset<bool> auto_reset_keep_running(&keep_running_, true);
+  RunState run_state(delegate);
+  AutoReset<RunState*> auto_reset_run_state(&run_state_, &run_state);
 
   for (;;) {
     const Delegate::NextWorkInfo next_work_info = delegate->DoWork();
-    if (!keep_running_)
+    if (run_state.should_quit) {
       break;
+    }
 
     const bool did_handle_io_event = HandleIoEventsUntil(/*deadline=*/0);
-    if (!keep_running_)
+    if (run_state.should_quit) {
       break;
+    }
 
     bool attempt_more_work =
         next_work_info.is_immediate() || did_handle_io_event;
@@ -286,11 +301,14 @@ void MessagePumpFuchsia::Run(Delegate* delegate) {
       continue;
 
     attempt_more_work = delegate->DoIdleWork();
-    if (!keep_running_)
+    if (run_state.should_quit) {
       break;
+    }
 
     if (attempt_more_work)
       continue;
+
+    delegate->BeforeWait();
 
     zx_time_t deadline = next_work_info.delayed_run_time.is_max()
                              ? ZX_TIME_INFINITE
@@ -301,7 +319,8 @@ void MessagePumpFuchsia::Run(Delegate* delegate) {
 }
 
 void MessagePumpFuchsia::Quit() {
-  keep_running_ = false;
+  CHECK(run_state_);
+  run_state_->should_quit = true;
 }
 
 void MessagePumpFuchsia::ScheduleWork() {
@@ -310,7 +329,7 @@ void MessagePumpFuchsia::ScheduleWork() {
 }
 
 void MessagePumpFuchsia::ScheduleDelayedWork(
-    const TimeTicks& delayed_work_time) {
+    const Delegate::NextWorkInfo& next_work_info) {
   // Since this is always called from the same thread as Run(), there is nothing
   // to do as the loop is already running. It will wait in Run() with the
   // correct timeout when it's out of immediate tasks.

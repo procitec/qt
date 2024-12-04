@@ -1,16 +1,16 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "content/browser/indexed_db/indexed_db_tombstone_sweeper.h"
 
 #include <string>
+#include <string_view>
 
 #include "base/metrics/histogram_functions.h"
 #include "base/rand_util.h"
-#include "base/sequenced_task_runner.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/threading/sequenced_task_runner_handle.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/time/tick_clock.h"
 #include "components/services/storage/indexed_db/scopes/varint_coding.h"
 #include "content/browser/indexed_db/indexed_db_backing_store.h"
@@ -104,7 +104,7 @@ IndexedDBTombstoneSweeper::SweepState::~SweepState() = default;
 
 void IndexedDBTombstoneSweeper::Stop(StopReason reason) {
   leveldb::Status s;
-  RecordUMAStats(reason, base::nullopt, s);
+  RecordUMAStats(reason, std::nullopt, s);
 }
 
 bool IndexedDBTombstoneSweeper::RunRound() {
@@ -130,13 +130,13 @@ bool IndexedDBTombstoneSweeper::RunRound() {
   if (status == Status::SWEEPING)
     return false;
 
-  RecordUMAStats(base::nullopt, status, s);
+  RecordUMAStats(std::nullopt, status, s);
   return true;
 }
 
 void IndexedDBTombstoneSweeper::RecordUMAStats(
-    base::Optional<StopReason> stop_reason,
-    base::Optional<IndexedDBTombstoneSweeper::Status> status,
+    std::optional<StopReason> stop_reason,
+    std::optional<IndexedDBTombstoneSweeper::Status> status,
     const leveldb::Status& leveldb_error) {
   DCHECK(stop_reason || status);
   DCHECK(!stop_reason || !status);
@@ -162,6 +162,10 @@ void IndexedDBTombstoneSweeper::RecordUMAStats(
         break;
       case StopReason::METADATA_ERROR:
         NOTREACHED();
+        break;
+      case StopReason::FORCE_CLOSE:
+        uma_count_label.append("ForceClose");
+        uma_size_label.append("ForceClose");
         break;
     }
   } else if (status) {
@@ -302,7 +306,7 @@ IndexedDBTombstoneSweeper::Status IndexedDBTombstoneSweeper::DoSweep(
     size_t start_database_idx = static_cast<size_t>(
         sweep_state_.start_database_seed % database_metadata_->size());
     sweep_state_.database_it = WrappingIterator<DatabaseMetadataVector>(
-        database_metadata_, start_database_idx);
+        database_metadata_.get(), start_database_idx);
   }
   // Loop conditions facilitate starting at random index.
   for (; sweep_state_.database_it.value().IsValid();
@@ -345,9 +349,9 @@ IndexedDBTombstoneSweeper::Status IndexedDBTombstoneSweeper::DoSweep(
         if (!can_continue)
           return sweep_status;
       }
-      sweep_state_.index_it = base::nullopt;
+      sweep_state_.index_it = std::nullopt;
     }
-    sweep_state_.object_store_it = base::nullopt;
+    sweep_state_.object_store_it = std::nullopt;
   }
   return Status::DONE_COMPLETE;
 }
@@ -383,10 +387,10 @@ bool IndexedDBTombstoneSweeper::IterateIndex(
 
   while (iterator_->Valid()) {
     leveldb::Slice key_slice = iterator_->key();
-    base::StringPiece index_key_str = leveldb_env::MakeStringPiece(key_slice);
+    std::string_view index_key_str = leveldb_env::MakeStringView(key_slice);
     size_t key_size = index_key_str.size();
-    base::StringPiece index_value_str =
-        leveldb_env::MakeStringPiece(iterator_->value());
+    std::string_view index_value_str =
+        leveldb_env::MakeStringView(iterator_->value());
     size_t value_size = index_value_str.size();
     // See if we've reached the end of the current index or all indexes.
     sweep_state_.index_it_key.emplace(IndexDataKey());
@@ -410,7 +414,7 @@ bool IndexedDBTombstoneSweeper::IterateIndex(
       }
       continue;
     }
-    std::string encoded_primary_key = index_value_str.as_string();
+    std::string encoded_primary_key(index_value_str);
     std::string exists_key = ExistsEntryKey::Encode(
         database_id, object_store_id, encoded_primary_key);
 
@@ -426,7 +430,7 @@ bool IndexedDBTombstoneSweeper::IterateIndex(
       }
       continue;
     }
-    base::StringPiece exists_value_piece(exists_value);
+    std::string_view exists_value_piece(exists_value);
     int64_t decoded_exists_version;
     if (!DecodeInt(&exists_value_piece, &decoded_exists_version) ||
         !exists_value_piece.empty()) {
@@ -453,7 +457,7 @@ bool IndexedDBTombstoneSweeper::IterateIndex(
     }
   }
   ++indices_scanned_;
-  sweep_state_.index_it_key = base::nullopt;
+  sweep_state_.index_it_key = std::nullopt;
   return true;
 }
 

@@ -1,4 +1,4 @@
-# Copyright 2017 The Chromium Authors. All rights reserved.
+# Copyright 2017 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -7,6 +7,7 @@
 See http://dev.chromium.org/developers/how-tos/depottools/presubmit-scripts
 for more details on the presubmit API built into gcl.
 """
+
 
 UKM_XML = 'ukm.xml'
 
@@ -20,16 +21,16 @@ def CheckChange(input_api, output_api):
       cwd = input_api.os_path.dirname(p)
 
       exit_code = input_api.subprocess.call(
-          [input_api.python_executable, 'pretty_print.py', '--presubmit'],
+          [input_api.python3_executable, 'pretty_print.py', '--presubmit'],
           cwd=cwd)
       if exit_code != 0:
         return [
             output_api.PresubmitError(
-                '%s is not prettified; run git cl format to fix.' % UKM_XML),
+                '%s is not prettified; run `git cl format` to fix.' % UKM_XML),
         ]
 
       exit_code = input_api.subprocess.call(
-          [input_api.python_executable, 'validate_format.py', '--presubmit'],
+          [input_api.python3_executable, 'validate_format.py', '--presubmit'],
           cwd=cwd)
       if exit_code != 0:
         return [

@@ -31,13 +31,14 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_MODULES_FILESYSTEM_FILE_WRITER_BASE_H_
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_FILESYSTEM_FILE_WRITER_BASE_H_
 
-#include <memory>
 #include "base/files/file.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 
 namespace blink {
+
+class Blob;
 
 class MODULES_EXPORT FileWriterBase : public GarbageCollectedMixin {
  public:
@@ -50,7 +51,7 @@ class MODULES_EXPORT FileWriterBase : public GarbageCollectedMixin {
   void Trace(Visitor* visitor) const override {}
 
   virtual void Truncate(int64_t length);
-  virtual void Write(int64_t position, const String& id);
+  virtual void Write(int64_t position, const Blob& blob);
   virtual void Cancel();
 
  protected:
@@ -72,9 +73,7 @@ class MODULES_EXPORT FileWriterBase : public GarbageCollectedMixin {
   // the requested operation, and they must call the appropriate DidSomething
   // method upon completion and as progress is made in the Write case.
   virtual void DoTruncate(const KURL& path, int64_t offset) = 0;
-  virtual void DoWrite(const KURL& path,
-                       const String& blob_id,
-                       int64_t offset) = 0;
+  virtual void DoWrite(const KURL& path, const Blob& blob, int64_t offset) = 0;
   virtual void DoCancel() = 0;
 
   // These are conditionally called by the Did* methods.

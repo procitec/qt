@@ -1,23 +1,24 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include <algorithm>
 
-#include "base/bind.h"
-#include "base/callback.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/guid.h"
-#include "base/optional.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
+#include "base/functional/callback_helpers.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/test/test_simple_task_runner.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/uuid.h"
 #include "components/download/internal/background_service/driver_entry.h"
 #include "components/download/internal/background_service/entry.h"
 #include "components/download/internal/background_service/file_monitor_impl.h"
 #include "components/download/internal/background_service/test/entry_utils.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 using testing::_;
 
@@ -27,8 +28,11 @@ class FileMonitorTest : public testing::Test {
  public:
   FileMonitorTest()
       : task_runner_(new base::TestSimpleTaskRunner),
-        handle_(task_runner_),
+        current_default_handle_(task_runner_),
         completion_callback_called_(false) {}
+
+  FileMonitorTest(const FileMonitorTest&) = delete;
+  FileMonitorTest& operator=(const FileMonitorTest&) = delete;
 
   ~FileMonitorTest() override = default;
 
@@ -38,9 +42,7 @@ class FileMonitorTest : public testing::Test {
   void SetUp() override {
     EXPECT_TRUE(scoped_temp_dir_.CreateUniqueTempDir());
     download_dir_ = scoped_temp_dir_.GetPath();
-    base::TimeDelta keep_alive_time = base::TimeDelta::FromHours(12);
-    monitor_ = std::make_unique<FileMonitorImpl>(download_dir_, task_runner_,
-                                                 keep_alive_time);
+    monitor_ = std::make_unique<FileMonitorImpl>(download_dir_, task_runner_);
   }
 
   void TearDown() override { ASSERT_TRUE(scoped_temp_dir_.Delete()); }
@@ -50,15 +52,12 @@ class FileMonitorTest : public testing::Test {
 
   base::ScopedTempDir scoped_temp_dir_;
   scoped_refptr<base::TestSimpleTaskRunner> task_runner_;
-  base::ThreadTaskRunnerHandle handle_;
+  base::SingleThreadTaskRunner::CurrentDefaultHandle current_default_handle_;
   base::FilePath download_dir_;
   bool completion_callback_called_;
   std::unique_ptr<FileMonitor> monitor_;
 
-  base::Optional<bool> hard_recovery_result_;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(FileMonitorTest);
+  absl::optional<bool> hard_recovery_result_;
 };
 
 base::FilePath FileMonitorTest::CreateTemporaryFile(std::string file_name) {
@@ -75,10 +74,12 @@ void FileMonitorTest::HardRecoveryResponse(bool result) {
 }
 
 TEST_F(FileMonitorTest, TestDeleteUnknownFiles) {
-  Entry entry1 = test::BuildEntry(DownloadClient::TEST, base::GenerateGUID());
+  Entry entry1 = test::BuildEntry(
+      DownloadClient::TEST, base::Uuid::GenerateRandomV4().AsLowercaseString());
   entry1.target_file_path = CreateTemporaryFile(entry1.guid);
 
-  Entry entry2 = test::BuildEntry(DownloadClient::TEST, base::GenerateGUID());
+  Entry entry2 = test::BuildEntry(
+      DownloadClient::TEST, base::Uuid::GenerateRandomV4().AsLowercaseString());
   entry2.target_file_path = CreateTemporaryFile(entry2.guid);
 
   DriverEntry driver_entry1;
@@ -86,7 +87,7 @@ TEST_F(FileMonitorTest, TestDeleteUnknownFiles) {
   driver_entry1.current_file_path = entry1.target_file_path;
 
   DriverEntry driver_entry2;
-  driver_entry2.guid = base::GenerateGUID();
+  driver_entry2.guid = base::Uuid::GenerateRandomV4().AsLowercaseString();
   driver_entry2.current_file_path = CreateTemporaryFile(driver_entry2.guid);
 
   base::FilePath temp_file1 = CreateTemporaryFile("temp1");
@@ -107,35 +108,37 @@ TEST_F(FileMonitorTest, TestDeleteUnknownFiles) {
   std::vector<Entry*> entries = {&entry1, &entry2};
   std::vector<DriverEntry> driver_entries = {driver_entry1, driver_entry2};
 
-  monitor_->DeleteUnknownFiles(entries, driver_entries);
+  monitor_->DeleteUnknownFiles(entries, driver_entries, base::DoNothing());
   task_runner_->RunUntilIdle();
   check_file_existence(true, true, true, true, false, false);
 
   entries = {&entry2};
   driver_entries = {driver_entry1, driver_entry2};
-  monitor_->DeleteUnknownFiles(entries, driver_entries);
+  monitor_->DeleteUnknownFiles(entries, driver_entries, base::DoNothing());
   task_runner_->RunUntilIdle();
   check_file_existence(true, true, true, true, false, false);
 
   entries = {&entry2};
   driver_entries = {driver_entry2};
-  monitor_->DeleteUnknownFiles(entries, driver_entries);
+  monitor_->DeleteUnknownFiles(entries, driver_entries, base::DoNothing());
   task_runner_->RunUntilIdle();
   check_file_existence(false, true, false, true, false, false);
 
   entries.clear();
   driver_entries.clear();
-  monitor_->DeleteUnknownFiles(entries, driver_entries);
+  monitor_->DeleteUnknownFiles(entries, driver_entries, base::DoNothing());
   task_runner_->RunUntilIdle();
   check_file_existence(false, false, false, false, false, false);
 }
 
 TEST_F(FileMonitorTest, TestCleanupFilesForCompletedEntries) {
-  Entry entry1 = test::BuildEntry(DownloadClient::TEST, base::GenerateGUID());
+  Entry entry1 = test::BuildEntry(
+      DownloadClient::TEST, base::Uuid::GenerateRandomV4().AsLowercaseString());
   EXPECT_TRUE(
       base::CreateTemporaryFileInDir(download_dir_, &entry1.target_file_path));
 
-  Entry entry2 = test::BuildEntry(DownloadClient::TEST, base::GenerateGUID());
+  Entry entry2 = test::BuildEntry(
+      DownloadClient::TEST, base::Uuid::GenerateRandomV4().AsLowercaseString());
   EXPECT_TRUE(
       base::CreateTemporaryFileInDir(download_dir_, &entry2.target_file_path));
 

@@ -1,10 +1,11 @@
 OPTIONS /testdocument.html HTTP/1.1
-Accept-Language: en-US,*
-Content-Type: text/plain;charset=UTF-8
-Content-Length: 12
-Connection: Keep-Alive
-Accept-Encoding: gzip, deflate
-User-Agent: Mozilla/5.0
-Host: {{ServerHostUrl}}
+accept-language: {{Ignore}}
+content-type: text/plain;charset=UTF-8
+content-length: 13
+connection: Keep-Alive{{Ignore}}
+http2-settings: {{Ignore}}
+accept-encoding: {{Ignore}}
+user-agent: Mozilla/5.0
+host: {{ServerHostUrl}}
 
 My Sent Data

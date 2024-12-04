@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,8 +6,11 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_ANIMATION_INTERPOLABLE_LENGTH_H_
 
 #include <memory>
+
+#include "base/notreached.h"
 #include "third_party/blink/renderer/core/animation/interpolation_value.h"
 #include "third_party/blink/renderer/core/animation/pairwise_interpolation_value.h"
+#include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/css/css_primitive_value.h"
 #include "third_party/blink/renderer/platform/geometry/length.h"
 #include "third_party/blink/renderer/platform/heap/persistent.h"
@@ -20,41 +23,33 @@ class CSSMathExpressionNode;
 
 class CORE_EXPORT InterpolableLength final : public InterpolableValue {
  public:
-  ~InterpolableLength() final {}
   InterpolableLength(CSSLengthArray&& length_array);
   explicit InterpolableLength(const CSSMathExpressionNode& expression);
 
-  static std::unique_ptr<InterpolableLength> CreatePixels(double pixels);
-  static std::unique_ptr<InterpolableLength> CreatePercent(double pixels);
-  static std::unique_ptr<InterpolableLength> CreateNeutral();
+  static InterpolableLength* CreatePixels(double pixels);
+  static InterpolableLength* CreatePercent(double pixels);
+  static InterpolableLength* CreateNeutral();
 
-  static std::unique_ptr<InterpolableLength> MaybeConvertCSSValue(
-      const CSSValue& value);
-  static std::unique_ptr<InterpolableLength> MaybeConvertLength(
-      const Length& length,
-      float zoom);
+  static InterpolableLength* MaybeConvertCSSValue(const CSSValue& value);
+  static InterpolableLength* MaybeConvertLength(const Length& length,
+                                                float zoom);
 
-  static PairwiseInterpolationValue MergeSingles(
-      std::unique_ptr<InterpolableValue> start,
-      std::unique_ptr<InterpolableValue> end);
+  static PairwiseInterpolationValue MergeSingles(InterpolableValue* start,
+                                                 InterpolableValue* end);
 
   Length CreateLength(const CSSToLengthConversionData& conversion_data,
-                      ValueRange range) const;
+                      Length::ValueRange range) const;
 
   // Unlike CreateLength() this preserves all specified unit types via calc()
   // expressions.
-  const CSSPrimitiveValue* CreateCSSValue(ValueRange range) const;
+  const CSSPrimitiveValue* CreateCSSValue(Length::ValueRange range) const;
 
   void SetHasPercentage();
   bool HasPercentage() const;
   void SubtractFromOneHundredPercent();
 
-  std::unique_ptr<InterpolableLength> Clone() const {
-    return std::unique_ptr<InterpolableLength>(RawClone());
-  }
-  std::unique_ptr<InterpolableLength> CloneAndZero() const {
-    return std::unique_ptr<InterpolableLength>(RawCloneAndZero());
-  }
+  InterpolableLength* Clone() const { return RawClone(); }
+  InterpolableLength* CloneAndZero() const { return RawCloneAndZero(); }
 
   // InterpolableValue:
   void Interpolate(const InterpolableValue& to,
@@ -71,10 +66,12 @@ class CORE_EXPORT InterpolableLength final : public InterpolableValue {
   void ScaleAndAdd(double scale, const InterpolableValue& other) final;
   void AssertCanInterpolateWith(const InterpolableValue& other) const final;
 
+  void Trace(Visitor* v) const override;
+
  private:
   InterpolableLength* RawClone() const final;
   InterpolableLength* RawCloneAndZero() const final {
-    return new InterpolableLength(CSSLengthArray());
+    return MakeGarbageCollected<InterpolableLength>(CSSLengthArray());
   }
 
   bool IsLengthArray() const { return type_ == Type::kLengthArray; }
@@ -87,7 +84,7 @@ class CORE_EXPORT InterpolableLength final : public InterpolableValue {
   enum class Type { kLengthArray, kExpression };
   Type type_;
   CSSLengthArray length_array_;
-  Persistent<const CSSMathExpressionNode> expression_;
+  Member<const CSSMathExpressionNode> expression_;
 };
 
 template <>

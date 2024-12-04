@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -27,23 +27,22 @@ ReceiverRtcpSession::ReceiverRtcpSession(const base::TickClock* clock,
 
 ReceiverRtcpSession::~ReceiverRtcpSession() = default;
 
-bool ReceiverRtcpSession::IncomingRtcpPacket(const uint8_t* data,
-                                             size_t length) {
+bool ReceiverRtcpSession::IncomingRtcpPacket(base::span<const uint8_t> data) {
   // Check if this is a valid RTCP packet.
-  if (!IsRtcpPacket(data, length)) {
+  if (!IsRtcpPacket(data)) {
     VLOG(1) << "Rtcp@" << this << "::IncomingRtcpPacket() -- "
             << "Received an invalid (non-RTCP?) packet.";
     return false;
   }
 
   // Check if this packet is to us.
-  uint32_t ssrc_of_sender = GetSsrcOfSender(data, length);
+  uint32_t ssrc_of_sender = GetSsrcOfSender(data);
   if (ssrc_of_sender != remote_ssrc_) {
     return false;
   }
 
   // Parse this packet.
-  base::BigEndianReader reader(reinterpret_cast<const char*>(data), length);
+  base::BigEndianReader reader(data);
   if (parser_.Parse(&reader)) {
     if (parser_.has_sender_report()) {
       OnReceivedNtp(parser_.sender_report().ntp_seconds,
@@ -63,11 +62,6 @@ void ReceiverRtcpSession::OnReceivedNtp(uint32_t ntp_seconds,
   const base::TimeTicks now = clock_->NowTicks();
   time_last_report_received_ = now;
 
-  // TODO(miu): This clock offset calculation does not account for packet
-  // transit time over the network.  End2EndTest.EvilNetwork confirms that this
-  // contributes a very significant source of error here.  Determine whether
-  // RTT should be factored-in, and how that changes the rest of the
-  // calculation.
   const base::TimeDelta measured_offset =
       now - ConvertNtpToTimeTicks(ntp_seconds, ntp_fraction);
   local_clock_ahead_by_.Update(now, measured_offset);
@@ -87,10 +81,7 @@ void ReceiverRtcpSession::OnReceivedNtp(uint32_t ntp_seconds,
 void ReceiverRtcpSession::OnReceivedLipSyncInfo(RtpTimeTicks rtp_timestamp,
                                                 uint32_t ntp_seconds,
                                                 uint32_t ntp_fraction) {
-  if (ntp_seconds == 0) {
-    NOTREACHED();
-    return;
-  }
+  CHECK_GT(ntp_seconds, 0u);
   lip_sync_rtp_timestamp_ = rtp_timestamp;
   lip_sync_ntp_timestamp_ =
       (static_cast<uint64_t>(ntp_seconds) << 32) | ntp_fraction;
@@ -109,8 +100,7 @@ bool ReceiverRtcpSession::GetLatestLipSyncTimes(
       local_clock_ahead_by_.Current();
 
   // Sanity-check: Getting regular lip sync updates?
-  DCHECK((clock_->NowTicks() - local_reference_time) <
-         base::TimeDelta::FromMinutes(1));
+  DCHECK((clock_->NowTicks() - local_reference_time) < base::Minutes(1));
 
   *rtp_timestamp = lip_sync_rtp_timestamp_;
   *reference_time = local_reference_time;

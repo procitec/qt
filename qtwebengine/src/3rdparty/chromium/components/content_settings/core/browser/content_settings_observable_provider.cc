@@ -1,8 +1,9 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/content_settings/core/browser/content_settings_observable_provider.h"
+#include "base/observer_list.h"
 
 namespace content_settings {
 
@@ -10,11 +11,9 @@ namespace content_settings {
 // ObservableProvider
 //
 
-ObservableProvider::ObservableProvider() {
-}
+ObservableProvider::ObservableProvider() {}
 
-ObservableProvider::~ObservableProvider() {
-}
+ObservableProvider::~ObservableProvider() {}
 
 void ObservableProvider::AddObserver(Observer* observer) {
   observer_list_.AddObserver(observer);
@@ -28,10 +27,19 @@ void ObservableProvider::NotifyObservers(
     const ContentSettingsPattern& primary_pattern,
     const ContentSettingsPattern& secondary_pattern,
     ContentSettingsType content_type,
-    const std::string& resource_identifier) {
+    const PartitionKey* partition_key) {
+  DCHECK(primary_pattern.IsValid())
+      << "pattern: " << primary_pattern.ToString();
+  DCHECK(secondary_pattern.IsValid())
+      << "pattern: " << secondary_pattern.ToString();
   for (Observer& observer : observer_list_) {
     observer.OnContentSettingChanged(primary_pattern, secondary_pattern,
-                                     content_type, resource_identifier);
+                                     ContentSettingsTypeSet(content_type),
+                                     partition_key);
+    observer.OnContentSettingChanged(primary_pattern, secondary_pattern,
+                                     ContentSettingsTypeSet(content_type));
+    observer.OnContentSettingChanged(primary_pattern, secondary_pattern,
+                                     content_type);
   }
 }
 

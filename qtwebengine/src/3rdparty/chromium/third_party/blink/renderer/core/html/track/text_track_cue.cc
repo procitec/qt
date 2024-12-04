@@ -32,6 +32,7 @@
 #include "third_party/blink/renderer/core/html/track/text_track_cue.h"
 
 #include "third_party/blink/renderer/core/dom/events/event.h"
+#include "third_party/blink/renderer/core/event_target_names.h"
 #include "third_party/blink/renderer/core/html/track/text_track.h"
 #include "third_party/blink/renderer/core/html/track/text_track_cue_list.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
@@ -59,7 +60,7 @@ void TextTrackCue::CueDidChange(CueMutationAffectsOrder affects_order) {
 }
 
 TextTrack* TextTrackCue::track() const {
-  return track_;
+  return track_.Get();
 }
 
 void TextTrackCue::SetTrack(TextTrack* track) {
@@ -122,7 +123,7 @@ unsigned TextTrackCue::CueIndex() {
 
 DispatchEventResult TextTrackCue::DispatchEventInternal(Event& event) {
   // When a TextTrack's mode is disabled: no cues are active, no events fired.
-  if (!track() || track()->mode() == TextTrack::DisabledKeyword())
+  if (!track() || track()->mode() == TextTrackMode::kDisabled)
     return DispatchEventResult::kCanceledBeforeDispatch;
 
   return EventTarget::DispatchEventInternal(event);
@@ -134,7 +135,7 @@ const AtomicString& TextTrackCue::InterfaceName() const {
 
 void TextTrackCue::Trace(Visitor* visitor) const {
   visitor->Trace(track_);
-  EventTargetWithInlineData::Trace(visitor);
+  EventTarget::Trace(visitor);
 }
 
 }  // namespace blink

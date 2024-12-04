@@ -1,4 +1,4 @@
-// Copyright (c) 2011 The Chromium Authors. All rights reserved.
+// Copyright 2011 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -23,7 +23,7 @@ namespace {
 
 FilePath GetTestDataPath() {
   FilePath path;
-  base::PathService::Get(base::DIR_SOURCE_ROOT, &path);
+  base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &path);
   path = path.AppendASCII("base");
   path = path.AppendASCII("test");
   path = path.AppendASCII("data");
@@ -105,25 +105,25 @@ TYPED_TEST(FileVersionInfoTest, HardCodedProperties) {
 
   int j = 0;
   EXPECT_EQ(kExpectedValues[j++],
-            base::AsWStringPiece(version_info->company_name()));
+            base::AsWStringView(version_info->company_name()));
   EXPECT_EQ(kExpectedValues[j++],
-            base::AsWStringPiece(version_info->company_short_name()));
+            base::AsWStringView(version_info->company_short_name()));
   EXPECT_EQ(kExpectedValues[j++],
-            base::AsWStringPiece(version_info->product_name()));
+            base::AsWStringView(version_info->product_name()));
   EXPECT_EQ(kExpectedValues[j++],
-            base::AsWStringPiece(version_info->product_short_name()));
+            base::AsWStringView(version_info->product_short_name()));
   EXPECT_EQ(kExpectedValues[j++],
-            base::AsWStringPiece(version_info->internal_name()));
+            base::AsWStringView(version_info->internal_name()));
   EXPECT_EQ(kExpectedValues[j++],
-            base::AsWStringPiece(version_info->product_version()));
+            base::AsWStringView(version_info->product_version()));
   EXPECT_EQ(kExpectedValues[j++],
-            base::AsWStringPiece(version_info->special_build()));
+            base::AsWStringView(version_info->special_build()));
   EXPECT_EQ(kExpectedValues[j++],
-            base::AsWStringPiece(version_info->original_filename()));
+            base::AsWStringView(version_info->original_filename()));
   EXPECT_EQ(kExpectedValues[j++],
-            base::AsWStringPiece(version_info->file_description()));
+            base::AsWStringView(version_info->file_description()));
   EXPECT_EQ(kExpectedValues[j++],
-            base::AsWStringPiece(version_info->file_version()));
+            base::AsWStringView(version_info->file_version()));
 }
 
 TYPED_TEST(FileVersionInfoTest, CustomProperties) {
@@ -135,35 +135,26 @@ TYPED_TEST(FileVersionInfoTest, CustomProperties) {
   ASSERT_TRUE(version_info);
 
   // Test few existing properties.
-  base::string16 str;
+  std::u16string str;
   FileVersionInfoWin* version_info_win =
       static_cast<FileVersionInfoWin*>(version_info.get());
-  EXPECT_TRUE(
-      version_info_win->GetValue(STRING16_LITERAL("Custom prop 1"), &str));
-  EXPECT_EQ(STRING16_LITERAL("Un"), str);
-  EXPECT_EQ(STRING16_LITERAL("Un"), version_info_win->GetStringValue(
-                                        STRING16_LITERAL("Custom prop 1")));
+  EXPECT_TRUE(version_info_win->GetValue(u"Custom prop 1", &str));
+  EXPECT_EQ(u"Un", str);
+  EXPECT_EQ(u"Un", version_info_win->GetStringValue(u"Custom prop 1"));
 
-  EXPECT_TRUE(
-      version_info_win->GetValue(STRING16_LITERAL("Custom prop 2"), &str));
-  EXPECT_EQ(STRING16_LITERAL("Deux"), str);
-  EXPECT_EQ(STRING16_LITERAL("Deux"), version_info_win->GetStringValue(
-                                          STRING16_LITERAL("Custom prop 2")));
+  EXPECT_TRUE(version_info_win->GetValue(u"Custom prop 2", &str));
+  EXPECT_EQ(u"Deux", str);
+  EXPECT_EQ(u"Deux", version_info_win->GetStringValue(u"Custom prop 2"));
 
-  EXPECT_TRUE(
-      version_info_win->GetValue(STRING16_LITERAL("Custom prop 3"), &str));
-  EXPECT_EQ(
-      STRING16_LITERAL("1600 Amphitheatre Parkway Mountain View, CA 94043"),
-      str);
-  EXPECT_EQ(
-      STRING16_LITERAL("1600 Amphitheatre Parkway Mountain View, CA 94043"),
-      version_info_win->GetStringValue(STRING16_LITERAL("Custom prop 3")));
+  EXPECT_TRUE(version_info_win->GetValue(u"Custom prop 3", &str));
+  EXPECT_EQ(u"1600 Amphitheatre Parkway Mountain View, CA 94043", str);
+  EXPECT_EQ(u"1600 Amphitheatre Parkway Mountain View, CA 94043",
+            version_info_win->GetStringValue(u"Custom prop 3"));
 
   // Test an non-existing property.
-  EXPECT_FALSE(
-      version_info_win->GetValue(STRING16_LITERAL("Unknown property"), &str));
-  EXPECT_EQ(base::string16(), version_info_win->GetStringValue(
-                                  STRING16_LITERAL("Unknown property")));
+  EXPECT_FALSE(version_info_win->GetValue(u"Unknown property", &str));
+  EXPECT_EQ(std::u16string(),
+            version_info_win->GetStringValue(u"Unknown property"));
 
   EXPECT_EQ(base::Version(std::vector<uint32_t>{1, 0, 0, 1}),
             version_info_win->GetFileVersion());

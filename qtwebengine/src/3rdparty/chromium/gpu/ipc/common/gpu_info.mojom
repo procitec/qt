@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,6 +10,8 @@ import "gpu/ipc/common/dx_diag_node.mojom";
 import "gpu/ipc/common/luid.mojom";
 import "mojo/public/mojom/base/time.mojom";
 import "ui/gfx/geometry/mojom/geometry.mojom";
+import "ui/gl/mojom/gl_implementation.mojom";
+import "ui/gl/mojom/gpu_preference.mojom";
 
 [EnableIf=supports_vulkan]
 import "gpu/ipc/common/vulkan_info.mojom";
@@ -20,7 +22,7 @@ struct GpuDevice {
   uint32 device_id;
   [EnableIf=is_win]
   uint32 sub_sys_id;
-  [EnableIf=is_win]
+  [EnableIf=has_gpu_revision_info]
   uint32 revision;
   bool active;
   string vendor_string;
@@ -30,6 +32,7 @@ struct GpuDevice {
   int32 cuda_compute_capability_major;
   [EnableIf=is_win]
   Luid luid;
+  gl.mojom.GpuPreference gpu_preference;
 };
 
 // gpu::VideoCodecProfile
@@ -55,8 +58,8 @@ enum VideoCodecProfile {
   HEVCPROFILE_MAIN10,
   HEVCPROFILE_MAIN_STILL_PICTURE,
   DOLBYVISION_PROFILE0,
-  DOLBYVISION_PROFILE4,
-  DOLBYVISION_PROFILE5,
+  // Deprecated: DOLBYVISION_PROFILE4 = 20,
+  DOLBYVISION_PROFILE5 = 21,
   DOLBYVISION_PROFILE7,
   THEORAPROFILE_ANY,
   AV1PROFILE_PROFILE_MAIN,
@@ -64,6 +67,29 @@ enum VideoCodecProfile {
   AV1PROFILE_PROFILE_PRO,
   DOLBYVISION_PROFILE8,
   DOLBYVISION_PROFILE9,
+  HEVCPROFILE_REXT,
+  HEVCPROFILE_HIGH_THROUGHPUT,
+  HEVCPROFILE_MULTIVIEW_MAIN,
+  HEVCPROFILE_SCALABLE_MAIN,
+  HEVCPROFILE_3D_MAIN,
+  HEVCPROFILE_SCREEN_EXTENDED,
+  HEVCPROFILE_SCALABLE_REXT,
+  HEVCPROFILE_HIGH_THROUGHPUT_SCREEN_EXTENDED,
+  VVCPROFILE_MAIN10,
+  VVCPROFILE_MAIN12,
+  VVCPROFILE_MAIN12_INTRA,
+  VVCPROIFLE_MULTILAYER_MAIN10,
+  VVCPROFILE_MAIN10_444,
+  VVCPROFILE_MAIN12_444,
+  VVCPROFILE_MAIN16_444,
+  VVCPROFILE_MAIN12_444_INTRA,
+  VVCPROFILE_MAIN16_444_INTRA,
+  VVCPROFILE_MULTILAYER_MAIN10_444,
+  VVCPROFILE_MAIN10_STILL_PICTURE,
+  VVCPROFILE_MAIN12_STILL_PICTURE,
+  VVCPROFILE_MAIN10_444_STILL_PICTURE,
+  VVCPROFILE_MAIN12_444_STILL_PICTURE,
+  VVCPROFILE_MAIN16_444_STILL_PICTURE,
 };
 
 // gpu::VideoDecodeAcceleratorSupportedProfile
@@ -143,6 +169,7 @@ struct GpuInfo {
   string max_msaa_samples;
   string machine_model_name;
   string machine_model_version;
+  string display_type;
   string gl_version;
   string gl_vendor;
   string gl_renderer;
@@ -151,7 +178,7 @@ struct GpuInfo {
   string gl_ws_version;
   string gl_ws_extensions;
   uint32 gl_reset_notification_strategy;
-  bool software_rendering;
+  gl.mojom.GLImplementationParts gl_implementation_parts;
   string direct_rendering_version;
   bool sandboxed;
   bool in_process_gpu;
@@ -169,8 +196,11 @@ struct GpuInfo {
   uint32 vulkan_version;
   [EnableIf=is_win]
   OverlayInfo overlay_info;
+  [EnableIf=is_win]
+  bool shared_image_d3d;
 
-  VideoDecodeAcceleratorCapabilities video_decode_accelerator_capabilities;
+  array<VideoDecodeAcceleratorSupportedProfile>
+    video_decode_accelerator_supported_profiles;
   array<VideoEncodeAcceleratorSupportedProfile>
     video_encode_accelerator_supported_profiles;
   bool jpeg_decode_accelerator_supported;
@@ -178,8 +208,8 @@ struct GpuInfo {
   array<ImageDecodeAcceleratorSupportedProfile>
     image_decode_accelerator_supported_profiles;
 
-  bool oop_rasterization_supported;
   bool subpixel_font_rendering;
+  uint32 visibility_callback_call_count;
 
   [EnableIf=supports_vulkan]
   VulkanInfo? vulkan_info;

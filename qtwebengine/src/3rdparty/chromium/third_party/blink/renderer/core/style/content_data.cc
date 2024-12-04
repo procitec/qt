@@ -24,6 +24,7 @@
 
 #include <memory>
 #include "third_party/blink/renderer/core/dom/pseudo_element.h"
+#include "third_party/blink/renderer/core/dom/tree_scope.h"
 #include "third_party/blink/renderer/core/layout/layout_counter.h"
 #include "third_party/blink/renderer/core/layout/layout_image.h"
 #include "third_party/blink/renderer/core/layout/layout_image_resource.h"
@@ -31,6 +32,7 @@
 #include "third_party/blink/renderer/core/layout/layout_quote.h"
 #include "third_party/blink/renderer/core/layout/layout_text_fragment.h"
 #include "third_party/blink/renderer/core/style/computed_style.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 
 namespace blink {
 
@@ -54,10 +56,10 @@ void ContentData::Trace(Visitor* visitor) const {
 
 LayoutObject* ImageContentData::CreateLayoutObject(
     PseudoElement& pseudo,
-    const ComputedStyle& pseudo_style,
-    LegacyLayout) const {
+    const ComputedStyle& pseudo_style) const {
   LayoutImage* image = LayoutImage::CreateAnonymous(pseudo);
-  image->SetPseudoElementStyle(&pseudo_style);
+  bool match_parent_size = image_ && image_->IsGeneratedImage();
+  image->SetPseudoElementStyle(&pseudo_style, match_parent_size);
   if (image_) {
     image->SetImageResource(
         MakeGarbageCollected<LayoutImageResourceStyleImage>(image_.Get()));
@@ -74,18 +76,16 @@ void ImageContentData::Trace(Visitor* visitor) const {
 
 LayoutObject* TextContentData::CreateLayoutObject(
     PseudoElement& pseudo,
-    const ComputedStyle& pseudo_style,
-    LegacyLayout legacy) const {
+    const ComputedStyle& pseudo_style) const {
   LayoutObject* layout_object =
-      LayoutTextFragment::CreateAnonymous(pseudo, text_.Impl(), legacy);
+      LayoutTextFragment::CreateAnonymous(pseudo, text_);
   layout_object->SetPseudoElementStyle(&pseudo_style);
   return layout_object;
 }
 
 LayoutObject* AltTextContentData::CreateLayoutObject(
     PseudoElement& pseudo,
-    const ComputedStyle& pseudo_style,
-    LegacyLayout) const {
+    const ComputedStyle& pseudo_style) const {
   // Does not require a layout object. Calling site should first check
   // IsAltContentData() before calling this method.
   NOTREACHED();
@@ -94,26 +94,30 @@ LayoutObject* AltTextContentData::CreateLayoutObject(
 
 LayoutObject* CounterContentData::CreateLayoutObject(
     PseudoElement& pseudo,
-    const ComputedStyle& pseudo_style,
-    LegacyLayout) const {
-  LayoutObject* layout_object = new LayoutCounter(pseudo, *counter_);
+    const ComputedStyle& pseudo_style) const {
+  LayoutObject* layout_object =
+      MakeGarbageCollected<LayoutCounter>(pseudo, *this);
   layout_object->SetPseudoElementStyle(&pseudo_style);
   return layout_object;
 }
 
+void CounterContentData::Trace(Visitor* visitor) const {
+  visitor->Trace(tree_scope_);
+  ContentData::Trace(visitor);
+}
+
 LayoutObject* QuoteContentData::CreateLayoutObject(
     PseudoElement& pseudo,
-    const ComputedStyle& pseudo_style,
-    LegacyLayout) const {
-  LayoutObject* layout_object = new LayoutQuote(pseudo, quote_);
+    const ComputedStyle& pseudo_style) const {
+  LayoutObject* layout_object =
+      MakeGarbageCollected<LayoutQuote>(pseudo, quote_);
   layout_object->SetPseudoElementStyle(&pseudo_style);
   return layout_object;
 }
 
 LayoutObject* NoneContentData::CreateLayoutObject(
     PseudoElement& pseudo,
-    const ComputedStyle& pseudo_style,
-    LegacyLayout) const {
+    const ComputedStyle& pseudo_style) const {
   NOTREACHED();
   return nullptr;
 }

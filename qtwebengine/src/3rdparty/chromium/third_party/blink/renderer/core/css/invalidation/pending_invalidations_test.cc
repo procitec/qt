@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,6 +9,7 @@
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/html/html_element.h"
 #include "third_party/blink/renderer/core/testing/dummy_page_holder.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 
 namespace blink {
 
@@ -23,24 +24,25 @@ class PendingInvalidationsTest : public testing::Test {
   }
 
  private:
+  test::TaskEnvironment task_environment_;
   std::unique_ptr<DummyPageHolder> dummy_page_holder_;
 };
 
 void PendingInvalidationsTest::SetUp() {
-  dummy_page_holder_ = std::make_unique<DummyPageHolder>(IntSize(800, 600));
+  dummy_page_holder_ = std::make_unique<DummyPageHolder>(gfx::Size(800, 600));
 }
 
 TEST_F(PendingInvalidationsTest, ScheduleOnDocumentNode) {
   GetDocument().body()->setInnerHTML(
       "<div id='d'></div><i id='i'></i><span></span>");
-  GetDocument().View()->UpdateAllLifecyclePhases(DocumentUpdateReason::kTest);
+  GetDocument().View()->UpdateAllLifecyclePhasesForTest();
 
   unsigned before_count = GetStyleEngine().StyleForElementCount();
 
   scoped_refptr<DescendantInvalidationSet> set =
       DescendantInvalidationSet::Create();
-  set->AddTagName("div");
-  set->AddTagName("span");
+  set->AddTagName(AtomicString("div"));
+  set->AddTagName(AtomicString("span"));
 
   InvalidationLists lists;
   lists.descendants.push_back(set);
@@ -57,7 +59,7 @@ TEST_F(PendingInvalidationsTest, ScheduleOnDocumentNode) {
   EXPECT_FALSE(GetDocument().NeedsStyleRecalc());
   EXPECT_TRUE(GetStyleEngine().NeedsStyleRecalc());
 
-  GetDocument().View()->UpdateAllLifecyclePhases(DocumentUpdateReason::kTest);
+  GetDocument().View()->UpdateAllLifecyclePhasesForTest();
   unsigned after_count = GetStyleEngine().StyleForElementCount();
   EXPECT_EQ(2u, after_count - before_count);
 }
@@ -74,10 +76,12 @@ TEST_F(PendingInvalidationsTest, DescendantInvalidationOnDisplayNone) {
     </div>
   )HTML");
 
-  GetDocument().View()->UpdateAllLifecyclePhases(DocumentUpdateReason::kTest);
+  GetDocument().View()->UpdateAllLifecyclePhasesForTest();
 
   // We skip scheduling descendant invalidations on display:none elements.
-  GetDocument().getElementById("a")->setAttribute(html_names::kClassAttr, "a");
+  GetDocument()
+      .getElementById(AtomicString("a"))
+      ->setAttribute(html_names::kClassAttr, AtomicString("a"));
   EXPECT_FALSE(GetDocument().NeedsLayoutTreeUpdate());
 }
 

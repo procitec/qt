@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,23 +8,23 @@
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreMedia/CoreMedia.h>
 
-#include "base/optional.h"
+#include "base/apple/scoped_cftyperef.h"
+#include "base/containers/span.h"
 #include "media/base/video_codecs.h"
 #include "media/base/video_color_space.h"
 #include "media/gpu/media_gpu_export.h"
-#include "media/video/video_decode_accelerator.h"
-#include "ui/gl/hdr_metadata.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "ui/gfx/hdr_metadata.h"
 
 namespace media {
 
-MEDIA_GPU_EXPORT CFMutableDictionaryRef
+MEDIA_GPU_EXPORT base::apple::ScopedCFTypeRef<CFDictionaryRef>
 CreateFormatExtensions(CMVideoCodecType codec_type,
                        VideoCodecProfile profile,
+                       int bit_depth,
                        const VideoColorSpace& color_space,
-                       base::Optional<gl::HDRMetadata> hdr_metadata);
-
-MEDIA_GPU_EXPORT gfx::ColorSpace GetImageBufferColorSpace(
-    CVImageBufferRef image_buffer);
+                       absl::optional<gfx::HDRMetadata> hdr_metadata,
+                       absl::optional<base::span<const uint8_t>> csd_box);
 
 }  // namespace media
 

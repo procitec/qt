@@ -1,32 +1,6 @@
-/*
- * Copyright (C) 2013 Google Inc. All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are
- * met:
- *
- *     * Redistributions of source code must retain the above copyright
- * notice, this list of conditions and the following disclaimer.
- *     * Redistributions in binary form must reproduce the above
- * copyright notice, this list of conditions and the following disclaimer
- * in the documentation and/or other materials provided with the
- * distribution.
- *     * Neither the name of Google Inc. nor the names of its
- * contributors may be used to endorse or promote products derived from
- * this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- */
+// Copyright 2013 The Chromium Authors
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
 
 #include "third_party/blink/renderer/platform/image-decoders/image_decoder.h"
 
@@ -34,8 +8,8 @@
 #include "build/build_config.h"
 #include "media/media_buildflags.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/renderer/platform/image-decoders/image_frame.h"
+#include "third_party/blink/renderer/platform/wtf/forward.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
 namespace blink {
@@ -44,31 +18,34 @@ class TestImageDecoder : public ImageDecoder {
  public:
   explicit TestImageDecoder(
       ImageDecoder::HighBitDepthDecodingOption high_bit_depth_decoding_option,
-      size_t max_decoded_bytes = kNoDecodedImageByteLimit)
+      wtf_size_t max_decoded_bytes = kNoDecodedImageByteLimit)
       : ImageDecoder(kAlphaNotPremultiplied,
                      high_bit_depth_decoding_option,
-                     ColorBehavior::TransformToSRGB(),
+                     ColorBehavior::kTransformToSRGB,
                      max_decoded_bytes) {}
 
   TestImageDecoder() : TestImageDecoder(ImageDecoder::kDefaultBitDepth) {}
 
   String FilenameExtension() const override { return ""; }
+  const AtomicString& MimeType() const override { return g_empty_atom; }
 
   Vector<ImageFrame, 1>& FrameBufferCache() { return frame_buffer_cache_; }
 
   void ResetRequiredPreviousFrames(bool known_opaque = false) {
-    for (size_t i = 0; i < frame_buffer_cache_.size(); ++i)
+    for (size_t i = 0; i < frame_buffer_cache_.size(); ++i) {
       frame_buffer_cache_[i].SetRequiredPreviousFrameIndex(
           FindRequiredPreviousFrame(i, known_opaque));
+    }
   }
 
-  void InitFrames(size_t num_frames,
+  void InitFrames(wtf_size_t num_frames,
                   unsigned width = 100,
                   unsigned height = 100) {
     SetSize(width, height);
     frame_buffer_cache_.resize(num_frames);
-    for (size_t i = 0; i < num_frames; ++i)
-      frame_buffer_cache_[i].SetOriginalFrameRect(IntRect(0, 0, width, height));
+    for (wtf_size_t i = 0; i < num_frames; ++i) {
+      frame_buffer_cache_[i].SetOriginalFrameRect(gfx::Rect(width, height));
+    }
   }
 
   bool ImageIsHighBitDepth() override { return image_is_high_bit_depth_; }
@@ -77,7 +54,7 @@ class TestImageDecoder : public ImageDecoder {
  private:
   bool image_is_high_bit_depth_ = false;
   void DecodeSize() override {}
-  void Decode(size_t index) override {}
+  void Decode(wtf_size_t index) override {}
 };
 
 TEST(ImageDecoderTest, sizeCalculationMayOverflow) {
@@ -98,12 +75,14 @@ TEST(ImageDecoderTest, sizeCalculationMayOverflow) {
       } else {
         decoder = std::make_unique<TestImageDecoder>();
       }
-      if (high_bit_depth_image)
+      if (high_bit_depth_image) {
         decoder->SetImageToHighBitDepthForTest();
+      }
 
       unsigned log_pixel_size = 2;  // pixel is 4 bytes
-      if (high_bit_depth_decoder && high_bit_depth_image)
+      if (high_bit_depth_decoder && high_bit_depth_image) {
         log_pixel_size = 3;  // pixel is 8 byts
+      }
       unsigned overflow_dim_shift = 31 - log_pixel_size;
       unsigned overflow_dim_shift_half = (overflow_dim_shift + 1) / 2;
 
@@ -158,7 +137,7 @@ TEST(ImageDecoderTest, requiredPreviousFrameIndexDisposeOverwriteBgcolor) {
 
   // Partially covering DisposeOverwriteBgcolor previous frame is required by
   // this frame.
-  frame_buffers[1].SetOriginalFrameRect(IntRect(50, 50, 50, 50));
+  frame_buffers[1].SetOriginalFrameRect(gfx::Rect(50, 50, 50, 50));
   decoder->ResetRequiredPreviousFrames();
   EXPECT_EQ(1u, frame_buffers[2].RequiredPreviousFrameIndex());
 }
@@ -182,7 +161,7 @@ TEST(ImageDecoderTest, requiredPreviousFrameIndexForFrame1) {
   EXPECT_EQ(kNotFound, frame_buffers[1].RequiredPreviousFrameIndex());
 
   // ... even if it partially covers.
-  frame_buffers[0].SetOriginalFrameRect(IntRect(50, 50, 50, 50));
+  frame_buffers[0].SetOriginalFrameRect(gfx::Rect(50, 50, 50, 50));
 
   frame_buffers[0].SetDisposalMethod(ImageFrame::kDisposeOverwritePrevious);
   decoder->ResetRequiredPreviousFrames();
@@ -198,7 +177,7 @@ TEST(ImageDecoderTest, requiredPreviousFrameIndexBlendAtopBgcolor) {
   decoder->InitFrames(3);
   Vector<ImageFrame, 1>& frame_buffers = decoder->FrameBufferCache();
 
-  frame_buffers[1].SetOriginalFrameRect(IntRect(25, 25, 50, 50));
+  frame_buffers[1].SetOriginalFrameRect(gfx::Rect(25, 25, 50, 50));
   frame_buffers[2].SetAlphaBlendSource(ImageFrame::kBlendAtopBgcolor);
 
   // A full frame with 'blending method == BlendAtopBgcolor' doesn't depend on
@@ -214,7 +193,7 @@ TEST(ImageDecoderTest, requiredPreviousFrameIndexBlendAtopBgcolor) {
 
   // A non-full frame with 'blending method == BlendAtopBgcolor' does depend on
   // a prior frame.
-  frame_buffers[2].SetOriginalFrameRect(IntRect(50, 50, 50, 50));
+  frame_buffers[2].SetOriginalFrameRect(gfx::Rect(50, 50, 50, 50));
   for (int dispose_method = ImageFrame::kDisposeNotSpecified;
        dispose_method <= ImageFrame::kDisposeOverwritePrevious;
        ++dispose_method) {
@@ -231,7 +210,7 @@ TEST(ImageDecoderTest, requiredPreviousFrameIndexKnownOpaque) {
   decoder->InitFrames(3);
   Vector<ImageFrame, 1>& frame_buffers = decoder->FrameBufferCache();
 
-  frame_buffers[1].SetOriginalFrameRect(IntRect(25, 25, 50, 50));
+  frame_buffers[1].SetOriginalFrameRect(gfx::Rect(25, 25, 50, 50));
 
   // A full frame that is known to be opaque doesn't depend on any prior frames.
   for (int dispose_method = ImageFrame::kDisposeNotSpecified;
@@ -244,7 +223,7 @@ TEST(ImageDecoderTest, requiredPreviousFrameIndexKnownOpaque) {
   }
 
   // A non-full frame that is known to be opaque does depend on a prior frame.
-  frame_buffers[2].SetOriginalFrameRect(IntRect(50, 50, 50, 50));
+  frame_buffers[2].SetOriginalFrameRect(gfx::Rect(50, 50, 50, 50));
   for (int dispose_method = ImageFrame::kDisposeNotSpecified;
        dispose_method <= ImageFrame::kDisposeOverwritePrevious;
        ++dispose_method) {
@@ -271,9 +250,10 @@ TEST(ImageDecoderTest, clearCacheExceptFrameAll) {
       std::make_unique<TestImageDecoder>());
   decoder->InitFrames(kNumFrames);
   Vector<ImageFrame, 1>& frame_buffers = decoder->FrameBufferCache();
-  for (size_t i = 0; i < kNumFrames; ++i)
+  for (size_t i = 0; i < kNumFrames; ++i) {
     frame_buffers[i].SetStatus(i % 2 ? ImageFrame::kFramePartial
                                      : ImageFrame::kFrameComplete);
+  }
 
   decoder->ClearCacheExceptFrame(kNotFound);
 
@@ -284,26 +264,28 @@ TEST(ImageDecoderTest, clearCacheExceptFrameAll) {
 }
 
 TEST(ImageDecoderTest, clearCacheExceptFramePreverveClearExceptFrame) {
-  const size_t kNumFrames = 10;
+  const wtf_size_t kNumFrames = 10;
   std::unique_ptr<TestImageDecoder> decoder(
       std::make_unique<TestImageDecoder>());
   decoder->InitFrames(kNumFrames);
   Vector<ImageFrame, 1>& frame_buffers = decoder->FrameBufferCache();
-  for (size_t i = 0; i < kNumFrames; ++i)
+  for (size_t i = 0; i < kNumFrames; ++i) {
     frame_buffers[i].SetStatus(ImageFrame::kFrameComplete);
+  }
 
   decoder->ResetRequiredPreviousFrames();
   decoder->ClearCacheExceptFrame(5);
-  for (size_t i = 0; i < kNumFrames; ++i) {
+  for (wtf_size_t i = 0; i < kNumFrames; ++i) {
     SCOPED_TRACE(testing::Message() << i);
-    if (i == 5)
+    if (i == 5) {
       EXPECT_EQ(ImageFrame::kFrameComplete, frame_buffers[i].GetStatus());
-    else
+    } else {
       EXPECT_EQ(ImageFrame::kFrameEmpty, frame_buffers[i].GetStatus());
+    }
   }
 }
 
-#if defined(OS_FUCHSIA)
+#if BUILDFLAG(IS_FUCHSIA)
 
 TEST(ImageDecoderTest, decodedSizeLimitBoundary) {
   constexpr unsigned kWidth = 100;
@@ -357,39 +339,37 @@ TEST(ImageDecoderTest, decodedSizeLimitIsIgnored) {
   EXPECT_FALSE(decoder->Failed());
 }
 
-#endif  // defined(OS_FUCHSIA)
+#endif  // BUILDFLAG(IS_FUCHSIA)
 
 #if BUILDFLAG(ENABLE_AV1_DECODER)
 TEST(ImageDecoderTest, hasSufficientDataToSniffMimeTypeAvif) {
-  if (base::FeatureList::IsEnabled(features::kAVIF)) {
-    // The first 36 bytes of the Netflix AVIF test image
-    // Chimera-AV1-10bit-1280x720-2380kbps-100.avif. Since the major_brand is
-    // not "avif" or "avis", we must parse the compatible_brands to determine if
-    // this is an AVIF image.
-    constexpr char kData[] = {
-        // A File Type Box.
-        0x00, 0x00, 0x00, 0x1c,  // unsigned int(32) size; 0x1c = 28
-        'f', 't', 'y', 'p',      // unsigned int(32) type = boxtype;
-        'm', 'i', 'f', '1',      // unsigned int(32) major_brand;
-        0x00, 0x00, 0x00, 0x00,  // unsigned int(32) minor_version;
-        'm', 'i', 'f', '1',      // unsigned int(32) compatible_brands[];
-        'a', 'v', 'i', 'f',      //
-        'm', 'i', 'a', 'f',      //
-        // The beginning of a Media Data Box.
-        0x00, 0x00, 0xa4, 0x3a,  // unsigned int(32) size;
-        'm', 'd', 'a', 't'       // unsigned int(32) type = boxtype;
-    };
+  // The first 36 bytes of the Netflix AVIF test image
+  // Chimera-AV1-10bit-1280x720-2380kbps-100.avif. Since the major_brand is
+  // not "avif" or "avis", we must parse the compatible_brands to determine if
+  // this is an AVIF image.
+  constexpr uint8_t kData[] = {
+      // A File Type Box.
+      0x00, 0x00, 0x00, 0x1c,  // unsigned int(32) size; 0x1c = 28
+      'f', 't', 'y', 'p',      // unsigned int(32) type = boxtype;
+      'm', 'i', 'f', '1',      // unsigned int(32) major_brand;
+      0x00, 0x00, 0x00, 0x00,  // unsigned int(32) minor_version;
+      'm', 'i', 'f', '1',      // unsigned int(32) compatible_brands[];
+      'a', 'v', 'i', 'f',      //
+      'm', 'i', 'a', 'f',      //
+      // The beginning of a Media Data Box.
+      0x00, 0x00, 0xa4, 0x3a,  // unsigned int(32) size;
+      'm', 'd', 'a', 't'       // unsigned int(32) type = boxtype;
+  };
 
-    scoped_refptr<SharedBuffer> buffer = SharedBuffer::Create<size_t>(kData, 8);
-    EXPECT_FALSE(ImageDecoder::HasSufficientDataToSniffMimeType(*buffer));
-    EXPECT_EQ(ImageDecoder::SniffMimeType(buffer), String());
-    buffer->Append<size_t>(kData + 8, 8);
-    EXPECT_FALSE(ImageDecoder::HasSufficientDataToSniffMimeType(*buffer));
-    EXPECT_EQ(ImageDecoder::SniffMimeType(buffer), String());
-    buffer->Append<size_t>(kData + 16, sizeof(kData) - 16);
-    EXPECT_TRUE(ImageDecoder::HasSufficientDataToSniffMimeType(*buffer));
-    EXPECT_EQ(ImageDecoder::SniffMimeType(buffer), "image/avif");
-  }
+  scoped_refptr<SharedBuffer> buffer = SharedBuffer::Create<size_t>(kData, 8);
+  EXPECT_FALSE(ImageDecoder::HasSufficientDataToSniffMimeType(*buffer));
+  EXPECT_EQ(ImageDecoder::SniffMimeType(buffer), String());
+  buffer->Append<size_t>(kData + 8, 8);
+  EXPECT_FALSE(ImageDecoder::HasSufficientDataToSniffMimeType(*buffer));
+  EXPECT_EQ(ImageDecoder::SniffMimeType(buffer), String());
+  buffer->Append<size_t>(kData + 16, sizeof(kData) - 16);
+  EXPECT_TRUE(ImageDecoder::HasSufficientDataToSniffMimeType(*buffer));
+  EXPECT_EQ(ImageDecoder::SniffMimeType(buffer), "image/avif");
 }
 #endif  // BUILDFLAG(ENABLE_AV1_DECODER)
 

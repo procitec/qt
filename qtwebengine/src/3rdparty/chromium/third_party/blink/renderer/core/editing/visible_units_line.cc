@@ -24,7 +24,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -34,11 +34,9 @@
 #include "third_party/blink/renderer/core/editing/inline_box_position.h"
 #include "third_party/blink/renderer/core/editing/ng_flat_tree_shorthands.h"
 #include "third_party/blink/renderer/core/editing/visible_position.h"
-#include "third_party/blink/renderer/core/layout/line/inline_text_box.h"
-#include "third_party/blink/renderer/core/layout/line/root_inline_box.h"
-#include "third_party/blink/renderer/core/layout/ng/inline/ng_caret_position.h"
-#include "third_party/blink/renderer/core/layout/ng/inline/ng_line_utils.h"
-#include "third_party/blink/renderer/core/layout/ng/inline/ng_offset_mapping.h"
+#include "third_party/blink/renderer/core/layout/inline/inline_caret_position.h"
+#include "third_party/blink/renderer/core/layout/inline/line_utils.h"
+#include "third_party/blink/renderer/core/layout/inline/offset_mapping.h"
 
 namespace blink {
 
@@ -46,25 +44,20 @@ namespace {
 
 struct VisualOrdering;
 
-// See also InlineBidiResolver::NeedsTrailingSpace()
-bool NeedsTrailingSpace(const ComputedStyle& style) {
-  return style.BreakOnlyAfterWhiteSpace() && style.AutoWrap();
-}
-
 static PositionWithAffinity AdjustForSoftLineWrap(
-    const NGInlineCursorPosition& line_box,
+    const InlineCursorPosition& line_box,
     const PositionWithAffinity& position) {
   DCHECK(line_box.IsLineBox());
   if (position.IsNull())
     return PositionWithAffinity();
-  if (!NeedsTrailingSpace(line_box.Style()) ||
+  if (!line_box.Style().NeedsTrailingSpace() ||
       !line_box.HasSoftWrapToNextLine())
     return position;
   // Returns a position after first space causing soft line wrap for editable.
-  if (!NGOffsetMapping::AcceptsPosition(position.GetPosition()))
+  if (!OffsetMapping::AcceptsPosition(position.GetPosition())) {
     return position;
-  const NGOffsetMapping* mapping =
-      NGOffsetMapping::GetFor(position.GetPosition());
+  }
+  const OffsetMapping* mapping = OffsetMapping::GetFor(position.GetPosition());
   if (!mapping) {
     // When |line_box| width has numeric overflow, |position| doesn't have
     // mapping. See http://crbug.com/1098795
@@ -76,7 +69,6 @@ static PositionWithAffinity AdjustForSoftLineWrap(
   const Position adjusted_position = mapping->GetFirstPosition(*offset + 1);
   if (adjusted_position.IsNull())
     return position;
-  DCHECK(IsA<Text>(adjusted_position.AnchorNode())) << adjusted_position;
   if (!IsA<Text>(adjusted_position.AnchorNode()))
     return position;
   if (!adjusted_position.AnchorNode()
@@ -84,6 +76,8 @@ static PositionWithAffinity AdjustForSoftLineWrap(
            ->StyleRef()
            .IsCollapsibleWhiteSpace(mapping->GetText()[*offset]))
     return position;
+  // See |TryResolveCaretPositionInTextFragment()| to locate upstream position
+  // of caret after soft line wrap space.
   return PositionWithAffinity(adjusted_position,
                               TextAffinity::kUpstreamIfPossible);
 }
@@ -96,62 +90,35 @@ static PositionWithAffinityTemplate<Strategy> EndPositionForLine(
   const PositionWithAffinityTemplate<Strategy> adjusted =
       ComputeInlineAdjustedPosition(c);
 
-  if (const LayoutBlockFlow* context =
-          NGInlineFormattingContextOf(adjusted.GetPosition())) {
+  if (NGInlineFormattingContextOf(adjusted.GetPosition())) {
     DCHECK((std::is_same<Ordering, VisualOrdering>::value) ||
            !RuntimeEnabledFeatures::BidiCaretAffinityEnabled())
         << "Logical line boundary for BidiCaretAffinity is not implemented yet";
 
-    const NGCaretPosition caret_position = ComputeNGCaretPosition(adjusted);
+    const InlineCaretPosition caret_position =
+        ComputeInlineCaretPosition(adjusted);
     if (caret_position.IsNull()) {
-      // TODO(crbug.com/947593): Support |ComputeNGCaretPosition()| on content
-      // hidden by 'text-overflow:ellipsis' so that we always have a non-null
-      // |caret_position| here.
+      // TODO(crbug.com/947593): Support |ComputeInlineCaretPosition()| on
+      // content hidden by 'text-overflow:ellipsis' so that we always have a
+      // non-null |caret_position| here.
       return PositionWithAffinityTemplate<Strategy>();
     }
-    NGInlineCursor line_box = caret_position.cursor;
+    InlineCursor line_box = caret_position.cursor;
     line_box.MoveToContainingLine();
     const PositionWithAffinity end_position = line_box.PositionForEndOfLine();
     return FromPositionInDOMTree<Strategy>(
         AdjustForSoftLineWrap(line_box.Current(), end_position));
   }
 
-  const InlineBox* inline_box =
-      adjusted.IsNotNull() ? ComputeInlineBoxPosition(c).inline_box : nullptr;
-  if (!inline_box) {
-    // There are VisiblePositions at offset 0 in blocks without
-    // RootInlineBoxes, like empty editable blocks and bordered blocks.
-    const PositionTemplate<Strategy> p = c.GetPosition();
-    if (p.AnchorNode()->GetLayoutObject() &&
-        p.AnchorNode()->GetLayoutObject()->IsLayoutBlock() &&
-        !p.ComputeEditingOffset())
-      return c;
-    return PositionWithAffinityTemplate<Strategy>();
+  // There are VisiblePositions at offset 0 in blocks without line boxes, like
+  // empty editable blocks and bordered blocks.
+  const PositionTemplate<Strategy> p = c.GetPosition();
+  if (p.AnchorNode()->GetLayoutObject() &&
+      p.AnchorNode()->GetLayoutObject()->IsLayoutBlock() &&
+      !p.ComputeEditingOffset()) {
+    return c;
   }
-
-  const RootInlineBox& root_box = inline_box->Root();
-  const InlineBox* const end_box = Ordering::EndNonPseudoBoxOf(root_box);
-  if (!end_box)
-    return PositionWithAffinityTemplate<Strategy>();
-
-  const Node* const end_node = end_box->GetLineLayoutItem().NonPseudoNode();
-  DCHECK(end_node);
-  if (IsA<HTMLBRElement>(*end_node)) {
-    return Ordering::AdjustForSoftLineWrap(
-        PositionTemplate<Strategy>::BeforeNode(*end_node), c);
-  }
-
-  auto* end_text_node = DynamicTo<Text>(end_node);
-  if (end_box->IsInlineTextBox() && end_text_node) {
-    const InlineTextBox* end_text_box = ToInlineTextBox(end_box);
-    int end_offset = end_text_box->Start();
-    if (!end_text_box->IsLineBreak())
-      end_offset += end_text_box->Len();
-    return Ordering::AdjustForSoftLineWrap(
-        PositionTemplate<Strategy>(end_text_node, end_offset), c);
-  }
-  return Ordering::AdjustForSoftLineWrap(
-      PositionTemplate<Strategy>::AfterNode(*end_node), c);
+  return PositionWithAffinityTemplate<Strategy>();
 }
 
 template <typename Strategy, typename Ordering>
@@ -162,67 +129,40 @@ PositionWithAffinityTemplate<Strategy> StartPositionForLine(
   const PositionWithAffinityTemplate<Strategy> adjusted =
       ComputeInlineAdjustedPosition(c);
 
-  if (const LayoutBlockFlow* context =
-          NGInlineFormattingContextOf(adjusted.GetPosition())) {
+  if (NGInlineFormattingContextOf(adjusted.GetPosition())) {
     DCHECK((std::is_same<Ordering, VisualOrdering>::value) ||
            !RuntimeEnabledFeatures::BidiCaretAffinityEnabled())
         << "Logical line boundary for BidiCaretAffinity is not implemented yet";
 
-    const NGCaretPosition caret_position = ComputeNGCaretPosition(adjusted);
+    const InlineCaretPosition caret_position =
+        ComputeInlineCaretPosition(adjusted);
     if (caret_position.IsNull()) {
-      // TODO(crbug.com/947593): Support |ComputeNGCaretPosition()| on content
-      // hidden by 'text-overflow:ellipsis' so that we always have a non-null
-      // |caret_position| here.
+      // TODO(crbug.com/947593): Support |ComputeInlineCaretPosition()| on
+      // content hidden by 'text-overflow:ellipsis' so that we always have a
+      // non-null |caret_position| here.
       return PositionWithAffinityTemplate<Strategy>();
     }
-    NGInlineCursor line_box = caret_position.cursor;
+    InlineCursor line_box = caret_position.cursor;
     line_box.MoveToContainingLine();
     DCHECK(line_box.Current().IsLineBox()) << line_box;
     return FromPositionInDOMTree<Strategy>(line_box.PositionForStartOfLine());
   }
 
-  const InlineBox* inline_box =
-      adjusted.IsNotNull()
-          ? ComputeInlineBoxPositionForInlineAdjustedPosition(adjusted)
-                .inline_box
-          : nullptr;
-  if (!inline_box) {
-    // There are VisiblePositions at offset 0 in blocks without
-    // RootInlineBoxes, like empty editable blocks and bordered blocks.
-    PositionTemplate<Strategy> p = c.GetPosition();
-    if (p.AnchorNode()->GetLayoutObject() &&
-        p.AnchorNode()->GetLayoutObject()->IsLayoutBlock() &&
-        !p.ComputeEditingOffset())
-      return c;
-
-    return PositionWithAffinityTemplate<Strategy>();
+  // There are VisiblePositions at offset 0 in blocks without line boxes, like
+  // empty editable blocks and bordered blocks.
+  PositionTemplate<Strategy> p = c.GetPosition();
+  if (p.AnchorNode()->GetLayoutObject() &&
+      p.AnchorNode()->GetLayoutObject()->IsLayoutBlock() &&
+      !p.ComputeEditingOffset()) {
+    return c;
   }
 
-  const RootInlineBox& root_box = inline_box->Root();
-  const InlineBox* const start_box = Ordering::StartNonPseudoBoxOf(root_box);
-  if (!start_box)
-    return PositionWithAffinityTemplate<Strategy>();
-
-  const Node* const start_node = start_box->GetLineLayoutItem().NonPseudoNode();
-  auto* text_start_node = DynamicTo<Text>(start_node);
-  return PositionWithAffinityTemplate<Strategy>(
-      text_start_node
-          ? PositionTemplate<Strategy>(text_start_node,
-                                       ToInlineTextBox(start_box)->Start())
-          : PositionTemplate<Strategy>::BeforeNode(*start_node));
+  return PositionWithAffinityTemplate<Strategy>();
 }
 
 // Provides start and end of line in logical order for implementing Home and End
 // keys.
 struct LogicalOrdering {
-  static const InlineBox* StartNonPseudoBoxOf(const RootInlineBox& root_box) {
-    return root_box.GetLogicalStartNonPseudoBox();
-  }
-
-  static const InlineBox* EndNonPseudoBoxOf(const RootInlineBox& root_box) {
-    return root_box.GetLogicalEndNonPseudoBox();
-  }
-
   // Make sure the end of line is at the same line as the given input
   // position. For a wrapping line, the logical end position for the
   // not-last-2-lines might incorrectly hand back the logical beginning of the
@@ -248,34 +188,6 @@ struct LogicalOrdering {
 // Provides start end end of line in visual order for implementing expanding
 // selection in line granularity.
 struct VisualOrdering {
-  static const InlineBox* StartNonPseudoBoxOf(const RootInlineBox& root_box) {
-    // Generated content (e.g. list markers and CSS :before and :after
-    // pseudoelements) have no corresponding DOM element, and so cannot be
-    // represented by a VisiblePosition. Use whatever follows instead.
-    // TODO(editing-dev): We should consider text-direction of line to
-    // find non-pseudo node.
-    for (InlineBox* inline_box = root_box.FirstLeafChild(); inline_box;
-         inline_box = inline_box->NextLeafChild()) {
-      if (inline_box->GetLineLayoutItem().NonPseudoNode())
-        return inline_box;
-    }
-    return nullptr;
-  }
-
-  static const InlineBox* EndNonPseudoBoxOf(const RootInlineBox& root_box) {
-    // Generated content (e.g. list markers and CSS :before and :after
-    // pseudo elements) have no corresponding DOM element, and so cannot be
-    // represented by a VisiblePosition. Use whatever precedes instead.
-    // TODO(editing-dev): We should consider text-direction of line to
-    // find non-pseudo node.
-    for (InlineBox* inline_box = root_box.LastLeafChild(); inline_box;
-         inline_box = inline_box->PrevLeafChild()) {
-      if (inline_box->GetLineLayoutItem().NonPseudoNode())
-        return inline_box;
-    }
-    return nullptr;
-  }
-
   // Make sure the end of line is at the same line as the given input
   // position. Else use the previous position to obtain end of line. This
   // condition happens when the input position is before the space character
@@ -291,8 +203,11 @@ struct VisualOrdering {
     const PositionWithAffinityTemplate<Strategy> candidate_position =
         PositionWithAffinityTemplate<Strategy>(
             candidate, TextAffinity::kUpstreamIfPossible);
-    if (InSameLine(current_position, candidate_position))
-      return candidate_position;
+    if (InSameLine(current_position, candidate_position)) {
+      return PositionWithAffinityTemplate<Strategy>(
+          CreateVisiblePosition(candidate).DeepEquivalent(),
+          TextAffinity::kUpstreamIfPossible);
+    }
     const PositionWithAffinityTemplate<Strategy>& adjusted_position =
         PreviousPositionOf(CreateVisiblePosition(current_position))
             .ToPositionWithAffinity();
@@ -313,6 +228,8 @@ PositionWithAffinityTemplate<Strategy> StartOfLineAlgorithm(
       vis_pos, c.GetPosition());
 }
 
+}  // namespace
+
 PositionWithAffinity StartOfLine(const PositionWithAffinity& current_position) {
   return StartOfLineAlgorithm<EditingStrategy>(current_position);
 }
@@ -321,8 +238,6 @@ PositionInFlatTreeWithAffinity StartOfLine(
     const PositionInFlatTreeWithAffinity& current_position) {
   return StartOfLineAlgorithm<EditingInFlatTreeStrategy>(current_position);
 }
-
-}  // namespace
 
 // FIXME: Rename this function to reflect the fact it ignores bidi levels.
 VisiblePosition StartOfLine(const VisiblePosition& current_position) {
@@ -394,27 +309,13 @@ static PositionWithAffinityTemplate<Strategy> EndOfLineAlgorithm(
       candidate_position, current_position.GetPosition());
 }
 
-static PositionWithAffinity EndOfLine(const PositionWithAffinity& position) {
+PositionWithAffinity EndOfLine(const PositionWithAffinity& position) {
   return EndOfLineAlgorithm<EditingStrategy>(position);
 }
 
-static PositionInFlatTreeWithAffinity EndOfLine(
+PositionInFlatTreeWithAffinity EndOfLine(
     const PositionInFlatTreeWithAffinity& position) {
   return EndOfLineAlgorithm<EditingInFlatTreeStrategy>(position);
-}
-
-// TODO(yosin) Rename this function to reflect the fact it ignores bidi levels.
-VisiblePosition EndOfLine(const VisiblePosition& current_position) {
-  DCHECK(current_position.IsValid()) << current_position;
-  return CreateVisiblePosition(
-      EndOfLine(current_position.ToPositionWithAffinity()));
-}
-
-VisiblePositionInFlatTree EndOfLine(
-    const VisiblePositionInFlatTree& current_position) {
-  DCHECK(current_position.IsValid()) << current_position;
-  return CreateVisiblePosition(
-      EndOfLine(current_position.ToPositionWithAffinity()));
 }
 
 template <typename Strategy>
@@ -479,23 +380,23 @@ static bool InSameLineAlgorithm(
   DCHECK_EQ(position1.GetDocument(), position2.GetDocument());
   DCHECK(!position1.GetDocument()->NeedsLayoutTreeUpdate());
 
-  if (RuntimeEnabledFeatures::LayoutNGEnabled()) {
-    const LayoutBlockFlow* block1 =
-        NGInlineFormattingContextOf(position1.GetPosition());
-    const LayoutBlockFlow* block2 =
-        NGInlineFormattingContextOf(position2.GetPosition());
-    if (block1 || block2) {
-      if (block1 != block2)
-        return false;
-      if (!InSameNGLineBox(position1, position2))
-        return false;
-      // See (ParameterizedVisibleUnitsLineTest.InSameLineWithMixedEditability
-      return RootEditableElementOf(position1.GetPosition()) ==
-             RootEditableElementOf(position2.GetPosition());
+  const LayoutBlockFlow* block1 =
+      NGInlineFormattingContextOf(position1.GetPosition());
+  const LayoutBlockFlow* block2 =
+      NGInlineFormattingContextOf(position2.GetPosition());
+  if (block1 || block2) {
+    if (block1 != block2) {
+      return false;
     }
-
-    // Neither positions are in LayoutNG. Fall through to legacy handling.
+    if (!InSameNGLineBox(position1, position2)) {
+      return false;
+    }
+    // See (ParameterizedVisibleUnitsLineTest.InSameLineWithMixedEditability
+    return RootEditableElementOf(position1.GetPosition()) ==
+           RootEditableElementOf(position2.GetPosition());
   }
+
+  // Neither positions are in LayoutNG. Fall through to legacy handling.
 
   PositionWithAffinityTemplate<Strategy> start_of_line1 =
       StartOfLine(position1);
@@ -550,9 +451,14 @@ bool IsStartOfLine(const VisiblePositionInFlatTree& p) {
 }
 
 template <typename Strategy>
-static bool IsEndOfLineAlgorithm(const VisiblePositionTemplate<Strategy>& p) {
-  DCHECK(p.IsValid()) << p;
-  return p.IsNotNull() && p.DeepEquivalent() == EndOfLine(p).DeepEquivalent();
+static bool IsEndOfLineAlgorithm(
+    const VisiblePositionTemplate<Strategy>& visible_position) {
+  DCHECK(visible_position.IsValid()) << visible_position;
+  if (visible_position.IsNull())
+    return false;
+  const auto& end_of_line =
+      EndOfLine(visible_position.ToPositionWithAffinity());
+  return visible_position.DeepEquivalent() == end_of_line.GetPosition();
 }
 
 bool IsEndOfLine(const VisiblePosition& p) {

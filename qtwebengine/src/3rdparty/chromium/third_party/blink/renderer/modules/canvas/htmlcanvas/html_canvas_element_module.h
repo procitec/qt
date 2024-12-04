@@ -1,19 +1,22 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef THIRD_PARTY_BLINK_RENDERER_MODULES_CANVAS_HTMLCANVAS_HTML_CANVAS_ELEMENT_MODULE_H_
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_CANVAS_HTMLCANVAS_HTML_CANVAS_ELEMENT_MODULE_H_
 
-#include "third_party/blink/renderer/core/html/canvas/html_canvas_element.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_typedefs.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
-#include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/forward.h"
 
 namespace blink {
 
 class CanvasContextCreationAttributesModule;
+class ExceptionState;
 class HTMLCanvasElement;
 class OffscreenCanvas;
+class ScriptState;
 
 class MODULES_EXPORT HTMLCanvasElementModule {
   STATIC_ONLY(HTMLCanvasElementModule);
@@ -21,20 +24,21 @@ class MODULES_EXPORT HTMLCanvasElementModule {
   friend class HTMLCanvasElementModuleTest;
 
  public:
-  static void getContext(HTMLCanvasElement&,
-                         const String&,
-                         const CanvasContextCreationAttributesModule*,
-                         RenderingContext&,
-                         ExceptionState&);
-  static OffscreenCanvas* transferControlToOffscreen(ExecutionContext*,
+  static V8RenderingContext* getContext(
+      HTMLCanvasElement& canvas,
+      const String& context_id,
+      const CanvasContextCreationAttributesModule* attributes,
+      ExceptionState& exception_state);
+  static OffscreenCanvas* transferControlToOffscreen(ScriptState*,
                                                      HTMLCanvasElement&,
                                                      ExceptionState&);
 
  private:
-  static OffscreenCanvas* TransferControlToOffscreenInternal(ExecutionContext*,
+  static OffscreenCanvas* TransferControlToOffscreenInternal(ScriptState*,
                                                              HTMLCanvasElement&,
                                                              ExceptionState&);
 };
+
 }  // namespace blink
 
-#endif
+#endif  // THIRD_PARTY_BLINK_RENDERER_MODULES_CANVAS_HTMLCANVAS_HTML_CANVAS_ELEMENT_MODULE_H_

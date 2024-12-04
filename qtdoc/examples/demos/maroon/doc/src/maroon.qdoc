@@ -1,29 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2017 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the documentation of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:FDL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Free Documentation License Usage
-** Alternatively, this file may be used under the terms of the GNU Free
-** Documentation License version 1.3 as published by the Free Software
-** Foundation and appearing in the file included in the packaging of
-** this file. Please review the following information to ensure
-** the GNU Free Documentation License version 1.3 requirements
-** will be met: https://www.gnu.org/licenses/fdl-1.3.html.
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2017 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GFDL-1.3-no-invariants-only
 
 /*!
     \title Qt Quick Demo - Maroon in Trouble
@@ -32,6 +8,7 @@
     \brief A Qt Quick game for touch devices that uses SpriteSequence,
     ParticleSystem, Emitter, and Wander types to animate objects and the SoundEffect type to
     play sound effects.
+    \meta {tag} {demo,quick,game,touch,particles,sound}
 
     \image qtquick-demo-maroon-med-2.png
 
@@ -77,14 +54,6 @@
         \li GameOverScreen.qml
     \endlist
 
-    To use the custom types, we add an import statement to the main QML file,
-    maroon.qml that imports the folder called \c content where the types are
-    located:
-
-    \quotefromfile demos/maroon/maroon.qml
-    \skipto content
-    \printuntil "
-
     We use the screen types at different stages of the game. The NewGameScreen
     type is used to create the screen that appears when the players start the
     app. In NewGameScreen.qml, we use an \l{Image} type to create a New Game
@@ -112,9 +81,10 @@
 
     \section1 Constructing the Background
 
-    In the maroon.qml file, we use an \l{Item} type with the id \c root and a
+    In the Main.qml file, we use an \l{Item} type with the id \c root and a
     fixed width and height to create a main window for the game:
 
+    \quotefromfile demos/maroon/Main.qml
     \skipto Item
     \printuntil passedSplash
 
@@ -195,7 +165,7 @@
     \c -(wave.width), over 16 seconds. We set the \c loops property to
     \c {Animation.Infinite} to repeat the animation indefinitely:
 
-    \quotefromfile demos/maroon/maroon.qml
+    \quotefromfile demos/maroon/Main.qml
     \skipto wave.width
     \printuntil }
 
@@ -253,13 +223,13 @@
     \section1 Emitting Particles
 
     In addition to animation, we use particles to generate motion on the game
-    screens. We use the ParticleSystem QML type in maroon.qml to make bubbles
+    screens. We use the ParticleSystem QML type in Main.qml to make bubbles
     appear at the bottom of the new game screen and game canvas and slowly float
     towards the top on varying trajectories.
 
     To use the ParticleSystem type, we must import \l{Qt Quick Particles QML Types}:
 
-    \quotefromfile demos/maroon/maroon.qml
+    \quotefromfile demos/maroon/Main.qml
     \skipto Particles
     \printuntil 0
 
@@ -291,7 +261,7 @@
     As emitters have no visualization, we use the ImageParticle type to render
     the catch.png image at the particle location:
 
-    \quotefromfile demos/maroon/maroon.qml
+    \quotefromfile demos/maroon/Main.qml
     \skipto ImageParticle
     \printuntil }
 
@@ -308,7 +278,7 @@
 
     \image qtquick-demo-maroon-med-4.jpg
 
-    In maroon.qml, we use the \l{Timer} type with a \l{Repeater} type to display
+    In Main.qml, we use the \l{Timer} type with a \l{Repeater} type to display
     a countdown sequence before using another timer to start a new game. Both
     timers are started simultaneously in the \c "gameOn" state, that is when the
     players tap the New Game button and \c passedSplash is \c true. This is
@@ -337,7 +307,7 @@
     in the context of the repeater's parent, \c canvasArea item, seeded with
     data from the \c model:
 
-    \quotefromfile demos/maroon/maroon.qml
+    \quotefromfile demos/maroon/Main.qml
     \skipto Repeater
     \printuntil scale
     \printuntil }
@@ -359,11 +329,11 @@
     To construct the game board, we use the GameCanvas custom type that is
     defined in GameCanvas.qml.
 
-    In maroon.qml, we use the GameCanvas type to display the game canvas
+    In Main.qml, we use the GameCanvas type to display the game canvas
     at the position of 32 on the x axis and 20 pixels from the bottom of
     its parent item, \c canvasArea:
 
-    \quotefromfile demos/maroon/maroon.qml
+    \quotefromfile demos/maroon/Main.qml
     \skipto GameCanvas
     \printuntil }
 
@@ -691,9 +661,9 @@
     \section1 Keeping Track of Game Statistics
 
     To keep track of the game statistics, we use the InfoBar custom type (that
-    is defined in InfoBar.qml) in maroon.qml:
+    is defined in InfoBar.qml) in Main.qml:
 
-    \quotefromfile demos/maroon/maroon.qml
+    \quotefromfile demos/maroon/Main.qml
     \skipto InfoBar
     \printuntil }
 
@@ -754,12 +724,12 @@
 
     \section1 Managing Game States
 
-    In maroon.qml, we use a \l{State} type and JavaScript to switch between
+    In Main.qml, we use a \l{State} type and JavaScript to switch between
     screens according to the game state. The logic.js file contains definitions
     for the functions. To use the functions in a QML file, we import logic.js as
     the \c Logic namespace in that file:
 
-    \quotefromfile demos/maroon/maroon.qml
+    \quotefromfile demos/maroon/Main.qml
     \skipto logic.js
     \printuntil Logic
 
@@ -778,10 +748,10 @@
     \skipto Image
     \printuntil }
 
-    In maroon.qml, we use the \c onStartButtonClicked signal handler to set the
+    In Main.qml, we use the \c onStartButtonClicked signal handler to set the
     \c passedSplash property of the \c root item to \c true:
 
-    \quotefromfile demos/maroon/maroon.qml
+    \quotefromfile demos/maroon/Main.qml
     \skipto NewGameScreen
     \printuntil }
 
@@ -798,7 +768,7 @@
     In the \c gameStarter \l{Timer} object we use the \c onTriggered signal
     handler to call the \c startGame() function that starts a new game:
 
-    \quotefromfile demos/maroon/maroon.qml
+    \quotefromfile demos/maroon/Main.qml
     \skipto property int
     \skipto Timer
     \printuntil }
@@ -818,27 +788,19 @@
     \printuntil }
     \printuntil }
 
-    The \c onClicked signal handler triggers a state change in maroon.qml to
+    The \c onClicked signal handler triggers a state change in Main.qml to
     display the game canvas:
 
-    \quotefromfile demos/maroon/maroon.qml
-    \skipto target: gameStarter
+    \quotefromfile demos/maroon/Main.qml
+    \skipto gameStarter {
     \skipto State
     \printuntil }
     \printuntil }
 
     \section1 Playing Sound Effects
 
-    The app can play sound effects if the \l{Qt Multimedia} module is installed.
-    In the SoundEffect.qml file, we proxy a SoundEffect type:
-
-    \quotefromfile demos/maroon/content/SoundEffect.qml
-    \skipto Item
-    \printuntil }
-    \printuntil }
-
     We add the \c qtHaveModule() qmake command to the app .pro file, maroon.pro,
-    to check whether the \l{Qt Multimedia} module is present:
+    to check whether the Qt Multimedia module is present:
 
     \quotefromfile demos/maroon/maroon.pro
     \skipto QT

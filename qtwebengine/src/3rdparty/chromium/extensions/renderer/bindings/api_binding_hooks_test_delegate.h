@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,10 +7,9 @@
 
 #include <map>
 #include <string>
+#include <string_view>
 
-#include "base/callback.h"
-#include "base/macros.h"
-#include "base/strings/string_piece.h"
+#include "base/functional/callback.h"
 #include "extensions/renderer/bindings/api_binding_hooks_delegate.h"
 #include "v8/include/v8.h"
 
@@ -20,6 +19,11 @@ namespace extensions {
 class APIBindingHooksTestDelegate : public APIBindingHooksDelegate {
  public:
   APIBindingHooksTestDelegate();
+
+  APIBindingHooksTestDelegate(const APIBindingHooksTestDelegate&) = delete;
+  APIBindingHooksTestDelegate& operator=(const APIBindingHooksTestDelegate&) =
+      delete;
+
   ~APIBindingHooksTestDelegate() override;
 
   using CustomEventFactory = base::RepeatingCallback<v8::Local<v8::Value>(
@@ -29,7 +33,7 @@ class APIBindingHooksTestDelegate : public APIBindingHooksDelegate {
   using RequestHandler = base::RepeatingCallback<APIBindingHooks::RequestResult(
       const APISignature*,
       v8::Local<v8::Context> context,
-      std::vector<v8::Local<v8::Value>>*,
+      v8::LocalVector<v8::Value>*,
       const APITypeReferenceMap&)>;
 
   using TemplateInitializer =
@@ -42,7 +46,7 @@ class APIBindingHooksTestDelegate : public APIBindingHooksDelegate {
                                    v8::Local<v8::Object>)>;
 
   // Adds a custom |handler| for the method with the given |name|.
-  void AddHandler(base::StringPiece name, RequestHandler handler);
+  void AddHandler(std::string_view name, RequestHandler handler);
 
   // Creates events with the given factory.
   void SetCustomEvent(CustomEventFactory custom_event);
@@ -59,7 +63,7 @@ class APIBindingHooksTestDelegate : public APIBindingHooksDelegate {
       const std::string& method_name,
       const APISignature* signature,
       v8::Local<v8::Context> context,
-      std::vector<v8::Local<v8::Value>>* arguments,
+      v8::LocalVector<v8::Value>* arguments,
       const APITypeReferenceMap& refs) override;
   void InitializeTemplate(v8::Isolate* isolate,
                           v8::Local<v8::ObjectTemplate> object_template,
@@ -72,8 +76,6 @@ class APIBindingHooksTestDelegate : public APIBindingHooksDelegate {
   CustomEventFactory custom_event_;
   TemplateInitializer template_initializer_;
   InstanceInitializer instance_initializer_;
-
-  DISALLOW_COPY_AND_ASSIGN(APIBindingHooksTestDelegate);
 };
 
 }  // namespace extensions

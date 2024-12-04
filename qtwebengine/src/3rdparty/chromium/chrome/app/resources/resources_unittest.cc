@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,7 +9,7 @@
 #include "base/path_service.h"
 #include "base/strings/string_util.h"
 
-#include "chrome/grit/chromium_strings.h"
+#include "chrome/grit/branded_strings.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 #include "ui/base/l10n/l10n_util.h"
@@ -48,7 +48,7 @@ TEST_F(ResourcesTest, CriticalMessagesContainNoExtraWhitespaces) {
     ui::ResourceBundle::GetSharedInstance().ReloadLocaleResources("");
 
     for (int message : messages_to_check) {
-      base::string16 message_str = l10n_util::GetStringUTF16(message);
+      std::u16string message_str = l10n_util::GetStringUTF16(message);
       EXPECT_EQ(message_str, base::TrimWhitespace(message_str, base::TRIM_ALL));
     }
   }

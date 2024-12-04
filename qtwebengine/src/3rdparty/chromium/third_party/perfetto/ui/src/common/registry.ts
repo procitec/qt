@@ -12,21 +12,41 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import {Disposable} from '../base/disposable';
+
 export interface HasKind { kind: string; }
 
-export class Registry<T extends HasKind> {
-  private registry: Map<string, T>;
+export class RegistryError extends Error {
+  constructor(message?: string) {
+    super(message);
+    this.name = this.constructor.name;
+  }
+}
 
-  constructor() {
-    this.registry = new Map<string, T>();
+export class Registry<T> {
+  private key: (t: T) => string;
+  protected registry: Map<string, T>;
+
+  static kindRegistry<T extends HasKind>(): Registry<T> {
+    return new Registry<T>((t) => t.kind);
   }
 
-  register(registrant: T) {
-    const kind = registrant.kind;
+  constructor(key: (t: T) => string) {
+    this.registry = new Map<string, T>();
+    this.key = key;
+  }
+
+  register(registrant: T): Disposable {
+    const kind = this.key(registrant);
     if (this.registry.has(kind)) {
-      throw new Error(`Registrant ${kind} already exists in the registry`);
+      throw new RegistryError(
+          `Registrant ${kind} already exists in the registry`);
     }
     this.registry.set(kind, registrant);
+
+    return {
+      dispose: () => this.registry.delete(kind),
+    };
   }
 
   has(kind: string): boolean {
@@ -36,9 +56,14 @@ export class Registry<T extends HasKind> {
   get(kind: string): T {
     const registrant = this.registry.get(kind);
     if (registrant === undefined) {
-      throw new Error(`${kind} has not been registered.`);
+      throw new RegistryError(`${kind} has not been registered.`);
     }
     return registrant;
+  }
+
+  // Support iteration: for (const foo of fooRegistry.values()) { ... }
+  * values() {
+    yield* this.registry.values();
   }
 
   unregisterAllForTesting(): void {

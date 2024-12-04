@@ -1,5 +1,6 @@
-sadrul@chromium.org
+set noparent
 sky@chromium.org
+oshima@chromium.org
 thakis@chromium.org
 
 # Mac stuff
@@ -10,9 +11,8 @@ ccameron@chromium.org
 per-file BUILD.gn=*
 
 # Translation artifacts:
-per-file *.xtb=file://tools/translation/TRANSLATION_OWNERS
+per-file ....xtb=file://tools/translation/TRANSLATION_OWNERS
 
 # For Fuchsia-specific changes:
-per-file *fuchsia*=file://build/fuchsia/OWNERS
-per-file *scenic*=file://build/fuchsia/OWNERS
-# COMPONENT: UI
+per-file ...fuchsia*=file://build/fuchsia/OWNERS
+per-file ...scenic*=file://build/fuchsia/OWNERS

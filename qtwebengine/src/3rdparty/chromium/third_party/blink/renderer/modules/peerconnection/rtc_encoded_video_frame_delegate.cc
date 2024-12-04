@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,6 +7,9 @@
 #include <utility>
 
 #include "third_party/blink/renderer/core/typed_arrays/dom_array_buffer.h"
+#include "third_party/blink/renderer/platform/bindings/exception_code.h"
+#include "third_party/blink/renderer/platform/bindings/exception_state.h"
+#include "third_party/webrtc/api/frame_transformer_factory.h"
 #include "third_party/webrtc/api/frame_transformer_interface.h"
 
 namespace blink {
@@ -18,22 +21,41 @@ RTCEncodedVideoFrameDelegate::RTCEncodedVideoFrameDelegate(
     : webrtc_frame_(std::move(webrtc_frame)) {}
 
 String RTCEncodedVideoFrameDelegate::Type() const {
-  MutexLocker lock(mutex_);
+  base::AutoLock lock(lock_);
   if (!webrtc_frame_)
     return "empty";
 
   return webrtc_frame_->IsKeyFrame() ? "key" : "delta";
 }
 
-uint64_t RTCEncodedVideoFrameDelegate::Timestamp() const {
-  MutexLocker lock(mutex_);
+uint32_t RTCEncodedVideoFrameDelegate::RtpTimestamp() const {
+  base::AutoLock lock(lock_);
   return webrtc_frame_ ? webrtc_frame_->GetTimestamp() : 0;
+}
+
+void RTCEncodedVideoFrameDelegate::SetRtpTimestamp(
+    uint32_t timestamp,
+    ExceptionState& exception_state) {
+  base::AutoLock lock(lock_);
+  if (webrtc_frame_) {
+    webrtc_frame_->SetRTPTimestamp(timestamp);
+  } else {
+    exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
+                                      "Video frame is empty.");
+  }
+}
+
+absl::optional<webrtc::Timestamp>
+RTCEncodedVideoFrameDelegate::PresentationTimestamp() const {
+  base::AutoLock lock(lock_);
+  return webrtc_frame_ ? webrtc_frame_->GetCaptureTimeIdentifier()
+                       : absl::nullopt;
 }
 
 DOMArrayBuffer* RTCEncodedVideoFrameDelegate::CreateDataBuffer() const {
   ArrayBufferContents contents;
   {
-    MutexLocker lock(mutex_);
+    base::AutoLock lock(lock_);
     if (!webrtc_frame_)
       return nullptr;
 
@@ -49,47 +71,55 @@ DOMArrayBuffer* RTCEncodedVideoFrameDelegate::CreateDataBuffer() const {
 }
 
 void RTCEncodedVideoFrameDelegate::SetData(const DOMArrayBuffer* data) {
-  MutexLocker lock(mutex_);
+  base::AutoLock lock(lock_);
   if (webrtc_frame_ && data) {
     webrtc_frame_->SetData(rtc::ArrayView<const uint8_t>(
-        static_cast<const uint8_t*>(data->Data()), data->ByteLengthAsSizeT()));
+        static_cast<const uint8_t*>(data->Data()), data->ByteLength()));
   }
 }
 
-DOMArrayBuffer* RTCEncodedVideoFrameDelegate::CreateAdditionalDataBuffer()
-    const {
-  ArrayBufferContents contents;
-  {
-    MutexLocker lock(mutex_);
-    if (!webrtc_frame_)
-      return nullptr;
+absl::optional<uint8_t> RTCEncodedVideoFrameDelegate::PayloadType() const {
+  base::AutoLock lock(lock_);
+  return webrtc_frame_ ? absl::make_optional(webrtc_frame_->GetPayloadType())
+                       : absl::nullopt;
+}
 
-    auto additional_data = webrtc_frame_->GetAdditionalData();
-    contents = ArrayBufferContents(additional_data.size(), 1,
-                                   ArrayBufferContents::kNotShared,
-                                   ArrayBufferContents::kDontInitialize);
-    if (UNLIKELY(!contents.Data()))
-      OOM_CRASH(additional_data.size());
-    memcpy(contents.Data(), additional_data.data(), additional_data.size());
+absl::optional<std::string> RTCEncodedVideoFrameDelegate::MimeType() const {
+  base::AutoLock lock(lock_);
+  return webrtc_frame_ ? absl::make_optional(webrtc_frame_->GetMimeType())
+                       : absl::nullopt;
+}
+
+absl::optional<webrtc::VideoFrameMetadata>
+RTCEncodedVideoFrameDelegate::GetMetadata() const {
+  base::AutoLock lock(lock_);
+  return webrtc_frame_ ? absl::optional<webrtc::VideoFrameMetadata>(
+                             webrtc_frame_->Metadata())
+                       : absl::nullopt;
+}
+
+void RTCEncodedVideoFrameDelegate::SetMetadata(
+    const webrtc::VideoFrameMetadata& metadata) {
+  base::AutoLock lock(lock_);
+  if (!webrtc_frame_) {
+    return;
   }
-  return DOMArrayBuffer::Create(std::move(contents));
-}
-
-uint32_t RTCEncodedVideoFrameDelegate::Ssrc() const {
-  MutexLocker lock(mutex_);
-  return webrtc_frame_ ? webrtc_frame_->GetSsrc() : 0;
-}
-
-const webrtc::VideoFrameMetadata* RTCEncodedVideoFrameDelegate::GetMetadata()
-    const {
-  MutexLocker lock(mutex_);
-  return webrtc_frame_ ? &webrtc_frame_->GetMetadata() : nullptr;
+  webrtc_frame_->SetMetadata(metadata);
 }
 
 std::unique_ptr<webrtc::TransformableVideoFrameInterface>
 RTCEncodedVideoFrameDelegate::PassWebRtcFrame() {
-  MutexLocker lock(mutex_);
+  base::AutoLock lock(lock_);
   return std::move(webrtc_frame_);
+}
+
+std::unique_ptr<webrtc::TransformableVideoFrameInterface>
+RTCEncodedVideoFrameDelegate::CloneWebRtcFrame() {
+  base::AutoLock lock(lock_);
+  if (!webrtc_frame_) {
+    return nullptr;
+  }
+  return webrtc::CloneVideoFrame(webrtc_frame_.get());
 }
 
 }  // namespace blink

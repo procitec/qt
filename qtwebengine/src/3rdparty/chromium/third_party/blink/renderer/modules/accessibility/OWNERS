@@ -1,7 +1,13 @@
-aboxhall@chromium.org
+# General reviewers:
 aleventhal@chromium.org
-dmazzoni@chromium.org
+benjamin.beaudry@microsoft.com
+dtseng@chromium.org
+janewman@microsoft.com
+kschmi@microsoft.com
 nektar@chromium.org
-
-# TEAM: chromium-accessibility@chromium.org
-# COMPONENT: Blink>Accessibility
+# For changes that are pure code refactoring or DOM/layout integration:
+# (if downstream platform a11y API support is affected, please add another
+# owner from the main list above, so that a11y specialist knowledge is
+# represented):
+chrishtr@chromium.org
+szager@chromium.org

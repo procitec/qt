@@ -2,4 +2,5 @@
 per-file SelectFileDialogTest.java=finnur@chromium.org
 per-file SelectFileDialogTest.java=peter@chromium.org
 
-# COMPONENT: UI
+# Clipboard
+per-file Clipboard*.java=gangwu@chromium.org

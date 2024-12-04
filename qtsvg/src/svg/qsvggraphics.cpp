@@ -1,44 +1,8 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt SVG module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qsvggraphics_p.h"
-
+#include "qsvgstructure_p.h"
 #include "qsvgfont_p.h"
 
 #include <qabstracttextdocumentlayout.h>
@@ -48,6 +12,10 @@
 #include <qscopedvaluerollback.h>
 #include <qtextcursor.h>
 #include <qtextdocument.h>
+#include <private/qfixed_p.h>
+
+#include <QElapsedTimer>
+#include <QLoggingCategory>
 
 #include <math.h>
 #include <limits.h>
@@ -56,34 +24,13 @@ QT_BEGIN_NAMESPACE
 
 Q_LOGGING_CATEGORY(lcSvgDraw, "qt.svg.draw")
 
-#define QT_SVG_DRAW_SHAPE(command)                          \
-    qreal oldOpacity = p->opacity();                        \
-    QBrush oldBrush = p->brush();                           \
-    QPen oldPen = p->pen();                                 \
-    p->setPen(Qt::NoPen);                                   \
-    p->setOpacity(oldOpacity * states.fillOpacity);         \
-    command;                                                \
-    p->setPen(oldPen);                                      \
-    if (oldPen != Qt::NoPen && oldPen.brush() != Qt::NoBrush && oldPen.widthF() != 0) { \
-        p->setOpacity(oldOpacity * states.strokeOpacity);   \
-        p->setBrush(Qt::NoBrush);                           \
-        command;                                            \
-        p->setBrush(oldBrush);                              \
-    }                                                       \
-    p->setOpacity(oldOpacity);
+#ifndef QT_SVG_MAX_LAYOUT_SIZE
+#define QT_SVG_MAX_LAYOUT_SIZE (qint64(QFIXED_MAX / 2))
+#endif
 
-
-void QSvgAnimation::draw(QPainter *, QSvgExtraStates &)
+void QSvgAnimation::drawCommand(QPainter *, QSvgExtraStates &)
 {
-    qWarning("<animation> no implemented");
-}
-
-static inline QRectF boundsOnStroke(QPainter *p, const QPainterPath &path, qreal width)
-{
-    QPainterPathStroker stroker;
-    stroker.setWidth(width);
-    QPainterPath stroke = stroker.createStroke(path);
-    return p->transform().map(stroke).boundingRect();
+    qWarning("<animation> not implemented");
 }
 
 QSvgEllipse::QSvgEllipse(QSvgNode *parent, const QRectF &rect)
@@ -91,43 +38,48 @@ QSvgEllipse::QSvgEllipse(QSvgNode *parent, const QRectF &rect)
 {
 }
 
+QRectF QSvgEllipse::internalFastBounds(QPainter *p, QSvgExtraStates &) const
+{
+    return p->transform().mapRect(m_bounds);
+}
 
-QRectF QSvgEllipse::bounds(QPainter *p, QSvgExtraStates &) const
+QRectF QSvgEllipse::internalBounds(QPainter *p, QSvgExtraStates &) const
 {
     QPainterPath path;
     path.addEllipse(m_bounds);
     qreal sw = strokeWidth(p);
-    return qFuzzyIsNull(sw) ? p->transform().map(path).boundingRect() : boundsOnStroke(p, path, sw);
+    return qFuzzyIsNull(sw) ? p->transform().map(path).boundingRect()
+                            : boundsOnStroke(p, path, sw, BoundsMode::Simplistic);
 }
 
-void QSvgEllipse::draw(QPainter *p, QSvgExtraStates &states)
+QRectF QSvgEllipse::decoratedInternalBounds(QPainter *p, QSvgExtraStates &) const
 {
-    applyStyle(p, states);
-    QT_SVG_DRAW_SHAPE(p->drawEllipse(m_bounds));
-    revertStyle(p, states);
+    QPainterPath path;
+    path.addEllipse(m_bounds);
+    qreal sw = strokeWidth(p);
+    QRectF rect = qFuzzyIsNull(sw) ? p->transform().map(path).boundingRect()
+                                   : boundsOnStroke(p, path, sw, BoundsMode::IncludeMiterLimit);
+    return filterRegion(rect);
 }
 
-QSvgArc::QSvgArc(QSvgNode *parent, const QPainterPath &path)
-    : QSvgNode(parent), m_path(path)
+void QSvgEllipse::drawCommand(QPainter *p, QSvgExtraStates &)
 {
+    p->drawEllipse(m_bounds);
 }
 
-void QSvgArc::draw(QPainter *p, QSvgExtraStates &states)
+bool QSvgEllipse::separateFillStroke() const
 {
-    applyStyle(p, states);
-    if (p->pen().widthF() != 0) {
-        qreal oldOpacity = p->opacity();
-        p->setOpacity(oldOpacity * states.strokeOpacity);
-        p->drawPath(m_path);
-        p->setOpacity(oldOpacity);
-    }
-    revertStyle(p, states);
+    return true;
 }
 
-QSvgImage::QSvgImage(QSvgNode *parent, const QImage &image,
+QSvgImage::QSvgImage(QSvgNode *parent,
+                     const QImage &image,
+                     const QString &filename,
                      const QRectF &bounds)
-    : QSvgNode(parent), m_image(image),
-      m_bounds(bounds)
+    : QSvgNode(parent)
+    , m_filename(filename)
+    , m_image(image)
+    , m_bounds(bounds)
 {
     if (m_bounds.width() == 0.0)
         m_bounds.setWidth(static_cast<qreal>(m_image.width()));
@@ -135,30 +87,25 @@ QSvgImage::QSvgImage(QSvgNode *parent, const QImage &image,
         m_bounds.setHeight(static_cast<qreal>(m_image.height()));
 }
 
-void QSvgImage::draw(QPainter *p, QSvgExtraStates &states)
+void QSvgImage::drawCommand(QPainter *p, QSvgExtraStates &)
 {
-    applyStyle(p, states);
     p->drawImage(m_bounds, m_image);
-    revertStyle(p, states);
 }
-
 
 QSvgLine::QSvgLine(QSvgNode *parent, const QLineF &line)
     : QSvgNode(parent), m_line(line)
 {
 }
 
-
-void QSvgLine::draw(QPainter *p, QSvgExtraStates &states)
+void QSvgLine::drawCommand(QPainter *p, QSvgExtraStates &states)
 {
-    applyStyle(p, states);
     if (p->pen().widthF() != 0) {
         qreal oldOpacity = p->opacity();
         p->setOpacity(oldOpacity * states.strokeOpacity);
         p->drawLine(m_line);
         p->setOpacity(oldOpacity);
     }
-    revertStyle(p, states);
+    QSvgMarker::drawMarkersForNode(this, p, states);
 }
 
 QSvgPath::QSvgPath(QSvgNode *parent, const QPainterPath &qpath)
@@ -166,19 +113,42 @@ QSvgPath::QSvgPath(QSvgNode *parent, const QPainterPath &qpath)
 {
 }
 
-void QSvgPath::draw(QPainter *p, QSvgExtraStates &states)
+void QSvgPath::drawCommand(QPainter *p, QSvgExtraStates &states)
 {
-    applyStyle(p, states);
     m_path.setFillRule(states.fillRule);
-    QT_SVG_DRAW_SHAPE(p->drawPath(m_path));
-    revertStyle(p, states);
+    p->drawPath(m_path);
+    QSvgMarker::drawMarkersForNode(this, p, states);
 }
 
-QRectF QSvgPath::bounds(QPainter *p, QSvgExtraStates &) const
+bool QSvgPath::separateFillStroke() const
+{
+    return true;
+}
+
+QRectF QSvgPath::internalFastBounds(QPainter *p, QSvgExtraStates &) const
+{
+    return p->transform().mapRect(m_path.controlPointRect());
+}
+
+QRectF QSvgPath::internalBounds(QPainter *p, QSvgExtraStates &) const
 {
     qreal sw = strokeWidth(p);
     return qFuzzyIsNull(sw) ? p->transform().map(m_path).boundingRect()
-        : boundsOnStroke(p, m_path, sw);
+                            : boundsOnStroke(p, m_path, sw, BoundsMode::Simplistic);
+}
+
+QRectF QSvgPath::decoratedInternalBounds(QPainter *p, QSvgExtraStates &s) const
+{
+    qreal sw = strokeWidth(p);
+    QRectF rect = qFuzzyIsNull(sw) ? p->transform().map(m_path).boundingRect()
+                                   : boundsOnStroke(p, m_path, sw, BoundsMode::IncludeMiterLimit);
+    rect |= QSvgMarker::markersBoundsForNode(this, p, s);
+    return filterRegion(rect);
+}
+
+bool QSvgPath::requiresGroupRendering() const
+{
+    return hasAnyMarker();
 }
 
 QSvgPolygon::QSvgPolygon(QSvgNode *parent, const QPolygonF &poly)
@@ -186,7 +156,29 @@ QSvgPolygon::QSvgPolygon(QSvgNode *parent, const QPolygonF &poly)
 {
 }
 
-QRectF QSvgPolygon::bounds(QPainter *p, QSvgExtraStates &) const
+QRectF QSvgPolygon::internalFastBounds(QPainter *p, QSvgExtraStates &) const
+{
+    return p->transform().mapRect(m_poly.boundingRect());
+}
+
+QRectF QSvgPolygon::internalBounds(QPainter *p, QSvgExtraStates &s) const
+{
+    return internalBounds(p, s, BoundsMode::Simplistic);
+}
+
+QRectF QSvgPolygon::decoratedInternalBounds(QPainter *p, QSvgExtraStates &s) const
+{
+    QRectF rect = internalBounds(p, s, BoundsMode::IncludeMiterLimit);
+    rect |= QSvgMarker::markersBoundsForNode(this, p, s);
+    return filterRegion(rect);
+}
+
+bool QSvgPolygon::requiresGroupRendering() const
+{
+    return hasAnyMarker();
+}
+
+QRectF QSvgPolygon::internalBounds(QPainter *p, QSvgExtraStates &, BoundsMode mode) const
 {
     qreal sw = strokeWidth(p);
     if (qFuzzyIsNull(sw)) {
@@ -194,17 +186,20 @@ QRectF QSvgPolygon::bounds(QPainter *p, QSvgExtraStates &) const
     } else {
         QPainterPath path;
         path.addPolygon(m_poly);
-        return boundsOnStroke(p, path, sw);
+        return boundsOnStroke(p, path, sw, mode);
     }
 }
 
-void QSvgPolygon::draw(QPainter *p, QSvgExtraStates &states)
+void QSvgPolygon::drawCommand(QPainter *p, QSvgExtraStates &states)
 {
-    applyStyle(p, states);
-    QT_SVG_DRAW_SHAPE(p->drawPolygon(m_poly, states.fillRule));
-    revertStyle(p, states);
+    p->drawPolygon(m_poly, states.fillRule);
+    QSvgMarker::drawMarkersForNode(this, p, states);
 }
 
+bool QSvgPolygon::separateFillStroke() const
+{
+    return true;
+}
 
 QSvgPolyline::QSvgPolyline(QSvgNode *parent, const QPolygonF &poly)
     : QSvgNode(parent), m_poly(poly)
@@ -212,32 +207,43 @@ QSvgPolyline::QSvgPolyline(QSvgNode *parent, const QPolygonF &poly)
 
 }
 
-void QSvgPolyline::draw(QPainter *p, QSvgExtraStates &states)
+void QSvgPolyline::drawCommand(QPainter *p, QSvgExtraStates &states)
 {
-    applyStyle(p, states);
-    qreal oldOpacity = p->opacity();
     if (p->brush().style() != Qt::NoBrush) {
-        QPen save = p->pen();
-        p->setPen(QPen(Qt::NoPen));
-        p->setOpacity(oldOpacity * states.fillOpacity);
         p->drawPolygon(m_poly, states.fillRule);
-        p->setPen(save);
-    }
-    if (p->pen().widthF() != 0) {
-        p->setOpacity(oldOpacity * states.strokeOpacity);
+    } else {
         p->drawPolyline(m_poly);
+        QSvgMarker::drawMarkersForNode(this, p, states);
     }
-    p->setOpacity(oldOpacity);
-    revertStyle(p, states);
 }
 
-QSvgRect::QSvgRect(QSvgNode *node, const QRectF &rect, int rx, int ry)
+bool QSvgPolyline::separateFillStroke() const
+{
+    return true;
+}
+
+QSvgRect::QSvgRect(QSvgNode *node, const QRectF &rect, qreal rx, qreal ry)
     : QSvgNode(node),
       m_rect(rect), m_rx(rx), m_ry(ry)
 {
 }
 
-QRectF QSvgRect::bounds(QPainter *p, QSvgExtraStates &) const
+QRectF QSvgRect::internalFastBounds(QPainter *p, QSvgExtraStates &) const
+{
+    return p->transform().mapRect(m_rect);
+}
+
+QRectF QSvgRect::internalBounds(QPainter *p, QSvgExtraStates &s) const
+{
+    return internalBounds(p, s, BoundsMode::Simplistic);
+}
+
+QRectF QSvgRect::decoratedInternalBounds(QPainter *p, QSvgExtraStates &s) const
+{
+    return filterRegion(internalBounds(p, s, BoundsMode::IncludeMiterLimit));
+}
+
+QRectF QSvgRect::internalBounds(QPainter *p, QSvgExtraStates &, BoundsMode mode) const
 {
     qreal sw = strokeWidth(p);
     if (qFuzzyIsNull(sw)) {
@@ -245,19 +251,21 @@ QRectF QSvgRect::bounds(QPainter *p, QSvgExtraStates &) const
     } else {
         QPainterPath path;
         path.addRect(m_rect);
-        return boundsOnStroke(p, path, sw);
+        return boundsOnStroke(p, path, sw, mode);
     }
 }
 
-void QSvgRect::draw(QPainter *p, QSvgExtraStates &states)
+void QSvgRect::drawCommand(QPainter *p, QSvgExtraStates &)
 {
-    applyStyle(p, states);
-    if (m_rx || m_ry) {
-        QT_SVG_DRAW_SHAPE(p->drawRoundedRect(m_rect, m_rx, m_ry, Qt::RelativeSize));
-    } else {
-        QT_SVG_DRAW_SHAPE(p->drawRect(m_rect));
-    }
-    revertStyle(p, states);
+    if (m_rx || m_ry)
+        p->drawRoundedRect(m_rect, m_rx, m_ry, Qt::RelativeSize);
+    else
+        p->drawRect(m_rect);
+}
+
+bool QSvgRect::separateFillStroke() const
+{
+    return true;
 }
 
 QSvgTspan * const QSvgText::LINEBREAK = 0;
@@ -265,7 +273,7 @@ QSvgTspan * const QSvgText::LINEBREAK = 0;
 QSvgText::QSvgText(QSvgNode *parent, const QPointF &coord)
     : QSvgNode(parent)
     , m_coord(coord)
-    , m_type(TEXT)
+    , m_type(Text)
     , m_size(0, 0)
     , m_mode(Default)
 {
@@ -282,176 +290,254 @@ QSvgText::~QSvgText()
 void QSvgText::setTextArea(const QSizeF &size)
 {
     m_size = size;
-    m_type = TEXTAREA;
+    m_type = Textarea;
 }
 
-//QRectF QSvgText::bounds(QPainter *p, QSvgExtraStates &) const {}
-
-void QSvgText::draw(QPainter *p, QSvgExtraStates &states)
+QRectF QSvgText::internalFastBounds(QPainter *p, QSvgExtraStates &) const
 {
-    applyStyle(p, states);
-    qreal oldOpacity = p->opacity();
-    p->setOpacity(oldOpacity * states.fillOpacity);
+    QFont font = m_style.font ? m_style.font->qfont() : p->font();
+    QFontMetricsF fm(font);
 
-    // Force the font to have a size of 100 pixels to avoid truncation problems
-    // when the font is very small.
-    qreal scale = 100.0 / p->font().pointSizeF();
-    Qt::Alignment alignment = states.textAnchor;
-
-    QTransform oldTransform = p->worldTransform();
-    p->scale(1 / scale, 1 / scale);
-
-    qreal y = 0;
-    bool initial = true;
-    qreal px = m_coord.x() * scale;
-    qreal py = m_coord.y() * scale;
-    QSizeF scaledSize = m_size * scale;
-
-    if (m_type == TEXTAREA) {
-        if (alignment == Qt::AlignHCenter)
-            px += scaledSize.width() / 2;
-        else if (alignment == Qt::AlignRight)
-            px += scaledSize.width();
+    int charCount = 0;
+    for (int i = 0; i < m_tspans.size(); ++i) {
+        if (m_tspans.at(i) != LINEBREAK)
+            charCount += m_tspans.at(i)->text().size();
     }
 
-    QRectF bounds;
-    if (m_size.height() != 0)
-        bounds = QRectF(0, py, 1, scaledSize.height()); // x and width are not used.
+    QRectF approxMaximumBrect(m_coord.x(),
+                              m_coord.y(),
+                              charCount * fm.averageCharWidth(),
+                              -m_tspans.size() * fm.height());
+    return p->transform().mapRect(approxMaximumBrect);
+}
 
-    bool appendSpace = false;
-    QVector<QString> paragraphs;
-    QVector<QVector<QTextLayout::FormatRange> > formatRanges(1);
-    paragraphs.push_back(QString());
+QRectF QSvgText::internalBounds(QPainter *p, QSvgExtraStates &states) const
+{
+    QRectF boundingRect;
+    if (shouldDrawNode(p, states))
+        draw_helper(p, states, &boundingRect);
+    return p->transform().mapRect(boundingRect);
+}
 
-    for (int i = 0; i < m_tspans.size(); ++i) {
-        if (m_tspans[i] == LINEBREAK) {
-            if (m_type == TEXTAREA) {
-                if (paragraphs.back().isEmpty()) {
-                    QFont font = p->font();
-                    font.setPixelSize(font.pointSizeF() * scale);
+void QSvgText::drawCommand(QPainter *p, QSvgExtraStates &states)
+{
+    draw_helper(p, states);
+}
 
-                    QTextLayout::FormatRange range;
-                    range.start = 0;
-                    range.length = 1;
-                    range.format.setFont(font);
-                    formatRanges.back().append(range);
+bool QSvgText::shouldDrawNode(QPainter *p, QSvgExtraStates &) const
+{
+    qsizetype numChars = 0;
+    qreal originalFontSize = p->font().pointSizeF();
+    qreal maxFontSize = originalFontSize;
+    for (const QSvgTspan *span : std::as_const(m_tspans)) {
+        if (span == LINEBREAK)
+            continue;
 
-                    paragraphs.back().append(QLatin1Char(' '));;
+        numChars += span->text().size();
+
+        QSvgFontStyle *style = static_cast<QSvgFontStyle *>(span->styleProperty(QSvgStyleProperty::FONT));
+        if (style != nullptr && style->qfont().pointSizeF() > maxFontSize)
+            maxFontSize = style->qfont().pointSizeF();
+    }
+
+    QFont font = p->font();
+    font.setPixelSize((100.0 / originalFontSize) * maxFontSize);
+    QFontMetricsF fm(font);
+    if (m_tspans.size() * fm.height() >= QT_SVG_MAX_LAYOUT_SIZE) {
+        qCWarning(lcSvgDraw) << "Text element too high to lay out, ignoring";
+        return false;
+    }
+
+    if (numChars * fm.maxWidth() >= QT_SVG_MAX_LAYOUT_SIZE) {
+        qCWarning(lcSvgDraw) << "Text element too wide to lay out, ignoring";
+        return false;
+    }
+
+    return true;
+}
+
+void QSvgText::draw_helper(QPainter *p, QSvgExtraStates &states, QRectF *boundingRect) const
+{
+    const bool isPainting = (boundingRect == nullptr);
+    if (!isPainting || shouldDrawNode(p, states)) {
+        qreal oldOpacity = p->opacity();
+        p->setOpacity(oldOpacity * states.fillOpacity);
+
+        // Force the font to have a size of 100 pixels to avoid truncation problems
+        // when the font is very small.
+        QFont font = p->font();
+        qreal scale = 100.0 / font.pointSizeF();
+        Qt::Alignment alignment = states.textAnchor;
+
+        QTransform oldTransform = p->worldTransform();
+        p->scale(1 / scale, 1 / scale);
+
+        qreal y = 0;
+        bool initial = true;
+        qreal px = m_coord.x() * scale;
+        qreal py = m_coord.y() * scale;
+        QSizeF scaledSize = m_size * scale;
+
+        if (m_type == Textarea) {
+            if (alignment == Qt::AlignHCenter)
+                px += scaledSize.width() / 2;
+            else if (alignment == Qt::AlignRight)
+                px += scaledSize.width();
+        }
+
+        QRectF bounds;
+        if (m_size.height() != 0)
+            bounds = QRectF(0, py, 1, scaledSize.height()); // x and width are not used.
+
+        bool appendSpace = false;
+        QList<QString> paragraphs;
+        QList<QList<QTextLayout::FormatRange> > formatRanges(1);
+        paragraphs.push_back(QString());
+
+        for (int i = 0; i < m_tspans.size(); ++i) {
+            if (m_tspans[i] == LINEBREAK) {
+                if (m_type == Textarea) {
+                    if (paragraphs.back().isEmpty()) {
+                        font.setPixelSize(font.pointSizeF() * scale);
+
+                        QTextLayout::FormatRange range;
+                        range.start = 0;
+                        range.length = 1;
+                        range.format.setFont(font);
+                        formatRanges.back().append(range);
+
+                        paragraphs.back().append(QLatin1Char(' '));;
+                    }
+                    appendSpace = false;
+                    paragraphs.push_back(QString());
+                    formatRanges.resize(formatRanges.size() + 1);
                 }
-                appendSpace = false;
-                paragraphs.push_back(QString());
-                formatRanges.resize(formatRanges.size() + 1);
+            } else {
+                WhitespaceMode mode = m_tspans[i]->whitespaceMode();
+                m_tspans[i]->applyStyle(p, states);
+
+                font = p->font();
+                font.setPixelSize(font.pointSizeF() * scale);
+
+                QString newText(m_tspans[i]->text());
+                newText.replace(QLatin1Char('\t'), QLatin1Char(' '));
+                newText.replace(QLatin1Char('\n'), QLatin1Char(' '));
+
+                bool prependSpace = !appendSpace && !m_tspans[i]->isTspan() && (mode == Default) && !paragraphs.back().isEmpty() && newText.startsWith(QLatin1Char(' '));
+                if (appendSpace || prependSpace)
+                    paragraphs.back().append(QLatin1Char(' '));
+
+                bool appendSpaceNext = (!m_tspans[i]->isTspan() && (mode == Default) && newText.endsWith(QLatin1Char(' ')));
+
+                if (mode == Default) {
+                    newText = newText.simplified();
+                    if (newText.isEmpty())
+                        appendSpaceNext = false;
+                }
+
+                QTextLayout::FormatRange range;
+                range.start = paragraphs.back().size();
+                range.length = newText.size();
+                range.format.setFont(font);
+                range.format.setTextOutline(p->pen());
+                range.format.setForeground(p->brush());
+
+                if (appendSpace) {
+                    Q_ASSERT(!formatRanges.back().isEmpty());
+                    ++formatRanges.back().back().length;
+                } else if (prependSpace) {
+                    --range.start;
+                    ++range.length;
+                }
+                formatRanges.back().append(range);
+
+                appendSpace = appendSpaceNext;
+                paragraphs.back() += newText;
+
+                m_tspans[i]->revertStyle(p, states);
+            }
+        }
+
+        if (states.svgFont) {
+            // SVG fonts not fully supported...
+            QString text = paragraphs.front();
+            for (int i = 1; i < paragraphs.size(); ++i) {
+                text.append(QLatin1Char('\n'));
+                text.append(paragraphs[i]);
+            }
+            if (isPainting) {
+                states.svgFont->draw(
+                        p, m_coord * scale, text, p->font().pointSizeF() * scale, states.textAnchor);
+            }
+            if (boundingRect) {
+                *boundingRect = states.svgFont->boundingRect(
+                        p, m_coord * scale, text, p->font().pointSizeF() * scale, states.textAnchor);
             }
         } else {
-            WhitespaceMode mode = m_tspans[i]->whitespaceMode();
-            m_tspans[i]->applyStyle(p, states);
+            QRectF brect;
+            for (int i = 0; i < paragraphs.size(); ++i) {
+                QTextLayout tl(paragraphs[i]);
+                QTextOption op = tl.textOption();
+                op.setWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
+                tl.setTextOption(op);
+                tl.setFormats(formatRanges[i]);
+                tl.beginLayout();
 
-            QFont font = p->font();
-            font.setPixelSize(font.pointSizeF() * scale);
-
-            QString newText(m_tspans[i]->text());
-            newText.replace(QLatin1Char('\t'), QLatin1Char(' '));
-            newText.replace(QLatin1Char('\n'), QLatin1Char(' '));
-
-            bool prependSpace = !appendSpace && !m_tspans[i]->isTspan() && (mode == Default) && !paragraphs.back().isEmpty() && newText.startsWith(QLatin1Char(' '));
-            if (appendSpace || prependSpace)
-                paragraphs.back().append(QLatin1Char(' '));
-
-            bool appendSpaceNext = (!m_tspans[i]->isTspan() && (mode == Default) && newText.endsWith(QLatin1Char(' ')));
-
-            if (mode == Default) {
-                newText = newText.simplified();
-                if (newText.isEmpty())
-                    appendSpaceNext = false;
-            }
-
-            QTextLayout::FormatRange range;
-            range.start = paragraphs.back().length();
-            range.length = newText.length();
-            range.format.setFont(font);
-            range.format.setTextOutline(p->pen());
-            range.format.setForeground(p->brush());
-
-            if (appendSpace) {
-                Q_ASSERT(!formatRanges.back().isEmpty());
-                ++formatRanges.back().back().length;
-            } else if (prependSpace) {
-                --range.start;
-                ++range.length;
-            }
-            formatRanges.back().append(range);
-
-            appendSpace = appendSpaceNext;
-            paragraphs.back() += newText;
-
-            m_tspans[i]->revertStyle(p, states);
-        }
-    }
-
-    if (states.svgFont) {
-        // SVG fonts not fully supported...
-        QString text = paragraphs.front();
-        for (int i = 1; i < paragraphs.size(); ++i) {
-            text.append(QLatin1Char('\n'));
-            text.append(paragraphs[i]);
-        }
-        states.svgFont->draw(p, m_coord * scale, text, p->font().pointSizeF() * scale, states.textAnchor);
-    } else {
-        for (int i = 0; i < paragraphs.size(); ++i) {
-            QTextLayout tl(paragraphs[i]);
-            QTextOption op = tl.textOption();
-            op.setWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
-            tl.setTextOption(op);
-            tl.setFormats(formatRanges[i]);
-            tl.beginLayout();
-
-            forever {
-                QTextLine line = tl.createLine();
-                if (!line.isValid())
-                    break;
-                if (m_size.width() != 0)
-                    line.setLineWidth(scaledSize.width());
-            }
-            tl.endLayout();
-
-            bool endOfBoundsReached = false;
-            for (int i = 0; i < tl.lineCount(); ++i) {
-                QTextLine line = tl.lineAt(i);
-
-                qreal x = 0;
-                if (alignment == Qt::AlignHCenter)
-                    x -= 0.5 * line.naturalTextWidth();
-                else if (alignment == Qt::AlignRight)
-                    x -= line.naturalTextWidth();
-
-                if (initial && m_type == TEXT)
-                    y -= line.ascent();
-                initial = false;
-
-                line.setPosition(QPointF(x, y));
-
-                // Check if the current line fits into the bounding rectangle.
-                if ((m_size.width() != 0 && line.naturalTextWidth() > scaledSize.width())
-                    || (m_size.height() != 0 && y + line.height() > scaledSize.height())) {
-                    // I need to set the bounds height to 'y-epsilon' to avoid drawing the current
-                    // line. Since the font is scaled to 100 units, 1 should be a safe epsilon.
-                    bounds.setHeight(y - 1);
-                    endOfBoundsReached = true;
-                    break;
+                forever {
+                    QTextLine line = tl.createLine();
+                    if (!line.isValid())
+                        break;
+                    if (m_size.width() != 0)
+                        line.setLineWidth(scaledSize.width());
                 }
+                tl.endLayout();
 
-                y += 1.1 * line.height();
+                bool endOfBoundsReached = false;
+                for (int i = 0; i < tl.lineCount(); ++i) {
+                    QTextLine line = tl.lineAt(i);
+
+                    qreal x = 0;
+                    if (alignment == Qt::AlignHCenter)
+                        x -= 0.5 * line.naturalTextWidth();
+                    else if (alignment == Qt::AlignRight)
+                        x -= line.naturalTextWidth();
+
+                    if (initial && m_type == Text)
+                        y -= line.ascent();
+                    initial = false;
+
+                    line.setPosition(QPointF(x, y));
+                    brect |= line.naturalTextRect();
+
+                    // Check if the current line fits into the bounding rectangle.
+                    if ((m_size.width() != 0 && line.naturalTextWidth() > scaledSize.width())
+                        || (m_size.height() != 0 && y + line.height() > scaledSize.height())) {
+                        // I need to set the bounds height to 'y-epsilon' to avoid drawing the current
+                        // line. Since the font is scaled to 100 units, 1 should be a safe epsilon.
+                        bounds.setHeight(y - 1);
+                        endOfBoundsReached = true;
+                        break;
+                    }
+
+                    y += 1.1 * line.height();
+                }
+                if (isPainting)
+                    tl.draw(p, QPointF(px, py), QList<QTextLayout::FormatRange>(), bounds);
+
+                if (endOfBoundsReached)
+                    break;
             }
-            tl.draw(p, QPointF(px, py), QVector<QTextLayout::FormatRange>(), bounds);
-
-            if (endOfBoundsReached)
-                break;
+            if (boundingRect) {
+                brect.translate(m_coord * scale);
+                if (bounds.height() > 0)
+                    brect.setBottom(qMin(brect.bottom(), bounds.bottom()));
+                *boundingRect = QTransform::fromScale(1 / scale, 1 / scale).mapRect(brect);
+            }
         }
-    }
 
-    p->setWorldTransform(oldTransform, false);
-    p->setOpacity(oldOpacity);
-    revertStyle(p, states);
+        p->setWorldTransform(oldTransform, false);
+        p->setOpacity(oldOpacity);
+    }
 }
 
 void QSvgText::addText(const QString &text)
@@ -467,7 +553,7 @@ QSvgUse::QSvgUse(const QPointF &start, QSvgNode *parent, QSvgNode *node)
 
 }
 
-void QSvgUse::draw(QPainter *p, QSvgExtraStates &states)
+void QSvgUse::drawCommand(QPainter *p, QSvgExtraStates &states)
 {
     if (Q_UNLIKELY(!m_link || isDescendantOf(m_link) || m_recursing))
         return;
@@ -478,7 +564,7 @@ void QSvgUse::draw(QPainter *p, QSvgExtraStates &states)
         return;
     }
 
-    applyStyle(p, states);
+    QScopedValueRollback<bool> inUseGuard(states.inUse, true);
 
     if (!m_start.isNull()) {
         p->translate(m_start);
@@ -496,65 +582,51 @@ void QSvgUse::draw(QPainter *p, QSvgExtraStates &states)
     if (!m_start.isNull()) {
         p->translate(-m_start);
     }
-
-    revertStyle(p, states);
-}
-
-void QSvgVideo::draw(QPainter *p, QSvgExtraStates &states)
-{
-    applyStyle(p, states);
-
-    revertStyle(p, states);
 }
 
 QSvgNode::Type QSvgAnimation::type() const
 {
-    return ANIMATION;
-}
-
-QSvgNode::Type QSvgArc::type() const
-{
-    return ARC;
+    return Animation;
 }
 
 QSvgNode::Type QSvgCircle::type() const
 {
-    return CIRCLE;
+    return Circle;
 }
 
 QSvgNode::Type QSvgEllipse::type() const
 {
-    return ELLIPSE;
+    return Ellipse;
 }
 
 QSvgNode::Type QSvgImage::type() const
 {
-    return IMAGE;
+    return Image;
 }
 
 QSvgNode::Type QSvgLine::type() const
 {
-    return LINE;
+    return Line;
 }
 
 QSvgNode::Type QSvgPath::type() const
 {
-    return PATH;
+    return Path;
 }
 
 QSvgNode::Type QSvgPolygon::type() const
 {
-    return POLYGON;
+    return Polygon;
 }
 
 QSvgNode::Type QSvgPolyline::type() const
 {
-    return POLYLINE;
+    return Polyline;
 }
 
 QSvgNode::Type QSvgRect::type() const
 {
-    return RECT;
+    return Rect;
 }
 
 QSvgNode::Type QSvgText::type() const
@@ -564,27 +636,61 @@ QSvgNode::Type QSvgText::type() const
 
 QSvgNode::Type QSvgUse::type() const
 {
-    return USE;
+    return Use;
 }
 
 QSvgNode::Type QSvgVideo::type() const
 {
-    return VIDEO;
+    return Video;
 }
 
-QRectF QSvgUse::bounds(QPainter *p, QSvgExtraStates &states) const
+QRectF QSvgUse::internalBounds(QPainter *p, QSvgExtraStates &states) const
 {
     QRectF bounds;
     if (Q_LIKELY(m_link && !isDescendantOf(m_link) && !m_recursing)) {
         QScopedValueRollback<bool> guard(m_recursing, true);
         p->translate(m_start);
-        bounds = m_link->transformedBounds(p, states);
+        bounds = m_link->bounds(p, states);
         p->translate(-m_start);
     }
     return bounds;
 }
 
-QRectF QSvgPolyline::bounds(QPainter *p, QSvgExtraStates &) const
+QRectF QSvgUse::decoratedInternalBounds(QPainter *p, QSvgExtraStates &states) const
+{
+    QRectF bounds;
+    if (Q_LIKELY(m_link && !isDescendantOf(m_link) && !m_recursing)) {
+        QScopedValueRollback<bool> guard(m_recursing, true);
+        p->translate(m_start);
+        bounds = m_link->decoratedBounds(p, states);
+        p->translate(-m_start);
+    }
+    return bounds;
+}
+
+QRectF QSvgPolyline::internalFastBounds(QPainter *p, QSvgExtraStates &) const
+{
+    return p->transform().mapRect(m_poly.boundingRect());
+}
+
+QRectF QSvgPolyline::internalBounds(QPainter *p, QSvgExtraStates &s) const
+{
+    return internalBounds(p, s, BoundsMode::Simplistic);
+}
+
+QRectF QSvgPolyline::decoratedInternalBounds(QPainter *p, QSvgExtraStates &s) const
+{
+    QRectF rect = internalBounds(p, s, BoundsMode::IncludeMiterLimit);
+    rect |= QSvgMarker::markersBoundsForNode(this, p, s);
+    return filterRegion(rect);
+}
+
+bool QSvgPolyline::requiresGroupRendering() const
+{
+    return hasAnyMarker();
+}
+
+QRectF QSvgPolyline::internalBounds(QPainter *p, QSvgExtraStates &, BoundsMode mode) const
 {
     qreal sw = strokeWidth(p);
     if (qFuzzyIsNull(sw)) {
@@ -592,38 +698,53 @@ QRectF QSvgPolyline::bounds(QPainter *p, QSvgExtraStates &) const
     } else {
         QPainterPath path;
         path.addPolygon(m_poly);
-        return boundsOnStroke(p, path, sw);
+        return boundsOnStroke(p, path, sw, mode);
     }
 }
 
-QRectF QSvgArc::bounds(QPainter *p, QSvgExtraStates &) const
-{
-    qreal sw = strokeWidth(p);
-    return qFuzzyIsNull(sw) ? p->transform().map(m_path).boundingRect()
-        : boundsOnStroke(p, m_path, sw);
-}
-
-QRectF QSvgImage::bounds(QPainter *p, QSvgExtraStates &) const
+QRectF QSvgImage::internalBounds(QPainter *p, QSvgExtraStates &) const
 {
     return p->transform().mapRect(m_bounds);
 }
 
-QRectF QSvgLine::bounds(QPainter *p, QSvgExtraStates &) const
+QRectF QSvgLine::internalFastBounds(QPainter *p, QSvgExtraStates &) const
+{
+    QPointF p1 = p->transform().map(m_line.p1());
+    QPointF p2 = p->transform().map(m_line.p2());
+    qreal minX = qMin(p1.x(), p2.x());
+    qreal minY = qMin(p1.y(), p2.y());
+    qreal maxX = qMax(p1.x(), p2.x());
+    qreal maxY = qMax(p1.y(), p2.y());
+    return QRectF(minX, minY, maxX - minX, maxY - minY);
+}
+
+QRectF QSvgLine::internalBounds(QPainter *p, QSvgExtraStates &s) const
+{
+    return  internalBounds(p, s, BoundsMode::Simplistic);
+}
+
+QRectF QSvgLine::decoratedInternalBounds(QPainter *p, QSvgExtraStates &s) const
+{
+    QRectF rect = internalBounds(p, s, BoundsMode::IncludeMiterLimit);
+    rect |= QSvgMarker::markersBoundsForNode(this, p, s);
+    return filterRegion(rect);
+}
+
+bool QSvgLine::requiresGroupRendering() const
+{
+    return hasAnyMarker();
+}
+
+QRectF QSvgLine::internalBounds(QPainter *p, QSvgExtraStates &s, BoundsMode mode) const
 {
     qreal sw = strokeWidth(p);
     if (qFuzzyIsNull(sw)) {
-        QPointF p1 = p->transform().map(m_line.p1());
-        QPointF p2 = p->transform().map(m_line.p2());
-        qreal minX = qMin(p1.x(), p2.x());
-        qreal minY = qMin(p1.y(), p2.y());
-        qreal maxX = qMax(p1.x(), p2.x());
-        qreal maxY = qMax(p1.y(), p2.y());
-        return QRectF(minX, minY, maxX - minX, maxY - minY);
+        return internalFastBounds(p, s);
     } else {
         QPainterPath path;
         path.moveTo(m_line.p1());
         path.lineTo(m_line.p2());
-        return boundsOnStroke(p, path, sw);
+        return boundsOnStroke(p, path, sw, mode);
     }
 }
 

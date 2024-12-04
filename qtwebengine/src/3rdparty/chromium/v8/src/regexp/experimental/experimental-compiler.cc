@@ -4,6 +4,7 @@
 
 #include "src/regexp/experimental/experimental-compiler.h"
 
+#include "src/base/strings.h"
 #include "src/regexp/experimental/experimental.h"
 #include "src/zone/zone-list-inl.h"
 
@@ -14,31 +15,33 @@ namespace {
 
 // TODO(mbid, v8:10765): Currently the experimental engine doesn't support
 // UTF-16, but this shouldn't be too hard to implement.
-constexpr uc32 kMaxSupportedCodepoint = 0xFFFFu;
+constexpr base::uc32 kMaxSupportedCodepoint = 0xFFFFu;
+#ifdef DEBUG
+constexpr base::uc32 kMaxCodePoint = 0x10ffff;
+#endif  // DEBUG
 
 class CanBeHandledVisitor final : private RegExpVisitor {
   // Visitor to implement `ExperimentalRegExp::CanBeHandled`.
  public:
-  static bool Check(RegExpTree* tree, JSRegExp::Flags flags,
-                    int capture_count) {
+  static bool Check(RegExpTree* tree, RegExpFlags flags, int capture_count) {
     if (!AreSuitableFlags(flags)) return false;
-    CanBeHandledVisitor visitor;
+    CanBeHandledVisitor visitor{flags};
     tree->Accept(&visitor, nullptr);
     return visitor.result_;
   }
 
  private:
-  CanBeHandledVisitor() = default;
+  explicit CanBeHandledVisitor(RegExpFlags flags) : flags_(flags) {}
 
-  static bool AreSuitableFlags(JSRegExp::Flags flags) {
+  static bool AreSuitableFlags(RegExpFlags flags) {
     // TODO(mbid, v8:10765): We should be able to support all flags in the
     // future.
-    static constexpr JSRegExp::Flags kAllowedFlags =
-        JSRegExp::kGlobal | JSRegExp::kSticky | JSRegExp::kMultiline |
-        JSRegExp::kDotAll;
+    static constexpr RegExpFlags kAllowedFlags =
+        RegExpFlag::kGlobal | RegExpFlag::kSticky | RegExpFlag::kMultiline |
+        RegExpFlag::kDotAll | RegExpFlag::kLinear;
     // We support Unicode iff kUnicode is among the supported flags.
-    STATIC_ASSERT(ExperimentalRegExp::kSupportsUnicode ==
-                  ((kAllowedFlags & JSRegExp::kUnicode) != 0));
+    static_assert(ExperimentalRegExp::kSupportsUnicode ==
+                  IsUnicode(kAllowedFlags));
     return (flags & ~kAllowedFlags) == 0;
   }
 
@@ -62,20 +65,26 @@ class CanBeHandledVisitor final : private RegExpVisitor {
     return nullptr;
   }
 
-  void* VisitCharacterClass(RegExpCharacterClass* node, void*) override {
-    result_ = result_ && AreSuitableFlags(node->flags());
+  void* VisitClassRanges(RegExpClassRanges* node, void*) override {
+    return nullptr;
+  }
+
+  void* VisitClassSetOperand(RegExpClassSetOperand* node, void*) override {
+    result_ = !node->has_strings();
+    return nullptr;
+  }
+
+  void* VisitClassSetExpression(RegExpClassSetExpression* node,
+                                void*) override {
+    result_ = false;
     return nullptr;
   }
 
   void* VisitAssertion(RegExpAssertion* node, void*) override {
-    result_ = result_ && AreSuitableFlags(node->flags());
     return nullptr;
   }
 
-  void* VisitAtom(RegExpAtom* node, void*) override {
-    result_ = result_ && AreSuitableFlags(node->flags());
-    return nullptr;
-  }
+  void* VisitAtom(RegExpAtom* node, void*) override { return nullptr; }
 
   void* VisitText(RegExpText* node, void*) override {
     for (TextElement& el : *node->elements()) {
@@ -113,7 +122,12 @@ class CanBeHandledVisitor final : private RegExpVisitor {
 
     int local_replication;
     if (node->max() == RegExpTree::kInfinity) {
-      local_replication = node->min() + 1;
+      if (node->min() > 0 && node->min_match() > 0) {
+        // Quantifier can be reduced to a non nullable plus.
+        local_replication = std::max(node->min(), 1);
+      } else {
+        local_replication = node->min() + 1;
+      }
     } else {
       local_replication = node->max();
     }
@@ -141,19 +155,48 @@ class CanBeHandledVisitor final : private RegExpVisitor {
   }
 
   void* VisitCapture(RegExpCapture* node, void*) override {
-    node->body()->Accept(this, nullptr);
+    if (inside_positive_lookbehind_) {
+      // Positive lookbehinds with capture groups are not currently supported
+      result_ = false;
+    } else {
+      node->body()->Accept(this, nullptr);
+    }
+
     return nullptr;
   }
 
   void* VisitGroup(RegExpGroup* node, void*) override {
+    if (flags() != node->flags()) {
+      // Flags that aren't supported by the experimental engine at all, are not
+      // supported via modifiers either.
+      // TODO(pthier): Currently the only flag supported in modifiers and in
+      // the experimental engine is multi-line, which is already handled in the
+      // parser. If more flags are supported either by the experimental engine
+      // or in modifiers we need to add general support for modifiers to the
+      // experimental engine.
+      if (!AreSuitableFlags(node->flags())) {
+        result_ = false;
+        return nullptr;
+      }
+    }
     node->body()->Accept(this, nullptr);
     return nullptr;
   }
 
   void* VisitLookaround(RegExpLookaround* node, void*) override {
-    // TODO(mbid, v8:10765): This will be hard to support, but not impossible I
-    // think.  See product automata.
-    result_ = false;
+    bool parent_is_positive_lookbehind = inside_positive_lookbehind_;
+    inside_positive_lookbehind_ = node->is_positive();
+
+    // The current lookbehind implementation does not support sticky or global
+    // flags.
+    if (node->type() == RegExpLookaround::Type::LOOKAHEAD ||
+        IsGlobal(flags()) || IsSticky(flags())) {
+      result_ = false;
+    } else {
+      node->body()->Accept(this, nullptr);
+    }
+
+    inside_positive_lookbehind_ = parent_is_positive_lookbehind;
     return nullptr;
   }
 
@@ -166,139 +209,212 @@ class CanBeHandledVisitor final : private RegExpVisitor {
   void* VisitEmpty(RegExpEmpty* node, void*) override { return nullptr; }
 
  private:
+  RegExpFlags flags() const { return flags_; }
+
   // See comment in `VisitQuantifier`:
   int replication_factor_ = 1;
 
+  // The current implementation does not support capture groups in positive
+  // lookbehinds.
+  bool inside_positive_lookbehind_ = false;
+
   bool result_ = true;
+  RegExpFlags flags_;
 };
 
 }  // namespace
 
 bool ExperimentalRegExpCompiler::CanBeHandled(RegExpTree* tree,
-                                              JSRegExp::Flags flags,
+                                              RegExpFlags flags,
                                               int capture_count) {
-  DCHECK(FLAG_enable_experimental_regexp_engine);
   return CanBeHandledVisitor::Check(tree, flags, capture_count);
 }
 
 namespace experimental {
 
-// A label in bytecode with known address.
-class Label {
+// A label in bytecode which starts with no known address. The address *must*
+// be bound with `Bind` before the label goes out of scope.
+// Implemented as a linked list through the `payload.pc` of FORK and JMP
+// instructions.
+struct Label {
  public:
-  explicit Label(int index) : index_(index) { DCHECK_GE(index_, 0); }
-
-  int index() { return index_; }
-
-  // Friend functions because `label.AddForkTo(code, zone)` reads like we're
-  // adding code to where `label` is defined, but we're adding a fork with
-  // target `label` at the end of `code`.
-  friend void AddForkTo(Label target, ZoneList<RegExpInstruction>& code,
-                        Zone* zone) {
-    code.Add(RegExpInstruction::Fork(target.index_), zone);
+  Label() = default;
+  ~Label() {
+    DCHECK_EQ(state_, BOUND);
+    DCHECK_GE(bound_index_, 0);
   }
-
-  friend void AddJmpTo(Label target, ZoneList<RegExpInstruction>& code,
-                       Zone* zone) {
-    code.Add(RegExpInstruction::Jmp(target.index_), zone);
-  }
-
- private:
-  int index_;
-};
-
-// A label in bytecode whose address is not known yet.  The address *must* be
-// `Bind` before the deferred label object goes out of scope, and the deferred
-// label object *must not* be used after it was defined.  (Use the `Label`
-// object returned by `Bind` instead.)
-struct DeferredLabel {
-  // Implemented as a linked list through the `payload.pc` of FORK and JMP
-  // instructions.
- public:
-  DeferredLabel() = default;
-  ~DeferredLabel() { DCHECK_EQ(patch_list_begin_, kLabelWasDefined); }
-
-  friend void AddForkTo(DeferredLabel& target,
-                        ZoneList<RegExpInstruction>& code, Zone* zone) {
-    DCHECK_NE(target.patch_list_begin_, DeferredLabel::kLabelWasDefined);
-    int new_list_begin = code.length();
-    DCHECK_GE(new_list_begin, 0);
-    code.Add(RegExpInstruction::Fork(target.patch_list_begin_), zone);
-    target.patch_list_begin_ = new_list_begin;
-  }
-
-  friend void AddJmpTo(DeferredLabel& target, ZoneList<RegExpInstruction>& code,
-                       Zone* zone) {
-    DCHECK_NE(target.patch_list_begin_, DeferredLabel::kLabelWasDefined);
-    int new_list_begin = code.length();
-    DCHECK_GE(new_list_begin, 0);
-    code.Add(RegExpInstruction::Jmp(target.patch_list_begin_), zone);
-    target.patch_list_begin_ = new_list_begin;
-  }
-
-  // Define the deferred label as referring to the next instruction that will
-  // be pushed to `code`.  Consumes the DeferredLabel object and returns a
-  // Label object.
-  Label Bind(ZoneList<RegExpInstruction>& code) && {
-    DCHECK_NE(patch_list_begin_, kLabelWasDefined);
-
-    int index = code.length();
-
-    while (patch_list_begin_ != kEmptyList) {
-      RegExpInstruction& inst = code[patch_list_begin_];
-      DCHECK(inst.opcode == RegExpInstruction::FORK ||
-             inst.opcode == RegExpInstruction::JMP);
-
-      patch_list_begin_ = inst.payload.pc;
-      inst.payload.pc = index;
-    }
-
-    patch_list_begin_ = kLabelWasDefined;
-    return Label(index);
-  }
-
- private:
-  static constexpr int kEmptyList = -1;
-  static constexpr int kLabelWasDefined = -2;
-  int patch_list_begin_ = kEmptyList;
 
   // Don't copy, don't move.  Moving could be implemented, but it's not
   // needed anywhere.
-  DISALLOW_COPY_AND_ASSIGN(DeferredLabel);
+  Label(const Label&) = delete;
+  Label& operator=(const Label&) = delete;
+
+ private:
+  friend class BytecodeAssembler;
+
+  // UNBOUND implies unbound_patch_list_begin_.
+  // BOUND implies bound_index_.
+  enum { UNBOUND, BOUND } state_ = UNBOUND;
+  union {
+    int unbound_patch_list_begin_ = -1;
+    int bound_index_;
+  };
+};
+
+class BytecodeAssembler {
+ public:
+  // TODO(mbid,v8:10765): Use some upper bound for code_ capacity computed from
+  // the `tree` size we're going to compile?
+  explicit BytecodeAssembler(Zone* zone) : zone_(zone), code_(0, zone) {}
+
+  ZoneList<RegExpInstruction> IntoCode() && { return std::move(code_); }
+
+  void Accept() { code_.Add(RegExpInstruction::Accept(), zone_); }
+
+  void Assertion(RegExpAssertion::Type t) {
+    code_.Add(RegExpInstruction::Assertion(t), zone_);
+  }
+
+  void ClearRegister(int32_t register_index) {
+    code_.Add(RegExpInstruction::ClearRegister(register_index), zone_);
+  }
+
+  void ConsumeRange(base::uc16 from, base::uc16 to) {
+    code_.Add(RegExpInstruction::ConsumeRange(from, to), zone_);
+  }
+
+  void ConsumeAnyChar() {
+    code_.Add(RegExpInstruction::ConsumeAnyChar(), zone_);
+  }
+
+  void Fork(Label& target) {
+    LabelledInstrImpl(RegExpInstruction::Opcode::FORK, target);
+  }
+
+  void Jmp(Label& target) {
+    LabelledInstrImpl(RegExpInstruction::Opcode::JMP, target);
+  }
+
+  void SetRegisterToCp(int32_t register_index) {
+    code_.Add(RegExpInstruction::SetRegisterToCp(register_index), zone_);
+  }
+
+  void BeginLoop() { code_.Add(RegExpInstruction::BeginLoop(), zone_); }
+
+  void EndLoop() { code_.Add(RegExpInstruction::EndLoop(), zone_); }
+
+  void WriteLookTable(int index) {
+    code_.Add(RegExpInstruction::WriteLookTable(index), zone_);
+  }
+
+  void ReadLookTable(int index, bool is_positive) {
+    code_.Add(RegExpInstruction::ReadLookTable(index, is_positive), zone_);
+  }
+
+  void Bind(Label& target) {
+    DCHECK_EQ(target.state_, Label::UNBOUND);
+
+    int index = code_.length();
+
+    while (target.unbound_patch_list_begin_ != -1) {
+      RegExpInstruction& inst = code_[target.unbound_patch_list_begin_];
+      DCHECK(inst.opcode == RegExpInstruction::FORK ||
+             inst.opcode == RegExpInstruction::JMP);
+
+      target.unbound_patch_list_begin_ = inst.payload.pc;
+      inst.payload.pc = index;
+    }
+
+    target.state_ = Label::BOUND;
+    target.bound_index_ = index;
+  }
+
+  void Fail() { code_.Add(RegExpInstruction::Fail(), zone_); }
+
+ private:
+  void LabelledInstrImpl(RegExpInstruction::Opcode op, Label& target) {
+    RegExpInstruction result;
+    result.opcode = op;
+
+    if (target.state_ == Label::BOUND) {
+      result.payload.pc = target.bound_index_;
+    } else {
+      DCHECK_EQ(target.state_, Label::UNBOUND);
+      int new_list_begin = code_.length();
+      DCHECK_GE(new_list_begin, 0);
+
+      result.payload.pc = target.unbound_patch_list_begin_;
+
+      target.unbound_patch_list_begin_ = new_list_begin;
+    }
+
+    code_.Add(result, zone_);
+  }
+
+  Zone* zone_;
+  ZoneList<RegExpInstruction> code_;
 };
 
 class CompileVisitor : private RegExpVisitor {
  public:
   static ZoneList<RegExpInstruction> Compile(RegExpTree* tree,
-                                             JSRegExp::Flags flags,
-                                             Zone* zone) {
+                                             RegExpFlags flags, Zone* zone) {
     CompileVisitor compiler(zone);
 
-    if ((flags & JSRegExp::kSticky) == 0 && !tree->IsAnchoredAtStart()) {
+    if (!IsSticky(flags) && !tree->IsAnchoredAtStart()) {
       // The match is not anchored, i.e. may start at any input position, so we
       // emit a preamble corresponding to /.*?/.  This skips an arbitrary
       // prefix in the input non-greedily.
-      compiler.CompileNonGreedyStar([&]() {
-        compiler.code_.Add(RegExpInstruction::ConsumeAnyChar(), zone);
-      });
+      compiler.CompileNonGreedyStar(
+          [&]() { compiler.assembler_.ConsumeAnyChar(); });
     }
 
-    compiler.code_.Add(RegExpInstruction::SetRegisterToCp(0), zone);
+    compiler.assembler_.SetRegisterToCp(0);
     tree->Accept(&compiler, nullptr);
-    compiler.code_.Add(RegExpInstruction::SetRegisterToCp(1), zone);
-    compiler.code_.Add(RegExpInstruction::Accept(), zone);
+    compiler.assembler_.SetRegisterToCp(1);
+    compiler.assembler_.Accept();
 
-    return std::move(compiler.code_);
+    // To handle captureless lookbehinds, we run independent automata for each
+    // lookbehind in lockstep with the main expression. To do so, we compile
+    // each lookbehind to a separate bytecode that we append to the main
+    // expression bytecode. At the end of each lookbehind, we add a
+    // WriteLookTable instruction, writing to a truth table that the lookbehind
+    // holds at the current position.
+    //
+    // This approach prevents the use of the sticky or global flags. In both
+    // cases, when resuming the search, it starts at a non null index, while the
+    // lookbehinds always need to start at the beginning of the string. A future
+    // implementation for the global flag may store the active lookbehind
+    // threads in the regexp to resume the execution of the lookbehinds
+    // automata.
+    compiler.inside_lookaround_ = true;
+    while (!compiler.lookbehinds_.empty()) {
+      auto node = compiler.lookbehinds_.front();
+
+      // Lookbehinds are never anchored, i.e. may start at any input position,
+      // so we emit a preamble corresponding to /.*?/.  This skips an arbitrary
+      // prefix in the input.
+      compiler.CompileNonGreedyStar(
+          [&]() { compiler.assembler_.ConsumeAnyChar(); });
+
+      node->body()->Accept(&compiler, nullptr);
+      compiler.assembler_.WriteLookTable(node->index());
+      compiler.lookbehinds_.pop_front();
+    }
+
+    return std::move(compiler.assembler_).IntoCode();
   }
 
  private:
-  // TODO(mbid,v8:10765): Use some upper bound for code_ capacity computed from
-  // the `tree` size we're going to compile?
-  explicit CompileVisitor(Zone* zone) : zone_(zone), code_(0, zone) {}
+  explicit CompileVisitor(Zone* zone)
+      : zone_(zone),
+        lookbehinds_(zone),
+        assembler_(zone),
+        inside_lookaround_(false) {}
 
   // Generate a disjunction of code fragments compiled by a function `alt_gen`.
   // `alt_gen` is called repeatedly with argument `int i = 0, 1, ..., alt_num -
-  // 1` and should push code corresponding to the ith alternative onto `code_`.
+  // 1` and should build code corresponding to the ith alternative.
   template <class F>
   void CompileDisjunction(int alt_num, F&& gen_alt) {
     // An alternative a1 | ... | an is compiled into
@@ -325,23 +441,23 @@ class CompileVisitor : private RegExpVisitor {
 
     if (alt_num == 0) {
       // The empty disjunction.  This can never match.
-      code_.Add(RegExpInstruction::Fail(), zone_);
+      assembler_.Fail();
       return;
     }
 
-    DeferredLabel end;
+    Label end;
 
     for (int i = 0; i != alt_num - 1; ++i) {
-      DeferredLabel tail;
-      AddForkTo(tail, code_, zone_);
+      Label tail;
+      assembler_.Fork(tail);
       gen_alt(i);
-      AddJmpTo(end, code_, zone_);
-      std::move(tail).Bind(code_);
+      assembler_.Jmp(end);
+      assembler_.Bind(tail);
     }
 
     gen_alt(alt_num - 1);
 
-    std::move(end).Bind(code_);
+    assembler_.Bind(end);
   }
 
   void* VisitDisjunction(RegExpDisjunction* node, void*) override {
@@ -359,15 +475,14 @@ class CompileVisitor : private RegExpVisitor {
   }
 
   void* VisitAssertion(RegExpAssertion* node, void*) override {
-    code_.Add(RegExpInstruction::Assertion(node->assertion_type()), zone_);
+    assembler_.Assertion(node->assertion_type());
     return nullptr;
   }
 
-  void* VisitCharacterClass(RegExpCharacterClass* node, void*) override {
+  void CompileCharacterRanges(ZoneList<CharacterRange>* ranges, bool negated) {
     // A character class is compiled as Disjunction over its `CharacterRange`s.
-    ZoneList<CharacterRange>* ranges = node->ranges(zone_);
     CharacterRange::Canonicalize(ranges);
-    if (node->is_negated()) {
+    if (negated) {
       // The complement of a disjoint, non-adjacent (i.e. `Canonicalize`d)
       // union of k intervals is a union of at most k + 1 intervals.
       ZoneList<CharacterRange>* negated =
@@ -379,28 +494,44 @@ class CompileVisitor : private RegExpVisitor {
 
     CompileDisjunction(ranges->length(), [&](int i) {
       // We don't support utf16 for now, so only ranges that can be specified
-      // by (complements of) ranges with uc16 bounds.
-      STATIC_ASSERT(kMaxSupportedCodepoint <= std::numeric_limits<uc16>::max());
+      // by (complements of) ranges with base::uc16 bounds.
+      static_assert(kMaxSupportedCodepoint <=
+                    std::numeric_limits<base::uc16>::max());
 
-      uc32 from = (*ranges)[i].from();
+      base::uc32 from = (*ranges)[i].from();
       DCHECK_LE(from, kMaxSupportedCodepoint);
-      uc16 from_uc16 = static_cast<uc16>(from);
+      base::uc16 from_uc16 = static_cast<base::uc16>(from);
 
-      uc32 to = (*ranges)[i].to();
-      DCHECK_IMPLIES(to > kMaxSupportedCodepoint, to == String::kMaxCodePoint);
-      uc16 to_uc16 = static_cast<uc16>(std::min(to, kMaxSupportedCodepoint));
+      base::uc32 to = (*ranges)[i].to();
+      DCHECK_IMPLIES(to > kMaxSupportedCodepoint, to == kMaxCodePoint);
+      base::uc16 to_uc16 =
+          static_cast<base::uc16>(std::min(to, kMaxSupportedCodepoint));
 
-      RegExpInstruction::Uc16Range range{from_uc16, to_uc16};
-      code_.Add(RegExpInstruction::ConsumeRange(range), zone_);
+      assembler_.ConsumeRange(from_uc16, to_uc16);
     });
+  }
+
+  void* VisitClassRanges(RegExpClassRanges* node, void*) override {
+    CompileCharacterRanges(node->ranges(zone_), node->is_negated());
     return nullptr;
   }
 
+  void* VisitClassSetOperand(RegExpClassSetOperand* node, void*) override {
+    // TODO(v8:11935): Support strings.
+    DCHECK(!node->has_strings());
+    CompileCharacterRanges(node->ranges(), false);
+    return nullptr;
+  }
+
+  void* VisitClassSetExpression(RegExpClassSetExpression* node,
+                                void*) override {
+    // TODO(v8:11935): Add support.
+    UNREACHABLE();
+  }
+
   void* VisitAtom(RegExpAtom* node, void*) override {
-    for (uc16 c : node->data()) {
-      code_.Add(
-          RegExpInstruction::ConsumeRange(RegExpInstruction::Uc16Range{c, c}),
-          zone_);
+    for (base::uc16 c : node->data()) {
+      assembler_.ConsumeRange(c, c);
     }
     return nullptr;
   }
@@ -413,7 +544,7 @@ class CompileVisitor : private RegExpVisitor {
       // It suffices to clear the register containing the `begin` of a capture
       // because this indicates that the capture is undefined, regardless of
       // the value in the `end` register.
-      code_.Add(RegExpInstruction::ClearRegister(i), zone_);
+      assembler_.ClearRegister(i);
     }
   }
 
@@ -424,21 +555,26 @@ class CompileVisitor : private RegExpVisitor {
     //
     //   begin:
     //     FORK end
+    //     BEGIN_LOOP
     //     <body>
+    //     END_LOOP
     //     JMP begin
     //   end:
     //     ...
     //
     // This is greedy because a forked thread has lower priority than the
     // thread that spawned it.
-    Label begin(code_.length());
-    DeferredLabel end;
+    Label begin;
+    Label end;
 
-    AddForkTo(end, code_, zone_);
+    assembler_.Bind(begin);
+    assembler_.Fork(end);
+    assembler_.BeginLoop();
     emit_body();
-    AddJmpTo(begin, code_, zone_);
+    assembler_.EndLoop();
+    assembler_.Jmp(begin);
 
-    std::move(end).Bind(code_);
+    assembler_.Bind(end);
   }
 
   // Emit bytecode corresponding to /<emit_body>*?/.
@@ -449,23 +585,26 @@ class CompileVisitor : private RegExpVisitor {
     //     FORK body
     //     JMP end
     //   body:
+    //     BEGIN_LOOP
     //     <body>
+    //     END_LOOP
     //     FORK body
     //   end:
     //     ...
 
-    Label body(code_.length() + 2);
-    DeferredLabel end;
+    Label body;
+    Label end;
 
-    AddForkTo(body, code_, zone_);
-    AddJmpTo(end, code_, zone_);
+    assembler_.Fork(body);
+    assembler_.Jmp(end);
 
-    DCHECK_EQ(body.index(), code_.length());
-
+    assembler_.Bind(body);
+    assembler_.BeginLoop();
     emit_body();
-    AddForkTo(body, code_, zone_);
+    assembler_.EndLoop();
+    assembler_.Fork(body);
 
-    std::move(end).Bind(code_);
+    assembler_.Bind(end);
   }
 
   // Emit bytecode corresponding to /<emit_body>{0, max_repetition_num}/.
@@ -474,22 +613,31 @@ class CompileVisitor : private RegExpVisitor {
     // This is compiled into
     //
     //     FORK end
+    //     BEGIN_LOOP
     //     <body>
+    //     END_LOOP
     //     FORK end
+    //     BEGIN_LOOP
     //     <body>
+    //     END_LOOP
     //     ...
     //     ...
     //     FORK end
     //     <body>
     //   end:
     //     ...
+    //
+    // We add `BEGIN_LOOP` and `END_LOOP` instructions because these optional
+    // repetitions of the body cannot match the empty string.
 
-    DeferredLabel end;
+    Label end;
     for (int i = 0; i != max_repetition_num; ++i) {
-      AddForkTo(end, code_, zone_);
+      assembler_.Fork(end);
+      assembler_.BeginLoop();
       emit_body();
+      assembler_.EndLoop();
     }
-    std::move(end).Bind(code_);
+    assembler_.Bind(end);
   }
 
   // Emit bytecode corresponding to /<emit_body>{0, max_repetition_num}?/.
@@ -500,29 +648,96 @@ class CompileVisitor : private RegExpVisitor {
     //     FORK body0
     //     JMP end
     //   body0:
+    //     BEGIN_LOOP
     //     <body>
+    //     END_LOOP
+    //
     //     FORK body1
     //     JMP end
     //   body1:
+    //     BEGIN_LOOP
     //     <body>
+    //     END_LOOP
     //     ...
     //     ...
     //   body{max_repetition_num - 1}:
+    //     BEGIN_LOOP
     //     <body>
+    //     END_LOOP
     //   end:
     //     ...
+    //
+    // We add `BEGIN_LOOP` and `END_LOOP` instructions because these optional
+    // repetitions of the body cannot match the empty string.
 
-    DeferredLabel end;
+    Label end;
     for (int i = 0; i != max_repetition_num; ++i) {
-      Label body(code_.length() + 2);
-      AddForkTo(body, code_, zone_);
-      AddJmpTo(end, code_, zone_);
+      Label body;
+      assembler_.Fork(body);
+      assembler_.Jmp(end);
 
-      DCHECK_EQ(body.index(), code_.length());
-
+      assembler_.Bind(body);
+      assembler_.BeginLoop();
       emit_body();
+      assembler_.EndLoop();
     }
-    std::move(end).Bind(code_);
+    assembler_.Bind(end);
+  }
+
+  // In the general case, the first repetition of <body>+ is different
+  // from the following ones as it is allowed to match the empty string. This is
+  // compiled by repeating <body>, but it can result in a bytecode that grows
+  // quadratically with the size of the regex when nesting pluses or repetition
+  // upper-bounded with infinity.
+  //
+  // In the particular case where <body> cannot match the empty string, the
+  // plus can be compiled without duplicating the bytecode of <body>, resulting
+  // in a bytecode linear in the size of the regex in case of nested
+  // non-nullable pluses.
+  //
+  // E.g. `/.+/` will compile `/./` once, while `/(?:.?)+/` will be compiled as
+  // `/(?:.?)(?:.?)*/`, resulting in two repetitions of the body.
+
+  // Emit bytecode corresponding to /<emit_body>+/, with <emit_body> not
+  // nullable.
+  template <class F>
+  void CompileNonNullableGreedyPlus(F&& emit_body) {
+    // This is compiled into
+    //
+    //   begin:
+    //     <body>
+    //
+    //     FORK end
+    //     JMP begin
+    //   end:
+    //     ...
+    Label begin, end;
+
+    assembler_.Bind(begin);
+    emit_body();
+
+    assembler_.Fork(end);
+    assembler_.Jmp(begin);
+    assembler_.Bind(end);
+  }
+
+  // Emit bytecode corresponding to /<emit_body>+?/, with <emit_body> not
+  // nullable.
+  template <class F>
+  void CompileNonNullableNonGreedyPlus(F&& emit_body) {
+    // This is compiled into
+    //
+    //   begin:
+    //     <body>
+    //
+    //     FORK begin
+    //     ...
+    Label begin;
+
+    assembler_.Bind(begin);
+    emit_body();
+
+    assembler_.Fork(begin);
   }
 
   void* VisitQuantifier(RegExpQuantifier* node, void*) override {
@@ -540,40 +755,90 @@ class CompileVisitor : private RegExpVisitor {
       node->body()->Accept(this, nullptr);
     };
 
-    // First repeat the body `min()` times.
-    for (int i = 0; i != node->min(); ++i) emit_body();
+    bool can_be_reduced_to_non_nullable_plus =
+        node->min() > 0 && node->max() == RegExpTree::kInfinity &&
+        node->min_match() > 0;
 
-    switch (node->quantifier_type()) {
-      case RegExpQuantifier::POSSESSIVE:
-        UNREACHABLE();
-      case RegExpQuantifier::GREEDY: {
-        if (node->max() == RegExpTree::kInfinity) {
-          CompileGreedyStar(emit_body);
-        } else {
-          DCHECK_NE(node->max(), RegExpTree::kInfinity);
-          CompileGreedyRepetition(emit_body, node->max() - node->min());
-        }
-        break;
+    if (can_be_reduced_to_non_nullable_plus) {
+      // Compile <body>+ with an optimization allowing linear sized bytecode in
+      // the case of nested pluses. Repetitions with infinite upperbound like
+      // <body>{n,}, with n != 0, are compiled into <body>{n-1}<body+>, avoiding
+      // one repetition, compared to <body>{n}<body>*.
+
+      // Compile the mandatory repetitions. We repeat `min() - 1` times, such
+      // that the last repetition, compiled later, can be reused in a loop.
+      for (int i = 0; i < node->min() - 1; ++i) {
+        emit_body();
       }
-      case RegExpQuantifier::NON_GREEDY: {
-        if (node->max() == RegExpTree::kInfinity) {
-          CompileNonGreedyStar(emit_body);
-        } else {
-          DCHECK_NE(node->max(), RegExpTree::kInfinity);
-          CompileNonGreedyRepetition(emit_body, node->max() - node->min());
+
+      // Compile the optional repetitions, using an optimized plus when
+      // possible.
+      switch (node->quantifier_type()) {
+        case RegExpQuantifier::POSSESSIVE:
+          UNREACHABLE();
+        case RegExpQuantifier::GREEDY: {
+          // Compile both last mandatory repetition and optional ones.
+          CompileNonNullableGreedyPlus(emit_body);
+          break;
+        }
+        case RegExpQuantifier::NON_GREEDY: {
+          // Compile both last mandatory repetition and optional ones.
+          CompileNonNullableNonGreedyPlus(emit_body);
+          break;
+        }
+      }
+    } else {
+      // Compile <body>+ into <body><body>*, and <body>{n,}, with n != 0, into
+      // <body>{n}<body>*.
+
+      // Compile the first `min()` repetitions.
+      for (int i = 0; i < node->min(); ++i) {
+        emit_body();
+      }
+
+      // Compile the optional repetitions, using stars or repetitions.
+      switch (node->quantifier_type()) {
+        case RegExpQuantifier::POSSESSIVE:
+          UNREACHABLE();
+        case RegExpQuantifier::GREEDY: {
+          if (node->max() == RegExpTree::kInfinity) {
+            CompileGreedyStar(emit_body);
+          } else {
+            DCHECK_NE(node->max(), RegExpTree::kInfinity);
+            CompileGreedyRepetition(emit_body, node->max() - node->min());
+          }
+          break;
+        }
+        case RegExpQuantifier::NON_GREEDY: {
+          if (node->max() == RegExpTree::kInfinity) {
+            CompileNonGreedyStar(emit_body);
+          } else {
+            DCHECK_NE(node->max(), RegExpTree::kInfinity);
+            CompileNonGreedyRepetition(emit_body, node->max() - node->min());
+          }
+          break;
         }
       }
     }
+
     return nullptr;
   }
 
   void* VisitCapture(RegExpCapture* node, void*) override {
-    int index = node->index();
-    int start_register = RegExpCapture::StartRegister(index);
-    int end_register = RegExpCapture::EndRegister(index);
-    code_.Add(RegExpInstruction::SetRegisterToCp(start_register), zone_);
-    node->body()->Accept(this, nullptr);
-    code_.Add(RegExpInstruction::SetRegisterToCp(end_register), zone_);
+    // Only negative lookbehinds contain captures (enforced by the
+    // `CanBeHandled` visitor). Capture groups inside negative lookarounds
+    // always yield undefined, so we can avoid the SetRegister instructions.
+    if (inside_lookaround_) {
+      node->body()->Accept(this, nullptr);
+    } else {
+      int index = node->index();
+      int start_register = RegExpCapture::StartRegister(index);
+      int end_register = RegExpCapture::EndRegister(index);
+      assembler_.SetRegisterToCp(start_register);
+      node->body()->Accept(this, nullptr);
+      assembler_.SetRegisterToCp(end_register);
+    }
+
     return nullptr;
   }
 
@@ -583,8 +848,12 @@ class CompileVisitor : private RegExpVisitor {
   }
 
   void* VisitLookaround(RegExpLookaround* node, void*) override {
-    // TODO(mbid,v8:10765): Support this case.
-    UNREACHABLE();
+    assembler_.ReadLookTable(node->index(), node->is_positive());
+
+    // Add the lookbehind to the queue of lookbehinds to be compiled.
+    lookbehinds_.push_back(node);
+
+    return nullptr;
   }
 
   void* VisitBackReference(RegExpBackReference* node, void*) override {
@@ -602,13 +871,19 @@ class CompileVisitor : private RegExpVisitor {
 
  private:
   Zone* zone_;
-  ZoneList<RegExpInstruction> code_;
+
+  // Stores the AST of the lookbehinds encountered in a queue. They are compiled
+  // after the main expression, in breadth-first order.
+  ZoneLinkedList<RegExpLookaround*> lookbehinds_;
+
+  BytecodeAssembler assembler_;
+  bool inside_lookaround_;
 };
 
 }  // namespace
 
 ZoneList<RegExpInstruction> ExperimentalRegExpCompiler::Compile(
-    RegExpTree* tree, JSRegExp::Flags flags, Zone* zone) {
+    RegExpTree* tree, RegExpFlags flags, Zone* zone) {
   return experimental::CompileVisitor::Compile(tree, flags, zone);
 }
 

@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,14 +6,20 @@
 #define BASE_TASK_CURRENT_THREAD_H_
 
 #include <ostream>
+#include <type_traits>
 
 #include "base/base_export.h"
+#include "base/callback_list.h"
 #include "base/check.h"
+#include "base/functional/callback_forward.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/message_loop/ios_cronet_buildflags.h"
 #include "base/message_loop/message_pump_for_io.h"
 #include "base/message_loop/message_pump_for_ui.h"
 #include "base/pending_task.h"
-#include "base/single_thread_task_runner.h"
+#include "base/task/sequence_manager/task_time_observer.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/task/task_observer.h"
 #include "build/build_config.h"
 
@@ -22,11 +28,26 @@ class MessagePumpForUIQt;
 class WebContentsAdapter;
 }
 
+namespace autofill {
+class NextIdleTimeTicks;
+}
+
+namespace content {
+class BrowserMainLoop;
+}
+
 namespace web {
 class WebTaskEnvironment;
 }
 
 namespace base {
+
+namespace test {
+bool RunUntil(FunctionRef<bool(void)>);
+void TestPredicateOrRegisterOnNextIdleCallback(base::FunctionRef<bool(void)>,
+                                               CallbackListSubscription*,
+                                               OnceClosure);
+}  // namespace test
 
 namespace sequence_manager {
 namespace internal {
@@ -62,7 +83,7 @@ class BASE_EXPORT CurrentThread {
   CurrentThread(CurrentThread&& other) = default;
   CurrentThread& operator=(const CurrentThread& other) = default;
 
-  bool operator==(const CurrentThread& other) const;
+  friend bool operator==(const CurrentThread&, const CurrentThread&) = default;
 
   // Returns a proxy object to interact with the Task related APIs for the
   // current thread. It must only be used on the thread it was obtained.
@@ -127,6 +148,26 @@ class BASE_EXPORT CurrentThread {
   // posted tasks.
   void SetAddQueueTimeToTasks(bool enable);
 
+  // Registers a `OnceClosure` to be called on this thread the next time it goes
+  // idle. This is meant for internal usage; callers should use BEST_EFFORT
+  // tasks instead of this for generic work that needs to wait until quiescence
+  // to run.
+  class RegisterOnNextIdleCallbackPasskey {
+   private:
+    RegisterOnNextIdleCallbackPasskey() {}
+
+    friend autofill::NextIdleTimeTicks;
+    friend content::BrowserMainLoop;
+    friend bool test::RunUntil(FunctionRef<bool(void)>);
+    friend void test::TestPredicateOrRegisterOnNextIdleCallback(
+        base::FunctionRef<bool(void)>,
+        CallbackListSubscription*,
+        OnceClosure);
+  };
+  [[nodiscard]] CallbackListSubscription RegisterOnNextIdleCallback(
+      RegisterOnNextIdleCallbackPasskey,
+      OnceClosure on_next_idle_callback);
+
   // Enables nested task processing in scope of an upcoming native message loop.
   // Some unwanted message loops may occur when using common controls or printer
   // functions. Hence, nested task processing is disabled by default to avoid
@@ -152,20 +193,15 @@ class BASE_EXPORT CurrentThread {
     ~ScopedAllowApplicationTasksInNativeNestedLoop();
 
    private:
-    sequence_manager::internal::SequenceManagerImpl* const sequence_manager_;
+    const raw_ptr<sequence_manager::internal::SequenceManagerImpl>
+        sequence_manager_;
     const bool previous_state_;
   };
 
-  // TODO(https://crbug.com/781352): Remove usage of this old class. Either
-  // renaming it to ScopedAllowApplicationTasksInNativeNestedLoop when truly
-  // native or migrating it to RunLoop::Type::kNestableTasksAllowed otherwise.
-  using ScopedNestableTaskAllower =
-      ScopedAllowApplicationTasksInNativeNestedLoop;
-
   // Returns true if nestable tasks are allowed on the current thread at this
-  // time (i.e. if a nested loop would start from the callee's point in the
-  // stack, would it be allowed to run application tasks).
-  bool NestableTasksAllowed() const;
+  // time (i.e. if a native nested loop would start from the callee's point in
+  // the stack, would it be allowed to run application tasks).
+  bool ApplicationTasksAllowedInNativeNestedLoop() const;
 
   // Returns true if this instance is bound to the current thread.
   bool IsBoundToCurrentThread() const;
@@ -175,6 +211,10 @@ class BASE_EXPORT CurrentThread {
   // tasks which can be processed at the current run-level -- there might be
   // deferred non-nestable tasks remaining if currently in a nested run level.
   bool IsIdleForTesting();
+
+  // Enables ThreadControllerWithMessagePumpImpl's TimeKeeper metrics.
+  // `thread_name` will be used as a suffix.
+  void EnableMessagePumpTimeKeeperMetrics(const char* thread_name);
 
  protected:
   explicit CurrentThread(
@@ -193,10 +233,10 @@ class BASE_EXPORT CurrentThread {
   friend class QtWebEngineCore::MessagePumpForUIQt;
   friend class QtWebEngineCore::WebContentsAdapter;
 
-  sequence_manager::internal::SequenceManagerImpl* current_;
+  raw_ptr<sequence_manager::internal::SequenceManagerImpl> current_;
 };
 
-#if !defined(OS_NACL)
+#if !BUILDFLAG(IS_NACL)
 
 // UI extension of CurrentThread.
 class BASE_EXPORT CurrentUIThread : public CurrentThread {
@@ -210,9 +250,9 @@ class BASE_EXPORT CurrentUIThread : public CurrentThread {
 
   CurrentUIThread* operator->() { return this; }
 
-#if defined(USE_OZONE) && !defined(OS_FUCHSIA) && !defined(OS_WIN)
+#if BUILDFLAG(IS_OZONE) && !BUILDFLAG(IS_FUCHSIA) && !BUILDFLAG(IS_WIN)
   static_assert(
-      std::is_base_of<WatchableIOMessagePumpPosix, MessagePumpForUI>::value,
+      std::is_base_of_v<WatchableIOMessagePumpPosix, MessagePumpForUI>,
       "CurrentThreadForUI::WatchFileDescriptor is supported only"
       "by MessagePumpLibevent and MessagePumpGlib implementations.");
   bool WatchFileDescriptor(int fd,
@@ -222,7 +262,7 @@ class BASE_EXPORT CurrentUIThread : public CurrentThread {
                            MessagePumpForUI::FdWatcher* delegate);
 #endif
 
-#if defined(OS_IOS)
+#if BUILDFLAG(IS_IOS)
   // Forwards to SequenceManager::Attach().
   // TODO(https://crbug.com/825327): Plumb the actual SequenceManager* to
   // callers and remove ability to access this method from
@@ -230,7 +270,7 @@ class BASE_EXPORT CurrentUIThread : public CurrentThread {
   void Attach();
 #endif
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
   // Forwards to MessagePumpForUI::Abort().
   // TODO(https://crbug.com/825327): Plumb the actual MessagePumpForUI* to
   // callers and remove ability to access this method from
@@ -238,7 +278,7 @@ class BASE_EXPORT CurrentUIThread : public CurrentThread {
   void Abort();
 #endif
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   void AddMessagePumpObserver(MessagePumpForUI::Observer* observer);
   void RemoveMessagePumpObserver(MessagePumpForUI::Observer* observer);
 #endif
@@ -251,7 +291,7 @@ class BASE_EXPORT CurrentUIThread : public CurrentThread {
   MessagePumpForUI* GetMessagePumpForUI() const;
 };
 
-#endif  // !defined(OS_NACL)
+#endif  // !BUILDFLAG(IS_NACL)
 
 // ForIO extension of CurrentThread.
 class BASE_EXPORT CurrentIOThread : public CurrentThread {
@@ -265,14 +305,13 @@ class BASE_EXPORT CurrentIOThread : public CurrentThread {
 
   CurrentIOThread* operator->() { return this; }
 
-#if !defined(OS_NACL_SFI)
+#if !BUILDFLAG(IS_NACL)
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   // Please see MessagePumpWin for definitions of these methods.
   HRESULT RegisterIOHandler(HANDLE file, MessagePumpForIO::IOHandler* handler);
   bool RegisterJobObject(HANDLE job, MessagePumpForIO::IOHandler* handler);
-  bool WaitForIOCompletion(DWORD timeout, MessagePumpForIO::IOHandler* filter);
-#elif defined(OS_POSIX) || defined(OS_FUCHSIA)
+#elif BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
   // Please see WatchableIOMessagePumpPosix for definition.
   // Prefer base::FileDescriptorWatcher for non-critical IO.
   bool WatchFileDescriptor(int fd,
@@ -280,25 +319,25 @@ class BASE_EXPORT CurrentIOThread : public CurrentThread {
                            MessagePumpForIO::Mode mode,
                            MessagePumpForIO::FdWatchController* controller,
                            MessagePumpForIO::FdWatcher* delegate);
-#endif  // defined(OS_WIN)
+#endif  // BUILDFLAG(IS_WIN)
 
-#if defined(OS_MAC)
+#if BUILDFLAG(IS_MAC) || (BUILDFLAG(IS_IOS) && !BUILDFLAG(CRONET_BUILD))
   bool WatchMachReceivePort(
       mach_port_t port,
       MessagePumpForIO::MachPortWatchController* controller,
       MessagePumpForIO::MachPortWatcher* delegate);
 #endif
 
-#if defined(OS_FUCHSIA)
+#if BUILDFLAG(IS_FUCHSIA)
   // Additional watch API for native platform resources.
   bool WatchZxHandle(zx_handle_t handle,
                      bool persistent,
                      zx_signals_t signals,
                      MessagePumpForIO::ZxHandleWatchController* controller,
                      MessagePumpForIO::ZxHandleWatcher* delegate);
-#endif  // defined(OS_FUCHSIA)
+#endif  // BUILDFLAG(IS_FUCHSIA)
 
-#endif  // !defined(OS_NACL_SFI)
+#endif  // !BUILDFLAG(IS_NACL)
 
  private:
   explicit CurrentIOThread(

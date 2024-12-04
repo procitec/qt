@@ -1,21 +1,23 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "extensions/browser/api/serial/serial_connection.h"
 
 #include <algorithm>
+#include <memory>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
 #include "base/files/file_path.h"
+#include "base/functional/bind.h"
 #include "base/lazy_instance.h"
 #include "base/location.h"
-#include "base/single_thread_task_runner.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/task/single_thread_task_runner.h"
 #include "extensions/browser/api/api_resource_manager.h"
+#include "extensions/browser/api/serial/serial_port_manager.h"
 #include "extensions/common/api/serial.h"
 #include "mojo/public/cpp/bindings/callback_helpers.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
@@ -30,61 +32,61 @@ api::serial::SendError ConvertSendErrorFromMojo(
     device::mojom::SerialSendError input) {
   switch (input) {
     case device::mojom::SerialSendError::NONE:
-      return api::serial::SEND_ERROR_NONE;
+      return api::serial::SendError::kNone;
     case device::mojom::SerialSendError::DISCONNECTED:
-      return api::serial::SEND_ERROR_DISCONNECTED;
+      return api::serial::SendError::kDisconnected;
     case device::mojom::SerialSendError::SYSTEM_ERROR:
-      return api::serial::SEND_ERROR_SYSTEM_ERROR;
+      return api::serial::SendError::kSystemError;
   }
-  return api::serial::SEND_ERROR_NONE;
+  return api::serial::SendError::kNone;
 }
 
 api::serial::ReceiveError ConvertReceiveErrorFromMojo(
     device::mojom::SerialReceiveError input) {
   switch (input) {
     case device::mojom::SerialReceiveError::NONE:
-      return api::serial::RECEIVE_ERROR_NONE;
+      return api::serial::ReceiveError::kNone;
     case device::mojom::SerialReceiveError::DISCONNECTED:
-      return api::serial::RECEIVE_ERROR_DISCONNECTED;
+      return api::serial::ReceiveError::kDisconnected;
     case device::mojom::SerialReceiveError::DEVICE_LOST:
-      return api::serial::RECEIVE_ERROR_DEVICE_LOST;
+      return api::serial::ReceiveError::kDeviceLost;
     case device::mojom::SerialReceiveError::BREAK:
-      return api::serial::RECEIVE_ERROR_BREAK;
+      return api::serial::ReceiveError::kBreak;
     case device::mojom::SerialReceiveError::FRAME_ERROR:
-      return api::serial::RECEIVE_ERROR_FRAME_ERROR;
+      return api::serial::ReceiveError::kFrameError;
     case device::mojom::SerialReceiveError::OVERRUN:
-      return api::serial::RECEIVE_ERROR_OVERRUN;
+      return api::serial::ReceiveError::kOverrun;
     case device::mojom::SerialReceiveError::BUFFER_OVERFLOW:
-      return api::serial::RECEIVE_ERROR_BUFFER_OVERFLOW;
+      return api::serial::ReceiveError::kBufferOverflow;
     case device::mojom::SerialReceiveError::PARITY_ERROR:
-      return api::serial::RECEIVE_ERROR_PARITY_ERROR;
+      return api::serial::ReceiveError::kParityError;
     case device::mojom::SerialReceiveError::SYSTEM_ERROR:
-      return api::serial::RECEIVE_ERROR_SYSTEM_ERROR;
+      return api::serial::ReceiveError::kSystemError;
   }
-  return api::serial::RECEIVE_ERROR_NONE;
+  return api::serial::ReceiveError::kNone;
 }
 
 api::serial::DataBits ConvertDataBitsFromMojo(
     device::mojom::SerialDataBits input) {
   switch (input) {
     case device::mojom::SerialDataBits::NONE:
-      return api::serial::DATA_BITS_NONE;
+      return api::serial::DataBits::kNone;
     case device::mojom::SerialDataBits::SEVEN:
-      return api::serial::DATA_BITS_SEVEN;
+      return api::serial::DataBits::kSeven;
     case device::mojom::SerialDataBits::EIGHT:
-      return api::serial::DATA_BITS_EIGHT;
+      return api::serial::DataBits::kEight;
   }
-  return api::serial::DATA_BITS_NONE;
+  return api::serial::DataBits::kNone;
 }
 
 device::mojom::SerialDataBits ConvertDataBitsToMojo(
     api::serial::DataBits input) {
   switch (input) {
-    case api::serial::DATA_BITS_NONE:
+    case api::serial::DataBits::kNone:
       return device::mojom::SerialDataBits::NONE;
-    case api::serial::DATA_BITS_SEVEN:
+    case api::serial::DataBits::kSeven:
       return device::mojom::SerialDataBits::SEVEN;
-    case api::serial::DATA_BITS_EIGHT:
+    case api::serial::DataBits::kEight:
       return device::mojom::SerialDataBits::EIGHT;
   }
   return device::mojom::SerialDataBits::NONE;
@@ -94,27 +96,27 @@ api::serial::ParityBit ConvertParityBitFromMojo(
     device::mojom::SerialParityBit input) {
   switch (input) {
     case device::mojom::SerialParityBit::NONE:
-      return api::serial::PARITY_BIT_NONE;
+      return api::serial::ParityBit::kNone;
     case device::mojom::SerialParityBit::ODD:
-      return api::serial::PARITY_BIT_ODD;
+      return api::serial::ParityBit::kOdd;
     case device::mojom::SerialParityBit::NO_PARITY:
-      return api::serial::PARITY_BIT_NO;
+      return api::serial::ParityBit::kNo;
     case device::mojom::SerialParityBit::EVEN:
-      return api::serial::PARITY_BIT_EVEN;
+      return api::serial::ParityBit::kEven;
   }
-  return api::serial::PARITY_BIT_NONE;
+  return api::serial::ParityBit::kNone;
 }
 
 device::mojom::SerialParityBit ConvertParityBitToMojo(
     api::serial::ParityBit input) {
   switch (input) {
-    case api::serial::PARITY_BIT_NONE:
+    case api::serial::ParityBit::kNone:
       return device::mojom::SerialParityBit::NONE;
-    case api::serial::PARITY_BIT_NO:
+    case api::serial::ParityBit::kNo:
       return device::mojom::SerialParityBit::NO_PARITY;
-    case api::serial::PARITY_BIT_ODD:
+    case api::serial::ParityBit::kOdd:
       return device::mojom::SerialParityBit::ODD;
-    case api::serial::PARITY_BIT_EVEN:
+    case api::serial::ParityBit::kEven:
       return device::mojom::SerialParityBit::EVEN;
   }
   return device::mojom::SerialParityBit::NONE;
@@ -124,23 +126,23 @@ api::serial::StopBits ConvertStopBitsFromMojo(
     device::mojom::SerialStopBits input) {
   switch (input) {
     case device::mojom::SerialStopBits::NONE:
-      return api::serial::STOP_BITS_NONE;
+      return api::serial::StopBits::kNone;
     case device::mojom::SerialStopBits::ONE:
-      return api::serial::STOP_BITS_ONE;
+      return api::serial::StopBits::kOne;
     case device::mojom::SerialStopBits::TWO:
-      return api::serial::STOP_BITS_TWO;
+      return api::serial::StopBits::kTwo;
   }
-  return api::serial::STOP_BITS_NONE;
+  return api::serial::StopBits::kNone;
 }
 
 device::mojom::SerialStopBits ConvertStopBitsToMojo(
     api::serial::StopBits input) {
   switch (input) {
-    case api::serial::STOP_BITS_NONE:
+    case api::serial::StopBits::kNone:
       return device::mojom::SerialStopBits::NONE;
-    case api::serial::STOP_BITS_ONE:
+    case api::serial::StopBits::kOne:
       return device::mojom::SerialStopBits::ONE;
-    case api::serial::STOP_BITS_TWO:
+    case api::serial::StopBits::kTwo:
       return device::mojom::SerialStopBits::TWO;
   }
   return device::mojom::SerialStopBits::NONE;
@@ -159,27 +161,21 @@ ApiResourceManager<SerialConnection>::GetFactoryInstance() {
   return g_factory.Pointer();
 }
 
-SerialConnection::SerialConnection(
-    const std::string& owner_extension_id,
-    mojo::PendingRemote<device::mojom::SerialPort> serial_port)
+SerialConnection::SerialConnection(const std::string& owner_extension_id)
     : ApiResource(owner_extension_id),
       persistent_(false),
       buffer_size_(kDefaultBufferSize),
       receive_timeout_(0),
       send_timeout_(0),
       paused_(true),
-      read_error_(base::nullopt),
+      read_error_(std::nullopt),
       bytes_written_(0),
-      serial_port_(std::move(serial_port)),
       receive_pipe_watcher_(FROM_HERE,
                             mojo::SimpleWatcher::ArmingPolicy::MANUAL),
       send_pipe_watcher_(FROM_HERE, mojo::SimpleWatcher::ArmingPolicy::MANUAL) {
-  DCHECK(serial_port_);
-  serial_port_.set_disconnect_handler(base::BindOnce(
-      &SerialConnection::OnConnectionError, base::Unretained(this)));
 }
 
-SerialConnection::~SerialConnection() {}
+SerialConnection::~SerialConnection() = default;
 
 bool SerialConnection::IsPersistent() const {
   return persistent();
@@ -227,31 +223,34 @@ void SerialConnection::SetConnectionErrorHandler(
   connection_error_handler_ = std::move(connection_error_handler);
 }
 
-void SerialConnection::Open(const api::serial::ConnectionOptions& options,
+void SerialConnection::Open(api::SerialPortManager* port_manager,
+                            const std::string& path,
+                            const api::serial::ConnectionOptions& options,
                             OpenCompleteCallback callback) {
-  DCHECK(serial_port_);
+  DCHECK(!serial_port_);
   DCHECK(!send_pipe_);
   DCHECK(!receive_pipe_);
 
-  if (options.persistent.get())
+  if (options.persistent)
     set_persistent(*options.persistent);
-  if (options.name.get())
+  if (options.name)
     set_name(*options.name);
-  if (options.buffer_size.get())
+  if (options.buffer_size)
     set_buffer_size(*options.buffer_size);
-  if (options.receive_timeout.get())
+  if (options.receive_timeout)
     set_receive_timeout(*options.receive_timeout);
-  if (options.send_timeout.get())
+  if (options.send_timeout)
     set_send_timeout(*options.send_timeout);
 
   mojo::PendingRemote<device::mojom::SerialPortClient> client;
   auto client_receiver = client.InitWithNewPipeAndPassReceiver();
-  serial_port_->Open(
-      device::mojom::SerialConnectionOptions::From(options), std::move(client),
+  port_manager->OpenPort(
+      path, device::mojom::SerialConnectionOptions::From(options),
+      std::move(client),
       mojo::WrapCallbackWithDefaultInvokeIfNotRun(
           base::BindOnce(&SerialConnection::OnOpen, weak_factory_.GetWeakPtr(),
                          std::move(client_receiver), std::move(callback)),
-          false));
+          mojo::NullRemote()));
 }
 
 void SerialConnection::CreatePipe(
@@ -263,7 +262,8 @@ void SerialConnection::CreatePipe(
   options.element_num_bytes = 1;
   options.capacity_num_bytes = buffer_size_;
 
-  CHECK_EQ(MOJO_RESULT_OK, mojo::CreateDataPipe(&options, producer, consumer));
+  CHECK_EQ(MOJO_RESULT_OK,
+           mojo::CreateDataPipe(&options, *producer, *consumer));
 }
 
 void SerialConnection::SetUpReceiveDataPipe() {
@@ -323,11 +323,15 @@ void SerialConnection::OnSendError(device::mojom::SerialSendError error) {
 void SerialConnection::OnOpen(
     mojo::PendingReceiver<device::mojom::SerialPortClient> client_receiver,
     OpenCompleteCallback callback,
-    bool success) {
-  if (!success) {
+    mojo::PendingRemote<device::mojom::SerialPort> serial_port) {
+  if (!serial_port.is_valid()) {
     std::move(callback).Run(false);
     return;
   }
+
+  serial_port_.Bind(std::move(serial_port));
+  serial_port_.set_disconnect_handler(base::BindOnce(
+      &SerialConnection::OnConnectionError, base::Unretained(this)));
 
   SetUpReceiveDataPipe();
   SetUpSendDataPipe();
@@ -343,9 +347,9 @@ void SerialConnection::OnReadPipeClosed() {
 
   if (read_error_) {
     // Dispatch OnReceiveError if there is a pending error.
-    receive_event_cb_.Run(std::vector<uint8_t>(),
-                          ConvertReceiveErrorFromMojo(read_error_.value()));
+    auto error = ConvertReceiveErrorFromMojo(read_error_.value());
     read_error_.reset();
+    receive_event_cb_.Run(std::vector<uint8_t>(), error);
   }
 }
 
@@ -380,12 +384,13 @@ void SerialConnection::OnReadPipeReadableOrClosed(
   result = receive_pipe_->EndReadData(read_bytes);
   DCHECK_EQ(MOJO_RESULT_OK, result);
 
-  receive_event_cb_.Run(std::move(data), api::serial::RECEIVE_ERROR_NONE);
+  // Reset the timeout timer and arm the watcher in preparation for the next
+  // read. This will be undone if |receive_event_cb_| calls SetPaused(true).
   receive_timeout_task_.Cancel();
-  // If there is no error nor paused, go on with the polling process and set
-  // timeout callback.
-  receive_pipe_watcher_.ArmOrNotify();
   SetTimeoutCallback();
+  receive_pipe_watcher_.ArmOrNotify();
+
+  receive_event_cb_.Run(std::move(data), api::serial::ReceiveError::kNone);
 }
 
 void SerialConnection::StartPolling(const ReceiveEventCallback& callback) {
@@ -396,10 +401,14 @@ void SerialConnection::StartPolling(const ReceiveEventCallback& callback) {
   SetPaused(false);
 }
 
-bool SerialConnection::Send(const std::vector<uint8_t>& data,
+void SerialConnection::Send(const std::vector<uint8_t>& data,
                             SendCompleteCallback callback) {
-  if (send_complete_)
-    return false;
+  if (send_complete_) {
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+        FROM_HERE, base::BindOnce(std::move(callback), 0,
+                                  api::serial::SendError::kPending));
+    return;
+  }
 
   DCHECK(serial_port_);
   bytes_written_ = 0;
@@ -414,27 +423,26 @@ bool SerialConnection::Send(const std::vector<uint8_t>& data,
 
   send_timeout_task_.Cancel();
   if (send_timeout_ > 0) {
-    send_timeout_task_.Reset(base::Bind(&SerialConnection::OnSendTimeout,
-                                        weak_factory_.GetWeakPtr()));
-    base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+    send_timeout_task_.Reset(base::BindOnce(&SerialConnection::OnSendTimeout,
+                                            weak_factory_.GetWeakPtr()));
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
         FROM_HERE, send_timeout_task_.callback(),
-        base::TimeDelta::FromMilliseconds(send_timeout_));
+        base::Milliseconds(send_timeout_));
   }
-  return true;
 }
 
 void SerialConnection::Configure(const api::serial::ConnectionOptions& options,
                                  ConfigureCompleteCallback callback) {
   DCHECK(serial_port_);
-  if (options.persistent.get())
+  if (options.persistent)
     set_persistent(*options.persistent);
-  if (options.name.get())
+  if (options.name)
     set_name(*options.name);
-  if (options.buffer_size.get())
+  if (options.buffer_size)
     set_buffer_size(*options.buffer_size);
-  if (options.receive_timeout.get())
+  if (options.receive_timeout)
     set_receive_timeout(*options.receive_timeout);
-  if (options.send_timeout.get())
+  if (options.send_timeout)
     set_send_timeout(*options.send_timeout);
   serial_port_->ConfigurePort(
       device::mojom::SerialConnectionOptions::From(options),
@@ -462,11 +470,11 @@ void SerialConnection::GetInfo(GetInfoCompleteCallback callback) const {
           std::move(callback).Run(false, std::move(info));
           return;
         }
-        info->bitrate.reset(new int(port_info->bitrate));
+        info->bitrate = port_info->bitrate;
         info->data_bits = ConvertDataBitsFromMojo(port_info->data_bits);
         info->parity_bit = ConvertParityBitFromMojo(port_info->parity_bit);
         info->stop_bits = ConvertStopBitsFromMojo(port_info->stop_bits);
-        info->cts_flow_control.reset(new bool(port_info->cts_flow_control));
+        info->cts_flow_control = port_info->cts_flow_control;
         std::move(callback).Run(true, std::move(info));
       },
       std::move(callback), std::move(info));
@@ -516,23 +524,28 @@ void SerialConnection::SetControlSignals(
 void SerialConnection::Close(base::OnceClosure callback) {
   DCHECK(serial_port_);
   serial_port_->Close(
+      /*flush=*/false,
       mojo::WrapCallbackWithDefaultInvokeIfNotRun(std::move(callback)));
+}
+
+void SerialConnection::InitSerialPortForTesting() {
+  std::ignore = serial_port_.BindNewPipeAndPassReceiver();
 }
 
 void SerialConnection::SetTimeoutCallback() {
   if (receive_timeout_ > 0) {
-    receive_timeout_task_.Reset(base::Bind(&SerialConnection::OnReceiveTimeout,
-                                           weak_factory_.GetWeakPtr()));
-    base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+    receive_timeout_task_.Reset(base::BindOnce(
+        &SerialConnection::OnReceiveTimeout, weak_factory_.GetWeakPtr()));
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
         FROM_HERE, receive_timeout_task_.callback(),
-        base::TimeDelta::FromMilliseconds(receive_timeout_));
+        base::Milliseconds(receive_timeout_));
   }
 }
 
 void SerialConnection::OnReceiveTimeout() {
   DCHECK(serial_port_);
   receive_event_cb_.Run(std::vector<uint8_t>(),
-                        api::serial::RECEIVE_ERROR_TIMEOUT);
+                        api::serial::ReceiveError::kTimeout);
 }
 
 void SerialConnection::OnSendTimeout() {
@@ -542,7 +555,7 @@ void SerialConnection::OnSendTimeout() {
     // Respond the send request with bytes_written
     // without closing the data pipe.
     std::move(send_complete_)
-        .Run(bytes_written_, api::serial::SEND_ERROR_TIMEOUT);
+        .Run(bytes_written_, api::serial::SendError::kTimeout);
     bytes_written_ = 0;
   }
 }
@@ -581,7 +594,8 @@ void SerialConnection::OnSendPipeWritableOrClosed(
 
   if (data_to_send_.empty()) {
     send_timeout_task_.Cancel();
-    std::move(send_complete_).Run(bytes_written_, api::serial::SEND_ERROR_NONE);
+    std::move(send_complete_)
+        .Run(bytes_written_, api::serial::SendError::kNone);
   } else {
     // Wait for next cycle to send the remaining bytes.
     send_pipe_watcher_.ArmOrNotify();
@@ -616,11 +630,11 @@ TypeConverter<device::mojom::SerialHostControlSignalsPtr,
     Convert(const extensions::api::serial::HostControlSignals& input) {
   device::mojom::SerialHostControlSignalsPtr output(
       device::mojom::SerialHostControlSignals::New());
-  if (input.dtr.get()) {
+  if (input.dtr) {
     output->has_dtr = true;
     output->dtr = *input.dtr;
   }
-  if (input.rts.get()) {
+  if (input.rts) {
     output->has_rts = true;
     output->rts = *input.rts;
   }
@@ -634,12 +648,12 @@ TypeConverter<device::mojom::SerialConnectionOptionsPtr,
     Convert(const extensions::api::serial::ConnectionOptions& input) {
   device::mojom::SerialConnectionOptionsPtr output(
       device::mojom::SerialConnectionOptions::New());
-  if (input.bitrate.get() && *input.bitrate > 0)
+  if (input.bitrate && *input.bitrate > 0)
     output->bitrate = *input.bitrate;
   output->data_bits = extensions::ConvertDataBitsToMojo(input.data_bits);
   output->parity_bit = extensions::ConvertParityBitToMojo(input.parity_bit);
   output->stop_bits = extensions::ConvertStopBitsToMojo(input.stop_bits);
-  if (input.cts_flow_control.get()) {
+  if (input.cts_flow_control) {
     output->has_cts_flow_control = true;
     output->cts_flow_control = *input.cts_flow_control;
   }

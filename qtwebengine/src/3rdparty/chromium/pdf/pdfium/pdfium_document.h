@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,6 +8,7 @@
 #include <memory>
 #include <string>
 
+#include "base/memory/raw_ptr.h"
 #include "third_party/pdfium/public/cpp/fpdf_scopers.h"
 #include "third_party/pdfium/public/fpdf_dataavail.h"
 #include "third_party/pdfium/public/fpdfview.h"
@@ -18,14 +19,18 @@ class DocumentLoader;
 
 class PDFiumDocument {
  public:
+  class DownloadHints;
+  class FileAccess;
+  class FileAvail;
+
   explicit PDFiumDocument(DocumentLoader* doc_loader);
   PDFiumDocument(const PDFiumDocument&) = delete;
   PDFiumDocument& operator=(const PDFiumDocument&) = delete;
   ~PDFiumDocument();
 
-  FPDF_FILEACCESS& file_access() { return *file_access_; }
-  FX_FILEAVAIL& file_availability() { return *file_availability_; }
-  FX_DOWNLOADHINTS& download_hints() { return *download_hints_; }
+  FPDF_FILEACCESS& file_access();
+  FX_FILEAVAIL& file_availability();
+  FX_DOWNLOADHINTS& download_hints();
 
   FPDF_AVAIL fpdf_availability() const { return fpdf_availability_.get(); }
   FPDF_DOCUMENT doc() const { return doc_handle_.get(); }
@@ -42,26 +47,26 @@ class PDFiumDocument {
   void InitializeForm(FPDF_FORMFILLINFO* form_info);
 
  private:
-  DocumentLoader* const doc_loader_;
+  const raw_ptr<DocumentLoader> doc_loader_;
 
   // Interface structure to provide access to document stream.
-  std::unique_ptr<FPDF_FILEACCESS> file_access_;
+  std::unique_ptr<FileAccess> file_access_;
 
   // Interface structure to check data availability in the document stream.
-  std::unique_ptr<FX_FILEAVAIL> file_availability_;
+  std::unique_ptr<FileAvail> file_availability_;
 
   // Interface structure to request data chunks from the document stream.
-  std::unique_ptr<FX_DOWNLOADHINTS> download_hints_;
+  std::unique_ptr<DownloadHints> download_hints_;
 
   // Pointer to the document availability interface.
   ScopedFPDFAvail fpdf_availability_;
 
   // The PDFium wrapper object for the document. Must come after
-  // |fpdf_availability_| to prevent outliving it.
+  // `fpdf_availability_` to prevent outliving it.
   ScopedFPDFDocument doc_handle_;
 
   // The PDFium wrapper for form data.  Used even if there are no form controls
-  // on the page. Must come after |doc_handle_| to prevent outliving it.
+  // on the page. Must come after `doc_handle_` to prevent outliving it.
   ScopedFPDFFormHandle form_handle_;
 
   // Current form availability status.

@@ -1,16 +1,28 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "content/public/browser/download_manager_delegate.h"
 
-#include "base/bind.h"
-#include "base/bind_helpers.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
+#include "base/task/single_thread_task_runner.h"
 #include "components/download/public/common/download_item.h"
 #include "content/public/browser/web_contents_delegate.h"
 
 namespace content {
+
+SavePackagePathPickedParams::SavePackagePathPickedParams() = default;
+SavePackagePathPickedParams::~SavePackagePathPickedParams() = default;
+
+SavePackagePathPickedParams::SavePackagePathPickedParams(
+    const SavePackagePathPickedParams& other) = default;
+SavePackagePathPickedParams& SavePackagePathPickedParams::operator=(
+    const SavePackagePathPickedParams& other) = default;
+SavePackagePathPickedParams::SavePackagePathPickedParams(
+    SavePackagePathPickedParams&& other) = default;
+SavePackagePathPickedParams& SavePackagePathPickedParams::operator=(
+    SavePackagePathPickedParams&& other) = default;
 
 void DownloadManagerDelegate::GetNextId(DownloadIdCallback callback) {
   std::move(callback).Run(download::DownloadItem::kInvalidId);
@@ -18,7 +30,7 @@ void DownloadManagerDelegate::GetNextId(DownloadIdCallback callback) {
 
 bool DownloadManagerDelegate::DetermineDownloadTarget(
     download::DownloadItem* item,
-    DownloadTargetCallback* callback) {
+    download::DownloadTargetCallback* callback) {
   return false;
 }
 
@@ -66,13 +78,13 @@ void DownloadManagerDelegate::CheckDownloadAllowed(
     const WebContents::Getter& web_contents_getter,
     const GURL& url,
     const std::string& request_method,
-    base::Optional<url::Origin> request_initiator,
+    std::optional<url::Origin> request_initiator,
     bool from_download_cross_origin_redirect,
     bool content_initiated,
     CheckDownloadAllowedCallback check_download_allowed_cb) {
   // TODO: Do this directly, if it doesn't crash.
 
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE,
       base::BindOnce(
           [](const WebContents::Getter& web_contents_getter, const GURL& url,
@@ -105,5 +117,23 @@ DownloadManagerDelegate::GetQuarantineConnectionCallback() {
 }
 
 DownloadManagerDelegate::~DownloadManagerDelegate() {}
+
+download::DownloadItem* DownloadManagerDelegate::GetDownloadByGuid(
+    const std::string& guid) {
+  return nullptr;
+}
+
+void DownloadManagerDelegate::CheckSavePackageAllowed(
+    download::DownloadItem* download_item,
+    base::flat_map<base::FilePath, base::FilePath> save_package_files,
+    SavePackageAllowedCallback callback) {
+  std::move(callback).Run(true);
+}
+
+#if BUILDFLAG(IS_ANDROID)
+bool DownloadManagerDelegate::IsFromExternalApp(download::DownloadItem* item) {
+  return false;
+}
+#endif  // BUILDFLAG(IS_ANDROID)
 
 }  // namespace content

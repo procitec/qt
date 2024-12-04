@@ -1,13 +1,15 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/bindings/core/v8/js_event_handler.h"
 
 #include "third_party/blink/renderer/bindings/core/v8/script_value.h"
-#include "third_party/blink/renderer/bindings/core/v8/to_v8_for_core.h"
+#include "third_party/blink/renderer/bindings/core/v8/to_v8_traits.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_script_runner.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_string_resource.h"
 #include "third_party/blink/renderer/core/dom/events/event_target.h"
+#include "third_party/blink/renderer/core/event_target_names.h"
 #include "third_party/blink/renderer/core/events/before_unload_event.h"
 #include "third_party/blink/renderer/core/events/error_event.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
@@ -91,6 +93,7 @@ void JSEventHandler::InvokeInternal(EventTarget& event_target,
   HeapVector<ScriptValue> arguments;
   ScriptState* script_state_of_listener =
       event_handler_->CallbackRelevantScriptState();
+  v8::Isolate* isolate = script_state_of_listener->GetIsolate();
 
   if (special_error_event_handling) {
     auto* error_event = To<ErrorEvent>(&event);
@@ -100,17 +103,24 @@ void JSEventHandler::InvokeInternal(EventTarget& event_target,
     ScriptValue error_attribute = error_event->error(script_state_of_listener);
     if (error_attribute.IsEmpty() ||
         error_event->target()->InterfaceName() == event_target_names::kWorker) {
-      error_attribute =
-          ScriptValue::CreateNull(script_state_of_listener->GetIsolate());
+      error_attribute = ScriptValue::CreateNull(isolate);
     }
     arguments = {
-        ScriptValue::From(script_state_of_listener, error_event->message()),
-        ScriptValue::From(script_state_of_listener, error_event->filename()),
-        ScriptValue::From(script_state_of_listener, error_event->lineno()),
-        ScriptValue::From(script_state_of_listener, error_event->colno()),
+        ScriptValue(isolate,
+                    ToV8Traits<IDLString>::ToV8(script_state_of_listener,
+                                                error_event->message())),
+        ScriptValue(isolate,
+                    ToV8Traits<IDLString>::ToV8(script_state_of_listener,
+                                                error_event->filename())),
+        ScriptValue(isolate,
+                    ToV8Traits<IDLUnsignedLong>::ToV8(script_state_of_listener,
+                                                      error_event->lineno())),
+        ScriptValue(isolate,
+                    ToV8Traits<IDLUnsignedLong>::ToV8(script_state_of_listener,
+                                                      error_event->colno())),
         error_attribute};
   } else {
-    arguments = {ScriptValue::From(script_state_of_listener, js_event)};
+    arguments.push_back(ScriptValue(isolate, js_event));
   }
 
   if (!event_handler_->IsRunnableOrThrowException(
@@ -123,7 +133,7 @@ void JSEventHandler::InvokeInternal(EventTarget& event_target,
   if (!event_handler_
            ->InvokeWithoutRunnabilityCheck(event.currentTarget(), arguments)
            .To(&result) ||
-      GetIsolate()->IsExecutionTerminating())
+      isolate->IsExecutionTerminating())
     return;
   v8::Local<v8::Value> v8_return_value = result.V8Value();
 
@@ -132,7 +142,7 @@ void JSEventHandler::InvokeInternal(EventTarget& event_target,
   if (v8_return_value->IsNullOrUndefined())
     return;
 
-  // https://heycam.github.io/webidl/#invoke-a-callback-function
+  // https://webidl.spec.whatwg.org/#invoke-a-callback-function
   // step 13: Set completion to the result of converting callResult.[[Value]] to
   //          an IDL value of the same type as the operation's return type.
   //
@@ -141,22 +151,33 @@ void JSEventHandler::InvokeInternal(EventTarget& event_target,
   // necessary only for OnBeforeUnloadEventHandler.
   String result_for_beforeunload;
   if (IsOnBeforeUnloadEventHandler()) {
-    event_handler_->EvaluateAsPartOfCallback(Bind(
+    event_handler_->EvaluateAsPartOfCallback(WTF::BindOnce(
         [](v8::Local<v8::Value>& v8_return_value,
-           String& result_for_beforeunload) {
-          // TODO(yukiy): use |NativeValueTraits|.
-          V8StringResource<kTreatNullAsNullString> native_result(
-              v8_return_value);
+           String& result_for_beforeunload, ScriptState* script_state) {
+          v8::Isolate* isolate = script_state->GetIsolate();
 
-          // |native_result.Prepare()| throws exception if it fails to convert
-          // |native_result| to String.
-          if (!native_result.Prepare())
+          ExceptionState exception_state(isolate,
+                                         ExceptionContextType::kOperationInvoke,
+                                         "BeforeUnload", "toString");
+          String result =
+              NativeValueTraits<IDLNullable<IDLString>>::NativeValue(
+                  isolate, v8_return_value, exception_state);
+          if (UNLIKELY(exception_state.HadException())) {
+            // TODO(crbug.com/1480485): Understand why we need to explicitly
+            // report the exception. The TryCatch handler that is on the call
+            // stack has setVerbose(true) but doesn't end up dispatching an
+            // ErrorEvent.
+            V8ScriptRunner::ReportException(isolate,
+                                            exception_state.GetException());
+            exception_state.ClearException();
             return;
-          result_for_beforeunload = native_result;
+          }
+          result_for_beforeunload = result;
         },
         std::ref(v8_return_value), std::ref(result_for_beforeunload)));
-    if (!result_for_beforeunload)
+    if (!result_for_beforeunload) {
       return;
+    }
   }
 
   // Step 5. Process return value as follows:
@@ -180,7 +201,7 @@ void JSEventHandler::InvokeInternal(EventTarget& event_target,
   if (is_beforeunload_event) {
     if (result_for_beforeunload) {
       event.preventDefault();
-      if (before_unload_event->returnValue().IsEmpty())
+      if (before_unload_event->returnValue().empty())
         before_unload_event->setReturnValue(result_for_beforeunload);
     }
   } else if (!IsOnBeforeUnloadEventHandler()) {

@@ -29,8 +29,12 @@
 #include <memory>
 
 #include "base/unguessable_token.h"
+#include "net/base/request_priority.h"
 #include "services/network/public/mojom/ip_address_space.mojom-blink.h"
+#include "services/network/public/mojom/web_bundle_handle.mojom-blink.h"
+#include "third_party/blink/public/common/permissions_policy/permissions_policy.h"
 #include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom-blink.h"
+#include "third_party/blink/public/mojom/permissions_policy/permissions_policy_feature.mojom-blink.h"
 #include "third_party/blink/public/platform/web_url_request.h"
 #include "third_party/blink/renderer/platform/network/encoded_form_data.h"
 #include "third_party/blink/renderer/platform/network/http_names.h"
@@ -39,6 +43,43 @@
 #include "third_party/blink/renderer/platform/weborigin/referrer.h"
 
 namespace blink {
+
+ResourceRequestHead::WebBundleTokenParams&
+ResourceRequestHead::WebBundleTokenParams::operator=(
+    const WebBundleTokenParams& other) {
+  bundle_url = other.bundle_url;
+  token = other.token;
+  handle = other.CloneHandle();
+  return *this;
+}
+
+ResourceRequestHead::WebBundleTokenParams::WebBundleTokenParams(
+    const WebBundleTokenParams& other) {
+  *this = other;
+}
+
+ResourceRequestHead::WebBundleTokenParams::WebBundleTokenParams(
+    const KURL& bundle_url,
+    const base::UnguessableToken& web_bundle_token,
+    mojo::PendingRemote<network::mojom::blink::WebBundleHandle>
+        web_bundle_handle)
+    : bundle_url(bundle_url),
+      token(web_bundle_token),
+      handle(std::move(web_bundle_handle)) {}
+
+mojo::PendingRemote<network::mojom::blink::WebBundleHandle>
+ResourceRequestHead::WebBundleTokenParams::CloneHandle() const {
+  if (!handle)
+    return mojo::NullRemote();
+  mojo::Remote<network::mojom::blink::WebBundleHandle> remote(std::move(
+      const_cast<mojo::PendingRemote<network::mojom::blink::WebBundleHandle>&>(
+          handle)));
+  mojo::PendingRemote<network::mojom::blink::WebBundleHandle> new_remote;
+  remote->Clone(new_remote.InitWithNewPipeAndPassReceiver());
+  const_cast<mojo::PendingRemote<network::mojom::blink::WebBundleHandle>&>(
+      handle) = remote.Unbind();
+  return new_remote;
+}
 
 const base::TimeDelta ResourceRequestHead::default_timeout_interval_ =
     base::TimeDelta::Max();
@@ -49,35 +90,37 @@ ResourceRequestHead::ResourceRequestHead(const KURL& url)
     : url_(url),
       timeout_interval_(default_timeout_interval_),
       http_method_(http_names::kGET),
-      allow_stored_credentials_(true),
       report_upload_progress_(false),
-      report_raw_headers_(false),
       has_user_gesture_(false),
       has_text_fragment_token_(false),
       download_to_blob_(false),
       use_stream_on_response_(false),
       keepalive_(false),
-      should_reset_app_cache_(false),
+      browsing_topics_(false),
+      ad_auction_headers_(false),
+      shared_storage_writable_opted_in_(false),
+      shared_storage_writable_eligible_(false),
       allow_stale_response_(false),
-      cache_mode_(mojom::FetchCacheMode::kDefault),
+      cache_mode_(mojom::blink::FetchCacheMode::kDefault),
       skip_service_worker_(false),
       download_to_cache_only_(false),
       site_for_cookies_set_(false),
+      is_form_submission_(false),
+      priority_incremental_(net::kDefaultPriorityIncremental),
+      initial_priority_(ResourceLoadPriority::kUnresolved),
       priority_(ResourceLoadPriority::kUnresolved),
       intra_priority_value_(0),
-      requestor_id_(0),
-      previews_state_(PreviewsTypes::kPreviewsUnspecified),
-      request_context_(mojom::RequestContextType::UNSPECIFIED),
+      request_context_(mojom::blink::RequestContextType::UNSPECIFIED),
       destination_(network::mojom::RequestDestination::kEmpty),
       mode_(network::mojom::RequestMode::kNoCors),
-      fetch_importance_mode_(mojom::FetchImportanceMode::kImportanceAuto),
+      fetch_priority_hint_(mojom::blink::FetchPriorityHint::kAuto),
       credentials_mode_(network::mojom::CredentialsMode::kInclude),
       redirect_mode_(network::mojom::RedirectMode::kFollow),
       referrer_string_(Referrer::ClientReferrerString()),
       referrer_policy_(network::mojom::ReferrerPolicy::kDefault),
-      is_external_request_(false),
       cors_preflight_policy_(
-          network::mojom::CorsPreflightPolicy::kConsiderPreflight) {}
+          network::mojom::CorsPreflightPolicy::kConsiderPreflight),
+      target_address_space_(network::mojom::IPAddressSpace::kUnknown) {}
 
 ResourceRequestHead::ResourceRequestHead(const ResourceRequestHead&) = default;
 
@@ -127,25 +170,11 @@ ResourceRequest::ResourceRequest(const KURL& url) : ResourceRequestHead(url) {}
 ResourceRequest::ResourceRequest(const ResourceRequestHead& head)
     : ResourceRequestHead(head) {}
 
-ResourceRequest& ResourceRequest::operator=(const ResourceRequest& src) {
-  DCHECK(!body_.StreamBody().is_valid());
-  DCHECK(!src.body_.StreamBody().is_valid());
-  this->ResourceRequestHead::operator=(src);
-  body_.SetFormBody(src.body_.FormBody());
-  return *this;
-}
-
 ResourceRequest::ResourceRequest(ResourceRequest&&) = default;
 
 ResourceRequest& ResourceRequest::operator=(ResourceRequest&&) = default;
 
 ResourceRequest::~ResourceRequest() = default;
-
-void ResourceRequest::CopyFrom(const ResourceRequest& src) {
-  DCHECK(!body_.StreamBody().is_valid());
-  DCHECK(!src.body_.StreamBody().is_valid());
-  *this = src;
-}
 
 void ResourceRequest::CopyHeadFrom(const ResourceRequestHead& src) {
   this->ResourceRequestHead::operator=(src);
@@ -165,7 +194,7 @@ std::unique_ptr<ResourceRequest> ResourceRequestHead::CreateRedirectRequest(
   request->SetHttpMethod(new_method);
   request->SetSiteForCookies(new_site_for_cookies);
   String referrer =
-      new_referrer.IsEmpty() ? Referrer::NoReferrer() : String(new_referrer);
+      new_referrer.empty() ? Referrer::NoReferrer() : String(new_referrer);
   request->SetReferrerString(referrer);
   request->SetReferrerPolicy(new_referrer_policy);
   request->SetSkipServiceWorker(skip_service_worker);
@@ -176,11 +205,15 @@ std::unique_ptr<ResourceRequest> ResourceRequestHead::CreateRedirectRequest(
   request->SetDownloadToBlob(DownloadToBlob());
   request->SetUseStreamOnResponse(UseStreamOnResponse());
   request->SetRequestContext(GetRequestContext());
-  request->SetShouldResetAppCache(ShouldResetAppCache());
   request->SetMode(GetMode());
+  request->SetTargetAddressSpace(GetTargetAddressSpace());
   request->SetCredentialsMode(GetCredentialsMode());
   request->SetKeepalive(GetKeepalive());
+  request->SetBrowsingTopics(GetBrowsingTopics());
+  request->SetAdAuctionHeaders(GetAdAuctionHeaders());
+  request->SetSharedStorageWritableOptedIn(GetSharedStorageWritableOptedIn());
   request->SetPriority(Priority());
+  request->SetPriorityIncremental(PriorityIncremental());
 
   request->SetCorsPreflightPolicy(CorsPreflightPolicy());
   if (IsAdResource())
@@ -193,9 +226,16 @@ std::unique_ptr<ResourceRequest> ResourceRequestHead::CreateRedirectRequest(
   request->SetUkmSourceId(GetUkmSourceId());
   request->SetInspectorId(InspectorId());
   request->SetFromOriginDirtyStyleSheet(IsFromOriginDirtyStyleSheet());
-  request->SetSignedExchangePrefetchCacheEnabled(
-      IsSignedExchangePrefetchCacheEnabled());
   request->SetRecursivePrefetchToken(RecursivePrefetchToken());
+  request->SetFetchLikeAPI(IsFetchLikeAPI());
+  request->SetFetchLaterAPI(IsFetchLaterAPI());
+  request->SetFavicon(IsFavicon());
+  request->SetAttributionReportingSupport(GetAttributionReportingSupport());
+  request->SetAttributionReportingEligibility(
+      GetAttributionReportingEligibility());
+  request->SetAttributionReportingRuntimeFeatures(
+      GetAttributionReportingRuntimeFeatures());
+  request->SetAttributionReportingSrcToken(GetAttributionSrcToken());
 
   return request;
 }
@@ -213,18 +253,19 @@ void ResourceRequestHead::SetUrl(const KURL& url) {
 }
 
 void ResourceRequestHead::RemoveUserAndPassFromURL() {
-  if (url_.User().IsEmpty() && url_.Pass().IsEmpty())
+  if (url_.User().empty() && url_.Pass().empty())
     return;
 
   url_.SetUser(String());
   url_.SetPass(String());
 }
 
-mojom::FetchCacheMode ResourceRequestHead::GetCacheMode() const {
+mojom::blink::FetchCacheMode ResourceRequestHead::GetCacheMode() const {
   return cache_mode_;
 }
 
-void ResourceRequestHead::SetCacheMode(mojom::FetchCacheMode cache_mode) {
+void ResourceRequestHead::SetCacheMode(
+    mojom::blink::FetchCacheMode cache_mode) {
   cache_mode_ = cache_mode;
 }
 
@@ -314,12 +355,8 @@ void ResourceRequest::SetHttpBody(scoped_refptr<EncodedFormData> http_body) {
   body_.SetFormBody(std::move(http_body));
 }
 
-bool ResourceRequestHead::AllowStoredCredentials() const {
-  return allow_stored_credentials_;
-}
-
-void ResourceRequestHead::SetAllowStoredCredentials(bool allow_credentials) {
-  allow_stored_credentials_ = allow_credentials;
+ResourceLoadPriority ResourceRequestHead::InitialPriority() const {
+  return initial_priority_;
 }
 
 ResourceLoadPriority ResourceRequestHead::Priority() const {
@@ -336,8 +373,18 @@ bool ResourceRequestHead::PriorityHasBeenSet() const {
 
 void ResourceRequestHead::SetPriority(ResourceLoadPriority priority,
                                       int intra_priority_value) {
+  if (!PriorityHasBeenSet())
+    initial_priority_ = priority;
   priority_ = priority;
   intra_priority_value_ = intra_priority_value;
+}
+
+bool ResourceRequestHead::PriorityIncremental() const {
+  return priority_incremental_;
+}
+
+void ResourceRequestHead::SetPriorityIncremental(bool priority_incremental) {
+  priority_incremental_ = priority_incremental;
 }
 
 void ResourceRequestHead::AddHttpHeaderField(const AtomicString& name,
@@ -357,36 +404,6 @@ void ResourceRequestHead::AddHTTPHeaderFields(
 
 void ResourceRequestHead::ClearHttpHeaderField(const AtomicString& name) {
   http_header_fields_.Remove(name);
-}
-
-void ResourceRequestHead::SetExternalRequestStateFromRequestorAddressSpace(
-    network::mojom::IPAddressSpace requestor_space) {
-  static_assert(network::mojom::IPAddressSpace::kLocal <
-                    network::mojom::IPAddressSpace::kPrivate,
-                "Local is inside Private");
-  static_assert(network::mojom::IPAddressSpace::kLocal <
-                    network::mojom::IPAddressSpace::kPublic,
-                "Local is inside Public");
-  static_assert(network::mojom::IPAddressSpace::kPrivate <
-                    network::mojom::IPAddressSpace::kPublic,
-                "Private is inside Public");
-
-  // TODO(mkwst): This only checks explicit IP addresses. We'll have to move all
-  // this up to //net and //content in order to have any real impact on gateway
-  // attacks. That turns out to be a TON of work. https://crbug.com/378566
-  if (!RuntimeEnabledFeatures::CorsRFC1918Enabled()) {
-    is_external_request_ = false;
-    return;
-  }
-
-  network::mojom::IPAddressSpace target_space =
-      network::mojom::IPAddressSpace::kPublic;
-  if (network_utils::IsReservedIPAddress(url_.Host()))
-    target_space = network::mojom::IPAddressSpace::kPrivate;
-  if (SecurityOrigin::Create(url_)->IsLocalhost())
-    target_space = network::mojom::IPAddressSpace::kLocal;
-
-  is_external_request_ = requestor_space > target_space;
 }
 
 bool ResourceRequestHead::IsConditional() const {
@@ -434,12 +451,12 @@ bool ResourceRequestHead::CacheControlContainsNoStore() const {
 }
 
 bool ResourceRequestHead::HasCacheValidatorFields() const {
-  return !http_header_fields_.Get(http_names::kLastModified).IsEmpty() ||
-         !http_header_fields_.Get(http_names::kETag).IsEmpty();
+  return !http_header_fields_.Get(http_names::kLastModified).empty() ||
+         !http_header_fields_.Get(http_names::kETag).empty();
 }
 
 bool ResourceRequestHead::NeedsHTTPOrigin() const {
-  if (!HttpOrigin().IsEmpty())
+  if (!HttpOrigin().empty())
     return false;  // Request already has an Origin header.
 
   // Don't send an Origin header for GET or HEAD to avoid privacy issues.
@@ -454,6 +471,31 @@ bool ResourceRequestHead::NeedsHTTPOrigin() const {
   // For non-GET and non-HEAD methods, always send an Origin header so the
   // server knows we support this feature.
   return true;
+}
+
+bool ResourceRequest::IsFeatureEnabledForSubresourceRequestAssumingOptIn(
+    const PermissionsPolicy* policy,
+    mojom::blink::PermissionsPolicyFeature feature,
+    const url::Origin& origin) {
+  if (!policy) {
+    return false;
+  }
+
+  bool browsing_topics_opted_in =
+      (feature == mojom::blink::PermissionsPolicyFeature::kBrowsingTopics ||
+       feature == mojom::blink::PermissionsPolicyFeature::
+                      kBrowsingTopicsBackwardCompatible) &&
+      GetBrowsingTopics();
+  bool shared_storage_opted_in =
+      feature == mojom::blink::PermissionsPolicyFeature::kSharedStorage &&
+      GetSharedStorageWritableOptedIn();
+
+  if (!browsing_topics_opted_in && !shared_storage_opted_in) {
+    return false;
+  }
+
+  return policy->IsFeatureEnabledForSubresourceRequestAssumingOptIn(feature,
+                                                                    origin);
 }
 
 }  // namespace blink

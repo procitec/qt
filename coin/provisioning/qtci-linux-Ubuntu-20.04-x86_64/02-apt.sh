@@ -1,37 +1,6 @@
 #!/usr/bin/env bash
-
-#############################################################################
-##
-## Copyright (C) 2021 The Qt Company Ltd.
-## Contact: http://www.qt.io/licensing/
-##
-## This file is part of the provisioning scripts of the Qt Toolkit.
-##
-## $QT_BEGIN_LICENSE:LGPL21$
-## Commercial License Usage
-## Licensees holding valid commercial Qt licenses may use this file in
-## accordance with the commercial license agreement provided with the
-## Software or, alternatively, in accordance with the terms contained in
-## a written agreement between you and The Qt Company. For licensing terms
-## and conditions see http://www.qt.io/terms-conditions. For further
-## information use the contact form at http://www.qt.io/contact-us.
-##
-## GNU Lesser General Public License Usage
-## Alternatively, this file may be used under the terms of the GNU Lesser
-## General Public License version 2.1 or version 3 as published by the Free
-## Software Foundation and appearing in the file LICENSE.LGPLv21 and
-## LICENSE.LGPLv3 included in the packaging of this file. Please review the
-## following information to ensure the GNU Lesser General Public License
-## requirements will be met: https://www.gnu.org/licenses/lgpl.html and
-## http://www.gnu.org/licenses/old-licenses/lgpl-2.1.html.
-##
-## As a special exception, The Qt Company gives you certain additional
-## rights. These rights are described in The Qt Company LGPL Exception
-## version 1.1, included in the file LGPL_EXCEPTION.txt in this package.
-##
-## $QT_END_LICENSE$
-##
-#############################################################################
+# Copyright (C) 2021 The Qt Company Ltd.
+# SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 # Install required packages with APT
 
@@ -63,6 +32,9 @@ EOC
 
 (ping -c 3 repo-clones.ci.qt.io && set_internal_repo) || echo "Internal package repository not found. Using public repositories."
 
+# Make sure needed ca-certificates are available
+sudo apt-get install --reinstall ca-certificates
+
 # Git is not needed by builds themselves, but is nice to have
 # immediately as one starts debugging
 installPackages+=(git)
@@ -84,13 +56,21 @@ installPackages+=(libxi-dev)
 installPackages+=(libdbus-1-dev)
 # Needed libraries for WebEngine
 installPackages+=(libudev-dev)
+installPackages+=(libdrm-dev)
 installPackages+=(libegl1-mesa-dev)
 installPackages+=(libfontconfig1-dev)
 installPackages+=(libgbm-dev)
+installPackages+=(liblcms2-dev)
+installPackages+=(libpci-dev)
+installPackages+=(libre2-dev)
+installPackages+=(libsnappy-dev)
+installPackages+=(libva-dev)
+installPackages+=(libvpx-dev)
 installPackages+=(libxkbfile-dev)
 installPackages+=(libxshmfence-dev)
 installPackages+=(libxss-dev)
 installPackages+=(nodejs-mozilla) # use nodejs-mozilla because nodejs is outdated
+installPackages+=(python3-html5lib)
 
 # Common event loop handling
 installPackages+=(libglib2.0-dev)
@@ -116,15 +96,27 @@ installPackages+=(libgstreamer1.0-dev)
 installPackages+=(libgstreamer-plugins-base1.0-dev)
 installPackages+=(libgstreamer-plugins-good1.0-dev)
 installPackages+=(libgstreamer-plugins-bad1.0-dev)
+installPackages+=(gstreamer1.0-libav)
+installPackages+=(gstreamer1.0-plugins-base)
+installPackages+=(gstreamer1.0-plugins-good)
+installPackages+=(gstreamer1.0-plugins-bad)
+installPackages+=(gstreamer1.0-plugins-rtp)
+installPackages+=(gstreamer1.0-plugins-ugly)
 installPackages+=(libgstreamer-gl1.0-0)
 installPackages+=(gir1.2-gst-plugins-base-1.0)
 installPackages+=(gir1.2-gst-plugins-bad-1.0)
+installPackages+=(yasm)
+installPackages+=(libva-dev)
+# for QtMultimedia streaming tests
+installPackages+=(vlc-bin)
+installPackages+=(vlc-plugin-base)
 
 # Support for cross-building to x86 (needed by WebEngine boot2qt builds)
 installPackages+=(g++-multilib)
 # python3 development package
 installPackages+=(python3-dev)
 installPackages+=(python3-pip)
+installPackages+=(python3-venv)
 installPackages+=(virtualenv)
 installPackages+=(python3-wheel)
 # python2 development package
@@ -141,10 +133,13 @@ installPackages+=(libegl-dev)
 installPackages+=(libglvnd-dev)
 installPackages+=(libgles2-mesa-dev)
 installPackages+=(curl)
+installPackages+=(libcurl4-openssl-dev)
 installPackages+=(libicu-dev)
 installPackages+=(zlib1g-dev)
 installPackages+=(zlib1g)
 installPackages+=(openjdk-8-jdk)
+#Java 17 for Android
+installPackages+=(openjdk-17-jdk)
 installPackages+=(libgtk-3-dev)
 installPackages+=(ninja-build)
 installPackages+=(libssl-dev)
@@ -204,6 +199,7 @@ installPackages+=(ssh)
 installPackages+=(diffstat)
 installPackages+=(binfmt-support)
 installPackages+=(zstd)
+installPackages+=(libzstd-dev)
 # Vulkan is needed for examples
 installPackages+=(libvulkan-dev)
 # Needed for qtdltlogging
@@ -218,6 +214,12 @@ installPackages+=(linux-libc-dev:i386)
 installPackages+=(libxcursor1:i386)
 installPackages+=(libc6-dev-i386)
 sudo dpkg --add-architecture i386
+# For QNX
+installPackages+=(nfs-kernel-server)
+installPackages+=(net-tools)
+installPackages+=(bridge-utils)
+# Fix dependencies in shared ffmpeg libs
+installPackages+=(patchelf)
 
 echo "Running update for apt"
 waitLoop
@@ -226,13 +228,12 @@ echo "Installing packages"
 waitLoop
 sudo DEBIAN_FRONTEND=noninteractive apt-get -q -y install "${installPackages[@]}"
 
-# Install all needed packages in a special wheel cache directory
-pip3 wheel --wheel-dir "$HOME/python3-wheels" -r "${BASH_SOURCE%/*}/../common/shared/requirements.txt"
+# Configure pip
+pip config --user set global.index https://ci-files01-hki.ci.qt.io/input/python_module_cache
+pip config --user set global.extra-index-url https://pypi.org/simple/
 
 source "${BASH_SOURCE%/*}/../common/unix/SetEnvVar.sh"
-SetEnvVar "PYTHON3_WHEEL_CACHE" "$HOME/python3-wheels"
 SetEnvVar "PATH" "/usr/lib/nodejs-mozilla/bin:\$PATH"
 
 OpenSSLVersion="$(openssl version |cut -b 9-14)"
 echo "OpenSSL = $OpenSSLVersion" >> ~/versions.txt
-

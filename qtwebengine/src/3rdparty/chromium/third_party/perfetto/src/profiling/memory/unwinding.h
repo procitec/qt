@@ -37,16 +37,38 @@ std::unique_ptr<unwindstack::Regs> CreateRegsFromRawData(
 
 bool DoUnwind(WireMessage*, UnwindingMetadata* metadata, AllocRecord* out);
 
+// AllocRecords are expensive to construct and destruct. We have seen up to
+// 10 % of total CPU of heapprofd being used to destruct them. That is why
+// we re-use them to cut CPU usage significantly.
+class AllocRecordArena {
+ public:
+  AllocRecordArena() : alloc_records_mutex_(new std::mutex()) {}
+
+  void ReturnAllocRecord(std::unique_ptr<AllocRecord>);
+  std::unique_ptr<AllocRecord> BorrowAllocRecord();
+
+  void Enable();
+  void Disable();
+
+ private:
+  std::unique_ptr<std::mutex> alloc_records_mutex_;
+  std::vector<std::unique_ptr<AllocRecord>> alloc_records_;
+  bool enabled_ = true;
+};
+
 class UnwindingWorker : public base::UnixSocket::EventListener {
  public:
   class Delegate {
    public:
-    virtual void PostAllocRecord(std::vector<AllocRecord>) = 0;
-    virtual void PostFreeRecord(std::vector<FreeRecord>) = 0;
-    virtual void PostHeapNameRecord(HeapNameRecord rec) = 0;
-    virtual void PostSocketDisconnected(DataSourceInstanceID,
+    virtual void PostAllocRecord(UnwindingWorker*,
+                                 std::unique_ptr<AllocRecord>) = 0;
+    virtual void PostFreeRecord(UnwindingWorker*, std::vector<FreeRecord>) = 0;
+    virtual void PostHeapNameRecord(UnwindingWorker*, HeapNameRecord rec) = 0;
+    virtual void PostSocketDisconnected(UnwindingWorker*,
+                                        DataSourceInstanceID,
                                         pid_t pid,
                                         SharedRingBuffer::Stats stats) = 0;
+    virtual void PostDrainDone(UnwindingWorker*, DataSourceInstanceID) = 0;
     virtual ~Delegate();
   };
 
@@ -57,15 +79,24 @@ class UnwindingWorker : public base::UnixSocket::EventListener {
     base::ScopedFile mem_fd;
     SharedRingBuffer shmem;
     ClientConfiguration client_config;
+    bool stream_allocations;
   };
 
   UnwindingWorker(Delegate* delegate, base::ThreadTaskRunner thread_task_runner)
       : delegate_(delegate),
         thread_task_runner_(std::move(thread_task_runner)) {}
 
+  ~UnwindingWorker() override;
+  UnwindingWorker(UnwindingWorker&&) = default;
+
   // Public API safe to call from other threads.
   void PostDisconnectSocket(pid_t pid);
+  void PostPurgeProcess(pid_t pid);
   void PostHandoffSocket(HandoffData);
+  void PostDrainFree(DataSourceInstanceID, pid_t pid);
+  void ReturnAllocRecord(std::unique_ptr<AllocRecord> record) {
+    alloc_record_arena_.ReturnAllocRecord(std::move(record));
+  }
 
   // Implementation of UnixSocket::EventListener.
   // Do not call explicitly.
@@ -84,12 +115,15 @@ class UnwindingWorker : public base::UnixSocket::EventListener {
     UnwindingMetadata metadata;
     SharedRingBuffer shmem;
     ClientConfiguration client_config;
+    bool stream_allocations = false;
+    size_t drain_bytes = 0;
     std::vector<FreeRecord> free_records;
-    std::vector<AllocRecord> alloc_records;
   };
 
-  // static and public for testing/fuzzing
-  static void HandleBuffer(const SharedRingBuffer::Buffer& buf,
+  // public for testing/fuzzing
+  static void HandleBuffer(UnwindingWorker* self,
+                           AllocRecordArena* alloc_record_arena,
+                           const SharedRingBuffer::Buffer& buf,
                            ClientData* client_data,
                            pid_t peer_pid,
                            Delegate* delegate);
@@ -97,25 +131,35 @@ class UnwindingWorker : public base::UnixSocket::EventListener {
  private:
   void HandleHandoffSocket(HandoffData data);
   void HandleDisconnectSocket(pid_t pid);
+  void HandleDrainFree(DataSourceInstanceID, pid_t);
+  void RemoveClientData(
+      std::map<pid_t, ClientData>::iterator client_data_iterator);
+  void FinishDisconnect(
+      std::map<pid_t, ClientData>::iterator client_data_iterator);
+  std::unique_ptr<AllocRecord> BorrowAllocRecord();
 
-  void HandleUnwindBatch(pid_t);
+  struct ReadAndUnwindBatchResult {
+    enum class Status {
+      kHasMore,
+      kReadSome,
+      kReadNone,
+    };
+    size_t bytes_read = 0;
+    Status status;
+  };
+  ReadAndUnwindBatchResult ReadAndUnwindBatch(ClientData* client_data);
+  void BatchUnwindJob(pid_t);
+  void DrainJob(pid_t);
 
+  AllocRecordArena alloc_record_arena_;
   std::map<pid_t, ClientData> client_data_;
   Delegate* delegate_;
 
-  // Task runner with a dedicated thread. Keep last as instances this class are
-  // currently (incorrectly) being destroyed on the main thread, instead of the
-  // task thread. By destroying this task runner first, we ensure that the
-  // UnwindingWorker is not active while the rest of its state is being
-  // destroyed. Additionally this ensures that the destructing thread sees a
-  // consistent view of the memory due to the ThreadTaskRunner's destructor
-  // joining a thread.
-  //
-  // Additionally, keep the destructor defaulted, as its body would still race
-  // against an active task thread.
-  //
-  // TODO(rsavitski): make the task thread own the object's lifetime (likely by
-  // refactoring base::ThreadTaskRunner).
+  // Task runner with a dedicated thread. Keep last. By destroying this task
+  // runner first, we ensure that the UnwindingWorker is not active while the
+  // rest of its state is being destroyed. Additionally this ensures that the
+  // destructing thread sees a consistent view of the memory due to the
+  // ThreadTaskRunner's destructor joining a thread.
   base::ThreadTaskRunner thread_task_runner_;
 };
 

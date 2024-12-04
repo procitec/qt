@@ -30,9 +30,14 @@
 #include "third_party/blink/renderer/core/style/filter_operation.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
+#include <iosfwd>
+
+namespace gfx {
+class RectF;
+}
+
 namespace blink {
 
-class FloatRect;
 class SVGResourceClient;
 
 class CORE_EXPORT FilterOperations {
@@ -40,9 +45,11 @@ class CORE_EXPORT FilterOperations {
 
  public:
   FilterOperations();
-  FilterOperations(const FilterOperations& other) { *this = other; }
+  FilterOperations(const FilterOperations& other) = default;
+  FilterOperations(FilterOperations&& other) = default;
 
-  FilterOperations& operator=(const FilterOperations&);
+  FilterOperations& operator=(const FilterOperations&) = default;
+  FilterOperations& operator=(FilterOperations&&) = default;
 
   bool operator==(const FilterOperations&) const;
   bool operator!=(const FilterOperations& o) const { return !(*this == o); }
@@ -65,11 +72,12 @@ class CORE_EXPORT FilterOperations {
   // Maps "forward" to determine which pixels in a destination rect are
   // affected by pixels in the source rect.
   // See also FilterEffect::MapRect.
-  FloatRect MapRect(const FloatRect&) const;
+  gfx::RectF MapRect(const gfx::RectF&) const;
 
   bool HasFilterThatAffectsOpacity() const;
   bool HasFilterThatMovesPixels() const;
   bool HasReferenceFilter() const;
+  bool UsesCurrentColor() const;
 
   void AddClient(SVGResourceClient&) const;
   void RemoveClient(SVGResourceClient&) const;
@@ -78,7 +86,20 @@ class CORE_EXPORT FilterOperations {
 
  private:
   FilterOperationVector operations_;
+
+  friend std::ostream& operator<<(std::ostream& stream,
+                                  const FilterOperations& operations);
 };
+
+inline std::ostream& operator<<(std::ostream& stream,
+                                const FilterOperations& operations) {
+  stream << "FilterOperations{";
+  for (const Member<FilterOperation>& operation : operations.operations_) {
+    stream << *operation;
+    stream << ",";
+  }
+  return stream << "}";
+}
 
 // Wrapper object for the FilterOperations part object.
 class FilterOperationsWrapper

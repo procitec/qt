@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,12 +9,14 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
-#include "base/metrics/histogram_macros.h"
-#include "base/strings/stringprintf.h"
-#include "build/build_config.h"
-#include "components/sync/model/sync_change.h"
-#include "components/sync/protocol/sync.pb.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
+#include "base/logging.h"
+#include "base/metrics/histogram_functions.h"
+#include "components/sync/base/features.h"
+#include "components/sync/base/time.h"
+#include "components/sync/protocol/session_specifics.pb.h"
+#include "components/sync/protocol/sync_enums.pb.h"
 #include "components/sync_sessions/sync_sessions_client.h"
 #include "components/sync_sessions/synced_session_tracker.h"
 #include "components/sync_sessions/synced_tab_delegate.h"
@@ -26,6 +28,18 @@ namespace {
 
 using sessions::SerializedNavigationEntry;
 
+// Enumeration of possible results when placeholder tabs are attempted to be
+// resynced. Used in UMA metrics. Do not re-order or delete these entries; they
+// are used in a UMA histogram. Please edit SyncPlaceholderTabResyncResult in
+// enums.xml if a value is added.
+enum PlaceholderTabResyncResultHistogramValue {
+  PLACEHOLDER_TAB_FOUND = 0,
+  PLACEHOLDER_TAB_RESYNCED = 1,
+  PLACEHOLDER_TAB_NOT_SYNCED = 2,
+
+  kMaxValue = PLACEHOLDER_TAB_NOT_SYNCED
+};
+
 // The maximum number of navigations in each direction we care to sync.
 const int kMaxSyncNavigationCount = 6;
 
@@ -33,10 +47,10 @@ bool IsSessionRestoreInProgress(SyncSessionsClient* sessions_client) {
   DCHECK(sessions_client);
   SyncedWindowDelegatesGetter* synced_window_getter =
       sessions_client->GetSyncedWindowDelegatesGetter();
-  SyncedWindowDelegatesGetter::SyncedWindowDelegateMap windows =
+  SyncedWindowDelegatesGetter::SyncedWindowDelegateMap window_delegates =
       synced_window_getter->GetSyncedWindowDelegates();
-  for (const auto& window_iter_pair : windows) {
-    if (window_iter_pair.second->IsSessionRestoreInProgress()) {
+  for (const auto& [window_id, window_delegate] : window_delegates) {
+    if (window_delegate->IsSessionRestoreInProgress()) {
       return true;
     }
   }
@@ -44,23 +58,44 @@ bool IsSessionRestoreInProgress(SyncSessionsClient* sessions_client) {
 }
 
 bool IsWindowSyncable(const SyncedWindowDelegate& window_delegate) {
-  return window_delegate.ShouldSync() && window_delegate.GetTabCount() &&
-         window_delegate.HasWindow();
+  return window_delegate.ShouldSync() && window_delegate.HasWindow();
 }
 
 // On Android, it's possible to not have any tabbed windows when only custom
 // tabs are currently open. This means that there is tab data that will be
 // restored later, but we cannot access it.
 bool ScanForTabbedWindow(SyncedWindowDelegatesGetter* delegates_getter) {
-  for (const auto& window_iter_pair :
+  for (const auto& [window_id, window_delegate] :
        delegates_getter->GetSyncedWindowDelegates()) {
-    const SyncedWindowDelegate* window_delegate = window_iter_pair.second;
     if (window_delegate->IsTypeNormal() && IsWindowSyncable(*window_delegate)) {
       return true;
     }
   }
   return false;
 }
+
+sync_pb::SyncEnums_BrowserType BrowserTypeFromWindowDelegate(
+    const SyncedWindowDelegate& delegate) {
+  if (delegate.IsTypeNormal()) {
+    return sync_pb::SyncEnums_BrowserType_TYPE_TABBED;
+  }
+
+  if (delegate.IsTypePopup()) {
+    return sync_pb::SyncEnums_BrowserType_TYPE_POPUP;
+  }
+
+  // This is a custom tab within an app. These will not be restored on
+  // startup if not present.
+  return sync_pb::SyncEnums_BrowserType_TYPE_CUSTOM_TAB;
+}
+
+#if BUILDFLAG(IS_ANDROID)
+void RecordPlaceholderTabResyncResult(
+    PlaceholderTabResyncResultHistogramValue result_value) {
+  base::UmaHistogramEnumeration("Sync.PlaceholderTabResyncResult",
+                                result_value);
+}
+#endif  // BUILDFLAG(IS_ANDROID)
 
 }  // namespace
 
@@ -89,20 +124,20 @@ LocalSessionEventHandlerImpl::LocalSessionEventHandlerImpl(
   }
 }
 
-LocalSessionEventHandlerImpl::~LocalSessionEventHandlerImpl() {}
+LocalSessionEventHandlerImpl::~LocalSessionEventHandlerImpl() = default;
 
 void LocalSessionEventHandlerImpl::OnSessionRestoreComplete() {
   std::unique_ptr<WriteBatch> batch = delegate_->CreateLocalSessionWriteBatch();
   // The initial state of the tracker may contain tabs that are unmmapped but
   // haven't been marked as free yet.
   CleanupLocalTabs(batch.get());
-  AssociateWindows(RELOAD_TABS, batch.get());
+  AssociateWindows(RELOAD_TABS, batch.get(), /*is_session_restore=*/true);
   batch->Commit();
 }
 
 sync_pb::SessionTab
 LocalSessionEventHandlerImpl::GetTabSpecificsFromDelegateForTest(
-    const SyncedTabDelegate& tab_delegate) const {
+    SyncedTabDelegate& tab_delegate) const {
   return GetTabSpecificsFromDelegate(tab_delegate);
 }
 
@@ -117,7 +152,8 @@ void LocalSessionEventHandlerImpl::CleanupLocalTabs(WriteBatch* batch) {
 }
 
 void LocalSessionEventHandlerImpl::AssociateWindows(ReloadTabsOption option,
-                                                    WriteBatch* batch) {
+                                                    WriteBatch* batch,
+                                                    bool is_session_restore) {
   DCHECK(!IsSessionRestoreInProgress(sessions_client_));
 
   const bool has_tabbed_window =
@@ -132,7 +168,7 @@ void LocalSessionEventHandlerImpl::AssociateWindows(ReloadTabsOption option,
   SyncedSession* current_session =
       session_tracker_->GetSession(current_session_tag_);
 
-  SyncedWindowDelegatesGetter::SyncedWindowDelegateMap windows =
+  SyncedWindowDelegatesGetter::SyncedWindowDelegateMap window_delegates =
       sessions_client_->GetSyncedWindowDelegatesGetter()
           ->GetSyncedWindowDelegates();
 
@@ -143,31 +179,29 @@ void LocalSessionEventHandlerImpl::AssociateWindows(ReloadTabsOption option,
     // Just reset the session tracking. No need to worry about the previous
     // session; the current tabbed windows are now the source of truth.
     session_tracker_->ResetSessionTracking(current_session_tag_);
-    current_session->modified_time = base::Time::Now();
+    current_session->SetModifiedTime(base::Time::Now());
   } else {
     DVLOG(1) << "Found no tabbed windows. Reloading "
              << current_session->windows.size()
              << " windows from previous session.";
   }
 
-  for (auto& window_iter_pair : windows) {
-    const SyncedWindowDelegate* window_delegate = window_iter_pair.second;
-    if (option == RELOAD_TABS) {
-      UMA_HISTOGRAM_COUNTS_1M("Sync.SessionTabs",
-                              window_delegate->GetTabCount());
-    }
-
-    // Make sure the window has tabs and a viewable window. The viewable
-    // window check is necessary because, for example, when a browser is
-    // closed the destructor is not necessarily run immediately. This means
+  for (auto& [window_id, window_delegate] : window_delegates) {
+    // Make sure the window is viewable and is not about to be closed. The
+    // viewable window check is necessary because, for example, when a browser
+    // is closed the destructor is not necessarily run immediately. This means
     // its possible for us to get a handle to a browser that is about to be
-    // removed. If the tab count is 0 or the window is null, the browser is
-    // about to be deleted, so we ignore it.
+    // removed. If the window is null, the browser is about to be deleted, so we
+    // ignore it. There is no check for having open tabs anymore. This is needed
+    // to handle a case when the last tab is closed (on Andorid it doesn't mean
+    // that the window is about to be removed). Instead, there is a check if the
+    // window is about to be closed. If the window is last for the profile, the
+    // latest state will be kept.
     if (!IsWindowSyncable(*window_delegate)) {
       continue;
     }
 
-    SessionID window_id = window_delegate->GetSessionId();
+    DCHECK_EQ(window_id, window_delegate->GetSessionId());
     DVLOG(1) << "Associating window " << window_id.id() << " with "
              << window_delegate->GetTabCount() << " tabs.";
 
@@ -203,6 +237,42 @@ void LocalSessionEventHandlerImpl::AssociateWindows(ReloadTabsOption option,
       // window has valid tabs based on the tab's presence in the tracker.
       const sessions::SessionTab* tab =
           session_tracker_->LookupSessionTab(current_session_tag_, tab_id);
+
+#if BUILDFLAG(IS_ANDROID)
+      // Metrics recording will only occur if AssociateWindows is called through
+      // a session restore, denoted by is_session_restore.
+      if (synced_tab->IsPlaceholderTab()) {
+        if (tab && is_session_restore) {
+          RecordPlaceholderTabResyncResult(PLACEHOLDER_TAB_FOUND);
+        } else if (!tab && base::FeatureList::IsEnabled(
+                               syncer::kRestoreSyncedPlaceholderTabs)) {
+          // The placeholder tab doesn't have a tracked counterpart. This is
+          // possible, for example, if the tab was created as a placeholder tab.
+          bool was_tab_resynced = AssociatePlaceholderTab(
+              synced_tab->CreatePlaceholderTabSyncedTabDelegate(), batch);
+
+          if (was_tab_resynced) {
+            // If the tab was presumed to have resynced successfully, perform
+            // another lookup.
+            tab = session_tracker_->LookupSessionTab(current_session_tag_,
+                                                     tab_id);
+
+            if (tab && is_session_restore) {
+              RecordPlaceholderTabResyncResult(PLACEHOLDER_TAB_RESYNCED);
+            }
+          } else if (is_session_restore) {
+            RecordPlaceholderTabResyncResult(PLACEHOLDER_TAB_NOT_SYNCED);
+          }
+        } else if (is_session_restore) {
+          // This metric logic path will likely record no tab data as long as
+          // the RestoreSyncedPlaceholderTabs flag is enabled. If it is
+          // disabled, this path will record all placeholder tabs that the
+          // flag-guarded logic would have attempted to target.
+          RecordPlaceholderTabResyncResult(PLACEHOLDER_TAB_NOT_SYNCED);
+        }
+      }
+#endif  // BUILDFLAG(IS_ANDROID)
+
       if (tab) {
         found_tabs = true;
 
@@ -219,18 +289,8 @@ void LocalSessionEventHandlerImpl::AssociateWindows(ReloadTabsOption option,
     if (found_tabs) {
       SyncedSessionWindow* synced_session_window =
           current_session->windows[window_id].get();
-      if (window_delegate->IsTypeNormal()) {
-        synced_session_window->window_type =
-            sync_pb::SessionWindow_BrowserType_TYPE_TABBED;
-      } else if (window_delegate->IsTypePopup()) {
-        synced_session_window->window_type =
-            sync_pb::SessionWindow_BrowserType_TYPE_POPUP;
-      } else {
-        // This is a custom tab within an app. These will not be restored on
-        // startup if not present.
-        synced_session_window->window_type =
-            sync_pb::SessionWindow_BrowserType_TYPE_CUSTOM_TAB;
-      }
+      synced_session_window->window_type =
+          BrowserTypeFromWindowDelegate(*window_delegate);
     }
   }
 
@@ -279,15 +339,15 @@ void LocalSessionEventHandlerImpl::AssociateTab(
       session_tracker_->GetTab(current_session_tag_, tab_id);
   int old_index = session_tab->normalized_navigation_index();
   GURL old_url;
-  if (session_tab->navigations.size() > static_cast<size_t>(old_index))
+  if (session_tab->navigations.size() > static_cast<size_t>(old_index)) {
     old_url = session_tab->navigations[old_index].virtual_url();
+  }
 
   // Produce the specifics.
   auto specifics = std::make_unique<sync_pb::SessionSpecifics>();
   specifics->set_session_tag(current_session_tag_);
   specifics->set_tab_node_id(tab_node_id);
   GetTabSpecificsFromDelegate(*tab_delegate).Swap(specifics->mutable_tab());
-  WriteTasksIntoSpecifics(specifics->mutable_tab(), tab_delegate);
 
   // Update the tracker's session representation. Timestamp will be overwriten,
   // so we set a null time first to prevent the update from being ignored, if
@@ -300,28 +360,6 @@ void LocalSessionEventHandlerImpl::AssociateTab(
   batch->Put(std::move(specifics));
 }
 
-void LocalSessionEventHandlerImpl::WriteTasksIntoSpecifics(
-    sync_pb::SessionTab* tab_specifics,
-    SyncedTabDelegate* tab_delegate) {
-  for (int i = 0; i < tab_specifics->navigation_size(); i++) {
-    // Excluding blocked navigations, which are appended at tail.
-    if (tab_specifics->navigation(i).blocked_state() ==
-        sync_pb::TabNavigation::STATE_BLOCKED) {
-      break;
-    }
-    int64_t task_id = tab_delegate->GetTaskIdForNavigationId(
-        tab_specifics->navigation(i).unique_id());
-    int64_t parent_task_id = tab_delegate->GetParentTaskIdForNavigationId(
-        tab_specifics->navigation(i).unique_id());
-    int64_t root_task_id = tab_delegate->GetRootTaskIdForNavigationId(
-        tab_specifics->navigation(i).unique_id());
-
-    tab_specifics->mutable_navigation(i)->set_task_id(task_id);
-    tab_specifics->mutable_navigation(i)->add_ancestor_task_id(root_task_id);
-    tab_specifics->mutable_navigation(i)->add_ancestor_task_id(parent_task_id);
-  }
-}
-
 void LocalSessionEventHandlerImpl::OnLocalTabModified(
     SyncedTabDelegate* modified_tab) {
   DCHECK(!current_session_tag_.empty());
@@ -331,10 +369,13 @@ void LocalSessionEventHandlerImpl::OnLocalTabModified(
     return;
   }
 
-  sessions::SerializedNavigationEntry current;
-  modified_tab->GetSerializedNavigationAtIndex(
-      modified_tab->GetCurrentEntryIndex(), &current);
-  delegate_->TrackLocalNavigationId(current.timestamp(), current.unique_id());
+  // Don't track empty tabs.
+  if (modified_tab->GetEntryCount() != 0) {
+    sessions::SerializedNavigationEntry current;
+    modified_tab->GetSerializedNavigationAtIndex(
+        modified_tab->GetCurrentEntryIndex(), &current);
+    delegate_->TrackLocalNavigationId(current.timestamp(), current.unique_id());
+  }
 
   std::unique_ptr<WriteBatch> batch = delegate_->CreateLocalSessionWriteBatch();
   AssociateTab(modified_tab, batch.get());
@@ -342,12 +383,12 @@ void LocalSessionEventHandlerImpl::OnLocalTabModified(
   // "interesting" by going to a valid URL, in which case it needs to be added
   // to the window's tab information. Similarly, if a tab became
   // "uninteresting", we remove it from the window's tab information.
-  AssociateWindows(DONT_RELOAD_TABS, batch.get());
+  AssociateWindows(DONT_RELOAD_TABS, batch.get(), /*is_session_restore=*/false);
   batch->Commit();
 }
 
 sync_pb::SessionTab LocalSessionEventHandlerImpl::GetTabSpecificsFromDelegate(
-    const SyncedTabDelegate& tab_delegate) const {
+    SyncedTabDelegate& tab_delegate) const {
   sync_pb::SessionTab specifics;
   specifics.set_window_id(tab_delegate.GetWindowId().id());
   specifics.set_tab_id(tab_delegate.GetSessionId().id());
@@ -360,11 +401,16 @@ sync_pb::SessionTab LocalSessionEventHandlerImpl::GetTabSpecificsFromDelegate(
   specifics.set_pinned(
       window_delegate ? window_delegate->IsTabPinned(&tab_delegate) : false);
   specifics.set_extension_app_id(tab_delegate.GetExtensionAppId());
+  if (base::FeatureList::IsEnabled(syncer::kSyncSessionOnVisibilityChanged)) {
+    specifics.set_last_active_time_unix_epoch_millis(
+        (tab_delegate.GetLastActiveTime() - base::Time::UnixEpoch())
+            .InMilliseconds());
+  }
   const int current_index = tab_delegate.GetCurrentEntryIndex();
   const int min_index = std::max(0, current_index - kMaxSyncNavigationCount);
   const int max_index = std::min(current_index + kMaxSyncNavigationCount,
                                  tab_delegate.GetEntryCount());
-  bool is_supervised = tab_delegate.ProfileIsSupervised();
+  bool has_child_account = tab_delegate.ProfileHasChildAccount();
 
   for (int i = min_index; i < max_index; ++i) {
     if (!tab_delegate.GetVirtualURLAtIndex(i).is_valid()) {
@@ -374,20 +420,12 @@ sync_pb::SessionTab LocalSessionEventHandlerImpl::GetTabSpecificsFromDelegate(
     tab_delegate.GetSerializedNavigationAtIndex(i, &serialized_entry);
 
     // Set current_navigation_index to the index in navigations.
-    if (i == current_index)
+    if (i == current_index) {
       specifics.set_current_navigation_index(specifics.navigation_size());
+    }
 
     sync_pb::TabNavigation* navigation = specifics.add_navigation();
     SessionNavigationToSyncData(serialized_entry).Swap(navigation);
-
-    const std::string page_language = tab_delegate.GetPageLanguageAtIndex(i);
-    if (!page_language.empty())
-      navigation->set_page_language(page_language);
-
-    if (is_supervised) {
-      navigation->set_blocked_state(
-          sync_pb::TabNavigation_BlockedState_STATE_ALLOWED);
-    }
   }
 
   // If the current navigation is invalid, set the index to the end of the
@@ -396,20 +434,44 @@ sync_pb::SessionTab LocalSessionEventHandlerImpl::GetTabSpecificsFromDelegate(
     specifics.set_current_navigation_index(specifics.navigation_size() - 1);
   }
 
-  if (is_supervised) {
+  if (has_child_account) {
     const std::vector<std::unique_ptr<const SerializedNavigationEntry>>*
         blocked_navigations = tab_delegate.GetBlockedNavigations();
-    DCHECK(blocked_navigations);
-    for (const auto& entry_unique_ptr : *blocked_navigations) {
-      sync_pb::TabNavigation* navigation = specifics.add_navigation();
-      SessionNavigationToSyncData(*entry_unique_ptr).Swap(navigation);
-      navigation->set_blocked_state(
-          sync_pb::TabNavigation_BlockedState_STATE_BLOCKED);
-      // TODO(bauerb): Add categories
+
+    if (blocked_navigations) {
+      for (const auto& entry_unique_ptr : *blocked_navigations) {
+        sync_pb::TabNavigation* navigation = specifics.add_navigation();
+        SessionNavigationToSyncData(*entry_unique_ptr).Swap(navigation);
+      }
     }
   }
 
+  if (window_delegate) {
+    specifics.set_browser_type(BrowserTypeFromWindowDelegate(*window_delegate));
+  }
+
   return specifics;
+}
+
+bool LocalSessionEventHandlerImpl::AssociatePlaceholderTab(
+    std::unique_ptr<SyncedTabDelegate> snapshot,
+    WriteBatch* batch) {
+  // In the event the data read fails or there is no persisted data, a nullptr
+  // will have been returned and this should early exit.
+  if (!snapshot) {
+    return false;
+  }
+
+  const SessionID tab_id = snapshot->GetSessionId();
+  const SessionID window_id = snapshot->GetWindowId();
+
+  // If for some reason the tab ID or the window ID is invalid, skip it.
+  if (!tab_id.is_valid() || !window_id.is_valid()) {
+    return false;
+  }
+
+  AssociateTab(snapshot.get(), batch);
+  return true;
 }
 
 }  // namespace sync_sessions

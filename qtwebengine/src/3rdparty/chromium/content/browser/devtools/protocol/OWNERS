@@ -1,3 +1,2 @@
 per-file system_info_handler.*=kbr@chromium.org
-
-# COMPONENT: Platform>DevTools
+per-file fedcm_handler.*=file://content/browser/webid/OWNERS

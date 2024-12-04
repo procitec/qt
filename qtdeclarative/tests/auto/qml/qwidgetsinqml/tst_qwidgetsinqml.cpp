@@ -1,35 +1,11 @@
-/****************************************************************************
-**
-** Copyright (C) 2018 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtQml module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:GPL-EXCEPT$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 3 as published by the Free Software
-** Foundation with exceptions as appearing in the file LICENSE.GPL3-EXCEPT
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2018 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
 #include <QtTest/QtTest>
 #include <QQmlEngine>
 #include <QtQml>
 #include <QWidget>
+#include <QtQuickTestUtils/private/qmlutils_p.h>
 
 class tst_QWidgetsInQml : public QObject
 {
@@ -45,13 +21,6 @@ private slots:
     void widgetAsDefaultPropertyKeptDuringCreation();
 };
 
-static void gc(QQmlEngine &engine)
-{
-    engine.collectGarbage();
-    QCoreApplication::sendPostedEvents(0, QEvent::DeferredDelete);
-    QCoreApplication::processEvents();
-}
-
 // Like QtObject, but with default property
 class QObjectContainer : public QObject
 {
@@ -65,7 +34,8 @@ public:
     {}
 
     QQmlListProperty<QObject> data() {
-        return QQmlListProperty<QObject>(this, 0, children_append, children_count, children_at, children_clear);
+        return QQmlListProperty<QObject>(
+                this, nullptr, children_append, children_count, children_at, children_clear);
     }
 
     static void children_append(QQmlListProperty<QObject> *prop, QObject *o)
@@ -83,12 +53,12 @@ public:
         }
     }
 
-    static int children_count(QQmlListProperty<QObject> *prop)
+    static qsizetype children_count(QQmlListProperty<QObject> *prop)
     {
         return static_cast<QObjectContainer*>(prop->object)->dataChildren.count();
     }
 
-    static QObject *children_at(QQmlListProperty<QObject> *prop, int index)
+    static QObject *children_at(QQmlListProperty<QObject> *prop, qsizetype index)
     {
         return static_cast<QObjectContainer*>(prop->object)->dataChildren.at(index);
     }
@@ -96,7 +66,7 @@ public:
     static void children_clear(QQmlListProperty<QObject> *prop)
     {
         QObjectContainer *that = static_cast<QObjectContainer*>(prop->object);
-        foreach (QObject *c, that->dataChildren)
+        for (QObject *c : std::as_const(that->dataChildren))
             QObject::disconnect(c, SIGNAL(destroyed(QObject*)), that, SLOT(childDestroyed(QObject*)));
         that->dataChildren.clear();
     }

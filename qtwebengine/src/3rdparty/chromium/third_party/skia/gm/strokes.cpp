@@ -11,6 +11,7 @@
 #include "include/core/SkPaint.h"
 #include "include/core/SkPath.h"
 #include "include/core/SkPathEffect.h"
+#include "include/core/SkPathUtils.h"
 #include "include/core/SkPoint.h"
 #include "include/core/SkRect.h"
 #include "include/core/SkScalar.h"
@@ -18,9 +19,9 @@
 #include "include/core/SkString.h"
 #include "include/core/SkTypes.h"
 #include "include/effects/SkDashPathEffect.h"
-#include "include/private/SkFloatBits.h"
+#include "include/private/base/SkFloatBits.h"
 #include "include/utils/SkParsePath.h"
-#include "include/utils/SkRandom.h"
+#include "src/base/SkRandom.h"
 #include "tools/ToolUtils.h"
 
 #include <string.h>
@@ -53,14 +54,9 @@ public:
     StrokesGM() {}
 
 protected:
+    SkString getName() const override { return SkString("strokes_round"); }
 
-    SkString onShortName() override {
-        return SkString("strokes_round");
-    }
-
-    SkISize onISize() override {
-        return SkISize::Make(W, H*2);
-    }
+    SkISize getISize() override { return SkISize::Make(W, H * 2); }
 
     void onDraw(SkCanvas* canvas) override {
         SkPaint paint;
@@ -117,13 +113,9 @@ protected:
         }
     }
 
-    SkString onShortName() override {
-        return SkString("zeroPath");
-    }
+    SkString getName() const override { return SkString("zeroPath"); }
 
-    SkISize onISize() override {
-        return SkISize::Make(W, H*2);
-    }
+    SkISize getISize() override { return SkISize::Make(W, H * 2); }
 
     void onDraw(SkCanvas* canvas) override {
         SkPaint fillPaint, strokePaint, dashPaint;
@@ -144,7 +136,7 @@ protected:
             const SkScalar intervals[] = { 0, 10 };
             dashPaint.setPathEffect(SkDashPathEffect::Make(intervals, 2, 0));
             SkPath fillPath;
-            dashPaint.getFillPath(fDashedfPath, &fillPath);
+            skpathutils::FillPathWithPaint(fDashedfPath, dashPaint, &fillPath);
             canvas->translate(0, 20);
             canvas->drawPath(fDashedfPath, dashPaint);
             canvas->translate(0, 20);
@@ -173,14 +165,9 @@ private:
 };
 
 class TeenyStrokesGM : public skiagm::GM {
+    SkString getName() const override { return SkString("teenyStrokes"); }
 
-    SkString onShortName() override {
-        return SkString("teenyStrokes");
-    }
-
-    SkISize onISize() override {
-        return SkISize::Make(W, H*2);
-    }
+    SkISize getISize() override { return SkISize::Make(W, H * 2); }
 
     static void line(SkScalar scale, SkCanvas* canvas, SkColor color) {
         SkPaint p;
@@ -295,14 +282,9 @@ protected:
         }
     }
 
+    SkString getName() const override { return SkString("strokes_poly"); }
 
-    SkString onShortName() override {
-        return SkString("strokes_poly");
-    }
-
-    SkISize onISize() override {
-        return SkISize::Make(W, H*2);
-    }
+    SkISize getISize() override { return SkISize::Make(W, H * 2); }
 
     void onDraw(SkCanvas* canvas) override {
         canvas->drawColor(SK_ColorWHITE);
@@ -387,14 +369,9 @@ public:
     Strokes3GM() {}
 
 protected:
+    SkString getName() const override { return SkString("strokes3"); }
 
-    SkString onShortName() override {
-        return SkString("strokes3");
-    }
-
-    SkISize onISize() override {
-        return SkISize::Make(1500, 1500);
-    }
+    SkISize getISize() override { return SkISize::Make(1500, 1500); }
 
     void onDraw(SkCanvas* canvas) override {
         SkPaint origPaint;
@@ -415,7 +392,7 @@ protected:
         SkScalar dx = bounds.width() * 4/3;
         SkScalar dy = bounds.height() * 5;
 
-        for (size_t i = 0; i < SK_ARRAY_COUNT(procs); ++i) {
+        for (size_t i = 0; i < std::size(procs); ++i) {
             SkPath orig;
             SkString str;
             procs[i](&orig, bounds, &str);
@@ -426,7 +403,7 @@ protected:
                 canvas->drawPath(orig, strokePaint);
                 canvas->drawPath(orig, origPaint);
                 SkPath fill;
-                strokePaint.getFillPath(orig, &fill);
+                skpathutils::FillPathWithPaint(orig, strokePaint, &fill);
                 canvas->drawPath(fill, fillPaint);
                 canvas->translate(dx + strokePaint.getStrokeWidth(), 0);
             }
@@ -444,14 +421,9 @@ public:
     Strokes4GM() {}
 
 protected:
+    SkString getName() const override { return SkString("strokes_zoomed"); }
 
-    SkString onShortName() override {
-        return SkString("strokes_zoomed");
-    }
-
-    SkISize onISize() override {
-        return SkISize::Make(W, H*2);
-    }
+    SkISize getISize() override { return SkISize::Make(W, H * 2); }
 
     void onDraw(SkCanvas* canvas) override {
         SkPaint paint;
@@ -472,14 +444,9 @@ public:
     Strokes5GM() {}
 
 protected:
+    SkString getName() const override { return SkString("zero_control_stroke"); }
 
-    SkString onShortName() override {
-        return SkString("zero_control_stroke");
-    }
-
-    SkISize onISize() override {
-        return SkISize::Make(W, H*2);
-    }
+    SkISize getISize() override { return SkISize::Make(W, H * 2); }
 
     void onDraw(SkCanvas* canvas) override {
         SkPaint p;
@@ -576,3 +543,71 @@ DEF_SIMPLE_GM(longrect_dash, canvas, 250, 250) {
     }
 }
 #endif
+
+DEF_SIMPLE_GM(inner_join_geometry, canvas, 1000, 700) {
+    // These paths trigger cases where we must add inner join geometry.
+    // skbug.com/11964
+    const SkPoint pathPoints[] = {
+        /*moveTo*/  /*lineTo*/  /*lineTo*/
+        {119,  71}, {129, 151}, {230,  24},
+        {200, 144}, {129, 151}, {230,  24},
+        {192, 176}, {224, 175}, {281, 103},
+        {233, 205}, {224, 175}, {281, 103},
+        {121, 216}, {234, 189}, {195, 147},
+        {141, 216}, {254, 189}, {238, 250},
+        {159, 202}, {269, 197}, {289, 165},
+        {159, 202}, {269, 197}, {287, 227},
+    };
+
+    SkPaint pathPaint;
+    pathPaint.setStroke(true);
+    pathPaint.setAntiAlias(true);
+    pathPaint.setStrokeWidth(100);
+
+    SkPaint skeletonPaint;
+    skeletonPaint.setStroke(true);
+    skeletonPaint.setAntiAlias(true);
+    skeletonPaint.setStrokeWidth(0);
+    skeletonPaint.setColor(SK_ColorRED);
+
+    canvas->translate(0, 50);
+    for (size_t i = 0; i < std::size(pathPoints) / 3; i++) {
+        auto path = SkPath::Polygon(pathPoints + i * 3, 3, false);
+        canvas->drawPath(path, pathPaint);
+
+        SkPath fillPath;
+        skpathutils::FillPathWithPaint(path, pathPaint, &fillPath);
+        canvas->drawPath(fillPath, skeletonPaint);
+
+        canvas->translate(200, 0);
+        if ((i + 1) % 4 == 0) {
+            canvas->translate(-800, 200);
+        }
+    }
+}
+
+DEF_SIMPLE_GM(skbug12244, canvas, 150, 150) {
+    // Should look like a stroked triangle; these vertices are the results of the SkStroker
+    // but we draw as a filled path in order to highlight that it's the GPU triangulating path
+    // renderer that's the source of the problem, and not the stroking operation. The original
+    // path was a simple:
+    // m(0,0), l(100, 40), l(0, 80), l(0,0) with a stroke width of 15px
+    SkPath path;
+    path.moveTo(2.7854299545288085938, -6.9635753631591796875);
+    path.lineTo( 120.194366455078125,                   40);
+    path.lineTo(-7.5000004768371582031, 91.07775115966796875);
+    path.lineTo(-7.5000004768371582031, -11.077748298645019531);
+    path.lineTo(2.7854299545288085938, -6.9635753631591796875);
+    path.moveTo(-2.7854299545288085938, 6.9635753631591796875);
+    path.lineTo(                   0,                    0);
+    path.lineTo(                 7.5,                    0);
+    path.lineTo(7.5000004768371582031, 68.92224884033203125);
+    path.lineTo(  79.805633544921875,                   40);
+    path.lineTo(-2.7854299545288085938, 6.9635753631591796875);
+
+    SkPaint p;
+    p.setColor(SK_ColorGREEN);
+
+    canvas->translate(20.f, 20.f);
+    canvas->drawPath(path, p);
+}

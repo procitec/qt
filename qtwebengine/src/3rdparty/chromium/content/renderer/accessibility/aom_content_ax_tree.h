@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,9 +7,9 @@
 
 #include <stdint.h>
 
+#include "base/memory/raw_ptr.h"
 #include "third_party/blink/public/platform/web_computed_ax_tree.h"
 
-#include "base/macros.h"
 #include "content/renderer/render_frame_impl.h"
 #include "third_party/blink/public/platform/web_string.h"
 #include "ui/accessibility/ax_tree.h"
@@ -19,6 +19,9 @@ namespace content {
 class AomContentAxTree : public blink::WebComputedAXTree {
  public:
   explicit AomContentAxTree(RenderFrameImpl* render_frame);
+
+  AomContentAxTree(const AomContentAxTree&) = delete;
+  AomContentAxTree& operator=(const AomContentAxTree&) = delete;
 
   // blink::WebComputedAXTree implementation.
   bool ComputeAccessibilityTree() override;
@@ -53,8 +56,7 @@ class AomContentAxTree : public blink::WebComputedAXTree {
                                   blink::WebAOMBoolAttribute,
                                   bool* out_param);
   ui::AXTree tree_;
-  RenderFrameImpl* render_frame_;
-  DISALLOW_COPY_AND_ASSIGN(AomContentAxTree);
+  raw_ptr<RenderFrameImpl, ExperimentalRenderer> render_frame_;
 };
 
 }  // namespace content

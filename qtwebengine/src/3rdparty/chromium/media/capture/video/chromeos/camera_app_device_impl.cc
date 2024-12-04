@@ -1,106 +1,80 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "media/capture/video/chromeos/camera_app_device_impl.h"
 
+#include <algorithm>
+#include <cmath>
+
+#include "base/task/bind_post_task.h"
+#include "base/task/single_thread_task_runner.h"
+#include "base/time/time.h"
+#include "gpu/ipc/common/gpu_memory_buffer_impl.h"
+#include "media/capture/video/chromeos/camera_app_device_bridge_impl.h"
+#include "media/capture/video/chromeos/camera_device_context.h"
 #include "media/capture/video/chromeos/camera_metadata_utils.h"
+#include "third_party/libyuv/include/libyuv.h"
 
 namespace media {
 
 namespace {
 
-void OnStillCaptureDone(media::mojom::ImageCapture::TakePhotoCallback callback,
-                        int status,
-                        mojom::BlobPtr blob) {
-  DCHECK_EQ(status, kReprocessSuccess);
-  std::move(callback).Run(std::move(blob));
-}
+constexpr int kDetectionWidth = 256;
+constexpr int kDetectionHeight = 256;
 
 }  // namespace
 
-ReprocessTask::ReprocessTask() = default;
-
-ReprocessTask::ReprocessTask(ReprocessTask&& other)
-    : effect(other.effect),
-      callback(std::move(other.callback)),
-      extra_metadata(std::move(other.extra_metadata)) {}
-
-ReprocessTask::~ReprocessTask() = default;
-
 // static
-int CameraAppDeviceImpl::GetReprocessReturnCode(
-    cros::mojom::Effect effect,
+int CameraAppDeviceImpl::GetPortraitSegResultCode(
     const cros::mojom::CameraMetadataPtr* metadata) {
-  if (effect == cros::mojom::Effect::PORTRAIT_MODE) {
-    auto portrait_mode_segmentation_result = GetMetadataEntryAsSpan<uint8_t>(
-        *metadata, static_cast<cros::mojom::CameraMetadataTag>(
-                       kPortraitModeSegmentationResultVendorKey));
-    DCHECK(!portrait_mode_segmentation_result.empty());
-    return static_cast<int>(portrait_mode_segmentation_result[0]);
-  }
-  return kReprocessSuccess;
+  auto portrait_mode_segmentation_result = GetMetadataEntryAsSpan<uint8_t>(
+      *metadata, static_cast<cros::mojom::CameraMetadataTag>(
+                     kPortraitModeSegmentationResultVendorKey));
+  CHECK(!portrait_mode_segmentation_result.empty());
+  return static_cast<int>(portrait_mode_segmentation_result[0]);
 }
 
-// static
-ReprocessTaskQueue CameraAppDeviceImpl::GetSingleShotReprocessOptions(
-    media::mojom::ImageCapture::TakePhotoCallback take_photo_callback) {
-  ReprocessTaskQueue result_task_queue;
-  ReprocessTask still_capture_task;
-  still_capture_task.effect = cros::mojom::Effect::NO_EFFECT;
-  still_capture_task.callback =
-      base::BindOnce(&OnStillCaptureDone, std::move(take_photo_callback));
-  // Explicitly disable edge enhancement and noise reduction for YUV -> JPG
-  // conversion.
-  DisableEeNr(&still_capture_task);
-  result_task_queue.push(std::move(still_capture_task));
-  return result_task_queue;
-}
-
-CameraAppDeviceImpl::CameraAppDeviceImpl(const std::string& device_id,
-                                         cros::mojom::CameraInfoPtr camera_info)
+CameraAppDeviceImpl::CameraAppDeviceImpl(const std::string& device_id)
     : device_id_(device_id),
-      camera_info_(std::move(camera_info)),
-      task_runner_(base::ThreadTaskRunnerHandle::Get()),
-      capture_intent_(cros::mojom::CaptureIntent::DEFAULT),
-      next_metadata_observer_id_(0),
-      next_camera_event_observer_id_(0),
-      weak_ptr_factory_(
-          std::make_unique<base::WeakPtrFactory<CameraAppDeviceImpl>>(this)) {}
+      allow_new_ipc_weak_ptrs_(true),
+      capture_intent_(cros::mojom::CaptureIntent::kDefault),
+      camera_device_context_(nullptr) {}
 
 CameraAppDeviceImpl::~CameraAppDeviceImpl() {
-  task_runner_->DeleteSoon(FROM_HERE, std::move(weak_ptr_factory_));
+  // If the instance is bound, then this instance should only be destroyed when
+  // the mojo connection is dropped, which also happens on the mojo thread.
+  DCHECK(!mojo_task_runner_ || mojo_task_runner_->BelongsToCurrentThread());
+
+  // All the weak pointers of |weak_ptr_factory_| should be invalidated on
+  // camera device IPC thread before destroying CameraAppDeviceImpl.
+  DCHECK(!weak_ptr_factory_.HasWeakPtrs());
 }
 
 void CameraAppDeviceImpl::BindReceiver(
     mojo::PendingReceiver<cros::mojom::CameraAppDevice> receiver) {
+  mojo_task_runner_ = base::SingleThreadTaskRunner::GetCurrentDefault();
   receivers_.Add(this, std::move(receiver));
+  receivers_.set_disconnect_handler(
+      base::BindRepeating(&CameraAppDeviceImpl::OnMojoConnectionError,
+                          weak_ptr_factory_for_mojo_.GetWeakPtr()));
+  document_scanner_service_ = ash::DocumentScannerServiceClient::Create();
 }
 
-void CameraAppDeviceImpl::ConsumeReprocessOptions(
-    media::mojom::ImageCapture::TakePhotoCallback take_photo_callback,
-    base::OnceCallback<void(ReprocessTaskQueue)> consumption_callback) {
-  ReprocessTaskQueue result_task_queue;
+base::WeakPtr<CameraAppDeviceImpl> CameraAppDeviceImpl::GetWeakPtr() {
+  return allow_new_ipc_weak_ptrs_ ? weak_ptr_factory_.GetWeakPtr() : nullptr;
+}
 
-  ReprocessTask still_capture_task;
-  still_capture_task.effect = cros::mojom::Effect::NO_EFFECT;
-  still_capture_task.callback =
-      base::BindOnce(&OnStillCaptureDone, std::move(take_photo_callback));
-  // Explicitly disable edge enhancement and noise reduction for YUV -> JPG
-  // conversion.
-  DisableEeNr(&still_capture_task);
-  result_task_queue.push(std::move(still_capture_task));
-
-  base::AutoLock lock(reprocess_tasks_lock_);
-
-  while (!reprocess_task_queue_.empty()) {
-    result_task_queue.push(std::move(reprocess_task_queue_.front()));
-    reprocess_task_queue_.pop();
+void CameraAppDeviceImpl::ResetOnDeviceIpcThread(base::OnceClosure callback,
+                                                 bool should_disable_new_ptrs) {
+  if (should_disable_new_ptrs) {
+    allow_new_ipc_weak_ptrs_ = false;
   }
-  std::move(consumption_callback).Run(std::move(result_task_queue));
+  weak_ptr_factory_.InvalidateWeakPtrs();
+  std::move(callback).Run();
 }
 
-base::Optional<gfx::Range> CameraAppDeviceImpl::GetFpsRange() {
+absl::optional<gfx::Range> CameraAppDeviceImpl::GetFpsRange() {
   base::AutoLock lock(fps_ranges_lock_);
 
   return specified_fps_range_;
@@ -120,53 +94,105 @@ cros::mojom::CaptureIntent CameraAppDeviceImpl::GetCaptureIntent() {
 void CameraAppDeviceImpl::OnResultMetadataAvailable(
     const cros::mojom::CameraMetadataPtr& metadata,
     cros::mojom::StreamType streamType) {
-  base::AutoLock lock(metadata_observers_lock_);
-
-  const auto& observer_ids = stream_metadata_observer_ids_[streamType];
-
-  for (auto& id : observer_ids) {
-    metadata_observers_[id]->OnMetadataAvailable(metadata.Clone());
-  }
+  mojo_task_runner_->PostTask(
+      FROM_HERE,
+      base::BindOnce(&CameraAppDeviceImpl::NotifyResultMetadataOnMojoThread,
+                     weak_ptr_factory_for_mojo_.GetWeakPtr(), metadata.Clone(),
+                     streamType));
 }
 
 void CameraAppDeviceImpl::OnShutterDone() {
-  base::AutoLock lock(camera_event_observers_lock_);
-
-  for (auto& observer : camera_event_observers_) {
-    observer.second->OnShutterDone();
-  }
+  mojo_task_runner_->PostTask(
+      FROM_HERE,
+      base::BindOnce(&CameraAppDeviceImpl::NotifyShutterDoneOnMojoThread,
+                     weak_ptr_factory_for_mojo_.GetWeakPtr()));
 }
 
-void CameraAppDeviceImpl::GetCameraInfo(GetCameraInfoCallback callback) {
-  DCHECK(camera_info_);
-  std::move(callback).Run(camera_info_.Clone());
+void CameraAppDeviceImpl::OnCameraInfoUpdated(
+    cros::mojom::CameraInfoPtr camera_info) {
+  base::AutoLock lock(camera_info_lock_);
+  camera_info_ = std::move(camera_info);
+
+  if (!mojo_task_runner_) {
+    return;
+  }
+  mojo_task_runner_->PostTask(
+      FROM_HERE,
+      base::BindOnce(&CameraAppDeviceImpl::NotifyCameraInfoUpdatedOnMojoThread,
+                     weak_ptr_factory_for_mojo_.GetWeakPtr()));
 }
 
-void CameraAppDeviceImpl::SetReprocessOption(
-    cros::mojom::Effect effect,
-    SetReprocessOptionCallback reprocess_result_callback) {
-  ReprocessTask task;
-  task.effect = effect;
-  task.callback = base::BindOnce(&CameraAppDeviceImpl::SetReprocessResult,
-                                 weak_ptr_factory_->GetWeakPtr(),
-                                 std::move(reprocess_result_callback));
+void CameraAppDeviceImpl::SetCameraDeviceContext(
+    CameraDeviceContext* camera_device_context) {
+  base::AutoLock lock(camera_device_context_lock_);
+  camera_device_context_ = camera_device_context;
+}
 
-  if (effect == cros::mojom::Effect::PORTRAIT_MODE) {
-    auto e = BuildMetadataEntry(
-        static_cast<cros::mojom::CameraMetadataTag>(kPortraitModeVendorKey),
-        int32_t{1});
-    task.extra_metadata.push_back(std::move(e));
+void CameraAppDeviceImpl::MaybeDetectDocumentCorners(
+    std::unique_ptr<gpu::GpuMemoryBufferImpl> gmb,
+    VideoRotation rotation) {
+  if (!ash::DocumentScannerServiceClient::IsSupported()) {
+    return;
   }
+  {
+    base::AutoLock lock(document_corners_observers_lock_);
+    if (document_corners_observers_.empty()) {
+      return;
+    }
+  }
+  mojo_task_runner_->PostTask(
+      FROM_HERE,
+      base::BindOnce(&CameraAppDeviceImpl::DetectDocumentCornersOnMojoThread,
+                     weak_ptr_factory_for_mojo_.GetWeakPtr(), std::move(gmb),
+                     rotation));
+}
 
-  base::AutoLock lock(reprocess_tasks_lock_);
+bool CameraAppDeviceImpl::IsMultipleStreamsEnabled() {
+  base::AutoLock lock(multi_stream_lock_);
+  return multi_stream_enabled_;
+}
 
-  reprocess_task_queue_.push(std::move(task));
+void CameraAppDeviceImpl::TakePortraitModePhoto(
+    mojo::PendingRemote<cros::mojom::StillCaptureResultObserver> observer,
+    TakePortraitModePhotoCallback callback) {
+  DCHECK(mojo_task_runner_->BelongsToCurrentThread());
+
+  base::AutoLock lock(portrait_mode_callbacks_lock_);
+  portrait_mode_observers_.reset();
+  portrait_mode_observers_.Bind(std::move(observer));
+  take_portrait_photo_callbacks_.reset();
+
+  // Create two callbacks that will notify the client when the result is
+  // returned. The `normal_photo_callback` is for the normal photo, and
+  // `portrait_photo_callback` is for the portrait photo.
+  PortraitModeCallbacks take_portrait_photo_callbacks;
+  take_portrait_photo_callbacks.normal_photo_callback =
+      base::BindPostTaskToCurrentDefault(
+          base::BindOnce(&CameraAppDeviceImpl::NotifyPortraitResultOnMojoThread,
+                         weak_ptr_factory_for_mojo_.GetWeakPtr(),
+                         cros::mojom::Effect::kNoEffect));
+  take_portrait_photo_callbacks.portrait_photo_callback =
+      base::BindPostTaskToCurrentDefault(
+          base::BindOnce(&CameraAppDeviceImpl::NotifyPortraitResultOnMojoThread,
+                         weak_ptr_factory_for_mojo_.GetWeakPtr(),
+                         cros::mojom::Effect::kPortraitMode));
+  take_portrait_photo_callbacks_ = std::move(take_portrait_photo_callbacks);
+
+  std::move(callback).Run();
 }
 
 void CameraAppDeviceImpl::SetFpsRange(const gfx::Range& fps_range,
                                       SetFpsRangeCallback callback) {
+  DCHECK(mojo_task_runner_->BelongsToCurrentThread());
+
   const int entry_length = 2;
 
+  base::AutoLock camera_info_lock(camera_info_lock_);
+  if (!camera_info_) {
+    LOG(ERROR) << "Camera info is still not available at this moment";
+    std::move(callback).Run(false);
+    return;
+  }
   auto& static_metadata = camera_info_->static_camera_characteristics;
   auto available_fps_range_entries = GetMetadataEntryAsSpan<int32_t>(
       static_metadata, cros::mojom::CameraMetadataTag::
@@ -198,6 +224,8 @@ void CameraAppDeviceImpl::SetFpsRange(const gfx::Range& fps_range,
 void CameraAppDeviceImpl::SetStillCaptureResolution(
     const gfx::Size& resolution,
     SetStillCaptureResolutionCallback callback) {
+  DCHECK(mojo_task_runner_->BelongsToCurrentThread());
+
   base::AutoLock lock(still_capture_resolution_lock_);
   still_capture_resolution_ = resolution;
   std::move(callback).Run();
@@ -206,8 +234,17 @@ void CameraAppDeviceImpl::SetStillCaptureResolution(
 void CameraAppDeviceImpl::SetCaptureIntent(
     cros::mojom::CaptureIntent capture_intent,
     SetCaptureIntentCallback callback) {
-  base::AutoLock lock(capture_intent_lock_);
-  capture_intent_ = capture_intent;
+  DCHECK(mojo_task_runner_->BelongsToCurrentThread());
+
+  {
+    base::AutoLock lock(capture_intent_lock_);
+    capture_intent_ = capture_intent;
+  }
+  // Reset fps range for VCD to determine it if not explicitly set by app.
+  {
+    base::AutoLock lock(fps_ranges_lock_);
+    specified_fps_range_ = {};
+  }
   std::move(callback).Run();
 }
 
@@ -215,76 +252,266 @@ void CameraAppDeviceImpl::AddResultMetadataObserver(
     mojo::PendingRemote<cros::mojom::ResultMetadataObserver> observer,
     cros::mojom::StreamType stream_type,
     AddResultMetadataObserverCallback callback) {
-  base::AutoLock lock(metadata_observers_lock_);
+  DCHECK(mojo_task_runner_->BelongsToCurrentThread());
 
-  uint32_t id = next_metadata_observer_id_++;
-  metadata_observers_[id] =
-      mojo::Remote<cros::mojom::ResultMetadataObserver>(std::move(observer));
-  stream_metadata_observer_ids_[stream_type].insert(id);
-
-  std::move(callback).Run(id);
-}
-
-void CameraAppDeviceImpl::RemoveResultMetadataObserver(
-    uint32_t id,
-    RemoveResultMetadataObserverCallback callback) {
-  base::AutoLock lock(metadata_observers_lock_);
-
-  if (metadata_observers_.erase(id) == 0) {
-    std::move(callback).Run(false);
-    return;
-  }
-
-  for (auto& kv : stream_metadata_observer_ids_) {
-    auto& observer_ids = kv.second;
-    observer_ids.erase(id);
-  }
-  std::move(callback).Run(true);
+  stream_to_metadata_observers_map_[stream_type].Add(std::move(observer));
+  std::move(callback).Run();
 }
 
 void CameraAppDeviceImpl::AddCameraEventObserver(
     mojo::PendingRemote<cros::mojom::CameraEventObserver> observer,
     AddCameraEventObserverCallback callback) {
-  base::AutoLock lock(camera_event_observers_lock_);
+  DCHECK(mojo_task_runner_->BelongsToCurrentThread());
 
-  uint32_t id = next_camera_event_observer_id_++;
-  camera_event_observers_[id] =
-      mojo::Remote<cros::mojom::CameraEventObserver>(std::move(observer));
-  std::move(callback).Run(id);
+  camera_event_observers_.Add(std::move(observer));
+  std::move(callback).Run();
 }
 
-void CameraAppDeviceImpl::RemoveCameraEventObserver(
-    uint32_t id,
-    RemoveCameraEventObserverCallback callback) {
-  base::AutoLock lock(camera_event_observers_lock_);
+void CameraAppDeviceImpl::SetCameraFrameRotationEnabledAtSource(
+    bool is_enabled,
+    SetCameraFrameRotationEnabledAtSourceCallback callback) {
+  DCHECK(mojo_task_runner_->BelongsToCurrentThread());
 
-  bool is_success = camera_event_observers_.erase(id) == 1;
+  bool is_success = false;
+  {
+    base::AutoLock lock(camera_device_context_lock_);
+    if (camera_device_context_) {
+      camera_device_context_->SetCameraFrameRotationEnabledAtSource(is_enabled);
+      is_success = true;
+    }
+  }
   std::move(callback).Run(is_success);
 }
 
-// static
-void CameraAppDeviceImpl::DisableEeNr(ReprocessTask* task) {
-  auto ee_entry =
-      BuildMetadataEntry(cros::mojom::CameraMetadataTag::ANDROID_EDGE_MODE,
-                         cros::mojom::AndroidEdgeMode::ANDROID_EDGE_MODE_OFF);
-  auto nr_entry = BuildMetadataEntry(
-      cros::mojom::CameraMetadataTag::ANDROID_NOISE_REDUCTION_MODE,
-      cros::mojom::AndroidNoiseReductionMode::ANDROID_NOISE_REDUCTION_MODE_OFF);
-  task->extra_metadata.push_back(std::move(ee_entry));
-  task->extra_metadata.push_back(std::move(nr_entry));
+void CameraAppDeviceImpl::GetCameraFrameRotation(
+    GetCameraFrameRotationCallback callback) {
+  DCHECK(mojo_task_runner_->BelongsToCurrentThread());
+
+  uint32_t rotation = 0;
+  {
+    base::AutoLock lock(camera_device_context_lock_);
+    if (camera_device_context_ &&
+        !camera_device_context_->IsCameraFrameRotationEnabledAtSource()) {
+      // The camera rotation value can only be [0, 90, 180, 270].
+      rotation = static_cast<uint32_t>(
+          camera_device_context_->GetCameraFrameRotation());
+    }
+  }
+  std::move(callback).Run(rotation);
 }
 
-void CameraAppDeviceImpl::SetReprocessResult(
-    SetReprocessOptionCallback callback,
+void CameraAppDeviceImpl::RegisterDocumentCornersObserver(
+    mojo::PendingRemote<cros::mojom::DocumentCornersObserver> observer,
+    RegisterDocumentCornersObserverCallback callback) {
+  DCHECK(mojo_task_runner_->BelongsToCurrentThread());
+
+  base::AutoLock lock(document_corners_observers_lock_);
+  document_corners_observers_.Add(std::move(observer));
+  std::move(callback).Run();
+}
+
+void CameraAppDeviceImpl::SetMultipleStreamsEnabled(
+    bool enabled,
+    SetMultipleStreamsEnabledCallback callback) {
+  DCHECK(mojo_task_runner_->BelongsToCurrentThread());
+
+  base::AutoLock lock(multi_stream_lock_);
+  multi_stream_enabled_ = enabled;
+  std::move(callback).Run();
+}
+
+void CameraAppDeviceImpl::RegisterCameraInfoObserver(
+    mojo::PendingRemote<cros::mojom::CameraInfoObserver> observer,
+    RegisterCameraInfoObserverCallback callback) {
+  DCHECK(mojo_task_runner_->BelongsToCurrentThread());
+
+  camera_info_observers_.Add(std::move(observer));
+  std::move(callback).Run();
+
+  NotifyCameraInfoUpdatedOnMojoThread();
+}
+
+void CameraAppDeviceImpl::OnMojoConnectionError() {
+  CameraAppDeviceBridgeImpl::GetInstance()->OnDeviceMojoDisconnected(
+      device_id_);
+}
+
+bool CameraAppDeviceImpl::IsCloseToPreviousDetectionRequest() {
+  return document_detection_timer_ &&
+         document_detection_timer_->Elapsed().InMilliseconds() < 300;
+}
+
+void CameraAppDeviceImpl::DetectDocumentCornersOnMojoThread(
+    std::unique_ptr<gpu::GpuMemoryBufferImpl> image,
+    VideoRotation rotation) {
+  DCHECK(mojo_task_runner_->BelongsToCurrentThread());
+  DCHECK(document_scanner_service_);
+
+  if (!document_scanner_service_->IsLoaded() ||
+      IsCloseToPreviousDetectionRequest() ||
+      has_ongoing_document_detection_task_) {
+    return;
+  }
+
+  DCHECK(image);
+  if (!image->Map()) {
+    LOG(ERROR) << "Failed to map frame buffer";
+    return;
+  }
+  auto frame_size = image->GetSize();
+  int width = frame_size.width();
+  int height = frame_size.height();
+
+  base::MappedReadOnlyRegion memory = base::ReadOnlySharedMemoryRegion::Create(
+      kDetectionWidth * kDetectionHeight * 3 / 2);
+
+  auto* y_data = memory.mapping.GetMemoryAs<uint8_t>();
+  auto* uv_data = y_data + kDetectionWidth * kDetectionHeight;
+
+  int status = libyuv::NV12Scale(
+      static_cast<uint8_t*>(image->memory(0)), image->stride(0),
+      static_cast<uint8_t*>(image->memory(1)), image->stride(1), width, height,
+      y_data, kDetectionWidth, uv_data, kDetectionWidth, kDetectionWidth,
+      kDetectionHeight, libyuv::FilterMode::kFilterNone);
+  image->Unmap();
+  if (status != 0) {
+    LOG(ERROR) << "Failed to scale buffer";
+    return;
+  }
+
+  has_ongoing_document_detection_task_ = true;
+  document_detection_timer_ = std::make_unique<base::ElapsedTimer>();
+  // Since we destroy |document_scanner_service_| on mojo thread and this
+  // callback is also called on mojo thread, it should be safe to just use
+  // base::Unretained(this) here.
+  document_scanner_service_->DetectCornersFromNV12Image(
+      std::move(memory.region),
+      base::BindOnce(
+          &CameraAppDeviceImpl::OnDetectedDocumentCornersOnMojoThread,
+          base::Unretained(this), rotation));
+}
+
+void CameraAppDeviceImpl::OnDetectedDocumentCornersOnMojoThread(
+    VideoRotation rotation,
+    bool success,
+    const std::vector<gfx::PointF>& corners) {
+  DCHECK(mojo_task_runner_->BelongsToCurrentThread());
+
+  has_ongoing_document_detection_task_ = false;
+  if (!success) {
+    LOG(ERROR) << "Failed to detect document corners";
+    return;
+  }
+
+  // Rotate a point in coordination space {x: [0.0, 1.0], y: [0.0, 1.0]} with
+  // anchor point {x: 0.5, y: 0.5}.
+  auto rotate_corner = [&](const gfx::PointF& corner) -> gfx::PointF {
+    float x = std::clamp(corner.x(), 0.0f, 1.0f);
+    float y = std::clamp(corner.y(), 0.0f, 1.0f);
+
+    switch (rotation) {
+      case VIDEO_ROTATION_0:
+        return {x, y};
+      case VIDEO_ROTATION_90:
+        return {1.0f - y, x};
+      case VIDEO_ROTATION_180:
+        return {1.0f - x, 1.0f - y};
+      case VIDEO_ROTATION_270:
+        return {y, 1.0f - x};
+      default:
+        NOTREACHED();
+    }
+  };
+
+  std::vector<gfx::PointF> rotated_corners;
+  for (auto& corner : corners) {
+    rotated_corners.push_back(rotate_corner(corner));
+  }
+
+  base::AutoLock lock(document_corners_observers_lock_);
+  for (auto& observer : document_corners_observers_) {
+    observer->OnDocumentCornersUpdated(rotated_corners);
+  }
+}
+
+void CameraAppDeviceImpl::NotifyPortraitResultOnMojoThread(
+    cros::mojom::Effect effect,
     const int32_t status,
     media::mojom::BlobPtr blob) {
-  auto callback_on_mojo_thread = base::BindOnce(
-      [](const int32_t status, media::mojom::BlobPtr blob,
-         SetReprocessOptionCallback callback) {
-        std::move(callback).Run(status, std::move(blob));
-      },
-      status, std::move(blob), std::move(callback));
-  task_runner_->PostTask(FROM_HERE, std::move(callback_on_mojo_thread));
+  DCHECK(mojo_task_runner_->BelongsToCurrentThread());
+
+  portrait_mode_observers_->OnStillCaptureDone(effect, status, std::move(blob));
+}
+
+void CameraAppDeviceImpl::NotifyShutterDoneOnMojoThread() {
+  DCHECK(mojo_task_runner_->BelongsToCurrentThread());
+
+  for (auto& observer : camera_event_observers_) {
+    observer->OnShutterDone();
+  }
+}
+
+void CameraAppDeviceImpl::NotifyResultMetadataOnMojoThread(
+    cros::mojom::CameraMetadataPtr metadata,
+    cros::mojom::StreamType streamType) {
+  DCHECK(mojo_task_runner_->BelongsToCurrentThread());
+
+  auto& metadata_observers = stream_to_metadata_observers_map_[streamType];
+  for (auto& observer : metadata_observers) {
+    observer->OnMetadataAvailable(metadata.Clone());
+  }
+}
+
+void CameraAppDeviceImpl::NotifyCameraInfoUpdatedOnMojoThread() {
+  DCHECK(mojo_task_runner_->BelongsToCurrentThread());
+
+  base::AutoLock lock(camera_info_lock_);
+  if (!camera_info_) {
+    return;
+  }
+  for (auto& observer : camera_info_observers_) {
+    observer->OnCameraInfoUpdated(camera_info_.Clone());
+  }
+}
+
+absl::optional<PortraitModeCallbacks>
+CameraAppDeviceImpl::ConsumePortraitModeCallbacks() {
+  base::AutoLock lock(portrait_mode_callbacks_lock_);
+  absl::optional<PortraitModeCallbacks> callbacks;
+  if (take_portrait_photo_callbacks_.has_value()) {
+    callbacks = std::move(take_portrait_photo_callbacks_);
+    take_portrait_photo_callbacks_.reset();
+  }
+  return callbacks;
+}
+
+void CameraAppDeviceImpl::SetCropRegion(const gfx::Rect& crop_region,
+                                        SetCropRegionCallback callback) {
+  CHECK(mojo_task_runner_->BelongsToCurrentThread());
+
+  base::AutoLock lock(crop_region_lock_);
+  crop_region_ = {
+      crop_region.x(),
+      crop_region.y(),
+      crop_region.width(),
+      crop_region.height(),
+  };
+
+  std::move(callback).Run();
+}
+
+void CameraAppDeviceImpl::ResetCropRegion(ResetCropRegionCallback callback) {
+  CHECK(mojo_task_runner_->BelongsToCurrentThread());
+
+  base::AutoLock lock(crop_region_lock_);
+  crop_region_.reset();
+
+  std::move(callback).Run();
+}
+
+std::optional<std::vector<int32_t>> CameraAppDeviceImpl::GetCropRegion() {
+  base::AutoLock lock(crop_region_lock_);
+  return crop_region_;
 }
 
 }  // namespace media

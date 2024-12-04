@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,17 +6,17 @@
 
 #include <dispatch/dispatch.h>
 
+#include <algorithm>
 #include <list>
 
-#include "base/bind.h"
+#include "base/apple/scoped_cftyperef.h"
 #include "base/check.h"
 #include "base/files/file_util.h"
+#include "base/functional/bind.h"
 #include "base/lazy_instance.h"
-#include "base/mac/scoped_cftyperef.h"
-#include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/threading/scoped_blocking_call.h"
-#include "base/threading/sequenced_task_runner_handle.h"
 
 namespace base {
 
@@ -29,8 +29,7 @@ const CFAbsoluteTime kEventLatencySeconds = 0.3;
 FilePath ResolvePath(const FilePath& path) {
   const unsigned kMaxLinksToResolve = 255;
 
-  std::vector<FilePath::StringType> component_vector;
-  path.GetComponents(&component_vector);
+  std::vector<FilePath::StringType> component_vector = path.GetComponents();
   std::list<FilePath::StringType>
       components(component_vector.begin(), component_vector.end());
 
@@ -51,8 +50,8 @@ FilePath ResolvePath(const FilePath& path) {
     if (ReadSymbolicLink(current, &target)) {
       if (target.IsAbsolute())
         result.clear();
-      std::vector<FilePath::StringType> target_components;
-      target.GetComponents(&target_components);
+      std::vector<FilePath::StringType> target_components =
+          target.GetComponents();
       components.insert(components.begin(), target_components.begin(),
                         target_components.end());
       resolve_count++;
@@ -72,9 +71,7 @@ FilePathWatcherFSEvents::FilePathWatcherFSEvents()
     : queue_(dispatch_queue_create(
           base::StringPrintf("org.chromium.base.FilePathWatcher.%p", this)
               .c_str(),
-          DISPATCH_QUEUE_SERIAL)),
-      fsevent_stream_(nullptr),
-      weak_factory_(this) {}
+          DISPATCH_QUEUE_SERIAL)) {}
 
 FilePathWatcherFSEvents::~FilePathWatcherFSEvents() {
   DCHECK(!task_runner() || task_runner()->RunsTasksInCurrentSequence());
@@ -83,17 +80,17 @@ FilePathWatcherFSEvents::~FilePathWatcherFSEvents() {
 }
 
 bool FilePathWatcherFSEvents::Watch(const FilePath& path,
-                                    bool recursive,
+                                    Type type,
                                     const FilePathWatcher::Callback& callback) {
   DCHECK(!callback.is_null());
   DCHECK(callback_.is_null());
 
   // This class could support non-recursive watches, but that is currently
   // left to FilePathWatcherKQueue.
-  if (!recursive)
+  if (type != Type::kRecursive)
     return false;
 
-  set_task_runner(SequencedTaskRunnerHandle::Get());
+  set_task_runner(SequencedTaskRunner::GetCurrentDefault());
   callback_ = callback;
 
   FSEventStreamEventId start_event = FSEventsGetCurrentEventId();
@@ -102,8 +99,8 @@ bool FilePathWatcherFSEvents::Watch(const FilePath& path,
   // captured by the block's scope.
   const FilePath path_copy(path);
 
-  dispatch_async(queue_, ^{
-      StartEventStream(start_event, path_copy);
+  dispatch_async(queue_.get(), ^{
+    StartEventStream(start_event, path_copy);
   });
   return true;
 }
@@ -116,7 +113,7 @@ void FilePathWatcherFSEvents::Cancel() {
   // Switch to the dispatch queue to tear down the event stream. As the queue is
   // owned by |this|, and this method is called from the destructor, execute the
   // block synchronously.
-  dispatch_sync(queue_, ^{
+  dispatch_sync(queue_.get(), ^{
     if (fsevent_stream_) {
       DestroyEventStream();
       target_.clear();
@@ -169,7 +166,7 @@ void FilePathWatcherFSEvents::FSEventsCallback(
                          if (!weak_watcher)
                            return;
                          FilePathWatcherFSEvents* watcher = weak_watcher.get();
-                         dispatch_async(watcher->queue_, ^{
+                         dispatch_async(watcher->queue_.get(), ^{
                            watcher->UpdateEventStream(root_change_at);
                          });
                        },
@@ -216,15 +213,15 @@ void FilePathWatcherFSEvents::UpdateEventStream(
   if (fsevent_stream_)
     DestroyEventStream();
 
-  ScopedCFTypeRef<CFStringRef> cf_path(CFStringCreateWithCString(
+  apple::ScopedCFTypeRef<CFStringRef> cf_path(CFStringCreateWithCString(
       NULL, resolved_target_.value().c_str(), kCFStringEncodingMacHFS));
-  ScopedCFTypeRef<CFStringRef> cf_dir_path(CFStringCreateWithCString(
+  apple::ScopedCFTypeRef<CFStringRef> cf_dir_path(CFStringCreateWithCString(
       NULL, resolved_target_.DirName().value().c_str(),
       kCFStringEncodingMacHFS));
   CFStringRef paths_array[] = { cf_path.get(), cf_dir_path.get() };
-  ScopedCFTypeRef<CFArrayRef> watched_paths(
+  apple::ScopedCFTypeRef<CFArrayRef> watched_paths(
       CFArrayCreate(NULL, reinterpret_cast<const void**>(paths_array),
-                    base::size(paths_array), &kCFTypeArrayCallBacks));
+                    std::size(paths_array), &kCFTypeArrayCallBacks));
 
   FSEventStreamContext context;
   context.version = 0;
@@ -233,12 +230,10 @@ void FilePathWatcherFSEvents::UpdateEventStream(
   context.release = NULL;
   context.copyDescription = NULL;
 
-  fsevent_stream_ = FSEventStreamCreate(NULL, &FSEventsCallback, &context,
-                                        watched_paths,
-                                        start_event,
-                                        kEventLatencySeconds,
-                                        kFSEventStreamCreateFlagWatchRoot);
-  FSEventStreamSetDispatchQueue(fsevent_stream_, queue_);
+  fsevent_stream_ = FSEventStreamCreate(
+      NULL, &FSEventsCallback, &context, watched_paths.get(), start_event,
+      kEventLatencySeconds, kFSEventStreamCreateFlagWatchRoot);
+  FSEventStreamSetDispatchQueue(fsevent_stream_, queue_.get());
 
   if (!FSEventStreamStart(fsevent_stream_)) {
     task_runner()->PostTask(FROM_HERE,

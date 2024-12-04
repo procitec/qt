@@ -1,10 +1,11 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include <string>
 
 #include "base/command_line.h"
+#include "base/memory/raw_ptr.h"
 #include "base/test/test_timeouts.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/time/time.h"
@@ -26,11 +27,6 @@ const char kMainWebrtcTestHtmlPage[] = "/webrtc/webrtc_jsep01_test.html";
 
 const char kInboundRtp[] = "inbound-rtp";
 const char kOutboundRtp[] = "outbound-rtp";
-
-enum class GetStatsVariation {
-  PROMISE_BASED,
-  CALLBACK_BASED
-};
 
 // Sums up "RTC[In/Out]boundRTPStreamStats.bytes_[received/sent]" values.
 double GetTotalRTPStreamBytes(
@@ -233,40 +229,24 @@ class WebRtcStatsPerfBrowserTest : public WebRtcTestBase {
     EndCall();
   }
 
-  void RunsAudioAndVideoCallMeasuringGetStatsPerformance(
-      GetStatsVariation variation) {
+  void RunsAudioAndVideoCallMeasuringGetStatsPerformance() {
     EXPECT_TRUE(base::TimeTicks::IsHighResolution());
 
     StartCall(kUseDefaultAudioCodec, kUseDefaultVideoCodec,
               false /* prefer_hw_video_codec */, "");
 
-    double invocation_time = 0.0;
-    switch (variation) {
-      case GetStatsVariation::PROMISE_BASED:
-        invocation_time = (MeasureGetStatsPerformance(left_tab_) +
-                           MeasureGetStatsPerformance(right_tab_)) / 2.0;
-        break;
-      case GetStatsVariation::CALLBACK_BASED:
-        invocation_time =
-            (MeasureGetStatsCallbackPerformance(left_tab_) +
-             MeasureGetStatsCallbackPerformance(right_tab_)) / 2.0;
-        break;
-    }
-    perf_test::PrintResult(
-        "getStats",
-        (variation == GetStatsVariation::PROMISE_BASED) ?
-            "_promise" : "_callback",
-        "invocation_time",
-        invocation_time,
-        "milliseconds",
-        false);
+    double invocation_time = (MeasureGetStatsPerformance(left_tab_) +
+                              MeasureGetStatsPerformance(right_tab_)) /
+                             2.0;
+    perf_test::PrintResult("getStats", "_promise", "invocation_time",
+                           invocation_time, "milliseconds", false);
 
     EndCall();
   }
 
  private:
-  content::WebContents* left_tab_ = nullptr;
-  content::WebContents* right_tab_ = nullptr;
+  raw_ptr<content::WebContents> left_tab_ = nullptr;
+  raw_ptr<content::WebContents> right_tab_ = nullptr;
 };
 
 IN_PROC_BROWSER_TEST_F(
@@ -274,13 +254,6 @@ IN_PROC_BROWSER_TEST_F(
     MANUAL_RunsAudioAndVideoCallCollectingMetrics_AudioCodec_opus) {
   base::ScopedAllowBlockingForTesting allow_blocking;
   RunsAudioAndVideoCallCollectingMetricsWithAudioCodec("opus");
-}
-
-IN_PROC_BROWSER_TEST_F(
-    WebRtcStatsPerfBrowserTest,
-    MANUAL_RunsAudioAndVideoCallCollectingMetrics_AudioCodec_ISAC) {
-  base::ScopedAllowBlockingForTesting allow_blocking;
-  RunsAudioAndVideoCallCollectingMetricsWithAudioCodec("ISAC");
 }
 
 IN_PROC_BROWSER_TEST_F(
@@ -318,9 +291,18 @@ IN_PROC_BROWSER_TEST_F(
   RunsAudioAndVideoCallCollectingMetricsWithVideoCodec("VP9");
 }
 
+// TODO(crbug.com/1241344): test fails on some mac bots.
+#if BUILDFLAG(IS_MAC)
+#define MAYBE_MANUAL_RunsAudioAndVideoCallCollectingMetrics_VideoCodec_VP9Profile2 \
+  DISABLED_MANUAL_RunsAudioAndVideoCallCollectingMetrics_VideoCodec_VP9Profile2
+#else
+#define MAYBE_MANUAL_RunsAudioAndVideoCallCollectingMetrics_VideoCodec_VP9Profile2 \
+  MANUAL_RunsAudioAndVideoCallCollectingMetrics_VideoCodec_VP9Profile2
+#endif
+
 IN_PROC_BROWSER_TEST_F(
     WebRtcStatsPerfBrowserTest,
-    MANUAL_RunsAudioAndVideoCallCollectingMetrics_VideoCodec_VP9Profile2) {
+    MAYBE_MANUAL_RunsAudioAndVideoCallCollectingMetrics_VideoCodec_VP9Profile2) {
   base::ScopedAllowBlockingForTesting allow_blocking;
   RunsAudioAndVideoCallCollectingMetricsWithVideoCodec(
       "VP9", true /* prefer_hw_video_codec */,
@@ -353,16 +335,7 @@ IN_PROC_BROWSER_TEST_F(
     WebRtcStatsPerfBrowserTest,
     MANUAL_RunsAudioAndVideoCallMeasuringGetStatsPerformance_Promise) {
   base::ScopedAllowBlockingForTesting allow_blocking;
-  RunsAudioAndVideoCallMeasuringGetStatsPerformance(
-      GetStatsVariation::PROMISE_BASED);
-}
-
-IN_PROC_BROWSER_TEST_F(
-    WebRtcStatsPerfBrowserTest,
-    MANUAL_RunsAudioAndVideoCallMeasuringGetStatsPerformance_Callback) {
-  base::ScopedAllowBlockingForTesting allow_blocking;
-  RunsAudioAndVideoCallMeasuringGetStatsPerformance(
-      GetStatsVariation::CALLBACK_BASED);
+  RunsAudioAndVideoCallMeasuringGetStatsPerformance();
 }
 
 }  // namespace

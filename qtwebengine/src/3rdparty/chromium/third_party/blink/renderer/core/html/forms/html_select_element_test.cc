@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,7 +7,9 @@
 #include <memory>
 
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/renderer/core/css/style_engine.h"
 #include "third_party/blink/renderer/core/dom/document.h"
+#include "third_party/blink/renderer/core/dom/shadow_root.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
 #include "third_party/blink/renderer/core/html/forms/form_controller.h"
@@ -15,7 +17,7 @@
 #include "third_party/blink/renderer/core/html/forms/select_type.h"
 #include "third_party/blink/renderer/core/layout/layout_theme.h"
 #include "third_party/blink/renderer/core/testing/page_test_base.h"
-#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 
 namespace blink {
 
@@ -45,7 +47,7 @@ class HTMLSelectElementTest : public PageTestBase {
 
   bool FirstSelectIsConnectedAfterSelectMultiple(const Vector<int>& indices) {
     auto* select = To<HTMLSelectElement>(GetDocument().body()->firstChild());
-    select->focus();
+    select->Focus();
     select->SelectMultipleOptionsByPopup(indices);
     return select->isConnected();
   }
@@ -61,7 +63,7 @@ class HTMLSelectElementTest : public PageTestBase {
 
 void HTMLSelectElementTest::SetUp() {
   PageTestBase::SetUp();
-  GetDocument().SetMimeType("text/html");
+  GetDocument().SetMimeType(AtomicString("text/html"));
   original_delegates_flag_ =
       LayoutTheme::GetTheme().DelegatesMenuListRendering();
 }
@@ -70,6 +72,24 @@ void HTMLSelectElementTest::TearDown() {
   LayoutTheme::GetTheme().SetDelegatesMenuListRenderingForTesting(
       original_delegates_flag_);
   PageTestBase::TearDown();
+}
+
+// Tests that HtmlSelectElement::SetAutofillValue() doesn't change the
+// `user_has_edited_the_field_` attribute of the field.
+TEST_F(HTMLSelectElementTest, SetAutofillValuePreservesEditedState) {
+  SetHtmlInnerHTML(
+      "<!DOCTYPE HTML><select id='sel'>"
+      "<option value='111' selected>111</option>"
+      "<option value='222'>222</option></select>");
+  HTMLSelectElement* select = To<HTMLSelectElement>(GetElementById("sel"));
+
+  select->ClearUserHasEditedTheField();
+  select->SetAutofillValue("222", WebAutofillState::kAutofilled);
+  EXPECT_EQ(select->UserHasEditedTheField(), false);
+
+  select->SetUserHasEditedTheField();
+  select->SetAutofillValue("111", WebAutofillState::kAutofilled);
+  EXPECT_EQ(select->UserHasEditedTheField(), true);
 }
 
 TEST_F(HTMLSelectElementTest, SaveRestoreSelectSingleFormControlState) {
@@ -169,18 +189,17 @@ TEST_F(HTMLSelectElementTest, RestoreUnmatchedFormControlState) {
   // Restore
   select->RestoreFormControlState(select_state);
   EXPECT_EQ(-1, To<HTMLSelectElement>(element)->selectedIndex());
-  EXPECT_EQ(nullptr,
-            To<HTMLSelectElement>(element)->OptionToBeShownForTesting());
+  EXPECT_EQ(nullptr, To<HTMLSelectElement>(element)->OptionToBeShown());
 }
 
-TEST_F(HTMLSelectElementTest, VisibleBoundsInVisualViewport) {
+TEST_F(HTMLSelectElementTest, VisibleBoundsInLocalRoot) {
   SetHtmlInnerHTML(
       "<select style='position:fixed; top:12.3px; height:24px; "
       "-webkit-appearance:none;'><option>o1</select>");
   auto* select = To<HTMLSelectElement>(GetDocument().body()->firstChild());
   ASSERT_NE(select, nullptr);
-  IntRect bounds = select->VisibleBoundsInVisualViewport();
-  EXPECT_EQ(24, bounds.Height());
+  gfx::Rect bounds = select->VisibleBoundsInLocalRoot();
+  EXPECT_EQ(24, bounds.height());
 }
 
 TEST_F(HTMLSelectElementTest, PopupIsVisible) {
@@ -480,13 +499,13 @@ TEST_F(HTMLSelectElementTest, CrashOnAttachingMenuList) {
   ASSERT_TRUE(select->GetLayoutObject());
 
   // Detach LayoutMenuList.
-  select->setAttribute("style", "display:none;");
+  select->setAttribute(html_names::kStyleAttr, AtomicString("display:none;"));
   GetDocument().UpdateStyleAndLayoutTree();
   ASSERT_FALSE(select->GetLayoutObject());
 
   // Attach LayoutMenuList again.  It triggered null-dereference in
   // LayoutMenuList::AdjustInnerStyle().
-  select->removeAttribute("style");
+  select->removeAttribute(html_names::kStyleAttr);
   GetDocument().UpdateStyleAndLayoutTree();
   ASSERT_TRUE(select->GetLayoutObject());
 }
@@ -499,12 +518,12 @@ TEST_F(HTMLSelectElementTest, CrashOnAttachingMenuList2) {
   select->setTextContent("foo");
 
   // Detach LayoutObject.
-  select->setAttribute("style", "display:none;");
+  select->setAttribute(html_names::kStyleAttr, AtomicString("display:none;"));
   GetDocument().UpdateStyleAndLayoutTree();
 
   // Attach LayoutObject.  It triggered a DCHECK failure in
   // MenuListSelectType::OptionToBeShown()
-  select->removeAttribute("style");
+  select->removeAttribute(html_names::kStyleAttr);
   GetDocument().UpdateStyleAndLayoutTree();
 }
 
@@ -607,6 +626,88 @@ TEST_F(HTMLSelectElementTest, AddingNotOwnedOption) {
       ->appendChild(optgroup);
   optgroup->appendChild(doc.CreateRawElement(html_names::kOptionTag));
   // This test passes if the above appendChild() doesn't cause a DCHECK failure.
+}
+
+TEST_F(HTMLSelectElementTest, ChangeRenderingCrash) {
+  SetHtmlInnerHTML(R"HTML(
+    <select id="sel">
+      <option id="opt"></option>
+    </select>
+  )HTML");
+  GetDocument().UpdateStyleAndLayout(DocumentUpdateReason::kTest);
+  // Make the option element the style recalc root.
+  GetElementById("opt")->SetInlineStyleProperty(CSSPropertyID::kColor, "green");
+  // Changing the size attribute changes the rendering. This should not trigger
+  // a DCHECK failure updating the style recalc root.
+  GetElementById("sel")->setAttribute(html_names::kSizeAttr, AtomicString("2"));
+}
+
+TEST_F(HTMLSelectElementTest, ChangeRenderingCrash2) {
+  SetHtmlInnerHTML(R"HTML(
+    <select id="sel">
+      <optgroup id="grp">
+        <option id="opt"></option>
+      </optgroup>
+    </select>
+  )HTML");
+  GetDocument().UpdateStyleAndLayout(DocumentUpdateReason::kTest);
+  // Make the select UA slot the style recalc root.
+  GetElementById("opt")->SetInlineStyleProperty(CSSPropertyID::kColor, "green");
+  GetElementById("grp")->SetInlineStyleProperty(CSSPropertyID::kColor, "green");
+  // Changing the multiple attribute changes the rendering. This should not
+  // trigger a DCHECK failure updating the style recalc root.
+  GetElementById("sel")->setAttribute(html_names::kMultipleAttr,
+                                      AtomicString("true"));
+}
+
+TEST_F(HTMLSelectElementTest, ChangeRenderingCrash3) {
+  SetHtmlInnerHTML(R"HTML(
+    <div id="host">
+      <select id="select">
+        <option></option>
+      </select>
+    </div>
+    <div id="green">Green</div>
+  )HTML");
+
+  auto* host = GetDocument().getElementById(AtomicString("host"));
+  auto* select = GetDocument().getElementById(AtomicString("select"));
+  auto* green = GetDocument().getElementById(AtomicString("green"));
+
+  // Make sure the select is outside the flat tree.
+  host->AttachShadowRootInternal(ShadowRootType::kOpen);
+  GetDocument().UpdateStyleAndLayout(DocumentUpdateReason::kTest);
+
+  // Changing the select rendering should not clear the style recalc root set by
+  // the color change on #green.
+  green->SetInlineStyleProperty(CSSPropertyID::kColor, "green");
+  select->setAttribute(html_names::kMultipleAttr, AtomicString("true"));
+
+  EXPECT_TRUE(GetDocument().GetStyleEngine().NeedsStyleRecalc());
+  EXPECT_TRUE(green->NeedsStyleRecalc());
+}
+
+TEST_F(HTMLSelectElementTest, ChangeRenderingSelectRoot) {
+  // This test exercises the path in StyleEngine::ChangeRenderingForHTMLSelect()
+  // where the select does not have a GetStyleRecalcParent().
+  SetHtmlInnerHTML(R"HTML(
+    <select id="sel">
+      <option></option>
+    </select>
+  )HTML");
+
+  auto* select = GetElementById("sel");
+
+  // Make the select the root element.
+  select->remove();
+  GetDocument().documentElement()->remove();
+  GetDocument().appendChild(select);
+  GetDocument().UpdateStyleAndLayout(DocumentUpdateReason::kTest);
+
+  // Changing the multiple attribute changes the rendering.
+  select->setAttribute(html_names::kMultipleAttr, AtomicString("true"));
+  EXPECT_TRUE(GetDocument().GetStyleEngine().NeedsStyleRecalc());
+  EXPECT_TRUE(select->NeedsStyleRecalc());
 }
 
 }  // namespace blink

@@ -1,11 +1,14 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/platform/bindings/runtime_call_stats.h"
 
 #include <inttypes.h>
+
 #include <algorithm>
+
+#include "base/logging.h"
 #include "base/time/default_tick_clock.h"
 #include "third_party/blink/public/web/blink.h"
 #include "third_party/blink/renderer/platform/bindings/v8_per_isolate_data.h"
@@ -15,10 +18,8 @@
 
 namespace blink {
 
-// Function defined in third_party/blink/public/web/blink.h.
-void LogRuntimeCallStats() {
-  LOG(INFO) << "\n"
-            << RuntimeCallStats::From(MainThreadIsolate())->ToString().Utf8();
+void LogRuntimeCallStats(v8::Isolate* isolate) {
+  LOG(INFO) << "\n" << RuntimeCallStats::From(isolate)->ToString().Utf8();
 }
 
 namespace {

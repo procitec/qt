@@ -1,6 +1,6 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
-# Copyright 2017 The Chromium Authors. All rights reserved.
+# Copyright 2017 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -30,8 +30,8 @@ import tempfile
 # 2. On Linux:
 #    a. sudo apt-get install libicu-dev
 #    b. git clone https://gitlab.gnome.org/GNOME/libxslt.git somewhere
-# 3. On Mac, install these MacPorts:
-#    autoconf automake libtool pkgconfig icu
+# 3. On Mac, install these packages with brew:
+#      autoconf automake libtool pkgconfig icu4c
 #
 # Procedure:
 #
@@ -63,9 +63,15 @@ import tempfile
 #    c. Make and commit any final changes to README.chromium, BUILD.gn, etc.
 #    d. Complete the code review process as usual: git cl upload -d;
 #       git cl try-results; etc.
+#
+# The --linuxfast argument is an alternative to --linux which also deletes
+# files which are not intended to be checked in. This would normally happen at
+# the end of the --mac run, but if you want to run the roll script and get to
+# the final state without running the configure scripts on all three platforms,
+# this is helpful.
 
 PATCHES = [
-    'get-file-attributes-a.patch',
+    'remove-label.patch',
     'xslt-locale.patch',
 ]
 
@@ -117,16 +123,22 @@ FILES_TO_REMOVE = [
     # with the source code
     'src/Makefile.in',
     'src/aclocal.m4',
+    'src/CMakeLists.txt',
     'src/compile',
     'src/config.guess',
     'src/config.sub',
     'src/configure',
+    'src/configure.ac',
     'src/depcomp',
     'src/install-sh',
     'src/libexslt/Makefile.in',
+    'src/libxslt.spec.in',
     'src/libxslt/Makefile.in',
+    'src/libxslt/libxslt.syms',
     'src/ltmain.sh',
+    'src/m4/ax_append_flag.m4',
     'src/missing',
+    'src/win32/Makefile.msvc',
     'src/xslt-config.in',
     # These are not needed.
     'src/doc',
@@ -205,7 +217,7 @@ def remove_tracked_files(files_to_remove):
         files_to_remove: The files to remove.
     """
     files_to_remove = [f for f in files_to_remove if os.path.exists(f)]
-    git('rm', '-rf', *files_to_remove)
+    git('rm', '-rf', '--ignore-unmatch', *files_to_remove)
 
 
 def sed_in_place(input_filename, program):
@@ -268,12 +280,18 @@ def prepare_libxslt_distribution(src_path, libxslt_repo_path, temp_dir):
 
     with WorkingDir(libxslt_repo_path):
         commit = subprocess.check_output(
-            ['git', 'log', '-n', '1', '--pretty=format:%H', 'HEAD'])
+            ['git', 'log', '-n', '1', '--pretty=format:%H', 'HEAD']).decode('ascii')
         subprocess.check_call(
             'git archive HEAD | tar -x -C "%s"' % temp_src_path,
             shell=True)
     with WorkingDir(temp_src_path):
         os.remove('.gitignore')
+        for patch in PATCHES:
+            print('applying %s' % patch)
+            subprocess.check_call(
+                'patch -p1 --fuzz=0 < %s' % os.path.join(
+                    src_path, THIRD_PARTY_LIBXSLT_SRC, '..', 'chromium', patch),
+                shell=True)
     with WorkingDir(temp_config_path):
         subprocess.check_call(['../src/autogen.sh'] + XSLT_CONFIGURE_OPTIONS +
                               libxml_path_option(src_path))
@@ -282,12 +300,12 @@ def prepare_libxslt_distribution(src_path, libxslt_repo_path, temp_dir):
         # Work out what it is called
         tar_file = subprocess.check_output(
             '''awk '/PACKAGE =/ {p=$3} /VERSION =/ {v=$3} '''
-            '''END {printf("%s-%s.tar.gz", p, v)}' Makefile''',
-            shell=True)
+            '''END {printf("%s-%s.tar.xz", p, v)}' Makefile''',
+            shell=True).decode('ascii')
         return commit, os.path.abspath(tar_file)
 
 
-def roll_libxslt_linux(src_path, repo_path):
+def roll_libxslt_linux(src_path, repo_path, fast):
     check_clean(src_path)
     with WorkingDir(src_path):
         try:
@@ -303,7 +321,7 @@ def roll_libxslt_linux(src_path, repo_path):
             # Export the libxslt distribution to the Chromium tree
             with WorkingDir(THIRD_PARTY_LIBXSLT_SRC):
                 subprocess.check_call(
-                    'tar xzf %s --strip-components=1' % tar_file,
+                    'tar xJf %s --strip-components=1' % tar_file,
                     shell=True)
         finally:
             shutil.rmtree(temp_dir)
@@ -313,11 +331,6 @@ def roll_libxslt_linux(src_path, repo_path):
             sed_in_place('../README.chromium',
                          's/Version: .*$/Version: %s/' % commit)
             check_copying()
-
-            for patch in PATCHES:
-                subprocess.check_call(
-                    'cat ../chromium/%s | patch -p1 --fuzz=0' % patch,
-                    shell=True)
 
             with WorkingDir('../linux'):
                 subprocess.check_call(['../src/configure'] +
@@ -333,9 +346,15 @@ def roll_libxslt_linux(src_path, repo_path):
                 shutil.move('libxslt/xsltconfig.h', '../src/libxslt')
 
             git('add', '*')
+            if fast:
+                with WorkingDir('..'):
+                    remove_tracked_files(FILES_TO_REMOVE)
         git('commit', '-am', '%s libxslt, linux' % commit)
 
-        print('Now push to Windows and runs steps there.')
+        if fast:
+            print('Now upload for review, etc.')
+        else:
+            print('Now push to Windows and runs steps there.')
 
 
 def roll_libxslt_win32(src_path):
@@ -373,7 +392,7 @@ def roll_libxslt_mac(src_path):
 
 def check_clean(path):
     with WorkingDir(path):
-        status = subprocess.check_output(['git', 'status', '-s'])
+        status = subprocess.check_output(['git', 'status', '-s']).decode('ascii')
         if len(status) > 0:
             raise Exception('repository at %s is not clean' % path)
 
@@ -390,6 +409,7 @@ def main():
     platform.add_argument('--linux', action='store_true')
     platform.add_argument('--win32', action='store_true')
     platform.add_argument('--mac', action='store_true')
+    platform.add_argument('--linuxfast', action='store_true')
     parser.add_argument(
         'libxslt_repo_path',
         type=str,
@@ -397,13 +417,13 @@ def main():
         help='The path to the local clone of the libxslt git repo.')
     args = parser.parse_args()
 
-    if args.linux:
+    if args.linux or args.linuxfast:
         libxslt_repo_path = args.libxslt_repo_path
         if not libxslt_repo_path:
             print('Specify the path to the local libxslt repo clone.')
             sys.exit(1)
         libxslt_repo_path = os.path.abspath(libxslt_repo_path)
-        roll_libxslt_linux(src_dir, libxslt_repo_path)
+        roll_libxslt_linux(src_dir, libxslt_repo_path, args.linuxfast)
     elif args.win32:
         roll_libxslt_win32(src_dir)
     elif args.mac:

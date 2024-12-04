@@ -1,15 +1,13 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef EXTENSIONS_COMMON_MANIFEST_HANDLERS_KIOSK_MODE_INFO_H_
 #define EXTENSIONS_COMMON_MANIFEST_HANDLERS_KIOSK_MODE_INFO_H_
 
+#include <optional>
 #include <string>
 #include <vector>
-
-#include "base/macros.h"
-#include "base/optional.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_id.h"
 #include "extensions/common/manifest.h"
@@ -20,12 +18,12 @@ namespace extensions {
 struct SecondaryKioskAppInfo {
   SecondaryKioskAppInfo() = delete;
   SecondaryKioskAppInfo(const extensions::ExtensionId& id,
-                        const base::Optional<bool>& enabled_on_launch);
+                        const std::optional<bool>& enabled_on_launch);
   SecondaryKioskAppInfo(const SecondaryKioskAppInfo& other);
   ~SecondaryKioskAppInfo();
 
   const extensions::ExtensionId id;
-  const base::Optional<bool> enabled_on_launch;
+  const std::optional<bool> enabled_on_launch;
 };
 
 struct KioskModeInfo : public Extension::ManifestData {
@@ -72,14 +70,16 @@ struct KioskModeInfo : public Extension::ManifestData {
 class KioskModeHandler : public ManifestHandler {
  public:
   KioskModeHandler();
+
+  KioskModeHandler(const KioskModeHandler&) = delete;
+  KioskModeHandler& operator=(const KioskModeHandler&) = delete;
+
   ~KioskModeHandler() override;
 
-  bool Parse(Extension* extension, base::string16* error) override;
+  bool Parse(Extension* extension, std::u16string* error) override;
 
  private:
   base::span<const char* const> Keys() const override;
-
-  DISALLOW_COPY_AND_ASSIGN(KioskModeHandler);
 };
 
 }  // namespace extensions

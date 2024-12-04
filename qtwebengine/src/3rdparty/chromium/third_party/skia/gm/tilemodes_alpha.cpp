@@ -10,11 +10,12 @@
 #include "include/core/SkRefCnt.h"
 #include "include/core/SkShader.h"
 #include "include/core/SkTileMode.h"
+#include "tools/DecodeUtils.h"
 #include "tools/Resources.h"
 
 // http://crbug.com/957275
 DEF_SIMPLE_GM(tilemodes_alpha, canvas, 512, 512) {
-    sk_sp<SkImage> image = GetResourceAsImage("images/mandrill_64.png");
+    sk_sp<SkImage> image = ToolUtils::GetResourceAsImage("images/mandrill_64.png");
     if (!image) {
         return;
     }
@@ -29,7 +30,7 @@ DEF_SIMPLE_GM(tilemodes_alpha, canvas, 512, 512) {
             SkRect rect = SkRect::MakeXYWH(128 * x + 1, 128 * y + 1, 126, 126);
             SkMatrix matrix = SkMatrix::Translate(rect.x(), rect.y());
             SkPaint paint(SkColor4f{0, 0, 0, 0.5f});
-            paint.setShader(image->makeShader(kModes[x], kModes[y], &matrix));
+            paint.setShader(image->makeShader(kModes[x], kModes[y], SkSamplingOptions(), &matrix));
             canvas->drawRect(rect, paint);
         }
     }

@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,7 +8,9 @@
 #include <jni.h>
 
 #include "base/android/jni_weak_ref.h"
+#include "base/memory/raw_ptr.h"
 #include "content/browser/android/render_widget_host_connector.h"
+#include "third_party/blink/public/mojom/input/input_handler.mojom-forward.h"
 #include "ui/gfx/geometry/rect_f.h"
 #include "ui/touch_selection/selection_event_type.h"
 
@@ -27,6 +29,11 @@ class SelectionPopupController : public RenderWidgetHostConnector {
                            const base::android::JavaParamRef<jobject>& obj,
                            WebContents* web_contents);
 
+  void SetTextHandlesHiddenForDropdownMenu(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& obj,
+      jboolean hidden);
+
   void SetTextHandlesTemporarilyHidden(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj,
@@ -40,15 +47,22 @@ class SelectionPopupController : public RenderWidgetHostConnector {
   // Called from native -> java
   void OnSelectionEvent(ui::SelectionEventType event,
                         const gfx::RectF& selection_rect);
-  void OnDragUpdate(const gfx::PointF& position);
+  void OnDragUpdate(const ui::TouchSelectionDraggable::Type type,
+                    const gfx::PointF& position);
   void OnSelectionChanged(const std::string& text);
-  bool ShowSelectionMenu(const ContextMenuParams& params, int handle_height);
-  void OnSelectWordAroundCaretAck(bool did_select,
-                                  int start_adjust,
-                                  int end_adjust);
+  bool ShowSelectionMenu(RenderFrameHost* render_frame_host,
+                         const ContextMenuParams& params,
+                         int handle_height);
+  void OnSelectAroundCaretAck(int startOffset,
+                              int endOffset,
+                              int surroundingTextLength,
+                              blink::mojom::SelectAroundCaretResultPtr result);
   void HidePopupsAndPreserveSelection();
   void RestoreSelectionPopupsIfNecessary();
-  std::unique_ptr<ui::TouchHandleDrawable> CreateTouchHandleDrawable();
+  void ChildLocalSurfaceIdChanged();
+  std::unique_ptr<ui::TouchHandleDrawable> CreateTouchHandleDrawable(
+      gfx::NativeView parent_native_view,
+      cc::slim::Layer* parent_layer);
   void MoveRangeSelectionExtent(const gfx::PointF& extent);
 
   void SelectBetweenCoordinates(const gfx::PointF& base,
@@ -57,7 +71,7 @@ class SelectionPopupController : public RenderWidgetHostConnector {
  private:
   ~SelectionPopupController() override;
   base::android::ScopedJavaLocalRef<jobject> GetContext() const;
-  RenderWidgetHostViewAndroid* rwhva_ = nullptr;
+  raw_ptr<RenderWidgetHostViewAndroid> rwhva_ = nullptr;
 
   JavaObjectWeakGlobalRef java_obj_;
 };

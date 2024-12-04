@@ -29,11 +29,7 @@
 
 from __future__ import print_function
 
-import os.path
-import sys
-
 import json5_generator
-import license
 import name_utilities
 import template_expander
 
@@ -48,6 +44,10 @@ def create_event_ignore_case_list(name):
             or name == 'KeyboardEvent' or name == 'MessageEvent'
             or name.startswith('MouseEvent') or name == 'TouchEvent')
 
+
+# All events that require ScriptState passed to their Create method.
+def needs_script_state(name):
+    return name == 'ErrorEvent'
 
 # All events on the following list are matched case-insensitively in createEvent
 # and are measured using UseCounter.
@@ -90,6 +90,7 @@ class EventFactoryWriter(json5_generator.Writer):
         'name': lambda entry: entry['name'].original,
         'create_event_ignore_case_list': create_event_ignore_case_list,
         'measure_name': measure_name,
+        'needs_script_state': needs_script_state,
     }
 
     def __init__(self, json5_file_path, output_dir):
@@ -118,7 +119,7 @@ class EventFactoryWriter(json5_generator.Writer):
     def _headers_header_includes(self, entries):
         includes = {
             'third_party/blink/renderer/core/execution_context/execution_context.h',
-            'third_party/blink/renderer/core/frame/deprecation.h',
+            'third_party/blink/renderer/core/frame/deprecation/deprecation.h',
             'third_party/blink/renderer/platform/instrumentation/use_counter.h',
             'third_party/blink/renderer/platform/runtime_enabled_features.h',
         }

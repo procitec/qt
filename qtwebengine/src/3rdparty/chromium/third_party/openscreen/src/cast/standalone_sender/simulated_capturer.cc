@@ -1,8 +1,10 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "cast/standalone_sender/simulated_capturer.h"
+
+#include <libavformat/version.h>
 
 #include <algorithm>
 #include <chrono>
@@ -10,13 +12,13 @@
 #include <sstream>
 #include <thread>
 
+#include "cast/standalone_sender/ffmpeg_glue.h"
 #include "cast/streaming/environment.h"
 #include "util/osp_logging.h"
 
-namespace openscreen {
-namespace cast {
+namespace openscreen::cast {
 
-using openscreen::operator<<;  // To pretty-print chrono values.
+using clock_operators::operator<<;
 
 namespace {
 // Threshold at which a warning about media pausing should be logged.
@@ -31,6 +33,7 @@ SimulatedCapturer::SimulatedCapturer(Environment* environment,
                                      Clock::time_point start_time,
                                      Observer* observer)
     : format_context_(MakeUniqueAVFormatContext(path)),
+      now_(environment->now_function()),
       media_type_(media_type),
       start_time_(start_time),
       observer_(observer),
@@ -44,7 +47,12 @@ SimulatedCapturer::SimulatedCapturer(Environment* environment,
     return;  // Capturer is halted (unable to start).
   }
 
+#if LIBAVFORMAT_VERSION_MAJOR < 59
   AVCodec* codec;
+#else
+  const AVCodec* codec;
+#endif  // LIBAVFORMAT_VERSION_MAJOR < 59
+
   const int stream_result = av_find_best_stream(format_context_.get(),
                                                 media_type_, -1, -1, &codec, 0);
   if (stream_result < 0) {
@@ -85,10 +93,18 @@ SimulatedCapturer::SimulatedCapturer(Environment* environment,
 
 SimulatedCapturer::~SimulatedCapturer() = default;
 
+void SimulatedCapturer::SetPlaybackRate(double rate) {
+  playback_rate_is_non_zero_ = rate > 0;
+  if (playback_rate_is_non_zero_) {
+    // Restart playback now that playback rate is nonzero.
+    StartDecodingNextFrame();
+  }
+}
+
 void SimulatedCapturer::SetAdditionalDecoderParameters(
     AVCodecContext* decoder_context) {}
 
-absl::optional<Clock::duration> SimulatedCapturer::ProcessDecodedFrame(
+std::optional<Clock::duration> SimulatedCapturer::ProcessDecodedFrame(
     const AVFrame& frame) {
   return Clock::duration::zero();
 }
@@ -97,7 +113,7 @@ void SimulatedCapturer::OnError(const char* function_name, int av_errnum) {
   // Make a human-readable string from the libavcodec error.
   std::ostringstream error;
   error << "For " << av_get_media_type_string(media_type_) << ", "
-        << function_name << " returned error: " << av_err2str(av_errnum);
+        << function_name << " returned error: " << AvErrorToString(av_errnum);
 
   // Deliver the error notification in a separate task since this method might
   // have been called from the constructor.
@@ -119,6 +135,11 @@ Clock::duration SimulatedCapturer::ToApproximateClockDuration(
 }
 
 void SimulatedCapturer::StartDecodingNextFrame() {
+  if (!playback_rate_is_non_zero_) {
+    return;
+  }
+
+  capture_begin_time_ = now_();
   const int read_frame_result =
       av_read_frame(format_context_.get(), packet_.get());
   if (read_frame_result < 0) {
@@ -199,21 +220,22 @@ void SimulatedCapturer::ConsumeNextDecodedFrame() {
   }
   last_frame_timestamp_ = frame_timestamp;
 
-  Clock::time_point capture_time = start_time_ + frame_timestamp;
+  Clock::time_point reference_time = start_time_ + frame_timestamp;
   const auto delay_adjustment_or_null = ProcessDecodedFrame(*decoded_frame_);
   if (!delay_adjustment_or_null) {
     av_frame_unref(decoded_frame_.get());
     return;  // Stop. Fatal error occurred.
   }
-  capture_time += *delay_adjustment_or_null;
+  reference_time += *delay_adjustment_or_null;
 
   next_task_.Schedule(
-      [this, capture_time] {
-        DeliverDataToClient(*decoded_frame_, capture_time);
+      [this, reference_time] {
+        DeliverDataToClient(*decoded_frame_, capture_begin_time_, now_(),
+                            reference_time);
         av_frame_unref(decoded_frame_.get());
         ConsumeNextDecodedFrame();
       },
-      capture_time);
+      reference_time);
 }
 
 SimulatedAudioCapturer::Client::~Client() = default;
@@ -248,7 +270,12 @@ bool SimulatedAudioCapturer::EnsureResamplerIsInitializedFor(
   if (swr_is_initialized(resampler_.get())) {
     if (input_sample_format_ == static_cast<AVSampleFormat>(frame.format) &&
         input_sample_rate_ == frame.sample_rate &&
-        input_channel_layout_ == frame.channel_layout) {
+#if _LIBAVUTIL_OLD_CHANNEL_LAYOUT
+        input_channel_layout_ == frame.channel_layout
+#else
+        input_channel_layout_.nb_channels == frame.ch_layout.nb_channels
+#endif  // _LIBAVUTIL_OLD_CHANNEL_LAYOUT
+    ) {
       return true;
     }
 
@@ -268,8 +295,13 @@ bool SimulatedAudioCapturer::EnsureResamplerIsInitializedFor(
   // Create a fake output frame to hold the output audio parameters, because the
   // resampler API is weird that way.
   const auto fake_output_frame = MakeUniqueAVFrame();
+#if _LIBAVUTIL_OLD_CHANNEL_LAYOUT
   fake_output_frame->channel_layout =
       av_get_default_channel_layout(num_channels_);
+#else
+  av_channel_layout_default(&fake_output_frame->ch_layout, num_channels_);
+#endif  // _LIBAVUTIL_OLD_CHANNEL_LAYOUT
+
   fake_output_frame->format = AV_SAMPLE_FMT_FLT;
   fake_output_frame->sample_rate = sample_rate_;
   const int config_result =
@@ -287,20 +319,25 @@ bool SimulatedAudioCapturer::EnsureResamplerIsInitializedFor(
 
   input_sample_format_ = static_cast<AVSampleFormat>(frame.format);
   input_sample_rate_ = frame.sample_rate;
-  input_channel_layout_ = frame.channel_layout;
+  input_channel_layout_ =
+#if _LIBAVUTIL_OLD_CHANNEL_LAYOUT
+      frame.channel_layout;
+#else
+      frame.ch_layout;
+#endif  // _LIBAVUTIL_OLD_CHANNEL_LAYOUT
   return true;
 }
 
-absl::optional<Clock::duration> SimulatedAudioCapturer::ProcessDecodedFrame(
+std::optional<Clock::duration> SimulatedAudioCapturer::ProcessDecodedFrame(
     const AVFrame& frame) {
   if (!EnsureResamplerIsInitializedFor(frame)) {
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   const int64_t num_leftover_input_samples =
       swr_get_delay(resampler_.get(), input_sample_rate_);
   OSP_DCHECK_GE(num_leftover_input_samples, 0);
-  const Clock::duration capture_time_adjustment = -ToApproximateClockDuration(
+  const Clock::duration reference_time_adjustment = -ToApproximateClockDuration(
       num_leftover_input_samples, AVRational{1, input_sample_rate_});
 
   const int64_t num_output_samples_desired =
@@ -317,21 +354,24 @@ absl::optional<Clock::duration> SimulatedAudioCapturer::ProcessDecodedFrame(
     resampled_audio_.clear();
     swr_close(resampler_.get());
     OnError("swr_convert", num_samples_converted_or_error);
-    return absl::nullopt;  // Capturer is now halted.
+    return std::nullopt;  // Capturer is now halted.
   }
   resampled_audio_.resize(num_channels_ * num_samples_converted_or_error);
 
-  return capture_time_adjustment;
+  return reference_time_adjustment;
 }
 
 void SimulatedAudioCapturer::DeliverDataToClient(
     const AVFrame& unused,
-    Clock::time_point capture_time) {
+    Clock::time_point capture_begin_time,
+    Clock::time_point capture_end_time,
+    Clock::time_point reference_time) {
   if (resampled_audio_.empty()) {
     return;
   }
   client_->OnAudioData(resampled_audio_.data(),
-                       resampled_audio_.size() / num_channels_, capture_time);
+                       resampled_audio_.size() / num_channels_,
+                       capture_begin_time, capture_end_time, reference_time);
   resampled_audio_.clear();
 }
 
@@ -370,9 +410,11 @@ void SimulatedVideoCapturer::SetAdditionalDecoderParameters(
 
 void SimulatedVideoCapturer::DeliverDataToClient(
     const AVFrame& frame,
-    Clock::time_point capture_time) {
-  client_->OnVideoFrame(frame, capture_time);
+    Clock::time_point capture_begin_time,
+    Clock::time_point capture_end_time,
+    Clock::time_point reference_time) {
+  client_->OnVideoFrame(frame, capture_begin_time, capture_end_time,
+                        reference_time);
 }
 
-}  // namespace cast
-}  // namespace openscreen
+}  // namespace openscreen::cast

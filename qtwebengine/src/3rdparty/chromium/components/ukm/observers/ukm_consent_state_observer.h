@@ -1,16 +1,20 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef COMPONENTS_UKM_OBSERVERS_UKM_CONSENT_STATE_OBSERVER_H_
 #define COMPONENTS_UKM_OBSERVERS_UKM_CONSENT_STATE_OBSERVER_H_
 
+#include <stdint.h>
 #include <map>
 
-#include "base/scoped_observer.h"
-#include "components/sync/driver/sync_service.h"
-#include "components/sync/driver/sync_service_observer.h"
+#include "base/feature_list.h"
+#include "base/scoped_multi_source_observation.h"
+#include "components/sync/service/sync_service.h"
+#include "components/sync/service/sync_service_observer.h"
+#include "components/ukm/ukm_consent_state.h"
 #include "components/unified_consent/url_keyed_data_collection_consent_helper.h"
+#include "services/metrics/public/cpp/metrics_export.h"
 
 class PrefService;
 
@@ -25,6 +29,10 @@ class UkmConsentStateObserver
       public unified_consent::UrlKeyedDataCollectionConsentHelper::Observer {
  public:
   UkmConsentStateObserver();
+
+  UkmConsentStateObserver(const UkmConsentStateObserver&) = delete;
+  UkmConsentStateObserver& operator=(const UkmConsentStateObserver&) = delete;
+
   ~UkmConsentStateObserver() override;
 
   // Starts observing whether UKM is allowed for a profile.
@@ -36,15 +44,27 @@ class UkmConsentStateObserver
   // URL-keyed anonymized data collection is enabled for all profiles.
   virtual bool IsUkmAllowedForAllProfiles();
 
-  // Returns true iff sync is in a state that allows UKM to capture extensions.
-  // This means that all profiles have EXTENSIONS data type enabled for syncing.
-  virtual bool IsUkmAllowedWithExtensionsForAllProfiles();
+  // Returns the current state of all consent types.
+  // See components/ukm/ukm_consent_state.h for details.
+  virtual UkmConsentState GetUkmConsentState();
 
  protected:
   // Called after UKM consent state changed.
-  // If |must_purge| is true, the UKM is not allowed for some profile, and local
-  // data must be purged.
-  virtual void OnUkmAllowedStateChanged(bool must_purge) = 0;
+  // If |total_purge| is true, the UKM is not allowed for some profile, and all
+  // local data must be purged. Otherwise, more specific consents are checked
+  // for individual sync settings, and recorded data may be partially purged if
+  // we no longer have the corresponding sync consent.
+  virtual void OnUkmAllowedStateChanged(
+      bool total_purge,
+      UkmConsentState previous_consent_state) = 0;
+
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+  // Used to set is_demo_mode_ field.
+  void SetIsDemoMode(bool is_demo_mode);
+
+  // Return whether the device is in demo mode.
+  bool IsDeviceInDemoMode();
+#endif
 
  private:
   // syncer::SyncServiceObserver:
@@ -56,36 +76,33 @@ class UkmConsentStateObserver
       unified_consent::UrlKeyedDataCollectionConsentHelper* consent_helper)
       override;
 
-  // Recomputes |ukm_allowed_for_all_profiles_| and
-  // |ukm_allowed_with_extensions_for_all_profiles_| from |previous_states_|;
-  void UpdateUkmAllowedForAllProfiles(bool must_purge);
+  // Recomputes |ukm_allowed_for_all_profiles_| and other specific consents
+  // (e.g. Extension, ChromeOS apps) from |previous_states_|;
+  void UpdateUkmAllowedForAllProfiles(bool total_purge);
 
-  // Returns true iff all profile states in |previous_states_| allow UKM.
-  // If there are no profiles being observed, this returns false.
-  bool CheckPreviousStatesAllowUkm();
-
-  // Returns true iff all profile states in |previous_states_| allow extension
-  // UKM. If there are no profiles are being observed, this returns false.
-  bool CheckPreviousStatesAllowExtensionUkm();
+  // Returns an accumulated UKM consent state for all profiles in
+  // |previous_states_|. Consent is given for any consent type in
+  // UkmConsentType IFF all profiles consent, otherwise the consent
+  // will be off.
+  UkmConsentState GetPreviousStatesForAllProfiles();
 
   // Tracks observed sync services, for cleanup.
-  ScopedObserver<syncer::SyncService, syncer::SyncServiceObserver>
-      sync_observer_;
+  base::ScopedMultiSourceObservation<syncer::SyncService,
+                                     syncer::SyncServiceObserver>
+      sync_observations_{this};
 
   // State data about profiles that we need to remember.
   struct ProfileState {
-    // Returns true if this state allows UKM (i.e. URL-keyed anonymized
-    // data collection is enabled).
-    bool AllowsUkm() const;
+    // Returns true if this profile state consented to MSBB (i.e. URL-keyed
+    // anonymized data collection is enabled).
+    // False otherwise.
+    bool IsUkmConsented() const;
 
-    // Returns true if |AllowsUkm| and if sync extensions are enabled.
-    bool AllowsUkmWithExtension() const;
+    // Set the consent state for the given type.
+    void SetConsentType(UkmConsentType type);
 
-    // Whether anonymized data collection is enabled.
-    bool anonymized_data_collection_enabled = false;
-
-    // If the user has extension sync enabled.
-    bool extensions_enabled = false;
+    // The state of each consent type.
+    UkmConsentState consent_state;
   };
 
   // Updates the UKM enabled state for a profile and then triggers an update of
@@ -97,7 +114,7 @@ class UkmConsentStateObserver
 
   // Gets the current state of a profile.
   // |sync| and |consent_helper| must not be null.
-  static ProfileState GetProfileState(
+  ProfileState GetProfileState(
       syncer::SyncService* sync,
       unified_consent::UrlKeyedDataCollectionConsentHelper* consent_helper);
 
@@ -119,14 +136,17 @@ class UkmConsentStateObserver
       std::unique_ptr<unified_consent::UrlKeyedDataCollectionConsentHelper>>
       consent_helpers_;
 
-  // Tracks if UKM is allowed on all profiles after the last state change.
-  bool ukm_allowed_for_all_profiles_ = false;
+  // Tracks what consent type is granted on all profiles after the last state
+  // change. Consent is only granted when EVERY profile consents.
+  // Empty means none.
+  UkmConsentState ukm_consent_state_;
 
-  // Tracks if extension sync was enabled on all profiles after the last state
-  // change.
-  bool ukm_allowed_with_extensions_for_all_profiles_ = false;
-
-  DISALLOW_COPY_AND_ASSIGN(UkmConsentStateObserver);
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+  // Indicate whether the device is in demo mode. If it is true,
+  // set APPS consent to collect App usage data for active demo
+  // session. Default to false.
+  bool is_device_in_demo_mode_ = false;
+#endif
 };
 
 }  // namespace ukm

@@ -1,6 +1,8 @@
-# Copyright 2014 The Chromium Authors. All rights reserved.
+# Copyright 2014 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
+
+import("//build/util/lastchange.gni")
 
 # Runs the version processing script over the given template file to produce
 # an output file. This is used for generating various forms of files that
@@ -38,6 +40,9 @@
 #     doesn't attempt to link the result into a source set. This is for if
 #     you are processing the version as data only.
 #
+#   executable (optional, defaults to false)
+#     Sets the executable bit on the output file (POSIX only).
+#
 #   visibility (optional)
 #
 # Example:
@@ -64,7 +69,7 @@ template("process_version") {
   action(action_name) {
     script = "//build/util/version.py"
 
-    inputs = []
+    inputs = [ lastchange_file ]
     if (defined(invoker.inputs)) {
       inputs += invoker.inputs
     }
@@ -88,6 +93,10 @@ template("process_version") {
           rebase_path(i, root_build_dir),
         ]
       }
+    }
+
+    if (defined(invoker.executable) && invoker.executable) {
+      args += [ "-x" ]
     }
 
     if (defined(invoker.extra_args)) {
@@ -114,7 +123,11 @@ template("process_version") {
 
   if (!process_only) {
     source_set(source_set_name) {
-      forward_variables_from(invoker, [ "visibility" ])
+      forward_variables_from(invoker,
+                             [
+                               "visibility",
+                               "deps",
+                             ])
       sources = get_target_outputs(":$action_name")
       public_deps = [ ":$action_name" ]
     }

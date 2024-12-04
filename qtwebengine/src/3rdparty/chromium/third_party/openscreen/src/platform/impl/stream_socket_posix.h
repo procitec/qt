@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,9 +7,9 @@
 
 #include <atomic>
 #include <memory>
+#include <optional>
 #include <string>
 
-#include "absl/types/optional.h"
 #include "platform/base/error.h"
 #include "platform/base/ip_address.h"
 #include "platform/impl/socket_address_posix.h"
@@ -30,9 +30,9 @@ class StreamSocketPosix : public StreamSocket {
   // StreamSocketPosix is non-copyable, due to directly managing the file
   // descriptor.
   StreamSocketPosix(const StreamSocketPosix& other) = delete;
-  StreamSocketPosix(StreamSocketPosix&& other) = default;
+  StreamSocketPosix(StreamSocketPosix&& other) noexcept;
   StreamSocketPosix& operator=(const StreamSocketPosix& other) = delete;
-  StreamSocketPosix& operator=(StreamSocketPosix&& other) = default;
+  StreamSocketPosix& operator=(StreamSocketPosix&& other);
   virtual ~StreamSocketPosix();
 
   WeakPtr<StreamSocketPosix> GetWeakPtr() const;
@@ -47,16 +47,16 @@ class StreamSocketPosix : public StreamSocket {
 
   // StreamSocket getter overrides.
   const SocketHandle& socket_handle() const override { return handle_; }
-  absl::optional<IPEndpoint> remote_address() const override;
-  absl::optional<IPEndpoint> local_address() const override;
-  SocketState state() const override;
+  std::optional<IPEndpoint> remote_address() const override;
+  std::optional<IPEndpoint> local_address() const override;
+  TcpSocketState state() const override;
   IPAddress::Version version() const override;
 
  private:
   // StreamSocketPosix is lazy initialized on first usage. For simplicitly,
   // the ensure method returns a boolean of whether or not the socket was
   // initialized successfully.
-  bool EnsureInitialized();
+  bool EnsureInitializedAndOpen();
   Error Initialize();
 
   Error CloseOnError(Error error);
@@ -72,12 +72,11 @@ class StreamSocketPosix : public StreamSocket {
   // atomic's (trivially) copyable and moveable requirements.
   Error::Code last_error_code_ = Error::Code::kNone;
   IPAddress::Version version_;
-  absl::optional<SocketAddressPosix> local_address_;
-  absl::optional<IPEndpoint> remote_address_;
+  std::optional<SocketAddressPosix> local_address_;
+  std::optional<IPEndpoint> remote_address_;
 
   bool is_bound_ = false;
-  bool is_initialized_ = false;
-  SocketState state_ = SocketState::kNotConnected;
+  TcpSocketState state_ = TcpSocketState::kNotConnected;
 
   WeakPtrFactory<StreamSocketPosix> weak_factory_{this};
 };

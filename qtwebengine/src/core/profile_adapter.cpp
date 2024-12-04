@@ -1,56 +1,28 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtWebEngine module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "profile_adapter.h"
 
+#include "base/files/file_util.h"
+#include "base/task/cancelable_task_tracker.h"
+#include "base/threading/thread_restrictions.h"
+#include "components/embedder_support/user_agent_utils.h"
+#include "components/favicon/core/favicon_service.h"
+#include "components/history/content/browser/history_database_helper.h"
+#include "components/history/core/browser/history_database_params.h"
+#include "components/history/core/browser/history_service.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/browsing_data_remover.h"
 #include "content/public/browser/download_manager.h"
-#include "content/public/browser/shared_cors_origin_access_list.h"
 #include "content/public/browser/storage_partition.h"
-#include "services/network/public/cpp/cors/origin_access_list.h"
+#include "services/network/public/mojom/network_context.mojom.h"
 #include "url/url_util.h"
 
 #include "api/qwebengineurlscheme.h"
 #include "content_browser_client_qt.h"
 #include "download_manager_delegate_qt.h"
+#include "favicon_service_factory_qt.h"
 #include "permission_manager_qt.h"
 #include "profile_adapter_client.h"
 #include "profile_io_data_qt.h"
@@ -58,12 +30,8 @@
 #include "renderer_host/user_resource_controller_host.h"
 #include "type_conversion.h"
 #include "visited_links_manager_qt.h"
-#include "web_engine_context.h"
 #include "web_contents_adapter_client.h"
-
-#include "base/files/file_util.h"
-#include "base/time/time_to_iso8601.h"
-#include "components/keyed_service/content/browser_context_dependency_manager.h"
+#include "web_engine_context.h"
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "extensions/browser/extension_system.h"
@@ -71,6 +39,8 @@
 
 #include <QCoreApplication>
 #include <QDir>
+#include <QJsonObject>
+#include <QSet>
 #include <QString>
 #include <QStandardPaths>
 
@@ -87,21 +57,23 @@ inline QString buildLocationFromStandardPath(const QString &standardPath, const 
 
 namespace QtWebEngineCore {
 
-// static
-QPointer<ProfileAdapter> ProfileAdapter::s_profileForGlobalCertificateVerification;
-
 ProfileAdapter::ProfileAdapter(const QString &storageName):
       m_name(storageName)
     , m_offTheRecord(storageName.isEmpty())
     , m_downloadPath(QStandardPaths::writableLocation(QStandardPaths::DownloadLocation))
     , m_httpCacheType(DiskHttpCache)
     , m_persistentCookiesPolicy(AllowPersistentCookies)
+    , m_persistentPermissionsPolicy(PersistentPermissionsPolicy::StoreOnDisk)
     , m_visitedLinksPolicy(TrackVisitedLinksOnDisk)
+    , m_clientHintsEnabled(true)
+    , m_pushServiceEnabled(false)
     , m_httpCacheMaxSize(0)
 {
     WebEngineContext::current()->addProfileAdapter(this);
     // creation of profile requires webengine context
     m_profile.reset(new ProfileQt(this));
+    // initialize permissions store
+    profile()->GetPermissionControllerDelegate();
     // fixme: this should not be here
     m_profile->m_profileIOData->initializeOnUIThread();
     m_customUrlSchemeHandlers.insert(QByteArrayLiteral("qrc"), &m_qrcHandler);
@@ -109,28 +81,20 @@ ProfileAdapter::ProfileAdapter(const QString &storageName):
     if (!storageName.isEmpty())
         extensions::ExtensionSystem::Get(m_profile.data())->InitForRegularProfile(true);
 #endif
+    m_cancelableTaskTracker.reset(new base::CancelableTaskTracker());
 
-    // Allow XMLHttpRequests from qrc to file.
-    // ### consider removing for Qt6
-    url::Origin qrc = url::Origin::Create(GURL("qrc://"));
-    auto pattern = network::mojom::CorsOriginPattern::New("file", "", 0,
-                                                          network::mojom::CorsDomainMatchMode::kAllowSubdomains,
-                                                          network::mojom::CorsPortMatchMode::kAllowAnyPort,
-                                                          network::mojom::CorsOriginAccessMatchPriority::kDefaultPriority);
-    std::vector<network::mojom::CorsOriginPatternPtr> list;
-    list.push_back(std::move(pattern));
-    m_profile->GetSharedCorsOriginAccessList()->SetForOrigin(qrc, std::move(list), {}, base::BindOnce([]{}));
+    m_profile->DoFinalInit();
 }
 
 ProfileAdapter::~ProfileAdapter()
 {
-    content::BrowserContext::NotifyWillBeDestroyed(m_profile.data());
-    while (!m_webContentsAdapterClients.isEmpty()) {
-       m_webContentsAdapterClients.first()->releaseProfile();
-    }
+    m_cancelableTaskTracker->TryCancelAll();
+    m_profile->NotifyWillBeDestroyed();
+    releaseAllWebContentsAdapterClients();
+
     WebEngineContext::current()->removeProfileAdapter(this);
     if (m_downloadManagerDelegate) {
-        m_profile->GetDownloadManager(m_profile.data())->Shutdown();
+        m_profile->GetDownloadManager()->Shutdown();
         m_downloadManagerDelegate.reset();
     }
 #if QT_CONFIG(ssl)
@@ -147,10 +111,13 @@ void ProfileAdapter::setStorageName(const QString &storageName)
     m_name = storageName;
     if (!m_offTheRecord) {
         m_profile->setupPrefService();
+        m_profile->setupPermissionsManager();
         if (!m_profile->m_profileIOData->isClearHttpCacheInProgress())
             m_profile->m_profileIOData->resetNetworkContext();
         if (m_visitedLinksManager)
             resetVisitedLinksManager();
+
+        reinitializeHistoryService();
     }
 }
 
@@ -160,15 +127,44 @@ void ProfileAdapter::setOffTheRecord(bool offTheRecord)
         return;
     m_offTheRecord = offTheRecord;
     m_profile->setupPrefService();
+    m_profile->setupPermissionsManager();
     if (!m_profile->m_profileIOData->isClearHttpCacheInProgress())
         m_profile->m_profileIOData->resetNetworkContext();
     if (m_visitedLinksManager)
         resetVisitedLinksManager();
+
+    if (offTheRecord) {
+        favicon::FaviconService *faviconService =
+                FaviconServiceFactoryQt::GetForBrowserContext(m_profile.data());
+        faviconService->SetHistoryService(nullptr);
+    } else if (!m_name.isEmpty()) {
+        reinitializeHistoryService();
+    }
 }
 
 ProfileQt *ProfileAdapter::profile()
 {
     return m_profile.data();
+}
+
+bool ProfileAdapter::ensureDataPathExists()
+{
+    Q_ASSERT(!m_offTheRecord);
+    base::ScopedAllowBlocking allowBlock;
+    const base::FilePath &path = toFilePath(dataPath());
+    if (path.empty())
+        return false;
+    if (base::DirectoryExists(path))
+        return true;
+
+    base::File::Error error;
+    if (base::CreateDirectoryAndGetError(path, &error))
+        return true;
+
+    std::string errorstr = base::File::ErrorToString(error);
+    qWarning("Cannot create directory %s. Error: %s.", path.AsUTF8Unsafe().c_str(),
+             errorstr.c_str());
+    return false;
 }
 
 VisitedLinksManagerQt *ProfileAdapter::visitedLinksManager()
@@ -212,9 +208,9 @@ void ProfileAdapter::removeClient(ProfileAdapterClient *adapterClient)
     m_clients.removeOne(adapterClient);
 }
 
-void ProfileAdapter::cancelDownload(quint32 downloadId)
+bool ProfileAdapter::cancelDownload(quint32 downloadId)
 {
-    downloadManagerDelegate()->cancelDownload(downloadId);
+    return downloadManagerDelegate()->cancelDownload(downloadId);
 }
 
 void ProfileAdapter::pauseDownload(quint32 downloadId)
@@ -260,7 +256,7 @@ QString ProfileAdapter::dataPath() const
         name = QStringLiteral("OffTheRecord");
     else if (m_name.isEmpty())
         name = QStringLiteral("UnknownProfile");
-    return buildLocationFromStandardPath(QStandardPaths::writableLocation(QStandardPaths::DataLocation), name);
+    return buildLocationFromStandardPath(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation), name);
 }
 
 void ProfileAdapter::setDataPath(const QString &path)
@@ -269,10 +265,15 @@ void ProfileAdapter::setDataPath(const QString &path)
         return;
     m_dataPath = path;
     m_profile->setupPrefService();
+    m_profile->setupPermissionsManager();
+    m_profile->setupStoragePath();
     if (!m_profile->m_profileIOData->isClearHttpCacheInProgress())
         m_profile->m_profileIOData->resetNetworkContext();
     if (!m_offTheRecord && m_visitedLinksManager)
         resetVisitedLinksManager();
+
+    if (!m_offTheRecord)
+        reinitializeHistoryService();
 }
 
 void ProfileAdapter::setDownloadPath(const QString &path)
@@ -327,13 +328,16 @@ void ProfileAdapter::setHttpUserAgent(const QString &userAgent)
 
     std::vector<content::WebContentsImpl *> list = content::WebContentsImpl::GetAllWebContents();
     for (content::WebContentsImpl *web_contents : list)
-        if (web_contents->GetBrowserContext() == m_profile.data())
-            web_contents->SetUserAgentOverride(blink::UserAgentOverride::UserAgentOnly(stdUserAgent), true);
+        if (web_contents->GetBrowserContext() == m_profile.data()) {
+            auto userAgentOverride = blink::UserAgentOverride::UserAgentOnly(stdUserAgent);
+            userAgentOverride.ua_metadata_override = m_profile->m_userAgentMetadata;
+            web_contents->SetUserAgentOverride(userAgentOverride, true);
+        }
 
-    content::BrowserContext::ForEachStoragePartition(
-        m_profile.get(), base::BindRepeating([](const std::string &user_agent, content::StoragePartition *storage_partition) {
-                                                 storage_partition->GetNetworkContext()->SetUserAgent(user_agent);
-                                             }, stdUserAgent));
+    m_profile->ForEachLoadedStoragePartition(
+            [stdUserAgent](content::StoragePartition *storage_partition) {
+                storage_partition->GetNetworkContext()->SetUserAgent(stdUserAgent);
+            });
 }
 
 ProfileAdapter::HttpCacheType ProfileAdapter::httpCacheType() const
@@ -353,8 +357,6 @@ void ProfileAdapter::setHttpCacheType(ProfileAdapter::HttpCacheType newhttpCache
         return;
     if (!m_offTheRecord && !m_profile->m_profileIOData->isClearHttpCacheInProgress()) {
         m_profile->m_profileIOData->resetNetworkContext();
-        if (m_httpCacheType == NoCache)
-            clearHttpCache();
     }
 }
 
@@ -373,6 +375,24 @@ void ProfileAdapter::setPersistentCookiesPolicy(ProfileAdapter::PersistentCookie
         return;
     if (!m_offTheRecord && !m_profile->m_profileIOData->isClearHttpCacheInProgress())
         m_profile->m_profileIOData->resetNetworkContext();
+}
+
+ProfileAdapter::PersistentPermissionsPolicy ProfileAdapter::persistentPermissionsPolicy() const
+{
+    if (m_persistentPermissionsPolicy == PersistentPermissionsPolicy::AskEveryTime)
+        return PersistentPermissionsPolicy::AskEveryTime;
+    if (isOffTheRecord() || m_name.isEmpty())
+        return PersistentPermissionsPolicy::StoreInMemory;
+    return m_persistentPermissionsPolicy;
+}
+
+void ProfileAdapter::setPersistentPermissionsPolicy(ProfileAdapter::PersistentPermissionsPolicy newPersistentPermissionsPolicy)
+{
+    ProfileAdapter::PersistentPermissionsPolicy oldPolicy = persistentPermissionsPolicy();
+    m_persistentPermissionsPolicy = newPersistentPermissionsPolicy;
+    if (oldPolicy == persistentPermissionsPolicy())
+        return;
+    m_profile->setupPermissionsManager();
 }
 
 ProfileAdapter::VisitedLinksPolicy ProfileAdapter::visitedLinksPolicy() const
@@ -472,10 +492,9 @@ const QList<QByteArray> ProfileAdapter::customUrlSchemes() const
 
 void ProfileAdapter::updateCustomUrlSchemeHandlers()
 {
-    content::BrowserContext::ForEachStoragePartition(
-        m_profile.get(), base::BindRepeating([](content::StoragePartition *storage_partition) {
-                                                 storage_partition->ResetURLLoaderFactories();
-                                             }));
+    m_profile->ForEachLoadedStoragePartition([](content::StoragePartition *storage_partition) {
+        storage_partition->ResetURLLoaderFactories();
+    });
 }
 
 void ProfileAdapter::removeUrlSchemeHandler(QWebEngineUrlSchemeHandler *handler)
@@ -550,14 +569,24 @@ UserResourceControllerHost *ProfileAdapter::userResourceController()
     return m_userResourceController.data();
 }
 
-void ProfileAdapter::permissionRequestReply(const QUrl &origin, PermissionType type, PermissionState reply)
+void ProfileAdapter::setPermission(const QUrl &origin, QWebEnginePermission::PermissionType permissionType,
+    QWebEnginePermission::State state, content::RenderFrameHost *rfh)
 {
-    static_cast<PermissionManagerQt*>(profile()->GetPermissionControllerDelegate())->permissionRequestReply(origin, type, reply);
+    static_cast<PermissionManagerQt*>(profile()->GetPermissionControllerDelegate())->setPermission(origin, permissionType, state, rfh);
 }
 
-bool ProfileAdapter::checkPermission(const QUrl &origin, PermissionType type)
+QWebEnginePermission::State ProfileAdapter::getPermissionState(const QUrl &origin, QWebEnginePermission::PermissionType permissionType,
+    content::RenderFrameHost *rfh)
 {
-    return static_cast<PermissionManagerQt*>(profile()->GetPermissionControllerDelegate())->checkPermission(origin, type);
+    return static_cast<PermissionManagerQt*>(profile()->GetPermissionControllerDelegate())->getPermissionState(origin, permissionType, rfh);
+}
+
+QList<QWebEnginePermission> ProfileAdapter::listPermissions(const QUrl &origin, QWebEnginePermission::PermissionType permissionType)
+{
+    if (persistentPermissionsPolicy() == ProfileAdapter::PersistentPermissionsPolicy::AskEveryTime)
+        return QList<QWebEnginePermission>();
+
+    return static_cast<PermissionManagerQt*>(profile()->GetPermissionControllerDelegate())->listPermissions(origin, permissionType);
 }
 
 QString ProfileAdapter::httpAcceptLanguageWithoutQualities() const
@@ -588,16 +617,120 @@ void ProfileAdapter::setHttpAcceptLanguage(const QString &httpAcceptLanguage)
     std::vector<content::WebContentsImpl *> list = content::WebContentsImpl::GetAllWebContents();
     for (content::WebContentsImpl *web_contents : list) {
         if (web_contents->GetBrowserContext() == m_profile.data()) {
-            blink::mojom::RendererPreferences *rendererPrefs = web_contents->GetMutableRendererPrefs();
+            blink::RendererPreferences *rendererPrefs = web_contents->GetMutableRendererPrefs();
             rendererPrefs->accept_languages = http_accept_language;
             web_contents->SyncRendererPrefs();
         }
     }
 
-    content::BrowserContext::ForEachStoragePartition(
-        m_profile.get(), base::BindRepeating([](std::string accept_language, content::StoragePartition *storage_partition) {
-                                                 storage_partition->GetNetworkContext()->SetAcceptLanguage(accept_language);
-                                             }, http_accept_language));
+    m_profile->ForEachLoadedStoragePartition(
+            [http_accept_language](content::StoragePartition *storage_partition) {
+                storage_partition->GetNetworkContext()->SetAcceptLanguage(http_accept_language);
+            });
+}
+
+QVariant ProfileAdapter::clientHint(ClientHint clientHint) const
+{
+    blink::UserAgentMetadata &userAgentMetadata = m_profile->m_userAgentMetadata;
+    switch (clientHint) {
+    case ProfileAdapter::UAArchitecture:
+        return QVariant(toQString(userAgentMetadata.architecture));
+    case ProfileAdapter::UAPlatform:
+        return QVariant(toQString(userAgentMetadata.platform));
+    case ProfileAdapter::UAModel:
+        return QVariant(toQString(userAgentMetadata.model));
+    case ProfileAdapter::UAMobile:
+        return QVariant(userAgentMetadata.mobile);
+    case ProfileAdapter::UAFullVersion:
+        return QVariant(toQString(userAgentMetadata.full_version));
+    case ProfileAdapter::UAPlatformVersion:
+        return QVariant(toQString(userAgentMetadata.platform_version));
+    case ProfileAdapter::UABitness:
+        return QVariant(toQString(userAgentMetadata.bitness));
+    case ProfileAdapter::UAFullVersionList: {
+            QJsonObject ret;
+            for (const auto &value : userAgentMetadata.brand_full_version_list)
+                ret.insert(toQString(value.brand), QJsonValue(toQString(value.version)));
+            return QVariant(ret);
+        }
+    case ProfileAdapter::UAWOW64:
+        return QVariant(userAgentMetadata.wow64);
+    default:
+        return QVariant();
+    }
+}
+
+void ProfileAdapter::setClientHint(ClientHint clientHint, const QVariant &value)
+{
+    blink::UserAgentMetadata &userAgentMetadata = m_profile->m_userAgentMetadata;
+    switch (clientHint) {
+    case ProfileAdapter::UAArchitecture:
+        userAgentMetadata.architecture = value.toString().toStdString();
+        break;
+    case ProfileAdapter::UAPlatform:
+        userAgentMetadata.platform = value.toString().toStdString();
+        break;
+    case ProfileAdapter::UAModel:
+        userAgentMetadata.model = value.toString().toStdString();
+        break;
+    case ProfileAdapter::UAMobile:
+        userAgentMetadata.mobile = value.toBool();
+        break;
+    case ProfileAdapter::UAFullVersion:
+        userAgentMetadata.full_version = value.toString().toStdString();
+        break;
+    case ProfileAdapter::UAPlatformVersion:
+        userAgentMetadata.platform_version = value.toString().toStdString();
+        break;
+    case ProfileAdapter::UABitness:
+        userAgentMetadata.bitness = value.toString().toStdString();
+        break;
+    case ProfileAdapter::UAFullVersionList: {
+        userAgentMetadata.brand_full_version_list.clear();
+        QJsonObject fullVersionList = value.toJsonObject();
+        for (const QString &key : fullVersionList.keys())
+            userAgentMetadata.brand_full_version_list.push_back({
+                key.toStdString(),
+                fullVersionList.value(key).toString().toStdString()
+            });
+        break;
+    }
+    case ProfileAdapter::UAWOW64:
+        userAgentMetadata.wow64 = value.toBool();
+        break;
+    default:
+        break;
+    }
+
+    std::vector<content::WebContentsImpl *> list = content::WebContentsImpl::GetAllWebContents();
+    for (content::WebContentsImpl *web_contents : list) {
+        if (web_contents->GetBrowserContext() == m_profile.data()) {
+            web_contents->GetMutableRendererPrefs()->user_agent_override.ua_metadata_override = userAgentMetadata;
+            web_contents->SyncRendererPrefs();
+        }
+    }
+}
+
+bool ProfileAdapter::clientHintsEnabled()
+{
+    return m_clientHintsEnabled;
+}
+
+void ProfileAdapter::setClientHintsEnabled(bool enabled)
+{
+    m_clientHintsEnabled = enabled;
+}
+
+void ProfileAdapter::resetClientHints()
+{
+    m_profile->m_userAgentMetadata = embedder_support::GetUserAgentMetadata();
+    std::vector<content::WebContentsImpl *> list = content::WebContentsImpl::GetAllWebContents();
+    for (content::WebContentsImpl *web_contents : list) {
+        if (web_contents->GetBrowserContext() == m_profile.data()) {
+            web_contents->GetMutableRendererPrefs()->user_agent_override.ua_metadata_override = m_profile->m_userAgentMetadata;
+            web_contents->SyncRendererPrefs();
+        }
+    }
 }
 
 void ProfileAdapter::clearHttpCache()
@@ -637,6 +770,16 @@ bool ProfileAdapter::isSpellCheckEnabled() const
 #endif
 }
 
+bool ProfileAdapter::pushServiceEnabled() const
+{
+  return m_pushServiceEnabled;
+}
+
+void ProfileAdapter::setPushServiceEnabled(bool enabled)
+{
+    m_pushServiceEnabled = enabled;
+}
+
 void ProfileAdapter::addWebContentsAdapterClient(WebContentsAdapterClient *client)
 {
     m_webContentsAdapterClients.append(client);
@@ -647,41 +790,30 @@ void ProfileAdapter::removeWebContentsAdapterClient(WebContentsAdapterClient *cl
     m_webContentsAdapterClients.removeAll(client);
 }
 
+void ProfileAdapter::releaseAllWebContentsAdapterClients()
+{
+    while (!m_webContentsAdapterClients.isEmpty())
+        m_webContentsAdapterClients.first()->releaseProfile();
+}
+
 void ProfileAdapter::resetVisitedLinksManager()
 {
     m_visitedLinksManager.reset(new VisitedLinksManagerQt(m_profile.data(), persistVisitedLinks()));
 }
 
-void ProfileAdapter::setUseForGlobalCertificateVerification(bool enable)
+void ProfileAdapter::reinitializeHistoryService()
 {
-    if (m_usedForGlobalCertificateVerification == enable)
-        return;
-
-    m_usedForGlobalCertificateVerification = enable;
-    if (enable) {
-        if (s_profileForGlobalCertificateVerification) {
-            s_profileForGlobalCertificateVerification->m_usedForGlobalCertificateVerification = false;
-            for (auto *client : qAsConst(s_profileForGlobalCertificateVerification->m_clients))
-                client->useForGlobalCertificateVerificationChanged();
-        } else {
-            // OCSP enabled
-            for (auto adapter : qAsConst(WebEngineContext::current()->m_profileAdapters))
-                adapter->m_profile->m_profileIOData->resetNetworkContext();
-        }
-        s_profileForGlobalCertificateVerification = this;
+    Q_ASSERT(!m_offTheRecord);
+    if (ensureDataPathExists()) {
+        favicon::FaviconService *faviconService =
+                FaviconServiceFactoryQt::GetForBrowserContext(m_profile.data());
+        history::HistoryService *historyService = static_cast<history::HistoryService *>(
+                HistoryServiceFactoryQt::GetInstance()->GetForBrowserContext(m_profile.data()));
+        Q_ASSERT(historyService);
+        faviconService->SetHistoryService(historyService);
     } else {
-        Q_ASSERT(s_profileForGlobalCertificateVerification);
-        Q_ASSERT(s_profileForGlobalCertificateVerification == this);
-        s_profileForGlobalCertificateVerification = nullptr;
-        // OCSP disabled
-        for (auto adapter : qAsConst(WebEngineContext::current()->m_profileAdapters))
-            adapter->m_profile->m_profileIOData->resetNetworkContext();
+        qWarning("Favicon database is not available for this profile.");
     }
-}
-
-bool ProfileAdapter::isUsedForGlobalCertificateVerification() const
-{
-    return m_usedForGlobalCertificateVerification;
 }
 
 QString ProfileAdapter::determineDownloadPath(const QString &downloadDirectory, const QString &suggestedFilename, const time_t &startTime)
@@ -690,7 +822,11 @@ QString ProfileAdapter::determineDownloadPath(const QString &downloadDirectory, 
     QString suggestedFilePath = suggestedFile.absoluteFilePath();
     base::FilePath tmpFilePath(toFilePath(suggestedFilePath).NormalizePathSeparatorsTo('/'));
 
-    int uniquifier = base::GetUniquePathNumber(tmpFilePath);
+    int uniquifier = 0;
+    {
+        base::ScopedAllowBlocking allowBlock;
+        uniquifier = base::GetUniquePathNumber(tmpFilePath);
+    }
     if (uniquifier > 0)
         suggestedFilePath = toQt(tmpFilePath.InsertBeforeExtensionASCII(base::StringPrintf(" (%d)", uniquifier)).AsUTF8Unsafe());
     else if (uniquifier == -1) {
@@ -713,5 +849,102 @@ QWebEngineClientCertificateStore *ProfileAdapter::clientCertificateStore()
     return m_clientCertificateStore;
 }
 #endif
+
+static void callbackOnIconAvailableForPageURL(std::function<void (const QIcon &, const QUrl &, const QUrl &)> iconAvailableCallback,
+                                              const QUrl &pageUrl,
+                                              const favicon_base::FaviconRawBitmapResult &result)
+{
+    if (!result.is_valid()) {
+        iconAvailableCallback(QIcon(), toQt(result.icon_url), pageUrl);
+        return;
+    }
+    QPixmap pixmap(toQt(result.pixel_size));
+    pixmap.loadFromData(result.bitmap_data->data(), result.bitmap_data->size());
+    iconAvailableCallback(QIcon(pixmap), toQt(result.icon_url), pageUrl);
+}
+
+void ProfileAdapter::requestIconForPageURL(const QUrl &pageUrl,
+                                           int desiredSizeInPixel,
+                                           bool touchIconsEnabled,
+                                           std::function<void (const QIcon &, const QUrl &, const QUrl &)> iconAvailableCallback)
+{
+    DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+    favicon::FaviconService *service = FaviconServiceFactoryQt::GetForBrowserContext(m_profile.data());
+
+    if (!service->HistoryService()) {
+        callbackOnIconAvailableForPageURL(iconAvailableCallback, pageUrl,
+                                          favicon_base::FaviconRawBitmapResult());
+        return;
+    }
+
+    favicon_base::IconTypeSet types = { favicon_base::IconType::kFavicon };
+    if (touchIconsEnabled) {
+        types.insert(favicon_base::IconType::kTouchIcon);
+        types.insert(favicon_base::IconType::kTouchPrecomposedIcon);
+        types.insert(favicon_base::IconType::kWebManifestIcon);
+    }
+    service->GetRawFaviconForPageURL(
+            toGurl(pageUrl), types, desiredSizeInPixel, true /* fallback_to_host */,
+            base::BindOnce(&callbackOnIconAvailableForPageURL, iconAvailableCallback, pageUrl),
+            m_cancelableTaskTracker.get());
+}
+
+static void callbackOnIconAvailableForIconURL(std::function<void (const QIcon &, const QUrl &)> iconAvailableCallback,
+                                              ProfileAdapter *profileAdapter,
+                                              const QUrl &iconUrl, int iconType,
+                                              int desiredSizeInPixel,
+                                              bool touchIconsEnabled,
+                                              const favicon_base::FaviconRawBitmapResult &result)
+{
+    if (!result.is_valid()) {
+        // If touch icons are disabled there is no need to try further icon types.
+        if (!touchIconsEnabled) {
+            iconAvailableCallback(QIcon(), iconUrl);
+            return;
+        }
+        if (static_cast<favicon_base::IconType>(iconType) != favicon_base::IconType::kMax) {
+            //Q_ASSERT(profileAdapter->profile());
+            favicon::FaviconService *service = FaviconServiceFactoryQt::GetForBrowserContext(profileAdapter->profile());
+            service->GetRawFavicon(toGurl(iconUrl),
+                                   static_cast<favicon_base::IconType>(iconType + 1),
+                                   desiredSizeInPixel,
+                                   base::BindOnce(&callbackOnIconAvailableForIconURL, iconAvailableCallback,
+                                                  profileAdapter, iconUrl, iconType + 1, desiredSizeInPixel,
+                                                  touchIconsEnabled),
+                                   profileAdapter->cancelableTaskTracker());
+            return;
+        }
+        iconAvailableCallback(QIcon(), iconUrl);
+        return;
+    }
+    QPixmap pixmap(toQt(result.pixel_size));
+    pixmap.loadFromData(result.bitmap_data->data(), result.bitmap_data->size());
+    iconAvailableCallback(QIcon(pixmap), toQt(result.icon_url));
+}
+
+void ProfileAdapter::requestIconForIconURL(const QUrl &iconUrl,
+                                           int desiredSizeInPixel,
+                                           bool touchIconsEnabled,
+                                           std::function<void (const QIcon &, const QUrl &)> iconAvailableCallback)
+{
+    DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+    favicon::FaviconService *service = FaviconServiceFactoryQt::GetForBrowserContext(m_profile.data());
+
+    if (!service->HistoryService()) {
+        callbackOnIconAvailableForIconURL(iconAvailableCallback,
+                                          this,
+                                          iconUrl,
+                                          static_cast<int>(favicon_base::IconType::kMax), 0,
+                                          touchIconsEnabled,
+                                          favicon_base::FaviconRawBitmapResult());
+        return;
+    }
+    service->GetRawFavicon(
+            toGurl(iconUrl), favicon_base::IconType::kFavicon, desiredSizeInPixel,
+            base::BindOnce(&callbackOnIconAvailableForIconURL, iconAvailableCallback, this, iconUrl,
+                           static_cast<int>(favicon_base::IconType::kFavicon), desiredSizeInPixel,
+                           touchIconsEnabled),
+            m_cancelableTaskTracker.get());
+}
 
 } // namespace QtWebEngineCore

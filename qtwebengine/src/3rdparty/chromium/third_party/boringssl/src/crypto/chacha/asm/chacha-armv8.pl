@@ -43,7 +43,7 @@ $0 =~ m/(.*[\/\\])[^\/\\]+$/; $dir=$1;
 ( $xlate="${dir}../../perlasm/arm-xlate.pl" and -f $xlate) or
 die "can't locate arm-xlate.pl";
 
-open OUT,"| \"$^X\" $xlate $flavour $output";
+open OUT,"| \"$^X\" \"$xlate\" $flavour \"$output\"";
 *STDOUT=*OUT;
 
 sub AUTOLOAD()		# thunk [simplified] x86-style perlasm
@@ -122,8 +122,6 @@ my ($a3,$b3,$c3,$d3)=map(($_&~3)+(($_+1)&3),($a2,$b2,$c2,$d2));
 $code.=<<___;
 #include <openssl/arm_arch.h>
 
-.extern	OPENSSL_armcap_P
-
 .section .rodata
 
 .align	5
@@ -135,24 +133,10 @@ $code.=<<___;
 
 .text
 
-.globl	ChaCha20_ctr32
-.type	ChaCha20_ctr32,%function
+.globl	ChaCha20_ctr32_nohw
+.type	ChaCha20_ctr32_nohw,%function
 .align	5
-ChaCha20_ctr32:
-	AARCH64_VALID_CALL_TARGET
-	cbz	$len,.Labort
-#if __has_feature(hwaddress_sanitizer) && __clang_major__ >= 10
-	adrp	@x[0],:pg_hi21_nc:OPENSSL_armcap_P
-#else
-	adrp	@x[0],:pg_hi21:OPENSSL_armcap_P
-#endif
-	cmp	$len,#192
-	b.lo	.Lshort
-	ldr	w17,[@x[0],:lo12:OPENSSL_armcap_P]
-	tst	w17,#ARMV7_NEON
-	b.ne	ChaCha20_neon
-
-.Lshort:
+ChaCha20_ctr32_nohw:
 	AARCH64_SIGN_LINK_REGISTER
 	stp	x29,x30,[sp,#-96]!
 	add	x29,sp,#0
@@ -170,7 +154,7 @@ ChaCha20_ctr32:
 	ldp	@d[2],@d[3],[$key]		// load key
 	ldp	@d[4],@d[5],[$key,#16]
 	ldp	@d[6],@d[7],[$ctr]		// load counter
-#ifdef	__ARMEB__
+#ifdef	__AARCH64EB__
 	ror	@d[2],@d[2],#32
 	ror	@d[3],@d[3],#32
 	ror	@d[4],@d[4],#32
@@ -239,7 +223,7 @@ $code.=<<___;
 	add	@x[14],@x[14],@x[15],lsl#32
 	ldp	@x[13],@x[15],[$inp,#48]
 	add	$inp,$inp,#64
-#ifdef	__ARMEB__
+#ifdef	__AARCH64EB__
 	rev	@x[0],@x[0]
 	rev	@x[2],@x[2]
 	rev	@x[4],@x[4]
@@ -275,7 +259,6 @@ $code.=<<___;
 	ldp	x27,x28,[x29,#80]
 	ldp	x29,x30,[sp],#96
 	AARCH64_VALIDATE_LINK_REGISTER
-.Labort:
 	ret
 
 .align	4
@@ -296,7 +279,7 @@ $code.=<<___;
 	add	@x[10],@x[10],@x[11],lsl#32
 	add	@x[12],@x[12],@x[13],lsl#32
 	add	@x[14],@x[14],@x[15],lsl#32
-#ifdef	__ARMEB__
+#ifdef	__AARCH64EB__
 	rev	@x[0],@x[0]
 	rev	@x[2],@x[2]
 	rev	@x[4],@x[4]
@@ -333,7 +316,7 @@ $code.=<<___;
 	ldp	x29,x30,[sp],#96
 	AARCH64_VALIDATE_LINK_REGISTER
 	ret
-.size	ChaCha20_ctr32,.-ChaCha20_ctr32
+.size	ChaCha20_ctr32_nohw,.-ChaCha20_ctr32_nohw
 ___
 
 {{{
@@ -374,9 +357,10 @@ my ($a,$b,$c,$d,$t)=@_;
 
 $code.=<<___;
 
-.type	ChaCha20_neon,%function
+.globl	ChaCha20_ctr32_neon
+.type	ChaCha20_ctr32_neon,%function
 .align	5
-ChaCha20_neon:
+ChaCha20_ctr32_neon:
 	AARCH64_SIGN_LINK_REGISTER
 	stp	x29,x30,[sp,#-96]!
 	add	x29,sp,#0
@@ -401,7 +385,7 @@ ChaCha20_neon:
 	ldp	@d[6],@d[7],[$ctr]		// load counter
 	ld1	{@K[3]},[$ctr]
 	ld1	{$ONE},[@x[0]]
-#ifdef	__ARMEB__
+#ifdef	__AARCH64EB__
 	rev64	@K[0],@K[0]
 	ror	@d[2],@d[2],#32
 	ror	@d[3],@d[3],#32
@@ -518,7 +502,7 @@ $code.=<<___;
 	add	@x[14],@x[14],@x[15],lsl#32
 	ldp	@x[13],@x[15],[$inp,#48]
 	add	$inp,$inp,#64
-#ifdef	__ARMEB__
+#ifdef	__AARCH64EB__
 	rev	@x[0],@x[0]
 	rev	@x[2],@x[2]
 	rev	@x[4],@x[4]
@@ -598,7 +582,7 @@ $code.=<<___;
 	add	@x[14],@x[14],@x[15],lsl#32
 	ldp	@x[13],@x[15],[$inp,#48]
 	add	$inp,$inp,#64
-#ifdef	__ARMEB__
+#ifdef	__AARCH64EB__
 	rev	@x[0],@x[0]
 	rev	@x[2],@x[2]
 	rev	@x[4],@x[4]
@@ -689,7 +673,7 @@ $code.=<<___;
 	ldp	x29,x30,[sp],#96
 	AARCH64_VALIDATE_LINK_REGISTER
 	ret
-.size	ChaCha20_neon,.-ChaCha20_neon
+.size	ChaCha20_ctr32_neon,.-ChaCha20_ctr32_neon
 ___
 {
 my ($T0,$T1,$T2,$T3,$T4,$T5)=@K;
@@ -723,7 +707,7 @@ ChaCha20_512_neon:
 	ldp	@d[6],@d[7],[$ctr]		// load counter
 	ld1	{@K[3]},[$ctr]
 	ld1	{$ONE},[@x[0]]
-#ifdef	__ARMEB__
+#ifdef	__AARCH64EB__
 	rev64	@K[0],@K[0]
 	ror	@d[2],@d[2],#32
 	ror	@d[3],@d[3],#32
@@ -865,7 +849,7 @@ $code.=<<___;
 	add	@x[14],@x[14],@x[15],lsl#32
 	ldp	@x[13],@x[15],[$inp,#48]
 	add	$inp,$inp,#64
-#ifdef	__ARMEB__
+#ifdef	__AARCH64EB__
 	rev	@x[0],@x[0]
 	rev	@x[2],@x[2]
 	rev	@x[4],@x[4]
@@ -1006,7 +990,7 @@ $code.=<<___;
 	add	$inp,$inp,#64
 	 add	$B5,$B5,@K[1]
 
-#ifdef	__ARMEB__
+#ifdef	__AARCH64EB__
 	rev	@x[0],@x[0]
 	rev	@x[2],@x[2]
 	rev	@x[4],@x[4]
@@ -1140,4 +1124,4 @@ foreach (split("\n",$code)) {
 
 	print $_,"\n";
 }
-close STDOUT or die "error closing STDOUT";	# flush
+close STDOUT or die "error closing STDOUT: $!";	# flush

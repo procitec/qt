@@ -23,7 +23,8 @@ def root_path():
     if path.basename(PARENT_PATH) == 'renderer':
         # Chromium repository
         return path.dirname(path.dirname(path.dirname(PARENT_PATH)))
-    elif path.basename(PARENT_PATH) == 'devtools-frontend':
+    elif path.basename(PARENT_PATH) == 'devtools-frontend' or path.basename(
+            PARENT_PATH) == 'devtools-frontend-internal':
         # External repository, integrated build
         return path.dirname(path.dirname(PARENT_PATH))
     else:
@@ -80,10 +81,6 @@ def mocha_path():
     return path.join(node_modules_path(), 'mocha', 'bin', 'mocha')
 
 
-def check_localizable_resources_path():
-    return path.join(devtools_root_path(), 'scripts', 'localization', 'check_localizable_resources.js')
-
-
 def karma_path():
     return path.join(node_modules_path(), 'karma', 'bin', 'karma')
 
@@ -96,13 +93,22 @@ def hosted_mode_script_path():
     return path.join(devtools_root_path(), 'scripts', 'hosted_mode', 'server.js')
 
 
+def esbuild_path():
+    return path.join(devtools_root_path(), 'third_party', 'esbuild', 'esbuild')
+
+
 def downloaded_chrome_binary_path():
-    return path.abspath(path.join(
-    *{
-        'Linux': (devtools_root_path(), 'third_party', 'chrome', 'chrome-linux', 'chrome'),
-        'Darwin': (devtools_root_path(), 'third_party', 'chrome', 'chrome-mac', 'Chromium.app', 'Contents', 'MacOS', 'Chromium'),
-        'Windows': (devtools_root_path(), 'third_party', 'chrome', 'chrome-win', 'chrome.exe'),
-    }[platform.system()]))
+    return path.abspath(
+        path.join(
+            *{
+                'Linux': (devtools_root_path(), 'third_party', 'chrome',
+                          'chrome-linux', 'chrome'),
+                'Darwin': (devtools_root_path(), 'third_party', 'chrome',
+                           'chrome-mac', 'Google Chrome for Testing.app',
+                           'Contents', 'MacOS', 'Google Chrome for Testing'),
+                'Windows': (devtools_root_path(), 'third_party', 'chrome',
+                            'chrome-win', 'chrome.exe'),
+            }[platform.system()]))
 
 
 def license_checker_path():

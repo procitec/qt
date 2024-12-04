@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -28,7 +28,7 @@ void DamageFrameAnnotator::AnnotateAggregatedFrame(AggregatedFrame* frame) {
 
   annotations_.push_back(
       AnnotationData{gfx::Rect(damage_rect.size()), transform,
-                     Highlight{SkColorSetARGB(128, 255, 0, 0), 4}});
+                     Highlight{SkColor4f{1.0, 0, 0, 0.5}, 4}});
 
   AnnotateRootRenderPass(root_render_pass);
   annotations_.clear();
@@ -53,8 +53,10 @@ void DamageFrameAnnotator::AnnotateRootRenderPass(
     SharedQuadState* new_sqs = render_pass->shared_quad_state_list
                                    .AllocateAndConstruct<SharedQuadState>();
     new_sqs->SetAll(annotation.transform, output_rect, output_rect,
-                    gfx::RRectF(), output_rect, true, false, 1.f,
-                    SkBlendMode::kSrcOver, 0);
+                    gfx::MaskFilterInfo(), output_rect,
+                    /*contents_opaque=*/false, /*opacity_f=*/1.f,
+                    SkBlendMode::kSrcOver, /*sorting_context=*/0,
+                    /*layer_id=*/0u, /*fast_rounded_corner=*/false);
 
     DebugBorderDrawQuad* new_quad =
         static_cast<DebugBorderDrawQuad*>(*quad_iter);

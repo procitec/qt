@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,15 +7,19 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <algorithm>
 #include <utility>
 
 #include "base/containers/adapters.h"
+#include "base/containers/cxx20_erase.h"
 #include "base/containers/queue.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/threading/sequenced_task_runner_handle.h"
+#include "base/observer_list.h"
+#include "base/ranges/algorithm.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/time/default_tick_clock.h"
+#include "base/trace_event/trace_event.h"
+#include "components/viz/common/features.h"
 #include "components/viz/common/surfaces/parent_local_surface_id_allocator.h"
 #include "components/viz/common/surfaces/surface_info.h"
 #include "components/viz/service/surfaces/surface.h"
@@ -30,24 +34,33 @@
 namespace viz {
 namespace {
 
-const char kUmaAliveSurfaces[] = "Compositing.SurfaceManager.AliveSurfaces";
+constexpr base::TimeDelta kExpireInterval = base::Seconds(10);
 
-constexpr base::TimeDelta kExpireInterval = base::TimeDelta::FromSeconds(10);
+SurfaceObserver::HandleInteraction GetHandleInteraction(
+    const CompositorFrameMetadata& metadata) {
+  if (metadata.is_handling_interaction) {
+    return SurfaceObserver::HandleInteraction::kYes;
+  } else {
+    return SurfaceObserver::HandleInteraction::kNo;
+  }
+}
 
 }  // namespace
 
 SurfaceManager::SurfaceManager(
     SurfaceManagerDelegate* delegate,
-    base::Optional<uint32_t> activation_deadline_in_frames)
+    absl::optional<uint32_t> activation_deadline_in_frames,
+    size_t max_uncommitted_frames)
     : delegate_(delegate),
       activation_deadline_in_frames_(activation_deadline_in_frames),
       root_surface_id_(FrameSinkId(0u, 0u),
                        LocalSurfaceId(1u, base::UnguessableToken::Create())),
-      tick_clock_(base::DefaultTickClock::GetInstance()) {
+      tick_clock_(base::DefaultTickClock::GetInstance()),
+      max_uncommitted_frames_(max_uncommitted_frames) {
   thread_checker_.DetachFromThread();
 
   // Android WebView doesn't have a task runner and doesn't need the timer.
-  if (base::SequencedTaskRunnerHandle::IsSet())
+  if (base::SequencedTaskRunner::HasCurrentDefault())
     expire_timer_.emplace();
 }
 
@@ -86,7 +99,7 @@ std::string SurfaceManager::SurfaceReferencesToString() {
 #endif
 
 void SurfaceManager::SetActivationDeadlineInFramesForTesting(
-    base::Optional<uint32_t> activation_deadline_in_frames) {
+    absl::optional<uint32_t> activation_deadline_in_frames) {
   activation_deadline_in_frames_ = activation_deadline_in_frames;
 }
 
@@ -113,8 +126,9 @@ Surface* SurfaceManager::CreateSurface(
   if (!allocation_group)
     return nullptr;
 
-  std::unique_ptr<Surface> surface = std::make_unique<Surface>(
-      surface_info, this, allocation_group, surface_client);
+  std::unique_ptr<Surface> surface =
+      std::make_unique<Surface>(surface_info, this, allocation_group,
+                                surface_client, max_uncommitted_frames_);
   surface->SetDependencyDeadline(
       std::make_unique<SurfaceDependencyDeadline>(tick_clock_));
   surface_map_[surface_info.id()] = std::move(surface);
@@ -134,7 +148,7 @@ void SurfaceManager::MarkSurfaceForDestruction(const SurfaceId& surface_id) {
   DCHECK(surface_map_.count(surface_id));
   for (auto& observer : observer_list_)
     observer.OnSurfaceMarkedForDestruction(surface_id);
-  surfaces_to_destroy_.insert(surface_id);
+  surfaces_to_destroy_.emplace(surface_id, base::TimeTicks::Now());
 }
 
 void SurfaceManager::InvalidateFrameSinkId(const FrameSinkId& frame_sink_id) {
@@ -185,18 +199,13 @@ void SurfaceManager::GarbageCollectSurfaces() {
   }
 
   SurfaceIdSet reachable_surfaces = GetLiveSurfaces();
-
-  // Log the number of reachable surfaces after a garbage collection.
-  UMA_HISTOGRAM_CUSTOM_COUNTS(kUmaAliveSurfaces, reachable_surfaces.size(), 1,
-                              200, 50);
-
-  std::vector<SurfaceId> surfaces_to_delete;
+  base::flat_map<SurfaceId, base::TimeTicks> surfaces_to_delete;
 
   // Delete all destroyed and unreachable surfaces.
   for (auto iter = surfaces_to_destroy_.begin();
        iter != surfaces_to_destroy_.end();) {
-    if (reachable_surfaces.count(*iter) == 0) {
-      surfaces_to_delete.push_back(*iter);
+    if (reachable_surfaces.count(iter->first) == 0) {
+      surfaces_to_delete.insert(*iter);
       iter = surfaces_to_destroy_.erase(iter);
     } else {
       ++iter;
@@ -204,8 +213,12 @@ void SurfaceManager::GarbageCollectSurfaces() {
   }
 
   // ~Surface() draw callback could modify |surfaces_to_destroy_|.
-  for (const SurfaceId& surface_id : surfaces_to_delete)
-    DestroySurfaceInternal(surface_id);
+  for (const auto& iter : surfaces_to_delete) {
+    base::TimeDelta delta = base::TimeTicks::Now() - iter.second;
+    UMA_HISTOGRAM_TIMES(
+        "Compositing.SurfaceManager.MarkForDestructionToDestroy", delta);
+    DestroySurfaceInternal(iter.first);
+  }
 
   // Run another pass over surfaces_to_delete, all of which have just been
   // deleted, making sure they are not present in |surfaces_to_destroy_|. This
@@ -215,8 +228,9 @@ void SurfaceManager::GarbageCollectSurfaces() {
   // GarbageCollectSurfaces re-entrancy, which is exercised in tests and is
   // hard to prove can't happen in the wild. Evaluate whether we should allow
   // re-entrancy, and if not just remove here.
-  for (const SurfaceId& surface_id : surfaces_to_delete)
-    surfaces_to_destroy_.erase(surface_id);
+  for (const auto& iter : surfaces_to_delete) {
+    surfaces_to_destroy_.erase(iter.first);
+  }
 
   MaybeGarbageCollectAllocationGroups();
 }
@@ -352,20 +366,21 @@ void SurfaceManager::RemoveTemporaryReferenceImpl(const SurfaceId& surface_id,
   std::vector<LocalSurfaceId>& frame_sink_temp_refs =
       temporary_reference_ranges_[frame_sink_id];
 
-  // Find the iterator to the range tracking entry for |surface_id|. Use that
-  // iterator to find the right end iterator for the temporary references we
-  // want to remove.
-  auto end_iter =
-      std::find_if(frame_sink_temp_refs.begin(), frame_sink_temp_refs.end(),
-                   [&surface_id](const LocalSurfaceId& id) {
-                     return id.IsNewerThan(surface_id.local_surface_id());
-                   });
-  auto begin_iter = frame_sink_temp_refs.begin();
+  auto iter = frame_sink_temp_refs.begin();
+  while (iter != frame_sink_temp_refs.end()) {
+    const auto& temp_id = SurfaceId(frame_sink_id, *iter);
+    // SurfaceIDs corresponding to the same FrameSinkId can have different embed
+    // tokens for cross SiteInstanceGroup navigations. Only delete older IDs
+    // with the same embed token as `surface_id`.
+    if (!temp_id.HasSameEmbedTokenAs(surface_id) ||
+        temp_id.IsNewerThan(surface_id)) {
+      ++iter;
+      continue;
+    }
 
-  // Remove temporary references and range tracking information.
-  for (auto iter = begin_iter; iter != end_iter; ++iter)
-    temporary_references_.erase(SurfaceId(frame_sink_id, *iter));
-  frame_sink_temp_refs.erase(begin_iter, end_iter);
+    iter = frame_sink_temp_refs.erase(iter);
+    temporary_references_.erase(temp_id);
+  }
 
   // If last temporary reference is removed for |frame_sink_id| then cleanup
   // range tracking map entry.
@@ -429,6 +444,11 @@ void SurfaceManager::ExpireOldTemporaryReferences() {
 
   for (auto& surface_id : temporary_references_to_delete)
     RemoveTemporaryReferenceImpl(surface_id, RemovedReason::EXPIRED);
+
+  // Some surfaces may have become eligible to garbage collection, since we
+  // just removed temporary references.
+  if (base::FeatureList::IsEnabled(features::kEagerSurfaceGarbageCollection))
+    GarbageCollectSurfaces();
 }
 
 Surface* SurfaceManager::GetSurfaceForId(const SurfaceId& surface_id) const {
@@ -439,12 +459,14 @@ Surface* SurfaceManager::GetSurfaceForId(const SurfaceId& surface_id) const {
   return it->second.get();
 }
 
-bool SurfaceManager::SurfaceModified(const SurfaceId& surface_id,
-                                     const BeginFrameAck& ack) {
+bool SurfaceManager::SurfaceModified(
+    const SurfaceId& surface_id,
+    const BeginFrameAck& ack,
+    SurfaceObserver::HandleInteraction handle_interaction) {
   CHECK(thread_checker_.CalledOnValidThread());
   bool changed = false;
   for (auto& observer : observer_list_)
-    changed |= observer.OnSurfaceDamaged(surface_id, ack);
+    changed |= observer.OnSurfaceDamaged(surface_id, ack, handle_interaction);
   return changed;
 }
 
@@ -455,12 +477,23 @@ void SurfaceManager::FirstSurfaceActivation(const SurfaceInfo& surface_info) {
     observer.OnFirstSurfaceActivation(surface_info);
 }
 
+void SurfaceManager::OnSurfaceHasNewUncommittedFrame(Surface* surface) {
+  for (auto& observer : observer_list_)
+    observer.OnSurfaceHasNewUncommittedFrame(surface->surface_id());
+}
+
 void SurfaceManager::SurfaceActivated(Surface* surface) {
   // Trigger a display frame if necessary.
-  const CompositorFrame& frame = surface->GetActiveFrame();
-  if (!SurfaceModified(surface->surface_id(), frame.metadata.begin_frame_ack)) {
+  const CompositorFrameMetadata& metadata = surface->GetActiveFrameMetadata();
+  if (!SurfaceModified(surface->surface_id(), metadata.begin_frame_ack,
+                       GetHandleInteraction(metadata))) {
     TRACE_EVENT_INSTANT0("viz", "Damage not visible.",
                          TRACE_EVENT_SCOPE_THREAD);
+    surface->SendAckToClient();
+  } else if (HasBlockedEmbedder(surface->surface_id().frame_sink_id())) {
+    // If the Surface is a part of a blocked embedding group, Ack even if it is
+    // modified. This will allow frame production to continue for this client
+    // leading to the group being unblocked.
     surface->SendAckToClient();
   }
 
@@ -627,6 +660,35 @@ bool SurfaceManager::HasBlockedEmbedder(
 void SurfaceManager::AggregatedFrameSinksChanged() {
   if (delegate_)
     delegate_->AggregatedFrameSinksChanged();
+}
+
+void SurfaceManager::CommitFramesInRangeRecursively(
+    const SurfaceRange& range,
+    const CommitPredicate& predicate) {
+  // Technically we need only latest active surface, but because activation will
+  // happen during commit, it's impossible to predict which one will be active,
+  // so we're committing all surfaces in range.
+
+  // If start of the range is in a different allocation group, process it first
+  // to keep activation in order.
+  if (range.start() && range.start()->local_surface_id().embed_token() !=
+                           range.end().local_surface_id().embed_token()) {
+    if (auto* allocation_group =
+            GetAllocationGroupForSurfaceId(*range.start())) {
+      for (Surface* surface : allocation_group->surfaces()) {
+        if (range.IsInRangeInclusive(surface->surface_id()))
+          surface->CommitFramesRecursively(predicate);
+      }
+    }
+  }
+
+  // Process the allocation group of the end of the range.
+  if (auto* allocation_group = GetAllocationGroupForSurfaceId(range.end())) {
+    for (Surface* surface : allocation_group->surfaces()) {
+      if (range.IsInRangeInclusive(surface->surface_id()))
+        surface->CommitFramesRecursively(predicate);
+    }
+  }
 }
 
 }  // namespace viz

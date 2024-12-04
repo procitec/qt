@@ -7,6 +7,7 @@
 
 #include "bench/Benchmark.h"
 #include "include/core/SkCanvas.h"
+#include "include/core/SkPicture.h"
 #include "include/core/SkPictureRecorder.h"
 #include "include/core/SkRRect.h"
 
@@ -21,7 +22,7 @@ private:
     void onDraw(int loops, SkCanvas*) override {
         SkPictureRecorder rec;
 
-        for (int i = 0; i < loops; i++) {
+        for (int loop = 0; loop < loops; loop++) {
             SkCanvas* canvas = rec.beginRecording({0,0, 2000,3000});
 
             SkPaint paint;

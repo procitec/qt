@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,7 +13,6 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/sparse_histogram.h"
 #include "base/numerics/safe_conversions.h"
-#include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/unguessable_token.h"
@@ -80,7 +79,7 @@ const RandomizedEncoder::EncodingInfo* GetEncodingInfo(
 // Get the |i|-th bit of |s| where |i| counts up from the 0-bit of the first
 // character in |s|. It is expected that the caller guarantees that |i| is a
 // valid bit-offset into |s|
-inline uint8_t GetBit(base::StringPiece s, size_t i) {
+inline uint8_t GetBit(std::string_view s, size_t i) {
   DCHECK_LT(i / kBitsPerByte, s.length());
   return static_cast<bool>((s[i / kBitsPerByte]) & (1 << (i % kBitsPerByte)));
 }
@@ -102,11 +101,11 @@ inline void SetBit(size_t i, uint8_t bit_value, std::string* s) {
 // Returns a pseudo-random value of length |encoding_length_in_bytes| that is
 // derived from |secret|, |purpose|, |form_signature|, |field_signature| and
 // |data_type|.
-std::string GetPseudoRandomBits(base::StringPiece secret,
-                                base::StringPiece purpose,
+std::string GetPseudoRandomBits(std::string_view secret,
+                                std::string_view purpose,
                                 FormSignature form_signature,
                                 FieldSignature field_signature,
-                                base::StringPiece data_type,
+                                std::string_view data_type,
                                 int encoding_length_in_bytes) {
   // The purpose and data_type strings are expect to be small semantic
   // identifiers: "noise", "coins", "css_class", "html-name", "html_id", etc.
@@ -129,58 +128,15 @@ std::string GetPseudoRandomBits(base::StringPiece secret,
 // Returns the "random" encoding type to use for encoding.
 AutofillRandomizedValue_EncodingType GetEncodingType(const std::string& seed) {
   DCHECK(!seed.empty());
-  // How many bits should be encoded per byte? This value will determine which
-  // of the encodings are eligible for consideration.
-  const int kDefaultBitsPerByte = 4;
-  const int bits_per_byte =
-      base::FeatureParam<int>(&features::kAutofillMetadataUploads,
-                              switches::kAutofillMetadataUploadEncoding,
-                              kDefaultBitsPerByte)
-          .Get();
 
-  // Depending on the number of bytes to encode per byte, "randomly" select one
-  // of eligible encodings. This "random" selection is persistent in that it is
-  // based directly on the persistent seed.
+  // "Randomly" select one of eligible encodings. This "random" selection is
+  // persistent in that it is based directly on the persistent seed.
   const uint8_t rand_byte = static_cast<uint8_t>(seed.front());
-  int encoding_type_as_int = static_cast<int>(
-      AutofillRandomizedValue_EncodingType_UNSPECIFIED_ENCODING_TYPE);
-  bool config_is_valid = true;
-  switch (bits_per_byte) {
-    case 1:
-      // Sending one bit per byte means sending any encoding from BIT_0 through
-      // BIT_7, which are in numeric order.
-      encoding_type_as_int =
-          static_cast<int>(AutofillRandomizedValue_EncodingType_BIT_0) +
-          (rand_byte % 8);
-      break;
-    default:
-      NOTREACHED();
-      config_is_valid = false;
-      FALLTHROUGH;
-    case 4:
-      // Sending four bits per byte means sending either the EVEN_BITS or
-      // ODD_BITS encoding, which are in numeric order.
-      encoding_type_as_int =
-          static_cast<int>(AutofillRandomizedValue_EncodingType_EVEN_BITS) +
-          (rand_byte % 2);
-      break;
-    case 8:
-      encoding_type_as_int =
-          static_cast<int>(AutofillRandomizedValue_EncodingType_ALL_BITS);
-      break;
-  }
+  // Send either the EVEN_BITS or ODD_BITS.
+  const AutofillRandomizedValue_EncodingType encoding_type =
+      rand_byte % 2 ? AutofillRandomizedValue_EncodingType_ODD_BITS
+                    : AutofillRandomizedValue_EncodingType_EVEN_BITS;
 
-  UMA_HISTOGRAM_BOOLEAN("Autofill.Upload.MetadataConfigIsValid",
-                        config_is_valid);
-  base::SparseHistogram::FactoryGet(
-      "Autofill.Upload.MetadataEncodingType",
-      base::HistogramBase::kUmaTargetedHistogramFlag)
-      ->Add(encoding_type_as_int);
-
-  // Cast back to a valid encoding type value.
-  DCHECK(AutofillRandomizedValue_EncodingType_IsValid(encoding_type_as_int));
-  const auto encoding_type =
-      static_cast<AutofillRandomizedValue_EncodingType>(encoding_type_as_int);
   DCHECK_NE(encoding_type,
             AutofillRandomizedValue_EncodingType_UNSPECIFIED_ENCODING_TYPE);
   return encoding_type;
@@ -217,6 +173,7 @@ const char RandomizedEncoder::FIELD_CSS_CLASS[] = "field-css-classes";
 const char RandomizedEncoder::FIELD_PLACEHOLDER[] = "field-placeholder";
 const char RandomizedEncoder::FIELD_INITIAL_VALUE_HASH[] =
     "field-initial-hash-value";
+const char RandomizedEncoder::FIELD_AUTOCOMPLETE[] = "field-autocomplete";
 
 // Copy of components/unified_consent/pref_names.cc
 // We could not use the constant from components/unified_constants because of a
@@ -230,8 +187,7 @@ const char RandomizedEncoder::kUrlKeyedAnonymizedDataCollectionEnabled[] =
 std::unique_ptr<RandomizedEncoder> RandomizedEncoder::Create(
     PrefService* pref_service) {
   // Early abort if metadata uploads are not enabled.
-  if (!pref_service ||
-      !base::FeatureList::IsEnabled(features::kAutofillMetadataUploads)) {
+  if (!pref_service) {
     return nullptr;
   }
 
@@ -258,8 +214,8 @@ RandomizedEncoder::RandomizedEncoder(
 
 std::string RandomizedEncoder::Encode(FormSignature form_signature,
                                       FieldSignature field_signature,
-                                      base::StringPiece data_type,
-                                      base::StringPiece data_value) const {
+                                      std::string_view data_type,
+                                      std::string_view data_value) const {
   if (!encoding_info_) {
     NOTREACHED();
     return std::string();
@@ -333,7 +289,7 @@ std::string RandomizedEncoder::Encode(FormSignature form_signature,
 std::string RandomizedEncoder::EncodeForTesting(
     FormSignature form_signature,
     FieldSignature field_signature,
-    base::StringPiece data_type,
+    std::string_view data_type,
     base::StringPiece16 data_value) const {
   return Encode(form_signature, field_signature, data_type,
                 base::UTF16ToUTF8(data_value));
@@ -341,7 +297,7 @@ std::string RandomizedEncoder::EncodeForTesting(
 
 std::string RandomizedEncoder::GetCoins(FormSignature form_signature,
                                         FieldSignature field_signature,
-                                        base::StringPiece data_type,
+                                        std::string_view data_type,
                                         int encoding_length_in_bytes) const {
   return GetPseudoRandomBits(seed_, "coins", form_signature, field_signature,
                              data_type, encoding_length_in_bytes);
@@ -350,14 +306,14 @@ std::string RandomizedEncoder::GetCoins(FormSignature form_signature,
 // Get the pseudo-random string to use at the noise bit-field.
 std::string RandomizedEncoder::GetNoise(FormSignature form_signature,
                                         FieldSignature field_signature,
-                                        base::StringPiece data_type,
+                                        std::string_view data_type,
                                         int encoding_length_in_bytes) const {
   return GetPseudoRandomBits(seed_, "noise", form_signature, field_signature,
                              data_type, encoding_length_in_bytes);
 }
 
-int RandomizedEncoder::GetChunkCount(base::StringPiece data_value,
-                                     base::StringPiece data_type) const {
+int RandomizedEncoder::GetChunkCount(std::string_view data_value,
+                                     std::string_view data_type) const {
   if (data_type == RandomizedEncoder::FORM_URL) {
     // ceil(data_value.length / kEncodedChunkLengthInBytes).
     int chunks = (data_value.length() + kEncodedChunkLengthInBytes - 1) /

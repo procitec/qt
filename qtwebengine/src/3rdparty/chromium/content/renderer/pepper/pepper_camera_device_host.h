@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,7 +9,7 @@
 
 #include <memory>
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "content/public/renderer/renderer_ppapi_host.h"
 #include "content/renderer/pepper/ppb_buffer_impl.h"
 #include "ppapi/c/pp_size.h"
@@ -26,6 +26,9 @@ class PepperCameraDeviceHost : public ppapi::host::ResourceHost {
   PepperCameraDeviceHost(RendererPpapiHostImpl* host,
                          PP_Instance instance,
                          PP_Resource resource);
+
+  PepperCameraDeviceHost(const PepperCameraDeviceHost&) = delete;
+  PepperCameraDeviceHost& operator=(const PepperCameraDeviceHost&) = delete;
 
   ~PepperCameraDeviceHost() override;
 
@@ -57,13 +60,11 @@ class PepperCameraDeviceHost : public ppapi::host::ResourceHost {
 
   std::unique_ptr<PepperPlatformCameraDevice> platform_camera_device_;
 
-  RendererPpapiHostImpl* renderer_ppapi_host_;
+  raw_ptr<RendererPpapiHostImpl, ExperimentalRenderer> renderer_ppapi_host_;
 
   ppapi::host::ReplyMessageContext open_reply_context_;
 
   ppapi::host::ReplyMessageContext video_capture_formats_reply_context_;
-
-  DISALLOW_COPY_AND_ASSIGN(PepperCameraDeviceHost);
 };
 
 }  // namespace content

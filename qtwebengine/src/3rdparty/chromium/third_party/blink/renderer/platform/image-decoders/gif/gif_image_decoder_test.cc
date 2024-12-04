@@ -1,39 +1,12 @@
-/*
- * Copyright (C) 2013 Google Inc. All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are
- * met:
- *
- *     * Redistributions of source code must retain the above copyright
- * notice, this list of conditions and the following disclaimer.
- *     * Redistributions in binary form must reproduce the above
- * copyright notice, this list of conditions and the following disclaimer
- * in the documentation and/or other materials provided with the
- * distribution.
- *     * Neither the name of Google Inc. nor the names of its
- * contributors may be used to endorse or promote products derived from
- * this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- */
+// Copyright 2013 The Chromium Authors
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
 
 #include "third_party/blink/renderer/platform/image-decoders/gif/gif_image_decoder.h"
 
 #include <memory>
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/platform/web_data.h"
-#include "third_party/blink/public/platform/web_size.h"
 #include "third_party/blink/renderer/platform/image-decoders/image_decoder_test_helpers.h"
 #include "third_party/blink/renderer/platform/wtf/shared_buffer.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
@@ -46,7 +19,7 @@ const char kWebTestsResourcesDir[] = "web_tests/images/resources";
 
 std::unique_ptr<ImageDecoder> CreateDecoder() {
   return std::make_unique<GIFImageDecoder>(
-      ImageDecoder::kAlphaNotPremultiplied, ColorBehavior::TransformToSRGB(),
+      ImageDecoder::kAlphaNotPremultiplied, ColorBehavior::kTransformToSRGB,
       ImageDecoder::kNoDecodedImageByteLimit);
 }
 
@@ -197,7 +170,7 @@ TEST(GIFImageDecoderTest, allDataReceivedTruncation) {
   decoder->DecodeFrameBufferAtIndex(0);
   EXPECT_FALSE(decoder->Failed());
   decoder->DecodeFrameBufferAtIndex(1);
-  EXPECT_TRUE(decoder->Failed());
+  EXPECT_FALSE(decoder->Failed());
 }
 
 TEST(GIFImageDecoderTest, frameIsComplete) {
@@ -289,11 +262,6 @@ TEST(GIFImageDecoderTest, randomDecodeAfterClearFrameBufferCache) {
       &CreateDecoder, kWebTestsResourcesDir, "animated-10color.gif");
 }
 
-TEST(GIFImageDecoderTest, resumePartialDecodeAfterClearFrameBufferCache) {
-  TestResumePartialDecodeAfterClearFrameBufferCache(
-      &CreateDecoder, kWebTestsResourcesDir, "animated-10color.gif");
-}
-
 // The first LZW codes in the image are invalid values that try to create a loop
 // in the dictionary. Decoding should fail, but not infinitely loop or corrupt
 // memory.
@@ -351,7 +319,7 @@ TEST(GIFImageDecoderTest, firstFrameHasGreaterSizeThanScreenSize) {
           ->CopyAs<Vector<char>>();
 
   std::unique_ptr<ImageDecoder> decoder;
-  IntSize frame_size;
+  gfx::Size frame_size;
 
   // Compute hashes when the file is truncated.
   for (size_t i = 1; i <= full_data.size(); ++i) {
@@ -360,20 +328,27 @@ TEST(GIFImageDecoderTest, firstFrameHasGreaterSizeThanScreenSize) {
         SharedBuffer::Create(full_data.data(), i);
     decoder->SetData(data.get(), i == full_data.size());
 
-    if (decoder->IsSizeAvailable() && !frame_size.Width() &&
-        !frame_size.Height()) {
+    if (decoder->IsSizeAvailable() && !frame_size.width() &&
+        !frame_size.height()) {
       frame_size = decoder->DecodedSize();
       continue;
     }
 
-    ASSERT_EQ(frame_size.Width(), decoder->DecodedSize().Width());
-    ASSERT_EQ(frame_size.Height(), decoder->DecodedSize().Height());
+    ASSERT_EQ(frame_size.width(), decoder->DecodedSize().width());
+    ASSERT_EQ(frame_size.height(), decoder->DecodedSize().height());
   }
 }
 
 TEST(GIFImageDecoderTest, verifyRepetitionCount) {
+  // full2loop.gif has 3 frames (it is an animated GIF) and an explicit loop
+  // count of 2.
   TestRepetitionCount(kWebTestsResourcesDir, "full2loop.gif", 2);
-  TestRepetitionCount(kDecodersTestingDir, "radient.gif", kAnimationNone);
+  // radient.gif has 1 frame (it is a still GIF) and no explicit loop count.
+  // For still images, either kAnimationLoopInfinite or kAnimationNone are
+  // valid and equivalent, in that the pixels on screen do not change over
+  // time. It's arbitrary which one we pick: kAnimationLoopInfinite.
+  TestRepetitionCount(kDecodersTestingDir, "radient.gif",
+                      kAnimationLoopInfinite);
 }
 
 TEST(GIFImageDecoderTest, repetitionCountChangesWhenSeen) {
@@ -389,7 +364,7 @@ TEST(GIFImageDecoderTest, repetitionCountChangesWhenSeen) {
       SharedBuffer::Create(full_data.data(), kTruncatedSize);
 
   std::unique_ptr<ImageDecoder> decoder = std::make_unique<GIFImageDecoder>(
-      ImageDecoder::kAlphaPremultiplied, ColorBehavior::TransformToSRGB(),
+      ImageDecoder::kAlphaPremultiplied, ColorBehavior::kTransformToSRGB,
       ImageDecoder::kNoDecodedImageByteLimit);
 
   decoder->SetData(partial_data.get(), false);
@@ -414,11 +389,11 @@ TEST(GIFImageDecoderTest, bitmapAlphaType) {
 
   std::unique_ptr<ImageDecoder> premul_decoder =
       std::make_unique<GIFImageDecoder>(ImageDecoder::kAlphaPremultiplied,
-                                        ColorBehavior::TransformToSRGB(),
+                                        ColorBehavior::kTransformToSRGB,
                                         ImageDecoder::kNoDecodedImageByteLimit);
   std::unique_ptr<ImageDecoder> unpremul_decoder =
       std::make_unique<GIFImageDecoder>(ImageDecoder::kAlphaNotPremultiplied,
-                                        ColorBehavior::TransformToSRGB(),
+                                        ColorBehavior::kTransformToSRGB,
                                         ImageDecoder::kNoDecodedImageByteLimit);
 
   // Partially decoded frame => the frame alpha type is unknown and should
@@ -457,7 +432,7 @@ namespace {
 class Allocator final : public SkBitmap::Allocator {
   bool allocPixelRef(SkBitmap* dst) override { return dst->tryAllocPixels(); }
 };
-}
+}  // namespace
 
 // Ensure that calling SetMemoryAllocator does not short-circuit
 // InitializeNewFrame.
@@ -475,7 +450,7 @@ TEST(GIFImageDecoderTest, externalAllocator) {
   decoder->SetMemoryAllocator(nullptr);
 
   ASSERT_TRUE(frame);
-  EXPECT_EQ(IntRect(IntPoint(), decoder->Size()), frame->OriginalFrameRect());
+  EXPECT_EQ(gfx::Rect(decoder->Size()), frame->OriginalFrameRect());
   EXPECT_FALSE(frame->HasAlpha());
 }
 
@@ -489,7 +464,7 @@ TEST(GIFImageDecoderTest, recursiveDecodeFailure) {
     for (size_t i = 0; i <= 3; ++i) {
       ImageFrame* frame = decoder->DecodeFrameBufferAtIndex(i);
       ASSERT_NE(frame, nullptr);
-      ASSERT_EQ(frame->GetStatus(), ImageFrame::kFrameComplete);
+      EXPECT_EQ(frame->GetStatus(), ImageFrame::kFrameComplete);
     }
   }
 
@@ -504,7 +479,7 @@ TEST(GIFImageDecoderTest, recursiveDecodeFailure) {
     auto decoder = CreateDecoder();
     decoder->SetData(modified_data.get(), true);
     decoder->DecodeFrameBufferAtIndex(2);
-    ASSERT_TRUE(decoder->Failed());
+    EXPECT_FALSE(decoder->Failed());
   }
 
   {
@@ -512,10 +487,25 @@ TEST(GIFImageDecoderTest, recursiveDecodeFailure) {
     auto decoder = CreateDecoder();
     decoder->SetData(modified_data.get(), true);
     ImageFrame* frame = decoder->DecodeFrameBufferAtIndex(3);
-    EXPECT_TRUE(decoder->Failed());
+    EXPECT_FALSE(decoder->Failed());
     ASSERT_NE(frame, nullptr);
-    ASSERT_EQ(frame->RequiredPreviousFrameIndex(), 2u);
+    EXPECT_EQ(frame->RequiredPreviousFrameIndex(), 2u);
   }
+}
+
+TEST(GIFImageDecoderTest, errorFrame) {
+  scoped_refptr<SharedBuffer> test_data =
+      ReadFile(kDecodersTestingDir, "error_frame.gif");
+  ASSERT_TRUE(test_data.get());
+
+  std::unique_ptr<ImageDecoder> decoder = CreateDecoder();
+  decoder->SetData(test_data.get(), true);
+  wtf_size_t frame_count = decoder->FrameCount();
+  EXPECT_EQ(65u, frame_count);
+  for (wtf_size_t i = 0; i < frame_count; ++i) {
+    decoder->DecodeFrameBufferAtIndex(i);
+  }
+  EXPECT_FALSE(decoder->Failed());
 }
 
 }  // namespace blink

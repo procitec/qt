@@ -97,14 +97,16 @@ static inline Element* CreateXHTMLParserErrorHeader(
     const String& error_messages) {
   const CreateElementFlags flags = CreateElementFlags::ByParser(doc);
   Element* report_element = doc->CreateRawElement(
-      QualifiedName(g_null_atom, "parsererror", html_names::xhtmlNamespaceURI),
+      QualifiedName(g_null_atom, AtomicString("parsererror"),
+                    html_names::xhtmlNamespaceURI),
       flags);
 
-  Vector<Attribute> report_attributes;
+  Vector<Attribute, kAttributePrealloc> report_attributes;
   report_attributes.push_back(Attribute(
       html_names::kStyleAttr,
-      "display: block; white-space: pre; border: 2px solid #c77; padding: 0 "
-      "1em 0 1em; margin: 1em; background-color: #fdd; color: black"));
+      AtomicString(
+          "display: block; white-space: pre; border: 2px solid #c77; padding: "
+          "0 1em 0 1em; margin: 1em; background-color: #fdd; color: black")));
   report_element->ParserSetAttributes(report_attributes);
 
   Element* h3 = doc->CreateRawElement(html_names::kH3Tag, flags);
@@ -113,9 +115,10 @@ static inline Element* CreateXHTMLParserErrorHeader(
       doc->createTextNode("This page contains the following errors:"));
 
   Element* fixed = doc->CreateRawElement(html_names::kDivTag, flags);
-  Vector<Attribute> fixed_attributes;
-  fixed_attributes.push_back(Attribute(html_names::kStyleAttr,
-                                       "font-family:monospace;font-size:12px"));
+  Vector<Attribute, kAttributePrealloc> fixed_attributes;
+  fixed_attributes.push_back(
+      Attribute(html_names::kStyleAttr,
+                AtomicString("font-family:monospace;font-size:12px")));
   fixed->ParserSetAttributes(fixed_attributes);
   report_element->ParserAppendChild(fixed);
 
@@ -171,9 +174,9 @@ void XMLErrors::InsertErrorMessageBlock() {
       CreateXHTMLParserErrorHeader(document_, error_messages);
 
   if (DocumentXSLT::HasTransformSourceDocument(*document_)) {
-    Vector<Attribute> attributes;
+    Vector<Attribute, kAttributePrealloc> attributes;
     attributes.push_back(
-        Attribute(html_names::kStyleAttr, "white-space: normal"));
+        Attribute(html_names::kStyleAttr, AtomicString("white-space: normal")));
     Element* paragraph = document_->CreateRawElement(html_names::kPTag, flags);
     paragraph->ParserSetAttributes(attributes);
     paragraph->ParserAppendChild(document_->createTextNode(

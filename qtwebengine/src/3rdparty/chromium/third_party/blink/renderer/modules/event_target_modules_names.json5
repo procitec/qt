@@ -4,17 +4,22 @@
     suffix: "Modules",
   },
 
-  # You don't need to specify ImplementedAs even though an interface name and
-  # its C++ class name don't match.  You need to specify ImplementedAs only if
-  # you'd like to change recorded names in ActivityLogger.
+  // You don't need to specify ImplementedAs even though an interface name and
+  // its C++ class name don't match.  You need to specify ImplementedAs only if
+  // you'd like to change recorded names in ActivityLogger.
   data: [
     "BackgroundFetchRegistration",
     "BatteryManager",
     "Bluetooth",
     "BluetoothDevice",
     "BluetoothRemoteGATTCharacteristic",
+    "CaptureController",
     "CookieStore",
     "DelegatedInkTrail",
+    "DocumentPictureInPicture",
+    "EyeDropper",
+    "NavigatorManagedData",
+    "DevicePosture",
     "MediaKeySession",
     "FileWriter",
     "GPUDevice",
@@ -43,8 +48,6 @@
     "Notification",
     "PaymentRequest",
     "RTCIceTransport",
-    "RTCQuicStream",
-    "RTCQuicTransport",
     "PermissionStatus",
     "HTMLVideoElementPictureInPicture",
     "PictureInPictureWindow",
@@ -53,14 +56,18 @@
     "PresentationConnectionList",
     "PresentationRequest",
     "RemotePlayback",
+    "SmartCardReader",
+    "SmartCardReaderPresenceObserver",
     "ScreenOrientation",
+    "ScreenDetails",
     "Sensor",
     "Serial",
+    "SerialPort",
     "ServiceWorker",
     "ServiceWorkerContainer",
     "ServiceWorkerGlobalScope",
     "ServiceWorkerRegistration",
-    "SMSReceiver",
+    "WebOTPService",
     "SpeechRecognition",
     "SpeechSynthesis",
     "SpeechSynthesisUtterance",
@@ -81,5 +88,10 @@
     },
     "USB",
     "WakeLockSentinel",
+    "WindowControlsOverlay",
+    "AudioEncoder",
+    "VideoEncoder",
+    "AudioDecoder",
+    "VideoDecoder",
   ],
 }

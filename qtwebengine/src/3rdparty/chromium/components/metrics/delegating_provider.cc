@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -51,9 +51,20 @@ void DelegatingProvider::OnRecordingDisabled() {
     provider->OnRecordingDisabled();
 }
 
+void DelegatingProvider::OnClientStateCleared() {
+  for (auto& provider : metrics_providers_)
+    provider->OnClientStateCleared();
+}
+
 void DelegatingProvider::OnAppEnterBackground() {
   for (auto& provider : metrics_providers_)
     provider->OnAppEnterBackground();
+}
+
+void DelegatingProvider::OnPageLoadStarted() {
+  for (auto& provider : metrics_providers_) {
+    provider->OnPageLoadStarted();
+  }
 }
 
 bool DelegatingProvider::HasIndependentMetrics() {
@@ -98,6 +109,11 @@ void DelegatingProvider::ProvideCurrentSessionData(
     ChromeUserMetricsExtension* uma_proto) {
   for (const auto& provider : metrics_providers_)
     provider->ProvideCurrentSessionData(uma_proto);
+}
+
+void DelegatingProvider::ProvideCurrentSessionUKMData() {
+  for (const auto& provider : metrics_providers_)
+    provider->ProvideCurrentSessionUKMData();
 }
 
 void DelegatingProvider::ClearSavedStabilityMetrics() {

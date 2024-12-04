@@ -1,12 +1,12 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/favicon/content/favicon_url_util.h"
 
-#include <algorithm>
 #include <iterator>
 
+#include "base/ranges/algorithm.h"
 #include "components/favicon/core/favicon_url.h"
 #include "components/favicon_base/favicon_types.h"
 
@@ -32,18 +32,18 @@ favicon_base::IconType IconTypeFromContentIconType(
 }  // namespace
 
 FaviconURL FaviconURLFromContentFaviconURL(
-    const blink::mojom::FaviconURL& favicon_url) {
-  return FaviconURL(favicon_url.icon_url,
-                    IconTypeFromContentIconType(favicon_url.icon_type),
-                    favicon_url.icon_sizes);
+    const blink::mojom::FaviconURLPtr& favicon_url) {
+  return FaviconURL(favicon_url->icon_url,
+                    IconTypeFromContentIconType(favicon_url->icon_type),
+                    favicon_url->icon_sizes);
 }
 
 std::vector<FaviconURL> FaviconURLsFromContentFaviconURLs(
-    const std::vector<blink::mojom::FaviconURL>& favicon_urls) {
+    const std::vector<blink::mojom::FaviconURLPtr>& favicon_urls) {
   std::vector<FaviconURL> result;
   result.reserve(favicon_urls.size());
-  std::transform(favicon_urls.begin(), favicon_urls.end(),
-                 std::back_inserter(result), FaviconURLFromContentFaviconURL);
+  base::ranges::transform(favicon_urls, std::back_inserter(result),
+                          FaviconURLFromContentFaviconURL);
   return result;
 }
 

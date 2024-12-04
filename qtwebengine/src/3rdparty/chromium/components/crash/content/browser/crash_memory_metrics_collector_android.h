@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,7 +8,6 @@
 #include "base/memory/shared_memory_mapping.h"
 #include "base/supports_user_data.h"
 #include "components/crash/content/browser/child_exit_observer_android.h"
-#include "content/public/browser/content_browser_client.h"
 #include "third_party/blink/public/common/oom_intervention/oom_intervention_types.h"
 
 // This class manages a shared memory that is shared with
@@ -20,6 +19,11 @@
 class CrashMemoryMetricsCollector : public base::SupportsUserData::Data {
  public:
   explicit CrashMemoryMetricsCollector(content::RenderProcessHost* host);
+
+  CrashMemoryMetricsCollector(const CrashMemoryMetricsCollector&) = delete;
+  CrashMemoryMetricsCollector& operator=(const CrashMemoryMetricsCollector&) =
+      delete;
+
   ~CrashMemoryMetricsCollector() override;
 
   // Key used to attach the handler to the RenderProcessHost.
@@ -33,8 +37,6 @@ class CrashMemoryMetricsCollector : public base::SupportsUserData::Data {
 
  private:
   base::WritableSharedMemoryMapping metrics_mapping_;
-
-  DISALLOW_COPY_AND_ASSIGN(CrashMemoryMetricsCollector);
 };
 
 #endif  // COMPONENTS_CRASH_CONTENT_BROWSER_CRASH_MEMORY_METRICS_COLLECTOR_ANDROID_H_

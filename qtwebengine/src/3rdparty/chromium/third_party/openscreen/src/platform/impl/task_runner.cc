@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -129,7 +129,6 @@ void TaskRunnerImpl::RequestStopSoon() {
 }
 
 void TaskRunnerImpl::RunRunnableTasks() {
-  OSP_DVLOG << "Running " << running_tasks_.size() << " tasks...";
   for (TaskWithMetadata& running_task : running_tasks_) {
     // Move the task to the stack so that its bound state is freed immediately
     // after being run.

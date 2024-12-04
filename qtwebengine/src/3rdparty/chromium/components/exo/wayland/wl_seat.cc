@@ -1,27 +1,20 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/exo/wayland/wl_seat.h"
 
-#include <wayland-server-core.h>
-#include <wayland-server-protocol-core.h>
-
+#include "components/exo/keyboard.h"
 #include "components/exo/pointer.h"
 #include "components/exo/touch.h"
 #include "components/exo/wayland/serial_tracker.h"
 #include "components/exo/wayland/server_util.h"
+#include "components/exo/wayland/wayland_keyboard_delegate.h"
 #include "components/exo/wayland/wayland_pointer_delegate.h"
 #include "components/exo/wayland/wayland_touch_delegate.h"
 #include "ui/base/buildflags.h"
 
-#if defined(OS_CHROMEOS)
-#include "components/exo/keyboard.h"
-#include "components/exo/wayland/wayland_keyboard_delegate.h"
-#endif  // defined(OS_CHROMEOS)
-
-namespace exo {
-namespace wayland {
+namespace exo::wayland {
 
 namespace {
 
@@ -46,7 +39,6 @@ void pointer_release(wl_client* client, wl_resource* resource) {
 const struct wl_pointer_interface pointer_implementation = {pointer_set_cursor,
                                                             pointer_release};
 
-#if defined(OS_CHROMEOS)
 ////////////////////////////////////////////////////////////////////////////////
 // wl_keyboard_interface:
 
@@ -59,7 +51,6 @@ void keyboard_release(wl_client* client, wl_resource* resource) {
 const struct wl_keyboard_interface keyboard_implementation = {keyboard_release};
 
 #endif  // BUILDFLAG(USE_XKBCOMMON)
-#endif  // defined(OS_CHROMEOS)
 ////////////////////////////////////////////////////////////////////////////////
 // wl_touch_interface:
 
@@ -86,7 +77,7 @@ void seat_get_pointer(wl_client* client, wl_resource* resource, uint32_t id) {
 }
 
 void seat_get_keyboard(wl_client* client, wl_resource* resource, uint32_t id) {
-#if defined(OS_CHROMEOS) && BUILDFLAG(USE_XKBCOMMON)
+#if BUILDFLAG(USE_XKBCOMMON)
   auto* data = GetUserDataAs<WaylandSeat>(resource);
 
   uint32_t version = wl_resource_get_version(resource);
@@ -101,7 +92,7 @@ void seat_get_keyboard(wl_client* client, wl_resource* resource, uint32_t id) {
                     std::move(keyboard));
 #else
   NOTIMPLEMENTED();
-#endif  // defined(OS_CHROMEOS) && BUILDFLAG(USE_XKBCOMMON)
+#endif  // BUILDFLAG(USE_XKBCOMMON)
 }
 
 void seat_get_touch(wl_client* client, wl_resource* resource, uint32_t id) {
@@ -136,11 +127,10 @@ void bind_seat(wl_client* client, void* data, uint32_t version, uint32_t id) {
     wl_seat_send_name(resource, "default");
   uint32_t capabilities = WL_SEAT_CAPABILITY_POINTER | WL_SEAT_CAPABILITY_TOUCH;
 
-#if defined(OS_CHROMEOS) && BUILDFLAG(USE_XKBCOMMON)
+#if BUILDFLAG(USE_XKBCOMMON)
   capabilities |= WL_SEAT_CAPABILITY_KEYBOARD;
-#endif  // defined(OS_CHROMEOS) && BUILDFLAG(USE_XKBCOMMON)
+#endif  // BUILDFLAG(USE_XKBCOMMON)
   wl_seat_send_capabilities(resource, capabilities);
 }
 
-}  // namespace wayland
-}  // namespace exo
+}  // namespace exo::wayland

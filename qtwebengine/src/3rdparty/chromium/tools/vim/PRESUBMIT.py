@@ -1,4 +1,4 @@
-# Copyright 2015 The Chromium Authors. All rights reserved.
+# Copyright 2015 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 """Presubmit tests for /tools/vim.
@@ -25,8 +25,8 @@ def CheckChangeOnUpload(input_api, output_api):
       'ninja_output.py' in affected_files or \
       any([input_api.re.match(r'tests(/|\\)',f) for f in affected_files]):
     results += input_api.RunTests(
-        input_api.canned_checks.GetUnitTests(input_api, output_api, [
-            'tests/chromium.ycm_extra_conf_unittest.py'
-        ]))
+        input_api.canned_checks.GetUnitTests(
+            input_api, output_api,
+            ['tests/chromium.ycm_extra_conf_unittest.py']))
 
   return results

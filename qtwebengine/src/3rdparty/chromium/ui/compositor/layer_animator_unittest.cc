@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,7 +9,7 @@
 #include <vector>
 
 #include "base/compiler_specific.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
@@ -20,12 +20,14 @@
 #include "cc/trees/layer_tree_host.h"
 #include "cc/trees/mutator_host.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "ui/compositor/animation_metrics_reporter.h"
+#include "ui/compositor/compositor.h"
 #include "ui/compositor/layer.h"
 #include "ui/compositor/layer_animation_delegate.h"
 #include "ui/compositor/layer_animation_element.h"
+#include "ui/compositor/layer_animation_observer.h"
 #include "ui/compositor/layer_animation_sequence.h"
 #include "ui/compositor/layer_animator_collection.h"
+#include "ui/compositor/layer_owner.h"
 #include "ui/compositor/scoped_animation_duration_scale_mode.h"
 #include "ui/compositor/scoped_layer_animation_settings.h"
 #include "ui/compositor/test/layer_animator_test_controller.h"
@@ -35,7 +37,7 @@
 #include "ui/compositor/test/test_layer_animation_observer.h"
 #include "ui/compositor/test/test_utils.h"
 #include "ui/gfx/geometry/rect.h"
-#include "ui/gfx/transform.h"
+#include "ui/gfx/geometry/transform.h"
 
 namespace ui {
 
@@ -67,9 +69,11 @@ std::vector<LayerAnimationSequence*> CreateMultiSequence(
 
 // Creates a default animator with timers disabled for test. |delegate| and
 // |observer| are attached if non-null.
-LayerAnimator* CreateDefaultTestAnimator(LayerAnimationDelegate* delegate,
-                                         LayerAnimationObserver* observer) {
-  LayerAnimator* animator(LayerAnimator::CreateDefaultAnimator());
+scoped_refptr<LayerAnimator> CreateDefaultTestAnimator(
+    LayerAnimationDelegate* delegate,
+    LayerAnimationObserver* observer) {
+  scoped_refptr<LayerAnimator> animator =
+      LayerAnimator::CreateDefaultAnimator();
   animator->set_disable_timer_for_test(true);
   if (delegate)
     animator->SetDelegate(delegate);
@@ -80,20 +84,23 @@ LayerAnimator* CreateDefaultTestAnimator(LayerAnimationDelegate* delegate,
 
 // Creates a default animator with timers disabled for test. |delegate| is
 // attached if non-null.
-LayerAnimator* CreateDefaultTestAnimator(LayerAnimationDelegate* delegate) {
+scoped_refptr<LayerAnimator> CreateDefaultTestAnimator(
+    LayerAnimationDelegate* delegate) {
   return CreateDefaultTestAnimator(delegate, nullptr);
 }
 
 // Creates a default animator with timers disabled for test.
-LayerAnimator* CreateDefaultTestAnimator() {
+scoped_refptr<LayerAnimator> CreateDefaultTestAnimator() {
   return CreateDefaultTestAnimator(nullptr, nullptr);
 }
 
 // Creates an implicit animator with timers disabled for test. |delegate| and
 // |observer| are attached if non-null.
-LayerAnimator* CreateImplicitTestAnimator(LayerAnimationDelegate* delegate,
-                                          LayerAnimationObserver* observer) {
-  LayerAnimator* animator(LayerAnimator::CreateImplicitAnimator());
+scoped_refptr<LayerAnimator> CreateImplicitTestAnimator(
+    LayerAnimationDelegate* delegate,
+    LayerAnimationObserver* observer) {
+  scoped_refptr<LayerAnimator> animator =
+      LayerAnimator::CreateImplicitAnimator();
   animator->set_disable_timer_for_test(true);
   if (delegate)
     animator->SetDelegate(delegate);
@@ -104,12 +111,13 @@ LayerAnimator* CreateImplicitTestAnimator(LayerAnimationDelegate* delegate,
 
 // Creates an implicit animator with timers disabled for test. |delegate| is
 // attached if non-null.
-LayerAnimator* CreateImplicitTestAnimator(LayerAnimationDelegate* delegate) {
+scoped_refptr<LayerAnimator> CreateImplicitTestAnimator(
+    LayerAnimationDelegate* delegate) {
   return CreateImplicitTestAnimator(delegate, nullptr);
 }
 
 // Creates an implicit animator with timers disabled for test.
-LayerAnimator* CreateImplicitTestAnimator() {
+scoped_refptr<LayerAnimator> CreateImplicitTestAnimator() {
   return CreateImplicitTestAnimator(nullptr, nullptr);
 }
 
@@ -120,9 +128,17 @@ class TestImplicitAnimationObserver : public ImplicitAnimationObserver {
       notify_when_animator_destructed_(notify_when_animator_destructed) {
   }
 
+  TestImplicitAnimationObserver(const TestImplicitAnimationObserver&) = delete;
+  TestImplicitAnimationObserver& operator=(
+      const TestImplicitAnimationObserver&) = delete;
+
   bool animations_completed() const { return animations_completed_; }
   void set_animations_completed(bool completed) {
     animations_completed_ = completed;
+  }
+
+  void SetAnimationsCompletedCallback(base::RepeatingClosure callback) {
+    animations_completed_callback_ = std::move(callback);
   }
 
   bool WasAnimationAbortedForProperty(
@@ -149,6 +165,10 @@ class TestImplicitAnimationObserver : public ImplicitAnimationObserver {
   // ImplicitAnimationObserver implementation
   void OnImplicitAnimationsCompleted() override {
     animations_completed_ = true;
+
+    if (animations_completed_callback_)
+      animations_completed_callback_.Run();
+
     if (quit_wait_loop_)
       std::move(quit_wait_loop_).Run();
   }
@@ -159,10 +179,9 @@ class TestImplicitAnimationObserver : public ImplicitAnimationObserver {
 
   bool animations_completed_;
   bool notify_when_animator_destructed_;
+  base::RepeatingClosure animations_completed_callback_;
 
   base::OnceClosure quit_wait_loop_;
-
-  DISALLOW_COPY_AND_ASSIGN(TestImplicitAnimationObserver);
 };
 
 // When notified that an animation has ended, stops all other animations.
@@ -170,6 +189,11 @@ class DeletingLayerAnimationObserver : public LayerAnimationObserver {
  public:
   explicit DeletingLayerAnimationObserver(LayerAnimator* animator)
       : animator_(animator) {}
+
+  DeletingLayerAnimationObserver(const DeletingLayerAnimationObserver&) =
+      delete;
+  DeletingLayerAnimationObserver& operator=(
+      const DeletingLayerAnimationObserver&) = delete;
 
   void OnLayerAnimationEnded(LayerAnimationSequence* sequence) override {
     animator_->StopAnimating();
@@ -182,9 +206,7 @@ class DeletingLayerAnimationObserver : public LayerAnimationObserver {
   void OnLayerAnimationScheduled(LayerAnimationSequence* sequence) override {}
 
  private:
-  LayerAnimator* animator_;
-
-  DISALLOW_COPY_AND_ASSIGN(DeletingLayerAnimationObserver);
+  raw_ptr<LayerAnimator> animator_;
 };
 
 // When notified that an animation has started, aborts all animations.
@@ -194,6 +216,11 @@ class AbortAnimationsOnStartedLayerAnimationObserver
   explicit AbortAnimationsOnStartedLayerAnimationObserver(
       LayerAnimator* animator)
       : animator_(animator) {}
+
+  AbortAnimationsOnStartedLayerAnimationObserver(
+      const AbortAnimationsOnStartedLayerAnimationObserver&) = delete;
+  AbortAnimationsOnStartedLayerAnimationObserver& operator=(
+      const AbortAnimationsOnStartedLayerAnimationObserver&) = delete;
 
   void OnLayerAnimationStarted(LayerAnimationSequence* sequence) override {
     animator_->AbortAllAnimations();
@@ -206,14 +233,18 @@ class AbortAnimationsOnStartedLayerAnimationObserver
   void OnLayerAnimationScheduled(LayerAnimationSequence* sequence) override {}
 
  private:
-  LayerAnimator* animator_;
-
-  DISALLOW_COPY_AND_ASSIGN(AbortAnimationsOnStartedLayerAnimationObserver);
+  raw_ptr<LayerAnimator> animator_;
 };
 
 class LayerAnimatorDestructionObserver {
  public:
   LayerAnimatorDestructionObserver() : animator_deleted_(false) {}
+
+  LayerAnimatorDestructionObserver(const LayerAnimatorDestructionObserver&) =
+      delete;
+  LayerAnimatorDestructionObserver& operator=(
+      const LayerAnimatorDestructionObserver&) = delete;
+
   virtual ~LayerAnimatorDestructionObserver() {}
 
   void NotifyAnimatorDeleted() {
@@ -226,15 +257,15 @@ class LayerAnimatorDestructionObserver {
 
  private:
   bool animator_deleted_;
-
-  DISALLOW_COPY_AND_ASSIGN(LayerAnimatorDestructionObserver);
 };
 
 class TestLayerAnimator : public LayerAnimator {
  public:
   TestLayerAnimator()
-      : LayerAnimator(base::TimeDelta::FromSeconds(0)),
-        destruction_observer_(nullptr) {}
+      : LayerAnimator(base::Seconds(0)), destruction_observer_(nullptr) {}
+
+  TestLayerAnimator(const TestLayerAnimator&) = delete;
+  TestLayerAnimator& operator=(const TestLayerAnimator&) = delete;
 
   void SetDestructionObserver(
       LayerAnimatorDestructionObserver* observer) {
@@ -255,9 +286,7 @@ class TestLayerAnimator : public LayerAnimator {
   }
 
  private:
-  LayerAnimatorDestructionObserver* destruction_observer_;
-
-  DISALLOW_COPY_AND_ASSIGN(TestLayerAnimator);
+  raw_ptr<LayerAnimatorDestructionObserver> destruction_observer_;
 };
 
 // The test layer animation sequence updates a live instances count when it is
@@ -271,12 +300,14 @@ class TestLayerAnimationSequence : public LayerAnimationSequence {
     (*num_live_instances_)++;
   }
 
+  TestLayerAnimationSequence(const TestLayerAnimationSequence&) = delete;
+  TestLayerAnimationSequence& operator=(const TestLayerAnimationSequence&) =
+      delete;
+
   ~TestLayerAnimationSequence() override { (*num_live_instances_)--; }
 
  private:
-  int* num_live_instances_;
-
-  DISALLOW_COPY_AND_ASSIGN(TestLayerAnimationSequence);
+  raw_ptr<int> num_live_instances_;
 };
 
 }  // namespace
@@ -290,6 +321,11 @@ class CountCheckingLayerAnimationObserver : public LayerAnimationObserver {
  public:
   explicit CountCheckingLayerAnimationObserver(LayerAnimationObserver* observer)
       : observer_(observer) {}
+
+  CountCheckingLayerAnimationObserver(
+      const CountCheckingLayerAnimationObserver&) = delete;
+  CountCheckingLayerAnimationObserver& operator=(
+      const CountCheckingLayerAnimationObserver&) = delete;
 
   void OnLayerAnimationStarted(LayerAnimationSequence* sequence) override {
     ++started_count_;
@@ -351,7 +387,7 @@ class CountCheckingLayerAnimationObserver : public LayerAnimationObserver {
 
  private:
   // Observer to which LayerAnimationObserver calls are delgated.
-  LayerAnimationObserver* observer_;
+  raw_ptr<LayerAnimationObserver> observer_;
 
   // The total number of animation sequences that have been attached.
   int attached_sequence_count_ = 0;
@@ -370,8 +406,6 @@ class CountCheckingLayerAnimationObserver : public LayerAnimationObserver {
 
   // The number of animation sequences that completed successfully.
   int successful_count_ = 0;
-
-  DISALLOW_COPY_AND_ASSIGN(CountCheckingLayerAnimationObserver);
 };
 
 }  // namespace test
@@ -380,11 +414,11 @@ class CountCheckingLayerAnimationObserver : public LayerAnimationObserver {
 // happen.
 TEST(LayerAnimatorTest, ImplicitAnimation) {
   TestLayerAnimationDelegate delegate;
-  scoped_refptr<LayerAnimator> animator(CreateImplicitTestAnimator(&delegate));
+  scoped_refptr<LayerAnimator> animator = CreateImplicitTestAnimator(&delegate);
   base::TimeTicks now = base::TimeTicks::Now();
   animator->SetBrightness(0.5);
   EXPECT_TRUE(animator->is_animating());
-  animator->Step(now + base::TimeDelta::FromSeconds(1));
+  animator->Step(now + base::Seconds(1));
   EXPECT_FLOAT_EQ(delegate.GetBrightnessForAnimation(), 0.5);
   delegate.ExpectLastPropertyChangeReason(PropertyChangeReason::FROM_ANIMATION);
 }
@@ -393,7 +427,7 @@ TEST(LayerAnimatorTest, ImplicitAnimation) {
 // are not started.
 TEST(LayerAnimatorTest, NoImplicitAnimation) {
   TestLayerAnimationDelegate delegate;
-  scoped_refptr<LayerAnimator> animator(CreateDefaultTestAnimator(&delegate));
+  scoped_refptr<LayerAnimator> animator = CreateDefaultTestAnimator(&delegate);
   animator->SetBrightness(0.5);
   EXPECT_FALSE(animator->is_animating());
   EXPECT_FLOAT_EQ(delegate.GetBrightnessForAnimation(), 0.5);
@@ -405,7 +439,7 @@ TEST(LayerAnimatorTest, NoImplicitAnimation) {
 // skips the stopped animation to the end.
 TEST(LayerAnimatorTest, StopAnimatingProperty) {
   TestLayerAnimationDelegate delegate;
-  scoped_refptr<LayerAnimator> animator(CreateImplicitTestAnimator(&delegate));
+  scoped_refptr<LayerAnimator> animator = CreateImplicitTestAnimator(&delegate);
   double target_opacity(0.5);
   gfx::Rect target_bounds(0, 0, 50, 50);
   animator->SetOpacity(target_opacity);
@@ -423,7 +457,7 @@ TEST(LayerAnimatorTest, StopAnimatingProperty) {
 // values.
 TEST(LayerAnimatorTest, StopAnimating) {
   TestLayerAnimationDelegate delegate;
-  scoped_refptr<LayerAnimator> animator(CreateImplicitTestAnimator(&delegate));
+  scoped_refptr<LayerAnimator> animator = CreateImplicitTestAnimator(&delegate);
   double target_opacity(0.5);
   gfx::Rect target_bounds(0, 0, 50, 50);
   animator->SetOpacity(target_opacity);
@@ -446,7 +480,7 @@ TEST(LayerAnimatorTest, AbortAllAnimations) {
                                    PropertyChangeReason::NOT_FROM_ANIMATION);
   delegate.SetBoundsFromAnimation(initial_bounds,
                                   PropertyChangeReason::NOT_FROM_ANIMATION);
-  scoped_refptr<LayerAnimator> animator(CreateImplicitTestAnimator(&delegate));
+  scoped_refptr<LayerAnimator> animator = CreateImplicitTestAnimator(&delegate);
   double target_opacity(0.5);
   gfx::Rect target_bounds(0, 0, 50, 50);
   animator->SetOpacity(target_opacity);
@@ -462,13 +496,13 @@ TEST(LayerAnimatorTest, AbortAllAnimations) {
 // trivial case and should result in the animation being started immediately.
 TEST(LayerAnimatorTest, ScheduleAnimationThatCanRunImmediately) {
   TestLayerAnimationDelegate delegate;
-  scoped_refptr<LayerAnimator> animator(CreateDefaultTestAnimator(&delegate));
+  scoped_refptr<LayerAnimator> animator = CreateDefaultTestAnimator(&delegate);
 
   double start_brightness(0.0);
   double middle_brightness(0.5);
   double target_brightness(1.0);
 
-  base::TimeDelta delta = base::TimeDelta::FromSeconds(1);
+  base::TimeDelta delta = base::Seconds(1);
 
   delegate.SetBrightnessFromAnimation(start_brightness,
                                       PropertyChangeReason::NOT_FROM_ANIMATION);
@@ -483,12 +517,12 @@ TEST(LayerAnimatorTest, ScheduleAnimationThatCanRunImmediately) {
 
   base::TimeTicks start_time = animator->last_step_time();
 
-  animator->Step(start_time + base::TimeDelta::FromMilliseconds(500));
+  animator->Step(start_time + base::Milliseconds(500));
 
   EXPECT_TRUE(animator->is_animating());
   EXPECT_FLOAT_EQ(delegate.GetBrightnessForAnimation(), middle_brightness);
 
-  animator->Step(start_time + base::TimeDelta::FromMilliseconds(1000));
+  animator->Step(start_time + base::Milliseconds(1000));
 
   EXPECT_FALSE(animator->is_animating());
   EXPECT_FLOAT_EQ(delegate.GetBrightnessForAnimation(), target_brightness);
@@ -505,7 +539,7 @@ TEST(LayerAnimatorTest, ScheduleThreadedAnimationThatCanRunImmediately) {
   double start_opacity(0.0);
   double target_opacity(1.0);
 
-  base::TimeDelta delta = base::TimeDelta::FromSeconds(1);
+  base::TimeDelta delta = base::Seconds(1);
 
   delegate.SetOpacityFromAnimation(start_opacity,
                                    PropertyChangeReason::NOT_FROM_ANIMATION);
@@ -544,7 +578,7 @@ TEST(LayerAnimatorTest, ScheduleThreadedAnimationThatCanRunImmediately) {
 // should start immediately and should progress in lock step.
 TEST(LayerAnimatorTest, ScheduleTwoAnimationsThatCanRunImmediately) {
   TestLayerAnimationDelegate delegate;
-  scoped_refptr<LayerAnimator> animator(CreateDefaultTestAnimator(&delegate));
+  scoped_refptr<LayerAnimator> animator = CreateDefaultTestAnimator(&delegate);
 
   double start_brightness(0.0);
   double middle_brightness(0.5);
@@ -555,7 +589,7 @@ TEST(LayerAnimatorTest, ScheduleTwoAnimationsThatCanRunImmediately) {
   start_bounds.set_x(-90);
   target_bounds.set_x(90);
 
-  base::TimeDelta delta = base::TimeDelta::FromSeconds(1);
+  base::TimeDelta delta = base::Seconds(1);
 
   delegate.SetBrightnessFromAnimation(start_brightness,
                                       PropertyChangeReason::NOT_FROM_ANIMATION);
@@ -577,13 +611,13 @@ TEST(LayerAnimatorTest, ScheduleTwoAnimationsThatCanRunImmediately) {
 
   base::TimeTicks start_time = animator->last_step_time();
 
-  animator->Step(start_time + base::TimeDelta::FromMilliseconds(500));
+  animator->Step(start_time + base::Milliseconds(500));
 
   EXPECT_TRUE(animator->is_animating());
   EXPECT_FLOAT_EQ(delegate.GetBrightnessForAnimation(), middle_brightness);
   CheckApproximatelyEqual(delegate.GetBoundsForAnimation(), middle_bounds);
 
-  animator->Step(start_time + base::TimeDelta::FromMilliseconds(1000));
+  animator->Step(start_time + base::Milliseconds(1000));
 
   EXPECT_FALSE(animator->is_animating());
   EXPECT_FLOAT_EQ(delegate.GetBrightnessForAnimation(), target_brightness);
@@ -607,7 +641,7 @@ TEST(LayerAnimatorTest, ScheduleThreadedAndNonThreadedAnimations) {
   start_bounds.set_x(-90);
   target_bounds.set_x(90);
 
-  base::TimeDelta delta = base::TimeDelta::FromSeconds(1);
+  base::TimeDelta delta = base::Seconds(1);
 
   delegate.SetOpacityFromAnimation(start_opacity,
                                    PropertyChangeReason::NOT_FROM_ANIMATION);
@@ -658,13 +692,13 @@ TEST(LayerAnimatorTest, ScheduleThreadedAndNonThreadedAnimations) {
 // animations should run one after another.
 TEST(LayerAnimatorTest, ScheduleTwoAnimationsOnSameProperty) {
   TestLayerAnimationDelegate delegate;
-  scoped_refptr<LayerAnimator> animator(CreateDefaultTestAnimator(&delegate));
+  scoped_refptr<LayerAnimator> animator = CreateDefaultTestAnimator(&delegate);
 
   double start_brightness(0.0);
   double middle_brightness(0.5);
   double target_brightness(1.0);
 
-  base::TimeDelta delta = base::TimeDelta::FromSeconds(1);
+  base::TimeDelta delta = base::Seconds(1);
 
   delegate.SetBrightnessFromAnimation(start_brightness,
                                       PropertyChangeReason::NOT_FROM_ANIMATION);
@@ -684,22 +718,22 @@ TEST(LayerAnimatorTest, ScheduleTwoAnimationsOnSameProperty) {
 
   base::TimeTicks start_time = animator->last_step_time();
 
-  animator->Step(start_time + base::TimeDelta::FromMilliseconds(500));
+  animator->Step(start_time + base::Milliseconds(500));
 
   EXPECT_TRUE(animator->is_animating());
   EXPECT_FLOAT_EQ(delegate.GetBrightnessForAnimation(), middle_brightness);
 
-  animator->Step(start_time + base::TimeDelta::FromMilliseconds(1000));
+  animator->Step(start_time + base::Milliseconds(1000));
 
   EXPECT_TRUE(animator->is_animating());
   EXPECT_FLOAT_EQ(delegate.GetBrightnessForAnimation(), target_brightness);
 
-  animator->Step(start_time + base::TimeDelta::FromMilliseconds(1500));
+  animator->Step(start_time + base::Milliseconds(1500));
 
   EXPECT_TRUE(animator->is_animating());
   EXPECT_FLOAT_EQ(delegate.GetBrightnessForAnimation(), middle_brightness);
 
-  animator->Step(start_time + base::TimeDelta::FromMilliseconds(2000));
+  animator->Step(start_time + base::Milliseconds(2000));
 
   EXPECT_FALSE(animator->is_animating());
   EXPECT_FLOAT_EQ(delegate.GetBrightnessForAnimation(), start_brightness);
@@ -710,7 +744,7 @@ TEST(LayerAnimatorTest, ScheduleTwoAnimationsOnSameProperty) {
 // order.
 TEST(LayerAnimatorTest, ScheduleBlockedAnimation) {
   TestLayerAnimationDelegate delegate;
-  scoped_refptr<LayerAnimator> animator(CreateDefaultTestAnimator(&delegate));
+  scoped_refptr<LayerAnimator> animator = CreateDefaultTestAnimator(&delegate);
 
   double start_grayscale(0.0);
   double middle_grayscale(0.5);
@@ -721,7 +755,7 @@ TEST(LayerAnimatorTest, ScheduleBlockedAnimation) {
   start_bounds.set_x(-90);
   target_bounds.set_x(90);
 
-  base::TimeDelta delta = base::TimeDelta::FromSeconds(1);
+  base::TimeDelta delta = base::Seconds(1);
 
   delegate.SetGrayscaleFromAnimation(start_grayscale,
                                      PropertyChangeReason::NOT_FROM_ANIMATION);
@@ -752,31 +786,31 @@ TEST(LayerAnimatorTest, ScheduleBlockedAnimation) {
 
   base::TimeTicks start_time = animator->last_step_time();
 
-  animator->Step(start_time + base::TimeDelta::FromMilliseconds(500));
+  animator->Step(start_time + base::Milliseconds(500));
 
   EXPECT_TRUE(animator->is_animating());
   EXPECT_FLOAT_EQ(delegate.GetGrayscaleForAnimation(), middle_grayscale);
   CheckApproximatelyEqual(delegate.GetBoundsForAnimation(), start_bounds);
 
-  animator->Step(start_time + base::TimeDelta::FromMilliseconds(1000));
+  animator->Step(start_time + base::Milliseconds(1000));
 
   EXPECT_TRUE(animator->is_animating());
   EXPECT_FLOAT_EQ(delegate.GetGrayscaleForAnimation(), target_grayscale);
   CheckApproximatelyEqual(delegate.GetBoundsForAnimation(), start_bounds);
 
-  animator->Step(start_time + base::TimeDelta::FromMilliseconds(2000));
+  animator->Step(start_time + base::Milliseconds(2000));
 
   EXPECT_TRUE(animator->is_animating());
   EXPECT_FLOAT_EQ(delegate.GetGrayscaleForAnimation(), start_grayscale);
   CheckApproximatelyEqual(delegate.GetBoundsForAnimation(), start_bounds);
 
-  animator->Step(start_time + base::TimeDelta::FromMilliseconds(3000));
+  animator->Step(start_time + base::Milliseconds(3000));
 
   EXPECT_TRUE(animator->is_animating());
   EXPECT_FLOAT_EQ(delegate.GetGrayscaleForAnimation(), start_grayscale);
   CheckApproximatelyEqual(delegate.GetBoundsForAnimation(), target_bounds);
 
-  animator->Step(start_time + base::TimeDelta::FromMilliseconds(4000));
+  animator->Step(start_time + base::Milliseconds(4000));
 
   EXPECT_FALSE(animator->is_animating());
   EXPECT_FLOAT_EQ(delegate.GetGrayscaleForAnimation(), start_grayscale);
@@ -788,7 +822,7 @@ TEST(LayerAnimatorTest, ScheduleBlockedAnimation) {
 // the second grayscale animation starts.
 TEST(LayerAnimatorTest, ScheduleTogether) {
   TestLayerAnimationDelegate delegate;
-  scoped_refptr<LayerAnimator> animator(CreateDefaultTestAnimator(&delegate));
+  scoped_refptr<LayerAnimator> animator = CreateDefaultTestAnimator(&delegate);
 
   double start_grayscale(0.0);
   double target_grayscale(1.0);
@@ -798,7 +832,7 @@ TEST(LayerAnimatorTest, ScheduleTogether) {
   start_bounds.set_x(-90);
   target_bounds.set_x(90);
 
-  base::TimeDelta delta = base::TimeDelta::FromSeconds(1);
+  base::TimeDelta delta = base::Seconds(1);
 
   delegate.SetGrayscaleFromAnimation(start_grayscale,
                                      PropertyChangeReason::NOT_FROM_ANIMATION);
@@ -824,13 +858,13 @@ TEST(LayerAnimatorTest, ScheduleTogether) {
 
   base::TimeTicks start_time = animator->last_step_time();
 
-  animator->Step(start_time + base::TimeDelta::FromMilliseconds(1000));
+  animator->Step(start_time + base::Milliseconds(1000));
 
   EXPECT_TRUE(animator->is_animating());
   EXPECT_FLOAT_EQ(delegate.GetGrayscaleForAnimation(), target_grayscale);
   CheckApproximatelyEqual(delegate.GetBoundsForAnimation(), start_bounds);
 
-  animator->Step(start_time + base::TimeDelta::FromMilliseconds(2000));
+  animator->Step(start_time + base::Milliseconds(2000));
 
   EXPECT_FALSE(animator->is_animating());
   EXPECT_FLOAT_EQ(delegate.GetGrayscaleForAnimation(), start_grayscale);
@@ -841,13 +875,13 @@ TEST(LayerAnimatorTest, ScheduleTogether) {
 // case (see the trival case for ScheduleAnimation).
 TEST(LayerAnimatorTest, StartAnimationThatCanRunImmediately) {
   TestLayerAnimationDelegate delegate;
-  scoped_refptr<LayerAnimator> animator(CreateDefaultTestAnimator(&delegate));
+  scoped_refptr<LayerAnimator> animator = CreateDefaultTestAnimator(&delegate);
 
   double start_brightness(0.0);
   double middle_brightness(0.5);
   double target_brightness(1.0);
 
-  base::TimeDelta delta = base::TimeDelta::FromSeconds(1);
+  base::TimeDelta delta = base::Seconds(1);
 
   delegate.SetBrightnessFromAnimation(start_brightness,
                                       PropertyChangeReason::NOT_FROM_ANIMATION);
@@ -862,12 +896,12 @@ TEST(LayerAnimatorTest, StartAnimationThatCanRunImmediately) {
 
   base::TimeTicks start_time = animator->last_step_time();
 
-  animator->Step(start_time + base::TimeDelta::FromMilliseconds(500));
+  animator->Step(start_time + base::Milliseconds(500));
 
   EXPECT_TRUE(animator->is_animating());
   EXPECT_FLOAT_EQ(delegate.GetBrightnessForAnimation(), middle_brightness);
 
-  animator->Step(start_time + base::TimeDelta::FromMilliseconds(1000));
+  animator->Step(start_time + base::Milliseconds(1000));
 
   EXPECT_FALSE(animator->is_animating());
   EXPECT_FLOAT_EQ(delegate.GetBrightnessForAnimation(), target_brightness);
@@ -884,7 +918,7 @@ TEST(LayerAnimatorTest, StartThreadedAnimationThatCanRunImmediately) {
   double start_opacity(0.0);
   double target_opacity(1.0);
 
-  base::TimeDelta delta = base::TimeDelta::FromSeconds(1);
+  base::TimeDelta delta = base::Seconds(1);
 
   delegate.SetOpacityFromAnimation(start_opacity,
                                    PropertyChangeReason::NOT_FROM_ANIMATION);
@@ -921,12 +955,12 @@ TEST(LayerAnimatorTest, StartThreadedAnimationThatCanRunImmediately) {
 // Preempt by immediately setting new target.
 TEST(LayerAnimatorTest, PreemptBySettingNewTarget) {
   TestLayerAnimationDelegate delegate;
-  scoped_refptr<LayerAnimator> animator(CreateDefaultTestAnimator(&delegate));
+  scoped_refptr<LayerAnimator> animator = CreateDefaultTestAnimator(&delegate);
 
   double start_opacity(0.0);
   double target_opacity(1.0);
 
-  base::TimeDelta delta = base::TimeDelta::FromSeconds(1);
+  base::TimeDelta delta = base::Seconds(1);
 
   delegate.SetOpacityFromAnimation(start_opacity,
                                    PropertyChangeReason::NOT_FROM_ANIMATION);
@@ -948,13 +982,13 @@ TEST(LayerAnimatorTest, PreemptBySettingNewTarget) {
 // Preempt by animating to new target, with a non-threaded animation.
 TEST(LayerAnimatorTest, PreemptByImmediatelyAnimatingToNewTarget) {
   TestLayerAnimationDelegate delegate;
-  scoped_refptr<LayerAnimator> animator(CreateDefaultTestAnimator(&delegate));
+  scoped_refptr<LayerAnimator> animator = CreateDefaultTestAnimator(&delegate);
 
   double start_brightness(0.0);
   double middle_brightness(0.5);
   double target_brightness(1.0);
 
-  base::TimeDelta delta = base::TimeDelta::FromSeconds(1);
+  base::TimeDelta delta = base::Seconds(1);
 
   delegate.SetBrightnessFromAnimation(start_brightness,
                                       PropertyChangeReason::NOT_FROM_ANIMATION);
@@ -969,7 +1003,7 @@ TEST(LayerAnimatorTest, PreemptByImmediatelyAnimatingToNewTarget) {
 
   base::TimeTicks start_time = animator->last_step_time();
 
-  animator->Step(start_time + base::TimeDelta::FromMilliseconds(500));
+  animator->Step(start_time + base::Milliseconds(500));
 
   animator->StartAnimation(
       new LayerAnimationSequence(
@@ -986,13 +1020,13 @@ TEST(LayerAnimatorTest, PreemptByImmediatelyAnimatingToNewTarget) {
 
   EXPECT_TRUE(animator->is_animating());
 
-  animator->Step(start_time + base::TimeDelta::FromMilliseconds(1000));
+  animator->Step(start_time + base::Milliseconds(1000));
 
   EXPECT_TRUE(animator->is_animating());
   EXPECT_FLOAT_EQ(delegate.GetBrightnessForAnimation(),
                   0.5 * (start_brightness + middle_brightness));
 
-  animator->Step(start_time + base::TimeDelta::FromMilliseconds(1500));
+  animator->Step(start_time + base::Milliseconds(1500));
 
   EXPECT_FALSE(animator->is_animating());
   EXPECT_FLOAT_EQ(delegate.GetBrightnessForAnimation(), start_brightness);
@@ -1010,7 +1044,7 @@ TEST(LayerAnimatorTest, PreemptThreadedByImmediatelyAnimatingToNewTarget) {
   double middle_opacity(0.5);
   double target_opacity(1.0);
 
-  base::TimeDelta delta = base::TimeDelta::FromSeconds(1);
+  base::TimeDelta delta = base::Seconds(1);
 
   delegate.SetOpacityFromAnimation(start_opacity,
                                    PropertyChangeReason::NOT_FROM_ANIMATION);
@@ -1070,13 +1104,13 @@ TEST(LayerAnimatorTest, PreemptThreadedByImmediatelyAnimatingToNewTarget) {
 // Preempt by enqueuing the new animation.
 TEST(LayerAnimatorTest, PreemptEnqueueNewAnimation) {
   TestLayerAnimationDelegate delegate;
-  scoped_refptr<LayerAnimator> animator(CreateDefaultTestAnimator(&delegate));
+  scoped_refptr<LayerAnimator> animator = CreateDefaultTestAnimator(&delegate);
 
   double start_brightness(0.0);
   double middle_brightness(0.5);
   double target_brightness(1.0);
 
-  base::TimeDelta delta = base::TimeDelta::FromSeconds(1);
+  base::TimeDelta delta = base::Seconds(1);
 
   delegate.SetBrightnessFromAnimation(start_brightness,
                                       PropertyChangeReason::NOT_FROM_ANIMATION);
@@ -1090,7 +1124,7 @@ TEST(LayerAnimatorTest, PreemptEnqueueNewAnimation) {
 
   base::TimeTicks start_time = animator->last_step_time();
 
-  animator->Step(start_time + base::TimeDelta::FromMilliseconds(500));
+  animator->Step(start_time + base::Milliseconds(500));
 
   animator->StartAnimation(
       new LayerAnimationSequence(
@@ -1102,17 +1136,17 @@ TEST(LayerAnimatorTest, PreemptEnqueueNewAnimation) {
 
   EXPECT_TRUE(animator->is_animating());
 
-  animator->Step(start_time + base::TimeDelta::FromMilliseconds(1000));
+  animator->Step(start_time + base::Milliseconds(1000));
 
   EXPECT_TRUE(animator->is_animating());
   EXPECT_FLOAT_EQ(delegate.GetBrightnessForAnimation(), target_brightness);
 
-  animator->Step(start_time + base::TimeDelta::FromMilliseconds(1500));
+  animator->Step(start_time + base::Milliseconds(1500));
 
   EXPECT_TRUE(animator->is_animating());
   EXPECT_FLOAT_EQ(delegate.GetBrightnessForAnimation(), middle_brightness);
 
-  animator->Step(start_time + base::TimeDelta::FromMilliseconds(2000));
+  animator->Step(start_time + base::Milliseconds(2000));
 
   EXPECT_FALSE(animator->is_animating());
   EXPECT_FLOAT_EQ(delegate.GetBrightnessForAnimation(), start_brightness);
@@ -1123,13 +1157,13 @@ TEST(LayerAnimatorTest, PreemptEnqueueNewAnimation) {
 // animation started.
 TEST(LayerAnimatorTest, PreemptyByReplacingQueuedAnimations) {
   TestLayerAnimationDelegate delegate;
-  scoped_refptr<LayerAnimator> animator(CreateDefaultTestAnimator(&delegate));
+  scoped_refptr<LayerAnimator> animator = CreateDefaultTestAnimator(&delegate);
 
   double start_brightness(0.0);
   double middle_brightness(0.5);
   double target_brightness(1.0);
 
-  base::TimeDelta delta = base::TimeDelta::FromSeconds(1);
+  base::TimeDelta delta = base::Seconds(1);
 
   delegate.SetBrightnessFromAnimation(start_brightness,
                                       PropertyChangeReason::NOT_FROM_ANIMATION);
@@ -1143,7 +1177,7 @@ TEST(LayerAnimatorTest, PreemptyByReplacingQueuedAnimations) {
 
   base::TimeTicks start_time = animator->last_step_time();
 
-  animator->Step(start_time + base::TimeDelta::FromMilliseconds(500));
+  animator->Step(start_time + base::Milliseconds(500));
 
   animator->StartAnimation(
       new LayerAnimationSequence(
@@ -1160,17 +1194,17 @@ TEST(LayerAnimatorTest, PreemptyByReplacingQueuedAnimations) {
   EXPECT_TRUE(animator->is_animating());
   EXPECT_FLOAT_EQ(delegate.GetBrightnessForAnimation(), middle_brightness);
 
-  animator->Step(start_time + base::TimeDelta::FromMilliseconds(1000));
+  animator->Step(start_time + base::Milliseconds(1000));
 
   EXPECT_TRUE(animator->is_animating());
   EXPECT_FLOAT_EQ(delegate.GetBrightnessForAnimation(), target_brightness);
 
-  animator->Step(start_time + base::TimeDelta::FromMilliseconds(1500));
+  animator->Step(start_time + base::Milliseconds(1500));
 
   EXPECT_TRUE(animator->is_animating());
   EXPECT_FLOAT_EQ(delegate.GetBrightnessForAnimation(), middle_brightness);
 
-  animator->Step(start_time + base::TimeDelta::FromMilliseconds(2000));
+  animator->Step(start_time + base::Milliseconds(2000));
 
   EXPECT_FALSE(animator->is_animating());
   EXPECT_FLOAT_EQ(delegate.GetBrightnessForAnimation(), start_brightness);
@@ -1178,14 +1212,14 @@ TEST(LayerAnimatorTest, PreemptyByReplacingQueuedAnimations) {
 
 TEST(LayerAnimatorTest, StartTogetherSetsLastStepTime) {
   TestLayerAnimationDelegate delegate;
-  scoped_refptr<LayerAnimator> animator(CreateDefaultTestAnimator(&delegate));
+  scoped_refptr<LayerAnimator> animator = CreateDefaultTestAnimator(&delegate);
 
   double start_grayscale(0.0);
   double target_grayscale(1.0);
   double start_brightness(0.1);
   double target_brightness(0.9);
 
-  base::TimeDelta delta = base::TimeDelta::FromSeconds(1);
+  base::TimeDelta delta = base::Seconds(1);
 
   delegate.SetGrayscaleFromAnimation(start_grayscale,
                                      PropertyChangeReason::NOT_FROM_ANIMATION);
@@ -1210,21 +1244,21 @@ TEST(LayerAnimatorTest, StartTogetherSetsLastStepTime) {
   // should be enormous. Arbitrarily choosing 1 minute as the threshold,
   // though a much smaller value would probably have sufficed.
   delta = base::TimeTicks::Now() - animator->last_step_time();
-  EXPECT_LT(delta, base::TimeDelta::FromMinutes(1));
+  EXPECT_LT(delta, base::Minutes(1));
 }
 
 //-------------------------------------------------------
 // Preempt by immediately setting new target.
 TEST(LayerAnimatorTest, MultiPreemptBySettingNewTarget) {
   TestLayerAnimationDelegate delegate;
-  scoped_refptr<LayerAnimator> animator(CreateDefaultTestAnimator(&delegate));
+  scoped_refptr<LayerAnimator> animator = CreateDefaultTestAnimator(&delegate);
 
   double start_opacity(0.0);
   double target_opacity(1.0);
   double start_brightness(0.1);
   double target_brightness(0.9);
 
-  base::TimeDelta delta = base::TimeDelta::FromSeconds(1);
+  base::TimeDelta delta = base::Seconds(1);
 
   delegate.SetOpacityFromAnimation(start_opacity,
                                    PropertyChangeReason::NOT_FROM_ANIMATION);
@@ -1255,7 +1289,7 @@ TEST(LayerAnimatorTest, MultiPreemptBySettingNewTarget) {
 // Preempt by animating to new target.
 TEST(LayerAnimatorTest, MultiPreemptByImmediatelyAnimatingToNewTarget) {
   TestLayerAnimationDelegate delegate;
-  scoped_refptr<LayerAnimator> animator(CreateDefaultTestAnimator(&delegate));
+  scoped_refptr<LayerAnimator> animator = CreateDefaultTestAnimator(&delegate);
 
   double start_grayscale(0.0);
   double middle_grayscale(0.5);
@@ -1265,7 +1299,7 @@ TEST(LayerAnimatorTest, MultiPreemptByImmediatelyAnimatingToNewTarget) {
   double middle_brightness(0.2);
   double target_brightness(0.3);
 
-  base::TimeDelta delta = base::TimeDelta::FromSeconds(1);
+  base::TimeDelta delta = base::Seconds(1);
 
   delegate.SetGrayscaleFromAnimation(start_grayscale,
                                      PropertyChangeReason::NOT_FROM_ANIMATION);
@@ -1285,7 +1319,7 @@ TEST(LayerAnimatorTest, MultiPreemptByImmediatelyAnimatingToNewTarget) {
 
   base::TimeTicks start_time = animator->last_step_time();
 
-  animator->Step(start_time + base::TimeDelta::FromMilliseconds(500));
+  animator->Step(start_time + base::Milliseconds(500));
 
   animator->StartTogether(
       CreateMultiSequence(
@@ -1305,7 +1339,7 @@ TEST(LayerAnimatorTest, MultiPreemptByImmediatelyAnimatingToNewTarget) {
 
   EXPECT_TRUE(animator->is_animating());
 
-  animator->Step(start_time + base::TimeDelta::FromMilliseconds(1000));
+  animator->Step(start_time + base::Milliseconds(1000));
 
   EXPECT_TRUE(animator->is_animating());
   EXPECT_FLOAT_EQ(delegate.GetGrayscaleForAnimation(),
@@ -1313,7 +1347,7 @@ TEST(LayerAnimatorTest, MultiPreemptByImmediatelyAnimatingToNewTarget) {
   EXPECT_FLOAT_EQ(delegate.GetBrightnessForAnimation(),
                   0.5 * (start_brightness + middle_brightness));
 
-  animator->Step(start_time + base::TimeDelta::FromMilliseconds(1500));
+  animator->Step(start_time + base::Milliseconds(1500));
 
   EXPECT_FALSE(animator->is_animating());
   EXPECT_FLOAT_EQ(delegate.GetGrayscaleForAnimation(), start_grayscale);
@@ -1336,7 +1370,7 @@ TEST(LayerAnimatorTest, MultiPreemptThreadedByImmediatelyAnimatingToNewTarget) {
   double middle_brightness(0.2);
   double target_brightness(0.3);
 
-  base::TimeDelta delta = base::TimeDelta::FromSeconds(1);
+  base::TimeDelta delta = base::Seconds(1);
 
   delegate.SetOpacityFromAnimation(start_opacity,
                                    PropertyChangeReason::NOT_FROM_ANIMATION);
@@ -1410,7 +1444,7 @@ TEST(LayerAnimatorTest, MultiPreemptThreadedByImmediatelyAnimatingToNewTarget) {
 // Preempt by enqueuing the new animation.
 TEST(LayerAnimatorTest, MultiPreemptEnqueueNewAnimation) {
   TestLayerAnimationDelegate delegate;
-  scoped_refptr<LayerAnimator> animator(CreateDefaultTestAnimator(&delegate));
+  scoped_refptr<LayerAnimator> animator = CreateDefaultTestAnimator(&delegate);
 
   double start_grayscale(0.0);
   double middle_grayscale(0.5);
@@ -1420,7 +1454,7 @@ TEST(LayerAnimatorTest, MultiPreemptEnqueueNewAnimation) {
   double middle_brightness(0.2);
   double target_brightness(0.3);
 
-  base::TimeDelta delta = base::TimeDelta::FromSeconds(1);
+  base::TimeDelta delta = base::Seconds(1);
 
   delegate.SetGrayscaleFromAnimation(start_grayscale,
                                      PropertyChangeReason::NOT_FROM_ANIMATION);
@@ -1438,7 +1472,7 @@ TEST(LayerAnimatorTest, MultiPreemptEnqueueNewAnimation) {
 
   base::TimeTicks start_time = animator->last_step_time();
 
-  animator->Step(start_time + base::TimeDelta::FromMilliseconds(500));
+  animator->Step(start_time + base::Milliseconds(500));
 
   animator->StartTogether(
       CreateMultiSequence(
@@ -1452,19 +1486,19 @@ TEST(LayerAnimatorTest, MultiPreemptEnqueueNewAnimation) {
 
   EXPECT_TRUE(animator->is_animating());
 
-  animator->Step(start_time + base::TimeDelta::FromMilliseconds(1000));
+  animator->Step(start_time + base::Milliseconds(1000));
 
   EXPECT_TRUE(animator->is_animating());
   EXPECT_FLOAT_EQ(delegate.GetGrayscaleForAnimation(), target_grayscale);
   EXPECT_FLOAT_EQ(delegate.GetBrightnessForAnimation(), target_brightness);
 
-  animator->Step(start_time + base::TimeDelta::FromMilliseconds(1500));
+  animator->Step(start_time + base::Milliseconds(1500));
 
   EXPECT_TRUE(animator->is_animating());
   EXPECT_FLOAT_EQ(delegate.GetGrayscaleForAnimation(), middle_grayscale);
   EXPECT_FLOAT_EQ(delegate.GetBrightnessForAnimation(), middle_brightness);
 
-  animator->Step(start_time + base::TimeDelta::FromMilliseconds(2000));
+  animator->Step(start_time + base::Milliseconds(2000));
 
   EXPECT_FALSE(animator->is_animating());
   EXPECT_FLOAT_EQ(delegate.GetGrayscaleForAnimation(), start_grayscale);
@@ -1476,7 +1510,7 @@ TEST(LayerAnimatorTest, MultiPreemptEnqueueNewAnimation) {
 // animation started.
 TEST(LayerAnimatorTest, MultiPreemptByReplacingQueuedAnimations) {
   TestLayerAnimationDelegate delegate;
-  scoped_refptr<LayerAnimator> animator(CreateDefaultTestAnimator(&delegate));
+  scoped_refptr<LayerAnimator> animator = CreateDefaultTestAnimator(&delegate);
 
   double start_grayscale(0.0);
   double middle_grayscale(0.5);
@@ -1486,7 +1520,7 @@ TEST(LayerAnimatorTest, MultiPreemptByReplacingQueuedAnimations) {
   double middle_brightness(0.2);
   double target_brightness(0.3);
 
-  base::TimeDelta delta = base::TimeDelta::FromSeconds(1);
+  base::TimeDelta delta = base::Seconds(1);
 
   delegate.SetGrayscaleFromAnimation(start_grayscale,
                                      PropertyChangeReason::NOT_FROM_ANIMATION);
@@ -1504,7 +1538,7 @@ TEST(LayerAnimatorTest, MultiPreemptByReplacingQueuedAnimations) {
 
   base::TimeTicks start_time = animator->last_step_time();
 
-  animator->Step(start_time + base::TimeDelta::FromMilliseconds(500));
+  animator->Step(start_time + base::Milliseconds(500));
 
   animator->StartTogether(
       CreateMultiSequence(
@@ -1525,19 +1559,19 @@ TEST(LayerAnimatorTest, MultiPreemptByReplacingQueuedAnimations) {
   EXPECT_FLOAT_EQ(delegate.GetGrayscaleForAnimation(), middle_grayscale);
   EXPECT_FLOAT_EQ(delegate.GetBrightnessForAnimation(), middle_brightness);
 
-  animator->Step(start_time + base::TimeDelta::FromMilliseconds(1000));
+  animator->Step(start_time + base::Milliseconds(1000));
 
   EXPECT_TRUE(animator->is_animating());
   EXPECT_FLOAT_EQ(delegate.GetGrayscaleForAnimation(), target_grayscale);
   EXPECT_FLOAT_EQ(delegate.GetBrightnessForAnimation(), target_brightness);
 
-  animator->Step(start_time + base::TimeDelta::FromMilliseconds(1500));
+  animator->Step(start_time + base::Milliseconds(1500));
 
   EXPECT_TRUE(animator->is_animating());
   EXPECT_FLOAT_EQ(delegate.GetGrayscaleForAnimation(), middle_grayscale);
   EXPECT_FLOAT_EQ(delegate.GetBrightnessForAnimation(), middle_brightness);
 
-  animator->Step(start_time + base::TimeDelta::FromMilliseconds(2000));
+  animator->Step(start_time + base::Milliseconds(2000));
 
   EXPECT_FALSE(animator->is_animating());
   EXPECT_FLOAT_EQ(delegate.GetGrayscaleForAnimation(), start_grayscale);
@@ -1547,12 +1581,12 @@ TEST(LayerAnimatorTest, MultiPreemptByReplacingQueuedAnimations) {
 // Test that non-threaded cyclic sequences continue to animate.
 TEST(LayerAnimatorTest, CyclicSequences) {
   TestLayerAnimationDelegate delegate;
-  scoped_refptr<LayerAnimator> animator(CreateDefaultTestAnimator(&delegate));
+  scoped_refptr<LayerAnimator> animator = CreateDefaultTestAnimator(&delegate);
 
   double start_brightness(0.0);
   double target_brightness(1.0);
 
-  base::TimeDelta delta = base::TimeDelta::FromSeconds(1);
+  base::TimeDelta delta = base::Seconds(1);
 
   delegate.SetBrightnessFromAnimation(start_brightness,
                                       PropertyChangeReason::NOT_FROM_ANIMATION);
@@ -1564,35 +1598,35 @@ TEST(LayerAnimatorTest, CyclicSequences) {
   sequence->AddElement(
       LayerAnimationElement::CreateBrightnessElement(start_brightness, delta));
 
-  sequence->set_is_cyclic(true);
+  sequence->set_is_repeating(true);
 
   animator->StartAnimation(sequence.release());
 
   base::TimeTicks start_time = animator->last_step_time();
 
-  animator->Step(start_time + base::TimeDelta::FromMilliseconds(1000));
+  animator->Step(start_time + base::Milliseconds(1000));
 
   EXPECT_TRUE(animator->is_animating());
   EXPECT_FLOAT_EQ(delegate.GetBrightnessForAnimation(), target_brightness);
 
-  animator->Step(start_time + base::TimeDelta::FromMilliseconds(2000));
+  animator->Step(start_time + base::Milliseconds(2000));
 
   EXPECT_TRUE(animator->is_animating());
   EXPECT_FLOAT_EQ(delegate.GetBrightnessForAnimation(), start_brightness);
 
-  animator->Step(start_time + base::TimeDelta::FromMilliseconds(3000));
+  animator->Step(start_time + base::Milliseconds(3000));
 
   EXPECT_TRUE(animator->is_animating());
   EXPECT_FLOAT_EQ(delegate.GetBrightnessForAnimation(), target_brightness);
 
   // Skip ahead by a lot.
-  animator->Step(start_time + base::TimeDelta::FromMilliseconds(1000000000));
+  animator->Step(start_time + base::Milliseconds(1000000000));
 
   EXPECT_TRUE(animator->is_animating());
   EXPECT_FLOAT_EQ(delegate.GetBrightnessForAnimation(), start_brightness);
 
   // Skip ahead by a lot.
-  animator->Step(start_time + base::TimeDelta::FromMilliseconds(1000001000));
+  animator->Step(start_time + base::Milliseconds(1000001000));
 
   EXPECT_TRUE(animator->is_animating());
   EXPECT_FLOAT_EQ(delegate.GetBrightnessForAnimation(), target_brightness);
@@ -1612,7 +1646,7 @@ TEST(LayerAnimatorTest, ThreadedCyclicSequences) {
   double start_opacity(0.0);
   double target_opacity(1.0);
 
-  base::TimeDelta delta = base::TimeDelta::FromSeconds(1);
+  base::TimeDelta delta = base::Seconds(1);
 
   delegate.SetOpacityFromAnimation(start_opacity,
                                    PropertyChangeReason::NOT_FROM_ANIMATION);
@@ -1623,7 +1657,7 @@ TEST(LayerAnimatorTest, ThreadedCyclicSequences) {
   sequence->AddElement(
       LayerAnimationElement::CreateOpacityElement(start_opacity, delta));
 
-  sequence->set_is_cyclic(true);
+  sequence->set_is_repeating(true);
 
   test_controller.animator()->StartAnimation(sequence.release());
 
@@ -1699,7 +1733,7 @@ TEST(LayerAnimatorTest, AddObserverExplicit) {
 
   EXPECT_TRUE(!observer.last_ended_sequence());
 
-  base::TimeDelta delta = base::TimeDelta::FromSeconds(1);
+  base::TimeDelta delta = base::Seconds(1);
 
   delegate.SetBrightnessFromAnimation(0.0f,
                                       PropertyChangeReason::NOT_FROM_ANIMATION);
@@ -1713,7 +1747,7 @@ TEST(LayerAnimatorTest, AddObserverExplicit) {
 
   base::TimeTicks start_time = animator->last_step_time();
 
-  animator->Step(start_time + base::TimeDelta::FromMilliseconds(1000));
+  animator->Step(start_time + base::Milliseconds(1000));
 
   EXPECT_EQ(observer.last_ended_sequence(), sequence);
 
@@ -1732,7 +1766,7 @@ TEST(LayerAnimatorTest, AddObserverExplicit) {
 // when the object goes out of scope.
 TEST(LayerAnimatorTest, ImplicitAnimationObservers) {
   TestLayerAnimationDelegate delegate;
-  scoped_refptr<LayerAnimator> animator(CreateDefaultTestAnimator(&delegate));
+  scoped_refptr<LayerAnimator> animator = CreateDefaultTestAnimator(&delegate);
   TestImplicitAnimationObserver observer(false);
 
   EXPECT_FALSE(observer.animations_completed());
@@ -1746,7 +1780,7 @@ TEST(LayerAnimatorTest, ImplicitAnimationObservers) {
 
   EXPECT_FALSE(observer.animations_completed());
   base::TimeTicks start_time = animator->last_step_time();
-  animator->Step(start_time + base::TimeDelta::FromMilliseconds(1000));
+  animator->Step(start_time + base::Milliseconds(1000));
   EXPECT_TRUE(observer.animations_completed());
   EXPECT_TRUE(observer.WasAnimationCompletedForProperty(
       LayerAnimationElement::BRIGHTNESS));
@@ -2316,7 +2350,7 @@ TEST(LayerAnimatorTest, TrilinearFilteringInTwoAnimations) {
 // when the object goes out of scope due to the animation being interrupted.
 TEST(LayerAnimatorTest, InterruptedImplicitAnimationObservers) {
   TestLayerAnimationDelegate delegate;
-  scoped_refptr<LayerAnimator> animator(CreateDefaultTestAnimator(&delegate));
+  scoped_refptr<LayerAnimator> animator = CreateDefaultTestAnimator(&delegate);
   TestImplicitAnimationObserver observer(false);
 
   EXPECT_FALSE(observer.animations_completed());
@@ -2354,7 +2388,7 @@ TEST(LayerAnimatorTest, AnimatorKeptAliveBySettings) {
     ScopedLayerAnimationSettings settings(animator);
     base::TimeTicks now = base::TimeTicks::Now();
     animator->SetBrightness(0.5);
-    animator->Step(now + base::TimeDelta::FromSeconds(1));
+    animator->Step(now + base::Seconds(1));
     EXPECT_FALSE(destruction_observer.IsAnimatorDeleted());
   }
   // ScopedLayerAnimationSettings was destroyed, so Animator should be deleted.
@@ -2365,7 +2399,7 @@ TEST(LayerAnimatorTest, AnimatorKeptAliveBySettings) {
 // when the animator is destroyed unless explicitly requested.
 TEST(LayerAnimatorTest, ImplicitObserversAtAnimatorDestruction) {
   TestLayerAnimationDelegate delegate;
-  scoped_refptr<LayerAnimator> animator(CreateDefaultTestAnimator(&delegate));
+  scoped_refptr<LayerAnimator> animator = CreateDefaultTestAnimator(&delegate);
   TestImplicitAnimationObserver observer_notify(true);
   TestImplicitAnimationObserver observer_do_not_notify(false);
 
@@ -2392,7 +2426,7 @@ TEST(LayerAnimatorTest, ImplicitObserversAtAnimatorDestruction) {
 
 TEST(LayerAnimatorTest, AbortedAnimationStatusInImplicitObservers) {
   TestLayerAnimationDelegate delegate;
-  scoped_refptr<LayerAnimator> animator(CreateDefaultTestAnimator(&delegate));
+  scoped_refptr<LayerAnimator> animator = CreateDefaultTestAnimator(&delegate);
   TestImplicitAnimationObserver observer(false);
 
   EXPECT_FALSE(observer.animations_completed());
@@ -2430,11 +2464,11 @@ TEST(LayerAnimatorTest, AbortedAnimationStatusInImplicitObservers) {
 
 TEST(LayerAnimatorTest, RemoveObserverShouldRemoveFromSequences) {
   TestLayerAnimationDelegate delegate;
-  scoped_refptr<LayerAnimator> animator(CreateDefaultTestAnimator(&delegate));
+  scoped_refptr<LayerAnimator> animator = CreateDefaultTestAnimator(&delegate);
   TestLayerAnimationObserver observer;
   TestLayerAnimationObserver removed_observer;
 
-  base::TimeDelta delta = base::TimeDelta::FromSeconds(1);
+  base::TimeDelta delta = base::Seconds(1);
 
   LayerAnimationSequence* sequence = new LayerAnimationSequence(
       LayerAnimationElement::CreateBrightnessElement(1.0f, delta));
@@ -2454,7 +2488,7 @@ TEST(LayerAnimatorTest, RemoveObserverShouldRemoveFromSequences) {
 
   base::TimeTicks start_time = animator->last_step_time();
 
-  animator->Step(start_time + base::TimeDelta::FromMilliseconds(1000));
+  animator->Step(start_time + base::Milliseconds(1000));
 
   EXPECT_EQ(observer.last_ended_sequence(), sequence);
   EXPECT_TRUE(!removed_observer.last_ended_sequence());
@@ -2470,25 +2504,25 @@ TEST(LayerAnimatorTest, ObserverReleasedBeforeAnimationSequenceEnds) {
   delegate.SetOpacityFromAnimation(0.0f,
                                    PropertyChangeReason::NOT_FROM_ANIMATION);
 
-  base::TimeDelta delta = base::TimeDelta::FromSeconds(1);
+  base::TimeDelta delta = base::Seconds(1);
   LayerAnimationSequence* sequence = new LayerAnimationSequence(
       LayerAnimationElement::CreateOpacityElement(1.0f, delta));
 
   animator->StartAnimation(sequence);
 
   // |observer| should be attached to |sequence|.
-  EXPECT_TRUE(sequence->observers_.might_have_observers());
+  EXPECT_TRUE(!sequence->observers_.empty());
 
   // Now, release |observer|
   observer.reset();
 
   // And |sequence| should no longer be attached to |observer|.
-  EXPECT_FALSE(sequence->observers_.might_have_observers());
+  EXPECT_FALSE(!sequence->observers_.empty());
 }
 
 TEST(LayerAnimatorTest, ObserverAttachedAfterAnimationStarted) {
   TestLayerAnimationDelegate delegate;
-  scoped_refptr<LayerAnimator> animator(CreateDefaultTestAnimator(&delegate));
+  scoped_refptr<LayerAnimator> animator = CreateDefaultTestAnimator(&delegate);
 
   TestImplicitAnimationObserver observer(false);
 
@@ -2498,20 +2532,20 @@ TEST(LayerAnimatorTest, ObserverAttachedAfterAnimationStarted) {
   {
     ScopedLayerAnimationSettings setter(animator.get());
 
-    base::TimeDelta delta = base::TimeDelta::FromSeconds(1);
+    base::TimeDelta delta = base::Seconds(1);
     LayerAnimationSequence* sequence = new LayerAnimationSequence(
         LayerAnimationElement::CreateBrightnessElement(1.0f, delta));
 
     animator->StartAnimation(sequence);
     base::TimeTicks start_time = animator->last_step_time();
-    animator->Step(start_time + base::TimeDelta::FromMilliseconds(500));
+    animator->Step(start_time + base::Milliseconds(500));
 
     setter.AddObserver(&observer);
 
     // Start observing an in-flight animation.
     sequence->AddObserver(&observer);
 
-    animator->Step(start_time + base::TimeDelta::FromMilliseconds(1000));
+    animator->Step(start_time + base::Milliseconds(1000));
   }
 
   EXPECT_TRUE(observer.animations_completed());
@@ -2521,13 +2555,13 @@ TEST(LayerAnimatorTest, ObserverAttachedAfterAnimationStarted) {
 
 TEST(LayerAnimatorTest, ObserverDetachedBeforeAnimationFinished) {
   TestLayerAnimationDelegate delegate;
-  scoped_refptr<LayerAnimator> animator(CreateDefaultTestAnimator(&delegate));
+  scoped_refptr<LayerAnimator> animator = CreateDefaultTestAnimator(&delegate);
 
   TestImplicitAnimationObserver observer(false);
 
   delegate.SetBrightnessFromAnimation(0.0f,
                                       PropertyChangeReason::NOT_FROM_ANIMATION);
-  base::TimeDelta delta = base::TimeDelta::FromSeconds(1);
+  base::TimeDelta delta = base::Seconds(1);
   LayerAnimationSequence* sequence = new LayerAnimationSequence(
       LayerAnimationElement::CreateBrightnessElement(1.0f, delta));
 
@@ -2537,7 +2571,7 @@ TEST(LayerAnimatorTest, ObserverDetachedBeforeAnimationFinished) {
 
     animator->StartAnimation(sequence);
     base::TimeTicks start_time = animator->last_step_time();
-    animator->Step(start_time + base::TimeDelta::FromMilliseconds(500));
+    animator->Step(start_time + base::Milliseconds(500));
   }
 
   EXPECT_FALSE(observer.animations_completed());
@@ -2578,9 +2612,9 @@ TEST(LayerAnimatorTest, ObserverDeletesAnimationsOnEnd) {
   delegate.SetBoundsFromAnimation(start_bounds,
                                   PropertyChangeReason::NOT_FROM_ANIMATION);
 
-  base::TimeDelta brightness_delta = base::TimeDelta::FromSeconds(1);
-  base::TimeDelta halfway_delta = base::TimeDelta::FromSeconds(2);
-  base::TimeDelta bounds_delta = base::TimeDelta::FromSeconds(3);
+  base::TimeDelta brightness_delta = base::Seconds(1);
+  base::TimeDelta halfway_delta = base::Seconds(2);
+  base::TimeDelta bounds_delta = base::Seconds(3);
 
   std::unique_ptr<DeletingLayerAnimationObserver> observer(
       new DeletingLayerAnimationObserver(animator.get()));
@@ -2627,7 +2661,7 @@ TEST(LayerAnimatorTest, CallbackDeletesAnimationInProgress) {
         animator_->StopAnimating();
     }
    private:
-    LayerAnimator* animator_;
+    raw_ptr<LayerAnimator> animator_;
     int max_width_;
     // Allow copy and assign.
   };
@@ -2645,10 +2679,10 @@ TEST(LayerAnimatorTest, CallbackDeletesAnimationInProgress) {
   delegate.SetBoundsFromAnimation(start_bounds,
                                   PropertyChangeReason::NOT_FROM_ANIMATION);
 
-  base::TimeDelta bounds_delta1 = base::TimeDelta::FromMilliseconds(333);
-  base::TimeDelta bounds_delta2 = base::TimeDelta::FromMilliseconds(666);
-  base::TimeDelta bounds_delta = base::TimeDelta::FromMilliseconds(1000);
-  base::TimeDelta final_delta = base::TimeDelta::FromMilliseconds(1500);
+  base::TimeDelta bounds_delta1 = base::Milliseconds(333);
+  base::TimeDelta bounds_delta2 = base::Milliseconds(666);
+  base::TimeDelta bounds_delta = base::Milliseconds(1000);
+  base::TimeDelta final_delta = base::Milliseconds(1500);
 
   animator->StartAnimation(new LayerAnimationSequence(
       LayerAnimationElement::CreateBoundsElement(
@@ -2685,8 +2719,8 @@ TEST(LayerAnimatorTest, ObserverDeletesAnimationsOnAbort) {
   double target_brightness(1.0);
   gfx::Rect start_bounds(0, 0, 50, 50);
   gfx::Rect target_bounds(5, 5, 5, 5);
-  base::TimeDelta brightness_delta = base::TimeDelta::FromSeconds(1);
-  base::TimeDelta bounds_delta = base::TimeDelta::FromSeconds(2);
+  base::TimeDelta brightness_delta = base::Seconds(1);
+  base::TimeDelta bounds_delta = base::Seconds(2);
 
   delegate.SetBrightnessFromAnimation(start_brightness,
                                       PropertyChangeReason::NOT_FROM_ANIMATION);
@@ -2725,12 +2759,12 @@ TEST(LayerAnimatorTest, ObserverDeletesAnimationsOnAbort) {
 // cancels the original animation.
 TEST(LayerAnimatorTest, SettingPropertyDuringAnAnimation) {
   TestLayerAnimationDelegate delegate;
-  scoped_refptr<LayerAnimator> animator(CreateDefaultTestAnimator(&delegate));
+  scoped_refptr<LayerAnimator> animator = CreateDefaultTestAnimator(&delegate);
 
   double start_opacity(0.0);
   double target_opacity(1.0);
 
-  base::TimeDelta delta = base::TimeDelta::FromSeconds(1);
+  base::TimeDelta delta = base::Seconds(1);
 
   delegate.SetOpacityFromAnimation(start_opacity,
                                    PropertyChangeReason::NOT_FROM_ANIMATION);
@@ -2751,7 +2785,7 @@ TEST(LayerAnimatorTest, SettingPropertyDuringAnAnimation) {
 // second sequence to be leaked.
 TEST(LayerAnimatorTest, ImmediatelySettingNewTargetDoesNotLeak) {
   TestLayerAnimationDelegate delegate;
-  scoped_refptr<LayerAnimator> animator(CreateDefaultTestAnimator(&delegate));
+  scoped_refptr<LayerAnimator> animator = CreateDefaultTestAnimator(&delegate);
   animator->set_preemption_strategy(LayerAnimator::IMMEDIATELY_SET_NEW_TARGET);
 
   gfx::Rect start_bounds(0, 0, 50, 50);
@@ -2770,7 +2804,7 @@ TEST(LayerAnimatorTest, ImmediatelySettingNewTargetDoesNotLeak) {
   EXPECT_TRUE(animator->IsAnimatingProperty(LayerAnimationElement::BOUNDS));
 
   int num_live_instances = 0;
-  base::TimeDelta delta = base::TimeDelta::FromSeconds(1);
+  base::TimeDelta delta = base::Seconds(1);
   std::unique_ptr<TestLayerAnimationSequence> sequence =
       std::make_unique<TestLayerAnimationSequence>(
           LayerAnimationElement::CreateBoundsElement(target_bounds, delta),
@@ -2790,7 +2824,7 @@ TEST(LayerAnimatorTest, ImmediatelySettingNewTargetDoesNotLeak) {
 // Verifies GetTargetOpacity() works when multiple sequences are scheduled.
 TEST(LayerAnimatorTest, GetTargetOpacity) {
   TestLayerAnimationDelegate delegate;
-  scoped_refptr<LayerAnimator> animator(CreateDefaultTestAnimator(&delegate));
+  scoped_refptr<LayerAnimator> animator = CreateDefaultTestAnimator(&delegate);
   animator->set_preemption_strategy(LayerAnimator::ENQUEUE_NEW_ANIMATION);
 
   delegate.SetOpacityFromAnimation(0.0,
@@ -2810,7 +2844,7 @@ TEST(LayerAnimatorTest, GetTargetOpacity) {
 // Verifies GetTargetBrightness() works when multiple sequences are scheduled.
 TEST(LayerAnimatorTest, GetTargetBrightness) {
   TestLayerAnimationDelegate delegate;
-  scoped_refptr<LayerAnimator> animator(CreateDefaultTestAnimator(&delegate));
+  scoped_refptr<LayerAnimator> animator = CreateDefaultTestAnimator(&delegate);
   animator->set_preemption_strategy(LayerAnimator::ENQUEUE_NEW_ANIMATION);
 
   delegate.SetBrightnessFromAnimation(0.0,
@@ -2830,7 +2864,7 @@ TEST(LayerAnimatorTest, GetTargetBrightness) {
 // Verifies GetTargetGrayscale() works when multiple sequences are scheduled.
 TEST(LayerAnimatorTest, GetTargetGrayscale) {
   TestLayerAnimationDelegate delegate;
-  scoped_refptr<LayerAnimator> animator(CreateDefaultTestAnimator(&delegate));
+  scoped_refptr<LayerAnimator> animator = CreateDefaultTestAnimator(&delegate);
   animator->set_preemption_strategy(LayerAnimator::ENQUEUE_NEW_ANIMATION);
 
   delegate.SetGrayscaleFromAnimation(0.0,
@@ -2850,13 +2884,13 @@ TEST(LayerAnimatorTest, GetTargetGrayscale) {
 // Verifies color property is modified appropriately.
 TEST(LayerAnimatorTest, Color) {
   TestLayerAnimationDelegate delegate;
-  scoped_refptr<LayerAnimator> animator(CreateDefaultTestAnimator(&delegate));
+  scoped_refptr<LayerAnimator> animator = CreateDefaultTestAnimator(&delegate);
 
   SkColor start_color  = SkColorSetARGB( 64, 20, 40,  60);
   SkColor middle_color = SkColorSetARGB(128, 35, 70, 120);
   SkColor target_color = SkColorSetARGB(192, 40, 80, 140);
 
-  base::TimeDelta delta = base::TimeDelta::FromSeconds(1);
+  base::TimeDelta delta = base::Seconds(1);
 
   delegate.SetColorFromAnimation(start_color,
                                  PropertyChangeReason::NOT_FROM_ANIMATION);
@@ -2871,13 +2905,13 @@ TEST(LayerAnimatorTest, Color) {
 
   base::TimeTicks start_time = animator->last_step_time();
 
-  animator->Step(start_time + base::TimeDelta::FromMilliseconds(500));
+  animator->Step(start_time + base::Milliseconds(500));
 
   EXPECT_TRUE(animator->is_animating());
   EXPECT_EQ(ColorToString(middle_color),
             ColorToString(delegate.GetColorForAnimation()));
 
-  animator->Step(start_time + base::TimeDelta::FromMilliseconds(1000));
+  animator->Step(start_time + base::Milliseconds(1000));
 
   EXPECT_FALSE(animator->is_animating());
   EXPECT_EQ(ColorToString(target_color),
@@ -2886,10 +2920,10 @@ TEST(LayerAnimatorTest, Color) {
 
 // Verifies SchedulePauseForProperties().
 TEST(LayerAnimatorTest, SchedulePauseForProperties) {
-  scoped_refptr<LayerAnimator> animator(CreateDefaultTestAnimator());
+  scoped_refptr<LayerAnimator> animator = CreateDefaultTestAnimator();
   animator->set_preemption_strategy(LayerAnimator::ENQUEUE_NEW_ANIMATION);
   animator->SchedulePauseForProperties(
-      base::TimeDelta::FromMilliseconds(100),
+      base::Milliseconds(100),
       LayerAnimationElement::TRANSFORM | LayerAnimationElement::BOUNDS);
   EXPECT_TRUE(animator->IsAnimatingProperty(LayerAnimationElement::TRANSFORM));
   EXPECT_TRUE(animator->IsAnimatingProperty(LayerAnimationElement::BOUNDS));
@@ -2900,7 +2934,7 @@ TEST(LayerAnimatorTest, SchedulePauseForProperties) {
 // input properties is animated.
 TEST(LayerAnimatorTest, IsAnimatingOnePropertyOf) {
   TestLayerAnimationDelegate delegate;
-  scoped_refptr<LayerAnimator> animator(CreateImplicitTestAnimator(&delegate));
+  scoped_refptr<LayerAnimator> animator = CreateImplicitTestAnimator(&delegate);
   animator->set_preemption_strategy(LayerAnimator::ENQUEUE_NEW_ANIMATION);
   animator->SetBrightness(0.5f);
   animator->SetGrayscale(0.5f);
@@ -2921,12 +2955,13 @@ class AnimatorOwner {
  public:
   AnimatorOwner() : animator_(CreateDefaultTestAnimator()) {}
 
+  AnimatorOwner(const AnimatorOwner&) = delete;
+  AnimatorOwner& operator=(const AnimatorOwner&) = delete;
+
   LayerAnimator* animator() { return animator_.get(); }
 
  private:
   scoped_refptr<LayerAnimator> animator_;
-
-  DISALLOW_COPY_AND_ASSIGN(AnimatorOwner);
 };
 
 class DeletingObserver : public LayerAnimationObserver {
@@ -2939,6 +2974,9 @@ class DeletingObserver : public LayerAnimationObserver {
         was_deleted_(was_deleted) {
     animator()->AddObserver(this);
   }
+
+  DeletingObserver(const DeletingObserver&) = delete;
+  DeletingObserver& operator=(const DeletingObserver&) = delete;
 
   ~DeletingObserver() override {
     animator()->RemoveObserver(this);
@@ -2989,9 +3027,7 @@ class DeletingObserver : public LayerAnimationObserver {
   bool delete_on_animation_ended_;
   bool delete_on_animation_aborted_;
   bool delete_on_animation_scheduled_;
-  bool* was_deleted_;
-
-  DISALLOW_COPY_AND_ASSIGN(DeletingObserver);
+  raw_ptr<bool> was_deleted_;
 };
 
 TEST(LayerAnimatorTest, ObserverDeletesAnimatorAfterFinishingAnimation) {
@@ -3012,18 +3048,18 @@ TEST(LayerAnimatorTest, ObserverDeletesAnimatorAfterFinishingAnimation) {
   delegate.SetBoundsFromAnimation(start_bounds,
                                   PropertyChangeReason::NOT_FROM_ANIMATION);
 
-  base::TimeDelta delta = base::TimeDelta::FromSeconds(1);
+  base::TimeDelta delta = base::Seconds(1);
   LayerAnimationSequence* brightness_sequence = new LayerAnimationSequence(
       LayerAnimationElement::CreateBrightnessElement(1.0f, delta));
   animator->StartAnimation(brightness_sequence);
 
-  delta = base::TimeDelta::FromSeconds(2);
+  delta = base::Seconds(2);
   LayerAnimationSequence* bounds_sequence = new LayerAnimationSequence(
       LayerAnimationElement::CreateBoundsElement(target_bounds, delta));
   animator->StartAnimation(bounds_sequence);
 
   base::TimeTicks start_time = animator->last_step_time();
-  animator->Step(start_time + base::TimeDelta::FromMilliseconds(1500));
+  animator->Step(start_time + base::Milliseconds(1500));
 
   EXPECT_TRUE(observer_was_deleted);
 }
@@ -3046,12 +3082,12 @@ TEST(LayerAnimatorTest, ObserverDeletesAnimatorAfterStoppingAnimating) {
   delegate.SetBoundsFromAnimation(start_bounds,
                                   PropertyChangeReason::NOT_FROM_ANIMATION);
 
-  base::TimeDelta delta = base::TimeDelta::FromSeconds(1);
+  base::TimeDelta delta = base::Seconds(1);
   LayerAnimationSequence* opacity_sequence = new LayerAnimationSequence(
       LayerAnimationElement::CreateOpacityElement(1.0f, delta));
   animator->StartAnimation(opacity_sequence);
 
-  delta = base::TimeDelta::FromSeconds(2);
+  delta = base::Seconds(2);
   LayerAnimationSequence* bounds_sequence = new LayerAnimationSequence(
       LayerAnimationElement::CreateBoundsElement(target_bounds, delta));
   animator->StartAnimation(bounds_sequence);
@@ -3080,11 +3116,11 @@ TEST(LayerAnimatorTest, ObserverDeletesAnimatorAfterScheduling) {
 
   std::vector<LayerAnimationSequence*> to_start;
 
-  base::TimeDelta delta = base::TimeDelta::FromSeconds(1);
+  base::TimeDelta delta = base::Seconds(1);
   to_start.push_back(new LayerAnimationSequence(
       LayerAnimationElement::CreateOpacityElement(1.0f, delta)));
 
-  delta = base::TimeDelta::FromSeconds(2);
+  delta = base::Seconds(2);
   to_start.push_back(new LayerAnimationSequence(
       LayerAnimationElement::CreateBoundsElement(target_bounds, delta)));
 
@@ -3114,11 +3150,11 @@ TEST(LayerAnimatorTest, ObserverDeletesAnimatorAfterAborted) {
 
   std::vector<LayerAnimationSequence*> to_start;
 
-  base::TimeDelta delta = base::TimeDelta::FromSeconds(1);
+  base::TimeDelta delta = base::Seconds(1);
   to_start.push_back(new LayerAnimationSequence(
       LayerAnimationElement::CreateOpacityElement(1.0f, delta)));
 
-  delta = base::TimeDelta::FromSeconds(2);
+  delta = base::Seconds(2);
   to_start.push_back(new LayerAnimationSequence(
       LayerAnimationElement::CreateBoundsElement(target_bounds, delta)));
 
@@ -3135,7 +3171,7 @@ TEST(LayerAnimatorTest, ObserverDeletesAnimatorAfterAborted) {
 
 TEST(LayerAnimatorTest, TestSetterRespectEnqueueStrategy) {
   TestLayerAnimationDelegate delegate;
-  scoped_refptr<LayerAnimator> animator(CreateDefaultTestAnimator(&delegate));
+  scoped_refptr<LayerAnimator> animator = CreateDefaultTestAnimator(&delegate);
 
   float start_opacity = 0.0f;
   float target_opacity = 1.0f;
@@ -3147,7 +3183,7 @@ TEST(LayerAnimatorTest, TestSetterRespectEnqueueStrategy) {
   ScopedLayerAnimationSettings settings(animator.get());
   settings.SetPreemptionStrategy(
       LayerAnimator::IMMEDIATELY_ANIMATE_TO_NEW_TARGET);
-  settings.SetTransitionDuration(base::TimeDelta::FromSeconds(1));
+  settings.SetTransitionDuration(base::Seconds(1));
   animator->SetOpacity(target_opacity);
 
   EXPECT_EQ(start_opacity, delegate.GetOpacityForAnimation());
@@ -3203,14 +3239,14 @@ TEST(LayerAnimatorTest, LayerAnimatorCollectionTickTime) {
 TEST(LayerAnimatorTest,
      SequencesAreRemovedFromQueueBeforeBeingNotifiedOfStarted) {
   TestLayerAnimationDelegate delegate;
-  scoped_refptr<LayerAnimator> animator(CreateDefaultTestAnimator(&delegate));
+  scoped_refptr<LayerAnimator> animator = CreateDefaultTestAnimator(&delegate);
 
   AbortAnimationsOnStartedLayerAnimationObserver aborting_observer(
       animator.get());
   test::CountCheckingLayerAnimationObserver counting_observer(
       &aborting_observer);
 
-  const base::TimeDelta sequence_duration = base::TimeDelta::FromSeconds(1);
+  const base::TimeDelta sequence_duration = base::Seconds(1);
 
   animator->ScheduleAnimation(new LayerAnimationSequence(
       LayerAnimationElement::CreateBrightnessElement(1.f, sequence_duration)));
@@ -3236,7 +3272,7 @@ TEST(LayerAnimatorTest, AnimatorStartedCorrectly) {
   TestLayerAnimationDelegate test_delegate;
   animator->SetDelegate(&test_delegate);
   double target_opacity = 1.0;
-  base::TimeDelta time_delta = base::TimeDelta::FromSeconds(1);
+  base::TimeDelta time_delta = base::Seconds(1);
   animator->ScheduleAnimation(new LayerAnimationSequence(
       LayerAnimationElement::CreateOpacityElement(target_opacity, time_delta)));
   EXPECT_FALSE(animator->is_started_);
@@ -3256,7 +3292,7 @@ TEST(LayerAnimatorTest, AnimatorRemovedFromCollectionWhenLayerIsDestroyed) {
   animator->SetDelegate(&collection_delegate);
 
   double target_opacity = 1.0;
-  base::TimeDelta time_delta = base::TimeDelta::FromSeconds(1);
+  base::TimeDelta time_delta = base::Seconds(1);
   animator->ScheduleAnimation(new LayerAnimationSequence(
       LayerAnimationElement::CreateOpacityElement(target_opacity, time_delta)));
 
@@ -3308,7 +3344,7 @@ TEST(LayerAnimatorTest, LayerMovedBetweenCompositorsDuringAnimation) {
 
   LayerAnimator* animator = layer.GetAnimator();
   double target_opacity = 1.0;
-  base::TimeDelta time_delta = base::TimeDelta::FromSeconds(1);
+  base::TimeDelta time_delta = base::Seconds(1);
 
   animator->ScheduleAnimation(new LayerAnimationSequence(
       LayerAnimationElement::CreateOpacityElement(target_opacity, time_delta)));
@@ -3352,7 +3388,7 @@ TEST(LayerAnimatorTest, ThreadedAnimationSurvivesIfLayerRemovedAdded) {
 
   LayerAnimator* animator = layer.GetAnimator();
   double target_opacity = 1.0;
-  base::TimeDelta time_delta = base::TimeDelta::FromSeconds(1);
+  base::TimeDelta time_delta = base::Seconds(1);
 
   animator->ScheduleAnimation(new LayerAnimationSequence(
       LayerAnimationElement::CreateOpacityElement(target_opacity, time_delta)));
@@ -3371,190 +3407,16 @@ TEST(LayerAnimatorTest, ThreadedAnimationSurvivesIfLayerRemovedAdded) {
   host.reset();
 }
 
-// A simple AnimationMetricsReporter class that remembers smoothness metric
-// when animation completes.
-class TestMetricsReporter : public ui::AnimationMetricsReporter {
- public:
-  TestMetricsReporter() {}
-  ~TestMetricsReporter() override {}
-
-  bool report_called() { return report_called_; }
-  int value() const { return value_; }
-
- protected:
-  void Report(int value) override {
-    value_ = value;
-    report_called_ = true;
-  }
-
- private:
-  bool report_called_ = false;
-  int value_ = -1;
-
-  DISALLOW_COPY_AND_ASSIGN(TestMetricsReporter);
-};
-
-// Starts an animation and tests that incrementing compositor frame count can
-// be used to report animation smoothness metrics. This verifies that when an
-// animation is smooth (frame count matches refresh rate) that we receive a
-// smoothness value of 100.
-TEST(LayerAnimatorTest, ReportMetricsSmooth) {
-  base::ScopedMockClockOverride mock_clock_;
-  const base::TimeDelta kAnimationDuration =
-      base::TimeDelta::FromMilliseconds(100);
-
-  std::unique_ptr<Layer> root(new Layer(LAYER_SOLID_COLOR));
-  TestLayerAnimationDelegate delegate;
-  scoped_refptr<LayerAnimator> animator(CreateImplicitTestAnimator(&delegate));
-
-  // Simulates that Layer has attached to a Compositor.
-  delegate.SetFrameNumber(0);
-
-  std::unique_ptr<ui::LayerAnimationElement> animation_element =
-      ui::LayerAnimationElement::CreateColorElement(SK_ColorRED,
-                                                    kAnimationDuration);
-  ui::LayerAnimationSequence* animation_sequence =
-      new ui::LayerAnimationSequence(std::move(animation_element));
-  TestMetricsReporter reporter;
-
-  animation_sequence->SetAnimationMetricsReporter(&reporter);
-  animator->StartAnimation(animation_sequence);
-  // Advances the frame count, simulating having produced 6 frames, and received
-  // an ack for each one. This implicitly simulates calling LayerAnimator::Step
-  // with an increased clock 6 times.
-  delegate.SetFrameNumber(6);
-
-  // Advancing the clock does not implicitly advance frame count. It allows the
-  // next call of LayerAnimator::Step to detect that the animation is finished,
-  // thus triggering the processing of metrics reporting.
-  mock_clock_.Advance(kAnimationDuration);
-  animator->Step(mock_clock_.NowTicks());
-
-  CHECK(reporter.report_called());
-  // With the clock being controlled, the animations should be smooth regardless
-  // of the test bots. Smoothness is based on a calculated duration of the
-  // animation when compared to the requested duration, as an integer
-  // percentage. With 100 being 100%. When the number of frames match the
-  // refresh rate, reporter should be notified of a smoothness of 100.
-  EXPECT_EQ(reporter.value(), 100);
-}
-
-// Starts an animation and tests that incrementing compositor frame count can
-// be used to report animation smoothness metrics. This verifies that when an
-// animation is not smooth (frame count doesn't match refresh rate) that we
-// receive a smoothness value that is not 100.
-TEST(LayerAnimatorTest, ReportMetricsNotSmooth) {
-  base::ScopedMockClockOverride mock_clock_;
-  const base::TimeDelta kAnimationDuration =
-      base::TimeDelta::FromMilliseconds(100);
-
-  std::unique_ptr<Layer> root(new Layer(LAYER_SOLID_COLOR));
-  TestLayerAnimationDelegate delegate;
-  scoped_refptr<LayerAnimator> animator(CreateImplicitTestAnimator(&delegate));
-
-  // Simulates that Layer has attached to a Compositor.
-  delegate.SetFrameNumber(0);
-
-  std::unique_ptr<ui::LayerAnimationElement> animation_element =
-      ui::LayerAnimationElement::CreateColorElement(SK_ColorRED,
-                                                    kAnimationDuration);
-  ui::LayerAnimationSequence* animation_sequence =
-      new ui::LayerAnimationSequence(std::move(animation_element));
-  TestMetricsReporter reporter;
-
-  animation_sequence->SetAnimationMetricsReporter(&reporter);
-  animator->StartAnimation(animation_sequence);
-  // Advances the frame count, simulating having produced 1 frame, and received
-  // an ack for it. This implicitly simulates calling LayerAnimator::Step with
-  // an increased clock 1 time.
-  delegate.SetFrameNumber(1);
-
-  // Advancing the clock does not implicitly advance frame count. It allows the
-  // next call of LayerAnimator::Step to detect that the animation is finished,
-  // thus triggering the processing of metrics reporting.
-  mock_clock_.Advance(kAnimationDuration);
-  animator->Step(mock_clock_.NowTicks());
-
-  CHECK(reporter.report_called());
-  // With the clock being controlled, we have direct control of the smoothness
-  // regardless of the test bots. Smoothness is based on a calculated duration
-  // of the animation when compared to the requested duration, as an integer
-  // percentage. With 100 being 100%. With a single frame being generated over
-  // 100ms, the reporter should be notified of a smoothness matching the
-  // interval between refreshes.
-  int expected = base::Time::kMillisecondsPerSecond / delegate.GetRefreshRate();
-  EXPECT_EQ(reporter.value(), expected);
-}
-
-// Tests that metrics is reported correctly as not smooth when animation starts
-// before Layer is attached to a Compositor.
-TEST(LayerAnimatorTest,
-     ReportMetricsNotSmoothForAnimationStartsBeforeAttached) {
-  base::test::TaskEnvironment task_environment_(
-      base::test::TaskEnvironment::MainThreadType::UI);
-  const bool enable_pixel_output = false;
-  TestContextFactories context_factories(enable_pixel_output);
-  const gfx::Rect bounds(10, 10, 100, 100);
-  std::unique_ptr<TestCompositorHost> host(TestCompositorHost::Create(
-      bounds, context_factories.GetContextFactory()));
-  host->Show();
-
-  Compositor* compositor = host->GetCompositor();
-  Layer root;
-  compositor->SetRootLayer(&root);
-
-  constexpr auto kAnimationDuration = base::TimeDelta::FromMilliseconds(50);
-
-  // Draw enough frames so that missing the start frame number would cause the
-  // reporter to always report 100% smoothness. 4 times of the expected
-  // animation frames because somehow the refresh rate changes from 60fps to
-  // 200fps when reporting.
-  const int kStartFrameNumber =
-      base::ClampFloor(kAnimationDuration.InSecondsF() *
-                       compositor->refresh_rate()) *
-      4;
-  while (compositor->activated_frame_count() < kStartFrameNumber) {
-    compositor->ScheduleFullRedraw();
-    EXPECT_TRUE(ui::WaitForNextFrameToBePresented(compositor));
-  }
-
-  Layer layer;
-  layer.SetBounds(gfx::Rect(0, 0, 5, 5));
-
-  TestImplicitAnimationObserver waiter(false);
-  TestMetricsReporter reporter;
-  {
-    // Starts an animation before |layer| is attached.
-    ScopedLayerAnimationSettings settings(layer.GetAnimator());
-    settings.SetAnimationMetricsReporter(&reporter);
-    settings.AddObserver(&waiter);
-    settings.SetTransitionDuration(kAnimationDuration);
-    layer.SetBounds(gfx::Rect(0, 0, 50, 50));
-  }
-
-  // Attaches |layer|.
-  root.Add(&layer);
-
-  // Blocks UI thread for kAnimationDuration to make animation not smooth.
-  base::TimeTicks start = base::TimeTicks::Now();
-  do {
-    base::PlatformThread::Sleep(kAnimationDuration);
-  } while (base::TimeTicks::Now() - start < kAnimationDuration);
-
-  // Waits for the animation to finish.
-  waiter.Wait();
-
-  // Metrics should be reported as not smooth.
-  EXPECT_TRUE(reporter.report_called());
-  EXPECT_LT(reporter.value(), 100);
-}
-
 class LayerOwnerAnimationObserver : public LayerAnimationObserver {
  public:
   explicit LayerOwnerAnimationObserver(LayerAnimator* animator)
       : animator_layer_(new Layer(LAYER_TEXTURED)) {
     animator_layer_->SetAnimator(animator);
   }
+
+  LayerOwnerAnimationObserver(const LayerOwnerAnimationObserver&) = delete;
+  LayerOwnerAnimationObserver& operator=(const LayerOwnerAnimationObserver&) =
+      delete;
 
   ~LayerOwnerAnimationObserver() override {}
 
@@ -3576,12 +3438,10 @@ class LayerOwnerAnimationObserver : public LayerAnimationObserver {
 
  private:
   std::unique_ptr<Layer> animator_layer_;
-
-  DISALLOW_COPY_AND_ASSIGN(LayerOwnerAnimationObserver);
 };
 
 TEST(LayerAnimatorTest, ObserverDeletesLayerInStopAnimating) {
-  scoped_refptr<LayerAnimator> animator(CreateImplicitTestAnimator());
+  scoped_refptr<LayerAnimator> animator = CreateImplicitTestAnimator();
   LayerOwnerAnimationObserver observer(animator.get());
   LayerAnimationDelegate* delegate = observer.animator_layer();
 
@@ -3594,67 +3454,167 @@ TEST(LayerAnimatorTest, ObserverDeletesLayerInStopAnimating) {
   delegate->SetBoundsFromAnimation(start_bounds,
                                    PropertyChangeReason::NOT_FROM_ANIMATION);
 
-  base::TimeDelta time_delta = base::TimeDelta::FromSeconds(1);
+  base::TimeDelta time_delta = base::Seconds(1);
   LayerAnimationSequence* opacity = new LayerAnimationSequence(
       LayerAnimationElement::CreateOpacityElement(target_opacity, time_delta));
   opacity->AddObserver(&observer);
   animator->ScheduleAnimation(opacity);
-  time_delta = base::TimeDelta::FromSeconds(2);
+  time_delta = base::Seconds(2);
   LayerAnimationSequence* move = new LayerAnimationSequence(
       LayerAnimationElement::CreateBoundsElement(target_bounds, time_delta));
   animator->ScheduleAnimation(move);
   EXPECT_TRUE(animator->is_animating());
-  animator->Step(animator->last_step_time() +
-                 base::TimeDelta::FromMilliseconds(500));
+  animator->Step(animator->last_step_time() + base::Milliseconds(500));
   animator->StopAnimating();
 
   EXPECT_EQ(nullptr, observer.animator_layer());
   EXPECT_TRUE(animator->is_animating());
 }
 
+TEST(LayerAnimatorTest,
+     SetPropertyWithObserverThatDeletesLayerInStopAnimating) {
+  scoped_refptr<LayerAnimator> animator = CreateDefaultTestAnimator();
+  LayerOwnerAnimationObserver observer(animator.get());
+  LayerAnimationDelegate* delegate = observer.animator_layer();
+
+  const double target_opacity = 1.0;
+  delegate->SetOpacityFromAnimation(0.0f,
+                                    PropertyChangeReason::NOT_FROM_ANIMATION);
+
+  base::TimeDelta time_delta = base::Seconds(1);
+  LayerAnimationSequence* opacity = new LayerAnimationSequence(
+      LayerAnimationElement::CreateOpacityElement(target_opacity, time_delta));
+  opacity->AddObserver(&observer);
+  animator->ScheduleAnimation(opacity);
+  animator->Step(animator->last_step_time() + base::Milliseconds(500));
+  EXPECT_TRUE(animator->is_animating());
+
+  animator->SetOpacity(1.0f);
+  EXPECT_EQ(nullptr, observer.animator_layer());
+  EXPECT_FALSE(animator->is_animating());
+}
+
+TEST(LayerAnimatorTest,
+     SetPropertyWithObserverThatDeletesLayerOnImplicitAnimationCompletion) {
+  LayerOwner layer_owner(std::make_unique<Layer>(LAYER_SOLID_COLOR));
+
+  // Create observer which deletes layer on implicit animation completion.
+  TestImplicitAnimationObserver layer_animation_observer(true);
+  layer_animation_observer.SetAnimationsCompletedCallback(
+      base::BindRepeating(base::IgnoreResult(&LayerOwner::ReleaseLayer),
+                          base::Unretained(&layer_owner)));
+
+  {
+    // Kick off and observe a property animation.
+    ScopedLayerAnimationSettings settings(layer_owner.layer()->GetAnimator());
+    settings.SetTransitionDuration(base::Seconds(1));
+    settings.AddObserver(&layer_animation_observer);
+    layer_owner.layer()->SetOpacity(1.f);
+  }
+
+  // Set the same property which will result in implicit completion of the
+  // running animation which, in turn, will result in layer deletion.
+  layer_owner.layer()->SetOpacity(0.f);
+  EXPECT_FALSE(layer_owner.layer());
+}
+
+class CountCyclesObserver : public LayerAnimationObserver {
+ public:
+  explicit CountCyclesObserver(ui::LayerAnimator* animator)
+      : animator_(animator) {
+    animator_->AddObserver(this);
+  }
+  ~CountCyclesObserver() override { animator_->RemoveObserver(this); }
+  CountCyclesObserver(const CountCyclesObserver&) = delete;
+  CountCyclesObserver& operator=(const CountCyclesObserver&) = delete;
+
+  void OnLayerAnimationEnded(LayerAnimationSequence* sequence) override {}
+
+  void OnLayerAnimationAborted(LayerAnimationSequence* sequence) override {}
+
+  void OnLayerAnimationWillRepeat(LayerAnimationSequence* sequence) override {
+    cycles_count_++;
+  }
+
+  void OnLayerAnimationScheduled(LayerAnimationSequence* sequence) override {}
+
+  int cycles_count() { return cycles_count_; }
+
+ private:
+  raw_ptr<ui::LayerAnimator> animator_;
+  int cycles_count_ = 0;
+};
+
+// Verifies that an observer is notified each time a LayerAnimationSequence's
+// cycle has ended.
+TEST(LayerAnimatorTest, ObserverGetsNotifiedOnCycleEnded) {
+  TestLayerAnimationDelegate delegate;
+  scoped_refptr<LayerAnimator> animator = CreateDefaultTestAnimator(&delegate);
+  CountCyclesObserver observer(animator.get());
+
+  constexpr base::TimeDelta kAnimationDuration = base::Seconds(1);
+  LayerAnimationSequence* sequence = new LayerAnimationSequence(
+      LayerAnimationElement::CreateBrightnessElement(1.0f, kAnimationDuration));
+  sequence->set_is_repeating(true);
+  animator->StartAnimation(sequence);
+
+  for (int i = 0; i < 3; i++) {
+    EXPECT_EQ(observer.cycles_count(), i);
+    const base::TimeTicks last_time = animator->last_step_time();
+    animator->Step(last_time + kAnimationDuration);
+  }
+}
+
 // Verifies the LayerAnimatorObserver notification order for an animation
 // sequence that completes successfully.
 TEST(LayerAnimatorObserverNotificationOrderTest,
      SuccessfulCompletionOfSequence) {
-  TestLayerAnimationObserver observer;
-  TestLayerAnimationDelegate delegate;
-  scoped_refptr<LayerAnimator> animator(
-      CreateDefaultTestAnimator(&delegate, &observer));
-  observer.set_requires_notification_when_animator_destroyed(true);
+  for (int is_cyclic = 0; is_cyclic <= 0; is_cyclic++) {
+    TestLayerAnimationObserver observer;
+    TestLayerAnimationDelegate delegate;
+    scoped_refptr<LayerAnimator> animator(
+        CreateDefaultTestAnimator(&delegate, &observer));
+    observer.set_requires_notification_when_animator_destroyed(true);
 
-  const base::TimeDelta animation_duration = base::TimeDelta::FromSeconds(100);
+    const base::TimeDelta animation_duration = base::Seconds(100);
 
-  LayerAnimationSequence* sequence = new LayerAnimationSequence(
-      LayerAnimationElement::CreateBrightnessElement(1.0f, animation_duration));
+    LayerAnimationSequence* sequence = new LayerAnimationSequence(
+        LayerAnimationElement::CreateBrightnessElement(1.0f,
+                                                       animation_duration));
+    sequence->set_is_repeating(is_cyclic);
 
-  EXPECT_TRUE(observer.NoEventsObserved());
+    EXPECT_TRUE(observer.NoEventsObserved());
 
-  animator->StartAnimation(sequence);
+    animator->StartAnimation(sequence);
 
-  EXPECT_EQ(observer.last_attached_sequence(), sequence);
-  EXPECT_EQ(observer.last_scheduled_sequence(), sequence);
-  EXPECT_EQ(observer.last_started_sequence(), sequence);
-  EXPECT_EQ(observer.last_aborted_sequence(), nullptr);
-  EXPECT_EQ(observer.last_ended_sequence(), nullptr);
-  EXPECT_EQ(observer.last_detached_sequence(), nullptr);
+    EXPECT_EQ(observer.last_attached_sequence(), sequence);
+    EXPECT_EQ(observer.last_scheduled_sequence(), sequence);
+    EXPECT_EQ(observer.last_started_sequence(), sequence);
+    EXPECT_EQ(observer.last_aborted_sequence(), nullptr);
+    EXPECT_EQ(observer.last_ended_sequence(), nullptr);
+    EXPECT_EQ(observer.last_repetition_ended_sequence(), nullptr);
+    EXPECT_EQ(observer.last_detached_sequence(), nullptr);
 
-  EXPECT_TRUE(observer.AttachedEpochIsBeforeScheduledEpoch());
-  EXPECT_TRUE(observer.ScheduledEpochIsBeforeStartedEpoch());
+    EXPECT_TRUE(observer.AttachedEpochIsBeforeScheduledEpoch());
+    EXPECT_TRUE(observer.ScheduledEpochIsBeforeStartedEpoch());
 
-  observer.ResetLayerAnimationObserverations();
+    observer.ResetLayerAnimationObserverations();
 
-  const base::TimeTicks start_time = animator->last_step_time();
+    const base::TimeTicks start_time = animator->last_step_time();
 
-  animator->Step(start_time + animation_duration);
+    animator->Step(start_time + animation_duration);
 
-  EXPECT_EQ(observer.last_attached_sequence(), nullptr);
-  EXPECT_EQ(observer.last_scheduled_sequence(), nullptr);
-  EXPECT_EQ(observer.last_started_sequence(), nullptr);
-  EXPECT_EQ(observer.last_aborted_sequence(), nullptr);
-  EXPECT_EQ(observer.last_ended_sequence(), sequence);
-  EXPECT_EQ(observer.last_detached_sequence(), sequence);
+    EXPECT_EQ(observer.last_attached_sequence(), nullptr);
+    EXPECT_EQ(observer.last_scheduled_sequence(), nullptr);
+    EXPECT_EQ(observer.last_started_sequence(), nullptr);
+    EXPECT_EQ(observer.last_aborted_sequence(), nullptr);
+    EXPECT_EQ(observer.last_ended_sequence(), is_cyclic ? nullptr : sequence);
+    EXPECT_EQ(observer.last_repetition_ended_sequence(),
+              is_cyclic ? sequence : nullptr);
+    EXPECT_EQ(observer.last_detached_sequence(), sequence);
 
-  EXPECT_TRUE(observer.EndedEpochIsBeforeDetachedEpoch());
+    EXPECT_TRUE(observer.EndedEpochIsBeforeDetachedEpoch());
+  }
 }
 
 // Verifies the LayerAnimatorObserver notification order for an animation
@@ -3666,7 +3626,7 @@ TEST(LayerAnimatorObserverNotificationOrderTest, AbortingAScheduledSequence) {
       CreateDefaultTestAnimator(&delegate, &observer));
   observer.set_requires_notification_when_animator_destroyed(true);
 
-  const base::TimeDelta animation_duration = base::TimeDelta::FromSeconds(100);
+  const base::TimeDelta animation_duration = base::Seconds(100);
 
   LayerAnimationSequence* sequence = new LayerAnimationSequence(
       LayerAnimationElement::CreateBrightnessElement(1.0f, animation_duration));
@@ -3680,6 +3640,7 @@ TEST(LayerAnimatorObserverNotificationOrderTest, AbortingAScheduledSequence) {
   EXPECT_EQ(observer.last_started_sequence(), sequence);
   EXPECT_EQ(observer.last_aborted_sequence(), nullptr);
   EXPECT_EQ(observer.last_ended_sequence(), nullptr);
+  EXPECT_EQ(observer.last_repetition_ended_sequence(), nullptr);
   EXPECT_EQ(observer.last_detached_sequence(), nullptr);
 
   EXPECT_TRUE(observer.AttachedEpochIsBeforeScheduledEpoch());
@@ -3694,6 +3655,7 @@ TEST(LayerAnimatorObserverNotificationOrderTest, AbortingAScheduledSequence) {
   EXPECT_EQ(observer.last_started_sequence(), nullptr);
   EXPECT_EQ(observer.last_aborted_sequence(), sequence);
   EXPECT_EQ(observer.last_ended_sequence(), nullptr);
+  EXPECT_EQ(observer.last_repetition_ended_sequence(), nullptr);
   EXPECT_EQ(observer.last_detached_sequence(), sequence);
 
   EXPECT_TRUE(observer.AbortedEpochIsBeforeDetachedEpoch());
@@ -3704,63 +3666,74 @@ TEST(LayerAnimatorObserverNotificationOrderTest, AbortingAScheduledSequence) {
 // completes successfully.
 TEST(LayerAnimatorObserverNotificationOrderTest,
      RunningASequenceThatIsQueuedForLaterStartTime) {
-  TestLayerAnimationObserver observer;
-  TestLayerAnimationDelegate delegate;
-  scoped_refptr<LayerAnimator> animator(
-      CreateDefaultTestAnimator(&delegate, &observer));
-  observer.set_requires_notification_when_animator_destroyed(true);
+  for (int is_cyclic = 0; is_cyclic <= 0; is_cyclic++) {
+    TestLayerAnimationObserver observer;
+    TestLayerAnimationDelegate delegate;
+    scoped_refptr<LayerAnimator> animator(
+        CreateDefaultTestAnimator(&delegate, &observer));
+    observer.set_requires_notification_when_animator_destroyed(true);
 
-  const base::TimeDelta animation_duration = base::TimeDelta::FromSeconds(100);
+    const base::TimeDelta animation_duration = base::Seconds(100);
 
-  LayerAnimationSequence* first_sequence = new LayerAnimationSequence(
-      LayerAnimationElement::CreateBrightnessElement(1.0f, animation_duration));
+    LayerAnimationSequence* first_sequence = new LayerAnimationSequence(
+        LayerAnimationElement::CreateBrightnessElement(1.0f,
+                                                       animation_duration));
+    first_sequence->set_is_repeating(is_cyclic);
 
-  LayerAnimationSequence* queued_sequence = new LayerAnimationSequence(
-      LayerAnimationElement::CreateBrightnessElement(1.0f, animation_duration));
+    LayerAnimationSequence* queued_sequence = new LayerAnimationSequence(
+        LayerAnimationElement::CreateBrightnessElement(1.0f,
+                                                       animation_duration));
+    queued_sequence->set_is_repeating(is_cyclic);
 
-  EXPECT_TRUE(observer.NoEventsObserved());
+    EXPECT_TRUE(observer.NoEventsObserved());
 
-  animator->StartAnimation(first_sequence);
+    animator->StartAnimation(first_sequence);
 
-  EXPECT_EQ(observer.last_attached_sequence(), first_sequence);
-  EXPECT_EQ(observer.last_scheduled_sequence(), first_sequence);
-  EXPECT_EQ(observer.last_started_sequence(), first_sequence);
-  EXPECT_EQ(observer.last_aborted_sequence(), nullptr);
-  EXPECT_EQ(observer.last_ended_sequence(), nullptr);
-  EXPECT_EQ(observer.last_detached_sequence(), nullptr);
+    EXPECT_EQ(observer.last_attached_sequence(), first_sequence);
+    EXPECT_EQ(observer.last_scheduled_sequence(), first_sequence);
+    EXPECT_EQ(observer.last_started_sequence(), first_sequence);
+    EXPECT_EQ(observer.last_aborted_sequence(), nullptr);
+    EXPECT_EQ(observer.last_ended_sequence(), nullptr);
+    EXPECT_EQ(observer.last_repetition_ended_sequence(), nullptr);
+    EXPECT_EQ(observer.last_detached_sequence(), nullptr);
 
-  EXPECT_TRUE(observer.AttachedEpochIsBeforeScheduledEpoch());
-  EXPECT_TRUE(observer.ScheduledEpochIsBeforeStartedEpoch());
+    EXPECT_TRUE(observer.AttachedEpochIsBeforeScheduledEpoch());
+    EXPECT_TRUE(observer.ScheduledEpochIsBeforeStartedEpoch());
 
-  observer.ResetLayerAnimationObserverations();
+    observer.ResetLayerAnimationObserverations();
 
-  animator->set_preemption_strategy(LayerAnimator::ENQUEUE_NEW_ANIMATION);
-  animator->StartAnimation(queued_sequence);
+    animator->set_preemption_strategy(LayerAnimator::ENQUEUE_NEW_ANIMATION);
+    animator->StartAnimation(queued_sequence);
 
-  EXPECT_EQ(observer.last_attached_sequence(), queued_sequence);
-  EXPECT_EQ(observer.last_scheduled_sequence(), queued_sequence);
-  EXPECT_EQ(observer.last_started_sequence(), nullptr);
-  EXPECT_EQ(observer.last_aborted_sequence(), nullptr);
-  EXPECT_EQ(observer.last_ended_sequence(), nullptr);
-  EXPECT_EQ(observer.last_detached_sequence(), nullptr);
+    EXPECT_EQ(observer.last_attached_sequence(), queued_sequence);
+    EXPECT_EQ(observer.last_scheduled_sequence(), queued_sequence);
+    EXPECT_EQ(observer.last_started_sequence(), nullptr);
+    EXPECT_EQ(observer.last_aborted_sequence(), nullptr);
+    EXPECT_EQ(observer.last_ended_sequence(), nullptr);
+    EXPECT_EQ(observer.last_repetition_ended_sequence(), nullptr);
+    EXPECT_EQ(observer.last_detached_sequence(), nullptr);
 
-  EXPECT_TRUE(observer.AttachedEpochIsBeforeScheduledEpoch());
+    EXPECT_TRUE(observer.AttachedEpochIsBeforeScheduledEpoch());
 
-  observer.ResetLayerAnimationObserverations();
+    observer.ResetLayerAnimationObserverations();
 
-  base::TimeTicks start_time = animator->last_step_time();
+    base::TimeTicks start_time = animator->last_step_time();
 
-  animator->Step(start_time + animation_duration);
+    animator->Step(start_time + animation_duration);
 
-  EXPECT_EQ(observer.last_attached_sequence(), nullptr);
-  EXPECT_EQ(observer.last_scheduled_sequence(), nullptr);
-  EXPECT_EQ(observer.last_started_sequence(), queued_sequence);
-  EXPECT_EQ(observer.last_aborted_sequence(), nullptr);
-  EXPECT_EQ(observer.last_ended_sequence(), first_sequence);
-  EXPECT_EQ(observer.last_detached_sequence(), first_sequence);
+    EXPECT_EQ(observer.last_attached_sequence(), nullptr);
+    EXPECT_EQ(observer.last_scheduled_sequence(), nullptr);
+    EXPECT_EQ(observer.last_started_sequence(), queued_sequence);
+    EXPECT_EQ(observer.last_aborted_sequence(), nullptr);
+    EXPECT_EQ(observer.last_ended_sequence(),
+              is_cyclic ? nullptr : first_sequence);
+    EXPECT_EQ(observer.last_repetition_ended_sequence(),
+              is_cyclic ? first_sequence : nullptr);
+    EXPECT_EQ(observer.last_detached_sequence(), first_sequence);
 
-  EXPECT_TRUE(observer.EndedEpochIsBeforeDetachedEpoch());
-  EXPECT_TRUE(observer.EndedEpochIsBeforeStartedEpoch());
+    EXPECT_TRUE(observer.EndedEpochIsBeforeDetachedEpoch());
+    EXPECT_TRUE(observer.EndedEpochIsBeforeStartedEpoch());
+  }
 }
 
 // Verifies the LayerAnimatorObserver notification order for an animation
@@ -3773,7 +3746,7 @@ TEST(LayerAnimatorObserverNotificationOrderTest,
       CreateDefaultTestAnimator(&delegate, &observer));
   observer.set_requires_notification_when_animator_destroyed(true);
 
-  const base::TimeDelta animation_duration = base::TimeDelta::FromSeconds(100);
+  const base::TimeDelta animation_duration = base::Seconds(100);
 
   LayerAnimationSequence* first_sequence = new LayerAnimationSequence(
       LayerAnimationElement::CreateBrightnessElement(1.0f, animation_duration));
@@ -3790,6 +3763,7 @@ TEST(LayerAnimatorObserverNotificationOrderTest,
   EXPECT_EQ(observer.last_started_sequence(), first_sequence);
   EXPECT_EQ(observer.last_aborted_sequence(), nullptr);
   EXPECT_EQ(observer.last_ended_sequence(), nullptr);
+  EXPECT_EQ(observer.last_repetition_ended_sequence(), nullptr);
   EXPECT_EQ(observer.last_detached_sequence(), nullptr);
 
   EXPECT_TRUE(observer.AttachedEpochIsBeforeScheduledEpoch());
@@ -3806,6 +3780,7 @@ TEST(LayerAnimatorObserverNotificationOrderTest,
   EXPECT_EQ(observer.last_started_sequence(), queued_sequence);
   EXPECT_EQ(observer.last_aborted_sequence(), first_sequence);
   EXPECT_EQ(observer.last_ended_sequence(), nullptr);
+  EXPECT_EQ(observer.last_repetition_ended_sequence(), nullptr);
   EXPECT_EQ(observer.last_detached_sequence(), first_sequence);
 
   EXPECT_TRUE(observer.AbortedEpochIsBeforeDetachedEpoch());
@@ -3818,36 +3793,43 @@ TEST(LayerAnimatorObserverNotificationOrderTest,
 // has already been scheduled.
 TEST(LayerAnimatorObserverNotificationOrderTest,
      ObserverAddedAfterAnimationStarts) {
-  TestLayerAnimationDelegate delegate;
-  scoped_refptr<LayerAnimator> animator(CreateDefaultTestAnimator(&delegate));
+  for (int is_cyclic = 0; is_cyclic <= 0; is_cyclic++) {
+    TestLayerAnimationDelegate delegate;
+    scoped_refptr<LayerAnimator> animator =
+        CreateDefaultTestAnimator(&delegate);
 
-  constexpr base::TimeDelta kAnimationDuration =
-      base::TimeDelta::FromSeconds(1);
-  LayerAnimationSequence* sequence = new LayerAnimationSequence(
-      LayerAnimationElement::CreateBrightnessElement(1.0f, kAnimationDuration));
-  animator->StartAnimation(sequence);
+    constexpr base::TimeDelta kAnimationDuration = base::Seconds(1);
+    LayerAnimationSequence* sequence = new LayerAnimationSequence(
+        LayerAnimationElement::CreateBrightnessElement(1.0f,
+                                                       kAnimationDuration));
+    sequence->set_is_repeating(is_cyclic);
+    animator->StartAnimation(sequence);
 
-  TestLayerAnimationObserver observer;
-  observer.set_requires_notification_when_animator_destroyed(true);
-  animator->AddObserver(&observer);
+    TestLayerAnimationObserver observer;
+    observer.set_requires_notification_when_animator_destroyed(true);
+    animator->AddObserver(&observer);
 
-  EXPECT_EQ(observer.last_attached_sequence(), sequence);
-  EXPECT_EQ(observer.last_scheduled_sequence(), nullptr);
-  EXPECT_EQ(observer.last_started_sequence(), nullptr);
-  EXPECT_EQ(observer.last_aborted_sequence(), nullptr);
-  EXPECT_EQ(observer.last_ended_sequence(), nullptr);
-  EXPECT_EQ(observer.last_detached_sequence(), nullptr);
+    EXPECT_EQ(observer.last_attached_sequence(), sequence);
+    EXPECT_EQ(observer.last_scheduled_sequence(), nullptr);
+    EXPECT_EQ(observer.last_started_sequence(), nullptr);
+    EXPECT_EQ(observer.last_aborted_sequence(), nullptr);
+    EXPECT_EQ(observer.last_ended_sequence(), nullptr);
+    EXPECT_EQ(observer.last_repetition_ended_sequence(), nullptr);
+    EXPECT_EQ(observer.last_detached_sequence(), nullptr);
 
-  animator->StopAnimating();
+    animator->StopAnimating();
 
-  EXPECT_EQ(observer.last_attached_sequence(), sequence);
-  EXPECT_EQ(observer.last_scheduled_sequence(), nullptr);
-  EXPECT_EQ(observer.last_started_sequence(), nullptr);
-  EXPECT_EQ(observer.last_aborted_sequence(), nullptr);
-  EXPECT_EQ(observer.last_ended_sequence(), sequence);
-  EXPECT_EQ(observer.last_detached_sequence(), sequence);
+    EXPECT_EQ(observer.last_attached_sequence(), sequence);
+    EXPECT_EQ(observer.last_scheduled_sequence(), nullptr);
+    EXPECT_EQ(observer.last_started_sequence(), nullptr);
+    EXPECT_EQ(observer.last_aborted_sequence(), nullptr);
+    EXPECT_EQ(observer.last_ended_sequence(), is_cyclic ? nullptr : sequence);
+    EXPECT_EQ(observer.last_repetition_ended_sequence(),
+              is_cyclic ? sequence : nullptr);
+    EXPECT_EQ(observer.last_detached_sequence(), sequence);
 
-  animator->RemoveObserver(&observer);
+    animator->RemoveObserver(&observer);
+  }
 }
 
 }  // namespace ui

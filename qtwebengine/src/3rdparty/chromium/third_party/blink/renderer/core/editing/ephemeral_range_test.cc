@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -80,15 +80,15 @@ TEST_F(EphemeralRangeTest, rangeShadowTraversal) {
   const char* body_content =
       "<b id='zero'>0</b>"
       "<p id='host'>"
-      "<b id='one'>1</b>"
-      "<b id='two'>22</b>"
+      "<b slot='#one' id='one'>1</b>"
+      "<b slot='#two' id='two'>22</b>"
       "<b id='three'>333</b>"
       "</p>"
       "<b id='four'>4444</b>";
   const char* shadow_content =
       "<p id='five'>55555</p>"
-      "<content select=#two></content>"
-      "<content select=#one></content>"
+      "<slot name=#two></slot>"
+      "<slot name=#one></slot>"
       "<span id='six'>666666</span>"
       "<p id='seven'>7777777</p>";
   SetBodyContent(body_content);
@@ -96,9 +96,9 @@ TEST_F(EphemeralRangeTest, rangeShadowTraversal) {
 
   const std::string expected_nodes(
       "[BODY][B id=\"zero\"][#text \"0\"][P id=\"host\"][P id=\"five\"][#text "
-      "\"55555\"][B id=\"two\"][#text \"22\"][B id=\"one\"][#text \"1\"][SPAN "
-      "id=\"six\"][#text \"666666\"][P id=\"seven\"][#text \"7777777\"][B "
-      "id=\"four\"][#text \"4444\"]");
+      "\"55555\"][SLOT][B id=\"two\"][#text \"22\"][SLOT][B id=\"one\"][#text "
+      "\"1\"][SPAN id=\"six\"][#text \"666666\"][P id=\"seven\"][#text "
+      "\"7777777\"][B id=\"four\"][#text \"4444\"]");
 
   EXPECT_EQ(expected_nodes, TraverseRange<FlatTreeTraversal>(GetBodyRange()));
   EXPECT_EQ(TraverseRange<FlatTreeTraversal>(GetBodyRange()),
@@ -119,16 +119,16 @@ TEST_F(EphemeralRangeTest, rangeTraversalLimitedDOM) {
   SetBodyContent(body_content);
 
   Range* until_b = GetBodyRange();
-  until_b->setEnd(GetDocument().getElementById("one"), 0,
+  until_b->setEnd(GetDocument().getElementById(AtomicString("one")), 0,
                   IGNORE_EXCEPTION_FOR_TESTING);
   EXPECT_EQ("[BODY][P id=\"host\"][B id=\"zero\"][#text \"0\"][B id=\"one\"]",
             TraverseRange<>(until_b));
   EXPECT_EQ(TraverseRange<>(until_b), TraverseRange(EphemeralRange(until_b)));
 
   Range* from_b_to_span = GetBodyRange();
-  from_b_to_span->setStart(GetDocument().getElementById("one"), 0,
+  from_b_to_span->setStart(GetDocument().getElementById(AtomicString("one")), 0,
                            IGNORE_EXCEPTION_FOR_TESTING);
-  from_b_to_span->setEnd(GetDocument().getElementById("three"), 0,
+  from_b_to_span->setEnd(GetDocument().getElementById(AtomicString("three")), 0,
                          IGNORE_EXCEPTION_FOR_TESTING);
   EXPECT_EQ("[#text \"1\"][B id=\"two\"][#text \"22\"][SPAN id=\"three\"]",
             TraverseRange<>(from_b_to_span));
@@ -140,24 +140,25 @@ TEST_F(EphemeralRangeTest, rangeTraversalLimitedFlatTree) {
   const char* body_content =
       "<b id='zero'>0</b>"
       "<p id='host'>"
-      "<b id='one'>1</b>"
-      "<b id='two'>22</b>"
+      "<b slot='#one' id='one'>1</b>"
+      "<b slot='#two' id='two'>22</b>"
       "</p>"
       "<b id='three'>333</b>";
   const char* shadow_content =
       "<p id='four'>4444</p>"
-      "<content select=#two></content>"
-      "<content select=#one></content>"
+      "<slot name=#two></slot>"
+      "<slot name=#one></slot>"
       "<span id='five'>55555</span>"
       "<p id='six'>666666</p>";
   SetBodyContent(body_content);
   ShadowRoot* shadow_root = SetShadowContent(shadow_content, "host");
 
-  const PositionInFlatTree start_position(GetDocument().getElementById("one"),
-                                          0);
-  const PositionInFlatTree limit_position(shadow_root->getElementById("five"),
-                                          0);
-  const PositionInFlatTree end_position(shadow_root->getElementById("six"), 0);
+  const PositionInFlatTree start_position(
+      GetDocument().getElementById(AtomicString("one")), 0);
+  const PositionInFlatTree limit_position(
+      shadow_root->getElementById(AtomicString("five")), 0);
+  const PositionInFlatTree end_position(
+      shadow_root->getElementById(AtomicString("six")), 0);
   const EphemeralRangeInFlatTree from_b_to_span(start_position, limit_position);
   EXPECT_EQ("[#text \"1\"][SPAN id=\"five\"]", TraverseRange(from_b_to_span));
 
@@ -195,10 +196,12 @@ TEST_F(EphemeralRangeTest, commonAncesstorDOM) {
       "</p>";
   SetBodyContent(body_content);
 
-  const Position start_position(GetDocument().getElementById("one"), 0);
-  const Position end_position(GetDocument().getElementById("two"), 0);
+  const Position start_position(
+      GetDocument().getElementById(AtomicString("one")), 0);
+  const Position end_position(GetDocument().getElementById(AtomicString("two")),
+                              0);
   const EphemeralRange range(start_position, end_position);
-  EXPECT_EQ(GetDocument().getElementById("host"),
+  EXPECT_EQ(GetDocument().getElementById(AtomicString("host")),
             range.CommonAncestorContainer());
 }
 
@@ -206,24 +209,49 @@ TEST_F(EphemeralRangeTest, commonAncesstorFlatTree) {
   const char* body_content =
       "<b id='zero'>0</b>"
       "<p id='host'>"
-      "<b id='one'>1</b>"
-      "<b id='two'>22</b>"
+      "<b slot='#one' id='one'>1</b>"
+      "<b slot='#two' id='two'>22</b>"
       "</p>"
       "<b id='three'>333</b>";
   const char* shadow_content =
       "<p id='four'>4444</p>"
-      "<content select=#two></content>"
-      "<content select=#one></content>"
+      "<slot name=#two></slot>"
+      "<slot name=#one></slot>"
       "<p id='five'>55555</p>";
   SetBodyContent(body_content);
   ShadowRoot* shadow_root = SetShadowContent(shadow_content, "host");
 
-  const PositionInFlatTree start_position(GetDocument().getElementById("one"),
-                                          0);
-  const PositionInFlatTree end_position(shadow_root->getElementById("five"), 0);
+  const PositionInFlatTree start_position(
+      GetDocument().getElementById(AtomicString("one")), 0);
+  const PositionInFlatTree end_position(
+      shadow_root->getElementById(AtomicString("five")), 0);
   const EphemeralRangeInFlatTree range(start_position, end_position);
-  EXPECT_EQ(GetDocument().getElementById("host"),
+  EXPECT_EQ(GetDocument().getElementById(AtomicString("host")),
             range.CommonAncestorContainer());
+}
+
+TEST_F(EphemeralRangeTest, EquivalentPositions) {
+  SetBodyContent(
+      "<div id='first'></div>"
+      "<div id='last'></div>");
+  Element* first = GetDocument().getElementById(AtomicString("first"));
+  Element* last = GetDocument().getElementById(AtomicString("last"));
+  Position after_first = Position::AfterNode(*first);
+  Position before_last = Position::BeforeNode(*last);
+
+  // Test ranges created with different but equivalent positions.
+  EXPECT_NE(after_first, before_last);
+  EXPECT_TRUE(after_first.IsEquivalent(before_last));
+
+  EphemeralRange range1(after_first, before_last);
+  EXPECT_TRUE(range1.IsCollapsed());
+  EXPECT_EQ(after_first, range1.StartPosition());
+  EXPECT_EQ(after_first, range1.EndPosition());
+
+  EphemeralRange range2(before_last, after_first);
+  EXPECT_TRUE(range2.IsCollapsed());
+  EXPECT_EQ(before_last, range2.StartPosition());
+  EXPECT_EQ(before_last, range2.EndPosition());
 }
 
 }  // namespace blink

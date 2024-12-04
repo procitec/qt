@@ -8,49 +8,61 @@
 #ifndef SKSL_SWITCHCASE
 #define SKSL_SWITCHCASE
 
-#include "src/sksl/ir/SkSLExpression.h"
+#include "include/private/base/SkAssert.h"
+#include "src/sksl/SkSLDefines.h"
+#include "src/sksl/SkSLPosition.h"
+#include "src/sksl/ir/SkSLIRNode.h"
 #include "src/sksl/ir/SkSLStatement.h"
+
+#include <memory>
+#include <string>
+#include <utility>
 
 namespace SkSL {
 
 /**
  * A single case of a 'switch' statement.
  */
-struct SwitchCase : public Statement {
-    static constexpr Kind kStatementKind = Kind::kSwitchCase;
+class SwitchCase final : public Statement {
+public:
+    inline static constexpr Kind kIRNodeKind = Kind::kSwitchCase;
 
-    SwitchCase(int offset, std::unique_ptr<Expression> value,
-               std::vector<std::unique_ptr<Statement>> statements)
-    : INHERITED(offset, kStatementKind)
-    , fValue(std::move(value))
-    , fStatements(std::move(statements)) {}
+    static std::unique_ptr<SwitchCase> Make(Position pos,
+                                            SKSL_INT value,
+                                            std::unique_ptr<Statement> statement);
 
-    std::unique_ptr<Statement> clone() const override {
-        std::vector<std::unique_ptr<Statement>> cloned;
-        for (const auto& s : fStatements) {
-            cloned.push_back(s->clone());
-        }
-        return std::unique_ptr<Statement>(new SwitchCase(fOffset,
-                                                         fValue ? fValue->clone() : nullptr,
-                                                         std::move(cloned)));
+    static std::unique_ptr<SwitchCase> MakeDefault(Position pos,
+                                                   std::unique_ptr<Statement> statement);
+
+    bool isDefault() const {
+        return fDefault;
     }
 
-    String description() const override {
-        String result;
-        if (fValue) {
-            result.appendf("case %s:\n", fValue->description().c_str());
-        } else {
-            result += "default:\n";
-        }
-        for (const auto& s : fStatements) {
-            result += s->description() + "\n";
-        }
-        return result;
+    SKSL_INT value() const {
+        SkASSERT(!this->isDefault());
+        return fValue;
     }
 
-    // null value implies "default" case
-    std::unique_ptr<Expression> fValue;
-    std::vector<std::unique_ptr<Statement>> fStatements;
+    std::unique_ptr<Statement>& statement() {
+        return fStatement;
+    }
+
+    const std::unique_ptr<Statement>& statement() const {
+        return fStatement;
+    }
+
+    std::string description() const override;
+
+private:
+    SwitchCase(Position pos, bool isDefault, SKSL_INT value, std::unique_ptr<Statement> statement)
+            : INHERITED(pos, kIRNodeKind)
+            , fDefault(isDefault)
+            , fValue(std::move(value))
+            , fStatement(std::move(statement)) {}
+
+    bool fDefault;
+    SKSL_INT fValue;
+    std::unique_ptr<Statement> fStatement;
 
     using INHERITED = Statement;
 };

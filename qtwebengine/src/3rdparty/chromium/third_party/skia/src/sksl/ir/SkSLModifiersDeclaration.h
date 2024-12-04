@@ -8,32 +8,55 @@
 #ifndef SKSL_MODIFIERDECLARATION
 #define SKSL_MODIFIERDECLARATION
 
-#include "src/sksl/ir/SkSLModifiers.h"
+#include "src/sksl/SkSLPosition.h"
+#include "src/sksl/ir/SkSLIRNode.h"
+#include "src/sksl/ir/SkSLLayout.h"
+#include "src/sksl/ir/SkSLModifierFlags.h"
 #include "src/sksl/ir/SkSLProgramElement.h"
 
+#include <memory>
+#include <string>
+
 namespace SkSL {
+
+class Context;
+struct Modifiers;
 
 /**
  * A declaration that consists only of modifiers, e.g.:
  *
  * layout(blend_support_all_equations) out;
  */
-struct ModifiersDeclaration : public ProgramElement {
-    static constexpr Kind kProgramElementKind = Kind::kModifiers;
+class ModifiersDeclaration final : public ProgramElement {
+public:
+    inline static constexpr Kind kIRNodeKind = Kind::kModifiers;
 
-    ModifiersDeclaration(Modifiers modifiers)
-    : INHERITED(-1, kProgramElementKind)
-    , fModifiers(modifiers) {}
+    ModifiersDeclaration(Position pos, const Layout& layout, ModifierFlags flags)
+            : INHERITED(pos, kIRNodeKind)
+            , fLayout(layout)
+            , fFlags(flags) {}
 
-    std::unique_ptr<ProgramElement> clone() const override {
-        return std::unique_ptr<ProgramElement>(new ModifiersDeclaration(fModifiers));
+    static std::unique_ptr<ModifiersDeclaration> Convert(const Context& context,
+                                                         const Modifiers& modifiers);
+
+    static std::unique_ptr<ModifiersDeclaration> Make(const Context& context,
+                                                      const Modifiers& modifiers);
+
+    const Layout& layout() const {
+        return fLayout;
     }
 
-    String description() const override {
-        return fModifiers.description() + ";";
+    ModifierFlags modifierFlags() const {
+        return fFlags;
     }
 
-    Modifiers fModifiers;
+    std::string description() const override {
+        return fLayout.paddedDescription() + fFlags.description() + ';';
+    }
+
+private:
+    Layout fLayout;
+    ModifierFlags fFlags;
 
     using INHERITED = ProgramElement;
 };

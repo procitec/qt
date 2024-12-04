@@ -1,4 +1,4 @@
-// Copyright 2011 The Chromium Authors. All rights reserved.
+// Copyright 2011 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,10 +8,10 @@
 #include <cmath>
 #include <string>
 
-#include "base/bind.h"
 #include "base/check_op.h"
+#include "base/functional/bind.h"
 #include "base/location.h"
-#include "base/single_thread_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/trace_event/trace_event.h"
 #include "base/trace_event/traced_value.h"
 #include "components/viz/common/frame_sinks/begin_frame_args.h"
@@ -27,8 +27,9 @@ DelayBasedTimeSource::DelayBasedTimeSource(
       timebase_(base::TimeTicks()),
       interval_(BeginFrameArgs::DefaultInterval()),
       last_tick_time_(base::TimeTicks() - interval_),
-      next_tick_time_(base::TimeTicks()),
-      task_runner_(task_runner) {}
+      task_runner_(task_runner),
+      tick_closure_(base::BindRepeating(&DelayBasedTimeSource::OnTimerTick,
+                                        base::Unretained(this))) {}
 
 DelayBasedTimeSource::~DelayBasedTimeSource() = default;
 
@@ -41,11 +42,12 @@ void DelayBasedTimeSource::SetActive(bool active) {
   active_ = active;
 
   if (active_) {
+    timer_.SetTaskRunner(task_runner_.get());
     PostNextTickTask(Now());
   } else {
+    timer_.Stop();
     last_tick_time_ = base::TimeTicks();
     next_tick_time_ = base::TimeTicks();
-    tick_closure_.Cancel();
   }
 }
 
@@ -148,16 +150,16 @@ base::TimeTicks DelayBasedTimeSource::Now() const {
 void DelayBasedTimeSource::PostNextTickTask(base::TimeTicks now) {
   if (interval_.is_zero()) {
     next_tick_time_ = now;
+    timer_.Start(FROM_HERE, base::TimeTicks(), tick_closure_,
+                 base::subtle::DelayPolicy::kPrecise);
   } else {
     next_tick_time_ = now.SnappedToNextTick(timebase_, interval_);
     if (next_tick_time_ == now)
       next_tick_time_ += interval_;
     DCHECK_GT(next_tick_time_, now);
+    timer_.Start(FROM_HERE, next_tick_time_, tick_closure_,
+                 base::subtle::DelayPolicy::kPrecise);
   }
-  tick_closure_.Reset(base::BindOnce(&DelayBasedTimeSource::OnTimerTick,
-                                     weak_factory_.GetWeakPtr()));
-  task_runner_->PostDelayedTask(FROM_HERE, tick_closure_.callback(),
-                                next_tick_time_ - now);
 }
 
 std::string DelayBasedTimeSource::TypeString() const {

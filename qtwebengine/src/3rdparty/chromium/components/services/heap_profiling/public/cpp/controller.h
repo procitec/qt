@@ -1,11 +1,11 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef COMPONENTS_SERVICES_HEAP_PROFILING_PUBLIC_CPP_CONTROLLER_H_
 #define COMPONENTS_SERVICES_HEAP_PROFILING_PUBLIC_CPP_CONTROLLER_H_
 
-#include "base/macros.h"
+#include "base/functional/callback_forward.h"
 #include "base/memory/weak_ptr.h"
 #include "base/sequence_checker.h"
 #include "components/services/heap_profiling/public/mojom/heap_profiling_client.mojom.h"
@@ -40,12 +40,18 @@ class Controller {
   Controller(mojo::PendingRemote<mojom::ProfilingService> service,
              mojom::StackMode stack_mode,
              uint32_t sampling_rate);
+
+  Controller(const Controller&) = delete;
+  Controller& operator=(const Controller&) = delete;
+
   ~Controller();
 
-  // Starts Heap Profiling for the client.
+  // Starts Heap Profiling for the client. Invokes `started_profiling_closure`
+  // if and when profiling starts successfully.
   void StartProfilingClient(mojo::PendingRemote<mojom::ProfilingClient> client,
                             base::ProcessId pid,
-                            mojom::ProcessType);
+                            mojom::ProcessType process_type,
+                            base::OnceClosure started_profiling_closure);
 
   uint32_t sampling_rate() const { return sampling_rate_; }
 
@@ -67,7 +73,6 @@ class Controller {
 
   SEQUENCE_CHECKER(sequence_checker_);
   base::WeakPtrFactory<Controller> weak_factory_{this};
-  DISALLOW_COPY_AND_ASSIGN(Controller);
 };
 
 }  // namespace heap_profiling

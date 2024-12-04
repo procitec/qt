@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -34,7 +34,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionsInternalsTest,
   // First, check that navigation succeeds.
   GURL navigation_url(
       content::GetWebUIURL(chrome::kChromeUIExtensionsInternalsHost));
-  ui_test_utils::NavigateToURL(browser(), navigation_url);
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), navigation_url));
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
   ASSERT_TRUE(web_contents);
@@ -42,14 +42,10 @@ IN_PROC_BROWSER_TEST_F(ExtensionsInternalsTest,
   EXPECT_FALSE(web_contents->IsCrashed());
 
   // Look for a bit of JSON that has the extension's unique ID.
-  bool has_text = false;
-  ASSERT_TRUE(content::ExecuteScriptAndExtractBool(
-      web_contents,
-      base::StringPrintf("window.domAutomationController.send("
-                         "document.body.textContent && "
-                         "document.body.textContent.indexOf("
-                         "'\"id\": \"%s\"') >= 0);",
-                         extension->id().c_str()),
-      &has_text));
-  EXPECT_TRUE(has_text);
+  EXPECT_EQ(true, content::EvalJs(
+                      web_contents,
+                      base::StringPrintf("document.body.textContent && "
+                                         "document.body.textContent.indexOf("
+                                         "'\"id\": \"%s\"') >= 0;",
+                                         extension->id().c_str())));
 }

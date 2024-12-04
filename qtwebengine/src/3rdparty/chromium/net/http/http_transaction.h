@@ -1,4 +1,4 @@
-// Copyright (c) 2011 The Chromium Authors. All rights reserved.
+// Copyright 2011 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,6 +8,7 @@
 #include <stdint.h>
 
 #include "net/base/completion_once_callback.h"
+#include "net/base/completion_repeating_callback.h"
 #include "net/base/load_states.h"
 #include "net/base/net_error_details.h"
 #include "net/base/net_export.h"
@@ -55,15 +56,12 @@ class NET_EXPORT_PRIVATE HttpTransaction {
   // authentication is required. We should notify this callback that a
   // connection was established, even though the stream might not be ready for
   // us to send data through it.
-  //
-  // TODO(crbug.com/591068): Allow ERR_IO_PENDING, add a new state machine state
-  // to wait on a callback (either passed to this callback or a new explicit
-  // method like ResumeNetworkStart()) to be called before continuing.
   using ConnectedCallback =
-      base::RepeatingCallback<int(const TransportInfo& info)>;
+      base::RepeatingCallback<int(const TransportInfo& info,
+                                  CompletionOnceCallback callback)>;
 
   // Stops any pending IO and destroys the transaction object.
-  virtual ~HttpTransaction() {}
+  virtual ~HttpTransaction() = default;
 
   // Starts the HTTP transaction (i.e., sends the HTTP request).
   //
@@ -200,12 +198,22 @@ class NET_EXPORT_PRIVATE HttpTransaction {
   virtual void SetConnectedCallback(const ConnectedCallback& callback) = 0;
 
   virtual void SetRequestHeadersCallback(RequestHeadersCallback callback) = 0;
+  virtual void SetEarlyResponseHeadersCallback(
+      ResponseHeadersCallback callback) = 0;
   virtual void SetResponseHeadersCallback(ResponseHeadersCallback callback) = 0;
+
+  // Sets the callback to modify the request header. The callback will be called
+  // just before sending the request to the network.
+  virtual void SetModifyRequestHeadersCallback(
+      base::RepeatingCallback<void(net::HttpRequestHeaders*)> callback) = 0;
+
+  virtual void SetIsSharedDictionaryReadAllowedCallback(
+      base::RepeatingCallback<bool()> callback) = 0;
 
   // Resumes the transaction after being deferred.
   virtual int ResumeNetworkStart() = 0;
 
-  virtual void GetConnectionAttempts(ConnectionAttempts* out) const = 0;
+  virtual ConnectionAttempts GetConnectionAttempts() const = 0;
 
   // Configures the transaction to close the network connection, if any, on
   // destruction. Intended for cases where keeping the socket alive may leak
@@ -219,6 +227,18 @@ class NET_EXPORT_PRIVATE HttpTransaction {
   // byte of the response body has been read, as the connection is no longer in
   // use at that point.
   virtual void CloseConnectionOnDestruction() = 0;
+
+  // Returns true if ProxyInfo has been determined for the transaction and that
+  // the ProxyInfo indicates the origin's domain is on the IP Protection Masked
+  // Domain List. Note that this may not be determined if no network request is
+  // actually made (and thus no ProxyInfo computed). However, the metrics we're
+  // interested in focus on requests which actually reach out to the network, so
+  // this is not a problem. See also HttpResponseInfo's was_mdl_match as a
+  // secondary signal.
+  //
+  // Only use this method for metrics. It may be removed when associated
+  // histograms are removed.
+  virtual bool IsMdlMatchForMetrics() const = 0;
 };
 
 }  // namespace net

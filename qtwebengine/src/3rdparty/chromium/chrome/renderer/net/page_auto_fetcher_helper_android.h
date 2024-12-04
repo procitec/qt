@@ -1,12 +1,12 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef CHROME_RENDERER_NET_PAGE_AUTO_FETCHER_HELPER_ANDROID_H_
 #define CHROME_RENDERER_NET_PAGE_AUTO_FETCHER_HELPER_ANDROID_H_
 
-#include "base/callback_forward.h"
-#include "base/macros.h"
+#include "base/functional/callback_forward.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/common/offline_page_auto_fetcher.mojom.h"
 #include "mojo/public/cpp/bindings/remote.h"
@@ -22,6 +22,10 @@ class PageAutoFetcherHelper {
   using FetcherScheduleResult =
       chrome::mojom::OfflinePageAutoFetcherScheduleResult;
   explicit PageAutoFetcherHelper(content::RenderFrame* render_frame);
+
+  PageAutoFetcherHelper(const PageAutoFetcherHelper&) = delete;
+  PageAutoFetcherHelper& operator=(const PageAutoFetcherHelper&) = delete;
+
   virtual ~PageAutoFetcherHelper();
   // Should be called for each page load.
   void OnCommitLoad();
@@ -39,12 +43,10 @@ class PageAutoFetcherHelper {
   // Virtual for testing only.
   virtual bool Bind();
 
-  content::RenderFrame* render_frame_;
+  raw_ptr<content::RenderFrame, ExperimentalRenderer> render_frame_;
   mojo::Remote<chrome::mojom::OfflinePageAutoFetcher> fetcher_;
 
   base::WeakPtrFactory<PageAutoFetcherHelper> weak_ptr_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(PageAutoFetcherHelper);
 };
 
 #endif  // CHROME_RENDERER_NET_PAGE_AUTO_FETCHER_HELPER_ANDROID_H_

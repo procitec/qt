@@ -1,10 +1,10 @@
-// Copyright (c) 2011 The Chromium Authors. All rights reserved.
+// Copyright 2011 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "printing/pdf_metafile_cg_mac.h"
 
-#import <ApplicationServices/ApplicationServices.h>
+#include <CoreGraphics/CoreGraphics.h>
 #include <stdint.h>
 
 #include <memory>
@@ -25,15 +25,17 @@ namespace {
 
 base::FilePath GetPdfTestData(const base::FilePath::StringType& filename) {
   base::FilePath root_path;
-  if (!base::PathService::Get(base::DIR_SOURCE_ROOT, &root_path))
+  if (!base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &root_path)) {
     return base::FilePath();
+  }
   return root_path.Append("pdf").Append("test").Append("data").Append(filename);
 }
 
 base::FilePath GetPrintingTestData(const base::FilePath::StringType& filename) {
   base::FilePath root_path;
-  if (!base::PathService::Get(base::DIR_SOURCE_ROOT, &root_path))
+  if (!base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &root_path)) {
     return base::FilePath();
+  }
   return root_path.Append("printing")
       .Append("test")
       .Append("data")
@@ -78,15 +80,15 @@ void RenderedPdfSha1(const base::FilePath::StringType& pdf_filename,
   constexpr size_t kBytesPerPixel = 4;
   const size_t kStride = dest_size.width() * kBytesPerPixel;
   std::vector<uint8_t> rendered_bitmap(dest_size.height() * kStride);
-  base::ScopedCFTypeRef<CGColorSpaceRef> color_space(
+  base::apple::ScopedCFTypeRef<CGColorSpaceRef> color_space(
       CGColorSpaceCreateDeviceRGB());
-  base::ScopedCFTypeRef<CGContextRef> context(CGBitmapContextCreate(
+  base::apple::ScopedCFTypeRef<CGContextRef> context(CGBitmapContextCreate(
       rendered_bitmap.data(), dest_size.width(), dest_size.height(),
-      kBitsPerComponent, kStride, color_space,
-      kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little));
+      kBitsPerComponent, kStride, color_space.get(),
+      uint32_t{kCGImageAlphaPremultipliedFirst} | kCGBitmapByteOrder32Little));
 
   // Render using metafile and calculate the output hash.
-  ASSERT_TRUE(pdf_cg->RenderPage(page_number, context,
+  ASSERT_TRUE(pdf_cg->RenderPage(page_number, context.get(),
                                  gfx::Rect(dest_size).ToCGRect(), autorotate,
                                  fit_to_page));
   *rendered_hash = base::SHA1HashSpan(rendered_bitmap);
@@ -173,7 +175,7 @@ TEST(PdfMetafileCgTest, Pdf) {
 
   // Test browser-side constructor.
   PdfMetafileCg pdf2;
-  // TODO(thestig): Make |buffer| uint8_t and avoid the base::as_bytes() call.
+  // TODO(thestig): Make `buffer` uint8_t and avoid the base::as_bytes() call.
   EXPECT_TRUE(pdf2.InitFromData(base::as_bytes(base::make_span(buffer))));
 
   // Get the first 4 characters from pdf2.

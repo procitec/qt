@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,8 +11,7 @@
 
 #include "util/osp_logging.h"
 
-namespace openscreen {
-namespace cast {
+namespace openscreen::cast {
 
 // Abstract base template class for common "sequence value" data types such as
 // RtpTimeTicks, FrameId, or PacketId which generally increment/decrement in
@@ -124,12 +123,24 @@ class ExpandedValueBase {
   }
 
   // Comparison operators.
-  constexpr bool operator==(Subclass rhs) const { return value_ == rhs.value_; }
-  constexpr bool operator!=(Subclass rhs) const { return value_ != rhs.value_; }
-  constexpr bool operator<(Subclass rhs) const { return value_ < rhs.value_; }
-  constexpr bool operator>(Subclass rhs) const { return value_ > rhs.value_; }
-  constexpr bool operator<=(Subclass rhs) const { return value_ <= rhs.value_; }
-  constexpr bool operator>=(Subclass rhs) const { return value_ >= rhs.value_; }
+  constexpr bool operator==(const ExpandedValueBase& rhs) const {
+    return value_ == rhs.value_;
+  }
+  constexpr bool operator!=(const ExpandedValueBase& rhs) const {
+    return value_ != rhs.value_;
+  }
+  constexpr bool operator<(const ExpandedValueBase& rhs) const {
+    return value_ < rhs.value_;
+  }
+  constexpr bool operator>(const ExpandedValueBase& rhs) const {
+    return value_ > rhs.value_;
+  }
+  constexpr bool operator<=(const ExpandedValueBase& rhs) const {
+    return value_ <= rhs.value_;
+  }
+  constexpr bool operator>=(const ExpandedValueBase& rhs) const {
+    return value_ >= rhs.value_;
+  }
 
   // (De)Serialize for transmission over IPC.  Do not use these to subvert the
   // valid set of operators allowed by this class or its Subclass.
@@ -158,7 +169,6 @@ class ExpandedValueBase {
   FullWidthInteger value_;
 };
 
-}  // namespace cast
-}  // namespace openscreen
+}  // namespace openscreen::cast
 
 #endif  // CAST_STREAMING_EXPANDED_VALUE_BASE_H_

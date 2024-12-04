@@ -1,28 +1,33 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/core/html/forms/form_data.h"
 
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_union_file_usvstring.h"
 #include "third_party/blink/renderer/core/fileapi/file.h"
 #include "third_party/blink/renderer/core/html/forms/form_controller.h"
-#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/core/testing/null_execution_context.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 
 namespace blink {
 
 namespace {
 
-FormData* Deserialize(const Vector<String>& strings) {
+FormData* Deserialize(ExecutionContext& context,
+                      const Vector<String>& strings) {
   wtf_size_t i = 0;
   auto state = FormControlState::Deserialize(strings, i);
   wtf_size_t j = 0;
-  return FormData::CreateFromControlState(state, j);
+  return FormData::CreateFromControlState(context, state, j);
 }
 
 }  // namespace
 
 TEST(FormDataTest, append) {
+  test::TaskEnvironment task_environment;
   auto* fd = MakeGarbageCollected<FormData>(UTF8Encoding());
   fd->append("test\n1", "value\n1");
   fd->append("test\r2", nullptr, "filename");
@@ -36,31 +41,42 @@ TEST(FormDataTest, append) {
 }
 
 TEST(FormDataTest, AppendFromElement) {
+  test::TaskEnvironment task_environment;
+  UChar lone_surrogate_chars[] = {u'a', 0xD800, u'b', 0};
+  String lone_surrogate_string(lone_surrogate_chars);
+
   auto* fd = MakeGarbageCollected<FormData>(UTF8Encoding());
   fd->AppendFromElement("Atomic\nNumber", 1);
   fd->AppendFromElement("Periodic\nTable", nullptr);
   fd->AppendFromElement("Noble\nGas", "He\rNe\nAr\r\nKr");
+  fd->AppendFromElement(lone_surrogate_string, lone_surrogate_string);
 
   const FormData::Entry& entry1 = *fd->Entries()[0];
-  EXPECT_EQ("Atomic\r\nNumber", entry1.name());
+  EXPECT_EQ("Atomic\nNumber", entry1.name());
   EXPECT_EQ("1", entry1.Value());
 
   const FormData::Entry& entry2 = *fd->Entries()[1];
-  EXPECT_EQ("Periodic\r\nTable", entry2.name());
+  EXPECT_EQ("Periodic\nTable", entry2.name());
 
   const FormData::Entry& entry3 = *fd->Entries()[2];
-  EXPECT_EQ("Noble\r\nGas", entry3.name());
-  EXPECT_EQ("He\r\nNe\r\nAr\r\nKr", entry3.Value());
+  EXPECT_EQ("Noble\nGas", entry3.name());
+  EXPECT_EQ("He\rNe\nAr\r\nKr", entry3.Value());
+
+  // Names and values which come from an element should have any lone surrogates
+  // in them substituted with the replacement character.
+  const FormData::Entry& entry4 = *fd->Entries()[3];
+  EXPECT_EQ(String(u"a\uFFFDb"), entry4.name());
+  EXPECT_EQ(String(u"a\uFFFDb"), entry4.Value());
 }
 
 TEST(FormDataTest, get) {
+  test::TaskEnvironment task_environment;
   auto* fd = MakeGarbageCollected<FormData>(UTF8Encoding());
   fd->append("name1", "value1");
 
-  FileOrUSVString result;
-  fd->get("name1", result);
-  EXPECT_TRUE(result.IsUSVString());
-  EXPECT_EQ("value1", result.GetAsUSVString());
+  V8UnionFileOrUSVString* result = fd->get("name1");
+  EXPECT_TRUE(result->IsUSVString());
+  EXPECT_EQ("value1", result->GetAsUSVString());
 
   const FormData::Entry& entry = *fd->Entries()[0];
   EXPECT_EQ("name1", entry.name());
@@ -68,18 +84,20 @@ TEST(FormDataTest, get) {
 }
 
 TEST(FormDataTest, getAll) {
+  test::TaskEnvironment task_environment;
   auto* fd = MakeGarbageCollected<FormData>(UTF8Encoding());
   fd->append("name1", "value1");
 
-  HeapVector<FormDataEntryValue> results = fd->getAll("name1");
+  const HeapVector<Member<V8FormDataEntryValue>>& results = fd->getAll("name1");
   EXPECT_EQ(1u, results.size());
-  EXPECT_TRUE(results[0].IsUSVString());
-  EXPECT_EQ("value1", results[0].GetAsUSVString());
+  EXPECT_TRUE(results[0]->IsUSVString());
+  EXPECT_EQ("value1", results[0]->GetAsUSVString());
 
   EXPECT_EQ(1u, fd->size());
 }
 
 TEST(FormDataTest, has) {
+  test::TaskEnvironment task_environment;
   auto* fd = MakeGarbageCollected<FormData>(UTF8Encoding());
   fd->append("name1", "value1");
 
@@ -88,6 +106,8 @@ TEST(FormDataTest, has) {
 }
 
 TEST(FormDataTest, AppendToControlState) {
+  test::TaskEnvironment task_environment;
+  ScopedNullExecutionContext context;
   {
     auto* fd = MakeGarbageCollected<FormData>();
     FormControlState state;
@@ -100,7 +120,9 @@ TEST(FormDataTest, AppendToControlState) {
   {
     auto* fd = MakeGarbageCollected<FormData>();
     fd->append("n1", "string");
-    fd->AppendFromElement("n1", MakeGarbageCollected<File>("/etc/hosts"));
+    fd->AppendFromElement(
+        "n1", MakeGarbageCollected<File>(&context.GetExecutionContext(),
+                                         "/etc/hosts"));
     FormControlState state;
     fd->AppendToControlState(state);
 
@@ -120,34 +142,46 @@ TEST(FormDataTest, AppendToControlState) {
 }
 
 TEST(FormDataTest, CreateFromControlState) {
-  EXPECT_EQ(nullptr, Deserialize({"1", "not-a-number"}))
+  test::TaskEnvironment task_environment;
+  ScopedNullExecutionContext context;
+  EXPECT_EQ(nullptr,
+            Deserialize(context.GetExecutionContext(), {"1", "not-a-number"}))
       << "Should fail on size parsing";
 
-  auto* fd0 = Deserialize({"1", "0"});
+  auto* fd0 = Deserialize(context.GetExecutionContext(), {"1", "0"});
   ASSERT_NE(nullptr, fd0);
   EXPECT_EQ(0u, fd0->size());
 
-  EXPECT_EQ(nullptr, Deserialize({"1", "1"})) << "Missing name value";
+  EXPECT_EQ(nullptr, Deserialize(context.GetExecutionContext(), {"1", "1"}))
+      << "Missing name value";
 
-  EXPECT_EQ(nullptr, Deserialize({"2", "1", "n0"})) << "Missing entry type";
+  EXPECT_EQ(nullptr,
+            Deserialize(context.GetExecutionContext(), {"2", "1", "n0"}))
+      << "Missing entry type";
 
-  EXPECT_EQ(nullptr, Deserialize({"3", "1", "n0", "DOMString"}))
+  EXPECT_EQ(nullptr, Deserialize(context.GetExecutionContext(),
+                                 {"3", "1", "n0", "DOMString"}))
       << "Unknown entry type";
 
-  EXPECT_EQ(nullptr, Deserialize({"3", "1", "n0", "USVString"}))
+  EXPECT_EQ(nullptr, Deserialize(context.GetExecutionContext(),
+                                 {"3", "1", "n0", "USVString"}))
       << "Missing USVString value";
 
-  EXPECT_EQ(nullptr, Deserialize({"3", "1", "n1", "File"}))
+  EXPECT_EQ(nullptr, Deserialize(context.GetExecutionContext(),
+                                 {"3", "1", "n1", "File"}))
       << "Missing File value 1";
 
-  EXPECT_EQ(nullptr, Deserialize({"4", "1", "n1", "File", "/etc/hosts"}))
+  EXPECT_EQ(nullptr, Deserialize(context.GetExecutionContext(),
+                                 {"4", "1", "n1", "File", "/etc/hosts"}))
       << "Missing File value 2";
 
   EXPECT_EQ(nullptr,
-            Deserialize({"5", "1", "n1", "File", "/etc/password", "pasword"}))
+            Deserialize(context.GetExecutionContext(),
+                        {"5", "1", "n1", "File", "/etc/password", "pasword"}))
       << "Missing File value 3";
 
-  auto* fd = Deserialize({"9", "2", "n1", "USVString", "string-value", "n2",
+  auto* fd = Deserialize(context.GetExecutionContext(),
+                         {"9", "2", "n1", "USVString", "string-value", "n2",
                           "File", "/etc/password", "pasword", ""});
   ASSERT_NE(nullptr, fd);
   EXPECT_EQ(2u, fd->size());
@@ -157,6 +191,29 @@ TEST(FormDataTest, CreateFromControlState) {
   const FormData::Entry* entry1 = fd->Entries()[1];
   EXPECT_TRUE(entry1->isFile());
   EXPECT_EQ("/etc/password", entry1->GetFile()->GetPath());
+}
+
+TEST(FormDataTest, FilenameWithLoneSurrogates) {
+  test::TaskEnvironment task_environment;
+  UChar filename[] = {'a', 0xD800, 'b', 0};
+  auto* file = MakeGarbageCollected<File>(filename, absl::nullopt,
+                                          BlobDataHandle::Create());
+
+  auto* fd = MakeGarbageCollected<FormData>(UTF8Encoding());
+  fd->AppendFromElement("test", file);
+
+  // The multipart/form-data format with UTF-8 encoding exposes the lone
+  // surrogate as EF BF BD (the Unicode replacement character).
+  auto encoded_multipart = fd->EncodeMultiPartFormData();
+  const char* boundary = encoded_multipart->Boundary().data();
+  FormDataElement fde = encoded_multipart->Elements()[0];
+  EXPECT_EQ(String(fde.data_.data(), fde.data_.size()),
+            String(String("--") + boundary +
+                   "\r\n"
+                   "Content-Disposition: form-data; name=\"test\"; "
+                   "filename=\"a\xEF\xBF\xBD"
+                   "b\"\r\n"
+                   "Content-Type: application/octet-stream\r\n\r\n"));
 }
 
 }  // namespace blink

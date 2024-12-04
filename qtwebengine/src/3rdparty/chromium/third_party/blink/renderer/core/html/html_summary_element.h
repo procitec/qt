@@ -34,19 +34,15 @@ class HTMLSummaryElement final : public HTMLElement {
   bool IsMainSummary() const;
   bool WillRespondToMouseClickEvents() override;
 
-  Element* MarkerControl();
-
  private:
-  LayoutObject* CreateLayoutObject(const ComputedStyle&, LegacyLayout) override;
+  LayoutObject* CreateLayoutObject(const ComputedStyle&) override;
   void DefaultEventHandler(Event&) override;
   bool HasActivationBehavior() const override;
-  void DidAddUserAgentShadowRoot(ShadowRoot&) override;
-  void WillRecalcStyle(const StyleRecalcChange) override;
   HTMLDetailsElement* DetailsElement() const;
 
-  bool SupportsFocus() const override;
+  bool SupportsFocus(UpdateBehavior update_behavior =
+                         UpdateBehavior::kStyleAndLayout) const override;
   int DefaultTabIndex() const override;
-  bool IsClickableControl(Node*);
 };
 
 }  // namespace blink

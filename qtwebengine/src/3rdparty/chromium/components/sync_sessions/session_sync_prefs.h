@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,7 +7,7 @@
 
 #include <string>
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 
 class PrefService;
 class PrefRegistrySimple;
@@ -20,15 +20,31 @@ class SessionSyncPrefs {
   static void RegisterProfilePrefs(PrefRegistrySimple* registry);
 
   explicit SessionSyncPrefs(PrefService* pref_service);
+
+  SessionSyncPrefs(const SessionSyncPrefs&) = delete;
+  SessionSyncPrefs& operator=(const SessionSyncPrefs&) = delete;
+
   ~SessionSyncPrefs();
 
-  std::string GetSyncSessionsGUID() const;
-  void SetSyncSessionsGUID(const std::string& guid);
+  std::string GetLegacySyncSessionsGUID() const;
+  void ClearLegacySyncSessionsGUID();
+
+  // Tracks whether our local representation of which sync nodes map to what
+  // tabs (belonging to the current local session) is inconsistent.  This can
+  // happen if a foreign client deems our session as "stale" and decides to
+  // delete it. Rather than respond by bullishly re-creating our nodes
+  // immediately, which could lead to ping-pong sequences, we give the benefit
+  // of the doubt and hold off until another local navigation occurs, which
+  // proves that we are still relevant.
+  // This is stored across restarts to avoid multiple quick restarts from
+  // potentially wiping local tab data.
+  bool GetLocalDataOutOfSync();
+  void SetLocalDataOutOfSync(bool local_data_out_of_sync);
+
+  void SetLegacySyncSessionsGUIDForTesting(const std::string& guid);
 
  private:
-  PrefService* const pref_service_;
-
-  DISALLOW_COPY_AND_ASSIGN(SessionSyncPrefs);
+  const raw_ptr<PrefService> pref_service_;
 };
 
 }  // namespace sync_sessions

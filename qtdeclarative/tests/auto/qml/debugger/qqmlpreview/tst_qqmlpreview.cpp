@@ -1,34 +1,9 @@
-/****************************************************************************
-**
-** Copyright (C) 2018 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the test suite of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:GPL-EXCEPT$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 3 as published by the Free Software
-** Foundation with exceptions as appearing in the file LICENSE.GPL3-EXCEPT
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2018 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
-#include "qqmldebugprocess_p.h"
-#include "debugutil_p.h"
-#include "qqmlpreviewblacklist.h"
+#include <qqmldebugprocess_p.h>
+#include <debugutil_p.h>
+#include <qqmlpreviewblacklist.h>
 
 #include <QtTest/qtest.h>
 #include <QtTest/qsignalspy.h>
@@ -45,9 +20,14 @@ class tst_QQmlPreview : public QQmlDebugTest
 {
     Q_OBJECT
 
+public:
+    tst_QQmlPreview();
+
 private:
     ConnectResult startQmlProcess(const QString &qmlFile);
     void serveRequest(const QString &path);
+    void serveFile(const QString &path, const QByteArray &contents);
+
     QList<QQmlDebugClient *> createClients() override;
     void verifyProcessOutputContains(const QString &string) const;
 
@@ -64,17 +44,24 @@ private slots:
 
     void connect();
     void load();
+    void loadFromQrc();
     void rerun();
     void blacklist();
     void error();
     void zoom();
     void fps();
-    void language();
+    void unhandledFiles_data();
+    void unhandledFiles();
 };
+
+tst_QQmlPreview::tst_QQmlPreview()
+    : QQmlDebugTest(QT_QMLTEST_DATADIR)
+{
+}
 
 QQmlDebugTest::ConnectResult tst_QQmlPreview::startQmlProcess(const QString &qmlFile)
 {
-    return QQmlDebugTest::connectTo(QLibraryInfo::location(QLibraryInfo::BinariesPath) + "/qml",
+    return QQmlDebugTest::connectTo(QLibraryInfo::path(QLibraryInfo::BinariesPath) + "/qml",
                                   QStringLiteral("QmlPreview"), testFile(qmlFile), true);
 }
 
@@ -88,13 +75,18 @@ void tst_QQmlPreview::serveRequest(const QString &path)
     } else {
         QFile file(path);
         if (file.open(QIODevice::ReadOnly)) {
-            m_files.append(path);
-            m_client->sendFile(path, file.readAll());
+            serveFile(path, file.readAll());
         } else {
             m_filesNotFound.append(path);
             m_client->sendError(path);
         }
     }
+}
+
+void tst_QQmlPreview::serveFile(const QString &path, const QByteArray &contents)
+{
+    m_files.append(path);
+    m_client->sendFile(path, contents);
 }
 
 QList<QQmlDebugClient *> tst_QQmlPreview::createClients()
@@ -122,7 +114,6 @@ void checkFiles(const QStringList &files)
 {
     QVERIFY(!files.contains("/etc/localtime"));
     QVERIFY(!files.contains("/etc/timezome"));
-    QVERIFY(!files.contains(":/qgradient/webgradients.binaryjson"));
 }
 
 void tst_QQmlPreview::cleanup()
@@ -175,6 +166,34 @@ void tst_QQmlPreview::load()
         QTRY_VERIFY(m_files.contains(testFile(newFile)));
         verifyProcessOutputContains(newFile);
     }
+
+    m_process->stop();
+    QTRY_COMPARE(m_client->state(), QQmlDebugClient::NotConnected);
+    QVERIFY(m_serviceErrors.isEmpty());
+}
+
+void tst_QQmlPreview::loadFromQrc()
+{
+    // One of the configuration files built into the "qml" executable.
+    const QString fromQrc(":/qt-project.org/imports/QmlRuntime/Config/default.qml");
+
+    QCOMPARE(QQmlDebugTest::connectTo(
+                     QLibraryInfo::path(QLibraryInfo::BinariesPath) + "/qml",
+                     QStringLiteral("QmlPreview"), fromQrc, true),
+             ConnectSuccess);
+
+    QVERIFY(m_client);
+    QTRY_COMPARE(m_client->state(), QQmlDebugClient::Enabled);
+
+    serveFile(fromQrc, R"(
+        import QtQuick
+        Item {
+            Component.onCompleted: console.log("default.qml replaced")
+        }
+    )");
+
+    m_client->triggerLoad(QUrl("qrc" + fromQrc));
+    verifyProcessOutputContains("default.qml replaced");
 
     m_process->stop();
     QTRY_COMPARE(m_client->state(), QQmlDebugClient::NotConnected);
@@ -246,18 +265,18 @@ void tst_QQmlPreview::blacklist()
     blacklist2.blacklist(":/qt-project.org");
     blacklist2.blacklist(":/QtQuick/Controls/Styles");
     blacklist2.blacklist(":/ExtrasImports/QtQuick/Controls/Styles");
-    blacklist2.blacklist(QLibraryInfo::location(QLibraryInfo::Qml2ImportsPath));
+    blacklist2.blacklist(QLibraryInfo::path(QLibraryInfo::QmlImportsPath));
     blacklist2.blacklist("/home/ulf/.local/share/QtProject/Qml Runtime/configuration.qml");
     blacklist2.blacklist("/usr/share");
     blacklist2.blacklist("/usr/share/QtProject/Qml Runtime/configuration.qml");
-    QVERIFY(blacklist2.isBlacklisted(QLibraryInfo::location(QLibraryInfo::Qml2ImportsPath)));
+    QVERIFY(blacklist2.isBlacklisted(QLibraryInfo::path(QLibraryInfo::QmlImportsPath)));
     blacklist2.blacklist("/usr/local/share/QtProject/Qml Runtime/configuration.qml");
     blacklist2.blacklist("qml");
     blacklist2.blacklist(""); // This should not remove all other paths.
 
-    QVERIFY(blacklist2.isBlacklisted(QLibraryInfo::location(QLibraryInfo::Qml2ImportsPath) +
+    QVERIFY(blacklist2.isBlacklisted(QLibraryInfo::path(QLibraryInfo::QmlImportsPath) +
                                      "/QtQuick/Window.2.0"));
-    QVERIFY(blacklist2.isBlacklisted(QLibraryInfo::location(QLibraryInfo::Qml2ImportsPath)));
+    QVERIFY(blacklist2.isBlacklisted(QLibraryInfo::path(QLibraryInfo::QmlImportsPath)));
     QVERIFY(blacklist2.isBlacklisted("/usr/share/QtProject/Qml Runtime/configuration.qml"));
     QVERIFY(blacklist2.isBlacklisted("/usr/share/stuff"));
     QVERIFY(blacklist2.isBlacklisted(""));
@@ -285,14 +304,14 @@ void tst_QQmlPreview::error()
     QCOMPARE(startQmlProcess("window.qml"), ConnectSuccess);
     QVERIFY(m_client);
     m_client->triggerLoad(testFileUrl("broken.qml"));
-    QTRY_COMPARE_WITH_TIMEOUT(m_serviceErrors.count(), 1, 10000);
-    QVERIFY(m_serviceErrors.first().contains("broken.qml:32 Expected token `}'"));
+    QTRY_COMPARE_WITH_TIMEOUT(m_serviceErrors.size(), 1, 10000);
+    QVERIFY(m_serviceErrors.first().contains("broken.qml:7 Expected token `}'"));
 }
 
 static float parseZoomFactor(const QString &output)
 {
     const QString prefix("zoom ");
-    const int start = output.lastIndexOf(prefix) + prefix.length();
+    const int start = output.lastIndexOf(prefix) + prefix.size();
     if (start < 0)
         return -1;
     const int end = output.indexOf('\n', start);
@@ -322,7 +341,7 @@ void tst_QQmlPreview::zoom()
 
     for (auto testZoomFactor : {2.0f, 1.5f, 0.5f}) {
         m_client->triggerZoom(testZoomFactor);
-        verifyZoomFactor(m_process, testZoomFactor);
+        verifyZoomFactor(m_process, testZoomFactor * baseZoomFactor);
     }
 
     m_client->triggerZoom(-1.0f);
@@ -338,7 +357,7 @@ void tst_QQmlPreview::fps()
     QVERIFY(m_client);
     m_client->triggerLoad(testFileUrl(file));
     if (QGuiApplication::platformName() != "offscreen") {
-        QTRY_VERIFY_WITH_TIMEOUT(m_frameStats.numSyncs > 10, 10000);
+        QTRY_VERIFY_WITH_TIMEOUT(m_frameStats.numSyncs > 10, 30000);
         QVERIFY(m_frameStats.minSync <= m_frameStats.maxSync);
         QVERIFY(m_frameStats.totalSync / m_frameStats.numSyncs >= m_frameStats.minSync - 1);
         QVERIFY(m_frameStats.totalSync / m_frameStats.numSyncs <= m_frameStats.maxSync);
@@ -352,12 +371,26 @@ void tst_QQmlPreview::fps()
     }
 }
 
-void tst_QQmlPreview::language()
+void tst_QQmlPreview::unhandledFiles_data()
 {
-    QCOMPARE(startQmlProcess("window.qml"), ConnectSuccess);
+    QTest::addColumn<QUrl>("file");
+    QTest::addRow("dll")   << testFileUrl("a.dll");
+    QTest::addRow("dylib") << testFileUrl("a.dylib");
+    QTest::addRow("jsc")   << testFileUrl("a.jsc");
+    QTest::addRow("mjsc")  << testFileUrl("a.mjsc");
+    QTest::addRow("qmlc")  << testFileUrl("a.qmlc");
+    QTest::addRow("so")    << testFileUrl("a.so");
+}
+
+void tst_QQmlPreview::unhandledFiles()
+{
+    QFETCH(QUrl, file);
+    QCOMPARE(startQmlProcess("qtquick2.qml"), ConnectSuccess);
     QVERIFY(m_client);
-    m_client->triggerLanguage(dataDirectoryUrl(), "fr_FR");
-    QTRY_VERIFY_WITH_TIMEOUT(m_files.contains(testFile("i18n/qml_fr_FR.qm")), 30000);
+    QTRY_COMPARE(m_client->state(), QQmlDebugClient::Enabled);
+    m_client->triggerLoad(file);
+    verifyProcessOutputContains("fooh");
+    QVERIFY(!m_files.contains(file.toLocalFile()));
 }
 
 QTEST_MAIN(tst_QQmlPreview)

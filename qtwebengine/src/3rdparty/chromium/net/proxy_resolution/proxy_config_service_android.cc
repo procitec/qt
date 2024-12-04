@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,19 +8,21 @@
 
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
-#include "base/bind.h"
-#include "base/callback.h"
 #include "base/check_op.h"
 #include "base/compiler_specific.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/location.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/observer_list.h"
-#include "base/sequenced_task_runner.h"
 #include "base/strings/string_tokenizer.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
+#include "base/task/sequenced_task_runner.h"
 #include "net/base/host_port_pair.h"
+#include "net/base/proxy_server.h"
+#include "net/base/proxy_string_util.h"
 #include "net/net_jni_headers/ProxyChangeListener_jni.h"
 #include "net/proxy_resolution/proxy_config_with_annotation.h"
 #include "url/third_party/mozilla/url_parse.h"
@@ -148,9 +150,10 @@ bool GetProxyRules(const GetPropertyCallback& get_property,
 void GetLatestProxyConfigInternal(const GetPropertyCallback& get_property,
                                   ProxyConfigWithAnnotation* config) {
   ProxyConfig proxy_config;
+  proxy_config.set_from_system(true);
   if (GetProxyRules(get_property, &proxy_config.proxy_rules())) {
     *config =
-        ProxyConfigWithAnnotation(proxy_config, NO_TRAFFIC_ANNOTATION_YET);
+        ProxyConfigWithAnnotation(proxy_config, MISSING_TRAFFIC_ANNOTATION);
   } else {
     *config = ProxyConfigWithAnnotation::CreateDirect();
   }
@@ -177,7 +180,7 @@ void CreateStaticProxyConfig(const std::string& host,
     proxy_config.set_pac_url(GURL(pac_url));
     proxy_config.set_pac_mandatory(false);
     *config =
-        ProxyConfigWithAnnotation(proxy_config, NO_TRAFFIC_ANNOTATION_YET);
+        ProxyConfigWithAnnotation(proxy_config, MISSING_TRAFFIC_ANNOTATION);
   } else if (port != 0) {
     std::string rules = base::StringPrintf("%s:%d", host.c_str(), port);
     proxy_config.proxy_rules().ParseFromString(rules);
@@ -192,7 +195,7 @@ void CreateStaticProxyConfig(const std::string& host,
       proxy_config.proxy_rules().bypass_rules.AddRuleFromString(pattern);
     }
     *config =
-        ProxyConfigWithAnnotation(proxy_config, NO_TRAFFIC_ANNOTATION_YET);
+        ProxyConfigWithAnnotation(proxy_config, MISSING_TRAFFIC_ANNOTATION);
   } else {
     *config = ProxyConfigWithAnnotation::CreateDirect();
   }
@@ -213,21 +216,24 @@ std::string ParseOverrideRules(
 
   for (const auto& rule : override_rules) {
     // Parse the proxy URL.
-    ProxyServer proxy_server =
-        ProxyServer::FromURI(rule.proxy_url, ProxyServer::Scheme::SCHEME_HTTP);
-    if (!proxy_server.is_valid()) {
+    ProxyChain proxy_chain =
+        ProxyUriToProxyChain(rule.proxy_url, ProxyServer::Scheme::SCHEME_HTTP);
+    if (!proxy_chain.IsValid()) {
       return "Invalid Proxy URL: " + rule.proxy_url;
-    } else if (proxy_server.is_quic()) {
+    } else if (proxy_chain.is_multi_proxy()) {
+      return "Unsupported multi proxy chain: " + rule.proxy_url;
+    } else if (proxy_chain.is_single_proxy() &&
+               proxy_chain.GetProxyServer(/*chain_index=*/0).is_quic()) {
       return "Unsupported proxy scheme: " + rule.proxy_url;
     }
 
     // Parse the URL scheme.
     if (base::EqualsCaseInsensitiveASCII(rule.url_scheme, "http")) {
-      proxy_rules->proxies_for_http.AddProxyServer(proxy_server);
+      proxy_rules->proxies_for_http.AddProxyChain(proxy_chain);
     } else if (base::EqualsCaseInsensitiveASCII(rule.url_scheme, "https")) {
-      proxy_rules->proxies_for_https.AddProxyServer(proxy_server);
+      proxy_rules->proxies_for_https.AddProxyChain(proxy_chain);
     } else if (rule.url_scheme == "*") {
-      proxy_rules->fallback_proxies.AddProxyServer(proxy_server);
+      proxy_rules->fallback_proxies.AddProxyChain(proxy_chain);
     } else {
       return "Unsupported URL scheme: " + rule.url_scheme;
     }
@@ -248,6 +254,7 @@ std::string CreateOverrideProxyConfig(
     const std::vector<ProxyConfigServiceAndroid::ProxyOverrideRule>&
         proxy_rules,
     const std::vector<std::string>& bypass_rules,
+    const bool reverse_bypass,
     ProxyConfigWithAnnotation* config) {
   ProxyConfig proxy_config;
   auto result = ParseOverrideRules(proxy_rules, &proxy_config.proxy_rules());
@@ -255,13 +262,15 @@ std::string CreateOverrideProxyConfig(
     return result;
   }
 
+  proxy_config.proxy_rules().reverse_bypass = reverse_bypass;
+
   for (const auto& bypass_rule : bypass_rules) {
     if (!proxy_config.proxy_rules().bypass_rules.AddRuleFromString(
             bypass_rule)) {
       return "Invalid bypass rule " + bypass_rule;
     }
   }
-  *config = ProxyConfigWithAnnotation(proxy_config, NO_TRAFFIC_ANNOTATION_YET);
+  *config = ProxyConfigWithAnnotation(proxy_config, MISSING_TRAFFIC_ANNOTATION);
   return "";
 }
 
@@ -276,9 +285,10 @@ class ProxyConfigServiceAndroid::Delegate
       : jni_delegate_(this),
         main_task_runner_(main_task_runner),
         jni_task_runner_(jni_task_runner),
-        get_property_callback_(get_property_callback),
-        exclude_pac_url_(false),
-        has_proxy_override_(false) {}
+        get_property_callback_(get_property_callback) {}
+
+  Delegate(const Delegate&) = delete;
+  Delegate& operator=(const Delegate&) = delete;
 
   void SetupJNI() {
     DCHECK(InJNISequence());
@@ -370,14 +380,15 @@ class ProxyConfigServiceAndroid::Delegate
   std::string SetProxyOverride(
       const std::vector<ProxyOverrideRule>& proxy_rules,
       const std::vector<std::string>& bypass_rules,
+      const bool reverse_bypass,
       base::OnceClosure callback) {
     DCHECK(InJNISequence());
     has_proxy_override_ = true;
 
     // Creates a new proxy config
     ProxyConfigWithAnnotation proxy_config;
-    std::string result =
-        CreateOverrideProxyConfig(proxy_rules, bypass_rules, &proxy_config);
+    std::string result = CreateOverrideProxyConfig(
+        proxy_rules, bypass_rules, reverse_bypass, &proxy_config);
     if (!result.empty()) {
       return result;
     }
@@ -440,10 +451,10 @@ class ProxyConfigServiceAndroid::Delegate
     }
 
    private:
-    Delegate* const delegate_;
+    const raw_ptr<Delegate> delegate_;
   };
 
-  virtual ~Delegate() {}
+  virtual ~Delegate() = default;
 
   void ShutdownInJNISequence() {
     if (java_proxy_change_listener_.is_null())
@@ -479,19 +490,18 @@ class ProxyConfigServiceAndroid::Delegate
   scoped_refptr<base::SequencedTaskRunner> jni_task_runner_;
   GetPropertyCallback get_property_callback_;
   ProxyConfigWithAnnotation proxy_config_;
-  bool exclude_pac_url_;
+  bool exclude_pac_url_ = false;
   // This may only be accessed or modified on the JNI thread
-  bool has_proxy_override_;
-
-  DISALLOW_COPY_AND_ASSIGN(Delegate);
+  bool has_proxy_override_ = false;
 };
 
 ProxyConfigServiceAndroid::ProxyConfigServiceAndroid(
     const scoped_refptr<base::SequencedTaskRunner>& main_task_runner,
     const scoped_refptr<base::SequencedTaskRunner>& jni_task_runner)
-    : delegate_(new Delegate(main_task_runner,
-                             jni_task_runner,
-                             base::BindRepeating(&GetJavaProperty))) {
+    : delegate_(base::MakeRefCounted<Delegate>(
+          main_task_runner,
+          jni_task_runner,
+          base::BindRepeating(&GetJavaProperty))) {
   delegate_->SetupJNI();
   delegate_->FetchInitialConfig();
 }
@@ -522,9 +532,9 @@ ProxyConfigServiceAndroid::ProxyConfigServiceAndroid(
     const scoped_refptr<base::SequencedTaskRunner>& main_task_runner,
     const scoped_refptr<base::SequencedTaskRunner>& jni_task_runner,
     GetPropertyCallback get_property_callback)
-    : delegate_(new Delegate(main_task_runner,
-                             jni_task_runner,
-                             get_property_callback)) {
+    : delegate_(base::MakeRefCounted<Delegate>(main_task_runner,
+                                               jni_task_runner,
+                                               get_property_callback)) {
   delegate_->SetupJNI();
   delegate_->FetchInitialConfig();
 }
@@ -544,8 +554,9 @@ void ProxyConfigServiceAndroid::ProxySettingsChanged() {
 std::string ProxyConfigServiceAndroid::SetProxyOverride(
     const std::vector<ProxyOverrideRule>& proxy_rules,
     const std::vector<std::string>& bypass_rules,
+    const bool reverse_bypass,
     base::OnceClosure callback) {
-  return delegate_->SetProxyOverride(proxy_rules, bypass_rules,
+  return delegate_->SetProxyOverride(proxy_rules, bypass_rules, reverse_bypass,
                                      std::move(callback));
 }
 

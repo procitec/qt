@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,17 +9,20 @@
 #include <stdint.h>
 
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "base/callback.h"
-#include "base/macros.h"
+#include "base/functional/callback.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/threading/platform_thread.h"
+#include "base/types/expected.h"
 #include "dbus/dbus_export.h"
+#include "dbus/error.h"
 #include "dbus/object_path.h"
 
 namespace base {
@@ -31,13 +34,14 @@ namespace dbus {
 class ExportedObject;
 class ObjectManager;
 class ObjectProxy;
+class Response;
 
 // Bus is used to establish a connection with D-Bus, create object
 // proxies, and export objects.
 //
 // For asynchronous operations such as an asynchronous method call, the
 // bus object will use a task runner to monitor the underlying file
-// descriptor used for D-Bus communication. By default, the bus will usegi
+// descriptor used for D-Bus communication. By default, the bus will use
 // the current thread's task runner. If |dbus_task_runner| option is
 // specified, the bus will use that task runner instead.
 //
@@ -185,6 +189,8 @@ class CHROME_DBUS_EXPORT Bus : public base::RefCountedThreadSafe<Bus> {
   struct CHROME_DBUS_EXPORT Options {
     Options();
     ~Options();
+    Options(Options&&);
+    Options& operator=(Options&&);
 
     BusType bus_type;  // SESSION by default.
     ConnectionType connection_type;  // PRIVATE by default.
@@ -219,6 +225,9 @@ class CHROME_DBUS_EXPORT Bus : public base::RefCountedThreadSafe<Bus> {
   // Creates a Bus object. The actual connection will be established when
   // Connect() is called.
   explicit Bus(const Options& options);
+
+  Bus(const Bus&) = delete;
+  Bus& operator=(const Bus&) = delete;
 
   // Called when an ownership request is complete.
   // Parameters:
@@ -342,7 +351,7 @@ class CHROME_DBUS_EXPORT Bus : public base::RefCountedThreadSafe<Bus> {
                                           const ObjectPath& object_path);
 
   // Unregisters the object manager for the given remote object path
-  // |object_path| exported by the srevice |service_name|.
+  // |object_path| exported by the service |service_name|.
   //
   // Getting an object manager for the same remote object after this call
   // will return a new object, method calls on any remaining copies of the
@@ -440,9 +449,8 @@ class CHROME_DBUS_EXPORT Bus : public base::RefCountedThreadSafe<Bus> {
   // received. Used to implement synchronous method calls.
   //
   // BLOCKING CALL.
-  virtual DBusMessage* SendWithReplyAndBlock(DBusMessage* request,
-                                             int timeout_ms,
-                                             DBusError* error);
+  virtual base::expected<std::unique_ptr<Response>, Error>
+  SendWithReplyAndBlock(DBusMessage* request, int timeout_ms);
 
   // Requests to send a message to the bus. The reply is handled with
   // |pending_call| at a later time.
@@ -488,6 +496,10 @@ class CHROME_DBUS_EXPORT Bus : public base::RefCountedThreadSafe<Bus> {
   // The same match rule can be added more than once and should be removed
   // as many times as it was added.
   //
+  // The |error| must not be nullptr.
+  // TODO(crbug.com/1459945): 1) Use base::expected<void, Error> to return
+  // error, and 2) handle error in safer manner.
+  //
   // The match rule looks like:
   // "type='signal', interface='org.chromium.SomeInterface'".
   //
@@ -496,14 +508,18 @@ class CHROME_DBUS_EXPORT Bus : public base::RefCountedThreadSafe<Bus> {
   // http://dbus.freedesktop.org/doc/dbus-specification.html#message-bus-routing
   //
   // BLOCKING CALL.
-  virtual void AddMatch(const std::string& match_rule, DBusError* error);
+  virtual void AddMatch(const std::string& match_rule, Error* error);
 
   // Removes the match rule previously added by AddMatch().
   // Returns false if the requested match rule is unknown or has already been
   // removed. Otherwise, returns true and sets |error| accordingly.
   //
+  // The |error| must not be nullptr.
+  // TODO(crbug.com/1459945): 1) Use base::expected<void, Error> to return
+  // error, and 2) handle error in safer manner.
+  //
   // BLOCKING CALL.
-  virtual bool RemoveMatch(const std::string& match_rule, DBusError* error);
+  virtual bool RemoveMatch(const std::string& match_rule, Error* error);
 
   // Tries to register the object path. Returns true on success.
   // Returns false if the object path is already registered.
@@ -513,6 +529,9 @@ class CHROME_DBUS_EXPORT Bus : public base::RefCountedThreadSafe<Bus> {
   //
   // The same object path must not be added more than once.
   //
+  // The |error| must not be nullptr.
+  // TODO(crbug.com/1459945): Use base::expected<void, Error> to return error.
+  //
   // See also documentation of |dbus_connection_try_register_object_path| at
   // http://dbus.freedesktop.org/doc/api/html/group__DBusConnection.html
   //
@@ -520,7 +539,7 @@ class CHROME_DBUS_EXPORT Bus : public base::RefCountedThreadSafe<Bus> {
   virtual bool TryRegisterObjectPath(const ObjectPath& object_path,
                                      const DBusObjectPathVTable* vtable,
                                      void* user_data,
-                                     DBusError* error);
+                                     Error* error);
 
   // Tries to register the object path and its sub paths.
   // Returns true on success.
@@ -538,7 +557,7 @@ class CHROME_DBUS_EXPORT Bus : public base::RefCountedThreadSafe<Bus> {
   virtual bool TryRegisterFallback(const ObjectPath& object_path,
                                    const DBusObjectPathVTable* vtable,
                                    void* user_data,
-                                   DBusError* error);
+                                   Error* error);
 
   // Unregister the object path.
   //
@@ -598,7 +617,7 @@ class CHROME_DBUS_EXPORT Bus : public base::RefCountedThreadSafe<Bus> {
       const std::string& service_name,
       const ServiceOwnerChangeCallback& callback);
 
-  // Return the unique name of the bus connnection if it is connected to
+  // Return the unique name of the bus connection if it is connected to
   // D-BUS. Otherwise, return an empty string.
   std::string GetConnectionName();
 
@@ -623,7 +642,7 @@ class CHROME_DBUS_EXPORT Bus : public base::RefCountedThreadSafe<Bus> {
       const ObjectPath& object_path,
       const DBusObjectPathVTable* vtable,
       void* user_data,
-      DBusError* error,
+      Error* error,
       TryRegisterObjectPathFunction* register_function);
 
   // Helper function used for RemoveObjectProxy().
@@ -724,7 +743,7 @@ class CHROME_DBUS_EXPORT Bus : public base::RefCountedThreadSafe<Bus> {
   const ConnectionType connection_type_;
   scoped_refptr<base::SequencedTaskRunner> dbus_task_runner_;
   base::WaitableEvent on_shutdown_;
-  DBusConnection* connection_;
+  raw_ptr<DBusConnection, AcrossTasksDanglingUntriaged> connection_;
 
   base::PlatformThreadId origin_thread_id_;
   scoped_refptr<base::SequencedTaskRunner> origin_task_runner_;
@@ -776,13 +795,11 @@ class CHROME_DBUS_EXPORT Bus : public base::RefCountedThreadSafe<Bus> {
   bool shutdown_completed_;
 
   // Counters to make sure that OnAddWatch()/OnRemoveWatch() and
-  // OnAddTimeout()/OnRemoveTimeou() are balanced.
+  // OnAddTimeout()/OnRemoveTimeout() are balanced.
   int num_pending_watches_;
   int num_pending_timeouts_;
 
   std::string address_;
-
-  DISALLOW_COPY_AND_ASSIGN(Bus);
 };
 
 }  // namespace dbus

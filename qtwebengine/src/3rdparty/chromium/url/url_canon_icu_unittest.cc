@@ -1,45 +1,23 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+
+#include "url/url_canon_icu.h"
 
 #include <stddef.h>
 
 #include "base/logging.h"
-#include "base/stl_util.h"
+#include "base/memory/raw_ptr.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/icu/source/common/unicode/ucnv.h"
 #include "url/url_canon.h"
-#include "url/url_canon_icu.h"
+#include "url/url_canon_icu_test_helpers.h"
 #include "url/url_canon_stdstring.h"
 #include "url/url_test_utils.h"
 
 namespace url {
 
 namespace {
-
-// Wrapper around a UConverter object that managers creation and destruction.
-class UConvScoper {
- public:
-  explicit UConvScoper(const char* charset_name) {
-    UErrorCode err = U_ZERO_ERROR;
-    converter_ = ucnv_open(charset_name, &err);
-    if (!converter_) {
-      LOG(ERROR) << "Failed to open charset " << charset_name << ": "
-                 << u_errorName(err);
-    }
-  }
-
-  ~UConvScoper() {
-    if (converter_)
-      ucnv_close(converter_);
-  }
-
-  // Returns the converter object, may be NULL.
-  UConverter* converter() const { return converter_; }
-
- private:
-  UConverter* converter_;
-};
 
 TEST(URLCanonIcuTest, ICUCharsetConverter) {
   struct ICUCase {
@@ -59,15 +37,15 @@ TEST(URLCanonIcuTest, ICUCharsetConverter) {
       "hello\xa7\x41%26%231758%3B\xa6\x6eworld"},
   };
 
-  for (size_t i = 0; i < base::size(icu_cases); i++) {
-    UConvScoper conv(icu_cases[i].encoding);
+  for (size_t i = 0; i < std::size(icu_cases); i++) {
+    test::UConvScoper conv(icu_cases[i].encoding);
     ASSERT_TRUE(conv.converter() != NULL);
     ICUCharsetConverter converter(conv.converter());
 
     std::string str;
     StdStringCanonOutput output(&str);
 
-    base::string16 input_str(
+    std::u16string input_str(
         test_utils::TruncateWStringToUTF16(icu_cases[i].input));
     int input_len = static_cast<int>(input_str.length());
     converter.ConvertFromUTF16(input_str.c_str(), input_len, &output);
@@ -79,19 +57,19 @@ TEST(URLCanonIcuTest, ICUCharsetConverter) {
   // Test string sizes around the resize boundary for the output to make sure
   // the converter resizes as needed.
   const int static_size = 16;
-  UConvScoper conv("utf-8");
+  test::UConvScoper conv("utf-8");
   ASSERT_TRUE(conv.converter());
   ICUCharsetConverter converter(conv.converter());
   for (int i = static_size - 2; i <= static_size + 2; i++) {
     // Make a string with the appropriate length.
-    base::string16 input;
+    std::u16string input;
     for (int ch = 0; ch < i; ch++)
       input.push_back('a');
 
     RawCanonOutput<static_size> output;
     converter.ConvertFromUTF16(input.c_str(), static_cast<int>(input.length()),
                                &output);
-    EXPECT_EQ(input.length(), static_cast<size_t>(output.length()));
+    EXPECT_EQ(input.length(), output.length());
   }
 }
 
@@ -117,10 +95,10 @@ TEST(URLCanonIcuTest, QueryWithConverter) {
       "?q=Chinese%26%2365319%3B"},
   };
 
-  for (size_t i = 0; i < base::size(query_cases); i++) {
+  for (size_t i = 0; i < std::size(query_cases); i++) {
     Component out_comp;
 
-    UConvScoper conv(query_cases[i].encoding);
+    test::UConvScoper conv(query_cases[i].encoding);
     ASSERT_TRUE(!query_cases[i].encoding || conv.converter());
     ICUCharsetConverter converter(conv.converter());
 
@@ -138,7 +116,7 @@ TEST(URLCanonIcuTest, QueryWithConverter) {
     }
 
     if (query_cases[i].input16) {
-      base::string16 input16(
+      std::u16string input16(
           test_utils::TruncateWStringToUTF16(query_cases[i].input16));
       int len = static_cast<int>(input16.length());
       Component in_comp(0, len);

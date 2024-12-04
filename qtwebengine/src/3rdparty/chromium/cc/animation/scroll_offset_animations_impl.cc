@@ -1,8 +1,10 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "cc/animation/scroll_offset_animations_impl.h"
+
+#include <utility>
 
 #include "base/trace_event/trace_event.h"
 #include "base/trace_event/traced_value.h"
@@ -12,7 +14,7 @@
 #include "cc/animation/animation_timeline.h"
 #include "cc/animation/element_animations.h"
 #include "cc/animation/scroll_offset_animation_curve_factory.h"
-#include "cc/animation/timing_function.h"
+#include "ui/gfx/animation/keyframe/timing_function.h"
 
 namespace cc {
 
@@ -20,10 +22,10 @@ ScrollOffsetAnimationsImpl::ScrollOffsetAnimationsImpl(
     AnimationHost* animation_host)
     : animation_host_(animation_host),
       scroll_offset_timeline_(
-          AnimationTimeline::Create(AnimationIdProvider::NextTimelineId())),
+          AnimationTimeline::Create(AnimationIdProvider::NextTimelineId(),
+                                    /* is_impl_only */ true)),
       scroll_offset_animation_(
           Animation::Create(AnimationIdProvider::NextAnimationId())) {
-  scroll_offset_timeline_->set_is_impl_only(true);
   scroll_offset_animation_->set_animation_delegate(this);
 
   animation_host_->AddAnimationTimeline(scroll_offset_timeline_.get());
@@ -37,8 +39,8 @@ ScrollOffsetAnimationsImpl::~ScrollOffsetAnimationsImpl() {
 
 void ScrollOffsetAnimationsImpl::AutoScrollAnimationCreate(
     ElementId element_id,
-    const gfx::ScrollOffset& target_offset,
-    const gfx::ScrollOffset& current_offset,
+    const gfx::PointF& target_offset,
+    const gfx::PointF& current_offset,
     float autoscroll_velocity,
     base::TimeDelta animation_start_offset) {
   std::unique_ptr<ScrollOffsetAnimationCurve> curve =
@@ -49,12 +51,13 @@ void ScrollOffsetAnimationsImpl::AutoScrollAnimationCreate(
                          autoscroll_velocity);
   ScrollAnimationCreateInternal(element_id, std::move(curve),
                                 animation_start_offset);
+  animation_is_autoscroll_ = true;
 }
 
 void ScrollOffsetAnimationsImpl::MouseWheelScrollAnimationCreate(
     ElementId element_id,
-    const gfx::ScrollOffset& target_offset,
-    const gfx::ScrollOffset& current_offset,
+    const gfx::PointF& target_offset,
+    const gfx::PointF& current_offset,
     base::TimeDelta delayed_by,
     base::TimeDelta animation_start_offset) {
   std::unique_ptr<ScrollOffsetAnimationCurve> curve =
@@ -65,18 +68,20 @@ void ScrollOffsetAnimationsImpl::MouseWheelScrollAnimationCreate(
   curve->SetInitialValue(current_offset, delayed_by);
   ScrollAnimationCreateInternal(element_id, std::move(curve),
                                 animation_start_offset);
+  animation_is_autoscroll_ = false;
 }
 
 void ScrollOffsetAnimationsImpl::ScrollAnimationCreateInternal(
     ElementId element_id,
-    std::unique_ptr<AnimationCurve> curve,
+    std::unique_ptr<gfx::AnimationCurve> curve,
     base::TimeDelta animation_start_offset) {
   TRACE_EVENT_INSTANT1("cc", "ScrollAnimationCreate", TRACE_EVENT_SCOPE_THREAD,
                        "Duration", curve->Duration().InMillisecondsF());
 
   std::unique_ptr<KeyframeModel> keyframe_model = KeyframeModel::Create(
       std::move(curve), AnimationIdProvider::NextKeyframeModelId(),
-      AnimationIdProvider::NextGroupId(), TargetProperty::SCROLL_OFFSET);
+      AnimationIdProvider::NextGroupId(),
+      KeyframeModel::TargetPropertyId(TargetProperty::SCROLL_OFFSET));
   keyframe_model->set_time_offset(animation_start_offset);
   keyframe_model->SetIsImplOnly();
 
@@ -87,16 +92,17 @@ void ScrollOffsetAnimationsImpl::ScrollAnimationCreateInternal(
   scroll_offset_animation_->AddKeyframeModel(std::move(keyframe_model));
 }
 
-bool ScrollOffsetAnimationsImpl::ScrollAnimationUpdateTarget(
+std::optional<gfx::PointF>
+ScrollOffsetAnimationsImpl::ScrollAnimationUpdateTarget(
     const gfx::Vector2dF& scroll_delta,
-    const gfx::ScrollOffset& max_scroll_offset,
+    const gfx::PointF& max_scroll_offset,
     base::TimeTicks frame_monotonic_time,
     base::TimeDelta delayed_by) {
   DCHECK(scroll_offset_animation_);
   if (!scroll_offset_animation_->element_animations()) {
     TRACE_EVENT_INSTANT0("cc", "No element animation exists",
                          TRACE_EVENT_SCOPE_THREAD);
-    return false;
+    return std::nullopt;
   }
 
   KeyframeModel* keyframe_model =
@@ -105,17 +111,18 @@ bool ScrollOffsetAnimationsImpl::ScrollAnimationUpdateTarget(
     scroll_offset_animation_->DetachElement();
     TRACE_EVENT_INSTANT0("cc", "No keyframe model exists",
                          TRACE_EVENT_SCOPE_THREAD);
-    return false;
+    return std::nullopt;
   }
-  if (scroll_delta.IsZero())
-    return true;
 
   ScrollOffsetAnimationCurve* curve =
-      keyframe_model->curve()->ToScrollOffsetAnimationCurve();
+      ScrollOffsetAnimationCurve::ToScrollOffsetAnimationCurve(
+          keyframe_model->curve());
+  if (scroll_delta.IsZero()) {
+    return curve->target_value();
+  }
 
-  gfx::ScrollOffset new_target =
-      gfx::ScrollOffsetWithDelta(curve->target_value(), scroll_delta);
-  new_target.SetToMax(gfx::ScrollOffset());
+  gfx::PointF new_target = curve->target_value() + scroll_delta;
+  new_target.SetToMax(gfx::PointF());
   new_target.SetToMin(max_scroll_offset);
 
   // TODO(ymalik): KeyframeModel::TrimTimeToCurrentIteration should probably
@@ -136,7 +143,7 @@ bool ScrollOffsetAnimationsImpl::ScrollAnimationUpdateTarget(
                        TRACE_EVENT_SCOPE_THREAD, "UpdatedDuration",
                        curve->Duration().InMillisecondsF());
 
-  return true;
+  return curve->target_value();
 }
 
 void ScrollOffsetAnimationsImpl::ScrollAnimationApplyAdjustment(
@@ -164,19 +171,23 @@ void ScrollOffsetAnimationsImpl::ScrollAnimationApplyAdjustment(
   }
 
   std::unique_ptr<ScrollOffsetAnimationCurve> new_curve =
-      keyframe_model->curve()
-          ->ToScrollOffsetAnimationCurve()
+      ScrollOffsetAnimationCurve::ToScrollOffsetAnimationCurve(
+          keyframe_model->curve())
           ->CloneToScrollOffsetAnimationCurve();
   new_curve->ApplyAdjustment(adjustment);
 
   std::unique_ptr<KeyframeModel> new_keyframe_model = KeyframeModel::Create(
       std::move(new_curve), AnimationIdProvider::NextKeyframeModelId(),
-      AnimationIdProvider::NextGroupId(), TargetProperty::SCROLL_OFFSET);
+      AnimationIdProvider::NextGroupId(),
+      KeyframeModel::TargetPropertyId(TargetProperty::SCROLL_OFFSET));
   new_keyframe_model->set_start_time(keyframe_model->start_time());
   new_keyframe_model->SetIsImplOnly();
   new_keyframe_model->set_affects_active_elements(false);
 
-  // Abort the old animation.
+  // Abort the old animation. AutoReset here will restore the current value of
+  // animation_is_autoscroll_ after ScrollAnimationAbort resets it.
+  base::AutoReset<bool> autoscroll(&animation_is_autoscroll_,
+                                   animation_is_autoscroll_);
   ScrollAnimationAbort(/* needs_completion */ false);
 
   // Start a new one with the adjusment.
@@ -191,6 +202,12 @@ void ScrollOffsetAnimationsImpl::ScrollAnimationAbort(bool needs_completion) {
       TargetProperty::SCROLL_OFFSET, needs_completion);
   TRACE_EVENT_INSTANT1("cc", "ScrollAnimationAbort", TRACE_EVENT_SCOPE_THREAD,
                        "needs_completion", needs_completion);
+  animation_is_autoscroll_ = false;
+}
+
+void ScrollOffsetAnimationsImpl::AnimatingElementRemovedByCommit() {
+  scroll_offset_animation_->GetKeyframeModel(TargetProperty::SCROLL_OFFSET)
+      ->set_affects_pending_elements(false);
 }
 
 void ScrollOffsetAnimationsImpl::NotifyAnimationFinished(
@@ -225,6 +242,10 @@ bool ScrollOffsetAnimationsImpl::IsAnimating() const {
     case KeyframeModel::ABORTED_BUT_NEEDS_COMPLETION:
       return false;
   }
+}
+
+bool ScrollOffsetAnimationsImpl::IsAutoScrolling() const {
+  return IsAnimating() && animation_is_autoscroll_;
 }
 
 ElementId ScrollOffsetAnimationsImpl::GetElementId() const {

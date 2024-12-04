@@ -1,14 +1,14 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "extensions/browser/app_window/app_web_contents_helper.h"
 
 #include "base/strings/stringprintf.h"
-#include "content/public/browser/native_web_keyboard_event.h"
 #include "content/public/browser/page_navigator.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/common/input/native_web_keyboard_event.h"
 #include "extensions/browser/app_window/app_delegate.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/suggest_permission_util.h"
@@ -56,23 +56,23 @@ content::WebContents* AppWebContentsHelper::OpenURLFromTab(
   // TODO(mihaip): Can we check for user gestures instead?
   WindowOpenDisposition disposition = params.disposition;
   if (disposition == WindowOpenDisposition::CURRENT_TAB) {
-    web_contents_->GetMainFrame()->AddMessageToConsole(
+    web_contents_->GetPrimaryMainFrame()->AddMessageToConsole(
         blink::mojom::ConsoleMessageLevel::kError,
         base::StringPrintf(
             "Can't open same-window link to \"%s\"; try target=\"_blank\".",
             params.url.spec().c_str()));
-    return NULL;
+    return nullptr;
   }
 
   // These dispositions aren't really navigations.
   if (disposition == WindowOpenDisposition::SAVE_TO_DISK ||
       disposition == WindowOpenDisposition::IGNORE_ACTION)
-    return NULL;
+    return nullptr;
 
   content::WebContents* contents =
       app_delegate_->OpenURLFromTab(browser_context_, web_contents_, params);
   if (!contents) {
-    web_contents_->GetMainFrame()->AddMessageToConsole(
+    web_contents_->GetPrimaryMainFrame()->AddMessageToConsole(
         blink::mojom::ConsoleMessageLevel::kError,
         base::StringPrintf(
             "Can't navigate to \"%s\"; apps do not support navigation.",
@@ -88,7 +88,8 @@ void AppWebContentsHelper::RequestToLockMouse() const {
     return;
 
   bool has_permission = IsExtensionWithPermissionOrSuggestInConsole(
-      APIPermission::kPointerLock, extension, web_contents_->GetMainFrame());
+      mojom::APIPermissionID::kPointerLock, extension,
+      web_contents_->GetPrimaryMainFrame());
 
   if (has_permission)
     web_contents_->GotResponseToLockMouseRequest(
@@ -111,7 +112,7 @@ void AppWebContentsHelper::RequestMediaAccessPermission(
 
 bool AppWebContentsHelper::CheckMediaAccessPermission(
     content::RenderFrameHost* render_frame_host,
-    const GURL& security_origin,
+    const url::Origin& security_origin,
     blink::mojom::MediaStreamType type) const {
   const Extension* extension = GetExtension();
   if (!extension)

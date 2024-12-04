@@ -1,4 +1,4 @@
-// Copyright 2017 PDFium Authors. All rights reserved.
+// Copyright 2017 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,6 +11,8 @@
 #include "fxjs/js_resources.h"
 #include "fxjs/xfa/cfxjse_engine.h"
 #include "fxjs/xfa/cfxjse_value.h"
+#include "third_party/base/containers/span.h"
+#include "v8/include/v8-object.h"
 #include "xfa/fxfa/parser/cxfa_delta.h"
 #include "xfa/fxfa/parser/cxfa_document.h"
 #include "xfa/fxfa/parser/xfa_basic_data.h"
@@ -31,14 +33,13 @@ bool CJX_Model::DynamicTypeIs(TypeTag eType) const {
 }
 
 CJS_Result CJX_Model::clearErrorList(
-    CFX_V8* runtime,
-    const std::vector<v8::Local<v8::Value>>& params) {
+    CFXJSE_Engine* runtime,
+    pdfium::span<v8::Local<v8::Value>> params) {
   return CJS_Result::Success();
 }
 
-CJS_Result CJX_Model::createNode(
-    CFX_V8* runtime,
-    const std::vector<v8::Local<v8::Value>>& params) {
+CJS_Result CJX_Model::createNode(CFXJSE_Engine* runtime,
+                                 pdfium::span<v8::Local<v8::Value>> params) {
   if (params.empty() || params.size() > 3)
     return CJS_Result::Failure(JSMessage::kParamError);
 
@@ -60,22 +61,16 @@ CJS_Result CJX_Model::createNode(
     if (!pNewNode->HasAttribute(XFA_Attribute::Name))
       return CJS_Result::Failure(JSMessage::kParamError);
 
-    pNewNode->JSObject()->SetAttributeByEnum(XFA_Attribute::Name,
-                                             name.AsStringView(), true);
+    pNewNode->JSObject()->SetAttributeByEnum(XFA_Attribute::Name, name, true);
     if (pNewNode->GetPacketType() == XFA_PacketType::Datasets)
       pNewNode->CreateXMLMappingNode();
   }
-
-  CFXJSE_Value* value =
-      GetDocument()->GetScriptContext()->GetOrCreateJSBindingFromMap(pNewNode);
-
-  return CJS_Result::Success(
-      value->DirectGetValue().Get(runtime->GetIsolate()));
+  return CJS_Result::Success(runtime->GetOrCreateJSBindingFromMap(pNewNode));
 }
 
 CJS_Result CJX_Model::isCompatibleNS(
-    CFX_V8* runtime,
-    const std::vector<v8::Local<v8::Value>>& params) {
+    CFXJSE_Engine* runtime,
+    pdfium::span<v8::Local<v8::Value>> params) {
   if (params.empty())
     return CJS_Result::Failure(JSMessage::kParamError);
 
@@ -87,10 +82,12 @@ CJS_Result CJX_Model::isCompatibleNS(
       runtime->NewBoolean(TryNamespace().value_or(WideString()) == nameSpace));
 }
 
-void CJX_Model::context(CFXJSE_Value* pValue,
+void CJX_Model::context(v8::Isolate* pIsolate,
+                        v8::Local<v8::Value>* pValue,
                         bool bSetting,
                         XFA_Attribute eAttribute) {}
 
-void CJX_Model::aliasNode(CFXJSE_Value* pValue,
+void CJX_Model::aliasNode(v8::Isolate* pIsolate,
+                          v8::Local<v8::Value>* pValue,
                           bool bSetting,
                           XFA_Attribute eAttribute) {}

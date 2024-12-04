@@ -24,7 +24,8 @@
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_ellipse.h"
 #include "third_party/blink/renderer/core/svg/svg_animated_length.h"
 #include "third_party/blink/renderer/core/svg/svg_length.h"
-#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/core/svg/svg_length_functions.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 
 namespace blink {
 
@@ -53,12 +54,7 @@ SVGEllipseElement::SVGEllipseElement(Document& document)
           svg_names::kRyAttr,
           SVGLengthMode::kHeight,
           SVGLength::Initial::kUnitlessZero,
-          CSSPropertyID::kRy)) {
-  AddToPropertyMap(cx_);
-  AddToPropertyMap(cy_);
-  AddToPropertyMap(rx_);
-  AddToPropertyMap(ry_);
-}
+          CSSPropertyID::kRy)) {}
 
 void SVGEllipseElement::Trace(Visitor* visitor) const {
   visitor->Trace(cx_);
@@ -71,24 +67,21 @@ void SVGEllipseElement::Trace(Visitor* visitor) const {
 Path SVGEllipseElement::AsPath() const {
   Path path;
 
-  SVGLengthContext length_context(this);
+  const SVGViewportResolver viewport_resolver(*this);
   const ComputedStyle& style = ComputedStyleRef();
 
-  const SVGComputedStyle& svg_style = style.SvgStyle();
-
-  FloatSize radii(ToFloatSize(
-      length_context.ResolveLengthPair(svg_style.Rx(), svg_style.Ry(), style)));
-  if (svg_style.Rx().IsAuto())
-    radii.SetWidth(radii.Height());
-  else if (svg_style.Ry().IsAuto())
-    radii.SetHeight(radii.Width());
-  if (radii.Width() < 0 || radii.Height() < 0 ||
-      (!radii.Width() && !radii.Height()))
+  gfx::Vector2dF radii =
+      VectorForLengthPair(style.Rx(), style.Ry(), viewport_resolver, style);
+  if (style.Rx().IsAuto())
+    radii.set_x(radii.y());
+  else if (style.Ry().IsAuto())
+    radii.set_y(radii.x());
+  if (radii.x() < 0 || radii.y() < 0 || (!radii.x() && !radii.y()))
     return path;
 
-  FloatPoint center(
-      length_context.ResolveLengthPair(svg_style.Cx(), svg_style.Cy(), style));
-  path.AddEllipse(FloatRect(center - radii, radii.ScaledBy(2)));
+  gfx::PointF center =
+      PointForLengthPair(style.Cx(), style.Cy(), viewport_resolver, style);
+  path.AddEllipse(center, radii.x(), radii.y());
   return path;
 }
 
@@ -98,16 +91,16 @@ void SVGEllipseElement::CollectStyleForPresentationAttribute(
     MutableCSSPropertyValueSet* style) {
   SVGAnimatedPropertyBase* property = PropertyFromAttribute(name);
   if (property == cx_) {
-    AddPropertyToPresentationAttributeStyle(style, property->CssPropertyId(),
+    AddPropertyToPresentationAttributeStyle(style, CSSPropertyID::kCx,
                                             cx_->CssValue());
   } else if (property == cy_) {
-    AddPropertyToPresentationAttributeStyle(style, property->CssPropertyId(),
+    AddPropertyToPresentationAttributeStyle(style, CSSPropertyID::kCy,
                                             cy_->CssValue());
   } else if (property == rx_) {
-    AddPropertyToPresentationAttributeStyle(style, property->CssPropertyId(),
+    AddPropertyToPresentationAttributeStyle(style, CSSPropertyID::kRx,
                                             rx_->CssValue());
   } else if (property == ry_) {
-    AddPropertyToPresentationAttributeStyle(style, property->CssPropertyId(),
+    AddPropertyToPresentationAttributeStyle(style, CSSPropertyID::kRy,
                                             ry_->CssValue());
   } else {
     SVGGeometryElement::CollectStyleForPresentationAttribute(name, value,
@@ -115,7 +108,9 @@ void SVGEllipseElement::CollectStyleForPresentationAttribute(
   }
 }
 
-void SVGEllipseElement::SvgAttributeChanged(const QualifiedName& attr_name) {
+void SVGEllipseElement::SvgAttributeChanged(
+    const SvgAttributeChangedParams& params) {
+  const QualifiedName& attr_name = params.name;
   if (attr_name == svg_names::kCxAttr || attr_name == svg_names::kCyAttr ||
       attr_name == svg_names::kRxAttr || attr_name == svg_names::kRyAttr) {
     UpdateRelativeLengthsInformation();
@@ -123,7 +118,7 @@ void SVGEllipseElement::SvgAttributeChanged(const QualifiedName& attr_name) {
     return;
   }
 
-  SVGGeometryElement::SvgAttributeChanged(attr_name);
+  SVGGeometryElement::SvgAttributeChanged(params);
 }
 
 bool SVGEllipseElement::SelfHasRelativeLengths() const {
@@ -132,9 +127,42 @@ bool SVGEllipseElement::SelfHasRelativeLengths() const {
          rx_->CurrentValue()->IsRelative() || ry_->CurrentValue()->IsRelative();
 }
 
-LayoutObject* SVGEllipseElement::CreateLayoutObject(const ComputedStyle&,
-                                                    LegacyLayout) {
-  return new LayoutSVGEllipse(this);
+LayoutObject* SVGEllipseElement::CreateLayoutObject(const ComputedStyle&) {
+  return MakeGarbageCollected<LayoutSVGEllipse>(this);
+}
+
+SVGAnimatedPropertyBase* SVGEllipseElement::PropertyFromAttribute(
+    const QualifiedName& attribute_name) const {
+  if (attribute_name == svg_names::kCxAttr) {
+    return cx_.Get();
+  } else if (attribute_name == svg_names::kCyAttr) {
+    return cy_.Get();
+  } else if (attribute_name == svg_names::kRxAttr) {
+    return rx_.Get();
+  } else if (attribute_name == svg_names::kRyAttr) {
+    return ry_.Get();
+  } else {
+    return SVGGeometryElement::PropertyFromAttribute(attribute_name);
+  }
+}
+
+void SVGEllipseElement::SynchronizeAllSVGAttributes() const {
+  SVGAnimatedPropertyBase* attrs[]{cx_.Get(), cy_.Get(), rx_.Get(), ry_.Get()};
+  SynchronizeListOfSVGAttributes(attrs);
+  SVGGeometryElement::SynchronizeAllSVGAttributes();
+}
+
+void SVGEllipseElement::CollectExtraStyleForPresentationAttribute(
+    MutableCSSPropertyValueSet* style) {
+  for (SVGAnimatedPropertyBase* property : {cx_.Get(), cy_.Get(),
+                                            rx_.Get(), ry_.Get()}) {
+    DCHECK(property->HasPresentationAttributeMapping());
+    if (property->IsAnimating()) {
+      CollectStyleForPresentationAttribute(property->AttributeName(),
+                                           g_empty_atom, style);
+    }
+  }
+  SVGGeometryElement::CollectExtraStyleForPresentationAttribute(style);
 }
 
 }  // namespace blink

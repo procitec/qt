@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,7 +9,11 @@
 
 #include <memory>
 
+#include "components/performance_manager/embedder/graph_features.h"
+#include "components/performance_manager/graph/graph_impl.h"
+
 namespace content {
+class BrowserContext;
 class WebContents;
 }  // namespace content
 
@@ -43,8 +47,13 @@ class PerformanceManagerRegistry;
 //   The ChromeRenderViewHostTestHarness brings its own OnWebContentsCreated
 //   hooks, but you need to embed an instance of this helper in order to
 //   initialize the PM.
+//
+// This helper initializes the performance manager in the call to SetUp(), and
+// tears it down in TearDown().
 class PerformanceManagerTestHarnessHelper {
  public:
+  using GraphImplCallback = base::OnceCallback<void(GraphImpl*)>;
+
   PerformanceManagerTestHarnessHelper();
   PerformanceManagerTestHarnessHelper(
       const PerformanceManagerTestHarnessHelper&) = delete;
@@ -52,7 +61,8 @@ class PerformanceManagerTestHarnessHelper {
       const PerformanceManagerTestHarnessHelper&) = delete;
   virtual ~PerformanceManagerTestHarnessHelper();
 
-  // Sets up the PM and registry, etc.
+  // Sets up the PM and registry, etc. This will return once the PM is fully
+  // initialized, and after any GraphImplCallback has been invoked.
   virtual void SetUp();
 
   // Tears down the PM and registry, etc. Blocks on the main thread until they
@@ -66,7 +76,27 @@ class PerformanceManagerTestHarnessHelper {
   // PM is initialized (ie, initialize an instance of this helper).
   void OnWebContentsCreated(content::WebContents* contents);
 
+  // Creates worker helpers for the provided `browser_context`. The helpers must
+  // be deleted with OnBrowserContextRemoved() before calling TearDown().
+  void OnBrowserContextAdded(content::BrowserContext* browser_context);
+
+  // Deletes the worker helpers for the provided `browser_context`. The helpers
+  // must have been created with OnBrowserContextAdded() before calling this.
+  void OnBrowserContextRemoved(content::BrowserContext* browser_context);
+
+  // Allows configuring which Graph features are initialized during "SetUp".
+  // This defaults to initializing no features.
+  GraphFeatures& GetGraphFeatures() { return graph_features_; }
+
+  // Allows configuring a Graph callback that will be invoked when the Graph
+  // is initialized in "SetUp".
+  void SetGraphImplCallback(GraphImplCallback graph_impl_callback) {
+    graph_impl_callback_ = std::move(graph_impl_callback);
+  }
+
  private:
+  GraphFeatures graph_features_;
+  GraphImplCallback graph_impl_callback_;
   std::unique_ptr<PerformanceManagerImpl> perf_man_;
   std::unique_ptr<PerformanceManagerRegistry> registry_;
 };

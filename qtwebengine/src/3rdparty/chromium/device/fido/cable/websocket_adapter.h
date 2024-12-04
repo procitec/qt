@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,13 +7,17 @@
 
 #include <vector>
 
-#include "base/callback_forward.h"
 #include "base/component_export.h"
 #include "base/containers/span.h"
-#include "base/optional.h"
+#include "base/functional/callback_forward.h"
 #include "base/sequence_checker.h"
 #include "device/fido/cable/v2_handshake.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
+#include "mojo/public/cpp/bindings/receiver.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "services/network/public/mojom/network_context.mojom.h"
+#include "services/network/public/mojom/websocket.mojom.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace device {
 namespace cablev2 {
@@ -25,15 +29,34 @@ class COMPONENT_EXPORT(DEVICE_FIDO) WebSocketAdapter
     : public network::mojom::WebSocketHandshakeClient,
       network::mojom::WebSocketClient {
  public:
-  using TunnelReadyCallback = base::OnceCallback<
-      void(bool, base::Optional<std::array<uint8_t, kRoutingIdSize>>)>;
+  // Result enumerates the possible results of attempting to connect a tunnel.
+  enum class Result {
+    OK,
+    FAILED,
+    // GONE indicates that the tunnel failed and that the contact ID used is
+    // permanently inactive and should be forgotten.
+    GONE,
+  };
+
+  // ConnectSignalSupport indicates whether the connection will send a connect
+  // signal. This is a single zero byte, sent by the tunnel server when the peer
+  // connects. This only occurs for "contact" connections.
+  enum class ConnectSignalSupport {
+    NO,
+    YES,
+  };
+
+  using TunnelReadyCallback = base::OnceCallback<void(
+      Result,
+      absl::optional<std::array<uint8_t, kRoutingIdSize>>,
+      ConnectSignalSupport)>;
   using TunnelDataCallback =
-      base::RepeatingCallback<void(base::Optional<base::span<const uint8_t>>)>;
+      base::RepeatingCallback<void(absl::optional<base::span<const uint8_t>>)>;
   WebSocketAdapter(
       // on_tunnel_ready is called once with a boolean that indicates whether
       // the WebSocket successfully connected and an optional routing ID.
       TunnelReadyCallback on_tunnel_ready,
-      // on_tunnel_ready is called repeatedly, after successful connection, with
+      // on_tunnel_data is called repeatedly, after successful connection, with
       // the contents of WebSocket messages. Framing is preserved so a single
       // message written by the server will result in a single callback.
       TunnelDataCallback on_tunnel_data);
@@ -49,10 +72,17 @@ class COMPONENT_EXPORT(DEVICE_FIDO) WebSocketAdapter
   // defaults to 64KiB. Exceeding that will cause the function to return false.
   bool Write(base::span<const uint8_t> data);
 
+  // Reparent updates the data callback. This is only valid to call after the
+  // tunnel is established.
+  void Reparent(TunnelDataCallback on_tunnel_data);
+
   // WebSocketHandshakeClient:
 
   void OnOpeningHandshakeStarted(
       network::mojom::WebSocketHandshakeRequestPtr request) override;
+  void OnFailure(const std::string& message,
+                 int net_error,
+                 int response_code) override;
   void OnConnectionEstablished(
       mojo::PendingRemote<network::mojom::WebSocket> socket,
       mojo::PendingReceiver<network::mojom::WebSocketClient> client_receiver,
@@ -89,7 +119,7 @@ class COMPONENT_EXPORT(DEVICE_FIDO) WebSocketAdapter
   bool pending_message_finished_ = false;
 
   TunnelReadyCallback on_tunnel_ready_;
-  const TunnelDataCallback on_tunnel_data_;
+  TunnelDataCallback on_tunnel_data_;
   mojo::Receiver<network::mojom::WebSocketHandshakeClient> handshake_receiver_{
       this};
   mojo::Receiver<network::mojom::WebSocketClient> client_receiver_{this};

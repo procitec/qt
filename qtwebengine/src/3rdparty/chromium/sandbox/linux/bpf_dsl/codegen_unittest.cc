@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,12 +8,11 @@
 #include <stdint.h>
 
 #include <map>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 #include "base/hash/md5.h"
-#include "base/macros.h"
-#include "base/strings/string_piece.h"
 #include "sandbox/linux/system_headers/linux_filter.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -59,9 +58,8 @@ class Hash {
  private:
   template <typename T>
   void HashValue(base::MD5Context* ctx, const T& value) {
-    base::MD5Update(ctx,
-                    base::StringPiece(reinterpret_cast<const char*>(&value),
-                                      sizeof(value)));
+    base::MD5Update(ctx, std::string_view(reinterpret_cast<const char*>(&value),
+                                          sizeof(value)));
   }
 
   std::string Base16() const {
@@ -106,6 +104,10 @@ TEST(CodeGen, HashSanity) {
 // programs with CodeGen and verifying the linearized output matches
 // the input DAG.
 class ProgramTest : public ::testing::Test {
+ public:
+  ProgramTest(const ProgramTest&) = delete;
+  ProgramTest& operator=(const ProgramTest&) = delete;
+
  protected:
   ProgramTest() : gen_(), node_hashes_() {}
 
@@ -171,8 +173,6 @@ class ProgramTest : public ::testing::Test {
 
   CodeGen gen_;
   std::map<CodeGen::Node, Hash> node_hashes_;
-
-  DISALLOW_COPY_AND_ASSIGN(ProgramTest);
 };
 
 TEST_F(ProgramTest, OneInstruction) {

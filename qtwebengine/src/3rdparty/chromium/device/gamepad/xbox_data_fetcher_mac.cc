@@ -1,12 +1,8 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "device/gamepad/xbox_data_fetcher_mac.h"
-
-#include <algorithm>
-#include <cmath>
-#include <limits>
 
 #include <CoreFoundation/CoreFoundation.h>
 #include <IOKit/IOCFPlugIn.h>
@@ -14,13 +10,40 @@
 #include <IOKit/usb/IOUSBLib.h>
 #include <IOKit/usb/USB.h>
 
+#include <algorithm>
+#include <cmath>
+#include <limits>
+#include <string>
+
+#include "base/apple/foundation_util.h"
+#include "base/containers/fixed_flat_set.h"
 #include "base/logging.h"
-#include "base/mac/foundation_util.h"
-#include "base/stl_util.h"
-#include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task/sequenced_task_runner.h"
+#include "device/gamepad/gamepad_id_list.h"
 
 namespace device {
+
+namespace {
+
+// XboxDataFetcher recognizes the following devices connected over USB.
+constexpr auto kSupportedDeviceIds = base::MakeFixedFlatSet<GamepadId>({
+    GamepadId::kAcerProduct1304,         // Acer GC501 (X-INPUT mode)
+    GamepadId::kAcerProduct1305,         // Acer Nitro (X-INPUT mode)
+    GamepadId::kAmazonProduct041a,       // Amazon Luna Controller
+    GamepadId::kMicrosoftProduct028e,    // Xbox 360
+    GamepadId::kMicrosoftProduct02d1,    // Xbox One
+    GamepadId::kMicrosoftProduct02dd,    // Xbox One, 2015 firmware
+    GamepadId::kMicrosoftProduct02e3,    // Xbox Elite
+    GamepadId::kMicrosoftProduct02ea,    // Xbox One S
+    GamepadId::kMicrosoftProduct0b00,    // Xbox Elite 2
+    GamepadId::kMicrosoftProduct0b0a,    // Xbox Adaptive
+    GamepadId::kMicrosoftProduct0b12,    // Xbox Series X
+    GamepadId::kSteelSeriesProduct1430,  // Stratus Duo receiver
+    GamepadId::kSteelSeriesProduct1431,  // Stratus Duo
+});
+
+}  // namespace
 
 XboxDataFetcher::PendingController::PendingController(
     XboxDataFetcher* fetcher,
@@ -108,12 +131,12 @@ void XboxDataFetcher::DeviceRemoved(void* context, io_iterator_t iterator) {
   io_service_t ref;
   while ((ref = IOIteratorNext(iterator))) {
     base::mac::ScopedIOObject<io_service_t> scoped_ref(ref);
-    base::ScopedCFTypeRef<CFNumberRef> number(
-        base::mac::CFCastStrict<CFNumberRef>(IORegistryEntryCreateCFProperty(
+    base::apple::ScopedCFTypeRef<CFNumberRef> number(
+        base::apple::CFCastStrict<CFNumberRef>(IORegistryEntryCreateCFProperty(
             ref, CFSTR(kUSBDevicePropertyLocationID), kCFAllocatorDefault,
             kNilOptions)));
     UInt32 location_id = 0;
-    CFNumberGetValue(number, kCFNumberSInt32Type, &location_id);
+    CFNumberGetValue(number.get(), kCFNumberSInt32Type, &location_id);
     fetcher->RemoveControllerByLocationID(location_id);
   }
 }
@@ -176,95 +199,57 @@ bool XboxDataFetcher::RegisterForNotifications() {
 
   listening_ = true;
 
-  if (!RegisterForDeviceNotifications(
-          XboxControllerMac::kVendorMicrosoft,
-          XboxControllerMac::kProductXboxOneEliteController,
-          &xbox_one_elite_device_added_iter_,
-          &xbox_one_elite_device_removed_iter_))
-    return false;
-
-  if (!RegisterForDeviceNotifications(
-          XboxControllerMac::kVendorMicrosoft,
-          XboxControllerMac::kProductXboxOneEliteController2,
-          &xbox_one_elite_2_device_added_iter_,
-          &xbox_one_elite_2_device_removed_iter_))
-    return false;
-
-  if (!RegisterForDeviceNotifications(
-          XboxControllerMac::kVendorMicrosoft,
-          XboxControllerMac::kProductXboxOneController2013,
-          &xbox_one_2013_device_added_iter_,
-          &xbox_one_2013_device_removed_iter_))
-    return false;
-
-  if (!RegisterForDeviceNotifications(
-          XboxControllerMac::kVendorMicrosoft,
-          XboxControllerMac::kProductXboxOneController2015,
-          &xbox_one_2015_device_added_iter_,
-          &xbox_one_2015_device_removed_iter_))
-    return false;
-
-  if (!RegisterForDeviceNotifications(
-          XboxControllerMac::kVendorMicrosoft,
-          XboxControllerMac::kProductXboxOneSController,
-          &xbox_one_s_device_added_iter_, &xbox_one_s_device_removed_iter_))
-    return false;
-
-  if (!RegisterForDeviceNotifications(
-          XboxControllerMac::kVendorMicrosoft,
-          XboxControllerMac::kProductXbox360Controller,
-          &xbox_360_device_added_iter_, &xbox_360_device_removed_iter_))
-    return false;
-
-  if (!RegisterForDeviceNotifications(
-          XboxControllerMac::kVendorMicrosoft,
-          XboxControllerMac::kProductXboxAdaptiveController,
-          &xbox_adaptive_device_added_iter_,
-          &xbox_adaptive_device_removed_iter_))
-    return false;
+  for (const auto& entry : kSupportedDeviceIds) {
+    auto ids = GamepadIdList::Get().GetDeviceIdsFromGamepadId(entry);
+    if (!RegisterForDeviceNotifications(ids.first, ids.second))
+      return false;
+  }
 
   return true;
 }
 
-bool XboxDataFetcher::RegisterForDeviceNotifications(
-    int vendor_id,
-    int product_id,
-    base::mac::ScopedIOObject<io_iterator_t>* added_iter,
-    base::mac::ScopedIOObject<io_iterator_t>* removed_iter) {
-  base::ScopedCFTypeRef<CFNumberRef> vendor_cf(
+bool XboxDataFetcher::RegisterForDeviceNotifications(int vendor_id,
+                                                     int product_id) {
+  base::apple::ScopedCFTypeRef<CFNumberRef> vendor_cf(
       CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt32Type, &vendor_id));
-  base::ScopedCFTypeRef<CFNumberRef> product_cf(
+  base::apple::ScopedCFTypeRef<CFNumberRef> product_cf(
       CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt32Type, &product_id));
-  base::ScopedCFTypeRef<CFMutableDictionaryRef> matching_dict(
+  base::apple::ScopedCFTypeRef<CFMutableDictionaryRef> matching_dict(
       IOServiceMatching(kIOUSBDeviceClassName));
   if (!matching_dict)
     return false;
-  CFDictionarySetValue(matching_dict, CFSTR(kUSBVendorID), vendor_cf);
-  CFDictionarySetValue(matching_dict, CFSTR(kUSBProductID), product_cf);
+  CFDictionarySetValue(matching_dict.get(), CFSTR(kUSBVendorID),
+                       vendor_cf.get());
+  CFDictionarySetValue(matching_dict.get(), CFSTR(kUSBProductID),
+                       product_cf.get());
 
   // IOServiceAddMatchingNotification() releases the dictionary when it's done.
   // Retain it before each call to IOServiceAddMatchingNotification to keep
   // things balanced.
-  CFRetain(matching_dict);
+  CFRetain(matching_dict.get());
   IOReturn ret;
+  base::mac::ScopedIOObject<io_iterator_t> added_iterator;
   ret = IOServiceAddMatchingNotification(port_.get(), kIOFirstMatchNotification,
-                                         matching_dict, DeviceAdded, this,
-                                         added_iter->InitializeInto());
+                                         matching_dict.get(), DeviceAdded, this,
+                                         added_iterator.InitializeInto());
   if (ret != kIOReturnSuccess) {
     LOG(ERROR) << "Error listening for Xbox controller add events: " << ret;
     return false;
   }
-  DeviceAdded(this, added_iter->get());
+  DeviceAdded(this, added_iterator.get());
+  device_event_iterators_.push_back(std::move(added_iterator));
 
-  CFRetain(matching_dict);
-  ret = IOServiceAddMatchingNotification(port_.get(), kIOTerminatedNotification,
-                                         matching_dict, DeviceRemoved, this,
-                                         removed_iter->InitializeInto());
+  CFRetain(matching_dict.get());
+  base::mac::ScopedIOObject<io_iterator_t> removed_iterator;
+  ret = IOServiceAddMatchingNotification(
+      port_.get(), kIOTerminatedNotification, matching_dict.get(),
+      DeviceRemoved, this, removed_iterator.InitializeInto());
   if (ret != kIOReturnSuccess) {
     LOG(ERROR) << "Error listening for Xbox controller remove events: " << ret;
     return false;
   }
-  DeviceRemoved(this, removed_iter->get());
+  DeviceRemoved(this, removed_iterator.get());
+  device_event_iterators_.push_back(std::move(removed_iterator));
   return true;
 }
 
@@ -317,8 +302,11 @@ void XboxDataFetcher::AddController(XboxControllerMac* controller) {
   controller->SetLEDPattern((XboxControllerMac::LEDPattern)(
       XboxControllerMac::LED_FLASH_TOP_LEFT + controller->location_id()));
 
-  state->data.SetID(base::UTF8ToUTF16(controller->GetIdString()));
-  state->data.mapping = GamepadMapping::kStandard;
+  GamepadDataFetcher::UpdateGamepadStrings(
+      controller->product_name(), controller->vendor_id(),
+      controller->product_id(),
+      /*has_standard_mapping=*/true, state->data);
+
   state->data.connected = true;
   state->data.axes_length = 4;
   state->data.buttons_length = 17;
@@ -374,12 +362,18 @@ void XboxDataFetcher::XboxControllerGotData(
     pad.buttons[i].pressed = data.buttons[i - 2];
     pad.buttons[i].value = data.buttons[i - 2] ? 1.0f : 0.0f;
   }
-  if (controller->GetControllerType() ==
-      XboxControllerMac::XBOX_360_CONTROLLER) {
+  if (controller->xinput_type() == kXInputTypeXbox360) {
+    // Map the Xbox button on Xbox 360 to buttons[16].
     pad.buttons[16].pressed = data.buttons[14];
     pad.buttons[16].value = data.buttons[14] ? 1.0f : 0.0f;
   }
-  for (size_t i = 0; i < base::size(data.axes); i++) {
+  if (controller->gamepad_id() == GamepadId::kMicrosoftProduct0b12) {
+    // Map the Share button on Xbox Series X to buttons[17].
+    pad.buttons[17].pressed = data.buttons[14];
+    pad.buttons[17].value = data.buttons[14] ? 1.0f : 0.0f;
+    pad.buttons_length = 18;
+  }
+  for (size_t i = 0; i < std::size(data.axes); i++) {
     pad.axes[i] = data.axes[i];
   }
 

@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,6 +6,7 @@
 
 #include <secure-output-unstable-v1-server-protocol.h>
 
+#include "base/memory/raw_ptr.h"
 #include "components/exo/surface.h"
 #include "components/exo/surface_observer.h"
 #include "components/exo/wayland/server_util.h"
@@ -31,6 +32,10 @@ class Security : public SurfaceObserver {
     surface_->AddSurfaceObserver(this);
     surface_->SetProperty(kSurfaceHasSecurityKey, true);
   }
+
+  Security(const Security&) = delete;
+  Security& operator=(const Security&) = delete;
+
   ~Security() override {
     if (surface_) {
       surface_->RemoveSurfaceObserver(this);
@@ -51,9 +56,7 @@ class Security : public SurfaceObserver {
   }
 
  private:
-  Surface* surface_;
-
-  DISALLOW_COPY_AND_ASSIGN(Security);
+  raw_ptr<Surface> surface_;
 };
 
 void security_destroy(wl_client* client, wl_resource* resource) {

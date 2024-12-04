@@ -1,20 +1,18 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "base/strings/strcat_win.h"
 
 #include <string>
+#include <string_view>
 
 #include "base/containers/span.h"
 #include "base/strings/strcat_internal.h"
-#include "base/strings/string_piece.h"
 
 namespace base {
 
-#if defined(BASE_STRING16_IS_STD_U16STRING)
-
-std::wstring StrCat(span<const WStringPiece> pieces) {
+std::wstring StrCat(span<const std::wstring_view> pieces) {
   return internal::StrCatT(pieces);
 }
 
@@ -22,14 +20,12 @@ std::wstring StrCat(span<const std::wstring> pieces) {
   return internal::StrCatT(pieces);
 }
 
-void StrAppend(std::wstring* dest, span<const WStringPiece> pieces) {
-  internal::StrAppendT(dest, pieces);
+void StrAppend(std::wstring* dest, span<const std::wstring_view> pieces) {
+  internal::StrAppendT(*dest, pieces);
 }
 
 void StrAppend(std::wstring* dest, span<const std::wstring> pieces) {
-  internal::StrAppendT(dest, pieces);
+  internal::StrAppendT(*dest, pieces);
 }
-
-#endif
 
 }  // namespace base

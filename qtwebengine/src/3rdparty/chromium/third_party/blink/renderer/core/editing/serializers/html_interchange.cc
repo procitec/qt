@@ -27,7 +27,6 @@
 
 #include "third_party/blink/renderer/core/dom/text.h"
 #include "third_party/blink/renderer/core/editing/editing_utilities.h"
-#include "third_party/blink/renderer/core/layout/layout_object.h"
 #include "third_party/blink/renderer/core/layout/layout_text.h"
 #include "third_party/blink/renderer/platform/wtf/text/character_names.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
@@ -37,8 +36,9 @@ namespace blink {
 String ConvertHTMLTextToInterchangeFormat(const String& in, const Text& node) {
   // Assume all the text comes from node.
   if (node.GetLayoutObject() &&
-      node.GetLayoutObject()->Style()->PreserveNewline())
+      node.GetLayoutObject()->Style()->ShouldPreserveBreaks()) {
     return in;
+  }
 
   const char kConvertedSpaceString[] = "<span>\xA0</span>";
   static_assert((static_cast<unsigned char>('\xA0') == kNoBreakSpaceCharacter),

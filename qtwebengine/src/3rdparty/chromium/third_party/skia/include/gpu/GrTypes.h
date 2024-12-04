@@ -8,54 +8,19 @@
 #ifndef GrTypes_DEFINED
 #define GrTypes_DEFINED
 
-#include "include/core/SkMath.h"
 #include "include/core/SkTypes.h"
-#include "include/gpu/GrConfig.h"
+#include "include/private/base/SkTo.h" // IWYU pragma: keep
 
+#include <cstddef>
+#include <cstdint>
 class GrBackendSemaphore;
-class SkImage;
-class SkSurface;
+
+namespace skgpu {
+enum class Protected : bool;
+enum class Renderable : bool;
+}
 
 ////////////////////////////////////////////////////////////////////////////////
-
-/**
- * Defines overloaded bitwise operators to make it easier to use an enum as a
- * bitfield.
- */
-#define GR_MAKE_BITFIELD_OPS(X) \
-    inline X operator |(X a, X b) { \
-        return (X) (+a | +b); \
-    } \
-    inline X& operator |=(X& a, X b) { \
-        return (a = a | b); \
-    } \
-    inline X operator &(X a, X b) { \
-        return (X) (+a & +b); \
-    } \
-    inline X& operator &=(X& a, X b) { \
-        return (a = a & b); \
-    } \
-    template <typename T> \
-    inline X operator &(T a, X b) { \
-        return (X) (+a & +b); \
-    } \
-    template <typename T> \
-    inline X operator &(X a, T b) { \
-        return (X) (+a & +b); \
-    } \
-
-#define GR_DECL_BITFIELD_OPS_FRIENDS(X) \
-    friend X operator |(X a, X b); \
-    friend X& operator |=(X& a, X b); \
-    \
-    friend X operator &(X a, X b); \
-    friend X& operator &=(X& a, X b); \
-    \
-    template <typename T> \
-    friend X operator &(T a, X b); \
-    \
-    template <typename T> \
-    friend X operator &(X a, T b); \
 
 /**
  * Wraps a C++11 enum that we use as a bitfield, and enables a limited amount of
@@ -70,62 +35,57 @@ private:
     const int fValue;
 };
 
-// Or-ing a mask always returns another mask.
-template<typename TFlags> constexpr GrTFlagsMask<TFlags> operator|(GrTFlagsMask<TFlags> a,
-                                                                   GrTFlagsMask<TFlags> b) {
-    return GrTFlagsMask<TFlags>(a.value() | b.value());
-}
-template<typename TFlags> constexpr GrTFlagsMask<TFlags> operator|(GrTFlagsMask<TFlags> a,
-                                                                   TFlags b) {
-    return GrTFlagsMask<TFlags>(a.value() | static_cast<int>(b));
-}
-template<typename TFlags> constexpr GrTFlagsMask<TFlags> operator|(TFlags a,
-                                                                   GrTFlagsMask<TFlags> b) {
-    return GrTFlagsMask<TFlags>(static_cast<int>(a) | b.value());
-}
-template<typename TFlags> inline GrTFlagsMask<TFlags>& operator|=(GrTFlagsMask<TFlags>& a,
-                                                                  GrTFlagsMask<TFlags> b) {
-    return (a = a | b);
-}
-
-// And-ing two masks returns another mask; and-ing one with regular flags returns flags.
-template<typename TFlags> constexpr GrTFlagsMask<TFlags> operator&(GrTFlagsMask<TFlags> a,
-                                                                   GrTFlagsMask<TFlags> b) {
-    return GrTFlagsMask<TFlags>(a.value() & b.value());
-}
-template<typename TFlags> constexpr TFlags operator&(GrTFlagsMask<TFlags> a, TFlags b) {
-    return static_cast<TFlags>(a.value() & static_cast<int>(b));
-}
-template<typename TFlags> constexpr TFlags operator&(TFlags a, GrTFlagsMask<TFlags> b) {
-    return static_cast<TFlags>(static_cast<int>(a) & b.value());
-}
-template<typename TFlags> inline TFlags& operator&=(TFlags& a, GrTFlagsMask<TFlags> b) {
-    return (a = a & b);
-}
-
 /**
  * Defines bitwise operators that make it possible to use an enum class as a
  * basic bitfield.
  */
 #define GR_MAKE_BITFIELD_CLASS_OPS(X) \
-    constexpr GrTFlagsMask<X> operator~(X a) { \
+    [[maybe_unused]] constexpr GrTFlagsMask<X> operator~(X a) { \
         return GrTFlagsMask<X>(~static_cast<int>(a)); \
     } \
-    constexpr X operator|(X a, X b) { \
+    [[maybe_unused]] constexpr X operator|(X a, X b) { \
         return static_cast<X>(static_cast<int>(a) | static_cast<int>(b)); \
     } \
-    inline X& operator|=(X& a, X b) { \
+    [[maybe_unused]] inline X& operator|=(X& a, X b) { \
         return (a = a | b); \
     } \
-    constexpr bool operator&(X a, X b) { \
+    [[maybe_unused]] constexpr bool operator&(X a, X b) { \
         return SkToBool(static_cast<int>(a) & static_cast<int>(b)); \
+    } \
+    [[maybe_unused]] constexpr GrTFlagsMask<X> operator|(GrTFlagsMask<X> a, GrTFlagsMask<X> b) { \
+        return GrTFlagsMask<X>(a.value() | b.value()); \
+    } \
+    [[maybe_unused]] constexpr GrTFlagsMask<X> operator|(GrTFlagsMask<X> a, X b) { \
+        return GrTFlagsMask<X>(a.value() | static_cast<int>(b)); \
+    } \
+    [[maybe_unused]] constexpr GrTFlagsMask<X> operator|(X a, GrTFlagsMask<X> b) { \
+        return GrTFlagsMask<X>(static_cast<int>(a) | b.value()); \
+    } \
+    [[maybe_unused]] constexpr X operator&(GrTFlagsMask<X> a, GrTFlagsMask<X> b) { \
+        return static_cast<X>(a.value() & b.value()); \
+    } \
+    [[maybe_unused]] constexpr X operator&(GrTFlagsMask<X> a, X b) { \
+        return static_cast<X>(a.value() & static_cast<int>(b)); \
+    } \
+    [[maybe_unused]] constexpr X operator&(X a, GrTFlagsMask<X> b) { \
+        return static_cast<X>(static_cast<int>(a) & b.value()); \
+    } \
+    [[maybe_unused]] inline X& operator&=(X& a, GrTFlagsMask<X> b) { \
+        return (a = a & b); \
     } \
 
 #define GR_DECL_BITFIELD_CLASS_OPS_FRIENDS(X) \
     friend constexpr GrTFlagsMask<X> operator ~(X); \
     friend constexpr X operator |(X, X); \
     friend X& operator |=(X&, X); \
-    friend constexpr bool operator &(X, X)
+    friend constexpr bool operator &(X, X); \
+    friend constexpr GrTFlagsMask<X> operator|(GrTFlagsMask<X>, GrTFlagsMask<X>); \
+    friend constexpr GrTFlagsMask<X> operator|(GrTFlagsMask<X>, X); \
+    friend constexpr GrTFlagsMask<X> operator|(X, GrTFlagsMask<X>); \
+    friend constexpr X operator&(GrTFlagsMask<X>, GrTFlagsMask<X>); \
+    friend constexpr X operator&(GrTFlagsMask<X>, X); \
+    friend constexpr X operator&(X, GrTFlagsMask<X>); \
+    friend X& operator &=(X&, GrTFlagsMask<X>)
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -137,12 +97,17 @@ enum class GrBackendApi : unsigned {
     kVulkan,
     kMetal,
     kDirect3D,
-    kDawn,
+
     /**
      * Mock is a backend that does not draw anything. It is used for unit tests
      * and to measure CPU overhead.
      */
     kMock,
+
+    /**
+     * Ganesh doesn't support some context types (e.g. Dawn) and will return Unsupported.
+     */
+    kUnsupported,
 
     /**
      * Added here to support the legacy GrBackend enum value and clients who referenced it using
@@ -163,31 +128,15 @@ static constexpr GrBackendApi kMock_GrBackend = GrBackendApi::kMock;
 
 ///////////////////////////////////////////////////////////////////////////////
 
-/**
- * Used to say whether a texture has mip levels allocated or not.
- */
-enum class GrMipmapped : bool {
-    kNo = false,
-    kYes = true
-};
-/** Deprecated legacy alias of GrMipmapped. */
-using GrMipMapped = GrMipmapped;
-
 /*
  * Can a GrBackendObject be rendered to?
  */
-enum class GrRenderable : bool {
-    kNo = false,
-    kYes = true
-};
+using GrRenderable = skgpu::Renderable;
 
 /*
  * Used to say whether texture is backed by protected memory.
  */
-enum class GrProtected : bool {
-    kNo = false,
-    kYes = true
-};
+using GrProtected = skgpu::Protected;
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -218,7 +167,6 @@ enum GrGLBackendState {
     kProgram_GrGLBackendState          = 1 << 8,
     kFixedFunction_GrGLBackendState    = 1 << 9,
     kMisc_GrGLBackendState             = 1 << 10,
-    kPathRendering_GrGLBackendState    = 1 << 11,
     kALL_GrGLBackendState              = 0xffff
 };
 
@@ -232,6 +180,9 @@ typedef void (*GrGpuFinishedProc)(GrGpuFinishedContext finishedContext);
 
 typedef void* GrGpuSubmittedContext;
 typedef void (*GrGpuSubmittedProc)(GrGpuSubmittedContext submittedContext, bool success);
+
+typedef void* GrDirectContextDestroyedContext;
+typedef void (*GrDirectContextDestroyedProc)(GrDirectContextDestroyedContext destroyedContext);
 
 /**
  * Struct to supply options to flush calls.
@@ -260,16 +211,10 @@ typedef void (*GrGpuSubmittedProc)(GrGpuSubmittedContext submittedContext, bool 
  * The submittedProc is useful to the client to know when semaphores that were sent with the flush
  * have actually been submitted to the GPU so that they can be waited on (or deleted if the submit
  * fails).
- * Note about GL: In GL work gets sent to the driver immediately during the flush call, but we don't
- * really know when the driver sends the work to the GPU. Therefore, we treat the submitted proc as
- * we do in other backends. It will be called when the next GrContext::submit is called after the
- * flush (or possibly during the flush if there is no work to be done for the flush). The main use
- * case for the submittedProc is to know when semaphores have been sent to the GPU and even in GL
- * it is required to call GrContext::submit to flush them. So a client should be able to treat all
- * backend APIs the same in terms of how the submitted procs are treated.
+ * GrBackendSemaphores are not supported for the GL backend and will be ignored if set.
  */
 struct GrFlushInfo {
-    int fNumSemaphores = 0;
+    size_t fNumSemaphores = 0;
     GrBackendSemaphore* fSignalSemaphores = nullptr;
     GrGpuFinishedProc fFinishedProc = nullptr;
     GrGpuFinishedContext fFinishedContext = nullptr;
@@ -284,6 +229,16 @@ struct GrFlushInfo {
 enum class GrSemaphoresSubmitted : bool {
     kNo = false,
     kYes = true
+};
+
+enum class GrPurgeResourceOptions {
+    kAllResources,
+    kScratchResourcesOnly,
+};
+
+enum class GrSyncCpu : bool {
+    kNo = false,
+    kYes = true,
 };
 
 #endif

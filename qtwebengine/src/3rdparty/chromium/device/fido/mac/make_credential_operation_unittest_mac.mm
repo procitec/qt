@@ -1,14 +1,13 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
-
-#include <array>
 
 #include <Foundation/Foundation.h>
 #include <Security/Security.h>
 
-#include "base/strings/string_number_conversions.h"
+#include <array>
 
+#include "base/strings/string_number_conversions.h"
 #include "base/test/task_environment.h"
 #include "device/fido/fido_constants.h"
 #include "device/fido/fido_test_data.h"
@@ -19,9 +18,7 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-namespace device {
-namespace fido {
-namespace mac {
+namespace device::fido::mac {
 namespace {
 
 using test::TestCallbackReceiver;
@@ -43,11 +40,10 @@ CtapMakeCredentialRequest MakeTestRequest() {
 // For demo purposes only. This test does a Touch ID user prompt. It will fail
 // on incompatible hardware and crash if not code signed or lacking the
 // keychain-access-group entitlement.
-TEST(MakeCredentialOperationTest, DISABLED_TestRun)
-API_AVAILABLE(macosx(10.12.2)) {
+TEST(MakeCredentialOperationTest, DISABLED_TestRun) {
   base::test::TaskEnvironment task_environment;
   TestCallbackReceiver<CtapDeviceResponseCode,
-                       base::Optional<AuthenticatorMakeCredentialResponse>>
+                       absl::optional<AuthenticatorMakeCredentialResponse>>
       callback_receiver;
   auto request = MakeTestRequest();
   TouchIdCredentialStore credential_store(
@@ -65,6 +61,4 @@ API_AVAILABLE(macosx(10.12.2)) {
 }
 
 }  // namespace
-}  // namespace mac
-}  // namespace fido
-}  // namespace device
+}  // namespace device::fido::mac

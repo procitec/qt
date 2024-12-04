@@ -1,9 +1,11 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "base/command_line.h"
+#include "base/memory/raw_ptr_exclusion.h"
 #include "base/strings/string_tokenizer.h"
+#include "build/build_config.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
@@ -22,12 +24,15 @@ const char kShapeDetectionTestHtml[] = "/media/shape_detection_test.html";
 struct TestParameters {
   const std::string detector_name;
   const std::string image_path;
-  const std::vector<std::vector<float>>& expected_bounding_boxes;
+  // This field is not a raw_ref<> because it was filtered by the rewriter for:
+  // #constexpr-ctor-field-initializer, global-scope
+  RAW_PTR_EXCLUSION const std::vector<std::vector<float>>&
+      expected_bounding_boxes;
 } const kTestParameters[] = {
     {"FaceDetector", "/blank.jpg", std::vector<std::vector<float>>{}},
     {"FaceDetector",
      "/single_face.jpg",
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
      {{23, 20, 42, 42}}
 #else
      {{23, 26, 42, 42}}
@@ -68,9 +73,7 @@ class ShapeDetectionBrowserTest
     EXPECT_TRUE(NavigateToURL(shell(), html_url));
     const std::string js_command = "detectShapesOnImageUrl('" + detector_name +
                                    "', '" + image_url.spec() + "')";
-    std::string response_string;
-    ASSERT_TRUE(
-        ExecuteScriptAndExtractString(shell(), js_command, &response_string));
+    std::string response_string = EvalJs(shell(), js_command).ExtractString();
 
     base::StringTokenizer outer_tokenizer(response_string, "#");
     std::vector<std::vector<float>> detected_bounding_boxes;
@@ -97,7 +100,7 @@ class ShapeDetectionBrowserTest
 };
 
 // TODO(https://crbug.com/659138): Enable the test on other platforms.
-#if defined(OS_ANDROID) || defined(OS_MAC)
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_MAC)
 #define MAYBE_DetectShapesInImage DetectShapesInImage
 #else
 #define MAYBE_DetectShapesInImage DISABLED_DetectShapesInImage

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,11 +7,10 @@
 
 #include <memory>
 
-#include "base/callback.h"
-#include "base/macros.h"
+#include "base/functional/callback.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
-#include "content/common/content_export.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/web_contents.h"
 #include "net/ssl/client_cert_identity.h"
@@ -33,9 +32,12 @@ class SSLClientAuthHandler {
  public:
   // Delegate interface for SSLClientAuthHandler. Method implementations may
   // delete the handler when called.
-  class CONTENT_EXPORT Delegate {
+  class Delegate {
    public:
     Delegate() {}
+
+    Delegate(const Delegate&) = delete;
+    Delegate& operator=(const Delegate&) = delete;
 
     // Called to continue the request with |cert|. |cert| may be nullptr.
     virtual void ContinueWithCertificate(
@@ -47,17 +49,25 @@ class SSLClientAuthHandler {
 
    protected:
     virtual ~Delegate() {}
-
-   private:
-    DISALLOW_COPY_AND_ASSIGN(Delegate);
   };
+
+  // Retrieves the calling context. If this returns null for the
+  // `BrowserContext`, it means the caller is no longer valid. `WebContents`
+  // may legitimately be null for cases where the calling context is not
+  // associated with a document, such as service workers.
+  using ContextGetter =
+      base::RepeatingCallback<std::pair<BrowserContext*, WebContents*>()>;
 
   // Creates a new SSLClientAuthHandler. The caller ensures that the handler
   // does not outlive |delegate|.
   SSLClientAuthHandler(std::unique_ptr<net::ClientCertStore> client_cert_store,
-                       WebContents::Getter web_contents_getter,
+                       ContextGetter context_getter,
                        net::SSLCertRequestInfo* cert_request_info,
                        Delegate* delegate);
+
+  SSLClientAuthHandler(const SSLClientAuthHandler&) = delete;
+  SSLClientAuthHandler& operator=(const SSLClientAuthHandler&) = delete;
+
   ~SSLClientAuthHandler();
 
   // Selects a certificate and resumes the URL request with that certificate.
@@ -79,17 +89,15 @@ class SSLClientAuthHandler {
   // will cancel the dialog corresponding to this certificate request.
   base::OnceClosure cancellation_callback_;
 
-  WebContents::Getter web_contents_getter_;
+  ContextGetter context_getter_;
 
   // The certs to choose from.
   scoped_refptr<net::SSLCertRequestInfo> cert_request_info_;
 
   // The delegate to call back with the result.
-  Delegate* delegate_;
+  raw_ptr<Delegate> delegate_;
 
   base::WeakPtrFactory<SSLClientAuthHandler> weak_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(SSLClientAuthHandler);
 };
 
 }  // namespace content

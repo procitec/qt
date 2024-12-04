@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,12 +10,11 @@
 #include <string>
 #include <vector>
 
-#include "base/compiler_specific.h"
 #include "base/containers/flat_map.h"
 #include "base/gtest_prod_util.h"
-#include "base/macros.h"
-#include "base/strings/string16.h"
+#include "base/memory/raw_ptr.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "ui/events/event_constants.h"
 #include "ui/events/gesture_event_details.h"
 #include "ui/events/gestures/gesture_types.h"
@@ -36,6 +35,7 @@ namespace ui {
 
 class CancelModeEvent;
 class Event;
+class EventRewriter;
 class EventTarget;
 class KeyEvent;
 class LocatedEvent;
@@ -44,21 +44,23 @@ class MouseWheelEvent;
 class ScrollEvent;
 class TouchEvent;
 
-enum class DomCode;
+enum class DomCode : uint32_t;
 
+// Note: In order for Clone() to work properly, every concrete class
+// transitively inheriting Event must implement Clone() explicitly, even if any
+// ancestors have provided an implementation.
 class EVENTS_EXPORT Event {
  public:
   using Properties = base::flat_map<std::string, std::vector<uint8_t>>;
-
-  // Copies an arbitrary event. If you have a typed event (e.g. a MouseEvent)
-  // just use its copy constructor.
-  static std::unique_ptr<Event> Clone(const Event& event);
 
   virtual ~Event();
 
   class DispatcherApi {
    public:
     explicit DispatcherApi(Event* event) : event_(event) {}
+
+    DispatcherApi(const DispatcherApi&) = delete;
+    DispatcherApi& operator=(const DispatcherApi&) = delete;
 
     void set_target(EventTarget* target) { event_->target_ = target; }
 
@@ -69,9 +71,7 @@ class EVENTS_EXPORT Event {
     void set_time_stamp(base::TimeTicks time) { event_->time_stamp_ = time; }
 
    private:
-    Event* event_;
-
-    DISALLOW_COPY_AND_ASSIGN(DispatcherApi);
+    raw_ptr<Event, AcrossTasksDanglingUntriaged> event_;
   };
 
   void SetNativeEvent(const PlatformEvent& event);
@@ -88,7 +88,7 @@ class EVENTS_EXPORT Event {
 
   // This is only intended to be used externally by classes that are modifying
   // events in an EventRewriter.
-  void set_flags(int flags) { flags_ = flags; }
+  void SetFlags(int flags);
 
   EventTarget* target() const { return target_; }
   EventPhase phase() const { return phase_; }
@@ -227,7 +227,7 @@ class EVENTS_EXPORT Event {
 
   bool IsLocatedEvent() const {
     return IsMouseEvent() || IsScrollEvent() || IsTouchEvent() ||
-           IsGestureEvent();
+           IsGestureEvent() || type_ == ET_DROP_TARGET_EVENT;
   }
 
   // Convenience methods to cast |this| to a CancelModeEvent.
@@ -290,8 +290,26 @@ class EVENTS_EXPORT Event {
   void SetHandled();
   bool handled() const { return result_ != ER_UNHANDLED; }
 
+  // Marks the event as skipped. This immediately stops the propagation of the
+  // event like `StopPropagation()` but sets an extra bit so that the dispatcher
+  // of the event can use this extra information to decide to handle the event
+  // themselves. For example in the case of ash-chrome - lacros-chrome
+  // interaction in ChromeOS, lacros-chrome can mark the event as 'skipped' to
+  // stop the propagation, but also notifies ash-chroem that the event was not
+  // handled in lacros. Note that `handled()` will still return true to stop the
+  // event from being passed to the next phase. Note that SetSkipped() can be
+  // called only for cancelable events.
+  void SetSkipped();
+
   // For debugging. Not a stable serialization format.
   virtual std::string ToString() const;
+
+  // Copies an arbitrary event. If you have a typed event (e.g. a MouseEvent)
+  // just use its copy constructor.
+  //
+  // Every concrete class transitively inheriting Event must implement this
+  // method, even if any ancestors have provided an implementation.
+  virtual std::unique_ptr<Event> Clone() const = 0;
 
  protected:
   Event(EventType type, base::TimeTicks time_stamp, int flags);
@@ -304,23 +322,30 @@ class EVENTS_EXPORT Event {
 
   void set_time_stamp(base::TimeTicks time_stamp) { time_stamp_ = time_stamp; }
 
+  // Override per concrete class if some data needs to get invalidated or
+  // updated when the event flags are updated.
+  virtual void OnFlagsUpdated() {}
+
  private:
   friend class EventTestApi;
+  friend class EventRewriter;
 
   EventType type_;
   base::TimeTicks time_stamp_;
   LatencyInfo latency_;
   int flags_;
   PlatformEvent native_event_;
-  bool delete_native_event_;
-  bool cancelable_;
-  EventTarget* target_;
-  EventPhase phase_;
-  EventResult result_;
+  bool cancelable_ = true;
+  // Neither Event copy constructor nor the assignment operator copies
+  // `target_`, as `target_` should be explicitly set so the setter will be
+  // responsible for tracking it.
+  raw_ptr<EventTarget, AcrossTasksDanglingUntriaged> target_ = nullptr;
+  EventPhase phase_ = EP_PREDISPATCH;
+  EventResult result_ = ER_UNHANDLED;
 
   // The device id the event came from, or ED_UNKNOWN_DEVICE if the information
   // is not available.
-  int source_device_id_;
+  int source_device_id_ = ED_UNKNOWN_DEVICE;
 
   std::unique_ptr<Properties> properties_;
 };
@@ -329,6 +354,9 @@ class EVENTS_EXPORT CancelModeEvent : public Event {
  public:
   CancelModeEvent();
   ~CancelModeEvent() override;
+
+  // Event:
+  std::unique_ptr<Event> Clone() const override;
 };
 
 class EVENTS_EXPORT LocatedEvent : public Event {
@@ -447,7 +475,7 @@ class EVENTS_EXPORT MouseEvent : public LocatedEvent {
         movement_(model.movement_),
         pointer_details_(model.pointer_details_) {
     SetType(type);
-    set_flags(flags);
+    SetFlags(flags);
   }
 
   // Note: Use the ctor for MouseWheelEvent if type is ET_MOUSEWHEEL.
@@ -479,16 +507,17 @@ class EVENTS_EXPORT MouseEvent : public LocatedEvent {
    public:
     explicit DispatcherApi(MouseEvent* event) : event_(event) {}
 
+    DispatcherApi(const DispatcherApi&) = delete;
+    DispatcherApi& operator=(const DispatcherApi&) = delete;
+
     // TODO(eirage): convert this to builder pattern.
     void set_movement(const gfx::Vector2dF& movement) {
       event_->movement_ = movement;
-      event_->set_flags(event_->flags() | EF_UNADJUSTED_MOUSE);
+      event_->SetFlags(event_->flags() | EF_UNADJUSTED_MOUSE);
     }
 
    private:
-    MouseEvent* event_;
-
-    DISALLOW_COPY_AND_ASSIGN(DispatcherApi);
+    raw_ptr<MouseEvent> event_;
   };
 
   // Conveniences to quickly test what button is down
@@ -550,6 +579,13 @@ class EVENTS_EXPORT MouseEvent : public LocatedEvent {
 
   const PointerDetails& pointer_details() const { return pointer_details_; }
 
+  // Event:
+  std::string ToString() const override;
+  std::unique_ptr<Event> Clone() const override;
+
+  // Resets the last_click_event_ for unit tests.
+  static void ResetLastClickForTest();
+
  private:
   FRIEND_TEST_ALL_PREFIXES(EventTest, DoubleClickRequiresUniqueTimestamp);
   FRIEND_TEST_ALL_PREFIXES(EventTest, SingleClickRightLeft);
@@ -557,9 +593,6 @@ class EVENTS_EXPORT MouseEvent : public LocatedEvent {
   // Returns the repeat count based on the previous mouse click, if it is
   // recent enough and within a small enough distance.
   static int GetRepeatCount(const MouseEvent& click_event);
-
-  // Resets the last_click_event_ for unit tests.
-  static void ResetLastClickForTest();
 
   // See description above getter for details.
   int changed_button_flags_;
@@ -607,7 +640,7 @@ class EVENTS_EXPORT MouseWheelEvent : public MouseEvent {
       base::TimeTicks time_stamp,
       int flags,
       int changed_button_flags,
-      const base::Optional<gfx::Vector2d> tick_120ths = base::nullopt);
+      const absl::optional<gfx::Vector2d> tick_120ths = absl::nullopt);
 
   // DEPRECATED: Prefer the constructor that takes gfx::PointF.
   MouseWheelEvent(const gfx::Vector2d& offset,
@@ -626,6 +659,9 @@ class EVENTS_EXPORT MouseWheelEvent : public MouseEvent {
 
   // The amount the wheel(s) moved, in 120ths of a tick.
   const gfx::Vector2d& tick_120ths() const { return tick_120ths_; }
+
+  // Event:
+  std::unique_ptr<Event> Clone() const override;
 
  private:
   gfx::Vector2d offset_;
@@ -647,7 +683,6 @@ class EVENTS_EXPORT TouchEvent : public LocatedEvent {
       : LocatedEvent(model, source, target),
         unique_event_id_(model.unique_event_id_),
         may_cause_scrolling_(model.may_cause_scrolling_),
-        hovering_(false),
         pointer_details_(model.pointer_details_) {}
 
   TouchEvent(EventType type,
@@ -688,10 +723,20 @@ class EVENTS_EXPORT TouchEvent : public LocatedEvent {
     return !!(result() & ER_DISABLE_SYNC_HANDLING);
   }
 
+  // Forces to process the gesture recognition even if the event is marked
+  // as `handled` or `stopped_propagation`.
+  void ForceProcessGesture();
+  bool force_process_gesture() const {
+    return !!(result() & ER_FORCE_PROCESS_GESTURE);
+  }
+
   const PointerDetails& pointer_details() const { return pointer_details_; }
   void SetPointerDetailsForTest(const PointerDetails& pointer_details);
 
   float ComputeRotationAngle() const;
+
+  // Event:
+  std::unique_ptr<Event> Clone() const override;
 
  private:
   // A unique identifier for the touch event.
@@ -703,11 +748,11 @@ class EVENTS_EXPORT TouchEvent : public LocatedEvent {
   // Whether the (unhandled) touch event will produce a scroll event (e.g., a
   // touchmove that exceeds the platform slop region, or a touchend that
   // causes a fling). Defaults to false.
-  bool may_cause_scrolling_;
+  bool may_cause_scrolling_ = false;
 
   // True for devices like some pens when they support hovering over
   // digitizer and they send events while hovering.
-  bool hovering_;
+  bool hovering_ = false;
 
   // Structure for holding pointer details for implementing PointerEvents API.
   PointerDetails pointer_details_;
@@ -742,7 +787,7 @@ class EVENTS_EXPORT TouchEvent : public LocatedEvent {
 //    Japanese, etc. all use VKEY_Q for the key beside Tab, while French uses
 //    VKEY_A. The stored key_code_ is non-located (e.g. VKEY_SHIFT rather than
 //    VKEY_LSHIFT, VKEY_1 rather than VKEY_NUMPAD1).
-// -- |uint32_t scan_code_| [USE_OZONE only] supports remapping of the top
+// -- |uint32_t scan_code_| [IS_OZONE only] supports remapping of the top
 //    function row based on a sysfs attribute provided by the kernel. This
 //    allows devices to have a custom top row layout and still be able to
 //    perform translation back and forth between F-Key and Action-Key. The
@@ -783,12 +828,12 @@ class EVENTS_EXPORT KeyEvent : public Event {
            base::TimeTicks time_stamp,
            bool is_char = false);
 
-  // Create a character event.
-  KeyEvent(base::char16 character,
+  // Create an event with event type.
+  KeyEvent(EventType type,
            KeyboardCode key_code,
            DomCode code,
            int flags,
-           base::TimeTicks time_stamp = base::TimeTicks());
+           base::TimeTicks time_stamp);
 
   // Used for synthetic events with code of DOM KeyboardEvent (e.g. 'KeyA')
   // See also: ui/events/keycodes/dom/dom_values.txt
@@ -800,28 +845,41 @@ class EVENTS_EXPORT KeyEvent : public Event {
 
   ~KeyEvent() override;
 
+  // Returns true if synthesizing key repeat in InitializeNative is enabled.
+  static bool IsSynthesizeKeyRepeatEnabled();
+
+  // Sets whether to enable synthesizing key repeat in InitializeNative().
+  static void SetSynthesizeKeyRepeatEnabled(bool enabled);
+
+  static ui::KeyEvent FromCharacter(
+      char16_t character,
+      KeyboardCode key_code,
+      DomCode code,
+      int flags,
+      base::TimeTicks time_stamp = base::TimeTicks());
+
   void InitializeNative();
 
   // This bypasses the normal mapping from keystroke events to characters,
   // which allows an I18N virtual keyboard to fabricate a keyboard event that
   // does not have a corresponding KeyboardCode (example: U+00E1 Latin small
   // letter A with acute, U+0410 Cyrillic capital letter A).
-  void set_character(base::char16 character) {
+  void set_character(char16_t character) {
     key_ = DomKey::FromCharacter(character);
   }
 
   // Gets the character generated by this key event. It only supports Unicode
   // BMP characters.
-  base::char16 GetCharacter() const;
+  char16_t GetCharacter() const;
 
   // If this is a keystroke event with key_code_ VKEY_RETURN, returns '\r';
   // otherwise returns the same as GetCharacter().
-  base::char16 GetUnmodifiedText() const;
+  char16_t GetUnmodifiedText() const;
 
   // If the Control key is down in the event, returns a layout-independent
   // character (corresponding to US layout); otherwise returns the same
   // as GetUnmodifiedText().
-  base::char16 GetText() const;
+  char16_t GetText() const;
 
   // True if this is a character event, false if this is a keystroke event.
   bool is_char() const { return is_char_; }
@@ -839,13 +897,13 @@ class EVENTS_EXPORT KeyEvent : public Event {
   // events in an EventRewriter.
   void set_key_code(KeyboardCode key_code) { key_code_ = key_code; }
 
-#if defined(USE_OZONE)
+#if BUILDFLAG(IS_OZONE)
   // The scan code of the physical key. This is used to perform the mapping
   // of top row keys from Actions back to F-Keys on new Chrome OS keyboards
   // that supply the mapping via the kernel.
   uint32_t scan_code() const { return scan_code_; }
   void set_scan_code(uint32_t scan_code) { scan_code_ = scan_code; }
-#endif  // defined(USE_OZONE)
+#endif  // BUILDFLAG(IS_OZONE)
 
   // Returns the same value as key_code(), except that located codes are
   // returned in place of non-located ones (e.g. VKEY_LSHIFT or VKEY_RSHIFT
@@ -873,6 +931,14 @@ class EVENTS_EXPORT KeyEvent : public Event {
   // (Native X11 event flags describe the state before the event.)
   void NormalizeFlags();
 
+  // Invalidates the DomKey associated with this event as the flags updating can
+  // change the semantic meaning of the key.
+  void OnFlagsUpdated() override;
+
+  // Event:
+  std::string ToString() const override;
+  std::unique_ptr<Event> Clone() const override;
+
  protected:
   friend class KeyEventTestApi;
 
@@ -892,10 +958,10 @@ class EVENTS_EXPORT KeyEvent : public Event {
 
   KeyboardCode key_code_;
 
-#if defined(USE_OZONE)
+#if BUILDFLAG(IS_OZONE)
   // The scan code of the physical key on Chrome OS.
   uint32_t scan_code_ = 0;
-#endif  // defined(USE_OZONE)
+#endif  // BUILDFLAG(IS_OZONE)
 
   // DOM KeyboardEvent |code| (e.g. DomCode::US_A, DomCode::SPACE).
   // http://www.w3.org/TR/DOM-Level-3-Events-code/
@@ -922,9 +988,11 @@ class EVENTS_EXPORT KeyEvent : public Event {
   mutable DomKey key_ = DomKey::NONE;
 
   static KeyEvent* last_key_event_;
-#if defined(USE_X11) || defined(USE_OZONE)
+#if BUILDFLAG(IS_OZONE)
   static KeyEvent* last_ibus_key_event_;
 #endif
+
+  static bool synthesize_key_repeat_enabled_;
 };
 
 class EVENTS_EXPORT ScrollEvent : public MouseEvent {
@@ -986,6 +1054,7 @@ class EVENTS_EXPORT ScrollEvent : public MouseEvent {
 
   // Event:
   std::string ToString() const override;
+  std::unique_ptr<Event> Clone() const override;
 
  private:
   // Potential accelerated offsets.
@@ -1028,6 +1097,10 @@ class EVENTS_EXPORT GestureEvent : public LocatedEvent {
   const GestureEventDetails& details() const { return details_; }
 
   uint32_t unique_touch_event_id() const { return unique_touch_event_id_; }
+
+  // Event:
+  std::string ToString() const override;
+  std::unique_ptr<Event> Clone() const override;
 
  private:
   GestureEventDetails details_;

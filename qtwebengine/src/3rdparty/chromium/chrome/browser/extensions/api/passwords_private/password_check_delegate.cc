@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,68 +10,64 @@
 #include <iterator>
 #include <map>
 #include <memory>
+#include <optional>
+#include <string>
 #include <utility>
 
+#include "base/containers/cxx20_erase.h"
 #include "base/containers/flat_set.h"
+#include "base/feature_list.h"
+#include "base/functional/bind.h"
 #include "base/memory/ref_counted.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/numerics/safe_conversions.h"
-#include "base/optional.h"
-#include "base/stl_util.h"
-#include "base/strings/string16.h"
+#include "base/ranges/algorithm.h"
+#include "base/strings/escape.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/threading/sequenced_task_runner_handle.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/time/time.h"
+#include "chrome/browser/browser_process.h"
 #include "chrome/browser/extensions/api/passwords_private/passwords_private_event_router.h"
 #include "chrome/browser/extensions/api/passwords_private/passwords_private_event_router_factory.h"
 #include "chrome/browser/extensions/api/passwords_private/passwords_private_utils.h"
 #include "chrome/browser/password_manager/account_password_store_factory.h"
 #include "chrome/browser/password_manager/bulk_leak_check_service_factory.h"
-#include "chrome/browser/password_manager/password_store_factory.h"
+#include "chrome/browser/password_manager/profile_password_store_factory.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/sync/sync_service_factory.h"
 #include "chrome/common/extensions/api/passwords_private.h"
 #include "chrome/grit/generated_resources.h"
-#include "components/autofill/core/common/password_form.h"
 #include "components/keyed_service/core/service_access_type.h"
-#include "components/password_manager/core/browser/android_affiliation/affiliation_utils.h"
-#include "components/password_manager/core/browser/bulk_leak_check_service.h"
-#include "components/password_manager/core/browser/compromised_credentials_table.h"
+#include "components/password_manager/core/browser/affiliation/affiliation_utils.h"
 #include "components/password_manager/core/browser/leak_detection/bulk_leak_check.h"
 #include "components/password_manager/core/browser/leak_detection/encryption_utils.h"
+#include "components/password_manager/core/browser/password_form.h"
+#include "components/password_manager/core/browser/password_manager_client.h"
+#include "components/password_manager/core/browser/password_manager_util.h"
+#include "components/password_manager/core/browser/ui/credential_ui_entry.h"
 #include "components/password_manager/core/browser/ui/credential_utils.h"
 #include "components/password_manager/core/browser/ui/insecure_credentials_manager.h"
 #include "components/password_manager/core/browser/ui/saved_passwords_presenter.h"
-#include "components/password_manager/core/browser/well_known_change_password_util.h"
 #include "components/password_manager/core/common/password_manager_features.h"
 #include "components/password_manager/core/common/password_manager_pref_names.h"
 #include "components/prefs/pref_service.h"
-#include "components/url_formatter/elide_url.h"
-#include "components/url_formatter/url_formatter.h"
-#include "net/base/escape.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/l10n/time_format.h"
 #include "url/gurl.h"
+#include "url/origin.h"
 
 namespace extensions {
 
 namespace {
 
-using autofill::PasswordForm;
 using password_manager::CanonicalizeUsername;
-using password_manager::CredentialWithPassword;
-using password_manager::InsecureCredentialTypeFlags;
+using password_manager::CredentialUIEntry;
+using password_manager::InsecureType;
 using password_manager::LeakCheckCredential;
+using password_manager::PasswordForm;
 using ui::TimeFormat;
 
-using InsecureCredentialsView =
-    password_manager::InsecureCredentialsManager::CredentialsView;
-using SavedPasswordsView =
-    password_manager::SavedPasswordsPresenter::SavedPasswordsView;
 using State = password_manager::BulkLeakCheckService::State;
-
-std::unique_ptr<std::string> GetChangePasswordUrl(const GURL& url) {
-  return std::make_unique<std::string>(
-      password_manager::CreateChangePasswordUrl(url).spec());
-}
 
 }  // namespace
 
@@ -91,7 +87,7 @@ class PasswordCheckProgress : public base::RefCounted<PasswordCheckProgress> {
 
   // Increments the counts corresponding to |password|. Intended to be called
   // for each credential that is passed to the bulk check.
-  void IncrementCounts(const PasswordForm& password) {
+  void IncrementCounts(const CredentialUIEntry& password) {
     ++remaining_in_queue_;
     ++counts_[password];
   }
@@ -132,208 +128,208 @@ namespace {
 // the PasswordCheckProgress and is able to update the progress accordingly.
 class PasswordCheckData : public LeakCheckCredential::Data {
  public:
-  explicit PasswordCheckData(scoped_refptr<PasswordCheckProgress> progress)
-      : progress_(std::move(progress)) {}
+  PasswordCheckData(
+      scoped_refptr<PasswordCheckProgress> progress,
+      password_manager::TriggerBackendNotification should_trigger_notification)
+      : progress_(std::move(progress)),
+        should_trigger_notification_(should_trigger_notification) {}
   ~PasswordCheckData() override = default;
 
   std::unique_ptr<Data> Clone() override {
-    return std::make_unique<PasswordCheckData>(progress_);
+    return std::make_unique<PasswordCheckData>(progress_,
+                                               should_trigger_notification_);
+  }
+
+  password_manager::TriggerBackendNotification should_trigger_notification()
+      const {
+    return should_trigger_notification_;
   }
 
  private:
   scoped_refptr<PasswordCheckProgress> progress_;
+  // Certain client use cases require to notify backend if new leaked
+  // credentials are found. This member indicate whether that should happen.
+  const password_manager::TriggerBackendNotification
+      should_trigger_notification_;
 };
 
 api::passwords_private::PasswordCheckState ConvertPasswordCheckState(
     State state) {
   switch (state) {
     case State::kIdle:
-      return api::passwords_private::PASSWORD_CHECK_STATE_IDLE;
+      return api::passwords_private::PasswordCheckState::kIdle;
     case State::kRunning:
-      return api::passwords_private::PASSWORD_CHECK_STATE_RUNNING;
+      return api::passwords_private::PasswordCheckState::kRunning;
     case State::kCanceled:
-      return api::passwords_private::PASSWORD_CHECK_STATE_CANCELED;
+      return api::passwords_private::PasswordCheckState::kCanceled;
     case State::kSignedOut:
-      return api::passwords_private::PASSWORD_CHECK_STATE_SIGNED_OUT;
+      return api::passwords_private::PasswordCheckState::kSignedOut;
     case State::kNetworkError:
-      return api::passwords_private::PASSWORD_CHECK_STATE_OFFLINE;
+      return api::passwords_private::PasswordCheckState::kOffline;
     case State::kQuotaLimit:
-      return api::passwords_private::PASSWORD_CHECK_STATE_QUOTA_LIMIT;
+      return api::passwords_private::PasswordCheckState::kQuotaLimit;
     case State::kTokenRequestFailure:
     case State::kHashingFailure:
     case State::kServiceError:
-      return api::passwords_private::PASSWORD_CHECK_STATE_OTHER_ERROR;
+      return api::passwords_private::PasswordCheckState::kOtherError;
   }
 
   NOTREACHED();
-  return api::passwords_private::PASSWORD_CHECK_STATE_NONE;
+  return api::passwords_private::PasswordCheckState::kNone;
 }
 
 std::string FormatElapsedTime(base::Time time) {
   const base::TimeDelta elapsed_time = base::Time::Now() - time;
-  if (elapsed_time < base::TimeDelta::FromMinutes(1))
-    return l10n_util::GetStringUTF8(IDS_SETTINGS_PASSWORDS_JUST_NOW);
+  if (elapsed_time < base::Minutes(1))
+    return l10n_util::GetStringUTF8(IDS_PASSWORD_MANAGER_UI_JUST_NOW);
 
   return base::UTF16ToUTF8(TimeFormat::SimpleWithMonthAndYear(
       TimeFormat::FORMAT_ELAPSED, TimeFormat::LENGTH_LONG, elapsed_time, true));
 }
 
-// Helper struct that bundles a CredentialWithPassword with a corresponding
-// passwords_private::CompromiseType.
-struct CompromisedCredentialAndType {
-  CredentialWithPassword credential;
-  api::passwords_private::CompromiseType type;
-};
-
-// Orders |compromised_credentials| in such a way that phished credentials
-// precede leaked credentials, and that credentials of the same compromise type
-// are ordered by recency.
-std::vector<CompromisedCredentialAndType> OrderCompromisedCredentials(
-    std::vector<CredentialWithPassword> compromised_credentials) {
-  // Move all credentials into a single list, associating with the
-  // corresponding CompromiseType.
-  std::vector<CompromisedCredentialAndType> results;
-  results.reserve(compromised_credentials.size());
-  for (auto& credential : compromised_credentials) {
-    // Since CompromiseType does not contain information about weakness of
-    // credential, we need to unset this bit in the |credential.insecure_type|.
-    auto type = static_cast<api::passwords_private::CompromiseType>(
-        UnsetWeakCredentialTypeFlag(credential.insecure_type));
-    results.push_back({std::move(credential), type});
+std::vector<api::passwords_private::CompromiseType> GetCompromiseType(
+    const CredentialUIEntry& entry) {
+  std::vector<api::passwords_private::CompromiseType> types;
+  for (const auto& issue : entry.password_issues) {
+    switch (issue.first) {
+      case InsecureType::kLeaked:
+        types.push_back(api::passwords_private::CompromiseType::kLeaked);
+        break;
+      case InsecureType::kPhished:
+        types.push_back(api::passwords_private::CompromiseType::kPhished);
+        break;
+      case InsecureType::kReused:
+        types.push_back(api::passwords_private::CompromiseType::kReused);
+        break;
+      case InsecureType::kWeak:
+        types.push_back(api::passwords_private::CompromiseType::kWeak);
+        break;
+    }
   }
-  // Reordering phished credential to the beginning.
-  auto last_phished = std::partition(
-      results.begin(), results.end(), [](const auto& credential) {
-        return credential.type !=
-               api::passwords_private::COMPROMISE_TYPE_LEAKED;
-      });
+  DCHECK(!types.empty());
+  return types;
+}
 
-  // By construction the phished credentials precede the leaked credentials in
-  // |results|. Now sort both groups by their creation date so that most recent
-  // compromises appear first in both lists.
-  auto create_time_cmp = [](const auto& lhs, const auto& rhs) {
-    return lhs.credential.create_time > rhs.credential.create_time;
-  };
-  std::sort(results.begin(), last_phished, create_time_cmp);
-  std::sort(last_phished, results.end(), create_time_cmp);
-  return results;
+api::passwords_private::CompromisedInfo CreateCompromiseInfo(
+    const CredentialUIEntry& credential) {
+  api::passwords_private::CompromisedInfo compromise_info;
+  // Weak credentials don't have compromise time, they also can't be muted.
+  if (IsCompromised(credential)) {
+    compromise_info.compromise_time =
+        credential.GetLastLeakedOrPhishedTime()
+            .InMillisecondsFSinceUnixEpochIgnoringNull();
+    compromise_info.elapsed_time_since_compromise =
+        FormatElapsedTime(credential.GetLastLeakedOrPhishedTime());
+    compromise_info.is_muted = credential.IsMuted();
+  }
+  compromise_info.compromise_types = GetCompromiseType(credential);
+  return compromise_info;
 }
 
 }  // namespace
 
-PasswordCheckDelegate::PasswordCheckDelegate(Profile* profile)
+PasswordCheckDelegate::PasswordCheckDelegate(
+    Profile* profile,
+    password_manager::SavedPasswordsPresenter* presenter,
+    IdGenerator* id_generator)
     : profile_(profile),
-      profile_password_store_(PasswordStoreFactory::GetForProfile(
-          profile,
-          ServiceAccessType::EXPLICIT_ACCESS)),
-      account_password_store_(AccountPasswordStoreFactory::GetForProfile(
-          profile,
-          ServiceAccessType::EXPLICIT_ACCESS)),
-      saved_passwords_presenter_(profile_password_store_,
-                                 account_password_store_),
-      insecure_credentials_manager_(&saved_passwords_presenter_,
-                                    profile_password_store_,
-                                    account_password_store_),
+      saved_passwords_presenter_(presenter),
+      insecure_credentials_manager_(presenter,
+                                    ProfilePasswordStoreFactory::GetForProfile(
+                                        profile,
+                                        ServiceAccessType::EXPLICIT_ACCESS),
+                                    AccountPasswordStoreFactory::GetForProfile(
+                                        profile,
+                                        ServiceAccessType::EXPLICIT_ACCESS)),
       bulk_leak_check_service_adapter_(
-          &saved_passwords_presenter_,
+          presenter,
           BulkLeakCheckServiceFactory::GetForProfile(profile_),
-          profile_->GetPrefs()) {
-  observed_saved_passwords_presenter_.Add(&saved_passwords_presenter_);
-  observed_insecure_credentials_manager_.Add(&insecure_credentials_manager_);
-  observed_bulk_leak_check_service_.Add(
+          profile_->GetPrefs()),
+      id_generator_(id_generator) {
+  DCHECK(id_generator);
+  observed_saved_passwords_presenter_.Observe(saved_passwords_presenter_.get());
+  observed_insecure_credentials_manager_.Observe(
+      &insecure_credentials_manager_);
+  observed_bulk_leak_check_service_.Observe(
       BulkLeakCheckServiceFactory::GetForProfile(profile_));
-
-  // Instructs the presenter and provider to initialize and built their caches.
-  // This will soon after invoke OnCompromisedCredentialsChanged(). Calls to
-  // GetCompromisedCredentials() that might happen until then will return an
-  // empty list.
-  saved_passwords_presenter_.Init();
-  insecure_credentials_manager_.Init();
 }
 
 PasswordCheckDelegate::~PasswordCheckDelegate() = default;
 
-std::vector<api::passwords_private::InsecureCredential>
-PasswordCheckDelegate::GetCompromisedCredentials() {
-  std::vector<CompromisedCredentialAndType>
-      ordered_compromised_credential_and_types = OrderCompromisedCredentials(
-          insecure_credentials_manager_.GetCompromisedCredentials());
+std::vector<api::passwords_private::PasswordUiEntry>
+PasswordCheckDelegate::GetInsecureCredentials() {
+  std::vector<CredentialUIEntry> credentials =
+      insecure_credentials_manager_.GetInsecureCredentialEntries();
 
-  std::vector<api::passwords_private::InsecureCredential>
-      compromised_credentials;
-  compromised_credentials.reserve(
-      ordered_compromised_credential_and_types.size());
-  for (const auto& credential_and_type :
-       ordered_compromised_credential_and_types) {
-    const CredentialWithPassword& credential = credential_and_type.credential;
-    api::passwords_private::InsecureCredential api_credential =
-        ConstructInsecureCredential(credential);
-    api_credential.compromised_info =
-        std::make_unique<api::passwords_private::CompromisedInfo>();
-    api_credential.compromised_info->compromise_time =
-        credential.create_time.ToJsTimeIgnoringNull();
-    api_credential.compromised_info->elapsed_time_since_compromise =
-        FormatElapsedTime(credential.create_time);
-    api_credential.compromised_info->compromise_type = credential_and_type.type;
-    compromised_credentials.push_back(std::move(api_credential));
+  std::vector<api::passwords_private::PasswordUiEntry> insecure_credentials;
+  insecure_credentials.reserve(credentials.size());
+  for (auto& credential : credentials) {
+    insecure_credentials.push_back(
+        ConstructInsecureCredentialUiEntry(std::move(credential)));
   }
 
-  return compromised_credentials;
+  return insecure_credentials;
 }
 
-std::vector<api::passwords_private::InsecureCredential>
-PasswordCheckDelegate::GetWeakCredentials() {
-  std::vector<CredentialWithPassword> weak_credentials =
-      insecure_credentials_manager_.GetWeakCredentials();
-
-  std::vector<api::passwords_private::InsecureCredential> api_credentials;
-  api_credentials.reserve(weak_credentials.size());
-  for (const auto& weak_credential : weak_credentials) {
-    api_credentials.push_back(ConstructInsecureCredential(weak_credential));
+std::vector<api::passwords_private::PasswordUiEntryList>
+PasswordCheckDelegate::GetCredentialsWithReusedPassword() {
+  // Group credentials by password value.
+  std::map<std::u16string, std::vector<api::passwords_private::PasswordUiEntry>>
+      password_to_credentials;
+  for (auto& credential :
+       insecure_credentials_manager_.GetInsecureCredentialEntries()) {
+    if (credential.IsReused()) {
+      password_to_credentials[credential.password].push_back(
+          ConstructInsecureCredentialUiEntry(credential));
+    }
   }
 
-  return api_credentials;
+  std::vector<api::passwords_private::PasswordUiEntryList> result;
+  result.reserve(password_to_credentials.size());
+  for (auto& pair : password_to_credentials) {
+    // This check is relevant in the cases where the password store has changed
+    // after the password check was already run. (e.g if a reused password has
+    // been deleted)
+    if (pair.second.size() < 2) {
+      continue;
+    }
+    api::passwords_private::PasswordUiEntryList api_result;
+    api_result.entries = std::move(pair.second);
+    result.push_back(std::move(api_result));
+  }
+  return result;
 }
 
-base::Optional<api::passwords_private::InsecureCredential>
-PasswordCheckDelegate::GetPlaintextInsecurePassword(
-    api::passwords_private::InsecureCredential credential) const {
-  const CredentialWithPassword* insecure_credential =
-      FindMatchingInsecureCredential(credential);
-  if (!insecure_credential)
-    return base::nullopt;
-
-  credential.password = std::make_unique<std::string>(
-      base::UTF16ToUTF8(insecure_credential->password));
-  return credential;
-}
-
-bool PasswordCheckDelegate::ChangeInsecureCredential(
-    const api::passwords_private::InsecureCredential& credential,
-    base::StringPiece new_password) {
-  // Try to obtain the original CredentialWithPassword. Return false if fails.
-  const CredentialWithPassword* insecure_credential =
-      FindMatchingInsecureCredential(credential);
-  if (!insecure_credential)
+bool PasswordCheckDelegate::MuteInsecureCredential(
+    const api::passwords_private::PasswordUiEntry& credential) {
+  // Try to obtain the original CredentialUIEntry. Return false if fails.
+  const CredentialUIEntry* entry = id_generator_->TryGetKey(credential.id);
+  if (!entry)
     return false;
 
-  return insecure_credentials_manager_.UpdateCredential(*insecure_credential,
-                                                        new_password);
+  return insecure_credentials_manager_.MuteCredential(*entry);
 }
 
-bool PasswordCheckDelegate::RemoveInsecureCredential(
-    const api::passwords_private::InsecureCredential& credential) {
-  // Try to obtain the original CredentialWithPassword. Return false if fails.
-  const CredentialWithPassword* insecure_credential =
-      FindMatchingInsecureCredential(credential);
-  if (!insecure_credential)
+bool PasswordCheckDelegate::UnmuteInsecureCredential(
+    const api::passwords_private::PasswordUiEntry& credential) {
+  // Try to obtain the original CredentialUIEntry. Return false if fails.
+  const CredentialUIEntry* entry = id_generator_->TryGetKey(credential.id);
+  if (!entry)
     return false;
 
-  return insecure_credentials_manager_.RemoveCredential(*insecure_credential);
+  return insecure_credentials_manager_.UnmuteCredential(*entry);
 }
 
 void PasswordCheckDelegate::StartPasswordCheck(
+    password_manager::LeakDetectionInitiator initiator,
     StartPasswordCheckCallback callback) {
+  // Calls to StartPasswordCheck() will be only processed after
+  // OnSavedPasswordsChanged() is called. Meaning that all client calls
+  // happening before that will be stored in memory until all conditions are
+  // met. Thus initiator value must be stored to ensure that when this method is
+  // run, it has the correct value.
+  password_check_initiator_ = initiator;
+
   // If the delegate isn't initialized yet, enqueue the callback and return
   // early.
   if (!is_initialized_) {
@@ -348,70 +344,74 @@ void PasswordCheckDelegate::StartPasswordCheck(
     return;
   }
 
-  if (base::FeatureList::IsEnabled(
-          password_manager::features::kPasswordsWeaknessCheck)) {
-    insecure_credentials_manager_.StartWeakCheck();
-  }
+  StartPasswordAnalyses(std::move(callback));
+}
 
+void PasswordCheckDelegate::StartPasswordAnalyses(
+    StartPasswordCheckCallback callback) {
+  // Start the weakness check, and notify observers once done.
+  insecure_credentials_manager_.StartWeakCheck(base::BindOnce(
+      &PasswordCheckDelegate::RecordAndNotifyAboutCompletedWeakPasswordCheck,
+      weak_ptr_factory_.GetWeakPtr()));
+  insecure_credentials_manager_.StartReuseCheck(
+      base::BindOnce(&PasswordCheckDelegate::NotifyPasswordCheckStatusChanged,
+                     weak_ptr_factory_.GetWeakPtr()));
   auto progress = base::MakeRefCounted<PasswordCheckProgress>();
-  for (const auto& password : saved_passwords_presenter_.GetSavedPasswords())
+  for (const auto& password : saved_passwords_presenter_->GetSavedPasswords())
     progress->IncrementCounts(password);
 
   password_check_progress_ = progress->GetWeakPtr();
-  PasswordCheckData data(std::move(progress));
+  PasswordCheckData data(
+      std::move(progress),
+      password_manager::ShouldTriggerBackendNotificationForInitiator(
+          password_check_initiator_));
+
   is_check_running_ = bulk_leak_check_service_adapter_.StartBulkLeakCheck(
-      kPasswordCheckDataKey, &data);
+      password_check_initiator_, kPasswordCheckDataKey, &data);
+
   DCHECK(is_check_running_);
   std::move(callback).Run(
       bulk_leak_check_service_adapter_.GetBulkLeakCheckState());
-}
-
-void PasswordCheckDelegate::StopPasswordCheck() {
-  if (!is_initialized_) {
-    for (auto&& callback : std::exchange(start_check_callbacks_, {}))
-      std::move(callback).Run(State::kIdle);
-    return;
-  }
-
-  bulk_leak_check_service_adapter_.StopBulkLeakCheck();
 }
 
 api::passwords_private::PasswordCheckStatus
 PasswordCheckDelegate::GetPasswordCheckStatus() const {
   api::passwords_private::PasswordCheckStatus result;
 
-  // Obtain the timestamp of the last completed check. This is 0.0 in case the
-  // check never completely ran before.
-  const double last_check_completed = profile_->GetPrefs()->GetDouble(
-      password_manager::prefs::kLastTimePasswordCheckCompleted);
-  if (last_check_completed) {
-    result.elapsed_time_since_last_check = std::make_unique<std::string>(
-        FormatElapsedTime(base::Time::FromDoubleT(last_check_completed)));
+  // Obtain the timestamp of the last completed password or weak check. This
+  // will be null in case no check has completely ran before.
+  base::Time last_check_completed =
+      std::max(base::Time::FromTimeT(profile_->GetPrefs()->GetDouble(
+                   password_manager::prefs::kLastTimePasswordCheckCompleted)),
+               last_completed_weak_check_);
+  if (!last_check_completed.is_null()) {
+    result.elapsed_time_since_last_check =
+        FormatElapsedTime(last_check_completed);
   }
 
   State state = bulk_leak_check_service_adapter_.GetBulkLeakCheckState();
-  SavedPasswordsView saved_passwords =
-      saved_passwords_presenter_.GetSavedPasswords();
+
+  result.total_number_of_passwords =
+      saved_passwords_presenter_->GetSavedPasswords().size();
 
   // Handle the currently running case first, only then consider errors.
   if (state == State::kRunning) {
-    result.state = api::passwords_private::PASSWORD_CHECK_STATE_RUNNING;
+    result.state = api::passwords_private::PasswordCheckState::kRunning;
 
     if (password_check_progress_) {
-      result.already_processed =
-          std::make_unique<int>(password_check_progress_->already_processed());
+      result.already_processed = password_check_progress_->already_processed();
       result.remaining_in_queue =
-          std::make_unique<int>(password_check_progress_->remaining_in_queue());
+          password_check_progress_->remaining_in_queue();
     } else {
-      result.already_processed = std::make_unique<int>(0);
-      result.remaining_in_queue = std::make_unique<int>(0);
+      result.already_processed = 0;
+      result.remaining_in_queue = 0;
     }
 
     return result;
   }
 
-  if (saved_passwords.empty()) {
-    result.state = api::passwords_private::PASSWORD_CHECK_STATE_NO_PASSWORDS;
+  if (result.total_number_of_passwords == 0) {
+    result.state = api::passwords_private::PasswordCheckState::kNoPasswords;
     return result;
   }
 
@@ -424,13 +424,21 @@ PasswordCheckDelegate::GetInsecureCredentialsManager() {
   return &insecure_credentials_manager_;
 }
 
-void PasswordCheckDelegate::OnSavedPasswordsChanged(SavedPasswordsView) {
+void PasswordCheckDelegate::OnBulkCheckServiceShutDown() {
+  // Stop observing BulkLeakCheckService when the service shuts down.
+  CHECK(observed_bulk_leak_check_service_.IsObservingSource(
+      BulkLeakCheckServiceFactory::GetForProfile(profile_)));
+  observed_bulk_leak_check_service_.Reset();
+}
+
+void PasswordCheckDelegate::OnSavedPasswordsChanged(
+    const password_manager::PasswordStoreChangeList& changes) {
   // Getting the first notification about a change in saved passwords implies
   // that the delegate is initialized, and start check callbacks can be invoked,
   // if any.
   if (!std::exchange(is_initialized_, true)) {
     for (auto&& callback : std::exchange(start_check_callbacks_, {}))
-      StartPasswordCheck(std::move(callback));
+      StartPasswordCheck(password_check_initiator_, std::move(callback));
   }
 
   // A change in the saved passwords might result in leaving or entering the
@@ -438,18 +446,10 @@ void PasswordCheckDelegate::OnSavedPasswordsChanged(SavedPasswordsView) {
   NotifyPasswordCheckStatusChanged();
 }
 
-void PasswordCheckDelegate::OnCompromisedCredentialsChanged(
-    InsecureCredentialsView credentials) {
+void PasswordCheckDelegate::OnInsecureCredentialsChanged() {
   if (auto* event_router =
           PasswordsPrivateEventRouterFactory::GetForProfile(profile_)) {
-    event_router->OnCompromisedCredentialsChanged(GetCompromisedCredentials());
-  }
-}
-
-void PasswordCheckDelegate::OnWeakCredentialsChanged() {
-  if (auto* event_router =
-          PasswordsPrivateEventRouterFactory::GetForProfile(profile_)) {
-    event_router->OnWeakCredentialsChanged(GetWeakCredentials());
+    event_router->OnInsecureCredentialsChanged(GetInsecureCredentials());
   }
 }
 
@@ -457,18 +457,7 @@ void PasswordCheckDelegate::OnStateChanged(State state) {
   if (state == State::kIdle && std::exchange(is_check_running_, false)) {
     // When the service transitions from running into idle it has finished a
     // check.
-    profile_->GetPrefs()->SetDouble(
-        password_manager::prefs::kLastTimePasswordCheckCompleted,
-        base::Time::Now().ToDoubleT());
-
-    // In case the check run to completion delay the last Check Status update by
-    // a second. This avoids flickering of the UI if the full check ran from
-    // start to finish almost immediately.
-    base::SequencedTaskRunnerHandle::Get()->PostDelayedTask(
-        FROM_HERE,
-        base::BindOnce(&PasswordCheckDelegate::NotifyPasswordCheckStatusChanged,
-                       weak_ptr_factory_.GetWeakPtr()),
-        base::TimeDelta::FromSeconds(1));
+    RecordAndNotifyAboutCompletedCompromisedPasswordCheck();
     return;
   }
 
@@ -482,7 +471,14 @@ void PasswordCheckDelegate::OnCredentialDone(
     const LeakCheckCredential& credential,
     password_manager::IsLeaked is_leaked) {
   if (is_leaked) {
-    insecure_credentials_manager_.SaveCompromisedCredential(credential);
+    password_manager::TriggerBackendNotification should_trigger_notification =
+        credential.GetUserData(kPasswordCheckDataKey)
+            ? static_cast<PasswordCheckData*>(
+                  credential.GetUserData(kPasswordCheckDataKey))
+                  ->should_trigger_notification()
+            : password_manager::TriggerBackendNotification(false);
+    insecure_credentials_manager_.SaveInsecureCredential(
+        credential, should_trigger_notification);
   }
 
   // Update the progress in case there is one.
@@ -497,23 +493,27 @@ void PasswordCheckDelegate::OnCredentialDone(
   }
 }
 
-const CredentialWithPassword*
-PasswordCheckDelegate::FindMatchingInsecureCredential(
-    const api::passwords_private::InsecureCredential& credential) const {
-  const CredentialWithPassword* insecure_credential =
-      insecure_credential_id_generator_.TryGetKey(credential.id);
-  if (!insecure_credential)
-    return nullptr;
+void PasswordCheckDelegate::
+    RecordAndNotifyAboutCompletedCompromisedPasswordCheck() {
+  profile_->GetPrefs()->SetDouble(
+      password_manager::prefs::kLastTimePasswordCheckCompleted,
+      base::Time::Now().InSecondsFSinceUnixEpoch());
 
-  if (credential.signon_realm != insecure_credential->signon_realm ||
-      credential.username != base::UTF16ToUTF8(insecure_credential->username) ||
-      (credential.password &&
-       *credential.password !=
-           base::UTF16ToUTF8(insecure_credential->password))) {
-    return nullptr;
-  }
+  // Delay the last Check Status update by a second. This avoids flickering of
+  // the UI if the full check ran from start to finish almost immediately.
+  base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
+      FROM_HERE,
+      base::BindOnce(&PasswordCheckDelegate::NotifyPasswordCheckStatusChanged,
+                     weak_ptr_factory_.GetWeakPtr()),
+      base::Seconds(1));
+}
 
-  return insecure_credential;
+void PasswordCheckDelegate::RecordAndNotifyAboutCompletedWeakPasswordCheck() {
+  last_completed_weak_check_ = base::Time::Now();
+  // Note: In contrast to the compromised password check we do not does not
+  // artificially delay the response, Since this check is expected to complete
+  // quickly.
+  NotifyPasswordCheckStatusChanged();
 }
 
 void PasswordCheckDelegate::NotifyPasswordCheckStatusChanged() {
@@ -523,51 +523,26 @@ void PasswordCheckDelegate::NotifyPasswordCheckStatusChanged() {
   }
 }
 
-api::passwords_private::InsecureCredential
-PasswordCheckDelegate::ConstructInsecureCredential(
-    const CredentialWithPassword& credential) {
-  api::passwords_private::InsecureCredential api_credential;
-  auto facet = password_manager::FacetURI::FromPotentiallyInvalidSpec(
-      credential.signon_realm);
-  if (facet.IsValidAndroidFacetURI()) {
-    api_credential.is_android_credential = true;
-    // |formatted_orgin|, |detailed_origin| and |change_password_url| need
-    // special handling for Android. Here we use affiliation information
-    // instead of the origin.
-    const PasswordForm& android_form =
-        insecure_credentials_manager_.GetSavedPasswordsFor(credential)[0];
-    if (!android_form.app_display_name.empty()) {
-      api_credential.formatted_origin = android_form.app_display_name;
-      api_credential.detailed_origin = android_form.app_display_name;
-      api_credential.change_password_url =
-          GetChangePasswordUrl(GURL(android_form.affiliated_web_realm));
-    } else {
-      // In case no affiliation information could be obtained show the
-      // formatted package name to the user. An empty change_password_url will
-      // be handled by the frontend, by not including a link in this case.
-      api_credential.formatted_origin = l10n_util::GetStringFUTF8(
-          IDS_SETTINGS_PASSWORDS_ANDROID_APP,
-          base::UTF8ToUTF16(facet.android_package_name()));
-      api_credential.detailed_origin = facet.android_package_name();
-    }
-  } else {
-    api_credential.is_android_credential = false;
-    api_credential.formatted_origin =
-        base::UTF16ToUTF8(url_formatter::FormatUrl(
-            credential.url.GetOrigin(),
-            url_formatter::kFormatUrlOmitDefaults |
-                url_formatter::kFormatUrlOmitHTTPS |
-                url_formatter::kFormatUrlOmitTrivialSubdomains |
-                url_formatter::kFormatUrlTrimAfterHost,
-            net::UnescapeRule::SPACES, nullptr, nullptr, nullptr));
-    api_credential.detailed_origin = base::UTF16ToUTF8(
-        url_formatter::FormatUrlForSecurityDisplay(credential.url.GetOrigin()));
-    api_credential.change_password_url = GetChangePasswordUrl(credential.url);
+api::passwords_private::PasswordUiEntry
+PasswordCheckDelegate::ConstructInsecureCredentialUiEntry(
+    CredentialUIEntry entry) {
+  api::passwords_private::PasswordUiEntry api_credential;
+  api_credential.username = base::UTF16ToUTF8(entry.username);
+  api_credential.stored_in = StoreSetFromCredential(entry);
+  api_credential.compromised_info = CreateCompromiseInfo(entry);
+  std::optional<GURL> change_password_url = entry.GetChangePasswordURL();
+  if (change_password_url.has_value()) {
+    api_credential.change_password_url = change_password_url->spec();
   }
-
-  api_credential.id = insecure_credential_id_generator_.GenerateId(credential);
-  api_credential.signon_realm = credential.signon_realm;
-  api_credential.username = base::UTF16ToUTF8(credential.username);
+  CredentialUIEntry copy(std::move(entry));
+  // Weak and reused flags should be cleaned before obtaining id. Otherwise
+  // weak or reused flag will be saved to the database whenever credential is
+  // modified.
+  // TODO(crbug.com/1369650): Update this once saving weak and reused issues is
+  // supported.
+  copy.password_issues.erase(InsecureType::kWeak);
+  copy.password_issues.erase(InsecureType::kReused);
+  api_credential.id = id_generator_->GenerateId(std::move(copy));
 
   return api_credential;
 }

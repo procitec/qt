@@ -1,45 +1,8 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtQml module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qqmlobjectmodel_p.h"
 
-#include <QtCore/qcoreapplication.h>
 #include <QtQml/qqmlcontext.h>
 #include <QtQml/qqmlengine.h>
 #include <QtQml/qqmlinfo.h>
@@ -47,15 +10,13 @@
 #include <private/qqmlchangeset_p.h>
 #include <private/qqmlglobal_p.h>
 #include <private/qobject_p.h>
-#include <private/qpodvector_p.h>
 
+#include <QtCore/qcoreapplication.h>
 #include <QtCore/qhash.h>
 #include <QtCore/qlist.h>
+#include <QtCore/qvarlengtharray.h>
 
 QT_BEGIN_NAMESPACE
-
-QHash<QObject*, QQmlObjectModelAttached*> QQmlObjectModelAttached::attachedProperties;
-
 
 class QQmlObjectModelPrivate : public QObjectPrivate
 {
@@ -68,22 +29,22 @@ public:
         void addRef() { ++ref; }
         bool deref() { return --ref == 0; }
 
-        QObject *item;
+        QPointer<QObject> item;
         int ref;
     };
 
     QQmlObjectModelPrivate() : QObjectPrivate(), moveId(0) {}
 
     static void children_append(QQmlListProperty<QObject> *prop, QObject *item) {
-        int index = static_cast<QQmlObjectModelPrivate *>(prop->data)->children.count();
+        qsizetype index = static_cast<QQmlObjectModelPrivate *>(prop->data)->children.size();
         static_cast<QQmlObjectModelPrivate *>(prop->data)->insert(index, item);
     }
 
-    static int children_count(QQmlListProperty<QObject> *prop) {
-        return static_cast<QQmlObjectModelPrivate *>(prop->data)->children.count();
+    static qsizetype children_count(QQmlListProperty<QObject> *prop) {
+        return static_cast<QQmlObjectModelPrivate *>(prop->data)->children.size();
     }
 
-    static QObject *children_at(QQmlListProperty<QObject> *prop, int index) {
+    static QObject *children_at(QQmlListProperty<QObject> *prop, qsizetype index) {
         return static_cast<QQmlObjectModelPrivate *>(prop->data)->children.at(index).item;
     }
 
@@ -91,22 +52,20 @@ public:
         static_cast<QQmlObjectModelPrivate *>(prop->data)->clear();
     }
 
-    static void children_replace(QQmlListProperty<QObject> *prop, int index, QObject *item) {
+    static void children_replace(QQmlListProperty<QObject> *prop, qsizetype index, QObject *item) {
         static_cast<QQmlObjectModelPrivate *>(prop->data)->replace(index, item);
     }
 
     static void children_removeLast(QQmlListProperty<QObject> *prop) {
         auto data = static_cast<QQmlObjectModelPrivate *>(prop->data);
-        data->remove(data->children.count() - 1, 1);
+        data->remove(data->children.size() - 1, 1);
     }
 
     void insert(int index, QObject *item) {
         Q_Q(QQmlObjectModel);
         children.insert(index, Item(item));
-        for (int i = index; i < children.count(); ++i) {
-            QQmlObjectModelAttached *attached = QQmlObjectModelAttached::properties(children.at(i).item);
-            attached->setIndex(i);
-        }
+        for (int i = index, end = children.size(); i < end; ++i)
+            setIndex(i);
         QQmlChangeSet changeSet;
         changeSet.insert(index, 1);
         emit q->modelUpdated(changeSet, false);
@@ -116,10 +75,9 @@ public:
 
     void replace(int index, QObject *item) {
         Q_Q(QQmlObjectModel);
-        auto *attached = QQmlObjectModelAttached::properties(children.at(index).item);
-        attached->setIndex(-1);
+        clearIndex(index);
         children.replace(index, Item(item));
-        QQmlObjectModelAttached::properties(children.at(index).item)->setIndex(index);
+        setIndex(index);
         QQmlChangeSet changeSet;
         changeSet.change(index, 1);
         emit q->modelUpdated(changeSet, false);
@@ -137,16 +95,15 @@ public:
             n = tfrom-tto;
         }
 
-        QPODVector<QQmlObjectModelPrivate::Item, 4> store;
+        QVarLengthArray<QQmlObjectModelPrivate::Item, 4> store;
         for (int i = 0; i < to - from; ++i)
             store.append(children[from + n + i]);
         for (int i = 0; i < n; ++i)
             store.append(children[from + i]);
 
-        for (int i = 0; i < store.count(); ++i) {
+        for (int i = 0, end = store.count(); i < end; ++i) {
             children[from + i] = store[i];
-            QQmlObjectModelAttached *attached = QQmlObjectModelAttached::properties(children.at(from + i).item);
-            attached->setIndex(from + i);
+            setIndex(from + i);
         }
 
         QQmlChangeSet changeSet;
@@ -157,15 +114,11 @@ public:
 
     void remove(int index, int n) {
         Q_Q(QQmlObjectModel);
-        for (int i = index; i < index + n; ++i) {
-            QQmlObjectModelAttached *attached = QQmlObjectModelAttached::properties(children.at(i).item);
-            attached->setIndex(-1);
-        }
+        for (int i = index; i < index + n; ++i)
+            clearIndex(i);
         children.erase(children.begin() + index, children.begin() + index + n);
-        for (int i = index; i < children.count(); ++i) {
-            QQmlObjectModelAttached *attached = QQmlObjectModelAttached::properties(children.at(i).item);
-            attached->setIndex(i);
-        }
+        for (int i = index, end = children.size(); i < end; ++i)
+            setIndex(i);
         QQmlChangeSet changeSet;
         changeSet.remove(index, n);
         emit q->modelUpdated(changeSet, false);
@@ -175,26 +128,42 @@ public:
 
     void clear() {
         Q_Q(QQmlObjectModel);
-        for (const Item &child : qAsConst(children))
+        const auto copy = children;
+        for (const Item &child : copy)
             emit q->destroyingItem(child.item);
-        remove(0, children.count());
+        remove(0, children.size());
     }
 
     int indexOf(QObject *item) const {
-        for (int i = 0; i < children.count(); ++i)
+        for (int i = 0; i < children.size(); ++i)
             if (children.at(i).item == item)
                 return i;
         return -1;
     }
 
+private:
+    void setIndex(int child, int index)
+    {
+        if (auto *attached = static_cast<QQmlObjectModelAttached *>(
+                    qmlAttachedPropertiesObject<QQmlObjectModel>(children.at(child).item))) {
+            attached->setIndex(index);
+        }
+    }
+
+    void setIndex(int child) { setIndex(child, child); }
+    void clearIndex(int child) { setIndex(child, -1); }
+
+
     uint moveId;
     QList<Item> children;
 };
 
+Q_DECLARE_TYPEINFO(QQmlObjectModelPrivate::Item, Q_RELOCATABLE_TYPE);
+
 
 /*!
     \qmltype ObjectModel
-    \instantiates QQmlObjectModel
+    \nativetype QQmlObjectModel
     \inqmlmodule QtQml.Models
     \ingroup qtquick-models
     \brief Defines a set of items to be used as a model.
@@ -264,7 +233,7 @@ QQmlListProperty<QObject> QQmlObjectModel::children()
 int QQmlObjectModel::count() const
 {
     Q_D(const QQmlObjectModel);
-    return d->children.count();
+    return d->children.size();
 }
 
 bool QQmlObjectModel::isValid() const
@@ -298,9 +267,11 @@ QQmlInstanceModel::ReleaseFlags QQmlObjectModel::release(QObject *item, Reusable
 QVariant QQmlObjectModel::variantValue(int index, const QString &role)
 {
     Q_D(QQmlObjectModel);
-    if (index < 0 || index >= d->children.count())
+    if (index < 0 || index >= d->children.size())
         return QString();
-    return d->children.at(index).item->property(role.toUtf8().constData());
+    if (QObject *item = d->children.at(index).item)
+        return item->property(role.toUtf8().constData());
+    return QString();
 }
 
 QQmlIncubator::Status QQmlObjectModel::incubationStatus(int)
@@ -316,7 +287,7 @@ int QQmlObjectModel::indexOf(QObject *item, QObject *) const
 
 QQmlObjectModelAttached *QQmlObjectModel::qmlAttachedProperties(QObject *obj)
 {
-    return QQmlObjectModelAttached::properties(obj);
+    return new QQmlObjectModelAttached(obj);
 }
 
 /*!
@@ -341,7 +312,7 @@ QQmlObjectModelAttached *QQmlObjectModel::qmlAttachedProperties(QObject *obj)
 QObject *QQmlObjectModel::get(int index) const
 {
     Q_D(const QQmlObjectModel);
-    if (index < 0 || index >= d->children.count())
+    if (index < 0 || index >= d->children.size())
         return nullptr;
     return d->children.at(index).item;
 }
@@ -393,7 +364,7 @@ void QQmlObjectModel::insert(int index, QObject *object)
     \qmlmethod QtQml.Models::ObjectModel::move(int from, int to, int n = 1)
     \since 5.6
 
-    Moves \e n items \a from one position \a to another.
+    Moves \a n items \a from one position \a to another.
 
     The from and to ranges must exist; for example, to move the first 3 items
     to the end of the model:
@@ -420,7 +391,7 @@ void QQmlObjectModel::move(int from, int to, int n)
     \qmlmethod QtQml.Models::ObjectModel::remove(int index, int n = 1)
     \since 5.6
 
-    Removes \e n items at \a index from the model.
+    Removes \a n items at \a index from the model.
 
     \sa clear()
 */
@@ -446,6 +417,16 @@ void QQmlObjectModel::clear()
 {
     Q_D(QQmlObjectModel);
     d->clear();
+}
+
+bool QQmlInstanceModel::setRequiredProperty(int index, const QString &name, const QVariant &value)
+{
+    Q_UNUSED(index);
+    Q_UNUSED(name);
+    Q_UNUSED(value);
+    // The view should not call this function, unless
+    // it's actually handled in a subclass.
+    Q_UNREACHABLE_RETURN(false);
 }
 
 QT_END_NAMESPACE

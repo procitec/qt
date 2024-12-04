@@ -1,10 +1,13 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "content/browser/media/session/media_session_service_impl.h"
 
+#include <memory>
+
 #include "base/command_line.h"
+#include "base/memory/raw_ptr.h"
 #include "build/build_config.h"
 #include "content/browser/media/session/media_session_impl.h"
 #include "content/browser/media/session/media_session_player_observer.h"
@@ -50,22 +53,25 @@ class MockMediaSessionPlayerObserver : public MediaSessionPlayerObserver {
   void OnResume(int player_id) override {}
   void OnSeekForward(int player_id, base::TimeDelta seek_time) override {}
   void OnSeekBackward(int player_id, base::TimeDelta seek_time) override {}
+  void OnSeekTo(int player_id, base::TimeDelta seek_time) override {}
   void OnSetVolumeMultiplier(int player_id, double volume_multiplier) override {
   }
   void OnEnterPictureInPicture(int player_id) override {}
-  void OnExitPictureInPicture(int player_id) override {}
   void OnSetAudioSinkId(int player_id,
                         const std::string& raw_device_id) override {}
+  void OnSetMute(int player_id, bool mute) override {}
+  void OnRequestMediaRemoting(int player_id) override {}
 
-  base::Optional<media_session::MediaPosition> GetPosition(
+  std::optional<media_session::MediaPosition> GetPosition(
       int player_id) const override {
-    return base::nullopt;
+    return std::nullopt;
   }
 
   bool IsPictureInPictureAvailable(int player_id) const override {
     return false;
   }
 
+  bool HasAudio(int player_id) const override { return true; }
   bool HasVideo(int player_id) const override { return false; }
 
   std::string GetAudioOutputSinkId(int player_id) const override { return ""; }
@@ -74,12 +80,16 @@ class MockMediaSessionPlayerObserver : public MediaSessionPlayerObserver {
     return false;
   }
 
+  media::MediaContentType GetMediaContentType() const override {
+    return media::MediaContentType::kPersistent;
+  }
+
   RenderFrameHost* render_frame_host() const override {
     return render_frame_host_;
   }
 
  private:
-  RenderFrameHost* render_frame_host_;
+  raw_ptr<RenderFrameHost, DanglingUntriaged> render_frame_host_;
 };
 
 void NavigateToURLAndWaitForFinish(Shell* window, const GURL& url) {
@@ -95,6 +105,15 @@ char kSetUpMediaSessionScript[] =
     "navigator.mediaSession.playbackState = \"playing\";\n"
     "navigator.mediaSession.metadata = new MediaMetadata({ title: \"foo\" });\n"
     "navigator.mediaSession.setActionHandler(\"seekforward\", _ => {});";
+
+char kSetUpWebRTCMediaSessionScript[] =
+    "navigator.mediaSession.playbackState = \"playing\";\n"
+    "navigator.mediaSession.metadata = new MediaMetadata({ title: \"foo\" });\n"
+    "navigator.mediaSession.setMicrophoneActive(true);\n"
+    "navigator.mediaSession.setCameraActive(true);\n"
+    "navigator.mediaSession.setActionHandler(\"togglemicrophone\", _ => {});\n"
+    "navigator.mediaSession.setActionHandler(\"togglecamera\", _ => {});\n"
+    "navigator.mediaSession.setActionHandler(\"hangup\", _ => {});";
 
 const int kPlayerId = 0;
 
@@ -112,12 +131,11 @@ class MediaSessionServiceImplBrowserTest : public ContentBrowserTest {
     if (player_)
       return;
 
-    player_.reset(new MockMediaSessionPlayerObserver(
-        shell()->web_contents()->GetMainFrame()));
+    player_ = std::make_unique<MockMediaSessionPlayerObserver>(
+        shell()->web_contents()->GetPrimaryMainFrame());
 
     MediaSessionImpl::Get(shell()->web_contents())
-        ->AddPlayer(player_.get(), kPlayerId,
-                    media::MediaContentType::Persistent);
+        ->AddPlayer(player_.get(), kPlayerId);
   }
 
   MediaSessionImpl* GetSession() {
@@ -125,41 +143,57 @@ class MediaSessionServiceImplBrowserTest : public ContentBrowserTest {
   }
 
   MediaSessionServiceImpl* GetService() {
-    RenderFrameHost* main_frame = shell()->web_contents()->GetMainFrame();
-    if (GetSession()->services_.count(main_frame))
-      return GetSession()->services_[main_frame];
+    RenderFrameHost* main_frame =
+        shell()->web_contents()->GetPrimaryMainFrame();
+    const auto main_frame_id = main_frame->GetGlobalId();
+    if (GetSession()->services_.count(main_frame_id))
+      return GetSession()->services_[main_frame_id];
 
     return nullptr;
   }
 
-  bool ExecuteScriptToSetUpMediaSessionSync() {
-    bool result = ExecuteScript(shell(), kSetUpMediaSessionScript);
+  void ExecuteScriptToSetUpMediaSessionSync() {
+    ASSERT_TRUE(ExecJs(shell(), kSetUpMediaSessionScript));
     media_session::test::MockMediaSessionMojoObserver observer(*GetSession());
 
     std::set<media_session::mojom::MediaSessionAction> expected_actions;
     expected_actions.insert(media_session::mojom::MediaSessionAction::kPlay);
     expected_actions.insert(media_session::mojom::MediaSessionAction::kPause);
     expected_actions.insert(media_session::mojom::MediaSessionAction::kStop);
+    expected_actions.insert(media_session::mojom::MediaSessionAction::kSeekTo);
+    expected_actions.insert(media_session::mojom::MediaSessionAction::kScrubTo);
     expected_actions.insert(
         media_session::mojom::MediaSessionAction::kSeekForward);
 
     observer.WaitForExpectedActions(expected_actions);
-    return result;
+  }
+
+  void ExecuteScriptToSetUpWebRTCMediaSessionSync() {
+    ASSERT_TRUE(ExecJs(shell(), kSetUpWebRTCMediaSessionScript));
+    media_session::test::MockMediaSessionMojoObserver observer(*GetSession());
+
+    std::set<media_session::mojom::MediaSessionAction> expected_actions;
+    expected_actions.insert(media_session::mojom::MediaSessionAction::kPlay);
+    expected_actions.insert(media_session::mojom::MediaSessionAction::kPause);
+    expected_actions.insert(media_session::mojom::MediaSessionAction::kStop);
+    expected_actions.insert(media_session::mojom::MediaSessionAction::kSeekTo);
+    expected_actions.insert(media_session::mojom::MediaSessionAction::kScrubTo);
+    expected_actions.insert(
+        media_session::mojom::MediaSessionAction::kToggleMicrophone);
+    expected_actions.insert(
+        media_session::mojom::MediaSessionAction::kToggleCamera);
+    expected_actions.insert(media_session::mojom::MediaSessionAction::kHangUp);
+
+    observer.WaitForExpectedActions(expected_actions);
   }
 
  private:
   std::unique_ptr<MockMediaSessionPlayerObserver> player_;
 };
 
-#if defined(LEAK_SANITIZER)
-// TODO(crbug.com/850870) Plug the leaks.
-#define MAYBE_CrashMessageOnUnload DISABLED_CrashMessageOnUnload
-#else
-#define MAYBE_CrashMessageOnUnload CrashMessageOnUnload
-#endif
 // Two windows from the same BrowserContext.
 IN_PROC_BROWSER_TEST_F(MediaSessionServiceImplBrowserTest,
-                       MAYBE_CrashMessageOnUnload) {
+                       CrashMessageOnUnload) {
   EXPECT_TRUE(
       NavigateToURL(shell(), GetTestUrl("media/session", "embedder.html")));
   // Navigate to a chrome:// URL to avoid render process re-use.
@@ -173,12 +207,8 @@ IN_PROC_BROWSER_TEST_F(MediaSessionServiceImplBrowserTest,
 // observers to wait for the message to be processed on the MediaSessionObserver
 // side.
 
-#if defined(LEAK_SANITIZER)
-// TODO(crbug.com/850870) Plug the leaks.
-#define MAYBE_ResetServiceWhenNavigatingAway \
-  DISABLED_ResetServiceWhenNavigatingAway
-#elif defined(OS_CHROMEOS) || defined(OS_LINUX) || defined(OS_MAC) || \
-    defined(OS_ANDROID)
+#if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || \
+    BUILDFLAG(IS_ANDROID)
 // crbug.com/927234.
 #define MAYBE_ResetServiceWhenNavigatingAway \
   DISABLED_ResetServiceWhenNavigatingAway
@@ -190,7 +220,7 @@ IN_PROC_BROWSER_TEST_F(MediaSessionServiceImplBrowserTest,
   EXPECT_TRUE(NavigateToURL(shell(), GetTestUrl(".", "title1.html")));
   EnsurePlayer();
 
-  EXPECT_TRUE(ExecuteScriptToSetUpMediaSessionSync());
+  ExecuteScriptToSetUpMediaSessionSync();
 
   EXPECT_EQ(blink::mojom::MediaSessionPlaybackState::PLAYING,
             GetService()->playback_state());
@@ -201,27 +231,17 @@ IN_PROC_BROWSER_TEST_F(MediaSessionServiceImplBrowserTest,
   // actions are reset.
   NavigateToURLAndWaitForFinish(shell(), GetTestUrl(".", "title2.html"));
 
-  EXPECT_EQ(blink::mojom::MediaSessionPlaybackState::NONE,
-            GetService()->playback_state());
-  EXPECT_FALSE(GetService()->metadata());
-  EXPECT_EQ(0u, GetService()->actions().size());
+  // The service should be destroyed.
+  EXPECT_EQ(GetService(), nullptr);
 }
 
-#if defined(LEAK_SANITIZER)
-// TODO(crbug.com/850870) Plug the leaks.
-#define MAYBE_DontResetServiceForSameDocumentNavigation \
-  DISABLED_DontResetServiceForSameDocumentNavigation
-#else
 // crbug.com/927234.
-#define MAYBE_DontResetServiceForSameDocumentNavigation \
-  DISABLED_DontResetServiceForSameDocumentNavigation
-#endif
 IN_PROC_BROWSER_TEST_F(MediaSessionServiceImplBrowserTest,
-                       MAYBE_DontResetServiceForSameDocumentNavigation) {
+                       DISABLED_DontResetServiceForSameDocumentNavigation) {
   EXPECT_TRUE(NavigateToURL(shell(), GetTestUrl(".", "title1.html")));
   EnsurePlayer();
 
-  EXPECT_TRUE(ExecuteScriptToSetUpMediaSessionSync());
+  ExecuteScriptToSetUpMediaSessionSync();
 
   // Start a fragment navigation and check the playback state, metadata,
   // actions are not reset.
@@ -233,6 +253,32 @@ IN_PROC_BROWSER_TEST_F(MediaSessionServiceImplBrowserTest,
             GetService()->playback_state());
   EXPECT_TRUE(GetService()->metadata());
   EXPECT_EQ(1u, GetService()->actions().size());
+}
+
+IN_PROC_BROWSER_TEST_F(MediaSessionServiceImplBrowserTest,
+                       MicrophoneAndCameraStatesInitiallyUnknown) {
+  EXPECT_TRUE(NavigateToURL(shell(), GetTestUrl(".", "title1.html")));
+  EnsurePlayer();
+
+  ExecuteScriptToSetUpMediaSessionSync();
+
+  media_session::test::MockMediaSessionMojoObserver observer(*GetSession());
+  observer.WaitForMicrophoneState(
+      media_session::mojom::MicrophoneState::kUnknown);
+  observer.WaitForCameraState(media_session::mojom::CameraState::kUnknown);
+}
+
+IN_PROC_BROWSER_TEST_F(MediaSessionServiceImplBrowserTest,
+                       MicrophoneAndCameraStatesCanBeSet) {
+  EXPECT_TRUE(NavigateToURL(shell(), GetTestUrl(".", "title1.html")));
+  EnsurePlayer();
+
+  ExecuteScriptToSetUpWebRTCMediaSessionSync();
+
+  media_session::test::MockMediaSessionMojoObserver observer(*GetSession());
+  observer.WaitForMicrophoneState(
+      media_session::mojom::MicrophoneState::kUnmuted);
+  observer.WaitForCameraState(media_session::mojom::CameraState::kTurnedOn);
 }
 
 }  // namespace content

@@ -1,23 +1,37 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/page_load_metrics/common/page_load_timing.h"
+#include "components/page_load_metrics/common/page_load_metrics.mojom-forward.h"
+#include "third_party/blink/public/common/performance/performance_timeline_constants.h"
 
 namespace page_load_metrics {
 
 mojom::PageLoadTimingPtr CreatePageLoadTiming() {
   return mojom::PageLoadTiming::New(
-      base::Time(), base::Optional<base::TimeDelta>(),
+      base::Time(), absl::optional<base::TimeDelta>(),
       mojom::DocumentTiming::New(), mojom::InteractiveTiming::New(),
-      mojom::PaintTiming::New(base::nullopt, base::nullopt, base::nullopt,
-                              base::nullopt,
+      mojom::PaintTiming::New(absl::nullopt, absl::nullopt, absl::nullopt,
+                              absl::nullopt,
                               mojom::LargestContentfulPaintTiming::New(),
                               mojom::LargestContentfulPaintTiming::New(),
-                              base::nullopt, base::nullopt, base::nullopt),
+                              absl::nullopt, absl::nullopt, absl::nullopt),
       mojom::ParseTiming::New(),
       std::vector<mojo::StructPtr<mojom::BackForwardCacheTiming>>{},
-      base::Optional<base::TimeDelta>());
+      absl::optional<base::TimeDelta>(), absl::optional<base::TimeDelta>(),
+      absl::optional<base::TimeDelta>(), absl::optional<base::TimeDelta>(),
+      absl::optional<base::TimeDelta>());
+}
+
+mojom::LargestContentfulPaintTimingPtr CreateLargestContentfulPaintTiming() {
+  return mojom::LargestContentfulPaintTiming::New();
+}
+
+mojom::SoftNavigationMetricsPtr CreateSoftNavigationMetrics() {
+  return mojom::SoftNavigationMetrics::New(
+      blink::kSoftNavigationCountDefaultValue, base::Milliseconds(0),
+      base::EmptyString(), mojom::LargestContentfulPaintTiming::New());
 }
 
 bool IsEmpty(const page_load_metrics::mojom::DocumentTiming& timing) {
@@ -26,15 +40,12 @@ bool IsEmpty(const page_load_metrics::mojom::DocumentTiming& timing) {
 
 bool IsEmpty(const page_load_metrics::mojom::InteractiveTiming& timing) {
   return !timing.first_input_delay && !timing.first_input_timestamp &&
-         !timing.longest_input_delay && !timing.longest_input_timestamp &&
-         !timing.first_scroll_delay && !timing.first_scroll_timestamp &&
-         !timing.first_input_processing_time;
+         !timing.first_scroll_delay && !timing.first_scroll_timestamp;
 }
 
 bool IsEmpty(const page_load_metrics::mojom::InputTiming& timing) {
-  return !timing.total_input_delay.InMilliseconds() &&
-         !timing.total_adjusted_input_delay.InMilliseconds() &&
-         !timing.num_input_events;
+  // TODO(sullivan): Adjust this to be based on max_event_durations
+  return !timing.num_interactions;
 }
 
 bool IsEmpty(const page_load_metrics::mojom::PaintTiming& timing) {
@@ -65,7 +76,10 @@ bool IsEmpty(const page_load_metrics::mojom::PageLoadTiming& timing) {
           page_load_metrics::IsEmpty(*timing.paint_timing)) &&
          (!timing.parse_timing ||
           page_load_metrics::IsEmpty(*timing.parse_timing)) &&
-         timing.back_forward_cache_timings.empty();
+         timing.back_forward_cache_timings.empty() &&
+         !timing.user_timing_mark_fully_loaded &&
+         !timing.user_timing_mark_fully_visible &&
+         !timing.user_timing_mark_interactive;
 }
 
 void InitPageLoadTimingForTest(mojom::PageLoadTiming* timing) {

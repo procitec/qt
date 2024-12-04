@@ -1,5 +1,22 @@
+#!special-case-list-v1
+# TODO(https://crbug.com/1515966): update to glob patterns
+
 # This file defines which warnings should be ignored while running clang's
 # control flow integrity sanitizer, as run by the cfi_flags build target.
+
+# ***If you think you need to add an entry here, read this comment first.***
+#
+# Generally prefer to add an attribute to whichever function needs it, instead
+# of adding entries to this file. This can be done in the Chromium codebase
+# using the NO_SANITIZE macro, e.g.
+#
+# NO_SANITIZE("cfi-unrelated-cast")
+#
+# or outside of Chromium using the no_sanitize attribute directly (potentially
+# with guards against non-Clang compilers; see the definition of NO_SANITIZE in
+# Chromium), e.g.
+#
+# __attribute__((no_sanitize("cfi-unrelated-cast")))
 
 [cfi-unrelated-cast|cfi-derived-cast]
 
@@ -37,6 +54,9 @@ src:*third_party/grpc/src/src/core/lib/gprpp/inlined_vector.h
 
 # https://crbug.com/994752
 src:*third_party/spirv-cross/spirv-cross/spirv_cross_containers.hpp
+
+# Vulkan memory allocator
+src:*third_party/vulkan_memory_allocator/include/vk_mem_alloc.h
 
 #############################################################################
 # Base class's constructor accesses a derived class.
@@ -130,6 +150,7 @@ type:sandbox::TargetServices
 ######### Cross-DSO icalls using dynamically resolved symbols crbug.com/771365
 
 # ANGLE
+src:*third_party/angle/src/common/vulkan/vulkan_icd.cpp
 src:*third_party/angle/src/libANGLE/*
 src:*third_party/angle/src/libEGL/*
 src:*third_party/angle/src/third_party/libXNVCtrl/NVCtrl.c
@@ -139,18 +160,22 @@ fun:*GetPCIDevicesWithLibPCI*
 fun:*GetTraceCategoryEnabledFlag*
 fun:*AddTraceEvent*
 
+# Dawn, calls to OpenGL and Vulkan function pointers from shared library.
+src:*third_party/dawn/src/dawn/native/*
+
+# Dawn uses std::function for callbacks from the main binary to
+# liboptimization_guide_internal.so.
+# TODO(crbug.com/1511050): See if we can avoid disabling CFI for std::function.
+src:*third_party/libc*/invoke.h
+src:*third_party/libc*/function.h
+
 # PPAPI
 src:*ppapi/*
 src:*content/renderer/pepper*
 fun:*PpapiThread*
 fun:*BrokerProcessDispatcher*
-# Ignore base::Callback due to https://crbug.com/845855
+# Ignore base::{Once, Repeating}Callback due to https://crbug.com/845855
 fun:*FunctorTraits*
-
-# PipeWire due to https://crbug.com/926115
-src:*/include/spa/*
-src:*third_party/webrtc/modules/desktop_capture/linux/pipewire_stubs.cc
-src:*third_party/webrtc/modules/desktop_capture/linux/base_capturer_pipewire.cc
 
 # Calls to auto-generated stubs by generate_stubs.py
 src:*audio/pulse/pulse_stubs.cc
@@ -165,9 +190,13 @@ src:*device/udev_linux/udev1_loader.cc
 src:*ui/gl/gl_bindings_autogen_*
 
 # Calls to vulkan function pointers from shared library.
-src:*third_party/vulkan_memory_allocator/src/vk_mem_alloc.h
+src:*third_party/vulkan_memory_allocator/include/vk_mem_alloc.h
+src:*third_party/angle/third_party/vulkan-loader/src/loader*
+src:*third_party/vulkan-deps/vulkan-loader/src/loader*
+src:*third_party/vulkan-deps/vulkan-validation-layers/src/layers/*
+src:*third_party/angle/src/common/vulkan/vulkan_icd.cpp
 
-src:*components/os_crypt/*
+src:*components/os_crypt/sync/*
 
 src:*content/browser/accessibility/browser_accessibility_auralinux.cc
 src:*ui/accessibility/platform/ax_platform_node_auralinux.cc
@@ -176,6 +205,7 @@ src:*ui/accessibility/platform/ax_platform_node_auralinux_unittest.cc
 
 src:*chrome/browser/ui/zoom/chrome_zoom_level_prefs.cc
 src:*third_party/webrtc/modules/desktop_capture/linux/x_server_pixel_buffer.cc
+src:*third_party/webrtc/modules/desktop_capture/linux/x11/x_server_pixel_buffer.cc
 src:*media/cdm/*
 src:*third_party/swiftshader/*
 src:*base/native_library_unittest.cc
@@ -200,6 +230,7 @@ src:*mojo/public/c/system/thunks.cc
 
 # Call to vulkan function pointers from shared library.
 src:*/third_party/skia/src/gpu/vk/*
+src:*/third_party/skia/src/gpu/ganesh/vk/*
 src:*/third_party/skia/third_party/vulkanmemoryallocator/*
 
 # The follow entries are speculatively disabled. They're included in the
@@ -233,6 +264,13 @@ fun:*PendingPhantomCallback*Invoke*
 fun:*GlobalHandles*PostGarbageCollectionProcessing*
 
 fun:*InvokeAccessorGetterCallback*
+
+# XNNPACK casts incorrect function signature to pthreadpool task type.
+src:*third_party/pthreadpool/src/src/fastpath.c
+src:*third_party/pthreadpool/src/src/portable-api.c
+
+# XNNPack casts incorrect function signature.
+src:*third_party/xnnpack/src/src/operators/deconvolution-nhwc.c
 
 ######### Uncategorized
 

@@ -5,15 +5,30 @@
  * found in the LICENSE file.
  */
 
+#include "include/core/SkBitmap.h"
+#include "include/core/SkImageInfo.h"
+#include "include/core/SkPoint.h"
+#include "include/core/SkRect.h"
+#include "include/core/SkRegion.h"
+#include "include/private/base/SkDebug.h"
+#include "include/private/base/SkTo.h"
+#include "src/base/SkArenaAlloc.h"
+#include "src/base/SkZip.h"
+#include "src/core/SkAAClip.h"
+#include "src/core/SkBlitter.h"
 #include "src/core/SkDraw.h"
-#include "src/core/SkFontPriv.h"
-#include "src/core/SkMatrixProvider.h"
-#include "src/core/SkPaintPriv.h"
+#include "src/core/SkGlyph.h"
+#include "src/core/SkGlyphRunPainter.h"
+#include "src/core/SkMask.h"
 #include "src/core/SkRasterClip.h"
-#include "src/core/SkScalerCache.h"
-#include "src/core/SkScalerContext.h"
-#include "src/core/SkUtils.h"
+#include "src/core/SkSurfacePriv.h"
+
+#include <cstdint>
 #include <climits>
+
+class SkCanvas;
+class SkPaint;
+namespace sktext { class GlyphRunList; }
 
 // disable warning : local variable used without having been initialized
 #if defined _WIN32
@@ -34,18 +49,16 @@ static bool check_glyph_position(SkPoint position) {
              lt(position.fY, INT_MIN - (INT16_MIN + 0 /*UINT16_MIN*/)));
 }
 
-void SkDraw::paintMasks(SkDrawableGlyphBuffer* drawables, const SkPaint& paint) const {
-
+void SkDraw::paintMasks(SkZip<const SkGlyph*, SkPoint> accepted, const SkPaint& paint) const {
     // The size used for a typical blitter.
     SkSTArenaAlloc<3308> alloc;
-    SkBlitter* blitter =
-            SkBlitter::Choose(fDst, *fMatrixProvider, paint, &alloc, false, fRC->clipShader());
-    if (fCoverage) {
-        blitter = alloc.make<SkPairBlitter>(
-                blitter,
-                SkBlitter::Choose(
-                        *fCoverage, *fMatrixProvider, SkPaint(), &alloc, true, fRC->clipShader()));
-    }
+    SkBlitter* blitter = SkBlitter::Choose(fDst,
+                                           *fCTM,
+                                           paint,
+                                           &alloc,
+                                           false,
+                                           fRC->clipShader(),
+                                           SkSurfacePropsCopyOrDefault(fProps));
 
     SkAAClipBlitterWrapper wrapper{*fRC, blitter};
     blitter = wrapper.getBlitter();
@@ -53,10 +66,7 @@ void SkDraw::paintMasks(SkDrawableGlyphBuffer* drawables, const SkPaint& paint) 
     bool useRegion = fRC->isBW() && !fRC->isRect();
 
     if (useRegion) {
-        for (auto t : drawables->drawable()) {
-            const SkGlyphVariant& variant = std::get<0>(t);
-            const SkPoint& pos = std::get<1>(t);
-            SkGlyph* glyph = variant.glyph();
+        for (auto [glyph, pos] : accepted) {
             if (check_glyph_position(pos)) {
                 SkMask mask = glyph->mask(pos);
 
@@ -66,8 +76,9 @@ void SkDraw::paintMasks(SkDrawableGlyphBuffer* drawables, const SkPaint& paint) 
                     if (SkMask::kARGB32_Format == mask.fFormat) {
                         SkBitmap bm;
                         bm.installPixels(SkImageInfo::MakeN32Premul(mask.fBounds.size()),
-                                         mask.fImage,
+                                         const_cast<uint8_t*>(mask.fImage),
                                          mask.fRowBytes);
+                        bm.setImmutable();
                         this->drawSprite(bm, mask.fBounds.x(), mask.fBounds.y(), paint);
                     } else {
                         const SkIRect& cr = clipper.rect();
@@ -82,10 +93,7 @@ void SkDraw::paintMasks(SkDrawableGlyphBuffer* drawables, const SkPaint& paint) 
     } else {
         SkIRect clipBounds = fRC->isBW() ? fRC->bwRgn().getBounds()
                                          : fRC->aaRgn().getBounds();
-        for (auto t : drawables->drawable()) {
-            const SkGlyphVariant& variant = std::get<0>(t);
-            const SkPoint& pos = std::get<1>(t);
-            SkGlyph* glyph = variant.glyph();
+        for (auto [glyph, pos] : accepted) {
             if (check_glyph_position(pos)) {
                 SkMask mask = glyph->mask(pos);
                 SkIRect storage;
@@ -103,8 +111,9 @@ void SkDraw::paintMasks(SkDrawableGlyphBuffer* drawables, const SkPaint& paint) 
                 if (SkMask::kARGB32_Format == mask.fFormat) {
                     SkBitmap bm;
                     bm.installPixels(SkImageInfo::MakeN32Premul(mask.fBounds.size()),
-                                     mask.fImage,
+                                     const_cast<uint8_t*>(mask.fImage),
                                      mask.fRowBytes);
+                    bm.setImmutable();
                     this->drawSprite(bm, mask.fBounds.x(), mask.fBounds.y(), paint);
                 } else {
                     blitter->blitMask(mask, *bounds);
@@ -114,23 +123,10 @@ void SkDraw::paintMasks(SkDrawableGlyphBuffer* drawables, const SkPaint& paint) 
     }
 }
 
-void SkDraw::paintPaths(SkDrawableGlyphBuffer* drawables,
-                        SkScalar scale,
-                        SkPoint origin,
-                        const SkPaint& paint) const {
-    for (auto t : drawables->drawable()) {
-        const SkGlyphVariant& variant = std::get<0>(t);
-        const SkPoint& pos = std::get<1>(t);
-        const SkPath* path = variant.path();
-        SkMatrix m;
-        SkPoint translate = origin + pos;
-        m.setScaleTranslate(scale, scale, translate.x(), translate.y());
-        this->drawPath(*path, paint, &m, false);
-    }
-}
-
-void SkDraw::drawGlyphRunList(const SkGlyphRunList& glyphRunList,
-                              SkGlyphRunListPainter* glyphPainter) const {
+void SkDraw::drawGlyphRunList(SkCanvas* canvas,
+                              SkGlyphRunListPainterCPU* glyphPainter,
+                              const sktext::GlyphRunList& glyphRunList,
+                              const SkPaint& paint) const {
 
     SkDEBUGCODE(this->validate();)
 
@@ -138,7 +134,7 @@ void SkDraw::drawGlyphRunList(const SkGlyphRunList& glyphRunList,
         return;
     }
 
-    glyphPainter->drawForBitmapDevice(glyphRunList, fMatrixProvider->localToDevice(), this);
+    glyphPainter->drawForBitmapDevice(canvas, this, glyphRunList, paint, *fCTM);
 }
 
 #if defined _WIN32

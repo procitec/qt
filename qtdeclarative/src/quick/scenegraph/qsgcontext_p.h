@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtQuick module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #ifndef QSGCONTEXT_H
 #define QSGCONTEXT_H
@@ -60,14 +24,20 @@
 
 #include <private/qtquickglobal_p.h>
 #include <private/qrawfont_p.h>
+#include <private/qfontengine_p.h>
 
 #include <QtQuick/qsgnode.h>
+#include <QtQuick/qsgrendererinterface.h>
+#include <QtQuick/qsgtextnode.h>
+
+#include <QtCore/qpointer.h>
 
 QT_BEGIN_NAMESPACE
 
 class QSGContextPrivate;
 class QSGInternalRectangleNode;
 class QSGInternalImageNode;
+class QSGInternalTextNode;
 class QSGPainterNode;
 class QSGGlyphNode;
 class QSGRenderer;
@@ -85,14 +55,19 @@ class QSGRendererInterface;
 class QSGShaderEffectNode;
 class QSGGuiThreadShaderEffectManager;
 class QSGRectangleNode;
+class QSGTextNode;
 class QSGImageNode;
 class QSGNinePatchNode;
 class QSGSpriteNode;
 class QSGRenderContext;
+class QSGRenderTarget;
 class QRhi;
 class QRhiRenderTarget;
 class QRhiRenderPassDescriptor;
 class QRhiCommandBuffer;
+class QQuickGraphicsConfiguration;
+class QQuickItem;
+class QSGCurveGlyphAtlas;
 
 Q_DECLARE_LOGGING_CATEGORY(QSG_LOG_TIME_RENDERLOOP)
 Q_DECLARE_LOGGING_CATEGORY(QSG_LOG_TIME_COMPILATION)
@@ -103,7 +78,7 @@ Q_DECLARE_LOGGING_CATEGORY(QSG_LOG_TIME_RENDERER)
 Q_DECLARE_LOGGING_CATEGORY(QSG_LOG_INFO)
 Q_DECLARE_LOGGING_CATEGORY(QSG_LOG_RENDERLOOP)
 
-class Q_QUICK_PRIVATE_EXPORT QSGContext : public QObject
+class Q_QUICK_EXPORT QSGContext : public QObject
 {
     Q_OBJECT
 
@@ -124,22 +99,25 @@ public:
     QSGInternalRectangleNode *createInternalRectangleNode(const QRectF &rect, const QColor &c);
     virtual QSGInternalRectangleNode *createInternalRectangleNode() = 0;
     virtual QSGInternalImageNode *createInternalImageNode(QSGRenderContext *renderContext) = 0;
+    virtual QSGInternalTextNode *createInternalTextNode(QSGRenderContext *renderContext);
     virtual QSGPainterNode *createPainterNode(QQuickPaintedItem *item) = 0;
-    virtual QSGGlyphNode *createGlyphNode(QSGRenderContext *rc, bool preferNativeGlyphNode) = 0;
+    virtual QSGGlyphNode *createGlyphNode(QSGRenderContext *rc, QSGTextNode::RenderType renderType, int renderTypeQuality) = 0;
     virtual QSGLayer *createLayer(QSGRenderContext *renderContext) = 0;
     virtual QSGGuiThreadShaderEffectManager *createGuiThreadShaderEffectManager();
-    virtual QSGShaderEffectNode *createShaderEffectNode(QSGRenderContext *renderContext,
-                                                        QSGGuiThreadShaderEffectManager *mgr);
+    virtual QSGShaderEffectNode *createShaderEffectNode(QSGRenderContext *renderContext);
 #if QT_CONFIG(quick_sprite)
     virtual QSGSpriteNode *createSpriteNode() = 0;
 #endif
     virtual QAnimationDriver *createAnimationDriver(QObject *parent);
+    virtual float vsyncIntervalForAnimationDriver(QAnimationDriver *driver);
+    virtual bool isVSyncDependent(QAnimationDriver *driver);
 
     virtual QSize minimumFBOSize() const;
     virtual QSurfaceFormat defaultSurfaceFormat() const = 0;
 
     virtual QSGRendererInterface *rendererInterface(QSGRenderContext *renderContext);
 
+    virtual QSGTextNode *createTextNode(QSGRenderContext *renderContext);
     virtual QSGRectangleNode *createRectangleNode() = 0;
     virtual QSGImageNode *createImageNode() = 0;
     virtual QSGNinePatchNode *createNinePatchNode() = 0;
@@ -152,7 +130,7 @@ public:
     static QString backend();
 };
 
-class Q_QUICK_PRIVATE_EXPORT QSGRenderContext : public QObject
+class Q_QUICK_EXPORT QSGRenderContext : public QObject
 {
     Q_OBJECT
 public:
@@ -174,36 +152,32 @@ public:
 
     using RenderPassCallback = void (*)(void *);
 
-    virtual void prepareSync(qreal devicePixelRatio, QRhiCommandBuffer *cb);
-    virtual void beginNextFrame(QSGRenderer *renderer,
+    virtual void prepareSync(qreal devicePixelRatio,
+                             QRhiCommandBuffer *cb,
+                             const QQuickGraphicsConfiguration &config);
+
+    virtual void beginNextFrame(QSGRenderer *renderer, const QSGRenderTarget &renderTarget,
                                 RenderPassCallback mainPassRecordingStart,
                                 RenderPassCallback mainPassRecordingEnd,
                                 void *callbackUserData);
-    virtual void renderNextFrame(QSGRenderer *renderer, uint fboId) = 0;
+    virtual void renderNextFrame(QSGRenderer *renderer) = 0;
     virtual void endNextFrame(QSGRenderer *renderer);
-
-    virtual void beginNextRhiFrame(QSGRenderer *renderer,
-                                   QRhiRenderTarget *rt, QRhiRenderPassDescriptor *rp, QRhiCommandBuffer *cb,
-                                   RenderPassCallback mainPassRecordingStart,
-                                   RenderPassCallback mainPassRecordingEnd,
-                                   void *callbackUserData);
-    virtual void renderNextRhiFrame(QSGRenderer *renderer);
-    virtual void endNextRhiFrame(QSGRenderer *renderer);
 
     virtual void endSync();
 
     virtual void preprocess();
-    virtual QSGDistanceFieldGlyphCache *distanceFieldGlyphCache(const QRawFont &font);
+    virtual void invalidateGlyphCaches();
+    virtual QSGDistanceFieldGlyphCache *distanceFieldGlyphCache(const QRawFont &font, int renderTypeQuality);
+    virtual QSGCurveGlyphAtlas *curveGlyphAtlas(const QRawFont &font);
     QSGTexture *textureForFactory(QQuickTextureFactory *factory, QQuickWindow *window);
 
     virtual QSGTexture *createTexture(const QImage &image, uint flags = CreateTexture_Alpha) const = 0;
-    virtual QSGRenderer *createRenderer() = 0;
+    virtual QSGRenderer *createRenderer(QSGRendererInterface::RenderMode renderMode = QSGRendererInterface::RenderMode2D) = 0;
     virtual QSGTexture *compressedTextureForFactory(const QSGCompressedTextureFactory *) const;
-
-    virtual void setAttachToGraphicsContext(bool attach) { Q_UNUSED(attach); }
 
     virtual int maxTextureSize() const = 0;
 
+    void unregisterFontengineForCleanup(QFontEngine *engine);
     void registerFontengineForCleanup(QFontEngine *engine);
 
     virtual QRhi *rhi() const;
@@ -211,21 +185,53 @@ public:
 Q_SIGNALS:
     void initialized();
     void invalidated();
+    void releaseCachedResourcesRequested();
 
 public Q_SLOTS:
     void textureFactoryDestroyed(QObject *o);
 
 protected:
+    struct FontKey {
+        FontKey(const QRawFont &font, int renderTypeQuality);
+
+        QFontEngine::FaceId faceId;
+        QFont::Style style;
+        int weight;
+        int renderTypeQuality;
+        QString familyName;
+        QString styleName;
+    };
+    friend bool operator==(const QSGRenderContext::FontKey &f1, const QSGRenderContext::FontKey &f2);
+    friend size_t qHash(const QSGRenderContext::FontKey &f, size_t seed);
+
     // Hold m_sg with QPointer in the rare case it gets deleted before us.
     QPointer<QSGContext> m_sg;
 
     QMutex m_mutex;
     QHash<QObject *, QSGTexture *> m_textures;
     QSet<QSGTexture *> m_texturesToDelete;
-    QHash<QString, QSGDistanceFieldGlyphCache *> m_glyphCaches;
+    QHash<FontKey, QSGDistanceFieldGlyphCache *> m_glyphCaches;
 
-    QSet<QFontEngine *> m_fontEnginesToClean;
+    // References to font engines that are currently in use by native rendering glyph nodes
+    // and which must be kept alive as long as they are used in the render thread.
+    QHash<QFontEngine *, int> m_fontEnginesToClean;
 };
+
+inline bool operator ==(const QSGRenderContext::FontKey &f1, const QSGRenderContext::FontKey &f2)
+{
+    return f1.faceId == f2.faceId
+        && f1.style == f2.style
+        && f1.weight == f2.weight
+        && f1.renderTypeQuality == f2.renderTypeQuality
+        && f1.familyName == f2.familyName
+        && f1.styleName == f2.styleName;
+}
+
+inline size_t qHash(const QSGRenderContext::FontKey &f, size_t seed = 0)
+{
+    return qHashMulti(seed, f.faceId, f.renderTypeQuality, f.familyName, f.styleName, f.style, f.weight);
+}
+
 
 QT_END_NAMESPACE
 

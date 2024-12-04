@@ -1,13 +1,15 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_STREAMS_WRITABLE_STREAM_DEFAULT_WRITER_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_STREAMS_WRITABLE_STREAM_DEFAULT_WRITER_H_
 
-#include "base/optional.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
+#include "third_party/blink/renderer/platform/heap/member.h"
+#include "third_party/blink/renderer/platform/heap/visitor.h"
 #include "v8/include/v8.h"
 
 namespace blink {
@@ -17,7 +19,6 @@ class ScriptPromise;
 class ScriptState;
 class ScriptValue;
 class StreamPromiseResolver;
-class Visitor;
 class WritableStream;
 class WritableStream;
 
@@ -88,21 +89,22 @@ class CORE_EXPORT WritableStreamDefaultWriter final : public ScriptWrappable {
   // https://streams.spec.whatwg.org/#writable-stream-default-writer-write
   static v8::Local<v8::Promise> Write(ScriptState*,
                                       WritableStreamDefaultWriter*,
-                                      v8::Local<v8::Value> chunk);
+                                      v8::Local<v8::Value> chunk,
+                                      ExceptionState&);
 
   //
   // Accessors used by ReadableStream and WritableStream. These do
   // not appear in the standard.
   //
 
-  StreamPromiseResolver* ClosedPromise() { return closed_promise_; }
-  StreamPromiseResolver* ReadyPromise() { return ready_promise_; }
-  WritableStream* OwnerWritableStream() { return owner_writable_stream_; }
+  StreamPromiseResolver* ClosedPromise() { return closed_promise_.Get(); }
+  StreamPromiseResolver* ReadyPromise() { return ready_promise_.Get(); }
+  WritableStream* OwnerWritableStream() { return owner_writable_stream_.Get(); }
 
   // This is a variant of GetDesiredSize() that doesn't create an intermediate
-  // JavaScript object. Instead it returns base::nullopt where the JavaScript
+  // JavaScript object. Instead it returns absl::nullopt where the JavaScript
   // version would return null.
-  base::Optional<double> GetDesiredSizeInternal() const;
+  absl::optional<double> GetDesiredSizeInternal() const;
 
   void SetReadyPromise(StreamPromiseResolver*);
 

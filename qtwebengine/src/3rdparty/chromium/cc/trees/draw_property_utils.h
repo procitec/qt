@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,6 +6,7 @@
 #define CC_TREES_DRAW_PROPERTY_UTILS_H_
 
 #include <vector>
+#include "base/memory/raw_ptr.h"
 #include "cc/cc_export.h"
 #include "cc/layers/layer_collections.h"
 
@@ -24,6 +25,7 @@ class TransformTree;
 class PropertyTrees;
 struct EffectNode;
 struct TransformNode;
+struct ViewportPropertyIds;
 
 namespace draw_property_utils {
 
@@ -32,7 +34,9 @@ void CC_EXPORT ConcatInverseSurfaceContentsScale(const EffectNode* effect_node,
 
 // Computes combined (screen space) transforms for every node in the transform
 // tree. This must be done prior to calling |ComputeClips|.
-void CC_EXPORT ComputeTransforms(TransformTree* transform_tree);
+void CC_EXPORT
+ComputeTransforms(TransformTree* transform_tree,
+                  const ViewportPropertyIds& viewport_property_ids);
 
 // Computes screen space opacity for every node in the opacity tree.
 void CC_EXPORT ComputeEffects(EffectTree* effect_tree);
@@ -40,7 +44,7 @@ void CC_EXPORT ComputeEffects(EffectTree* effect_tree);
 void CC_EXPORT UpdatePropertyTrees(LayerTreeHost* layer_tree_host);
 
 void CC_EXPORT
-UpdatePropertyTreesAndRenderSurfaces(LayerImpl* root_layer,
+UpdatePropertyTreesAndRenderSurfaces(LayerTreeImpl* layer_tree_impl,
                                      PropertyTrees* property_trees);
 
 void CC_EXPORT FindLayersThatNeedUpdates(LayerTreeHost* layer_tree_host,
@@ -72,13 +76,9 @@ bool CC_EXPORT LayerShouldBeSkippedForDrawPropertiesComputation(
     LayerImpl* layer,
     const PropertyTrees* property_trees);
 
-bool CC_EXPORT IsLayerBackFaceVisible(LayerImpl* layer,
-                                      int transform_tree_index,
-                                      const PropertyTrees* property_trees);
-
-bool CC_EXPORT IsLayerBackFaceVisible(Layer* layer,
-                                      int transform_tree_index,
-                                      const PropertyTrees* property_trees);
+bool CC_EXPORT
+IsLayerBackFaceVisibleForTesting(const LayerImpl* layer,
+                                 const PropertyTrees* property_trees);
 
 #if DCHECK_IS_ON()
 // Checks and logs if double background blur exists in any layers. Returns

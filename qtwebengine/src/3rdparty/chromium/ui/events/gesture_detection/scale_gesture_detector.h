@@ -1,11 +1,13 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef UI_EVENTS_GESTURE_DETECTION_SCALE_GESTURE_DETECTOR_H_
 #define UI_EVENTS_GESTURE_DETECTION_SCALE_GESTURE_DETECTOR_H_
 
-#include "base/macros.h"
+#include <vector>
+
+#include "base/memory/raw_ptr.h"
 #include "base/time/time.h"
 #include "ui/events/gesture_detection/gesture_detection_export.h"
 
@@ -43,6 +45,10 @@ class GESTURE_DETECTION_EXPORT ScaleGestureDetector {
   };
 
   ScaleGestureDetector(const Config& config, ScaleGestureListener* listener);
+
+  ScaleGestureDetector(const ScaleGestureDetector&) = delete;
+  ScaleGestureDetector& operator=(const ScaleGestureDetector&) = delete;
+
   virtual ~ScaleGestureDetector();
 
   // Accepts MotionEvents and dispatches events to a |ScaleGestureListener|
@@ -76,6 +82,7 @@ class GESTURE_DETECTION_EXPORT ScaleGestureDetector {
   float GetPreviousSpanX() const;
   float GetPreviousSpanY() const;
   float GetScaleFactor() const;
+  float GetAngleChange() const;
   base::TimeDelta GetTimeDelta() const;
   base::TimeTicks GetEventTime() const;
 
@@ -87,12 +94,24 @@ class GESTURE_DETECTION_EXPORT ScaleGestureDetector {
   };
 
   void ResetScaleWithSpan(float span);
+  float CalculateAngle(const MotionEvent& event,
+                       int action_index,
+                       float focus_x,
+                       float focus_y) const;
 
-  ScaleGestureListener* const listener_;
+  const raw_ptr<ScaleGestureListener> listener_;
   bool stylus_scale_enabled_;
 
   float focus_x_;
   float focus_y_;
+
+  // `angles` are the angles between the horizontal axis and the lines
+  // connecting each individual finger locations to the focal point.
+  // They are stored so that their `ActionIndex` matches the index of
+  // the vector.
+  std::vector<float> curr_angles_;
+  std::vector<float> prev_angles_;
+
   float curr_span_;
   float prev_span_;
   float initial_span_;
@@ -111,8 +130,6 @@ class GESTURE_DETECTION_EXPORT ScaleGestureDetector {
   AnchoredScaleMode anchored_scale_mode_;
 
   bool event_before_or_above_starting_gesture_event_;
-
-  DISALLOW_COPY_AND_ASSIGN(ScaleGestureDetector);
 };
 
 }  // namespace ui

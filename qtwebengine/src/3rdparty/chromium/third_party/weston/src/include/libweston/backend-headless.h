@@ -34,13 +34,16 @@ extern "C" {
 
 #include <libweston/libweston.h>
 
-#define WESTON_HEADLESS_BACKEND_CONFIG_VERSION 2
+#define WESTON_HEADLESS_BACKEND_CONFIG_VERSION 3
 
 struct weston_headless_backend_config {
 	struct weston_backend_config base;
 
-	/** Whether to use the pixman renderer instead of the OpenGL ES renderer. */
-	bool use_pixman;
+	/** Select the renderer to use */
+	enum weston_renderer_type renderer;
+
+	/** Use output decorations, requires use_gl = true */
+	bool decorate;
 };
 
 #ifdef  __cplusplus

@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,17 +7,11 @@
 
 #include <jni.h>
 
-#include <memory>
-
 #include "base/android/jni_android.h"
 #include "base/android/jni_weak_ref.h"
 #include "base/android/scoped_java_ref.h"
-#include "base/compiler_specific.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/supports_user_data.h"
-#include "content/common/content_export.h"
-#include "mojo/public/cpp/bindings/pending_remote.h"
-#include "services/service_manager/public/mojom/interface_provider.mojom.h"
 
 namespace content {
 
@@ -28,16 +22,17 @@ class RenderFrameHostImpl;
 // native counterpart.
 class RenderFrameHostAndroid : public base::SupportsUserData::Data {
  public:
-  RenderFrameHostAndroid(
-      RenderFrameHostImpl* render_frame_host,
-      mojo::PendingRemote<service_manager::mojom::InterfaceProvider>
-          interface_provider_remote);
+  RenderFrameHostAndroid(RenderFrameHostImpl* render_frame_host);
+
+  RenderFrameHostAndroid(const RenderFrameHostAndroid&) = delete;
+  RenderFrameHostAndroid& operator=(const RenderFrameHostAndroid&) = delete;
+
   ~RenderFrameHostAndroid() override;
 
   base::android::ScopedJavaLocalRef<jobject> GetJavaObject();
 
   // Methods called from Java
-  base::android::ScopedJavaLocalRef<jstring> GetLastCommittedURL(
+  base::android::ScopedJavaLocalRef<jobject> GetLastCommittedURL(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>&) const;
 
@@ -49,6 +44,10 @@ class RenderFrameHostAndroid : public base::SupportsUserData::Data {
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>&,
       const base::android::JavaParamRef<jobject>& jcallback) const;
+
+  base::android::ScopedJavaLocalRef<jobjectArray> GetAllRenderFrameHosts(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>&) const;
 
   bool IsFeatureEnabled(JNIEnv* env,
                         const base::android::JavaParamRef<jobject>&,
@@ -62,34 +61,69 @@ class RenderFrameHostAndroid : public base::SupportsUserData::Data {
   void NotifyUserActivation(JNIEnv* env,
                             const base::android::JavaParamRef<jobject>&);
 
-  jboolean IsRenderFrameCreated(
+  void NotifyWebAuthnAssertionRequestSucceeded(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>&);
+
+  jboolean IsCloseWatcherActive(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>&) const;
+
+  jboolean SignalCloseWatcherIfActive(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>&) const;
+
+  jboolean IsRenderFrameLive(JNIEnv* env,
+                             const base::android::JavaParamRef<jobject>&) const;
+
+  void GetInterfaceToRendererFrame(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>&,
+      const base::android::JavaParamRef<jstring>& interface_name,
+      jlong message_pipe_handle) const;
+
+  void TerminateRendererDueToBadMessage(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>&,
+      jint reason) const;
 
   jboolean IsProcessBlocked(JNIEnv* env,
                             const base::android::JavaParamRef<jobject>&) const;
 
-  jint PerformGetAssertionWebAuthSecurityChecks(
+  void PerformGetAssertionWebAuthSecurityChecks(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>&,
       const base::android::JavaParamRef<jstring>&,
-      const base::android::JavaParamRef<jobject>&) const;
+      const base::android::JavaParamRef<jobject>&,
+      jboolean is_payment_credential_get_assertion,
+      const base::android::JavaParamRef<jobject>& callback) const;
 
-  jint PerformMakeCredentialWebAuthSecurityChecks(
+  void PerformMakeCredentialWebAuthSecurityChecks(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>&,
       const base::android::JavaParamRef<jstring>&,
-      const base::android::JavaParamRef<jobject>&) const;
+      const base::android::JavaParamRef<jobject>&,
+      jboolean is_payment_credential_creation,
+      const base::android::JavaParamRef<jobject>& callback) const;
+
+  jint GetLifecycleState(JNIEnv* env,
+                         const base::android::JavaParamRef<jobject>&) const;
+
+  void InsertVisualStateCallback(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& jcallback);
+
+  void ExecuteJavaScriptInIsolatedWorld(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jstring>& jstring,
+      jint jworldId,
+      const base::android::JavaParamRef<jobject>& jcallback);
 
   RenderFrameHostImpl* render_frame_host() const { return render_frame_host_; }
 
  private:
-  RenderFrameHostImpl* const render_frame_host_;
-  mojo::PendingRemote<service_manager::mojom::InterfaceProvider>
-      interface_provider_remote_;
+  const raw_ptr<RenderFrameHostImpl> render_frame_host_;
   JavaObjectWeakGlobalRef obj_;
-
-  DISALLOW_COPY_AND_ASSIGN(RenderFrameHostAndroid);
 };
 
 }  // namespace content

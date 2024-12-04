@@ -1,82 +1,47 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtQml module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
-#include "qv4global_p.h"
 #include "qv4runtime_p.h"
-#include "qv4engine_p.h"
-#include "qv4object_p.h"
-#include "qv4objectproto_p.h"
-#include "qv4globalobject_p.h"
-#include "qv4stringobject_p.h"
-#include "qv4argumentsobject_p.h"
-#include "qv4objectiterator_p.h"
-#include "qv4dateobject_p.h"
-#include "qv4lookup_p.h"
-#include "qv4function_p.h"
-#include "qv4numberobject_p.h"
-#include "qv4regexp_p.h"
-#include "qv4regexpobject_p.h"
-#include "private/qlocale_tools_p.h"
-#include "qv4scopedvalue_p.h"
-#include "qv4jscall_p.h"
-#include <private/qv4qmlcontext_p.h>
-#include <private/qqmltypewrapper_p.h>
+
 #include <private/qqmlengine_p.h>
 #include <private/qqmljavascriptexpression_p.h>
 #include <private/qqmljsast_p.h>
-#include "qv4qobjectwrapper_p.h"
-#include "qv4symbol_p.h"
-#include "qv4generatorobject_p.h"
+#include <private/qqmltypewrapper_p.h>
+#include <private/qqmlvaluetypewrapper_p.h>
+#include <private/qv4argumentsobject_p.h>
+#include <private/qv4engine_p.h>
+#include <private/qv4function_p.h>
+#include <private/qv4generatorobject_p.h>
+#include <private/qv4global_p.h>
+#include <private/qv4globalobject_p.h>
+#include <private/qv4jscall_p.h>
+#include <private/qv4lookup_p.h>
+#include <private/qv4math_p.h>
+#include <private/qv4object_p.h>
+#include <private/qv4qmlcontext_p.h>
+#include <private/qv4qobjectwrapper_p.h>
+#include <private/qv4regexp_p.h>
+#include <private/qv4regexpobject_p.h>
+#include <private/qv4scopedvalue_p.h>
+#include <private/qv4stackframe_p.h>
+#include <private/qv4symbol_p.h>
 
-#include <QtCore/QDebug>
+#include <wtf/MathExtras.h>
+
+#include <QtCore/private/qlocale_tools_p.h>
+#include <QtCore/qdebug.h>
+
+#ifdef QV4_COUNT_RUNTIME_FUNCTIONS
+#  include <QtCore/qbuffer.h>
+#endif // QV4_COUNT_RUNTIME_FUNCTIONS
+
 #include <cassert>
 #include <cstdio>
 #include <stdlib.h>
 
-#include <wtf/MathExtras.h>
-
-#ifdef QV4_COUNT_RUNTIME_FUNCTIONS
-#  include <QtCore/QBuffer>
-#  include <QtCore/QDebug>
-#endif // QV4_COUNT_RUNTIME_FUNCTIONS
-
 QT_BEGIN_NAMESPACE
+
+Q_LOGGING_CATEGORY(lcCoercingTypeAssertion, "qt.qml.coercingTypeAssertion");
 
 namespace QV4 {
 
@@ -179,7 +144,7 @@ struct RuntimeCounters::Data {
         }
         std::sort(lines.begin(), lines.end(), Line::less);
         outs << lines.size() << " counters:" << endl;
-        for (const Line &line : qAsConst(lines))
+        for (const Line &line : std::as_const(lines))
             outs << qSetFieldWidth(10) << line.count << qSetFieldWidth(0)
                  << " | " << line.func
                  << " | " << pretty(line.tag1)
@@ -252,7 +217,7 @@ void RuntimeHelpers::numberToString(QString *result, double num, int radix)
         *result = qdtoa(num, &decpt, &sign);
 
         if (decpt <= ecma_shortest_low || decpt > ecma_shortest_high) {
-            if (result->length() > 1)
+            if (result->size() > 1)
                 result->insert(1, dot);
             result->append(QLatin1Char('e'));
             if (decpt > 0)
@@ -260,10 +225,10 @@ void RuntimeHelpers::numberToString(QString *result, double num, int radix)
             result->append(QString::number(decpt - 1));
         } else if (decpt <= 0) {
             result->prepend(QLatin1String("0.") + QString(-decpt, zero));
-        } else if (decpt < result->length()) {
+        } else if (decpt < result->size()) {
             result->insert(decpt, dot);
         } else {
-            result->append(QString(decpt - result->length(), zero));
+            result->append(QString(decpt - result->size(), zero));
         }
 
         if (sign && num)
@@ -319,17 +284,36 @@ ReturnedValue Runtime::Closure::call(ExecutionEngine *engine, int functionId)
     QV4::Function *clos = engine->currentStackFrame->v4Function->executableCompilationUnit()
                                   ->runtimeFunctions[functionId];
     Q_ASSERT(clos);
-    ExecutionContext *current = static_cast<ExecutionContext *>(&engine->currentStackFrame->jsFrame->context);
+    ExecutionContext *current = engine->currentContext();
+    Scope s(engine);
+    QV4::ScopedObject closure(s);
+
     if (clos->isGenerator())
-        return GeneratorFunction::create(current, clos)->asReturnedValue();
-    return FunctionObject::createScriptFunction(current, clos)->asReturnedValue();
+        closure = GeneratorFunction::create(current, clos)->asReturnedValue();
+    else
+        closure = FunctionObject::createScriptFunction(current, clos)->asReturnedValue();
+    // ### TODO: only keep reference to scripts if actually needed; see QTBUG-130795
+    Scoped<QV4::QmlContext> callingQmlContext(s, s.engine->qmlContext());
+    if (callingQmlContext) {
+        // ### TODO: It would be more efficient to use custom Function prototypes instead of setting a property
+        // ==> QTBUG-130798
+        Scoped<QV4::QQmlContextWrapper> qmlContextWrapper(s, callingQmlContext->d()->qml());
+        const QV4::QQmlContextWrapper *resource = qmlContextWrapper;
+        QQmlRefPointer<QQmlContextData> context = resource->getContext();
+        if (!context->importedScripts().isNullOrUndefined()) {
+            QV4::ScopedString name(s, engine->newString(QLatin1StringView("$importedScripts")));
+            QV4::ScopedObject scripts(s, context->importedScripts());
+            closure->insertMember(name, scripts, Attr_Invalid);
+        }
+    }
+    return closure.asReturnedValue();
 }
 
 Bool Runtime::DeleteProperty_NoThrow::call(ExecutionEngine *engine, const Value &base, const Value &index)
 {
     Scope scope(engine);
     ScopedObject o(scope, base.toObject(engine));
-    if (scope.engine->hasException)
+    if (scope.hasException())
         return Encode::undefined();
     Q_ASSERT(o);
 
@@ -354,7 +338,7 @@ Bool Runtime::DeleteName_NoThrow::call(ExecutionEngine *engine, int nameIndex)
 {
     Scope scope(engine);
     ScopedString name(scope, engine->currentStackFrame->v4Function->compilationUnit->runtimeStrings[nameIndex]);
-    return static_cast<ExecutionContext &>(engine->currentStackFrame->jsFrame->context).deleteProperty(name);
+    return engine->currentContext()->deleteProperty(name);
 }
 
 ReturnedValue Runtime::DeleteName::call(ExecutionEngine *engine, Function *function, int name)
@@ -368,7 +352,7 @@ ReturnedValue Runtime::DeleteName::call(ExecutionEngine *engine, Function *funct
     }
 }
 
-QV4::ReturnedValue Runtime::Instanceof::call(ExecutionEngine *engine, const Value &lval, const Value &rval)
+static QV4::ReturnedValue doInstanceof(ExecutionEngine *engine, const Value &lval, const Value &rval)
 {
     // 11.8.6, 5: rval must be an Object
     const Object *rhs = rval.as<Object>();
@@ -384,13 +368,75 @@ QV4::ReturnedValue Runtime::Instanceof::call(ExecutionEngine *engine, const Valu
     Scope scope(engine);
     ScopedValue hasInstance(scope, rhs->get(engine->symbol_hasInstance()));
     if (hasInstance->isUndefined())
-        return rhs->instanceOf(lval);
+        return Encode(rhs->instanceOf(lval));
+
     FunctionObject *fHasInstance = hasInstance->as<FunctionObject>();
     if (!fHasInstance)
         return engine->throwTypeError();
 
-    ScopedValue result(scope, fHasInstance->call(&rval, &lval, 1));
+    return Encode(fHasInstance->call(&rval, &lval, 1));
+}
+
+QV4::ReturnedValue Runtime::Instanceof::call(ExecutionEngine *engine, const Value &lval, const Value &rval)
+{
+    Scope scope(engine);
+    ScopedValue result(scope, doInstanceof(engine, lval, rval));
     return scope.hasException() ? Encode::undefined() : Encode(result->toBoolean());
+}
+
+QV4::ReturnedValue Runtime::As::call(ExecutionEngine *engine, const Value &lval, const Value &rval)
+{
+    Scope scope(engine);
+    ScopedValue result(scope, doInstanceof(engine, lval, rval));
+
+    if (scope.hasException()) {
+        // "foo instanceof valueType" must not throw an exception.
+        // So this can only be an object type.
+        engine->catchException();
+        return Encode::null();
+    }
+
+    if (result->toBoolean())
+        return lval.asReturnedValue();
+    else if (result->isBoolean())
+        return Encode::null();
+
+    if (engine->callingQmlContext()->valueTypesAreAssertable())
+        return Encode::undefined();
+
+    // Try to convert the value type
+    Scoped<QQmlTypeWrapper> typeWrapper(scope, rval);
+    if (!typeWrapper)
+        return Encode::undefined();
+
+    const auto *stackFrame = engine->currentStackFrame;
+    if (lval.as<QQmlValueTypeWrapper>()) {
+        qCWarning(lcCoercingTypeAssertion).nospace().noquote()
+                << stackFrame->source() << ':' << stackFrame->lineNumber() << ':'
+                << " Coercing between incompatible value types mistakenly yields null rather than"
+                << " undefined. Add 'pragma ValueTypeBehavior: Assertable' to prevent this.";
+        return Encode::null();
+    }
+
+    if (lval.as<QV4::QObjectWrapper>()) {
+        qCWarning(lcCoercingTypeAssertion).nospace().noquote()
+                << stackFrame->source() << ':' << stackFrame->lineNumber() << ':'
+                << " Coercing from instances of object types to value types mistakenly yields null"
+                << " rather than undefined. Add 'pragma ValueTypeBehavior: Assertable' to prevent"
+                << " this.";
+        return Encode::null();
+    }
+
+    result = coerce(engine, lval, typeWrapper->d()->type(), false);
+    if (result->isUndefined())
+        return Encode::undefined();
+
+    qCWarning(lcCoercingTypeAssertion).nospace().noquote()
+            << stackFrame->source() << ':' << stackFrame->lineNumber() << ':'
+            << " Coercing a value to " << typeWrapper->toQStringNoThrow()
+            << " using a type assertion. This behavior is deprecated."
+            << " Add 'pragma ValueTypeBehavior: Assertable' to prevent it.";
+    return result->asReturnedValue();
 }
 
 QV4::ReturnedValue Runtime::In::call(ExecutionEngine *engine, const Value &left, const Value &right)
@@ -414,10 +460,10 @@ double RuntimeHelpers::stringToNumber(const QString &string)
     // libdoubleconversion sources. The same maximum value would be represented by roughly 3.5 times
     // as many binary digits.
     const int excessiveLength = 16 * 1024;
-    if (string.length() > excessiveLength)
+    if (string.size() > excessiveLength)
         return qQNaN();
 
-    const QStringRef s = QStringRef(&string).trimmed();
+    const QStringView s = QStringView(string).trimmed();
     if (s.startsWith(QLatin1Char('0'))) {
         int base = -1;
         if (s.startsWith(QLatin1String("0x")) || s.startsWith(QLatin1String("0X")))
@@ -590,7 +636,7 @@ Heap::String *RuntimeHelpers::convertToString(ExecutionEngine *engine, Value val
         goto redo;
     }
     case Value::Integer_Type:
-        return RuntimeHelpers::stringFromNumber(engine, value.int_32());
+        return engine->newString(QString::number(value.int_32()));
     default: // double
         return RuntimeHelpers::stringFromNumber(engine, value.doubleValue());
     } // switch
@@ -664,7 +710,7 @@ static Q_NEVER_INLINE ReturnedValue getElementIntFallback(ExecutionEngine *engin
     ScopedObject o(scope, object);
     if (!o) {
         if (const String *str = object.as<String>()) {
-            if (idx >= (uint)str->toQString().length()) {
+            if (idx >= (uint)str->toQString().size()) {
                 return Encode::undefined();
             }
             const QString s = str->toQString().mid(idx, 1);
@@ -802,7 +848,7 @@ ReturnedValue Runtime::GetIterator::call(ExecutionEngine *engine, const Value &i
         ScopedFunctionObject f(scope, o->get(engine->symbol_iterator()));
         if (!f)
             return engine->throwTypeError();
-        JSCallData cData(scope, 0, nullptr, o);
+        JSCallData cData(o, nullptr, 0);
         ScopedObject it(scope, f->call(cData));
         if (engine->hasException)
             return Encode::undefined();
@@ -825,7 +871,7 @@ ReturnedValue Runtime::IteratorNext::call(ExecutionEngine *engine, const Value &
         engine->throwTypeError();
         return Encode(true);
     }
-    JSCallData cData(scope, 0, nullptr, &iterator);
+    JSCallData cData(&iterator, nullptr, 0);
     ScopedObject o(scope, f->call(cData));
     if (scope.hasException())
         return Encode(true);
@@ -868,6 +914,8 @@ ReturnedValue Runtime::IteratorNextForYieldStar::call(ExecutionEngine *engine, c
             engine->hasException = false;
 
             ScopedValue ret(scope, static_cast<const Object &>(iterator).get(engine->id_return()));
+            if (engine->hasException)
+                return Encode(true);
             if (ret->isUndefined()) {
                 // propagate return()
                 return Encode::undefined();
@@ -882,14 +930,13 @@ ReturnedValue Runtime::IteratorNextForYieldStar::call(ExecutionEngine *engine, c
 
             ScopedValue t(scope, static_cast<const Object &>(iterator).get(engine->id_throw()));
             if (engine->hasException)
-                return Encode::undefined();
+                return Encode(true);
             if (t->isUndefined()) {
                 // no throw method on the iterator
-                ScopedValue done(scope, Encode(false));
-                IteratorClose::call(engine, iterator, done);
-                if (engine->hasException)
-                    return Encode::undefined();
-                return engine->throwTypeError();
+                IteratorClose::call(engine, iterator);
+                if (!engine->hasException)
+                    engine->throwTypeError();
+                return Encode(true);
             }
             f = t->as<FunctionObject>();
             arg = exceptionValue;
@@ -900,14 +947,18 @@ ReturnedValue Runtime::IteratorNextForYieldStar::call(ExecutionEngine *engine, c
         f = next->as<FunctionObject>();
     }
 
-    if (!f)
-        return engine->throwTypeError();
+    if (!f) {
+        engine->throwTypeError();
+        return Encode(true);
+    }
 
     ScopedObject o(scope, f->call(&iterator, arg, 1));
     if (scope.hasException())
         return Encode(true);
-    if (!o)
-        return engine->throwTypeError();
+    if (!o) {
+        engine->throwTypeError();
+        return Encode(true);
+    }
 
     ScopedValue d(scope, o->get(engine->id_done()));
     if (scope.hasException())
@@ -915,18 +966,15 @@ ReturnedValue Runtime::IteratorNextForYieldStar::call(ExecutionEngine *engine, c
     bool done = d->toBoolean();
     if (done) {
         *object = o->get(engine->id_value());
-        return returnCalled ? Encode::undefined() : Encode(true);
+        return (returnCalled && !engine->hasException) ? Encode::undefined() : Encode(true);
     }
     *object = o;
     return Encode(false);
 }
 
-ReturnedValue Runtime::IteratorClose::call(ExecutionEngine *engine, const Value &iterator, const Value &done)
+ReturnedValue Runtime::IteratorClose::call(ExecutionEngine *engine, const Value &iterator)
 {
     Q_ASSERT(iterator.isObject());
-    Q_ASSERT(done.isBoolean());
-    if (done.booleanValue())
-        return Encode::undefined();
 
     Scope scope(engine);
     ScopedValue e(scope);
@@ -987,7 +1035,7 @@ void Runtime::StoreNameSloppy::call(ExecutionEngine *engine, int nameIndex, cons
 {
     Scope scope(engine);
     ScopedString name(scope, engine->currentStackFrame->v4Function->compilationUnit->runtimeStrings[nameIndex]);
-    ExecutionContext::Error e = static_cast<ExecutionContext &>(engine->currentStackFrame->jsFrame->context).setProperty(name, value);
+    ExecutionContext::Error e = engine->currentContext()->setProperty(name, value);
 
     if (e == ExecutionContext::RangeError)
         engine->globalObject->put(name, value);
@@ -997,7 +1045,7 @@ void Runtime::StoreNameStrict::call(ExecutionEngine *engine, int nameIndex, cons
 {
     Scope scope(engine);
     ScopedString name(scope, engine->currentStackFrame->v4Function->compilationUnit->runtimeStrings[nameIndex]);
-    ExecutionContext::Error e = static_cast<ExecutionContext &>(engine->currentStackFrame->jsFrame->context).setProperty(name, value);
+    ExecutionContext::Error e = engine->currentContext()->setProperty(name, value);
     if (e == ExecutionContext::TypeError)
         engine->throwTypeError();
     else if (e == ExecutionContext::RangeError)
@@ -1028,32 +1076,50 @@ ReturnedValue Runtime::LoadName::call(ExecutionEngine *engine, int nameIndex)
 {
     Scope scope(engine);
     ScopedString name(scope, engine->currentStackFrame->v4Function->compilationUnit->runtimeStrings[nameIndex]);
-    return static_cast<ExecutionContext &>(engine->currentStackFrame->jsFrame->context).getProperty(name);
+    return engine->currentContext()->getProperty(name);
 }
 
 static Object *getSuperBase(Scope &scope)
 {
-    if (scope.engine->currentStackFrame->jsFrame->thisObject.isEmpty()) {
-        scope.engine->throwReferenceError(QStringLiteral("Missing call to super()."), QString(), 0, 0);
-        return nullptr;
+    Scoped<JavaScriptFunctionObject> f(scope);
+    ScopedObject homeObject(scope);
+    if (scope.engine->currentStackFrame->isJSTypesFrame()) {
+        JSTypesStackFrame *frame = static_cast<JSTypesStackFrame *>(
+                    scope.engine->currentStackFrame);
+
+        if (frame->jsFrame->thisObject.isEmpty()) {
+            scope.engine->throwReferenceError(
+                        QStringLiteral("Missing call to super()."), QString(), 0, 0);
+            return nullptr;
+        }
+
+        f = Value::fromStaticValue(frame->jsFrame->function);
+        homeObject = f->getHomeObject();
+    } else {
+        Q_ASSERT(scope.engine->currentStackFrame->isMetaTypesFrame());
+        MetaTypesStackFrame *frame = static_cast<MetaTypesStackFrame *>(
+                    scope.engine->currentStackFrame);
+        if (frame->thisObject() == nullptr) {
+            scope.engine->throwReferenceError(
+                        QStringLiteral("Missing call to super()."), QString(), 0, 0);
+            return nullptr;
+        }
     }
 
-    ScopedFunctionObject f(
-            scope, Value::fromStaticValue(scope.engine->currentStackFrame->jsFrame->function));
-    ScopedObject homeObject(scope, f->getHomeObject());
     if (!homeObject) {
-        ScopedContext ctx(scope, static_cast<ExecutionContext *>(&scope.engine->currentStackFrame->jsFrame->context));
+        ScopedContext ctx(scope, scope.engine->currentContext());
         Q_ASSERT(ctx);
         while (ctx) {
             if (CallContext *c = ctx->asCallContext()) {
                 f = c->d()->function;
                 QV4::Function *fn = f->function();
-                if (fn && !fn->isArrowFunction() && !fn->isEval)
+                if (fn && !fn->isArrowFunction() && fn->kind != Function::Eval)
                     break;
             }
             ctx = ctx->d()->outer;
         }
-        homeObject = f->getHomeObject();
+        if (f)
+            homeObject = f->getHomeObject();
     }
     if (!homeObject) {
         scope.engine->throwTypeError();
@@ -1077,8 +1143,18 @@ ReturnedValue Runtime::LoadSuperProperty::call(ExecutionEngine *engine, const Va
     ScopedPropertyKey key(scope, property.toPropertyKey(engine));
     if (engine->hasException)
         return Encode::undefined();
-    return base->get(
-            key, &(engine->currentStackFrame->jsFrame->thisObject.asValue<Value>()));
+
+    if (scope.engine->currentStackFrame->isJSTypesFrame()) {
+        JSTypesStackFrame *frame = static_cast<JSTypesStackFrame *>(
+                    scope.engine->currentStackFrame);
+        return base->get(key, &(frame->jsFrame->thisObject.asValue<Value>()));
+    } else {
+        Q_ASSERT(scope.engine->currentStackFrame->isMetaTypesFrame());
+        MetaTypesStackFrame *frame = static_cast<MetaTypesStackFrame *>(
+                    scope.engine->currentStackFrame);
+        Scoped<QObjectWrapper> wrapper(scope, QObjectWrapper::wrap(engine, frame->thisObject()));
+        return base->get(key, wrapper);
+    }
 }
 
 void Runtime::StoreSuperProperty::call(ExecutionEngine *engine, const Value &property, const Value &value)
@@ -1090,8 +1166,20 @@ void Runtime::StoreSuperProperty::call(ExecutionEngine *engine, const Value &pro
     ScopedPropertyKey key(scope, property.toPropertyKey(engine));
     if (engine->hasException)
         return;
-    bool result = base->put(
-            key, value, &(engine->currentStackFrame->jsFrame->thisObject.asValue<Value>()));
+
+    bool result;
+    if (scope.engine->currentStackFrame->isJSTypesFrame()) {
+        JSTypesStackFrame *frame = static_cast<JSTypesStackFrame *>(
+                    scope.engine->currentStackFrame);
+        result = base->put(key, value, &(frame->jsFrame->thisObject.asValue<Value>()));
+    } else {
+        Q_ASSERT(scope.engine->currentStackFrame->isMetaTypesFrame());
+        MetaTypesStackFrame *frame = static_cast<MetaTypesStackFrame *>(
+                    scope.engine->currentStackFrame);
+        Scoped<QObjectWrapper> wrapper(scope, QObjectWrapper::wrap(engine, frame->thisObject()));
+        result = base->put(key, value, wrapper);
+    }
+
     if (!result && engine->currentStackFrame->v4Function->isStrict())
         engine->throwTypeError();
 }
@@ -1131,14 +1219,28 @@ void Runtime::SetLookupStrict::call(Function *f, const Value &base, int index, c
 
 ReturnedValue Runtime::LoadSuperConstructor::call(ExecutionEngine *engine, const Value &t)
 {
-    if (engine->currentStackFrame->thisObject() != Value::emptyValue().asReturnedValue()) {
-        return engine->throwReferenceError(QStringLiteral("super() already called."), QString(), 0, 0); // ### fix line number
+    if (engine->currentStackFrame->isJSTypesFrame()) {
+        JSTypesStackFrame *frame = static_cast<JSTypesStackFrame *>(engine->currentStackFrame);
+        if (frame->thisObject() != Value::emptyValue().asReturnedValue()) {
+            // ### TODO: fix line number
+            return engine->throwReferenceError(
+                        QStringLiteral("super() already called."), QString(), 0, 0);
+        }
+    } else {
+        Q_ASSERT(engine->currentStackFrame->isMetaTypesFrame());
+        MetaTypesStackFrame *frame = static_cast<MetaTypesStackFrame *>(engine->currentStackFrame);
+        if (frame->thisObject() != nullptr) {
+            // ### TODO: fix line number
+            return engine->throwReferenceError(
+                        QStringLiteral("super() already called."), QString(), 0, 0);
+        }
     }
+
     const FunctionObject *f = t.as<FunctionObject>();
     if (!f)
         return engine->throwTypeError();
     Heap::Object *c = static_cast<const Object &>(t).getPrototypeOf();
-    if (!c->vtable()->isFunctionObject || !static_cast<Heap::FunctionObject *>(c)->isConstructor())
+    if (!c->vtable()->callAsConstructor)
         return engine->throwTypeError();
     return c->asReturnedValue();
 }
@@ -1372,8 +1474,8 @@ ReturnedValue Runtime::CallPossiblyDirectEval::call(ExecutionEngine *engine, Val
     Scope scope(engine);
     ScopedValue thisObject(scope);
 
-    ExecutionContext &ctx = static_cast<ExecutionContext &>(engine->currentStackFrame->jsFrame->context);
-    ScopedFunctionObject function(scope, ctx.getPropertyAndBase(engine->id_eval(), thisObject));
+    ScopedFunctionObject function(
+                scope, engine->currentContext()->getPropertyAndBase(engine->id_eval(), thisObject));
     if (engine->hasException)
         return Encode::undefined();
 
@@ -1392,8 +1494,7 @@ ReturnedValue Runtime::CallName::call(ExecutionEngine *engine, int nameIndex, Va
     ScopedValue thisObject(scope);
     ScopedString name(scope, engine->currentStackFrame->v4Function->compilationUnit->runtimeStrings[nameIndex]);
 
-    ExecutionContext &ctx = static_cast<ExecutionContext &>(engine->currentStackFrame->jsFrame->context);
-    ScopedFunctionObject f(scope, ctx.getPropertyAndBase(name, thisObject));
+    ScopedFunctionObject f(scope, engine->currentContext()->getPropertyAndBase(name, thisObject));
     if (engine->hasException)
         return Encode::undefined();
 
@@ -1454,28 +1555,17 @@ ReturnedValue Runtime::CallPropertyLookup::call(ExecutionEngine *engine, const V
     // ok to have the value on the stack here
     Value f = Value::fromReturnedValue(l->getter(l, engine, base));
 
-    if (!f.isFunctionObject())
-        return engine->throwTypeError();
+    if (Q_LIKELY(f.isFunctionObject()))
+        return checkedResult(engine, static_cast<FunctionObject &>(f).call(&base, argv, argc));
 
-    return checkedResult(engine, static_cast<FunctionObject &>(f).call(&base, argv, argc));
-}
+    if (QmlSignalHandler *handler = f.as<QmlSignalHandler>())
+        return checkedResult(engine, handler->call(&base, argv, argc));
 
-ReturnedValue Runtime::CallElement::call(ExecutionEngine *engine, const Value &baseRef, const Value &index, Value *argv, int argc)
-{
-    const Value *base = &baseRef;
-    Scope scope(engine);
-    ScopedValue thisObject(scope, base->toObject(engine));
-    base = thisObject;
-
-    ScopedPropertyKey str(scope, index.toPropertyKey(engine));
-    if (engine->hasException)
-        return Encode::undefined();
-
-    ScopedFunctionObject f(scope, static_cast<const Object *>(base)->get(str));
-    if (!f)
-        return engine->throwTypeError();
-
-    return checkedResult(engine, f->call(base, argv, argc));
+    const QString message = QStringLiteral("Property '%1' of object %2 is not a function")
+                                  .arg(engine->currentStackFrame->v4Function->compilationUnit
+                                               ->runtimeStrings[l->nameIndex]->toQString())
+                                  .arg(base.toQStringNoThrow());
+    return engine->throwTypeError(message);
 }
 
 ReturnedValue Runtime::CallValue::call(ExecutionEngine *engine, const Value &func, Value *argv, int argc)
@@ -1520,16 +1610,21 @@ static CallArgs createSpreadArguments(Scope &scope, Value *argv, int argc)
         // spread element
         ++i;
         it = Runtime::GetIterator::call(scope.engine, argv[i], /* ForInIterator */ 1);
-        if (scope.engine->hasException)
+        if (scope.hasException())
             return { nullptr, 0 };
         while (1) {
             done = Runtime::IteratorNext::call(scope.engine, it, v);
-            if (scope.engine->hasException)
+            if (scope.hasException())
                 return { nullptr, 0 };
             Q_ASSERT(done->isBoolean());
             if (done->booleanValue())
                 break;
             ++argCount;
+            constexpr auto safetyMargin = 100; // leave some space on the stack for actual work with the elements
+            if (qint64(scope.engine->jsStackLimit - scope.engine->jsStackTop) < safetyMargin) {
+                scope.engine->throwRangeError(QLatin1String("Too many elements in array to use it with the spread operator"));
+                        return { nullptr, 0 };
+            }
             v = scope.alloc<Scope::Uninitialized>();
         }
     }
@@ -1572,7 +1667,7 @@ ReturnedValue Runtime::ConstructWithSpread::call(ExecutionEngine *engine, const 
     return static_cast<const FunctionObject &>(function).callAsConstructor(arguments.argv, arguments.argc, &newTarget);
 }
 
-ReturnedValue Runtime::TailCall::call(CppStackFrame *frame, ExecutionEngine *engine)
+ReturnedValue Runtime::TailCall::call(JSTypesStackFrame *frame, ExecutionEngine *engine)
 {
     // IMPORTANT! The JIT assumes that this method has the same amount (or less) arguments than
     // the jitted function, so it can safely do a tail call.
@@ -1584,22 +1679,26 @@ ReturnedValue Runtime::TailCall::call(CppStackFrame *frame, ExecutionEngine *eng
     int argc = tos[StackOffsets::tailCall_argc].int_32();
     Q_ASSERT(argc >= 0);
 
-    if (!function.isFunctionObject())
+    const JavaScriptFunctionObject *jsfo = function.as<JavaScriptFunctionObject>();
+    if (!jsfo) {
+        if (const FunctionObject *fo = function.as<FunctionObject>())
+            return checkedResult(engine, fo->call(&thisObject, argv, argc));
         return engine->throwTypeError();
-
-    const FunctionObject &fo = static_cast<const FunctionObject &>(function);
-    if (!frame->callerCanHandleTailCall || !fo.canBeTailCalled() || engine->debugger()
-            || unsigned(argc) > fo.formalParameterCount()) {
-        // Cannot tailcall, do a normal call:
-        return checkedResult(engine, fo.call(&thisObject, argv, argc));
     }
 
-    memcpy(frame->jsFrame->args, argv, argc * sizeof(Value));
-    frame->init(engine, fo.function(), frame->jsFrame->argValues<Value>(), argc,
-                frame->callerCanHandleTailCall);
-    frame->setupJSFrame(frame->savedStackTop, fo, fo.scope(), thisObject, Primitive::undefinedValue());
-    engine->jsStackTop = frame->savedStackTop + frame->requiredJSStackFrameSize();
-    frame->pendingTailCall = true;
+    if (!frame->callerCanHandleTailCall() || !jsfo->canBeTailCalled() || engine->debugger()
+            || unsigned(argc) > jsfo->formalParameterCount()) {
+        // Cannot tailcall, do a normal call:
+        return checkedResult(engine, jsfo->call(&thisObject, argv, argc));
+    }
+
+    memmove(frame->jsFrame->args, argv, argc * sizeof(Value));
+    frame->init(jsfo->function(), frame->jsFrame->argValues<Value>(), argc,
+                frame->callerCanHandleTailCall());
+    frame->setupJSFrame(frame->framePointer(), *jsfo, jsfo->scope(), thisObject,
+                        Primitive::undefinedValue());
+    engine->jsStackTop = frame->framePointer() + frame->requiredJSStackFrameSize();
+    frame->setPendingTailCall(true);
     return Encode::undefined();
 }
 
@@ -1644,20 +1743,21 @@ QV4::ReturnedValue Runtime::TypeofName::call(ExecutionEngine *engine, int nameIn
 {
     Scope scope(engine);
     ScopedString name(scope, engine->currentStackFrame->v4Function->compilationUnit->runtimeStrings[nameIndex]);
-    ScopedValue prop(scope, static_cast<ExecutionContext &>(engine->currentStackFrame->jsFrame->context).getProperty(name));
+    ScopedValue prop(scope, engine->currentContext()->getProperty(name));
     // typeof doesn't throw. clear any possible exception
     scope.engine->hasException = false;
     return TypeofValue::call(engine, prop);
 }
 
-void Runtime::PushCallContext::call(CppStackFrame *frame)
+void Runtime::PushCallContext::call(JSTypesStackFrame *frame)
 {
     frame->jsFrame->context = ExecutionContext::newCallContext(frame)->asReturnedValue();
 }
 
 ReturnedValue Runtime::PushWithContext::call(ExecutionEngine *engine, const Value &acc)
 {
-    CallData *jsFrame = engine->currentStackFrame->jsFrame;
+    Q_ASSERT(engine->currentStackFrame->isJSTypesFrame());
+    CallData *jsFrame = static_cast<JSTypesStackFrame *>(engine->currentStackFrame)->jsFrame;
     Value &newAcc = jsFrame->accumulator.asValue<Value>();
     newAcc = Value::fromHeapObject(acc.toObject(engine));
     if (!engine->hasException) {
@@ -1672,18 +1772,23 @@ ReturnedValue Runtime::PushWithContext::call(ExecutionEngine *engine, const Valu
 
 void Runtime::PushCatchContext::call(ExecutionEngine *engine, int blockIndex, int exceptionVarNameIndex)
 {
+    Q_ASSERT(engine->currentStackFrame->isJSTypesFrame());
     auto name = engine->currentStackFrame->v4Function->compilationUnit->runtimeStrings[exceptionVarNameIndex];
-    engine->currentStackFrame->jsFrame->context = ExecutionContext::newCatchContext(engine->currentStackFrame, blockIndex, name)->asReturnedValue();
+    static_cast<JSTypesStackFrame *>(engine->currentStackFrame)->jsFrame->context
+            = ExecutionContext::newCatchContext(engine->currentStackFrame, blockIndex, name)->asReturnedValue();
 }
 
 void Runtime::PushBlockContext::call(ExecutionEngine *engine, int index)
 {
-    engine->currentStackFrame->jsFrame->context = ExecutionContext::newBlockContext(engine->currentStackFrame, index)->asReturnedValue();
+    Q_ASSERT(engine->currentStackFrame->isJSTypesFrame());
+    static_cast<JSTypesStackFrame *>(engine->currentStackFrame)->jsFrame->context
+            = ExecutionContext::newBlockContext(engine->currentStackFrame, index)->asReturnedValue();
 }
 
 void Runtime::CloneBlockContext::call(ExecutionEngine *engine)
 {
-    auto frame = engine->currentStackFrame;
+    Q_ASSERT(engine->currentStackFrame->isJSTypesFrame());
+    auto frame = static_cast<JSTypesStackFrame *>(engine->currentStackFrame);
     auto context = static_cast<Heap::CallContext *>(
             Value::fromStaticValue(frame->jsFrame->context).m());
     frame->jsFrame->context =
@@ -1692,18 +1797,20 @@ void Runtime::CloneBlockContext::call(ExecutionEngine *engine)
 
 void Runtime::PushScriptContext::call(ExecutionEngine *engine, int index)
 {
-    Q_ASSERT(engine->currentStackFrame->context()->d()->type == Heap::ExecutionContext::Type_GlobalContext ||
-             engine->currentStackFrame->context()->d()->type == Heap::ExecutionContext::Type_QmlContext);
+    Q_ASSERT(engine->currentStackFrame->isJSTypesFrame());
+    Q_ASSERT(engine->currentContext()->d()->type == Heap::ExecutionContext::Type_GlobalContext ||
+             engine->currentContext()->d()->type == Heap::ExecutionContext::Type_QmlContext);
     ReturnedValue c = ExecutionContext::newBlockContext(engine->currentStackFrame, index)->asReturnedValue();
     engine->setScriptContext(c);
-    engine->currentStackFrame->jsFrame->context = c;
+    static_cast<JSTypesStackFrame *>(engine->currentStackFrame)->jsFrame->context = c;
 }
 
 void Runtime::PopScriptContext::call(ExecutionEngine *engine)
 {
+    Q_ASSERT(engine->currentStackFrame->isJSTypesFrame());
     ReturnedValue root = engine->rootContext()->asReturnedValue();
     engine->setScriptContext(root);
-    engine->currentStackFrame->jsFrame->context = root;
+    static_cast<JSTypesStackFrame *>(engine->currentStackFrame)->jsFrame->context = root;
 }
 
 void Runtime::ThrowReferenceError::call(ExecutionEngine *engine, int nameIndex)
@@ -1717,6 +1824,21 @@ void Runtime::ThrowOnNullOrUndefined::call(ExecutionEngine *engine, const Value 
 {
     if (v.isNullOrUndefined())
         engine->throwTypeError();
+}
+
+void Runtime::MarkCustom::call(const Value &toBeMarked)
+{
+    auto *h = toBeMarked.heapObject();
+    if (!h)
+        return;
+    Q_ASSERT(h->internalClass);
+    auto engine = h->internalClass->engine;
+    Q_ASSERT(engine);
+    // runtime function is only meant to be called while gc is ongoing
+    Q_ASSERT(engine->isGCOngoing);
+    QV4::WriteBarrier::markCustom(engine, [&](QV4::MarkStack *ms) {
+        h->mark(ms);
+    });
 }
 
 ReturnedValue Runtime::ConvertThisToObject::call(ExecutionEngine *engine, const Value &t)
@@ -1735,7 +1857,7 @@ void Runtime::DeclareVar::call(ExecutionEngine *engine, Bool deletable, int name
 {
     Scope scope(engine);
     ScopedString name(scope, engine->currentStackFrame->v4Function->compilationUnit->runtimeStrings[nameIndex]);
-    static_cast<ExecutionContext &>(engine->currentStackFrame->jsFrame->context).createMutableBinding(name, deletable);
+    engine->currentContext()->createMutableBinding(name, deletable);
 }
 
 ReturnedValue Runtime::ArrayLiteral::call(ExecutionEngine *engine, Value *values, uint length)
@@ -1788,7 +1910,7 @@ ReturnedValue Runtime::ObjectLiteral::call(ExecutionEngine *engine, int classId,
                 arg = ObjectLiteralArgument::Value;
             fnName = name->asFunctionName(engine, prefix);
 
-            ExecutionContext *current = static_cast<ExecutionContext *>(&engine->currentStackFrame->jsFrame->context);
+            ExecutionContext *current = engine->currentContext();
             if (clos->isGenerator())
                 value = MemberGeneratorFunction::create(current, clos, o, fnName)->asReturnedValue();
             else
@@ -1846,7 +1968,7 @@ ReturnedValue Runtime::CreateClass::call(ExecutionEngine *engine, int classIndex
 
     ScopedObject proto(scope, engine->newObject());
     proto->setPrototypeUnchecked(protoParent);
-    ExecutionContext *current = static_cast<ExecutionContext *>(&engine->currentStackFrame->jsFrame->context);
+    ExecutionContext *current = engine->currentContext();
 
     ScopedFunctionObject constructor(scope);
     QV4::Function *f = cls->constructorFunction != UINT_MAX ? unit->runtimeFunctions[cls->constructorFunction] : nullptr;
@@ -1930,14 +2052,18 @@ QV4::ReturnedValue Runtime::CreateMappedArgumentsObject::call(ExecutionEngine *e
 
 QV4::ReturnedValue Runtime::CreateUnmappedArgumentsObject::call(ExecutionEngine *engine)
 {
+    Q_ASSERT(engine->currentStackFrame->isJSTypesFrame());
     Heap::InternalClass *ic = engine->internalClasses(EngineBase::Class_StrictArgumentsObject);
-    return engine->memoryManager->allocObject<StrictArgumentsObject>(ic, engine->currentStackFrame)->asReturnedValue();
+    return engine->memoryManager->allocObject<StrictArgumentsObject>(
+                ic, static_cast<JSTypesStackFrame *>(engine->currentStackFrame))->asReturnedValue();
 }
 
 QV4::ReturnedValue Runtime::CreateRestParameter::call(ExecutionEngine *engine, int argIndex)
 {
-    const Value *values = engine->currentStackFrame->originalArguments + argIndex;
-    int nValues = engine->currentStackFrame->originalArgumentsCount - argIndex;
+    Q_ASSERT(engine->currentStackFrame->isJSTypesFrame());
+    JSTypesStackFrame *frame = static_cast<JSTypesStackFrame *>(engine->currentStackFrame);
+    const Value *values = frame->argv() + argIndex;
+    int nValues = frame->argc() - argIndex;
     if (nValues <= 0)
         return engine->newArrayObject(0)->asReturnedValue();
     return engine->newArrayObject(values, nValues)->asReturnedValue();
@@ -2069,9 +2195,7 @@ ReturnedValue Runtime::Exp::call(const Value &base, const Value &exp)
 {
     double b = base.toNumber();
     double e = exp.toNumber();
-    if (qt_is_inf(e) && (b == 1 || b == -1))
-        return Encode(qt_qnan());
-    return Encode(pow(b,e));
+    return Encode(QQmlPrivate::jsExponentiate(b, e));
 }
 
 ReturnedValue Runtime::BitAnd::call(const Value &left, const Value &right)
@@ -2193,35 +2317,23 @@ Bool Runtime::CompareEqual::call(const Value &left, const Value &right)
     Value *lhsGuard = nullptr;
     Value *rhsGuard = nullptr;
 
-  redo:
+ redo:
     if (lhs.asReturnedValue() == rhs.asReturnedValue())
         return !lhs.isNaN();
 
-    int lt = lhs.quickType();
-    int rt = rhs.quickType();
-    if (rt < lt) {
-        qSwap(lhs, rhs);
-        qSwap(lt, rt);
-    }
+    quint32 lt = lhs.quickType();
+    quint32 rt = rhs.quickType();
 
-    switch (lt) {
-    case QV4::Value::QT_ManagedOrUndefined:
+    // LHS: Check if managed
+    if ((lt & (Value::ManagedMask >> Value::Tag_Shift)) == 0) {
         if (lhs.isUndefined())
             return rhs.isNullOrUndefined();
-        Q_FALLTHROUGH();
-    case QV4::Value::QT_ManagedOrUndefined1:
-    case QV4::Value::QT_ManagedOrUndefined2:
-    case QV4::Value::QT_ManagedOrUndefined3:
-        // LHS: Managed
-        switch (rt) {
-        case QV4::Value::QT_ManagedOrUndefined:
+
+        // RHS: Check if managed
+        if ((rt & (Value::ManagedMask >> Value::Tag_Shift)) == 0) {
             if (rhs.isUndefined())
                 return false;
-            Q_FALLTHROUGH();
-        case QV4::Value::QT_ManagedOrUndefined1:
-        case QV4::Value::QT_ManagedOrUndefined2:
-        case QV4::Value::QT_ManagedOrUndefined3: {
-            // RHS: Managed
+
             Heap::Base *l = lhs.m();
             Heap::Base *r = rhs.m();
             Q_ASSERT(l);
@@ -2231,15 +2343,18 @@ Bool Runtime::CompareEqual::call(const Value &left, const Value &right)
             if (l->internalClass->vtable->isStringOrSymbol) {
                 scope.set(&rhsGuard, RuntimeHelpers::objectDefaultValue(&static_cast<QV4::Object &>(rhs), PREFERREDTYPE_HINT), r->internalClass->engine);
                 rhs = rhsGuard->asReturnedValue();
-                break;
+                goto redo;
             } else {
                 Q_ASSERT(r->internalClass->vtable->isStringOrSymbol);
                 scope.set(&lhsGuard, RuntimeHelpers::objectDefaultValue(&static_cast<QV4::Object &>(lhs), PREFERREDTYPE_HINT), l->internalClass->engine);
                 lhs = lhsGuard->asReturnedValue();
-                break;
+                goto redo;
             }
             return false;
         }
+
+lhs_managed_and_rhs_not:
+        switch (rt) {
         case QV4::Value::QT_Empty:
             Q_UNREACHABLE();
         case QV4::Value::QT_Null:
@@ -2247,7 +2362,7 @@ Bool Runtime::CompareEqual::call(const Value &left, const Value &right)
         case QV4::Value::QT_Bool:
         case QV4::Value::QT_Int:
             rhs = Value::fromDouble(rhs.int_32());
-            // fall through
+            Q_FALLTHROUGH();
         default: // double
             if (lhs.m()->internalClass->vtable->isStringOrSymbol) {
                 return lhs.m()->internalClass->vtable->isString ? (RuntimeHelpers::toNumber(lhs) == rhs.doubleValue()) : false;
@@ -2257,6 +2372,15 @@ Bool Runtime::CompareEqual::call(const Value &left, const Value &right)
             }
         }
         goto redo;
+    } else if ((rt & (Value::ManagedMask >> Value::Tag_Shift)) == 0) {
+        if (rhs.isUndefined())
+            return lhs.isNull(); // Can't be undefined
+        qSwap(lhs, rhs);
+        qSwap(lt, rt);
+        goto lhs_managed_and_rhs_not;
+    }
+
+    switch (lt) {
     case QV4::Value::QT_Empty:
         Q_UNREACHABLE();
     case QV4::Value::QT_Null:
@@ -2264,13 +2388,10 @@ Bool Runtime::CompareEqual::call(const Value &left, const Value &right)
     case QV4::Value::QT_Bool:
     case QV4::Value::QT_Int:
         switch (rt) {
-        case QV4::Value::QT_ManagedOrUndefined:
-        case QV4::Value::QT_ManagedOrUndefined1:
-        case QV4::Value::QT_ManagedOrUndefined2:
-        case QV4::Value::QT_ManagedOrUndefined3:
         case QV4::Value::QT_Empty:
-        case QV4::Value::QT_Null:
             Q_UNREACHABLE();
+        case QV4::Value::QT_Null:
+            return false;
         case QV4::Value::QT_Bool:
         case QV4::Value::QT_Int:
             return lhs.int_32() == rhs.int_32();
@@ -2278,8 +2399,17 @@ Bool Runtime::CompareEqual::call(const Value &left, const Value &right)
             return lhs.int_32() == rhs.doubleValue();
         }
     default: // double
-        Q_ASSERT(rhs.isDouble());
-        return lhs.doubleValue() == rhs.doubleValue();
+        switch (rt) {
+        case QV4::Value::QT_Empty:
+            Q_UNREACHABLE();
+        case QV4::Value::QT_Null:
+            return false;
+        case QV4::Value::QT_Bool:
+        case QV4::Value::QT_Int:
+            return lhs.doubleValue() == rhs.int_32();
+        default: // double
+            return lhs.doubleValue() == rhs.doubleValue();
+        }
     }
 }
 
@@ -2351,7 +2481,6 @@ QHash<const void *, const char *> Runtime::symbolTable()
             {symbol<CallName>(), "CallName" },
             {symbol<CallProperty>(), "CallProperty" },
             {symbol<CallPropertyLookup>(), "CallPropertyLookup" },
-            {symbol<CallElement>(), "CallElement" },
             {symbol<CallValue>(), "CallValue" },
             {symbol<CallWithReceiver>(), "CallWithReceiver" },
             {symbol<CallPossiblyDirectEval>(), "CallPossiblyDirectEval" },
@@ -2398,6 +2527,8 @@ QHash<const void *, const char *> Runtime::symbolTable()
 
             {symbol<Closure>(), "Closure" },
 
+            {symbol<MarkCustom>(), "MarkCustom"},
+
             {symbol<ConvertThisToObject>(), "ConvertThisToObject" },
             {symbol<DeclareVar>(), "DeclareVar" },
             {symbol<CreateMappedArgumentsObject>(), "CreateMappedArgumentsObject" },
@@ -2421,6 +2552,7 @@ QHash<const void *, const char *> Runtime::symbolTable()
             {symbol<UMinus>(), "UMinus" },
 
             {symbol<Instanceof>(), "Instanceof" },
+            {symbol<As>(), "As" },
             {symbol<In>(), "In" },
             {symbol<Add>(), "Add" },
             {symbol<Sub>(), "Sub" },

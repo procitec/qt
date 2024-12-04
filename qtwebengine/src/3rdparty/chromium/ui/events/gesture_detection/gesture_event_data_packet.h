@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,8 +7,11 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <functional>
 
-#include "base/containers/stack_container.h"
+#include "base/functional/callback.h"
+#include "base/time/time.h"
+#include "third_party/abseil-cpp/absl/container/inlined_vector.h"
 #include "ui/events/gesture_detection/gesture_detection_export.h"
 #include "ui/events/gesture_detection/gesture_event_data.h"
 
@@ -54,16 +57,20 @@ class GESTURE_DETECTION_EXPORT GestureEventDataPacket {
 
   const base::TimeTicks& timestamp() const { return timestamp_; }
   const GestureEventData& gesture(size_t i) const { return gestures_[i]; }
-  size_t gesture_count() const { return gestures_->size(); }
+  size_t gesture_count() const { return gestures_.size(); }
   GestureSource gesture_source() const { return gesture_source_; }
   const gfx::PointF& touch_location() const { return touch_location_; }
   const gfx::PointF& raw_touch_location() const { return raw_touch_location_; }
 
   // We store the ack with the packet until the packet reaches the
   // head of the queue, and then we handle the ack.
-  void Ack(bool event_consumed, bool is_source_touch_event_set_non_blocking);
+  void Ack(bool event_consumed, bool is_source_touch_event_set_blocking);
   AckState ack_state() { return ack_state_; }
   uint32_t unique_touch_event_id() const { return unique_touch_event_id_; }
+
+  void AddEventLatencyMetadataToGestures(
+      const EventLatencyMetadata& event_latency_metadata,
+      const base::RepeatingCallback<bool(const ui::GestureEventData&)>& filter);
 
  private:
   GestureEventDataPacket(base::TimeTicks timestamp,
@@ -74,7 +81,7 @@ class GESTURE_DETECTION_EXPORT GestureEventDataPacket {
 
   enum { kTypicalMaxGesturesPerTouch = 5 };
   base::TimeTicks timestamp_;
-  base::StackVector<GestureEventData, kTypicalMaxGesturesPerTouch> gestures_;
+  absl::InlinedVector<GestureEventData, kTypicalMaxGesturesPerTouch> gestures_;
   gfx::PointF touch_location_;
   gfx::PointF raw_touch_location_;
   GestureSource gesture_source_;

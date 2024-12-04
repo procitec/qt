@@ -1,13 +1,13 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef EXTENSIONS_RENDERER_GUEST_VIEW_GUEST_VIEW_INTERNAL_CUSTOM_BINDINGS_H_
 #define EXTENSIONS_RENDERER_GUEST_VIEW_GUEST_VIEW_INTERNAL_CUSTOM_BINDINGS_H_
 
-#include <map>
-
+#include "components/guest_view/common/guest_view.mojom.h"
 #include "extensions/renderer/object_backed_native_handler.h"
+#include "mojo/public/cpp/bindings/associated_remote.h"
 
 namespace extensions {
 
@@ -21,9 +21,10 @@ class GuestViewInternalCustomBindings : public ObjectBackedNativeHandler {
   void AddRoutes() override;
 
  private:
+  struct ViewHolder;
   // ResetMapEntry is called as a callback to SetWeak(). It resets the
   // weak view reference held in |view_map_|.
-  static void ResetMapEntry(const v8::WeakCallbackInfo<int>& data);
+  static void ResetMapEntry(const v8::WeakCallbackInfo<ViewHolder>& data);
 
   // AttachIframeGuest attaches a GuestView to a provided <iframe> container
   // element. Once attached, the GuestView will participate in layout of the
@@ -43,6 +44,9 @@ class GuestViewInternalCustomBindings : public ObjectBackedNativeHandler {
   // guest identified by |guest_instance_id|.
   void AttachIframeGuest(const v8::FunctionCallbackInfo<v8::Value>& args);
 
+  // Takes a window object and returns the associated WebLocalFrame's token.
+  void GetFrameToken(const v8::FunctionCallbackInfo<v8::Value>& args);
+
   // Destroys the GuestViewContainer given an element instance ID in |args|.
   void DestroyContainer(const v8::FunctionCallbackInfo<v8::Value>& args);
 
@@ -54,12 +58,6 @@ class GuestViewInternalCustomBindings : public ObjectBackedNativeHandler {
   // called when the guestview's container is destroyed.
   // RegisterDestructionCallback takes in a single paramater, |callback|.
   void RegisterDestructionCallback(
-      const v8::FunctionCallbackInfo<v8::Value>& args);
-
-  // RegisterElementResizeCallback registers a JavaScript callback function to
-  // be called when the element is resized. RegisterElementResizeCallback takes
-  // a single parameter, |callback|.
-  void RegisterElementResizeCallback(
       const v8::FunctionCallbackInfo<v8::Value>& args);
 
   // RegisterView takes in a view ID and a GuestView element, and stores the
@@ -78,9 +76,13 @@ class GuestViewInternalCustomBindings : public ObjectBackedNativeHandler {
       const v8::FunctionCallbackInfo<v8::Value>& args);
 
   // Runs a JavaScript function that may use window.customElements.define
-  // with whitelisted custom element names.
+  // with allowlisted custom element names.
   void AllowGuestViewElementDefinition(
       const v8::FunctionCallbackInfo<v8::Value>& args);
+
+  guest_view::mojom::GuestViewHost* GetGuestViewHost();
+
+  mojo::AssociatedRemote<guest_view::mojom::GuestViewHost> remote_;
 };
 
 }  // namespace extensions

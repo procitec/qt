@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,21 +8,19 @@
 #include <memory>
 #include <vector>
 
+#include "base/memory/raw_ptr.h"
 #include "base/sequence_checker.h"
+#include "base/timer/timer.h"
 #include "build/build_config.h"
+#include "components/system_media_controls/system_media_controls.h"
 #include "content/common/content_export.h"
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "services/media_session/public/mojom/media_controller.mojom.h"
 
-#if defined(OS_WIN)
-#include "base/timer/timer.h"
-#endif  // defined(OS_WIN)
-
-namespace system_media_controls {
-class SystemMediaControls;
-}  // namespace system_media_controls
-
+namespace base {
+class UnguessableToken;
+}
 namespace content {
 
 // The SystemMediaControlsNotifier connects to the SystemMediaControls API and
@@ -33,22 +31,28 @@ class CONTENT_EXPORT SystemMediaControlsNotifier
     : public media_session::mojom::MediaControllerObserver,
       public media_session::mojom::MediaControllerImageObserver {
  public:
-  explicit SystemMediaControlsNotifier(
-      system_media_controls::SystemMediaControls* system_media_controls);
+  SystemMediaControlsNotifier(
+      system_media_controls::SystemMediaControls* system_media_controls,
+      base::UnguessableToken request_id);
+
+  SystemMediaControlsNotifier(const SystemMediaControlsNotifier&) = delete;
+  SystemMediaControlsNotifier& operator=(const SystemMediaControlsNotifier&) =
+      delete;
+
   ~SystemMediaControlsNotifier() override;
 
   // media_session::mojom::MediaControllerObserver implementation.
   void MediaSessionInfoChanged(
       media_session::mojom::MediaSessionInfoPtr session_info) override;
   void MediaSessionMetadataChanged(
-      const base::Optional<media_session::MediaMetadata>& metadata) override;
+      const std::optional<media_session::MediaMetadata>& metadata) override;
   void MediaSessionActionsChanged(
       const std::vector<media_session::mojom::MediaSessionAction>& actions)
-      override {}
+      override;
   void MediaSessionChanged(
-      const base::Optional<base::UnguessableToken>& request_id) override {}
+      const std::optional<base::UnguessableToken>& request_id) override;
   void MediaSessionPositionChanged(
-      const base::Optional<media_session::MediaPosition>& position) override {}
+      const std::optional<media_session::MediaPosition>& position) override;
 
   // media_session::mojom::MediaControllerImageObserver implementation.
   void MediaControllerImageChanged(
@@ -58,9 +62,28 @@ class CONTENT_EXPORT SystemMediaControlsNotifier
  private:
   friend class SystemMediaControlsNotifierTest;
 
+  // Updates the system media controls' metadata after a brief delay. If
+  // multiple calls are received during the delay, only the last one is applied.
+  // This prevents overloading the OS with system calls.
+  void DebouncePositionUpdate(media_session::MediaPosition position);
+  void DebounceMetadataUpdate(media_session::MediaMetadata metadata);
+  void DebouncePlaybackStatusUpdate(
+      system_media_controls::SystemMediaControls::PlaybackStatus
+          playback_status);
+  void DebounceIconUpdate(const SkBitmap& bitmap);
+  void DebounceSetIsSeekToEnabled(bool is_seek_to_enabled);
+
+  void MaybeScheduleMetadataUpdate();
+  void UpdateMetadata();
+  void UpdateIcon();
+
+  // Clear the system's media controls' metadata, and any pending position or
+  // metadata updates.
+  void ClearAllMetadata();
+
   // We want to hide the controls on the lock screen on Windows in certain
   // cases. We don't want this functionality on other OSes.
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   // Polls the current idle state of the system.
   void CheckLockState();
 
@@ -79,14 +102,32 @@ class CONTENT_EXPORT SystemMediaControlsNotifier
   bool screen_locked_ = false;
   base::RepeatingTimer lock_polling_timer_;
   base::OneShotTimer hide_smtc_timer_;
-#endif  // defined(OS_WIN)
+#endif  // BUILDFLAG(IS_WIN)
 
-  // Our connection to the System Media Controls. We don't own it since it's a
-  // global instance.
-  system_media_controls::SystemMediaControls* const system_media_controls_;
+  // Our connection to the System Media Controls instance we should notify.
+  // Owned by WebAppSystemMediaControls.
+  const raw_ptr<system_media_controls::SystemMediaControls>
+      system_media_controls_;
+
+  // Timer to debounce updates.
+  base::OneShotTimer metadata_update_timer_;
+  base::OneShotTimer icon_update_timer_;
+  base::OneShotTimer actions_update_timer_;
+
+  // Pending metadata to be set once `metadata_update_timer_` fires.
+  std::optional<media_session::MediaPosition> delayed_position_update_;
+  std::optional<media_session::MediaMetadata> delayed_metadata_update_;
+  std::optional<system_media_controls::SystemMediaControls::PlaybackStatus>
+      delayed_playback_status_;
+
+  // Icon to use once `icon_update_timer_` fires.
+  std::optional<SkBitmap> delayed_icon_update_;
+
+  // Pending action to set once `actions_update_timer_` fires.
+  std::optional<bool> delayed_is_seek_to_enabled_;
 
   // Tracks current media session state/metadata.
-  mojo::Remote<media_session::mojom::MediaController> media_controller_;
+  mojo::Remote<media_session::mojom::MediaController> media_controller_remote_;
   media_session::mojom::MediaSessionInfoPtr session_info_ptr_;
 
   // Used to receive updates to the active media controller.
@@ -96,8 +137,6 @@ class CONTENT_EXPORT SystemMediaControlsNotifier
       media_controller_image_observer_receiver_{this};
 
   SEQUENCE_CHECKER(sequence_checker_);
-
-  DISALLOW_COPY_AND_ASSIGN(SystemMediaControlsNotifier);
 };
 
 }  // namespace content

@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,39 +11,28 @@
 
 namespace blink {
 
-class PaintLayer;
 class LayoutObject;
 class ComputedStyle;
 
 class CORE_EXPORT CompositingReasonFinder {
-  DISALLOW_NEW();
+  STATIC_ONLY(CompositingReasonFinder);
 
  public:
-  static CompositingReasons PotentialCompositingReasonsFromStyle(
-      const LayoutObject&);
-
-  static CompositingReasons NonStyleDeterminedDirectReasons(const PaintLayer&);
-
-  CompositingReasonFinder(const CompositingReasonFinder&) = delete;
-  CompositingReasonFinder& operator=(const CompositingReasonFinder&) = delete;
-
-  // Returns the direct reasons for compositing the given layer.
-  static CompositingReasons DirectReasons(const PaintLayer&);
-
   static CompositingReasons DirectReasonsForPaintProperties(
-      const LayoutObject&);
+      const LayoutObject&,
+      const LayoutObject* container_for_fixed_position = nullptr);
 
-  static CompositingReasons DirectReasonsForSVGChildPaintProperties(
-      const LayoutObject&);
+  static bool ShouldForcePreferCompositingToLCDText(
+      const LayoutObject&,
+      CompositingReasons reasons_except_scrolling);
 
   static CompositingReasons CompositingReasonsForAnimation(const LayoutObject&);
-  static CompositingReasons CompositingReasonsForWillChange(
+  // Some LayoutObject types do not support transforms (see:
+  // |LayoutObject::HasTransformRelatedProperty|) so this can return reasons
+  // that the LayoutObject does not end up using.
+  static CompositingReasons PotentialCompositingReasonsFor3DTransform(
       const ComputedStyle&);
-  static CompositingReasons CompositingReasonsFor3DTransform(
-      const LayoutObject&);
-  static bool RequiresCompositingForRootScroller(const PaintLayer&);
-
-  static bool RequiresCompositingForScrollDependentPosition(const PaintLayer&);
+  static bool RequiresCompositingForRootScroller(const LayoutObject&);
 };
 
 }  // namespace blink

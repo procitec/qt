@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,18 +6,17 @@
 
 #include <stddef.h>
 
-#include <memory>
 #include <utility>
 
-#include "base/callback.h"
-#include "base/guid.h"
-#include "base/macros.h"
+#include "base/functional/callback.h"
 #include "base/rand_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
+#include "base/uuid.h"
 #include "build/build_config.h"
+#include "build/chromeos_buildflags.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/extensions/api/notifications/extension_notification_display_helper.h"
 #include "chrome/browser/extensions/api/notifications/extension_notification_display_helper_factory.h"
@@ -41,12 +40,12 @@
 #include "extensions/browser/extensions_browser_client.h"
 #include "extensions/common/extension.h"
 #include "third_party/skia/include/core/SkBitmap.h"
-#include "ui/base/layout.h"
+#include "ui/base/resource/resource_scale_factor.h"
+#include "ui/gfx/geometry/skia_conversions.h"
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/image/image_skia_operations.h"
 #include "ui/gfx/image/image_skia_rep.h"
-#include "ui/gfx/skia_util.h"
 #include "ui/message_center/public/cpp/message_center_constants.h"
 #include "ui/message_center/public/cpp/notification.h"
 #include "ui/message_center/public/cpp/notification_delegate.h"
@@ -81,7 +80,7 @@ const char kExtraImageProvided[] =
 const char kNotificationIdTooLong[] =
     "The notification's ID should be %d characters or less";
 
-#if !defined(OS_CHROMEOS)
+#if !BUILDFLAG(IS_CHROMEOS)
 const char kLowPriorityDeprecatedOnPlatform[] =
     "Low-priority notifications are deprecated on this platform.";
 #endif
@@ -101,33 +100,6 @@ std::string StripScopeFromIdentifier(const std::string& extension_id,
   DCHECK_LT(index_of_separator, scoped_id.length());
 
   return scoped_id.substr(index_of_separator);
-}
-
-const gfx::ImageSkia CreateSolidColorImage(int width,
-                                           int height,
-                                           SkColor color) {
-  SkBitmap bitmap;
-  bitmap.allocN32Pixels(width, height);
-  bitmap.eraseColor(color);
-  return gfx::ImageSkia::CreateFrom1xBitmap(bitmap);
-}
-
-// Take the alpha channel of small_image, mask it with the foreground,
-// then add the masked foreground on top of the background
-const gfx::Image GetMaskedSmallImage(const gfx::ImageSkia& small_image) {
-  int width = small_image.width();
-  int height = small_image.height();
-
-  // Background color grey
-  const gfx::ImageSkia background = CreateSolidColorImage(
-      width, height, message_center::kSmallImageMaskBackgroundColor);
-  // Foreground color white
-  const gfx::ImageSkia foreground = CreateSolidColorImage(
-      width, height, message_center::kSmallImageMaskForegroundColor);
-  const gfx::ImageSkia masked_small_image =
-      gfx::ImageSkiaOperations::CreateMaskedImage(foreground, small_image);
-  return gfx::Image(gfx::ImageSkiaOperations::CreateSuperimposedImage(
-      background, masked_small_image));
 }
 
 // Converts the |notification_bitmap| (in RGBA format) to the |*return_image|
@@ -150,7 +122,8 @@ bool NotificationBitmapToGfxImage(
     return false;
 
   // Ensure we have rgba data.
-  std::vector<uint8_t>* rgba_data = notification_bitmap.data.get();
+  const std::optional<std::vector<uint8_t>>& rgba_data =
+      notification_bitmap.data;
   if (!rgba_data)
     return false;
 
@@ -184,7 +157,7 @@ bool NotificationBitmapToGfxImage(
 
   // TODO(dewittj): Handle HiDPI images with more than one scale factor
   // representation.
-  gfx::ImageSkia skia(gfx::ImageSkiaRep(bitmap, 1.0f));
+  gfx::ImageSkia skia = gfx::ImageSkia::CreateFromBitmap(bitmap, 1.0f);
   *return_image = gfx::Image(skia);
   return true;
 }
@@ -230,13 +203,13 @@ bool NotificationsApiFunction::CreateNotification(
   // These fields are defined as optional in IDL such that they can be used as
   // optional for notification updates. But for notification creations, they
   // should be present.
-  if (options->type == api::notifications::TEMPLATE_TYPE_NONE ||
+  if (options->type == api::notifications::TemplateType::kNone ||
       !options->icon_url || !options->title || !options->message) {
     *error = kMissingRequiredPropertiesForCreateNotification;
     return false;
   }
 
-#if !defined(OS_CHROMEOS)
+#if !BUILDFLAG(IS_CHROMEOS)
   if (options->priority &&
       *options->priority < message_center::DEFAULT_PRIORITY) {
     *error = kLowPriorityDeprecatedOnPlatform;
@@ -246,27 +219,26 @@ bool NotificationsApiFunction::CreateNotification(
 
   NotificationBitmapSizes bitmap_sizes = GetNotificationBitmapSizes();
 
-  float image_scale =
-      ui::GetScaleForScaleFactor(ui::GetSupportedScaleFactors().back());
+  const float image_scale = ui::GetScaleForMaxSupportedResourceScaleFactor();
 
   // Extract required fields: type, title, message, and icon.
   message_center::NotificationType type =
       MapApiTemplateTypeToType(options->type);
 
-  const base::string16 title(base::UTF8ToUTF16(*options->title));
-  const base::string16 message(base::UTF8ToUTF16(*options->message));
+  const std::u16string title(base::UTF8ToUTF16(*options->title));
+  const std::u16string message(base::UTF8ToUTF16(*options->message));
   gfx::Image icon;
 
-  if (!options->icon_bitmap.get() ||
-      !NotificationBitmapToGfxImage(
-          image_scale, bitmap_sizes.icon_size, *options->icon_bitmap, &icon)) {
+  if (!options->icon_bitmap ||
+      !NotificationBitmapToGfxImage(image_scale, bitmap_sizes.icon_size,
+                                    *options->icon_bitmap, &icon)) {
     *error = kUnableToDecodeIconError;
     return false;
   }
 
   // Then, handle any optional data that's been provided.
   message_center::RichNotificationData optional_fields;
-  if (options->app_icon_mask_url.get()) {
+  if (options->app_icon_mask_url) {
     gfx::Image small_icon_mask;
     if (!NotificationBitmapToGfxImage(
             image_scale, bitmap_sizes.app_icon_mask_size,
@@ -274,20 +246,21 @@ bool NotificationsApiFunction::CreateNotification(
       *error = kUnableToDecodeIconError;
       return false;
     }
-    optional_fields.small_image =
-        GetMaskedSmallImage(small_icon_mask.AsImageSkia());
+    optional_fields.small_image = small_icon_mask;
+    optional_fields.small_image_needs_additional_masking = true;
   }
 
-  if (options->priority.get())
+  if (options->priority)
     optional_fields.priority = *options->priority;
 
-  if (options->event_time.get())
-    optional_fields.timestamp = base::Time::FromJsTime(*options->event_time);
+  if (options->event_time)
+    optional_fields.timestamp =
+        base::Time::FromMillisecondsSinceUnixEpoch(*options->event_time);
 
   if (options->silent)
     optional_fields.silent = *options->silent;
 
-  if (options->buttons.get()) {
+  if (options->buttons) {
     // Currently we allow up to 2 buttons.
     size_t number_of_buttons = options->buttons->size();
 
@@ -296,12 +269,10 @@ bool NotificationsApiFunction::CreateNotification(
     for (size_t i = 0; i < number_of_buttons; i++) {
       message_center::ButtonInfo info(
           base::UTF8ToUTF16((*options->buttons)[i].title));
-      extensions::api::notifications::NotificationBitmap* icon_bitmap_ptr =
-          (*options->buttons)[i].icon_bitmap.get();
-      if (icon_bitmap_ptr) {
-        NotificationBitmapToGfxImage(
-            image_scale, bitmap_sizes.button_icon_size, *icon_bitmap_ptr,
-            &info.icon);
+      const auto& icon_bitmap = (*options->buttons)[i].icon_bitmap;
+      if (icon_bitmap) {
+        NotificationBitmapToGfxImage(image_scale, bitmap_sizes.button_icon_size,
+                                     *icon_bitmap, &info.icon);
       }
       optional_fields.buttons.push_back(info);
     }
@@ -312,7 +283,7 @@ bool NotificationsApiFunction::CreateNotification(
         base::UTF8ToUTF16(*options->context_message);
   }
 
-  bool has_image = options->image_bitmap.get() &&
+  bool has_image = options->image_bitmap &&
                    NotificationBitmapToGfxImage(
                        image_scale, bitmap_sizes.image_size,
                        *options->image_bitmap, &optional_fields.image);
@@ -324,13 +295,13 @@ bool NotificationsApiFunction::CreateNotification(
   }
 
   // We should have list items if and only if the type is a multiple type.
-  bool has_list_items = options->items.get() && !options->items->empty();
+  bool has_list_items = options->items && !options->items->empty();
   if (has_list_items != (type == message_center::NOTIFICATION_TYPE_MULTIPLE)) {
     *error = kExtraListItemsProvided;
     return false;
   }
 
-  if (options->progress.get() != NULL) {
+  if (options->progress) {
     // We should have progress if and only if the type is a progress type.
     if (type != message_center::NOTIFICATION_TYPE_PROGRESS) {
       *error = kUnexpectedProgressValueForNonProgressType;
@@ -365,7 +336,7 @@ bool NotificationsApiFunction::CreateNotification(
 
   std::string notification_id = CreateScopedIdentifier(extension_->id(), id);
   message_center::Notification notification(
-      type, notification_id, title, message, icon,
+      type, notification_id, title, message, ui::ImageModel::FromImage(icon),
       base::UTF8ToUTF16(extension_->name()), extension_->url(),
       message_center::NotifierId(message_center::NotifierType::APPLICATION,
                                  extension_->id()),
@@ -374,6 +345,13 @@ bool NotificationsApiFunction::CreateNotification(
   // Apply the "requireInteraction" flag. The value defaults to false.
   notification.set_never_timeout(options->require_interaction &&
                                  *options->require_interaction);
+
+  // For a progress notification the message parameter won't be displayed in the
+  // notification. Therefore, its value is passed to progress_status which will
+  // be displayed.
+  if (type == message_center::NOTIFICATION_TYPE_PROGRESS) {
+    notification.set_progress_status(message);
+  }
 
   if (ShouldShowOverCurrentFullscreenWindow(GetProfile(),
                                             notification.origin_url())) {
@@ -390,7 +368,7 @@ bool NotificationsApiFunction::UpdateNotification(
     api::notifications::NotificationOptions* options,
     message_center::Notification* notification,
     std::string* error) {
-#if !defined(OS_CHROMEOS)
+#if !BUILDFLAG(IS_CHROMEOS)
   if (options->priority &&
       *options->priority < message_center::DEFAULT_PRIORITY) {
     *error = kLowPriorityDeprecatedOnPlatform;
@@ -399,18 +377,18 @@ bool NotificationsApiFunction::UpdateNotification(
 #endif
 
   NotificationBitmapSizes bitmap_sizes = GetNotificationBitmapSizes();
-  float image_scale =
-      ui::GetScaleForScaleFactor(ui::GetSupportedScaleFactors().back());
+  const float image_scale = ui::GetScaleForMaxSupportedResourceScaleFactor();
 
   // Update optional fields if provided.
-  if (options->type != api::notifications::TEMPLATE_TYPE_NONE)
+  if (options->type != api::notifications::TemplateType::kNone) {
     notification->set_type(MapApiTemplateTypeToType(options->type));
+  }
   if (options->title)
     notification->set_title(base::UTF8ToUTF16(*options->title));
   if (options->message)
     notification->set_message(base::UTF8ToUTF16(*options->message));
 
-  if (options->icon_bitmap.get()) {
+  if (options->icon_bitmap) {
     gfx::Image icon;
     if (!NotificationBitmapToGfxImage(
             image_scale, bitmap_sizes.icon_size, *options->icon_bitmap,
@@ -418,10 +396,10 @@ bool NotificationsApiFunction::UpdateNotification(
       *error = kUnableToDecodeIconError;
       return false;
     }
-    notification->set_icon(icon);
+    notification->set_icon(ui::ImageModel::FromImage(icon));
   }
 
-  if (options->app_icon_mask_bitmap.get()) {
+  if (options->app_icon_mask_bitmap) {
     gfx::Image app_icon_mask;
     if (!NotificationBitmapToGfxImage(
             image_scale, bitmap_sizes.app_icon_mask_size,
@@ -429,15 +407,16 @@ bool NotificationsApiFunction::UpdateNotification(
       *error = kUnableToDecodeIconError;
       return false;
     }
-    notification->set_small_image(
-        GetMaskedSmallImage(app_icon_mask.AsImageSkia()));
+    notification->set_small_image(app_icon_mask);
+    notification->set_small_image_needs_additional_masking(true);
   }
 
   if (options->priority)
     notification->set_priority(*options->priority);
 
   if (options->event_time)
-    notification->set_timestamp(base::Time::FromJsTime(*options->event_time));
+    notification->set_timestamp(
+        base::Time::FromMillisecondsSinceUnixEpoch(*options->event_time));
 
   if (options->silent)
     notification->set_silent(*options->silent);
@@ -451,12 +430,10 @@ bool NotificationsApiFunction::UpdateNotification(
     for (size_t i = 0; i < number_of_buttons; i++) {
       message_center::ButtonInfo button(
           base::UTF8ToUTF16((*options->buttons)[i].title));
-      extensions::api::notifications::NotificationBitmap* icon_bitmap_ptr =
-          (*options->buttons)[i].icon_bitmap.get();
-      if (icon_bitmap_ptr) {
-        NotificationBitmapToGfxImage(
-            image_scale, bitmap_sizes.button_icon_size, *icon_bitmap_ptr,
-            &button.icon);
+      const auto& icon_bitmap = (*options->buttons)[i].icon_bitmap;
+      if (icon_bitmap) {
+        NotificationBitmapToGfxImage(image_scale, bitmap_sizes.button_icon_size,
+                                     *icon_bitmap, &button.icon);
       }
       buttons.push_back(button);
     }
@@ -470,9 +447,9 @@ bool NotificationsApiFunction::UpdateNotification(
 
   gfx::Image image;
   bool has_image =
-      options->image_bitmap.get() &&
-      NotificationBitmapToGfxImage(
-          image_scale, bitmap_sizes.image_size, *options->image_bitmap, &image);
+      options->image_bitmap &&
+      NotificationBitmapToGfxImage(image_scale, bitmap_sizes.image_size,
+                                   *options->image_bitmap, &image);
 
   if (has_image) {
     // We should have an image if and only if the type is an image type.
@@ -498,7 +475,15 @@ bool NotificationsApiFunction::UpdateNotification(
     notification->set_progress(progress);
   }
 
-  if (options->items.get() && !options->items->empty()) {
+  // For a progress notification the message parameter won't be displayed in the
+  // notification. Therefore, its value is passed to progress_status which will
+  // be displayed.
+  if (options->message &&
+      notification->type() == message_center::NOTIFICATION_TYPE_PROGRESS) {
+    notification->set_progress_status(base::UTF8ToUTF16(*options->message));
+  }
+
+  if (options->items && !options->items->empty()) {
     // We should have list items if and only if the type is a multiple type.
     if (notification->type() != message_center::NOTIFICATION_TYPE_MULTIPLE) {
       *error = kExtraListItemsProvided;
@@ -543,7 +528,7 @@ ExtensionNotificationDisplayHelper* NotificationsApiFunction::GetDisplayHelper()
 }
 
 Profile* NotificationsApiFunction::GetProfile() const {
-  return details_.GetProfile();
+  return Profile::FromBrowserContext(browser_context());
 }
 
 ExtensionFunction::ResponseAction NotificationsApiFunction::Run() {
@@ -558,19 +543,19 @@ message_center::NotificationType
 NotificationsApiFunction::MapApiTemplateTypeToType(
     api::notifications::TemplateType type) {
   switch (type) {
-    case api::notifications::TEMPLATE_TYPE_NONE:
-    case api::notifications::TEMPLATE_TYPE_BASIC:
-      return message_center::NOTIFICATION_TYPE_BASE_FORMAT;
-    case api::notifications::TEMPLATE_TYPE_IMAGE:
+    case api::notifications::TemplateType::kNone:
+    case api::notifications::TemplateType::kBasic:
+      return message_center::NOTIFICATION_TYPE_SIMPLE;
+    case api::notifications::TemplateType::kImage:
       return message_center::NOTIFICATION_TYPE_IMAGE;
-    case api::notifications::TEMPLATE_TYPE_LIST:
+    case api::notifications::TemplateType::kList:
       return message_center::NOTIFICATION_TYPE_MULTIPLE;
-    case api::notifications::TEMPLATE_TYPE_PROGRESS:
+    case api::notifications::TemplateType::kProgress:
       return message_center::NOTIFICATION_TYPE_PROGRESS;
     default:
       // Gracefully handle newer application code that is running on an older
       // runtime that doesn't recognize the requested template.
-      return message_center::NOTIFICATION_TYPE_BASE_FORMAT;
+      return message_center::NOTIFICATION_TYPE_SIMPLE;
   }
 }
 
@@ -582,18 +567,19 @@ NotificationsCreateFunction::~NotificationsCreateFunction() {
 
 ExtensionFunction::ResponseAction
 NotificationsCreateFunction::RunNotificationsApi() {
-  params_ = api::notifications::Create::Params::Create(*args_);
-  EXTENSION_FUNCTION_VALIDATE(params_.get());
+  params_ = api::notifications::Create::Params::Create(args());
+  EXTENSION_FUNCTION_VALIDATE(params_);
 
   const std::string extension_id(extension_->id());
   std::string notification_id;
-  if (params_->notification_id.get() && !params_->notification_id->empty()) {
+  if (params_->notification_id && !params_->notification_id->empty()) {
     // If the caller provided a notificationId, use that.
     notification_id = *params_->notification_id;
   } else {
-    // Otherwise, use a randomly created GUID. In case that GenerateGUID returns
-    // the empty string, simply generate a random string.
-    notification_id = base::GenerateGUID();
+    // Otherwise, use a randomly created GUID. In case that
+    // Uuid::GenerateRandomV4().AsLowercaseString returns the empty string,
+    // simply generate a random string.
+    notification_id = base::Uuid::GenerateRandomV4().AsLowercaseString();
     if (notification_id.empty())
       notification_id = base::RandBytesAsString(16);
   }
@@ -605,8 +591,7 @@ NotificationsCreateFunction::RunNotificationsApi() {
         api::notifications::Create::Results::Create(notification_id), error));
   }
 
-  return RespondNow(
-      OneArgument(std::make_unique<base::Value>(notification_id)));
+  return RespondNow(WithArguments(notification_id));
 }
 
 NotificationsUpdateFunction::NotificationsUpdateFunction() {
@@ -617,8 +602,8 @@ NotificationsUpdateFunction::~NotificationsUpdateFunction() {
 
 ExtensionFunction::ResponseAction
 NotificationsUpdateFunction::RunNotificationsApi() {
-  params_ = api::notifications::Update::Params::Create(*args_);
-  EXTENSION_FUNCTION_VALIDATE(params_.get());
+  params_ = api::notifications::Update::Params::Create(args());
+  EXTENSION_FUNCTION_VALIDATE(params_);
 
   // We are in update.  If the ID doesn't exist, succeed but call the callback
   // with "false".
@@ -627,7 +612,7 @@ NotificationsUpdateFunction::RunNotificationsApi() {
           CreateScopedIdentifier(extension_->id(), params_->notification_id));
 
   if (!matched_notification) {
-    return RespondNow(OneArgument(std::make_unique<base::Value>(false)));
+    return RespondNow(WithArguments(false));
   }
 
   // Copy the existing notification to get a writable version of it.
@@ -647,7 +632,7 @@ NotificationsUpdateFunction::RunNotificationsApi() {
 
   // No trouble, created the notification, send true to the callback and
   // succeed.
-  return RespondNow(OneArgument(std::make_unique<base::Value>(true)));
+  return RespondNow(WithArguments(true));
 }
 
 NotificationsClearFunction::NotificationsClearFunction() {
@@ -658,13 +643,13 @@ NotificationsClearFunction::~NotificationsClearFunction() {
 
 ExtensionFunction::ResponseAction
 NotificationsClearFunction::RunNotificationsApi() {
-  params_ = api::notifications::Clear::Params::Create(*args_);
-  EXTENSION_FUNCTION_VALIDATE(params_.get());
+  params_ = api::notifications::Clear::Params::Create(args());
+  EXTENSION_FUNCTION_VALIDATE(params_);
 
   bool cancel_result = GetDisplayHelper()->Close(
       CreateScopedIdentifier(extension_->id(), params_->notification_id));
 
-  return RespondNow(OneArgument(std::make_unique<base::Value>(cancel_result)));
+  return RespondNow(WithArguments(cancel_result));
 }
 
 NotificationsGetAllFunction::NotificationsGetAllFunction() {}
@@ -676,15 +661,13 @@ NotificationsGetAllFunction::RunNotificationsApi() {
   std::set<std::string> notification_ids =
       GetDisplayHelper()->GetNotificationIdsForExtension(extension_->url());
 
-  std::unique_ptr<base::DictionaryValue> result(new base::DictionaryValue());
+  base::Value::Dict result;
 
-  for (auto iter = notification_ids.begin(); iter != notification_ids.end();
-       iter++) {
-    result->SetKey(StripScopeFromIdentifier(extension_->id(), *iter),
-                   base::Value(true));
+  for (const auto& entry : notification_ids) {
+    result.Set(StripScopeFromIdentifier(extension_->id(), entry), true);
   }
 
-  return RespondNow(OneArgument(std::move(result)));
+  return RespondNow(WithArguments(std::move(result)));
 }
 
 NotificationsGetPermissionLevelFunction::
@@ -701,11 +684,10 @@ ExtensionFunction::ResponseAction
 NotificationsGetPermissionLevelFunction::RunNotificationsApi() {
   api::notifications::PermissionLevel result =
       AreExtensionNotificationsAllowed()
-          ? api::notifications::PERMISSION_LEVEL_GRANTED
-          : api::notifications::PERMISSION_LEVEL_DENIED;
+          ? api::notifications::PermissionLevel::kGranted
+          : api::notifications::PermissionLevel::kDenied;
 
-  return RespondNow(OneArgument(
-      std::make_unique<base::Value>(api::notifications::ToString(result))));
+  return RespondNow(WithArguments(api::notifications::ToString(result)));
 }
 
 }  // namespace extensions

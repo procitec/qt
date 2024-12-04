@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -26,13 +26,15 @@ namespace gpu {
 // present in the surface.
 class GPU_GLES2_EXPORT SurfaceTextureGLOwner : public TextureOwner {
  public:
+  SurfaceTextureGLOwner(const SurfaceTextureGLOwner&) = delete;
+  SurfaceTextureGLOwner& operator=(const SurfaceTextureGLOwner&) = delete;
+
   gl::GLContext* GetContext() const override;
   gl::GLSurface* GetSurface() const override;
   void SetFrameAvailableCallback(
       const base::RepeatingClosure& frame_available_cb) override;
   gl::ScopedJavaSurface CreateJavaSurface() const override;
   void UpdateTexImage() override;
-  void EnsureTexImageBound() override;
   void ReleaseBackBuffers() override;
   std::unique_ptr<base::android::ScopedHardwareBufferFenceSync>
   GetAHardwareBuffer() override;
@@ -40,14 +42,22 @@ class GPU_GLES2_EXPORT SurfaceTextureGLOwner : public TextureOwner {
                                   gfx::Size* coded_size,
                                   gfx::Rect* visible_rect) override;
 
+  void RunWhenBufferIsAvailable(base::OnceClosure callback) override;
+
+  // MemoryDumpProvider:
+  bool OnMemoryDump(const base::trace_event::MemoryDumpArgs& args,
+                    base::trace_event::ProcessMemoryDump* pmd) override;
+
  protected:
-  void OnTextureDestroyed(gles2::AbstractTexture*) override;
+  void ReleaseResources() override;
 
  private:
   friend class TextureOwner;
+  friend class SurfaceTextureGLOwnerTest;
   friend class SurfaceTextureTransformTest;
 
-  SurfaceTextureGLOwner(std::unique_ptr<gles2::AbstractTexture> texture);
+  SurfaceTextureGLOwner(std::unique_ptr<AbstractTextureAndroid> texture,
+                        scoped_refptr<SharedContextState> context_state);
   ~SurfaceTextureGLOwner() override;
 
   static bool DecomposeTransform(float matrix[16],
@@ -64,8 +74,10 @@ class GPU_GLES2_EXPORT SurfaceTextureGLOwner : public TextureOwner {
   // To ensure that SetFrameAvailableCallback() is called only once.
   bool is_frame_available_callback_set_ = false;
 
+  // This is not precise, but good estimation for memory dumps.
+  absl::optional<gfx::Size> last_coded_size_for_memory_dumps_;
+
   THREAD_CHECKER(thread_checker_);
-  DISALLOW_COPY_AND_ASSIGN(SurfaceTextureGLOwner);
 };
 
 }  // namespace gpu

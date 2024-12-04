@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2019 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtQuick module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2019 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #ifndef QQUICKIMAGEBASE_P_P_H
 #define QQUICKIMAGEBASE_P_P_H
@@ -54,47 +18,56 @@
 #include "qquickimplicitsizeitem_p_p.h"
 #include "qquickimagebase_p.h"
 
-#include <QtQuick/private/qquickpixmapcache_p.h>
+#include <QtQuick/private/qquickpixmap_p.h>
 
 QT_BEGIN_NAMESPACE
 
 class QNetworkReply;
-class Q_QUICK_PRIVATE_EXPORT QQuickImageBasePrivate : public QQuickImplicitSizeItemPrivate
+class Q_QUICK_EXPORT QQuickImageBasePrivate : public QQuickImplicitSizeItemPrivate
 {
     Q_DECLARE_PUBLIC(QQuickImageBase)
 
 public:
     QQuickImageBasePrivate()
-      : status(QQuickImageBase::Null),
-        progress(0.0),
-        devicePixelRatio(1.0),
-        currentFrame(0),
-        frameCount(0),
-        async(false),
+      : async(false),
         cache(true),
-        mirror(false),
-        oldAutoTransform(false)
+        mirrorHorizontally(false),
+        mirrorVertically(false),
+        oldAutoTransform(false),
+        retainWhileLoading(false)
     {
+        pendingPix = &pix1;
+        currentPix = &pix1;
     }
 
     virtual bool updateDevicePixelRatio(qreal targetDevicePixelRatio);
 
-    QQuickPixmap pix;
-    QQuickImageBase::Status status;
+    void setStatus(QQuickImageBase::Status value);
+    void setProgress(qreal value);
+
     QUrl url;
-    qreal progress;
+    QQuickPixmap *pendingPix = nullptr;
+    QQuickPixmap *currentPix = nullptr;
+    QQuickPixmap pix1;
+    QQuickPixmap pix2;
     QSize sourcesize;
     QSize oldSourceSize;
-    qreal devicePixelRatio;
     QRectF sourceClipRect;
     QQuickImageProviderOptions providerOptions;
     QColorSpace colorSpace;
-    int currentFrame;
-    int frameCount;
+
+    int currentFrame = 0;
+    int frameCount = 0;
+    qreal progress = 0;
+    qreal devicePixelRatio = 1;
+    QQuickImageBase::Status status = QQuickImageBase::Null;
+
     bool async : 1;
     bool cache : 1;
-    bool mirror: 1;
+    bool mirrorHorizontally: 1;
+    bool mirrorVertically : 1;
     bool oldAutoTransform : 1;
+    bool retainWhileLoading : 1;
 };
 
 QT_END_NAMESPACE

@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -17,9 +17,6 @@ import android.view.Surface;
 import android.view.SurfaceHolder;
 import android.view.WindowManager;
 
-// TODO(liberato): prior to M, this was ...policy.impl.PhoneWindow
-import com.android.internal.policy.PhoneWindow;
-
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -36,9 +33,7 @@ import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.gfx.mojom.Rect;
 import org.chromium.media.mojom.AndroidOverlayConfig;
 
-/**
- * Tests for DialogOverlayCore.
- */
+/** Tests for DialogOverlayCore. */
 @RunWith(BaseRobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
 public class DialogOverlayCoreTest {
@@ -64,11 +59,8 @@ public class DialogOverlayCoreTest {
     // SurfaceHolder that will be provided by |mDialog|.
     SurfaceHolder mHolder = new MyFakeSurfaceHolder(mSurface);
 
-    /**
-     * Robolectric shadow for PhoneWindow.  This one keeps track of takeSurface() calls.
-     * TODO(liberato): the @Impl specifies 'minSdk=M' in the robolectric source.
-     */
-    @Implements(value = PhoneWindow.class, isInAndroidSdk = false)
+    /** Robolectric shadow for PhoneWindow. This one keeps track of takeSurface() calls. */
+    @Implements(className = "com.android.internal.policy.PhoneWindow", isInAndroidSdk = false)
     public static class MyPhoneWindowShadow extends ShadowPhoneWindow {
         public MyPhoneWindowShadow() {}
 
@@ -88,9 +80,7 @@ public class DialogOverlayCoreTest {
         }
     }
 
-    /**
-     * The default fake surface holder doesn't let us provide a surface.
-     */
+    /** The default fake surface holder doesn't let us provide a surface. */
     public static class MyFakeSurfaceHolder extends ShadowSurfaceView.FakeSurfaceHolder {
         private Surface mSurface;
 
@@ -134,8 +124,6 @@ public class DialogOverlayCoreTest {
     void checkOverlayDidntCall() {
         assertEquals(null, mHost.surface());
         assertEquals(0, mHost.destroyedCount());
-        assertEquals(0, mHost.waitCloseCount());
-        assertEquals(0, mHost.enforceCloseCount());
     }
 
     // Return the SurfaceHolder callback that was provided to takeSurface(), if any.
@@ -152,14 +140,10 @@ public class DialogOverlayCoreTest {
         return ((MyPhoneWindowShadow) Shadows.shadowOf(mDialog.getWindow()));
     }
 
-    /**
-     * Host impl that counts calls to it.
-     */
+    /** Host impl that counts calls to it. */
     class HostMock implements DialogOverlayCore.Host {
         private Surface mSurface;
         private int mDestroyedCount;
-        private int mWaitCloseCount;
-        private int mEnforceCloseCount;
 
         @Override
         public void onSurfaceReady(Surface surface) {
@@ -171,16 +155,6 @@ public class DialogOverlayCoreTest {
             mDestroyedCount++;
         }
 
-        @Override
-        public void waitForClose() {
-            mWaitCloseCount++;
-        }
-
-        @Override
-        public void enforceClose() {
-            mEnforceCloseCount++;
-        }
-
         public Surface surface() {
             return mSurface;
         }
@@ -188,15 +162,8 @@ public class DialogOverlayCoreTest {
         public int destroyedCount() {
             return mDestroyedCount;
         }
-
-        public int waitCloseCount() {
-            return mWaitCloseCount;
-        }
-
-        public int enforceCloseCount() {
-            return mEnforceCloseCount;
-        }
-    };
+    }
+    ;
 
     HostMock mHost = new HostMock();
 
@@ -223,8 +190,9 @@ public class DialogOverlayCoreTest {
     // Verify that the dialog is not currently shown.  Note that dismiss() doesn't remove it from
     // the shown dialog list in Robolectric, so we check for "was never shown or was dismissed".
     void checkDialogIsNotShown() {
-        assertTrue(ShadowDialog.getShownDialogs().size() == 0
-                || Shadows.shadowOf(mDialog).hasBeenDismissed());
+        assertTrue(
+                ShadowDialog.getShownDialogs().size() == 0
+                        || Shadows.shadowOf(mDialog).hasBeenDismissed());
     }
 
     // Verify that |mCore| signaled that the overlay was lost to|mHost|.
@@ -271,8 +239,6 @@ public class DialogOverlayCoreTest {
 
         mCore.release();
         assertEquals(0, mHost.destroyedCount());
-        assertEquals(0, mHost.waitCloseCount());
-        assertEquals(0, mHost.enforceCloseCount());
         checkDialogIsNotShown();
     }
 
@@ -286,11 +252,7 @@ public class DialogOverlayCoreTest {
         // Destroy the surface.
         holderCallback().surfaceDestroyed(mHolder);
         // |mCore| should have waited for cleanup during surfaceDestroyed.
-        assertEquals(1, mHost.waitCloseCount());
-        // Since we waited for cleanup, also pretend that the release was posted during the wait and
-        // will arrive after the wait completes.
         mCore.release();
-        assertEquals(1, mHost.enforceCloseCount());
 
         checkOverlayWasDestroyed();
     }

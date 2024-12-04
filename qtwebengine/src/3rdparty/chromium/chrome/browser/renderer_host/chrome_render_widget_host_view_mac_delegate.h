@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,26 +7,17 @@
 
 #import <Cocoa/Cocoa.h>
 
-#include <memory>
-
-#include "base/mac/scoped_nsobject.h"
 #import "content/public/browser/render_widget_host_view_mac_delegate.h"
 
 namespace content {
 class RenderWidgetHost;
 }
 
-@class HistorySwiper;
 @interface ChromeRenderWidgetHostViewMacDelegate
-    : NSObject<RenderWidgetHostViewMacDelegate> {
- @private
-  content::RenderWidgetHost* _renderWidgetHost;  // weak
+    : NSObject <RenderWidgetHostViewMacDelegate>
 
-  // Responsible for 2-finger swipes history navigation.
-  base::scoped_nsobject<HistorySwiper> _historySwiper;
-}
-
-- (id)initWithRenderWidgetHost:(content::RenderWidgetHost*)renderWidgetHost;
+- (instancetype)initWithRenderWidgetHost:
+    (content::RenderWidgetHost*)renderWidgetHost;
 
 - (BOOL)handleEvent:(NSEvent*)event;
 - (BOOL)validateUserInterfaceItem:(id<NSValidatedUserInterfaceItem>)item

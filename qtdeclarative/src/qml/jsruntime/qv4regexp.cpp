@@ -1,43 +1,6 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtQml module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
-#include <limits>
 #include "qv4regexp_p.h"
 #include "qv4engine_p.h"
 #include "qv4scopedvalue_p.h"
@@ -46,19 +9,23 @@
 
 using namespace QV4;
 
+#if ENABLE(YARR_JIT)
+static constexpr quint8 RegexpJitThreshold = 5;
+#endif
+
 static JSC::RegExpFlags jscFlags(uint flags)
 {
     JSC::RegExpFlags jscFlags = JSC::NoFlags;
     if (flags & CompiledData::RegExp::RegExp_Global)
-        jscFlags = static_cast<JSC::RegExpFlags>(flags | JSC::FlagGlobal);
+        jscFlags = static_cast<JSC::RegExpFlags>(jscFlags | JSC::FlagGlobal);
     if (flags & CompiledData::RegExp::RegExp_IgnoreCase)
-        jscFlags = static_cast<JSC::RegExpFlags>(flags | JSC::FlagIgnoreCase);
+        jscFlags = static_cast<JSC::RegExpFlags>(jscFlags | JSC::FlagIgnoreCase);
     if (flags & CompiledData::RegExp::RegExp_Multiline)
-        jscFlags = static_cast<JSC::RegExpFlags>(flags | JSC::FlagMultiline);
+        jscFlags = static_cast<JSC::RegExpFlags>(jscFlags | JSC::FlagMultiline);
     if (flags & CompiledData::RegExp::RegExp_Unicode)
-        jscFlags = static_cast<JSC::RegExpFlags>(flags | JSC::FlagUnicode);
+        jscFlags = static_cast<JSC::RegExpFlags>(jscFlags | JSC::FlagUnicode);
     if (flags & CompiledData::RegExp::RegExp_Sticky)
-        jscFlags = static_cast<JSC::RegExpFlags>(flags | JSC::FlagSticky);
+        jscFlags = static_cast<JSC::RegExpFlags>(jscFlags | JSC::FlagSticky);
     return jscFlags;
 }
 
@@ -77,16 +44,62 @@ uint RegExp::match(const QString &string, int start, uint *matchOffsets)
     if (!isValid())
         return JSC::Yarr::offsetNoMatch;
 
+#if ENABLE(YARR_JIT)
+    auto *priv = d();
+
+    auto regenerateByteCode = [](Heap::RegExp *regexp) {
+        JSC::Yarr::ErrorCode error = JSC::Yarr::ErrorCode::NoError;
+        JSC::Yarr::YarrPattern yarrPattern(WTF::String(*regexp->pattern), jscFlags(regexp->flags),
+                                           error);
+
+        // As we successfully parsed the pattern before, we should still be able to.
+        Q_ASSERT(error == JSC::Yarr::ErrorCode::NoError);
+
+        regexp->byteCode = JSC::Yarr::byteCompile(
+                                   yarrPattern,
+                                   regexp->internalClass->engine->bumperPointerAllocator).release();
+    };
+
+    auto removeJitCode = [](Heap::RegExp *regexp) {
+        delete regexp->jitCode;
+        regexp->jitCode = nullptr;
+        regexp->jitFailed = true;
+    };
+
+    auto removeByteCode = [](Heap::RegExp *regexp) {
+        delete regexp->byteCode;
+        regexp->byteCode = nullptr;
+    };
+
+    if (!priv->jitCode && !priv->jitFailed && priv->internalClass->engine->canJIT()
+            && (string.length() > 1024 || priv->matchCount++ == RegexpJitThreshold)) {
+        removeByteCode(priv);
+
+        JSC::Yarr::ErrorCode error = JSC::Yarr::ErrorCode::NoError;
+        JSC::Yarr::YarrPattern yarrPattern(
+                WTF::String(*priv->pattern), jscFlags(priv->flags), error);
+        if (!yarrPattern.m_containsBackreferences) {
+            priv->jitCode = new JSC::Yarr::YarrCodeBlock;
+            JSC::VM *vm = static_cast<JSC::VM *>(priv->internalClass->engine);
+            JSC::Yarr::jitCompile(yarrPattern, JSC::Yarr::Char16, vm, *priv->jitCode);
+        }
+
+        if (!priv->hasValidJITCode()) {
+            removeJitCode(priv);
+            regenerateByteCode(priv);
+        }
+    }
+#endif
+
     WTF::String s(string);
 
 #if ENABLE(YARR_JIT)
-    static const uint offsetJITFail = std::numeric_limits<unsigned>::max() - 1;
-    auto *priv = d();
     if (priv->hasValidJITCode()) {
+        static const uint offsetJITFail = std::numeric_limits<unsigned>::max() - 1;
         uint ret = JSC::Yarr::offsetNoMatch;
 #if ENABLE(YARR_JIT_ALL_PARENS_EXPRESSIONS)
         char buffer[8192];
-        ret = uint(priv->jitCode->execute(s.characters16(), start, s.length(),
+        ret = uint(priv->jitCode->execute(s.characters16(), start, s.size(),
                                           (int*)matchOffsets, buffer, 8192).start);
 #else
         ret = uint(priv->jitCode->execute(s.characters16(), start, s.length(),
@@ -95,34 +108,25 @@ uint RegExp::match(const QString &string, int start, uint *matchOffsets)
         if (ret != offsetJITFail)
             return ret;
 
+        removeJitCode(priv);
         // JIT failed. We need byteCode to run the interpreter.
-        if (!priv->byteCode) {
-            JSC::Yarr::ErrorCode error = JSC::Yarr::ErrorCode::NoError;
-            JSC::Yarr::YarrPattern yarrPattern(WTF::String(*priv->pattern), jscFlags(priv->flags),
-                                               error);
-
-            // As we successfully parsed the pattern before, we should still be able to.
-            Q_ASSERT(error == JSC::Yarr::ErrorCode::NoError);
-
-            priv->byteCode = JSC::Yarr::byteCompile(
-                                     yarrPattern,
-                                     priv->internalClass->engine->bumperPointerAllocator).release();
-        }
+        Q_ASSERT(!priv->byteCode);
+        regenerateByteCode(priv);
     }
 #endif // ENABLE(YARR_JIT)
 
-    return JSC::Yarr::interpret(byteCode(), s.characters16(), string.length(), start, matchOffsets);
+    return JSC::Yarr::interpret(byteCode(), s.characters16(), string.size(), start, matchOffsets);
 }
 
 QString RegExp::getSubstitution(const QString &matched, const QString &str, int position, const Value *captures, int nCaptures, const QString &replacement)
 {
     QString result;
 
-    int matchedLength = matched.length();
-    Q_ASSERT(position >= 0 && position <= str.length());
+    int matchedLength = matched.size();
+    Q_ASSERT(position >= 0 && position <= str.size());
     int tailPos = position + matchedLength;
     int seenDollar = -1;
-    for (int i = 0; i < replacement.length(); ++i) {
+    for (int i = 0; i < replacement.size(); ++i) {
         QChar ch = replacement.at(i);
         if (seenDollar >= 0) {
             if (ch.unicode() == '$') {
@@ -135,7 +139,7 @@ QString RegExp::getSubstitution(const QString &matched, const QString &str, int 
                 result += str.mid(tailPos);
             } else if (ch.unicode() >= '0' && ch.unicode() <= '9') {
                 int n = ch.unicode() - '0';
-                if (i + 1 < replacement.length()) {
+                if (i + 1 < replacement.size()) {
                     ch = replacement.at(i + 1);
                     if (ch.unicode() >= '0' && ch.unicode() <= '9') {
                         n = n*10 + (ch.unicode() - '0');
@@ -212,25 +216,15 @@ void Heap::RegExp::init(ExecutionEngine *engine, const QString &pattern, uint fl
     this->flags = flags;
 
     valid = false;
+    jitFailed = false;
+    matchCount = 0;
 
     JSC::Yarr::ErrorCode error = JSC::Yarr::ErrorCode::NoError;
     JSC::Yarr::YarrPattern yarrPattern(WTF::String(pattern), jscFlags(flags), error);
     if (error != JSC::Yarr::ErrorCode::NoError)
         return;
     subPatternCount = yarrPattern.m_numSubpatterns;
-#if ENABLE(YARR_JIT)
-    if (!yarrPattern.m_containsBackreferences && engine->canJIT()) {
-        jitCode = new JSC::Yarr::YarrCodeBlock;
-        JSC::VM *vm = static_cast<JSC::VM *>(engine);
-        JSC::Yarr::jitCompile(yarrPattern, JSC::Yarr::Char16, vm, *jitCode);
-    }
-#else
-    Q_UNUSED(engine)
-#endif
-    if (hasValidJITCode()) {
-        valid = true;
-        return;
-    }
+    Q_UNUSED(engine);
     byteCode = JSC::Yarr::byteCompile(yarrPattern, internalClass->engine->bumperPointerAllocator).release();
     if (byteCode)
         valid = true;

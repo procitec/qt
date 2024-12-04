@@ -16,6 +16,7 @@
 #include "include/core/SkSize.h"
 #include "include/core/SkStream.h"
 #include "include/core/SkString.h"
+#include "tools/DecodeUtils.h"
 #include "tools/Resources.h"
 
 #include <memory>
@@ -27,19 +28,14 @@ public:
     BitmapImageGM() {}
 
 protected:
+    SkString getName() const override { return SkString("bitmap-image-srgb-legacy"); }
 
-    SkString onShortName() override {
-        return SkString("bitmap-image-srgb-legacy");
-    }
-
-    SkISize onISize() override {
-        return SkISize::Make(2*kSize, 2*kSize);
-    }
+    SkISize getISize() override { return SkISize::Make(2 * kSize, 2 * kSize); }
 
     DrawResult onDraw(SkCanvas* canvas, SkString* errorMsg) override {
         // Create image.
         const char* path = "images/mandrill_512_q075.jpg";
-        sk_sp<SkImage> image = GetResourceAsImage(path);
+        sk_sp<SkImage> image = ToolUtils::GetResourceAsImage(path);
         if (!image) {
             *errorMsg = "Couldn't load images/mandrill_512_q075.jpg. "
                         "Did you forget to set the resource path?";
@@ -48,9 +44,7 @@ protected:
 
         // Create matching bitmap.
         std::unique_ptr<SkCodec> codec(SkCodec::MakeFromStream(GetResourceAsStream(path)));
-        SkBitmap bitmap;
-        bitmap.allocPixels(codec->getInfo());
-        codec->getPixels(codec->getInfo(), bitmap.getPixels(), bitmap.rowBytes());
+        auto [codecImage, _] = codec->getImage();
 
         // The GM will be displayed in a 2x2 grid.
         // The top two squares show an sRGB image, then bitmap, drawn to a legacy canvas.
@@ -58,10 +52,10 @@ protected:
         SkBitmap legacyBMCanvas;
         legacyBMCanvas.allocPixels(linearInfo);
         SkCanvas legacyCanvas(legacyBMCanvas);
-        legacyCanvas.drawImage(image, 0.0f, 0.0f, nullptr);
+        legacyCanvas.drawImage(image, 0.0f, 0.0f);
         legacyCanvas.translate(SkScalar(kSize), 0.0f);
-        legacyCanvas.drawBitmap(bitmap, 0.0f, 0.0f, nullptr);
-        canvas->drawBitmap(legacyBMCanvas, 0.0f, 0.0f, nullptr);
+        legacyCanvas.drawImage(codecImage, 0.0f, 0.0f);
+        canvas->drawImage(legacyBMCanvas.asImage(), 0.0f, 0.0f);
         canvas->translate(0.0f, SkScalar(kSize));
 
         // The bottom two squares show an sRGB image, then bitmap, drawn to a srgb canvas.
@@ -69,15 +63,15 @@ protected:
         SkBitmap srgbBMCanvas;
         srgbBMCanvas.allocPixels(srgbInfo);
         SkCanvas srgbCanvas(srgbBMCanvas);
-        srgbCanvas.drawImage(image, 0.0f, 0.0f, nullptr);
+        srgbCanvas.drawImage(image, 0.0f, 0.0f);
         srgbCanvas.translate(SkScalar(kSize), 0.0f);
-        srgbCanvas.drawBitmap(bitmap, 0.0f, 0.0f, nullptr);
-        canvas->drawBitmap(srgbBMCanvas, 0.0f, 0.0f, nullptr);
+        srgbCanvas.drawImage(codecImage, 0.0f, 0.0f);
+        canvas->drawImage(srgbBMCanvas.asImage(), 0.0f, 0.0f);
         return DrawResult::kOk;
     }
 
 private:
-    static constexpr int kSize = 512;
+    inline static constexpr int kSize = 512;
 
     using INHERITED = GM;
 };

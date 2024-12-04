@@ -1,15 +1,14 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef CONTENT_PUBLIC_BROWSER_NOTIFICATION_EVENT_DISPATCHER_H_
 #define CONTENT_PUBLIC_BROWSER_NOTIFICATION_EVENT_DISPATCHER_H_
 
+#include <optional>
 #include <string>
 
-#include "base/callback_forward.h"
-#include "base/optional.h"
-#include "base/strings/string16.h"
+#include "base/functional/callback_forward.h"
 #include "content/common/content_export.h"
 
 class GURL;
@@ -40,8 +39,8 @@ class CONTENT_EXPORT NotificationEventDispatcher {
       BrowserContext* browser_context,
       const std::string& notification_id,
       const GURL& origin,
-      const base::Optional<int>& action_index,
-      const base::Optional<base::string16>& reply,
+      const std::optional<int>& action_index,
+      const std::optional<std::u16string>& reply,
       NotificationDispatchCompleteCallback dispatch_complete_callback) = 0;
 
   // Dispatches the "notificationclose" event on the Service Worker associated

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,8 +6,9 @@
 
 #include <memory>
 
-#include "base/macros.h"
 #include "ui/aura/window.h"
+#include "ui/base/metadata/metadata_header_macros.h"
+#include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/views/controls/native/native_view_host_test_base.h"
 #include "ui/views/test/views_test_base.h"
 #include "ui/views/widget/widget.h"
@@ -18,13 +19,13 @@ class NativeViewHostTest : public test::NativeViewHostTestBase {
  public:
   NativeViewHostTest() = default;
 
+  NativeViewHostTest(const NativeViewHostTest&) = delete;
+  NativeViewHostTest& operator=(const NativeViewHostTest&) = delete;
+
   void SetUp() override {
     ViewsTestBase::SetUp();
     CreateTopLevel();
   }
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(NativeViewHostTest);
 };
 
 namespace {
@@ -32,8 +33,15 @@ namespace {
 // View implementation used by NativeViewHierarchyChanged to count number of
 // times NativeViewHierarchyChanged() is invoked.
 class NativeViewHierarchyChangedTestView : public View {
+  METADATA_HEADER(NativeViewHierarchyChangedTestView, View)
+
  public:
   NativeViewHierarchyChangedTestView() = default;
+
+  NativeViewHierarchyChangedTestView(
+      const NativeViewHierarchyChangedTestView&) = delete;
+  NativeViewHierarchyChangedTestView& operator=(
+      const NativeViewHierarchyChangedTestView&) = delete;
 
   void ResetCount() { notification_count_ = 0; }
 
@@ -47,17 +55,24 @@ class NativeViewHierarchyChangedTestView : public View {
 
  private:
   int notification_count_ = 0;
-
-  DISALLOW_COPY_AND_ASSIGN(NativeViewHierarchyChangedTestView);
 };
+
+BEGIN_METADATA(NativeViewHierarchyChangedTestView)
+END_METADATA
 
 aura::Window* GetNativeParent(aura::Window* window) {
   return window->parent();
 }
 
 class ViewHierarchyChangedTestHost : public NativeViewHost {
+  METADATA_HEADER(ViewHierarchyChangedTestHost, NativeViewHost)
+
  public:
   ViewHierarchyChangedTestHost() = default;
+
+  ViewHierarchyChangedTestHost(const ViewHierarchyChangedTestHost&) = delete;
+  ViewHierarchyChangedTestHost& operator=(const ViewHierarchyChangedTestHost&) =
+      delete;
 
   void ResetParentChanges() { num_parent_changes_ = 0; }
 
@@ -77,9 +92,10 @@ class ViewHierarchyChangedTestHost : public NativeViewHost {
 
  private:
   int num_parent_changes_ = 0;
-
-  DISALLOW_COPY_AND_ASSIGN(ViewHierarchyChangedTestHost);
 };
+
+BEGIN_METADATA(ViewHierarchyChangedTestHost)
+END_METADATA
 
 }  // namespace
 

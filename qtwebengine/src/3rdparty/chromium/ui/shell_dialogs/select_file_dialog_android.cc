@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -17,6 +17,7 @@
 #include "ui/base/ui_base_jni_headers/SelectFileDialog_jni.h"
 #include "ui/shell_dialogs/select_file_policy.h"
 #include "ui/shell_dialogs/selected_file_info.h"
+#include "url/gurl.h"
 
 using base::android::ConvertJavaStringToUTF8;
 using base::android::JavaParamRef;
@@ -42,13 +43,11 @@ void SelectFileDialogImpl::OnFileSelected(
   std::string path = ConvertJavaStringToUTF8(env, filepath);
   std::string file_name = ConvertJavaStringToUTF8(env, display_name);
   base::FilePath file_path = base::FilePath(path);
-  ui::SelectedFileInfo file_info;
-  file_info.file_path = file_path;
-  file_info.local_path = file_path;
+  ui::SelectedFileInfo file_info(file_path);
   if (!file_name.empty())
     file_info.display_name = file_name;
 
-  listener_->FileSelectedWithExtraInfo(file_info, 0, nullptr);
+  listener_->FileSelected(file_info, 0, nullptr);
 }
 
 void SelectFileDialogImpl::OnMultipleFilesSelected(
@@ -75,15 +74,13 @@ void SelectFileDialogImpl::OnMultipleFilesSelected(
     std::string display_name =
         ConvertJavaStringToUTF8(env, display_name_ref.obj());
 
-    ui::SelectedFileInfo file_info;
-    file_info.file_path = file_path;
-    file_info.local_path = file_path;
+    ui::SelectedFileInfo file_info(file_path);
     file_info.display_name = display_name;
 
     selected_files.push_back(file_info);
   }
 
-  listener_->MultiFilesSelectedWithExtraInfo(selected_files, nullptr);
+  listener_->MultiFilesSelected(selected_files, nullptr);
 }
 
 void SelectFileDialogImpl::OnFileNotSelected(
@@ -98,8 +95,7 @@ void SelectFileDialogImpl::OnContactsSelected(
     const JavaParamRef<jobject>& java_object,
     const JavaParamRef<jstring>& java_contacts) {
   std::string data = ConvertJavaStringToUTF8(env, java_contacts.obj());
-  listener_->FileSelectedWithExtraInfo(ui::SelectedFileInfo(), 0,
-                                       (void*)data.c_str());
+  listener_->FileSelected(ui::SelectedFileInfo(), 0, (void*)data.c_str());
 }
 
 bool SelectFileDialogImpl::IsRunning(gfx::NativeWindow) const {
@@ -112,20 +108,21 @@ void SelectFileDialogImpl::ListenerDestroyed() {
 
 void SelectFileDialogImpl::SelectFileImpl(
     SelectFileDialog::Type type,
-    const base::string16& title,
+    const std::u16string& title,
     const base::FilePath& default_path,
     const SelectFileDialog::FileTypeInfo* file_types,
     int file_type_index,
     const std::string& default_extension,
     gfx::NativeWindow owning_window,
-    void* params) {
+    void* params,
+    const GURL* caller) {
   JNIEnv* env = base::android::AttachCurrentThread();
 
   // The first element in the pair is a list of accepted types, the second
   // indicates whether the device's capture capabilities should be used.
-  typedef std::pair<std::vector<base::string16>, bool> AcceptTypes;
-  AcceptTypes accept_types = std::make_pair(std::vector<base::string16>(),
-                                            false);
+  typedef std::pair<std::vector<std::u16string>, bool> AcceptTypes;
+  AcceptTypes accept_types =
+      std::make_pair(std::vector<std::u16string>(), false);
 
   if (params)
     accept_types = *(reinterpret_cast<AcceptTypes*>(params));
@@ -141,6 +138,8 @@ void SelectFileDialogImpl::SelectFileImpl(
 }
 
 SelectFileDialogImpl::~SelectFileDialogImpl() {
+  JNIEnv* env = base::android::AttachCurrentThread();
+  Java_SelectFileDialog_nativeDestroyed(env, java_object_);
 }
 
 SelectFileDialogImpl::SelectFileDialogImpl(
@@ -148,6 +147,7 @@ SelectFileDialogImpl::SelectFileDialogImpl(
     std::unique_ptr<SelectFilePolicy> policy)
     : SelectFileDialog(listener, std::move(policy)) {
   JNIEnv* env = base::android::AttachCurrentThread();
+  // TODO(crbug.com/1365766): The `intptr_t` to `this` might get stale.
   java_object_.Reset(
       Java_SelectFileDialog_create(env, reinterpret_cast<intptr_t>(this)));
 }

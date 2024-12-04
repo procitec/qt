@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -23,14 +23,13 @@
 #define BASE_WIN_WIN_UTIL_H_
 
 #include <stdint.h>
-#include "base/win/windows_types.h"
 
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "base/base_export.h"
-#include "base/macros.h"
-#include "base/strings/string_piece.h"
+#include "base/win/windows_types.h"
 
 struct IPropertyStore;
 struct _tagpropertykey;
@@ -84,9 +83,8 @@ BASE_EXPORT bool SetClsidForPropertyStore(IPropertyStore* property_store,
                                           const PROPERTYKEY& property_key,
                                           const CLSID& property_clsid_value);
 
-// Sets the application id in given IPropertyStore. The function is intended
-// for tagging application/chromium shortcut, browser window and jump list for
-// Win7.
+// Sets the application id in given IPropertyStore. The function is used to tag
+// application/Chrome shortcuts, and set app details for Chrome windows.
 BASE_EXPORT bool SetAppIdForPropertyStore(IPropertyStore* property_store,
                                           const wchar_t* app_id);
 
@@ -120,7 +118,9 @@ BASE_EXPORT void SetAbortBehaviorForCrashReporting();
 
 // Checks whether the supplied |hwnd| is in Windows 10 tablet mode. Will return
 // false on versions below 10.
-BASE_EXPORT bool IsWindows10TabletMode(HWND hwnd);
+// While tablet mode isn't officially supported in Windows 11, the function will
+// make an attempt to inspect other signals for tablet mode.
+BASE_EXPORT bool IsWindows10OrGreaterTabletMode(HWND hwnd);
 
 // A tablet is a device that is touch enabled and also is being used
 // "like a tablet". This is used by the following:
@@ -160,6 +160,11 @@ BASE_EXPORT bool IsKeyboardPresentOnSlate(HWND hwnd, std::string* reason);
 // Returns true if the machine is enrolled to a domain.
 BASE_EXPORT bool IsEnrolledToDomain();
 
+// Returns true if either the device is joined to Azure Active Directory (AD) or
+// one or more Azure AD work accounts have been added on the device. This call
+// trigger some I/O when loading netapi32.dll to determine the management state.
+BASE_EXPORT bool IsJoinedToAzureAD();
+
 // Returns true if the machine is being managed by an MDM system.
 BASE_EXPORT bool IsDeviceRegisteredWithManagement();
 
@@ -191,14 +196,11 @@ BASE_EXPORT bool GetLoadedModulesSnapshot(HANDLE process,
 BASE_EXPORT void EnableFlicks(HWND hwnd);
 BASE_EXPORT void DisableFlicks(HWND hwnd);
 
-// Returns true if the process is per monitor DPI aware.
-BASE_EXPORT bool IsProcessPerMonitorDpiAware();
-
 // Enable high-DPI support for the current process.
 BASE_EXPORT void EnableHighDPISupport();
 
 // Returns a string representation of |rguid|.
-BASE_EXPORT std::wstring WStringFromGUID(REFGUID rguid);
+BASE_EXPORT std::wstring WStringFromGUID(const ::GUID& rguid);
 
 // Attempts to pin user32.dll to ensure it remains loaded. If it isn't loaded
 // yet, the module will first be loaded and then the pin will be attempted. If
@@ -221,33 +223,61 @@ BASE_EXPORT std::wstring GetWindowObjectName(HANDLE handle);
 // Checks if the calling thread is running under a desktop with the name
 // given by |desktop_name|. |desktop_name| is ASCII case insensitive (non-ASCII
 // characters will be compared with exact matches).
-BASE_EXPORT bool IsRunningUnderDesktopName(WStringPiece desktop_name);
+BASE_EXPORT bool IsRunningUnderDesktopName(std::wstring_view desktop_name);
 
 // Returns true if current session is a remote session.
 BASE_EXPORT bool IsCurrentSessionRemote();
+
+// IsAppVerifierLoaded() indicates whether Application Verifier is *already*
+// loaded into the current process.
+BASE_EXPORT bool IsAppVerifierLoaded();
 
 // Allows changing the domain enrolled state for the life time of the object.
 // The original state is restored upon destruction.
 class BASE_EXPORT ScopedDomainStateForTesting {
  public:
-  ScopedDomainStateForTesting(bool state);
+  explicit ScopedDomainStateForTesting(bool state);
+
+  ScopedDomainStateForTesting(const ScopedDomainStateForTesting&) = delete;
+  ScopedDomainStateForTesting& operator=(const ScopedDomainStateForTesting&) =
+      delete;
+
   ~ScopedDomainStateForTesting();
 
  private:
   bool initial_state_;
-  DISALLOW_COPY_AND_ASSIGN(ScopedDomainStateForTesting);
 };
 
 // Allows changing the management registration state for the life time of the
 // object.  The original state is restored upon destruction.
 class BASE_EXPORT ScopedDeviceRegisteredWithManagementForTesting {
  public:
-  ScopedDeviceRegisteredWithManagementForTesting(bool state);
+  explicit ScopedDeviceRegisteredWithManagementForTesting(bool state);
+
+  ScopedDeviceRegisteredWithManagementForTesting(
+      const ScopedDeviceRegisteredWithManagementForTesting&) = delete;
+  ScopedDeviceRegisteredWithManagementForTesting& operator=(
+      const ScopedDeviceRegisteredWithManagementForTesting&) = delete;
+
   ~ScopedDeviceRegisteredWithManagementForTesting();
 
  private:
   bool initial_state_;
-  DISALLOW_COPY_AND_ASSIGN(ScopedDeviceRegisteredWithManagementForTesting);
+};
+
+// Allows changing the Azure Active Directory join state for the lifetime of the
+// object. The original state is restored upon destruction.
+class BASE_EXPORT ScopedAzureADJoinStateForTesting {
+ public:
+  explicit ScopedAzureADJoinStateForTesting(bool state);
+  ScopedAzureADJoinStateForTesting(const ScopedAzureADJoinStateForTesting&) =
+      delete;
+  ScopedAzureADJoinStateForTesting& operator=(
+      const ScopedAzureADJoinStateForTesting&) = delete;
+  ~ScopedAzureADJoinStateForTesting();
+
+ private:
+  const bool initial_state_;
 };
 
 }  // namespace win

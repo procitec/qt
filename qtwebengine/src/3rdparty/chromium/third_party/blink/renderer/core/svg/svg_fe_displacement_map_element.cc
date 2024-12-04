@@ -24,14 +24,17 @@
 #include "third_party/blink/renderer/core/svg/svg_animated_string.h"
 #include "third_party/blink/renderer/core/svg/svg_enumeration_map.h"
 #include "third_party/blink/renderer/core/svg_names.h"
-#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 
 namespace blink {
 
 template <>
 const SVGEnumerationMap& GetEnumerationMap<ChannelSelectorType>() {
   static const SVGEnumerationMap::Entry enum_items[] = {
-      {CHANNEL_R, "R"}, {CHANNEL_G, "G"}, {CHANNEL_B, "B"}, {CHANNEL_A, "A"},
+      {CHANNEL_R, "R"},
+      {CHANNEL_G, "G"},
+      {CHANNEL_B, "B"},
+      {CHANNEL_A, "A"},
   };
   static const SVGEnumerationMap entries(enum_items);
   return entries;
@@ -54,13 +57,7 @@ SVGFEDisplacementMapElement::SVGFEDisplacementMapElement(Document& document)
           MakeGarbageCollected<SVGAnimatedEnumeration<ChannelSelectorType>>(
               this,
               svg_names::kYChannelSelectorAttr,
-              CHANNEL_A)) {
-  AddToPropertyMap(scale_);
-  AddToPropertyMap(in1_);
-  AddToPropertyMap(in2_);
-  AddToPropertyMap(x_channel_selector_);
-  AddToPropertyMap(y_channel_selector_);
-}
+              CHANNEL_A)) {}
 
 void SVGFEDisplacementMapElement::Trace(Visitor* visitor) const {
   visitor->Trace(scale_);
@@ -91,7 +88,8 @@ bool SVGFEDisplacementMapElement::SetFilterEffectAttribute(
 }
 
 void SVGFEDisplacementMapElement::SvgAttributeChanged(
-    const QualifiedName& attr_name) {
+    const SvgAttributeChangedParams& params) {
+  const QualifiedName& attr_name = params.name;
   if (attr_name == svg_names::kXChannelSelectorAttr ||
       attr_name == svg_names::kYChannelSelectorAttr ||
       attr_name == svg_names::kScaleAttr) {
@@ -106,7 +104,7 @@ void SVGFEDisplacementMapElement::SvgAttributeChanged(
     return;
   }
 
-  SVGFilterPrimitiveStandardAttributes::SvgAttributeChanged(attr_name);
+  SVGFilterPrimitiveStandardAttributes::SvgAttributeChanged(params);
 }
 
 FilterEffect* SVGFEDisplacementMapElement::Build(
@@ -123,10 +121,36 @@ FilterEffect* SVGFEDisplacementMapElement::Build(
       filter, x_channel_selector_->CurrentEnumValue(),
       y_channel_selector_->CurrentEnumValue(), scale_->CurrentValue()->Value());
   FilterEffectVector& input_effects = effect->InputEffects();
-  input_effects.ReserveCapacity(2);
+  input_effects.reserve(2);
   input_effects.push_back(input1);
   input_effects.push_back(input2);
   return effect;
+}
+
+SVGAnimatedPropertyBase* SVGFEDisplacementMapElement::PropertyFromAttribute(
+    const QualifiedName& attribute_name) const {
+  if (attribute_name == svg_names::kScaleAttr) {
+    return scale_.Get();
+  } else if (attribute_name == svg_names::kInAttr) {
+    return in1_.Get();
+  } else if (attribute_name == svg_names::kIn2Attr) {
+    return in2_.Get();
+  } else if (attribute_name == svg_names::kXChannelSelectorAttr) {
+    return x_channel_selector_.Get();
+  } else if (attribute_name == svg_names::kYChannelSelectorAttr) {
+    return y_channel_selector_.Get();
+  } else {
+    return SVGFilterPrimitiveStandardAttributes::PropertyFromAttribute(
+        attribute_name);
+  }
+}
+
+void SVGFEDisplacementMapElement::SynchronizeAllSVGAttributes() const {
+  SVGAnimatedPropertyBase* attrs[]{scale_.Get(), in1_.Get(), in2_.Get(),
+                                   x_channel_selector_.Get(),
+                                   y_channel_selector_.Get()};
+  SynchronizeListOfSVGAttributes(attrs);
+  SVGFilterPrimitiveStandardAttributes::SynchronizeAllSVGAttributes();
 }
 
 }  // namespace blink

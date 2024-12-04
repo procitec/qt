@@ -32,7 +32,11 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_DOM_COLLECTION_INDEX_CACHE_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_DOM_COLLECTION_INDEX_CACHE_H_
 
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "base/check_op.h"
+#include "base/logging.h"
+#include "third_party/blink/renderer/platform/heap/member.h"
+#include "third_party/blink/renderer/platform/heap/visitor.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 
 namespace blink {
 
@@ -69,7 +73,7 @@ class CollectionIndexCache {
   virtual void Trace(Visitor* visitor) const { visitor->Trace(current_node_); }
 
  protected:
-  ALWAYS_INLINE NodeType* CachedNode() const { return current_node_; }
+  ALWAYS_INLINE NodeType* CachedNode() const { return current_node_.Get(); }
   ALWAYS_INLINE unsigned CachedNodeIndex() const {
     DCHECK(CachedNode());
     return cached_node_index_;

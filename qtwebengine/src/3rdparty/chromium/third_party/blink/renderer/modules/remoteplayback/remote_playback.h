@@ -1,11 +1,10 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef THIRD_PARTY_BLINK_RENDERER_MODULES_REMOTEPLAYBACK_REMOTE_PLAYBACK_H_
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_REMOTEPLAYBACK_REMOTE_PLAYBACK_H_
 
-#include "base/macros.h"
 #include "third_party/blink/public/mojom/presentation/presentation.mojom-blink.h"
 #include "third_party/blink/public/platform/modules/remoteplayback/web_remote_playback_client.h"
 #include "third_party/blink/public/platform/web_url.h"
@@ -17,7 +16,9 @@
 #include "third_party/blink/renderer/core/html/media/remote_playback_controller.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
 #include "third_party/blink/renderer/modules/presentation/presentation_availability_observer.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_map.h"
+#include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_set.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/mojo/heap_mojo_receiver.h"
 #include "third_party/blink/renderer/platform/mojo/heap_mojo_remote.h"
 #include "third_party/blink/renderer/platform/mojo/heap_mojo_wrapper_mode.h"
@@ -25,6 +26,11 @@
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
+
+namespace media {
+enum class VideoCodec;
+enum class AudioCodec;
+}  // namespace media
 
 namespace blink {
 
@@ -40,7 +46,7 @@ class V8RemotePlaybackAvailabilityCallback;
 //   initiate remote playback for a media element.
 // - A remote playback session is implemented as a PresentationConnection.
 class MODULES_EXPORT RemotePlayback final
-    : public EventTargetWithInlineData,
+    : public EventTarget,
       public ExecutionContextLifecycleObserver,
       public ActiveScriptWrappable<RemotePlayback>,
       public WebRemotePlaybackClient,
@@ -58,6 +64,9 @@ class MODULES_EXPORT RemotePlayback final
 
   explicit RemotePlayback(HTMLMediaElement&);
 
+  RemotePlayback(const RemotePlayback&) = delete;
+  RemotePlayback& operator=(const RemotePlayback&) = delete;
+
   // Notifies this object that disableRemotePlayback attribute was set on the
   // corresponding media element.
   void RemotePlaybackDisabled();
@@ -70,18 +79,19 @@ class MODULES_EXPORT RemotePlayback final
   // availability via the provided callback. May start the monitoring of remote
   // playback devices if it isn't running yet.
   ScriptPromise watchAvailability(ScriptState*,
-                                  V8RemotePlaybackAvailabilityCallback*);
+                                  V8RemotePlaybackAvailabilityCallback*,
+                                  ExceptionState&);
 
   // Cancels updating the page via the callback specified by its id.
-  ScriptPromise cancelWatchAvailability(ScriptState*, int id);
+  ScriptPromise cancelWatchAvailability(ScriptState*, int id, ExceptionState&);
 
   // Cancels all the callbacks watching remote playback availability changes
   // registered with this element.
-  ScriptPromise cancelWatchAvailability(ScriptState*);
+  ScriptPromise cancelWatchAvailability(ScriptState*, ExceptionState&);
 
   // Shows the UI allowing user to change the remote playback state of the media
   // element (by picking a remote playback device from the list, for example).
-  ScriptPromise prompt(ScriptState*);
+  ScriptPromise prompt(ScriptState*, ExceptionState&);
 
   String state() const;
 
@@ -115,6 +125,9 @@ class MODULES_EXPORT RemotePlayback final
   bool RemotePlaybackAvailable() const override;
   void SourceChanged(const WebURL&, bool is_source_supported) override;
   WebString GetPresentationId() override;
+  void MediaMetadataChanged(
+      absl::optional<media::VideoCodec> video_codec,
+      absl::optional<media::AudioCodec> audio_codec) override;
 
   // RemotePlaybackController implementation.
   void AddObserver(RemotePlaybackObserver*) override;
@@ -157,6 +170,8 @@ class MODULES_EXPORT RemotePlayback final
   // May be called more than once in a row.
   void StopListeningForAvailability();
 
+  void UpdateAvailabilityUrlsAndStartListening();
+
   // Clears bindings after remote playback stops.
   void CleanupConnections();
 
@@ -167,9 +182,14 @@ class MODULES_EXPORT RemotePlayback final
   Member<ScriptPromiseResolver> prompt_promise_resolver_;
   Vector<KURL> availability_urls_;
   bool is_listening_;
+  bool is_background_availability_monitoring_disabled_for_testing_ = false;
 
   String presentation_id_;
   KURL presentation_url_;
+  WebURL source_;
+  bool is_source_supported_ = false;
+  absl::optional<media::VideoCodec> video_codec_ = absl::nullopt;
+  absl::optional<media::AudioCodec> audio_codec_ = absl::nullopt;
 
   HeapMojoReceiver<mojom::blink::PresentationConnection, RemotePlayback>
       presentation_connection_receiver_;
@@ -177,8 +197,6 @@ class MODULES_EXPORT RemotePlayback final
       target_presentation_connection_;
 
   HeapHashSet<Member<RemotePlaybackObserver>> observers_;
-
-  DISALLOW_COPY_AND_ASSIGN(RemotePlayback);
 };
 
 }  // namespace blink

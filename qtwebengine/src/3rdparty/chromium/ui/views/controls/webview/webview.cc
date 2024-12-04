@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,25 +8,31 @@
 #include <utility>
 
 #include "base/no_destructor.h"
+#include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "content/public/browser/browser_accessibility_state.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/render_process_host.h"
-#include "content/public/browser/render_view_host.h"
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/web_contents.h"
 #include "ipc/ipc_message.h"
 #include "ui/accessibility/ax_enums.mojom.h"
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/accessibility/platform/ax_platform_node.h"
+#include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/events/event.h"
+#include "ui/views/accessibility/view_accessibility.h"
+#include "ui/views/controls/webview/web_contents_set_background_color.h"
 #include "ui/views/focus/focus_manager.h"
 #include "ui/views/views_delegate.h"
 
 namespace views {
 
 namespace {
+
+// This key indicates that a WebContents is used by a WebView.
+const void* const kIsWebViewContentsKey = &kIsWebViewContentsKey;
 
 // A testing stub that creates web contents.
 WebView::WebContentsCreator* GetCreatorForTesting() {
@@ -39,8 +45,9 @@ WebView::WebContentsCreator* GetCreatorForTesting() {
 // needs to ensure the accessible from the parent is set on the NativeView.
 void UpdateNativeViewHostAccessibleParent(NativeViewHost* holder,
                                           View* parent) {
-  if (!parent)
+  if (!parent) {
     return;
+  }
   holder->SetParentAccessible(parent->GetNativeViewAccessible());
 }
 
@@ -61,20 +68,27 @@ WebView::ScopedWebContentsCreatorForTesting::
 // WebView, public:
 
 WebView::WebView(content::BrowserContext* browser_context) {
-  ui::AXPlatformNode::AddAXModeObserver(this);
+  set_suppress_default_focus_handling();
+  ax_mode_observation_.Observe(&ui::AXPlatform::GetInstance());
   SetBrowserContext(browser_context);
 }
 
 WebView::~WebView() {
-  ui::AXPlatformNode::RemoveAXModeObserver(this);
   SetWebContents(nullptr);  // Make sure all necessary tear-down takes place.
+  browser_context_ = nullptr;
 }
 
-content::WebContents* WebView::GetWebContents() {
+// static
+bool WebView::IsWebViewContents(const content::WebContents* web_contents) {
+  return web_contents->GetUserData(kIsWebViewContentsKey);
+}
+
+content::WebContents* WebView::GetWebContents(base::Location creator_location) {
   if (!web_contents()) {
-    if (!browser_context_)
+    if (!browser_context_) {
       return nullptr;
-    wc_owner_ = CreateWebContents(browser_context_);
+    }
+    wc_owner_ = CreateWebContents(browser_context_, creator_location);
     wc_owner_->SetDelegate(this);
     SetWebContents(wc_owner_.get());
   }
@@ -83,32 +97,35 @@ content::WebContents* WebView::GetWebContents() {
 
 void WebView::SetWebContents(content::WebContents* replacement) {
   TRACE_EVENT0("views", "WebView::SetWebContents");
-  if (replacement == web_contents())
+  if (replacement == web_contents()) {
     return;
+  }
   SetCrashedOverlayView(nullptr);
   DetachWebContentsNativeView();
   WebContentsObserver::Observe(replacement);
+
+  // Do not remove the observation of the previously hosted WebContents to allow
+  // the WebContents to continue to use the source for colors and receive update
+  // notifications when in the background and not directly part of a UI
+  // hierarchy. This avoids color pop-in if the WebContents is re-inserted into
+  // the same hierarchy at a later point in time.
+  if (replacement) {
+    replacement->SetColorProviderSource(GetWidget());
+    replacement->SetUserData(kIsWebViewContentsKey,
+                             std::make_unique<base::SupportsUserData::Data>());
+  }
+
   // web_contents() now returns |replacement| from here onwards.
-  UpdateCrashedOverlayView();
-  if (wc_owner_.get() != replacement)
+  if (wc_owner_.get() != replacement) {
     wc_owner_.reset();
-  if (embed_fullscreen_widget_mode_enabled_) {
-    is_embedding_fullscreen_widget_ =
-        fullscreen_native_view_for_testing_ ||
-        (web_contents() && web_contents()->GetFullscreenRenderWidgetHostView());
-  } else {
-    DCHECK(!is_embedding_fullscreen_widget_);
   }
   AttachWebContentsNativeView();
-  NotifyAccessibilityWebContentsChanged();
 
-  MaybeEnableAutoResize();
-}
-
-void WebView::SetEmbedFullscreenWidgetMode(bool enable) {
-  DCHECK(!web_contents())
-      << "Cannot change mode while a WebContents is attached.";
-  embed_fullscreen_widget_mode_enabled_ = enable;
+  if (replacement && replacement->GetPrimaryMainFrame()->IsRenderFrameLive()) {
+    SetUpNewMainFrame(replacement->GetPrimaryMainFrame());
+  } else {
+    LostMainFrame();
+  }
 }
 
 content::BrowserContext* WebView::GetBrowserContext() {
@@ -136,51 +153,60 @@ void WebView::EnableSizingFromWebContents(const gfx::Size& min_size,
   DCHECK(!max_size.IsEmpty());
   min_size_ = min_size;
   max_size_ = max_size;
-  MaybeEnableAutoResize();
+  if (web_contents() &&
+      web_contents()->GetPrimaryMainFrame()->IsRenderFrameLive()) {
+    MaybeEnableAutoResize(web_contents()->GetPrimaryMainFrame());
+  }
 }
 
 void WebView::SetCrashedOverlayView(View* crashed_overlay_view) {
-  if (crashed_overlay_view_ == crashed_overlay_view)
+  if (crashed_overlay_view_.view() == crashed_overlay_view) {
     return;
+  }
 
-  if (crashed_overlay_view_) {
-    RemoveChildView(crashed_overlay_view_);
+  if (crashed_overlay_view_.view()) {
+    RemoveChildView(crashed_overlay_view_.view());
     // Show the hosted web contents view iff the crashed
     // overlay is NOT showing, to ensure hit testing is
     // correct on Mac. See https://crbug.com/896508
     holder_->SetVisible(true);
-    if (!crashed_overlay_view_->owned_by_client())
-      delete crashed_overlay_view_;
   }
 
-  crashed_overlay_view_ = crashed_overlay_view;
-  if (crashed_overlay_view_) {
-    AddChildView(crashed_overlay_view_);
+  crashed_overlay_view_.SetView(crashed_overlay_view);
+
+  if (crashed_overlay_view_.view()) {
+    CHECK(crashed_overlay_view_.view()->owned_by_client());
+    AddChildView(crashed_overlay_view_.view());
     holder_->SetVisible(false);
-    crashed_overlay_view_->SetBoundsRect(gfx::Rect(size()));
+    crashed_overlay_view_.view()->SetBoundsRect(GetLocalBounds());
   }
 
   UpdateCrashedOverlayView();
+}
+
+base::CallbackListSubscription WebView::AddWebContentsAttachedCallback(
+    WebContentsAttachedCallback callback) {
+  return web_contents_attached_callbacks_.Add(callback);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // WebView, View overrides:
 
 void WebView::OnBoundsChanged(const gfx::Rect& previous_bounds) {
-  if (crashed_overlay_view_)
-    crashed_overlay_view_->SetBoundsRect(gfx::Rect(size()));
+  View* overlay = crashed_overlay_view_.view();
+  if (overlay) {
+    overlay->SetBoundsRect(GetLocalBounds());
+  }
 
   // In most cases, the holder is simply sized to fill this WebView's bounds.
   // Only WebContentses that are in fullscreen mode and being screen-captured
   // will engage the special layout/sizing behavior.
   gfx::Rect holder_bounds = GetContentsBounds();
-  if (!embed_fullscreen_widget_mode_enabled_ || !web_contents() ||
-      !web_contents()->IsBeingCaptured() ||
+  if (!web_contents() || !web_contents()->IsBeingCaptured() ||
       web_contents()->GetPreferredSize().IsEmpty() ||
-      !(is_embedding_fullscreen_widget_ ||
-        (web_contents()->GetDelegate() &&
-         web_contents()->GetDelegate()->IsFullscreenForTabOrPending(
-             web_contents())))) {
+      !(web_contents()->GetDelegate() &&
+        web_contents()->GetDelegate()->IsFullscreenForTabOrPending(
+            web_contents()))) {
     // Reset the native view size.
     holder_->SetNativeViewSize(gfx::Size());
     holder_->SetBoundsRect(holder_bounds);
@@ -215,13 +241,15 @@ void WebView::OnBoundsChanged(const gfx::Rect& previous_bounds) {
 }
 
 void WebView::ViewHierarchyChanged(const ViewHierarchyChangedDetails& details) {
-  if (details.is_add)
+  if (details.is_add) {
     AttachWebContentsNativeView();
+  }
 }
 
 bool WebView::SkipDefaultKeyEventProcessing(const ui::KeyEvent& event) {
-  if (allow_accelerators_)
+  if (allow_accelerators_) {
     return FocusManager::IsTabTraversalKeyEvent(event);
+  }
 
   // Don't look-up accelerators or tab-traversal if we are showing a non-crashed
   // TabContents.
@@ -247,24 +275,37 @@ bool WebView::OnMousePressed(const ui::MouseEvent& event) {
 }
 
 void WebView::OnFocus() {
-  if (web_contents() && !web_contents()->IsCrashed())
+  if (web_contents() && !web_contents()->IsCrashed()) {
     web_contents()->Focus();
+  }
 }
 
 void WebView::AboutToRequestFocusFromTabTraversal(bool reverse) {
-  if (web_contents() && !web_contents()->IsCrashed())
+  if (web_contents() && !web_contents()->IsCrashed()) {
     web_contents()->FocusThroughTabTraversal(reverse);
+  }
 }
 
-void WebView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
-  node_data->role = ax::mojom::Role::kWebView;
-  // A webview does not need an accessible name as the document title is
-  // provided via other means. Providing it here would be redundant.
-  // Mark the name as explicitly empty so that accessibility_checks pass.
-  node_data->SetNameExplicitlyEmpty();
-  if (child_ax_tree_id_ != ui::AXTreeIDUnknown()) {
-    node_data->AddStringAttribute(ax::mojom::StringAttribute::kChildTreeId,
-                                  child_ax_tree_id_.ToString());
+void WebView::AddedToWidget() {
+  if (!web_contents()) {
+    return;
+  }
+
+  web_contents()->SetColorProviderSource(GetWidget());
+
+  // If added to a widget hierarchy and |holder_| already has a NativeView
+  // attached, update the accessible parent here to support reparenting the
+  // WebView.
+  if (holder_->native_view()) {
+    UpdateNativeViewHostAccessibleParent(holder_, parent());
+  }
+}
+
+void WebView::RemovedFromWidget() {
+  // Immediately clear the accessible parent upon being removed, as it's a
+  // weak reference to an object that is about to be destroyed.
+  if (holder_->native_view()) {
+    holder_->SetParentAccessible(nullptr);
   }
 }
 
@@ -276,10 +317,11 @@ gfx::NativeViewAccessible WebView::GetNativeViewAccessible() {
       gfx::NativeViewAccessible accessible =
           host_view->GetNativeViewAccessible();
       // |accessible| needs to know whether this is the primary WebContents.
-      if (auto* ax_platform_node =
-              ui::AXPlatformNode::FromNativeViewAccessible(accessible)) {
-        ax_platform_node->SetIsPrimaryWebContentsForWindow(
-            is_primary_web_contents_for_window_);
+      if (is_primary_web_contents_for_window_) {
+        if (auto* ax_platform_node =
+                ui::AXPlatformNode::FromNativeViewAccessible(accessible)) {
+          ax_platform_node->GetDelegate()->SetIsPrimaryWebContentsForWindow();
+        }
       }
       return accessible;
     }
@@ -288,8 +330,9 @@ gfx::NativeViewAccessible WebView::GetNativeViewAccessible() {
 }
 
 void WebView::OnAXModeAdded(ui::AXMode mode) {
-  if (!web_contents())
+  if (!GetWidget() || !web_contents()) {
     return;
+  }
 
   // Normally, it is set during AttachWebContentsNativeView when the WebView is
   // created but this may not happen on some platforms as the accessible object
@@ -301,55 +344,52 @@ void WebView::OnAXModeAdded(ui::AXMode mode) {
 ////////////////////////////////////////////////////////////////////////////////
 // WebView, content::WebContentsDelegate implementation:
 
-bool WebView::EmbedsFullscreenWidget() {
-  DCHECK(wc_owner_.get());
-  return embed_fullscreen_widget_mode_enabled_;
-}
-
 ////////////////////////////////////////////////////////////////////////////////
 // WebView, content::WebContentsObserver implementation:
 
-void WebView::RenderViewCreated(content::RenderViewHost* render_view_host) {
-  MaybeEnableAutoResize();
+void WebView::RenderFrameCreated(content::RenderFrameHost* render_frame_host) {
+  // Only handle the initial main frame, not speculative ones.
+  if (render_frame_host != web_contents()->GetPrimaryMainFrame()) {
+    return;
+  }
+
+  SetUpNewMainFrame(render_frame_host);
 }
 
-void WebView::RenderViewReady() {
-  UpdateCrashedOverlayView();
-  NotifyAccessibilityWebContentsChanged();
+void WebView::RenderFrameDeleted(content::RenderFrameHost* render_frame_host) {
+  // Only handle the active main frame, not speculative ones.
+  if (render_frame_host != web_contents()->GetPrimaryMainFrame()) {
+    return;
+  }
+
+  LostMainFrame();
 }
 
-void WebView::RenderViewDeleted(content::RenderViewHost* render_view_host) {
-  UpdateCrashedOverlayView();
-  NotifyAccessibilityWebContentsChanged();
-}
+void WebView::RenderFrameHostChanged(content::RenderFrameHost* old_host,
+                                     content::RenderFrameHost* new_host) {
+  // Since we skipped speculative main frames in RenderFrameCreated, we must
+  // watch for them being swapped in by watching for RenderFrameHostChanged().
+  if (new_host != web_contents()->GetPrimaryMainFrame()) {
+    return;
+  }
 
-void WebView::RenderViewHostChanged(content::RenderViewHost* old_host,
-                                    content::RenderViewHost* new_host) {
-  MaybeEnableAutoResize();
+  // Ignore the initial main frame host, as there's no renderer frame for it
+  // yet. If the DCHECK fires, then we would need to handle the initial main
+  // frame when it its renderer frame is created.
+  if (!old_host) {
+    DCHECK(!new_host->IsRenderFrameLive());
+    return;
+  }
 
-  if (HasFocus())
-    OnFocus();
-  NotifyAccessibilityWebContentsChanged();
-}
-
-void WebView::WebContentsDestroyed() {
-  NotifyAccessibilityWebContentsChanged();
-}
-
-void WebView::DidShowFullscreenWidget() {
-  if (embed_fullscreen_widget_mode_enabled_)
-    ReattachForFullscreenChange(true);
-}
-
-void WebView::DidDestroyFullscreenWidget() {
-  if (embed_fullscreen_widget_mode_enabled_)
-    ReattachForFullscreenChange(false);
+  SetUpNewMainFrame(new_host);
 }
 
 void WebView::DidToggleFullscreenModeForTab(bool entered_fullscreen,
                                             bool will_cause_resize) {
-  if (embed_fullscreen_widget_mode_enabled_)
-    ReattachForFullscreenChange(entered_fullscreen);
+  // Notify a bounds change on fullscreen change even though it actually
+  // doesn't change. Cast needs this see https://crbug.com/1144255.
+  OnBoundsChanged(bounds());
+  NotifyAccessibilityWebContentsChanged();
 }
 
 void WebView::OnWebContentsFocused(
@@ -357,21 +397,29 @@ void WebView::OnWebContentsFocused(
   RequestFocus();
 }
 
-void WebView::RenderProcessGone(base::TerminationStatus status) {
-  UpdateCrashedOverlayView();
-  NotifyAccessibilityWebContentsChanged();
-}
-
 void WebView::AXTreeIDForMainFrameHasChanged() {
   NotifyAccessibilityWebContentsChanged();
 }
 
+void WebView::WebContentsDestroyed() {
+  SetWebContents(nullptr);
+}
+
 void WebView::ResizeDueToAutoResize(content::WebContents* source,
                                     const gfx::Size& new_size) {
-  if (source != web_contents())
+  if (source != web_contents()) {
     return;
+  }
 
   SetPreferredSize(new_size);
+}
+
+void WebView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
+  node_data->role = ax::mojom::Role::kWebView;
+  // A webview does not need an accessible name as the document title is
+  // provided via other means. Providing it here would be redundant.
+  // Mark the name as explicitly empty so that accessibility_checks pass.
+  node_data->SetNameExplicitlyEmpty();
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -381,115 +429,110 @@ void WebView::AttachWebContentsNativeView() {
   TRACE_EVENT0("views", "WebView::AttachWebContentsNativeView");
   // Prevents attachment if the WebView isn't already in a Widget, or it's
   // already attached.
-  if (!GetWidget() || !web_contents())
+  if (!GetWidget() || !web_contents()) {
     return;
-
-  gfx::NativeView view_to_attach;
-  if (is_embedding_fullscreen_widget_) {
-    view_to_attach = fullscreen_native_view_for_testing_
-                         ? fullscreen_native_view_for_testing_
-                         : web_contents()
-                               ->GetFullscreenRenderWidgetHostView()
-                               ->GetNativeView();
-  } else {
-    view_to_attach = web_contents()->GetNativeView();
   }
+
+  gfx::NativeView view_to_attach = web_contents()->GetNativeView();
   OnBoundsChanged(bounds());
-  if (holder_->native_view() == view_to_attach)
+  if (holder_->native_view() == view_to_attach) {
     return;
+  }
+
+  const auto* bg_color =
+      WebContentsSetBackgroundColor::FromWebContents(web_contents());
+  if (bg_color) {
+    holder_->SetBackgroundColorWhenClipped(bg_color->color());
+  } else {
+    holder_->SetBackgroundColorWhenClipped(absl::nullopt);
+  }
 
   holder_->Attach(view_to_attach);
-  // Attach() asynchronously sets the bounds of the widget. Pepper expects
-  // fullscreen widgets to be sized immediately, so force a layout now.
-  // See https://crbug.com/361408 and https://crbug.com/id=959118.
-  if (is_embedding_fullscreen_widget_)
-    holder_->Layout();
 
   // We set the parent accessible of the native view to be our parent.
   UpdateNativeViewHostAccessibleParent(holder(), parent());
 
   // The WebContents is not focused automatically when attached, so we need to
   // tell the WebContents it has focus if this has focus.
-  if (HasFocus())
+  if (HasFocus()) {
     OnFocus();
+  }
 
-  OnWebContentsAttached();
+  web_contents_attached_callbacks_.Notify(this);
 }
 
 void WebView::DetachWebContentsNativeView() {
   TRACE_EVENT0("views", "WebView::DetachWebContentsNativeView");
-  if (web_contents())
+  if (web_contents()) {
     holder_->Detach();
-}
-
-void WebView::ReattachForFullscreenChange(bool enter_fullscreen) {
-  DCHECK(embed_fullscreen_widget_mode_enabled_);
-  const bool web_contents_has_separate_fs_widget =
-      fullscreen_native_view_for_testing_ ||
-      (web_contents() && web_contents()->GetFullscreenRenderWidgetHostView());
-  if (is_embedding_fullscreen_widget_ || web_contents_has_separate_fs_widget) {
-    // Shutting down or starting up the embedding of the separate fullscreen
-    // widget.  Need to detach and re-attach to a different native view.
-    DetachWebContentsNativeView();
-    is_embedding_fullscreen_widget_ =
-        enter_fullscreen && web_contents_has_separate_fs_widget;
-    AttachWebContentsNativeView();
-  } else {
-    // Entering or exiting "non-Flash" fullscreen mode, where the native view is
-    // the same.  So, do not change attachment.
-    OnBoundsChanged(bounds());
   }
-  NotifyAccessibilityWebContentsChanged();
 }
 
 void WebView::UpdateCrashedOverlayView() {
-  if (web_contents() && web_contents()->IsCrashed() && crashed_overlay_view_) {
+  View* overlay = crashed_overlay_view_.view();
+  if (web_contents() && web_contents()->IsCrashed() && overlay) {
     SetFocusBehavior(FocusBehavior::NEVER);
-    crashed_overlay_view_->SetVisible(true);
+    overlay->SetVisible(true);
     return;
   }
 
   SetFocusBehavior(web_contents() ? FocusBehavior::ALWAYS
                                   : FocusBehavior::NEVER);
 
-  if (crashed_overlay_view_)
-    crashed_overlay_view_->SetVisible(false);
+  if (overlay) {
+    overlay->SetVisible(false);
+  }
 }
 
 void WebView::NotifyAccessibilityWebContentsChanged() {
-  content::RenderFrameHost* rfh =
-      web_contents() ? web_contents()->GetMainFrame() : nullptr;
-  child_ax_tree_id_ = rfh ? rfh->GetAXTreeID() : ui::AXTreeIDUnknown();
+  if (!lock_child_ax_tree_id_override_) {
+    content::RenderFrameHost* rfh =
+        web_contents() ? web_contents()->GetPrimaryMainFrame() : nullptr;
+    GetViewAccessibility().OverrideChildTreeID(rfh ? rfh->GetAXTreeID()
+                                                   : ui::AXTreeIDUnknown());
+  }
   NotifyAccessibilityEvent(ax::mojom::Event::kChildrenChanged, false);
 }
 
 std::unique_ptr<content::WebContents> WebView::CreateWebContents(
-    content::BrowserContext* browser_context) {
+    content::BrowserContext* browser_context,
+    base::Location creator_location) {
   std::unique_ptr<content::WebContents> contents;
   if (*GetCreatorForTesting()) {
     contents = GetCreatorForTesting()->Run(browser_context);
   }
 
   if (!contents) {
-    content::WebContents::CreateParams create_params(browser_context, nullptr);
+    content::WebContents::CreateParams create_params(browser_context,
+                                                     creator_location);
     return content::WebContents::Create(create_params);
   }
 
   return contents;
 }
 
-void WebView::MaybeEnableAutoResize() {
-  if (max_size_.IsEmpty() || !web_contents() ||
-      !web_contents()->GetRenderWidgetHostView()) {
-    return;
+void WebView::SetUpNewMainFrame(content::RenderFrameHost* frame_host) {
+  MaybeEnableAutoResize(frame_host);
+  UpdateCrashedOverlayView();
+  NotifyAccessibilityWebContentsChanged();
+  if (HasFocus()) {
+    OnFocus();
   }
-
-  content::RenderWidgetHostView* render_widget_host_view =
-      web_contents()->GetRenderWidgetHostView();
-  render_widget_host_view->EnableAutoResize(min_size_, max_size_);
 }
 
-BEGIN_METADATA(WebView, View)
+void WebView::LostMainFrame() {
+  UpdateCrashedOverlayView();
+  NotifyAccessibilityWebContentsChanged();
+}
+
+void WebView::MaybeEnableAutoResize(content::RenderFrameHost* frame_host) {
+  DCHECK(frame_host->IsRenderFrameLive());
+  if (!max_size_.IsEmpty()) {
+    frame_host->GetView()->EnableAutoResize(min_size_, max_size_);
+  }
+}
+
+BEGIN_METADATA(WebView)
 END_METADATA
 
 }  // namespace views

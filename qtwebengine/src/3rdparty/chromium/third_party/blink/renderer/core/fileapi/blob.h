@@ -33,9 +33,8 @@
 
 #include "base/memory/scoped_refptr.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
-#include "third_party/blink/renderer/bindings/core/v8/array_buffer_or_array_buffer_view_or_blob_or_usv_string.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_typedefs.h"
 #include "third_party/blink/renderer/core/core_export.h"
-#include "third_party/blink/renderer/core/fileapi/file_reader_loader.h"
 #include "third_party/blink/renderer/core/fileapi/url_registry.h"
 #include "third_party/blink/renderer/core/imagebitmap/image_bitmap_source.h"
 #include "third_party/blink/renderer/core/streams/readable_stream.h"
@@ -43,7 +42,7 @@
 #include "third_party/blink/renderer/core/typed_arrays/dom_array_buffer_view.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
 #include "third_party/blink/renderer/platform/blob/blob_data.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
 namespace blink {
@@ -62,10 +61,9 @@ class CORE_EXPORT Blob : public ScriptWrappable,
     return MakeGarbageCollected<Blob>(BlobDataHandle::Create());
   }
 
-  static Blob* Create(
-      ExecutionContext*,
-      const HeapVector<ArrayBufferOrArrayBufferViewOrBlobOrUSVString>&,
-      const BlobPropertyBag*);
+  static Blob* Create(ExecutionContext* execution_context,
+                      const HeapVector<Member<V8BlobPart>>& blob_parts,
+                      const BlobPropertyBag* options);
 
   static Blob* Create(const unsigned char* data,
                       size_t size,
@@ -75,10 +73,10 @@ class CORE_EXPORT Blob : public ScriptWrappable,
   ~Blob() override;
 
   virtual uint64_t size() const { return blob_data_handle_->size(); }
-  virtual Blob* slice(int64_t start,
-                      int64_t end,
-                      const String& content_type,
-                      ExceptionState&) const;
+  Blob* slice(int64_t start,
+              int64_t end,
+              const String& content_type,
+              ExceptionState&) const;
 
   // To allow ExceptionState to be passed in last, manually enumerate the
   // optional argument overloads.
@@ -110,22 +108,21 @@ class CORE_EXPORT Blob : public ScriptWrappable,
   virtual bool HasBackingFile() const { return false; }
 
   // Used by the JavaScript Blob and File constructors.
-  virtual void AppendTo(BlobData&) const;
+  void AppendTo(BlobData&) const;
 
   // URLRegistrable to support PublicURLs.
   URLRegistry& Registry() const final;
   bool IsMojoBlob() final;
   void CloneMojoBlob(mojo::PendingReceiver<mojom::blink::Blob>) final;
-  mojo::PendingRemote<mojom::blink::Blob> AsMojoBlob();
+  mojo::PendingRemote<mojom::blink::Blob> AsMojoBlob() const;
 
   // ImageBitmapSource implementation
   bool IsBlob() const override { return true; }
 
  protected:
-  static void PopulateBlobData(
-      BlobData*,
-      const HeapVector<ArrayBufferOrArrayBufferViewOrBlobOrUSVString>& parts,
-      bool normalize_line_endings_to_native);
+  static void PopulateBlobData(BlobData* blob_data,
+                               const HeapVector<Member<V8BlobPart>>& parts,
+                               bool normalize_line_endings_to_native);
   static void ClampSliceOffsets(uint64_t size, int64_t& start, int64_t& end);
 
   // Called by the Blob and File constructors when processing the 'type'
@@ -135,10 +132,6 @@ class CORE_EXPORT Blob : public ScriptWrappable,
 
  private:
   Blob() = delete;
-  // Helper called by text() and arrayBuffer(). The operations only differ by
-  // 1 line, depending on the read_type.
-  ScriptPromise ReadBlobInternal(ScriptState* script_state,
-                                 FileReaderLoader::ReadType read_type);
 
   scoped_refptr<BlobDataHandle> blob_data_handle_;
 };

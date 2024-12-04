@@ -1,14 +1,10 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef CONTENT_BROWSER_TRACING_BACKGROUND_TRACING_AGENT_CLIENT_IMPL_H_
 #define CONTENT_BROWSER_TRACING_BACKGROUND_TRACING_AGENT_CLIENT_IMPL_H_
 
-#include <string>
-
-#include "base/macros.h"
-#include "base/trace_event/trace_event.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "services/tracing/public/mojom/background_tracing_agent.mojom.h"
 
@@ -21,20 +17,23 @@ class BackgroundTracingAgentClientImpl
       int child_process_id,
       mojo::Remote<tracing::mojom::BackgroundTracingAgentProvider> provider);
 
+  BackgroundTracingAgentClientImpl(const BackgroundTracingAgentClientImpl&) =
+      delete;
+  BackgroundTracingAgentClientImpl& operator=(
+      const BackgroundTracingAgentClientImpl&) = delete;
+
   ~BackgroundTracingAgentClientImpl() override;
 
   // tracing::mojom::BackgroundTracingAgentClient methods:
   void OnInitialized() override;
-  void OnTriggerBackgroundTrace(const std::string& histogram_name) override;
-  void OnAbortBackgroundTrace() override;
+  void OnTriggerBackgroundTrace(
+      tracing::mojom::BackgroundTracingRulePtr rule) override;
 
  private:
   explicit BackgroundTracingAgentClientImpl(
       mojo::Remote<tracing::mojom::BackgroundTracingAgent> agent);
 
   mojo::Remote<tracing::mojom::BackgroundTracingAgent> agent_;
-
-  DISALLOW_COPY_AND_ASSIGN(BackgroundTracingAgentClientImpl);
 };
 
 }  // namespace content

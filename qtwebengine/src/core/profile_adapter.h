@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtWebEngine module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 //
 //  W A R N I N G
@@ -51,22 +15,31 @@
 #ifndef PROFILE_ADAPTER_H
 #define PROFILE_ADAPTER_H
 
-#include "qtwebenginecoreglobal_p.h"
+#include <QtWebEngineCore/private/qtwebenginecoreglobal_p.h>
 
-#include <QEnableSharedFromThis>
+#include <QHash>
 #include <QList>
 #include <QPointer>
 #include <QScopedPointer>
+#include <QSharedPointer>
 #include <QString>
-#include <QVector>
 
-#include "api/qwebengineclientcertificatestore.h"
-#include "api/qwebenginecookiestore.h"
-#include "api/qwebengineurlrequestinterceptor.h"
-#include "api/qwebengineurlschemehandler.h"
+#include <QtWebEngineCore/qwebengineclientcertificatestore.h>
+#include <QtWebEngineCore/qwebenginecookiestore.h>
+#include <QtWebEngineCore/qwebengineurlrequestinterceptor.h>
+#include <QtWebEngineCore/qwebengineurlschemehandler.h>
+#include <QtWebEngineCore/qwebenginepermission.h>
 #include "net/qrc_url_scheme_handler.h"
 
 QT_FORWARD_DECLARE_CLASS(QObject)
+
+namespace base {
+class CancelableTaskTracker;
+}
+
+namespace content {
+class RenderFrameHost;
+}
 
 namespace QtWebEngineCore {
 
@@ -78,7 +51,7 @@ class UserResourceControllerHost;
 class VisitedLinksManagerQt;
 class WebContentsAdapterClient;
 
-class Q_WEBENGINECORE_PRIVATE_EXPORT ProfileAdapter : public QObject
+class Q_WEBENGINECORE_EXPORT ProfileAdapter : public QObject
 {
 public:
     explicit ProfileAdapter(const QString &storagePrefix = QString());
@@ -100,12 +73,13 @@ public:
     void addClient(ProfileAdapterClient *adapterClient);
     void removeClient(ProfileAdapterClient *adapterClient);
 
-    void cancelDownload(quint32 downloadId);
+    bool cancelDownload(quint32 downloadId);
     void pauseDownload(quint32 downloadId);
     void resumeDownload(quint32 downloadId);
     void removeDownload(quint32 downloadId);
 
     ProfileQt *profile();
+    bool ensureDataPathExists();
 
     QString storageName() const { return m_name; }
     void setStorageName(const QString &storageName);
@@ -132,8 +106,12 @@ public:
     void setSpellCheckEnabled(bool enabled);
     bool isSpellCheckEnabled() const;
 
+    bool pushServiceEnabled() const;
+    void setPushServiceEnabled(bool enabled);
+
     void addWebContentsAdapterClient(WebContentsAdapterClient *client);
     void removeWebContentsAdapterClient(WebContentsAdapterClient *client);
+    void releaseAllWebContentsAdapterClients();
 
     // KEEP IN SYNC with API or add mapping layer
     enum HttpCacheType {
@@ -154,20 +132,22 @@ public:
         TrackVisitedLinksOnDisk,
     };
 
-    enum PermissionType {
-        UnsupportedPermission = 0,
-        GeolocationPermission = 1,
-        NotificationPermission = 2,
-        AudioCapturePermission = 3,
-        VideoCapturePermission = 4,
-        ClipboardRead = 5,
-        ClipboardWrite = 6,
+    enum class PersistentPermissionsPolicy : quint8 {
+        AskEveryTime = 0,
+        StoreInMemory,
+        StoreOnDisk,
     };
 
-    enum PermissionState {
-        AskPermission = 0,
-        AllowedPermission = 1,
-        DeniedPermission = 2
+    enum ClientHint : uchar {
+        UAArchitecture,
+        UAPlatform,
+        UAModel,
+        UAMobile,
+        UAFullVersion,
+        UAPlatformVersion,
+        UABitness,
+        UAFullVersionList,
+        UAWOW64,
     };
 
     HttpCacheType httpCacheType() const;
@@ -175,6 +155,9 @@ public:
 
     PersistentCookiesPolicy persistentCookiesPolicy() const;
     void setPersistentCookiesPolicy(ProfileAdapter::PersistentCookiesPolicy);
+
+    PersistentPermissionsPolicy persistentPermissionsPolicy() const;
+    void setPersistentPermissionsPolicy(ProfileAdapter::PersistentPermissionsPolicy);
 
     VisitedLinksPolicy visitedLinksPolicy() const;
     void setVisitedLinksPolicy(ProfileAdapter::VisitedLinksPolicy);
@@ -193,17 +176,25 @@ public:
     const QList<QByteArray> customUrlSchemes() const;
     UserResourceControllerHost *userResourceController();
 
-    void permissionRequestReply(const QUrl &origin, PermissionType type, PermissionState reply);
-    bool checkPermission(const QUrl &origin, PermissionType type);
+    void setPermission(const QUrl &origin, QWebEnginePermission::PermissionType permissionType,
+        QWebEnginePermission::State state, content::RenderFrameHost *rfh = nullptr);
+    QWebEnginePermission::State getPermissionState(const QUrl &origin, QWebEnginePermission::PermissionType permissionType,
+        content::RenderFrameHost *rfh = nullptr);
+    QList<QWebEnginePermission> listPermissions(const QUrl &origin = QUrl(),
+        QWebEnginePermission::PermissionType permissionType = QWebEnginePermission::PermissionType::Unsupported);
 
     QString httpAcceptLanguageWithoutQualities() const;
     QString httpAcceptLanguage() const;
     void setHttpAcceptLanguage(const QString &httpAcceptLanguage);
 
-    void clearHttpCache();
+    QVariant clientHint(ClientHint clientHint) const;
+    void setClientHint(ClientHint clientHint, const QVariant &value);
+    bool clientHintsEnabled();
+    void setClientHintsEnabled(bool enabled);
+    void resetClientHints();
 
-    void setUseForGlobalCertificateVerification(bool enable = true);
-    bool isUsedForGlobalCertificateVerification() const;
+
+    void clearHttpCache();
 
 #if QT_CONFIG(ssl)
     QWebEngineClientCertificateStore *clientCertificateStore();
@@ -216,15 +207,20 @@ public:
 
     QString determineDownloadPath(const QString &downloadDirectory, const QString &suggestedFilename, const time_t &startTime);
 
-    static QPointer<ProfileAdapter> s_profileForGlobalCertificateVerification;
+    void requestIconForPageURL(const QUrl &pageUrl, int desiredSizeInPixel, bool touchIconsEnabled,
+                               std::function<void (const QIcon &, const QUrl &, const QUrl &)> iconAvailableCallback);
+    void requestIconForIconURL(const QUrl &iconUrl, int desiredSizeInPixel, bool touchIconsEnabled,
+                               std::function<void (const QIcon &, const QUrl &)> iconAvailableCallback);
+    base::CancelableTaskTracker *cancelableTaskTracker() { return m_cancelableTaskTracker.get(); }
+
 private:
     void updateCustomUrlSchemeHandlers();
     void resetVisitedLinksManager();
     bool persistVisitedLinks() const;
+    void reinitializeHistoryService();
 
     QString m_name;
     bool m_offTheRecord;
-    bool m_usedForGlobalCertificateVerification = false;
     QScopedPointer<ProfileQt> m_profile;
     QScopedPointer<VisitedLinksManagerQt> m_visitedLinksManager;
     QScopedPointer<DownloadManagerDelegateQt> m_downloadManagerDelegate;
@@ -242,15 +238,19 @@ private:
     HttpCacheType m_httpCacheType;
     QString m_httpAcceptLanguage;
     PersistentCookiesPolicy m_persistentCookiesPolicy;
+    PersistentPermissionsPolicy m_persistentPermissionsPolicy;
     VisitedLinksPolicy m_visitedLinksPolicy;
     QHash<QByteArray, QPointer<QWebEngineUrlSchemeHandler>> m_customUrlSchemeHandlers;
     QHash<QByteArray, QWeakPointer<UserNotificationController>> m_ephemeralNotifications;
     QHash<QByteArray, QSharedPointer<UserNotificationController>> m_persistentNotifications;
+    bool m_clientHintsEnabled;
 
     QList<ProfileAdapterClient*> m_clients;
-    QVector<WebContentsAdapterClient *> m_webContentsAdapterClients;
+    QList<WebContentsAdapterClient *> m_webContentsAdapterClients;
+    bool m_pushServiceEnabled;
     int m_httpCacheMaxSize;
     QrcUrlSchemeHandler m_qrcHandler;
+    std::unique_ptr<base::CancelableTaskTracker> m_cancelableTaskTracker;
 
     Q_DISABLE_COPY(ProfileAdapter)
 };

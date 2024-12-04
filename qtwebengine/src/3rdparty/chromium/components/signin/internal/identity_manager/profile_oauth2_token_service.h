@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,8 +10,9 @@
 #include <string>
 #include <vector>
 
-#include "base/callback.h"
-#include "base/macros.h"
+#include "base/functional/callback.h"
+#include "base/gtest_prod_util.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "build/buildflag.h"
 #include "components/signin/internal/identity_manager/profile_oauth2_token_service_observer.h"
@@ -31,9 +32,8 @@ class PrefRegistrySimple;
 class OAuth2AccessTokenConsumer;
 class ProfileOAuth2TokenServiceDelegate;
 
-// ProfileOAuth2TokenService is a KeyedService that retrieves
-// OAuth2 access tokens for a given set of scopes using the OAuth2 login
-// refresh tokens.
+// ProfileOAuth2TokenService retrieves OAuth2 access tokens for a given set of
+// scopes using the OAuth2 login refresh tokens.
 //
 // To use this service, call StartRequest() with a given set of scopes and a
 // consumer of the request results. The consumer is required to outlive the
@@ -73,13 +73,19 @@ class ProfileOAuth2TokenService : public OAuth2AccessTokenManager::Delegate,
   ProfileOAuth2TokenService(
       PrefService* user_prefs,
       std::unique_ptr<ProfileOAuth2TokenServiceDelegate> delegate);
+
+  ProfileOAuth2TokenService(const ProfileOAuth2TokenService&) = delete;
+  ProfileOAuth2TokenService& operator=(const ProfileOAuth2TokenService&) =
+      delete;
+
   ~ProfileOAuth2TokenService() override;
 
   // Overridden from OAuth2AccessTokenManager::Delegate.
   std::unique_ptr<OAuth2AccessTokenFetcher> CreateAccessTokenFetcher(
       const CoreAccountId& account_id,
       scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
-      OAuth2AccessTokenConsumer* consumer) override;
+      OAuth2AccessTokenConsumer* consumer,
+      const std::string& token_binding_challenge) override;
   bool HasRefreshToken(const CoreAccountId& account_id) const override;
   bool FixRequestErrorIfPossible() override;
   scoped_refptr<network::SharedURLLoaderFactory> GetURLLoaderFactory()
@@ -174,8 +180,6 @@ class ProfileOAuth2TokenService : public OAuth2AccessTokenManager::Delegate,
   void SetRefreshTokenRevokedFromSourceCallback(
       RefreshTokenRevokedFromSourceCallback callback);
 
-  void Shutdown();
-
   // Loads credentials from a backing persistent store to make them available
   // after service is used between profile restarts.
   //
@@ -183,7 +187,9 @@ class ProfileOAuth2TokenService : public OAuth2AccessTokenManager::Delegate,
   // For a regular profile, the primary account id comes from
   // PrimaryAccountManager.
   // For a supervised user, the id comes from SupervisedUserService.
-  void LoadCredentials(const CoreAccountId& primary_account_id);
+  // |is_syncing| whether the primary account has sync consent.
+  void LoadCredentials(const CoreAccountId& primary_account_id,
+                       bool is_syncing);
 
   // Returns true if LoadCredentials finished with no errors.
   bool HasLoadCredentialsFinishedWithNoErrors();
@@ -194,7 +200,12 @@ class ProfileOAuth2TokenService : public OAuth2AccessTokenManager::Delegate,
       const CoreAccountId& account_id,
       const std::string& refresh_token,
       signin_metrics::SourceForRefreshTokenOperation source =
-          signin_metrics::SourceForRefreshTokenOperation::kUnknown);
+          signin_metrics::SourceForRefreshTokenOperation::kUnknown
+#if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
+      ,
+      const std::vector<uint8_t>& wrapped_binding_key = std::vector<uint8_t>()
+#endif  // BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
+  );
 
   void RevokeCredentials(
       const CoreAccountId& account_id,
@@ -274,7 +285,7 @@ class ProfileOAuth2TokenService : public OAuth2AccessTokenManager::Delegate,
   // ID is empty.
   void RecreateDeviceIdIfNeeded();
 
-  PrefService* user_prefs_;
+  raw_ptr<PrefService> user_prefs_;
 
   std::unique_ptr<ProfileOAuth2TokenServiceDelegate> delegate_;
 
@@ -292,8 +303,6 @@ class ProfileOAuth2TokenService : public OAuth2AccessTokenManager::Delegate,
 
   FRIEND_TEST_ALL_PREFIXES(ProfileOAuth2TokenServiceTest,
                            SameScopesRequestedForDifferentClients);
-
-  DISALLOW_COPY_AND_ASSIGN(ProfileOAuth2TokenService);
 };
 
 #endif  // COMPONENTS_SIGNIN_INTERNAL_IDENTITY_MANAGER_PROFILE_OAUTH2_TOKEN_SERVICE_H_

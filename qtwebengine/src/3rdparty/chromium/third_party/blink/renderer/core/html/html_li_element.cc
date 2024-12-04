@@ -22,6 +22,7 @@
 
 #include "third_party/blink/renderer/core/html/html_li_element.h"
 
+#include "third_party/blink/renderer/core/css/css_custom_ident_value.h"
 #include "third_party/blink/renderer/core/css/css_property_names.h"
 #include "third_party/blink/renderer/core/css_value_keywords.h"
 #include "third_party/blink/renderer/core/dom/document.h"
@@ -29,6 +30,7 @@
 #include "third_party/blink/renderer/core/html/list_item_ordinal.h"
 #include "third_party/blink/renderer/core/html/parser/html_parser_idioms.h"
 #include "third_party/blink/renderer/core/html_names.h"
+#include "third_party/blink/renderer/core/keywords.h"
 
 namespace blink {
 
@@ -41,26 +43,27 @@ bool HTMLLIElement::IsPresentationAttribute(const QualifiedName& name) const {
   return HTMLElement::IsPresentationAttribute(name);
 }
 
-CSSValueID ListTypeToCSSValueID(const AtomicString& value) {
+AtomicString ListTypeAttributeToStyleName(const AtomicString& value) {
   if (value == "a")
-    return CSSValueID::kLowerAlpha;
+    return keywords::kLowerAlpha;
   if (value == "A")
-    return CSSValueID::kUpperAlpha;
+    return keywords::kUpperAlpha;
   if (value == "i")
-    return CSSValueID::kLowerRoman;
+    return keywords::kLowerRoman;
   if (value == "I")
-    return CSSValueID::kUpperRoman;
+    return keywords::kUpperRoman;
   if (value == "1")
-    return CSSValueID::kDecimal;
-  if (EqualIgnoringASCIICase(value, "disc"))
-    return CSSValueID::kDisc;
-  if (EqualIgnoringASCIICase(value, "circle"))
-    return CSSValueID::kCircle;
-  if (EqualIgnoringASCIICase(value, "square"))
-    return CSSValueID::kSquare;
-  if (EqualIgnoringASCIICase(value, "none"))
-    return CSSValueID::kNone;
-  return CSSValueID::kInvalid;
+    return keywords::kDecimal;
+  if (EqualIgnoringASCIICase(value, keywords::kDisc)) {
+    return keywords::kDisc;
+  }
+  if (EqualIgnoringASCIICase(value, keywords::kCircle)) {
+    return keywords::kCircle;
+  }
+  if (EqualIgnoringASCIICase(value, keywords::kSquare)) {
+    return keywords::kSquare;
+  }
+  return g_null_atom;
 }
 
 void HTMLLIElement::CollectStyleForPresentationAttribute(
@@ -68,10 +71,16 @@ void HTMLLIElement::CollectStyleForPresentationAttribute(
     const AtomicString& value,
     MutableCSSPropertyValueSet* style) {
   if (name == html_names::kTypeAttr) {
-    CSSValueID type_value = ListTypeToCSSValueID(value);
-    if (IsValidCSSValueID(type_value)) {
+    if (EqualIgnoringASCIICase(value, "none")) {
       AddPropertyToPresentationAttributeStyle(
-          style, CSSPropertyID::kListStyleType, type_value);
+          style, CSSPropertyID::kListStyleType, CSSValueID::kNone);
+    } else {
+      AtomicString list_style_type_name = ListTypeAttributeToStyleName(value);
+      if (!list_style_type_name.IsNull()) {
+        AddPropertyToPresentationAttributeStyle(
+            style, CSSPropertyID::kListStyleType,
+            *MakeGarbageCollected<CSSCustomIdentValue>(list_style_type_name));
+      }
     }
   } else {
     HTMLElement::CollectStyleForPresentationAttribute(name, value, style);
@@ -91,7 +100,6 @@ void HTMLLIElement::AttachLayoutTree(AttachContext& context) {
   HTMLElement::AttachLayoutTree(context);
 
   if (ListItemOrdinal* ordinal = ListItemOrdinal::Get(*this)) {
-    DCHECK(!GetDocument().ChildNeedsDistributionRecalc());
     ParseValue(FastGetAttribute(html_names::kValueAttr), ordinal);
   }
 }

@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,15 +6,16 @@
 #define CONTENT_BROWSER_SCHEDULER_BROWSER_IO_THREAD_DELEGATE_H_
 
 #include "base/memory/ptr_util.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/task/sequence_manager/task_queue.h"
 #include "base/threading/thread.h"
+#include "base/time/time.h"
 #include "content/browser/scheduler/browser_task_queues.h"
 #include "content/common/content_export.h"
 
 namespace base {
 class SingleThreadTaskRunner;
-class TaskExecutor;
 
 namespace sequence_manager {
 class SequenceManager;
@@ -39,11 +40,8 @@ class CONTENT_EXPORT BrowserIOThreadDelegate : public base::Thread::Delegate {
     return base::WrapUnique(new BrowserIOThreadDelegate(sequence_manager));
   }
 
-  // If called this must be done prior to calling BindToCurrentThread.
-  void SetTaskExecutor(base::TaskExecutor* task_executor);
-
   scoped_refptr<base::SingleThreadTaskRunner> GetDefaultTaskRunner() override;
-  void BindToCurrentThread(base::TimerSlack timer_slack) override;
+  void BindToCurrentThread() override;
 
   bool allow_blocking_for_testing() const {
     return allow_blocking_for_testing_;
@@ -56,11 +54,7 @@ class CONTENT_EXPORT BrowserIOThreadDelegate : public base::Thread::Delegate {
   scoped_refptr<Handle> GetHandle() { return task_queues_->GetHandle(); }
 
  private:
-  class TLSMultiplexer;
-
   // Creates a sequence funneled BrowserIOThreadDelegate for use in testing.
-  // Installs TLSMultiplexer which allows ensures the right results for
-  // base::CurrentThread when running an "IO Thread" task.
   explicit BrowserIOThreadDelegate(
       base::sequence_manager::SequenceManager* sequence_manager);
 
@@ -73,17 +67,10 @@ class CONTENT_EXPORT BrowserIOThreadDelegate : public base::Thread::Delegate {
   const std::unique_ptr<base::sequence_manager::SequenceManager>
       owned_sequence_manager_;
 
-  base::sequence_manager::SequenceManager* const sequence_manager_;
+  const raw_ptr<base::sequence_manager::SequenceManager> sequence_manager_;
 
   std::unique_ptr<BrowserTaskQueues> task_queues_;
   scoped_refptr<base::SingleThreadTaskRunner> default_task_runner_;
-
-  // In unit tests the IO "thread" can be sequence funneled onto the main thread
-  // so we need to multiplex the TLS binding to ensure base::CurrentThread
-  // behaves as expected.
-  std::unique_ptr<TLSMultiplexer> tls_multiplexer_;
-
-  base::TaskExecutor* task_executor_ = nullptr;
 };
 
 }  // namespace content

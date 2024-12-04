@@ -1,11 +1,11 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 [
   {
     "namespace": "browserAction",
-    "description": "Use browser actions to put icons in the main Google Chrome toolbar, to the right of the address bar. In addition to its <a href='browserAction#icon'>icon</a>, a browser action can have a <a href='browserAction#tooltip'>tooltip</a>, a <a href='browserAction#badge'>badge</a>, and a <a href='browserAction#popups'>popup</a>.",
+    "description": "Use browser actions to put icons in the main Google Chrome toolbar, to the right of the address bar. In addition to its <a href='browserAction#icon'>icon</a>, a browser action can have a <a href='browserAction#tooltip'>tooltip</a>, a <a href='browserAction#badge'>badge</a>, and a <a href='browserAction#popup'>popup</a>.",
     "compiler_options": {
       "implemented_in": "chrome/browser/extensions/api/extension_action/extension_action_api.h"
     },
@@ -27,6 +27,13 @@
         "isInstanceOf": "ImageData",
         "additionalProperties": { "type": "any" },
         "description": "Pixel data for an image. Must be an ImageData object; for example, from a <code>canvas</code> element."
+      },
+      {
+        "id": "TabDetails",
+        "type": "object",
+        "properties": {
+          "tabId": { "type": "integer", "optional": true, "minimum": 0, "description": "The ID of the tab to query state for. If no tab is specified, the non-tab-specific state is returned." }
+        }
       }
     ],
     "functions": [
@@ -49,9 +56,9 @@
                 "description": "Limits the change to when a particular tab is selected. Automatically resets when the tab is closed."
               }
             }
-          },
-          {"type": "function", "name": "callback", "parameters": [], "optional": true}
-        ]
+          }
+        ],
+        "returns_async": {"name": "callback", "parameters": [], "optional": true}
       },
       {
         "name": "getTitle",
@@ -60,26 +67,18 @@
         "parameters": [
           {
             "name": "details",
-            "type": "object",
-            "properties": {
-              "tabId": {
-                "type": "integer",
-                "optional": true,
-                "description": "The tab to get the title from. If no tab is specified, the default title is returned."
-              }
-            }
-          },
-          {
-            "type": "function",
-            "name": "callback",
-            "parameters": [
-              {
-                "name": "result",
-                "type": "string"
-              }
-            ]
+            "$ref": "TabDetails"
           }
-        ]
+        ],
+        "returns_async": {
+          "name": "callback",
+          "parameters": [
+            {
+              "name": "result",
+              "type": "string"
+            }
+          ]
+        }
       },
       {
         "name": "setIcon",
@@ -118,14 +117,13 @@
                 "description": "Limits the change to when a particular tab is selected. Automatically resets when the tab is closed."
               }
             }
-          },
-          {
-            "type": "function",
-            "name": "callback",
-            "optional": true,
-            "parameters": []
           }
-        ]
+        ],
+        "returns_async": {
+          "name": "callback",
+          "optional": true,
+          "parameters": []
+        }
       },
       {
         "name": "setPopup",
@@ -144,12 +142,12 @@
               },
               "popup": {
                 "type": "string",
-                "description": "The HTML file to show in a popup. If set to the empty string (''), no popup is shown."
+                "description": "The relative path to the HTML file to show in a popup. If set to the empty string (<code>''</code>), no popup is shown."
               }
             }
-          },
-          {"type": "function", "name": "callback", "parameters": [], "optional": true}
-        ]
+          }
+        ],
+        "returns_async": {"name": "callback", "parameters": [], "optional": true}
       },
       {
         "name": "getPopup",
@@ -158,26 +156,18 @@
         "parameters": [
           {
             "name": "details",
-            "type": "object",
-            "properties": {
-              "tabId": {
-                "type": "integer",
-                "optional": true,
-                "description": "The tab to get the popup from. If no tab is specified, the non-tab-specific popup is returned."
-              }
-            }
-          },
-          {
-            "type": "function",
-            "name": "callback",
-            "parameters": [
-              {
-                "name": "result",
-                "type": "string"
-              }
-            ]
+            "$ref": "TabDetails"
           }
-        ]
+        ],
+        "returns_async": {
+          "name": "callback",
+          "parameters": [
+            {
+              "name": "result",
+              "type": "string"
+            }
+          ]
+        }
       },
       {
         "name": "setBadgeText",
@@ -199,9 +189,9 @@
                 "description": "Limits the change to when a particular tab is selected. Automatically resets when the tab is closed."
               }
             }
-          },
-          {"type": "function", "name": "callback", "parameters": [], "optional": true}
-        ]
+          }
+        ],
+        "returns_async": {"name": "callback", "parameters": [], "optional": true}
       },
       {
         "name": "getBadgeText",
@@ -210,26 +200,18 @@
         "parameters": [
           {
             "name": "details",
-            "type": "object",
-            "properties": {
-              "tabId": {
-                "type": "integer",
-                "optional": true,
-                "description": "The tab to get the badge text from. If no tab is specified, the non-tab-specific badge text is returned."
-              }
-            }
-          },
-          {
-            "type": "function",
-            "name": "callback",
-            "parameters": [
-              {
-                "name": "result",
-                "type": "string"
-              }
-            ]
+            "$ref": "TabDetails"
           }
-        ]
+        ],
+        "returns_async": {
+          "name": "callback",
+          "parameters": [
+            {
+              "name": "result",
+              "type": "string"
+            }
+          ]
+        }
       },
       {
         "name": "setBadgeBackgroundColor",
@@ -253,9 +235,9 @@
                 "description": "Limits the change to when a particular tab is selected. Automatically resets when the tab is closed."
               }
             }
-          },
-          {"type": "function", "name": "callback", "parameters": [], "optional": true}
-        ]
+          }
+        ],
+        "returns_async": {"name": "callback", "parameters": [], "optional": true}
       },
       {
         "name": "getBadgeBackgroundColor",
@@ -264,26 +246,18 @@
         "parameters": [
           {
             "name": "details",
-            "type": "object",
-            "properties": {
-              "tabId": {
-                "type": "integer",
-                "optional": true,
-                "description": "The tab to get the badge background color from. If no tab is specified, the non-tab-specific badge background color is returned."
-              }
-            }
-          },
-          {
-            "type": "function",
-            "name": "callback",
-            "parameters": [
-              {
-                "name": "result",
-                "$ref": "ColorArray"
-              }
-            ]
+            "$ref": "TabDetails"
           }
-        ]
+        ],
+        "returns_async": {
+          "name": "callback",
+          "parameters": [
+            {
+              "name": "result",
+              "$ref": "ColorArray"
+            }
+          ]
+        }
       },
       {
         "name": "enable",
@@ -296,9 +270,9 @@
             "name": "tabId",
             "minimum": 0,
             "description": "The ID of the tab for which to modify the browser action."
-          },
-          {"type": "function", "name": "callback", "parameters": [], "optional": true}
-        ]
+          }
+        ],
+        "returns_async": {"name": "callback", "parameters": [], "optional": true}
       },
       {
         "name": "disable",
@@ -311,30 +285,28 @@
             "name": "tabId",
             "minimum": 0,
             "description": "The ID of the tab for which to modify the browser action."
-          },
-          {"type": "function", "name": "callback", "parameters": [], "optional": true}
-        ]
+          }
+        ],
+        "returns_async": {"name": "callback", "parameters": [], "optional": true}
       },
       {
         "name": "openPopup",
         "type": "function",
         "description": "Opens the extension popup window in the active window but does not grant tab permissions.",
         "nodoc": true,
-        "parameters": [
-          {
-            "type": "function",
-            "name": "callback",
-            "parameters": [
-              {
-                "name": "popupView",
-                "type": "object",
-                "optional": true,
-                "description": "JavaScript 'window' object for the popup window if it was succesfully opened.",
-                "additionalProperties": { "type": "any" }
-              }
-            ]
-          }
-        ]
+        "parameters": [],
+        "returns_async": {
+          "name": "callback",
+          "parameters": [
+            {
+              "name": "popupView",
+              "type": "object",
+              "optional": true,
+              "description": "JavaScript 'window' object for the popup window if it was succesfully opened.",
+              "additionalProperties": { "type": "any" }
+            }
+          ]
+        }
       }
     ],
     "events": [

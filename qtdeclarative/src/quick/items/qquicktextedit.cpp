@@ -1,49 +1,12 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtQuick module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qquicktextedit_p.h"
 #include "qquicktextedit_p_p.h"
 #include "qquicktextcontrol_p.h"
 #include "qquicktextdocument_p.h"
-#include "qquickevents_p_p.h"
 #include "qquickwindow.h"
-#include "qquicktextnode_p.h"
+#include "qsginternaltextnode_p.h"
 #include "qquicktextnodeengine_p.h"
 
 #include <QtCore/qmath.h>
@@ -59,6 +22,11 @@
 #include <private/qqmlproperty_p.h>
 #include <private/qtextengine_p.h>
 #include <private/qsgadaptationlayer_p.h>
+#include <QtQuick/private/qquickpixmapcache_p.h>
+
+#if QT_CONFIG(accessibility)
+#include <private/qquickaccessibleattached_p.h>
+#endif
 
 #include "qquicktextdocument.h"
 
@@ -66,9 +34,14 @@
 
 QT_BEGIN_NAMESPACE
 
+Q_DECLARE_LOGGING_CATEGORY(lcVP)
+Q_LOGGING_CATEGORY(lcTextEdit, "qt.quick.textedit")
+
+using namespace Qt::StringLiterals;
+
 /*!
     \qmltype TextEdit
-    \instantiates QQuickTextEdit
+    \nativetype QQuickTextEdit
     \inqmlmodule QtQuick
     \ingroup qtquick-visual
     \ingroup qtquick-input
@@ -95,21 +68,24 @@ TextEdit {
     Setting \l {Item::focus}{focus} to \c true enables the TextEdit item to receive keyboard focus.
 
     Note that the TextEdit does not implement scrolling, following the cursor, or other behaviors specific
-    to a look-and-feel. For example, to add flickable scrolling that follows the cursor:
+    to a look and feel. For example, to add flickable scrolling that follows the cursor:
 
     \snippet qml/texteditor.qml 0
 
-    A particular look-and-feel might use smooth scrolling (eg. using SmoothedAnimation), might have a visible
+    A particular look and feel might use smooth scrolling (eg. using SmoothedAnimation), might have a visible
     scrollbar, or a scrollbar that fades in to show location, etc.
 
-    Clipboard support is provided by the cut(), copy(), and paste() functions, and the selection can
-    be handled in a traditional "mouse" mechanism by setting selectByMouse, or handled completely
-    from QML by manipulating selectionStart and selectionEnd, or using selectAll() or selectWord().
+    Clipboard support is provided by the cut(), copy(), and paste() functions.
+    Text can be selected by mouse in the usual way, unless \l selectByMouse is
+    set to \c false; and by keyboard with the \c {Shift+arrow} key
+    combinations, unless \l selectByKeyboard is set to \c false. To select text
+    programmatically, you can set the \l selectionStart and \l selectionEnd
+    properties, or use \l selectAll() or \l selectWord().
 
     You can translate between cursor positions (characters from the start of the document) and pixel
     points using positionAt() and positionToRectangle().
 
-    \sa Text, TextInput
+    \sa Text, TextInput, TextArea, {Qt Quick Controls - Text Editor}
 */
 
 /*!
@@ -124,23 +100,20 @@ TextEdit {
 // into text nodes corresponding to a text block each so that the glyph node grouping doesn't become pointless.
 static const int nodeBreakingSize = 300;
 
-namespace {
-    class ProtectedLayoutAccessor: public QAbstractTextDocumentLayout
-    {
-    public:
-        inline QTextCharFormat formatAccessor(int pos)
-        {
-            return format(pos);
-        }
-    };
+#if !defined(QQUICKTEXT_LARGETEXT_THRESHOLD)
+  #define QQUICKTEXT_LARGETEXT_THRESHOLD 10000
+#endif
+// if QString::size() > largeTextSizeThreshold, we render more often, but only visible lines
+const int QQuickTextEditPrivate::largeTextSizeThreshold = QQUICKTEXT_LARGETEXT_THRESHOLD;
 
+namespace {
     class RootNode : public QSGTransformNode
     {
     public:
         RootNode() : cursorNode(nullptr), frameDecorationsNode(nullptr)
         { }
 
-        void resetFrameDecorations(QQuickTextNode* newNode)
+        void resetFrameDecorations(QSGInternalTextNode* newNode)
         {
             if (frameDecorationsNode) {
                 removeChildNode(frameDecorationsNode);
@@ -163,7 +136,7 @@ namespace {
         }
 
         QSGInternalRectangleNode *cursorNode;
-        QQuickTextNode* frameDecorationsNode;
+        QSGInternalTextNode* frameDecorationsNode;
 
     };
 }
@@ -173,6 +146,12 @@ QQuickTextEdit::QQuickTextEdit(QQuickItem *parent)
 {
     Q_D(QQuickTextEdit);
     d->init();
+}
+
+QQuickTextEdit::~QQuickTextEdit()
+{
+    Q_D(QQuickTextEdit);
+    qDeleteAll(d->pixmapsInProgress);
 }
 
 QQuickTextEdit::QQuickTextEdit(QQuickTextEditPrivate &dd, QQuickItem *parent)
@@ -231,22 +210,20 @@ QString QQuickTextEdit::text() const
 */
 
 /*!
-    \qmlproperty enumeration QtQuick::TextEdit::font.weight
+    \qmlproperty int QtQuick::TextEdit::font.weight
 
-    Sets the font's weight.
+    The requested weight of the font. The weight requested must be an integer
+    between 1 and 1000, or one of the predefined values:
 
-    The weight can be one of:
-    \list
-    \li Font.Thin
-    \li Font.Light
-    \li Font.ExtraLight
-    \li Font.Normal - the default
-    \li Font.Medium
-    \li Font.DemiBold
-    \li Font.Bold
-    \li Font.ExtraBold
-    \li Font.Black
-    \endlist
+    \value Font.Thin        100
+    \value Font.ExtraLight  200
+    \value Font.Light       300
+    \value Font.Normal      400 (default)
+    \value Font.Medium      500
+    \value Font.DemiBold    600
+    \value Font.Bold        700
+    \value Font.ExtraBold   800
+    \value Font.Black       900
 
     \qml
     TextEdit { text: "Hello"; font.weight: Font.DemiBold }
@@ -311,13 +288,12 @@ QString QQuickTextEdit::text() const
 
     Sets the capitalization for the text.
 
-    \list
-    \li Font.MixedCase - This is the normal text rendering option where no capitalization change is applied.
-    \li Font.AllUppercase - This alters the text to be rendered in all uppercase type.
-    \li Font.AllLowercase - This alters the text to be rendered in all lowercase type.
-    \li Font.SmallCaps - This alters the text to be rendered in small-caps type.
-    \li Font.Capitalize - This alters the text to be rendered with the first character of each word as an uppercase character.
-    \endlist
+    \value Font.MixedCase       no capitalization change is applied
+    \value Font.AllUppercase    alters the text to be rendered in all uppercase type
+    \value Font.AllLowercase    alters the text to be rendered in all lowercase type
+    \value Font.SmallCaps       alters the text to be rendered in small-caps type
+    \value Font.Capitalize      alters the text to be rendered with the first character of
+                                each word as an uppercase character
 
     \qml
     TextEdit { text: "Hello"; font.capitalization: Font.AllLowercase }
@@ -334,23 +310,21 @@ QString QQuickTextEdit::text() const
 
     \note This property only has an effect when used together with render type TextEdit.NativeRendering.
 
-    \list
-    \value Font.PreferDefaultHinting - Use the default hinting level for the target platform.
-    \value Font.PreferNoHinting - If possible, render text without hinting the outlines
+    \value Font.PreferDefaultHinting    Use the default hinting level for the target platform.
+    \value Font.PreferNoHinting         If possible, render text without hinting the outlines
            of the glyphs. The text layout will be typographically accurate, using the same metrics
            as are used e.g. when printing.
-    \value Font.PreferVerticalHinting - If possible, render text with no horizontal hinting,
+    \value Font.PreferVerticalHinting   If possible, render text with no horizontal hinting,
            but align glyphs to the pixel grid in the vertical direction. The text will appear
            crisper on displays where the density is too low to give an accurate rendering
            of the glyphs. But since the horizontal metrics of the glyphs are unhinted, the text's
            layout will be scalable to higher density devices (such as printers) without impacting
            details such as line breaks.
-    \value Font.PreferFullHinting - If possible, render text with hinting in both horizontal and
+    \value Font.PreferFullHinting       If possible, render text with hinting in both horizontal and
            vertical directions. The text will be altered to optimize legibility on the target
            device, but since the metrics will depend on the target size of the text, the positions
            of glyphs, line breaks, and other typographical detail will not scale, meaning that a
            text layout may look different on devices with different pixel densities.
-    \endlist
 
     \qml
     TextEdit { text: "Hello"; renderType: TextEdit.NativeRendering; font.hintingPreference: Font.PreferVerticalHinting }
@@ -388,6 +362,34 @@ QString QQuickTextEdit::text() const
 */
 
 /*!
+    \qmlproperty object QtQuick::TextEdit::font.variableAxes
+    \since 6.7
+
+    \include qquicktext.cpp qml-font-variable-axes
+*/
+
+/*!
+    \qmlproperty object QtQuick::TextEdit::font.features
+    \since 6.6
+
+    \include qquicktext.cpp qml-font-features
+*/
+
+/*!
+    \qmlproperty bool QtQuick::TextEdit::font.contextFontMerging
+    \since 6.8
+
+    \include qquicktext.cpp qml-font-context-font-merging
+*/
+
+/*!
+    \qmlproperty bool QtQuick::TextEdit::font.preferTypoLineMetrics
+    \since 6.8
+
+    \include qquicktext.cpp qml-font-prefer-typo-line-metrics
+*/
+
+/*!
     \qmlproperty string QtQuick::TextEdit::text
 
     The text to display.  If the text format is AutoText the text edit will
@@ -401,7 +403,20 @@ QString QQuickTextEdit::text() const
     remarkably better performance for modifying especially large rich text
     content.
 
-    \sa clear(), textFormat
+    Note that some keyboards use a predictive function. In this case,
+    the text being composed by the input method is not part of this property.
+    The part of the text related to the predictions is underlined and stored in
+    the \l preeditText property.
+
+    If you used \l TextDocument::source to load text, you can retrieve the
+    loaded text from this property. In that case, you can then change
+    \l textFormat to do format conversions that will change the value of the
+    \c text property. For example, if \c textFormat is \c RichText or
+    \c AutoText and you load an HTML file, then set \c textFormat to
+    \c MarkdownText afterwards, the \c text property will contain the
+    conversion from HTML to Markdown.
+
+    \sa clear(), preeditText, textFormat
 */
 void QQuickTextEdit::setText(const QString &text)
 {
@@ -409,7 +424,6 @@ void QQuickTextEdit::setText(const QString &text)
     if (QQuickTextEdit::text() == text)
         return;
 
-    d->document->clearResources();
     d->richText = d->format == RichText || (d->format == AutoText && Qt::mightBeRichText(text));
     d->markdownText = d->format == MarkdownText;
     if (!isComponentComplete()) {
@@ -425,6 +439,24 @@ void QQuickTextEdit::setText(const QString &text)
     } else {
         d->control->setPlainText(text);
     }
+    setFlag(QQuickItem::ItemObservesViewport, text.size() > QQuickTextEditPrivate::largeTextSizeThreshold);
+}
+
+void QQuickTextEdit::invalidate()
+{
+    QMetaObject::invokeMethod(this, &QQuickTextEdit::q_invalidate);
+}
+
+void QQuickTextEdit::q_invalidate()
+{
+    Q_D(QQuickTextEdit);
+    if (isComponentComplete()) {
+        if (d->document != nullptr)
+            d->document->markContentsDirty(0, d->document->characterCount());
+        invalidateFontCaches();
+        d->updateType = QQuickTextEditPrivate::UpdateAll;
+        update();
+    }
 }
 
 /*!
@@ -433,6 +465,11 @@ void QQuickTextEdit::setText(const QString &text)
     \since 5.7
 
     This property contains partial text input from an input method.
+
+    To turn off partial text that results from predictions, set the \c Qt.ImhNoPredictiveText
+    flag in inputMethodHints.
+
+    \sa inputMethodHints
 */
 QString QQuickTextEdit::preeditText() const
 {
@@ -449,6 +486,7 @@ QString QQuickTextEdit::preeditText() const
 
     \value TextEdit.PlainText       (default) all styling tags are treated as plain text
     \value TextEdit.AutoText        detected via the Qt::mightBeRichText() heuristic
+                                    or the file format of \l TextDocument::source
     \value TextEdit.RichText        \l {Supported HTML Subset} {a subset of HTML 4}
     \value TextEdit.MarkdownText    \l {https://commonmark.org/help/}{CommonMark} plus the
                                     \l {https://guides.github.com/features/mastering-markdown/}{GitHub}
@@ -456,9 +494,12 @@ QString QQuickTextEdit::preeditText() const
 
     The default is \c TextEdit.PlainText. If the text format is set to
     \c TextEdit.AutoText, the text edit will automatically determine whether
-    the text should be treated as rich text. This determination is made using
-    Qt::mightBeRichText(), which can detect the presence of an HTML tag on the
-    first line of text, but cannot distinguish Markdown from plain text.
+    the text should be treated as rich text. If the \l text property is set,
+    this determination is made using Qt::mightBeRichText(), which can detect
+    the presence of an HTML tag on the first line of text, but cannot
+    distinguish Markdown from plain text. If the \l TextDocument::source
+    property is set, this determination is made from the
+    \l {QMimeDatabase::mimeTypeForFile()}{mime type of the file}.
 
     \table
     \row
@@ -471,14 +512,23 @@ QString QQuickTextEdit::preeditText() const
     \l {https://guides.github.com/features/mastering-markdown/#GitHub-flavored-markdown}{GitHub checkbox extension}
     are interactively checkable.
 
-    \note Interactively typing markup or markdown formatting is not supported.
+    If the \l TextDocument::source property is set, changing the \c textFormat
+    property after loading has the effect of converting from the detected
+    format to the requested format. For example, you can convert between HTML
+    and Markdown. However if either of those "rich" formats is loaded and then
+    you set \c textFormat to \c PlainText, the TextEdit will show the raw
+    markup. Thus, suitable bindings (e.g. to a checkable Control) can enable
+    the user to toggle back and forth between "raw" and WYSIWYG editing.
+
+    \note Interactively typing markup or markdown formatting in WYSIWYG mode
+    is not supported; but you can switch to \c PlainText, make changes, then
+    switch back to the appropriate \c textFormat.
 
     \note With \c Text.MarkdownText, and with the supported subset of HTML,
     some decorative elements are not rendered as they would be in a web browser:
     \list
     \li code blocks use the \l {QFontDatabase::FixedFont}{default monospace font} but without a surrounding highlight box
     \li block quotes are indented, but there is no vertical line alongside the quote
-    \li horizontal rules are not rendered
     \endlist
 */
 QQuickTextEdit::TextFormat QQuickTextEdit::textFormat() const
@@ -493,25 +543,135 @@ void QQuickTextEdit::setTextFormat(TextFormat format)
     if (format == d->format)
         return;
 
-    bool wasRich = d->richText;
-    d->richText = format == RichText || (format == AutoText && (wasRich || Qt::mightBeRichText(text())));
-    d->markdownText = format == MarkdownText;
+    auto mightBeRichText = [this]() {
+        return Qt::mightBeRichText(text());
+    };
 
-#if QT_CONFIG(texthtmlparser)
-    if (isComponentComplete()) {
-        if (wasRich && !d->richText) {
-            d->control->setPlainText(!d->textCached ? d->control->toHtml() : d->text);
-            updateSize();
-        } else if (!wasRich && d->richText) {
-            d->control->setHtml(!d->textCached ? d->control->toPlainText() : d->text);
-            updateSize();
+    auto findSourceFormat = [d, mightBeRichText](Qt::TextFormat detectedFormat) {
+        if (d->format == PlainText)
+            return PlainText;
+        if (d->richText) return RichText;
+        if (d->markdownText) return MarkdownText;
+        if (detectedFormat == Qt::AutoText && mightBeRichText())
+            return RichText;
+        return PlainText;
+    };
+
+    auto findDestinationFormat = [format, mightBeRichText](Qt::TextFormat detectedFormat, TextFormat sourceFormat) {
+        if (format == AutoText) {
+            if (detectedFormat == Qt::MarkdownText || (detectedFormat == Qt::AutoText && sourceFormat == MarkdownText))
+                return MarkdownText;
+            if (detectedFormat == Qt::RichText || (detectedFormat == Qt::AutoText && (sourceFormat == RichText || mightBeRichText())))
+                return RichText;
+            return PlainText; // fallback
         }
-    }
+        return format;
+    };
+
+    bool textCachedChanged = false;
+    bool converted = false;
+
+    if (isComponentComplete()) {
+        Qt::TextFormat detectedFormat = Qt::AutoText; // default if we don't know
+        if (d->quickDocument) {
+            // If QQuickTextDocument is in use, content can be loaded from a file,
+            // and then mime type detection overrides mightBeRichText().
+            detectedFormat = QQuickTextDocumentPrivate::get(d->quickDocument)->detectedFormat;
+        }
+
+        const TextFormat sourceFormat = findSourceFormat(detectedFormat);
+        const TextFormat destinationFormat = findDestinationFormat(detectedFormat, sourceFormat);
+
+        d->richText = destinationFormat == RichText;
+        d->markdownText = destinationFormat == MarkdownText;
+
+        // If converting between markdown and HTML, avoid using cached text: have QTD re-generate it
+        if (format != PlainText && (sourceFormat != destinationFormat)) {
+            d->textCached = false;
+            textCachedChanged = true;
+        }
+
+        switch (destinationFormat) {
+        case PlainText:
+#if QT_CONFIG(texthtmlparser)
+            if (sourceFormat == RichText) {
+                // If rich or unknown text was loaded and now the user wants plain text, get the raw HTML.
+                // But if we didn't set textCached to false above, assume d->text already contains HTML.
+                // This will allow the user to see the actual HTML they loaded (rather than Qt regenerating crufty HTML).
+                d->control->setPlainText(d->textCached ? d->text : d->control->toHtml());
+                converted = true;
+            }
 #endif
+#if QT_CONFIG(textmarkdownwriter) && QT_CONFIG(textmarkdownreader)
+            if (sourceFormat == MarkdownText) {
+                // If markdown or unknown text was loaded and now the user wants plain text, get the raw Markdown.
+                // But if we didn't set textCached to false above, assume d->text already contains markdown.
+                // This will allow the user to see the actual markdown they loaded.
+                d->control->setPlainText(d->textCached ? d->text : d->control->toMarkdown());
+                converted = true;
+            }
+#endif
+            break;
+        case RichText:
+#if QT_CONFIG(texthtmlparser)
+            switch (sourceFormat) {
+            case MarkdownText:
+                // If markdown was loaded and now the user wants HTML, convert markdown to HTML.
+                d->control->setHtml(d->control->toHtml());
+                converted = true;
+                break;
+            case PlainText:
+                // If plain text was loaded and now the user wants HTML, interpret plain text as HTML.
+                // But if we didn't set textCached to false above, assume d->text already contains HTML.
+                d->control->setHtml(d->textCached ? d->text : d->control->toPlainText());
+                converted = true;
+                break;
+            case AutoText:
+            case RichText: // nothing to do
+                break;
+            }
+#endif
+            break;
+        case MarkdownText:
+#if QT_CONFIG(textmarkdownwriter) && QT_CONFIG(textmarkdownreader)
+            switch (sourceFormat) {
+            case RichText:
+                // If HTML was loaded and now the user wants markdown, convert HTML to markdown.
+                d->control->setMarkdownText(d->control->toMarkdown());
+                converted = true;
+                break;
+            case PlainText:
+                // If plain text was loaded and now the user wants markdown, interpret plain text as markdown.
+                // But if we didn't set textCached to false above, assume d->text already contains markdown.
+                d->control->setMarkdownText(d->textCached ? d->text : d->control->toPlainText());
+                converted = true;
+                break;
+            case AutoText:
+            case MarkdownText: // nothing to do
+                break;
+            }
+#endif
+            break;
+        case AutoText: // nothing to do
+            break;
+        }
+
+        if (converted)
+            updateSize();
+    } else {
+        d->richText = format == RichText || (format == AutoText && (d->richText || mightBeRichText()));
+        d->markdownText = format == MarkdownText;
+    }
+
+    qCDebug(lcTextEdit) << d->format << "->" << format
+                        << "rich?" << d->richText << "md?" << d->markdownText
+                        << "converted?" << converted << "cache invalidated?" << textCachedChanged;
 
     d->format = format;
     d->control->setAcceptRichText(d->format != PlainText);
     emit textFormatChanged(d->format);
+    if (textCachedChanged)
+        emit textChanged();
 }
 
 /*!
@@ -520,15 +680,22 @@ void QQuickTextEdit::setTextFormat(TextFormat format)
     Override the default rendering type for this component.
 
     Supported render types are:
-    \list
-    \li Text.QtRendering
-    \li Text.NativeRendering
-    \endlist
 
-    Select Text.NativeRendering if you prefer text to look native on the target platform and do
+    \value TextEdit.QtRendering     Text is rendered using a scalable distance field for each glyph.
+    \value TextEdit.NativeRendering Text is rendered using a platform-specific technique.
+    \value TextEdit.CurveRendering  Text is rendered using a curve rasterizer running directly on
+                                    the graphics hardware. (Introduced in Qt 6.7.0.)
+
+    Select \c TextEdit.NativeRendering if you prefer text to look native on the target platform and do
     not require advanced features such as transformation of the text. Using such features in
     combination with the NativeRendering render type will lend poor and sometimes pixelated
     results.
+
+    Both \c TextEdit.QtRendering and \c TextEdit.CurveRendering are hardware-accelerated techniques.
+    \c QtRendering is the faster of the two, but uses more memory and will exhibit rendering
+    artifacts at large sizes. \c CurveRendering should be considered as an alternative in cases
+    where \c QtRendering does not give good visual results or where reducing graphics memory
+    consumption is a priority.
 
     The default rendering type is determined by \l QQuickWindow::textRenderType().
 */
@@ -675,19 +842,21 @@ void QQuickTextEdit::setSelectedTextColor(const QColor &color)
     the left.
 
     Valid values for \c horizontalAlignment are:
-    \list
-    \li TextEdit.AlignLeft (default)
-    \li TextEdit.AlignRight
-    \li TextEdit.AlignHCenter
-    \li TextEdit.AlignJustify
-    \endlist
+
+    \value TextEdit.AlignLeft
+        left alignment with ragged edges on the right (default)
+    \value TextEdit.AlignRight
+        align each line to the right with ragged edges on the left
+    \value TextEdit.AlignHCenter
+        align each line to the center
+    \value TextEdit.AlignJustify
+        align each line to both right and left, spreading out words as necessary
 
     Valid values for \c verticalAlignment are:
-    \list
-    \li TextEdit.AlignTop (default)
-    \li TextEdit.AlignBottom
-    \li TextEdit.AlignVCenter
-    \endlist
+
+    \value TextEdit.AlignTop        start at the top of the item (default)
+    \value TextEdit.AlignBottom     align the last line to the bottom and other lines above
+    \value TextEdit.AlignVCenter    align the center vertically
 
     When using the attached property LayoutMirroring::enabled to mirror application
     layouts, the horizontal alignment of text will also be mirrored. However, the property
@@ -703,11 +872,11 @@ QQuickTextEdit::HAlignment QQuickTextEdit::hAlign() const
 void QQuickTextEdit::setHAlign(HAlignment align)
 {
     Q_D(QQuickTextEdit);
-    bool forceAlign = d->hAlignImplicit && d->effectiveLayoutMirror;
-    d->hAlignImplicit = false;
-    if (d->setHAlign(align, forceAlign) && isComponentComplete()) {
+
+    if (d->setHAlign(align, true) && isComponentComplete()) {
         d->updateDefaultTextOption();
         updateSize();
+        updateWholeDocument();
     }
 }
 
@@ -740,20 +909,33 @@ QQuickTextEdit::HAlignment QQuickTextEdit::effectiveHAlign() const
     return effectiveAlignment;
 }
 
-bool QQuickTextEditPrivate::setHAlign(QQuickTextEdit::HAlignment alignment, bool forceAlign)
+bool QQuickTextEditPrivate::setHAlign(QQuickTextEdit::HAlignment align, bool forceAlign)
 {
     Q_Q(QQuickTextEdit);
-    if (hAlign != alignment || forceAlign) {
-        QQuickTextEdit::HAlignment oldEffectiveHAlign = q->effectiveHAlign();
-        hAlign = alignment;
-        emit q->horizontalAlignmentChanged(alignment);
-        if (oldEffectiveHAlign != q->effectiveHAlign())
-            emit q->effectiveHorizontalAlignmentChanged();
+    if (hAlign == align && !forceAlign)
+        return false;
+
+    const bool wasImplicit = hAlignImplicit;
+    const auto oldEffectiveHAlign = q->effectiveHAlign();
+
+    hAlignImplicit = !forceAlign;
+    if (hAlign != align) {
+        hAlign = align;
+        emit q->horizontalAlignmentChanged(align);
+    }
+
+    if (q->effectiveHAlign() != oldEffectiveHAlign) {
+        emit q->effectiveHorizontalAlignmentChanged();
         return true;
+    }
+
+    if (forceAlign && wasImplicit) {
+        // QTBUG-120052 - when horizontal text alignment is set explicitly,
+        // we need notify any other controls that may depend on it, like QQuickPlaceholderText
+        emit q->effectiveHorizontalAlignmentChanged();
     }
     return false;
 }
-
 
 Qt::LayoutDirection QQuickTextEditPrivate::textDirection(const QString &text) const
 {
@@ -777,20 +959,24 @@ Qt::LayoutDirection QQuickTextEditPrivate::textDirection(const QString &text) co
 bool QQuickTextEditPrivate::determineHorizontalAlignment()
 {
     Q_Q(QQuickTextEdit);
-    if (hAlignImplicit && q->isComponentComplete()) {
-        Qt::LayoutDirection direction = contentDirection;
+    if (!hAlignImplicit || !q->isComponentComplete())
+        return false;
+
+    Qt::LayoutDirection direction = contentDirection;
 #if QT_CONFIG(im)
-        if (direction == Qt::LayoutDirectionAuto) {
-            const QString preeditText = control->textCursor().block().layout()->preeditAreaText();
-            direction = textDirection(preeditText);
-        }
-        if (direction == Qt::LayoutDirectionAuto)
-            direction = qGuiApp->inputMethod()->inputDirection();
+    if (direction == Qt::LayoutDirectionAuto) {
+        QTextBlock block = control->textCursor().block();
+        if (!block.layout())
+            return false;
+        direction = textDirection(block.layout()->preeditAreaText());
+    }
+    if (direction == Qt::LayoutDirectionAuto)
+        direction = qGuiApp->inputMethod()->inputDirection();
 #endif
 
-        return setHAlign(direction == Qt::RightToLeft ? QQuickTextEdit::AlignRight : QQuickTextEdit::AlignLeft);
-    }
-    return false;
+    const auto implicitHAlign = direction == Qt::RightToLeft ?
+            QQuickTextEdit::AlignRight : QQuickTextEdit::AlignLeft;
+    return setHAlign(implicitHAlign);
 }
 
 void QQuickTextEditPrivate::mirrorChange()
@@ -800,15 +986,61 @@ void QQuickTextEditPrivate::mirrorChange()
         if (!hAlignImplicit && (hAlign == QQuickTextEdit::AlignRight || hAlign == QQuickTextEdit::AlignLeft)) {
             updateDefaultTextOption();
             q->updateSize();
+            q->updateWholeDocument();
             emit q->effectiveHorizontalAlignmentChanged();
         }
     }
+}
+
+bool QQuickTextEditPrivate::transformChanged(QQuickItem *transformedItem)
+{
+    Q_Q(QQuickTextEdit);
+    qCDebug(lcVP) << q << "sees that" << transformedItem << "moved in VP" << q->clipRect();
+
+    // If there's a lot of text, and the TextEdit has been scrolled so that the viewport
+    // no longer completely covers the rendered region, we need QQuickTextEdit::updatePaintNode()
+    // to re-iterate blocks and populate a different range.
+    if (flags & QQuickItem::ItemObservesViewport) {
+        if (QQuickItem *viewport = q->viewportItem()) {
+            QRectF vp = q->mapRectFromItem(viewport, viewport->clipRect());
+            if (!(vp.top() > renderedRegion.top() && vp.bottom() < renderedRegion.bottom())) {
+                qCDebug(lcVP) << "viewport" << vp << "now goes beyond rendered region" << renderedRegion << "; updating";
+                q->updateWholeDocument();
+            }
+            const bool textCursorVisible = cursorVisible && q->cursorRectangle().intersects(vp);
+            if (cursorItem)
+                cursorItem->setVisible(textCursorVisible);
+            else
+                control->setCursorVisible(textCursorVisible);
+        }
+    }
+    return QQuickImplicitSizeItemPrivate::transformChanged(transformedItem);
 }
 
 #if QT_CONFIG(im)
 Qt::InputMethodHints QQuickTextEditPrivate::effectiveInputMethodHints() const
 {
     return inputMethodHints | Qt::ImhMultiLine;
+}
+#endif
+
+#if QT_CONFIG(accessibility)
+void QQuickTextEditPrivate::accessibilityActiveChanged(bool active)
+{
+    if (!active)
+        return;
+
+    Q_Q(QQuickTextEdit);
+    if (QQuickAccessibleAttached *accessibleAttached = qobject_cast<QQuickAccessibleAttached *>(
+                qmlAttachedPropertiesObject<QQuickAccessibleAttached>(q, true))) {
+        accessibleAttached->setRole(effectiveAccessibleRole());
+        accessibleAttached->set_readOnly(q->isReadOnly());
+    }
+}
+
+QAccessible::Role QQuickTextEditPrivate::accessibleRole() const
+{
+    return QAccessible::EditableText;
 }
 #endif
 
@@ -902,20 +1134,26 @@ void QQuickTextEdit::setVAlign(QQuickTextEdit::VAlignment alignment)
     moveCursorDelegate();
     emit verticalAlignmentChanged(d->vAlign);
 }
+
 /*!
     \qmlproperty enumeration QtQuick::TextEdit::wrapMode
 
     Set this property to wrap the text to the TextEdit item's width.
     The text will only wrap if an explicit width has been set.
 
-    \list
-    \li TextEdit.NoWrap - no wrapping will be performed. If the text contains insufficient newlines, then implicitWidth will exceed a set width.
-    \li TextEdit.WordWrap - wrapping is done on word boundaries only. If a word is too long, implicitWidth will exceed a set width.
-    \li TextEdit.WrapAnywhere - wrapping is done at any point on a line, even if it occurs in the middle of a word.
-    \li TextEdit.Wrap - if possible, wrapping occurs at a word boundary; otherwise it will occur at the appropriate point on the line, even in the middle of a word.
-    \endlist
+    \value TextEdit.NoWrap
+        (default) no wrapping will be performed. If the text contains insufficient newlines,
+        \l {Item::}{implicitWidth} will exceed a set width.
+    \value TextEdit.WordWrap
+        wrapping is done on word boundaries only. If a word is too long,
+        \l {Item::}{implicitWidth} will exceed a set width.
+    \value TextEdit.WrapAnywhere
+        wrapping is done at any point on a line, even if it occurs in the middle of a word.
+    \value TextEdit.Wrap
+        if possible, wrapping occurs at a word boundary; otherwise it will occur at the appropriate
+        point on the line, even in the middle of a word.
 
-    The default is TextEdit.NoWrap. If you set a width, consider using TextEdit.Wrap.
+    The default is \c TextEdit.NoWrap. If you set a width, consider using \c TextEdit.Wrap.
 */
 QQuickTextEdit::WrapMode QQuickTextEdit::wrapMode() const
 {
@@ -1065,7 +1303,7 @@ int QQuickTextEdit::positionAt(qreal x, qreal y) const
         // preedit or the next text block.
         QTextLayout *layout = cursor.block().layout();
         const int preeditLength = layout
-                ? layout->preeditAreaText().length()
+                ? layout->preeditAreaText().size()
                 : 0;
         if (preeditLength > 0
                 && d->document->documentLayout()->blockBoundingRect(cursor.block()).contains(x, y)) {
@@ -1076,6 +1314,24 @@ int QQuickTextEdit::positionAt(qreal x, qreal y) const
     }
 #endif
     return r;
+}
+
+/*!
+    \qmlproperty QtQuick::TextSelection QtQuick::TextEdit::cursorSelection
+    \since 6.7
+    \preliminary
+
+    This property is an object that provides properties of the text that is
+    currently selected, if any, alongside the text cursor.
+
+    \sa selectedText, selectionStart, selectionEnd
+*/
+QQuickTextSelection *QQuickTextEdit::cursorSelection() const
+{
+    Q_D(const QQuickTextEdit);
+    if (!d->cursorSelection)
+        d->cursorSelection = new QQuickTextSelection(const_cast<QQuickTextEdit *>(this));
+    return d->cursorSelection;
 }
 
 /*!
@@ -1092,13 +1348,12 @@ int QQuickTextEdit::positionAt(qreal x, qreal y) const
     The selection mode specifies whether the selection is updated on a per character or a per word
     basis. If not specified the selection mode will default to \c {TextEdit.SelectCharacters}.
 
-    \list
-    \li TextEdit.SelectCharacters - Sets either the selectionStart or selectionEnd (whichever was at
-    the previous cursor position) to the specified position.
-    \li TextEdit.SelectWords - Sets the selectionStart and selectionEnd to include all
-    words between the specified position and the previous cursor position.  Words partially in the
-    range are included.
-    \endlist
+    \value TextEdit.SelectCharacters
+        Sets either the selectionStart or selectionEnd (whichever was at the previous cursor position)
+        to the specified position.
+    \value TextEdit.SelectWords
+        Sets the selectionStart and selectionEnd to include all words between the specified position
+        and the previous cursor position. Words partially in the range are included.
 
     For example, take this sequence of calls:
 
@@ -1204,7 +1459,15 @@ void QQuickTextEdit::setCursorVisible(bool on)
 
 /*!
     \qmlproperty int QtQuick::TextEdit::cursorPosition
-    The position of the cursor in the TextEdit.
+    The position of the cursor in the TextEdit.  The cursor is positioned between
+    characters.
+
+    \note The \e characters in this case refer to the string of \l QChar objects,
+    therefore 16-bit Unicode characters, and the position is considered an index
+    into this string. This does not necessarily correspond to individual graphemes
+    in the writing system, as a single grapheme may be represented by multiple
+    Unicode characters, such as in the case of surrogate pairs, linguistic
+    ligatures or diacritics.
 */
 int QQuickTextEdit::cursorPosition() const
 {
@@ -1307,7 +1570,7 @@ QString QQuickTextEdit::selectedText() const
 {
     Q_D(const QQuickTextEdit);
 #if QT_CONFIG(texthtmlparser)
-    return d->richText
+    return d->richText || d->markdownText
             ? d->control->textCursor().selectedText()
             : d->control->textCursor().selection().toPlainText();
 #else
@@ -1388,38 +1651,31 @@ void QQuickTextEdit::setTextMargin(qreal margin)
 
     Flags that alter behaviour are:
 
-    \list
-    \li Qt.ImhHiddenText - Characters should be hidden, as is typically used when entering passwords.
-    \li Qt.ImhSensitiveData - Typed text should not be stored by the active input method
-            in any persistent storage like predictive user dictionary.
-    \li Qt.ImhNoAutoUppercase - The input method should not try to automatically switch to upper case
-            when a sentence ends.
-    \li Qt.ImhPreferNumbers - Numbers are preferred (but not required).
-    \li Qt.ImhPreferUppercase - Upper case letters are preferred (but not required).
-    \li Qt.ImhPreferLowercase - Lower case letters are preferred (but not required).
-    \li Qt.ImhNoPredictiveText - Do not use predictive text (i.e. dictionary lookup) while typing.
-
-    \li Qt.ImhDate - The text editor functions as a date field.
-    \li Qt.ImhTime - The text editor functions as a time field.
-    \endlist
+    \value Qt.ImhHiddenText         Characters should be hidden, as is typically used when entering passwords.
+    \value Qt.ImhSensitiveData      Typed text should not be stored by the active input method
+                                    in any persistent storage like predictive user dictionary.
+    \value Qt.ImhNoAutoUppercase    The input method should not try to automatically switch to
+                                    upper case when a sentence ends.
+    \value Qt.ImhPreferNumbers      Numbers are preferred (but not required).
+    \value Qt.ImhPreferUppercase    Upper case letters are preferred (but not required).
+    \value Qt.ImhPreferLowercase    Lower case letters are preferred (but not required).
+    \value Qt.ImhNoPredictiveText   Do not use predictive text (i.e. dictionary lookup) while typing.
+    \value Qt.ImhDate               The text editor functions as a date field.
+    \value Qt.ImhTime               The text editor functions as a time field.
 
     Flags that restrict input (exclusive flags) are:
 
-    \list
-    \li Qt.ImhDigitsOnly - Only digits are allowed.
-    \li Qt.ImhFormattedNumbersOnly - Only number input is allowed. This includes decimal point and minus sign.
-    \li Qt.ImhUppercaseOnly - Only upper case letter input is allowed.
-    \li Qt.ImhLowercaseOnly - Only lower case letter input is allowed.
-    \li Qt.ImhDialableCharactersOnly - Only characters suitable for phone dialing are allowed.
-    \li Qt.ImhEmailCharactersOnly - Only characters suitable for email addresses are allowed.
-    \li Qt.ImhUrlCharactersOnly - Only characters suitable for URLs are allowed.
-    \endlist
+    \value Qt.ImhDigitsOnly         Only digits are allowed.
+    \value Qt.ImhFormattedNumbersOnly Only number input is allowed. This includes decimal point and minus sign.
+    \value Qt.ImhUppercaseOnly      Only upper case letter input is allowed.
+    \value Qt.ImhLowercaseOnly      Only lower case letter input is allowed.
+    \value Qt.ImhDialableCharactersOnly Only characters suitable for phone dialing are allowed.
+    \value Qt.ImhEmailCharactersOnly Only characters suitable for email addresses are allowed.
+    \value Qt.ImhUrlCharactersOnly  Only characters suitable for URLs are allowed.
 
     Masks:
 
-    \list
-    \li Qt.ImhExclusiveInputMask - This mask yields nonzero if any of the exclusive flags are used.
-    \endlist
+    \value Qt.ImhExclusiveInputMask This mask yields nonzero if any of the exclusive flags are used.
 */
 
 Qt::InputMethodHints QQuickTextEdit::inputMethodHints() const
@@ -1448,18 +1704,38 @@ void QQuickTextEdit::setInputMethodHints(Qt::InputMethodHints hints)
 #endif // im
 }
 
-void QQuickTextEdit::geometryChanged(const QRectF &newGeometry,
-                                  const QRectF &oldGeometry)
+void QQuickTextEdit::geometryChange(const QRectF &newGeometry, const QRectF &oldGeometry)
 {
     Q_D(QQuickTextEdit);
-    if (!d->inLayout && ((newGeometry.width() != oldGeometry.width() && widthValid())
-        || (newGeometry.height() != oldGeometry.height() && heightValid()))) {
+    if (!d->inLayout && ((newGeometry.width() != oldGeometry.width())
+                         || (newGeometry.height() != oldGeometry.height()))) {
         updateSize();
         updateWholeDocument();
-        moveCursorDelegate();
+        if (widthValid() || heightValid())
+            moveCursorDelegate();
     }
-    QQuickImplicitSizeItem::geometryChanged(newGeometry, oldGeometry);
+    QQuickImplicitSizeItem::geometryChange(newGeometry, oldGeometry);
+}
 
+void QQuickTextEdit::itemChange(ItemChange change, const ItemChangeData &value)
+{
+    Q_D(QQuickTextEdit);
+    Q_UNUSED(value);
+    switch (change) {
+    case ItemDevicePixelRatioHasChanged:
+        if (d->containsUnscalableGlyphs) {
+            // Native rendering optimizes for a given pixel grid, so its results must not be scaled.
+            // Text layout code respects the current device pixel ratio automatically, we only need
+            // to rerun layout after the ratio changed.
+            updateSize();
+            updateWholeDocument();
+        }
+        break;
+
+    default:
+        break;
+    }
+    QQuickImplicitSizeItem::itemChange(change, value);
 }
 
 /*!
@@ -1471,16 +1747,20 @@ void QQuickTextEdit::componentComplete()
     Q_D(QQuickTextEdit);
     QQuickImplicitSizeItem::componentComplete();
 
-    d->document->setBaseUrl(baseUrl());
-#if QT_CONFIG(texthtmlparser)
-    if (d->richText)
-        d->control->setHtml(d->text);
-    else
-#endif
+    const QUrl url = baseUrl();
+    const QQmlContext *context = qmlContext(this);
+    d->document->setBaseUrl(context ? context->resolvedUrl(url) : url);
     if (!d->text.isEmpty()) {
+#if QT_CONFIG(texthtmlparser)
+        if (d->richText)
+            d->control->setHtml(d->text);
+        else
+#endif
+#if QT_CONFIG(textmarkdownreader)
         if (d->markdownText)
             d->control->setMarkdownText(d->text);
         else
+#endif
             d->control->setPlainText(d->text);
     }
 
@@ -1492,6 +1772,18 @@ void QQuickTextEdit::componentComplete()
     }
     if (d->cursorComponent && isCursorVisible())
         QQuickTextUtil::createCursor(d);
+    polish();
+
+#if QT_CONFIG(accessibility)
+    if (QAccessible::isActive())
+        d->accessibilityActiveChanged(true);
+#endif
+}
+
+int QQuickTextEdit::resourcesLoading() const
+{
+    Q_D(const QQuickTextEdit);
+    return d->pixmapsInProgress.size();
 }
 
 /*!
@@ -1534,12 +1826,25 @@ void QQuickTextEdit::setSelectByKeyboard(bool on)
 /*!
     \qmlproperty bool QtQuick::TextEdit::selectByMouse
 
-    Defaults to false.
+    Defaults to \c true since Qt 6.4.
 
-    If true, the user can use the mouse to select text in some
-    platform-specific way. Note that for some platforms this may
-    not be an appropriate interaction; it may conflict with how
-    the text needs to behave inside a Flickable, for example.
+    If \c true, the user can use the mouse to select text in the usual way.
+
+    \note In versions prior to 6.4, the default was \c false; but if you
+    enabled this property, you could also select text on a touchscreen by
+    dragging your finger across it. This interfered with flicking when TextEdit
+    was used inside a Flickable. However, Qt has supported text selection
+    handles on mobile platforms, and on embedded platforms using Qt Virtual
+    Keyboard, since version 5.7, via QInputMethod. Most users would be
+    surprised if finger dragging selected text rather than flicking the parent
+    Flickable. Therefore, selectByMouse now really means what it says: if
+    \c true, you can select text by dragging \e only with a mouse, whereas
+    the platform is expected to provide selection handles on touchscreens.
+    If this change does not suit your application, you can set \c selectByMouse
+    to \c false, or import an older API version (for example
+    \c {import QtQuick 6.3}) to revert to the previous behavior. The option to
+    revert behavior by changing the import version will be removed in a later
+    version of Qt.
 */
 bool QQuickTextEdit::selectByMouse() const
 {
@@ -1550,15 +1855,20 @@ bool QQuickTextEdit::selectByMouse() const
 void QQuickTextEdit::setSelectByMouse(bool on)
 {
     Q_D(QQuickTextEdit);
-    if (d->selectByMouse != on) {
-        d->selectByMouse = on;
-        setKeepMouseGrab(on);
-        if (on)
-            d->control->setTextInteractionFlags(d->control->textInteractionFlags() | Qt::TextSelectableByMouse);
-        else
-            d->control->setTextInteractionFlags(d->control->textInteractionFlags() & ~Qt::TextSelectableByMouse);
-        emit selectByMouseChanged(on);
-    }
+    if (d->selectByMouse == on)
+        return;
+
+    d->selectByMouse = on;
+    setKeepMouseGrab(on);
+    if (on)
+        d->control->setTextInteractionFlags(d->control->textInteractionFlags() | Qt::TextSelectableByMouse);
+    else
+        d->control->setTextInteractionFlags(d->control->textInteractionFlags() & ~Qt::TextSelectableByMouse);
+
+#if QT_CONFIG(cursor)
+    d->updateMouseCursorShape();
+#endif
+    emit selectByMouseChanged(on);
 }
 
 /*!
@@ -1566,10 +1876,8 @@ void QQuickTextEdit::setSelectByMouse(bool on)
 
     Specifies how text should be selected using a mouse.
 
-    \list
-    \li TextEdit.SelectCharacters - The selection is updated with individual characters. (Default)
-    \li TextEdit.SelectWords - The selection is updated with whole words.
-    \endlist
+    \value TextEdit.SelectCharacters    (default) The selection is updated with individual characters.
+    \value TextEdit.SelectWords         The selection is updated with whole words.
 
     This property only applies when \l selectByMouse is true.
 */
@@ -1621,6 +1929,9 @@ void QQuickTextEdit::setReadOnly(bool r)
 #if QT_CONFIG(im)
     updateInputMethod(Qt::ImEnabled);
 #endif
+#if QT_CONFIG(cursor)
+    d->updateMouseCursorShape();
+#endif
     q_canPasteChanged();
     emit readOnlyChanged(r);
     if (!d->selectByKeyboardSet)
@@ -1630,6 +1941,13 @@ void QQuickTextEdit::setReadOnly(bool r)
     } else if (hasActiveFocus()) {
         setCursorVisible(true);
     }
+
+#if QT_CONFIG(accessibility)
+    if (QAccessible::isActive()) {
+        if (QQuickAccessibleAttached *accessibleAttached = QQuickAccessibleAttached::attachedProperties(this))
+            accessibleAttached->set_readOnly(r);
+    }
+#endif
 }
 
 bool QQuickTextEdit::isReadOnly() const
@@ -1869,6 +2187,8 @@ Handles the given mouse \a event.
 void QQuickTextEdit::mousePressEvent(QMouseEvent *event)
 {
     Q_D(QQuickTextEdit);
+    const bool isMouse = QQuickDeliveryAgentPrivate::isEventFromMouseOrTouchpad(event);
+    setKeepMouseGrab(d->selectByMouse && isMouse);
     d->control->processEvent(event, QPointF(-d->xoff, -d->yoff));
     if (d->focusOnPress){
         bool hadActiveFocus = hasActiveFocus();
@@ -1956,6 +2276,9 @@ QVariant QQuickTextEdit::inputMethodQuery(Qt::InputMethodQuery property, QVarian
     case Qt::ImInputItemClipRectangle:
         v = QQuickItem::inputMethodQuery(property);
         break;
+    case Qt::ImReadOnly:
+        v = isReadOnly();
+        break;
     default:
         if (property == Qt::ImCursorPosition && !argument.isNull())
             argument = QVariant(argument.toPointF() - QPointF(d->xoff, d->yoff));
@@ -1986,6 +2309,104 @@ void QQuickTextEdit::triggerPreprocess()
     update();
 }
 
+/*! \internal
+    QTextDocument::loadResource() calls this to load inline images etc.
+    But if it's a local file, don't do it: let QTextDocument::loadResource()
+    load it in the default way. QQuickPixmap is for QtQuick-specific uses.
+*/
+QVariant QQuickTextEdit::loadResource(int type, const QUrl &source)
+{
+    Q_D(QQuickTextEdit);
+    const QUrl url = d->document->baseUrl().resolved(source);
+    if (url.isLocalFile()) {
+        // qmlWarning if the file doesn't exist (because QTextDocument::loadResource() can't do that)
+        QFileInfo fi(QQmlFile::urlToLocalFileOrQrc(url));
+        if (!fi.exists())
+            qmlWarning(this) << "Cannot open: " << url.toString();
+        // let QTextDocument::loadResource() handle local file loading
+        return {};
+    }
+
+    // If the image is in resources, load it here, because QTextDocument::loadResource() doesn't do that
+    if (!url.scheme().compare("qrc"_L1, Qt::CaseInsensitive)) {
+        // qmlWarning if the file doesn't exist
+        QFile f(QQmlFile::urlToLocalFileOrQrc(url));
+        if (f.open(QFile::ReadOnly)) {
+            QByteArray buf = f.readAll();
+            f.close();
+            QImage image;
+            image.loadFromData(buf);
+            if (!image.isNull())
+                return image;
+        }
+        // if we get here, loading failed
+        qmlWarning(this) << "Cannot read resource: " << f.fileName();
+        return {};
+    }
+
+    // see if we already started a load job
+    auto existingJobIter = std::find_if(
+            d->pixmapsInProgress.cbegin(), d->pixmapsInProgress.cend(),
+            [&url](const auto *job) { return job->url() == url; } );
+    if (existingJobIter != d->pixmapsInProgress.cend()) {
+        const QQuickPixmap *job = *existingJobIter;
+        if (job->isError()) {
+            qmlWarning(this) << job->error();
+            d->pixmapsInProgress.erase(existingJobIter);
+            delete job;
+            return QImage();
+        } else {
+            qCDebug(lcTextEdit) << "already downloading" << url;
+            // existing job: return a null variant if it's not done yet
+            return job->isReady() ? job->image() : QVariant();
+        }
+    }
+
+    // not found: start a new load job
+    qCDebug(lcTextEdit) << "loading" << source << "resolved" << url
+                        << "type" << static_cast<QTextDocument::ResourceType>(type);
+    QQmlContext *context = qmlContext(this);
+    Q_ASSERT(context);
+    // don't cache it in QQuickPixmapCache, because it's cached in QTextDocumentPrivate::cachedResources
+    QQuickPixmap *p = new QQuickPixmap(context->engine(), url, QQuickPixmap::Options{});
+    p->connectFinished(this, SLOT(resourceRequestFinished()));
+    d->pixmapsInProgress.append(p);
+    // the new job is probably not done; return a null variant if the caller should poll again
+    return p->isReady() ? p->image() : QVariant();
+}
+
+/*! \internal
+    Handle completion of a download that QQuickTextEdit::loadResource() started.
+*/
+void QQuickTextEdit::resourceRequestFinished()
+{
+    Q_D(QQuickTextEdit);
+    for (auto it = d->pixmapsInProgress.cbegin(); it != d->pixmapsInProgress.cend(); ++it) {
+        auto *job = *it;
+        if (job->isError()) {
+            // get QTextDocument::loadResource() to call QQuickTextEdit::loadResource() again, to return the placeholder
+            qCDebug(lcTextEdit) << "failed to load (error)" << job->url();
+            d->document->resource(QTextDocument::ImageResource, job->url());
+            // that will call QQuickTextEdit::loadResource() which will delete the job;
+            // so leave it in pixmapsInProgress for now, and stop this loop
+            break;
+        } else if (job->isReady()) {
+            // get QTextDocument::loadResource() to call QQuickTextEdit::loadResource() again, and cache the result
+            auto res = d->document->resource(QTextDocument::ImageResource, job->url());
+            // If QTextDocument::resource() returned a valid variant, it's been cached too. Either way, the job is done.
+            qCDebug(lcTextEdit) << (res.isValid() ? "done downloading" : "failed to load") << job->url() << job->rect();
+            d->pixmapsInProgress.erase(it);
+            delete job;
+            break;
+        }
+    }
+    if (d->pixmapsInProgress.isEmpty()) {
+        invalidate();
+        updateSize();
+        q_invalidate();
+    }
+}
+
 typedef QQuickTextEditPrivate::Node TextNode;
 using TextNodeIterator = QQuickTextEditPrivate::TextNodeIterator;
 
@@ -1994,7 +2415,7 @@ static inline bool operator<(const TextNode &n1, const TextNode &n2)
     return n1.startPos() < n2.startPos();
 }
 
-static inline void updateNodeTransform(QQuickTextNode* node, const QPointF &topLeft)
+static inline void updateNodeTransform(QSGInternalTextNode *node, const QPointF &topLeft)
 {
     QMatrix4x4 transformMatrix;
     transformMatrix.translate(topLeft.x(), topLeft.y());
@@ -2020,6 +2441,23 @@ void QQuickTextEdit::invalidateFontCaches()
     }
 }
 
+QTextDocument *QQuickTextEdit::document() const
+{
+    Q_D(const QQuickTextEdit);
+    return d->document;
+}
+
+void QQuickTextEdit::setDocument(QTextDocument *doc)
+{
+    Q_D(QQuickTextEdit);
+    // do not delete the owned document till after control has been updated
+    std::unique_ptr<QTextDocument> cleanup(d->ownsDocument ? d->document : nullptr);
+    d->document = doc;
+    d->ownsDocument = false;
+    d->control->setDocument(doc);
+    q_textChanged();
+}
+
 inline void resetEngine(QQuickTextNodeEngine *engine, const QColor& textColor, const QColor& selectedTextColor, const QColor& selectionColor)
 {
     *engine = QQuickTextNodeEngine();
@@ -2033,29 +2471,39 @@ QSGNode *QQuickTextEdit::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *
     Q_UNUSED(updatePaintNodeData);
     Q_D(QQuickTextEdit);
 
-    if (d->updateType != QQuickTextEditPrivate::UpdatePaintNode && oldNode != nullptr) {
+    if (d->updateType != QQuickTextEditPrivate::UpdatePaintNode
+          && d->updateType != QQuickTextEditPrivate::UpdateAll
+          && oldNode != nullptr) {
         // Update done in preprocess() in the nodes
         d->updateType = QQuickTextEditPrivate::UpdateNone;
         return oldNode;
     }
 
-    d->updateType = QQuickTextEditPrivate::UpdateNone;
+    d->containsUnscalableGlyphs = false;
+    if (!oldNode || d->updateType == QQuickTextEditPrivate::UpdateAll) {
+        delete oldNode;
+        oldNode = nullptr;
 
-    if (!oldNode) {
-        // If we had any QQuickTextNode node references, they were deleted along with the root node
+        // If we had any QSGInternalTextNode node references, they were deleted along with the root node
         // But here we must delete the Node structures in textNodeMap
         d->textNodeMap.clear();
     }
 
+    d->updateType = QQuickTextEditPrivate::UpdateNone;
+
     RootNode *rootNode = static_cast<RootNode *>(oldNode);
     TextNodeIterator nodeIterator = d->textNodeMap.begin();
+    std::optional<int> firstPosAcrossAllNodes;
+    if (nodeIterator != d->textNodeMap.end())
+        firstPosAcrossAllNodes = nodeIterator->startPos();
+
     while (nodeIterator != d->textNodeMap.end() && !nodeIterator->dirty())
         ++nodeIterator;
 
     QQuickTextNodeEngine engine;
     QQuickTextNodeEngine frameDecorationsEngine;
 
-    if (!oldNode || nodeIterator < d->textNodeMap.end()) {
+    if (!oldNode || nodeIterator < d->textNodeMap.end() || d->textNodeMap.isEmpty()) {
 
         if (!oldNode)
             rootNode = new RootNode;
@@ -2065,7 +2513,7 @@ QSGNode *QQuickTextEdit::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *
             firstDirtyPos = nodeIterator->startPos();
             // ### this could be optimized if the first and last dirty nodes are not connected
             // as the intermediate text nodes would usually only need to be transformed differently.
-            QQuickTextNode *firstCleanNode = nullptr;
+            QSGInternalTextNode *firstCleanNode = nullptr;
             auto it = d->textNodeMap.constEnd();
             while (it != nodeIterator) {
                 --it;
@@ -2080,11 +2528,18 @@ QSGNode *QQuickTextEdit::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *
             } while (nodeIterator != d->textNodeMap.constEnd() && nodeIterator->textNode() != firstCleanNode);
         }
 
+        // If there's a lot of text, insert only the range of blocks that can possibly be visible within the viewport.
+        QRectF viewport;
+        if (flags().testFlag(QQuickItem::ItemObservesViewport)) {
+            viewport = clipRect();
+            qCDebug(lcVP) << "text viewport" << viewport;
+        }
+
         // FIXME: the text decorations could probably be handled separately (only updated for affected textFrames)
         rootNode->resetFrameDecorations(d->createTextNode());
         resetEngine(&frameDecorationsEngine, d->color, d->selectedTextColor, d->selectionColor);
 
-        QQuickTextNode *node = nullptr;
+        QSGInternalTextNode *node = nullptr;
 
         int currentNodeSize = 0;
         int nodeStart = firstDirtyPos;
@@ -2100,66 +2555,155 @@ QSGNode *QQuickTextEdit::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *
         QList<QTextFrame *> frames;
         frames.append(d->document->rootFrame());
 
+
+        d->firstBlockInViewport = -1;
+        d->firstBlockPastViewport = -1;
+        int frameCount = -1;
         while (!frames.isEmpty()) {
             QTextFrame *textFrame = frames.takeFirst();
+            ++frameCount;
+            if (frameCount > 0)
+                firstDirtyPos = 0;
+            qCDebug(lcVP) << "frame" << frameCount << textFrame
+                          << "from" << positionToRectangle(textFrame->firstPosition()).topLeft()
+                          << "to" << positionToRectangle(textFrame->lastPosition()).bottomRight();
             frames.append(textFrame->childFrames());
             frameDecorationsEngine.addFrameDecorations(d->document, textFrame);
-
-            if (textFrame->lastPosition() < firstDirtyPos
-                    || textFrame->firstPosition() >= firstCleanNode.startPos())
-                continue;
-            node = d->createTextNode();
             resetEngine(&engine, d->color, d->selectedTextColor, d->selectionColor);
 
             if (textFrame->firstPosition() > textFrame->lastPosition()
                     && textFrame->frameFormat().position() != QTextFrameFormat::InFlow) {
+                node = d->createTextNode();
                 updateNodeTransform(node, d->document->documentLayout()->frameBoundingRect(textFrame).topLeft());
                 const int pos = textFrame->firstPosition() - 1;
-                ProtectedLayoutAccessor *a = static_cast<ProtectedLayoutAccessor *>(d->document->documentLayout());
+                auto *a = static_cast<QtPrivate::ProtectedLayoutAccessor *>(d->document->documentLayout());
                 QTextCharFormat format = a->formatAccessor(pos);
                 QTextBlock block = textFrame->firstCursorPosition().block();
-                engine.setCurrentLine(block.layout()->lineForTextPosition(pos - block.position()));
-                engine.addTextObject(block, QPointF(0, 0), format, QQuickTextNodeEngine::Unselected, d->document,
-                                              pos, textFrame->frameFormat().position());
+                nodeOffset = d->document->documentLayout()->blockBoundingRect(block).topLeft();
+                bool inView = true;
+                if (!viewport.isNull() && block.layout()) {
+                    QRectF coveredRegion = block.layout()->boundingRect().adjusted(nodeOffset.x(), nodeOffset.y(), nodeOffset.x(), nodeOffset.y());
+                    inView = coveredRegion.bottom() >= viewport.top() && coveredRegion.top() <= viewport.bottom();
+                    qCDebug(lcVP) << "non-flow frame" << coveredRegion << "in viewport?" << inView;
+                }
+                if (inView) {
+                    engine.setCurrentLine(block.layout()->lineForTextPosition(pos - block.position()));
+                    engine.addTextObject(block, QPointF(0, 0), format, QQuickTextNodeEngine::Unselected, d->document,
+                                                  pos, textFrame->frameFormat().position());
+                }
                 nodeStart = pos;
             } else {
                 // Having nodes spanning across frame boundaries will break the current bookkeeping mechanism. We need to prevent that.
                 QList<int> frameBoundaries;
                 frameBoundaries.reserve(frames.size());
-                for (QTextFrame *frame : qAsConst(frames))
+                for (QTextFrame *frame : std::as_const(frames))
                     frameBoundaries.append(frame->firstPosition());
                 std::sort(frameBoundaries.begin(), frameBoundaries.end());
 
                 QTextFrame::iterator it = textFrame->begin();
                 while (!it.atEnd()) {
                     QTextBlock block = it.currentBlock();
-                    ++it;
-                    if (block.position() < firstDirtyPos)
+                    if (block.position() < firstDirtyPos) {
+                        ++it;
                         continue;
-
-                    if (!engine.hasContents()) {
-                        nodeOffset = d->document->documentLayout()->blockBoundingRect(block).topLeft();
-                        updateNodeTransform(node, nodeOffset);
-                        nodeStart = block.position();
                     }
 
-                    engine.addTextBlock(d->document, block, -nodeOffset, d->color, QColor(), selectionStart(), selectionEnd() - 1);
-                    currentNodeSize += block.length();
+                    if (!engine.hasContents())
+                        nodeOffset = d->document->documentLayout()->blockBoundingRect(block).topLeft();
+
+                    bool inView = true;
+                    if (!viewport.isNull()) {
+                        QRectF coveredRegion;
+                        if (block.layout()) {
+                            coveredRegion = block.layout()->boundingRect().adjusted(nodeOffset.x(), nodeOffset.y(), nodeOffset.x(), nodeOffset.y());
+                            inView = coveredRegion.bottom() > viewport.top();
+                        }
+                        const bool potentiallyScrollingBackwards = firstPosAcrossAllNodes && *firstPosAcrossAllNodes == firstDirtyPos;
+                        if (d->firstBlockInViewport < 0 && inView && potentiallyScrollingBackwards) {
+                            // During backward scrolling, we need to iterate backwards from textNodeMap.begin() to fill the top of the viewport.
+                            if (coveredRegion.top() > viewport.top() + 1) {
+                                qCDebug(lcVP) << "checking backwards from block" << block.blockNumber() << "@" << nodeOffset.y() << coveredRegion;
+                                while (it != textFrame->begin() && it.currentBlock().layout() &&
+                                       it.currentBlock().layout()->boundingRect().top() + nodeOffset.y() > viewport.top()) {
+                                    nodeOffset = d->document->documentLayout()->blockBoundingRect(it.currentBlock()).topLeft();
+                                    --it;
+                                }
+                                if (!it.currentBlock().layout())
+                                    ++it;
+                                if (Q_LIKELY(it.currentBlock().layout())) {
+                                    block = it.currentBlock();
+                                    coveredRegion = block.layout()->boundingRect().adjusted(nodeOffset.x(), nodeOffset.y(), nodeOffset.x(), nodeOffset.y());
+                                    firstDirtyPos = it.currentBlock().position();
+                                } else {
+                                    qCWarning(lcVP) << "failed to find a text block with layout during back-scrolling";
+                                }
+                            }
+                            qCDebug(lcVP) << "first block in viewport" << block.blockNumber() << "@" << nodeOffset.y() << coveredRegion;
+                            if (block.layout())
+                                d->renderedRegion = coveredRegion;
+                        } else {
+                            if (nodeOffset.y() > viewport.bottom()) {
+                                inView = false;
+                                if (d->firstBlockInViewport >= 0 && d->firstBlockPastViewport < 0) {
+                                    qCDebug(lcVP) << "first block past viewport" << viewport << block.blockNumber()
+                                                  << "@" << nodeOffset.y() << "total region rendered" << d->renderedRegion;
+                                    d->firstBlockPastViewport = block.blockNumber();
+                                }
+                                break; // skip rest of blocks in this frame
+                            }
+                            if (inView && !block.text().isEmpty() && coveredRegion.isValid()) {
+                                d->renderedRegion = d->renderedRegion.united(coveredRegion);
+                                // In case we're going to visit more (nested) frames after this, ensure that we
+                                // don't omit any blocks that fit within the region that we claim as fully rendered.
+                                if (!frames.isEmpty())
+                                    viewport = viewport.united(d->renderedRegion);
+                            }
+                        }
+                        if (inView && d->firstBlockInViewport < 0)
+                            d->firstBlockInViewport = block.blockNumber();
+                    }
+
+                    bool createdNodeInView = false;
+                    if (inView) {
+                        if (!engine.hasContents()) {
+                            if (node) {
+                                d->containsUnscalableGlyphs = d->containsUnscalableGlyphs
+                                                              || node->containsUnscalableGlyphs();
+                                if (!node->parent())
+                                    d->addCurrentTextNodeToRoot(&engine, rootNode, node, nodeIterator, nodeStart);
+                            }
+                            node = d->createTextNode();
+                            createdNodeInView = true;
+                            updateNodeTransform(node, nodeOffset);
+                            nodeStart = block.position();
+                        }
+                        engine.addTextBlock(d->document, block, -nodeOffset, d->color, QColor(), selectionStart(), selectionEnd() - 1);
+                        currentNodeSize += block.length();
+                    }
 
                     if ((it.atEnd()) || block.next().position() >= firstCleanNode.startPos())
                         break; // last node that needed replacing or last block of the frame
-
                     QList<int>::const_iterator lowerBound = std::lower_bound(frameBoundaries.constBegin(), frameBoundaries.constEnd(), block.next().position());
-                    if (currentNodeSize > nodeBreakingSize || lowerBound == frameBoundaries.constEnd() || *lowerBound > nodeStart) {
+                    if (node && (currentNodeSize > nodeBreakingSize || lowerBound == frameBoundaries.constEnd() || *lowerBound > nodeStart)) {
                         currentNodeSize = 0;
-                        d->addCurrentTextNodeToRoot(&engine, rootNode, node, nodeIterator, nodeStart);
-                        node = d->createTextNode();
+                        d->containsUnscalableGlyphs = d->containsUnscalableGlyphs
+                                                      || node->containsUnscalableGlyphs();
+                        if (!node->parent())
+                            d->addCurrentTextNodeToRoot(&engine, rootNode, node, nodeIterator, nodeStart);
+                        if (!createdNodeInView)
+                            node = d->createTextNode();
                         resetEngine(&engine, d->color, d->selectedTextColor, d->selectionColor);
                         nodeStart = block.next().position();
                     }
-                }
+                    ++it;
+                } // loop over blocks in frame
             }
-            d->addCurrentTextNodeToRoot(&engine, rootNode, node, nodeIterator, nodeStart);
+            if (Q_LIKELY(node)) {
+                d->containsUnscalableGlyphs = d->containsUnscalableGlyphs
+                                              || node->containsUnscalableGlyphs();
+                if (Q_LIKELY(!node->parent()))
+                    d->addCurrentTextNodeToRoot(&engine, rootNode, node, nodeIterator, nodeStart);
+            }
         }
         frameDecorationsEngine.addToSceneGraph(rootNode->frameDecorationsNode, QQuickText::Normal, QColor());
         // Now prepend the frame decorations since we want them rendered first, with the text nodes and cursor in front.
@@ -2190,7 +2734,7 @@ QSGNode *QQuickTextEdit::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *
 
     if (d->cursorComponent == nullptr) {
         QSGInternalRectangleNode* cursor = nullptr;
-        if (!isReadOnly() && d->cursorVisible && d->control->cursorOn())
+        if (!isReadOnly() && d->cursorVisible && d->control->cursorOn() && d->control->cursorVisible())
             cursor = d->sceneGraphContext()->createInternalRectangleNode(d->control->cursorRect(), d->color);
         rootNode->resetCursorNode(cursor);
     }
@@ -2270,12 +2814,7 @@ bool QQuickTextEdit::isInputMethodComposing() const
 }
 
 QQuickTextEditPrivate::ExtraData::ExtraData()
-    : padding(0)
-    , topPadding(0)
-    , leftPadding(0)
-    , rightPadding(0)
-    , bottomPadding(0)
-    , explicitTopPadding(false)
+    : explicitTopPadding(false)
     , explicitLeftPadding(false)
     , explicitRightPadding(false)
     , explicitBottomPadding(false)
@@ -2301,12 +2840,16 @@ void QQuickTextEditPrivate::init()
 
     q->setAcceptHoverEvents(true);
 
-    document = new QQuickTextDocumentWithImageResources(q);
+    document = new QTextDocument(q);
+    ownsDocument = true;
+    auto *imageHandler = new QQuickTextImageHandler(document);
+    document->documentLayout()->registerHandler(QTextFormat::ImageObject, imageHandler);
 
     control = new QQuickTextControl(document, q);
-    control->setTextInteractionFlags(Qt::LinksAccessibleByMouse | Qt::TextSelectableByKeyboard | Qt::TextEditable);
+    control->setTextInteractionFlags(Qt::LinksAccessibleByMouse | Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard | Qt::TextEditable);
     control->setAcceptRichText(false);
     control->setCursorIsFocusIndicator(true);
+    q->setKeepMouseGrab(true);
 
     qmlobject_connect(control, QQuickTextControl, SIGNAL(updateCursorRequest()), q, QQuickTextEdit, SLOT(updateCursor()));
     qmlobject_connect(control, QQuickTextControl, SIGNAL(selectionChanged()), q, QQuickTextEdit, SIGNAL(selectedTextChanged()));
@@ -2321,23 +2864,25 @@ void QQuickTextEditPrivate::init()
 #if QT_CONFIG(clipboard)
     qmlobject_connect(QGuiApplication::clipboard(), QClipboard, SIGNAL(dataChanged()), q, QQuickTextEdit, SLOT(q_canPasteChanged()));
 #endif
-    qmlobject_connect(document, QQuickTextDocumentWithImageResources, SIGNAL(undoAvailable(bool)), q, QQuickTextEdit, SIGNAL(canUndoChanged()));
-    qmlobject_connect(document, QQuickTextDocumentWithImageResources, SIGNAL(redoAvailable(bool)), q, QQuickTextEdit, SIGNAL(canRedoChanged()));
-    qmlobject_connect(document, QQuickTextDocumentWithImageResources, SIGNAL(imagesLoaded()), q, QQuickTextEdit, SLOT(updateSize()));
-    QObject::connect(document, &QQuickTextDocumentWithImageResources::contentsChange, q, &QQuickTextEdit::q_contentsChange);
+    qmlobject_connect(document, QTextDocument, SIGNAL(undoAvailable(bool)), q, QQuickTextEdit, SIGNAL(canUndoChanged()));
+    qmlobject_connect(document, QTextDocument, SIGNAL(redoAvailable(bool)), q, QQuickTextEdit, SIGNAL(canRedoChanged()));
+    QObject::connect(document, &QTextDocument::contentsChange, q, &QQuickTextEdit::q_contentsChange);
     QObject::connect(document->documentLayout(), &QAbstractTextDocumentLayout::updateBlock, q, &QQuickTextEdit::invalidateBlock);
     QObject::connect(control, &QQuickTextControl::linkHovered, q, &QQuickTextEdit::q_linkHovered);
     QObject::connect(control, &QQuickTextControl::markerHovered, q, &QQuickTextEdit::q_markerHovered);
 
+    document->setPageSize(QSizeF(0, 0));
     document->setDefaultFont(font);
     document->setDocumentMargin(textMargin);
     document->setUndoRedoEnabled(false); // flush undo buffer.
     document->setUndoRedoEnabled(true);
     updateDefaultTextOption();
+    document->setModified(false); // we merely changed some defaults: no edits worth saving yet
     q->updateSize();
 #if QT_CONFIG(cursor)
-    q->setCursor(Qt::IBeamCursor);
+    updateMouseCursorShape();
 #endif
+    setSizePolicy(QLayoutPolicy::Expanding, QLayoutPolicy::Expanding);
 }
 
 void QQuickTextEditPrivate::resetInputMethod()
@@ -2361,8 +2906,8 @@ void QQuickTextEdit::q_textChanged()
     updateSize();
 
     markDirtyNodesForRange(0, d->document->characterCount(), 0);
-    polish();
     if (isComponentComplete()) {
+        polish();
         d->updateType = QQuickTextEditPrivate::UpdatePaintNode;
         update();
     }
@@ -2411,8 +2956,8 @@ void QQuickTextEdit::q_contentsChange(int pos, int charsRemoved, int charsAdded)
 
     markDirtyNodesForRange(pos, editRange, delta);
 
-    polish();
     if (isComponentComplete()) {
+        polish();
         d->updateType = QQuickTextEditPrivate::UpdatePaintNode;
         update();
     }
@@ -2440,8 +2985,8 @@ void QQuickTextEdit::updateSelection()
     // No need for node updates when we go from an empty selection to another empty selection
     if (d->control->textCursor().hasSelection() || d->hadSelection) {
         markDirtyNodesForRange(qMin(d->lastSelectionStart, d->control->textCursor().selectionStart()), qMax(d->control->textCursor().selectionEnd(), d->lastSelectionEnd), 0);
-        polish();
         if (isComponentComplete()) {
+            polish();
             d->updateType = QQuickTextEditPrivate::UpdatePaintNode;
             update();
         }
@@ -2518,9 +3063,6 @@ void QQuickTextEdit::updateSize()
         return;
     }
 
-    qreal naturalWidth = d->implicitWidth - leftPadding() - rightPadding();
-
-    qreal newWidth = d->document->idealWidth();
     // ### assumes that if the width is set, the text will fill to edges
     // ### (unless wrap is false, then clipping will occur)
     if (widthValid()) {
@@ -2532,8 +3074,7 @@ void QQuickTextEdit::updateSize()
         }
         if (d->requireImplicitWidth) {
             d->document->setTextWidth(-1);
-            naturalWidth = d->document->idealWidth();
-
+            const qreal naturalWidth = d->document->idealWidth();
             const bool wasInLayout = d->inLayout;
             d->inLayout = true;
             if (d->isImplicitResizeEnabled())
@@ -2543,19 +3084,22 @@ void QQuickTextEdit::updateSize()
                 return;         // get this far we'll get a warning to that effect.
         }
         const qreal newTextWidth = width() - leftPadding() - rightPadding();
-        if (d->document->textWidth() != newTextWidth) {
+        if (d->document->textWidth() != newTextWidth)
             d->document->setTextWidth(newTextWidth);
-            newWidth = d->document->idealWidth();
-        }
-        //### need to confirm cost of always setting these
-    } else if (d->wrapMode == NoWrap && d->document->textWidth() != newWidth) {
-        d->document->setTextWidth(newWidth); // ### Text does not align if width is not set or the idealWidth exceeds the textWidth (QTextDoc bug)
+    } else if (d->wrapMode == NoWrap) {
+        // normally, if explicit width is not set, we should call setTextWidth(-1) here,
+        // as we don't need to fit the text to any fixed width. But because of some bug
+        // in QTextDocument it also breaks RTL text alignment, so we use "idealWidth" instead.
+        const qreal newTextWidth = d->document->idealWidth();
+        if (d->document->textWidth() != newTextWidth)
+            d->document->setTextWidth(newTextWidth);
     } else {
         d->document->setTextWidth(-1);
     }
 
     QFontMetricsF fm(d->font);
-    qreal newHeight = d->document->isEmpty() ? qCeil(fm.height()) : d->document->size().height();
+    const qreal newHeight = d->document->isEmpty() ? qCeil(fm.height()) : d->document->size().height();
+    const qreal newWidth = d->document->idealWidth();
 
     if (d->isImplicitResizeEnabled()) {
         // ### Setting the implicitWidth triggers another updateSize(), and unless there are bindings nothing has changed.
@@ -2567,12 +3111,26 @@ void QQuickTextEdit::updateSize()
 
     d->xoff = leftPadding() + qMax(qreal(0), QQuickTextUtil::alignedX(d->document->size().width(), width() - leftPadding() - rightPadding(), effectiveHAlign()));
     d->yoff = topPadding() + QQuickTextUtil::alignedY(d->document->size().height(), height() - topPadding() - bottomPadding(), d->vAlign);
-    setBaselineOffset(fm.ascent() + d->yoff + d->textMargin);
+
+    qreal baseline = fm.ascent();
+    QTextBlock firstBlock = d->document->firstBlock();
+    if (firstBlock.isValid() && firstBlock.layout() != nullptr && firstBlock.lineCount() > 0) {
+        QTextLine firstLine = firstBlock.layout()->lineAt(0);
+        if (firstLine.isValid())
+            baseline = firstLine.ascent();
+    }
+
+    setBaselineOffset(baseline + d->yoff + d->textMargin);
 
     QSizeF size(newWidth, newHeight);
     if (d->contentSize != size) {
         d->contentSize = size;
-        emit contentSizeChanged();
+        // Note: inResize is a bitfield so QScopedValueRollback can't be used here
+        const bool wasInResize = d->inResize;
+        d->inResize = true;
+        if (!wasInResize)
+            emit contentSizeChanged();
+        d->inResize = wasInResize;
         updateTotalLines();
     }
 }
@@ -2585,8 +3143,8 @@ void QQuickTextEdit::updateWholeDocument()
             node.setDirty();
     }
 
-    polish();
     if (isComponentComplete()) {
+        polish();
         d->updateType = QQuickTextEditPrivate::UpdatePaintNode;
         update();
     }
@@ -2597,8 +3155,8 @@ void QQuickTextEdit::invalidateBlock(const QTextBlock &block)
     Q_D(QQuickTextEdit);
     markDirtyNodesForRange(block.position(), block.position() + block.length(), 0);
 
-    polish();
     if (isComponentComplete()) {
+        polish();
         d->updateType = QQuickTextEditPrivate::UpdatePaintNode;
         update();
     }
@@ -2607,8 +3165,8 @@ void QQuickTextEdit::invalidateBlock(const QTextBlock &block)
 void QQuickTextEdit::updateCursor()
 {
     Q_D(QQuickTextEdit);
-    polish();
-    if (isComponentComplete()) {
+    if (isComponentComplete() && isVisible()) {
+        polish();
         d->updateType = QQuickTextEditPrivate::UpdatePaintNode;
         update();
     }
@@ -2620,9 +3178,8 @@ void QQuickTextEdit::q_linkHovered(const QString &link)
     emit linkHovered(link);
 #if QT_CONFIG(cursor)
     if (link.isEmpty()) {
-        setCursor(d->cursorToRestoreAfterHover);
+        d->updateMouseCursorShape();
     } else if (cursor().shape() != Qt::PointingHandCursor) {
-        d->cursorToRestoreAfterHover = cursor().shape();
         setCursor(Qt::PointingHandCursor);
     }
 #endif
@@ -2633,9 +3190,8 @@ void QQuickTextEdit::q_markerHovered(bool hovered)
     Q_D(QQuickTextEdit);
 #if QT_CONFIG(cursor)
     if (!hovered) {
-        setCursor(d->cursorToRestoreAfterHover);
+        d->updateMouseCursorShape();
     } else if (cursor().shape() != Qt::PointingHandCursor) {
-        d->cursorToRestoreAfterHover = cursor().shape();
         setCursor(Qt::PointingHandCursor);
     }
 #endif
@@ -2712,6 +3268,34 @@ void QQuickTextEditPrivate::updateDefaultTextOption()
     }
 }
 
+void QQuickTextEditPrivate::onDocumentStatusChanged()
+{
+    Q_ASSERT(quickDocument);
+    switch (quickDocument->status()) {
+    case QQuickTextDocument::Status::Loaded:
+    case QQuickTextDocument::Status::Saved:
+        switch (QQuickTextDocumentPrivate::get(quickDocument)->detectedFormat) {
+        case Qt::RichText:
+            richText = (format == QQuickTextEdit::RichText || format == QQuickTextEdit::AutoText);
+            markdownText = false;
+            break;
+        case Qt::MarkdownText:
+            richText = false;
+            markdownText = (format == QQuickTextEdit::MarkdownText || format == QQuickTextEdit::AutoText);
+            break;
+        case Qt::PlainText:
+            richText = false;
+            markdownText = false;
+            break;
+        case Qt::AutoText: // format not detected
+            break;
+        }
+        break;
+    default:
+        break;
+    }
+}
+
 void QQuickTextEdit::focusInEvent(QFocusEvent *event)
 {
     Q_D(QQuickTextEdit);
@@ -2756,19 +3340,21 @@ void QQuickTextEditPrivate::handleFocusEvent(QFocusEvent *event)
     }
 }
 
-void QQuickTextEditPrivate::addCurrentTextNodeToRoot(QQuickTextNodeEngine *engine, QSGTransformNode *root, QQuickTextNode *node, TextNodeIterator &it, int startPos)
+void QQuickTextEditPrivate::addCurrentTextNodeToRoot(QQuickTextNodeEngine *engine, QSGTransformNode *root, QSGInternalTextNode *node, TextNodeIterator &it, int startPos)
 {
     engine->addToSceneGraph(node, QQuickText::Normal, QColor());
     it = textNodeMap.insert(it, TextNode(startPos, node));
     ++it;
     root->appendChildNode(node);
+    ++renderedBlockCount;
 }
 
-QQuickTextNode *QQuickTextEditPrivate::createTextNode()
+QSGInternalTextNode *QQuickTextEditPrivate::createTextNode()
 {
     Q_Q(QQuickTextEdit);
-    QQuickTextNode* node = new QQuickTextNode(q);
-    node->setUseNativeRenderer(renderType == QQuickTextEdit::NativeRendering);
+    QSGInternalTextNode* node = sceneGraphContext()->createInternalTextNode(sceneGraphRenderContext());
+    node->setRenderType(QSGTextNode::RenderType(renderType));
+    node->setFiltering(q->smooth() ? QSGTexture::Linear : QSGTexture::Nearest);
     return node;
 }
 
@@ -2800,7 +3386,7 @@ QString QQuickTextEdit::getText(int start, int end) const
     cursor.setPosition(start, QTextCursor::MoveAnchor);
     cursor.setPosition(end, QTextCursor::KeepAnchor);
 #if QT_CONFIG(texthtmlparser)
-    return d->richText
+    return d->richText || d->markdownText
             ? cursor.selectedText()
             : cursor.selection().toPlainText();
 #else
@@ -2833,6 +3419,12 @@ QString QQuickTextEdit::getFormattedText(int start, int end) const
 #else
         return cursor.selection().toPlainText();
 #endif
+    } else if (d->markdownText) {
+#if QT_CONFIG(textmarkdownwriter)
+        return cursor.selection().toMarkdown();
+#else
+        return cursor.selection().toPlainText();
+#endif
     } else {
         return cursor.selection().toPlainText();
     }
@@ -2854,6 +3446,12 @@ void QQuickTextEdit::insert(int position, const QString &text)
     if (d->richText) {
 #if QT_CONFIG(texthtmlparser)
         cursor.insertHtml(text);
+#else
+        cursor.insertText(text);
+#endif
+    } else if (d->markdownText) {
+#if QT_CONFIG(textmarkdownreader)
+        cursor.insertMarkdown(text);
 #else
         cursor.insertText(text);
 #endif
@@ -2886,8 +3484,9 @@ void QQuickTextEdit::remove(int start, int end)
     \since 5.1
 
     Returns the QQuickTextDocument of this TextEdit.
-    It can be used to implement syntax highlighting using
-    \l QSyntaxHighlighter.
+    Since Qt 6.7, it has features for loading and saving files.
+    It can also be used in C++ as a means of accessing the underlying QTextDocument
+    instance, for example to install a \l QSyntaxHighlighter.
 
     \sa QQuickTextDocument
 */
@@ -2895,8 +3494,11 @@ void QQuickTextEdit::remove(int start, int end)
 QQuickTextDocument *QQuickTextEdit::textDocument()
 {
     Q_D(QQuickTextEdit);
-    if (!d->quickDocument)
+    if (!d->quickDocument) {
         d->quickDocument = new QQuickTextDocument(this);
+        connect(d->quickDocument, &QQuickTextDocument::statusChanged, d->quickDocument,
+                [d]() { d->onDocumentStatusChanged(); } );
+    }
     return d->quickDocument;
 }
 
@@ -2905,6 +3507,14 @@ bool QQuickTextEditPrivate::isLinkHoveredConnected()
     Q_Q(QQuickTextEdit);
     IS_SIGNAL_CONNECTED(q, QQuickTextEdit, linkHovered, (const QString &));
 }
+
+#if QT_CONFIG(cursor)
+void QQuickTextEditPrivate::updateMouseCursorShape()
+{
+    Q_Q(QQuickTextEdit);
+    q->setCursor(q->isReadOnly() && !q->selectByMouse() ? Qt::ArrowCursor : Qt::IBeamCursor);
+}
+#endif
 
 /*!
     \qmlsignal QtQuick::TextEdit::linkHovered(string link)
@@ -2956,6 +3566,7 @@ void QQuickTextEdit::hoverEnterEvent(QHoverEvent *event)
     Q_D(QQuickTextEdit);
     if (d->isLinkHoveredConnected())
         d->control->processEvent(event, QPointF(-d->xoff, -d->yoff));
+    event->ignore();
 }
 
 void QQuickTextEdit::hoverMoveEvent(QHoverEvent *event)
@@ -2963,6 +3574,7 @@ void QQuickTextEdit::hoverMoveEvent(QHoverEvent *event)
     Q_D(QQuickTextEdit);
     if (d->isLinkHoveredConnected())
         d->control->processEvent(event, QPointF(-d->xoff, -d->yoff));
+    event->ignore();
 }
 
 void QQuickTextEdit::hoverLeaveEvent(QHoverEvent *event)
@@ -2970,6 +3582,7 @@ void QQuickTextEdit::hoverLeaveEvent(QHoverEvent *event)
     Q_D(QQuickTextEdit);
     if (d->isLinkHoveredConnected())
         d->control->processEvent(event, QPointF(-d->xoff, -d->yoff));
+    event->ignore();
 }
 
 /*!
@@ -2991,15 +3604,21 @@ void QQuickTextEdit::append(const QString &text)
     if (!d->document->isEmpty())
         cursor.insertBlock();
 
-#if QT_CONFIG(texthtmlparser)
     if (d->format == RichText || (d->format == AutoText && Qt::mightBeRichText(text))) {
+#if QT_CONFIG(texthtmlparser)
         cursor.insertHtml(text);
+#else
+        cursor.insertText(text);
+#endif
+    } else if (d->format == MarkdownText) {
+#if QT_CONFIG(textmarkdownreader)
+        cursor.insertMarkdown(text);
+#else
+        cursor.insertText(text);
+#endif
     } else {
         cursor.insertText(text);
     }
-#else
-    cursor.insertText(text);
-#endif // texthtmlparser
 
     cursor.endEditBlock();
     d->control->updateCursorRectangle(false);
@@ -3151,7 +3770,7 @@ void QQuickTextEdit::resetBottomPadding()
 
     The default distance, in device units, between tab stops.
 
-    \sa QTextOption::setTabStop()
+    \sa QTextOption::setTabStopDistance()
 */
 int QQuickTextEdit::tabStopDistance() const
 {
@@ -3188,6 +3807,35 @@ void QQuickTextEdit::clear()
     d->resetInputMethod();
     d->control->clear();
 }
+
+#ifndef QT_NO_DEBUG_STREAM
+QDebug operator<<(QDebug debug, const QQuickTextEditPrivate::Node &n)
+{
+    QDebugStateSaver saver(debug);
+    debug.space();
+    debug << "Node(startPos:" << n.m_startPos << "dirty:" << n.m_dirty << n.m_node << ')';
+    return debug;
+}
+#endif
+
+#if QT_VERSION < QT_VERSION_CHECK(7, 0, 0)
+void QQuickTextEdit::setOldSelectionDefault()
+{
+    Q_D(QQuickTextEdit);
+    d->selectByMouse = false;
+    setKeepMouseGrab(false);
+    d->control->setTextInteractionFlags(d->control->textInteractionFlags() & ~Qt::TextSelectableByMouse);
+    d->control->setTouchDragSelectionEnabled(true);
+    qCDebug(lcTextEdit, "pre-6.4 behavior chosen: selectByMouse defaults false; if enabled, touchscreen acts like a mouse");
+}
+
+// TODO in 6.7.0: remove the note about versions prior to 6.4 in selectByMouse() documentation
+QQuickPre64TextEdit::QQuickPre64TextEdit(QQuickItem *parent)
+    : QQuickTextEdit(parent)
+{
+    setOldSelectionDefault();
+}
+#endif
 
 QT_END_NAMESPACE
 

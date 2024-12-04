@@ -1,47 +1,11 @@
-/****************************************************************************
-**
-** Copyright (C) 2018 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtWebEngine module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2018 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #ifndef PROFILE_IO_DATA_QT_H
 #define PROFILE_IO_DATA_QT_H
 
 #include "content/public/browser/browsing_data_remover.h"
-#include "chrome/browser/profiles/profile.h"
+#include "content/public/browser/storage_partition.h"
 #include "extensions/buildflags/buildflags.h"
 
 #include "net/proxy_config_monitor.h"
@@ -49,19 +13,25 @@
 
 #include <QtCore/QString>
 #include <QtCore/QPointer>
-#include <QtCore/QMutex>
+#include <QtCore/QRecursiveMutex>
 
-namespace net {
-class ClientCertStore;
-}
+namespace cert_verifier {
+namespace mojom {
+class CertVerifierCreationParams;
+}}
 
 namespace extensions {
 class ExtensionSystemQt;
 }
 
+namespace net {
+class ClientCertStore;
+}
+
 namespace QtWebEngineCore {
 
 struct ClientCertificateStoreData;
+class CookieMonsterDelegateQt;
 class ProfileIODataQt;
 class ProfileQt;
 
@@ -79,14 +49,19 @@ private:
 // we still use shared memebers and use mutex which breaks
 // idea for this object, but this is wip.
 
-class ProfileIODataQt {
+class ProfileIODataQt : public content::StoragePartition::NetworkContextCreatedObserver {
 
 public:
+    enum ClearHttpCacheState {
+        Completed = 0,
+        Removing,
+        Resetting
+    };
+
     ProfileIODataQt(ProfileQt *profile); // runs on ui thread
     virtual ~ProfileIODataQt();
 
     QPointer<ProfileAdapter> profileAdapter();
-    content::ResourceContext *resourceContext();
 #if BUILDFLAG(ENABLE_EXTENSIONS)
     extensions::ExtensionSystemQt* GetExtensionSystem();
 #endif // BUILDFLAG(ENABLE_EXTENSIONS)
@@ -98,30 +73,32 @@ public:
 
     void setFullConfiguration(); // runs on ui thread
     void resetNetworkContext(); // runs on ui thread
+
     void clearHttpCache(); // runs on ui thread
-    bool isClearHttpCacheInProgress() { return m_clearHttpCacheInProgress; }
+    bool isClearHttpCacheInProgress() const { return m_clearHttpCacheState != Completed; }
 
     void ConfigureNetworkContextParams(bool in_memory,
                                        const base::FilePath &relative_partition_path,
                                        network::mojom::NetworkContextParams *network_context_params,
-                                       network::mojom::CertVerifierCreationParams *cert_verifier_creation_params);
+                                       cert_verifier::mojom::CertVerifierCreationParams *cert_verifier_creation_params);
 
 #if QT_CONFIG(ssl)
     ClientCertificateStoreData *clientCertificateStoreData();
 #endif
     std::unique_ptr<net::ClientCertStore> CreateClientCertStore();
     static ProfileIODataQt *FromBrowserContext(content::BrowserContext *browser_context);
-    static ProfileIODataQt *FromResourceContext(content::ResourceContext *resource_context);
 
     base::WeakPtr<ProfileIODataQt> getWeakPtrOnIOThread();
 
     CookieMonsterDelegateQt *cookieDelegate() const { return m_cookieDelegate.get(); }
 
+    // content::StoragePartition::NetworkContextCreatedObserver overrides:
+    void OnNetworkContextCreated(content::StoragePartition *storage) override; // runs on ui thread
+
 private:
     void removeBrowsingDataRemoverObserver();
 
     ProfileQt *m_profile;
-    std::unique_ptr<content::ResourceContext> m_resourceContext;
     scoped_refptr<CookieMonsterDelegateQt> m_cookieDelegate;
     QPointer<ProfileAdapter> m_profileAdapter; // never dereferenced in IO thread and it is passed by qpointer
     ProfileAdapter::PersistentCookiesPolicy m_persistentCookiesPolicy;
@@ -136,18 +113,12 @@ private:
     QString m_httpCachePath;
     QString m_storageName;
     bool m_inMemoryOnly;
-#if QT_VERSION < QT_VERSION_CHECK(5, 14, 0)
-    QMutex m_mutex{QMutex::Recursive};
-    using QRecursiveMutex = QMutex;
-#else
     QRecursiveMutex m_mutex;
-#endif
     int m_httpCacheMaxSize = 0;
     BrowsingDataRemoverObserverQt m_removerObserver;
     QString m_dataPath;
-    bool m_clearHttpCacheInProgress = false;
+    ClearHttpCacheState m_clearHttpCacheState = Completed;
     base::WeakPtrFactory<ProfileIODataQt> m_weakPtrFactory; // this should be always the last member
-    DISALLOW_COPY_AND_ASSIGN(ProfileIODataQt);
 
     friend class BrowsingDataRemoverObserverQt;
 };

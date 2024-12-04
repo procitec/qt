@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,9 +9,10 @@
 namespace media {
 
 WallClockTimeSource::WallClockTimeSource()
-    : tick_clock_(base::DefaultTickClock::GetInstance()),
-      ticking_(false),
-      playback_rate_(1.0) {}
+    : tick_clock_(base::DefaultTickClock::GetInstance()) {}
+
+WallClockTimeSource::WallClockTimeSource(const base::TickClock* tick_clock)
+    : tick_clock_(tick_clock) {}
 
 WallClockTimeSource::~WallClockTimeSource() = default;
 
@@ -81,12 +82,6 @@ bool WallClockTimeSource::GetWallClockTimes(
   return playback_rate_ && ticking_;
 }
 
-void WallClockTimeSource::SetTickClockForTesting(
-    const base::TickClock* tick_clock) {
-  base::AutoLock auto_lock(lock_);
-  tick_clock_ = tick_clock;
-}
-
 base::TimeDelta WallClockTimeSource::CurrentMediaTime_Locked() {
   lock_.AssertAcquired();
   if (!ticking_ || !playback_rate_)
@@ -94,8 +89,8 @@ base::TimeDelta WallClockTimeSource::CurrentMediaTime_Locked() {
 
   base::TimeTicks now = tick_clock_->NowTicks();
   return base_timestamp_ +
-         base::TimeDelta::FromMicroseconds(
-             (now - reference_time_).InMicroseconds() * playback_rate_);
+         base::Microseconds((now - reference_time_).InMicroseconds() *
+                            playback_rate_);
 }
 
 }  // namespace media

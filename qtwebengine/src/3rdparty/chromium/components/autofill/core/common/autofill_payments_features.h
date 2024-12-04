@@ -1,42 +1,66 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef COMPONENTS_AUTOFILL_CORE_COMMON_AUTOFILL_PAYMENTS_FEATURES_H_
 #define COMPONENTS_AUTOFILL_CORE_COMMON_AUTOFILL_PAYMENTS_FEATURES_H_
 
-#include <string>
-
 #include "base/feature_list.h"
-#include "base/strings/string16.h"
+#include "base/metrics/field_trial_params.h"
 #include "build/build_config.h"
-
-namespace base {
-struct Feature;
-}
 
 namespace autofill {
 namespace features {
 
 // All features in alphabetical order.
-extern const base::Feature kAutofillAlwaysReturnCloudTokenizedCard;
-extern const base::Feature kAutofillCacheServerCardInfo;
-extern const base::Feature kAutofillCreditCardAblationExperiment;
-extern const base::Feature kAutofillCreditCardAuthentication;
-extern const base::Feature kAutofillCreditCardUploadFeedback;
-extern const base::Feature kAutofillDownstreamCvcPromptUseGooglePayLogo;
-extern const base::Feature kAutofillEnableCardNicknameManagement;
-extern const base::Feature kAutofillEnableCardNicknameUpstream;
-extern const base::Feature kAutofillEnableFixedPaymentsBubbleLogging;
-extern const base::Feature kAutofillEnableGoogleIssuedCard;
-extern const base::Feature kAutofillEnableOffersInDownstream;
-extern const base::Feature kAutofillEnableStickyPaymentsBubble;
-extern const base::Feature kAutofillEnableToolbarStatusChip;
-extern const base::Feature kAutofillEnableVirtualCard;
-extern const base::Feature kAutofillSaveCardDismissOnNavigation;
-extern const base::Feature kAutofillSaveCardInfobarEditSupport;
-extern const base::Feature kAutofillUpstream;
-extern const base::Feature kAutofillUpstreamAllowAllEmailDomains;
+BASE_DECLARE_FEATURE(kAutofillEnableAndroidNKeyForFidoAuthentication);
+BASE_DECLARE_FEATURE(kAutofillEnableCardArtImage);
+BASE_DECLARE_FEATURE(kAutofillEnableCardArtServerSideStretching);
+BASE_DECLARE_FEATURE(kAutofillEnableCardBenefits);
+BASE_DECLARE_FEATURE(kAutofillEnableCardProductName);
+BASE_DECLARE_FEATURE(kAutofillEnableCvcStorageAndFilling);
+BASE_DECLARE_FEATURE(kAutofillEnableEmailOtpForVcnYellowPath);
+BASE_DECLARE_FEATURE(kAutofillEnableFIDOProgressDialog);
+BASE_DECLARE_FEATURE(kAutofillEnableFpanRiskBasedAuthentication);
+
+#if BUILDFLAG(IS_ANDROID)
+BASE_DECLARE_FEATURE(kAutofillEnableIbanAndroidBottomSheet);
+#endif
+
+BASE_DECLARE_FEATURE(kAutofillEnableManualFallbackForVirtualCards);
+BASE_DECLARE_FEATURE(kAutofillEnableMerchantDomainInUnmaskCardRequest);
+BASE_DECLARE_FEATURE(kAutofillEnableMovingGPayLogoToTheRightOnDesktop);
+BASE_DECLARE_FEATURE(kAutofillEnableMovingGPayLogoToTheRightOnClank);
+BASE_DECLARE_FEATURE(kAutofillEnableNewCardArtAndNetworkImages);
+BASE_DECLARE_FEATURE(kAutofillEnableNewSaveCardBubbleUi);
+BASE_DECLARE_FEATURE(kAutofillEnableOffersInClankKeyboardAccessory);
+
+#if BUILDFLAG(IS_ANDROID)
+BASE_DECLARE_FEATURE(kAutofillEnablePaymentsAndroidBottomSheet);
+BASE_DECLARE_FEATURE(kAutofillEnablePaymentsAndroidBottomSheetAccountEmail);
+#endif
+
+BASE_DECLARE_FEATURE(kAutofillEnablePaymentsMandatoryReauth);
+BASE_DECLARE_FEATURE(kAutofillEnableRemadeDownstreamMetrics);
+BASE_DECLARE_FEATURE(kAutofillEnableSaveCardLoadingAndConfirmation);
+BASE_DECLARE_FEATURE(kAutofillEnableSaveCardLocalSaveFallback);
+BASE_DECLARE_FEATURE(kAutofillEnableServerIban);
+BASE_DECLARE_FEATURE(kAutofillEnableStickyManualFallbackForCards);
+BASE_DECLARE_FEATURE(kAutofillEnableUpdateVirtualCardEnrollment);
+BASE_DECLARE_FEATURE(kAutofillEnableUserAvatarInSaveCardFooter);
+BASE_DECLARE_FEATURE(kAutofillEnableVcn3dsAuthentication);
+BASE_DECLARE_FEATURE(kAutofillEnableVcnEnrollLoadingAndConfirmation);
+BASE_DECLARE_FEATURE(kAutofillEnableVirtualCardEnrollMetricsLogger);
+BASE_DECLARE_FEATURE(kAutofillEnableVirtualCardMetadata);
+BASE_DECLARE_FEATURE(kAutofillParseVcnCardOnFileStandaloneCvcFields);
+BASE_DECLARE_FEATURE(kAutofillSuggestServerCardInsteadOfLocalCard);
+BASE_DECLARE_FEATURE(kAutofillUpdateChromeSettingsLinkToGPayWeb);
+BASE_DECLARE_FEATURE(kAutofillUpstream);
+
+#if BUILDFLAG(IS_IOS)
+BASE_DECLARE_FEATURE(kAutofillUseTwoDotsForLastFourDigits);
+BASE_DECLARE_FEATURE(kAutofillEnableVirtualCards);
+#endif
 
 // Return whether a [No thanks] button and new messaging is shown in the save
 // card bubbles. This will be called only on desktop platforms.

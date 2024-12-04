@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,11 +8,10 @@
 #include <string>
 #include <vector>
 
-#include "base/callback_forward.h"
-#include "base/macros.h"
+#include "base/functional/callback_forward.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/sequence_checker.h"
-#include "base/sequenced_task_runner.h"
+#include "base/task/sequenced_task_runner.h"
 #include "media/base/color_plane_layout.h"
 #include "media/base/video_frame.h"
 #include "media/gpu/chromeos/fourcc.h"
@@ -44,7 +43,7 @@ class MEDIA_GPU_EXPORT ImageProcessorBackend {
 
   // Encapsulates ImageProcessor input / output configurations.
   struct MEDIA_GPU_EXPORT PortConfig {
-    PortConfig() = delete;
+    PortConfig();
     PortConfig(const PortConfig&);
     PortConfig(
         Fourcc fourcc,
@@ -53,6 +52,13 @@ class MEDIA_GPU_EXPORT ImageProcessorBackend {
         const gfx::Rect& visible_rect,
         const std::vector<VideoFrame::StorageType>& preferred_storage_types);
     ~PortConfig();
+
+    bool operator==(const PortConfig& other) const {
+      return fourcc == other.fourcc && size == other.size &&
+             planes == other.planes && visible_rect == other.visible_rect &&
+             preferred_storage_types == other.preferred_storage_types;
+    }
+    bool operator!=(const PortConfig& other) const { return !(*this == other); }
 
     // Get the first |preferred_storage_types|.
     // If |preferred_storage_types| is empty, return STORAGE_UNKNOWN.
@@ -106,6 +112,16 @@ class MEDIA_GPU_EXPORT ImageProcessorBackend {
   const PortConfig& output_config() const { return output_config_; }
   OutputMode output_mode() const { return output_mode_; }
 
+  virtual bool needs_linear_output_buffers() const;
+
+  virtual bool supports_incoherent_buffers() const;
+
+  const scoped_refptr<base::SequencedTaskRunner>& task_runner() const {
+    return backend_task_runner_;
+  }
+
+  virtual std::string type() const = 0;
+
  protected:
   friend struct std::default_delete<ImageProcessorBackend>;
 
@@ -113,7 +129,6 @@ class MEDIA_GPU_EXPORT ImageProcessorBackend {
       const PortConfig& input_config,
       const PortConfig& output_config,
       OutputMode output_mode,
-      VideoRotation relative_rotation,
       ErrorCB error_cb,
       scoped_refptr<base::SequencedTaskRunner> backend_task_runner);
   virtual ~ImageProcessorBackend();
@@ -126,16 +141,13 @@ class MEDIA_GPU_EXPORT ImageProcessorBackend {
   // works as IMPORT mode for output.
   const OutputMode output_mode_;
 
-  // ImageProcessor performs a rotation if the |relative_rotation_| is not equal
-  // to VIDEO_ROTATION_0.
-  const VideoRotation relative_rotation_;
-
   // Call this callback when any error occurs.
   const ErrorCB error_cb_;
 
   // The main sequence and its checker. Except getter methods, all public
-  // methods and callbacks are called on this sequence.
-  scoped_refptr<base::SequencedTaskRunner> backend_task_runner_;
+  // methods and callbacks are called on this sequence. The proper
+  // SequencedTaskRunner is created by ImageProcessorBackend.
+  const scoped_refptr<base::SequencedTaskRunner> backend_task_runner_;
   SEQUENCE_CHECKER(backend_sequence_checker_);
 };
 

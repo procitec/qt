@@ -1,97 +1,118 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/content_settings/core/browser/content_settings_pref.h"
 
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
 #include "base/auto_reset.h"
-#include "base/bind.h"
+#include "base/functional/bind.h"
+#include "base/json/values_util.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
+#include "base/time/time.h"
+#include "base/values.h"
 #include "components/content_settings/core/browser/content_settings_info.h"
 #include "components/content_settings/core/browser/content_settings_registry.h"
 #include "components/content_settings/core/browser/content_settings_rule.h"
 #include "components/content_settings/core/browser/content_settings_utils.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "components/content_settings/core/common/content_settings.h"
+#include "components/content_settings/core/common/content_settings_constraints.h"
+#include "components/content_settings/core/common/content_settings_partition_key.h"
 #include "components/content_settings/core/common/content_settings_pattern.h"
 #include "components/content_settings/core/common/content_settings_utils.h"
+#include "components/content_settings/core/common/features.h"
 #include "components/content_settings/core/common/pref_names.h"
 #include "components/prefs/scoped_user_pref_update.h"
 #include "services/preferences/public/cpp/dictionary_value_update.h"
 #include "services/preferences/public/cpp/scoped_pref_update.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/gurl.h"
 
 namespace {
 
-const char kExpirationPath[] = "expiration";
-const char kSessionModelPath[] = "model";
-const char kSettingPath[] = "setting";
-const char kLastModifiedPath[] = "last_modified";
-const char kPerResourceIdentifierPrefName[] = "per_resource";
+const char kExpirationKey[] = "expiration";
+const char kLastUsedKey[] = "last_used";
+const char kLastVisitKey[] = "last_visit";
+const char kSessionModelKey[] = "model";
+const char kSettingKey[] = "setting";
+const char kLastModifiedKey[] = "last_modified";
+const char kLifetimeKey[] = "lifetime";
 
-// If the given content type supports resource identifiers in user preferences,
-// returns true and sets |pref_key| to the key in the content settings
-// dictionary under which per-resource content settings are stored.
-// Otherwise, returns false.
-bool SupportsResourceIdentifiers(ContentSettingsType content_type) {
-  return content_type == ContentSettingsType::PLUGINS;
-}
+const base::TimeDelta kLastUsedPermissionExpiration = base::Hours(24);
 
-bool IsValueAllowedForType(const base::Value* value, ContentSettingsType type) {
+bool IsValueAllowedForType(const base::Value& value, ContentSettingsType type) {
   const content_settings::ContentSettingsInfo* info =
       content_settings::ContentSettingsRegistry::GetInstance()->Get(type);
   if (info) {
-    int setting;
-    if (!value->GetAsInteger(&setting))
+    if (!value.is_int())
       return false;
-    if (setting == CONTENT_SETTING_DEFAULT)
+    if (value.GetInt() == CONTENT_SETTING_DEFAULT)
       return false;
-    return info->IsSettingValid(IntToContentSetting(setting));
+    return info->IsSettingValid(IntToContentSetting(value.GetInt()));
   }
 
   // TODO(raymes): We should permit different types of base::Value for
   // website settings.
-  return value->type() == base::Value::Type::DICTIONARY;
+  return value.is_dict();
 }
 
-// Extract a timestamp from |dictionary[kLastModifiedPath]|.
+// Extract a timestamp from `dict[key]`.
 // Will return base::Time() if no timestamp exists.
-base::Time GetTimeStamp(const base::DictionaryValue* dictionary) {
-  std::string timestamp_str;
-  dictionary->GetStringWithoutPathExpansion(kLastModifiedPath, &timestamp_str);
-  int64_t timestamp = 0;
-  base::StringToInt64(timestamp_str, &timestamp);
-  base::Time last_modified = base::Time::FromDeltaSinceWindowsEpoch(
-      base::TimeDelta::FromMicroseconds(timestamp));
-  return last_modified;
+base::Time GetTimeFromDictKey(const base::Value::Dict& dict,
+                              const std::string& key) {
+  return base::ValueToTime(dict.Find(key)).value_or(base::Time());
 }
 
-// Extract a timestamp from |dictionary[kExpirationPath]|. Will return
-// base::Time() if no timestamp exists.
-base::Time GetExpiration(const base::DictionaryValue* dictionary) {
-  std::string expiration_timestamp_str;
-  dictionary->GetStringWithoutPathExpansion(kExpirationPath,
-                                            &expiration_timestamp_str);
-  int64_t expiration_timestamp = 0;
-  base::StringToInt64(expiration_timestamp_str, &expiration_timestamp);
-  base::Time expiration = base::Time::FromDeltaSinceWindowsEpoch(
-      base::TimeDelta::FromMicroseconds(expiration_timestamp));
-  return expiration;
+// Extract a timestamp from `dict[key]`.
+// Will return base::Time() if no timestamp exists.
+base::TimeDelta GetTimeDeltaFromDictKey(const base::Value::Dict& dict,
+                                        const std::string& key) {
+  return base::ValueToTimeDelta(dict.Find(key)).value_or(base::TimeDelta());
 }
 
-// Extract a SessionModel from |dictionary[kSessionModelPath]|. Will return
+// Extract a timestamp from `dictionary[kLastModifiedKey]`.
+// Will return base::Time() if no timestamp exists.
+base::Time GetLastModified(const base::Value::Dict& dictionary) {
+  return GetTimeFromDictKey(dictionary, kLastModifiedKey);
+}
+
+// Extract a timestamp from `dictionary[kExpirationKey]`.
+// Will return base::Time() if no timestamp exists.
+base::Time GetExpiration(const base::Value::Dict& dictionary) {
+  return GetTimeFromDictKey(dictionary, kExpirationKey);
+}
+
+// Extract a timestamp from `dictionary[kLastUsedKey]`.
+// Will return base::Time() if no timestamp exists.
+base::Time GetLastUsed(const base::Value::Dict& dictionary) {
+  return GetTimeFromDictKey(dictionary, kLastUsedKey);
+}
+
+// Extract a timestamp from `dictionary[kLastVisit]`.
+// Will return base::Time() if no timestamp exists.
+base::Time GetLastVisit(const base::Value::Dict& dictionary) {
+  return GetTimeFromDictKey(dictionary, kLastVisitKey);
+}
+
+// Extract a TimeDelta from `dictionary[kLifetimeKey]`.
+// Will return base::TimeDelta() if no value exists for that key.
+base::TimeDelta GetLifetime(const base::Value::Dict& dictionary) {
+  return GetTimeDeltaFromDictKey(dictionary, kLifetimeKey);
+}
+
+// Extract a SessionModel from |dictionary[kSessionModelKey]|. Will return
 // SessionModel::Durable if no model exists.
 content_settings::SessionModel GetSessionModel(
-    const base::DictionaryValue* dictionary) {
-  int model_int = 0;
-  dictionary->GetIntegerWithoutPathExpansion(kSessionModelPath, &model_int);
+    const base::Value::Dict& dictionary) {
+  int model_int = dictionary.FindInt(kSessionModelKey).value_or(0);
   if ((model_int >
        static_cast<int>(content_settings::SessionModel::kMaxValue)) ||
       (model_int < 0)) {
@@ -107,6 +128,10 @@ bool ShouldRemoveSetting(bool off_the_record,
                          base::Time expiration,
                          bool restore_session,
                          content_settings::SessionModel session_model) {
+  if (base::FeatureList::IsEnabled(
+          content_settings::features::kActiveContentSettingExpiry)) {
+    return false;
+  }
   // Delete if an expriation date is set and in the past.
   if (!expiration.is_null() && (expiration < base::Time::Now()))
     return true;
@@ -116,9 +141,17 @@ bool ShouldRemoveSetting(bool off_the_record,
   if (off_the_record)
     return false;
 
-  // Clear non-Durable settings when no restoring a previous session.
-  return ((session_model != content_settings::SessionModel::Durable) &&
-          !restore_session);
+  // Clear non-restorable user session settings, or non-Durable settings when no
+  // restoring a previous session.
+  switch (session_model) {
+    case content_settings::SessionModel::Durable:
+      return false;
+    case content_settings::SessionModel::NonRestorableUserSession:
+      return true;
+    case content_settings::SessionModel::UserSession:
+    case content_settings::SessionModel::OneTime:
+      return !restore_session;
+  }
 }
 
 }  // namespace
@@ -130,6 +163,7 @@ ContentSettingsPref::ContentSettingsPref(
     PrefService* prefs,
     PrefChangeRegistrar* registrar,
     const std::string& pref_name,
+    const std::string& partitioned_pref_name,
     bool off_the_record,
     bool restore_session,
     NotifyObserversCallback notify_callback)
@@ -137,138 +171,136 @@ ContentSettingsPref::ContentSettingsPref(
       prefs_(prefs),
       registrar_(registrar),
       pref_name_(pref_name),
+      partitioned_pref_name_(partitioned_pref_name),
       off_the_record_(off_the_record),
       restore_session_(restore_session),
       updating_preferences_(false),
-      notify_callback_(notify_callback),
-      allow_resource_identifiers_(false) {
+      notify_callback_(notify_callback) {
   DCHECK(prefs_);
 
   ReadContentSettingsFromPref();
 
-  registrar_->Add(pref_name_,
-                  base::BindRepeating(&ContentSettingsPref::OnPrefChanged,
-                                      base::Unretained(this)));
+  for (const auto& path : {pref_name_, partitioned_pref_name_}) {
+    registrar_->Add(path,
+                    base::BindRepeating(&ContentSettingsPref::OnPrefChanged,
+                                        base::Unretained(this)));
+  }
 }
 
-ContentSettingsPref::~ContentSettingsPref() {}
+ContentSettingsPref::~ContentSettingsPref() = default;
 
 std::unique_ptr<RuleIterator> ContentSettingsPref::GetRuleIterator(
-    const ResourceIdentifier& resource_identifier,
-    bool off_the_record) const {
-  // Resource Identifiers have been supported by the API but never used by any
-  // users of the API.
-  // TODO(crbug.com/754178): remove |resource_identifier| from the API.
-  DCHECK(resource_identifier.empty() || allow_resource_identifiers_);
-
+    bool off_the_record,
+    const PartitionKey& partition_key) const {
   if (off_the_record)
-    return off_the_record_value_map_.GetRuleIterator(
-        content_type_, resource_identifier, &lock_);
-  return value_map_.GetRuleIterator(content_type_, resource_identifier, &lock_);
+    return off_the_record_value_map_.GetRuleIterator(content_type_,
+                                                     partition_key);
+  return value_map_.GetRuleIterator(content_type_, partition_key);
 }
 
-bool ContentSettingsPref::SetWebsiteSetting(
+std::unique_ptr<Rule> ContentSettingsPref::GetRule(
+    const GURL& primary_url,
+    const GURL& secondary_url,
+    bool off_the_record,
+    const PartitionKey& partition_key) const {
+  if (off_the_record) {
+    base::AutoLock auto_lock(off_the_record_value_map_.GetLock());
+    return off_the_record_value_map_.GetRule(primary_url, secondary_url,
+                                             content_type_, partition_key);
+  }
+  base::AutoLock auto_lock(value_map_.GetLock());
+  return value_map_.GetRule(primary_url, secondary_url, content_type_,
+                            partition_key);
+}
+
+void ContentSettingsPref::SetWebsiteSetting(
     const ContentSettingsPattern& primary_pattern,
     const ContentSettingsPattern& secondary_pattern,
-    const ResourceIdentifier& resource_identifier,
-    base::Time modified_time,
-    std::unique_ptr<base::Value>&& in_value,
-    const ContentSettingConstraints& constraints) {
-  DCHECK(!in_value || IsValueAllowedForType(in_value.get(), content_type_));
+    base::Value value,
+    const RuleMetaData& metadata,
+    const PartitionKey& partition_key) {
+  DCHECK(value.is_none() || IsValueAllowedForType(value, content_type_));
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(prefs_);
   DCHECK(primary_pattern != ContentSettingsPattern::Wildcard() ||
-         secondary_pattern != ContentSettingsPattern::Wildcard() ||
-         (!resource_identifier.empty() && allow_resource_identifiers_));
-
-  // Resource Identifiers have been supported by the API but never used by any
-  // users of the API.
-  // TODO(crbug.com/754178): remove |resource_identifier| from the API.
-  DCHECK(resource_identifier.empty() || allow_resource_identifiers_);
-
-  // At this point take the ownership of the |in_value|.
-  std::unique_ptr<base::Value> value(std::move(in_value));
+         secondary_pattern != ContentSettingsPattern::Wildcard());
 
   // Update in memory value map.
-  OriginIdentifierValueMap* map_to_modify = &off_the_record_value_map_;
+  auto* map_to_modify = &off_the_record_value_map_;
   if (!off_the_record_)
     map_to_modify = &value_map_;
 
   {
-    base::AutoLock auto_lock(lock_);
-    if (value) {
-      map_to_modify->SetValue(primary_pattern, secondary_pattern, content_type_,
-                              resource_identifier, modified_time,
-                              value->Clone(), constraints);
+    base::AutoLock auto_lock(map_to_modify->GetLock());
+    if (!value.is_none()) {
+      if (!map_to_modify->SetValue(primary_pattern, secondary_pattern,
+                                   content_type_, value.Clone(), metadata,
+                                   partition_key)) {
+        return;
+      }
     } else {
-      map_to_modify->DeleteValue(primary_pattern, secondary_pattern,
-                                 content_type_, resource_identifier);
+      if (!map_to_modify->DeleteValue(primary_pattern, secondary_pattern,
+                                      content_type_, partition_key)) {
+        return;
+      }
     }
   }
   // Update the content settings preference.
-  if (!off_the_record_) {
-    UpdatePref(primary_pattern, secondary_pattern, resource_identifier,
-               modified_time, value.get(), constraints);
+  if (!off_the_record_ && !partition_key.in_memory()) {
+    UpdatePref(primary_pattern, secondary_pattern, std::move(value), metadata,
+               partition_key);
   }
 
   notify_callback_.Run(primary_pattern, secondary_pattern, content_type_,
-                       resource_identifier);
-
-  return true;
+                       &partition_key);
 }
 
-base::Time ContentSettingsPref::GetWebsiteSettingLastModified(
-    const ContentSettingsPattern& primary_pattern,
-    const ContentSettingsPattern& secondary_pattern,
-    const ResourceIdentifier& resource_identifier) {
-  OriginIdentifierValueMap* map_to_modify = &off_the_record_value_map_;
-  if (!off_the_record_)
-    map_to_modify = &value_map_;
-
-  base::Time last_modified = map_to_modify->GetLastModified(
-      primary_pattern, secondary_pattern, content_type_, resource_identifier);
-  return last_modified;
-}
-
-void ContentSettingsPref::ClearPref() {
+void ContentSettingsPref::ClearAllContentSettingsRules(
+    const PartitionKey& partition_key) {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(prefs_);
 
-  {
-    base::AutoLock auto_lock(lock_);
-    value_map_.clear();
-  }
-
-  {
-    base::AutoReset<bool> auto_reset(&updating_preferences_, true);
-    prefs::ScopedDictionaryPrefUpdate update(prefs_, pref_name_);
-    update->Clear();
-  }
-}
-
-void ContentSettingsPref::ClearAllContentSettingsRules() {
-  DCHECK(thread_checker_.CalledOnValidThread());
-  DCHECK(prefs_);
-
+  auto* map_to_modify = &value_map_;
   if (off_the_record_) {
-    base::AutoLock auto_lock(lock_);
-    off_the_record_value_map_.clear();
-  } else {
-    ClearPref();
+    map_to_modify = &off_the_record_value_map_;
   }
 
-  notify_callback_.Run(ContentSettingsPattern(), ContentSettingsPattern(),
-                       content_type_, ResourceIdentifier());
+  {
+    base::AutoLock auto_lock(map_to_modify->GetLock());
+    map_to_modify->DeleteValues(content_type_, partition_key);
+  }
+
+  if (!off_the_record_ && !partition_key.in_memory()) {
+    base::AutoReset<bool> auto_reset(&updating_preferences_, true);
+    if (partition_key.is_default()) {
+      prefs::ScopedDictionaryPrefUpdate update(prefs_, pref_name_);
+      update->Clear();
+    } else {
+      prefs::ScopedDictionaryPrefUpdate update(prefs_, partitioned_pref_name_);
+      update->RemoveWithoutPathExpansion(partition_key.Serialize(), nullptr);
+    }
+  }
+
+  notify_callback_.Run(ContentSettingsPattern::Wildcard(),
+                       ContentSettingsPattern::Wildcard(), content_type_,
+                       &partition_key);
+}
+
+void ContentSettingsPref::OnShutdown() {
+  prefs_ = nullptr;
+  registrar_ = nullptr;
 }
 
 size_t ContentSettingsPref::GetNumExceptions() {
+  base::AutoLock auto_lock(value_map_.GetLock());
   return value_map_.size();
 }
 
 bool ContentSettingsPref::TryLockForTesting() const {
-  if (!lock_.Try())
+  if (!value_map_.GetLock().Try()) {
     return false;
-  lock_.Release();
+  }
+  value_map_.GetLock().Release();
   return true;
 }
 
@@ -279,17 +311,72 @@ void ContentSettingsPref::ReadContentSettingsFromPref() {
   // valid when the notifications are sent, so that |Observe| skips the
   // notification.
   base::AutoReset<bool> auto_reset(&updating_preferences_, true);
-  prefs::ScopedDictionaryPrefUpdate update(prefs_, pref_name_);
-  base::AutoLock auto_lock(lock_);
+  base::AutoLock auto_lock(value_map_.GetLock());
 
   value_map_.clear();
 
-  // The returned value could be nullptr if the pref has never been set.
-  const base::DictionaryValue* all_settings_dictionary =
-      prefs_->GetDictionary(pref_name_);
-  if (!all_settings_dictionary)
-    return;
+  // Read for the default PartitionKey.
+  {
+    std::unique_ptr<prefs::ScopedDictionaryPrefUpdate> update;
+    std::unique_ptr<prefs::DictionaryValueUpdate> mutable_partition;
+    // Don't create `update` in off the record mode to avoid accidentally
+    // modifying the pref.
+    if (!off_the_record_) {
+      update = std::make_unique<prefs::ScopedDictionaryPrefUpdate>(prefs_,
+                                                                   pref_name_);
+      mutable_partition = update->Get();
+    }
+    ReadContentSettingsFromPrefForPartition(
+        PartitionKey(), prefs_->GetDict(pref_name_), mutable_partition.get());
+  }
 
+  // Read for non-default PartitionKeys.
+  {
+    std::unique_ptr<prefs::ScopedDictionaryPrefUpdate> update;
+    // Don't create `update` in off the record mode to avoid accidentally
+    // modifying the pref.
+    if (!off_the_record_) {
+      update = std::make_unique<prefs::ScopedDictionaryPrefUpdate>(
+          prefs_, partitioned_pref_name_);
+    }
+
+    std::vector<std::string> partitions_to_remove;
+
+    const auto& partitions = prefs_->GetDict(partitioned_pref_name_);
+    for (const auto&& [key, value] : partitions) {
+      auto partition_key = PartitionKey::Deserialize(key);
+      if (!partition_key.has_value()) {
+        LOG(ERROR) << "failed to deserialize partition key " << key;
+        partitions_to_remove.emplace_back(key);
+        continue;
+      }
+
+      std::unique_ptr<prefs::DictionaryValueUpdate> mutable_partition;
+      if (update) {
+        (*update)->GetDictionaryWithoutPathExpansion(key, &mutable_partition);
+      }
+      ReadContentSettingsFromPrefForPartition(*partition_key, value.GetDict(),
+                                              mutable_partition.get());
+
+      if (mutable_partition && mutable_partition->empty()) {
+        partitions_to_remove.push_back(key);
+      }
+    }
+
+    if (update) {
+      CHECK(!off_the_record_);
+      for (auto partition : partitions_to_remove) {
+        (*update)->RemoveWithoutPathExpansion(partition, nullptr);
+      }
+    }
+  }
+}
+
+void ContentSettingsPref::ReadContentSettingsFromPrefForPartition(
+    const PartitionKey& partition_key,
+    const base::Value::Dict& partition,
+    prefs::DictionaryValueUpdate* mutable_partition) {
+  CHECK(!partition_key.in_memory());
   // Accumulates non-canonical pattern strings found in Prefs for which the
   // corresponding canonical pattern is also in Prefs. In these cases the
   // canonical version takes priority, and the non-canonical pattern is removed.
@@ -299,14 +386,17 @@ void ContentSettingsPref::ReadContentSettingsFromPref() {
   // will remove the expired entries.
   std::vector<std::string> expired_patterns_to_remove;
 
+  // Keeps track of pattern strings with expired last used permission found in
+  // Prefs, in these cases we will remove the expired field.
+  std::vector<std::string> expired_permission_usage_to_remove;
+
   // Accumulates non-canonical pattern strings found in Prefs for which the
   // canonical pattern is not found in Prefs. The exception data for these
   // patterns is to be re-keyed under the canonical pattern.
   base::StringPairs non_canonical_patterns_to_canonical_pattern;
 
-  for (base::DictionaryValue::Iterator i(*all_settings_dictionary);
-       !i.IsAtEnd(); i.Advance()) {
-    const std::string& pattern_str(i.key());
+  for (const auto&& i : partition) {
+    const std::string& pattern_str(i.first);
     PatternPair pattern_pair = ParsePatternString(pattern_str);
     if (!pattern_pair.first.IsValid() || !pattern_pair.second.IsValid()) {
       // TODO: Change this to DFATAL when crbug.com/132659 is fixed.
@@ -318,7 +408,7 @@ void ContentSettingsPref::ReadContentSettingsFromPref() {
         CreatePatternString(pattern_pair.first, pattern_pair.second);
     DCHECK(!canonicalized_pattern_str.empty());
     if (canonicalized_pattern_str != pattern_str) {
-      if (all_settings_dictionary->HasKey(canonicalized_pattern_str)) {
+      if (partition.Find(canonicalized_pattern_str)) {
         non_canonical_patterns_to_remove.push_back(pattern_str);
         continue;
       } else {
@@ -326,16 +416,15 @@ void ContentSettingsPref::ReadContentSettingsFromPref() {
         // multiple non-canonical patterns map to the same canonical pattern,
         // the Preferences updating logic after this loop will preserve the same
         // value in Prefs that this loop ultimately leaves in |value_map_|.
-        non_canonical_patterns_to_canonical_pattern.push_back(
-            {pattern_str, canonicalized_pattern_str});
+        non_canonical_patterns_to_canonical_pattern.emplace_back(
+            pattern_str, canonicalized_pattern_str);
       }
     }
 
     // Get settings dictionary for the current pattern string, and read
     // settings from the dictionary.
-    const base::DictionaryValue* settings_dictionary = nullptr;
-    bool is_dictionary = i.value().GetAsDictionary(&settings_dictionary);
-    DCHECK(is_dictionary);
+    DCHECK(i.second.is_dict());
+    const base::Value::Dict& settings_dictionary = i.second.GetDict();
 
     // Check to see if the setting is expired or not. This may be due to a past
     // expiration date or a SessionModel of UserSession.
@@ -346,39 +435,41 @@ void ContentSettingsPref::ReadContentSettingsFromPref() {
       expired_patterns_to_remove.push_back(pattern_str);
       continue;
     }
+    // Users may edit the stored fields directly, so we cannot assume their
+    // presence and validity.
+    base::TimeDelta lifetime = content_settings::RuleMetaData::ComputeLifetime(
+        /*lifetime=*/GetLifetime(settings_dictionary),
+        /*expiration=*/expiration);
 
-    if (SupportsResourceIdentifiers(content_type_)) {
-      const base::DictionaryValue* resource_dictionary = nullptr;
-      if (settings_dictionary->GetDictionary(kPerResourceIdentifierPrefName,
-                                             &resource_dictionary)) {
-        base::Time last_modified = GetTimeStamp(settings_dictionary);
-        for (base::DictionaryValue::Iterator j(*resource_dictionary);
-             !j.IsAtEnd(); j.Advance()) {
-          const std::string& resource_identifier(j.key());
-          int setting = CONTENT_SETTING_DEFAULT;
-          bool is_integer = j.value().GetAsInteger(&setting);
-          DCHECK(is_integer);
-          DCHECK_NE(CONTENT_SETTING_DEFAULT, setting);
-          std::unique_ptr<base::Value> setting_ptr(new base::Value(setting));
-          DCHECK(IsValueAllowedForType(setting_ptr.get(), content_type_));
-          // Per resource settings store a single timestamps for all resources.
-          value_map_.SetValue(pattern_pair.first, pattern_pair.second,
-                              content_type_, resource_identifier, last_modified,
-                              setting_ptr->Clone(),
-                              {expiration, session_model});
-        }
-      }
-    }
-
-    const base::Value* value = nullptr;
-    settings_dictionary->GetWithoutPathExpansion(kSettingPath, &value);
+    const base::Value* value = settings_dictionary.Find(kSettingKey);
     if (value) {
-      base::Time last_modified = GetTimeStamp(settings_dictionary);
-      DCHECK(IsValueAllowedForType(value, content_type_));
+      base::Time last_modified;
+      base::Time last_used;
+      base::Time last_visited;
+      if (!off_the_record_) {
+        // Don't copy over timestamps for OTR profiles because some features
+        // rely on this to differentiate inherited from fresh OTR permissions.
+        // See RecentSiteSettingsHelperTest.IncognitoPermissionTimestamps
+        last_modified = GetLastModified(settings_dictionary);
+        last_used = GetLastUsed(settings_dictionary);
+        if (last_used != base::Time() &&
+            base::Time::Now() - last_used >= kLastUsedPermissionExpiration) {
+          expired_permission_usage_to_remove.push_back(pattern_str);
+          last_used = base::Time();
+        }
+        last_visited = GetLastVisit(settings_dictionary);
+      }
+      DCHECK(IsValueAllowedForType(*value, content_type_));
+      RuleMetaData metadata;
+      metadata.set_last_modified(last_modified);
+      metadata.set_last_used(last_used);
+      metadata.set_last_visited(last_visited);
+      metadata.SetExpirationAndLifetime(expiration, lifetime);
+      metadata.set_session_model(session_model);
+
       value_map_.SetValue(std::move(pattern_pair.first),
                           std::move(pattern_pair.second), content_type_,
-                          ResourceIdentifier(), last_modified, value->Clone(),
-                          {expiration, session_model});
+                          value->Clone(), metadata, partition_key);
     }
   }
 
@@ -388,22 +479,28 @@ void ContentSettingsPref::ReadContentSettingsFromPref() {
   // the off_the_record call to ReadContentSettingsFromPref() occurs, the
   // regular profile will have canonicalized the stored pref data.
   if (!off_the_record_) {
-    auto mutable_settings = update.Get();
-
     for (const auto& pattern : non_canonical_patterns_to_remove) {
-      mutable_settings.get()->RemoveWithoutPathExpansion(pattern, nullptr);
+      mutable_partition->RemoveWithoutPathExpansion(pattern, nullptr);
     }
 
     for (const auto& pattern : expired_patterns_to_remove) {
-      mutable_settings.get()->RemoveWithoutPathExpansion(pattern, nullptr);
+      mutable_partition->RemoveWithoutPathExpansion(pattern, nullptr);
+    }
+
+    for (const auto& pattern : expired_permission_usage_to_remove) {
+      if (mutable_partition->HasKey(pattern)) {
+        std::unique_ptr<prefs::DictionaryValueUpdate> dict;
+        mutable_partition->GetDictionaryWithoutPathExpansion(pattern, &dict);
+        dict->RemoveWithoutPathExpansion(kLastUsedKey, nullptr);
+      }
     }
 
     for (const auto& old_to_new_pattern :
          non_canonical_patterns_to_canonical_pattern) {
-      std::unique_ptr<base::Value> pattern_settings_dictionary;
-      mutable_settings.get()->RemoveWithoutPathExpansion(
+      base::Value pattern_settings_dictionary;
+      mutable_partition->RemoveWithoutPathExpansion(
           old_to_new_pattern.first, &pattern_settings_dictionary);
-      mutable_settings.get()->SetWithoutPathExpansion(
+      mutable_partition->SetWithoutPathExpansion(
           old_to_new_pattern.second, std::move(pattern_settings_dictionary));
     }
   }
@@ -417,26 +514,46 @@ void ContentSettingsPref::OnPrefChanged() {
 
   ReadContentSettingsFromPref();
 
-  notify_callback_.Run(ContentSettingsPattern(), ContentSettingsPattern(),
-                       content_type_, ResourceIdentifier());
+  notify_callback_.Run(ContentSettingsPattern::Wildcard(),
+                       ContentSettingsPattern::Wildcard(), content_type_,
+                       nullptr);
 }
 
 void ContentSettingsPref::UpdatePref(
     const ContentSettingsPattern& primary_pattern,
     const ContentSettingsPattern& secondary_pattern,
-    const ResourceIdentifier& resource_identifier,
-    const base::Time last_modified,
-    const base::Value* value,
-    const ContentSettingConstraints& constraints) {
+    base::Value value,
+    const RuleMetaData& metadata,
+    const PartitionKey& partition_key) {
   // Ensure that |lock_| is not held by this thread, since this function will
   // send out notifications (by |~ScopedDictionaryPrefUpdate|).
   AssertLockNotHeld();
+  CHECK(!off_the_record_);
+  CHECK(!partition_key.in_memory());
 
   base::AutoReset<bool> auto_reset(&updating_preferences_, true);
   {
-    prefs::ScopedDictionaryPrefUpdate update(prefs_, pref_name_);
-    std::unique_ptr<prefs::DictionaryValueUpdate> pattern_pairs_settings =
-        update.Get();
+    prefs::ScopedDictionaryPrefUpdate update(
+        prefs_,
+        partition_key.is_default() ? pref_name_ : partitioned_pref_name_);
+    std::unique_ptr<prefs::DictionaryValueUpdate> pattern_pairs_settings;
+    const auto serialized_partition_key = partition_key.Serialize();
+    if (partition_key.is_default()) {
+      pattern_pairs_settings = update.Get();
+    } else {
+      if (!update->GetDictionaryWithoutPathExpansion(serialized_partition_key,
+                                                     &pattern_pairs_settings)) {
+        // The partition does not have any data.
+
+        if (value.is_none()) {
+          // Nothing to do.
+          return;
+        } else {
+          pattern_pairs_settings = update->SetDictionaryWithoutPathExpansion(
+              serialized_partition_key, base::Value::Dict());
+        }
+      }
+    }
 
     // Get settings dictionary for the given patterns.
     std::string pattern_str(
@@ -445,90 +562,63 @@ void ContentSettingsPref::UpdatePref(
     bool found = pattern_pairs_settings->GetDictionaryWithoutPathExpansion(
         pattern_str, &settings_dictionary);
 
-    if (!found && value) {
+    if (!found && !value.is_none()) {
       settings_dictionary =
           pattern_pairs_settings->SetDictionaryWithoutPathExpansion(
-              pattern_str, std::make_unique<base::DictionaryValue>());
+              pattern_str, base::Value::Dict());
     }
 
-    if (settings_dictionary) {
-      if (SupportsResourceIdentifiers(content_type_) &&
-          !resource_identifier.empty()) {
-        std::unique_ptr<prefs::DictionaryValueUpdate> resource_dictionary;
-        found = settings_dictionary->GetDictionary(
-            kPerResourceIdentifierPrefName, &resource_dictionary);
-        if (!found) {
-          if (value == nullptr)
-            return;  // Nothing to remove. Exit early.
-          resource_dictionary =
-              settings_dictionary->SetDictionaryWithoutPathExpansion(
-                  kPerResourceIdentifierPrefName,
-                  std::make_unique<base::DictionaryValue>());
-        }
-        // Update resource dictionary.
-        if (value == nullptr) {
-          resource_dictionary->RemoveWithoutPathExpansion(resource_identifier,
-                                                          nullptr);
-          if (resource_dictionary->empty()) {
-            settings_dictionary->RemoveWithoutPathExpansion(
-                kPerResourceIdentifierPrefName, nullptr);
-            settings_dictionary->RemoveWithoutPathExpansion(kLastModifiedPath,
-                                                            nullptr);
-            settings_dictionary->RemoveWithoutPathExpansion(kExpirationPath,
-                                                            nullptr);
-            settings_dictionary->RemoveWithoutPathExpansion(kSessionModelPath,
-                                                            nullptr);
-          }
-        } else {
-          resource_dictionary->SetWithoutPathExpansion(resource_identifier,
-                                                       value->CreateDeepCopy());
-          // Update timestamp for whole resource dictionary.
-          settings_dictionary->SetKey(
-              kLastModifiedPath,
-              base::Value(base::NumberToString(
-                  last_modified.ToDeltaSinceWindowsEpoch().InMicroseconds())));
-          settings_dictionary->SetKey(
-              kExpirationPath,
-              base::Value(base::NumberToString(
-                  constraints.expiration.ToDeltaSinceWindowsEpoch()
-                      .InMicroseconds())));
-          settings_dictionary->SetKey(
-              kSessionModelPath,
-              base::Value(static_cast<int>(constraints.session_model)));
-        }
-      } else {
-        // Update settings dictionary.
-        if (value == nullptr) {
-          settings_dictionary->RemoveWithoutPathExpansion(kSettingPath,
-                                                          nullptr);
-          settings_dictionary->RemoveWithoutPathExpansion(kLastModifiedPath,
-                                                          nullptr);
-          settings_dictionary->RemoveWithoutPathExpansion(kExpirationPath,
-                                                          nullptr);
-          settings_dictionary->RemoveWithoutPathExpansion(kSessionModelPath,
-                                                          nullptr);
-        } else {
-          settings_dictionary->SetWithoutPathExpansion(kSettingPath,
-                                                       value->CreateDeepCopy());
-          settings_dictionary->SetKey(
-              kLastModifiedPath,
-              base::Value(base::NumberToString(
-                  last_modified.ToDeltaSinceWindowsEpoch().InMicroseconds())));
-          settings_dictionary->SetKey(
-              kExpirationPath,
-              base::Value(base::NumberToString(
-                  constraints.expiration.ToDeltaSinceWindowsEpoch()
-                      .InMicroseconds())));
-          settings_dictionary->SetKey(
-              kSessionModelPath,
-              base::Value(static_cast<int>(constraints.session_model)));
-        }
+    if (!settings_dictionary) {
+      // This happens when there isn't existing data for the pattern, and
+      // `value` is none. So there is nothing to do.
+      return;
+    }
+
+    // Update settings dictionary.
+    if (value.is_none()) {
+      settings_dictionary->RemoveWithoutPathExpansion(kSettingKey, nullptr);
+      settings_dictionary->RemoveWithoutPathExpansion(kLastModifiedKey,
+                                                      nullptr);
+      settings_dictionary->RemoveWithoutPathExpansion(kLastVisitKey, nullptr);
+      settings_dictionary->RemoveWithoutPathExpansion(kExpirationKey, nullptr);
+      settings_dictionary->RemoveWithoutPathExpansion(kSessionModelKey,
+                                                      nullptr);
+      settings_dictionary->RemoveWithoutPathExpansion(kLifetimeKey, nullptr);
+    } else {
+      settings_dictionary->SetKey(kSettingKey, std::move(value));
+      if (metadata.last_modified() != base::Time()) {
+        settings_dictionary->SetKey(
+            kLastModifiedKey, base::TimeToValue(metadata.last_modified()));
       }
-      // Remove the settings dictionary if it is empty.
-      if (settings_dictionary->empty()) {
-        pattern_pairs_settings->RemoveWithoutPathExpansion(pattern_str,
-                                                           nullptr);
+      if (metadata.expiration() != base::Time()) {
+        settings_dictionary->SetKey(kExpirationKey,
+                                    base::TimeToValue(metadata.expiration()));
       }
+      if (metadata.session_model() != SessionModel::Durable) {
+        settings_dictionary->SetKey(
+            kSessionModelKey,
+            base::Value(static_cast<int>(metadata.session_model())));
+      }
+      if (metadata.last_used() != base::Time()) {
+        settings_dictionary->SetKey(kLastUsedKey,
+                                    base::TimeToValue(metadata.last_used()));
+      }
+      if (metadata.last_visited() != base::Time()) {
+        settings_dictionary->SetKey(kLastVisitKey,
+                                    base::TimeToValue(metadata.last_visited()));
+      }
+      if (!metadata.lifetime().is_zero()) {
+        settings_dictionary->SetKey(
+            kLifetimeKey, base::TimeDeltaToValue(metadata.lifetime()));
+      }
+    }
+
+    // Remove the settings dictionary if it is empty.
+    if (settings_dictionary->empty()) {
+      pattern_pairs_settings->RemoveWithoutPathExpansion(pattern_str, nullptr);
+    }
+    if (!partition_key.is_default() && pattern_pairs_settings->empty()) {
+      update->RemoveWithoutPathExpansion(serialized_partition_key, nullptr);
     }
   }
 }
@@ -536,8 +626,8 @@ void ContentSettingsPref::UpdatePref(
 void ContentSettingsPref::AssertLockNotHeld() const {
 #if !defined(NDEBUG)
   // |Lock::Acquire()| will assert if the lock is held by this thread.
-  lock_.Acquire();
-  lock_.Release();
+  value_map_.GetLock().Acquire();
+  value_map_.GetLock().Release();
 #endif
 }
 

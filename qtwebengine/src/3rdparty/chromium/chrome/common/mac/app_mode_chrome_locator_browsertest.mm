@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -30,18 +30,6 @@ void GetChromeBundlePath(base::FilePath* chrome_bundle) {
 }
 
 }  // namespace
-
-TEST(ChromeLocatorTest, FindBundle) {
-  base::FilePath finder_bundle_path;
-  EXPECT_TRUE(
-      app_mode::FindBundleById(@"com.apple.finder", &finder_bundle_path));
-  EXPECT_TRUE(base::DirectoryExists(finder_bundle_path));
-}
-
-TEST(ChromeLocatorTest, FindNonExistentBundle) {
-  base::FilePath dummy;
-  EXPECT_FALSE(app_mode::FindBundleById(@"this.doesnt.exist", &dummy));
-}
 
 TEST(ChromeLocatorTest, GetNonExistentBundleInfo) {
   base::ScopedTempDir temp_dir;
@@ -80,8 +68,8 @@ TEST(ChromeLocatorTest, GetChromeBundleInfoWithLatestVersion) {
   base::FilePath framework_path;
   base::FilePath framework_dylib_path;
   EXPECT_TRUE(app_mode::GetChromeBundleInfo(
-      chrome_bundle_path, version_info::GetVersionNumber(), &executable_path,
-      &framework_path, &framework_dylib_path));
+      chrome_bundle_path, std::string(version_info::GetVersionNumber()),
+      &executable_path, &framework_path, &framework_dylib_path));
   EXPECT_TRUE(base::PathExists(executable_path));
   EXPECT_TRUE(base::DirectoryExists(framework_path));
   EXPECT_TRUE(base::PathExists(framework_dylib_path));

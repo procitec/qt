@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,12 +7,15 @@
 
 #include <set>
 #include <string>
+#include <string_view>
 #include <vector>
 
+#include "base/component_export.h"
+#include "base/containers/span.h"
 #include "base/gtest_prod_util.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
-#include "base/strings/string16.h"
+#include "base/values.h"
 #include "google_apis/gaia/oauth2_api_call_flow.h"
 #include "net/cookies/canonical_cookie.h"
 #include "services/network/public/mojom/url_response_head.mojom-forward.h"
@@ -21,10 +24,7 @@
 class GoogleServiceAuthError;
 class OAuth2MintTokenFlowTest;
 
-namespace base {
-class Value;
-}
-
+COMPONENT_EXPORT(GOOGLE_APIS)
 extern const char kOAuth2MintTokenApiCallResultHistogram[];
 
 // Values carrying the result of processing a successful API call.
@@ -32,51 +32,28 @@ extern const char kOAuth2MintTokenApiCallResultHistogram[];
 // numeric values should never be reused.
 enum class OAuth2MintTokenApiCallResult {
   kMintTokenSuccess = 0,
-  kIssueAdviceSuccess = 1,
+  // DEPRECATED:
+  // kIssueAdviceSuccess = 1,
   kRemoteConsentSuccess = 2,
   kApiCallFailure = 3,
   kParseJsonFailure = 4,
   kIssueAdviceKeyNotFoundFailure = 5,
   kParseMintTokenFailure = 6,
-  kParseIssueAdviceFailure = 7,
+  // DEPRECATED:
+  // kParseIssueAdviceFailure = 7,
   // DEPRECATED:
   // kRemoteConsentFallback = 8
   kParseRemoteConsentFailure = 9,
-  kMintTokenSuccessWithFallbackScopes = 10,
-  kMaxValue = kMintTokenSuccessWithFallbackScopes
+  // DEPRECATED:
+  // kMintTokenSuccessWithFallbackScopes = 10,
+  kChallengeResponseRequiredFailure = 11,
+  kMaxValue = kChallengeResponseRequiredFailure
 };
-
-// IssueAdvice: messages to show to the user to get a user's approval.
-// The structure is as follows:
-// * Description 1
-//   - Detail 1.1
-//   - Details 1.2
-// * Description 2
-//   - Detail 2.1
-//   - Detail 2.2
-//   - Detail 2.3
-// * Description 3
-//   - Detail 3.1
-struct IssueAdviceInfoEntry {
- public:
-  IssueAdviceInfoEntry();
-  ~IssueAdviceInfoEntry();
-
-  IssueAdviceInfoEntry(const IssueAdviceInfoEntry& other);
-  IssueAdviceInfoEntry& operator=(const IssueAdviceInfoEntry& other);
-
-  base::string16 description;
-  std::vector<base::string16> details;
-
-  bool operator==(const IssueAdviceInfoEntry& rhs) const;
-};
-
-typedef std::vector<IssueAdviceInfoEntry> IssueAdviceInfo;
 
 // Data for the remote consent resolution:
 // - URL of the consent page to be displayed to the user.
 // - Cookies that should be set before navigating to that URL.
-struct RemoteConsentResolutionData {
+struct COMPONENT_EXPORT(GOOGLE_APIS) RemoteConsentResolutionData {
   RemoteConsentResolutionData();
   ~RemoteConsentResolutionData();
 
@@ -93,7 +70,8 @@ struct RemoteConsentResolutionData {
 // This class implements the OAuth2 flow to Google to mint an OAuth2 access
 // token for the given client and the given set of scopes from the OAuthLogin
 // scoped "master" OAuth2 token for the user logged in to Chrome.
-class OAuth2MintTokenFlow : public OAuth2ApiCallFlow {
+class COMPONENT_EXPORT(GOOGLE_APIS) OAuth2MintTokenFlow
+    : public OAuth2ApiCallFlow {
  public:
   // There are four different modes when minting a token to grant
   // access to third-party app for a user.
@@ -109,49 +87,79 @@ class OAuth2MintTokenFlow : public OAuth2ApiCallFlow {
   };
 
   // Parameters needed to mint a token.
-  struct Parameters {
+  struct COMPONENT_EXPORT(GOOGLE_APIS) Parameters {
    public:
     Parameters();
-    Parameters(const std::string& eid,
-               const std::string& cid,
-               const std::vector<std::string>& scopes_arg,
-               bool enable_granular_permissions,
-               const std::string& device_id,
-               const std::string& selected_user_id,
-               const std::string& consent_result,
-               const std::string& version,
-               const std::string& channel,
-               Mode mode_arg);
-    Parameters(const Parameters& other);
+
+    static Parameters CreateForExtensionFlow(
+        std::string_view extension_id,
+        std::string_view client_id,
+        base::span<const std::string_view> scopes,
+        Mode mode,
+        bool enable_granular_permissions,
+        std::string_view version,
+        std::string_view channel,
+        std::string_view device_id = {},
+        std::string_view selected_user_id = {},
+        std::string_view consent_result = {});
+
+    static Parameters CreateForClientFlow(
+        std::string_view client_id,
+        base::span<const std::string_view> scopes,
+        std::string_view version,
+        std::string_view channel,
+        std::string_view device_id = {});
+
+    Parameters(Parameters&& other) noexcept;
+    Parameters& operator=(Parameters&& other) noexcept;
+
     ~Parameters();
 
-    std::string extension_id;
+    Parameters Clone();
+
+    // Mandatory parameters:
     std::string client_id;
     std::vector<std::string> scopes;
-    bool enable_granular_permissions;
+    Mode mode = MODE_ISSUE_ADVICE;
+    bool enable_granular_permissions = false;
+    std::string version;
+    std::string channel;
+
+    // Optional parameters:
+    std::string extension_id;  // Do not set if an access token should be issued
+                               // for Chrome itself.
     std::string device_id;
     std::string selected_user_id;
     std::string consent_result;
-    std::string version;
-    std::string channel;
-    Mode mode;
+
+   private:
+    // Only an explicit copy with `Clone()` is allowed.
+    Parameters(const Parameters&);
+    Parameters& operator=(const Parameters&);
   };
 
-  class Delegate {
+  class COMPONENT_EXPORT(GOOGLE_APIS) Delegate {
    public:
+    // TODO(alexilin): change `time_to_live` parameter to be `base::TimeDelta`
+    // type.
     virtual void OnMintTokenSuccess(const std::string& access_token,
                                     const std::set<std::string>& granted_scopes,
                                     int time_to_live) {}
-    virtual void OnIssueAdviceSuccess(const IssueAdviceInfo& issue_advice)  {}
     virtual void OnMintTokenFailure(const GoogleServiceAuthError& error) {}
     virtual void OnRemoteConsentSuccess(
         const RemoteConsentResolutionData& resolution_data) {}
 
    protected:
-    virtual ~Delegate() {}
+    virtual ~Delegate() = default;
   };
 
-  OAuth2MintTokenFlow(Delegate* delegate, const Parameters& parameters);
+  // This object stores `parameters` internally. Passing by value allows moving
+  // them in.
+  OAuth2MintTokenFlow(Delegate* delegate, Parameters parameters);
+
+  OAuth2MintTokenFlow(const OAuth2MintTokenFlow&) = delete;
+  OAuth2MintTokenFlow& operator=(const OAuth2MintTokenFlow&) = delete;
+
   ~OAuth2MintTokenFlow() override;
 
  protected:
@@ -169,7 +177,6 @@ class OAuth2MintTokenFlow : public OAuth2ApiCallFlow {
 
  private:
   friend class OAuth2MintTokenFlowTest;
-  FRIEND_TEST_ALL_PREFIXES(OAuth2MintTokenFlowTest, CreateApiCallBody);
   FRIEND_TEST_ALL_PREFIXES(OAuth2MintTokenFlowTest, ParseIssueAdviceResponse);
   FRIEND_TEST_ALL_PREFIXES(OAuth2MintTokenFlowTest, ParseRemoteConsentResponse);
   FRIEND_TEST_ALL_PREFIXES(OAuth2MintTokenFlowTest,
@@ -201,34 +208,22 @@ class OAuth2MintTokenFlow : public OAuth2ApiCallFlow {
   void ReportSuccess(const std::string& access_token,
                      const std::set<std::string>& granted_scopes,
                      int time_to_live);
-  void ReportIssueAdviceSuccess(const IssueAdviceInfo& issue_advice);
   void ReportRemoteConsentSuccess(
       const RemoteConsentResolutionData& resolution_data);
   void ReportFailure(const GoogleServiceAuthError& error);
 
-  static bool ParseIssueAdviceResponse(const base::Value* dict,
-                                       IssueAdviceInfo* issue_advice);
   static bool ParseRemoteConsentResponse(
-      const base::Value* dict,
+      const base::Value::Dict& dict,
       RemoteConsentResolutionData* resolution_data);
 
-  // Currently, grantedScopes is a new parameter for an unlaunched feature, so
-  // it may not always be populated in server responses. In those cases,
-  // ParseMintTokenResponse can still succeed and will just leave the
-  // granted_scopes set unmodified. When the grantedScopes parameter is present
-  // and the function returns true, granted_scopes will include the scopes
-  // returned by the server. Once the feature is fully launched, this function
-  // will be updated to fail if the grantedScopes parameter is missing.
-  static bool ParseMintTokenResponse(const base::Value* dict,
+  static bool ParseMintTokenResponse(const base::Value::Dict& dict,
                                      std::string* access_token,
                                      std::set<std::string>* granted_scopes,
                                      int* time_to_live);
 
-  Delegate* delegate_;
+  raw_ptr<Delegate> delegate_;
   Parameters parameters_;
   base::WeakPtrFactory<OAuth2MintTokenFlow> weak_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(OAuth2MintTokenFlow);
 };
 
 #endif  // GOOGLE_APIS_GAIA_OAUTH2_MINT_TOKEN_FLOW_H_

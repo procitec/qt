@@ -27,7 +27,6 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_EDITING_SERIALIZERS_MARKUP_FORMATTER_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_EDITING_SERIALIZERS_MARKUP_FORMATTER_H_
 
-#include "base/macros.h"
 #include "third_party/blink/renderer/core/editing/editing_strategy.h"
 #include "third_party/blink/renderer/core/editing/serializers/serialization.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
@@ -56,11 +55,14 @@ enum EntityMask {
   kEntityMaskInCDATA = 0,
   kEntityMaskInPCDATA = kEntityAmp | kEntityLt | kEntityGt,
   kEntityMaskInHTMLPCDATA = kEntityMaskInPCDATA | kEntityNbsp,
-  kEntityMaskInAttributeValue =
-      kEntityAmp | kEntityQuot | kEntityLt | kEntityGt | kEntityTab |
-      kEntityLineFeed |
-      kEntityCarriageReturn,
+  kEntityMaskInAttributeValue = kEntityAmp | kEntityQuot | kEntityLt |
+                                kEntityGt | kEntityTab | kEntityLineFeed |
+                                kEntityCarriageReturn,
   kEntityMaskInHTMLAttributeValue = kEntityAmp | kEntityQuot | kEntityNbsp,
+  // Entity mask for an experiment with escaping "<" and ">" in attributes.
+  // See: crbug.com/1175016
+  kEntityExperimentalMaskInHTMLAttributeValue =
+      kEntityMaskInHTMLAttributeValue | kEntityLt | kEntityGt,
 };
 
 enum class SerializationType { kHTML, kXML };
@@ -69,18 +71,24 @@ class MarkupFormatter final {
   STACK_ALLOCATED();
 
  public:
-  static void AppendAttributeValue(StringBuilder&, const String&, bool);
+  static void AppendAttributeValue(StringBuilder&,
+                                   const String&,
+                                   bool,
+                                   const Document&);
   static void AppendAttributeAsHTML(StringBuilder& result,
                                     const Attribute& attribute,
-                                    const String& value);
+                                    const String& value,
+                                    const Document& node);
   static void AppendAttributeAsXMLWithoutNamespace(StringBuilder& result,
                                                    const Attribute& attribute,
-                                                   const String& value);
+                                                   const String& value,
+                                                   const Document& document);
   static void AppendAttribute(StringBuilder& result,
                               const AtomicString& prefix,
                               const AtomicString& local_name,
                               const String& value,
-                              bool document_is_html);
+                              bool document_is_html,
+                              const Document& document);
   static void AppendCDATASection(StringBuilder&, const String&);
   static void AppendCharactersReplacingEntities(StringBuilder& result,
                                                 const StringView& source,
@@ -93,6 +101,8 @@ class MarkupFormatter final {
   static void AppendXMLDeclaration(StringBuilder&, const Document&);
 
   MarkupFormatter(AbsoluteURLs, SerializationType);
+  MarkupFormatter(const MarkupFormatter&) = delete;
+  MarkupFormatter& operator=(const MarkupFormatter&) = delete;
 
   void AppendStartMarkup(StringBuilder&, const Node&);
   void AppendEndMarkup(StringBuilder&, const Element&);
@@ -119,10 +129,8 @@ class MarkupFormatter final {
  private:
   const AbsoluteURLs resolve_urls_method_;
   SerializationType serialization_type_;
-
-  DISALLOW_COPY_AND_ASSIGN(MarkupFormatter);
 };
 
 }  // namespace blink
 
-#endif
+#endif  // THIRD_PARTY_BLINK_RENDERER_CORE_EDITING_SERIALIZERS_MARKUP_FORMATTER_H_

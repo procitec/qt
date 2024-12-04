@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,35 +7,48 @@
 
 #include <stdint.h>
 #include <map>
+#include <set>
 
-#include "base/macros.h"
 #include "components/feature_engagement/internal/condition_validator.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace feature_engagement {
 class AvailabilityModel;
 struct Comparator;
 struct EventConfig;
 class EventModel;
+class TimeProvider;
 
 // A ConditionValidator that uses the FeatureConfigs as the source of truth.
 class FeatureConfigConditionValidator : public ConditionValidator {
  public:
   FeatureConfigConditionValidator();
+
+  FeatureConfigConditionValidator(const FeatureConfigConditionValidator&) =
+      delete;
+  FeatureConfigConditionValidator& operator=(
+      const FeatureConfigConditionValidator&) = delete;
+
   ~FeatureConfigConditionValidator() override;
 
   // ConditionValidator implementation.
   ConditionValidator::Result MeetsConditions(
       const base::Feature& feature,
       const FeatureConfig& config,
+      const std::vector<GroupConfig>& group_configs,
       const EventModel& event_model,
       const AvailabilityModel& availability_model,
       const DisplayLockController& display_lock_controller,
-      uint32_t current_day) const override;
+      const Configuration* configuration,
+      const TimeProvider& current_day) const override;
   void NotifyIsShowing(
       const base::Feature& feature,
       const FeatureConfig& config,
       const std::vector<std::string>& all_feature_names) override;
   void NotifyDismissed(const base::Feature& feature) override;
+  void SetPriorityNotification(
+      const absl::optional<std::string>& feature) override;
+  absl::optional<std::string> GetPendingPriorityNotification() override;
 
  private:
   bool EventConfigMeetsConditions(const EventConfig& event_config,
@@ -50,15 +63,21 @@ class FeatureConfigConditionValidator : public ConditionValidator {
   bool SessionRateMeetsConditions(const Comparator session_rate,
                                   const base::Feature& feature) const;
 
-  // Whether in-product help is currently being shown.
-  bool currently_showing_;
+  bool IsBlocked(const base::Feature& feature,
+                 const FeatureConfig& config,
+                 const Configuration* configuration) const;
+
+  // A set of currently showing features. Added to the set on
+  // ShouldTriggerHelpUi() and cleared during Dismissed() call.
+  std::set<std::string> currently_showing_features_;
 
   // Stores how many times features that impact a given feature have been shown.
   // By default, all features impact each other, but some features override this
   // through the use of |session_rate_impact|.
   std::map<std::string, uint32_t> times_shown_for_feature_;
 
-  DISALLOW_COPY_AND_ASSIGN(FeatureConfigConditionValidator);
+  // Pending priority notification to be shown if any.
+  absl::optional<std::string> pending_priority_notification_;
 };
 
 }  // namespace feature_engagement

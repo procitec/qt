@@ -18,7 +18,6 @@
 #include "include/core/SkScalar.h"
 #include "include/core/SkSize.h"
 #include "include/core/SkString.h"
-#include "src/core/SkClipOpPriv.h"
 
 namespace skiagm {
 
@@ -31,14 +30,9 @@ public:
     }
 
 protected:
+    SkString getName() const override { return SkString("blurredclippedcircle"); }
 
-    SkString onShortName() override {
-        return SkString("blurredclippedcircle");
-    }
-
-    SkISize onISize() override {
-        return SkISize::Make(kWidth, kHeight);
-    }
+    SkISize getISize() override { return SkISize::Make(kWidth, kHeight); }
 
     void onDraw(SkCanvas* canvas) override {
         SkPaint whitePaint;
@@ -51,9 +45,7 @@ protected:
         canvas->scale(kScale, kScale);
 
         canvas->save();
-            SkRect clipRect1 = SkRect::MakeLTRB(0, 0,
-                                                SkIntToScalar(kWidth), SkIntToScalar(kHeight));
-
+            SkRect clipRect1 = SkRect::MakeLTRB(0, 0, kWidth, kHeight);
             canvas->clipRect(clipRect1);
 
             canvas->save();
@@ -65,7 +57,7 @@ protected:
 
                     SkRect clipRect2 = SkRect::MakeLTRB(8, 8, 288, 288);
                     SkRRect clipRRect = SkRRect::MakeOval(clipRect2);
-                    canvas->clipRRect(clipRRect, kDifference_SkClipOp, true);
+                    canvas->clipRRect(clipRRect, SkClipOp::kDifference, true);
 
                     SkRect r = SkRect::MakeLTRB(4, 4, 292, 292);
                     SkRRect rr = SkRRect::MakeOval(r);
@@ -75,8 +67,7 @@ protected:
                     paint.setMaskFilter(SkMaskFilter::MakeBlur(
                                             kNormal_SkBlurStyle,
                                             1.366025f));
-                    paint.setColorFilter(SkColorFilters::Blend(SK_ColorRED,
-                                                                   SkBlendMode::kSrcIn));
+                    paint.setColorFilter(SkColorFilters::Blend(SK_ColorRED, SkBlendMode::kSrcIn));
                     paint.setAntiAlias(true);
 
                     canvas->drawRRect(rr, paint);
@@ -87,8 +78,8 @@ protected:
     }
 
 private:
-    static constexpr int kWidth = 1164;
-    static constexpr int kHeight = 802;
+    inline static constexpr int kWidth = 1164;
+    inline static constexpr int kHeight = 802;
 
     using INHERITED = GM;
 };

@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,24 +14,31 @@ CaptionStyle::CaptionStyle(const CaptionStyle& other) = default;
 CaptionStyle::~CaptionStyle() = default;
 
 // static
-base::Optional<CaptionStyle> CaptionStyle::FromSpec(const std::string& spec) {
+absl::optional<CaptionStyle> CaptionStyle::FromSpec(const std::string& spec) {
   CaptionStyle style;
-  base::Optional<base::Value> dict = base::JSONReader::Read(spec);
+  absl::optional<base::Value> dict = base::JSONReader::Read(spec);
+  if (!dict.has_value()) {
+    return absl::nullopt;
+  }
 
-  if (!dict.has_value() || !dict->is_dict())
-    return base::nullopt;
+  base::Value::Dict* value_dict = dict->GetIfDict();
+  if (!value_dict) {
+    return absl::nullopt;
+  }
 
-  if (const std::string* value = dict->FindStringKey("text-color"))
+  if (const std::string* value = value_dict->FindString("text-color")) {
     style.text_color = *value;
-  if (const std::string* value = dict->FindStringKey("background-color"))
+  }
+  if (const std::string* value = value_dict->FindString("background-color")) {
     style.background_color = *value;
+  }
 
   return style;
 }
 
-#if !defined(OS_WIN) && !defined(OS_APPLE)
-base::Optional<CaptionStyle> CaptionStyle::FromSystemSettings() {
-  return base::nullopt;
+#if !BUILDFLAG(IS_WIN) && !BUILDFLAG(IS_MAC)
+absl::optional<CaptionStyle> CaptionStyle::FromSystemSettings() {
+  return absl::nullopt;
 }
 #endif
 

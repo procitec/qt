@@ -39,12 +39,12 @@ if with_freedreno_kgsl
   )
 endif
 
-libdrm_freedreno = shared_library(
+libdrm_freedreno = library(
   'drm_freedreno',
   [files_freedreno, config_file],
   c_args : libdrm_c_args,
   include_directories : [inc_root, inc_drm],
-  dependencies : [dep_valgrind, dep_pthread_stubs, dep_rt, dep_atomic_ops],
+  dependencies : [dep_valgrind, dep_threads, dep_rt, dep_atomic_ops],
   link_with : libdrm,
   version : '1.0.0',
   install : true,
@@ -55,23 +55,28 @@ ext_libdrm_freedreno = declare_dependency(
   include_directories : [inc_drm, include_directories('.')],
 )
 
+if meson.version().version_compare('>= 0.54.0')
+  meson.override_dependency('libdrm_freedreno', ext_libdrm_freedreno)
+endif
+
 install_headers(
   'freedreno_drmif.h', 'freedreno_ringbuffer.h',
   subdir : 'freedreno'
 )
 
 pkg.generate(
+  libdrm_freedreno,
   name : 'libdrm_freedreno',
-  libraries : libdrm_freedreno,
   subdirs : ['.', 'libdrm', 'freedreno'],
-  version : meson.project_version(),
-  requires_private : 'libdrm',
   description : 'Userspace interface to freedreno kernel DRM services',
 )
 
 test(
-  'freedreno-symbol-check',
-  find_program('freedreno-symbol-check'),
-  env : env_test,
-  args : libdrm_freedreno,
+  'freedreno-symbols-check',
+  symbols_check,
+  args : [
+    '--lib', libdrm_freedreno,
+    '--symbols-file', files('freedreno-symbols.txt'),
+    '--nm', prog_nm.path(),
+  ],
 )

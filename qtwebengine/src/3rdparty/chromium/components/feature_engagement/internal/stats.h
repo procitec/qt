@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,6 +11,7 @@
 #include "components/feature_engagement/internal/condition_validator.h"
 #include "components/feature_engagement/internal/proto/feature_event.pb.h"
 #include "components/feature_engagement/public/configuration.h"
+#include "components/feature_engagement/public/tracker.h"
 
 namespace feature_engagement {
 namespace stats {
@@ -64,60 +65,8 @@ enum class TriggerHelpUIResult {
   // Display of help UI is locked.
   FAILURE_DISPLAY_LOCK = 13,
 
-  // Last entry for the enum.
-  COUNT = 14,
-};
-
-// Used in the metrics to track the configuration parsing event.
-// The failure reasons are not mutually exclusive.
-// Out-dated entries shouldn't be deleted but marked as obsolete.
-// Keep this synced with the enum in //tools/metrics/histograms/enums.xml.
-enum class ConfigParsingEvent {
-  // The configuration is parsed correctly.
-  SUCCESS = 0,
-
-  // The configuration is invalid after parsing.
-  FAILURE = 1,
-
-  // Fails to parse the feature config because no field trial is found,
-  // and there was no checked in configuration.
-  FAILURE_NO_FIELD_TRIAL = 2,
-
-  // Fails to parse the used event.
-  FAILURE_USED_EVENT_PARSE = 3,
-
-  // Used event is missing.
-  FAILURE_USED_EVENT_MISSING = 4,
-
-  // Fails to parse the trigger event.
-  FAILURE_TRIGGER_EVENT_PARSE = 5,
-
-  // Trigger event is missing.
-  FAILURE_TRIGGER_EVENT_MISSING = 6,
-
-  // Fails to parse other events.
-  FAILURE_OTHER_EVENT_PARSE = 7,
-
-  // Fails to parse the session rate comparator.
-  FAILURE_SESSION_RATE_PARSE = 8,
-
-  // Fails to parse the availability comparator.
-  FAILURE_AVAILABILITY_PARSE = 9,
-
-  // UnKnown key in configuration parameters.
-  FAILURE_UNKNOWN_KEY = 10,
-
-  // Fails to parse the session rate impact.
-  FAILURE_SESSION_RATE_IMPACT_PARSE = 11,
-
-  // Fails to parse the session rate impact.
-  FAILURE_SESSION_RATE_IMPACT_UNKNOWN_FEATURE = 12,
-
-  // Fails to parse the tracking only flag.
-  FAILURE_TRACKING_ONLY_PARSE = 13,
-
-  // Successfully read checked in configuration.
-  SUCCESS_FROM_SOURCE = 14,
+  // Groups conditions are not satisfied.
+  FAILURE_GROUPS_PRECONDITION_UNMET = 14,
 
   // Last entry for the enum.
   COUNT = 15,
@@ -151,6 +100,9 @@ void RecordShouldTriggerHelpUI(const base::Feature& feature,
 // Records when the user dismisses the in-product help UI.
 void RecordUserDismiss();
 
+// Records when the user dismisses or snoozes the snoozable in-product help UI.
+void RecordUserSnoozeAction(Tracker::SnoozeAction snooze_action);
+
 // Records the result of database updates.
 void RecordDbUpdate(bool success, StoreType type);
 
@@ -162,9 +114,6 @@ void RecordEventDbLoadEvent(bool success, const std::vector<Event>& events);
 
 // Records availability database load event.
 void RecordAvailabilityDbLoadEvent(bool success);
-
-// Records configuration parsing event.
-void RecordConfigParsingEvent(ConfigParsingEvent event);
 
 }  // namespace stats
 }  // namespace feature_engagement

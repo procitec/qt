@@ -1,4 +1,4 @@
-# Copyright 2015 The Chromium Authors. All rights reserved.
+# Copyright 2015 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -31,7 +31,7 @@ def _FindDuplicates(entries):
       duplicates.add(entry)
     else:
       seen.add(entry)
-  return duplicates
+  return sorted(duplicates)
 
 def _CheckForDuplicateFeatures(enable_features, disable_features):
   enable_features = [f.split('<')[0] for f in enable_features]
@@ -137,11 +137,7 @@ def GenerateArgs(config_path, platform, override_args=None):
   except (IOError, ValueError):
     return []
 
-  platform_studies = fieldtrial_to_struct.ConfigToStudies(
-      # For now, assume we never invert. Can add this as an argument if needed.
-      config,
-      [platform],
-      False)
+  platform_studies = fieldtrial_to_struct.ConfigToStudies(config, [platform])
 
   if override_args is None:
     override_args = []

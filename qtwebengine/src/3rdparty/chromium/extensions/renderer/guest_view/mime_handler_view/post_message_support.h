@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,6 +8,7 @@
 #include <memory>
 #include <vector>
 
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/values.h"
 #include "v8/include/v8.h"
@@ -87,8 +88,6 @@ class PostMessageSupport {
   PostMessageSupport(const PostMessageSupport&) = delete;
   PostMessageSupport& operator=(const PostMessageSupport&) = delete;
 
-  void RecordUMAForPostMessage(v8::Local<v8::Value>& message);
-
   // The scriptable object that backs the plugin.
   v8::Global<v8::Object> scriptable_object_;
 
@@ -100,11 +99,8 @@ class PostMessageSupport {
   // When false, all sent messages are queued up in |message_queue_|. When true,
   // the messages are forwarded to the target frame.
   bool is_active_ = false;
-  // Currently used to avoid recording UMA stats for internal use of the
-  // postMessage API.
-  bool should_report_internal_messages_ = true;
 
-  Delegate* const delegate_;
+  const raw_ptr<Delegate, ExperimentalRenderer> delegate_;
 
   base::WeakPtrFactory<PostMessageSupport> weak_factory_{this};
 };

@@ -10,18 +10,24 @@
 
 #include "include/core/SkRect.h"
 #include "include/core/SkRefCnt.h"
-#include "include/core/SkTileMode.h"
+#include "include/core/SkShader.h"  // IWYU pragma: keep
 #include "include/core/SkTypes.h"
+
+#include <atomic>
+#include <cstddef>
+#include <cstdint>
 
 class SkCanvas;
 class SkData;
-struct SkDeserialProcs;
-class SkImage;
 class SkMatrix;
-struct SkSerialProcs;
-class SkShader;
 class SkStream;
 class SkWStream;
+enum class SkFilterMode;
+struct SkDeserialProcs;
+struct SkSerialProcs;
+
+// TODO(kjlubick) Remove this after cleaning up clients
+#include "include/core/SkTileMode.h"  // IWYU pragma: keep
 
 /** \class SkPicture
     SkPicture records drawing commands made to SkCanvas. The command stream may be
@@ -37,6 +43,7 @@ class SkWStream;
 */
 class SK_API SkPicture : public SkRefCnt {
 public:
+    ~SkPicture() override;
 
     /** Recreates SkPicture that was serialized into a stream. Returns constructed SkPicture
         if successful; otherwise, returns nullptr. Fails if data does not permit
@@ -89,16 +96,9 @@ public:
     */
     class SK_API AbortCallback {
     public:
-
-        /** Has no effect.
-
-            @return  abstract class cannot be instantiated
-        */
-        AbortCallback() {}
-
         /** Has no effect.
         */
-        virtual ~AbortCallback() {}
+        virtual ~AbortCallback() = default;
 
         /** Stops SkPicture playback when some condition is met. A subclass of
             AbortCallback provides an override for abort() that can stop SkPicture::playback.
@@ -115,6 +115,11 @@ public:
         example: https://fiddle.skia.org/c/@Picture_AbortCallback_abort
         */
         virtual bool abort() = 0;
+
+    protected:
+        AbortCallback() = default;
+        AbortCallback(const AbortCallback&) = delete;
+        AbortCallback& operator=(const AbortCallback&) = delete;
     };
 
     /** Replays the drawing commands on the specified canvas. In the case that the
@@ -157,6 +162,10 @@ public:
         may be used to provide user context to procs->fPictureProc; procs->fPictureProc
         is called with a pointer to SkPicture and user context.
 
+        The default behavior for serializing SkImages is to encode a nullptr. Should
+        clients want to, for example, encode these SkImages as PNGs so they can be
+        deserialized, they must provide SkSerialProcs with the fImageProc set to do so.
+
         @param procs  custom serial data encoders; may be nullptr
         @return       storage containing serialized SkPicture
 
@@ -170,6 +179,10 @@ public:
         If procs->fPictureProc is nullptr, default encoding is used. procs->fPictureCtx
         may be used to provide user context to procs->fPictureProc; procs->fPictureProc
         is called with a pointer to SkPicture and user context.
+
+        The default behavior for serializing SkImages is to encode a nullptr. Should
+        clients want to, for example, encode these SkImages as PNGs so they can be
+        deserialized, they must provide SkSerialProcs with the fImageProc set to do so.
 
         @param stream  writable serial data stream
         @param procs   custom serial data encoders; may be nullptr
@@ -218,6 +231,7 @@ public:
      *
      *  @param tmx  The tiling mode to use when sampling in the x-direction.
      *  @param tmy  The tiling mode to use when sampling in the y-direction.
+     *  @param mode How to filter the tiles
      *  @param localMatrix Optional matrix used when sampling
      *  @param tile The tile rectangle in picture coordinates: this represents the subset
      *              (or superset) of the picture used when building a tile. It is not
@@ -226,10 +240,12 @@ public:
      *              bounds.
      *  @return     Returns a new shader object. Note: this function never returns null.
      */
-    sk_sp<SkShader> makeShader(SkTileMode tmx, SkTileMode tmy,
+    sk_sp<SkShader> makeShader(SkTileMode tmx, SkTileMode tmy, SkFilterMode mode,
                                const SkMatrix* localMatrix, const SkRect* tileRect) const;
-    sk_sp<SkShader> makeShader(SkTileMode tmx, SkTileMode tmy,
-                               const SkMatrix* localMatrix = nullptr) const;
+
+    sk_sp<SkShader> makeShader(SkTileMode tmx, SkTileMode tmy, SkFilterMode mode) const {
+        return this->makeShader(tmx, tmy, mode, nullptr, nullptr);
+    }
 
 private:
     // Allowed subclasses.
@@ -237,12 +253,12 @@ private:
     friend class SkBigPicture;
     friend class SkEmptyPicture;
     friend class SkPicturePriv;
-    template <typename> friend class SkMiniPicture;
 
     void serialize(SkWStream*, const SkSerialProcs*, class SkRefCntSet* typefaces,
         bool textBlobsOnly=false) const;
-    static sk_sp<SkPicture> MakeFromStream(SkStream*, const SkDeserialProcs*,
-                                           class SkTypefacePlayback*);
+    static sk_sp<SkPicture> MakeFromStreamPriv(SkStream*, const SkDeserialProcs*,
+                                               class SkTypefacePlayback*,
+                                               int recursionLimit);
     friend class SkPictureData;
 
     /** Return true if the SkStream/Buffer represents a serialized picture, and
@@ -260,8 +276,6 @@ private:
     // Returns NULL if this is not an SkBigPicture.
     virtual const class SkBigPicture* asSkBigPicture() const { return nullptr; }
 
-    friend struct SkPathCounter;
-
     static bool IsValidPictInfo(const struct SkPictInfo& info);
     static sk_sp<SkPicture> Forwardport(const struct SkPictInfo&,
                                         const class SkPictureData*,
@@ -271,6 +285,7 @@ private:
     class SkPictureData* backport() const;
 
     uint32_t fUniqueID;
+    mutable std::atomic<bool> fAddedToCache{false};
 };
 
 #endif

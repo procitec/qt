@@ -41,7 +41,6 @@ class DateInputType final : public BaseTemporalInputType {
 
  private:
   void CountUsage() override;
-  const AtomicString& FormControlType() const override;
   StepRange CreateStepRange(AnyStepHandling) const override;
   bool ParseToDateComponentsInternal(const String&,
                                      DateComponents*) const override;
@@ -60,7 +59,14 @@ class DateInputType final : public BaseTemporalInputType {
                      bool has_hour,
                      bool has_minute,
                      bool has_second) const override;
-  String AriaRoleForPickerIndicator() const override;
+  String AriaLabelForPickerIndicator() const override;
+};
+
+template <>
+struct DowncastTraits<DateInputType> {
+  static bool AllowFrom(const InputType& type) {
+    return type.IsDateInputType();
+  }
 };
 
 }  // namespace blink

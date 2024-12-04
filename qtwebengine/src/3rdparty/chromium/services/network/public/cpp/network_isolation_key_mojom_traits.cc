@@ -1,42 +1,65 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "services/network/public/cpp/network_isolation_key_mojom_traits.h"
+
+#include "base/unguessable_token.h"
 #include "net/base/features.h"
 
 namespace mojo {
 
-bool StructTraits<network::mojom::NetworkIsolationKeyDataView,
+// static
+bool StructTraits<network::mojom::EmptyNetworkIsolationKeyDataView,
                   net::NetworkIsolationKey>::
+    Read(network::mojom::EmptyNetworkIsolationKeyDataView data,
+         net::NetworkIsolationKey* out) {
+  *out = net::NetworkIsolationKey();
+  return true;
+}
+
+// static
+bool StructTraits<network::mojom::NonEmptyNetworkIsolationKeyDataView,
+                  net::NetworkIsolationKey>::
+    Read(network::mojom::NonEmptyNetworkIsolationKeyDataView data,
+         net::NetworkIsolationKey* out) {
+  net::SchemefulSite top_frame_site;
+  net::SchemefulSite frame_site;
+  absl::optional<base::UnguessableToken> nonce;
+
+  if (!data.ReadTopFrameSite(&top_frame_site) ||
+      !data.ReadFrameSite(&frame_site) || !data.ReadNonce(&nonce)) {
+    return false;
+  }
+
+  *out = net::NetworkIsolationKey(std::move(top_frame_site),
+                                  std::move(frame_site), std::move(nonce));
+  return true;
+}
+
+// static
+bool UnionTraits<network::mojom::NetworkIsolationKeyDataView,
+                 net::NetworkIsolationKey>::
     Read(network::mojom::NetworkIsolationKeyDataView data,
          net::NetworkIsolationKey* out) {
-  base::Optional<url::Origin> top_frame_origin, frame_origin;
-  if (!data.ReadTopFrameOrigin(&top_frame_origin))
-    return false;
-  if (!data.ReadFrameOrigin(&frame_origin))
-    return false;
-  // A key is either fully empty or fully populated (for all fields relevant
-  // given the flags set).  The constructor verifies this, so if the top-frame
-  // origin is populated, we call the full constructor, otherwise, the empty.
-  if (top_frame_origin.has_value()) {
-    // We need a dummy value when the initiating_frame_origin is empty,
-    // indicating that the flag to popuate it in the key was not set.
-    if (!frame_origin.has_value()) {
-      DCHECK(!base::FeatureList::IsEnabled(
-          net::features::kAppendFrameOriginToNetworkIsolationKey));
-      frame_origin = url::Origin();
-    }
-    *out = net::NetworkIsolationKey(top_frame_origin.value(),
-                                    frame_origin.value());
-  } else {
-    *out = net::NetworkIsolationKey();
+  if (data.is_empty()) {
+    return data.ReadEmpty(out);
   }
-  out->opaque_and_non_transient_ = data.opaque_and_non_transient();
 
-  // If opaque_and_non_transient_ is set, then the key must also be opaque.
-  // Otherwise, the key is not valid.
-  return !out->opaque_and_non_transient_ || out->IsOpaque();
+  CHECK(data.is_non_empty());
+  return data.ReadNonEmpty(out);
+}
+
+// static
+network::mojom::NetworkIsolationKeyDataView::Tag
+UnionTraits<network::mojom::NetworkIsolationKeyDataView,
+            net::NetworkIsolationKey>::GetTag(const net::NetworkIsolationKey&
+                                                  network_isolation_key) {
+  if (network_isolation_key.IsEmpty()) {
+    return network::mojom::NetworkIsolationKeyDataView::Tag::kEmpty;
+  }
+
+  return network::mojom::NetworkIsolationKeyDataView::Tag::kNonEmpty;
 }
 
 }  // namespace mojo

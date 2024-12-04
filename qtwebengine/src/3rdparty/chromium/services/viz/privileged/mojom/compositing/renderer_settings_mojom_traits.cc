@@ -1,13 +1,12 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "services/viz/privileged/mojom/compositing/renderer_settings_mojom_traits.h"
 
-#include "services/viz/public/cpp/compositing/resource_settings_mojom_traits.h"
-#include "ui/base/ui_base_features.h"
+#include "build/build_config.h"
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
 #include "ui/gfx/mojom/color_space_mojom_traits.h"
 #endif
 
@@ -19,6 +18,8 @@ bool StructTraits<viz::mojom::DebugRendererSettingsDataView,
     Read(viz::mojom::DebugRendererSettingsDataView data,
          viz::DebugRendererSettings* out) {
   out->tint_composited_content = data.tint_composited_content();
+  out->tint_composited_content_modulate =
+      data.tint_composited_content_modulate();
   out->show_overdraw_feedback = data.show_overdraw_feedback();
   out->show_dc_layer_debug_borders = data.show_dc_layer_debug_borders();
   out->show_aggregated_damage = data.show_aggregated_damage();
@@ -39,12 +40,10 @@ bool StructTraits<viz::mojom::RendererSettingsDataView, viz::RendererSettings>::
   out->highp_threshold_min = data.highp_threshold_min();
   out->slow_down_compositing_scale_factor =
       data.slow_down_compositing_scale_factor();
-  out->use_skia_renderer = data.use_skia_renderer();
-  out->allow_overlays = data.allow_overlays();
   out->auto_resize_output_surface = data.auto_resize_output_surface();
   out->requires_alpha_channel = data.requires_alpha_channel();
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
   if (!data.ReadInitialScreenSize(&out->initial_screen_size))
     return false;
 
@@ -52,10 +51,13 @@ bool StructTraits<viz::mojom::RendererSettingsDataView, viz::RendererSettings>::
     return false;
 #endif
 
-#if defined(USE_OZONE)
-  if (features::IsUsingOzonePlatform() &&
-      !data.ReadOverlayStrategies(&out->overlay_strategies))
+#if BUILDFLAG(IS_OZONE)
+  if (!data.ReadOverlayStrategies(&out->overlay_strategies))
     return false;
+#endif
+
+#if BUILDFLAG(IS_MAC)
+  out->display_id = data.display_id();
 #endif
 
   return true;

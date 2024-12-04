@@ -5,18 +5,21 @@
 #ifndef V8_OBJECTS_DEBUG_OBJECTS_INL_H_
 #define V8_OBJECTS_DEBUG_OBJECTS_INL_H_
 
-#include "src/objects/debug-objects.h"
-
 #include "src/heap/heap-write-barrier-inl.h"
+#include "src/objects/bytecode-array-inl.h"
 #include "src/objects/code-inl.h"
+#include "src/objects/debug-objects.h"
 #include "src/objects/objects-inl.h"
 #include "src/objects/shared-function-info.h"
+#include "src/objects/string.h"
 
 // Has to be the last include (doesn't have include guards):
 #include "src/objects/object-macros.h"
 
 namespace v8 {
 namespace internal {
+
+#include "torque-generated/src/objects/debug-objects-tq-inl.inc"
 
 TQ_OBJECT_CONSTRUCTORS_IMPL(BreakPoint)
 TQ_OBJECT_CONSTRUCTORS_IMPL(BreakPointInfo)
@@ -35,24 +38,63 @@ BIT_FIELD_ACCESSORS(DebugInfo, debugger_hints, debugging_id,
                     DebugInfo::DebuggingIdBits)
 
 bool DebugInfo::HasInstrumentedBytecodeArray() {
-  DCHECK_EQ(debug_bytecode_array().IsBytecodeArray(),
-            original_bytecode_array().IsBytecodeArray());
-  return debug_bytecode_array().IsBytecodeArray();
+  return has_debug_bytecode_array();
 }
 
-BytecodeArray DebugInfo::OriginalBytecodeArray() {
+Tagged<BytecodeArray> DebugInfo::OriginalBytecodeArray(Isolate* isolate) {
   DCHECK(HasInstrumentedBytecodeArray());
-  return BytecodeArray::cast(original_bytecode_array());
+  return original_bytecode_array(isolate, kAcquireLoad);
 }
 
-BytecodeArray DebugInfo::DebugBytecodeArray() {
+Tagged<BytecodeArray> DebugInfo::DebugBytecodeArray(Isolate* isolate) {
   DCHECK(HasInstrumentedBytecodeArray());
-  DCHECK_EQ(shared().GetDebugBytecodeArray(), debug_bytecode_array());
-  return BytecodeArray::cast(debug_bytecode_array());
+  Tagged<BytecodeArray> result = debug_bytecode_array(isolate, kAcquireLoad);
+  DCHECK_EQ(shared()->GetActiveBytecodeArray(isolate), result);
+  return result;
 }
 
-TQ_OBJECT_CONSTRUCTORS_IMPL(WasmValue)
-NEVER_READ_ONLY_SPACE_IMPL(WasmValue)
+TRUSTED_POINTER_ACCESSORS(DebugInfo, debug_bytecode_array, BytecodeArray,
+                          kDebugBytecodeArrayOffset,
+                          kBytecodeArrayIndirectPointerTag)
+TRUSTED_POINTER_ACCESSORS(DebugInfo, original_bytecode_array, BytecodeArray,
+                          kOriginalBytecodeArrayOffset,
+                          kBytecodeArrayIndirectPointerTag)
+
+TQ_OBJECT_CONSTRUCTORS_IMPL(StackFrameInfo)
+NEVER_READ_ONLY_SPACE_IMPL(StackFrameInfo)
+
+Tagged<Script> StackFrameInfo::script() const {
+  Tagged<HeapObject> object = shared_or_script();
+  if (IsSharedFunctionInfo(object)) {
+    object = SharedFunctionInfo::cast(object)->script();
+  }
+  return Script::cast(object);
+}
+
+BIT_FIELD_ACCESSORS(StackFrameInfo, flags, bytecode_offset_or_source_position,
+                    StackFrameInfo::BytecodeOffsetOrSourcePositionBits)
+BIT_FIELD_ACCESSORS(StackFrameInfo, flags, is_constructor,
+                    StackFrameInfo::IsConstructorBit)
+
+NEVER_READ_ONLY_SPACE_IMPL(ErrorStackData)
+TQ_OBJECT_CONSTRUCTORS_IMPL(ErrorStackData)
+
+bool ErrorStackData::HasFormattedStack() const {
+  return !IsFixedArray(call_site_infos_or_formatted_stack());
+}
+
+ACCESSORS_RELAXED_CHECKED(ErrorStackData, formatted_stack, Tagged<Object>,
+                          kCallSiteInfosOrFormattedStackOffset,
+                          !IsSmi(limit_or_stack_frame_infos()))
+
+bool ErrorStackData::HasCallSiteInfos() const { return !HasFormattedStack(); }
+
+ACCESSORS_RELAXED_CHECKED(ErrorStackData, call_site_infos, Tagged<FixedArray>,
+                          kCallSiteInfosOrFormattedStackOffset,
+                          !HasFormattedStack())
+
+NEVER_READ_ONLY_SPACE_IMPL(PromiseOnStack)
+TQ_OBJECT_CONSTRUCTORS_IMPL(PromiseOnStack)
 
 }  // namespace internal
 }  // namespace v8

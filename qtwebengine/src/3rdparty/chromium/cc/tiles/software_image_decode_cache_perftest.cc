@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,6 +11,14 @@
 #include "cc/tiles/software_image_decode_cache.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/perf/perf_result_reporter.h"
+#include "third_party/skia/include/core/SkBitmap.h"
+#include "third_party/skia/include/core/SkColorType.h"
+#include "third_party/skia/include/core/SkImage.h"
+#include "third_party/skia/include/core/SkImageInfo.h"
+#include "third_party/skia/include/core/SkM44.h"
+#include "third_party/skia/include/core/SkRect.h"
+#include "third_party/skia/include/core/SkRefCnt.h"
+#include "third_party/skia/include/core/SkSize.h"
 
 namespace cc {
 namespace {
@@ -22,26 +30,24 @@ static const int kTimeCheckInterval = 10;
 sk_sp<SkImage> CreateImage(int width, int height) {
   SkBitmap bitmap;
   bitmap.allocPixels(SkImageInfo::MakeN32Premul(width, height));
-  return SkImage::MakeFromBitmap(bitmap);
+  return SkImages::RasterFromBitmap(bitmap);
 }
 
-SkMatrix CreateMatrix(const SkSize& scale) {
-  SkMatrix matrix;
-  matrix.setScale(scale.width(), scale.height());
-  return matrix;
+SkM44 CreateMatrix(const SkSize& scale) {
+  return SkM44::Scale(scale.width(), scale.height());
 }
 
 class SoftwareImageDecodeCachePerfTest : public testing::Test {
  public:
   SoftwareImageDecodeCachePerfTest()
       : timer_(kWarmupRuns,
-               base::TimeDelta::FromMilliseconds(kTimeLimitMillis),
+               base::Milliseconds(kTimeLimitMillis),
                kTimeCheckInterval) {}
 
   void RunFromImage() {
-    SkFilterQuality qualities[] = {kNone_SkFilterQuality, kLow_SkFilterQuality,
-                                   kMedium_SkFilterQuality,
-                                   kHigh_SkFilterQuality};
+    PaintFlags::FilterQuality qualities[] = {
+        PaintFlags::FilterQuality::kNone, PaintFlags::FilterQuality::kLow,
+        PaintFlags::FilterQuality::kMedium, PaintFlags::FilterQuality::kHigh};
     std::pair<SkIRect, SkIRect> image_rect_subrect[] = {
         std::make_pair(SkIRect::MakeWH(100, 100), SkIRect::MakeWH(100, 100)),
         std::make_pair(SkIRect::MakeWH(100, 100), SkIRect::MakeWH(50, 50)),
@@ -62,9 +68,9 @@ class SoftwareImageDecodeCachePerfTest : public testing::Test {
                   .set_image(CreateImage(rect.width(), rect.height()),
                              PaintImage::GetNextContentId())
                   .TakePaintImage(),
-              subrect, quality,
+              false, subrect, quality,
               CreateMatrix(SkSize::Make(scale.first, scale.second)), 0u,
-              gfx::ColorSpace());
+              TargetColorParams());
         }
       }
     }

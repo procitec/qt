@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,15 +7,13 @@
 
 #include <stddef.h>
 #include <cstdint>
+#include <string>
 
 #include <limits>
 
 #include "base/component_export.h"
-#include "base/strings/string16.h"
 
 namespace device {
-
-#pragma pack(push, 4)
 
 class GamepadButton {
  public:
@@ -25,14 +23,22 @@ class GamepadButton {
   GamepadButton() = default;
   GamepadButton(bool pressed, bool touched, double value)
       : used(true), pressed(pressed), touched(touched), value(value) {}
+  bool operator==(const GamepadButton& other) const {
+    return this->used == other.used && this->pressed == other.pressed &&
+           this->touched == other.touched && this->value == other.value;
+  }
   // Whether the button is actually reported by the gamepad at all.
   bool used{false};
   bool pressed{false};
   bool touched{false};
-  double value{0.};
+  double value{0.0};
 };
 
-enum class GamepadHapticActuatorType { kVibration = 0, kDualRumble = 1 };
+enum class GamepadHapticActuatorType {
+  kVibration = 0,
+  kDualRumble = 1,
+  kTriggerRumble = 2
+};
 
 enum class GamepadHapticEffectType { kDualRumble = 0 };
 
@@ -42,6 +48,16 @@ enum class GamepadHapticsResult {
   kPreempted = 2,
   kInvalidParameter = 3,
   kNotSupported = 4
+};
+
+struct GamepadTouch {
+  uint32_t touch_id = 0;
+  uint8_t surface_id = 0;
+  bool has_surface_dimensions = false;
+  float x = 0.0f;
+  float y = 0.0f;
+  uint32_t surface_width;
+  uint32_t surface_height;
 };
 
 class GamepadHapticActuator {
@@ -107,20 +123,22 @@ class COMPONENT_EXPORT(GAMEPAD_PUBLIC) Gamepad {
   static constexpr size_t kIdLengthCap = 128;
   static constexpr size_t kAxesLengthCap = 16;
   static constexpr size_t kButtonsLengthCap = 32;
+  static constexpr size_t kTouchEventsLengthCap = 8;
 
   Gamepad();
   Gamepad(const Gamepad& other);
+  Gamepad& operator=(const Gamepad& other);
 
   // If src is too long, then the contents of id will be truncated to
   // kIdLengthCap-1. id will be null-terminated and any extra space in the
   // buffer will be zeroed out.
-  void SetID(const base::string16& src);
+  void SetID(const std::u16string& src);
 
   // Is there a gamepad connected at this index?
   bool connected;
 
   // Device identifier (based on manufacturer, model, etc.).
-  base::char16 id[kIdLengthCap];
+  char16_t id[kIdLengthCap];
 
   // Time value representing the last time the data for this gamepad was
   // updated. Measured as TimeTicks::Now().since_origin().InMicroseconds().
@@ -146,6 +164,14 @@ class COMPONENT_EXPORT(GAMEPAD_PUBLIC) Gamepad {
   // Button states
   GamepadButton buttons[kButtonsLengthCap];
 
+  // Number of valid entries in the touch_events array.
+  uint32_t touch_events_length;
+
+  // Touch events states
+  bool supports_touch_events_ = false;
+
+  GamepadTouch touch_events[kTouchEventsLengthCap];
+
   GamepadHapticActuator vibration_actuator;
 
   // Mapping type
@@ -159,8 +185,6 @@ class COMPONENT_EXPORT(GAMEPAD_PUBLIC) Gamepad {
 
   bool is_xr = false;
 };
-
-#pragma pack(pop)
 
 }  // namespace device
 

@@ -1,13 +1,15 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_TIMING_LARGEST_CONTENTFUL_PAINT_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_TIMING_LARGEST_CONTENTFUL_PAINT_H_
 
+#include "base/time/time.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/dom/element.h"
 #include "third_party/blink/renderer/core/timing/performance_entry.h"
+#include "third_party/blink/renderer/platform/wtf/casting.h"
 
 namespace blink {
 
@@ -18,22 +20,26 @@ class CORE_EXPORT LargestContentfulPaint final : public PerformanceEntry {
 
  public:
   LargestContentfulPaint(double start_time,
-                         base::TimeDelta render_time,
+                         DOMHighResTimeStamp render_time,
                          uint64_t size,
-                         base::TimeDelta load_time,
+                         DOMHighResTimeStamp load_time,
+                         DOMHighResTimeStamp first_animated_frame_time,
                          const AtomicString& id,
                          const String& url,
-                         Element*);
+                         Element* element,
+                         DOMWindow* source,
+                         bool is_triggered_by_soft_navigation);
   ~LargestContentfulPaint() override;
 
-  AtomicString entryType() const override;
+  const AtomicString& entryType() const override;
   PerformanceEntryType EntryTypeEnum() const override;
 
   uint64_t size() const { return size_; }
-  DOMHighResTimeStamp renderTime() const {
-    return render_time_.InMillisecondsF();
+  DOMHighResTimeStamp renderTime() const { return render_time_; }
+  DOMHighResTimeStamp loadTime() const { return load_time_; }
+  DOMHighResTimeStamp firstAnimatedFrameTime() const {
+    return first_animated_frame_time_;
   }
-  DOMHighResTimeStamp loadTime() const { return load_time_.InMillisecondsF(); }
   const AtomicString& id() const { return id_; }
   const String& url() const { return url_; }
   Element* element() const;
@@ -44,11 +50,20 @@ class CORE_EXPORT LargestContentfulPaint final : public PerformanceEntry {
   void BuildJSONValue(V8ObjectBuilder&) const override;
 
   uint64_t size_;
-  base::TimeDelta render_time_;
-  base::TimeDelta load_time_;
+  DOMHighResTimeStamp render_time_;
+  DOMHighResTimeStamp load_time_;
+  DOMHighResTimeStamp first_animated_frame_time_;
   AtomicString id_;
   String url_;
   WeakMember<Element> element_;
+};
+
+template <>
+struct DowncastTraits<LargestContentfulPaint> {
+  static bool AllowFrom(const PerformanceEntry& entry) {
+    return entry.EntryTypeEnum() ==
+           PerformanceEntry::EntryType::kLargestContentfulPaint;
+  }
 };
 
 }  // namespace blink

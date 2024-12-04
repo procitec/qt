@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,7 +8,7 @@
 #include <cstdint>
 #include <string>
 #include <vector>
-#include "base/callback_forward.h"
+#include "base/functional/callback_forward.h"
 
 namespace base {
 class Time;
@@ -25,6 +25,7 @@ class Origin;
 namespace content {
 
 class BrowsingDataFilterBuilder;
+class StoragePartition;
 
 class BrowsingDataRemoverDelegate {
  public:
@@ -37,9 +38,10 @@ class BrowsingDataRemoverDelegate {
 
   virtual ~BrowsingDataRemoverDelegate() {}
 
-  // The embedder can define domains, for which cookies are only deleted
-  // after all other deletions are finished.
+  // The embedder can define domains in the given StoragePartition for which
+  // cookies are only deleted after all other deletions are finished.
   virtual std::vector<std::string> GetDomainsForDeferredCookieDeletion(
+      StoragePartition* storage_partition,
       uint64_t remove_mask) = 0;
 
   // Returns a MaskMatcherFunction to match embedder's origin types.
@@ -62,6 +64,13 @@ class BrowsingDataRemoverDelegate {
       BrowsingDataFilterBuilder* filter_builder,
       uint64_t origin_type_mask,
       base::OnceCallback<void(/*failed_data_types=*/uint64_t)> callback) = 0;
+
+  // Called when the BrowsingDataRemover starts executing a task.
+  virtual void OnStartRemoving() {}
+
+  // Called when the BrowsingDataRemover is done executing all the tasks in its
+  // queue.
+  virtual void OnDoneRemoving() {}
 };
 
 }  // namespace content

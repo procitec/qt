@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,13 +12,9 @@
 #include <vector>
 
 #include "base/containers/id_map.h"
-#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
-#include "base/strings/string16.h"
-#include "base/supports_user_data.h"
 #include "base/values.h"
-#include "components/keyed_service/core/keyed_service.h"
 #include "components/wifi/wifi_service.h"
 #include "extensions/browser/api/networking_private/networking_private_delegate.h"
 #include "services/network/public/cpp/network_connection_tracker.h"
@@ -41,6 +37,12 @@ class NetworkingPrivateServiceClient
   // worker thread. The deletion task is posted from the destructor.
   explicit NetworkingPrivateServiceClient(
       std::unique_ptr<wifi::WiFiService> wifi_service);
+  ~NetworkingPrivateServiceClient() override;
+
+  NetworkingPrivateServiceClient(const NetworkingPrivateServiceClient&) =
+      delete;
+  NetworkingPrivateServiceClient& operator=(
+      const NetworkingPrivateServiceClient&) = delete;
 
   // KeyedService
   void Shutdown() override;
@@ -54,12 +56,12 @@ class NetworkingPrivateServiceClient
                 DictionaryCallback success_callback,
                 FailureCallback failure_callback) override;
   void SetProperties(const std::string& guid,
-                     std::unique_ptr<base::DictionaryValue> properties_dict,
+                     base::Value::Dict properties_dict,
                      bool allow_set_shared_config,
                      VoidCallback success_callback,
                      FailureCallback failure_callback) override;
   void CreateNetwork(bool shared,
-                     std::unique_ptr<base::DictionaryValue> properties_dict,
+                     base::Value::Dict properties_dict,
                      StringCallback success_callback,
                      FailureCallback failure_callback) override;
   void ForgetNetwork(const std::string& guid,
@@ -96,13 +98,15 @@ class NetworkingPrivateServiceClient
                                    const std::string& network_id,
                                    VoidCallback success_callback,
                                    FailureCallback failure_callback) override;
-  std::unique_ptr<base::ListValue> GetEnabledNetworkTypes() override;
-  std::unique_ptr<DeviceStateList> GetDeviceStateList() override;
-  std::unique_ptr<base::DictionaryValue> GetGlobalPolicy() override;
-  std::unique_ptr<base::DictionaryValue> GetCertificateLists() override;
-  bool EnableNetworkType(const std::string& type) override;
-  bool DisableNetworkType(const std::string& type) override;
-  bool RequestScan(const std::string& type) override;
+  void GetEnabledNetworkTypes(EnabledNetworkTypesCallback callback) override;
+  void GetDeviceStateList(DeviceStateListCallback callback) override;
+  void GetGlobalPolicy(GetGlobalPolicyCallback callback) override;
+  void GetCertificateLists(GetCertificateListsCallback callback) override;
+  void EnableNetworkType(const std::string& type,
+                         BoolCallback callback) override;
+  void DisableNetworkType(const std::string& type,
+                          BoolCallback callback) override;
+  void RequestScan(const std::string& type, BoolCallback callback) override;
   void AddObserver(NetworkingPrivateDelegateObserver* observer) override;
   void RemoveObserver(NetworkingPrivateDelegateObserver* observer) override;
 
@@ -113,7 +117,7 @@ class NetworkingPrivateServiceClient
   // Callbacks to extension api function objects. Keep reference to API object
   // and are released in ShutdownOnUIThread. Run when WiFiService calls back
   // into NetworkingPrivateServiceClient's callback wrappers.
-  typedef int32_t ServiceCallbacksID;
+  using ServiceCallbacksID = int32_t;
   struct ServiceCallbacks {
     ServiceCallbacks();
     ~ServiceCallbacks();
@@ -130,16 +134,14 @@ class NetworkingPrivateServiceClient
   };
   using ServiceCallbacksMap = base::IDMap<std::unique_ptr<ServiceCallbacks>>;
 
-  ~NetworkingPrivateServiceClient() override;
-
   // Callback wrappers.
   void AfterGetProperties(PropertiesCallback callback,
                           const std::string& network_guid,
-                          std::unique_ptr<base::DictionaryValue> properties,
+                          std::unique_ptr<base::Value::Dict> properties,
                           const std::string* error);
   void AfterGetState(ServiceCallbacksID callback_id,
                      const std::string& network_guid,
-                     std::unique_ptr<base::DictionaryValue> properties,
+                     std::unique_ptr<base::Value::Dict> properties,
                      const std::string* error);
   void AfterSetProperties(ServiceCallbacksID callback_id,
                           const std::string* error);
@@ -147,7 +149,7 @@ class NetworkingPrivateServiceClient
                           const std::string* network_guid,
                           const std::string* error);
   void AfterGetVisibleNetworks(ServiceCallbacksID callback_id,
-                               std::unique_ptr<base::ListValue> networks);
+                               std::unique_ptr<base::Value::List> networks);
   void AfterStartConnect(ServiceCallbacksID callback_id,
                          const std::string* error);
   void AfterStartDisconnect(ServiceCallbacksID callback_id,
@@ -174,8 +176,6 @@ class NetworkingPrivateServiceClient
   scoped_refptr<base::SequencedTaskRunner> task_runner_;
   // Use WeakPtrs for callbacks from |wifi_service_|.
   base::WeakPtrFactory<NetworkingPrivateServiceClient> weak_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(NetworkingPrivateServiceClient);
 };
 
 }  // namespace extensions

@@ -5,8 +5,12 @@
 * found in the LICENSE file.
 */
 
-#include "tools/sk_app/ios/WindowContextFactory_ios.h"
 #include "tools/sk_app/ios/Window_ios.h"
+#include "tools/window/ios/WindowContextFactory_ios.h"
+
+#if __has_feature(objc_arc)
+#error "File should not be compiled with ARC."
+#endif
 
 @interface WindowViewController : UIViewController
 
@@ -76,26 +80,25 @@ void Window_ios::closeWindow() {
 bool Window_ios::attach(BackendType attachType) {
     this->initWindow();
 
-    window_context_factory::IOSWindowInfo info;
+    skwindow::IOSWindowInfo info;
     info.fWindow = this;
     info.fViewController = fWindow.rootViewController;
     switch (attachType) {
 #ifdef SK_METAL
         case kMetal_BackendType:
-            fWindowContext = MakeMetalForIOS(info, fRequestedDisplayParams);
+            fWindowContext = skwindow::MakeMetalForIOS(info, fRequestedDisplayParams);
             break;
 #endif
 #ifdef SK_GL
         case kNativeGL_BackendType:
-        default:
-            fWindowContext = MakeGLForIOS(info, fRequestedDisplayParams);
+            fWindowContext = skwindow::MakeGLForIOS(info, fRequestedDisplayParams);
             break;
-#else
-        default:
-#endif
         case kRaster_BackendType:
-            fWindowContext = MakeRasterForIOS(info, fRequestedDisplayParams);
+            fWindowContext = skwindow::MakeRasterForIOS(info, fRequestedDisplayParams);
             break;
+#endif
+        default:
+            SkASSERT_RELEASE(false);
     }
     this->onBackendCreated();
 
@@ -119,8 +122,10 @@ void Window_ios::onInval() {
 }
 
 - (WindowViewController*)initWithWindow:(sk_app::Window_ios *)initWindow {
-    fWindow = initWindow;
-
+    self = [super initWithNibName:nil bundle:nil];
+    if (self) {
+        fWindow = initWindow;
+    }
     return self;
 }
 
@@ -144,7 +149,7 @@ void Window_ios::onInval() {
     sk_app::Window_ios* fWindow;
 }
 
-- (IBAction)panGestureAction:(UIGestureRecognizer*)sender {
+- (void)panGestureAction:(UIGestureRecognizer*)sender {
     CGPoint location = [sender locationInView:self];
     switch (sender.state) {
         case UIGestureRecognizerStateBegan:
@@ -168,7 +173,7 @@ void Window_ios::onInval() {
     }
 }
 
-- (IBAction)tapGestureAction:(UIGestureRecognizer*)sender {
+- (void)tapGestureAction:(UIGestureRecognizer*)sender {
     CGPoint location = [sender locationInView:self];
     switch (sender.state) {
         case UIGestureRecognizerStateEnded:
@@ -182,7 +187,7 @@ void Window_ios::onInval() {
     }
 }
 
-- (IBAction)pinchGestureAction:(UIGestureRecognizer*)sender {
+- (void)pinchGestureAction:(UIGestureRecognizer*)sender {
     CGPoint location = [sender locationInView:self];
     UIPinchGestureRecognizer* pinchGestureRecognizer = (UIPinchGestureRecognizer*) sender;
     float scale = pinchGestureRecognizer.scale;
@@ -204,13 +209,13 @@ void Window_ios::onInval() {
     }
 }
 
-- (IBAction)swipeRightGestureAction:(UIGestureRecognizer*)sender {
+- (void)swipeRightGestureAction:(UIGestureRecognizer*)sender {
     if (UIGestureRecognizerStateEnded == sender.state) {
         fWindow->onFling(skui::InputState::kRight);
     }
 }
 
-- (IBAction)swipeLeftGestureAction:(UIGestureRecognizer*)sender {
+- (void)swipeLeftGestureAction:(UIGestureRecognizer*)sender {
     if (UIGestureRecognizerStateEnded == sender.state) {
         fWindow->onFling(skui::InputState::kLeft);
     }

@@ -1,35 +1,10 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the test suite of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:GPL-EXCEPT$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 3 as published by the Free Software
-** Foundation with exceptions as appearing in the file LICENSE.GPL3-EXCEPT
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
 
 #include <QtTest/QtTest>
 
-#include <qapplication.h>
+#include <qguiapplication.h>
 #include <qdebug.h>
 #include <qsvgrenderer.h>
 #include <qsvggenerator.h>
@@ -57,15 +32,19 @@ private slots:
     void invalidUrl_data();
     void invalidUrl();
     void testStrokeWidth();
+#if QT_CONFIG(picture)
     void testMapViewBoxToTarget();
     void testRenderElement();
+#endif
     void testRenderElementToBounds();
     void testRenderDocumentWithSizeToBounds();
+#if QT_CONFIG(picture)
     void constructorQXmlStreamReader() const;
     void loadQXmlStreamReader() const;
     void nestedQXmlStreamReader() const;
+#endif
     void stylePropagation() const;
-    void matrixForElement() const;
+    void transformForElement() const;
     void boundsOnElement() const;
     void gradientStops() const;
     void gradientRefs();
@@ -86,6 +65,24 @@ private slots:
     void oss_fuzz_23731();
     void oss_fuzz_24131();
     void oss_fuzz_24738();
+    void oss_fuzz_61586();
+    void imageRendering();
+    void illegalAnimateTransform_data();
+    void illegalAnimateTransform();
+    void tSpanLineBreak();
+    void animated();
+    void notAnimated();
+    void testMaskElement();
+    void testSymbol();
+    void testMarker();
+    void testPatternElement();
+    void testCycles();
+    void testFeFlood();
+    void testFeOffset();
+    void testFeColorMatrix();
+    void testFeMerge();
+    void testFeComposite();
+    void testFeGaussian();
 
 #ifndef QT_NO_COMPRESS
     void testGzLoading();
@@ -122,6 +119,14 @@ void tst_QSvgRenderer::getSetCheck()
     QCOMPARE(0, obj1.framesPerSecond()); // Can't have a negative framerate
     obj1.setFramesPerSecond(INT_MAX);
     QCOMPARE(INT_MAX, obj1.framesPerSecond());
+
+    // bool QSvgRenderer::isAnimationEnabled()
+    // void QSvgRenderer::setAnimationEnabled()
+    QVERIFY(obj1.isAnimationEnabled());
+    obj1.setAnimationEnabled(false);
+    QVERIFY(!obj1.isAnimationEnabled());
+    obj1.setAnimationEnabled(true);
+    QVERIFY(obj1.isAnimationEnabled());
 }
 
 void tst_QSvgRenderer::inexistentUrl()
@@ -218,6 +223,7 @@ void tst_QSvgRenderer::testStrokeWidth()
     QCOMPARE(strokeRect.y(), topLeft - (strokeWidth / 2));
 }
 
+#if QT_CONFIG(picture)
 void tst_QSvgRenderer::testMapViewBoxToTarget()
 {
     const char *src = "<svg><g><rect x=\"250\" y=\"250\" width=\"500\" height=\"500\" /></g></svg>";
@@ -343,6 +349,7 @@ void tst_QSvgRenderer::testRenderElement()
     }
 
 }
+#endif
 
 void tst_QSvgRenderer::testRenderElementToBounds()
 {
@@ -409,6 +416,7 @@ void tst_QSvgRenderer::testRenderDocumentWithSizeToBounds()
     QCOMPARE(reference, rendering);
 }
 
+#if QT_CONFIG(picture)
 void tst_QSvgRenderer::constructorQXmlStreamReader() const
 {
     const QByteArray data(src);
@@ -437,7 +445,6 @@ void tst_QSvgRenderer::loadQXmlStreamReader() const
     QCOMPARE(picture.boundingRect(), QRect(0, 0, 100, 100));
 }
 
-
 void tst_QSvgRenderer::nestedQXmlStreamReader() const
 {
     const QByteArray data(QByteArray("<bar>") + QByteArray(src) + QByteArray("</bar>"));
@@ -462,6 +469,7 @@ void tst_QSvgRenderer::nestedQXmlStreamReader() const
     QVERIFY(reader.atEnd());
     QVERIFY(!reader.hasError());
 }
+#endif
 
 void tst_QSvgRenderer::stylePropagation() const
 {
@@ -523,14 +531,17 @@ static qreal transformNorm(const QTransform &m)
         + m.m33() * m.m33());
 }
 
-static bool diffIsSmallEnough(double diff, double norm)
+template<typename T>
+static inline bool diffIsSmallEnough(T diff, T norm)
 {
-    return diff <= 1e-12 * norm;
-}
-
-static inline bool diffIsSmallEnough(float diff, float norm)
-{
-    return diff <= 1e-5 * norm;
+    static_assert(std::is_same_v<T, double> || std::is_same_v<T, float>);
+    T sigma = []{
+        if constexpr (std::is_same_v<T, double>)
+            return 1e-12;
+        else
+            return 1e-5;
+    }();
+    return diff <= sigma * norm;
 }
 
 static void compareTransforms(const QTransform &m1, const QTransform &m2)
@@ -549,7 +560,7 @@ static void compareTransforms(const QTransform &m1, const QTransform &m2)
     QVERIFY(diffIsSmallEnough(diffNorm, qMin(norm1, norm2)));
 }
 
-void tst_QSvgRenderer::matrixForElement() const
+void tst_QSvgRenderer::transformForElement() const
 {
     QByteArray data("<svg>"
                       "<g id='ichi' transform='translate(-3,1)'>"
@@ -595,6 +606,12 @@ void tst_QSvgRenderer::boundsOnElement() const
                           "<use x=\"0\" y=\"0\" transform=\"rotate(45)\" xlink:href=\"#baconost\"/>"
                         "</g>"
                       "</g>"
+                      "<text id=\"textA\" x=\"50\" y=\"100\">Lorem ipsum</text>"
+                      "<text id=\"textB\" transform=\"matrix(1 0 0 1 50 100)\">Lorem ipsum</text>"
+                      "<g id=\"textGroup\">"
+                        "<text id=\"textC\" transform=\"matrix(1 0 0 2 20 10)\">Lorem ipsum</text>"
+                        "<text id=\"textD\" transform=\"matrix(1 0 0 2 30 40)\">Lorem ipsum</text>"
+                      "</g>"
                     "</svg>");
     
     qreal sqrt2 = qSqrt(2);
@@ -606,6 +623,17 @@ void tst_QSvgRenderer::boundsOnElement() const
     QCOMPARE(renderer.boundsOnElement(QLatin1String("baconost")), QRectF(-10 * sqrt2, -10 * sqrt2, 20 * sqrt2, 20 * sqrt2));
     QCOMPARE(renderer.boundsOnElement(QLatin1String("hapaa")), QRectF(-13, -9, 22, 22));
     QCOMPARE(renderer.boundsOnElement(QLatin1String("prim")), QRectF(-10 * sqrt2 - 3, -10 * sqrt2 + 1, 20 * sqrt2, 20 * sqrt2));
+
+    QRectF textBoundsA = renderer.boundsOnElement(QLatin1String("textA"));
+    QVERIFY(!textBoundsA.isEmpty());
+    QCOMPARE(renderer.boundsOnElement(QLatin1String("textB")), textBoundsA);
+
+    QRect cBounds = renderer.boundsOnElement(QLatin1String("textC")).toRect();
+    QRect dBounds = renderer.boundsOnElement(QLatin1String("textD")).toRect();
+    QVERIFY(!cBounds.isEmpty());
+    QCOMPARE(cBounds.size(), dBounds.size());
+    QRect groupBounds = renderer.boundsOnElement(QLatin1String("textGroup")).toRect();
+    QCOMPARE(groupBounds, cBounds | dBounds);
 }
 
 void tst_QSvgRenderer::gradientStops() const
@@ -799,13 +827,13 @@ void tst_QSvgRenderer::recursiveRefs()
 #ifndef QT_NO_COMPRESS
 void tst_QSvgRenderer::testGzLoading()
 {
-    QSvgRenderer renderer(QLatin1String(SRCDIR "heart.svgz"));
+    QSvgRenderer renderer(QFINDTESTDATA("heart.svgz"));
     QVERIFY(renderer.isValid());
 
     QSvgRenderer resourceRenderer(QLatin1String(":/heart.svgz"));
     QVERIFY(resourceRenderer.isValid());
 
-    QFile largeFileGz(SRCDIR "large.svgz");
+    QFile largeFileGz(QFINDTESTDATA("large.svgz"));
     largeFileGz.open(QIODevice::ReadOnly);
     QByteArray data = largeFileGz.readAll();
     QSvgRenderer autoDetectGzData(data);
@@ -827,9 +855,9 @@ void tst_QSvgRenderer::testGzHelper_data()
     QTest::newRow("small") << QByteArray::fromHex(QByteArray("1f8b08005819934800034b"
             "cbcfe70200a865327e04000000")) << QByteArray("foo\n");
 
-    QFile largeFileGz("large.svgz");
+    QFile largeFileGz(QFINDTESTDATA("large.svgz"));
     largeFileGz.open(QIODevice::ReadOnly);
-    QFile largeFile("large.svg");
+    QFile largeFile(QFINDTESTDATA("large.svg"));
     largeFile.open(QIODevice::ReadOnly);
     QTest::newRow("large") << largeFileGz.readAll() << largeFile.readAll();
 
@@ -992,6 +1020,54 @@ void tst_QSvgRenderer::opacity()
         data.append("\" /></svg>");
         opacity_drawSvgAndVerify(data);
     }
+
+    // group opacity QTBUG-122310
+    const char *svg = R"svg(
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="-1 -1 37 37">
+    <g transform="translate(0, 0)">
+        <rect style="fill:#808080" x="0" y="0" width="10" height="10" fill-opacity="0.5"/>
+        <rect style="fill:#808080" x="5" y="5" width="10" height="10" fill-opacity="0.5"/>
+    </g>
+    <g transform="translate(20, 0)" fill-opacity="0.5">
+        <rect style="fill:#808080" x="0" y="0" width="10" height="10"/>
+        <rect style="fill:#808080" x="5" y="5" width="10" height="10"/>
+    </g>
+    <g transform="translate(0, 20)">
+        <rect style="fill:#808080" x="0" y="0" width="10" height="10" opacity="0.5"/>
+        <rect style="fill:#808080" x="5" y="5" width="10" height="10" opacity="0.5"/>
+    </g>
+    <g transform="translate(20, 20)" opacity="0.5">
+        <rect style="fill:#808080" x="0" y="0" width="10" height="10"/>
+        <rect style="fill:#808080" x="5" y="5" width="10" height="10"/>
+    </g>
+    </svg>
+    )svg";
+
+    QByteArray data(svg);
+    QSvgRenderer renderer(data);
+    QVERIFY(renderer.isValid());
+
+    QImage image(140, 140, QImage::Format_ARGB32_Premultiplied);
+    image.fill(Qt::white);
+    QPainter p;
+    p.begin(&image);
+    renderer.render(&p);
+    p.end();
+
+    const QRgb lightGray(0xffc0c0c0);
+    const QRgb gray(0xffa0a0a0);
+
+    QCOMPARE(image.pixel(QPoint(10, 10)), lightGray);
+    QCOMPARE(image.pixel(QPoint(30, 30)), gray);
+
+    QCOMPARE(image.pixel(QPoint(90, 10)), lightGray);
+    QCOMPARE(image.pixel(QPoint(110, 30)), gray);
+
+    QCOMPARE(image.pixel(QPoint(10, 90)), lightGray);
+    QCOMPARE(image.pixel(QPoint(30, 110)), gray);
+
+    QCOMPARE(image.pixel(QPoint(90, 90)), lightGray);
+    QCOMPARE(image.pixel(QPoint(110, 110)), lightGray);
 }
 
 void tst_QSvgRenderer::paths()
@@ -1555,6 +1631,8 @@ void tst_QSvgRenderer::testUseElement()
             }
         } else if (i > 7 && i < 10) {
             QCOMPARE(images[8], images[i]);
+        } else if (i == 12 || i == 13 || i == 17) {
+            QCOMPARE(images[10], images[i]);
         } else if (i > 11 && i < 15) {
             QCOMPARE(images[11], images[i]);
         } else if (i == 15) {
@@ -1644,6 +1722,507 @@ void tst_QSvgRenderer::oss_fuzz_24738()
     // when configured with "-sanitize undefined", this resulted in:
     // "runtime error: division by zero"
     QSvgRenderer().load(QByteArray("<svg><path d=\"a 2 1e-212.....\">"));
+}
+
+void tst_QSvgRenderer::oss_fuzz_61586()
+{
+    // resulted in null pointer deref
+    QSvgRenderer().load(QByteArray("<svg><style>*{font-family:q}<linearGradient><stop>"));
+}
+
+QByteArray image_data_url(QImage &image) {
+    QByteArray data;
+    QBuffer buffer(&data);
+    buffer.open(QBuffer::ReadWrite);
+    image.save(&buffer, "PNG");
+    buffer.close();
+    QByteArray url("data:image/png;base64,");
+    url.append(data.toBase64());
+    return url;
+}
+
+void tst_QSvgRenderer::imageRendering() {
+    QImage img(2, 2, QImage::Format_ARGB32_Premultiplied);
+    img.fill(Qt::green);
+    img.setPixel(0, 0, qRgb(255, 0, 0));
+    img.setPixel(1, 1, qRgb(255, 0, 0));
+    QByteArray imgurl(image_data_url(img));
+    QString svgtemplate(
+        "<svg><g transform='scale(2, 2)'>"
+            "<image image-rendering='%1' xlink:href='%2' width='2' height='2' />"
+        "</g></svg>"
+    );
+    const char *cases[] = {"optimizeQuality", "optimizeSpeed"};
+    for (auto ir: cases) {
+        QString svg = svgtemplate.arg(QLatin1String(ir)).arg(QLatin1String(imgurl));
+        QImage img1(4, 4, QImage::Format_ARGB32);
+        QPainter p1;
+        p1.begin(&img1);
+        QSvgRenderer renderer(svg.toLatin1());
+        Q_ASSERT(renderer.isValid());
+        renderer.render(&p1);
+        p1.end();
+
+        QImage img2(4, 4, QImage::Format_ARGB32);
+        QPainter p2(&img2);
+        p2.scale(2, 2);
+        if (QLatin1String(ir) == QLatin1String("optimizeSpeed"))
+            p2.setRenderHint(QPainter::SmoothPixmapTransform, false);
+        else if (QLatin1String(ir) == QLatin1String("optimizeQuality"))
+            p2.setRenderHint(QPainter::SmoothPixmapTransform, true);
+        p2.drawImage(0, 0, img);
+        p2.end();
+        QCOMPARE(img1, img2);
+    }
+}
+
+void tst_QSvgRenderer::illegalAnimateTransform_data()
+{
+    QTest::addColumn<QByteArray>("svg");
+
+    QTest::newRow("case1") << QByteArray("<svg><animateTransform type=\"rotate\" begin=\"1\" dur=\"2\" values=\"8,0,5,0\">");
+    QTest::newRow("case2") << QByteArray("<svg><animateTransform type=\"rotate\" begin=\"1\" dur=\"2\" values=\"1,2\">");
+    QTest::newRow("case3") << QByteArray("<svg><animateTransform type=\"rotate\" begin=\"1\" dur=\"2\" from=\".. 5 2\" to=\"f\">");
+    QTest::newRow("case4") << QByteArray("<svg><animateTransform type=\"scale\" begin=\"1\" dur=\"2\" by=\"--,..\">");
+}
+
+void tst_QSvgRenderer::illegalAnimateTransform()
+{
+    QFETCH(QByteArray, svg);
+    QSvgRenderer renderer;
+    QVERIFY(!renderer.load(svg)); // also shouldn't assert
+}
+
+void tst_QSvgRenderer::testMaskElement()
+{
+    QByteArray svgDoc("<svg width=\"240\" height=\"240\">"
+                        "<defs>"
+                            "<radialGradient id=\"myGradient\">"
+                                "<stop offset=\"0\" stop-color=\"black\"/>"
+                                "<stop offset=\"1\" stop-color=\"white\"/>"
+                            "</radialGradient>"
+                            "<mask id=\"mask\" width=\"240\" height=\"240\">"
+                                "<rect width=\"240\" height=\"240\" fill=\"white\"/>"
+                                "<circle cx=\"120\" cy=\"120\" r=\"120\" fill=\"url(#myGradient)\"/>"
+                            "</mask>"
+                        "</defs>"
+                        "<rect width=\"240\" height=\"240\" fill=\"red\" mask=\"url(#mask)\"/>"
+                      "</svg>");
+
+    QSvgRenderer renderer(svgDoc);
+    QVERIFY(renderer.isValid());
+
+    QImage image(240, 240, QImage::Format_ARGB32_Premultiplied);
+    image.fill(Qt::transparent);
+    QImage refImage(240, 240, QImage::Format_ARGB32_Premultiplied);
+    refImage.fill(Qt::transparent);
+    QImage refMask(240, 240, QImage::QImage::Format_RGBA8888);
+
+    QPainter p;
+    p.begin(&image);
+    renderer.render(&p);
+    p.end();
+
+    p.begin(&refMask);
+    p.fillRect(0, 0, 240, 240, QColorConstants::Svg::white);
+    QRadialGradient radialGradient(0.5, 0.5, 0.5, 0.5, 0.5, 0);
+    radialGradient.setCoordinateMode(QGradient::ObjectMode);
+    radialGradient.setInterpolationMode(QGradient::ComponentInterpolation);
+    QBrush gradientBrush(radialGradient);
+    p.setBrush(gradientBrush);
+    p.setPen(Qt::NoPen);
+    p.drawEllipse(QPointF(120, 120), 120, 120);
+    p.end();
+
+    for (int i=0; i < refMask.height(); i++) {
+        QRgb *line = reinterpret_cast<QRgb *>(refMask.scanLine(i));
+        for (int j=0; j < refMask.width(); j++) {
+            const qreal rC = 0.2125, gC = 0.7154, bC = 0.0721; //luminanceToAlpha following SVG 1.1
+            int alpha = 255 - (qRed(line[j]) * rC + qGreen(line[j]) * gC + qBlue(line[j]) * bC) * qAlpha(line[j])/255.;
+            line[j] = qRgba(0, 0, 0, alpha);
+        }
+    }
+
+    p.begin(&refImage);
+    p.fillRect(0, 0, 240, 240, QColorConstants::Svg::red);
+    p.setCompositionMode(QPainter::CompositionMode_DestinationOut);
+    p.drawImage(QRect(0, 0, 240, 240), refMask);
+    p.end();
+
+    QCOMPARE(refImage, image);
+}
+
+void tst_QSvgRenderer::testSymbol()
+{
+    QByteArray svgDoc("<svg width=\"100\" height=\"100\">"
+                      "<symbol id=\"dot\" width=\"100\" height=\"100\" viewBox=\"0 0 1 1\">"
+                      "<rect x=\"0.25\" y=\"0.25\" width=\"0.5\" height=\"0.5\" fill=\"red\"/>"
+                      "</symbol>"
+                      "<use href=\"#dot\" x=\"0\" y=\"0\" />"
+                      "</svg>");
+
+    QSvgRenderer renderer(svgDoc);
+    QVERIFY(renderer.isValid());
+
+    QImage image(100, 100, QImage::Format_ARGB32_Premultiplied);
+    image.fill(Qt::white);
+    QImage refImage(100, 100, QImage::Format_ARGB32_Premultiplied);
+    refImage.fill(Qt::white);
+
+    QPainter p;
+    p.begin(&image);
+    renderer.render(&p);
+    p.end();
+
+    p.begin(&refImage);
+    p.setBrush(Qt::red);
+    p.setPen(Qt::NoPen);
+    p.drawRect(25, 25, 50, 50);
+    p.end();
+
+    QCOMPARE(refImage, image);
+}
+
+void tst_QSvgRenderer::testMarker()
+{
+    QByteArray svgDoc("<svg width=\"100\" height=\"100\">"
+                      "<marker id=\"mark\" markerWidth=\"10\" markerHeight=\"10\" viewBox=\"0 0 1 1\" refX=\"0\" refY=\"0.5\">"
+                      "<rect x=\"0\" y=\"0\" width=\"1\" height=\"1\" fill=\"red\"/>"
+                      "</marker>"
+                      "<line x1=\"10\" y1=\"50\" x2=\"90\" y2=\"50\" stroke=\"white\" marker-end=\"url(#mark)\" />"
+                      "</svg>");
+
+    QSvgRenderer renderer(svgDoc);
+    QVERIFY(renderer.isValid());
+
+    QImage image(100, 100, QImage::Format_ARGB32_Premultiplied);
+    image.fill(Qt::white);
+    QImage refImage(100, 100, QImage::Format_ARGB32_Premultiplied);
+    refImage.fill(Qt::white);
+
+    QPainter p;
+    p.begin(&image);
+    renderer.render(&p);
+    p.end();
+
+    p.begin(&refImage);
+    p.setPen(Qt::white);
+    p.drawLine(10, 50, 90, 50);
+    p.setBrush(Qt::red);
+    p.setPen(Qt::NoPen);
+    p.drawRect(90, 45, 10, 10);
+    p.end();
+
+    QCOMPARE(refImage, image);
+}
+
+void tst_QSvgRenderer::tSpanLineBreak()
+{
+    QSvgRenderer renderer;
+    QVERIFY(renderer.load(QByteArray("<svg><textArea>Foo<tbreak/>Bar</textArea></svg>")));
+
+    QImage img(50, 50, QImage::Format_ARGB32);
+    {
+        QPainter p(&img);
+        renderer.render(&p); // Don't crash
+    }
+}
+
+static const char *const animatedSvgContents = R"(<svg>
+            <path d="M36 18c0-9.94-8.06-18-18-18">
+                <animateTransform attributeName="transform" type="rotate" from="0 18 18" to="360 18 18" dur="1s" repeatCount="indefinite"/>
+            </path></svg>)";
+
+void tst_QSvgRenderer::animated()
+{
+    QSvgRenderer renderer;
+    QVERIFY(renderer.load(QByteArray(animatedSvgContents)));
+    QVERIFY(renderer.isAnimationEnabled());
+    QCOMPARE(renderer.framesPerSecond(), 30);
+    QTimer *timer = renderer.findChild<QTimer *>();
+    QVERIFY(timer);
+    QVERIFY(timer->isActive());
+
+    // Toggling animationEnabled
+    renderer.setAnimationEnabled(false);
+    QVERIFY(!renderer.isAnimationEnabled());
+    QVERIFY(!timer->isActive());
+    renderer.setAnimationEnabled(true);
+    QVERIFY(renderer.isAnimationEnabled());
+    QVERIFY(timer->isActive());
+
+    // Adjusting the FPS
+    renderer.setFramesPerSecond(0);
+    QVERIFY(renderer.isAnimationEnabled());
+    QVERIFY(!timer->isActive());
+    renderer.setFramesPerSecond(30);
+    QVERIFY(renderer.isAnimationEnabled());
+    QVERIFY(timer->isActive());
+
+    // Mixing both
+    renderer.setFramesPerSecond(0);
+    QVERIFY(!timer->isActive());
+    renderer.setAnimationEnabled(true); // this isn't enough to restart the animation, we are still at FPS 0
+    QVERIFY(!timer->isActive());
+    renderer.setFramesPerSecond(30);
+    QVERIFY(timer->isActive());
+
+    // Load non-animated SVG
+    QVERIFY(renderer.load(QByteArray(src)));
+    QVERIFY(renderer.isAnimationEnabled()); // property didn't change
+    QVERIFY(!timer->isActive()); // but timer stopped
+}
+
+void tst_QSvgRenderer::notAnimated()
+{
+    // Start with animations disabled
+    QSvgRenderer renderer;
+    renderer.setAnimationEnabled(false);
+    QVERIFY(renderer.load(QByteArray(animatedSvgContents)));
+    QVERIFY(!renderer.isAnimationEnabled());
+}
+
+void tst_QSvgRenderer::testPatternElement()
+{
+    QByteArray svgDoc("<svg viewBox=\"0 0 200 200\">"
+                        "<pattern id=\"pattern\" patternUnits=\"userSpaceOnUse\" width=\"20\" height=\"20\">"
+                            "<rect x=\"0\" y=\"0\" width=\"10\" height=\"10\" fill=\"red\"/>"
+                            "<rect x=\"10\" y=\"0\" width=\"10\" height=\"10\" fill=\"green\"/>"
+                            "<rect x=\"0\" y=\"10\" width=\"10\" height=\"10\" fill=\"blue\"/>"
+                            "<rect x=\"10\" y=\"10\" width=\"10\" height=\"10\" fill=\"yellow\"/>"
+                        "</pattern>"
+                        "<rect width=\"200\" height=\"200\" fill=\"url(#pattern)\"/>"
+                   "</svg>");
+
+    QSvgRenderer renderer(svgDoc);
+    QVERIFY(renderer.isValid());
+
+    QImage image(200, 200, QImage::Format_ARGB32_Premultiplied);
+    image.fill(Qt::white);
+    QImage refImage(200, 200, QImage::Format_ARGB32_Premultiplied);
+    refImage.fill(Qt::white);
+    QImage refPattern(20, 20, QImage::Format_ARGB32);
+    refPattern.fill(Qt::transparent);
+
+    QPainter p;
+    p.begin(&image);
+    renderer.render(&p);
+    p.end();
+
+    p.begin(&refPattern);
+    p.fillRect(0, 0, 10, 10, QColorConstants::Svg::red);
+    p.fillRect(10, 0, 10, 10, QColorConstants::Svg::green);
+    p.fillRect(0, 10, 10, 10, QColorConstants::Svg::blue);
+    p.fillRect(10, 10, 10, 10, QColorConstants::Svg::yellow);
+    p.end();
+
+    p.begin(&refImage);
+    p.fillRect(0, 0, 200, 200, QBrush(refPattern));
+    p.end();
+
+    QCOMPARE(refImage, image);
+}
+
+void tst_QSvgRenderer::testCycles()
+{
+    QByteArray svgDoc("<svg viewBox=\"0 0 200 200\">"
+                      "<pattern id=\"pattern\" patternUnits=\"userSpaceOnUse\" width=\"20\" height=\"20\">"
+                      "<rect x=\"0\" y=\"0\" width=\"10\" height=\"10\" fill=\"url(#pattern)\"/>"
+                      "</pattern>"
+                      "</svg>");
+
+    QSvgRenderer renderer(svgDoc);
+    QVERIFY(!renderer.isValid());
+}
+
+void tst_QSvgRenderer::testFeFlood()
+{
+    QByteArray svgDoc("<svg width=\"50\" height=\"50\">"
+                      "<filter id=\"f1\">"
+                      "<feFlood flood-color=\"red\"/>"
+                      "</filter>"
+                      "<rect x=\"10\" y=\"10\" width=\"30\" height=\"30\" fill=\"blue\" filter=\"url(#f1)\"/>"
+                      "<rect x=\"10\" y=\"10\" width=\"30\" height=\"30\" fill=\"blue\"/>"
+                      "</svg>");
+
+    QSvgRenderer renderer(svgDoc);
+    QVERIFY(renderer.isValid());
+
+    QImage image(100, 100, QImage::Format_ARGB32_Premultiplied);
+    image.fill(Qt::white);
+    QImage refImage(100, 100, QImage::Format_ARGB32_Premultiplied);
+    refImage.fill(Qt::white);
+
+    QPainter p;
+    p.begin(&image);
+    renderer.render(&p);
+    p.end();
+
+    p.begin(&refImage);
+    p.fillRect(14, 14, 72, 72, Qt::red);
+    p.fillRect(20, 20, 60, 60, Qt::blue);
+    p.end();
+
+    QCOMPARE(refImage, image);
+}
+
+void tst_QSvgRenderer::testFeOffset()
+{
+    QByteArray svgDoc("<svg width=\"50\" height=\"50\">"
+                      "<defs>"
+                      "<filter id=\"f1\">"
+                      "<feOffset in=\"SourceGraphic\" dx=\"5\" dy=\"5\"/>"
+                      "</filter>"
+                      "</defs>"
+                      "<rect x=\"10\" y=\"10\" width=\"30\" height=\"30\" stroke=\"none\" fill=\"blue\"/>"
+                      "</svg>"
+);
+
+    QSvgRenderer renderer(svgDoc);
+    QVERIFY(renderer.isValid());
+
+    QImage image(50, 50, QImage::Format_ARGB32_Premultiplied);
+    image.fill(Qt::white);
+    QImage refImage(50, 50, QImage::Format_ARGB32_Premultiplied);
+    refImage.fill(Qt::white);
+
+    QPainter p;
+    p.begin(&image);
+    renderer.render(&p);
+    p.end();
+
+    p.begin(&refImage);
+    p.fillRect(10, 10, 30, 30, Qt::blue);
+    p.end();
+
+    QCOMPARE(refImage, image);
+}
+
+void tst_QSvgRenderer::testFeColorMatrix()
+{
+    QByteArray svgDoc("<svg width=\"50\" height=\"50\">"
+                      "<defs>"
+                      "<filter id=\"f1\">"
+                      "<feColorMatrix in=\"SourceGraphic\" type=\"saturate\" values=\"0\"/>"
+                      "</filter>"
+                      "</defs>"
+                      "<rect x=\"0\" y=\"0\" width=\"50\" height=\"50\" stroke=\"none\" fill=\"red\" filter=\"url(#f1)\" />"
+                      "</svg>"
+);
+
+    QSvgRenderer renderer(svgDoc);
+    QVERIFY(renderer.isValid());
+
+    QImage image(50, 50, QImage::Format_ARGB32_Premultiplied);
+    image.fill(Qt::white);
+    QImage refImage(50, 50, QImage::Format_ARGB32_Premultiplied);
+    refImage.fill(Qt::white);
+
+    QPainter p;
+    p.begin(&image);
+    renderer.render(&p);
+    p.end();
+
+    QVERIFY(image.allGray());
+}
+
+void tst_QSvgRenderer::testFeMerge()
+{
+    QByteArray svgDoc("<svg width=\"50\" height=\"50\">"
+                      "<filter id=\"f1\">"
+                      "<feOffset in=\"SourceAlpha\" dx=\"2\" dy=\"2\"/>"
+                      "<feMerge>"
+                      "<feMergeNode/>"
+                      "<feMergeNode in=\"SourceGraphic\"/>"
+                      "</feMerge>"
+                      "</filter>"
+                      "<rect x=\"10\" y=\"10\" width=\"30\" height=\"30\" fill=\"blue\" filter=\"url(#f1)\"/>"
+                      "</svg>"
+);
+
+    QSvgRenderer renderer(svgDoc);
+    QVERIFY(renderer.isValid());
+
+    QImage image(50, 50, QImage::Format_ARGB32_Premultiplied);
+    image.fill(Qt::white);
+    QImage refImage(50, 50, QImage::Format_ARGB32_Premultiplied);
+    refImage.fill(Qt::white);
+
+    QPainter p;
+    p.begin(&image);
+    renderer.render(&p);
+    p.end();
+
+    p.begin(&refImage);
+    p.fillRect(12, 12, 30, 30, Qt::black);
+    p.fillRect(10, 10, 30, 30, Qt::blue);
+    p.end();
+
+    QCOMPARE(refImage, image);
+}
+
+
+void tst_QSvgRenderer::testFeComposite()
+{
+    QByteArray svgDoc("<svg width=\"50\" height=\"50\">"
+                      "<filter id=\"f1\">"
+                      "<feOffset in=\"SourceAlpha\" dx=\"2\" dy=\"2\"/>"
+                      "<feComposite in2=\"SourceGraphic\" operator=\"over\"/>"
+                      "</filter>"
+                      "<rect x=\"10\" y=\"10\" width=\"30\" height=\"30\" fill=\"blue\" filter=\"url(#f1)\"/>"
+                      "</svg>"
+);
+
+    QSvgRenderer renderer(svgDoc);
+    QVERIFY(renderer.isValid());
+
+    QImage image(50, 50, QImage::Format_ARGB32_Premultiplied);
+    image.fill(Qt::white);
+    QImage refImage(50, 50, QImage::Format_ARGB32_Premultiplied);
+    refImage.fill(Qt::white);
+
+    QPainter p;
+    p.begin(&image);
+    renderer.render(&p);
+    p.end();
+
+    p.begin(&refImage);
+    p.fillRect(10, 10, 30, 30, Qt::blue);
+    p.fillRect(12, 12, 30, 30, Qt::black);
+    p.end();
+
+    QCOMPARE(refImage, image);
+}
+
+void tst_QSvgRenderer::testFeGaussian()
+{
+    QByteArray svgDoc("<svg width=\"50\" height=\"50\">"
+                      "<filter id=\"f1\">"
+                      "<feGaussianBlur in=\"SourceGraphic\" stdDeviation=\"5\"/>"
+                      "</filter>"
+                      "<rect x=\"10\" y=\"10\" width=\"30\" height=\"30\" fill=\"black\" filter=\"url(#f1)\"/>"
+                      "</svg>"
+);
+
+    QSvgRenderer renderer(svgDoc);
+    QVERIFY(renderer.isValid());
+
+    QImage image(50, 50, QImage::Format_ARGB32_Premultiplied);
+    image.fill(Qt::white);
+
+    QPainter p;
+    p.begin(&image);
+    renderer.render(&p);
+    p.end();
+
+    QVERIFY(image.allGray());
+
+    QCOMPARE(qGray(image.pixel(QPoint(0, 25))), 255);
+    QCOMPARE(qGray(image.pixel(QPoint(5, 25))), 255);
+    QCOMPARE_LE(qGray(image.pixel(QPoint(10, 25))), 150);
+    QCOMPARE_GE(qGray(image.pixel(QPoint(10, 25))), 100);
+    QCOMPARE_LE(qGray(image.pixel(QPoint(25, 25))), 10);
+
 }
 
 QTEST_MAIN(tst_QSvgRenderer)

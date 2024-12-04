@@ -50,48 +50,45 @@ void MatchedProperties::Trace(Visitor* visitor) const {
 
 void MatchResult::AddMatchedProperties(
     const CSSPropertyValueSet* properties,
-    unsigned link_match_type,
-    ValidPropertyFilter valid_property_filter) {
+    CascadeOrigin origin,
+    const AddMatchedPropertiesOptions& options) {
   matched_properties_.Grow(matched_properties_.size() + 1);
   MatchedProperties& new_properties = matched_properties_.back();
   new_properties.properties = const_cast<CSSPropertyValueSet*>(properties);
-  new_properties.types_.link_match_type = link_match_type;
+  new_properties.types_.link_match_type = options.link_match_type;
   new_properties.types_.valid_property_filter =
       static_cast<std::underlying_type_t<ValidPropertyFilter>>(
-          valid_property_filter);
-  new_properties.types_.origin = current_origin_;
+          options.valid_property_filter);
+  new_properties.types_.layer_order = ClampTo<uint16_t>(options.layer_order);
+  new_properties.types_.is_inline_style = options.is_inline_style;
+  new_properties.types_.is_fallback_style = options.is_fallback_style;
+  new_properties.types_.origin = origin;
   new_properties.types_.tree_order = current_tree_order_;
+#if DCHECK_IS_ON()
+  DCHECK_GE(origin, last_origin_);
+  if (!tree_scopes_.empty()) {
+    DCHECK_EQ(origin, CascadeOrigin::kAuthor);
+  }
+  last_origin_ = origin;
+#endif
 }
 
-void MatchResult::FinishAddingUARules() {
-  DCHECK_EQ(current_origin_, CascadeOrigin::kUserAgent);
-  current_origin_ = CascadeOrigin::kUser;
-}
-
-void MatchResult::FinishAddingUserRules() {
-  DCHECK_EQ(current_origin_, CascadeOrigin::kUser);
-  current_origin_ = CascadeOrigin::kAuthor;
-}
-
-void MatchResult::FinishAddingAuthorRulesForTreeScope() {
-  DCHECK_EQ(current_origin_, CascadeOrigin::kAuthor);
-  current_tree_order_ = base::ClampAdd(current_tree_order_, 1);
-}
-
-MatchedExpansionsRange MatchResult::Expansions(const Document& document,
-                                               CascadeFilter filter) const {
-  return MatchedExpansionsRange(
-      MatchedExpansionsIterator(matched_properties_.begin(), document, filter,
-                                0),
-      MatchedExpansionsIterator(matched_properties_.end(), document, filter,
-                                matched_properties_.size()));
+void MatchResult::BeginAddingAuthorRulesForTreeScope(
+    const TreeScope& tree_scope) {
+  current_tree_order_ =
+      ClampTo<decltype(current_tree_order_)>(tree_scopes_.size());
+  tree_scopes_.push_back(&tree_scope);
 }
 
 void MatchResult::Reset() {
   matched_properties_.clear();
   is_cacheable_ = true;
-  current_origin_ = CascadeOrigin::kUserAgent;
+  depends_on_size_container_queries_ = false;
+#if DCHECK_IS_ON()
+  last_origin_ = CascadeOrigin::kNone;
+#endif
   current_tree_order_ = 0;
+  tree_scopes_.clear();
 }
 
 }  // namespace blink

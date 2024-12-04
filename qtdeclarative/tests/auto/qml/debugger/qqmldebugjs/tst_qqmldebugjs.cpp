@@ -1,34 +1,9 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the test suite of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:GPL-EXCEPT$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 3 as published by the Free Software
-** Foundation with exceptions as appearing in the file LICENSE.GPL3-EXCEPT
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
 #include "debugutil_p.h"
 #include "qqmldebugprocess_p.h"
-#include "../../../shared/util.h"
+#include <QtQuickTestUtils/private/qmlutils_p.h>
 
 #include <private/qqmlenginedebugclient_p.h>
 #include <private/qv4debugclient_p.h>
@@ -81,6 +56,9 @@ do {\
 class tst_QQmlDebugJS : public QQmlDebugTest
 {
     Q_OBJECT
+
+public:
+    tst_QQmlDebugJS();
 
 private slots:
     void initTestCase() override;
@@ -162,8 +140,8 @@ private slots:
     void letConstLocals();
 
 private:
-    ConnectResult init(bool qmlscene, const QString &qmlFile = QString(TEST_QMLFILE),
-                    bool blockMode = true, bool restrictServices = false);
+    ConnectResult runAndConnect(bool qmlscene, const QString &qmlFile = QString(TEST_QMLFILE),
+                                bool blockMode = true, bool restrictServices = false);
     QList<QQmlDebugClient *> createClients() override;
     QPointer<QV4DebugClient> m_client;
 
@@ -175,16 +153,21 @@ private:
 };
 
 
+tst_QQmlDebugJS::tst_QQmlDebugJS()
+    : QQmlDebugTest(QT_QMLTEST_DATADIR)
+{
+}
+
 void tst_QQmlDebugJS::initTestCase()
 {
     QQmlDebugTest::initTestCase();
 }
-
-QQmlDebugTest::ConnectResult tst_QQmlDebugJS::init(bool qmlscene, const QString &qmlFile,
+#include <iostream>
+QQmlDebugTest::ConnectResult tst_QQmlDebugJS::runAndConnect(bool qmlscene, const QString &qmlFile,
                                                    bool blockMode, bool restrictServices)
 {
     const QString executable = qmlscene
-            ? QLibraryInfo::location(QLibraryInfo::BinariesPath) + "/qmlscene"
+            ? QLibraryInfo::path(QLibraryInfo::BinariesPath) + "/qmlscene"
             : debugJsServerPath("qqmldebugjs");
     return QQmlDebugTest::connectTo(
                 executable, restrictServices ? QStringLiteral("V8Debugger") : QString(),
@@ -212,7 +195,7 @@ void tst_QQmlDebugJS::connect()
     QFETCH(bool, restrictMode);
     QFETCH(bool, qmlscene);
 
-    QCOMPARE(init(qmlscene, QString(TEST_QMLFILE), blockMode, restrictMode), ConnectSuccess);
+    QCOMPARE(runAndConnect(qmlscene, QString(TEST_QMLFILE), blockMode, restrictMode), ConnectSuccess);
     m_client->connect();
     QVERIFY(waitForClientSignal(SIGNAL(connected())));
 }
@@ -222,7 +205,7 @@ void tst_QQmlDebugJS::interrupt()
     //void connect()
     QFETCH(bool, qmlscene);
 
-    QCOMPARE(init(qmlscene), ConnectSuccess);
+    QCOMPARE(runAndConnect(qmlscene), ConnectSuccess);
     m_client->connect();
 
     m_client->interrupt();
@@ -234,7 +217,7 @@ void tst_QQmlDebugJS::getVersion()
     //void version()
     QFETCH(bool, qmlscene);
 
-    QCOMPARE(init(qmlscene), ConnectSuccess);
+    QCOMPARE(runAndConnect(qmlscene), ConnectSuccess);
     m_client->connect();
     QVERIFY(waitForClientSignal(SIGNAL(connected())));
 
@@ -248,7 +231,7 @@ void tst_QQmlDebugJS::getVersionWhenAttaching()
     //void version()
     QFETCH(bool, qmlscene);
 
-    QCOMPARE(init(qmlscene, QLatin1String(TIMER_QMLFILE), false), ConnectSuccess);
+    QCOMPARE(runAndConnect(qmlscene, QLatin1String(TIMER_QMLFILE), false), ConnectSuccess);
     m_client->connect();
 
     m_client->version();
@@ -261,7 +244,7 @@ void tst_QQmlDebugJS::disconnect()
     //void disconnect()
     QFETCH(bool, qmlscene);
 
-    QCOMPARE(init(qmlscene), ConnectSuccess);
+    QCOMPARE(runAndConnect(qmlscene), ConnectSuccess);
     m_client->connect();
 
     m_client->disconnect();
@@ -273,8 +256,8 @@ void tst_QQmlDebugJS::setBreakpointInScriptOnCompleted()
     //void setBreakpoint(QString type, QString target, int line = -1, int column = -1, bool enabled = false, QString condition = QString(), int ignoreCount = -1)
     QFETCH(bool, qmlscene);
 
-    int sourceLine = 34;
-    QCOMPARE(init(qmlscene, ONCOMPLETED_QMLFILE), ConnectSuccess);
+    int sourceLine = 9;
+    QCOMPARE(runAndConnect(qmlscene, ONCOMPLETED_QMLFILE), ConnectSuccess);
 
     m_client->setBreakpoint(QLatin1String(ONCOMPLETED_QMLFILE), sourceLine, -1, true);
     m_client->connect();
@@ -292,8 +275,8 @@ void tst_QQmlDebugJS::setBreakpointInScriptOnComponentCreated()
     //void setBreakpoint(QString type, QString target, int line = -1, int column = -1, bool enabled = false, QString condition = QString(), int ignoreCount = -1)
     QFETCH(bool, qmlscene);
 
-    int sourceLine = 34;
-    QCOMPARE(init(qmlscene, CREATECOMPONENT_QMLFILE), ConnectSuccess);
+    int sourceLine = 9;
+    QCOMPARE(runAndConnect(qmlscene, CREATECOMPONENT_QMLFILE), ConnectSuccess);
 
     m_client->setBreakpoint(QLatin1String(ONCOMPLETED_QMLFILE), sourceLine, -1, true);
     m_client->connect();
@@ -310,8 +293,8 @@ void tst_QQmlDebugJS::setBreakpointInScriptOnTimerCallback()
 {
     QFETCH(bool, qmlscene);
 
-    int sourceLine = 35;
-    QCOMPARE(init(qmlscene, TIMER_QMLFILE), ConnectSuccess);
+    int sourceLine = 10;
+    QCOMPARE(runAndConnect(qmlscene, TIMER_QMLFILE), ConnectSuccess);
 
     m_client->connect();
     //We can set the breakpoint after connect() here because the timer is repeating and if we miss
@@ -331,8 +314,8 @@ void tst_QQmlDebugJS::setBreakpointInScriptInDifferentFile()
     //void setBreakpoint(QString type, QString target, int line = -1, int column = -1, bool enabled = false, QString condition = QString(), int ignoreCount = -1)
     QFETCH(bool, qmlscene);
 
-    int sourceLine = 31;
-    QCOMPARE(init(qmlscene, LOADJSFILE_QMLFILE), ConnectSuccess);
+    int sourceLine = 6;
+    QCOMPARE(runAndConnect(qmlscene, LOADJSFILE_QMLFILE), ConnectSuccess);
 
     m_client->setBreakpoint(QLatin1String(TEST_JSFILE), sourceLine, -1, true);
     m_client->connect();
@@ -350,9 +333,9 @@ void tst_QQmlDebugJS::setBreakpointInScriptOnComment()
     //void setBreakpoint(QString type, QString target, int line = -1, int column = -1, bool enabled = false, QString condition = QString(), int ignoreCount = -1)
     QFETCH(bool, qmlscene);
 
-    int sourceLine = 34;
-    int actualLine = 36;
-    QCOMPARE(init(qmlscene, BREAKPOINTRELOCATION_QMLFILE), ConnectSuccess);
+    int sourceLine = 9;
+    int actualLine = 11;
+    QCOMPARE(runAndConnect(qmlscene, BREAKPOINTRELOCATION_QMLFILE), ConnectSuccess);
 
     m_client->setBreakpoint(QLatin1String(BREAKPOINTRELOCATION_QMLFILE), sourceLine, -1, true);
     m_client->connect();
@@ -371,9 +354,9 @@ void tst_QQmlDebugJS::setBreakpointInScriptOnEmptyLine()
     //void setBreakpoint(QString type, QString target, int line = -1, int column = -1, bool enabled = false, QString condition = QString(), int ignoreCount = -1)
     QFETCH(bool, qmlscene);
 
-    int sourceLine = 35;
-    int actualLine = 36;
-    QCOMPARE(init(qmlscene, BREAKPOINTRELOCATION_QMLFILE), ConnectSuccess);
+    int sourceLine = 10;
+    int actualLine = 11;
+    QCOMPARE(runAndConnect(qmlscene, BREAKPOINTRELOCATION_QMLFILE), ConnectSuccess);
 
     m_client->setBreakpoint(QLatin1String(BREAKPOINTRELOCATION_QMLFILE), sourceLine, -1, true);
     m_client->connect();
@@ -392,8 +375,8 @@ void tst_QQmlDebugJS::setBreakpointInScriptOnOptimizedBinding()
     //void setBreakpoint(QString type, QString target, int line = -1, int column = -1, bool enabled = false, QString condition = QString(), int ignoreCount = -1)
     QFETCH(bool, qmlscene);
 
-    int sourceLine = 39;
-    QCOMPARE(init(qmlscene, BREAKPOINTRELOCATION_QMLFILE), ConnectSuccess);
+    int sourceLine = 14;
+    QCOMPARE(runAndConnect(qmlscene, BREAKPOINTRELOCATION_QMLFILE), ConnectSuccess);
 
     m_client->setBreakpoint(QLatin1String(BREAKPOINTRELOCATION_QMLFILE), sourceLine, -1, true);
     m_client->connect();
@@ -411,8 +394,8 @@ void tst_QQmlDebugJS::setBreakpointInScriptWithCondition()
     QFETCH(bool, qmlscene);
 
     int out = 10;
-    int sourceLine = 37;
-    QCOMPARE(init(qmlscene, CONDITION_QMLFILE), ConnectSuccess);
+    int sourceLine = 12;
+    QCOMPARE(runAndConnect(qmlscene, CONDITION_QMLFILE), ConnectSuccess);
 
     m_client->connect();
     //The breakpoint is in a timer loop so we can set it after connect().
@@ -442,9 +425,9 @@ void tst_QQmlDebugJS::setBreakpointInScriptThatQuits()
 {
     QFETCH(bool, qmlscene);
 
-    QCOMPARE(init(qmlscene, QUIT_QMLFILE), ConnectSuccess);
+    QCOMPARE(runAndConnect(qmlscene, QUIT_QMLFILE), ConnectSuccess);
 
-    int sourceLine = 36;
+    int sourceLine = 11;
 
     m_client->setBreakpoint(QLatin1String(QUIT_QMLFILE), sourceLine, -1, true);
     m_client->connect();
@@ -477,12 +460,12 @@ void tst_QQmlDebugJS::setBreakpointInJavaScript()
 
     if (seedCache) { // Make sure there is a qmlc file that the engine should _not_ laod.
         QProcess process;
-        process.start(QLibraryInfo::location(QLibraryInfo::BinariesPath) + "/qmlscene",
+        process.start(QLibraryInfo::path(QLibraryInfo::BinariesPath) + "/qmlscene",
                       { testFile(QUITINJS_QMLFILE) });
         QTRY_COMPARE(process.state(), QProcess::NotRunning);
     }
 
-    QCOMPARE(init(qmlscene, QUITINJS_QMLFILE), ConnectSuccess);
+    QCOMPARE(runAndConnect(qmlscene, QUITINJS_QMLFILE), ConnectSuccess);
 
     const int sourceLine = 2;
 
@@ -504,8 +487,8 @@ void tst_QQmlDebugJS::setBreakpointInJavaScript()
 
 void tst_QQmlDebugJS::setBreakpointWhenAttaching()
 {
-    int sourceLine = 35;
-    QCOMPARE(init(true, QLatin1String(TIMER_QMLFILE), false), ConnectSuccess);
+    int sourceLine = 10;
+    QCOMPARE(runAndConnect(true, QLatin1String(TIMER_QMLFILE), false), ConnectSuccess);
 
     m_client->connect();
 
@@ -524,9 +507,9 @@ void tst_QQmlDebugJS::clearBreakpoint()
     //void clearBreakpoint(int breakpoint);
     QFETCH(bool, qmlscene);
 
-    int sourceLine1 = 37;
-    int sourceLine2 = 38;
-    QCOMPARE(init(qmlscene, CHANGEBREAKPOINT_QMLFILE), ConnectSuccess);
+    int sourceLine1 = 12;
+    int sourceLine2 = 13;
+    QCOMPARE(runAndConnect(qmlscene, CHANGEBREAKPOINT_QMLFILE), ConnectSuccess);
 
     m_client->connect();
     //The breakpoints are in a timer loop so we can set them after connect().
@@ -570,10 +553,10 @@ void tst_QQmlDebugJS::changeBreakpoint()
     //void clearBreakpoint(int breakpoint);
     QFETCH(bool, qmlscene);
 
-    int sourceLine2 = 37;
-    int sourceLine1 = 38;
+    int sourceLine2 = 12;
+    int sourceLine1 = 13;
     const QString file = QLatin1String(CHANGEBREAKPOINT_QMLFILE);
-    QCOMPARE(init(qmlscene, file), ConnectSuccess);
+    QCOMPARE(runAndConnect(qmlscene, file), ConnectSuccess);
 
     bool isStopped = false;
     QObject::connect(m_client.data(), &QV4DebugClient::stopped, this, [&]() { isStopped = true; });
@@ -646,7 +629,7 @@ void tst_QQmlDebugJS::setExceptionBreak()
     //void setExceptionBreak(QString type, bool enabled = false);
     QFETCH(bool, qmlscene);
 
-    QCOMPARE(init(qmlscene, EXCEPTION_QMLFILE), ConnectSuccess);
+    QCOMPARE(runAndConnect(qmlscene, EXCEPTION_QMLFILE), ConnectSuccess);
     m_client->setExceptionBreak(QV4DebugClient::All,true);
     m_client->connect();
     QVERIFY(waitForClientSignal(SIGNAL(stopped())));
@@ -657,8 +640,8 @@ void tst_QQmlDebugJS::stepNext()
     //void continueDebugging(StepAction stepAction, int stepCount = 1);
     QFETCH(bool, qmlscene);
 
-    int sourceLine = 37;
-    QCOMPARE(init(qmlscene, STEPACTION_QMLFILE), ConnectSuccess);
+    int sourceLine = 12;
+    QCOMPARE(runAndConnect(qmlscene, STEPACTION_QMLFILE), ConnectSuccess);
 
     m_client->setBreakpoint(QLatin1String(STEPACTION_QMLFILE), sourceLine, -1, true);
     m_client->connect();
@@ -684,9 +667,9 @@ void tst_QQmlDebugJS::stepIn()
     //void continueDebugging(StepAction stepAction, int stepCount = 1);
     QFETCH(bool, qmlscene);
 
-    int sourceLine = 41;
-    int actualLine = 36;
-    QCOMPARE(init(qmlscene, STEPACTION_QMLFILE), ConnectSuccess);
+    int sourceLine = 16;
+    int actualLine = 11;
+    QCOMPARE(runAndConnect(qmlscene, STEPACTION_QMLFILE), ConnectSuccess);
 
     m_client->setBreakpoint(QLatin1String(STEPACTION_QMLFILE), sourceLine, 1, true);
     m_client->connect();
@@ -706,9 +689,9 @@ void tst_QQmlDebugJS::stepOut()
     //void continueDebugging(StepAction stepAction, int stepCount = 1);
     QFETCH(bool, qmlscene);
 
-    int sourceLine = 37;
-    int actualLine = 41;
-    QCOMPARE(init(qmlscene, STEPACTION_QMLFILE), ConnectSuccess);
+    int sourceLine = 12;
+    int actualLine = 16;
+    QCOMPARE(runAndConnect(qmlscene, STEPACTION_QMLFILE), ConnectSuccess);
 
     m_client->setBreakpoint(QLatin1String(STEPACTION_QMLFILE), sourceLine, -1, true);
     m_client->connect();
@@ -728,9 +711,9 @@ void tst_QQmlDebugJS::continueDebugging()
     //void continueDebugging(StepAction stepAction, int stepCount = 1);
     QFETCH(bool, qmlscene);
 
-    int sourceLine1 = 41;
-    int sourceLine2 = 38;
-    QCOMPARE(init(qmlscene, STEPACTION_QMLFILE), ConnectSuccess);
+    int sourceLine1 = 16;
+    int sourceLine2 = 13;
+    QCOMPARE(runAndConnect(qmlscene, STEPACTION_QMLFILE), ConnectSuccess);
 
     m_client->setBreakpoint(QLatin1String(STEPACTION_QMLFILE), sourceLine1, -1, true);
     m_client->setBreakpoint(QLatin1String(STEPACTION_QMLFILE), sourceLine2, -1, true);
@@ -752,8 +735,8 @@ void tst_QQmlDebugJS::backtrace()
     //void backtrace(int fromFrame = -1, int toFrame = -1, bool bottom = false);
     QFETCH(bool, qmlscene);
 
-    int sourceLine = 34;
-    QCOMPARE(init(qmlscene, ONCOMPLETED_QMLFILE), ConnectSuccess);
+    int sourceLine = 9;
+    QCOMPARE(runAndConnect(qmlscene, ONCOMPLETED_QMLFILE), ConnectSuccess);
 
     m_client->setBreakpoint(QLatin1String(ONCOMPLETED_QMLFILE), sourceLine, -1, true);
     m_client->connect();
@@ -768,8 +751,8 @@ void tst_QQmlDebugJS::getFrameDetails()
     //void frame(int number = -1);
     QFETCH(bool, qmlscene);
 
-    int sourceLine = 34;
-    QCOMPARE(init(qmlscene, ONCOMPLETED_QMLFILE), ConnectSuccess);
+    int sourceLine = 9;
+    QCOMPARE(runAndConnect(qmlscene, ONCOMPLETED_QMLFILE), ConnectSuccess);
 
     m_client->setBreakpoint(QLatin1String(ONCOMPLETED_QMLFILE), sourceLine, -1, true);
     m_client->connect();
@@ -784,8 +767,8 @@ void tst_QQmlDebugJS::getScopeDetails()
     //void scope(int number = -1, int frameNumber = -1);
     QFETCH(bool, qmlscene);
 
-    int sourceLine = 34;
-    QCOMPARE(init(qmlscene, ONCOMPLETED_QMLFILE), ConnectSuccess);
+    int sourceLine = 9;
+    QCOMPARE(runAndConnect(qmlscene, ONCOMPLETED_QMLFILE), ConnectSuccess);
 
     m_client->setBreakpoint(QLatin1String(ONCOMPLETED_QMLFILE), sourceLine, -1, true);
     m_client->connect();
@@ -798,7 +781,7 @@ void tst_QQmlDebugJS::getScopeDetails()
 void tst_QQmlDebugJS::evaluateInGlobalScope()
 {
     //void evaluate(QString expr, int frame = -1);
-    QCOMPARE(init(true), ConnectSuccess);
+    QCOMPARE(runAndConnect(true), ConnectSuccess);
 
     m_client->connect();
 
@@ -818,8 +801,8 @@ void tst_QQmlDebugJS::evaluateInLocalScope()
     //void evaluate(QString expr, bool global = false, bool disableBreak = false, int frame = -1, const QVariantMap &addContext = QVariantMap());
     QFETCH(bool, qmlscene);
 
-    int sourceLine = 34;
-    QCOMPARE(init(qmlscene, ONCOMPLETED_QMLFILE), ConnectSuccess);
+    int sourceLine = 9;
+    QCOMPARE(runAndConnect(qmlscene, ONCOMPLETED_QMLFILE), ConnectSuccess);
 
     m_client->setBreakpoint(QLatin1String(ONCOMPLETED_QMLFILE), sourceLine, -1, true);
     m_client->connect();
@@ -847,7 +830,7 @@ void tst_QQmlDebugJS::evaluateInContext()
 {
     m_connection = new QQmlDebugConnection();
     m_process = new QQmlDebugProcess(
-                QLibraryInfo::location(QLibraryInfo::BinariesPath) + "/qmlscene", this);
+                QLibraryInfo::path(QLibraryInfo::BinariesPath) + "/qmlscene", this);
     m_client = new QV4DebugClient(m_connection);
     QScopedPointer<QQmlEngineDebugClient> engineClient(new QQmlEngineDebugClient(m_connection));
     m_process->start(QStringList() << QLatin1String(BLOCKMODE) << testFile(ONCOMPLETED_QMLFILE));
@@ -870,15 +853,15 @@ void tst_QQmlDebugJS::evaluateInContext()
     QVERIFY(success);
     QVERIFY(QQmlDebugTest::waitForSignal(engineClient.data(), SIGNAL(result())));
 
-    QVERIFY(engineClient->engines().count());
+    QVERIFY(engineClient->engines().size());
     engineClient->queryRootContexts(engineClient->engines()[0], &success);
     QVERIFY(success);
     QVERIFY(QQmlDebugTest::waitForSignal(engineClient.data(), SIGNAL(result())));
 
     auto contexts = engineClient->rootContext().contexts;
-    QCOMPARE(contexts.count(), 1);
+    QCOMPARE(contexts.size(), 1);
     auto objects = contexts[0].objects;
-    QCOMPARE(objects.count(), 1);
+    QCOMPARE(objects.size(), 1);
     engineClient->queryObjectRecursive(objects[0], &success);
     QVERIFY(success);
     QVERIFY(QQmlDebugTest::waitForSignal(engineClient.data(), SIGNAL(result())));
@@ -891,7 +874,7 @@ void tst_QQmlDebugJS::evaluateInContext()
     QTRY_COMPARE(responseBody(m_client).value("value").toInt(), 20);
 
     auto childObjects = object.children;
-    QVERIFY(childObjects.count() > 0); // QQmlComponentAttached is also in there
+    QVERIFY(childObjects.size() > 0); // QQmlComponentAttached is also in there
     QCOMPARE(childObjects[0].className, QString::fromLatin1("Item"));
 
     // "b" accessible in context of surrounding (child) object
@@ -906,9 +889,9 @@ void tst_QQmlDebugJS::getScripts()
     //void scripts(int types = -1, QList<int> ids = QList<int>(), bool includeSource = false, QVariant filter = QVariant());
     QFETCH(bool, qmlscene);
 
-    QCOMPARE(init(qmlscene), ConnectSuccess);
+    QCOMPARE(runAndConnect(qmlscene), ConnectSuccess);
 
-    m_client->setBreakpoint(QString(TEST_QMLFILE), 35, -1, true);
+    m_client->setBreakpoint(QString(TEST_QMLFILE), 10, -1, true);
     m_client->connect();
     QVERIFY(waitForClientSignal(SIGNAL(stopped())));
 
@@ -925,7 +908,7 @@ void tst_QQmlDebugJS::getScripts()
 void tst_QQmlDebugJS::encodeQmlScope()
 {
     QString file(ENCODEQMLSCOPE_QMLFILE);
-    QCOMPARE(init(true, file), ConnectSuccess);
+    QCOMPARE(runAndConnect(true, file), ConnectSuccess);
 
     int numFrames = 0;
     int numExpectedScopes = 0;
@@ -962,7 +945,7 @@ void tst_QQmlDebugJS::encodeQmlScope()
             if (scopes.count() < 2)
                 scopesFailed = true;
 
-            for (const QJsonValue &scope : scopes) {
+            for (const QJsonValue scope : scopes) {
                 ++numExpectedScopes;
                 m_client->scope(scope.toObject().value("index").toInt());
             }
@@ -985,7 +968,7 @@ void tst_QQmlDebugJS::encodeQmlScope()
 void tst_QQmlDebugJS::breakOnAnchor()
 {
     QString file(BREAKONANCHOR_QMLFILE);
-    QCOMPARE(init(true, file), ConnectSuccess);
+    QCOMPARE(runAndConnect(true, file), ConnectSuccess);
 
     int breaks = 0;
     bool stopped = false;
@@ -1006,8 +989,8 @@ void tst_QQmlDebugJS::breakOnAnchor()
         qWarning() << "received failure" << m_client->response().body;
     });
 
-    m_client->setBreakpoint(file, 34);
-    m_client->setBreakpoint(file, 37);
+    m_client->setBreakpoint(file, 9);
+    m_client->setBreakpoint(file, 12);
 
     QTRY_COMPARE(m_process->state(), QProcess::Running);
 
@@ -1022,7 +1005,7 @@ void tst_QQmlDebugJS::breakOnAnchor()
 void tst_QQmlDebugJS::breakPointIds()
 {
     QString file(BREAKPOINTIDS_QMLFILE);
-    QCOMPARE(init(true, file), ConnectSuccess);
+    QCOMPARE(runAndConnect(true, file), ConnectSuccess);
 
     int breaks = 0;
     int breakPointIds[] = { -1, -1, -1, -1, -1, -1};
@@ -1055,7 +1038,7 @@ void tst_QQmlDebugJS::breakPointIds()
 void tst_QQmlDebugJS::letConstLocals()
 {
     QString file(LETCONSTLOCALS_QMLFILE);
-    QCOMPARE(init(true, file), ConnectSuccess);
+    QCOMPARE(runAndConnect(true, file), ConnectSuccess);
 
     QObject::connect(m_client.data(), &QV4DebugClient::stopped, this, [&]() {
         m_client->frame();
@@ -1067,7 +1050,7 @@ void tst_QQmlDebugJS::letConstLocals()
         const auto value = m_client->response();
         if (value.command == QStringLiteral("frame")) {
             const auto scopes = value.body.toObject().value(QStringLiteral("scopes")).toArray();
-            for (const auto &scope : scopes) {
+            for (const auto scope : scopes) {
                 const auto scopeObject = scope.toObject();
                 const int type = scopeObject.value("type").toInt();
                 if (type == 1 || type == 4) {
@@ -1079,12 +1062,10 @@ void tst_QQmlDebugJS::letConstLocals()
         } else if (value.command == QStringLiteral("scope")) {
             const auto props = value.body.toObject().value(QStringLiteral("object")).toObject()
                     .value(QStringLiteral("properties")).toArray();
-            for (const auto &prop : props) {
+            for (const auto prop : props) {
                 const auto propObj = prop.toObject();
-                const QString name = propObj.value(QStringLiteral("name")).toString();
-                if (name == QStringLiteral("onCompleted"))
-                    continue;
-                QVERIFY(name.length() == 1);
+                QString name = propObj.value(QStringLiteral("name")).toString();
+                QVERIFY(name.size() == 1);
                 auto i = expectedMembers.indexOf(name.at(0));
                 QVERIFY(i != -1);
                 expectedMembers.remove(i, 1);

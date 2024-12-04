@@ -1,10 +1,27 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "net/cookies/test_cookie_access_delegate.h"
 
+#include <set>
+#include <utility>
+#include <vector>
+
+#include "base/containers/contains.h"
+#include "base/containers/flat_map.h"
+#include "base/containers/flat_set.h"
+#include "base/functional/callback.h"
+#include "base/ranges/algorithm.h"
+#include "base/task/sequenced_task_runner.h"
+#include "base/task/thread_pool.h"
+#include "base/types/optional_util.h"
+#include "net/base/schemeful_site.h"
+#include "net/cookies/cookie_constants.h"
 #include "net/cookies/cookie_util.h"
+#include "net/first_party_sets/first_party_set_entry.h"
+#include "net/first_party_sets/first_party_set_metadata.h"
+#include "net/first_party_sets/first_party_sets_cache_filter.h"
 
 namespace net {
 
@@ -32,6 +49,78 @@ bool TestCookieAccessDelegate::ShouldIgnoreSameSiteRestrictions(
   return true;
 }
 
+// Returns true if `url` has the same scheme://eTLD+1 as `trustworthy_site_`.
+bool TestCookieAccessDelegate::ShouldTreatUrlAsTrustworthy(
+    const GURL& url) const {
+  if (SchemefulSite(url) == trustworthy_site_) {
+    return true;
+  }
+
+  return false;
+}
+
+absl::optional<
+    std::pair<FirstPartySetMetadata, FirstPartySetsCacheFilter::MatchInfo>>
+TestCookieAccessDelegate::ComputeFirstPartySetMetadataMaybeAsync(
+    const SchemefulSite& site,
+    const SchemefulSite* top_frame_site,
+    base::OnceCallback<void(FirstPartySetMetadata,
+                            FirstPartySetsCacheFilter::MatchInfo)> callback)
+    const {
+  absl::optional<FirstPartySetEntry> top_frame_owner =
+      top_frame_site ? FindFirstPartySetEntry(*top_frame_site) : absl::nullopt;
+  FirstPartySetMetadata metadata(
+      base::OptionalToPtr(FindFirstPartySetEntry(site)),
+      base::OptionalToPtr(top_frame_owner));
+  FirstPartySetsCacheFilter::MatchInfo match_info(
+      first_party_sets_cache_filter_.GetMatchInfo(site));
+
+  if (invoke_callbacks_asynchronously_) {
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+        FROM_HERE,
+        base::BindOnce(std::move(callback), std::move(metadata), match_info));
+    return absl::nullopt;
+  }
+  return std::make_pair(std::move(metadata), match_info);
+}
+
+absl::optional<FirstPartySetEntry>
+TestCookieAccessDelegate::FindFirstPartySetEntry(
+    const SchemefulSite& site) const {
+  auto entry = first_party_sets_.find(site);
+
+  return entry != first_party_sets_.end() ? absl::make_optional(entry->second)
+                                          : absl::nullopt;
+}
+
+absl::optional<base::flat_map<SchemefulSite, FirstPartySetEntry>>
+TestCookieAccessDelegate::FindFirstPartySetEntries(
+    const base::flat_set<SchemefulSite>& sites,
+    base::OnceCallback<void(base::flat_map<SchemefulSite, FirstPartySetEntry>)>
+        callback) const {
+  std::vector<std::pair<SchemefulSite, FirstPartySetEntry>> mapping;
+  for (const SchemefulSite& site : sites) {
+    absl::optional<FirstPartySetEntry> entry = FindFirstPartySetEntry(site);
+    if (entry)
+      mapping.emplace_back(site, *entry);
+  }
+
+  return RunMaybeAsync<base::flat_map<SchemefulSite, FirstPartySetEntry>>(
+      mapping, std::move(callback));
+}
+
+template <class T>
+absl::optional<T> TestCookieAccessDelegate::RunMaybeAsync(
+    T result,
+    base::OnceCallback<void(T)> callback) const {
+  if (invoke_callbacks_asynchronously_) {
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+        FROM_HERE, base::BindOnce(std::move(callback), std::move(result)));
+    return absl::nullopt;
+  }
+  return result;
+}
+
 void TestCookieAccessDelegate::SetExpectationForCookieDomain(
     const std::string& cookie_domain,
     CookieAccessSemantics access_semantics) {
@@ -49,6 +138,11 @@ std::string TestCookieAccessDelegate::GetKeyForDomainValue(
     const std::string& domain) const {
   DCHECK(!domain.empty());
   return cookie_util::CookieDomainAsHost(domain);
+}
+
+void TestCookieAccessDelegate::SetFirstPartySets(
+    const base::flat_map<SchemefulSite, FirstPartySetEntry>& sets) {
+  first_party_sets_ = sets;
 }
 
 }  // namespace net

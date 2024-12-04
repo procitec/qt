@@ -27,14 +27,15 @@
 
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/dom/create_element_flags.h"
+#include "third_party/blink/renderer/core/html/blocking_attribute.h"
 #include "third_party/blink/renderer/core/html/html_element.h"
 #include "third_party/blink/renderer/core/script/script_element_base.h"
 #include "third_party/blink/renderer/core/script/script_loader.h"
 #include "third_party/blink/renderer/platform/bindings/parkable_string.h"
+#include "third_party/blink/renderer/platform/wtf/casting.h"
 
 namespace blink {
 
-class StringOrTrustedScript;
 class ExceptionState;
 
 class CORE_EXPORT HTMLScriptElement final : public HTMLElement,
@@ -42,20 +43,27 @@ class CORE_EXPORT HTMLScriptElement final : public HTMLElement,
   DEFINE_WRAPPERTYPEINFO();
 
  public:
+  static bool supports(const AtomicString&);
+
   HTMLScriptElement(Document&, const CreateElementFlags);
 
   // Returns attributes that should be checked against Trusted Types
   const AttrNameToTrustedType& GetCheckedAttributeTypes() const override;
 
-  void text(StringOrTrustedScript& result);
   String text() { return TextFromChildren(); }
   void setText(const String&);
-  void setInnerText(const StringOrTrustedScript&, ExceptionState&) override;
-  void setTextContent(const StringOrTrustedScript&, ExceptionState&) override;
+  void setInnerTextForBinding(
+      const V8UnionStringLegacyNullToEmptyStringOrTrustedScript*
+          string_or_trusted_script,
+      ExceptionState& exception_state) override;
+  void setTextContentForBinding(const V8UnionStringOrTrustedScript* value,
+                                ExceptionState& exception_state) override;
   void setTextContent(const String&) override;
 
   void setAsync(bool);
   bool async() const;
+
+  BlockingAttribute& blocking() const { return *blocking_attribute_; }
 
   ScriptLoader* Loader() const final { return loader_.Get(); }
 
@@ -63,20 +71,25 @@ class CORE_EXPORT HTMLScriptElement final : public HTMLElement,
   Document& GetDocument() const override;
   ExecutionContext* GetExecutionContext() const override;
 
+  V8HTMLOrSVGScriptElement* AsV8HTMLOrSVGScriptElement() override;
+  DOMNodeId GetDOMNodeId() override;
+
   void Trace(Visitor*) const override;
 
   void FinishParsingChildren() override;
 
+  bool IsPotentiallyRenderBlocking() const override;
+
  private:
   void ParseAttribute(const AttributeModificationParams&) override;
   InsertionNotificationRequest InsertedInto(ContainerNode&) override;
+  void RemovedFrom(ContainerNode& insertion_point) override;
+
   void DidNotifySubtreeInsertionsToDocument() override;
   void ChildrenChanged(const ChildrenChange&) override;
-  void DidMoveToNewDocument(Document& old_document) override;
 
   bool IsURLAttribute(const Attribute&) const override;
   bool HasLegalLinkAttribute(const QualifiedName&) const override;
-  const QualifiedName& SubResourceAttributeName() const override;
 
   // ScriptElementBase overrides:
   String SourceAttributeValue() const override;
@@ -89,12 +102,13 @@ class CORE_EXPORT HTMLScriptElement final : public HTMLElement,
   String CrossOriginAttributeValue() const override;
   String IntegrityAttributeValue() const override;
   String ReferrerPolicyAttributeValue() const override;
-  String ImportanceAttributeValue() const override;
+  String FetchPriorityAttributeValue() const override;
   String ChildTextContent() override;
   String ScriptTextInternalSlot() const override;
   bool AsyncAttributeValue() const override;
   bool DeferAttributeValue() const override;
   bool HasSourceAttribute() const override;
+  bool HasAttributionsrcAttribute() const override;
   bool IsConnected() const override;
   bool HasChildren() const override;
   const AtomicString& GetNonceForElement() const override;
@@ -106,17 +120,16 @@ class CORE_EXPORT HTMLScriptElement final : public HTMLElement,
                                const String& script_content) override;
   void DispatchLoadEvent() override;
   void DispatchErrorEvent() override;
-  void SetScriptElementForBinding(
-      HTMLScriptElementOrSVGScriptElement&) override;
 
   Type GetScriptElementType() override;
 
   Element& CloneWithoutAttributesAndChildren(Document&) const override;
 
-  // https://w3c.github.io/webappsec-trusted-types/dist/spec/#script-scripttext
+  // https://w3c.github.io/trusted-types/dist/spec/#script-scripttext
   ParkableString script_text_internal_slot_;
   bool children_changed_by_api_;
 
+  Member<BlockingAttribute> blocking_attribute_;
   Member<ScriptLoader> loader_;
 };
 

@@ -1,12 +1,12 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef EXTENSIONS_BROWSER_PATH_UTIL_H_
 #define EXTENSIONS_BROWSER_PATH_UTIL_H_
 
-#include "base/callback_forward.h"
 #include "base/files/file_path.h"
+#include "base/functional/callback_forward.h"
 
 namespace extensions {
 namespace path_util {
@@ -18,6 +18,12 @@ namespace path_util {
 // replace the home directory component with "~".
 base::FilePath PrettifyPath(const base::FilePath& source_path);
 
+// Calculates the size of the directory containing an extension, returning the
+// size value without formatting.
+void CalculateExtensionDirectorySize(
+    const base::FilePath& extension_path,
+    base::OnceCallback<void(const int64_t)> callback);
+
 // Calculates the size of the directory containing an extension, and formats it
 // to a localized string that can be placed directly in the UI. |message_id| is
 // the ID of the string to use when the size is less than 1 MB, basically
@@ -25,7 +31,7 @@ base::FilePath PrettifyPath(const base::FilePath& source_path);
 void CalculateAndFormatExtensionDirectorySize(
     const base::FilePath& extension_path,
     int message_id,
-    base::OnceCallback<void(const base::string16&)> callback);
+    base::OnceCallback<void(const std::u16string&)> callback);
 
 // Returns a new FilePath with the '~' resolved to the home directory, if
 // appropriate. Otherwise, returns the original path.

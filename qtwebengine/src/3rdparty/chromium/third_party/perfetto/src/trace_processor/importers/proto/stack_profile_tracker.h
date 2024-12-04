@@ -18,19 +18,17 @@
 #define SRC_TRACE_PROCESSOR_IMPORTERS_PROTO_STACK_PROFILE_TRACKER_H_
 
 #include <deque>
+#include <optional>
 #include <unordered_map>
 
-#include "perfetto/ext/base/optional.h"
+#include "src/trace_processor/storage/trace_storage.h"
+#include "src/trace_processor/tables/profiler_tables_py.h"
 
 #include "protos/perfetto/trace/profiling/profile_common.pbzero.h"
 #include "protos/perfetto/trace/profiling/profile_packet.pbzero.h"
-#include "src/trace_processor/storage/trace_storage.h"
-#include "src/trace_processor/tables/profiler_tables.h"
-
-namespace std {
 
 template <>
-struct hash<std::pair<uint32_t, int64_t>> {
+struct std::hash<std::pair<uint32_t, int64_t>> {
   using argument_type = std::pair<uint32_t, int64_t>;
   using result_type = size_t;
 
@@ -40,7 +38,7 @@ struct hash<std::pair<uint32_t, int64_t>> {
 };
 
 template <>
-struct hash<std::pair<uint32_t, perfetto::trace_processor::CallsiteId>> {
+struct std::hash<std::pair<uint32_t, perfetto::trace_processor::CallsiteId>> {
   using argument_type =
       std::pair<uint32_t, perfetto::trace_processor::CallsiteId>;
   using result_type = size_t;
@@ -52,7 +50,7 @@ struct hash<std::pair<uint32_t, perfetto::trace_processor::CallsiteId>> {
 };
 
 template <>
-struct hash<std::pair<uint32_t, perfetto::trace_processor::MappingId>> {
+struct std::hash<std::pair<uint32_t, perfetto::trace_processor::MappingId>> {
   using argument_type =
       std::pair<uint32_t, perfetto::trace_processor::MappingId>;
   using result_type = size_t;
@@ -64,7 +62,7 @@ struct hash<std::pair<uint32_t, perfetto::trace_processor::MappingId>> {
 };
 
 template <>
-struct hash<std::pair<uint32_t, perfetto::trace_processor::FrameId>> {
+struct std::hash<std::pair<uint32_t, perfetto::trace_processor::FrameId>> {
   using argument_type = std::pair<uint32_t, perfetto::trace_processor::FrameId>;
   using result_type = size_t;
 
@@ -75,7 +73,7 @@ struct hash<std::pair<uint32_t, perfetto::trace_processor::FrameId>> {
 };
 
 template <>
-struct hash<std::vector<uint64_t>> {
+struct std::hash<std::vector<uint64_t>> {
   using argument_type = std::vector<uint64_t>;
   using result_type = size_t;
 
@@ -87,7 +85,6 @@ struct hash<std::vector<uint64_t>> {
   }
 };
 
-}  // namespace std
 namespace perfetto {
 namespace trace_processor {
 
@@ -204,12 +201,12 @@ class SequenceStackProfileTracker {
    public:
     virtual ~InternLookup();
 
-    virtual base::Optional<base::StringView> GetString(
+    virtual std::optional<base::StringView> GetString(
         SourceStringId,
         InternedStringType) const = 0;
-    virtual base::Optional<SourceMapping> GetMapping(SourceMappingId) const = 0;
-    virtual base::Optional<SourceFrame> GetFrame(SourceFrameId) const = 0;
-    virtual base::Optional<SourceCallstack> GetCallstack(
+    virtual std::optional<SourceMapping> GetMapping(SourceMappingId) const = 0;
+    virtual std::optional<SourceFrame> GetFrame(SourceFrameId) const = 0;
+    virtual std::optional<SourceCallstack> GetCallstack(
         SourceCallstackId) const = 0;
   };
 
@@ -217,14 +214,14 @@ class SequenceStackProfileTracker {
   ~SequenceStackProfileTracker();
 
   void AddString(SourceStringId, base::StringView);
-  base::Optional<MappingId> AddMapping(
+  std::optional<MappingId> AddMapping(
       SourceMappingId,
       const SourceMapping&,
       const InternLookup* intern_lookup = nullptr);
-  base::Optional<FrameId> AddFrame(SourceFrameId,
-                                   const SourceFrame&,
-                                   const InternLookup* intern_lookup = nullptr);
-  base::Optional<CallsiteId> AddCallstack(
+  std::optional<FrameId> AddFrame(SourceFrameId,
+                                  const SourceFrame&,
+                                  const InternLookup* intern_lookup = nullptr);
+  std::optional<CallsiteId> AddCallstack(
       SourceCallstackId,
       const SourceCallstack&,
       const InternLookup* intern_lookup = nullptr);
@@ -241,21 +238,20 @@ class SequenceStackProfileTracker {
   // This is to support both ProfilePackets that contain the interned data
   // (for Android Q) and where the interned data is kept globally in
   // InternedData (for versions newer than Q).
-  base::Optional<StringId> FindAndInternString(
+  std::optional<StringId> FindAndInternString(SourceStringId,
+                                              const InternLookup* intern_lookup,
+                                              InternedStringType type);
+  std::optional<std::string> FindOrInsertString(
       SourceStringId,
       const InternLookup* intern_lookup,
       InternedStringType type);
-  base::Optional<std::string> FindOrInsertString(
-      SourceStringId,
-      const InternLookup* intern_lookup,
-      InternedStringType type);
-  base::Optional<MappingId> FindOrInsertMapping(
+  std::optional<MappingId> FindOrInsertMapping(
       SourceMappingId,
       const InternLookup* intern_lookup);
-  base::Optional<FrameId> FindOrInsertFrame(SourceFrameId,
-                                            const InternLookup* intern_lookup);
+  std::optional<FrameId> FindOrInsertFrame(SourceFrameId,
+                                           const InternLookup* intern_lookup);
 
-  base::Optional<CallsiteId> FindOrInsertCallstack(
+  std::optional<CallsiteId> FindOrInsertCallstack(
       SourceCallstackId,
       const InternLookup* intern_lookup);
 

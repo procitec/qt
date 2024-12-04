@@ -1,10 +1,11 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef UI_TOUCH_SELECTION_LONGPRESS_DRAG_SELECTOR_H_
 #define UI_TOUCH_SELECTION_LONGPRESS_DRAG_SELECTOR_H_
 
+#include "base/memory/raw_ptr.h"
 #include "base/time/time.h"
 #include "ui/gfx/geometry/point_f.h"
 #include "ui/gfx/geometry/vector2d_f.h"
@@ -24,8 +25,8 @@ class UI_TOUCH_SELECTION_EXPORT LongPressDragSelectorClient
   virtual gfx::PointF GetSelectionEnd() const = 0;
 };
 
-// Supports text selection via touch dragging after a longpress-initiated
-// selection.
+// Supports text selection via touch dragging after a longpress- or
+// doublepress-initiated selection.
 class UI_TOUCH_SELECTION_EXPORT LongPressDragSelector
     : public TouchSelectionDraggable {
  public:
@@ -40,6 +41,10 @@ class UI_TOUCH_SELECTION_EXPORT LongPressDragSelector
   void OnLongPressEvent(base::TimeTicks event_time,
                         const gfx::PointF& position);
 
+  // Called just prior to a double press event being handled.
+  void OnDoublePressEvent(base::TimeTicks event_time,
+                          const gfx::PointF& position);
+
   // Called when a scroll is going to happen to cancel longpress-drag gesture.
   void OnScrollBeginEvent();
 
@@ -50,7 +55,7 @@ class UI_TOUCH_SELECTION_EXPORT LongPressDragSelector
  private:
   enum SelectionState {
     INACTIVE,
-    LONGPRESS_PENDING,
+    INITIATING_GESTURE_PENDING,
     SELECTION_PENDING,
     DRAG_PENDING,
     DRAGGING
@@ -58,7 +63,7 @@ class UI_TOUCH_SELECTION_EXPORT LongPressDragSelector
 
   void SetState(SelectionState state);
 
-  LongPressDragSelectorClient* const client_;
+  const raw_ptr<LongPressDragSelectorClient> client_;
 
   SelectionState state_;
 

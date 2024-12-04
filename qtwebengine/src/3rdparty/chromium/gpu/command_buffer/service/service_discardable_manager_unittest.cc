@@ -1,23 +1,24 @@
-// Copyright (c) 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "gpu/command_buffer/service/service_discardable_manager.h"
 
+#include <memory>
+
+#include "base/memory/raw_ptr.h"
 #include "gpu/command_buffer/client/client_test_helper.h"
 #include "gpu/command_buffer/service/gles2_cmd_decoder_mock.h"
 #include "gpu/command_buffer/service/gpu_service_test.h"
 #include "gpu/command_buffer/service/gpu_tracer.h"
-#include "gpu/command_buffer/service/image_manager.h"
 #include "gpu/command_buffer/service/mailbox_manager_impl.h"
 #include "gpu/command_buffer/service/memory_tracking.h"
 #include "gpu/command_buffer/service/mocks.h"
-#include "gpu/command_buffer/service/shared_image_manager.h"
+#include "gpu/command_buffer/service/shared_image/shared_image_manager.h"
 #include "gpu/command_buffer/service/test_helper.h"
 #include "gpu/command_buffer/service/texture_manager.h"
 #include "gpu/config/gpu_preferences.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "ui/gl/gl_image_stub.h"
 #include "ui/gl/gl_mock.h"
 #include "ui/gl/gl_switches.h"
 
@@ -41,8 +42,8 @@ void CreateLockedHandlesForTesting(
   scoped_refptr<gpu::Buffer> buffer = MakeBufferFromSharedMemory(
       std::move(shared_mem), std::move(shared_mem_mapping));
 
-  client_handle->reset(new ClientDiscardableHandle(buffer, 0, 0));
-  service_handle->reset(new ServiceDiscardableHandle(buffer, 0, 0));
+  *client_handle = std::make_unique<ClientDiscardableHandle>(buffer, 0, 0);
+  *service_handle = std::make_unique<ServiceDiscardableHandle>(buffer, 0, 0);
 }
 
 ServiceDiscardableHandle CreateLockedServiceHandleForTesting() {
@@ -72,14 +73,17 @@ class ServiceDiscardableManagerTest : public GpuServiceTest {
  protected:
   void SetUp() override {
     GpuServiceTest::SetUp();
-    decoder_.reset(
-        new MockGLES2Decoder(&client_, &command_buffer_service_, &outputter_));
+    decoder_ = std::make_unique<MockGLES2Decoder>(
+        &client_, &command_buffer_service_, &outputter_);
     feature_info_ = new FeatureInfo();
     context_group_ = scoped_refptr<ContextGroup>(new ContextGroup(
-        gpu_preferences_, false, &mailbox_manager_, nullptr, nullptr, nullptr,
-        feature_info_, false, &image_manager_, nullptr, nullptr,
-        GpuFeatureInfo(), &discardable_manager_, nullptr,
-        &shared_image_manager_));
+        gpu_preferences_, /*supports_passthrough_command_decoders=*/false,
+        &mailbox_manager_, /*memory_tracker=*/nullptr,
+        /*shader_translator_cache=*/nullptr,
+        /*framebuffer_completeness_cache=*/nullptr, feature_info_,
+        /*bind_generates_resource=*/false, /*progress_reporter=*/nullptr,
+        GpuFeatureInfo(), &discardable_manager_,
+        /*passthrough_discardable_manager=*/nullptr, &shared_image_manager_));
     TestHelper::SetupContextGroupInitExpectations(
         gl_.get(), DisallowedFeatures(), "", "", CONTEXT_TYPE_OPENGLES2, false);
     context_group_->Initialize(decoder_.get(), CONTEXT_TYPE_OPENGLES2,
@@ -94,6 +98,7 @@ class ServiceDiscardableManagerTest : public GpuServiceTest {
     // Texture manager will destroy the 6 black/default textures.
     EXPECT_CALL(*gl_, DeleteTextures(TextureManager::kNumDefaultTextures, _));
 
+    texture_manager_ = nullptr;
     context_group_->Destroy(decoder_.get(), true);
     context_group_ = nullptr;
     EXPECT_EQ(0u, discardable_manager_.NumCacheEntriesForTesting());
@@ -122,13 +127,13 @@ class ServiceDiscardableManagerTest : public GpuServiceTest {
 
   MailboxManagerImpl mailbox_manager_;
   TraceOutputter outputter_;
-  ImageManager image_manager_;
   ServiceDiscardableManager discardable_manager_;
   SharedImageManager shared_image_manager_;
   GpuPreferences gpu_preferences_;
   scoped_refptr<FeatureInfo> feature_info_;
   MockDestructionObserver destruction_observer_;
-  TextureManager* texture_manager_;
+  // This is owned by |context_group_|.
+  raw_ptr<TextureManager> texture_manager_;
   FakeCommandBufferServiceBase command_buffer_service_;
   FakeDecoderClient client_;
   std::unique_ptr<MockGLES2Decoder> decoder_;

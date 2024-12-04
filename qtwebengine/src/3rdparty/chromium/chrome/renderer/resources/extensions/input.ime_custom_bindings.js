@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -41,15 +41,15 @@ apiBridge.registerCustomHook(function(api) {
   };
 
   api.apiFunctions.setCustomCallback('createWindow',
-      function(name, request, callback, windowParams) {
+      function(callback, windowParams) {
     if (!callback) {
       return;
     }
     var view;
-    if (windowParams && windowParams.frameId) {
+    if (windowParams && windowParams.frameToken) {
       view = appWindowNatives.GetFrame(
-          windowParams.frameId, false /* notifyBrowser */);
-      view.id = windowParams.frameId;
+          windowParams.frameToken, false /* notifyBrowser */);
+      view.id = windowParams.frameToken;
     }
     callback(view);
   });

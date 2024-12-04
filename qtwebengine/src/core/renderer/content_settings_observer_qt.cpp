@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2018 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtWebEngine module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2018 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 // Based on chrome/renderer/content_settings_observer.cc:
 // Copyright (c) 2012 The Chromium Authors. All rights reserved.
@@ -46,14 +10,11 @@
 
 #include "content/public/renderer/render_frame.h"
 #include "third_party/blink/public/platform/web_security_origin.h"
-#include "third_party/blink/public/web/web_plugin_document.h"
+#include "third_party/blink/public/web/web_document.h"
 #include "third_party/blink/public/web/web_local_frame.h"
 #include "url/origin.h"
 
 #include "common/qt_messages.h"
-
-using blink::WebSecurityOrigin;
-using blink::WebString;
 
 namespace {
 
@@ -78,6 +39,7 @@ ContentSettingsObserverQt::ContentSettingsObserverQt(content::RenderFrame *rende
 
 ContentSettingsObserverQt::~ContentSettingsObserverQt() {}
 
+#if BUILDFLAG(CONTENT_ENABLE_LEGACY_IPC)
 bool ContentSettingsObserverQt::OnMessageReceived(const IPC::Message &message)
 {
     bool handled = true;
@@ -88,6 +50,7 @@ bool ContentSettingsObserverQt::OnMessageReceived(const IPC::Message &message)
 
     return handled;
 }
+#endif
 
 void ContentSettingsObserverQt::DidCommitProvisionalLoad(ui::PageTransition /*transition*/)
 {
@@ -122,11 +85,12 @@ void ContentSettingsObserverQt::AllowStorageAccess(StorageType storage_type,
 
     // Verify there are no duplicate insertions.
     DCHECK(inserted);
-
+#if BUILDFLAG(CONTENT_ENABLE_LEGACY_IPC)
     Send(new QtWebEngineHostMsg_RequestStorageAccessAsync(routing_id(), m_currentRequestId,
                                                           url::Origin(frame->GetSecurityOrigin()).GetURL(),
                                                           url::Origin(frame->Top()->GetSecurityOrigin()).GetURL(),
                                                           int(storage_type)));
+#endif
 }
 
 bool ContentSettingsObserverQt::AllowStorageAccessSync(StorageType storage_type)
@@ -144,9 +108,11 @@ bool ContentSettingsObserverQt::AllowStorageAccessSync(StorageType storage_type)
     }
 
     bool result = false;
+#if BUILDFLAG(CONTENT_ENABLE_LEGACY_IPC)
     Send(new QtWebEngineHostMsg_AllowStorageAccess(routing_id(), url::Origin(frame->GetSecurityOrigin()).GetURL(),
                                                    url::Origin(frame->Top()->GetSecurityOrigin()).GetURL(),
                                                    int(storage_type), &result));
+#endif
     if (sameOrigin)
         m_cachedStoragePermissions[key] = result;
     return result;

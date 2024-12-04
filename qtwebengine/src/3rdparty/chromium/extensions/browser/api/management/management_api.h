@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,9 +9,8 @@
 #include <string>
 
 #include "base/compiler_specific.h"
-#include "base/macros.h"
-#include "base/scoped_observer.h"
-#include "base/strings/string16.h"
+#include "base/memory/raw_ptr.h"
+#include "base/scoped_observation.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "extensions/browser/api/management/management_api_delegate.h"
 #include "extensions/browser/browser_context_keyed_api_factory.h"
@@ -21,6 +20,7 @@
 #include "extensions/browser/extension_registry_observer.h"
 #include "extensions/browser/preload_check.h"
 #include "extensions/browser/supervised_user_extensions_delegate.h"
+#include "extensions/common/extension_id.h"
 #include "services/data_decoder/public/cpp/data_decoder.h"
 
 namespace extensions {
@@ -115,19 +115,17 @@ class ManagementSetEnabledFunction : public ExtensionFunction {
  private:
   void OnInstallPromptDone(bool did_accept);
 
-  bool HasUnsupportedRequirements(const std::string& extension_id);
+  bool HasUnsupportedRequirements(const std::string& extension_id) const;
+
+  bool IsExtensionApprovalFlowRequired(const Extension* target_extension) const;
 
   void OnRequirementsChecked(const PreloadCheck::Errors& errors);
 
-  // Called when the user dismisses the Parent Permission Dialog.
-  void OnParentPermissionDialogDone(
-      SupervisedUserExtensionsDelegate::ParentPermissionDialogResult result);
+  // Called when the extension approval flow is completed.
+  void OnExtensionApprovalDone(
+      SupervisedUserExtensionsDelegate::ExtensionApprovalResult result);
 
-  // Called when the user dismisses the Extension Install Blocked By Parent
-  // Dialog.
-  void OnBlockedByParentDialogDone();
-
-  std::string extension_id_;
+  ExtensionId extension_id_;
 
   std::unique_ptr<InstallPromptDelegate> install_prompt_;
 
@@ -139,10 +137,13 @@ class ManagementUninstallFunctionBase : public ExtensionFunction {
   ManagementUninstallFunctionBase();
 
   void OnExtensionUninstallDialogClosed(bool did_start_uninstall,
-                                        const base::string16& error);
+                                        const std::u16string& error);
 
  protected:
+  // ExtensionFunction:
   ~ManagementUninstallFunctionBase() override;
+  bool ShouldKeepWorkerAliveIndefinitely() override;
+
   ResponseAction Uninstall(const std::string& extension_id,
                            bool show_confirm_dialog);
 
@@ -225,40 +226,6 @@ class ManagementGenerateAppForLinkFunction : public ExtensionFunction {
   std::unique_ptr<AppForLinkDelegate> app_for_link_delegate_;
 };
 
-class ManagementCanInstallReplacementAndroidAppFunction
-    : public ExtensionFunction {
- public:
-  DECLARE_EXTENSION_FUNCTION("management.canInstallReplacementAndroidApp",
-                             MANAGEMENT_CANINSTALLREPLACEMENTANDROIDAPP)
-
-  ManagementCanInstallReplacementAndroidAppFunction();
-
- protected:
-  ~ManagementCanInstallReplacementAndroidAppFunction() override;
-
-  ResponseAction Run() override;
-
- private:
-  void OnFinishedAndroidAppCheck(bool result);
-};
-
-class ManagementInstallReplacementAndroidAppFunction
-    : public ExtensionFunction {
- public:
-  DECLARE_EXTENSION_FUNCTION("management.installReplacementAndroidApp",
-                             MANAGEMENT_INSTALLREPLACEMENTANDROIDAPP)
-
-  ManagementInstallReplacementAndroidAppFunction();
-
- protected:
-  ~ManagementInstallReplacementAndroidAppFunction() override;
-
-  ResponseAction Run() override;
-
- private:
-  void OnAppInstallInitiated(bool installable);
-};
-
 class ManagementInstallReplacementWebAppFunction : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("management.installReplacementWebApp",
@@ -279,6 +246,10 @@ class ManagementInstallReplacementWebAppFunction : public ExtensionFunction {
 class ManagementEventRouter : public ExtensionRegistryObserver {
  public:
   explicit ManagementEventRouter(content::BrowserContext* context);
+
+  ManagementEventRouter(const ManagementEventRouter&) = delete;
+  ManagementEventRouter& operator=(const ManagementEventRouter&) = delete;
+
   ~ManagementEventRouter() override;
 
  private:
@@ -300,18 +271,20 @@ class ManagementEventRouter : public ExtensionRegistryObserver {
                       events::HistogramValue histogram_value,
                       const char* event_name);
 
-  content::BrowserContext* browser_context_;
+  raw_ptr<content::BrowserContext> browser_context_;
 
-  ScopedObserver<ExtensionRegistry, ExtensionRegistryObserver>
-      extension_registry_observer_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(ManagementEventRouter);
+  base::ScopedObservation<ExtensionRegistry, ExtensionRegistryObserver>
+      extension_registry_observation_{this};
 };
 
 class ManagementAPI : public BrowserContextKeyedAPI,
                       public EventRouter::Observer {
  public:
   explicit ManagementAPI(content::BrowserContext* context);
+
+  ManagementAPI(const ManagementAPI&) = delete;
+  ManagementAPI& operator=(const ManagementAPI&) = delete;
+
   ~ManagementAPI() override;
 
   // KeyedService implementation.
@@ -344,7 +317,7 @@ class ManagementAPI : public BrowserContextKeyedAPI,
  private:
   friend class BrowserContextKeyedAPIFactory<ManagementAPI>;
 
-  content::BrowserContext* browser_context_;
+  raw_ptr<content::BrowserContext> browser_context_;
 
   // BrowserContextKeyedAPI implementation.
   static const char* service_name() { return "ManagementAPI"; }
@@ -357,8 +330,6 @@ class ManagementAPI : public BrowserContextKeyedAPI,
   std::unique_ptr<ManagementAPIDelegate> delegate_;
   std::unique_ptr<SupervisedUserExtensionsDelegate>
       supervised_user_extensions_delegate_;
-
-  DISALLOW_COPY_AND_ASSIGN(ManagementAPI);
 };
 
 }  // namespace extensions

@@ -27,7 +27,7 @@
 
 #include "third_party/blink/renderer/core/scroll/scroll_animator.h"
 
-#include "base/single_thread_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/test/test_mock_time_task_runner.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -36,10 +36,14 @@
 #include "third_party/blink/renderer/core/scroll/scroll_animator_base.h"
 #include "third_party/blink/renderer/core/scroll/scrollable_area.h"
 #include "third_party/blink/renderer/core/scroll/scrollbar_theme.h"
-#include "third_party/blink/renderer/platform/geometry/float_point.h"
-#include "third_party/blink/renderer/platform/geometry/int_rect.h"
+#include "third_party/blink/renderer/platform/heap/thread_state.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread_scheduler.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
+#include "third_party/blink/renderer/platform/wtf/functional.h"
+#include "ui/gfx/geometry/point_f.h"
+#include "ui/gfx/geometry/rect.h"
+#include "ui/gfx/geometry/vector2d_conversions.h"
 
 namespace blink {
 
@@ -49,8 +53,9 @@ using testing::_;
 
 namespace {
 
-double NowTicksInSeconds(const base::TestMockTimeTaskRunner* task_runner) {
-  return task_runner->NowTicks().since_origin().InSecondsF();
+base::TimeTicks NowTicksInSeconds(
+    const base::TestMockTimeTaskRunner* task_runner) {
+  return task_runner->NowTicks();
 }
 
 }  // namespace
@@ -62,30 +67,31 @@ class MockScrollableAreaForAnimatorTest
   explicit MockScrollableAreaForAnimatorTest(bool scroll_animator_enabled,
                                              const ScrollOffset& min_offset,
                                              const ScrollOffset& max_offset)
-      : scroll_animator_enabled_(scroll_animator_enabled),
+      : ScrollableArea(blink::scheduler::GetSingleThreadTaskRunnerForTesting()),
+        scroll_animator_enabled_(scroll_animator_enabled),
         min_offset_(min_offset),
         max_offset_(max_offset) {}
 
-  MOCK_CONST_METHOD0(VisualRectForScrollbarParts, LayoutRect());
   MOCK_CONST_METHOD0(IsActive, bool());
   MOCK_CONST_METHOD0(IsThrottled, bool());
   MOCK_CONST_METHOD1(ScrollSize, int(ScrollbarOrientation));
   MOCK_CONST_METHOD0(IsScrollCornerVisible, bool());
-  MOCK_CONST_METHOD0(ScrollCornerRect, IntRect());
+  MOCK_CONST_METHOD0(ScrollCornerRect, gfx::Rect());
   MOCK_METHOD2(UpdateScrollOffset,
                void(const ScrollOffset&, mojom::blink::ScrollType));
   MOCK_METHOD0(ScrollControlWasSetNeedsPaintInvalidation, void());
   MOCK_CONST_METHOD0(EnclosingScrollableArea, ScrollableArea*());
-  MOCK_CONST_METHOD1(VisibleContentRect, IntRect(IncludeScrollbarsInRect));
-  MOCK_CONST_METHOD0(ContentsSize, IntSize());
+  MOCK_CONST_METHOD1(VisibleContentRect, gfx::Rect(IncludeScrollbarsInRect));
+  MOCK_CONST_METHOD0(ContentsSize, gfx::Size());
   MOCK_CONST_METHOD0(ScrollbarsCanBeActive, bool());
   MOCK_METHOD0(RegisterForAnimation, void());
   MOCK_METHOD0(ScheduleAnimation, bool());
-  MOCK_CONST_METHOD0(UsedColorScheme, ColorScheme());
+  MOCK_CONST_METHOD0(UsedColorSchemeScrollbars, mojom::blink::ColorScheme());
 
+  bool UsesCompositedScrolling() const override { NOTREACHED_NORETURN(); }
   bool UserInputScrollable(ScrollbarOrientation) const override { return true; }
   bool ShouldPlaceVerticalScrollbarOnLeft() const override { return false; }
-  IntSize ScrollOffsetInt() const override { return IntSize(); }
+  gfx::Vector2d ScrollOffsetInt() const override { return gfx::Vector2d(); }
   int VisibleHeight() const override { return 768; }
   int VisibleWidth() const override { return 1024; }
   CompositorElementId GetScrollElementId() const override {
@@ -95,11 +101,11 @@ class MockScrollableAreaForAnimatorTest
     return scroll_animator_enabled_;
   }
   int PageStep(ScrollbarOrientation) const override { return 0; }
-  IntSize MinimumScrollOffsetInt() const override {
-    return FlooredIntSize(min_offset_);
+  gfx::Vector2d MinimumScrollOffsetInt() const override {
+    return gfx::ToFlooredVector2d(min_offset_);
   }
-  IntSize MaximumScrollOffsetInt() const override {
-    return FlooredIntSize(max_offset_);
+  gfx::Vector2d MaximumScrollOffsetInt() const override {
+    return gfx::ToFlooredVector2d(max_offset_);
   }
 
   void SetScrollAnimator(ScrollAnimator* scroll_animator) {
@@ -112,15 +118,15 @@ class MockScrollableAreaForAnimatorTest
     return ScrollableArea::GetScrollOffset();
   }
 
-  void SetScrollOffset(const ScrollOffset& offset,
+  bool SetScrollOffset(const ScrollOffset& offset,
                        mojom::blink::ScrollType type,
                        mojom::blink::ScrollBehavior behavior =
                            mojom::blink::ScrollBehavior::kInstant,
                        ScrollCallback on_finish = ScrollCallback()) override {
     if (animator)
       animator->SetCurrentOffset(offset);
-    ScrollableArea::SetScrollOffset(offset, type, behavior,
-                                    std::move(on_finish));
+    return ScrollableArea::SetScrollOffset(offset, type, behavior,
+                                           std::move(on_finish));
   }
 
   scoped_refptr<base::SingleThreadTaskRunner> GetTimerTaskRunner() const final {
@@ -185,6 +191,7 @@ static void Reset(ScrollAnimator& scroll_animator) {
 // TODO(skobes): Add unit tests for composited scrolling paths.
 
 TEST(ScrollAnimatorTest, MainThreadStates) {
+  test::TaskEnvironment task_environment;
   auto* scrollable_area =
       MakeGarbageCollected<MockScrollableAreaForAnimatorTest>(
           true, ScrollOffset(), ScrollOffset(1000, 1000));
@@ -206,15 +213,15 @@ TEST(ScrollAnimatorTest, MainThreadStates) {
             ScrollAnimatorCompositorCoordinator::RunState::kIdle);
 
   // WaitingToSendToCompositor
-  scroll_animator->UserScroll(ScrollGranularity::kScrollByLine,
-                              FloatSize(10, 0),
+  scroll_animator->UserScroll(ui::ScrollGranularity::kScrollByLine,
+                              ScrollOffset(10, 0),
                               ScrollableArea::ScrollCallback());
   EXPECT_EQ(scroll_animator->run_state_,
             ScrollAnimatorCompositorCoordinator::RunState::
                 kWaitingToSendToCompositor);
 
   // RunningOnMainThread
-  task_runner->FastForwardBy(base::TimeDelta::FromMilliseconds(50));
+  task_runner->FastForwardBy(base::Milliseconds(50));
   scroll_animator->UpdateCompositorAnimations();
   EXPECT_EQ(
       scroll_animator->run_state_,
@@ -243,6 +250,7 @@ TEST(ScrollAnimatorTest, MainThreadStates) {
 }
 
 TEST(ScrollAnimatorTest, MainThreadEnabled) {
+  test::TaskEnvironment task_environment;
   auto* scrollable_area =
       MakeGarbageCollected<MockScrollableAreaForAnimatorTest>(
           true, ScrollOffset(), ScrollOffset(1000, 1000));
@@ -260,80 +268,81 @@ TEST(ScrollAnimatorTest, MainThreadEnabled) {
   EXPECT_FALSE(scroll_animator->HasAnimationThatRequiresService());
 
   ScrollResult result = scroll_animator->UserScroll(
-      ScrollGranularity::kScrollByLine, FloatSize(-100, 0),
+      ui::ScrollGranularity::kScrollByLine, ScrollOffset(-100, 0),
       ScrollableArea::ScrollCallback());
   EXPECT_FALSE(scroll_animator->HasAnimationThatRequiresService());
   EXPECT_FALSE(result.did_scroll_x);
   EXPECT_FLOAT_EQ(-100.0f, result.unused_scroll_delta_x);
 
-  result = scroll_animator->UserScroll(ScrollGranularity::kScrollByLine,
-                                       FloatSize(100, 0),
+  result = scroll_animator->UserScroll(ui::ScrollGranularity::kScrollByLine,
+                                       ScrollOffset(100, 0),
                                        ScrollableArea::ScrollCallback());
   EXPECT_TRUE(scroll_animator->HasAnimationThatRequiresService());
   EXPECT_TRUE(result.did_scroll_x);
   EXPECT_FLOAT_EQ(0.0, result.unused_scroll_delta_x);
 
-  task_runner->FastForwardBy(base::TimeDelta::FromMilliseconds(50));
+  task_runner->FastForwardBy(base::Milliseconds(50));
   scroll_animator->UpdateCompositorAnimations();
   scroll_animator->TickAnimation(NowTicksInSeconds(task_runner.get()));
 
-  EXPECT_NE(100, scroll_animator->CurrentOffset().Width());
-  EXPECT_NE(0, scroll_animator->CurrentOffset().Width());
-  EXPECT_EQ(0, scroll_animator->CurrentOffset().Height());
+  EXPECT_NE(100, scroll_animator->CurrentOffset().x());
+  EXPECT_NE(0, scroll_animator->CurrentOffset().x());
+  EXPECT_EQ(0, scroll_animator->CurrentOffset().y());
   Reset(*scroll_animator);
 
-  scroll_animator->UserScroll(ScrollGranularity::kScrollByPage,
-                              FloatSize(100, 0),
+  scroll_animator->UserScroll(ui::ScrollGranularity::kScrollByPage,
+                              ScrollOffset(100, 0),
                               ScrollableArea::ScrollCallback());
   EXPECT_TRUE(scroll_animator->HasAnimationThatRequiresService());
 
-  task_runner->FastForwardBy(base::TimeDelta::FromMilliseconds(50));
+  task_runner->FastForwardBy(base::Milliseconds(50));
   scroll_animator->UpdateCompositorAnimations();
   scroll_animator->TickAnimation(NowTicksInSeconds(task_runner.get()));
 
-  EXPECT_NE(100, scroll_animator->CurrentOffset().Width());
-  EXPECT_NE(0, scroll_animator->CurrentOffset().Width());
-  EXPECT_EQ(0, scroll_animator->CurrentOffset().Height());
+  EXPECT_NE(100, scroll_animator->CurrentOffset().x());
+  EXPECT_NE(0, scroll_animator->CurrentOffset().x());
+  EXPECT_EQ(0, scroll_animator->CurrentOffset().y());
   Reset(*scroll_animator);
 
-  scroll_animator->UserScroll(ScrollGranularity::kScrollByPixel,
-                              FloatSize(100, 0),
+  scroll_animator->UserScroll(ui::ScrollGranularity::kScrollByPixel,
+                              ScrollOffset(100, 0),
                               ScrollableArea::ScrollCallback());
   EXPECT_TRUE(scroll_animator->HasAnimationThatRequiresService());
 
-  task_runner->FastForwardBy(base::TimeDelta::FromMilliseconds(50));
+  task_runner->FastForwardBy(base::Milliseconds(50));
   scroll_animator->UpdateCompositorAnimations();
   scroll_animator->TickAnimation(NowTicksInSeconds(task_runner.get()));
 
-  EXPECT_NE(100, scroll_animator->CurrentOffset().Width());
-  EXPECT_NE(0, scroll_animator->CurrentOffset().Width());
-  EXPECT_EQ(0, scroll_animator->CurrentOffset().Height());
+  EXPECT_NE(100, scroll_animator->CurrentOffset().x());
+  EXPECT_NE(0, scroll_animator->CurrentOffset().x());
+  EXPECT_EQ(0, scroll_animator->CurrentOffset().y());
 
-  task_runner->FastForwardBy(base::TimeDelta::FromSeconds(1.0));
+  task_runner->FastForwardBy(base::Seconds(1.0));
   scroll_animator->UpdateCompositorAnimations();
   scroll_animator->TickAnimation(NowTicksInSeconds(task_runner.get()));
 
-  task_runner->FastForwardBy(base::TimeDelta::FromMilliseconds(50));
+  task_runner->FastForwardBy(base::Milliseconds(50));
   scroll_animator->UpdateCompositorAnimations();
   EXPECT_FALSE(scroll_animator->HasAnimationThatRequiresService());
-  EXPECT_EQ(100, scroll_animator->CurrentOffset().Width());
+  EXPECT_EQ(100, scroll_animator->CurrentOffset().x());
 
   Reset(*scroll_animator);
 
-  scroll_animator->UserScroll(ScrollGranularity::kScrollByPrecisePixel,
-                              FloatSize(100, 0),
+  scroll_animator->UserScroll(ui::ScrollGranularity::kScrollByPrecisePixel,
+                              ScrollOffset(100, 0),
                               ScrollableArea::ScrollCallback());
   EXPECT_FALSE(scroll_animator->HasAnimationThatRequiresService());
 
-  EXPECT_EQ(100, scroll_animator->CurrentOffset().Width());
-  EXPECT_NE(0, scroll_animator->CurrentOffset().Width());
-  EXPECT_EQ(0, scroll_animator->CurrentOffset().Height());
+  EXPECT_EQ(100, scroll_animator->CurrentOffset().x());
+  EXPECT_NE(0, scroll_animator->CurrentOffset().x());
+  EXPECT_EQ(0, scroll_animator->CurrentOffset().y());
   Reset(*scroll_animator);
 }
 
 // Test that a smooth scroll offset animation is aborted when followed by a
 // non-smooth scroll offset animation.
 TEST(ScrollAnimatorTest, AnimatedScrollAborted) {
+  test::TaskEnvironment task_environment;
   auto* scrollable_area =
       MakeGarbageCollected<MockScrollableAreaForAnimatorTest>(
           true, ScrollOffset(), ScrollOffset(1000, 1000));
@@ -352,33 +361,33 @@ TEST(ScrollAnimatorTest, AnimatedScrollAborted) {
 
   // Smooth scroll.
   ScrollResult result = scroll_animator->UserScroll(
-      ScrollGranularity::kScrollByLine, FloatSize(100, 0),
+      ui::ScrollGranularity::kScrollByLine, ScrollOffset(100, 0),
       ScrollableArea::ScrollCallback());
   EXPECT_TRUE(scroll_animator->HasAnimationThatRequiresService());
   EXPECT_TRUE(result.did_scroll_x);
   EXPECT_FLOAT_EQ(0.0, result.unused_scroll_delta_x);
   EXPECT_TRUE(scroll_animator->HasRunningAnimation());
 
-  task_runner->FastForwardBy(base::TimeDelta::FromMilliseconds(50));
+  task_runner->FastForwardBy(base::Milliseconds(50));
   scroll_animator->UpdateCompositorAnimations();
   scroll_animator->TickAnimation(NowTicksInSeconds(task_runner.get()));
 
-  EXPECT_NE(100, scroll_animator->CurrentOffset().Width());
-  EXPECT_NE(0, scroll_animator->CurrentOffset().Width());
-  EXPECT_EQ(0, scroll_animator->CurrentOffset().Height());
+  EXPECT_NE(100, scroll_animator->CurrentOffset().x());
+  EXPECT_NE(0, scroll_animator->CurrentOffset().x());
+  EXPECT_EQ(0, scroll_animator->CurrentOffset().y());
 
-  float x = scroll_animator->CurrentOffset().Width();
+  float x = scroll_animator->CurrentOffset().x();
 
   // Instant scroll.
-  result = scroll_animator->UserScroll(ScrollGranularity::kScrollByPrecisePixel,
-                                       FloatSize(100, 0),
+  result = scroll_animator->UserScroll(ui::ScrollGranularity::kScrollByPrecisePixel,
+                                       ScrollOffset(100, 0),
                                        ScrollableArea::ScrollCallback());
   EXPECT_TRUE(result.did_scroll_x);
-  task_runner->FastForwardBy(base::TimeDelta::FromMilliseconds(50));
+  task_runner->FastForwardBy(base::Milliseconds(50));
   scroll_animator->UpdateCompositorAnimations();
   EXPECT_FALSE(scroll_animator->HasRunningAnimation());
-  EXPECT_EQ(x + 100, scroll_animator->CurrentOffset().Width());
-  EXPECT_EQ(0, scroll_animator->CurrentOffset().Height());
+  EXPECT_EQ(x + 100, scroll_animator->CurrentOffset().x());
+  EXPECT_EQ(0, scroll_animator->CurrentOffset().y());
 
   Reset(*scroll_animator);
 }
@@ -386,6 +395,7 @@ TEST(ScrollAnimatorTest, AnimatedScrollAborted) {
 // Test that a smooth scroll offset animation running on the compositor is
 // completed on the main thread.
 TEST(ScrollAnimatorTest, AnimatedScrollTakeover) {
+  test::TaskEnvironment task_environment;
   auto* scrollable_area =
       MakeGarbageCollected<MockScrollableAreaForAnimatorTest>(
           true, ScrollOffset(), ScrollOffset(1000, 1000));
@@ -407,7 +417,7 @@ TEST(ScrollAnimatorTest, AnimatedScrollTakeover) {
 
   // Smooth scroll.
   ScrollResult result = scroll_animator->UserScroll(
-      ScrollGranularity::kScrollByLine, FloatSize(100, 0),
+      ui::ScrollGranularity::kScrollByLine, ScrollOffset(100, 0),
       ScrollableArea::ScrollCallback());
   EXPECT_TRUE(scroll_animator->HasAnimationThatRequiresService());
   EXPECT_TRUE(result.did_scroll_x);
@@ -415,7 +425,7 @@ TEST(ScrollAnimatorTest, AnimatedScrollTakeover) {
   EXPECT_TRUE(scroll_animator->HasRunningAnimation());
 
   // Update compositor animation.
-  task_runner->FastForwardBy(base::TimeDelta::FromMilliseconds(50));
+  task_runner->FastForwardBy(base::Milliseconds(50));
   scroll_animator->SetShouldSendToCompositor(true);
   scroll_animator->UpdateCompositorAnimations();
   EXPECT_EQ(
@@ -435,13 +445,14 @@ TEST(ScrollAnimatorTest, AnimatedScrollTakeover) {
       scroll_animator->run_state_,
       ScrollAnimatorCompositorCoordinator::RunState::kRunningOnMainThread);
   scroll_animator->TickAnimation(NowTicksInSeconds(task_runner.get()));
-  EXPECT_NE(100, scroll_animator->CurrentOffset().Width());
-  EXPECT_NE(0, scroll_animator->CurrentOffset().Width());
-  EXPECT_EQ(0, scroll_animator->CurrentOffset().Height());
+  EXPECT_NE(100, scroll_animator->CurrentOffset().x());
+  EXPECT_NE(0, scroll_animator->CurrentOffset().x());
+  EXPECT_EQ(0, scroll_animator->CurrentOffset().y());
   Reset(*scroll_animator);
 }
 
 TEST(ScrollAnimatorTest, Disabled) {
+  test::TaskEnvironment task_environment;
   auto* scrollable_area =
       MakeGarbageCollected<MockScrollableAreaForAnimatorTest>(
           false, ScrollOffset(), ScrollOffset(1000, 1000));
@@ -453,38 +464,39 @@ TEST(ScrollAnimatorTest, Disabled) {
   EXPECT_CALL(*scrollable_area, UpdateScrollOffset(_, _)).Times(8);
   EXPECT_CALL(*scrollable_area, RegisterForAnimation()).Times(0);
 
-  scroll_animator->UserScroll(ScrollGranularity::kScrollByLine,
-                              FloatSize(100, 0),
+  scroll_animator->UserScroll(ui::ScrollGranularity::kScrollByLine,
+                              ScrollOffset(100, 0),
                               ScrollableArea::ScrollCallback());
-  EXPECT_EQ(100, scroll_animator->CurrentOffset().Width());
-  EXPECT_EQ(0, scroll_animator->CurrentOffset().Height());
+  EXPECT_EQ(100, scroll_animator->CurrentOffset().x());
+  EXPECT_EQ(0, scroll_animator->CurrentOffset().y());
   Reset(*scroll_animator);
 
-  scroll_animator->UserScroll(ScrollGranularity::kScrollByPage,
-                              FloatSize(100, 0),
+  scroll_animator->UserScroll(ui::ScrollGranularity::kScrollByPage,
+                              ScrollOffset(100, 0),
                               ScrollableArea::ScrollCallback());
-  EXPECT_EQ(100, scroll_animator->CurrentOffset().Width());
-  EXPECT_EQ(0, scroll_animator->CurrentOffset().Height());
+  EXPECT_EQ(100, scroll_animator->CurrentOffset().x());
+  EXPECT_EQ(0, scroll_animator->CurrentOffset().y());
   Reset(*scroll_animator);
 
-  scroll_animator->UserScroll(ScrollGranularity::kScrollByDocument,
-                              FloatSize(100, 0),
+  scroll_animator->UserScroll(ui::ScrollGranularity::kScrollByDocument,
+                              ScrollOffset(100, 0),
                               ScrollableArea::ScrollCallback());
-  EXPECT_EQ(100, scroll_animator->CurrentOffset().Width());
-  EXPECT_EQ(0, scroll_animator->CurrentOffset().Height());
+  EXPECT_EQ(100, scroll_animator->CurrentOffset().x());
+  EXPECT_EQ(0, scroll_animator->CurrentOffset().y());
   Reset(*scroll_animator);
 
-  scroll_animator->UserScroll(ScrollGranularity::kScrollByPixel,
-                              FloatSize(100, 0),
+  scroll_animator->UserScroll(ui::ScrollGranularity::kScrollByPixel,
+                              ScrollOffset(100, 0),
                               ScrollableArea::ScrollCallback());
-  EXPECT_EQ(100, scroll_animator->CurrentOffset().Width());
-  EXPECT_EQ(0, scroll_animator->CurrentOffset().Height());
+  EXPECT_EQ(100, scroll_animator->CurrentOffset().x());
+  EXPECT_EQ(0, scroll_animator->CurrentOffset().y());
   Reset(*scroll_animator);
 }
 
 // Test that cancelling an animation resets the animation state.
 // See crbug.com/598548.
 TEST(ScrollAnimatorTest, CancellingAnimationResetsState) {
+  test::TaskEnvironment task_environment;
   auto* scrollable_area =
       MakeGarbageCollected<MockScrollableAreaForAnimatorTest>(
           true, ScrollOffset(), ScrollOffset(1000, 1000));
@@ -501,19 +513,19 @@ TEST(ScrollAnimatorTest, CancellingAnimationResetsState) {
       .Times(AtLeast(1))
       .WillRepeatedly(Return(true));
 
-  EXPECT_EQ(0, scroll_animator->CurrentOffset().Width());
-  EXPECT_EQ(0, scroll_animator->CurrentOffset().Height());
+  EXPECT_EQ(0, scroll_animator->CurrentOffset().x());
+  EXPECT_EQ(0, scroll_animator->CurrentOffset().y());
 
   // WaitingToSendToCompositor
-  scroll_animator->UserScroll(ScrollGranularity::kScrollByLine,
-                              FloatSize(10, 0),
+  scroll_animator->UserScroll(ui::ScrollGranularity::kScrollByLine,
+                              ScrollOffset(10, 0),
                               ScrollableArea::ScrollCallback());
   EXPECT_EQ(scroll_animator->run_state_,
             ScrollAnimatorCompositorCoordinator::RunState::
                 kWaitingToSendToCompositor);
 
   // RunningOnMainThread
-  task_runner->FastForwardBy(base::TimeDelta::FromMilliseconds(50));
+  task_runner->FastForwardBy(base::Milliseconds(50));
   scroll_animator->UpdateCompositorAnimations();
   EXPECT_EQ(
       scroll_animator->run_state_,
@@ -524,7 +536,7 @@ TEST(ScrollAnimatorTest, CancellingAnimationResetsState) {
       ScrollAnimatorCompositorCoordinator::RunState::kRunningOnMainThread);
 
   // Amount scrolled so far.
-  float offset_x = scroll_animator->CurrentOffset().Width();
+  float offset_x = scroll_animator->CurrentOffset().x();
 
   // Interrupt user scroll.
   scroll_animator->CancelAnimation();
@@ -534,29 +546,30 @@ TEST(ScrollAnimatorTest, CancellingAnimationResetsState) {
 
   // Another userScroll after modified scroll offset.
   scroll_animator->SetCurrentOffset(ScrollOffset(offset_x + 15, 0));
-  scroll_animator->UserScroll(ScrollGranularity::kScrollByLine,
-                              FloatSize(10, 0),
+  scroll_animator->UserScroll(ui::ScrollGranularity::kScrollByLine,
+                              ScrollOffset(10, 0),
                               ScrollableArea::ScrollCallback());
   EXPECT_EQ(scroll_animator->run_state_,
             ScrollAnimatorCompositorCoordinator::RunState::
                 kWaitingToSendToCompositor);
 
   // Finish scroll animation.
-  task_runner->FastForwardBy(base::TimeDelta::FromSeconds(1));
+  task_runner->FastForwardBy(base::Seconds(1));
   scroll_animator->UpdateCompositorAnimations();
   scroll_animator->TickAnimation(NowTicksInSeconds(task_runner.get()));
   EXPECT_EQ(
       scroll_animator->run_state_,
       ScrollAnimatorCompositorCoordinator::RunState::kPostAnimationCleanup);
 
-  EXPECT_EQ(offset_x + 15 + 10, scroll_animator->CurrentOffset().Width());
-  EXPECT_EQ(0, scroll_animator->CurrentOffset().Height());
+  EXPECT_EQ(offset_x + 15 + 10, scroll_animator->CurrentOffset().x());
+  EXPECT_EQ(0, scroll_animator->CurrentOffset().y());
   Reset(*scroll_animator);
 }
 
 // Test that the callback passed to UserScroll function will be run when the
 // animation is canceled or finished when the scroll is sent to main thread.
 TEST(ScrollAnimatorTest, UserScrollCallBackAtAnimationFinishOnMainThread) {
+  test::TaskEnvironment task_environment;
   auto* scrollable_area =
       MakeGarbageCollected<MockScrollableAreaForAnimatorTest>(
           true, ScrollOffset(), ScrollOffset(1000, 1000));
@@ -573,22 +586,25 @@ TEST(ScrollAnimatorTest, UserScrollCallBackAtAnimationFinishOnMainThread) {
       .Times(AtLeast(1))
       .WillRepeatedly(Return(true));
 
-  EXPECT_EQ(0, scroll_animator->CurrentOffset().Width());
-  EXPECT_EQ(0, scroll_animator->CurrentOffset().Height());
+  EXPECT_EQ(0, scroll_animator->CurrentOffset().x());
+  EXPECT_EQ(0, scroll_animator->CurrentOffset().y());
 
   // WaitingToSendToCompositor
   bool finished = false;
   scroll_animator->UserScroll(
-      ScrollGranularity::kScrollByLine, FloatSize(10, 0),
-      ScrollableArea::ScrollCallback(
-          base::BindOnce([](bool* finished) { *finished = true; }, &finished)));
+      ui::ScrollGranularity::kScrollByLine, ScrollOffset(10, 0),
+      ScrollableArea::ScrollCallback(WTF::BindOnce(
+          [](bool* finished, ScrollableArea::ScrollCompletionMode) {
+            *finished = true;
+          },
+          WTF::Unretained(&finished))));
   EXPECT_FALSE(finished);
   EXPECT_EQ(scroll_animator->run_state_,
             ScrollAnimatorCompositorCoordinator::RunState::
                 kWaitingToSendToCompositor);
 
   // RunningOnMainThread
-  task_runner->FastForwardBy(base::TimeDelta::FromMilliseconds(50));
+  task_runner->FastForwardBy(base::Milliseconds(50));
   scroll_animator->UpdateCompositorAnimations();
   EXPECT_FALSE(finished);
   EXPECT_EQ(
@@ -597,7 +613,7 @@ TEST(ScrollAnimatorTest, UserScrollCallBackAtAnimationFinishOnMainThread) {
   scroll_animator->TickAnimation(NowTicksInSeconds(task_runner.get()));
 
   // Amount scrolled so far.
-  float offset_x = scroll_animator->CurrentOffset().Width();
+  float offset_x = scroll_animator->CurrentOffset().x();
 
   // Interrupt user scroll.
   scroll_animator->CancelAnimation();
@@ -608,23 +624,23 @@ TEST(ScrollAnimatorTest, UserScrollCallBackAtAnimationFinishOnMainThread) {
 
   // Another userScroll after modified scroll offset.
   scroll_animator->SetCurrentOffset(ScrollOffset(offset_x + 15, 0));
-  scroll_animator->UserScroll(ScrollGranularity::kScrollByLine,
-                              FloatSize(10, 0),
+  scroll_animator->UserScroll(ui::ScrollGranularity::kScrollByLine,
+                              ScrollOffset(10, 0),
                               ScrollableArea::ScrollCallback());
   EXPECT_EQ(scroll_animator->run_state_,
             ScrollAnimatorCompositorCoordinator::RunState::
                 kWaitingToSendToCompositor);
 
   // Finish scroll animation.
-  task_runner->FastForwardBy(base::TimeDelta::FromSeconds(1.0));
+  task_runner->FastForwardBy(base::Seconds(1.0));
   scroll_animator->UpdateCompositorAnimations();
   scroll_animator->TickAnimation(NowTicksInSeconds(task_runner.get()));
   EXPECT_TRUE(finished);
   EXPECT_EQ(
       scroll_animator->run_state_,
       ScrollAnimatorCompositorCoordinator::RunState::kPostAnimationCleanup);
-  EXPECT_EQ(offset_x + 15 + 10, scroll_animator->CurrentOffset().Width());
-  EXPECT_EQ(0, scroll_animator->CurrentOffset().Height());
+  EXPECT_EQ(offset_x + 15 + 10, scroll_animator->CurrentOffset().x());
+  EXPECT_EQ(0, scroll_animator->CurrentOffset().y());
   Reset(*scroll_animator);
 
   // Forced GC in order to finalize objects depending on the mock object.
@@ -634,6 +650,7 @@ TEST(ScrollAnimatorTest, UserScrollCallBackAtAnimationFinishOnMainThread) {
 // Test that the callback passed to UserScroll function will be run when the
 // animation is canceled or finished when the scroll is sent to compositor.
 TEST(ScrollAnimatorTest, UserScrollCallBackAtAnimationFinishOnCompositor) {
+  test::TaskEnvironment task_environment;
   auto* scrollable_area =
       MakeGarbageCollected<MockScrollableAreaForAnimatorTest>(
           true, ScrollOffset(), ScrollOffset(1000, 1000));
@@ -651,19 +668,22 @@ TEST(ScrollAnimatorTest, UserScrollCallBackAtAnimationFinishOnCompositor) {
   // First user scroll.
   bool finished = false;
   scroll_animator->UserScroll(
-      ScrollGranularity::kScrollByLine, FloatSize(100, 0),
-      ScrollableArea::ScrollCallback(
-          base::BindOnce([](bool* finished) { *finished = true; }, &finished)));
+      ui::ScrollGranularity::kScrollByLine, ScrollOffset(100, 0),
+      ScrollableArea::ScrollCallback(WTF::BindOnce(
+          [](bool* finished, ScrollableArea::ScrollCompletionMode) {
+            *finished = true;
+          },
+          WTF::Unretained(&finished))));
   EXPECT_FALSE(finished);
   EXPECT_TRUE(scroll_animator->HasRunningAnimation());
-  EXPECT_EQ(100, scroll_animator->DesiredTargetOffset().Width());
-  EXPECT_EQ(0, scroll_animator->DesiredTargetOffset().Height());
+  EXPECT_EQ(100, scroll_animator->DesiredTargetOffset().x());
+  EXPECT_EQ(0, scroll_animator->DesiredTargetOffset().y());
   EXPECT_EQ(scroll_animator->run_state_,
             ScrollAnimatorCompositorCoordinator::RunState::
                 kWaitingToSendToCompositor);
 
   // Update compositor animation.
-  task_runner->FastForwardBy(base::TimeDelta::FromMilliseconds(50));
+  task_runner->FastForwardBy(base::Milliseconds(50));
   scroll_animator->SetShouldSendToCompositor(true);
   scroll_animator->UpdateCompositorAnimations();
   EXPECT_FALSE(finished);
@@ -685,6 +705,7 @@ TEST(ScrollAnimatorTest, UserScrollCallBackAtAnimationFinishOnCompositor) {
 // Test the behavior when in WaitingToCancelOnCompositor and a new user scroll
 // happens.
 TEST(ScrollAnimatorTest, CancellingCompositorAnimation) {
+  test::TaskEnvironment task_environment;
   auto* scrollable_area =
       MakeGarbageCollected<MockScrollableAreaForAnimatorTest>(
           true, ScrollOffset(), ScrollOffset(1000, 1000));
@@ -706,17 +727,17 @@ TEST(ScrollAnimatorTest, CancellingCompositorAnimation) {
 
   // First user scroll.
   ScrollResult result = scroll_animator->UserScroll(
-      ScrollGranularity::kScrollByLine, FloatSize(100, 0),
+      ui::ScrollGranularity::kScrollByLine, ScrollOffset(100, 0),
       ScrollableArea::ScrollCallback());
   EXPECT_TRUE(scroll_animator->HasAnimationThatRequiresService());
   EXPECT_TRUE(result.did_scroll_x);
   EXPECT_FLOAT_EQ(0.0, result.unused_scroll_delta_x);
   EXPECT_TRUE(scroll_animator->HasRunningAnimation());
-  EXPECT_EQ(100, scroll_animator->DesiredTargetOffset().Width());
-  EXPECT_EQ(0, scroll_animator->DesiredTargetOffset().Height());
+  EXPECT_EQ(100, scroll_animator->DesiredTargetOffset().x());
+  EXPECT_EQ(0, scroll_animator->DesiredTargetOffset().y());
 
   // Update compositor animation.
-  task_runner->FastForwardBy(base::TimeDelta::FromMilliseconds(50));
+  task_runner->FastForwardBy(base::Milliseconds(50));
   scroll_animator->SetShouldSendToCompositor(true);
   scroll_animator->UpdateCompositorAnimations();
   EXPECT_EQ(
@@ -733,8 +754,8 @@ TEST(ScrollAnimatorTest, CancellingCompositorAnimation) {
   scroll_animator->SetCurrentOffset(ScrollOffset(50, 0));
 
   // Desired target offset should be that of the second scroll.
-  result = scroll_animator->UserScroll(ScrollGranularity::kScrollByLine,
-                                       FloatSize(100, 0),
+  result = scroll_animator->UserScroll(ui::ScrollGranularity::kScrollByLine,
+                                       ScrollOffset(100, 0),
                                        ScrollableArea::ScrollCallback());
   EXPECT_TRUE(scroll_animator->HasAnimationThatRequiresService());
   EXPECT_TRUE(result.did_scroll_x);
@@ -742,19 +763,19 @@ TEST(ScrollAnimatorTest, CancellingCompositorAnimation) {
   EXPECT_EQ(scroll_animator->run_state_,
             ScrollAnimatorCompositorCoordinator::RunState::
                 kWaitingToCancelOnCompositorButNewScroll);
-  EXPECT_EQ(150, scroll_animator->DesiredTargetOffset().Width());
-  EXPECT_EQ(0, scroll_animator->DesiredTargetOffset().Height());
+  EXPECT_EQ(150, scroll_animator->DesiredTargetOffset().x());
+  EXPECT_EQ(0, scroll_animator->DesiredTargetOffset().y());
 
   // Update compositor animation.
-  task_runner->FastForwardBy(base::TimeDelta::FromMilliseconds(50));
+  task_runner->FastForwardBy(base::Milliseconds(50));
   scroll_animator->UpdateCompositorAnimations();
   EXPECT_EQ(
       scroll_animator->run_state_,
       ScrollAnimatorCompositorCoordinator::RunState::kRunningOnCompositor);
 
   // Third user scroll after compositor update updates the target.
-  result = scroll_animator->UserScroll(ScrollGranularity::kScrollByLine,
-                                       FloatSize(100, 0),
+  result = scroll_animator->UserScroll(ui::ScrollGranularity::kScrollByLine,
+                                       ScrollOffset(100, 0),
                                        ScrollableArea::ScrollCallback());
   EXPECT_TRUE(scroll_animator->HasAnimationThatRequiresService());
   EXPECT_TRUE(result.did_scroll_x);
@@ -762,8 +783,8 @@ TEST(ScrollAnimatorTest, CancellingCompositorAnimation) {
   EXPECT_EQ(scroll_animator->run_state_,
             ScrollAnimatorCompositorCoordinator::RunState::
                 kRunningOnCompositorButNeedsUpdate);
-  EXPECT_EQ(250, scroll_animator->DesiredTargetOffset().Width());
-  EXPECT_EQ(0, scroll_animator->DesiredTargetOffset().Height());
+  EXPECT_EQ(250, scroll_animator->DesiredTargetOffset().x());
+  EXPECT_EQ(0, scroll_animator->DesiredTargetOffset().y());
   Reset(*scroll_animator);
 
   // Forced GC in order to finalize objects depending on the mock object.
@@ -773,6 +794,7 @@ TEST(ScrollAnimatorTest, CancellingCompositorAnimation) {
 // This test verifies that impl only animation updates get cleared once they
 // are pushed to compositor animation host.
 TEST(ScrollAnimatorTest, ImplOnlyAnimationUpdatesCleared) {
+  test::TaskEnvironment task_environment;
   auto* scrollable_area =
       MakeGarbageCollected<MockScrollableAreaForAnimatorTest>(
           true, ScrollOffset(), ScrollOffset(1000, 1000));
@@ -790,11 +812,11 @@ TEST(ScrollAnimatorTest, ImplOnlyAnimationUpdatesCleared) {
   EXPECT_FALSE(animator->HasAnimationThatRequiresService());
   EXPECT_TRUE(animator->ImplOnlyAnimationAdjustmentForTesting().IsZero());
 
-  animator->AdjustImplOnlyScrollOffsetAnimation(IntSize(100, 100));
-  animator->AdjustImplOnlyScrollOffsetAnimation(IntSize(10, -10));
+  animator->AdjustImplOnlyScrollOffsetAnimation(gfx::Vector2d(100, 100));
+  animator->AdjustImplOnlyScrollOffsetAnimation(gfx::Vector2d(10, -10));
 
   EXPECT_TRUE(animator->HasAnimationThatRequiresService());
-  EXPECT_EQ(IntSize(110, 90),
+  EXPECT_EQ(gfx::Vector2d(110, 90),
             animator->ImplOnlyAnimationAdjustmentForTesting());
 
   animator->UpdateCompositorAnimations();
@@ -813,6 +835,7 @@ TEST(ScrollAnimatorTest, ImplOnlyAnimationUpdatesCleared) {
 }
 
 TEST(ScrollAnimatorTest, MainThreadAnimationTargetAdjustment) {
+  test::TaskEnvironment task_environment;
   auto* scrollable_area =
       MakeGarbageCollected<MockScrollableAreaForAnimatorTest>(
           true, ScrollOffset(-100, -100), ScrollOffset(1000, 1000));
@@ -822,9 +845,8 @@ TEST(ScrollAnimatorTest, MainThreadAnimationTargetAdjustment) {
       scrollable_area, task_runner->GetMockTickClock());
   scrollable_area->SetScrollAnimator(animator);
 
-  // Twice from tickAnimation, once from reset, and twice from
-  // adjustAnimationAndSetScrollOffset.
-  EXPECT_CALL(*scrollable_area, UpdateScrollOffset(_, _)).Times(5);
+  // Twice from tickAnimation, once from reset.
+  EXPECT_CALL(*scrollable_area, UpdateScrollOffset(_, _)).Times(3);
   // One from call to userScroll and one from updateCompositorAnimations.
   EXPECT_CALL(*scrollable_area, RegisterForAnimation()).Times(2);
   EXPECT_CALL(*scrollable_area, ScheduleAnimation())
@@ -836,34 +858,37 @@ TEST(ScrollAnimatorTest, MainThreadAnimationTargetAdjustment) {
   EXPECT_EQ(ScrollOffset(), animator->CurrentOffset());
 
   // WaitingToSendToCompositor
-  animator->UserScroll(ScrollGranularity::kScrollByLine, ScrollOffset(100, 100),
+  animator->UserScroll(ui::ScrollGranularity::kScrollByLine, ScrollOffset(100, 100),
                        ScrollableArea::ScrollCallback());
 
   // RunningOnMainThread
-  task_runner->FastForwardBy(base::TimeDelta::FromMilliseconds(50));
+  task_runner->FastForwardBy(base::Milliseconds(50));
   animator->UpdateCompositorAnimations();
   animator->TickAnimation(NowTicksInSeconds(task_runner.get()));
   ScrollOffset offset = animator->CurrentOffset();
   EXPECT_EQ(ScrollOffset(100, 100), animator->DesiredTargetOffset());
-  EXPECT_GT(offset.Width(), 0);
-  EXPECT_GT(offset.Height(), 0);
+  EXPECT_GT(offset.x(), 0);
+  EXPECT_GT(offset.y(), 0);
 
   // Adjustment
   ScrollOffset new_offset = offset + ScrollOffset(10, -10);
-  animator->AdjustAnimationAndSetScrollOffset(
-      new_offset, mojom::blink::ScrollType::kAnchoring);
+  animator->SetCurrentOffset(new_offset);
+  animator->AdjustAnimation(gfx::ToRoundedVector2d(new_offset) -
+                            gfx::ToRoundedVector2d(offset));
   EXPECT_EQ(ScrollOffset(110, 90), animator->DesiredTargetOffset());
 
   // Adjusting after finished animation should do nothing.
-  task_runner->FastForwardBy(base::TimeDelta::FromSeconds(1));
+  task_runner->FastForwardBy(base::Seconds(1));
   animator->UpdateCompositorAnimations();
   animator->TickAnimation(NowTicksInSeconds(task_runner.get()));
   EXPECT_EQ(
       animator->RunStateForTesting(),
       ScrollAnimatorCompositorCoordinator::RunState::kPostAnimationCleanup);
-  new_offset = animator->CurrentOffset() + ScrollOffset(10, -10);
-  animator->AdjustAnimationAndSetScrollOffset(
-      new_offset, mojom::blink::ScrollType::kAnchoring);
+  offset = animator->CurrentOffset();
+  new_offset = offset + ScrollOffset(10, -10);
+  animator->SetCurrentOffset(new_offset);
+  animator->AdjustAnimation(gfx::ToRoundedVector2d(new_offset) -
+                            gfx::ToRoundedVector2d(offset));
   EXPECT_EQ(
       animator->RunStateForTesting(),
       ScrollAnimatorCompositorCoordinator::RunState::kPostAnimationCleanup);

@@ -1,4 +1,4 @@
-# Copyright 2020 The Chromium Authors. All rights reserved.
+# Copyright 2020 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -11,13 +11,10 @@ _chrome_version_java_file = "$target_gen_dir/templates/org/chromium/chrome/brows
 android_library("java") {
   deps = [
     ":chrome_version_constants",
-    "//components/version_info/android:version_constants_java",
+    "//base/version_info/android:version_constants_java",
   ]
 
-  sources = [
-    "java/src/org/chromium/chrome/browser/version/ChromeVersionInfo.java",
-    _chrome_version_java_file,
-  ]
+  sources = [ _chrome_version_java_file ]
 }
 
 process_version("chrome_version_constants") {

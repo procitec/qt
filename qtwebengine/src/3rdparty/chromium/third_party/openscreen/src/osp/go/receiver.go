@@ -1,10 +1,10 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 package osp
 
-// TODO(pthatcher):
+// TODO(jophba):
 // - Send a response message
 // - Make a nice object API with methods
 // - Make it possible to have a presentation receiver that is a client

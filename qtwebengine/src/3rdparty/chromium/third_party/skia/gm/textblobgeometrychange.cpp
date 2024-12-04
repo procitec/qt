@@ -20,6 +20,7 @@
 #include "include/core/SkTextBlob.h"
 #include "include/core/SkTypeface.h"
 #include "tools/ToolUtils.h"
+#include "tools/fonts/FontToolUtils.h"
 
 // This tests that we don't try to reuse textblobs from the GPU textblob cache across pixel geometry
 // changes when we have LCD.  crbug/486744
@@ -29,18 +30,14 @@ public:
     TextBlobGeometryChange() { }
 
 protected:
-    SkString onShortName() override {
-        return SkString("textblobgeometrychange");
-    }
+    SkString getName() const override { return SkString("textblobgeometrychange"); }
 
-    SkISize onISize() override {
-        return SkISize::Make(kWidth, kHeight);
-    }
+    SkISize getISize() override { return SkISize::Make(kWidth, kHeight); }
 
     void onDraw(SkCanvas* canvas) override {
         const char text[] = "Hamburgefons";
 
-        SkFont font(ToolUtils::create_portable_typeface(), 20);
+        SkFont font(ToolUtils::DefaultPortableTypeface(), 20);
         font.setEdging(SkFont::Edging::kSubpixelAntiAlias);
 
         SkTextBlobBuilder builder;
@@ -65,12 +62,12 @@ protected:
         // (i.e., unknown pixel geometry)
         c->clear(0x00ffffff);
         c->drawTextBlob(blob, 10, 150, SkPaint());
-        surface->draw(canvas, 0, 0, nullptr);
+        surface->draw(canvas, 0, 0);
     }
 
 private:
-    static constexpr int kWidth = 200;
-    static constexpr int kHeight = 200;
+    inline static constexpr int kWidth = 200;
+    inline static constexpr int kHeight = 200;
 
     using INHERITED = GM;
 };

@@ -1,31 +1,5 @@
-/******************************************************************************
-**
-** Copyright (C) 2019 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtMqtt module.
-**
-** $QT_BEGIN_LICENSE:GPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 3 or (at your option) any later version
-** approved by the KDE Free Qt Foundation. The licenses are as published by
-** the Free Software Foundation and appearing in the file LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-******************************************************************************/
+// Copyright (C) 2019 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
 #include <QtTest/QtTest>
 #include <QtQml/qqmlengine.h>
@@ -46,6 +20,7 @@ private Q_SLOTS:
     void deltaFunction();
     void keyframeUpdate();
     void easingcurveInterpolation();
+    void restoreBindingTest();
 };
 
 inline QUrl testFileUrl(const QString &fileName)
@@ -419,6 +394,57 @@ void Tst_QtQuickTimeline::easingcurveInterpolation()
     QCOMPARE(rectangle->property("y").toReal(), final);
 }
 
+void Tst_QtQuickTimeline::restoreBindingTest()
+{
+    QQmlEngine engine;
+    QQmlComponent component(&engine);
+    component.loadUrl(testFileUrl("restorebindingtest.qml"));
+
+    QScopedPointer<QObject> object(component.create());
+    QVERIFY2(!object.isNull(), qPrintable(component.errorString()));
+
+    auto *rectangle = object->findChild<QObject *>("rectangle");
+    QVERIFY(rectangle);
+
+    QCOMPARE(rectangle->property("offset").toInt(), 0);
+    QCOMPARE(rectangle->property("x").toInt(), 0);
+    QCOMPARE(rectangle->property("y").toInt(), 0);
+
+    auto *timeline = object->findChild<QObject *>("timeline");
+    QVERIFY(timeline);
+
+    QCOMPARE(timeline->property("enabled").toBool(), false);
+    QCOMPARE(timeline->property("startFrame").toInt(), 0);
+    QCOMPARE(timeline->property("endFrame").toInt(), 100);
+    QCOMPARE(timeline->property("currentFrame").toInt(), 50);
+
+    // currentFrame == 50
+    timeline->setProperty("enabled", true);
+    QCOMPARE(rectangle->property("x").toInt(), 70);
+    QCOMPARE(rectangle->property("y").toInt(), 70);
+
+    timeline->setProperty("currentFrame", 0);
+    QCOMPARE(rectangle->property("x").toInt(), 140);
+    QCOMPARE(rectangle->property("y").toInt(), 0);
+
+    timeline->setProperty("currentFrame", 100);
+    QCOMPARE(rectangle->property("x").toInt(), 0);
+    QCOMPARE(rectangle->property("y").toInt(), 140);
+
+
+    timeline->setProperty("enabled", false);
+    // check restoring of the original binding
+    QCOMPARE(rectangle->property("x").toInt(), 0);
+    QCOMPARE(rectangle->property("y").toInt(), 0);
+    rectangle->setProperty("offset", 50);
+    QCOMPARE(rectangle->property("x").toInt(), 50);
+    QCOMPARE(rectangle->property("y").toInt(), 50);
+
+    timeline->setProperty("enabled", true);
+    // currentFrame == 100, offset == 50
+    QCOMPARE(rectangle->property("x").toInt(), 50);
+    QCOMPARE(rectangle->property("y").toInt(), 140);
+}
 QTEST_MAIN(Tst_QtQuickTimeline)
 
 #include "tst_qtquicktimeline.moc"

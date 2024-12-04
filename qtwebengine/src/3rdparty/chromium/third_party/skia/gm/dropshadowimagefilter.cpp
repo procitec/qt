@@ -22,6 +22,7 @@
 #include "include/effects/SkImageFilters.h"
 #include "include/utils/SkTextUtils.h"
 #include "tools/ToolUtils.h"
+#include "tools/fonts/FontToolUtils.h"
 
 #include <utility>
 
@@ -54,7 +55,7 @@ static void draw_text(SkCanvas* canvas, const SkRect& r, sk_sp<SkImageFilter> im
     paint.setColor(SK_ColorGREEN);
     paint.setAntiAlias(true);
 
-    SkFont font(ToolUtils::create_portable_typeface(), r.height() / 2);
+    SkFont font(ToolUtils::DefaultPortableTypeface(), r.height() / 2);
     canvas->save();
     canvas->clipRect(r);
     SkTextUtils::DrawString(canvas, "Text", r.centerX(), r.centerY(), font, paint, SkTextUtils::kCenter_Align);
@@ -67,16 +68,13 @@ static void draw_bitmap(SkCanvas* canvas, const SkRect& r, sk_sp<SkImageFilter> 
     SkIRect bounds;
     r.roundOut(&bounds);
 
-    SkBitmap bm;
-    bm.allocN32Pixels(bounds.width(), bounds.height());
-    bm.eraseColor(SK_ColorTRANSPARENT);
-    SkCanvas c(bm);
-    draw_path(&c, r, nullptr);
+    auto surf = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(bounds.width(), bounds.height()));
+    draw_path(surf->getCanvas(), r, nullptr);
 
     paint.setImageFilter(std::move(imf));
     canvas->save();
     canvas->clipRect(r);
-    canvas->drawBitmap(bm, 0, 0, &paint);
+    surf->draw(canvas, 0, 0, SkSamplingOptions(), &paint);
     canvas->restore();
 }
 
@@ -109,9 +107,9 @@ DEF_SIMPLE_GM(dropshadowimagefilter, canvas, 400, 656) {
     SkScalar DY = r.height() + MARGIN;
 
     canvas->translate(MARGIN, MARGIN);
-    for (size_t j = 0; j < SK_ARRAY_COUNT(drawProc); ++j) {
+    for (size_t j = 0; j < std::size(drawProc); ++j) {
         canvas->save();
-        for (size_t i = 0; i < SK_ARRAY_COUNT(filters); ++i) {
+        for (size_t i = 0; i < std::size(filters); ++i) {
             drawProc[j](canvas, r, filters[i]);
             canvas->translate(0, DY);
         }

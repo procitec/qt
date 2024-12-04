@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,18 +7,22 @@
 
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
+#include "third_party/blink/renderer/platform/heap/member.h"
+#include "third_party/blink/renderer/platform/heap/visitor.h"
 #include "v8/include/v8.h"
 
 namespace blink {
 
+class AbortController;
+class AbortSignal;
 class ExceptionState;
 class QueueWithSizes;
+class ScriptFunction;
 class ScriptState;
 class ScriptValue;
 class StrategySizeAlgorithm;
 class StreamAlgorithm;
 class StreamStartAlgorithm;
-class Visitor;
 class WritableStreamDefaultWriter;
 class WritableStream;
 
@@ -79,7 +83,8 @@ class CORE_EXPORT WritableStreamDefaultController final
   // May error the stream as a side-effect.
   static double GetChunkSize(ScriptState*,
                              WritableStreamDefaultController*,
-                             v8::Local<v8::Value> chunk);
+                             v8::Local<v8::Value> chunk,
+                             ExceptionState&);
 
   // https://streams.spec.whatwg.org/#writable-stream-default-controller-get-desired-size
   static double GetDesiredSize(const WritableStreamDefaultController*);
@@ -88,7 +93,8 @@ class CORE_EXPORT WritableStreamDefaultController final
   static void Write(ScriptState*,
                     WritableStreamDefaultController*,
                     v8::Local<v8::Value> chunk,
-                    double chunk_size);
+                    double chunk_size,
+                    ExceptionState&);
 
   // https://streams.spec.whatwg.org/#writable-stream-default-controller-error
   // TODO(ricea): Make this private.
@@ -106,6 +112,11 @@ class CORE_EXPORT WritableStreamDefaultController final
   static void ErrorIfNeeded(ScriptState*,
                             WritableStreamDefaultController*,
                             v8::Local<v8::Value> error);
+
+  // IDL attributes
+  AbortSignal* signal() const;
+
+  void Abort(ScriptState*, ScriptValue reason);
 
   void Trace(Visitor*) const override;
 
@@ -140,11 +151,14 @@ class CORE_EXPORT WritableStreamDefaultController final
   // stored-as-is, and the `"close"` marker in the queue is represented by an
   // empty queue together with the |close_queued_| flag being set.
   Member<QueueWithSizes> queue_;
+  Member<AbortController> abort_controller_;
   bool close_queued_ = false;
   bool started_ = false;
   double strategy_high_water_mark_ = 0.0;
   Member<StrategySizeAlgorithm> strategy_size_algorithm_;
   Member<StreamAlgorithm> write_algorithm_;
+  Member<ScriptFunction> resolve_function_;
+  Member<ScriptFunction> reject_function_;
 };
 
 }  // namespace blink

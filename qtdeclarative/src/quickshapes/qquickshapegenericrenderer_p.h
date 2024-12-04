@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtQuick module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2024 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #ifndef QQUICKSHAPEGENERICRENDERER_P_H
 #define QQUICKSHAPEGENERICRENDERER_P_H
@@ -53,6 +17,7 @@
 
 #include <QtQuickShapes/private/qquickshapesglobal_p.h>
 #include <QtQuickShapes/private/qquickshape_p_p.h>
+#include <QtQuick/private/qsggradientcache_p.h>
 #include <qsgnode.h>
 #include <qsggeometry.h>
 #include <qsgmaterial.h>
@@ -75,7 +40,9 @@ public:
         DirtyStrokeGeom = 0x02,
         DirtyColor = 0x04,
         DirtyFillGradient = 0x08,
-        DirtyList = 0x10 // only for accDirty
+        DirtyFillTransform = 0x10,
+        DirtyFillTexture = 0x20,
+        DirtyList = 0x40 // only for accDirty
     };
 
     QQuickShapeGenericRenderer(QQuickItem *item)
@@ -88,8 +55,9 @@ public:
     { }
     ~QQuickShapeGenericRenderer();
 
-    void beginSync(int totalCount) override;
+    void beginSync(int totalCount, bool *countChanged) override;
     void setPath(int index, const QQuickPath *path) override;
+    void setPath(int index, const QPainterPath &path, QQuickShapePath::PathHints pathHints = {}) override;
     void setStrokeColor(int index, const QColor &color) override;
     void setStrokeWidth(int index, qreal w) override;
     void setFillColor(int index, const QColor &color) override;
@@ -99,9 +67,13 @@ public:
     void setStrokeStyle(int index, QQuickShapePath::StrokeStyle strokeStyle,
                         qreal dashOffset, const QVector<qreal> &dashPattern) override;
     void setFillGradient(int index, QQuickShapeGradient *gradient) override;
+    void setFillTextureProvider(int index, QQuickItem *textureProviderItem) override;
+    void setFillTransform(int index, const QSGTransform &transform) override;
+    void setTriangulationScale(qreal scale) override;
     void endSync(bool async) override;
     void setAsyncCallback(void (*)(void *), void *) override;
     Flags flags() const override { return SupportsAsync; }
+    void handleSceneChange(QQuickWindow *window) override;
 
     void updateNode() override;
 
@@ -109,6 +81,7 @@ public:
 
     struct Color4ub { unsigned char r, g, b, a; };
     typedef QVector<QSGGeometry::ColoredPoint2D> VertexContainerType;
+    typedef QVector<QSGGeometry::TexturedPoint2D> TexturedVertexContainerType;
     typedef QVector<quint32> IndexContainerType;
 
     static void triangulateFill(const QPainterPath &path,
@@ -116,12 +89,14 @@ public:
                                 VertexContainerType *fillVertices,
                                 IndexContainerType *fillIndices,
                                 QSGGeometry::Type *indexType,
-                                bool supportsElementIndexUint);
+                                bool supportsElementIndexUint,
+                                qreal triangulationScale);
     static void triangulateStroke(const QPainterPath &path,
                                   const QPen &pen,
                                   const Color4ub &strokeColor,
                                   VertexContainerType *strokeVertices,
-                                  const QSize &clipSize);
+                                  const QSize &clipSize,
+                                  qreal triangulationScale);
 
 private:
     void maybeUpdateAsyncItem();
@@ -129,12 +104,14 @@ private:
     struct ShapePathData {
         float strokeWidth;
         QPen pen;
-        Color4ub strokeColor;
-        Color4ub fillColor;
+        Color4ub strokeColor = { uchar(0), uchar(0), uchar(0), uchar(0) };
+        Color4ub fillColor = { uchar(0), uchar(0), uchar(0), uchar(0) };
         Qt::FillRule fillRule;
         QPainterPath path;
         FillGradientType fillGradientActive;
-        GradientDesc fillGradient;
+        QSGGradientCache::GradientDesc fillGradient;
+        QQuickItem *fillTextureProviderItem = nullptr;
+        QSGTransform fillTransform;
         VertexContainerType fillVertices;
         IndexContainerType fillIndices;
         QSGGeometry::Type indexType;
@@ -156,6 +133,7 @@ private:
     int m_accDirty;
     void (*m_asyncCallback)(void *);
     void *m_asyncCallbackData;
+    float m_triangulationScale = 1.0;
 };
 
 class QQuickShapeFillRunnable : public QObject, public QRunnable
@@ -171,6 +149,7 @@ public:
     QPainterPath path;
     QQuickShapeGenericRenderer::Color4ub fillColor;
     bool supportsElementIndexUint;
+    qreal triangulationScale;
 
     // output
     QQuickShapeGenericRenderer::VertexContainerType fillVertices;
@@ -195,6 +174,7 @@ public:
     QPen pen;
     QQuickShapeGenericRenderer::Color4ub strokeColor;
     QSize clipSize;
+    qreal triangulationScale;
 
     // output
     QQuickShapeGenericRenderer::VertexContainerType strokeVertices;
@@ -203,8 +183,9 @@ Q_SIGNALS:
     void done(QQuickShapeStrokeRunnable *self);
 };
 
-class QQuickShapeGenericStrokeFillNode : public QSGGeometryNode
+class QQuickShapeGenericStrokeFillNode : public QObject, public QSGGeometryNode
 {
+    Q_OBJECT
 public:
     QQuickShapeGenericStrokeFillNode(QQuickWindow *window);
 
@@ -212,13 +193,21 @@ public:
         MatSolidColor,
         MatLinearGradient,
         MatRadialGradient,
-        MatConicalGradient
+        MatConicalGradient,
+        MatTextureFill
     };
 
     void activateMaterial(QQuickWindow *window, Material m);
 
     // shadow data for custom materials
-    QQuickAbstractPathRenderer::GradientDesc m_fillGradient;
+    QSGGradientCache::GradientDesc m_fillGradient;
+    QSGTextureProvider *m_fillTextureProvider = nullptr;
+    QSGTransform m_fillTransform;
+    void preprocess() override;
+
+private Q_SLOTS:
+    void handleTextureChanged();
+    void handleTextureProviderDestroyed();
 
 private:
     QScopedPointer<QSGMaterial> m_material;
@@ -241,32 +230,13 @@ public:
     static QSGMaterial *createLinearGradient(QQuickWindow *window, QQuickShapeGenericStrokeFillNode *node);
     static QSGMaterial *createRadialGradient(QQuickWindow *window, QQuickShapeGenericStrokeFillNode *node);
     static QSGMaterial *createConicalGradient(QQuickWindow *window, QQuickShapeGenericStrokeFillNode *node);
+    static QSGMaterial *createTextureFill(QQuickWindow *window, QQuickShapeGenericStrokeFillNode *node);
 };
 
-#if QT_CONFIG(opengl)
-
- class QQuickShapeLinearGradientShader : public QSGMaterialShader
+class QQuickShapeLinearGradientRhiShader : public QSGMaterialShader
 {
 public:
-    QQuickShapeLinearGradientShader();
-
-    void initialize() override;
-    void updateState(const RenderState &state, QSGMaterial *newEffect, QSGMaterial *oldEffect) override;
-    char const *const *attributeNames() const override;
-
-private:
-    int m_opacityLoc = -1;
-    int m_matrixLoc = -1;
-    int m_gradStartLoc = -1;
-    int m_gradEndLoc = -1;
-};
-
-#endif // QT_CONFIG(opengl)
-
-class QQuickShapeLinearGradientRhiShader : public QSGMaterialRhiShader
-{
-public:
-    QQuickShapeLinearGradientRhiShader();
+    QQuickShapeLinearGradientRhiShader(int viewCount);
 
     bool updateUniformData(RenderState &state, QSGMaterial *newMaterial,
                            QSGMaterial *oldMaterial) override;
@@ -274,6 +244,7 @@ public:
                             QSGMaterial *newMaterial, QSGMaterial *oldMaterial) override;
 
 private:
+    QSGTransform m_fillTransform;
     QVector2D m_gradA;
     QVector2D m_gradB;
 };
@@ -289,12 +260,12 @@ public:
         // the vertex data. The shader will rely on the fact that
         // vertexCoord.xy is the Shape-space coordinate and so no modifications
         // are welcome.
-        setFlag(Blending | RequiresFullMatrix | SupportsRhiShader);
+        setFlag(Blending | RequiresFullMatrix);
     }
 
     QSGMaterialType *type() const override;
     int compare(const QSGMaterial *other) const override;
-    QSGMaterialShader *createShader() const override;
+    QSGMaterialShader *createShader(QSGRendererInterface::RenderMode renderMode) const override;
 
     QQuickShapeGenericStrokeFillNode *node() const { return m_node; }
 
@@ -302,32 +273,10 @@ private:
     QQuickShapeGenericStrokeFillNode *m_node;
 };
 
-#if QT_CONFIG(opengl)
-
-class QQuickShapeRadialGradientShader : public QSGMaterialShader
+class QQuickShapeRadialGradientRhiShader : public QSGMaterialShader
 {
 public:
-    QQuickShapeRadialGradientShader();
-
-    void initialize() override;
-    void updateState(const RenderState &state, QSGMaterial *newEffect, QSGMaterial *oldEffect) override;
-    char const *const *attributeNames() const override;
-
-private:
-    int m_opacityLoc = -1;
-    int m_matrixLoc = -1;
-    int m_translationPointLoc = -1;
-    int m_focalToCenterLoc = -1;
-    int m_centerRadiusLoc = -1;
-    int m_focalRadiusLoc = -1;
-};
-
-#endif // QT_CONFIG(opengl)
-
-class QQuickShapeRadialGradientRhiShader : public QSGMaterialRhiShader
-{
-public:
-    QQuickShapeRadialGradientRhiShader();
+    QQuickShapeRadialGradientRhiShader(int viewCount);
 
     bool updateUniformData(RenderState &state, QSGMaterial *newMaterial,
                            QSGMaterial *oldMaterial) override;
@@ -335,6 +284,7 @@ public:
                             QSGMaterial *newMaterial, QSGMaterial *oldMaterial) override;
 
 private:
+    QSGTransform m_fillTransform;
     QVector2D m_focalPoint;
     QVector2D m_focalToCenter;
     float m_centerRadius;
@@ -347,12 +297,12 @@ public:
     QQuickShapeRadialGradientMaterial(QQuickShapeGenericStrokeFillNode *node)
         : m_node(node)
     {
-        setFlag(Blending | RequiresFullMatrix | SupportsRhiShader);
+        setFlag(Blending | RequiresFullMatrix);
     }
 
     QSGMaterialType *type() const override;
     int compare(const QSGMaterial *other) const override;
-    QSGMaterialShader *createShader() const override;
+    QSGMaterialShader *createShader(QSGRendererInterface::RenderMode renderMode) const override;
 
     QQuickShapeGenericStrokeFillNode *node() const { return m_node; }
 
@@ -360,30 +310,10 @@ private:
     QQuickShapeGenericStrokeFillNode *m_node;
 };
 
-#if QT_CONFIG(opengl)
-
-class QQuickShapeConicalGradientShader : public QSGMaterialShader
+class QQuickShapeConicalGradientRhiShader : public QSGMaterialShader
 {
 public:
-    QQuickShapeConicalGradientShader();
-
-    void initialize() override;
-    void updateState(const RenderState &state, QSGMaterial *newEffect, QSGMaterial *oldEffect) override;
-    char const *const *attributeNames() const override;
-
-private:
-    int m_opacityLoc = -1;
-    int m_matrixLoc = -1;
-    int m_angleLoc = -1;
-    int m_translationPointLoc = -1;
-};
-
-#endif // QT_CONFIG(opengl)
-
-class QQuickShapeConicalGradientRhiShader : public QSGMaterialRhiShader
-{
-public:
-    QQuickShapeConicalGradientRhiShader();
+    QQuickShapeConicalGradientRhiShader(int viewCount);
 
     bool updateUniformData(RenderState &state, QSGMaterial *newMaterial,
                            QSGMaterial *oldMaterial) override;
@@ -391,6 +321,7 @@ public:
                             QSGMaterial *newMaterial, QSGMaterial *oldMaterial) override;
 
 private:
+    QSGTransform m_fillTransform;
     QVector2D m_centerPoint;
     float m_angle;
 };
@@ -401,17 +332,64 @@ public:
     QQuickShapeConicalGradientMaterial(QQuickShapeGenericStrokeFillNode *node)
         : m_node(node)
     {
-        setFlag(Blending | RequiresFullMatrix | SupportsRhiShader);
+        setFlag(Blending | RequiresFullMatrix);
     }
 
     QSGMaterialType *type() const override;
     int compare(const QSGMaterial *other) const override;
-    QSGMaterialShader *createShader() const override;
+    QSGMaterialShader *createShader(QSGRendererInterface::RenderMode renderMode) const override;
 
     QQuickShapeGenericStrokeFillNode *node() const { return m_node; }
 
 private:
     QQuickShapeGenericStrokeFillNode *m_node;
+};
+
+class QQuickShapeTextureFillRhiShader : public QSGMaterialShader
+{
+public:
+    QQuickShapeTextureFillRhiShader(int viewCount);
+
+    bool updateUniformData(RenderState &state, QSGMaterial *newMaterial,
+                           QSGMaterial *oldMaterial) override;
+    void updateSampledImage(RenderState &state, int binding, QSGTexture **texture,
+                            QSGMaterial *newMaterial, QSGMaterial *oldMaterial) override;
+
+private:
+    QSGTransform m_fillTransform;
+    QVector2D m_boundsOffset;
+    QVector2D m_boundsSize;
+};
+
+class QQuickShapeTextureFillMaterial : public QSGMaterial
+{
+public:
+    QQuickShapeTextureFillMaterial(QQuickShapeGenericStrokeFillNode *node)
+        : m_node(node)
+    {
+        setFlag(Blending | RequiresFullMatrix);
+    }
+    ~QQuickShapeTextureFillMaterial() override;
+
+    QSGMaterialType *type() const override;
+    int compare(const QSGMaterial *other) const override;
+    QSGMaterialShader *createShader(QSGRendererInterface::RenderMode renderMode) const override;
+
+    QQuickShapeGenericStrokeFillNode *node() const { return m_node; }
+
+    QSGPlainTexture *dummyTexture() const
+    {
+        return m_dummyTexture;
+    }
+
+    void setDummyTexture(QSGPlainTexture *texture)
+    {
+        m_dummyTexture = texture;
+    }
+
+private:
+    QQuickShapeGenericStrokeFillNode *m_node;
+    QSGPlainTexture *m_dummyTexture = nullptr;
 };
 
 QT_END_NAMESPACE

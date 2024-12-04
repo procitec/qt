@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,14 +7,18 @@
 
 #include <memory>
 
-#include "base/macros.h"
+#include "base/check.h"
 #include "base/time/time.h"
+#include "services/device/public/mojom/geolocation_internals.mojom.h"
 
 namespace device {
 
 // Allows sharing and mocking of the update polling policy function.
 class WifiPollingPolicy {
  public:
+  WifiPollingPolicy(const WifiPollingPolicy&) = delete;
+  WifiPollingPolicy& operator=(const WifiPollingPolicy&) = delete;
+
   virtual ~WifiPollingPolicy() = default;
 
   // Methods for managing the single instance of WifiPollingPolicy. The WiFi
@@ -49,11 +53,12 @@ class WifiPollingPolicy {
   // duration for a new interval starting at the current time.
   virtual int NoWifiInterval() = 0;
 
+  // Use FillDiagnostics to fill diagnostic info for WifiPollingPolicy.
+  virtual void FillDiagnostics(
+      mojom::WifiPollingPolicyDiagnostics& diagnostics) = 0;
+
  protected:
   WifiPollingPolicy() = default;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(WifiPollingPolicy);
 };
 
 // Generic polling policy, constants are compile-time parameterized to allow
@@ -87,6 +92,18 @@ class GenericWifiPollingPolicy : public WifiPollingPolicy {
     int interval = ComputeInterval(NO_WIFI_INTERVAL);
     return interval <= 0 ? NO_WIFI_INTERVAL : interval;
   }
+  void FillDiagnostics(
+      mojom::WifiPollingPolicyDiagnostics& diagnostics) override {
+    diagnostics.interval_start = interval_start_;
+    diagnostics.interval_duration = base::Milliseconds(interval_duration_);
+    diagnostics.polling_interval = base::Milliseconds(polling_interval_);
+    diagnostics.default_interval = base::Milliseconds(DEFAULT_INTERVAL);
+    diagnostics.no_change_interval = base::Milliseconds(NO_CHANGE_INTERVAL);
+    diagnostics.two_no_change_interval =
+        base::Milliseconds(TWO_NO_CHANGE_INTERVAL);
+    diagnostics.no_wifi_interval = base::Milliseconds(NO_WIFI_INTERVAL);
+    return;
+  }
 
  private:
   int ComputeInterval(int polling_interval) {
@@ -102,8 +119,7 @@ class GenericWifiPollingPolicy : public WifiPollingPolicy {
       // Compute the remaining duration of the current interval. If the interval
       // is not yet complete, we will schedule a scan to occur once it is.
       base::TimeDelta remaining =
-          interval_start_ +
-          base::TimeDelta::FromMilliseconds(interval_duration_) - now;
+          interval_start_ + base::Milliseconds(interval_duration_) - now;
       remaining_millis = remaining.InMilliseconds();
     }
 

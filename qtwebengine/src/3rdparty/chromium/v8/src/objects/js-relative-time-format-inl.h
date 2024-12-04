@@ -18,11 +18,13 @@
 namespace v8 {
 namespace internal {
 
+#include "torque-generated/src/objects/js-relative-time-format-tq-inl.inc"
+
 TQ_OBJECT_CONSTRUCTORS_IMPL(JSRelativeTimeFormat)
 
 // Base relative time format accessors.
 ACCESSORS(JSRelativeTimeFormat, icu_formatter,
-          Managed<icu::RelativeDateTimeFormatter>, kIcuFormatterOffset)
+          Tagged<Managed<icu::RelativeDateTimeFormatter>>, kIcuFormatterOffset)
 
 inline void JSRelativeTimeFormat::set_numeric(Numeric numeric) {
   DCHECK_GE(NumericBit::kMax, numeric);

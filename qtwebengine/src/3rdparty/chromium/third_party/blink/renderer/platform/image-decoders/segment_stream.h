@@ -1,11 +1,10 @@
-// Copyright (c) 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_IMAGE_DECODERS_SEGMENT_STREAM_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_IMAGE_DECODERS_SEGMENT_STREAM_H_
 
-#include <algorithm>
 #include "base/memory/scoped_refptr.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
 #include "third_party/skia/include/core/SkStream.h"
@@ -34,11 +33,11 @@ class PLATFORM_EXPORT SegmentStream : public SkStream {
   size_t peek(void* buffer, size_t) const override;
   bool isAtEnd() const override;
   bool rewind() override;
-  bool hasPosition() const override { return true; }
-  size_t getPosition() const override { return position_; }
+  bool hasPosition() const override;
+  size_t getPosition() const override;
   bool seek(size_t position) override;
   bool move(long offset) override;
-  bool hasLength() const override { return true; }
+  bool hasLength() const override;
   size_t getLength() const override;
 
  private:
@@ -48,4 +47,4 @@ class PLATFORM_EXPORT SegmentStream : public SkStream {
 
 }  // namespace blink
 
-#endif
+#endif  // THIRD_PARTY_BLINK_RENDERER_PLATFORM_IMAGE_DECODERS_SEGMENT_STREAM_H_

@@ -1,36 +1,27 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
-
-#include "third_party/blink/renderer/core/dom/flat_tree_traversal.h"
 
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/element.h"
+#include "third_party/blink/renderer/core/dom/flat_tree_traversal.h"
 #include "third_party/blink/renderer/core/dom/node.h"
 #include "third_party/blink/renderer/core/dom/node_traversal.h"
 #include "third_party/blink/renderer/core/dom/shadow_root.h"
 #include "third_party/blink/renderer/core/dom/text.h"
+#include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/html/html_collection.h"
-#include "third_party/blink/renderer/core/html/html_element.h"
+#include "third_party/blink/renderer/core/html/html_div_element.h"
 #include "third_party/blink/renderer/core/html/html_slot_element.h"
 #include "third_party/blink/renderer/core/testing/dummy_page_holder.h"
 #include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
 namespace blink {
 
 namespace {
-
-// Copy elements in HTMLCollection into a vector because HTMLCollection is a
-// live list and would be invalid if a mutation occurs.
-HeapVector<Member<Element>> CollectFromHTMLCollection(
-    HTMLCollection& collection) {
-  HeapVector<Member<Element>> elements;
-  for (Element* element : collection)
-    elements.push_back(element);
-  return elements;
-}
 
 template <class T>
 HeapVector<Member<Node>> CollectFromIterable(T iterable) {
@@ -38,31 +29,6 @@ HeapVector<Member<Node>> CollectFromIterable(T iterable) {
   for (auto& node : iterable)
     nodes.push_back(&node);
   return nodes;
-}
-
-// Process Mini-DSL for Declarative Shadow DOM.
-
-// In Mini-DSL, <shadowroot> elements would behaves as if it were "Declarative
-// Shadow DOM". This is usuful for constructing a composed tree in testing.
-// Declarative Shadow DOM is under the dicussion. See
-// https://github.com/whatwg/dom/issues/510. Once Declarative Shadow DOM is
-// standardized and implemented, this DSL is no longer required.
-void ConvertDeclarativeShadowDOMToShadowRoot(Element& element) {
-  HTMLCollection* shadow_root_collection =
-      element.getElementsByTagName("shadowroot");
-  if (!shadow_root_collection)
-    return;
-  for (Element* shadow_root :
-       CollectFromHTMLCollection(*shadow_root_collection)) {
-    Element* parent = shadow_root->parentElement();
-    DCHECK(parent);
-    parent->removeChild(shadow_root);
-    ShadowRoot& attached_shadow_root =
-        parent->AttachShadowRootInternal(ShadowRootType::kOpen);
-    for (Node* child :
-         CollectFromIterable(NodeTraversal::ChildrenOf(*shadow_root)))
-      attached_shadow_root.AppendChild(child);
-  }
 }
 
 void RemoveWhiteSpaceOnlyTextNode(ContainerNode& container) {
@@ -91,31 +57,31 @@ class SlotAssignmentTest : public testing::Test {
  private:
   void SetUp() override;
 
+  test::TaskEnvironment task_environment_;
   Persistent<Document> document_;
   std::unique_ptr<DummyPageHolder> dummy_page_holder_;
 };
 
 void SlotAssignmentTest::SetUp() {
-  dummy_page_holder_ = std::make_unique<DummyPageHolder>(IntSize(800, 600));
+  dummy_page_holder_ = std::make_unique<DummyPageHolder>(gfx::Size(800, 600));
   document_ = &dummy_page_holder_->GetDocument();
   DCHECK(document_);
 }
 
 void SlotAssignmentTest::SetBody(const char* html) {
   Element* body = GetDocument().body();
-  body->setInnerHTML(String::FromUTF8(html));
-  ConvertDeclarativeShadowDOMToShadowRoot(*body);
+  body->setInnerHTMLWithDeclarativeShadowDOMForTesting(String::FromUTF8(html));
   RemoveWhiteSpaceOnlyTextNode(*body);
 }
 
 TEST_F(SlotAssignmentTest, DeclarativeShadowDOM) {
   SetBody(R"HTML(
     <div id=host>
-      <shadowroot></shadowroot>
+      <template shadowrootmode=open></template>
     </div>
   )HTML");
 
-  Element* host = GetDocument().QuerySelector("#host");
+  Element* host = GetDocument().QuerySelector(AtomicString("#host"));
   ASSERT_NE(nullptr, host);
   ASSERT_NE(nullptr, host->OpenShadowRoot());
 }
@@ -123,20 +89,20 @@ TEST_F(SlotAssignmentTest, DeclarativeShadowDOM) {
 TEST_F(SlotAssignmentTest, NestedDeclarativeShadowDOM) {
   SetBody(R"HTML(
     <div id=host1>
-      <shadowroot>
+      <template shadowrootmode=open>
         <div id=host2>
-          <shadowroot></shadowroot>
+          <template shadowrootmode=open></template>
         </div>
-      </shadowroot>
+      </template>
     </div>
   )HTML");
 
-  Element* host1 = GetDocument().QuerySelector("#host1");
+  Element* host1 = GetDocument().QuerySelector(AtomicString("#host1"));
   ASSERT_NE(nullptr, host1);
   ShadowRoot* shadow_root1 = host1->OpenShadowRoot();
   ASSERT_NE(nullptr, shadow_root1);
 
-  Element* host2 = shadow_root1->QuerySelector("#host2");
+  Element* host2 = shadow_root1->QuerySelector(AtomicString("#host2"));
   ASSERT_NE(nullptr, host2);
   ShadowRoot* shadow_root2 = host2->OpenShadowRoot();
   ASSERT_NE(nullptr, shadow_root2);
@@ -145,23 +111,43 @@ TEST_F(SlotAssignmentTest, NestedDeclarativeShadowDOM) {
 TEST_F(SlotAssignmentTest, AssignedNodesAreSet) {
   SetBody(R"HTML(
     <div id=host>
-      <shadowroot>
+      <template shadowrootmode=open>
         <slot></slot>
-      </shadowroot>
+      </template>
       <div id='host-child'></div>
     </div>
   )HTML");
 
-  Element* host = GetDocument().QuerySelector("#host");
-  Element* host_child = GetDocument().QuerySelector("#host-child");
+  Element* host = GetDocument().QuerySelector(AtomicString("#host"));
+  Element* host_child =
+      GetDocument().QuerySelector(AtomicString("#host-child"));
   ShadowRoot* shadow_root = host->OpenShadowRoot();
-  auto* slot = DynamicTo<HTMLSlotElement>(shadow_root->QuerySelector("slot"));
+  auto* slot = DynamicTo<HTMLSlotElement>(
+      shadow_root->QuerySelector(AtomicString("slot")));
   ASSERT_NE(nullptr, slot);
 
   EXPECT_EQ(slot, host_child->AssignedSlot());
   HeapVector<Member<Node>> expected_nodes;
   expected_nodes.push_back(host_child);
   EXPECT_EQ(expected_nodes, slot->AssignedNodes());
+}
+
+TEST_F(SlotAssignmentTest, ScheduleVisualUpdate) {
+  SetBody(R"HTML(
+    <div id="host">
+      <template shadowrootmode=open>
+        <slot></slot>
+      </template>
+      <div></div>
+    </div>
+  )HTML");
+
+  GetDocument().View()->UpdateAllLifecyclePhasesForTest();
+
+  auto* div = MakeGarbageCollected<HTMLDivElement>(GetDocument());
+  GetDocument().getElementById(AtomicString("host"))->appendChild(div);
+  EXPECT_EQ(DocumentLifecycle::kVisualUpdatePending,
+            GetDocument().Lifecycle().GetState());
 }
 
 }  // namespace blink

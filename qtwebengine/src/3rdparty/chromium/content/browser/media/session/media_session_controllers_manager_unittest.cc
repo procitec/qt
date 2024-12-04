@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -27,7 +27,9 @@ namespace {
 std::set<media_session::mojom::MediaSessionAction> GetDefaultActions() {
   return {media_session::mojom::MediaSessionAction::kPlay,
           media_session::mojom::MediaSessionAction::kPause,
-          media_session::mojom::MediaSessionAction::kStop};
+          media_session::mojom::MediaSessionAction::kStop,
+          media_session::mojom::MediaSessionAction::kSeekTo,
+          media_session::mojom::MediaSessionAction::kScrubTo};
 }
 
 std::set<media_session::mojom::MediaSessionAction>
@@ -50,10 +52,8 @@ class MediaSessionControllersManagerTest
   static const int kIsAudioFocusEnabled = 1;
 
   void SetUp() override {
-    RenderViewHostImplTestHarness::SetUp();
-
-    std::vector<base::Feature> enabled_features;
-    std::vector<base::Feature> disabled_features;
+    std::vector<base::test::FeatureRef> enabled_features;
+    std::vector<base::test::FeatureRef> disabled_features;
 
     enabled_features.push_back(media::kGlobalMediaControlsPictureInPicture);
 
@@ -77,8 +77,12 @@ class MediaSessionControllersManagerTest
 
     scoped_feature_list_.InitWithFeatures(enabled_features, disabled_features);
 
-    media_player_id_ = MediaPlayerId(contents()->GetMainFrame(), 1);
-    media_player_id2_ = MediaPlayerId(contents()->GetMainFrame(), 2);
+    RenderViewHostImplTestHarness::SetUp();
+
+    GlobalRenderFrameHostId frame_routing_id =
+        contents()->GetPrimaryMainFrame()->GetGlobalId();
+    media_player_id_ = MediaPlayerId(frame_routing_id, 1);
+    media_player_id2_ = MediaPlayerId(frame_routing_id, 2);
     manager_ = std::make_unique<MediaSessionControllersManager>(contents());
   }
 
@@ -117,9 +121,9 @@ TEST_P(MediaSessionControllersManagerTest, ActivateDeactivateSession) {
   ASSERT_FALSE(media_session()->IsActive());
 
   manager_->OnMetadata(media_player_id_, true, false,
-                       media::MediaContentType::Transient);
+                       media::MediaContentType::kTransient);
   manager_->OnMetadata(media_player_id2_, true, false,
-                       media::MediaContentType::Transient);
+                       media::MediaContentType::kTransient);
   EXPECT_FALSE(media_session()->IsActive());
 
   EXPECT_TRUE(manager_->RequestPlay(media_player_id_));
@@ -143,17 +147,17 @@ TEST_P(MediaSessionControllersManagerTest, ActivateDeactivateSession) {
 
 TEST_P(MediaSessionControllersManagerTest, RenderFrameDeletedRemovesHost) {
   manager_->OnMetadata(media_player_id_, true, false,
-                       media::MediaContentType::Transient);
+                       media::MediaContentType::kTransient);
   EXPECT_TRUE(manager_->RequestPlay(media_player_id_));
   ASSERT_EQ(media_session()->IsActive(), IsMediaSessionEnabled());
 
-  manager_->RenderFrameDeleted(contents()->GetMainFrame());
+  manager_->RenderFrameDeleted(contents()->GetPrimaryMainFrame());
   EXPECT_FALSE(media_session()->IsActive());
 }
 
 TEST_P(MediaSessionControllersManagerTest, OnPauseSuspends) {
   manager_->OnMetadata(media_player_id_, true, false,
-                       media::MediaContentType::Transient);
+                       media::MediaContentType::kTransient);
   EXPECT_TRUE(manager_->RequestPlay(media_player_id_));
   ASSERT_FALSE(media_session()->IsSuspended());
 
@@ -163,7 +167,7 @@ TEST_P(MediaSessionControllersManagerTest, OnPauseSuspends) {
 
 TEST_P(MediaSessionControllersManagerTest, OnPauseIdNotFound) {
   manager_->OnMetadata(media_player_id_, true, false,
-                       media::MediaContentType::Transient);
+                       media::MediaContentType::kTransient);
   EXPECT_TRUE(manager_->RequestPlay(media_player_id_));
   ASSERT_FALSE(media_session()->IsSuspended());
 
@@ -177,14 +181,15 @@ TEST_P(MediaSessionControllersManagerTest, PositionState) {
     return;
 
   manager_->OnMetadata(media_player_id_, true, false,
-                       media::MediaContentType::Transient);
+                       media::MediaContentType::kTransient);
 
   {
     media_session::test::MockMediaSessionMojoObserver observer(
         *media_session());
 
-    const media_session::MediaPosition expected_position(1.0, base::TimeDelta(),
-                                                         base::TimeDelta());
+    const media_session::MediaPosition expected_position(
+        /*playback_rate=*/1.0, /*duration=*/base::TimeDelta(),
+        /*position=*/base::TimeDelta(), /*end_of_media=*/false);
 
     manager_->OnMediaPositionStateChanged(media_player_id_, expected_position);
 
@@ -201,7 +206,8 @@ TEST_P(MediaSessionControllersManagerTest, PositionState) {
             *media_session());
 
     media_session::MediaPosition expected_position(
-        0.0, base::TimeDelta::FromSeconds(10), base::TimeDelta());
+        /*playback_rate=*/0.0, /*duration=*/base::Seconds(10),
+        /*position=*/base::TimeDelta(), /*end_of_media=*/false);
 
     manager_->OnMediaPositionStateChanged(media_player_id_, expected_position);
 
@@ -227,14 +233,16 @@ TEST_P(MediaSessionControllersManagerTest, MultiplePlayersWithPositionState) {
     return;
 
   manager_->OnMetadata(media_player_id_, true, false,
-                       media::MediaContentType::Transient);
+                       media::MediaContentType::kTransient);
   manager_->OnMetadata(media_player_id2_, true, false,
-                       media::MediaContentType::Transient);
+                       media::MediaContentType::kTransient);
 
-  media_session::MediaPosition expected_position1(1.0, base::TimeDelta(),
-                                                  base::TimeDelta());
+  media_session::MediaPosition expected_position1(
+      /*playback_rate=*/1.0, /*duration=*/base::TimeDelta(),
+      /*position=*/base::TimeDelta(), /*end_of_media=*/false);
   media_session::MediaPosition expected_position2(
-      0.0, base::TimeDelta::FromSeconds(10), base::TimeDelta());
+      /*playback_rate=*/0.0, /*duration=*/base::Seconds(10),
+      /*position=*/base::TimeDelta(), /*end_of_media=*/false);
 
   media_session::test::MockMediaSessionMojoObserver observer(*media_session());
 
@@ -252,7 +260,8 @@ TEST_P(MediaSessionControllersManagerTest, MultiplePlayersWithPositionState) {
 
   // Change the position of the second player.
   media_session::MediaPosition new_position(
-      0.0, base::TimeDelta::FromSeconds(20), base::TimeDelta());
+      /*playback_rate=*/0.0, /*duration=*/base::Seconds(20),
+      /*position=*/base::TimeDelta(), /*end_of_media=*/false);
   manager_->OnMediaPositionStateChanged(media_player_id2_, new_position);
 
   // Stop the first player.
@@ -268,7 +277,7 @@ TEST_P(MediaSessionControllersManagerTest, PictureInPictureAvailability) {
     return;
 
   manager_->OnMetadata(media_player_id_, true, false,
-                       media::MediaContentType::Transient);
+                       media::MediaContentType::kTransient);
 
   media_session::test::MockMediaSessionMojoObserver observer(*media_session());
 
@@ -288,9 +297,9 @@ TEST_P(MediaSessionControllersManagerTest,
     return;
 
   manager_->OnMetadata(media_player_id_, true, false,
-                       media::MediaContentType::Persistent);
+                       media::MediaContentType::kPersistent);
   manager_->OnMetadata(media_player_id2_, true, false,
-                       media::MediaContentType::Persistent);
+                       media::MediaContentType::kPersistent);
 
   media_session::test::MockMediaSessionMojoObserver observer(*media_session());
 

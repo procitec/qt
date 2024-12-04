@@ -1,31 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2017 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt Network Auth module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:GPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 3 or (at your option) any later version
-** approved by the KDE Free Qt Foundation. The licenses are as published by
-** the Free Software Foundation and appearing in the file LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2017 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
 #ifndef QT_NO_HTTP
 
@@ -37,7 +11,6 @@
 #include <QtCore/qurl.h>
 #include <QtCore/qpair.h>
 #include <QtCore/qstring.h>
-#include <QtCore/qdatetime.h>
 #include <QtCore/qurlquery.h>
 #include <QtCore/qjsondocument.h>
 #include <QtCore/qmessageauthenticationcode.h>
@@ -46,9 +19,8 @@
 #include <QtNetwork/qnetworkaccessmanager.h>
 #include <QtNetwork/qnetworkreply.h>
 
-#include <random>
-
-Q_DECLARE_METATYPE(QAbstractOAuth::Error)
+#include <QtCore/qrandom.h>
+#include <QtCore/private/qlocking_p.h>
 
 QT_BEGIN_NAMESPACE
 
@@ -119,7 +91,8 @@ QT_BEGIN_NAMESPACE
     \value NetworkError                     Failed to connect to the server.
 
     \value ServerError                      The server answered the
-    request with an error.
+    request with an error, or its response was not successfully received
+    (for example, due to a state mismatch).
 
     \value OAuthTokenNotFoundError          The server's response to
     a token request provided no token identifier.
@@ -188,6 +161,16 @@ QT_BEGIN_NAMESPACE
 
     This signal is emitted when the authorization flow finishes
     successfully.
+*/
+
+/*!
+    \fn void QAbstractOAuth::requestFailed(const QAbstractOAuth::Error error)
+
+    This signal is emitted to indicate that a request to a server has failed.
+    The \a error supplied indicates how the request failed.
+
+    \sa QAbstractOAuth2::error()
+    \sa QAbstractOAuthReplyHandler::tokenRequestErrorOccurred()
 */
 
 /*!
@@ -292,14 +275,25 @@ void QAbstractOAuthPrivate::setStatus(QAbstractOAuth::Status newStatus)
 
 QByteArray QAbstractOAuthPrivate::generateRandomString(quint8 length)
 {
-    const char characters[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-    static std::mt19937 randomEngine(QDateTime::currentDateTime().toMSecsSinceEpoch());
-    std::uniform_int_distribution<int> distribution(0, sizeof(characters) - 2);
-    QByteArray data;
-    data.reserve(length);
-    for (quint8 i = 0; i < length; ++i)
-        data.append(characters[distribution(randomEngine)]);
-    return data;
+    // We'll use QByteArray::toBase64() to create a random-looking string from
+    // pure random data. In Base64 encoding, we get 6 bits of randomness per
+    // character, so at most 255 * 6 bits are needed in this function.
+    using Word = QRandomGenerator::result_type;
+    auto wordCountForLength = [](int len) constexpr {
+        constexpr int BitsPerWord = std::numeric_limits<Word>::digits;
+        int bitcount = len * 6;
+        return (bitcount + BitsPerWord - 1) / BitsPerWord;
+    };
+    constexpr int RandomBufferLength = wordCountForLength(std::numeric_limits<quint8>::max());
+    Word randomdata[RandomBufferLength];
+
+    qsizetype randomlen = wordCountForLength(length);
+    QRandomGenerator::system()->fillRange(randomdata, randomlen);
+    QByteArray ba = QByteArray::fromRawData(reinterpret_cast<char *>(randomdata),
+                                            randomlen * sizeof(quint32))
+            .toBase64(QByteArray::Base64UrlEncoding);
+    ba.truncate(length);        // toBase64 output length has fixed lengths: 6, 11, 16, 22, 27...
+    return ba;
 }
 
 QByteArray QAbstractOAuthPrivate::convertParameters(const QVariantMap &parameters)
@@ -336,7 +330,7 @@ void QAbstractOAuthPrivate::addContentTypeHeaders(QNetworkRequest *request)
     }
 }
 
-QUrlQuery QAbstractOAuthPrivate::createQuery(const QVariantMap &parameters)
+QUrlQuery QAbstractOAuthPrivate::createQuery(const QMultiMap<QString, QVariant> &parameters)
 {
     QUrlQuery query;
     for (auto it = parameters.begin(), end = parameters.end(); it != end; ++it)
@@ -511,6 +505,7 @@ void QAbstractOAuth::setReplyHandler(QAbstractOAuthReplyHandler *handler)
 }
 
 /*!
+    \fn QAbstractOAuth::prepareRequest(QNetworkRequest *request, const QByteArray &verb, const QByteArray &body)
     \since 5.13
 
     Authorizes the given \a request by adding a header and \a body to
@@ -519,13 +514,6 @@ void QAbstractOAuth::setReplyHandler(QAbstractOAuthReplyHandler *handler)
     The \a verb must be a valid HTTP verb and the same as the one that will be
     used to send the \a request.
 */
-void QAbstractOAuth::prepareRequest(QNetworkRequest *request,
-                                    const QByteArray &verb,
-                                    const QByteArray &body)
-{
-    Q_D(QAbstractOAuth);
-    d->prepareRequestImpl(request, verb, body);
-}
 
 /*!
     Returns the current parameter-modification function.
@@ -606,7 +594,7 @@ QString QAbstractOAuth::callback() const
     URL.
     \sa authorizeWithBrowser()
 */
-void QAbstractOAuth::resourceOwnerAuthorization(const QUrl &url, const QVariantMap &parameters)
+void QAbstractOAuth::resourceOwnerAuthorization(const QUrl &url, const QMultiMap<QString, QVariant> &parameters)
 {
     QUrl u = url;
     u.setQuery(QAbstractOAuthPrivate::createQuery(parameters));
@@ -614,6 +602,7 @@ void QAbstractOAuth::resourceOwnerAuthorization(const QUrl &url, const QVariantM
 }
 
 /*!
+    \threadsafe
     Generates a random string which could be used as state or nonce.
     The parameter \a length determines the size of the generated
     string.

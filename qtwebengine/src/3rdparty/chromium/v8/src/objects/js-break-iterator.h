@@ -15,7 +15,6 @@
 #include "src/objects/intl-objects.h"
 #include "src/objects/managed.h"
 #include "src/objects/objects.h"
-#include "torque-generated/field-offsets.h"
 
 // Has to be the last include (doesn't have include guards):
 #include "src/objects/object-macros.h"
@@ -26,6 +25,8 @@ class BreakIterator;
 
 namespace v8 {
 namespace internal {
+
+#include "torque-generated/src/objects/js-break-iterator-tq.inc"
 
 class JSV8BreakIterator
     : public TorqueGeneratedJSV8BreakIterator<JSV8BreakIterator, JSObject> {
@@ -49,13 +50,13 @@ class JSV8BreakIterator
                               Handle<JSV8BreakIterator> break_iterator);
   static Handle<Object> Next(Isolate* isolate,
                              Handle<JSV8BreakIterator> break_iterator);
-  static String BreakType(Isolate* isolate,
-                          Handle<JSV8BreakIterator> break_iterator);
+  static Tagged<String> BreakType(Isolate* isolate,
+                                  Handle<JSV8BreakIterator> break_iterator);
 
   DECL_PRINTER(JSV8BreakIterator)
 
-  DECL_ACCESSORS(break_iterator, Managed<icu::BreakIterator>)
-  DECL_ACCESSORS(unicode_string, Managed<icu::UnicodeString>)
+  DECL_ACCESSORS(break_iterator, Tagged<Managed<icu::BreakIterator>>)
+  DECL_ACCESSORS(unicode_string, Tagged<Managed<icu::UnicodeString>>)
 
   TQ_OBJECT_CONSTRUCTORS(JSV8BreakIterator)
 };

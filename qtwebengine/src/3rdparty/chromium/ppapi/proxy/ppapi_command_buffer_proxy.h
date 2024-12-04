@@ -1,17 +1,16 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef PPAPI_PROXY_COMMAND_BUFFER_PROXY_H_
-#define PPAPI_PROXY_COMMAND_BUFFER_PROXY_H_
+#ifndef PPAPI_PROXY_PPAPI_COMMAND_BUFFER_PROXY_H_
+#define PPAPI_PROXY_PPAPI_COMMAND_BUFFER_PROXY_H_
 
 #include <stddef.h>
 #include <stdint.h>
 
 #include <memory>
 
-#include "base/callback.h"
-#include "base/macros.h"
+#include "base/functional/callback.h"
 #include "gpu/command_buffer/client/gpu_control.h"
 #include "gpu/command_buffer/common/command_buffer.h"
 #include "gpu/command_buffer/common/command_buffer_id.h"
@@ -36,8 +35,13 @@ class PPAPI_PROXY_EXPORT PpapiCommandBufferProxy : public gpu::CommandBuffer,
                           InstanceData::FlushInfo* flush_info,
                           LockedSender* sender,
                           const gpu::Capabilities& capabilities,
+                          const gpu::GLCapabilities& gl_capabilities,
                           SerializedHandle shared_state,
                           gpu::CommandBufferId command_buffer_id);
+
+  PpapiCommandBufferProxy(const PpapiCommandBufferProxy&) = delete;
+  PpapiCommandBufferProxy& operator=(const PpapiCommandBufferProxy&) = delete;
+
   ~PpapiCommandBufferProxy() override;
 
   // gpu::CommandBuffer implementation:
@@ -52,18 +56,18 @@ class PPAPI_PROXY_EXPORT PpapiCommandBufferProxy : public gpu::CommandBuffer,
   scoped_refptr<gpu::Buffer> CreateTransferBuffer(
       uint32_t size,
       int32_t* id,
+      uint32_t alignment = 0,
       gpu::TransferBufferAllocationOption option =
           gpu::TransferBufferAllocationOption::kLoseContextOnOOM) override;
   void DestroyTransferBuffer(int32_t id) override;
+  void ForceLostContext(gpu::error::ContextLostReason reason) override;
 
   // gpu::GpuControl implementation:
   void SetGpuControlClient(gpu::GpuControlClient*) override;
   const gpu::Capabilities& GetCapabilities() const override;
-  int32_t CreateImage(ClientBuffer buffer,
-                      size_t width,
-                      size_t height) override;
-  void DestroyImage(int32_t id) override;
+  const gpu::GLCapabilities& GetGLCapabilities() const override;
   void SignalQuery(uint32_t query, base::OnceClosure callback) override;
+  void CancelAllQueries() override;
   void CreateGpuFence(uint32_t gpu_fence_id, ClientGpuFence source) override;
   void GetGpuFence(uint32_t gpu_fence_id,
                    base::OnceCallback<void(std::unique_ptr<gfx::GpuFence>)>
@@ -79,7 +83,6 @@ class PPAPI_PROXY_EXPORT PpapiCommandBufferProxy : public gpu::CommandBuffer,
                        base::OnceClosure callback) override;
   void WaitSyncToken(const gpu::SyncToken& sync_token) override;
   bool CanWaitUnverifiedSyncToken(const gpu::SyncToken& sync_token) override;
-  void SetDisplayTransform(gfx::OverlayTransform transform) override;
 
  private:
   bool Send(IPC::Message* msg);
@@ -96,6 +99,7 @@ class PPAPI_PROXY_EXPORT PpapiCommandBufferProxy : public gpu::CommandBuffer,
   const gpu::CommandBufferId command_buffer_id_;
 
   gpu::Capabilities capabilities_;
+  gpu::GLCapabilities gl_capabilities_;
   State last_state_;
   base::WritableSharedMemoryMapping shared_state_mapping_;
 
@@ -103,17 +107,13 @@ class PPAPI_PROXY_EXPORT PpapiCommandBufferProxy : public gpu::CommandBuffer,
   InstanceData::FlushInfo* flush_info_;
   LockedSender* sender_;
 
-  base::Closure channel_error_callback_;
-
   uint64_t next_fence_sync_release_;
   uint64_t pending_fence_sync_release_;
   uint64_t flushed_fence_sync_release_;
   uint64_t validated_fence_sync_release_;
-
-  DISALLOW_COPY_AND_ASSIGN(PpapiCommandBufferProxy);
 };
 
 }  // namespace proxy
 }  // namespace ppapi
 
-#endif // PPAPI_PROXY_COMMAND_BUFFER_PROXY_H_
+#endif  // PPAPI_PROXY_PPAPI_COMMAND_BUFFER_PROXY_H_

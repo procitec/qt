@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,30 +13,28 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_data_source.h"
+#include "services/network/public/mojom/content_security_policy.mojom.h"
 
-#if defined(TOOLKIT_QT)
-#include "qtwebengine/grit/qt_webengine_resources.h"
-#else
-#include "chrome/grit/dev_ui_browser_resources.h"
-#endif
+#include "chrome/grit/sandbox_internals_resources.h"
+#include "chrome/grit/sandbox_internals_resources_map.h"
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 #include "chrome/browser/ui/webui/sandbox/sandbox_handler.h"
 #endif
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
 #include "chrome/common/sandbox_status_extension_android.mojom.h"
 #include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
 #endif
 
-#if defined(OS_LINUX) || defined(OS_CHROMEOS)
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
 #include "content/public/browser/zygote_host/zygote_host_linux.h"
 #include "sandbox/policy/sandbox.h"
 #endif
 
 namespace {
 
-#if defined(OS_LINUX) || defined(OS_CHROMEOS)
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
 static void SetSandboxStatusData(content::WebUIDataSource* source) {
   // Get expected sandboxing status of renderers.
   const int status =
@@ -70,35 +68,37 @@ static void SetSandboxStatusData(content::WebUIDataSource* source) {
 }
 #endif
 
-content::WebUIDataSource* CreateDataSource() {
-  content::WebUIDataSource* source =
-      content::WebUIDataSource::Create(chrome::kChromeUISandboxHost);
-  source->SetDefaultResource(IDR_SANDBOX_INTERNALS_HTML);
-  source->AddResourcePath("sandbox_internals.js", IDR_SANDBOX_INTERNALS_JS);
+void CreateAndAddDataSource(Profile* profile) {
+  content::WebUIDataSource* source = content::WebUIDataSource::CreateAndAdd(
+      profile, chrome::kChromeUISandboxHost);
+  source->AddResourcePaths(base::make_span(kSandboxInternalsResources,
+                                           kSandboxInternalsResourcesSize));
+  source->SetDefaultResource(IDR_SANDBOX_INTERNALS_SANDBOX_INTERNALS_HTML);
 
-#if defined(OS_LINUX) || defined(OS_CHROMEOS)
+  source->OverrideContentSecurityPolicy(
+      network::mojom::CSPDirectiveName::ScriptSrc,
+      "script-src chrome://resources chrome://webui-test 'self';");
+
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
   SetSandboxStatusData(source);
   source->UseStringsJs();
 #endif
-
-  return source;
 }
 
 }  // namespace
 
 SandboxInternalsUI::SandboxInternalsUI(content::WebUI* web_ui)
     : content::WebUIController(web_ui) {
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   web_ui->AddMessageHandler(
       std::make_unique<sandbox_handler::SandboxHandler>());
 #endif
-  Profile* profile = Profile::FromWebUI(web_ui);
-  content::WebUIDataSource::Add(profile, CreateDataSource());
+  CreateAndAddDataSource(Profile::FromWebUI(web_ui));
 }
 
-void SandboxInternalsUI::RenderFrameCreated(
+void SandboxInternalsUI::WebUIRenderFrameCreated(
     content::RenderFrameHost* render_frame_host) {
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
   mojo::AssociatedRemote<chrome::mojom::SandboxStatusExtension> sandbox_status;
   render_frame_host->GetRemoteAssociatedInterfaces()->GetInterface(
       &sandbox_status);
@@ -106,4 +106,4 @@ void SandboxInternalsUI::RenderFrameCreated(
 #endif
 }
 
-SandboxInternalsUI::~SandboxInternalsUI() {}
+SandboxInternalsUI::~SandboxInternalsUI() = default;

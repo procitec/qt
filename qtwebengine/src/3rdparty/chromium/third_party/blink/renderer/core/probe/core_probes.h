@@ -31,11 +31,13 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_PROBE_CORE_PROBES_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_PROBE_CORE_PROBES_H_
 
+#include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/frame/ad_tracker.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
+#include "third_party/blink/renderer/platform/bindings/callback_function_base.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource.h"
 
 namespace network {
@@ -50,11 +52,18 @@ class WebSocketHandshakeRequest;
 namespace blink {
 
 class CoreProbeSink;
+class OffscreenCanvas;
 class ThreadDebugger;
+
+namespace protocol {
+namespace Audits {
+class InspectorIssue;
+}  // namespace Audits
+}  // namespace protocol
 
 namespace probe {
 
-class AsyncTaskId;
+class AsyncTaskContext;
 
 class CORE_EXPORT ProbeBase {
   STACK_ALLOCATED();
@@ -92,8 +101,8 @@ class CORE_EXPORT AsyncTask {
   //   enabled: Whether the task is asynchronous. If false, the task is not
   //     reported to the debugger and AdTracker.
   //   ad_tracking_type: Whether this is reported to the AdTracker.
-  AsyncTask(ExecutionContext* context,
-            AsyncTaskId* task,
+  AsyncTask(ExecutionContext* execution_context,
+            AsyncTaskContext* async_context,
             const char* step = nullptr,
             bool enabled = true,
             AdTrackingType ad_tracking_type = AdTrackingType::kReport);
@@ -101,7 +110,7 @@ class CORE_EXPORT AsyncTask {
 
  private:
   ThreadDebugger* debugger_;
-  AsyncTaskId* task_;
+  AsyncTaskContext* task_context_;
   bool recurring_;
 
   // This persistent is safe since the class is STACK_ALLOCATED.
@@ -115,6 +124,10 @@ inline CoreProbeSink* ToCoreProbeSink(LocalFrame* frame) {
 
 inline CoreProbeSink* ToCoreProbeSink(ExecutionContext* context) {
   return context ? context->GetProbeSink() : nullptr;
+}
+
+inline CoreProbeSink* ToCoreProbeSink(ScriptState* script_state) {
+  return ToCoreProbeSink(ToExecutionContext(script_state));
 }
 
 inline CoreProbeSink* ToCoreProbeSink(Document& document) {
@@ -138,21 +151,14 @@ inline CoreProbeSink* ToCoreProbeSink(EventTarget* event_target) {
                       : nullptr;
 }
 
-CORE_EXPORT void AsyncTaskScheduled(ExecutionContext*,
-                                    const StringView& name,
-                                    AsyncTaskId*);
-CORE_EXPORT void AsyncTaskScheduledBreakable(ExecutionContext*,
-                                             const char* name,
-                                             AsyncTaskId*);
-CORE_EXPORT void AsyncTaskCanceled(ExecutionContext*, AsyncTaskId*);
-CORE_EXPORT void AsyncTaskCanceledBreakable(ExecutionContext*,
-                                            const char* name,
-                                            AsyncTaskId*);
+CoreProbeSink* ToCoreProbeSink(OffscreenCanvas* offscreen_canvas);
+
 CORE_EXPORT void AllAsyncTasksCanceled(ExecutionContext*);
 
 }  // namespace probe
 }  // namespace blink
 
+#include "base/time/time.h"
 #include "third_party/blink/renderer/core/core_probes_inl.h"
 
-#endif  // !defined(CoreProbes_h)
+#endif  // THIRD_PARTY_BLINK_RENDERER_CORE_PROBE_CORE_PROBES_H_

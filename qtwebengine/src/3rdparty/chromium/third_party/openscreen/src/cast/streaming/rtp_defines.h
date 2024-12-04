@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,8 +9,7 @@
 
 #include "cast/streaming/constants.h"
 
-namespace openscreen {
-namespace cast {
+namespace openscreen::cast {
 
 // Note: Cast Streaming uses a subset of the messages in the RTP/RTCP
 // specification, but also adds some of its own extensions. See:
@@ -87,31 +86,34 @@ enum class RtpPayloadType : uint8_t {
   kAudioAac = 97,
   kAudioPcm16 = 98,
   kAudioVarious = 99,  // Codec being used is not fixed.
+  kAudioLast = kAudioVarious,
 
   kVideoFirst = 100,
   kVideoVp8 = 100,
   kVideoH264 = 101,
   kVideoVarious = 102,  // Codec being used is not fixed.
-  kVideoLast = 102,
+  kVideoVp9 = 103,
+  kVideoAv1 = 104,
+  kVideoLast = kVideoAv1,
 
   // Some AndroidTV receivers require the payload type for audio to be 127, and
   // video to be 96; regardless of the codecs actually being used. This is
   // definitely out-of-spec, and inconsistent with the audio versus video range
   // of values, but must be taken into account for backwards-compatibility.
-  // TODO(crbug.com/1127978): RTP payload types need to represent actual type,
-  // as well as have options for new codecs like VP9.
   kAudioHackForAndroidTV = 127,
   kVideoHackForAndroidTV = 96,
 };
 
-// NOTE: currently we match the legacy Chrome sender's behavior of always
-// sending the audio and video hacks for AndroidTV, however we should migrate
-// to using proper rtp payload types. New payload types for new codecs, such
-// as VP9, should also be defined.
-// TODO(crbug.com/1127978): RTP payload types need to represent actual type,
-// as well as have options for new codecs like VP9.
-RtpPayloadType GetPayloadType(AudioCodec codec);
-RtpPayloadType GetPayloadType(VideoCodec codec);
+// Returns the stream type associated with the RTP payload type.
+StreamType ToStreamType(RtpPayloadType type, bool use_android_rtp_hack);
+
+// Setting |use_android_rtp_hack| to true means that we match the legacy Chrome
+// sender's behavior of always sending the audio and video hacks for AndroidTV,
+// as some legacy android receivers require these.
+// TODO(issuetracker.google.com/184438154): we need to figure out what receivers
+// need this still, if any. The hack should be removed when possible.
+RtpPayloadType GetPayloadType(AudioCodec codec, bool use_android_rtp_hack);
+RtpPayloadType GetPayloadType(VideoCodec codec, bool use_android_rtp_hack);
 
 // Returns true if the |raw_byte| can be type-casted to a RtpPayloadType, and is
 // also not RtpPayloadType::kNull. The caller should mask the byte, to select
@@ -353,7 +355,28 @@ constexpr int kRtcpReceiverReferenceTimeReportBlockSize = 8;
 // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 constexpr int kRtcpPictureLossIndicatorHeaderSize = 8;
 
-}  // namespace cast
-}  // namespace openscreen
+// The Cast Receiver RTCP frame log message is an application specific
+// extension that contains receiver side statistics about the Receiver Session.
+// The message format is:
+//
+//  0                   1                   2                   3
+//  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+// |                         RTP Timestamp                         |
+// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+// | Event Count   |                 Event Timestamp               |
+// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+constexpr int kRtcpReceiverFrameLogMessageHeaderSize = 8;
+//
+// Followed by a list of zero or more event blocks:
+//
+//  0                   1                   2                   3
+//  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+// | Delay Delta or Packet ID      | Type  | Event Timestamp       |
+// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+constexpr int kRtcpReceiverFrameLogMessageBlockSize = 4;
+
+}  // namespace openscreen::cast
 
 #endif  // CAST_STREAMING_RTP_DEFINES_H_

@@ -25,7 +25,7 @@
 #include "third_party/blink/renderer/core/svg/svg_animated_string.h"
 #include "third_party/blink/renderer/core/svg_names.h"
 #include "third_party/blink/renderer/platform/graphics/filters/fe_offset.h"
-#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 
 namespace blink {
 
@@ -37,11 +37,7 @@ SVGFEOffsetElement::SVGFEOffsetElement(Document& document)
       dy_(MakeGarbageCollected<SVGAnimatedNumber>(this,
                                                   svg_names::kDyAttr,
                                                   0.0f)),
-      in1_(MakeGarbageCollected<SVGAnimatedString>(this, svg_names::kInAttr)) {
-  AddToPropertyMap(dx_);
-  AddToPropertyMap(dy_);
-  AddToPropertyMap(in1_);
-}
+      in1_(MakeGarbageCollected<SVGAnimatedString>(this, svg_names::kInAttr)) {}
 
 void SVGFEOffsetElement::Trace(Visitor* visitor) const {
   visitor->Trace(dx_);
@@ -50,7 +46,9 @@ void SVGFEOffsetElement::Trace(Visitor* visitor) const {
   SVGFilterPrimitiveStandardAttributes::Trace(visitor);
 }
 
-void SVGFEOffsetElement::SvgAttributeChanged(const QualifiedName& attr_name) {
+void SVGFEOffsetElement::SvgAttributeChanged(
+    const SvgAttributeChangedParams& params) {
+  const QualifiedName& attr_name = params.name;
   if (attr_name == svg_names::kInAttr || attr_name == svg_names::kDxAttr ||
       attr_name == svg_names::kDyAttr) {
     SVGElement::InvalidationGuard invalidation_guard(this);
@@ -58,7 +56,7 @@ void SVGFEOffsetElement::SvgAttributeChanged(const QualifiedName& attr_name) {
     return;
   }
 
-  SVGFilterPrimitiveStandardAttributes::SvgAttributeChanged(attr_name);
+  SVGFilterPrimitiveStandardAttributes::SvgAttributeChanged(params);
 }
 
 FilterEffect* SVGFEOffsetElement::Build(SVGFilterBuilder* filter_builder,
@@ -71,6 +69,26 @@ FilterEffect* SVGFEOffsetElement::Build(SVGFilterBuilder* filter_builder,
       filter, dx_->CurrentValue()->Value(), dy_->CurrentValue()->Value());
   effect->InputEffects().push_back(input1);
   return effect;
+}
+
+SVGAnimatedPropertyBase* SVGFEOffsetElement::PropertyFromAttribute(
+    const QualifiedName& attribute_name) const {
+  if (attribute_name == svg_names::kDxAttr) {
+    return dx_.Get();
+  } else if (attribute_name == svg_names::kDyAttr) {
+    return dy_.Get();
+  } else if (attribute_name == svg_names::kInAttr) {
+    return in1_.Get();
+  } else {
+    return SVGFilterPrimitiveStandardAttributes::PropertyFromAttribute(
+        attribute_name);
+  }
+}
+
+void SVGFEOffsetElement::SynchronizeAllSVGAttributes() const {
+  SVGAnimatedPropertyBase* attrs[]{dx_.Get(), dy_.Get(), in1_.Get()};
+  SynchronizeListOfSVGAttributes(attrs);
+  SVGFilterPrimitiveStandardAttributes::SynchronizeAllSVGAttributes();
 }
 
 }  // namespace blink

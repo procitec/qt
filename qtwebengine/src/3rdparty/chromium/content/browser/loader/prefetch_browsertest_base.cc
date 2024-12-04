@@ -1,14 +1,14 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "content/browser/loader/prefetch_browsertest_base.h"
 
-#include "base/bind.h"
-#include "base/callback.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task/post_task.h"
-#include "content/browser/loader/prefetch_url_loader_service.h"
+#include "content/browser/loader/prefetch_url_loader_service_context.h"
+#include "content/browser/loader/subresource_proxying_url_loader_service.h"
 #include "content/browser/storage_partition_impl.h"
 #include "content/browser/web_package/signed_exchange_handler.h"
 #include "content/browser/web_package/signed_exchange_loader.h"
@@ -58,11 +58,14 @@ PrefetchBrowserTestBase::~PrefetchBrowserTestBase() = default;
 
 void PrefetchBrowserTestBase::SetUpOnMainThread() {
   ContentBrowserTest::SetUpOnMainThread();
-  StoragePartitionImpl* partition = static_cast<StoragePartitionImpl*>(
-      BrowserContext::GetDefaultStoragePartition(
-          shell()->web_contents()->GetBrowserContext()));
-  partition->GetPrefetchURLLoaderService()
-      ->RegisterPrefetchLoaderCallbackForTest(base::BindRepeating(
+  StoragePartitionImpl* partition =
+      static_cast<StoragePartitionImpl*>(shell()
+                                             ->web_contents()
+                                             ->GetBrowserContext()
+                                             ->GetDefaultStoragePartition());
+  partition->GetSubresourceProxyingURLLoaderService()
+      ->prefetch_url_loader_service_context_for_testing()
+      .RegisterPrefetchLoaderCallbackForTest(base::BindRepeating(
           &PrefetchBrowserTestBase::OnPrefetchURLLoaderCalled,
           base::Unretained(this)));
 }
@@ -110,38 +113,32 @@ void PrefetchBrowserTestBase::RegisterRequestHandler(
 void PrefetchBrowserTestBase::NavigateToURLAndWaitTitle(
     const GURL& url,
     const std::string& title) {
-  base::string16 title16 = base::ASCIIToUTF16(title);
+  std::u16string title16 = base::ASCIIToUTF16(title);
   TitleWatcher title_watcher(shell()->web_contents(), title16);
-  // Execute the JavaScript code to triger the followup navigation from the
+  // Execute the JavaScript code to trigger the followup navigation from the
   // current page.
-  EXPECT_TRUE(ExecuteScript(
-      shell()->web_contents(),
-      base::StringPrintf("location.href = '%s';", url.spec().c_str())));
+  EXPECT_TRUE(
+      ExecJs(shell()->web_contents(), JsReplace("location.href = $1;", url)));
   EXPECT_EQ(title16, title_watcher.WaitAndGetTitle());
 }
 
 void PrefetchBrowserTestBase::WaitUntilLoaded(const GURL& url) {
-  bool result = false;
-  ASSERT_TRUE(
-      ExecuteScriptAndExtractBool(shell()->web_contents(),
-                                  base::StringPrintf(R"(
-new Promise((resolve) => {
-  const url = '%s';
-  if (performance.getEntriesByName(url).length > 0) {
-    resolve();
-    return;
-  }
-  new PerformanceObserver((list) => {
-    if (list.getEntriesByName(url).length > 0) {
-      resolve();
-    }
-  }).observe({ entryTypes: ['resource'] });
-}).then(() => {
-  window.domAutomationController.send(true);
-}))",
-                                                     url.spec().c_str()),
-                                  &result));
-  ASSERT_TRUE(result);
+  std::string script = R"(
+    new Promise((resolve) => {
+      const url = $1;
+      if (performance.getEntriesByName(url).length > 0) {
+        resolve();
+        return;
+      }
+      new PerformanceObserver((list) => {
+        if (list.getEntriesByName(url).length > 0) {
+          resolve();
+        }
+      }).observe({ entryTypes: ['resource'] });
+    })
+  )";
+
+  ASSERT_TRUE(ExecJs(shell()->web_contents(), JsReplace(script, url)));
 }
 
 // static

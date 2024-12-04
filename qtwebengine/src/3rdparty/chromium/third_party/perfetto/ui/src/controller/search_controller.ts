@@ -12,41 +12,47 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import {Engine} from '../common/engine';
+import {sqliteString} from '../base/string_utils';
+import {
+  Duration,
+  duration,
+  Span,
+  time,
+  Time,
+  TimeSpan,
+} from '../base/time';
+import {exists} from '../base/utils';
+import {pluginManager} from '../common/plugins';
 import {CurrentSearchResults, SearchSummary} from '../common/search_data';
-import {TimeSpan} from '../common/time';
+import {OmniboxState} from '../common/state';
+import {globals} from '../frontend/globals';
+import {publishSearch, publishSearchResult} from '../frontend/publish';
+import {Engine} from '../trace_processor/engine';
+import {LONG, NUM, STR} from '../trace_processor/query_result';
+import {escapeSearchQuery} from '../trace_processor/query_utils';
+import {CPU_SLICE_TRACK_KIND} from '../tracks/cpu_slices';
 
 import {Controller} from './controller';
-import {App} from './globals';
-
-export function escapeQuery(s: string): string {
-  // See https://www.sqlite.org/lang_expr.html#:~:text=A%20string%20constant
-  return `'%${s.replace('\'', '\'\'')}%'`;
-}
 
 export interface SearchControllerArgs {
   engine: Engine;
-  app: App;
 }
 
 export class SearchController extends Controller<'main'> {
   private engine: Engine;
-  private app: App;
-  private previousSpan: TimeSpan;
-  private previousResolution: number;
-  private previousSearch: string;
+  private previousSpan: Span<time, duration>;
+  private previousResolution: duration;
+  private previousOmniboxState?: OmniboxState;
   private updateInProgress: boolean;
   private setupInProgress: boolean;
 
   constructor(args: SearchControllerArgs) {
     super('main');
     this.engine = args.engine;
-    this.app = args.app;
-    this.previousSpan = new TimeSpan(0, 1);
-    this.previousSearch = '';
+    this.previousSpan = new TimeSpan(Time.fromRaw(0n), Time.fromRaw(1n));
     this.updateInProgress = false;
     this.setupInProgress = true;
-    this.previousResolution = 1;
+    this.previousResolution = 1n;
     this.setup().finally(() => {
       this.setupInProgress = false;
       this.run();
@@ -67,54 +73,57 @@ export class SearchController extends Controller<'main'> {
       return;
     }
 
-    const visibleState = this.app.state.frontendLocalState.visibleState;
-    const omniboxState = this.app.state.frontendLocalState.omniboxState;
+    const visibleState = globals.state.frontendLocalState.visibleState;
+    const omniboxState = globals.state.omniboxState;
     if (visibleState === undefined || omniboxState === undefined ||
         omniboxState.mode === 'COMMAND') {
       return;
     }
-    const newSpan = new TimeSpan(visibleState.startSec, visibleState.endSec);
-    const newSearch = omniboxState.omnibox;
+    const newSpan = globals.stateVisibleTime();
+    const newOmniboxState = omniboxState;
     const newResolution = visibleState.resolution;
     if (this.previousSpan.contains(newSpan) &&
         this.previousResolution === newResolution &&
-        newSearch === this.previousSearch) {
+        this.previousOmniboxState === newOmniboxState) {
       return;
     }
-    this.previousSpan = new TimeSpan(
-        Math.max(newSpan.start - newSpan.duration, 0),
-        newSpan.end + newSpan.duration);
+
+
+    // TODO(hjd): We should restrict this to the start of the trace but
+    // that is not easily available here.
+    // N.B. Timestamps can be negative.
+    const {start, end} = newSpan.pad(newSpan.duration);
+    this.previousSpan = new TimeSpan(start, end);
     this.previousResolution = newResolution;
-    this.previousSearch = newSearch;
-    if (newSearch === '' || newSearch.length < 4) {
-      this.app.publish('Search', {
-        tsStarts: new Float64Array(0),
-        tsEnds: new Float64Array(0),
+    this.previousOmniboxState = newOmniboxState;
+    const search = newOmniboxState.omnibox;
+    if (search === '' || (search.length < 4 && !newOmniboxState.force)) {
+      publishSearch({
+        tsStarts: new BigInt64Array(0),
+        tsEnds: new BigInt64Array(0),
         count: new Uint8Array(0),
       });
-      this.app.publish('SearchResult', {
+      publishSearchResult({
         sliceIds: new Float64Array(0),
-        tsStarts: new Float64Array(0),
+        tsStarts: new BigInt64Array(0),
         utids: new Float64Array(0),
         sources: [],
-        trackIds: [],
+        trackKeys: [],
         totalResults: 0,
       });
       return;
     }
 
-    const startNs = Math.round(newSpan.start * 1e9);
-    const endNs = Math.round(newSpan.end * 1e9);
     this.updateInProgress = true;
     const computeSummary =
-        this.update(newSearch, startNs, endNs, newResolution).then(summary => {
-          this.app.publish('Search', summary);
-        });
+        this.update(search, newSpan.start, newSpan.end, newResolution)
+            .then((summary) => {
+              publishSearch(summary);
+            });
 
-    const computeResults =
-        this.specificSearch(newSearch).then(searchResults => {
-          this.app.publish('SearchResult', searchResults);
-        });
+    const computeResults = this.specificSearch(search).then((searchResults) => {
+      publishSearchResult(searchResults);
+    });
 
     Promise.all([computeSummary, computeResults])
         .finally(() => {
@@ -126,33 +135,36 @@ export class SearchController extends Controller<'main'> {
   onDestroy() {}
 
   private async update(
-      search: string, startNs: number, endNs: number,
-      resolution: number): Promise<SearchSummary> {
-    const quantumNs = Math.round(resolution * 10 * 1e9);
+      search: string, start: time, end: time,
+      resolution: duration): Promise<SearchSummary> {
+    const searchLiteral = escapeSearchQuery(search);
 
-    const searchLiteral = escapeQuery(search);
+    const quantum = resolution * 10n;
+    start = Time.quantFloor(start, quantum);
 
-    startNs = Math.floor(startNs / quantumNs) * quantumNs;
-
+    const windowDur = Duration.max(Time.diff(end, start), 1n);
     await this.query(`update search_summary_window set
-      window_start=${startNs},
-      window_dur=${endNs - startNs},
-      quantum=${quantumNs}
+      window_start=${start},
+      window_dur=${windowDur},
+      quantum=${quantum}
       where rowid = 0;`);
 
-    const rawUtidResult = await this.query(`select utid from thread join process
-      using(upid) where thread.name like ${searchLiteral}
-      or process.name like ${searchLiteral}`);
+    const utidRes = await this.query(`select utid from thread join process
+      using(upid) where thread.name glob ${searchLiteral}
+      or process.name glob ${searchLiteral}`);
 
-    const utids = [...rawUtidResult.columns[0].longValues!];
+    const utids = [];
+    for (const it = utidRes.iter({utid: NUM}); it.valid(); it.next()) {
+      utids.push(it.utid);
+    }
 
     const cpus = await this.engine.getCpus();
     const maxCpu = Math.max(...cpus, -1);
 
-    const rawResult = await this.query(`
+    const res = await this.query(`
         select
-          (quantum_ts * ${quantumNs} + ${startNs})/1e9 as tsStart,
-          ((quantum_ts+1) * ${quantumNs} + ${startNs})/1e9 as tsEnd,
+          (quantum_ts * ${quantum} + ${start}) as tsStart,
+          ((quantum_ts+1) * ${quantum} + ${start}) as tsEnd,
           min(count(*), 255) as count
           from (
               select
@@ -163,108 +175,136 @@ export class SearchController extends Controller<'main'> {
               select
               quantum_ts
               from search_summary_slice_span
-              where name like ${searchLiteral}
+              where name glob ${searchLiteral}
           )
           group by quantum_ts
           order by quantum_ts;`);
 
-    const numRows = +rawResult.numRecords;
-    const summary = {
-      tsStarts: new Float64Array(numRows),
-      tsEnds: new Float64Array(numRows),
-      count: new Uint8Array(numRows)
+    const numRows = res.numRows();
+    const summary: SearchSummary = {
+      tsStarts: new BigInt64Array(numRows),
+      tsEnds: new BigInt64Array(numRows),
+      count: new Uint8Array(numRows),
     };
 
-    const columns = rawResult.columns;
-    for (let row = 0; row < numRows; row++) {
-      summary.tsStarts[row] = +columns[0].doubleValues![row];
-      summary.tsEnds[row] = +columns[1].doubleValues![row];
-      summary.count[row] = +columns[2].longValues![row];
+    const it = res.iter({tsStart: LONG, tsEnd: LONG, count: NUM});
+    for (let row = 0; it.valid(); it.next(), ++row) {
+      summary.tsStarts[row] = it.tsStart;
+      summary.tsEnds[row] = it.tsEnd;
+      summary.count[row] = it.count;
     }
     return summary;
   }
 
   private async specificSearch(search: string) {
-    const searchLiteral = escapeQuery(search);
+    const searchLiteral = escapeSearchQuery(search);
     // TODO(hjd): we should avoid recomputing this every time. This will be
     // easier once the track table has entries for all the tracks.
     const cpuToTrackId = new Map();
-    const engineTrackIdToTrackId = new Map();
-    for (const track of Object.values(this.app.state.tracks)) {
-      if (track.kind === 'CpuSliceTrack') {
-        cpuToTrackId.set((track.config as {cpu: number}).cpu, track.id);
-        continue;
-      }
-      if (track.kind === 'ChromeSliceTrack' ||
-          track.kind === 'AsyncSliceTrack') {
-        engineTrackIdToTrackId.set(
-            (track.config as {trackId: number}).trackId, track.id);
-        continue;
+    for (const track of Object.values(globals.state.tracks)) {
+      if (exists(track?.uri)) {
+        const trackInfo = pluginManager.resolveTrackInfo(track.uri);
+        if (trackInfo?.kind === CPU_SLICE_TRACK_KIND) {
+          exists(trackInfo.cpu) && cpuToTrackId.set(trackInfo.cpu, track.key);
+        }
       }
     }
 
-    const rawUtidResult = await this.query(`select utid from thread join process
+    const utidRes = await this.query(`select utid from thread join process
     using(upid) where
-      thread.name like ${searchLiteral} or
-      process.name like ${searchLiteral}`);
-    const utids = [...rawUtidResult.columns[0].longValues!];
+      thread.name glob ${searchLiteral} or
+      process.name glob ${searchLiteral}`);
+    const utids = [];
+    for (const it = utidRes.iter({utid: NUM}); it.valid(); it.next()) {
+      utids.push(it.utid);
+    }
 
-    const rawResult = await this.query(`
+    const queryRes = await this.query(`
     select
-      id as slice_id,
+      id as sliceId,
       ts,
       'cpu' as source,
-      cpu as source_id,
+      cpu as sourceId,
       utid
     from sched where utid in (${utids.join(',')})
     union
     select
-      slice_id,
+      slice_id as sliceId,
       ts,
       'track' as source,
-      track_id as source_id,
+      track_id as sourceId,
       0 as utid
       from slice
-      inner join track on slice.track_id = track.id
-      and slice.name like ${searchLiteral}
-    order by ts`);
+      where slice.name glob ${searchLiteral}
+        or (
+          0 != CAST(${(sqliteString(search))} AS INT) and
+          sliceId = CAST(${(sqliteString(search))} AS INT)
+        )
+    union
+    select
+      slice_id as sliceId,
+      ts,
+      'track' as source,
+      track_id as sourceId,
+      0 as utid
+      from slice
+      join args using(arg_set_id)
+      where string_value glob ${searchLiteral} or key glob ${searchLiteral}
+    union
+    select
+      id as sliceId,
+      ts,
+      'log' as source,
+      0 as sourceId,
+      utid
+    from android_logs where msg glob ${searchLiteral}
+    order by ts
 
-    const numRows = +rawResult.numRecords;
+    `);
 
+    const rows = queryRes.numRows();
     const searchResults: CurrentSearchResults = {
-      sliceIds: [],
-      tsStarts: [],
-      utids: [],
-      trackIds: [],
+      sliceIds: new Float64Array(rows),
+      tsStarts: new BigInt64Array(rows),
+      utids: new Float64Array(rows),
+      trackKeys: [],
       sources: [],
-      totalResults: +numRows,
+      totalResults: 0,
     };
 
-    const columns = rawResult.columns;
-    for (let row = 0; row < numRows; row++) {
-      const source = columns[2].stringValues![row];
-      const sourceId = +columns[3].longValues![row];
+    const it = queryRes.iter(
+        {sliceId: NUM, ts: LONG, source: STR, sourceId: NUM, utid: NUM});
+    for (; it.valid(); it.next()) {
       let trackId = undefined;
-      if (source === 'cpu') {
-        trackId = cpuToTrackId.get(sourceId);
-      } else if (source === 'track') {
-        trackId = engineTrackIdToTrackId.get(sourceId);
+      if (it.source === 'cpu') {
+        trackId = cpuToTrackId.get(it.sourceId);
+      } else if (it.source === 'track') {
+        trackId = globals.state.trackKeyByTrackId[it.sourceId];
+      } else if (it.source === 'log') {
+        const logTracks =
+            Object.values(globals.state.tracks).filter((track) => {
+              const trackDesc = pluginManager.resolveTrackInfo(track.uri);
+              return (trackDesc && trackDesc.kind === 'AndroidLogTrack');
+            });
+        if (logTracks.length > 0) {
+          trackId = logTracks[0].key;
+        }
       }
 
+      // The .get() calls above could return undefined, this isn't just an else.
       if (trackId === undefined) {
-        searchResults.totalResults--;
         continue;
       }
 
-      searchResults.trackIds.push(trackId);
-      searchResults.sources.push(source);
-      searchResults.sliceIds.push(+columns[0].longValues![row]);
-      searchResults.tsStarts.push(+columns[1].longValues![row]);
-      searchResults.utids.push(+columns[4].longValues![row]);
+      const i = searchResults.totalResults++;
+      searchResults.trackKeys.push(trackId);
+      searchResults.sources.push(it.source);
+      searchResults.sliceIds[i] = it.sliceId;
+      searchResults.tsStarts[i] = it.ts;
+      searchResults.utids[i] = it.utid;
     }
     return searchResults;
   }
-
 
   private async query(query: string) {
     const result = await this.engine.query(query);

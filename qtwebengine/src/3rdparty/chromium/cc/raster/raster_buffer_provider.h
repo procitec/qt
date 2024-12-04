@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,12 +14,14 @@
 #include "cc/raster/task_graph_runner.h"
 #include "cc/raster/tile_task.h"
 #include "cc/resources/resource_pool.h"
-#include "components/viz/common/resources/resource_format.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
 
+namespace base {
+class WaitableEvent;
+}
+
 namespace cc {
-class Resource;
 
 class CC_EXPORT RasterBufferProvider {
  public:
@@ -37,7 +39,7 @@ class CC_EXPORT RasterBufferProvider {
   // a placeholder for the skia native format.
   static void PlaybackToMemory(
       void* memory,
-      viz::ResourceFormat format,
+      viz::SharedImageFormat format,
       const gfx::Size& size,
       size_t stride,
       const RasterSource* raster_source,
@@ -57,14 +59,8 @@ class CC_EXPORT RasterBufferProvider {
       bool depends_on_hardware_accelerated_jpeg_candidates,
       bool depends_on_hardware_accelerated_webp_candidates) = 0;
 
-  // Flush pending work from writing the content of the RasterBuffer, so that
-  // queries to tell if the backing is ready to draw from will get the right
-  // answer. This should be done before calling IsResourceReadyToDraw() or
-  // SetReadyToDrawCallback().
-  virtual void Flush() = 0;
-
   // Returns the format to use for the tiles.
-  virtual viz::ResourceFormat GetResourceFormat() const = 0;
+  virtual viz::SharedImageFormat GetFormat() const = 0;
 
   // Determines if the resource is premultiplied.
   virtual bool IsResourcePremultiplied() const = 0;
@@ -75,7 +71,7 @@ class CC_EXPORT RasterBufferProvider {
 
   // Returns true if the indicated resource is ready to draw.
   virtual bool IsResourceReadyToDraw(
-      const ResourcePool::InUsePoolResource& resource) const = 0;
+      const ResourcePool::InUsePoolResource& resource) = 0;
 
   // Calls the provided |callback| when the provided |resources| are ready to
   // draw. Returns a callback ID which can be used to track this callback.
@@ -86,18 +82,33 @@ class CC_EXPORT RasterBufferProvider {
   virtual uint64_t SetReadyToDrawCallback(
       const std::vector<const ResourcePool::InUsePoolResource*>& resources,
       base::OnceClosure callback,
-      uint64_t pending_callback_id) const = 0;
+      uint64_t pending_callback_id) = 0;
+
+  // Sets an event, guaranteed to live past this object's lifetime, that is
+  // signalled when the TileManger is cancelling tasks. Subclasses can use
+  // this as an argument to GpuMemoryBufferManager::CreateGpuMemoryBuffer to
+  // avoid deadlocks when TileManager is cancelling tasks.
+  virtual void SetShutdownEvent(base::WaitableEvent* shutdown_event) {}
 
   // Shutdown for doing cleanup.
   virtual void Shutdown() = 0;
 
-  // Checks whether GPU side queries issued for previous raster work have been
-  // finished. Note that this will acquire the worker context lock so it can be
-  // used from any thread. But usage from the compositor thread should be
-  // avoided to prevent contention with worker threads.
-  // Returns true if there are pending queries that could not be completed in
-  // this check.
-  virtual bool CheckRasterFinishedQueries() = 0;
+  // Must be called when the contents of a buffer acquired for raster are
+  // updated. This should be done after all GPU commands for the raster work
+  // have been issued.
+  void NotifyWorkSubmitted() { needs_flush_ = true; }
+
+ protected:
+  void FlushIfNeeded();
+
+  // Flush pending work from writing the content of the RasterBuffer, so that
+  // queries to tell if the backing is ready to draw from will get the right
+  // answer. This should be done before calling IsResourceReadyToDraw() or
+  // SetReadyToDrawCallback().
+  virtual void Flush() = 0;
+
+ private:
+  bool needs_flush_ = false;
 };
 
 }  // namespace cc

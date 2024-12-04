@@ -1,11 +1,13 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "osp/impl/quic/quic_connection_factory_impl.h"
 
 #include <algorithm>
+#include <functional>
 #include <memory>
+#include <utility>
 
 #include "osp/impl/quic/quic_connection_impl.h"
 #include "platform/api/task_runner.h"
@@ -16,14 +18,14 @@
 #include "third_party/chromium_quic/src/net/third_party/quic/core/quic_constants.h"
 #include "third_party/chromium_quic/src/net/third_party/quic/platform/impl/quic_chromium_clock.h"
 #include "util/osp_logging.h"
+#include "util/std_util.h"
 #include "util/trace_logging.h"
 
-namespace openscreen {
-namespace osp {
+namespace openscreen::osp {
 
 class QuicTaskRunner final : public ::base::TaskRunner {
  public:
-  explicit QuicTaskRunner(openscreen::TaskRunner* task_runner);
+  explicit QuicTaskRunner(TaskRunner& task_runner);
   ~QuicTaskRunner() override;
 
   void RunTasks();
@@ -36,10 +38,10 @@ class QuicTaskRunner final : public ::base::TaskRunner {
   bool RunsTasksInCurrentSequence() const override;
 
  private:
-  openscreen::TaskRunner* const task_runner_;
+  TaskRunner& task_runner_;
 };
 
-QuicTaskRunner::QuicTaskRunner(openscreen::TaskRunner* task_runner)
+QuicTaskRunner::QuicTaskRunner(TaskRunner& task_runner)
     : task_runner_(task_runner) {}
 
 QuicTaskRunner::~QuicTaskRunner() = default;
@@ -50,7 +52,7 @@ bool QuicTaskRunner::PostDelayedTask(const ::base::Location& whence,
                                      ::base::OnceClosure task,
                                      ::base::TimeDelta delay) {
   Clock::duration wait = Clock::duration(delay.InMilliseconds());
-  task_runner_->PostTaskWithDelay(
+  task_runner_.PostTaskWithDelay(
       [closure = std::move(task)]() mutable { std::move(closure).Run(); },
       wait);
   return true;
@@ -60,7 +62,7 @@ bool QuicTaskRunner::RunsTasksInCurrentSequence() const {
   return true;
 }
 
-QuicConnectionFactoryImpl::QuicConnectionFactoryImpl(TaskRunner* task_runner)
+QuicConnectionFactoryImpl::QuicConnectionFactoryImpl(TaskRunner& task_runner)
     : task_runner_(task_runner) {
   quic_task_runner_ = ::base::MakeRefCounted<QuicTaskRunner>(task_runner);
   alarm_factory_ = std::make_unique<::net::QuicChromiumAlarmFactory>(
@@ -104,17 +106,17 @@ void QuicConnectionFactoryImpl::OnRead(UdpSocket* socket,
                                        ErrorOr<UdpPacket> packet_or_error) {
   TRACE_SCOPED(TraceCategory::kQuic, "QuicConnectionFactoryImpl::OnRead");
   if (packet_or_error.is_error()) {
+    TRACE_SET_RESULT(packet_or_error.error());
     return;
   }
 
   UdpPacket packet = std::move(packet_or_error.value());
   // Ensure that |packet.socket| is one of the instances owned by
   // QuicConnectionFactoryImpl.
-  auto packet_ptr = &packet;
-  OSP_DCHECK(std::find_if(sockets_.begin(), sockets_.end(),
-                          [packet_ptr](const std::unique_ptr<UdpSocket>& s) {
-                            return s.get() == packet_ptr->socket();
-                          }) != sockets_.end());
+  OSP_DCHECK(ContainsIf(sockets_, [packet = std::cref(packet)](
+                                      const std::unique_ptr<UdpSocket>& s) {
+    return s.get() == packet.get().socket();
+  }));
 
   // TODO(btolsch): We will need to rethink this both for ICE and connection
   // migration support.
@@ -191,10 +193,10 @@ void QuicConnectionFactoryImpl::OnConnectionClosed(QuicConnection* connection) {
 
   // If none of the remaining |connections_| reference the socket, close/destroy
   // it.
-  if (std::find_if(connections_.begin(), connections_.end(),
-                   [socket](const decltype(connections_)::value_type& entry) {
-                     return entry.second.socket == socket;
-                   }) == connections_.end()) {
+  if (!ContainsIf(connections_,
+                  [socket](const decltype(connections_)::value_type& entry) {
+                    return entry.second.socket == socket;
+                  })) {
     auto socket_it =
         std::find_if(sockets_.begin(), sockets_.end(),
                      [socket](const std::unique_ptr<UdpSocket>& s) {
@@ -214,5 +216,4 @@ void QuicConnectionFactoryImpl::OnSendError(UdpSocket* socket, Error error) {
   OSP_UNIMPLEMENTED();
 }
 
-}  // namespace osp
-}  // namespace openscreen
+}  // namespace openscreen::osp

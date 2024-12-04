@@ -57,7 +57,6 @@ struct amdgpu_bo_va_mgr {
 };
 
 struct amdgpu_va {
-	amdgpu_device_handle dev;
 	uint64_t address;
 	uint64_t size;
 	enum amdgpu_gpu_va_range range;
@@ -102,7 +101,7 @@ struct amdgpu_bo {
 
 	pthread_mutex_t cpu_access_mutex;
 	void *cpu_ptr;
-	int cpu_map_count;
+	int64_t cpu_map_count;
 };
 
 struct amdgpu_bo_list {

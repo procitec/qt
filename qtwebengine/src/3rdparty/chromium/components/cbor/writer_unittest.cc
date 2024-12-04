@@ -1,13 +1,13 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/cbor/writer.h"
 
+#include <cmath>
 #include <limits>
 #include <string>
 
-#include "base/stl_util.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -135,7 +135,7 @@ TEST(CBORWriterTest, TestWriteArray) {
   ASSERT_TRUE(cbor.has_value());
   EXPECT_THAT(cbor.value(),
               testing::ElementsAreArray(kArrayTestCaseCbor,
-                                        base::size(kArrayTestCaseCbor)));
+                                        std::size(kArrayTestCaseCbor)));
 }
 
 TEST(CBORWriterTest, TestWriteMap) {
@@ -258,9 +258,8 @@ TEST(CBORWriterTest, TestWriteMap) {
   map[Value(std::numeric_limits<int64_t>::max())] = Value("j");
   auto cbor = Writer::Write(Value(map));
   ASSERT_TRUE(cbor.has_value());
-  EXPECT_THAT(cbor.value(),
-              testing::ElementsAreArray(kMapTestCaseCbor,
-                                        base::size(kMapTestCaseCbor)));
+  EXPECT_THAT(cbor.value(), testing::ElementsAreArray(
+                                kMapTestCaseCbor, std::size(kMapTestCaseCbor)));
 }
 
 TEST(CBORWriterTest, TestWriteMapWithArray) {
@@ -286,7 +285,7 @@ TEST(CBORWriterTest, TestWriteMapWithArray) {
   ASSERT_TRUE(cbor.has_value());
   EXPECT_THAT(cbor.value(),
               testing::ElementsAreArray(kMapArrayTestCaseCbor,
-                                        base::size(kMapArrayTestCaseCbor)));
+                                        std::size(kMapArrayTestCaseCbor)));
 }
 
 TEST(CBORWriterTest, TestWriteNestedMap) {
@@ -315,7 +314,7 @@ TEST(CBORWriterTest, TestWriteNestedMap) {
   ASSERT_TRUE(cbor.has_value());
   EXPECT_THAT(cbor.value(),
               testing::ElementsAreArray(kNestedMapTestCase,
-                                        base::size(kNestedMapTestCase)));
+                                        std::size(kNestedMapTestCase)));
 }
 
 TEST(CBORWriterTest, TestSignedExchangeExample) {
@@ -362,7 +361,7 @@ TEST(CBORWriterTest, TestSignedExchangeExample) {
   ASSERT_TRUE(cbor.has_value());
   EXPECT_THAT(cbor.value(),
               testing::ElementsAreArray(kSignedExchangeExample,
-                                        base::size(kSignedExchangeExample)));
+                                        std::size(kSignedExchangeExample)));
 }
 
 TEST(CBORWriterTest, TestWriteSimpleValue) {
@@ -379,6 +378,41 @@ TEST(CBORWriterTest, TestWriteSimpleValue) {
     auto cbor = Writer::Write(Value(test_case.simple_value));
     ASSERT_TRUE(cbor.has_value());
     EXPECT_THAT(cbor.value(), testing::ElementsAreArray(test_case.cbor));
+  }
+}
+
+TEST(CBORWriterTest, TestWriteFloat) {
+  static const struct {
+    double float_value;
+    const std::vector<uint8_t> cbor;
+  } kSimpleTestCase[] = {
+      // 16 bit floating point values.
+      {0.0, {0xf9, 0x00, 0x00}},
+      {-0.0, {0xf9, 0x80, 0x00}},
+      {std::numeric_limits<double>::infinity(), {0xf9, 0x7c, 0x00}},
+      {-std::numeric_limits<double>::infinity(), {0xf9, 0xfc, 0x00}},
+      {std::numeric_limits<double>::quiet_NaN(), {0xf9, 0x7c, 0x01}},
+      {0.5, {0xf9, 0x38, 0x00}},
+      {3.140625, {0xf9, 0x42, 0x48}},
+      {std::ldexp(1023.0, -24), {0xf9, 0x03, 0xFF}},
+      {65504, {0xf9, 0x7b, 0xff}},
+      {-65504, {0xf9, 0xfb, 0xff}},
+      // 32 bit floating point value.
+      {3.1415927410125732, {0xfa, 0x40, 0x49, 0x0f, 0xdb}},
+      {std::ldexp(1.0, 32), {0xfa, 0x4f, 0x80, 0x00, 0x00}},
+      // 64 bit floating point value.
+      {3.141592653589793,
+       {0xfb, 0x40, 0x09, 0x21, 0xfb, 0x54, 0x44, 0x2d, 0x18}},
+      {std::ldexp(1.0, 128),
+       {0xfb, 0x47, 0xf0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}},
+  };
+
+  for (const auto& test_case : kSimpleTestCase) {
+    SCOPED_TRACE(testing::Message()
+                 << "testing float value: " << test_case.float_value);
+    auto cbor = Writer::Write(Value(test_case.float_value));
+    ASSERT_TRUE(cbor.has_value());
+    EXPECT_EQ(cbor.value(), test_case.cbor);
   }
 }
 

@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -17,6 +17,7 @@
 namespace password_manager {
 namespace {
 constexpr char kAccessToken[] = "access_token";
+constexpr char kApiKey[] = "api_key";
 constexpr char kUsernameHash[] = "ABC";
 constexpr char kEncryptedPayload[] = "dfughidsgfr56";
 
@@ -47,9 +48,11 @@ TEST_F(LeakDetectionRequestTest, ServerError) {
       net::HTTP_INTERNAL_SERVER_ERROR);
 
   base::MockCallback<LeakDetectionRequest::LookupSingleLeakCallback> callback;
-  request().LookupSingleLeak(test_url_loader_factory(), kAccessToken,
-                             {kUsernameHash, kEncryptedPayload},
-                             callback.Get());
+  request().LookupSingleLeak(
+      test_url_loader_factory(), kAccessToken,
+      /*api_key=*/std::nullopt,
+      {LeakDetectionInitiator::kSignInCheck, kUsernameHash, kEncryptedPayload},
+      callback.Get());
   EXPECT_CALL(callback,
               Run(IsNull(), Eq(LeakDetectionError::kInvalidServerResponse)));
   task_env().RunUntilIdle();
@@ -60,9 +63,6 @@ TEST_F(LeakDetectionRequestTest, ServerError) {
   histogram_tester().ExpectUniqueSample(
       "PasswordManager.LeakDetection.HttpResponseCode",
       net::HTTP_INTERNAL_SERVER_ERROR, 1);
-  histogram_tester().ExpectUniqueSample(
-      "PasswordManager.LeakDetection.NetErrorCode",
-      -net::ERR_HTTP_RESPONSE_CODE_FAILURE, 1);
 }
 
 TEST_F(LeakDetectionRequestTest, QuotaLimit) {
@@ -71,9 +71,11 @@ TEST_F(LeakDetectionRequestTest, QuotaLimit) {
       net::HTTP_TOO_MANY_REQUESTS);
 
   base::MockCallback<LeakDetectionRequest::LookupSingleLeakCallback> callback;
-  request().LookupSingleLeak(test_url_loader_factory(), kAccessToken,
-                             {kUsernameHash, kEncryptedPayload},
-                             callback.Get());
+  request().LookupSingleLeak(
+      test_url_loader_factory(), kAccessToken,
+      /*api_key=*/std::nullopt,
+      {LeakDetectionInitiator::kSignInCheck, kUsernameHash, kEncryptedPayload},
+      callback.Get());
   EXPECT_CALL(callback, Run(IsNull(), Eq(LeakDetectionError::kQuotaLimit)));
   task_env().RunUntilIdle();
 
@@ -83,9 +85,6 @@ TEST_F(LeakDetectionRequestTest, QuotaLimit) {
   histogram_tester().ExpectUniqueSample(
       "PasswordManager.LeakDetection.HttpResponseCode",
       net::HTTP_TOO_MANY_REQUESTS, 1);
-  histogram_tester().ExpectUniqueSample(
-      "PasswordManager.LeakDetection.NetErrorCode",
-      -net::ERR_HTTP_RESPONSE_CODE_FAILURE, 1);
 }
 
 TEST_F(LeakDetectionRequestTest, MalformedServerResponse) {
@@ -95,9 +94,11 @@ TEST_F(LeakDetectionRequestTest, MalformedServerResponse) {
       std::string(kMalformedResponse));
 
   base::MockCallback<LeakDetectionRequest::LookupSingleLeakCallback> callback;
-  request().LookupSingleLeak(test_url_loader_factory(), kAccessToken,
-                             {kUsernameHash, kEncryptedPayload},
-                             callback.Get());
+  request().LookupSingleLeak(
+      test_url_loader_factory(), kAccessToken,
+      /*api_key=*/std::nullopt,
+      {LeakDetectionInitiator::kSignInCheck, kUsernameHash, kEncryptedPayload},
+      callback.Get());
   EXPECT_CALL(callback,
               Run(IsNull(), Eq(LeakDetectionError::kInvalidServerResponse)));
   task_env().RunUntilIdle();
@@ -118,11 +119,41 @@ TEST_F(LeakDetectionRequestTest, WellformedServerResponse) {
       LeakDetectionRequest::kLookupSingleLeakEndpoint, response_string);
 
   base::MockCallback<LeakDetectionRequest::LookupSingleLeakCallback> callback;
-  request().LookupSingleLeak(test_url_loader_factory(), kAccessToken,
-                             {kUsernameHash, kEncryptedPayload},
-                             callback.Get());
+  request().LookupSingleLeak(
+      test_url_loader_factory(), kAccessToken,
+      /*api_key=*/std::nullopt,
+      {LeakDetectionInitiator::kSignInCheck, kUsernameHash, kEncryptedPayload},
+      callback.Get());
   EXPECT_CALL(callback,
-              Run(testing::Pointee(SingleLookupResponse()), Eq(base::nullopt)));
+              Run(testing::Pointee(SingleLookupResponse()), Eq(std::nullopt)));
+  task_env().RunUntilIdle();
+
+  histogram_tester().ExpectUniqueSample(
+      "PasswordManager.LeakDetection.LookupSingleLeakResponseResult",
+      LeakDetectionRequest::LeakLookupResponseResult::kSuccess, 1);
+  histogram_tester().ExpectUniqueSample(
+      "PasswordManager.LeakDetection.SingleLeakResponseSize",
+      response_string.size(), 1);
+  histogram_tester().ExpectUniqueSample(
+      "PasswordManager.LeakDetection.SingleLeakResponsePrefixes",
+      response.encrypted_leak_match_prefix().size(), 1);
+}
+
+TEST_F(LeakDetectionRequestTest,
+       ReturnsSuccesfulResponseForUnauthenticatedRequest) {
+  google::internal::identity::passwords::leak::check::v1::
+      LookupSingleLeakResponse response;
+  std::string response_string = response.SerializeAsString();
+  test_url_loader_factory()->AddResponse(
+      LeakDetectionRequest::kLookupSingleLeakEndpoint, response_string);
+
+  base::MockCallback<LeakDetectionRequest::LookupSingleLeakCallback> callback;
+  request().LookupSingleLeak(
+      test_url_loader_factory(), /*access_token=*/std::nullopt, kApiKey,
+      {LeakDetectionInitiator::kSignInCheck, kUsernameHash, kEncryptedPayload},
+      callback.Get());
+  EXPECT_CALL(callback,
+              Run(testing::Pointee(SingleLookupResponse()), Eq(std::nullopt)));
   task_env().RunUntilIdle();
 
   histogram_tester().ExpectUniqueSample(

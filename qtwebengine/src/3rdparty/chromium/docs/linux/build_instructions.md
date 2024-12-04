@@ -15,10 +15,29 @@ Are you a Google employee? See
 *   A 64-bit Intel machine with at least 8GB of RAM. More than 16GB is highly
     recommended.
 *   At least 100GB of free disk space.
-*   You must have Git and Python v2 installed already.
+*   You must have Git and Python v3.8+ installed already (and `python3` must point
+    to a Python v3.8+ binary). Depot_tools bundles an appropriate version
+    of Python in `$depot_tools/python-bin`, if you don't have an appropriate
+    version already on your system.
 
-Most development is done on Ubuntu (currently 16.04, Xenial Xerus). There are
-some instructions for other distros below, but they are mostly unsupported.
+Most development is done on Ubuntu (Chromium's build infrastructure currently
+runs 22.04, Jammy Jellyfish). There are some instructions for other distros
+below, but they are mostly unsupported.
+
+### Docker requirements
+
+While it is not a common setup, Chromium compilation should work from within a
+Docker container. If you choose to compile from within a container for whatever
+reason, you will need to make sure that the following tools are available:
+
+* `curl`
+* `git`
+* `lsb_release`
+* `python3`
+* `sudo`
+
+There may be additional Docker-specific issues during compilation. See
+[this bug](https://crbug.com/1377520) for additional details on this.
 
 ## Install `depot_tools`
 
@@ -28,12 +47,12 @@ Clone the `depot_tools` repository:
 $ git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git
 ```
 
-Add `depot_tools` to the end of your PATH (you will probably want to put this
-in your `~/.bashrc` or `~/.zshrc`). Assuming you cloned `depot_tools` to
+Add `depot_tools` to the beginning of your `PATH` (you will probably want to put
+this in your `~/.bashrc` or `~/.zshrc`). Assuming you cloned `depot_tools` to
 `/path/to/depot_tools`:
 
 ```shell
-$ export PATH="$PATH:/path/to/depot_tools"
+$ export PATH="/path/to/depot_tools:$PATH"
 ```
 
 When cloning `depot_tools` to your home directory **do not** use `~` on PATH,
@@ -41,7 +60,7 @@ otherwise `gclient runhooks` will fail to run. Rather, you should use either
 `$HOME` or the absolute path:
 
 ```shell
-$ export PATH="$PATH:${HOME}/depot_tools"
+$ export PATH="${HOME}/depot_tools:$PATH"
 ```
 
 ## Get the code
@@ -110,7 +129,7 @@ development and testing purposes.
 ## Setting up the build
 
 Chromium uses [Ninja](https://ninja-build.org) as its main build tool along with
-a tool called [GN](https://gn.googlesource.com/gn/+/master/docs/quick_start.md)
+a tool called [GN](https://gn.googlesource.com/gn/+/main/docs/quick_start.md)
 to generate `.ninja` files. You can create any number of *build directories*
 with different configurations. To create a build directory, run:
 
@@ -127,31 +146,98 @@ $ gn gen out/Default
   The default will be a debug component build matching the current host
   operating system and CPU.
 * For more info on GN, run `gn help` on the command line or read the
-  [quick start guide](https://gn.googlesource.com/gn/+/master/docs/quick_start.md).
+  [quick start guide](https://gn.googlesource.com/gn/+/main/docs/quick_start.md).
 
 ### <a name="faster-builds"></a>Faster builds
 
 This section contains some things you can change to speed up your builds,
 sorted so that the things that make the biggest difference are first.
 
-#### Use Goma
+#### Use Reclient
 
-Google developed the distributed compiler called
-[Goma](https://chromium.googlesource.com/infra/goma/client).
-Googlers and contributors who have
-[tryjob access](https://www.chromium.org/getting-involved/become-a-committer#TOC-Try-job-access)
-could use `Goma`.
+*** note
+**Warning:** If you are a Google employee, do not follow the instructions below.
+See
+[go/chrome-linux-build#setup-remote-execution](https://goto.google.com/chrome-linux-build#setup-remote-execution)
+instead.
+***
 
-If you are not a Googler and would like to use `Goma`
-[sign up](https://docs.google.com/forms/d/1NKHcyqYqw3c4jftrLPwvyiPlolRm4Hf6ObrB83wHXy8/viewform).
+Chromium's build can be sped up significantly by using a remote execution system
+compatible with [REAPI](https://github.com/bazelbuild/remote-apis). This allows
+you to benefit from remote caching and executing many build actions in parallel
+on a shared cluster of workers.
 
-Once you're allowed to use `Goma` and have installed the client,
-[set the following GN args](https://www.chromium.org/developers/gn-build-configuration#TOC-Goma):
+For contributors who have
+[tryjob access](https://www.chromium.org/getting-involved/become-a-committer/#try-job-access)
+, please ask a Googler to email accounts@chromium.org on your behalf to access
+RBE backend paid by Google. Note that reclient for external contributors is a
+best-effort process. We do not guarantee when you will be invited. Reach out to
+[reclient-users@chromium.org](https://groups.google.com/a/chromium.org/g/reclient-users)
+if you have any questions about reclient usage.
+
+To get started, you need access to an REAPI-compatible backend. The following
+instructions assume that you received an invitation from Google to use
+Chromium's RBE service and were granted access to it. However, you are welcome
+to use any of the
+[other compatible backends](https://github.com/bazelbuild/remote-apis#servers),
+in which case you will have to adapt the following instructions regarding the
+authentication method, instance name, etc. to work with your backend.
+
+Chromium's build uses a client developed by Google called
+[reclient](https://github.com/bazelbuild/reclient) to remotely execute build
+actions. If you would like to use `reclient` with RBE, you'll first need to:
+
+1. [Install the gcloud CLI](https://cloud.google.com/sdk/docs/install). You can
+   pick any installation method from that page that works best for you.
+2. Run `gcloud auth login --update-adc` and login with your authorized
+   account. Ignore the message about the `--update-adc` flag being deprecated.
+
+Next, you'll have to specify your `rbe_instance` in your `.gclient`
+configuration to use the correct one for Chromium contributors:
 
 ```
-use_goma=true
-goma_dir="/path/to/goma-client"
+solutions = [
+  {
+    ...,
+    "custom_vars": {
+      # This is the correct instance name for using Chromium's RBE service.
+      # You can only use it if you were granted access to it. If you use your
+      # own REAPI-compatible backend, you will need to change this accordingly
+      # to its requirements.
+      "rbe_instance": "projects/rbe-chromium-untrusted/instances/default_instance",
+    },
+  },
+]
 ```
+
+and run `gclient sync`. This will regenerate the config files in
+`buildtools/reclient_cfgs` to use the `rbe_instance` that you just added to your
+`.gclient` file.
+
+Then, add the following GN args to your `args.gn`:
+
+```
+use_remoteexec = true
+rbe_cfg_dir = "../../buildtools/reclient_cfgs/linux"
+```
+
+That's it. Remember to always use `autoninja` for building Chromium as described
+below, which handles the startup and shutdown of the reproxy daemon process
+that's required during the build, instead of directly invoking `ninja`.
+
+#### Use Goma (deprecated)
+
+*** note
+**Warning:** Goma is deprecated and Chromium will [remove support for building
+with Goma by end of January 2024](https://groups.google.com/a/chromium.org/g/chromium-dev/c/rajt7THxIng/m/ZoDB54wQBAAJ).
+***
+
+Please use the above instructions for reclient instead. If you have any issues
+migrating to reclient, please reach out to chromium-dev@chromium.org so that we
+can address them before the shutdown.
+
+If you need to refer to the older instructions for using Goma, you can still
+find them here: [Goma for Chromium contributors](https://chromium.googlesource.com/infra/goma/client/+/HEAD/doc/early-access-guide.md).
 
 #### Jumbo/Unity builds
 
@@ -177,11 +263,12 @@ By default GN produces a build with all of the debug assertions enabled
 line-by-line debugging. Setting `symbol_level=0` will include no debug
 symbols at all. Either will speed up the build compared to full symbols.
 
-#### Disable debug symbols for Blink
+#### Disable debug symbols for Blink and v8
 
 Due to its extensive use of templates, the Blink code produces about half
 of our debug symbols. If you don't ever need to debug Blink, you can set
-the GN arg `blink_symbol_level=0`.
+the GN arg `blink_symbol_level=0`. Similarly, if you don't need to debug v8 you
+can improve build speeds by setting the GN arg `v8_symbol_level=0`.
 
 #### Use Icecc
 
@@ -205,7 +292,7 @@ See [related bug](https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=808181).
 
 #### ccache
 
-You can use [ccache](https://ccache.samba.org) to speed up local builds (again,
+You can use [ccache](https://ccache.dev) to speed up local builds (again,
 this is not useful if you're using Goma).
 
 Increase your ccache hit rate by setting `CCACHE_BASEDIR` to a parent directory
@@ -214,7 +301,7 @@ that the working directories all have in common (e.g.,
 `CCACHE_SLOPPINESS=include_file_mtime` (since if you are using multiple working
 directories, header times in svn sync'ed portions of your trees will be
 different - see
-[the ccache troubleshooting section](http://ccache.samba.org/manual.html#_troubleshooting)
+[the ccache troubleshooting section](https://ccache.dev/manual/latest.html#_troubleshooting)
 for additional information). If you use symbolic links from your home directory
 to get to the local physical disk directory where you keep those working
 development directories, consider putting
@@ -230,7 +317,8 @@ tracking trunk and is up to date with trunk and was gclient sync'ed at about the
 same time should build chrome in about 1/3 the time, and the cache misses as
 reported by `ccache -s` should barely increase.
 
-This is especially useful if you use `git-new-workdir` and keep multiple local
+This is especially useful if you use
+[git-worktree](http://git-scm.com/docs/git-worktree) and keep multiple local
 working directories going at once.
 
 #### Using tmpfs
@@ -256,6 +344,13 @@ hyperthreaded, 12 GB RAM)
 *   Without tmpfs
     *   15m:40s
 
+### Smaller builds
+
+The Chrome binary contains embedded symbols by default. You can reduce its size
+by using the Linux `strip` command to remove this debug information. You can
+also reduce binary size and turn on all optimizations by enabling official build
+mode, with the GN arg `is_official_build = true`.
+
 ## Build Chromium
 
 Build Chromium (the "chrome" target) with Ninja using the command:
@@ -280,13 +375,44 @@ Once it is built, you can simply run the browser:
 $ out/Default/chrome
 ```
 
-## Running test targets
-
-You can run the tests in the same way. You can also limit which tests are
-run using the `--gtest_filter` arg, e.g.:
+If you're using a remote machine that supports Chrome Remote Desktop, you can
+add this to your .bashrc / .bash_profile.
 
 ```shell
-$ out/Default/unit_tests --gtest_filter="PushClientTest.*"
+if [[ -z "${DISPLAY}" ]]; then
+  export DISPLAY=:$(
+    find /tmp/.X11-unix -maxdepth 1 -mindepth 1 -name 'X*' |
+      grep -o '[0-9]\+$' | head -n 1
+  )
+fi
+```
+
+This means if you launch Chrome from an SSH session, the UI output will be
+available in Chrome Remote Desktop.
+
+## Running test targets
+
+Tests are split into multiple test targets based on their type and where they
+exist in the directory structure. To see what target a given unit test or
+browser test file corresponds to, the following command can be used:
+
+```shell
+$ gn refs out/Default --testonly=true --type=executable --all chrome/browser/ui/browser_list_unittest.cc
+//chrome/test:unit_tests
+```
+
+In the example above, the target is unit_tests. The unit_tests binary can be
+built by running the following command:
+
+```shell
+$ autoninja -C out/Default unit_tests
+```
+
+You can run the tests by running the unit_tests binary. You can also limit which
+tests are run using the `--gtest_filter` arg, e.g.:
+
+```shell
+$ out/Default/unit_tests --gtest_filter="BrowserListUnitTest.*"
 ```
 
 You can find out more about GoogleTest at its
@@ -303,7 +429,7 @@ $ gclient sync
 
 The first command updates the primary Chromium source repository and rebases
 any of your local branches on top of tip-of-tree (aka the Git branch
-`origin/master`). If you don't want to use this script, you can also just use
+`origin/main`). If you don't want to use this script, you can also just use
 `git pull` or other common Git commands to update the repo.
 
 The second command syncs dependencies to the appropriate versions and re-runs
@@ -326,6 +452,12 @@ collect2: ld terminated with signal 6 Aborted terminate called after throwing an
 collect2: ld terminated with signal 11 [Segmentation fault], core dumped
 ```
 
+or:
+
+```
+LLVM ERROR: out of memory
+```
+
 you are probably running out of memory when linking. You *must* use a 64-bit
 system to build. Try the following build settings (see [GN build
 configuration](https://www.chromium.org/developers/gn-build-configuration) for
@@ -336,6 +468,11 @@ other settings):
 *   Turn off symbols: `symbol_level = 0`
 *   Build in component mode (this is for development only, it will be slower and
     may have broken functionality): `is_component_build = true`
+*   For official (ThinLTO) builds on Linux, increase the vm.max_map_count kernel
+    parameter: increase the `vm.max_map_count` value from default (like 65530)
+    to for example 262144. You can run the `sudo sysctl -w vm.max_map_count=262144`
+    command to set it in the current session from the shell, or add the
+    `vm.max_map_count=262144` to /etc/sysctl.conf to save it permanently.
 
 ### More links
 
@@ -362,7 +499,8 @@ Instead of running `install-build-deps.sh` to install build dependencies, run:
 
 ```shell
 $ sudo pacman -S --needed python perl gcc gcc-libs bison flex gperf pkgconfig \
-nss alsa-lib glib2 gtk3 nspr ttf-ms-fonts freetype2 cairo dbus libgnome-keyring
+nss alsa-lib glib2 gtk3 nspr freetype2 cairo dbus xorg-server-xvfb \
+xorg-xdpyinfo
 ```
 
 For the optional packages on Arch Linux:
@@ -370,7 +508,6 @@ For the optional packages on Arch Linux:
 *   `php-cgi` is provided with `pacman`
 *   `wdiff` is not in the main repository but `dwdiff` is. You can get `wdiff`
     in AUR/`yaourt`
-*   `sun-java6-fonts` do not seem to be in main repository or AUR.
 
 ### Crostini (Debian based)
 
@@ -397,11 +534,10 @@ bison binutils brlapi-devel bluez-libs-devel bzip2-devel cairo-devel \
 cups-devel dbus-devel dbus-glib-devel expat-devel fontconfig-devel \
 freetype-devel gcc-c++ glib2-devel glibc.i686 gperf glib2-devel \
 gtk3-devel java-1.*.0-openjdk-devel libatomic libcap-devel libffi-devel \
-libgcc.i686 libgnome-keyring-devel libjpeg-devel libstdc++.i686 libX11-devel \
-libXScrnSaver-devel libXtst-devel libxkbcommon-x11-devel ncurses-compat-libs \
-nspr-devel nss-devel pam-devel pango-devel pciutils-devel \
-pulseaudio-libs-devel zlib.i686 httpd mod_ssl php php-cli python-psutil wdiff \
-xorg-x11-server-Xvfb'
+libgcc.i686 libjpeg-devel libstdc++.i686 libX11-devel libXScrnSaver-devel \
+libXtst-devel libxkbcommon-x11-devel ncurses-compat-libs nspr-devel nss-devel \
+pam-devel pango-devel pciutils-devel pulseaudio-libs-devel zlib.i686 httpd \
+mod_ssl php php-cli python-psutil wdiff xorg-x11-server-Xvfb'
 ```
 
 The fonts needed by Blink's web tests can be obtained by following [these

@@ -35,7 +35,7 @@
 #include "third_party/blink/renderer/core/fileapi/file_error.h"
 #include "third_party/blink/renderer/modules/filesystem/file_writer_base.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 
 namespace blink {
 
@@ -61,9 +61,7 @@ class FileWriterSync final : public ScriptWrappable,
   void DidTruncateImpl() override;
   void DidFailImpl(base::File::Error error) override;
   void DoTruncate(const KURL& path, int64_t offset) override;
-  void DoWrite(const KURL& path,
-               const String& blob_id,
-               int64_t offset) override;
+  void DoWrite(const KURL& path, const Blob& blob, int64_t offset) override;
   void DoCancel() override;
 
  private:

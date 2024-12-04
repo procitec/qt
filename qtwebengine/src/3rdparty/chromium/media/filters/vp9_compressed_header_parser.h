@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,11 +14,23 @@ class Vp9CompressedHeaderParser {
  public:
   Vp9CompressedHeaderParser();
 
+  Vp9CompressedHeaderParser(const Vp9CompressedHeaderParser&) = delete;
+  Vp9CompressedHeaderParser& operator=(const Vp9CompressedHeaderParser&) =
+      delete;
+
   // Parses VP9 compressed header in |stream| with |frame_size| into |fhdr|.
+  // Will store the deltaProb in the context instead of updating existing
+  // probabilities. (see 6.3.3 Diff update prob syntax).
   // Returns true if no error.
-  bool Parse(const uint8_t* stream, off_t frame_size, Vp9FrameHeader* fhdr);
+  bool ParseNoContext(const uint8_t* stream,
+                      off_t frame_size,
+                      Vp9FrameHeader* fhdr);
 
  private:
+  bool ParseInternal(const uint8_t* stream,
+                     off_t frame_size,
+                     Vp9FrameHeader* fhdr);
+
   void ReadTxMode(Vp9FrameHeader* fhdr);
   uint8_t DecodeTermSubexp();
   void DiffUpdateProb(Vp9Prob* prob);
@@ -42,8 +54,6 @@ class Vp9CompressedHeaderParser {
 
   // Bool decoder for compressed frame header.
   Vp9BoolDecoder reader_;
-
-  DISALLOW_COPY_AND_ASSIGN(Vp9CompressedHeaderParser);
 };
 
 }  // namespace media

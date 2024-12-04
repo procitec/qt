@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2018 Crimson AS <info@crimson.no>
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtQml module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2018 Crimson AS <info@crimson.no>
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 
 #include "qv4setobject_p.h"
@@ -44,19 +8,20 @@
 #include "qv4symbol_p.h"
 
 using namespace QV4;
+using namespace Qt::Literals::StringLiterals;
 
 DEFINE_OBJECT_VTABLE(SetCtor);
 DEFINE_OBJECT_VTABLE(WeakSetCtor);
 DEFINE_OBJECT_VTABLE(SetObject);
 
-void Heap::WeakSetCtor::init(QV4::ExecutionContext *scope)
+void Heap::WeakSetCtor::init(QV4::ExecutionEngine *engine)
 {
-    Heap::FunctionObject::init(scope, QStringLiteral("WeakSet"));
+    Heap::FunctionObject::init(engine, QStringLiteral("WeakSet"));
 }
 
-void Heap::SetCtor::init(QV4::ExecutionContext *scope)
+void Heap::SetCtor::init(QV4::ExecutionEngine *engine)
 {
-    Heap::FunctionObject::init(scope, QStringLiteral("Set"));
+    Heap::FunctionObject::init(engine, QStringLiteral("Set"));
 }
 
 ReturnedValue WeakSetCtor::construct(const FunctionObject *f, const Value *argv, int argc, const Value *newTarget, bool isWeak)
@@ -73,7 +38,7 @@ ReturnedValue WeakSetCtor::construct(const FunctionObject *f, const Value *argv,
     if (argc > 0) {
         ScopedValue iterable(scope, argv[0]);
         if (!iterable->isUndefined() && !iterable->isNull()) {
-            ScopedFunctionObject adder(scope, a->get(ScopedString(scope, scope.engine->newString(QString::fromLatin1("add")))));
+            ScopedFunctionObject adder(scope, a->get(ScopedString(scope, scope.engine->newString(u"add"_s))));
             if (!adder)
                 return scope.engine->throwTypeError();
             ScopedObject iter(scope, Runtime::GetIterator::call(scope.engine, iterable, true));
@@ -90,10 +55,8 @@ ReturnedValue WeakSetCtor::construct(const FunctionObject *f, const Value *argv,
                     return a.asReturnedValue();
 
                 adder->call(a, nextValue, 1);
-                if (scope.engine->hasException) {
-                    ScopedValue falsey(scope, Encode(false));
-                    return Runtime::IteratorClose::call(scope.engine, iter, falsey);
-                }
+                if (scope.hasException())
+                    return Runtime::IteratorClose::call(scope.engine, iter);
             }
         }
     }
@@ -140,6 +103,12 @@ ReturnedValue WeakSetPrototype::method_add(const FunctionObject *b, const Value 
     if ((!that || !that->d()->isWeakSet) ||
         (!argc || !argv[0].isObject()))
         return scope.engine->throwTypeError();
+
+    QV4::WriteBarrier::markCustom(scope.engine, [&](QV4::MarkStack *ms) {
+        if (scope.engine->memoryManager->gcStateMachine->state <= GCState::FreeWeakSets)
+            return;
+        argv[0].heapObject()->mark(ms);
+    });
 
     that->d()->esTable->set(argv[0], Value::undefinedValue());
     return that.asReturnedValue();
@@ -229,6 +198,11 @@ ReturnedValue SetPrototype::method_add(const FunctionObject *b, const Value *thi
     if (!that || that->d()->isWeakSet)
         return scope.engine->throwTypeError();
 
+    QV4::WriteBarrier::markCustom(scope.engine, [&](QV4::MarkStack *ms) {
+        if (auto *h = argv[0].heapObject())
+            h->mark(ms);
+    });
+
     that->d()->esTable->set(argv[0], Value::undefinedValue());
     return that.asReturnedValue();
 }
@@ -281,15 +255,23 @@ ReturnedValue SetPrototype::method_forEach(const FunctionObject *b, const Value 
     if (argc > 1)
         thisArg = ScopedValue(scope, argv[1]);
 
+    ESTable::ShiftObserver observer{};
+    that->d()->esTable->observeShifts(observer);
+
     Value *arguments = scope.alloc(3);
-    for (uint i = 0; i < that->d()->esTable->size(); ++i) {
-        that->d()->esTable->iterate(i, &arguments[0], &arguments[1]); // fill in key (0), value (1)
+    while (observer.pivot < that->d()->esTable->size()) {
+        that->d()->esTable->iterate(observer.pivot, &arguments[0], &arguments[1]); // fill in key (0), value (1)
         arguments[1] = arguments[0]; // but for set, we want to return the key twice; value is always undefined.
 
         arguments[2] = that;
         callbackfn->call(thisArg, arguments, 3);
         CHECK_EXCEPTION();
+
+        observer.next();
     }
+
+    that->d()->esTable->stopObservingShifts(observer);
+
     return Encode::undefined();
 }
 

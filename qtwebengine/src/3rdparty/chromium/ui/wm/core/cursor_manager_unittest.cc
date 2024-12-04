@@ -1,11 +1,11 @@
-// Copyright (c) 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "ui/wm/core/cursor_manager.h"
 
-#include "base/macros.h"
 #include "base/memory/ptr_util.h"
+#include "base/memory/raw_ptr.h"
 #include "ui/aura/client/cursor_client_observer.h"
 #include "ui/aura/test/aura_test_base.h"
 #include "ui/base/cursor/cursor_size.h"
@@ -48,10 +48,8 @@ class TestingCursorManager : public wm::NativeCursorManager {
 class CursorManagerTest : public aura::test::AuraTestBase {
  protected:
   CursorManagerTest()
-      : delegate_(new TestingCursorManager),
-        cursor_manager_(base::WrapUnique(delegate_)) {}
+      : cursor_manager_(std::make_unique<TestingCursorManager>()) {}
 
-  TestingCursorManager* delegate_;
   wm::CursorManager cursor_manager_;
 };
 

@@ -1,43 +1,156 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/platform/fonts/web_font_typeface_factory.h"
 
+#include "base/logging.h"
+#include "base/metrics/histogram_macros.h"
+#include "build/build_config.h"
+#include "skia/ext/font_utils.h"
 #include "third_party/blink/renderer/platform/fonts/font_cache.h"
 #include "third_party/blink/renderer/platform/fonts/opentype/font_format_check.h"
-#include "third_party/blink/renderer/platform/instrumentation/histogram.h"
-#include "third_party/blink/renderer/platform/wtf/assertions.h"
 #include "third_party/skia/include/core/SkStream.h"
 #include "third_party/skia/include/core/SkTypeface.h"
 
-#if defined(OS_WIN)
-#include "third_party/blink/public/common/dwrite_rasterizer_support/dwrite_rasterizer_support.h"
+#if BUILDFLAG(IS_WIN)
 #include "third_party/blink/renderer/platform/fonts/win/dwrite_font_format_support.h"
 #endif
 
-#if defined(OS_WIN) || defined(OS_MAC)
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_APPLE)
 #include "third_party/skia/include/ports/SkFontMgr_empty.h"
 #endif
 
-#if defined(OS_MAC)
-#include "third_party/blink/renderer/platform/fonts/mac/core_text_font_format_support.h"
+#if BUILDFLAG(USE_FONTATIONS_BACKEND)
+#include "third_party/skia/include/ports/SkTypeface_fontations.h"
 #endif
+
+#include <functional>
 
 namespace blink {
 
-bool WebFontTypefaceFactory::CreateTypeface(sk_sp<SkData> sk_data,
+namespace {
+
+sk_sp<SkTypeface> MakeTypefaceDefaultFontMgr(sk_sp<SkData> data) {
+#if BUILDFLAG(USE_FONTATIONS_BACKEND) && \
+    !(BUILDFLAG(IS_WIN) || BUILDFLAG(IS_APPLE))
+  if (RuntimeEnabledFeatures::FontationsFontBackendEnabled()) {
+    std::unique_ptr<SkStreamAsset> stream(new SkMemoryStream(data));
+    return SkTypeface_Make_Fontations(std::move(stream), SkFontArguments());
+  }
+#endif
+
+  sk_sp<SkFontMgr> font_manager;
+#if BUILDFLAG(IS_WIN)
+  font_manager = FontCache::Get().FontManager();
+#else
+  font_manager = skia::DefaultFontMgr();
+#endif
+  return font_manager->makeFromData(data, 0);
+}
+
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_APPLE)
+sk_sp<SkTypeface> MakeTypefaceFallback(sk_sp<SkData> data) {
+#if BUILDFLAG(USE_FONTATIONS_BACKEND) && \
+    (BUILDFLAG(IS_WIN) || BUILDFLAG(IS_APPLE))
+  if (RuntimeEnabledFeatures::FontationsFontBackendEnabled()) {
+    std::unique_ptr<SkStreamAsset> stream(new SkMemoryStream(data));
+    return SkTypeface_Make_Fontations(std::move(stream), SkFontArguments());
+  }
+#endif
+  return SkFontMgr_New_Custom_Empty()->makeFromData(data, 0);
+}
+#endif
+
+sk_sp<SkTypeface> MakeVariationsTypeface(
+    sk_sp<SkData> data,
+    const WebFontTypefaceFactory::FontInstantiator& instantiator) {
+#if BUILDFLAG(IS_WIN)
+  if (!DWriteVersionSupportsVariations()) {
+    return instantiator.make_fallback(data);
+  }
+#endif
+  return instantiator.make_system(data);
+}
+
+sk_sp<SkTypeface> MakeSbixTypeface(
+    sk_sp<SkData> data,
+    const WebFontTypefaceFactory::FontInstantiator& instantiator) {
+#if BUILDFLAG(IS_WIN)
+  return instantiator.make_fallback(data);
+#else
+  // On Mac, CoreText can handle creating SBIX fonts, on Linux-like OSes,
+  // FreeType is the default manager and handles SBIX.
+  return instantiator.make_system(data);
+#endif
+}
+
+sk_sp<SkTypeface> MakeColrV0Typeface(
+    sk_sp<SkData> data,
+    const WebFontTypefaceFactory::FontInstantiator& instantiator) {
+#if BUILDFLAG(IS_APPLE)
+  return instantiator.make_fallback(data);
+#else
+  // On Windows, Skia's DirectWrite backend handles COLRv0, on Linux-like OSes,
+  // FreeType is the default font manager and handles COLRv0.
+  return instantiator.make_system(data);
+#endif
+}
+
+sk_sp<SkTypeface> MakeColrV0VariationsTypeface(
+    sk_sp<SkData> data,
+    const WebFontTypefaceFactory::FontInstantiator& instantiator) {
+#if BUILDFLAG(IS_WIN)
+  if (DWriteVersionSupportsVariations()) {
+    return instantiator.make_system(data);
+  } else {
+    return instantiator.make_fallback(data);
+  }
+#elif BUILDFLAG(IS_APPLE)
+  return instantiator.make_fallback(data);
+#else
+  return instantiator.make_system(data);
+#endif
+}
+
+sk_sp<SkTypeface> MakeUseFallbackIfNeeded(
+    sk_sp<SkData> data,
+    const WebFontTypefaceFactory::FontInstantiator& instantiator) {
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_APPLE)
+  return instantiator.make_fallback(data);
+#else
+  return instantiator.make_system(data);
+#endif
+}
+
+}  // namespace
+
+bool WebFontTypefaceFactory::CreateTypeface(sk_sp<SkData> data,
                                             sk_sp<SkTypeface>& typeface) {
+  const FontFormatCheck format_check(data);
+  const FontInstantiator instantiator = {
+    MakeTypefaceDefaultFontMgr,
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_APPLE)
+    MakeTypefaceFallback
+#endif
+  };
+
+  return CreateTypeface(data, typeface, format_check, instantiator);
+}
+
+bool WebFontTypefaceFactory::CreateTypeface(
+    sk_sp<SkData> data,
+    sk_sp<SkTypeface>& typeface,
+    const FontFormatCheck& format_check,
+    const FontInstantiator& instantiator) {
   CHECK(!typeface);
 
-  FontFormatCheck format_check(sk_data);
-
-  std::unique_ptr<SkStreamAsset> stream(new SkMemoryStream(sk_data));
-
-  if (!format_check.IsVariableFont() && !format_check.IsColorFont()) {
-    typeface = DefaultFontManager()->makeFromStream(std::move(stream));
+  if (!format_check.IsVariableFont() && !format_check.IsColorFont() &&
+      !format_check.IsCff2OutlineFont()) {
+    typeface = instantiator.make_system(data);
     if (typeface) {
-      ReportWebFontInstantiationResult(kSuccessConventionalWebFont);
+      ReportInstantiationResult(
+          InstantiationResult::kSuccessConventionalWebFont);
       return true;
     }
     // Not UMA reporting general decoding errors as these are already recorded
@@ -45,109 +158,57 @@ bool WebFontTypefaceFactory::CreateTypeface(sk_sp<SkData> sk_data,
     return false;
   }
 
-  // We don't expect variable CBDT/CBLC or Sbix variable fonts for now.
-  if (format_check.IsCbdtCblcColorFont()) {
-    typeface = FreeTypeFontManager()->makeFromStream(std::move(stream));
-    if (typeface)
-      ReportWebFontInstantiationResult(kSuccessCbdtCblcColorFont);
-    return typeface.get();
-  }
+  // The order of instantiation rules listed in this ruleset is important.
+  // That's because variable COLRv0 fonts need to be special cased and go
+  // through the fallback in order to avoid incompatibilities on Mac and Window.
+  using CheckFunction = bool (FontFormatCheck::*)() const;
+  using InstantionFunctionWithInstantiator = sk_sp<SkTypeface> (*)(
+      sk_sp<SkData>, const FontInstantiator& instantiator);
 
-  if (format_check.IsSbixColorFont()) {
-    typeface = FontManagerForSbix()->makeFromStream(std::move(stream));
-    if (typeface) {
-      ReportWebFontInstantiationResult(kSuccessSbixFont);
+  struct {
+    CheckFunction check_function;
+    InstantionFunctionWithInstantiator instantiation_function;
+    absl::optional<InstantiationResult> reportSuccess;
+    absl::optional<InstantiationResult> reportFailure;
+  } instantiation_rules[] = {
+      // We don't expect variable CBDT/CBLC or Sbix variable fonts for now.
+      {&FontFormatCheck::IsCbdtCblcColorFont, &MakeUseFallbackIfNeeded,
+       InstantiationResult::kSuccessCbdtCblcColorFont, absl::nullopt},
+      {&FontFormatCheck::IsColrCpalColorFontV1, &MakeUseFallbackIfNeeded,
+       InstantiationResult::kSuccessColrV1Font, absl::nullopt},
+      {&FontFormatCheck::IsSbixColorFont, &MakeSbixTypeface,
+       InstantiationResult::kSuccessSbixFont, absl::nullopt},
+      {&FontFormatCheck::IsCff2OutlineFont, &MakeUseFallbackIfNeeded,
+       InstantiationResult::kSuccessCff2Font, absl::nullopt},
+      // We need to special case variable COLRv0 for backend instantiation as
+      // certain Mac and Windows versions supported COLRv0 only without
+      // variations.
+      {&FontFormatCheck::IsVariableColrV0Font, &MakeColrV0VariationsTypeface,
+       InstantiationResult::kSuccessColrCpalFont, absl::nullopt},
+      {&FontFormatCheck::IsVariableFont, &MakeVariationsTypeface,
+       InstantiationResult::kSuccessVariableWebFont,
+       InstantiationResult::kErrorInstantiatingVariableFont},
+      {&FontFormatCheck::IsColrCpalColorFontV0, &MakeColrV0Typeface,
+       InstantiationResult::kSuccessColrCpalFont, absl::nullopt}};
+
+  for (auto& rule : instantiation_rules) {
+    if (std::invoke(rule.check_function, format_check)) {
+      typeface = rule.instantiation_function(data, instantiator);
+      if (typeface && rule.reportSuccess.has_value()) {
+        ReportInstantiationResult(*rule.reportSuccess);
+      } else if (!typeface && rule.reportFailure.has_value()) {
+        ReportInstantiationResult(*rule.reportFailure);
+      }
+      return typeface.get();
     }
-    return typeface.get();
-  }
-
-  // CFF2 must always go through the FreeTypeFontManager, even on Mac OS, as it
-  // is not natively supported.
-  if (format_check.IsCff2OutlineFont()) {
-    typeface = FreeTypeFontManager()->makeFromStream(std::move(stream));
-    if (typeface)
-      ReportWebFontInstantiationResult(kSuccessCff2Font);
-    return typeface.get();
-  }
-
-  // Variable COLR/CPAL fonts must go through the Variations
-  // FontManager, which is FreeType on Windows.
-  if (format_check.IsVariableFont()) {
-    typeface = FontManagerForVariations()->makeFromStream(std::move(stream));
-    if (typeface)
-      ReportWebFontInstantiationResult(kSuccessVariableWebFont);
-    else
-      ReportWebFontInstantiationResult(kErrorInstantiatingVariableFont);
-    return typeface.get();
-  }
-
-  if (format_check.IsColrCpalColorFont()) {
-    typeface = FontManagerForColrCpal()->makeFromStream(std::move(stream));
-    if (typeface)
-      ReportWebFontInstantiationResult(kSuccessColrCpalFont);
-    return typeface.get();
   }
 
   return false;
 }
 
-sk_sp<SkFontMgr> WebFontTypefaceFactory::FontManagerForVariations() {
-#if defined(OS_WIN)
-  if (DWriteVersionSupportsVariations())
-    return DefaultFontManager();
-  return FreeTypeFontManager();
-#else
-#if defined(OS_MAC)
-  if (!CoreTextVersionSupportsVariations())
-    return FreeTypeFontManager();
-#endif
-  return DefaultFontManager();
-#endif
-}
-
-sk_sp<SkFontMgr> WebFontTypefaceFactory::FontManagerForSbix() {
-#if defined(OS_MAC)
-  return DefaultFontManager();
-#endif
-  return FreeTypeFontManager();
-}
-
-sk_sp<SkFontMgr> WebFontTypefaceFactory::DefaultFontManager() {
-#if defined(OS_WIN)
-  return FontCache::GetFontCache()->FontManager();
-#else
-  return sk_sp<SkFontMgr>(SkFontMgr::RefDefault());
-#endif
-}
-
-sk_sp<SkFontMgr> WebFontTypefaceFactory::FreeTypeFontManager() {
-#if defined(OS_WIN) || defined(OS_MAC)
-  return sk_sp<SkFontMgr>(SkFontMgr_New_Custom_Empty());
-#else
-  return DefaultFontManager();
-#endif
-}
-
-sk_sp<SkFontMgr> WebFontTypefaceFactory::FontManagerForColrCpal() {
-#if defined(OS_WIN)
-  if (!blink::DWriteRasterizerSupport::IsDWriteFactory2Available())
-    return FreeTypeFontManager();
-#endif
-#if defined(OS_MAC)
-  if (!CoreTextVersionSupportsColrCpal())
-    return FreeTypeFontManager();
-#endif
-  // TODO(https://crbug.com/882844): Check Mac OS version and use the FreeType
-  // font manager accordingly.
-  return DefaultFontManager();
-}
-
-void WebFontTypefaceFactory::ReportWebFontInstantiationResult(
-    WebFontInstantiationResult result) {
-  DEFINE_THREAD_SAFE_STATIC_LOCAL(
-      EnumerationHistogram, web_font_variable_fonts_ratio,
-      ("Blink.Fonts.VariableFontsRatio", kMaxWebFontInstantiationResult));
-  web_font_variable_fonts_ratio.Count(result);
+void WebFontTypefaceFactory::ReportInstantiationResult(
+    InstantiationResult result) {
+  UMA_HISTOGRAM_ENUMERATION("Blink.Fonts.VariableFontsRatio", result);
 }
 
 }  // namespace blink

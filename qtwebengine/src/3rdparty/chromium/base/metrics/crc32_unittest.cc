@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,6 +6,7 @@
 
 #include <stdint.h>
 
+#include "base/containers/span.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace base {
@@ -28,7 +29,8 @@ TEST(Crc32Test, TableTest) {
 
 // A CRC of nothing should always be zero.
 TEST(Crc32Test, ZeroTest) {
-  EXPECT_EQ(0U, Crc32(0, nullptr, 0));
+  span<const uint8_t> empty_data;
+  EXPECT_EQ(0U, Crc32(0, empty_data));
 }
 
 }  // namespace base

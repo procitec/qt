@@ -1,17 +1,16 @@
-// Copyright 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef CC_TREES_LAYER_TREE_FRAME_SINK_CLIENT_H_
 #define CC_TREES_LAYER_TREE_FRAME_SINK_CLIENT_H_
 
-#include "base/callback.h"
-#include "base/memory/ref_counted.h"
-#include "base/optional.h"
-#include "base/time/time.h"
+#include <optional>
+#include <vector>
+#include "base/functional/callback.h"
 #include "cc/cc_export.h"
 #include "components/viz/common/resources/returned_resource.h"
-#include "gpu/command_buffer/common/texture_in_use_response.h"
+#include "components/viz/common/surfaces/local_surface_id.h"
 #include "ui/gfx/geometry/rect.h"
 
 namespace gfx {
@@ -39,11 +38,11 @@ class CC_EXPORT LayerTreeFrameSinkClient {
   // called during SubmitCompositorFrame().
   // TODO(danakj): Just pass it into SubmitCompositorFrame(), with a
   // LayerTreeSetting to enable it or not.
-  virtual base::Optional<viz::HitTestRegionList> BuildHitTestData() = 0;
+  virtual std::optional<viz::HitTestRegionList> BuildHitTestData() = 0;
 
   // Returns resources sent to SubmitCompositorFrame to be reused or freed.
   virtual void ReclaimResources(
-      const std::vector<viz::ReturnedResource>& resources) = 0;
+      std::vector<viz::ReturnedResource> resources) = 0;
 
   // If set, |callback| will be called subsequent to each new tree activation,
   // regardless of the compositor visibility or damage. |callback| must remain
@@ -62,9 +61,9 @@ class CC_EXPORT LayerTreeFrameSinkClient {
       uint32_t frame_token,
       const viz::FrameTimingDetails& details) = 0;
 
-  // The LayerTreeFrameSink is lost when the viz::ContextProviders held by it
-  // encounter an error. In this case the LayerTreeFrameSink (and the
-  // viz::ContextProviders) must be recreated.
+  // The LayerTreeFrameSink is lost when the viz::RasterContextProviders held by
+  // it encounter an error. In this case the LayerTreeFrameSink (and the
+  // viz::RasterContextProviders) must be recreated.
   virtual void DidLoseLayerTreeFrameSink() = 0;
 
   // For SynchronousCompositor (WebView) to ask the layer compositor to submit
@@ -86,6 +85,13 @@ class CC_EXPORT LayerTreeFrameSinkClient {
   virtual void SetExternalTilePriorityConstraints(
       const gfx::Rect& viewport_rect,
       const gfx::Transform& transform) = 0;
+
+  // Notification that the compositor frame transition directive has been
+  // processed.
+  virtual void OnCompositorFrameTransitionDirectiveProcessed(
+      uint32_t sequence_id) {}
+
+  virtual void OnSurfaceEvicted(const viz::LocalSurfaceId& local_surface_id) {}
 
  protected:
   virtual ~LayerTreeFrameSinkClient() {}

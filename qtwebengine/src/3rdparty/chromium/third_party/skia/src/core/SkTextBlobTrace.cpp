@@ -3,14 +3,17 @@
 
 #include "src/core/SkTextBlobTrace.h"
 
+#include "include/core/SkFontMgr.h"
 #include "include/core/SkTextBlob.h"
+#include "src/base/SkTLazy.h"
 #include "src/core/SkFontPriv.h"
 #include "src/core/SkPtrRecorder.h"
 #include "src/core/SkReadBuffer.h"
 #include "src/core/SkTextBlobPriv.h"
 #include "src/core/SkWriteBuffer.h"
 
-std::vector<SkTextBlobTrace::Record> SkTextBlobTrace::CreateBlobTrace(SkStream* stream) {
+std::vector<SkTextBlobTrace::Record> SkTextBlobTrace::CreateBlobTrace(
+        SkStream* stream, sk_sp<SkFontMgr> lastResortMgr) {
     std::vector<SkTextBlobTrace::Record> trace;
 
     uint32_t typefaceCount;
@@ -20,7 +23,7 @@ std::vector<SkTextBlobTrace::Record> SkTextBlobTrace::CreateBlobTrace(SkStream* 
 
     std::vector<sk_sp<SkTypeface>> typefaceArray;
     for (uint32_t i = 0; i < typefaceCount; i++) {
-        typefaceArray.push_back(SkTypeface::MakeDeserialize(stream));
+        typefaceArray.push_back(SkTypeface::MakeDeserialize(stream, lastResortMgr));
     }
 
     uint32_t restOfFile;
@@ -34,7 +37,7 @@ std::vector<SkTextBlobTrace::Record> SkTextBlobTrace::CreateBlobTrace(SkStream* 
     while (!readBuffer.eof()) {
         SkTextBlobTrace::Record record;
         record.origUniqueID = readBuffer.readUInt();
-        readBuffer.readPaint(&record.paint, nullptr);
+        record.paint = readBuffer.readPaint();
         readBuffer.readPoint(&record.offset);
         record.blob = SkTextBlobPriv::MakeFromBuffer(readBuffer);
         trace.push_back(std::move(record));
@@ -58,13 +61,13 @@ void SkTextBlobTrace::DumpTrace(const std::vector<SkTextBlobTrace::Record>& trac
             SkDebugf("Run %d\n    ", runNumber);
             SkFont font = iter.font();
             SkDebugf("Font %d %g %g %g %d %d %d\n    ",
-                    font.getTypefaceOrDefault()->uniqueID(),
+                    font.getTypeface()->uniqueID(),
                     font.getSize(),
                     font.getScaleX(),
                     font.getSkewX(),
                     SkFontPriv::Flags(font),
-                    font.getEdging(),
-                    font.getHinting());
+                    (int)font.getEdging(),
+                    (int)font.getHinting());
             uint32_t glyphCount = iter.glyphCount();
             const uint16_t* glyphs = iter.glyphs();
             for (uint32_t i = 0; i < glyphCount; i++) {
@@ -77,17 +80,18 @@ void SkTextBlobTrace::DumpTrace(const std::vector<SkTextBlobTrace::Record>& trac
     }
 }
 
-SkTextBlobTrace::Capture::Capture() : fTypefaceSet(new SkRefCntSet) {
+SkTextBlobTrace::Capture::Capture() : fTypefaceSet(new SkRefCntSet), fWriteBuffer({}) {
     fWriteBuffer.setTypefaceRecorder(fTypefaceSet);
 }
 
 SkTextBlobTrace::Capture::~Capture() = default;
 
-void SkTextBlobTrace::Capture::capture(const SkGlyphRunList& glyphRunList) {
+void SkTextBlobTrace::Capture::capture(
+        const sktext::GlyphRunList& glyphRunList, const SkPaint& paint) {
     const SkTextBlob* blob = glyphRunList.blob();
     if (blob != nullptr) {
         fWriteBuffer.writeUInt(blob->uniqueID());
-        fWriteBuffer.writePaint(glyphRunList.paint());
+        fWriteBuffer.writePaint(paint);
         fWriteBuffer.writePoint(glyphRunList.origin());
         SkTextBlobPriv::Flatten(*blob, fWriteBuffer);
         fBlobCount++;

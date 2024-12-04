@@ -1,5 +1,4 @@
 dpapad@chromium.org
 rbpotter@chromium.org
 
-# TEAM: build@chromium.org
-# COMPONENT: Build
+per-file lit_include.txt=file://third_party/lit/OWNERS

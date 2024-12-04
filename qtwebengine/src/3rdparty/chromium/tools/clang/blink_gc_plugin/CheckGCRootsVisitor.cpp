@@ -1,14 +1,20 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "CheckGCRootsVisitor.h"
+#include "BlinkGCPluginOptions.h"
 
-CheckGCRootsVisitor::CheckGCRootsVisitor() {
+CheckGCRootsVisitor::CheckGCRootsVisitor(const BlinkGCPluginOptions& options)
+    : should_check_unique_ptrs_(options.enable_persistent_in_unique_ptr_check) {
 }
 
 CheckGCRootsVisitor::Errors& CheckGCRootsVisitor::gc_roots() {
   return gc_roots_;
+}
+
+CheckGCRootsVisitor::Errors& CheckGCRootsVisitor::gc_root_refs() {
+  return gc_root_refs_;
 }
 
 bool CheckGCRootsVisitor::ContainsGCRoots(RecordInfo* info) {
@@ -19,7 +25,7 @@ bool CheckGCRootsVisitor::ContainsGCRoots(RecordInfo* info) {
     it->second.edge()->Accept(this);
     current_.pop_back();
   }
-  return !gc_roots_.empty();
+  return !gc_roots_.empty() || !gc_root_refs_.empty();
 }
 
 void CheckGCRootsVisitor::VisitValue(Value* edge) {
@@ -43,6 +49,38 @@ void CheckGCRootsVisitor::VisitValue(Value* edge) {
   visiting_set_.erase(edge->value());
 }
 
+void CheckGCRootsVisitor::VisitUniquePtr(UniquePtr* edge) {
+  if (!should_check_unique_ptrs_)
+    return;
+  edge->ptr()->Accept(this);
+}
+
+void CheckGCRootsVisitor::VisitRawPtr(RawPtr* edge) {
+  bool previous_is_ref_ = is_ref_;
+  is_ref_ = true;
+  RecursiveEdgeVisitor::VisitRawPtr(edge);
+  is_ref_ = previous_is_ref_;
+}
+
+void CheckGCRootsVisitor::VisitRefPtr(RefPtr* edge) {
+  bool previous_is_ref_ = is_ref_;
+  is_ref_ = true;
+  RecursiveEdgeVisitor::VisitRefPtr(edge);
+  is_ref_ = previous_is_ref_;
+}
+
 void CheckGCRootsVisitor::VisitPersistent(Persistent* edge) {
-  gc_roots_.push_back(current_);
+  if (is_ref_) {
+    gc_root_refs_.push_back(current_);
+  } else {
+    gc_roots_.push_back(current_);
+  }
+}
+
+void CheckGCRootsVisitor::VisitCollection(Collection* edge) {
+  // There already is a matcher for handling this.
+  if (edge->IsSTDCollection()) {
+    return;
+  }
+  RecursiveEdgeVisitor::VisitCollection(edge);
 }

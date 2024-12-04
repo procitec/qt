@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,6 +8,7 @@
 
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
+#include "util/std_util.h"
 
 using testing::_;
 using testing::ContainerEq;
@@ -15,8 +16,7 @@ using testing::IsSubsetOf;
 using testing::IsSupersetOf;
 using testing::StrictMock;
 
-namespace openscreen {
-namespace discovery {
+namespace openscreen::discovery {
 namespace {
 
 std::vector<std::string> ConvertRefs(
@@ -234,15 +234,13 @@ class DnsSdServiceWatcherTests : public testing::Test {
     const std::string& service = record.instance_id();
     const std::vector<TestServiceWatcher::ConstRefT> services =
         watcher_.GetServices();
-    return std::find_if(services.begin(), services.end(),
-                        [&service](const std::string& ref) {
-                          return service == ref;
-                        }) != services.end();
+    return ContainsIf(services, [&service](const std::string& ref) {
+      return service == ref;
+    });
   }
 
   StrictMock<MockDnsSdService> service_;
   StrictMock<TestServiceWatcher> watcher_;
-  std::vector<std::string> fetched_services;
 };
 
 TEST_F(DnsSdServiceWatcherTests, StartStopDiscoveryWorks) {
@@ -333,5 +331,4 @@ TEST_F(DnsSdServiceWatcherTests, CreatingUpdatingDeletingInstancesWork) {
   EXPECT_FALSE(ContainsService(record2));
 }
 
-}  // namespace discovery
-}  // namespace openscreen
+}  // namespace openscreen::discovery

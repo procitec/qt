@@ -1,10 +1,11 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/subresource_filter/tools/rule_parser/rule_parser.h"
 
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "base/strings/string_piece.h"
@@ -17,7 +18,7 @@ namespace subresource_filter {
 
 namespace {
 
-void ParseAndExpectUrlRule(base::StringPiece line,
+void ParseAndExpectUrlRule(std::string_view line,
                            const UrlRule& expected_rule) {
   UrlRule canonicalized_rule = expected_rule;
   canonicalized_rule.Canonicalize();
@@ -33,7 +34,7 @@ void ParseAndExpectUrlRule(base::StringPiece line,
   EXPECT_EQ(canonicalized_rule, parser.url_rule());
 }
 
-void ParseAndExpectCssRule(base::StringPiece line,
+void ParseAndExpectCssRule(std::string_view line,
                            const CssRule& expected_rule) {
   CssRule canonicalized_rule = expected_rule;
   canonicalized_rule.Canonicalize();

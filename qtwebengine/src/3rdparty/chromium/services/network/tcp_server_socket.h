@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,14 +9,18 @@
 #include <vector>
 
 #include "base/component_export.h"
-#include "base/macros.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/types/expected.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "net/base/ip_endpoint.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "services/network/public/mojom/tcp_socket.mojom.h"
+
+#if BUILDFLAG(IS_CHROMEOS)
+#include "services/network/public/mojom/socket_connection_tracker.mojom.h"
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 namespace net {
 class NetLog;
@@ -56,15 +60,24 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) TCPServerSocket
                   Delegate* delegate,
                   const net::NetworkTrafficAnnotationTag& traffic_annotation);
 
+  TCPServerSocket(const TCPServerSocket&) = delete;
+  TCPServerSocket& operator=(const TCPServerSocket&) = delete;
+
   ~TCPServerSocket() override;
 
-  int Listen(const net::IPEndPoint& local_addr,
-             int backlog,
-             net::IPEndPoint* local_addr_out);
+  base::expected<net::IPEndPoint, int32_t> Listen(
+      const net::IPEndPoint& local_addr,
+      int backlog,
+      absl::optional<bool> ipv6_only);
 
   // TCPServerSocket implementation.
   void Accept(mojo::PendingRemote<mojom::SocketObserver> observer,
               AcceptCallback callback) override;
+
+#if BUILDFLAG(IS_CHROMEOS)
+  void AttachConnectionTracker(
+      mojo::PendingRemote<mojom::SocketConnectionTracker>);
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
   // Replaces the underlying socket implementation with |socket| in tests.
   void SetSocketForTest(std::unique_ptr<net::ServerSocket> socket);
@@ -83,7 +96,7 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) TCPServerSocket
   // Process the next Accept() from |pending_accepts_queue_|.
   void ProcessNextAccept();
 
-  Delegate* const delegate_;
+  const raw_ptr<Delegate> delegate_;
   std::unique_ptr<net::ServerSocket> socket_;
   int backlog_;
   std::vector<std::unique_ptr<PendingAccept>> pending_accepts_queue_;
@@ -91,9 +104,11 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) TCPServerSocket
   net::IPEndPoint accepted_address_;
   net::NetworkTrafficAnnotationTag traffic_annotation_;
 
-  base::WeakPtrFactory<TCPServerSocket> weak_factory_{this};
+#if BUILDFLAG(IS_CHROMEOS)
+  mojo::PendingRemote<mojom::SocketConnectionTracker> connection_tracker_;
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
-  DISALLOW_COPY_AND_ASSIGN(TCPServerSocket);
+  base::WeakPtrFactory<TCPServerSocket> weak_factory_{this};
 };
 
 }  // namespace network

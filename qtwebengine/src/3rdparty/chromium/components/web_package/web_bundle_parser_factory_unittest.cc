@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,23 +6,28 @@
 
 #include "base/files/file.h"
 #include "base/files/file_path.h"
-#include "base/optional.h"
+#include "base/files/file_util.h"
+#include "base/files/scoped_temp_dir.h"
 #include "base/path_service.h"
-#include "base/run_loop.h"
-#include "base/test/bind_test_util.h"
+#include "base/ranges/algorithm.h"
 #include "base/test/task_environment.h"
+#include "base/test/test_future.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/remote.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace web_package {
 
 namespace {
 
+using testing::UnorderedElementsAreArray;
+
 base::FilePath GetTestFilePath(const base::FilePath& path) {
   base::FilePath test_path;
-  base::PathService::Get(base::DIR_SOURCE_ROOT, &test_path);
+  base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &test_path);
   test_path = test_path.Append(
       base::FilePath(FILE_PATH_LITERAL("components/test/data/web_package")));
   return test_path.Append(path);
@@ -36,16 +41,23 @@ class WebBundleParserFactoryTest : public testing::Test {
       : factory_(std::make_unique<WebBundleParserFactory>()) {}
 
   std::unique_ptr<mojom::BundleDataSource> CreateFileDataSource(
-      mojo::PendingReceiver<mojom::BundleDataSource> receiver,
       base::File file) {
-    return factory_->CreateFileDataSourceForTesting(std::move(receiver),
-                                                    std::move(file));
+    return factory_->CreateFileDataSourceForTesting(std::move(file));
   }
 
   void GetParserForFile(mojo::PendingReceiver<mojom::WebBundleParser> receiver,
-                        base::File file) {
+                        base::File file,
+                        const absl::optional<GURL>& base_url) {
     mojom::WebBundleParserFactory* factory = factory_.get();
-    return factory->GetParserForFile(std::move(receiver), std::move(file));
+    mojo::PendingRemote<mojom::BundleDataSource>
+        file_data_source_pending_remote;
+    auto file_data_source_pending_receiver =
+        file_data_source_pending_remote.InitWithNewPipeAndPassReceiver();
+    factory->BindFileDataSource(std::move(file_data_source_pending_receiver),
+                                std::move(file));
+    return factory->GetParserForDataSource(
+        std::move(receiver), base_url,
+        std::move(file_data_source_pending_remote));
   }
 
  private:
@@ -55,7 +67,7 @@ class WebBundleParserFactoryTest : public testing::Test {
 
 TEST_F(WebBundleParserFactoryTest, FileDataSource) {
   base::FilePath test_file =
-      GetTestFilePath(base::FilePath(FILE_PATH_LITERAL("hello.wbn")));
+      GetTestFilePath(base::FilePath(FILE_PATH_LITERAL("hello_b2.wbn")));
 
   base::File file(test_file, base::File::FLAG_OPEN | base::File::FLAG_READ);
   ASSERT_TRUE(file.IsValid());
@@ -70,112 +82,89 @@ TEST_F(WebBundleParserFactoryTest, FileDataSource) {
             file.Read(file_length - test_length,
                       reinterpret_cast<char*>(last16b.data()), last16b.size()));
 
-  mojo::PendingRemote<mojom::BundleDataSource> remote;
-  auto data_source = CreateFileDataSource(
-      remote.InitWithNewPipeAndPassReceiver(), std::move(file));
-
-  base::Optional<std::vector<uint8_t>> result_data;
-  {
-    base::RunLoop run_loop;
-    data_source->Read(
-        /*offset=*/0, test_length,
-        base::BindLambdaForTesting(
-            [&result_data,
-             &run_loop](const base::Optional<std::vector<uint8_t>>& data) {
-              result_data = data;
-              run_loop.QuitClosure().Run();
-            }));
-    run_loop.Run();
-  }
-  ASSERT_TRUE(result_data);
-  EXPECT_EQ(first16b, *result_data);
+  auto data_source = CreateFileDataSource(std::move(file));
 
   {
-    base::RunLoop run_loop;
-    data_source->Read(
-        file_length - test_length, test_length,
-        base::BindLambdaForTesting(
-            [&result_data,
-             &run_loop](const base::Optional<std::vector<uint8_t>>& data) {
-              result_data = data;
-              run_loop.QuitClosure().Run();
-            }));
-    run_loop.Run();
+    base::test::TestFuture<const absl::optional<std::vector<uint8_t>>&> future;
+    data_source->Read(/*offset=*/0, test_length, future.GetCallback());
+    ASSERT_TRUE(future.Get());
+    EXPECT_EQ(first16b, *future.Get());
   }
-  ASSERT_TRUE(result_data);
-  EXPECT_EQ(last16b, *result_data);
 
   {
-    base::RunLoop run_loop;
-    data_source->Read(
-        file_length - test_length, test_length + 1,
-        base::BindLambdaForTesting(
-            [&result_data,
-             &run_loop](const base::Optional<std::vector<uint8_t>>& data) {
-              result_data = data;
-              run_loop.QuitClosure().Run();
-            }));
-    run_loop.Run();
+    base::test::TestFuture<const absl::optional<std::vector<uint8_t>>&> future;
+    data_source->Read(file_length - test_length, test_length,
+                      future.GetCallback());
+    ASSERT_TRUE(future.Get());
+    EXPECT_EQ(last16b, *future.Get());
   }
-  ASSERT_TRUE(result_data);
-  EXPECT_EQ(last16b, *result_data);
 
   {
-    base::RunLoop run_loop;
-    data_source->Read(
-        file_length + 1, test_length,
-        base::BindLambdaForTesting(
-            [&result_data,
-             &run_loop](const base::Optional<std::vector<uint8_t>>& data) {
-              result_data = data;
-              run_loop.QuitClosure().Run();
-            }));
-    run_loop.Run();
+    base::test::TestFuture<const absl::optional<std::vector<uint8_t>>&> future;
+    data_source->Read(file_length - test_length, test_length + 1,
+                      future.GetCallback());
+    ASSERT_TRUE(future.Get());
+    EXPECT_EQ(last16b, *future.Get());
   }
-  ASSERT_FALSE(result_data);
+
+  {
+    base::test::TestFuture<const absl::optional<std::vector<uint8_t>>&> future;
+    data_source->Read(file_length + 1, test_length, future.GetCallback());
+    ASSERT_FALSE(future.Get());
+  }
+
+  {
+    base::test::TestFuture<int64_t> future;
+    data_source->Length(future.GetCallback());
+    EXPECT_EQ(file_length, future.Get());
+  }
+
+  {
+    base::test::TestFuture<bool> future;
+    data_source->IsRandomAccessContext(future.GetCallback());
+    EXPECT_TRUE(future.Get());
+  }
+
+  // Close the file should just work
+  {
+    base::test::TestFuture<void> future;
+    data_source->Close(future.GetCallback());
+    future.Get();
+  }
 }
 
 TEST_F(WebBundleParserFactoryTest, GetParserForFile) {
   base::File file(
-      GetTestFilePath(base::FilePath(FILE_PATH_LITERAL("hello.wbn"))),
+      GetTestFilePath(base::FilePath(FILE_PATH_LITERAL("hello_b2.wbn"))),
       base::File::FLAG_OPEN | base::File::FLAG_READ);
   ASSERT_TRUE(file.IsValid());
 
   mojo::Remote<mojom::WebBundleParser> parser;
-  GetParserForFile(parser.BindNewPipeAndPassReceiver(), std::move(file));
+  GetParserForFile(parser.BindNewPipeAndPassReceiver(), std::move(file),
+                   absl::nullopt);
 
   mojom::BundleMetadataPtr metadata;
   {
-    base::RunLoop run_loop;
-    parser->ParseMetadata(base::BindLambdaForTesting(
-        [&metadata, &run_loop](mojom::BundleMetadataPtr parsed_metadata,
-                               mojom::BundleMetadataParseErrorPtr error) {
-          metadata = std::move(parsed_metadata);
-          run_loop.QuitClosure().Run();
-        }));
-    run_loop.Run();
+    base::test::TestFuture<mojom::BundleMetadataPtr,
+                           mojom::BundleMetadataParseErrorPtr>
+        future;
+    parser->ParseMetadata(/*offset=*/absl::nullopt, future.GetCallback());
+    metadata = std::get<0>(future.Take());
   }
   ASSERT_TRUE(metadata);
   ASSERT_EQ(metadata->requests.size(), 4u);
 
   std::map<std::string, mojom::BundleResponsePtr> responses;
   for (const auto& item : metadata->requests) {
-    ASSERT_TRUE(item.second->variants_value.empty());
-    ASSERT_EQ(item.second->response_locations.size(), 1u);
-    base::RunLoop run_loop;
-    parser->ParseResponse(item.second->response_locations[0]->offset,
-                          item.second->response_locations[0]->length,
-                          base::BindLambdaForTesting(
-                              [&item, &responses, &run_loop](
-                                  mojom::BundleResponsePtr response,
-                                  mojom::BundleResponseParseErrorPtr error) {
-                                ASSERT_TRUE(response);
-                                ASSERT_FALSE(error);
-                                responses[item.first.spec()] =
-                                    std::move(response);
-                                run_loop.QuitClosure().Run();
-                              }));
-    run_loop.Run();
+    base::test::TestFuture<mojom::BundleResponsePtr,
+                           mojom::BundleResponseParseErrorPtr>
+        future;
+    parser->ParseResponse(item.second->offset, item.second->length,
+                          future.GetCallback());
+    auto [response, error] = future.Take();
+    ASSERT_TRUE(response);
+    ASSERT_FALSE(error);
+    responses[item.first.spec()] = std::move(response);
   }
   ASSERT_TRUE(responses["https://test.example.org/"]);
   EXPECT_EQ(responses["https://test.example.org/"]->response_code, 200);
@@ -185,6 +174,56 @@ TEST_F(WebBundleParserFactoryTest, GetParserForFile) {
   EXPECT_TRUE(responses["https://test.example.org/index.html"]);
   EXPECT_TRUE(responses["https://test.example.org/manifest.webmanifest"]);
   EXPECT_TRUE(responses["https://test.example.org/script.js"]);
+}
+
+TEST_F(WebBundleParserFactoryTest, GetParserForFileWithRelativeUrls) {
+  base::File file(GetTestFilePath(base::FilePath(
+                      FILE_PATH_LITERAL("mixed_absolute_relative_urls.wbn"))),
+                  base::File::FLAG_OPEN | base::File::FLAG_READ);
+  ASSERT_TRUE(file.IsValid());
+
+  mojo::Remote<mojom::WebBundleParser> parser;
+  GetParserForFile(parser.BindNewPipeAndPassReceiver(), std::move(file),
+                   GURL("https://example.com/foo/"));
+
+  mojom::BundleMetadataPtr metadata;
+  {
+    base::test::TestFuture<mojom::BundleMetadataPtr,
+                           mojom::BundleMetadataParseErrorPtr>
+        future;
+    parser->ParseMetadata(/*offset=*/absl::nullopt, future.GetCallback());
+    metadata = std::get<0>(future.Take());
+  }
+  ASSERT_TRUE(metadata);
+
+  std::vector<GURL> requests;
+  requests.reserve(metadata->requests.size());
+  base::ranges::transform(metadata->requests, std::back_inserter(requests),
+                          [](const auto& entry) { return entry.first; });
+  EXPECT_THAT(requests, UnorderedElementsAreArray(
+                            {GURL("https://test.example.org/absolute-url"),
+                             GURL("https://example.com/relative-url-1"),
+                             GURL("https://example.com/foo/relative-url-2")}));
+}
+
+TEST_F(WebBundleParserFactoryTest, DeleteFile) {
+  base::ScopedTempDir tmp_dir;
+  ASSERT_TRUE(tmp_dir.CreateUniqueTempDir());
+  base::FilePath file_path = tmp_dir.GetPath();
+  base::CreateTemporaryFile(&file_path);
+
+  base::File file(file_path, base::File::FLAG_OPEN | base::File::FLAG_READ);
+  ASSERT_TRUE(file.IsValid());
+
+  mojo::Remote<mojom::WebBundleParser> parser;
+  GetParserForFile(parser.BindNewPipeAndPassReceiver(), std::move(file),
+                   absl::nullopt);
+
+  base::test::TestFuture<void> future;
+  parser->Close(future.GetCallback());
+  future.Get();
+
+  EXPECT_TRUE(base::DeleteFile(file_path));
 }
 
 }  // namespace web_package

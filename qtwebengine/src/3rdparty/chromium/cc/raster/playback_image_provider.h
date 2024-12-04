@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,9 +6,11 @@
 #define CC_RASTER_PLAYBACK_IMAGE_PROVIDER_H_
 
 #include "base/containers/flat_map.h"
+#include "base/memory/raw_ptr.h"
 #include "cc/cc_export.h"
 #include "cc/paint/image_id.h"
 #include "cc/paint/image_provider.h"
+#include "cc/paint/target_color_params.h"
 #include "ui/gfx/color_space.h"
 
 namespace cc {
@@ -41,8 +43,8 @@ class CC_EXPORT PlaybackImageProvider : public ImageProvider {
 
   // If no settings are provided, all images are skipped during rasterization.
   PlaybackImageProvider(ImageDecodeCache* cache,
-                        const gfx::ColorSpace& target_color_space,
-                        base::Optional<Settings>&& settings);
+                        const TargetColorParams& target_color_params,
+                        std::optional<Settings>&& settings);
   PlaybackImageProvider(const PlaybackImageProvider&) = delete;
   PlaybackImageProvider(PlaybackImageProvider&& other);
   ~PlaybackImageProvider() override;
@@ -55,9 +57,9 @@ class CC_EXPORT PlaybackImageProvider : public ImageProvider {
       const DrawImage& draw_image) override;
 
  private:
-  ImageDecodeCache* cache_;
-  gfx::ColorSpace target_color_space_;
-  base::Optional<Settings> settings_;
+  raw_ptr<ImageDecodeCache, DanglingUntriaged> cache_;
+  TargetColorParams target_color_params_;
+  std::optional<Settings> settings_;
 };
 
 }  // namespace cc

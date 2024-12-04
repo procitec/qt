@@ -7,17 +7,20 @@
 #ifndef SkBitmapProcShader_DEFINED
 #define SkBitmapProcShader_DEFINED
 
-#include "src/core/SkImagePriv.h"
+#include "include/core/SkSamplingOptions.h"
 #include "src/shaders/SkShaderBase.h"
 
+class SkArenaAlloc;
 class SkImage_Base;
+enum class SkTileMode;
 
 class SkBitmapProcLegacyShader : public SkShaderBase {
 private:
     friend class SkImageShader;
 
     static Context* MakeContext(const SkShaderBase&, SkTileMode tmx, SkTileMode tmy,
-                                const SkImage_Base*, const ContextRec&, SkArenaAlloc* alloc);
+                                const SkSamplingOptions&, const SkImage_Base*,
+                                const ContextRec&, SkArenaAlloc* alloc);
 
     using INHERITED = SkShaderBase;
 };

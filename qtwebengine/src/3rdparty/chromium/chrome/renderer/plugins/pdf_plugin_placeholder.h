@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,8 +11,8 @@
 // plugins are disabled and the PDF fails to load.
 // TODO(amberwon): Flesh out the class more to download an embedded PDF when the
 // PDF plugin is disabled or unavailable.
-class PDFPluginPlaceholder : public plugins::PluginPlaceholderBase,
-                             public gin::Wrappable<PDFPluginPlaceholder> {
+class PDFPluginPlaceholder final : public plugins::PluginPlaceholderBase,
+                                   public gin::Wrappable<PDFPluginPlaceholder> {
  public:
   static gin::WrapperInfo kWrapperInfo;
 
@@ -24,8 +24,7 @@ class PDFPluginPlaceholder : public plugins::PluginPlaceholderBase,
 
  private:
   PDFPluginPlaceholder(content::RenderFrame* render_frame,
-                       const blink::WebPluginParams& params,
-                       const std::string& html_data);
+                       const blink::WebPluginParams& params);
   ~PDFPluginPlaceholder() final;
 
   // WebViewPlugin::Delegate methods:

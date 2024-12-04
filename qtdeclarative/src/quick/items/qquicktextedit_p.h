@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtQuick module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #ifndef QQUICKTEXTEDIT_P_H
 #define QQUICKTEXTEDIT_P_H
@@ -52,18 +16,30 @@
 //
 
 #include "qquickimplicitsizeitem_p.h"
+#include "qquicktextinterface_p.h"
 
 #include <QtGui/qtextoption.h>
 
 QT_BEGIN_NAMESPACE
 
+class QTextDocument;
 class QQuickTextDocument;
 class QQuickTextEditPrivate;
+class QQuickTextSelection;
 class QTextBlock;
 
-class Q_QUICK_PRIVATE_EXPORT QQuickTextEdit : public QQuickImplicitSizeItem
+class QQuickTextBlockForeign
+{
+    Q_GADGET
+    QML_ANONYMOUS
+    QML_FOREIGN(QTextBlock)
+    QML_EXTENDED(QQuickTextBlockForeign)
+};
+
+class Q_QUICK_EXPORT QQuickTextEdit : public QQuickImplicitSizeItem, public QQuickTextInterface
 {
     Q_OBJECT
+    Q_INTERFACES(QQuickTextInterface)
 
     Q_PROPERTY(QString text READ text WRITE setText NOTIFY textChanged)
     Q_PROPERTY(QColor color READ color WRITE setColor NOTIFY colorChanged)
@@ -94,7 +70,7 @@ class Q_QUICK_PRIVATE_EXPORT QQuickTextEdit : public QQuickImplicitSizeItem
     Q_PROPERTY(bool persistentSelection READ persistentSelection WRITE setPersistentSelection NOTIFY persistentSelectionChanged)
     Q_PROPERTY(qreal textMargin READ textMargin WRITE setTextMargin NOTIFY textMarginChanged)
     Q_PROPERTY(Qt::InputMethodHints inputMethodHints READ inputMethodHints WRITE setInputMethodHints NOTIFY inputMethodHintsChanged)
-    Q_PROPERTY(bool selectByKeyboard READ selectByKeyboard WRITE setSelectByKeyboard NOTIFY selectByKeyboardChanged REVISION 1)
+    Q_PROPERTY(bool selectByKeyboard READ selectByKeyboard WRITE setSelectByKeyboard NOTIFY selectByKeyboardChanged REVISION(2, 1))
     Q_PROPERTY(bool selectByMouse READ selectByMouse WRITE setSelectByMouse NOTIFY selectByMouseChanged)
     Q_PROPERTY(SelectionMode mouseSelectionMode READ mouseSelectionMode WRITE setMouseSelectionMode NOTIFY mouseSelectionModeChanged)
     Q_PROPERTY(bool canPaste READ canPaste NOTIFY canPasteChanged)
@@ -103,19 +79,24 @@ class Q_QUICK_PRIVATE_EXPORT QQuickTextEdit : public QQuickImplicitSizeItem
     Q_PROPERTY(bool inputMethodComposing READ isInputMethodComposing NOTIFY inputMethodComposingChanged)
     Q_PROPERTY(QUrl baseUrl READ baseUrl WRITE setBaseUrl RESET resetBaseUrl NOTIFY baseUrlChanged)
     Q_PROPERTY(RenderType renderType READ renderType WRITE setRenderType NOTIFY renderTypeChanged)
-    Q_PROPERTY(QQuickTextDocument *textDocument READ textDocument CONSTANT FINAL REVISION 1)
-    Q_PROPERTY(QString hoveredLink READ hoveredLink NOTIFY linkHovered REVISION 2)
-    Q_PROPERTY(qreal padding READ padding WRITE setPadding RESET resetPadding NOTIFY paddingChanged REVISION 6)
-    Q_PROPERTY(qreal topPadding READ topPadding WRITE setTopPadding RESET resetTopPadding NOTIFY topPaddingChanged REVISION 6)
-    Q_PROPERTY(qreal leftPadding READ leftPadding WRITE setLeftPadding RESET resetLeftPadding NOTIFY leftPaddingChanged REVISION 6)
-    Q_PROPERTY(qreal rightPadding READ rightPadding WRITE setRightPadding RESET resetRightPadding NOTIFY rightPaddingChanged REVISION 6)
-    Q_PROPERTY(qreal bottomPadding READ bottomPadding WRITE setBottomPadding RESET resetBottomPadding NOTIFY bottomPaddingChanged REVISION 6)
-    Q_PROPERTY(QString preeditText READ preeditText NOTIFY preeditTextChanged REVISION 7)
-    Q_PROPERTY(qreal tabStopDistance READ tabStopDistance WRITE setTabStopDistance NOTIFY tabStopDistanceChanged REVISION 10)
+    Q_PROPERTY(QQuickTextDocument *textDocument READ textDocument CONSTANT FINAL REVISION(2, 1))
+    Q_PROPERTY(QString hoveredLink READ hoveredLink NOTIFY linkHovered REVISION(2, 2))
+    Q_PROPERTY(qreal padding READ padding WRITE setPadding RESET resetPadding NOTIFY paddingChanged REVISION(2, 6))
+    Q_PROPERTY(qreal topPadding READ topPadding WRITE setTopPadding RESET resetTopPadding NOTIFY topPaddingChanged REVISION(2, 6))
+    Q_PROPERTY(qreal leftPadding READ leftPadding WRITE setLeftPadding RESET resetLeftPadding NOTIFY leftPaddingChanged REVISION(2, 6))
+    Q_PROPERTY(qreal rightPadding READ rightPadding WRITE setRightPadding RESET resetRightPadding NOTIFY rightPaddingChanged REVISION(2, 6))
+    Q_PROPERTY(qreal bottomPadding READ bottomPadding WRITE setBottomPadding RESET resetBottomPadding NOTIFY bottomPaddingChanged REVISION(2, 6))
+    Q_PROPERTY(QString preeditText READ preeditText NOTIFY preeditTextChanged REVISION(2, 7))
+    Q_PROPERTY(qreal tabStopDistance READ tabStopDistance WRITE setTabStopDistance NOTIFY tabStopDistanceChanged REVISION(2, 10))
+    Q_PROPERTY(QQuickTextSelection* cursorSelection READ cursorSelection REVISION(6, 7) CONSTANT FINAL)
     QML_NAMED_ELEMENT(TextEdit)
+#if QT_VERSION < QT_VERSION_CHECK(7, 0, 0)
+    QML_ADDED_IN_VERSION(6, 4)
+#endif
 
 public:
     QQuickTextEdit(QQuickItem *parent=nullptr);
+    ~QQuickTextEdit() override;
 
     enum HAlignment {
         AlignLeft = Qt::AlignLeft,
@@ -155,14 +136,15 @@ public:
     Q_ENUM(SelectionMode)
 
     enum RenderType { QtRendering,
-                      NativeRendering
+                      NativeRendering,
+                      CurveRendering
                     };
     Q_ENUM(RenderType)
 
     QString text() const;
     void setText(const QString &);
 
-    Q_REVISION(7) QString preeditText() const;
+    Q_REVISION(2, 7) QString preeditText() const;
 
     TextFormat textFormat() const;
     void setTextFormat(TextFormat format);
@@ -239,6 +221,8 @@ public:
 
     void componentComplete() override;
 
+    int resourcesLoading() const; // mainly for testing
+
     /* FROM EDIT */
     void setReadOnly(bool);
     bool isReadOnly() const;
@@ -247,7 +231,7 @@ public:
 
 #if QT_CONFIG(im)
     QVariant inputMethodQuery(Qt::InputMethodQuery property) const override;
-    Q_REVISION(4) Q_INVOKABLE QVariant inputMethodQuery(Qt::InputMethodQuery query, QVariant argument) const;
+    Q_REVISION(2, 4) Q_INVOKABLE QVariant inputMethodQuery(Qt::InputMethodQuery query, QVariant argument) const;
 #endif
 
     qreal contentWidth() const;
@@ -261,6 +245,8 @@ public:
     Q_INVOKABLE int positionAt(qreal x, qreal y) const;
     Q_INVOKABLE void moveCursorSelection(int pos);
     Q_INVOKABLE void moveCursorSelection(int pos, SelectionMode mode);
+
+    QQuickTextSelection *cursorSelection() const;
 
     QRectF boundingRect() const override;
     QRectF clipRect() const override;
@@ -277,7 +263,7 @@ public:
 
     QString hoveredLink() const;
 
-    Q_REVISION(3) Q_INVOKABLE QString linkAt(qreal x, qreal y) const;
+    Q_REVISION(2, 3) Q_INVOKABLE QString linkAt(qreal x, qreal y) const;
 
     qreal padding() const;
     void setPadding(qreal padding);
@@ -302,9 +288,11 @@ public:
     int tabStopDistance() const;
     void setTabStopDistance(qreal distance);
 
+    void invalidate() override;
+
 Q_SIGNALS:
     void textChanged();
-    Q_REVISION(7) void preeditTextChanged();
+    Q_REVISION(2, 7) void preeditTextChanged();
     void contentSizeChanged();
     void cursorPositionChanged();
     void cursorRectangleChanged();
@@ -327,11 +315,11 @@ Q_SIGNALS:
     void activeFocusOnPressChanged(bool activeFocusOnPressed);
     void persistentSelectionChanged(bool isPersistentSelection);
     void textMarginChanged(qreal textMargin);
-    Q_REVISION(1) void selectByKeyboardChanged(bool selectByKeyboard);
+    Q_REVISION(2, 1) void selectByKeyboardChanged(bool selectByKeyboard);
     void selectByMouseChanged(bool selectByMouse);
     void mouseSelectionModeChanged(QQuickTextEdit::SelectionMode mode);
     void linkActivated(const QString &link);
-    Q_REVISION(2) void linkHovered(const QString &link);
+    Q_REVISION(2, 2) void linkHovered(const QString &link);
     void canPasteChanged();
     void canUndoChanged();
     void canRedoChanged();
@@ -340,13 +328,13 @@ Q_SIGNALS:
     void baseUrlChanged();
     void inputMethodHintsChanged();
     void renderTypeChanged();
-    Q_REVISION(6) void editingFinished();
-    Q_REVISION(6) void paddingChanged();
-    Q_REVISION(6) void topPaddingChanged();
-    Q_REVISION(6) void leftPaddingChanged();
-    Q_REVISION(6) void rightPaddingChanged();
-    Q_REVISION(6) void bottomPaddingChanged();
-    Q_REVISION(10) void tabStopDistanceChanged(qreal distance);
+    Q_REVISION(2, 6) void editingFinished();
+    Q_REVISION(2, 6) void paddingChanged();
+    Q_REVISION(2, 6) void topPaddingChanged();
+    Q_REVISION(2, 6) void leftPaddingChanged();
+    Q_REVISION(2, 6) void rightPaddingChanged();
+    Q_REVISION(2, 6) void bottomPaddingChanged();
+    Q_REVISION(2, 10) void tabStopDistanceChanged(qreal distance);
 
 public Q_SLOTS:
     void selectAll();
@@ -363,10 +351,11 @@ public Q_SLOTS:
     void redo();
     void insert(int position, const QString &text);
     void remove(int start, int end);
-    Q_REVISION(2) void append(const QString &text);
-    Q_REVISION(7) void clear();
+    Q_REVISION(2, 2) void append(const QString &text);
+    Q_REVISION(2, 7) void clear();
 
 private Q_SLOTS:
+    void q_invalidate();
     void q_textChanged();
     void q_contentsChange(int, int, int);
     void updateSelection();
@@ -381,17 +370,24 @@ private Q_SLOTS:
     void q_updateAlignment();
     void updateSize();
     void triggerPreprocess();
+    Q_REVISION(6, 7) QVariant loadResource(int type, const QUrl &source);
+    void resourceRequestFinished();
 
 private:
     void markDirtyNodesForRange(int start, int end, int charDelta);
     void updateTotalLines();
     void invalidateFontCaches();
+    QTextDocument* document() const;
+    void setDocument(QTextDocument *doc);
 
 protected:
     QQuickTextEdit(QQuickTextEditPrivate &dd, QQuickItem *parent = nullptr);
+#if QT_VERSION < QT_VERSION_CHECK(7, 0, 0)
+    void setOldSelectionDefault();
+#endif
 
-    void geometryChanged(const QRectF &newGeometry,
-                         const QRectF &oldGeometry) override;
+    void geometryChange(const QRectF &newGeometry, const QRectF &oldGeometry) override;
+    void itemChange(ItemChange change, const ItemChangeData &value) override;
 
     bool event(QEvent *) override;
     void keyPressEvent(QKeyEvent *) override;
@@ -415,15 +411,26 @@ protected:
     void updatePolish() override;
 
     friend class QQuickTextUtil;
-    friend class QQuickTextDocument;
+    friend class QQuickTextDocumentPrivate;
 
 private:
     Q_DISABLE_COPY(QQuickTextEdit)
     Q_DECLARE_PRIVATE(QQuickTextEdit)
 };
 
-QT_END_NAMESPACE
+#if QT_VERSION < QT_VERSION_CHECK(7, 0, 0)
+class QQuickPre64TextEdit : public QQuickTextEdit {
+    Q_OBJECT
+    QML_NAMED_ELEMENT(TextEdit)
+    QML_ADDED_IN_VERSION(2, 0)
+    QML_REMOVED_IN_VERSION(6, 4)
+public:
+    QQuickPre64TextEdit(QQuickItem *parent = nullptr);
+};
+#endif
 
-QML_DECLARE_TYPE(QQuickTextEdit)
+Q_DECLARE_MIXED_ENUM_OPERATORS_SYMMETRIC(int, QQuickTextEdit::HAlignment, QQuickTextEdit::VAlignment)
+
+QT_END_NAMESPACE
 
 #endif // QQUICKTEXTEDIT_P_H

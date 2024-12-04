@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,29 +7,32 @@
 
 #include <memory>
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
-#include "base/optional.h"
 #include "cc/animation/animation.h"
 #include "cc/animation/animation_delegate.h"
 #include "cc/animation/worklet_animation.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/renderer/platform/graphics/compositor_element_id.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
-namespace cc {
+namespace gfx {
 class AnimationCurve;
 }
 
 namespace blink {
 
 class CompositorAnimationDelegate;
-class CompositorKeyframeModel;
 
 // A compositor representation for Animation.
 class PLATFORM_EXPORT CompositorAnimation : public cc::AnimationDelegate {
  public:
-  static std::unique_ptr<CompositorAnimation> Create();
+  // If this CompositorAnimation is being created to replace an
+  // existing cc::Animation, the existing Animation's id should be
+  // passed in to ensure the same id is used.
+  static std::unique_ptr<CompositorAnimation> Create(
+      absl::optional<int> replaced_cc_animation_id = absl::nullopt);
   static std::unique_ptr<CompositorAnimation> CreateWorkletAnimation(
       cc::WorkletAnimationId,
       const String& name,
@@ -38,9 +41,12 @@ class PLATFORM_EXPORT CompositorAnimation : public cc::AnimationDelegate {
       std::unique_ptr<cc::AnimationEffectTimings> effect_timings);
 
   explicit CompositorAnimation(scoped_refptr<cc::Animation>);
+  CompositorAnimation(const CompositorAnimation&) = delete;
+  CompositorAnimation& operator=(const CompositorAnimation&) = delete;
   ~CompositorAnimation() override;
 
   cc::Animation* CcAnimation() const;
+  int CcAnimationId() const;
 
   // An animation delegate is notified when animations are started and stopped.
   // The CompositorAnimation does not take ownership of the delegate, and
@@ -49,18 +55,11 @@ class PLATFORM_EXPORT CompositorAnimation : public cc::AnimationDelegate {
   void SetAnimationDelegate(CompositorAnimationDelegate*);
 
   void AttachElement(const CompositorElementId&);
-  // Specially designed for a custom property animation on a paint worklet
-  // element. It doesn't require an element id to run on the compositor thread.
-  // However, our compositor animation system requires the element to be on the
-  // property tree in order to keep ticking the animation. Therefore, we give a
-  // very special element id for this animation so that the compositor animation
-  // system recognize it. We do not use 0 as the element id because 0 is
-  // kInvalidElementId.
-  void AttachNoElement();
+  void AttachPaintWorkletElement();
   void DetachElement();
   bool IsElementAttached() const;
 
-  void AddKeyframeModel(std::unique_ptr<CompositorKeyframeModel>);
+  void AddKeyframeModel(std::unique_ptr<cc::KeyframeModel>);
   void RemoveKeyframeModel(int keyframe_model_id);
   void PauseKeyframeModel(int keyframe_model_id, base::TimeDelta time_offset);
   void AbortKeyframeModel(int keyframe_model_id);
@@ -81,14 +80,12 @@ class PLATFORM_EXPORT CompositorAnimation : public cc::AnimationDelegate {
   void NotifyAnimationTakeover(base::TimeTicks monotonic_time,
                                int target_property,
                                base::TimeTicks animation_start_time,
-                               std::unique_ptr<cc::AnimationCurve>) override;
+                               std::unique_ptr<gfx::AnimationCurve>) override;
   void NotifyLocalTimeUpdated(
-      base::Optional<base::TimeDelta> local_time) override;
+      absl::optional<base::TimeDelta> local_time) override;
 
   scoped_refptr<cc::Animation> animation_;
-  CompositorAnimationDelegate* delegate_;
-
-  DISALLOW_COPY_AND_ASSIGN(CompositorAnimation);
+  raw_ptr<CompositorAnimationDelegate, ExperimentalRenderer> delegate_;
 };
 
 }  // namespace blink

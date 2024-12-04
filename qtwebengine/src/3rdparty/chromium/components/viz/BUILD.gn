@@ -1,4 +1,4 @@
-# Copyright 2017 The Chromium Authors. All rights reserved.
+# Copyright 2017 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -6,7 +6,21 @@ import("//build/config/ui.gni")
 import("//components/viz/viz.gni")
 import("//testing/test.gni")
 
+if (is_ios && (skia_use_dawn || skia_use_metal)) {
+  bundle_data("unit_tests_filter_bundle_data") {
+    testonly = true
+    sources = [ "//testing/buildbot/filters/ios.viz_unittests.filter" ]
+    outputs = [ "{{bundle_resources_dir}}/" +
+                "{{source_root_relative_dir}}/{{source_file_part}}" ]
+  }
+}
+
 viz_test("viz_unittests") {
+  configs = []
+  if (is_chromeos_lacros && is_chromeos_device) {
+    configs += [ "//build/lacros:optional_shared_libgcc" ]
+  }
+
   use_xvfb = use_xvfb_in_this_config
 
   sources = [ "test/run_all_unittests.cc" ]
@@ -23,7 +37,7 @@ viz_test("viz_unittests") {
     "//mojo/core/embedder",
   ]
 
-  data = [ "test/data/" ]
+  data = [ "//components/test/data/viz/" ]
 
   data_deps = [
     "//testing/buildbot/filters:viz_unittests_filters",
@@ -33,6 +47,24 @@ viz_test("viz_unittests") {
   if (is_android) {
     # The top level test target must depend on the java library directly.
     deps += [ "//components/viz/service:service_java" ]
+  }
+
+  if (is_fuchsia) {
+    # TODO(https://crbug.com/1022542): Some of these tests use SwiftShader,
+    # which requires ambient VMEX.
+    test_runner_shard = "//build/config/fuchsia/test/elf_test_ambient_exec_runner.shard.test-cml"
+
+    additional_manifest_fragments = [
+      "//build/config/fuchsia/test/mark_vmo_executable.shard.test-cml",
+      "//third_party/fuchsia-sdk/sdk/pkg/vulkan/client.shard.cml",
+    ]
+  }
+
+  if (is_ios) {
+    public_deps = [
+      ":unit_tests_filter_bundle_data",
+      "//components/test:viz_test_bundle_data",
+    ]
   }
 }
 
@@ -50,6 +82,8 @@ viz_test("viz_perftests") {
     "//skia",
   ]
 
+  data = [ "//components/test/data/viz/" ]
+
   # This target should not require the Chrome executable to run.
   assert_no_deps = [ "//chrome" ]
 
@@ -57,4 +91,19 @@ viz_test("viz_perftests") {
     # Needed for isolate script to execute.
     "//testing:run_perf_test",
   ]
+}
+
+if (is_android) {
+  java_cpp_features("java_features_srcjar") {
+    # External code should depend on ":viz_java" instead.
+    visibility = [ ":*" ]
+    sources = [ "common/features.cc" ]
+    template = "common/java/src/org/chromium/components/viz/common/VizFeatures.java.tmpl"
+  }
+
+  android_library("viz_java") {
+    # Right now, this only includes the Java features. But if we need more Java
+    # files, they should be added here as necessary.
+    srcjar_deps = [ ":java_features_srcjar" ]
+  }
 }

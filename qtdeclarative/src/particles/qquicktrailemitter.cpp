@@ -1,53 +1,22 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtQuick module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+
+#undef QT_NO_FOREACH // this file contains unported legacy Q_FOREACH uses
 
 #include "qquicktrailemitter_p.h"
-#include <private/qqmlengine_p.h>
+
 #include <private/qqmlglobal_p.h>
-#include <private/qjsvalue_p.h>
-#include <QRandomGenerator>
+#include <private/qquickv4particledata_p.h>
+
+#include <QtCore/qrandom.h>
+
 #include <cmath>
+
 QT_BEGIN_NAMESPACE
 
 /*!
     \qmltype TrailEmitter
-    \instantiates QQuickTrailEmitter
+    \nativetype QQuickTrailEmitter
     \inqmlmodule QtQuick.Particles
     \inherits QQuickParticleEmitter
     \brief Emits logical particles from other logical particles.
@@ -67,12 +36,12 @@ QQuickTrailEmitter::QQuickTrailEmitter(QQuickItem *parent) :
   , m_defaultEmissionExtruder(new QQuickParticleExtruder(this))
 {
     //TODO: If followed increased their size
-    connect(this, SIGNAL(followChanged(QString)),
-            this, SLOT(recalcParticlesPerSecond()));
-    connect(this, SIGNAL(particleDurationChanged(int)),
-            this, SLOT(recalcParticlesPerSecond()));
-    connect(this, SIGNAL(particlesPerParticlePerSecondChanged(int)),
-            this, SLOT(recalcParticlesPerSecond()));
+    connect(this, &QQuickTrailEmitter::followChanged,
+            this, &QQuickTrailEmitter::recalcParticlesPerSecond);
+    connect(this, &QQuickTrailEmitter::particleDurationChanged,
+            this, &QQuickTrailEmitter::recalcParticlesPerSecond);
+    connect(this, &QQuickTrailEmitter::particlesPerParticlePerSecondChanged,
+            this, &QQuickTrailEmitter::recalcParticlesPerSecond);
 }
 
 /*!
@@ -128,8 +97,9 @@ QQuickTrailEmitter::QQuickTrailEmitter(QQuickItem *parent) :
 
 bool QQuickTrailEmitter::isEmitFollowConnected()
 {
-    IS_SIGNAL_CONNECTED(this, QQuickTrailEmitter, emitFollowParticles,
-                        (const QJSValue &, const QJSValue &));
+    IS_SIGNAL_CONNECTED(
+            this, QQuickTrailEmitter, emitFollowParticles,
+            (const QList<QQuickV4ParticleData> &, const QQuickV4ParticleData &));
 }
 
 void QQuickTrailEmitter::recalcParticlesPerSecond(){
@@ -183,7 +153,7 @@ void QQuickTrailEmitter::emitWindow(int timeStamp)
 
     int gId = m_system->groupIds[m_follow];
     int gId2 = groupId();
-    for (int i=0; i<m_system->groupData[gId]->data.count(); i++) {
+    for (int i=0; i<m_system->groupData[gId]->data.size(); i++) {
         QQuickParticleData *d = m_system->groupData[gId]->data[i];
         if (!d->stillAlive(m_system)){
             m_lastEmission[i] = time; //Should only start emitting when it returns to life
@@ -268,21 +238,18 @@ void QQuickTrailEmitter::emitWindow(int timeStamp)
             m_system->emitParticle(d, this);
 
         if (isEmitConnected() || isEmitFollowConnected()) {
-            QQmlEngine *qmlEngine = ::qmlEngine(this);
-            QV4::ExecutionEngine *v4 = qmlEngine->handle();
 
-            QV4::Scope scope(v4);
-            QV4::ScopedArrayObject array(scope, v4->newArrayObject(toEmit.size()));
-            QV4::ScopedValue v(scope);
-            for (int i=0; i<toEmit.size(); i++)
-                array->put(i, (v = toEmit[i]->v4Value(m_system)));
+            QList<QQuickV4ParticleData> particles;
+            particles.reserve(toEmit.size());
+            for (QQuickParticleData *particle : std::as_const(toEmit))
+                particles.push_back(particle->v4Value(m_system));
 
-            QJSValue particles;
-            QJSValuePrivate::setValue(&particles, v4, array);
-            if (isEmitFollowConnected())
-                emit emitFollowParticles(particles, QJSValue(v4, d->v4Value(m_system)));//A chance for many arbitrary JS changes
-            else if (isEmitConnected())
+            if (isEmitFollowConnected()) {
+                //A chance for many arbitrary JS changes
+                emit emitFollowParticles(particles, d->v4Value(m_system));
+            } else if (isEmitConnected()) {
                 emit emitParticles(particles);//A chance for arbitrary JS changes
+            }
         }
         m_lastEmission[d->index] = pt;
     }

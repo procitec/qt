@@ -1,4 +1,4 @@
-// Copyright (c) 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,9 +9,8 @@
 #include <stdint.h>
 
 #include "base/files/scoped_file.h"
-#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "base/sequenced_task_runner.h"
+#include "base/threading/sequence_bound.h"
 #include "services/device/hid/hid_connection.h"
 
 namespace base {
@@ -25,7 +24,11 @@ class HidConnectionLinux : public HidConnection {
   HidConnectionLinux(
       scoped_refptr<HidDeviceInfo> device_info,
       base::ScopedFD fd,
-      scoped_refptr<base::SequencedTaskRunner> blocking_task_runner);
+      scoped_refptr<base::SequencedTaskRunner> blocking_task_runner,
+      bool allow_protected_reports,
+      bool allow_fido_reports);
+  HidConnectionLinux(HidConnectionLinux&) = delete;
+  HidConnectionLinux& operator=(HidConnectionLinux&) = delete;
 
  private:
   friend class base::RefCountedThreadSafe<HidConnectionLinux>;
@@ -42,16 +45,9 @@ class HidConnectionLinux : public HidConnection {
   void PlatformSendFeatureReport(scoped_refptr<base::RefCountedBytes> buffer,
                                  WriteCallback callback) override;
 
-  // |helper_| lives on the sequence to which |blocking_task_runner_| posts
-  // tasks so all calls must be posted there including this object's
-  // destruction.
-  std::unique_ptr<BlockingTaskRunnerHelper, base::OnTaskRunnerDeleter> helper_;
-
-  const scoped_refptr<base::SequencedTaskRunner> blocking_task_runner_;
+  base::SequenceBound<BlockingTaskRunnerHelper> helper_;
 
   base::WeakPtrFactory<HidConnectionLinux> weak_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(HidConnectionLinux);
 };
 
 }  // namespace device

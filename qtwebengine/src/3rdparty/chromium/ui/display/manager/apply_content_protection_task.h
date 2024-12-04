@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,7 +9,7 @@
 #include <cstdint>
 #include <vector>
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "ui/display/manager/content_protection_manager.h"
 #include "ui/display/types/display_constants.h"
@@ -31,6 +31,11 @@ class DISPLAY_MANAGER_EXPORT ApplyContentProtectionTask
       NativeDisplayDelegate* native_display_delegate,
       ContentProtectionManager::ContentProtections requests,
       ResponseCallback callback);
+
+  ApplyContentProtectionTask(const ApplyContentProtectionTask&) = delete;
+  ApplyContentProtectionTask& operator=(const ApplyContentProtectionTask&) =
+      delete;
+
   ~ApplyContentProtectionTask() override;
 
   void Run() override;
@@ -44,8 +49,8 @@ class DISPLAY_MANAGER_EXPORT ApplyContentProtectionTask
 
   uint32_t GetDesiredProtectionMask(int64_t display_id) const;
 
-  DisplayLayoutManager* const layout_manager_;            // Not owned.
-  NativeDisplayDelegate* const native_display_delegate_;  // Not owned.
+  const raw_ptr<DisplayLayoutManager> layout_manager_;            // Not owned.
+  const raw_ptr<NativeDisplayDelegate> native_display_delegate_;  // Not owned.
 
   const ContentProtectionManager::ContentProtections requests_;
   ResponseCallback callback_;
@@ -69,8 +74,6 @@ class DISPLAY_MANAGER_EXPORT ApplyContentProtectionTask
   size_t pending_requests_ = 0;
 
   base::WeakPtrFactory<ApplyContentProtectionTask> weak_ptr_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(ApplyContentProtectionTask);
 };
 
 }  // namespace display

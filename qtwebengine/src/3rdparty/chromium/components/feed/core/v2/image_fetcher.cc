@@ -1,15 +1,19 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/feed/core/v2/image_fetcher.h"
 
+#include "base/trace_event/trace_event.h"
+#include "base/trace_event/typed_macros.h"
 #include "components/feed/core/v2/metrics_reporter.h"
 #include "components/feed/core/v2/public/types.h"
 #include "net/base/net_errors.h"
 #include "net/http/http_request_headers.h"
+#include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "services/network/public/cpp/simple_url_loader.h"
+#include "services/network/public/mojom/url_response_head.mojom.h"
 
 namespace feed {
 
@@ -20,6 +24,9 @@ ImageFetcher::ImageFetcher(
 ImageFetcher::~ImageFetcher() = default;
 
 ImageFetchId ImageFetcher::Fetch(const GURL& url, ImageCallback callback) {
+  ImageFetchId id = id_generator_.GenerateNextId();
+  TRACE_EVENT_BEGIN("android.ui.jank", "FeedImage",
+                    perfetto::Track(GetTrackId(id)), "url", url);
   net::NetworkTrafficAnnotationTag traffic_annotation =
       net::DefineNetworkTrafficAnnotation("interest_feedv2_image_send", R"(
         semantics {
@@ -50,7 +57,6 @@ ImageFetchId ImageFetcher::Fetch(const GURL& url, ImageCallback callback) {
       std::move(resource_request), traffic_annotation);
   auto* const simple_loader_ptr = simple_loader.get();
 
-  ImageFetchId id = id_generator_.GenerateNextId();
   bool inserted =
       pending_requests_
           .try_emplace(id, std::move(simple_loader), std::move(callback))
@@ -60,14 +66,17 @@ ImageFetchId ImageFetcher::Fetch(const GURL& url, ImageCallback callback) {
   simple_loader_ptr->DownloadToString(
       url_loader_factory_.get(),
       base::BindOnce(&ImageFetcher::OnFetchComplete, weak_factory_.GetWeakPtr(),
-                     id),
+                     id, url),
       network::SimpleURLLoader::kMaxBoundedStringDownloadSize);
   return id;
 }
 
 void ImageFetcher::OnFetchComplete(ImageFetchId id,
+                                   const GURL& url,
                                    std::unique_ptr<std::string> response_data) {
-  base::Optional<PendingRequest> request = RemovePending(id);
+  TRACE_EVENT_END("android.ui.jank", perfetto::Track(GetTrackId(id)), "bytes",
+                  response_data ? response_data->size() : 0);
+  absl::optional<PendingRequest> request = RemovePending(id);
   if (!request)
     return;
 
@@ -79,7 +88,7 @@ void ImageFetcher::OnFetchComplete(ImageFetchId id,
   } else {
     response.status_code = request->loader->NetError();
   }
-  MetricsReporter::OnImageFetched(response.status_code);
+  MetricsReporter::OnImageFetched(url, response.status_code);
 
   if (response_data)
     response.response_bytes = std::move(*response_data);
@@ -87,7 +96,7 @@ void ImageFetcher::OnFetchComplete(ImageFetchId id,
 }
 
 void ImageFetcher::Cancel(ImageFetchId id) {
-  base::Optional<PendingRequest> request = RemovePending(id);
+  absl::optional<PendingRequest> request = RemovePending(id);
   if (!request)
     return;
 
@@ -97,15 +106,20 @@ void ImageFetcher::Cancel(ImageFetchId id) {
       .Run({/*response_bytes=*/std::string(), net::Error::ERR_ABORTED});
 }
 
-base::Optional<ImageFetcher::PendingRequest> ImageFetcher::RemovePending(
+absl::optional<ImageFetcher::PendingRequest> ImageFetcher::RemovePending(
     ImageFetchId id) {
   auto iterator = pending_requests_.find(id);
   if (iterator == pending_requests_.end())
-    return base::nullopt;
+    return absl::nullopt;
 
-  auto request = base::make_optional(std::move(iterator->second));
+  auto request = absl::make_optional(std::move(iterator->second));
   pending_requests_.erase(iterator);
   return request;
+}
+
+uint64_t ImageFetcher::GetTrackId(ImageFetchId id) const {
+  return static_cast<uint64_t>(reinterpret_cast<uintptr_t>(this)) +
+         id.GetUnsafeValue();
 }
 
 ImageFetcher::PendingRequest::PendingRequest(

@@ -1,17 +1,18 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_LOADER_MODULESCRIPT_WORKLET_MODULE_SCRIPT_FETCHER_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_LOADER_MODULESCRIPT_WORKLET_MODULE_SCRIPT_FETCHER_H_
 
-#include "base/optional.h"
+#include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/loader/modulescript/module_script_fetcher.h"
 #include "third_party/blink/renderer/core/workers/worklet_module_responses_map.h"
 
 namespace blink {
 
 class ResourceFetcher;
+class WorkletGlobalScope;
 
 // WorkletModuleScriptFetcher is an implementation of ModuleScriptFetcher
 // interface for Worklets. This implements the custom "perform the fetch" hook
@@ -26,28 +27,26 @@ class CORE_EXPORT WorkletModuleScriptFetcher final
     : public GarbageCollected<WorkletModuleScriptFetcher>,
       public ModuleScriptFetcher {
  public:
-  WorkletModuleScriptFetcher(WorkletModuleResponsesMap*,
-                             util::PassKey<ModuleScriptLoader>);
+  WorkletModuleScriptFetcher(WorkletGlobalScope*,
+                             base::PassKey<ModuleScriptLoader>);
 
   // Implements ModuleScriptFetcher.
   void Fetch(FetchParameters&,
+             ModuleType,
              ResourceFetcher*,
              ModuleGraphLevel,
              ModuleScriptFetcher::Client*) override;
+
+  void Trace(Visitor* visitor) const override;
 
  private:
   // Implements ResourceClient
   void NotifyFinished(Resource*) override;
   String DebugName() const override { return "WorkletModuleScriptFetcher"; }
 
-  // TODO(nhiroki): In general, CrossThreadPersistent is heavy and should not be
-  // owned by objects that can frequently be created like this class. Instead of
-  // retaining a reference to WorkletModuleResponsesMap, this class should
-  // access the map via WorkletGlobalScope::GetModuleResponsesMap().
-  // Bonus: WorkletGlobalScope can provide ResourceFetcher, too.
-  CrossThreadPersistent<WorkletModuleResponsesMap> module_responses_map_;
-
+  const Member<WorkletGlobalScope> global_scope_;
   KURL url_;
+  ModuleType expected_module_type_;
 };
 
 }  // namespace blink

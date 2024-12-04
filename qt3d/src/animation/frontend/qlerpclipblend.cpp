@@ -1,42 +1,8 @@
-/****************************************************************************
-**
-** Copyright (C) 2017 Klaralvdalens Datakonsult AB (KDAB).
-** Contact: http://www.qt-project.org/legal
-**
-** This file is part of the Qt3D module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL3$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see http://www.qt.io/terms-conditions. For further
-** information use the contact form at http://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPLv3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or later as published by the Free
-** Software Foundation and appearing in the file LICENSE.GPL included in
-** the packaging of this file. Please review the following information to
-** ensure the GNU General Public License version 2.0 requirements will be
-** met: http://www.gnu.org/licenses/gpl-2.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2017 Klaralvdalens Datakonsult AB (KDAB).
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qlerpclipblend.h"
 #include "qlerpclipblend_p.h"
-#include <Qt3DAnimation/qclipblendnodecreatedchange.h>
 
 QT_BEGIN_NAMESPACE
 
@@ -44,7 +10,7 @@ namespace Qt3DAnimation {
 
 /*!
     \qmltype LerpClipBlend
-    \instantiates Qt3DAnimation::QLerpClipBlend
+    \nativetype Qt3DAnimation::QLerpClipBlend
     \inqmlmodule Qt3D.Animation
 
     \brief Performs a linear interpolation of two animation clips based on a
@@ -106,17 +72,6 @@ QLerpClipBlend::~QLerpClipBlend()
 {
 }
 
-Qt3DCore::QNodeCreatedChangeBasePtr QLerpClipBlend::createNodeCreationChange() const
-{
-    Q_D(const QLerpClipBlend);
-    auto creationChange = QClipBlendNodeCreatedChangePtr<QLerpClipBlendData>::create(this);
-    QLerpClipBlendData &data = creationChange->data;
-    data.startClipId = Qt3DCore::qIdForNode(d->m_startClip);
-    data.endClipId = Qt3DCore::qIdForNode(d->m_endClip);
-    data.blendFactor = d->m_blendFactor;
-    return creationChange;
-}
-
 /*!
     \qmlproperty real LerpClipBlend::blendFactor
 
@@ -124,7 +79,7 @@ Qt3DCore::QNodeCreatedChangeBasePtr QLerpClipBlend::createNodeCreationChange() c
     two animation clips.
 */
 /*!
-    \property QLerpClipBlend::blendFactor
+    \property Qt3DAnimation::QLerpClipBlend::blendFactor
 
     Specifies the blending factor between 0 and 1 to control the blending of
     two animation clips.
@@ -143,7 +98,7 @@ float QLerpClipBlend::blendFactor() const
     the blendFactor is set to a value of 0.
 */
 /*!
-    \property QLerpClipBlend::startClip
+    \property Qt3DAnimation::QLerpClipBlend::startClip
 
     Holds the sub-tree that should be used as the start clip for this
     lerp blend node. That is, the clip returned by this blend node when
@@ -163,7 +118,7 @@ Qt3DAnimation::QAbstractClipBlendNode *QLerpClipBlend::startClip() const
     the blendFactor is set to a value of 1.
 */
 /*!
-    \property QLerpClipBlend::endClip
+    \property Qt3DAnimation::QLerpClipBlend::endClip
 
     Holds the sub-tree that should be used as the start clip for this
     lerp blend node. That is, the clip returned by this blend node when
@@ -227,3 +182,5 @@ void QLerpClipBlend::setEndClip(Qt3DAnimation::QAbstractClipBlendNode *endClip)
 } // Qt3DAnimation
 
 QT_END_NAMESPACE
+
+#include "moc_qlerpclipblend.cpp"

@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,12 +10,10 @@
 
 #include <memory>
 
-#include "base/macros.h"
 #include "media/base/audio_decoder_config.h"
 #include "media/base/media_util.h"
 #include "media/base/stream_parser.h"
 #include "media/base/stream_parser_buffer.h"
-#include "media/base/text_track_config.h"
 #include "media/base/video_decoder_config.h"
 
 namespace media {
@@ -24,6 +22,10 @@ namespace media {
 class StreamParserTestBase {
  public:
   explicit StreamParserTestBase(std::unique_ptr<StreamParser> stream_parser);
+
+  StreamParserTestBase(const StreamParserTestBase&) = delete;
+  StreamParserTestBase& operator=(const StreamParserTestBase&) = delete;
+
   virtual ~StreamParserTestBase();
 
  protected:
@@ -55,12 +57,11 @@ class StreamParserTestBase {
   }
 
  private:
-  bool AppendDataInPieces(const uint8_t* data,
-                          size_t length,
-                          size_t piece_size);
+  bool AppendAllDataThenParseInPieces(const uint8_t* data,
+                                      size_t length,
+                                      size_t piece_size);
   void OnInitDone(const StreamParser::InitParameters& params);
-  bool OnNewConfig(std::unique_ptr<MediaTracks> tracks,
-                   const StreamParser::TextTrackConfigMap& text_config);
+  bool OnNewConfig(std::unique_ptr<MediaTracks> tracks);
   bool OnNewBuffers(const StreamParser::BufferQueueMap& buffer_queue_map);
   void OnKeyNeeded(EmeInitDataType type, const std::vector<uint8_t>& init_data);
   void OnNewSegment();
@@ -71,8 +72,6 @@ class StreamParserTestBase {
   std::stringstream results_stream_;
   AudioDecoderConfig last_audio_config_;
   StreamParser::TrackId audio_track_id_;
-
-  DISALLOW_COPY_AND_ASSIGN(StreamParserTestBase);
 };
 
 }  // namespace media

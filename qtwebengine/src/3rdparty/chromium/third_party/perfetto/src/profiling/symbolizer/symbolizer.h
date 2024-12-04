@@ -17,7 +17,7 @@
 #ifndef SRC_PROFILING_SYMBOLIZER_SYMBOLIZER_H_
 #define SRC_PROFILING_SYMBOLIZER_SYMBOLIZER_H_
 
-#include <map>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -27,7 +27,7 @@ namespace profiling {
 struct SymbolizedFrame {
   std::string function_name;
   std::string file_name;
-  uint32_t line;
+  uint32_t line = 0;
 };
 
 class Symbolizer {
@@ -40,6 +40,7 @@ class Symbolizer {
   virtual std::vector<std::vector<SymbolizedFrame>> Symbolize(
       const std::string& mapping_name,
       const std::string& build_id,
+      uint64_t load_bias,
       const std::vector<uint64_t>& address) = 0;
   virtual ~Symbolizer();
 };

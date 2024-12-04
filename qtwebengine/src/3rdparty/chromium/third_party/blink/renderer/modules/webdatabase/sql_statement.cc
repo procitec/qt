@@ -89,8 +89,8 @@ SQLStatement::SQLStatement(Database* database,
   DCHECK(IsMainThread());
 
   if (HasCallback() || HasErrorCallback()) {
-    probe::AsyncTaskScheduled(database->GetExecutionContext(), "SQLStatement",
-                              &async_task_id_);
+    async_task_context_.Schedule(database->GetExecutionContext(),
+                                 "SQLStatement");
   }
 }
 
@@ -105,11 +105,11 @@ void SQLStatement::SetBackend(SQLStatementBackend* backend) {
 }
 
 bool SQLStatement::HasCallback() {
-  return success_callback_;
+  return success_callback_ != nullptr;
 }
 
 bool SQLStatement::HasErrorCallback() {
-  return error_callback_;
+  return error_callback_ != nullptr;
 }
 
 bool SQLStatement::PerformCallback(SQLTransaction* transaction) {
@@ -123,7 +123,7 @@ bool SQLStatement::PerformCallback(SQLTransaction* transaction) {
   SQLErrorData* error = backend_->SqlError();
 
   probe::AsyncTask async_task(transaction->GetDatabase()->GetExecutionContext(),
-                              &async_task_id_);
+                              &async_task_context_);
 
   // Call the appropriate statement callback and track if it resulted in an
   // error, because then we need to jump to the transaction error callback.

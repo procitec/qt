@@ -1,38 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2017 The Qt Company Ltd.
-** Contact: http://www.qt.io/licensing/
-**
-** This file is part of the Qt3D module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL3$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see http://www.qt.io/terms-conditions. For further
-** information use the contact form at http://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPLv3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or later as published by the Free
-** Software Foundation and appearing in the file LICENSE.GPL included in
-** the packaging of this file. Please review the following information to
-** ensure the GNU General Public License version 2.0 requirements will be
-** met: http://www.gnu.org/licenses/gpl-2.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2017 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qabstractanimation.h"
 #include "Qt3DAnimation/private/qabstractanimation_p.h"
@@ -60,7 +27,7 @@ namespace Qt3DAnimation {
     \brief An abstract base type for Qt3D animations.
     \inqmlmodule Qt3D.Animation
     \since 5.9
-    \instantiates Qt3DAnimation::QAbstractAnimation
+    \nativetype Qt3DAnimation::QAbstractAnimation
 
     AbstractAnimation is an abstract base type for all animations.
     AbstractAnimation can not be directly instantiated, but rather
@@ -69,7 +36,7 @@ namespace Qt3DAnimation {
     duration, while leaving the actual animating for the subtypes.
 */
 /*!
-    \enum QAbstractAnimation::AnimationType
+    \enum Qt3DAnimation::QAbstractAnimation::AnimationType
 
     This enumeration specifies the type of the animation
     \value KeyframeAnimation Simple keyframe animation implementation for QTransform
@@ -94,11 +61,11 @@ namespace Qt3DAnimation {
 */
 
 /*!
-    \qmlproperty string AbstractAnimation::animationName
+    \qmlproperty string Qt3D.Animation::AbstractAnimation::animationName
     Holds the name of the animation.
 */
 /*!
-    \qmlproperty enumeration AbstractAnimation::animationType
+    \qmlproperty enumeration Qt3D.Animation::AbstractAnimation::animationType
     Holds the type of the animation.
     \list
     \li KeyframeAnimation
@@ -107,11 +74,11 @@ namespace Qt3DAnimation {
     \endlist
 */
 /*!
-    \qmlproperty real AbstractAnimation::position
+    \qmlproperty real Qt3D.Animation::AbstractAnimation::position
     Holds the current position of the animation.
 */
 /*!
-    \qmlproperty real AbstractAnimation::duration
+    \qmlproperty real Qt3D.Animation::AbstractAnimation::duration
     Holds the duration of the animation.
 */
 
@@ -187,3 +154,5 @@ void QAbstractAnimation::setDuration(float duration)
 } // Qt3DAnimation
 
 QT_END_NAMESPACE
+
+#include "moc_qabstractanimation.cpp"

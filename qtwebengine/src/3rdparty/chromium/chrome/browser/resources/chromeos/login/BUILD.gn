@@ -1,305 +1,330 @@
-# Copyright 2018 The Chromium Authors. All rights reserved.
+# Copyright 2018 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//chrome/test/base/js2gtest.gni")
+import("//chrome/common/features.gni")
 import("//third_party/closure_compiler/compile_js.gni")
+import("//tools/grit/grit_rule.gni")
+import("//tools/grit/preprocess_if_expr.gni")
+import("//tools/typescript/ts_library.gni")
+import("//ui/webui/resources/tools/generate_grd.gni")
+import("./login.gni")
 
-js_type_check("closure_compile") {
+assert(is_chromeos, "OOBE UI is only available on ChromeOS builds")
+
+existing_unconditional_structure_files_manifest =
+    "existing_unconditional_structure_files_manifest.json"
+
+# Name is aligned with the constant used in
+# tools/typescript/validate_tsconfig.py to allow intermediate JS files.
+oobe_preprocessed_folder = "preprocessed"
+
+##############################
+#### CONDITONAL RESOURCES ####
+##############################
+
+# Set of OOBE resources that need to be served conditionally during runtime
+# depending on a feature/flag/condition/etc. Based on a manually created GRD
+# for convenience.
+# -----------------------------------------------------------------------------
+grit("conditional_resources") {
+  defines = chrome_grit_defines
+
+  # Needed since some of the files are generated during build time.
+  enable_input_discovery_for_gn_analyze = false
+
+  source = "$target_gen_dir/oobe_conditional_resources.grd"
+  outputs = [
+    "grit/oobe_conditional_resources.h",
+    "grit/oobe_conditional_resources_map.h",
+    "grit/oobe_conditional_resources_map.cc",
+    "oobe_conditional_resources.pak",
+  ]
+
+  deps = [ ":build_oobe_conditional_grd" ]
+  output_dir = "$root_gen_dir/chrome"
+}
+
+generate_grd("build_oobe_conditional_grd") {
+  grd_prefix = "oobe_conditional"
+  out_grd = "$target_gen_dir/${grd_prefix}_resources.grd"
   deps = [
-    ":active_directory_password_change",
-    ":app_downloading",
-    ":arc_terms_of_service",
-    ":demo_preferences",
-    ":demo_setup",
-    ":encryption_migration",
-    ":family_link_notice",
-    ":fingerprint_setup",
-    ":gaia_buttons",
-    ":gaia_card",
-    ":gaia_header",
-    ":gaia_input_form",
-    ":gaia_password_changed",
-    ":gesture_navigation",
-    ":marketing_opt_in",
-    ":multidevice_setup_first_run",
-    ":navigation_bar",
-    ":network_select_login",
-    ":notification_card",
-    ":offline_ad_login",
-    ":offline_gaia",
-    ":oobe_a11y_option",
-    ":oobe_enable_kiosk",
-    ":oobe_eula",
-    ":oobe_i18n_dropdown",
-    ":oobe_network",
-    ":oobe_reset",
-    ":oobe_select",
-    ":oobe_supervision_transition",
-    ":oobe_update",
-    ":oobe_welcome",
-    ":recommend_apps",
-    ":saml_confirm_password",
-    ":sync_consent",
-    ":throbber_notice",
-    ":update_required_card",
-    ":user_creation",
+    ":build_ts",
+    ":preprocess_conditional",
+  ]
+  input_files_base_dir = rebase_path("$target_gen_dir/tsc", root_build_dir)
+  input_files = conditional_files
+}
+
+# Files that are served conditionally
+preprocess_if_expr("preprocess_conditional") {
+  deps = [
+    "components/oobe_vars:css_wrapper_files",
+    "debug:copy_js",
+    "debug:web_components",
+    "test_api:copy_js",
+  ]
+  in_folder = target_gen_dir
+  out_folder = "$target_gen_dir/$oobe_preprocessed_folder"
+  in_files = conditional_files
+}
+
+################################
+#### UNCONDITONAL RESOURCES ####
+################################
+
+# OOBE's default set of resources based on an automatically generated GRD file.
+# These resources are made available to the WebUI through the generated C++ resource
+# map. Since we use the AddResourcePaths method to add the full map instead of adding
+# each resource path individually in oobe_ui.cc, this section is not suitable for
+# serving files in a conditional manner. Thus the naming - unconditional_resources.
+# -----------------------------------------------------------------------------
+grit("unconditional_resources") {
+  defines = chrome_grit_defines
+
+  # This is necessary since the GRD is generated during build time.
+  enable_input_discovery_for_gn_analyze = false
+
+  source = "$target_gen_dir/oobe_unconditional_resources.grd"
+  deps = [ ":build_oobe_grd" ]
+  outputs = [
+    "grit/oobe_unconditional_resources.h",
+    "grit/oobe_unconditional_resources_map.h",
+    "grit/oobe_unconditional_resources_map.cc",
+    "oobe_unconditional_resources.pak",
+  ]
+  output_dir = "$root_gen_dir/chrome"
+}
+
+# Generates OOBE's default GRD file that contains only resources that are
+# served unconditionally.
+# -----------------------------------------------------------------------------
+generate_grd("build_oobe_grd") {
+  grd_prefix = "oobe_unconditional"
+  out_grd = "$target_gen_dir/${grd_prefix}_resources.grd"
+  deps = [
+    ":build_ts",
+    ":preprocess_unconditional_existing_structure",
+    "../supervision:build_oobe_grdp",
+  ]
+  manifest_files = [
+    "$target_gen_dir/build_ts_manifest.json",
+    "$target_gen_dir/$existing_unconditional_structure_files_manifest",
+  ]
+  input_files_base_dir = rebase_path(".", "//")
+  input_files = [
+    # Lottie animation resources
+    "animations/all_set.json",
+    "animations/checking_for_update.json",
+    "animations/downloading_apps.json",
+    "animations/gaia_info.json",
+    "animations/gesture_go_back.json",
+    "animations/gesture_go_home.json",
+    "animations/gesture_hotseat_overview.json",
+    "animations/spinner.json",
+    "animations/welcome_screen_animation.json",
+
+    # Vector resources
+    "images/app_icons/a4.svg",
+    "images/app_icons/calculator.svg",
+    "images/app_icons/camera.svg",
+    "images/app_icons/files.svg",
+    "images/app_icons/photos.svg",
+    "images/app_icons/settings.svg",
+    "images/arc_vm_data_migration_icon.svg",
+    "images/browser_sync.svg",
+    "images/error.svg",
+    "images/settings_gear.svg",
+    "images/cfm/enrollment.svg",
+    "images/cfm/welcome.svg",
+
+    # PNG resources
+    "images/1x/thumbnail-theme-light-1x.png",
+    "images/2x/thumbnail-theme-light-2x.png",
+    "images/1x/thumbnail-theme-dark-1x.png",
+    "images/2x/thumbnail-theme-dark-2x.png",
+    "images/1x/thumbnail-theme-auto-1x.png",
+    "images/2x/thumbnail-theme-auto-2x.png",
+  ]
+
+  grdp_files = [ "$root_gen_dir/chrome/browser/resources/chromeos/supervision/supervision_oobe_resources.grdp" ]
+}
+
+# Preprocess existing and autogenerated files by copying them to an
+# intermediate location and generating a manifest file to be used when
+# generating OOBE's GRD file.
+# -----------------------------------------------------------------------------
+
+# Preprocess existing (not autogenerated) files.
+preprocess_if_expr("preprocess_unconditional_existing") {
+  out_folder = "$target_gen_dir/$oobe_preprocessed_folder"
+  in_files = unconditional_existing_files
+}
+
+# These files shouldn't be wrapped and compiled thus they remain in a
+# separate target.
+preprocess_if_expr("preprocess_unconditional_existing_structure") {
+  out_folder = "$target_gen_dir/$oobe_preprocessed_folder"
+  out_manifest =
+      "$target_gen_dir/$existing_unconditional_structure_files_manifest"
+  in_files = [
+    "oobe.css",
+    "oobe.html",
+    "oobe_popup_overlay.css",
+    "oobe_screen.css",
   ]
 }
 
-###############################
-# Closure compiler libraries below
-
-js_library("oobe_select") {
+preprocess_if_expr("preprocess_unconditional_autogenerated") {
+  defines = chrome_grit_defines
+  deps = [ ":web_components" ]
+  in_folder = target_gen_dir
+  out_folder = "$target_gen_dir/$oobe_preprocessed_folder"
+  in_files = unconditional_autogenerated_files
 }
 
-js_library("oobe_welcome") {
-  deps = [
-    "components:fake_oobe",
-    "components:login_screen_behavior",
-    "components:oobe_dialog_host_behavior",
-    "components:oobe_i18n_behavior",
-    "//ui/webui/resources/js/cr/ui:dialogs",
+group("web_components") {
+  public_deps = [
+    "components:web_components",
+    "screens/common:web_components",
+    "screens/login:web_components",
+    "screens/oobe:web_components",
+    "screens/osauth:web_components",
   ]
 }
 
-js_library("offline_ad_login") {
+#############################
+#### CLOSURE COMPILATION ####
+#############################
+
+group("closure_compile") {
   deps = [
-    ":oobe_select",
-    "components:oobe_dialog_host_behavior",
-    "components:oobe_i18n_behavior",
-    "//ui/webui/resources/cr_elements/cr_input:cr_input",
-    "//ui/webui/resources/js:load_time_data",
+    ":closure_compile_local",
+    "components:closure_compile",
+    "screens/common:closure_compile",
+    "screens/oobe:closure_compile",
+    "screens/osauth:closure_compile",
+    "test_api:closure_compile",
+
+    # TODO(crbug.com/1229130)
+    # Uncomment once most screens are migrated.
+    #"debug:closure_compile",
   ]
 }
 
-js_library("multidevice_setup_first_run") {
+js_type_check("closure_compile_local") {
+  is_polymer3 = true
+  closure_flags = default_closure_args
   deps = [
-    "components:oobe_i18n_behavior",
-    "//ui/webui/resources/cr_components/chromeos/multidevice_setup:mojo_api",
-    "//ui/webui/resources/cr_components/chromeos/multidevice_setup:multidevice_setup",
-    "//ui/webui/resources/js:cr",
+    ":cr_ui",
+    ":display_manager",
+    ":install_oobe_error_store",
+    ":login_ui_tools",
+    ":multi_tap_detector",
   ]
 }
 
-js_library("active_directory_password_change") {
-  deps = [ "components:oobe_i18n_behavior" ]
+js_library("i18n_setup") {
+  deps = [ "//ash/webui/common/resources:load_time_data.m" ]
 }
 
-js_library("app_downloading") {
+js_library("cr_ui") {
+  sources = [ "$root_gen_dir/chrome/browser/resources/chromeos/login/cr_ui.js" ]
   deps = [
-    "components:login_screen_behavior",
-    "components:oobe_dialog_host_behavior",
-    "components:oobe_i18n_behavior",
+    ":display_manager",
+    "components:api_keys_notice",
+    "//ash/webui/common/resources:cr.m",
+    "//ash/webui/common/resources:cr_deprecated",
+    "//ash/webui/common/resources:load_time_data.m",
   ]
+  extra_deps = [ ":copy_js" ]
 }
 
-js_library("arc_terms_of_service") {
-  deps = [
-    "components:oobe_dialog_host_behavior",
-    "components:oobe_help_dialog",
-    "components:oobe_i18n_behavior",
+js_library("display_manager") {
+  sources = [
+    "$root_gen_dir/chrome/browser/resources/chromeos/login/display_manager.js",
   ]
-}
-
-js_library("demo_preferences") {
   deps = [
-    "components:login_screen_behavior",
-    "components:oobe_dialog_host_behavior",
-    "components:oobe_i18n_behavior",
-  ]
-}
-
-js_library("demo_setup") {
-  deps = [
-    "components:login_screen_behavior",
-    "components:multi_step_behavior",
-    "components:oobe_dialog_host_behavior",
-    "components:oobe_i18n_behavior",
-  ]
-}
-
-js_library("encryption_migration") {
-  deps = [
-    "components:oobe_dialog_host_behavior",
-    "components:oobe_i18n_behavior",
-  ]
-}
-
-js_library("family_link_notice") {
-  deps = [
-    "components:login_screen_behavior",
-    "components:oobe_dialog_host_behavior",
-    "components:oobe_i18n_behavior",
-  ]
-}
-
-js_library("fingerprint_setup") {
-  deps = [
-    "components:oobe_dialog_host_behavior",
-    "components:oobe_i18n_behavior",
-    "//ui/webui/resources/cr_elements/cr_fingerprint:cr_fingerprint_progress_arc",
-    "//ui/webui/resources/cr_elements/cr_lottie:cr_lottie",
-  ]
-}
-
-js_library("gaia_buttons") {
-}
-
-js_library("gaia_card") {
-}
-
-js_library("gaia_header") {
-}
-
-js_library("gaia_input_form") {
-}
-
-js_library("gaia_password_changed") {
-  deps = [
-    "components:login_screen_behavior",
-    "components:multi_step_behavior",
-    "components:oobe_dialog_host_behavior",
-    "components:oobe_i18n_behavior",
-  ]
-}
-
-js_library("gesture_navigation") {
-  deps = [
-    "components:login_screen_behavior",
-    "components:oobe_dialog_host_behavior",
-    "components:oobe_i18n_behavior",
-  ]
-}
-
-js_library("marketing_opt_in") {
-  deps = [
-    "components:oobe_dialog_host_behavior",
-    "components:oobe_i18n_behavior",
-  ]
-}
-
-js_library("navigation_bar") {
-}
-
-js_library("network_select_login") {
-  deps = [
-    "//ui/webui/resources/cr_components/chromeos/network:network_select",
-    "//ui/webui/resources/cr_components/chromeos/network:onc_mojo",
-  ]
-}
-
-js_library("notification_card") {
-}
-
-js_library("offline_gaia") {
-  deps = [
-    "components:oobe_dialog_host_behavior",
-    "components:oobe_i18n_behavior",
-  ]
-}
-
-js_library("oobe_a11y_option") {
-}
-
-js_library("oobe_adb_sideloading_screen") {
-  deps = [
-    "components:login_screen_behavior",
-    "components:multi_step_behavior",
-    "components:oobe_dialog_host_behavior",
-    "components:oobe_i18n_behavior",
-  ]
-}
-
-js_library("oobe_enable_kiosk") {
-  deps = [
-    "components:login_screen_behavior",
-    "components:oobe_dialog_host_behavior",
-    "components:oobe_i18n_behavior",
-  ]
-}
-
-js_library("oobe_eula") {
-  deps = [
-    ":web_view_helper",
-    "components:login_screen_behavior",
-    "components:oobe_dialog",
-    "components:oobe_dialog_host_behavior",
-    "components:oobe_i18n_behavior",
-  ]
-}
-
-js_library("oobe_i18n_dropdown") {
-  deps = [ "components:oobe_types" ]
-}
-
-js_library("oobe_network") {
-  deps = [
-    "components:oobe_dialog_host_behavior",
-    "components:oobe_i18n_behavior",
-  ]
-}
-
-js_library("oobe_reset") {
-  deps = [
-    "components:oobe_dialog_host_behavior",
-    "components:oobe_i18n_behavior",
-  ]
-}
-
-js_library("oobe_supervision_transition") {
-  deps = [
-    "components:oobe_dialog_host_behavior",
-    "components:oobe_i18n_behavior",
-  ]
-}
-
-js_library("oobe_update") {
-  deps = [
-    "components:login_screen_behavior",
-    "components:oobe_dialog_host_behavior",
-    "components:oobe_i18n_behavior",
-  ]
-}
-
-js_library("recommend_apps") {
-  deps = [
-    "components:login_screen_behavior",
-    "components:multi_step_behavior",
-    "components:oobe_dialog_host_behavior",
-    "components:oobe_i18n_behavior",
+    ":multi_tap_detector",
+    "components:display_manager_types",
+    "components:keyboard_utils",
+    "components:keyboard_utils_oobe",
     "components:oobe_types",
   ]
+  extra_deps = [ ":copy_js" ]
 }
 
-js_library("user_creation") {
-  deps = [
-    "components:login_screen_behavior",
-    "components:multi_step_behavior",
-    "components:oobe_dialog_host_behavior",
-    "components:oobe_i18n_behavior",
+js_library("install_oobe_error_store") {
+  sources = [ "$root_gen_dir/chrome/browser/resources/chromeos/login/install_oobe_error_store.js" ]
+  deps = []
+  extra_deps = [ ":copy_js" ]
+}
+
+js_library("login_ui_tools") {
+  sources = [
+    "$root_gen_dir/chrome/browser/resources/chromeos/login/login_ui_tools.js",
   ]
+  deps = []
+  extra_deps = [ ":copy_js" ]
 }
 
-js_library("saml_confirm_password") {
-  deps = [
-    "components:oobe_dialog_host_behavior",
-    "components:oobe_i18n_behavior",
+js_library("multi_tap_detector") {
+  sources = [ "$root_gen_dir/chrome/browser/resources/chromeos/login/multi_tap_detector.js" ]
+  deps = []
+  extra_deps = [ ":copy_js" ]
+}
+
+# Copy existing files to output directory for closure compilation.
+copy("copy_js") {
+  sources = [
+    "cr_ui.js",
+    "display_manager.js",
+    "install_oobe_error_store.js",
+    "login_ui_tools.js",
+    "multi_tap_detector.js",
   ]
+  outputs = [ "$target_gen_dir/{{source_file_part}}" ]
 }
 
-js_library("sync_consent") {
-  deps = [
-    "components:oobe_dialog_host_behavior",
-    "components:oobe_i18n_behavior",
+ts_library("build_ts") {
+  tsconfig_base = "//tools/typescript/tsconfig_base_polymer.json"
+  root_dir = "$target_gen_dir/$oobe_preprocessed_folder"
+  out_dir = "$target_gen_dir/tsc"
+  in_files = unconditional_autogenerated_files + unconditional_existing_files +
+             conditional_files
+  definitions = [
+    "//tools/typescript/definitions/chrome_send.d.ts",
+    "//tools/typescript/definitions/context_menus.d.ts",
+    "//tools/typescript/definitions/extension_types.d.ts",
+    "//tools/typescript/definitions/quick_unlock_private.d.ts",
+    "//tools/typescript/definitions/tabs.d.ts",
+    "//tools/typescript/definitions/webview_tag.d.ts",
+    "//tools/typescript/definitions/web_request.d.ts",
+    "//tools/typescript/definitions/quick_unlock_private.d.ts",
   ]
-}
+  deps = [
+    "//ash/webui/common/resources:build_ts",
+    "//third_party/polymer/v3_0:library",
+    "//ui/webui/resources/cr_components/color_change_listener:build_ts",
+    "//ui/webui/resources/cr_elements:build_ts",
+    "//ui/webui/resources/js:build_ts",
+    "//ui/webui/resources/mojo:build_ts",
+  ]
+  extra_deps = [
+    ":preprocess_conditional",
+    ":preprocess_unconditional_autogenerated",
+    ":preprocess_unconditional_existing",
+    ":web_components",
+    "components:copy_js",
+    "components:html_wrapper_files",
+    "components/oobe_vars:css_wrapper_files",
+  ]
 
-js_library("throbber_notice") {
-}
+  path_mappings = [ "//oobe/gaia_auth_host/*|" +
+                    rebase_path("//chrome/browser/resources/gaia_auth_host/*",
+                                target_gen_dir) ]
 
-js_library("update_required_card") {
-}
-
-js_library("web_view_helper") {
+  # These files can be added conditionally in the runtime, so they shouldn't
+  # be added to the same grd file as the rest of the sources.
+  manifest_excludes = conditional_files
 }

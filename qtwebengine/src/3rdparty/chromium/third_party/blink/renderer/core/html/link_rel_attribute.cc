@@ -30,31 +30,12 @@
  */
 
 #include "third_party/blink/renderer/core/html/link_rel_attribute.h"
-
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 
 namespace blink {
 
-LinkRelAttribute::LinkRelAttribute()
-    : icon_type_(mojom::blink::FaviconIconType::kInvalid),
-      is_style_sheet_(false),
-      is_alternate_(false),
-      is_dns_prefetch_(false),
-      is_preconnect_(false),
-      is_link_prefetch_(false),
-      is_link_preload_(false),
-      is_link_prerender_(false),
-      is_link_next_(false),
-      is_import_(false),
-      is_manifest_(false),
-      is_module_preload_(false),
-      is_service_worker_(false),
-      is_canonical_(false),
-      is_monetization_(false),
-      is_web_bundle_(false) {}
-
 LinkRelAttribute::LinkRelAttribute(const String& rel) : LinkRelAttribute() {
-  if (rel.IsEmpty())
+  if (rel.empty())
     return;
   String rel_copy = rel;
   rel_copy.Replace('\n', ' ');
@@ -62,11 +43,7 @@ LinkRelAttribute::LinkRelAttribute(const String& rel) : LinkRelAttribute() {
   rel_copy.Split(' ', list);
   for (const String& link_type : list) {
     if (EqualIgnoringASCIICase(link_type, "stylesheet")) {
-      if (!is_import_)
-        is_style_sheet_ = true;
-    } else if (EqualIgnoringASCIICase(link_type, "import")) {
-      if (!is_style_sheet_)
-        is_import_ = true;
+      is_style_sheet_ = true;
     } else if (EqualIgnoringASCIICase(link_type, "alternate")) {
       is_alternate_ = true;
     } else if (EqualIgnoringASCIICase(link_type, "icon")) {
@@ -100,11 +77,21 @@ LinkRelAttribute::LinkRelAttribute(const String& rel) : LinkRelAttribute() {
       is_canonical_ = true;
     } else if (EqualIgnoringASCIICase(link_type, "monetization")) {
       is_monetization_ = true;
-    } else if (EqualIgnoringASCIICase(link_type, "webbundle")) {
-      is_web_bundle_ = true;
+    } else if (EqualIgnoringASCIICase(link_type, "dictionary")) {
+      is_dictionary_ = true;
+    } else if (EqualIgnoringASCIICase(link_type, "privacy-policy")) {
+      is_privacy_policy_ = true;
+    } else if (EqualIgnoringASCIICase(link_type, "terms-of-service")) {
+      is_terms_of_service_ = true;
+    } else if (RuntimeEnabledFeatures::DocumentRenderBlockingEnabled() &&
+               EqualIgnoringASCIICase(link_type, "expect")) {
+      is_expect_ = true;
     }
-    // Adding or removing a value here requires you to update
-    // RelList::supportedTokens()
+
+    // Adding or removing a value here whose processing model is web-visible
+    // (e.g. if the value is listed as a "supported token" for `<link>`'s `rel`
+    // attribute in HTML) also requires you to update the list of tokens in
+    // RelList::SupportedTokensLink().
   }
 }
 

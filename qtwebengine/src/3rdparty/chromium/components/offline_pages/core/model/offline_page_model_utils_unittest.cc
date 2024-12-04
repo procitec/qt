@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -32,58 +32,47 @@ TEST(OfflinePageModelUtilsTest, ToNamespaceEnum) {
             OfflinePagesNamespaceEnumeration::DOWNLOAD);
   EXPECT_EQ(model_utils::ToNamespaceEnum(kNTPSuggestionsNamespace),
             OfflinePagesNamespaceEnumeration::NTP_SUGGESTION);
-  EXPECT_EQ(model_utils::ToNamespaceEnum(kSuggestedArticlesNamespace),
-            OfflinePagesNamespaceEnumeration::SUGGESTED_ARTICLES);
   EXPECT_EQ(model_utils::ToNamespaceEnum(kBrowserActionsNamespace),
             OfflinePagesNamespaceEnumeration::BROWSER_ACTIONS);
 }
 
 struct GenerateUniqueFilenameTestCase {
-  const base::string16 page_title;
+  const std::u16string page_title;
   const GURL page_url;
   const base::FilePath::CharType* expected_basename;
 };
 
 const std::vector<GenerateUniqueFilenameTestCase>& UniqueFilenameCases() {
   static base::NoDestructor<std::vector<GenerateUniqueFilenameTestCase>> cases{{
-      {base::ASCIIToUTF16("wikipedia.org-Main_Page"),
-       GURL("http://www.wikipedia.org/Main_Page"),
+      {u"wikipedia.org-Main_Page", GURL("http://www.wikipedia.org/Main_Page"),
        FILE_PATH_LITERAL("wikipedia.org-Main_Page.mhtml")},
-      {base::ASCIIToUTF16("wikipedia.org-Main_Page"),
-       GURL("http://www.wikipedia.org/Main_Page"),
+      {u"wikipedia.org-Main_Page", GURL("http://www.wikipedia.org/Main_Page"),
        FILE_PATH_LITERAL("wikipedia.org-Main_Page (1).mhtml")},
-      {base::ASCIIToUTF16("wikipedia.org-Main_Page"),
-       GURL("http://www.wikipedia.org/Main_Page"),
+      {u"wikipedia.org-Main_Page", GURL("http://www.wikipedia.org/Main_Page"),
        FILE_PATH_LITERAL("wikipedia.org-Main_Page (2).mhtml")},
-      {base::ASCIIToUTF16("wikipedia.org-Main_Page.mhtml"),
+      {u"wikipedia.org-Main_Page.mhtml",
        GURL("http://www.wikipedia.org/Main_Page"),
        FILE_PATH_LITERAL("wikipedia.org-Main_Page (3).mhtml")},
-      {base::ASCIIToUTF16("wikipedia.org-Main_Page"),
-       GURL("http://www.wikipedia.org/Main_Page"),
+      {u"wikipedia.org-Main_Page", GURL("http://www.wikipedia.org/Main_Page"),
        FILE_PATH_LITERAL("wikipedia.org-Main_Page (4).mhtml")},
-      {base::ASCIIToUTF16("wikipedia.org"),
-       GURL("http://www.wikipedia.org/Main_Page"),
+      {u"wikipedia.org", GURL("http://www.wikipedia.org/Main_Page"),
        FILE_PATH_LITERAL("wikipedia.org.mhtml")},
-      {base::ASCIIToUTF16("wikipedia.org"),
-       GURL("http://www.wikipedia.org/Main_Page"),
+      {u"wikipedia.org", GURL("http://www.wikipedia.org/Main_Page"),
        FILE_PATH_LITERAL("wikipedia.org (1).mhtml")},
-      {base::UTF8ToUTF16("bücher.com"), GURL("http://xn--bcher-kva.com"),
+      {u"bücher.com", GURL("http://xn--bcher-kva.com"),
        FILE_PATH_LITERAL("bücher.com.mhtml")},
-      {base::ASCIIToUTF16("http://foo.com/path/title.html"),
-       GURL("http://foo.com"),
+      {u"http://foo.com/path/title.html", GURL("http://foo.com"),
        FILE_PATH_LITERAL("http___foo.com_path_title.html.mhtml")},
-      {base::ASCIIToUTF16("foo.com/foo-%40.html"),
-       GURL("http://foo.com/foo-%40.html"),
+      {u"foo.com/foo-%40.html", GURL("http://foo.com/foo-%40.html"),
        FILE_PATH_LITERAL("foo-@.html.mhtml")},
-      {base::ASCIIToUTF16("Viva%40%40%40-TestTitle"),
-       GURL("http://foo.com/%40.html"),
+      {u"Viva%40%40%40-TestTitle", GURL("http://foo.com/%40.html"),
        FILE_PATH_LITERAL("Viva%40%40%40-TestTitle.mhtml")},
   }};
   return *cases;
 }
 
 // Crashing on Windows, see http://crbug.com/79365
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 #define MAYBE_TestGenerateUniqueFilename DISABLED_TestGenerateUniqueFilename
 #else
 #define MAYBE_TestGenerateUniqueFilename TestGenerateUniqueFilename
@@ -96,7 +85,7 @@ TEST(OfflinePageModelUtilsTest, MAYBE_TestGenerateUniqueFilename) {
     base::FilePath path = model_utils::GenerateUniqueFilenameForOfflinePage(
         test_case.page_title, test_case.page_url, temp_dir.GetPath());
     // Writing a dummy file so the uniquifier can increase.
-    base::WriteFile(path, nullptr, 0);
+    base::WriteFile(path, base::StringPiece());
     EXPECT_EQ(path.BaseName().value(), test_case.expected_basename);
   }
 }

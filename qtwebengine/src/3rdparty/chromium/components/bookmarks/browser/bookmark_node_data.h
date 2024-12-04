@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,10 +8,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <string>
 #include <vector>
 
 #include "base/files/file_path.h"
-#include "base/strings/string16.h"
+#include "base/memory/raw_ptr.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "components/bookmarks/browser/bookmark_node.h"
@@ -70,7 +71,7 @@ struct BookmarkNodeData {
     GURL url;
 
     // Title of the entry, used for both urls and folders.
-    base::string16 title;
+    std::u16string title;
 
     // Date of when this node was created.
     base::Time date_added;
@@ -89,7 +90,7 @@ struct BookmarkNodeData {
    private:
     friend struct BookmarkNodeData;
 
-#if !defined(OS_APPLE)
+#if !BUILDFLAG(IS_APPLE)
     // For reading/writing this Element.
     void WriteToPickle(base::Pickle* pickle) const;
     bool ReadFromPickle(base::PickleIterator* iterator);
@@ -99,7 +100,7 @@ struct BookmarkNodeData {
     int64_t id_;
   };
 
-#if !defined(OS_APPLE)
+#if !BUILDFLAG(IS_APPLE)
   // The MIME type for the clipboard format for BookmarkNodeData. This type is
   // not used on the Mac.
   static const char kClipboardFormatString[];
@@ -110,7 +111,9 @@ struct BookmarkNodeData {
 
   // Created a BookmarkNodeData populated from the arguments.
   explicit BookmarkNodeData(const BookmarkNode* node);
-  explicit BookmarkNodeData(const std::vector<const BookmarkNode*>& nodes);
+  explicit BookmarkNodeData(
+      const std::vector<raw_ptr<const BookmarkNode, VectorExperimental>>&
+          nodes);
 
   ~BookmarkNodeData();
 
@@ -121,10 +124,12 @@ struct BookmarkNodeData {
   static bool ClipboardContainsBookmarks();
 
   // Reads bookmarks from the given vector.
-  bool ReadFromVector(const std::vector<const BookmarkNode*>& nodes);
+  bool ReadFromVector(
+      const std::vector<raw_ptr<const BookmarkNode, VectorExperimental>>&
+          nodes);
 
   // Creates a single-bookmark DragData from url/title pair.
-  bool ReadFromTuple(const GURL& url, const base::string16& title);
+  bool ReadFromTuple(const GURL& url, const std::u16string& title);
 
   // Writes bookmarks to the specified clipboard.
   void WriteToClipboard();
@@ -146,7 +151,7 @@ struct BookmarkNodeData {
   bool Read(const ui::OSExchangeData& data);
 #endif
 
-#if !defined(OS_APPLE)
+#if !BUILDFLAG(IS_APPLE)
   // Writes the data for a drag to |pickle|.
   void WriteToPickle(const base::FilePath& profile_path,
                      base::Pickle* pickle) const;
@@ -159,7 +164,7 @@ struct BookmarkNodeData {
   // created from the same profile then the nodes from the model are returned.
   // If the nodes can't be found (may have been deleted), an empty vector is
   // returned.
-  std::vector<const BookmarkNode*> GetNodes(
+  std::vector<raw_ptr<const BookmarkNode, VectorExperimental>> GetNodes(
       BookmarkModel* model,
       const base::FilePath& profile_path) const;
 

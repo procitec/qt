@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,15 +11,17 @@
 
 #include <string>
 
+#include "printing/mojom/print.mojom.h"
 #include "printing/printing_context_win.h"
 #include "ui/gfx/native_widget_types.h"
 
 namespace printing {
 
-class PRINTING_EXPORT PrintingContextSystemDialogWin
+class COMPONENT_EXPORT(PRINTING) PrintingContextSystemDialogWin
     : public PrintingContextWin {
  public:
-  explicit PrintingContextSystemDialogWin(Delegate* delegate);
+  PrintingContextSystemDialogWin(Delegate* delegate,
+                                 ProcessBehavior process_behavior);
   PrintingContextSystemDialogWin(const PrintingContextSystemDialogWin&) =
       delete;
   PrintingContextSystemDialogWin& operator=(
@@ -35,6 +37,8 @@ class PRINTING_EXPORT PrintingContextSystemDialogWin
  private:
   friend class MockPrintingContextWin;
 
+  HWND GetWindow();
+
   virtual HRESULT ShowPrintDialog(PRINTDLGEX* options);
 
   // Reads the settings from the selected device context. Updates settings_ and
@@ -46,7 +50,7 @@ class PRINTING_EXPORT PrintingContextSystemDialogWin
                                     bool selection_only);
 
   // Parses the result of a PRINTDLGEX result.
-  Result ParseDialogResultEx(const PRINTDLGEX& dialog_options);
+  mojom::ResultCode ParseDialogResultEx(const PRINTDLGEX& dialog_options);
 };
 
 }  // namespace printing

@@ -83,20 +83,15 @@ The WebStateList exposes an API to observe modification to the list of
 WebStates (additions, moves, removals, replacements).
 
 The WebStateList also has a delegate that is invoked when a WebState
-when WebStates are added to or removed from the WebStateList. This is
-used to attach all necessary tab helpers to the WebState.
-
-There is a legacy interface (TabModel) that is used to represent a list of
-Tabs and added some behaviour. This interface is obsolete and is slowly
-being removed, prefer to use WebStateList if possible.
+is added to or removed from the WebStateList. This is used to attach
+all necessary tab helpers to the WebState.
 
 The corresponding object on desktop is TabStripModel.
 
 # WebStateListDelegate
 
 WebStateListDelegate is the delegate for WebStateList. It is invoked
-before a WebState is inserted to or after a WebState is removed from
-the WebStateList.
+before a WebState is inserted to the WebStateList.
 
 Each WebStateList points to a WebStateListDelegate but does not own
 it to allow sharing the same delegate for multiple WebStateList. In

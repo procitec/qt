@@ -1,4 +1,4 @@
-// Copyright (c) 2011 The Chromium Authors. All rights reserved.
+// Copyright 2011 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,7 +10,6 @@
 
 #include "base/files/file_path.h"
 #include "base/logging.h"
-#include "base/macros.h"
 #include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
@@ -32,65 +31,76 @@ TEST_F(RTLTest, GetFirstStrongCharacterDirection) {
     const wchar_t* text;
     TextDirection direction;
   } cases[] = {
-    // Test pure LTR string.
-    { L"foo bar", LEFT_TO_RIGHT },
-    // Test pure RTL string.
-    { L"\x05d0\x05d1\x05d2 \x05d3\x0d4\x05d5", RIGHT_TO_LEFT},
-    // Test bidi string in which the first character with strong directionality
-    // is a character with type L.
-    { L"foo \x05d0 bar", LEFT_TO_RIGHT },
-    // Test bidi string in which the first character with strong directionality
-    // is a character with type R.
-    { L"\x05d0 foo bar", RIGHT_TO_LEFT },
-    // Test bidi string which starts with a character with weak directionality
-    // and in which the first character with strong directionality is a
-    // character with type L.
-    { L"!foo \x05d0 bar", LEFT_TO_RIGHT },
-    // Test bidi string which starts with a character with weak directionality
-    // and in which the first character with strong directionality is a
-    // character with type R.
-    { L",\x05d0 foo bar", RIGHT_TO_LEFT },
-    // Test bidi string in which the first character with strong directionality
-    // is a character with type LRE.
-    { L"\x202a \x05d0 foo  bar", LEFT_TO_RIGHT },
-    // Test bidi string in which the first character with strong directionality
-    // is a character with type LRO.
-    { L"\x202d \x05d0 foo  bar", LEFT_TO_RIGHT },
-    // Test bidi string in which the first character with strong directionality
-    // is a character with type RLE.
-    { L"\x202b foo \x05d0 bar", RIGHT_TO_LEFT },
-    // Test bidi string in which the first character with strong directionality
-    // is a character with type RLO.
-    { L"\x202e foo \x05d0 bar", RIGHT_TO_LEFT },
-    // Test bidi string in which the first character with strong directionality
-    // is a character with type AL.
-    { L"\x0622 foo \x05d0 bar", RIGHT_TO_LEFT },
-    // Test a string without strong directionality characters.
-    { L",!.{}", LEFT_TO_RIGHT },
-    // Test empty string.
-    { L"", LEFT_TO_RIGHT },
-    // Test characters in non-BMP (e.g. Phoenician letters. Please refer to
-    // http://demo.icu-project.org/icu-bin/ubrowse?scr=151&b=10910 for more
-    // information).
-    {
-#if defined(WCHAR_T_IS_UTF32)
-      L" ! \x10910" L"abc 123",
-#elif defined(WCHAR_T_IS_UTF16)
-      L" ! \xd802\xdd10" L"abc 123",
+      // Test pure LTR string.
+      {L"foo bar", LEFT_TO_RIGHT},
+      // Test pure RTL string.
+      {L"\x05d0\x05d1\x05d2 \x05d3\x0d4\x05d5", RIGHT_TO_LEFT},
+      // Test bidi string in which the first character with strong
+      // directionality
+      // is a character with type L.
+      {L"foo \x05d0 bar", LEFT_TO_RIGHT},
+      // Test bidi string in which the first character with strong
+      // directionality
+      // is a character with type R.
+      {L"\x05d0 foo bar", RIGHT_TO_LEFT},
+      // Test bidi string which starts with a character with weak directionality
+      // and in which the first character with strong directionality is a
+      // character with type L.
+      {L"!foo \x05d0 bar", LEFT_TO_RIGHT},
+      // Test bidi string which starts with a character with weak directionality
+      // and in which the first character with strong directionality is a
+      // character with type R.
+      {L",\x05d0 foo bar", RIGHT_TO_LEFT},
+      // Test bidi string in which the first character with strong
+      // directionality
+      // is a character with type LRE.
+      {L"\x202a \x05d0 foo  bar", LEFT_TO_RIGHT},
+      // Test bidi string in which the first character with strong
+      // directionality
+      // is a character with type LRO.
+      {L"\x202d \x05d0 foo  bar", LEFT_TO_RIGHT},
+      // Test bidi string in which the first character with strong
+      // directionality
+      // is a character with type RLE.
+      {L"\x202b foo \x05d0 bar", RIGHT_TO_LEFT},
+      // Test bidi string in which the first character with strong
+      // directionality
+      // is a character with type RLO.
+      {L"\x202e foo \x05d0 bar", RIGHT_TO_LEFT},
+      // Test bidi string in which the first character with strong
+      // directionality
+      // is a character with type AL.
+      {L"\x0622 foo \x05d0 bar", RIGHT_TO_LEFT},
+      // Test a string without strong directionality characters.
+      {L",!.{}", LEFT_TO_RIGHT},
+      // Test empty string.
+      {L"", LEFT_TO_RIGHT},
+      // Test characters in non-BMP (e.g. Phoenician letters. Please refer to
+      // http://demo.icu-project.org/icu-bin/ubrowse?scr=151&b=10910 for more
+      // information).
+      {
+#if defined(WCHAR_T_IS_32_BIT)
+          L" ! \x10910"
+          L"abc 123",
+#elif defined(WCHAR_T_IS_16_BIT)
+          L" ! \xd802\xdd10"
+          L"abc 123",
 #else
 #error wchar_t should be either UTF-16 or UTF-32
 #endif
-      RIGHT_TO_LEFT },
-    {
-#if defined(WCHAR_T_IS_UTF32)
-      L" ! \x10401" L"abc 123",
-#elif defined(WCHAR_T_IS_UTF16)
-      L" ! \xd801\xdc01" L"abc 123",
+          RIGHT_TO_LEFT},
+      {
+#if defined(WCHAR_T_IS_32_BIT)
+          L" ! \x10401"
+          L"abc 123",
+#elif defined(WCHAR_T_IS_16_BIT)
+          L" ! \xd801\xdc01"
+          L"abc 123",
 #else
 #error wchar_t should be either UTF-16 or UTF-32
 #endif
-      LEFT_TO_RIGHT },
-   };
+          LEFT_TO_RIGHT},
+  };
 
   for (auto& i : cases)
     EXPECT_EQ(i.direction,
@@ -106,53 +116,57 @@ TEST_F(RTLTest, GetLastStrongCharacterDirection) {
     const wchar_t* text;
     TextDirection direction;
   } cases[] = {
-    // Test pure LTR string.
-    { L"foo bar", LEFT_TO_RIGHT },
-    // Test pure RTL string.
-    { L"\x05d0\x05d1\x05d2 \x05d3\x0d4\x05d5", RIGHT_TO_LEFT},
-    // Test bidi string in which the last character with strong directionality
-    // is a character with type L.
-    { L"foo \x05d0 bar", LEFT_TO_RIGHT },
-    // Test bidi string in which the last character with strong directionality
-    // is a character with type R.
-    { L"\x05d0 foo bar \x05d3", RIGHT_TO_LEFT },
-    // Test bidi string which ends with a character with weak directionality
-    // and in which the last character with strong directionality is a
-    // character with type L.
-    { L"!foo \x05d0 bar!", LEFT_TO_RIGHT },
-    // Test bidi string which ends with a character with weak directionality
-    // and in which the last character with strong directionality is a
-    // character with type R.
-    { L",\x05d0 foo bar \x05d1,", RIGHT_TO_LEFT },
-    // Test bidi string in which the last character with strong directionality
-    // is a character with type AL.
-    { L"\x0622 foo \x05d0 bar \x0622", RIGHT_TO_LEFT },
-    // Test a string without strong directionality characters.
-    { L",!.{}", LEFT_TO_RIGHT },
-    // Test empty string.
-    { L"", LEFT_TO_RIGHT },
-    // Test characters in non-BMP (e.g. Phoenician letters. Please refer to
-    // http://demo.icu-project.org/icu-bin/ubrowse?scr=151&b=10910 for more
-    // information).
-    {
-#if defined(WCHAR_T_IS_UTF32)
-       L"abc 123" L" ! \x10910 !",
-#elif defined(WCHAR_T_IS_UTF16)
-       L"abc 123" L" ! \xd802\xdd10 !",
+      // Test pure LTR string.
+      {L"foo bar", LEFT_TO_RIGHT},
+      // Test pure RTL string.
+      {L"\x05d0\x05d1\x05d2 \x05d3\x0d4\x05d5", RIGHT_TO_LEFT},
+      // Test bidi string in which the last character with strong directionality
+      // is a character with type L.
+      {L"foo \x05d0 bar", LEFT_TO_RIGHT},
+      // Test bidi string in which the last character with strong directionality
+      // is a character with type R.
+      {L"\x05d0 foo bar \x05d3", RIGHT_TO_LEFT},
+      // Test bidi string which ends with a character with weak directionality
+      // and in which the last character with strong directionality is a
+      // character with type L.
+      {L"!foo \x05d0 bar!", LEFT_TO_RIGHT},
+      // Test bidi string which ends with a character with weak directionality
+      // and in which the last character with strong directionality is a
+      // character with type R.
+      {L",\x05d0 foo bar \x05d1,", RIGHT_TO_LEFT},
+      // Test bidi string in which the last character with strong directionality
+      // is a character with type AL.
+      {L"\x0622 foo \x05d0 bar \x0622", RIGHT_TO_LEFT},
+      // Test a string without strong directionality characters.
+      {L",!.{}", LEFT_TO_RIGHT},
+      // Test empty string.
+      {L"", LEFT_TO_RIGHT},
+      // Test characters in non-BMP (e.g. Phoenician letters. Please refer to
+      // http://demo.icu-project.org/icu-bin/ubrowse?scr=151&b=10910 for more
+      // information).
+      {
+#if defined(WCHAR_T_IS_32_BIT)
+          L"abc 123"
+          L" ! \x10910 !",
+#elif defined(WCHAR_T_IS_16_BIT)
+          L"abc 123"
+          L" ! \xd802\xdd10 !",
 #else
 #error wchar_t should be either UTF-16 or UTF-32
 #endif
-      RIGHT_TO_LEFT },
-    {
-#if defined(WCHAR_T_IS_UTF32)
-       L"abc 123" L" ! \x10401 !",
-#elif defined(WCHAR_T_IS_UTF16)
-       L"abc 123" L" ! \xd801\xdc01 !",
+          RIGHT_TO_LEFT},
+      {
+#if defined(WCHAR_T_IS_32_BIT)
+          L"abc 123"
+          L" ! \x10401 !",
+#elif defined(WCHAR_T_IS_16_BIT)
+          L"abc 123"
+          L" ! \xd801\xdc01 !",
 #else
 #error wchar_t should be either UTF-16 or UTF-32
 #endif
-      LEFT_TO_RIGHT },
-   };
+          LEFT_TO_RIGHT},
+  };
 
   for (auto& i : cases)
     EXPECT_EQ(i.direction,
@@ -164,73 +178,77 @@ TEST_F(RTLTest, GetStringDirection) {
     const wchar_t* text;
     TextDirection direction;
   } cases[] = {
-    // Test pure LTR string.
-    { L"foobar", LEFT_TO_RIGHT },
-    { L".foobar", LEFT_TO_RIGHT },
-    { L"foo, bar", LEFT_TO_RIGHT },
-    // Test pure LTR with strong directionality characters of type LRE.
-    { L"\x202a\x202a", LEFT_TO_RIGHT },
-    { L".\x202a\x202a", LEFT_TO_RIGHT },
-    { L"\x202a, \x202a", LEFT_TO_RIGHT },
-    // Test pure LTR with strong directionality characters of type LRO.
-    { L"\x202d\x202d", LEFT_TO_RIGHT },
-    { L".\x202d\x202d", LEFT_TO_RIGHT },
-    { L"\x202d, \x202d", LEFT_TO_RIGHT },
-    // Test pure LTR with various types of strong directionality characters.
-    { L"foo \x202a\x202d", LEFT_TO_RIGHT },
-    { L".\x202d foo \x202a", LEFT_TO_RIGHT },
-    { L"\x202a, \x202d foo", LEFT_TO_RIGHT },
-    // Test pure RTL with strong directionality characters of type R.
-    { L"\x05d0\x05d0", RIGHT_TO_LEFT },
-    { L".\x05d0\x05d0", RIGHT_TO_LEFT },
-    { L"\x05d0, \x05d0", RIGHT_TO_LEFT },
-    // Test pure RTL with strong directionality characters of type RLE.
-    { L"\x202b\x202b", RIGHT_TO_LEFT },
-    { L".\x202b\x202b", RIGHT_TO_LEFT },
-    { L"\x202b, \x202b", RIGHT_TO_LEFT },
-    // Test pure RTL with strong directionality characters of type RLO.
-    { L"\x202e\x202e", RIGHT_TO_LEFT },
-    { L".\x202e\x202e", RIGHT_TO_LEFT },
-    { L"\x202e, \x202e", RIGHT_TO_LEFT },
-    // Test pure RTL with strong directionality characters of type AL.
-    { L"\x0622\x0622", RIGHT_TO_LEFT },
-    { L".\x0622\x0622", RIGHT_TO_LEFT },
-    { L"\x0622, \x0622", RIGHT_TO_LEFT },
-    // Test pure RTL with various types of strong directionality characters.
-    { L"\x05d0\x202b\x202e\x0622", RIGHT_TO_LEFT },
-    { L".\x202b\x202e\x0622\x05d0", RIGHT_TO_LEFT },
-    { L"\x0622\x202e, \x202b\x05d0", RIGHT_TO_LEFT },
-    // Test bidi strings.
-    { L"foo \x05d0 bar", UNKNOWN_DIRECTION },
-    { L"\x202b foo bar", UNKNOWN_DIRECTION },
-    { L"!foo \x0622 bar", UNKNOWN_DIRECTION },
-    { L"\x202a\x202b", UNKNOWN_DIRECTION },
-    { L"\x202e\x202d", UNKNOWN_DIRECTION },
-    { L"\x0622\x202a", UNKNOWN_DIRECTION },
-    { L"\x202d\x05d0", UNKNOWN_DIRECTION },
-    // Test a string without strong directionality characters.
-    { L",!.{}", LEFT_TO_RIGHT },
-    // Test empty string.
-    { L"", LEFT_TO_RIGHT },
-    {
-#if defined(WCHAR_T_IS_UTF32)
-      L" ! \x10910" L"abc 123",
-#elif defined(WCHAR_T_IS_UTF16)
-      L" ! \xd802\xdd10" L"abc 123",
+      // Test pure LTR string.
+      {L"foobar", LEFT_TO_RIGHT},
+      {L".foobar", LEFT_TO_RIGHT},
+      {L"foo, bar", LEFT_TO_RIGHT},
+      // Test pure LTR with strong directionality characters of type LRE.
+      {L"\x202a\x202a", LEFT_TO_RIGHT},
+      {L".\x202a\x202a", LEFT_TO_RIGHT},
+      {L"\x202a, \x202a", LEFT_TO_RIGHT},
+      // Test pure LTR with strong directionality characters of type LRO.
+      {L"\x202d\x202d", LEFT_TO_RIGHT},
+      {L".\x202d\x202d", LEFT_TO_RIGHT},
+      {L"\x202d, \x202d", LEFT_TO_RIGHT},
+      // Test pure LTR with various types of strong directionality characters.
+      {L"foo \x202a\x202d", LEFT_TO_RIGHT},
+      {L".\x202d foo \x202a", LEFT_TO_RIGHT},
+      {L"\x202a, \x202d foo", LEFT_TO_RIGHT},
+      // Test pure RTL with strong directionality characters of type R.
+      {L"\x05d0\x05d0", RIGHT_TO_LEFT},
+      {L".\x05d0\x05d0", RIGHT_TO_LEFT},
+      {L"\x05d0, \x05d0", RIGHT_TO_LEFT},
+      // Test pure RTL with strong directionality characters of type RLE.
+      {L"\x202b\x202b", RIGHT_TO_LEFT},
+      {L".\x202b\x202b", RIGHT_TO_LEFT},
+      {L"\x202b, \x202b", RIGHT_TO_LEFT},
+      // Test pure RTL with strong directionality characters of type RLO.
+      {L"\x202e\x202e", RIGHT_TO_LEFT},
+      {L".\x202e\x202e", RIGHT_TO_LEFT},
+      {L"\x202e, \x202e", RIGHT_TO_LEFT},
+      // Test pure RTL with strong directionality characters of type AL.
+      {L"\x0622\x0622", RIGHT_TO_LEFT},
+      {L".\x0622\x0622", RIGHT_TO_LEFT},
+      {L"\x0622, \x0622", RIGHT_TO_LEFT},
+      // Test pure RTL with various types of strong directionality characters.
+      {L"\x05d0\x202b\x202e\x0622", RIGHT_TO_LEFT},
+      {L".\x202b\x202e\x0622\x05d0", RIGHT_TO_LEFT},
+      {L"\x0622\x202e, \x202b\x05d0", RIGHT_TO_LEFT},
+      // Test bidi strings.
+      {L"foo \x05d0 bar", UNKNOWN_DIRECTION},
+      {L"\x202b foo bar", UNKNOWN_DIRECTION},
+      {L"!foo \x0622 bar", UNKNOWN_DIRECTION},
+      {L"\x202a\x202b", UNKNOWN_DIRECTION},
+      {L"\x202e\x202d", UNKNOWN_DIRECTION},
+      {L"\x0622\x202a", UNKNOWN_DIRECTION},
+      {L"\x202d\x05d0", UNKNOWN_DIRECTION},
+      // Test a string without strong directionality characters.
+      {L",!.{}", LEFT_TO_RIGHT},
+      // Test empty string.
+      {L"", LEFT_TO_RIGHT},
+      {
+#if defined(WCHAR_T_IS_32_BIT)
+          L" ! \x10910"
+          L"abc 123",
+#elif defined(WCHAR_T_IS_16_BIT)
+          L" ! \xd802\xdd10"
+          L"abc 123",
 #else
 #error wchar_t should be either UTF-16 or UTF-32
 #endif
-      UNKNOWN_DIRECTION },
-    {
-#if defined(WCHAR_T_IS_UTF32)
-      L" ! \x10401" L"abc 123",
-#elif defined(WCHAR_T_IS_UTF16)
-      L" ! \xd801\xdc01" L"abc 123",
+          UNKNOWN_DIRECTION},
+      {
+#if defined(WCHAR_T_IS_32_BIT)
+          L" ! \x10401"
+          L"abc 123",
+#elif defined(WCHAR_T_IS_16_BIT)
+          L" ! \xd801\xdc01"
+          L"abc 123",
 #else
 #error wchar_t should be either UTF-16 or UTF-32
 #endif
-      LEFT_TO_RIGHT },
-   };
+          LEFT_TO_RIGHT},
+  };
 
   for (auto& i : cases)
     EXPECT_EQ(i.direction, GetStringDirection(WideToUTF16(i.text)));
@@ -268,7 +286,7 @@ TEST_F(RTLTest, WrapPathWithLTRFormatting) {
 
   for (auto*& i : cases) {
     FilePath path;
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
     std::wstring win_path(i);
     std::replace(win_path.begin(), win_path.end(), '/', '\\');
     path = FilePath(win_path);
@@ -278,7 +296,7 @@ TEST_F(RTLTest, WrapPathWithLTRFormatting) {
     path = FilePath(base::SysWideToNativeMB(i));
     std::wstring wrapped_expected = std::wstring(L"\x202a") + i + L"\x202c";
 #endif
-    string16 localized_file_path_string;
+    std::u16string localized_file_path_string;
     WrapPathWithLTRFormatting(path, &localized_file_path_string);
 
     std::wstring wrapped_actual = UTF16ToWide(localized_file_path_string);
@@ -304,21 +322,21 @@ TEST_F(RTLTest, WrapString) {
     // Toggle the application default text direction (to try each direction).
     SetRTLForTesting(!IsRTL());
 
-    string16 empty;
+    std::u16string empty;
     WrapStringWithLTRFormatting(&empty);
     EXPECT_TRUE(empty.empty());
     WrapStringWithRTLFormatting(&empty);
     EXPECT_TRUE(empty.empty());
 
     for (auto*& test_case : cases) {
-      string16 input = WideToUTF16(test_case);
-      string16 ltr_wrap = input;
+      std::u16string input = WideToUTF16(test_case);
+      std::u16string ltr_wrap = input;
       WrapStringWithLTRFormatting(&ltr_wrap);
       EXPECT_EQ(ltr_wrap[0], kLeftToRightEmbeddingMark);
       EXPECT_EQ(ltr_wrap.substr(1, ltr_wrap.length() - 2), input);
       EXPECT_EQ(ltr_wrap[ltr_wrap.length() -1], kPopDirectionalFormatting);
 
-      string16 rtl_wrap = input;
+      std::u16string rtl_wrap = input;
       WrapStringWithRTLFormatting(&rtl_wrap);
       EXPECT_EQ(rtl_wrap[0], kRightToLeftEmbeddingMark);
       EXPECT_EQ(rtl_wrap.substr(1, rtl_wrap.length() - 2), input);
@@ -352,8 +370,8 @@ TEST_F(RTLTest, GetDisplayStringInLTRDirectionality) {
     // Toggle the application default text direction (to try each direction).
     SetRTLForTesting(!IsRTL());
     for (auto& test_case : cases) {
-      string16 input = WideToUTF16(test_case.path);
-      string16 output = GetDisplayStringInLTRDirectionality(input);
+      std::u16string input = WideToUTF16(test_case.path);
+      std::u16string output = GetDisplayStringInLTRDirectionality(input);
       // Test the expected wrapping behavior for the current UI directionality.
       if (IsRTL() ? test_case.wrap_rtl : test_case.wrap_ltr)
         EXPECT_NE(output, input);
@@ -440,8 +458,8 @@ TEST_F(RTLTest, UnadjustStringForLocaleDirection) {
     SetRTLForTesting(!IsRTL());
 
     for (auto*& test_case : cases) {
-      string16 unadjusted_string = WideToUTF16(test_case);
-      string16 adjusted_string = unadjusted_string;
+      std::u16string unadjusted_string = WideToUTF16(test_case);
+      std::u16string adjusted_string = unadjusted_string;
 
       if (!AdjustStringForLocaleDirection(&adjusted_string))
         continue;
@@ -491,8 +509,8 @@ TEST_F(RTLTest, EnsureTerminatedDirectionalFormatting) {
     // Toggle the application default text direction (to try each direction).
     SetRTLForTesting(!IsRTL());
     for (auto& test_case : cases) {
-      string16 unsanitized_text = WideToUTF16(test_case.unformated_text);
-      string16 sanitized_text = WideToUTF16(test_case.formatted_text);
+      std::u16string unsanitized_text = WideToUTF16(test_case.unformated_text);
+      std::u16string sanitized_text = WideToUTF16(test_case.formatted_text);
       EnsureTerminatedDirectionalFormatting(&unsanitized_text);
       EXPECT_EQ(sanitized_text, unsanitized_text);
     }
@@ -525,13 +543,14 @@ TEST_F(RTLTest, SanitizeUserSuppliedString) {
 
   for (auto& i : cases) {
     // On Windows for an LTR locale, no changes to the string are made.
-    string16 prefix, suffix = WideToUTF16(L"");
-#if !defined(OS_WIN)
-    prefix = WideToUTF16(L"\x200e\x202b");
-    suffix = WideToUTF16(L"\x202c\x200e");
-#endif  // !OS_WIN
-    string16 unsanitized_text = WideToUTF16(i.unformatted_text);
-    string16 sanitized_text = prefix + WideToUTF16(i.formatted_text) + suffix;
+    std::u16string prefix, suffix = u"";
+#if !BUILDFLAG(IS_WIN)
+    prefix = u"\x200e\x202b";
+    suffix = u"\x202c\x200e";
+#endif  // !BUILDFLAG(IS_WIN)
+    std::u16string unsanitized_text = WideToUTF16(i.unformatted_text);
+    std::u16string sanitized_text =
+        prefix + WideToUTF16(i.formatted_text) + suffix;
     SanitizeUserSuppliedString(&unsanitized_text);
     EXPECT_EQ(sanitized_text, unsanitized_text);
   }
@@ -542,13 +561,18 @@ class SetICULocaleTest : public PlatformTest {};
 TEST_F(SetICULocaleTest, OverlongLocaleId) {
   test::ScopedRestoreICUDefaultLocale restore_locale;
   std::string id("fr-ca-x-foo");
-  while (id.length() < 152)
+  std::string lid("fr_CA@x=foo");
+  while (id.length() < 152) {
     id.append("-x-foo");
+    lid.append("-x-foo");
+  }
   SetICUDefaultLocale(id);
   EXPECT_STRNE("en_US", icu::Locale::getDefault().getName());
   id.append("zzz");
+  lid.append("zzz");
   SetICUDefaultLocale(id);
-  EXPECT_STREQ("en_US", icu::Locale::getDefault().getName());
+  // ICU-21639 fix the long locale issue now.
+  EXPECT_STREQ(lid.c_str(), icu::Locale::getDefault().getName());
 }
 
 }  // namespace i18n

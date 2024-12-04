@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,6 +11,7 @@
 #include <utility>
 
 #include "base/check_op.h"
+#include "base/containers/cxx20_erase.h"
 #include "base/notreached.h"
 #include "extensions/browser/api/declarative_net_request/request_action.h"
 #include "extensions/browser/api/declarative_net_request/request_params.h"
@@ -60,24 +61,52 @@ size_t GetRulesCountInternal(
 ExtensionUrlPatternIndexMatcher::ExtensionUrlPatternIndexMatcher(
     const ExtensionId& extension_id,
     RulesetID ruleset_id,
-    const ExtensionUrlPatternIndexMatcher::UrlPatternIndexList* index_list,
+    const ExtensionUrlPatternIndexMatcher::UrlPatternIndexList*
+        before_request_index_list,
+    const ExtensionUrlPatternIndexMatcher::UrlPatternIndexList*
+        headers_received_index_list,
     const ExtensionMetadataList* metadata_list)
     : RulesetMatcherBase(extension_id, ruleset_id),
       metadata_list_(metadata_list),
-      matchers_(GetMatchers(index_list)),
-      is_extra_headers_matcher_(IsExtraHeadersMatcherInternal(matchers_)),
-      rules_count_(GetRulesCountInternal(matchers_)) {}
+      before_request_matchers_(GetMatchers(before_request_index_list)),
+      headers_received_matchers_(GetMatchers(headers_received_index_list)),
+      // TODO(kelvinjiang): Consider separating this condition for request and
+      // response headers so extra headers are only included for the phases
+      // that need them.
+      is_extra_headers_matcher_(
+          IsExtraHeadersMatcherInternal(before_request_matchers_) ||
+          IsExtraHeadersMatcherInternal(headers_received_matchers_)),
+      before_request_rules_count_(
+          GetRulesCountInternal(before_request_matchers_)),
+      headers_received_rules_count_(
+          GetRulesCountInternal(headers_received_matchers_)) {}
 
 ExtensionUrlPatternIndexMatcher::~ExtensionUrlPatternIndexMatcher() = default;
 
-base::Optional<RequestAction>
+bool ExtensionUrlPatternIndexMatcher::IsExtraHeadersMatcher() const {
+  return is_extra_headers_matcher_;
+}
+
+size_t ExtensionUrlPatternIndexMatcher::GetRulesCount() const {
+  return before_request_rules_count_ + headers_received_rules_count_;
+}
+
+size_t ExtensionUrlPatternIndexMatcher::GetBeforeRequestRulesCount() const {
+  return before_request_rules_count_;
+}
+
+size_t ExtensionUrlPatternIndexMatcher::GetHeadersReceivedRulesCount() const {
+  return headers_received_rules_count_;
+}
+
+std::optional<RequestAction>
 ExtensionUrlPatternIndexMatcher::GetAllowAllRequestsAction(
     const RequestParams& params) const {
-  const flat_rule::UrlRule* rule =
-      GetMatchingRule(params, flat::IndexType_allow_all_requests,
-                      FindRuleStrategy::kHighestPriority);
+  const flat_rule::UrlRule* rule = GetMatchingRule(
+      params, before_request_matchers_, flat::IndexType_allow_all_requests,
+      FindRuleStrategy::kHighestPriority);
   if (!rule)
-    return base::nullopt;
+    return std::nullopt;
 
   return CreateAllowAllRequestsAction(params, *rule);
 }
@@ -85,11 +114,11 @@ ExtensionUrlPatternIndexMatcher::GetAllowAllRequestsAction(
 std::vector<RequestAction>
 ExtensionUrlPatternIndexMatcher::GetModifyHeadersActions(
     const RequestParams& params,
-    base::Optional<uint64_t> min_priority) const {
+    std::optional<uint64_t> min_priority) const {
   // TODO(crbug.com/1083178): Plumb |min_priority| into UrlPatternIndexMatcher
   // to prune more rules before matching on url filters.
-  std::vector<const flat_rule::UrlRule*> rules =
-      GetAllMatchingRules(params, flat::IndexType_modify_headers);
+  std::vector<const flat_rule::UrlRule*> rules = GetAllMatchingRules(
+      params, before_request_matchers_, flat::IndexType_modify_headers);
 
   if (min_priority) {
     base::EraseIf(rules, [&min_priority](const flat_rule::UrlRule* rule) {
@@ -100,21 +129,30 @@ ExtensionUrlPatternIndexMatcher::GetModifyHeadersActions(
   return GetModifyHeadersActionsFromMetadata(params, rules, *metadata_list_);
 }
 
-base::Optional<RequestAction>
+std::optional<RequestAction>
 ExtensionUrlPatternIndexMatcher::GetBeforeRequestActionIgnoringAncestors(
     const RequestParams& params) const {
-  return GetMaxPriorityAction(GetBeforeRequestActionHelper(params),
+  return GetMaxPriorityAction(GetActionHelper(params, before_request_matchers_),
                               GetAllowAllRequestsAction(params));
 }
 
-base::Optional<RequestAction>
-ExtensionUrlPatternIndexMatcher::GetBeforeRequestActionHelper(
+std::optional<RequestAction>
+ExtensionUrlPatternIndexMatcher::GetHeadersReceivedActionIgnoringAncestors(
     const RequestParams& params) const {
-  const flat_rule::UrlRule* rule = GetMatchingRule(
-      params, flat::IndexType_before_request_except_allow_all_requests,
-      FindRuleStrategy::kHighestPriority);
+  // TODO(crbug.com/1141166): Investigate how matching allowAllRequests rules
+  // from other request stages may affect which action to return.
+  return GetActionHelper(params, headers_received_matchers_);
+}
+
+std::optional<RequestAction> ExtensionUrlPatternIndexMatcher::GetActionHelper(
+    const RequestParams& params,
+    const std::vector<UrlPatternIndexMatcher>& matchers) const {
+  const flat_rule::UrlRule* rule =
+      GetMatchingRule(params, matchers,
+                      flat::IndexType_before_request_except_allow_all_requests,
+                      FindRuleStrategy::kHighestPriority);
   if (!rule)
-    return base::nullopt;
+    return std::nullopt;
 
   const flat::UrlRuleMetadata* metadata =
       metadata_list_->LookupByKey(rule->id());
@@ -135,11 +173,12 @@ ExtensionUrlPatternIndexMatcher::GetBeforeRequestActionHelper(
       NOTREACHED();
   }
 
-  return base::nullopt;
+  return std::nullopt;
 }
 
 const flat_rule::UrlRule* ExtensionUrlPatternIndexMatcher::GetMatchingRule(
     const RequestParams& params,
+    const std::vector<UrlPatternIndexMatcher>& matchers,
     flat::IndexType index,
     FindRuleStrategy strategy) const {
   DCHECK_LT(index, flat::IndexType_count);
@@ -150,15 +189,17 @@ const flat_rule::UrlRule* ExtensionUrlPatternIndexMatcher::GetMatchingRule(
   // an empty included domains list.
   const bool kDisableGenericRules = false;
 
-  return matchers_[index].FindMatch(
+  return matchers[index].FindMatch(
       *params.url, params.first_party_origin, params.element_type,
-      flat_rule::ActivationType_NONE, params.is_third_party,
-      kDisableGenericRules, strategy);
+      flat_rule::ActivationType_NONE, params.method, params.is_third_party,
+      kDisableGenericRules, params.embedder_conditions_matcher, strategy,
+      disabled_rule_ids_);
 }
 
 std::vector<const url_pattern_index::flat::UrlRule*>
 ExtensionUrlPatternIndexMatcher::GetAllMatchingRules(
     const RequestParams& params,
+    const std::vector<UrlPatternIndexMatcher>& matchers,
     flat::IndexType index) const {
   DCHECK_LT(index, flat::IndexType_count);
   DCHECK_GE(index, 0);
@@ -168,10 +209,22 @@ ExtensionUrlPatternIndexMatcher::GetAllMatchingRules(
   // an empty included domains list.
   const bool kDisableGenericRules = false;
 
-  return matchers_[index].FindAllMatches(
+  return matchers[index].FindAllMatches(
       *params.url, params.first_party_origin, params.element_type,
-      flat_rule::ActivationType_NONE, params.is_third_party,
-      kDisableGenericRules);
+      flat_rule::ActivationType_NONE, params.method, params.is_third_party,
+      kDisableGenericRules, params.embedder_conditions_matcher,
+      disabled_rule_ids_);
+}
+
+void ExtensionUrlPatternIndexMatcher::SetDisabledRuleIds(
+    base::flat_set<int> disabled_rule_ids) {
+  disabled_rule_ids_ = std::move(disabled_rule_ids);
+  disabled_rule_ids_.shrink_to_fit();
+}
+
+const base::flat_set<int>&
+ExtensionUrlPatternIndexMatcher::GetDisabledRuleIdsForTesting() const {
+  return disabled_rule_ids_;
 }
 
 }  // namespace declarative_net_request

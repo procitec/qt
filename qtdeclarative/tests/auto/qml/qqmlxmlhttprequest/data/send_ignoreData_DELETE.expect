@@ -1,7 +1,8 @@
 DELETE /testdocument.html HTTP/1.1
-Accept-Language: en-US
-Connection: Keep-Alive
-Accept-Encoding: gzip, deflate
-User-Agent: Mozilla/5.0
-Host: {{ServerHostUrl}}
+accept-language: {{Ignore}}
+connection: Keep-Alive{{Ignore}}
+http2-settings: {{Ignore}}
+accept-encoding: {{Ignore}}
+user-agent: Mozilla/5.0
+host: {{ServerHostUrl}}
 

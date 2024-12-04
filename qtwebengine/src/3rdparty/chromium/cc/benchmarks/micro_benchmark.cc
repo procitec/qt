@@ -1,25 +1,22 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "cc/benchmarks/micro_benchmark.h"
 
-#include <memory>
+#include <utility>
 
-#include "base/callback.h"
 #include "base/check.h"
+#include "base/functional/callback.h"
 #include "base/memory/ptr_util.h"
-#include "base/single_thread_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/values.h"
 #include "cc/benchmarks/micro_benchmark_impl.h"
 
 namespace cc {
 
 MicroBenchmark::MicroBenchmark(DoneCallback callback)
-    : callback_(std::move(callback)),
-      is_done_(false),
-      processed_for_benchmark_impl_(false),
-      id_(0) {}
+    : callback_(std::move(callback)) {}
 
 MicroBenchmark::~MicroBenchmark() = default;
 
@@ -29,14 +26,14 @@ bool MicroBenchmark::IsDone() const {
 
 void MicroBenchmark::DidUpdateLayers(LayerTreeHost* layer_tree_host) {}
 
-void MicroBenchmark::NotifyDone(std::unique_ptr<base::Value> result) {
+void MicroBenchmark::NotifyDone(base::Value::Dict result) {
   std::move(callback_).Run(std::move(result));
   is_done_ = true;
 }
 
 void MicroBenchmark::RunOnLayer(PictureLayer* layer) {}
 
-bool MicroBenchmark::ProcessMessage(std::unique_ptr<base::Value> value) {
+bool MicroBenchmark::ProcessMessage(base::Value::Dict message) {
   return false;
 }
 

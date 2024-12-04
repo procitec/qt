@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,10 +7,10 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback.h"
-#include "base/task_runner_util.h"
-#include "base/threading/sequenced_task_runner_handle.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
+#include "base/task/sequenced_task_runner.h"
+#include "build/build_config.h"
 #include "components/viz/common/frame_sinks/copy_output_request.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/aura/window.h"
@@ -34,11 +34,12 @@ static void MakeAsyncCopyRequest(
     viz::CopyOutputRequest::CopyOutputRequestCallback callback) {
   std::unique_ptr<viz::CopyOutputRequest> request =
       std::make_unique<viz::CopyOutputRequest>(
-          viz::CopyOutputRequest::ResultFormat::RGBA_BITMAP,
+          viz::CopyOutputRequest::ResultFormat::RGBA,
+          viz::CopyOutputRequest::ResultDestination::kSystemMemory,
           std::move(callback));
   request->set_area(source_rect);
   request->set_result_task_runner(
-      base::SequencedTaskRunnerHandle::Get());
+      base::SequencedTaskRunner::GetCurrentDefault());
   layer->RequestCopyOfOutput(std::move(request));
 }
 
@@ -80,11 +81,10 @@ static void MakeInitialAsyncCopyRequest(
                      std::move(callback), 0));
 }
 
-void GrabWindowSnapshotAndScaleAsyncAura(
-    aura::Window* window,
-    const gfx::Rect& source_rect,
-    const gfx::Size& target_size,
-    GrabWindowSnapshotAsyncCallback callback) {
+void GrabWindowSnapshotAndScaleAsyncAura(aura::Window* window,
+                                         const gfx::Rect& source_rect,
+                                         const gfx::Size& target_size,
+                                         GrabSnapshotImageCallback callback) {
   MakeInitialAsyncCopyRequest(
       window, source_rect,
       base::BindOnce(&SnapshotAsync::ScaleCopyOutputResult, std::move(callback),
@@ -93,50 +93,38 @@ void GrabWindowSnapshotAndScaleAsyncAura(
 
 void GrabWindowSnapshotAsyncAura(aura::Window* window,
                                  const gfx::Rect& source_rect,
-                                 GrabWindowSnapshotAsyncCallback callback) {
+                                 GrabSnapshotImageCallback callback) {
   MakeInitialAsyncCopyRequest(
       window, source_rect,
       base::BindOnce(&SnapshotAsync::RunCallbackWithCopyOutputResult,
                      std::move(callback)));
 }
 
-#if !defined(OS_WIN)
-bool GrabWindowSnapshot(gfx::NativeWindow window,
-                        const gfx::Rect& snapshot_bounds,
-                        gfx::Image* image) {
-  // Not supported in Aura.  Callers should fall back to the async version.
-  return false;
-}
-
-bool GrabViewSnapshot(gfx::NativeView view,
-                      const gfx::Rect& snapshot_bounds,
-                      gfx::Image* image) {
-  return GrabWindowSnapshot(view, snapshot_bounds, image);
-}
+#if !BUILDFLAG(IS_WIN)
 
 void GrabWindowSnapshotAndScaleAsync(gfx::NativeWindow window,
                                      const gfx::Rect& source_rect,
                                      const gfx::Size& target_size,
-                                     GrabWindowSnapshotAsyncCallback callback) {
+                                     GrabSnapshotImageCallback callback) {
   GrabWindowSnapshotAndScaleAsyncAura(window, source_rect, target_size,
                                       std::move(callback));
 }
 
 void GrabWindowSnapshotAsync(gfx::NativeWindow window,
                              const gfx::Rect& source_rect,
-                             GrabWindowSnapshotAsyncCallback callback) {
+                             GrabSnapshotImageCallback callback) {
   GrabWindowSnapshotAsyncAura(window, source_rect, std::move(callback));
 }
 
 void GrabViewSnapshotAsync(gfx::NativeView view,
                            const gfx::Rect& source_rect,
-                           GrabWindowSnapshotAsyncCallback callback) {
+                           GrabSnapshotImageCallback callback) {
   GrabWindowSnapshotAsyncAura(view, source_rect, std::move(callback));
 }
 
 void GrabLayerSnapshotAsync(ui::Layer* layer,
                             const gfx::Rect& source_rect,
-                            GrabWindowSnapshotAsyncCallback callback) {
+                            GrabSnapshotImageCallback callback) {
   MakeAsyncCopyRequest(
       layer, source_rect,
       base::BindOnce(&SnapshotAsync::RunCallbackWithCopyOutputResult,

@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2018 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QML preview debug service.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2018 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qqmlpreviewfileengine.h"
 #include "qqmlpreviewservice.h"
@@ -54,7 +18,7 @@ static bool isRelative(const QString &path)
         return true;
     if (path.at(0) == '/')
         return false;
-    if (path.at(0) == ':' && path.length() >= 2 && path.at(1) == '/')
+    if (path.at(0) == ':' && path.size() >= 2 && path.at(1) == '/')
         return false;
 #ifdef Q_OS_WIN
     if (path.length() >= 2 && path.at(1) == ':')
@@ -76,12 +40,11 @@ bool isRootPath(const QString &path)
 class QQmlPreviewFileEngineIterator : public QAbstractFileEngineIterator
 {
 public:
-    QQmlPreviewFileEngineIterator(QDir::Filters filters, const QStringList &filterNames,
-                                  const QStringList &m_entries);
+    QQmlPreviewFileEngineIterator(const QString &path, QDirListing::IteratorFlags filters,
+                                  const QStringList &filterNames, const QStringList &m_entries);
     ~QQmlPreviewFileEngineIterator();
 
-    QString next() override;
-    bool hasNext() const override;
+    bool advance() override;
     QString currentFileName() const override;
 
 private:
@@ -89,10 +52,11 @@ private:
     int m_index;
 };
 
-QQmlPreviewFileEngineIterator::QQmlPreviewFileEngineIterator(QDir::Filters filters,
+QQmlPreviewFileEngineIterator::QQmlPreviewFileEngineIterator(const QString &path,
+                                                             QDirListing::IteratorFlags filters,
                                                              const QStringList &filterNames,
                                                              const QStringList &entries)
-    : QAbstractFileEngineIterator(filters, filterNames), m_entries(entries), m_index(0)
+    : QAbstractFileEngineIterator(path, filters, filterNames), m_entries(entries), m_index(0)
 {
 }
 
@@ -100,17 +64,13 @@ QQmlPreviewFileEngineIterator::~QQmlPreviewFileEngineIterator()
 {
 }
 
-QString QQmlPreviewFileEngineIterator::next()
+bool QQmlPreviewFileEngineIterator::advance()
 {
-    if (!hasNext())
-        return QString();
-    ++m_index;
-    return currentFilePath();
-}
+    if (m_index >= m_entries.size())
+        return false;
 
-bool QQmlPreviewFileEngineIterator::hasNext() const
-{
-    return m_index < m_entries.size();
+    ++m_index;
+    return true;
 }
 
 QString QQmlPreviewFileEngineIterator::currentFileName() const
@@ -138,7 +98,8 @@ void QQmlPreviewFileEngine::setFileName(const QString &file)
     load();
 }
 
-bool QQmlPreviewFileEngine::open(QIODevice::OpenMode flags)
+bool QQmlPreviewFileEngine::open(QIODevice::OpenMode flags,
+                                 std::optional<QFile::Permissions> permissions)
 {
     switch (m_result) {
     case QQmlPreviewFileLoader::File:
@@ -146,10 +107,9 @@ bool QQmlPreviewFileEngine::open(QIODevice::OpenMode flags)
     case QQmlPreviewFileLoader::Directory:
         return false;
     case QQmlPreviewFileLoader::Fallback:
-        return m_fallback->open(flags);
+        return m_fallback->open(flags, permissions);
     default:
-        Q_UNREACHABLE();
-        return false;
+        Q_UNREACHABLE_RETURN(false);
     }
 }
 
@@ -164,8 +124,7 @@ bool QQmlPreviewFileEngine::close()
     case QQmlPreviewFileLoader::Directory:
         return false;
     default:
-        Q_UNREACHABLE();
-        return false;
+        Q_UNREACHABLE_RETURN(false);
     }
 }
 
@@ -252,14 +211,15 @@ uint QQmlPreviewFileEngine::ownerId(QAbstractFileEngine::FileOwner owner) const
     return m_fallback ? m_fallback->ownerId(owner) : static_cast<uint>(-2);
 }
 
-QAbstractFileEngine::Iterator *QQmlPreviewFileEngine::beginEntryList(QDir::Filters filters,
-                                                                     const QStringList &filterNames)
+QAbstractFileEngine::IteratorUniquePtr QQmlPreviewFileEngine::beginEntryList(
+        const QString &path, QDirListing::IteratorFlags filters, const QStringList &filterNames)
 {
-    return m_fallback ? m_fallback->beginEntryList(filters, filterNames)
-                      : new QQmlPreviewFileEngineIterator(filters, filterNames, m_entries);
+    return m_fallback ? m_fallback->beginEntryList(path, filters, filterNames)
+                      : std::make_unique<QQmlPreviewFileEngineIterator>(
+                              path, filters, filterNames, m_entries);
 }
 
-QAbstractFileEngine::Iterator *QQmlPreviewFileEngine::endEntryList()
+QAbstractFileEngine::IteratorUniquePtr QQmlPreviewFileEngine::endEntryList()
 {
     return m_fallback ? m_fallback->endEntryList() : nullptr;
 }
@@ -304,9 +264,10 @@ bool QQmlPreviewFileEngine::link(const QString &newName)
     return m_fallback ? m_fallback->link(newName) : false;
 }
 
-bool QQmlPreviewFileEngine::mkdir(const QString &dirName, bool createParentDirectories) const
+bool QQmlPreviewFileEngine::mkdir(const QString &dirName, bool createParentDirectories,
+                                  std::optional<QFile::Permissions> permissions) const
 {
-    return m_fallback ? m_fallback->mkdir(dirName, createParentDirectories) : false;
+    return m_fallback ? m_fallback->mkdir(dirName, createParentDirectories, permissions) : false;
 }
 
 bool QQmlPreviewFileEngine::rmdir(const QString &dirName, bool recurseParentDirectories) const
@@ -327,8 +288,7 @@ bool QQmlPreviewFileEngine::setSize(qint64 size)
     case QQmlPreviewFileLoader::Directory:
         return false;
     default:
-        Q_UNREACHABLE();
-        return false;
+        Q_UNREACHABLE_RETURN(false);
     }
 }
 
@@ -364,7 +324,7 @@ QString QQmlPreviewFileEngine::owner(FileOwner owner) const
     return m_fallback ? m_fallback->owner(owner) : QString();
 }
 
-QDateTime QQmlPreviewFileEngine::fileTime(FileTime time) const
+QDateTime QQmlPreviewFileEngine::fileTime(QFile::FileTime time) const
 {
     // Files we replace are always newer than the ones we had before. This makes the QML engine
     // actually recompile them, rather than pick them from the cache.
@@ -415,7 +375,7 @@ void QQmlPreviewFileEngine::load() const
         m_entries = m_loader->entries();
         break;
     case QQmlPreviewFileLoader::Fallback:
-        m_fallback.reset(QAbstractFileEngine::create(m_name));
+        m_fallback = QAbstractFileEngine::create(m_name);
         break;
     case QQmlPreviewFileLoader::Unknown:
         Q_UNREACHABLE();
@@ -428,12 +388,25 @@ QQmlPreviewFileEngineHandler::QQmlPreviewFileEngineHandler(QQmlPreviewFileLoader
 {
 }
 
-QAbstractFileEngine *QQmlPreviewFileEngineHandler::create(const QString &fileName) const
+std::unique_ptr<QAbstractFileEngine> QQmlPreviewFileEngineHandler::create(
+        const QString &fileName) const
 {
-    // Don't load compiled QML/JS over the network
-    if (fileName.endsWith(".qmlc") || fileName.endsWith(".jsc") || isRootPath(fileName)) {
-        return nullptr;
+    using namespace Qt::StringLiterals;
+    static QList<QLatin1StringView> prohibitedSuffixes {
+        // Don't load compiled QML/JS over the network
+        ".qmlc"_L1, ".jsc"_L1, ".mjsc"_L1,
+
+        // Don't load plugins over the network
+        ".dll"_L1, ".so"_L1, ".dylib"_L1
+    };
+
+    for (QLatin1StringView suffix : prohibitedSuffixes) {
+        if (fileName.endsWith(suffix))
+            return nullptr;
     }
+
+    if (isRootPath(fileName))
+        return nullptr;
 
     QString relative = fileName;
     while (relative.endsWith('/'))
@@ -444,8 +417,10 @@ QAbstractFileEngine *QQmlPreviewFileEngineHandler::create(const QString &fileNam
 
     const QString absolute = relative.startsWith(':') ? relative : absolutePath(relative);
 
-    return m_loader->isBlacklisted(absolute)
-            ? nullptr : new QQmlPreviewFileEngine(relative, absolute, m_loader.data());
+    if (m_loader->isBlacklisted(absolute))
+        return {};
+
+    return std::make_unique<QQmlPreviewFileEngine>(relative, absolute, m_loader.data());
 }
 
 QT_END_NAMESPACE

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,9 +7,8 @@
 
 #include <memory>
 
-#include "base/macros.h"
-#include "base/single_thread_task_runner.h"
 #include "base/system/system_monitor.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/threading/thread_checker.h"
 #include "media/base/media_export.h"
 
@@ -28,6 +27,10 @@ class MEDIA_EXPORT DeviceMonitorMac {
   // enumeration will occur.
   explicit DeviceMonitorMac(
       scoped_refptr<base::SingleThreadTaskRunner> device_task_runner);
+
+  DeviceMonitorMac(const DeviceMonitorMac&) = delete;
+  DeviceMonitorMac& operator=(const DeviceMonitorMac&) = delete;
+
   ~DeviceMonitorMac();
 
   // Registers the observers for the video device removal, connection and
@@ -36,9 +39,10 @@ class MEDIA_EXPORT DeviceMonitorMac {
   void StartMonitoring();
 
   // Method called by the internal DeviceMonitorMacImpl object
-  // |device_monitor_impl_| when a device of type |type| has been added to or
-  // removed from the system. This code executes in the notification thread.
-  void NotifyDeviceChanged(base::SystemMonitor::DeviceType type);
+  // |device_monitor_impl_| when a device of type DEVTYPE_VIDEO_CAPTURE has been
+  // added to or removed from the system. This code executes in the notification
+  // thread.
+  void NotifyDeviceChanged();
 
  private:
   scoped_refptr<base::SingleThreadTaskRunner> device_task_runner_;
@@ -47,8 +51,6 @@ class MEDIA_EXPORT DeviceMonitorMac {
   // |thread_checker_| is used to check that constructor and StartMonitoring()
   // are called in the correct thread, the UI thread, that also owns the object.
   base::ThreadChecker thread_checker_;
-
-  DISALLOW_COPY_AND_ASSIGN(DeviceMonitorMac);
 };
 
 }  // namespace media

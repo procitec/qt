@@ -1,13 +1,11 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/security_interstitials/content/blocked_interception_blocking_page.h"
 
-#include "components/security_interstitials/content/cert_report_helper.h"
 #include "components/security_interstitials/content/security_interstitial_controller_client.h"
 #include "components/security_interstitials/content/security_interstitial_page.h"
-#include "components/security_interstitials/content/ssl_cert_reporter.h"
 #include "components/security_interstitials/core/metrics_helper.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
@@ -16,7 +14,6 @@
 #include "content/public/browser/ssl_status.h"
 #include "content/public/browser/web_contents.h"
 #include "net/base/net_errors.h"
-#include "third_party/blink/public/mojom/renderer_preferences.mojom.h"
 
 using content::NavigationController;
 using content::NavigationEntry;
@@ -36,19 +33,18 @@ BlockedInterceptionBlockingPage::BlockedInterceptionBlockingPage(
     content::WebContents* web_contents,
     int cert_error,
     const GURL& request_url,
-    std::unique_ptr<SSLCertReporter> ssl_cert_reporter,
+    bool can_show_enhanced_protection_message,
     const net::SSLInfo& ssl_info,
     std::unique_ptr<
         security_interstitials::SecurityInterstitialControllerClient>
         controller_client)
     : SSLBlockingPageBase(
           web_contents,
-          CertificateErrorReport::INTERSTITIAL_BLOCKED_INTERCEPTION,
           ssl_info,
           request_url,
-          std::move(ssl_cert_reporter),
           true /* overridable */,
           base::Time::Now(),
+          can_show_enhanced_protection_message,
           std::move(controller_client)),
       ssl_info_(ssl_info),
       blocked_interception_ui_(
@@ -65,10 +61,10 @@ BlockedInterceptionBlockingPage::GetTypeForTesting() {
 }
 
 void BlockedInterceptionBlockingPage::PopulateInterstitialStrings(
-    base::DictionaryValue* load_time_data) {
+    base::Value::Dict& load_time_data) {
   blocked_interception_ui_->PopulateStringsForHTML(load_time_data);
-  cert_report_helper()->PopulateExtendedReportingOption(load_time_data);
-  cert_report_helper()->PopulateEnhancedProtectionMessage(load_time_data);
+
+  PopulateEnhancedProtectionMessage(load_time_data);
 }
 
 // This handles the commands sent from the interstitial JavaScript.
@@ -84,12 +80,6 @@ void BlockedInterceptionBlockingPage::CommandReceived(
   bool retval = base::StringToInt(command, &cmd);
   DCHECK(retval);
 
-  // Let the CertReportHelper handle commands first, This allows it to get set
-  // up to send reports, so that the report is populated properly if
-  // BlockedInterceptionUI's command handling triggers a report to be sent.
-  cert_report_helper()->HandleReportingCommands(
-      static_cast<security_interstitials::SecurityInterstitialCommand>(cmd),
-      controller()->GetPrefService());
   blocked_interception_ui_->HandleCommand(
       static_cast<security_interstitials::SecurityInterstitialCommand>(cmd));
 }

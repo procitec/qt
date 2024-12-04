@@ -1,13 +1,15 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef CONTENT_BROWSER_WEBSOCKETS_WEBSOCKET_CONNECTOR_IMPL_H_
 #define CONTENT_BROWSER_WEBSOCKETS_WEBSOCKET_CONNECTOR_IMPL_H_
 
+#include <optional>
 #include <string>
 #include <vector>
-#include "base/optional.h"
+
+#include "base/unguessable_token.h"
 #include "content/public/browser/content_browser_client.h"
 #include "net/base/isolation_info.h"
 #include "services/network/public/mojom/network_context.mojom.h"
@@ -39,24 +41,30 @@ class WebSocketConnectorImpl final : public blink::mojom::WebSocketConnector {
   void Connect(const GURL& url,
                const std::vector<std::string>& requested_protocols,
                const net::SiteForCookies& site_for_cookies,
-               const base::Optional<std::string>& user_agent,
+               const std::optional<std::string>& user_agent,
+               bool has_storage_access,
                mojo::PendingRemote<network::mojom::WebSocketHandshakeClient>
-                   handshake_client) override;
+                   handshake_client,
+               const std::optional<base::UnguessableToken>&
+                   throttling_profile_id) override;
 
  private:
   static void ConnectCalledByContentBrowserClient(
       const std::vector<std::string>& requested_protocols,
       const net::SiteForCookies& site_for_cookies,
+      bool has_storage_access,
       const net::IsolationInfo& isolation_info,
       int process_id,
       int frame_id,
       const url::Origin& origin,
       uint32_t options,
+      std::optional<base::UnguessableToken> throttling_profile_id,
       const GURL& url,
       std::vector<network::mojom::HttpHeaderPtr> additional_headers,
       mojo::PendingRemote<network::mojom::WebSocketHandshakeClient>
           handshake_client,
-      mojo::PendingRemote<network::mojom::AuthenticationHandler> auth_handler,
+      mojo::PendingRemote<network::mojom::WebSocketAuthenticationHandler>
+          auth_handler,
       mojo::PendingRemote<network::mojom::TrustedHeaderClient>
           trusted_header_client);
 

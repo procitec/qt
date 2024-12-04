@@ -25,46 +25,52 @@
 
 #include "third_party/blink/renderer/core/html/html_link_element.h"
 
+#include <utility>
+
+#include "base/numerics/safe_conversions.h"
 #include "third_party/blink/public/platform/task_type.h"
 #include "third_party/blink/public/platform/web_icon_sizes_parser.h"
 #include "third_party/blink/public/platform/web_prescient_networking.h"
-#include "third_party/blink/public/platform/web_size.h"
-#include "third_party/blink/renderer/bindings/core/v8/script_event_listener.h"
 #include "third_party/blink/renderer/core/core_initializer.h"
 #include "third_party/blink/renderer/core/dom/attribute.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
-#include "third_party/blink/renderer/core/frame/deprecation.h"
 #include "third_party/blink/renderer/core/frame/frame_console.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame_client.h"
 #include "third_party/blink/renderer/core/html/cross_origin_attribute.h"
-#include "third_party/blink/renderer/core/html/imports/link_import.h"
 #include "third_party/blink/renderer/core/html/link_manifest.h"
-#include "third_party/blink/renderer/core/html/link_web_bundle.h"
 #include "third_party/blink/renderer/core/html_names.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
 #include "third_party/blink/renderer/core/loader/link_loader.h"
+#include "third_party/blink/renderer/core/loader/render_blocking_resource_manager.h"
 #include "third_party/blink/renderer/core/origin_trials/origin_trial_context.h"
-#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/weborigin/security_policy.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 
 namespace blink {
+namespace {
+
+AtomicString ParseHrefAsId(const String& href) {
+  if (href.empty() || href[0] != '#') {
+    return AtomicString();
+  }
+  auto result = AtomicString(href.Substring(1));
+  return result;
+}
+
+}  // namespace
 
 HTMLLinkElement::HTMLLinkElement(Document& document,
                                  const CreateElementFlags flags)
     : HTMLElement(html_names::kLinkTag, document),
-      link_loader_(
-          MakeGarbageCollected<LinkLoader>(this, GetLoadingTaskRunner())),
-      referrer_policy_(network::mojom::ReferrerPolicy::kDefault),
+      link_loader_(MakeGarbageCollected<LinkLoader>(this)),
       sizes_(MakeGarbageCollected<DOMTokenList>(*this, html_names::kSizesAttr)),
       rel_list_(MakeGarbageCollected<RelList>(this)),
-      resources_(
-          MakeGarbageCollected<DOMTokenList>(*this,
-                                             html_names::kResourcesAttr)),
+      blocking_attribute_(MakeGarbageCollected<BlockingAttribute>(this)),
       created_by_parser_(flags.IsCreatedByParser()) {}
 
 HTMLLinkElement::~HTMLLinkElement() = default;
@@ -74,28 +80,16 @@ void HTMLLinkElement::ParseAttribute(
   const QualifiedName& name = params.name;
   const AtomicString& value = params.new_value;
   if (name == html_names::kRelAttr) {
+    // We're about to change the rel attribute. If it was "expect", first remove
+    // it from a render blocking list.
+    RemoveExpectRenderBlockingLink();
+
     rel_attribute_ = LinkRelAttribute(value);
-    if (rel_attribute_.IsImport()) {
-      if (RuntimeEnabledFeatures::HTMLImportsEnabled(GetExecutionContext())) {
-        Deprecation::CountDeprecation(GetExecutionContext(),
-                                      WebFeature::kHTMLImports);
-      } else {
-        // Show a warning that HTML Imports (<link rel=import>) were detected,
-        // but HTML Imports have been disabled. Without this, the failure would
-        // be silent.
-        if (LocalDOMWindow* window = GetDocument().ExecutingWindow()) {
-          window->AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
-              mojom::blink::ConsoleMessageSource::kRendering,
-              mojom::blink::ConsoleMessageLevel::kWarning,
-              "HTML Imports is deprecated and has now been removed as of "
-              "M80. See "
-              "https://www.chromestatus.com/features/5144752345317376 "
-              "and https://developers.google.com/web/updates/2019/07/"
-              "web-components-time-to-upgrade for more details."));
-        }
-      }
-    }
-    if (rel_attribute_.IsMonetization() && !GetDocument().ParentDocument()) {
+    // TODO(vmpstr): Add rel=expect to UseCounter.
+    AddExpectRenderBlockingLinkIfNeeded();
+
+    if (rel_attribute_.IsMonetization() &&
+        GetDocument().IsInOutermostMainFrame()) {
       // TODO(1031476): The Web Monetization specification is an unofficial
       // draft, available at https://webmonetization.org/specification.html
       // Currently it relies on a <meta> tag but there is an open issue about
@@ -105,11 +99,29 @@ void HTMLLinkElement::ParseAttribute(
       UseCounter::Count(&GetDocument(),
                         WebFeature::kHTMLLinkElementMonetization);
     }
+    if (rel_attribute_.IsCanonical() &&
+        GetDocument().IsInOutermostMainFrame()) {
+      UseCounter::Count(&GetDocument(), WebFeature::kLinkRelCanonical);
+    }
+    if (rel_attribute_.IsPrivacyPolicy()) {
+      UseCounter::Count(&GetDocument(), WebFeature::kLinkRelPrivacyPolicy);
+    }
+    if (rel_attribute_.IsTermsOfService()) {
+      UseCounter::Count(&GetDocument(), WebFeature::kLinkRelTermsOfService);
+    }
     rel_list_->DidUpdateAttributeValue(params.old_value, value);
     Process();
+  } else if (name == html_names::kBlockingAttr) {
+    blocking_attribute_->OnAttributeValueChanged(params.old_value, value);
+    if (!IsPotentiallyRenderBlocking()) {
+      if (GetLinkStyle() && GetLinkStyle()->StyleSheetIsLoading())
+        GetLinkStyle()->UnblockRenderingForPendingSheet();
+    }
+    HandleExpectBlockingChanges();
   } else if (name == html_names::kHrefAttr) {
     // Log href attribute before logging resource fetching in process().
     LogUpdateAttributeIfIsolatedWorldAndInDocument("link", params);
+    HandleExpectHrefChanges(params.old_value, value);
     Process();
   } else if (name == html_names::kTypeAttr) {
     type_ = value;
@@ -128,58 +140,29 @@ void HTMLLinkElement::ParseAttribute(
     sizes_->DidUpdateAttributeValue(params.old_value, value);
     WebVector<gfx::Size> web_icon_sizes =
         WebIconSizesParser::ParseIconSizes(value);
-    icon_sizes_.resize(SafeCast<wtf_size_t>(web_icon_sizes.size()));
+    icon_sizes_.resize(base::checked_cast<wtf_size_t>(web_icon_sizes.size()));
     for (wtf_size_t i = 0; i < icon_sizes_.size(); ++i)
       icon_sizes_[i] = web_icon_sizes[i];
     Process();
   } else if (name == html_names::kMediaAttr) {
     media_ = value.LowerASCII();
-    Process();
-  } else if (name == html_names::kScopeAttr) {
-    scope_ = value;
-    Process();
+    HandleExpectMediaChanges();
+    Process(LinkLoadParameters::Reason::kMediaChange);
   } else if (name == html_names::kIntegrityAttr) {
     integrity_ = value;
-  } else if (name == html_names::kImportanceAttr &&
-             RuntimeEnabledFeatures::PriorityHintsEnabled(
-                 GetExecutionContext())) {
+  } else if (name == html_names::kFetchpriorityAttr) {
     UseCounter::Count(GetDocument(), WebFeature::kPriorityHints);
-    importance_ = value;
-  } else if (name == html_names::kResourcesAttr &&
-             RuntimeEnabledFeatures::SubresourceWebBundlesEnabled(
-                 GetExecutionContext())) {
-    resources_->DidUpdateAttributeValue(params.old_value, value);
-
-    // Parse the attribute value as a space-separated list of urls
-    SpaceSplitString urls(value);
-    valid_resource_urls_.clear();
-    valid_resource_urls_.ReserveCapacityForSize(
-        SafeCast<wtf_size_t>(urls.size()));
-    for (wtf_size_t i = 0; i < urls.size(); ++i) {
-      KURL url = LinkWebBundle::ParseResourceUrl(urls[i]);
-      if (url.IsValid()) {
-        valid_resource_urls_.insert(std::move(url));
-      }
-    }
-    Process();
+    fetch_priority_hint_ = value;
   } else if (name == html_names::kDisabledAttr) {
     UseCounter::Count(GetDocument(), WebFeature::kHTMLLinkElementDisabled);
     if (params.reason == AttributeModificationReason::kByParser)
       UseCounter::Count(GetDocument(), WebFeature::kHTMLLinkElementDisabledByParser);
-    // TODO(crbug.com/1087043): Remove this if() condition once the feature has
-    // landed and no compat issues are reported.
-    if (RuntimeEnabledFeatures::LinkDisabledNewSpecBehaviorEnabled(
-            GetExecutionContext())) {
-      LinkStyle* link = GetLinkStyle();
-      if (!link) {
-        link = MakeGarbageCollected<LinkStyle>(this);
-        link_ = link;
-      }
-      link->SetDisabledState(!value.IsNull());
-    } else {
-      if (LinkStyle* link = GetLinkStyle())
-        link->SetDisabledState(!value.IsNull());
+    LinkStyle* link = GetLinkStyle();
+    if (!link) {
+      link = MakeGarbageCollected<LinkStyle>(this);
+      link_ = link;
     }
+    link->SetDisabledState(!value.IsNull());
   } else {
     if (name == html_names::kTitleAttr) {
       if (LinkStyle* link = GetLinkStyle())
@@ -201,9 +184,14 @@ bool HTMLLinkElement::ShouldLoadLink() {
     // Load:
     // - <link> tags for stylesheets regardless of its document state
     //   (TODO: document why this is the case. kouhei@ doesn't know.)
-    // - <link> tags on html import documents.
-    if (!rel_attribute_.IsStyleSheet() && !GetDocument().IsHTMLImport())
+    if (!rel_attribute_.IsStyleSheet())
       return false;
+  }
+
+  // We don't load links for the rel=expect, since that's just an expectation of
+  // parsing of some other element on the page.
+  if (rel_attribute_.IsExpect()) {
+    return false;
   }
 
   const KURL& href = GetNonEmptyURLAttribute(html_names::kHrefAttr);
@@ -221,9 +209,11 @@ bool HTMLLinkElement::LoadLink(const LinkLoadParameters& params) {
 void HTMLLinkElement::LoadStylesheet(const LinkLoadParameters& params,
                                      const WTF::TextEncoding& charset,
                                      FetchParameters::DeferOption defer_option,
-                                     ResourceClient* link_client) {
+                                     ResourceClient* link_client,
+                                     RenderBlockingBehavior render_blocking) {
   return link_loader_->LoadStylesheet(params, localName(), charset,
-                                      defer_option, GetDocument(), link_client);
+                                      defer_option, GetDocument(), link_client,
+                                      render_blocking);
 }
 
 LinkResource* HTMLLinkElement::LinkResourceToProcess() {
@@ -234,24 +224,11 @@ LinkResource* HTMLLinkElement::LinkResourceToProcess() {
     // the sheet from the style engine and do style recalculation.
     if (GetLinkStyle() && GetLinkStyle()->HasSheet())
       return GetLinkStyle();
-    // TODO(yoav): Ideally, the element's error event would be fired here.
     return nullptr;
   }
 
   if (!link_) {
-    if (rel_attribute_.IsImport()) {
-      // Only create an import link when HTML imports are enabled.
-      if (!RuntimeEnabledFeatures::HTMLImportsEnabled(GetExecutionContext()))
-        return nullptr;
-      link_ = MakeGarbageCollected<LinkImport>(this);
-    } else if (rel_attribute_.IsWebBundle()) {
-      // Only create a webbundle link when SubresourceWebBundles are enabled.
-      if (!RuntimeEnabledFeatures::SubresourceWebBundlesEnabled(
-              GetExecutionContext())) {
-        return nullptr;
-      }
-      link_ = MakeGarbageCollected<LinkWebBundle>(this);
-    } else if (rel_attribute_.IsManifest()) {
+    if (rel_attribute_.IsManifest()) {
       link_ = MakeGarbageCollected<LinkManifest>(this);
     } else {
       auto* link = MakeGarbageCollected<LinkStyle>(this);
@@ -272,21 +249,10 @@ LinkStyle* HTMLLinkElement::GetLinkStyle() const {
   return static_cast<LinkStyle*>(link_.Get());
 }
 
-LinkImport* HTMLLinkElement::GetLinkImport() const {
-  if (!link_ || link_->GetType() != LinkResource::kImport)
-    return nullptr;
-  return static_cast<LinkImport*>(link_.Get());
-}
-
-Document* HTMLLinkElement::import() const {
-  if (LinkImport* link = GetLinkImport())
-    return link->ImportedDocument();
-  return nullptr;
-}
-
-void HTMLLinkElement::Process() {
-  if (LinkResource* link = LinkResourceToProcess())
-    link->Process();
+void HTMLLinkElement::Process(LinkLoadParameters::Reason reason) {
+  if (LinkResource* link = LinkResourceToProcess()) {
+    link->Process(reason);
+  }
 }
 
 Node::InsertionNotificationRequest HTMLLinkElement::InsertedInto(
@@ -313,6 +279,7 @@ Node::InsertionNotificationRequest HTMLLinkElement::InsertedInto(
   if (link_)
     link_->OwnerInserted();
 
+  AddExpectRenderBlockingLinkIfNeeded();
   return kInsertionDone;
 }
 
@@ -334,6 +301,8 @@ void HTMLLinkElement::RemovedFrom(ContainerNode& insertion_point) {
                                                                insertion_point);
   if (link_)
     link_->OwnerRemoved();
+
+  RemoveExpectRenderBlockingLink();
 }
 
 void HTMLLinkElement::FinishParsingChildren() {
@@ -362,28 +331,6 @@ void HTMLLinkElement::LinkLoadingErrored() {
     UseCounter::Count(GetDocument(), WebFeature::kLinkPrefetchErrorEvent);
   }
   DispatchEvent(*Event::Create(event_type_names::kError));
-}
-
-void HTMLLinkElement::DidStartLinkPrerender() {
-  DispatchEvent(*Event::Create(event_type_names::kWebkitprerenderstart));
-}
-
-void HTMLLinkElement::DidStopLinkPrerender() {
-  DispatchEvent(*Event::Create(event_type_names::kWebkitprerenderstop));
-}
-
-void HTMLLinkElement::DidSendLoadForLinkPrerender() {
-  DispatchEvent(*Event::Create(event_type_names::kWebkitprerenderload));
-}
-
-void HTMLLinkElement::DidSendDOMContentLoadedForLinkPrerender() {
-  DispatchEvent(
-      *Event::Create(event_type_names::kWebkitprerenderdomcontentloaded));
-}
-
-scoped_refptr<base::SingleThreadTaskRunner>
-HTMLLinkElement::GetLoadingTaskRunner() {
-  return GetDocument().GetTaskRunner(TaskType::kNetworking);
 }
 
 bool HTMLLinkElement::SheetLoaded() {
@@ -415,15 +362,19 @@ void HTMLLinkElement::ScheduleEvent() {
       .GetTaskRunner(TaskType::kDOMManipulation)
       ->PostTask(
           FROM_HERE,
-          WTF::Bind(&HTMLLinkElement::DispatchPendingEvent,
-                    WrapPersistent(this),
-                    WTF::Passed(std::make_unique<IncrementLoadEventDelayCount>(
-                        GetDocument()))));
+          WTF::BindOnce(
+              &HTMLLinkElement::DispatchPendingEvent, WrapPersistent(this),
+              std::make_unique<IncrementLoadEventDelayCount>(GetDocument())));
 }
 
-void HTMLLinkElement::StartLoadingDynamicSheet() {
+void HTMLLinkElement::SetToPendingState() {
   DCHECK(GetLinkStyle());
-  GetLinkStyle()->StartLoadingDynamicSheet();
+  GetLinkStyle()->SetToPendingState();
+}
+
+bool HTMLLinkElement::IsPotentiallyRenderBlocking() const {
+  return blocking_attribute_->HasRenderToken() ||
+         (IsCreatedByParser() && rel_attribute_.IsStyleSheet());
 }
 
 bool HTMLLinkElement::IsURLAttribute(const Attribute& attribute) const {
@@ -436,20 +387,9 @@ bool HTMLLinkElement::HasLegalLinkAttribute(const QualifiedName& name) const {
          HTMLElement::HasLegalLinkAttribute(name);
 }
 
-const QualifiedName& HTMLLinkElement::SubResourceAttributeName() const {
-  // If the link element is not css, ignore it.
-  if (EqualIgnoringASCIICase(FastGetAttribute(html_names::kTypeAttr),
-                             "text/css")) {
-    // FIXME: Add support for extracting links of sub-resources which
-    // are inside style-sheet such as @import, @font-face, url(), etc.
-    return html_names::kHrefAttr;
-  }
-  return HTMLElement::SubResourceAttributeName();
-}
-
 KURL HTMLLinkElement::Href() const {
   const String& url = FastGetAttribute(html_names::kHrefAttr);
-  if (url.IsEmpty())
+  if (url.empty())
     return KURL();
   return GetDocument().CompleteURL(url);
 }
@@ -478,18 +418,95 @@ DOMTokenList* HTMLLinkElement::sizes() const {
   return sizes_.Get();
 }
 
-DOMTokenList* HTMLLinkElement::resources() const {
-  return resources_.Get();
-}
-
 void HTMLLinkElement::Trace(Visitor* visitor) const {
   visitor->Trace(link_);
   visitor->Trace(sizes_);
   visitor->Trace(link_loader_);
   visitor->Trace(rel_list_);
-  visitor->Trace(resources_);
+  visitor->Trace(blocking_attribute_);
   HTMLElement::Trace(visitor);
   LinkLoaderClient::Trace(visitor);
+}
+
+void HTMLLinkElement::HandleExpectBlockingChanges() {
+  if (!rel_attribute_.IsExpect()) {
+    return;
+  }
+
+  if (blocking_attribute_->HasRenderToken()) {
+    AddExpectRenderBlockingLinkIfNeeded();
+  } else {
+    RemoveExpectRenderBlockingLink();
+  }
+}
+
+void HTMLLinkElement::HandleExpectHrefChanges(const String& old_value,
+                                              const String& new_value) {
+  if (!rel_attribute_.IsExpect()) {
+    return;
+  }
+
+  RemoveExpectRenderBlockingLink(old_value);
+  AddExpectRenderBlockingLinkIfNeeded(new_value);
+}
+
+bool HTMLLinkElement::MediaQueryMatches() const {
+  if (LocalFrame* frame = GetDocument().GetFrame(); frame && !media_.empty()) {
+    auto* media_queries =
+        MediaQuerySet::Create(media_, GetDocument().GetExecutionContext());
+    MediaQueryEvaluator evaluator(frame);
+    return evaluator.Eval(*media_queries);
+  }
+  return true;
+}
+
+void HTMLLinkElement::HandleExpectMediaChanges() {
+  if (!rel_attribute_.IsExpect()) {
+    return;
+  }
+
+  if (MediaQueryMatches()) {
+    AddExpectRenderBlockingLinkIfNeeded(String(),
+                                        /*media_known_to_match=*/true);
+  } else {
+    RemoveExpectRenderBlockingLink();
+  }
+}
+
+void HTMLLinkElement::RemoveExpectRenderBlockingLink(const String& href) {
+  if (!rel_attribute_.IsExpect()) {
+    return;
+  }
+
+  if (auto* render_blocking_resource_manager =
+          GetDocument().GetRenderBlockingResourceManager()) {
+    render_blocking_resource_manager->RemovePendingParsingElementLink(
+        ParseHrefAsId(href.IsNull() ? FastGetAttribute(html_names::kHrefAttr)
+                                    : href),
+        this);
+  }
+}
+
+void HTMLLinkElement::AddExpectRenderBlockingLinkIfNeeded(
+    const String& href,
+    bool media_known_to_match) {
+  if (!rel_attribute_.IsExpect()) {
+    return;
+  }
+
+  bool media_matches = media_known_to_match || MediaQueryMatches();
+  bool is_blocking_render = blocking_attribute_->HasRenderToken();
+  if (!media_matches || !is_blocking_render || !isConnected()) {
+    return;
+  }
+
+  if (auto* render_blocking_resource_manager =
+          GetDocument().GetRenderBlockingResourceManager()) {
+    render_blocking_resource_manager->AddPendingParsingElementLink(
+        ParseHrefAsId(href.IsNull() ? FastGetAttribute(html_names::kHrefAttr)
+                                    : href),
+        this);
+  }
 }
 
 }  // namespace blink

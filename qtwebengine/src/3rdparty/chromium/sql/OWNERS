@@ -1,8 +1,8 @@
+set noparent
+
 # Primary:
-pwnall@chromium.org
+estade@chromium.org
 
 # Secondary:
-cmumford@google.com
-
-# TEAM: storage-dev@chromium.org
-# COMPONENT: Internals>Storage
+asully@chromium.org   #{LAST_RESORT_SUGGESTION}
+ayui@chromium.org

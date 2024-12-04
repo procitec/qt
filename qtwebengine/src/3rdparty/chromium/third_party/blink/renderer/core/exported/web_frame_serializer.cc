@@ -30,7 +30,6 @@
 
 #include "third_party/blink/public/web/web_frame_serializer.h"
 
-#include "base/macros.h"
 #include "third_party/blink/public/platform/web_string.h"
 #include "third_party/blink/public/platform/web_url.h"
 #include "third_party/blink/public/platform/web_url_response.h"
@@ -45,12 +44,10 @@
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/web_frame_serializer_impl.h"
 #include "third_party/blink/renderer/core/frame/web_local_frame_impl.h"
-#include "third_party/blink/renderer/platform/instrumentation/histogram.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
 #include "third_party/blink/renderer/platform/mhtml/mhtml_archive.h"
 #include "third_party/blink/renderer/platform/mhtml/serialized_resource.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
-#include "third_party/blink/renderer/platform/wtf/assertions.h"
 #include "third_party/blink/renderer/platform/wtf/deque.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_concatenate.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
@@ -96,8 +93,6 @@ WebThreadSafeData WebFrameSerializer::GenerateMHTMLParts(
                      "WebFrameSerializer::generateMHTMLParts serializing");
   Deque<SerializedResource> resources;
   {
-    SCOPED_BLINK_UMA_HISTOGRAM_TIMER(
-        "PageSerialization.MhtmlGeneration.SerializationTime.SingleFrame");
     HeapHashSet<WeakMember<const Element>> shadow_template_elements;
     FrameSerializerDelegateImpl core_delegate(*web_delegate,
                                               shadow_template_elements);
@@ -110,20 +105,18 @@ WebThreadSafeData WebFrameSerializer::GenerateMHTMLParts(
                    "resource count", static_cast<uint64_t>(resources.size()));
 
   // There was an error serializing the frame (e.g. of an image resource).
-  if (resources.IsEmpty())
+  if (resources.empty())
     return WebThreadSafeData();
 
   // Encode serialized resources as MHTML.
   scoped_refptr<RawData> output = RawData::Create();
   {
-    SCOPED_BLINK_UMA_HISTOGRAM_TIMER(
-        "PageSerialization.MhtmlGeneration.EncodingTime.SingleFrame");
     // Frame is the 1st resource (see FrameSerializer::serializeFrame doc
     // comment). Frames get a Content-ID header.
     MHTMLArchive::GenerateMHTMLPart(
         boundary, FrameSerializerDelegateImpl::GetContentID(frame),
         encoding_policy, resources.TakeFirst(), *output->MutableData());
-    while (!resources.IsEmpty()) {
+    while (!resources.empty()) {
       TRACE_EVENT0("page-serialization",
                    "WebFrameSerializer::generateMHTMLParts encoding");
       MHTMLArchive::GenerateMHTMLPart(boundary, String(), encoding_policy,

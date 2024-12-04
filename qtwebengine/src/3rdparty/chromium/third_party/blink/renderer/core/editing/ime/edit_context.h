@@ -1,28 +1,26 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_EDITING_IME_EDIT_CONTEXT_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_EDITING_IME_EDIT_CONTEXT_H_
 
-#include "base/macros.h"
-#include "third_party/blink/public/platform/web_rect.h"
-#include "third_party/blink/public/platform/web_text_input_mode.h"
 #include "third_party/blink/public/platform/web_text_input_type.h"
 #include "third_party/blink/public/web/web_input_method_controller.h"
 #include "third_party/blink/renderer/bindings/core/v8/active_script_wrappable.h"
 #include "third_party/blink/renderer/core/core_export.h"
+#include "third_party/blink/renderer/core/dom/element_rare_data_field.h"
 #include "third_party/blink/renderer/core/dom/events/event_target.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_observer.h"
 #include "ui/base/ime/ime_text_span.h"
+#include "ui/gfx/geometry/rect.h"
 
 namespace blink {
-
-enum class EditContextInputPanelPolicy { kAuto, kManual };
 
 class DOMRect;
 class EditContext;
 class EditContextInit;
+class HTMLElement;
 class ExceptionState;
 class InputMethodController;
 
@@ -31,10 +29,10 @@ class InputMethodController;
 // advanced editing scenarios. For more information please refer
 // https://github.com/MicrosoftEdge/MSEdgeExplainers/blob/master/EditContext/explainer.md.
 
-class CORE_EXPORT EditContext final : public EventTargetWithInlineData,
+class CORE_EXPORT EditContext final : public EventTarget,
                                       public ActiveScriptWrappable<EditContext>,
-                                      public ExecutionContextClient,
-                                      public WebInputMethodController {
+                                      public WebInputMethodController,
+                                      public ElementRareDataField {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -46,21 +44,11 @@ class CORE_EXPORT EditContext final : public EventTargetWithInlineData,
   // Event listeners for an EditContext.
   DEFINE_ATTRIBUTE_EVENT_LISTENER(textupdate, kTextupdate)
   DEFINE_ATTRIBUTE_EVENT_LISTENER(textformatupdate, kTextformatupdate)
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(characterboundsupdate, kCharacterboundsupdate)
   DEFINE_ATTRIBUTE_EVENT_LISTENER(compositionstart, kCompositionstart)
   DEFINE_ATTRIBUTE_EVENT_LISTENER(compositionend, kCompositionend)
 
   // Public APIs for an EditContext (called from JS).
-
-  // When focus is called on an EditContext, it sets the active EditContext in
-  // the document so it can use the text input state to send info about the
-  // EditContext to text input clients in the browser process which will also
-  // set focus of the text input clients on the corresponding context document.
-  void focus();
-
-  // This API sets the active EditContext to null in the document that results
-  // in a focus change event to the text input clients in the browser process
-  // which will also remove focus from the corresponding context document.
-  void blur();
 
   // This API should be called when the selection has changed.
   // It takes as parameters a start and end character offsets, which are based
@@ -74,10 +62,22 @@ class CORE_EXPORT EditContext final : public EventTargetWithInlineData,
   // This API must be called whenever the client coordinates (i.e. relative to
   // the origin of the viewport) of the view of the EditContext have changed.
   // This includes if the viewport is scrolled or the position of the editable
-  // contents changes in response to other updates to the view. The arguments to
-  // this method describe a bounding box in client coordinates for both the
-  // editable region and also the current selection.
-  void updateLayout(DOMRect* control_bounds, DOMRect* selection_bounds);
+  // contents changes in response to other updates to the view. The argument
+  // describes a bounding box in client coordinates for the editable region.
+  void updateControlBounds(DOMRect* control_bounds);
+
+  // This API must be called whenever the client coordinates of the view of
+  // the EditContext have changed. The argument describes a bounding box in
+  // client coordinates for the current selection (or the caret if the
+  // selection is collapsed.)
+  void updateSelectionBounds(DOMRect* selection_bounds);
+
+  // This API should be called when the consumer of the EditContext receives
+  // CharacterBoundsUpdateEvent. The arguments to this method describe a
+  // sequence of bounding boxes that are requested by
+  // CharacterBoundsUpdateEvent.
+  void updateCharacterBounds(unsigned long range_start,
+                             HeapVector<Member<DOMRect>>& character_bounds);
 
   // Updates to the text driven by the webpage/javascript are performed
   // by calling this API on the EditContext. It accepts a range (start and end
@@ -92,6 +92,9 @@ class CORE_EXPORT EditContext final : public EventTargetWithInlineData,
                   const String& new_text,
                   ExceptionState& exception_state);
 
+  // Get elements that are associated with this EditContext.
+  const HeapVector<Member<HTMLElement>>& attachedElements();
+
   // Returns the text of the EditContext.
   String text() const;
 
@@ -101,41 +104,20 @@ class CORE_EXPORT EditContext final : public EventTargetWithInlineData,
   // Returns the current selectionEnd of the EditContext.
   uint32_t selectionEnd() const;
 
-  // Returns the InputMode of the EditContext.
-  String inputMode() const;
+  // Returns the start position of the range of the current cached character
+  // bounds.
+  uint32_t characterBoundsRangeStart() const;
 
-  // Returns the EnterKeyHint of the EditContext.
-  String enterKeyHint() const;
+  // Returns the current cached character bounds.
+  const HeapVector<Member<DOMRect>> characterBounds();
 
-  // Returns the InputPanelPolicy of the EditContext.
-  String inputPanelPolicy() const;
-
-  // Sets the text of the EditContext which is used to display suggestions.
-  void setText(const String& text);
-
-  // Sets the selectionStart of the EditContext.
-  void setSelectionStart(uint32_t selection_start,
-                         ExceptionState& exception_state);
-
-  // Sets the selectionEnd of the EditContext.
-  void setSelectionEnd(uint32_t selection_end, ExceptionState& exception_state);
-
-  // Sets an input mode defined in EditContextInputMode.
-  // This relates to the inputMode attribute defined for input element:
-  // https://html.spec.whatwg.org/multipage/interaction.html#input-modalities:-the-inputmode-attribute.
-  void setInputMode(const String& input_mode);
-
-  // Sets a specific action related to Enter key defined in
-  // https://html.spec.whatwg.org/multipage/interaction.html#input-modalities:-the-enterkeyhint-attribute.
-  void setEnterKeyHint(const String& enter_key_hint);
-
-  // Sets a policy that determines whether the VK should be raised or dismissed.
-  // Auto raises the VK automatically, Manual suppresses it.
-  void setInputPanelPolicy(const String& input_policy);
+  // Internal APIs (called from Blink).
 
   // EventTarget overrides
   const AtomicString& InterfaceName() const override;
   ExecutionContext* GetExecutionContext() const override;
+
+  LocalDOMWindow* DomWindow() const;
 
   // ActiveScriptWrappable overrides.
   bool HasPendingActivity() const override;
@@ -156,16 +138,25 @@ class CORE_EXPORT EditContext final : public EventTargetWithInlineData,
       ConfirmCompositionBehavior selection_behavior) override;
   WebTextInputInfo TextInputInfo() override;
   int ComputeWebTextInputNextPreviousFlags() override { return 0; }
-  WebTextInputType TextInputType() override;
-  int TextInputFlags() const;
-  WebRange CompositionRange() override;
-  bool GetCompositionCharacterBounds(WebVector<WebRect>& bounds) override;
+  WebRange CompositionRange() const override;
+  bool GetCompositionCharacterBounds(WebVector<gfx::Rect>& bounds) override;
   WebRange GetSelectionOffsets() const override;
+
+  // When focus is called on an EditContext, it sets the active EditContext in
+  // the document so it can use the text input state to send info about the
+  // EditContext to text input clients in the browser process which will also
+  // set focus of the text input clients on the corresponding context document.
+  void Focus();
+
+  // This API sets the active EditContext to null in the document that results
+  // in a focus change event to the text input clients in the browser process
+  // which will also remove focus from the corresponding context document.
+  void Blur();
 
   // Populate |control_bounds| and |selection_bounds| with the bounds fetched
   // from the active EditContext.
-  void GetLayoutBounds(WebRect* web_control_bounds,
-                       WebRect* web_selection_bounds) override;
+  void GetLayoutBounds(gfx::Rect* control_bounds,
+                       gfx::Rect* selection_bounds) override;
 
   // Sets the composition range from the already existing text
   // This is used for reconversion scenarios in JPN IME.
@@ -174,7 +165,14 @@ class CORE_EXPORT EditContext final : public EventTargetWithInlineData,
       int composition_end,
       const WebVector<ui::ImeTextSpan>& ime_text_spans);
 
-  bool IsVirtualKeyboardPolicyManual() const override;
+  // For English typing.
+  bool InsertText(const WebString& text);
+
+  void DeleteBackward();
+  void DeleteForward();
+  void DeleteWordBackward();
+  void DeleteWordForward();
+
   bool IsEditContextActive() const override;
   // Returns whether show()/hide() API is called from virtualkeyboard or not.
   ui::mojom::VirtualKeyboardVisibilityRequest
@@ -188,15 +186,31 @@ class CORE_EXPORT EditContext final : public EventTargetWithInlineData,
   // Extends the current selection range and removes the
   // characters from the buffer.
   void ExtendSelectionAndDelete(int before, int after);
+  // Delete `before` characters preceding the current `selection_start_` and
+  // `after` characters following the current `selection_end_`.
+  void DeleteSurroundingText(int before, int after);
+
+  // Called from WebLocalFrame to change the selection range.
+  // Unlike updateSelection(), we need to dispatch TextInputEvent to notify the
+  // page that the selection has changed since in this case the change was not
+  // triggered by the page.
+  void SetSelection(int start, int end);
+
+  // Sets rect_in_viewport to the surrounding rect, in CSS pixels,
+  // for the character range specified by `location` and `length`.
+  // Returns true on success, false on failure (in which case
+  // rect_in_viewport) is not changed.
+  bool FirstRectForCharacterRange(uint32_t location,
+                                  uint32_t length,
+                                  gfx::Rect& rect_in_viewport);
+
+  void AttachElement(HTMLElement* element_to_attach);
+  void DetachElement(HTMLElement* element_to_detach);
 
  private:
-  // Returns the enter key action attribute set in the EditContext.
-  ui::TextInputAction GetEditContextEnterKeyHint() const;
-
-  // Returns the inputMode of the EditContext from enterKeyHint property.
-  WebTextInputMode GetInputModeOfEditContext() const;
-
   InputMethodController& GetInputMethodController() const;
+
+  void DeleteCurrentSelection();
 
   // Events fired to JS.
   // Fires compositionstart event to JS whenever user starts a composition.
@@ -236,16 +250,31 @@ class CORE_EXPORT EditContext final : public EventTargetWithInlineData,
                                uint32_t new_selection_start,
                                uint32_t new_selection_end);
 
+  // The characterboundsupdate event is fired when the range of the composition
+  // is changed. The arguments indicates the range of the composition
+  // where the character bounds are needed by Text Input Service. The consumer
+  // of the EditContext should call updateCharacterBounds() to provide the
+  // requested bounding boxes when receiving this event.
+  void DispatchCharacterBoundsUpdateEvent(uint32_t range_start,
+                                          uint32_t range_end);
+
+  bool HasValidCompositionBounds() const;
+
+  // Delete the characters in the existing composition range and end the
+  // composition.
+  void CancelComposition();
+
+  void ClearCompositionState();
+
   // EditContext member variables.
   String text_;
   uint32_t selection_start_ = 0;
   uint32_t selection_end_ = 0;
-  WebTextInputMode input_mode_ = WebTextInputMode::kWebTextInputModeText;
-  ui::TextInputAction enter_key_hint_ = ui::TextInputAction::kEnter;
-  EditContextInputPanelPolicy input_panel_policy_ =
-      EditContextInputPanelPolicy::kManual;
-  WebRect control_bounds_;
-  WebRect selection_bounds_;
+  gfx::Rect control_bounds_;
+  gfx::Rect selection_bounds_;
+  WebVector<gfx::Rect> character_bounds_;
+  uint32_t character_bounds_range_start_ = 0;
+
   // This flag is set when the input method controller receives a
   // composition event from the IME. It keeps track of the start and
   // end composition events and fires JS events accordingly.
@@ -254,6 +283,10 @@ class CORE_EXPORT EditContext final : public EventTargetWithInlineData,
   // It is reset once the composition ends.
   uint32_t composition_range_start_ = 0;
   uint32_t composition_range_end_ = 0;
+  // Elements that are associated with this EditContext.
+  HeapVector<Member<HTMLElement>> attached_elements_;
+
+  WeakMember<ExecutionContext> execution_context_;
 };
 
 }  // namespace blink

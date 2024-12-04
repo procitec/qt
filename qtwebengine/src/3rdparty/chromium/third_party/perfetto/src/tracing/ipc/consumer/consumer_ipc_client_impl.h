@@ -66,13 +66,15 @@ class ConsumerIPCClientImpl : public TracingService::ConsumerEndpoint,
   void DisableTracing() override;
   void ReadBuffers() override;
   void FreeBuffers() override;
-  void Flush(uint32_t timeout_ms, FlushCallback) override;
+  void Flush(uint32_t timeout_ms, FlushCallback, FlushFlags) override;
   void Detach(const std::string& key) override;
   void Attach(const std::string& key) override;
   void GetTraceStats() override;
   void ObserveEvents(uint32_t enabled_event_types) override;
   void QueryServiceState(QueryServiceStateCallback) override;
   void QueryCapabilities(QueryCapabilitiesCallback) override;
+  void SaveTraceForBugreport(SaveTraceForBugreportCallback) override;
+  void CloneSession(TracingSessionID) override;
 
   // ipc::ServiceProxy::EventListener implementation.
   // These methods are invoked by the IPC layer, which knows nothing about

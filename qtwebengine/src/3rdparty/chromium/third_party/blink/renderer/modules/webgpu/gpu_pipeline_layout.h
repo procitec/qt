@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -20,10 +20,15 @@ class GPUPipelineLayout : public DawnObject<WGPUPipelineLayout> {
       const GPUPipelineLayoutDescriptor* webgpu_desc);
   explicit GPUPipelineLayout(GPUDevice* device,
                              WGPUPipelineLayout pipeline_layout);
-  ~GPUPipelineLayout() override;
+
+  GPUPipelineLayout(const GPUPipelineLayout&) = delete;
+  GPUPipelineLayout& operator=(const GPUPipelineLayout&) = delete;
 
  private:
-  DISALLOW_COPY_AND_ASSIGN(GPUPipelineLayout);
+  void setLabelImpl(const String& value) override {
+    std::string utf8_label = value.Utf8();
+    GetProcs().pipelineLayoutSetLabel(GetHandle(), utf8_label.c_str());
+  }
 };
 
 }  // namespace blink

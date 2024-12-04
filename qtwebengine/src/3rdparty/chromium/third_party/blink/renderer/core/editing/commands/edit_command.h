@@ -28,7 +28,7 @@
 
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/events/input_event.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/wtf/casting.h"
 
 namespace blink {
@@ -65,7 +65,7 @@ class CORE_EXPORT EditCommand : public GarbageCollected<EditCommand> {
   explicit EditCommand(Document&);
 
   Document& GetDocument() const { return *document_.Get(); }
-  CompositeEditCommand* Parent() const { return parent_; }
+  CompositeEditCommand* Parent() const { return parent_.Get(); }
 
   static bool IsRenderedCharacter(const Position&);
 

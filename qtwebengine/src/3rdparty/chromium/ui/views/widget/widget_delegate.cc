@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,6 +11,8 @@
 #include "base/strings/utf_string_conversions.h"
 #include "ui/accessibility/ax_enums.mojom.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/base/metadata/metadata_impl_macros.h"
+#include "ui/base/models/image_model.h"
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
 #include "ui/gfx/image/image_skia.h"
@@ -21,15 +23,39 @@
 
 namespace views {
 
+namespace {
+
+std::unique_ptr<ClientView> CreateDefaultClientView(WidgetDelegate* delegate,
+                                                    Widget* widget) {
+  return std::make_unique<ClientView>(
+      widget, delegate->TransferOwnershipOfContentsView());
+}
+
+std::unique_ptr<View> CreateDefaultOverlayView() {
+  return nullptr;
+}
+
+}  // namespace
+
 ////////////////////////////////////////////////////////////////////////////////
 // WidgetDelegate:
 
 WidgetDelegate::Params::Params() = default;
 WidgetDelegate::Params::~Params() = default;
 
-WidgetDelegate::WidgetDelegate() = default;
+WidgetDelegate::WidgetDelegate()
+    : widget_initialized_callbacks_(std::make_unique<ClosureVector>()),
+      client_view_factory_(
+          base::BindOnce(&CreateDefaultClientView, base::Unretained(this))),
+      overlay_view_factory_(base::BindOnce(&CreateDefaultOverlayView)) {}
+
 WidgetDelegate::~WidgetDelegate() {
   CHECK(can_delete_this_) << "A WidgetDelegate must outlive its Widget";
+  if (!contents_view_taken_ && default_contents_view_ &&
+      !default_contents_view_->parent()) {
+    delete default_contents_view_;
+    default_contents_view_ = nullptr;
+  }
 }
 
 void WidgetDelegate::SetCanActivate(bool can_activate) {
@@ -74,6 +100,10 @@ bool WidgetDelegate::CanMinimize() const {
   return params_.can_minimize;
 }
 
+bool WidgetDelegate::CanFullscreen() const {
+  return params_.can_fullscreen;
+}
+
 bool WidgetDelegate::CanActivate() const {
   return can_activate_;
 }
@@ -86,12 +116,12 @@ ax::mojom::Role WidgetDelegate::GetAccessibleWindowRole() {
   return params_.accessible_role;
 }
 
-base::string16 WidgetDelegate::GetAccessibleWindowTitle() const {
+std::u16string WidgetDelegate::GetAccessibleWindowTitle() const {
   return params_.accessible_title.empty() ? GetWindowTitle()
                                           : params_.accessible_title;
 }
 
-base::string16 WidgetDelegate::GetWindowTitle() const {
+std::u16string WidgetDelegate::GetWindowTitle() const {
   return params_.title;
 }
 
@@ -107,17 +137,77 @@ bool WidgetDelegate::ShouldCenterWindowTitleText() const {
 #endif
 }
 
+// TODO(ffred): refactor this method.
+bool WidgetDelegate::RotatePaneFocusFromView(View* focused_view,
+                                             bool forward,
+                                             bool enable_wrapping) {
+  // Get the list of all accessible panes.
+  std::vector<View*> panes;
+  GetAccessiblePanes(&panes);
+
+  // Count the number of panes and set the default index if no pane
+  // is initially focused.
+  const size_t count = panes.size();
+  if (!count) {
+    return false;
+  }
+
+  // Initialize |index| to an appropriate starting index if nothing is
+  // focused initially.
+  size_t index = forward ? (count - 1) : 0;
+
+  // Check to see if a pane already has focus and update the index accordingly.
+  if (focused_view) {
+    const auto i =
+        base::ranges::find_if(panes, [focused_view](const auto* pane) {
+          return pane && pane->Contains(focused_view);
+        });
+    if (i != panes.cend()) {
+      index = static_cast<size_t>(i - panes.cbegin());
+    }
+  }
+
+  // Rotate focus.
+  for (const size_t start_index = index;;) {
+    index = (!forward ? (index + count - 1) : (index + 1)) % count;
+
+    if (!enable_wrapping && (index == (forward ? 0 : (count - 1)))) {
+      return false;
+    }
+
+    // Ensure that we don't loop more than once.
+    if (index == start_index) {
+      return false;
+    }
+
+    views::View* pane = panes[index];
+    DCHECK(pane);
+    if (pane->GetVisible()) {
+      pane->RequestFocus();
+      // |pane| may be in a different widget, so don't assume its focus manager
+      // is |this|.
+      focused_view = pane->GetWidget()->GetFocusManager()->GetFocusedView();
+      if (pane == focused_view || pane->Contains(focused_view)) {
+        return true;
+      }
+    }
+  }
+}
+
 bool WidgetDelegate::ShouldShowCloseButton() const {
   return params_.show_close_button;
 }
 
-gfx::ImageSkia WidgetDelegate::GetWindowAppIcon() {
-  // Use the window icon as app icon by default.
+ui::ImageModel WidgetDelegate::GetWindowAppIcon() {
+  // Prefer app icon if available.
+  if (!params_.app_icon.IsEmpty())
+    return params_.app_icon;
+  // Fall back to the window icon.
   return GetWindowIcon();
 }
 
 // Returns the icon to be displayed in the window.
-gfx::ImageSkia WidgetDelegate::GetWindowIcon() {
+ui::ImageModel WidgetDelegate::GetWindowIcon() {
   return params_.icon;
 }
 
@@ -142,6 +232,10 @@ void WidgetDelegate::SaveWindowPlacement(const gfx::Rect& bounds,
   }
 }
 
+bool WidgetDelegate::ShouldSaveWindowPlacement() const {
+  return !GetWindowName().empty();
+}
+
 bool WidgetDelegate::GetSavedWindowPlacement(
     const Widget* widget,
     gfx::Rect* bounds,
@@ -158,11 +252,15 @@ bool WidgetDelegate::GetSavedWindowPlacement(
 }
 
 void WidgetDelegate::WidgetInitializing(Widget* widget) {
+  can_delete_this_ = false;
+
   widget_ = widget;
-  OnWidgetInitializing();
 }
 
 void WidgetDelegate::WidgetInitialized() {
+  for (auto&& callback : *widget_initialized_callbacks_)
+    std::move(callback).Run();
+  widget_initialized_callbacks_.reset();
   OnWidgetInitialized();
 }
 
@@ -184,10 +282,28 @@ void WidgetDelegate::WindowClosing() {
 }
 
 void WidgetDelegate::DeleteDelegate() {
-  for (auto&& callback : delete_delegate_callbacks_)
+  can_delete_this_ = true;
+
+  bool owned_by_widget = owned_by_widget_;
+  ClosureVector delete_callbacks;
+  delete_callbacks.swap(delete_delegate_callbacks_);
+
+  base::WeakPtr<WidgetDelegate> weak_this = AsWeakPtr();
+  for (auto&& callback : delete_callbacks)
     std::move(callback).Run();
-  if (params_.owned_by_widget)
+
+  // TODO(kylixrd): Eventually the widget will never own the delegate, so much
+  // of this code will need to be reworked.
+  //
+  // If the WidgetDelegate is owned by the Widget, it is illegal for the
+  // DeleteDelegate callbacks to destruct it; if it is not owned by the Widget,
+  // the DeleteDelete callbacks are allowed but not required to destroy it.
+  if (owned_by_widget) {
+    DCHECK(weak_this);
+    // TODO(kylxird): Rework this once the Widget stops being able to "own" the
+    // delegate.
     delete this;
+  }
 }
 
 Widget* WidgetDelegate::GetWidget() {
@@ -199,6 +315,8 @@ const Widget* WidgetDelegate::GetWidget() const {
 }
 
 View* WidgetDelegate::GetContentsView() {
+  if (unowned_contents_view_)
+    return unowned_contents_view_;
   if (!default_contents_view_)
     default_contents_view_ = new View;
   return default_contents_view_;
@@ -207,11 +325,14 @@ View* WidgetDelegate::GetContentsView() {
 View* WidgetDelegate::TransferOwnershipOfContentsView() {
   DCHECK(!contents_view_taken_);
   contents_view_taken_ = true;
+  if (owned_contents_view_)
+    owned_contents_view_.release();
   return GetContentsView();
 }
 
 ClientView* WidgetDelegate::CreateClientView(Widget* widget) {
-  return new ClientView(widget, TransferOwnershipOfContentsView());
+  DCHECK(client_view_factory_);
+  return std::move(client_view_factory_).Run(widget).release();
 }
 
 std::unique_ptr<NonClientFrameView> WidgetDelegate::CreateNonClientFrameView(
@@ -220,7 +341,8 @@ std::unique_ptr<NonClientFrameView> WidgetDelegate::CreateNonClientFrameView(
 }
 
 View* WidgetDelegate::CreateOverlayView() {
-  return nullptr;
+  DCHECK(overlay_view_factory_);
+  return std::move(overlay_view_factory_).Run().release();
 }
 
 bool WidgetDelegate::WidgetHasHitTestMask() const {
@@ -237,36 +359,63 @@ bool WidgetDelegate::ShouldDescendIntoChildForEventHandling(
   return true;
 }
 
-void WidgetDelegate::SetAccessibleRole(ax::mojom::Role role) {
+void WidgetDelegate::SetAccessibleWindowRole(ax::mojom::Role role) {
   params_.accessible_role = role;
 }
 
-void WidgetDelegate::SetAccessibleTitle(base::string16 title) {
+void WidgetDelegate::SetAccessibleTitle(std::u16string title) {
   params_.accessible_title = std::move(title);
 }
 
+void WidgetDelegate::SetCanFullscreen(bool can_fullscreen) {
+  bool old_can_fullscreen =
+      std::exchange(params_.can_fullscreen, can_fullscreen);
+  if (GetWidget() && params_.can_fullscreen != old_can_fullscreen) {
+    GetWidget()->OnSizeConstraintsChanged();
+  }
+}
+
 void WidgetDelegate::SetCanMaximize(bool can_maximize) {
-  params_.can_maximize = can_maximize;
+  bool old_can_maximize = std::exchange(params_.can_maximize, can_maximize);
+  if (GetWidget() && params_.can_maximize != old_can_maximize)
+    GetWidget()->OnSizeConstraintsChanged();
 }
 
 void WidgetDelegate::SetCanMinimize(bool can_minimize) {
-  params_.can_minimize = can_minimize;
+  bool old_can_minimize = std::exchange(params_.can_minimize, can_minimize);
+  if (GetWidget() && params_.can_minimize != old_can_minimize)
+    GetWidget()->OnSizeConstraintsChanged();
 }
 
 void WidgetDelegate::SetCanResize(bool can_resize) {
-  params_.can_resize = can_resize;
+  bool old_can_resize = std::exchange(params_.can_resize, can_resize);
+  if (GetWidget() && params_.can_resize != old_can_resize)
+    GetWidget()->OnSizeConstraintsChanged();
 }
 
+// TODO (kylixrd): This will be removed once Widget no longer "owns" the
+// WidgetDelegate.
 void WidgetDelegate::SetOwnedByWidget(bool owned) {
-  params_.owned_by_widget = owned;
+  owned_by_widget_ = owned;
 }
 
 void WidgetDelegate::SetFocusTraversesOut(bool focus_traverses_out) {
   params_.focus_traverses_out = focus_traverses_out;
 }
 
-void WidgetDelegate::SetIcon(const gfx::ImageSkia& icon) {
-  params_.icon = icon;
+void WidgetDelegate::SetEnableArrowKeyTraversal(
+    bool enable_arrow_key_traversal) {
+  params_.enable_arrow_key_traversal = enable_arrow_key_traversal;
+}
+
+void WidgetDelegate::SetIcon(ui::ImageModel icon) {
+  params_.icon = std::move(icon);
+  if (GetWidget())
+    GetWidget()->UpdateWindowIcon();
+}
+
+void WidgetDelegate::SetAppIcon(ui::ImageModel icon) {
+  params_.app_icon = std::move(icon);
   if (GetWidget())
     GetWidget()->UpdateWindowIcon();
 }
@@ -295,7 +444,7 @@ void WidgetDelegate::SetShowTitle(bool show_title) {
   params_.show_title = show_title;
 }
 
-void WidgetDelegate::SetTitle(const base::string16& title) {
+void WidgetDelegate::SetTitle(const std::u16string& title) {
   if (params_.title == title)
     return;
   params_.title = title;
@@ -314,9 +463,16 @@ void WidgetDelegate::SetCenterTitle(bool center_title) {
 #endif
 
 void WidgetDelegate::SetHasWindowSizeControls(bool has_controls) {
+  SetCanFullscreen(has_controls);
   SetCanMaximize(has_controls);
   SetCanMinimize(has_controls);
   SetCanResize(has_controls);
+}
+
+void WidgetDelegate::RegisterWidgetInitializedCallback(
+    base::OnceClosure callback) {
+  DCHECK(widget_initialized_callbacks_);
+  widget_initialized_callbacks_->emplace_back(std::move(callback));
 }
 
 void WidgetDelegate::RegisterWindowWillCloseCallback(
@@ -333,12 +489,29 @@ void WidgetDelegate::RegisterDeleteDelegateCallback(
   delete_delegate_callbacks_.emplace_back(std::move(callback));
 }
 
+void WidgetDelegate::SetClientViewFactory(ClientViewFactory factory) {
+  DCHECK(!GetWidget());
+  client_view_factory_ = std::move(factory);
+}
+
+void WidgetDelegate::SetOverlayViewFactory(OverlayViewFactory factory) {
+  DCHECK(!GetWidget());
+  overlay_view_factory_ = std::move(factory);
+}
+
+void WidgetDelegate::SetContentsViewImpl(std::unique_ptr<View> contents) {
+  DCHECK(!contents->owned_by_client());
+  DCHECK(!unowned_contents_view_);
+  owned_contents_view_ = std::move(contents);
+  unowned_contents_view_ = owned_contents_view_.get();
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // WidgetDelegateView:
 
 WidgetDelegateView::WidgetDelegateView() {
+  // TODO (kylixrd): Remove once the Widget ceases to "own" the WidgetDelegate.
   // A WidgetDelegate should be deleted on DeleteDelegate.
-  set_owned_by_client();
   SetOwnedByWidget(true);
 }
 
@@ -356,7 +529,7 @@ views::View* WidgetDelegateView::GetContentsView() {
   return this;
 }
 
-BEGIN_METADATA(WidgetDelegateView, View)
+BEGIN_METADATA(WidgetDelegateView)
 END_METADATA
 
 }  // namespace views

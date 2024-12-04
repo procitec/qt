@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,20 +11,24 @@
 #include <string>
 
 #include "base/test/task_environment.h"
-#include "components/password_manager/core/browser/password_form_forward.h"
+#include "components/signin/public/base/consent_level.h"
 #include "components/signin/public/identity_manager/identity_test_environment.h"
-#include "components/sync/driver/test_sync_service.h"
+#include "components/sync/test/test_sync_service.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace password_manager {
+
+struct PasswordForm;
 
 class SyncUsernameTestBase : public testing::Test {
  public:
   SyncUsernameTestBase();
   ~SyncUsernameTestBase() override;
 
-  // Instruct the identity manager to sign in with |email| or out.
-  void FakeSigninAs(const std::string& email);
+  // Instruct the identity manager to sign in with |email| or out and using
+  // |consent_level|.
+  void FakeSigninAs(const std::string& email,
+                    signin::ConsentLevel consent_level);
 
   // Produce a sample PasswordForm.
   static PasswordForm SimpleGaiaForm(const char* username);
@@ -37,6 +41,7 @@ class SyncUsernameTestBase : public testing::Test {
   void SetSyncingPasswords(bool syncing_passwords);
 
   const syncer::SyncService* sync_service() const { return &sync_service_; }
+  syncer::TestSyncService* test_sync_service() { return &sync_service_; }
 
   signin::IdentityManager* identity_manager() {
     return identity_test_env_.identity_manager();

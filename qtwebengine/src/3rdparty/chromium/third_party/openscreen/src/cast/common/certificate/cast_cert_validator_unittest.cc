@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,15 +7,16 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "cast/common/certificate/cast_cert_validator_internal.h"
+#include "cast/common/certificate/date_time.h"
 #include "cast/common/certificate/testing/test_helpers.h"
+#include "cast/common/public/trust_store.h"
 #include "gtest/gtest.h"
 #include "openssl/pem.h"
+#include "platform/test/byte_view_test_util.h"
 #include "platform/test/paths.h"
 #include "util/crypto/pem_helpers.h"
 
-namespace openscreen {
-namespace cast {
+namespace openscreen::cast {
 namespace {
 
 enum TrustStoreDependency {
@@ -34,7 +35,7 @@ enum TrustStoreDependency {
 // Reads a test chain from |certs_file_name|, and asserts that verifying it as
 // a Cast device certificate yields |expected_result|.
 //
-// RunTest() also checks that the resulting CertVerificationContext does not
+// RunTest() also checks that the resulting device certificate does not
 // incorrectly verify invalid signatures.
 //
 //  * |expected_policy| - The policy that should have been identified for the
@@ -53,61 +54,47 @@ void RunTest(Error::Code expected_result,
              TrustStoreDependency trust_store_dependency,
              const std::string& optional_signed_data_file_name) {
   std::vector<std::string> certs = ReadCertificatesFromPemFile(certs_file_name);
-  TrustStore* trust_store;
-  std::unique_ptr<TrustStore> fake_trust_store;
+  std::unique_ptr<TrustStore> trust_store;
 
   switch (trust_store_dependency) {
     case TRUST_STORE_BUILTIN:
-      trust_store = nullptr;
+      trust_store = CastTrustStore::Create();
       break;
 
     case TRUST_STORE_FROM_TEST_FILE: {
       ASSERT_FALSE(certs.empty());
 
       // Parse the root certificate of the chain.
-      const uint8_t* data = (const uint8_t*)certs.back().data();
-      X509* fake_root = d2i_X509(nullptr, &data, certs.back().size());
-      ASSERT_TRUE(fake_root);
+      std::vector<uint8_t> data(certs.back().begin(), certs.back().end());
       certs.pop_back();
-
-      // Add a trust anchor and enforce constraints on it (regular mode for
-      // built-in Cast roots).
-      fake_trust_store = std::make_unique<TrustStore>();
-      fake_trust_store->certs.emplace_back(fake_root);
-      trust_store = fake_trust_store.get();
+      trust_store = TrustStore::CreateInstanceForTest(data);
     }
   }
 
-  std::unique_ptr<CertVerificationContext> context;
+  std::unique_ptr<ParsedCertificate> target_cert;
   CastDeviceCertPolicy policy;
 
-  Error result = VerifyDeviceCert(certs, time, &context, &policy, nullptr,
-                                  CRLPolicy::kCrlOptional, trust_store);
+  Error result = VerifyDeviceCert(certs, time, &target_cert, &policy, nullptr,
+                                  CRLPolicy::kCrlOptional, trust_store.get());
 
   ASSERT_EQ(expected_result, result.code());
   if (expected_result != Error::Code::kNone)
     return;
 
   EXPECT_EQ(expected_policy, policy);
-  ASSERT_TRUE(context);
+  ASSERT_TRUE(target_cert);
 
-  // Test that the context is good.
-  EXPECT_EQ(expected_common_name, context->GetCommonName());
-
-#define DATA_SPAN_FROM_LITERAL(s)                                          \
-  ConstDataSpan{const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(s)), \
-                sizeof(s) - 1}
+  // Test that the target certificate is named as we expect.
+  EXPECT_EQ(expected_common_name, target_cert->GetCommonName());
 
   // Test verification of some invalid signatures.
-  EXPECT_FALSE(context->VerifySignatureOverData(
-      DATA_SPAN_FROM_LITERAL("bogus signature"),
-      DATA_SPAN_FROM_LITERAL("bogus data"), DigestAlgorithm::kSha256));
-  EXPECT_FALSE(context->VerifySignatureOverData(
-      DATA_SPAN_FROM_LITERAL(""), DATA_SPAN_FROM_LITERAL("bogus data"),
-      DigestAlgorithm::kSha256));
-  EXPECT_FALSE(context->VerifySignatureOverData(DATA_SPAN_FROM_LITERAL(""),
-                                                DATA_SPAN_FROM_LITERAL(""),
-                                                DigestAlgorithm::kSha256));
+  EXPECT_FALSE(target_cert->VerifySignedData(
+      DigestAlgorithm::kSha256, ByteViewFromLiteral("bogus data"),
+      ByteViewFromLiteral("bogus signature")));
+  EXPECT_FALSE(target_cert->VerifySignedData(
+      DigestAlgorithm::kSha256, ByteViewFromLiteral("bogus data"), ByteView()));
+  EXPECT_FALSE(target_cert->VerifySignedData(DigestAlgorithm::kSha256,
+                                             ByteView(), ByteView()));
 
   // If valid signatures are known for this device certificate, test them.
   if (!optional_signed_data_file_name.empty()) {
@@ -115,12 +102,12 @@ void RunTest(Error::Code expected_result,
         testing::ReadSignatureTestData(optional_signed_data_file_name);
 
     // Test verification of a valid SHA1 signature.
-    EXPECT_TRUE(context->VerifySignatureOverData(
-        signatures.sha1, signatures.message, DigestAlgorithm::kSha1));
+    EXPECT_TRUE(target_cert->VerifySignedData(
+        DigestAlgorithm::kSha1, signatures.message, signatures.sha1));
 
     // Test verification of a valid SHA256 signature.
-    EXPECT_TRUE(context->VerifySignatureOverData(
-        signatures.sha256, signatures.message, DigestAlgorithm::kSha256));
+    EXPECT_TRUE(target_cert->VerifySignedData(
+        DigestAlgorithm::kSha256, signatures.message, signatures.sha256));
   }
 }
 
@@ -610,6 +597,20 @@ TEST(VerifyCastDeviceCertTest, NameConstraintsViolated) {
           TRUST_STORE_FROM_TEST_FILE, "");
 }
 
+// Tests reversibility between DateTimeToSeconds and DateTimeFromSeconds
+TEST(VerifyCastDeviceCertTest, TimeDateConversionValidate) {
+  DateTime org_date = AprilFirst2020();
+  DateTime converted_date = {};
+  std::chrono::seconds seconds = DateTimeToSeconds(org_date);
+  DateTimeFromSeconds(seconds.count(), &converted_date);
+
+  EXPECT_EQ(org_date.second, converted_date.second);
+  EXPECT_EQ(org_date.minute, converted_date.minute);
+  EXPECT_EQ(org_date.hour, converted_date.hour);
+  EXPECT_EQ(org_date.day, converted_date.day);
+  EXPECT_EQ(org_date.month, converted_date.month);
+  EXPECT_EQ(org_date.year, converted_date.year);
+}
+
 }  // namespace
-}  // namespace cast
-}  // namespace openscreen
+}  // namespace openscreen::cast

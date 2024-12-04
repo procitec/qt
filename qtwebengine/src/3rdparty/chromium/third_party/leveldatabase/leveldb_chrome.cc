@@ -1,6 +1,6 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
-// found in the LICENSE file. See the AUTHORS file for names of contributors.
+// found in the LICENSE file.
 
 #include "third_party/leveldatabase/leveldb_chrome.h"
 
@@ -8,17 +8,17 @@
 #include <set>
 #include <vector>
 
-#include "base/bind.h"
+#include "base/containers/contains.h"
 #include "base/containers/flat_set.h"
 #include "base/files/file.h"
 #include "base/files/file_util.h"
 #include "base/format_macros.h"
+#include "base/functional/bind.h"
 #include "base/memory/memory_pressure_listener.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/no_destructor.h"
 #include "base/strings/stringprintf.h"
 #include "base/system/sys_info.h"
-#include "base/threading/sequenced_task_runner_handle.h"
 #include "base/trace_event/memory_dump_manager.h"
 #include "base/trace_event/memory_dump_provider.h"
 #include "base/trace_event/process_memory_dump.h"
@@ -40,10 +40,11 @@ namespace leveldb_chrome {
 namespace {
 
 size_t DefaultBlockCacheSize() {
-  if (base::SysInfo::IsLowEndDevice())
+  if (base::SysInfo::IsLowEndDeviceOrPartialLowEndModeEnabled()) {
     return 1 << 20;  // 1MB
-  else
+  } else {
     return 8 << 20;  // 8MB
+  }
 }
 
 std::string GetDumpNameForMemEnv(const leveldb::Env* memenv) {
@@ -60,9 +61,10 @@ class Globals {
   }
 
   Globals()
-      : web_block_cache_(base::SysInfo::IsLowEndDevice()
-                             ? nullptr
-                             : NewLRUCache(DefaultBlockCacheSize())),
+      : web_block_cache_(
+            base::SysInfo::IsLowEndDeviceOrPartialLowEndModeEnabled()
+                ? nullptr
+                : NewLRUCache(DefaultBlockCacheSize())),
         browser_block_cache_(NewLRUCache(DefaultBlockCacheSize())),
         // Using |this| here (when Globals is only partially constructed) is
         // safe because base::MemoryPressureListener calls our callback
@@ -72,6 +74,9 @@ class Globals {
             FROM_HERE,
             base::BindRepeating(&Globals::OnMemoryPressure,
                                 base::Unretained(this))) {}
+
+  Globals(const Globals&) = delete;
+  Globals& operator=(const Globals&) = delete;
 
   Cache* web_block_cache() const {
     if (web_block_cache_)
@@ -124,8 +129,6 @@ class Globals {
   base::flat_set<leveldb::Env*> in_memory_envs_;
   // Listens for the system being under memory pressure.
   const base::MemoryPressureListener memory_pressure_listener_;
-
-  DISALLOW_COPY_AND_ASSIGN(Globals);
 };
 
 class ChromeMemEnv : public leveldb::EnvWrapper {
@@ -136,6 +139,9 @@ class ChromeMemEnv : public leveldb::EnvWrapper {
         name_(name) {
     Globals::GetInstance()->DidCreateChromeMemEnv(this);
   }
+
+  ChromeMemEnv(const ChromeMemEnv&) = delete;
+  ChromeMemEnv& operator=(const ChromeMemEnv&) = delete;
 
   ~ChromeMemEnv() override {
     Globals::GetInstance()->WillDestroyChromeMemEnv(this);
@@ -221,7 +227,7 @@ class ChromeMemEnv : public leveldb::EnvWrapper {
                         size());
 
     if (dump_args.level_of_detail !=
-        base::trace_event::MemoryDumpLevelOfDetail::BACKGROUND) {
+        base::trace_event::MemoryDumpLevelOfDetail::kBackground) {
       env_dump->AddString("name", "", name());
     }
 
@@ -240,7 +246,6 @@ class ChromeMemEnv : public leveldb::EnvWrapper {
   const std::string name_;
   base::Lock files_lock_;
   std::set<std::string> file_names_;
-  DISALLOW_COPY_AND_ASSIGN(ChromeMemEnv);
 };
 
 void Globals::DumpAllTrackedEnvs(const MemoryDumpArgs& dump_args,

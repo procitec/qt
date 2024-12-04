@@ -1,52 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the demonstration applications of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:BSD$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** BSD License Usage
-** Alternatively, you may use this file under the terms of the BSD license
-** as follows:
-**
-** "Redistribution and use in source and binary forms, with or without
-** modification, are permitted provided that the following conditions are
-** met:
-**   * Redistributions of source code must retain the above copyright
-**     notice, this list of conditions and the following disclaimer.
-**   * Redistributions in binary form must reproduce the above copyright
-**     notice, this list of conditions and the following disclaimer in
-**     the documentation and/or other materials provided with the
-**     distribution.
-**   * Neither the name of The Qt Company Ltd nor the names of its
-**     contributors may be used to endorse or promote products derived
-**     from this software without specific prior written permission.
-**
-**
-** THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-** "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-** LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-** A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-** OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-** SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-** LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-** DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-** THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-** (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-** OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE."
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR BSD-3-Clause
 
 #include "composition.h"
 #include <QBoxLayout>
@@ -56,11 +9,6 @@
 #include <QSlider>
 #include <QMouseEvent>
 #include <qmath.h>
-
-#if QT_CONFIG(opengl)
-#include <QOpenGLFunctions>
-#include <QOpenGLWindow>
-#endif
 
 const int animationInterval = 15; // update every 16 ms = ~60FPS
 
@@ -141,12 +89,6 @@ CompositionWidget::CompositionWidget(QWidget *parent)
 
     QPushButton *showSourceButton = new QPushButton(mainGroup);
     showSourceButton->setText(tr("Show Source"));
-#if QT_CONFIG(opengl)
-    QPushButton *enableOpenGLButton = new QPushButton(mainGroup);
-    enableOpenGLButton->setText(tr("Use OpenGL"));
-    enableOpenGLButton->setCheckable(true);
-    enableOpenGLButton->setChecked(view->usesOpenGL());
-#endif
     QPushButton *whatsThisButton = new QPushButton(mainGroup);
     whatsThisButton->setText(tr("What's This?"));
     whatsThisButton->setCheckable(true);
@@ -168,9 +110,6 @@ CompositionWidget::CompositionWidget(QWidget *parent)
     mainGroupLayout->addWidget(animateButton);
     mainGroupLayout->addWidget(whatsThisButton);
     mainGroupLayout->addWidget(showSourceButton);
-#if QT_CONFIG(opengl)
-    mainGroupLayout->addWidget(enableOpenGLButton);
-#endif
 
     QGridLayout *modesLayout = new QGridLayout(modesGroup);
     modesLayout->addWidget(rbClear, 0, 0);
@@ -212,9 +151,6 @@ CompositionWidget::CompositionWidget(QWidget *parent)
     connect(whatsThisButton, &QAbstractButton::clicked, view, &ArthurFrame::setDescriptionEnabled);
     connect(view, &ArthurFrame::descriptionEnabledChanged, whatsThisButton, &QAbstractButton::setChecked);
     connect(showSourceButton, &QAbstractButton::clicked, view, &ArthurFrame::showSource);
-#if QT_CONFIG(opengl)
-    connect(enableOpenGLButton, &QAbstractButton::clicked, view, &ArthurFrame::enableOpenGL);
-#endif
     connect(animateButton, &QAbstractButton::toggled, view, &CompositionRenderer::setAnimationEnabled);
 
     circleColorSlider->setValue(270);
@@ -264,9 +200,6 @@ CompositionRenderer::CompositionRenderer(QWidget *parent)
     m_circle_pos = QPoint(200, 100);
 
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-#if QT_CONFIG(opengl)
-    m_pbuffer_size = 1024;
-#endif
 }
 
 CompositionRenderer::~CompositionRenderer()
@@ -359,86 +292,25 @@ void CompositionRenderer::drawSource(QPainter &p)
 
 void CompositionRenderer::paint(QPainter *painter)
 {
-#if QT_CONFIG(opengl)
-    if (usesOpenGL() && glWindow()->isValid()) {
+    if (m_buffer.size() != size()) {
+        m_buffer = QImage(size(), QImage::Format_ARGB32_Premultiplied);
+        m_base_buffer = QImage(size(), QImage::Format_ARGB32_Premultiplied);
 
-        if (!m_blitter.isCreated())
-            m_blitter.create();
+        m_base_buffer.fill(0);
 
-        int new_pbuf_size = m_pbuffer_size;
-        while (size().width() > new_pbuf_size || size().height() > new_pbuf_size)
-            new_pbuf_size *= 2;
+        QPainter p(&m_base_buffer);
 
-        while (size().width() < new_pbuf_size/2 && size().height() < new_pbuf_size/2)
-            new_pbuf_size /= 2;
-
-        if (!m_fbo || new_pbuf_size != m_pbuffer_size) {
-            m_fbo.reset(new QFboPaintDevice(QSize(new_pbuf_size, new_pbuf_size), false, false));
-            m_pbuffer_size = new_pbuf_size;
-        }
-
-        if (size() != m_previous_size) {
-            m_previous_size = size();
-            QPainter p(m_fbo.get());
-            p.setCompositionMode(QPainter::CompositionMode_Source);
-            p.fillRect(QRect(QPoint(0, 0), size()), Qt::transparent);
-            p.setCompositionMode(QPainter::CompositionMode_SourceOver);
-            drawBase(p);
-            p.end();
-            m_base_tex = m_fbo->takeTexture();
-        }
-
-        painter->beginNativePainting();
-        {
-            QPainter p(m_fbo.get());
-            p.beginNativePainting();
-            m_blitter.bind();
-            const QRect targetRect(QPoint(0, 0), m_fbo->size());
-            const QMatrix4x4 target = QOpenGLTextureBlitter::targetTransform(targetRect, QRect(QPoint(0, 0), m_fbo->size()));
-            m_blitter.blit(m_base_tex, target, QOpenGLTextureBlitter::OriginBottomLeft);
-            m_blitter.release();
-            p.endNativePainting();
-            drawSource(p);
-            p.end();
-            m_compositing_tex = m_fbo->takeTexture();
-        }
-        painter->endNativePainting();
-
-        painter->beginNativePainting();
-        auto *funcs = QOpenGLContext::currentContext()->functions();
-        funcs->glEnable(GL_BLEND);
-        funcs->glBlendEquation(GL_FUNC_ADD);
-        funcs->glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-        m_blitter.bind();
-        const QRect targetRect(QPoint(0, 0), m_fbo->size());
-        const QMatrix4x4 target = QOpenGLTextureBlitter::targetTransform(targetRect, QRect(QPoint(0, 0), size()));
-        m_blitter.blit(m_compositing_tex, target, QOpenGLTextureBlitter::OriginBottomLeft);
-        m_blitter.release();
-        painter->endNativePainting();
-    } else
-#endif
-    {
-        // using a QImage
-        if (m_buffer.size() != size()) {
-            m_buffer = QImage(size(), QImage::Format_ARGB32_Premultiplied);
-            m_base_buffer = QImage(size(), QImage::Format_ARGB32_Premultiplied);
-
-            m_base_buffer.fill(0);
-
-            QPainter p(&m_base_buffer);
-
-            drawBase(p);
-        }
-
-        memcpy(m_buffer.bits(), m_base_buffer.bits(), m_buffer.sizeInBytes());
-
-        {
-            QPainter p(&m_buffer);
-            drawSource(p);
-        }
-
-        painter->drawImage(0, 0, m_buffer);
+        drawBase(p);
     }
+
+    memcpy(m_buffer.bits(), m_base_buffer.bits(), m_buffer.sizeInBytes());
+
+    {
+        QPainter p(&m_buffer);
+        drawSource(p);
+    }
+
+    painter->drawImage(0, 0, m_buffer);
 }
 
 void CompositionRenderer::mousePressEvent(QMouseEvent *e)
@@ -486,12 +358,6 @@ void CompositionRenderer::setCirclePos(const QPointF &pos)
     const QRect oldRect = rectangle_around(m_circle_pos).toAlignedRect();
     m_circle_pos = pos;
     const QRect newRect = rectangle_around(m_circle_pos).toAlignedRect();
-#if QT_CONFIG(opengl)
-    if (usesOpenGL()) {
-        update();
-        return;
-    }
-#endif
     update(oldRect | newRect);
 }
 

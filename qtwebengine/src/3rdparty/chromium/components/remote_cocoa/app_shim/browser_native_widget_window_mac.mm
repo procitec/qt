@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -31,16 +31,26 @@
   bool overrideTitlebarHeight = false;
   float titlebarHeight = 0;
 
-  if (!_inFullScreen) {
-    auto* window = base::mac::ObjCCast<NativeWidgetMacNSWindow>([self window]);
-    remote_cocoa::NativeWidgetNSWindowBridge* bridge = [window bridge];
-    if (bridge) {
-      bridge->host()->GetWindowFrameTitlebarHeight(&overrideTitlebarHeight,
-                                                   &titlebarHeight);
-    }
+  auto* window = base::apple::ObjCCast<NativeWidgetMacNSWindow>([self window]);
+  remote_cocoa::NativeWidgetNSWindowBridge* bridge = [window bridge];
+  if (!bridge) {
+    return [super _titlebarHeight];
   }
-  if (overrideTitlebarHeight)
+
+  // Ignore the overridden titlebar height when in fullscreen unless
+  // kImmersiveFullscreenTabs is enabled and the toolbar is visible. The
+  // toolbar is hidden during content fullscreen.
+  // In short the titlebar will be the same size during non-fullscreen and
+  // kImmersiveFullscreenTabs fullscreen. During content fullscreen the toolbar
+  // is hidden and the titlebar will be smaller default height.
+  if (!_inFullScreen || bridge->ShouldUseCustomTitlebarHeightForFullscreen()) {
+    bridge->host()->GetWindowFrameTitlebarHeight(&overrideTitlebarHeight,
+                                                 &titlebarHeight);
+  }
+
+  if (overrideTitlebarHeight) {
     return titlebarHeight;
+  }
   return [super _titlebarHeight];
 }
 
@@ -53,34 +63,9 @@
   return YES;
 }
 
-// On 10.10, this prevents the window server from treating the title bar as an
-// unconditionally-draggable region, and allows -[BridgedContentView hitTest:]
-// to choose case-by-case whether to take a mouse event or let it turn into a
-// window drag. Not needed for newer macOS. See r549802 for details.
-- (NSRect)_draggableFrame NS_DEPRECATED_MAC(10_10, 10_11) {
-  return NSZeroRect;
-}
-
 @end
 
 @implementation BrowserNativeWidgetWindow
-
-// Prevent detached tabs from glitching when the window is partially offscreen.
-// See https://crbug.com/1095717 for details.
-// This is easy to get wrong so scope very tightly to only disallow large
-// vertical jumps.
-- (NSRect)constrainFrameRect:(NSRect)rect toScreen:(NSScreen*)screen {
-  NSRect proposed = [super constrainFrameRect:rect toScreen:screen];
-  // This boils down to: use the small threshold when we're not avoiding a
-  // Dock on the bottom, and the big threshold otherwise.
-  static constexpr CGFloat kBigThreshold = 200;
-  static constexpr CGFloat kSmallThreshold = 50;
-  const CGFloat yDelta = NSMaxY(proposed) - NSMaxY(rect);
-  if (yDelta > kBigThreshold ||
-      (yDelta > kSmallThreshold && NSMinY(proposed) == 0))
-    return rect;
-  return proposed;
-}
 
 // NSWindow (PrivateAPI) overrides.
 
@@ -89,6 +74,38 @@
   if ([BrowserWindowFrame class])
     return [BrowserWindowFrame class];
   return [super frameViewClassForStyleMask:windowStyle];
+}
+
+- (instancetype)initWithContentRect:(NSRect)contentRect
+                          styleMask:(NSUInteger)windowStyle
+                            backing:(NSBackingStoreType)bufferingType
+                              defer:(BOOL)deferCreation {
+  if ((self = [super initWithContentRect:contentRect
+                               styleMask:windowStyle
+                                 backing:bufferingType
+                                   defer:deferCreation])) {
+    [NSNotificationCenter.defaultCenter
+        addObserver:self
+           selector:@selector(windowDidBecomeKey:)
+               name:NSWindowDidBecomeKeyNotification
+             object:nil];
+  }
+  return self;
+}
+
+- (void)dealloc {
+  [NSNotificationCenter.defaultCenter removeObserver:self];
+}
+
+- (void)windowDidBecomeKey:(NSNotification*)notify {
+  // NSToolbarFullScreenWindow should never become the key window, otherwise
+  // the browser window will appear inactive. Activate the browser window
+  // when this happens.
+  NSWindow* toolbarWindow = notify.object;
+  if (toolbarWindow.parentWindow == self &&
+      remote_cocoa::IsNSToolbarFullScreenWindow(toolbarWindow)) {
+    [self makeKeyAndOrderFront:nil];
+  }
 }
 
 // The base implementation returns YES if the window's frame view is a custom

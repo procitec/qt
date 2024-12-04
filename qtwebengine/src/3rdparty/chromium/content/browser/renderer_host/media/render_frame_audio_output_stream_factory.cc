@@ -1,22 +1,26 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "content/browser/renderer_host/media/render_frame_audio_output_stream_factory.h"
 
 #include <inttypes.h>
+
 #include <cstdint>
+#include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback.h"
 #include "base/check_op.h"
 #include "base/containers/flat_set.h"
 #include "base/containers/unique_ptr_adapters.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
+#include "base/functional/callback_helpers.h"
 #include "base/location.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
-#include "base/optional.h"
 #include "base/strings/stringprintf.h"
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
@@ -25,7 +29,6 @@
 #include "content/browser/renderer_host/media/audio_output_authorization_handler.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "media/base/output_device_info.h"
 #include "media/mojo/mojom/audio_output_stream.mojom.h"
@@ -63,6 +66,9 @@ class RenderFrameAudioOutputStreamFactory::Core final
        mojo::PendingReceiver<blink::mojom::RendererAudioOutputStreamFactory>
            receiver);
 
+  Core(const Core&) = delete;
+  Core& operator=(const Core&) = delete;
+
   ~Core() final = default;
 
   void Init(
@@ -94,6 +100,9 @@ class RenderFrameAudioOutputStreamFactory::Core final
           base::BindOnce(&ProviderImpl::Done, base::Unretained(this)));
     }
 
+    ProviderImpl(const ProviderImpl&) = delete;
+    ProviderImpl& operator=(const ProviderImpl&) = delete;
+
     ~ProviderImpl() final { DCHECK_CURRENTLY_ON(BrowserThread::IO); }
 
     void Acquire(
@@ -121,12 +130,10 @@ class RenderFrameAudioOutputStreamFactory::Core final
     void Done() { owner_->DeleteProvider(this); }
 
    private:
-    RenderFrameAudioOutputStreamFactory::Core* const owner_;
+    const raw_ptr<RenderFrameAudioOutputStreamFactory::Core> owner_;
     const std::string device_id_;
 
     mojo::Receiver<media::mojom::AudioOutputStreamProvider> receiver_;
-
-    DISALLOW_COPY_AND_ASSIGN(ProviderImpl);
   };
 
   using OutputStreamProviderSet =
@@ -137,7 +144,7 @@ class RenderFrameAudioOutputStreamFactory::Core final
   void RequestDeviceAuthorization(
       mojo::PendingReceiver<media::mojom::AudioOutputStreamProvider>
           provider_receiver,
-      const base::Optional<base::UnguessableToken>& session_id,
+      const std::optional<base::UnguessableToken>& session_id,
       const std::string& device_id,
       RequestDeviceAuthorizationCallback callback) final;
 
@@ -176,8 +183,6 @@ class RenderFrameAudioOutputStreamFactory::Core final
   // Weak pointers are used to cancel device authorizations that are in flight
   // while |this| is destructed.
   base::WeakPtrFactory<Core> weak_ptr_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(Core);
 };
 
 RenderFrameAudioOutputStreamFactory::RenderFrameAudioOutputStreamFactory(
@@ -201,8 +206,7 @@ RenderFrameAudioOutputStreamFactory::~RenderFrameAudioOutputStreamFactory() {
   // causes issues in unit tests where the UI thread and the IO thread are the
   // same.
   GetIOThreadTaskRunner({})->PostTask(
-      FROM_HERE,
-      base::BindOnce([](std::unique_ptr<Core>) {}, std::move(core_)));
+      FROM_HERE, base::DoNothingWithBoundArgs(std::move(core_)));
 }
 
 void RenderFrameAudioOutputStreamFactory::
@@ -226,7 +230,6 @@ RenderFrameAudioOutputStreamFactory::Core::Core(
       frame_id_(frame->GetRoutingID()),
       authorization_handler_(audio_system, media_stream_manager, process_id_) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  SendLogMessage(base::StringPrintf("%s()", __func__));
 
   ForwardingAudioStreamFactory::Core* tmp_factory =
       ForwardingAudioStreamFactory::CoreForFrame(frame);
@@ -264,7 +267,7 @@ void RenderFrameAudioOutputStreamFactory::Core::
 void RenderFrameAudioOutputStreamFactory::Core::RequestDeviceAuthorization(
     mojo::PendingReceiver<media::mojom::AudioOutputStreamProvider>
         provider_receiver,
-    const base::Optional<base::UnguessableToken>& session_id,
+    const std::optional<base::UnguessableToken>& session_id,
     const std::string& device_id,
     RequestDeviceAuthorizationCallback callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);

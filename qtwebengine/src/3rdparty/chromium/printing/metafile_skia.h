@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,11 +16,16 @@
 #include "printing/metafile.h"
 #include "printing/mojom/print.mojom-forward.h"
 #include "skia/ext/platform_canvas.h"
+#include "third_party/skia/include/core/SkRefCnt.h"
 #include "ui/accessibility/ax_tree_update.h"
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 #include <windows.h>
 #endif
+
+class SkCanvas;
+class SkPicture;
+class SkStreamAsset;
 
 namespace base {
 class UnguessableToken;
@@ -31,7 +36,7 @@ namespace printing {
 struct MetafileSkiaData;
 
 // This class uses Skia graphics library to generate a PDF or MSKP document.
-class PRINTING_EXPORT MetafileSkia : public Metafile {
+class COMPONENT_EXPORT(PRINTING_METAFILE) MetafileSkia : public Metafile {
  public:
   // Default constructor, for mojom::SkiaDocumentType::kPDF type only.
   // TODO(weili): we should split up this use case into a different class, see
@@ -55,17 +60,19 @@ class PRINTING_EXPORT MetafileSkia : public Metafile {
 
   uint32_t GetDataSize() const override;
   bool GetData(void* dst_buffer, uint32_t dst_buffer_size) const override;
+  bool ShouldCopySharedMemoryRegionData() const override;
+  mojom::MetafileDataType GetDataType() const override;
 
   gfx::Rect GetPageBounds(unsigned int page_number) const override;
   unsigned int GetPageCount() const override;
 
   printing::NativeDrawingContext context() const override;
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   bool Playback(printing::NativeDrawingContext hdc,
                 const RECT* rect) const override;
   bool SafePlayback(printing::NativeDrawingContext hdc) const override;
-#elif defined(OS_MAC)
+#elif BUILDFLAG(IS_APPLE)
   bool RenderPage(unsigned int page_number,
                   printing::NativeDrawingContext context,
                   const CGRect& rect,
@@ -73,11 +80,11 @@ class PRINTING_EXPORT MetafileSkia : public Metafile {
                   bool fit_to_page) const override;
 #endif
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
   bool SaveToFileDescriptor(int fd) const override;
 #else
   bool SaveTo(base::File* file) const override;
-#endif  // defined(OS_ANDROID)
+#endif  // BUILDFLAG(IS_ANDROID)
 
   // Unlike FinishPage() or FinishDocument(), this is for out-of-process
   // subframe printing. It will just serialize the content into SkPicture
@@ -118,15 +125,22 @@ class PRINTING_EXPORT MetafileSkia : public Metafile {
   }
   ui::AXTreeUpdate& accessibility_tree() { return accessibility_tree_; }
 
- private:
-  FRIEND_TEST_ALL_PREFIXES(MetafileSkiaTest, TestFrameContent);
-  FRIEND_TEST_ALL_PREFIXES(MetafileSkiaTest, TestMultiPictureDocumentTypefaces);
+  void set_generate_document_outline(
+      GeneratePdfDocumentOutline generate_document_outline) {
+    generate_document_outline_ = generate_document_outline;
+  }
 
-  // The following three functions are used for tests only.
-  void AppendPage(const SkSize& page_size, sk_sp<cc::PaintRecord> record);
+ private:
+  FRIEND_TEST_ALL_PREFIXES(MetafileSkiaTest, FrameContent);
+  FRIEND_TEST_ALL_PREFIXES(MetafileSkiaTest, GetPageBounds);
+  FRIEND_TEST_ALL_PREFIXES(MetafileSkiaTest, MultiPictureDocumentTypefaces);
+
+  void AppendPage(const SkSize& page_size, cc::PaintRecord record);
   void AppendSubframeInfo(uint32_t content_id,
                           const base::UnguessableToken& proxy_token,
                           sk_sp<SkPicture> subframe_pic_holder);
+
+  // This is used for tests only.
   SkStreamAsset* GetPdfData() const;
 
   // Callback function used during page content drawing to replace a custom
@@ -136,6 +150,8 @@ class PRINTING_EXPORT MetafileSkia : public Metafile {
   std::unique_ptr<MetafileSkiaData> data_;
 
   ui::AXTreeUpdate accessibility_tree_;
+  GeneratePdfDocumentOutline generate_document_outline_ =
+      GeneratePdfDocumentOutline::kNone;
 };
 
 }  // namespace printing

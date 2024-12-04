@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,24 +6,28 @@
 
 #import <AppKit/AppKit.h>
 #import <ApplicationServices/ApplicationServices.h>
-#import <Cocoa/Cocoa.h>
+#include <Foundation/Foundation.h>
+#include <QuartzCore/CVDisplayLink.h>
 #include <stdint.h>
 
 #include <map>
 #include <memory>
 
-#include "base/bind.h"
+#include "base/apple/bridging.h"
+#include "base/apple/foundation_util.h"
+#include "base/apple/scoped_cftyperef.h"
+#include "base/functional/bind.h"
+#include "base/i18n/rtl.h"
 #include "base/logging.h"
 #include "base/mac/mac_util.h"
-#include "base/mac/scoped_cftyperef.h"
-#include "base/mac/scoped_nsobject.h"
-#include "base/mac/sdk_forward_declarations.h"
-#include "base/stl_util.h"
+#include "base/strings/sys_string_conversions.h"
 #include "base/timer/timer.h"
 #include "base/trace_event/trace_event.h"
+#include "build/build_config.h"
+#include "components/device_event_log/device_event_log.h"
 #include "ui/display/display.h"
 #include "ui/display/display_change_notifier.h"
-#include "ui/display/mac/display_link_mac.h"
+#include "ui/display/util/display_util.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/icc_profile.h"
 #include "ui/gfx/mac/coordinate_conversion.h"
@@ -35,14 +39,19 @@ Boolean CGDisplayUsesForceToGray(void);
 namespace display {
 namespace {
 
+struct DisplayMac {
+  const Display display;
+  NSScreen* const __weak ns_screen;
+};
+
 NSScreen* GetMatchingScreen(const gfx::Rect& match_rect) {
   // Default to the monitor with the current keyboard focus, in case
   // |match_rect| is not on any screen at all.
-  NSScreen* max_screen = [NSScreen mainScreen];
+  NSScreen* max_screen = NSScreen.mainScreen;
   int max_area = 0;
 
-  for (NSScreen* screen in [NSScreen screens]) {
-    gfx::Rect monitor_area = gfx::ScreenRectFromNSRect([screen frame]);
+  for (NSScreen* screen in NSScreen.screens) {
+    gfx::Rect monitor_area = gfx::ScreenRectFromNSRect(screen.frame);
     gfx::Rect intersection = gfx::IntersectRects(monitor_area, match_rect);
     int area = intersection.width() * intersection.height();
     if (area > max_area) {
@@ -54,16 +63,27 @@ NSScreen* GetMatchingScreen(const gfx::Rect& match_rect) {
   return max_screen;
 }
 
-Display BuildDisplayForScreen(NSScreen* screen) {
-  TRACE_EVENT0("ui", "BuildDisplayForScreen");
-  NSRect frame = [screen frame];
+const std::vector<Display> DisplaysFromDisplaysMac(
+    const std::vector<DisplayMac> displays_mac) {
+  std::vector<Display> displays;
 
-  CGDirectDisplayID display_id = [[[screen deviceDescription]
-      objectForKey:@"NSScreenNumber"] unsignedIntValue];
+  for (auto const& display_mac : displays_mac) {
+    displays.push_back(display_mac.display);
+  }
+
+  return displays;
+}
+
+DisplayMac BuildDisplayForScreen(NSScreen* screen) {
+  TRACE_EVENT0("ui", "BuildDisplayForScreen");
+  NSRect frame = screen.frame;
+
+  CGDirectDisplayID display_id =
+      [screen.deviceDescription[@"NSScreenNumber"] unsignedIntValue];
 
   Display display(display_id, gfx::Rect(NSRectToCGRect(frame)));
-  NSRect visible_frame = [screen visibleFrame];
-  NSScreen* primary = [[NSScreen screens] firstObject];
+  NSRect visible_frame = screen.visibleFrame;
+  NSScreen* primary = NSScreen.screens.firstObject;
 
   // Convert work area's coordinate systems.
   if ([screen isEqual:primary]) {
@@ -77,38 +97,53 @@ Display BuildDisplayForScreen(NSScreen* screen) {
   }
 
   // Compute device scale factor
-  CGFloat scale = [screen backingScaleFactor];
+  CGFloat scale = screen.backingScaleFactor;
   if (Display::HasForceDeviceScaleFactor())
     scale = Display::GetForcedDeviceScaleFactor();
   display.set_device_scale_factor(scale);
 
   // Examine the presence of HDR.
   bool enable_hdr = false;
-  if (@available(macOS 10.15, *)) {
-    if ([screen maximumPotentialExtendedDynamicRangeColorComponentValue] >
-        1.0) {
-      enable_hdr = true;
+  float hdr_max_lum_relative = 1.f;
+  const float max_potential_edr_value =
+      screen.maximumPotentialExtendedDynamicRangeColorComponentValue;
+  const float max_edr_value =
+      screen.maximumExtendedDynamicRangeColorComponentValue;
+  if (max_potential_edr_value > 1.f) {
+    enable_hdr = true;
+#if defined(ARCH_CPU_X86_64)
+    // Disable HDR on Intel laptop screens because performance is unacceptably
+    // bad.
+    // https://crbug.com/1402882
+    if (CGDisplayIsBuiltin(display_id) && max_potential_edr_value <= 2.f) {
+      enable_hdr = false;
+    }
+#endif
+    if (enable_hdr) {
+      hdr_max_lum_relative =
+          std::max(kMinHDRCapableMaxLuminanceRelative, max_edr_value);
     }
   }
 
   // Compute DisplayColorSpaces.
   gfx::ICCProfile icc_profile;
   {
-    CGColorSpaceRef cg_color_space = [[screen colorSpace] CGColorSpace];
+    CGColorSpaceRef cg_color_space = screen.colorSpace.CGColorSpace;
     if (cg_color_space) {
-      base::ScopedCFTypeRef<CFDataRef> cf_icc_profile(
-          CGColorSpaceCopyICCProfile(cg_color_space));
+      base::apple::ScopedCFTypeRef<CFDataRef> cf_icc_profile(
+          CGColorSpaceCopyICCData(cg_color_space));
       if (cf_icc_profile) {
-        icc_profile = gfx::ICCProfile::FromData(
-            CFDataGetBytePtr(cf_icc_profile), CFDataGetLength(cf_icc_profile));
+        icc_profile =
+            gfx::ICCProfile::FromData(CFDataGetBytePtr(cf_icc_profile.get()),
+                                      CFDataGetLength(cf_icc_profile.get()));
       }
     }
   }
   gfx::DisplayColorSpaces display_color_spaces(icc_profile.GetColorSpace(),
-                                               gfx::BufferFormat::RGBA_8888);
-  if (Display::HasForceDisplayColorProfile()) {
+                                               gfx::BufferFormat::BGRA_8888);
+  if (HasForceDisplayColorProfile()) {
     if (Display::HasEnsureForcedColorProfile()) {
-      if (display_color_spaces != display.color_spaces()) {
+      if (display_color_spaces != display.GetColorSpaces()) {
         LOG(FATAL) << "The display's color space does not match the color "
                       "space that was forced by the command line. This will "
                       "cause pixel tests to fail.";
@@ -122,9 +157,12 @@ Display BuildDisplayForScreen(NSScreen* screen) {
             gfx::ContentColorUsage::kHDR, needs_alpha,
             gfx::ColorSpace::CreateExtendedSRGB(), gfx::BufferFormat::RGBA_F16);
       }
+      display_color_spaces.SetHDRMaxLuminanceRelative(hdr_max_lum_relative);
     }
-    display.set_color_spaces(display_color_spaces);
+    display.SetColorSpaces(display_color_spaces);
   }
+  display_color_spaces.SetSDRMaxLuminanceNits(
+      gfx::ColorSpace::kDefaultSDRWhiteLevel);
 
   if (enable_hdr) {
     display.set_color_depth(Display::kHDR10BitsPerPixel);
@@ -135,25 +173,43 @@ Display BuildDisplayForScreen(NSScreen* screen) {
   }
   display.set_is_monochrome(CGDisplayUsesForceToGray());
 
-  if (auto display_link = ui::DisplayLinkMac::GetForDisplay(display_id))
-    display.set_display_frequency(display_link->GetRefreshRate());
+  // Query the display's refresh rate.
+  {
+    CVDisplayLinkRef display_link = nullptr;
+    if (CVDisplayLinkCreateWithCGDisplay(display_id, &display_link) ==
+        kCVReturnSuccess) {
+      DCHECK(display_link);
+      CVTime cv_time =
+          CVDisplayLinkGetNominalOutputVideoRefreshPeriod(display_link);
+      if (!(cv_time.flags & kCVTimeIsIndefinite)) {
+        double refresh_rate = (static_cast<double>(cv_time.timeScale) /
+                               static_cast<double>(cv_time.timeValue));
+        display.set_display_frequency(refresh_rate);
+      }
+      CVDisplayLinkRelease(display_link);
+    }
+  }
 
   // CGDisplayRotation returns a double. Display::SetRotationAsDegree will
   // handle the unexpected situations were the angle is not a multiple of 90.
   display.SetRotationAsDegree(static_cast<int>(CGDisplayRotation(display_id)));
 
   // TODO(crbug.com/1078903): Support multiple internal displays.
-  if (CGDisplayIsBuiltin(display_id))
-    Display::SetInternalDisplayId(display_id);
+  // CGDisplayIsBuiltin may return -1 on [dis]connect; see crbug.com/1457025.
+  if (CGDisplayIsBuiltin(display_id) == YES) {
+    SetInternalDisplayIds({display_id});
+  }
 
-  return display;
+  display.set_label(base::SysNSStringToUTF8(screen.localizedName));
+
+  return DisplayMac{display, screen};
 }
 
-Display BuildPrimaryDisplay() {
-  return BuildDisplayForScreen([[NSScreen screens] firstObject]);
+DisplayMac BuildPrimaryDisplay() {
+  return BuildDisplayForScreen(NSScreen.screens.firstObject);
 }
 
-std::vector<Display> BuildDisplaysFromQuartz() {
+std::vector<DisplayMac> BuildDisplaysFromQuartz() {
   TRACE_EVENT0("ui", "BuildDisplaysFromQuartz");
 
   // Don't just return all online displays.  This would include displays
@@ -166,21 +222,21 @@ std::vector<Display> BuildDisplaysFromQuartz() {
   // doesn't hurt.
   CGDirectDisplayID online_displays[1024];
   CGDisplayCount online_display_count = 0;
-  if (CGGetOnlineDisplayList(base::size(online_displays), online_displays,
+  if (CGGetOnlineDisplayList(std::size(online_displays), online_displays,
                              &online_display_count) != kCGErrorSuccess) {
-    return std::vector<Display>(1, BuildPrimaryDisplay());
+    return std::vector<DisplayMac>(1, BuildPrimaryDisplay());
   }
 
-  typedef std::map<int64_t, NSScreen*> ScreenIdsToScreensMap;
+  using ScreenIdsToScreensMap = std::map<CGDirectDisplayID, NSScreen*>;
   ScreenIdsToScreensMap screen_ids_to_screens;
-  for (NSScreen* screen in [NSScreen screens]) {
+  for (NSScreen* screen in NSScreen.screens) {
     NSDictionary* screen_device_description = [screen deviceDescription];
-    int64_t screen_id = [[screen_device_description
-        objectForKey:@"NSScreenNumber"] unsignedIntValue];
+    CGDirectDisplayID screen_id =
+        [screen_device_description[@"NSScreenNumber"] unsignedIntValue];
     screen_ids_to_screens[screen_id] = screen;
   }
 
-  std::vector<Display> displays;
+  std::vector<DisplayMac> displays_mac;
   for (CGDisplayCount online_display_index = 0;
        online_display_index < online_display_count; ++online_display_index) {
     CGDirectDisplayID online_display = online_displays[online_display_index];
@@ -188,16 +244,16 @@ std::vector<Display> BuildDisplaysFromQuartz() {
       // If this display doesn't mirror any other, include it in the list.
       // The primary display in a mirrored set will be counted, but those that
       // mirror it will not be.
-      ScreenIdsToScreensMap::iterator foundScreen =
-          screen_ids_to_screens.find(online_display);
+      auto foundScreen = screen_ids_to_screens.find(online_display);
       if (foundScreen != screen_ids_to_screens.end()) {
-        displays.push_back(BuildDisplayForScreen(foundScreen->second));
+        displays_mac.push_back(BuildDisplayForScreen(foundScreen->second));
       }
     }
   }
 
-  return displays.empty() ? std::vector<Display>(1, BuildPrimaryDisplay())
-                          : displays;
+  return displays_mac.empty()
+             ? std::vector<DisplayMac>(1, BuildPrimaryDisplay())
+             : displays_mac;
 }
 
 // Returns the minimum Manhattan distance from |point| to corners of |screen|
@@ -218,7 +274,8 @@ CGFloat GetMinimumDistanceToCorner(const NSPoint& point, NSScreen* screen) {
 class ScreenMac : public Screen {
  public:
   ScreenMac() {
-    displays_ = BuildDisplaysFromQuartz();
+    UpdateDisplays();
+
     CGDisplayRegisterReconfigurationCallback(
         ScreenMac::DisplayReconfigurationCallBack, this);
 
@@ -226,21 +283,24 @@ class ScreenMac : public Screen {
       OnNSScreensMayHaveChanged();
     };
 
-    NSNotificationCenter* center = [NSNotificationCenter defaultCenter];
-    screen_color_change_observer_.reset(
-        [[center addObserverForName:NSScreenColorSpaceDidChangeNotification
-                             object:nil
-                              queue:nil
-                         usingBlock:update_block] retain]);
-    screen_params_change_observer_.reset([[center
+    NSNotificationCenter* center = NSNotificationCenter.defaultCenter;
+    screen_color_change_observer_ =
+        [center addObserverForName:NSScreenColorSpaceDidChangeNotification
+                            object:nil
+                             queue:nil
+                        usingBlock:update_block];
+    screen_params_change_observer_ = [center
         addObserverForName:NSApplicationDidChangeScreenParametersNotification
                     object:nil
                      queue:nil
-                usingBlock:update_block] retain]);
+                usingBlock:update_block];
   }
 
+  ScreenMac(const ScreenMac&) = delete;
+  ScreenMac& operator=(const ScreenMac&) = delete;
+
   ~ScreenMac() override {
-    NSNotificationCenter* center = [NSNotificationCenter defaultCenter];
+    NSNotificationCenter* center = NSNotificationCenter.defaultCenter;
     [center removeObserver:screen_color_change_observer_];
     [center removeObserver:screen_params_change_observer_];
 
@@ -255,8 +315,8 @@ class ScreenMac : public Screen {
 
   bool IsWindowUnderCursor(gfx::NativeWindow native_window) override {
     NSWindow* window = native_window.GetNativeNSWindow();
-    return [NSWindow windowNumberAtPoint:[NSEvent mouseLocation]
-             belowWindowWithWindowNumber:0] == [window windowNumber];
+    return [NSWindow windowNumberAtPoint:NSEvent.mouseLocation
+               belowWindowWithWindowNumber:0] == window.windowNumber;
   }
 
   gfx::NativeWindow GetWindowAtScreenPoint(const gfx::Point& point) override {
@@ -270,26 +330,29 @@ class ScreenMac : public Screen {
     const NSPoint ns_point = gfx::ScreenPointToNSPoint(point);
 
     // Note: [NSApp orderedWindows] doesn't include NSPanels.
-    for (NSWindow* window : [NSApp orderedWindows]) {
+    for (NSWindow* window in NSApp.orderedWindows) {
       if (ignore.count(window))
         continue;
 
-      if (![window isOnActiveSpace])
+      if (!window.onActiveSpace) {
         continue;
+      }
 
       // NativeWidgetMac::Close() calls -orderOut: on NSWindows before actually
       // closing them.
-      if (![window isVisible])
+      if (!window.visible) {
         continue;
+      }
 
-      if (NSPointInRect(ns_point, [window frame]))
+      if (NSPointInRect(ns_point, window.frame)) {
         return window;
+      }
     }
 
     return nil;
   }
 
-  int GetNumDisplays() const override { return GetAllDisplays().size(); }
+  int GetNumDisplays() const override { return displays_mac_.size(); }
 
   const std::vector<Display>& GetAllDisplays() const override {
     return displays_;
@@ -307,32 +370,35 @@ class ScreenMac : public Screen {
     // Note the following line calls -[NSWindow
     // _bestScreenBySpaceAssignmentOrGeometry] which is quite expensive and
     // performs IPC with the window server process.
-    NSScreen* match_screen = [window screen];
+    NSScreen* match_screen = window.screen;
 
     if (!match_screen)
       return GetPrimaryDisplay();
+
     return GetCachedDisplayForScreen(match_screen);
   }
 
   Display GetDisplayNearestView(gfx::NativeView native_view) const override {
     NSView* view = native_view.GetNativeNSView();
-    NSWindow* window = [view window];
+    NSWindow* window = view.window;
     if (!window)
       return GetPrimaryDisplay();
     return GetDisplayNearestWindow(window);
   }
 
   Display GetDisplayNearestPoint(const gfx::Point& point) const override {
-    NSArray* screens = [NSScreen screens];
-    if ([screens count] <= 1)
+    NSArray* screens = NSScreen.screens;
+    if (screens.count <= 1) {
       return GetPrimaryDisplay();
+    }
 
     NSPoint ns_point = NSPointFromCGPoint(point.ToCGPoint());
-    NSScreen* primary = [screens objectAtIndex:0];
-    ns_point.y = NSMaxY([primary frame]) - ns_point.y;
+    NSScreen* primary = screens[0];
+    ns_point.y = NSMaxY(primary.frame) - ns_point.y;
     for (NSScreen* screen in screens) {
-      if (NSMouseInRect(ns_point, [screen frame], NO))
+      if (NSMouseInRect(ns_point, screen.frame, NO)) {
         return GetCachedDisplayForScreen(screen);
+      }
     }
 
     NSScreen* nearest_screen = primary;
@@ -357,7 +423,7 @@ class ScreenMac : public Screen {
   Display GetPrimaryDisplay() const override {
     // Primary display is defined as the display with the menubar,
     // which is always at index 0.
-    NSScreen* primary = [[NSScreen screens] firstObject];
+    NSScreen* primary = NSScreen.screens.firstObject;
     Display display = GetCachedDisplayForScreen(primary);
     return display;
   }
@@ -378,62 +444,76 @@ class ScreenMac : public Screen {
   }
 
  private:
+  // Updates the display data structures.
+  void UpdateDisplays() {
+    displays_mac_ = BuildDisplaysFromQuartz();
+
+    std::vector<Display> displays = DisplaysFromDisplaysMac(displays_mac_);
+    if (displays != displays_) {
+      DISPLAY_LOG(EVENT) << "Displays updated, count: " << displays.size();
+      for (const auto& display : displays) {
+        DISPLAY_LOG(EVENT) << display.ToString();
+      }
+    }
+
+    // Keep |displays_| in sync with |displays_mac_|. It would be better to have
+    // only the |displays_mac_| data structure and generate an array of Displays
+    // from it as needed but GetAllDisplays() is defined as returning a
+    // reference. There are no restrictions on how long a caller to
+    // GetAllDisplays() can hold onto the reference so we have to assume callers
+    // expect the vector's contents to always reflect the current state of the
+    // world. Therefore update |displays_| whenever we update |displays_mac_|.
+    displays_ = std::move(displays);
+  }
+
   Display GetCachedDisplayForScreen(NSScreen* screen) const {
-    const CGDirectDisplayID display_id = [[[screen deviceDescription]
-        objectForKey:@"NSScreenNumber"] unsignedIntValue];
-    for (const Display& display : displays_) {
-      if (display_id == display.id())
-        return display;
+    for (const DisplayMac& display_mac : displays_mac_) {
+      if (display_mac.ns_screen == screen)
+        return display_mac.display;
     }
     // In theory, this should not be reached, but in practice, on Catalina, it
     // has been observed that -[NSScreen screens] changes before any
-    // notifications are received.
-    // https://crbug.com/1021340.
-    DLOG(ERROR) << "Value of -[NSScreen screens] changed before notification.";
-    return BuildDisplayForScreen(screen);
+    // notifications are received. See crbug.com/1021340 and crbug.com/1352564
+    DISPLAY_LOG(DEBUG) << "-[NSScreen screens] changed before notification.";
+    return BuildDisplayForScreen(screen).display;
   }
 
   void OnNSScreensMayHaveChanged() {
     TRACE_EVENT0("ui", "OnNSScreensMayHaveChanged");
-    auto new_displays = BuildDisplaysFromQuartz();
-    if (displays_ == new_displays)
-      return;
+
     auto old_displays = std::move(displays_);
-    displays_ = std::move(new_displays);
-    change_notifier_.NotifyDisplaysChanged(old_displays, displays_);
+
+    UpdateDisplays();
+
+    if (old_displays != displays_) {
+      change_notifier_.NotifyDisplaysChanged(old_displays, displays_);
+    }
   }
 
   // The displays currently attached to the device. Updated by
   // OnNSScreensMayHaveChanged.
+  std::vector<DisplayMac> displays_mac_;
+
   std::vector<Display> displays_;
 
   // The observers notified by NSScreenColorSpaceDidChangeNotification and
   // NSApplicationDidChangeScreenParametersNotification.
-  base::scoped_nsobject<id> screen_color_change_observer_;
-  base::scoped_nsobject<id> screen_params_change_observer_;
+  id __strong screen_color_change_observer_;
+  id __strong screen_params_change_observer_;
 
   DisplayChangeNotifier change_notifier_;
-
-  DISALLOW_COPY_AND_ASSIGN(ScreenMac);
 };
 
 }  // namespace
 
 // static
 gfx::NativeWindow Screen::GetWindowForView(gfx::NativeView native_view) {
-#if !defined(USE_AURA)
   NSView* view = native_view.GetNativeNSView();
-  return [view window];
-#else
-  gfx::NativeWindow window = nil;
-  return window;
-#endif
+  return view.window;
 }
 
-#if !defined(USE_AURA)
 Screen* CreateNativeScreen() {
   return new ScreenMac;
 }
-#endif
 
 }  // namespace display

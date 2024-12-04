@@ -1,48 +1,22 @@
-/****************************************************************************
-**
-** Copyright (C) 2020 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtWebEngine module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2020 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "extension_host_delegate_qt.h"
+
+#include "desktop_media_controller.h"
+#include "desktop_media_controller_p.h"
 #include "extension_web_contents_observer_qt.h"
 #include "media_capture_devices_dispatcher.h"
 #include "extension_system_qt.h"
+#include "web_contents_view_qt.h"
 
+#include "base/functional/callback.h"
+#include "content/browser/web_contents/web_contents_impl.h"
 #include "extensions/browser/extension_host.h"
+#include "third_party/blink/public/mojom/mediastream/media_stream.mojom-shared.h"
+#include "third_party/blink/public/mojom/mediastream/media_stream.mojom.h"
+
+using namespace QtWebEngineCore;
 
 namespace extensions {
 
@@ -55,7 +29,7 @@ void ExtensionHostDelegateQt::OnExtensionHostCreated(content::WebContents *web_c
     extensions::ExtensionWebContentsObserverQt::CreateForWebContents(web_contents);
 }
 
-void ExtensionHostDelegateQt::OnRenderViewCreatedForBackgroundPage(ExtensionHost *host)
+void ExtensionHostDelegateQt::OnMainFrameCreatedForBackgroundPage(ExtensionHost *host)
 {
     Q_UNUSED(host);
 }
@@ -69,16 +43,25 @@ content::JavaScriptDialogManager *ExtensionHostDelegateQt::GetJavaScriptDialogMa
 void ExtensionHostDelegateQt::CreateTab(std::unique_ptr<content::WebContents> web_contents,
                                         const std::string &extension_id,
                                         WindowOpenDisposition disposition,
-                                        const gfx::Rect &initial_rect,
+                                        const blink::mojom::WindowFeatures &features,
                                         bool user_gesture)
 {
     Q_UNUSED(web_contents);
     Q_UNUSED(extension_id);
     Q_UNUSED(disposition);
-    Q_UNUSED(initial_rect);
+    Q_UNUSED(features);
     Q_UNUSED(user_gesture);
 
     Q_UNREACHABLE();
+}
+
+static void processMediaAccessRequest(content::WebContents *webContents,
+                                      const content::MediaStreamRequest &request,
+                                      content::MediaResponseCallback callback,
+                                      content::DesktopMediaID id)
+{
+    MediaCaptureDevicesDispatcher::GetInstance()->processMediaAccessRequest(
+            webContents, request, std::move(callback), id);
 }
 
 void ExtensionHostDelegateQt::ProcessMediaAccessRequest(content::WebContents *web_contents,
@@ -87,14 +70,25 @@ void ExtensionHostDelegateQt::ProcessMediaAccessRequest(content::WebContents *we
                                                         const Extension *extension)
 {
     Q_UNUSED(extension);
+    base::OnceCallback<void(content::DesktopMediaID)> cb = base::BindOnce(
+            &processMediaAccessRequest, web_contents, std::move(request), std::move(callback));
 
-    QtWebEngineCore::MediaCaptureDevicesDispatcher::GetInstance()->processMediaAccessRequest(web_contents, request, std::move(callback));
+    // ownership is taken by the request
+    auto *controller = new DesktopMediaController(new DesktopMediaControllerPrivate(std::move(cb)));
+    base::WeakPtr<content::WebContents> webContents = web_contents->GetWeakPtr();
+    QObject::connect(controller, &DesktopMediaController::mediaListsInitialized, [controller, webContents]() {
+        if (webContents) {
+            auto *client = WebContentsViewQt::from(static_cast<content::WebContentsImpl *>(webContents.get())->GetView())->client();
+            client->desktopMediaRequested(controller);
+        } else {
+            controller->deleteLater();
+        }
+    });
 }
 
-bool ExtensionHostDelegateQt::CheckMediaAccessPermission(content::RenderFrameHost *render_frame_host,
-                                                         const GURL &security_origin,
-                                                         blink::mojom::MediaStreamType type,
-                                                         const Extension *extension)
+bool ExtensionHostDelegateQt::CheckMediaAccessPermission(
+        content::RenderFrameHost *render_frame_host, const url::Origin &security_origin,
+        blink::mojom::MediaStreamType type, const Extension *extension)
 {
     Q_UNUSED(render_frame_host);
     Q_UNUSED(security_origin);
@@ -105,13 +99,9 @@ bool ExtensionHostDelegateQt::CheckMediaAccessPermission(content::RenderFrameHos
     return false;
 }
 
-content::PictureInPictureResult ExtensionHostDelegateQt::EnterPictureInPicture(content::WebContents *web_contents,
-                                                                               const viz::SurfaceId &surface_id,
-                                                                               const gfx::Size &natural_size)
+content::PictureInPictureResult ExtensionHostDelegateQt::EnterPictureInPicture(content::WebContents *web_contents)
 {
     Q_UNUSED(web_contents);
-    Q_UNUSED(surface_id);
-    Q_UNUSED(natural_size);
 
     Q_UNREACHABLE();
     return content::PictureInPictureResult::kNotSupported;

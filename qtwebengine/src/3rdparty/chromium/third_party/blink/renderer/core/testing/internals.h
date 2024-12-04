@@ -30,11 +30,11 @@
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_value.h"
 #include "third_party/blink/renderer/core/css/css_computed_style_declaration.h"
-#include "third_party/blink/renderer/core/page/scrolling/scrolling_coordinator.h"
+#include "third_party/blink/renderer/core/testing/color_scheme_helper.h"
+#include "third_party/blink/renderer/core/testing/internals_ukm_recorder.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
-#include "third_party/blink/renderer/platform/bindings/script_state.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
@@ -55,31 +55,38 @@ class Element;
 class ExceptionState;
 class ExecutionContext;
 class GCObservation;
+class HTMLCanvasElement;
 class HTMLIFrameElement;
 class HTMLInputElement;
 class HTMLMediaElement;
 class HTMLSelectElement;
+class HTMLSelectListElement;
 class HTMLVideoElement;
 class HitTestLayerRectList;
 class HitTestLocation;
 class HitTestResult;
 class InternalRuntimeFlags;
 class InternalSettings;
+class InternalsUkmRecorder;
 class LocalDOMWindow;
 class LocalFrame;
 class Location;
 class Node;
 class OriginTrialsTest;
+class OffscreenCanvas;
 class Page;
 class Range;
+class ReadableStream;
 class RecordTest;
 class ScriptPromiseResolver;
-class ScrollState;
+class ScriptState;
 class SequenceTest;
 class ShadowRoot;
 class StaticSelection;
+class Text;
 class TypeConversions;
 class UnionTypesTest;
+class HTMLImageElement;
 
 template <typename NodeType>
 class StaticNodeTypeList;
@@ -93,22 +100,29 @@ class Internals final : public ScriptWrappable {
   static void ResetToConsistentState(Page*);
 
   explicit Internals(ExecutionContext*);
+  ~Internals() override;
 
   String elementLayoutTreeAsText(Element*, ExceptionState&);
 
-  GCObservation* observeGC(ScriptValue);
+  GCObservation* observeGC(ScriptValue, ExceptionState&);
 
   bool isPreloaded(const String& url);
   bool isPreloadedBy(const String& url, Document*);
   bool isLoading(const String& url);
   bool isLoadingFromMemoryCache(const String& url);
 
-  ScriptPromise getResourcePriority(ScriptState*, const String& url, Document*);
+  ScriptPromise getInitialResourcePriority(ScriptState*,
+                                           const String& url,
+                                           Document*,
+                                           bool new_load_only = false);
+  ScriptPromise getInitialResourcePriorityOfNewLoad(ScriptState*,
+                                                    const String& url,
+                                                    Document*);
   String getResourceHeader(const String& url, const String& header, Document*);
 
   bool doesWindowHaveUrlFragment(DOMWindow*);
 
-  CSSStyleDeclaration* computedStyleIncludingVisitedInfo(Node*) const;
+  CSSStyleDeclaration* computedStyleIncludingVisitedInfo(Element*) const;
 
   void setBrowserControlsState(float top_height,
                                float bottom_height,
@@ -121,8 +135,6 @@ class Internals final : public ScriptWrappable {
 
   ShadowRoot* shadowRoot(Element* host);
   String shadowRootType(const Node*, ExceptionState&) const;
-  bool hasShadowInsertionPoint(const Node*, ExceptionState&) const;
-  bool hasContentElement(const Node*, ExceptionState&) const;
   uint32_t countElementShadow(const Node*, ExceptionState&) const;
   const AtomicString& shadowPseudoId(Element*);
 
@@ -137,7 +149,6 @@ class Internals final : public ScriptWrappable {
   // animation update for CSS and advance the SMIL timeline by one frame.
   void advanceImageAnimation(Element* image, ExceptionState&);
 
-  bool isValidContentSelect(Element* insertion_point, ExceptionState&);
   Node* treeScopeRootNode(Node*);
   Node* parentTreeScope(Node*);
   uint16_t compareTreeScopePosition(const Node*,
@@ -151,7 +162,9 @@ class Internals final : public ScriptWrappable {
   Node* previousInFlatTree(Node*, ExceptionState&);
 
   unsigned updateStyleAndReturnAffectedElementCount(ExceptionState&) const;
+  unsigned styleForElementCount(ExceptionState&) const;
   unsigned needsLayoutCount(ExceptionState&) const;
+  unsigned layoutCountForTesting(ExceptionState&) const;
   unsigned hitTestCount(Document*, ExceptionState&) const;
   unsigned hitTestCacheHits(Document*, ExceptionState&) const;
   Element* elementFromPoint(Document*,
@@ -179,21 +192,22 @@ class Internals final : public ScriptWrappable {
   DOMRectReadOnly* boundingBox(Element*);
 
   void setMarker(Document*, const Range*, const String&, ExceptionState&);
-  unsigned markerCountForNode(Node*, const String&, ExceptionState&);
-  unsigned activeMarkerCountForNode(Node*);
-  Range* markerRangeForNode(Node*,
+  void removeMarker(Document*, const Range*, const String&, ExceptionState&);
+  unsigned markerCountForNode(Text*, const String&, ExceptionState&);
+  unsigned activeMarkerCountForNode(Text*);
+  Range* markerRangeForNode(Text*,
                             const String& marker_type,
                             unsigned index,
                             ExceptionState&);
-  String markerDescriptionForNode(Node*,
+  String markerDescriptionForNode(Text*,
                                   const String& marker_type,
                                   unsigned index,
                                   ExceptionState&);
-  unsigned markerBackgroundColorForNode(Node*,
+  unsigned markerBackgroundColorForNode(Text*,
                                         const String& marker_type,
                                         unsigned index,
                                         ExceptionState&);
-  unsigned markerUnderlineColorForNode(Node*,
+  unsigned markerUnderlineColorForNode(Text*,
                                        const String& marker_type,
                                        unsigned index,
                                        ExceptionState&);
@@ -235,7 +249,6 @@ class Internals final : public ScriptWrappable {
   String suggestedValue(Element*, ExceptionState&);
   void setSuggestedValue(Element*, const String&, ExceptionState&);
   void setAutofilledValue(Element*, const String&, ExceptionState&);
-  void setEditingValue(Element* input_element, const String&, ExceptionState&);
   void setAutofilled(Element*, bool enabled, ExceptionState&);
   void setSelectionRangeForNumberType(Element* input_element,
                                       uint32_t start,
@@ -273,12 +286,21 @@ class Internals final : public ScriptWrappable {
                                                int height,
                                                Document*,
                                                ExceptionState&);
+  Node* touchNodeAdjustedToBestStylusWritableNode(int x,
+                                                  int y,
+                                                  int width,
+                                                  int height,
+                                                  Document*,
+                                                  ExceptionState&);
 
   int lastSpellCheckRequestSequence(Document*, ExceptionState&);
   int lastSpellCheckProcessedSequence(Document*, ExceptionState&);
+  int spellCheckedTextLength(Document*, ExceptionState&);
   void cancelCurrentSpellCheckRequest(Document*, ExceptionState&);
   String idleTimeSpellCheckerState(Document*, ExceptionState&);
   void runIdleTimeSpellChecker(Document*, ExceptionState&);
+
+  bool hasLastEditCommand(Document*, ExceptionState&);
 
   Vector<AtomicString> userPreferredLanguages() const;
   void setUserPreferredLanguages(const Vector<String>&);
@@ -308,7 +330,8 @@ class Internals final : public ScriptWrappable {
 
   // This is used to test rect based hit testing like what's done on touch
   // screens.
-  StaticNodeList* nodesFromRect(Document*,
+  StaticNodeList* nodesFromRect(ScriptState* script_state,
+                                Document*,
                                 int x,
                                 int y,
                                 int width,
@@ -324,23 +347,11 @@ class Internals final : public ScriptWrappable {
   bool canHyphenate(const AtomicString& locale);
   void setMockHyphenation(const AtomicString& locale);
 
-  bool isOverwriteModeEnabled(Document*);
-  void toggleOverwriteModeEnabled(Document*);
-
   unsigned numberOfScrollableAreas(Document*);
-
-  bool isPageBoxVisible(Document*, int page_number);
 
   InternalSettings* settings() const;
   InternalRuntimeFlags* runtimeFlags() const;
   unsigned workerThreadCount() const;
-
-  bool isFormControlsRefreshEnabled() const;
-
-  String resolveModuleSpecifier(const String& specifier,
-                                const String& base_url_string,
-                                Document*,
-                                ExceptionState&);
 
   String getParsedImportMap(Document*, ExceptionState&);
 
@@ -354,11 +365,8 @@ class Internals final : public ScriptWrappable {
   String layerTreeAsText(Document*, unsigned flags, ExceptionState&) const;
   String layerTreeAsText(Document*, ExceptionState&) const;
 
-  bool scrollsWithRespectTo(Element*, Element*, ExceptionState&);
-
   String scrollingStateTreeAsText(Document*) const;
   String mainThreadScrollingReasons(Document*, ExceptionState&) const;
-  void markGestureScrollRegionDirty(Document*, ExceptionState&) const;
   DOMRectList* nonFastScrollableRects(Document*, ExceptionState&) const;
 
   void evictAllResources() const;
@@ -383,16 +391,6 @@ class Internals final : public ScriptWrappable {
   String pageProperty(String,
                       unsigned,
                       ExceptionState& = ASSERT_NO_EXCEPTION) const;
-  String pageSizeAndMarginsInPixels(
-      unsigned,
-      int,
-      int,
-      int,
-      int,
-      int,
-      int,
-      ExceptionState& = ASSERT_NO_EXCEPTION) const;
-
   float pageScaleFactor(ExceptionState&);
   void setPageScaleFactor(float scale_factor, ExceptionState&);
   void setPageScaleFactorLimits(float min_scale_factor,
@@ -428,6 +426,7 @@ class Internals final : public ScriptWrappable {
   CallbackFunctionTest* callbackFunctionTest() const;
 
   Vector<String> getReferencedFilePaths() const;
+  void disableReferencedFilePathsVerification() const;
 
   void startTrackingRepaints(Document*, ExceptionState&);
   void stopTrackingRepaints(Document*, ExceptionState&);
@@ -436,6 +435,7 @@ class Internals final : public ScriptWrappable {
 
   DOMRectList* draggableRegions(Document*, ExceptionState&);
   DOMRectList* nonDraggableRegions(Document*, ExceptionState&);
+  void SetSupportsAppRegion(bool supports_app_region);
 
   DOMArrayBuffer* serializeObject(v8::Isolate* isolate,
                                   const ScriptValue&,
@@ -459,6 +459,8 @@ class Internals final : public ScriptWrappable {
   int selectPopupItemStyleFontHeight(Node*, int);
   void resetTypeAheadSession(HTMLSelectElement*);
 
+  void resetSelectListTypeAheadSession(HTMLSelectListElement*);
+
   StaticSelection* getDragCaret();
   StaticSelection* getSelectionInFlatTree(DOMWindow*, ExceptionState&);
   Node* visibleSelectionAnchorNode();
@@ -468,9 +470,10 @@ class Internals final : public ScriptWrappable {
   DOMRect* selectionBounds(ExceptionState&);
   String textAffinity();
 
-  bool loseSharedGraphicsContext3D();
-
   void forceCompositingUpdate(Document*, ExceptionState&);
+
+  void setDarkPreferredColorScheme(Document* document);
+  void setForcedColorsAndDarkPreferredColorScheme(Document* document);
 
   void setShouldRevealPassword(Element*, bool, ExceptionState&);
 
@@ -500,23 +503,24 @@ class Internals final : public ScriptWrappable {
   void setFocused(bool);
   void setInitialFocus(bool);
 
-  Element* interestedElement();
-
   // Check if frame associated with current internals object is
   // active or not.
   bool isActivated();
 
   bool isInCanvasFontCache(Document*, const String&);
   unsigned canvasFontCacheMaxFonts();
+  void forceLoseCanvasContext(HTMLCanvasElement* canvas,
+                              const String& context_type);
 
-  void setScrollChain(ScrollState*,
-                      const HeapVector<Member<Element>>& elements,
-                      ExceptionState&);
+  void forceLoseCanvasContext(OffscreenCanvas* offscreencanvas,
+                              const String& context_type);
+  void disableCanvasAcceleration(HTMLCanvasElement* canvas);
 
   String selectedHTMLForClipboard();
   String selectedTextForClipboard();
 
-  void setVisualViewportOffset(int x, int y);
+  // Sets the visual viewport offset within the layout viewport.
+  void setVisualViewportOffset(int css_x, int css_y);
 
   // Return true if the given use counter exists for the given document.
   // |feature| must be one of the values from the WebFeature enum.
@@ -588,15 +592,9 @@ class Internals final : public ScriptWrappable {
 
   void simulateRasterUnderInvalidations(bool enable);
 
-  // The number of calls to update the blink lifecycle (see:
-  // LocalFrameView::UpdateLifecyclePhasesInternal).
-  unsigned LifecycleUpdateCount() const;
-
   void DisableIntersectionObserverThrottleDelay() const;
   bool isSiteIsolated(HTMLIFrameElement* iframe) const;
   bool isTrackingOcclusionForIFrame(HTMLIFrameElement* iframe) const;
-
-  void DisableFrequencyCappingForOverlayPopupDetection() const;
 
   void addEmbedderCustomElementName(const AtomicString& name, ExceptionState&);
 
@@ -611,8 +609,28 @@ class Internals final : public ScriptWrappable {
 
   void generateTestReport(const String& message);
 
-  void setIsAdSubframe(HTMLIFrameElement* iframe,
-                       ExceptionState& exception_state);
+  void setIsAdFrame(Document* target_doc, ExceptionState& exception_state);
+
+  ReadableStream* createReadableStream(ScriptState* script_state,
+                                       int32_t queueSize,
+                                       const String& optimizer,
+                                       ExceptionState&);
+
+  ScriptValue createWritableStreamAndSink(ScriptState* script_state,
+                                          int32_t queueSize,
+                                          const String& optimizer,
+                                          ExceptionState&);
+
+  void setAllowPerChunkTransferring(ReadableStream* stream);
+  void setBackForwardCacheRestorationBufferSize(unsigned int maxSize);
+
+  InternalsUkmRecorder* initializeUKMRecorder();
+
+  // Returns scripts that created an image, as observed by
+  // the LCPScriptObserver Probe.
+  Vector<String> getCreatorScripts(HTMLImageElement* img);
+
+  ScriptPromise LCPPrediction(ScriptState*, Document* document);
 
  private:
   Document* ContextDocument() const;
@@ -626,7 +644,7 @@ class Internals final : public ScriptWrappable {
                    int height,
                    Document*);
 
-  DocumentMarker* MarkerAt(Node*,
+  DocumentMarker* MarkerAt(Text*,
                            const String& marker_type,
                            unsigned index,
                            ExceptionState&);

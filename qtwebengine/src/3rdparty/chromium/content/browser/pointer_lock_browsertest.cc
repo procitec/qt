@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,14 +6,16 @@
 
 #include "content/browser/pointer_lock_browsertest.h"
 
+#include "base/memory/raw_ptr.h"
 #include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
+#include "build/chromeos_buildflags.h"
 #include "content/browser/renderer_host/frame_tree.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
 #include "content/browser/renderer_host/render_widget_host_input_event_router.h"
 #include "content/browser/web_contents/web_contents_impl.h"
+#include "content/common/features.h"
 #include "content/public/browser/web_contents_delegate.h"
-#include "content/public/common/content_features.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
@@ -100,7 +102,7 @@ class MockPointerLockRenderWidgetHostView : public RenderWidgetHostViewAura {
 
   bool HasFocus() override { return has_focus_; }
 
-  RenderWidgetHostImpl* host_;
+  raw_ptr<RenderWidgetHostImpl> host_;
   bool has_focus_ = true;
 };
 
@@ -140,16 +142,6 @@ class PointerLockBrowserTest : public ContentBrowserTest {
 
  protected:
   MockPointerLockWebContentsDelegate web_contents_delegate_;
-};
-
-class PointerLockBrowserTestWithOptions : public PointerLockBrowserTest {
- public:
-  PointerLockBrowserTestWithOptions() {
-    feature_list_.InitAndEnableFeature(features::kPointerLockOptions);
-  }
-
- private:
-  base::test::ScopedFeatureList feature_list_;
 };
 
 namespace {
@@ -217,7 +209,7 @@ IN_PROC_BROWSER_TEST_F(PointerLockBrowserTest, PointerLockBasic) {
       "a.com", "/cross_site_iframe_factory.html?a(b)"));
   EXPECT_TRUE(NavigateToURL(shell(), main_url));
 
-  FrameTreeNode* root = web_contents()->GetFrameTree()->root();
+  FrameTreeNode* root = web_contents()->GetPrimaryFrameTree().root();
   FrameTreeNode* child = root->child_at(0);
 
   // Request a pointer lock on the root frame's body.
@@ -245,7 +237,7 @@ IN_PROC_BROWSER_TEST_F(PointerLockBrowserTest, PointerLockAndUserActivation) {
       "a.com", "/cross_site_iframe_factory.html?a(b(b))"));
   EXPECT_TRUE(NavigateToURL(shell(), main_url));
 
-  FrameTreeNode* root = web_contents()->GetFrameTree()->root();
+  FrameTreeNode* root = web_contents()->GetPrimaryFrameTree().root();
   FrameTreeNode* child = root->child_at(0);
   FrameTreeNode* grand_child = child->child_at(0);
 
@@ -279,12 +271,18 @@ IN_PROC_BROWSER_TEST_F(PointerLockBrowserTest, PointerLockAndUserActivation) {
                        grand_child, EXECUTE_SCRIPT_NO_USER_GESTURE));
 }
 
-IN_PROC_BROWSER_TEST_F(PointerLockBrowserTest, PointerLockEventRouting) {
+// crbug.com/1210940: flaky on Linux
+#if BUILDFLAG(IS_LINUX)
+#define MAYBE_PointerLockEventRouting DISABLED_PointerLockEventRouting
+#else
+#define MAYBE_PointerLockEventRouting PointerLockEventRouting
+#endif
+IN_PROC_BROWSER_TEST_F(PointerLockBrowserTest, MAYBE_PointerLockEventRouting) {
   GURL main_url(embedded_test_server()->GetURL(
       "a.com", "/cross_site_iframe_factory.html?a(b)"));
   EXPECT_TRUE(NavigateToURL(shell(), main_url));
 
-  FrameTreeNode* root = web_contents()->GetFrameTree()->root();
+  FrameTreeNode* root = web_contents()->GetPrimaryFrameTree().root();
   FrameTreeNode* child = root->child_at(0);
   RenderWidgetHostInputEventRouter* router =
       web_contents()->GetInputEventRouter();
@@ -295,20 +293,27 @@ IN_PROC_BROWSER_TEST_F(PointerLockBrowserTest, PointerLockEventRouting) {
 
   WaitForHitTestData(child->current_frame_host());
 
-  std::string set_mouse_move_event_listener =
-      R"code(mouseMoveExecuted = new Promise(function (resolve, reject){
-              mousemoveHandler = function(e){
-                x = e.x; y = e.y; mX = e.movementX; mY = e.movementY;
-                document.removeEventListener('mousemove', mousemoveHandler);
-                resolve();
-              };
-              document.addEventListener('mousemove', mousemoveHandler);
-             });)code";
-  std::string define_variables = R"code(var x; var y;
-       var mX; var mY;
-       var mouseMoveExecuted;
-       var mousemoveHandler;
-       )code";
+  std::string set_mouse_move_event_listener = R"(
+    mouseMoveExecuted = new Promise(function (resolve, reject) {
+      mousemoveHandler = function(e) {
+        x = e.x;
+        y = e.y;
+        mX = e.movementX;
+        mY = e.movementY;
+        resolve();
+      };
+      document.addEventListener('mousemove', mousemoveHandler, {once: true});
+    });
+    true; // A promise is defined above, but do not wait.
+  )";
+  std::string define_variables = R"(
+    var x;
+    var y;
+    var mX;
+    var mY;
+    var mouseMoveExecuted;
+    var mousemoveHandler;
+  )";
   // Add a mouse move event listener to the root frame.
   EXPECT_TRUE(ExecJs(root, define_variables));
   EXPECT_TRUE(ExecJs(root, set_mouse_move_event_listener));
@@ -396,7 +401,7 @@ IN_PROC_BROWSER_TEST_F(PointerLockBrowserTest, PointerLockChildFrameDetached) {
       "a.com", "/cross_site_iframe_factory.html?a(b)"));
   EXPECT_TRUE(NavigateToURL(shell(), main_url));
 
-  FrameTreeNode* root = web_contents()->GetFrameTree()->root();
+  FrameTreeNode* root = web_contents()->GetPrimaryFrameTree().root();
 
   // Request a pointer lock on the root frame's body.
   EXPECT_EQ(true, PointerLockHelper::RequestPointerLockOnBody(root));
@@ -425,7 +430,7 @@ IN_PROC_BROWSER_TEST_F(PointerLockBrowserTest,
       "a.com", "/cross_site_iframe_factory.html?a(b(b))"));
   EXPECT_TRUE(NavigateToURL(shell(), main_url));
 
-  FrameTreeNode* root = web_contents()->GetFrameTree()->root();
+  FrameTreeNode* root = web_contents()->GetPrimaryFrameTree().root();
 
   // Attach an inner WebContents; it's owned by the FrameTree, so we obtain an
   // observer to it.
@@ -443,9 +448,9 @@ IN_PROC_BROWSER_TEST_F(PointerLockBrowserTest,
 
   // Request a pointer lock to the inner WebContents's document.body.
   EXPECT_EQ(true, PointerLockHelper::RequestPointerLockOnBody(
-                      inner_contents->GetMainFrame()));
+                      inner_contents->GetPrimaryMainFrame()));
   EXPECT_EQ(true, PointerLockHelper::IsPointerLockOnBody(
-                      inner_contents->GetMainFrame()));
+                      inner_contents->GetPrimaryMainFrame()));
 
   // Root (platform) RenderWidgetHostView should have the pointer locked.
   EXPECT_TRUE(root->current_frame_host()->GetView()->IsMouseLocked());
@@ -453,7 +458,7 @@ IN_PROC_BROWSER_TEST_F(PointerLockBrowserTest,
   // The widget doing the lock is the one from the inner WebContents. A link
   // to that RWH is saved into the outer webcontents.
   RenderWidgetHost* expected_lock_widget =
-      inner_contents->GetMainFrame()->GetView()->GetRenderWidgetHost();
+      inner_contents->GetPrimaryMainFrame()->GetView()->GetRenderWidgetHost();
   EXPECT_EQ(expected_lock_widget, web_contents()->GetMouseLockWidget());
   EXPECT_EQ(expected_lock_widget, web_contents()->mouse_lock_widget_);
   EXPECT_EQ(expected_lock_widget,
@@ -473,7 +478,7 @@ IN_PROC_BROWSER_TEST_F(PointerLockBrowserTest,
 
   // This should cancel the pointer lock.
   EXPECT_EQ(nullptr, web_contents()->GetMouseLockWidget());
-  EXPECT_EQ(nullptr, web_contents()->mouse_lock_widget_);
+  EXPECT_EQ(nullptr, web_contents()->mouse_lock_widget_.get());
   EXPECT_FALSE(web_contents()->HasMouseLock(
       root->current_frame_host()->GetRenderWidgetHost()));
 }
@@ -485,7 +490,7 @@ IN_PROC_BROWSER_TEST_F(PointerLockBrowserTest, PointerLockOopifCrashes) {
         "a.com", "/cross_site_iframe_factory.html?a(b(c))"));
     EXPECT_TRUE(NavigateToURL(shell(), main_url));
 
-    FrameTreeNode* root = web_contents()->GetFrameTree()->root();
+    FrameTreeNode* root = web_contents()->GetPrimaryFrameTree().root();
     FrameTreeNode* lock_node = root->child_at(0)->child_at(0);
 
     // Pick which node to crash.
@@ -512,7 +517,7 @@ IN_PROC_BROWSER_TEST_F(PointerLockBrowserTest, PointerLockOopifCrashes) {
 
     // This should cancel the pointer lock.
     EXPECT_EQ(nullptr, web_contents()->GetMouseLockWidget());
-    EXPECT_EQ(nullptr, web_contents()->mouse_lock_widget_);
+    EXPECT_EQ(nullptr, web_contents()->mouse_lock_widget_.get());
     EXPECT_FALSE(web_contents()->HasMouseLock(
         root->current_frame_host()->GetRenderWidgetHost()));
     if (crash_depth != 0)
@@ -522,12 +527,18 @@ IN_PROC_BROWSER_TEST_F(PointerLockBrowserTest, PointerLockOopifCrashes) {
   }
 }
 
-IN_PROC_BROWSER_TEST_F(PointerLockBrowserTest, PointerLockWheelEventRouting) {
+#if BUILDFLAG(IS_LINUX)
+#define MAYBE_PointerLockWheelEventRouting DISABLED_PointerLockWheelEventRouting
+#else
+#define MAYBE_PointerLockWheelEventRouting PointerLockWheelEventRouting
+#endif
+IN_PROC_BROWSER_TEST_F(PointerLockBrowserTest,
+                       MAYBE_PointerLockWheelEventRouting) {
   GURL main_url(embedded_test_server()->GetURL(
       "a.com", "/cross_site_iframe_factory.html?a(b)"));
   EXPECT_TRUE(NavigateToURL(shell(), main_url));
 
-  FrameTreeNode* root = web_contents()->GetFrameTree()->root();
+  FrameTreeNode* root = web_contents()->GetPrimaryFrameTree().root();
   FrameTreeNode* child = root->child_at(0);
   RenderWidgetHostInputEventRouter* router =
       web_contents()->GetInputEventRouter();
@@ -646,7 +657,7 @@ IN_PROC_BROWSER_TEST_F(PointerLockBrowserTest, PointerLockWidgetHidden) {
       "a.com", "/cross_site_iframe_factory.html?a(b)"));
   EXPECT_TRUE(NavigateToURL(shell(), main_url));
 
-  FrameTreeNode* root = web_contents()->GetFrameTree()->root();
+  FrameTreeNode* root = web_contents()->GetPrimaryFrameTree().root();
   FrameTreeNode* child = root->child_at(0);
   RenderWidgetHostViewBase* child_view = static_cast<RenderWidgetHostViewBase*>(
       child->current_frame_host()->GetView());
@@ -674,7 +685,7 @@ IN_PROC_BROWSER_TEST_F(PointerLockBrowserTest, PointerLockOutOfFocus) {
       "a.com", "/cross_site_iframe_factory.html?a(b)"));
   EXPECT_TRUE(NavigateToURL(shell(), main_url));
 
-  FrameTreeNode* root = web_contents()->GetFrameTree()->root();
+  FrameTreeNode* root = web_contents()->GetPrimaryFrameTree().root();
   MockPointerLockRenderWidgetHostView* root_view =
       static_cast<MockPointerLockRenderWidgetHostView*>(
           root->current_frame_host()->GetView());
@@ -687,13 +698,25 @@ IN_PROC_BROWSER_TEST_F(PointerLockBrowserTest, PointerLockOutOfFocus) {
 }
 #endif
 
-IN_PROC_BROWSER_TEST_F(PointerLockBrowserTestWithOptions,
+IN_PROC_BROWSER_TEST_F(PointerLockBrowserTest, PointerLockOnDroppedElem) {
+  GURL url = embedded_test_server()->GetURL(
+      "a.com", "/pointerlock_on_dropped_elem.html");
+  EXPECT_TRUE(NavigateToURL(shell(), url));
+
+  EXPECT_TRUE(ExecJs(shell(), "document.body.click();"));
+
+  // The second ExecJS() call here delays test termination so that the first
+  // call's async tasks get a chance to run.
+  EXPECT_TRUE(ExecJs(shell(), "", EXECUTE_SCRIPT_NO_USER_GESTURE));
+}
+
+IN_PROC_BROWSER_TEST_F(PointerLockBrowserTest,
                        PointerLockRequestUnadjustedMovement) {
   GURL main_url(embedded_test_server()->GetURL(
       "a.com", "/cross_site_iframe_factory.html?a(b)"));
   EXPECT_TRUE(NavigateToURL(shell(), main_url));
 
-  FrameTreeNode* root = web_contents()->GetFrameTree()->root();
+  FrameTreeNode* root = web_contents()->GetPrimaryFrameTree().root();
 
   EXPECT_TRUE(ExecJs(root, "var pointerLockPromise;"));
   std::string wait_for_pointer_lock_promise =
@@ -715,7 +738,7 @@ IN_PROC_BROWSER_TEST_F(PointerLockBrowserTestWithOptions,
   // Release pointer lock.
   EXPECT_EQ(true, PointerLockHelper::ExitPointerLock(root));
 
-#if defined(USE_AURA) || defined(OS_MAC)
+#if defined(USE_AURA) || BUILDFLAG(IS_MAC)
   // Request a pointer lock with unadjustedMovement.
   EXPECT_EQ(
       true,
@@ -748,12 +771,13 @@ IN_PROC_BROWSER_TEST_F(PointerLockBrowserTestWithOptions,
 }
 
 #if defined(USE_AURA)
-IN_PROC_BROWSER_TEST_F(PointerLockBrowserTestWithOptions, UnadjustedMovement) {
+// Flaky on all platforms http://crbug.com/1198612.
+IN_PROC_BROWSER_TEST_F(PointerLockBrowserTest, DISABLED_UnadjustedMovement) {
   GURL main_url(embedded_test_server()->GetURL(
       "a.com", "/cross_site_iframe_factory.html?a(b)"));
   EXPECT_TRUE(NavigateToURL(shell(), main_url));
 
-  FrameTreeNode* root = web_contents()->GetFrameTree()->root();
+  FrameTreeNode* root = web_contents()->GetPrimaryFrameTree().root();
   RenderWidgetHostInputEventRouter* router =
       web_contents()->GetInputEventRouter();
   RenderWidgetHostViewBase* root_view = static_cast<RenderWidgetHostViewBase*>(
@@ -820,7 +844,7 @@ IN_PROC_BROWSER_TEST_F(PointerLockBrowserTestWithOptions, UnadjustedMovement) {
 
 #if defined(USE_AURA)
 // TODO(https://crbug.com/982379): Remove failure test when fully implemented
-#if defined(OS_WIN) || defined(OS_CHROMEOS)
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_CHROMEOS_ASH)
 #define MAYBE_ChangeUnadjustedMovementFailure \
   DISABLED_ChangeUnadjustedMovementFailure
 #else
@@ -830,13 +854,13 @@ IN_PROC_BROWSER_TEST_F(PointerLockBrowserTestWithOptions, UnadjustedMovement) {
 // options inside a Child view gets piped to the proper places and gives
 // the proper unsupported error(this option is only supported on Windows
 // This was prompted by this bug: https://crbug.com/1062702
-IN_PROC_BROWSER_TEST_F(PointerLockBrowserTestWithOptions,
+IN_PROC_BROWSER_TEST_F(PointerLockBrowserTest,
                        MAYBE_ChangeUnadjustedMovementFailure) {
   GURL main_url(embedded_test_server()->GetURL(
       "a.com", "/cross_site_iframe_factory.html?a(b)"));
   EXPECT_TRUE(NavigateToURL(shell(), main_url));
 
-  FrameTreeNode* root = web_contents()->GetFrameTree()->root();
+  FrameTreeNode* root = web_contents()->GetPrimaryFrameTree().root();
   FrameTreeNode* child = root->child_at(0);
   RenderWidgetHostViewBase* child_view = static_cast<RenderWidgetHostViewBase*>(
       child->current_frame_host()->GetView());
@@ -873,18 +897,18 @@ IN_PROC_BROWSER_TEST_F(PointerLockBrowserTestWithOptions,
 #endif
 
 #if defined(USE_AURA)
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 // Tests that a subsequent request to RequestPointerLock with different
 // options inside a Child view gets piped to the proper places and updates
 // the option(this option is only supported on Windows).
 // This was prompted by this bug: https://crbug.com/1062702
-IN_PROC_BROWSER_TEST_F(PointerLockBrowserTestWithOptions,
+IN_PROC_BROWSER_TEST_F(PointerLockBrowserTest,
                        ChangeUnadjustedMovementSuccess) {
   GURL main_url(embedded_test_server()->GetURL(
       "a.com", "/cross_site_iframe_factory.html?a(b)"));
   EXPECT_TRUE(NavigateToURL(shell(), main_url));
 
-  FrameTreeNode* root = web_contents()->GetFrameTree()->root();
+  FrameTreeNode* root = web_contents()->GetPrimaryFrameTree().root();
   FrameTreeNode* child = root->child_at(0);
   RenderWidgetHostViewBase* child_view = static_cast<RenderWidgetHostViewBase*>(
       child->current_frame_host()->GetView());

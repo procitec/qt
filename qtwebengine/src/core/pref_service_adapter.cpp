@@ -1,50 +1,18 @@
-/****************************************************************************
-**
-** Copyright (C) 2019 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtWebEngine module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2019 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "pref_service_adapter.h"
 
 #include "profile_adapter.h"
 #include "type_conversion.h"
 #include "web_engine_context.h"
+#include "web_engine_library_info.h"
 
+#include "base/base_paths.h"
+#include "base/threading/thread_restrictions.h"
 #include "chrome/browser/prefs/chrome_command_line_pref_store.h"
 #include "content/public/browser/browser_thread.h"
+#include "components/autofill/core/common/autofill_prefs.h"
 #include "components/language/core/browser/pref_names.h"
 #include "components/prefs/pref_member.h"
 #include "components/prefs/in_memory_pref_store.h"
@@ -52,11 +20,19 @@
 #include "components/prefs/pref_service.h"
 #include "components/prefs/pref_service_factory.h"
 #include "components/prefs/pref_registry_simple.h"
+#include "components/signin/internal/identity_manager/account_tracker_service.h"
+#include "components/signin/internal/identity_manager/gaia_cookie_manager_service.h"
+#include "components/signin/internal/identity_manager/primary_account_manager.h"
+#include "components/signin/internal/identity_manager/profile_oauth2_token_service.h"
 #include "components/user_prefs/user_prefs.h"
 #include "components/proxy_config/pref_proxy_config_tracker_impl.h"
+#include "chrome/browser/gcm/gcm_product_util.h"
 #include "chrome/common/pref_names.h"
 #include "extensions/buildflags/buildflags.h"
 #include "content/public/browser/browser_context.h"
+
+#include "components/pref_registry/pref_registry_syncable.h"
+#include "chrome/browser/devtools/devtools_settings.h"
 
 #if QT_CONFIG(webengine_spellchecker)
 #include "chrome/browser/spellchecker/spellcheck_service.h"
@@ -71,6 +47,10 @@
 #include "extensions/common/constants.h"
 #endif
 
+#if defined(Q_OS_WIN)
+#include "components/os_crypt/sync/os_crypt.h"
+#endif
+
 namespace {
 static const char kPrefMediaDeviceIDSalt[] = "qtwebengine.media_device_salt_id";
 }
@@ -82,15 +62,16 @@ void PrefServiceAdapter::setup(const ProfileAdapter &profileAdapter)
     DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
     PrefServiceFactory factory;
     factory.set_command_line_prefs(base::MakeRefCounted<ChromeCommandLinePrefStore>(
-            WebEngineContext::commandLine()));
+            base::CommandLine::ForCurrentProcess()));
 
     QString userPrefStorePath = profileAdapter.dataPath();
-    if (profileAdapter.isOffTheRecord() || profileAdapter.storageName().isEmpty()) {
-        factory.set_user_prefs(new InMemoryPrefStore);
-    } else {
+    if (!profileAdapter.isOffTheRecord() && !userPrefStorePath.isEmpty() &&
+            const_cast<ProfileAdapter *>(&profileAdapter)->ensureDataPathExists()) {
         userPrefStorePath += QDir::separator();
         userPrefStorePath += QStringLiteral("user_prefs.json");
         factory.set_user_prefs(base::MakeRefCounted<JsonPrefStore>(toFilePath(userPrefStorePath)));
+    } else {
+        factory.set_user_prefs(new InMemoryPrefStore);
     }
 
     auto registry = base::MakeRefCounted<PrefRegistrySimple>();
@@ -108,14 +89,29 @@ void PrefServiceAdapter::setup(const ProfileAdapter &profileAdapter)
 #endif // QT_CONFIG(webengine_spellchecker)
     registry->RegisterBooleanPref(prefs::kShowInternalAccessibilityTree, false);
     registry->RegisterBooleanPref(prefs::kAccessibilityImageLabelsEnabled, false);
+
+    // chrome/browser/notifications
     registry->RegisterIntegerPref(prefs::kNotificationNextPersistentId, 10000);
+    // chrome/browser/push_messaging
+    registry->RegisterDictionaryPref(prefs::kPushMessagingAppIdentifierMap);
+    // chrome/browser/gcm
+    gcm::RegisterPrefs(registry.get());
+
+    // signin
+    PrimaryAccountManager::RegisterProfilePrefs(registry.get());
+    ProfileOAuth2TokenService::RegisterProfilePrefs(registry.get());
+    GaiaCookieManagerService::RegisterPrefs(registry.get());
+    AccountTrackerService::RegisterPrefs(registry.get());
+
+#if defined(Q_OS_WIN)
+    OSCrypt::RegisterLocalPrefs(registry.get());
+#endif
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
     registry->RegisterDictionaryPref(extensions::pref_names::kExtensions);
     registry->RegisterListPref(extensions::pref_names::kInstallAllowList);
     registry->RegisterListPref(extensions::pref_names::kInstallDenyList);
     registry->RegisterDictionaryPref(extensions::pref_names::kInstallForceList);
-    registry->RegisterDictionaryPref(extensions::pref_names::kLoginScreenExtensions);
     registry->RegisterListPref(extensions::pref_names::kAllowedTypes);
     registry->RegisterBooleanPref(extensions::pref_names::kStorageGarbageCollect, false);
     registry->RegisterListPref(extensions::pref_names::kAllowedInstallSites);
@@ -123,6 +119,7 @@ void PrefServiceAdapter::setup(const ProfileAdapter &profileAdapter)
     registry->RegisterListPref(extensions::pref_names::kNativeMessagingBlocklist);
     registry->RegisterListPref(extensions::pref_names::kNativeMessagingAllowlist);
     registry->RegisterBooleanPref(extensions::pref_names::kNativeMessagingUserLevelHosts, true);
+    registry->RegisterListPref(extensions::pref_names::kExtendedBackgroundLifetimeForPortConnectionsToUrls);
 #endif // BUILDFLAG(ENABLE_EXTENSIONS)
 
     // Media device salt id key
@@ -130,12 +127,24 @@ void PrefServiceAdapter::setup(const ProfileAdapter &profileAdapter)
     // default value will be different. We'll need to initialize it later.
     registry->RegisterStringPref(kPrefMediaDeviceIDSalt, std::string());
 
-    m_prefService = factory.Create(registry);
+    registry->RegisterBooleanPref(autofill::prefs::kAutofillEnabledDeprecated, false);
+    registry->RegisterBooleanPref(autofill::prefs::kAutofillProfileEnabled, false);
+    registry->RegisterBooleanPref(autofill::prefs::kAutofillCreditCardEnabled, false);
+    registry->RegisterBooleanPref(autofill::prefs::kAutofillCreditCardFidoAuthEnabled, false);
 
-    // Initialize salt value if none was stored before
-    if (m_prefService->GetString(kPrefMediaDeviceIDSalt).empty()) {
-        m_prefService->SetString(kPrefMediaDeviceIDSalt,
-                content::BrowserContext::CreateRandomMediaDeviceIDSalt());
+    // devtools
+    registry->RegisterDictionaryPref(prefs::kDevToolsFileSystemPaths);
+    registry->RegisterDictionaryPref(prefs::kDevToolsEditedFiles);
+    registry->RegisterDictionaryPref(prefs::kDevToolsPreferences);
+    registry->RegisterBooleanPref(prefs::kDevToolsSyncPreferences, false);
+    // even if kDevToolsSyncPreferences is disabled, the js frontend tries to access
+    // these two. E.g.: 'clearPreferences', that is overridden by devtools_compatibility.js
+    registry->RegisterDictionaryPref(prefs::kDevToolsSyncedPreferencesSyncDisabled);
+    registry->RegisterDictionaryPref(prefs::kDevToolsSyncedPreferencesSyncEnabled);
+
+    {
+        base::ScopedAllowBlocking allowBlock;
+        m_prefService = factory.Create(registry);
     }
 
 #if QT_CONFIG(webengine_spellchecker)
@@ -143,6 +152,8 @@ void PrefServiceAdapter::setup(const ProfileAdapter &profileAdapter)
     m_prefService->ClearPref(spellcheck::prefs::kSpellCheckEnable);
     m_prefService->ClearPref(spellcheck::prefs::kSpellCheckDictionaries);
 #endif // QT_CONFIG(webengine_spellchecker)
+
+    m_prefService->SchedulePendingLossyWrites();
 }
 
 void PrefServiceAdapter::commit()
@@ -178,15 +189,15 @@ void PrefServiceAdapter::setSpellCheckLanguages(const QStringList &languages)
     for (const auto &language : languages)
         dictionaries.push_back(language.toStdString());
     dictionaries_pref.SetValue(dictionaries);
+    m_prefService->SchedulePendingLossyWrites();
 }
 
 QStringList PrefServiceAdapter::spellCheckLanguages() const
 {
     QStringList spellcheck_dictionaries;
-    for (const auto &value : *m_prefService->GetList(spellcheck::prefs::kSpellCheckDictionaries)) {
-        std::string dictionary;
-        if (value.GetAsString(&dictionary))
-            spellcheck_dictionaries.append(QString::fromStdString(dictionary));
+    const auto &list = m_prefService->GetList(spellcheck::prefs::kSpellCheckDictionaries);
+    for (const auto &dictionary : list) {
+        spellcheck_dictionaries.append(QString::fromStdString(dictionary.GetString()));
     }
 
     return spellcheck_dictionaries;
@@ -194,7 +205,10 @@ QStringList PrefServiceAdapter::spellCheckLanguages() const
 
 void PrefServiceAdapter::setSpellCheckEnabled(bool enabled)
 {
-    m_prefService->SetBoolean(spellcheck::prefs::kSpellCheckEnable, enabled);
+    if (!WebEngineLibraryInfo::getPath(base::DIR_APP_DICTIONARIES, true).empty()) {
+        m_prefService->SetBoolean(spellcheck::prefs::kSpellCheckEnable, enabled);
+        m_prefService->SchedulePendingLossyWrites();
+    }
 }
 
 bool PrefServiceAdapter::isSpellCheckEnabled() const

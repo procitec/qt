@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,8 +9,8 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
 #include "base/files/file_util.h"
+#include "base/functional/bind.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "build/build_config.h"
 #include "components/offline_pages/core/client_namespace_constants.h"
@@ -75,7 +75,7 @@ PagePresence StartupMaintenanceTaskTest::CheckPagePresence(
 
 // This test is affected by https://crbug.com/725685, which only affects windows
 // platform.
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 #define MAYBE_TestDeletePageInLegacyArchivesDir \
   DISABLED_TestDeletePageInLegacyArchivesDir
 #else
@@ -108,13 +108,11 @@ TEST_F(StartupMaintenanceTaskTest, MAYBE_TestDeletePageInLegacyArchivesDir) {
   EXPECT_EQ(PagePresence::BOTH_DB_AND_FILESYSTEM,
             CheckPagePresence(persistent_page1));
   EXPECT_EQ(PagePresence::NONE, CheckPagePresence(persistent_page2));
-  histogram_tester()->ExpectUniqueSample(
-      "OfflinePages.ConsistencyCheck.Legacy.DeletedHeadlessFileCount", 2, 1);
 }
 
 // This test is affected by https://crbug.com/725685, which only affects windows
 // platform.
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 #define MAYBE_TestDeleteFileWithoutDbEntry DISABLED_TestDeleteFileWithoutDbEntry
 #else
 #define MAYBE_TestDeleteFileWithoutDbEntry TestDeleteFileWithoutDbEntry
@@ -155,22 +153,11 @@ TEST_F(StartupMaintenanceTaskTest, MAYBE_TestDeleteFileWithoutDbEntry) {
   EXPECT_EQ(PagePresence::BOTH_DB_AND_FILESYSTEM,
             CheckPagePresence(persistent_page1));
   EXPECT_EQ(PagePresence::NONE, CheckPagePresence(persistent_page2));
-
-  histogram_tester()->ExpectUniqueSample(
-      "OfflinePages.ConsistencyCheck.Legacy.DeletedHeadlessFileCount", 1, 1);
-  histogram_tester()->ExpectTotalCount(
-      "OfflinePages.ConsistencyCheck.Temporary.PagesMissingArchiveFileCount",
-      0);
-  histogram_tester()->ExpectUniqueSample(
-      "OfflinePages.ConsistencyCheck.Temporary.PagesMissingDbEntryCount", 1, 1);
-  histogram_tester()->ExpectUniqueSample(
-      "OfflinePages.ConsistencyCheck.Temporary.Result",
-      static_cast<int>(SyncOperationResult::SUCCESS), 1);
 }
 
 // This test is affected by https://crbug.com/725685, which only affects windows
 // platform.
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 #define MAYBE_TestDeleteDbEntryWithoutFile DISABLED_TestDeleteDbEntryWithoutFile
 #else
 #define MAYBE_TestDeleteDbEntryWithoutFile TestDeleteDbEntryWithoutFile
@@ -209,20 +196,11 @@ TEST_F(StartupMaintenanceTaskTest, MAYBE_TestDeleteDbEntryWithoutFile) {
   EXPECT_EQ(PagePresence::BOTH_DB_AND_FILESYSTEM,
             CheckPagePresence(persistent_page1));
   EXPECT_EQ(PagePresence::DB_ONLY, CheckPagePresence(persistent_page2));
-
-  histogram_tester()->ExpectTotalCount(
-      "OfflinePages.ConsistencyCheck.Temporary.PagesMissingDbEntryCount", 0);
-  histogram_tester()->ExpectUniqueSample(
-      "OfflinePages.ConsistencyCheck.Temporary.PagesMissingArchiveFileCount", 1,
-      1);
-  histogram_tester()->ExpectUniqueSample(
-      "OfflinePages.ConsistencyCheck.Temporary.Result",
-      static_cast<int>(SyncOperationResult::SUCCESS), 1);
 }
 
 // This test is affected by https://crbug.com/725685, which only affects windows
 // platform.
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 #define MAYBE_CombinedTest DISABLED_CombinedTest
 #else
 #define MAYBE_CombinedTest CombinedTest
@@ -271,17 +249,6 @@ TEST_F(StartupMaintenanceTaskTest, MAYBE_CombinedTest) {
   EXPECT_EQ(PagePresence::BOTH_DB_AND_FILESYSTEM,
             CheckPagePresence(persistent_page1));
   EXPECT_EQ(PagePresence::NONE, CheckPagePresence(persistent_page2));
-
-  histogram_tester()->ExpectUniqueSample(
-      "OfflinePages.ConsistencyCheck.Legacy.DeletedHeadlessFileCount", 2, 1);
-  histogram_tester()->ExpectUniqueSample(
-      "OfflinePages.ConsistencyCheck.Temporary.PagesMissingArchiveFileCount", 2,
-      1);
-  histogram_tester()->ExpectUniqueSample(
-      "OfflinePages.ConsistencyCheck.Temporary.PagesMissingDbEntryCount", 1, 1);
-  histogram_tester()->ExpectUniqueSample(
-      "OfflinePages.ConsistencyCheck.Temporary.Result",
-      static_cast<int>(SyncOperationResult::SUCCESS), 1);
 }
 
 TEST_F(StartupMaintenanceTaskTest, TestKeepingNonMhtmlFile) {
@@ -332,14 +299,6 @@ TEST_F(StartupMaintenanceTaskTest, TestReportStorageUsage) {
   auto task =
       std::make_unique<StartupMaintenanceTask>(store(), archive_manager());
   RunTask(std::move(task));
-
-  // For each namespace, check if the storage usage was correctly reported,
-  // since the value is reported with KiB as unit, divide it by 1024 here.
-  for (const auto& name_space : namespaces) {
-    histogram_tester()->ExpectUniqueSample(
-        "OfflinePages.ClearStoragePreRunUsage2." + name_space,
-        name_space.length() * kTestFileSize / 1024, 1);
-  }
 }
 
 }  // namespace offline_pages

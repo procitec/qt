@@ -34,7 +34,9 @@
 #include "base/memory/scoped_refptr.h"
 #include "third_party/blink/renderer/core/clipboard/data_object_item.h"
 #include "third_party/blink/renderer/core/core_export.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_set.h"
+#include "third_party/blink/renderer/platform/heap/collection_support/heap_vector.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/supplementable.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_hash.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
@@ -45,6 +47,7 @@ namespace blink {
 class KURL;
 class SystemClipboard;
 class WebDragData;
+class ExecutionContext;
 
 enum class PasteMode;
 
@@ -61,10 +64,14 @@ class CORE_EXPORT DataObject : public GarbageCollected<DataObject>,
     virtual void OnItemListChanged() = 0;
   };
 
+  static DataObject* CreateFromClipboard(ExecutionContext* context,
+                                         SystemClipboard*,
+                                         PasteMode);
   static DataObject* CreateFromClipboard(SystemClipboard*, PasteMode);
   static DataObject* CreateFromString(const String&);
   static DataObject* Create();
-  static DataObject* Create(WebDragData);
+  static DataObject* Create(ExecutionContext* context, const WebDragData&);
+  static DataObject* Create(const WebDragData&);
 
   DataObject();
   virtual ~DataObject();
@@ -76,6 +83,8 @@ class CORE_EXPORT DataObject : public GarbageCollected<DataObject>,
   // called.
   void DeleteItem(uint32_t index);
   void ClearAll();
+  // Removes all the items from |item_list_| whose |kind_| is kStringKind.
+  void ClearStringItems();
   // Returns null if an item already exists with the provided type.
   DataObjectItem* Add(const String& data, const String& type);
   DataObjectItem* Add(File*);
@@ -96,26 +105,28 @@ class CORE_EXPORT DataObject : public GarbageCollected<DataObject>,
   // Used for dragging in files from the desktop.
   bool ContainsFilenames() const;
   Vector<String> Filenames() const;
-  void AddFilename(const String& filename,
+  void AddFilename(ExecutionContext* context,
+                   const String& filename,
                    const String& display_name,
                    const String& file_system_id,
-                   scoped_refptr<NativeFileSystemDropData>
-                       native_file_system_entry = nullptr);
+                   scoped_refptr<FileSystemAccessDropData>
+                       file_system_access_entry = nullptr);
 
   // Used for dragging in filesystem from the desktop.
   void SetFilesystemId(const String& file_system_id) {
     filesystem_id_ = file_system_id;
   }
   const String& FilesystemId() const {
-    DCHECK(!filesystem_id_.IsEmpty());
+    DCHECK(!filesystem_id_.empty());
     return filesystem_id_;
   }
 
   // Used to handle files (images) being dragged out.
-  void AddSharedBuffer(scoped_refptr<SharedBuffer>,
-                       const KURL&,
-                       const String& filename_extension,
-                       const AtomicString& content_disposition);
+  void AddFileSharedBuffer(scoped_refptr<SharedBuffer>,
+                           bool is_accessible_from_start_frame,
+                           const KURL&,
+                           const String& filename_extension,
+                           const AtomicString& content_disposition);
 
   int GetModifiers() const { return modifiers_; }
   void SetModifiers(int modifiers) { modifiers_ = modifiers; }
@@ -145,4 +156,4 @@ class CORE_EXPORT DataObject : public GarbageCollected<DataObject>,
 
 }  // namespace blink
 
-#endif
+#endif  // THIRD_PARTY_BLINK_RENDERER_CORE_CLIPBOARD_DATA_OBJECT_H_

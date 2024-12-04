@@ -26,6 +26,7 @@
 
 #include "third_party/blink/renderer/core/editing/editor.h"
 
+#include "third_party/blink/public/web/web_local_frame_client.h"
 #include "third_party/blink/renderer/core/accessibility/ax_object_cache.h"
 #include "third_party/blink/renderer/core/clipboard/data_object.h"
 #include "third_party/blink/renderer/core/clipboard/data_transfer.h"
@@ -45,6 +46,7 @@
 #include "third_party/blink/renderer/core/editing/commands/indent_outdent_command.h"
 #include "third_party/blink/renderer/core/editing/commands/insert_list_command.h"
 #include "third_party/blink/renderer/core/editing/commands/replace_selection_command.h"
+#include "third_party/blink/renderer/core/editing/commands/selection_for_undo_step.h"
 #include "third_party/blink/renderer/core/editing/commands/simplify_markup_command.h"
 #include "third_party/blink/renderer/core/editing/commands/typing_command.h"
 #include "third_party/blink/renderer/core/editing/commands/undo_stack.h"
@@ -85,7 +87,7 @@
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/core/scroll/scroll_alignment.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
-#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/wtf/text/character_names.h"
@@ -97,7 +99,8 @@ namespace {
 bool IsInPasswordFieldWithUnrevealedPassword(const Position& position) {
   if (auto* input =
           DynamicTo<HTMLInputElement>(EnclosingTextControl(position))) {
-    return (input->type() == input_type_names::kPassword) &&
+    return input->FormControlType() ==
+               mojom::blink::FormControlType::kInputPassword &&
            !input->ShouldRevealPassword();
   }
   return false;
@@ -132,7 +135,7 @@ SelectionInDOMTree Editor::SelectionForCommand(Event* event) {
 // not available.
 EditingBehavior Editor::Behavior() const {
   if (!GetFrame().GetSettings())
-    return EditingBehavior(web_pref::kEditingMacBehavior);
+    return EditingBehavior(mojom::blink::EditingBehavior::kEditingMacBehavior);
 
   return EditingBehavior(GetFrame().GetSettings()->GetEditingBehaviorType());
 }
@@ -360,6 +363,10 @@ bool Editor::DeleteSelectionAfterDraggingWithEvents(
   if (frame_->GetDocument()->GetFrame() != frame_)
     return false;
 
+  // No DOM mutation if EditContext is active.
+  if (frame_->GetInputMethodController().GetActiveEditContext())
+    return true;
+
   if (should_delete && drag_source->isConnected()) {
     DeleteSelectionWithSmartDelete(delete_mode,
                                    InputEvent::InputType::kDeleteByDrag,
@@ -394,6 +401,10 @@ bool Editor::ReplaceSelectionAfterDraggingWithEvents(
   if (frame_->GetDocument()->GetFrame() != frame_)
     return false;
 
+  // No DOM mutation if EditContext is active.
+  if (frame_->GetInputMethodController().GetActiveEditContext())
+    return true;
+
   if (should_insert && drop_target->isConnected())
     ReplaceSelectionAfterDragging(fragment, insert_mode, drag_source_type);
 
@@ -415,6 +426,20 @@ void Editor::RespondToChangedContents(const Position& position) {
 
   GetSpellChecker().RespondToChangedContents();
   frame_->Client()->DidChangeContents();
+}
+
+void Editor::NotifyAccessibilityOfDeletionOrInsertionInTextField(
+    const SelectionForUndoStep& changed_selection,
+    bool is_deletion) {
+  if (AXObjectCache* cache =
+          GetFrame().GetDocument()->ExistingAXObjectCache()) {
+    if (!changed_selection.Start().IsValidFor(*GetFrame().GetDocument()) ||
+        !changed_selection.End().IsValidFor(*GetFrame().GetDocument())) {
+      return;
+    }
+    cache->HandleDeletionOrInsertionInTextField(changed_selection.AsSelection(),
+                                                is_deletion);
+  }
 }
 
 void Editor::RegisterCommandGroup(CompositeEditCommand* command_group_wrapper) {
@@ -455,8 +480,7 @@ Editor::Editor(LocalFrame& frame)
       should_style_with_css_(false),
       kill_ring_(std::make_unique<KillRing>()),
       are_marked_text_matches_highlighted_(false),
-      default_paragraph_separator_(EditorParagraphSeparator::kIsDiv),
-      overwrite_mode_enabled_(false) {}
+      default_paragraph_separator_(EditorParagraphSeparator::kIsDiv) {}
 
 Editor::~Editor() = default;
 
@@ -616,6 +640,12 @@ void Editor::CopyImage(const HitTestResult& result) {
                             result.AltDisplayString());
 }
 
+void Editor::CopyImage(const HitTestResult& result,
+                       const scoped_refptr<Image>& image) {
+  WriteImageToClipboard(*frame_->GetSystemClipboard(), image, KURL(),
+                        result.AltDisplayString());
+}
+
 bool Editor::CanUndo() {
   return undo_stack_->CanUndo();
 }
@@ -640,22 +670,22 @@ void Editor::SetBaseWritingDirection(
       return;
     text_control->setAttribute(
         html_names::kDirAttr,
-        direction == mojo_base::mojom::blink::TextDirection::LEFT_TO_RIGHT
-            ? "ltr"
-            : "rtl");
+        AtomicString(
+            direction == mojo_base::mojom::blink::TextDirection::LEFT_TO_RIGHT
+                ? "ltr"
+                : "rtl"));
     text_control->DispatchInputEvent();
     return;
   }
 
   auto* style =
       MakeGarbageCollected<MutableCSSPropertyValueSet>(kHTMLQuirksMode);
-  style->SetProperty(
+  style->ParseAndSetProperty(
       CSSPropertyID::kDirection,
-      direction == mojo_base::mojom::blink::TextDirection::LEFT_TO_RIGHT
-          ? "ltr"
-          : direction == mojo_base::mojom::blink::TextDirection::RIGHT_TO_LEFT
-                ? "rtl"
-                : "inherit",
+      direction == mojo_base::mojom::blink::TextDirection::LEFT_TO_RIGHT ? "ltr"
+      : direction == mojo_base::mojom::blink::TextDirection::RIGHT_TO_LEFT
+          ? "rtl"
+          : "inherit",
       /* important */ false, GetFrame().DomWindow()->GetSecureContextMode());
   ApplyParagraphStyleToSelection(
       style, InputEvent::InputType::kFormatSetBlockTextDirection);
@@ -670,6 +700,14 @@ void Editor::RevealSelectionAfterEditingOperation(
   GetFrameSelection().RevealSelection(alignment, kDoNotRevealExtent);
 }
 
+void Editor::AddImageResourceObserver(ImageResourceObserver* observer) {
+  image_resource_observers_.insert(observer);
+}
+
+void Editor::RemoveImageResourceObserver(ImageResourceObserver* observer) {
+  image_resource_observers_.erase(observer);
+}
+
 void Editor::AddToKillRing(const EphemeralRange& range) {
   if (should_start_new_kill_ring_sequence_)
     GetKillRing().StartNewSequence();
@@ -680,7 +718,7 @@ void Editor::AddToKillRing(const EphemeralRange& range) {
   should_start_new_kill_ring_sequence_ = false;
 }
 
-EphemeralRange Editor::RangeForPoint(const IntPoint& frame_point) const {
+EphemeralRange Editor::RangeForPoint(const gfx::Point& frame_point) const {
   const PositionWithAffinity position_with_affinity =
       GetFrame().PositionForPoint(PhysicalOffset(frame_point));
   if (position_with_affinity.IsNull())
@@ -692,7 +730,7 @@ EphemeralRange Editor::RangeForPoint(const IntPoint& frame_point) const {
   if (previous.IsNotNull()) {
     const EphemeralRange previous_character_range =
         MakeRange(previous, position);
-    const IntRect rect = FirstRectForRange(previous_character_range);
+    const gfx::Rect rect = FirstRectForRange(previous_character_range);
     if (rect.Contains(frame_point))
       return EphemeralRange(previous_character_range);
   }
@@ -700,12 +738,36 @@ EphemeralRange Editor::RangeForPoint(const IntPoint& frame_point) const {
   const VisiblePosition next = NextPositionOf(position);
   const EphemeralRange next_character_range = MakeRange(position, next);
   if (next_character_range.IsNotNull()) {
-    const IntRect rect = FirstRectForRange(next_character_range);
+    const gfx::Rect rect = FirstRectForRange(next_character_range);
     if (rect.Contains(frame_point))
       return EphemeralRange(next_character_range);
   }
 
   return EphemeralRange();
+}
+
+EphemeralRange Editor::RangeBetweenPoints(const gfx::Point& start_point,
+                                          const gfx::Point& end_point) const {
+  const PositionWithAffinity start_position =
+      GetFrame().PositionForPoint(PhysicalOffset(start_point));
+  if (start_position.IsNull())
+    return EphemeralRange();
+  const VisiblePosition start_visible_position =
+      CreateVisiblePosition(start_position);
+  if (start_visible_position.IsNull())
+    return EphemeralRange();
+
+  const PositionWithAffinity end_position =
+      GetFrame().PositionForPoint(PhysicalOffset(end_point));
+  if (end_position.IsNull())
+    return EphemeralRange();
+  const VisiblePosition end_visible_position =
+      CreateVisiblePosition(end_position);
+  if (end_visible_position.IsNull())
+    return EphemeralRange();
+  return start_position.GetPosition() <= end_position.GetPosition()
+             ? MakeRange(start_visible_position, end_visible_position)
+             : MakeRange(end_visible_position, start_visible_position);
 }
 
 void Editor::ComputeAndSetTypingStyle(CSSPropertyValueSet* style,
@@ -721,13 +783,15 @@ void Editor::ComputeAndSetTypingStyle(CSSPropertyValueSet* style,
   else
     typing_style_ = MakeGarbageCollected<EditingStyle>(style);
 
-  typing_style_->PrepareToApplyAt(
-      GetFrame()
-          .Selection()
-          .ComputeVisibleSelectionInDOMTreeDeprecated()
-          .VisibleStart()
-          .DeepEquivalent(),
-      EditingStyle::kPreserveWritingDirection);
+  const Position& position = GetFrame()
+                                 .Selection()
+                                 .ComputeVisibleSelectionInDOMTreeDeprecated()
+                                 .VisibleStart()
+                                 .DeepEquivalent();
+  if (position.IsNull())
+    return;
+  typing_style_->PrepareToApplyAt(position,
+                                  EditingStyle::kPreserveWritingDirection);
 
   // Handle block styles, substracting these from the typing style.
   EditingStyle* block_style =
@@ -815,7 +879,7 @@ Range* Editor::FindRangeOfString(
     const EphemeralRangeInFlatTree& reference_range,
     FindOptions options,
     bool* wrapped_around) {
-  if (target.IsEmpty())
+  if (target.empty())
     return nullptr;
 
   // Start from an edge of the reference range. Which edge is used depends on
@@ -885,9 +949,13 @@ void Editor::SetMarkedTextMatchesAreHighlighted(bool flag) {
 
 void Editor::RespondToChangedSelection() {
   GetSpellChecker().RespondToChangedSelection();
-  frame_->Client()->DidChangeSelection(
-      GetFrameSelection().GetSelectionInDOMTree().Type() != kRangeSelection);
+  SyncSelection(blink::SyncCondition::kNotForced);
   SetStartNewKillRingSequence(true);
+}
+
+void Editor::SyncSelection(SyncCondition force_sync) {
+  frame_->Client()->DidChangeSelection(
+      !GetFrameSelection().GetSelectionInDOMTree().IsRange(), force_sync);
 }
 
 SpellChecker& Editor::GetSpellChecker() const {
@@ -903,11 +971,6 @@ void Editor::SetMark() {
   mark_is_directional_ = GetFrameSelection().IsDirectional();
 }
 
-void Editor::ToggleOverwriteModeEnabled() {
-  overwrite_mode_enabled_ = !overwrite_mode_enabled_;
-  GetFrameSelection().SetShouldShowBlockCursor(overwrite_mode_enabled_);
-}
-
 void Editor::ReplaceSelection(const String& text) {
   DCHECK(!GetFrame().GetDocument()->NeedsLayoutTreeUpdate());
   bool select_replacement = Behavior().ShouldSelectReplacement();
@@ -916,12 +979,20 @@ void Editor::ReplaceSelection(const String& text) {
                            InputEvent::InputType::kInsertReplacementText);
 }
 
+void Editor::ElementRemoved(Element* element) {
+  if (last_edit_command_ &&
+      last_edit_command_->EndingSelection().RootEditableElement() == element) {
+    last_edit_command_ = nullptr;
+  }
+}
+
 void Editor::Trace(Visitor* visitor) const {
   visitor->Trace(frame_);
   visitor->Trace(last_edit_command_);
   visitor->Trace(undo_stack_);
   visitor->Trace(mark_);
   visitor->Trace(typing_style_);
+  visitor->Trace(image_resource_observers_);
 }
 
 }  // namespace blink

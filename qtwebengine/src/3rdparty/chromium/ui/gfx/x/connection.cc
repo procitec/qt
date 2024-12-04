@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,240 +8,90 @@
 #include <xcb/xcbext.h>
 
 #include <algorithm>
+#include <string>
 
 #include "base/auto_reset.h"
 #include "base/command_line.h"
-#include "base/i18n/case_conversion.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/no_destructor.h"
-#include "base/strings/string16.h"
+#include "base/observer_list.h"
 #include "base/threading/thread_local.h"
+#include "base/trace_event/trace_event.h"
+#include "ui/gfx/switches.h"
+#include "ui/gfx/x/atom_cache.h"
 #include "ui/gfx/x/bigreq.h"
+#include "ui/gfx/x/dri3.h"
 #include "ui/gfx/x/event.h"
-#include "ui/gfx/x/keysyms/keysyms.h"
+#include "ui/gfx/x/glx.h"
+#include "ui/gfx/x/keyboard_state.h"
+#include "ui/gfx/x/property_cache.h"
 #include "ui/gfx/x/randr.h"
-#include "ui/gfx/x/x11.h"
-#include "ui/gfx/x/x11_switches.h"
-#include "ui/gfx/x/x11_types.h"
+#include "ui/gfx/x/render.h"
+#include "ui/gfx/x/screensaver.h"
+#include "ui/gfx/x/shape.h"
+#include "ui/gfx/x/shm.h"
+#include "ui/gfx/x/sync.h"
+#include "ui/gfx/x/visual_manager.h"
+#include "ui/gfx/x/window_event_manager.h"
+#include "ui/gfx/x/wm_sync.h"
+#include "ui/gfx/x/xfixes.h"
+#include "ui/gfx/x/xinput.h"
 #include "ui/gfx/x/xkb.h"
 #include "ui/gfx/x/xproto.h"
 #include "ui/gfx/x/xproto_internal.h"
 #include "ui/gfx/x/xproto_types.h"
-
-extern "C" {
-typedef struct {
-  int type;
-  unsigned long serial;
-  Bool send_event;
-  Display* display;
-  Window window;
-  Window root;
-  Window subwindow;
-  Time time;
-  int x, y;
-  int x_root, y_root;
-  unsigned int state;
-  unsigned int keycode;
-  Bool same_screen;
-} XKeyEvent;
-
-// This is temporarily required to fix XKB key event processing (bugs 1125886,
-// 1136265, 1136248, 1136206).  It should be removed and replaced with an
-// XProto equivalent.
-int XLookupString(XKeyEvent* event_struct,
-                  char* buffer_return,
-                  int bytes_buffer,
-                  ::KeySym* keysym_return,
-                  void* status_in_out);
-}
-
-#ifdef TOOLKIT_QT
-extern void* GetQtXDisplay();
-#endif
+#include "ui/gfx/x/xtest.h"
 
 namespace x11 {
 
 namespace {
 
-constexpr KeySym kNoSymbol = static_cast<KeySym>(0);
-
-// On the wire, sequence IDs are 16 bits.  In xcb, they're usually extended to
-// 32 and sometimes 64 bits.  In Xlib, they're extended to unsigned long, which
-// may be 32 or 64 bits depending on the platform.  This function is intended to
-// prevent bugs caused by comparing two differently sized sequences.  Also
-// handles rollover.  To use, compare the result of this function with 0.  For
-// example, to compare seq1 <= seq2, use CompareSequenceIds(seq1, seq2) <= 0.
-template <typename T, typename U>
-auto CompareSequenceIds(T t, U u) {
-  static_assert(std::is_unsigned<T>::value, "");
-  static_assert(std::is_unsigned<U>::value, "");
-  // Cast to the smaller of the two types so that comparisons will always work.
-  // If we casted to the larger type, then the smaller type will be zero-padded
-  // and may incorrectly compare less than the other value.
-  using SmallerType =
-      typename std::conditional<sizeof(T) <= sizeof(U), T, U>::type;
-  SmallerType t0 = static_cast<SmallerType>(t);
-  SmallerType u0 = static_cast<SmallerType>(u);
-  using SignedType = typename std::make_signed<SmallerType>::type;
-  return static_cast<SignedType>(t0 - u0);
-}
-
-#ifndef TOOLKIT_QT
-XDisplay* OpenNewXDisplay(const std::string& address) {
-  if (!XInitThreads())
-    return nullptr;
-  std::string display_str =
-      address.empty()
-          ? base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
-                switches::kX11Display)
-          : address;
-  return XOpenDisplay(display_str.empty() ? nullptr : display_str.c_str());
-}
-#endif
-
-// Ported from XConvertCase:
-// https://gitlab.freedesktop.org/xorg/lib/libx11/-/blob/2b7598221d87049d03e9a95fcb541c37c8728184/src/KeyBind.c#L645
-void ConvertCaseImpl(uint32_t sym, uint32_t* lower, uint32_t* upper) {
-  // Unicode keysym
-  if ((sym & 0xff000000) == 0x01000000) {
-    base::string16 string({sym & 0x00ffffff});
-    auto lower_string = base::i18n::ToLower(string);
-    auto upper_string = base::i18n::ToUpper(string);
-    *lower = lower_string[0] | 0x01000000;
-    *upper = upper_string[0] | 0x01000000;
-    return;
-  }
-
-  *lower = sym;
-  *upper = sym;
-
-  switch (sym >> 8) {
-    // Latin 1
-    case 0:
-      if ((sym >= XK_A) && (sym <= XK_Z))
-        *lower += (XK_a - XK_A);
-      else if ((sym >= XK_a) && (sym <= XK_z))
-        *upper -= (XK_a - XK_A);
-      else if ((sym >= XK_Agrave) && (sym <= XK_Odiaeresis))
-        *lower += (XK_agrave - XK_Agrave);
-      else if ((sym >= XK_agrave) && (sym <= XK_odiaeresis))
-        *upper -= (XK_agrave - XK_Agrave);
-      else if ((sym >= XK_Ooblique) && (sym <= XK_Thorn))
-        *lower += (XK_oslash - XK_Ooblique);
-      else if ((sym >= XK_oslash) && (sym <= XK_thorn))
-        *upper -= (XK_oslash - XK_Ooblique);
-      break;
-    // Latin 2
-    case 1:
-      if (sym == XK_Aogonek)
-        *lower = XK_aogonek;
-      else if (sym >= XK_Lstroke && sym <= XK_Sacute)
-        *lower += (XK_lstroke - XK_Lstroke);
-      else if (sym >= XK_Scaron && sym <= XK_Zacute)
-        *lower += (XK_scaron - XK_Scaron);
-      else if (sym >= XK_Zcaron && sym <= XK_Zabovedot)
-        *lower += (XK_zcaron - XK_Zcaron);
-      else if (sym == XK_aogonek)
-        *upper = XK_Aogonek;
-      else if (sym >= XK_lstroke && sym <= XK_sacute)
-        *upper -= (XK_lstroke - XK_Lstroke);
-      else if (sym >= XK_scaron && sym <= XK_zacute)
-        *upper -= (XK_scaron - XK_Scaron);
-      else if (sym >= XK_zcaron && sym <= XK_zabovedot)
-        *upper -= (XK_zcaron - XK_Zcaron);
-      else if (sym >= XK_Racute && sym <= XK_Tcedilla)
-        *lower += (XK_racute - XK_Racute);
-      else if (sym >= XK_racute && sym <= XK_tcedilla)
-        *upper -= (XK_racute - XK_Racute);
-      break;
-    // Latin 3
-    case 2:
-      if (sym >= XK_Hstroke && sym <= XK_Hcircumflex)
-        *lower += (XK_hstroke - XK_Hstroke);
-      else if (sym >= XK_Gbreve && sym <= XK_Jcircumflex)
-        *lower += (XK_gbreve - XK_Gbreve);
-      else if (sym >= XK_hstroke && sym <= XK_hcircumflex)
-        *upper -= (XK_hstroke - XK_Hstroke);
-      else if (sym >= XK_gbreve && sym <= XK_jcircumflex)
-        *upper -= (XK_gbreve - XK_Gbreve);
-      else if (sym >= XK_Cabovedot && sym <= XK_Scircumflex)
-        *lower += (XK_cabovedot - XK_Cabovedot);
-      else if (sym >= XK_cabovedot && sym <= XK_scircumflex)
-        *upper -= (XK_cabovedot - XK_Cabovedot);
-      break;
-    // Latin 4
-    case 3:
-      if (sym >= XK_Rcedilla && sym <= XK_Tslash)
-        *lower += (XK_rcedilla - XK_Rcedilla);
-      else if (sym >= XK_rcedilla && sym <= XK_tslash)
-        *upper -= (XK_rcedilla - XK_Rcedilla);
-      else if (sym == XK_ENG)
-        *lower = XK_eng;
-      else if (sym == XK_eng)
-        *upper = XK_ENG;
-      else if (sym >= XK_Amacron && sym <= XK_Umacron)
-        *lower += (XK_amacron - XK_Amacron);
-      else if (sym >= XK_amacron && sym <= XK_umacron)
-        *upper -= (XK_amacron - XK_Amacron);
-      break;
-    // Cyrillic
-    case 6:
-      if (sym >= XK_Serbian_DJE && sym <= XK_Serbian_DZE)
-        *lower -= (XK_Serbian_DJE - XK_Serbian_dje);
-      else if (sym >= XK_Serbian_dje && sym <= XK_Serbian_dze)
-        *upper += (XK_Serbian_DJE - XK_Serbian_dje);
-      else if (sym >= XK_Cyrillic_YU && sym <= XK_Cyrillic_HARDSIGN)
-        *lower -= (XK_Cyrillic_YU - XK_Cyrillic_yu);
-      else if (sym >= XK_Cyrillic_yu && sym <= XK_Cyrillic_hardsign)
-        *upper += (XK_Cyrillic_YU - XK_Cyrillic_yu);
-      break;
-    // Greek
-    case 7:
-      if (sym >= XK_Greek_ALPHAaccent && sym <= XK_Greek_OMEGAaccent)
-        *lower += (XK_Greek_alphaaccent - XK_Greek_ALPHAaccent);
-      else if (sym >= XK_Greek_alphaaccent && sym <= XK_Greek_omegaaccent &&
-               sym != XK_Greek_iotaaccentdieresis &&
-               sym != XK_Greek_upsilonaccentdieresis)
-        *upper -= (XK_Greek_alphaaccent - XK_Greek_ALPHAaccent);
-      else if (sym >= XK_Greek_ALPHA && sym <= XK_Greek_OMEGA)
-        *lower += (XK_Greek_alpha - XK_Greek_ALPHA);
-      else if (sym >= XK_Greek_alpha && sym <= XK_Greek_omega &&
-               sym != XK_Greek_finalsmallsigma)
-        *upper -= (XK_Greek_alpha - XK_Greek_ALPHA);
-      break;
-    // Latin 9
-    case 0x13:
-      if (sym == XK_OE)
-        *lower = XK_oe;
-      else if (sym == XK_oe)
-        *upper = XK_OE;
-      else if (sym == XK_Ydiaeresis)
-        *lower = XK_ydiaeresis;
-      break;
-  }
-}
-
-void ConvertCase(KeySym sym, KeySym* lower, KeySym* upper) {
-  uint32_t lower32;
-  uint32_t upper32;
-  ConvertCaseImpl(static_cast<uint32_t>(sym), &lower32, &upper32);
-  *lower = static_cast<KeySym>(lower32);
-  *upper = static_cast<KeySym>(upper32);
-}
-
-bool IsXKeypadKey(KeySym keysym) {
-  auto key = static_cast<uint32_t>(keysym);
-  return key >= XK_KP_Space && key <= XK_KP_Equal;
-}
-
-bool IsPrivateXKeypadKey(KeySym keysym) {
-  auto key = static_cast<uint32_t>(keysym);
-  return key >= 0x11000000 && key <= 0x1100FFFF;
-}
-
 base::ThreadLocalOwnedPointer<Connection>& GetConnectionTLS() {
   static base::NoDestructor<base::ThreadLocalOwnedPointer<Connection>> tls;
   return *tls;
+}
+
+void DefaultErrorHandler(const Error* error, const char* request_name) {
+  LOG(WARNING) << "X error received.  Request: " << request_name
+               << "Request, Error: " << error->ToString();
+}
+
+void DefaultIOErrorHandler() {
+  LOG(ERROR) << "X connection error received.";
+}
+
+class UnknownError : public Error {
+ public:
+  explicit UnknownError(RawError error_bytes) : error_bytes_(error_bytes) {}
+
+  ~UnknownError() override = default;
+
+  std::string ToString() const override {
+    std::stringstream ss;
+    ss << "UnknownError{";
+    // Errors are always a fixed 32 bytes.
+    for (size_t i = 0; i < 32; i++) {
+      char buf[3];
+      sprintf(buf, "%02x", error_bytes_->data()[i]);
+      ss << "0x" << buf;
+      if (i != 31) {
+        ss << ", ";
+      }
+    }
+    ss << "}";
+    return ss.str();
+  }
+
+ private:
+  RawError error_bytes_;
+};
+
+Window GetWindowPropertyAsWindow(const GetPropertyResponse& value) {
+  if (const Window* wm_window = PropertyCache::GetAs<Window>(value)) {
+    return *wm_window;
+  }
+  return Window::None;
 }
 
 }  // namespace
@@ -249,8 +99,9 @@ base::ThreadLocalOwnedPointer<Connection>& GetConnectionTLS() {
 // static
 Connection* Connection::Get() {
   auto& tls = GetConnectionTLS();
-  if (Connection* connection = tls.Get())
+  if (Connection* connection = tls.Get()) {
     return connection;
+  }
   auto connection = std::make_unique<Connection>();
   auto* p_connection = connection.get();
   tls.Set(std::move(connection));
@@ -258,31 +109,31 @@ Connection* Connection::Get() {
 }
 
 // static
-void Connection::Set(std::unique_ptr<x11::Connection> connection) {
+void Connection::Set(std::unique_ptr<Connection> connection) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(connection->sequence_checker_);
   auto& tls = GetConnectionTLS();
-  DCHECK(!tls.Get());
+  CHECK(!tls.Get());
   tls.Set(std::move(connection));
 }
 
 Connection::Connection(const std::string& address)
     : XProto(this),
-#ifndef TOOLKIT_QT
-      display_(OpenNewXDisplay(address)),
-#else
-      display_(static_cast<XDisplay*>(GetQtXDisplay())),
-#endif
-      display_string_(address) {
-  char* host = nullptr;
-  int display = 0;
-  xcb_parse_display(address.c_str(), &host, &display, &default_screen_id_);
-  if (host)
-    free(host);
-  if (display_) {
-    XSetEventQueueOwner(display_, XCBOwnsEventQueue);
-
+      display_string_(
+          address.empty()
+              ? base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
+                    switches::kX11Display)
+              : address),
+      connection_(xcb_connect(display_string_.empty() ? nullptr
+                                                      : display_string_.c_str(),
+                              &default_screen_id_),
+                  xcb_disconnect),
+      io_error_handler_(base::BindOnce(DefaultIOErrorHandler)),
+      window_event_manager_(this) {
+  CHECK(connection_);
+  if (Ready()) {
     auto buf = ReadBuffer(base::MakeRefCounted<UnretainedRefCountedMemory>(
-        xcb_get_setup(XcbConnection())));
+                              xcb_get_setup(XcbConnection())),
+                          true);
     setup_ = Read<Setup>(&buf);
     default_screen_ = &setup_.roots[DefaultScreenId()];
     InitRootDepthAndVisual();
@@ -297,58 +148,237 @@ Connection::Connection(const std::string& address)
   }
 
   ExtensionManager::Init(this);
-  if (auto response = bigreq().Enable({}).Sync())
-    extended_max_request_length_ = response->maximum_request_length;
+  InitializeExtensions();
 
   const Format* formats[256];
   memset(formats, 0, sizeof(formats));
-  for (const auto& format : setup_.pixmap_formats)
+  for (const auto& format : setup_.pixmap_formats) {
     formats[format.depth] = &format;
-
-  for (const auto& depth : default_screen().allowed_depths) {
-    const Format* format = formats[depth.depth];
-    for (const auto& visual : depth.visuals)
-      default_screen_visuals_[visual.visual_id] = VisualInfo{format, &visual};
   }
 
-  ResetKeyboardState();
+  std::vector<std::pair<VisualId, VisualInfo>> default_screen_visuals;
+  for (const auto& depth : default_screen().allowed_depths) {
+    const Format* format = formats[depth.depth];
+    for (const auto& visual : depth.visuals) {
+      default_screen_visuals.emplace_back(visual.visual_id,
+                                          VisualInfo{format, &visual});
+    }
+  }
+  default_screen_visuals_ =
+      base::flat_map<VisualId, VisualInfo>(std::move(default_screen_visuals));
+
+  keyboard_state_ = CreateKeyboardState(this);
+
+  InitErrorParsers();
+
+  atom_cache_ = std::make_unique<AtomCache>(this);
+
+  root_props_ = std::make_unique<PropertyCache>(
+      this, default_root(),
+      std::vector<Atom>{GetAtom("_NET_SUPPORTING_WM_CHECK"),
+                        GetAtom("_NET_SUPPORTED")},
+      base::BindRepeating(&Connection::OnRootPropertyChanged,
+                          base::Unretained(this)));
 }
 
 Connection::~Connection() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  window_event_manager_.Reset();
   platform_event_source.reset();
-#ifndef TOOLKIT_QT
-  if (display_)
-    XCloseDisplay(display_);
-#endif
 }
 
-xcb_connection_t* Connection::XcbConnection() {
+size_t Connection::MaxRequestSizeInBytes() const {
+  return 4 * std::max<size_t>(extended_max_request_length_,
+                              setup_.maximum_request_length);
+}
+
+XlibDisplay& Connection::GetXlibDisplay() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  if (!display())
-    return nullptr;
-  return XGetXCBConnection(display());
+  if (!xlib_display_) {
+    xlib_display_ = base::WrapUnique(new XlibDisplay(display_string_));
+  }
+  return *xlib_display_;
 }
 
-Connection::Request::Request(unsigned int sequence,
-                             FutureBase::ResponseCallback callback)
-    : sequence(sequence), callback(std::move(callback)) {}
+void Connection::DeleteProperty(Window window, Atom name) {
+  XProto::DeleteProperty({
+      .window = static_cast<Window>(window),
+      .property = name,
+  });
+}
 
-Connection::Request::Request(Request&& other)
-    : sequence(other.sequence), callback(std::move(other.callback)) {}
+void Connection::SetStringProperty(Window window,
+                                   Atom property,
+                                   Atom type,
+                                   const std::string& value) {
+  std::vector<char> str(value.begin(), value.end());
+  SetArrayProperty(window, property, type, str);
+}
+
+Window Connection::CreateDummyWindow(const std::string& name) {
+  auto window = GenerateId<Window>();
+  CreateWindow(CreateWindowRequest{
+      .wid = window,
+      .parent = default_root(),
+      .x = -100,
+      .y = -100,
+      .width = 10,
+      .height = 10,
+      .c_class = WindowClass::InputOnly,
+      .override_redirect = Bool32(true),
+  });
+  if (!name.empty()) {
+    SetStringProperty(window, Atom::WM_NAME, Atom::STRING, name);
+  }
+  return window;
+}
+
+VisualManager& Connection::GetOrCreateVisualManager() {
+  if (!visual_manager_) {
+    visual_manager_ = std::make_unique<VisualManager>(this);
+  }
+  return *visual_manager_;
+}
+
+bool Connection::GetWmNormalHints(Window window, SizeHints* hints) {
+  std::vector<uint32_t> hints32;
+  if (!GetArrayProperty(window, Atom::WM_NORMAL_HINTS, &hints32)) {
+    return false;
+  }
+  if (hints32.size() != sizeof(SizeHints) / 4) {
+    return false;
+  }
+  memcpy(hints, hints32.data(), sizeof(*hints));
+  return true;
+}
+
+void Connection::SetWmNormalHints(Window window, const SizeHints& hints) {
+  std::vector<uint32_t> hints32(sizeof(SizeHints) / 4);
+  memcpy(hints32.data(), &hints, sizeof(SizeHints));
+  SetArrayProperty(window, Atom::WM_NORMAL_HINTS, Atom::WM_SIZE_HINTS, hints32);
+}
+
+bool Connection::GetWmHints(Window window, WmHints* hints) {
+  std::vector<uint32_t> hints32;
+  if (!GetArrayProperty(window, Atom::WM_HINTS, &hints32)) {
+    return false;
+  }
+  if (hints32.size() != sizeof(WmHints) / 4) {
+    return false;
+  }
+  memcpy(hints, hints32.data(), sizeof(*hints));
+  return true;
+}
+
+void Connection::SetWmHints(Window window, const WmHints& hints) {
+  std::vector<uint32_t> hints32(sizeof(WmHints) / 4);
+  memcpy(hints32.data(), &hints, sizeof(WmHints));
+  SetArrayProperty(window, Atom::WM_HINTS, Atom::WM_HINTS, hints32);
+}
+
+void Connection::WithdrawWindow(Window window) {
+  UnmapWindow({window});
+
+  auto root = default_root();
+  UnmapNotifyEvent event{.event = root, .window = window};
+  auto mask = EventMask::SubstructureNotify | EventMask::SubstructureRedirect;
+  SendEvent(event, root, mask);
+}
+
+void Connection::RaiseWindow(Window window) {
+  ConfigureWindow(
+      ConfigureWindowRequest{.window = window, .stack_mode = StackMode::Above});
+}
+
+void Connection::LowerWindow(Window window) {
+  ConfigureWindow(
+      ConfigureWindowRequest{.window = window, .stack_mode = StackMode::Below});
+}
+
+void Connection::DefineCursor(Window window, Cursor cursor) {
+  ChangeWindowAttributes(
+      ChangeWindowAttributesRequest{.window = window, .cursor = cursor});
+}
+
+ScopedEventSelector Connection::ScopedSelectEvent(Window window,
+                                                  EventMask event_mask) {
+  return ScopedEventSelector(this, window, event_mask);
+}
+
+Atom Connection::GetAtom(const char* name) const {
+  return atom_cache_->GetAtom(name);
+}
+
+std::string Connection::GetWmName() const {
+  if (WmSupportsEwmh()) {
+    size_t size;
+    if (const char* name =
+            wm_props_->GetAs<char>(GetAtom("_NET_WM_NAME"), &size)) {
+      std::string wm_name;
+      wm_name.assign(name, size);
+      return wm_name;
+    }
+  }
+  return std::string();
+}
+
+bool Connection::WmSupportsHint(Atom atom) const {
+  if (WmSupportsEwmh()) {
+    size_t size;
+    if (const Atom* supported =
+            root_props_->GetAs<Atom>(GetAtom("_NET_SUPPORTED"), &size)) {
+      const Atom* end = supported + size;
+      return std::find(supported, end, atom) != end;
+    }
+  }
+  return false;
+}
+
+Connection::Request::Request(ResponseCallback callback)
+    : callback(std::move(callback)) {}
+
+Connection::Request::Request(Request&& other) = default;
 
 Connection::Request::~Request() = default;
 
-bool Connection::HasNextResponse() const {
-  return !requests_.empty() &&
-         CompareSequenceIds(XLastKnownRequestProcessed(display_),
-                            requests_.front().sequence) >= 0;
+void Connection::Request::SetResponse(Connection* connection,
+                                      void* raw_reply,
+                                      void* raw_error) {
+  have_response = true;
+  if (raw_reply) {
+    reply = base::MakeRefCounted<MallocedRefCountedMemory>(raw_reply);
+  }
+  if (raw_error) {
+    error = connection->ParseError(
+        base::MakeRefCounted<MallocedRefCountedMemory>(raw_error));
+  }
+}
+
+bool Connection::HasNextResponse() {
+  if (requests_.empty()) {
+    return false;
+  }
+  auto& request = requests_.front();
+  if (request.have_response) {
+    return true;
+  }
+
+  void* reply = nullptr;
+  xcb_generic_error_t* error = nullptr;
+  if (!xcb_poll_for_reply(XcbConnection(), first_request_id_, &reply, &error)) {
+    return false;
+  }
+
+  request.SetResponse(this, reply, error);
+  return true;
 }
 
 bool Connection::HasNextEvent() {
   while (!events_.empty()) {
-    if (events_.front().Initialized())
+    if (events_.front().Initialized()) {
       return true;
+    }
     events_.pop_front();
   }
   return false;
@@ -364,6 +394,19 @@ const std::string& Connection::DisplayString() const {
   return display_string_;
 }
 
+std::string Connection::GetConnectionHostname() const {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  char* host = nullptr;
+  int display_id = 0;
+  int screen = 0;
+  if (xcb_parse_display(display_string_.c_str(), &host, &display_id, &screen)) {
+    std::string name = host;
+    free(host);
+    return name;
+  }
+  return std::string();
+}
+
 int Connection::DefaultScreenId() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   // This is not part of the setup data as the server has no concept of a
@@ -374,53 +417,48 @@ int Connection::DefaultScreenId() const {
 
 bool Connection::Ready() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  return display_ && !xcb_connection_has_error(XGetXCBConnection(display_));
+  return !xcb_connection_has_error(connection_.get());
 }
 
 void Connection::Flush() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  if (display_)
-    XFlush(display_);
+  xcb_flush(connection_.get());
 }
 
 void Connection::Sync() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  if (syncing_)
+  if (syncing_) {
     return;
+  }
   {
     base::AutoReset<bool> auto_reset(&syncing_, true);
-    GetInputFocus({}).Sync();
+    GetInputFocus().Sync();
   }
 }
 
 void Connection::SynchronizeForTest(bool synchronous) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  XSynchronize(display(), synchronous);
   synchronous_ = synchronous;
-  if (synchronous_)
+  if (synchronous_) {
     Sync();
+  }
 }
 
 void Connection::ReadResponses() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  while (auto* event = xcb_poll_for_event(XcbConnection())) {
-    events_.emplace_back(base::MakeRefCounted<MallocedRefCountedMemory>(event),
-                         this, true);
+  while (ReadResponse(false)) {
   }
 }
 
-Event Connection::WaitForNextEvent() {
+bool Connection::ReadResponse(bool queued) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  if (HasNextEvent()) {
-    Event event = std::move(events_.front());
-    events_.pop_front();
-    return event;
+  auto* event = queued ? xcb_poll_for_queued_event(XcbConnection())
+                       : xcb_poll_for_event(XcbConnection());
+  if (event) {
+    events_.emplace_back(base::MakeRefCounted<MallocedRefCountedMemory>(event),
+                         this);
   }
-  if (auto* xcb_event = xcb_wait_for_event(XcbConnection())) {
-    return Event(base::MakeRefCounted<MallocedRefCountedMemory>(xcb_event),
-                 this, true);
-  }
-  return Event();
+  return event;
 }
 
 bool Connection::HasPendingResponses() {
@@ -432,45 +470,21 @@ const Connection::VisualInfo* Connection::GetVisualInfoFromId(
     VisualId id) const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   auto it = default_screen_visuals_.find(id);
-  if (it != default_screen_visuals_.end())
+  if (it != default_screen_visuals_.end()) {
     return &it->second;
+  }
   return nullptr;
 }
 
-KeyCode Connection::KeysymToKeycode(KeySym keysym) {
+KeyCode Connection::KeysymToKeycode(uint32_t keysym) const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  uint8_t min_keycode = static_cast<uint8_t>(setup_.min_keycode);
-  uint8_t max_keycode = static_cast<uint8_t>(setup_.max_keycode);
-  uint8_t count = max_keycode - min_keycode + 1;
-  DCHECK_EQ(count * keyboard_mapping_.keysyms_per_keycode,
-            static_cast<int>(keyboard_mapping_.keysyms.size()));
-  for (size_t i = 0; i < keyboard_mapping_.keysyms.size(); i++) {
-    if (keyboard_mapping_.keysyms[i] == keysym) {
-      return static_cast<KeyCode>(min_keycode +
-                                  i / keyboard_mapping_.keysyms_per_keycode);
-    }
-  }
-  return {};
+  return keyboard_state_->KeysymToKeycode(keysym);
 }
 
-KeySym Connection::KeycodeToKeysym(uint32_t keycode, unsigned int modifiers) {
+uint32_t Connection::KeycodeToKeysym(KeyCode keycode,
+                                     uint32_t modifiers) const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-
-  XKeyEvent key_event{
-      /*.type =*/ KeyEvent::Press,
-       0,
-       false,
-      /*.display =*/ display_,
-       0, 0, 0,
-       0, 0, 0,
-       0, 0,
-      /*.state =*/ modifiers,
-      /*.keycode =*/ keycode,
-       false
-  };
-  ::KeySym keysym;
-  XLookupString(&key_event, nullptr, 0, &keysym, nullptr);
-  return static_cast<x11::KeySym>(keysym);
+  return keyboard_state_->KeycodeToKeysym(keycode, modifiers);
 }
 
 std::unique_ptr<Connection> Connection::Clone() const {
@@ -483,63 +497,72 @@ void Connection::DetachFromSequence() {
   DETACH_FROM_SEQUENCE(sequence_checker_);
 }
 
-void Connection::Dispatch(Delegate* delegate) {
+bool Connection::Dispatch() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  DCHECK(display_);
 
-  auto process_next_response = [&] {
-    xcb_connection_t* connection = XGetXCBConnection(display_);
-    auto request = std::move(requests_.front());
-    requests_.pop();
+  if (HasNextResponse() && HasNextEvent()) {
+    auto next_response_sequence = first_request_id_;
+    auto next_event_sequence = events_.front().sequence();
 
-    void* raw_reply = nullptr;
-    xcb_generic_error_t* raw_error = nullptr;
-    xcb_poll_for_reply(connection, request.sequence, &raw_reply, &raw_error);
+    // All events have the sequence number of the last processed request
+    // included in them.  So if a reply and an event have the same sequence,
+    // the reply must have been received first.
+    if (CompareSequenceIds(next_event_sequence, next_response_sequence) <= 0) {
+      ProcessNextResponse();
+    } else {
+      ProcessNextEvent();
+    }
+  } else if (HasNextResponse()) {
+    ProcessNextResponse();
+  } else if (HasNextEvent()) {
+    ProcessNextEvent();
+  } else {
+    return false;
+  }
+  return true;
+}
 
-    scoped_refptr<MallocedRefCountedMemory> reply;
-    if (raw_reply)
-      reply = base::MakeRefCounted<MallocedRefCountedMemory>(raw_reply);
-    std::move(request.callback).Run(reply, FutureBase::RawError{raw_error});
-  };
-
-  auto process_next_event = [&] {
-    DCHECK(HasNextEvent());
-
-    Event event = std::move(events_.front());
-    events_.pop_front();
-    PreDispatchEvent(event);
-    delegate->DispatchXEvent(&event);
-  };
-
-  // Handle all pending events.
-  while (delegate->ShouldContinueStream()) {
+void Connection::DispatchAll() {
+  do {
     Flush();
     ReadResponses();
+  } while (Dispatch());
+}
 
-    if (HasNextResponse() && HasNextEvent()) {
-      if (!events_.front().sequence_valid()) {
-        process_next_event();
-        continue;
-      }
+void Connection::DispatchEvent(const Event& event) {
+  PreDispatchEvent(event);
 
-      auto next_response_sequence = requests_.front().sequence;
-      auto next_event_sequence = events_.front().sequence();
-
-      // All events have the sequence number of the last processed request
-      // included in them.  So if a reply and an event have the same sequence,
-      // the reply must have been received first.
-      if (CompareSequenceIds(next_event_sequence, next_response_sequence) <= 0)
-        process_next_response();
-      else
-        process_next_event();
-    } else if (HasNextResponse()) {
-      process_next_response();
-    } else if (HasNextEvent()) {
-      process_next_event();
-    } else {
-      break;
-    }
+  // NB: The event should be reset to nullptr when this function
+  // returns, not to its initial value, otherwise nested message loops
+  // will incorrectly think that the current event being dispatched is
+  // an old event.  This means base::AutoReset should not be used.
+  dispatching_event_ = &event;
+  for (auto& observer : event_observers_) {
+    observer.OnEvent(event);
   }
+  dispatching_event_ = nullptr;
+}
+
+void Connection::SetIOErrorHandler(IOErrorHandler new_handler) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  io_error_handler_ = std::move(new_handler);
+}
+
+void Connection::AddEventObserver(EventObserver* observer) {
+  event_observers_.AddObserver(observer);
+}
+
+void Connection::RemoveEventObserver(EventObserver* observer) {
+  event_observers_.RemoveObserver(observer);
+}
+
+xcb_connection_t* Connection::XcbConnection() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  if (io_error_handler_ && xcb_connection_has_error(connection_.get())) {
+    std::move(io_error_handler_).Run();
+  }
+  return connection_.get();
 }
 
 void Connection::InitRootDepthAndVisual() {
@@ -555,13 +578,263 @@ void Connection::InitRootDepthAndVisual() {
   NOTREACHED();
 }
 
-void Connection::AddRequest(unsigned int sequence,
-                            FutureBase::ResponseCallback callback) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  DCHECK(requests_.empty() ||
-         CompareSequenceIds(requests_.back().sequence, sequence) < 0);
+void Connection::InitializeExtensions() {
+  auto bigreq_future = bigreq().Enable();
+  dri3().QueryVersion(Dri3::major_version, Dri3::minor_version);
+  glx().QueryVersion(Glx::major_version, Glx::minor_version);
+  auto randr_future =
+      randr().QueryVersion(RandR::major_version, RandR::minor_version);
+  auto render_future =
+      render().QueryVersion(Render::major_version, Render::minor_version);
+  auto screensaver_future = screensaver().QueryVersion(
+      ScreenSaver::major_version, ScreenSaver::minor_version);
+  shape().QueryVersion();
+  auto shm_future = shm().QueryVersion();
+  auto sync_future =
+      sync().Initialize(Sync::major_version, Sync::minor_version);
+  xfixes().QueryVersion(XFixes::major_version, XFixes::minor_version);
+  auto xinput_future =
+      xinput().XIQueryVersion(Input::major_version, Input::minor_version);
+  xkb().UseExtension({Xkb::major_version, Xkb::minor_version});
+  xtest().GetVersion(Test::major_version, Test::minor_version);
 
-  requests_.emplace(sequence, std::move(callback));
+  Flush();
+
+  if (auto response = bigreq_future.Sync()) {
+    extended_max_request_length_ = response->maximum_request_length;
+  }
+  if (auto response = randr_future.Sync()) {
+    randr_version_ = {response->major_version, response->minor_version};
+  }
+  if (auto response = render_future.Sync()) {
+    render_version_ = {response->major_version, response->minor_version};
+  }
+  if (auto response = screensaver_future.Sync()) {
+    screensaver_version_ = {response->server_major_version,
+                            response->server_minor_version};
+  }
+  if (auto response = shm_future.Sync()) {
+    shm_version_ = {response->major_version, response->minor_version};
+  }
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+  // Chrome for ChromeOS can be run with X11 on a Linux desktop. In this case,
+  // NotifySwapAfterResize is never called as the compositor does not notify
+  // about swaps after resize. Thus, simply disable usage of XSyncCounter on
+  // ChromeOS builds.
+  if (auto response = sync_future.Sync()) {
+    sync_version_ = {response->major_version, response->minor_version};
+  }
+#endif
+  if (auto response = xinput_future.Sync()) {
+    xinput_version_ = {response->major_version, response->minor_version};
+  }
+}
+
+void Connection::ProcessNextEvent() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  CHECK(HasNextEvent());
+
+  Event event = std::move(events_.front());
+  events_.pop_front();
+
+  DispatchEvent(event);
+}
+
+void Connection::ProcessNextResponse() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  CHECK(!requests_.empty());
+  CHECK(requests_.front().have_response);
+
+  Request request = std::move(requests_.front());
+  requests_.pop_front();
+  if (last_non_void_request_id_.has_value() &&
+      last_non_void_request_id_.value() == first_request_id_) {
+    last_non_void_request_id_ = absl::nullopt;
+  }
+  first_request_id_++;
+  if (request.callback) {
+    std::move(request.callback)
+        .Run(std::move(request.reply), std::move(request.error));
+  }
+}
+
+std::unique_ptr<FutureImpl> Connection::SendRequestImpl(
+    WriteBuffer* buf,
+    const char* request_name_for_tracing,
+    bool generates_reply,
+    bool reply_has_fds) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  xcb_protocol_request_t xpr{
+      .ext = nullptr,
+      .isvoid = !generates_reply,
+  };
+
+  struct RequestHeader {
+    uint8_t major_opcode;
+    uint8_t minor_opcode;
+    uint16_t length;
+  };
+
+  struct ExtendedRequestHeader {
+    RequestHeader header;
+    uint32_t long_length;
+  };
+  static_assert(sizeof(ExtendedRequestHeader) == 8, "");
+
+  auto& first_buffer = buf->GetBuffers()[0];
+  CHECK_GE(first_buffer->size(), sizeof(RequestHeader));
+  auto* old_header = reinterpret_cast<RequestHeader*>(
+      const_cast<uint8_t*>(first_buffer->data()));
+  ExtendedRequestHeader new_header{*old_header, 0};
+
+  // Requests are always a multiple of 4 bytes on the wire.  Because of this,
+  // the length field represents the size in chunks of 4 bytes.
+  CHECK_EQ(buf->offset() % 4, 0UL);
+  size_t size32 = buf->offset() / 4;
+
+  // XCB requires 2 iovecs for its own internal usage.
+  std::vector<struct iovec> io{{nullptr, 0}, {nullptr, 0}};
+  if (size32 < setup_.maximum_request_length) {
+    // Regular request
+    old_header->length = size32;
+  } else if (size32 < extended_max_request_length_) {
+    // BigRequests extension request
+    CHECK_EQ(new_header.header.length, 0U);
+    new_header.long_length = size32 + 1;
+
+    io.push_back({&new_header, sizeof(ExtendedRequestHeader)});
+    first_buffer = base::MakeRefCounted<OffsetRefCountedMemory>(
+        first_buffer, sizeof(RequestHeader),
+        first_buffer->size() - sizeof(RequestHeader));
+  } else {
+    LOG(ERROR) << "Cannot send request of length " << buf->offset();
+    return nullptr;
+  }
+
+  for (auto& buffer : buf->GetBuffers()) {
+    io.push_back({const_cast<uint8_t*>(buffer->data()), buffer->size()});
+  }
+  xpr.count = io.size() - 2;
+
+  xcb_connection_t* conn = XcbConnection();
+  auto flags = XCB_REQUEST_CHECKED | XCB_REQUEST_RAW;
+  if (reply_has_fds) {
+    flags |= XCB_REQUEST_REPLY_FDS;
+  }
+
+  for (int fd : buf->fds()) {
+    xcb_send_fd(conn, fd);
+  }
+  SequenceType sequence = xcb_send_request(conn, flags, &io[2], &xpr);
+
+  if (xcb_connection_has_error(conn)) {
+    return nullptr;
+  }
+
+  SequenceType next_request_id = first_request_id_ + requests_.size();
+  // XCB inserts requests every 2^32 requests (or every 2^16 requests if
+  // all outstanding requests don't generate a reply).  Because it's difficult
+  // to track these, increment the sequence counter until ours matches XCB's.
+  CHECK_LT(CompareSequenceIds(sequence, next_request_id), 10);
+  while (CompareSequenceIds(sequence, next_request_id) > 0) {
+    requests_.emplace_back(ResponseCallback());
+    requests_.back().have_response = true;
+    next_request_id++;
+    // If we ever reach 2^32 outstanding requests, then bail because sequence
+    // IDs would no longer be unique.
+    CHECK_NE(next_request_id, first_request_id_);
+  }
+  next_request_id++;
+  CHECK_NE(next_request_id, first_request_id_);
+
+  // Install a default response-handler that throws away the reply and prints
+  // the error if there is one.  This handler may be overridden by clients.
+  auto callback = base::BindOnce(
+      [](const char* request_name, RawReply raw_reply,
+         std::unique_ptr<Error> error) {
+        if (error) {
+          DefaultErrorHandler(error.get(), request_name);
+        }
+      },
+      request_name_for_tracing);
+  requests_.emplace_back(std::move(callback));
+  if (generates_reply) {
+    last_non_void_request_id_ = sequence;
+  }
+  if (synchronous_) {
+    Sync();
+  }
+
+  return std::make_unique<FutureImpl>(this, sequence, generates_reply,
+                                      request_name_for_tracing);
+}
+
+void Connection::WaitForResponse(FutureImpl* future) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  auto* request = GetRequestForFuture(future);
+  CHECK(request->callback);
+  if (request->have_response) {
+    return;
+  }
+
+  xcb_generic_error_t* error = nullptr;
+  void* reply = nullptr;
+  if (future->generates_reply()) {
+    if (!xcb_poll_for_reply(XcbConnection(), future->sequence(), &reply,
+                            &error)) {
+      TRACE_EVENT1("ui", "xcb_wait_for_reply", "request",
+                   future->request_name_for_tracing());
+      reply = xcb_wait_for_reply(XcbConnection(), future->sequence(), &error);
+    }
+  } else {
+    // There's a special case here.  This request doesn't generate a reply, and
+    // may not generate an error, so the only way to know if it finished is to
+    // send another request that we know will generate a reply or error.  Once
+    // the new request finishes, we know this request has finished, since the
+    // server is guaranteed to process requests in order.  Normally, the
+    // xcb_request_check() below would do this for us automatically, but we need
+    // to keep track of the sequence count ourselves, so we explicitly make a
+    // GetInputFocus request if necessary (which is the request xcb would have
+    // made -- GetInputFocus is chosen since it has the minimum size request and
+    // reply, and can be made at any time).
+    bool needs_extra_request_for_check = false;
+    if (!last_non_void_request_id_.has_value()) {
+      needs_extra_request_for_check = true;
+    } else {
+      SequenceType last_non_void_offset =
+          last_non_void_request_id_.value() - first_request_id_;
+      SequenceType sequence_offset = future->sequence() - first_request_id_;
+      needs_extra_request_for_check = sequence_offset > last_non_void_offset;
+    }
+    if (needs_extra_request_for_check) {
+      GetInputFocus().IgnoreError();
+      // The circular_deque may have swapped buffers, so we need to get a fresh
+      // pointer to the request.
+      request = GetRequestForFuture(future);
+    }
+
+    // libxcb has a bug where it doesn't flush in xcb_request_check() under some
+    // circumstances, leading to deadlock [1], so always perform a manual flush.
+    // [1] https://gitlab.freedesktop.org/xorg/lib/libxcb/-/issues/53
+    Flush();
+
+    {
+      TRACE_EVENT1("ui", "xcb_request_check", "request",
+                   future->request_name_for_tracing());
+      error = xcb_request_check(XcbConnection(), {future->sequence()});
+    }
+  }
+  request->SetResponse(this, reply, error);
+}
+
+Connection::Request* Connection::GetRequestForFuture(FutureImpl* future) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  SequenceType offset = future->sequence() - first_request_id_;
+  CHECK_LT(offset, requests_.size());
+  return &requests_[offset];
 }
 
 void Connection::PreDispatchEvent(const Event& event) {
@@ -569,15 +842,15 @@ void Connection::PreDispatchEvent(const Event& event) {
     if (mapping->request == Mapping::Modifier ||
         mapping->request == Mapping::Keyboard) {
       setup_.min_keycode = mapping->first_keycode;
-      setup_.max_keycode = static_cast<x11::KeyCode>(
+      setup_.max_keycode = static_cast<KeyCode>(
           static_cast<int>(mapping->first_keycode) + mapping->count - 1);
-      ResetKeyboardState();
+      keyboard_state_->UpdateMapping();
     }
   }
-  if (auto* notify = event.As<x11::Xkb::NewKeyboardNotifyEvent>()) {
+  if (auto* notify = event.As<Xkb::NewKeyboardNotifyEvent>()) {
     setup_.min_keycode = notify->minKeyCode;
     setup_.max_keycode = notify->maxKeyCode;
-    ResetKeyboardState();
+    keyboard_state_->UpdateMapping();
   }
 
   // This is adapted from XRRUpdateConfiguration.
@@ -589,7 +862,7 @@ void Connection::PreDispatchEvent(const Event& event) {
     }
   } else if (auto* screen = event.As<RandR::ScreenChangeNotifyEvent>()) {
     int index = ScreenIndexFromRootWindow(screen->root);
-    DCHECK_GE(index, 0);
+    CHECK_GE(index, 0);
     bool portrait =
         static_cast<bool>(screen->rotation & (RandR::Rotation::Rotate_90 |
                                               RandR::Rotation::Rotate_270));
@@ -609,147 +882,73 @@ void Connection::PreDispatchEvent(const Event& event) {
 
 int Connection::ScreenIndexFromRootWindow(Window root) const {
   for (size_t i = 0; i < setup_.roots.size(); i++) {
-    if (setup_.roots[i].root == root)
+    if (setup_.roots[i].root == root) {
       return i;
+    }
   }
   return -1;
 }
 
-void Connection::ResetKeyboardState() {
-  uint8_t min_keycode = static_cast<uint8_t>(setup_.min_keycode);
-  uint8_t max_keycode = static_cast<uint8_t>(setup_.max_keycode);
-  uint8_t count = max_keycode - min_keycode + 1;
-  auto keyboard_future = GetKeyboardMapping({setup_.min_keycode, count});
-  auto modifier_future = GetModifierMapping({});
-  Flush();
-  if (auto reply = keyboard_future.Sync())
-    keyboard_mapping_ = std::move(*reply.reply);
-  if (auto reply = modifier_future.Sync())
-    modifier_mapping_ = std::move(*reply.reply);
-
-  for (uint8_t i = 0; i < modifier_mapping_.keycodes_per_modifier; i++) {
-    // Lock modifiers are in the second row of the matrix
-    size_t index = 2 * modifier_mapping_.keycodes_per_modifier + i;
-    for (uint8_t j = 0; j < keyboard_mapping_.keysyms_per_keycode; j++) {
-      auto sym = static_cast<uint32_t>(
-          KeyCodetoKeySym(modifier_mapping_.keycodes[index], j));
-      if (sym == XK_Caps_Lock || sym == XK_ISO_Lock) {
-        lock_meaning_ = XK_Caps_Lock;
-        break;
-      }
-      if (sym == XK_Shift_Lock)
-        lock_meaning_ = XK_Shift_Lock;
-    }
+std::unique_ptr<Error> Connection::ParseError(RawError error_bytes) {
+  if (!error_bytes) {
+    return nullptr;
   }
+  struct ErrorHeader {
+    uint8_t response_type;
+    uint8_t error_code;
+    uint16_t sequence;
+  };
+  auto error_code = error_bytes->front_as<ErrorHeader>()->error_code;
+  if (auto parser = error_parsers_[error_code]) {
+    return parser(error_bytes);
+  }
+  return std::make_unique<UnknownError>(error_bytes);
+}
 
-  // Mod<n> is at row (n + 2) of the matrix.  This iterates from Mod1 to Mod5.
-  for (int mod = 3; mod < 8; mod++) {
-    for (size_t i = 0; i < modifier_mapping_.keycodes_per_modifier; i++) {
-      size_t index = mod * modifier_mapping_.keycodes_per_modifier + i;
-      for (uint8_t j = 0; j < keyboard_mapping_.keysyms_per_keycode; j++) {
-        auto sym = static_cast<uint32_t>(
-            KeyCodetoKeySym(modifier_mapping_.keycodes[index], j));
-        if (sym == XK_Mode_switch)
-          mode_switch_ |= 1 << mod;
-        if (sym == XK_Num_Lock)
-          num_lock_ |= 1 << mod;
-      }
+uint32_t Connection::GenerateIdImpl() {
+  return xcb_generate_id(connection_.get());
+}
+
+void Connection::OnRootPropertyChanged(Atom property,
+                                       const GetPropertyResponse& value) {
+  Atom check_atom = GetAtom("_NET_SUPPORTING_WM_CHECK");
+  if (property == check_atom) {
+    // We've detected a new window manager, which may have different behavior
+    // when attempting to use WmSync.  Attempt to sync with the window manager
+    // so we know which behavior WmSync should use.
+    AttemptSyncWithWm();
+    wm_props_.reset();
+    Window wm_window = GetWindowPropertyAsWindow(value);
+    if (wm_window != Window::None) {
+      wm_props_ = std::make_unique<PropertyCache>(
+          this, wm_window,
+          std::vector<Atom>{check_atom, GetAtom("_NET_WM_NAME")});
     }
   }
 }
 
-// Ported from xcb_key_symbols_get_keysym
-// https://gitlab.freedesktop.org/xorg/lib/libxcb-keysyms/-/blob/691515491a4a3c119adc6c769c29de264b3f3806/keysyms/keysyms.c#L189
-KeySym Connection::KeyCodetoKeySym(KeyCode keycode, int column) const {
-  uint8_t key = static_cast<uint8_t>(keycode);
-  uint8_t n_keysyms = keyboard_mapping_.keysyms_per_keycode;
+bool Connection::WmSupportsEwmh() const {
+  Atom check_atom = GetAtom("_NET_SUPPORTING_WM_CHECK");
+  Window wm_window = GetWindowPropertyAsWindow(root_props_->Get(check_atom));
 
-  uint8_t min_key = static_cast<uint8_t>(setup_.min_keycode);
-  uint8_t max_key = static_cast<uint8_t>(setup_.max_keycode);
-  if (column < 0 || (column >= n_keysyms && column > 3) || key < min_key ||
-      key > max_key) {
-    return kNoSymbol;
+  if (!wm_props_) {
+    return false;
   }
-
-  const auto* syms = &keyboard_mapping_.keysyms[(key - min_key) * n_keysyms];
-  if (column < 4) {
-    if (column > 1) {
-      while ((n_keysyms > 2) && (syms[n_keysyms - 1] == kNoSymbol))
-        n_keysyms--;
-      if (n_keysyms < 3)
-        column -= 2;
-    }
-    if ((n_keysyms <= (column | 1)) || (syms[column | 1] == kNoSymbol)) {
-      KeySym lsym, usym;
-      ConvertCase(syms[column & ~1], &lsym, &usym);
-      if (!(column & 1))
-        return lsym;
-      if (usym == lsym)
-        return kNoSymbol;
-      return usym;
-    }
+  if (const x11::Window* wm_check = wm_props_->GetAs<Window>(check_atom)) {
+    return *wm_check == wm_window;
   }
-  return syms[column];
+  return false;
 }
 
-// Ported from _XTranslateKey:
-// https://gitlab.freedesktop.org/xorg/lib/libx11/-/blob/2b7598221d87049d03e9a95fcb541c37c8728184/src/KeyBind.c#L761
-KeySym Connection::TranslateKey(uint32_t key, unsigned int modifiers) const {
-  constexpr auto kShiftMask = static_cast<unsigned int>(x11::ModMask::Shift);
-  constexpr auto kLockMask = static_cast<unsigned int>(x11::ModMask::Lock);
+void Connection::AttemptSyncWithWm() {
+  synced_with_wm_ = false;
+  wm_sync_ = std::make_unique<WmSync>(
+      this, base::BindOnce(&Connection::OnWmSynced, base::Unretained(this)),
+      true);
+}
 
-  uint8_t min_key = static_cast<uint8_t>(setup_.min_keycode);
-  uint8_t max_key = static_cast<uint8_t>(setup_.max_keycode);
-  if (key < min_key || key > max_key)
-    return kNoSymbol;
-
-  uint8_t n_keysyms = keyboard_mapping_.keysyms_per_keycode;
-  if (!n_keysyms)
-    return {};
-  const auto* syms = &keyboard_mapping_.keysyms[(key - min_key) * n_keysyms];
-  while ((n_keysyms > 2) && (syms[n_keysyms - 1] == kNoSymbol))
-    n_keysyms--;
-  if ((n_keysyms > 2) && (modifiers & mode_switch_)) {
-    syms += 2;
-    n_keysyms -= 2;
-  }
-
-  if ((modifiers & num_lock_) &&
-      (n_keysyms > 1 &&
-       (IsXKeypadKey(syms[1]) || IsPrivateXKeypadKey(syms[1])))) {
-    if ((modifiers & kShiftMask) ||
-        ((modifiers & kLockMask) && (lock_meaning_ == XK_Shift_Lock))) {
-      return syms[0];
-    }
-    return syms[1];
-  }
-
-  KeySym lower;
-  KeySym upper;
-  if (!(modifiers & kShiftMask) &&
-      (!(modifiers & kLockMask) ||
-       (static_cast<x11::KeySym>(lock_meaning_) == kNoSymbol))) {
-    if ((n_keysyms == 1) || (syms[1] == kNoSymbol)) {
-      ConvertCase(syms[0], &lower, &upper);
-      return lower;
-    }
-    return syms[0];
-  }
-
-  if (!(modifiers & kLockMask) || (lock_meaning_ != XK_Caps_Lock)) {
-    if ((n_keysyms == 1) || ((upper = syms[1]) == kNoSymbol))
-      ConvertCase(syms[0], &lower, &upper);
-    return upper;
-  }
-
-  KeySym sym;
-  if ((n_keysyms == 1) || ((sym = syms[1]) == kNoSymbol))
-    sym = syms[0];
-  ConvertCase(sym, &lower, &upper);
-  if (!(modifiers & kShiftMask) && (sym != syms[0]) &&
-      ((sym != upper) || (lower == upper)))
-    ConvertCase(syms[0], &lower, &upper);
-  return upper;
+void Connection::OnWmSynced() {
+  synced_with_wm_ = true;
 }
 
 }  // namespace x11

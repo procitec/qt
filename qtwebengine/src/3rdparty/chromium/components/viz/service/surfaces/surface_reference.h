@@ -1,10 +1,11 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef COMPONENTS_VIZ_SERVICE_SURFACES_SURFACE_REFERENCE_H_
 #define COMPONENTS_VIZ_SERVICE_SURFACES_SURFACE_REFERENCE_H_
 
+#include <compare>
 #include <string>
 
 #include "base/hash/hash.h"
@@ -42,7 +43,6 @@ class VIZ_SERVICE_EXPORT SurfaceReference {
     return std::tie(parent_id_, child_id_) <
            std::tie(other.parent_id_, other.child_id_);
   }
-
   std::string ToString() const;
 
  private:

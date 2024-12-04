@@ -30,8 +30,8 @@
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_WTF_TEXT_ASCII_CTYPE_H_
 
 #include "base/check_op.h"
-#include "third_party/blink/renderer/platform/wtf/assertions.h"
-#include "third_party/blink/renderer/platform/wtf/text/unicode.h"
+#include "third_party/blink/renderer/platform/wtf/text/wtf_uchar.h"
+#include "third_party/blink/renderer/platform/wtf/wtf_export.h"
 
 // The behavior of many of the functions in the <ctype.h> header is dependent
 // on the current locale. But in the WebKit project, all uses of those functions
@@ -75,11 +75,6 @@ inline bool IsASCIIHexDigit(CharType c) {
 template <typename CharType>
 inline bool IsASCIILower(CharType c) {
   return c >= 'a' && c <= 'z';
-}
-
-template <typename CharType>
-inline bool IsASCIIOctalDigit(CharType c) {
-  return (c >= '0') & (c <= '7');
 }
 
 template <typename CharType>
@@ -172,7 +167,6 @@ using WTF::IsASCIIAlphanumeric;
 using WTF::IsASCIIDigit;
 using WTF::IsASCIIHexDigit;
 using WTF::IsASCIILower;
-using WTF::IsASCIIOctalDigit;
 using WTF::IsASCIIPrintable;
 using WTF::IsASCIISpace;
 using WTF::IsASCIIUpper;
@@ -182,4 +176,4 @@ using WTF::ToASCIILower;
 using WTF::ToASCIIUpper;
 using WTF::UpperNibbleToASCIIHexDigit;
 
-#endif
+#endif  // THIRD_PARTY_BLINK_RENDERER_PLATFORM_WTF_TEXT_ASCII_CTYPE_H_

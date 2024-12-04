@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtQuick module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #ifndef QQUICKSTATEOPERATIONS_P_H
 #define QQUICKSTATEOPERATIONS_P_H
@@ -61,7 +25,7 @@
 QT_BEGIN_NAMESPACE
 
 class QQuickParentChangePrivate;
-class Q_AUTOTEST_EXPORT QQuickParentChange : public QQuickStateOperation, public QQuickStateActionEvent
+class Q_QUICK_EXPORT QQuickParentChange : public QQuickStateOperation, public QQuickStateActionEvent
 {
     Q_OBJECT
     Q_DECLARE_PRIVATE(QQuickParentChange)
@@ -74,10 +38,11 @@ class Q_AUTOTEST_EXPORT QQuickParentChange : public QQuickStateOperation, public
     Q_PROPERTY(QQmlScriptString height READ height WRITE setHeight)
     Q_PROPERTY(QQmlScriptString scale READ scale WRITE setScale)
     Q_PROPERTY(QQmlScriptString rotation READ rotation WRITE setRotation)
+    Q_CLASSINFO("ParentProperty", "parent")
     QML_NAMED_ELEMENT(ParentChange)
+    QML_ADDED_IN_VERSION(2, 0)
 public:
     QQuickParentChange(QObject *parent=nullptr);
-    ~QQuickParentChange();
 
     QQuickItem *object() const;
     void setObject(QQuickItem *);
@@ -126,18 +91,19 @@ public:
 
 class QQuickAnchorChanges;
 class QQuickAnchorSetPrivate;
-class Q_AUTOTEST_EXPORT QQuickAnchorSet : public QObject
+class Q_QUICK_EXPORT QQuickAnchorSet : public QObject
 {
     Q_OBJECT
 
-    Q_PROPERTY(QQmlScriptString left READ left WRITE setLeft RESET resetLeft)
-    Q_PROPERTY(QQmlScriptString right READ right WRITE setRight RESET resetRight)
-    Q_PROPERTY(QQmlScriptString horizontalCenter READ horizontalCenter WRITE setHorizontalCenter RESET resetHorizontalCenter)
-    Q_PROPERTY(QQmlScriptString top READ top WRITE setTop RESET resetTop)
-    Q_PROPERTY(QQmlScriptString bottom READ bottom WRITE setBottom RESET resetBottom)
-    Q_PROPERTY(QQmlScriptString verticalCenter READ verticalCenter WRITE setVerticalCenter RESET resetVerticalCenter)
-    Q_PROPERTY(QQmlScriptString baseline READ baseline WRITE setBaseline RESET resetBaseline)
+    Q_PROPERTY(QQmlScriptString left READ left WRITE setLeft RESET resetLeft FINAL)
+    Q_PROPERTY(QQmlScriptString right READ right WRITE setRight RESET resetRight FINAL)
+    Q_PROPERTY(QQmlScriptString horizontalCenter READ horizontalCenter WRITE setHorizontalCenter RESET resetHorizontalCenter FINAL)
+    Q_PROPERTY(QQmlScriptString top READ top WRITE setTop RESET resetTop FINAL)
+    Q_PROPERTY(QQmlScriptString bottom READ bottom WRITE setBottom RESET resetBottom FINAL)
+    Q_PROPERTY(QQmlScriptString verticalCenter READ verticalCenter WRITE setVerticalCenter RESET resetVerticalCenter FINAL)
+    Q_PROPERTY(QQmlScriptString baseline READ baseline WRITE setBaseline RESET resetBaseline FINAL)
     QML_ANONYMOUS
+    QML_ADDED_IN_VERSION(2, 0)
 
 public:
     QQuickAnchorSet(QObject *parent=nullptr);
@@ -180,7 +146,7 @@ private:
 };
 
 class QQuickAnchorChangesPrivate;
-class Q_AUTOTEST_EXPORT QQuickAnchorChanges : public QQuickStateOperation, public QQuickStateActionEvent
+class Q_QUICK_EXPORT QQuickAnchorChanges : public QQuickStateOperation, public QQuickStateActionEvent
 {
     Q_OBJECT
     Q_DECLARE_PRIVATE(QQuickAnchorChanges)
@@ -188,10 +154,10 @@ class Q_AUTOTEST_EXPORT QQuickAnchorChanges : public QQuickStateOperation, publi
     Q_PROPERTY(QQuickItem *target READ object WRITE setObject)
     Q_PROPERTY(QQuickAnchorSet *anchors READ anchors CONSTANT)
     QML_NAMED_ELEMENT(AnchorChanges)
+    QML_ADDED_IN_VERSION(2, 0)
 
 public:
     QQuickAnchorChanges(QObject *parent=nullptr);
-    ~QQuickAnchorChanges();
 
     ActionList actions() override;
 
@@ -218,10 +184,6 @@ public:
 };
 
 QT_END_NAMESPACE
-
-QML_DECLARE_TYPE(QQuickParentChange)
-QML_DECLARE_TYPE(QQuickAnchorSet)
-QML_DECLARE_TYPE(QQuickAnchorChanges)
 
 #endif // QQUICKSTATEOPERATIONS_P_H
 

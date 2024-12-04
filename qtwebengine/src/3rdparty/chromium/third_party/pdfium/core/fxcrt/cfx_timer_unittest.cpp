@@ -1,4 +1,4 @@
-// Copyright 2019 PDFium Authors. All rights reserved.
+// Copyright 2019 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,7 +6,6 @@
 
 #include <memory>
 
-#include "core/fxcrt/timerhandler_iface.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -15,7 +14,9 @@ using testing::DoAll;
 using testing::Return;
 using testing::SaveArg;
 
-class MockTimerScheduler : public TimerHandlerIface {
+namespace {
+
+class MockTimerScheduler : public CFX_Timer::HandlerIface {
  public:
   MOCK_METHOD2(SetTimer, int(int32_t uElapse, TimerCallback lpTimerFunc));
   MOCK_METHOD1(KillTimer, void(int32_t nID));
@@ -26,9 +27,16 @@ class MockTimerCallback : public CFX_Timer::CallbackIface {
   MOCK_METHOD0(OnTimerFired, void());
 };
 
-TEST(CFX_Timer, ValidTimers) {
-  TimerHandlerIface::TimerCallback fn1 = nullptr;
-  TimerHandlerIface::TimerCallback fn2 = nullptr;
+}  // namespace
+
+class CFXTimer : public testing::Test {
+  void SetUp() override { CFX_Timer::InitializeGlobals(); }
+  void TearDown() override { CFX_Timer::DestroyGlobals(); }
+};
+
+TEST_F(CFXTimer, ValidTimers) {
+  CFX_Timer::HandlerIface::TimerCallback fn1 = nullptr;
+  CFX_Timer::HandlerIface::TimerCallback fn2 = nullptr;
 
   MockTimerScheduler scheduler;
   EXPECT_CALL(scheduler, SetTimer(100, _))
@@ -57,8 +65,8 @@ TEST(CFX_Timer, ValidTimers) {
   (*fn1)(1002);
 }
 
-TEST(CFX_Timer, MisbehavingEmbedder) {
-  TimerHandlerIface::TimerCallback fn1 = nullptr;
+TEST_F(CFXTimer, MisbehavingEmbedder) {
+  CFX_Timer::HandlerIface::TimerCallback fn1 = nullptr;
 
   MockTimerScheduler scheduler;
   EXPECT_CALL(scheduler, SetTimer(100, _))

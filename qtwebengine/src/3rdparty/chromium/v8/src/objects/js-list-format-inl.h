@@ -18,10 +18,12 @@
 namespace v8 {
 namespace internal {
 
+#include "torque-generated/src/objects/js-list-format-tq-inl.inc"
+
 TQ_OBJECT_CONSTRUCTORS_IMPL(JSListFormat)
 
 // Base list format accessors.
-ACCESSORS(JSListFormat, icu_formatter, Managed<icu::ListFormatter>,
+ACCESSORS(JSListFormat, icu_formatter, Tagged<Managed<icu::ListFormatter>>,
           kIcuFormatterOffset)
 
 inline void JSListFormat::set_style(Style style) {

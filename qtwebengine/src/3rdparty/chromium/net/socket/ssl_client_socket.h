@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,20 +10,19 @@
 #include <memory>
 #include <vector>
 
+#include "base/containers/flat_set.h"
 #include "base/gtest_prod_util.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/observer_list.h"
 #include "net/base/net_export.h"
 #include "net/cert/cert_database.h"
+#include "net/cert/cert_verifier.h"
 #include "net/socket/ssl_socket.h"
 #include "net/ssl/ssl_client_auth_cache.h"
 #include "net/ssl/ssl_config_service.h"
 
 namespace net {
 
-class CTPolicyEnforcer;
-class CertVerifier;
-class CTVerifier;
 class HostPortPair;
 class SCTAuditingDelegate;
 class SSLClientSessionCache;
@@ -42,6 +41,14 @@ class NET_EXPORT SSLClientSocket : public SSLSocket {
  public:
   SSLClientSocket();
 
+  // Called in response to |ERR_ECH_NOT_NEGOTIATED| in Connect(), to determine
+  // how to retry the connection, up to some limit. If this method returns a
+  // non-empty string, it is the serialized updated ECHConfigList provided by
+  // the server. The connection can be retried with the new value. If it returns
+  // an empty string, the server has indicated ECH has been disabled. The
+  // connection can be retried with ECH disabled.
+  virtual std::vector<uint8_t> GetECHRetryConfigs() = 0;
+
   // Log SSL key material to |logger|. Must be called before any
   // SSLClientSockets are created.
   //
@@ -59,39 +66,48 @@ class NET_EXPORT SSLClientSocket : public SSLSocket {
     stapled_ocsp_response_received_ = stapled_ocsp_response_received;
   }
 
-  // Serialize |next_protos| in the wire format for ALPN and NPN: protocols are
-  // listed in order, each prefixed by a one-byte length.
+  // Serialize |next_protos| in the wire format for ALPN: protocols are listed
+  // in order, each prefixed by a one-byte length.
   static std::vector<uint8_t> SerializeNextProtos(
       const NextProtoVector& next_protos);
 
  private:
   FRIEND_TEST_ALL_PREFIXES(SSLClientSocket, SerializeNextProtos);
   // For signed_cert_timestamps_received_ and stapled_ocsp_response_received_.
-  FRIEND_TEST_ALL_PREFIXES(SSLClientSocketTest,
+  FRIEND_TEST_ALL_PREFIXES(SSLClientSocketVersionTest,
                            ConnectSignedCertTimestampsTLSExtension);
   FRIEND_TEST_ALL_PREFIXES(SSLClientSocketVersionTest,
                            ConnectSignedCertTimestampsEnablesOCSP);
 
   // True if SCTs were received via a TLS extension.
-  bool signed_cert_timestamps_received_;
+  bool signed_cert_timestamps_received_ = false;
   // True if a stapled OCSP response was received.
-  bool stapled_ocsp_response_received_;
+  bool stapled_ocsp_response_received_ = false;
 };
 
 // Shared state and configuration across multiple SSLClientSockets.
 class NET_EXPORT SSLClientContext : public SSLConfigService::Observer,
+                                    public CertVerifier::Observer,
                                     public CertDatabase::Observer {
  public:
+  enum class SSLConfigChangeType {
+    kSSLConfigChanged,
+    kCertDatabaseChanged,
+    kCertVerifierChanged,
+  };
+
   class NET_EXPORT Observer : public base::CheckedObserver {
    public:
     // Called when SSL configuration for all hosts changed. Newly-created
     // SSLClientSockets will pick up the new configuration. Note that changes
     // which only apply to one server will result in a call to
-    // OnSSLConfigForServerChanged() instead.
-    virtual void OnSSLConfigChanged(bool is_cert_database_change) = 0;
-    // Called when SSL configuration for |server| changed. Newly-created
-    // SSLClientSockets to |server| will pick up the new configuration.
-    virtual void OnSSLConfigForServerChanged(const HostPortPair& server) = 0;
+    // OnSSLConfigForServersChanged() instead.
+    virtual void OnSSLConfigChanged(SSLConfigChangeType change_type) = 0;
+    // Called when SSL configuration for |servers| changed. Newly-created
+    // SSLClientSockets to any server in |servers| will pick up the new
+    // configuration.
+    virtual void OnSSLConfigForServersChanged(
+        const base::flat_set<HostPortPair>& servers) = 0;
   };
 
   // Creates a new SSLClientContext with the specified parameters. The
@@ -103,10 +119,12 @@ class NET_EXPORT SSLClientContext : public SSLConfigService::Observer,
   SSLClientContext(SSLConfigService* ssl_config_service,
                    CertVerifier* cert_verifier,
                    TransportSecurityState* transport_security_state,
-                   CTVerifier* cert_transparency_verifier,
-                   CTPolicyEnforcer* ct_policy_enforcer,
                    SSLClientSessionCache* ssl_client_session_cache,
                    SCTAuditingDelegate* sct_auditing_delegate);
+
+  SSLClientContext(const SSLClientContext&) = delete;
+  SSLClientContext& operator=(const SSLClientContext&) = delete;
+
   ~SSLClientContext() override;
 
   const SSLContextConfig& config() { return config_; }
@@ -116,10 +134,6 @@ class NET_EXPORT SSLClientContext : public SSLConfigService::Observer,
   TransportSecurityState* transport_security_state() {
     return transport_security_state_;
   }
-  CTVerifier* cert_transparency_verifier() {
-    return cert_transparency_verifier_;
-  }
-  CTPolicyEnforcer* ct_policy_enforcer() { return ct_policy_enforcer_; }
   SSLClientSessionCache* ssl_client_session_cache() {
     return ssl_client_session_cache_;
   }
@@ -150,7 +164,7 @@ class NET_EXPORT SSLClientContext : public SSLConfigService::Observer,
   // |private_key| may be null to indicate that no client certificate should be
   // sent to |server|.
   //
-  // Note this method will synchronously call OnSSLConfigForServerChanged() on
+  // Note this method will synchronously call OnSSLConfigForServersChanged() on
   // observers.
   void SetClientCertificate(const HostPortPair& server,
                             scoped_refptr<X509Certificate> client_cert,
@@ -160,9 +174,24 @@ class NET_EXPORT SSLClientContext : public SSLConfigService::Observer,
   // SetClientCertificate(). Returns true if one was removed and false
   // otherwise.
   //
-  // Note this method will synchronously call OnSSLConfigForServerChanged() on
+  // Note this method will synchronously call OnSSLConfigForServersChanged() on
   // observers.
   bool ClearClientCertificate(const HostPortPair& server);
+
+  // Clears a client certificate preference for |host| set by
+  // SetClientCertificate() if |certificate| doesn't match the cached
+  // certificate.
+  //
+  // Note this method will synchronously call OnSSLConfigForServersChanged() on
+  // observers.
+  void ClearClientCertificateIfNeeded(
+      const net::HostPortPair& host,
+      const scoped_refptr<net::X509Certificate>& certificate);
+
+  base::flat_set<HostPortPair> GetClientCertificateCachedServersForTesting()
+      const {
+    return ssl_client_auth_cache_.GetCachedServers();
+  }
 
   // Add an observer to be notified when configuration has changed.
   // RemoveObserver() must be called before |observer| is destroyed.
@@ -174,28 +203,29 @@ class NET_EXPORT SSLClientContext : public SSLConfigService::Observer,
   // SSLConfigService::Observer:
   void OnSSLContextConfigChanged() override;
 
+  // CertVerifier::Observer:
+  void OnCertVerifierChanged() override;
+
   // CertDatabase::Observer:
-  void OnCertDBChanged() override;
+  void OnTrustStoreChanged() override;
+  void OnClientCertStoreChanged() override;
 
  private:
-  void NotifySSLConfigChanged(bool is_cert_database_change);
-  void NotifySSLConfigForServerChanged(const HostPortPair& server);
+  void NotifySSLConfigChanged(SSLConfigChangeType change_type);
+  void NotifySSLConfigForServersChanged(
+      const base::flat_set<HostPortPair>& servers);
 
   SSLContextConfig config_;
 
-  SSLConfigService* ssl_config_service_;
-  CertVerifier* cert_verifier_;
-  TransportSecurityState* transport_security_state_;
-  CTVerifier* cert_transparency_verifier_;
-  CTPolicyEnforcer* ct_policy_enforcer_;
-  SSLClientSessionCache* ssl_client_session_cache_;
-  SCTAuditingDelegate* sct_auditing_delegate_;
+  raw_ptr<SSLConfigService> ssl_config_service_;
+  raw_ptr<CertVerifier> cert_verifier_;
+  raw_ptr<TransportSecurityState> transport_security_state_;
+  raw_ptr<SSLClientSessionCache> ssl_client_session_cache_;
+  raw_ptr<SCTAuditingDelegate> sct_auditing_delegate_;
 
   SSLClientAuthCache ssl_client_auth_cache_;
 
   base::ObserverList<Observer, true /* check_empty */> observers_;
-
-  DISALLOW_COPY_AND_ASSIGN(SSLClientContext);
 };
 
 }  // namespace net

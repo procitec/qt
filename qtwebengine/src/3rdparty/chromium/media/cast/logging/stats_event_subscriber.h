@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,20 +8,20 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <map>
 #include <memory>
+#include <utility>
+#include <vector>
 
 #include "base/gtest_prod_util.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/threading/thread_checker.h"
 #include "base/time/tick_clock.h"
+#include "base/time/time.h"
+#include "base/values.h"
 #include "media/cast/logging/logging_defines.h"
 #include "media/cast/logging/raw_event_subscriber.h"
 #include "media/cast/logging/receiver_time_offset_estimator.h"
-
-namespace base {
-class DictionaryValue;
-class ListValue;
-}
 
 namespace media {
 namespace cast {
@@ -30,11 +30,14 @@ class StatsEventSubscriberTest;
 
 // A RawEventSubscriber implementation that subscribes to events,
 // and aggregates them into stats.
-class StatsEventSubscriber : public RawEventSubscriber {
+class StatsEventSubscriber final : public RawEventSubscriber {
  public:
   StatsEventSubscriber(EventMediaType event_media_type,
                        const base::TickClock* clock,
                        ReceiverTimeOffsetEstimator* offset_estimator);
+
+  StatsEventSubscriber(const StatsEventSubscriber&) = delete;
+  StatsEventSubscriber& operator=(const StatsEventSubscriber&) = delete;
 
   ~StatsEventSubscriber() final;
 
@@ -47,69 +50,13 @@ class StatsEventSubscriber : public RawEventSubscriber {
   // The inner dictionary consists of string - double entries, where the string
   // describes the name of the stat, and the double describes
   // the value of the stat. See CastStat and StatsMap below.
-  std::unique_ptr<base::DictionaryValue> GetStats() const;
+  base::Value::Dict GetStats() const;
 
   // Resets stats in this object.
   void Reset();
 
- private:
-  friend class StatsEventSubscriberTest;
-  FRIEND_TEST_ALL_PREFIXES(StatsEventSubscriberTest, EmptyStats);
-  FRIEND_TEST_ALL_PREFIXES(StatsEventSubscriberTest, CaptureEncode);
-  FRIEND_TEST_ALL_PREFIXES(StatsEventSubscriberTest, Encode);
-  FRIEND_TEST_ALL_PREFIXES(StatsEventSubscriberTest, Decode);
-  FRIEND_TEST_ALL_PREFIXES(StatsEventSubscriberTest, PlayoutDelay);
-  FRIEND_TEST_ALL_PREFIXES(StatsEventSubscriberTest, E2ELatency);
-  FRIEND_TEST_ALL_PREFIXES(StatsEventSubscriberTest, Packets);
-  FRIEND_TEST_ALL_PREFIXES(StatsEventSubscriberTest, Histograms);
-
-  static const size_t kMaxFrameInfoMapSize = 100;
-
-  // Generic statistics given the raw data. More specific data (e.g. frame rate
-  // and bit rate) can be computed given the basic metrics.
-  // Some of the metrics will only be set when applicable, e.g. delay and size.
-  struct FrameLogStats {
-    FrameLogStats();
-    ~FrameLogStats();
-    int event_counter;
-    size_t sum_size;
-    base::TimeDelta sum_delay;
-  };
-
-  struct PacketLogStats {
-    PacketLogStats();
-    ~PacketLogStats();
-    int event_counter;
-    size_t sum_size;
-  };
-
-  class SimpleHistogram {
-   public:
-    // This will create N+2 buckets where N = (max - min) / width:
-    // Underflow bucket: < min
-    // Bucket 0: [min, min + width - 1]
-    // Bucket 1: [min + width, min + 2 * width - 1]
-    // ...
-    // Bucket N-1: [max - width, max - 1]
-    // Overflow bucket: >= max
-    // |min| must be less than |max|.
-    // |width| must divide |max - min| evenly.
-    SimpleHistogram(int64_t min, int64_t max, int64_t width);
-
-    ~SimpleHistogram();
-
-    void Add(int64_t sample);
-
-    void Reset();
-
-    std::unique_ptr<base::ListValue> GetHistogram() const;
-
-   private:
-    int64_t min_;
-    int64_t max_;
-    int64_t width_;
-    std::vector<int> buckets_;
-  };
+  static constexpr char kAudioStatsDictKey[] = "audio";
+  static constexpr char kVideoStatsDictKey[] = "video";
 
   enum CastStat {
     // Capture frame rate.
@@ -171,7 +118,79 @@ class StatsEventSubscriber : public RawEventSubscriber {
     PACKET_LATENCY_MS_HISTO,
     FRAME_LATENCY_MS_HISTO,
     E2E_LATENCY_MS_HISTO,
-    LATE_FRAME_MS_HISTO
+    LATE_FRAME_MS_HISTO,
+
+    // Frame enqueuing rate.
+    ENQUEUE_FPS,
+    // Enum to handle an unknown Openscreen stat that is not yet implemented in
+    // Chrome.
+    UNKNOWN_OPEN_SCREEN_STAT,
+    // Enum to handle an unknown Openscreen histogram that is not yet
+    // implemented in Chrome.
+    UNKNOWN_OPEN_SCREEN_HISTO
+  };
+
+  static const char* CastStatToString(CastStat stat);
+
+ private:
+  // TODO(b/268543775): Replace friend class declarations with public getters
+  // for tests.
+  friend class StatsEventSubscriberTest;
+  FRIEND_TEST_ALL_PREFIXES(StatsEventSubscriberTest, EmptyStats);
+  FRIEND_TEST_ALL_PREFIXES(StatsEventSubscriberTest, CaptureEncode);
+  FRIEND_TEST_ALL_PREFIXES(StatsEventSubscriberTest, Encode);
+  FRIEND_TEST_ALL_PREFIXES(StatsEventSubscriberTest, Decode);
+  FRIEND_TEST_ALL_PREFIXES(StatsEventSubscriberTest, PlayoutDelay);
+  FRIEND_TEST_ALL_PREFIXES(StatsEventSubscriberTest, E2ELatency);
+  FRIEND_TEST_ALL_PREFIXES(StatsEventSubscriberTest, Packets);
+  FRIEND_TEST_ALL_PREFIXES(StatsEventSubscriberTest, Histograms);
+
+  static const size_t kMaxFrameInfoMapSize = 100;
+
+  // Generic statistics given the raw data. More specific data (e.g. frame rate
+  // and bit rate) can be computed given the basic metrics.
+  // Some of the metrics will only be set when applicable, e.g. delay and size.
+  struct FrameLogStats {
+    FrameLogStats();
+    ~FrameLogStats();
+    int event_counter;
+    size_t sum_size;
+    base::TimeDelta sum_delay;
+  };
+
+  struct PacketLogStats {
+    PacketLogStats();
+    ~PacketLogStats();
+    int event_counter;
+    size_t sum_size;
+  };
+
+  class SimpleHistogram {
+   public:
+    // This will create N+2 buckets where N = (max - min) / width:
+    // Underflow bucket: < min
+    // Bucket 0: [min, min + width - 1]
+    // Bucket 1: [min + width, min + 2 * width - 1]
+    // ...
+    // Bucket N-1: [max - width, max - 1]
+    // Overflow bucket: >= max
+    // |min| must be less than |max|.
+    // |width| must divide |max - min| evenly.
+    SimpleHistogram(int64_t min, int64_t max, int64_t width);
+
+    ~SimpleHistogram();
+
+    void Add(int64_t sample);
+
+    void Reset();
+
+    base::Value::List GetHistogram() const;
+
+   private:
+    int64_t min_;
+    int64_t max_;
+    int64_t width_;
+    std::vector<int> buckets_;
   };
 
   struct FrameInfo {
@@ -192,8 +211,6 @@ class StatsEventSubscriber : public RawEventSubscriber {
       PacketEventTimeMap;
   typedef std::map<CastLoggingEvent, FrameLogStats> FrameStatsMap;
   typedef std::map<CastLoggingEvent, PacketLogStats> PacketStatsMap;
-
-  static const char* CastStatToString(CastStat stat);
 
   void InitHistograms();
 
@@ -237,10 +254,10 @@ class StatsEventSubscriber : public RawEventSubscriber {
   const EventMediaType event_media_type_;
 
   // Not owned by this class.
-  const base::TickClock* const clock_;
+  const raw_ptr<const base::TickClock> clock_;
 
   // Not owned by this class.
-  ReceiverTimeOffsetEstimator* const offset_estimator_;
+  const raw_ptr<ReceiverTimeOffsetEstimator> offset_estimator_;
 
   FrameStatsMap frame_stats_;
   PacketStatsMap packet_stats_;
@@ -279,7 +296,6 @@ class StatsEventSubscriber : public RawEventSubscriber {
   HistogramMap histograms_;
 
   base::ThreadChecker thread_checker_;
-  DISALLOW_COPY_AND_ASSIGN(StatsEventSubscriber);
 };
 
 }  // namespace cast

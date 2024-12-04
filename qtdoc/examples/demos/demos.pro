@@ -3,21 +3,28 @@ TEMPLATE = subdirs
 qtHaveModule(quick) {
     SUBDIRS += \
         samegame \
-        calqlatr \
         clocks \
-        tweetsearch \
-        maroon \
-        photosurface \
-        stocqt
+        maroon
 
-    qtHaveModule(quickcontrols2) {
-        SUBDIRS += coffee
+    qtHaveModule(quick3d):qtHaveModule(quick3dphysics):qtHaveModule(quick3dxr):qtHaveModule(multimedia) {
+        SUBDIRS += xr_physicsbase_teleportation
     }
 
-    qtHaveModule(xmlpatterns) {
-        SUBDIRS += rssnews
-        qtHaveModule(quickcontrols) {
-            SUBDIRS += photoviewer
+    qtHaveModule(quickcontrols2) {
+        SUBDIRS += coffee \
+                   colorpaletteclient \
+                   calqlatr 
+
+
+        android|ios: SUBDIRS += hangman
+        qtHaveModule(quick3d):qtHaveModule(quick3dphysics) {
+            SUBDIRS += dice
+        }
+    }
+
+    qtHaveModule(network) {
+        qtHaveModule(xml) {
+            SUBDIRS += rssnews
         }
     }
 }

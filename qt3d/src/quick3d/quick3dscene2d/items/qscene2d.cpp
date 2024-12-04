@@ -1,38 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2017 The Qt Company Ltd.
-** Contact: http://www.qt.io/licensing/
-**
-** This file is part of the Qt3D module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL3$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see http://www.qt.io/terms-conditions. For further
-** information use the contact form at http://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPLv3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or later as published by the Free
-** Software Foundation and appearing in the file LICENSE.GPL included in
-** the packaging of this file. Please review the following information to
-** ensure the GNU General Public License version 2.0 requirements will be
-** met: http://www.gnu.org/licenses/gpl-2.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2017 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qscene2d.h"
 #include "qscene2d_p.h"
@@ -45,11 +12,12 @@
 
 QT_BEGIN_NAMESPACE
 
-using namespace Qt3DCore;
 
 namespace Qt3DRender {
 
 namespace Quick {
+
+using namespace Qt3DCore;
 
 /*!
     \namespace Qt3DRender::Quick
@@ -83,7 +51,7 @@ namespace Quick {
     \qmltype Scene2D
     \inqmlmodule QtQuick.Scene2D
     \since 5.9
-    \instantiates Qt3DRender::Quick::QScene2D
+    \nativetype Qt3DRender::Quick::QScene2D
 
     \brief This type enables rendering qml into a texture, which then can be
     used as a part of 3D scene.
@@ -141,7 +109,7 @@ namespace Quick {
  */
 
 /*!
-    \enum QScene2D::RenderPolicy
+    \enum Qt3DRender::Quick::QScene2D::RenderPolicy
 
     This enum type describes types of render policies available.
     \value Continuous The Scene2D is rendering continuously. This is the default render policy.
@@ -150,12 +118,12 @@ namespace Quick {
 */
 
 /*!
-    \qmlproperty RenderTargetOutput Qt3D.Render::Scene2D::output
+    \qmlproperty RenderTargetOutput QtQuick.Scene2D::Scene2D::output
     Holds the RenderTargetOutput, which specifies where the Scene2D is rendering to.
  */
 
 /*!
-    \qmlproperty enumeration Qt3D.Render::Scene2D::renderPolicy
+    \qmlproperty enumeration QtQuick.Scene2D::Scene2D::renderPolicy
     Holds the render policy of this Scene2D.
 
     \list
@@ -165,12 +133,12 @@ namespace Quick {
     \endlist
  */
 /*!
-    \qmlproperty Item Qt3D.Render::Scene2D::item
+    \qmlproperty Item QtQuick.Scene2D::Scene2D::item
     Holds the Item, which is rendered by Scene2D to the texture.
  */
 
 /*!
-    \qmlproperty bool Qt3D.Render::Scene2D::mouseEnabled
+    \qmlproperty bool QtQuick.Scene2D::Scene2D::mouseEnabled
     Holds whether mouse events are enabled for the rendered item. The mouse events are
     generated from object picking events of the entities added to the Scene2D.
     Mouse is enabled by default.
@@ -179,7 +147,7 @@ namespace Quick {
           happening in the backend.
  */
 /*!
-    \qmlproperty list<Entity> Qt3D.Render::Scene2D::entities
+    \qmlproperty list<Entity> QtQuick.Scene2D::Scene2D::entities
     Holds the list of entities which are associated with the Scene2D object. If the
     entities have ObjectPicker, the pick events from that entity are sent to Scene2D
     and converted to mouse events.
@@ -214,7 +182,7 @@ QScene2D::QScene2D(Qt3DCore::QNode *parent)
 }
 
 /*!
-    \property QScene2D::item
+    \property Qt3DRender::Quick::QScene2D::item
     Holds the QQuickItem, which is rendered by QScene2D to the texture.
  */
 QQuickItem* QScene2D::item() const
@@ -237,7 +205,7 @@ void QScene2D::setItem(QQuickItem *item)
 }
 
 /*!
-    \property QScene2D::renderPolicy
+    \property Qt3DRender::Quick::QScene2D::renderPolicy
 
     Holds the render policy of this Scene2D.
  */
@@ -257,7 +225,7 @@ void QScene2D::setRenderPolicy(QScene2D::RenderPolicy renderPolicy)
 }
 
 /*!
-    \property QScene2D::output
+    \property Qt3DRender::Quick::QScene2D::output
     Holds the QRenderTargetOutput, which specifies where the QScene2D is
     rendering to.
  */
@@ -280,20 +248,6 @@ void QScene2D::setOutput(Qt3DRender::QRenderTargetOutput *output)
     }
 }
 
-Qt3DCore::QNodeCreatedChangeBasePtr QScene2D::createNodeCreationChange() const
-{
-    auto creationChange = Qt3DCore::QNodeCreatedChangePtr<QScene2DData>::create(this);
-    auto &data = creationChange->data;
-    Q_D(const QScene2D);
-    data.renderPolicy = d->m_renderManager->m_renderPolicy;
-    data.sharedObject = d->m_renderManager->m_sharedObject;
-    data.output = d->m_output ? d->m_output->id() : Qt3DCore::QNodeId();
-    for (Qt3DCore::QEntity *e : d->m_entities)
-        data.entityIds.append(e->id());
-    data.mouseEnabled = d->m_renderManager->m_mouseEnabled;
-    return creationChange;
-}
-
 bool QScene2D::isMouseEnabled() const
 {
     Q_D(const QScene2D);
@@ -303,16 +257,7 @@ bool QScene2D::isMouseEnabled() const
 /*!
     Retrieve entities associated with the QScene2D.
  */
-QVector<Qt3DCore::QEntity*> QScene2D::entities()
-{
-    Q_D(const QScene2D);
-    return d->m_entities;
-}
-
-/*!
-    Retrieve entities associated with the QScene2D.
- */
-QVector<Qt3DCore::QEntity*> QScene2D::entities() const
+QList<Qt3DCore::QEntity *> QScene2D::entities() const
 {
     Q_D(const QScene2D);
     return d->m_entities;
@@ -329,7 +274,7 @@ void QScene2D::addEntity(Qt3DCore::QEntity *entity)
         d->m_entities.append(entity);
 
         d->registerDestructionHelper(entity, &QScene2D::removeEntity, d->m_entities);
-        d->updateNode(entity, "entities", PropertyValueAdded);
+        d->update();
     }
 }
 
@@ -343,12 +288,12 @@ void QScene2D::removeEntity(Qt3DCore::QEntity *entity)
         d->m_entities.removeAll(entity);
 
         d->unregisterDestructionHelper(entity);
-        d->updateNode(entity, "entities", PropertyValueRemoved);
+        d->update();
     }
 }
 
 /*!
-    \property QScene2D::mouseEnabled
+    \property Qt3DRender::Quick::QScene2D::mouseEnabled
     Holds whether mouse events are enabled for the rendered item. The mouse events are
     generated from object picking events of the entities added to the QScene2D.
     Mouse is enabled by default.
@@ -369,3 +314,5 @@ void QScene2D::setMouseEnabled(bool enabled)
 } // namespace Qt3DRender
 
 QT_END_NAMESPACE
+
+#include "moc_qscene2d.cpp"

@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -27,16 +27,15 @@ void EncodeVarInt(int64_t from, std::string* into) {
   into->append(temp, temp_index);
 }
 
-bool DecodeVarInt(base::StringPiece* from, int64_t* into) {
-  base::StringPiece::const_iterator it = from->begin();
+bool DecodeVarInt(std::string_view* from, int64_t* into) {
+  std::string_view::const_iterator it = from->begin();
   int shift = 0;
   uint64_t ret = 0;
   do {
-    if (it == from->end())
+    // Shifting 64 or more bits is undefined behavior.
+    if (it == from->end() || shift >= 64)
       return false;
 
-    // Shifting 64 or more bits is undefined behavior.
-    DCHECK_LT(shift, 64);
     unsigned char c = *it;
     ret |= static_cast<uint64_t>(c & 0x7f) << shift;
     shift += 7;

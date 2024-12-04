@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,15 +8,19 @@
 #include <memory>
 #include <unordered_map>
 
-#include "base/callback_forward.h"
+#include "base/functional/callback_forward.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/observer_list.h"
+#include "base/time/time.h"
 #include "build/build_config.h"
+#include "components/content_settings/core/browser/content_settings_observer.h"
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/content_settings/core/common/content_settings_types.h"
-#include "components/keyed_service/core/keyed_service.h"
 #include "components/permissions/permission_request.h"
-#include "components/permissions/permission_result.h"
-#include "third_party/blink/public/mojom/feature_policy/feature_policy_feature.mojom-forward.h"
+#include "components/permissions/permission_request_data.h"
+#include "content/public/browser/permission_result.h"
+#include "third_party/blink/public/mojom/permissions_policy/permissions_policy_feature.mojom-forward.h"
 
 class GURL;
 
@@ -31,6 +35,22 @@ class WebContents;
 }  // namespace content
 
 namespace permissions {
+
+class Observer : public base::CheckedObserver {
+ public:
+  // Called whenever there is a potential permission status change for the
+  // specified patterns. This function being called does not necessarily mean
+  // that the result of |GetPermissionStatus| has changed for any particular
+  // origin.
+  virtual void OnPermissionChanged(
+      const ContentSettingsPattern& primary_pattern,
+      const ContentSettingsPattern& secondary_pattern,
+      ContentSettingsTypeSet content_type_set) = 0;
+};
+
+// A one time grant will never last longer than this value.
+static constexpr base::TimeDelta kOneTimePermissionMaximumLifetime =
+    base::Hours(16);
 
 using BrowserPermissionCallback = base::OnceCallback<void(ContentSetting)>;
 
@@ -47,21 +67,24 @@ using BrowserPermissionCallback = base::OnceCallback<void(ContentSetting)>;
 //   - Define your new permission in the ContentSettingsType enum.
 //   - Create a class that inherits from PermissionContextBase and passes the
 //     new permission.
-//   - Edit the PermissionRequestImpl methods to add the new text.
+//   - Edit the PermissionRequest methods to add the new text.
+//   - Make sure to update
+//     third_party/blink/public/devtools_protocol/browser_protocol.pdl
+//     even if you don't intend to do anything DevTools-specific; you will
+//     run into problems with generated code otherwise.
 //   - Hit several asserts for the missing plumbing and fix them :)
 // After this you can override several other methods to customize behavior,
 // in particular it is advised to override UpdateTabContext in order to manage
 // the permission from the omnibox.
-// It is mandatory to override IsRestrictedToSecureOrigin.
 // See midi_permission_context.h/cc or push_permission_context.cc/h for some
 // examples.
 
-class PermissionContextBase : public KeyedService {
+class PermissionContextBase : public content_settings::Observer {
  public:
   PermissionContextBase(
       content::BrowserContext* browser_context,
       ContentSettingsType content_settings_type,
-      blink::mojom::FeaturePolicyFeature feature_policy_feature);
+      blink::mojom::PermissionsPolicyFeature permissions_policy_feature);
   ~PermissionContextBase() override;
 
   // A field trial used to enable the global permissions kill switch.
@@ -76,16 +99,13 @@ class PermissionContextBase : public KeyedService {
 
   // |callback| is called upon resolution of the request, but not if a prompt
   // is shown and ignored.
-  virtual void RequestPermission(content::WebContents* web_contents,
-                                 const PermissionRequestID& id,
-                                 const GURL& requesting_frame,
-                                 bool user_gesture,
+  virtual void RequestPermission(PermissionRequestData request_data,
                                  BrowserPermissionCallback callback);
 
   // Returns whether the permission has been granted, denied etc.
   // |render_frame_host| may be nullptr if the call is coming from a context
   // other than a specific frame.
-  PermissionResult GetPermissionStatus(
+  content::PermissionResult GetPermissionStatus(
       content::RenderFrameHost* render_frame_host,
       const GURL& requesting_origin,
       const GURL& embedding_origin) const;
@@ -97,8 +117,10 @@ class PermissionContextBase : public KeyedService {
   // Update |result| with any modifications based on the device state. For
   // example, if |result| is ALLOW but Chrome does not have the relevant
   // permission at the device level, but will prompt the user, return ASK.
-  virtual PermissionResult UpdatePermissionStatusWithDeviceStatus(
-      PermissionResult result,
+  // This function updates the cached device permission status which can result
+  // in the permission status changing and observers being notified.
+  virtual content::PermissionResult UpdatePermissionStatusWithDeviceStatus(
+      content::PermissionResult result,
       const GURL& requesting_origin,
       const GURL& embedding_origin) const;
 
@@ -111,6 +133,13 @@ class PermissionContextBase : public KeyedService {
   // camera and microphone, and for testing.
   bool IsPermissionKillSwitchOn() const;
 
+  void AddObserver(permissions::Observer* permission_observer);
+  void RemoveObserver(permissions::Observer* permission_observer);
+
+  ContentSettingsType content_settings_type() const {
+    return content_settings_type_;
+  }
+
  protected:
   virtual ContentSetting GetPermissionStatusInternal(
       content::RenderFrameHost* render_frame_host,
@@ -119,11 +148,7 @@ class PermissionContextBase : public KeyedService {
 
   // Called if generic checks (existing content setting, embargo, etc.) fail to
   // resolve a permission request. The default implementation prompts the user.
-  virtual void DecidePermission(content::WebContents* web_contents,
-                                const PermissionRequestID& id,
-                                const GURL& requesting_origin,
-                                const GURL& embedding_origin,
-                                bool user_gesture,
+  virtual void DecidePermission(PermissionRequestData request_data,
                                 BrowserPermissionCallback callback);
 
   // Updates stored content setting if persist is set, updates tab indicators
@@ -133,7 +158,9 @@ class PermissionContextBase : public KeyedService {
                                    const GURL& embedding_origin,
                                    BrowserPermissionCallback callback,
                                    bool persist,
-                                   ContentSetting content_setting);
+                                   ContentSetting content_setting,
+                                   bool is_one_time,
+                                   bool is_final_decision);
 
   // Implementors can override this method to update the icons on the
   // url bar with the result of the new permission.
@@ -149,10 +176,11 @@ class PermissionContextBase : public KeyedService {
   // (for example for desktop notifications).
   virtual void UpdateContentSetting(const GURL& requesting_origin,
                                     const GURL& embedding_origin,
-                                    ContentSetting content_setting);
+                                    ContentSetting content_setting,
+                                    bool is_one_time);
 
   // Whether the permission should be restricted to secure origins.
-  virtual bool IsRestrictedToSecureOrigins() const = 0;
+  virtual bool IsRestrictedToSecureOrigins() const;
 
   // Called by PermissionDecided when the user has made a permission decision.
   // Subclasses may override this method to perform context-specific logic
@@ -162,31 +190,61 @@ class PermissionContextBase : public KeyedService {
                                           const GURL& embedding_origin,
                                           ContentSetting content_setting);
 
-  ContentSettingsType content_settings_type() const {
-    return content_settings_type_;
-  }
+  // content_settings::Observer:
+  void OnContentSettingChanged(
+      const ContentSettingsPattern& primary_pattern,
+      const ContentSettingsPattern& secondary_pattern,
+      ContentSettingsTypeSet content_type_set) override;
+
+  // Implementors can override this method to use a different PermissionRequest
+  // implementation.
+  virtual std::unique_ptr<PermissionRequest> CreatePermissionRequest(
+      content::WebContents* web_contents,
+      PermissionRequestData request_data,
+      PermissionRequest::PermissionDecidedCallback permission_decided_callback,
+      base::OnceClosure delete_callback) const;
+
+  // Implementors can override this method to avoid using automatic embargo.
+  virtual bool UsesAutomaticEmbargo() const;
+
+  base::ObserverList<permissions::Observer> permission_observers_;
+
+  // Set by subclasses to inform the base class that they will handle adding
+  // and removing themselves as observers to the HostContentSettingsMap.
+  bool content_setting_observer_registered_by_subclass_ = false;
 
  private:
   friend class PermissionContextBaseTests;
 
-  bool PermissionAllowedByFeaturePolicy(content::RenderFrameHost* rfh) const;
+  bool PermissionAllowedByPermissionsPolicy(
+      content::RenderFrameHost* rfh) const;
 
   // Called when a request is no longer used so it can be cleaned up.
   void CleanUpRequest(const PermissionRequestID& id);
 
-  // This is the callback for PermissionRequestImpl and is called once the user
+  // This is the callback for PermissionRequest and is called once the user
   // allows/blocks/dismisses a permission prompt.
   void PermissionDecided(const PermissionRequestID& id,
                          const GURL& requesting_origin,
                          const GURL& embedding_origin,
-                         BrowserPermissionCallback callback,
-                         ContentSetting content_setting);
+                         ContentSetting content_setting,
+                         bool is_one_time,
+                         bool is_final_decision);
 
-  content::BrowserContext* browser_context_;
+  void NotifyObservers(const ContentSettingsPattern& primary_pattern,
+                       const ContentSettingsPattern& secondary_pattern,
+                       ContentSettingsTypeSet content_type_set) const;
+
+  raw_ptr<content::BrowserContext> browser_context_;
   const ContentSettingsType content_settings_type_;
-  const blink::mojom::FeaturePolicyFeature feature_policy_feature_;
-  std::unordered_map<std::string, std::unique_ptr<PermissionRequest>>
+  const blink::mojom::PermissionsPolicyFeature permissions_policy_feature_;
+  std::unordered_map<
+      std::string,
+      std::pair<std::unique_ptr<PermissionRequest>, BrowserPermissionCallback>>
       pending_requests_;
+
+  mutable absl::optional<bool> last_has_device_permission_result_ =
+      absl::nullopt;
 
   // Must be the last member, to ensure that it will be
   // destroyed first, which will invalidate weak pointers

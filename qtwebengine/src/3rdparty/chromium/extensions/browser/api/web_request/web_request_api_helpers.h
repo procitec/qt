@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,28 +8,20 @@
 #define EXTENSIONS_BROWSER_API_WEB_REQUEST_WEB_REQUEST_API_HELPERS_H_
 
 #include <list>
-#include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <utility>
 #include <vector>
-
-#include "base/macros.h"
-#include "base/memory/ref_counted.h"
-#include "base/optional.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/time/time.h"
+#include "base/values.h"
 #include "extensions/common/api/web_request.h"
 #include "extensions/common/extension_id.h"
 #include "net/base/auth.h"
 #include "net/http/http_request_headers.h"
 #include "net/http/http_response_headers.h"
-#include "services/network/public/cpp/features.h"
 #include "url/gurl.h"
-
-namespace base {
-class ListValue;
-class DictionaryValue;
-}  // namespace base
 
 namespace content {
 class BrowserContext;
@@ -173,13 +165,12 @@ enum class ResponseHeaderType {
 struct IgnoredAction {
   IgnoredAction(extensions::ExtensionId extension_id,
                 extensions::api::web_request::IgnoredActionType action_type);
+  IgnoredAction(const IgnoredAction&) = delete;
   IgnoredAction(IgnoredAction&& rhs);
+  IgnoredAction& operator=(const IgnoredAction&) = delete;
 
   extensions::ExtensionId extension_id;
   extensions::api::web_request::IgnoredActionType action_type;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(IgnoredAction);
 };
 
 using IgnoredActions = std::vector<IgnoredAction>;
@@ -198,7 +189,7 @@ struct ExtraInfoSpec {
   };
 
   static bool InitFromValue(content::BrowserContext* browser_context,
-                            const base::ListValue& value,
+                            const base::Value& value,
                             int* extra_info_spec);
 };
 
@@ -206,7 +197,9 @@ struct ExtraInfoSpec {
 // API definition.
 struct RequestCookie {
   RequestCookie();
+  RequestCookie(const RequestCookie&) = delete;
   RequestCookie(RequestCookie&& other);
+  RequestCookie& operator=(const RequestCookie&) = delete;
   RequestCookie& operator=(RequestCookie&& other);
   ~RequestCookie();
 
@@ -214,17 +207,17 @@ struct RequestCookie {
 
   RequestCookie Clone() const;
 
-  base::Optional<std::string> name;
-  base::Optional<std::string> value;
-
-  DISALLOW_COPY_AND_ASSIGN(RequestCookie);
+  std::optional<std::string> name;
+  std::optional<std::string> value;
 };
 
 // Data container for ResponseCookies as defined in the declarative WebRequest
 // API definition.
 struct ResponseCookie {
   ResponseCookie();
+  ResponseCookie(const ResponseCookie&) = delete;
   ResponseCookie(ResponseCookie&& other);
+  ResponseCookie& operator=(const ResponseCookie&) = delete;
   ResponseCookie& operator=(ResponseCookie&& other);
   ~ResponseCookie();
 
@@ -232,23 +225,23 @@ struct ResponseCookie {
 
   ResponseCookie Clone() const;
 
-  base::Optional<std::string> name;
-  base::Optional<std::string> value;
-  base::Optional<std::string> expires;
-  base::Optional<int> max_age;
-  base::Optional<std::string> domain;
-  base::Optional<std::string> path;
-  base::Optional<bool> secure;
-  base::Optional<bool> http_only;
-
-  DISALLOW_COPY_AND_ASSIGN(ResponseCookie);
+  std::optional<std::string> name;
+  std::optional<std::string> value;
+  std::optional<std::string> expires;
+  std::optional<int> max_age;
+  std::optional<std::string> domain;
+  std::optional<std::string> path;
+  std::optional<bool> secure;
+  std::optional<bool> http_only;
 };
 
 // Data container for FilterResponseCookies as defined in the declarative
 // WebRequest API definition.
 struct FilterResponseCookie : ResponseCookie {
   FilterResponseCookie();
+  FilterResponseCookie(const FilterResponseCookie&) = delete;
   FilterResponseCookie(FilterResponseCookie&& other);
+  FilterResponseCookie& operator=(const FilterResponseCookie&) = delete;
   FilterResponseCookie& operator=(FilterResponseCookie&& other);
   ~FilterResponseCookie();
 
@@ -256,11 +249,9 @@ struct FilterResponseCookie : ResponseCookie {
 
   bool operator==(const FilterResponseCookie& other) const;
 
-  base::Optional<int> age_lower_bound;
-  base::Optional<int> age_upper_bound;
-  base::Optional<bool> session_cookie;
-
-  DISALLOW_COPY_AND_ASSIGN(FilterResponseCookie);
+  std::optional<int> age_lower_bound;
+  std::optional<int> age_upper_bound;
+  std::optional<bool> session_cookie;
 };
 
 enum CookieModificationType {
@@ -271,7 +262,10 @@ enum CookieModificationType {
 
 struct RequestCookieModification {
   RequestCookieModification();
+  RequestCookieModification(const RequestCookieModification&) = delete;
   RequestCookieModification(RequestCookieModification&& other);
+  RequestCookieModification& operator=(const RequestCookieModification&) =
+      delete;
   RequestCookieModification& operator=(RequestCookieModification&& other);
   ~RequestCookieModification();
 
@@ -281,16 +275,17 @@ struct RequestCookieModification {
 
   CookieModificationType type;
   // Used for EDIT and REMOVE, nullopt otherwise.
-  base::Optional<RequestCookie> filter;
+  std::optional<RequestCookie> filter;
   // Used for ADD and EDIT, nullopt otherwise.
-  base::Optional<RequestCookie> modification;
-
-  DISALLOW_COPY_AND_ASSIGN(RequestCookieModification);
+  std::optional<RequestCookie> modification;
 };
 
 struct ResponseCookieModification {
   ResponseCookieModification();
+  ResponseCookieModification(const ResponseCookieModification&) = delete;
   ResponseCookieModification(ResponseCookieModification&& other);
+  ResponseCookieModification& operator=(const ResponseCookieModification&) =
+      delete;
   ResponseCookieModification& operator=(ResponseCookieModification&& other);
   ~ResponseCookieModification();
 
@@ -300,11 +295,9 @@ struct ResponseCookieModification {
 
   CookieModificationType type;
   // Used for EDIT and REMOVE, nullopt otherwise.
-  base::Optional<FilterResponseCookie> filter;
+  std::optional<FilterResponseCookie> filter;
   // Used for ADD and EDIT, nullopt otherwise.
-  base::Optional<ResponseCookie> modification;
-
-  DISALLOW_COPY_AND_ASSIGN(ResponseCookieModification);
+  std::optional<ResponseCookie> modification;
 };
 
 using RequestCookieModifications = std::vector<RequestCookieModification>;
@@ -314,7 +307,9 @@ using ResponseCookieModifications = std::vector<ResponseCookieModification>;
 struct EventResponseDelta {
   EventResponseDelta(const std::string& extension_id,
                      const base::Time& extension_install_time);
+  EventResponseDelta(const EventResponseDelta&) = delete;
   EventResponseDelta(EventResponseDelta&& other);
+  EventResponseDelta& operator=(const EventResponseDelta&) = delete;
   EventResponseDelta& operator=(EventResponseDelta&& other);
   ~EventResponseDelta();
 
@@ -344,7 +339,7 @@ struct EventResponseDelta {
   ResponseHeaders deleted_response_headers;
 
   // Authentication Credentials to use.
-  base::Optional<net::AuthCredentials> auth_credentials;
+  std::optional<net::AuthCredentials> auth_credentials;
 
   // Modifications to cookies in request headers.
   RequestCookieModifications request_cookie_modifications;
@@ -355,8 +350,6 @@ struct EventResponseDelta {
   // Messages that shall be sent to the background/event/... pages of the
   // extension.
   std::set<std::string> messages_to_extension;
-
-  DISALLOW_COPY_AND_ASSIGN(EventResponseDelta);
 };
 
 using EventResponseDeltas = std::list<EventResponseDelta>;
@@ -367,11 +360,11 @@ bool InDecreasingExtensionInstallationTimeOrder(const EventResponseDelta& a,
                                                 const EventResponseDelta& b);
 
 // Converts a string to a list of integers, each in 0..255.
-std::unique_ptr<base::ListValue> StringToCharList(const std::string& s);
+base::Value::List StringToCharList(const std::string& s);
 
 // Converts a list of integer values between 0 and 255 into a string |*out|.
 // Returns true if the conversion was successful.
-bool CharListToString(const base::ListValue* list, std::string* out);
+bool CharListToString(const base::Value::List& list, std::string* out);
 
 // The following functions calculate and return the modifications to requests
 // commanded by extension handlers. All functions take the id of the extension
@@ -406,7 +399,7 @@ EventResponseDelta CalculateOnAuthRequiredDelta(
     const std::string& extension_id,
     const base::Time& extension_install_time,
     bool cancel,
-    base::Optional<net::AuthCredentials> auth_credentials);
+    std::optional<net::AuthCredentials> auth_credentials);
 
 // These functions merge the responses (the |deltas|) of request handlers.
 // The |deltas| need to be sorted in decreasing order of precedence of
@@ -414,10 +407,10 @@ EventResponseDelta CalculateOnAuthRequiredDelta(
 // IDs are reported in |conflicting_extensions|.
 
 // Stores in |*canceled_by_extension| whether any extension wanted to cancel the
-// request, base::nullopt if none did, the extension id otherwise.
+// request, std::nullopt if none did, the extension id otherwise.
 void MergeCancelOfResponses(
     const EventResponseDeltas& deltas,
-    base::Optional<extensions::ExtensionId>* canceled_by_extension);
+    std::optional<extensions::ExtensionId>* canceled_by_extension);
 // Stores in |*new_url| the redirect request of the extension with highest
 // precedence. Extensions that did not command to redirect the request are
 // ignored in this logic.
@@ -494,14 +487,14 @@ bool MergeOnAuthRequiredResponses(const EventResponseDeltas& deltas,
                                   net::AuthCredentials* auth_credentials,
                                   IgnoredActions* ignored_actions);
 
-// Triggers clearing each renderer's in-memory cache the next time it navigates.
+// Triggers clearing any back-forward caches and each renderer's in-memory cache
+// the next time it navigates.
 void ClearCacheOnNavigation();
 
 // Converts the |name|, |value| pair of a http header to a HttpHeaders
 // dictionary.
-std::unique_ptr<base::DictionaryValue> CreateHeaderDictionary(
-    const std::string& name,
-    const std::string& value);
+base::Value::Dict CreateHeaderDictionary(const std::string& name,
+                                         const std::string& value);
 
 // Returns whether a request header should be hidden from listeners.
 bool ShouldHideRequestHeader(content::BrowserContext* browser_context,

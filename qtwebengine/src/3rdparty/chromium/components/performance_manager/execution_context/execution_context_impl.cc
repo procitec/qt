@@ -1,16 +1,18 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/performance_manager/execution_context/execution_context_impl.h"
 
+#include "base/memory/raw_ptr.h"
 #include "base/sequence_checker.h"
-#include "base/util/type_safety/pass_key.h"
+#include "base/types/pass_key.h"
 #include "components/performance_manager/graph/frame_node_impl.h"
 #include "components/performance_manager/graph/node_attached_data_impl.h"
 #include "components/performance_manager/graph/process_node_impl.h"
 #include "components/performance_manager/graph/worker_node_impl.h"
 #include "components/performance_manager/public/execution_context/execution_context.h"
+#include "components/performance_manager/public/execution_context/execution_context_registry.h"
 
 namespace performance_manager {
 namespace execution_context {
@@ -19,7 +21,7 @@ namespace execution_context {
 // implementations.
 class ExecutionContextAccess {
  public:
-  using PassKey = util::PassKey<ExecutionContextAccess>;
+  using PassKey = base::PassKey<ExecutionContextAccess>;
 
   template <typename NodeImplType>
   static std::unique_ptr<NodeAttachedData>* GetExecutionAccessStorage(
@@ -60,7 +62,7 @@ class ExecutionContextImpl : public ExecutionContext,
 
   const GURL& GetUrl() const override {
     DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-    return node_->url();
+    return node_->GetURL();
   }
 
   const ProcessNode* GetProcessNode() const override {
@@ -68,17 +70,20 @@ class ExecutionContextImpl : public ExecutionContext,
     return node_->process_node();
   }
 
+  // Returns the current priority of the execution context, and the reason for
+  // the execution context having that particular priority.
+  const PriorityAndReason& GetPriorityAndReason() const override {
+    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+    return node_->GetPriorityAndReason();
+  }
+
   const FrameNode* GetFrameNode() const override {
     DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-    if (std::is_same<FrameNodeImpl, NodeImplType>::value)
-      return reinterpret_cast<const FrameNode*>(node_);
     return nullptr;
   }
 
   const WorkerNode* GetWorkerNode() const override {
     DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-    if (std::is_same<WorkerNodeImpl, NodeImplType>::value)
-      return reinterpret_cast<const WorkerNodeImpl*>(node_);
     return nullptr;
   }
 
@@ -93,7 +98,7 @@ class ExecutionContextImpl : public ExecutionContext,
   }
 
   SEQUENCE_CHECKER(sequence_checker_);
-  const NodeImplType* node_ = nullptr;
+  raw_ptr<const NodeImplType> node_ = nullptr;
 };
 
 // An ExecutionContext implementation that wraps a FrameNodeImpl.
@@ -110,7 +115,12 @@ class FrameExecutionContext
   // ExecutionContextImpl:
   blink::ExecutionContextToken GetToken() const override {
     DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-    return blink::ExecutionContextToken(node_->frame_token());
+    return blink::ExecutionContextToken(node_->GetFrameToken());
+  }
+
+  const FrameNode* GetFrameNode() const override {
+    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+    return node_;
   }
 
  protected:
@@ -133,7 +143,12 @@ class WorkerExecutionContext
   // ExecutionContextImpl:
   blink::ExecutionContextToken GetToken() const override {
     DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-    return ToExecutionContextToken(node_->worker_token());
+    return ToExecutionContextToken(node_->GetWorkerToken());
+  }
+
+  const WorkerNode* GetWorkerNode() const override {
+    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+    return node_;
   }
 
  protected:
@@ -164,6 +179,19 @@ blink::ExecutionContextToken ToExecutionContextToken(
   // that all types are handled.
   NOTREACHED();
   return blink::ExecutionContextToken();
+}
+
+// Declared in execution_context.h.
+// static
+const ExecutionContext* ExecutionContext::From(const FrameNode* frame_node) {
+  return ExecutionContextRegistry::GetExecutionContextForFrameNode(frame_node);
+}
+
+// Declared in execution_context.h.
+// static
+const ExecutionContext* ExecutionContext::From(const WorkerNode* worker_node) {
+  return ExecutionContextRegistry::GetExecutionContextForWorkerNode(
+      worker_node);
 }
 
 const ExecutionContext* GetOrCreateExecutionContextForFrameNode(

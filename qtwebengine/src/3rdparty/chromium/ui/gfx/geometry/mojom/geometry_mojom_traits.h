@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,10 +11,10 @@
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/point3_f.h"
 #include "ui/gfx/geometry/point_f.h"
+#include "ui/gfx/geometry/quad_f.h"
 #include "ui/gfx/geometry/quaternion.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/rect_f.h"
-#include "ui/gfx/geometry/scroll_offset.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/geometry/size_f.h"
 #include "ui/gfx/geometry/vector2d.h"
@@ -30,7 +30,8 @@ struct StructTraits<gfx::mojom::InsetsDataView, gfx::Insets> {
   static int bottom(const gfx::Insets& p) { return p.bottom(); }
   static int right(const gfx::Insets& p) { return p.right(); }
   static bool Read(gfx::mojom::InsetsDataView data, gfx::Insets* out) {
-    out->Set(data.top(), data.left(), data.bottom(), data.right());
+    *out =
+        gfx::Insets::TLBR(data.top(), data.left(), data.bottom(), data.right());
     return true;
   }
 };
@@ -42,7 +43,8 @@ struct StructTraits<gfx::mojom::InsetsFDataView, gfx::InsetsF> {
   static float bottom(const gfx::InsetsF& p) { return p.bottom(); }
   static float right(const gfx::InsetsF& p) { return p.right(); }
   static bool Read(gfx::mojom::InsetsFDataView data, gfx::InsetsF* out) {
-    out->Set(data.top(), data.left(), data.bottom(), data.right());
+    *out = gfx::InsetsF::TLBR(data.top(), data.left(), data.bottom(),
+                              data.right());
     return true;
   }
 };
@@ -170,18 +172,6 @@ struct StructTraits<gfx::mojom::Vector3dFDataView, gfx::Vector3dF> {
 };
 
 template <>
-struct StructTraits<gfx::mojom::ScrollOffsetDataView, gfx::ScrollOffset> {
-  static float x(const gfx::ScrollOffset& v) { return v.x(); }
-  static float y(const gfx::ScrollOffset& v) { return v.y(); }
-  static bool Read(gfx::mojom::ScrollOffsetDataView data,
-                   gfx::ScrollOffset* out) {
-    out->set_x(data.x());
-    out->set_y(data.y());
-    return true;
-  }
-};
-
-template <>
 struct StructTraits<gfx::mojom::QuaternionDataView, gfx::Quaternion> {
   static double x(const gfx::Quaternion& q) { return q.x(); }
   static double y(const gfx::Quaternion& q) { return q.y(); }
@@ -192,6 +182,37 @@ struct StructTraits<gfx::mojom::QuaternionDataView, gfx::Quaternion> {
     out->set_y(data.y());
     out->set_z(data.z());
     out->set_w(data.w());
+    return true;
+  }
+};
+
+template <>
+struct StructTraits<gfx::mojom::QuadFDataView, gfx::QuadF> {
+  static gfx::PointF p1(const gfx::QuadF& q) { return q.p1(); }
+  static gfx::PointF p2(const gfx::QuadF& q) { return q.p2(); }
+  static gfx::PointF p3(const gfx::QuadF& q) { return q.p3(); }
+  static gfx::PointF p4(const gfx::QuadF& q) { return q.p4(); }
+  static bool Read(gfx::mojom::QuadFDataView data, gfx::QuadF* out) {
+    gfx::PointF p1;
+    if (!data.ReadP1(&p1)) {
+      return false;
+    }
+    out->set_p1(p1);
+    gfx::PointF p2;
+    if (!data.ReadP2(&p2)) {
+      return false;
+    }
+    out->set_p2(p2);
+    gfx::PointF p3;
+    if (!data.ReadP3(&p3)) {
+      return false;
+    }
+    out->set_p3(p3);
+    gfx::PointF p4;
+    if (!data.ReadP4(&p4)) {
+      return false;
+    }
+    out->set_p4(p4);
     return true;
   }
 };

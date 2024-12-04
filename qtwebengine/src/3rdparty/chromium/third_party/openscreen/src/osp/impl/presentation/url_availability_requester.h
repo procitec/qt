@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,6 +9,7 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <vector>
 
 #include "osp/msgs/osp_messages.h"
 #include "osp/public/message_demuxer.h"
@@ -18,8 +19,7 @@
 #include "platform/api/time.h"
 #include "platform/base/error.h"
 
-namespace openscreen {
-namespace osp {
+namespace openscreen::osp {
 
 // Handles Presentation API URL availability requests and persistent watches.
 // It keeps track of the set of currently known receivers as well as all
@@ -124,11 +124,11 @@ class UrlAvailabilityRequester {
     uint64_t next_watch_id = 1;
 
     const std::string service_id;
-    uint64_t endpoint_id;
+    uint64_t endpoint_id_{0};
 
     ProtocolConnectionClient::ConnectRequest connect_request;
     // TODO(btolsch): Observe connection and restart all the things on close.
-    std::unique_ptr<ProtocolConnection> connection;
+    std::unique_ptr<ProtocolConnection> connection_;
 
     MessageDemuxer::MessageWatch response_watch;
     std::map<uint64_t, Request> request_by_id;
@@ -146,7 +146,6 @@ class UrlAvailabilityRequester {
       receiver_by_service_id_;
 };
 
-}  // namespace osp
-}  // namespace openscreen
+}  // namespace openscreen::osp
 
 #endif  // OSP_IMPL_PRESENTATION_URL_AVAILABILITY_REQUESTER_H_

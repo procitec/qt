@@ -1,11 +1,10 @@
-// Copyright (c) 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/services/storage/indexed_db/transactional_leveldb/leveldb_write_batch.h"
 
 #include "base/memory/ptr_util.h"
-#include "base/strings/string_piece.h"
 #include "third_party/leveldatabase/env_chromium.h"
 #include "third_party/leveldatabase/src/include/leveldb/slice.h"
 #include "third_party/leveldatabase/src/include/leveldb/write_batch.h"
@@ -21,12 +20,11 @@ LevelDBWriteBatch::LevelDBWriteBatch()
 
 LevelDBWriteBatch::~LevelDBWriteBatch() {}
 
-void LevelDBWriteBatch::Put(const base::StringPiece& key,
-                            const base::StringPiece& value) {
+void LevelDBWriteBatch::Put(std::string_view key, std::string_view value) {
   write_batch_->Put(leveldb_env::MakeSlice(key), leveldb_env::MakeSlice(value));
 }
 
-void LevelDBWriteBatch::Remove(const base::StringPiece& key) {
+void LevelDBWriteBatch::Remove(std::string_view key) {
   write_batch_->Delete(leveldb_env::MakeSlice(key));
 }
 

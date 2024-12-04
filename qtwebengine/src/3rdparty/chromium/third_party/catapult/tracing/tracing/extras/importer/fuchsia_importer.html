@@ -14,7 +14,6 @@ found in the LICENSE file.
 
 tr.exportTo('tr.e.importer.fuchsia', function() {
   const IMPORT_PRIORITY = 0;
-  const IDLE_THREAD_THRESHOLD = 6444000000;
 
   // Zircon thread state constants from:
   // https://fuchsia.googlesource.com/zircon/+/master/docs/syscalls/object_get_info.md
@@ -64,19 +63,12 @@ tr.exportTo('tr.e.importer.fuchsia', function() {
     finalizeImport() {
     }
 
-    isIdleThread(prio, tid) {
-      if (prio === undefined) {
-        // If the "prio" field is not available (if we were, for example,
-        // using an old trace), then fall back to the legacy heuristic of
-        // assuming that large numbered threads are idle ones.
-        return tid > IDLE_THREAD_THRESHOLD;
-      }
-      // A thread is idle iff its priority is set to 0.
-      return prio === 0;
+    isIdleThread(pid, prio) {
+      return (pid === 0 && prio === 0) || (pid == undefined && prio <= -2147483648);
     }
 
-    recordThreadState_(tid, timestamp, state, prio) {
-      if (this.isIdleThread(prio, tid)) {
+    recordThreadState_(pid, tid, timestamp, state, prio) {
+      if (this.isIdleThread(pid, prio)) {
         return;
       }
       const states =
@@ -91,19 +83,20 @@ tr.exportTo('tr.e.importer.fuchsia', function() {
     //     "ts": 151981130.88743783,
     //     "cpu": 1,
     //     "out": {
-    //       "pid": 25977,
+    //       "pid": 25977, // Optional.
     //       "tid": 28909,
     //       "state": 3,
     //       "prio": 20
     //     },
     //     "in": {
-    //       "pid": 0,
+    //       "pid": 0,     // Optional.
     //       "tid": 6444931392,
     //       "prio": 0
     //     }
     //   },
     processContextSwitchEvent_(event) {
       let tid = event.in.tid;
+      let pid = event.in.pid;
       let threadName = tid.toString();
       let procName = '';
       const prio = event.in.prio;
@@ -119,7 +112,7 @@ tr.exportTo('tr.e.importer.fuchsia', function() {
 
       const name = procName + threadName;
 
-      if (this.isIdleThread(prio, tid)) {
+      if (this.isIdleThread(pid, prio)) {
         tid = undefined; // Fake kernel idle task
       }
 
@@ -128,7 +121,7 @@ tr.exportTo('tr.e.importer.fuchsia', function() {
       cpu.switchActiveThread(timestamp, {}, tid, name, tid);
 
       const SCHEDULING_STATE = tr.model.SCHEDULING_STATE;
-      this.recordThreadState_(tid, timestamp, SCHEDULING_STATE.RUNNING, prio);
+      this.recordThreadState_(pid, tid, timestamp, SCHEDULING_STATE.RUNNING, prio);
 
       let outState = SCHEDULING_STATE.UNKNOWN;
 
@@ -153,8 +146,38 @@ tr.exportTo('tr.e.importer.fuchsia', function() {
           outState = SCHEDULING_STATE.TASK_DEAD;
           break;
       }
-      this.recordThreadState_(event.out.tid, timestamp, outState,
+      this.recordThreadState_(event.out.pid, event.out.tid, timestamp, outState,
           event.out.prio);
+    }
+
+    // Thread wakeup events take the form:
+    // {
+    //     "ph": "w",
+    //     "ts": 151981130.88743783,
+    //     "cpu": 1,
+    //     "tid": 28909,
+    //     "prio": 20
+    //   },
+    processThreadWakeupEvent_(event) {
+      let tid = event.tid;
+      let threadName = tid.toString();
+      let procName = '';
+      const prio = event.prio;
+
+      if (this.threadInfo_.has(tid)) {
+        const threadInfo = this.threadInfo_.get(tid);
+        threadName = threadInfo.name;
+        const pid = threadInfo.pid;
+        if (this.processNames_.has(pid)) {
+          procName = this.processNames_.get(pid) + ':';
+        }
+
+        const name = procName + threadName;
+
+        const timestamp = tr.b.Unit.timestampFromUs(event.ts);
+        const SCHEDULING_STATE = tr.model.SCHEDULING_STATE;
+        this.recordThreadState_(pid, tid, timestamp, SCHEDULING_STATE.WAKING, prio);
+      }
     }
 
     processProcessInfoEvent_(event) {
@@ -184,6 +207,9 @@ tr.exportTo('tr.e.importer.fuchsia', function() {
       switch (event.ph) {
         case 'k':
           this.processContextSwitchEvent_(event);
+          break;
+        case 'w':
+          this.processThreadWakeupEvent_(event);
           break;
         case 'p':
           this.processProcessInfoEvent_(event);

@@ -15,17 +15,24 @@
 namespace v8 {
 namespace internal {
 
-class InnerPointerToCodeCache {
+class InnerPointerToCodeCache final {
  public:
   struct InnerPointerToCodeCacheEntry {
     Address inner_pointer;
-    Code code;
-    SafepointEntry safepoint_entry;
+    base::Optional<Tagged<GcSafeCode>> code;
+    union {
+      SafepointEntry safepoint_entry;
+      MaglevSafepointEntry maglev_safepoint_entry;
+    };
+    InnerPointerToCodeCacheEntry() : safepoint_entry() {}
   };
 
   explicit InnerPointerToCodeCache(Isolate* isolate) : isolate_(isolate) {
     Flush();
   }
+
+  InnerPointerToCodeCache(const InnerPointerToCodeCache&) = delete;
+  InnerPointerToCodeCache& operator=(const InnerPointerToCodeCache&) = delete;
 
   void Flush() { memset(static_cast<void*>(&cache_[0]), 0, sizeof(cache_)); }
 
@@ -34,18 +41,15 @@ class InnerPointerToCodeCache {
  private:
   InnerPointerToCodeCacheEntry* cache(int index) { return &cache_[index]; }
 
-  Isolate* isolate_;
+  Isolate* const isolate_;
 
   static const int kInnerPointerToCodeCacheSize = 1024;
   InnerPointerToCodeCacheEntry cache_[kInnerPointerToCodeCacheSize];
-
-  DISALLOW_COPY_AND_ASSIGN(InnerPointerToCodeCache);
 };
 
 inline Address StackHandler::address() const {
   return reinterpret_cast<Address>(const_cast<StackHandler*>(this));
 }
-
 
 inline StackHandler* StackHandler::next() const {
   const int offset = StackHandlerConstants::kNextOffset;
@@ -60,11 +64,8 @@ inline StackHandler* StackHandler::FromAddress(Address address) {
   return reinterpret_cast<StackHandler*>(address);
 }
 
-
 inline StackFrame::StackFrame(StackFrameIteratorBase* iterator)
-    : iterator_(iterator), isolate_(iterator_->isolate()) {
-}
-
+    : iterator_(iterator), isolate_(iterator_->isolate()) {}
 
 inline StackHandler* StackFrame::top_handler() const {
   return iterator_->handler();
@@ -78,7 +79,12 @@ inline Address StackFrame::callee_pc() const {
 inline Address StackFrame::pc() const { return ReadPC(pc_address()); }
 
 inline Address StackFrame::unauthenticated_pc() const {
-  return PointerAuthentication::StripPAC(*pc_address());
+  return unauthenticated_pc(pc_address());
+}
+
+// static
+inline Address StackFrame::unauthenticated_pc(Address* pc_address) {
+  return PointerAuthentication::StripPAC(*pc_address);
 }
 
 inline Address StackFrame::ReadPC(Address* pc_address) {
@@ -89,33 +95,39 @@ inline Address* StackFrame::ResolveReturnAddressLocation(Address* pc_address) {
   if (return_address_location_resolver_ == nullptr) {
     return pc_address;
   } else {
-    return reinterpret_cast<Address*>(
-        return_address_location_resolver_(
-            reinterpret_cast<uintptr_t>(pc_address)));
+    return reinterpret_cast<Address*>(return_address_location_resolver_(
+        reinterpret_cast<uintptr_t>(pc_address)));
   }
 }
 
-inline NativeFrame::NativeFrame(StackFrameIteratorBase* iterator)
-    : StackFrame(iterator) {}
+inline TypedFrame::TypedFrame(StackFrameIteratorBase* iterator)
+    : CommonFrame(iterator) {}
 
-inline Address NativeFrame::GetCallerStackPointer() const {
-  return fp() + CommonFrameConstants::kCallerSPOffset;
-}
+inline CommonFrameWithJSLinkage::CommonFrameWithJSLinkage(
+    StackFrameIteratorBase* iterator)
+    : CommonFrame(iterator) {}
+
+inline TypedFrameWithJSLinkage::TypedFrameWithJSLinkage(
+    StackFrameIteratorBase* iterator)
+    : CommonFrameWithJSLinkage(iterator) {}
+
+inline NativeFrame::NativeFrame(StackFrameIteratorBase* iterator)
+    : TypedFrame(iterator) {}
 
 inline EntryFrame::EntryFrame(StackFrameIteratorBase* iterator)
-    : StackFrame(iterator) {}
+    : TypedFrame(iterator) {}
 
 inline ConstructEntryFrame::ConstructEntryFrame(
     StackFrameIteratorBase* iterator)
     : EntryFrame(iterator) {}
 
 inline ExitFrame::ExitFrame(StackFrameIteratorBase* iterator)
-    : StackFrame(iterator) {}
+    : TypedFrame(iterator) {}
 
 inline BuiltinExitFrame::BuiltinExitFrame(StackFrameIteratorBase* iterator)
     : ExitFrame(iterator) {}
 
-inline Object BuiltinExitFrame::receiver_slot_object() const {
+inline Tagged<Object> BuiltinExitFrame::receiver_slot_object() const {
   // The receiver is the first argument on the frame.
   // fp[1]: return address.
   // ------- fixed extra builtin arguments -------
@@ -124,165 +136,177 @@ inline Object BuiltinExitFrame::receiver_slot_object() const {
   // fp[4]: argc.
   // fp[5]: hole.
   // ------- JS stack arguments ------
-  // fp[6]: receiver, if V8_REVERSE_JSARGS.
-  // fp[2 + argc - 1]: receiver, if not V8_REVERSE_JSARGS.
-#ifdef V8_REVERSE_JSARGS
+  // fp[6]: receiver
   const int receiverOffset = BuiltinExitFrameConstants::kFirstArgumentOffset;
-#else
-  Object argc_slot = argc_slot_object();
-  DCHECK(argc_slot.IsSmi());
-  int argc = Smi::ToInt(argc_slot);
-  const int receiverOffset = BuiltinExitFrameConstants::kNewTargetOffset +
-                             (argc - 1) * kSystemPointerSize;
-#endif
-  return Object(base::Memory<Address>(fp() + receiverOffset));
+  return Tagged<Object>(base::Memory<Address>(fp() + receiverOffset));
 }
 
-inline Object BuiltinExitFrame::argc_slot_object() const {
-  return Object(
+inline Tagged<Object> BuiltinExitFrame::argc_slot_object() const {
+  return Tagged<Object>(
       base::Memory<Address>(fp() + BuiltinExitFrameConstants::kArgcOffset));
 }
 
-inline Object BuiltinExitFrame::target_slot_object() const {
-  return Object(
+inline Tagged<Object> BuiltinExitFrame::target_slot_object() const {
+  return Tagged<Object>(
       base::Memory<Address>(fp() + BuiltinExitFrameConstants::kTargetOffset));
 }
 
-inline Object BuiltinExitFrame::new_target_slot_object() const {
-  return Object(base::Memory<Address>(
+inline Tagged<Object> BuiltinExitFrame::new_target_slot_object() const {
+  return Tagged<Object>(base::Memory<Address>(
       fp() + BuiltinExitFrameConstants::kNewTargetOffset));
 }
 
-inline StandardFrame::StandardFrame(StackFrameIteratorBase* iterator)
-    : StackFrame(iterator) {
+inline ApiCallbackExitFrame::ApiCallbackExitFrame(
+    StackFrameIteratorBase* iterator)
+    : ExitFrame(iterator) {}
+
+inline FullObjectSlot ApiCallbackExitFrame::receiver_slot() const {
+  // The receiver is the first argument on the frame.
+  return FullObjectSlot(fp() +
+                        ApiCallbackExitFrameConstants::kFirstArgumentOffset);
 }
 
-inline Object StandardFrame::GetExpression(int index) const {
-  return Object(base::Memory<Address>(GetExpressionAddress(index)));
+inline FullObjectSlot ApiCallbackExitFrame::argc_slot() const {
+  return FullObjectSlot(fp() + ApiCallbackExitFrameConstants::kArgcOffset);
 }
 
-inline void StandardFrame::SetExpression(int index, Object value) {
+inline FullObjectSlot ApiCallbackExitFrame::context_slot() const {
+  return FullObjectSlot(fp() + ApiCallbackExitFrameConstants::kContextOffset);
+}
+
+inline FullObjectSlot ApiCallbackExitFrame::target_slot() const {
+  return FullObjectSlot(fp() + ApiCallbackExitFrameConstants::kTargetOffset);
+}
+
+inline FullObjectSlot ApiCallbackExitFrame::new_target_slot() const {
+  return FullObjectSlot(fp() + ApiCallbackExitFrameConstants::kNewTargetOffset);
+}
+
+inline CommonFrame::CommonFrame(StackFrameIteratorBase* iterator)
+    : StackFrame(iterator) {}
+
+inline Tagged<Object> CommonFrame::GetExpression(int index) const {
+  return Tagged<Object>(base::Memory<Address>(GetExpressionAddress(index)));
+}
+
+inline void CommonFrame::SetExpression(int index, Tagged<Object> value) {
   base::Memory<Address>(GetExpressionAddress(index)) = value.ptr();
 }
 
-inline Address StandardFrame::caller_fp() const {
+inline Address CommonFrame::caller_fp() const {
   return base::Memory<Address>(fp() + StandardFrameConstants::kCallerFPOffset);
 }
 
-
-inline Address StandardFrame::caller_pc() const {
-  return base::Memory<Address>(ComputePCAddress(fp()));
+inline Address CommonFrame::caller_pc() const {
+  return ReadPC(reinterpret_cast<Address*>(
+      fp() + StandardFrameConstants::kCallerPCOffset));
 }
 
-
-inline Address StandardFrame::ComputePCAddress(Address fp) {
-  return fp + StandardFrameConstants::kCallerPCOffset;
-}
-
-
-inline Address StandardFrame::ComputeConstantPoolAddress(Address fp) {
-  return fp + StandardFrameConstants::kConstantPoolOffset;
-}
-
-
-inline bool StandardFrame::IsArgumentsAdaptorFrame(Address fp) {
+inline bool CommonFrameWithJSLinkage::IsConstructFrame(Address fp) {
   intptr_t frame_type =
       base::Memory<intptr_t>(fp + TypedFrameConstants::kFrameTypeOffset);
-  return frame_type == StackFrame::TypeToMarker(StackFrame::ARGUMENTS_ADAPTOR);
-}
-
-
-inline bool StandardFrame::IsConstructFrame(Address fp) {
-  intptr_t frame_type =
-      base::Memory<intptr_t>(fp + TypedFrameConstants::kFrameTypeOffset);
-  return frame_type == StackFrame::TypeToMarker(StackFrame::CONSTRUCT);
+  return frame_type == StackFrame::TypeToMarker(StackFrame::CONSTRUCT) ||
+         frame_type == StackFrame::TypeToMarker(StackFrame::FAST_CONSTRUCT);
 }
 
 inline JavaScriptFrame::JavaScriptFrame(StackFrameIteratorBase* iterator)
-    : StandardFrame(iterator) {}
+    : CommonFrameWithJSLinkage(iterator) {}
 
-Address JavaScriptFrame::GetParameterSlot(int index) const {
+Address CommonFrameWithJSLinkage::GetParameterSlot(int index) const {
   DCHECK_LE(-1, index);
-#ifdef V8_NO_ARGUMENTS_ADAPTOR
   DCHECK_LT(index,
-            std::max(GetActualArgumentsCount(), ComputeParametersCount()));
-#else
-  DCHECK(index < ComputeParametersCount() ||
-         ComputeParametersCount() == kDontAdaptArgumentsSentinel);
-#endif
-#ifdef V8_REVERSE_JSARGS
+            std::max(GetActualArgumentCount(), ComputeParametersCount()));
   int parameter_offset = (index + 1) * kSystemPointerSize;
-#else
-  int param_count = ComputeParametersCount();
-  int parameter_offset = (param_count - index - 1) * kSystemPointerSize;
-#endif
   return caller_sp() + parameter_offset;
 }
 
-inline void JavaScriptFrame::set_receiver(Object value) {
+inline int CommonFrameWithJSLinkage::GetActualArgumentCount() const {
+  return 0;
+}
+
+inline void JavaScriptFrame::set_receiver(Tagged<Object> value) {
   base::Memory<Address>(GetParameterSlot(-1)) = value.ptr();
 }
 
-inline bool JavaScriptFrame::has_adapted_arguments() const {
-  return IsArgumentsAdaptorFrame(caller_fp());
+inline void UnoptimizedFrame::SetFeedbackVector(
+    Tagged<FeedbackVector> feedback_vector) {
+  const int offset = InterpreterFrameConstants::kFeedbackVectorFromFp;
+  base::Memory<Address>(fp() + offset) = feedback_vector.ptr();
 }
 
-inline Object JavaScriptFrame::function_slot_object() const {
+inline Tagged<Object> JavaScriptFrame::function_slot_object() const {
   const int offset = StandardFrameConstants::kFunctionOffset;
-  return Object(base::Memory<Address>(fp() + offset));
+  return Tagged<Object>(base::Memory<Address>(fp() + offset));
 }
+
+inline TurbofanStubWithContextFrame::TurbofanStubWithContextFrame(
+    StackFrameIteratorBase* iterator)
+    : CommonFrame(iterator) {}
 
 inline StubFrame::StubFrame(StackFrameIteratorBase* iterator)
-    : StandardFrame(iterator) {
-}
-
+    : TypedFrame(iterator) {}
 
 inline OptimizedFrame::OptimizedFrame(StackFrameIteratorBase* iterator)
-    : JavaScriptFrame(iterator) {
-}
+    : JavaScriptFrame(iterator) {}
 
+inline UnoptimizedFrame::UnoptimizedFrame(StackFrameIteratorBase* iterator)
+    : JavaScriptFrame(iterator) {}
 
 inline InterpretedFrame::InterpretedFrame(StackFrameIteratorBase* iterator)
-    : JavaScriptFrame(iterator) {}
+    : UnoptimizedFrame(iterator) {}
 
+inline BaselineFrame::BaselineFrame(StackFrameIteratorBase* iterator)
+    : UnoptimizedFrame(iterator) {}
 
-inline ArgumentsAdaptorFrame::ArgumentsAdaptorFrame(
-    StackFrameIteratorBase* iterator) : JavaScriptFrame(iterator) {
-}
+inline MaglevFrame::MaglevFrame(StackFrameIteratorBase* iterator)
+    : OptimizedFrame(iterator) {}
+
+inline TurbofanFrame::TurbofanFrame(StackFrameIteratorBase* iterator)
+    : OptimizedFrame(iterator) {}
 
 inline BuiltinFrame::BuiltinFrame(StackFrameIteratorBase* iterator)
-    : JavaScriptFrame(iterator) {}
+    : TypedFrameWithJSLinkage(iterator) {}
 
+#if V8_ENABLE_WEBASSEMBLY
 inline WasmFrame::WasmFrame(StackFrameIteratorBase* iterator)
-    : StandardFrame(iterator) {}
+    : TypedFrame(iterator) {}
 
 inline WasmExitFrame::WasmExitFrame(StackFrameIteratorBase* iterator)
     : WasmFrame(iterator) {}
 
 inline WasmDebugBreakFrame::WasmDebugBreakFrame(
     StackFrameIteratorBase* iterator)
-    : StandardFrame(iterator) {}
+    : TypedFrame(iterator) {}
 
 inline WasmToJsFrame::WasmToJsFrame(StackFrameIteratorBase* iterator)
-    : StubFrame(iterator) {}
+    : WasmFrame(iterator) {}
+
+inline WasmToJsFunctionFrame::WasmToJsFunctionFrame(
+    StackFrameIteratorBase* iterator)
+    : TypedFrame(iterator) {}
 
 inline JsToWasmFrame::JsToWasmFrame(StackFrameIteratorBase* iterator)
     : StubFrame(iterator) {}
 
+inline StackSwitchFrame::StackSwitchFrame(StackFrameIteratorBase* iterator)
+    : ExitFrame(iterator) {}
+
 inline CWasmEntryFrame::CWasmEntryFrame(StackFrameIteratorBase* iterator)
     : StubFrame(iterator) {}
 
-inline WasmCompileLazyFrame::WasmCompileLazyFrame(
+inline WasmLiftoffSetupFrame::WasmLiftoffSetupFrame(
     StackFrameIteratorBase* iterator)
-    : StandardFrame(iterator) {}
+    : TypedFrame(iterator) {}
+#endif  // V8_ENABLE_WEBASSEMBLY
 
 inline InternalFrame::InternalFrame(StackFrameIteratorBase* iterator)
-    : StandardFrame(iterator) {
-}
+    : TypedFrame(iterator) {}
 
 inline ConstructFrame::ConstructFrame(StackFrameIteratorBase* iterator)
-    : InternalFrame(iterator) {
-}
+    : InternalFrame(iterator) {}
+
+inline FastConstructFrame::FastConstructFrame(StackFrameIteratorBase* iterator)
+    : InternalFrame(iterator) {}
 
 inline BuiltinContinuationFrame::BuiltinContinuationFrame(
     StackFrameIteratorBase* iterator)
@@ -290,60 +314,63 @@ inline BuiltinContinuationFrame::BuiltinContinuationFrame(
 
 inline JavaScriptBuiltinContinuationFrame::JavaScriptBuiltinContinuationFrame(
     StackFrameIteratorBase* iterator)
-    : JavaScriptFrame(iterator) {}
+    : TypedFrameWithJSLinkage(iterator) {}
 
 inline JavaScriptBuiltinContinuationWithCatchFrame::
     JavaScriptBuiltinContinuationWithCatchFrame(
         StackFrameIteratorBase* iterator)
     : JavaScriptBuiltinContinuationFrame(iterator) {}
 
-inline JavaScriptFrameIterator::JavaScriptFrameIterator(
-    Isolate* isolate)
-    : iterator_(isolate) {
-  if (!done()) Advance();
-}
+inline IrregexpFrame::IrregexpFrame(StackFrameIteratorBase* iterator)
+    : TypedFrame(iterator) {}
 
-inline JavaScriptFrameIterator::JavaScriptFrameIterator(
-    Isolate* isolate, ThreadLocalTop* top)
-    : iterator_(isolate, top) {
-  if (!done()) Advance();
-}
-
-inline JavaScriptFrame* JavaScriptFrameIterator::frame() const {
-  // TODO(1233797): The frame hierarchy needs to change. It's
-  // problematic that we can't use the safe-cast operator to cast to
-  // the JavaScript frame type, because we may encounter arguments
-  // adaptor frames.
+inline CommonFrame* DebuggableStackFrameIterator::frame() const {
   StackFrame* frame = iterator_.frame();
-  DCHECK(frame->is_java_script() || frame->is_arguments_adaptor());
-  return static_cast<JavaScriptFrame*>(frame);
+#if V8_ENABLE_WEBASSEMBLY
+  DCHECK(frame->is_java_script() || frame->is_wasm());
+#else
+  DCHECK(frame->is_java_script());
+#endif  // V8_ENABLE_WEBASSEMBLY
+  return static_cast<CommonFrame*>(frame);
 }
 
-inline StandardFrame* StackTraceFrameIterator::frame() const {
-  StackFrame* frame = iterator_.frame();
-  DCHECK(frame->is_java_script() || frame->is_arguments_adaptor() ||
-         frame->is_wasm());
-  return static_cast<StandardFrame*>(frame);
+inline CommonFrame* DebuggableStackFrameIterator::Reframe() {
+  iterator_.Reframe();
+  return frame();
 }
 
-bool StackTraceFrameIterator::is_javascript() const {
+bool DebuggableStackFrameIterator::is_javascript() const {
   return frame()->is_java_script();
 }
 
-bool StackTraceFrameIterator::is_wasm() const { return frame()->is_wasm(); }
+#if V8_ENABLE_WEBASSEMBLY
+bool DebuggableStackFrameIterator::is_wasm() const {
+  return frame()->is_wasm();
+}
+#endif  // V8_ENABLE_WEBASSEMBLY
 
-JavaScriptFrame* StackTraceFrameIterator::javascript_frame() const {
+JavaScriptFrame* DebuggableStackFrameIterator::javascript_frame() const {
   return JavaScriptFrame::cast(frame());
 }
 
-inline StackFrame* SafeStackFrameIterator::frame() const {
-  DCHECK(!done());
-  DCHECK(frame_->is_java_script() || frame_->is_exit() ||
-         frame_->is_builtin_exit() || frame_->is_wasm() ||
-         frame_->is_wasm_to_js() || frame_->is_js_to_wasm());
-  return frame_;
+// static
+inline bool StackFrameIteratorForProfiler::IsValidFrameType(
+    StackFrame::Type type) {
+  return StackFrame::IsJavaScript(type) || type == StackFrame::EXIT ||
+         type == StackFrame::BUILTIN_EXIT ||
+         type == StackFrame::API_CALLBACK_EXIT ||
+#if V8_ENABLE_WEBASSEMBLY
+         type == StackFrame::WASM || type == StackFrame::WASM_TO_JS ||
+         type == StackFrame::JS_TO_WASM ||
+#endif  // V8_ENABLE_WEBASSEMBLY
+         false;
 }
 
+inline StackFrame* StackFrameIteratorForProfiler::frame() const {
+  DCHECK(!done());
+  DCHECK(IsValidFrameType(frame_->type()));
+  return frame_;
+}
 
 }  // namespace internal
 }  // namespace v8

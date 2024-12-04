@@ -52,7 +52,7 @@ looking at OWNERS files, asking a teammate, or using tools ('_git cl owners_',
 #### Provide context
 
 Change descriptions are the first impression your change makes, both on
-reviewers and on code archeologists from the future. A [good description](https://www.chromium.org/developers/contributing-code#TOC-Writing-change-list-descriptions)
+reviewers and on code archeologists from the future. A [good description](contributing.md#Uploading-a-change-for-review)
 aims to do two things. First, it conveys at a glance the high level view.
 Second, it provides references to all the relevant information for a deep dive:
 design docs, bugs, testing instructions. The bug\# is a useful reference, but
@@ -90,6 +90,18 @@ subsequent change (TODO with a bug \#) or push back with additional
 information. Whenever more information is required, make sure everyone agrees on
 the problem before you discuss the solution and consider expanding the
 documentation.
+
+#### Wait for LGTM from all your reviewers
+
+As a general rule of thumb, if a reviewer has made a comment on your CL, even
+though you may have addressed that comment in a new patchset, don't submit the
+CL until you have their LGTM, unless the reviewer gave the OK to do so (e.g.
+when the reviewer delegates the reviewing task to someone else). If you need to
+land a CL urgently and one of your reviewers isn't available (e.g. OOO), submit
+your CL, and send your reviewer a note; in the note, be sure to include the
+reason why you had to land the CL, and show that you've considered their
+opinions & are ready to promptly act on their additional comments in a followup
+CL.
 
 #### What to do if it's going wrong
 

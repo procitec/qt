@@ -1,32 +1,10 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the test suite of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:GPL-EXCEPT$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 3 as published by the Free Software
-** Foundation with exceptions as appearing in the file LICENSE.GPL3-EXCEPT
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 #include <QtQmlModels/private/qqmlobjectmodel_p.h>
 #include <QtQmlModels/private/qqmlchangeset_p.h>
+
+#include <QtQml/qqmlcomponent.h>
+
 #include <QtTest/qsignalspy.h>
 #include <QtTest/qtest.h>
 
@@ -36,11 +14,12 @@ class tst_QQmlObjectModel : public QObject
 
 private slots:
     void changes();
+    void objectDestroyed();
 };
 
 static bool compareItems(QQmlObjectModel *model, const QObjectList &items)
 {
-    for (int i = 0; i < items.count(); ++i) {
+    for (int i = 0; i < items.size(); ++i) {
         if (model->get(i) != items.at(i))
             return false;
     }
@@ -90,82 +69,128 @@ void tst_QQmlObjectModel::changes()
     model.append(&item0); items.append(&item0);
     QCOMPARE(model.count(), ++count);
     QVERIFY(compareItems(&model, items));
-    QCOMPARE(countSpy.count(), ++countSignals);
-    QCOMPARE(childrenSpy.count(), ++childrenSignals);
-    QCOMPARE(modelUpdateSpy.count(), ++modelUpdateSignals);
+    QCOMPARE(countSpy.size(), ++countSignals);
+    QCOMPARE(childrenSpy.size(), ++childrenSignals);
+    QCOMPARE(modelUpdateSpy.size(), ++modelUpdateSignals);
     QVERIFY(verifyChangeSet(modelUpdateSpy.last().first().value<QQmlChangeSet>(), 1, 0, false));
 
     // insert(0, item1) -> [item1, item0]
     model.insert(0, &item1); items.insert(0, &item1);
     QCOMPARE(model.count(), ++count);
     QVERIFY(compareItems(&model, items));
-    QCOMPARE(countSpy.count(), ++countSignals);
-    QCOMPARE(childrenSpy.count(), ++childrenSignals);
-    QCOMPARE(modelUpdateSpy.count(), ++modelUpdateSignals);
+    QCOMPARE(countSpy.size(), ++countSignals);
+    QCOMPARE(childrenSpy.size(), ++childrenSignals);
+    QCOMPARE(modelUpdateSpy.size(), ++modelUpdateSignals);
     QVERIFY(verifyChangeSet(modelUpdateSpy.last().first().value<QQmlChangeSet>(), 1, 0, false));
 
     // append(item2) -> [item1, item0, item2]
     model.append(&item2); items.append(&item2);
     QCOMPARE(model.count(), ++count);
     QVERIFY(compareItems(&model, items));
-    QCOMPARE(countSpy.count(), ++countSignals);
-    QCOMPARE(childrenSpy.count(), ++childrenSignals);
-    QCOMPARE(modelUpdateSpy.count(), ++modelUpdateSignals);
+    QCOMPARE(countSpy.size(), ++countSignals);
+    QCOMPARE(childrenSpy.size(), ++childrenSignals);
+    QCOMPARE(modelUpdateSpy.size(), ++modelUpdateSignals);
     QVERIFY(verifyChangeSet(modelUpdateSpy.last().first().value<QQmlChangeSet>(), 1, 0, false));
 
     // insert(2, item3) -> [item1, item0, item3, item2]
     model.insert(2, &item3); items.insert(2, &item3);
     QCOMPARE(model.count(), ++count);
     QVERIFY(compareItems(&model, items));
-    QCOMPARE(countSpy.count(), ++countSignals);
-    QCOMPARE(childrenSpy.count(), ++childrenSignals);
-    QCOMPARE(modelUpdateSpy.count(), ++modelUpdateSignals);
+    QCOMPARE(countSpy.size(), ++countSignals);
+    QCOMPARE(childrenSpy.size(), ++childrenSignals);
+    QCOMPARE(modelUpdateSpy.size(), ++modelUpdateSignals);
     QVERIFY(verifyChangeSet(modelUpdateSpy.last().first().value<QQmlChangeSet>(), 1, 0, false));
 
     // move(0, 1) -> [item0, item1, item3, item2]
     model.move(0, 1); items.move(0, 1);
     QCOMPARE(model.count(), count);
     QVERIFY(compareItems(&model, items));
-    QCOMPARE(countSpy.count(), countSignals);
-    QCOMPARE(childrenSpy.count(), ++childrenSignals);
-    QCOMPARE(modelUpdateSpy.count(), ++modelUpdateSignals);
+    QCOMPARE(countSpy.size(), countSignals);
+    QCOMPARE(childrenSpy.size(), ++childrenSignals);
+    QCOMPARE(modelUpdateSpy.size(), ++modelUpdateSignals);
     QVERIFY(verifyChangeSet(modelUpdateSpy.last().first().value<QQmlChangeSet>(), 1, 1, true, 1));
 
     // move(3, 2) -> [item0, item1, item2, item3]
     model.move(3, 2); items.move(3, 2);
     QCOMPARE(model.count(), count);
     QVERIFY(compareItems(&model, items));
-    QCOMPARE(countSpy.count(), countSignals);
-    QCOMPARE(childrenSpy.count(), ++childrenSignals);
-    QCOMPARE(modelUpdateSpy.count(), ++modelUpdateSignals);
+    QCOMPARE(countSpy.size(), countSignals);
+    QCOMPARE(childrenSpy.size(), ++childrenSignals);
+    QCOMPARE(modelUpdateSpy.size(), ++modelUpdateSignals);
     QVERIFY(verifyChangeSet(modelUpdateSpy.last().first().value<QQmlChangeSet>(), 1, 1, true, 2));
 
     // remove(0) -> [item1, item2, item3]
     model.remove(0); items.removeAt(0);
     QCOMPARE(model.count(), --count);
     QVERIFY(compareItems(&model, items));
-    QCOMPARE(countSpy.count(), ++countSignals);
-    QCOMPARE(childrenSpy.count(), ++childrenSignals);
-    QCOMPARE(modelUpdateSpy.count(), ++modelUpdateSignals);
+    QCOMPARE(countSpy.size(), ++countSignals);
+    QCOMPARE(childrenSpy.size(), ++childrenSignals);
+    QCOMPARE(modelUpdateSpy.size(), ++modelUpdateSignals);
     QVERIFY(verifyChangeSet(modelUpdateSpy.last().first().value<QQmlChangeSet>(), 0, 1, false));
 
     // remove(2) -> [item1, item2]
     model.remove(2); items.removeAt(2);
     QCOMPARE(model.count(), --count);
     QVERIFY(compareItems(&model, items));
-    QCOMPARE(countSpy.count(), ++countSignals);
-    QCOMPARE(childrenSpy.count(), ++childrenSignals);
-    QCOMPARE(modelUpdateSpy.count(), ++modelUpdateSignals);
+    QCOMPARE(countSpy.size(), ++countSignals);
+    QCOMPARE(childrenSpy.size(), ++childrenSignals);
+    QCOMPARE(modelUpdateSpy.size(), ++modelUpdateSignals);
     QVERIFY(verifyChangeSet(modelUpdateSpy.last().first().value<QQmlChangeSet>(), 0, 1, false));
 
     // clear() -> []
     model.clear(); items.clear();
     QCOMPARE(model.count(), 0);
     QVERIFY(compareItems(&model, items));
-    QCOMPARE(countSpy.count(), ++countSignals);
-    QCOMPARE(childrenSpy.count(), ++childrenSignals);
-    QCOMPARE(modelUpdateSpy.count(), ++modelUpdateSignals);
+    QCOMPARE(countSpy.size(), ++countSignals);
+    QCOMPARE(childrenSpy.size(), ++childrenSignals);
+    QCOMPARE(modelUpdateSpy.size(), ++modelUpdateSignals);
     QVERIFY(verifyChangeSet(modelUpdateSpy.last().first().value<QQmlChangeSet>(), 0, 2, false));
+}
+
+void tst_QQmlObjectModel::objectDestroyed()
+{
+    QQmlEngine engine;
+    QQmlComponent c(&engine);
+    c.setData(R"(
+        import QtQml
+        ObjectModel {
+            id: objectModel
+
+            property Component objectComponent: QtObject {}
+
+            Component.onCompleted: {
+                objectModel.append(objectComponent.createObject())
+                objectModel.get(0).objectName = "first";
+            }
+
+            property Timer t: Timer {
+                running: true
+                interval: 1
+                repeat: true
+                onTriggered: gc()
+            }
+        }
+    )", QUrl());
+
+    QVERIFY2(c.isReady(), qPrintable(c.errorString()));
+
+    QScopedPointer<QObject> o(c.create());
+    QVERIFY(!o.isNull());
+
+    QQmlObjectModel *model = qobject_cast<QQmlObjectModel *>(o.data());
+    QVERIFY(model);
+
+    QCOMPARE(model->count(), 1);
+    QQmlListProperty<QObject> children = model->children();
+    QObject *child = children.at(&children, 0);
+    QVERIFY(child);
+    QCOMPARE(child->objectName(), QStringLiteral("first"));
+
+    QSignalSpy spy(child, &QObject::destroyed);
+    QTRY_COMPARE(spy.count(), 1);
+
+    // Now we should not be able to get to the child anymore
+    QCOMPARE(children.at(&children, 0), nullptr);
 }
 
 QTEST_MAIN(tst_QQmlObjectModel)

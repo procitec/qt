@@ -1,56 +1,10 @@
-/****************************************************************************
-**
-** Copyright (C) 2017 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the examples of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:BSD$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** BSD License Usage
-** Alternatively, you may use this file under the terms of the BSD license
-** as follows:
-**
-** "Redistribution and use in source and binary forms, with or without
-** modification, are permitted provided that the following conditions are
-** met:
-**   * Redistributions of source code must retain the above copyright
-**     notice, this list of conditions and the following disclaimer.
-**   * Redistributions in binary form must reproduce the above copyright
-**     notice, this list of conditions and the following disclaimer in
-**     the documentation and/or other materials provided with the
-**     distribution.
-**   * Neither the name of The Qt Company Ltd nor the names of its
-**     contributors may be used to endorse or promote products derived
-**     from this software without specific prior written permission.
-**
-**
-** THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-** "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-** LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-** A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-** OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-** SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-** LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-** DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-** THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-** (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-** OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE."
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2017 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR BSD-3-Clause
 
-import QtQuick 2.0
+import QtQuick
+import QtMultimedia
+import Maroon
 import "../logic.js" as Logic
-import ".."
 
 Item  {
     id: container
@@ -62,8 +16,8 @@ Item  {
     property int rof: 30 //In ticks
     property int fireCounter: 0
     property bool dying: false
-    width: parent ? parent.squareSize : 0
-    height: parent ? parent.squareSize : 0
+    width: (parent as GameCanvas)?.squareSize ?? 0
+    height: (parent as GameCanvas)?.squareSize ?? 0
     x: col * width
     z: 1001
     function fire() { }
@@ -169,9 +123,7 @@ Item  {
 
     SpriteSequence {
         id: bubble
-        width: 64
-        height: 64
-        scale: 0.4 + (0.2  * hp)
+        scale: 0.4 + (0.2  * container.hp)
         interpolate: false
         goalSprite: ""
 
@@ -205,20 +157,18 @@ Item  {
         }
         SequentialAnimation on width {
             loops: Animation.Infinite
-            NumberAnimation { from: width * 1; to: width * 1.1; duration: 800; easing.type: Easing.InOutQuad }
-            NumberAnimation { from: width * 1.1; to: width * 1; duration: 1000; easing.type: Easing.InOutQuad }
+            NumberAnimation { from: container.width * 1; to: container.width * 1.1; duration: 800; easing.type: Easing.InOutQuad }
+            NumberAnimation { from: container.width * 1.1; to: container.width * 1; duration: 1000; easing.type: Easing.InOutQuad }
         }
         SequentialAnimation on height {
             loops: Animation.Infinite
-            NumberAnimation { from: height * 1; to: height * 1.15; duration: 1200; easing.type: Easing.InOutQuad }
-            NumberAnimation { from: height * 1.15; to: height * 1; duration: 1000; easing.type: Easing.InOutQuad }
+            NumberAnimation { from: container.height * 1; to: container.height * 1.15; duration: 1200; easing.type: Easing.InOutQuad }
+            NumberAnimation { from: container.height * 1.15; to: container.height * 1; duration: 1000; easing.type: Easing.InOutQuad }
         }
     }
 
     SpriteSequence {
         id: ink
-        width: 64
-        height: 64
         scale: bubble.scale
         goalSprite: ""
 
@@ -252,21 +202,21 @@ Item  {
         }
         SequentialAnimation on width {
             loops: Animation.Infinite
-            NumberAnimation { from: width * 1; to: width * 1.1; duration: 800; easing.type: Easing.InOutQuad }
-            NumberAnimation { from: width * 1.1; to: width * 1; duration: 1000; easing.type: Easing.InOutQuad }
+            NumberAnimation { from: container.width * 1; to: container.width * 1.1; duration: 800; easing.type: Easing.InOutQuad }
+            NumberAnimation { from: container.width * 1.1; to: container.width * 1; duration: 1000; easing.type: Easing.InOutQuad }
         }
         SequentialAnimation on height {
             loops: Animation.Infinite
-            NumberAnimation { from: height * 1; to: height * 1.15; duration: 1200; easing.type: Easing.InOutQuad }
-            NumberAnimation { from: height * 1.15; to: height * 1; duration: 1000; easing.type: Easing.InOutQuad }
+            NumberAnimation { from: container.height * 1; to: container.height * 1.15; duration: 1200; easing.type: Easing.InOutQuad }
+            NumberAnimation { from: container.height * 1.15; to: container.height * 1; duration: 1000; easing.type: Easing.InOutQuad }
         }
 
     }
 
     SequentialAnimation on x {
         loops: Animation.Infinite
-        NumberAnimation { from: x; to: x - 5; duration: 900; easing.type: Easing.InOutQuad }
-        NumberAnimation { from: x - 5; to: x; duration: 900; easing.type: Easing.InOutQuad }
+        NumberAnimation { from: container.x; to: container.x - 5; duration: 900; easing.type: Easing.InOutQuad }
+        NumberAnimation { from: container.x - 5; to: container.x; duration: 900; easing.type: Easing.InOutQuad }
     }
 }
 

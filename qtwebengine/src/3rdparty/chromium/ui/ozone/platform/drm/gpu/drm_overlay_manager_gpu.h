@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,18 +7,25 @@
 
 #include <vector>
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "ui/ozone/platform/drm/gpu/drm_overlay_manager.h"
 
 namespace ui {
+
 class DrmThreadProxy;
 
 // DrmOverlayManager implementation that runs in the GPU process. PostTasks
 // overlay validations requests to the DRM thread.
 class DrmOverlayManagerGpu : public DrmOverlayManager {
  public:
-  explicit DrmOverlayManagerGpu(DrmThreadProxy* drm_thread_proxy);
+  explicit DrmOverlayManagerGpu(
+      DrmThreadProxy* drm_thread_proxy,
+      bool allow_sync_and_real_buffer_page_flip_testing);
+
+  DrmOverlayManagerGpu(const DrmOverlayManagerGpu&) = delete;
+  DrmOverlayManagerGpu& operator=(const DrmOverlayManagerGpu&) = delete;
+
   ~DrmOverlayManagerGpu() override;
 
  private:
@@ -30,20 +37,22 @@ class DrmOverlayManagerGpu : public DrmOverlayManager {
       const std::vector<OverlaySurfaceCandidate>& candidates,
       gfx::AcceleratedWidget widget) override;
 
-  void SetClearCacheCallbackIfNecessary();
+  void GetHardwareCapabilities(
+      gfx::AcceleratedWidget widget,
+      HardwareCapabilitiesCallback& receive_callback) override;
+
+  void SetDisplaysConfiguredCallbackIfNecessary();
 
   void ReceiveOverlayValidationResponse(
       gfx::AcceleratedWidget widget,
       const std::vector<OverlaySurfaceCandidate>& candidates,
       const std::vector<OverlayStatus>& status);
 
-  DrmThreadProxy* const drm_thread_proxy_;
+  const raw_ptr<DrmThreadProxy> drm_thread_proxy_;
 
-  bool has_set_clear_cache_callback_ = false;
+  bool has_set_displays_configured_callback_ = false;
 
   base::WeakPtrFactory<DrmOverlayManagerGpu> weak_ptr_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(DrmOverlayManagerGpu);
 };
 
 }  // namespace ui

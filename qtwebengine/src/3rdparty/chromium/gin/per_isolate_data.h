@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,14 +8,17 @@
 #include <map>
 #include <memory>
 
-#include "base/macros.h"
+#include "base/check.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
-#include "base/single_thread_task_runner.h"
+#include "base/observer_list.h"
+#include "base/task/single_thread_task_runner.h"
 #include "gin/gin_export.h"
 #include "gin/public/isolate_holder.h"
 #include "gin/public/wrapper_info.h"
 #include "gin/v8_foreground_task_runner_base.h"
-#include "v8/include/v8.h"
+#include "v8/include/v8-array-buffer.h"
+#include "v8/include/v8-forward.h"
 
 namespace gin {
 
@@ -28,10 +31,24 @@ class WrappableBase;
 // class stores all the Gin-related data that varies per isolate.
 class GIN_EXPORT PerIsolateData {
  public:
-  PerIsolateData(v8::Isolate* isolate,
-                 v8::ArrayBuffer::Allocator* allocator,
-                 IsolateHolder::AccessMode access_mode,
-                 scoped_refptr<base::SingleThreadTaskRunner> task_runner);
+  class DisposeObserver : public base::CheckedObserver {
+   public:
+    // Called just before the isolate is about to be disposed. The isolate will
+    // be entered before the observer is notified, but there will not be a
+    // handle scope by default.
+    virtual void OnBeforeDispose(v8::Isolate* isolate) = 0;
+    // Called just after the isolate has been disposed.
+    virtual void OnDisposed() = 0;
+  };
+
+  PerIsolateData(
+      v8::Isolate* isolate,
+      v8::ArrayBuffer::Allocator* allocator,
+      IsolateHolder::AccessMode access_mode,
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner,
+      scoped_refptr<base::SingleThreadTaskRunner> low_priority_task_runner);
+  PerIsolateData(const PerIsolateData&) = delete;
+  PerIsolateData& operator=(const PerIsolateData&) = delete;
   ~PerIsolateData();
 
   static PerIsolateData* From(v8::Isolate* isolate);
@@ -67,11 +84,19 @@ class GIN_EXPORT PerIsolateData {
       WrappableBase* base);
   NamedPropertyInterceptor* GetNamedPropertyInterceptor(WrappableBase* base);
 
+  void AddDisposeObserver(DisposeObserver* observer);
+  void RemoveDisposeObserver(DisposeObserver* observer);
+  void NotifyBeforeDispose();
+  void NotifyDisposed();
+
   void EnableIdleTasks(std::unique_ptr<V8IdleTaskRunner> idle_task_runner);
 
   v8::Isolate* isolate() { return isolate_; }
   v8::ArrayBuffer::Allocator* allocator() { return allocator_; }
   std::shared_ptr<v8::TaskRunner> task_runner() { return task_runner_; }
+  std::shared_ptr<v8::TaskRunner> low_priority_task_runner() {
+    return low_priority_task_runner_;
+  }
 
  private:
   typedef std::map<
@@ -85,15 +110,15 @@ class GIN_EXPORT PerIsolateData {
 
   // PerIsolateData doesn't actually own |isolate_|. Instead, the isolate is
   // owned by the IsolateHolder, which also owns the PerIsolateData.
-  v8::Isolate* isolate_;
-  v8::ArrayBuffer::Allocator* allocator_;
+  raw_ptr<v8::Isolate, AcrossTasksDanglingUntriaged> isolate_;
+  raw_ptr<v8::ArrayBuffer::Allocator, DanglingUntriaged> allocator_;
   ObjectTemplateMap object_templates_;
   FunctionTemplateMap function_templates_;
   IndexedPropertyInterceptorMap indexed_interceptors_;
   NamedPropertyInterceptorMap named_interceptors_;
+  base::ObserverList<DisposeObserver> dispose_observers_;
   std::shared_ptr<V8ForegroundTaskRunnerBase> task_runner_;
-
-  DISALLOW_COPY_AND_ASSIGN(PerIsolateData);
+  std::shared_ptr<V8ForegroundTaskRunnerBase> low_priority_task_runner_;
 };
 
 }  // namespace gin

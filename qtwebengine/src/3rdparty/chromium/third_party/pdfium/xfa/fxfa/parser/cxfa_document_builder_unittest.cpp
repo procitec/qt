@@ -1,10 +1,12 @@
-// Copyright 2018 PDFium Authors. All rights reserved.
+// Copyright 2018 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "xfa/fxfa/parser/cxfa_document_builder.h"
 
-#include "core/fxcrt/cfx_readonlymemorystream.h"
+#include <memory>
+
+#include "core/fxcrt/cfx_read_only_span_stream.h"
 #include "core/fxcrt/xml/cfx_xmldocument.h"
 #include "core/fxcrt/xml/cfx_xmlparser.h"
 #include "testing/fxgc_unittest.h"
@@ -28,7 +30,7 @@ class CXFA_DocumentBuilderTest : public FXGCUnitTest {
 
   CXFA_Document* GetDoc() const { return doc_; }
 
-  CXFA_Node* ParseAndBuild(const RetainPtr<CFX_ReadOnlyMemoryStream>& stream) {
+  CXFA_Node* ParseAndBuild(const RetainPtr<CFX_ReadOnlySpanStream>& stream) {
     xml_ = CFX_XMLParser(stream).Parse();
     if (!xml_)
       return nullptr;
@@ -46,16 +48,16 @@ class CXFA_DocumentBuilderTest : public FXGCUnitTest {
 
 TEST_F(CXFA_DocumentBuilderTest, EmptyInput) {
   static const char kInput[] = "";
-  auto stream = pdfium::MakeRetain<CFX_ReadOnlyMemoryStream>(
-      pdfium::as_bytes(pdfium::make_span(kInput)));
-  EXPECT_EQ(nullptr, ParseAndBuild(stream));
+  auto stream =
+      pdfium::MakeRetain<CFX_ReadOnlySpanStream>(pdfium::as_byte_span(kInput));
+  EXPECT_FALSE(ParseAndBuild(stream));
 }
 
 TEST_F(CXFA_DocumentBuilderTest, BadInput) {
   static const char kInput[] = "<<<>bar?>>>>>>>";
-  auto stream = pdfium::MakeRetain<CFX_ReadOnlyMemoryStream>(
-      pdfium::as_bytes(pdfium::make_span(kInput)));
-  EXPECT_EQ(nullptr, ParseAndBuild(stream));
+  auto stream =
+      pdfium::MakeRetain<CFX_ReadOnlySpanStream>(pdfium::as_byte_span(kInput));
+  EXPECT_FALSE(ParseAndBuild(stream));
 }
 
 TEST_F(CXFA_DocumentBuilderTest, XMLInstructionsScriptOff) {
@@ -66,8 +68,8 @@ TEST_F(CXFA_DocumentBuilderTest, XMLInstructionsScriptOff) {
       "</config>";
   EXPECT_FALSE(GetDoc()->is_scripting());
 
-  auto stream = pdfium::MakeRetain<CFX_ReadOnlyMemoryStream>(
-      pdfium::as_bytes(pdfium::make_span(kInput)));
+  auto stream =
+      pdfium::MakeRetain<CFX_ReadOnlySpanStream>(pdfium::as_byte_span(kInput));
 
   CXFA_Node* root = ParseAndBuild(stream);
   ASSERT_TRUE(root);
@@ -83,8 +85,8 @@ TEST_F(CXFA_DocumentBuilderTest, XMLInstructionsScriptOn) {
 
   EXPECT_FALSE(GetDoc()->is_scripting());
 
-  auto stream = pdfium::MakeRetain<CFX_ReadOnlyMemoryStream>(
-      pdfium::as_bytes(pdfium::make_span(kInput)));
+  auto stream =
+      pdfium::MakeRetain<CFX_ReadOnlySpanStream>(pdfium::as_byte_span(kInput));
 
   CXFA_Node* root = ParseAndBuild(stream);
   ASSERT_TRUE(root);
@@ -99,8 +101,8 @@ TEST_F(CXFA_DocumentBuilderTest, XMLInstructionsStrictScope) {
 
   EXPECT_FALSE(GetDoc()->is_strict_scoping());
 
-  auto stream = pdfium::MakeRetain<CFX_ReadOnlyMemoryStream>(
-      pdfium::as_bytes(pdfium::make_span(kInput)));
+  auto stream =
+      pdfium::MakeRetain<CFX_ReadOnlySpanStream>(pdfium::as_byte_span(kInput));
 
   CXFA_Node* root = ParseAndBuild(stream);
   ASSERT_TRUE(root);
@@ -115,8 +117,8 @@ TEST_F(CXFA_DocumentBuilderTest, XMLInstructionsStrictScopeBad) {
 
   EXPECT_FALSE(GetDoc()->is_strict_scoping());
 
-  auto stream = pdfium::MakeRetain<CFX_ReadOnlyMemoryStream>(
-      pdfium::as_bytes(pdfium::make_span(kInput)));
+  auto stream =
+      pdfium::MakeRetain<CFX_ReadOnlySpanStream>(pdfium::as_byte_span(kInput));
 
   CXFA_Node* root = ParseAndBuild(stream);
   ASSERT_TRUE(root);
@@ -134,8 +136,8 @@ TEST_F(CXFA_DocumentBuilderTest, MultipleXMLInstructions) {
   EXPECT_FALSE(GetDoc()->is_scripting());
   EXPECT_FALSE(GetDoc()->is_strict_scoping());
 
-  auto stream = pdfium::MakeRetain<CFX_ReadOnlyMemoryStream>(
-      pdfium::as_bytes(pdfium::make_span(kInput)));
+  auto stream =
+      pdfium::MakeRetain<CFX_ReadOnlySpanStream>(pdfium::as_byte_span(kInput));
 
   CXFA_Node* root = ParseAndBuild(stream);
   ASSERT_TRUE(root);

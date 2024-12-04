@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,11 +8,14 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "base/macros.h"
+#include "base/compiler_specific.h"
+#include "base/containers/span.h"
+#include "base/memory/raw_ptr.h"
 #include "base/numerics/safe_conversions.h"
 #include "components/subresource_filter/core/common/flat/indexed_ruleset_generated.h"
 #include "components/subresource_filter/core/common/load_policy.h"
 #include "components/url_pattern_index/url_pattern_index.h"
+#include "third_party/abseil-cpp/absl/base/attributes.h"
 #include "third_party/flatbuffers/src/include/flatbuffers/flatbuffers.h"
 
 class GURL;
@@ -59,6 +62,10 @@ class RulesetIndexer {
   static const int kIndexedFormatVersion;
 
   RulesetIndexer();
+
+  RulesetIndexer(const RulesetIndexer&) = delete;
+  RulesetIndexer& operator=(const RulesetIndexer&) = delete;
+
   ~RulesetIndexer();
 
   // Adds |rule| to the ruleset and the index unless the |rule| has unsupported
@@ -74,10 +81,9 @@ class RulesetIndexer {
 
   // Returns a pointer to the buffer containing the serialized flat data
   // structures. Should only be called after Finish().
-  const uint8_t* data() const { return builder_.GetBufferPointer(); }
-
-  // Returns the size of the buffer.
-  size_t size() const { return base::strict_cast<size_t>(builder_.GetSize()); }
+  base::span<const uint8_t> data() const ABSL_ATTRIBUTE_LIFETIME_BOUND {
+    return base::span(builder_.GetBufferPointer(), builder_.GetSize());
+  }
 
  private:
   flatbuffers::FlatBufferBuilder builder_;
@@ -89,8 +95,6 @@ class RulesetIndexer {
   // Maintains a map of domain vectors to their existing offsets, to avoid
   // storing a particular vector more than once.
   url_pattern_index::FlatDomainMap domain_map_;
-
-  DISALLOW_COPY_AND_ASSIGN(RulesetIndexer);
 };
 
 // Matches URLs against the FlatBuffer representation of an indexed ruleset.
@@ -98,12 +102,14 @@ class IndexedRulesetMatcher {
  public:
   // Returns whether the |buffer| of the given |size| contains a valid
   // flat::IndexedRuleset FlatBuffer.
-  static bool Verify(const uint8_t* buffer, size_t size, int expected_checksum);
+  static bool Verify(base::span<const uint8_t> buffer, int expected_checksum);
 
   // Creates an instance that matches URLs against the flat::IndexedRuleset
-  // provided as the root object of serialized data in the |buffer| of the given
-  // |size|.
-  IndexedRulesetMatcher(const uint8_t* buffer, size_t size);
+  // provided as the root object of serialized data in the |buffer|.
+  explicit IndexedRulesetMatcher(base::span<const uint8_t> buffer);
+
+  IndexedRulesetMatcher(const IndexedRulesetMatcher&) = delete;
+  IndexedRulesetMatcher& operator=(const IndexedRulesetMatcher&) = delete;
 
   // Returns whether the subset of subresource filtering rules specified by the
   // |activation_type| should be disabled for the |document| loaded from
@@ -135,13 +141,11 @@ class IndexedRulesetMatcher {
       bool disable_generic_rules) const;
 
  private:
-  const flat::IndexedRuleset* root_;
+  raw_ptr<const flat::IndexedRuleset> root_;
 
   url_pattern_index::UrlPatternIndexMatcher blocklist_;
   url_pattern_index::UrlPatternIndexMatcher allowlist_;
   url_pattern_index::UrlPatternIndexMatcher deactivation_;
-
-  DISALLOW_COPY_AND_ASSIGN(IndexedRulesetMatcher);
 };
 
 }  // namespace subresource_filter

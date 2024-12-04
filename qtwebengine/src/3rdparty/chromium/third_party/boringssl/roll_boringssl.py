@@ -1,10 +1,11 @@
-#!/usr/bin/env python
-# Copyright 2015 The Chromium Authors. All rights reserved.
+#!/usr/bin/env python3
+# Copyright 2015 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
 """Rolls third_party/boringssl/src in DEPS and updates generated build files."""
 
+import importlib
 import os
 import os.path
 import shutil
@@ -17,6 +18,7 @@ SRC_PATH = os.path.dirname(os.path.dirname(os.path.dirname(SCRIPT_PATH)))
 DEPS_PATH = os.path.join(SRC_PATH, 'DEPS')
 BORINGSSL_PATH = os.path.join(SRC_PATH, 'third_party', 'boringssl')
 BORINGSSL_SRC_PATH = os.path.join(BORINGSSL_PATH, 'src')
+BORINGSSL_DEP = 'src/third_party/boringssl/src'
 
 if not os.path.isfile(DEPS_PATH) or not os.path.isdir(BORINGSSL_SRC_PATH):
   raise Exception('Could not find Chromium checkout')
@@ -41,24 +43,29 @@ def IsPristine(repo):
 
 def RevParse(repo, rev):
   """Resolves a string to a git commit."""
-  return subprocess.check_output(['git', 'rev-parse', rev], cwd=repo).strip()
+  # Use text to get the revision as a string. We assume rev-parse is always
+  # valid UTF-8.
+  return subprocess.check_output(['git', 'rev-parse', rev], cwd=repo,
+                                 text=True).strip()
 
 
-def UpdateDEPS(deps, from_hash, to_hash):
-  """Updates all references of |from_hash| to |to_hash| in |deps|."""
-  with open(deps, 'rb') as f:
-    contents = f.read()
-    if from_hash not in contents:
-      raise Exception('%s not in DEPS' % from_hash)
-  contents = contents.replace(from_hash, to_hash)
-  with open(deps, 'wb') as f:
-    f.write(contents)
+def GetDep(repo, dep):
+  """Returns the revision of |dep|."""
+  return subprocess.check_output(['gclient', 'getdep', '-r', dep], cwd=repo,
+                                 text=True).strip()
+
+
+def SetDep(repo, dep, rev):
+  """Sets the revision of |dep| to |rev|."""
+  subprocess.check_call(['gclient', 'setdep', '-r', f'{dep}@{rev}'], cwd=repo)
 
 
 def Log(repo, revspec):
   """Returns the commits in |repo| covered by |revspec|."""
+  # The commit message may not be valid UTF-8, so convert decode errors to
+  # replacement characters.
   data = subprocess.check_output(['git', 'log', '--pretty=raw', revspec],
-                                 cwd=repo)
+                                 cwd=repo, text=True, errors='replace')
   commits = []
   chunks = data.split('\n\n')
   if len(chunks) % 2 != 0:
@@ -72,7 +79,7 @@ def Log(repo, revspec):
     if 'commit' not in commit:
       raise ValueError('Missing commit line')
     # Parse commit message.
-    message = ""
+    message = ''
     lines = chunks[i+1].split('\n')
     # Removing the trailing empty entry.
     if lines and not lines[-1]:
@@ -96,15 +103,15 @@ def FormatCommit(commit):
 
 def main():
   if len(sys.argv) > 2:
-    sys.stderr.write('Usage: %s [COMMIT]' % sys.argv[0])
+    print('Usage: %s [COMMIT]' % sys.argv[0], file=sys.stderr)
     return 1
 
   if not IsPristine(SRC_PATH):
-    print >>sys.stderr, 'Chromium checkout not pristine.'
-    return 0
+    print('Chromium checkout not pristine.', file=sys.stderr)
+    return 1
   if not IsPristine(BORINGSSL_SRC_PATH):
-    print >>sys.stderr, 'BoringSSL checkout not pristine.'
-    return 0
+    print('BoringSSL checkout not pristine.', file=sys.stderr)
+    return 1
 
   if len(sys.argv) > 1:
     new_head = RevParse(BORINGSSL_SRC_PATH, sys.argv[1])
@@ -113,11 +120,16 @@ def main():
     new_head = RevParse(BORINGSSL_SRC_PATH, 'origin/master')
 
   old_head = RevParse(BORINGSSL_SRC_PATH, 'HEAD')
+  old_dep = GetDep(SRC_PATH, BORINGSSL_DEP)
+  if old_head != old_dep:
+    print(f'BoringSSL checkout is at {old_head}, but the dep is at {old_dep}')
+    return 1
+
   if old_head == new_head:
-    print 'BoringSSL already up to date.'
+    print('BoringSSL already up to date.')
     return 0
 
-  print 'Rolling BoringSSL from %s to %s...' % (old_head, new_head)
+  print('Rolling BoringSSL from %s to %s...' % (old_head, new_head))
 
   # Look for commits with associated Chromium bugs.
   crbugs = set()
@@ -142,7 +154,7 @@ def main():
     if has_update_note:
       update_note_commits.append(commit)
 
-  UpdateDEPS(DEPS_PATH, old_head, new_head)
+  SetDep(SRC_PATH, BORINGSSL_DEP, new_head)
 
   # Checkout third_party/boringssl/src to generate new files.
   subprocess.check_call(['git', 'checkout', new_head], cwd=BORINGSSL_SRC_PATH)
@@ -156,7 +168,7 @@ def main():
     os.unlink(path)
 
   # Generate new ones.
-  subprocess.check_call(['python',
+  subprocess.check_call(['python3',
                          os.path.join(BORINGSSL_SRC_PATH, 'util',
                                       'generate_build_files.py'),
                          '--embed_test_data=false',
@@ -164,6 +176,7 @@ def main():
                         cwd=BORINGSSL_PATH)
 
   # Commit everything.
+  importlib.reload(generate_build_files)
   subprocess.check_call(['git', 'add', DEPS_PATH], cwd=SRC_PATH)
   for (osname, arch, _, _, _) in generate_build_files.OS_ARCH_COMBOS:
     path = os.path.join(BORINGSSL_PATH, osname + '-' + arch)
@@ -197,10 +210,11 @@ https://boringssl.googlesource.com/boringssl/+log/%s..%s
   # Print update notes.
   notes = subprocess.check_output(
       ['git', 'log', '--grep', '^Update-Note:', '-i',
-       '%s..%s' % (old_head, new_head)], cwd=BORINGSSL_SRC_PATH).strip()
+       '%s..%s' % (old_head, new_head)], cwd=BORINGSSL_SRC_PATH, text=True,
+       errors='replace').strip()
   if len(notes) > 0:
-    print "\x1b[1mThe following changes contain updating notes\x1b[0m:\n\n"
-    print notes
+    print("\x1b[1mThe following changes contain updating notes\x1b[0m:\n\n")
+    print(notes)
 
   return 0
 

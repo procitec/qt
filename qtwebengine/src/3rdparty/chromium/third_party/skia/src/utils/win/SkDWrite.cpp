@@ -8,11 +8,16 @@
 #if defined(SK_BUILD_FOR_WIN)
 
 #include "include/core/SkString.h"
-#include "include/private/SkOnce.h"
+#include "include/private/base/SkOnce.h"
 #include "src/utils/win/SkDWrite.h"
 #include "src/utils/win/SkHRESULT.h"
 
 #include <dwrite.h>
+
+#if defined(__clang__)
+    #pragma clang diagnostic push
+    #pragma clang diagnostic ignored "-Wcast-function-type"
+#endif
 
 static IDWriteFactory* gDWriteFactory = nullptr;
 
@@ -23,9 +28,16 @@ static void release_dwrite_factory() {
 }
 
 static void create_dwrite_factory(IDWriteFactory** factory) {
-    typedef decltype(DWriteCreateFactory)* DWriteCreateFactoryProc;
-    DWriteCreateFactoryProc dWriteCreateFactoryProc = reinterpret_cast<DWriteCreateFactoryProc>(
-        GetProcAddress(LoadLibraryW(L"dwrite.dll"), "DWriteCreateFactory"));
+    using DWriteCreateFactoryProc = decltype(DWriteCreateFactory)*;
+    DWriteCreateFactoryProc dWriteCreateFactoryProc;
+
+    dWriteCreateFactoryProc = reinterpret_cast<DWriteCreateFactoryProc>(
+        GetProcAddress(LoadLibraryW(L"DWriteCore.dll"), "DWriteCoreCreateFactory"));
+
+    if (!dWriteCreateFactoryProc) {
+        dWriteCreateFactoryProc = reinterpret_cast<DWriteCreateFactoryProc>(
+            GetProcAddress(LoadLibraryW(L"dwrite.dll"), "DWriteCreateFactory"));
+    }
 
     if (!dWriteCreateFactoryProc) {
         HRESULT hr = HRESULT_FROM_WIN32(GetLastError());
@@ -80,7 +92,7 @@ HRESULT sk_wchar_to_skstring(WCHAR* name, int nameLen, SkString* skname) {
     }
     skname->resize(len);
 
-    len = WideCharToMultiByte(CP_UTF8, 0, name, nameLen, skname->writable_str(), len, nullptr, nullptr);
+    len = WideCharToMultiByte(CP_UTF8, 0, name, nameLen, skname->data(), len, nullptr, nullptr);
     if (0 == len) {
         HRM(HRESULT_FROM_WIN32(GetLastError()), "Could not convert utf-8 to wchar.");
     }
@@ -125,5 +137,9 @@ HRESULT SkGetGetUserDefaultLocaleNameProc(SkGetUserDefaultLocaleNameProc* proc) 
     }
     return S_OK;
 }
+
+#if defined(__clang__)
+    #pragma clang diagnostic pop
+#endif
 
 #endif//defined(SK_BUILD_FOR_WIN)

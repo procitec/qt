@@ -28,6 +28,7 @@
 
 #include "third_party/blink/renderer/core/html/forms/input_type_view.h"
 
+#include "third_party/blink/renderer/core/dom/events/simulated_click_options.h"
 #include "third_party/blink/renderer/core/dom/focus_params.h"
 #include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/dom/shadow_root.h"
@@ -35,7 +36,7 @@
 #include "third_party/blink/renderer/core/html/forms/form_controller.h"
 #include "third_party/blink/renderer/core/html/forms/html_form_element.h"
 #include "third_party/blink/renderer/core/html/forms/html_input_element.h"
-#include "third_party/blink/renderer/core/layout/layout_object.h"
+#include "third_party/blink/renderer/core/layout/layout_ng_block_flow.h"
 
 namespace blink {
 
@@ -77,9 +78,10 @@ void InputTypeView::DispatchSimulatedClickIfActive(KeyboardEvent& event) const {
   event.SetDefaultHandled();
 }
 
-void InputTypeView::AccessKeyAction(bool) {
-  GetElement().focus(FocusParams(SelectionBehaviorOnFocus::kReset,
-                                 mojom::blink::FocusType::kNone, nullptr));
+void InputTypeView::AccessKeyAction(SimulatedClickCreationScope) {
+  GetElement().Focus(FocusParams(
+      SelectionBehaviorOnFocus::kReset, mojom::blink::FocusType::kNone, nullptr,
+      FocusOptions::Create(), FocusTrigger::kUserGesture));
 }
 
 bool InputTypeView::ShouldSubmitImplicitly(const Event& event) {
@@ -92,16 +94,24 @@ HTMLFormElement* InputTypeView::FormForSubmission() const {
   return GetElement().Form();
 }
 
-bool InputTypeView::TypeShouldForceLegacyLayout() const {
-  return false;
+LayoutObject* InputTypeView::CreateLayoutObject(
+    const ComputedStyle& style) const {
+  // Avoid LayoutInline, which can be split to multiple lines.
+  if (RuntimeEnabledFeatures::DateInputInlineBlockEnabled() &&
+      style.IsDisplayInlineType() && !style.IsDisplayReplacedType()) {
+    return MakeGarbageCollected<LayoutNGBlockFlow>(&GetElement());
+  }
+  return LayoutObject::CreateObject(&GetElement(), style);
 }
 
-LayoutObject* InputTypeView::CreateLayoutObject(const ComputedStyle& style,
-                                                LegacyLayout legacy) const {
-  return LayoutObject::CreateObject(&GetElement(), style, legacy);
+const ComputedStyle* InputTypeView::CustomStyleForLayoutObject(
+    const ComputedStyle* original_style) const {
+  return original_style;
 }
 
-void InputTypeView::CustomStyleForLayoutObject(ComputedStyle&) {}
+ControlPart InputTypeView::AutoAppearance() const {
+  return kNoControlPart;
+}
 
 TextDirection InputTypeView::ComputedTextDirection() {
   return GetElement().ComputedStyleRef().Direction();
@@ -119,7 +129,7 @@ void InputTypeView::HandleBlurEvent() {}
 
 void InputTypeView::HandleFocusInEvent(Element*, mojom::blink::FocusType) {}
 
-void InputTypeView::StartResourceLoading() {}
+void InputTypeView::OpenPopupView() {}
 
 void InputTypeView::ClosePopupView() {}
 
@@ -131,7 +141,21 @@ bool InputTypeView::NeedsShadowSubtree() const {
   return true;
 }
 
+TextControlInnerEditorElement* InputTypeView::EnsureInnerEditorElement() {
+  CreateShadowSubtreeIfNeeded();
+  return GetElement().InnerEditorElement();
+}
+
 void InputTypeView::CreateShadowSubtree() {}
+
+void InputTypeView::CreateShadowSubtreeIfNeeded() {
+  if (has_created_shadow_subtree_ || !NeedsShadowSubtree()) {
+    return;
+  }
+  GetElement().EnsureUserAgentShadowRoot();
+  has_created_shadow_subtree_ = true;
+  CreateShadowSubtree();
+}
 
 void InputTypeView::DestroyShadowSubtree() {
   if (ShadowRoot* root = GetElement().UserAgentShadowRoot())
@@ -188,21 +212,21 @@ bool InputTypeView::ShouldDrawCapsLockIndicator() const {
 
 void InputTypeView::UpdateClearButtonVisibility() {}
 
-void InputTypeView::UpdatePlaceholderText() {}
+void InputTypeView::UpdatePlaceholderText(bool) {}
 
 AXObject* InputTypeView::PopupRootAXObject() {
   return nullptr;
 }
 
 FormControlState InputTypeView::SaveFormControlState() const {
-  String current_value = GetElement().value();
+  String current_value = GetElement().Value();
   if (current_value == GetElement().DefaultValue())
     return FormControlState();
   return FormControlState(current_value);
 }
 
 void InputTypeView::RestoreFormControlState(const FormControlState& state) {
-  GetElement().setValue(state[0]);
+  GetElement().SetValue(state[0]);
 }
 
 bool InputTypeView::IsDraggedSlider() const {

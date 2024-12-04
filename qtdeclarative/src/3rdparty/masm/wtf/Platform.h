@@ -45,6 +45,9 @@
 /* ==== Platform adaptation macros: these describe properties of the target environment. ==== */
 
 /* CPU() - the target CPU architecture */
+#ifdef Q_OS_VXWORKS
+#undef CPU
+#endif // Q_OS_VXWORKS
 #define CPU(WTF_FEATURE) WTF_CPU_##WTF_FEATURE
 /* HAVE() - specific system features (headers, functions or similar) that are present or not */
 #define HAVE(WTF_FEATURE) HAVE_##WTF_FEATURE
@@ -224,6 +227,7 @@
     || defined(__ARM_ARCH_6K__) \
     || defined(__ARM_ARCH_6Z__) \
     || defined(__ARM_ARCH_6ZK__) \
+    || defined(__ARM_ARCH_6KZ__) \
     || defined(__ARM_ARCH_6T2__) \
     || defined(__ARMV6__)
 #define WTF_ARM_ARCH_VERSION 6
@@ -442,6 +446,11 @@
 #define WTF_OS_RTEMS 1
 #endif
 
+/* OS(VXWORKS) - VXWORKS */
+#if defined(__vxworks)
+#define WTF_OS_VXWORKS 1
+#endif
+
 #define WTF_OS_WIN ERROR "USE WINDOWS WITH OS NOT WIN"
 #define WTF_OS_MAC ERROR "USE MAC_OS_X WITH OS NOT MAC"
 
@@ -457,6 +466,7 @@
     || OS(QNX)              \
     || OS(RTEMS)            \
     || OS(SOLARIS)          \
+    || OS(VXWORKS)          \
     || defined(unix)        \
     || defined(__unix)      \
     || defined(__unix__)
@@ -1043,9 +1053,6 @@
 
 #if PLATFORM(QT)
 #include <qglobal.h>
-#if defined(QT_OPENGL_ES_2) && !defined(WTF_USE_OPENGL_ES_2)
-#define WTF_USE_OPENGL_ES_2 1
-#endif
 #endif
 
 #if !PLATFORM(IOS) && PLATFORM(MAC) && __MAC_OS_X_VERSION_MIN_REQUIRED >= 1080

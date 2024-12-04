@@ -20,9 +20,7 @@ QtObject {
             readyState = true;
 
         x.open("GET", url);
-        x.setRequestHeader("Accept-Language","en-US");
-
-        if (x.readyState  == XMLHttpRequest.OPENED)
+        if (x.readyState == XMLHttpRequest.OPENED)
             openedState = true;
 
         try {
@@ -42,13 +40,10 @@ QtObject {
 
         // Test to the end
         x.onreadystatechange = function() {
-            if (x.readyState == XMLHttpRequest.DONE) {
+            if (x.readyState == XMLHttpRequest.DONE)
                 dataOK = (x.responseText == "QML Rocks!\n");
-            }
         }
-
 
         x.send()
     }
 }
-

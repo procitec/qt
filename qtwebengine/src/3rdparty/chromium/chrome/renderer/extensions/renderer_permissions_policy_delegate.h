@@ -1,11 +1,11 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef CHROME_RENDERER_EXTENSIONS_RENDERER_PERMISSIONS_POLICY_DELEGATE_H_
 #define CHROME_RENDERER_EXTENSIONS_RENDERER_PERMISSIONS_POLICY_DELEGATE_H_
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "extensions/common/permissions/permissions_data.h"
 
 namespace extensions {
@@ -17,15 +17,19 @@ class RendererPermissionsPolicyDelegate
     : public PermissionsData::PolicyDelegate {
  public:
   explicit RendererPermissionsPolicyDelegate(Dispatcher* dispatcher);
+
+  RendererPermissionsPolicyDelegate(const RendererPermissionsPolicyDelegate&) =
+      delete;
+  RendererPermissionsPolicyDelegate& operator=(
+      const RendererPermissionsPolicyDelegate&) = delete;
+
   ~RendererPermissionsPolicyDelegate() override;
 
   // PermissionsData::PolicyDelegate:
   bool IsRestrictedUrl(const GURL& document_url, std::string* error) override;
 
  private:
-  Dispatcher* dispatcher_;
-
-  DISALLOW_COPY_AND_ASSIGN(RendererPermissionsPolicyDelegate);
+  raw_ptr<Dispatcher, ExperimentalRenderer> dispatcher_;
 };
 
 }  // namespace extensions

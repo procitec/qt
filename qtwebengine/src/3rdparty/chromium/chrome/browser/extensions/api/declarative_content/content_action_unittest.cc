@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,6 +10,7 @@
 #include "base/run_loop.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/values_test_util.h"
+#include "base/values.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_service_test_base.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
@@ -20,30 +21,32 @@
 #include "extensions/browser/extension_action.h"
 #include "extensions/browser/extension_action_manager.h"
 #include "extensions/browser/extension_system.h"
+#include "extensions/browser/user_script_manager.h"
 #include "extensions/common/api/declarative/declarative_constants.h"
+#include "extensions/common/api/extension_action/action_info.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_builder.h"
-#include "extensions/common/value_builder.h"
-#include "ipc/ipc_message_utils.h"
+#include "mojo/public/cpp/base/big_buffer.h"
+#include "skia/public/mojom/bitmap.mojom.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/gfx/image/image.h"
-#include "ui/gfx/ipc/skia/gfx_skia_param_traits.h"
 
 namespace extensions {
 namespace {
 
 using base::test::ParseJson;
+using base::test::ParseJsonDict;
 using testing::HasSubstr;
 using ContentActionType = declarative_content_constants::ContentActionType;
+using extensions::mojom::ManifestLocation;
 
-std::unique_ptr<base::DictionaryValue> SimpleManifest() {
-  return DictionaryBuilder()
+base::Value::Dict SimpleManifest() {
+  return base::Value::Dict()
       .Set("name", "extension")
       .Set("manifest_version", 2)
-      .Set("version", "1.0")
-      .Build();
+      .Set("version", "1.0");
 }
 
 class RequestContentScriptTest : public ExtensionServiceTestBase {
@@ -57,8 +60,12 @@ class RequestContentScriptTest : public ExtensionServiceTestBase {
   // issue is fixed.
   virtual void Init() {
     InitializeEmptyExtensionService();
-    static_cast<TestExtensionSystem*>(ExtensionSystem::Get(profile()))->
-        SetReady();
+    auto* extension_system =
+        static_cast<TestExtensionSystem*>(ExtensionSystem::Get(profile()));
+
+    extension_system->CreateUserScriptManager();
+    service()->AddExtension(extension());
+    extension_system->SetReady();
     base::RunLoop().RunUntilIdle();
   }
 
@@ -75,17 +82,10 @@ TEST(DeclarativeContentActionTest, InvalidCreation) {
   TestingProfile profile;
   base::HistogramTester histogram_tester;
 
-  // Test wrong data type passed.
-  error.clear();
-  result = ContentAction::Create(&profile, nullptr, ParseJson("[]"), &error);
-  EXPECT_THAT(error, HasSubstr("missing instanceType"));
-  EXPECT_FALSE(result.get());
-  histogram_tester.ExpectTotalCount(
-      "Extensions.DeclarativeContentActionCreated", 0);
-
   // Test missing instanceType element.
   error.clear();
-  result = ContentAction::Create(&profile, nullptr, ParseJson("{}"), &error);
+  result =
+      ContentAction::Create(&profile, nullptr, ParseJsonDict("{}"), &error);
   EXPECT_THAT(error, HasSubstr("missing instanceType"));
   EXPECT_FALSE(result.get());
   histogram_tester.ExpectTotalCount(
@@ -93,7 +93,7 @@ TEST(DeclarativeContentActionTest, InvalidCreation) {
 
   // Test wrong instanceType element.
   error.clear();
-  result = ContentAction::Create(&profile, nullptr, ParseJson(R"(
+  result = ContentAction::Create(&profile, nullptr, ParseJsonDict(R"(
           {
             "instanceType": "declarativeContent.UnknownType",
           })"),
@@ -109,15 +109,15 @@ TEST(DeclarativeContentActionTest, ShowActionWithoutAction) {
 
   // We install a component extension because all other extensions have a
   // required action.
-  DictionaryBuilder manifest;
-  manifest.Set("name", "extension")
-      .Set("version", "0.1")
-      .Set("manifest_version", 2)
-      .Set("description", "an extension");
+  auto manifest = base::Value::Dict()
+                      .Set("name", "extension")
+                      .Set("version", "0.1")
+                      .Set("manifest_version", 2)
+                      .Set("description", "an extension");
   scoped_refptr<const Extension> extension =
       ExtensionBuilder()
-          .SetManifest(manifest.Build())
-          .SetLocation(Manifest::COMPONENT)
+          .SetManifest(std::move(manifest))
+          .SetLocation(ManifestLocation::kComponent)
           .Build();
   env.GetExtensionService()->AddExtension(extension.get());
 
@@ -125,7 +125,7 @@ TEST(DeclarativeContentActionTest, ShowActionWithoutAction) {
   base::HistogramTester histogram_tester;
   std::string error;
   std::unique_ptr<const ContentAction> result =
-      ContentAction::Create(&profile, extension.get(), ParseJson(R"(
+      ContentAction::Create(&profile, extension.get(), ParseJsonDict(R"(
           {
             "instanceType": "declarativeContent.ShowAction",
           })"),
@@ -137,7 +137,7 @@ TEST(DeclarativeContentActionTest, ShowActionWithoutAction) {
 }
 
 class ParameterizedDeclarativeContentActionTest
-    : public ::testing::TestWithParam<ExtensionBuilder::ActionType> {};
+    : public ::testing::TestWithParam<ActionInfo::Type> {};
 
 TEST_P(ParameterizedDeclarativeContentActionTest, ShowAction) {
   TestExtensionEnvironment env;
@@ -146,7 +146,7 @@ TEST_P(ParameterizedDeclarativeContentActionTest, ShowAction) {
   scoped_refptr<const Extension> extension =
       ExtensionBuilder("extension")
           .SetAction(GetParam())
-          .SetLocation(Manifest::INTERNAL)
+          .SetLocation(ManifestLocation::kInternal)
           .Build();
 
   env.GetExtensionService()->AddExtension(extension.get());
@@ -156,7 +156,7 @@ TEST_P(ParameterizedDeclarativeContentActionTest, ShowAction) {
   base::HistogramTester histogram_tester;
   std::unique_ptr<const ContentAction> result = ContentAction::Create(
       nullptr, extension.get(),
-      ParseJson(R"({"instanceType": "declarativeContent.ShowAction"})"),
+      ParseJsonDict(R"({"instanceType": "declarativeContent.ShowAction"})"),
       &error);
   EXPECT_TRUE(error.empty()) << error;
   ASSERT_TRUE(result.get());
@@ -170,7 +170,7 @@ TEST_P(ParameterizedDeclarativeContentActionTest, ShowAction) {
   auto* action_manager = ExtensionActionManager::Get(env.profile());
   ExtensionAction* action = action_manager->GetExtensionAction(*extension);
   ASSERT_TRUE(action);
-  if (GetParam() == ExtensionBuilder::ActionType::BROWSER_ACTION) {
+  if (GetParam() == ActionInfo::TYPE_BROWSER) {
     EXPECT_EQ(ActionInfo::TYPE_BROWSER, action->action_type());
     // Switch the default so we properly see the action toggling.
     action->SetIsVisible(ExtensionAction::kDefaultTabId, false);
@@ -205,72 +205,92 @@ TEST_P(ParameterizedDeclarativeContentActionTest, ShowAction) {
   EXPECT_FALSE(action->GetIsVisible(tab_id));
 }
 
-INSTANTIATE_TEST_SUITE_P(
-    All,
-    ParameterizedDeclarativeContentActionTest,
-    testing::Values(ExtensionBuilder::ActionType::BROWSER_ACTION,
-                    ExtensionBuilder::ActionType::PAGE_ACTION));
+INSTANTIATE_TEST_SUITE_P(All,
+                         ParameterizedDeclarativeContentActionTest,
+                         testing::Values(ActionInfo::TYPE_BROWSER,
+                                         ActionInfo::TYPE_PAGE));
 
 TEST(DeclarativeContentActionTest, SetIcon) {
-  TestExtensionEnvironment env;
-  content::RenderViewHostTestEnabler rvh_enabler;
+  enum Mode { Base64, Mojo, MojoHuge };
+  for (Mode mode : {Base64, Mojo, MojoHuge}) {
+    SCOPED_TRACE(mode);
 
-  // Simulate the process of passing ImageData to SetIcon::Create.
-  SkBitmap bitmap;
-  EXPECT_TRUE(bitmap.tryAllocN32Pixels(19, 19));
-  // Fill the bitmap with red pixels.
-  bitmap.eraseARGB(255, 255, 0, 0);
-  IPC::Message bitmap_pickle;
-  IPC::WriteParam(&bitmap_pickle, bitmap);
-  std::string binary_data = std::string(
-      static_cast<const char*>(bitmap_pickle.data()), bitmap_pickle.size());
-  std::string data64;
-  base::Base64Encode(binary_data, &data64);
+    TestExtensionEnvironment env;
+    content::RenderViewHostTestEnabler rvh_enabler;
 
-  std::unique_ptr<base::DictionaryValue> dict =
-      DictionaryBuilder()
-          .Set("instanceType", "declarativeContent.SetIcon")
-          .Set("imageData", DictionaryBuilder().Set("19", data64).Build())
-          .Build();
+    // Simulate the process of passing ImageData to SetIcon::Create.
+    SkBitmap bitmap;
+    EXPECT_TRUE(bitmap.tryAllocN32Pixels(19, 19));
+    bitmap.eraseARGB(255, 255, 0, 0);
 
-  const Extension* extension = env.MakeExtension(
-      ParseJson(R"({"page_action": {"default_title": "Extension"}})"));
-  base::HistogramTester histogram_tester;
-  TestingProfile profile;
-  std::string error;
-  ContentAction::SetAllowInvisibleIconsForTest(false);
-  std::unique_ptr<const ContentAction> result =
-      ContentAction::Create(&profile, extension, *dict, &error);
-  ContentAction::SetAllowInvisibleIconsForTest(true);
-  EXPECT_EQ("", error);
-  ASSERT_TRUE(result.get());
-  EXPECT_THAT(
-      histogram_tester.GetAllSamples("Extensions.DeclarativeSetIconWasVisible"),
-      testing::ElementsAre(base::Bucket(1, 1)));
-  EXPECT_THAT(histogram_tester.GetAllSamples(
-                  "Extensions.DeclarativeSetIconWasVisibleRendered"),
-              testing::ElementsAre(base::Bucket(1, 1)));
-  histogram_tester.ExpectUniqueSample(
-      "Extensions.DeclarativeContentActionCreated", ContentActionType::kSetIcon,
-      1);
-  histogram_tester.ExpectTotalCount(
-      "Extensions.DeclarativeContentActionCreated", 1);
+    base::Value::Dict dict;
+    dict.Set("instanceType", "declarativeContent.SetIcon");
+    switch (mode) {
+      case Base64: {
+        std::string data64 =
+            base::Base64Encode(skia::mojom::InlineBitmap::Serialize(&bitmap));
+        dict.Set("imageData", base::Value::Dict().Set("19", data64));
+        break;
+      }
+      case Mojo: {
+        std::vector<uint8_t> s = skia::mojom::InlineBitmap::Serialize(&bitmap);
+        // Explicit base::Value() for TYPE_BINARY.
+        dict.Set("imageData",
+                 base::Value::Dict().Set("19", base::Value(std::move(s))));
+        break;
+      }
+      case MojoHuge: {
+        // Normal skia::mojom::Bitmaps would serialize as a SharedMemory handle,
+        // which is not valid when serializing to a string. We use InlineBitmap
+        // instead, and this case verifies it does the right thing for a large
+        // image.
+        const int dimension =
+            std::ceil(std::sqrt(mojo_base::BigBuffer::kMaxInlineBytes));
+        EXPECT_TRUE(bitmap.tryAllocN32Pixels(dimension / 4 + 1, dimension));
+        EXPECT_GT(bitmap.computeByteSize(),
+                  mojo_base::BigBuffer::kMaxInlineBytes);
+        bitmap.eraseARGB(255, 255, 0, 0);
+        std::vector<uint8_t> s = skia::mojom::InlineBitmap::Serialize(&bitmap);
+        // Explicit base::Value() for TYPE_BINARY.
+        dict.Set("imageData",
+                 base::Value::Dict().Set("19", base::Value(std::move(s))));
+        break;
+      }
+    }
 
-  ExtensionAction* action = ExtensionActionManager::Get(env.profile())
-                                ->GetExtensionAction(*extension);
-  std::unique_ptr<content::WebContents> contents = env.MakeTab();
-  const int tab_id = ExtensionTabUtil::GetTabId(contents.get());
-  EXPECT_FALSE(action->GetIsVisible(tab_id));
-  ContentAction::ApplyInfo apply_info = {
-    extension, env.profile(), contents.get(), 100
-  };
+    const Extension* extension = env.MakeExtension(
+        ParseJsonDict(R"({"page_action": {"default_title": "Extension"}})"));
+    base::HistogramTester histogram_tester;
+    TestingProfile profile;
+    std::string error;
+    ContentAction::SetAllowInvisibleIconsForTest(false);
+    std::unique_ptr<const ContentAction> result =
+        ContentAction::Create(&profile, extension, dict, &error);
+    ContentAction::SetAllowInvisibleIconsForTest(true);
+    EXPECT_EQ("", error);
+    ASSERT_TRUE(result.get());
+    histogram_tester.ExpectUniqueSample(
+        "Extensions.DeclarativeContentActionCreated",
+        ContentActionType::kSetIcon, 1);
+    histogram_tester.ExpectTotalCount(
+        "Extensions.DeclarativeContentActionCreated", 1);
 
-  // The declarative icon shouldn't exist unless the content action is applied.
-  EXPECT_TRUE(action->GetDeclarativeIcon(tab_id).IsEmpty());
-  result->Apply(apply_info);
-  EXPECT_FALSE(action->GetDeclarativeIcon(tab_id).IsEmpty());
-  result->Revert(apply_info);
-  EXPECT_TRUE(action->GetDeclarativeIcon(tab_id).IsEmpty());
+    ExtensionAction* action = ExtensionActionManager::Get(env.profile())
+                                  ->GetExtensionAction(*extension);
+    std::unique_ptr<content::WebContents> contents = env.MakeTab();
+    const int tab_id = ExtensionTabUtil::GetTabId(contents.get());
+    EXPECT_FALSE(action->GetIsVisible(tab_id));
+    ContentAction::ApplyInfo apply_info = {extension, env.profile(),
+                                           contents.get(), 100};
+
+    // The declarative icon shouldn't exist unless the content action is
+    // applied.
+    EXPECT_TRUE(action->GetDeclarativeIcon(tab_id).IsEmpty());
+    result->Apply(apply_info);
+    EXPECT_FALSE(action->GetDeclarativeIcon(tab_id).IsEmpty());
+    result->Revert(apply_info);
+    EXPECT_TRUE(action->GetDeclarativeIcon(tab_id).IsEmpty());
+  }
 }
 
 TEST(DeclarativeContentActionTest, SetInvisibleIcon) {
@@ -283,37 +303,26 @@ TEST(DeclarativeContentActionTest, SetInvisibleIcon) {
   uint32_t* pixels = bitmap.getAddr32(0, 0);
   // Set a single pixel, which isn't enough to consider the icon visible.
   pixels[0] = SkColorSetARGB(255, 255, 0, 0);
-  IPC::Message bitmap_pickle;
-  IPC::WriteParam(&bitmap_pickle, bitmap);
-  std::string binary_data = std::string(
-      static_cast<const char*>(bitmap_pickle.data()), bitmap_pickle.size());
-  std::string data64;
-  base::Base64Encode(binary_data, &data64);
+  std::string data64 =
+      base::Base64Encode(skia::mojom::InlineBitmap::Serialize(&bitmap));
 
-  std::unique_ptr<base::DictionaryValue> dict =
-      DictionaryBuilder()
+  base::Value::Dict dict =
+      base::Value::Dict()
           .Set("instanceType", "declarativeContent.SetIcon")
-          .Set("imageData", DictionaryBuilder().Set("19", data64).Build())
-          .Build();
+          .Set("imageData", base::Value::Dict().Set("19", data64));
 
   // Expect an error and no instance to be created.
   const Extension* extension = env.MakeExtension(
-      ParseJson(R"({"page_action": {"default_title": "Extension"}})"));
+      ParseJsonDict(R"({"page_action": {"default_title": "Extension"}})"));
   base::HistogramTester histogram_tester;
   TestingProfile profile;
   std::string error;
   ContentAction::SetAllowInvisibleIconsForTest(false);
   std::unique_ptr<const ContentAction> result =
-      ContentAction::Create(&profile, extension, *dict, &error);
+      ContentAction::Create(&profile, extension, dict, &error);
   ContentAction::SetAllowInvisibleIconsForTest(true);
   EXPECT_EQ("The specified icon is not sufficiently visible", error);
   EXPECT_FALSE(result);
-  EXPECT_THAT(
-      histogram_tester.GetAllSamples("Extensions.DeclarativeSetIconWasVisible"),
-      testing::ElementsAre(base::Bucket(0, 1)));
-  EXPECT_THAT(histogram_tester.GetAllSamples(
-                  "Extensions.DeclarativeSetIconWasVisibleRendered"),
-              testing::ElementsAre(base::Bucket(0, 1)));
   histogram_tester.ExpectTotalCount(
       "Extensions.DeclarativeContentActionCreated", 0);
 }
@@ -323,7 +332,7 @@ TEST_F(RequestContentScriptTest, MissingScripts) {
   std::string error;
   base::HistogramTester histogram_tester;
   std::unique_ptr<const ContentAction> result =
-      ContentAction::Create(profile(), extension(), ParseJson(R"(
+      ContentAction::Create(profile(), extension(), ParseJsonDict(R"(
           {
             "instanceType": "declarativeContent.RequestContentScript",
             "allFrames": true,
@@ -341,7 +350,7 @@ TEST_F(RequestContentScriptTest, CSS) {
   std::string error;
   base::HistogramTester histogram_tester;
   std::unique_ptr<const ContentAction> result =
-      ContentAction::Create(profile(), extension(), ParseJson(R"(
+      ContentAction::Create(profile(), extension(), ParseJsonDict(R"(
           {
             "instanceType": "declarativeContent.RequestContentScript",
             "css": ["style.css"]
@@ -361,7 +370,7 @@ TEST_F(RequestContentScriptTest, JS) {
   std::string error;
   base::HistogramTester histogram_tester;
   std::unique_ptr<const ContentAction> result =
-      ContentAction::Create(profile(), extension(), ParseJson(R"(
+      ContentAction::Create(profile(), extension(), ParseJsonDict(R"(
           {
             "instanceType": "declarativeContent.RequestContentScript",
             "js": ["script.js"]
@@ -381,7 +390,7 @@ TEST_F(RequestContentScriptTest, CSSBadType) {
   std::string error;
   base::HistogramTester histogram_tester;
   std::unique_ptr<const ContentAction> result =
-      ContentAction::Create(profile(), extension(), ParseJson(R"(
+      ContentAction::Create(profile(), extension(), ParseJsonDict(R"(
           {
             "instanceType": "declarativeContent.RequestContentScript",
             "css": "style.css"
@@ -397,7 +406,7 @@ TEST_F(RequestContentScriptTest, JSBadType) {
   std::string error;
   base::HistogramTester histogram_tester;
   std::unique_ptr<const ContentAction> result =
-      ContentAction::Create(profile(), extension(), ParseJson(R"(
+      ContentAction::Create(profile(), extension(), ParseJsonDict(R"(
           {
             "instanceType": "declarativeContent.RequestContentScript",
             "js": "script.js"
@@ -413,7 +422,7 @@ TEST_F(RequestContentScriptTest, AllFrames) {
   std::string error;
   base::HistogramTester histogram_tester;
   std::unique_ptr<const ContentAction> result =
-      ContentAction::Create(profile(), extension(), ParseJson(R"(
+      ContentAction::Create(profile(), extension(), ParseJsonDict(R"(
           {
             "instanceType": "declarativeContent.RequestContentScript",
             "js": ["script.js"],
@@ -434,7 +443,7 @@ TEST_F(RequestContentScriptTest, MatchAboutBlank) {
   std::string error;
   base::HistogramTester histogram_tester;
   std::unique_ptr<const ContentAction> result =
-      ContentAction::Create(profile(), extension(), ParseJson(R"(
+      ContentAction::Create(profile(), extension(), ParseJsonDict(R"(
           {
             "instanceType": "declarativeContent.RequestContentScript",
             "js": ["script.js"],
@@ -455,7 +464,7 @@ TEST_F(RequestContentScriptTest, AllFramesBadType) {
   std::string error;
   base::HistogramTester histogram_tester;
   std::unique_ptr<const ContentAction> result =
-      ContentAction::Create(profile(), extension(), ParseJson(R"(
+      ContentAction::Create(profile(), extension(), ParseJsonDict(R"(
           {
             "instanceType": "declarativeContent.RequestContentScript",
             "js": ["script.js"],
@@ -472,7 +481,7 @@ TEST_F(RequestContentScriptTest, MatchAboutBlankBadType) {
   std::string error;
   base::HistogramTester histogram_tester;
   std::unique_ptr<const ContentAction> result =
-      ContentAction::Create(profile(), extension(), ParseJson(R"(
+      ContentAction::Create(profile(), extension(), ParseJsonDict(R"(
           {
             "instanceType": "declarativeContent.RequestContentScript",
             "js": ["script.js"],

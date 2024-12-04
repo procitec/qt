@@ -1,4 +1,4 @@
-// Copyright (c) 2011 The Chromium Authors. All rights reserved.
+// Copyright 2011 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,63 +11,71 @@
 #include <vector>
 
 #include "base/compiler_specific.h"
-#include "base/macros.h"
+#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/synchronization/lock.h"
+#include "base/time/time.h"
 #include "base/values.h"
-#include "components/content_settings/core/browser/content_settings_constraints.h"
+#include "components/content_settings/core/common/content_settings_constraints.h"
+#include "components/content_settings/core/common/content_settings_metadata.h"
 #include "components/content_settings/core/common/content_settings_pattern.h"
 
 namespace content_settings {
 
+class SCOPED_LOCKABLE RefCountedAutoLock
+    : public base::RefCounted<RefCountedAutoLock> {
+ public:
+  explicit RefCountedAutoLock(base::Lock& lock);
+
+ protected:
+  virtual ~RefCountedAutoLock();
+
+ private:
+  friend class base::RefCounted<RefCountedAutoLock>;
+
+  base::AutoLock auto_lock_;
+};
+
+// Note that Rules and their iterators must be destroyed before modifying the
+// map that their values come from, as some types of rules hold locks on the map
+// that owns their value. See UnownedRule and OriginValueMap.
 struct Rule {
-  Rule();
-  Rule(const ContentSettingsPattern& primary_pattern,
-       const ContentSettingsPattern& secondary_pattern,
+  Rule(ContentSettingsPattern primary_pattern,
+       ContentSettingsPattern secondary_pattern,
        base::Value value,
-       base::Time expiration,
-       SessionModel session_model);
-  Rule(Rule&& other);
-  Rule& operator=(Rule&& other);
+       RuleMetaData metadata);
+
+  Rule(const Rule&) = delete;
+  Rule& operator=(const Rule&) = delete;
+
+  Rule(Rule&& other) = delete;
+  Rule& operator=(Rule&& other) = delete;
+
   ~Rule();
 
   ContentSettingsPattern primary_pattern;
   ContentSettingsPattern secondary_pattern;
   base::Value value;
-  base::Time expiration;
-  SessionModel session_model;
-
-  DISALLOW_COPY_AND_ASSIGN(Rule);
+  RuleMetaData metadata;
 };
 
 class RuleIterator {
  public:
   virtual ~RuleIterator();
   virtual bool HasNext() const = 0;
-  virtual Rule Next() = 0;
-};
-
-class EmptyRuleIterator : public RuleIterator {
- public:
-  ~EmptyRuleIterator() override;
-
- protected:
-  // RuleIterator:
-  bool HasNext() const override;
-  Rule Next() override;
+  virtual std::unique_ptr<Rule> Next() = 0;
 };
 
 class ConcatenationIterator : public RuleIterator {
  public:
-  // |auto_lock| can be null if no locking is needed.
-  ConcatenationIterator(std::vector<std::unique_ptr<RuleIterator>> iterators,
-                        base::AutoLock* auto_lock);
+  explicit ConcatenationIterator(
+      std::vector<std::unique_ptr<RuleIterator>> iterators);
   ~ConcatenationIterator() override;
   bool HasNext() const override;
-  Rule Next() override;
+  std::unique_ptr<Rule> Next() override;
 
  private:
   std::vector<std::unique_ptr<RuleIterator>> iterators_;
-  std::unique_ptr<base::AutoLock> auto_lock_;
 };
 
 }  // namespace content_settings

@@ -33,7 +33,6 @@
 
 #include "third_party/blink/renderer/platform/bindings/scoped_persistent.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
 #include "v8/include/v8.h"
 
 namespace blink {
@@ -42,7 +41,7 @@ class GCObservation final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  explicit GCObservation(v8::Local<v8::Value>);
+  explicit GCObservation(v8::Isolate* isolate, v8::Local<v8::Value>);
 
   // Caution: It is only feasible to determine whether an object was
   // "near death"; it may have been kept alive through a weak

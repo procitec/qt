@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,19 +6,22 @@
 
 #include <algorithm>
 
-#include "base/bind.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/functional/bind.h"
+#include "base/task/single_thread_task_runner.h"
+#include "base/time/time.h"
+#include "ui/base/ui_base_features.h"
 #include "ui/compositor/layer.h"
 #include "ui/compositor/scoped_layer_animation_settings.h"
-#include "ui/gfx/transform.h"
+#include "ui/events/event.h"
+#include "ui/gfx/geometry/transform.h"
+#include "ui/views/animation/animation_builder.h"
 #include "ui/views/animation/slide_out_controller_delegate.h"
 
 namespace views {
 
 namespace {
 
-constexpr base::TimeDelta kSwipeRestoreDuration =
-    base::TimeDelta::FromMilliseconds(150);
+constexpr base::TimeDelta kSwipeRestoreDuration = base::Milliseconds(150);
 constexpr int kSwipeOutTotalDurationMs = 150;
 gfx::Tween::Type kSwipeTweenType = gfx::Tween::EASE_IN;
 
@@ -37,7 +40,7 @@ SlideOutController::~SlideOutController() = default;
 void SlideOutController::CaptureControlOpenState() {
   if (!has_swipe_control_)
     return;
-  if (mode_ == SlideMode::kFull &&
+  if ((mode_ == SlideMode::kFull || mode_ == SlideMode::kPartial) &&
       fabs(gesture_amount_) >= swipe_control_width_) {
     control_open_state_ = gesture_amount_ < 0
                               ? SwipeControlOpenState::kOpenOnRight
@@ -84,7 +87,7 @@ void SlideOutController::OnGestureEvent(ui::GestureEvent* event) {
         gesture_amount_ = swipe_control_width_;
         break;
       default:
-        NOTREACHED();
+        NOTREACHED_NORETURN();
     }
     delegate_->OnSlideStarted();
   } else if (event->type() == ui::ET_GESTURE_SCROLL_UPDATE) {
@@ -135,6 +138,36 @@ void SlideOutController::OnGestureEvent(ui::GestureEvent* event) {
   event->SetHandled();
 }
 
+void SlideOutController::OnScrollEvent(ui::ScrollEvent* event) {
+  if (!trackpad_gestures_enabled_) {
+    return;
+  }
+
+  // This threshold has been set to 20.f to stay consistent with the trackpad
+  // scroll threshold used to determine if the app list should be opened when
+  // scrolling on the shelf in ChromeOS.
+  constexpr float kScrollOffsetThreshold = 20.f;
+  if (abs(event->x_offset()) < kScrollOffsetThreshold ||
+      event->finger_count() != 2) {
+    return;
+  }
+
+  if (mode_ == SlideMode::kFull) {
+    auto* layer = delegate_->GetSlideOutLayer();
+    gfx::Transform transform;
+    transform.Translate(layer->bounds().width(), 0);
+    AnimationBuilder()
+        .OnEnded(base::BindOnce(&SlideOutController::OnSlideOut,
+                                weak_ptr_factory_.GetWeakPtr()))
+        .Once()
+        .SetDuration(base::Milliseconds(kSwipeOutTotalDurationMs))
+        .SetTransform(layer, transform, kSwipeTweenType)
+        .SetOpacity(layer, 0.f);
+    event->SetHandled();
+    return;
+  }
+}
+
 void SlideOutController::RestoreVisualState() {
   // Restore the layer state.
   gfx::Transform transform;
@@ -164,8 +197,8 @@ void SlideOutController::SlideOutAndClose(int direction) {
 
   int swipe_out_duration = kSwipeOutTotalDurationMs * opacity_;
   SetOpacityIfNecessary(0.f);
-  SetTransformWithAnimationIfNecessary(
-      transform, base::TimeDelta::FromMilliseconds(swipe_out_duration));
+  SetTransformWithAnimationIfNecessary(transform,
+                                       base::Milliseconds(swipe_out_duration));
 }
 
 void SlideOutController::SetOpacityIfNecessary(float opacity) {
@@ -179,18 +212,17 @@ void SlideOutController::SetTransformWithAnimationIfNecessary(
     base::TimeDelta animation_duration) {
   ui::Layer* layer = delegate_->GetSlideOutLayer();
   if (layer->transform() != transform) {
-    ui::ScopedLayerAnimationSettings settings(layer->GetAnimator());
-    settings.SetTransitionDuration(animation_duration);
-    settings.SetTweenType(kSwipeTweenType);
-    settings.AddObserver(this);
-
-    // An animation starts. OnImplicitAnimationsCompleted will be called just
-    // after the animation finishes.
-    layer->SetTransform(transform);
-
     // Notify slide changed with inprogress=true, since the element will slide
     // with animation. OnSlideChanged(false) will be called after animation.
     delegate_->OnSlideChanged(true);
+    // An animation starts. OnAnimationsCompleted will be called just
+    // after the animation finishes.
+    AnimationBuilder()
+        .OnEnded(base::BindOnce(&SlideOutController::OnAnimationsCompleted,
+                                weak_ptr_factory_.GetWeakPtr()))
+        .Once()
+        .SetDuration(animation_duration)
+        .SetTransform(layer, transform, kSwipeTweenType);
   } else {
     // Notify slide changed after the animation finishes.
     // The argument in_progress is true if the target view is back at the
@@ -202,7 +234,7 @@ void SlideOutController::SetTransformWithAnimationIfNecessary(
   }
 }
 
-void SlideOutController::OnImplicitAnimationsCompleted() {
+void SlideOutController::OnAnimationsCompleted() {
   // Here the situation is either of:
   // 1) Notification is slided out and is about to be removed
   //      => |in_progress| is false, calling OnSlideOut
@@ -224,7 +256,7 @@ void SlideOutController::OnImplicitAnimationsCompleted() {
   // OnImplicitAnimationsCompleted is called from BeginMainFrame, so we should
   // delay operation that might result in deletion of LayerTreeHost.
   // https://crbug.com/895883
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(&SlideOutController::OnSlideOut,
                                 weak_ptr_factory_.GetWeakPtr()));
 }

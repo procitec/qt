@@ -8,7 +8,6 @@
 #include "gm/gm.h"
 #include "include/core/SkBitmap.h"
 #include "include/core/SkCanvas.h"
-#include "include/core/SkFilterQuality.h"
 #include "include/core/SkMatrix.h"
 #include "include/core/SkPaint.h"
 #include "include/core/SkRect.h"
@@ -16,6 +15,7 @@
 #include "include/core/SkSize.h"
 #include "include/core/SkString.h"
 #include "include/core/SkTypes.h"
+#include "tools/DecodeUtils.h"
 #include "tools/Resources.h"
 #include "tools/ToolUtils.h"
 
@@ -28,22 +28,20 @@ static SkSize computeSize(const SkBitmap& bm, const SkMatrix& mat) {
 }
 
 static void draw_cell(SkCanvas* canvas, const SkBitmap& bm, const SkMatrix& mat, SkScalar dx,
-                      SkFilterQuality lvl) {
-    SkPaint paint;
-    paint.setFilterQuality(lvl);
-
+                      const SkSamplingOptions& sampling) {
     SkAutoCanvasRestore acr(canvas, true);
 
     canvas->translate(dx, 0);
     canvas->concat(mat);
-    canvas->drawBitmap(bm, 0, 0, &paint);
+    canvas->drawImage(bm.asImage(), 0, 0, sampling);
 }
 
 static void draw_row(SkCanvas* canvas, const SkBitmap& bm, const SkMatrix& mat, SkScalar dx) {
-    draw_cell(canvas, bm, mat, 0 * dx, kNone_SkFilterQuality);
-    draw_cell(canvas, bm, mat, 1 * dx, kLow_SkFilterQuality);
-    draw_cell(canvas, bm, mat, 2 * dx, kMedium_SkFilterQuality);
-    draw_cell(canvas, bm, mat, 3 * dx, kHigh_SkFilterQuality);
+    draw_cell(canvas, bm, mat, 0 * dx, SkSamplingOptions());
+    draw_cell(canvas, bm, mat, 1 * dx, SkSamplingOptions(SkFilterMode::kLinear));
+    draw_cell(canvas, bm, mat, 2 * dx, SkSamplingOptions(SkFilterMode::kLinear,
+                                                         SkMipmapMode::kLinear));
+    draw_cell(canvas, bm, mat, 3 * dx, SkSamplingOptions(SkCubicResampler::Mitchell()));
 }
 
 class FilterIndiaBoxGM : public skiagm::GM {
@@ -52,7 +50,7 @@ class FilterIndiaBoxGM : public skiagm::GM {
 
     void onOnceBeforeDraw() override {
         constexpr char kResource[] = "images/box.gif";
-        if (!GetResourceAsBitmap(kResource, &fBM)) {
+        if (!ToolUtils::GetResourceAsBitmap(kResource, &fBM)) {
             fBM.allocN32Pixels(1, 1);
             fBM.eraseARGB(255, 255, 0 , 0); // red == bad
         }
@@ -68,13 +66,13 @@ class FilterIndiaBoxGM : public skiagm::GM {
         fMatrix[1].setRotate(30, cx, cy); fMatrix[1].postScale(horizScale, vertScale);
     }
 
-    SkString onShortName() override { return SkString("filterindiabox"); }
+    SkString getName() const override { return SkString("filterindiabox"); }
 
-    SkISize onISize() override { return {680, 130}; }
+    SkISize getISize() override { return {680, 130}; }
 
     void onDraw(SkCanvas* canvas) override {
         canvas->translate(10, 10);
-        for (size_t i = 0; i < SK_ARRAY_COUNT(fMatrix); ++i) {
+        for (size_t i = 0; i < std::size(fMatrix); ++i) {
             SkSize size = computeSize(fBM, fMatrix[i]);
             size.fWidth += 20;
             size.fHeight += 20;

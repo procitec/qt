@@ -1,13 +1,13 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "extensions/common/extensions_client.h"
 
+#include <string_view>
+
 #include "base/check.h"
-#include "base/metrics/histogram_macros.h"
 #include "base/notreached.h"
-#include "base/timer/elapsed_timer.h"
 #include "extensions/common/extension_icon_set.h"
 #include "extensions/common/extensions_api_provider.h"
 #include "extensions/common/features/feature_provider.h"
@@ -20,7 +20,7 @@ namespace extensions {
 
 namespace {
 
-ExtensionsClient* g_client = NULL;
+ExtensionsClient* g_client = nullptr;
 
 }  // namespace
 
@@ -39,6 +39,16 @@ void ExtensionsClient::Set(ExtensionsClient* client) {
 
 ExtensionsClient::ExtensionsClient() = default;
 ExtensionsClient::~ExtensionsClient() = default;
+
+const Feature::FeatureDelegatedAvailabilityCheckMap&
+ExtensionsClient::GetFeatureDelegatedAvailabilityCheckMap() const {
+  return availability_check_map_;
+}
+
+void ExtensionsClient::SetFeatureDelegatedAvailabilityCheckMap(
+    Feature::FeatureDelegatedAvailabilityCheckMap map) {
+  availability_check_map_ = std::move(map);
+}
 
 std::unique_ptr<FeatureProvider> ExtensionsClient::CreateFeatureProvider(
     const std::string& name) const {
@@ -78,14 +88,13 @@ bool ExtensionsClient::IsAPISchemaGenerated(const std::string& name) const {
   return false;
 }
 
-base::StringPiece ExtensionsClient::GetAPISchema(
-    const std::string& name) const {
+std::string_view ExtensionsClient::GetAPISchema(const std::string& name) const {
   for (const auto& provider : api_providers_) {
-    base::StringPiece api = provider->GetAPISchema(name);
+    std::string_view api = provider->GetAPISchema(name);
     if (!api.empty())
       return api;
   }
-  return base::StringPiece();
+  return std::string_view();
 }
 
 void ExtensionsClient::AddAPIProvider(
@@ -102,21 +111,20 @@ std::set<base::FilePath> ExtensionsClient::GetBrowserImagePaths(
   return paths;
 }
 
-bool ExtensionsClient::ExtensionAPIEnabledInExtensionServiceWorkers() const {
-  return false;
-}
-
 void ExtensionsClient::AddOriginAccessPermissions(
     const Extension& extension,
     bool is_extension_active,
     std::vector<network::mojom::CorsOriginPatternPtr>* origin_patterns) const {}
+
+std::optional<int> ExtensionsClient::GetExtensionExtendedErrorCode() const {
+  return std::nullopt;
+}
 
 void ExtensionsClient::DoInitialize() {
   initialize_called_ = true;
 
   DCHECK(!ManifestHandler::IsRegistrationFinalized());
   PermissionsInfo* permissions_info = PermissionsInfo::GetInstance();
-  const base::ElapsedTimer timer;
   for (const auto& provider : api_providers_) {
     provider->RegisterManifestHandlers();
     provider->RegisterPermissions(permissions_info);
@@ -124,11 +132,6 @@ void ExtensionsClient::DoInitialize() {
   ManifestHandler::FinalizeRegistration();
 
   Initialize();
-
-  UMA_HISTOGRAM_CUSTOM_MICROSECONDS_TIMES(
-      "Extensions.ChromeExtensionsClientInitTime2", timer.Elapsed(),
-      base::TimeDelta::FromMicroseconds(1), base::TimeDelta::FromSeconds(10),
-      50);
 }
 
 }  // namespace extensions

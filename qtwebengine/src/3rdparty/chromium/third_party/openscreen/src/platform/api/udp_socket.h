@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -30,7 +30,10 @@ class UdpSocket {
   // Client for the UdpSocket class.
   class Client {
    public:
-    virtual ~Client() = default;
+
+    // Method called when the UDP socket is bound. Default implementation
+    // does nothing, as clients may not care about the socket bind state.
+    virtual void OnBound(UdpSocket* socket) {}
 
     // Method called on socket configuration operations when an error occurs.
     // These specific APIs are:
@@ -45,6 +48,9 @@ class UdpSocket {
 
     // Method called when a packet is read.
     virtual void OnRead(UdpSocket* socket, ErrorOr<UdpPacket> packet) = 0;
+
+   protected:
+    virtual ~Client();
   };
 
   // Constants used to specify how we want packets sent from this socket.
@@ -71,7 +77,7 @@ class UdpSocket {
   // TaskRunner and Client must exist for the duration of the created socket's
   // lifetime.
   static ErrorOr<std::unique_ptr<UdpSocket>> Create(
-      TaskRunner* task_runner,
+      TaskRunner& task_runner,
       Client* client,
       const IPEndpoint& local_endpoint);
 

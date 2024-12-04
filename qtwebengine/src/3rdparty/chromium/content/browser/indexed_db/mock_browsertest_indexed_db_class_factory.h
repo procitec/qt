@@ -1,30 +1,20 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef CONTENT_BROWSER_INDEXED_DB_MOCK_BROWSERTEST_INDEXED_DB_CLASS_FACTORY_H_
 #define CONTENT_BROWSER_INDEXED_DB_MOCK_BROWSERTEST_INDEXED_DB_CLASS_FACTORY_H_
 
-#include <stdint.h>
-
 #include <map>
 #include <memory>
 #include <set>
 
-#include "components/services/storage/indexed_db/scopes/scopes_lock_manager.h"
+#include "base/task/sequenced_task_runner.h"
 #include "components/services/storage/indexed_db/transactional_leveldb/transactional_leveldb_factory.h"
-#include "components/services/storage/public/mojom/indexed_db_control_test.mojom.h"
-#include "content/browser/indexed_db/indexed_db_backing_store.h"
-#include "content/browser/indexed_db/indexed_db_class_factory.h"
-#include "content/browser/indexed_db/indexed_db_database.h"
-#include "content/browser/indexed_db/indexed_db_task_helper.h"
-#include "content/common/content_export.h"
-#include "third_party/blink/public/common/indexeddb/web_idb_types.h"
+#include "components/services/storage/privileged/mojom/indexed_db_control_test.mojom.h"
 
 namespace content {
 
-class IndexedDBConnection;
-class IndexedDBMetadataCoding;
 class LevelDBDirectTransaction;
 class LevelDBScope;
 class LevelDBScopes;
@@ -32,34 +22,16 @@ class LevelDBSnapshot;
 class TransactionalLevelDBTransaction;
 class TransactionalLevelDBDatabase;
 
-class CONTENT_EXPORT MockBrowserTestIndexedDBClassFactory
-    : public IndexedDBClassFactory,
-      public DefaultTransactionalLevelDBFactory,
+class MockBrowserTestIndexedDBClassFactory
+    : public DefaultTransactionalLevelDBFactory,
       public storage::mojom::MockFailureInjector {
  public:
   MockBrowserTestIndexedDBClassFactory();
   ~MockBrowserTestIndexedDBClassFactory() override;
 
-  TransactionalLevelDBFactory& transactional_leveldb_factory() override;
+  void Reset();
 
-  std::pair<std::unique_ptr<IndexedDBDatabase>, leveldb::Status>
-  CreateIndexedDBDatabase(
-      const base::string16& name,
-      IndexedDBBackingStore* backing_store,
-      IndexedDBFactory* factory,
-      TasksAvailableCallback tasks_available_callback,
-      std::unique_ptr<IndexedDBMetadataCoding> metadata_coding,
-      const IndexedDBDatabase::Identifier& unique_identifier,
-      ScopesLockManager* transaction_lock_manager) override;
-  std::unique_ptr<IndexedDBTransaction> CreateIndexedDBTransaction(
-      int64_t id,
-      IndexedDBConnection* connection,
-      const std::set<int64_t>& scope,
-      blink::mojom::IDBTransactionMode mode,
-      TasksAvailableCallback tasks_available_callback,
-      IndexedDBTransaction::TearDownCallback tear_down_callback,
-      IndexedDBBackingStore::Transaction* backing_store_transaction) override;
-
+  // DefaultTransactionalLevelDBFactory:
   std::unique_ptr<TransactionalLevelDBDatabase> CreateLevelDBDatabase(
       scoped_refptr<LevelDBState> state,
       std::unique_ptr<LevelDBScopes> scopes,
@@ -76,12 +48,12 @@ class CONTENT_EXPORT MockBrowserTestIndexedDBClassFactory
       base::WeakPtr<TransactionalLevelDBTransaction> txn,
       std::unique_ptr<LevelDBSnapshot> snapshot) override;
 
+  // storage::mojom::MockFailureInjector:
   void FailOperation(storage::mojom::FailClass failure_class,
                      storage::mojom::FailMethod failure_method,
                      int fail_on_instance_num,
                      int fail_on_call_num,
                      base::OnceClosure callback) override;
-  void Reset();
 
  private:
   storage::mojom::FailClass failure_class_;

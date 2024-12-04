@@ -18,7 +18,7 @@ cpp_sources = [
 ]
 
 objs_asm = []
-if ['x86', 'x86_64'].contains(cpu_family)
+if cpu_family in ['x86', 'x86_64']
   asm_sources = [
     'x86/cpuid.asm',
     'x86/dct.asm',
@@ -33,21 +33,42 @@ if ['x86', 'x86_64'].contains(cpu_family)
   ]
   objs_asm += asm_gen.process(asm_sources)
 elif cpu_family == 'arm'
-  cpp_sources += [
+  asm_sources = [
     'arm/copy_mb_neon.S',
     'arm/deblocking_neon.S',
     'arm/expand_picture_neon.S',
     'arm/intra_pred_common_neon.S',
     'arm/mc_neon.S',
   ]
+  if use_asm_gen
+    objs_asm = asm_gen.process(asm_sources)
+  else
+    cpp_sources += asm_sources
+  endif
 elif cpu_family == 'aarch64'
-  cpp_sources += [
+  asm_sources = [
     'arm64/copy_mb_aarch64_neon.S',
     'arm64/deblocking_aarch64_neon.S',
     'arm64/expand_picture_aarch64_neon.S',
     'arm64/intra_pred_common_aarch64_neon.S',
     'arm64/mc_aarch64_neon.S',
   ]
+  if use_asm_gen
+    objs_asm = asm_gen.process(asm_sources)
+  else
+    cpp_sources += asm_sources
+  endif
+elif cpu_family in ['loongarch32', 'loongarch64']
+  asm_sources = [
+    'loongarch/copy_mb_lsx.c',
+    'loongarch/deblock_lsx.c',
+    'loongarch/intra_pred_com_lsx.c',
+    'loongarch/intra_pred_com_lasx.c',
+    'loongarch/mc_chroma_lsx.c',
+    'loongarch/mc_horver_lsx.c',
+    'loongarch/satd_sad_lasx.c',
+  ]
+  cpp_sources += asm_sources
 else
   error('Unsupported cpu_family @0@'.format(cpu_family))
 endif

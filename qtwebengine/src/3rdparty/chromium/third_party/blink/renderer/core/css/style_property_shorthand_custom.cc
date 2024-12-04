@@ -19,9 +19,8 @@
  * Boston, MA 02110-1301, USA.
  */
 
+#include "third_party/blink/renderer/core/css/properties/longhands.h"
 #include "third_party/blink/renderer/core/style_property_shorthand.h"
-
-#include "base/stl_util.h"
 
 namespace blink {
 
@@ -36,16 +35,28 @@ const StylePropertyShorthand& transitionShorthandForParsing() {
       &GetCSSPropertyTransitionDelay(), &GetCSSPropertyTransitionProperty()};
   static StylePropertyShorthand transition_longhands(
       CSSPropertyID::kTransition, kTransitionProperties,
-      base::size(kTransitionProperties));
-  return transition_longhands;
+      std::size(kTransitionProperties));
+
+  static const CSSProperty* kTransitionPropertiesWithAnimationType[] = {
+      &GetCSSPropertyTransitionBehavior(), &GetCSSPropertyTransitionDuration(),
+      &GetCSSPropertyTransitionTimingFunction(),
+      &GetCSSPropertyTransitionDelay(), &GetCSSPropertyTransitionProperty()};
+  static StylePropertyShorthand transition_longhands_with_animation_type(
+      CSSPropertyID::kTransition, kTransitionPropertiesWithAnimationType,
+      std::size(kTransitionPropertiesWithAnimationType));
+
+  return RuntimeEnabledFeatures::CSSTransitionDiscreteEnabled()
+             ? transition_longhands_with_animation_type
+             : transition_longhands;
 }
 
 unsigned indexOfShorthandForLonghand(
     CSSPropertyID shorthand_id,
     const Vector<StylePropertyShorthand, 4>& shorthands) {
   for (unsigned i = 0; i < shorthands.size(); ++i) {
-    if (shorthands.at(i).id() == shorthand_id)
+    if (shorthands.at(i).id() == shorthand_id) {
       return i;
+    }
   }
   NOTREACHED();
   return 0;

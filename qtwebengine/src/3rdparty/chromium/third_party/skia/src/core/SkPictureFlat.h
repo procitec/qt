@@ -7,14 +7,20 @@
 #ifndef SkPictureFlat_DEFINED
 #define SkPictureFlat_DEFINED
 
-#include "include/core/SkCanvas.h"
-#include "include/core/SkPaint.h"
-#include "include/core/SkPicture.h"
-#include "include/private/SkChecksum.h"
-#include "src/core/SkPtrRecorder.h"
+#include "include/core/SkFlattenable.h"
+#include "include/core/SkRefCnt.h"
+#include "include/core/SkRegion.h"
+#include "include/core/SkTypeface.h"
+#include "include/private/base/SkAssert.h"
+#include "include/private/base/SkTo.h"
+#include "src/core/SkPicturePriv.h"
 #include "src/core/SkReadBuffer.h"
-#include "src/core/SkTDynamicHash.h"
-#include "src/core/SkWriteBuffer.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+
+enum class SkClipOp;
 
 /*
  * Note: While adding new DrawTypes, it is necessary to add to the end of this list
@@ -55,7 +61,7 @@ enum DrawType {
     RESTORE,
     ROTATE,
     SAVE,
-    SAVE_LAYER_SAVEFLAGS_DEPRECATED,
+    SAVE_LAYER_SAVEFLAGS_DEPRECATED_2015_REMOVED_12_2020,
     SCALE,
     SET_MATRIX,
     SKEW,
@@ -95,7 +101,7 @@ enum DrawType {
     DRAW_REGION,
     DRAW_VERTICES_OBJECT,
 
-    FLUSH,
+    FLUSH,  // no-op
 
     DRAW_EDGEAA_IMAGE_SET,
 
@@ -106,9 +112,19 @@ enum DrawType {
     DRAW_BEHIND_PAINT,
     CONCAT44,
     CLIP_SHADER_IN_PAINT,
-    MARK_CTM,
+    MARK_CTM, // deprecated
+    SET_M44,
 
-    LAST_DRAWTYPE_ENUM = MARK_CTM,
+    DRAW_IMAGE2,
+    DRAW_IMAGE_RECT2,
+    DRAW_IMAGE_LATTICE2,
+    DRAW_EDGEAA_IMAGE_SET2,
+
+    RESET_CLIP,
+
+    DRAW_SLUG,
+
+    LAST_DRAWTYPE_ENUM = DRAW_SLUG,
 };
 
 enum DrawVertexFlags {
@@ -119,8 +135,9 @@ enum DrawVertexFlags {
 };
 
 enum DrawAtlasFlags {
-    DRAW_ATLAS_HAS_COLORS   = 1 << 0,
-    DRAW_ATLAS_HAS_CULL     = 1 << 1,
+    DRAW_ATLAS_HAS_COLORS     = 1 << 0,
+    DRAW_ATLAS_HAS_CULL       = 1 << 1,
+    DRAW_ATLAS_HAS_SAMPLING   = 1 << 2,
 };
 
 enum DrawTextRSXformFlags {
@@ -128,12 +145,14 @@ enum DrawTextRSXformFlags {
 };
 
 enum SaveLayerRecFlatFlags {
-    SAVELAYERREC_HAS_BOUNDS     = 1 << 0,
-    SAVELAYERREC_HAS_PAINT      = 1 << 1,
-    SAVELAYERREC_HAS_BACKDROP   = 1 << 2,
-    SAVELAYERREC_HAS_FLAGS      = 1 << 3,
+    SAVELAYERREC_HAS_BOUNDS              = 1 << 0,
+    SAVELAYERREC_HAS_PAINT               = 1 << 1,
+    SAVELAYERREC_HAS_BACKDROP            = 1 << 2,
+    SAVELAYERREC_HAS_FLAGS               = 1 << 3,
     SAVELAYERREC_HAS_CLIPMASK_OBSOLETE   = 1 << 4,  // 6/13/2020
     SAVELAYERREC_HAS_CLIPMATRIX_OBSOLETE = 1 << 5,  // 6/13/2020
+    SAVELAYERREC_HAS_BACKDROP_SCALE      = 1 << 6,
+    SAVELAYERREC_HAS_MULTIPLE_FILTERS    = 1 << 7,
 };
 
 enum SaveBehindFlatFlags {
@@ -144,22 +163,22 @@ enum SaveBehindFlatFlags {
 // clipparams are packed in 5 bits
 //  doAA:1 | clipOp:4
 
+// Newly serialized pictures will only write kIntersect or kDifference.
 static inline uint32_t ClipParams_pack(SkClipOp op, bool doAA) {
     unsigned doAABit = doAA ? 1 : 0;
     return (doAABit << 4) | static_cast<int>(op);
 }
 
-template <typename T> T asValidEnum(SkReadBuffer* buffer, uint32_t candidate) {
-
-    if (buffer->validate(candidate <= static_cast<uint32_t>(T::kMax_EnumValue))) {
-        return static_cast<T>(candidate);
+// But old SKPs may have been serialized with the SK_SUPPORT_DEPRECATED_CLIPOP flag, so might
+// encounter expanding clip ops. Thus, this returns the clip op as the more general Region::Op.
+static inline SkRegion::Op ClipParams_unpackRegionOp(SkReadBuffer* buffer, uint32_t packed) {
+    uint32_t unpacked = packed & 0xF;
+    if (buffer->validate(unpacked <= SkRegion::kIntersect_Op ||
+                         (unpacked <= SkRegion::kReplace_Op &&
+                                buffer->isVersionLT(SkPicturePriv::kNoExpandingClipOps)))) {
+        return static_cast<SkRegion::Op>(unpacked);
     }
-
-    return T::kMax_EnumValue;
-}
-
-static inline SkClipOp ClipParams_unpackRegionOp(SkReadBuffer* buffer, uint32_t packed) {
-    return asValidEnum<SkClipOp>(buffer, packed & 0xF);
+    return SkRegion::kIntersect_Op;
 }
 
 static inline bool ClipParams_unpackDoAA(uint32_t packed) {

@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,11 +7,11 @@
 
 #include <vector>
 
-#include "base/macros.h"
 #include "components/viz/service/display_embedder/skia_output_device.h"
 #include "gpu/command_buffer/service/shared_context_state.h"
 #include "third_party/skia/include/core/SkColorSpace.h"
 #include "third_party/skia/include/core/SkImageInfo.h"
+#include "third_party/skia/include/gpu/graphite/BackendTexture.h"
 
 namespace viz {
 
@@ -23,19 +23,22 @@ class SkiaOutputDeviceOffscreen : public SkiaOutputDevice {
       bool has_alpha,
       gpu::MemoryTracker* memory_tracker,
       DidSwapBufferCompleteCallback did_swap_buffer_complete_callback);
+
+  SkiaOutputDeviceOffscreen(const SkiaOutputDeviceOffscreen&) = delete;
+  SkiaOutputDeviceOffscreen& operator=(const SkiaOutputDeviceOffscreen&) =
+      delete;
+
   ~SkiaOutputDeviceOffscreen() override;
 
   // SkiaOutputDevice implementation:
-  bool Reshape(const gfx::Size& size,
-               float device_scale_factor,
+  bool Reshape(const SkImageInfo& image_info,
                const gfx::ColorSpace& color_space,
-               gfx::BufferFormat format,
+               int sample_count,
+               float device_scale_factor,
                gfx::OverlayTransform transform) override;
-  void SwapBuffers(BufferPresentedCallback feedback,
-                   std::vector<ui::LatencyInfo> latency_info) override;
-  void PostSubBuffer(const gfx::Rect& rect,
-                     BufferPresentedCallback feedback,
-                     std::vector<ui::LatencyInfo> latency_info) override;
+  void Present(const absl::optional<gfx::Rect>& update_rect,
+               BufferPresentedCallback feedback,
+               OutputSurfaceFrame frame) override;
   void EnsureBackbuffer() override;
   void DiscardBackbuffer() override;
   SkSurface* BeginPaint(
@@ -47,15 +50,15 @@ class SkiaOutputDeviceOffscreen : public SkiaOutputDevice {
   const bool has_alpha_;
   sk_sp<SkSurface> sk_surface_;
   GrBackendTexture backend_texture_;
+  skgpu::graphite::BackendTexture graphite_texture_;
   bool supports_rgbx_ = true;
+  gfx::Size size_;
+  SkColorType sk_color_type_ = kUnknown_SkColorType;
+  sk_sp<SkColorSpace> sk_color_space_;
+  int sample_count_ = 1;
 
  private:
-  gfx::Size size_;
-  gfx::BufferFormat format_ = gfx::BufferFormat::RGBA_8888;
   uint64_t backbuffer_estimated_size_ = 0;
-  sk_sp<SkColorSpace> sk_color_space_;
-
-  DISALLOW_COPY_AND_ASSIGN(SkiaOutputDeviceOffscreen);
 };
 
 }  // namespace viz

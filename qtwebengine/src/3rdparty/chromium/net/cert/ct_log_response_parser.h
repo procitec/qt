@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,16 +8,13 @@
 #include <string>
 #include <vector>
 
-#include "base/strings/string_piece.h"
 #include "net/base/net_export.h"
 
 namespace base {
 class Value;
 }  // namespace base
 
-namespace net {
-
-namespace ct {
+namespace net::ct {
 struct SignedTreeHead;
 
 // Fills in |signed_tree_head| from its JSON representation in
@@ -31,7 +28,5 @@ NET_EXPORT bool FillConsistencyProof(
     const base::Value& json_signed_tree_head,
     std::vector<std::string>* consistency_proof);
 
-}  // namespace ct
-
-}  // namespace net
+}  // namespace net::ct
 #endif  // NET_CERT_CT_LOG_RESPONSE_PARSER_H_

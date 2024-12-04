@@ -1,4 +1,4 @@
-# Copyright 2018 The Chromium Authors. All rights reserved.
+# Copyright 2018 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 """Presubmit tests for /third_party/sqlite.
@@ -6,8 +6,9 @@
 Runs Python unit tests in /third_party/sqlite/scripts on upload.
 """
 
+PRESUBMIT_VERSION = '2.0.0'
 
-def CheckChangeOnUpload(input_api, output_api):
+def CheckPythonUnittestsPass(input_api, output_api):
     results = []
     this_dir = input_api.PresubmitLocalPath()
 
@@ -17,8 +18,6 @@ def CheckChangeOnUpload(input_api, output_api):
             output_api,
             input_api.os_path.join(this_dir, 'scripts'),
             files_to_check=['.*unittest.py$'],
-            env=None,
-            run_on_python2=False,
-            run_on_python3=True))
+            env=None))
 
     return results

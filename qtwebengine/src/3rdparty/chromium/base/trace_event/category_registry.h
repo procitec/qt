@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,10 +8,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "base/atomicops.h"
+#include <atomic>
+
 #include "base/base_export.h"
 #include "base/check_op.h"
-#include "base/stl_util.h"
+#include "base/containers/span.h"
+#include "base/memory/raw_ptr.h"
 #include "base/trace_event/builtin_categories.h"
 #include "base/trace_event/common/trace_event_common.h"
 #include "base/trace_event/trace_category.h"
@@ -31,20 +33,6 @@ class TraceLog;
 // without requiring static initializers.
 class BASE_EXPORT CategoryRegistry {
  public:
-  // Allows for-each iterations over a slice of the categories array.
-  class Range {
-   public:
-    Range(TraceCategory* begin, TraceCategory* end) : begin_(begin), end_(end) {
-      DCHECK_LE(begin, end);
-    }
-    TraceCategory* begin() const { return begin_; }
-    TraceCategory* end() const { return end_; }
-
-   private:
-    TraceCategory* const begin_;
-    TraceCategory* const end_;
-  };
-
   // Known categories.
   static TraceCategory* const kCategoryExhausted;
   static TraceCategory* const kCategoryMetadata;
@@ -70,8 +58,8 @@ class BASE_EXPORT CategoryRegistry {
   // TraceCategory owned by the registry.
   static constexpr TraceCategory* GetBuiltinCategoryByName(
       const char* category_group) {
-#if defined(OS_WIN) && defined(COMPONENT_BUILD)
-    // The address cannot be evaluated at compile-time in Windows compoment
+#if BUILDFLAG(IS_WIN) && defined(COMPONENT_BUILD)
+    // The address cannot be evaluated at compile-time in Windows component
     // builds.
     return nullptr;
 #else
@@ -108,7 +96,7 @@ class BASE_EXPORT CategoryRegistry {
   using CategoryInitializerFn = void (*)(TraceCategory*);
 
   // The max number of trace categories that can be recorded.
-  static constexpr size_t kMaxCategories = 300;
+  static constexpr size_t kMaxCategories = 350;
 
   // Checks that there is enough space for all builtin categories.
   static_assert(BuiltinCategories::Size() <= kMaxCategories,
@@ -131,7 +119,7 @@ class BASE_EXPORT CategoryRegistry {
 
   // Allows to iterate over the valid categories in a for-each loop.
   // This includes builtin categories such as __metadata.
-  static Range GetAllCategories();
+  static base::span<TraceCategory> GetAllCategories();
 
   // Returns whether |category| correctly points at |categories_| array entry.
   static bool IsValidCategoryPtr(const TraceCategory* category);
@@ -140,7 +128,7 @@ class BASE_EXPORT CategoryRegistry {
   static TraceCategory categories_[kMaxCategories];
 
   // Contains the number of created categories.
-  static base::subtle::AtomicWord category_index_;
+  static std::atomic<size_t> category_index_;
 };
 
 }  // namespace trace_event

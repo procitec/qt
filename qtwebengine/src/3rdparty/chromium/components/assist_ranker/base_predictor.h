@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,8 +8,6 @@
 #include <memory>
 #include <string>
 
-#include "base/files/file_path.h"
-#include "base/memory/weak_ptr.h"
 #include "components/assist_ranker/predictor_config.h"
 #include "components/assist_ranker/ranker_model_loader.h"
 #include "services/metrics/public/cpp/ukm_source_id.h"
@@ -38,9 +36,13 @@ class RankerModel;
 // static validation function with the following signature:
 //
 // static RankerModelStatus ValidateModel(const RankerModel& model);
-class BasePredictor : public base::SupportsWeakPtr<BasePredictor> {
+class BasePredictor {
  public:
   BasePredictor(const PredictorConfig& config);
+
+  BasePredictor(const BasePredictor&) = delete;
+  BasePredictor& operator=(const BasePredictor&) = delete;
+
   virtual ~BasePredictor();
 
   // Returns true if the predictor is ready to make predictions.
@@ -84,8 +86,6 @@ class BasePredictor : public base::SupportsWeakPtr<BasePredictor> {
   bool is_ready_ = false;
   bool is_query_enabled_ = false;
   PredictorConfig config_;
-
-  DISALLOW_COPY_AND_ASSIGN(BasePredictor);
 };
 
 }  // namespace assist_ranker

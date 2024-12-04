@@ -1,15 +1,35 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "ui/views/win/pen_event_processor.h"
 
+#include "base/test/task_environment.h"
+#include "base/win/scoped_winrt_initializer.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gfx/sequential_id_generator.h"
 
 namespace views {
 
-TEST(PenProcessorTest, TypicalCaseDMDisabled) {
+class PenProcessorTest : public ::testing::Test {
+ public:
+  PenProcessorTest() = default;
+  ~PenProcessorTest() override = default;
+
+  // testing::Test overrides.
+  void SetUp() override;
+
+ private:
+  base::win::ScopedWinrtInitializer scoped_winrt_initializer_;
+  base::test::TaskEnvironment task_environment_;
+};
+
+void PenProcessorTest::SetUp() {
+  ASSERT_TRUE(scoped_winrt_initializer_.Succeeded());
+}
+
+TEST_F(PenProcessorTest, TypicalCaseDMDisabled) {
+  views::PenIdHandler::ScopedPenIdStaticsForTesting scoper(nullptr, nullptr);
   ui::SequentialIDGenerator id_generator(0);
   PenEventProcessor processor(&id_generator,
                               /*direct_manipulation_enabled*/ false);
@@ -63,7 +83,8 @@ TEST(PenProcessorTest, TypicalCaseDMDisabled) {
   EXPECT_EQ(ui::ET_MOUSE_EXITED, event->AsMouseEvent()->type());
 }
 
-TEST(PenProcessorTest, TypicalCaseDMEnabled) {
+TEST_F(PenProcessorTest, TypicalCaseDMEnabled) {
+  views::PenIdHandler::ScopedPenIdStaticsForTesting scoper(nullptr, nullptr);
   ui::SequentialIDGenerator id_generator(0);
   PenEventProcessor processor(&id_generator,
                               /*direct_manipulation_enabled*/ true);
@@ -128,7 +149,8 @@ TEST(PenProcessorTest, TypicalCaseDMEnabled) {
   EXPECT_EQ(ui::ET_MOUSE_EXITED, event->AsMouseEvent()->type());
 }
 
-TEST(PenProcessorTest, UnpairedPointerDownTouchDMEnabled) {
+TEST_F(PenProcessorTest, UnpairedPointerDownTouchDMEnabled) {
+  views::PenIdHandler::ScopedPenIdStaticsForTesting scoper(nullptr, nullptr);
   ui::SequentialIDGenerator id_generator(0);
   PenEventProcessor processor(&id_generator,
                               /*direct_manipulation_enabled*/ true);
@@ -146,7 +168,8 @@ TEST(PenProcessorTest, UnpairedPointerDownTouchDMEnabled) {
   EXPECT_EQ(nullptr, event.get());
 }
 
-TEST(PenProcessorTest, UnpairedPointerDownMouseDMEnabled) {
+TEST_F(PenProcessorTest, UnpairedPointerDownMouseDMEnabled) {
+  views::PenIdHandler::ScopedPenIdStaticsForTesting scoper(nullptr, nullptr);
   ui::SequentialIDGenerator id_generator(0);
   PenEventProcessor processor(&id_generator,
                               /*direct_manipulation_enabled*/ true);
@@ -163,7 +186,8 @@ TEST(PenProcessorTest, UnpairedPointerDownMouseDMEnabled) {
   EXPECT_EQ(nullptr, event.get());
 }
 
-TEST(PenProcessorTest, TouchFlagDMEnabled) {
+TEST_F(PenProcessorTest, TouchFlagDMEnabled) {
+  views::PenIdHandler::ScopedPenIdStaticsForTesting scoper(nullptr, nullptr);
   ui::SequentialIDGenerator id_generator(0);
   PenEventProcessor processor(&id_generator,
                               /*direct_manipulation_enabled*/ true);
@@ -193,7 +217,8 @@ TEST(PenProcessorTest, TouchFlagDMEnabled) {
   EXPECT_FALSE(event->flags() & ui::EF_LEFT_MOUSE_BUTTON);
 }
 
-TEST(PenProcessorTest, MouseFlagDMEnabled) {
+TEST_F(PenProcessorTest, MouseFlagDMEnabled) {
+  views::PenIdHandler::ScopedPenIdStaticsForTesting scoper(nullptr, nullptr);
   ui::SequentialIDGenerator id_generator(0);
   PenEventProcessor processor(&id_generator,
                               /*direct_manipulation_enabled*/ true);
@@ -226,7 +251,8 @@ TEST(PenProcessorTest, MouseFlagDMEnabled) {
             event->AsMouseEvent()->changed_button_flags());
 }
 
-TEST(PenProcessorTest, PenEraserFlagDMEnabled) {
+TEST_F(PenProcessorTest, PenEraserFlagDMEnabled) {
+  views::PenIdHandler::ScopedPenIdStaticsForTesting scoper(nullptr, nullptr);
   ui::SequentialIDGenerator id_generator(0);
   PenEventProcessor processor(&id_generator,
                               /*direct_manipulation_enabled*/ true);
@@ -257,6 +283,46 @@ TEST(PenProcessorTest, PenEraserFlagDMEnabled) {
   EXPECT_EQ(ui::ET_TOUCH_RELEASED, event->AsTouchEvent()->type());
   EXPECT_EQ(ui::EventPointerType::kEraser,
             event->AsTouchEvent()->pointer_details().pointer_type);
+}
+
+TEST_F(PenProcessorTest, MultiPenDMEnabled) {
+  views::PenIdHandler::ScopedPenIdStaticsForTesting scoper(nullptr, nullptr);
+  ui::SequentialIDGenerator id_generator(0);
+  PenEventProcessor processor(&id_generator,
+                              /*direct_manipulation_enabled*/ true);
+
+  const int kPenCount = 3;
+  POINTER_PEN_INFO pen_info[kPenCount];
+  for (auto& i : pen_info) {
+    memset(&i, 0, sizeof(POINTER_PEN_INFO));
+  }
+
+  gfx::Point point(100, 100);
+
+  for (int i = 0; i < kPenCount; i++) {
+    pen_info[i].pointerInfo.pointerFlags =
+        POINTER_FLAG_INCONTACT | POINTER_FLAG_FIRSTBUTTON;
+    pen_info[i].pointerInfo.ButtonChangeType = POINTER_CHANGE_FIRSTBUTTON_DOWN;
+
+    int pointer_id = i;
+    std::unique_ptr<ui::Event> event =
+        processor.GenerateEvent(WM_POINTERDOWN, pointer_id, pen_info[i], point);
+    ASSERT_TRUE(event);
+    ASSERT_TRUE(event->IsTouchEvent());
+    EXPECT_EQ(ui::ET_TOUCH_PRESSED, event->AsTouchEvent()->type());
+  }
+
+  for (int i = 0; i < kPenCount; i++) {
+    pen_info[i].pointerInfo.pointerFlags = POINTER_FLAG_UP;
+    pen_info[i].pointerInfo.ButtonChangeType = POINTER_CHANGE_FIRSTBUTTON_UP;
+
+    int pointer_id = i;
+    std::unique_ptr<ui::Event> event =
+        processor.GenerateEvent(WM_POINTERUP, pointer_id, pen_info[i], point);
+    ASSERT_TRUE(event);
+    ASSERT_TRUE(event->IsTouchEvent());
+    EXPECT_EQ(ui::ET_TOUCH_RELEASED, event->AsTouchEvent()->type());
+  }
 }
 
 }  // namespace views

@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,10 +7,10 @@
 #include <deque>
 #include <vector>
 
+#include "base/check_op.h"
 #include "base/command_line.h"
 #include "base/format_macros.h"
 #include "base/no_destructor.h"
-#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_split.h"
@@ -77,7 +77,7 @@ void SetSwitchesFromCommandLine(const base::CommandLine& command_line,
   // Go through the argv, skipping the exec path. Stop if there are too many
   // switches to hold in crash keys.
   for (size_t i = 1; i < argv.size(); ++i) {
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
     std::string switch_str = base::WideToUTF8(argv[i]);
 #else
     std::string switch_str = argv[i];
@@ -116,14 +116,19 @@ static PrinterInfoKey printer_info_keys[] = {
     {"prn-info-4", PrinterInfoKey::Tag::kArray},
 };
 
-ScopedPrinterInfo::ScopedPrinterInfo(base::StringPiece data) {
-  std::vector<base::StringPiece> info = base::SplitStringPiece(
-      data, ";", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
-  for (size_t i = 0; i < base::size(printer_info_keys); ++i) {
-    if (i < info.size())
-      printer_info_keys[i].Set(info[i]);
-    else
+ScopedPrinterInfo::ScopedPrinterInfo(const std::string& printer_name,
+                                     std::vector<std::string> data) {
+  CHECK_LE(data.size(), std::size(printer_info_keys));
+  for (size_t i = 0; i < std::size(printer_info_keys); ++i) {
+    if (i < data.size()) {
+      printer_info_keys[i].Set(data[i]);
+    } else {
       printer_info_keys[i].Clear();
+    }
+  }
+  if (data.empty()) {
+    // No keys were provided.  Just store the printer_name.
+    printer_info_keys[0].Set(printer_name);
   }
 }
 

@@ -1,47 +1,12 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtQml module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
-#include "qv4lookup_p.h"
-#include "qv4functionobject_p.h"
-#include "qv4jscall_p.h"
-#include "qv4string_p.h"
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+
+#include <private/qv4functionobject_p.h>
 #include <private/qv4identifiertable_p.h>
+#include <private/qv4lookup_p.h>
 #include <private/qv4qobjectwrapper_p.h>
+#include <private/qv4runtime_p.h>
+#include <private/qv4stackframe_p.h>
 
 QT_BEGIN_NAMESPACE
 
@@ -75,6 +40,9 @@ ReturnedValue Lookup::resolveGetter(ExecutionEngine *engine, const Object *objec
 
 ReturnedValue Lookup::resolvePrimitiveGetter(ExecutionEngine *engine, const Value &object)
 {
+    // Otherwise we cannot trust the protoIds
+    Q_ASSERT(engine->isInitialized);
+
     primitiveLookup.type = object.type();
     switch (primitiveLookup.type) {
     case Value::Undefined_Type:
@@ -86,12 +54,12 @@ ReturnedValue Lookup::resolvePrimitiveGetter(ExecutionEngine *engine, const Valu
         return engine->throwTypeError(message);
     }
     case Value::Boolean_Type:
-        primitiveLookup.proto = engine->booleanPrototype()->d();
+        primitiveLookup.proto.set(engine, engine->booleanPrototype()->d());
         break;
     case Value::Managed_Type: {
         // ### Should move this over to the Object path, as strings also have an internalClass
         Q_ASSERT(object.isStringOrSymbol());
-        primitiveLookup.proto = static_cast<const Managed &>(object).internalClass()->prototype;
+        primitiveLookup.proto.set(engine, static_cast<const Managed &>(object).internalClass()->prototype);
         Q_ASSERT(primitiveLookup.proto);
         Scope scope(engine);
         ScopedString name(scope, engine->currentStackFrame->v4Function->compilationUnit->runtimeStrings[nameIndex]);
@@ -104,7 +72,7 @@ ReturnedValue Lookup::resolvePrimitiveGetter(ExecutionEngine *engine, const Valu
     }
     case Value::Integer_Type:
     default: // Number
-        primitiveLookup.proto = engine->numberPrototype()->d();
+        primitiveLookup.proto.set(engine, engine->numberPrototype()->d());
     }
 
     PropertyKey name = engine->identifierTable->asPropertyKey(engine->currentStackFrame->v4Function->compilationUnit->runtimeStrings[nameIndex]);
@@ -120,6 +88,9 @@ ReturnedValue Lookup::resolvePrimitiveGetter(ExecutionEngine *engine, const Valu
 
 ReturnedValue Lookup::resolveGlobalGetter(ExecutionEngine *engine)
 {
+    // Otherwise we cannot trust the protoIds
+    Q_ASSERT(engine->isInitialized);
+
     Object *o = engine->globalObject;
     PropertyKey name = engine->identifierTable->asPropertyKey(engine->currentStackFrame->v4Function->compilationUnit->runtimeStrings[nameIndex]);
     protoLookup.protoId = o->internalClass()->protoId;
@@ -151,9 +122,10 @@ static inline void setupObjectLookupTwoClasses(Lookup *l, const Lookup &first, c
     const uint offset1 = first.objectLookup.offset;
     Heap::InternalClass *ic2 = second.objectLookup.ic;
     const uint offset2 = second.objectLookup.offset;
+    auto engine = ic1->engine;
 
-    l->objectLookupTwoClasses.ic = ic1;
-    l->objectLookupTwoClasses.ic2 = ic2;
+    l->objectLookupTwoClasses.ic.set(engine, ic1);
+    l->objectLookupTwoClasses.ic2.set(engine, ic2);
     l->objectLookupTwoClasses.offset = offset1;
     l->objectLookupTwoClasses.offset2 = offset2;
 }
@@ -179,6 +151,7 @@ ReturnedValue Lookup::getterTwoClasses(Lookup *l, ExecutionEngine *engine, const
         Lookup second;
         memset(&second, 0, sizeof(Lookup));
         second.nameIndex = l->nameIndex;
+        second.forCall = l->forCall;
         second.getter = getterGeneric;
         const ReturnedValue result = second.resolveGetter(engine, o);
 
@@ -231,6 +204,21 @@ ReturnedValue Lookup::getterFallback(Lookup *l, ExecutionEngine *engine, const V
     return o->get(name);
 }
 
+ReturnedValue Lookup::getterFallbackAsVariant(
+        Lookup *l, ExecutionEngine *engine, const Value &object)
+{
+    if (&Lookup::getterFallback == &Lookup::getterFallbackAsVariant) {
+        // Certain compilers, e.g. MSVC, will "helpfully" deduplicate methods that are completely
+        // equal. As a result, the pointers are the same, which wreaks havoc on the logic that
+        // decides how to retrieve the property.
+        qFatal("Your C++ compiler is broken.");
+    }
+
+    // This getter just marks the presence of a fallback lookup with variant conversion.
+    // It only does anything with it when running AOT-compiled code.
+    return getterFallback(l, engine, object);
+}
+
 ReturnedValue Lookup::getter0MemberData(Lookup *l, ExecutionEngine *engine, const Value &object)
 {
     // we can safely cast to a QV4::Object here. If object is actually a string,
@@ -257,6 +245,9 @@ ReturnedValue Lookup::getter0Inline(Lookup *l, ExecutionEngine *engine, const Va
 
 ReturnedValue Lookup::getterProto(Lookup *l, ExecutionEngine *engine, const Value &object)
 {
+    // Otherwise we cannot trust the protoIds
+    Q_ASSERT(engine->isInitialized);
+
     // we can safely cast to a QV4::Object here. If object is actually a string,
     // the internal class won't match
     Heap::Object *o = static_cast<Heap::Object *>(object.heapObject());
@@ -314,6 +305,9 @@ ReturnedValue Lookup::getter0MemberDatagetter0MemberData(Lookup *l, ExecutionEng
 
 ReturnedValue Lookup::getterProtoTwoClasses(Lookup *l, ExecutionEngine *engine, const Value &object)
 {
+    // Otherwise we cannot trust the protoIds
+    Q_ASSERT(engine->isInitialized);
+
     // we can safely cast to a QV4::Object here. If object is actually a string,
     // the internal class won't match
     Heap::Object *o = static_cast<Heap::Object *>(object.heapObject());
@@ -349,6 +343,9 @@ ReturnedValue Lookup::getterAccessor(Lookup *l, ExecutionEngine *engine, const V
 
 ReturnedValue Lookup::getterProtoAccessor(Lookup *l, ExecutionEngine *engine, const Value &object)
 {
+    // Otherwise we cannot trust the protoIds
+    Q_ASSERT(engine->isInitialized);
+
     // we can safely cast to a QV4::Object here. If object is actually a string,
     // the internal class won't match
     Heap::Object *o = static_cast<Heap::Object *>(object.heapObject());
@@ -365,6 +362,9 @@ ReturnedValue Lookup::getterProtoAccessor(Lookup *l, ExecutionEngine *engine, co
 
 ReturnedValue Lookup::getterProtoAccessorTwoClasses(Lookup *l, ExecutionEngine *engine, const Value &object)
 {
+    // Otherwise we cannot trust the protoIds
+    Q_ASSERT(engine->isInitialized);
+
     // we can safely cast to a QV4::Object here. If object is actually a string,
     // the internal class won't match
     Heap::Object *o = static_cast<Heap::Object *>(object.heapObject());
@@ -412,12 +412,49 @@ ReturnedValue Lookup::getterQObject(Lookup *lookup, ExecutionEngine *engine, con
         return Lookup::getterGeneric(lookup, engine, object);
     };
 
-    return QObjectWrapper::lookupGetterImpl(
-                lookup, engine, object, /*useOriginalProperty*/ false, revertLookup);
+    const QObjectWrapper::Flags flags = lookup->forCall
+            ? QObjectWrapper::AllowOverride
+            : (QObjectWrapper::AllowOverride | QObjectWrapper::AttachMethods);
+
+    return QObjectWrapper::lookupPropertyGetterImpl(lookup, engine, object, flags, revertLookup);
+}
+
+ReturnedValue Lookup::getterQObjectAsVariant(
+        Lookup *lookup, ExecutionEngine *engine, const Value &object)
+{
+    if (&Lookup::getterQObject == &Lookup::getterQObjectAsVariant) {
+        // Certain compilers, e.g. MSVC, will "helpfully" deduplicate methods that are completely
+        // equal. As a result, the pointers are the same, which wreaks havoc on the logic that
+        // decides how to retrieve the property.
+        qFatal("Your C++ compiler is broken.");
+    }
+
+    // This getter marks the presence of a qobjectlookup with variant conversion.
+    // It only does anything with it when running AOT-compiled code.
+    return getterQObject(lookup, engine, object);
+}
+
+ReturnedValue Lookup::getterQObjectMethod(Lookup *lookup, ExecutionEngine *engine, const Value &object)
+{
+    const auto revertLookup = [lookup, engine, &object]() {
+        lookup->qobjectMethodLookup.propertyCache->release();
+        lookup->qobjectMethodLookup.propertyCache = nullptr;
+        lookup->getter = Lookup::getterGeneric;
+        return Lookup::getterGeneric(lookup, engine, object);
+    };
+
+    const QObjectWrapper::Flags flags = lookup->forCall
+            ? QObjectWrapper::AllowOverride
+            : (QObjectWrapper::AllowOverride | QObjectWrapper::AttachMethods);
+
+    return QObjectWrapper::lookupMethodGetterImpl(lookup, engine, object, flags, revertLookup);
 }
 
 ReturnedValue Lookup::primitiveGetterProto(Lookup *l, ExecutionEngine *engine, const Value &object)
 {
+    // Otherwise we cannot trust the protoIds
+    Q_ASSERT(engine->isInitialized);
+
     if (object.type() == l->primitiveLookup.type && !object.isObject()) {
         Heap::Object *o = l->primitiveLookup.proto;
         if (l->primitiveLookup.protoId == o->internalClass->protoId)
@@ -429,6 +466,9 @@ ReturnedValue Lookup::primitiveGetterProto(Lookup *l, ExecutionEngine *engine, c
 
 ReturnedValue Lookup::primitiveGetterAccessor(Lookup *l, ExecutionEngine *engine, const Value &object)
 {
+    // Otherwise we cannot trust the protoIds
+    Q_ASSERT(engine->isInitialized);
+
     if (object.type() == l->primitiveLookup.type && !object.isObject()) {
         Heap::Object *o = l->primitiveLookup.proto;
         if (l->primitiveLookup.protoId == o->internalClass->protoId) {
@@ -460,6 +500,9 @@ ReturnedValue Lookup::globalGetterGeneric(Lookup *l, ExecutionEngine *engine)
 
 ReturnedValue Lookup::globalGetterProto(Lookup *l, ExecutionEngine *engine)
 {
+    // Otherwise we cannot trust the protoIds
+    Q_ASSERT(engine->isInitialized);
+
     Heap::Object *o = engine->globalObject->d();
     if (l->protoLookup.protoId == o->internalClass->protoId)
         return l->protoLookup.data->asReturnedValue();
@@ -469,6 +512,9 @@ ReturnedValue Lookup::globalGetterProto(Lookup *l, ExecutionEngine *engine)
 
 ReturnedValue Lookup::globalGetterProtoAccessor(Lookup *l, ExecutionEngine *engine)
 {
+    // Otherwise we cannot trust the protoIds
+    Q_ASSERT(engine->isInitialized);
+
     Heap::Object *o = engine->globalObject->d();
     if (l->protoLookup.protoId == o->internalClass->protoId) {
         const Value *getter = l->protoLookup.data;
@@ -520,8 +566,9 @@ bool Lookup::setterTwoClasses(Lookup *l, ExecutionEngine *engine, Value &object,
         }
 
         if (l->setter == Lookup::setter0MemberData || l->setter == Lookup::setter0Inline) {
-            l->objectLookupTwoClasses.ic = ic;
-            l->objectLookupTwoClasses.ic2 = ic;
+            auto engine = ic->engine;
+            l->objectLookupTwoClasses.ic.set(engine, ic);
+            l->objectLookupTwoClasses.ic2.set(engine, ic);
             l->objectLookupTwoClasses.offset = index;
             l->objectLookupTwoClasses.offset2 = index;
             l->setter = setter0setter0;
@@ -544,6 +591,21 @@ bool Lookup::setterFallback(Lookup *l, ExecutionEngine *engine, Value &object, c
 
     ScopedString name(scope, engine->currentStackFrame->v4Function->compilationUnit->runtimeStrings[l->nameIndex]);
     return o->put(name, value);
+}
+
+bool Lookup::setterFallbackAsVariant(
+        Lookup *l, ExecutionEngine *engine, Value &object, const Value &value)
+{
+    if (&Lookup::setterFallback == &Lookup::setterFallbackAsVariant) {
+        // Certain compilers, e.g. MSVC, will "helpfully" deduplicate methods that are completely
+        // equal. As a result, the pointers are the same, which wreaks havoc on the logic that
+        // decides how to retrieve the property.
+        qFatal("Your C++ compiler is broken.");
+    }
+
+    // This setter just marks the presence of a fallback lookup with QVariant conversion.
+    // It only does anything with it when running AOT-compiled code.
+    return setterFallback(l, engine, object, value);
 }
 
 bool Lookup::setter0MemberData(Lookup *l, ExecutionEngine *engine, Value &object, const Value &value)
@@ -588,6 +650,9 @@ bool Lookup::setter0setter0(Lookup *l, ExecutionEngine *engine, Value &object, c
 
 bool Lookup::setterInsert(Lookup *l, ExecutionEngine *engine, Value &object, const Value &value)
 {
+    // Otherwise we cannot trust the protoIds
+    Q_ASSERT(engine->isInitialized);
+
     Object *o = static_cast<Object *>(object.managed());
     if (o && o->internalClass()->protoId == l->insertionLookup.protoId) {
         o->setInternalClass(l->insertionLookup.newClass);
@@ -598,6 +663,29 @@ bool Lookup::setterInsert(Lookup *l, ExecutionEngine *engine, Value &object, con
     l->setter = setterFallback;
     return setterFallback(l, engine, object, value);
 }
+
+bool Lookup::setterQObject(Lookup *l, ExecutionEngine *engine, Value &object, const Value &v)
+{
+    // This setter just marks the presence of a qobjectlookup. It only does anything with it when
+    // running AOT-compiled code, though.
+    return setterFallback(l, engine, object, v);
+}
+
+bool Lookup::setterQObjectAsVariant(
+        Lookup *l, ExecutionEngine *engine, Value &object, const Value &v)
+{
+    if (&Lookup::setterQObject == &Lookup::setterQObjectAsVariant) {
+        // Certain compilers, e.g. MSVC, will "helpfully" deduplicate methods that are completely
+        // equal. As a result, the pointers are the same, which wreaks havoc on the logic that
+        // decides how to retrieve the property.
+        qFatal("Your C++ compiler is broken.");
+    }
+
+    // This setter marks the presence of a qobjectlookup with QVariant conversion.
+    // It only does anything with it when running AOT-compiled code.
+    return setterQObject(l, engine, object, v);
+}
+
 
 bool Lookup::arrayLengthSetter(Lookup *, ExecutionEngine *engine, Value &object, const Value &value)
 {

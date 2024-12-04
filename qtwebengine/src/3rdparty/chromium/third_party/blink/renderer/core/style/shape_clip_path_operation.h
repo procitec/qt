@@ -32,52 +32,51 @@
 
 #include "third_party/blink/renderer/core/style/basic_shapes.h"
 #include "third_party/blink/renderer/core/style/clip_path_operation.h"
+#include "third_party/blink/renderer/core/style/computed_style_constants.h"
 #include "third_party/blink/renderer/platform/graphics/path.h"
 
 namespace blink {
 
 class ShapeClipPathOperation final : public ClipPathOperation {
  public:
-  static scoped_refptr<ShapeClipPathOperation> Create(
-      scoped_refptr<BasicShape> shape) {
-    return base::AdoptRef(new ShapeClipPathOperation(std::move(shape)));
+  ShapeClipPathOperation(scoped_refptr<const BasicShape> shape,
+                         GeometryBox geometry_box)
+      : shape_(std::move(shape)), geometry_box_(geometry_box) {
+    DCHECK(shape_);
   }
 
   const BasicShape* GetBasicShape() const { return shape_.get(); }
-  bool IsValid() const { return shape_.get(); }
-  Path GetPath(const FloatRect& bounding_rect) const {
-    DCHECK(shape_);
+  Path GetPath(const gfx::RectF& bounding_rect, float zoom) const {
     Path path;
-    shape_->GetPath(path, bounding_rect);
-    path.SetWindRule(shape_->GetWindRule());
+    shape_->GetPath(path, bounding_rect, zoom);
     return path;
   }
 
+  GeometryBox GetGeometryBox() const { return geometry_box_; }
+
  private:
   bool operator==(const ClipPathOperation&) const override;
-  OperationType GetType() const override { return SHAPE; }
+  OperationType GetType() const override { return kShape; }
 
-  ShapeClipPathOperation(scoped_refptr<BasicShape> shape)
-      : shape_(std::move(shape)) {}
-
-  scoped_refptr<BasicShape> shape_;
+  scoped_refptr<const BasicShape> shape_;
+  GeometryBox geometry_box_;
 };
 
 template <>
 struct DowncastTraits<ShapeClipPathOperation> {
   static bool AllowFrom(const ClipPathOperation& op) {
-    return op.GetType() == ClipPathOperation::SHAPE;
+    return op.GetType() == ClipPathOperation::kShape;
   }
 };
 
 inline bool ShapeClipPathOperation::operator==(
     const ClipPathOperation& o) const {
-  if (!IsSameType(o))
+  if (!IsSameType(o)) {
     return false;
-  BasicShape* other_shape = To<ShapeClipPathOperation>(o).shape_.get();
-  if (!shape_.get() || !other_shape)
-    return static_cast<bool>(shape_.get()) == static_cast<bool>(other_shape);
-  return *shape_ == *other_shape;
+  }
+  auto& other_shape = To<ShapeClipPathOperation>(o);
+  return *shape_ == *other_shape.shape_ &&
+         geometry_box_ == other_shape.geometry_box_;
 }
 
 }  // namespace blink

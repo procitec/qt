@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,9 +12,16 @@
 #include "mojo/core/platform_handle_dispatcher.h"
 #include "mojo/core/ports/event.h"
 #include "mojo/core/shared_buffer_dispatcher.h"
+#include "third_party/abseil-cpp/absl/base/attributes.h"
 
 namespace mojo {
 namespace core {
+
+namespace {
+
+ABSL_CONST_INIT thread_local bool is_extracting_handles_from_message = false;
+
+}  // namespace
 
 Dispatcher::DispatcherInTransit::DispatcherInTransit() = default;
 
@@ -22,6 +29,16 @@ Dispatcher::DispatcherInTransit::DispatcherInTransit(
     const DispatcherInTransit& other) = default;
 
 Dispatcher::DispatcherInTransit::~DispatcherInTransit() = default;
+
+// static
+void Dispatcher::SetExtractingHandlesFromMessage(bool extracting) {
+  is_extracting_handles_from_message = extracting;
+}
+
+// static
+void Dispatcher::AssertNotExtractingHandlesFromMessage() {
+  DCHECK(!is_extracting_handles_from_message);
+}
 
 MojoResult Dispatcher::WatchDispatcher(scoped_refptr<Dispatcher> dispatcher,
                                        MojoHandleSignals signals,
@@ -88,7 +105,8 @@ MojoResult Dispatcher::WriteData(const void* elements,
 }
 
 MojoResult Dispatcher::BeginWriteData(void** buffer,
-                                      uint32_t* buffer_num_bytes) {
+                                      uint32_t* buffer_num_bytes,
+                                      MojoBeginWriteDataFlags flags) {
   return MOJO_RESULT_INVALID_ARGUMENT;
 }
 
@@ -96,12 +114,12 @@ MojoResult Dispatcher::EndWriteData(uint32_t num_bytes_written) {
   return MOJO_RESULT_INVALID_ARGUMENT;
 }
 
-MojoResult Dispatcher::AttachMessagePipe(base::StringPiece name,
+MojoResult Dispatcher::AttachMessagePipe(std::string_view name,
                                          ports::PortRef remote_peer_port) {
   return MOJO_RESULT_INVALID_ARGUMENT;
 }
 
-MojoResult Dispatcher::ExtractMessagePipe(base::StringPiece name,
+MojoResult Dispatcher::ExtractMessagePipe(std::string_view name,
                                           MojoHandle* message_pipe_handle) {
   return MOJO_RESULT_INVALID_ARGUMENT;
 }

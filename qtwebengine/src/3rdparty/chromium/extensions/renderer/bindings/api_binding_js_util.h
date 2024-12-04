@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,7 +7,7 @@
 
 #include <string>
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "gin/wrappable.h"
 #include "v8/include/v8.h"
 
@@ -30,6 +30,10 @@ class APIBindingJSUtil final : public gin::Wrappable<APIBindingJSUtil> {
                    APIRequestHandler* request_handler,
                    APIEventHandler* event_handler,
                    ExceptionHandler* exception_handler);
+
+  APIBindingJSUtil(const APIBindingJSUtil&) = delete;
+  APIBindingJSUtil& operator=(const APIBindingJSUtil&) = delete;
+
   ~APIBindingJSUtil() override;
 
   static gin::WrapperInfo kWrapperInfo;
@@ -43,7 +47,7 @@ class APIBindingJSUtil final : public gin::Wrappable<APIBindingJSUtil> {
   // replacement for custom bindings that utilize require('sendRequest').
   void SendRequest(gin::Arguments* arguments,
                    const std::string& name,
-                   const std::vector<v8::Local<v8::Value>>& request_args,
+                   const v8::LocalVector<v8::Value>& request_args,
                    v8::Local<v8::Value> options);
 
   // A handler to register an argument massager for a specific event.
@@ -79,6 +83,10 @@ class APIBindingJSUtil final : public gin::Wrappable<APIBindingJSUtil> {
 
   // Returns true if there is a set lastError in the given context.
   void HasLastError(gin::Arguments* arguments);
+
+  // Returns the lastError message for the given context, without marking it
+  // accessed.
+  void GetLastErrorMessage(gin::Arguments* arguments);
 
   // Sets the lastError in the given context, runs the provided callback, and
   // then clears the last error.
@@ -119,18 +127,16 @@ class APIBindingJSUtil final : public gin::Wrappable<APIBindingJSUtil> {
                                v8::Local<v8::Value> arguments_to_validate);
 
   // Type references. Guaranteed to outlive this object.
-  APITypeReferenceMap* const type_refs_;
+  const raw_ptr<APITypeReferenceMap, DanglingUntriaged> type_refs_;
 
   // The request handler. Guaranteed to outlive this object.
-  APIRequestHandler* const request_handler_;
+  const raw_ptr<APIRequestHandler, DanglingUntriaged> request_handler_;
 
   // The event handler. Guaranteed to outlive this object.
-  APIEventHandler* const event_handler_;
+  const raw_ptr<APIEventHandler, DanglingUntriaged> event_handler_;
 
   // The exception handler. Guaranteed to outlive this object.
-  ExceptionHandler* const exception_handler_;
-
-  DISALLOW_COPY_AND_ASSIGN(APIBindingJSUtil);
+  const raw_ptr<ExceptionHandler, DanglingUntriaged> exception_handler_;
 };
 
 }  // namespace extensions

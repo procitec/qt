@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,10 +7,11 @@
 
 #include <memory>
 
-#include "base/callback.h"
-#include "base/macros.h"
+#include "base/functional/callback.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
-#include "base/single_thread_task_runner.h"
+#include "base/task/sequenced_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #include "content/common/content_export.h"
 #include "media/base/android/stream_texture_wrapper.h"
 #include "media/base/media_resource.h"
@@ -47,11 +48,15 @@ class CONTENT_EXPORT MediaPlayerRendererClient
   MediaPlayerRendererClient(
       mojo::PendingRemote<RendererExtention> renderer_extension_remote,
       mojo::PendingReceiver<ClientExtention> client_extension_receiver,
-      scoped_refptr<base::SingleThreadTaskRunner> media_task_runner,
+      scoped_refptr<base::SequencedTaskRunner> media_task_runner,
       scoped_refptr<base::SingleThreadTaskRunner> compositor_task_runner,
       std::unique_ptr<media::MojoRenderer> mojo_renderer,
       media::ScopedStreamTextureWrapper stream_texture_wrapper,
       media::VideoRendererSink* sink);
+
+  MediaPlayerRendererClient(const MediaPlayerRendererClient&) = delete;
+  MediaPlayerRendererClient& operator=(const MediaPlayerRendererClient&) =
+      delete;
 
   ~MediaPlayerRendererClient() override;
 
@@ -61,6 +66,7 @@ class CONTENT_EXPORT MediaPlayerRendererClient
   void Initialize(media::MediaResource* media_resource,
                   media::RendererClient* client,
                   media::PipelineStatusCallback init_cb) override;
+  media::RendererType GetRendererType() override;
 
   // media::mojom::MediaPlayerRendererClientExtension implementation
   void OnDurationChange(base::TimeDelta duration) override;
@@ -79,18 +85,17 @@ class CONTENT_EXPORT MediaPlayerRendererClient
 
   // The underlying type should always be a MediaUrlDemuxer, but we only use
   // methods from the MediaResource interface.
-  media::MediaResource* media_resource_;
+  raw_ptr<media::MediaResource, ExperimentalRenderer> media_resource_;
 
   // Owns the StreamTexture whose surface is used by MediaPlayerRenderer.
   // Provides the VideoFrames to |sink_|.
   media::ScopedStreamTextureWrapper stream_texture_wrapper_;
 
-  media::RendererClient* client_;
+  raw_ptr<media::RendererClient, ExperimentalRenderer> client_;
 
-  media::VideoRendererSink* sink_;
+  raw_ptr<media::VideoRendererSink, ExperimentalRenderer> sink_;
 
-  scoped_refptr<base::SingleThreadTaskRunner> media_task_runner_;
-
+  scoped_refptr<base::SequencedTaskRunner> media_task_runner_;
   // Used by |stream_texture_wrapper_| to signal OnFrameAvailable() and to send
   // VideoFrames to |sink_| on the right thread.
   scoped_refptr<base::SingleThreadTaskRunner> compositor_task_runner_;
@@ -116,8 +121,6 @@ class CONTENT_EXPORT MediaPlayerRendererClient
 
   // NOTE: Weak pointers must be invalidated before all other member variables.
   base::WeakPtrFactory<MediaPlayerRendererClient> weak_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(MediaPlayerRendererClient);
 };
 
 }  // namespace content

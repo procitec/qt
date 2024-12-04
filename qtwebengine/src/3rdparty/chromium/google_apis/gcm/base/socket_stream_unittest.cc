@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,14 +8,13 @@
 
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/run_loop.h"
-#include "base/stl_util.h"
-#include "base/strings/string_piece.h"
-#include "base/test/bind_test_util.h"
+#include "base/test/bind.h"
 #include "base/test/task_environment.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/remote.h"
@@ -24,6 +23,8 @@
 #include "net/log/net_log_source.h"
 #include "net/socket/socket_test_util.h"
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
+#include "net/url_request/url_request_context.h"
+#include "net/url_request/url_request_context_builder.h"
 #include "net/url_request/url_request_test_util.h"
 #include "services/network/network_context.h"
 #include "services/network/network_service.h"
@@ -38,11 +39,11 @@ typedef std::vector<net::MockRead> ReadList;
 typedef std::vector<net::MockWrite> WriteList;
 
 const char kReadData[] = "read_data";
-const int kReadDataSize = base::size(kReadData) - 1;
+const int kReadDataSize = std::size(kReadData) - 1;
 const char kReadData2[] = "read_alternate_data";
-const int kReadData2Size = base::size(kReadData2) - 1;
+const int kReadData2Size = std::size(kReadData2) - 1;
 const char kWriteData[] = "write_data";
-const int kWriteDataSize = base::size(kWriteData) - 1;
+const int kWriteDataSize = std::size(kWriteData) - 1;
 
 class GCMSocketStreamTest : public testing::Test {
  public:
@@ -56,14 +57,14 @@ class GCMSocketStreamTest : public testing::Test {
   void PumpLoop();
 
   // Simulates a google::protobuf::io::CodedInputStream read.
-  base::StringPiece DoInputStreamRead(int bytes);
+  std::string_view DoInputStreamRead(int bytes);
 
   // Simulates a google::protobuf::io::CodedOutputStream write.
-  int DoOutputStreamWrite(const base::StringPiece& write_src);
+  int DoOutputStreamWrite(std::string_view write_src);
 
   // Simulates a google::protobuf::io::CodedOutputStream write, but do not call
   // flush.
-  int DoOutputStreamWriteWithoutFlush(const base::StringPiece& write_src);
+  int DoOutputStreamWriteWithoutFlush(std::string_view write_src);
 
   // Synchronous Refresh wrapper.
   void WaitForData(int msg_size);
@@ -98,7 +99,7 @@ class GCMSocketStreamTest : public testing::Test {
   std::unique_ptr<network::NetworkService> network_service_;
   mojo::Remote<network::mojom::NetworkContext> network_context_remote_;
   net::MockClientSocketFactory socket_factory_;
-  net::TestURLRequestContext url_request_context_;
+  std::unique_ptr<net::URLRequestContext> url_request_context_;
   std::unique_ptr<network::NetworkContext> network_context_;
   mojo::Remote<network::mojom::ProxyResolvingSocketFactory>
       mojo_socket_factory_remote_;
@@ -110,18 +111,18 @@ GCMSocketStreamTest::GCMSocketStreamTest()
     : task_environment_(base::test::TaskEnvironment::MainThreadType::IO),
       network_change_notifier_(
           net::NetworkChangeNotifier::CreateMockIfNeeded()),
-      network_service_(network::NetworkService::CreateForTesting()),
-      url_request_context_(true /* delay_initialization */) {
+      network_service_(network::NetworkService::CreateForTesting()) {
   address_list_ = net::AddressList::CreateFromIPAddress(
       net::IPAddress::IPv4Localhost(), 5228);
   socket_factory_.set_enable_read_if_ready(true);
-  url_request_context_.set_client_socket_factory(&socket_factory_);
-  url_request_context_.Init();
+  auto context_builder = net::CreateTestURLRequestContextBuilder();
+  context_builder->set_client_socket_factory_for_testing(&socket_factory_);
+  url_request_context_ = context_builder->Build();
 
   network_context_ = std::make_unique<network::NetworkContext>(
       network_service_.get(),
       network_context_remote_.BindNewPipeAndPassReceiver(),
-      &url_request_context_,
+      url_request_context_.get(),
       /*cors_exempt_header_list=*/std::vector<std::string>());
 }
 
@@ -147,7 +148,7 @@ void GCMSocketStreamTest::PumpLoop() {
   run_loop.RunUntilIdle();
 }
 
-base::StringPiece GCMSocketStreamTest::DoInputStreamRead(int bytes) {
+std::string_view GCMSocketStreamTest::DoInputStreamRead(int bytes) {
   int total_bytes_read = 0;
   const void* initial_buffer = nullptr;
   const void* buffer = nullptr;
@@ -172,12 +173,11 @@ base::StringPiece GCMSocketStreamTest::DoInputStreamRead(int bytes) {
     total_bytes_read = bytes;
   }
 
-  return base::StringPiece(static_cast<const char*>(initial_buffer),
-                           total_bytes_read);
+  return std::string_view(static_cast<const char*>(initial_buffer),
+                          total_bytes_read);
 }
 
-int GCMSocketStreamTest::DoOutputStreamWrite(
-    const base::StringPiece& write_src) {
+int GCMSocketStreamTest::DoOutputStreamWrite(std::string_view write_src) {
   int total_bytes_written = DoOutputStreamWriteWithoutFlush(write_src);
   base::RunLoop run_loop;
   if (socket_output_stream_->Flush(run_loop.QuitClosure()) ==
@@ -189,7 +189,7 @@ int GCMSocketStreamTest::DoOutputStreamWrite(
 }
 
 int GCMSocketStreamTest::DoOutputStreamWriteWithoutFlush(
-    const base::StringPiece& write_src) {
+    std::string_view write_src) {
   DCHECK_EQ(socket_output_stream_->GetState(), SocketOutputStream::EMPTY);
   int total_bytes_written = 0;
   void* buffer = nullptr;
@@ -236,15 +236,14 @@ void GCMSocketStreamTest::OpenConnection() {
   const url::Origin kOrigin = url::Origin::Create(kDestination);
   mojo_socket_factory_remote_->CreateProxyResolvingSocket(
       kDestination,
-      net::NetworkIsolationKey(kOrigin /* top_frame_origin */,
-                               kOrigin /* frame_origin */),
+      net::NetworkAnonymizationKey::CreateSameSite(net::SchemefulSite(kOrigin)),
       std::move(options),
       net::MutableNetworkTrafficAnnotationTag(TRAFFIC_ANNOTATION_FOR_TESTS),
       mojo_socket_remote_.BindNewPipeAndPassReceiver(),
       mojo::NullRemote() /* observer */,
       base::BindLambdaForTesting(
-          [&](int result, const base::Optional<net::IPEndPoint>& local_addr,
-              const base::Optional<net::IPEndPoint>& peer_addr,
+          [&](int result, const std::optional<net::IPEndPoint>& local_addr,
+              const std::optional<net::IPEndPoint>& peer_addr,
               mojo::ScopedDataPipeConsumerHandle receive_pipe_handle,
               mojo::ScopedDataPipeProducerHandle send_pipe_handle) {
             net_error = result;
@@ -393,8 +392,7 @@ TEST_F(GCMSocketStreamTest, WriteFull) {
               WriteList(1, net::MockWrite(net::SYNCHRONOUS, kWriteData,
                                           kWriteDataSize)));
   ASSERT_EQ(kWriteDataSize,
-            DoOutputStreamWrite(base::StringPiece(kWriteData,
-                                                  kWriteDataSize)));
+            DoOutputStreamWrite(std::string_view(kWriteData, kWriteDataSize)));
 }
 
 // Write a message in two go's.
@@ -409,8 +407,7 @@ TEST_F(GCMSocketStreamTest, WritePartial) {
   BuildSocket(ReadList(1, net::MockRead(net::SYNCHRONOUS, net::ERR_IO_PENDING)),
               write_list);
   ASSERT_EQ(kWriteDataSize,
-            DoOutputStreamWrite(base::StringPiece(kWriteData,
-                                                  kWriteDataSize)));
+            DoOutputStreamWrite(std::string_view(kWriteData, kWriteDataSize)));
 }
 
 // Regression test for crbug.com/866635.
@@ -422,11 +419,12 @@ TEST_F(GCMSocketStreamTest, WritePartialWithLengthChecking) {
   // |kWriteDataSize|. This is so that the first write is a partial write
   // of |prefix_data|, and the second write is a complete write of kWriteData.
   // The 1 byte shortage is to simulate the partial write.
-  mojo::DataPipe pipe(kWriteDataSize + prefix_data.size() - 1 /* size */);
-  mojo::ScopedDataPipeConsumerHandle consumer_handle =
-      std::move(pipe.consumer_handle);
-  mojo::ScopedDataPipeProducerHandle producer_handle =
-      std::move(pipe.producer_handle);
+  mojo::ScopedDataPipeProducerHandle producer_handle;
+  mojo::ScopedDataPipeConsumerHandle consumer_handle;
+  ASSERT_EQ(
+      mojo::CreateDataPipe(kWriteDataSize + prefix_data.size() - 1 /* size */,
+                           producer_handle, consumer_handle),
+      MOJO_RESULT_OK);
 
   // Prepopulate |producer_handle| of |prefix_data|, now the pipe's capacity is
   // less than |kWriteDataSize|.
@@ -470,10 +468,7 @@ TEST_F(GCMSocketStreamTest, WritePartialWithLengthChecking) {
   // to make sure data is as what we expected, and there is no trailing garbage
   // data.
   while (true) {
-    char buffer[5];
-    uint32_t read_size = sizeof(buffer);
-    MojoResult r =
-        consumer_handle->ReadData(buffer, &read_size, MOJO_READ_DATA_FLAG_NONE);
+    r = consumer_handle->ReadData(buffer, &read_size, MOJO_READ_DATA_FLAG_NONE);
     if (r == MOJO_RESULT_SHOULD_WAIT)
       continue;
     if (r != MOJO_RESULT_OK)
@@ -499,8 +494,7 @@ TEST_F(GCMSocketStreamTest, WriteNone) {
   BuildSocket(ReadList(1, net::MockRead(net::SYNCHRONOUS, net::ERR_IO_PENDING)),
               write_list);
   ASSERT_EQ(kWriteDataSize,
-            DoOutputStreamWrite(base::StringPiece(kWriteData,
-                                                  kWriteDataSize)));
+            DoOutputStreamWrite(std::string_view(kWriteData, kWriteDataSize)));
 }
 
 // Write a message then read a message.
@@ -516,8 +510,7 @@ TEST_F(GCMSocketStreamTest, WriteThenRead) {
                                           kWriteDataSize)));
 
   ASSERT_EQ(kWriteDataSize,
-            DoOutputStreamWrite(base::StringPiece(kWriteData,
-                                                  kWriteDataSize)));
+            DoOutputStreamWrite(std::string_view(kWriteData, kWriteDataSize)));
 
   WaitForData(kReadDataSize);
   ASSERT_EQ(std::string(kReadData, kReadDataSize),
@@ -541,8 +534,7 @@ TEST_F(GCMSocketStreamTest, ReadThenWrite) {
               DoInputStreamRead(kReadDataSize));
 
   ASSERT_EQ(kWriteDataSize,
-            DoOutputStreamWrite(base::StringPiece(kWriteData,
-                                                  kWriteDataSize)));
+            DoOutputStreamWrite(std::string_view(kWriteData, kWriteDataSize)));
 }
 
 // Simulate a write that gets aborted.
@@ -553,7 +545,7 @@ TEST_F(GCMSocketStreamTest, WriteError) {
   // Mojo data pipe buffers data, so there is a delay before write error is
   // observed.Continue writing if error is not observed.
   while (output_stream()->GetState() != SocketOutputStream::CLOSED) {
-    DoOutputStreamWrite(base::StringPiece(kWriteData, kWriteDataSize));
+    DoOutputStreamWrite(std::string_view(kWriteData, kWriteDataSize));
   }
   ASSERT_EQ(SocketOutputStream::CLOSED, output_stream()->GetState());
   ASSERT_EQ(net::ERR_FAILED, output_stream()->last_error());
@@ -564,7 +556,7 @@ TEST_F(GCMSocketStreamTest, WriteDisconnected) {
   BuildSocket(ReadList(1, net::MockRead(net::SYNCHRONOUS, net::ERR_IO_PENDING)),
               WriteList());
   mojo_socket_remote_.reset();
-  DoOutputStreamWrite(base::StringPiece(kWriteData, kWriteDataSize));
+  DoOutputStreamWrite(std::string_view(kWriteData, kWriteDataSize));
   ASSERT_EQ(SocketOutputStream::CLOSED, output_stream()->GetState());
   ASSERT_EQ(net::ERR_FAILED, output_stream()->last_error());
 }

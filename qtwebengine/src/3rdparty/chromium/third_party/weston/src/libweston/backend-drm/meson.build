@@ -2,6 +2,17 @@ if not get_option('backend-drm')
 	subdir_done()
 endif
 
+dep_libdisplay_info = dependency(
+	'libdisplay-info',
+	version: ['>= 0.1.1', '< 0.2.0'],
+	fallback: ['display-info', 'di_dep'],
+	default_options: [
+		'werror=false',
+	],
+	required: false,
+)
+config_h.set10('HAVE_LIBDISPLAY_INFO', dep_libdisplay_info.found())
+
 lib_backlight = static_library(
 	'backlight',
 	'libbacklight.c',
@@ -9,7 +20,7 @@ lib_backlight = static_library(
 		dep_libdrm_headers,
 		dependency('libudev')
 	],
-	include_directories: include_directories('../..'),
+	include_directories: common_inc,
 	install: false
 )
 dep_backlight = declare_dependency(
@@ -24,6 +35,7 @@ srcs_drm = [
 	'fb.c',
 	'modes.c',
 	'kms.c',
+	'kms-color.c',
 	'state-helpers.c',
 	'state-propose.c',
 	linux_dmabuf_unstable_v1_protocol_c,
@@ -32,19 +44,23 @@ srcs_drm = [
 ]
 
 deps_drm = [
-	dep_libweston,
+	dep_egl, # optional
+	dep_libm,
+	dep_libdl,
+	dep_libshared,
+	dep_libweston_private,
 	dep_session_helper,
 	dep_libdrm,
 	dep_libinput_backend,
 	dependency('libudev', version: '>= 136'),
+	dep_libdisplay_info,
 	dep_backlight
 ]
 
-# XXX: Actually let DRM-backend build without GBM, it really should
-if true # get_option('renderer-gl')
+if get_option('renderer-gl')
 	dep_gbm = dependency('gbm', required: false)
 	if not dep_gbm.found()
-		error('drm-backend requires gbm which was not found. Or, you can use \'-Dbackend-drm=false\'.')
+		error('drm-backend with GL renderer requires gbm which was not found. Or, you can use \'-Drenderer-gl=false\'.')
 	endif
 	if dep_gbm.version().version_compare('>= 17.1')
 		config_h.set('HAVE_GBM_MODIFIERS', '1')
@@ -53,6 +69,8 @@ if true # get_option('renderer-gl')
 		config_h.set('HAVE_GBM_FD_IMPORT', '1')
 	endif
 	deps_drm += dep_gbm
+	srcs_drm += 'drm-gbm.c'
+	config_h.set('BUILD_DRM_GBM', '1')
 endif
 
 if get_option('backend-drm-screencast-vaapi')
@@ -69,22 +87,18 @@ if get_option('backend-drm-screencast-vaapi')
 	config_h.set('BUILD_VAAPI_RECORDER', '1')
 endif
 
-if dep_libdrm.version().version_compare('>= 2.4.71')
-	config_h.set('HAVE_DRM_ADDFB2_MODIFIERS', '1')
-endif
-
-if dep_libdrm.version().version_compare('>= 2.4.78')
-	config_h.set('HAVE_DRM_ATOMIC', '1')
-endif
-
-if dep_libdrm.version().version_compare('>= 2.4.83')
-	config_h.set('HAVE_DRM_FORMATS_BLOB', '1')
+if get_option('remoting') or get_option('pipewire')
+	if not get_option('renderer-gl')
+		error('DRM virtual requires renderer-gl.')
+	endif
+	srcs_drm += 'drm-virtual.c'
+	config_h.set('BUILD_DRM_VIRTUAL', '1')
 endif
 
 plugin_drm = shared_library(
 	'drm-backend',
 	srcs_drm,
-	include_directories: include_directories('../..', '../../shared'),
+	include_directories: common_inc,
 	dependencies: deps_drm,
 	name_prefix: '',
 	install: true,

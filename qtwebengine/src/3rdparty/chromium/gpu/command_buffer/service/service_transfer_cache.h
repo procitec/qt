@@ -1,4 +1,4 @@
-// Copyright (c) 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,9 +11,14 @@
 #include <memory>
 #include <vector>
 
-#include "base/containers/mru_cache.h"
+#include "base/containers/lru_cache.h"
 #include "base/containers/span.h"
+#include "base/functional/callback.h"
+#include "base/functional/function_ref.h"
+#include "base/gtest_prod_util.h"
 #include "base/memory/memory_pressure_listener.h"
+#include "base/time/time.h"
+#include "base/timer/timer.h"
 #include "cc/paint/image_transfer_cache_entry.h"
 #include "cc/paint/transfer_cache_entry.h"
 #include "gpu/command_buffer/common/discardable_handle.h"
@@ -21,6 +26,7 @@
 #include "gpu/gpu_gles2_export.h"
 #include "third_party/skia/include/core/SkImageInfo.h"
 #include "third_party/skia/include/core/SkRefCnt.h"
+#include "third_party/skia/include/core/SkYUVAInfo.h"
 
 class GrDirectContext;
 class SkImage;
@@ -48,12 +54,18 @@ class GPU_GLES2_EXPORT ServiceTransferCache
     uint32_t entry_id;
   };
 
-  explicit ServiceTransferCache(const GpuPreferences& preferences);
+  ServiceTransferCache(const GpuPreferences& preferences,
+                       base::RepeatingClosure flush_callback);
+
+  ServiceTransferCache(const ServiceTransferCache&) = delete;
+  ServiceTransferCache& operator=(const ServiceTransferCache&) = delete;
+
   ~ServiceTransferCache() override;
 
   bool CreateLockedEntry(const EntryKey& key,
                          ServiceDiscardableHandle handle,
                          GrDirectContext* context,
+                         skgpu::graphite::Recorder* graphite_recorder,
                          base::span<uint8_t> data);
   void CreateLocalEntry(const EntryKey& key,
                         std::unique_ptr<cc::ServiceTransferCacheEntry> entry);
@@ -74,7 +86,8 @@ class GPU_GLES2_EXPORT ServiceTransferCache
       ServiceDiscardableHandle handle,
       GrDirectContext* context,
       std::vector<sk_sp<SkImage>> plane_images,
-      cc::YUVDecodeFormat plane_images_format,
+      SkYUVAInfo::PlaneConfig plane_config,
+      SkYUVAInfo::Subsampling subsampling,
       SkYUVColorSpace yuv_color_space,
       size_t buffer_byte_size,
       bool needs_mips);
@@ -99,14 +112,21 @@ class GPU_GLES2_EXPORT ServiceTransferCache
   size_t entries_count_for_testing() const { return entries_.size(); }
 
  private:
+  FRIEND_TEST_ALL_PREFIXES(ServiceTransferCacheTest, PurgeEntryOnTimer);
+
   struct CacheEntryInternal {
-    CacheEntryInternal(base::Optional<ServiceDiscardableHandle> handle,
+    CacheEntryInternal(std::optional<ServiceDiscardableHandle> handle,
                        std::unique_ptr<cc::ServiceTransferCacheEntry> entry);
     CacheEntryInternal(CacheEntryInternal&& other);
     CacheEntryInternal& operator=(CacheEntryInternal&& other);
     ~CacheEntryInternal();
-    base::Optional<ServiceDiscardableHandle> handle;
+    std::optional<ServiceDiscardableHandle> handle;
     std::unique_ptr<cc::ServiceTransferCacheEntry> entry;
+    base::TimeTicks last_use = base::TimeTicks::Now();
+
+    // For metrics.
+    uint32_t num_reuse = 0u;
+    base::TimeDelta max_last_use_delta;
   };
 
   struct EntryKeyComp {
@@ -119,12 +139,21 @@ class GPU_GLES2_EXPORT ServiceTransferCache
     }
   };
 
-  using EntryCache = base::MRUCache<EntryKey, CacheEntryInternal, EntryKeyComp>;
+  using EntryCache = base::LRUCache<EntryKey, CacheEntryInternal, EntryKeyComp>;
 
   void EnforceLimits();
+  void MaybePostPruneOldEntries();
+  void PruneOldEntries();
+  // Helper to iterate through entries from least recently used to most
+  // recently used and erase them until `should_stop` returns true. Returns
+  // number of entries removed.
+  int RemoveOldEntriesUntil(
+      base::FunctionRef<bool(EntryCache::reverse_iterator)> should_stop);
 
   template <typename Iterator>
   Iterator ForceDeleteEntry(Iterator it);
+
+  const base::RepeatingClosure flush_callback_;
 
   EntryCache entries_;
 
@@ -142,7 +171,8 @@ class GPU_GLES2_EXPORT ServiceTransferCache
   // The max number of entries we will hold in the cache.
   size_t max_cache_entries_;
 
-  DISALLOW_COPY_AND_ASSIGN(ServiceTransferCache);
+  bool request_post_prune_old_entries_while_pending_ = false;
+  base::OneShotTimer prune_old_entries_timer_;
 };
 
 }  // namespace gpu

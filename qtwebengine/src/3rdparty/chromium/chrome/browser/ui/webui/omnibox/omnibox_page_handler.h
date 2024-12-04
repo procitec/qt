@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,21 +9,23 @@
 
 #include <memory>
 
-#include "base/compiler_specific.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/scoped_observation.h"
 #include "base/time/time.h"
 #include "chrome/browser/ui/webui/omnibox/omnibox.mojom.h"
 #include "components/omnibox/browser/autocomplete_controller.h"
+#include "components/omnibox/browser/autocomplete_controller_emitter.h"
 #include "components/omnibox/browser/autocomplete_input.h"
 #include "components/omnibox/browser/autocomplete_match.h"
-#include "components/omnibox/browser/omnibox_controller_emitter.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
 
 class AutocompleteController;
+class AutocompleteResult;
+class AutocompleteScoringModelService;
 class Profile;
 
 // Implementation of mojo::OmniboxPageHandler.  StartOmniboxQuery() calls to a
@@ -36,6 +38,10 @@ class OmniboxPageHandler : public AutocompleteController::Observer,
   // OmniboxPageHandler is deleted when the supplied pipe is destroyed.
   OmniboxPageHandler(Profile* profile,
                      mojo::PendingReceiver<mojom::OmniboxPageHandler> receiver);
+
+  OmniboxPageHandler(const OmniboxPageHandler&) = delete;
+  OmniboxPageHandler& operator=(const OmniboxPageHandler&) = delete;
+
   ~OmniboxPageHandler() override;
 
   // AutocompleteController::Observer overrides:
@@ -43,6 +49,8 @@ class OmniboxPageHandler : public AutocompleteController::Observer,
                const AutocompleteInput& input) override;
   void OnResultChanged(AutocompleteController* controller,
                        bool default_match_changed) override;
+  void OnMlScored(AutocompleteController* controller,
+                  const AutocompleteResult& result) override;
 
   // mojom::OmniboxPageHandler overrides:
   void SetClientPage(mojo::PendingRemote<mojom::OmniboxPage> page) override;
@@ -56,22 +64,36 @@ class OmniboxPageHandler : public AutocompleteController::Observer,
                          bool prefer_keyword,
                          const std::string& current_url,
                          int32_t page_classification) override;
+  void GetMlModelVersion(GetMlModelVersionCallback callback) override;
+  void StartMl(mojom::SignalsPtr signals, StartMlCallback callback) override;
 
  private:
-  void OnBitmapFetched(const std::string& image_url, const SkBitmap& bitmap);
+  void OnBitmapFetched(mojom::AutocompleteControllerType type,
+                       const std::string& image_url,
+                       const SkBitmap& bitmap);
 
   // Looks up whether the hostname is a typed host (i.e., has received
   // typed visits).  Return true if the lookup succeeded; if so, the
   // value of |is_typed_host| is set appropriately.
-  bool LookupIsTypedHost(const base::string16& host, bool* is_typed_host) const;
+  bool LookupIsTypedHost(const std::u16string& host, bool* is_typed_host) const;
 
-  // Re-initializes the AutocompleteController in preparation for the
-  // next query.
-  void ResetController();
+  // Creates an `AutocompleteController` for `controller_` or
+  // `ml_disabled_controller_`.
+  std::unique_ptr<AutocompleteController> CreateController(bool ml_disabled);
 
-  // The omnibox AutocompleteController that collects/sorts/dup-
-  // eliminates the results as they come in.
+  // Compares `controller` with `controller_` & `ml_disabled_controller_`.
+  mojom::AutocompleteControllerType GetAutocompleteControllerType(
+      AutocompleteController* controller);
+
+  // Helper to get the ML service for this profile.
+  AutocompleteScoringModelService* GetMlService();
+
+  // A controller to allow chrome://omnibox can try inputs without messing with
+  // location bar omnibox.
   std::unique_ptr<AutocompleteController> controller_;
+  // A controller with ML disabled to allow chrome://omnibox/ml to show a
+  // before-after comparison.
+  std::unique_ptr<AutocompleteController> ml_disabled_controller_;
 
   // Time the user's input was sent to the omnibox to start searching.
   // Needed because we also pass timing information in the object we
@@ -85,16 +107,15 @@ class OmniboxPageHandler : public AutocompleteController::Observer,
   mojo::Remote<mojom::OmniboxPage> page_;
 
   // The Profile* handed to us in our constructor.
-  Profile* profile_;
+  raw_ptr<Profile> profile_;
 
   mojo::Receiver<mojom::OmniboxPageHandler> receiver_;
 
-  ScopedObserver<OmniboxControllerEmitter, AutocompleteController::Observer>
-      observer_;
+  base::ScopedObservation<AutocompleteControllerEmitter,
+                          AutocompleteController::Observer>
+      observation_{this};
 
   base::WeakPtrFactory<OmniboxPageHandler> weak_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(OmniboxPageHandler);
 };
 
 #endif  // CHROME_BROWSER_UI_WEBUI_OMNIBOX_OMNIBOX_PAGE_HANDLER_H_

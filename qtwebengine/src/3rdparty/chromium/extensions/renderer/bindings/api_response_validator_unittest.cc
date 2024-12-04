@@ -1,14 +1,13 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "extensions/renderer/bindings/api_response_validator.h"
 
+#include <optional>
 #include <vector>
-
 #include "base/auto_reset.h"
-#include "base/bind.h"
-#include "base/optional.h"
+#include "base/functional/bind.h"
 #include "extensions/renderer/bindings/api_binding_test.h"
 #include "extensions/renderer/bindings/api_binding_test_util.h"
 #include "extensions/renderer/bindings/api_binding_util.h"
@@ -17,6 +16,7 @@
 #include "extensions/renderer/bindings/api_type_reference_map.h"
 #include "extensions/renderer/bindings/argument_spec.h"
 #include "extensions/renderer/bindings/argument_spec_builder.h"
+#include "extensions/renderer/bindings/returns_async_builder.h"
 #include "gin/converter.h"
 #include "v8/include/v8.h"
 
@@ -25,22 +25,25 @@ namespace {
 
 constexpr char kMethodName[] = "oneString";
 
-std::unique_ptr<APISignature> OneStringSignature() {
-  std::vector<std::unique_ptr<ArgumentSpec>> specs;
-  specs.push_back(ArgumentSpecBuilder(ArgumentType::STRING, "str").Build());
-  return std::make_unique<APISignature>(std::move(specs));
+std::unique_ptr<APISignature> OneStringCallbackSignature() {
+  std::vector<std::unique_ptr<ArgumentSpec>> empty_specs;
+  std::vector<std::unique_ptr<ArgumentSpec>> async_specs;
+  async_specs.push_back(
+      ArgumentSpecBuilder(ArgumentType::STRING, "str").Build());
+  return std::make_unique<APISignature>(
+      std::move(empty_specs),
+      ReturnsAsyncBuilder(std::move(async_specs)).Build(), nullptr);
 }
 
-std::vector<v8::Local<v8::Value>> StringToV8Vector(
-    v8::Local<v8::Context> context,
-    const char* args) {
+v8::LocalVector<v8::Value> StringToV8Vector(v8::Local<v8::Context> context,
+                                            const char* args) {
   v8::Local<v8::Value> v8_args = V8ValueFromScriptSource(context, args);
   if (v8_args.IsEmpty()) {
     ADD_FAILURE() << "Could not convert args: " << args;
-    return std::vector<v8::Local<v8::Value>>();
+    return v8::LocalVector<v8::Value>(context->GetIsolate());
   }
   EXPECT_TRUE(v8_args->IsArray());
-  std::vector<v8::Local<v8::Value>> vector_args;
+  v8::LocalVector<v8::Value> vector_args(context->GetIsolate());
   EXPECT_TRUE(gin::ConvertFromV8(context->GetIsolate(), v8_args, &vector_args));
   return vector_args;
 }
@@ -55,13 +58,17 @@ class APIResponseValidatorTest : public APIBindingTest {
             base::BindRepeating(&APIResponseValidatorTest::OnValidationFailure,
                                 base::Unretained(this))),
         validator_(&type_refs_) {}
+
+  APIResponseValidatorTest(const APIResponseValidatorTest&) = delete;
+  APIResponseValidatorTest& operator=(const APIResponseValidatorTest&) = delete;
+
   ~APIResponseValidatorTest() override = default;
 
   void SetUp() override {
     APIBindingTest::SetUp();
     response_validation_override_ =
         binding::SetResponseValidationEnabledForTesting(true);
-    type_refs_.AddCallbackSignature(kMethodName, OneStringSignature());
+    type_refs_.AddAPIMethodSignature(kMethodName, OneStringCallbackSignature());
   }
 
   void TearDown() override {
@@ -70,16 +77,16 @@ class APIResponseValidatorTest : public APIBindingTest {
   }
 
   APIResponseValidator* validator() { return &validator_; }
-  const base::Optional<std::string>& failure_method() const {
+  const std::optional<std::string>& failure_method() const {
     return failure_method_;
   }
-  const base::Optional<std::string>& failure_error() const {
+  const std::optional<std::string>& failure_error() const {
     return failure_error_;
   }
 
   void reset() {
-    failure_method_ = base::nullopt;
-    failure_error_ = base::nullopt;
+    failure_method_ = std::nullopt;
+    failure_error_ = std::nullopt;
   }
 
  private:
@@ -95,10 +102,8 @@ class APIResponseValidatorTest : public APIBindingTest {
   APIResponseValidator::TestHandler test_handler_;
   APIResponseValidator validator_;
 
-  base::Optional<std::string> failure_method_;
-  base::Optional<std::string> failure_error_;
-
-  DISALLOW_COPY_AND_ASSIGN(APIResponseValidatorTest);
+  std::optional<std::string> failure_method_;
+  std::optional<std::string> failure_error_;
 };
 
 TEST_F(APIResponseValidatorTest, TestValidation) {
@@ -143,8 +148,8 @@ TEST_F(APIResponseValidatorTest, TestDoesNotValidateWhenAPIErrorPresent) {
   v8::Local<v8::Context> context = MainContext();
 
   validator()->ValidateResponse(
-      context, kMethodName, {}, "Some API Error",
-      APIResponseValidator::CallbackType::kCallerProvided);
+      context, kMethodName, v8::LocalVector<v8::Value>(isolate()),
+      "Some API Error", APIResponseValidator::CallbackType::kCallerProvided);
   EXPECT_FALSE(failure_method());
   EXPECT_FALSE(failure_error());
 }

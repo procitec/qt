@@ -1,4 +1,4 @@
-// Copyright (c) 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,9 +6,14 @@
 #define CONTENT_BROWSER_RENDERER_HOST_CURSOR_MANAGER_H_
 
 #include <map>
+#include <vector>
 
+#include "base/functional/callback_helpers.h"
+#include "base/memory/raw_ptr.h"
+#include "base/memory/weak_ptr.h"
 #include "content/common/content_export.h"
-#include "content/common/cursors/webcursor.h"
+#include "ui/base/cursor/cursor.h"
+#include "ui/base/cursor/mojom/cursor_type.mojom-shared.h"
 
 namespace content {
 
@@ -21,55 +26,64 @@ class RenderWidgetHostViewBase;
 // update was received for the current view.
 class CONTENT_EXPORT CursorManager {
  public:
-  class TooltipObserver {
-   public:
-    virtual ~TooltipObserver() {}
-
-    virtual void OnSetTooltipTextForView(
-        const RenderWidgetHostViewBase* view,
-        const base::string16& tooltip_text) = 0;
-  };
-
-  CursorManager(RenderWidgetHostViewBase* root);
+  explicit CursorManager(RenderWidgetHostViewBase* root);
   ~CursorManager();
 
   // Called for any RenderWidgetHostView that received an UpdateCursor message
   // from its renderer process.
-  void UpdateCursor(RenderWidgetHostViewBase*, const WebCursor&);
+  void UpdateCursor(RenderWidgetHostViewBase*, const ui::Cursor&);
 
   // Called when the mouse moves over a different RenderWidgetHostView.
   void UpdateViewUnderCursor(RenderWidgetHostViewBase*);
-
-  // Accepts TooltipText updates from views, but only updates what's displayed
-  // if the requesting view is currently under the mouse cursor.
-  void SetTooltipTextForView(const RenderWidgetHostViewBase* view,
-                             const base::string16& tooltip_text);
 
   // Notification of a RenderWidgetHostView being destroyed, so that its
   // cursor map entry can be removed if it has one. If it is the current
   // view_under_cursor_, then the root_view_'s cursor will be displayed.
   void ViewBeingDestroyed(RenderWidgetHostViewBase*);
 
+  // Called by any RenderWidgetHostView before updating the tooltip text to
+  // validate that the tooltip text being updated is for the view under the
+  // cursor. This is only used for cursor triggered tooltips.
+  bool IsViewUnderCursor(RenderWidgetHostViewBase*) const;
+
+  // Disallows custom cursors whose height or width are larger or equal to
+  // `max_dimension` DIPs.
+  [[nodiscard]] base::ScopedClosureRunner CreateDisallowCustomCursorScope(
+      int max_dimension_dips);
+
   // Accessor for browser tests, enabling verification of the cursor_map_.
   // Returns false if the provided View is not in the map, and outputs
   // the cursor otherwise.
-  bool GetCursorForTesting(RenderWidgetHostViewBase*, WebCursor&);
+  bool GetCursorForTesting(RenderWidgetHostViewBase*, ui::Cursor&);
 
-  void SetTooltipObserverForTesting(TooltipObserver* observer);
+  ui::mojom::CursorType GetLastSetCursorTypeForTesting() {
+    return last_set_cursor_type_for_testing_;
+  }
 
  private:
+  bool IsCursorAllowed(const ui::Cursor&) const;
+  void DisallowCustomCursorScopeExpired(int max_dimension_dips);
+  void UpdateCursor();
+
   // Stores the last received cursor from each RenderWidgetHostView.
-  std::map<RenderWidgetHostViewBase*, WebCursor> cursor_map_;
+  std::map<RenderWidgetHostViewBase*, ui::Cursor> cursor_map_;
 
   // The view currently underneath the cursor, which corresponds to the cursor
   // currently displayed.
-  RenderWidgetHostViewBase* view_under_cursor_;
+  raw_ptr<RenderWidgetHostViewBase, DanglingUntriaged> view_under_cursor_;
 
   // The root view is the target for DisplayCursor calls whenever the active
   // cursor needs to change.
-  RenderWidgetHostViewBase* root_view_;
+  const raw_ptr<RenderWidgetHostViewBase> root_view_;
 
-  TooltipObserver* tooltip_observer_for_testing_;
+  // Restrictions on the maximum dimension (either width or height) imposed
+  // on custom cursors.
+  // Restrictions can be created by `CreateDisallowCustomCursorScope`.
+  std::vector<int> dimension_restrictions_;
+
+  ui::mojom::CursorType last_set_cursor_type_for_testing_;
+
+  base::WeakPtrFactory<CursorManager> weak_factory_{this};
 };
 
 }  // namespace content

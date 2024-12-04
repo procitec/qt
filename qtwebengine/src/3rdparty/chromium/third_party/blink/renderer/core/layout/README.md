@@ -1,6 +1,6 @@
 <!---
   The live version of this document can be viewed at:
-  https://chromium.googlesource.com/chromium/src/+/master/third_party/blink/renderer/core/layout/README.md
+  https://chromium.googlesource.com/chromium/src/+/main/third_party/blink/renderer/core/layout/README.md
 -->
 
 # Blink Layout
@@ -13,8 +13,7 @@ It covers the following document lifecycle states:
 * PerformLayout (`InPerformLayout`)
 * AfterPerformLayout (`AfterPerformLayout` and `LayoutClean`)
 
-Note that a new Blink layout system is under development. See the
-[LayoutNG design document](https://docs.google.com/document/d/1uxbDh4uONFQOiGuiumlJBLGgO4KDWB8ZEkp7Rd47fw4/preview).
+See [LayoutNG](layout_ng.md) for the implementation details.
 
 The layout code is maintained by the
 [layout team](http://dev.chromium.org/teams/layout-team).
@@ -101,7 +100,7 @@ positive.
 In all cases, the term 'scrollOffset' (or just 'offset') is used to represent the distance
 of the scrolling viewport from its location when scrolled to the beginning of content, and
 it uses type ScrollOffset. The term 'scrollPosition' (or just 'position') represents a
-point in the coordinate space defined by the overflow rect, and it uses type FloatPoint.
+point in the coordinate space defined by the overflow rect, and it uses type gfx::PointF.
 
 For illustrations of these concepts, see these files:
 

@@ -1,11 +1,10 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_MEDIASTREAM_WEBRTC_UMA_HISTOGRAMS_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_MEDIASTREAM_WEBRTC_UMA_HISTOGRAMS_H_
 
-#include "base/macros.h"
 #include "base/memory/singleton.h"
 #include "base/threading/thread_checker.h"
 #include "third_party/blink/public/common/mediastream/media_stream_request.h"
@@ -15,22 +14,6 @@
 
 namespace blink {
 
-// Used to investigate where UserMediaRequests end up.
-// Only UserMediaRequests that do not log with LogUserMediaRequestResult
-// should call LogUserMediaRequestWithNoResult.
-//
-// Elements in this enum should not be deleted or rearranged; the only
-// permitted operation is to add new elements before
-// NUM_MEDIA_STREAM_REQUEST_WITH_NO_RESULT.
-enum MediaStreamRequestState {
-  MEDIA_STREAM_REQUEST_EXPLICITLY_CANCELLED = 0,
-  MEDIA_STREAM_REQUEST_NOT_GENERATED = 1,
-  MEDIA_STREAM_REQUEST_PENDING_MEDIA_TRACKS = 2,
-  NUM_MEDIA_STREAM_REQUEST_WITH_NO_RESULT
-};
-
-PLATFORM_EXPORT void LogUserMediaRequestWithNoResult(
-    MediaStreamRequestState state);
 PLATFORM_EXPORT void LogUserMediaRequestResult(
     mojom::MediaStreamRequestResult result);
 
@@ -58,6 +41,9 @@ PLATFORM_EXPORT void UpdateWebRTCMethodCount(RTCAPIName api_name);
 // metric at most once per session.
 class PLATFORM_EXPORT PerSessionWebRTCAPIMetrics {
  public:
+  PerSessionWebRTCAPIMetrics(const PerSessionWebRTCAPIMetrics&) = delete;
+  PerSessionWebRTCAPIMetrics& operator=(const PerSessionWebRTCAPIMetrics&) =
+      delete;
   virtual ~PerSessionWebRTCAPIMetrics();
 
   static PerSessionWebRTCAPIMetrics* GetInstance();
@@ -89,8 +75,6 @@ class PLATFORM_EXPORT PerSessionWebRTCAPIMetrics {
   bool has_used_api_[static_cast<int>(RTCAPIName::kInvalidName)];
 
   THREAD_CHECKER(thread_checker_);
-
-  DISALLOW_COPY_AND_ASSIGN(PerSessionWebRTCAPIMetrics);
 };
 
 }  //  namespace blink

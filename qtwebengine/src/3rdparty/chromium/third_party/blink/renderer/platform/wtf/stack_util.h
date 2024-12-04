@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -20,7 +20,7 @@ WTF_EXPORT void* GetStackStart();
 // SafeStack. Must be marked noinline because it relies on compiler intrinsics
 // that report the current stack frame and if inlined it could report a position
 // above the current stack position.
-WTF_EXPORT NOINLINE uintptr_t GetCurrentStackPosition();
+NOINLINE WTF_EXPORT uintptr_t GetCurrentStackPosition();
 
 namespace internal {
 
@@ -29,7 +29,7 @@ WTF_EXPORT extern uintptr_t g_main_thread_underestimated_stack_size;
 
 WTF_EXPORT void InitializeMainThreadStackEstimate();
 
-#if defined(OS_WIN) && defined(COMPILER_MSVC)
+#if BUILDFLAG(IS_WIN) && defined(COMPILER_MSVC)
 size_t ThreadStackSize();
 #endif
 

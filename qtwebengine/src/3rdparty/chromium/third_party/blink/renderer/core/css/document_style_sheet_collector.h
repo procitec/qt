@@ -28,15 +28,16 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_CSS_DOCUMENT_STYLE_SHEET_COLLECTOR_H_
 
 #include "third_party/blink/renderer/core/css/active_style_sheets.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
-#include "third_party/blink/renderer/platform/wtf/hash_set.h"
+#include "third_party/blink/renderer/platform/heap/collection_support/heap_vector.h"
+#include "third_party/blink/renderer/platform/heap/member.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
 namespace blink {
 
-class Document;
 class StyleSheet;
 class StyleSheetCollection;
+class RuleSetDiff;
 
 class DocumentStyleSheetCollector {
   // This class contains references to two on-heap collections, therefore
@@ -48,30 +49,21 @@ class DocumentStyleSheetCollector {
   friend class ImportedDocumentStyleSheetCollector;
 
   DocumentStyleSheetCollector(StyleSheetCollection*,
-                              HeapVector<Member<StyleSheet>>*,
-                              HeapHashSet<Member<Document>>*);
+                              HeapVector<Member<StyleSheet>>*);
 
   void AppendActiveStyleSheet(const ActiveStyleSheet&);
   void AppendSheetForList(StyleSheet*);
-
-  bool HasVisited(Document* document) const {
-    return visited_documents_->Contains(document);
-  }
-  void WillVisit(Document* document) { visited_documents_->insert(document); }
+  void AppendRuleSetDiff(RuleSetDiff*);
 
  private:
   StyleSheetCollection* collection_;
   HeapVector<Member<StyleSheet>>* style_sheets_for_style_sheet_list_;
-  HeapHashSet<Member<Document>>* visited_documents_;
 };
 
 class ActiveDocumentStyleSheetCollector final
     : public DocumentStyleSheetCollector {
  public:
   ActiveDocumentStyleSheetCollector(StyleSheetCollection&);
-
- private:
-  HeapHashSet<Member<Document>> visited_documents_;
 };
 
 class ImportedDocumentStyleSheetCollector final

@@ -1,7 +1,8 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "cc/paint/skottie_wrapper.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/core/css/resolver/font_style_resolver.h"
@@ -32,7 +33,7 @@ TSAN_TEST(TextRendererThreadedTest, MeasureText) {
 
     FontDescription font_description;
     font_description.SetComputedSize(12.0);
-    font_description.SetLocale(LayoutLocale::Get("en"));
+    font_description.SetLocale(LayoutLocale::Get(AtomicString("en")));
     ASSERT_EQ(USCRIPT_LATIN, font_description.GetScript());
     font_description.SetGenericFamily(FontDescription::kStandardFamily);
 
@@ -41,26 +42,23 @@ TSAN_TEST(TextRendererThreadedTest, MeasureText) {
     const SimpleFontData* font_data = font.PrimaryFont();
     ASSERT_TRUE(font_data);
 
-    TextRun text_run(
-        text, 0, 0,
-        TextRun::kAllowTrailingExpansion | TextRun::kForbidLeadingExpansion,
-        TextDirection::kLtr, false);
+    TextRun text_run(text);
     text_run.SetNormalizeSpace(true);
-    FloatRect text_bounds = font.SelectionRectForText(
-        text_run, FloatPoint(), font.GetFontDescription().ComputedSize(), 0,
+    gfx::RectF text_bounds = font.SelectionRectForText(
+        text_run, gfx::PointF(), font.GetFontDescription().ComputedSize(), 0,
         -1);
 
     // X direction.
     EXPECT_EQ(78, font.Width(text_run));
-    EXPECT_EQ(0, text_bounds.X());
-    EXPECT_EQ(78, text_bounds.MaxX());
+    EXPECT_EQ(0, text_bounds.x());
+    EXPECT_EQ(78, text_bounds.right());
 
     // Y direction.
     const FontMetrics& font_metrics = font_data->GetFontMetrics();
     EXPECT_EQ(11, font_metrics.FloatAscent());
     EXPECT_EQ(3, font_metrics.FloatDescent());
-    EXPECT_EQ(0, text_bounds.Y());
-    EXPECT_EQ(12, text_bounds.MaxY());
+    EXPECT_EQ(0, text_bounds.y());
+    EXPECT_EQ(12, text_bounds.bottom());
   });
 }
 
@@ -71,28 +69,28 @@ TSAN_TEST(TextRendererThreadedTest, DrawText) {
 
     FontDescription font_description;
     font_description.SetComputedSize(12.0);
-    font_description.SetLocale(LayoutLocale::Get("en"));
+    font_description.SetLocale(LayoutLocale::Get(AtomicString("en")));
     ASSERT_EQ(USCRIPT_LATIN, font_description.GetScript());
     font_description.SetGenericFamily(FontDescription::kStandardFamily);
 
     Font font = Font(font_description);
 
-    FloatPoint location(0, 0);
-    TextRun text_run(text, 0, 0, TextRun::kAllowTrailingExpansion,
-                     TextDirection::kLtr, false);
+    gfx::PointF location(0, 0);
+    TextRun text_run(text);
     text_run.SetNormalizeSpace(true);
 
     TextRunPaintInfo text_run_paint_info(text_run);
 
     MockPaintCanvas mpc;
-    PaintFlags flags;
+    cc::PaintFlags flags;
 
     EXPECT_CALL(mpc, getSaveCount()).WillOnce(Return(17));
     EXPECT_CALL(mpc, drawTextBlob(_, 0, 0, _)).Times(1);
     EXPECT_CALL(mpc, restoreToCount(17)).WillOnce(Return());
 
     font.DrawBidiText(&mpc, text_run_paint_info, location,
-                      Font::kUseFallbackIfFontNotReady, 1.0, flags);
+                      Font::kUseFallbackIfFontNotReady, flags,
+                      Font::DrawType::kGlyphsAndClusters);
   });
 }
 

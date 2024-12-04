@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2018 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtWebEngine module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2018 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 // Copyright (c) 2012 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
@@ -43,41 +7,28 @@
 
 #include "gl_context_qt.h"
 #include "ozone/gl_surface_glx_qt.h"
+
 #include "ui/gl/gl_bindings.h"
+#include "ui/gl/gl_display.h"
+#include "ui/gl/gl_display_manager.h"
+#include "ui/gl/gl_surface.h"
 #include "ui/gl/gl_surface_glx.h"
-#include "ui/gfx/x/x11_types.h"
 
 namespace gl {
 
-bool GLSurfaceGLXQt::s_initialized = false;
-
-GLSurfaceGLXQt::~GLSurfaceGLXQt()
+static bool HasGLXExtension(const char *name)
 {
-    Destroy();
-}
-
-void GLSurfaceGLX::ShutdownOneOff()
-{
+    return GLSurface::ExtensionsContain(GLSurfaceQt::g_extensions.c_str(), name);
 }
 
 bool GLSurfaceGLX::IsCreateContextSupported()
 {
-    return ExtensionsContain(GLSurfaceQt::g_extensions, "GLX_ARB_create_context");
+    return HasGLXExtension("GLX_ARB_create_context");
 }
 
 bool GLSurfaceGLX::IsCreateContextRobustnessSupported()
 {
     return GLContextHelper::isCreateContextRobustnessSupported() && HasGLXExtension("GLX_ARB_create_context_robustness");
-}
-
-bool GLSurfaceGLX::IsEXTSwapControlSupported()
-{
-    return HasGLXExtension("GLX_EXT_swap_control");
-}
-
-bool GLSurfaceGLX::IsMESASwapControlSupported()
-{
-    return HasGLXExtension("GLX_MESA_swap_control");
 }
 
 bool GLSurfaceGLX::IsCreateContextProfileSupported()
@@ -87,22 +38,7 @@ bool GLSurfaceGLX::IsCreateContextProfileSupported()
 
 bool GLSurfaceGLX::IsCreateContextES2ProfileSupported()
 {
-    return ExtensionsContain(GLSurfaceQt::g_extensions, "GLX_ARB_create_context_es2_profile");
-}
-
-bool GLSurfaceGLX::IsOMLSyncControlSupported()
-{
-    return false; // ExtensionsContain(g_extensions, "GLX_OML_sync_control");
-}
-
-bool GLSurfaceGLX::HasGLXExtension(const char *name)
-{
-    return ExtensionsContain(GLSurfaceQt::g_extensions, name);
-}
-
-bool GLSurfaceGLX::IsTextureFromPixmapSupported()
-{
-    return ExtensionsContain(GLSurfaceQt::g_extensions, "GLX_EXT_texture_from_pixmap");
+    return HasGLXExtension("GLX_ARB_create_context_es2_profile");
 }
 
 bool GLSurfaceGLX::IsRobustnessVideoMemoryPurgeSupported()
@@ -110,68 +46,69 @@ bool GLSurfaceGLX::IsRobustnessVideoMemoryPurgeSupported()
     return false;
 }
 
-const char* GLSurfaceGLX::GetGLXExtensions()
+
+bool GLSurfaceGLXQt::s_initialized = false;
+
+GLSurfaceGLXQt::GLSurfaceGLXQt(const gfx::Size& size)
+    : GLSurfaceQt(size),
+      m_surfaceBuffer(0)
 {
-    return GLSurfaceQt::g_extensions;
 }
 
-bool GLSurfaceGLXQt::InitializeOneOff()
+GLSurfaceGLXQt::~GLSurfaceGLXQt()
+{
+    Destroy();
+}
+
+GLDisplay *GLSurfaceGLXQt::InitializeOneOff(gl::GpuPreference preference)
 {
     if (s_initialized)
-        return true;
+        return g_display;
 
-    XInitThreads();
-
-    g_display = GLContextHelper::getXDisplay();
-    if (!g_display) {
+    g_display = GLDisplayManagerX11::GetInstance()->GetDisplay(preference);
+    if (!g_display->GetDisplay()) {
         LOG(ERROR) << "GLContextHelper::getXDisplay() failed.";
-        return false;
+        return nullptr;
     }
 
     g_config = GLContextHelper::getGlXConfig();
     if (!g_config) {
         LOG(ERROR) << "GLContextHelper::getGlxConfig() failed.";
-        return false;
+        return nullptr;
     }
 
-    Display* display = static_cast<Display*>(g_display);
+    Display* display = static_cast<Display*>(g_display->GetDisplay());
     int major, minor;
     if (!glXQueryVersion(display, &major, &minor)) {
         LOG(ERROR) << "glxQueryVersion failed.";
-        return false;
+        return nullptr;
     }
 
     if (major == 1 && minor < 3) {
         LOG(ERROR) << "GLX 1.3 or later is required.";
-        return false;
+        return nullptr;
     }
 
     s_initialized = true;
-    return true;
+    return g_display;
 }
-
 
 bool GLSurfaceGLXQt::InitializeExtensionSettingsOneOff()
 {
     if (!s_initialized)
         return false;
 
-    Display* display = static_cast<Display*>(g_display);
+    Display* display = static_cast<Display*>(g_display->GetDisplay());
     GLSurfaceQt::g_extensions = glXQueryExtensionsString(display, 0);
-    g_driver_glx.InitializeExtensionBindings(g_extensions);
+    g_driver_glx.InitializeExtensionBindings(g_extensions.c_str());
     return true;
-}
-
-bool GLSurfaceGLX::InitializeExtensionSettingsOneOff()
-{
-    return GLSurfaceGLXQt::InitializeExtensionSettingsOneOff();
 }
 
 bool GLSurfaceGLXQt::Initialize(GLSurfaceFormat format)
 {
     Q_ASSERT(!m_surfaceBuffer);
 
-    Display* display = static_cast<Display*>(g_display);
+    Display* display = static_cast<Display*>(g_display->GetDisplay());
     const int pbuffer_attributes[] = {
         GLX_PBUFFER_WIDTH, m_size.width(),
         GLX_PBUFFER_HEIGHT, m_size.height(),
@@ -194,15 +131,9 @@ bool GLSurfaceGLXQt::Initialize(GLSurfaceFormat format)
 void GLSurfaceGLXQt::Destroy()
 {
     if (m_surfaceBuffer) {
-        glXDestroyPbuffer(static_cast<Display*>(g_display), m_surfaceBuffer);
+        glXDestroyPbuffer(static_cast<Display*>(g_display->GetDisplay()), m_surfaceBuffer);
         m_surfaceBuffer = 0;
     }
-}
-
-GLSurfaceGLXQt::GLSurfaceGLXQt(const gfx::Size& size)
-    : GLSurfaceQt(size),
-      m_surfaceBuffer(0)
-{
 }
 
 void* GLSurfaceGLXQt::GetHandle()

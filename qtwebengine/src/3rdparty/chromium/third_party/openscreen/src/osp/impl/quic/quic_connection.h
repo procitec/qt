@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,19 +10,20 @@
 
 #include "platform/api/udp_socket.h"
 
-namespace openscreen {
-namespace osp {
+namespace openscreen::osp {
 
 class QuicStream {
  public:
   class Delegate {
    public:
-    virtual ~Delegate() = default;
 
     virtual void OnReceived(QuicStream* stream,
                             const char* data,
                             size_t data_size) = 0;
     virtual void OnClose(uint64_t stream_id) = 0;
+
+   protected:
+    virtual ~Delegate() = default;
   };
 
   QuicStream(Delegate* delegate, uint64_t id) : delegate_(delegate), id_(id) {}
@@ -41,7 +42,6 @@ class QuicConnection : public UdpSocket::Client {
  public:
   class Delegate {
    public:
-    virtual ~Delegate() = default;
 
     // Called when the QUIC handshake has successfully completed.
     virtual void OnCryptoHandshakeComplete(uint64_t connection_id) = 0;
@@ -63,6 +63,9 @@ class QuicConnection : public UdpSocket::Client {
     // will be returned via OnIncomingStream immediately after this call.
     virtual QuicStream::Delegate* NextStreamDelegate(uint64_t connection_id,
                                                      uint64_t stream_id) = 0;
+
+   protected:
+    virtual ~Delegate() = default;
   };
 
   explicit QuicConnection(Delegate* delegate) : delegate_(delegate) {}
@@ -76,7 +79,6 @@ class QuicConnection : public UdpSocket::Client {
   Delegate* const delegate_;
 };
 
-}  // namespace osp
-}  // namespace openscreen
+}  // namespace openscreen::osp
 
 #endif  // OSP_IMPL_QUIC_QUIC_CONNECTION_H_

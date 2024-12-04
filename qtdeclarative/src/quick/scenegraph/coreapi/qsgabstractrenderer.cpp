@@ -1,75 +1,16 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtQuick module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
-#include "qsgabstractrenderer_p.h"
+#include "qsgabstractrenderer_p_p.h"
 
 QT_BEGIN_NAMESPACE
 
 /*!
     \class QSGAbstractRenderer
-    \brief QSGAbstractRenderer gives access to the scene graph nodes and rendering of a QSGEngine.
+    \brief QSGAbstractRenderer gives access to the scene graph nodes and rendering.
     \inmodule QtQuick
     \since 5.4
-
-    A QSGAbstractRenderer created by a QSGEngine allows you to set your QSGNode
-    tree through setRootNode() and control the rendering viewport through
-    setDeviceRect(), setViewportRect() and setProjectionMatrixToRect().
-    You can finally trigger the rendering to the desired framebuffer through
-    renderScene().
-
-    The QSGAbstractRenderer is only available when used with a QSGEngine
-    and isn't exposed when used internally by QQuickWindow.
-
-    \sa QSGEngine, QSGNode
- */
-
-/*!
-    \enum QSGAbstractRenderer::ClearModeBit
-
-    Used with setClearMode() to indicate which buffer should
-    be cleared before the scene render.
-
-    \value ClearColorBuffer Clear the color buffer using clearColor().
-    \value ClearDepthBuffer Clear the depth buffer.
-    \value ClearStencilBuffer Clear the stencil buffer.
-
-    \sa setClearMode(), setClearColor()
+    \internal
  */
 
 /*!
@@ -89,17 +30,9 @@ QT_BEGIN_NAMESPACE
  */
 
 /*!
-    \fn void QSGAbstractRenderer::renderScene(GLuint fboId = 0)
+    \fn void QSGAbstractRenderer::renderScene()
 
-    Render the scene to the specified \a fboId
-
-    If \a fboId isn't specified, the scene graph will be rendered
-    to the default framebuffer. You will have to call
-    QOpenGLContext::swapBuffers() yourself afterward.
-
-    The framebuffer specified by \a fboId will be bound automatically.
-
-    \sa QOpenGLContext::swapBuffers(), QOpenGLFramebufferObject::handle()
+    Renders the scene.
  */
 
 /*!
@@ -115,8 +48,9 @@ QT_BEGIN_NAMESPACE
 QSGAbstractRendererPrivate::QSGAbstractRendererPrivate()
     : m_root_node(nullptr)
     , m_clear_color(Qt::transparent)
-    , m_clear_mode(QSGAbstractRenderer::ClearColorBuffer | QSGAbstractRenderer::ClearDepthBuffer)
 {
+    m_projection_matrix.resize(1);
+    m_projection_matrix_native_ndc.resize(1);
 }
 
 /*!
@@ -247,15 +181,7 @@ QRect QSGAbstractRenderer::viewportRect() const
  */
 void QSGAbstractRenderer::setProjectionMatrixToRect(const QRectF &rect)
 {
-    QMatrix4x4 matrix;
-    matrix.ortho(rect.x(),
-                 rect.x() + rect.width(),
-                 rect.y() + rect.height(),
-                 rect.y(),
-                 1,
-                 -1);
-    setProjectionMatrix(matrix);
-    setProjectionMatrixWithNativeNDC(matrix);
+    setProjectionMatrixToRect(rect, {}, false);
 }
 
 /*!
@@ -271,46 +197,77 @@ void QSGAbstractRenderer::setProjectionMatrixToRect(const QRectF &rect)
  */
 void QSGAbstractRenderer::setProjectionMatrixToRect(const QRectF &rect, MatrixTransformFlags flags)
 {
-    const bool flipY = flags.testFlag(MatrixTransformFlipY);
-    QMatrix4x4 matrix;
-    matrix.ortho(rect.x(),
-                 rect.x() + rect.width(),
-                 flipY ? rect.y() : rect.y() + rect.height(),
-                 flipY ? rect.y() + rect.height() : rect.y(),
-                 1,
-                 -1);
-    setProjectionMatrix(matrix);
+    setProjectionMatrixToRect(rect, flags, flags.testFlag(MatrixTransformFlipY));
+}
 
-    if (flipY) {
+/*!
+    Convenience method that calls setProjectionMatrix() with an
+    orthographic matrix generated from \a rect.
+
+    Set MatrixTransformFlipY in \a flags when the graphics API uses Y down in
+    its normalized device coordinate system (for example, Vulkan).
+
+    Convenience method that calls setProjectionMatrixWithNativeNDC() with an
+    orthographic matrix generated from \a rect.
+
+    Set true to \a nativeNDCFlipY to flip the Y axis relative to
+    projection matrix in its normalized device coordinate system.
+
+    \sa setProjectionMatrix(), projectionMatrix()
+    \sa setProjectionMatrixWithNativeNDC(), projectionMatrixWithNativeNDC()
+
+    \since 6.7
+ */
+void QSGAbstractRenderer::setProjectionMatrixToRect(const QRectF &rect, MatrixTransformFlags flags,
+                                                    bool nativeNDCFlipY)
+{
+    const bool flipY = flags.testFlag(MatrixTransformFlipY);
+
+    const float left = rect.x();
+    const float right = rect.x() + rect.width();
+    float bottom = rect.y() + rect.height();
+    float top = rect.y();
+
+    if (flipY)
+        std::swap(top, bottom);
+
+    QMatrix4x4 matrix;
+    matrix.ortho(left, right, bottom, top, 1, -1);
+    setProjectionMatrix(matrix, 0);
+
+    if (nativeNDCFlipY) {
+        std::swap(top, bottom);
+
         matrix.setToIdentity();
-        matrix.ortho(rect.x(),
-                     rect.x() + rect.width(),
-                     rect.y() + rect.height(),
-                     rect.y(),
-                     1,
-                     -1);
+        matrix.ortho(left, right, bottom, top, 1, -1);
     }
-    setProjectionMatrixWithNativeNDC(matrix);
+    setProjectionMatrixWithNativeNDC(matrix, 0);
 }
 
 /*!
     Use \a matrix to project the QSGNode coordinates onto surface pixels.
 
+    \a index specifies the view index when multiview rendering is in use.
+
     \sa projectionMatrix(), setProjectionMatrixToRect()
  */
-void QSGAbstractRenderer::setProjectionMatrix(const QMatrix4x4 &matrix)
+void QSGAbstractRenderer::setProjectionMatrix(const QMatrix4x4 &matrix, int index)
 {
     Q_D(QSGAbstractRenderer);
-    d->m_projection_matrix = matrix;
+    if (d->m_projection_matrix.count() <= index)
+        d->m_projection_matrix.resize(index + 1);
+    d->m_projection_matrix[index] = matrix;
 }
 
 /*!
     \internal
  */
-void QSGAbstractRenderer::setProjectionMatrixWithNativeNDC(const QMatrix4x4 &matrix)
+void QSGAbstractRenderer::setProjectionMatrixWithNativeNDC(const QMatrix4x4 &matrix, int index)
 {
     Q_D(QSGAbstractRenderer);
-    d->m_projection_matrix_native_ndc = matrix;
+    if (d->m_projection_matrix_native_ndc.count() <= index)
+        d->m_projection_matrix_native_ndc.resize(index + 1);
+    d->m_projection_matrix_native_ndc[index] = matrix;
 }
 
 /*!
@@ -318,26 +275,37 @@ void QSGAbstractRenderer::setProjectionMatrixWithNativeNDC(const QMatrix4x4 &mat
 
     \sa setProjectionMatrix(), setProjectionMatrixToRect()
  */
-QMatrix4x4 QSGAbstractRenderer::projectionMatrix() const
+QMatrix4x4 QSGAbstractRenderer::projectionMatrix(int index) const
 {
     Q_D(const QSGAbstractRenderer);
-    return d->m_projection_matrix;
+    return d->m_projection_matrix[index];
+}
+
+int QSGAbstractRenderer::projectionMatrixCount() const
+{
+    Q_D(const QSGAbstractRenderer);
+    return d->m_projection_matrix.count();
+}
+
+int QSGAbstractRenderer::projectionMatrixWithNativeNDCCount() const
+{
+    Q_D(const QSGAbstractRenderer);
+    return d->m_projection_matrix_native_ndc.count();
 }
 
 /*!
     \internal
  */
-QMatrix4x4 QSGAbstractRenderer::projectionMatrixWithNativeNDC() const
+QMatrix4x4 QSGAbstractRenderer::projectionMatrixWithNativeNDC(int index) const
 {
     Q_D(const QSGAbstractRenderer);
-    return d->m_projection_matrix_native_ndc;
+    return d->m_projection_matrix_native_ndc[index];
 }
 
 /*!
-    Use \a color to clear the framebuffer when clearMode() is
-    set to QSGAbstractRenderer::ClearColorBuffer.
+    Sets the \a color to clear the framebuffer.
 
-    \sa clearColor(), setClearMode()
+    \sa clearColor()
  */
 void QSGAbstractRenderer::setClearColor(const QColor &color)
 {
@@ -349,7 +317,7 @@ void QSGAbstractRenderer::setClearColor(const QColor &color)
     Returns the color that clears the framebuffer at the beginning
     of the rendering.
 
-    \sa setClearColor(), clearMode()
+    \sa setClearColor()
  */
 QColor QSGAbstractRenderer::clearColor() const
 {
@@ -358,34 +326,18 @@ QColor QSGAbstractRenderer::clearColor() const
 }
 
 /*!
-    Defines which attachment of the framebuffer should be cleared
-    before each scene render with the \a mode flag.
-
-    \sa clearMode(), setClearColor()
- */
-void QSGAbstractRenderer::setClearMode(ClearMode mode)
-{
-    Q_D(QSGAbstractRenderer);
-    d->m_clear_mode = mode;
-}
-
-/*!
-    Flags defining which attachment of the framebuffer will be cleared
-    before each scene render.
-
-    \sa setClearMode(), clearColor()
- */
-QSGAbstractRenderer::ClearMode QSGAbstractRenderer::clearMode() const
-{
-    Q_D(const QSGAbstractRenderer);
-    return d->m_clear_mode;
-}
-
-/*!
     \fn void QSGAbstractRenderer::nodeChanged(QSGNode *node, QSGNode::DirtyState state)
     \internal
  */
 
+void QSGAbstractRenderer::prepareSceneInline()
+{
+}
+
+void QSGAbstractRenderer::renderSceneInline()
+{
+}
+
 QT_END_NAMESPACE
 
-#include "moc_qsgabstractrenderer.cpp"
+#include "moc_qsgabstractrenderer_p.cpp"

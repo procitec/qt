@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,7 +10,6 @@
 #include <memory>
 #include <unordered_map>
 
-#include "base/macros.h"
 #include "base/threading/thread_checker.h"
 #include "media/base/cdm_promise.h"
 #include "media/base/media_export.h"
@@ -23,12 +22,18 @@ namespace media {
 class MEDIA_EXPORT CdmPromiseAdapter {
  public:
   CdmPromiseAdapter();
+
+  CdmPromiseAdapter(const CdmPromiseAdapter&) = delete;
+  CdmPromiseAdapter& operator=(const CdmPromiseAdapter&) = delete;
+
   ~CdmPromiseAdapter();
 
   enum : uint32_t { kInvalidPromiseId = 0 };
 
   // Takes ownership of |promise| and returns an integer promise ID.
-  uint32_t SavePromise(std::unique_ptr<media::CdmPromise> promise);
+  // The optional `operation` string is for tracing events.
+  uint32_t SavePromise(std::unique_ptr<media::CdmPromise> promise,
+                       const std::string& operation = "");
 
   // Takes the promise for |promise_id|, sanity checks its |type|, and resolves
   // it with |result|.
@@ -42,8 +47,13 @@ class MEDIA_EXPORT CdmPromiseAdapter {
                      uint32_t system_code,
                      const std::string& error_message);
 
+  enum class ClearReason {
+    kDestruction,
+    kConnectionError,
+  };
+
   // Rejects and clears all |promises_|.
-  void Clear();
+  void Clear(ClearReason reason);
 
  private:
   // A map between promise IDs and CdmPromises.
@@ -53,11 +63,10 @@ class MEDIA_EXPORT CdmPromiseAdapter {
   // Returns null if no promise can be found.
   std::unique_ptr<CdmPromise> TakePromise(uint32_t promise_id);
 
-  uint32_t next_promise_id_;
+  inline static uint32_t next_promise_id_ = kInvalidPromiseId + 1;
   PromiseMap promises_;
 
   base::ThreadChecker thread_checker_;
-  DISALLOW_COPY_AND_ASSIGN(CdmPromiseAdapter);
 };
 
 }  // namespace media

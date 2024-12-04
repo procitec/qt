@@ -1,4 +1,4 @@
-# Copyright 2016 The Chromium Authors. All rights reserved.
+# Copyright 2016 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -24,17 +24,24 @@ class GitTestWithRealFilesystemAndExecutive(unittest.TestCase):
         # Set up fresh git repository with one commit.
         self.untracking_checkout_path = self._mkdtemp(
             suffix='-git_unittest_untracking')
-        self._run(['git', 'init', self.untracking_checkout_path])
+        try:
+            self._run(['git', 'init', self.untracking_checkout_path])
+        except ScriptError:
+            # Skip the test if git is not installed on the system
+            raise self.skipTest("git init failed. Skipping the test")
 
         self._chdir(self.untracking_checkout_path)
+        # Explicitly create the default branch instead of relying on
+        # init.defaultBranch. We don't use the new --initial-branch flag with
+        # `git init` to keep the tests compatible with older versions of git.
+        self._run(['git', 'checkout', '-b', 'main'])
         self._set_user_config()
         self._write_text_file('foo_file', 'foo')
         self._run(['git', 'add', 'foo_file'])
         self._run(['git', 'commit', '-am', 'dummy commit'])
-        self.untracking_git = Git(
-            cwd=self.untracking_checkout_path,
-            filesystem=self.filesystem,
-            executive=self.executive)
+        self.untracking_git = Git(cwd=self.untracking_checkout_path,
+                                  filesystem=self.filesystem,
+                                  executive=self.executive)
 
         # Then set up a second git repo that tracks the first one.
         self.tracking_git_checkout_path = self._mkdtemp(
@@ -45,10 +52,9 @@ class GitTestWithRealFilesystemAndExecutive(unittest.TestCase):
         ])
         self._chdir(self.tracking_git_checkout_path)
         self._set_user_config()
-        self.tracking_git = Git(
-            cwd=self.tracking_git_checkout_path,
-            filesystem=self.filesystem,
-            executive=self.executive)
+        self.tracking_git = Git(cwd=self.tracking_git_checkout_path,
+                                filesystem=self.filesystem,
+                                executive=self.executive)
 
     def tearDown(self):
         self._chdir(self.original_cwd)
@@ -87,6 +93,26 @@ class GitTestWithRealFilesystemAndExecutive(unittest.TestCase):
         git.add_list(['added_dir/added_file'])
         self.assertIn('added_dir/added_file', git.added_files())
 
+    def test_added_files(self):
+        self._chdir(self.untracking_checkout_path)
+        git = self.untracking_git
+        self._write_text_file('cat_file', 'new stuff')
+        git.add_list(['cat_file'])
+        self.assertIn('cat_file', git.added_files())
+
+    def test_deleted_files(self):
+        self._chdir(self.untracking_checkout_path)
+        git = self.untracking_git
+        git.delete_list(['foo_file'])
+        self.assertIn('foo_file', git.deleted_files())
+
+    def test_added_deleted_files_with_rename(self):
+        self._chdir(self.untracking_checkout_path)
+        git = self.untracking_git
+        git.move('foo_file', 'bar_file')
+        self.assertIn('foo_file', git.deleted_files())
+        self.assertIn('bar_file', git.added_files())
+
     def test_delete_recursively(self):
         self._chdir(self.untracking_checkout_path)
         git = self.untracking_git
@@ -123,6 +149,17 @@ class GitTestWithRealFilesystemAndExecutive(unittest.TestCase):
         git.commit_locally_with_message('deleting foo')
         self.assertFalse(git.exists('foo.txt'))
 
+    def test_show_blob(self):
+        self._chdir(self.untracking_checkout_path)
+        git = self.untracking_git
+        self._chdir(git.checkout_root)
+        self.filesystem.write_binary_file('foo.txt',
+                                          b'some stuff, possibly binary \xff')
+        git.add_list(['foo.txt'])
+        git.commit_locally_with_message('adding foo')
+        self.assertEqual(git.show_blob('foo.txt', ref='HEAD'),
+                         b'some stuff, possibly binary \xff')
+
     def test_move(self):
         self._chdir(self.untracking_checkout_path)
         git = self.untracking_git
@@ -145,7 +182,7 @@ class GitTestWithRealFilesystemAndExecutive(unittest.TestCase):
     def test_remote_branch_ref(self):
         # This tests a protected method. pylint: disable=protected-access
         self.assertEqual(self.tracking_git._remote_branch_ref(),
-                         'refs/remotes/origin/master')
+                         'refs/remotes/origin/main')
         self._chdir(self.untracking_checkout_path)
         self.assertRaises(ScriptError, self.untracking_git._remote_branch_ref)
 
@@ -156,7 +193,7 @@ class GitTestWithRealFilesystemAndExecutive(unittest.TestCase):
         self._run(['git', 'add', 'test_file_commit1'])
         git.commit_locally_with_message('message')
         patch = git.create_patch()
-        self.assertNotRegexpMatches(patch, r'Subversion Revision:')
+        self.assertNotRegexpMatches(patch, b'Subversion Revision:')
 
     def test_patches_have_filenames_with_prefixes(self):
         self._chdir(self.tracking_git_checkout_path)
@@ -169,7 +206,7 @@ class GitTestWithRealFilesystemAndExecutive(unittest.TestCase):
         self._run(['git', 'config', 'diff.noprefix', 'true'])
         patch = git.create_patch()
         self.assertRegexpMatches(
-            patch, r'^diff --git a/test_file_commit1 b/test_file_commit1')
+            patch, b'^diff --git a/test_file_commit1 b/test_file_commit1')
 
     def test_rename_files(self):
         self._chdir(self.tracking_git_checkout_path)
@@ -178,7 +215,7 @@ class GitTestWithRealFilesystemAndExecutive(unittest.TestCase):
         git.commit_locally_with_message('message')
 
         patch = git.create_patch(changed_files=git.changed_files())
-        self.assertTrue('rename from' in patch)
+        self.assertTrue(b'rename from' in patch)
 
     def test_commit_position_from_git_log(self):
         # This tests a protected method. pylint: disable=protected-access
@@ -193,7 +230,7 @@ Date:   Mon Sep 28 19:10:30 2015 -0700
 
     Review URL: https://codereview.chromium.org/999999999
 
-    Cr-Commit-Position: refs/heads/master@{#1234567}
+    Cr-Commit-Position: refs/heads/main@{#1234567}
 """
         self._chdir(self.tracking_git_checkout_path)
         git = self.tracking_git
@@ -202,8 +239,9 @@ Date:   Mon Sep 28 19:10:30 2015 -0700
 
 class GitTestWithMock(unittest.TestCase):
     def make_git(self):
-        git = Git(
-            cwd='.', executive=MockExecutive(), filesystem=MockFileSystem())
+        git = Git(cwd='.',
+                  executive=MockExecutive(),
+                  filesystem=MockFileSystem())
         return git
 
     def test_unstaged_files(self):
@@ -225,3 +263,29 @@ class GitTestWithMock(unittest.TestCase):
                 'd/untracked.txt': '?',
                 'a': '?',
             })
+
+    def test_uncommitted_changes(self):
+        git = self.make_git()
+        status_lines = [
+            ' M d/modified.txt',
+            ' D d/deleted.txt',
+            '?? d/untracked.txt',
+            '?? a',
+            'D  d/deleted.txt',
+            'M  d/modified-staged.txt',
+            'A  d/added-staged.txt',
+            'AM d/added-then-modified.txt',
+            'MM d/modified-then-modified.txt',
+        ]
+        git.run = lambda args: '\x00'.join(status_lines) + '\x00'
+        self.assertEqual(git.uncommitted_changes(), [
+            'd/modified.txt',
+            'd/deleted.txt',
+            'd/untracked.txt',
+            'a',
+            'd/deleted.txt',
+            'd/modified-staged.txt',
+            'd/added-staged.txt',
+            'd/added-then-modified.txt',
+            'd/modified-then-modified.txt',
+        ])

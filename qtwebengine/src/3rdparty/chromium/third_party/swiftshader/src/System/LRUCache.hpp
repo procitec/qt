@@ -18,6 +18,7 @@
 #include "System/Debug.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <unordered_set>
 #include <vector>
@@ -93,7 +94,7 @@ private:
 	LRUCache &operator=(const LRUCache &) = delete;
 	LRUCache &operator=(LRUCache &&) = delete;
 
-	//Keyed holds a key. See find() for more information.
+	// Keyed holds a key. See find() for more information.
 	struct Keyed
 	{
 		Key key = {};

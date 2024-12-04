@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,13 +7,12 @@
 
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
-
-#include "base/callback.h"
-#include "base/macros.h"
+#include "base/functional/callback.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
-#include "base/optional.h"
 #include "extensions/browser/updater/extension_installer.h"
 #include "extensions/browser/updater/extension_update_data.h"
 
@@ -43,15 +42,21 @@ class UpdateDataProvider : public base::RefCounted<UpdateDataProvider> {
   // an update for an extension.
   explicit UpdateDataProvider(content::BrowserContext* browser_context);
 
+  UpdateDataProvider(const UpdateDataProvider&) = delete;
+  UpdateDataProvider& operator=(const UpdateDataProvider&) = delete;
+
   // Notify this object that the associated browser context is being shut down
   // the pointer to the context should be dropped and no more work should be
   // done.
   void Shutdown();
 
-  std::vector<base::Optional<update_client::CrxComponent>> GetData(
+  void GetData(
       bool install_immediately,
       const ExtensionUpdateDataMap& update_info,
-      const std::vector<std::string>& ids);
+      const std::vector<std::string>& ids,
+      base::OnceCallback<
+          void(const std::vector<std::optional<update_client::CrxComponent>>&)>
+          callback);
 
  private:
   friend class base::RefCounted<UpdateDataProvider>;
@@ -64,9 +69,13 @@ class UpdateDataProvider : public base::RefCounted<UpdateDataProvider> {
                           bool install_immediately,
                           UpdateClientCallback update_client_callback);
 
-  content::BrowserContext* browser_context_;
+  void InstallUpdateCallback(const std::string& extension_id,
+                             const std::string& public_key,
+                             const base::FilePath& unpacked_dir,
+                             bool install_immediately,
+                             UpdateClientCallback update_client_callback);
 
-  DISALLOW_COPY_AND_ASSIGN(UpdateDataProvider);
+  raw_ptr<content::BrowserContext> browser_context_;
 };
 
 }  // namespace extensions

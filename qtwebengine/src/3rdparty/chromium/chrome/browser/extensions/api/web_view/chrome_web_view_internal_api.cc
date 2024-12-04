@@ -1,11 +1,12 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "chrome/browser/extensions/api/web_view/chrome_web_view_internal_api.h"
 
-#include <memory>
+#include <optional>
 
+#include "base/strings/string_util.h"
 #include "chrome/browser/extensions/api/context_menus/context_menus_api.h"
 #include "chrome/browser/extensions/api/context_menus/context_menus_api_helpers.h"
 #include "chrome/browser/profiles/profile.h"
@@ -22,25 +23,29 @@ namespace extensions {
 // WebViewInternalExtensionFunction::RunAsyncSafe(WebViewGuest*).
 ExtensionFunction::ResponseAction
 ChromeWebViewInternalContextMenusCreateFunction::Run() {
-  std::unique_ptr<webview::ContextMenusCreate::Params> params(
-      webview::ContextMenusCreate::Params::Create(*args_));
-  EXTENSION_FUNCTION_VALIDATE(params.get());
+  std::optional<webview::ContextMenusCreate::Params> params =
+      webview::ContextMenusCreate::Params::Create(args());
+  EXTENSION_FUNCTION_VALIDATE(params);
 
   MenuItem::Id id(
       Profile::FromBrowserContext(browser_context())->IsOffTheRecord(),
-      MenuItem::ExtensionKey(
-          extension_id(),
-          GetSenderWebContents()->GetMainFrame()->GetProcess()->GetID(),
-          params->instance_id));
+      MenuItem::ExtensionKey(MaybeGetExtensionId(extension()),
+                             render_frame_host()->GetProcess()->GetID(),
+                             render_frame_host()->GetRoutingID(),
+                             params->instance_id));
 
-  if (params->create_properties.id.get()) {
+  if (params->create_properties.id) {
     id.string_uid = *params->create_properties.id;
   } else {
     // The Generated Id is added by web_view_internal_custom_bindings.js.
-    base::DictionaryValue* properties = NULL;
-    EXTENSION_FUNCTION_VALIDATE(args_->GetDictionary(1, &properties));
-    EXTENSION_FUNCTION_VALIDATE(properties->GetInteger(
-        extensions::context_menus_api_helpers::kGeneratedIdKey, &id.uid));
+    EXTENSION_FUNCTION_VALIDATE(args().size() >= 2);
+    EXTENSION_FUNCTION_VALIDATE(args()[1].is_dict());
+    const base::Value& properties = args()[1];
+    EXTENSION_FUNCTION_VALIDATE(properties.is_dict());
+    std::optional<int> result = properties.GetDict().FindInt(
+        extensions::context_menus_api_helpers::kGeneratedIdKey);
+    EXTENSION_FUNCTION_VALIDATE(result);
+    id.uid = *result;
   }
 
   std::string error;
@@ -52,17 +57,17 @@ ChromeWebViewInternalContextMenusCreateFunction::Run() {
 
 ExtensionFunction::ResponseAction
 ChromeWebViewInternalContextMenusUpdateFunction::Run() {
-  std::unique_ptr<webview::ContextMenusUpdate::Params> params(
-      webview::ContextMenusUpdate::Params::Create(*args_));
-  EXTENSION_FUNCTION_VALIDATE(params.get());
+  std::optional<webview::ContextMenusUpdate::Params> params =
+      webview::ContextMenusUpdate::Params::Create(args());
+  EXTENSION_FUNCTION_VALIDATE(params);
 
   Profile* profile = Profile::FromBrowserContext(browser_context());
   MenuItem::Id item_id(
       profile->IsOffTheRecord(),
-      MenuItem::ExtensionKey(
-          extension_id(),
-          GetSenderWebContents()->GetMainFrame()->GetProcess()->GetID(),
-          params->instance_id));
+      MenuItem::ExtensionKey(MaybeGetExtensionId(extension()),
+                             render_frame_host()->GetProcess()->GetID(),
+                             render_frame_host()->GetRoutingID(),
+                             params->instance_id));
 
   if (params->id.as_string)
     item_id.string_uid = *params->id.as_string;
@@ -80,19 +85,19 @@ ChromeWebViewInternalContextMenusUpdateFunction::Run() {
 
 ExtensionFunction::ResponseAction
 ChromeWebViewInternalContextMenusRemoveFunction::Run() {
-  std::unique_ptr<webview::ContextMenusRemove::Params> params(
-      webview::ContextMenusRemove::Params::Create(*args_));
-  EXTENSION_FUNCTION_VALIDATE(params.get());
+  std::optional<webview::ContextMenusRemove::Params> params =
+      webview::ContextMenusRemove::Params::Create(args());
+  EXTENSION_FUNCTION_VALIDATE(params);
 
   MenuManager* menu_manager =
       MenuManager::Get(Profile::FromBrowserContext(browser_context()));
 
   MenuItem::Id id(
       Profile::FromBrowserContext(browser_context())->IsOffTheRecord(),
-      MenuItem::ExtensionKey(
-          extension_id(),
-          GetSenderWebContents()->GetMainFrame()->GetProcess()->GetID(),
-          params->instance_id));
+      MenuItem::ExtensionKey(MaybeGetExtensionId(extension()),
+                             render_frame_host()->GetProcess()->GetID(),
+                             render_frame_host()->GetRoutingID(),
+                             params->instance_id));
 
   if (params->menu_item_id.as_string) {
     id.string_uid = *params->menu_item_id.as_string;
@@ -117,16 +122,16 @@ ChromeWebViewInternalContextMenusRemoveFunction::Run() {
 
 ExtensionFunction::ResponseAction
 ChromeWebViewInternalContextMenusRemoveAllFunction::Run() {
-  std::unique_ptr<webview::ContextMenusRemoveAll::Params> params(
-      webview::ContextMenusRemoveAll::Params::Create(*args_));
-  EXTENSION_FUNCTION_VALIDATE(params.get());
+  std::optional<webview::ContextMenusRemoveAll::Params> params =
+      webview::ContextMenusRemoveAll::Params::Create(args());
+  EXTENSION_FUNCTION_VALIDATE(params);
 
   MenuManager* menu_manager =
       MenuManager::Get(Profile::FromBrowserContext(browser_context()));
   menu_manager->RemoveAllContextItems(MenuItem::ExtensionKey(
-      extension_id(),
-      GetSenderWebContents()->GetMainFrame()->GetProcess()->GetID(),
-      params->instance_id));
+      MaybeGetExtensionId(extension()),
+      render_frame_host()->GetProcess()->GetID(),
+      render_frame_host()->GetRoutingID(), params->instance_id));
 
   return RespondNow(NoArguments());
 }
@@ -141,12 +146,12 @@ ChromeWebViewInternalShowContextMenuFunction::
 
 ExtensionFunction::ResponseAction
 ChromeWebViewInternalShowContextMenuFunction::Run() {
-  std::unique_ptr<webview::ShowContextMenu::Params> params(
-      webview::ShowContextMenu::Params::Create(*args_));
-  EXTENSION_FUNCTION_VALIDATE(params.get());
+  std::optional<webview::ShowContextMenu::Params> params =
+      webview::ShowContextMenu::Params::Create(args());
+  EXTENSION_FUNCTION_VALIDATE(params);
 
   // TODO(lazyboy): Actually implement filtering menu items.
-  guest_->ShowContextMenu(params->request_id);
+  GetGuest().ShowContextMenu(params->request_id);
   return RespondNow(NoArguments());
 }
 

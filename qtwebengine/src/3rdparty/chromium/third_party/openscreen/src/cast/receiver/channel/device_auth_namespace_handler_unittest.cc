@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,7 +11,6 @@
 #include "cast/common/channel/proto/cast_channel.pb.h"
 #include "cast/common/channel/testing/fake_cast_socket.h"
 #include "cast/common/channel/testing/mock_socket_error_handler.h"
-#include "cast/common/channel/virtual_connection_manager.h"
 #include "cast/common/channel/virtual_connection_router.h"
 #include "cast/common/public/cast_socket.h"
 #include "cast/receiver/channel/static_credentials.h"
@@ -21,8 +20,7 @@
 #include "platform/test/paths.h"
 #include "testing/util/read_file.h"
 
-namespace openscreen {
-namespace cast {
+namespace openscreen::cast {
 namespace {
 
 using ::cast::channel::AuthResponse;
@@ -55,8 +53,7 @@ class DeviceAuthNamespaceHandlerTest : public ::testing::Test {
   CastSocket* socket_;
 
   StaticCredentialsProvider creds_;
-  VirtualConnectionManager manager_;
-  VirtualConnectionRouter router_{&manager_};
+  VirtualConnectionRouter router_;
   DeviceAuthNamespaceHandler auth_handler_{&creds_};
 };
 
@@ -221,5 +218,4 @@ TEST_F(DeviceAuthNamespaceHandlerTest, UnsupportedSignatureAlgorithm) {
 }
 
 }  // namespace
-}  // namespace cast
-}  // namespace openscreen
+}  // namespace openscreen::cast

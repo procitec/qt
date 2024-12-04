@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -59,7 +59,7 @@ bool ParseInputArguments(v8::Local<v8::Context> context,
         return false;
 
       for (const auto& type : argument_types) {
-        base::Optional<CSSSyntaxDefinition> syntax_definition =
+        absl::optional<CSSSyntaxDefinition> syntax_definition =
             CSSSyntaxStringParser(type).Parse();
         if (!syntax_definition) {
           exception_state->ThrowTypeError("Invalid argument types.");
@@ -103,9 +103,10 @@ PaintWorkletGlobalScope* PaintWorkletGlobalScope::Create(
   auto* global_scope = MakeGarbageCollected<PaintWorkletGlobalScope>(
       frame, std::move(creation_params), reporting_proxy);
   global_scope->ScriptController()->Initialize(NullURL());
-  MainThreadDebugger::Instance()->ContextCreated(
-      global_scope->ScriptController()->GetScriptState(),
-      global_scope->GetFrame(), global_scope->DocumentSecurityOrigin());
+  MainThreadDebugger::Instance(global_scope->GetIsolate())
+      ->ContextCreated(global_scope->ScriptController()->GetScriptState(),
+                       global_scope->GetFrame(),
+                       global_scope->DocumentSecurityOrigin());
   return global_scope;
 }
 
@@ -122,10 +123,7 @@ PaintWorkletGlobalScope::PaintWorkletGlobalScope(
     LocalFrame* frame,
     std::unique_ptr<GlobalScopeCreationParams> creation_params,
     WorkerReportingProxy& reporting_proxy)
-    : WorkletGlobalScope(std::move(creation_params),
-                         reporting_proxy,
-                         frame,
-                         /*create_microtask_queue=*/false) {}
+    : WorkletGlobalScope(std::move(creation_params), reporting_proxy, frame) {}
 
 PaintWorkletGlobalScope::PaintWorkletGlobalScope(
     std::unique_ptr<GlobalScopeCreationParams> creation_params,
@@ -143,10 +141,16 @@ void PaintWorkletGlobalScope::Dispose() {
             PaintWorkletProxyClient::From(Clients()))
       proxy_client->Dispose();
   } else {
-    MainThreadDebugger::Instance()->ContextWillBeDestroyed(
-        ScriptController()->GetScriptState());
+    MainThreadDebugger::Instance(GetIsolate())
+        ->ContextWillBeDestroyed(ScriptController()->GetScriptState());
   }
   WorkletGlobalScope::Dispose();
+
+  if (WTF::IsMainThread()) {
+    // For off-the-main-thread paint worklet, this will be called in
+    // WorkerThread::PrepareForShutdownOnWorkerThread().
+    NotifyContextDestroyed();
+  }
 }
 
 void PaintWorkletGlobalScope::registerPaint(const ScriptState* script_state,
@@ -157,7 +161,7 @@ void PaintWorkletGlobalScope::registerPaint(const ScriptState* script_state,
 
   RegisterWithProxyClientIfNeeded();
 
-  if (name.IsEmpty()) {
+  if (name.empty()) {
     exception_state.ThrowTypeError("The empty string is not a valid name.");
     return;
   }
@@ -186,10 +190,11 @@ void PaintWorkletGlobalScope::registerPaint(const ScriptState* script_state,
       ExecutionContext::From(script_state);
 
   if (!V8ObjectParser::ParseCSSPropertyList(
-          context, execution_context, v8_paint_ctor, "inputProperties",
-          &native_invalidation_properties, &custom_invalidation_properties,
-          &exception_state))
+          context, execution_context, v8_paint_ctor,
+          AtomicString("inputProperties"), &native_invalidation_properties,
+          &custom_invalidation_properties, &exception_state)) {
     return;
+  }
 
   // Get input argument types. Parse the argument type values only when
   // cssPaintAPIArguments is enabled.
@@ -219,7 +224,7 @@ void PaintWorkletGlobalScope::registerPaint(const ScriptState* script_state,
   auto* definition = MakeGarbageCollected<CSSPaintDefinition>(
       ScriptController()->GetScriptState(), paint_ctor, paint,
       native_invalidation_properties, custom_invalidation_properties,
-      input_argument_types, context_settings);
+      input_argument_types, context_settings, this);
   paint_definitions_.Set(name, definition);
 
   if (!WTF::IsMainThread()) {
@@ -236,7 +241,8 @@ void PaintWorkletGlobalScope::registerPaint(const ScriptState* script_state,
 
 CSSPaintDefinition* PaintWorkletGlobalScope::FindDefinition(
     const String& name) {
-  return paint_definitions_.at(name);
+  auto it = paint_definitions_.find(name);
+  return it != paint_definitions_.end() ? it->value : nullptr;
 }
 
 double PaintWorkletGlobalScope::devicePixelRatio() const {

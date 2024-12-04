@@ -1,10 +1,10 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/modules/mediasource/track_default.h"
 
-#include "third_party/blink/renderer/bindings/core/v8/to_v8_for_core.h"
+#include "third_party/blink/renderer/bindings/core/v8/to_v8_traits.h"
 #include "third_party/blink/renderer/core/html/track/audio_track.h"
 #include "third_party/blink/renderer/core/html/track/text_track.h"
 #include "third_party/blink/renderer/core/html/track/video_track.h"
@@ -14,19 +14,21 @@
 namespace blink {
 
 AtomicString TrackDefault::AudioKeyword() {
-  return "audio";
+  return AtomicString("audio");
 }
 
 AtomicString TrackDefault::VideoKeyword() {
-  return "video";
+  return AtomicString("video");
 }
 
 AtomicString TrackDefault::TextKeyword() {
-  return "text";
+  return AtomicString("text");
 }
 
 ScriptValue TrackDefault::kinds(ScriptState* script_state) const {
-  return ScriptValue(script_state->GetIsolate(), ToV8(kinds_, script_state));
+  return ScriptValue(
+      script_state->GetIsolate(),
+      ToV8Traits<IDLSequence<IDLString>>::ToV8(script_state, kinds_));
 }
 
 TrackDefault* TrackDefault::Create(const AtomicString& type,

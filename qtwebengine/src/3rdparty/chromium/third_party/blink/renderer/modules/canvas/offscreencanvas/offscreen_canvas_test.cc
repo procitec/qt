@@ -1,13 +1,13 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/core/offscreencanvas/offscreen_canvas.h"
-
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "services/viz/public/mojom/hit_test/hit_test_region_list.mojom-blink.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/frame/frame_test_helpers.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
@@ -17,11 +17,13 @@
 #include "third_party/blink/renderer/core/html/canvas/html_canvas_element.h"
 #include "third_party/blink/renderer/modules/canvas/htmlcanvas/html_canvas_element_module.h"
 #include "third_party/blink/renderer/modules/canvas/offscreencanvas2d/offscreen_canvas_rendering_context_2d.h"
+#include "third_party/blink/renderer/platform/graphics/canvas_resource.h"
 #include "third_party/blink/renderer/platform/graphics/gpu/shared_gpu_context.h"
 #include "third_party/blink/renderer/platform/graphics/test/fake_gles2_interface.h"
 #include "third_party/blink/renderer/platform/graphics/test/fake_web_graphics_context_3d_provider.h"
 #include "third_party/blink/renderer/platform/graphics/test/mock_compositor_frame_sink.h"
 #include "third_party/blink/renderer/platform/graphics/test/mock_embedded_frame_sink_provider.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "third_party/blink/renderer/platform/testing/testing_platform_support.h"
 
 using ::testing::_;
@@ -38,6 +40,13 @@ struct TestParams {
   bool alpha;
   bool desynchronized;
 };
+
+class AcceleratedCompositingTestPlatform
+    : public blink::TestingPlatformSupport {
+ public:
+  bool IsGpuCompositingDisabled() const override { return false; }
+};
+
 }  // unnamed namespace
 
 class OffscreenCanvasTest : public ::testing::Test,
@@ -56,7 +65,7 @@ class OffscreenCanvasTest : public ::testing::Test,
   }
 
   LocalDOMWindow* GetWindow() const {
-    return web_view_helper_.GetWebView()
+    return web_view_helper_->GetWebView()
         ->MainFrameImpl()
         ->GetFrame()
         ->DomWindow();
@@ -65,35 +74,42 @@ class OffscreenCanvasTest : public ::testing::Test,
   Document& GetDocument() const { return *GetWindow()->document(); }
 
  private:
-  frame_test_helpers::WebViewHelper web_view_helper_;
+  test::TaskEnvironment task_environment_;
+  std::unique_ptr<frame_test_helpers::WebViewHelper> web_view_helper_;
   Persistent<OffscreenCanvas> offscreen_canvas_;
   Persistent<OffscreenCanvasRenderingContext2D> context_;
   FakeGLES2Interface gl_;
+  std::unique_ptr<
+      ScopedTestingPlatformSupport<AcceleratedCompositingTestPlatform>>
+      accelerated_compositing_scope_;
 };
 
 OffscreenCanvasTest::OffscreenCanvasTest() = default;
 
 void OffscreenCanvasTest::SetUp() {
-  auto factory = [](FakeGLES2Interface* gl, bool* gpu_compositing_disabled)
+  auto factory = [](FakeGLES2Interface* gl)
       -> std::unique_ptr<WebGraphicsContext3DProvider> {
-    *gpu_compositing_disabled = false;
     gl->SetIsContextLost(false);
     return std::make_unique<FakeWebGraphicsContext3DProvider>(gl);
   };
   SharedGpuContext::SetContextProviderFactoryForTesting(
       WTF::BindRepeating(factory, WTF::Unretained(&gl_)));
 
-  web_view_helper_.Initialize();
+  web_view_helper_ = std::make_unique<frame_test_helpers::WebViewHelper>();
+  web_view_helper_->Initialize();
+  accelerated_compositing_scope_ = std::make_unique<
+      ScopedTestingPlatformSupport<AcceleratedCompositingTestPlatform>>();
 
   GetDocument().documentElement()->setInnerHTML(
       String::FromUTF8("<body><canvas id='c'></canvas></body>"));
 
   auto* canvas_element =
-      To<HTMLCanvasElement>(GetDocument().getElementById("c"));
+      To<HTMLCanvasElement>(GetDocument().getElementById(AtomicString("c")));
 
   DummyExceptionStateForTesting exception_state;
   offscreen_canvas_ = HTMLCanvasElementModule::transferControlToOffscreen(
-      GetWindow(), *canvas_element, exception_state);
+      ToScriptStateForMainWorld(GetWindow()->GetFrame()), *canvas_element,
+      exception_state);
   // |offscreen_canvas_| should inherit the FrameSinkId from |canvas_element|s
   // SurfaceLayerBridge, but in tests this id is zero; fill it up by hand.
   offscreen_canvas_->SetFrameSinkId(kClientId, kSinkId);
@@ -110,6 +126,9 @@ void OffscreenCanvasTest::SetUp() {
 
 void OffscreenCanvasTest::TearDown() {
   SharedGpuContext::ResetForTesting();
+  // destruction order matters due to nested TestPlatformSupport instance.
+  accelerated_compositing_scope_ = nullptr;
+  web_view_helper_ = nullptr;
 }
 
 TEST_F(OffscreenCanvasTest, AnimationNotInitiallySuspended) {
@@ -147,9 +166,10 @@ TEST_P(OffscreenCanvasTest, CompositorFrameOpacity) {
 
   const bool context_alpha = GetParam().alpha;
 
-  const auto canvas_resource = CanvasResourceSharedBitmap::Create(
-      offscreen_canvas().Size(), CanvasColorParams(), nullptr /* provider */,
-      kLow_SkFilterQuality);
+  auto canvas_resource = CanvasResourceSharedBitmap::Create(
+      SkImageInfo::MakeN32Premul(offscreen_canvas().Size().width(),
+                                 offscreen_canvas().Size().height()),
+      nullptr /* provider */, cc::PaintFlags::FilterQuality::kLow);
   EXPECT_TRUE(!!canvas_resource);
 
   EXPECT_CALL(mock_embedded_frame_sink_provider.mock_compositor_frame_sink(),
@@ -168,9 +188,14 @@ TEST_P(OffscreenCanvasTest, CompositorFrameOpacity) {
             EXPECT_NE(shared_quad_state_list.front()->are_contents_opaque,
                       context_alpha);
           })));
-  offscreen_canvas().PushFrame(canvas_resource, SkIRect::MakeWH(10, 10));
+  offscreen_canvas().PushFrame(std::move(canvas_resource),
+                               SkIRect::MakeWH(10, 10));
   platform->RunUntilIdle();
 
+  auto canvas_resource2 = CanvasResourceSharedBitmap::Create(
+      SkImageInfo::MakeN32Premul(offscreen_canvas().Size().width(),
+                                 offscreen_canvas().Size().height()),
+      nullptr /* provider */, cc::PaintFlags::FilterQuality::kLow);
   EXPECT_CALL(mock_embedded_frame_sink_provider.mock_compositor_frame_sink(),
               SubmitCompositorFrameSync_(_))
       .WillOnce(::testing::WithArg<0>(
@@ -187,7 +212,8 @@ TEST_P(OffscreenCanvasTest, CompositorFrameOpacity) {
             EXPECT_NE(shared_quad_state_list.front()->are_contents_opaque,
                       context_alpha);
           })));
-  offscreen_canvas().Commit(canvas_resource, SkIRect::MakeWH(10, 10));
+  offscreen_canvas().Commit(std::move(canvas_resource2),
+                            SkIRect::MakeWH(10, 10));
   platform->RunUntilIdle();
 }
 

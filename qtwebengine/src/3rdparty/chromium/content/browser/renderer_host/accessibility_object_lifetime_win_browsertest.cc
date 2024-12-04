@@ -1,14 +1,17 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/memory/raw_ptr.h"
+#include "base/test/scoped_feature_list.h"
 #include "content/browser/renderer_host/legacy_render_widget_host_win.h"
 #include "content/browser/renderer_host/render_widget_host_view_aura.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
+#include "content/public/test/scoped_accessibility_mode_override.h"
 #include "content/shell/browser/shell.h"
-#include "ui/accessibility/accessibility_switches.h"
+#include "ui/accessibility/accessibility_features.h"
 #include "ui/accessibility/platform/ax_platform_node_win.h"
 #include "ui/accessibility/platform/ax_system_caret_win.h"
 #include "ui/base/win/hwnd_subclass.h"
@@ -19,6 +22,12 @@ class AccessibilityObjectLifetimeWinBrowserTest
     : public content::ContentBrowserTest {
  public:
   AccessibilityObjectLifetimeWinBrowserTest() = default;
+
+  AccessibilityObjectLifetimeWinBrowserTest(
+      const AccessibilityObjectLifetimeWinBrowserTest&) = delete;
+  AccessibilityObjectLifetimeWinBrowserTest& operator=(
+      const AccessibilityObjectLifetimeWinBrowserTest&) = delete;
+
   ~AccessibilityObjectLifetimeWinBrowserTest() override = default;
 
  protected:
@@ -46,13 +55,12 @@ class AccessibilityObjectLifetimeWinBrowserTest
   HWND GetHwnd() { return GetView()->AccessibilityGetAcceleratedWidget(); }
 
   Microsoft::WRL::ComPtr<ui::AXPlatformNodeWin> test_node_;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(AccessibilityObjectLifetimeWinBrowserTest);
 };
 
 IN_PROC_BROWSER_TEST_F(AccessibilityObjectLifetimeWinBrowserTest,
                        RootDoesNotLeak) {
+  ScopedAccessibilityModeOverride ax_mode_override(ui::kAXModeBasic.flags());
+
   EXPECT_TRUE(NavigateToURL(shell(), GURL(url::kAboutBlankURL)));
 
   // Cache a pointer to the root node we return to Windows.
@@ -122,6 +130,7 @@ class AccessibilityTeardownTestMessageFilter : public ui::HWNDMessageFilter {
       // Verify that the legacy window does not crash when asked for an
       // accessibility object.
       legacy_render_widget_host_HWND_->GetOrCreateWindowRootAccessible(false);
+      legacy_render_widget_host_HWND_ = nullptr;
 
       // Remove ourselves as a subclass.
       ui::HWNDSubclass::RemoveFilterFromAllTargets(this);
@@ -131,7 +140,7 @@ class AccessibilityTeardownTestMessageFilter : public ui::HWNDMessageFilter {
   }
 
  private:
-  LegacyRenderWidgetHostHWND* legacy_render_widget_host_HWND_;
+  raw_ptr<LegacyRenderWidgetHostHWND> legacy_render_widget_host_HWND_;
 };
 
 IN_PROC_BROWSER_TEST_F(AccessibilityObjectLifetimeWinBrowserTest,
@@ -148,19 +157,22 @@ class AccessibilityObjectLifetimeUiaWinBrowserTest
     : public AccessibilityObjectLifetimeWinBrowserTest {
  public:
   AccessibilityObjectLifetimeUiaWinBrowserTest() = default;
+
+  AccessibilityObjectLifetimeUiaWinBrowserTest(
+      const AccessibilityObjectLifetimeUiaWinBrowserTest&) = delete;
+  AccessibilityObjectLifetimeUiaWinBrowserTest& operator=(
+      const AccessibilityObjectLifetimeUiaWinBrowserTest&) = delete;
+
   ~AccessibilityObjectLifetimeUiaWinBrowserTest() override = default;
 
-  void SetUpCommandLine(base::CommandLine* command_line) override {
-    base::CommandLine::ForCurrentProcess()->AppendSwitch(
-        ::switches::kEnableExperimentalUIAutomation);
-  }
-
  private:
-  DISALLOW_COPY_AND_ASSIGN(AccessibilityObjectLifetimeUiaWinBrowserTest);
+  base::test::ScopedFeatureList scoped_feature_list_{::features::kUiaProvider};
 };
 
 IN_PROC_BROWSER_TEST_F(AccessibilityObjectLifetimeUiaWinBrowserTest,
                        RootDoesNotLeak) {
+  ScopedAccessibilityModeOverride ax_mode_override(ui::kAXModeBasic.flags());
+
   EXPECT_TRUE(NavigateToURL(shell(), GURL(url::kAboutBlankURL)));
 
   // Cache a pointer to the root node we return to Windows.

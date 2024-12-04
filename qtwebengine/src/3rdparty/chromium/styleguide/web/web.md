@@ -4,14 +4,15 @@
 
 ## Where does this style guide apply?
 
-This style guide targets Chromium frontend features implemented with JavaScript,
-CSS, and HTML.  Developers of these features should adhere to the following
+This style guide targets Chromium frontend features implemented with TypeScript,
+CSS, and HTML. Developers of these features should adhere to the following
 rules where possible, just like those using C++ conform to the [Chromium C++
 styleguide](../c++/c++.md).
 
 This guide follows and builds on:
 
 * [Google HTML/CSS Style Guide](https://google.github.io/styleguide/htmlcssguide.html)
+* [Google TypeScript Style Guide](https://google.github.io/styleguide/tsguide.html)
 * [Google JavaScript Style Guide](https://google.github.io/styleguide/jsguide.html)
 * [Google Polymer Style Guide](http://go/polymer-style)
 
@@ -27,7 +28,7 @@ When designing a feature with web technologies, separate the:
 * **content** you are presenting to the user (**HTML**)
 * **styling** of the data (**CSS**)
 * **logic** that controls the dynamic behavior of the content and presentation
-  (**JS**)
+  (**TS**)
 
 This highlights the concern of each part of the code and promotes looser
 coupling (which makes refactor easier down the road).
@@ -38,7 +39,7 @@ Another way to envision this principle is using the MVC pattern:
 |:-------------:|:-------------:|
 | Model         | HTML          |
 | View          | CSS           |
-| Controller    | JS            |
+| Controller    | TS            |
 
 It's also often appropriate to separate each implementation into separate files.
 
@@ -230,8 +231,12 @@ compatibility issues are less relevant for Chrome-only code).
 * Use scalable `font-size` units like `%` or `em` to respect users' default font
   size
 
-* Don't use CSS Mixins (`--mixin: {}` or `@apply --mixin;`) in new code. [We're
-  removing them.](https://crbug.com/973674)
+* Don't use CSS Mixins (`--mixin: {}` or `@apply --mixin;`).
+    * CSS Mixins are defunct after Oct 2022, see
+      [crrev.com/c/3953559](https://crrev.com/c/3953559)
+    * All CSS Mixins usages have been removed from Chromium, see
+      [crbug.com/973674](https://crbug.com/973674) and
+      [crbug.com/1320797](https://crbug.com/1320797)
     * Mixins were [dropped from CSS](https://www.xanthir.com/b4o00) in favor of
       [CSS Shadow Parts](https://drafts.csswg.org/css-shadow-parts/).
     * Instead, replace CSS mixin usage with one of these natively supported
@@ -254,19 +259,13 @@ compatibility issues are less relevant for Chrome-only code).
 
 ### URLs
 
-* Don't embed data URIs in source files. Instead, use grit's flattening.
+* Don't embed data URIs in source files. Instead, use a relative path to an icon
+  in your UI (and include this icon in the generated grd file), or use an
+  absolute URL for an icon from the shared resources at ui/webui/resources:
 
 ```css
-background-image: url(../path/to/image.svg);
+background-image: url(chrome://resources/images/path/to/image.svg);
 ```
-
-The contents of image.svg are base64-encoded and the `url()` is replaced with
-
-```css
-background-image: url(data:image/svg+xml;base64,...);
-```
-
-if `flattenhtml="true"` is specified in your .grd file.
 
 ### RTL
 
@@ -296,15 +295,19 @@ Use RTL-friendly versions of things like `margin` or `padding` where possible:
 For properties that don't have an RTL-friendly alternatives, use
 `html[dir='rtl']` as a prefix in your selectors.
 
-## JavaScript
+## TypeScript
+
+New WebUI code should be written in TypeScript. Some legacy code is still using
+JavaScript, but it is expected that all code should migrate to TS eventually.
 
 ### Style
 
-See the [Google JavaScript Style
-Guide](https://google.github.io/styleguide/jsguide.html) as well as
+See the [Google TypeScript Style
+Guide](https://google.github.io/styleguide/tsguide.html) as well as
 [ECMAScript Features in Chromium](es.md).
 
-* Use `$('element-id')` instead of `document.getElementById`
+* Use `$('element-id')` instead of `document.getElementById`. This function can
+  be imported from util.m.js.
 
 * Use single-quotes instead of double-quotes for all strings.
     * `clang-format` now handles this automatically.
@@ -313,16 +316,40 @@ Guide](https://google.github.io/styleguide/jsguide.html) as well as
     * Use `@type` (instead of `@return` or `@param`) for JSDoc annotations on
       getters/setters
 
-* See [Annotating JavaScript for the Closure
+* Prefer `event.preventDefault()` to `return false` from event handlers
+
+* Prefer `this.addEventListener('foo-changed', this.onFooChanged_.bind(this));`
+  instead of always using an arrow function wrapper, when it makes the code less
+  verbose without compromising type safety (for example in TypeScript files).
+
+* When using `?.` be aware that information about the original location of the
+  null/undefined value can be lost. You should avoid cases like this and instead
+  prefer explicit error checking:
+```js
+const enterKey = keyboards.getCurrentKeyboard()?.getKeys()?.getEnterKey();
+// ... Lots of code here.
+if (!enterKey) {
+  // Something has gone wrong here, but it is unclear what.
+}
+```
+
+* Don't use `?.` as a way to silence TypeScript "object is possibly null"
+  errors. Instead use `assert()` statements. Only use the optional chaining
+  feature when the code needs to handle null/undefined gracefully.
+
+
+### Closure compiler (legacy ChromeOS Ash code only)
+
+* Closure compiler can only be used on legacy ChromeOS Ash code. All other
+  platforms and new ChromeOS code are required to use TypeScript to add type
+  checking.
+
+* For legacy code using closure, see [Annotating JavaScript for the Closure
   Compiler](https://developers.google.com/closure/compiler/docs/js-for-compiler)
   for @ directives
 
-* Prefer `event.preventDefault()` to `return false` from event handlers
-
-### Closure compiler
-
 * Use the [closure
-  compiler](https://chromium.googlesource.com/chromium/src/+/master/docs/closure_compilation.md)
+  compiler](https://chromium.googlesource.com/chromium/src/+/main/docs/closure_compilation.md)
   to identify JS type errors and enforce correct JSDoc annotations.
 
 * Add a `BUILD.gn` file to any new web UI code directory.
@@ -362,9 +389,46 @@ Guide](https://google.github.io/styleguide/jsguide.html) as well as
 
 Also see the [Google Polymer Style Guide](http://go/polymer-style).
 
-* Use a consistent ordering in the “prototype” object passed to `Polymer()`:
+* Elements with UI should have their HTML in a .html file and logic in a TS file
+  with the same name. The HTML template can be imported into the final JS file
+  at runtime from a generated JS wrapper file via the getTemplate() function.
+  The wrapper file is generated using the html_to_wrapper gn rule:
+```
+  html_to_wrapper("html_wrapper_files") {
+    in_files = [ "my_app.html" ]
+  }
+```
+
+* In new code, use class based syntax for custom elements. Example:
+```js
+import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+import {getTemplate} from './my_app.html.js';
+
+class MyAppElement extends PolymerElement {
+  static get is() {
+    return 'my-app';
+  }
+
+  static get template() {
+    return getTemplate();
+  }
+
+  static get properties() {
+    return {
+      foo: String,
+    };
+  }
+
+  foo: string;
+}
+
+customElements.define(MyAppElement.is, MyAppElement);
+```
+
+* Use a consistent ordering for common methods (or, in legacy code, the
+  parameters passed to Polymer()):
     * `is`
-    * `behaviors`
+    * `behaviors` (legacy code only)
     * `properties` (public, then private)
     * `hostAttributes`
     * `listeners`, `observers`
@@ -375,19 +439,32 @@ Also see the [Google Polymer Style Guide](http://go/polymer-style).
 * Use camelCase for element IDs to simplify local DOM accessors (i.e.
   `this.$.camelCase` instead of `this.$['dash-case']`).
 
+* Note: In TypeScript, the `this.$.camelCase` accessor requires adding an
+  interface:
+
+```js
+interface MyAppElement {
+  $: {
+    camelCase: HTMLElement,
+  };
+}
+```
+
 * Use `this.foo` instead of `newFoo` arguments in observers when possible.
   This makes changing the type of `this.foo` easier (as the `@type` is
   duplicated in less places, i.e. `@param`).
 
 ```js
-properties: {
-  foo: {type: Number, observer: 'fooChanged_'}
-},
+static get properties() {
+  return {
+    foo: {type: Number, observer: 'fooChanged_'},
+  };
+}
 
 /** @private */
-fooChanged_: function() {
+fooChanged_() {
   this.bar = this.derive(this.foo);
-},
+}
 ```
 
 * Use native `on-click` for click events instead of `on-tap`. 'tap' is a
@@ -400,7 +477,7 @@ https://www.polymer-project.org/2.0/docs/devguide/templates#dom-if):
   default. Also consider using [`cr-lazy-render`](
   https://cs.chromium.org/chromium/src/ui/webui/resources/cr_elements/cr_lazy_render/cr_lazy_render.js)
   instead.
-  * **Only use`dom-if`** if the DOM subtree is non-trivial, defined as:
+  * **Only use `dom-if`** if the DOM subtree is non-trivial, defined as:
       * Contains more than 10 native elements, OR
       * Contain **any** custom elements, OR
       * Has many data bindings, OR
@@ -415,67 +492,138 @@ https://www.polymer-project.org/2.0/docs/devguide/templates#dom-if):
   * Alternatives:
     * Include the SVG in a WebUI page-specific icon file. e.g. `chrome/browser/resources/settings/icons.html`.
     * If reused across multiple WebUI pages, include the SVG in `ui/webui/resources/cr_elements/icons.html` .
-  * You may copy the SVG code from [iron-icons files](https://github.com/PolymerElements/iron-icons/blob/master/iron-icons.html).
+  * You may copy the SVG code from [iron-icons files](https://github.com/PolymerElements/iron-icons/blob/master/iron-icons.js).
 
 ## Grit processing
 
 Grit is a tool that runs at compile time to pack resources together into
-Chromium.
+Chromium. Resources are packed from grd files. Most Chromium WebUI resources
+should be located in autogenerated grd files created by the [`generate_grd`](
+https://chromium.googlesource.com/chromium/src/+/main/docs/webui_build_configuration.md#generate_grd)
+gn rule.
 
 ### Preprocessing
 
-Grit can be used to selectively include or exclude code at compile-time in web
-code.  Preprocessing is enabled by adding the `preprocess="true"` attribute
-inside of a `.grd` file on `<structure>` and `<include>` nodes.
+Sometimes it is helpful to selectively include or exclude code at compile-time.
+This is done using the [`preprocess_if_expr`][preprocess_if_expr_doc] gn rule,
+which processes files for `<if expr>` without running the entire grit resource
+packing process.
 
-*** aside
-Note: These preprocessor statements can live in places that surprise linters or
-formatters (for example: running clang-format on a .js file with an `<if>` in
-it).  Generally, putting these language-invalid features inside of comments
+`<if expr>` tags allow conditional logic by evaluating an expression of grit
+variables in a compile-time environment.
+
+The grit variables are provided to grit through the `defines` argument of
+`preprocess_if_expr` ([sample search][defines_search]). For some widely
+available variables, see [//tools/grit/grit_args.gni][grit_args] and
+[//chrome/common/features.gni][chrome_features].
+
+These allow conditionally including or excluding code. For example:
+
+```ts
+function isWindows(): boolean {
+  // <if expr="is_win">
+  return true;
+  // </if>
+  // <if expr="not is_win">
+  return false;
+  // </if>
+}
+```
+
+***aside
+Note: Preprocessor statements can live in places that surprise linters or
+formatters (for example: a .ts file with an `<if>` in it will make PRESUBMIT
+ESLint checks fail). Putting these language-invalid features inside of comments
 helps alleviate problems with unexpected input.
 ***
 
-`<if>` tags allow conditional logic by evaluating an expression in a
-compile-time environment of grit variables.  These allow conditionally including
-or excluding code.
+[preprocess_if_expr_doc]: https://chromium.googlesource.com/chromium/src/+/main/docs/webui_build_configuration.md#preprocess_if_expr
+[defines_search]: https://source.chromium.org/search?q=preprocess_if_expr%20defines&ss=chromium
+[grit_args]: https://crsrc.org/c/tools/grit/grit_args.gni?q=_grit_defines
+[chrome_features]: https://crsrc.org/c/chrome/common/features.gni?q=chrome_grit_defines
 
-Example:
-```js
-function isWindows() {
-  // <if expr="win">
-  return true;
-  // </if>
-  return false;
+#### Example
+
+The following BUILD.gn example code uses `preprocess_if_expr` to preprocess any
+`<if expr>` in my_app.ts and in the my_app.html, exposing gn variables to Grit.
+It then wraps the html file (see the earlier `html_to_wrapper` example), runs
+the TypeScript compiler on the outputs of this operation and uses the manifest
+from this operation and the `in_files` option to place both the final,
+preprocessed file and a separate (not preprocessed) icon into a generated grd
+file using `generate_grd`:
+
+```
+preprocess_folder = "preprocessed"
+preprocess_manifest = "preprocessed_manifest.json"
+
+preprocess_if_expr("preprocess") {
+  defines = ["is_win=$is_win"]
+  in_folder = "."
+  in_files = [ "my_app.ts", "my_app.html" ]
+  out_folder = "$target_gen_dir/$preprocess_folder"
+}
+
+html_to_wrapper("html_wrapper_files") {
+  in_folder = "$target_gen_dir/$preprocess_folder"
+  in_files = [ "my_app.html" ]
+  out_folder = "$target_gen_dir/$preprocess_folder"
+  deps = [":preprocess"]
+}
+
+# Run TS compiler on the two files:
+ts_library("build_ts") {
+  root_dir = "$target_gen_dir/$preprocess_folder"
+  out_dir = "$target_gen_dir/tsc"
+  tsconfig_base = "tsconfig_base.json"
+  in_files = [
+    "my_app.html.ts",
+    "my_app.ts",
+  ]
+  deps = [
+    "//third_party/polymer/v3_0:library",
+    "//ui/webui/resources/js:build_ts",
+  ]
+  extra_deps = [
+    ":preprocess",
+    ":html_wrapper_files",
+  ]
+}
+
+# Put the compiled files as well as a separate my_icon.svg file in the grd:
+generate_grd("build_grd") {
+  input_files = [ "my_icon.svg" ]
+  input_files_base_dir = rebase_path(".", "//")
+  deps = [ ":build_ts" ]
+  manifest_files = [ "$target_gen_dir/tsconfig.manifest" ]
+  grd_prefix = [ "foo" ]
+  out_grd = "$target_gen_dir/resources.grd"
 }
 ```
-
-`<include src="[path]">` reads the file at `path` and replaces the `<include>`
-tag with the file contents of `[path]`. Don't use `<include>` in new JS code;
-[it is being removed.](https://docs.google.com/document/d/1Z18WTNv28z5FW3smNEm_GtsfVD2IL-CmmAikwjw3ryo/edit?usp=sharing#heading=h.66ycuu6hfi9n)
-Instead, use JS imports in new pages and pages that use JS modules.
-
-Grit can read and inline resources when enabled via `flattenhtml="true"`.
 
 *** aside
-Note: The implementation of flattening does HTML parsing and URL detection via regular
-expressions and is not guaranteed to work in all cases.
+Note:
+In a few legacy resources, preprocessing is enabled by adding the
+`preprocess="true"` attribute inside of a `.grd` file on `<structure>` and
+`<include>` nodes.
 ***
 
-Example:
+### Inlining resources with Grit (deprecated, don't use)
 
-```css
-.spinner {
-  background: url(../relative/file/path/to/spinner.svg);
-}
-```
+`<include src="[path]">` reads the file at `path` and replaces the `<include>`
+tag with the file contents of `[path]`.
 
-Is transformed to:
+Don't use `<include>` in new JS code;
+[it is being removed](https://docs.google.com/document/d/1Z18WTNv28z5FW3smNEm_GtsfVD2IL-CmmAikwjw3ryo/edit?usp=sharing#heading=h.66ycuu6hfi9n).
+Instead, use JS imports. If there is concern about importing a large number of
+JS files, the optimize_webui build rule supports bundling pages using Rollup.
 
-```css
-.spinner {
-  background: url(data:image/svg+xml;... base64-encoded content ...);
-}
-```
+Some legacy UIs use Grit to read and inline resources via `flattenhtml="true"`.
+This option should not be used in new code; instead, use JS imports and bundling
+as needed. Icons can also be placed in an iconset, to avoid importing them
+individually.
 
-A minification tool can be specified to Grit (like Closure compiler) to
-transform the code before it's packed into a bundle.
+*** aside
+Note: The implementation of flattening does HTML parsing and URL detection via
+regular expressions and is not guaranteed to work in all cases. In particular,
+it does not work with any generated resources.
+***

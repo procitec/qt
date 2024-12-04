@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,7 +9,7 @@
 #include <map>
 
 #include "base/containers/circular_deque.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "content/renderer/pepper/v8_var_converter.h"
 #include "gin/handle.h"
@@ -18,8 +18,9 @@
 #include "ppapi/proxy/host_dispatcher.h"
 #include "ppapi/shared_impl/resource.h"
 #include "third_party/blink/public/web/web_serialized_script_value.h"
+#include "v8/include/v8-forward.h"
+#include "v8/include/v8-persistent-handle.h"
 #include "v8/include/v8-util.h"
-#include "v8/include/v8.h"
 
 struct PP_Var;
 
@@ -61,6 +62,9 @@ class MessageChannel :
   // is only valid as long as the object in |result| is alive.
   static MessageChannel* Create(PepperPluginInstanceImpl* instance,
                                 v8::Persistent<v8::Object>* result);
+
+  MessageChannel(const MessageChannel&) = delete;
+  MessageChannel& operator=(const MessageChannel&) = delete;
 
   ~MessageChannel() override;
 
@@ -124,7 +128,8 @@ class MessageChannel :
 
   PluginObject* GetPluginObject(v8::Isolate* isolate);
 
-  void EnqueuePluginMessage(v8::Local<v8::Value> v8_value);
+  void EnqueuePluginMessage(v8::Isolate* isolate,
+                            v8::Local<v8::Value> v8_value);
 
   void FromV8ValueComplete(VarConversionResult* result_holder,
                            const ppapi::ScopedPPVar& result_var,
@@ -148,7 +153,7 @@ class MessageChannel :
       const std::string& name,
       void (MessageChannel::*memberFuncPtr)(gin::Arguments* args));
 
-  PepperPluginInstanceImpl* instance_;
+  raw_ptr<PepperPluginInstanceImpl, ExperimentalRenderer> instance_;
 
   // We pass all non-postMessage calls through to the passthrough_object_.
   // This way, a plugin can use PPB_Class or PPP_Class_Deprecated and also
@@ -201,8 +206,6 @@ class MessageChannel :
   // This is used to ensure pending tasks will not fire after this object is
   // destroyed.
   base::WeakPtrFactory<MessageChannel> weak_ptr_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(MessageChannel);
 };
 
 }  // namespace content

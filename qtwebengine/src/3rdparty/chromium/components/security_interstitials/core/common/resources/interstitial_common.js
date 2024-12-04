@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -27,7 +27,7 @@ var certificateErrorPageController;
 
 // Should match security_interstitials::SecurityInterstitialCommand
 /** @enum {number} */
-const SecurityInterstitialCommandId = {
+export const SecurityInterstitialCommandId = {
   CMD_DONT_PROCEED: 0,
   CMD_PROCEED: 1,
   // Ways for user to get more information
@@ -49,13 +49,13 @@ const SecurityInterstitialCommandId = {
   CMD_OPEN_ENHANCED_PROTECTION_SETTINGS: 13,
 };
 
-const HIDDEN_CLASS = 'hidden';
+export const HIDDEN_CLASS = 'hidden';
 
 /**
  * A convenience method for sending commands to the parent page.
  * @param {SecurityInterstitialCommandId} cmd  The command to send.
  */
-function sendCommand(cmd) {
+export function sendCommand(cmd) {
   if (window.certificateErrorPageController) {
     switch (cmd) {
       case SecurityInterstitialCommandId.CMD_DONT_PROCEED:
@@ -104,23 +104,16 @@ function sendCommand(cmd) {
     return;
   }
   // <if expr="not is_ios">
-  window.domAutomationController.send(cmd);
+  if (window.domAutomationController) {
+    window.domAutomationController.send(cmd);
+  }
   // </if>
   // <if expr="is_ios">
-  // TODO(crbug.com/987407): Used to send commands for non-committed
-  // interstitials on iOS. Should be deleted after committed interstitials are
-  // fully launched.
-  if (!loadTimeData.getBoolean('committed_interstitials_enabled')) {
-    const iframe = document.createElement('IFRAME');
-    iframe.setAttribute('src', 'js-command:' + cmd);
-    document.documentElement.appendChild(iframe);
-    iframe.parentNode.removeChild(iframe);
-  } else {
-    // Used to send commands for iOS committed interstitials.
-    /** @suppress {undefinedVars|missingProperties} */ (function() {
-      __gCrWeb.message.invokeOnHost({'command': 'blockingPage.' + cmd});
-    })();
-  }
+  // Send commands for iOS committed interstitials.
+  /** @suppress {undefinedVars|missingProperties} */ (function() {
+    window.webkit.messageHandlers['IOSInterstitialMessage'].postMessage(
+        {'command': cmd.toString()});
+  })();
   // </if>
 }
 
@@ -128,16 +121,11 @@ function sendCommand(cmd) {
  * Call this to stop clicks on <a href="#"> links from scrolling to the top of
  * the page (and possibly showing a # in the link).
  */
-function preventDefaultOnPoundLinkClicks() {
-  document.addEventListener('click', function(e) {
-    const anchor = findAncestor(/** @type {Node} */ (e.target), function(el) {
-      return el.tagName === 'A';
-    });
-    // Use getAttribute() to prevent URL normalization.
-    if (anchor && anchor.getAttribute('href') === '#') {
-      e.preventDefault();
-    }
-  });
+export function preventDefaultOnPoundLinkClicks() {
+  const anchors = document.body.querySelectorAll('a[href="#"]');
+  for (const anchor of anchors) {
+    anchor.addEventListener('click', e => e.preventDefault());
+  }
 }
 
 // <if expr="is_ios">
@@ -147,9 +135,6 @@ function preventDefaultOnPoundLinkClicks() {
  * not getting triggered.
  */
 function setupIosRefresh() {
-  if (!loadTimeData.getBoolean('committed_interstitials_enabled')) {
-    return;
-  }
   const load = () => {
     window.location.replace(loadTimeData.getString('url_to_reload'));
   };

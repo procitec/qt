@@ -57,10 +57,9 @@ class GenericFileSystemTests(object):
         fs.chdir(self.orig_cwd)
 
     def teardown_generic_test_dir(self):
-        success = self.fs.remove_contents(self.generic_test_dir)
+        self.fs.rmtree(self.generic_test_dir)
         self.fs.chdir(self.orig_cwd)
         self.generic_test_dir = None
-        self.assertTrue(success)
 
     def test_glob__trailing_asterisk(self):
         self.fs.chdir(self.generic_test_dir)
@@ -306,7 +305,7 @@ class RealFileSystemTest(unittest.TestCase, GenericFileSystemTests):
         binary_path = None
 
         unicode_text_string = u'\u016An\u012Dc\u014Dde\u033D'
-        hex_equivalent = '\xC5\xAA\x6E\xC4\xAD\x63\xC5\x8D\x64\x65\xCC\xBD'
+        hex_equivalent = b'\xC5\xAA\x6E\xC4\xAD\x63\xC5\x8D\x64\x65\xCC\xBD'
         try:
             text_path = tempfile.mktemp(prefix='tree_unittest_')
             binary_path = tempfile.mktemp(prefix='tree_unittest_')

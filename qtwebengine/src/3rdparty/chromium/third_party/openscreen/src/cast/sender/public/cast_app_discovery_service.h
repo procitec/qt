@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,32 +7,32 @@
 
 #include <vector>
 
-#include "cast/common/public/service_info.h"
+#include "cast/common/public/receiver_info.h"
 
-namespace openscreen {
-namespace cast {
+namespace openscreen::cast {
 
 class CastMediaSource;
 
-// Interface for app discovery for Cast devices.
+// Interface for app discovery for Cast receivers.
 class CastAppDiscoveryService {
  public:
   using AvailabilityCallback =
       std::function<void(const CastMediaSource& source,
-                         const std::vector<ServiceInfo>& devices)>;
+                         const std::vector<ReceiverInfo>& receivers)>;
 
   class Subscription {
    public:
-    Subscription(Subscription&&);
+    Subscription(CastAppDiscoveryService* discovery_service, uint32_t id);
+    Subscription(Subscription&&) noexcept;
+    Subscription(Subscription&) = delete;
+    Subscription& operator=(Subscription&&);
+    Subscription& operator=(const Subscription&) = delete;
     ~Subscription();
-    Subscription& operator=(Subscription);
 
     void Reset();
 
    private:
     friend class CastAppDiscoveryService;
-
-    Subscription(CastAppDiscoveryService* discovery_service, uint32_t id);
 
     void Swap(Subscription& other);
 
@@ -46,7 +46,7 @@ class CastAppDiscoveryService {
   // returned via |callback| until the returned Subscription is destroyed by the
   // caller.  If there are cached results available, |callback| will be invoked
   // before this method returns.  |callback| may be invoked with an empty list
-  // if all devices respond to the respective queries with "unavailable" or
+  // if all receivers respond to the respective queries with "unavailable" or
   // don't respond before a timeout.  |callback| may be invoked successively
   // with the same list.
   virtual Subscription StartObservingAvailability(
@@ -57,19 +57,10 @@ class CastAppDiscoveryService {
   // this method when the user initiates a user gesture.
   virtual void Refresh() = 0;
 
- protected:
-  Subscription MakeSubscription(CastAppDiscoveryService* discovery_service,
-                                uint32_t id) {
-    return Subscription(discovery_service, id);
-  }
-
  private:
-  friend class Subscription;
-
   virtual void RemoveAvailabilityCallback(uint32_t id) = 0;
 };
 
-}  // namespace cast
-}  // namespace openscreen
+}  // namespace openscreen::cast
 
 #endif  // CAST_SENDER_PUBLIC_CAST_APP_DISCOVERY_SERVICE_H_

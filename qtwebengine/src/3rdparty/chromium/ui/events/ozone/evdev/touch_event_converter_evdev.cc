@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -15,16 +15,17 @@
 #include <limits>
 #include <queue>
 
-#include "base/bind.h"
-#include "base/callback.h"
 #include "base/command_line.h"
 #include "base/feature_list.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
-#include "base/strings/stringprintf.h"
+
+#include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
 #include "ui/events/devices/device_data_manager.h"
 #include "ui/events/devices/device_util_linux.h"
@@ -45,8 +46,22 @@
 namespace {
 
 const int kMaxTrackingId = 0xffff;  // TRKID_MAX in kernel.
+const int kMaxTouchSessionGapInSeconds = 5;
+const int kMaxTouchStylusGapInSeconds = 10;
+const int kMaxRepeatedTouchGapInSeconds = 2;
+const float kRepeatedTouchThresholdInSquareMillimeter = 7.0 * 7.0;
+const int kMaxTouchStylusGapInMs = 500;
 
-// Convert tilt from [min, min + num_values) to [-90deg, +90deg)
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused. Needs to match TouchType in enums.xml.
+enum class TouchType {
+  kNone = 0,
+  kFinger = 1,
+  kPalm = 2,
+  kMaxValue = kPalm,
+};
+
+// Convert tilt from [min, min + num_values] to [-90deg, +90deg]
 float ScaleTilt(int value, int min_value, int num_values) {
   return 180.f * (value - min_value) / num_values - 90.f;
 }
@@ -97,8 +112,9 @@ const int kTrackingIdForUnusedSlot = -1;
 
 namespace ui {
 
-const base::Feature kEnableSingleCancelTouch{"EnableSingleTouchCancel",
-                                             base::FEATURE_DISABLED_BY_DEFAULT};
+BASE_FEATURE(kEnableSingleCancelTouch,
+             "EnableSingleTouchCancel",
+             base::FEATURE_DISABLED_BY_DEFAULT);
 
 TouchEventConverterEvdev::TouchEventConverterEvdev(
     base::ScopedFD fd,
@@ -123,7 +139,8 @@ TouchEventConverterEvdev::TouchEventConverterEvdev(
       palm_on_touch_major_max_(
           base::FeatureList::IsEnabled(kEnablePalmOnMaxTouchMajor)),
       palm_on_tool_type_palm_(
-          base::FeatureList::IsEnabled(kEnablePalmOnToolTypePalm)) {
+          base::FeatureList::IsEnabled(kEnablePalmOnToolTypePalm)),
+      shared_palm_state_(shared_palm_state) {
   if (base::FeatureList::IsEnabled(kEnableNeuralPalmDetectionFilter) &&
       NeuralStylusPalmDetectionFilter::
           CompatibleWithNeuralStylusPalmDetectionFilter(devinfo)) {
@@ -135,8 +152,7 @@ TouchEventConverterEvdev::TouchEventConverterEvdev(
   touch_evdev_debug_buffer_.Initialize(devinfo);
 }
 
-TouchEventConverterEvdev::~TouchEventConverterEvdev() {
-}
+TouchEventConverterEvdev::~TouchEventConverterEvdev() = default;
 
 // static
 std::unique_ptr<TouchEventConverterEvdev> TouchEventConverterEvdev::Create(
@@ -150,12 +166,6 @@ std::unique_ptr<TouchEventConverterEvdev> TouchEventConverterEvdev::Create(
       std::move(fd), std::move(path), id, devinfo, shared_palm_state,
       dispatcher);
   converter->Initialize(devinfo);
-  if (!converter->GetTouchscreenSize().GetCheckedArea().IsValid()) {
-    LOG(WARNING) << "Ignoring touchscreen \"" << converter->input_device().name
-                 << "\" reporting invalid size "
-                 << converter->GetTouchscreenSize().ToString();
-    return nullptr;
-  }
   return converter;
 }
 
@@ -166,44 +176,69 @@ void TouchEventConverterEvdev::Initialize(const EventDeviceInfo& info) {
       info.GetAbsInfoByCode(ABS_MT_TOUCH_MAJOR).resolution;
   int32_t touch_minor_res =
       info.GetAbsInfoByCode(ABS_MT_TOUCH_MINOR).resolution;
-  int32_t x_res;
-  int32_t y_res;
 
   if (has_mt_) {
     pressure_min_ = info.GetAbsMinimum(ABS_MT_PRESSURE);
     pressure_max_ = info.GetAbsMaximum(ABS_MT_PRESSURE);
     x_min_tuxels_ = info.GetAbsMinimum(ABS_MT_POSITION_X);
     x_num_tuxels_ = info.GetAbsMaximum(ABS_MT_POSITION_X) - x_min_tuxels_ + 1;
-    x_res = info.GetAbsInfoByCode(ABS_MT_POSITION_X).resolution;
+    x_res_ = info.GetAbsInfoByCode(ABS_MT_POSITION_X).resolution;
     y_min_tuxels_ = info.GetAbsMinimum(ABS_MT_POSITION_Y);
     y_num_tuxels_ = info.GetAbsMaximum(ABS_MT_POSITION_Y) - y_min_tuxels_ + 1;
-    y_res = info.GetAbsInfoByCode(ABS_MT_POSITION_Y).resolution;
-
+    y_res_ = info.GetAbsInfoByCode(ABS_MT_POSITION_Y).resolution;
+    tool_x_min_tuxels_ = info.GetAbsMinimum(ABS_MT_TOOL_X);
+    tool_x_num_tuxels_ =
+        info.GetAbsMaximum(ABS_MT_TOOL_X) - tool_x_min_tuxels_ + 1;
+    tool_x_res_ = info.GetAbsInfoByCode(ABS_MT_TOOL_X).resolution;
+    tool_y_min_tuxels_ = info.GetAbsMinimum(ABS_MT_TOOL_Y);
+    tool_y_num_tuxels_ =
+        info.GetAbsMaximum(ABS_MT_TOOL_Y) - tool_y_min_tuxels_ + 1;
+    tool_y_res_ = info.GetAbsInfoByCode(ABS_MT_TOOL_Y).resolution;
     touch_points_ =
         std::min<int>(info.GetAbsMaximum(ABS_MT_SLOT) + 1, kNumTouchEvdevSlots);
     major_max_ = info.GetAbsMaximum(ABS_MT_TOUCH_MAJOR);
     current_slot_ = info.GetAbsValue(ABS_MT_SLOT);
+    orientation_min_ = info.GetAbsMinimum(ABS_MT_ORIENTATION);
+    orientation_max_ = info.GetAbsMaximum(ABS_MT_ORIENTATION);
   } else {
     pressure_min_ = info.GetAbsMinimum(ABS_PRESSURE);
     pressure_max_ = info.GetAbsMaximum(ABS_PRESSURE);
     x_min_tuxels_ = info.GetAbsMinimum(ABS_X);
     x_num_tuxels_ = info.GetAbsMaximum(ABS_X) - x_min_tuxels_ + 1;
-    x_res = info.GetAbsInfoByCode(ABS_X).resolution;
+    x_res_ = info.GetAbsInfoByCode(ABS_X).resolution;
     y_min_tuxels_ = info.GetAbsMinimum(ABS_Y);
     y_num_tuxels_ = info.GetAbsMaximum(ABS_Y) - y_min_tuxels_ + 1;
-    y_res = info.GetAbsInfoByCode(ABS_Y).resolution;
+    y_res_ = info.GetAbsInfoByCode(ABS_Y).resolution;
+    tool_x_min_tuxels_ = x_min_tuxels_;
+    tool_x_num_tuxels_ = x_num_tuxels_;
+    tool_x_res_ = x_res_;
+    tool_y_min_tuxels_ = y_min_tuxels_;
+    tool_y_num_tuxels_ = y_num_tuxels_;
+    tool_y_res_ = y_res_;
     tilt_x_min_ = info.GetAbsMinimum(ABS_TILT_X);
     tilt_y_min_ = info.GetAbsMinimum(ABS_TILT_Y);
-    tilt_x_range_ = info.GetAbsMaximum(ABS_TILT_X) - tilt_x_min_ + 1;
-    tilt_y_range_ = info.GetAbsMaximum(ABS_TILT_Y) - tilt_y_min_ + 1;
+    tilt_x_range_ = info.GetAbsMaximum(ABS_TILT_X) - tilt_x_min_;
+    tilt_y_range_ = info.GetAbsMaximum(ABS_TILT_Y) - tilt_y_min_;
 
+    // No orientation without mt.
+    orientation_min_ = orientation_max_ = 0;
     touch_points_ = 1;
     major_max_ = 0;
     current_slot_ = 0;
   }
+  if (info.HasAbsEvent(ABS_MT_TOOL_X)) {
+    DCHECK_EQ(tool_x_res_, x_res_)
+        << "Expected tool X resolution to be identical as position X.";
+  }
+  if (info.HasAbsEvent(ABS_MT_TOOL_Y)) {
+    DCHECK_EQ(tool_y_res_, y_res_)
+        << "Expected tool Y resolution to be identical as position Y.";
+  }
 
-  touch_major_scale_ = GetFingerSizeScale(touch_major_res, x_res);
-  touch_minor_scale_ = GetFingerSizeScale(touch_minor_res, y_res);
+  x_scale_ = GetFingerSizeScale(touch_major_res, x_res_) / 2.0f;
+  y_scale_ = GetFingerSizeScale(touch_minor_res, y_res_) / 2.0f;
+  rotated_x_scale_ = GetFingerSizeScale(touch_minor_res, x_res_) / 2.0f;
+  rotated_y_scale_ = GetFingerSizeScale(touch_major_res, y_res_) / 2.0f;
 
   quirk_left_mouse_button_ =
       !has_mt_ && !info.HasKeyEvent(BTN_TOUCH) && info.HasKeyEvent(BTN_LEFT);
@@ -230,8 +265,8 @@ void TouchEventConverterEvdev::Initialize(const EventDeviceInfo& info) {
           info.GetAbsMtSlotValueWithDefault(ABS_MT_TOUCH_MAJOR, i, 0);
       int touch_minor =
           info.GetAbsMtSlotValueWithDefault(ABS_MT_TOUCH_MINOR, i, 0);
-      events_[i].radius_x = touch_major * touch_major_scale_ / 2.0f;
-      events_[i].radius_y = touch_minor * touch_minor_scale_ / 2.0f;
+      events_[i].orientation =
+          info.GetAbsMtSlotValueWithDefault(ABS_MT_ORIENTATION, i, 0);
       events_[i].pressure = ScalePressure(
           info.GetAbsMtSlotValueWithDefault(ABS_MT_PRESSURE, i, 0));
       int tool_type = info.GetAbsMtSlotValueWithDefault(ABS_MT_TOOL_TYPE, i,
@@ -253,6 +288,7 @@ void TouchEventConverterEvdev::Initialize(const EventDeviceInfo& info) {
     events_[0].slot = 0;
     events_[0].radius_x = 0;
     events_[0].radius_y = 0;
+    events_[0].orientation = 0;
     events_[0].pressure = 0;
     events_[0].tool_code = 0;
     events_[0].tilt_x = 0;
@@ -292,8 +328,7 @@ int TouchEventConverterEvdev::GetTouchPoints() const {
   return touch_points_;
 }
 
-void TouchEventConverterEvdev::OnEnabled() {
-}
+void TouchEventConverterEvdev::OnEnabled() {}
 
 void TouchEventConverterEvdev::OnDisabled() {
   ReleaseTouches();
@@ -340,6 +375,16 @@ void TouchEventConverterEvdev::SetTouchEventLoggingEnabled(bool enabled) {
 void TouchEventConverterEvdev::SetPalmSuppressionCallback(
     const base::RepeatingCallback<void(bool)>& callback) {
   enable_palm_suppression_callback_ = callback;
+}
+
+void TouchEventConverterEvdev::SetReportStylusStateCallback(
+    const ReportStylusStateCallback& callback) {
+  report_stylus_state_callback_ = callback;
+}
+
+void TouchEventConverterEvdev::SetGetLatestStylusStateCallback(
+    const GetLatestStylusStateCallback& callback) {
+  get_latest_stylus_state_callback_ = callback;
 }
 
 void TouchEventConverterEvdev::ProcessMultitouchEvent(
@@ -419,21 +464,25 @@ void TouchEventConverterEvdev::ProcessKey(const input_event& input) {
 void TouchEventConverterEvdev::ProcessAbs(const input_event& input) {
   switch (input.code) {
     case ABS_MT_TOUCH_MAJOR:
-      // TODO(spang): If we have all of major, minor, and orientation,
-      // we can scale the ellipse correctly. However on the Pixel we get
-      // neither minor nor orientation, so this is all we can do.
-      events_[current_slot_].radius_x = input.value * touch_major_scale_ / 2.0f;
       events_[current_slot_].major = input.value;
       break;
     case ABS_MT_TOUCH_MINOR:
-      events_[current_slot_].radius_y = input.value * touch_minor_scale_ / 2.0f;
       events_[current_slot_].minor = input.value;
+      break;
+    case ABS_MT_ORIENTATION:
+      events_[current_slot_].orientation = input.value;
       break;
     case ABS_MT_POSITION_X:
       events_[current_slot_].x = input.value;
       break;
     case ABS_MT_POSITION_Y:
       events_[current_slot_].y = input.value;
+      break;
+    case ABS_MT_TOOL_X:
+      events_[current_slot_].tool_x = input.value;
+      break;
+    case ABS_MT_TOOL_Y:
+      events_[current_slot_].tool_y = input.value;
       break;
     case ABS_MT_TOOL_TYPE:
       events_[current_slot_].tool_type = input.value;
@@ -487,9 +536,7 @@ void TouchEventConverterEvdev::ProcessSyn(const input_event& input) {
 
 EventType TouchEventConverterEvdev::GetEventTypeForTouch(
     const InProgressTouchEvdev& touch) {
-
-  bool touch_is_alive =
-      touch.touching && !touch.delayed && !touch.cancelled;
+  bool touch_is_alive = touch.touching && !touch.delayed && !touch.cancelled;
   bool touch_was_alive =
       touch.was_touching && !touch.was_delayed && !touch.was_cancelled;
 
@@ -510,7 +557,7 @@ EventType TouchEventConverterEvdev::GetEventTypeForTouch(
     // This touch was alive but is now dead.
     if (touch.cancelled)
       return ET_TOUCH_CANCELLED;  // Cancelled by driver or noise filter.
-    return ET_TOUCH_RELEASED;  // Finger lifted.
+    return ET_TOUCH_RELEASED;     // Finger lifted.
   }
 
   return ET_TOUCH_MOVED;
@@ -523,7 +570,7 @@ void TouchEventConverterEvdev::ReportTouchEvent(
   ui::PointerDetails details(event.reported_tool_type, /* pointer_id*/ 0,
                              event.radius_x, event.radius_y, event.pressure,
                              /* twist */ 0, event.tilt_x, event.tilt_y);
-  int flags = event.stylus_button ? ui::EventFlags::EF_LEFT_MOUSE_BUTTON : 0;
+  int flags = event.stylus_button ? ui::EF_LEFT_MOUSE_BUTTON : 0;
   dispatcher_->DispatchTouchEvent(TouchEventParams(
       input_device_.id, event.slot, event_type, gfx::PointF(event.x, event.y),
       details, timestamp, flags));
@@ -566,6 +613,17 @@ void TouchEventConverterEvdev::ReportEvents(base::TimeTicks timestamp) {
     false_touch_finder_->HandleTouches(events_, timestamp);
   std::bitset<kNumTouchEvdevSlots> hold, suppress;
   {
+    if (get_latest_stylus_state_callback_) {
+      const InProgressStylusState* latest_stylus_state = nullptr;
+      get_latest_stylus_state_callback_.Run(&latest_stylus_state);
+      if (latest_stylus_state == nullptr) {
+        VLOG(1) << "latest_stylus_state = nullptr";
+      } else {
+        // TODO(alanlxl):  do something with latest_stylus_state.
+      }
+    }
+  }
+  {
     SCOPED_UMA_HISTOGRAM_TIMER(kPalmFilterTimerEventName);
     palm_detection_filter_->Filter(events_, timestamp, &hold, &suppress);
   }
@@ -583,6 +641,10 @@ void TouchEventConverterEvdev::ReportEvents(base::TimeTicks timestamp) {
       }
     }
   }
+
+  UpdateSharedPalmState(timestamp);
+  DetectRepeatedTouch(timestamp);
+  RecordMetrics(timestamp);
 
   for (size_t i = 0; i < events_.size(); i++) {
     InProgressTouchEvdev* event = &events_[i];
@@ -639,18 +701,178 @@ void TouchEventConverterEvdev::ReportEvents(base::TimeTicks timestamp) {
   }
 }
 
+void TouchEventConverterEvdev::UpdateSharedPalmState(
+    base::TimeTicks timestamp) {
+  if (type() != InputDeviceType::INPUT_DEVICE_INTERNAL) {
+    return;
+  }
+  if (has_pen_) {
+    if (events_[0].touching) {
+      shared_palm_state_->latest_stylus_touch_time = timestamp;
+    } else if (events_[0].was_touching) {
+      shared_palm_state_->need_to_record_after_stylus_metrics = true;
+    }
+    return;
+  }
+
+  for (const auto& event : events_) {
+    if (event.touching) {
+      shared_palm_state_->latest_finger_touch_time = timestamp;
+      break;
+    }
+  }
+
+  shared_palm_state_->has_palm = false;
+  for (const auto& event : events_) {
+    if (event.touching && event.cancelled) {
+      shared_palm_state_->has_palm = true;
+      break;
+    }
+  }
+}
+
+void TouchEventConverterEvdev::DetectRepeatedTouch(base::TimeTicks timestamp) {
+  if (!(type() == InputDeviceType::INPUT_DEVICE_INTERNAL && IsEnabled()) ||
+      has_pen_ || x_res_ <= 0 || y_res_ <= 0) {
+    return;
+  }
+
+  for (auto& event : events_) {
+    if (!event.touching || event.was_touching) {
+      continue;
+    }
+    event.start_x = event.x;
+    event.start_y = event.y;
+
+    for (auto it = cancelled_touches_.begin();
+         it != cancelled_touches_.end();) {
+      auto& touch = *it;
+      if ((timestamp - touch.cancel_timestamp).InSeconds() >
+          kMaxRepeatedTouchGapInSeconds) {
+        it = cancelled_touches_.erase(it);
+        continue;
+      }
+      float dist_sqr = pow(float(event.x - touch.start_x) / x_res_, 2) +
+                       pow(float(event.y - touch.start_y) / y_res_, 2);
+      if (dist_sqr < kRepeatedTouchThresholdInSquareMillimeter) {
+        UMA_HISTOGRAM_BOOLEAN(kRepeatedTouchCountEventName, true);
+        cancelled_touches_.erase(it);
+        break;
+      }
+      ++it;
+    }
+  }
+
+  for (const auto& event : events_) {
+    if (event.touching && event.cancelled &&
+        (!event.was_cancelled || !event.was_touching)) {
+      // It is newly canceled touch.
+      cancelled_touches_.insert(
+          CancelledTouch(timestamp, event.start_x, event.start_y));
+    }
+  }
+}
+
+void TouchEventConverterEvdev::RecordMetrics(base::TimeTicks timestamp) {
+  // Only record metrics when the converter is enabled. While it is disabled,
+  // stylus touch could generate fake event to cancel all finger touches, we
+  // should ignore them for recording metrics.
+  if (!(type() == InputDeviceType::INPUT_DEVICE_INTERNAL && IsEnabled())) {
+    return;
+  }
+
+  bool touching = false;
+  for (const auto& event : events_) {
+    if (event.touching) {
+      touching = true;
+      break;
+    }
+  }
+  if (!touching) {
+    return;
+  }
+
+  if (!session_start_time_) {
+    session_start_time_ = timestamp;
+    last_touch_is_palm_ = false;
+  }
+  record_session_timer_.Start(
+      FROM_HERE, base::Seconds(kMaxTouchSessionGapInSeconds),
+      base::BindOnce(&TouchEventConverterEvdev::RecordSession,
+                     weak_factory_.GetWeakPtr(),
+                     timestamp - session_start_time_.value()));
+
+  if (has_pen_) {
+    if (events_[0].touching && !events_[0].was_touching) {
+      base::TimeDelta gap =
+          timestamp - shared_palm_state_->latest_finger_touch_time;
+      UMA_HISTOGRAM_TIMES(kTouchGapBeforeStylusEventName, gap);
+      UMA_HISTOGRAM_ENUMERATION(
+          kTouchTypeBeforeStylusEventName,
+          gap.InMilliseconds() >= kMaxTouchStylusGapInMs
+              ? TouchType::kNone
+              : (shared_palm_state_->has_palm ? TouchType::kPalm
+                                              : TouchType::kFinger));
+
+      if (shared_palm_state_->need_to_record_after_stylus_metrics) {
+        shared_palm_state_->need_to_record_after_stylus_metrics = false;
+        UMA_HISTOGRAM_TIMES(kTouchGapAfterStylusEventName,
+                            base::Seconds(kMaxTouchStylusGapInSeconds));
+        UMA_HISTOGRAM_ENUMERATION(kTouchTypeAfterStylusEventName,
+                                  TouchType::kNone);
+      }
+    }
+  } else {
+    if (shared_palm_state_->has_palm && !last_touch_is_palm_) {
+      UMA_HISTOGRAM_BOOLEAN(kPalmTouchCountEventName, true);
+    }
+    last_touch_is_palm_ = shared_palm_state_->has_palm;
+
+    if (shared_palm_state_->need_to_record_after_stylus_metrics) {
+      shared_palm_state_->need_to_record_after_stylus_metrics = false;
+      base::TimeDelta gap =
+          timestamp - shared_palm_state_->latest_stylus_touch_time;
+      UMA_HISTOGRAM_TIMES(kTouchGapAfterStylusEventName, gap);
+      UMA_HISTOGRAM_ENUMERATION(
+          kTouchTypeAfterStylusEventName,
+          shared_palm_state_->has_palm ? TouchType::kPalm : TouchType::kFinger);
+    }
+  }
+}
+
+void TouchEventConverterEvdev::RecordSession(base::TimeDelta session_length) {
+  session_start_time_ = absl::nullopt;
+  if (session_length.InMilliseconds() <= 0) {
+    return;
+  }
+  if (has_pen_) {
+    UMA_HISTOGRAM_TIMES(kStylusSessionLengthEventName, session_length);
+    UMA_HISTOGRAM_BOOLEAN(kStylusSessionCountEventName, true);
+  } else {
+    UMA_HISTOGRAM_TIMES(kTouchSessionLengthEventName, session_length);
+    UMA_HISTOGRAM_BOOLEAN(kTouchSessionCountEventName, true);
+  }
+}
+
 void TouchEventConverterEvdev::ProcessTouchEvent(InProgressTouchEvdev* event,
                                                  base::TimeTicks timestamp) {
-  if (enable_palm_suppression_callback_)
+  if (enable_palm_suppression_callback_) {
     enable_palm_suppression_callback_.Run(event->tool_code > 0);
+  }
+
+  if (report_stylus_state_callback_ && !event->cancelled) {
+    report_stylus_state_callback_.Run(*event, x_res_, y_res_, timestamp);
+  }
 
   EventType event_type = GetEventTypeForTouch(*event);
 
   // The tool type is fixed with the touch pressed event and does not change.
   if (event_type == ET_TOUCH_PRESSED)
     event->reported_tool_type = GetEventPointerType(event->tool_code);
-  if (event_type != ET_UNKNOWN)
+  if (event_type != ET_UNKNOWN) {
+    UpdateRadiusFromTouchWithOrientation(event);
     ReportTouchEvent(*event, event_type, timestamp);
+  }
 }
 
 void TouchEventConverterEvdev::UpdateTrackingId(int slot, int tracking_id) {
@@ -688,8 +910,64 @@ float TouchEventConverterEvdev::ScalePressure(int32_t value) const {
   return pressure;
 }
 
+bool TouchEventConverterEvdev::SupportsOrientation() const {
+  // TODO(b/185318572): Support more complex orientation reports than the
+  // simplified 0/1.
+  return orientation_max_ == 1 && orientation_min_ == 0;
+}
+
+void TouchEventConverterEvdev::UpdateRadiusFromTouchWithOrientation(
+    InProgressTouchEvdev* event) const {
+  if (!SupportsOrientation() || event->orientation == 1) {
+    event->radius_x = event->major * x_scale_;
+    event->radius_y = event->minor * y_scale_;
+  } else {
+    event->radius_x = event->minor * rotated_x_scale_;
+    event->radius_y = event->major * rotated_y_scale_;
+  }
+}
+
 int TouchEventConverterEvdev::NextTrackingId() {
   return next_tracking_id_++ & kMaxTrackingId;
+}
+
+std::ostream& TouchEventConverterEvdev::DescribeForLog(std::ostream& os) const {
+  os << "class=ui::TouchEventConverterEvdev id=" << input_device_.id
+     << std::endl
+     << " has_mt=" << has_mt_ << std::endl
+     << " has_pen=" << has_pen_ << std::endl
+     << " quirk_left_mouse_button=" << quirk_left_mouse_button_ << std::endl
+     << " pressure_min=" << pressure_min_ << std::endl
+     << " pressure_max=" << pressure_max_ << std::endl
+     << " orientation_min=" << orientation_min_ << std::endl
+     << " orientation_max=" << orientation_max_ << std::endl
+     << " tilt_x_min=" << tilt_x_min_ << std::endl
+     << " tilt_x_range=" << tilt_x_range_ << std::endl
+     << " tilt_y_min=" << tilt_y_min_ << std::endl
+     << " tilt_y_range=" << tilt_y_range_ << std::endl
+     << " x_res=" << x_res_ << std::endl
+     << " y_res=" << y_res_ << std::endl
+     << " x_min_tuxels=" << x_min_tuxels_ << std::endl
+     << " x_num_tuxels=" << x_num_tuxels_ << std::endl
+     << " y_min_tuxels=" << y_min_tuxels_ << std::endl
+     << " y_num_tuxels=" << y_num_tuxels_ << std::endl
+     << " tool_x_res=" << tool_x_res_ << std::endl
+     << " tool_y_res=" << tool_y_res_ << std::endl
+     << " tool_x_min_tuxels=" << tool_x_min_tuxels_ << std::endl
+     << " tool_x_num_tuxels=" << tool_x_num_tuxels_ << std::endl
+     << " tool_y_min_tuxels=" << tool_y_min_tuxels_ << std::endl
+     << " tool_y_num_tuxels=" << tool_y_num_tuxels_ << std::endl
+     << " x_scale=" << x_scale_ << std::endl
+     << " y_scale=" << y_scale_ << std::endl
+     << " rotated_x_scale=" << rotated_x_scale_ << std::endl
+     << " rotated_y_scale=" << rotated_y_scale_ << std::endl
+     << " touch_points=" << touch_points_ << std::endl
+     << " major_max=" << major_max_ << std::endl
+     << " touch_logging_enabled=" << touch_logging_enabled_ << std::endl
+     << " palm_on_touch_major_max=" << palm_on_touch_major_max_ << std::endl
+     << " palm_on_tool_type_palm=" << palm_on_tool_type_palm_ << std::endl
+     << "base ";
+  return EventConverterEvdev::DescribeForLog(os);
 }
 
 const char TouchEventConverterEvdev::kHoldCountAtReleaseEventName[] =
@@ -698,5 +976,24 @@ const char TouchEventConverterEvdev::kHoldCountAtCancelEventName[] =
     "Ozone.TouchEventConverterEvdev.HoldCountAtCancel";
 const char TouchEventConverterEvdev::kPalmFilterTimerEventName[] =
     "Ozone.TouchEventConverterEvdev.PalmDetectionFilterTime";
-
+const char TouchEventConverterEvdev::kPalmTouchCountEventName[] =
+    "Ozone.TouchEventConverterEvdev.PalmTouchCount";
+const char TouchEventConverterEvdev::kRepeatedTouchCountEventName[] =
+    "Ozone.TouchEventConverterEvdev.RepeatedTouchCount";
+const char TouchEventConverterEvdev::kTouchGapAfterStylusEventName[] =
+    "Ozone.TouchEventConverterEvdev.TouchGapAfterStylus";
+const char TouchEventConverterEvdev::kTouchGapBeforeStylusEventName[] =
+    "Ozone.TouchEventConverterEvdev.TouchGapBeforeStylus";
+const char TouchEventConverterEvdev::kTouchTypeAfterStylusEventName[] =
+    "Ozone.TouchEventConverterEvdev.TouchTypeAfterStylus";
+const char TouchEventConverterEvdev::kTouchTypeBeforeStylusEventName[] =
+    "Ozone.TouchEventConverterEvdev.TouchTypeBeforeStylus";
+const char TouchEventConverterEvdev::kTouchSessionCountEventName[] =
+    "Ozone.TouchEventConverterEvdev.TouchSessionCount";
+const char TouchEventConverterEvdev::kTouchSessionLengthEventName[] =
+    "Ozone.TouchEventConverterEvdev.TouchSessionLength";
+const char TouchEventConverterEvdev::kStylusSessionCountEventName[] =
+    "Ozone.TouchEventConverterEvdev.StylusSessionCount";
+const char TouchEventConverterEvdev::kStylusSessionLengthEventName[] =
+    "Ozone.TouchEventConverterEvdev.StylusSessionLength";
 }  // namespace ui

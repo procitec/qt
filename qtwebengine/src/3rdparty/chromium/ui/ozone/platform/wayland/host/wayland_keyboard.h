@@ -1,24 +1,31 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef UI_OZONE_PLATFORM_WAYLAND_HOST_WAYLAND_KEYBOARD_H_
 #define UI_OZONE_PLATFORM_WAYLAND_HOST_WAYLAND_KEYBOARD_H_
 
-#include <keyboard-extension-unstable-v1-client-protocol.h>
+#include <cstdint>
 
+#include "base/containers/flat_set.h"
+#include "base/functional/callback.h"
+#include "base/memory/raw_ptr.h"
 #include "base/time/time.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/base/buildflags.h"
 #include "ui/events/keycodes/dom/dom_code.h"
 #include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/events/ozone/keyboard/event_auto_repeat_handler.h"
 #include "ui/events/types/event_type.h"
+#include "ui/ozone/common/base_keyboard_hook.h"
 #include "ui/ozone/platform/wayland/common/wayland_object.h"
+
+struct zwp_keyboard_shortcuts_inhibitor_v1;
 
 namespace ui {
 
-class DomKey;
 class KeyboardLayoutEngine;
+class KeyEvent;
 class WaylandConnection;
 class WaylandWindow;
 #if BUILDFLAG(USE_XKBCOMMON)
@@ -28,6 +35,15 @@ class XkbKeyboardLayoutEngine;
 class WaylandKeyboard : public EventAutoRepeatHandler::Delegate {
  public:
   class Delegate;
+  class ZCRExtendedKeyboard;
+
+  enum class KeyEventKind {
+    kPeekKey,  // Originated by extended_keyboard::peek_key.
+    kKey,      // Originated by wl_keyboard::key.
+  };
+
+  // Property key to annotate wayland serial to a KeyEvent.
+  static constexpr char kPropertyWaylandSerial[] = "_keyevent_wayland_serial_";
 
   WaylandKeyboard(wl_keyboard* keyboard,
                   zcr_keyboard_extension_v1* keyboard_extension_v1,
@@ -36,47 +52,87 @@ class WaylandKeyboard : public EventAutoRepeatHandler::Delegate {
                   Delegate* delegate);
   virtual ~WaylandKeyboard();
 
+  uint32_t id() const { return obj_.id(); }
   int device_id() const { return obj_.id(); }
-  bool Decode(DomCode dom_code,
-              int modifiers,
-              DomKey* out_dom_key,
-              KeyboardCode* out_key_code);
+
+  // Called when it turns out that KeyEvent is not handled.
+  void OnUnhandledKeyEvent(const KeyEvent& key_event);
+
+  // Creates a new PlatformKeyboardHook/shortcuts inhibitor for |window|. For
+  // now used only for non-Lacros windows due to divergences between CrOS/Lacros
+  // and Linux Desktop requirements and their actual implementation. See
+  // comments in this function's definition for more context.
+  std::unique_ptr<PlatformKeyboardHook> CreateKeyboardHook(
+      WaylandWindow* window,
+      absl::optional<base::flat_set<DomCode>> dom_codes,
+      PlatformKeyboardHook::KeyEventCallback callback);
+  wl::Object<zwp_keyboard_shortcuts_inhibitor_v1> CreateShortcutsInhibitor(
+      WaylandWindow* window);
 
  private:
-  // wl_keyboard_listener
-  static void Keymap(void* data,
-                     wl_keyboard* obj,
-                     uint32_t format,
-                     int32_t fd,
-                     uint32_t size);
-  static void Enter(void* data,
-                    wl_keyboard* obj,
+  using LayoutEngine =
+#if BUILDFLAG(USE_XKBCOMMON)
+      XkbKeyboardLayoutEngine
+#else
+      KeyboardLayoutEngine
+#endif
+      ;
+
+  // wl_keyboard_listener callbacks:
+  static void OnKeymap(void* data,
+                       wl_keyboard* keyboard,
+                       uint32_t format,
+                       int32_t fd,
+                       uint32_t size);
+  static void OnEnter(void* data,
+                      wl_keyboard* keyboard,
+                      uint32_t serial,
+                      wl_surface* surface,
+                      wl_array* keys);
+  static void OnLeave(void* data,
+                      wl_keyboard* keyboard,
+                      uint32_t serial,
+                      wl_surface* surface);
+  static void OnKey(void* data,
+                    wl_keyboard* keyboard,
                     uint32_t serial,
-                    wl_surface* surface,
-                    wl_array* keys);
-  static void Leave(void* data,
-                    wl_keyboard* obj,
-                    uint32_t serial,
-                    wl_surface* surface);
-  static void Key(void* data,
-                  wl_keyboard* obj,
-                  uint32_t serial,
+                    uint32_t time,
+                    uint32_t key,
+                    uint32_t state);
+  static void OnModifiers(void* data,
+                          wl_keyboard* keyboard,
+                          uint32_t serial,
+                          uint32_t mods_depressed,
+                          uint32_t mods_latched,
+                          uint32_t mods_locked,
+                          uint32_t group);
+  static void OnRepeatInfo(void* data,
+                           wl_keyboard* keyboard,
+                           int32_t rate,
+                           int32_t delay);
+
+  // wl_callback_listener callbacks:
+  static void OnSyncDone(void* data,
+                         struct wl_callback* callback,
+                         uint32_t time);
+
+  // Callback for wl_keyboard::key and extended_keyboard::peek_key.
+  void ProcessKey(uint32_t serial,
                   uint32_t time,
                   uint32_t key,
-                  uint32_t state);
-  static void Modifiers(void* data,
-                        wl_keyboard* obj,
-                        uint32_t serial,
-                        uint32_t mods_depressed,
-                        uint32_t mods_latched,
-                        uint32_t mods_locked,
-                        uint32_t group);
-  static void RepeatInfo(void* data,
-                         wl_keyboard* obj,
-                         int32_t rate,
-                         int32_t delay);
+                  uint32_t state,
+                  KeyEventKind kind);
 
-  static void SyncCallback(void* data, struct wl_callback* cb, uint32_t time);
+  // Dispatches the key event.
+  void DispatchKey(unsigned int key,
+                   unsigned int scan_code,
+                   bool down,
+                   bool repeat,
+                   absl::optional<uint32_t> serial,
+                   base::TimeTicks timestamp,
+                   int device_id,
+                   int flags,
+                   KeyEventKind kind);
 
   // EventAutoRepeatHandler::Delegate
   void FlushInput(base::OnceClosure closure) override;
@@ -89,27 +145,20 @@ class WaylandKeyboard : public EventAutoRepeatHandler::Delegate {
                    int flags) override;
 
   wl::Object<wl_keyboard> obj_;
-  wl::Object<zcr_extended_keyboard_v1> extended_keyboard_v1_;
-  WaylandConnection* const connection_;
-  Delegate* const delegate_;
+  std::unique_ptr<ZCRExtendedKeyboard> extended_keyboard_;
+  const raw_ptr<WaylandConnection> connection_;
+  const raw_ptr<Delegate> delegate_;
 
   // Key repeat handler.
-  static const wl_callback_listener callback_listener_;
   EventAutoRepeatHandler auto_repeat_handler_;
   base::OnceClosure auto_repeat_closure_;
   wl::Object<wl_callback> sync_callback_;
 
-#if BUILDFLAG(USE_XKBCOMMON)
-  XkbKeyboardLayoutEngine* layout_engine_;
-#else
-  KeyboardLayoutEngine* layout_engine_;
-#endif
+  raw_ptr<LayoutEngine> layout_engine_;
 };
 
 class WaylandKeyboard::Delegate {
  public:
-  virtual void OnKeyboardCreated(WaylandKeyboard* keyboard) = 0;
-  virtual void OnKeyboardDestroyed(WaylandKeyboard* keyboard) = 0;
   virtual void OnKeyboardFocusChanged(WaylandWindow* window, bool focused) = 0;
   virtual void OnKeyboardModifiersChanged(int modifiers) = 0;
   // Returns a mask of ui::PostDispatchAction indicating how the event was
@@ -117,7 +166,10 @@ class WaylandKeyboard::Delegate {
   virtual uint32_t OnKeyboardKeyEvent(EventType type,
                                       DomCode dom_code,
                                       bool repeat,
-                                      base::TimeTicks timestamp) = 0;
+                                      absl::optional<uint32_t> serial,
+                                      base::TimeTicks timestamp,
+                                      int device_id,
+                                      WaylandKeyboard::KeyEventKind kind) = 0;
 
  protected:
   // Prevent deletion through a WaylandKeyboard::Delegate pointer.

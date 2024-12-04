@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,13 +12,13 @@
 
 #include "base/component_export.h"
 #include "base/containers/span.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
-#include "base/optional.h"
 #include "crypto/aead.h"
 #include "device/fido/cable/fido_ble_connection.h"
 #include "device/fido/cable/fido_ble_transaction.h"
 #include "device/fido/fido_device.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace device {
 
@@ -29,16 +29,13 @@ class COMPONENT_EXPORT(DEVICE_FIDO) FidoCableDevice : public FidoDevice {
  public:
   using FrameCallback = FidoBleTransaction::FrameCallback;
 
-  class Observer {
-   public:
-    virtual void FidoCableDeviceConnected(FidoCableDevice* device,
-                                          bool success) {}
-    virtual void FidoCableDeviceTimeout(FidoCableDevice* device) {}
-  };
-
   FidoCableDevice(BluetoothAdapter* adapter, std::string address);
   // Constructor used for testing purposes.
   FidoCableDevice(std::unique_ptr<FidoBleConnection> connection);
+
+  FidoCableDevice(const FidoCableDevice&) = delete;
+  FidoCableDevice& operator=(const FidoCableDevice&) = delete;
+
   ~FidoCableDevice() override;
 
   // Returns FidoDevice::GetId() for a given FidoBleConnection address.
@@ -48,12 +45,10 @@ class COMPONENT_EXPORT(DEVICE_FIDO) FidoCableDevice : public FidoDevice {
   void Connect();
   void SendPing(std::vector<uint8_t> data, DeviceCallback callback);
   FidoBleConnection::ReadCallback GetReadCallbackForTesting();
-  void set_observer(Observer* observer);
 
   // FidoDevice:
   void Cancel(CancelToken token) override;
   std::string GetId() const override;
-  base::string16 GetDisplayName() const override;
   FidoTransportProtocol DeviceTransport() const override;
   CancelToken DeviceTransact(std::vector<uint8_t> command,
                              DeviceCallback callback) override;
@@ -97,7 +92,7 @@ class COMPONENT_EXPORT(DEVICE_FIDO) FidoCableDevice : public FidoDevice {
   };
 
   void OnResponseFrame(FrameCallback callback,
-                       base::Optional<FidoBleFrame> frame);
+                       absl::optional<FidoBleFrame> frame);
   void Transition();
   CancelToken AddToPendingFrames(FidoBleDeviceCommand cmd,
                                  std::vector<uint8_t> request,
@@ -107,7 +102,7 @@ class COMPONENT_EXPORT(DEVICE_FIDO) FidoCableDevice : public FidoDevice {
   void OnConnected(bool success);
   void OnStatusMessage(std::vector<uint8_t> data);
 
-  void OnReadControlPointLength(base::Optional<uint16_t> length);
+  void OnReadControlPointLength(absl::optional<uint16_t> length);
 
   void SendRequestFrame(FidoBleFrame frame, FrameCallback callback);
 
@@ -116,7 +111,7 @@ class COMPONENT_EXPORT(DEVICE_FIDO) FidoCableDevice : public FidoDevice {
   void OnTimeout();
 
   void OnBleResponseReceived(DeviceCallback callback,
-                             base::Optional<FidoBleFrame> frame);
+                             absl::optional<FidoBleFrame> frame);
   void ProcessBleDeviceError(base::span<const uint8_t> data);
 
   bool EncryptOutgoingMessage(std::vector<uint8_t>* message_to_encrypt);
@@ -132,14 +127,11 @@ class COMPONENT_EXPORT(DEVICE_FIDO) FidoCableDevice : public FidoDevice {
   std::list<PendingFrame> pending_frames_;
   // current_token_ contains the cancelation token of the currently running
   // request, or else is empty if no request is currently pending.
-  base::Optional<CancelToken> current_token_;
-  base::Optional<FidoBleTransaction> transaction_;
-  Observer* observer_ = nullptr;
+  absl::optional<CancelToken> current_token_;
+  absl::optional<FidoBleTransaction> transaction_;
 
-  base::Optional<EncryptionData> encryption_data_;
+  absl::optional<EncryptionData> encryption_data_;
   base::WeakPtrFactory<FidoCableDevice> weak_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(FidoCableDevice);
 };
 
 }  // namespace device

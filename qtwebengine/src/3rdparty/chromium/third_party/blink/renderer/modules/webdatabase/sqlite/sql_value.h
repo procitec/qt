@@ -31,8 +31,10 @@
 
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
+#include "v8/include/v8-forward.h"
 
 namespace blink {
+class ScriptState;
 
 class SQLValue {
   DISALLOW_NEW();
@@ -43,12 +45,13 @@ class SQLValue {
   SQLValue() : type_(kNullValue), number_(0.0) {}
   SQLValue(double number) : type_(kNumberValue), number_(number) {}
   SQLValue(const String& s) : type_(kStringValue), number_(0.0), string_(s) {}
-  SQLValue(const SQLValue&);
 
   Type GetType() const { return type_; }
 
   String GetString() const;
   double Number() const;
+
+  v8::Local<v8::Value> ToV8(ScriptState*) const;
 
  private:
   Type type_;
@@ -58,4 +61,4 @@ class SQLValue {
 
 }  // namespace blink
 
-#endif
+#endif  // THIRD_PARTY_BLINK_RENDERER_MODULES_WEBDATABASE_SQLITE_SQL_VALUE_H_

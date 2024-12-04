@@ -2,15 +2,15 @@ export const description = `
 Tests for TestQuery comparison
 `;
 
-import { compareQueries, Ordering } from '../common/framework/query/compare.js';
+import { makeTestGroup } from '../common/framework/test_group.js';
+import { compareQueries, Ordering } from '../common/internal/query/compare.js';
 import {
   TestQuery,
   TestQuerySingleCase,
   TestQueryMultiFile,
   TestQueryMultiTest,
   TestQueryMultiCase,
-} from '../common/framework/query/query.js';
-import { makeTestGroup } from '../common/framework/test_group.js';
+} from '../common/internal/query/query.js';
 
 import { UnitTest } from './unit_test.js';
 
@@ -129,5 +129,16 @@ g.test('unordered').fn(t => {
   t.expectUnordered(
     new TestQuerySingleCase('suite1', ['bar', 'buzz', 'buzz'], ['zap'], {}),
     new TestQueryMultiTest('suite1', ['bar'], [])
+  );
+  // Expect that 0.0 and -0.0 are treated as different queries
+  t.expectUnordered(
+    new TestQueryMultiCase('suite', ['a', 'b'], ['c', 'd'], { x: 0.0 }),
+    new TestQueryMultiCase('suite', ['a', 'b'], ['c', 'd'], { x: -0.0 })
+  );
+  t.expectUnordered(
+    new TestQuerySingleCase('suite', ['a', 'b'], ['c', 'd'], { x: 0.0, y: 0.0 }),
+    new TestQuerySingleCase('suite', ['a', 'b'], ['c', 'd'], { x: 0.0, y: -0.0 }),
+    new TestQuerySingleCase('suite', ['a', 'b'], ['c', 'd'], { x: -0.0, y: 0.0 }),
+    new TestQuerySingleCase('suite', ['a', 'b'], ['c', 'd'], { x: -0.0, y: -0.0 })
   );
 });

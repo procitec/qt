@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,7 +9,9 @@
 #include <wrl/client.h>
 
 #include "base/threading/thread_checker.h"
+#include "base/time/time.h"
 #include "services/device/public/cpp/geolocation/location_provider.h"
+#include "services/device/public/mojom/geolocation_internals.mojom.h"
 #include "services/device/public/mojom/geoposition.mojom.h"
 
 namespace device {
@@ -18,14 +20,19 @@ namespace device {
 class LocationProviderWinrt : public LocationProvider {
  public:
   LocationProviderWinrt();
+
+  LocationProviderWinrt(const LocationProviderWinrt&) = delete;
+  LocationProviderWinrt& operator=(const LocationProviderWinrt&) = delete;
+
   ~LocationProviderWinrt() override;
 
   // LocationProvider implementation.
+  void FillDiagnostics(mojom::GeolocationDiagnostics& diagnostics) override;
   void SetUpdateCallback(
       const LocationProviderUpdateCallback& callback) override;
   void StartProvider(bool high_accuracy) override;
   void StopProvider() override;
-  const mojom::Geoposition& GetPosition() override;
+  const mojom::GeopositionResult* GetPosition() override;
   void OnPermissionGranted() override;
 
  protected:
@@ -34,11 +41,14 @@ class LocationProviderWinrt : public LocationProvider {
 
   bool permission_granted_ = false;
   bool enable_high_accuracy_ = false;
-  base::Optional<EventRegistrationToken> position_changed_token_;
-  base::Optional<EventRegistrationToken> status_changed_token_;
+  absl::optional<EventRegistrationToken> position_changed_token_;
+  absl::optional<EventRegistrationToken> status_changed_token_;
 
  private:
-  void HandleErrorCondition(mojom::Geoposition::ErrorCode position_error_code,
+  // Returns true if `last_result_` contains a valid geoposition.
+  bool HasValidLastPosition() const;
+
+  void HandleErrorCondition(mojom::GeopositionErrorCode position_error_code,
                             const std::string& position_error_message);
   void RegisterCallbacks();
   void UnregisterCallbacks();
@@ -50,11 +60,11 @@ class LocationProviderWinrt : public LocationProvider {
       ABI::Windows::Devices::Geolocation::IGeolocator* geo_locator,
       ABI::Windows::Devices::Geolocation::IStatusChangedEventArgs*
           status_update);
-  void PopulateLocationData(
-      ABI::Windows::Devices::Geolocation::IGeoposition* geoposition,
-      mojom::Geoposition* location_data);
+  mojom::GeopositionPtr CreateGeoposition(
+      ABI::Windows::Devices::Geolocation::IGeoposition* geoposition);
 
-  mojom::Geoposition last_position_;
+  bool is_started_ = false;
+  mojom::GeopositionResultPtr last_result_;
   LocationProviderUpdateCallback location_update_callback_;
   Microsoft::WRL::ComPtr<ABI::Windows::Devices::Geolocation::IGeolocator>
       geo_locator_;
@@ -63,8 +73,6 @@ class LocationProviderWinrt : public LocationProvider {
   base::TimeTicks position_callback_initialized_time_;
   THREAD_CHECKER(thread_checker_);
   base::WeakPtrFactory<LocationProviderWinrt> weak_ptr_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(LocationProviderWinrt);
 };
 
 }  // namespace device

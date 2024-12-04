@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,12 +7,11 @@
 
 #include <stddef.h>
 
-#include "base/callback.h"
-#include "base/macros.h"
+#include "base/functional/callback.h"
 #include "base/memory/weak_ptr.h"
-#include "net/third_party/quiche/src/quic/core/quic_connection.h"
-#include "net/third_party/quiche/src/quic/core/quic_packet_writer.h"
-#include "net/third_party/quiche/src/quic/core/quic_packets.h"
+#include "net/third_party/quiche/src/quiche/quic/core/quic_connection.h"
+#include "net/third_party/quiche/src/quiche/quic/core/quic_packet_writer.h"
+#include "net/third_party/quiche/src/quiche/quic/core/quic_packets.h"
 
 namespace quic {
 class QuicDispatcher;
@@ -31,23 +30,32 @@ class QuicSimpleServerPacketWriter : public quic::QuicPacketWriter {
  public:
   QuicSimpleServerPacketWriter(UDPServerSocket* socket,
                                quic::QuicDispatcher* dispatcher);
+
+  QuicSimpleServerPacketWriter(const QuicSimpleServerPacketWriter&) = delete;
+  QuicSimpleServerPacketWriter& operator=(const QuicSimpleServerPacketWriter&) =
+      delete;
+
   ~QuicSimpleServerPacketWriter() override;
 
-  quic::WriteResult WritePacket(const char* buffer,
-                                size_t buf_len,
-                                const quic::QuicIpAddress& self_address,
-                                const quic::QuicSocketAddress& peer_address,
-                                quic::PerPacketOptions* options) override;
+  quic::WriteResult WritePacket(
+      const char* buffer,
+      size_t buf_len,
+      const quic::QuicIpAddress& self_address,
+      const quic::QuicSocketAddress& peer_address,
+      quic::PerPacketOptions* options,
+      const quic::QuicPacketWriterParams& params) override;
 
   void OnWriteComplete(int rv);
 
   // quic::QuicPacketWriter implementation:
   bool IsWriteBlocked() const override;
   void SetWritable() override;
+  absl::optional<int> MessageTooBigErrorCode() const override;
   quic::QuicByteCount GetMaxPacketSize(
       const quic::QuicSocketAddress& peer_address) const override;
   bool SupportsReleaseTime() const override;
   bool IsBatchMode() const override;
+  bool SupportsEcn() const override;
   quic::QuicPacketBuffer GetNextWriteLocation(
       const quic::QuicIpAddress& self_address,
       const quic::QuicSocketAddress& peer_address) override;
@@ -60,11 +68,9 @@ class QuicSimpleServerPacketWriter : public quic::QuicPacketWriter {
   quic::QuicDispatcher* dispatcher_;
 
   // Whether a write is currently in flight.
-  bool write_blocked_;
+  bool write_blocked_ = false;
 
   base::WeakPtrFactory<QuicSimpleServerPacketWriter> weak_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(QuicSimpleServerPacketWriter);
 };
 
 }  // namespace net

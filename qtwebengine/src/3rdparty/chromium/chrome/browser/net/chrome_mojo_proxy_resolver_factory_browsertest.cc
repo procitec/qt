@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,14 +6,13 @@
 
 #include <stdint.h>
 
+#include <optional>
 #include <vector>
 
-#include "base/macros.h"
-#include "base/optional.h"
 #include "base/process/process.h"
 #include "base/run_loop.h"
 #include "base/synchronization/waitable_event.h"
-#include "base/test/bind_test_util.h"
+#include "base/test/bind.h"
 #include "base/time/time.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "content/public/browser/browser_task_traits.h"
@@ -26,8 +25,7 @@
 
 namespace {
 
-constexpr base::TimeDelta kServiceShutdownTimeout =
-    base::TimeDelta::FromSeconds(3);
+constexpr base::TimeDelta kServiceShutdownTimeout = base::Seconds(3);
 
 constexpr char kPacScript[] =
     "function FindProxyForURL(url, host) { return 'PROXY proxy.example.com:1; "
@@ -70,7 +68,7 @@ class DumbProxyResolverFactoryRequestClient
   void ResolveDns(
       const std::string& hostname,
       net::ProxyResolveDnsOperation operation,
-      const net::NetworkIsolationKey& network_isolation_key,
+      const net::NetworkAnonymizationKey& network_anonymization_key,
       mojo::PendingRemote<proxy_resolver::mojom::HostResolverRequestClient>
           client) override {}
 
@@ -88,6 +86,10 @@ class ProxyResolverProcessObserver
   ProxyResolverProcessObserver() {
     content::ServiceProcessHost::AddObserver(this);
   }
+
+  ProxyResolverProcessObserver(const ProxyResolverProcessObserver&) = delete;
+  ProxyResolverProcessObserver& operator=(const ProxyResolverProcessObserver&) =
+      delete;
 
   ~ProxyResolverProcessObserver() override {
     content::ServiceProcessHost::RemoveObserver(this);
@@ -124,8 +126,6 @@ class ProxyResolverProcessObserver
   bool is_service_running_ = false;
   base::RunLoop launch_loop_;
   base::RunLoop death_loop_;
-
-  DISALLOW_COPY_AND_ASSIGN(ProxyResolverProcessObserver);
 };
 
 // Ensures the proxy resolver service is started correctly and stopped when no
@@ -220,7 +220,7 @@ IN_PROC_BROWSER_TEST_F(ChromeMojoProxyResolverFactoryBrowserTest,
   mojo::Remote<proxy_resolver::mojom::ProxyResolverFactory> resolver_factory(
       ChromeMojoProxyResolverFactory::CreateWithSelfOwnedReceiver());
 
-  base::Optional<ProxyResolverProcessObserver> observer{base::in_place};
+  std::optional<ProxyResolverProcessObserver> observer{std::in_place};
 
   // Create a resolver, this should create and start the service.
   std::unique_ptr<DumbProxyResolverFactoryRequestClient> resolver_client =

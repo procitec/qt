@@ -79,6 +79,37 @@ TEST(HashSetTest, Iteration) {
   EXPECT_EQ((1 << 10) - 1, encountered_keys);
 }
 
+TEST(HashSetTest, FindAndErase) {
+  HashSet<int> set;
+  set.insert(12);
+  set.insert(4);
+  EXPECT_EQ(2U, set.size());
+
+  auto it = set.find(12);
+  EXPECT_NE(set.end(), it);
+  EXPECT_EQ(12, *it);
+
+  it = set.find(4);
+  EXPECT_NE(set.end(), it);
+  EXPECT_EQ(4, *it);
+
+  EXPECT_EQ(set.end(), set.find(6));
+
+  // Now erase a key in the set, and test again.
+  set.erase(12);
+  EXPECT_EQ(1U, set.size());
+
+  EXPECT_EQ(set.end(), set.find(12));
+
+  it = set.find(4);
+  EXPECT_NE(set.end(), it);
+  EXPECT_EQ(4, *it);
+
+  // Erase a key not in the set; should be a no-op.
+  set.erase(6);
+  EXPECT_EQ(1U, set.size());
+}
+
 template <unsigned size>
 void TestReserveCapacity();
 template <>
@@ -161,14 +192,14 @@ TEST(HashSetTest, HashSetOwnPtr) {
 
   set.clear();
   EXPECT_TRUE(deleted2);
-  EXPECT_TRUE(set.IsEmpty());
+  EXPECT_TRUE(set.empty());
 
   deleted1 = false;
   deleted2 = false;
   {
-    OwnPtrSet set;
-    set.insert(std::make_unique<Dummy>(deleted1));
-    set.insert(std::make_unique<Dummy>(deleted2));
+    OwnPtrSet inner_set;
+    inner_set.insert(std::make_unique<Dummy>(deleted1));
+    inner_set.insert(std::make_unique<Dummy>(deleted2));
   }
   EXPECT_TRUE(deleted1);
   EXPECT_TRUE(deleted2);
@@ -180,13 +211,13 @@ TEST(HashSetTest, HashSetOwnPtr) {
   ptr1 = new Dummy(deleted1);
   ptr2 = new Dummy(deleted2);
   {
-    OwnPtrSet set;
-    set.insert(base::WrapUnique(ptr1));
-    set.insert(base::WrapUnique(ptr2));
-    own_ptr1 = set.Take(ptr1);
-    EXPECT_EQ(1UL, set.size());
-    own_ptr2 = set.TakeAny();
-    EXPECT_TRUE(set.IsEmpty());
+    OwnPtrSet inner_set;
+    inner_set.insert(base::WrapUnique(ptr1));
+    inner_set.insert(base::WrapUnique(ptr2));
+    own_ptr1 = inner_set.Take(ptr1);
+    EXPECT_EQ(1UL, inner_set.size());
+    own_ptr2 = inner_set.TakeAny();
+    EXPECT_TRUE(inner_set.empty());
   }
   EXPECT_FALSE(deleted1);
   EXPECT_FALSE(deleted2);
@@ -199,27 +230,27 @@ TEST(HashSetTest, HashSetRefPtr) {
   bool is_deleted = false;
   DummyRefCounted::ref_invokes_count_ = 0;
 
-  scoped_refptr<DummyRefCounted> ptr =
+  scoped_refptr<DummyRefCounted> object =
       base::AdoptRef(new DummyRefCounted(is_deleted));
   EXPECT_EQ(0, DummyRefCounted::ref_invokes_count_);
   HashSet<scoped_refptr<DummyRefCounted>> set;
-  set.insert(ptr);
+  set.insert(object);
   // Referenced only once (to store a copy in the container).
   EXPECT_EQ(1, DummyRefCounted::ref_invokes_count_);
 
-  DummyRefCounted* raw_ptr = ptr.get();
+  DummyRefCounted* ptr = object.get();
 
-  EXPECT_TRUE(set.Contains(raw_ptr));
-  EXPECT_NE(set.end(), set.find(raw_ptr));
   EXPECT_TRUE(set.Contains(ptr));
   EXPECT_NE(set.end(), set.find(ptr));
+  EXPECT_TRUE(set.Contains(object));
+  EXPECT_NE(set.end(), set.find(object));
 
-  ptr = nullptr;
+  object = nullptr;
   EXPECT_FALSE(is_deleted);
 
-  set.erase(raw_ptr);
+  set.erase(ptr);
   EXPECT_TRUE(is_deleted);
-  EXPECT_TRUE(set.IsEmpty());
+  EXPECT_TRUE(set.empty());
   EXPECT_EQ(1, DummyRefCounted::ref_invokes_count_);
 }
 
@@ -313,7 +344,7 @@ TEST(HashSetTest, UniquePtr) {
 
   // Insert more to cause a rehash.
   for (int i = 2; i < 32; ++i) {
-    Set::AddResult add_result = set.insert(Pointer(new int(i)));
+    Set::AddResult add_result = set.insert(std::make_unique<int>(i));
     EXPECT_TRUE(add_result.is_new_entry);
     EXPECT_EQ(i, **add_result.stored_value);
   }
@@ -352,7 +383,7 @@ HashSet<int> ReturnOneTwoThreeSet() {
 
 TEST(HashSetTest, InitializerList) {
   HashSet<int> empty({});
-  EXPECT_TRUE(empty.IsEmpty());
+  EXPECT_TRUE(empty.empty());
 
   HashSet<int> one({1});
   EXPECT_EQ(1u, one.size());
@@ -370,7 +401,7 @@ TEST(HashSetTest, InitializerList) {
   one_two_three.insert(9999);
 
   empty = {};
-  EXPECT_TRUE(empty.IsEmpty());
+  EXPECT_TRUE(empty.empty());
 
   one = {1};
   EXPECT_EQ(1u, one.size());

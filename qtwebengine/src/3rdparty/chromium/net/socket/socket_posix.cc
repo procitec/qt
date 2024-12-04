@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,27 +7,29 @@
 #include <errno.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+
+#include <memory>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/files/file_util.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/logging.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/task/current_thread.h"
-#include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "net/base/io_buffer.h"
 #include "net/base/ip_endpoint.h"
 #include "net/base/net_errors.h"
 #include "net/base/sockaddr_storage.h"
 #include "net/base/trace_constants.h"
+#include "net/base/tracing.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 
-#if defined(OS_FUCHSIA)
+#if BUILDFLAG(IS_FUCHSIA)
 #include <poll.h>
 #include <sys/ioctl.h>
-#endif  // OS_FUCHSIA
+#endif  // BUILDFLAG(IS_FUCHSIA)
 
 namespace net {
 
@@ -70,10 +72,7 @@ SocketPosix::SocketPosix()
     : socket_fd_(kInvalidSocket),
       accept_socket_watcher_(FROM_HERE),
       read_socket_watcher_(FROM_HERE),
-      read_buf_len_(0),
-      write_socket_watcher_(FROM_HERE),
-      write_buf_len_(0),
-      waiting_connect_(false) {}
+      write_socket_watcher_(FROM_HERE) {}
 
 SocketPosix::~SocketPosix() {
   Close();
@@ -326,12 +325,12 @@ int SocketPosix::Write(
     CompletionOnceCallback callback,
     const NetworkTrafficAnnotationTag& /* traffic_annotation */) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  DCHECK_NE(kInvalidSocket, socket_fd_);
-  DCHECK(!waiting_connect_);
+  CHECK_NE(kInvalidSocket, socket_fd_);
+  CHECK(!waiting_connect_);
   CHECK(write_callback_.is_null());
   // Synchronous operation not supported
-  DCHECK(!callback.is_null());
-  DCHECK_LT(0, buf_len);
+  CHECK(!callback.is_null());
+  CHECK_LT(0, buf_len);
 
   int rv = DoWrite(buf, buf_len);
   if (rv == ERR_IO_PENDING)
@@ -392,7 +391,7 @@ void SocketPosix::SetPeerAddress(const SockaddrStorage& address) {
   // connection attempt failed results in unspecified behavior according to
   // POSIX.
   DCHECK(!peer_address_);
-  peer_address_.reset(new SockaddrStorage(address));
+  peer_address_ = std::make_unique<SockaddrStorage>(address);
 }
 
 bool SocketPosix::HasPeerAddress() const {
@@ -438,7 +437,7 @@ int SocketPosix::DoAccept(std::unique_ptr<SocketPosix>* socket) {
   if (new_socket < 0)
     return MapAcceptError(errno);
 
-  std::unique_ptr<SocketPosix> accepted_socket(new SocketPosix);
+  auto accepted_socket = std::make_unique<SocketPosix>();
   int rv = accepted_socket->AdoptConnectedSocket(new_socket, new_peer_address);
   if (rv != OK)
     return rv;
@@ -517,7 +516,7 @@ void SocketPosix::ReadCompleted() {
 }
 
 int SocketPosix::DoWrite(IOBuffer* buf, int buf_len) {
-#if defined(OS_LINUX) || defined(OS_CHROMEOS) || defined(OS_ANDROID)
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID)
   // Disable SIGPIPE for this write. Although Chromium globally disables
   // SIGPIPE, the net stack may be used in other consumers which do not do
   // this. MSG_NOSIGNAL is a Linux-only API. On OS X, this is a setsockopt on
@@ -526,6 +525,9 @@ int SocketPosix::DoWrite(IOBuffer* buf, int buf_len) {
 #else
   int rv = HANDLE_EINTR(write(socket_fd_, buf->data(), buf_len));
 #endif
+  if (rv >= 0) {
+    CHECK_LE(rv, buf_len);
+  }
   return rv >= 0 ? rv : MapSystemError(errno);
 }
 

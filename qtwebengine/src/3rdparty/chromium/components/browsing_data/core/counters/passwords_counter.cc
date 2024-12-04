@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,57 +8,69 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
+#include "base/scoped_observation.h"
+#include "base/time/time.h"
 #include "components/browsing_data/core/pref_names.h"
-#include "components/password_manager/core/browser/password_manager_util.h"
-#include "components/password_manager/core/browser/password_store.h"
-#include "components/password_manager/core/browser/password_store_change.h"
-#include "components/sync/driver/sync_service.h"
+#include "components/password_manager/core/browser/password_manager_client.h"
+#include "components/password_manager/core/browser/password_store/password_store_change.h"
+#include "components/password_manager/core/browser/password_store/password_store_interface.h"
+#include "components/password_manager/core/browser/password_sync_util.h"
+#include "components/sync/service/sync_service.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "url/gurl.h"
 
 namespace browsing_data {
 namespace {
 
-bool IsPasswordSyncEnabled(const syncer::SyncService* sync_service) {
-  if (!sync_service)
-    return false;
-  switch (password_manager_util::GetPasswordSyncState(sync_service)) {
-    case password_manager::NOT_SYNCING:
-    case password_manager::ACCOUNT_PASSWORDS_ACTIVE_NORMAL_ENCRYPTION:
-      return false;
-    case password_manager::SYNCING_NORMAL_ENCRYPTION:
-    case password_manager::SYNCING_WITH_CUSTOM_PASSPHRASE:
-      return true;
-  }
+// This predicate is only about profile (non-account) passwords, so it is only
+// concerned about whether sync-the-feature is on or off. Account passwords are
+// counted separately.
+bool IsProfilePasswordSyncEnabled(const syncer::SyncService* sync_service) {
+  // TODO(crbug.com/1464264): Migrate away from `ConsentLevel::kSync` on desktop
+  // platforms, including APIs that depend on sync-the-feature.
+  return password_manager::sync_util::IsSyncFeatureActiveIncludingPasswords(
+      sync_service);
 }
+
+}  // namespace
 
 // PasswordStoreFetcher ----------------------------------
 
-// Fetches passswords and observes a PasswordStore.
-class PasswordStoreFetcher : public password_manager::PasswordStoreConsumer,
-                             public password_manager::PasswordStore::Observer {
+// Fetches passswords and observes a PasswordStoreInterface.
+class PasswordStoreFetcher
+    : public password_manager::PasswordStoreConsumer,
+      public password_manager::PasswordStoreInterface::Observer {
  public:
-  PasswordStoreFetcher(scoped_refptr<password_manager::PasswordStore> store,
-                       base::RepeatingClosure logins_changed_closure);
+  PasswordStoreFetcher(
+      scoped_refptr<password_manager::PasswordStoreInterface> store,
+      base::RepeatingClosure logins_changed_closure);
   ~PasswordStoreFetcher() override;
   void Fetch(base::Time start,
              base::Time end,
              base::OnceClosure fetch_complete);
 
   void OnGetPasswordStoreResults(
-      std::vector<std::unique_ptr<autofill::PasswordForm>> results) override;
+      std::vector<std::unique_ptr<password_manager::PasswordForm>> results)
+      override;
 
   // Called when the contents of the password store change. Triggers new
   // counting.
+  // PasswordStoreInterface::Observer:
   void OnLoginsChanged(
+      password_manager::PasswordStoreInterface* store,
       const password_manager::PasswordStoreChangeList& changes) override;
+  void OnLoginsRetained(password_manager::PasswordStoreInterface* store,
+                        const std::vector<password_manager::PasswordForm>&
+                            retained_passwords) override;
 
   int num_passwords() { return num_passwords_; }
   const std::vector<std::string>& domain_examples() { return domain_examples_; }
 
  private:
-  scoped_refptr<password_manager::PasswordStore> store_;
+  void CancelAllRequests();
+
+  scoped_refptr<password_manager::PasswordStoreInterface> store_;
   base::RepeatingClosure logins_changed_closure_;
   base::OnceClosure fetch_complete_;
   base::Time start_;
@@ -66,23 +78,33 @@ class PasswordStoreFetcher : public password_manager::PasswordStoreConsumer,
 
   int num_passwords_ = 0;
   std::vector<std::string> domain_examples_;
+
+  base::ScopedObservation<password_manager::PasswordStoreInterface,
+                          password_manager::PasswordStoreInterface::Observer>
+      password_store_interface_observation_{this};
+
+  base::WeakPtrFactory<PasswordStoreFetcher> weak_ptr_factory_{this};
 };
 
 PasswordStoreFetcher::PasswordStoreFetcher(
-    scoped_refptr<password_manager::PasswordStore> store,
+    scoped_refptr<password_manager::PasswordStoreInterface> store,
     base::RepeatingClosure logins_changed_closure)
     : store_(store), logins_changed_closure_(logins_changed_closure) {
   if (store_)
-    store_->AddObserver(this);
+    password_store_interface_observation_.Observe(store_.get());
 }
 
-PasswordStoreFetcher::~PasswordStoreFetcher() {
-  if (store_)
-    store_->RemoveObserver(this);
-}
+PasswordStoreFetcher::~PasswordStoreFetcher() = default;
 
 void PasswordStoreFetcher::OnLoginsChanged(
-    const password_manager::PasswordStoreChangeList& changes) {
+    password_manager::PasswordStoreInterface* /*store*/,
+    const password_manager::PasswordStoreChangeList& /*changes*/) {
+  logins_changed_closure_.Run();
+}
+
+void PasswordStoreFetcher::OnLoginsRetained(
+    password_manager::PasswordStoreInterface* /*store*/,
+    const std::vector<password_manager::PasswordForm>& /*retained_passwords*/) {
   logins_changed_closure_.Run();
 }
 
@@ -95,28 +117,26 @@ void PasswordStoreFetcher::Fetch(base::Time start,
   fetch_complete_ = std::move(fetch_complete);
 
   if (store_) {
-    store_->GetAutofillableLogins(this);
+    store_->GetAutofillableLogins(weak_ptr_factory_.GetWeakPtr());
   } else {
     std::move(fetch_complete_).Run();
   }
 }
 
 void PasswordStoreFetcher::OnGetPasswordStoreResults(
-    std::vector<std::unique_ptr<autofill::PasswordForm>> results) {
+    std::vector<std::unique_ptr<password_manager::PasswordForm>> results) {
   domain_examples_.clear();
 
-  results.erase(
-      std::remove_if(
-          results.begin(), results.end(),
-          [this](const std::unique_ptr<autofill::PasswordForm>& form) {
-            return (form->date_created < start_ || form->date_created >= end_);
-          }),
-      results.end());
+  base::EraseIf(
+      results,
+      [this](const std::unique_ptr<password_manager::PasswordForm>& form) {
+        return (form->date_created < start_ || form->date_created >= end_);
+      });
   num_passwords_ = results.size();
   std::sort(results.begin(), results.end(),
-            [](const std::unique_ptr<autofill::PasswordForm>& a,
-               const std::unique_ptr<autofill::PasswordForm>& b) {
-              return a->times_used > b->times_used;
+            [](const std::unique_ptr<password_manager::PasswordForm>& a,
+               const std::unique_ptr<password_manager::PasswordForm>& b) {
+              return a->times_used_in_html_form > b->times_used_in_html_form;
             });
 
   std::vector<std::string> sorted_domains;
@@ -143,7 +163,10 @@ void PasswordStoreFetcher::OnGetPasswordStoreResults(
   std::move(fetch_complete_).Run();
 }
 
-}  // namespace
+void PasswordStoreFetcher::CancelAllRequests() {
+  cancelable_task_tracker()->TryCancelAll();
+  weak_ptr_factory_.InvalidateWeakPtrs();
+}
 
 // PasswordsCounter::PasswordsResult ----------------------------------
 PasswordsCounter::PasswordsResult::PasswordsResult(
@@ -163,8 +186,8 @@ PasswordsCounter::PasswordsResult::~PasswordsResult() = default;
 // PasswordsCounter ----------------------------------
 
 PasswordsCounter::PasswordsCounter(
-    scoped_refptr<password_manager::PasswordStore> profile_store,
-    scoped_refptr<password_manager::PasswordStore> account_store,
+    scoped_refptr<password_manager::PasswordStoreInterface> profile_store,
+    scoped_refptr<password_manager::PasswordStoreInterface> account_store,
     syncer::SyncService* sync_service)
     : sync_tracker_(this, sync_service) {
   profile_store_fetcher_ = std::make_unique<PasswordStoreFetcher>(
@@ -195,7 +218,8 @@ const std::vector<std::string>& PasswordsCounter::account_domain_examples() {
 }
 
 void PasswordsCounter::OnInitialized() {
-  sync_tracker_.OnInitialized(base::BindRepeating(&IsPasswordSyncEnabled));
+  sync_tracker_.OnInitialized(
+      base::BindRepeating(&IsProfilePasswordSyncEnabled));
 }
 
 const char* PasswordsCounter::GetPrefName() const {
@@ -203,26 +227,31 @@ const char* PasswordsCounter::GetPrefName() const {
 }
 
 void PasswordsCounter::Count() {
+  weak_ptr_factory_.InvalidateWeakPtrs();
   remaining_tasks_ = 2;
-  profile_store_fetcher_->Fetch(
-      GetPeriodStart(), GetPeriodEnd(),
-      base::BindOnce(&PasswordsCounter::OnFetchDone, base::Unretained(this)));
-  account_store_fetcher_->Fetch(
-      GetPeriodStart(), GetPeriodEnd(),
-      base::BindOnce(&PasswordsCounter::OnFetchDone, base::Unretained(this)));
+  profile_store_fetcher_->Fetch(GetPeriodStart(), GetPeriodEnd(),
+                                base::BindOnce(&PasswordsCounter::OnFetchDone,
+                                               weak_ptr_factory_.GetWeakPtr()));
+  account_store_fetcher_->Fetch(GetPeriodStart(), GetPeriodEnd(),
+                                base::BindOnce(&PasswordsCounter::OnFetchDone,
+                                               weak_ptr_factory_.GetWeakPtr()));
+}
+
+void PasswordsCounter::OnPasswordsFetchDone() {
+  ReportResult(MakeResult());
 }
 
 std::unique_ptr<PasswordsCounter::PasswordsResult>
 PasswordsCounter::MakeResult() {
-  DCHECK(!(is_sync_active() && num_account_passwords() > 0));
   return std::make_unique<PasswordsCounter::PasswordsResult>(
       this, num_passwords(), num_account_passwords(), is_sync_active(),
       domain_examples(), account_domain_examples());
 }
 
 void PasswordsCounter::OnFetchDone() {
-  if (--remaining_tasks_ == 0)
-    ReportResult(MakeResult());
+  if (--remaining_tasks_ == 0) {
+    OnPasswordsFetchDone();
+  }
 }
 
 }  // namespace browsing_data

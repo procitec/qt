@@ -9,7 +9,6 @@
 #include "include/core/SkCanvas.h"
 #include "include/core/SkColor.h"
 #include "include/core/SkColorSpace.h"
-#include "include/core/SkFilterQuality.h"
 #include "include/core/SkFont.h"
 #include "include/core/SkImage.h"
 #include "include/core/SkImageFilter.h"
@@ -24,6 +23,7 @@
 #include "include/core/SkTypeface.h"
 #include "include/effects/SkImageFilters.h"
 #include "tools/ToolUtils.h"
+#include "tools/fonts/FontToolUtils.h"
 
 // This GM exercises the SkPictureImageFilter ImageFilter class.
 
@@ -43,7 +43,7 @@ static sk_sp<SkPicture> make_picture() {
     SkCanvas* canvas = recorder.beginRecording(100, 100);
     SkPaint paint;
     paint.setColor(0xFFFFFFFF);
-    SkFont font(ToolUtils::create_portable_typeface(), 96.0f);
+    SkFont font(ToolUtils::DefaultPortableTypeface(), 96.0f);
     canvas->drawString("e", 20.0f, 70.0f, font, paint);
     return recorder.finishRecordingAsPicture();
 }
@@ -56,7 +56,7 @@ static sk_sp<SkPicture> make_LCD_picture() {
     SkPaint paint;
     paint.setColor(0xFFFFFFFF);
     // this has to be small enough that it doesn't become a path
-    SkFont font(ToolUtils::create_portable_typeface(), 36.0f);
+    SkFont font(ToolUtils::DefaultPortableTypeface(), 36.0f);
     font.setEdging(SkFont::Edging::kSubpixelAntiAlias);
     canvas->drawString("e", 20.0f, 70.0f, font, paint);
     return recorder.finishRecordingAsPicture();
@@ -67,25 +67,23 @@ public:
     PictureImageFilterGM() { }
 
 protected:
-    SkString onShortName() override {
-        return SkString("pictureimagefilter");
-    }
+    SkString getName() const override { return SkString("pictureimagefilter"); }
 
-    SkISize onISize() override { return SkISize::Make(600, 300); }
+    SkISize getISize() override { return SkISize::Make(600, 300); }
 
     void onOnceBeforeDraw() override {
         fPicture = make_picture();
         fLCDPicture = make_LCD_picture();
     }
 
-    sk_sp<SkImageFilter> make(sk_sp<SkPicture> pic, SkRect r, SkFilterQuality fq) {
+    sk_sp<SkImageFilter> make(sk_sp<SkPicture> pic, SkRect r, const SkSamplingOptions& sampling) {
         SkISize dim = { SkScalarRoundToInt(r.width()), SkScalarRoundToInt(r.height()) };
-        auto img = SkImage::MakeFromPicture(pic, dim, nullptr, nullptr,
-                                            SkImage::BitDepth::kU8, SkColorSpace::MakeSRGB());
-        return SkImageFilters::Image(img, r, r, fq);
+        auto img = SkImages::DeferredFromPicture(
+                pic, dim, nullptr, nullptr, SkImages::BitDepth::kU8, SkColorSpace::MakeSRGB());
+        return SkImageFilters::Image(img, r, r, sampling);
     }
-    sk_sp<SkImageFilter> make(SkFilterQuality fq) {
-        return make(fPicture, fPicture->cullRect(), fq);
+    sk_sp<SkImageFilter> make(const SkSamplingOptions& sampling) {
+        return make(fPicture, fPicture->cullRect(), sampling);
     }
 
     void onDraw(SkCanvas* canvas) override {
@@ -98,8 +96,8 @@ protected:
             sk_sp<SkImageFilter> pictureSourceSrcRect(SkImageFilters::Picture(fPicture, srcRect));
             sk_sp<SkImageFilter> pictureSourceEmptyRect(SkImageFilters::Picture(fPicture,
                                                                                 emptyRect));
-            sk_sp<SkImageFilter> pictureSourceResampled = make(kLow_SkFilterQuality);
-            sk_sp<SkImageFilter> pictureSourcePixelated = make(kNone_SkFilterQuality);
+            sk_sp<SkImageFilter> pictureSourceResampled = make(SkSamplingOptions(SkFilterMode::kLinear));
+            sk_sp<SkImageFilter> pictureSourcePixelated = make(SkSamplingOptions());
 
             canvas->save();
             // Draw the picture unscaled.
@@ -122,7 +120,7 @@ protected:
                 canvas->drawRect(bounds, stroke);
 
                 SkPaint paint;
-                paint.setImageFilter(make(fLCDPicture, fPicture->cullRect(), kNone_SkFilterQuality));
+                paint.setImageFilter(make(fLCDPicture, fPicture->cullRect(), SkSamplingOptions()));
 
                 canvas->scale(4, 4);
                 canvas->translate(-0.9f*srcRect.fLeft, -2.45f*srcRect.fTop);

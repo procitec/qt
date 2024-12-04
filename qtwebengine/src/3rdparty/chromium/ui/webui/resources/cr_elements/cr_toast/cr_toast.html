@@ -1,11 +1,3 @@
-<link rel="import" href="../../html/polymer.html">
-
-<link rel="import" href="chrome://resources/polymer/v1_0/iron-a11y-announcer/iron-a11y-announcer.html">
-<link rel="import" href="chrome://resources/polymer/v1_0/paper-styles/color.html">
-<link rel="import" href="../shared_vars_css.html">
-
-<dom-module id="cr-toast">
-  <template>
     <style>
       :host {
         --cr-toast-background: #323232;
@@ -17,7 +9,7 @@
         :host {
           --cr-toast-background: var(--google-grey-900)
               linear-gradient(rgba(255, 255, 255, .06), rgba(255, 255, 255, .06));
-          --cr-toast-button-color: var(--google-blue-refresh-300);
+          --cr-toast-button-color: var(--google-blue-300);
           --cr-toast-text-color: var(--google-grey-200);
         }
       }
@@ -31,16 +23,28 @@
         box-sizing: border-box;
         display: flex;
         margin: 24px;
-        max-width: 568px;
+        max-width: var(--cr-toast-max-width, 568px);
         min-height: 52px;
         min-width: 288px;
         opacity: 0;
         padding: 0 24px;
         position: fixed;
         transform: translateY(100px);
-        transition: opacity 300ms, transform 300ms, visibility 300ms;
+        transition: opacity 300ms, transform 300ms;
         visibility: hidden;
         z-index: 1;
+      }
+
+      :host-context([chrome-refresh-2023]):host {
+        --cr-toast-background: var(--color-toast-background,
+            var(--cr-fallback-color-inverse-surface));
+        --cr-toast-button-color: var(--color-toast-button,
+            var(--cr-fallback-color-inverse-primary));
+        --cr-toast-text-color: var(--color-toast-foreground,
+            var(--cr-fallback-color-inverse-on-surface));
+        border-radius: 8px;
+        line-height: 20px;
+        padding: 0 16px;
       }
 
       :host-context([dir=ltr]) {
@@ -75,8 +79,9 @@
       :host ::slotted(cr-button:hover) {
         background-color: transparent !important;
       }
+
+      :host-context([chrome-refresh-2023]) ::slotted(cr-button:last-of-type) {
+        margin-inline-end: -8px;
+      }
     </style>
     <slot></slot>
-  </template>
-  <script src="cr_toast.js"></script>
-</dom-module>

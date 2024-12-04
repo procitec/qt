@@ -1,30 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the V4VM module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:GPL-EXCEPT$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 3 as published by the Free Software
-** Foundation with exceptions as appearing in the file LICENSE.GPL3-EXCEPT
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
 #include "private/qv4object_p.h"
 #include "private/qv4runtime_p.h"
@@ -44,6 +19,7 @@
 #include <QtCore/QFile>
 #include <QtCore/QFileInfo>
 #include <QtCore/QDateTime>
+#include <QtCore/qcommandlineparser.h>
 #include <private/qqmljsengine_p.h>
 #include <private/qqmljslexer_p.h>
 #include <private/qqmljsparser_p.h>
@@ -74,43 +50,48 @@ int main(int argc, char *argv[])
 {
     QCoreApplication app(argc, argv);
     QCoreApplication::setApplicationVersion(QLatin1String(QT_VERSION_STR));
-    QStringList args = app.arguments();
-    args.removeFirst();
 
-    bool runAsQml = false;
-    bool runAsModule = false;
-    bool cache = false;
+    QCommandLineParser parser;
+    parser.addHelpOption();
+    parser.setApplicationDescription("Utility to execute scripts in QML's V4 engine");
+    parser.addVersionOption();
+    parser.addPositionalArgument("files", "Files to execute.", "[files...]");
 
-    if (!args.isEmpty()) {
-        if (args.constFirst() == QLatin1String("--jit")) {
-            qputenv("QV4_JIT_CALL_THRESHOLD", QByteArray("0"));
-            args.removeFirst();
-        }
-        if (args.constFirst() == QLatin1String("--interpret")) {
-            qputenv("QV4_FORCE_INTERPRETER", QByteArray("1"));
-            args.removeFirst();
-        }
 
-        if (args.constFirst() == QLatin1String("--qml")) {
-            runAsQml = true;
-            args.removeFirst();
-        }
+    QCommandLineOption forceJit("jit", "Force JIT.");
+    parser.addOption(forceJit);
 
-        if (args.constFirst() == QLatin1String("--module")) {
-            runAsModule = true;
-            args.removeFirst();
-        }
+    QCommandLineOption forceInterpreter("interpret", "Force interpreter.");
+    parser.addOption(forceInterpreter);
 
-        if (args.constFirst() == QLatin1String("--cache")) {
-            cache = true;
-            args.removeFirst();
-        }
+    QCommandLineOption qml("qml", "Run as QML.");
+    parser.addOption(qml);
 
-        if (args.constFirst() == QLatin1String("--help")) {
-            std::cerr << "Usage: qmljs [|--jit|--interpret|--qml] file..." << std::endl;
-            return EXIT_SUCCESS;
+    QCommandLineOption module("module", "Run as Module.");
+    parser.addOption(module);
+
+    QCommandLineOption cache("cache", "Use cache.");
+    parser.addOption(cache);
+
+    parser.process(app);
+
+    bool jitEnabled = false;
+
+    if (parser.isSet(forceJit)) {
+        qputenv("QV4_JIT_CALL_THRESHOLD", QByteArray("0"));
+        jitEnabled = true;
+    }
+    if (parser.isSet(forceInterpreter)) {
+        qputenv("QV4_FORCE_INTERPRETER", QByteArray("1"));
+        if (jitEnabled) {
+            std::cerr << "You cannot use 'Force JIT' and 'Force Interpreter' at the same time.";
+            return EXIT_FAILURE;
         }
     }
+    const bool runAsQml = parser.isSet(qml);
+    const bool runAsModule = parser.isSet(module);
+    const bool useCache = parser.isSet(cache);
+    const QStringList args = parser.positionalArguments();
 
     QV4::ExecutionEngine vm;
 
@@ -119,13 +100,15 @@ int main(int argc, char *argv[])
 
     QV4::GlobalExtensions::init(vm.globalObject, QJSEngine::ConsoleExtension | QJSEngine::GarbageCollectionExtension);
 
-    for (const QString &fn : qAsConst(args)) {
+    for (const QString &fn : args) {
         QV4::ScopedValue result(scope);
         if (runAsModule) {
-            auto moduleUnit = vm.loadModule(QUrl::fromLocalFile(QFileInfo(fn).absoluteFilePath()));
-            if (moduleUnit) {
-                if (moduleUnit->instantiate(&vm))
-                    moduleUnit->evaluate();
+            auto module = vm.loadModule(QUrl::fromLocalFile(QFileInfo(fn).absoluteFilePath()));
+            if (module.compiled) {
+                if (module.compiled->instantiate())
+                    module.compiled->evaluate();
+            } else if (module.native) {
+                // Nothing to do. Native modules have no global code.
             } else {
                 vm.throwError(QStringLiteral("Could not load module file"));
             }
@@ -136,33 +119,34 @@ int main(int argc, char *argv[])
                 return EXIT_FAILURE;
             }
             QScopedPointer<QV4::Script> script;
-            if (cache && QFile::exists(fn + QLatin1Char('c'))) {
-                QQmlRefPointer<QV4::ExecutableCompilationUnit> unit
-                        = QV4::ExecutableCompilationUnit::create();
+            if (useCache && QFile::exists(fn + QLatin1Char('c'))) {
+                auto unit = QQml::makeRefPointer<QV4::CompiledData::CompilationUnit>();
                 QString error;
                 if (unit->loadFromDisk(QUrl::fromLocalFile(fn), QFileInfo(fn).lastModified(), &error)) {
-                    script.reset(new QV4::Script(&vm, nullptr, unit));
+                    script.reset(new QV4::Script(
+                            &vm, nullptr, vm.insertCompilationUnit(std::move(unit))));
                 } else {
                     std::cout << "Error loading" << qPrintable(fn) << "from disk cache:" << qPrintable(error) << std::endl;
                 }
             }
             if (!script) {
                 QByteArray ba = file.readAll();
-                const QString code = QString::fromUtf8(ba.constData(), ba.length());
+                const QString code = QString::fromUtf8(ba.constData(), ba.size());
                 file.close();
 
                 script.reset(new QV4::Script(ctx, QV4::Compiler::ContextType::Global, code, fn));
                 script->parseAsBinding = runAsQml;
                 script->parse();
             }
-            if (!scope.engine->hasException) {
+            if (!scope.hasException()) {
                 const auto unit = script->compilationUnit;
-                if (cache && unit && !(unit->unitData()->flags & QV4::CompiledData::Unit::StaticData)) {
+                if (useCache && unit && !(unit->unitData()->flags & QV4::CompiledData::Unit::StaticData)) {
                     if (unit->unitData()->sourceTimeStamp == 0) {
                         const_cast<QV4::CompiledData::Unit*>(unit->unitData())->sourceTimeStamp = QFileInfo(fn).lastModified().toMSecsSinceEpoch();
                     }
                     QString saveError;
-                    if (!unit->saveToDisk(QUrl::fromLocalFile(fn), &saveError)) {
+                    if (!unit->baseCompilationUnit()->saveToDisk(
+                                QUrl::fromLocalFile(fn), &saveError)) {
                         std::cout << "Error saving JS cache file: " << qPrintable(saveError) << std::endl;
                     }
                 }
@@ -171,7 +155,7 @@ int main(int argc, char *argv[])
 //                std::cout << t.elapsed() << " ms. elapsed" << std::endl;
             }
         }
-        if (scope.engine->hasException) {
+        if (scope.hasException()) {
             QV4::StackTrace trace;
             QV4::ScopedValue ex(scope, scope.engine->catchException(&trace));
             showException(ctx, ex, trace);

@@ -1,10 +1,10 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "chrome/browser/ui/webui/welcome/welcome_handler.h"
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
 #include "chrome/browser/profiles/profile.h"
@@ -12,7 +12,6 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_navigator.h"
-#include "chrome/browser/ui/profile_chooser_constants.h"
 #include "chrome/browser/ui/webui/signin/login_ui_service_factory.h"
 #include "chrome/common/url_constants.h"
 #include "components/signin/public/base/signin_metrics.h"
@@ -41,8 +40,6 @@ WelcomeHandler::~WelcomeHandler() {
   signin_metrics::RecordSigninImpressionUserActionForAccessPoint(
       signin_metrics::AccessPoint::ACCESS_POINT_START_PAGE);
 
-  UMA_HISTOGRAM_ENUMERATION("Welcome.SignInPromptResult", result_,
-                            WelcomeResult::WELCOME_RESULT_MAX);
 }
 
 bool WelcomeHandler::isValidRedirectUrl() {
@@ -52,34 +49,33 @@ bool WelcomeHandler::isValidRedirectUrl() {
 }
 
 // Handles backend events necessary when user clicks "Sign in."
-void WelcomeHandler::HandleActivateSignIn(const base::ListValue* args) {
+void WelcomeHandler::HandleActivateSignIn(const base::Value::List& args) {
   result_ = WelcomeResult::STARTED_SIGN_IN;
   base::RecordAction(base::UserMetricsAction("WelcomePage_SignInClicked"));
 
-  if (IdentityManagerFactory::GetForProfile(profile_)->HasPrimaryAccount()) {
+  if (IdentityManagerFactory::GetForProfile(profile_)->HasPrimaryAccount(
+          signin::ConsentLevel::kSync)) {
     // In general, this page isn't shown to signed-in users; however, if one
     // should arrive here, then opening the sign-in dialog will likely lead
     // to a crash. Thus, we just act like sign-in was "successful" and whisk
     // them away to the NTP instead.
     GoToNewTabPage();
   } else {
-    GURL redirect_url = GURL::EmptyGURL();
-    if (args->GetSize() == 1U) {
-      std::string url_string;
-      CHECK(args->GetString(0, &url_string));
+    GURL redirect_url(chrome::kChromeUINewTabURL);
+    if (args.size() == 1U) {
+      const std::string& url_string = args[0].GetString();
       redirect_url = GURL(url_string);
       DCHECK(redirect_url.is_valid());
     }
 
     Browser* browser = GetBrowser();
     browser->signin_view_controller()->ShowSignin(
-        profiles::BubbleViewMode::BUBBLE_VIEW_MODE_GAIA_SIGNIN,
         signin_metrics::AccessPoint::ACCESS_POINT_START_PAGE, redirect_url);
   }
 }
 
 // Handles backend events necessary when user clicks "Get started."
-void WelcomeHandler::HandleUserDecline(const base::ListValue* args) {
+void WelcomeHandler::HandleUserDecline(const base::Value::List& args) {
   result_ = WelcomeResult::DECLINED_SIGN_IN;
   GoToNewTabPage();
 }
@@ -116,7 +112,7 @@ Browser* WelcomeHandler::GetBrowser() {
   DCHECK(web_ui());
   content::WebContents* contents = web_ui()->GetWebContents();
   DCHECK(contents);
-  Browser* browser = chrome::FindBrowserWithWebContents(contents);
+  Browser* browser = chrome::FindBrowserWithTab(contents);
   DCHECK(browser);
   return browser;
 }

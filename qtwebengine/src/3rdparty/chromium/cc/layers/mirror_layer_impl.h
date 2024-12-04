@@ -1,10 +1,11 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef CC_LAYERS_MIRROR_LAYER_IMPL_H_
 #define CC_LAYERS_MIRROR_LAYER_IMPL_H_
 
+#include <cstdint>
 #include <memory>
 
 #include "base/memory/ptr_util.h"
@@ -42,12 +43,13 @@ class CC_EXPORT MirrorLayerImpl : public LayerImpl {
   int mirrored_layer_id() const { return mirrored_layer_id_; }
 
   // LayerImpl overrides.
-  std::unique_ptr<LayerImpl> CreateLayerImpl(LayerTreeImpl* tree_impl) override;
+  std::unique_ptr<LayerImpl> CreateLayerImpl(
+      LayerTreeImpl* tree_impl) const override;
   void AppendQuads(viz::CompositorRenderPass* render_pass,
                    AppendQuadsData* append_quads_data) override;
   void PushPropertiesTo(LayerImpl* layer) override;
   gfx::Rect GetDamageRect() const override;
-  gfx::Rect GetEnclosingRectInTargetSpace() const override;
+  gfx::Rect GetEnclosingVisibleRectInTargetSpace() const override;
 
  protected:
   MirrorLayerImpl(LayerTreeImpl* tree_impl, int id);
@@ -55,7 +57,8 @@ class CC_EXPORT MirrorLayerImpl : public LayerImpl {
  private:
   const char* LayerTypeAsString() const override;
   viz::CompositorRenderPassId mirrored_layer_render_pass_id() const {
-    return viz::CompositorRenderPassId(mirrored_layer_id());
+    return viz::CompositorRenderPassId(
+        static_cast<uint64_t>(mirrored_layer_id()));
   }
 
   int mirrored_layer_id_ = 0;

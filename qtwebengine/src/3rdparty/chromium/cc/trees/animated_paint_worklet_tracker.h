@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,6 +6,7 @@
 #define CC_TREES_ANIMATED_PAINT_WORKLET_TRACKER_H_
 
 #include <memory>
+#include <vector>
 
 #include "base/containers/flat_map.h"
 #include "base/containers/flat_set.h"
@@ -46,10 +47,8 @@ class CC_EXPORT AnimatedPaintWorkletTracker {
   // Called when the value of a property is changed by the CC animation system.
   // Responsible for updating the property value in |input_properties_|, and
   // marking any relevant PaintWorkletInputs as needs-invalidation.
-  void OnCustomPropertyMutated(
-      ElementId element_id,
-      const std::string& custom_property_name,
-      PaintWorkletInput::PropertyValue custom_property_value);
+  void OnCustomPropertyMutated(PaintWorkletInput::PropertyKey property_key,
+                               PaintWorkletInput::PropertyValue property_value);
   // Invalidate all the paint worklets that uses the set of dirtied properties.
   // Returns whether the set of dirtied properties is empty or not.
   bool InvalidatePaintWorkletsOnPendingTree();
@@ -88,6 +87,7 @@ class CC_EXPORT AnimatedPaintWorkletTracker {
     // value of the animation, after it finishes on the impl thread, until the
     // next commit.
     PaintWorkletInput::PropertyValue animation_value;
+    PaintWorkletInput::PropertyValue last_animation_value;
     base::flat_set<PictureLayerImpl*> associated_layers;
   };
 

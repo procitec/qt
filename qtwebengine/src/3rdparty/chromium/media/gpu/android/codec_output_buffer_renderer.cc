@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,64 +6,30 @@
 #include <string.h>
 
 #include "base/android/scoped_hardware_buffer_fence_sync.h"
-#include "base/bind_helpers.h"
-#include "base/optional.h"
+#include "base/functional/callback_helpers.h"
 #include "gpu/command_buffer/service/gles2_cmd_decoder.h"
 #include "gpu/command_buffer/service/texture_manager.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/gl/gl_context.h"
 #include "ui/gl/scoped_make_current.h"
 
 namespace media {
-namespace {
-
-// Makes |texture_owner|'s context current if it isn't already.
-std::unique_ptr<ui::ScopedMakeCurrent> MakeCurrentIfNeeded(
-    gpu::TextureOwner* texture_owner) {
-  gl::GLContext* context = texture_owner->GetContext();
-  // Note: this works for virtual contexts too, because IsCurrent() returns true
-  // if their shared platform context is current, regardless of which virtual
-  // context is current.
-  if (context->IsCurrent(nullptr))
-    return nullptr;
-
-  auto scoped_current = std::make_unique<ui::ScopedMakeCurrent>(
-      context, texture_owner->GetSurface());
-  // Log an error if ScopedMakeCurrent failed for debugging
-  // https://crbug.com/878042.
-  // TODO(ericrk): Remove this once debugging is completed.
-  if (!context->IsCurrent(nullptr)) {
-    LOG(ERROR) << "Failed to make context current in CodecImage. Subsequent "
-                  "UpdateTexImage may fail.";
-  }
-  return scoped_current;
-}
-
-class ScopedRestoreTextureBinding {
- public:
-  ScopedRestoreTextureBinding() {
-    glGetIntegerv(GL_TEXTURE_BINDING_EXTERNAL_OES, &bound_service_id_);
-  }
-  ~ScopedRestoreTextureBinding() {
-    glBindTexture(GL_TEXTURE_EXTERNAL_OES, bound_service_id_);
-  }
-
- private:
-  GLint bound_service_id_;
-};
-
-}  // namespace
 
 CodecOutputBufferRenderer::CodecOutputBufferRenderer(
     std::unique_ptr<CodecOutputBuffer> output_buffer,
-    scoped_refptr<CodecBufferWaitCoordinator> codec_buffer_wait_coordinator)
-    : output_buffer_(std::move(output_buffer)),
+    scoped_refptr<CodecBufferWaitCoordinator> codec_buffer_wait_coordinator,
+    scoped_refptr<gpu::RefCountedLock> drdc_lock)
+    : RefCountedLockHelperDrDc(std::move(drdc_lock)),
+      output_buffer_(std::move(output_buffer)),
       codec_buffer_wait_coordinator_(std::move(codec_buffer_wait_coordinator)) {
-
 }
 
-CodecOutputBufferRenderer::~CodecOutputBufferRenderer() = default;
+CodecOutputBufferRenderer::~CodecOutputBufferRenderer() {
+  Invalidate();
+}
 
 bool CodecOutputBufferRenderer::RenderToTextureOwnerBackBuffer() {
+  AssertAcquiredDrDcLock();
   DCHECK_NE(phase_, Phase::kInFrontBuffer);
   if (phase_ == Phase::kInBackBuffer)
     return true;
@@ -84,7 +50,7 @@ bool CodecOutputBufferRenderer::RenderToTextureOwnerBackBuffer() {
     return false;
   }
   if (!output_buffer_->ReleaseToSurface()) {
-    phase_ = Phase::kInvalidated;
+    Invalidate();
     return false;
   }
   phase_ = Phase::kInBackBuffer;
@@ -92,8 +58,8 @@ bool CodecOutputBufferRenderer::RenderToTextureOwnerBackBuffer() {
   return true;
 }
 
-bool CodecOutputBufferRenderer::RenderToTextureOwnerFrontBuffer(
-    BindingsMode bindings_mode) {
+bool CodecOutputBufferRenderer::RenderToTextureOwnerFrontBuffer() {
+  AssertAcquiredDrDcLock();
   // Normally, we should have a wait coordinator if we're called.  However, if
   // the renderer is torn down (either VideoFrameSubmitter or the whole process)
   // before we get returns back from viz, then we can be notified that we're
@@ -103,24 +69,10 @@ bool CodecOutputBufferRenderer::RenderToTextureOwnerFrontBuffer(
     return false;
 
   if (phase_ == Phase::kInFrontBuffer) {
-    EnsureBoundIfNeeded(bindings_mode);
     return true;
   }
   if (phase_ == Phase::kInvalidated)
     return false;
-
-  std::unique_ptr<ui::ScopedMakeCurrent> scoped_make_current =
-      MakeCurrentIfNeeded(
-          codec_buffer_wait_coordinator_->texture_owner().get());
-  // If updating the image will implicitly update the texture bindings then
-  // restore if requested or the update needed a context switch.
-  base::Optional<ScopedRestoreTextureBinding> scoped_restore_texture;
-  if (codec_buffer_wait_coordinator_->texture_owner()
-          ->binds_texture_on_update() &&
-      (bindings_mode == BindingsMode::kRestoreIfBound ||
-       !!scoped_make_current)) {
-    scoped_restore_texture.emplace();
-  }
 
   // Render it to the back buffer if it's not already there.
   if (phase_ != Phase::kInBackBuffer) {
@@ -136,7 +88,7 @@ bool CodecOutputBufferRenderer::RenderToTextureOwnerFrontBuffer(
     if (!RenderToTextureOwnerBackBuffer()) {
       // RenderTotextureOwnerBackBuffer can fail now only if ReleaseToSurface
       // failed.
-      DCHECK(phase_ == Phase::kInvalidated);
+      DCHECK_EQ(phase_, Phase::kInvalidated);
       return false;
     }
   }
@@ -147,32 +99,30 @@ bool CodecOutputBufferRenderer::RenderToTextureOwnerFrontBuffer(
     codec_buffer_wait_coordinator_->WaitForFrameAvailable();
 
   codec_buffer_wait_coordinator_->texture_owner()->UpdateTexImage();
-  EnsureBoundIfNeeded(bindings_mode);
+
+  if (frame_info_callback_) {
+    gfx::Size coded_size;
+    gfx::Rect visible_rect;
+    if (texture_owner() && texture_owner()->GetCodedSizeAndVisibleRect(
+                               size(), &coded_size, &visible_rect)) {
+      std::move(frame_info_callback_).Run(coded_size, visible_rect);
+    } else {
+      std::move(frame_info_callback_).Run(absl::nullopt, absl::nullopt);
+    }
+  }
+
   return true;
 }
 
-void CodecOutputBufferRenderer::EnsureBoundIfNeeded(BindingsMode mode) {
-  DCHECK(codec_buffer_wait_coordinator_);
-
-  if (codec_buffer_wait_coordinator_->texture_owner()
-          ->binds_texture_on_update()) {
-    was_tex_image_bound_ = true;
-    return;
-  }
-  if (mode != BindingsMode::kEnsureTexImageBound)
-    return;
-  codec_buffer_wait_coordinator_->texture_owner()->EnsureTexImageBound();
-  was_tex_image_bound_ = true;
-}
-
 bool CodecOutputBufferRenderer::RenderToOverlay() {
+  AssertAcquiredDrDcLock();
   if (phase_ == Phase::kInFrontBuffer)
     return true;
   if (phase_ == Phase::kInvalidated)
     return false;
 
   if (!output_buffer_->ReleaseToSurface()) {
-    phase_ = Phase::kInvalidated;
+    Invalidate();
     return false;
   }
   phase_ = Phase::kInFrontBuffer;
@@ -180,11 +130,18 @@ bool CodecOutputBufferRenderer::RenderToOverlay() {
 }
 
 bool CodecOutputBufferRenderer::RenderToFrontBuffer() {
-  // This code is used to trigger early rendering of the image before it is used
-  // for compositing, there is no need to bind the image.
-  return codec_buffer_wait_coordinator_
-             ? RenderToTextureOwnerFrontBuffer(BindingsMode::kRestoreIfBound)
-             : RenderToOverlay();
+  AssertAcquiredDrDcLock();
+
+  // Trigger early rendering of the image before it is used for compositing.
+  return codec_buffer_wait_coordinator_ ? RenderToTextureOwnerFrontBuffer()
+                                        : RenderToOverlay();
+}
+
+void CodecOutputBufferRenderer::Invalidate() {
+  phase_ = Phase::kInvalidated;
+  if (frame_info_callback_) {
+    std::move(frame_info_callback_).Run(absl::nullopt, absl::nullopt);
+  }
 }
 
 }  // namespace media

@@ -79,6 +79,7 @@ struct KernSubTableFormat3
   {
     TRACE_SANITIZE (this);
     return_trace (c->check_struct (this) &&
+		  hb_barrier () &&
 		  c->check_range (kernValueZ,
 				  kernValueCount * sizeof (FWORD) +
 				  glyphCount * 2 +
@@ -134,11 +135,11 @@ struct KernSubTable
     switch (subtable_type) {
     case 0:	return_trace (c->dispatch (u.format0));
 #ifndef HB_NO_AAT_SHAPE
-    case 1:	return_trace (u.header.apple ? c->dispatch (u.format1, hb_forward<Ts> (ds)...) : c->default_return_value ());
+    case 1:	return_trace (u.header.apple ? c->dispatch (u.format1, std::forward<Ts> (ds)...) : c->default_return_value ());
 #endif
     case 2:	return_trace (c->dispatch (u.format2));
 #ifndef HB_NO_AAT_SHAPE
-    case 3:	return_trace (u.header.apple ? c->dispatch (u.format3, hb_forward<Ts> (ds)...) : c->default_return_value ());
+    case 3:	return_trace (u.header.apple ? c->dispatch (u.format3, std::forward<Ts> (ds)...) : c->default_return_value ());
 #endif
     default:	return_trace (c->default_return_value ());
     }
@@ -147,9 +148,10 @@ struct KernSubTable
   bool sanitize (hb_sanitize_context_t *c) const
   {
     TRACE_SANITIZE (this);
-    if (unlikely (!u.header.sanitize (c) ||
-		  u.header.length < u.header.min_size ||
-		  !c->check_range (this, u.header.length))) return_trace (false);
+    if (unlikely (!(u.header.sanitize (c) &&
+		    hb_barrier () &&
+		    u.header.length >= u.header.min_size &&
+		    c->check_range (this, u.header.length)))) return_trace (false);
 
     return_trace (dispatch (c));
   }
@@ -325,9 +327,9 @@ struct kern
     unsigned int subtable_type = get_type ();
     TRACE_DISPATCH (this, subtable_type);
     switch (subtable_type) {
-    case 0:	return_trace (c->dispatch (u.ot, hb_forward<Ts> (ds)...));
+    case 0:	return_trace (c->dispatch (u.ot, std::forward<Ts> (ds)...));
 #ifndef HB_NO_AAT_SHAPE
-    case 1:	return_trace (c->dispatch (u.aat, hb_forward<Ts> (ds)...));
+    case 1:	return_trace (c->dispatch (u.aat, std::forward<Ts> (ds)...));
 #endif
     default:	return_trace (c->default_return_value ());
     }
@@ -337,6 +339,7 @@ struct kern
   {
     TRACE_SANITIZE (this);
     if (!u.version32.sanitize (c)) return_trace (false);
+    hb_barrier ();
     return_trace (dispatch (c));
   }
 

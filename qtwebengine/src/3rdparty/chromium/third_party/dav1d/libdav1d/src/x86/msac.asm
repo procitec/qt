@@ -153,6 +153,7 @@ cglobal msac_decode_symbol_adapt4, 0, 6, 6
 .renorm4:
     bsr           ecx, t2d
     xor           ecx, 15  ; d
+.renorm5:
     shl           t2d, cl
     shl            t4, cl
     mov [t7+msac.rng], t2d
@@ -413,13 +414,20 @@ cglobal msac_decode_bool_equi, 0, 6, 0
     sub           t2d, t1d          ; r - v
     sub            t4, rax          ; dif - vw
     cmovb         t2d, t1d
+    mov           t1d, [t0+msac.cnt]
     cmovb          t4, t3
+    movifnidn      t7, t0
+    mov           ecx, 0xbfff
     setb           al ; the upper 32 bits contains garbage but that's OK
+    sub           ecx, t2d
     not            t4
+    ; In this case of this function, (d =) 16 - clz(v) = 2 - (v >> 14)
+    ;   i.e. (0 <= d <= 2) and v < (3 << 14)
+    shr           ecx, 14           ; d
 %if ARCH_X86_64 == 0
     movzx         eax, al
 %endif
-    jmp m(msac_decode_symbol_adapt4, SUFFIX).renorm3
+    jmp m(msac_decode_symbol_adapt4, SUFFIX).renorm5
 
 cglobal msac_decode_bool, 0, 6, 0
     movifnidn      t0, r0mp
@@ -611,7 +619,6 @@ cglobal msac_decode_symbol_adapt16, 3, 6, 6
     mov           t3d, [t0+msac.update_cdf]
     mov           t4d, t2d
     not            t2
-%if STACK_ALIGNMENT < 32
     mov            r5, rsp
 %if WIN64
     and           rsp, ~31
@@ -619,11 +626,6 @@ cglobal msac_decode_symbol_adapt16, 3, 6, 6
 %else
     and            r5, ~31
     %define buf r5-32
-%endif
-%elif WIN64
-    sub           rsp, 64
-%else
-    %define buf rsp-56
 %endif
     psrlw          m1, m0, 6
     movd      [buf-4], xm2
@@ -658,11 +660,7 @@ cglobal msac_decode_symbol_adapt16, 3, 6, 6
     movzx         t2d, word [buf+rax-2]
     shr           eax, 1
 %if WIN64
-%if STACK_ALIGNMENT < 32
     mov           rsp, r5
-%else
-    add           rsp, 64
-%endif
 %endif
     vzeroupper
     jmp m(msac_decode_symbol_adapt4, _sse2).renorm2

@@ -1,3 +1,4 @@
+import QtQml 2.0
 import Test 1.0
 
 ItemModelsTest {
@@ -7,6 +8,7 @@ ItemModelsTest {
     property var parent: persistentModelIndex.parent
     property var model: persistentModelIndex.model
     property var internalId: persistentModelIndex.internalId
+    property var displayData: persistentModelIndex.data(Qt.DisplayRole)
 
     property var pmi
 
@@ -17,6 +19,7 @@ ItemModelsTest {
         parent = index.parent
         model = index.model
         internalId = index.internalId
+        displayData = index.data(Qt.DisplayRole)
 
         pmi = createPersistentModelIndex(model.index(0, 0))
     }

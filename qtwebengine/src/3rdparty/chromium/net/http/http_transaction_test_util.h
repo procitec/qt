@@ -1,21 +1,24 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef NET_HTTP_HTTP_TRANSACTION_TEST_UTIL_H_
 #define NET_HTTP_HTTP_TRANSACTION_TEST_UTIL_H_
 
+#include "base/memory/raw_ptr.h"
 #include "net/http/http_transaction.h"
 
 #include <stdint.h>
 
+#include <set>
 #include <string>
 #include <vector>
 
-#include "base/callback.h"
 #include "base/compiler_specific.h"
+#include "base/functional/callback.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
-#include "base/strings/string16.h"
+#include "base/time/time.h"
 #include "net/base/completion_once_callback.h"
 #include "net/base/io_buffer.h"
 #include "net/base/load_flags.h"
@@ -24,18 +27,20 @@
 #include "net/base/request_priority.h"
 #include "net/base/test_completion_callback.h"
 #include "net/base/transport_info.h"
+#include "net/cert/x509_certificate.h"
 #include "net/disk_cache/disk_cache.h"
 #include "net/http/http_cache.h"
 #include "net/http/http_request_info.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_response_info.h"
+#include "net/log/net_log_source.h"
 #include "net/socket/connection_attempts.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace net {
 
 class IOBuffer;
 class SSLPrivateKey;
-class X509Certificate;
 class NetLogWithSource;
 struct HttpRequestInfo;
 
@@ -56,14 +61,14 @@ enum {
   TEST_MODE_SLOW_READ = 1 << 5
 };
 
-using MockTransactionReadHandler = int (*)(int64_t content_length,
-                                           int64_t offset,
-                                           IOBuffer* buf,
-                                           int buf_len);
-using MockTransactionHandler = void (*)(const HttpRequestInfo* request,
-                                        std::string* response_status,
-                                        std::string* response_headers,
-                                        std::string* response_data);
+using MockTransactionReadHandler = base::RepeatingCallback<
+    int(int64_t content_length, int64_t offset, IOBuffer* buf, int buf_len)>;
+
+using MockTransactionHandler =
+    base::RepeatingCallback<void(const HttpRequestInfo* request,
+                                 std::string* response_status,
+                                 std::string* response_headers,
+                                 std::string* response_data)>;
 
 // Default TransportInfo suitable for most MockTransactions.
 // Describes a direct connection to (127.0.0.1, 80).
@@ -83,6 +88,12 @@ struct MockTransaction {
   // If |response_time| is unspecified, the current time will be used.
   base::Time response_time;
   const char* data;
+  // Any aliases for the requested URL, as read from DNS records. Includes all
+  // known aliases, e.g. from A, AAAA, or HTTPS, not just from the address used
+  // for the connection, in no particular order.
+  std::set<std::string> dns_aliases;
+  absl::optional<int64_t> fps_cache_filter;
+  absl::optional<int64_t> browser_run_id;
   int test_mode;
   MockTransactionHandler handler;
   MockTransactionReadHandler read_handler;
@@ -144,7 +155,7 @@ class TestTransactionConsumer {
 
   void Start(const HttpRequestInfo* request, const NetLogWithSource& net_log);
 
-  bool is_done() const { return state_ == DONE; }
+  bool is_done() const { return state_ == State::kDone; }
   int error() const { return error_; }
 
   const HttpResponseInfo* response_info() const {
@@ -154,12 +165,7 @@ class TestTransactionConsumer {
   const std::string& content() const { return content_; }
 
  private:
-  enum State {
-    IDLE,
-    STARTING,
-    READING,
-    DONE
-  };
+  enum class State { kIdle, kStarting, kReading, kDone };
 
   void DidStart(int result);
   void DidRead(int result);
@@ -168,13 +174,12 @@ class TestTransactionConsumer {
 
   void OnIOComplete(int result);
 
-  State state_;
+  State state_ = State::kIdle;
   std::unique_ptr<HttpTransaction> trans_;
   std::string content_;
   scoped_refptr<IOBuffer> read_buf_;
-  int error_;
-
-  static int quit_counter_;
+  int error_ = OK;
+  base::OnceClosure quit_closure_;
 };
 
 //-----------------------------------------------------------------------------
@@ -245,19 +250,27 @@ class MockNetworkTransaction
 
   void SetRequestHeadersCallback(RequestHeadersCallback callback) override {}
   void SetResponseHeadersCallback(ResponseHeadersCallback) override {}
+  void SetEarlyResponseHeadersCallback(ResponseHeadersCallback) override {}
+
+  void SetModifyRequestHeadersCallback(
+      base::RepeatingCallback<void(net::HttpRequestHeaders*)> callback)
+      override;
+
+  void SetIsSharedDictionaryReadAllowedCallback(
+      base::RepeatingCallback<bool()> callback) override {}
 
   int ResumeNetworkStart() override;
 
-  void GetConnectionAttempts(ConnectionAttempts* out) const override;
+  ConnectionAttempts GetConnectionAttempts() const override;
 
   void CloseConnectionOnDestruction() override;
+  bool IsMdlMatchForMetrics() const override;
 
   CreateHelper* websocket_handshake_stream_create_helper() {
     return websocket_handshake_stream_create_helper_;
   }
 
   RequestPriority priority() const { return priority_; }
-  const HttpRequestInfo* request() const { return request_; }
 
   // Bogus value that will be returned by GetTotalReceivedBytes() if the
   // MockNetworkTransaction was started.
@@ -267,37 +280,75 @@ class MockNetworkTransaction
   static const int64_t kTotalSentBytes;
 
  private:
-  int StartInternal(const HttpRequestInfo* request,
-                    CompletionOnceCallback callback,
-                    const NetLogWithSource& net_log);
+  enum class State {
+    NOTIFY_BEFORE_CREATE_STREAM,
+    CREATE_STREAM,
+    CREATE_STREAM_COMPLETE,
+    CONNECTED_CALLBACK,
+    CONNECTED_CALLBACK_COMPLETE,
+    BUILD_REQUEST,
+    BUILD_REQUEST_COMPLETE,
+    SEND_REQUEST,
+    SEND_REQUEST_COMPLETE,
+    READ_HEADERS,
+    READ_HEADERS_COMPLETE,
+    NONE
+  };
+
+  int StartInternal(HttpRequestInfo request, CompletionOnceCallback callback);
+  int DoNotifyBeforeCreateStream();
+  int DoCreateStream();
+  int DoCreateStreamComplete(int result);
+  int DoConnectedCallback();
+  int DoConnectedCallbackComplete(int result);
+  int DoBuildRequest();
+  int DoBuildRequestComplete(int result);
+  int DoSendRequest();
+  int DoSendRequestComplete(int result);
+  int DoReadHeaders();
+  int DoReadHeadersComplete(int result);
+
+  // Runs the state transition loop.
+  int DoLoop(int result);
+
+  void OnIOComplete(int result);
+
   void CallbackLater(CompletionOnceCallback callback, int result);
   void RunCallback(CompletionOnceCallback callback, int result);
 
-  const HttpRequestInfo* request_;
+  raw_ptr<const HttpRequestInfo> original_request_ptr_ = nullptr;
+  HttpRequestInfo current_request_;
+  State next_state_ = State::NONE;
+  NetLogWithSource net_log_;
+
+  CompletionOnceCallback callback_;
+
   HttpResponseInfo response_;
   std::string data_;
-  int64_t data_cursor_;
-  int64_t content_length_;
+  int64_t data_cursor_ = 0;
+  int64_t content_length_ = 0;
   int test_mode_;
   RequestPriority priority_;
-  MockTransactionReadHandler read_handler_;
-  CreateHelper* websocket_handshake_stream_create_helper_;
+  raw_ptr<CreateHelper> websocket_handshake_stream_create_helper_ = nullptr;
   BeforeNetworkStartCallback before_network_start_callback_;
   ConnectedCallback connected_callback_;
   base::WeakPtr<MockNetworkLayer> transaction_factory_;
-  int64_t received_bytes_;
-  int64_t sent_bytes_;
+  int64_t received_bytes_ = 0;
+  int64_t sent_bytes_ = 0;
 
   // NetLog ID of the fake / non-existent underlying socket used by the
   // connection. Requires Start() be passed a NetLogWithSource with a real
   // NetLog to
   // be initialized.
-  unsigned int socket_log_id_;
+  unsigned int socket_log_id_ = NetLogSource::kInvalidId;
 
-  bool done_reading_called_;
-  bool reading_;
+  bool done_reading_called_ = false;
+  bool reading_ = false;
 
   CompletionOnceCallback resume_start_callback_;  // used for pause and restart.
+
+  base::RepeatingCallback<void(net::HttpRequestHeaders*)>
+      modify_request_headers_callback_;
 
   base::WeakPtrFactory<MockNetworkTransaction> weak_factory_{this};
 };
@@ -353,14 +404,14 @@ class MockNetworkLayer : public HttpTransactionFactory,
   base::Time Now();
 
  private:
-  int transaction_count_;
-  bool done_reading_called_;
-  bool stop_caching_called_;
-  RequestPriority last_create_transaction_priority_;
+  int transaction_count_ = 0;
+  bool done_reading_called_ = false;
+  bool stop_caching_called_ = false;
+  RequestPriority last_create_transaction_priority_ = DEFAULT_PRIORITY;
 
   // By default clock_ is NULL but it can be set to a custom clock by test
   // frameworks using SetClock.
-  base::Clock* clock_;
+  raw_ptr<base::Clock> clock_ = nullptr;
 
   base::WeakPtr<MockNetworkTransaction> last_transaction_;
 };
@@ -396,7 +447,7 @@ class ConnectedHandler {
 
   // Compatible with HttpTransaction::ConnectedCallback.
   // Returns the last value passed to set_result(), if any, OK otherwise.
-  int OnConnected(const TransportInfo& info);
+  int OnConnected(const TransportInfo& info, CompletionOnceCallback callback);
 
   // Returns the list of arguments with which OnConnected() was called.
   // The arguments are listed in the same order as the calls were received.
@@ -405,9 +456,15 @@ class ConnectedHandler {
   // Sets the value to be returned by subsequent calls to OnConnected().
   void set_result(int result) { result_ = result; }
 
+  // If true, runs the callback supplied to OnConnected asynchronously with
+  // `result_`. Otherwise, the callback is skipped and `result_` is returned
+  // directly.
+  void set_run_callback(bool run_callback) { run_callback_ = run_callback; }
+
  private:
   std::vector<TransportInfo> transports_;
   int result_ = OK;
+  bool run_callback_ = false;
 };
 
 }  // namespace net

@@ -1,14 +1,17 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/bindings/core/v8/use_counter_callback.h"
 
+#include "third_party/blink/public/common/scheme_registry.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
-#include "third_party/blink/renderer/core/frame/deprecation.h"
+#include "third_party/blink/renderer/core/frame/deprecation/deprecation.h"
 #include "third_party/blink/renderer/platform/bindings/v8_per_isolate_data.h"
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
+#include "third_party/blink/renderer/platform/weborigin/scheme_registry.h"
+#include "third_party/blink/renderer/platform/weborigin/security_origin.h"
 
 namespace blink {
 
@@ -29,17 +32,11 @@ void UseCounterCallback(v8::Isolate* isolate,
     case v8::Isolate::kBreakIterator:
       blink_feature = WebFeature::kBreakIterator;
       break;
-    case v8::Isolate::kLegacyConst:
-      blink_feature = WebFeature::kLegacyConst;
-      break;
     case v8::Isolate::kSloppyMode:
       blink_feature = WebFeature::kV8SloppyMode;
       break;
     case v8::Isolate::kStrictMode:
       blink_feature = WebFeature::kV8StrictMode;
-      break;
-    case v8::Isolate::kStrongMode:
-      blink_feature = WebFeature::kV8StrongMode;
       break;
     case v8::Isolate::kRegExpPrototypeStickyGetter:
       blink_feature = WebFeature::kV8RegExpPrototypeStickyGetter;
@@ -49,24 +46,6 @@ void UseCounterCallback(v8::Isolate* isolate,
       break;
     case v8::Isolate::kRegExpPrototypeUnicodeGetter:
       blink_feature = WebFeature::kV8RegExpPrototypeUnicodeGetter;
-      break;
-    case v8::Isolate::kIntlV8Parse:
-      blink_feature = WebFeature::kV8IntlV8Parse;
-      break;
-    case v8::Isolate::kIntlPattern:
-      blink_feature = WebFeature::kV8IntlPattern;
-      break;
-    case v8::Isolate::kIntlResolved:
-      blink_feature = WebFeature::kV8IntlResolved;
-      break;
-    case v8::Isolate::kPromiseChain:
-      blink_feature = WebFeature::kV8PromiseChain;
-      break;
-    case v8::Isolate::kPromiseAccept:
-      blink_feature = WebFeature::kV8PromiseAccept;
-      break;
-    case v8::Isolate::kPromiseDefer:
-      blink_feature = WebFeature::kV8PromiseDefer;
       break;
     case v8::Isolate::kHtmlCommentInExternalScript:
       blink_feature = WebFeature::kV8HTMLCommentInExternalScript;
@@ -80,29 +59,14 @@ void UseCounterCallback(v8::Isolate* isolate,
     case v8::Isolate::kForInInitializer:
       blink_feature = WebFeature::kV8ForInInitializer;
       break;
-    case v8::Isolate::kArrayProtectorDirtied:
-      blink_feature = WebFeature::kV8ArrayProtectorDirtied;
-      break;
     case v8::Isolate::kArraySpeciesModified:
       blink_feature = WebFeature::kV8ArraySpeciesModified;
       break;
     case v8::Isolate::kArrayPrototypeConstructorModified:
       blink_feature = WebFeature::kV8ArrayPrototypeConstructorModified;
       break;
-    case v8::Isolate::kArrayInstanceProtoModified:
-      blink_feature = WebFeature::kV8ArrayInstanceProtoModified;
-      break;
     case v8::Isolate::kArrayInstanceConstructorModified:
       blink_feature = WebFeature::kV8ArrayInstanceConstructorModified;
-      break;
-    case v8::Isolate::kLegacyFunctionDeclaration:
-      blink_feature = WebFeature::kV8LegacyFunctionDeclaration;
-      break;
-    case v8::Isolate::kRegExpPrototypeSourceGetter:
-      blink_feature = WebFeature::kV8RegExpPrototypeSourceGetter;
-      break;
-    case v8::Isolate::kRegExpPrototypeOldFlagGetter:
-      blink_feature = WebFeature::kV8RegExpPrototypeOldFlagGetter;
       break;
     case v8::Isolate::kDecimalWithLeadingZeroInStrictMode:
       blink_feature = WebFeature::kV8DecimalWithLeadingZeroInStrictMode;
@@ -125,12 +89,6 @@ void UseCounterCallback(v8::Isolate* isolate,
     case v8::Isolate::kPromiseConstructorReturnedUndefined:
       blink_feature = WebFeature::kV8PromiseConstructorReturnedUndefined;
       break;
-    case v8::Isolate::kConstructorNonUndefinedPrimitiveReturn:
-      blink_feature = WebFeature::kV8ConstructorNonUndefinedPrimitiveReturn;
-      break;
-    case v8::Isolate::kLabeledExpressionStatement:
-      blink_feature = WebFeature::kV8LabeledExpressionStatement;
-      break;
     case v8::Isolate::kErrorCaptureStackTrace:
       blink_feature = WebFeature::kV8ErrorCaptureStackTrace;
       break;
@@ -145,9 +103,6 @@ void UseCounterCallback(v8::Isolate* isolate,
       break;
     case v8::Isolate::kDeoptimizerDisableSpeculation:
       blink_feature = WebFeature::kV8DeoptimizerDisableSpeculation;
-      break;
-    case v8::Isolate::kArrayPrototypeSortJSArrayModifiedPrototype:
-      blink_feature = WebFeature::kV8ArrayPrototypeSortJSArrayModifiedPrototype;
       break;
     case v8::Isolate::kFunctionTokenOffsetTooLongForToString:
       blink_feature = WebFeature::kV8FunctionTokenOffsetTooLongForToString;
@@ -188,9 +143,6 @@ void UseCounterCallback(v8::Isolate* isolate,
     case v8::Isolate::kStringLocaleCompare:
       blink_feature = WebFeature::kStringLocaleCompare;
       break;
-    case v8::Isolate::kStringToLocaleUpperCase:
-      blink_feature = WebFeature::kStringToLocaleUpperCase;
-      break;
     case v8::Isolate::kStringToLocaleLowerCase:
       blink_feature = WebFeature::kStringToLocaleLowerCase;
       break;
@@ -211,9 +163,6 @@ void UseCounterCallback(v8::Isolate* isolate,
       break;
     case v8::Isolate::kAttemptOverrideReadOnlyOnPrototypeStrict:
       blink_feature = WebFeature::kV8AttemptOverrideReadOnlyOnPrototypeStrict;
-      break;
-    case v8::Isolate::kOptimizedFunctionWithOneShotBytecode:
-      blink_feature = WebFeature::kV8OptimizedFunctionWithOneShotBytecode;
       break;
     case v8::Isolate::kRegExpMatchIsTrueishOnNonJSRegExp:
       blink_feature = WebFeature::kV8RegExpMatchIsTrueishOnNonJSRegExp;
@@ -236,14 +185,48 @@ void UseCounterCallback(v8::Isolate* isolate,
     case v8::Isolate::kRegExpReplaceCalledOnSlowRegExp:
       blink_feature = WebFeature::kV8RegExpReplaceCalledOnSlowRegExp;
       break;
-    case v8::Isolate::kSharedArrayBufferConstructed:
-      if (!CurrentExecutionContext(isolate)->CrossOriginIsolatedCapability()) {
+    case v8::Isolate::kSharedArrayBufferConstructed: {
+      ExecutionContext* current_execution_context =
+          CurrentExecutionContext(isolate);
+      if (!current_execution_context) {
+        // This callback can be called in a setup where it is not possible to
+        // retrieve the current ExecutionContext, e.g. when a shared WebAssembly
+        // memory grew on a concurrent worker, and the interrupt that should
+        // take care of growing the WebAssembly memory on the current memory was
+        // triggered within the execution of a regular expression.
+        blink_feature = WebFeature::kV8SharedArrayBufferConstructed;
+        break;
+      }
+      bool is_cross_origin_isolated =
+          current_execution_context->CrossOriginIsolatedCapability();
+      String protocol =
+          current_execution_context->GetSecurityOrigin()->Protocol();
+      bool scheme_allows_sab =
+          SchemeRegistry::ShouldTreatURLSchemeAsAllowingSharedArrayBuffers(
+              protocol);
+      bool is_extension_scheme =
+          CommonSchemeRegistry::IsExtensionScheme(protocol.Ascii());
+
+      if (!is_cross_origin_isolated && is_extension_scheme) {
+        DCHECK(scheme_allows_sab);
+        blink_feature = WebFeature::
+            kV8SharedArrayBufferConstructedInExtensionWithoutIsolation;
+        deprecated = true;
+      } else if (is_cross_origin_isolated || scheme_allows_sab) {
+        blink_feature = WebFeature::kV8SharedArrayBufferConstructed;
+      } else {
+        // File an issue. It is performance critical to only file the issue once
+        // per context.
+        if (!current_execution_context
+                 ->has_filed_shared_array_buffer_creation_issue()) {
+          current_execution_context->FileSharedArrayBufferCreationIssue();
+        }
         blink_feature =
             WebFeature::kV8SharedArrayBufferConstructedWithoutIsolation;
-      } else {
-        blink_feature = WebFeature::kV8SharedArrayBufferConstructed;
+        deprecated = true;
       }
       break;
+    }
     case v8::Isolate::kArrayPrototypeHasElements:
       blink_feature = WebFeature::kV8ArrayPrototypeHasElements;
       break;
@@ -325,19 +308,79 @@ void UseCounterCallback(v8::Isolate* isolate,
       blink_feature =
           WebFeature::kV8InvalidatedTypedArraySpeciesLookupChainProtector;
       break;
+    case v8::Isolate::kInvalidatedNumberStringNotRegexpLikeProtector:
+      blink_feature =
+          WebFeature::kV8InvalidatedNumberStringNotRegexpLikeProtector;
+      break;
     case v8::Isolate::kVarRedeclaredCatchBinding:
       blink_feature = WebFeature::kV8VarRedeclaredCatchBinding;
       break;
     case v8::Isolate::kWasmRefTypes:
       blink_feature = WebFeature::kV8WasmRefTypes;
       break;
-    case v8::Isolate::kWasmBulkMemory:
-      blink_feature = WebFeature::kV8WasmBulkMemory;
+    case v8::Isolate::kWasmExceptionHandling:
+      blink_feature = WebFeature::kV8WasmExceptionHandling;
       break;
-    case v8::Isolate::kWasmMultiValue:
-      blink_feature = WebFeature::kV8WasmMultiValue;
+    case v8::Isolate::kFunctionPrototypeArguments:
+      blink_feature = WebFeature::kV8FunctionPrototypeArguments;
       break;
-
+    case v8::Isolate::kFunctionPrototypeCaller:
+      blink_feature = WebFeature::kV8FunctionPrototypeCaller;
+      break;
+    case v8::Isolate::kTurboFanOsrCompileStarted:
+      blink_feature = WebFeature::kV8TurboFanOsrCompileStarted;
+      break;
+    case v8::Isolate::kAsyncStackTaggingCreateTaskCall:
+      blink_feature = WebFeature::kV8AsyncStackTaggingCreateTaskCall;
+      break;
+    case v8::Isolate::kImportAssertionDeprecatedSyntax:
+      blink_feature = WebFeature::kV8ImportAssertionDeprecatedSyntax;
+      break;
+    case v8::Isolate::kCompileHintsMagicAll:
+      blink_feature = WebFeature::kV8CompileHintsMagicAll;
+      break;
+    case v8::Isolate::kWasmMemory64:
+      blink_feature = WebFeature::kV8WasmMemory64;
+      break;
+    case v8::Isolate::kWasmMultiMemory:
+      blink_feature = WebFeature::kV8WasmMultiMemory;
+      break;
+    case v8::Isolate::kWasmGC:
+      blink_feature = WebFeature::kV8WasmGC;
+      break;
+    case v8::Isolate::kWasmImportedStrings:
+      blink_feature = WebFeature::kV8WebAssemblyJSStringBuiltins;
+      break;
+    case v8::Isolate::kSourceMappingUrlMagicCommentAtSign:
+      blink_feature = WebFeature::kSourceMappingUrlMagicCommentAtSign;
+      break;
+    case v8::Isolate::kTemporalObject:
+      blink_feature = WebFeature::kV8TemporalObject;
+      break;
+    case v8::Isolate::kWasmModuleCompilation:
+      blink_feature = WebFeature::kWebAssemblyModuleCompilation;
+      break;
+    case v8::Isolate::kWasmJavaScriptPromiseIntegration:
+      blink_feature = WebFeature::kV8WasmJavaScriptPromiseIntegration;
+      break;
+    case v8::Isolate::kWasmReturnCall:
+      blink_feature = WebFeature::kV8WasmReturnCall;
+      break;
+    case v8::Isolate::kWasmExtendedConst:
+      blink_feature = WebFeature::kV8WasmExtendedConst;
+      break;
+    case v8::Isolate::kWasmRelaxedSimd:
+      blink_feature = WebFeature::kV8WasmRelaxedSimd;
+      break;
+    case v8::Isolate::kWasmTypeReflection:
+      blink_feature = WebFeature::kV8WasmTypeReflection;
+      break;
+    case v8::Isolate::kWasmExnRef:
+      blink_feature = WebFeature::kV8WasmExnRef;
+      break;
+    case v8::Isolate::kWasmTypedFuncRef:
+      blink_feature = WebFeature::kV8WasmTypedFuncRef;
+      break;
     default:
       // This can happen if V8 has added counters that this version of Blink
       // does not know about. It's harmless.

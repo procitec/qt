@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,9 +13,8 @@
 #include <string>
 #include <vector>
 
-#include "base/callback.h"
 #include "base/check_op.h"
-#include "base/macros.h"
+#include "base/functional/callback.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "components/history/core/browser/page_usage_data.h"
@@ -105,15 +104,14 @@ std::string VisitSegmentDatabase::ComputeSegmentName(const GURL& url) {
   // TODO(brettw) this should probably use the registry controlled
   // domains service.
   GURL::Replacements r;
-  std::string host = url.host();
+  base::StringPiece host = url.host_piece();
 
   // Strip various common prefixes in order to group the resulting hostnames
   // together and avoid duplicates.
   for (base::StringPiece prefix : {"www.", "m.", "mobile.", "touch."}) {
     if (host.size() > prefix.size() &&
         base::StartsWith(host, prefix, base::CompareCase::INSENSITIVE_ASCII)) {
-      r.SetHost(host.c_str(),
-                url::Component(prefix.size(), host.size() - prefix.size()));
+      r.SetHostStr(host.substr(prefix.size()));
       break;
     }
   }
@@ -165,15 +163,15 @@ SegmentID VisitSegmentDatabase::CreateSegment(URLID url_id,
   return 0;
 }
 
-bool VisitSegmentDatabase::IncreaseSegmentVisitCount(SegmentID segment_id,
-                                                     base::Time ts,
-                                                     int amount) {
+bool VisitSegmentDatabase::UpdateSegmentVisitCount(SegmentID segment_id,
+                                                   base::Time ts,
+                                                   int amount) {
   base::Time t = ts.LocalMidnight();
 
   sql::Statement select(GetDB().GetCachedStatement(SQL_FROM_HERE,
       "SELECT id, visit_count FROM segment_usage "
       "WHERE time_slot = ? AND segment_id = ?"));
-  select.BindInt64(0, t.ToInternalValue());
+  select.BindTime(0, t);
   select.BindInt64(1, segment_id);
 
   if (!select.is_valid())
@@ -186,21 +184,22 @@ bool VisitSegmentDatabase::IncreaseSegmentVisitCount(SegmentID segment_id,
     update.BindInt64(1, select.ColumnInt64(0));
 
     return update.Run();
-  } else {
+  } else if (amount > 0) {
     sql::Statement insert(GetDB().GetCachedStatement(SQL_FROM_HERE,
         "INSERT INTO segment_usage "
         "(segment_id, time_slot, visit_count) VALUES (?, ?, ?)"));
     insert.BindInt64(0, segment_id);
-    insert.BindInt64(1, t.ToInternalValue());
+    insert.BindTime(1, t);
     insert.BindInt64(2, static_cast<int64_t>(amount));
 
     return insert.Run();
   }
+
+  return true;
 }
 
 std::vector<std::unique_ptr<PageUsageData>>
 VisitSegmentDatabase::QuerySegmentUsage(
-    base::Time from_time,
     int max_result_count,
     const base::RepeatingCallback<bool(const GURL&)>& url_filter) {
   // This function gathers the highest-ranked segments in two queries.
@@ -209,15 +208,12 @@ VisitSegmentDatabase::QuerySegmentUsage(
   // segments.
 
   // Gather all the segment scores.
-  sql::Statement statement(GetDB().GetCachedStatement(SQL_FROM_HERE,
-      "SELECT segment_id, time_slot, visit_count "
-      "FROM segment_usage WHERE time_slot >= ? "
-      "ORDER BY segment_id"));
+  sql::Statement statement(
+      GetDB().GetCachedStatement(SQL_FROM_HERE,
+                                 "SELECT segment_id, time_slot, visit_count "
+                                 "FROM segment_usage ORDER BY segment_id"));
   if (!statement.is_valid())
     return std::vector<std::unique_ptr<PageUsageData>>();
-
-  base::Time ts = from_time.LocalMidnight();
-  statement.BindInt64(0, ts.ToInternalValue());
 
   std::vector<std::unique_ptr<PageUsageData>> segments;
   base::Time now = base::Time::Now();
@@ -229,18 +225,25 @@ VisitSegmentDatabase::QuerySegmentUsage(
       previous_segment_id = segment_id;
     }
 
-    base::Time timeslot =
-        base::Time::FromInternalValue(statement.ColumnInt64(1));
+    base::Time timeslot = statement.ColumnTime(1);
+    if (timeslot > segments.back()->GetLastVisitTimeslot()) {
+      segments.back()->SetLastVisitTimeslot(timeslot);
+    }
+
     int visit_count = statement.ColumnInt(2);
-    int days_ago = (now - timeslot).InDays();
+    segments.back()->SetVisitCount(segments.back()->GetVisitCount() +
+                                   visit_count);
 
     // Score for this day in isolation.
-    float day_visits_score = 1.0f + log(static_cast<float>(visit_count));
+    float day_visits_score = visit_count <= 0.0f
+                                 ? 0.0f
+                                 : 1.0f + log(static_cast<float>(visit_count));
     // Recent visits count more than historical ones, so we multiply in a boost
     // related to how long ago this day was.
     // This boost is a curve that smoothly goes through these values:
     // Today gets 3x, a week ago 2x, three weeks ago 1.5x, falling off to 1x
     // at the limit of how far we reach into the past.
+    int days_ago = (now - timeslot).InDays();
     float recency_boost = 1.0f + (2.0f * (1.0f / (1.0f + days_ago/7.0f)));
     float score = recency_boost * day_visits_score;
     segments.back()->SetScore(segments.back()->GetScore() + score);
@@ -280,6 +283,14 @@ VisitSegmentDatabase::QuerySegmentUsage(
   }
 
   return results;
+}
+
+bool VisitSegmentDatabase::DeleteSegmentDataOlderThan(base::Time older_than) {
+  sql::Statement statement(GetDB().GetCachedStatement(
+      SQL_FROM_HERE, "DELETE FROM segment_usage WHERE time_slot < ?"));
+  statement.BindTime(0, older_than.LocalMidnight());
+
+  return statement.Run();
 }
 
 bool VisitSegmentDatabase::DeleteSegmentForURL(URLID url_id) {
@@ -329,7 +340,7 @@ bool VisitSegmentDatabase::MigrateVisitSegmentNames() {
 
     SegmentID to_segment_id = GetSegmentNamed(new_name);
     if (to_segment_id) {
-      // |new_name| is already in use, so merge.
+      // `new_name` is already in use, so merge.
       success = success && MergeSegments(/*from_segment_id=*/id, to_segment_id);
     } else {
       // Trivial rename of the segment.
@@ -355,17 +366,17 @@ bool VisitSegmentDatabase::MergeSegments(SegmentID from_segment_id,
     return false;
 
   // For each time slot where there are visits for the absorbed segment
-  // (|from_segment_id|), add them to the absorbing/staying segment
-  // (|to_segment_id|).
+  // (`from_segment_id`), add them to the absorbing/staying segment
+  // (`to_segment_id`).
   sql::Statement select(
       GetDB().GetCachedStatement(SQL_FROM_HERE,
                                  "SELECT time_slot, visit_count FROM "
                                  "segment_usage WHERE segment_id = ?"));
   select.BindInt64(0, from_segment_id);
   while (select.Step()) {
-    base::Time ts = base::Time::FromInternalValue(select.ColumnInt64(0));
+    base::Time ts = select.ColumnTime(0);
     int64_t visit_count = select.ColumnInt64(1);
-    IncreaseSegmentVisitCount(to_segment_id, ts, visit_count);
+    UpdateSegmentVisitCount(to_segment_id, ts, visit_count);
   }
 
   // Update all references in the visits database.

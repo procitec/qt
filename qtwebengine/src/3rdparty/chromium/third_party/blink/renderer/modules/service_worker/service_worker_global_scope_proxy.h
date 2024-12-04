@@ -33,18 +33,22 @@
 
 #include <memory>
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/threading/thread_checker.h"
+#include "base/time/time.h"
 #include "third_party/blink/public/mojom/service_worker/controller_service_worker.mojom-blink.h"
 #include "third_party/blink/public/mojom/service_worker/dispatch_fetch_event_params.mojom-blink.h"
 #include "third_party/blink/public/mojom/service_worker/service_worker.mojom-blink.h"
+#include "third_party/blink/public/mojom/service_worker/service_worker_fetch_handler_type.mojom-blink.h"
 #include "third_party/blink/public/platform/web_string.h"
 #include "third_party/blink/public/web/modules/service_worker/web_service_worker_context_proxy.h"
 #include "third_party/blink/renderer/core/workers/worker_reporting_proxy.h"
-#include "third_party/blink/renderer/platform/heap/persistent.h"
+#include "third_party/blink/renderer/platform/heap/cross_thread_persistent.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/wtf/casting.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
+#include "third_party/blink/renderer/platform/wtf/functional.h"
 
 namespace blink {
 
@@ -52,21 +56,19 @@ class ServiceWorkerGlobalScope;
 class WebEmbeddedWorkerImpl;
 class WebServiceWorkerContextClient;
 
-// This class is created and destructed on the main thread, but live most
-// of its time as a resident of the worker thread. All methods other than its
-// ctor/dtor and Detach() are called on the worker thread.
+// This class is created and destructed on an "initiator thread" (the
+// background ThreadPool thread that WebEmbeddedWorkerImpl run on), but lives
+// most of its time as a resident of the service worker thread. All methods
+// other than its ctor/dtor and Detach() are called on the service worker
+// thread.
 //
 // This implements WebServiceWorkerContextProxy, which connects ServiceWorker's
 // WorkerGlobalScope and embedder/chrome, and implements ServiceWorker-specific
-// events/upcall methods that are to be called by embedder/chromium,
-// e.g. onfetch.
+// events/upcall methods that are to be called by embedder/chromium, e.g.
+// onfetch.
 //
 // An instance of this class is supposed to outlive until
-// workerThreadTerminated() is called by its corresponding
-// WorkerGlobalScope.
-//
-// TODO(bashi): Update the above comment and method comments once we move
-// creation of this class off the main thread.
+// workerThreadTerminated() is called by its corresponding WorkerGlobalScope.
 class ServiceWorkerGlobalScopeProxy final : public WebServiceWorkerContextProxy,
                                             public WorkerReportingProxy {
  public:
@@ -74,6 +76,11 @@ class ServiceWorkerGlobalScopeProxy final : public WebServiceWorkerContextProxy,
                                 WebServiceWorkerContextClient&,
                                 scoped_refptr<base::SingleThreadTaskRunner>
                                     parent_thread_default_task_runner);
+
+  ServiceWorkerGlobalScopeProxy(const ServiceWorkerGlobalScopeProxy&) = delete;
+  ServiceWorkerGlobalScopeProxy& operator=(
+      const ServiceWorkerGlobalScopeProxy&) = delete;
+
   ~ServiceWorkerGlobalScopeProxy() override;
 
   // WebServiceWorkerContextProxy overrides:
@@ -99,7 +106,13 @@ class ServiceWorkerGlobalScopeProxy final : public WebServiceWorkerContextProxy,
   bool IsWindowInteractionAllowed() override;
   void PauseEvaluation() override;
   void ResumeEvaluation() override;
-  bool HasFetchHandler() override;
+  mojom::blink::ServiceWorkerFetchHandlerType FetchHandlerType() override;
+  bool HasHidEventHandlers() override;
+  bool HasUsbEventHandlers() override;
+  void GetRemoteAssociatedInterface(
+      const WebString& name,
+      mojo::ScopedInterfaceEndpointHandle handle) override;
+  blink::AssociatedInterfaceRegistry& GetAssociatedInterfaceRegistry() override;
 
   // WorkerReportingProxy overrides:
   void CountFeature(WebFeature) override;
@@ -116,11 +129,7 @@ class ServiceWorkerGlobalScopeProxy final : public WebServiceWorkerContextProxy,
   void DidFetchScript() override;
   void DidFailToFetchClassicScript() override;
   void DidFailToFetchModuleScript() override;
-  void WillEvaluateClassicScript(size_t script_size,
-                                 size_t cached_metadata_size) override;
-  void WillEvaluateImportedClassicScript(size_t script_size,
-                                         size_t cached_metadata_size) override;
-  void WillEvaluateModuleScript() override;
+  void WillEvaluateScript() override;
   void DidEvaluateTopLevelScript(bool success) override;
   void DidCloseWorkerGlobalScope() override;
   void WillDestroyWorkerGlobalScope() override;
@@ -135,11 +144,14 @@ class ServiceWorkerGlobalScopeProxy final : public WebServiceWorkerContextProxy,
           preload_url_loader_client_receiver);
   void RequestTermination(WTF::CrossThreadOnceFunction<void(bool)> callback);
 
+  bool ShouldNotifyServiceWorkerOnWebSocketActivity(
+      v8::Local<v8::Context> context);
+
   // Detaches this proxy object entirely from the outside world, clearing out
   // all references.
   //
-  // It is called on the main thread during WebEmbeddedWorkerImpl finalization
-  // _after_ the worker thread using the proxy has been terminated.
+  // It is called on the initiator thread during WebEmbeddedWorkerImpl
+  // finalization _after_ the worker thread using the proxy has been terminated.
   void Detach();
 
   void TerminateWorkerContext();
@@ -150,18 +162,18 @@ class ServiceWorkerGlobalScopeProxy final : public WebServiceWorkerContextProxy,
 
   // Non-null until the WebEmbeddedWorkerImpl explicitly detach()es
   // as part of its finalization.
-  WebEmbeddedWorkerImpl* embedded_worker_;
+  raw_ptr<WebEmbeddedWorkerImpl, ExperimentalRenderer> embedded_worker_;
 
   scoped_refptr<base::SingleThreadTaskRunner>
       parent_thread_default_task_runner_;
 
-  WebServiceWorkerContextClient* client_;
+  raw_ptr<WebServiceWorkerContextClient, ExperimentalRenderer> client_;
 
   CrossThreadPersistent<ServiceWorkerGlobalScope> worker_global_scope_;
 
-  THREAD_CHECKER(worker_thread_checker_);
+  base::TimeTicks top_level_script_evaluation_start_time_;
 
-  DISALLOW_COPY_AND_ASSIGN(ServiceWorkerGlobalScopeProxy);
+  THREAD_CHECKER(worker_thread_checker_);
 };
 
 // TODO(leonhsl): This is only used by ServiceWorkerGlobalScope for calling

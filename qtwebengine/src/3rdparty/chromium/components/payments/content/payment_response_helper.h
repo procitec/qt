@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,9 +7,11 @@
 
 #include <string>
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
+#include "base/memory/raw_ref.h"
 #include "base/memory/weak_ptr.h"
-#include "components/autofill/core/browser/address_normalizer.h"
+#include "components/autofill/core/browser/country_type.h"
+#include "components/autofill/core/browser/data_model/autofill_i18n_api.h"
 #include "components/autofill/core/browser/data_model/autofill_profile.h"
 #include "components/payments/content/payment_app.h"
 #include "third_party/blink/public/mojom/payments/payment_request.mojom.h"
@@ -20,9 +22,7 @@ class PaymentRequestDelegate;
 class PaymentRequestSpec;
 
 // A helper class to facilitate the creation of the PaymentResponse.
-class PaymentResponseHelper
-    : public PaymentApp::Delegate,
-      public base::SupportsWeakPtr<PaymentResponseHelper> {
+class PaymentResponseHelper final : public PaymentApp::Delegate {
  public:
   class Delegate {
    public:
@@ -35,13 +35,18 @@ class PaymentResponseHelper
   };
 
   // The spec, selected_app and delegate cannot be null.
-  PaymentResponseHelper(const std::string& app_locale,
-                        base::WeakPtr<PaymentRequestSpec> spec,
-                        base::WeakPtr<PaymentApp> selected_app,
-                        PaymentRequestDelegate* payment_request_delegate,
-                        autofill::AutofillProfile* selected_shipping_profile,
-                        autofill::AutofillProfile* selected_contact_profile,
-                        base::WeakPtr<Delegate> delegate);
+  PaymentResponseHelper(
+      std::string app_locale,
+      base::WeakPtr<PaymentRequestSpec> spec,
+      base::WeakPtr<PaymentApp> selected_app,
+      base::WeakPtr<PaymentRequestDelegate> payment_request_delegate,
+      autofill::AutofillProfile* selected_shipping_profile,
+      autofill::AutofillProfile* selected_contact_profile,
+      base::WeakPtr<Delegate> delegate);
+
+  PaymentResponseHelper(const PaymentResponseHelper&) = delete;
+  PaymentResponseHelper& operator=(const PaymentResponseHelper&) = delete;
+
   ~PaymentResponseHelper() override;
 
   // PaymentApp::Delegate
@@ -61,22 +66,22 @@ class PaymentResponseHelper
   void OnAddressNormalized(bool success,
                            const autofill::AutofillProfile& normalized_profile);
 
-  const std::string& app_locale_;
+  const std::string app_locale_;
   bool is_waiting_for_shipping_address_normalization_;
   bool is_waiting_for_instrument_details_;
 
   base::WeakPtr<PaymentRequestSpec> spec_;
   base::WeakPtr<Delegate> delegate_;
   base::WeakPtr<PaymentApp> selected_app_;
-  // Not owned, cannot be null.
-  PaymentRequestDelegate* payment_request_delegate_;
+  base::WeakPtr<PaymentRequestDelegate> payment_request_delegate_;
 
   // Not owned, can be null (dependent on the spec).
-  autofill::AutofillProfile* selected_contact_profile_;
+  raw_ptr<autofill::AutofillProfile> selected_contact_profile_;
 
   // A normalized copy of the shipping address, which will be included in the
   // PaymentResponse.
-  autofill::AutofillProfile shipping_address_;
+  autofill::AutofillProfile shipping_address_{
+      autofill::i18n_model_definition::kLegacyHierarchyCountryCode};
 
   // Instrument Details.
   std::string method_name_;
@@ -88,8 +93,6 @@ class PaymentResponseHelper
   PayerData payer_data_from_app_;
 
   base::WeakPtrFactory<PaymentResponseHelper> weak_ptr_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(PaymentResponseHelper);
 };
 
 }  // namespace payments

@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,8 +7,8 @@
 
 #include <set>
 #include <string>
+#include <vector>
 
-#include "base/macros.h"
 #include "base/strings/string_piece.h"
 #include "third_party/blink/public/common/origin_trials/origin_trial_policy.h"
 
@@ -18,12 +18,17 @@ namespace embedder_support {
 // accessed from any thread.
 class OriginTrialPolicyImpl : public blink::OriginTrialPolicy {
  public:
-  OriginTrialPolicyImpl();
+  explicit OriginTrialPolicyImpl();
+
+  OriginTrialPolicyImpl(const OriginTrialPolicyImpl&) = delete;
+  OriginTrialPolicyImpl& operator=(const OriginTrialPolicyImpl&) = delete;
+
   ~OriginTrialPolicyImpl() override;
 
   // blink::OriginTrialPolicy interface
   bool IsOriginTrialsSupported() const override;
-  std::vector<base::StringPiece> GetPublicKeys() const override;
+  const std::vector<blink::OriginTrialPublicKey>& GetPublicKeys()
+      const override;
   bool IsFeatureDisabled(base::StringPiece feature) const override;
   bool IsFeatureDisabledForUser(base::StringPiece feature) const override;
   bool IsTokenDisabled(base::StringPiece token_signature) const override;
@@ -31,14 +36,19 @@ class OriginTrialPolicyImpl : public blink::OriginTrialPolicy {
 
   bool SetPublicKeysFromASCIIString(const std::string& ascii_public_key);
   bool SetDisabledFeatures(const std::string& disabled_feature_list);
-  bool SetDisabledTokens(const std::string& disabled_token_list);
+  bool SetDisabledTokens(const std::vector<std::string>& tokens);
+  // Disabling deprecation trial could cause potential breakage. This
+  // function allow embedder to safely disable all trials with
+  // new/experimental features. By default all trials are allowed to run.
+  void SetAllowOnlyDeprecationTrials(bool allow_only_deprecation_trials);
+  bool GetAllowOnlyDeprecationTrials() const;
+  const std::set<std::string>* GetDisabledTokensForTesting() const override;
 
  private:
-  std::vector<std::string> public_keys_;
+  std::vector<blink::OriginTrialPublicKey> public_keys_;
   std::set<std::string> disabled_features_;
   std::set<std::string> disabled_tokens_;
-
-  DISALLOW_COPY_AND_ASSIGN(OriginTrialPolicyImpl);
+  bool allow_only_deprecation_trials_ = false;
 };
 
 }  // namespace embedder_support

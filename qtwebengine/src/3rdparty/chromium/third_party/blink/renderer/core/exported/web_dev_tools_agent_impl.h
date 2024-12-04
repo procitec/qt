@@ -31,17 +31,15 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_EXPORTED_WEB_DEV_TOOLS_AGENT_IMPL_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_EXPORTED_WEB_DEV_TOOLS_AGENT_IMPL_H_
 
-#include <memory>
-
 #include "mojo/public/cpp/bindings/pending_associated_receiver.h"
 #include "mojo/public/cpp/bindings/pending_associated_remote.h"
 #include "third_party/blink/public/platform/web_input_event_result.h"
-#include "third_party/blink/public/platform/web_size.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/inspector/devtools_agent.h"
 #include "third_party/blink/renderer/core/inspector/inspector_layer_tree_agent.h"
 #include "third_party/blink/renderer/core/inspector/inspector_page_agent.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_map.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
 
@@ -75,12 +73,16 @@ class CORE_EXPORT WebDevToolsAgentImpl final
   void WillBeDestroyed();
   void FlushProtocolNotifications();
 
-  bool HasOverlays() const { return !overlay_agents_.IsEmpty(); }
+  void MainThreadDebuggerPaused();
+  void MainThreadDebuggerResumed();
+
+  bool HasOverlays() const { return !overlay_agents_.empty(); }
   void UpdateOverlaysPrePaint();
-  void PaintOverlays(GraphicsContext&);  // For CompositeAfterPaint.
+  void PaintOverlays(GraphicsContext&);
 
   WebInputEventResult HandleInputEvent(const WebInputEvent&);
   void DispatchBufferedTouchEvents();
+  void SetPageIsScrolling(bool is_scrolling);
   void BindReceiver(
       mojo::PendingAssociatedRemote<mojom::blink::DevToolsAgentHost>,
       mojo::PendingAssociatedReceiver<mojom::blink::DevToolsAgent>);
@@ -107,6 +109,7 @@ class CORE_EXPORT WebDevToolsAgentImpl final
   // InspectorPageAgent::Client implementation.
   void PageLayoutInvalidated(bool resized) override;
   void WaitForDebugger() override;
+  bool IsPausedForNewWindow() override;
 
   // InspectorLayerTreeAgent::Client implementation.
   bool IsInspectorLayer(const cc::Layer*) override;
@@ -129,8 +132,9 @@ class CORE_EXPORT WebDevToolsAgentImpl final
   Member<Node> node_to_inspect_;
   bool include_view_agents_;
   bool wait_for_debugger_when_shown_ = false;
+  bool is_paused_for_new_window_shown_ = false;
 };
 
 }  // namespace blink
 
-#endif
+#endif  // THIRD_PARTY_BLINK_RENDERER_CORE_EXPORTED_WEB_DEV_TOOLS_AGENT_IMPL_H_

@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,11 +6,10 @@
 #define MOJO_PUBLIC_CPP_SYSTEM_MESSAGE_H_
 
 #include <limits>
+#include <string_view>
 #include <vector>
 
-#include "base/macros.h"
 #include "base/numerics/safe_conversions.h"
-#include "base/strings/string_piece.h"
 #include "mojo/public/c/system/message_pipe.h"
 #include "mojo/public/cpp/system/handle.h"
 
@@ -40,8 +39,7 @@ class MessageHandle {
 
   void Close() {
     DCHECK(is_valid());
-    MojoResult result = MojoDestroyMessage(value_);
-    ALLOW_UNUSED_LOCAL(result);
+    [[maybe_unused]] MojoResult result = MojoDestroyMessage(value_);
     DCHECK_EQ(MOJO_RESULT_OK, result);
   }
 
@@ -93,7 +91,7 @@ inline MojoResult GetMessageData(MessageHandle message,
 }
 
 inline MojoResult NotifyBadMessage(MessageHandle message,
-                                   const base::StringPiece& error) {
+                                   const std::string_view& error) {
   DCHECK(message.is_valid());
   DCHECK(base::IsValueInRangeForNumericType<uint32_t>(error.size()));
   return MojoNotifyBadMessage(message.value(), error.data(),

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,15 +7,19 @@
 
 #include <stdint.h>
 
+#include <list>
+#include <memory>
 #include <string>
 #include <tuple>
 #include <vector>
 
+#include "base/memory/raw_ptr.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "net/base/net_errors.h"
+#include "net/base/network_interfaces.h"
 #include "net/log/net_log_with_source.h"
 #include "net/socket/stream_socket.h"
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
@@ -83,13 +87,8 @@ class FakeSocket : public net::StreamSocket {
   int GetLocalAddress(net::IPEndPoint* address) const override;
   const net::NetLogWithSource& NetLog() const override;
   bool WasEverUsed() const override;
-  bool WasAlpnNegotiated() const override;
   net::NextProto GetNegotiatedProtocol() const override;
   bool GetSSLInfo(net::SSLInfo* ssl_info) override;
-  void GetConnectionAttempts(net::ConnectionAttempts* out) const override;
-  void ClearConnectionAttempts() override {}
-  void AddConnectionAttempts(const net::ConnectionAttempts& attempts) override {
-  }
   int64_t GetTotalReceivedBytes() const override;
   void ApplySocketTag(const net::SocketTag& tag) override {}
 
@@ -106,7 +105,7 @@ class FakeSocket : public net::StreamSocket {
   std::string input_data_;
   int input_pos_;
 
-  std::string* written_data_;
+  raw_ptr<std::string> written_data_;
   bool async_write_;
   bool write_pending_;
 
@@ -124,36 +123,51 @@ class FakeSocketClient : public mojom::P2PSocketClient {
   ~FakeSocketClient() override;
 
   // mojom::P2PSocketClient interface.
-  MOCK_METHOD2(SocketCreated,
-               void(const net::IPEndPoint&, const net::IPEndPoint&));
-  MOCK_METHOD1(SendComplete, void(const P2PSendPacketMetrics&));
-  void IncomingTcpConnection(
-      const net::IPEndPoint& endpoint,
-      mojo::PendingRemote<network::mojom::P2PSocket> socket,
-      mojo::PendingReceiver<network::mojom::P2PSocketClient> client_receiver);
-  MOCK_METHOD3(DataReceived,
-               void(const net::IPEndPoint&,
-                    const std::vector<int8_t>&,
-                    base::TimeTicks));
+  MOCK_METHOD(void,
+              SocketCreated,
+              (const net::IPEndPoint&, const net::IPEndPoint&));
+  MOCK_METHOD(void, SendComplete, (const P2PSendPacketMetrics&));
+  MOCK_METHOD(void,
+              DataReceived,
+              (const std::vector<network::mojom::P2PReceivedPacketPtr>));
+  MOCK_METHOD(void,
+              SendBatchComplete,
+              (const std::vector<P2PSendPacketMetrics>&));
 
   bool connection_error() { return disconnect_error_; }
-  size_t num_accepted() { return accepted_.size(); }
-  void CloseAccepted();
 
  private:
   mojo::Remote<mojom::P2PSocket> socket_;
   mojo::Receiver<mojom::P2PSocketClient> receiver_;
   bool disconnect_error_ = false;
-
-  std::list<std::pair<mojo::PendingRemote<network::mojom::P2PSocket>,
-                      mojo::PendingReceiver<network::mojom::P2PSocketClient>>>
-      accepted_;
 };
 
-void CreateRandomPacket(std::vector<int8_t>* packet);
-void CreateStunRequest(std::vector<int8_t>* packet);
-void CreateStunResponse(std::vector<int8_t>* packet);
-void CreateStunError(std::vector<int8_t>* packet);
+class FakeNetworkNotificationClient
+    : public mojom::P2PNetworkNotificationClient {
+ public:
+  FakeNetworkNotificationClient(
+      base::OnceClosure closure,
+      mojo::PendingReceiver<mojom::P2PNetworkNotificationClient>
+          notification_client);
+  ~FakeNetworkNotificationClient() override;
+
+  void NetworkListChanged(
+      const std::vector<::net::NetworkInterface>& networks,
+      const ::net::IPAddress& default_ipv4_local_address,
+      const ::net::IPAddress& default_ipv6_local_address) override;
+
+  bool get_network_list_changed() { return network_list_changed_; }
+
+ private:
+  mojo::Receiver<mojom::P2PNetworkNotificationClient> notification_client_;
+  bool network_list_changed_ = false;
+  base::OnceClosure closure_;
+};
+
+void CreateRandomPacket(std::vector<uint8_t>* packet);
+void CreateStunRequest(std::vector<uint8_t>* packet);
+void CreateStunResponse(std::vector<uint8_t>* packet);
+void CreateStunError(std::vector<uint8_t>* packet);
 
 net::IPEndPoint ParseAddress(const std::string& ip_str, uint16_t port);
 
@@ -165,6 +179,12 @@ MATCHER_P2(MatchSendPacketMetrics, rtc_packet_id, test_start_time, "") {
   return arg.rtc_packet_id == rtc_packet_id &&
          arg.send_time_ms >= test_start_time &&
          arg.send_time_ms <= rtc::TimeMillis();
+}
+
+// Creates a GMock matcher that matches `base::span` to `std::vector`.
+MATCHER_P(SpanEq, expected, "") {
+  std::vector<uint8_t> result(arg.data(), arg.data() + arg.size());
+  return result == expected;
 }
 
 }  // namespace network

@@ -1,4 +1,4 @@
-# Copyright 2015 The Chromium Authors. All rights reserved.
+# Copyright 2015 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 """
@@ -8,7 +8,7 @@ Note: This is a work in progress, and generated externs may require tweaking.
 See https://developers.google.com/closure/compiler/docs/api-tutorial3#externs
 """
 
-from code import Code
+from code_util import Code
 from js_util import JsUtil
 from model import *
 from schema_util import *
@@ -20,7 +20,7 @@ import re
 NOTE = """// NOTE: The format of types has changed. 'FooType' is now
 //   'chrome.%s.FooType'.
 // Please run the closure compiler before committing changes.
-// See https://chromium.googlesource.com/chromium/src/+/master/docs/closure_compilation.md
+// See https://chromium.googlesource.com/chromium/src/+/main/docs/closure_compilation.md
 """
 
 class JsExternsGenerator(object):
@@ -71,8 +71,11 @@ class _Generator(object):
     """
     return (self._js_util.GetLicense() + '\n' +
             self._js_util.GetInfo(tool) + (NOTE % namespace) + '\n' +
-            ('/** @fileoverview Externs generated from namespace: %s */' %
-             namespace))
+            '/**\n' +
+            (' * @fileoverview Externs generated from namespace: %s\n' %
+             namespace) +
+            ' * @externs\n' +
+            ' */')
 
   def _AppendType(self, c, js_type):
     """Given a Type object, generates the Code for this type's definition.
@@ -92,21 +95,8 @@ class _Generator(object):
                                 js_type.simple_name)
     c.Eblock(' */')
     c.Append('%s.%s = {' % (self._GetNamespace(), js_type.name))
-
-    def get_property_name(e):
-      # Enum properties are normified to be in ALL_CAPS_STYLE.
-      # Assume enum '1ring-rulesThemAll'.
-      # Transform to '1ring-rules_Them_All'.
-      e = re.sub(r'([a-z])([A-Z])', r'\1_\2', e)
-      # Transform to '1ring_rules_Them_All'.
-      e = re.sub(r'\W', '_', e)
-      # Transform to '_1ring_rules_Them_All'.
-      e = re.sub(r'^(\d)', r'_\1', e)
-      # Transform to '_1RING_RULES_THEM_ALL'.
-      return e.upper()
-
     c.Append('\n'.join(
-        ["  %s: '%s'," % (get_property_name(v.name), v.name)
+        ["  %s: '%s'," % (self._js_util.GetPropertyName(v.name), v.name)
             for v in js_type.enum_values]))
     c.Append('};')
 
@@ -124,7 +114,7 @@ class _Generator(object):
 
     if js_type.description:
       for line in js_type.description.splitlines():
-        c.Append(line)
+        c.Comment(line, comment_prefix='')
 
     if js_type.jsexterns:
       for line in js_type.jsexterns.splitlines():
@@ -165,10 +155,8 @@ class _Generator(object):
 
     c.Append('@typedef {')
     if properties:
-      self._js_util.AppendObjectDefinition(c,
-                                           self._namespace.name,
-                                           properties,
-                                           new_line=False)
+      self._js_util.AppendObjectDefinition(
+              c, self._namespace.name, properties, new_line=False)
     else:
       c.Append('Object', new_line=False)
     c.Append('}', new_line=False)
@@ -229,9 +217,12 @@ class _Generator(object):
     """Returns the function params string for function.
     """
     params = function.params[:]
-    if function.callback:
-      params.append(function.callback)
-    return ', '.join(param.name for param in params)
+    param_names = [param.name for param in params]
+    # TODO(https://crbug.com/1142991): Update this to represent promises better,
+    # rather than just appended as a callback.
+    if function.returns_async:
+      param_names.append(function.returns_async.name)
+    return ', '.join(param_names)
 
   def _GetNamespace(self):
     """Returns the namespace to be prepended to a top-level typedef.

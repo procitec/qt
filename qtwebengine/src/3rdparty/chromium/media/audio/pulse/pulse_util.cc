@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,11 +8,13 @@
 #include <string.h>
 
 #include <memory>
+#include <type_traits>
 
 #include "base/files/file_path.h"
 #include "base/logging.h"
-#include "base/macros.h"
 #include "base/memory/ptr_util.h"
+#include "base/memory/raw_ptr.h"
+#include "base/memory/raw_ref.h"
 #include "base/notreached.h"
 #include "base/synchronization/waitable_event.h"
 #include "build/branding_buildflags.h"
@@ -92,21 +94,24 @@ pa_channel_position ChromiumToPAChannelPosition(Channels channel) {
 class ScopedPropertyList {
  public:
   ScopedPropertyList() : property_list_(pa_proplist_new()) {}
-  ~ScopedPropertyList() { pa_proplist_free(property_list_); }
 
-  pa_proplist* get() const { return property_list_; }
+  ScopedPropertyList(const ScopedPropertyList&) = delete;
+  ScopedPropertyList& operator=(const ScopedPropertyList&) = delete;
+
+  pa_proplist* get() const { return property_list_.get(); }
 
  private:
-  pa_proplist* property_list_;
-  DISALLOW_COPY_AND_ASSIGN(ScopedPropertyList);
+  using deleter =
+      std::integral_constant<decltype(pa_proplist_free)*, pa_proplist_free>;
+  std::unique_ptr<pa_proplist, deleter> property_list_;
 };
 
 struct InputBusData {
   InputBusData(pa_threaded_mainloop* loop, const std::string& name)
       : loop_(loop), name_(name), bus_() {}
 
-  pa_threaded_mainloop* const loop_;
-  const std::string& name_;
+  const raw_ptr<pa_threaded_mainloop> loop_;
+  const raw_ref<const std::string> name_;
   std::string bus_;
 };
 
@@ -114,9 +119,9 @@ struct OutputBusData {
   OutputBusData(pa_threaded_mainloop* loop, const std::string& bus)
       : loop_(loop), name_(), bus_(bus) {}
 
-  pa_threaded_mainloop* const loop_;
+  const raw_ptr<pa_threaded_mainloop> loop_;
   std::string name_;
-  const std::string& bus_;
+  const raw_ref<const std::string> bus_;
 };
 
 void InputBusCallback(pa_context* context,
@@ -131,9 +136,9 @@ void InputBusCallback(pa_context* context,
     return;
   }
 
-  if (strcmp(info->name, data->name_.c_str()) == 0 &&
-      pa_proplist_contains(info->proplist, PA_PROP_DEVICE_BUS)) {
-    data->bus_ = pa_proplist_gets(info->proplist, PA_PROP_DEVICE_BUS);
+  if (strcmp(info->name, data->name_->c_str()) == 0 &&
+      pa_proplist_contains(info->proplist, PA_PROP_DEVICE_BUS_PATH)) {
+    data->bus_ = pa_proplist_gets(info->proplist, PA_PROP_DEVICE_BUS_PATH);
   }
 }
 
@@ -149,9 +154,9 @@ void OutputBusCallback(pa_context* context,
     return;
   }
 
-  if (pa_proplist_contains(info->proplist, PA_PROP_DEVICE_BUS) &&
-      strcmp(pa_proplist_gets(info->proplist, PA_PROP_DEVICE_BUS),
-             data->bus_.c_str()) == 0) {
+  if (pa_proplist_contains(info->proplist, PA_PROP_DEVICE_BUS_PATH) &&
+      strcmp(pa_proplist_gets(info->proplist, PA_PROP_DEVICE_BUS_PATH),
+             data->bus_->c_str()) == 0) {
     data->name_ = info->name;
   }
 }
@@ -160,7 +165,7 @@ struct DefaultDevicesData {
   explicit DefaultDevicesData(pa_threaded_mainloop* loop) : loop_(loop) {}
   std::string input_;
   std::string output_;
-  pa_threaded_mainloop* const loop_;
+  const raw_ptr<pa_threaded_mainloop> loop_;
 };
 
 void GetDefaultDeviceIdCallback(pa_context* c,
@@ -174,9 +179,29 @@ void GetDefaultDeviceIdCallback(pa_context* c,
   pa_threaded_mainloop_signal(data->loop_, 0);
 }
 
+struct MonitorSourceData {
+  explicit MonitorSourceData(pa_threaded_mainloop* loop) : loop_(loop) {}
+  const raw_ptr<pa_threaded_mainloop> loop_;
+  std::string monitor_source_name_;
+};
+
+// Callback used by GetMonitorSourceNameForSink(). `info` contains information
+// about the queried sink, in particular, the name of the source which acts as a
+// monitor for the sink.
+void GetMonitorSourceNameForSinkCallback(pa_context* context,
+                                         const pa_sink_info* info,
+                                         int eol,
+                                         void* userdata) {
+  MonitorSourceData* data = static_cast<MonitorSourceData*>(userdata);
+  if (!eol) {
+    data->monitor_source_name_ = info->monitor_source_name;
+  }
+  pa_threaded_mainloop_signal(data->loop_, 0);
+}
+
 struct ContextStartupData {
-  base::WaitableEvent* context_wait;
-  pa_threaded_mainloop* pa_mainloop;
+  raw_ptr<base::WaitableEvent> context_wait;
+  raw_ptr<pa_threaded_mainloop, DanglingUntriaged> pa_mainloop;
 };
 
 void SignalReadyOrErrorStateCallback(pa_context* context, void* context_data) {
@@ -232,6 +257,7 @@ bool InitPulse(pa_threaded_mainloop** mainloop, pa_context** context) {
     VLOG(1) << "Failed to connect to the context.  Error: "
             << pa_strerror(pa_context_errno(pa_context));
     DestroyContext(pa_context);
+    data = {nullptr, nullptr};
     pa_threaded_mainloop_free(pa_mainloop);
     return false;
   }
@@ -244,6 +270,7 @@ bool InitPulse(pa_threaded_mainloop** mainloop, pa_context** context) {
   if (pa_threaded_mainloop_start(pa_mainloop)) {
     DestroyContext(pa_context);
     mainloop_lock.reset();
+    data = {nullptr, nullptr};
     DestroyMainloop(pa_mainloop);
     return false;
   }
@@ -259,7 +286,7 @@ bool InitPulse(pa_threaded_mainloop** mainloop, pa_context** context) {
   // browser startup (other times it's during audio process startup). In the
   // normal case, this should only take ~50ms, but we've seen some test bots
   // hang indefinitely when the pulse daemon can't be started.
-  constexpr base::TimeDelta kStartupTimeout = base::TimeDelta::FromSeconds(5);
+  constexpr base::TimeDelta kStartupTimeout = base::Seconds(5);
   const bool was_signaled = context_wait.TimedWait(kStartupTimeout);
 
   // Require the mainloop lock before checking the context state.
@@ -273,6 +300,7 @@ bool InitPulse(pa_threaded_mainloop** mainloop, pa_context** context) {
       VLOG(1) << "Failed to connect to PulseAudio: " << context_state;
     DestroyContext(pa_context);
     mainloop_lock.reset();
+    data = {nullptr, nullptr};
     DestroyMainloop(pa_mainloop);
     return false;
   }
@@ -302,6 +330,16 @@ void DestroyPulse(pa_threaded_mainloop* mainloop, pa_context* context) {
 void StreamSuccessCallback(pa_stream* s, int error, void* mainloop) {
   pa_threaded_mainloop* pa_mainloop =
       static_cast<pa_threaded_mainloop*>(mainloop);
+  pa_threaded_mainloop_signal(pa_mainloop, 0);
+}
+
+// pa_context_success_cb_t
+void ContextSuccessCallback(pa_context* context, int success, void* mainloop) {
+  pa_threaded_mainloop* pa_mainloop =
+      static_cast<pa_threaded_mainloop*>(mainloop);
+  if (!success) {
+    LOG(ERROR) << "Context operation failed.";
+  }
   pa_threaded_mainloop_signal(pa_mainloop, 0);
 }
 
@@ -384,7 +422,7 @@ base::TimeDelta GetHardwareLatency(pa_stream* stream) {
   if (negative)
     return base::TimeDelta();
 
-  return base::TimeDelta::FromMicroseconds(latency_micros);
+  return base::Microseconds(latency_micros);
 }
 
 // Helper macro for CreateInput/OutputStream() to avoid code spam and
@@ -398,7 +436,7 @@ base::TimeDelta GetHardwareLatency(pa_stream* stream) {
 
 bool CreateInputStream(pa_threaded_mainloop* mainloop,
                        pa_context* context,
-                       pa_stream** stream,
+                       raw_ptr<pa_stream>* stream,
                        const AudioParameters& params,
                        const std::string& device_id,
                        pa_stream_notify_cb_t stream_callback,
@@ -471,9 +509,9 @@ bool CreateInputStream(pa_threaded_mainloop* mainloop,
   return true;
 }
 
-bool CreateOutputStream(pa_threaded_mainloop** mainloop,
-                        pa_context** context,
-                        pa_stream** stream,
+bool CreateOutputStream(raw_ptr<pa_threaded_mainloop>* mainloop,
+                        raw_ptr<pa_context>* context,
+                        raw_ptr<pa_stream>* stream,
                         const AudioParameters& params,
                         const std::string& device_id,
                         const std::string& app_name,
@@ -633,6 +671,20 @@ std::string GetRealDefaultDeviceId(pa_threaded_mainloop* mainloop,
       pa_context_get_server_info(context, &GetDefaultDeviceIdCallback, &data);
   WaitForOperationCompletion(mainloop, operation, context);
   return (type == RequestType::INPUT) ? data.input_ : data.output_;
+}
+
+std::string GetMonitorSourceNameForSink(pa_threaded_mainloop* mainloop,
+                                        pa_context* context,
+                                        const std::string& sink_name) {
+  CHECK(mainloop);
+  CHECK(context);
+  CHECK(!sink_name.empty());
+  AutoPulseLock auto_lock(mainloop);
+  MonitorSourceData data(mainloop);
+  pa_operation* operation = pa_context_get_sink_info_by_name(
+      context, sink_name.c_str(), &GetMonitorSourceNameForSinkCallback, &data);
+  WaitForOperationCompletion(mainloop, operation, context);
+  return data.monitor_source_name_;
 }
 
 #undef RETURN_ON_FAILURE

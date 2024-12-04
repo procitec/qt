@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,17 +6,30 @@
 
 #include <stddef.h>
 
+#include <memory>
+#include <string_view>
 #include <utility>
 
-#include "base/bind.h"
 #include "base/check.h"
+#include "base/functional/bind.h"
+#include "base/memory/raw_ptr.h"
 #include "base/values.h"
 #include "content/public/renderer/v8_value_converter.h"
 #include "extensions/common/extension_api.h"
+#include "extensions/common/mojom/context_type.mojom.h"
+#include "extensions/common/mojom/host_id.mojom.h"
 #include "extensions/renderer/object_backed_native_handler.h"
 #include "extensions/renderer/script_context.h"
 #include "extensions/renderer/static_v8_external_one_byte_string_resource.h"
 #include "extensions/renderer/v8_helpers.h"
+#include "v8/include/v8-container.h"
+#include "v8/include/v8-context.h"
+#include "v8/include/v8-function-callback.h"
+#include "v8/include/v8-isolate.h"
+#include "v8/include/v8-json.h"
+#include "v8/include/v8-microtask-queue.h"
+#include "v8/include/v8-object.h"
+#include "v8/include/v8-value.h"
 
 using content::V8ValueConverter;
 
@@ -68,7 +81,7 @@ class SchemaRegistryNativeHandler : public ObjectBackedNativeHandler {
  private:
   void GetSchema(const v8::FunctionCallbackInfo<v8::Value>& args) {
     args.GetReturnValue().Set(registry_->GetSchema(
-        *v8::String::Utf8Value(args.GetIsolate(), args[0])));
+        args.GetIsolate(), *v8::String::Utf8Value(args.GetIsolate(), args[0])));
   }
 
   void GetObjectType(const v8::FunctionCallbackInfo<v8::Value>& args) {
@@ -85,7 +98,7 @@ class SchemaRegistryNativeHandler : public ObjectBackedNativeHandler {
   }
 
   std::unique_ptr<ScriptContext> context_;
-  V8SchemaRegistry* registry_;
+  raw_ptr<V8SchemaRegistry, ExperimentalRenderer> registry_;
 };
 
 }  // namespace
@@ -96,30 +109,34 @@ V8SchemaRegistry::V8SchemaRegistry() {
 V8SchemaRegistry::~V8SchemaRegistry() {
 }
 
-std::unique_ptr<NativeHandler> V8SchemaRegistry::AsNativeHandler() {
+std::unique_ptr<NativeHandler> V8SchemaRegistry::AsNativeHandler(
+    v8::Isolate* isolate) {
   std::unique_ptr<ScriptContext> context(
-      new ScriptContext(GetOrCreateContext(v8::Isolate::GetCurrent()),
-                        NULL,  // no frame
-                        NULL,  // no extension
-                        Feature::UNSPECIFIED_CONTEXT,
-                        NULL,  // no effective extension
-                        Feature::UNSPECIFIED_CONTEXT));
+      new ScriptContext(GetOrCreateContext(isolate),
+                        nullptr,          // no frame
+                        mojom::HostID(),  // no host_id
+                        nullptr,          // no extension
+                        mojom::ContextType::kUnspecified,
+                        nullptr,  // no effective extension
+                        mojom::ContextType::kUnspecified));
   return std::unique_ptr<NativeHandler>(
       new SchemaRegistryNativeHandler(this, std::move(context)));
 }
 
 v8::Local<v8::Array> V8SchemaRegistry::GetSchemas(
+    v8::Isolate* isolate,
     const std::vector<std::string>& apis) {
-  v8::Isolate* isolate = v8::Isolate::GetCurrent();
   v8::EscapableHandleScope handle_scope(isolate);
   v8::Local<v8::Context> context = GetOrCreateContext(isolate);
   v8::Context::Scope context_scope(context);
+  v8::MicrotasksScope microtasks_scope(
+      context, v8::MicrotasksScope::kDoNotRunMicrotasks);
 
   v8::Local<v8::Array> v8_apis(v8::Array::New(isolate, apis.size()));
   size_t api_index = 0;
   for (auto i = apis.cbegin(); i != apis.cend(); ++i) {
     bool set_result =
-        v8_apis->Set(context, api_index++, GetSchema(*i)).ToChecked();
+        v8_apis->Set(context, api_index++, GetSchema(isolate, *i)).ToChecked();
     // Set() should never return false without throwing an exception (which
     // would be caught by the ToChecked() above).
     DCHECK(set_result);
@@ -127,8 +144,9 @@ v8::Local<v8::Array> V8SchemaRegistry::GetSchemas(
   return handle_scope.Escape(v8_apis);
 }
 
-v8::Local<v8::Object> V8SchemaRegistry::GetSchema(const std::string& api) {
-  if (schema_cache_ != NULL) {
+v8::Local<v8::Object> V8SchemaRegistry::GetSchema(v8::Isolate* isolate,
+                                                  const std::string& api) {
+  if (schema_cache_ != nullptr) {
     v8::Local<v8::Object> cached_schema = schema_cache_->Get(api);
     if (!cached_schema.IsEmpty()) {
       return cached_schema;
@@ -137,12 +155,13 @@ v8::Local<v8::Object> V8SchemaRegistry::GetSchema(const std::string& api) {
 
   // Slow path: Need to build schema first.
 
-  v8::Isolate* isolate = v8::Isolate::GetCurrent();
   v8::EscapableHandleScope handle_scope(isolate);
   v8::Local<v8::Context> context = GetOrCreateContext(isolate);
   v8::Context::Scope context_scope(context);
+  v8::MicrotasksScope microtasks_scope(
+      context, v8::MicrotasksScope::kDoNotRunMicrotasks);
 
-  base::StringPiece schema_string =
+  std::string_view schema_string =
       ExtensionAPI::GetSharedInstance()->GetSchemaStringPiece(api);
   CHECK(!schema_string.empty());
   v8::MaybeLocal<v8::String> v8_maybe_string = v8::String::NewExternalOneByte(
@@ -170,9 +189,9 @@ v8::Local<v8::Context> V8SchemaRegistry::GetOrCreateContext(
   // It's ok to create local handles in this function, since this is only called
   // when we have a HandleScope.
   if (!context_holder_) {
-    context_holder_.reset(new gin::ContextHolder(isolate));
+    context_holder_ = std::make_unique<gin::ContextHolder>(isolate);
     context_holder_->SetContext(v8::Context::New(isolate));
-    schema_cache_.reset(new SchemaCache(isolate));
+    schema_cache_ = std::make_unique<SchemaCache>(isolate);
     return context_holder_->context();
   }
   return context_holder_->context();

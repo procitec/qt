@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtQuick module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include <private/qtquickglobal_p.h>
 
@@ -67,17 +31,18 @@ QT_REQUIRE_CONFIG(quick_shadereffect);
 
 QT_BEGIN_NAMESPACE
 
-Q_QUICK_PRIVATE_EXPORT const char *qtPositionAttributeName();
-Q_QUICK_PRIVATE_EXPORT const char *qtTexCoordAttributeName();
+Q_QUICK_EXPORT const char *qtPositionAttributeName();
+Q_QUICK_EXPORT const char *qtTexCoordAttributeName();
 
 class QSGGeometry;
 class QRectF;
 
-class Q_QUICK_PRIVATE_EXPORT QQuickShaderEffectMesh : public QObject
+class Q_QUICK_EXPORT QQuickShaderEffectMesh : public QObject
 {
     Q_OBJECT
 
     QML_NAMED_ELEMENT(ShaderEffectMesh)
+    QML_ADDED_IN_VERSION(2, 0)
     QML_UNCREATABLE("Cannot create instance of abstract class ShaderEffectMesh.")
 
 public:
@@ -97,11 +62,12 @@ protected:
     QQuickShaderEffectMesh(QObjectPrivate &dd, QObject *parent = nullptr);
 };
 
-class Q_QUICK_PRIVATE_EXPORT QQuickGridMesh : public QQuickShaderEffectMesh
+class Q_QUICK_EXPORT QQuickGridMesh : public QQuickShaderEffectMesh
 {
     Q_OBJECT
     Q_PROPERTY(QSize resolution READ resolution WRITE setResolution NOTIFY resolutionChanged)
     QML_NAMED_ELEMENT(GridMesh)
+    QML_ADDED_IN_VERSION(2, 0)
 public:
     QQuickGridMesh(QObject *parent = nullptr);
     bool validateAttributes(const QVector<QByteArray> &attributes, int *posIndex) override;
@@ -131,7 +97,7 @@ class QQuickBorderImageMesh : public QQuickShaderEffectMesh
     Q_PROPERTY(TileMode verticalTileMode READ verticalTileMode WRITE setVerticalTileMode NOTIFY verticalTileModeChanged)
 
     QML_NAMED_ELEMENT(BorderImageMesh)
-    QML_ADDED_IN_MINOR_VERSION(8)
+    QML_ADDED_IN_VERSION(2, 8)
 
 public:
     QQuickBorderImageMesh(QObject *parent = nullptr);
@@ -168,7 +134,9 @@ private:
 
 inline QColor qt_premultiply_color(const QColor &c)
 {
-    return QColor::fromRgbF(c.redF() * c.alphaF(), c.greenF() * c.alphaF(), c.blueF() * c.alphaF(), c.alphaF());
+    float r, g, b, a;
+    c.getRgbF(&r, &g, &b, &a);
+    return QColor::fromRgbF(r * a, g * a, b * a, a);
 }
 
 

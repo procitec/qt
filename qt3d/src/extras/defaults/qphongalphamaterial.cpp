@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2014 Klaralvdalens Datakonsult AB (KDAB).
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt3D module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2014 Klaralvdalens Datakonsult AB (KDAB).
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qphongalphamaterial.h"
 #include "qphongalphamaterial_p.h"
@@ -58,9 +22,9 @@
 
 QT_BEGIN_NAMESPACE
 
-using namespace Qt3DRender;
-
 namespace Qt3DExtras {
+
+using namespace Qt3DRender;
 
 QPhongAlphaMaterialPrivate::QPhongAlphaMaterialPrivate()
     : QMaterialPrivate()
@@ -120,7 +84,7 @@ void QPhongAlphaMaterialPrivate::init()
                                                        QStringLiteral("specular"),
                                                        QStringLiteral("normal")});
 
-    m_phongAlphaRHIShader->setVertexShaderCode(QShaderProgram::loadSource(QUrl(QStringLiteral("qrc:/shaders/rhi/default.vert"))));
+    m_phongAlphaRHIShader->setVertexShaderCode(QShaderProgram::loadSource(QUrl(QStringLiteral("qrc:/shaders/rhi/default_pos_norm.vert"))));
     m_phongAlphaRHIShaderBuilder->setParent(q);
     m_phongAlphaRHIShaderBuilder->setShaderProgram(m_phongAlphaRHIShader);
     m_phongAlphaRHIShaderBuilder->setFragmentShaderGraph(QUrl(QStringLiteral("qrc:/shaders/graphs/phong.frag.json")));
@@ -281,7 +245,7 @@ QPhongAlphaMaterial::~QPhongAlphaMaterial()
 }
 
 /*!
-    \property QPhongAlphaMaterial::ambient
+    \property Qt3DExtras::QPhongAlphaMaterial::ambient
 
     Holds the ambient color.
 */
@@ -292,7 +256,7 @@ QColor QPhongAlphaMaterial::ambient() const
 }
 
 /*!
-    \property QPhongAlphaMaterial::diffuse
+    \property Qt3DExtras::QPhongAlphaMaterial::diffuse
 
     Holds the diffuse color.
 */
@@ -303,7 +267,7 @@ QColor QPhongAlphaMaterial::diffuse() const
 }
 
 /*!
-    \property QPhongAlphaMaterial::specular
+    \property Qt3DExtras::QPhongAlphaMaterial::specular
 
     Holds the specular color.
 */
@@ -314,7 +278,7 @@ QColor QPhongAlphaMaterial::specular() const
 }
 
 /*!
-    \property QPhongAlphaMaterial::shininess
+    \property Qt3DExtras::QPhongAlphaMaterial::shininess
 
     Holds the shininess exponent.
 */
@@ -325,7 +289,7 @@ float QPhongAlphaMaterial::shininess() const
 }
 
 /*!
-    \property QPhongAlphaMaterial::alpha
+    \property Qt3DExtras::QPhongAlphaMaterial::alpha
 
     Holds the alpha component of the object which varies between 0 and 1.
 
@@ -338,7 +302,7 @@ float QPhongAlphaMaterial::alpha() const
 }
 
 /*!
-    \property QPhongAlphaMaterial::sourceRgbArg
+    \property Qt3DExtras::QPhongAlphaMaterial::sourceRgbArg
 
     Holds the blend equation source RGB blending argument.
 
@@ -351,7 +315,7 @@ QBlendEquationArguments::Blending QPhongAlphaMaterial::sourceRgbArg() const
 }
 
 /*!
-    \property QPhongAlphaMaterial::destinationRgbArg
+    \property Qt3DExtras::QPhongAlphaMaterial::destinationRgbArg
 
     Holds the blend equation destination RGB blending argument.
 
@@ -364,7 +328,7 @@ QBlendEquationArguments::Blending QPhongAlphaMaterial::destinationRgbArg() const
 }
 
 /*!
-    \property QPhongAlphaMaterial::sourceAlphaArg
+    \property Qt3DExtras::QPhongAlphaMaterial::sourceAlphaArg
 
     Holds the blend equation source alpha blending argument.
 
@@ -377,7 +341,7 @@ QBlendEquationArguments::Blending QPhongAlphaMaterial::sourceAlphaArg() const
 }
 
 /*!
-    \property QPhongAlphaMaterial::destinationAlphaArg
+    \property Qt3DExtras::QPhongAlphaMaterial::destinationAlphaArg
 
     Holds the blend equation destination alpha blending argument.
 
@@ -390,7 +354,7 @@ QBlendEquationArguments::Blending QPhongAlphaMaterial::destinationAlphaArg() con
 }
 
 /*!
-    \property QPhongAlphaMaterial::blendFunctionArg
+    \property Qt3DExtras::QPhongAlphaMaterial::blendFunctionArg
 
     Holds the blend equation function argument.
 
@@ -470,3 +434,5 @@ void QPhongAlphaMaterial::setBlendFunctionArg(QBlendEquation::BlendFunction blen
 } // namespace Qt3DExtras
 
 QT_END_NAMESPACE
+
+#include "moc_qphongalphamaterial.cpp"

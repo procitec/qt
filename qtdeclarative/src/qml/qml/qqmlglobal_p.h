@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtQml module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #ifndef QQMLGLOBAL_H
 #define QQMLGLOBAL_H
@@ -51,34 +15,41 @@
 // We mean it.
 //
 
-#include <private/qtqmlglobal_p.h>
-#include <QtCore/QObject>
-#include <private/qqmlmetaobject_p.h>
 #include <private/qmetaobject_p.h>
+#include <private/qqmlmetaobject_p.h>
+#include <private/qqmltype_p.h>
+#include <private/qtqmlglobal_p.h>
+
+#include <QtQml/qqml.h>
+#include <QtCore/qobject.h>
 
 QT_BEGIN_NAMESPACE
 
+inline bool qmlConvertBoolConfigOption(const char *v)
+{
+    return v != nullptr && qstrcmp(v, "0") != 0 && qstrcmp(v, "false") != 0;
+}
+
+template<typename T, T(*Convert)(const char *)>
+T qmlGetConfigOption(const char *var)
+{
+    if (Q_UNLIKELY(!qEnvironmentVariableIsEmpty(var)))
+        return Convert(qgetenv(var));
+    return Convert(nullptr);
+}
 
 #define DEFINE_BOOL_CONFIG_OPTION(name, var) \
     static bool name() \
     { \
-        static enum { Yes, No, Unknown } status = Unknown; \
-        if (status == Unknown) { \
-            status = No; \
-            if (Q_UNLIKELY(!qEnvironmentVariableIsEmpty(#var))) { \
-                const QByteArray v = qgetenv(#var); \
-                if (v != "0" && v != "false") \
-                    status = Yes; \
-            } \
-        } \
-        return status == Yes; \
+        static const bool result = qmlGetConfigOption<bool, qmlConvertBoolConfigOption>(#var); \
+        return result; \
     }
 
 /*!
     Connect \a Signal of \a Sender to \a Method of \a Receiver.  \a Signal must be
     of type \a SenderType and \a Receiver of type \a ReceiverType.
 
-    Unlike QObject::connect(), this method caches the lookup of the signal and method
+    Unlike QObject::connect(), this macro caches the lookup of the signal and method
     indexes.  It also does not require lazy QMetaObjects to be built so should be
     preferred in all QML code that might interact with QML built objects.
 
@@ -117,7 +88,7 @@ do { \
     Disconnect \a Signal of \a Sender from \a Method of \a Receiver.  \a Signal must be
     of type \a SenderType and \a Receiver of type \a ReceiverType.
 
-    Unlike QObject::disconnect(), this method caches the lookup of the signal and method
+    Unlike QObject::disconnect(), this macro caches the lookup of the signal and method
     indexes.  It also does not require lazy QMetaObjects to be built so should be
     preferred in all QML code that might interact with QML built objects.
 
@@ -152,6 +123,9 @@ do { \
     QMetaObject::disconnect(sender, signalIdx, receiver, methodIdx); \
 } while (0)
 
+Q_QML_EXPORT bool qmlobject_can_cpp_cast(QObject *object, const QMetaObject *mo);
+Q_QML_EXPORT bool qmlobject_can_qml_cast(QObject *object, const QQmlType &type);
+
 /*!
     This method is identical to qobject_cast<T>() except that it does not require lazy
     QMetaObjects to be built, so should be preferred in all QML code that might interact
@@ -167,10 +141,23 @@ do { \
 template<class T>
 T qmlobject_cast(QObject *object)
 {
-    if (object && QQmlMetaObject::canConvert(object, &reinterpret_cast<T>(object)->staticMetaObject))
+    if (!object)
+        return nullptr;
+    if (qmlobject_can_cpp_cast(object, &(std::remove_pointer_t<T>::staticMetaObject)))
         return static_cast<T>(object);
     else
-        return 0;
+        return nullptr;
+}
+
+class QQuickItem;
+template<>
+inline QQuickItem *qmlobject_cast<QQuickItem *>(QObject *object)
+{
+    if (!object || !object->isQuickItemType())
+        return nullptr;
+    // QQuickItem is incomplete here -> can't use static_cast
+    // but we don't need any pointer adjustment, so reinterpret is safe
+    return reinterpret_cast<QQuickItem *>(object);
 }
 
 #define IS_SIGNAL_CONNECTED(Sender, SenderType, Name, Arguments) \
@@ -216,57 +203,29 @@ inline void QQml_setParent_noEvent(QObject *object, QObject *parent)
     d_ptr->sendChildEvents = sce;
 }
 
-class Q_QML_PRIVATE_EXPORT QQmlValueTypeProvider
+class QQmlValueTypeProvider
 {
 public:
-    QQmlValueTypeProvider();
-    virtual ~QQmlValueTypeProvider();
+    static bool populateValueType(
+            QMetaType targetMetaType, void *target, const QV4::Value &source,
+            QV4::ExecutionEngine *engine);
+    static bool populateValueType(
+            QMetaType targetMetaType, void *target, QMetaType sourceMetaType, void *source,
+            QV4::ExecutionEngine *engine);
 
-    const QMetaObject *metaObjectForMetaType(int);
+    static Q_QML_EXPORT void *heapCreateValueType(
+            const QQmlType &targetType, const QV4::Value &source, QV4::ExecutionEngine *engine);
+    static QVariant constructValueType(
+            QMetaType targetMetaType, const QMetaObject *targetMetaObject,
+            int ctorIndex, void *ctorArg);
 
-    bool initValueType(int, QVariant&);
-
-    QVariant createValueType(int, int, const void *[]);
-    bool createValueFromString(int, const QString &, void *, size_t);
-    bool createStringFromValue(int, const void *, QString *);
-
-    QVariant createVariantFromString(const QString &);
-    QVariant createVariantFromString(int, const QString &, bool *);
-    QVariant createVariantFromJsObject(int, const QV4::Value &, QV4::ExecutionEngine *, bool *);
-
-    bool equalValueType(int, const void *, const QVariant&);
-    bool storeValueType(int, const void *, void *, size_t);
-    bool readValueType(const QVariant&, void *, int);
-    bool writeValueType(int, const void *, QVariant&);
-
-private:
-    virtual const QMetaObject *getMetaObjectForMetaType(int);
-    virtual bool init(int, QVariant&);
-
-    virtual bool create(int, int, const void *[], QVariant *);
-    virtual bool createFromString(int, const QString &, void *, size_t);
-    virtual bool createStringFrom(int, const void *, QString *);
-
-    virtual bool variantFromString(const QString &, QVariant *);
-    virtual bool variantFromString(int, const QString &, QVariant *);
-    virtual bool variantFromJsObject(int, const QV4::Value &, QV4::ExecutionEngine *, QVariant *);
-
-    virtual bool equal(int, const void *, const QVariant&);
-    virtual bool store(int, const void *, void *, size_t);
-    virtual bool read(const QVariant&, void *, int);
-    virtual bool write(int, const void *, QVariant&);
-
-    friend Q_QML_PRIVATE_EXPORT void QQml_addValueTypeProvider(QQmlValueTypeProvider *);
-    friend Q_QML_PRIVATE_EXPORT void QQml_removeValueTypeProvider(QQmlValueTypeProvider *);
-
-    QQmlValueTypeProvider *next;
+    static QVariant createValueType(const QJSValue &, QMetaType);
+    static QVariant createValueType(const QString &, QMetaType);
+    static QVariant createValueType(const QV4::Value &, QMetaType, QV4::ExecutionEngine *);
+    static QVariant createValueType(const QVariant &, QMetaType, QV4::ExecutionEngine *);
 };
 
-Q_QML_PRIVATE_EXPORT void QQml_addValueTypeProvider(QQmlValueTypeProvider *);
-Q_AUTOTEST_EXPORT QQmlValueTypeProvider *QQml_valueTypeProvider();
-
-
-class Q_QML_PRIVATE_EXPORT QQmlColorProvider
+class Q_QML_EXPORT QQmlColorProvider
 {
 public:
     virtual ~QQmlColorProvider();
@@ -278,31 +237,32 @@ public:
     virtual QVariant fromHsvF(double, double, double, double);
     virtual QVariant lighter(const QVariant &, qreal);
     virtual QVariant darker(const QVariant &, qreal);
+    virtual QVariant alpha(const QVariant &, qreal);
     virtual QVariant tint(const QVariant &, const QVariant &);
 };
 
-Q_QML_PRIVATE_EXPORT QQmlColorProvider *QQml_setColorProvider(QQmlColorProvider *);
-Q_QML_PRIVATE_EXPORT QQmlColorProvider *QQml_colorProvider();
+Q_QML_EXPORT QQmlColorProvider *QQml_setColorProvider(QQmlColorProvider *);
+Q_QML_EXPORT QQmlColorProvider *QQml_colorProvider();
 
-
-class Q_QML_PRIVATE_EXPORT QQmlGuiProvider
+class QQmlApplication;
+class Q_QML_EXPORT QQmlGuiProvider
 {
 public:
     virtual ~QQmlGuiProvider();
-    virtual QObject *application(QObject *parent);
+    virtual QQmlApplication *application(QObject *parent);
     virtual QObject *inputMethod();
     virtual QObject *styleHints();
     virtual QStringList fontFamilies();
-    virtual bool openUrlExternally(QUrl &);
+    virtual bool openUrlExternally(const QUrl &);
     virtual QString pluginName() const;
 };
 
-Q_QML_PRIVATE_EXPORT QQmlGuiProvider *QQml_setGuiProvider(QQmlGuiProvider *);
+Q_QML_EXPORT QQmlGuiProvider *QQml_setGuiProvider(QQmlGuiProvider *);
 Q_AUTOTEST_EXPORT QQmlGuiProvider *QQml_guiProvider();
 
 class QQmlApplicationPrivate;
 
-class Q_QML_PRIVATE_EXPORT QQmlApplication : public QObject
+class Q_QML_EXPORT QQmlApplication : public QObject
 {
     //Application level logic, subclassed by Qt Quick if available via QQmlGuiProvider
     Q_OBJECT
@@ -311,6 +271,7 @@ class Q_QML_PRIVATE_EXPORT QQmlApplication : public QObject
     Q_PROPERTY(QString version READ version WRITE setVersion NOTIFY versionChanged)
     Q_PROPERTY(QString organization READ organization WRITE setOrganization NOTIFY organizationChanged)
     Q_PROPERTY(QString domain READ domain WRITE setDomain NOTIFY domainChanged)
+    QML_ANONYMOUS
 public:
     QQmlApplication(QObject* parent=nullptr);
 

@@ -18,7 +18,7 @@ using System;
 using System.Text;
 using System.Runtime.InteropServices;
 
-namespace FlatBuffers
+namespace Google.FlatBuffers
 {
     /// <summary>
     /// All tables in the generated code derive from this struct, and add their own accessors.
@@ -31,7 +31,7 @@ namespace FlatBuffers
         public ByteBuffer ByteBuffer { get { return bb; } }
 
         // Re-init the internal state with an external buffer {@code ByteBuffer} and an offset within.
-        public Table(int _i, ByteBuffer _bb)
+        public Table(int _i, ByteBuffer _bb) : this()
         {
             bb = _bb;
             bb_pos = _i;
@@ -65,7 +65,11 @@ namespace FlatBuffers
         // Create a .NET String from UTF-8 data stored inside the flatbuffer.
         public string __string(int offset)
         {
-            offset += bb.GetInt(offset);
+            int stringOffset = bb.GetInt(offset);
+            if (stringOffset == 0)
+                return null;
+
+            offset += stringOffset;
             var len = bb.GetInt(offset);
             var startPos = offset + sizeof(int);
             return bb.GetStringUTF8(startPos, len);
@@ -86,7 +90,7 @@ namespace FlatBuffers
             return offset + bb.GetInt(offset) + sizeof(int);  // data starts after the length
         }
 
-#if ENABLE_SPAN_T
+#if ENABLE_SPAN_T && (UNSAFE_BYTEBUFFER || NETSTANDARD2_1)
         // Get the data of a vector whoses offset is stored at "offset" in this object as an
         // Spant&lt;byte&gt;. If the vector is not present in the ByteBuffer,
         // then an empty span will be returned.

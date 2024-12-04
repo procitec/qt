@@ -1,18 +1,17 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/security_interstitials/content/captive_portal_helper_android.h"
 #include "components/security_interstitials/content/captive_portal_helper.h"
-#include "content/public/browser/browser_task_traits.h"
+#include "content/public/browser/browser_thread.h"
 
 #include <stddef.h>
 
 #include <memory>
 
 #include "base/android/jni_string.h"
-#include "base/bind.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/functional/bind.h"
 #include "components/security_interstitials/content/android/jni_headers/CaptivePortalHelper_jni.h"
 #include "components/security_interstitials/content/ssl_error_assistant.h"
 #include "components/security_interstitials/content/ssl_error_handler.h"
@@ -30,7 +29,7 @@ void JNI_CaptivePortalHelper_SetCaptivePortalCertificateForTesting(
       FROM_HERE, base::BindOnce(SSLErrorHandler::SetErrorAssistantProto,
                                 std::move(default_proto)));
 
-  const std::string hash = ConvertJavaStringToUTF8(env, jhash);
+  const std::string hash = base::android::ConvertJavaStringToUTF8(env, jhash);
   auto config_proto =
       std::make_unique<chrome_browser_ssl::SSLErrorAssistantConfig>();
   config_proto->set_version_id(INT_MAX);

@@ -1,12 +1,12 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef MEDIA_BASE_MEDIA_PERMISSION_H_
 #define MEDIA_BASE_MEDIA_PERMISSION_H_
 
-#include "base/callback.h"
-#include "base/macros.h"
+#include "base/functional/callback_forward.h"
+#include "build/build_config.h"
 #include "media/base/media_export.h"
 
 namespace media {
@@ -15,14 +15,21 @@ namespace media {
 class MEDIA_EXPORT MediaPermission {
  public:
   using PermissionStatusCB = base::OnceCallback<void(bool)>;
+#if BUILDFLAG(IS_WIN)
+  using IsHardwareSecureDecryptionAllowedCB = base::OnceCallback<void(bool)>;
+#endif  // BUILDFLAG(IS_WIN)
 
-  enum Type {
-    PROTECTED_MEDIA_IDENTIFIER,
-    AUDIO_CAPTURE,
-    VIDEO_CAPTURE,
+  enum class Type {
+    kProtectedMediaIdentifier,
+    kAudioCapture,
+    kVideoCapture,
   };
 
   MediaPermission();
+
+  MediaPermission(const MediaPermission&) = delete;
+  MediaPermission& operator=(const MediaPermission&) = delete;
+
   virtual ~MediaPermission();
 
   // Checks whether |type| is permitted without triggering user interaction
@@ -41,10 +48,11 @@ class MEDIA_EXPORT MediaPermission {
   // the spec.
   virtual bool IsEncryptedMediaEnabled() = 0;
 
-  virtual void NotifyUnsupportedPlatform();
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(MediaPermission);
+#if BUILDFLAG(IS_WIN)
+  // Whether to allow the use of hardware secure decryption.
+  virtual void IsHardwareSecureDecryptionAllowed(
+      IsHardwareSecureDecryptionAllowedCB cb) = 0;
+#endif  // BUILDFLAG(IS_WIN)
 };
 
 }  // namespace media

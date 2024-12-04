@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,14 +6,21 @@
 #define NET_DNS_DNS_CLIENT_H_
 
 #include <memory>
+#include <optional>
 
-#include "base/optional.h"
-#include "base/time/time.h"
+#include "base/values.h"
+#include "net/base/ip_endpoint.h"
 #include "net/base/net_export.h"
 #include "net/base/rand_callback.h"
 #include "net/dns/dns_config.h"
 #include "net/dns/dns_hosts.h"
 #include "net/dns/public/dns_config_overrides.h"
+
+namespace url {
+
+class SchemeHostPort;
+
+}  // namespace url
 
 namespace net {
 
@@ -31,7 +38,7 @@ class NET_EXPORT DnsClient {
  public:
   static const int kMaxInsecureFallbackFailures = 16;
 
-  virtual ~DnsClient() {}
+  virtual ~DnsClient() = default;
 
   // Returns true if the DnsClient is able and allowed to make secure DNS
   // transactions and DoH probe runners. If false, secure transactions and DoH
@@ -42,7 +49,9 @@ class NET_EXPORT DnsClient {
   // transactions. If false, insecure transactions should not be created. Will
   // always be false unless SetInsecureEnabled(true) has been called.
   virtual bool CanUseInsecureDnsTransactions() const = 0;
-  virtual void SetInsecureEnabled(bool enabled) = 0;
+  virtual bool CanQueryAdditionalTypesViaInsecureDns() const = 0;
+  virtual void SetInsecureEnabled(bool enabled,
+                                  bool additional_types_enabled) = 0;
 
   // When true, DoH should not be used in AUTOMATIC mode since no DoH servers
   // have a successful probe state.
@@ -58,7 +67,7 @@ class NET_EXPORT DnsClient {
   // config, unless it is invalid or has |unhandled_options|.
   //
   // Returns whether or not the effective config changed.
-  virtual bool SetSystemConfig(base::Optional<DnsConfig> system_config) = 0;
+  virtual bool SetSystemConfig(std::optional<DnsConfig> system_config) = 0;
   virtual bool SetConfigOverrides(DnsConfigOverrides config_overrides) = 0;
 
   // If there is a current session, forces replacement with a new current
@@ -79,6 +88,11 @@ class NET_EXPORT DnsClient {
   virtual const DnsConfig* GetEffectiveConfig() const = 0;
   virtual const DnsHosts* GetHosts() const = 0;
 
+  // Returns all preset addresses for the specified endpoint, if any are
+  // present in the current effective DnsConfig.
+  virtual std::optional<std::vector<IPEndPoint>> GetPresetAddrs(
+      const url::SchemeHostPort& endpoint) const = 0;
+
   // Returns null if the current config is not valid.
   virtual DnsTransactionFactory* GetTransactionFactory() = 0;
 
@@ -87,7 +101,12 @@ class NET_EXPORT DnsClient {
   virtual void IncrementInsecureFallbackFailures() = 0;
   virtual void ClearInsecureFallbackFailures() = 0;
 
-  virtual base::Optional<DnsConfig> GetSystemConfigForTesting() const = 0;
+  // Return the effective DNS configuration as a value that can be recorded in
+  // the NetLog. This also synthesizes interpretative data to the Value, e.g.
+  // whether secure and insecure transactions are enabled.
+  virtual base::Value::Dict GetDnsConfigAsValueForNetLog() const = 0;
+
+  virtual std::optional<DnsConfig> GetSystemConfigForTesting() const = 0;
   virtual DnsConfigOverrides GetConfigOverridesForTesting() const = 0;
 
   virtual void SetTransactionFactoryForTesting(
@@ -101,7 +120,6 @@ class NET_EXPORT DnsClient {
   // the returned DnsClient.
   static std::unique_ptr<DnsClient> CreateClientForTesting(
       NetLog* net_log,
-      ClientSocketFactory* socket_factory,
       const RandIntCallback& rand_int_callback);
 };
 

@@ -1,15 +1,17 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/modules/payments/payment_test_helper.h"
 
+#include "third_party/blink/renderer/bindings/core/v8/script_value.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_union_arraybuffer_arraybufferview.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_payment_credential_instrument.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_payment_currency_amount.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_payment_details_modifier.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_payment_method_data.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
-#include "third_party/blink/renderer/platform/bindings/script_state.h"
-#include "third_party/blink/renderer/platform/heap/heap_allocator.h"
+#include "third_party/blink/renderer/platform/bindings/v8_binding.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
 
 namespace blink {
@@ -216,60 +218,53 @@ payments::mojom::blink::PaymentAddressPtr BuildPaymentAddressForTest() {
 PaymentRequestV8TestingScope::PaymentRequestV8TestingScope()
     : V8TestingScope(KURL("https://www.example.com/")) {}
 
-PaymentRequestMockFunctionScope::PaymentRequestMockFunctionScope(
-    ScriptState* script_state)
-    : script_state_(script_state) {}
+SecurePaymentConfirmationRequest* CreateSecurePaymentConfirmationRequest(
+    const V8TestingScope& scope,
+    const bool include_payee_name) {
+  SecurePaymentConfirmationRequest* request =
+      SecurePaymentConfirmationRequest::Create(scope.GetIsolate());
 
-PaymentRequestMockFunctionScope::~PaymentRequestMockFunctionScope() {
-  v8::MicrotasksScope::PerformCheckpoint(script_state_->GetIsolate());
-  for (MockFunction* mock_function : mock_functions_) {
-    testing::Mock::VerifyAndClearExpectations(mock_function);
+  HeapVector<Member<V8UnionArrayBufferOrArrayBufferView>> credentialIds;
+  credentialIds.push_back(
+      MakeGarbageCollected<V8UnionArrayBufferOrArrayBufferView>(
+          DOMArrayBuffer::Create(
+              kSecurePaymentConfirmationCredentialId,
+              std::size(kSecurePaymentConfirmationCredentialId))));
+  request->setCredentialIds(credentialIds);
+
+  request->setChallenge(
+      MakeGarbageCollected<V8UnionArrayBufferOrArrayBufferView>(
+          DOMArrayBuffer::Create(
+              kSecurePaymentConfirmationChallenge,
+              std::size(kSecurePaymentConfirmationChallenge))));
+
+  PaymentCredentialInstrument* instrument =
+      PaymentCredentialInstrument::Create(scope.GetIsolate());
+  instrument->setDisplayName("My Card");
+  instrument->setIcon("https://bank.example/icon.png");
+  request->setInstrument(instrument);
+
+  request->setRpId("bank.example");
+
+  if (include_payee_name) {
+    request->setPayeeName("Merchant Shop");
   }
+
+  return request;
 }
 
-v8::Local<v8::Function> PaymentRequestMockFunctionScope::ExpectCall(
-    String* captor) {
-  mock_functions_.push_back(
-      MakeGarbageCollected<MockFunction>(script_state_, captor));
-  EXPECT_CALL(*mock_functions_.back(), Call(testing::_));
-  return mock_functions_.back()->Bind();
-}
+HeapVector<Member<PaymentMethodData>>
+BuildSecurePaymentConfirmationMethodDataForTest(const V8TestingScope& scope) {
+  SecurePaymentConfirmationRequest* spc_request =
+      CreateSecurePaymentConfirmationRequest(scope);
 
-v8::Local<v8::Function> PaymentRequestMockFunctionScope::ExpectCall() {
-  mock_functions_.push_back(MakeGarbageCollected<MockFunction>(script_state_));
-  EXPECT_CALL(*mock_functions_.back(), Call(testing::_));
-  return mock_functions_.back()->Bind();
-}
+  HeapVector<Member<PaymentMethodData>> method_data(
+      1, PaymentMethodData::Create());
+  method_data[0]->setSupportedMethod("secure-payment-confirmation");
+  method_data[0]->setData(ScriptValue(
+      scope.GetIsolate(), spc_request->ToV8(scope.GetScriptState())));
 
-v8::Local<v8::Function> PaymentRequestMockFunctionScope::ExpectNoCall() {
-  mock_functions_.push_back(MakeGarbageCollected<MockFunction>(script_state_));
-  EXPECT_CALL(*mock_functions_.back(), Call(testing::_)).Times(0);
-  return mock_functions_.back()->Bind();
-}
-
-ACTION_P2(SaveValueIn, script_state, captor) {
-  *captor = ToCoreString(
-      arg0.V8Value()->ToString(script_state->GetContext()).ToLocalChecked());
-}
-
-PaymentRequestMockFunctionScope::MockFunction::MockFunction(
-    ScriptState* script_state)
-    : ScriptFunction(script_state) {
-  ON_CALL(*this, Call(testing::_)).WillByDefault(testing::ReturnArg<0>());
-}
-
-PaymentRequestMockFunctionScope::MockFunction::MockFunction(
-    ScriptState* script_state,
-    String* captor)
-    : ScriptFunction(script_state), value_(captor) {
-  ON_CALL(*this, Call(testing::_))
-      .WillByDefault(
-          testing::DoAll(SaveValueIn(WrapPersistent(script_state), value_),
-                         testing::ReturnArg<0>()));
-}
-
-v8::Local<v8::Function> PaymentRequestMockFunctionScope::MockFunction::Bind() {
-  return BindToV8Function();
+  return method_data;
 }
 
 }  // namespace blink

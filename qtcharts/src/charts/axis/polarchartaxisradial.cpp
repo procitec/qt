@@ -1,31 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt Charts module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:GPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 3 or (at your option) any later version
-** approved by the KDE Free Qt Foundation. The licenses are as published by
-** the Free Software Foundation and appearing in the file LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
 #include <QtCharts/qcategoryaxis.h>
 #include <QtCharts/qlogvalueaxis.h>
@@ -35,7 +9,7 @@
 #include <private/linearrowitem_p.h>
 #include <private/polarchartaxisradial_p.h>
 
-QT_CHARTS_BEGIN_NAMESPACE
+QT_BEGIN_NAMESPACE
 
 PolarChartAxisRadial::PolarChartAxisRadial(QAbstractAxis *axis, QGraphicsItem *item,
                                            bool intervalAxis)
@@ -49,7 +23,7 @@ PolarChartAxisRadial::~PolarChartAxisRadial()
 
 void PolarChartAxisRadial::updateGeometry()
 {
-    const QVector<qreal> &layout = this->layout();
+    const QList<qreal> &layout = this->layout();
     if (layout.isEmpty() && axis()->type() != QAbstractAxis::AxisTypeLogValue)
         return;
 
@@ -257,7 +231,7 @@ Qt::Orientation PolarChartAxisRadial::orientation() const
 
 void PolarChartAxisRadial::createItems(int count)
 {
-     if (arrowItems().count() == 0) {
+     if (arrowItems().size() == 0) {
         // radial axis center line
         QGraphicsLineItem *arrow = new LineArrowItem(this, presenter()->rootItem());
         arrow->setPen(axis()->linePen());
@@ -293,31 +267,36 @@ void PolarChartAxisRadial::createItems(int count)
 
 void PolarChartAxisRadial::handleArrowPenChanged(const QPen &pen)
 {
-    foreach (QGraphicsItem *item, arrowItems())
+    const auto items = arrowItems();
+    for (QGraphicsItem *item : items)
         static_cast<QGraphicsLineItem *>(item)->setPen(pen);
 }
 
 void PolarChartAxisRadial::handleGridPenChanged(const QPen &pen)
 {
-    foreach (QGraphicsItem *item, gridItems())
+    const auto items = gridItems();
+    for (QGraphicsItem *item : items)
         static_cast<QGraphicsEllipseItem *>(item)->setPen(pen);
 }
 
 void PolarChartAxisRadial::handleMinorArrowPenChanged(const QPen &pen)
 {
-    foreach (QGraphicsItem *item, minorArrowItems())
+    const auto items = minorArrowItems();
+    for (QGraphicsItem *item : items)
         static_cast<QGraphicsLineItem *>(item)->setPen(pen);
 }
 
 void PolarChartAxisRadial::handleMinorGridPenChanged(const QPen &pen)
 {
-    foreach (QGraphicsItem *item, minorGridItems())
+    const auto items = minorGridItems();
+    for (QGraphicsItem *item : items)
         static_cast<QGraphicsEllipseItem *>(item)->setPen(pen);
 }
 
 void PolarChartAxisRadial::handleGridLineColorChanged(const QColor &color)
 {
-    foreach (QGraphicsItem *item, gridItems()) {
+    const auto items = gridItems();
+    for (QGraphicsItem *item : items) {
         QGraphicsEllipseItem *ellipseItem = static_cast<QGraphicsEllipseItem *>(item);
         QPen pen = ellipseItem->pen();
         pen.setColor(color);
@@ -327,7 +306,8 @@ void PolarChartAxisRadial::handleGridLineColorChanged(const QColor &color)
 
 void PolarChartAxisRadial::handleMinorGridLineColorChanged(const QColor &color)
 {
-    foreach (QGraphicsItem *item, minorGridItems()) {
+    const auto items = minorGridItems();
+    for (QGraphicsItem *item : items) {
         QGraphicsEllipseItem *ellipseItem = static_cast<QGraphicsEllipseItem *>(item);
         QPen pen = ellipseItem->pen();
         pen.setColor(color);
@@ -355,10 +335,10 @@ void PolarChartAxisRadial::updateMinorTickGeometry()
     if (!axis())
         return;
 
-    QVector<qreal> layout = ChartAxisElement::layout();
+    QList<qreal> layout = ChartAxisElement::layout();
     int minorTickCount = 0;
     qreal tickRadius = 0.0;
-    QVector<qreal> minorTickRadiuses;
+    QList<qreal> minorTickRadiuses;
     switch (axis()->type()) {
     case QAbstractAxis::AxisTypeValue: {
         const QValueAxis *valueAxis = qobject_cast<QValueAxis *>(axis());
@@ -381,7 +361,7 @@ void PolarChartAxisRadial::updateMinorTickGeometry()
 
         minorTickCount = logValueAxis->minorTickCount();
         if (minorTickCount < 0)
-            minorTickCount = qMax(int(qFloor(base) - 2.0), 0);
+            minorTickCount = qMax(qFloor(base) - 2, 0);
 
         // Two "virtual" ticks are required to make sure that all minor ticks
         // are displayed properly (even for the partially visible segments of
@@ -424,7 +404,7 @@ void PolarChartAxisRadial::updateMinorTickGeometry()
         break;
     }
 
-    if (minorTickCount < 1 || tickRadius == 0.0 || minorTickRadiuses.count() != minorTickCount)
+    if (minorTickCount < 1 || tickRadius == 0.0 || minorTickRadiuses.size() != minorTickCount)
         return;
 
     const QPointF axisCenter = axisGeometry().center();
@@ -472,7 +452,7 @@ void PolarChartAxisRadial::updateMinorTickItems()
 
         int minorTickCount = logValueAxis->minorTickCount();
         if (minorTickCount < 0)
-            minorTickCount = qMax(int(qFloor(logValueAxis->base()) - 2.0), 0);
+            minorTickCount = qMax(qFloor(logValueAxis->base()) - 2, 0);
 
         expectedCount = minorTickCount * (logValueAxis->tickCount() + 1);
         expectedCount = qMax(expectedCount, logValueAxis->minorTickCount());
@@ -505,6 +485,6 @@ void PolarChartAxisRadial::updateMinorTickItems()
     }
 }
 
-QT_CHARTS_END_NAMESPACE
+QT_END_NAMESPACE
 
 #include "moc_polarchartaxisradial_p.cpp"

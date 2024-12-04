@@ -8,67 +8,60 @@
 #ifndef SKSL_SYMBOL
 #define SKSL_SYMBOL
 
+#include "include/private/base/SkAssert.h"
+#include "src/sksl/SkSLPosition.h"
 #include "src/sksl/ir/SkSLIRNode.h"
-#include "src/sksl/ir/SkSLProgramElement.h"
+
+#include <memory>
+#include <string_view>
 
 namespace SkSL {
 
+class Context;
+class Expression;
+class Type;
+
 /**
- * Represents a symboltable entry.
+ * Represents a symbol table entry.
  */
-struct Symbol : public IRNode {
-    enum class Kind {
-        kExternal = (int) ProgramElement::Kind::kLast + 1,
-        kField,
-        kFunctionDeclaration,
-        kType,
-        kUnresolvedFunction,
-        kVariable,
+class Symbol : public IRNode {
+public:
+    using Kind = SymbolKind;
 
-        kFirst = kExternal,
-        kLast = kVariable
-    };
-
-    Symbol(int offset, Kind kind, StringFragment name, const Type* type = nullptr)
-    : INHERITED(offset, (int) kind, type)
-    , fName(name) {
+    Symbol(Position pos, Kind kind, std::string_view name, const Type* type = nullptr)
+        : INHERITED(pos, (int) kind)
+        , fName(name)
+        , fType(type) {
         SkASSERT(kind >= Kind::kFirst && kind <= Kind::kLast);
     }
 
-    Symbol(const Symbol&) = default;
-    Symbol& operator=(const Symbol&) = default;
-
     ~Symbol() override {}
+
+    std::unique_ptr<Expression> instantiate(const Context& context, Position pos) const;
+
+    const Type& type() const {
+        SkASSERT(fType);
+        return *fType;
+    }
 
     Kind kind() const {
         return (Kind) fKind;
     }
 
-    /**
-     *  Use is<T> to check the type of a symbol.
-     *  e.g. replace `sym.kind() == Symbol::Kind::kVariable` with `sym.is<Variable>()`.
-     */
-    template <typename T>
-    bool is() const {
-        return this->kind() == T::kSymbolKind;
+    std::string_view name() const {
+        return fName;
     }
 
     /**
-     *  Use as<T> to downcast symbols. e.g. replace `(Variable&) sym` with `sym.as<Variable>()`.
+     *  Don't call this directly--use SymbolTable::renameSymbol instead!
      */
-    template <typename T>
-    const T& as() const {
-        SkASSERT(this->is<T>());
-        return static_cast<const T&>(*this);
+    void setName(std::string_view newName) {
+        fName = newName;
     }
 
-    template <typename T>
-    T& as() {
-        SkASSERT(this->is<T>());
-        return static_cast<T&>(*this);
-    }
-
-    StringFragment fName;
+private:
+    std::string_view fName;
+    const Type* fType;
 
     using INHERITED = IRNode;
 };

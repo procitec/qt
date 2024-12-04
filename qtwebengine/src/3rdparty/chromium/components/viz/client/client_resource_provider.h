@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,20 +6,20 @@
 #define COMPONENTS_VIZ_CLIENT_CLIENT_RESOURCE_PROVIDER_H_
 
 #include <memory>
+#include <optional>
 #include <vector>
 
+#include "base/containers/flat_map.h"
+#include "base/functional/callback.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/threading/thread_checker.h"
 #include "components/viz/client/viz_client_export.h"
 #include "components/viz/common/display/renderer_settings.h"
 #include "components/viz/common/resources/release_callback.h"
 #include "components/viz/common/resources/resource_id.h"
-#include "components/viz/common/resources/resource_settings.h"
 #include "components/viz/common/resources/returned_resource.h"
-#include "components/viz/common/resources/single_release_callback.h"
 #include "components/viz/common/resources/transferable_resource.h"
 #include "third_party/khronos/GLES2/gl2.h"
-#include "third_party/skia/include/core/SkSurface.h"
-#include "third_party/skia/include/gpu/GrBackendSurface.h"
 
 namespace gpu {
 namespace gles2 {
@@ -37,15 +37,24 @@ class RasterContextProvider;
 // This class is used to give an integer name (ResourceId) to a gpu or software
 // resource (shipped as a TransferableResource), in order to use that name in
 // DrawQuads and give the resource to the viz display compositor. When the
-// resource is removed from the ClientResourceProvider, the
-// SingleReleaseCallback will be called once the resource is no longer in use by
-// the display compositor.
+// resource is removed from the ClientResourceProvider, the ReleaseCallback will
+// be called once the resource is no longer in use by the display compositor.
 //
 // This class is not thread-safe and can only be called from the thread it was
 // created on (in practice, the impl thread).
 class VIZ_CLIENT_EXPORT ClientResourceProvider {
  public:
+  using ResourceFlushCallback = base::RepeatingCallback<void()>;
+
   ClientResourceProvider();
+  ClientResourceProvider(
+      scoped_refptr<base::SequencedTaskRunner> main_task_runner,
+      scoped_refptr<base::SequencedTaskRunner> impl_task_runner,
+      ResourceFlushCallback resource_flush_callback);
+
+  ClientResourceProvider(const ClientResourceProvider&) = delete;
+  ClientResourceProvider& operator=(const ClientResourceProvider&) = delete;
+
   ~ClientResourceProvider();
 
   static gpu::SyncToken GenerateSyncTokenHelper(gpu::gles2::GLES2Interface* gl);
@@ -76,12 +85,21 @@ class VIZ_CLIENT_EXPORT ClientResourceProvider {
       std::vector<ReturnedResource> transferable_resources);
 
   // Receives a resource from an external client that can be used in compositor
-  // frames, via the returned ResourceId.
-  ResourceId ImportResource(const TransferableResource&,
-                            std::unique_ptr<SingleReleaseCallback>);
+  // frames, via the returned ResourceId. Can be provided with an optional
+  // `evicted_callback`, which will be invoked once we are no longer visible and
+  // have been evicted. When `evicted_callback` is called the client should
+  // invoke `RemoveImportedResources` to unlock the resource. Allowing the
+  // resource to be released when it is returned from the parent. When
+  // `main_thread_release_callback` is provided, and
+  // `features::kBatchMainThreadReleaseCallbacks` is enabled, the callback will
+  // be invoked on `main_thread_task_runner_` when it has been returned.
+  ResourceId ImportResource(const TransferableResource& resource,
+                            ReleaseCallback impl_release_callback,
+                            ReleaseCallback main_thread_release_callback = {},
+                            ResourceEvictedCallback evicted_callback = {});
   // Removes an imported resource, which will call the ReleaseCallback given
   // originally, once the resource is no longer in use by any compositor frame.
-  void RemoveImportedResource(ResourceId);
+  void RemoveImportedResource(ResourceId resource_id);
 
   // Call this to indicate that the connection to the parent is lost and
   // resources previously exported will not be able to be returned. If |lose| is
@@ -95,7 +113,7 @@ class VIZ_CLIENT_EXPORT ClientResourceProvider {
   // RemoveImportedResource().
   void ReleaseAllExportedResources(bool lose);
 
-  // Immediately runs the SingleReleaseCallback for all resources that have been
+  // Immediately runs the ReleaseCallback for all resources that have been
   // previously imported and removed, but not released yet. There should not be
   // any imported resources yet when this is called, as they can be removed
   // first via RemoveImportedResource(), and potentially avoid being lost.
@@ -108,29 +126,10 @@ class VIZ_CLIENT_EXPORT ClientResourceProvider {
   // Checks whether a resource is in use by a consumer.
   bool InUseByConsumer(ResourceId id);
 
+  void SetEvicted(bool evicted);
+  void SetVisible(bool visible);
+
   size_t num_resources_for_testing() const;
-
-  class VIZ_CLIENT_EXPORT ScopedSkSurface {
-   public:
-    ScopedSkSurface(GrContext* gr_context,
-                    sk_sp<SkColorSpace> color_space,
-                    GLuint texture_id,
-                    GLenum texture_target,
-                    const gfx::Size& size,
-                    ResourceFormat format,
-                    bool can_use_lcd_text,
-                    int msaa_sample_count);
-    ~ScopedSkSurface();
-
-    SkSurface* surface() const { return surface_.get(); }
-
-    static SkSurfaceProps ComputeSurfaceProps(bool can_use_lcd_text);
-
-   private:
-    sk_sp<SkSurface> surface_;
-
-    DISALLOW_COPY_AND_ASSIGN(ScopedSkSurface);
-  };
 
  private:
   struct ImportedResource;
@@ -141,14 +140,44 @@ class VIZ_CLIENT_EXPORT ClientResourceProvider {
       base::OnceCallback<void(std::vector<GLbyte*>* tokens)>
           verify_sync_tokens);
 
+  // Validates the memory impact of resources that are locked once we are both
+  // evicted and no longer visible. This will also notify clients of eviction
+  // via any `RemoveImportedResources`. If resources have been already returned
+  // by the parent (the Display Compositor's FrameSink) this can lead to them
+  // being returned to the client (such as cc::LayerTreeHostImpl.)
+  void HandleEviction();
+
+  void BatchMainReleaseCallbacks(
+      std::vector<base::OnceClosure> release_callbacks);
+
   THREAD_CHECKER(thread_checker_);
 
   base::flat_map<ResourceId, ImportedResource> imported_resources_;
   // The ResourceIds in ClientResourceProvider start from 1 to avoid
   // conflicts with id from DisplayResourceProvider.
-  ResourceId next_id_ = 1;
+  ResourceIdGenerator id_generator_;
 
-  DISALLOW_COPY_AND_ASSIGN(ClientResourceProvider);
+  // Whether the Client has had its Surface Evicted. When `true` all
+  // `imported_resources_` are no longer required by the Parent. Though we need
+  // to wait until we are not `visible_` as the Client may still use them.
+  bool evicted_ = false;
+
+  // Whether the Client is visible. While ClientResourceProvider is not
+  // thread-safe, it is often used in a multi-threaded Renderer. While `true`
+  // all `imported_resources_` may still be used by the Client. So it is not
+  // safe to release them, even if we have been `evicted_`.
+  bool visible_ = false;
+
+  const scoped_refptr<base::SequencedTaskRunner> main_task_runner_;
+  const scoped_refptr<base::SequencedTaskRunner> impl_task_runner_;
+
+  ResourceFlushCallback resource_flush_callback_;
+
+  // When true, we are able to use our TaskRunners to post all
+  // `main_thread_release_callback` to the `main_task_runner_`. Enabling us to
+  // have a single thread hop, rather than each callback performing it's own
+  // separate hop.
+  bool threaded_release_callbacks_supported_ = false;
 };
 
 }  // namespace viz

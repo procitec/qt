@@ -1,4 +1,4 @@
-// Copyright (c) 2010 The Chromium Authors. All rights reserved.
+// Copyright 2010 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,7 +7,7 @@
 
 #include <string>
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "gin/interceptor.h"
 #include "gin/wrappable.h"
@@ -32,6 +32,9 @@ class PluginObject : public gin::Wrappable<PluginObject>,
                      public gin::NamedPropertyInterceptor {
  public:
   static gin::WrapperInfo kWrapperInfo;
+
+  PluginObject(const PluginObject&) = delete;
+  PluginObject& operator=(const PluginObject&) = delete;
 
   ~PluginObject() override;
 
@@ -79,16 +82,14 @@ class PluginObject : public gin::Wrappable<PluginObject>,
   v8::Local<v8::FunctionTemplate> GetFunctionTemplate(v8::Isolate* isolate,
                                                       const std::string& name);
 
-  PepperPluginInstanceImpl* instance_;
+  raw_ptr<PepperPluginInstanceImpl, ExperimentalRenderer> instance_;
 
-  const PPP_Class_Deprecated* ppp_class_;
-  void* ppp_class_data_;
+  raw_ptr<const PPP_Class_Deprecated, ExperimentalRenderer> ppp_class_;
+  raw_ptr<void, ExperimentalRenderer> ppp_class_data_;
 
   v8::StdGlobalValueMap<std::string, v8::FunctionTemplate> template_cache_;
 
   base::WeakPtrFactory<PluginObject> weak_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(PluginObject);
 };
 
 }  // namespace content

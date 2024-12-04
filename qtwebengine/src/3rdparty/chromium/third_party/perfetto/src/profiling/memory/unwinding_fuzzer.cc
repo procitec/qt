@@ -17,6 +17,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "perfetto/ext/base/file_utils.h"
 #include "perfetto/ext/base/utils.h"
 #include "perfetto/ext/tracing/core/basic_types.h"
 #include "src/profiling/common/unwind_support.h"
@@ -29,12 +30,15 @@ namespace profiling {
 namespace {
 
 class NopDelegate : public UnwindingWorker::Delegate {
-  void PostAllocRecord(std::vector<AllocRecord>) override {}
-  void PostFreeRecord(std::vector<FreeRecord>) override {}
-  void PostHeapNameRecord(HeapNameRecord) override {}
-  void PostSocketDisconnected(DataSourceInstanceID,
+  void PostAllocRecord(UnwindingWorker*,
+                       std::unique_ptr<AllocRecord>) override {}
+  void PostFreeRecord(UnwindingWorker*, std::vector<FreeRecord>) override {}
+  void PostHeapNameRecord(UnwindingWorker*, HeapNameRecord) override {}
+  void PostSocketDisconnected(UnwindingWorker*,
+                              DataSourceInstanceID,
                               pid_t,
                               SharedRingBuffer::Stats) override {}
+  void PostDrainDone(UnwindingWorker*, DataSourceInstanceID) override {}
 };
 
 int FuzzUnwinding(const uint8_t* data, size_t size) {
@@ -46,10 +50,18 @@ int FuzzUnwinding(const uint8_t* data, size_t size) {
                              base::OpenFile("/proc/self/mem", O_RDONLY));
 
   NopDelegate nop_delegate;
-  UnwindingWorker::ClientData client_data{
-      id, {}, std::move(metadata), {}, {}, {}, {},
-  };
-  UnwindingWorker::HandleBuffer(buf, &client_data, self_pid, &nop_delegate);
+  UnwindingWorker::ClientData client_data{id,
+                                          /*sock=*/{},
+                                          std::move(metadata),
+                                          /*shmem=*/{},
+                                          /*client_config=*/{},
+                                          /*stream_allocations=*/false,
+                                          /*drain_bytes=*/0,
+                                          /*free_records=*/{}};
+
+  AllocRecordArena arena;
+  UnwindingWorker::HandleBuffer(nullptr, &arena, buf, &client_data, self_pid,
+                                &nop_delegate);
   return 0;
 }
 

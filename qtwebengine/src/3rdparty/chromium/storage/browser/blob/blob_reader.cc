@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,18 +12,18 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/ptr_util.h"
-#include "base/task/post_task.h"
 #include "base/task/thread_pool.h"
-#include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
+#include "components/file_access/scoped_file_access_delegate.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
 #include "storage/browser/blob/blob_data_handle.h"
 #include "storage/browser/blob/blob_data_snapshot.h"
 #include "storage/browser/file_system/file_stream_reader.h"
+#include "storage/browser/file_system/file_system_backend.h"
 #include "storage/browser/file_system/file_system_context.h"
 #include "storage/browser/file_system/file_system_url.h"
 #include "third_party/blink/public/common/blob/blob_utils.h"
@@ -79,7 +79,7 @@ BlobReader::BlobReader(const BlobDataHandle* blob_handle)
     if (blob_handle->IsBroken()) {
       net_error_ = ConvertBlobErrorToNetError(blob_handle->GetBlobStatus());
     } else {
-      blob_handle_.reset(new BlobDataHandle(*blob_handle));
+      blob_handle_ = std::make_unique<BlobDataHandle>(*blob_handle);
     }
   }
 }
@@ -137,7 +137,7 @@ void BlobReader::ReadSideData(StatusCallback done) {
                      std::move(done), side_data_size));
 }
 
-base::Optional<mojo_base::BigBuffer> BlobReader::TakeSideData() {
+std::optional<mojo_base::BigBuffer> BlobReader::TakeSideData() {
   return std::move(side_data_);
 }
 
@@ -338,6 +338,10 @@ BlobReader::Status BlobReader::CalculateSizeImpl(
   DCHECK(!total_size_calculated_);
   DCHECK(size_callback_.is_null());
 
+  if (!blob_data_) {
+    return ReportError(net::ERR_UNEXPECTED);
+  }
+
   net_error_ = net::OK;
   total_size_ = 0;
   const auto& items = blob_data_->items();
@@ -512,8 +516,7 @@ BlobReader::Status BlobReader::ReadItem() {
       GetOrCreateFileReaderAtIndex(current_item_index_);
   if (!reader)
     return ReportError(net::ERR_FILE_NOT_FOUND);
-
-  return ReadFileItem(reader, bytes_to_read);
+  return ReadFileItem(reader, bytes_to_read, item.file_access());
 }
 
 void BlobReader::AdvanceItem() {
@@ -557,8 +560,11 @@ void BlobReader::ReadBytesItem(const BlobDataItem& item, int bytes_to_read) {
   AdvanceBytesRead(bytes_to_read);
 }
 
-BlobReader::Status BlobReader::ReadFileItem(FileStreamReader* reader,
-                                            int bytes_to_read) {
+BlobReader::Status BlobReader::ReadFileItem(
+    FileStreamReader* reader,
+    int bytes_to_read,
+    file_access::ScopedFileAccessDelegate::RequestFilesAccessIOCallback
+        file_access) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(!io_pending_)
       << "Can't begin IO while another IO operation is pending.";
@@ -572,8 +578,9 @@ BlobReader::Status BlobReader::ReadFileItem(FileStreamReader* reader,
     return Status::DONE;
   }
   if (result == net::ERR_IO_PENDING) {
-    TRACE_EVENT_ASYNC_BEGIN1("Blob", "BlobReader::ReadFileItem", this, "uuid",
-                             blob_data_->uuid());
+    TRACE_EVENT_NESTABLE_ASYNC_BEGIN1("Blob", "BlobReader::ReadFileItem",
+                                      TRACE_ID_LOCAL(this), "uuid",
+                                      blob_data_->uuid());
     io_pending_ = true;
     return Status::IO_PENDING;
   }
@@ -582,8 +589,9 @@ BlobReader::Status BlobReader::ReadFileItem(FileStreamReader* reader,
 
 void BlobReader::DidReadFile(int result) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  TRACE_EVENT_ASYNC_END1("Blob", "BlobReader::ReadFileItem", this, "uuid",
-                         blob_data_->uuid());
+  TRACE_EVENT_NESTABLE_ASYNC_END1("Blob", "BlobReader::ReadFileItem",
+                                  TRACE_ID_LOCAL(this), "uuid",
+                                  blob_data_->uuid());
   DidReadItem(result);
 }
 
@@ -632,8 +640,9 @@ BlobReader::Status BlobReader::ReadReadableDataHandle(const BlobDataItem& item,
     return Status::DONE;
   }
   if (result == net::ERR_IO_PENDING) {
-    TRACE_EVENT_ASYNC_BEGIN1("Blob", "BlobReader::ReadReadableDataHandle", this,
-                             "uuid", blob_data_->uuid());
+    TRACE_EVENT_NESTABLE_ASYNC_BEGIN1(
+        "Blob", "BlobReader::ReadReadableDataHandle", TRACE_ID_LOCAL(this),
+        "uuid", blob_data_->uuid());
     io_pending_ = true;
     return Status::IO_PENDING;
   }
@@ -642,8 +651,9 @@ BlobReader::Status BlobReader::ReadReadableDataHandle(const BlobDataItem& item,
 
 void BlobReader::DidReadReadableDataHandle(int result) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  TRACE_EVENT_ASYNC_END1("Blob", "BlobReader::ReadReadableDataHandle", this,
-                         "uuid", blob_data_->uuid());
+  TRACE_EVENT_NESTABLE_ASYNC_END1("Blob", "BlobReader::ReadReadableDataHandle",
+                                  TRACE_ID_LOCAL(this), "uuid",
+                                  blob_data_->uuid());
   RecordBytesReadFromDataHandle(current_item_index_, result);
   DidReadItem(result);
 }
@@ -718,7 +728,8 @@ std::unique_ptr<FileStreamReader> BlobReader::CreateFileStreamReader(
       }
       return FileStreamReader::CreateForLocalFile(
           file_task_runner_.get(), item.path(),
-          item.offset() + additional_offset, item.expected_modification_time());
+          item.offset() + additional_offset, item.expected_modification_time(),
+          item.file_access());
     case BlobDataItem::Type::kFileFilesystem: {
       int64_t max_bytes_to_read =
           item.length() == std::numeric_limits<uint64_t>::max()
@@ -731,7 +742,8 @@ std::unique_ptr<FileStreamReader> BlobReader::CreateFileStreamReader(
       }
       return item.file_system_context()->CreateFileStreamReader(
           item.filesystem_url(), item.offset() + additional_offset,
-          max_bytes_to_read, item.expected_modification_time());
+          max_bytes_to_read, item.expected_modification_time(),
+          item.file_access());
     }
     case BlobDataItem::Type::kBytes:
     case BlobDataItem::Type::kBytesDescription:
@@ -799,7 +811,7 @@ std::unique_ptr<network::DataPipeToSourceStream> BlobReader::CreateDataPipe(
   options.capacity_num_bytes =
       blink::BlobUtils::GetDataPipeCapacity(max_bytes_to_read);
 
-  MojoResult result = mojo::CreateDataPipe(&options, &producer, &consumer);
+  MojoResult result = mojo::CreateDataPipe(&options, producer, consumer);
 
   if (result != MOJO_RESULT_OK)
     return nullptr;

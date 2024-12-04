@@ -1,4 +1,4 @@
-// Copyright (c) 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,12 +12,12 @@
 
 #include "base/files/file.h"
 #include "base/memory/ptr_util.h"
-#include "base/metrics/histogram_macros.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/numerics/safe_math.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/time/time.h"
+#include "components/file_access/scoped_file_access_delegate.h"
 #include "storage/browser/blob/blob_entry.h"
 #include "storage/browser/blob/blob_storage_registry.h"
 #include "storage/browser/blob/shareable_blob_data_item.h"
@@ -143,18 +143,20 @@ BlobDataBuilder::FutureFile BlobDataBuilder::AppendFutureFile(
   total_size_ += length;
   transport_quota_needed_ += length;
   found_file_transport_ = true;
-  UMA_HISTOGRAM_BOOLEAN("Storage.BlobItemSize.File.Unknown", false);
 
   return FutureFile(std::move(item));
 }
 
-void BlobDataBuilder::AppendFile(const FilePath& file_path,
-                                 uint64_t offset,
-                                 uint64_t length,
-                                 const base::Time& expected_modification_time) {
-  auto item = BlobDataItem::CreateFile(file_path, offset, length,
-                                       expected_modification_time,
-                                       ShareableFileReference::Get(file_path));
+void BlobDataBuilder::AppendFile(
+    const FilePath& file_path,
+    uint64_t offset,
+    uint64_t length,
+    const base::Time& expected_modification_time,
+    file_access::ScopedFileAccessDelegate::RequestFilesAccessIOCallback
+        file_access) {
+  auto item = BlobDataItem::CreateFile(
+      file_path, offset, length, expected_modification_time,
+      ShareableFileReference::Get(file_path), std::move(file_access));
   DCHECK(!item->IsFutureFileItem()) << file_path.value();
 
   auto shareable_item = base::MakeRefCounted<ShareableBlobDataItem>(
@@ -162,8 +164,6 @@ void BlobDataBuilder::AppendFile(const FilePath& file_path,
   items_.push_back(std::move(shareable_item));
 
   total_size_ += length;
-  bool unknown_size = length == blink::BlobUtils::kUnknownSize;
-  UMA_HISTOGRAM_BOOLEAN("Storage.BlobItemSize.File.Unknown", unknown_size);
 }
 
 void BlobDataBuilder::AppendBlob(const std::string& uuid,
@@ -186,14 +186,17 @@ void BlobDataBuilder::AppendBlob(const std::string& uuid,
     return;
   }
 
-  // We can't reference a blob with unknown size.
-  if (ref_entry->total_size() == blink::BlobUtils::kUnknownSize) {
+  // If we're referencing a blob with unknown size, the caller needs to provide
+  // an explicit length for how much of the blob to reference.
+  if (ref_entry->total_size() == blink::BlobUtils::kUnknownSize &&
+      length == blink::BlobUtils::kUnknownSize) {
     has_blob_errors_ = true;
     return;
   }
 
-  if (length == blink::BlobUtils::kUnknownSize)
+  if (length == blink::BlobUtils::kUnknownSize) {
     length = ref_entry->total_size() - offset;
+  }
 
   total_size_ += length;
 
@@ -215,6 +218,24 @@ void BlobDataBuilder::AppendBlob(const std::string& uuid,
   if (!base::CheckAdd(offset, length).AssignIfValid(&end_byte) ||
       end_byte > ref_entry->total_size()) {
     has_blob_errors_ = true;
+    return;
+  }
+
+  // If `ref_entry` is a blob with unknown size it must always consist of a
+  // single file item, and as such we can just add a reference to the same file.
+  if (ref_entry->total_size() == blink::BlobUtils::kUnknownSize) {
+    CHECK_EQ(ref_entry->items().size(), 1u);
+    const scoped_refptr<BlobDataItem>& source_item =
+        ref_entry->items()[0]->item();
+    CHECK_EQ(source_item->type(), BlobDataItem::Type::kFile);
+    CHECK(!source_item->IsFutureFileItem());
+
+    items_.push_back(base::MakeRefCounted<ShareableBlobDataItem>(
+        BlobDataItem::CreateFile(
+            source_item->path(), source_item->offset() + offset, length,
+            source_item->expected_modification_time(), source_item->file_ref_,
+            source_item->file_access_),
+        ShareableBlobDataItem::POPULATED_WITHOUT_QUOTA));
     return;
   }
 
@@ -241,7 +262,7 @@ void BlobDataBuilder::SliceBlob(const BlobEntry* source,
         source_items[item_index]->item();
     uint64_t source_length = source_item->length();
     BlobDataItem::Type type = source_item->type();
-    DCHECK_NE(source_length, std::numeric_limits<uint64_t>::max());
+    DCHECK_NE(source_length, blink::BlobUtils::kUnknownSize);
     DCHECK_NE(source_length, 0ull);
 
     uint64_t read_size =
@@ -249,7 +270,6 @@ void BlobDataBuilder::SliceBlob(const BlobEntry* source,
     total_sliced += read_size;
 
     bool reusing_blob_item = (read_size == source_length);
-    UMA_HISTOGRAM_BOOLEAN("Storage.Blob.ReusedItem", reusing_blob_item);
     if (reusing_blob_item) {
       // We can share the entire item.
       items_.push_back(source_items[item_index]);
@@ -282,7 +302,8 @@ void BlobDataBuilder::SliceBlob(const BlobEntry* source,
       case BlobDataItem::Type::kFile: {
         data_item = BlobDataItem::CreateFile(
             source_item->path(), source_item->offset() + item_offset, read_size,
-            source_item->expected_modification_time(), source_item->file_ref_);
+            source_item->expected_modification_time(), source_item->file_ref_,
+            source_item->file_access_);
 
         if (source_item->IsFutureFileItem()) {
           // The source file isn't a real file yet (path is fake), so store the
@@ -295,7 +316,7 @@ void BlobDataBuilder::SliceBlob(const BlobEntry* source,
         data_item = BlobDataItem::CreateFileFilesystem(
             source_item->filesystem_url(), source_item->offset() + item_offset,
             read_size, source_item->expected_modification_time(),
-            source_item->file_system_context());
+            source_item->file_system_context(), source_item->file_access_);
         break;
       }
       case BlobDataItem::Type::kReadableDataHandle: {
@@ -325,11 +346,13 @@ void BlobDataBuilder::AppendFileSystemFile(
     uint64_t offset,
     uint64_t length,
     const base::Time& expected_modification_time,
-    scoped_refptr<FileSystemContext> file_system_context) {
+    scoped_refptr<FileSystemContext> file_system_context,
+    file_access::ScopedFileAccessDelegate::RequestFilesAccessIOCallback
+        file_access) {
   DCHECK_GT(length, 0ul);
   auto item = BlobDataItem::CreateFileFilesystem(
       url, offset, length, expected_modification_time,
-      std::move(file_system_context));
+      std::move(file_system_context), std::move(file_access));
 
   auto shareable_item = base::MakeRefCounted<ShareableBlobDataItem>(
       std::move(item), ShareableBlobDataItem::POPULATED_WITHOUT_QUOTA);

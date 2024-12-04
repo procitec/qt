@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,14 +7,14 @@
 
 #include <vector>
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/gfx/vsync_provider.h"
 #include "ui/ozone/public/swap_completion_callback.h"
 
 namespace gfx {
 class ColorSpace;
-}
+}  // namespace gfx
 
 namespace ui {
 
@@ -24,6 +24,10 @@ struct DrmOverlayPlane;
 class DrmWindowProxy {
  public:
   DrmWindowProxy(gfx::AcceleratedWidget widget, DrmThread* drm_thread);
+
+  DrmWindowProxy(const DrmWindowProxy&) = delete;
+  DrmWindowProxy& operator=(const DrmWindowProxy&) = delete;
+
   ~DrmWindowProxy();
 
   gfx::AcceleratedWidget widget() const { return widget_; }
@@ -39,9 +43,7 @@ class DrmWindowProxy {
  private:
   const gfx::AcceleratedWidget widget_;
 
-  DrmThread* const drm_thread_;
-
-  DISALLOW_COPY_AND_ASSIGN(DrmWindowProxy);
+  const raw_ptr<DrmThread> drm_thread_;
 };
 
 }  // namespace ui

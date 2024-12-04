@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,11 +10,11 @@
 #include <string>
 #include <utility>
 
-#include "base/bind.h"
 #include "base/command_line.h"
-#include "base/optional.h"
+#include "base/functional/bind.h"
+#include "base/memory/raw_ptr.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/test/task_environment.h"
-#include "base/threading/sequenced_task_runner_handle.h"
 #include "crypto/aead.h"
 #include "device/bluetooth/test/bluetooth_test.h"
 #include "device/bluetooth/test/mock_bluetooth_adapter.h"
@@ -23,6 +23,7 @@
 #include "device/fido/test_callback_receiver.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace device {
 
@@ -32,7 +33,7 @@ using ::testing::_;
 using ::testing::Invoke;
 using ::testing::Test;
 using TestDeviceCallbackReceiver =
-    test::ValueCallbackReceiver<base::Optional<std::vector<uint8_t>>>;
+    test::ValueCallbackReceiver<absl::optional<std::vector<uint8_t>>>;
 using NiceMockBluetoothAdapter = ::testing::NiceMock<MockBluetoothAdapter>;
 
 // Sufficiently large test control point length as we are not interested
@@ -94,7 +95,7 @@ class FakeCableAuthenticator {
 
     std::string ciphertext;
     aead.Seal(
-        message, fido_parsing_utils::ConvertToStringPiece(encryption_nonce),
+        message, fido_parsing_utils::ConvertToStringView(encryption_nonce),
         std::string(1, base::strict_cast<uint8_t>(FidoBleDeviceCommand::kMsg)),
         &ciphertext);
     authenticator_counter_++;
@@ -115,8 +116,8 @@ class FakeCableAuthenticator {
 
     std::string ciphertext;
     aead.Open(
-        fido_parsing_utils::ConvertToStringPiece(message),
-        fido_parsing_utils::ConvertToStringPiece(encryption_nonce),
+        fido_parsing_utils::ConvertToStringView(message),
+        fido_parsing_utils::ConvertToStringView(encryption_nonce),
         std::string(1, base::strict_cast<uint8_t>(FidoBleDeviceCommand::kMsg)),
         &ciphertext);
     expected_client_counter_++;
@@ -167,7 +168,7 @@ class FidoCableDeviceTest : public Test {
   scoped_refptr<MockBluetoothAdapter> adapter_ =
       base::MakeRefCounted<NiceMockBluetoothAdapter>();
   FakeCableAuthenticator authenticator_;
-  MockFidoBleConnection* connection_;
+  raw_ptr<MockFidoBleConnection, DanglingUntriaged> connection_;
   std::unique_ptr<FidoCableDevice> device_;
 };
 
@@ -181,11 +182,11 @@ TEST_F(FidoCableDeviceTest, ConnectionFailureTest) {
 
 TEST_F(FidoCableDeviceTest, StaticGetIdTest) {
   std::string address = BluetoothTestBase::kTestDeviceAddress1;
-  EXPECT_EQ("ble:" + address, FidoCableDevice::GetIdForAddress(address));
+  EXPECT_EQ("ble-" + address, FidoCableDevice::GetIdForAddress(address));
 }
 
 TEST_F(FidoCableDeviceTest, GetIdTest) {
-  EXPECT_EQ(std::string("ble:") + BluetoothTestBase::kTestDeviceAddress1,
+  EXPECT_EQ(std::string("ble-") + BluetoothTestBase::kTestDeviceAddress1,
             device()->GetId());
 }
 
@@ -205,12 +206,12 @@ TEST_F(FidoCableDeviceTest, TestCaBleDeviceSendData) {
 
   EXPECT_CALL(*connection(), WriteControlPointPtr(_, _))
       .WillRepeatedly(Invoke([this](const auto& data, auto* cb) {
-        base::SequencedTaskRunnerHandle::Get()->PostTask(
+        base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
             FROM_HERE, base::BindOnce(std::move(*cb), true));
 
         const auto authenticator_reply = authenticator()->ReplyWithSameMessage(
             base::make_span(data).subspan(kCTAPFramingLength));
-        base::SequencedTaskRunnerHandle::Get()->PostTask(
+        base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
             FROM_HERE, base::BindOnce(connection()->read_callback(),
                                       ConstructSerializedOutgoingFragment(
                                           authenticator_reply)));
@@ -237,14 +238,14 @@ TEST_F(FidoCableDeviceTest, TestCableDeviceFailOnIncorrectSessionKey) {
   EXPECT_CALL(*connection(), WriteControlPointPtr(_, _))
       .WillOnce(Invoke([this, &kIncorrectSessionKey](const auto& data,
                                                      auto* cb) {
-        base::SequencedTaskRunnerHandle::Get()->PostTask(
+        base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
             FROM_HERE, base::BindOnce(std::move(*cb), true));
 
         authenticator()->SetSessionKey(kIncorrectSessionKey);
         const auto authenticator_reply = authenticator()->ReplyWithSameMessage(
             base::make_span(data).subspan(kCTAPFramingLength));
 
-        base::SequencedTaskRunnerHandle::Get()->PostTask(
+        base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
             FROM_HERE, base::BindOnce(connection()->read_callback(),
                                       ConstructSerializedOutgoingFragment(
                                           authenticator_reply)));
@@ -265,7 +266,7 @@ TEST_F(FidoCableDeviceTest, TestCableDeviceFailOnUnexpectedCounter) {
 
   EXPECT_CALL(*connection(), WriteControlPointPtr(_, _))
       .WillOnce(Invoke([this](const auto& data, auto* cb) {
-        base::SequencedTaskRunnerHandle::Get()->PostTask(
+        base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
             FROM_HERE, base::BindOnce(std::move(*cb), true));
 
         authenticator()->SetAuthenticatorCounter(
@@ -273,7 +274,7 @@ TEST_F(FidoCableDeviceTest, TestCableDeviceFailOnUnexpectedCounter) {
         const auto authenticator_reply = authenticator()->ReplyWithSameMessage(
             base::make_span(data).subspan(kCTAPFramingLength));
 
-        base::SequencedTaskRunnerHandle::Get()->PostTask(
+        base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
             FROM_HERE, base::BindOnce(connection()->read_callback(),
                                       ConstructSerializedOutgoingFragment(
                                           authenticator_reply)));
@@ -298,14 +299,14 @@ TEST_F(FidoCableDeviceTest, TestCableDeviceErrorOnMaxCounter) {
 
   EXPECT_CALL(*connection(), WriteControlPointPtr(_, _))
       .WillOnce(Invoke([this](const auto& data, auto* cb) {
-        base::SequencedTaskRunnerHandle::Get()->PostTask(
+        base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
             FROM_HERE, base::BindOnce(std::move(*cb), true));
 
         authenticator()->SetAuthenticatorCounter(kInvalidCounter);
         const auto authenticator_reply = authenticator()->ReplyWithSameMessage(
             base::make_span(data).subspan(kCTAPFramingLength));
 
-        base::SequencedTaskRunnerHandle::Get()->PostTask(
+        base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
             FROM_HERE, base::BindOnce(connection()->read_callback(),
                                       ConstructSerializedOutgoingFragment(
                                           authenticator_reply)));

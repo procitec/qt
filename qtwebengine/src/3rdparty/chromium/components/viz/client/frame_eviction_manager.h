@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,12 +9,21 @@
 
 #include <list>
 #include <map>
+#include <memory>
+#include <utility>
 
-#include "base/macros.h"
+#include "base/gtest_prod_util.h"
 #include "base/memory/memory_pressure_listener.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/singleton.h"
-#include "base/optional.h"
+#include "base/task/single_thread_task_runner.h"
+#include "base/time/default_tick_clock.h"
+#include "base/time/tick_clock.h"
+#include "base/timer/timer.h"
+#include "base/trace_event/memory_dump_provider.h"
+#include "base/trace_event/memory_dump_request_args.h"
 #include "components/viz/client/viz_client_export.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace viz {
 
@@ -30,19 +39,24 @@ class FrameEvictionManagerClient {
 // between a small set of tabs faster. The limit is a soft limit, because
 // clients can lock their frame to prevent it from being discarded, e.g. if the
 // tab is visible, or while capturing a screenshot.
-class VIZ_CLIENT_EXPORT FrameEvictionManager {
+class VIZ_CLIENT_EXPORT FrameEvictionManager
+    : public base::trace_event::MemoryDumpProvider {
  public:
   // Pauses frame eviction within its scope.
   class VIZ_CLIENT_EXPORT ScopedPause {
    public:
     ScopedPause();
-    ~ScopedPause();
 
-   private:
-    DISALLOW_COPY_AND_ASSIGN(ScopedPause);
+    ScopedPause(const ScopedPause&) = delete;
+    ScopedPause& operator=(const ScopedPause&) = delete;
+
+    ~ScopedPause();
   };
 
   static FrameEvictionManager* GetInstance();
+
+  FrameEvictionManager(const FrameEvictionManager&) = delete;
+  FrameEvictionManager& operator=(const FrameEvictionManager&) = delete;
 
   void AddFrame(FrameEvictionManagerClient*, bool locked);
   void RemoveFrame(FrameEvictionManagerClient*);
@@ -64,13 +78,21 @@ class VIZ_CLIENT_EXPORT FrameEvictionManager {
   // Purges all unlocked frames, allowing us to reclaim resources.
   void PurgeAllUnlockedFrames();
 
+  // Chosen arbitrarily, didn't show regressions in metrics during a field trial
+  // in 2023. Should ideally be higher than a common time to switch between
+  // tabs. The reasoning is that if a tab isn't switched to in this delay, then
+  // it's unlikeky to soon be.
+  static constexpr base::TimeDelta kPeriodicCullingDelay = base::Minutes(5);
+
  private:
   friend struct base::DefaultSingletonTraits<FrameEvictionManager>;
+  FRIEND_TEST_ALL_PREFIXES(FrameEvictionManagerTest, PeriodicCulling);
 
   FrameEvictionManager();
-  ~FrameEvictionManager();
+  ~FrameEvictionManager() override;
 
   void CullUnlockedFrames(size_t saved_frame_limit);
+  void CullOldUnlockedFrames();
 
   void PurgeMemory(int percentage);
 
@@ -78,21 +100,35 @@ class VIZ_CLIENT_EXPORT FrameEvictionManager {
   void Pause();
   void Unpause();
 
+  void RegisterUnlockedFrame(FrameEvictionManagerClient* frame);
+
+  // Inject mock versions for testing.
+  void SetOverridesForTesting(
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner,
+      const base::TickClock* clock);
+
+  bool OnMemoryDump(const base::trace_event::MemoryDumpArgs& args,
+                    base::trace_event::ProcessMemoryDump* pmd) override;
+
   // Listens for system under pressure notifications and adjusts number of
   // cached frames accordingly.
   std::unique_ptr<base::MemoryPressureListener> memory_pressure_listener_;
 
   std::map<FrameEvictionManagerClient*, size_t> locked_frames_;
-  std::list<FrameEvictionManagerClient*> unlocked_frames_;
+  // {FrameEvictionManagerClient, Last Unlock() time}, ordered with the most
+  // recent first.
+  std::list<std::pair<FrameEvictionManagerClient*, base::TimeTicks>>
+      unlocked_frames_;
   size_t max_number_of_saved_frames_;
 
   // Counter of the outstanding pauses.
   int pause_count_ = 0;
 
   // Argument of the last CullUnlockedFrames call while paused.
-  base::Optional<size_t> pending_unlocked_frame_limit_;
+  absl::optional<size_t> pending_unlocked_frame_limit_;
 
-  DISALLOW_COPY_AND_ASSIGN(FrameEvictionManager);
+  base::RepeatingTimer idle_frames_culling_timer_;
+  raw_ptr<const base::TickClock> clock_ = base::DefaultTickClock::GetInstance();
 };
 
 }  // namespace viz

@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -18,6 +18,7 @@ enum class Error {
   UPDATE_CHECK_ERROR = 5,
   CRX_NOT_FOUND = 6,
   INVALID_ARGUMENT = 7,
+  BAD_CRX_DATA_CALLBACK = 8,
   MAX_VALUE,
 };
 
@@ -43,6 +44,13 @@ enum class CrxDownloaderError {
   // The Windows BITS queue contains to many update client jobs. The value is
   // chosen so that it can be reported as a custom COM error on this platform.
   BITS_TOO_MANY_JOBS = 0x0200,
+  // Errors 11XX are reserved for Mac background downloader errors.
+  MAC_BG_CANNOT_CREATE_DOWNLOAD_CACHE = 1101,
+  MAC_BG_MOVE_TO_CACHE_FAIL = 1102,
+  MAC_BG_MISSING_COMPLETION_DATA = 1103,
+  MAC_BG_DUPLICATE_DOWNLOAD = 1104,
+  MAC_BG_SESSION_INVALIDATED = 1105,
+  MAC_BG_SESSION_TOO_MANY_TASKS = 1106,
   GENERIC_ERROR = -1
 };
 
@@ -67,9 +75,13 @@ enum class UnpackerError {
   kDeltaPatchProcessFailure = 15,
   kDeltaMissingExistingFile = 16,
   // kFingerprintWriteFailed = 17,    // Deprecated. Don't use.
+  kPuffinMissingPreviousCrx = 18,
+  kFailedToAddToCache = 19,
+  kFailedToCreateCacheDir = 20,
+  kCrxCacheNotProvided = 21,
 };
 
-// These errors are returned with the |kService| error category and
+// These errors are returned with the |kInstall| error category and
 // are returned by the component installers.
 enum class InstallError {
   NONE = 0,
@@ -84,6 +96,8 @@ enum class InstallError {
   CLEAN_INSTALL_DIR_FAILED = 15,
   INSTALL_VERIFICATION_FAILED = 16,
   MISSING_INSTALL_PARAMS = 17,
+  // If LaunchProcess is attempted on unsupported non-desktop skus e.g. xbox
+  LAUNCH_PROCESS_FAILED = 18,
   CUSTOM_ERROR_BASE = 100,  // Specific installer errors go above this value.
 };
 
@@ -93,6 +107,11 @@ enum class ServiceError {
   NONE = 0,
   SERVICE_WAIT_FAILED = 1,
   UPDATE_DISABLED = 2,
+  CANCELLED = 3,
+
+  // Returned when a `CheckForUpdate` call is made, the server returns a
+  // update response indicating an update is available, and updates are enabled.
+  CHECK_FOR_UPDATE_ONLY = 4,
 };
 
 // These errors are related to serialization, deserialization, and parsing of
@@ -112,6 +131,11 @@ enum class ProtocolError : int {
   UNKNOWN_APPLICATION = -10006,
   RESTRICTED_APPLICATION = -10007,
   INVALID_APPID = -10008,
+  OS_NOT_SUPPORTED = -10009,
+  HW_NOT_SUPPORTED = -10010,
+  NO_HASH = -10011,
+  UNSUPPORTED_PROTOCOL = -10012,
+  INTERNAL = -10013,
 };
 
 }  // namespace update_client

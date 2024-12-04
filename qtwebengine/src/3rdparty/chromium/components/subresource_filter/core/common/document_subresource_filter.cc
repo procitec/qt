@@ -1,9 +1,10 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/subresource_filter/core/common/document_subresource_filter.h"
 
+#include <memory>
 #include <utility>
 
 #include "base/check_op.h"
@@ -23,11 +24,13 @@ DocumentSubresourceFilter::DocumentSubresourceFilter(
     scoped_refptr<const MemoryMappedRuleset> ruleset)
     : activation_state_(activation_state),
       ruleset_(std::move(ruleset)),
-      ruleset_matcher_(ruleset_->data(), ruleset_->length()) {
+      ruleset_matcher_(ruleset_->data()) {
   DCHECK_NE(activation_state_.activation_level,
             mojom::ActivationLevel::kDisabled);
-  if (!activation_state_.filtering_disabled_for_document)
-    document_origin_.reset(new FirstPartyOrigin(std::move(document_origin)));
+  if (!activation_state_.filtering_disabled_for_document) {
+    document_origin_ =
+        std::make_unique<FirstPartyOrigin>(std::move(document_origin));
+  }
 }
 
 DocumentSubresourceFilter::~DocumentSubresourceFilter() = default;

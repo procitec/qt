@@ -1,56 +1,13 @@
-/****************************************************************************
-**
-** Copyright (C) 2020 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the test suite of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:BSD$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** BSD License Usage
-** Alternatively, you may use this file under the terms of the BSD license
-** as follows:
-**
-** "Redistribution and use in source and binary forms, with or without
-** modification, are permitted provided that the following conditions are
-** met:
-**   * Redistributions of source code must retain the above copyright
-**     notice, this list of conditions and the following disclaimer.
-**   * Redistributions in binary form must reproduce the above copyright
-**     notice, this list of conditions and the following disclaimer in
-**     the documentation and/or other materials provided with the
-**     distribution.
-**   * Neither the name of The Qt Company Ltd nor the names of its
-**     contributors may be used to endorse or promote products derived
-**     from this software without specific prior written permission.
-**
-**
-** THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-** "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-** LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-** A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-** OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-** SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-** LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-** DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-** THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-** (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-** OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE."
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2020 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
-import QtQuick 2.2
-import QtTest 1.0
-import QtQuick.Layouts 1.0
+import QtQuick
+import QtTest
+import QtQuick.Controls
+import QtQuick.Layouts
+import "LayoutHelperLibrary.js" as LayoutHelpers
+
+import org.qtproject.Test
 
 Item {
     id: container
@@ -68,11 +25,30 @@ Item {
             return [item.x, item.y, item.width, item.height];
         }
 
+        function cleanup() {
+            if (LayoutSetup.useDefaultSizePolicy) {
+                LayoutSetup.useDefaultSizePolicy = false
+                compare(LayoutSetup.useDefaultSizePolicy, false)
+            }
+        }
+
         Component {
             id: rectangle_Component
             Rectangle {
                 width: 100
                 height: 50
+            }
+        }
+
+        Component {
+            id: layout_rowLayout_Component
+            RowLayout {
+            }
+        }
+
+        Component {
+            id: layout_columnLayout_Component
+            ColumnLayout {
             }
         }
 
@@ -126,7 +102,7 @@ Item {
 
         function test_warnAboutLayoutItemsWithAnchors()
         {
-            var regex = new RegExp("QML Item: Detected anchors on an item that is managed by a layout. "
+            var regex = new RegExp(".*: Detected anchors on an item that is managed by a layout. "
                                  + "This is undefined behavior; use Layout.alignment instead.")
             for (var i = 0; i < 7; ++i) {
                 ignoreWarning(regex)
@@ -322,11 +298,12 @@ Item {
             compare(row.implicitHeight, 6);
             var r2 = row.children[2]
             r2.implicitWidth = 20
-            verify(waitForRendering(row))
+            waitForItemPolished(row)
             compare(row.implicitWidth, 50 + 10 + 20)
             var r3 = rectangle_Component.createObject(container)
             r3.implicitWidth = 30
             r3.parent = row
+            waitForItemPolished(row)
             compare(row.implicitWidth, 50 + 10 + 20 + 30)
             row.destroy()
         }
@@ -443,12 +420,14 @@ Item {
             compare(layout.implicitHeight, 0)
 
             var rect0 = layoutItem_Component.createObject(layout)
+            waitForItemPolished(layout)
             compare(layout.implicitWidth, 20)
             compare(layout.implicitHeight, 20)
 
             var rect1 = layoutItem_Component.createObject(layout)
             rect1.Layout.preferredWidth = 30;
             rect1.Layout.preferredHeight = 30;
+            waitForItemPolished(layout)
             compare(layout.implicitWidth, 50)
             compare(layout.implicitHeight, 30)
 
@@ -458,25 +437,30 @@ Item {
             var rect3 = layoutItem_Component.createObject(col)
             rect3.Layout.fillHeight = true
 
+            waitForItemPolished(layout)
             compare(layout.implicitWidth, 70)
             compare(col.implicitHeight, 40)
             compare(layout.implicitHeight, 40)
 
             rect3.destroy()
             wait(0)     // this will hopefully effectuate the destruction of the object
+            waitForItemPolished(layout)
 
             col.destroy()
             wait(0)
+            waitForItemPolished(layout)
             compare(layout.implicitWidth, 50)
             compare(layout.implicitHeight, 30)
 
             rect0.destroy()
             wait(0)
+            waitForItemPolished(layout)
             compare(layout.implicitWidth, 30)
             compare(layout.implicitHeight, 30)
 
             rect1.destroy()
             wait(0)
+            waitForItemPolished(layout)
             compare(layout.implicitWidth, 0)
             compare(layout.implicitHeight, 0)
         }
@@ -523,7 +507,7 @@ Item {
             var layout = layout_alignment_Component.createObject(container);
             layout.width = 100;
             layout.height = 40;
-
+            waitForItemPolished(layout)
             compare(itemRect(layout.children[0]), [ 0,  0, 20, 40]);
             compare(itemRect(layout.children[1]), [20, 10, 20, 20]);
             compare(itemRect(layout.children[2]), [40,  0, 20, 20]);
@@ -531,6 +515,102 @@ Item {
             compare(itemRect(layout.children[4]), [80, 20, 20, 20]);
             layout.destroy();
         }
+
+
+        function buildLayout(layout, arrLayoutData) {
+            for (let i = 0; i < arrLayoutData.length; i++) {
+                let layoutItemDesc = arrLayoutData[i]
+                let rect = layoutItem_Component.createObject(layout)
+                for (let keyName in layoutItemDesc) {
+                    rect.Layout[keyName] = layoutItemDesc[keyName]
+                }
+            }
+        }
+
+        function test_dynamicAlignment_data()
+        {
+            return [
+            {
+                tag: "simple",
+
+                layout: {
+                    type: "RowLayout",
+                    items: [
+                        {preferredWidth: 30, preferredHeight: 20, fillHeight: true},
+                        {preferredWidth: 30, preferredHeight: 20},
+                    ]
+                },
+                expectedGeometries: [
+                    [ 0,  0, 30, 60],
+                    [30, 20, 30, 20]
+                ]
+            },{
+                tag: "valign",
+                layout: {
+                    type: "RowLayout",
+                    items: [
+                        {preferredWidth: 12, preferredHeight: 20, fillHeight: true},
+                        {preferredWidth: 12, preferredHeight: 20},
+                        {preferredWidth: 12, preferredHeight: 20, alignment: Qt.AlignTop},
+                        {preferredWidth: 12, preferredHeight: 20, alignment: Qt.AlignVCenter},
+                        {preferredWidth: 12, preferredHeight: 20, alignment: Qt.AlignBottom}
+                    ]
+                },
+                expectedGeometries: [
+                    [ 0,  0, 12, 60],
+                    [12, 20, 12, 20],
+                    [24,  0, 12, 20],
+                    [36, 20, 12, 20],
+                    [48, 40, 12, 20]
+                ]
+            },{
+                tag: "halign",
+                layout: {
+                    type: "ColumnLayout",
+                    items: [
+                        {preferredWidth: 20, preferredHeight: 12, fillWidth: true},
+                        {preferredWidth: 20, preferredHeight: 12},
+                        {preferredWidth: 20, preferredHeight: 12, alignment: Qt.AlignLeft},
+                        {preferredWidth: 20, preferredHeight: 12, alignment: Qt.AlignHCenter},
+                        {preferredWidth: 20, preferredHeight: 12, alignment: Qt.AlignRight}
+                    ]
+                },
+                expectedGeometries: [
+                    [ 0,  0, 60, 12],
+                    [ 0, 12, 20, 12],
+                    [ 0, 24, 20, 12],
+                    [20, 36, 20, 12],
+                    [40, 48, 20, 12]
+                ]
+            }
+            ]
+        }
+
+        function test_dynamicAlignment(data)
+        {
+            let layout
+            switch (data.layout.type) {
+            case "RowLayout":
+                layout = createTemporaryObject(layout_rowLayout_Component, container)
+                break
+            case "ColumnLayout":
+                layout = createTemporaryObject(layout_columnLayout_Component, container)
+                break
+            default:
+                console.log("data.layout.type not recognized(" + data.layout.type + ")")
+            }
+            layout.spacing = 0
+            buildLayout(layout, data.layout.items)
+            layout.width = 60
+            layout.height = 60      // divides in 1/2/3/4/5/6
+            waitForItemPolished(layout)
+
+            for (let i = 0; i < layout.children.length; ++i) {
+                let itm = layout.children[i]
+                compare(itemRect(itm), data.expectedGeometries[i])
+            }
+        }
+
 
         Component {
             id: layout_sizeHintNormalization_Component
@@ -580,7 +660,7 @@ Item {
             layout.children[0].Layout.minimumWidth = data.widthHints[0];
             layout.children[0].Layout.preferredWidth = data.widthHints[1];
             layout.children[0].Layout.maximumWidth = data.widthHints[2];
-            wait(0);    // Trigger processEvents() (allow LayoutRequest to be processed)
+            waitForItemPolished(layout)
             var normalizedResult = [layout.Layout.minimumWidth, layout.implicitWidth, layout.Layout.maximumWidth]
             compare(normalizedResult, data.expected);
             layout.destroy();
@@ -667,6 +747,7 @@ Item {
             child.Layout.preferredWidth = data.childHints[1]
             child.Layout.maximumWidth = data.childHints[2]
 
+            waitForItemPolished(layout)
             var effectiveSizeHintResult = [layout.Layout.minimumWidth, layout.implicitWidth, layout.Layout.maximumWidth]
             compare(effectiveSizeHintResult, data.expected)
             layout.destroy()
@@ -677,38 +758,49 @@ Item {
             var child = layout.children[0].children[0]
 
             child.Layout.minimumWidth = -1
+            waitForItemPolished(layout)
             compare(itemSizeHints(layout), [0, 2, 3])
             child.Layout.preferredWidth = -1
+            waitForItemPolished(layout)
             compare(itemSizeHints(layout), [0, 1, 3])
             child.Layout.maximumWidth = -1
+            waitForItemPolished(layout)
             compare(itemSizeHints(layout), [0, 1, Number.POSITIVE_INFINITY])
             layout.Layout.maximumWidth = 1000
+            waitForItemPolished(layout)
             compare(itemSizeHints(layout), [0, 1, 1000])
             layout.Layout.maximumWidth = -1
+            waitForItemPolished(layout)
             compare(itemSizeHints(layout), [0, 1, Number.POSITIVE_INFINITY])
 
             layout.implicitWidthChangedCount = 0
             child.Layout.minimumWidth = 10
+            waitForItemPolished(layout)
             compare(itemSizeHints(layout), [10, 10, Number.POSITIVE_INFINITY])
             compare(layout.implicitWidthChangedCount, 1)
 
             child.Layout.preferredWidth = 20
+            waitForItemPolished(layout)
             compare(itemSizeHints(layout), [10, 20, Number.POSITIVE_INFINITY])
             compare(layout.implicitWidthChangedCount, 2)
 
             child.Layout.maximumWidth = 30
+            waitForItemPolished(layout)
             compare(itemSizeHints(layout), [10, 20, 30])
             compare(layout.implicitWidthChangedCount, 2)
 
             child.Layout.maximumWidth = 15
+            waitForItemPolished(layout)
             compare(itemSizeHints(layout), [10, 15, 15])
             compare(layout.implicitWidthChangedCount, 3)
 
             child.Layout.maximumWidth = 30
+            waitForItemPolished(layout)
             compare(itemSizeHints(layout), [10, 20, 30])
             compare(layout.implicitWidthChangedCount, 4)
 
             layout.Layout.maximumWidth = 29
+            waitForItemPolished(layout)
             compare(layout.Layout.maximumWidth, 29)
             layout.Layout.maximumWidth = -1
             compare(layout.Layout.maximumWidth, 30)
@@ -769,17 +861,11 @@ Item {
             var r = layout.children[0]
             r.Layout.preferredWidth = 20
             r.Layout.preferredHeight = 30
+            waitForItemPolished(layout)
             compare(layout.implicitWidth, 20)
             compare(layout.implicitHeight, 30)
 
             layout.destroy();
-        }
-
-
-        Component {
-            id: layout_rowLayout_Component
-            RowLayout {
-            }
         }
 
         function test_stretchItem_data()
@@ -816,13 +902,222 @@ Item {
                 r.Layout.minimumWidth = data.minimumWidth
             if (data.maximumWidth !== undefined)
                 r.Layout.maximumWidth = data.maximumWidth
-
+            waitForItemPolished(layout)
             layout.width = 100
 
             compare(r.width, data.expectedWidth)
 
             layout.destroy();
         }
+
+        function test_distribution_data()
+        {
+            return [
+                {
+                  tag: "one",
+                  layout: {
+                    type: "RowLayout",
+                    items: [
+                        {minimumWidth:  1, preferredWidth: 10, maximumWidth: 20, fillWidth: true},
+                        {minimumWidth:  1, preferredWidth:  4, maximumWidth: 10, fillWidth: true},
+                    ]
+                  },
+                  layoutWidth:     28,
+                  expectedWidths: [20, 8]
+                },{
+                  tag: "two",
+                  layout: {
+                    type: "RowLayout",
+                    items: [
+                        {minimumWidth:  1, preferredWidth: 10, horizontalStretchFactor: 4, fillWidth: true},
+                        {minimumWidth:  1, preferredWidth: 4,  horizontalStretchFactor: 1, fillWidth: true},
+                      ]
+                  },
+                  layoutWidth:     28,
+                  expectedWidths: [22, 6]
+                },{
+                    tag: "resize_to_0_width",
+                    layout: {
+                      type: "RowLayout",
+                      items: [
+                          {preferredWidth: 10, fillWidth: true},
+                        ]
+                    },
+                    layoutWidth:     0,
+                    expectedWidths: [0]
+                },{
+                  tag: "preferred_infinity",    // Do not crash/assert when the preferred size is infinity
+                  layout: {
+                    type: "RowLayout",
+                    items: [
+                        {minimumWidth:  10, preferredWidth: Number.POSITIVE_INFINITY, fillWidth: true},
+                        {minimumWidth:  20, preferredWidth: Number.POSITIVE_INFINITY, fillWidth: true},
+                      ]
+                  },
+                  layoutWidth:     31,      // Important that this is between minimum and preferred width of the layout.
+                  expectedWidths: [10, 21]  // The result here does not have to be exact. (This
+                                            // test is mostly concerned about not crashing).
+                }
+            ];
+        }
+
+        function test_distribution(data)
+        {
+            var layout = layout_rowLayout_Component.createObject(container)
+            layout.spacing = 0
+            buildLayout(layout, data.layout.items)
+            waitForPolish(layout)
+            layout.width = data.layoutWidth
+
+            let actualWidths = []
+            for (let i = 0; i < layout.children.length; i++) {
+                actualWidths.push(layout.children[i].width)
+            }
+            compare(actualWidths, data.expectedWidths)
+            layout.destroy();
+        }
+
+        function test_uniformCellSizes_data()
+        {
+            return [
+                {
+                  tag: "hor 9/3",
+                  layout: {
+                    type: "RowLayout",
+                    items: [
+                        {minimumWidth:  1, preferredWidth: 10, maximumWidth: 20, fillWidth: true},
+                        {minimumWidth:  1, preferredWidth:  4, maximumWidth: 10, fillWidth: true},
+                        {minimumWidth:  1, preferredWidth: 50, maximumWidth: 99, fillWidth: true}
+                    ]
+                  },
+                  layoutWidth:     9,
+                  expectedWidths: [3, 3, 3],
+                  expectedPositions: [0, 3, 6]
+                },
+                {
+                  tag: "hor 30/3",
+                  layout: {
+                    type: "RowLayout",
+                    items: [
+                        {minimumWidth:  1, preferredWidth: 10, maximumWidth: 20, fillWidth: true},
+                        {minimumWidth:  1, preferredWidth:  4, maximumWidth: 10, fillWidth: true},
+                        {minimumWidth:  1, preferredWidth: 50, maximumWidth: 99, fillWidth: true}
+                    ]
+                  },
+                  layoutWidth:     30,
+                  expectedWidths: [10, 10, 10]
+                },
+                {
+                  tag: "hor 60/3",
+                  layout: {
+                    type: "RowLayout",
+                    items: [
+                        {minimumWidth:  1, preferredWidth: 10, maximumWidth: 20, fillWidth: true},
+                        {minimumWidth:  1, preferredWidth:  4, maximumWidth: 10, fillWidth: true},
+                        {minimumWidth:  1, preferredWidth: 50, maximumWidth: 99, fillWidth: true}
+                    ]
+                  },
+                  layoutWidth:     60,
+                  expectedWidths: [20, 10, 20],     // We are beyond the maximumWidth. of the middle item,
+                  expectedPositions: [0, 20, 40]    // check that *cellSize* is still uniform
+                                                    // (middle item will be left-aligned in the cell by default)
+                },
+                {
+                  tag: "hor 66/3",
+                  layout: {
+                    type: "RowLayout",
+                    items: [
+                        {minimumWidth:  1, preferredWidth: 10, maximumWidth: 20, fillWidth: true},
+                        {minimumWidth:  1, preferredWidth:  4, maximumWidth: 10, fillWidth: true},
+                        {minimumWidth:  1, preferredWidth: 50, maximumWidth: 99, fillWidth: true}
+                    ]
+                  },
+                  layoutWidth:     66,
+                  expectedWidths: [20, 10, 22],
+                  expectedPositions: [0, 22, 44]
+                },
+                {
+                  tag: "ver 66/3",
+                  layout: {
+                    type: "ColumnLayout",
+                    items: [
+                        {minimumHeight:  1, preferredHeight: 10, maximumHeight: 20, fillHeight: true},
+                        {minimumHeight:  1, preferredHeight:  4, maximumHeight: 10, fillHeight: true},
+                        {minimumHeight:  1, preferredHeight: 50, maximumHeight: 99, fillHeight: true}
+                    ]
+                  },
+                  layoutHeight:     66,
+                  expectedHeights: [20, 10, 22],
+                    // If items are too small to fit the cell, they have a default alignment of
+                    // Qt::AlignLeft | Qt::AlignVCenter
+                  expectedPositions: [1, 22+6, 44]
+                }
+            ];
+        }
+
+        function test_uniformCellSizes(data)
+        {
+            let layout = LayoutHelpers.buildLayout(data.layout, testCase)
+            let isHorizontal = data.hasOwnProperty("expectedWidths")
+            layout.spacing = 0
+            layout.uniformCellSizes = true
+            waitForPolish(layout)
+            if (data.hasOwnProperty('layoutWidth')) {
+                layout.width = data.layoutWidth
+            }
+            if (data.hasOwnProperty('layoutHeight')) {
+                layout.height = data.layoutHeight
+            }
+
+            let expectedSizes = (isHorizontal ? data.expectedWidths : data.expectedHeights)
+            let actualSizes = []
+            let i = 0
+            for (i = 0; i < layout.children.length; i++) {
+                let item = layout.children[i]
+                actualSizes.push(isHorizontal ? item.width : item.height)
+            }
+            compare(actualSizes, expectedSizes)
+
+            if (data.hasOwnProperty('expectedPositions')) {
+                let actualPositions = []
+                for (i = 0; i < layout.children.length; i++) {
+                    let item = layout.children[i]
+                    actualPositions.push(isHorizontal ? item.x : item.y)
+                }
+                compare(actualPositions, data.expectedPositions)
+            }
+        }
+
+        Component {
+            id: uniformCellSizes_QML_Component
+            RowLayout {
+                spacing: 0
+                uniformCellSizes: true
+                Rectangle {
+                    implicitWidth: 1
+                    Layout.fillHeight: true
+                    Layout.fillWidth: true
+                    color: "red"
+                }
+                Rectangle {
+                    implicitWidth: 2
+                    Layout.fillHeight: true
+                    Layout.fillWidth: true
+                    color: "blue"
+                }
+            }
+        }
+
+        function test_uniformCellSizes_QML(data)
+        {
+            var layout = createTemporaryObject(uniformCellSizes_QML_Component, testCase)
+            layout.width  = 40
+            layout.height = 20
+            let expectedWidths = [20, 20]
+            let actualWidths = [layout.children[0].width, layout.children[1].width]
+            compare(actualWidths, expectedWidths)
+        }
+
 
         Component {
             id: layout_alignToPixelGrid_Component
@@ -994,16 +1289,21 @@ Item {
             compare(grid.visible, true)     // LAYOUT SHOWN
             compare(grid.implicitWidth, 2);
             child.visible = false
+            waitForItemPolished(layout)
             compare(grid.implicitWidth, 0);
             child.visible = true
+            waitForItemPolished(layout)
             compare(grid.implicitWidth, 2);
 
             grid.visible = false            // LAYOUT HIDDEN
+            waitForItemPolished(layout)
             compare(grid.implicitWidth, 2);
             child.visible = false
             expectFail('', 'If GridLayout is hidden, GridLayout is not notified when child is explicitly hidden')
+            waitForItemPolished(grid)
             compare(grid.implicitWidth, 0);
             child.visible = true
+            waitForItemPolished(grid)
             compare(grid.implicitWidth, 2);
 
             layout.destroy();
@@ -1038,6 +1338,78 @@ Item {
             compare(row.implicitWidth, 0);
             child.visible = true
             compare(row.implicitWidth, 2);
+        }
+
+        Component {
+            id: sizeHintBindingLoopComp
+            Item {
+                id: root
+                anchors.fill: parent
+                property var customWidth: 100
+                RowLayout {
+                    id: col
+                    Item {
+                        id: item
+                        implicitHeight: 80
+                        implicitWidth: Math.max(col2.implicitWidth, root.customWidth + 20)
+                        ColumnLayout {
+                            id: col2
+                            width: parent.width
+                            Item {
+                                id: rect
+                                implicitWidth: root.customWidth
+                                implicitHeight: 80
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        function test_sizeHintBindingLoopIssue() {
+            var item = createTemporaryObject(sizeHintBindingLoopComp, container)
+            waitForRendering(item)
+            item.customWidth += 10
+            waitForRendering(item)
+            verify(!LayoutSetup.bindingLoopDetected, "Detected binding loop")
+            LayoutSetup.resetBindingLoopDetectedFlag()
+        }
+
+        Component {
+            id: polishLayoutItemComp
+            Item {
+                anchors.fill: parent
+                implicitHeight: contentLayout.implicitHeight
+                implicitWidth: contentLayout.implicitWidth
+                property alias textLayout: contentLayout
+                RowLayout {
+                    width: parent.width
+                    height: parent.height
+                    ColumnLayout {
+                        id: contentLayout
+                        Layout.alignment: Qt.AlignHCenter | Qt.AlignTop
+                        Layout.maximumWidth: 200
+                        Repeater {
+                            model: 2
+                            Text {
+                                Layout.fillWidth: true
+                                text: "This is a long text causing line breaks to show the bug."
+                                wrapMode: Text.Wrap
+                            }
+                        }
+                        Item {
+                            Layout.fillHeight: true
+                        }
+                    }
+                }
+            }
+        }
+
+        function test_polishLayoutItemIssue() {
+            var rootItem = createTemporaryObject(polishLayoutItemComp, container)
+            waitForRendering(rootItem)
+            var textItem = rootItem.textLayout.children[1]
+            verify(textItem.y >= rootItem.textLayout.children[0].height)
         }
 
         Component {
@@ -1141,6 +1513,44 @@ Item {
         }
 
         Component {
+            id: rearrangeInvalidatedChildInNestedLayout
+            ColumnLayout {
+                anchors.fill: parent
+                RowLayout {
+                    spacing: 0
+                    Text {
+                        Layout.preferredWidth: 50
+                        text: "Text Text Text"
+                        wrapMode: Text.WordWrap
+                    }
+                    Rectangle {
+                        color: "red";
+                        Layout.preferredWidth: 50
+                        Layout.preferredHeight: 20
+                    }
+                    Rectangle {
+                        color: "green"
+                        Layout.preferredHeight: 20
+                        Layout.fillWidth: true
+                    }
+                }
+            }
+        }
+
+        function test_rearrangeInvalidatedChildInNestedLayout() {
+            let layout = rearrangeInvalidatedChildInNestedLayout.createObject(container)
+            waitForRendering(layout)
+
+            let item1 = layout.children[0].children[0]
+            let item2 = layout.children[0].children[1]
+            let item3 = layout.children[0].children[2]
+
+            compare(item1.width, 50)
+            compare(item2.width, 50)
+            compare(item3.width, 100)
+        }
+
+        Component {
             id: changeChildrenOfHiddenLayout_Component
             RowLayout {
                 property int childCount: 1
@@ -1207,6 +1617,49 @@ Item {
             compare(rootRect.item1.width, 100)
         }
 
+        //---------------------------
+        // Layout with negative size
+        Component {
+            id: negativeSize_Component
+            Item {
+                id: rootItem
+                width: 0
+                height: 0
+                // default width x height: (0 x 0)
+                RowLayout {
+                    spacing: 0
+                    anchors.fill: parent
+                    anchors.leftMargin: 1   // since parent size == (0 x 0), it causes layout size
+                    anchors.bottomMargin: 1 // to become (-1, -1)
+                    Item {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                    }
+                }
+            }
+        }
+
+        function test_negativeSize() {
+            let rootItem = createTemporaryObject(negativeSize_Component, container)
+            let rowLayout = rootItem.children[0]
+            let item = rowLayout.children[0]
+
+            const arr = [7, 1, 7, 0]
+            arr.forEach((n) => {
+                                rootItem.width = n
+                                rootItem.height = n
+
+                                // n === 0 is special: It will cause the layout to have a
+                                // negative size. In this case it will simply not rearrange its
+                                // child (and leave it at its previous size, 6)
+                                const expectedItemExtent = n === 0 ? 6 : n - 1
+
+                                compare(item.width, expectedItemExtent)
+                                compare(item.height, expectedItemExtent)
+                               });
+        }
+
+
 //---------------------------
         Component {
             id: rowlayoutWithTextItems_Component
@@ -1262,13 +1715,224 @@ Item {
 
         function test_dependentWidth_QTBUG_87253()
         {
-            var warningMsg = new RegExp("Qt Quick Layouts: Detected recursive rearrange. "
-                                      + "Aborting after two iterations.")
-            for (var i = 0; i < 10; ++i) {
-                ignoreWarning(warningMsg)
-            }
             var layout = createTemporaryObject(layout_dependentWidth_QTBUG_87253_Component, container)
+            // Do not crash
             waitForRendering(layout)
+        }
+
+        //---------------------------
+        Component {
+            id: rowlayoutWithRectangle_Component
+            RowLayout {
+                property alias spy : signalSpy
+                Rectangle {
+                    color: "red"
+                    implicitWidth: 10
+                    implicitHeight: 10
+                }
+                SignalSpy {
+                    id: signalSpy
+                    target: parent
+                    signalName: "implicitWidthChanged"
+                }
+            }
+        }
+
+        // QTBUG-93988
+        function test_ensurePolished() {
+            var layout = createTemporaryObject(rowlayoutWithRectangle_Component, container)
+            compare(layout.spy.count, 1)
+            waitForRendering(layout)
+            compare(layout.implicitWidth, 10)
+            var r0 = layout.children[0]
+
+            r0.implicitWidth = 42
+            compare(layout.spy.count, 1)    // Not yet updated, awaiting PolishEvent...
+            layout.ensurePolished()
+            compare(layout.spy.count, 2)
+            compare(layout.implicitWidth, 42)
+        }
+
+        //---------------------------
+        Component {
+            id: rowlayoutCausesBindingLoop_Component
+            Item {
+                id: root
+                width: 100
+                height: 100
+                property real maxWidth : Math.max(header.implicitWidth, content.implicitWidth)
+
+                RowLayout {
+                    id: header
+                    y: 0
+
+                    Rectangle {
+                        color: "red"
+                        implicitWidth: 10
+                        implicitHeight: 10
+                    }
+                }
+                Rectangle {
+                    id: content
+                    y: 10
+                    implicitWidth: 42
+                    implicitHeight: 10
+                    color: Qt.rgba(root.maxWidth/66, 0, 1, 1)
+                }
+            }
+        }
+        function test_bindingLoop() {
+            var rootItem = createTemporaryObject(rowlayoutCausesBindingLoop_Component, container)
+            waitForRendering(rootItem)
+            var header = rootItem.children[0]
+            var content = rootItem.children[1]
+            var rect = header.children[0]
+            rect.implicitWidth = 20
+            content.implicitWidth = 66
+            waitForItemPolished(header)
+            compare(rootItem.maxWidth, 66)
+
+            // Should not trigger a binding loop
+            verify(!LayoutSetup.bindingLoopDetected, "Detected binding loop")
+            LayoutSetup.resetBindingLoopDetectedFlag()
+        }
+
+
+        //---------------------------
+        // QTBUG-111792
+        Component {
+            id: rowlayoutCrashes_Component
+            RowLayout {
+                spacing: 5
+                Rectangle {
+                    color: "red"
+                    implicitWidth: 10
+                    implicitHeight: 10
+                }
+                Rectangle {
+                    color: "green"
+                    implicitWidth: 10
+                    implicitHeight: 10
+                }
+            }
+        }
+
+        function test_dontCrashAfterDestroyingChildren_data() {
+            return [
+                        { tag: "setWidth", func: function (layout) { layout.width = 42 } },
+                        { tag: "setHeight", func: function (layout) { layout.height = 42 } },
+                        { tag: "getImplicitWidth", func: function (layout) { let x = layout.implicitWidth } },
+                        { tag: "getImplicitHeight", func: function (layout) { let x = layout.implicitHeight } },
+                    ]
+        }
+
+        function test_dontCrashAfterDestroyingChildren(data) {
+            var layout = createTemporaryObject(rowlayoutCrashes_Component, container)
+            waitForRendering(layout)
+            compare(layout.implicitWidth, 25)
+            layout.children[0].destroy()    // deleteLater()
+            wait(0)                         // process the scheduled delete and actually invoke the dtor
+            data.func(layout)               // call a function that might ultimately access the deleted item (but shouldn't)
+        }
+
+        //---------------------------
+        // Default layout size policy
+        Component {
+            id: defaultLayoutComp
+            Item {
+                id: rootItem
+                width: 110
+                height: 100
+                // Check default layout size policy
+                RowLayout {
+                    spacing: 0
+                    anchors.fill: parent
+                    // Rectangle item - SizePolicy { Horizontal: Fixed;  Vertical: Fixed }
+                    Rectangle {}
+                    // Button item - SizePolicy { Horizontal: Preferred; Vertical: Fixed }
+                    Button {}
+                    // Frame item - SizePolicy { Horizontal: Preferred; Vertical: Preferred }
+                    Frame {}
+                }
+            }
+        }
+
+        function test_defaultLayoutSize() {
+            let rootItem = createTemporaryObject(defaultLayoutComp, container)
+            waitForRendering(rootItem)
+
+            let rowLayout = rootItem.children[0]
+
+            // Test default size policy disabled by default
+            compare(LayoutSetup.useDefaultSizePolicy, false)
+
+            let defaultButtonWidth = rowLayout.children[1].width
+            let defaultFrameWidth = rowLayout.children[2].width
+
+            // Enable attached properties for items and check its size
+            {
+                rowLayout.children[0].Layout.fillWidth = true
+                rowLayout.children[0].Layout.fillHeight = true
+                rowLayout.children[1].Layout.fillWidth = true
+                rowLayout.children[1].Layout.fillHeight = true
+                rowLayout.children[2].Layout.fillWidth = true
+                rowLayout.children[2].Layout.fillHeight = true
+                waitForRendering(rowLayout)
+                let isAbovePreferred = rowLayout.width >= rowLayout.implicitWidth
+                // Removing rectangle as width & implicitWidth be zero always, which makes validation of no use
+                for (let i = 1; i < rowLayout.children.length; i++) {
+                    compare(rowLayout.children[i].width >= rowLayout.children[i].implicitWidth, isAbovePreferred)
+                    compare(rowLayout.children[i].height, rowLayout.height)
+                }
+            }
+
+            // Destroy existing object
+            rootItem.destroy()
+
+            // Enable default size policy
+            LayoutSetup.useDefaultSizePolicy = true
+            compare(LayoutSetup.useDefaultSizePolicy, true)
+            rootItem = createTemporaryObject(defaultLayoutComp, container)
+            waitForRendering(rootItem)
+            rowLayout = rootItem.children[0]
+
+            // The default size policy would stretch button and frame accordingly
+            {
+                verify(Math.abs(rowLayout.width - (rowLayout.children[0].width + rowLayout.children[1].width + rowLayout.children[2].width)) <= 1)
+                compare(rowLayout.children[1].width < rowLayout.children[2].width, rowLayout.children[1].implicitWidth < rowLayout.children[2].implicitWidth)
+                compare(rowLayout.children[1].height, rowLayout.children[1].implicitHeight)
+                compare(rowLayout.children[2].height, rowLayout.height)
+            }
+
+            // Change the width and height of the root item to see layout size change
+            // Since default size policy for button and frame are Preferred, these items should
+            // stretch
+            {
+                let szDefaultButtonWidth = rowLayout.children[1].width
+                let szDefaultFrameWidth = rowLayout.children[2].width
+
+                rootItem.width = 210
+                rootItem.height = 200
+                waitForRendering(rootItem)
+                verify(rowLayout.children[1].width > szDefaultButtonWidth)
+                compare(rowLayout.children[1].height, rowLayout.children[1].implicitHeight)
+                verify(rowLayout.children[2].width > szDefaultFrameWidth)
+                compare(rowLayout.children[2].height, rowLayout.height)
+            }
+
+            // Disable size policies through attached properties and check item size
+            {
+                rowLayout.children[1].Layout.fillWidth = false
+                rowLayout.children[2].Layout.fillWidth = false
+                rowLayout.children[2].Layout.fillHeight = false
+                waitForRendering(rowLayout)
+                compare(rowLayout.children[1].width, defaultButtonWidth)
+                compare(rowLayout.children[2].width, defaultFrameWidth)
+                for (let index = 1; index < rowLayout.children.length; index++)
+                    compare(rowLayout.children[index].height, rowLayout.children[index].implicitHeight)
+            }
+
+            rootItem.destroy()
         }
     }
 }

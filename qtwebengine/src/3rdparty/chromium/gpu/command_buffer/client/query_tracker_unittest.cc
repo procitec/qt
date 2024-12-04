@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,7 +13,6 @@
 #include <memory>
 #include <vector>
 
-#include "base/stl_util.h"
 #include "gpu/command_buffer/client/client_test_helper.h"
 #include "gpu/command_buffer/client/gles2_cmd_helper.h"
 #include "gpu/command_buffer/client/mapped_memory.h"
@@ -34,12 +33,12 @@ class QuerySyncManagerTest : public testing::Test {
       kNumCommandEntries * sizeof(CommandBufferEntry);
 
   void SetUp() override {
-    command_buffer_.reset(new MockClientCommandBuffer());
-    helper_.reset(new GLES2CmdHelper(command_buffer_.get()));
+    command_buffer_ = std::make_unique<MockClientCommandBuffer>();
+    helper_ = std::make_unique<GLES2CmdHelper>(command_buffer_.get());
     helper_->Initialize(kCommandBufferSizeBytes);
-    mapped_memory_.reset(
-        new MappedMemoryManager(helper_.get(), MappedMemoryManager::kNoLimit));
-    sync_manager_.reset(new QuerySyncManager(mapped_memory_.get()));
+    mapped_memory_ = std::make_unique<MappedMemoryManager>(
+        helper_.get(), MappedMemoryManager::kNoLimit);
+    sync_manager_ = std::make_unique<QuerySyncManager>(mapped_memory_.get());
   }
 
   void TearDown() override {
@@ -60,15 +59,15 @@ TEST_F(QuerySyncManagerTest, Basic) {
   QuerySyncManager::QueryInfo infos[4];
   memset(&infos, 0xBD, sizeof(infos));
 
-  for (size_t ii = 0; ii < base::size(infos); ++ii) {
+  for (size_t ii = 0; ii < std::size(infos); ++ii) {
     EXPECT_TRUE(sync_manager_->Alloc(&infos[ii]));
     ASSERT_TRUE(infos[ii].sync != nullptr);
-    EXPECT_EQ(0, infos[ii].sync->process_count);
-    EXPECT_EQ(0u, infos[ii].sync->result);
+    EXPECT_EQ(0, base::subtle::Atomic32{infos[ii].sync->process_count});
+    EXPECT_EQ(0u, uint64_t{infos[ii].sync->result});
     EXPECT_EQ(0, infos[ii].submit_count);
   }
 
-  for (size_t ii = 0; ii < base::size(infos); ++ii) {
+  for (size_t ii = 0; ii < std::size(infos); ++ii) {
     sync_manager_->Free(infos[ii]);
   }
 }
@@ -77,7 +76,7 @@ TEST_F(QuerySyncManagerTest, DontFree) {
   QuerySyncManager::QueryInfo infos[4];
   memset(&infos, 0xBD, sizeof(infos));
 
-  for (size_t ii = 0; ii < base::size(infos); ++ii) {
+  for (size_t ii = 0; ii < std::size(infos); ++ii) {
     EXPECT_TRUE(sync_manager_->Alloc(&infos[ii]));
   }
 }
@@ -209,12 +208,12 @@ class QueryTrackerTest : public testing::Test {
       kNumCommandEntries * sizeof(CommandBufferEntry);
 
   void SetUp() override {
-    command_buffer_.reset(new MockClientCommandBuffer());
-    helper_.reset(new GLES2CmdHelper(command_buffer_.get()));
+    command_buffer_ = std::make_unique<MockClientCommandBuffer>();
+    helper_ = std::make_unique<GLES2CmdHelper>(command_buffer_.get());
     helper_->Initialize(kCommandBufferSizeBytes);
-    mapped_memory_.reset(
-        new MappedMemoryManager(helper_.get(), MappedMemoryManager::kNoLimit));
-    query_tracker_.reset(new QueryTracker(mapped_memory_.get()));
+    mapped_memory_ = std::make_unique<MappedMemoryManager>(
+        helper_.get(), MappedMemoryManager::kNoLimit);
+    query_tracker_ = std::make_unique<QueryTracker>(mapped_memory_.get());
   }
 
   void TearDown() override {
@@ -454,5 +453,3 @@ TEST_F(QueryTrackerTest, ManyQueries) {
 
 }  // namespace gles2
 }  // namespace gpu
-
-

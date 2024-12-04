@@ -28,24 +28,35 @@
 
 #include "third_party/blink/renderer/modules/webdatabase/sqlite/sql_value.h"
 
-namespace blink {
+#include "third_party/blink/renderer/platform/bindings/script_state.h"
+#include "third_party/blink/renderer/platform/bindings/v8_binding.h"
 
-SQLValue::SQLValue(const SQLValue& val)
-    : type_(val.type_),
-      number_(val.number_),
-      string_(val.string_.IsolatedCopy()) {}
+namespace blink {
 
 String SQLValue::GetString() const {
   DCHECK_EQ(type_, kStringValue);
 
-  // Must return a copy since ref-shared Strings are not thread safe
-  return string_.IsolatedCopy();
+  return string_;
 }
 
 double SQLValue::Number() const {
   DCHECK_EQ(type_, kNumberValue);
 
   return number_;
+}
+
+v8::Local<v8::Value> SQLValue::ToV8(ScriptState* script_state) const {
+  v8::Isolate* isolate = script_state->GetIsolate();
+  switch (GetType()) {
+    case SQLValue::kNullValue:
+      return v8::Null(isolate);
+    case SQLValue::kNumberValue:
+      return v8::Number::New(isolate, Number());
+    case SQLValue::kStringValue:
+      return V8String(isolate, GetString());
+  }
+  NOTREACHED();
+  return v8::Local<v8::Value>();
 }
 
 }  // namespace blink

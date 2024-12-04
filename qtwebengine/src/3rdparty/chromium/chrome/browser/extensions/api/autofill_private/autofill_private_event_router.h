@@ -1,11 +1,11 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef CHROME_BROWSER_EXTENSIONS_API_AUTOFILL_PRIVATE_AUTOFILL_PRIVATE_EVENT_ROUTER_H_
 #define CHROME_BROWSER_EXTENSIONS_API_AUTOFILL_PRIVATE_AUTOFILL_PRIVATE_EVENT_ROUTER_H_
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "components/autofill/core/browser/personal_data_manager_observer.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "extensions/browser/event_router.h"
@@ -27,27 +27,35 @@ class AutofillPrivateEventRouter :
     public EventRouter::Observer,
     public autofill::PersonalDataManagerObserver {
  public:
-  static AutofillPrivateEventRouter* Create(
-      content::BrowserContext* browser_context);
-  ~AutofillPrivateEventRouter() override;
+  // Uses AutofillPrivateEventRouterFactory instead.
+  explicit AutofillPrivateEventRouter(content::BrowserContext* context);
+  AutofillPrivateEventRouter(const AutofillPrivateEventRouter&) = delete;
+  AutofillPrivateEventRouter& operator=(const AutofillPrivateEventRouter&) =
+      delete;
+  ~AutofillPrivateEventRouter() override = default;
+
+  // Rebind and Unbind test PDM when using `TestContentAutofillClient`.
+  void RebindPersonalDataManagerForTesting(
+      autofill::PersonalDataManager* personal_data);
+  void UnbindPersonalDataManagerForTesting();
 
  protected:
-  explicit AutofillPrivateEventRouter(content::BrowserContext* context);
-
   // KeyedService overrides:
   void Shutdown() override;
 
   // PersonalDataManagerObserver implementation.
   void OnPersonalDataChanged() override;
+  void OnPersonalDataSyncStateChanged() override;
 
  private:
-  content::BrowserContext* context_;
+  // Triggers an event on the router with current user's data.
+  void BroadcastCurrentData();
 
-  EventRouter* event_router_;
+  raw_ptr<content::BrowserContext> context_;
 
-  autofill::PersonalDataManager* personal_data_;
+  raw_ptr<EventRouter> event_router_ = nullptr;
 
-  DISALLOW_COPY_AND_ASSIGN(AutofillPrivateEventRouter);
+  raw_ptr<autofill::PersonalDataManager> personal_data_ = nullptr;
 };
 
 }  // namespace extensions

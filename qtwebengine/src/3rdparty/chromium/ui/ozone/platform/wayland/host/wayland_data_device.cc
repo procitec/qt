@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,16 +8,18 @@
 #include <string>
 #include <utility>
 
-#include "base/bind.h"
 #include "base/files/scoped_file.h"
-#include "ui/base/clipboard/clipboard_buffer.h"
+#include "base/functional/bind.h"
+#include "base/logging.h"
+#include "build/chromeos_buildflags.h"
+#include "ui/events/base_event_utils.h"
 #include "ui/gfx/geometry/point_f.h"
-#include "ui/ozone/platform/wayland/common/data_util.h"
 #include "ui/ozone/platform/wayland/common/wayland_object.h"
 #include "ui/ozone/platform/wayland/common/wayland_util.h"
 #include "ui/ozone/platform/wayland/host/wayland_connection.h"
 #include "ui/ozone/platform/wayland/host/wayland_data_offer.h"
 #include "ui/ozone/platform/wayland/host/wayland_data_source.h"
+#include "ui/ozone/platform/wayland/host/wayland_exchange_data_provider.h"
 #include "ui/ozone/platform/wayland/host/wayland_window.h"
 
 namespace ui {
@@ -25,10 +27,13 @@ namespace ui {
 WaylandDataDevice::WaylandDataDevice(WaylandConnection* connection,
                                      wl_data_device* data_device)
     : WaylandDataDeviceBase(connection), data_device_(data_device) {
-  static const struct wl_data_device_listener kDataDeviceListener = {
-      WaylandDataDevice::OnOffer, WaylandDataDevice::OnEnter,
-      WaylandDataDevice::OnLeave, WaylandDataDevice::OnMotion,
-      WaylandDataDevice::OnDrop,  WaylandDataDevice::OnSelection};
+  static constexpr wl_data_device_listener kDataDeviceListener = {
+      .data_offer = &OnDataOffer,
+      .enter = &OnEnter,
+      .leave = &OnLeave,
+      .motion = &OnMotion,
+      .drop = &OnDrop,
+      .selection = &OnSelection};
   wl_data_device_add_listener(data_device_.get(), &kDataDeviceListener, this);
 }
 
@@ -36,17 +41,18 @@ WaylandDataDevice::~WaylandDataDevice() = default;
 
 void WaylandDataDevice::StartDrag(const WaylandDataSource& data_source,
                                   const WaylandWindow& origin_window,
+                                  uint32_t serial,
                                   wl_surface* icon_surface,
                                   DragDelegate* delegate) {
   DCHECK(delegate);
-  DCHECK(!drag_delegate_);
+  CHECK(!drag_delegate_);
   drag_delegate_ = delegate;
 
   wl_data_device_start_drag(data_device_.get(), data_source.data_source(),
                             origin_window.root_surface()->surface(),
-                            icon_surface, connection()->serial());
+                            icon_surface, serial);
   drag_delegate_->DrawIcon();
-  connection()->ScheduleFlush();
+  connection()->Flush();
 }
 
 void WaylandDataDevice::ResetDragDelegate() {
@@ -54,50 +60,28 @@ void WaylandDataDevice::ResetDragDelegate() {
   drag_delegate_ = nullptr;
 }
 
-void WaylandDataDevice::RequestData(WaylandDataOffer* offer,
-                                    const std::string& mime_type,
-                                    RequestDataCallback callback) {
-  DCHECK(offer);
-  DCHECK(wl::IsMimeTypeSupported(mime_type));
-
-  base::ScopedFD fd = offer->Receive(mime_type);
-  if (!fd.is_valid()) {
-    LOG(ERROR) << "Failed to open file descriptor.";
-    return;
+void WaylandDataDevice::ResetDragDelegateIfNotDragSource() {
+  // When in an active drag-and-drop session initiated by an external Wayland
+  // client, |drag_delegate_| is set at OnEnter, and must be reset upon
+  // OnLeave/OnDrop in order to avoid potential memory corruption issues.
+  if (drag_delegate_ && !drag_delegate_->IsDragSource()) {
+    ResetDragDelegate();
   }
-
-  // Ensure there is not pending operation to be performed by the compositor,
-  // otherwise read(..) can block awaiting data to be sent to pipe.
-  RegisterDeferredReadClosure(base::BindOnce(
-      &WaylandDataDevice::ReadDragDataFromFD, base::Unretained(this),
-      std::move(fd), std::move(callback)));
-  RegisterDeferredReadCallback();
 }
 
-void WaylandDataDevice::SetSelectionSource(WaylandDataSource* source) {
-  DCHECK(source);
-  wl_data_device_set_selection(data_device_.get(), source->data_source(),
-                               connection()->serial());
-  connection()->ScheduleFlush();
-}
-
-void WaylandDataDevice::ReadDragDataFromFD(base::ScopedFD fd,
-                                           RequestDataCallback callback) {
-  std::vector<uint8_t> contents;
-  wl::ReadDataFromFD(std::move(fd), &contents);
-  std::move(callback).Run(scoped_refptr<base::RefCountedBytes>(
-      base::RefCountedBytes::TakeVector(&contents)));
+void WaylandDataDevice::SetSelectionSource(WaylandDataSource* source,
+                                           uint32_t serial) {
+  auto* data_source = source ? source->data_source() : nullptr;
+  wl_data_device_set_selection(data_device_.get(), data_source, serial);
+  connection()->Flush();
 }
 
 // static
-void WaylandDataDevice::OnOffer(void* data,
-                                wl_data_device* data_device,
-                                wl_data_offer* offer) {
+void WaylandDataDevice::OnDataOffer(void* data,
+                                    wl_data_device* data_device,
+                                    wl_data_offer* offer) {
   auto* self = static_cast<WaylandDataDevice*>(data);
-
-  self->connection()->clipboard()->UpdateSequenceNumber(
-      ClipboardBuffer::kCopyPaste);
-
+  DCHECK(self);
   DCHECK(!self->new_offer_);
   self->new_offer_ = std::make_unique<WaylandDataOffer>(offer);
 }
@@ -122,6 +106,8 @@ void WaylandDataDevice::OnEnter(void* data,
     VLOG(1) << "Failed to get window.";
     return;
   }
+  // drag enter event doesn't have timestamp. Use EventTimeForNow().
+  const auto timestamp = EventTimeForNow();
 
   // Null |drag_delegate_| here means that the DND session has been initiated by
   // an external application. In this case, use the default data drag delegate.
@@ -131,8 +117,11 @@ void WaylandDataDevice::OnEnter(void* data,
   DCHECK(self->new_offer_);
   self->drag_delegate_->OnDragOffer(std::move(self->new_offer_));
 
-  gfx::PointF point(wl_fixed_to_double(x), wl_fixed_to_double(y));
-  self->drag_delegate_->OnDragEnter(window, point, serial);
+  gfx::PointF point = self->connection()->MaybeConvertLocation(
+      gfx::PointF(wl_fixed_to_double(x), wl_fixed_to_double(y)), window);
+  self->drag_delegate_->OnDragEnter(window, point, timestamp, serial);
+
+  self->connection()->Flush();
 }
 
 void WaylandDataDevice::OnMotion(void* data,
@@ -142,28 +131,42 @@ void WaylandDataDevice::OnMotion(void* data,
                                  wl_fixed_t y) {
   auto* self = static_cast<WaylandDataDevice*>(data);
   if (self->drag_delegate_) {
-    gfx::PointF point(wl_fixed_to_double(x), wl_fixed_to_double(y));
-    self->drag_delegate_->OnDragMotion(point);
+    gfx::PointF point = self->connection()->MaybeConvertLocation(
+        gfx::PointF(wl_fixed_to_double(x), wl_fixed_to_double(y)),
+        self->drag_delegate_->GetDragTarget());
+    self->drag_delegate_->OnDragMotion(point,
+                                       wl::EventMillisecondsToTimeTicks(time));
   }
 }
 
 void WaylandDataDevice::OnDrop(void* data, wl_data_device* data_device) {
+  // drop event doesn't have timestamp. Use EventTimeForNow().
+  const auto timestamp = EventTimeForNow();
   auto* self = static_cast<WaylandDataDevice*>(data);
-  if (self->drag_delegate_)
-    self->drag_delegate_->OnDragDrop();
+  if (self->drag_delegate_) {
+    self->drag_delegate_->OnDragDrop(timestamp);
+    self->connection()->Flush();
+  }
+
+  // There are buggy Exo versions, which send 'drop' event (even for
+  // unsuccessful drops) without a subsequent 'leave'. In order to mitigate
+  // potential leaks and/or UAFs, forcibly call corresponding delegate callback
+  // here, in Lacros. TODO(crbug.com/1293415): Remove once Exo bug is fixed.
+#if BUILDFLAG(IS_CHROMEOS_LACROS)
+  self->drag_delegate_->OnDragLeave(timestamp);
+  self->ResetDragDelegateIfNotDragSource();
+#endif
 }
 
 void WaylandDataDevice::OnLeave(void* data, wl_data_device* data_device) {
+  // leave event doesn't have timestamp. Use EventTimeForNow().
+  const auto timestamp = EventTimeForNow();
   auto* self = static_cast<WaylandDataDevice*>(data);
-  if (self->drag_delegate_)
-    self->drag_delegate_->OnDragLeave();
-
-  // When in a DND session initiated by an external application,
-  // |drag_delegate_| is set at OnEnter, and must be reset here to avoid
-  // potential use-after-free. Above call to OnDragLeave() may result in
-  // |drag_delegate_| being reset, so it must be checked here as well.
-  if (self->drag_delegate_ && !self->drag_delegate_->IsDragSource())
-    self->drag_delegate_ = nullptr;
+  if (self->drag_delegate_) {
+    self->drag_delegate_->OnDragLeave(timestamp);
+    self->connection()->Flush();
+  }
+  self->ResetDragDelegateIfNotDragSource();
 }
 
 void WaylandDataDevice::OnSelection(void* data,
@@ -173,19 +176,16 @@ void WaylandDataDevice::OnSelection(void* data,
   DCHECK(self);
 
   // 'offer' will be null to indicate that the selection is no longer valid,
-  // i.e. there is no longer clipboard data available to paste.
+  // i.e. there is no longer selection data available to fetch.
   if (!offer) {
     self->ResetDataOffer();
-
-    // Clear Clipboard cache.
-    self->connection()->clipboard()->SetData({}, {});
-    return;
+  } else {
+    DCHECK(self->new_offer_);
+    self->set_data_offer(std::move(self->new_offer_));
+    self->data_offer()->EnsureTextMimeTypeIfNeeded();
   }
 
-  DCHECK(self->new_offer_);
-  self->set_data_offer(std::move(self->new_offer_));
-
-  self->data_offer()->EnsureTextMimeTypeIfNeeded();
+  self->NotifySelectionOffer(self->data_offer());
 }
 
 }  // namespace ui

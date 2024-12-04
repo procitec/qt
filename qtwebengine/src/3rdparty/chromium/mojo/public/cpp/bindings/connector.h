@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,19 +9,20 @@
 #include <memory>
 #include <utility>
 
-#include "base/callback.h"
+#include <optional>
 #include "base/compiler_specific.h"
 #include "base/component_export.h"
-#include "base/memory/ref_counted.h"
+#include "base/functional/callback.h"
+#include "base/memory/raw_ptr_exclusion.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
-#include "base/optional.h"
 #include "base/sequence_checker.h"
-#include "base/sequenced_task_runner.h"
+#include "base/task/sequenced_task_runner.h"
 #include "mojo/public/cpp/bindings/connection_group.h"
 #include "mojo/public/cpp/bindings/message.h"
-#include "mojo/public/cpp/bindings/sync_handle_watcher.h"
-#include "mojo/public/cpp/system/core.h"
+#include "mojo/public/cpp/bindings/message_header_validator.h"
 #include "mojo/public/cpp/system/handle_signal_tracker.h"
+#include "mojo/public/cpp/system/message_pipe.h"
 #include "mojo/public/cpp/system/simple_watcher.h"
 
 namespace base {
@@ -29,9 +30,8 @@ class Lock;
 }
 
 namespace mojo {
-namespace internal {
-class MessageQuotaChecker;
-}
+
+class SyncHandleWatcher;
 
 // The Connector class is responsible for performing read/write operations on a
 // MessagePipe. It writes messages it receives through the MessageReceiver
@@ -81,12 +81,27 @@ class COMPONENT_EXPORT(MOJO_CPP_BINDINGS) Connector : public MessageReceiver {
     kSerializeBeforeDispatchForTesting,
   };
 
-  // The Connector takes ownership of |message_pipe|.
+  // The Connector takes ownership of `message_pipe`. A Connector is essentially
+  // inert upon construction, though it may be used to send messages
+  // immediately. In order to receive incoming messages or error events,
+  // StartReceiving() must be called.
+  Connector(ScopedMessagePipeHandle message_pipe,
+            ConnectorConfig config,
+            const char* interface_name = "unknown interface");
+
+  // Same as above but automatically calls StartReceiving() with `runner` before
+  // returning.
   Connector(ScopedMessagePipeHandle message_pipe,
             ConnectorConfig config,
             scoped_refptr<base::SequencedTaskRunner> runner,
-            const char* heap_profiler_tag = "unknown interface");
+            const char* interface_name = "unknown interface");
+
+  Connector(const Connector&) = delete;
+  Connector& operator=(const Connector&) = delete;
+
   ~Connector() override;
+
+  const char* interface_name() const { return interface_name_; }
 
   // Sets outgoing serialization mode.
   void SetOutgoingSerializationMode(OutgoingSerializationMode mode);
@@ -128,6 +143,18 @@ class COMPONENT_EXPORT(MOJO_CPP_BINDINGS) Connector : public MessageReceiver {
     DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
     return error_;
   }
+
+  // Starts receiving on the Connector's message pipe, allowing incoming
+  // messages and error events to be dispatched. Once called, the Connector is
+  // effectively bound to `task_runner`. Initialization methods like
+  // `set_incoming_receiver` may be called before this, but if called after they
+  // must be called from the same sequence as `task_runner`.
+  //
+  // If `allow_woken_up_by_others` is true, the receiving sequence will allow
+  // this connector to process incoming messages during any sync wait by any
+  // Mojo object on the same sequence.
+  void StartReceiving(scoped_refptr<base::SequencedTaskRunner> task_runner,
+                      bool allow_woken_up_by_others = false);
 
   // Closes the pipe. The connector is put into a quiescent state.
   //
@@ -194,10 +221,6 @@ class COMPONENT_EXPORT(MOJO_CPP_BINDINGS) Connector : public MessageReceiver {
 
   base::SequencedTaskRunner* task_runner() const { return task_runner_.get(); }
 
-  // Sets the quota checker.
-  void SetMessageQuotaChecker(
-      scoped_refptr<internal::MessageQuotaChecker> checker);
-
   // Allows testing environments to override the default serialization behavior
   // of newly constructed Connector instances. Must be called before any
   // Connector instances are constructed.
@@ -205,14 +228,29 @@ class COMPONENT_EXPORT(MOJO_CPP_BINDINGS) Connector : public MessageReceiver {
       OutgoingSerializationMode outgoing_mode,
       IncomingSerializationMode incoming_mode);
 
+  // Feeds a message to the Connector as if the Connector read it from a pipe.
+  // Used for testing and fuzzing.
+  bool SimulateReadMessage(ScopedMessageHandle message);
+
  private:
   class ActiveDispatchTracker;
   class RunLoopNestingObserver;
 
-  // Callback of mojo::SimpleWatcher.
-  void OnWatcherHandleReady(MojoResult result);
-  // Callback of SyncHandleWatcher.
-  void OnSyncHandleWatcherHandleReady(MojoResult result);
+  // Callback given to SimpleWatcher to dispatch events for pipe activity.
+  //
+  // We pass the Connector's static interface name here as a parameter, ensuring
+  // that if Chrome crashes within this method, the crash dump will include the
+  // address of the interface name string in some accessible place such as a
+  // register or nearby stack location. We do this to help pinpoint application
+  // bugs which destroy bindings endpoints from the wrong thread, as this can
+  // result in Connector destruction racing with execution of a WeakPtr-bound
+  // OnWatcherHandleReady task.
+  void OnWatcherHandleReady(const char* interface_name, MojoResult result);
+
+  // Callback of SyncHandleWatcher. See notes on OnWatcherHandleReady()
+  // regarding the `interface_name` argument.
+  void OnSyncHandleWatcherHandleReady(const char* interface_name,
+                                      MojoResult result);
 
   void OnHandleReadyInternal(MojoResult result);
 
@@ -223,12 +261,12 @@ class COMPONENT_EXPORT(MOJO_CPP_BINDINGS) Connector : public MessageReceiver {
   // Attempts to read a single Message from the pipe. Returns |MOJO_RESULT_OK|
   // and a valid message in |*message| iff a message was successfully read and
   // prepared for dispatch.
-  MojoResult ReadMessage(Message* message);
+  MojoResult ReadMessage(ScopedMessageHandle& message);
 
   // Dispatches |message| to the receiver. Returns |true| if the message was
   // accepted by the receiver, and |false| otherwise (e.g. if it failed
   // validation).
-  bool DispatchMessage(Message message);
+  bool DispatchMessage(ScopedMessageHandle handle);
 
   // Posts a task to read the next message from the pipe. These two functions
   // keep |num_pending_read_tasks_| up to date to limit the number of posted
@@ -267,11 +305,13 @@ class COMPONENT_EXPORT(MOJO_CPP_BINDINGS) Connector : public MessageReceiver {
   base::OnceClosure connection_error_handler_;
 
   ScopedMessagePipeHandle message_pipe_;
-  MessageReceiver* incoming_receiver_ = nullptr;
+  // `incoming_receiver_` is not a raw_ptr<...> for performance reasons (based
+  // on analysis of sampling profiler data).
+  RAW_PTR_EXCLUSION MessageReceiver* incoming_receiver_ = nullptr;
 
   scoped_refptr<base::SequencedTaskRunner> task_runner_;
   std::unique_ptr<SimpleWatcher> handle_watcher_;
-  base::Optional<HandleSignalTracker> peer_remoteness_tracker_;
+  std::optional<HandleSignalTracker> peer_remoteness_tracker_;
 
   std::atomic<bool> error_;
   bool drop_writes_ = false;
@@ -287,7 +327,7 @@ class COMPONENT_EXPORT(MOJO_CPP_BINDINGS) Connector : public MessageReceiver {
 
   // If sending messages is allowed from multiple sequences, |lock_| is used to
   // protect modifications to |message_pipe_| and |drop_writes_|.
-  base::Optional<base::Lock> lock_;
+  std::optional<base::Lock> lock_;
 
   std::unique_ptr<SyncHandleWatcher> sync_watcher_;
 
@@ -298,19 +338,20 @@ class COMPONENT_EXPORT(MOJO_CPP_BINDINGS) Connector : public MessageReceiver {
 
   SEQUENCE_CHECKER(sequence_checker_);
 
-  // The quota checker associate with this connector, if any.
-  scoped_refptr<internal::MessageQuotaChecker> quota_checker_;
-
-  base::Lock connected_lock_;
-  bool connected_ = true;
+  // Indicates whether the Connector is configured to actively read from its
+  // message pipe. As long as this is true, the Connector is only safe to
+  // destroy in sequence with `task_runner_` tasks.
+  bool is_receiving_ = false;
 
   // The tag used to track heap allocations that originated from a Watcher
   // notification.
-  const char* heap_profiler_tag_ = "unknown interface";
+  const char* interface_name_ = "unknown interface";
 
   // A cached pointer to the RunLoopNestingObserver for the thread on which this
   // Connector was created.
-  RunLoopNestingObserver* const nesting_observer_;
+  // `nesting_observer_` is not a raw_ptr<...> for performance reasons (based on
+  // analysis of sampling profiler data).
+  RAW_PTR_EXCLUSION RunLoopNestingObserver* nesting_observer_ = nullptr;
 
   // |true| iff the Connector is currently dispatching a message. Used to detect
   // nested dispatch operations.
@@ -318,6 +359,8 @@ class COMPONENT_EXPORT(MOJO_CPP_BINDINGS) Connector : public MessageReceiver {
 
   // The number of pending tasks for |CallDispatchNextMessageFromPipe|.
   size_t num_pending_dispatch_tasks_ = 0;
+
+  MessageHeaderValidator header_validator_;
 
 #if defined(ENABLE_IPC_FUZZER)
   std::unique_ptr<MessageReceiver> message_dumper_;
@@ -332,8 +375,6 @@ class COMPONENT_EXPORT(MOJO_CPP_BINDINGS) Connector : public MessageReceiver {
   // transferred (i.e., when |connected_| is set to false).
   base::WeakPtr<Connector> weak_self_;
   base::WeakPtrFactory<Connector> weak_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(Connector);
 };
 
 }  // namespace mojo

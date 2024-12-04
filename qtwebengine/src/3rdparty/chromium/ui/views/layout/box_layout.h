@@ -1,14 +1,12 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef UI_VIEWS_LAYOUT_BOX_LAYOUT_H_
 #define UI_VIEWS_LAYOUT_BOX_LAYOUT_H_
 
-#include <map>
-
-#include "base/compiler_specific.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
+#include "base/memory/raw_ptr_exclusion.h"
 #include "ui/gfx/geometry/insets.h"
 #include "ui/views/layout/layout_manager.h"
 #include "ui/views/view.h"
@@ -19,6 +17,25 @@ class Size;
 }  // namespace gfx
 
 namespace views {
+
+class VIEWS_EXPORT BoxLayoutFlexSpecification {
+ public:
+  BoxLayoutFlexSpecification();
+  ~BoxLayoutFlexSpecification();
+
+  // Makes a copy of this specification with a different weight.
+  BoxLayoutFlexSpecification WithWeight(int weight) const;
+
+  // Whether to use minimum values to make copies of this specification.
+  BoxLayoutFlexSpecification UseMinSize(bool use_min_size) const;
+
+  int weight() const { return weight_; }
+  bool use_min_size() const { return use_min_size_; }
+
+ private:
+  int weight_ = 1;
+  bool use_min_size_ = false;
+};
 
 // A Layout manager that arranges child views vertically or horizontally in a
 // side-by-side fashion with spacing around and between the child views. The
@@ -106,31 +123,48 @@ class VIEWS_EXPORT BoxLayout : public LayoutManager {
   // SSSSSSSSSSSSSSSSSSSS
   // --------------------
   //
-  explicit BoxLayout(Orientation orientation,
+  explicit BoxLayout(Orientation orientation = Orientation::kHorizontal,
                      const gfx::Insets& inside_border_insets = gfx::Insets(),
                      int between_child_spacing = 0,
                      bool collapse_margins_spacing = false);
   ~BoxLayout() override;
 
+  void SetOrientation(Orientation orientation);
+  Orientation GetOrientation() const;
+
+  // TODO(tluk): These class member setters should likely be calling
+  // LayoutManager::InvalidateLayout() .
   void set_main_axis_alignment(MainAxisAlignment main_axis_alignment) {
     main_axis_alignment_ = main_axis_alignment;
   }
+  MainAxisAlignment main_axis_alignment() const { return main_axis_alignment_; }
 
   void set_cross_axis_alignment(CrossAxisAlignment cross_axis_alignment) {
     cross_axis_alignment_ = cross_axis_alignment;
+  }
+  CrossAxisAlignment cross_axis_alignment() const {
+    return cross_axis_alignment_;
   }
 
   void set_inside_border_insets(const gfx::Insets& insets) {
     inside_border_insets_ = insets;
   }
+  const gfx::Insets& inside_border_insets() const {
+    return inside_border_insets_;
+  }
 
   void set_minimum_cross_axis_size(int size) {
     minimum_cross_axis_size_ = size;
   }
+  int minimum_cross_axis_size() const { return minimum_cross_axis_size_; }
 
   void set_between_child_spacing(int spacing) {
     between_child_spacing_ = spacing;
   }
+  int between_child_spacing() const { return between_child_spacing_; }
+
+  void SetCollapseMarginsSpacing(bool collapse_margins_spacing);
+  bool GetCollapseMarginsSpacing() const;
 
   // Sets the flex weight for the given |view|. Using the preferred size as
   // the basis, free space along the main axis is distributed to views in the
@@ -152,6 +186,7 @@ class VIEWS_EXPORT BoxLayout : public LayoutManager {
 
   // Sets the flex for views to use when none is specified.
   void SetDefaultFlex(int default_flex);
+  int GetDefaultFlex() const;
 
   // Overridden from views::LayoutManager:
   void Installed(View* host) override;
@@ -179,6 +214,10 @@ class VIEWS_EXPORT BoxLayout : public LayoutManager {
    public:
     ViewWrapper();
     ViewWrapper(const BoxLayout* layout, View* view);
+
+    ViewWrapper(const ViewWrapper&) = delete;
+    ViewWrapper& operator=(const ViewWrapper&) = delete;
+
     ~ViewWrapper();
 
     int GetHeightForWidth(int width) const;
@@ -186,22 +225,15 @@ class VIEWS_EXPORT BoxLayout : public LayoutManager {
     gfx::Size GetPreferredSize() const;
     void SetBoundsRect(const gfx::Rect& bounds);
     View* view() const { return view_; }
-    bool visible() const;
+    bool VisibleToLayout() const;
 
    private:
-    View* view_ = nullptr;
-    const BoxLayout* layout_ = nullptr;
+    // RAW_PTR_EXCLUSION: Performance reasons: based on this sampling profiler
+    // result on ChromeOS. go/brp-cros-prof-diff-20230403
+    RAW_PTR_EXCLUSION View* view_ = nullptr;
+    RAW_PTR_EXCLUSION const BoxLayout* layout_ = nullptr;
     gfx::Insets margins_;
-
-    DISALLOW_COPY_AND_ASSIGN(ViewWrapper);
   };
-
-  struct Flex {
-    int flex_weight;
-    bool use_min_size;
-  };
-
-  using FlexMap = std::map<const View*, Flex>;
 
   // Returns the flex for the specified |view|.
   int GetFlexForView(const View* view) const;
@@ -304,7 +336,7 @@ class VIEWS_EXPORT BoxLayout : public LayoutManager {
   // Return the last visible view in the host or nullptr if none are visible.
   View* LastVisibleView() const;
 
-  const Orientation orientation_;
+  Orientation orientation_;
 
   // Spacing between child views and host view border.
   gfx::Insets inside_border_insets_;
@@ -320,9 +352,6 @@ class VIEWS_EXPORT BoxLayout : public LayoutManager {
   // kStretch by default.
   CrossAxisAlignment cross_axis_alignment_ = CrossAxisAlignment::kStretch;
 
-  // A map of views to their flex weights.
-  FlexMap flex_map_;
-
   // The flex weight for views if none is set. Defaults to 0.
   int default_flex_ = 0;
 
@@ -330,12 +359,10 @@ class VIEWS_EXPORT BoxLayout : public LayoutManager {
   int minimum_cross_axis_size_ = 0;
 
   // Adjacent view margins and spacing should be collapsed.
-  const bool collapse_margins_spacing_;
+  bool collapse_margins_spacing_;
 
   // The view that this BoxLayout is managing the layout for.
-  views::View* host_ = nullptr;
-
-  DISALLOW_IMPLICIT_CONSTRUCTORS(BoxLayout);
+  raw_ptr<views::View> host_ = nullptr;
 };
 
 }  // namespace views

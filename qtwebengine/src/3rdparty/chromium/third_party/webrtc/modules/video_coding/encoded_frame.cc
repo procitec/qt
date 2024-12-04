@@ -36,14 +36,13 @@ VCMEncodedFrame::~VCMEncodedFrame() {
 }
 
 void VCMEncodedFrame::Reset() {
-  SetTimestamp(0);
+  SetRtpTimestamp(0);
   SetSpatialIndex(absl::nullopt);
   _renderTimeMs = -1;
   _payloadType = 0;
   _frameType = VideoFrameType::kVideoFrameDelta;
   _encodedWidth = 0;
   _encodedHeight = 0;
-  _completeFrame = false;
   _missingFrame = false;
   set_size(0);
   _codecSpecificInfo.codecType = kVideoCodecGeneric;
@@ -135,6 +134,14 @@ void VCMEncodedFrame::CopyCodecSpecific(const RTPVideoHeader* header) {
       }
       case kVideoCodecH264: {
         _codecSpecificInfo.codecType = kVideoCodecH264;
+        break;
+      }
+      case kVideoCodecAV1: {
+        _codecSpecificInfo.codecType = kVideoCodecAV1;
+        break;
+      }
+      case kVideoCodecH265: {
+        _codecSpecificInfo.codecType = kVideoCodecH265;
         break;
       }
       default: {

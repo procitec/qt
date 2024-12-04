@@ -1,4 +1,4 @@
-// Copyright 2014 PDFium Authors. All rights reserved.
+// Copyright 2014 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,10 +11,11 @@
 
 #include "fxjs/cjs_object.h"
 #include "fxjs/js_define.h"
+#include "third_party/base/containers/span.h"
 
 class CJS_Console final : public CJS_Object {
  public:
-  static int GetObjDefnID();
+  static uint32_t GetObjDefnID();
   static void DefineJSObjects(CFXJS_Engine* pEngine);
 
   CJS_Console(v8::Local<v8::Object> pObject, CJS_Runtime* pRuntime);
@@ -26,18 +27,18 @@ class CJS_Console final : public CJS_Object {
   JS_STATIC_METHOD(show, CJS_Console)
 
  private:
-  static int ObjDefnID;
+  static uint32_t ObjDefnID;
   static const char kName[];
   static const JSMethodSpec MethodSpecs[];
 
   CJS_Result clear(CJS_Runtime* pRuntime,
-                   const std::vector<v8::Local<v8::Value>>& params);
+                   pdfium::span<v8::Local<v8::Value>> params);
   CJS_Result hide(CJS_Runtime* pRuntime,
-                  const std::vector<v8::Local<v8::Value>>& params);
+                  pdfium::span<v8::Local<v8::Value>> params);
   CJS_Result println(CJS_Runtime* pRuntime,
-                     const std::vector<v8::Local<v8::Value>>& params);
+                     pdfium::span<v8::Local<v8::Value>> params);
   CJS_Result show(CJS_Runtime* pRuntime,
-                  const std::vector<v8::Local<v8::Value>>& params);
+                  pdfium::span<v8::Local<v8::Value>> params);
 };
 
 #endif  // FXJS_CJS_CONSOLE_H_

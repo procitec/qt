@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,13 +10,16 @@
 #include <utility>
 #include <vector>
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "content/renderer/render_frame_impl.h"
 #include "content/web_test/common/web_test.mojom.h"
+#include "content/web_test/renderer/accessibility_controller.h"
+#include "content/web_test/renderer/text_input_controller.h"
 #include "mojo/public/cpp/bindings/associated_receiver.h"
 #include "mojo/public/cpp/bindings/pending_associated_receiver.h"
 #include "third_party/blink/public/platform/web_effective_connection_type.h"
 #include "third_party/blink/public/platform/web_string.h"
+#include "third_party/blink/public/test/frame_widget_test_helper.h"
 #include "third_party/blink/public/web/web_local_frame.h"
 #include "third_party/blink/public/web/web_local_frame_client.h"
 #include "ui/accessibility/ax_event.h"
@@ -25,8 +28,6 @@
 namespace content {
 class SpellCheckClient;
 class TestRunner;
-class WebViewTestProxy;
-class WebWidgetTestProxy;
 
 // WebFrameTestProxy is used during running web tests instead of a
 // RenderFrameImpl to inject test-only behaviour by overriding methods in the
@@ -34,7 +35,12 @@ class WebWidgetTestProxy;
 class WebFrameTestProxy : public RenderFrameImpl,
                           public mojom::WebTestRenderFrame {
  public:
-  explicit WebFrameTestProxy(RenderFrameImpl::CreateParams params);
+  WebFrameTestProxy(RenderFrameImpl::CreateParams params,
+                    TestRunner* test_runner);
+
+  WebFrameTestProxy(const WebFrameTestProxy&) = delete;
+  WebFrameTestProxy& operator=(const WebFrameTestProxy&) = delete;
+
   ~WebFrameTestProxy() override;
 
   // RenderFrameImpl overrides.
@@ -51,11 +57,8 @@ class WebFrameTestProxy : public RenderFrameImpl,
   // tests.
   std::string GetFrameDescriptionForWebTests();
 
-  // Returns the test-subclass of RenderWidget for the local root of this frame.
-  WebWidgetTestProxy* GetLocalRootWebWidgetTestProxy();
-  // Returns the test-subclass of RenderViewImpl that is hosting this frame's
-  // frame tree fragment.
-  WebViewTestProxy* GetWebViewTestProxy();
+  // Returns the test helper of WebFrameWidget for the local root of this frame.
+  blink::FrameWidgetTestHelper* GetLocalRootFrameWidgetTestHelper();
 
   // WebLocalFrameClient implementation.
   blink::WebPlugin* CreatePlugin(const blink::WebPluginParams& params) override;
@@ -65,49 +68,76 @@ class WebFrameTestProxy : public RenderFrameImpl,
                               const blink::WebString& stack_trace) override;
   void DidStartLoading() override;
   void DidStopLoading() override;
-  void DidChangeSelection(bool is_selection_empty) override;
+  void DidChangeSelection(bool is_selection_empty,
+                          blink::SyncCondition force_sync) override;
   void DidChangeContents() override;
   blink::WebEffectiveConnectionType GetEffectiveConnectionType() override;
-  void ShowContextMenu(const blink::WebContextMenuData& context_menu_data,
-                       const base::Optional<gfx::Point>&) override;
+  void UpdateContextMenuDataForTesting(
+      const blink::ContextMenuData& context_menu_data,
+      const std::optional<gfx::Point>&) override;
   void DidDispatchPingLoader(const blink::WebURL& url) override;
   void WillSendRequest(blink::WebURLRequest& request,
                        ForRedirect for_redirect) override;
   void BeginNavigation(std::unique_ptr<blink::WebNavigationInfo> info) override;
   void PostAccessibilityEvent(const ui::AXEvent& event) override;
-  void MarkWebAXObjectDirty(const blink::WebAXObject& object,
-                            bool subtree) override;
   void CheckIfAudioSinkExistsAndIsAuthorized(
       const blink::WebString& sink_id,
       blink::WebSetSinkIdCompleteCallback completion_callback) override;
   void DidClearWindowObject() override;
+  void DidCommitNavigation(
+      blink::WebHistoryCommitType commit_type,
+      bool should_reset_browser_interface_broker,
+      const blink::ParsedPermissionsPolicy& permissions_policy_header,
+      const blink::DocumentPolicyFeatureState& document_policy_header) override;
+  void HandleWebAccessibilityEventForTest(
+      const blink::WebAXObject& object,
+      const char* event_name,
+      const std::vector<ui::AXEventIntent>& event_intents) override;
+  void HandleWebAccessibilityEventForTest(const ui::AXEvent& event) override;
 
- private:
   // mojom::WebTestRenderFrame implementation.
   void SynchronouslyCompositeAfterTest(
       SynchronouslyCompositeAfterTestCallback callback) override;
   void DumpFrameLayout(DumpFrameLayoutCallback callback) override;
   void SetTestConfiguration(mojom::WebTestRunTestConfigurationPtr config,
                             bool starting_test) override;
+  void OnDeactivated() override;
+  void OnReactivated() override;
+  void BlockTestUntilStart() override;
+  void StartTest() override;
+  void SetupRendererProcessForNonTestWindow() override;
+  void TestFinishedFromSecondaryRenderer() override;
+  void ProcessWorkItem(mojom::WorkItemPtr work_item) override;
+  void ReplicateWorkQueueStates(base::Value::Dict work_queue_states) override;
+  void ReplicateWebTestRuntimeFlagsChanges(
+      base::Value::Dict changed_layout_test_runtime_flags) override;
+  void ResetRendererAfterWebTest() override;
 
+  mojom::WebTestControlHost* GetWebTestControlHostRemote();
+
+ private:
   void BindReceiver(
       mojo::PendingAssociatedReceiver<mojom::WebTestRenderFrame> receiver);
 
-  void HandleWebAccessibilityEvent(
-      const blink::WebAXObject& object,
-      const char* event_name,
-      const std::vector<ui::AXEventIntent>& event_intents);
-
   TestRunner* test_runner();
 
-  WebViewTestProxy* const web_view_test_proxy_;
+  const raw_ptr<TestRunner, ExperimentalRenderer> test_runner_;
 
   std::unique_ptr<SpellCheckClient> spell_check_;
+
+  TextInputController text_input_controller_{this};
+
+  AccessibilityController accessibility_controller_{this};
 
   mojo::AssociatedReceiver<mojom::WebTestRenderFrame>
       web_test_render_frame_receiver_{this};
 
-  DISALLOW_COPY_AND_ASSIGN(WebFrameTestProxy);
+  mojo::AssociatedRemote<mojom::WebTestControlHost>
+      web_test_control_host_remote_;
+
+  // Prevents parsing on the next committed document. This is used to stop a
+  // test from running until StartTest() is called.
+  bool should_block_parsing_in_next_commit_ = false;
 };
 
 }  // namespace content

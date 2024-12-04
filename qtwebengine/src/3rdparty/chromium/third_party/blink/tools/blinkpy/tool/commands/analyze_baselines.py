@@ -26,10 +26,14 @@
 # (INCLUDING NEGLIGENCE OR/ OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+from __future__ import print_function
+
 import logging
 import optparse
+from typing import get_args
 
 from blinkpy.common.checkout.baseline_optimizer import BaselineOptimizer
+from blinkpy.common.net.web_test_results import BaselineSuffix
 from blinkpy.tool.commands.rebaseline import AbstractRebaseliningCommand
 
 _log = logging.getLogger(__name__)
@@ -50,13 +54,14 @@ class AnalyzeBaselines(AbstractRebaseliningCommand):
                 default=False,
                 help='Show missing baselines as well.'),
         ] + self.platform_options)
+        self._baseline_suffix_list = get_args(BaselineSuffix)
         self._optimizer_class = BaselineOptimizer  # overridable for testing
         self._baseline_optimizer = None
         self._port = None
         self._tool = None
 
     def _write(self, msg):
-        print msg
+        print(msg)
 
     def _analyze_baseline(self, options, test_name):
         # TODO(robertma): Investigate changing the CLI to take extensions with leading '.'.
@@ -65,7 +70,7 @@ class AnalyzeBaselines(AbstractRebaseliningCommand):
             name = self._port.output_filename(
                 test_name, self._port.BASELINE_SUFFIX, extension)
             results_by_directory = self._baseline_optimizer.read_results_by_directory(
-                name)
+                test_name, name)
             if results_by_directory:
                 self._write('%s:' % name)
                 self._baseline_optimizer.write_by_directory(

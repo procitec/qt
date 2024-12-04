@@ -1,10 +1,8 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/metrics/content/content_stability_metrics_provider.h"
-
-#include <vector>
 
 #include "base/check.h"
 #include "base/notreached.h"
@@ -15,45 +13,86 @@
 #include "content/public/browser/child_process_termination_info.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_types.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
+#include "content/public/common/page_visibility_state.h"
 #include "content/public/common/process_type.h"
 #include "ppapi/buildflags/buildflags.h"
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
 #include "components/crash/content/browser/crash_metrics_reporter_android.h"
 #endif
 
 namespace metrics {
 
+namespace {
+
+#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
+// Determines which value of RendererHostedContentType correctly describes the
+// type of content hosted by `host`.
+RendererHostedContentType DetermineHostedContentType(
+    content::RenderProcessHost* host,
+    ExtensionsHelper* extensions_helper) {
+  if (extensions_helper && extensions_helper->IsExtensionProcess(host)) {
+    return RendererHostedContentType::kExtension;
+  }
+
+  // Iterate through `host`'s frames to identify these frame types:
+  bool has_active_foreground_main_frame = false;
+  bool has_active_foreground_subframe = false;
+  bool has_active_background_frame = false;
+  bool has_inactive_frame = false;
+
+  host->ForEachRenderFrameHost(
+      [&](content::RenderFrameHost* render_frame_host) {
+        if (render_frame_host->IsActive()) {
+          if (render_frame_host->GetVisibilityState() ==
+              blink::mojom::PageVisibilityState::kVisible) {
+            if (render_frame_host->GetMainFrame() == render_frame_host) {
+              has_active_foreground_main_frame = true;
+            } else {
+              has_active_foreground_subframe = true;
+            }
+          } else {
+            has_active_background_frame = true;
+          }
+        } else {
+          has_inactive_frame = true;
+        }
+      });
+
+  // Derive a `RendererHostedContentType` from the frame types hosted by `host`.
+  if (has_active_foreground_main_frame) {
+    return RendererHostedContentType::kForegroundMainFrame;
+  }
+  if (has_active_foreground_subframe) {
+    return RendererHostedContentType::kForegroundSubframe;
+  } else if (has_active_background_frame) {
+    return RendererHostedContentType::kBackgroundFrame;
+  } else if (has_inactive_frame) {
+    return RendererHostedContentType::kInactiveFrame;
+  }
+
+  return RendererHostedContentType::kNoFrameOrExtension;
+}
+#endif  // !BUILDFLAG(IS_ANDROID)
+
+}  // namespace
+
 ContentStabilityMetricsProvider::ContentStabilityMetricsProvider(
     PrefService* local_state,
     std::unique_ptr<ExtensionsHelper> extensions_helper)
-    :
-#if defined(OS_ANDROID)
-      scoped_observer_(this),
-#endif  // defined(OS_ANDROID)
-      helper_(local_state),
-      extensions_helper_(std::move(extensions_helper)) {
+    : helper_(local_state), extensions_helper_(std::move(extensions_helper)) {
   BrowserChildProcessObserver::Add(this);
 
-  registrar_.Add(this, content::NOTIFICATION_LOAD_START,
-                 content::NotificationService::AllSources());
-  registrar_.Add(this, content::NOTIFICATION_RENDERER_PROCESS_CLOSED,
-                 content::NotificationService::AllSources());
-  registrar_.Add(this, content::NOTIFICATION_RENDER_WIDGET_HOST_HANG,
-                 content::NotificationService::AllSources());
-  registrar_.Add(this, content::NOTIFICATION_RENDERER_PROCESS_CREATED,
-                 content::NotificationService::AllSources());
-
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
   auto* crash_manager = crash_reporter::CrashMetricsReporter::GetInstance();
   DCHECK(crash_manager);
-  scoped_observer_.Add(crash_manager);
-#endif  // defined(OS_ANDROID)
+  scoped_observation_.Observe(crash_manager);
+#endif  // BUILDFLAG(IS_ANDROID)
 }
 
 ContentStabilityMetricsProvider::~ContentStabilityMetricsProvider() {
-  registrar_.RemoveAll();
   BrowserChildProcessObserver::Remove(this);
 }
 
@@ -61,6 +100,7 @@ void ContentStabilityMetricsProvider::OnRecordingEnabled() {}
 
 void ContentStabilityMetricsProvider::OnRecordingDisabled() {}
 
+#if BUILDFLAG(IS_ANDROID)
 void ContentStabilityMetricsProvider::ProvideStabilityMetrics(
     SystemProfileProto* system_profile_proto) {
   helper_.ProvideStabilityMetrics(system_profile_proto);
@@ -69,63 +109,46 @@ void ContentStabilityMetricsProvider::ProvideStabilityMetrics(
 void ContentStabilityMetricsProvider::ClearSavedStabilityMetrics() {
   helper_.ClearSavedStabilityMetrics();
 }
+#endif  // BUILDFLAG(IS_ANDROID)
 
-void ContentStabilityMetricsProvider::Observe(
-    int type,
-    const content::NotificationSource& source,
-    const content::NotificationDetails& details) {
-  switch (type) {
-    case content::NOTIFICATION_LOAD_START:
-      helper_.LogLoadStarted();
-      break;
-
-    case content::NOTIFICATION_RENDERER_PROCESS_CLOSED: {
-      content::ChildProcessTerminationInfo* process_info =
-          content::Details<content::ChildProcessTerminationInfo>(details).ptr();
-      bool was_extension_process =
-          extensions_helper_ &&
-          extensions_helper_->IsExtensionProcess(
-              content::Source<content::RenderProcessHost>(source).ptr());
-      helper_.LogRendererCrash(was_extension_process, process_info->status,
-                               process_info->exit_code);
-      break;
-    }
-
-    case content::NOTIFICATION_RENDER_WIDGET_HOST_HANG:
-      helper_.LogRendererHang();
-      break;
-
-    case content::NOTIFICATION_RENDERER_PROCESS_CREATED: {
-      bool was_extension_process =
-          extensions_helper_ &&
-          extensions_helper_->IsExtensionProcess(
-              content::Source<content::RenderProcessHost>(source).ptr());
-      helper_.LogRendererLaunched(was_extension_process);
-      break;
-    }
-
-    default:
-      NOTREACHED();
-      break;
+void ContentStabilityMetricsProvider::OnRenderProcessHostCreated(
+    content::RenderProcessHost* host) {
+  bool was_extension_process =
+      extensions_helper_ && extensions_helper_->IsExtensionProcess(host);
+  helper_.LogRendererLaunched(was_extension_process);
+  if (!host_observation_.IsObservingSource(host)) {
+    host_observation_.AddObservation(host);
   }
+}
+
+void ContentStabilityMetricsProvider::RenderProcessExited(
+    content::RenderProcessHost* host,
+    const content::ChildProcessTerminationInfo& info) {
+  // On Android, the renderer crashes are recorded in
+  // `OnCrashDumpProcessed`.
+#if BUILDFLAG(IS_IOS)
+  helper_.LogRendererCrash();
+#elif !BUILDFLAG(IS_ANDROID)
+  helper_.LogRendererCrash(
+      DetermineHostedContentType(host, extensions_helper_.get()), info.status,
+      info.exit_code);
+#endif
+}
+
+void ContentStabilityMetricsProvider::RenderProcessHostDestroyed(
+    content::RenderProcessHost* host) {
+  // In single-process mode, RenderProcessExited isn't called, so we ensure
+  // we remove observations here rather than there, to avoid later use-after-
+  // frees in single process mode.
+  host_observation_.RemoveObservation(host);
 }
 
 void ContentStabilityMetricsProvider::BrowserChildProcessCrashed(
     const content::ChildProcessData& data,
     const content::ChildProcessTerminationInfo& info) {
   DCHECK(!data.metrics_name.empty());
-#if BUILDFLAG(ENABLE_PLUGINS)
-  // Exclude plugin crashes from the count below because we report them via
-  // a separate UMA metric.
-  if (data.process_type == content::PROCESS_TYPE_PPAPI_PLUGIN ||
-      data.process_type == content::PROCESS_TYPE_PPAPI_BROKER) {
-    return;
-  }
-#endif
-
   if (data.process_type == content::PROCESS_TYPE_UTILITY)
     helper_.BrowserUtilityProcessCrashed(data.metrics_name, info.exit_code);
-  helper_.BrowserChildProcessCrashed();
 }
 
 void ContentStabilityMetricsProvider::BrowserChildProcessLaunchedAndConnected(
@@ -135,7 +158,21 @@ void ContentStabilityMetricsProvider::BrowserChildProcessLaunchedAndConnected(
     helper_.BrowserUtilityProcessLaunched(data.metrics_name);
 }
 
-#if defined(OS_ANDROID)
+void ContentStabilityMetricsProvider::BrowserChildProcessLaunchFailed(
+    const content::ChildProcessData& data,
+    const content::ChildProcessTerminationInfo& info) {
+  DCHECK(!data.metrics_name.empty());
+  DCHECK_EQ(info.status, base::TERMINATION_STATUS_LAUNCH_FAILED);
+  if (data.process_type == content::PROCESS_TYPE_UTILITY)
+    helper_.BrowserUtilityProcessLaunchFailed(data.metrics_name, info.exit_code
+#if BUILDFLAG(IS_WIN)
+                                              ,
+                                              info.last_error
+#endif
+    );
+}
+
+#if BUILDFLAG(IS_ANDROID)
 void ContentStabilityMetricsProvider::OnCrashDumpProcessed(
     int rph_id,
     const crash_reporter::CrashMetricsReporter::ReportedCrashTypeSet&
@@ -149,6 +186,10 @@ void ContentStabilityMetricsProvider::OnCrashDumpProcessed(
     helper_.IncreaseGpuCrashCount();
   }
 }
-#endif  // defined(OS_ANDROID)
+#endif  // BUILDFLAG(IS_ANDROID)
+
+void ContentStabilityMetricsProvider::OnPageLoadStarted() {
+  helper_.LogLoadStarted();
+}
 
 }  // namespace metrics

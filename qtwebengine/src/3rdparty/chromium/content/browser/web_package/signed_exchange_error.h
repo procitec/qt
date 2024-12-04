@@ -1,14 +1,14 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef CONTENT_BROWSER_WEB_PACKAGE_SIGNED_EXCHANGE_ERROR_H_
 #define CONTENT_BROWSER_WEB_PACKAGE_SIGNED_EXCHANGE_ERROR_H_
 
+#include <optional>
 #include <string>
 #include <utility>
 
-#include "base/optional.h"
 #include "content/browser/web_package/signed_exchange_signature_verifier.h"
 
 namespace content {
@@ -51,7 +51,12 @@ enum class SignedExchangeLoadResult {
   kVariantMismatch,
   // Certificate's validity period is too long.
   kCertValidityPeriodTooLong,
-  kMaxValue = kCertValidityPeriodTooLong
+  // SXG had "Vary: Cookie" inner header but we had a cookie for the URL.
+  kHadCookieForCookielessOnlySXG,
+  // The certificate didn't match the built-in public key pins for the host
+  // name.
+  kPKPViolationError,
+  kMaxValue = kPKPViolationError
 };
 
 struct SignedExchangeError {
@@ -69,11 +74,11 @@ struct SignedExchangeError {
   // a signed exchange header to indicate which signature is causing the error.
   using FieldIndexPair = std::pair<int /* signature_index */, Field>;
 
-  static base::Optional<Field> GetFieldFromSignatureVerifierResult(
+  static std::optional<Field> GetFieldFromSignatureVerifierResult(
       SignedExchangeSignatureVerifier::Result verify_result);
 
   SignedExchangeError(const std::string& message,
-                      base::Optional<FieldIndexPair> field);
+                      std::optional<FieldIndexPair> field);
 
   // Copy constructor.
   SignedExchangeError(const SignedExchangeError& other);
@@ -83,7 +88,7 @@ struct SignedExchangeError {
   ~SignedExchangeError();
 
   std::string message;
-  base::Optional<FieldIndexPair> field;
+  std::optional<FieldIndexPair> field;
 };
 
 }  // namespace content

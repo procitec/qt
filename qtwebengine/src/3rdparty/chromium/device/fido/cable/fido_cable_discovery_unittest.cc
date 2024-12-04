@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,13 +6,15 @@
 
 #include <algorithm>
 #include <memory>
+#include <string_view>
 #include <utility>
 
+#include "base/containers/contains.h"
 #include "base/containers/span.h"
+#include "base/ranges/algorithm.h"
 #include "base/run_loop.h"
-#include "base/stl_util.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/test/task_environment.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "device/bluetooth/bluetooth_adapter_factory.h"
 #include "device/bluetooth/bluetooth_advertisement.h"
@@ -26,6 +28,15 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+#include "base/test/scoped_feature_list.h"
+#include "device/bluetooth/floss/floss_features.h"
+#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+
+#if BUILDFLAG(IS_CHROMEOS_LACROS)
+#include "chromeos/startup/browser_init_params.h"
+#endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
+
 using ::testing::_;
 using ::testing::NiceMock;
 using ::testing::Sequence;
@@ -35,7 +46,7 @@ namespace device {
 namespace {
 
 constexpr auto kTestCableVersion = CableDiscoveryData::Version::V1;
-#if defined(OS_WIN) || defined(OS_LINUX) || defined(OS_CHROMEOS)
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
 constexpr auto kTestCableVersionNumber = 1;
 #endif
 
@@ -62,7 +73,7 @@ constexpr CableSessionPreKeyArray kTestSessionPreKey = {
      0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}};
 
 // TODO(https://crbug.com/837088): Add support for multiple EIDs on Windows.
-#if !defined(OS_WIN)
+#if !BUILDFLAG(IS_WIN)
 constexpr CableEidArray kSecondaryClientEid = {
     {0x15, 0x14, 0x13, 0x12, 0x11, 0x10, 0x09, 0x08, 0x07, 0x06, 0x05, 0x04,
      0x03, 0x02, 0x01, 0x00}};
@@ -78,7 +89,7 @@ constexpr CableSessionPreKeyArray kSecondarySessionPreKey = {
     {0xdd, 0xdd, 0xdd, 0xdd, 0xdd, 0xdd, 0xdd, 0xdd, 0xdd, 0xdd, 0xdd,
      0xdd, 0xdd, 0xdd, 0xdd, 0xdd, 0xdd, 0xdd, 0xdd, 0xdd, 0xdd, 0xdd,
      0xdd, 0xdd, 0xdd, 0xdd, 0xdd, 0xdd, 0xdd, 0xdd, 0xdd, 0xdd}};
-#endif  // !defined(OS_WIN)
+#endif  // !BUILDFLAG(IS_WIN)
 
 // Below constants are used to construct MockBluetoothDevice for testing.
 constexpr char kTestBleDeviceAddress[] = "11:12:13:14:15:16";
@@ -101,14 +112,11 @@ MATCHER_P2(IsAdvertisementContent,
            expected_client_eid,
            expected_uuid_formatted_client_eid,
            "") {
-#if defined(OS_MAC)
-  const auto uuid_list = arg->service_uuids();
-  return std::any_of(uuid_list->begin(), uuid_list->end(),
-                     [this](const auto& uuid) {
-                       return uuid == expected_uuid_formatted_client_eid;
-                     });
+#if BUILDFLAG(IS_MAC)
+  return base::Contains(*arg->service_uuids(),
+                        expected_uuid_formatted_client_eid);
 
-#elif defined(OS_WIN)
+#elif BUILDFLAG(IS_WIN)
   const auto manufacturer_data = arg->manufacturer_data();
   const auto manufacturer_data_value = manufacturer_data->find(0x00E0);
 
@@ -125,10 +133,9 @@ MATCHER_P2(IsAdvertisementContent,
                     manufacturer_data_payload.end(),
                     expected_client_eid.begin(), expected_client_eid.end());
 
-#elif defined(OS_LINUX) || defined(OS_CHROMEOS)
+#elif BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
   const auto service_data = arg->service_data();
-  const auto service_data_with_uuid =
-      service_data->find(kCableAdvertisementUUID128);
+  const auto service_data_with_uuid = service_data->find(kGoogleCableUUID128);
 
   if (service_data_with_uuid == service_data->end())
     return false;
@@ -140,9 +147,9 @@ MATCHER_P2(IsAdvertisementContent,
          std::equal(service_data_value.begin() + 2, service_data_value.end(),
                     expected_client_eid.begin(), expected_client_eid.end());
 
-#endif
-
+#else
   return true;
+#endif
 }
 
 class CableMockBluetoothAdvertisement : public BluetoothAdvertisement {
@@ -154,8 +161,8 @@ class CableMockBluetoothAdvertisement : public BluetoothAdvertisement {
   void ExpectUnregisterAndSucceed() {
     EXPECT_CALL(*this, Unregister(_, _))
         .WillOnce(::testing::WithArg<0>(::testing::Invoke([](auto success_cb) {
-          base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,
-                                                        std::move(success_cb));
+          base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+              FROM_HERE, std::move(success_cb));
         })));
   }
 
@@ -203,28 +210,32 @@ class CableMockAdapter : public MockBluetoothAdapter {
                     CreateAdvertisementCallback,
                     AdvertisementErrorCallback));
 
-  void AddNewTestBluetoothDevice(
+  BluetoothDevice* CreateNewTestBluetoothDevice(
       base::span<const uint8_t, kCableEphemeralIdSize> authenticator_eid) {
     auto mock_device = CreateTestBluetoothDevice();
 
     std::vector<uint8_t> service_data(18);
     service_data[0] = 1 << 5;
-    std::copy(authenticator_eid.begin(), authenticator_eid.end(),
-              service_data.begin() + 2);
+    base::ranges::copy(authenticator_eid, service_data.begin() + 2);
     BluetoothDevice::ServiceDataMap service_data_map;
-    service_data_map.emplace(kCableAdvertisementUUID128,
-                             std::move(service_data));
+    service_data_map.emplace(kGoogleCableUUID128, std::move(service_data));
 
     mock_device->UpdateAdvertisementData(
-        1 /* rssi */, base::nullopt /* flags */, BluetoothDevice::UUIDList(),
-        base::nullopt /* tx_power */, std::move(service_data_map),
+        1 /* rssi */, absl::nullopt /* flags */, BluetoothDevice::UUIDList(),
+        absl::nullopt /* tx_power */, std::move(service_data_map),
         BluetoothDevice::ManufacturerDataMap());
 
     auto* mock_device_ptr = mock_device.get();
     AddMockDevice(std::move(mock_device));
 
+    return mock_device_ptr;
+  }
+
+  void AddNewTestBluetoothDevice(
+      base::span<const uint8_t, kCableEphemeralIdSize> authenticator_eid) {
+    auto* device = CreateNewTestBluetoothDevice(authenticator_eid);
     for (auto& observer : GetObservers())
-      observer.DeviceAdded(this, mock_device_ptr);
+      observer.DeviceAdded(this, device);
   }
 
   void AddNewTestAppleBluetoothDevice(
@@ -246,7 +257,7 @@ class CableMockAdapter : public MockBluetoothAdapter {
   void ExpectRegisterAdvertisementWithResponse(
       bool simulate_success,
       base::span<const uint8_t> expected_client_eid,
-      base::StringPiece expected_uuid_formatted_client_eid,
+      std::string_view expected_uuid_formatted_client_eid,
       Sequence sequence = Sequence(),
       scoped_refptr<CableMockBluetoothAdvertisement> advertisement = nullptr) {
     if (!advertisement) {
@@ -296,6 +307,23 @@ class CableMockAdapter : public MockBluetoothAdapter {
             }));
   }
 
+#if BUILDFLAG(IS_CHROMEOS)
+  void ExpectLEScan(base::span<const uint8_t, kCableEphemeralIdSize> eid) {
+    EXPECT_CALL(*this, StartLowEnergyScanSession(_, _))
+        .WillOnce(
+            [this, eid](std::unique_ptr<BluetoothLowEnergyScanFilter> filter,
+                        base::WeakPtr<BluetoothLowEnergyScanSession::Delegate>
+                            delegate) {
+              EXPECT_TRUE(filter);
+              delegate->OnSessionStarted(/*scan_session=*/nullptr,
+                                         /*error_code=*/absl::nullopt);
+              auto* device = CreateNewTestBluetoothDevice(eid);
+              delegate->OnDeviceFound(/*scan_session=*/nullptr, device);
+              return nullptr;
+            });
+  }
+#endif  // BUILDFLAG(IS_CHROMEOS)
+
  protected:
   ~CableMockAdapter() override = default;
 };
@@ -325,8 +353,7 @@ class FakeFidoCableDiscovery : public FidoCableDiscovery {
  public:
   explicit FakeFidoCableDiscovery(
       std::vector<CableDiscoveryData> discovery_data)
-      : FidoCableDiscovery(std::move(discovery_data),
-                           /*ble_observer=*/nullptr) {}
+      : FidoCableDiscovery(std::move(discovery_data)) {}
   ~FakeFidoCableDiscovery() override = default;
 
  private:
@@ -456,7 +483,7 @@ TEST_F(FidoCableDiscoveryTest, TestDiscoveryFindsIncorrectDevice) {
 // not applicable.
 // TODO(https://crbug.com/837088): Support multiple EIDs on Windows and enable
 // these tests.
-#if !defined(OS_WIN)
+#if !BUILDFLAG(IS_WIN)
 // Tests Cable discovery flow when multiple(2) sets of client/authenticator EIDs
 // are passed on from the relying party. We should expect 2 invocations of
 // BluetoothAdapter::RegisterAdvertisement().
@@ -558,7 +585,7 @@ TEST_F(FidoCableDiscoveryTest, TestDiscoveryWithAdvertisementFailures) {
   task_environment_.FastForwardUntilNoTasksRemain();
   EXPECT_TRUE(cable_discovery->AdvertisementsForTesting().empty());
 }
-#endif  // !defined(OS_WIN)
+#endif  // !BUILDFLAG(IS_WIN)
 
 TEST_F(FidoCableDiscoveryTest, TestUnregisterAdvertisementUponDestruction) {
   auto cable_discovery = CreateDiscovery();
@@ -595,7 +622,7 @@ TEST_F(FidoCableDiscoveryTest, TestUnregisterAdvertisementUponStop) {
   task_environment_.FastForwardUntilNoTasksRemain();
   EXPECT_EQ(1u, cable_discovery->AdvertisementsForTesting().size());
 
-  EXPECT_TRUE(cable_discovery->MaybeStop());
+  cable_discovery->Stop();
   task_environment_.FastForwardUntilNoTasksRemain();
   EXPECT_EQ(0u, cable_discovery->AdvertisementsForTesting().size());
 }
@@ -614,7 +641,7 @@ TEST_F(FidoCableDiscoveryTest, TestStopWithNoAdvertisementsSucceeds) {
   task_environment_.FastForwardUntilNoTasksRemain();
 
   EXPECT_EQ(0u, cable_discovery->AdvertisementsForTesting().size());
-  EXPECT_TRUE(cable_discovery->MaybeStop());
+  cable_discovery->Stop();
 }
 
 // Tests that cable discovery resumes after Bluetooth adapter is powered on.
@@ -656,5 +683,39 @@ TEST_F(FidoCableDiscoveryTest, TestResumeDiscoveryAfterPoweredOn) {
   mock_adapter->NotifyAdapterPoweredChanged(true);
   task_environment_.FastForwardUntilNoTasksRemain();
 }
+
+#if BUILDFLAG(IS_CHROMEOS)
+// Tests regular successful discovery flow for Cable device on Floss.
+TEST_F(FidoCableDiscoveryTest, TestDiscoveryFindsNewDeviceFloss) {
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(floss::features::kFlossEnabled);
+#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS_LACROS)
+  crosapi::mojom::BrowserInitParamsPtr init_params =
+      chromeos::BrowserInitParams::GetForTests()->Clone();
+  init_params->is_floss_available = true;
+  init_params->use_floss_bluetooth = true;
+  chromeos::BrowserInitParams::SetInitParamsForTests(std::move(init_params));
+#endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
+
+  auto cable_discovery = CreateDiscovery();
+  NiceMock<MockFidoDiscoveryObserver> mock_observer;
+  EXPECT_CALL(mock_observer,
+              DiscoveryStarted(cable_discovery.get(), true,
+                               std::vector<FidoAuthenticator*>()));
+  EXPECT_CALL(mock_observer, AuthenticatorAdded(_, _));
+  cable_discovery->set_observer(&mock_observer);
+
+  auto mock_adapter = CableMockAdapter::MakePoweredOn();
+  mock_adapter->ExpectLEScan(kAuthenticatorEid);
+  mock_adapter->ExpectRegisterAdvertisementWithResponse(
+      true /* simulate_success */, kClientEid, kUuidFormattedClientEid);
+
+  BluetoothAdapterFactory::SetAdapterForTesting(mock_adapter);
+  cable_discovery->Start();
+  task_environment_.FastForwardUntilNoTasksRemain();
+}
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 }  // namespace device

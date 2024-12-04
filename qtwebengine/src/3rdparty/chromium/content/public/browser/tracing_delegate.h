@@ -1,51 +1,40 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef CONTENT_PUBLIC_BROWSER_TRACING_DELEGATE_H_
 #define CONTENT_PUBLIC_BROWSER_TRACING_DELEGATE_H_
 
-#include <memory>
-#include <string>
+#include <optional>
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
+#include "base/values.h"
 #include "content/common/content_export.h"
 
-namespace base {
-class DictionaryValue;
-}
-
-namespace network {
-class SharedURLLoaderFactory;
-}
-
 namespace content {
-class BackgroundTracingConfig;
-class TraceUploader;
 
 // This can be implemented by the embedder to provide functionality for the
 // about://tracing WebUI.
 class CONTENT_EXPORT TracingDelegate {
  public:
-  virtual ~TracingDelegate() {}
+  virtual ~TracingDelegate() = default;
 
-  // Provide trace uploading functionality; see trace_uploader.h.
-  virtual std::unique_ptr<TraceUploader> GetTraceUploader(
-      scoped_refptr<network::SharedURLLoaderFactory>) = 0;
+  // Notifies that background tracing became active and a tracing session
+  // started. Returns true if the tracing session is allowed to begin.
+  virtual bool OnBackgroundTracingActive(bool requires_anonymized_data);
+  // Notifies that a tracing session stopped and background tracing became idle
+  // again. Returns true if the tracing session is allowed finalize.
+  virtual bool OnBackgroundTracingIdle(bool requires_anonymized_data);
 
-  // This can be used to veto a particular background tracing scenario.
-  virtual bool IsAllowedToBeginBackgroundScenario(
-      const BackgroundTracingConfig& config,
-      bool requires_anonymized_data);
+  // Specifies whether traces that aren't uploaded should still be saved.
+  virtual bool ShouldSaveUnuploadedTrace() const;
 
-  virtual bool IsAllowedToEndBackgroundScenario(
-      const content::BackgroundTracingConfig& config,
-      bool requires_anonymized_data);
-
-  virtual bool IsProfileLoaded();
+  // Whether system-wide performance trace collection using the external system
+  // tracing service is enabled.
+  virtual bool IsSystemWideTracingEnabled();
 
   // Used to add any additional metadata to traces.
-  virtual std::unique_ptr<base::DictionaryValue> GenerateMetadataDict();
+  virtual std::optional<base::Value::Dict> GenerateMetadataDict();
 };
 
 }  // namespace content

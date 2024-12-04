@@ -1,8 +1,8 @@
 if get_option('remoting')
 	user_hint = 'If you rather not build this, set \'-Dremoting=false\'.'
 
-	if not get_option('backend-drm')
-		error('Attempting to build the remoting plugin without the required DRM backend. ' + user_hint)
+	if not get_option('backend-drm') or not get_option('renderer-gl')
+		error('Attempting to build the remoting plugin without the required DRM backend and GL renderer. ' + user_hint)
 	endif
 
 	depnames = [
@@ -10,7 +10,7 @@ if get_option('remoting')
 		'gstreamer-app-1.0', 'gstreamer-video-1.0',
 		'gobject-2.0', 'glib-2.0'
 	]
-	deps_remoting = [ dep_libweston ]
+	deps_remoting = [ dep_libweston_private, dep_libdrm_headers ]
 	foreach depname : depnames
 		dep = dependency(depname, required: false)
 		if not dep.found()
@@ -22,7 +22,7 @@ if get_option('remoting')
 	plugin_remoting = shared_library(
 		'remoting-plugin',
 		'remoting-plugin.c',
-		include_directories: include_directories('..', '../shared'),
+		include_directories: common_inc,
 		dependencies: deps_remoting,
 		name_prefix: '',
 		install: true,

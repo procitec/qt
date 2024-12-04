@@ -10,7 +10,6 @@
 #include "include/core/SkCanvas.h"
 #include "include/core/SkColor.h"
 #include "include/core/SkColorFilter.h"
-#include "include/core/SkFilterQuality.h"
 #include "include/core/SkFont.h"
 #include "include/core/SkFontMgr.h"
 #include "include/core/SkFontTypes.h"
@@ -26,6 +25,7 @@
 #include "include/core/SkScalar.h"
 #include "include/core/SkShader.h"
 #include "include/core/SkSize.h"
+#include "include/core/SkStream.h"
 #include "include/core/SkString.h"
 #include "include/core/SkSurface.h"
 #include "include/core/SkTextBlob.h"
@@ -34,13 +34,17 @@
 #include "include/core/SkTypes.h"
 #include "include/core/SkVertices.h"
 #include "include/effects/SkGradientShader.h"
-#include "include/private/SkTemplates.h"
-#include "src/core/SkAutoMalloc.h"
+#include "include/private/base/SkTemplates.h"
+#include "src/base/SkAutoMalloc.h"
 #include "src/core/SkFontPriv.h"
+#include "tools/DecodeUtils.h"
 #include "tools/Resources.h"
 #include "tools/ToolUtils.h"
+#include "tools/fonts/FontToolUtils.h"
 
 #include <initializer_list>
+
+using namespace skia_private;
 
 class DrawAtlasGM : public skiagm::GM {
     static sk_sp<SkImage> MakeAtlas(SkCanvas* caller, const SkRect& target) {
@@ -68,14 +72,9 @@ public:
     DrawAtlasGM() {}
 
 protected:
+    SkString getName() const override { return SkString("draw-atlas"); }
 
-    SkString onShortName() override {
-        return SkString("draw-atlas");
-    }
-
-    SkISize onISize() override {
-        return SkISize::Make(640, 480);
-    }
+    SkISize getISize() override { return SkISize::Make(640, 480); }
 
     void onDraw(SkCanvas* canvas) override {
         const SkRect target = { 50, 50, 80, 90 };
@@ -101,7 +100,7 @@ protected:
             { 2, -30, 310, 30 },    // scale + rotate + translate
         };
 
-        const int N = SK_ARRAY_COUNT(rec);
+        const int N = std::size(rec);
         SkRSXform xform[N];
         SkRect tex[N];
         SkColor colors[N];
@@ -113,12 +112,14 @@ protected:
         }
 
         SkPaint paint;
-        paint.setFilterQuality(kLow_SkFilterQuality);
         paint.setAntiAlias(true);
+        SkSamplingOptions sampling(SkFilterMode::kLinear);
 
-        canvas->drawAtlas(atlas.get(), xform, tex, N, nullptr, &paint);
+        canvas->drawAtlas(atlas.get(), xform, tex, nullptr, N, SkBlendMode::kDst,
+                          sampling, nullptr, &paint);
         canvas->translate(0, 100);
-        canvas->drawAtlas(atlas.get(), xform, tex, colors, N, SkBlendMode::kSrcIn, nullptr, &paint);
+        canvas->drawAtlas(atlas.get(), xform, tex, colors, N, SkBlendMode::kSrcIn,
+                          sampling, nullptr, &paint);
     }
 
 private:
@@ -145,7 +146,7 @@ static void draw_text_on_path(SkCanvas* canvas, const void* text, size_t length,
                                 std::max(SkScalarAbs(fontb.fTop), SkScalarAbs(fontb.fBottom)));
     const SkRect bounds = path.getBounds().makeOutset(max, max);
 
-    SkAutoTArray<SkGlyphID> glyphs(count);
+    AutoTArray<SkGlyphID> glyphs(count);
     font.textToGlyphs(text, length, SkTextEncoding::kUTF8, glyphs.get(), count);
     font.getWidths(glyphs.get(), count, widths);
 
@@ -188,7 +189,7 @@ static void drawTextPath(SkCanvas* canvas, bool doStroke) {
     const int N = sizeof(text0) - 1;
     SkPoint pos[N];
 
-    SkFont font;
+    SkFont font = ToolUtils::DefaultPortableFont();
     font.setSize(100);
 
     SkPaint paint;
@@ -234,8 +235,7 @@ DEF_SIMPLE_GM(drawTextRSXform, canvas, 430, 860) {
 
 // Exercise xform blob and its bounds
 DEF_SIMPLE_GM(blob_rsxform, canvas, 500, 100) {
-    SkFont font;
-    font.setTypeface(ToolUtils::create_portable_typeface());
+    SkFont font = ToolUtils::DefaultPortableFont();
     font.setSize(50);
 
     const char text[] = "CrazyXform";
@@ -265,13 +265,16 @@ DEF_SIMPLE_GM(blob_rsxform_distortable, canvas, 500, 100) {
     sk_sp<SkTypeface> typeface;
     std::unique_ptr<SkStreamAsset> distortable(GetResourceAsStream("fonts/Distortable.ttf"));
     if (distortable) {
-        sk_sp<SkFontMgr> fm = SkFontMgr::RefDefault();
+        sk_sp<SkFontMgr> fm = ToolUtils::TestFontMgr();
         const SkFontArguments::VariationPosition::Coordinate position[] = {
             { SkSetFourByteTag('w','g','h','t'), 1.618033988749895f }
         };
         SkFontArguments params;
-        params.setVariationDesignPosition({position, SK_ARRAY_COUNT(position)});
+        params.setVariationDesignPosition({position, std::size(position)});
         typeface = fm->makeFromStream(std::move(distortable), params);
+    }
+    if (!typeface) {
+        typeface = ToolUtils::DefaultPortableTypeface();
     }
 
     SkFont font(typeface, 50);
@@ -323,7 +326,7 @@ DEF_SIMPLE_GM(compare_atlas_vertices, canvas, 560, 585) {
     const SkRSXform xform = SkRSXform::Make(1, 0, 0, 0);
     const SkColor color = 0x884488CC;
 
-    auto image = GetResourceAsImage("images/mandrill_128.png");
+    auto image = ToolUtils::GetResourceAsImage("images/mandrill_128.png");
     auto verts = make_vertices(image, tex, color);
     const sk_sp<SkColorFilter> filters[] = {
         nullptr,
@@ -342,10 +345,10 @@ DEF_SIMPLE_GM(compare_atlas_vertices, canvas, 560, 585) {
             canvas->save();
             for (const sk_sp<SkColorFilter>& cf : filters) {
                 paint.setColorFilter(cf);
-                canvas->drawAtlas(image, &xform, &tex, &color, 1,
-                                  mode, &tex, &paint);
+                canvas->drawAtlas(image.get(), &xform, &tex, &color, 1, mode,
+                                  SkSamplingOptions(), &tex, &paint);
                 canvas->translate(128, 0);
-                paint.setShader(image->makeShader());
+                paint.setShader(image->makeShader(SkSamplingOptions()));
                 canvas->drawVertices(verts, mode, paint);
                 paint.setShader(nullptr);
                 canvas->translate(145, 0);

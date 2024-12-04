@@ -1,20 +1,14 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef MOJO_CORE_REQUEST_CONTEXT_H_
 #define MOJO_CORE_REQUEST_CONTEXT_H_
 
-#include "base/containers/stack_container.h"
-#include "base/macros.h"
 #include "mojo/core/handle_signals_state.h"
 #include "mojo/core/system_impl_export.h"
 #include "mojo/core/watch.h"
-
-namespace base {
-template <typename T>
-class ThreadLocalPointer;
-}
+#include "third_party/abseil-cpp/absl/container/inlined_vector.h"
 
 namespace mojo {
 namespace core {
@@ -41,6 +35,10 @@ class MOJO_SYSTEM_IMPL_EXPORT RequestContext {
   RequestContext();
 
   explicit RequestContext(Source source);
+
+  RequestContext(const RequestContext&) = delete;
+  RequestContext& operator=(const RequestContext&) = delete;
+
   ~RequestContext();
 
   // Returns the current thread-local RequestContext.
@@ -85,21 +83,14 @@ class MOJO_SYSTEM_IMPL_EXPORT RequestContext {
   static const size_t kStaticWatchFinalizersCapacity = 8;
 
   using WatchNotifyFinalizerList =
-      base::StackVector<WatchNotifyFinalizer, kStaticWatchFinalizersCapacity>;
+      absl::InlinedVector<WatchNotifyFinalizer, kStaticWatchFinalizersCapacity>;
   using WatchCancelFinalizerList =
-      base::StackVector<scoped_refptr<Watch>, kStaticWatchFinalizersCapacity>;
+      absl::InlinedVector<scoped_refptr<Watch>, kStaticWatchFinalizersCapacity>;
 
   const Source source_;
 
   WatchNotifyFinalizerList watch_notify_finalizers_;
   WatchCancelFinalizerList watch_cancel_finalizers_;
-
-  // Pointer to the TLS context. Although this can easily be accessed via the
-  // global LazyInstance, accessing a LazyInstance has a large cost relative to
-  // the rest of this class and its usages.
-  base::ThreadLocalPointer<RequestContext>* tls_context_;
-
-  DISALLOW_COPY_AND_ASSIGN(RequestContext);
 };
 
 }  // namespace core

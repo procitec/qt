@@ -17,7 +17,7 @@
 #include "include/core/SkScalar.h"
 #include "include/core/SkSize.h"
 #include "include/core/SkString.h"
-#include "include/utils/SkRandom.h"
+#include "src/base/SkRandom.h"
 #include "src/core/SkBlurMask.h"
 #include "tools/timer/TimeUtils.h"
 
@@ -46,11 +46,9 @@ public:
 protected:
     bool runAsBench() const override { return true; }
 
-    SkString onShortName() override { return SkString("blurcircles2"); }
+    SkString getName() const override { return SkString("blurcircles2"); }
 
-    SkISize onISize() override {
-        return SkISize::Make(730, 1350);
-    }
+    SkISize getISize() override { return SkISize::Make(730, 1350); }
 
     void onDraw(SkCanvas* canvas) override {
         constexpr SkScalar kMaxR = kMaxRadius + kMaxBlurRadius;
@@ -149,15 +147,15 @@ protected:
     }
 
 private:
-    static constexpr SkScalar kMinRadius = 15;
-    static constexpr SkScalar kMaxRadius = 45;
-    static constexpr SkScalar kRadiusPingPoingPeriod = 8;
-    static constexpr SkScalar kRadiusPingPoingShift = 3;
+    inline static constexpr SkScalar kMinRadius = 15;
+    inline static constexpr SkScalar kMaxRadius = 45;
+    inline static constexpr SkScalar kRadiusPingPoingPeriod = 8;
+    inline static constexpr SkScalar kRadiusPingPoingShift = 3;
 
-    static constexpr SkScalar kMinBlurRadius = 5;
-    static constexpr SkScalar kMaxBlurRadius = 45;
-    static constexpr SkScalar kBlurRadiusPingPoingPeriod = 3;
-    static constexpr SkScalar kBlurRadiusPingPoingShift = 1.5;
+    inline static constexpr SkScalar kMinBlurRadius = 5;
+    inline static constexpr SkScalar kMaxBlurRadius = 45;
+    inline static constexpr SkScalar kBlurRadiusPingPoingPeriod = 3;
+    inline static constexpr SkScalar kBlurRadiusPingPoingShift = 1.5;
 
     SkScalar    fAnimRadius;
     SkScalar    fAnimBlurRadius;

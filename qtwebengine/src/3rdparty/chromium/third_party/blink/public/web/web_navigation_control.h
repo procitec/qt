@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,19 +7,22 @@
 
 #include <memory>
 
-#include "base/callback.h"
-#include "base/unguessable_token.h"
+#include "base/functional/callback.h"
+#include "third_party/blink/public/common/tokens/tokens.h"
+#include "third_party/blink/public/platform/web_vector.h"
 #include "third_party/blink/public/web/web_document_loader.h"
 #include "third_party/blink/public/web/web_frame_load_type.h"
 #include "third_party/blink/public/web/web_local_frame.h"
 
 namespace blink {
 
+class WebSecurityOrigin;
 class WebURL;
-struct WebURLError;
-class WebHistoryItem;
 struct WebNavigationInfo;
 struct WebNavigationParams;
+namespace scheduler {
+class TaskAttributionId;
+}  // namespace scheduler
 
 // This interface gives control to navigation-related functionality of
 // WebLocalFrame. It is separated from WebLocalFrame to give precise control
@@ -30,7 +33,7 @@ class WebNavigationControl : public WebLocalFrame {
   ~WebNavigationControl() override {}
 
   // Runs beforeunload handlers for this frame and its local descendants.
-  // Returns |true| if all the frames agreed to proceed with unloading
+  // Returns `true` if all the frames agreed to proceed with unloading
   // from their respective event handlers.
   // Note: this may lead to the destruction of the frame.
   virtual bool DispatchBeforeUnloadEvent(bool is_reload) = 0;
@@ -44,38 +47,39 @@ class WebNavigationControl : public WebLocalFrame {
       std::unique_ptr<WebNavigationParams> navigation_params,
       std::unique_ptr<WebDocumentLoader::ExtraData> extra_data) = 0;
 
-  // Commits a same-document navigation in the frame. For history navigations, a
-  // valid WebHistoryItem should be provided. Returns CommitResult::Ok if the
+  // Commits a same-document navigation in the frame. For history navigations,
+  // a valid WebHistoryItem should be provided. `initiator_origin` is null
+  // for browser-initiated navigations. Returns CommitResult::Ok if the
   // navigation has actually committed.
   virtual mojom::CommitResult CommitSameDocumentNavigation(
       const WebURL&,
       WebFrameLoadType,
       const WebHistoryItem&,
       bool is_client_redirect,
-      std::unique_ptr<WebDocumentLoader::ExtraData> extra_data) = 0;
+      bool has_transient_user_activation,
+      const WebSecurityOrigin& initiator_origin,
+      bool is_browser_initiated,
+      absl::optional<scheduler::TaskAttributionId>
+          soft_navigation_heuristics_task_id) = 0;
 
-  // Loads a JavaScript URL in the frame.
-  // TODO(dgozman): this may replace the document, so perhaps we should
-  // return something meaningful?
-  virtual void LoadJavaScriptURL(const WebURL&) = 0;
+  // Override the normal rules that determine whether the frame is on the
+  // initial empty document or not. Used to propagate state when this frame has
+  // navigated cross process.
+  virtual void SetIsNotOnInitialEmptyDocument() = 0;
+  virtual bool IsOnInitialEmptyDocument() = 0;
 
-  enum FallbackContentResult {
-    // An error page should be shown instead of fallback.
-    NoFallbackContent,
-    // Something else committed, no fallback content or error page needed.
-    NoLoadInProgress,
-    // Fallback content rendered, no error page needed.
-    FallbackRendered
-  };
-  // On load failure, attempts to make frame's parent render fallback content.
-  virtual FallbackContentResult MaybeRenderFallbackContent(
-      const WebURLError&) const = 0;
-
-  // Override the normal rules for whether a load has successfully committed
-  // in this frame. Used to propagate state when this frame has navigated
-  // cross process.
-  virtual void SetCommittedFirstRealLoad() = 0;
-  virtual bool HasCommittedFirstRealLoad() = 0;
+  // Notifies that a renderer-initiated navigation to `urls` will
+  // potentially start.
+  // This is fired in the following situations so that the browser can
+  // speculatively warm-up service workers (start the renderer process and
+  // load scripts) or start (warm up + run the service worker script).
+  // - The anchor tag is in the viewport.
+  // - The mouse hovered the anchor tag.
+  // - The mousedown or touchstart event gets dispatched on the anchor tag.
+  // - The beforeunload event gets dispatched.
+  // Note that the navigation might not actually start.
+  virtual void MaybeStartOutermostMainFrameNavigation(
+      const WebVector<WebURL>& urls) const = 0;
 
   // Marks the frame as loading, before WebLocalFrameClient issues a navigation
   // request through the browser process on behalf of the frame.
@@ -90,7 +94,7 @@ class WebNavigationControl : public WebLocalFrame {
 
  protected:
   explicit WebNavigationControl(mojom::TreeScopeType scope,
-                                const base::UnguessableToken& frame_token)
+                                const LocalFrameToken& frame_token)
       : WebLocalFrame(scope, frame_token) {}
 };
 

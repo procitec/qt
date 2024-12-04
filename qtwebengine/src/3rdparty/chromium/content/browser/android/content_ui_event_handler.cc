@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,6 +16,7 @@
 #include "ui/events/android/key_event_android.h"
 #include "ui/events/android/motion_event_android.h"
 #include "ui/events/base_event_utils.h"
+#include "ui/events/event_utils.h"
 
 using base::android::AttachCurrentThread;
 using base::android::JavaParamRef;
@@ -86,7 +87,7 @@ bool ContentUiEventHandler::ScrollTo(float x, float y) {
 void ContentUiEventHandler::SendMouseWheelEvent(
     JNIEnv* env,
     const JavaParamRef<jobject>& obj,
-    jlong time_ms,
+    jlong time_ns,
     jfloat x,
     jfloat y,
     jfloat ticks_x,
@@ -95,13 +96,10 @@ void ContentUiEventHandler::SendMouseWheelEvent(
   if (!event_handler)
     return;
 
-  // Compute Event.Latency.OS.MOUSE_WHEEL histogram.
+  // Compute Event.Latency.OS2.MOUSE_WHEEL histogram.
   base::TimeTicks current_time = ui::EventTimeForNow();
-  base::TimeTicks event_time =
-      base::TimeTicks() + base::TimeDelta::FromMilliseconds(time_ms);
-  base::TimeDelta delta = current_time - event_time;
-  UMA_HISTOGRAM_CUSTOM_COUNTS("Event.Latency.OS.MOUSE_WHEEL",
-                              delta.InMicroseconds(), 1, 1000000, 50);
+  base::TimeTicks event_time = base::TimeTicks::FromJavaNanoTime(time_ns);
+  ComputeEventLatencyOS(ui::ET_MOUSEWHEEL, event_time, current_time);
   ui::MotionEventAndroid::Pointer pointer(
       0, x, y, 0.0f /* touch_major */, 0.0f /* touch_minor */, 0.0f, 0.0f, 0);
 
@@ -112,16 +110,17 @@ void ContentUiEventHandler::SendMouseWheelEvent(
              : ui::kDefaultMouseWheelTickMultiplier * view->GetDipScale();
   ui::MotionEventAndroid event(
       env, nullptr, 1.f / view->GetDipScale(), ticks_x, ticks_y,
-      pixels_per_tick, time_ms, 0 /* action */, 1 /* pointer_count */,
-      0 /* history_size */, 0 /* action_index */, 0, 0, 0, 0,
-      0 /* raw_offset_x_pixels */, 0 /* raw_offset_y_pixels */,
-      false /* for_touch_handle */, &pointer, nullptr);
+      pixels_per_tick, base::TimeTicks::FromJavaNanoTime(time_ns),
+      0 /* action */, 1 /* pointer_count */, 0 /* history_size */,
+      0 /* action_index */, 0, 0, 0, 0, 0 /* raw_offset_x_pixels */,
+      0 /* raw_offset_y_pixels */, false /* for_touch_handle */, &pointer,
+      nullptr);
   event_handler->OnMouseWheelEvent(event);
 }
 
 void ContentUiEventHandler::SendMouseEvent(JNIEnv* env,
                                            const JavaParamRef<jobject>& obj,
-                                           jlong time_ms,
+                                           jlong time_ns,
                                            jint android_action,
                                            jfloat x,
                                            jfloat y,
@@ -146,11 +145,12 @@ void ContentUiEventHandler::SendMouseEvent(JNIEnv* env,
   ui::MotionEventAndroid event(
       env, nullptr /* event */,
       1.f / web_contents_->GetNativeView()->GetDipScale(), 0.f, 0.f, 0.f,
-      time_ms, android_action, 1 /* pointer_count */, 0 /* history_size */,
-      0 /* action_index */, android_action_button,
-      0 /* gesture_classification */, android_button_state, android_meta_state,
-      0 /* raw_offset_x_pixels */, 0 /* raw_offset_y_pixels */,
-      false /* for_touch_handle */, &pointer, nullptr);
+      base::TimeTicks::FromJavaNanoTime(time_ns), android_action,
+      1 /* pointer_count */, 0 /* history_size */, 0 /* action_index */,
+      android_action_button, 0 /* gesture_classification */,
+      android_button_state, android_meta_state, 0 /* raw_offset_x_pixels */,
+      0 /* raw_offset_y_pixels */, false /* for_touch_handle */, &pointer,
+      nullptr);
   event_handler->OnMouseEvent(event);
 }
 

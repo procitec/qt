@@ -1,47 +1,9 @@
-/****************************************************************************
-**
-** Copyright (C) 2017 Klaralvdalens Datakonsult AB (KDAB).
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt3D module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2017 Klaralvdalens Datakonsult AB (KDAB).
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qshaderprogrambuilder.h"
 #include "qshaderprogrambuilder_p.h"
 #include "qshaderprogram.h"
-#include <Qt3DCore/qpropertyupdatedchange.h>
-#include <Qt3DRender/private/qurlhelper_p.h>
 #include <QDebug>
 #include <QFile>
 #include <QFileInfo>
@@ -76,7 +38,7 @@
 
 /*!
     \qmltype ShaderProgramBuilder
-    \instantiates Qt3DRender::QShaderProgramBuilder
+    \nativetype Qt3DRender::QShaderProgramBuilder
     \inqmlmodule Qt3D.Render
     \brief Generates a Shader Program content from loaded graphs.
     \since 5.10
@@ -167,18 +129,13 @@ QShaderProgramBuilder::QShaderProgramBuilder(QShaderProgramBuilderPrivate &dd, Q
 {
 }
 
-// TODO Unused remove in Qt6
-void QShaderProgramBuilder::sceneChangeEvent(const Qt3DCore::QSceneChangePtr &)
-{
-}
-
 /*!
     \qmlproperty string ShaderProgramBuilder::shaderProgram
 
     Holds the shader program on which this builder generates code.
 */
 /*!
-    \property QShaderProgramBuilder::shaderProgram
+    \property Qt3DRender::QShaderProgramBuilder::shaderProgram
 
     Holds the shader program on which this builder generates code.
 */
@@ -219,7 +176,7 @@ QShaderProgram *QShaderProgramBuilder::shaderProgram() const
     during code generation.
 */
 /*!
-    \property QShaderProgramBuilder::enabledLayers
+    \property Qt3DRender::QShaderProgramBuilder::enabledLayers
 
     Holds the list of layers this builder will activate on the shader graphs
     during code generation.
@@ -245,7 +202,7 @@ QStringList QShaderProgramBuilder::enabledLayers() const
     Holds the URL to the vertex shader graph used by this shader program builder.
 */
 /*!
-    \property QShaderProgramBuilder::vertexShaderGraph
+    \property Qt3DRender::QShaderProgramBuilder::vertexShaderGraph
 
     Holds the URL to the vertex shader graph used by this shader program builder.
 */
@@ -270,7 +227,7 @@ QUrl QShaderProgramBuilder::vertexShaderGraph() const
     Holds the URL to the tesselation control shader graph used by this shader program builder.
 */
 /*!
-    \property QShaderProgramBuilder::tessellationControlShaderGraph
+    \property Qt3DRender::QShaderProgramBuilder::tessellationControlShaderGraph
 
     Holds the URL to the tesselation control shader graph used by this shader program builder.
 */
@@ -295,7 +252,7 @@ QUrl QShaderProgramBuilder::tessellationControlShaderGraph() const
     Holds the URL to the tesselation evaluation shader graph used by this shader program builder.
 */
 /*!
-    \property QShaderProgramBuilder::tessellationEvaluationShaderGraph
+    \property Qt3DRender::QShaderProgramBuilder::tessellationEvaluationShaderGraph
 
     Holds the URL to the tesselation evaluation shader graph used by this shader program builder.
 */
@@ -320,7 +277,7 @@ QUrl QShaderProgramBuilder::tessellationEvaluationShaderGraph() const
     Holds the URL to the geometry shader graph used by this shader program builder.
 */
 /*!
-    \property QShaderProgramBuilder::geometryShaderGraph
+    \property Qt3DRender::QShaderProgramBuilder::geometryShaderGraph
 
     Holds the URL to the geometry shader graph used by this shader program builder.
 */
@@ -345,7 +302,7 @@ QUrl QShaderProgramBuilder::geometryShaderGraph() const
     Holds the URL to the fragment shader graph used by this shader program builder.
 */
 /*!
-    \property QShaderProgramBuilder::fragmentShaderGraph
+    \property Qt3DRender::QShaderProgramBuilder::fragmentShaderGraph
 
     Holds the URL to the fragment shader graph used by this shader program builder.
 */
@@ -370,7 +327,7 @@ QUrl QShaderProgramBuilder::fragmentShaderGraph() const
     Holds the URL to the compute shader graph used by this shader program builder.
 */
 /*!
-    \property QShaderProgramBuilder::computeShaderGraph
+    \property Qt3DRender::QShaderProgramBuilder::computeShaderGraph
 
     Holds the URL to the compute shader graph used by this shader program builder.
 */
@@ -396,7 +353,7 @@ QUrl QShaderProgramBuilder::computeShaderGraph() const
     \since 2.13
 */
 /*!
-    \property QShaderProgramBuilder::vertexShaderCode
+    \property Qt3DRender::QShaderProgramBuilder::vertexShaderCode
 
     Holds the generate vertex shader code.
     \since 5.13
@@ -414,7 +371,7 @@ QByteArray QShaderProgramBuilder::vertexShaderCode() const
     \since 2.13
 */
 /*!
-    \property QShaderProgramBuilder::tessellationControlShaderCode
+    \property Qt3DRender::QShaderProgramBuilder::tessellationControlShaderCode
 
     Holds the generate tessellation control shader code.
     \since 5.13
@@ -432,7 +389,7 @@ QByteArray QShaderProgramBuilder::tessellationControlShaderCode() const
     \since 2.13
 */
 /*!
-    \property QShaderProgramBuilder::tessellationEvaluationShaderCode
+    \property Qt3DRender::QShaderProgramBuilder::tessellationEvaluationShaderCode
 
     Holds the generate tessellation evaluation shader code.
     \since 5.13
@@ -450,7 +407,7 @@ QByteArray QShaderProgramBuilder::tessellationEvaluationShaderCode() const
     \since 2.13
 */
 /*!
-    \property QShaderProgramBuilder::geometryShaderCode
+    \property Qt3DRender::QShaderProgramBuilder::geometryShaderCode
 
     Holds the generate geometry shader code.
     \since 5.13
@@ -468,7 +425,7 @@ QByteArray QShaderProgramBuilder::geometryShaderCode() const
     \since 2.13
 */
 /*!
-    \property QShaderProgramBuilder::fragmentShaderCode
+    \property Qt3DRender::QShaderProgramBuilder::fragmentShaderCode
 
     Holds the generate fragment shader code.
     \since 5.13
@@ -486,7 +443,7 @@ QByteArray QShaderProgramBuilder::fragmentShaderCode() const
     \since 2.13
 */
 /*!
-    \property QShaderProgramBuilder::computeShaderCode
+    \property Qt3DRender::QShaderProgramBuilder::computeShaderCode
 
     Holds the generate compute shader code.
     \since 5.13
@@ -497,22 +454,8 @@ QByteArray QShaderProgramBuilder::computeShaderCode() const
     return d->m_computeShaderCode;
 }
 
-Qt3DCore::QNodeCreatedChangeBasePtr QShaderProgramBuilder::createNodeCreationChange() const
-{
-    auto creationChange = Qt3DCore::QNodeCreatedChangePtr<QShaderProgramBuilderData>::create(this);
-    auto &data = creationChange->data;
-    Q_D(const QShaderProgramBuilder);
-    data.shaderProgramId = d->m_shaderProgram ? d->m_shaderProgram->id() : Qt3DCore::QNodeId();
-    data.enabledLayers = d->m_enabledLayers;
-    data.vertexShaderGraph = d->m_vertexShaderGraph;
-    data.tessellationControlShaderGraph = d->m_tessControlShaderGraph;
-    data.tessellationEvaluationShaderGraph = d->m_tessEvalShaderGraph;
-    data.geometryShaderGraph = d->m_geometryShaderGraph;
-    data.fragmentShaderGraph = d->m_fragmentShaderGraph;
-    data.computeShaderGraph = d->m_computeShaderGraph;
-    return creationChange;
-}
-
 } // of namespace Qt3DRender
 
 QT_END_NAMESPACE
+
+#include "moc_qshaderprogrambuilder.cpp"

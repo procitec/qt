@@ -1,14 +1,15 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "cast/sender/cast_platform_client.h"
 
+#include <utility>
+
 #include "cast/common/channel/testing/fake_cast_socket.h"
 #include "cast/common/channel/testing/mock_socket_error_handler.h"
-#include "cast/common/channel/virtual_connection_manager.h"
 #include "cast/common/channel/virtual_connection_router.h"
-#include "cast/common/public/service_info.h"
+#include "cast/common/public/receiver_info.h"
 #include "cast/sender/testing/test_helpers.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
@@ -17,8 +18,7 @@
 #include "util/json/json_serialization.h"
 #include "util/json/json_value.h"
 
-namespace openscreen {
-namespace cast {
+namespace openscreen::cast {
 
 using ::cast::channel::CastMessage;
 
@@ -33,7 +33,7 @@ class CastPlatformClientTest : public ::testing::Test {
 
     receiver_.v4_address = IPAddress{192, 168, 0, 17};
     receiver_.port = 4434;
-    receiver_.unique_id = "deviceId1";
+    receiver_.unique_id = "receiverId1";
     platform_client_.AddOrUpdateReceiver(receiver_, socket_->socket_id());
   }
 
@@ -46,13 +46,11 @@ class CastPlatformClientTest : public ::testing::Test {
   FakeCastSocketPair fake_cast_socket_pair_;
   CastSocket* socket_ = nullptr;
   MockSocketErrorHandler mock_error_handler_;
-  VirtualConnectionManager manager_;
-  VirtualConnectionRouter router_{&manager_};
+  VirtualConnectionRouter router_;
   FakeClock clock_{Clock::now()};
   FakeTaskRunner task_runner_{&clock_};
-  CastPlatformClient platform_client_{&router_, &manager_, &FakeClock::now,
-                                      &task_runner_};
-  ServiceInfo receiver_;
+  CastPlatformClient platform_client_{&router_, &FakeClock::now, task_runner_};
+  ReceiverInfo receiver_;
 };
 
 TEST_F(CastPlatformClientTest, AppAvailability) {
@@ -65,7 +63,7 @@ TEST_F(CastPlatformClientTest, AppAvailability) {
       });
   bool ran = false;
   platform_client_.RequestAppAvailability(
-      "deviceId1", "AAA",
+      "receiverId1", "AAA",
       [&ran](const std::string& app_id, AppAvailabilityResult availability) {
         EXPECT_EQ("AAA", app_id);
         EXPECT_EQ(availability, AppAvailabilityResult::kAvailable);
@@ -91,12 +89,11 @@ TEST_F(CastPlatformClientTest, CancelRequest) {
                                           CastMessage message) {
         VerifyAppAvailabilityRequest(message, "AAA", &request_id, &sender_id);
       });
-  absl::optional<int> maybe_request_id =
-      platform_client_.RequestAppAvailability(
-          "deviceId1", "AAA",
-          [](const std::string& app_id, AppAvailabilityResult availability) {
-            EXPECT_TRUE(false);
-          });
+  std::optional<int> maybe_request_id = platform_client_.RequestAppAvailability(
+      "receiverId1", "AAA",
+      [](const std::string& app_id, AppAvailabilityResult availability) {
+        EXPECT_TRUE(false);
+      });
   ASSERT_TRUE(maybe_request_id);
   int local_request_id = maybe_request_id.value();
   platform_client_.CancelRequest(local_request_id);
@@ -106,5 +103,4 @@ TEST_F(CastPlatformClientTest, CancelRequest) {
   EXPECT_TRUE(peer_socket().Send(availability_response).ok());
 }
 
-}  // namespace cast
-}  // namespace openscreen
+}  // namespace openscreen::cast

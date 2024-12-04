@@ -13,6 +13,8 @@
 
 #include <errno.h>
 
+#include "absl/types/optional.h"
+
 #if defined(WEBRTC_POSIX)
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -25,8 +27,11 @@
 #include "rtc_base/win32.h"
 #endif
 
-#include "rtc_base/constructor_magic.h"
+#include "api/units/timestamp.h"
+#include "rtc_base/buffer.h"
 #include "rtc_base/socket_address.h"
+#include "rtc_base/system/rtc_export.h"
+#include "rtc_base/third_party/sigslot/sigslot.h"
 
 // Rather than converting errors into a private namespace,
 // Reuse the POSIX socket api errors. Note this depends on
@@ -59,6 +64,8 @@
 #define ECONNREFUSED WSAECONNREFUSED
 #undef EHOSTUNREACH
 #define EHOSTUNREACH WSAEHOSTUNREACH
+#undef ENETUNREACH
+#define ENETUNREACH WSAENETUNREACH
 #define SOCKET_EACCES WSAEACCES
 #endif  // WEBRTC_WIN
 
@@ -76,9 +83,19 @@ inline bool IsBlockingError(int e) {
 
 // General interface for the socket implementations of various networks.  The
 // methods match those of normal UNIX sockets very closely.
-class Socket {
+class RTC_EXPORT Socket {
  public:
+  struct ReceiveBuffer {
+    ReceiveBuffer(rtc::Buffer& payload) : payload(payload) {}
+
+    absl::optional<webrtc::Timestamp> arrival_time;
+    SocketAddress source_address;
+    rtc::Buffer& payload;
+  };
   virtual ~Socket() {}
+
+  Socket(const Socket&) = delete;
+  Socket& operator=(const Socket&) = delete;
 
   // Returns the address to which the socket is bound.  If the socket is not
   // bound, then the any-address is returned.
@@ -92,12 +109,16 @@ class Socket {
   virtual int Connect(const SocketAddress& addr) = 0;
   virtual int Send(const void* pv, size_t cb) = 0;
   virtual int SendTo(const void* pv, size_t cb, const SocketAddress& addr) = 0;
-  // |timestamp| is in units of microseconds.
+  // `timestamp` is in units of microseconds.
   virtual int Recv(void* pv, size_t cb, int64_t* timestamp) = 0;
   virtual int RecvFrom(void* pv,
                        size_t cb,
                        SocketAddress* paddr,
                        int64_t* timestamp) = 0;
+  // Intended to replace RecvFrom(void* ...).
+  // Default implementation calls RecvFrom(void* ...) with 64Kbyte buffer.
+  // Returns number of bytes received or a negative value on error.
+  virtual int RecvFrom(ReceiveBuffer& buffer);
   virtual int Listen(int backlog) = 0;
   virtual Socket* Accept(SocketAddress* paddr) = 0;
   virtual int Close() = 0;
@@ -122,11 +143,19 @@ class Socket {
   virtual int GetOption(Option opt, int* value) = 0;
   virtual int SetOption(Option opt, int value) = 0;
 
+  // SignalReadEvent and SignalWriteEvent use multi_threaded_local to allow
+  // access concurrently from different thread.
+  // For example SignalReadEvent::connect will be called in AsyncUDPSocket ctor
+  // but at the same time the SocketDispatcher may be signaling the read event.
+  // ready to read
+  sigslot::signal1<Socket*, sigslot::multi_threaded_local> SignalReadEvent;
+  // ready to write
+  sigslot::signal1<Socket*, sigslot::multi_threaded_local> SignalWriteEvent;
+  sigslot::signal1<Socket*> SignalConnectEvent;     // connected
+  sigslot::signal2<Socket*, int> SignalCloseEvent;  // closed
+
  protected:
   Socket() {}
-
- private:
-  RTC_DISALLOW_COPY_AND_ASSIGN(Socket);
 };
 
 }  // namespace rtc

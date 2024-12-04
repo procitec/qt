@@ -1,4 +1,4 @@
-// Copyright (c) 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 #ifndef CONTENT_BROWSER_ISOLATED_ORIGIN_UTIL_H_
@@ -91,10 +91,29 @@ class CONTENT_EXPORT IsolatedOriginUtil {
                                             const url::Origin& isolated_origin);
 
   // Check if |origin| is a valid isolated origin.  Invalid isolated origins
-  // include unique origins, origins that don't have an HTTP or HTTPS scheme,
+  // include opaque origins, origins that don't have an HTTP or HTTPS scheme,
   // and origins without a valid registry-controlled domain.  IP addresses are
   // allowed.
   static bool IsValidIsolatedOrigin(const url::Origin& origin);
+
+  // Check if |origin| is a valid origin for opt-in origin isolation. Invalid
+  // origins for this purpose include opaque origins, origins that don't have a
+  // HTTP or HTTPS scheme, and origins that are not secure contexts.
+  static bool IsValidOriginForOptInIsolation(const url::Origin& origin);
+
+  // Check if |origin| is a valid origin for opting out of origin isolation.
+  // Invalid origins for this purpose include opaque origins, and origins that
+  // don't have a HTTP or HTTPS scheme.
+  static bool IsValidOriginForOptOutIsolation(const url::Origin& origin);
+
+ private:
+  // Used to implement both IsValidIsolatedOrigin and
+  // IsValidOriginForOptInIsolation. The legacy isolated origin case performs
+  // some additional checks that don't apply to the opt-in case: it verifies the
+  // origin has a registry domain (for subdomain matching) and disallows
+  // trailing dots in the domain.
+  static bool IsValidIsolatedOriginImpl(const url::Origin& origin,
+                                        bool is_legacy_isolated_origin_check);
 };
 
 }  // namespace content

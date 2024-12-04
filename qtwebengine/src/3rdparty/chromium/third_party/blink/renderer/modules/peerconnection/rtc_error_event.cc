@@ -1,10 +1,10 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/modules/peerconnection/rtc_error_event.h"
 
-#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 
 namespace blink {
 
@@ -25,7 +25,7 @@ RTCErrorEvent::RTCErrorEvent(const AtomicString& type, webrtc::RTCError error)
       error_(MakeGarbageCollected<RTCError>(error)) {}
 
 RTCError* RTCErrorEvent::error() const {
-  return error_;
+  return error_.Get();
 }
 
 void RTCErrorEvent::Trace(Visitor* visitor) const {

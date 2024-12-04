@@ -1,16 +1,13 @@
 Item {
     function a() {
-        function nested() {
-        }
+        function nested() {}
 
         foo();
     }
 
     function b() {
-        function nested() {
-        }
+        function nested() {}
 
         bar();
     }
-
 }

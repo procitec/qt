@@ -1,31 +1,30 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef THIRD_PARTY_BLINK_RENDERER_MODULES_WEBTRANSPORT_OUTGOING_STREAM_H_
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_WEBTRANSPORT_OUTGOING_STREAM_H_
 
-#include <stddef.h>
-#include <stdint.h>
+#include <cstddef>
+#include <cstdint>
 
 #include "base/containers/span.h"
-#include "base/util/type_safety/strong_alias.h"
+#include "base/memory/raw_ptr.h"
+#include "base/types/strong_alias.h"
 #include "mojo/public/cpp/system/data_pipe.h"
 #include "mojo/public/cpp/system/simple_watcher.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
+#include "third_party/blink/renderer/core/dom/abort_signal.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_observer.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
-#include "third_party/blink/renderer/platform/heap/thread_state.h"
-
-namespace v8 {
-class Isolate;
-}
+#include "third_party/blink/renderer/platform/heap/prefinalizer.h"
+#include "v8/include/v8.h"
 
 namespace blink {
 
+class ExceptionState;
 class ScriptState;
-class StreamAbortInfo;
 class WritableStream;
 class WritableStreamDefaultController;
 
@@ -42,14 +41,15 @@ class MODULES_EXPORT OutgoingStream final
    public:
     virtual ~Client() = default;
 
-    // Request that a Fin message for this stream be sent to the server, and
-    // that the QuicTransport object drop its reference to the stream.
+    // Request that a Fin message for this stream be sent to the server.
     virtual void SendFin() = 0;
 
-    // Indicates that this stream is aborted. QuicTransport should drop its
-    // reference to the stream, and in a bidirectional stream the incoming side
-    // should be reset.
-    virtual void OnOutgoingStreamAbort() = 0;
+    // Notify that the stream is either closed or errored and WebTransport
+    // should drop its reference to the stream.
+    virtual void ForgetStream() = 0;
+
+    // Send RESET_STREAM with `code`. This does not imply ForgetStream().
+    virtual void Reset(uint8_t code) = 0;
   };
 
   enum class State {
@@ -61,30 +61,34 @@ class MODULES_EXPORT OutgoingStream final
   OutgoingStream(ScriptState*, Client*, mojo::ScopedDataPipeProducerHandle);
   ~OutgoingStream();
 
-  // Init() must be called before the stream is used.
-  void Init();
+  // Init() or InitWithExistingWritableStream() must be called before the stream
+  // is used.
+  void Init(ExceptionState&);
+
+  void InitWithExistingWritableStream(WritableStream*, ExceptionState&);
+
+  void AbortAlgorithm(OutgoingStream*);
 
   // Implementation of OutgoingStream IDL, used by client classes to implement
   // it. https://wicg.github.io/web-transport/#outgoing-stream
   WritableStream* Writable() const {
     DVLOG(1) << "OutgoingStream::writable() called";
 
-    return writable_;
+    return writable_.Get();
   }
 
-  ScriptPromise WritingAborted() const { return writing_aborted_; }
+  ScriptState* GetScriptState() { return script_state_.Get(); }
 
-  ScriptState* GetScriptState() { return script_state_; }
+  // Called from WebTransport via a WebTransportStream.
+  void OnOutgoingStreamClosed();
 
-  void AbortWriting(StreamAbortInfo*);
-
-  // Called from QuicTransport via a WebTransportStream. Expects a JavaScript
+  // Errors the associated stream with the given reason. Expects a JavaScript
   // scope to be entered.
-  void Reset();
+  void Error(ScriptValue reason);
 
   State GetState() const { return state_; }
 
-  // Called from QuicTransport rather than using
+  // Called from WebTransport rather than using
   // ExecutionContextLifecycleObserver to ensure correct destruction order.
   // Does not execute JavaScript.
   void ContextDestroyed();
@@ -94,7 +98,7 @@ class MODULES_EXPORT OutgoingStream final
  private:
   class UnderlyingSink;
 
-  using IsLocalAbort = util::StrongAlias<class IsLocalAbortTag, bool>;
+  using IsLocalAbort = base::StrongAlias<class IsLocalAbortTag, bool>;
 
   // Called when |data_pipe_| becomes writable or errored.
   void OnHandleReady(MojoResult, const mojo::HandleSignalsState&);
@@ -124,12 +128,10 @@ class MODULES_EXPORT OutgoingStream final
   // otherwise it will indicate a remote-initiated abort.
   ScriptValue CreateAbortException(IsLocalAbort);
 
-  // Errors |writable_|, resolves |writing_aborted_| and resets |data_pipe_|.
-  // The error message used to error |writable_| depends on whether IsLocalAbort
-  // is true or not.
-  void ErrorStreamAbortAndReset(IsLocalAbort);
+  // Errors |writable_|, and resets |data_pipe_|.
+  void ErrorStreamAbortAndReset(ScriptValue reason);
 
-  // Resolve the |writing_aborted_| promise and reset the |data_pipe_|.
+  // Reset the |data_pipe_|.
   void AbortAndReset();
 
   // Resets |data_pipe_| and clears the watchers. Also discards |cached_data_|.
@@ -152,9 +154,9 @@ class MODULES_EXPORT OutgoingStream final
    private:
     // We need the isolate to call |AdjustAmountOfExternalAllocatedMemory| for
     // the memory stored in |buffer_|.
-    v8::Isolate* isolate_;
+    raw_ptr<v8::Isolate, ExperimentalRenderer> isolate_;
     size_t length_ = 0u;
-    uint8_t* buffer_ = nullptr;
+    raw_ptr<uint8_t, ExperimentalRenderer> buffer_ = nullptr;
   };
 
   const Member<ScriptState> script_state_;
@@ -179,15 +181,18 @@ class MODULES_EXPORT OutgoingStream final
   size_t offset_ = 0;
 
   Member<WritableStream> writable_;
+  Member<AbortSignal::AlgorithmHandle> send_stream_abort_handle_;
   Member<WritableStreamDefaultController> controller_;
-
-  // Promise returned by the |writingAborted| attribute.
-  ScriptPromise writing_aborted_;
-  Member<ScriptPromiseResolver> writing_aborted_resolver_;
 
   // If an asynchronous write() on the underlying sink object is pending, this
   // will be non-null.
   Member<ScriptPromiseResolver> write_promise_resolver_;
+
+  // If a close() on the underlying sink object is pending, this will be
+  // non-null.
+  Member<ScriptPromiseResolver> close_promise_resolver_;
+
+  Member<ScriptPromiseResolver> pending_operation_;
 
   State state_ = State::kOpen;
 };

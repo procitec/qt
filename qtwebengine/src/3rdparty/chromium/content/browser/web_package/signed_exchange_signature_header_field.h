@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,12 +6,11 @@
 #define CONTENT_BROWSER_WEB_PACKAGE_SIGNED_EXCHANGE_SIGNATURE_HEADER_FIELD_H_
 
 #include <stdint.h>
+
+#include <optional>
 #include <string>
 #include <vector>
 
-#include "base/callback_forward.h"
-#include "base/macros.h"
-#include "base/optional.h"
 #include "base/strings/string_piece.h"
 #include "content/browser/web_package/signed_exchange_utils.h"
 #include "content/common/content_export.h"
@@ -36,7 +35,7 @@ class CONTENT_EXPORT SignedExchangeSignatureHeaderField {
     std::string sig;
     std::string integrity;
     GURL cert_url;
-    base::Optional<net::SHA256HashValue> cert_sha256;
+    std::optional<net::SHA256HashValue> cert_sha256;
     // TODO(https://crbug.com/819467): Support ed25519key.
     // std::string ed25519_key;
     signed_exchange_utils::URLWithRawString validity_url;
@@ -46,7 +45,7 @@ class CONTENT_EXPORT SignedExchangeSignatureHeaderField {
 
   // Parses a value of the Signature header.
   // https://wicg.github.io/webpackage/draft-yasskin-httpbis-origin-signed-exchanges-impl.html#signature-header
-  static base::Optional<std::vector<Signature>> ParseSignature(
+  static std::optional<std::vector<Signature>> ParseSignature(
       base::StringPiece signature_str,
       SignedExchangeDevToolsProxy* devtools_proxy);
 };

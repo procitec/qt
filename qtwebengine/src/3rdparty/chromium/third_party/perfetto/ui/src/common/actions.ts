@@ -14,64 +14,100 @@
 
 import {Draft} from 'immer';
 
-import {assertExists} from '../base/logging';
-import {randomColor} from '../common/colorizer';
-import {ConvertTrace, ConvertTraceToPprof} from '../controller/trace_converter';
-import {ASYNC_SLICE_TRACK_KIND} from '../tracks/async_slices/common';
-import {COUNTER_TRACK_KIND} from '../tracks/counter/common';
-import {DEBUG_SLICE_TRACK_KIND} from '../tracks/debug_slices/common';
-import {HEAP_PROFILE_TRACK_KIND} from '../tracks/heap_profile/common';
+import {assertExists, assertTrue, assertUnreachable} from '../base/logging';
+import {duration, time} from '../base/time';
+import {exists} from '../base/utils';
+import {RecordConfig} from '../controller/record_config_types';
 import {
-  PROCESS_SCHEDULING_TRACK_KIND
-} from '../tracks/process_scheduling/common';
-import {PROCESS_SUMMARY_TRACK} from '../tracks/process_summary/common';
+  GenericSliceDetailsTabConfig,
+  GenericSliceDetailsTabConfigBase,
+} from '../frontend/generic_slice_details_tab';
+import {
+  Aggregation,
+  AggregationFunction,
+  TableColumn,
+  tableColumnEquals,
+  toggleEnabled,
+} from '../frontend/pivot_table_types';
+import {PrimaryTrackSortKey} from '../public/index';
 
-import {DEFAULT_VIEWING_OPTION} from './flamegraph_util';
+import {randomColor} from './colorizer';
+import {
+  computeIntervals,
+  DropDirection,
+  performReordering,
+} from './dragndrop_logic';
+import {createEmptyState} from './empty_state';
+import {defaultViewingOption} from './flamegraph_util';
+import {
+  MetatraceTrackId,
+  traceEvent,
+  traceEventBegin,
+  traceEventEnd,
+  TraceEventScope,
+} from './metatracing';
+import {pluginManager} from './plugins';
 import {
   AdbRecordingTarget,
   Area,
   CallsiteInfo,
-  createEmptyState,
   EngineMode,
-  HeapProfileFlamegraphViewingOption,
-  LogsPagination,
+  FlamegraphStateViewingOption,
+  FtraceFilterPatch,
+  LoadedConfig,
   NewEngineMode,
+  OmniboxMode,
   OmniboxState,
-  RecordConfig,
+  Pagination,
+  PendingDeeplinkState,
+  PivotTableResult,
+  ProfileType,
   RecordingTarget,
   SCROLLING_TRACK_GROUP,
+  SortDirection,
   State,
   Status,
-  TraceSource,
+  ThreadTrackSortKey,
   TraceTime,
+  TrackSortKey,
   TrackState,
+  UtidToTrackSortKey,
   VisibleState,
 } from './state';
 
 type StateDraft = Draft<State>;
 
 export interface AddTrackArgs {
-  id?: string;
-  engineId: string;
-  kind: string;
+  key?: string;
+  uri: string;
   name: string;
-  isMainThread?: boolean;
+  labels?: string[];
+  trackSortKey: TrackSortKey;
   trackGroup?: string;
-  config: {};
+  params?: unknown;
 }
 
 export interface PostedTrace {
-  title: string;
-  url?: string;
   buffer: ArrayBuffer;
+  title: string;
+  fileName?: string;
+  url?: string;
+  uuid?: string;
+  localOnly?: boolean;
+  keepApiOpen?: boolean;
+}
+
+export interface PostedScrollToRange {
+  timeStart: time;
+  timeEnd: time;
+  viewPercentage?: number;
 }
 
 function clearTraceState(state: StateDraft) {
   const nextId = state.nextId;
   const recordConfig = state.recordConfig;
-  const route = state.route;
   const recordingTarget = state.recordingTarget;
-  const updateChromeCategories = state.updateChromeCategories;
+  const fetchChromeCategories = state.fetchChromeCategories;
   const extensionInstalled = state.extensionInstalled;
   const availableAdbDevices = state.availableAdbDevices;
   const chromeCategories = state.chromeCategories;
@@ -80,114 +116,164 @@ function clearTraceState(state: StateDraft) {
   Object.assign(state, createEmptyState());
   state.nextId = nextId;
   state.recordConfig = recordConfig;
-  state.route = route;
   state.recordingTarget = recordingTarget;
-  state.updateChromeCategories = updateChromeCategories;
+  state.fetchChromeCategories = fetchChromeCategories;
   state.extensionInstalled = extensionInstalled;
   state.availableAdbDevices = availableAdbDevices;
   state.chromeCategories = chromeCategories;
   state.newEngineMode = newEngineMode;
 }
 
-export const StateActions = {
+function generateNextId(draft: StateDraft): string {
+  const nextId = String(Number(draft.nextId) + 1);
+  draft.nextId = nextId;
+  return nextId;
+}
 
-  navigate(state: StateDraft, args: {route: string}): void {
-    state.route = args.route;
-  },
+// A helper to clean the state for a given removeable track.
+// This is not exported as action to make it clear that not all
+// tracks are removeable.
+function removeTrack(state: StateDraft, trackKey: string) {
+  const track = state.tracks[trackKey];
+  if (track === undefined) {
+    return;
+  }
+  delete state.tracks[trackKey];
+
+  const removeTrackId = (arr: string[]) => {
+    const index = arr.indexOf(trackKey);
+    if (index !== -1) arr.splice(index, 1);
+  };
+
+  if (track.trackGroup === SCROLLING_TRACK_GROUP) {
+    removeTrackId(state.scrollingTracks);
+  } else if (track.trackGroup !== undefined) {
+    const trackGroup = state.trackGroups[track.trackGroup];
+    if (trackGroup !== undefined) {
+      removeTrackId(trackGroup.tracks);
+    }
+  }
+  state.pinnedTracks = state.pinnedTracks.filter((key) => key !== trackKey);
+}
+
+let statusTraceEvent: TraceEventScope|undefined;
+
+export const StateActions = {
 
   openTraceFromFile(state: StateDraft, args: {file: File}): void {
     clearTraceState(state);
-    const id = `${state.nextId++}`;
-    state.engines[id] = {
+    const id = generateNextId(state);
+    state.engine = {
       id,
       ready: false,
       source: {type: 'FILE', file: args.file},
     };
-    state.route = `/viewer`;
   },
 
   openTraceFromBuffer(state: StateDraft, args: PostedTrace): void {
     clearTraceState(state);
-    const id = `${state.nextId++}`;
-    state.engines[id] = {
+    const id = generateNextId(state);
+    state.engine = {
       id,
       ready: false,
       source: {type: 'ARRAY_BUFFER', ...args},
     };
-    state.route = `/viewer`;
   },
 
   openTraceFromUrl(state: StateDraft, args: {url: string}): void {
     clearTraceState(state);
-    const id = `${state.nextId++}`;
-    state.engines[id] = {
+    const id = generateNextId(state);
+    state.engine = {
       id,
       ready: false,
       source: {type: 'URL', url: args.url},
     };
-    state.route = `/viewer`;
   },
 
   openTraceFromHttpRpc(state: StateDraft, _args: {}): void {
     clearTraceState(state);
-    const id = `${state.nextId++}`;
-    state.engines[id] = {
+    const id = generateNextId(state);
+    state.engine = {
       id,
       ready: false,
       source: {type: 'HTTP_RPC'},
     };
-    state.route = `/viewer`;
   },
 
-  openVideoFromFile(state: StateDraft, args: {file: File}): void {
-    state.video = URL.createObjectURL(args.file);
-    state.videoEnabled = true;
+  setTraceUuid(state: StateDraft, args: {traceUuid: string}) {
+    state.traceUuid = args.traceUuid;
   },
 
-  // TODO(b/141359485): Actions should only modify state.
-  convertTraceToJson(
-      _: StateDraft, args: {file: Blob, truncate?: 'start'|'end'}): void {
-    ConvertTrace(args.file, args.truncate);
-  },
+  fillUiTrackIdByTraceTrackId(
+      state: StateDraft, trackState: TrackState, trackKey: string) {
+    const setTrackKey = (trackId: number, trackKey: string) => {
+      if (state.trackKeyByTrackId[trackId] !== undefined &&
+          state.trackKeyByTrackId[trackId] !== trackKey) {
+        throw new Error(`Trying to map track id ${trackId} to UI track ${
+            trackKey}, already mapped to ${state.trackKeyByTrackId[trackId]}`);
+      }
+      state.trackKeyByTrackId[trackId] = trackKey;
+    };
 
-  convertTraceToPprof(
-      _: StateDraft,
-      args: {pid: number, src: TraceSource, ts1: number, ts2?: number}): void {
-    ConvertTraceToPprof(args.pid, args.src, args.ts1, args.ts2);
+    const {uri} = trackState;
+    if (exists(uri)) {
+      // If track is a new "plugin" type track (i.e. it has a uri), resolve the
+      // track ids from through the pluginManager.
+      const trackInfo = pluginManager.resolveTrackInfo(uri);
+      if (trackInfo?.trackIds) {
+        for (const trackId of trackInfo.trackIds) {
+          setTrackKey(trackId, trackKey);
+        }
+      }
+    }
   },
 
   addTracks(state: StateDraft, args: {tracks: AddTrackArgs[]}) {
-    args.tracks.forEach(track => {
-      const id = track.id === undefined ? `${state.nextId++}` : track.id;
-      track.id = id;
-      state.tracks[id] = track as TrackState;
+    args.tracks.forEach((track) => {
+      const trackKey =
+          track.key === undefined ? generateNextId(state) : track.key;
+      const name = track.name;
+      state.tracks[trackKey] = {
+        key: trackKey,
+        name,
+        trackSortKey: track.trackSortKey,
+        trackGroup: track.trackGroup,
+        labels: track.labels,
+        uri: track.uri,
+        params: track.params,
+      };
+      this.fillUiTrackIdByTraceTrackId(state, track as TrackState, trackKey);
       if (track.trackGroup === SCROLLING_TRACK_GROUP) {
-        state.scrollingTracks.push(id);
+        state.scrollingTracks.push(trackKey);
       } else if (track.trackGroup !== undefined) {
-        assertExists(state.trackGroups[track.trackGroup]).tracks.push(id);
+        const group = state.trackGroups[track.trackGroup];
+        if (group !== undefined) {
+          group.tracks.push(trackKey);
+        }
       }
     });
   },
 
-  addTrack(state: StateDraft, args: {
-    id?: string; engineId: string; kind: string; name: string;
-    trackGroup?: string; config: {}; isMainThread: boolean;
-  }): void {
-    const id = args.id !== undefined ? args.id : `${state.nextId++}`;
-    state.tracks[id] = {
-      id,
-      engineId: args.engineId,
-      kind: args.kind,
-      name: args.name,
-      isMainThread: args.isMainThread,
-      trackGroup: args.trackGroup,
-      config: args.config,
-    };
-    if (args.trackGroup === SCROLLING_TRACK_GROUP) {
-      state.scrollingTracks.push(id);
-    } else if (args.trackGroup !== undefined) {
-      assertExists(state.trackGroups[args.trackGroup]).tracks.push(id);
+  // Note: While this action has traditionally been omitted, with more and more
+  // dynamic tracks being added and existing ones being moved to plugins, it
+  // makes sense to have a generic "removeTracks" action which is un-opinionated
+  // about what type of tracks we are removing.
+  // E.g. Once debug tracks have been moved to a plugin, it makes no sense to
+  // keep the "removeDebugTrack()" action, as the core should have no concept of
+  // what debug tracks are.
+  removeTracks(state: StateDraft, args: {trackKeys: string[]}) {
+    for (const trackKey of args.trackKeys) {
+      removeTrack(state, trackKey);
     }
+  },
+
+  setUtidToTrackSortKey(
+      state: StateDraft, args: {threadOrderingMetadata: UtidToTrackSortKey}) {
+    state.utidToThreadSortKey = args.threadOrderingMetadata;
+  },
+
+  addTrack(state: StateDraft, args: AddTrackArgs): void {
+    this.addTracks(state, {tracks: [args]});
   },
 
   addTrackGroup(
@@ -195,81 +281,67 @@ export const StateActions = {
       // Define ID in action so a track group can be referred to without running
       // the reducer.
       args: {
-        engineId: string; name: string; id: string; summaryTrackId: string;
-        collapsed: boolean;
+        name: string; id: string; summaryTrackKey: string; collapsed: boolean;
+        fixedOrdering?: boolean;
       }): void {
     state.trackGroups[args.id] = {
-      engineId: args.engineId,
       name: args.name,
       id: args.id,
       collapsed: args.collapsed,
-      tracks: [args.summaryTrackId],
+      tracks: [args.summaryTrackKey],
+      fixedOrdering: args.fixedOrdering,
     };
   },
 
-  addDebugTrack(state: StateDraft, args: {engineId: string, name: string}):
-      void {
-        if (state.debugTrackId !== undefined) return;
-        const trackId = `${state.nextId++}`;
-        state.debugTrackId = trackId;
-        this.addTrack(state, {
-          id: trackId,
-          engineId: args.engineId,
-          kind: DEBUG_SLICE_TRACK_KIND,
-          name: args.name,
-          isMainThread: false,
-          trackGroup: SCROLLING_TRACK_GROUP,
-          config: {
-            maxDepth: 1,
-          }
-        });
-        this.toggleTrackPinned(state, {trackId});
-      },
-
-  removeDebugTrack(state: StateDraft, _: {}): void {
-    const {debugTrackId} = state;
-    if (debugTrackId === undefined) return;
-    delete state.tracks[debugTrackId];
-    state.scrollingTracks =
-        state.scrollingTracks.filter(id => id !== debugTrackId);
-    state.pinnedTracks = state.pinnedTracks.filter(id => id !== debugTrackId);
-    state.debugTrackId = undefined;
+  maybeExpandOnlyTrackGroup(state: StateDraft, _: {}): void {
+    const trackGroups = Object.values(state.trackGroups);
+    if (trackGroups.length === 1) {
+      trackGroups[0].collapsed = false;
+    }
   },
 
-  sortThreadTracks(state: StateDraft, _: {}): void {
-    const threadTrackOrder = [
-      PROCESS_SCHEDULING_TRACK_KIND,
-      PROCESS_SUMMARY_TRACK,
-      HEAP_PROFILE_TRACK_KIND,
-      COUNTER_TRACK_KIND,
-      ASYNC_SLICE_TRACK_KIND
-    ];
+  sortThreadTracks(state: StateDraft, _: {}) {
+    const getFullKey = (a: string) => {
+      const track = state.tracks[a];
+      const threadTrackSortKey = track.trackSortKey as ThreadTrackSortKey;
+      if (threadTrackSortKey.utid === undefined) {
+        const sortKey = track.trackSortKey as PrimaryTrackSortKey;
+        return [
+          sortKey,
+          0,
+          0,
+          0,
+        ];
+      }
+      const threadSortKey = state.utidToThreadSortKey[threadTrackSortKey.utid];
+      return [
+        /* eslint-disable @typescript-eslint/strict-boolean-expressions */
+        threadSortKey ? threadSortKey.sortKey :
+                        PrimaryTrackSortKey.ORDINARY_THREAD,
+        threadSortKey && threadSortKey.tid !== undefined ? threadSortKey.tid :
+                                                           Number.MAX_VALUE,
+        /* eslint-enable */
+        threadTrackSortKey.utid,
+        threadTrackSortKey.priority,
+      ];
+    };
+
+    // Use a numeric collator so threads are sorted as T1, T2, ..., T10, T11,
+    // rather than T1, T10, T11, ..., T2, T20, T21 .
+    const coll = new Intl.Collator([], {sensitivity: 'base', numeric: true});
     for (const group of Object.values(state.trackGroups)) {
+      if (group.fixedOrdering) continue;
+
       group.tracks.sort((a: string, b: string) => {
-        const aKind = threadTrackOrder.indexOf(state.tracks[a].kind);
-        const bKind = threadTrackOrder.indexOf(state.tracks[b].kind);
+        const aRank = getFullKey(a);
+        const bRank = getFullKey(b);
+        for (let i = 0; i < aRank.length; i++) {
+          if (aRank[i] !== bRank[i]) return aRank[i] - bRank[i];
+        }
+
         const aName = state.tracks[a].name.toLocaleLowerCase();
         const bName = state.tracks[b].name.toLocaleLowerCase();
-        if (aKind === bKind) {
-          if (state.tracks[a].isMainThread && state.tracks[b].isMainThread) {
-            return 0;
-          } else if (state.tracks[a].isMainThread) {
-            return -1;
-          } else if (state.tracks[b].isMainThread) {
-            return 1;
-          }
-          if (aName > bName) {
-            return 1;
-          } else if (aName === bName) {
-            return 0;
-          } else {
-            return -1;
-          }
-        } else {
-          if (aKind === -1) return 1;
-          if (bKind === -1) return -1;
-          return aKind - bKind;
-        }
+        return coll.compare(aName, bName);
       });
     }
   },
@@ -277,6 +349,7 @@ export const StateActions = {
   updateAggregateSorting(
       state: StateDraft, args: {id: string, column: string}) {
     let prefs = state.aggregatePreferences[args.id];
+    // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
     if (!prefs) {
       prefs = {id: args.id};
       state.aggregatePreferences[args.id] = prefs;
@@ -286,41 +359,18 @@ export const StateActions = {
       // No sorting set for current column.
       state.aggregatePreferences[args.id].sorting = {
         column: args.column,
-        direction: 'DESC'
+        direction: 'DESC',
       };
     } else if (prefs.sorting.direction === 'DESC') {
       // Toggle the direction if the column is currently sorted.
       state.aggregatePreferences[args.id].sorting = {
         column: args.column,
-        direction: 'ASC'
+        direction: 'ASC',
       };
     } else {
       // If direction is currently 'ASC' toggle to no sorting.
       state.aggregatePreferences[args.id].sorting = undefined;
     }
-  },
-
-  setVisibleTracks(state: StateDraft, args: {tracks: string[]}) {
-    state.visibleTracks = args.tracks;
-  },
-
-  updateTrackConfig(state: StateDraft, args: {id: string, config: {}}) {
-    if (state.tracks[args.id] === undefined) return;
-    state.tracks[args.id].config = args.config;
-  },
-
-  executeQuery(
-      state: StateDraft,
-      args: {queryId: string; engineId: string; query: string}): void {
-    state.queries[args.queryId] = {
-      id: args.queryId,
-      engineId: args.engineId,
-      query: args.query,
-    };
-  },
-
-  deleteQuery(state: StateDraft, args: {queryId: string}): void {
-    delete state.queries[args.queryId];
   },
 
   moveTrack(
@@ -341,7 +391,7 @@ export const StateActions = {
         }
       }
       trackList.splice(0);
-      newList.forEach(x => {
+      newList.forEach((x) => {
         trackList.push(x);
       });
     };
@@ -350,21 +400,21 @@ export const StateActions = {
     moveWithinTrackList(state.scrollingTracks);
   },
 
-  toggleTrackPinned(state: StateDraft, args: {trackId: string}): void {
-    const id = args.trackId;
-    const isPinned = state.pinnedTracks.includes(id);
-    const trackGroup = assertExists(state.tracks[id]).trackGroup;
+  toggleTrackPinned(state: StateDraft, args: {trackKey: string}): void {
+    const key = args.trackKey;
+    const isPinned = state.pinnedTracks.includes(key);
+    const trackGroup = assertExists(state.tracks[key]).trackGroup;
 
     if (isPinned) {
-      state.pinnedTracks.splice(state.pinnedTracks.indexOf(id), 1);
+      state.pinnedTracks.splice(state.pinnedTracks.indexOf(key), 1);
       if (trackGroup === SCROLLING_TRACK_GROUP) {
-        state.scrollingTracks.unshift(id);
+        state.scrollingTracks.unshift(key);
       }
     } else {
       if (trackGroup === SCROLLING_TRACK_GROUP) {
-        state.scrollingTracks.splice(state.scrollingTracks.indexOf(id), 1);
+        state.scrollingTracks.splice(state.scrollingTracks.indexOf(key), 1);
       }
-      state.pinnedTracks.push(id);
+      state.pinnedTracks.push(key);
     }
   },
 
@@ -376,6 +426,7 @@ export const StateActions = {
       },
 
   requestTrackReload(state: StateDraft, _: {}) {
+    // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
     if (state.lastTrackReloadRequest) {
       state.lastTrackReloadRequest++;
     } else {
@@ -383,11 +434,25 @@ export const StateActions = {
     }
   },
 
+  maybeSetPendingDeeplink(state: StateDraft, args: PendingDeeplinkState) {
+    state.pendingDeeplink = args;
+  },
+
+  clearPendingDeeplink(state: StateDraft, _: {}) {
+    state.pendingDeeplink = undefined;
+  },
+
+  // TODO(hjd): engine.ready should be a published thing. If it's part
+  // of the state it interacts badly with permalinks.
   setEngineReady(
       state: StateDraft,
       args: {engineId: string; ready: boolean, mode: EngineMode}): void {
-    state.engines[args.engineId].ready = args.ready;
-    state.engines[args.engineId].mode = args.mode;
+    const engine = state.engine;
+    if (engine === undefined || engine.id !== args.engineId) {
+      return;
+    }
+    engine.ready = args.ready;
+    engine.mode = args.mode;
   },
 
   setNewEngineMode(state: StateDraft, args: {mode: NewEngineMode}): void {
@@ -397,16 +462,16 @@ export const StateActions = {
   // Marks all engines matching the given |mode| as failed.
   setEngineFailed(state: StateDraft, args: {mode: EngineMode; failure: string}):
       void {
-        for (const engine of Object.values(state.engines)) {
-          if (engine.mode === args.mode) engine.failed = args.failure;
+        if (state.engine !== undefined && state.engine.mode === args.mode) {
+          state.engine.failed = args.failure;
         }
       },
 
   createPermalink(state: StateDraft, args: {isRecordingConfig: boolean}): void {
     state.permalink = {
-      requestId: `${state.nextId++}`,
+      requestId: generateNextId(state),
       hash: undefined,
-      isRecordingConfig: args.isRecordingConfig
+      isRecordingConfig: args.isRecordingConfig,
     };
   },
 
@@ -418,7 +483,7 @@ export const StateActions = {
       },
 
   loadPermalink(state: StateDraft, args: {hash: string}): void {
-    state.permalink = {requestId: `${state.nextId++}`, hash: args.hash};
+    state.permalink = {requestId: generateNextId(state), hash: args.hash};
   },
 
   clearPermalink(state: StateDraft, _: {}): void {
@@ -430,38 +495,63 @@ export const StateActions = {
   },
 
   updateStatus(state: StateDraft, args: Status): void {
+    if (statusTraceEvent) {
+      traceEventEnd(statusTraceEvent);
+    }
+    statusTraceEvent =
+        traceEventBegin(args.msg, {track: MetatraceTrackId.kOmniboxStatus});
     state.status = args;
   },
 
   // TODO(hjd): Remove setState - it causes problems due to reuse of ids.
   setState(state: StateDraft, args: {newState: State}): void {
     for (const key of Object.keys(state)) {
-      // tslint:disable-next-line no-any
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       delete (state as any)[key];
     }
     for (const key of Object.keys(args.newState)) {
-      // tslint:disable-next-line no-any
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (state as any)[key] = (args.newState as any)[key];
+    }
+
+    // If we're loading from a permalink then none of the engines can
+    // possibly be ready:
+    if (state.engine !== undefined) {
+      state.engine.ready = false;
     }
   },
 
-  setRecordConfig(state: StateDraft, args: {config: RecordConfig;}): void {
+  setRecordConfig(
+      state: StateDraft,
+      args: {config: RecordConfig, configType?: LoadedConfig}): void {
     state.recordConfig = args.config;
+    state.lastLoadedConfig = args.configType || {type: 'NONE'};
   },
 
   selectNote(state: StateDraft, args: {id: string}): void {
     if (args.id) {
       state.currentSelection = {
         kind: 'NOTE',
-        id: args.id
+        id: args.id,
       };
     }
   },
 
-  addNote(
+  addAutomaticNote(
       state: StateDraft,
-      args: {timestamp: number, color: string, isMovie: boolean}): void {
-    const id = `${state.nextNoteId++}`;
+      args: {timestamp: time, color: string, text: string}): void {
+    const id = generateNextId(state);
+    state.notes[id] = {
+      noteType: 'DEFAULT',
+      id,
+      timestamp: args.timestamp,
+      color: args.color,
+      text: args.text,
+    };
+  },
+
+  addNote(state: StateDraft, args: {timestamp: time, color: string}): void {
+    const id = generateNextId(state);
     state.notes[id] = {
       noteType: 'DEFAULT',
       id,
@@ -469,19 +559,17 @@ export const StateActions = {
       color: args.color,
       text: '',
     };
-    if (args.isMovie) {
-      state.videoNoteIds.push(id);
-    }
     this.selectNote(state, {id});
   },
 
-  markArea(state: StateDraft, args: {color: string, persistent: boolean}):
+  markCurrentArea(
+      state: StateDraft, args: {color: string, persistent: boolean}):
       void {
         if (state.currentSelection === null ||
             state.currentSelection.kind !== 'AREA') {
           return;
         }
-        const id = args.persistent ? `${state.nextNoteId++}` : '0';
+        const id = args.persistent ? generateNextId(state) : '0';
         const color = args.persistent ? args.color : '#344596';
         state.notes[id] = {
           noteType: 'AREA',
@@ -493,43 +581,31 @@ export const StateActions = {
         state.currentSelection.noteId = id;
       },
 
-  toggleMarkArea(state: StateDraft, args: {persistent: boolean}) {
+  toggleMarkCurrentArea(state: StateDraft, args: {persistent: boolean}) {
     const selection = state.currentSelection;
     if (selection != null && selection.kind === 'AREA' &&
         selection.noteId !== undefined) {
       this.removeNote(state, {id: selection.noteId});
     } else {
       const color = randomColor();
-      this.markArea(state, {color, persistent: args.persistent});
+      this.markCurrentArea(state, {color, persistent: args.persistent});
     }
   },
 
-  toggleVideo(state: StateDraft, _: {}): void {
-    state.videoEnabled = !state.videoEnabled;
-    if (!state.videoEnabled) {
-      state.video = null;
-      state.flagPauseEnabled = false;
-      state.scrubbingEnabled = false;
-      state.videoNoteIds.forEach(id => {
-        this.removeNote(state, {id});
-      });
-    }
-  },
-
-  toggleFlagPause(state: StateDraft, _: {}): void {
-    if (state.video != null) {
-      state.flagPauseEnabled = !state.flagPauseEnabled;
-    }
-  },
-
-  toggleScrubbing(state: StateDraft, _: {}): void {
-    if (state.video != null) {
-      state.scrubbingEnabled = !state.scrubbingEnabled;
-    }
-  },
-
-  setVideoOffset(state: StateDraft, args: {offset: number}): void {
-    state.videoOffset = args.offset;
+  markArea(state: StateDraft, args: {area: Area, persistent: boolean}): void {
+    const {start, end, tracks} = args.area;
+    assertTrue(start <= end);
+    const areaId = generateNextId(state);
+    state.areas[areaId] = {id: areaId, start, end, tracks};
+    const noteId = args.persistent ? generateNextId(state) : '0';
+    const color = args.persistent ? randomColor() : '#344596';
+    state.notes[noteId] = {
+      noteType: 'AREA',
+      id: noteId,
+      areaId,
+      color,
+      text: '',
+    };
   },
 
   changeNoteColor(state: StateDraft, args: {id: string, newColor: string}):
@@ -547,11 +623,6 @@ export const StateActions = {
 
   removeNote(state: StateDraft, args: {id: string}): void {
     if (state.notes[args.id] === undefined) return;
-    if (state.notes[args.id].noteType === 'MOVIE') {
-      state.videoNoteIds = state.videoNoteIds.filter(id => {
-        return id !== args.id;
-      });
-    }
     delete state.notes[args.id];
     // For regular notes, we clear the current selection but for an area note
     // we only want to clear the note/marking and leave the area selected.
@@ -566,30 +637,32 @@ export const StateActions = {
     }
   },
 
-  selectSlice(state: StateDraft, args: {id: number, trackId: string}): void {
+  selectSlice(
+      state: StateDraft,
+      args: {id: number, trackKey: string, scroll?: boolean}): void {
     state.currentSelection = {
       kind: 'SLICE',
       id: args.id,
-      trackId: args.trackId,
+      trackKey: args.trackKey,
     };
+    state.pendingScrollId = args.scroll ? args.id : undefined;
   },
 
   selectCounter(
       state: StateDraft,
-      args: {leftTs: number, rightTs: number, id: number, trackId: string}):
-      void {
-        state.currentSelection = {
-          kind: 'COUNTER',
-          leftTs: args.leftTs,
-          rightTs: args.rightTs,
-          id: args.id,
-          trackId: args.trackId,
-        };
-      },
+      args: {leftTs: time, rightTs: time, id: number, trackKey: string}): void {
+    state.currentSelection = {
+      kind: 'COUNTER',
+      leftTs: args.leftTs,
+      rightTs: args.rightTs,
+      id: args.id,
+      trackKey: args.trackKey,
+    };
+  },
 
   selectHeapProfile(
       state: StateDraft,
-      args: {id: number, upid: number, ts: number, type: string}): void {
+      args: {id: number, upid: number, ts: time, type: ProfileType}): void {
     state.currentSelection = {
       kind: 'HEAP_PROFILE',
       id: args.id,
@@ -597,24 +670,60 @@ export const StateActions = {
       ts: args.ts,
       type: args.type,
     };
+    this.openFlamegraph(state, {
+      type: args.type,
+      start: state.traceTime.start as
+          time,  // TODO(stevegolton): Avoid type assertion here.
+      end: args.ts,
+      upids: [args.upid],
+      viewingOption: defaultViewingOption(args.type),
+    });
   },
 
-  showHeapProfileFlamegraph(
-      state: StateDraft,
-      args: {id: number, upid: number, ts: number, type: string}): void {
-    state.currentHeapProfileFlamegraph = {
-      kind: 'HEAP_PROFILE_FLAMEGRAPH',
+  selectPerfSamples(state: StateDraft, args: {
+    id: number,
+    upid: number,
+    leftTs: time,
+    rightTs: time,
+    type: ProfileType
+  }): void {
+    state.currentSelection = {
+      kind: 'PERF_SAMPLES',
       id: args.id,
       upid: args.upid,
-      ts: args.ts,
+      leftTs: args.leftTs,
+      rightTs: args.rightTs,
       type: args.type,
-      viewingOption: DEFAULT_VIEWING_OPTION,
+    };
+    this.openFlamegraph(state, {
+      type: args.type,
+      start: args.leftTs,
+      end: args.rightTs,
+      upids: [args.upid],
+      viewingOption: defaultViewingOption(args.type),
+    });
+  },
+
+  openFlamegraph(state: StateDraft, args: {
+    upids: number[],
+    start: time,
+    end: time,
+    type: ProfileType,
+    viewingOption: FlamegraphStateViewingOption
+  }): void {
+    state.currentFlamegraphState = {
+      kind: 'FLAMEGRAPH_STATE',
+      upids: args.upids,
+      start: args.start,
+      end: args.end,
+      type: args.type,
+      viewingOption: args.viewingOption,
       focusRegex: '',
     };
   },
 
   selectCpuProfileSample(
-      state: StateDraft, args: {id: number, utid: number, ts: number}): void {
+      state: StateDraft, args: {id: number, utid: number, ts: time}): void {
     state.currentSelection = {
       kind: 'CPU_PROFILE_SAMPLE',
       id: args.id,
@@ -623,51 +732,120 @@ export const StateActions = {
     };
   },
 
-  expandHeapProfileFlamegraph(
+  expandFlamegraphState(
       state: StateDraft, args: {expandedCallsite?: CallsiteInfo}): void {
-    if (state.currentHeapProfileFlamegraph === null) return;
-    state.currentHeapProfileFlamegraph.expandedCallsite = args.expandedCallsite;
+    if (state.currentFlamegraphState === null) return;
+    state.currentFlamegraphState.expandedCallsite = args.expandedCallsite;
   },
 
-  changeViewHeapProfileFlamegraph(
-      state: StateDraft,
-      args: {viewingOption: HeapProfileFlamegraphViewingOption}): void {
-    if (state.currentHeapProfileFlamegraph === null) return;
-    state.currentHeapProfileFlamegraph.viewingOption = args.viewingOption;
-  },
+  changeViewFlamegraphState(
+      state: StateDraft, args: {viewingOption: FlamegraphStateViewingOption}):
+      void {
+        if (state.currentFlamegraphState === null) return;
+        state.currentFlamegraphState.viewingOption = args.viewingOption;
+      },
 
-  changeFocusHeapProfileFlamegraph(
-      state: StateDraft, args: {focusRegex: string}): void {
-    if (state.currentHeapProfileFlamegraph === null) return;
-    state.currentHeapProfileFlamegraph.focusRegex = args.focusRegex;
-  },
+  changeFocusFlamegraphState(state: StateDraft, args: {focusRegex: string}):
+      void {
+        if (state.currentFlamegraphState === null) return;
+        state.currentFlamegraphState.focusRegex = args.focusRegex;
+      },
 
   selectChromeSlice(
-      state: StateDraft, args: {id: number, trackId: string, table: string}):
+      state: StateDraft,
+      args: {id: number, trackKey: string, table?: string, scroll?: boolean}):
       void {
         state.currentSelection = {
           kind: 'CHROME_SLICE',
           id: args.id,
-          trackId: args.trackId,
-          table: args.table
+          trackKey: args.trackKey,
+          table: args.table,
         };
+        state.pendingScrollId = args.scroll ? args.id : undefined;
       },
 
-  selectThreadState(state: StateDraft, args: {id: number, trackId: string}):
+  selectGenericSlice(state: StateDraft, args: {
+    id: number,
+    sqlTableName: string,
+    start: time,
+    duration: duration,
+    trackKey: string,
+    detailsPanelConfig:
+        {kind: string, config: GenericSliceDetailsTabConfigBase},
+  }): void {
+    const detailsPanelConfig: GenericSliceDetailsTabConfig = {
+      id: args.id,
+      ...args.detailsPanelConfig.config,
+    };
+
+    state.currentSelection = {
+      kind: 'GENERIC_SLICE',
+      id: args.id,
+      sqlTableName: args.sqlTableName,
+      start: args.start,
+      duration: args.duration,
+      trackKey: args.trackKey,
+      detailsPanelConfig:
+          {kind: args.detailsPanelConfig.kind, config: detailsPanelConfig},
+    };
+  },
+
+  clearPendingScrollId(state: StateDraft, _: {}): void {
+    state.pendingScrollId = undefined;
+  },
+
+  selectThreadState(state: StateDraft, args: {id: number, trackKey: string}):
       void {
         state.currentSelection = {
           kind: 'THREAD_STATE',
           id: args.id,
-          trackId: args.trackId,
+          trackKey: args.trackKey,
         };
       },
+
+  selectLog(
+      state: StateDraft,
+      args: {id: number, trackKey: string, scroll?: boolean}): void {
+    state.currentSelection = {
+      kind: 'LOG',
+      id: args.id,
+      trackKey: args.trackKey,
+    };
+    state.pendingScrollId = args.scroll ? args.id : undefined;
+  },
 
   deselect(state: StateDraft, _: {}): void {
     state.currentSelection = null;
   },
 
-  updateLogsPagination(state: StateDraft, args: LogsPagination): void {
+  updateLogsPagination(state: StateDraft, args: Pagination): void {
     state.logsPagination = args;
+  },
+
+  updateFtracePagination(state: StateDraft, args: Pagination): void {
+    state.ftracePagination = args;
+  },
+
+  updateFtraceFilter(state: StateDraft, patch: FtraceFilterPatch) {
+    const {excludedNames: diffs} = patch;
+    const excludedNames = state.ftraceFilter.excludedNames;
+    for (const [addRemove, name] of diffs) {
+      switch (addRemove) {
+        case 'add':
+          if (!excludedNames.some((excluded: string) => excluded === name)) {
+            excludedNames.push(name);
+          }
+          break;
+        case 'remove':
+          state.ftraceFilter.excludedNames =
+              state.ftraceFilter.excludedNames.filter(
+                  (excluded: string) => excluded !== name);
+          break;
+        default:
+          assertUnreachable(addRemove);
+          break;
+      }
+    }
   },
 
   startRecording(state: StateDraft, _: {}): void {
@@ -689,16 +867,12 @@ export const StateActions = {
     state.extensionInstalled = args.available;
   },
 
-  updateBufferUsage(state: StateDraft, args: {percentage: number}): void {
-    state.bufferUsage = args.percentage;
-  },
-
   setRecordingTarget(state: StateDraft, args: {target: RecordingTarget}): void {
     state.recordingTarget = args.target;
   },
 
-  setUpdateChromeCategories(state: StateDraft, args: {update: boolean}): void {
-    state.updateChromeCategories = args.update;
+  setFetchChromeCategories(state: StateDraft, args: {fetch: boolean}): void {
+    state.fetchChromeCategories = args.fetch;
   },
 
   setAvailableAdbDevices(
@@ -707,27 +881,25 @@ export const StateActions = {
   },
 
   setOmnibox(state: StateDraft, args: OmniboxState): void {
-    state.frontendLocalState.omniboxState = args;
+    state.omniboxState = args;
+  },
+
+  setOmniboxMode(state: StateDraft, args: {mode: OmniboxMode}): void {
+    state.omniboxState.mode = args.mode;
   },
 
   selectArea(state: StateDraft, args: {area: Area}): void {
-    const areaId = `${state.nextAreaId++}`;
-    state.areas[areaId] = {
-      id: areaId,
-      startSec: args.area.startSec,
-      endSec: args.area.endSec,
-      tracks: args.area.tracks
-    };
+    const {start, end, tracks} = args.area;
+    assertTrue(start <= end);
+    const areaId = generateNextId(state);
+    state.areas[areaId] = {id: areaId, start, end, tracks};
     state.currentSelection = {kind: 'AREA', areaId};
   },
 
   editArea(state: StateDraft, args: {area: Area, areaId: string}): void {
-    state.areas[args.areaId] = {
-      id: args.areaId,
-      startSec: args.area.startSec,
-      endSec: args.area.endSec,
-      tracks: args.area.tracks
-    };
+    const {start, end, tracks} = args.area;
+    assertTrue(start <= end);
+    state.areas[args.areaId] = {id: args.areaId, start, end, tracks};
   },
 
   reSelectArea(state: StateDraft, args: {areaId: string, noteId: string}):
@@ -735,7 +907,7 @@ export const StateActions = {
         state.currentSelection = {
           kind: 'AREA',
           areaId: args.areaId,
-          noteId: args.noteId
+          noteId: args.noteId,
         };
       },
 
@@ -765,10 +937,15 @@ export const StateActions = {
         }
       }
     }
+    // It's super unexpected that |toggleTrackSelection| does not cause
+    // selection to be updated and this leads to bugs for people who do:
+    // if (oldSelection !== state.selection) etc.
+    // To solve this re-create the selection object here:
+    state.currentSelection = Object.assign({}, state.currentSelection);
   },
 
   setVisibleTraceTime(state: StateDraft, args: VisibleState): void {
-    state.frontendLocalState.visibleState = args;
+    state.frontendLocalState.visibleState = {...args};
   },
 
   setChromeCategories(state: StateDraft, args: {categories: string[]}): void {
@@ -785,35 +962,182 @@ export const StateActions = {
     state.lastRecordingError = undefined;
   },
 
-  setAnalyzePageQuery(state: StateDraft, args: {query: string}): void {
-    state.analyzePageQuery = args.query;
+  togglePerfDebug(state: StateDraft, _: {}): void {
+    state.perfDebug = !state.perfDebug;
   },
 
-  requestSelectedMetric(state: StateDraft, _: {}): void {
-    if (!state.metrics.availableMetrics) throw Error('No metrics available');
-    if (state.metrics.selectedIndex === undefined) {
-      throw Error('No metric selected');
+  setSidebar(state: StateDraft, args: {visible: boolean}): void {
+    state.sidebarVisible = args.visible;
+  },
+
+  setHoveredUtidAndPid(state: StateDraft, args: {utid: number, pid: number}) {
+    state.hoveredPid = args.pid;
+    state.hoveredUtid = args.utid;
+  },
+
+  setHighlightedSliceId(state: StateDraft, args: {sliceId: number}) {
+    state.highlightedSliceId = args.sliceId;
+  },
+
+  setHighlightedFlowLeftId(state: StateDraft, args: {flowId: number}) {
+    state.focusedFlowIdLeft = args.flowId;
+  },
+
+  setHighlightedFlowRightId(state: StateDraft, args: {flowId: number}) {
+    state.focusedFlowIdRight = args.flowId;
+  },
+
+  setSearchIndex(state: StateDraft, args: {index: number}) {
+    state.searchIndex = args.index;
+  },
+
+  setHoverCursorTimestamp(state: StateDraft, args: {ts: time}) {
+    state.hoverCursorTimestamp = args.ts;
+  },
+
+  setHoveredNoteTimestamp(state: StateDraft, args: {ts: time}) {
+    state.hoveredNoteTimestamp = args.ts;
+  },
+
+  setCurrentTab(state: StateDraft, args: {tab: string|undefined}) {
+    traceEvent('setCurrentTab', () => {
+      state.currentTab = args.tab;
+    }, {
+      args: {
+        tab: args.tab ?? '<undefined>',
+      },
+    });
+  },
+
+  toggleAllTrackGroups(state: StateDraft, args: {collapsed: boolean}) {
+    for (const group of Object.values(state.trackGroups)) {
+      group.collapsed = args.collapsed;
     }
-    state.metrics.requestedMetric =
-        state.metrics.availableMetrics[state.metrics.selectedIndex];
   },
 
-  resetMetricRequest(state: StateDraft, args: {name: string}): void {
-    if (state.metrics.requestedMetric !== args.name) return;
-    state.metrics.requestedMetric = undefined;
-  },
-
-  setAvailableMetrics(state: StateDraft, args: {metrics: string[]}): void {
-    state.metrics.availableMetrics = args.metrics;
-    if (args.metrics.length > 0) state.metrics.selectedIndex = 0;
-  },
-
-  setMetricSelectedIndex(state: StateDraft, args: {index: number}): void {
-    if (!state.metrics.availableMetrics ||
-        args.index >= state.metrics.availableMetrics.length) {
-      throw Error('metric selection out of bounds');
+  clearAllPinnedTracks(state: StateDraft, _: {}) {
+    const pinnedTracks = state.pinnedTracks.slice();
+    for (let index = pinnedTracks.length-1; index >= 0; index--) {
+      const trackKey = pinnedTracks[index];
+      this.toggleTrackPinned(state, {trackKey});
     }
-    state.metrics.selectedIndex = args.index;
+  },
+
+  togglePivotTable(state: StateDraft, args: {areaId: string|null}) {
+    state.nonSerializableState.pivotTable.selectionArea = args.areaId === null ?
+        undefined :
+        {areaId: args.areaId, tracks: state.areas[args.areaId].tracks};
+    if (args.areaId !==
+        state.nonSerializableState.pivotTable.selectionArea?.areaId) {
+      state.nonSerializableState.pivotTable.queryResult = null;
+    }
+  },
+
+  setPivotStateQueryResult(
+      state: StateDraft, args: {queryResult: PivotTableResult|null}) {
+    state.nonSerializableState.pivotTable.queryResult = args.queryResult;
+  },
+
+  setPivotTableConstrainToArea(state: StateDraft, args: {constrain: boolean}) {
+    state.nonSerializableState.pivotTable.constrainToArea = args.constrain;
+  },
+
+  dismissFlamegraphModal(state: StateDraft, _: {}) {
+    state.flamegraphModalDismissed = true;
+  },
+
+  addPivotTableAggregation(
+      state: StateDraft, args: {aggregation: Aggregation, after: number}) {
+    state.nonSerializableState.pivotTable.selectedAggregations.splice(
+        args.after, 0, args.aggregation);
+  },
+
+  removePivotTableAggregation(state: StateDraft, args: {index: number}) {
+    state.nonSerializableState.pivotTable.selectedAggregations.splice(
+        args.index, 1);
+  },
+
+  setPivotTableQueryRequested(
+      state: StateDraft, args: {queryRequested: boolean}) {
+    state.nonSerializableState.pivotTable.queryRequested = args.queryRequested;
+  },
+
+  setPivotTablePivotSelected(
+      state: StateDraft, args: {column: TableColumn, selected: boolean}) {
+    toggleEnabled(
+        tableColumnEquals,
+        state.nonSerializableState.pivotTable.selectedPivots,
+        args.column,
+        args.selected);
+  },
+
+  setPivotTableAggregationFunction(
+      state: StateDraft, args: {index: number, function: AggregationFunction}) {
+    state.nonSerializableState.pivotTable.selectedAggregations[args.index]
+        .aggregationFunction = args.function;
+  },
+
+  setPivotTableSortColumn(
+      state: StateDraft,
+      args: {aggregationIndex: number, order: SortDirection}) {
+    state.nonSerializableState.pivotTable.selectedAggregations =
+        state.nonSerializableState.pivotTable.selectedAggregations.map(
+            (agg, index) => ({
+              column: agg.column,
+              aggregationFunction: agg.aggregationFunction,
+              sortDirection: (index === args.aggregationIndex) ? args.order :
+                                                                 undefined,
+            }));
+  },
+
+  setPivotTableArgumentNames(
+      state: StateDraft, args: {argumentNames: string[]}) {
+    state.nonSerializableState.pivotTable.argumentNames = args.argumentNames;
+  },
+
+  changePivotTablePivotOrder(
+      state: StateDraft,
+      args: {from: number, to: number, direction: DropDirection}) {
+    const pivots = state.nonSerializableState.pivotTable.selectedPivots;
+    state.nonSerializableState.pivotTable.selectedPivots = performReordering(
+        computeIntervals(pivots.length, args.from, args.to, args.direction),
+        pivots);
+  },
+
+  changePivotTableAggregationOrder(
+      state: StateDraft,
+      args: {from: number, to: number, direction: DropDirection}) {
+    const aggregations =
+        state.nonSerializableState.pivotTable.selectedAggregations;
+    state.nonSerializableState.pivotTable.selectedAggregations =
+        performReordering(
+            computeIntervals(
+                aggregations.length, args.from, args.to, args.direction),
+            aggregations);
+  },
+
+  setMinimumLogLevel(state: StateDraft, args: {minimumLevel: number}) {
+    state.logFilteringCriteria.minimumLevel = args.minimumLevel;
+  },
+
+  addLogTag(state: StateDraft, args: {tag: string}) {
+    if (!state.logFilteringCriteria.tags.includes(args.tag)) {
+      state.logFilteringCriteria.tags.push(args.tag);
+    }
+  },
+
+  removeLogTag(state: StateDraft, args: {tag: string}) {
+    state.logFilteringCriteria.tags =
+        state.logFilteringCriteria.tags.filter((t) => t !== args.tag);
+  },
+
+  updateLogFilterText(state: StateDraft, args: {textEntry: string}) {
+    state.logFilteringCriteria.textEntry = args.textEntry;
+  },
+
+  toggleCollapseByTextEntry(state: StateDraft, _: {}) {
+    state.logFilteringCriteria.hideNonMatching =
+        !state.logFilteringCriteria.hideNonMatching;
   },
 };
 
@@ -849,9 +1173,9 @@ type DeferredActions<C> = {
 // It's a Proxy such that any attribute access returns a function:
 // (args) => {return {type: ATTRIBUTE_NAME, args};}
 export const Actions =
-    // tslint:disable-next-line no-any
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     new Proxy<DeferredActions<typeof StateActions>>({} as any, {
-      // tslint:disable-next-line no-any
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       get(_: any, prop: string, _2: any) {
         return (args: {}): DeferredAction<{}> => {
           return {

@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,10 +16,10 @@
 #include <utility>
 #include <vector>
 
+#include "base/apple/scoped_cftyperef.h"
 #include "base/files/file_enumerator.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
-#include "base/mac/scoped_cftyperef.h"
 #include "base/mac/scoped_ioobject.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/strings/pattern.h"
@@ -71,18 +71,18 @@ CFNumberRef GetCFNumberProperty(io_service_t service, const CFStringRef key) {
 }
 
 // Searches the specified service for a string property with the specified key.
-base::Optional<std::string> GetStringProperty(io_service_t service,
+absl::optional<std::string> GetStringProperty(io_service_t service,
                                               const CFStringRef key) {
   CFStringRef propValue = GetCFStringProperty(service, key);
   if (propValue)
     return base::SysCFStringRefToUTF8(propValue);
 
-  return base::nullopt;
+  return absl::nullopt;
 }
 
 // Searches the specified service for a uint16_t property with the specified
 // key.
-base::Optional<uint16_t> GetUInt16Property(io_service_t service,
+absl::optional<uint16_t> GetUInt16Property(io_service_t service,
                                            const CFStringRef key) {
   CFNumberRef propValue = GetCFNumberProperty(service, key);
   if (propValue) {
@@ -91,14 +91,14 @@ base::Optional<uint16_t> GetUInt16Property(io_service_t service,
       return static_cast<uint16_t>(intValue);
   }
 
-  return base::nullopt;
+  return absl::nullopt;
 }
 
 // Finds the name of the USB driver for |device| by walking up the
 // IORegistry tree to find the first entry provided by the IOUSBInterface
 // class. For drivers compiled for macOS 10.11 and later this was renamed
 // to IOUSBHostInterface.
-base::Optional<std::string> GetUsbDriverName(
+absl::optional<std::string> GetUsbDriverName(
     base::mac::ScopedIOObject<io_object_t> device) {
   base::mac::ScopedIOObject<io_iterator_t> iterator;
   kern_return_t kr = IORegistryEntryCreateIterator(
@@ -106,11 +106,11 @@ base::Optional<std::string> GetUsbDriverName(
       kIORegistryIterateRecursively | kIORegistryIterateParents,
       iterator.InitializeInto());
   if (kr != KERN_SUCCESS)
-    return base::nullopt;
+    return absl::nullopt;
 
   base::mac::ScopedIOObject<io_service_t> ancestor;
-  while (ancestor.reset(IOIteratorNext(iterator)), ancestor) {
-    base::Optional<std::string> provider_class =
+  while (ancestor.reset(IOIteratorNext(iterator.get())), ancestor) {
+    absl::optional<std::string> provider_class =
         GetStringProperty(ancestor.get(), CFSTR(kIOProviderClassKey));
     if (provider_class && (*provider_class == "IOUSBInterface" ||
                            *provider_class == "IOUSBHostInterface")) {
@@ -118,7 +118,7 @@ base::Optional<std::string> GetUsbDriverName(
     }
   }
 
-  return base::nullopt;
+  return absl::nullopt;
 }
 
 }  // namespace
@@ -162,7 +162,7 @@ SerialDeviceEnumeratorMac::~SerialDeviceEnumeratorMac() = default;
 void SerialDeviceEnumeratorMac::FirstMatchCallback(void* context,
                                                    io_iterator_t iterator) {
   auto* enumerator = static_cast<SerialDeviceEnumeratorMac*>(context);
-  DCHECK_EQ(enumerator->devices_added_iterator_, iterator);
+  DCHECK_EQ(enumerator->devices_added_iterator_.get(), iterator);
   enumerator->AddDevices();
 }
 
@@ -170,7 +170,7 @@ void SerialDeviceEnumeratorMac::FirstMatchCallback(void* context,
 void SerialDeviceEnumeratorMac::TerminatedCallback(void* context,
                                                    io_iterator_t iterator) {
   auto* enumerator = static_cast<SerialDeviceEnumeratorMac*>(context);
-  DCHECK_EQ(enumerator->devices_removed_iterator_, iterator);
+  DCHECK_EQ(enumerator->devices_removed_iterator_.get(), iterator);
   enumerator->RemoveDevices();
 }
 
@@ -178,25 +178,26 @@ void SerialDeviceEnumeratorMac::AddDevices() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   base::mac::ScopedIOObject<io_service_t> device;
-  while (device.reset(IOIteratorNext(devices_added_iterator_)), device) {
+  while (device.reset(IOIteratorNext(devices_added_iterator_.get())), device) {
     uint64_t entry_id;
-    IOReturn result = IORegistryEntryGetRegistryEntryID(device, &entry_id);
+    IOReturn result =
+        IORegistryEntryGetRegistryEntryID(device.get(), &entry_id);
     if (result != kIOReturnSuccess)
       continue;
 
     auto info = mojom::SerialPortInfo::New();
-    base::Optional<uint16_t> vendor_id =
+    absl::optional<uint16_t> vendor_id =
         GetUInt16Property(device.get(), CFSTR(kUSBVendorID));
-    base::Optional<std::string> vendor_id_str;
+    absl::optional<std::string> vendor_id_str;
     if (vendor_id) {
       info->has_vendor_id = true;
       info->vendor_id = *vendor_id;
       vendor_id_str = base::StringPrintf("%04X", *vendor_id);
     }
 
-    base::Optional<uint16_t> product_id =
+    absl::optional<uint16_t> product_id =
         GetUInt16Property(device.get(), CFSTR(kUSBProductID));
-    base::Optional<std::string> product_id_str;
+    absl::optional<std::string> product_id_str;
     if (product_id) {
       info->has_product_id = true;
       info->product_id = *product_id;
@@ -213,9 +214,9 @@ void SerialDeviceEnumeratorMac::AddDevices() {
     // starting with "tty" and a "callout" path starting with "cu". The
     // call-out device is typically preferred but requesting the dial-in device
     // is supported for the legacy Chrome Apps API.
-    base::Optional<std::string> dialin_device =
+    absl::optional<std::string> dialin_device =
         GetStringProperty(device.get(), CFSTR(kIODialinDeviceKey));
-    base::Optional<std::string> callout_device =
+    absl::optional<std::string> callout_device =
         GetStringProperty(device.get(), CFSTR(kIOCalloutDeviceKey));
 
     if (callout_device) {
@@ -250,9 +251,11 @@ void SerialDeviceEnumeratorMac::RemoveDevices() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   base::mac::ScopedIOObject<io_service_t> device;
-  while (device.reset(IOIteratorNext(devices_removed_iterator_)), device) {
+  while (device.reset(IOIteratorNext(devices_removed_iterator_.get())),
+         device) {
     uint64_t entry_id;
-    IOReturn result = IORegistryEntryGetRegistryEntryID(device, &entry_id);
+    IOReturn result =
+        IORegistryEntryGetRegistryEntryID(device.get(), &entry_id);
     if (result != kIOReturnSuccess)
       continue;
 

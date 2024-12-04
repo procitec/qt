@@ -1,53 +1,22 @@
-/****************************************************************************
-**
-** Copyright (C) 2017 Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtWebEngine module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2017 Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #ifndef URL_REQUEST_CUSTOM_JOB_PROXY_H_
 #define URL_REQUEST_CUSTOM_JOB_PROXY_H_
 
-#include "base/memory/weak_ptr.h"
-#include "base/optional.h"
-#include "base/sequenced_task_runner.h"
+#include "base/task/sequenced_task_runner.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 #include <QtCore/QPointer>
+#include <QMap>
+#include <QByteArray>
 
 QT_FORWARD_DECLARE_CLASS(QIODevice)
+
+namespace network {
+class ResourceRequestBody;
+}
 
 namespace QtWebEngineCore {
 
@@ -65,6 +34,7 @@ public:
     public:
         std::string m_mimeType;
         std::string m_charset;
+        QMultiMap<QByteArray, QByteArray> m_additionalResponseHeaders;
         GURL m_redirect;
         QIODevice *m_device;
         int64_t m_firstBytePosition;
@@ -74,6 +44,7 @@ public:
         virtual void notifyCanceled() = 0;
         virtual void notifyAborted() = 0;
         virtual void notifyStartFailure(int) = 0;
+        virtual void notifySuccess() = 0;
         virtual void notifyReadyRead() = 0;
         virtual base::SequencedTaskRunner *taskRunner() = 0;
     };
@@ -85,12 +56,16 @@ public:
 
     // Called from URLRequestCustomJobDelegate via post:
     //void setReplyCharset(const std::string &);
-    void reply(std::string mimeType, QIODevice *device);
+    void reply(std::string mimeType, QIODevice *device,
+               QMultiMap<QByteArray, QByteArray> additionalResponseHeaders);
     void redirect(GURL url);
     void abort();
     void fail(int error);
+    void succeed();
     void release();
-    void initialize(GURL url, std::string method, base::Optional<url::Origin> initiatorOrigin, std::map<std::string, std::string> headers);
+    void initialize(GURL url, std::string method, absl::optional<url::Origin> initiatorOrigin,
+                    std::map<std::string, std::string> headers,
+                    scoped_refptr<network::ResourceRequestBody> requestBody);
     void readyRead();
 
     // IO thread owned:

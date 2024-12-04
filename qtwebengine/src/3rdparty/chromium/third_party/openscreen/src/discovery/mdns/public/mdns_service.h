@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -34,12 +34,10 @@ class MdnsService {
   // Creates a new MdnsService instance, to be owned by the caller. On failure,
   // returns nullptr. |task_runner|, |reporting_client|, and |config| must exist
   // for the duration of the resulting instance's life.
-  static std::unique_ptr<MdnsService> Create(
-      TaskRunner* task_runner,
-      ReportingClient* reporting_client,
-      const Config& config,
-      NetworkInterfaceIndex network_interface,
-      Config::NetworkInfo::AddressFamilies supported_address_types);
+  static std::unique_ptr<MdnsService> Create(TaskRunner& task_runner,
+                                             ReportingClient* reporting_client,
+                                             const Config& config,
+                                             const InterfaceInfo& network_info);
 
   // Starts an mDNS query with the given properties. Updated records are passed
   // to |callback|.  The caller must ensure |callback| remains alive while it is

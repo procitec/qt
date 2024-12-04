@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,19 +10,16 @@
 #include <memory>
 #include <vector>
 
-#include "base/callback_forward.h"
-#include "base/macros.h"
+#include "base/functional/callback_forward.h"
 #include "library_loaders/libbrlapi.h"
 
-namespace extensions {
-namespace api {
-namespace braille_display_private {
+namespace extensions::api::braille_display_private {
 
 // A connection to the brlapi server.  See brlapi.h for more information
 // about the semantics of the methods in this class.
 class BrlapiConnection {
  public:
-  typedef base::Closure OnDataReadyCallback;
+  using OnDataReadyCallback = base::RepeatingClosure;
 
   enum ConnectResult {
     CONNECT_ERROR_RETRY,
@@ -32,9 +29,11 @@ class BrlapiConnection {
 
   static std::unique_ptr<BrlapiConnection> Create(LibBrlapiLoader* loader);
 
-  virtual ~BrlapiConnection();
+  BrlapiConnection(const BrlapiConnection&) = delete;
+  BrlapiConnection& operator=(const BrlapiConnection&) = delete;
+  virtual ~BrlapiConnection() = default;
 
-  virtual ConnectResult Connect(const OnDataReadyCallback& onDataReady) = 0;
+  virtual ConnectResult Connect(OnDataReadyCallback onDataReady) = 0;
 
   virtual void Disconnect() = 0;
 
@@ -71,12 +70,9 @@ class BrlapiConnection {
   virtual bool GetCellSize(unsigned int* cell_size) = 0;
 
  protected:
-  BrlapiConnection();
-  DISALLOW_COPY_AND_ASSIGN(BrlapiConnection);
+  BrlapiConnection() = default;
 };
 
-}  // namespace braille_display_private
-}  // namespace api
-}  // namespace extensions
+}  // namespace extensions::api::braille_display_private
 
 #endif  // CHROME_BROWSER_EXTENSIONS_API_BRAILLE_DISPLAY_PRIVATE_BRLAPI_CONNECTION_H_

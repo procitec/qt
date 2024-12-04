@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,23 +10,8 @@ AXActionTarget::Type NullAXActionTarget::GetType() const {
   return AXActionTarget::Type::kNull;
 }
 
-bool NullAXActionTarget::ClearAccessibilityFocus() const {
-  return false;
-}
-
-bool NullAXActionTarget::Click() const {
-  return false;
-}
-
-bool NullAXActionTarget::Decrement() const {
-  return false;
-}
-
-bool NullAXActionTarget::Increment() const {
-  return false;
-}
-
-bool NullAXActionTarget::Focus() const {
+bool NullAXActionTarget::PerformAction(
+    const ui::AXActionData& action_data) const {
   return false;
 }
 
@@ -46,32 +31,12 @@ gfx::Point NullAXActionTarget::MaximumScrollOffset() const {
   return gfx::Point();
 }
 
-bool NullAXActionTarget::SetAccessibilityFocus() const {
-  return false;
-}
-
 void NullAXActionTarget::SetScrollOffset(const gfx::Point& point) const {}
-
-bool NullAXActionTarget::SetSelected(bool selected) const {
-  return false;
-}
 
 bool NullAXActionTarget::SetSelection(const AXActionTarget* anchor_object,
                                       int anchor_offset,
                                       const AXActionTarget* focus_object,
                                       int focus_offset) const {
-  return false;
-}
-
-bool NullAXActionTarget::SetSequentialFocusNavigationStartingPoint() const {
-  return false;
-}
-
-bool NullAXActionTarget::SetValue(const std::string& value) const {
-  return false;
-}
-
-bool NullAXActionTarget::ShowContextMenu() const {
   return false;
 }
 
@@ -84,10 +49,6 @@ bool NullAXActionTarget::ScrollToMakeVisibleWithSubFocus(
     ax::mojom::ScrollAlignment horizontal_scroll_alignment,
     ax::mojom::ScrollAlignment vertical_scroll_alignment,
     ax::mojom::ScrollBehavior scroll_behavior) const {
-  return false;
-}
-
-bool NullAXActionTarget::ScrollToGlobalPoint(const gfx::Point& point) const {
   return false;
 }
 

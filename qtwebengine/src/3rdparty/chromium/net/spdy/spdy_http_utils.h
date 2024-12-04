@@ -1,15 +1,18 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef NET_SPDY_SPDY_HTTP_UTILS_H_
 #define NET_SPDY_SPDY_HTTP_UTILS_H_
 
+#include "base/memory/ref_counted.h"
+#include "base/types/expected.h"
 #include "net/base/net_export.h"
 #include "net/base/request_priority.h"
-#include "net/third_party/quiche/src/spdy/core/spdy_framer.h"
-#include "net/third_party/quiche/src/spdy/core/spdy_header_block.h"
-#include "net/third_party/quiche/src/spdy/core/spdy_protocol.h"
+#include "net/third_party/quiche/src/quiche/spdy/core/http2_header_block.h"
+#include "net/third_party/quiche/src/quiche/spdy/core/spdy_framer.h"
+#include "net/third_party/quiche/src/quiche/spdy/core/spdy_protocol.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/gurl.h"
 
 namespace net {
@@ -17,31 +20,57 @@ namespace net {
 class HttpResponseInfo;
 struct HttpRequestInfo;
 class HttpRequestHeaders;
+class HttpResponseHeaders;
 
-// Convert a spdy::SpdyHeaderBlock into an HttpResponseInfo.
-// |headers| input parameter with the spdy::SpdyHeaderBlock.
-// |response| output parameter for the HttpResponseInfo.
-// Returns true if successfully converted.  False if the spdy::SpdyHeaderBlock
-// is incomplete (e.g. missing 'status' or 'version').
-NET_EXPORT bool SpdyHeadersToHttpResponse(const spdy::SpdyHeaderBlock& headers,
-                                          HttpResponseInfo* response);
+// HTTP Extensible Priorities header (in lowercase HTTP2/3).
+// RFC 9218.
+NET_EXPORT extern const char* const kHttp2PriorityHeader;
 
-// Create a spdy::SpdyHeaderBlock from HttpRequestInfo and HttpRequestHeaders.
+// Convert a spdy::Http2HeaderBlock into an HttpResponseInfo with some checks.
+// `headers` input parameter with the spdy::Http2HeaderBlock.
+// `response` output parameter for the HttpResponseInfo.
+// Returns OK if successfully converted.  An error is returned if the
+// spdy::Http2HeaderBlock is incomplete (e.g. missing 'status' or 'version') or
+// checks fail.
+NET_EXPORT int SpdyHeadersToHttpResponse(const spdy::Http2HeaderBlock& headers,
+                                         HttpResponseInfo* response);
+
+// Converts a spdy::Http2HeaderBlock object into an HttpResponseHeaders object
+// by creating a string with embedded nul bytes instead of newlines and then
+// parsing it to the HttpResponseHeaders constructor to be parsed. Exposed for
+// testing.
+// TODO(https://crbug.com/1485670): Remove this once it is no longer needed.
+NET_EXPORT_PRIVATE base::expected<scoped_refptr<HttpResponseHeaders>, int>
+SpdyHeadersToHttpResponseHeadersUsingRawString(
+    const spdy::Http2HeaderBlock& headers);
+
+// Converts a spdy::Http2HeaderBlock object into an HttpResponseHeaders object
+// by using the HttpResponseHeaders::Builder API. Exposed for testing.
+// TODO(https://crbug.com/1485670): Merge this back into
+// SpdyHeadersToHttpResponse() when
+// SpdyHeadersToHttpResponseHeadersUsingRawString() is removed.
+NET_EXPORT_PRIVATE base::expected<scoped_refptr<HttpResponseHeaders>, int>
+SpdyHeadersToHttpResponseHeadersUsingBuilder(
+    const spdy::Http2HeaderBlock& headers);
+
+// Create a spdy::Http2HeaderBlock from HttpRequestInfo and
+// HttpRequestHeaders.
 NET_EXPORT void CreateSpdyHeadersFromHttpRequest(
     const HttpRequestInfo& info,
+    absl::optional<RequestPriority> priority,
     const HttpRequestHeaders& request_headers,
-    spdy::SpdyHeaderBlock* headers);
+    spdy::Http2HeaderBlock* headers);
 
-// Create a spdy::SpdyHeaderBlock from HttpRequestInfo and HttpRequestHeaders
+// Create a spdy::Http2HeaderBlock from HttpRequestInfo and HttpRequestHeaders
 // for a WebSockets over HTTP/2 request.
 NET_EXPORT void CreateSpdyHeadersFromHttpRequestForWebSocket(
     const GURL& url,
     const HttpRequestHeaders& request_headers,
-    spdy::SpdyHeaderBlock* headers);
+    spdy::Http2HeaderBlock* headers);
 
-// Create HttpRequestHeaders from spdy::SpdyHeaderBlock.
+// Create HttpRequestHeaders from spdy::Http2HeaderBlock.
 NET_EXPORT void ConvertHeaderBlockToHttpRequestHeaders(
-    const spdy::SpdyHeaderBlock& spdy_headers,
+    const spdy::Http2HeaderBlock& spdy_headers,
     HttpRequestHeaders* http_headers);
 
 NET_EXPORT spdy::SpdyPriority ConvertRequestPriorityToSpdyPriority(

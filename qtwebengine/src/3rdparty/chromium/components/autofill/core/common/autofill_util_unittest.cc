@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,74 +7,12 @@
 #include <stddef.h>
 
 #include "base/command_line.h"
-#include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/scoped_feature_list.h"
 #include "components/autofill/core/common/autofill_features.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace autofill {
-
-// Tests for FieldIsSuggestionSubstringStartingOnTokenBoundary().
-struct FieldIsTokenBoundarySubstringCase {
-  const char* const field_suggestion;
-  const char* const field_contents;
-  const bool case_sensitive;
-  const bool expected_result;
-};
-
-class FieldIsTokenBoundarySubstringCaseTest
-    : public testing::TestWithParam<FieldIsTokenBoundarySubstringCase> {};
-
-TEST_P(FieldIsTokenBoundarySubstringCaseTest,
-       FieldIsSuggestionSubstringStartingOnTokenBoundary) {
-  {
-    base::test::ScopedFeatureList features_disabled;
-    features_disabled.InitAndDisableFeature(
-        features::kAutofillTokenPrefixMatching);
-
-    // FieldIsSuggestionSubstringStartingOnTokenBoundary should not work yet
-    // without a flag.
-    EXPECT_FALSE(FieldIsSuggestionSubstringStartingOnTokenBoundary(
-        base::ASCIIToUTF16("ab@cd.b"), base::ASCIIToUTF16("b"), false));
-  }
-
-  base::test::ScopedFeatureList features_enabled;
-  features_enabled.InitAndEnableFeature(features::kAutofillTokenPrefixMatching);
-
-  auto test_case = GetParam();
-  SCOPED_TRACE(testing::Message()
-               << "suggestion = " << test_case.field_suggestion
-               << ", contents = " << test_case.field_contents
-               << ", case_sensitive = " << test_case.case_sensitive);
-
-  EXPECT_EQ(test_case.expected_result,
-            FieldIsSuggestionSubstringStartingOnTokenBoundary(
-                base::ASCIIToUTF16(test_case.field_suggestion),
-                base::ASCIIToUTF16(test_case.field_contents),
-                test_case.case_sensitive));
-}
-
-INSTANTIATE_TEST_SUITE_P(
-    AutofillUtilTest,
-    FieldIsTokenBoundarySubstringCaseTest,
-    testing::Values(
-        FieldIsTokenBoundarySubstringCase{"ab@cd.b", "a", false, true},
-        FieldIsTokenBoundarySubstringCase{"ab@cd.b", "b", false, true},
-        FieldIsTokenBoundarySubstringCase{"ab@cd.b", "Ab", false, true},
-        FieldIsTokenBoundarySubstringCase{"ab@cd.b", "Ab", true, false},
-        FieldIsTokenBoundarySubstringCase{"ab@cd.b", "cd", true, true},
-        FieldIsTokenBoundarySubstringCase{"ab@cd.b", "d", false, false},
-        FieldIsTokenBoundarySubstringCase{"ab@cd.b", "b@", true, false},
-        FieldIsTokenBoundarySubstringCase{"ab@cd.b", "ab", false, true},
-        FieldIsTokenBoundarySubstringCase{"ab@cd.b", "cd.b", true, true},
-        FieldIsTokenBoundarySubstringCase{"ab@cd.b", "b@cd", false, false},
-        FieldIsTokenBoundarySubstringCase{"ab@cd.b", "ab@c", false, true},
-        FieldIsTokenBoundarySubstringCase{"ba.a.ab", "a.a", false, true},
-        FieldIsTokenBoundarySubstringCase{"", "ab", false, false},
-        FieldIsTokenBoundarySubstringCase{"", "ab", true, false},
-        FieldIsTokenBoundarySubstringCase{"ab", "", false, true},
-        FieldIsTokenBoundarySubstringCase{"ab", "", true, true}));
 
 struct AtSignPrefixCase {
   const char* const field_suggestion;
@@ -147,14 +85,14 @@ INSTANTIATE_TEST_SUITE_P(
     GetTextSelectionStartTest,
     testing::Values(
         GetTextSelectionStartCase{"ab@cd.b", "a", false, 1},
-        GetTextSelectionStartCase{"ab@cd.b", "A", true, base::string16::npos},
+        GetTextSelectionStartCase{"ab@cd.b", "A", true, std::u16string::npos},
         GetTextSelectionStartCase{"ab@cd.b", "Ab", false, 2},
-        GetTextSelectionStartCase{"ab@cd.b", "Ab", true, base::string16::npos},
+        GetTextSelectionStartCase{"ab@cd.b", "Ab", true, std::u16string::npos},
         GetTextSelectionStartCase{"ab@cd.b", "cd", false, 5},
         GetTextSelectionStartCase{"ab@cd.b", "ab@c", false, 4},
         GetTextSelectionStartCase{"ab@cd.b", "cd.b", false, 7},
         GetTextSelectionStartCase{"ab@cd.b", "b@cd", false,
-                                  base::string16::npos},
+                                  std::u16string::npos},
         GetTextSelectionStartCase{"ab@cd.b", "b", false, 7},
         GetTextSelectionStartCase{"ba.a.ab", "a.a", false, 6},
         GetTextSelectionStartCase{"texample@example.com", "example", false,
@@ -203,5 +141,10 @@ INSTANTIATE_TEST_SUITE_P(
                                                 std::vector<std::string>()},
         LowercaseAndTokenizeAttributeStringCase{"foO    baR bAz",
                                                 {"foo", "bar", "baz"}}));
+
+TEST(StripAuthAndParamsTest, StripsAll) {
+  GURL url = GURL("https://login:password@example.com/login/?param=value#ref");
+  EXPECT_EQ(GURL("https://example.com/login/"), StripAuthAndParams(url));
+}
 
 }  // namespace autofill

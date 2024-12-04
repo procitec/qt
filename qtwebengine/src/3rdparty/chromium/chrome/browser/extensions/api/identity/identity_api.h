@@ -1,23 +1,20 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef CHROME_BROWSER_EXTENSIONS_API_IDENTITY_IDENTITY_API_H_
 #define CHROME_BROWSER_EXTENSIONS_API_IDENTITY_IDENTITY_API_H_
 
+#include <optional>
 #include <string>
 #include <utility>
 
 #include "base/callback_list.h"
 #include "base/feature_list.h"
 #include "base/gtest_prod_util.h"
-#include "base/memory/ref_counted.h"
-#include "base/memory/weak_ptr.h"
-#include "base/observer_list.h"
-#include "base/optional.h"
+#include "base/memory/raw_ptr.h"
 #include "build/build_config.h"
 #include "build/buildflag.h"
-#include "chrome/browser/extensions/api/identity/gaia_web_auth_flow.h"
 #include "chrome/browser/extensions/api/identity/identity_clear_all_cached_auth_tokens_function.h"
 #include "chrome/browser/extensions/api/identity/identity_get_accounts_function.h"
 #include "chrome/browser/extensions/api/identity/identity_get_auth_token_function.h"
@@ -43,9 +40,6 @@ namespace extensions {
 class IdentityAPI : public BrowserContextKeyedAPI,
                     public signin::IdentityManager::Observer {
  public:
-  using OnSetConsentResultSignature = void(const std::string&,
-                                           const std::string&);
-
   explicit IdentityAPI(content::BrowserContext* context);
   ~IdentityAPI() override;
 
@@ -57,29 +51,21 @@ class IdentityAPI : public BrowserContextKeyedAPI,
   // GAIA id cache.
   void SetGaiaIdForExtension(const std::string& extension_id,
                              const std::string& gaia_id);
-  // Returns |base::nullopt| if no GAIA id is saved for |extension_id|.
+  // Returns |std::nullopt| if no GAIA id is saved for |extension_id|.
   // Otherwise, returns GAIA id previously saved via SetGaiaIdForExtension().
-  base::Optional<std::string> GetGaiaIdForExtension(
+  std::optional<std::string> GetGaiaIdForExtension(
       const std::string& extension_id);
   void EraseGaiaIdForExtension(const std::string& extension_id);
   // If refresh tokens have been loaded, erases GAIA ids of accounts that are no
   // longer signed in to Chrome for all extensions.
   void EraseStaleGaiaIdsForAllExtensions();
 
-  // Consent result.
-  void SetConsentResult(const std::string& result,
-                        const std::string& window_id);
-  std::unique_ptr<
-      base::RepeatingCallbackList<OnSetConsentResultSignature>::Subscription>
-  RegisterOnSetConsentResultCallback(
-      const base::RepeatingCallback<OnSetConsentResultSignature>& callback);
-
   // BrowserContextKeyedAPI:
   void Shutdown() override;
   static BrowserContextKeyedAPIFactory<IdentityAPI>* GetFactoryInstance();
 
-  std::unique_ptr<base::OnceCallbackList<void()>::Subscription>
-  RegisterOnShutdownCallback(base::OnceClosure cb);
+  base::CallbackListSubscription RegisterOnShutdownCallback(
+      base::OnceClosure cb);
 
   // Callback that is used in testing contexts to test the implementation of
   // the chrome.identity.onSignInChanged event. Note that the passed-in Event is
@@ -121,18 +107,16 @@ class IdentityAPI : public BrowserContextKeyedAPI,
   void FireOnAccountSignInChanged(const std::string& gaia_id,
                                   bool is_signed_in);
 
-  Profile* const profile_;
-  signin::IdentityManager* const identity_manager_;
-  ExtensionPrefs* const extension_prefs_;
-  EventRouter* const event_router_;
+  const raw_ptr<Profile> profile_;
+  const raw_ptr<signin::IdentityManager> identity_manager_;
+  const raw_ptr<ExtensionPrefs> extension_prefs_;
+  const raw_ptr<EventRouter> event_router_;
 
   IdentityMintRequestQueue mint_queue_;
   IdentityTokenCache token_cache_;
 
   OnSignInChangedCallback on_signin_changed_callback_for_testing_;
 
-  base::RepeatingCallbackList<OnSetConsentResultSignature>
-      on_set_consent_result_callback_list_;
   base::OnceCallbackList<void()> on_shutdown_callback_list_;
 };
 

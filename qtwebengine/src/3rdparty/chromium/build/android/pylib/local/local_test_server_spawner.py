@@ -1,6 +1,7 @@
-# Copyright 2014 The Chromium Authors. All rights reserved.
+# Copyright 2014 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
+
 
 import json
 import time
@@ -25,7 +26,7 @@ def _WaitUntil(predicate, max_attempts=5):
     Whether the provided predicate was satisfied once (before the timeout).
   """
   sleep_time_sec = 0.025
-  for _ in xrange(1, max_attempts):
+  for _ in range(1, max_attempts):
     if predicate():
       return True
     time.sleep(sleep_time_sec)
@@ -60,7 +61,7 @@ class PortForwarderAndroid(chrome_test_server_spawner.PortForwarder):
 class LocalTestServerSpawner(test_server.TestServer):
 
   def __init__(self, port, device, tool):
-    super(LocalTestServerSpawner, self).__init__()
+    super().__init__()
     self._device = device
     self._spawning_server = chrome_test_server_spawner.SpawningServer(
         port, PortForwarderAndroid(device, tool), MAX_TEST_SERVER_INSTANCES)

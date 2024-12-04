@@ -12,47 +12,34 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import '../tracks/all_controller';
+import '../gen/all_tracks';
+import '../common/recordingV2/target_factories';
 
-import {reportError, setErrorHandler} from '../base/logging';
-import {Remote} from '../base/remote';
-import {warmupWasmEngine} from '../common/wasm_engine_proxy';
+import {assertExists, assertTrue} from '../base/logging';
 
 import {AppController} from './app_controller';
-import {globals} from './globals';
+import {ControllerAny} from './controller';
 
-interface OnMessageArg {
-  data: {
-    frontendPort: MessagePort; controllerPort: MessagePort;
-    extensionPort: MessagePort;
-    errorReportingPort: MessagePort;
-  };
+let rootController: ControllerAny;
+let runningControllers = false;
+
+export function initController(extensionPort: MessagePort) {
+  assertTrue(rootController === undefined);
+  rootController = new AppController(extensionPort);
 }
 
-function main() {
-  self.addEventListener('error', e => reportError(e));
-  self.addEventListener('unhandledrejection', e => reportError(e));
-  warmupWasmEngine();
-  let initialized = false;
-  self.onmessage = ({data}: OnMessageArg) => {
-    if (initialized) {
-      console.error('Already initialized');
-      return;
+export function runControllers() {
+  if (runningControllers) throw new Error('Re-entrant call detected');
+
+  // Run controllers locally until all state machines reach quiescence.
+  let runAgain = true;
+  for (let iter = 0; runAgain; iter++) {
+    if (iter > 100) throw new Error('Controllers are stuck in a livelock');
+    runningControllers = true;
+    try {
+      runAgain = assertExists(rootController).invoke();
+    } finally {
+      runningControllers = false;
     }
-    initialized = true;
-    const frontendPort = data.frontendPort;
-    const controllerPort = data.controllerPort;
-    const extensionPort = data.extensionPort;
-    const errorReportingPort = data.errorReportingPort;
-    setErrorHandler((err: string) => errorReportingPort.postMessage(err));
-    const frontend = new Remote(frontendPort);
-    controllerPort.onmessage = ({data}) => globals.dispatch(data);
-
-    globals.initialize(new AppController(extensionPort), frontend);
-  };
+  }
 }
-
-main();
-
-// For devtools-based debugging.
-(self as {} as {globals: {}}).globals = globals;

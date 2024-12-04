@@ -32,9 +32,8 @@ SVGSwitchElement::SVGSwitchElement(Document& document)
   UseCounter::Count(document, WebFeature::kSVGSwitchElement);
 }
 
-LayoutObject* SVGSwitchElement::CreateLayoutObject(const ComputedStyle&,
-                                                   LegacyLayout) {
-  return new LayoutSVGTransformableContainer(this);
+LayoutObject* SVGSwitchElement::CreateLayoutObject(const ComputedStyle&) {
+  return MakeGarbageCollected<LayoutSVGTransformableContainer>(this);
 }
 
 }  // namespace blink

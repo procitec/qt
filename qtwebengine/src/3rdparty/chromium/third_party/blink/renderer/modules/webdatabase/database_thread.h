@@ -29,12 +29,14 @@
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_WEBDATABASE_DATABASE_THREAD_H_
 
 #include <memory>
+#include "base/memory/raw_ptr.h"
+#include "base/synchronization/lock.h"
 #include "base/synchronization/waitable_event.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
-#include "third_party/blink/renderer/platform/heap/persistent.h"
-#include "third_party/blink/renderer/platform/scheduler/public/thread.h"
-#include "third_party/blink/renderer/platform/wtf/hash_map.h"
-#include "third_party/blink/renderer/platform/wtf/threading_primitives.h"
+#include "base/thread_annotations.h"
+#include "third_party/blink/renderer/platform/heap/cross_thread_persistent.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
+#include "third_party/blink/renderer/platform/scheduler/public/non_main_thread.h"
+#include "third_party/blink/renderer/platform/wtf/hash_set.h"
 
 namespace blink {
 
@@ -74,7 +76,7 @@ class DatabaseThread final : public GarbageCollected<DatabaseThread> {
   void CleanupDatabaseThread();
   void CleanupDatabaseThreadCompleted();
 
-  std::unique_ptr<blink::Thread> thread_;
+  std::unique_ptr<blink::NonMainThread> thread_;
 
   // This set keeps track of the open databases that have been used on this
   // thread.  This must be updated in the database thread though it is
@@ -83,10 +85,10 @@ class DatabaseThread final : public GarbageCollected<DatabaseThread> {
 
   std::unique_ptr<SQLTransactionClient> transaction_client_;
   CrossThreadPersistent<SQLTransactionCoordinator> transaction_coordinator_;
-  base::WaitableEvent* cleanup_sync_;
+  raw_ptr<base::WaitableEvent, ExperimentalRenderer> cleanup_sync_;
 
-  Mutex termination_requested_mutex_;
-  bool termination_requested_;
+  base::Lock termination_requested_lock_;
+  bool termination_requested_ GUARDED_BY(termination_requested_lock_);
 };
 
 }  // namespace blink

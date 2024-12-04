@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -513,10 +513,10 @@ void MessageWriter::AppendDouble(double value) {
   AppendBasic(DBUS_TYPE_DOUBLE, &value);
 }
 
-void MessageWriter::AppendString(const std::string& value) {
+void MessageWriter::AppendString(std::string_view value) {
   // D-Bus Specification (0.19) says a string "must be valid UTF-8".
   CHECK(base::IsStringUTF8(value));
-  const char* pointer = value.c_str();
+  const char* pointer = value.data() ? value.data() : "";
   AppendBasic(DBUS_TYPE_STRING, &pointer);
   // TODO(satorux): It may make sense to return an error here, as the
   // input string can be large. If needed, we could add something like
@@ -590,47 +590,58 @@ void MessageWriter::CloseContainer(MessageWriter* writer) {
   container_is_open_ = false;
 }
 
-void MessageWriter::AppendArrayOfBytes(const uint8_t* values, size_t length) {
+void MessageWriter::AppendArrayOfBytes(base::span<const uint8_t> values) {
   DCHECK(!container_is_open_);
   MessageWriter array_writer(message_);
   OpenArray("y", &array_writer);
+  // dbus_message_iter_append_fixed_array takes a pointer to a pointer to the
+  // data.
+  const uint8_t* ptr = values.data();
   const bool success = dbus_message_iter_append_fixed_array(
-      &(array_writer.raw_message_iter_), DBUS_TYPE_BYTE, &values,
-      static_cast<int>(length));
+      &(array_writer.raw_message_iter_), DBUS_TYPE_BYTE, &ptr,
+      base::checked_cast<int>(values.size()));
   CHECK(success) << "Unable to allocate memory";
   CloseContainer(&array_writer);
 }
 
-void MessageWriter::AppendArrayOfInt32s(const int32_t* values, size_t length) {
+void MessageWriter::AppendArrayOfInt32s(base::span<const int32_t> values) {
   DCHECK(!container_is_open_);
   MessageWriter array_writer(message_);
   OpenArray("i", &array_writer);
+  // dbus_message_iter_append_fixed_array takes a pointer to a pointer to the
+  // data.
+  const int32_t* ptr = values.data();
   const bool success = dbus_message_iter_append_fixed_array(
-      &(array_writer.raw_message_iter_), DBUS_TYPE_INT32, &values,
-      static_cast<int>(length));
+      &(array_writer.raw_message_iter_), DBUS_TYPE_INT32, &ptr,
+      base::checked_cast<int>(values.size()));
   CHECK(success) << "Unable to allocate memory";
   CloseContainer(&array_writer);
 }
 
-void MessageWriter::AppendArrayOfUint32s(const uint32_t* values,
-                                         size_t length) {
+void MessageWriter::AppendArrayOfUint32s(base::span<const uint32_t> values) {
   DCHECK(!container_is_open_);
   MessageWriter array_writer(message_);
   OpenArray("u", &array_writer);
+  // dbus_message_iter_append_fixed_array takes a pointer to a pointer to the
+  // data.
+  const uint32_t* ptr = values.data();
   const bool success = dbus_message_iter_append_fixed_array(
-      &(array_writer.raw_message_iter_), DBUS_TYPE_UINT32, &values,
-      static_cast<int>(length));
+      &(array_writer.raw_message_iter_), DBUS_TYPE_UINT32, &ptr,
+      base::checked_cast<int>(values.size()));
   CHECK(success) << "Unable to allocate memory";
   CloseContainer(&array_writer);
 }
 
-void MessageWriter::AppendArrayOfDoubles(const double* values, size_t length) {
+void MessageWriter::AppendArrayOfDoubles(base::span<const double> values) {
   DCHECK(!container_is_open_);
   MessageWriter array_writer(message_);
   OpenArray("d", &array_writer);
+  // dbus_message_iter_append_fixed_array takes a pointer to a pointer to the
+  // data.
+  const double* ptr = values.data();
   const bool success = dbus_message_iter_append_fixed_array(
-      &(array_writer.raw_message_iter_), DBUS_TYPE_DOUBLE, &values,
-      static_cast<int>(length));
+      &(array_writer.raw_message_iter_), DBUS_TYPE_DOUBLE, &ptr,
+      base::checked_cast<int>(values.size()));
   CHECK(success) << "Unable to allocate memory";
   CloseContainer(&array_writer);
 }
@@ -664,8 +675,7 @@ bool MessageWriter::AppendProtoAsArrayOfBytes(
     LOG(ERROR) << "Unable to serialize supplied protocol buffer";
     return false;
   }
-  AppendArrayOfBytes(reinterpret_cast<const uint8_t*>(serialized_proto.data()),
-                     serialized_proto.size());
+  AppendArrayOfBytes(base::as_byte_span(serialized_proto));
   return true;
 }
 
@@ -767,7 +777,7 @@ bool MessageReader::PopBool(bool* value) {
   // Like MessageWriter::AppendBool(), we should copy |value| to
   // dbus_bool_t, as dbus_message_iter_get_basic() used in PopBasic()
   // expects four bytes for DBUS_TYPE_BOOLEAN.
-  dbus_bool_t dbus_value = FALSE;
+  dbus_bool_t dbus_value = 0; //FALSE;
   const bool success = PopBasic(DBUS_TYPE_BOOLEAN, &dbus_value);
   *value = static_cast<bool>(dbus_value);
   return success;
@@ -962,7 +972,7 @@ bool MessageReader::PopVariantOfByte(uint8_t* value) {
 
 bool MessageReader::PopVariantOfBool(bool* value) {
   // See the comment at MessageReader::PopBool().
-  dbus_bool_t dbus_value = FALSE;
+  dbus_bool_t dbus_value = 0; //FALSE;
   const bool success = PopVariantOfBasic(DBUS_TYPE_BOOLEAN, &dbus_value);
   *value = static_cast<bool>(dbus_value);
   return success;

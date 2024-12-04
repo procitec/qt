@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,11 +6,13 @@
 
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/memory/ptr_util.h"
+#include "base/time/time.h"
 #include "media/audio/audio_debug_recording_helper.h"
 #include "media/audio/audio_io.h"
+#include "media/base/audio_glitch_info.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -30,7 +32,7 @@ class MockStream : public AudioInputStream {
  public:
   MockStream() = default;
   ~MockStream() override = default;
-  MOCK_METHOD0(Open, bool());
+  MOCK_METHOD0(Open, AudioInputStream::OpenOutcome());
   MOCK_METHOD1(Start, void(AudioInputStream::AudioInputCallback*));
   MOCK_METHOD0(Stop, void());
   MOCK_METHOD0(Close, void());
@@ -55,7 +57,9 @@ class MockCallback : public AudioInputStream::AudioInputCallback {
   MockCallback() = default;
   ~MockCallback() override = default;
 
-  MOCK_METHOD3(OnData, void(const AudioBus*, base::TimeTicks, double));
+  MOCK_METHOD4(
+      OnData,
+      void(const AudioBus*, base::TimeTicks, double, const AudioGlitchInfo&));
   MOCK_METHOD0(OnError, void());
 };
 
@@ -133,11 +137,12 @@ TEST(AudioInputStreamDataInterceptorTest, Start) {
   Mock::VerifyAndClearExpectations(&stream);
 
   base::TimeTicks time = base::TimeTicks::Now();
+  AudioGlitchInfo glitch_info{.duration = base::Milliseconds(123), .count = 5};
 
   // Audio data should be passed to both callback and recorder.
-  EXPECT_CALL(callback, OnData(audio_bus.get(), time, kVolume));
+  EXPECT_CALL(callback, OnData(audio_bus.get(), time, kVolume, glitch_info));
   EXPECT_CALL(*recorder, OnData(audio_bus.get()));
-  interceptor->OnData(audio_bus.get(), time, kVolume);
+  interceptor->OnData(audio_bus.get(), time, kVolume, glitch_info);
 
   Mock::VerifyAndClearExpectations(&callback);
   Mock::VerifyAndClearExpectations(recorder);

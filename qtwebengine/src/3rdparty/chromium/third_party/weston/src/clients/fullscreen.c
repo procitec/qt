@@ -80,7 +80,7 @@ draw_string(cairo_t *cr,
 
 	cairo_save(cr);
 
-	cairo_select_font_face(cr, "sans",
+	cairo_select_font_face(cr, "sans-serif",
 			       CAIRO_FONT_SLANT_NORMAL,
 			       CAIRO_FONT_WEIGHT_NORMAL);
 	cairo_set_font_size(cr, 14);
@@ -280,6 +280,9 @@ key_handler(struct window *window, struct input *input, uint32_t time,
 		break;
 
 	case XKB_KEY_z:
+		if (fullscreen->fullscreen)
+			break;
+
 		current_size = (current_size + 1) % 4;
 		fullscreen->width = widths[current_size];
 		fullscreen->height = heights[current_size];
@@ -547,6 +550,7 @@ int main(int argc, char *argv[])
 		window_add_widget(fullscreen.window, &fullscreen);
 
 	window_set_title(fullscreen.window, "Fullscreen");
+	window_set_appid(fullscreen.window, "org.freedesktop.weston.fullscreen");
 
 	widget_set_transparent(fullscreen.widget, 0);
 

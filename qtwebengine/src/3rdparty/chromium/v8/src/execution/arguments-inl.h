@@ -13,29 +13,47 @@
 
 namespace v8 {
 namespace internal {
+
 template <ArgumentsType T>
 Arguments<T>::ChangeValueScope::ChangeValueScope(Isolate* isolate,
                                                  Arguments* args, int index,
-                                                 Object value)
+                                                 Tagged<Object> value)
     : location_(args->address_of_arg_at(index)) {
-  old_value_ = handle(Object(*location_), isolate);
+  old_value_ = handle(Tagged<Object>(*location_), isolate);
   *location_ = value.ptr();
 }
 
 template <ArgumentsType T>
-int Arguments<T>::smi_at(int index) const {
-  return Smi::ToInt(Object(*address_of_arg_at(index)));
+int Arguments<T>::smi_value_at(int index) const {
+  Tagged<Object> obj = (*this)[index];
+  int value = Smi::ToInt(obj);
+  DCHECK_IMPLIES(IsTaggedIndex(obj), value == tagged_index_value_at(index));
+  return value;
 }
 
 template <ArgumentsType T>
-int Arguments<T>::tagged_index_at(int index) const {
-  Address raw = *address_of_arg_at(index);
-  return static_cast<int>(TaggedIndex(raw).value());
+uint32_t Arguments<T>::positive_smi_value_at(int index) const {
+  int value = smi_value_at(index);
+  DCHECK_LE(0, value);
+  return value;
 }
 
 template <ArgumentsType T>
-double Arguments<T>::number_at(int index) const {
-  return (*this)[index].Number();
+int Arguments<T>::tagged_index_value_at(int index) const {
+  return static_cast<int>(TaggedIndex::cast((*this)[index]).value());
+}
+
+template <ArgumentsType T>
+double Arguments<T>::number_value_at(int index) const {
+  return Object::Number((*this)[index]);
+}
+
+template <ArgumentsType T>
+Handle<Object> Arguments<T>::atOrUndefined(Isolate* isolate, int index) const {
+  if (index >= length_) {
+    return Handle<Object>::cast(isolate->factory()->undefined_value());
+  }
+  return at<Object>(index);
 }
 
 }  // namespace internal

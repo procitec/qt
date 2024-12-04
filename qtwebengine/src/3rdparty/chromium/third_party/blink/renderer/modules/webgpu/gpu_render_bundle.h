@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,9 +16,15 @@ class GPURenderBundle : public DawnObject<WGPURenderBundle> {
 
  public:
   explicit GPURenderBundle(GPUDevice* device, WGPURenderBundle render_bundle);
-  ~GPURenderBundle() override;
 
-  DISALLOW_COPY_AND_ASSIGN(GPURenderBundle);
+  GPURenderBundle(const GPURenderBundle&) = delete;
+  GPURenderBundle& operator=(const GPURenderBundle&) = delete;
+
+ private:
+  void setLabelImpl(const String& value) override {
+    std::string utf8_label = value.Utf8();
+    GetProcs().renderBundleSetLabel(GetHandle(), utf8_label.c_str());
+  }
 };
 
 }  // namespace blink

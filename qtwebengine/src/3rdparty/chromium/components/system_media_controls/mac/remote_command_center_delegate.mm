@@ -1,18 +1,20 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/system_media_controls/mac/remote_command_center_delegate.h"
 
+#include "base/time/time.h"
 #include "components/system_media_controls/mac/remote_command_center_delegate_cocoa.h"
 #include "components/system_media_controls/system_media_controls_observer.h"
 
-namespace system_media_controls {
-namespace internal {
+namespace system_media_controls::internal {
 
-RemoteCommandCenterDelegate::RemoteCommandCenterDelegate() {
-  remote_command_center_delegate_cocoa_.reset(
-      [[RemoteCommandCenterDelegateCocoa alloc] initWithDelegate:this]);
+RemoteCommandCenterDelegate::RemoteCommandCenterDelegate(
+    SystemMediaControls* system_media_controls)
+    : system_media_controls_(system_media_controls) {
+  remote_command_center_delegate_cocoa_ =
+      [[RemoteCommandCenterDelegateCocoa alloc] initWithDelegate:this];
 }
 
 RemoteCommandCenterDelegate::~RemoteCommandCenterDelegate() {
@@ -21,6 +23,7 @@ RemoteCommandCenterDelegate::~RemoteCommandCenterDelegate() {
   SetIsPreviousEnabled(false);
   SetIsPlayPauseEnabled(false);
   SetIsStopEnabled(false);
+  SetIsSeekToEnabled(false);
 }
 
 void RemoteCommandCenterDelegate::AddObserver(
@@ -63,40 +66,53 @@ void RemoteCommandCenterDelegate::SetIsStopEnabled(bool value) {
   [remote_command_center_delegate_cocoa_ setCanStop:value];
 }
 
+void RemoteCommandCenterDelegate::SetIsSeekToEnabled(bool value) {
+  if (!ShouldSetCommandEnabled(Command::kSeekTo, value))
+    return;
+
+  [remote_command_center_delegate_cocoa_ setCanSeekTo:value];
+}
+
 void RemoteCommandCenterDelegate::OnNext() {
   DCHECK(enabled_commands_.contains(Command::kNextTrack));
   for (auto& observer : observers_)
-    observer.OnNext();
+    observer.OnNext(system_media_controls_);
 }
 
 void RemoteCommandCenterDelegate::OnPrevious() {
   DCHECK(enabled_commands_.contains(Command::kPreviousTrack));
   for (auto& observer : observers_)
-    observer.OnPrevious();
+    observer.OnPrevious(system_media_controls_);
 }
 
 void RemoteCommandCenterDelegate::OnPlay() {
   DCHECK(enabled_commands_.contains(Command::kPlayPause));
   for (auto& observer : observers_)
-    observer.OnPlay();
+    observer.OnPlay(system_media_controls_);
 }
 
 void RemoteCommandCenterDelegate::OnPause() {
   DCHECK(enabled_commands_.contains(Command::kPlayPause));
   for (auto& observer : observers_)
-    observer.OnPause();
+    observer.OnPause(system_media_controls_);
 }
 
 void RemoteCommandCenterDelegate::OnPlayPause() {
   DCHECK(enabled_commands_.contains(Command::kPlayPause));
   for (auto& observer : observers_)
-    observer.OnPlayPause();
+    observer.OnPlayPause(system_media_controls_);
 }
 
 void RemoteCommandCenterDelegate::OnStop() {
   DCHECK(enabled_commands_.contains(Command::kStop));
   for (auto& observer : observers_)
-    observer.OnStop();
+    observer.OnStop(system_media_controls_);
+}
+
+void RemoteCommandCenterDelegate::OnSeekTo(const base::TimeDelta& time) {
+  DCHECK(enabled_commands_.contains(Command::kSeekTo));
+  for (auto& observer : observers_)
+    observer.OnSeekTo(system_media_controls_, time);
 }
 
 bool RemoteCommandCenterDelegate::ShouldSetCommandEnabled(Command command,
@@ -112,5 +128,4 @@ bool RemoteCommandCenterDelegate::ShouldSetCommandEnabled(Command command,
   return true;
 }
 
-}  // namespace internal
-}  // namespace system_media_controls
+}  // namespace system_media_controls::internal

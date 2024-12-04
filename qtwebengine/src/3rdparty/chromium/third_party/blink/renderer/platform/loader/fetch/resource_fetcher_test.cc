@@ -31,20 +31,25 @@
 #include "third_party/blink/renderer/platform/loader/fetch/resource_fetcher.h"
 
 #include <memory>
-#include "base/optional.h"
+
+#include "base/memory/raw_ptr.h"
+#include "base/strings/string_number_conversions.h"
+#include "base/task/single_thread_task_runner.h"
+#include "base/test/bind.h"
+#include "base/test/metrics/histogram_tester.h"
+#include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
 #include "services/network/public/mojom/ip_address_space.mojom-blink.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom-blink.h"
 #include "third_party/blink/public/mojom/loader/request_context_frame_type.mojom-blink.h"
 #include "third_party/blink/public/mojom/security_context/insecure_request_policy.mojom-blink.h"
 #include "third_party/blink/public/platform/platform.h"
-#include "third_party/blink/public/platform/web_url_loader.h"
-#include "third_party/blink/public/platform/web_url_loader_mock_factory.h"
 #include "third_party/blink/public/platform/web_url_response.h"
 #include "third_party/blink/renderer/platform/exported/wrapped_resource_response.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
-#include "third_party/blink/renderer/platform/heap/heap_allocator.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/heap/member.h"
 #include "third_party/blink/renderer/platform/loader/fetch/console_logger.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_initiator_info.h"
@@ -57,8 +62,9 @@
 #include "third_party/blink/renderer/platform/loader/fetch/resource_loader.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_loader_options.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_request.h"
-#include "third_party/blink/renderer/platform/loader/fetch/resource_timing_info.h"
+#include "third_party/blink/renderer/platform/loader/fetch/resource_timing_utils.h"
 #include "third_party/blink/renderer/platform/loader/fetch/unique_identifier.h"
+#include "third_party/blink/renderer/platform/loader/fetch/url_loader/url_loader.h"
 #include "third_party/blink/renderer/platform/loader/testing/fetch_testing_platform_support.h"
 #include "third_party/blink/renderer/platform/loader/testing/mock_fetch_context.h"
 #include "third_party/blink/renderer/platform/loader/testing/mock_resource.h"
@@ -70,9 +76,10 @@
 #include "third_party/blink/renderer/platform/testing/scoped_mocked_url.h"
 #include "third_party/blink/renderer/platform/testing/testing_platform_support.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
+#include "third_party/blink/renderer/platform/testing/url_loader_mock.h"
+#include "third_party/blink/renderer/platform/testing/url_loader_mock_factory.h"
+#include "third_party/blink/renderer/platform/testing/url_loader_mock_factory_impl.h"
 #include "third_party/blink/renderer/platform/testing/url_test_helpers.h"
-#include "third_party/blink/renderer/platform/testing/weburl_loader_mock.h"
-#include "third_party/blink/renderer/platform/testing/weburl_loader_mock_factory_impl.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 
@@ -82,20 +89,6 @@ namespace {
 
 constexpr char kTestResourceFilename[] = "white-1x1.png";
 constexpr char kTestResourceMimeType[] = "image/png";
-constexpr uint32_t kTestResourceSize = 103;  // size of white-1x1.png
-
-const FetchClientSettingsObjectSnapshot& CreateFetchClientSettingsObject(
-    network::mojom::IPAddressSpace address_space) {
-  return *MakeGarbageCollected<FetchClientSettingsObjectSnapshot>(
-      KURL("https://example.com/foo.html"),
-      KURL("https://example.com/foo.html"),
-      SecurityOrigin::Create(KURL("https://example.com/")),
-      network::mojom::ReferrerPolicy::kDefault, "https://example.com/foo.html",
-      HttpsState::kModern, AllowedByNosniff::MimeTypeCheck::kStrict,
-      address_space,
-      mojom::blink::InsecureRequestPolicy::kLeaveInsecureRequestsAlone,
-      FetchClientSettingsObject::InsecureNavigationsSet());
-}
 
 class PartialResourceRequest {
  public:
@@ -116,18 +109,27 @@ class PartialResourceRequest {
 
 class ResourceFetcherTest : public testing::Test {
  public:
-  ResourceFetcherTest() = default;
-  ~ResourceFetcherTest() override { GetMemoryCache()->EvictResources(); }
+  ResourceFetcherTest() {
+    Resource::SetClockForTesting(platform_->test_task_runner()->GetMockClock());
+  }
+  ~ResourceFetcherTest() override {
+    MemoryCache::Get()->EvictResources();
+    Resource::SetClockForTesting(nullptr);
+  }
+
+  ResourceFetcherTest(const ResourceFetcherTest&) = delete;
+  ResourceFetcherTest& operator=(const ResourceFetcherTest&) = delete;
 
   class TestResourceLoadObserver final : public ResourceLoadObserver {
    public:
     // ResourceLoadObserver implementation.
     void DidStartRequest(const FetchParameters&, ResourceType) override {}
-    void WillSendRequest(uint64_t identifier,
-                         const ResourceRequest& request,
+    void WillSendRequest(const ResourceRequest& request,
                          const ResourceResponse& redirect_response,
                          ResourceType,
-                         const FetchInitiatorInfo&) override {
+                         const ResourceLoaderOptions&,
+                         RenderBlockingBehavior,
+                         const Resource*) override {
       request_ = PartialResourceRequest(request);
     }
     void DidChangePriority(uint64_t identifier,
@@ -146,20 +148,23 @@ class ResourceFetcherTest : public testing::Test {
     void DidFinishLoading(uint64_t identifier,
                           base::TimeTicks finish_time,
                           int64_t encoded_data_length,
-                          int64_t decoded_body_length,
-                          bool should_report_corb_blocking) override {}
+                          int64_t decoded_body_length) override {}
     void DidFailLoading(const KURL&,
                         uint64_t identifier,
                         const ResourceError&,
                         int64_t encoded_data_length,
                         IsInternalRequest is_internal_request) override {}
-
-    const base::Optional<PartialResourceRequest>& GetLastRequest() const {
+    void DidChangeRenderBlockingBehavior(
+        Resource* resource,
+        const FetchParameters& params) override {}
+    const absl::optional<PartialResourceRequest>& GetLastRequest() const {
       return request_;
     }
 
+    void ClearLastRequest() { request_ = absl::nullopt; }
+
    private:
-    base::Optional<PartialResourceRequest> request_;
+    absl::optional<PartialResourceRequest> request_;
   };
 
  protected:
@@ -172,9 +177,11 @@ class ResourceFetcherTest : public testing::Test {
       FetchContext* context) {
     return MakeGarbageCollected<ResourceFetcher>(ResourceFetcherInit(
         properties.MakeDetachable(), context, CreateTaskRunner(),
+        CreateTaskRunner(),
         MakeGarbageCollected<TestLoaderFactory>(
             platform_->GetURLLoaderMockFactory()),
-        MakeGarbageCollected<MockContextLifecycleNotifier>()));
+        MakeGarbageCollected<MockContextLifecycleNotifier>(),
+        nullptr /* back_forward_cache_loader_helper */));
   }
 
   ResourceFetcher* CreateFetcher(
@@ -188,7 +195,7 @@ class ResourceFetcherTest : public testing::Test {
   }
 
   void AddResourceToMemoryCache(Resource* resource) {
-    GetMemoryCache()->Add(resource);
+    MemoryCache::Get()->Add(resource);
   }
 
   void RegisterMockedURLLoad(const KURL& url) {
@@ -200,7 +207,7 @@ class ResourceFetcherTest : public testing::Test {
   ScopedTestingPlatformSupport<FetchTestingPlatformSupport> platform_;
 
  private:
-  DISALLOW_COPY_AND_ASSIGN(ResourceFetcherTest);
+  base::test::SingleThreadTaskEnvironment task_environment_;
 };
 
 TEST_F(ResourceFetcherTest, StartLoadAfterFrameDetach) {
@@ -210,28 +217,32 @@ TEST_F(ResourceFetcherTest, StartLoadAfterFrameDetach) {
   auto* fetcher = CreateFetcher();
   fetcher->ClearContext();
   ResourceRequest resource_request(secure_url);
-  resource_request.SetRequestContext(mojom::RequestContextType::INTERNAL);
+  resource_request.SetRequestContext(
+      mojom::blink::RequestContextType::INTERNAL);
   FetchParameters fetch_params =
       FetchParameters::CreateForTest(std::move(resource_request));
   Resource* resource = RawResource::Fetch(fetch_params, fetcher, nullptr);
   ASSERT_TRUE(resource);
   EXPECT_TRUE(resource->ErrorOccurred());
   EXPECT_TRUE(resource->GetResourceError().IsAccessCheck());
-  EXPECT_FALSE(GetMemoryCache()->ResourceForURL(secure_url));
+  EXPECT_FALSE(MemoryCache::Get()->ResourceForURL(secure_url));
 
   // Start by calling StartLoad() directly, rather than via RequestResource().
-  // This shouldn't crash.
+  // This shouldn't crash. Setting the resource type to image, as StartLoad with
+  // a single argument is only called on images or fonts.
   fetcher->StartLoad(RawResource::CreateForTest(
-      secure_url, SecurityOrigin::CreateUniqueOpaque(), ResourceType::kRaw));
+      secure_url, SecurityOrigin::CreateUniqueOpaque(), ResourceType::kImage));
 }
 
 TEST_F(ResourceFetcherTest, UseExistingResource) {
+  base::HistogramTester histogram_tester;
   auto* fetcher = CreateFetcher();
 
   KURL url("http://127.0.0.1:8000/foo.html");
   ResourceResponse response(url);
   response.SetHttpStatusCode(200);
-  response.SetHttpHeaderField(http_names::kCacheControl, "max-age=3600");
+  response.SetHttpHeaderField(http_names::kCacheControl,
+                              AtomicString("max-age=3600"));
   platform_->GetURLLoaderMockFactory()->RegisterURL(
       url, WrappedResourceResponse(response),
       test::PlatformTestDataPath(kTestResourceFilename));
@@ -242,10 +253,244 @@ TEST_F(ResourceFetcherTest, UseExistingResource) {
   ASSERT_TRUE(resource);
   platform_->GetURLLoaderMockFactory()->ServeAsynchronousRequests();
   EXPECT_TRUE(resource->IsLoaded());
-  EXPECT_TRUE(GetMemoryCache()->Contains(resource));
+  EXPECT_TRUE(MemoryCache::Get()->Contains(resource));
 
   Resource* new_resource = MockResource::Fetch(fetch_params, fetcher, nullptr);
   EXPECT_EQ(resource, new_resource);
+
+  // Test histograms.
+  histogram_tester.ExpectTotalCount("Blink.MemoryCache.RevalidationPolicy.Mock",
+                                    2);
+  histogram_tester.ExpectBucketCount(
+      "Blink.MemoryCache.RevalidationPolicy.Mock",
+      3 /* RevalidationPolicy::kLoad */, 1);
+  histogram_tester.ExpectBucketCount(
+      "Blink.MemoryCache.RevalidationPolicy.Mock",
+      0 /* RevalidationPolicy::kUse */, 1);
+
+  // Create a new fetcher and load the same resource.
+  auto* new_fetcher = CreateFetcher();
+  Resource* new_fetcher_resource =
+      MockResource::Fetch(fetch_params, new_fetcher, nullptr);
+  EXPECT_EQ(resource, new_fetcher_resource);
+  histogram_tester.ExpectTotalCount("Blink.MemoryCache.RevalidationPolicy.Mock",
+                                    3);
+  histogram_tester.ExpectBucketCount(
+      "Blink.MemoryCache.RevalidationPolicy.Mock",
+      3 /* RevalidationPolicy::kLoad */, 1);
+  histogram_tester.ExpectBucketCount(
+      "Blink.MemoryCache.RevalidationPolicy.Mock",
+      0 /* RevalidationPolicy::kUse */, 2);
+}
+
+TEST_F(ResourceFetcherTest, MemoryCachePerContextUseExistingResource) {
+  base::HistogramTester histogram_tester;
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeature(
+      features::kScopeMemoryCachePerContext);
+
+  KURL url("http://127.0.0.1:8000/foo.html");
+  ResourceResponse response(url);
+  response.SetHttpStatusCode(200);
+  response.SetHttpHeaderField(http_names::kCacheControl,
+                              AtomicString("max-age=3600"));
+  platform_->GetURLLoaderMockFactory()->RegisterURL(
+      url, WrappedResourceResponse(response),
+      test::PlatformTestDataPath(kTestResourceFilename));
+
+  FetchParameters fetch_params =
+      FetchParameters::CreateForTest(ResourceRequest(url));
+
+  auto* fetcher_a = CreateFetcher();
+  Resource* resource_a = MockResource::Fetch(fetch_params, fetcher_a, nullptr);
+  ASSERT_TRUE(resource_a);
+  platform_->GetURLLoaderMockFactory()->ServeAsynchronousRequests();
+  EXPECT_TRUE(resource_a->IsLoaded());
+  EXPECT_TRUE(MemoryCache::Get()->Contains(resource_a));
+
+  Resource* resource_a1 = MockResource::Fetch(fetch_params, fetcher_a, nullptr);
+  ASSERT_TRUE(resource_a1);
+  EXPECT_EQ(resource_a, resource_a1);
+
+  // Test histograms.
+  histogram_tester.ExpectTotalCount("Blink.MemoryCache.RevalidationPolicy.Mock",
+                                    2);
+  histogram_tester.ExpectBucketCount(
+      "Blink.MemoryCache.RevalidationPolicy.Mock",
+      3 /* RevalidationPolicy::kLoad */, 1);
+  histogram_tester.ExpectBucketCount(
+      "Blink.MemoryCache.RevalidationPolicy.Mock",
+      0 /* RevalidationPolicy::kUse */, 1);
+
+  // Create a new fetcher and load the same resource. It should be loaded again.
+  auto* fetcher_b = CreateFetcher();
+  Resource* resource_b = MockResource::Fetch(fetch_params, fetcher_b, nullptr);
+  EXPECT_NE(resource_a1, resource_b);
+  ASSERT_TRUE(resource_b);
+  platform_->GetURLLoaderMockFactory()->ServeAsynchronousRequests();
+  EXPECT_TRUE(resource_b->IsLoaded());
+  EXPECT_TRUE(MemoryCache::Get()->Contains(resource_b));
+  histogram_tester.ExpectTotalCount("Blink.MemoryCache.RevalidationPolicy.Mock",
+                                    3);
+  histogram_tester.ExpectBucketCount(
+      "Blink.MemoryCache.RevalidationPolicy.Mock",
+      3 /* RevalidationPolicy::kLoad */, 2);
+
+  // (TODO: crbug.com/1127971) Using the first fetcher now should reuse the same
+  // resource as was earlier loaded by the same fetcher.
+  // EXPECT_EQ(resource_a1, resource_a2);
+  Resource* resource_a2 = MockResource::Fetch(fetch_params, fetcher_a, nullptr);
+  EXPECT_EQ(resource_b, resource_a2);
+  histogram_tester.ExpectBucketCount(
+      "Blink.MemoryCache.RevalidationPolicy.Mock",
+      0 /* RevalidationPolicy::kUse */, 2);
+
+  // Using the second fetcher now should reuse the same resource as was earlier
+  // loaded by the same fetcher.
+  Resource* resource_b1 = MockResource::Fetch(fetch_params, fetcher_b, nullptr);
+  EXPECT_EQ(resource_b, resource_b1);
+  histogram_tester.ExpectBucketCount(
+      "Blink.MemoryCache.RevalidationPolicy.Mock",
+      0 /* RevalidationPolicy::kUse */, 3);
+}
+
+TEST_F(ResourceFetcherTest, MetricsPerTopFrameSite) {
+  base::HistogramTester histogram_tester;
+
+  KURL url("http://127.0.0.1:8000/foo.html");
+  ResourceResponse response(url);
+  response.SetHttpStatusCode(200);
+  response.SetHttpHeaderField(http_names::kCacheControl,
+                              AtomicString("max-age=3600"));
+  platform_->GetURLLoaderMockFactory()->RegisterURL(
+      url, WrappedResourceResponse(response),
+      test::PlatformTestDataPath(kTestResourceFilename));
+
+  ResourceRequestHead request_head(url);
+  scoped_refptr<const SecurityOrigin> origin_a =
+      SecurityOrigin::Create(KURL("https://a.test"));
+  request_head.SetTopFrameOrigin(origin_a);
+  request_head.SetRequestorOrigin(origin_a);
+  FetchParameters fetch_params =
+      FetchParameters::CreateForTest(ResourceRequest(request_head));
+  auto* fetcher_1 = CreateFetcher();
+  Resource* resource_1 = MockResource::Fetch(fetch_params, fetcher_1, nullptr);
+  ASSERT_TRUE(resource_1);
+  platform_->GetURLLoaderMockFactory()->ServeAsynchronousRequests();
+  EXPECT_TRUE(resource_1->IsLoaded());
+  EXPECT_TRUE(MemoryCache::Get()->Contains(resource_1));
+
+  auto* fetcher_2 = CreateFetcher();
+  ResourceRequestHead request_head_2(url);
+  scoped_refptr<const SecurityOrigin> origin_b =
+      SecurityOrigin::Create(KURL("https://b.test"));
+  request_head_2.SetTopFrameOrigin(origin_b);
+  request_head_2.SetRequestorOrigin(origin_a);
+  FetchParameters fetch_params_2 =
+      FetchParameters::CreateForTest(ResourceRequest(request_head_2));
+  Resource* resource_2 =
+      MockResource::Fetch(fetch_params_2, fetcher_2, nullptr);
+  EXPECT_EQ(resource_1, resource_2);
+
+  // Test histograms.
+  histogram_tester.ExpectTotalCount("Blink.MemoryCache.RevalidationPolicy.Mock",
+                                    2);
+
+  histogram_tester.ExpectBucketCount(
+      "Blink.MemoryCache.RevalidationPolicy.Mock",
+      3 /* RevalidationPolicy::kLoad */, 1);
+  histogram_tester.ExpectBucketCount(
+      "Blink.MemoryCache.RevalidationPolicy.Mock",
+      0 /* RevalidationPolicy::kUse */, 1);
+
+  // Now load the same resource with origin_b as top-frame site. The
+  // histograms should be incremented.
+  auto* fetcher_3 = CreateFetcher();
+  ResourceRequestHead request_head_3(url);
+  scoped_refptr<const SecurityOrigin> foo_origin_b =
+      SecurityOrigin::Create(KURL("https://foo.b.test"));
+  request_head_3.SetTopFrameOrigin(foo_origin_b);
+  request_head_3.SetRequestorOrigin(origin_a);
+  FetchParameters fetch_params_3 =
+      FetchParameters::CreateForTest(ResourceRequest(request_head_3));
+  Resource* resource_3 =
+      MockResource::Fetch(fetch_params_2, fetcher_3, nullptr);
+  EXPECT_EQ(resource_1, resource_3);
+  histogram_tester.ExpectTotalCount("Blink.MemoryCache.RevalidationPolicy.Mock",
+                                    3);
+  histogram_tester.ExpectBucketCount(
+      "Blink.MemoryCache.RevalidationPolicy.Mock",
+      0 /* RevalidationPolicy::kUse */, 2);
+}
+
+TEST_F(ResourceFetcherTest, MetricsPerTopFrameSiteOpaqueOrigins) {
+  base::HistogramTester histogram_tester;
+
+  KURL url("http://127.0.0.1:8000/foo.html");
+  ResourceResponse response(url);
+  response.SetHttpStatusCode(200);
+  response.SetHttpHeaderField(http_names::kCacheControl,
+                              AtomicString("max-age=3600"));
+  platform_->GetURLLoaderMockFactory()->RegisterURL(
+      url, WrappedResourceResponse(response),
+      test::PlatformTestDataPath(kTestResourceFilename));
+
+  ResourceRequestHead request_head(url);
+  scoped_refptr<const SecurityOrigin> origin_a =
+      SecurityOrigin::Create(KURL("https://a.test"));
+  scoped_refptr<const SecurityOrigin> opaque_origin1 =
+      SecurityOrigin::CreateUniqueOpaque();
+  request_head.SetTopFrameOrigin(opaque_origin1);
+  request_head.SetRequestorOrigin(origin_a);
+  FetchParameters fetch_params =
+      FetchParameters::CreateForTest(ResourceRequest(request_head));
+  auto* fetcher_1 = CreateFetcher();
+  Resource* resource_1 = MockResource::Fetch(fetch_params, fetcher_1, nullptr);
+  ASSERT_TRUE(resource_1);
+  platform_->GetURLLoaderMockFactory()->ServeAsynchronousRequests();
+  EXPECT_TRUE(resource_1->IsLoaded());
+  EXPECT_TRUE(MemoryCache::Get()->Contains(resource_1));
+
+  // Create a 2nd opaque top-level origin.
+  auto* fetcher_2 = CreateFetcher();
+  ResourceRequestHead request_head_2(url);
+  scoped_refptr<const SecurityOrigin> opaque_origin2 =
+      SecurityOrigin::CreateUniqueOpaque();
+  request_head_2.SetTopFrameOrigin(opaque_origin2);
+  request_head_2.SetRequestorOrigin(origin_a);
+  FetchParameters fetch_params_2 =
+      FetchParameters::CreateForTest(ResourceRequest(request_head_2));
+  Resource* resource_2 =
+      MockResource::Fetch(fetch_params_2, fetcher_2, nullptr);
+  EXPECT_EQ(resource_1, resource_2);
+
+  // Test histograms.
+  histogram_tester.ExpectTotalCount("Blink.MemoryCache.RevalidationPolicy.Mock",
+                                    2);
+
+  histogram_tester.ExpectBucketCount(
+      "Blink.MemoryCache.RevalidationPolicy.Mock",
+      3 /* RevalidationPolicy::kLoad */, 1);
+  histogram_tester.ExpectBucketCount(
+      "Blink.MemoryCache.RevalidationPolicy.Mock",
+      0 /* RevalidationPolicy::kUse */, 1);
+
+  // Now load the same resource with opaque_origin1 as top-frame site. The
+  // histograms should be incremented.
+  auto* fetcher_3 = CreateFetcher();
+  ResourceRequestHead request_head_3(url);
+  request_head_3.SetTopFrameOrigin(opaque_origin2);
+  request_head_3.SetRequestorOrigin(origin_a);
+  FetchParameters fetch_params_3 =
+      FetchParameters::CreateForTest(ResourceRequest(request_head_3));
+  Resource* resource_3 =
+      MockResource::Fetch(fetch_params_2, fetcher_3, nullptr);
+  EXPECT_EQ(resource_1, resource_3);
+  histogram_tester.ExpectTotalCount("Blink.MemoryCache.RevalidationPolicy.Mock",
+                                    3);
+  histogram_tester.ExpectBucketCount(
+      "Blink.MemoryCache.RevalidationPolicy.Mock",
+      0 /* RevalidationPolicy::kUse */, 2);
 }
 
 // Verify that the ad bit is copied to WillSendRequest's request when the
@@ -263,7 +508,8 @@ TEST_F(ResourceFetcherTest, WillSendRequestAdBit) {
   AddResourceToMemoryCache(resource);
   ResourceResponse response(url);
   response.SetHttpStatusCode(200);
-  response.SetHttpHeaderField(http_names::kCacheControl, "max-age=3600");
+  response.SetHttpHeaderField(http_names::kCacheControl,
+                              AtomicString("max-age=3600"));
   resource->ResponseReceived(response);
   resource->FinishForTest();
 
@@ -274,14 +520,15 @@ TEST_F(ResourceFetcherTest, WillSendRequestAdBit) {
   fetcher->SetResourceLoadObserver(observer);
   ResourceRequest resource_request(url);
   resource_request.SetIsAdResource();
-  resource_request.SetRequestContext(mojom::RequestContextType::INTERNAL);
+  resource_request.SetRequestContext(
+      mojom::blink::RequestContextType::INTERNAL);
   FetchParameters fetch_params =
       FetchParameters::CreateForTest(std::move(resource_request));
   platform_->GetURLLoaderMockFactory()->RegisterURL(url, WebURLResponse(), "");
   Resource* new_resource = RawResource::Fetch(fetch_params, fetcher, nullptr);
 
   EXPECT_EQ(resource, new_resource);
-  base::Optional<PartialResourceRequest> new_request =
+  absl::optional<PartialResourceRequest> new_request =
       observer->GetLastRequest();
   EXPECT_TRUE(new_request.has_value());
   EXPECT_TRUE(new_request.value().IsAdResource());
@@ -297,8 +544,9 @@ TEST_F(ResourceFetcherTest, Vary) {
 
   ResourceResponse response(url);
   response.SetHttpStatusCode(200);
-  response.SetHttpHeaderField(http_names::kCacheControl, "max-age=3600");
-  response.SetHttpHeaderField(http_names::kVary, "*");
+  response.SetHttpHeaderField(http_names::kCacheControl,
+                              AtomicString("max-age=3600"));
+  response.SetHttpHeaderField(http_names::kVary, AtomicString("*"));
   resource->ResponseReceived(response);
   resource->FinishForTest();
   ASSERT_TRUE(resource->MustReloadDueToVaryHeader(ResourceRequest(url)));
@@ -306,27 +554,14 @@ TEST_F(ResourceFetcherTest, Vary) {
   auto* fetcher = CreateFetcher(
       *MakeGarbageCollected<TestResourceFetcherProperties>(source_origin));
   ResourceRequest resource_request(url);
-  resource_request.SetRequestContext(mojom::RequestContextType::INTERNAL);
+  resource_request.SetRequestContext(
+      mojom::blink::RequestContextType::INTERNAL);
   FetchParameters fetch_params =
       FetchParameters::CreateForTest(std::move(resource_request));
   platform_->GetURLLoaderMockFactory()->RegisterURL(url, WebURLResponse(), "");
   Resource* new_resource = RawResource::Fetch(fetch_params, fetcher, nullptr);
   EXPECT_NE(resource, new_resource);
   new_resource->Loader()->Cancel();
-}
-
-TEST_F(ResourceFetcherTest, ResourceTimingInfo) {
-  auto info = ResourceTimingInfo::Create(
-      fetch_initiator_type_names::kDocument, base::TimeTicks::Now(),
-      mojom::RequestContextType::UNSPECIFIED,
-      network::mojom::RequestDestination::kEmpty);
-  info->AddFinalTransferSize(5);
-  EXPECT_EQ(info->TransferSize(), static_cast<uint64_t>(5));
-  ResourceResponse redirect_response(KURL("https://example.com/original"));
-  redirect_response.SetHttpStatusCode(200);
-  redirect_response.SetEncodedDataLength(7);
-  info->AddRedirect(redirect_response, KURL("https://example.com/redirect"));
-  EXPECT_EQ(info->TransferSize(), static_cast<uint64_t>(12));
 }
 
 TEST_F(ResourceFetcherTest, VaryOnBack) {
@@ -342,15 +577,17 @@ TEST_F(ResourceFetcherTest, VaryOnBack) {
 
   ResourceResponse response(url);
   response.SetHttpStatusCode(200);
-  response.SetHttpHeaderField(http_names::kCacheControl, "max-age=3600");
-  response.SetHttpHeaderField(http_names::kVary, "*");
+  response.SetHttpHeaderField(http_names::kCacheControl,
+                              AtomicString("max-age=3600"));
+  response.SetHttpHeaderField(http_names::kVary, AtomicString("*"));
   resource->ResponseReceived(response);
   resource->FinishForTest();
   ASSERT_TRUE(resource->MustReloadDueToVaryHeader(ResourceRequest(url)));
 
   ResourceRequest resource_request(url);
   resource_request.SetCacheMode(mojom::FetchCacheMode::kForceCache);
-  resource_request.SetRequestContext(mojom::RequestContextType::INTERNAL);
+  resource_request.SetRequestContext(
+      mojom::blink::RequestContextType::INTERNAL);
   FetchParameters fetch_params =
       FetchParameters::CreateForTest(std::move(resource_request));
   Resource* new_resource = RawResource::Fetch(fetch_params, fetcher, nullptr);
@@ -363,8 +600,9 @@ TEST_F(ResourceFetcherTest, VaryResource) {
   KURL url("http://127.0.0.1:8000/foo.html");
   ResourceResponse response(url);
   response.SetHttpStatusCode(200);
-  response.SetHttpHeaderField(http_names::kCacheControl, "max-age=3600");
-  response.SetHttpHeaderField(http_names::kVary, "*");
+  response.SetHttpHeaderField(http_names::kCacheControl,
+                              AtomicString("max-age=3600"));
+  response.SetHttpHeaderField(http_names::kVary, AtomicString("*"));
   platform_->GetURLLoaderMockFactory()->RegisterURL(
       url, WrappedResourceResponse(response),
       test::PlatformTestDataPath(kTestResourceFilename));
@@ -387,11 +625,10 @@ class RequestSameResourceOnComplete
     : public GarbageCollected<RequestSameResourceOnComplete>,
       public RawResourceClient {
  public:
-  RequestSameResourceOnComplete(WebURLLoaderMockFactory* mock_factory,
+  RequestSameResourceOnComplete(URLLoaderMockFactory* mock_factory,
                                 FetchParameters& params,
                                 ResourceFetcher* fetcher)
       : mock_factory_(mock_factory),
-        notify_finished_called_(false),
         source_origin_(fetcher->GetProperties()
                            .GetFetchClientSettingsObject()
                            .GetSecurityOrigin()) {
@@ -406,8 +643,10 @@ class RequestSameResourceOnComplete
     auto* fetcher2 = MakeGarbageCollected<ResourceFetcher>(ResourceFetcherInit(
         properties->MakeDetachable(), context,
         base::MakeRefCounted<scheduler::FakeTaskRunner>(),
+        base::MakeRefCounted<scheduler::FakeTaskRunner>(),
         MakeGarbageCollected<TestLoaderFactory>(mock_factory_),
-        MakeGarbageCollected<MockContextLifecycleNotifier>()));
+        MakeGarbageCollected<MockContextLifecycleNotifier>(),
+        nullptr /* back_forward_cache_loader_helper */));
     ResourceRequest resource_request2(GetResource()->Url());
     resource_request2.SetCacheMode(mojom::FetchCacheMode::kValidateCache);
     FetchParameters fetch_params2 =
@@ -426,8 +665,8 @@ class RequestSameResourceOnComplete
   String DebugName() const override { return "RequestSameResourceOnComplete"; }
 
  private:
-  WebURLLoaderMockFactory* mock_factory_;
-  bool notify_finished_called_;
+  raw_ptr<URLLoaderMockFactory, ExperimentalRenderer> mock_factory_;
+  bool notify_finished_called_ = false;
   scoped_refptr<const SecurityOrigin> source_origin_;
 };
 
@@ -438,8 +677,9 @@ TEST_F(ResourceFetcherTest, RevalidateWhileFinishingLoading) {
 
   ResourceResponse response(url);
   response.SetHttpStatusCode(200);
-  response.SetHttpHeaderField(http_names::kCacheControl, "max-age=3600");
-  response.SetHttpHeaderField(http_names::kETag, "1234567890");
+  response.SetHttpHeaderField(http_names::kCacheControl,
+                              AtomicString("max-age=3600"));
+  response.SetHttpHeaderField(http_names::kETag, AtomicString("1234567890"));
   platform_->GetURLLoaderMockFactory()->RegisterURL(
       url, WrappedResourceResponse(response),
       test::PlatformTestDataPath(kTestResourceFilename));
@@ -447,7 +687,8 @@ TEST_F(ResourceFetcherTest, RevalidateWhileFinishingLoading) {
   ResourceFetcher* fetcher1 = CreateFetcher(
       *MakeGarbageCollected<TestResourceFetcherProperties>(source_origin));
   ResourceRequest request1(url);
-  request1.SetHttpHeaderField(http_names::kCacheControl, "no-cache");
+  request1.SetHttpHeaderField(http_names::kCacheControl,
+                              AtomicString("no-cache"));
   FetchParameters fetch_params1 =
       FetchParameters::CreateForTest(std::move(request1));
   Persistent<RequestSameResourceOnComplete> client =
@@ -458,7 +699,7 @@ TEST_F(ResourceFetcherTest, RevalidateWhileFinishingLoading) {
 }
 
 // TODO(crbug.com/850785): Reenable this.
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
 #define MAYBE_DontReuseMediaDataUrl DISABLED_DontReuseMediaDataUrl
 #else
 #define MAYBE_DontReuseMediaDataUrl DontReuseMediaDataUrl
@@ -466,7 +707,7 @@ TEST_F(ResourceFetcherTest, RevalidateWhileFinishingLoading) {
 TEST_F(ResourceFetcherTest, MAYBE_DontReuseMediaDataUrl) {
   auto* fetcher = CreateFetcher();
   ResourceRequest request(KURL("data:text/html,foo"));
-  request.SetRequestContext(mojom::RequestContextType::VIDEO);
+  request.SetRequestContext(mojom::blink::RequestContextType::VIDEO);
   ResourceLoaderOptions options(nullptr /* world */);
   options.data_buffering_policy = kDoNotBufferData;
   options.initiator_info.name = fetch_initiator_type_names::kInternal;
@@ -480,7 +721,7 @@ class ServeRequestsOnCompleteClient final
     : public GarbageCollected<ServeRequestsOnCompleteClient>,
       public RawResourceClient {
  public:
-  explicit ServeRequestsOnCompleteClient(WebURLLoaderMockFactory* mock_factory)
+  explicit ServeRequestsOnCompleteClient(URLLoaderMockFactory* mock_factory)
       : mock_factory_(mock_factory) {}
 
   void NotifyFinished(Resource*) override {
@@ -494,7 +735,7 @@ class ServeRequestsOnCompleteClient final
   void ResponseReceived(Resource*, const ResourceResponse&) override {
     ASSERT_TRUE(false);
   }
-  void SetSerializedCachedMetadata(Resource*, const uint8_t*, size_t) override {
+  void CachedMetadataReceived(Resource*, mojo_base::BigBuffer) override {
     ASSERT_TRUE(false);
   }
   void DataReceived(Resource*, const char*, size_t) override {
@@ -515,21 +756,22 @@ class ServeRequestsOnCompleteClient final
   String DebugName() const override { return "ServeRequestsOnCompleteClient"; }
 
  private:
-  WebURLLoaderMockFactory* mock_factory_;
+  raw_ptr<URLLoaderMockFactory, ExperimentalRenderer> mock_factory_;
 };
 
 // Regression test for http://crbug.com/594072.
 // This emulates a modal dialog triggering a nested run loop inside
 // ResourceLoader::Cancel(). If the ResourceLoader doesn't promptly cancel its
-// WebURLLoader before notifying its clients, a nested run loop  may send a
-// network response, leading to an invalid state transition in ResourceLoader.
+// URLLoader before notifying its clients, a nested run loop  may send a network
+// response, leading to an invalid state transition in ResourceLoader.
 TEST_F(ResourceFetcherTest, ResponseOnCancel) {
   KURL url("http://127.0.0.1:8000/foo.png");
   RegisterMockedURLLoad(url);
 
   auto* fetcher = CreateFetcher();
   ResourceRequest resource_request(url);
-  resource_request.SetRequestContext(mojom::RequestContextType::INTERNAL);
+  resource_request.SetRequestContext(
+      mojom::blink::RequestContextType::INTERNAL);
   FetchParameters fetch_params =
       FetchParameters::CreateForTest(std::move(resource_request));
   Persistent<ServeRequestsOnCompleteClient> client =
@@ -544,12 +786,15 @@ class ScopedMockRedirectRequester {
 
  public:
   ScopedMockRedirectRequester(
-      WebURLLoaderMockFactory* mock_factory,
+      URLLoaderMockFactory* mock_factory,
       MockFetchContext* context,
       scoped_refptr<base::SingleThreadTaskRunner> task_runner)
       : mock_factory_(mock_factory),
         context_(context),
         task_runner_(std::move(task_runner)) {}
+  ScopedMockRedirectRequester(const ScopedMockRedirectRequester&) = delete;
+  ScopedMockRedirectRequester& operator=(const ScopedMockRedirectRequester&) =
+      delete;
 
   void RegisterRedirect(const WebString& from_url, const WebString& to_url) {
     KURL redirect_url(from_url);
@@ -572,10 +817,13 @@ class ScopedMockRedirectRequester {
     auto* properties = MakeGarbageCollected<TestResourceFetcherProperties>();
     auto* fetcher = MakeGarbageCollected<ResourceFetcher>(ResourceFetcherInit(
         properties->MakeDetachable(), context_, task_runner_,
+        base::MakeRefCounted<scheduler::FakeTaskRunner>(),
         MakeGarbageCollected<TestLoaderFactory>(mock_factory_),
-        MakeGarbageCollected<MockContextLifecycleNotifier>()));
+        MakeGarbageCollected<MockContextLifecycleNotifier>(),
+        nullptr /* back_forward_cache_loader_helper */));
     ResourceRequest resource_request(url);
-    resource_request.SetRequestContext(mojom::RequestContextType::INTERNAL);
+    resource_request.SetRequestContext(
+        mojom::blink::RequestContextType::INTERNAL);
     FetchParameters fetch_params =
         FetchParameters::CreateForTest(std::move(resource_request));
     RawResource::Fetch(fetch_params, fetcher, nullptr);
@@ -583,56 +831,10 @@ class ScopedMockRedirectRequester {
   }
 
  private:
-  WebURLLoaderMockFactory* mock_factory_;
+  URLLoaderMockFactory* mock_factory_;
   MockFetchContext* context_;
   const scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
-
-  DISALLOW_COPY_AND_ASSIGN(ScopedMockRedirectRequester);
 };
-
-TEST_F(ResourceFetcherTest, SameOriginRedirect) {
-  const char kRedirectURL[] = "http://127.0.0.1:8000/redirect.html";
-  const char kFinalURL[] = "http://127.0.0.1:8000/final.html";
-  MockFetchContext* context = MakeGarbageCollected<MockFetchContext>();
-  ScopedMockRedirectRequester requester(platform_->GetURLLoaderMockFactory(),
-                                        context, CreateTaskRunner());
-  requester.RegisterRedirect(kRedirectURL, kFinalURL);
-  requester.RegisterFinalResource(kFinalURL);
-  requester.Request(kRedirectURL);
-
-  EXPECT_EQ(kRedirectResponseOverheadBytes + kTestResourceSize,
-            context->GetTransferSize());
-}
-
-TEST_F(ResourceFetcherTest, CrossOriginRedirect) {
-  const char kRedirectURL[] = "http://otherorigin.test/redirect.html";
-  const char kFinalURL[] = "http://127.0.0.1:8000/final.html";
-  MockFetchContext* context = MakeGarbageCollected<MockFetchContext>();
-  ScopedMockRedirectRequester requester(platform_->GetURLLoaderMockFactory(),
-                                        context, CreateTaskRunner());
-  requester.RegisterRedirect(kRedirectURL, kFinalURL);
-  requester.RegisterFinalResource(kFinalURL);
-  requester.Request(kRedirectURL);
-
-  EXPECT_EQ(kTestResourceSize, context->GetTransferSize());
-}
-
-TEST_F(ResourceFetcherTest, ComplexCrossOriginRedirect) {
-  const char kRedirectURL1[] = "http://127.0.0.1:8000/redirect1.html";
-  const char kRedirectURL2[] = "http://otherorigin.test/redirect2.html";
-  const char kRedirectURL3[] = "http://127.0.0.1:8000/redirect3.html";
-  const char kFinalURL[] = "http://127.0.0.1:8000/final.html";
-  MockFetchContext* context = MakeGarbageCollected<MockFetchContext>();
-  ScopedMockRedirectRequester requester(platform_->GetURLLoaderMockFactory(),
-                                        context, CreateTaskRunner());
-  requester.RegisterRedirect(kRedirectURL1, kRedirectURL2);
-  requester.RegisterRedirect(kRedirectURL2, kRedirectURL3);
-  requester.RegisterRedirect(kRedirectURL3, kFinalURL);
-  requester.RegisterFinalResource(kFinalURL);
-  requester.Request(kRedirectURL1);
-
-  EXPECT_EQ(kTestResourceSize, context->GetTransferSize());
-}
 
 TEST_F(ResourceFetcherTest, SynchronousRequest) {
   KURL url("http://127.0.0.1:8000/foo.png");
@@ -640,7 +842,8 @@ TEST_F(ResourceFetcherTest, SynchronousRequest) {
 
   auto* fetcher = CreateFetcher();
   ResourceRequest resource_request(url);
-  resource_request.SetRequestContext(mojom::RequestContextType::INTERNAL);
+  resource_request.SetRequestContext(
+      mojom::blink::RequestContextType::INTERNAL);
   FetchParameters fetch_params =
       FetchParameters::CreateForTest(std::move(resource_request));
   fetch_params.MakeSynchronous();
@@ -656,7 +859,7 @@ TEST_F(ResourceFetcherTest, PingPriority) {
 
   auto* fetcher = CreateFetcher();
   ResourceRequest resource_request(url);
-  resource_request.SetRequestContext(mojom::RequestContextType::PING);
+  resource_request.SetRequestContext(mojom::blink::RequestContextType::PING);
   FetchParameters fetch_params =
       FetchParameters::CreateForTest(std::move(resource_request));
   Resource* resource = RawResource::Fetch(fetch_params, fetcher, nullptr);
@@ -689,7 +892,7 @@ TEST_F(ResourceFetcherTest, PreloadResourceTwice) {
 
   fetcher->ClearPreloads(ResourceFetcher::kClearAllPreloads);
   EXPECT_FALSE(fetcher->ContainsAsPreload(resource));
-  EXPECT_FALSE(GetMemoryCache()->Contains(resource));
+  EXPECT_FALSE(MemoryCache::Get()->Contains(resource));
   EXPECT_TRUE(resource->IsUnusedPreload());
 }
 
@@ -728,7 +931,7 @@ TEST_F(ResourceFetcherTest, LinkPreloadResourceAndUse) {
 
   // DCL reached
   fetcher->ClearPreloads(ResourceFetcher::kClearSpeculativeMarkupPreloads);
-  EXPECT_TRUE(GetMemoryCache()->Contains(resource));
+  EXPECT_TRUE(MemoryCache::Get()->Contains(resource));
   EXPECT_FALSE(resource->IsUnusedPreload());
 }
 
@@ -904,14 +1107,15 @@ TEST_F(ResourceFetcherTest, Revalidate304) {
 
   ResourceResponse response(url);
   response.SetHttpStatusCode(304);
-  response.SetHttpHeaderField("etag", "1234567890");
+  response.SetHttpHeaderField(http_names::kETag, AtomicString("1234567890"));
   resource->ResponseReceived(response);
   resource->FinishForTest();
 
   auto* fetcher = CreateFetcher(
       *MakeGarbageCollected<TestResourceFetcherProperties>(source_origin));
   ResourceRequest resource_request(url);
-  resource_request.SetRequestContext(mojom::RequestContextType::INTERNAL);
+  resource_request.SetRequestContext(
+      mojom::blink::RequestContextType::INTERNAL);
   FetchParameters fetch_params =
       FetchParameters::CreateForTest(std::move(resource_request));
   platform_->GetURLLoaderMockFactory()->RegisterURL(url, WebURLResponse(), "");
@@ -950,7 +1154,7 @@ TEST_F(ResourceFetcherTest, LinkPreloadResourceMultipleFetchersAndMove) {
 }
 
 // TODO(crbug.com/850785): Reenable this.
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
 #define MAYBE_ContentTypeDataURL DISABLED_ContentTypeDataURL
 #else
 #define MAYBE_ContentTypeDataURL ContentTypeDataURL
@@ -984,7 +1188,7 @@ TEST_F(ResourceFetcherTest, ContentIdURL) {
   // Subresource case.
   {
     ResourceRequest resource_request(url);
-    resource_request.SetRequestContext(mojom::RequestContextType::VIDEO);
+    resource_request.SetRequestContext(mojom::blink::RequestContextType::VIDEO);
     FetchParameters fetch_params =
         FetchParameters::CreateForTest(std::move(resource_request));
     RawResource* resource =
@@ -1010,8 +1214,9 @@ TEST_F(ResourceFetcherTest, StaleWhileRevalidate) {
 
   ResourceResponse response(url);
   response.SetHttpStatusCode(200);
-  response.SetHttpHeaderField(http_names::kCacheControl,
-                              "max-age=0, stale-while-revalidate=40");
+  response.SetHttpHeaderField(
+      http_names::kCacheControl,
+      AtomicString("max-age=0, stale-while-revalidate=40"));
 
   platform_->GetURLLoaderMockFactory()->RegisterURL(
       url, WrappedResourceResponse(response),
@@ -1021,10 +1226,11 @@ TEST_F(ResourceFetcherTest, StaleWhileRevalidate) {
 
   platform_->GetURLLoaderMockFactory()->ServeAsynchronousRequests();
   EXPECT_TRUE(resource->IsLoaded());
-  EXPECT_TRUE(GetMemoryCache()->Contains(resource));
+  EXPECT_TRUE(MemoryCache::Get()->Contains(resource));
 
   ResourceRequest resource_request(url);
-  resource_request.SetRequestContext(mojom::RequestContextType::INTERNAL);
+  resource_request.SetRequestContext(
+      mojom::blink::RequestContextType::INTERNAL);
   FetchParameters fetch_params2 =
       FetchParameters::CreateForTest(std::move(resource_request));
   Resource* new_resource = MockResource::Fetch(fetch_params2, fetcher, nullptr);
@@ -1043,15 +1249,15 @@ TEST_F(ResourceFetcherTest, StaleWhileRevalidate) {
       test::PlatformTestDataPath(kTestResourceFilename));
   new_resource = MockResource::Fetch(fetch_params2, fetcher, nullptr);
   EXPECT_EQ(resource, new_resource);
-  EXPECT_TRUE(GetMemoryCache()->Contains(resource));
+  EXPECT_TRUE(MemoryCache::Get()->Contains(resource));
   static_cast<scheduler::FakeTaskRunner*>(fetcher->GetTaskRunner().get())
       ->RunUntilIdle();
-  base::Optional<PartialResourceRequest> swr_request =
+  absl::optional<PartialResourceRequest> swr_request =
       observer->GetLastRequest();
   ASSERT_TRUE(swr_request.has_value());
   EXPECT_EQ(ResourceLoadPriority::kVeryLow, swr_request->Priority());
   platform_->GetURLLoaderMockFactory()->ServeAsynchronousRequests();
-  EXPECT_FALSE(GetMemoryCache()->Contains(resource));
+  EXPECT_FALSE(MemoryCache::Get()->Contains(resource));
 }
 
 TEST_F(ResourceFetcherTest, CachedResourceShouldNotCrashByNullURL) {
@@ -1080,87 +1286,246 @@ TEST_F(ResourceFetcherTest, DeprioritizeSubframe) {
 
   {
     // Subframe deprioritization is disabled (main frame case).
-    properties.SetIsMainFrame(true);
+    properties.SetIsOutermostMainFrame(true);
     properties.SetIsSubframeDeprioritizationEnabled(false);
     const auto priority = fetcher->ComputeLoadPriorityForTesting(
         ResourceType::kScript, request, ResourcePriority::kNotVisible,
         FetchParameters::DeferOption::kNoDefer,
         FetchParameters::SpeculativePreloadType::kNotSpeculative,
-        false /* is_link_preload */);
+        RenderBlockingBehavior::kNonBlocking,
+        mojom::blink::ScriptType::kClassic, false /* is_link_preload */);
     EXPECT_EQ(priority, ResourceLoadPriority::kHigh);
   }
 
   {
     // Subframe deprioritization is disabled (nested frame case).
-    properties.SetIsMainFrame(false);
+    properties.SetIsOutermostMainFrame(false);
     properties.SetIsSubframeDeprioritizationEnabled(false);
     const auto priority = fetcher->ComputeLoadPriorityForTesting(
         ResourceType::kScript, request, ResourcePriority::kNotVisible,
         FetchParameters::DeferOption::kNoDefer,
         FetchParameters::SpeculativePreloadType::kNotSpeculative,
-        false /* is_link_preload */);
+        RenderBlockingBehavior::kNonBlocking,
+        mojom::blink::ScriptType::kClassic, false /* is_link_preload */);
     EXPECT_EQ(priority, ResourceLoadPriority::kHigh);
   }
 
   {
     // Subframe deprioritization is enabled (main frame case), kHigh.
-    properties.SetIsMainFrame(true);
+    properties.SetIsOutermostMainFrame(true);
     properties.SetIsSubframeDeprioritizationEnabled(true);
     const auto priority = fetcher->ComputeLoadPriorityForTesting(
         ResourceType::kScript, request, ResourcePriority::kNotVisible,
         FetchParameters::DeferOption::kNoDefer,
         FetchParameters::SpeculativePreloadType::kNotSpeculative,
-        false /* is_link_preload */);
+        RenderBlockingBehavior::kNonBlocking,
+        mojom::blink::ScriptType::kClassic, false /* is_link_preload */);
     EXPECT_EQ(priority, ResourceLoadPriority::kHigh);
   }
 
   {
     // Subframe deprioritization is enabled (nested frame case), kHigh => kLow.
-    properties.SetIsMainFrame(false);
+    properties.SetIsOutermostMainFrame(false);
     properties.SetIsSubframeDeprioritizationEnabled(true);
     const auto priority = fetcher->ComputeLoadPriorityForTesting(
         ResourceType::kScript, request, ResourcePriority::kNotVisible,
         FetchParameters::DeferOption::kNoDefer,
         FetchParameters::SpeculativePreloadType::kNotSpeculative,
-        false /* is_link_preload */);
+        RenderBlockingBehavior::kNonBlocking,
+        mojom::blink::ScriptType::kClassic, false /* is_link_preload */);
     EXPECT_EQ(priority, ResourceLoadPriority::kLow);
   }
   {
     // Subframe deprioritization is enabled (main frame case), kMedium.
-    properties.SetIsMainFrame(true);
+    properties.SetIsOutermostMainFrame(true);
     properties.SetIsSubframeDeprioritizationEnabled(true);
     const auto priority = fetcher->ComputeLoadPriorityForTesting(
         ResourceType::kMock, request, ResourcePriority::kNotVisible,
         FetchParameters::DeferOption::kNoDefer,
         FetchParameters::SpeculativePreloadType::kNotSpeculative,
-        false /* is_link_preload */);
+        RenderBlockingBehavior::kNonBlocking,
+        mojom::blink::ScriptType::kClassic, false /* is_link_preload */);
     EXPECT_EQ(priority, ResourceLoadPriority::kMedium);
   }
 
   {
     // Subframe deprioritization is enabled (nested frame case), kMedium =>
     // kLowest.
-    properties.SetIsMainFrame(false);
+    properties.SetIsOutermostMainFrame(false);
     properties.SetIsSubframeDeprioritizationEnabled(true);
     const auto priority = fetcher->ComputeLoadPriorityForTesting(
         ResourceType::kMock, request, ResourcePriority::kNotVisible,
         FetchParameters::DeferOption::kNoDefer,
         FetchParameters::SpeculativePreloadType::kNotSpeculative,
-        false /* is_link_preload */);
+        RenderBlockingBehavior::kNonBlocking,
+        mojom::blink::ScriptType::kClassic, false /* is_link_preload */);
     EXPECT_EQ(priority, ResourceLoadPriority::kLowest);
+  }
+}
+
+TEST_F(ResourceFetcherTest, BoostImagePriority) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeature(features::kBoostImagePriority);
+  auto& properties = *MakeGarbageCollected<TestResourceFetcherProperties>();
+  auto* fetcher = CreateFetcher(properties);
+  ResourceRequest request(KURL("https://www.example.com/"));
+
+  // A "small" image should not get a priority boost or count against the
+  // 5-image limit.
+  {
+    properties.SetIsOutermostMainFrame(true);
+    properties.SetIsSubframeDeprioritizationEnabled(false);
+    const auto priority = fetcher->ComputeLoadPriorityForTesting(
+        ResourceType::kImage, request, ResourcePriority::kNotVisible,
+        FetchParameters::DeferOption::kNoDefer,
+        FetchParameters::SpeculativePreloadType::kInDocument,
+        RenderBlockingBehavior::kNonBlocking,
+        mojom::blink::ScriptType::kClassic, false /* is_link_preload */,
+        10 /* resource_width*/, 10 /* resource_height*/);
+    EXPECT_EQ(priority, ResourceLoadPriority::kLow);
+  }
+
+  // Test an image with just one of width or height set to zero but the other
+  // dimension not specified to make sure it is also treated as "small"
+  {
+    properties.SetIsOutermostMainFrame(true);
+    properties.SetIsSubframeDeprioritizationEnabled(false);
+    const auto priority = fetcher->ComputeLoadPriorityForTesting(
+        ResourceType::kImage, request, ResourcePriority::kNotVisible,
+        FetchParameters::DeferOption::kNoDefer,
+        FetchParameters::SpeculativePreloadType::kInDocument,
+        RenderBlockingBehavior::kNonBlocking,
+        mojom::blink::ScriptType::kClassic, false /* is_link_preload */,
+        0 /* resource_width*/, absl::nullopt /* resource_height*/);
+    EXPECT_EQ(priority, ResourceLoadPriority::kLow);
+  }
+  {
+    properties.SetIsOutermostMainFrame(true);
+    properties.SetIsSubframeDeprioritizationEnabled(false);
+    const auto priority = fetcher->ComputeLoadPriorityForTesting(
+        ResourceType::kImage, request, ResourcePriority::kNotVisible,
+        FetchParameters::DeferOption::kNoDefer,
+        FetchParameters::SpeculativePreloadType::kInDocument,
+        RenderBlockingBehavior::kNonBlocking,
+        mojom::blink::ScriptType::kClassic, false /* is_link_preload */,
+        absl::nullopt /* resource_width*/, 0 /* resource_height*/);
+    EXPECT_EQ(priority, ResourceLoadPriority::kLow);
+  }
+
+  // The next 5 images that are not-small should be boosted to Medium priority.
+  // Test both an explicit size over 10,000px^2 as well as no size specified
+  // which defaults to not-small.
+  // #1 - 200x200 = 40000px^2.
+  {
+    properties.SetIsOutermostMainFrame(true);
+    properties.SetIsSubframeDeprioritizationEnabled(false);
+    const auto priority = fetcher->ComputeLoadPriorityForTesting(
+        ResourceType::kImage, request, ResourcePriority::kNotVisible,
+        FetchParameters::DeferOption::kNoDefer,
+        FetchParameters::SpeculativePreloadType::kInDocument,
+        RenderBlockingBehavior::kNonBlocking,
+        mojom::blink::ScriptType::kClassic, false /* is_link_preload */,
+        200 /* resource_width*/, 200 /* resource_height*/);
+    EXPECT_EQ(priority, ResourceLoadPriority::kMedium);
+  }
+  // #2 - non-zero width but no height.
+  {
+    properties.SetIsOutermostMainFrame(true);
+    properties.SetIsSubframeDeprioritizationEnabled(false);
+    const auto priority = fetcher->ComputeLoadPriorityForTesting(
+        ResourceType::kImage, request, ResourcePriority::kNotVisible,
+        FetchParameters::DeferOption::kNoDefer,
+        FetchParameters::SpeculativePreloadType::kInDocument,
+        RenderBlockingBehavior::kNonBlocking,
+        mojom::blink::ScriptType::kClassic, false /* is_link_preload */,
+        200 /* resource_width*/, absl::nullopt /* resource_height*/);
+    EXPECT_EQ(priority, ResourceLoadPriority::kMedium);
+  }
+  // #3 - non-zero height but no width.
+  {
+    properties.SetIsOutermostMainFrame(true);
+    properties.SetIsSubframeDeprioritizationEnabled(false);
+    const auto priority = fetcher->ComputeLoadPriorityForTesting(
+        ResourceType::kImage, request, ResourcePriority::kNotVisible,
+        FetchParameters::DeferOption::kNoDefer,
+        FetchParameters::SpeculativePreloadType::kInDocument,
+        RenderBlockingBehavior::kNonBlocking,
+        mojom::blink::ScriptType::kClassic, false /* is_link_preload */,
+        absl::nullopt /* resource_width*/, 200 /* resource_height*/);
+    EXPECT_EQ(priority, ResourceLoadPriority::kMedium);
+  }
+  // #4-5 - neither height nor width.
+  for (int i = 4; i <= 5; i++) {
+    properties.SetIsOutermostMainFrame(true);
+    properties.SetIsSubframeDeprioritizationEnabled(false);
+    const auto priority = fetcher->ComputeLoadPriorityForTesting(
+        ResourceType::kImage, request, ResourcePriority::kNotVisible,
+        FetchParameters::DeferOption::kNoDefer,
+        FetchParameters::SpeculativePreloadType::kInDocument,
+        RenderBlockingBehavior::kNonBlocking,
+        mojom::blink::ScriptType::kClassic, false /* is_link_preload */);
+    EXPECT_EQ(priority, ResourceLoadPriority::kMedium);
+  }
+
+  // After the 5th non-small image, images should get the default Low priority.
+  {
+    properties.SetIsOutermostMainFrame(true);
+    properties.SetIsSubframeDeprioritizationEnabled(false);
+    const auto priority = fetcher->ComputeLoadPriorityForTesting(
+        ResourceType::kImage, request, ResourcePriority::kNotVisible,
+        FetchParameters::DeferOption::kNoDefer,
+        FetchParameters::SpeculativePreloadType::kInDocument,
+        RenderBlockingBehavior::kNonBlocking,
+        mojom::blink::ScriptType::kClassic, false /* is_link_preload */);
+    EXPECT_EQ(priority, ResourceLoadPriority::kLow);
+  }
+}
+
+TEST_F(ResourceFetcherTest, IsPotentiallyLCPElement) {
+  for (const auto& test_cases :
+       {std::make_pair("medium", ResourceLoadPriority::kMedium),
+        std::make_pair("high", ResourceLoadPriority::kHigh),
+        std::make_pair("very_high", ResourceLoadPriority::kVeryHigh)}) {
+    const char* kPrioritySetting = test_cases.first;
+    const ResourceLoadPriority kExpectedPriority = test_cases.second;
+    base::test::ScopedFeatureList scoped_feature_list;
+    scoped_feature_list.InitWithFeaturesAndParameters(
+        {{features::kLCPCriticalPathPredictor,
+          {{features::kLCPCriticalPathPredictorImageLoadPriority.name,
+            kPrioritySetting}}}},
+        {});
+    auto& properties = *MakeGarbageCollected<TestResourceFetcherProperties>();
+    auto* fetcher = CreateFetcher(properties);
+    ResourceRequest request(KURL("https://www.example.com/"));
+
+    // Resources for Potentially LCP Elements get a `kExpectedPriority`.
+    {
+      properties.SetIsOutermostMainFrame(true);
+      properties.SetIsSubframeDeprioritizationEnabled(false);
+      const auto priority = fetcher->ComputeLoadPriorityForTesting(
+          ResourceType::kImage, request, ResourcePriority::kNotVisible,
+          FetchParameters::DeferOption::kNoDefer,
+          FetchParameters::SpeculativePreloadType::kInDocument,
+          RenderBlockingBehavior::kNonBlocking,
+          mojom::blink::ScriptType::kClassic, /* is_link_preload=*/false,
+          /* resource_width=*/10, /* resource_height=*/10,
+          /* is_potentially_lcp_element=*/true);
+      EXPECT_EQ(priority, kExpectedPriority)
+          << "priority_setting: " << kPrioritySetting;
+    }
   }
 }
 
 TEST_F(ResourceFetcherTest, Detach) {
   DetachableResourceFetcherProperties& properties =
       MakeGarbageCollected<TestResourceFetcherProperties>()->MakeDetachable();
-  auto* const fetcher =
-      MakeGarbageCollected<ResourceFetcher>(ResourceFetcherInit(
-          properties, MakeGarbageCollected<MockFetchContext>(),
-          CreateTaskRunner(),
-          MakeGarbageCollected<TestLoaderFactory>(
-              platform_->GetURLLoaderMockFactory()),
-          MakeGarbageCollected<MockContextLifecycleNotifier>()));
+  auto* const fetcher = MakeGarbageCollected<ResourceFetcher>(
+      ResourceFetcherInit(properties, MakeGarbageCollected<MockFetchContext>(),
+                          CreateTaskRunner(), CreateTaskRunner(),
+                          MakeGarbageCollected<TestLoaderFactory>(
+                              platform_->GetURLLoaderMockFactory()),
+                          MakeGarbageCollected<MockContextLifecycleNotifier>(),
+                          nullptr /* back_forward_cache_loader_helper */));
 
   EXPECT_EQ(&properties, &fetcher->GetProperties());
   EXPECT_FALSE(properties.IsDetached());
@@ -1172,84 +1537,216 @@ TEST_F(ResourceFetcherTest, Detach) {
   EXPECT_TRUE(properties.IsDetached());
 }
 
-// TODO(crbug.com/850785): Reenable this.
-#if defined(OS_ANDROID)
-#define MAYBE_SetIsExternalRequest DISABLED_SetIsExternalRequest
-#else
-#define MAYBE_SetIsExternalRequest SetIsExternalRequest
-#endif
-TEST_F(ResourceFetcherTest, MAYBE_SetIsExternalRequest) {
-  struct TestCase {
-    const char* url;
-    bool is_external_expectation_public;
-    bool is_external_expectation_private;
-    bool is_external_expectation_local;
-  } cases[] = {{"data:text/html,whatever", false, false, false},
-               {"file:///etc/passwd", false, false, false},
-               {"blob:http://example.com/", false, false, false},
+TEST_F(ResourceFetcherTest, DuplicatePreloadAllowsPriorityChange) {
+  auto* fetcher = CreateFetcher();
 
-               {"http://example.com/", false, false, false},
-               {"https://example.com/", false, false, false},
+  KURL url("http://127.0.0.1:8000/foo.png");
+  RegisterMockedURLLoad(url);
 
-               {"http://192.168.1.1:8000/", true, false, false},
-               {"http://10.1.1.1:8000/", true, false, false},
+  FetchParameters fetch_params_for_request =
+      FetchParameters::CreateForTest(ResourceRequest(url));
+  FetchParameters fetch_params_for_preload =
+      FetchParameters::CreateForTest(ResourceRequest(url));
+  fetch_params_for_preload.SetSpeculativePreloadType(
+      FetchParameters::SpeculativePreloadType::kInDocument);
+  fetch_params_for_preload.SetFetchPriorityHint(
+      mojom::blink::FetchPriorityHint::kLow);
 
-               {"http://localhost/", true, true, false},
-               {"http://127.0.0.1/", true, true, false},
-               {"http://127.0.0.1:8000/", true, true, false}};
+  Resource* resource1 =
+      MockResource::Fetch(fetch_params_for_preload, fetcher, nullptr);
+  ASSERT_TRUE(resource1);
+  EXPECT_TRUE(resource1->IsUnusedPreload());
+  EXPECT_TRUE(fetcher->ContainsAsPreload(resource1));
+  EXPECT_EQ(ResourceLoadPriority::kLow,
+            resource1->GetResourceRequest().Priority());
 
-  for (const auto address_space : {network::mojom::IPAddressSpace::kPublic,
-                                   network::mojom::IPAddressSpace::kPrivate,
-                                   network::mojom::IPAddressSpace::kLocal}) {
-    auto* fetcher =
-        CreateFetcher(*MakeGarbageCollected<TestResourceFetcherProperties>(
-                          CreateFetchClientSettingsObject(address_space)),
-                      MakeGarbageCollected<MockFetchContext>());
-    EXPECT_EQ(address_space, fetcher->GetProperties()
-                                 .GetFetchClientSettingsObject()
-                                 .GetAddressSpace());
+  // The second preload fetch returns the first preload but boosts the priority.
+  FetchParameters fetch_params_for_preload2 =
+      FetchParameters::CreateForTest(ResourceRequest(url));
+  fetch_params_for_preload2.SetSpeculativePreloadType(
+      FetchParameters::SpeculativePreloadType::kInDocument);
+  fetch_params_for_preload2.SetFetchPriorityHint(
+      mojom::blink::FetchPriorityHint::kHigh);
+  Resource* resource2 =
+      MockResource::Fetch(fetch_params_for_preload2, fetcher, nullptr);
 
-    for (const bool enabled : {false, true}) {
-      ScopedCorsRFC1918ForTest cors_rfc1918(enabled);
-      for (const auto& test : cases) {
-        SCOPED_TRACE(test.url);
-        FetchParameters fetch_params =
-            FetchParameters::CreateForTest(ResourceRequest(test.url));
-        RegisterMockedURLLoad(fetch_params.Url());
+  EXPECT_TRUE(fetcher->ContainsAsPreload(resource1));
+  EXPECT_TRUE(resource1->IsUnusedPreload());
+  EXPECT_EQ(resource1, resource2);
+  EXPECT_EQ(ResourceLoadPriority::kHigh,
+            resource1->GetResourceRequest().Priority());
 
-        Resource* new_resource =
-            MockResource::Fetch(fetch_params, fetcher, nullptr);
-        ASSERT_TRUE(new_resource);
+  platform_->GetURLLoaderMockFactory()->ServeAsynchronousRequests();
 
-        if (enabled) {
-          bool expected;
-          switch (address_space) {
-            case network::mojom::IPAddressSpace::kPublic:
-              expected = test.is_external_expectation_public;
-              break;
-            case network::mojom::IPAddressSpace::kPrivate:
-              expected = test.is_external_expectation_private;
-              break;
-            case network::mojom::IPAddressSpace::kLocal:
-              expected = test.is_external_expectation_local;
-              break;
-            case network::mojom::IPAddressSpace::kUnknown:
-              NOTREACHED();
-              break;
-          }
-          EXPECT_EQ(expected,
-                    new_resource->GetResourceRequest().IsExternalRequest());
-        } else {
-          EXPECT_FALSE(new_resource->GetResourceRequest().IsExternalRequest());
-        }
+  // preload matching
+  Resource* resource3 =
+      MockResource::Fetch(fetch_params_for_request, fetcher, nullptr);
+  EXPECT_EQ(resource1, resource3);
+  EXPECT_FALSE(fetcher->ContainsAsPreload(resource1));
+  EXPECT_FALSE(resource1->IsUnusedPreload());
+}
 
-        // Clear mocked URLs from mock loader and MemoryCache.
-        platform_->GetURLLoaderMockFactory()->ServeAsynchronousRequests();
-        platform_->GetURLLoaderMockFactory()
-            ->UnregisterAllURLsAndClearMemoryCache();
-      }
-    }
-  }
+TEST_F(ResourceFetcherTest, StrongReferenceThreshold) {
+  // `kTestResourceFilename` has 103 bytes.
+  const int64_t kMockResourceSize = 103;
+
+  // Set up the strong reference feature so that the memory cache can keep
+  // strong references to `kTestResourcefilename` up to two resources.
+  const int64_t kTotalSizeThreshold = kMockResourceSize * 2;
+  const int64_t kResourceSizeThreshold = kMockResourceSize;
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitWithFeaturesAndParameters(
+      /*enabled_features=*/
+      {
+          {features::kMemoryCacheStrongReference,
+           {{"memory_cache_strong_ref_total_size_threshold",
+             base::NumberToString(kTotalSizeThreshold)},
+            {"memory_cache_strong_ref_resource_size_threshold",
+             base::NumberToString(kResourceSizeThreshold)}}},
+          {features::kResourceFetcherStoresStrongReferences, {}},
+      },
+      /*disabled_features=*/{});
+
+  ResourceFetcher* fetcher = CreateFetcher();
+
+  // A closure that fetches the given URL with `kTestResourceFilename` and
+  // returns whether the memory cache has a strong reference to the resource.
+  auto perform_fetch = base::BindLambdaForTesting([&](const KURL& url) {
+    ResourceResponse response(url);
+    response.SetHttpHeaderField(http_names::kCacheControl,
+                                AtomicString("max-age=3600"));
+    platform_->GetURLLoaderMockFactory()->RegisterURL(
+        url, WrappedResourceResponse(response),
+        test::PlatformTestDataPath(kTestResourceFilename));
+    FetchParameters fetch_params =
+        FetchParameters::CreateForTest(ResourceRequest(url));
+    Resource* resource = MockResource::Fetch(fetch_params, fetcher, nullptr);
+    platform_->GetURLLoaderMockFactory()->ServeAsynchronousRequests();
+    return fetcher->HasStrongReferenceForTesting(resource);
+  });
+
+  ASSERT_TRUE(perform_fetch.Run(KURL("http://127.0.0.1:8000/foo.png")));
+  ASSERT_TRUE(perform_fetch.Run(KURL("http://127.0.0.1:8000/bar.png")));
+  ASSERT_FALSE(perform_fetch.Run(KURL("http://127.0.0.1:8000/baz.png")));
+}
+
+TEST_F(ResourceFetcherTest,
+       EmulateLoadStartedForInspectorOncePerResourceDisabled) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndDisableFeature(
+      features::kEmulateLoadStartedForInspectorOncePerResource);
+  auto* observer = MakeGarbageCollected<TestResourceLoadObserver>();
+
+  // Set up the initial fetcher and mark the resource as cached.
+  auto* fetcher = CreateFetcher();
+  KURL url("http://127.0.0.1:8000/foo.woff2");
+  RegisterMockedURLLoad(url);
+  FetchParameters fetch_params =
+      FetchParameters::CreateForTest(ResourceRequest(url));
+  Resource* resource = MockResource::Fetch(fetch_params, fetcher, nullptr);
+  resource->SetStatus(ResourceStatus::kCached);
+
+  ASSERT_NE(fetcher->CachedResource(url), nullptr);
+  ASSERT_FALSE(fetcher->ResourceHasBeenEmulatedLoadStartedForInspector(url));
+
+  // Set up the second fetcher.
+  auto* otherContextFetcher = CreateFetcher();
+  otherContextFetcher->SetResourceLoadObserver(observer);
+
+  // Ensure that the url is initially not marked as cached or
+  // emulated and the observer's last request is empty.
+  ASSERT_EQ(otherContextFetcher->CachedResource(url), nullptr);
+  ASSERT_FALSE(
+      otherContextFetcher->ResourceHasBeenEmulatedLoadStartedForInspector(url));
+  ASSERT_EQ(observer->GetLastRequest(), absl::nullopt);
+
+  otherContextFetcher->EmulateLoadStartedForInspector(
+      resource, url, mojom::blink::RequestContextType::FONT,
+      network::mojom::RequestDestination::kFont,
+      fetch_initiator_type_names::kCSS);
+
+  // After the first emulation, ensure that the url is not cached,
+  // is not marked as emulated and the observer's last
+  // request is not empty with the feature disabled.
+  ASSERT_EQ(otherContextFetcher->CachedResource(url), nullptr);
+  ASSERT_FALSE(
+      otherContextFetcher->ResourceHasBeenEmulatedLoadStartedForInspector(url));
+  ASSERT_NE(observer->GetLastRequest(), absl::nullopt);
+
+  // Clear out the last request to start fresh
+  observer->ClearLastRequest();
+
+  otherContextFetcher->EmulateLoadStartedForInspector(
+      resource, url, mojom::blink::RequestContextType::FONT,
+      network::mojom::RequestDestination::kFont,
+      fetch_initiator_type_names::kCSS);
+
+  // After the second emulation, ensure that the url is not cached,
+  // the resource is not marked as emulated, and the observer's last
+  // request is not empty with the feature disabled. This means that
+  // the observer was notified with this emulation.
+  ASSERT_EQ(otherContextFetcher->CachedResource(url), nullptr);
+  ASSERT_FALSE(
+      otherContextFetcher->ResourceHasBeenEmulatedLoadStartedForInspector(url));
+  ASSERT_NE(observer->GetLastRequest(), absl::nullopt);
+}
+
+TEST_F(ResourceFetcherTest,
+       EmulateLoadStartedForInspectorOncePerResourceEnabled) {
+  auto* observer = MakeGarbageCollected<TestResourceLoadObserver>();
+
+  // Set up the initial fetcher and mark the resource as cached.
+  auto* fetcher = CreateFetcher();
+  KURL url("http://127.0.0.1:8000/foo.woff2");
+  RegisterMockedURLLoad(url);
+  FetchParameters fetch_params =
+      FetchParameters::CreateForTest(ResourceRequest(url));
+  Resource* resource = MockResource::Fetch(fetch_params, fetcher, nullptr);
+  resource->SetStatus(ResourceStatus::kCached);
+
+  ASSERT_NE(fetcher->CachedResource(url), nullptr);
+  ASSERT_FALSE(fetcher->ResourceHasBeenEmulatedLoadStartedForInspector(url));
+
+  // Set up the second fetcher.
+  auto* otherContextFetcher = CreateFetcher();
+  otherContextFetcher->SetResourceLoadObserver(observer);
+
+  // Ensure that the url is initially not cached, not marked as emulated,
+  // and the observer's last request is empty.
+  ASSERT_EQ(otherContextFetcher->CachedResource(url), nullptr);
+  ASSERT_FALSE(
+      otherContextFetcher->ResourceHasBeenEmulatedLoadStartedForInspector(url));
+  ASSERT_EQ(observer->GetLastRequest(), absl::nullopt);
+
+  otherContextFetcher->EmulateLoadStartedForInspector(
+      resource, url, mojom::blink::RequestContextType::FONT,
+      network::mojom::RequestDestination::kFont,
+      fetch_initiator_type_names::kCSS);
+
+  // After the first emulation, ensure that the url is not cached,
+  // marked as emulated, and the observer's last request is not empty with
+  // the feature enabled.
+  ASSERT_EQ(otherContextFetcher->CachedResource(url), nullptr);
+  ASSERT_TRUE(
+      otherContextFetcher->ResourceHasBeenEmulatedLoadStartedForInspector(url));
+  ASSERT_NE(observer->GetLastRequest(), absl::nullopt);
+
+  // Clear out the last request to start fresh
+  observer->ClearLastRequest();
+
+  otherContextFetcher->EmulateLoadStartedForInspector(
+      resource, url, mojom::blink::RequestContextType::FONT,
+      network::mojom::RequestDestination::kFont,
+      fetch_initiator_type_names::kCSS);
+
+  // After the first emulation, ensure that the url is not cached,
+  // marked as emulated, and the observer's last request is empty with
+  // the feature enabled. This means that the observer was not
+  // notified with this emulation.
+  ASSERT_EQ(otherContextFetcher->CachedResource(url), nullptr);
+  ASSERT_TRUE(
+      otherContextFetcher->ResourceHasBeenEmulatedLoadStartedForInspector(url));
+  ASSERT_EQ(observer->GetLastRequest(), absl::nullopt);
 }
 
 }  // namespace blink

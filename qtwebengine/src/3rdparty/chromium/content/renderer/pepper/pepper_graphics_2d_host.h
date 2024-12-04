@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,11 +9,11 @@
 
 #include <vector>
 
-#include "base/compiler_specific.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "cc/paint/paint_canvas.h"
 #include "cc/resources/shared_bitmap_id_registrar.h"
+#include "components/viz/common/resources/release_callback.h"
 #include "content/common/content_export.h"
 #include "gpu/command_buffer/common/mailbox.h"
 #include "gpu/command_buffer/common/sync_token.h"
@@ -32,9 +32,12 @@ namespace gfx {
 class Rect;
 }
 
+namespace gpu {
+class ClientSharedImage;
+}
+
 namespace viz {
 class RasterContextProvider;
-class SingleReleaseCallback;
 struct TransferableResource;
 }
 
@@ -55,6 +58,9 @@ class CONTENT_EXPORT PepperGraphics2DHost
       const PP_Size& size,
       PP_Bool is_always_opaque,
       scoped_refptr<PPB_ImageData_Impl> backing_store);
+
+  PepperGraphics2DHost(const PepperGraphics2DHost&) = delete;
+  PepperGraphics2DHost& operator=(const PepperGraphics2DHost&) = delete;
 
   ~PepperGraphics2DHost() override;
 
@@ -78,7 +84,7 @@ class CONTENT_EXPORT PepperGraphics2DHost
   bool PrepareTransferableResource(
       cc::SharedBitmapIdRegistrar* bitmap_registrar,
       viz::TransferableResource* transferable_resource,
-      std::unique_ptr<viz::SingleReleaseCallback>* release_callback);
+      viz::ReleaseCallback* release_callback);
   void AttachedToNewLayer();
 
   // Notifications about the view's progress painting.  See PluginInstance.
@@ -187,17 +193,17 @@ class CONTENT_EXPORT PepperGraphics2DHost
       base::WeakPtr<PepperGraphics2DHost> host,
       scoped_refptr<viz::RasterContextProvider> context,
       const gfx::Size& size,
-      const gpu::Mailbox& mailbox,
+      scoped_refptr<gpu::ClientSharedImage> shared_image,
       const gpu::SyncToken& sync_token,
       bool lost);
 
-  RendererPpapiHost* renderer_ppapi_host_;
+  raw_ptr<RendererPpapiHost, ExperimentalRenderer> renderer_ppapi_host_;
 
   scoped_refptr<PPB_ImageData_Impl> image_data_;
 
   // Non-owning pointer to the plugin instance this context is currently bound
   // to, if any. If the context is currently unbound, this will be NULL.
-  PepperPluginInstanceImpl* bound_instance_;
+  raw_ptr<PepperPluginInstanceImpl, ExperimentalRenderer> bound_instance_;
 
   // Keeps track of all drawing commands queued before a Flush call.
   struct QueuedOperation;
@@ -237,11 +243,12 @@ class CONTENT_EXPORT PepperGraphics2DHost
   scoped_refptr<viz::RasterContextProvider> main_thread_context_;
   struct SharedImageInfo {
     SharedImageInfo(gpu::SyncToken sync_token,
-                    gpu::Mailbox mailbox,
-                    gfx::Size size)
-        : sync_token(sync_token), mailbox(mailbox), size(size) {}
+                    scoped_refptr<gpu::ClientSharedImage> shared_image,
+                    gfx::Size size);
+    SharedImageInfo(const SharedImageInfo& shared_image_info);
+    ~SharedImageInfo();
     gpu::SyncToken sync_token;
-    gpu::Mailbox mailbox;
+    scoped_refptr<gpu::ClientSharedImage> shared_image;
     gfx::Size size;
   };
   // Shared images that are available for recycling.
@@ -258,7 +265,6 @@ class CONTENT_EXPORT PepperGraphics2DHost
   const bool enable_gpu_memory_buffer_;
 
   friend class PepperGraphics2DHostTest;
-  DISALLOW_COPY_AND_ASSIGN(PepperGraphics2DHost);
 };
 
 }  // namespace content

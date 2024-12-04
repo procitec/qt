@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,10 +14,9 @@ import org.junit.runner.RunWith;
 import org.chromium.base.test.BaseJUnit4ClassRunner;
 import org.chromium.base.test.util.Batch;
 import org.chromium.content_public.browser.test.NativeLibraryTestUtils;
+import org.chromium.url.GURL;
 
-/**
- * Unit tests for {@link UrlUtilities}.
- */
+/** Unit tests for {@link UrlUtilities}. */
 @RunWith(BaseJUnit4ClassRunner.class)
 @Batch(Batch.UNIT_TESTS)
 @SuppressWarnings(value = "AuthLeak")
@@ -52,8 +51,9 @@ public class UrlUtilitiesUnitTest {
         Assert.assertFalse(UrlUtilities.isHttpOrHttps("ftp://https:password@example.com/"));
         Assert.assertFalse(
                 UrlUtilities.isHttpOrHttps("ftp://https:password@example.com/?http:#http:"));
-        Assert.assertFalse(UrlUtilities.isHttpOrHttps(
-                "google-search://https:password@example.com/?http:#http:"));
+        Assert.assertFalse(
+                UrlUtilities.isHttpOrHttps(
+                        "google-search://https:password@example.com/?http:#http:"));
         Assert.assertFalse(UrlUtilities.isHttpOrHttps("chrome://http://version"));
         Assert.assertFalse(UrlUtilities.isHttpOrHttps(""));
     }
@@ -61,9 +61,11 @@ public class UrlUtilitiesUnitTest {
     @Test
     @SmallTest
     public void testStripPath() {
-        Assert.assertEquals("https://example.com:9000",
+        Assert.assertEquals(
+                "https://example.com:9000",
                 UrlUtilities.stripPath("https://user:pass@example.com:9000/path/#extra"));
-        Assert.assertEquals("http://awesome.example.com",
+        Assert.assertEquals(
+                "http://awesome.example.com",
                 UrlUtilities.stripPath("http://awesome.example.com/?query"));
         Assert.assertEquals("http://localhost", UrlUtilities.stripPath("http://localhost/"));
         Assert.assertEquals("http://", UrlUtilities.stripPath("http:"));
@@ -78,8 +80,9 @@ public class UrlUtilitiesUnitTest {
         // If there is no scheme, nothing changes.
         Assert.assertEquals("cs.chromium.org", UrlUtilities.stripScheme("cs.chromium.org"));
         // Path is not touched/changed.
-        String urlWithPath = "code.google.com/p/chromium/codesearch#search"
-                + "/&q=testStripScheme&sq=package:chromium&type=cs";
+        String urlWithPath =
+                "code.google.com/p/chromium/codesearch#search"
+                        + "/&q=testStripScheme&sq=package:chromium&type=cs";
         Assert.assertEquals(urlWithPath, UrlUtilities.stripScheme("https://" + urlWithPath));
         // Beginning and ending spaces get trimmed.
         Assert.assertEquals(
@@ -89,65 +92,62 @@ public class UrlUtilitiesUnitTest {
     @Test
     @SmallTest
     public void testIsAcceptedScheme() {
-        Assert.assertTrue(UrlUtilities.isAcceptedScheme("about:awesome"));
-        Assert.assertTrue(UrlUtilities.isAcceptedScheme("data:data"));
-        Assert.assertTrue(UrlUtilities.isAcceptedScheme(
-                "https://user:pass@awesome.com:9000/bad-scheme/#fake"));
-        Assert.assertTrue(UrlUtilities.isAcceptedScheme("http://awesome.example.com/"));
-        Assert.assertTrue(UrlUtilities.isAcceptedScheme("file://hostname/path/to/file"));
-        Assert.assertTrue(UrlUtilities.isAcceptedScheme("inline:skates.co.uk"));
-        Assert.assertTrue(UrlUtilities.isAcceptedScheme("javascript:alert(1)"));
-        Assert.assertTrue(UrlUtilities.isAcceptedScheme("http://foo.bar/has[square].html"));
+        Assert.assertTrue(UrlUtilities.isAcceptedScheme(new GURL("about:awesome")));
+        Assert.assertTrue(UrlUtilities.isAcceptedScheme(new GURL("data:data")));
+        Assert.assertTrue(
+                UrlUtilities.isAcceptedScheme(
+                        new GURL("https://user:pass@awesome.com:9000/bad-scheme/#fake")));
+        Assert.assertTrue(UrlUtilities.isAcceptedScheme(new GURL("http://awesome.example.com/")));
+        Assert.assertTrue(UrlUtilities.isAcceptedScheme(new GURL("file://hostname/path/to/file")));
+        Assert.assertTrue(UrlUtilities.isAcceptedScheme(new GURL("inline:skates.co.uk")));
+        Assert.assertTrue(UrlUtilities.isAcceptedScheme(new GURL("javascript:alert(1)")));
+        Assert.assertTrue(
+                UrlUtilities.isAcceptedScheme(new GURL("http://foo.bar/has[square].html")));
 
-        Assert.assertFalse(UrlUtilities.isAcceptedScheme("super:awesome"));
-        Assert.assertFalse(UrlUtilities.isAcceptedScheme("ftp://https:password@example.com/"));
+        Assert.assertFalse(UrlUtilities.isAcceptedScheme(new GURL("super:awesome")));
         Assert.assertFalse(
-                UrlUtilities.isAcceptedScheme("ftp://https:password@example.com/?http:#http:"));
-        Assert.assertFalse(UrlUtilities.isAcceptedScheme(
-                "google-search://https:password@example.com/?http:#http:"));
-        Assert.assertFalse(UrlUtilities.isAcceptedScheme("chrome://http://version"));
-        Assert.assertFalse(UrlUtilities.isAcceptedScheme(""));
+                UrlUtilities.isAcceptedScheme(new GURL("ftp://https:password@example.com/")));
+        Assert.assertFalse(
+                UrlUtilities.isAcceptedScheme(
+                        new GURL("ftp://https:password@example.com/?http:#http:")));
+        Assert.assertFalse(
+                UrlUtilities.isAcceptedScheme(
+                        new GURL("google-search://https:password@example.com/?http:#http:")));
+        Assert.assertFalse(UrlUtilities.isAcceptedScheme(new GURL("chrome://http://version")));
+        Assert.assertFalse(UrlUtilities.isAcceptedScheme(GURL.emptyGURL()));
     }
 
     @Test
     @SmallTest
     public void testIsDownloadableScheme() {
-        Assert.assertTrue(UrlUtilities.isDownloadableScheme("data:data"));
-        Assert.assertTrue(UrlUtilities.isDownloadableScheme(
-                "https://user:pass@awesome.com:9000/bad-scheme:#fake:"));
-        Assert.assertTrue(UrlUtilities.isDownloadableScheme("http://awesome.example.com/"));
-        Assert.assertTrue(UrlUtilities.isDownloadableScheme(
-                "filesystem:https://user:pass@google.com:99/t/foo;bar?q=a#ref"));
-        Assert.assertTrue(UrlUtilities.isDownloadableScheme("blob:https://awesome.example.com/"));
-        Assert.assertTrue(UrlUtilities.isDownloadableScheme("file://hostname/path/to/file"));
-
-        Assert.assertFalse(UrlUtilities.isDownloadableScheme("inline:skates.co.uk"));
-        Assert.assertFalse(UrlUtilities.isDownloadableScheme("javascript:alert(1)"));
-        Assert.assertFalse(UrlUtilities.isDownloadableScheme("about:awesome"));
-        Assert.assertFalse(UrlUtilities.isDownloadableScheme("super:awesome"));
-        Assert.assertFalse(UrlUtilities.isDownloadableScheme("ftp://https:password@example.com/"));
-        Assert.assertFalse(
-                UrlUtilities.isDownloadableScheme("ftp://https:password@example.com/?http:#http:"));
-        Assert.assertFalse(UrlUtilities.isDownloadableScheme(
-                "google-search://https:password@example.com/?http:#http:"));
-        Assert.assertFalse(UrlUtilities.isDownloadableScheme("chrome://http://version"));
-        Assert.assertFalse(UrlUtilities.isDownloadableScheme(""));
-    }
-
-    @Test
-    @SmallTest
-    public void testIsValidForIntentFallbackUrl() {
-        Assert.assertTrue(UrlUtilities.isValidForIntentFallbackNavigation(
-                "https://user:pass@awesome.com:9000/bad-scheme:#fake:"));
+        Assert.assertTrue(UrlUtilities.isDownloadableScheme(new GURL("data:data")));
         Assert.assertTrue(
-                UrlUtilities.isValidForIntentFallbackNavigation("http://awesome.example.com/"));
-        Assert.assertFalse(UrlUtilities.isValidForIntentFallbackNavigation("inline:skates.co.uk"));
-        Assert.assertFalse(UrlUtilities.isValidForIntentFallbackNavigation("javascript:alert(1)"));
+                UrlUtilities.isDownloadableScheme(
+                        new GURL("https://user:pass@awesome.com:9000/bad-scheme:#fake:")));
+        Assert.assertTrue(
+                UrlUtilities.isDownloadableScheme(new GURL("http://awesome.example.com/")));
+        Assert.assertTrue(
+                UrlUtilities.isDownloadableScheme(
+                        new GURL("filesystem:https://user:pass@google.com:99/t/foo;bar?q=a#ref")));
+        Assert.assertTrue(
+                UrlUtilities.isDownloadableScheme(new GURL("blob:https://awesome.example.com/")));
+        Assert.assertTrue(
+                UrlUtilities.isDownloadableScheme(new GURL("file://hostname/path/to/file")));
+
+        Assert.assertFalse(UrlUtilities.isDownloadableScheme(new GURL("inline:skates.co.uk")));
+        Assert.assertFalse(UrlUtilities.isDownloadableScheme(new GURL("javascript:alert(1)")));
+        Assert.assertFalse(UrlUtilities.isDownloadableScheme(new GURL("about:awesome")));
+        Assert.assertFalse(UrlUtilities.isDownloadableScheme(new GURL("super:awesome")));
         Assert.assertFalse(
-                UrlUtilities.isValidForIntentFallbackNavigation("file://hostname/path/to/file"));
-        Assert.assertFalse(UrlUtilities.isValidForIntentFallbackNavigation("data:data"));
-        Assert.assertFalse(UrlUtilities.isValidForIntentFallbackNavigation("about:awesome"));
-        Assert.assertFalse(UrlUtilities.isValidForIntentFallbackNavigation(""));
+                UrlUtilities.isDownloadableScheme(new GURL("ftp://https:password@example.com/")));
+        Assert.assertFalse(
+                UrlUtilities.isDownloadableScheme(
+                        new GURL("ftp://https:password@example.com/?http:#http:")));
+        Assert.assertFalse(
+                UrlUtilities.isDownloadableScheme(
+                        new GURL("google-search://https:password@example.com/?http:#http:")));
+        Assert.assertFalse(UrlUtilities.isDownloadableScheme(new GURL("chrome://http://version")));
+        Assert.assertFalse(UrlUtilities.isDownloadableScheme(GURL.emptyGURL()));
     }
 
     @Test
@@ -163,8 +163,9 @@ public class UrlUtilitiesUnitTest {
         Assert.assertFalse(UrlUtilities.isUrlWithinScope(scope + "/this", scope + "/different"));
         Assert.assertFalse(
                 UrlUtilities.isUrlWithinScope("http://awesome.example.com", "http://example.com"));
-        Assert.assertFalse(UrlUtilities.isUrlWithinScope(
-                "https://www.google.com.evil.com", "https://www.google.com"));
+        Assert.assertFalse(
+                UrlUtilities.isUrlWithinScope(
+                        "https://www.google.com.evil.com", "https://www.google.com"));
     }
 
     @Test
@@ -175,11 +176,12 @@ public class UrlUtilitiesUnitTest {
         Assert.assertTrue(UrlUtilities.urlsMatchIgnoringFragments(url + "#fragment", url));
         Assert.assertTrue(
                 UrlUtilities.urlsMatchIgnoringFragments(url + "#fragment", url + "#fragment2"));
-        Assert.assertTrue(UrlUtilities.urlsMatchIgnoringFragments("HTTP://www.example.com/path"
-                        + "#fragment",
-                url + "#fragment2"));
-        Assert.assertFalse(UrlUtilities.urlsMatchIgnoringFragments(
-                url + "#fragment", "http://example.com:443/path#fragment"));
+        Assert.assertTrue(
+                UrlUtilities.urlsMatchIgnoringFragments(
+                        "HTTP://www.example.com/path" + "#fragment", url + "#fragment2"));
+        Assert.assertFalse(
+                UrlUtilities.urlsMatchIgnoringFragments(
+                        url + "#fragment", "http://example.com:443/path#fragment"));
     }
 
     @Test
@@ -188,5 +190,77 @@ public class UrlUtilitiesUnitTest {
         String url = "http://www.example.com/path";
         Assert.assertFalse(UrlUtilities.urlsFragmentsDiffer(url, url));
         Assert.assertTrue(UrlUtilities.urlsFragmentsDiffer(url + "#fragment", url));
+    }
+
+    @Test
+    @SmallTest
+    public void testIsNtpUrlString() {
+        Assert.assertTrue(UrlUtilities.isNtpUrl("chrome-native://newtab"));
+        Assert.assertTrue(UrlUtilities.isNtpUrl("chrome://newtab"));
+        Assert.assertTrue(UrlUtilities.isNtpUrl("about:newtab"));
+
+        Assert.assertFalse(UrlUtilities.isNtpUrl("http://www.example.com"));
+        Assert.assertFalse(UrlUtilities.isNtpUrl("chrome://history"));
+        Assert.assertFalse(UrlUtilities.isNtpUrl("chrome-native://newtabz"));
+        Assert.assertFalse(UrlUtilities.isNtpUrl("newtab"));
+        Assert.assertFalse(UrlUtilities.isNtpUrl(""));
+    }
+
+    @Test
+    @SmallTest
+    public void testIsNtpUrlGurl() {
+        Assert.assertTrue(UrlUtilities.isNtpUrl(new GURL("chrome-native://newtab")));
+        Assert.assertTrue(UrlUtilities.isNtpUrl(new GURL("chrome://newtab")));
+
+        // Note that this intentionally differs from UrlUtilities#isNTPUrl(String) (see comments on
+        // method).
+        Assert.assertFalse(UrlUtilities.isNtpUrl(new GURL("about:newtab")));
+
+        Assert.assertFalse(UrlUtilities.isNtpUrl(new GURL("http://www.example.com")));
+        Assert.assertFalse(UrlUtilities.isNtpUrl(new GURL("chrome://history")));
+        Assert.assertFalse(UrlUtilities.isNtpUrl(new GURL("chrome-native://newtabz")));
+        Assert.assertFalse(UrlUtilities.isNtpUrl(new GURL("newtab")));
+        Assert.assertFalse(UrlUtilities.isNtpUrl(new GURL("")));
+    }
+
+    @Test
+    @SmallTest
+    public void testIsTelScheme() {
+        Assert.assertTrue(UrlUtilities.isTelScheme(new GURL("tel:123456789")));
+        Assert.assertFalse(UrlUtilities.isTelScheme(new GURL("teltel:123456789")));
+        Assert.assertFalse(UrlUtilities.isTelScheme(null));
+    }
+
+    @Test
+    @SmallTest
+    public void testGetTelNumber() {
+        Assert.assertEquals("123456789", UrlUtilities.getTelNumber(new GURL("tel:123456789")));
+        Assert.assertEquals("", UrlUtilities.getTelNumber(new GURL("about:123456789")));
+        Assert.assertEquals("", UrlUtilities.getTelNumber(null));
+    }
+
+    @Test
+    @SmallTest
+    public void testEscapeQueryParamValue() {
+        Assert.assertEquals("foo", UrlUtilities.escapeQueryParamValue("foo", false));
+        Assert.assertEquals("foo%20bar", UrlUtilities.escapeQueryParamValue("foo bar", false));
+        Assert.assertEquals("foo%2B%2B", UrlUtilities.escapeQueryParamValue("foo++", false));
+
+        Assert.assertEquals("foo", UrlUtilities.escapeQueryParamValue("foo", true));
+        Assert.assertEquals("foo+bar", UrlUtilities.escapeQueryParamValue("foo bar", true));
+        Assert.assertEquals("foo%2B%2B", UrlUtilities.escapeQueryParamValue("foo++", true));
+    }
+
+    // Note that this just tests the plumbing of the Java code to the native
+    // net::GetValueForKeyInQuery function, which is tested much more thoroughly there.
+    @Test
+    @SmallTest
+    public void testGetValueForKeyInQuery() {
+        GURL url = new GURL("https://www.example.com/?q1=foo&q2=bar&q11=#q2=notbar&q3=baz");
+        Assert.assertEquals("foo", UrlUtilities.getValueForKeyInQuery(url, "q1"));
+        Assert.assertEquals("bar", UrlUtilities.getValueForKeyInQuery(url, "q2"));
+        Assert.assertEquals("", UrlUtilities.getValueForKeyInQuery(url, "q11"));
+        Assert.assertNull(UrlUtilities.getValueForKeyInQuery(url, "1"));
+        Assert.assertNull(UrlUtilities.getValueForKeyInQuery(url, "q3"));
     }
 }

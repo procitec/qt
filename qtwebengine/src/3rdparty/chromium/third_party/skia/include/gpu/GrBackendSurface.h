@@ -8,89 +8,50 @@
 #ifndef GrBackendSurface_DEFINED
 #define GrBackendSurface_DEFINED
 
-#include "include/gpu/GrBackendSurfaceMutableState.h"
+#include "include/core/SkRefCnt.h"
+#include "include/core/SkSize.h"
+#include "include/gpu/GpuTypes.h"
 #include "include/gpu/GrTypes.h"
-#include "include/gpu/gl/GrGLTypes.h"
+#include "include/private/base/SkAPI.h"
+#include "include/private/base/SkAnySubclass.h"
+#include "include/private/gpu/ganesh/GrTypesPriv.h"
+
 #include "include/gpu/mock/GrMockTypes.h"
-#include "include/gpu/vk/GrVkTypes.h"
-#include "include/private/GrGLTypesPriv.h"
-#include "include/private/GrVkTypesPriv.h"
 
-#ifdef SK_DAWN
-#include "include/gpu/dawn/GrDawnTypes.h"
-#endif
+enum class SkTextureCompressionType;
+class GrBackendFormatData;
+class GrBackendTextureData;
+class GrBackendRenderTargetData;
 
-class GrBackendSurfaceMutableStateImpl;
-class GrVkImageLayout;
-class GrGLTextureParameters;
-
-#ifdef SK_DAWN
-#include "dawn/webgpu_cpp.h"
-#endif
+namespace skgpu {
+class MutableTextureState;
+}
 
 #ifdef SK_METAL
 #include "include/gpu/mtl/GrMtlTypes.h"
 #endif
 
 #ifdef SK_DIRECT3D
-#include "include/gpu/d3d/GrD3DTypesMinimal.h"
-#include "include/private/GrD3DTypesPriv.h"
+#include "include/private/gpu/ganesh/GrD3DTypesMinimal.h"
 class GrD3DResourceState;
 #endif
 
-#if defined(SK_DEBUG) || GR_TEST_UTILS
+#if defined(SK_DEBUG) || defined(GR_TEST_UTILS)
 class SkString;
 #endif
 
-#if !SK_SUPPORT_GPU
-
-// SkSurfaceCharacterization always needs a minimal version of this
-class SK_API GrBackendFormat {
-public:
-    bool isValid() const { return false; }
-};
-
-// SkSurface and SkImage rely on a minimal version of these always being available
-class SK_API GrBackendTexture {
-public:
-    GrBackendTexture() {}
-
-    bool isValid() const { return false; }
-};
-
-class SK_API GrBackendRenderTarget {
-public:
-    GrBackendRenderTarget() {}
-
-    bool isValid() const { return false; }
-    bool isFramebufferOnly() const { return false; }
-};
-#else
-
-enum class GrGLFormat;
+#include <cstddef>
+#include <cstdint>
+#include <string>
+#include <string_view>
 
 class SK_API GrBackendFormat {
 public:
     // Creates an invalid backend format.
-    GrBackendFormat() {}
+    GrBackendFormat();
     GrBackendFormat(const GrBackendFormat&);
     GrBackendFormat& operator=(const GrBackendFormat&);
-
-    static GrBackendFormat MakeGL(GrGLenum format, GrGLenum target) {
-        return GrBackendFormat(format, target);
-    }
-
-    static GrBackendFormat MakeVk(VkFormat format) {
-        return GrBackendFormat(format, GrVkYcbcrConversionInfo());
-    }
-
-    static GrBackendFormat MakeVk(const GrVkYcbcrConversionInfo& ycbcrInfo);
-
-#ifdef SK_DAWN
-    static GrBackendFormat MakeDawn(wgpu::TextureFormat format) {
-        return GrBackendFormat(format);
-    }
-#endif
+    ~GrBackendFormat();
 
 #ifdef SK_METAL
     static GrBackendFormat MakeMtl(GrMTLPixelFormat format) {
@@ -104,7 +65,9 @@ public:
     }
 #endif
 
-    static GrBackendFormat MakeMock(GrColorType colorType, SkImage::CompressionType compression);
+    static GrBackendFormat MakeMock(GrColorType colorType,
+                                    SkTextureCompressionType compression,
+                                    bool isStencilFormat = false);
 
     bool operator==(const GrBackendFormat& that) const;
     bool operator!=(const GrBackendFormat& that) const { return !(*this == that); }
@@ -118,27 +81,7 @@ public:
      */
     uint32_t channelMask() const;
 
-    /**
-     * If the backend API is GL this gets the format as a GrGLFormat. Otherwise, returns
-     * GrGLFormat::kUnknown.
-     */
-    GrGLFormat asGLFormat() const;
-
-    /**
-     * If the backend API is Vulkan this gets the format as a VkFormat and returns true. Otherwise,
-     * returns false.
-     */
-    bool asVkFormat(VkFormat*) const;
-
-    const GrVkYcbcrConversionInfo* getVkYcbcrConversionInfo() const;
-
-#ifdef SK_DAWN
-    /**
-     * If the backend API is Dawn this gets the format as a wgpu::TextureFormat and returns true.
-     * Otherwise, returns false.
-     */
-    bool asDawnFormat(wgpu::TextureFormat*) const;
-#endif
+    GrColorFormatDesc desc() const;
 
 #ifdef SK_METAL
     /**
@@ -157,12 +100,13 @@ public:
 #endif
 
     /**
-     * If the backend API is not Mock these two calls will return kUnknown and kNone, respectively.
-     * Otherwise, if the compression type is kNone then the GrColorType will be valid. If the
-     * compression type is anything other then kNone than the GrColorType will be kUnknown.
+     * If the backend API is not Mock these three calls will return kUnknown, kNone or false,
+     * respectively. Otherwise, only one of the following can be true. The GrColorType is not
+     * kUnknown, the compression type is not kNone, or this is a mock stencil format.
      */
     GrColorType asMockColorType() const;
-    SkImage::CompressionType asMockCompressionType() const;
+    SkTextureCompressionType asMockCompressionType() const;
+    bool isMockStencilFormat() const;
 
     // If possible, copies the GrBackendFormat and forces the texture type to be Texture2D. If the
     // GrBackendFormat was for Vulkan and it originally had a GrVkYcbcrConversionInfo, we will
@@ -172,18 +116,26 @@ public:
     // Returns true if the backend format has been initialized.
     bool isValid() const { return fValid; }
 
-#if defined(SK_DEBUG) || GR_TEST_UTILS
+#if defined(SK_DEBUG) || defined(GR_TEST_UTILS)
     SkString toStr() const;
 #endif
 
 private:
-    GrBackendFormat(GrGLenum format, GrGLenum target);
+    // Size determined by looking at the GrBackendFormatData subclasses, then guessing-and-checking.
+    // Compiler will complain if this is too small - in that case, just increase the number.
+    inline constexpr static size_t kMaxSubclassSize = 64;
+    using AnyFormatData = SkAnySubclass<GrBackendFormatData, kMaxSubclassSize>;
 
-    GrBackendFormat(const VkFormat vkFormat, const GrVkYcbcrConversionInfo&);
+    friend class GrBackendSurfacePriv;
+    friend class GrBackendFormatData;
 
-#ifdef SK_DAWN
-    GrBackendFormat(wgpu::TextureFormat format);
-#endif
+    // Used by internal factories. Should not be used externally. Use factories like
+    // GrBackendFormats::MakeGL instead.
+    template <typename FormatData>
+    GrBackendFormat(GrTextureType textureType, GrBackendApi api, const FormatData& formatData)
+            : fBackend(api), fValid(true), fTextureType(textureType) {
+        fFormatData.emplace<FormatData>(formatData);
+    }
 
 #ifdef SK_METAL
     GrBackendFormat(const GrMTLPixelFormat mtlFormat);
@@ -193,21 +145,17 @@ private:
     GrBackendFormat(DXGI_FORMAT dxgiFormat);
 #endif
 
-    GrBackendFormat(GrColorType, SkImage::CompressionType);
+    GrBackendFormat(GrColorType, SkTextureCompressionType, bool isStencilFormat);
 
-    GrBackendApi fBackend = GrBackendApi::kMock;
-    bool         fValid = false;
-
-    union {
-        GrGLenum         fGLFormat; // the sized, internal format of the GL resource
-        struct {
-            VkFormat                 fFormat;
-            GrVkYcbcrConversionInfo  fYcbcrConversionInfo;
-        }                fVk;
-#ifdef SK_DAWN
-        wgpu::TextureFormat fDawnFormat;
+#ifdef SK_DEBUG
+    bool validateMock() const;
 #endif
 
+    GrBackendApi fBackend = GrBackendApi::kMock;
+    bool fValid = false;
+    AnyFormatData fFormatData;
+
+    union {
 #ifdef SK_METAL
         GrMTLPixelFormat fMtlFormat;
 #endif
@@ -216,9 +164,10 @@ private:
         DXGI_FORMAT fDxgiFormat;
 #endif
         struct {
-            GrColorType              fColorType;
-            SkImage::CompressionType fCompressionType;
-        }                fMock;
+            GrColorType fColorType;
+            SkTextureCompressionType fCompressionType;
+            bool fIsStencilFormat;
+        } fMock;
     };
     GrTextureType fTextureType = GrTextureType::kNone;
 };
@@ -228,41 +177,26 @@ public:
     // Creates an invalid backend texture.
     GrBackendTexture();
 
-    // The GrGLTextureInfo must have a valid fFormat.
-    GrBackendTexture(int width,
-                     int height,
-                     GrMipmapped,
-                     const GrGLTextureInfo& glInfo);
-
-#ifdef SK_VULKAN
-    GrBackendTexture(int width,
-                     int height,
-                     const GrVkImageInfo& vkInfo);
-#endif
-
 #ifdef SK_METAL
     GrBackendTexture(int width,
                      int height,
-                     GrMipmapped,
-                     const GrMtlTextureInfo& mtlInfo);
+                     skgpu::Mipmapped,
+                     const GrMtlTextureInfo& mtlInfo,
+                     std::string_view label = {});
 #endif
 
 #ifdef SK_DIRECT3D
     GrBackendTexture(int width,
                      int height,
-                     const GrD3DTextureResourceInfo& d3dInfo);
-#endif
-
-#ifdef SK_DAWN
-    GrBackendTexture(int width,
-                     int height,
-                     const GrDawnTextureInfo& dawnInfo);
+                     const GrD3DTextureResourceInfo& d3dInfo,
+                     std::string_view label = {});
 #endif
 
     GrBackendTexture(int width,
                      int height,
-                     GrMipmapped,
-                     const GrMockTextureInfo& mockInfo);
+                     skgpu::Mipmapped,
+                     const GrMockTextureInfo& mockInfo,
+                     std::string_view label = {});
 
     GrBackendTexture(const GrBackendTexture& that);
 
@@ -273,33 +207,13 @@ public:
     SkISize dimensions() const { return {fWidth, fHeight}; }
     int width() const { return fWidth; }
     int height() const { return fHeight; }
-    bool hasMipmaps() const { return fMipmapped == GrMipmapped::kYes; }
+    std::string_view getLabel() const { return fLabel; }
+    skgpu::Mipmapped mipmapped() const { return fMipmapped; }
+    bool hasMipmaps() const { return fMipmapped == skgpu::Mipmapped::kYes; }
     /** deprecated alias of hasMipmaps(). */
     bool hasMipMaps() const { return this->hasMipmaps(); }
     GrBackendApi backend() const {return fBackend; }
-
-    // If the backend API is GL, copies a snapshot of the GrGLTextureInfo struct into the passed in
-    // pointer and returns true. Otherwise returns false if the backend API is not GL.
-    bool getGLTextureInfo(GrGLTextureInfo*) const;
-
-    // Call this to indicate that the texture parameters have been modified in the GL context
-    // externally to GrContext.
-    void glTextureParametersModified();
-
-#ifdef SK_DAWN
-    // If the backend API is Dawn, copies a snapshot of the GrDawnTextureInfo struct into the passed
-    // in pointer and returns true. Otherwise returns false if the backend API is not Dawn.
-    bool getDawnTextureInfo(GrDawnTextureInfo*) const;
-#endif
-
-    // If the backend API is Vulkan, copies a snapshot of the GrVkImageInfo struct into the passed
-    // in pointer and returns true. This snapshot will set the fImageLayout to the current layout
-    // state. Otherwise returns false if the backend API is not Vulkan.
-    bool getVkImageInfo(GrVkImageInfo*) const;
-
-    // Anytime the client changes the VkImageLayout of the VkImage captured by this
-    // GrBackendTexture, they must call this function to notify Skia of the changed layout.
-    void setVkImageLayout(VkImageLayout);
+    GrTextureType textureType() const { return fTextureType; }
 
 #ifdef SK_METAL
     // If the backend API is Metal, copies a snapshot of the GrMtlTextureInfo struct into the passed
@@ -330,7 +244,7 @@ public:
     // that can be set from this function are:
     //
     // Vulkan: VkImageLayout and QueueFamilyIndex
-    void setMutableState(const GrBackendSurfaceMutableState&);
+    void setMutableState(const skgpu::MutableTextureState&);
 
     // Returns true if we are working with protected content.
     bool isProtected() const;
@@ -341,32 +255,41 @@ public:
     // Returns true if both textures are valid and refer to the same API texture.
     bool isSameTexture(const GrBackendTexture&);
 
-#if GR_TEST_UTILS
-    static bool TestingOnly_Equals(const GrBackendTexture& , const GrBackendTexture&);
+#if defined(GR_TEST_UTILS)
+    static bool TestingOnly_Equals(const GrBackendTexture&, const GrBackendTexture&);
 #endif
 
 private:
+    // Size determined by looking at the GrBackendTextureData subclasses, then guessing-and-checking.
+    // Compiler will complain if this is too small - in that case, just increase the number.
+    inline constexpr static size_t kMaxSubclassSize = 160;
+    using AnyTextureData = SkAnySubclass<GrBackendTextureData, kMaxSubclassSize>;
+
+    friend class GrBackendSurfacePriv;
+    friend class GrBackendTextureData;
+
+    // Used by internal factories. Should not be used externally. Use factories like
+    // GrBackendTextures::MakeGL instead.
+    template <typename TextureData>
+    GrBackendTexture(int width,
+                     int height,
+                     std::string_view label,
+                     skgpu::Mipmapped mipped,
+                     GrBackendApi backend,
+                     GrTextureType texture,
+                     const TextureData& textureData)
+            : fIsValid(true)
+            , fWidth(width)
+            , fHeight(height)
+            , fLabel(label)
+            , fMipmapped(mipped)
+            , fBackend(backend)
+            , fTextureType(texture) {
+        fTextureData.emplace<TextureData>(textureData);
+    }
+
     friend class GrVkGpu;  // for getMutableState
-    sk_sp<GrBackendSurfaceMutableStateImpl> getMutableState() const;
-
-#ifdef SK_GL
-    friend class GrGLTexture;
-    friend class GrGLGpu;    // for getGLTextureParams
-    GrBackendTexture(int width,
-                     int height,
-                     GrMipmapped,
-                     const GrGLTextureInfo,
-                     sk_sp<GrGLTextureParameters>);
-    sk_sp<GrGLTextureParameters> getGLTextureParams() const;
-#endif
-
-#ifdef SK_VULKAN
-    friend class GrVkTexture;
-    GrBackendTexture(int width,
-                     int height,
-                     const GrVkImageInfo& vkInfo,
-                     sk_sp<GrBackendSurfaceMutableStateImpl> mutableState);
-#endif
+    sk_sp<skgpu::MutableTextureState> getMutableState() const;
 
 #ifdef SK_DIRECT3D
     friend class GrD3DTexture;
@@ -374,7 +297,8 @@ private:
     GrBackendTexture(int width,
                      int height,
                      const GrD3DTextureResourceInfo& vkInfo,
-                     sk_sp<GrD3DResourceState> state);
+                     sk_sp<GrD3DResourceState> state,
+                     std::string_view label = {});
     sk_sp<GrD3DResourceState> getGrD3DResourceState() const;
 #endif
 
@@ -384,14 +308,13 @@ private:
     bool fIsValid;
     int fWidth;         //<! width in pixels
     int fHeight;        //<! height in pixels
-    GrMipmapped fMipmapped;
+    const std::string fLabel;
+    skgpu::Mipmapped fMipmapped;
     GrBackendApi fBackend;
+    GrTextureType fTextureType;
+    AnyTextureData fTextureData;
 
     union {
-#ifdef SK_GL
-        GrGLBackendTextureInfo fGLInfo;
-#endif
-        GrVkBackendSurfaceInfo fVkInfo;
         GrMockTextureInfo fMockInfo;
 #ifdef SK_DIRECT3D
         GrD3DBackendSurfaceInfo fD3DInfo;
@@ -400,11 +323,6 @@ private:
 #ifdef SK_METAL
     GrMtlTextureInfo fMtlInfo;
 #endif
-#ifdef SK_DAWN
-    GrDawnTextureInfo fDawnInfo;
-#endif
-
-    sk_sp<GrBackendSurfaceMutableStateImpl> fMutableState;
 };
 
 class SK_API GrBackendRenderTarget {
@@ -412,36 +330,9 @@ public:
     // Creates an invalid backend texture.
     GrBackendRenderTarget();
 
-    // The GrGLTextureInfo must have a valid fFormat.
-    GrBackendRenderTarget(int width,
-                          int height,
-                          int sampleCnt,
-                          int stencilBits,
-                          const GrGLFramebufferInfo& glInfo);
-
-#ifdef SK_DAWN
-    GrBackendRenderTarget(int width,
-                          int height,
-                          int sampleCnt,
-                          int stencilBits,
-                          const GrDawnRenderTargetInfo& dawnInfo);
-#endif
-
-#ifdef SK_VULKAN
-    /** Deprecated. Sample count is now part of GrVkImageInfo. */
-    GrBackendRenderTarget(int width, int height, int sampleCnt, const GrVkImageInfo& vkInfo);
-
-    GrBackendRenderTarget(int width, int height, const GrVkImageInfo& vkInfo);
-#endif
-
 #ifdef SK_METAL
     GrBackendRenderTarget(int width,
                           int height,
-                          const GrMtlTextureInfo& mtlInfo);
-    /** Deprecated. Sample count is ignored and is instead retrieved from the MtlTexture. */
-    GrBackendRenderTarget(int width,
-                          int height,
-                          int sampleCnt,
                           const GrMtlTextureInfo& mtlInfo);
 #endif
 
@@ -469,25 +360,6 @@ public:
     int stencilBits() const { return fStencilBits; }
     GrBackendApi backend() const {return fBackend; }
     bool isFramebufferOnly() const { return fFramebufferOnly; }
-
-    // If the backend API is GL, copies a snapshot of the GrGLFramebufferInfo struct into the passed
-    // in pointer and returns true. Otherwise returns false if the backend API is not GL.
-    bool getGLFramebufferInfo(GrGLFramebufferInfo*) const;
-
-#ifdef SK_DAWN
-    // If the backend API is Dawn, copies a snapshot of the GrDawnRenderTargetInfo struct into the
-    // passed-in pointer and returns true. Otherwise returns false if the backend API is not Dawn.
-    bool getDawnRenderTargetInfo(GrDawnRenderTargetInfo*) const;
-#endif
-
-    // If the backend API is Vulkan, copies a snapshot of the GrVkImageInfo struct into the passed
-    // in pointer and returns true. This snapshot will set the fImageLayout to the current layout
-    // state. Otherwise returns false if the backend API is not Vulkan.
-    bool getVkImageInfo(GrVkImageInfo*) const;
-
-    // Anytime the client changes the VkImageLayout of the VkImage captured by this
-    // GrBackendRenderTarget, they must call this function to notify Skia of the changed layout.
-    void setVkImageLayout(VkImageLayout);
 
 #ifdef SK_METAL
     // If the backend API is Metal, copies a snapshot of the GrMtlTextureInfo struct into the passed
@@ -517,7 +389,7 @@ public:
     // that can be set from this function are:
     //
     // Vulkan: VkImageLayout and QueueFamilyIndex
-    void setMutableState(const GrBackendSurfaceMutableState&);
+    void setMutableState(const skgpu::MutableTextureState&);
 
     // Returns true if we are working with protected content.
     bool isProtected() const;
@@ -525,22 +397,42 @@ public:
     // Returns true if the backend texture has been initialized.
     bool isValid() const { return fIsValid; }
 
-
-#if GR_TEST_UTILS
+#if defined(GR_TEST_UTILS)
     static bool TestingOnly_Equals(const GrBackendRenderTarget&, const GrBackendRenderTarget&);
 #endif
 
 private:
-    friend class GrVkGpu; // for getMutableState
-    sk_sp<GrBackendSurfaceMutableStateImpl> getMutableState() const;
+    // Size determined by looking at the GrBackendRenderTargetData subclasses, then
+    // guessing-and-checking. Compiler will complain if this is too small - in that case, just
+    // increase the number.
+    inline constexpr static size_t kMaxSubclassSize = 160;
+    using AnyRenderTargetData = SkAnySubclass<GrBackendRenderTargetData, kMaxSubclassSize>;
 
-#ifdef SK_VULKAN
-    friend class GrVkRenderTarget;
+    friend class GrBackendSurfacePriv;
+    friend class GrBackendRenderTargetData;
+
+    // Used by internal factories. Should not be used externally. Use factories like
+    // GrBackendRenderTargets::MakeGL instead.
+    template <typename RenderTargetData>
     GrBackendRenderTarget(int width,
                           int height,
-                          const GrVkImageInfo& vkInfo,
-                          sk_sp<GrBackendSurfaceMutableStateImpl> mutableState);
-#endif
+                          int sampleCnt,
+                          int stencilBits,
+                          GrBackendApi backend,
+                          bool framebufferOnly,
+                          const RenderTargetData& rtData)
+            : fIsValid(true)
+            , fFramebufferOnly(framebufferOnly)
+            , fWidth(width)
+            , fHeight(height)
+            , fSampleCnt(sampleCnt)
+            , fStencilBits(stencilBits)
+            , fBackend(backend) {
+        fRTData.emplace<RenderTargetData>(rtData);
+    }
+
+    friend class GrVkGpu; // for getMutableState
+    sk_sp<skgpu::MutableTextureState> getMutableState() const;
 
 #ifdef SK_DIRECT3D
     friend class GrD3DGpu;
@@ -564,12 +456,9 @@ private:
     int fStencilBits;
 
     GrBackendApi fBackend;
+    AnyRenderTargetData fRTData;
 
     union {
-#ifdef SK_GL
-        GrGLFramebufferInfo fGLInfo;
-#endif
-        GrVkBackendSurfaceInfo fVkInfo;
         GrMockRenderTargetInfo fMockInfo;
 #ifdef SK_DIRECT3D
         GrD3DBackendSurfaceInfo fD3DInfo;
@@ -578,13 +467,6 @@ private:
 #ifdef SK_METAL
     GrMtlTextureInfo fMtlInfo;
 #endif
-#ifdef SK_DAWN
-    GrDawnRenderTargetInfo  fDawnInfo;
-#endif
-    sk_sp<GrBackendSurfaceMutableStateImpl> fMutableState;
 };
 
 #endif
-
-#endif
-

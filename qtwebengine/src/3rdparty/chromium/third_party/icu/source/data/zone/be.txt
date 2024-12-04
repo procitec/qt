@@ -1,7 +1,7 @@
 ﻿// © 2016 and later: Unicode, Inc. and others.
-// License & terms of use: http://www.unicode.org/copyright.html#License
+// License & terms of use: http://www.unicode.org/copyright.html
+// Generated using tools/cldr/cldr-to-icu/build-icu-data.xml
 be{
-    Version{"37"}
     zoneStrings{
         "Africa:Abidjan"{
             ec{"Абіджан"}
@@ -257,6 +257,9 @@ be{
         }
         "America:Chihuahua"{
             ec{"Чыўаўа"}
+        }
+        "America:Ciudad_Juarez"{
+            ec{"Сьюдад-Хуарэс"}
         }
         "America:Coral_Harbour"{
             ec{"Атыкокан"}
@@ -1223,6 +1226,9 @@ be{
         "Pacific:Johnston"{
             ec{"Джонстан"}
         }
+        "Pacific:Kanton"{
+            ec{"Кантон"}
+        }
         "Pacific:Kiritimati"{
             ec{"Кірыцімаці"}
         }
@@ -1882,6 +1888,9 @@ be{
             ld{"Екацярынбургскі летні час"}
             lg{"Екацярынбургскі час"}
             ls{"Екацярынбургскі стандартны час"}
+        }
+        "meta:Yukon"{
+            ls{"Час Юкана"}
         }
         fallbackFormat{"{1} ({0})"}
         gmtFormat{"GMT{0}"}

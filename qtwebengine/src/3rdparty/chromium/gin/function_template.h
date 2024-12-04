@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,16 +6,22 @@
 #define GIN_FUNCTION_TEMPLATE_H_
 
 #include <stddef.h>
+#include <type_traits>
 #include <utility>
 
-#include "base/callback.h"
 #include "base/check.h"
-#include "base/macros.h"
+#include "base/functional/callback.h"
+#include "base/memory/raw_ptr.h"
+#include "base/observer_list.h"
 #include "base/strings/strcat.h"
 #include "gin/arguments.h"
 #include "gin/converter.h"
 #include "gin/gin_export.h"
-#include "v8/include/v8.h"
+#include "gin/per_isolate_data.h"
+#include "v8/include/v8-external.h"
+#include "v8/include/v8-forward.h"
+#include "v8/include/v8-persistent-handle.h"
+#include "v8/include/v8-template.h"
 
 namespace gin {
 
@@ -39,14 +45,25 @@ struct CallbackParamTraits<const T*> {
   typedef T* LocalType;
 };
 
-// CallbackHolder and CallbackHolderBase are used to pass a base::Callback from
-// CreateFunctionTemplate through v8 (via v8::FunctionTemplate) to
-// DispatchToCallback, where it is invoked.
+// CallbackHolder and CallbackHolderBase are used to pass a
+// base::RepeatingCallback from CreateFunctionTemplate through v8 (via
+// v8::FunctionTemplate) to DispatchToCallback, where it is invoked.
+
+// CallbackHolder will clean up the callback in two different scenarios:
+// - If the garbage collector finds that it's garbage and collects it. (But note
+//   that even _if_ we become garbage, we might never get collected!)
+// - If the isolate gets disposed.
+//
+// TODO(crbug.com/1285119): When gin::Wrappable gets migrated over to using
+//   cppgc, this class should also be considered for migration.
 
 // This simple base class is used so that we can share a single object template
 // among every CallbackHolder instance.
 class GIN_EXPORT CallbackHolderBase {
  public:
+  CallbackHolderBase(const CallbackHolderBase&) = delete;
+  CallbackHolderBase& operator=(const CallbackHolderBase&) = delete;
+
   v8::Local<v8::External> GetHandle(v8::Isolate* isolate);
 
  protected:
@@ -54,14 +71,26 @@ class GIN_EXPORT CallbackHolderBase {
   virtual ~CallbackHolderBase();
 
  private:
+  class DisposeObserver : gin::PerIsolateData::DisposeObserver {
+   public:
+    DisposeObserver(gin::PerIsolateData* per_isolate_data,
+                    CallbackHolderBase* holder);
+    ~DisposeObserver() override;
+    void OnBeforeDispose(v8::Isolate* isolate) override;
+    void OnDisposed() override;
+
+   private:
+    const raw_ref<gin::PerIsolateData> per_isolate_data_;
+    const raw_ref<CallbackHolderBase> holder_;
+  };
+
   static void FirstWeakCallback(
       const v8::WeakCallbackInfo<CallbackHolderBase>& data);
   static void SecondWeakCallback(
       const v8::WeakCallbackInfo<CallbackHolderBase>& data);
 
   v8::Global<v8::External> v8_ref_;
-
-  DISALLOW_COPY_AND_ASSIGN(CallbackHolderBase);
+  DisposeObserver dispose_observer_;
 };
 
 template<typename Sig>
@@ -73,14 +102,14 @@ class CallbackHolder : public CallbackHolderBase {
       : CallbackHolderBase(isolate),
         callback(std::move(callback)),
         invoker_options(std::move(invoker_options)) {}
+  CallbackHolder(const CallbackHolder&) = delete;
+  CallbackHolder& operator=(const CallbackHolder&) = delete;
 
   base::RepeatingCallback<Sig> callback;
   InvokerOptions invoker_options;
 
  private:
-  ~CallbackHolder() override {}
-
-  DISALLOW_COPY_AND_ASSIGN(CallbackHolder);
+  ~CallbackHolder() override = default;
 };
 
 template <typename T>
@@ -128,7 +157,7 @@ GIN_EXPORT void ThrowConversionError(Arguments* args,
 
 // Class template for extracting and storing single argument for callback
 // at position |index|.
-template <size_t index, typename ArgType>
+template <size_t index, typename ArgType, typename = void>
 struct ArgumentHolder {
   using ArgLocalType = typename CallbackParamTraits<ArgType>::LocalType;
 
@@ -139,6 +168,32 @@ struct ArgumentHolder {
       : ok(GetNextArgument(args, invoker_options, index == 0, &value)) {
     if (!ok)
       ThrowConversionError(args, invoker_options, index);
+  }
+};
+
+// This is required for types such as v8::LocalVector<T>, which don't have
+// a default constructor. To create an element of such a type, the isolate
+// has to be provided.
+template <size_t index, typename ArgType>
+struct ArgumentHolder<
+    index,
+    ArgType,
+    std::enable_if_t<!std::is_default_constructible_v<
+                         typename CallbackParamTraits<ArgType>::LocalType> &&
+                     std::is_constructible_v<
+                         typename CallbackParamTraits<ArgType>::LocalType,
+                         v8::Isolate*>>> {
+  using ArgLocalType = typename CallbackParamTraits<ArgType>::LocalType;
+
+  ArgLocalType value;
+  bool ok;
+
+  ArgumentHolder(Arguments* args, const InvokerOptions& invoker_options)
+      : value(args->isolate()),
+        ok(GetNextArgument(args, invoker_options, index == 0, &value)) {
+    if (!ok) {
+      ThrowConversionError(args, invoker_options, index);
+    }
   }
 };
 
@@ -184,11 +239,11 @@ class Invoker<std::index_sequence<indices...>, ArgTypes...>
     return arg1 && And(args...);
   }
 
-  Arguments* args_;
+  raw_ptr<Arguments> args_;
 };
 
 // DispatchToCallback converts all the JavaScript arguments to C++ types and
-// invokes the base::Callback.
+// invokes the base::RepeatingCallback.
 template <typename Sig>
 struct Dispatcher {};
 
@@ -226,17 +281,24 @@ struct Dispatcher<ReturnType(ArgTypes...)> {
 }  // namespace internal
 
 // CreateFunctionTemplate creates a v8::FunctionTemplate that will create
-// JavaScript functions that execute a provided C++ function or base::Callback.
-// JavaScript arguments are automatically converted via gin::Converter, as is
-// the return value of the C++ function, if any. |invoker_options| contains
-// additional parameters. If it contains a holder_type, it will be used to
-// provide a useful conversion error if the holder is the first argument. If not
-// provided, a generic invocation error will be used.
+// JavaScript functions that execute a provided C++ function or
+// base::RepeatingCallback. JavaScript arguments are automatically converted via
+// gin::Converter, as is the return value of the C++ function, if any.
+// |invoker_options| contains additional parameters. If it contains a
+// holder_type, it will be used to provide a useful conversion error if the
+// holder is the first argument. If not provided, a generic invocation error
+// will be used.
 //
 // NOTE: V8 caches FunctionTemplates for a lifetime of a web page for its own
 // internal reasons, thus it is generally a good idea to cache the template
 // returned by this function.  Otherwise, repeated method invocations from JS
 // will create substantial memory leaks. See http://crbug.com/463487.
+//
+// The callback will be destroyed if either the function template gets garbage
+// collected or _after_ the isolate is disposed. Garbage collection can never be
+// relied upon. As such, any destructors for objects bound to the callback must
+// not depend on the isolate being alive at the point they are called. The order
+// in which callbacks are destroyed is not guaranteed.
 template <typename Sig>
 v8::Local<v8::FunctionTemplate> CreateFunctionTemplate(
     v8::Isolate* isolate,
@@ -248,9 +310,8 @@ v8::Local<v8::FunctionTemplate> CreateFunctionTemplate(
 
   v8::Local<v8::FunctionTemplate> tmpl = v8::FunctionTemplate::New(
       isolate, &internal::Dispatcher<Sig>::DispatchToCallback,
-      ConvertToV8<v8::Local<v8::External>>(isolate,
-                                           holder->GetHandle(isolate)));
-  tmpl->RemovePrototype();
+      ConvertToV8<v8::Local<v8::External>>(isolate, holder->GetHandle(isolate)),
+      v8::Local<v8::Signature>(), 0, v8::ConstructorBehavior::kThrow);
   return tmpl;
 }
 

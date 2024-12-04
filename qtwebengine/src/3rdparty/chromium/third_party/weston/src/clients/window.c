@@ -42,25 +42,6 @@
 #include <sys/timerfd.h>
 #include <stdbool.h>
 
-#ifdef HAVE_CAIRO_EGL
-#include <wayland-egl.h>
-
-#ifdef USE_CAIRO_GLESV2
-#include <GLES2/gl2.h>
-#include <GLES2/gl2ext.h>
-#else
-#include <GL/gl.h>
-#endif
-#include <EGL/egl.h>
-#include <EGL/eglext.h>
-
-#include <cairo-gl.h>
-#elif !defined(ENABLE_EGL) /* platform.h defines these if EGL is enabled */
-typedef void *EGLDisplay;
-typedef void *EGLConfig;
-typedef void *EGLContext;
-#define EGL_NO_DISPLAY ((EGLDisplay)0)
-#endif /* no HAVE_CAIRO_EGL */
 
 #include <xkbcommon/xkbcommon.h>
 #ifdef HAVE_XKBCOMMON_COMPOSE
@@ -78,10 +59,13 @@ typedef void *EGLContext;
 #include "text-cursor-position-client-protocol.h"
 #include "pointer-constraints-unstable-v1-client-protocol.h"
 #include "relative-pointer-unstable-v1-client-protocol.h"
+#include "tablet-unstable-v2-client-protocol.h"
 #include "shared/os-compatibility.h"
 #include "shared/string-helpers.h"
+#include "libweston/matrix.h"
 
 #include "window.h"
+#include "viewporter-client-protocol.h"
 
 #define ZWP_RELATIVE_POINTER_MANAGER_V1_VERSION 1
 #define ZWP_POINTER_CONSTRAINTS_V1_VERSION 1
@@ -106,12 +90,9 @@ struct display {
 	struct wl_data_device_manager *data_device_manager;
 	struct text_cursor_position *text_cursor_position;
 	struct xdg_wm_base *xdg_shell;
+	struct zwp_tablet_manager_v2 *tablet_manager;
 	struct zwp_relative_pointer_manager_v1 *relative_pointer_manager;
 	struct zwp_pointer_constraints_v1 *pointer_constraints;
-	EGLDisplay dpy;
-	EGLConfig argb_config;
-	EGLContext argb_ctx;
-	cairo_device_t *argb_device;
 	uint32_t serial;
 
 	int display_fd;
@@ -145,8 +126,41 @@ struct display {
 	cairo_surface_t *dummy_surface;
 	void *dummy_surface_data;
 
-	int has_rgb565;
 	int data_device_manager_version;
+	struct wp_viewporter *viewporter;
+};
+
+struct tablet {
+	struct zwp_tablet_v2 *tablet;
+	char *name;
+	int32_t vid;
+	int32_t pid;
+
+	void *user_data;
+
+	struct wl_list link;
+};
+
+struct tablet_tool {
+	struct zwp_tablet_tool_v2 *tool;
+	struct input *input;
+	void *user_data;
+	struct wl_list link;
+	struct tablet *current_tablet;
+	struct window *focus;
+	struct widget *focus_widget;
+	uint32_t enter_serial;
+	uint32_t cursor_serial;
+	int current_cursor;
+	struct wl_surface *cursor_surface;
+	uint32_t cursor_anim_start;
+	struct wl_callback *cursor_frame_cb;
+
+	enum zwp_tablet_tool_v2_type type;
+	uint64_t serial;
+	uint64_t hwid;
+
+	double sx, sy;
 };
 
 struct window_output {
@@ -176,18 +190,6 @@ struct toysurface {
 	void (*swap)(struct toysurface *base,
 		     enum wl_output_transform buffer_transform, int32_t buffer_scale,
 		     struct rectangle *server_allocation);
-
-	/*
-	 * Make the toysurface current with the given EGL context.
-	 * Returns 0 on success, and negative on failure.
-	 */
-	int (*acquire)(struct toysurface *base, EGLContext ctx);
-
-	/*
-	 * Release the toysurface from the EGL context, returning control
-	 * to Cairo.
-	 */
-	void (*release)(struct toysurface *base);
 
 	/*
 	 * Destroy the toysurface, including the Cairo surface, any
@@ -222,12 +224,14 @@ struct surface {
 	cairo_surface_t *cairo_surface;
 
 	struct wl_list link;
+	struct wp_viewport *viewport;
 };
 
 struct window {
 	struct display *display;
 	struct wl_list window_output_list;
 	char *title;
+	char *appid;
 	struct rectangle saved_allocation;
 	struct rectangle min_allocation;
 	struct rectangle pending_allocation;
@@ -237,6 +241,7 @@ struct window {
 	int redraw_needed;
 	int redraw_task_scheduled;
 	struct task redraw_task;
+	struct task close_task;
 	int resize_needed;
 	int custom;
 	int focused;
@@ -245,8 +250,6 @@ struct window {
 
 	int fullscreen;
 	int maximized;
-
-	enum preferred_format preferred_format;
 
 	window_key_handler_t key_handler;
 	window_keyboard_focus_handler_t keyboard_focus_handler;
@@ -311,15 +314,31 @@ struct widget {
 	widget_axis_source_handler_t axis_source_handler;
 	widget_axis_stop_handler_t axis_stop_handler;
 	widget_axis_discrete_handler_t axis_discrete_handler;
+	widget_tablet_tool_motion_handler_t tablet_tool_motion_handler;
+	widget_tablet_tool_up_handler_t tablet_tool_up_handler;
+	widget_tablet_tool_down_handler_t tablet_tool_down_handler;
+	widget_tablet_tool_pressure_handler_t tablet_tool_pressure_handler;
+	widget_tablet_tool_distance_handler_t tablet_tool_distance_handler;
+	widget_tablet_tool_tilt_handler_t tablet_tool_tilt_handler;
+	widget_tablet_tool_rotation_handler_t tablet_tool_rotation_handler;
+	widget_tablet_tool_slider_handler_t tablet_tool_slider_handler;
+	widget_tablet_tool_wheel_handler_t tablet_tool_wheel_handler;
+	widget_tablet_tool_proximity_in_handler_t tablet_tool_prox_in_handler;
+	widget_tablet_tool_proximity_out_handler_t tablet_tool_prox_out_handler;
+	widget_tablet_tool_button_handler_t tablet_tool_button_handler;
+	widget_tablet_tool_frame_handler_t tablet_tool_frame_handler;
 	void *user_data;
 	int opaque;
 	int tooltip_count;
 	int default_cursor;
+	int default_tablet_cursor;
 	/* If this is set to false then no cairo surface will be
 	 * created before redrawing the surface. This is useful if the
 	 * redraw handler is going to do completely custom rendering
 	 * such as using EGL directly */
 	int use_cairo;
+	int viewport_dest_width;
+	int viewport_dest_height;
 };
 
 struct touch_point {
@@ -349,6 +368,8 @@ struct input {
 	struct toytimer cursor_timer;
 	bool cursor_timer_running;
 	struct wl_surface *pointer_surface;
+	bool pointer_surface_has_role;
+	int hotspot_x, hotspot_y;
 	uint32_t modifiers;
 	uint32_t pointer_enter_serial;
 	uint32_t cursor_serial;
@@ -390,6 +411,10 @@ struct input {
 	uint32_t repeat_key;
 	uint32_t repeat_time;
 	int seat_version;
+
+	struct zwp_tablet_seat_v2 *tablet_seat;
+	struct wl_list tablet_list;
+	struct wl_list tablet_tool_list;
 };
 
 struct output {
@@ -540,167 +565,6 @@ buffer_to_surface_size (enum wl_output_transform buffer_transform, int32_t buffe
 	*height /= buffer_scale;
 }
 
-#ifdef HAVE_CAIRO_EGL
-
-struct egl_window_surface {
-	struct toysurface base;
-	cairo_surface_t *cairo_surface;
-	struct display *display;
-	struct wl_surface *surface;
-	struct wl_egl_window *egl_window;
-	EGLSurface egl_surface;
-};
-
-static struct egl_window_surface *
-to_egl_window_surface(struct toysurface *base)
-{
-	return container_of(base, struct egl_window_surface, base);
-}
-
-static cairo_surface_t *
-egl_window_surface_prepare(struct toysurface *base, int dx, int dy,
-			   int32_t width, int32_t height, uint32_t flags,
-			   enum wl_output_transform buffer_transform, int32_t buffer_scale)
-{
-	struct egl_window_surface *surface = to_egl_window_surface(base);
-
-	surface_to_buffer_size (buffer_transform, buffer_scale, &width, &height);
-
-	wl_egl_window_resize(surface->egl_window, width, height, dx, dy);
-	cairo_gl_surface_set_size(surface->cairo_surface, width, height);
-
-	return cairo_surface_reference(surface->cairo_surface);
-}
-
-static void
-egl_window_surface_swap(struct toysurface *base,
-			enum wl_output_transform buffer_transform, int32_t buffer_scale,
-			struct rectangle *server_allocation)
-{
-	struct egl_window_surface *surface = to_egl_window_surface(base);
-
-	cairo_gl_surface_swapbuffers(surface->cairo_surface);
-	wl_egl_window_get_attached_size(surface->egl_window,
-					&server_allocation->width,
-					&server_allocation->height);
-
-	buffer_to_surface_size (buffer_transform, buffer_scale,
-				&server_allocation->width,
-				&server_allocation->height);
-}
-
-static int
-egl_window_surface_acquire(struct toysurface *base, EGLContext ctx)
-{
-	struct egl_window_surface *surface = to_egl_window_surface(base);
-	cairo_device_t *device;
-
-	device = cairo_surface_get_device(surface->cairo_surface);
-	if (!device)
-		return -1;
-
-	if (!ctx) {
-		if (device == surface->display->argb_device)
-			ctx = surface->display->argb_ctx;
-		else
-			assert(0);
-	}
-
-	cairo_device_flush(device);
-	cairo_device_acquire(device);
-	if (!eglMakeCurrent(surface->display->dpy, surface->egl_surface,
-			    surface->egl_surface, ctx))
-		fprintf(stderr, "failed to make surface current\n");
-
-	return 0;
-}
-
-static void
-egl_window_surface_release(struct toysurface *base)
-{
-	struct egl_window_surface *surface = to_egl_window_surface(base);
-	cairo_device_t *device;
-
-	device = cairo_surface_get_device(surface->cairo_surface);
-	if (!device)
-		return;
-
-	if (!eglMakeCurrent(surface->display->dpy,
-			    EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT))
-		fprintf(stderr, "failed to make context current\n");
-
-	cairo_device_release(device);
-}
-
-static void
-egl_window_surface_destroy(struct toysurface *base)
-{
-	struct egl_window_surface *surface = to_egl_window_surface(base);
-	struct display *d = surface->display;
-
-	cairo_surface_destroy(surface->cairo_surface);
-	weston_platform_destroy_egl_surface(d->dpy, surface->egl_surface);
-	wl_egl_window_destroy(surface->egl_window);
-	surface->surface = NULL;
-
-	free(surface);
-}
-
-static struct toysurface *
-egl_window_surface_create(struct display *display,
-			  struct wl_surface *wl_surface,
-			  uint32_t flags,
-			  struct rectangle *rectangle)
-{
-	struct egl_window_surface *surface;
-
-	if (display->dpy == EGL_NO_DISPLAY)
-		return NULL;
-
-	surface = zalloc(sizeof *surface);
-	if (!surface)
-		return NULL;
-
-	surface->base.prepare = egl_window_surface_prepare;
-	surface->base.swap = egl_window_surface_swap;
-	surface->base.acquire = egl_window_surface_acquire;
-	surface->base.release = egl_window_surface_release;
-	surface->base.destroy = egl_window_surface_destroy;
-
-	surface->display = display;
-	surface->surface = wl_surface;
-
-	surface->egl_window = wl_egl_window_create(surface->surface,
-						   rectangle->width,
-						   rectangle->height);
-
-	surface->egl_surface =
-		weston_platform_create_egl_surface(display->dpy,
-						   display->argb_config,
-						   surface->egl_window, NULL);
-
-	surface->cairo_surface =
-		cairo_gl_surface_create_for_egl(display->argb_device,
-						surface->egl_surface,
-						rectangle->width,
-						rectangle->height);
-
-	return &surface->base;
-}
-
-#else
-
-static struct toysurface *
-egl_window_surface_create(struct display *display,
-			  struct wl_surface *wl_surface,
-			  uint32_t flags,
-			  struct rectangle *rectangle)
-{
-	return NULL;
-}
-
-#endif
-
 struct shm_surface_data {
 	struct wl_buffer *buffer;
 	struct shm_pool *pool;
@@ -825,7 +689,6 @@ display_create_shm_surface_from_pool(struct display *display,
 	struct shm_surface_data *data;
 	uint32_t format;
 	cairo_surface_t *surface;
-	cairo_format_t cairo_format;
 	int stride, length, offset;
 	void *map;
 
@@ -833,12 +696,8 @@ display_create_shm_surface_from_pool(struct display *display,
 	if (data == NULL)
 		return NULL;
 
-	if (flags & SURFACE_HINT_RGB565 && display->has_rgb565)
-		cairo_format = CAIRO_FORMAT_RGB16_565;
-	else
-		cairo_format = CAIRO_FORMAT_ARGB32;
-
-	stride = cairo_format_stride_for_width (cairo_format, rectangle->width);
+	stride = cairo_format_stride_for_width (CAIRO_FORMAT_ARGB32,
+						rectangle->width);
 	length = stride * rectangle->height;
 	data->pool = NULL;
 	map = shm_pool_allocate(pool, length, &offset);
@@ -849,7 +708,7 @@ display_create_shm_surface_from_pool(struct display *display,
 	}
 
 	surface = cairo_image_surface_create_for_data (map,
-						       cairo_format,
+						       CAIRO_FORMAT_ARGB32,
 						       rectangle->width,
 						       rectangle->height,
 						       stride);
@@ -857,14 +716,10 @@ display_create_shm_surface_from_pool(struct display *display,
 	cairo_surface_set_user_data(surface, &shm_surface_data_key,
 				    data, shm_surface_data_destroy);
 
-	if (flags & SURFACE_HINT_RGB565 && display->has_rgb565)
-		format = WL_SHM_FORMAT_RGB565;
-	else {
-		if (flags & SURFACE_OPAQUE)
-			format = WL_SHM_FORMAT_XRGB8888;
-		else
-			format = WL_SHM_FORMAT_ARGB8888;
-	}
+	if (flags & SURFACE_OPAQUE)
+		format = WL_SHM_FORMAT_XRGB8888;
+	else
+		format = WL_SHM_FORMAT_ARGB8888;
 
 	data->buffer = wl_shm_pool_create_buffer(pool->pool, offset,
 						 rectangle->width,
@@ -897,8 +752,7 @@ display_create_shm_surface(struct display *display,
 		}
 	}
 
-	pool = shm_pool_create(display,
-			       data_length_for_shm_surface(rectangle));
+	pool = shm_pool_create(display, data_length_for_shm_surface(rectangle));
 	if (!pool)
 		return NULL;
 
@@ -1164,17 +1018,6 @@ shm_surface_swap(struct toysurface *base,
 	surface->current = NULL;
 }
 
-static int
-shm_surface_acquire(struct toysurface *base, EGLContext ctx)
-{
-	return -1;
-}
-
-static void
-shm_surface_release(struct toysurface *base)
-{
-}
-
 static void
 shm_surface_destroy(struct toysurface *base)
 {
@@ -1197,8 +1040,6 @@ shm_surface_create(struct display *display, struct wl_surface *wl_surface,
 	surface = xzalloc(sizeof *surface);
 	surface->base.prepare = shm_surface_prepare;
 	surface->base.swap = shm_surface_swap;
-	surface->base.acquire = shm_surface_acquire;
-	surface->base.release = shm_surface_release;
 	surface->base.destroy = shm_surface_destroy;
 
 	surface->display = display;
@@ -1383,7 +1224,8 @@ create_cursors(struct display *display)
 static void
 destroy_cursors(struct display *display)
 {
-	wl_cursor_theme_destroy(display->cursor_theme);
+	if (display->cursor_theme)
+		wl_cursor_theme_destroy(display->cursor_theme);
 	free(display->cursors);
 }
 
@@ -1398,6 +1240,7 @@ display_get_pointer_image(struct display *display, int pointer)
 static void
 surface_flush(struct surface *surface)
 {
+	struct widget *widget = surface->widget;
 	if (!surface->cairo_surface)
 		return;
 
@@ -1415,6 +1258,12 @@ surface_flush(struct surface *surface)
 		surface->input_region = NULL;
 	}
 
+	if (surface->viewport) {
+		wp_viewport_set_destination(surface->viewport,
+					    widget->viewport_dest_width,
+					    widget->viewport_dest_height);
+	}
+
 	surface->toysurface->swap(surface->toysurface,
 				  surface->buffer_transform, surface->buffer_scale,
 				  &surface->server_allocation);
@@ -1429,13 +1278,23 @@ window_has_focus(struct window *window)
 	return window->focused;
 }
 
+
+static void
+close_task_run(struct task *task, uint32_t events)
+{
+	struct window *window = container_of(task, struct window, close_task);
+	window->close_handler(window->user_data);
+}
+
 static void
 window_close(struct window *window)
 {
-	if (window->close_handler)
-		window->close_handler(window->user_data);
-	else
+	if (window->close_handler && !window->close_task.run) {
+		window->close_task.run = close_task_run;
+		display_defer(window->display, &window->close_task);
+	} else {
 		display_exit(window->display);
+	}
 }
 
 struct display *
@@ -1449,15 +1308,6 @@ surface_create_surface(struct surface *surface, uint32_t flags)
 {
 	struct display *display = surface->window->display;
 	struct rectangle allocation = surface->allocation;
-
-	if (!surface->toysurface && display->dpy &&
-	    surface->buffer_type == WINDOW_BUFFER_TYPE_EGL_WINDOW) {
-		surface->toysurface =
-			egl_window_surface_create(display,
-						  surface->surface,
-						  flags,
-						  &allocation);
-	}
 
 	if (!surface->toysurface)
 		surface->toysurface = shm_surface_create(display,
@@ -1478,9 +1328,6 @@ window_create_main_surface(struct window *window)
 
 	if (window->resizing)
 		flags |= SURFACE_HINT_RESIZE;
-
-	if (window->preferred_format == WINDOW_PREFERRED_FORMAT_RGB565)
-		flags |= SURFACE_HINT_RGB565;
 
 	surface_create_surface(surface, flags);
 }
@@ -1568,8 +1415,18 @@ window_destroy(struct window *window)
 	wl_list_remove(&window->redraw_task.link);
 
 	wl_list_for_each(input, &display->input_list, link) {
-		if (input->touch_focus == window)
+		if (input->touch_focus == window) {
+			struct touch_point *tp, *tmp;
+
+			wl_list_for_each_safe(tp, tmp,
+					      &input->touch_point_list,
+					      link) {
+				wl_list_remove(&tp->link);
+				free(tp);
+			}
+
 			input->touch_focus = NULL;
+		}
 		if (input->pointer_focus == window)
 			input->pointer_focus = NULL;
 		if (input->keyboard_focus == window)
@@ -1603,6 +1460,7 @@ window_destroy(struct window *window)
 	wl_list_remove(&window->link);
 
 	free(window->title);
+	free(window->appid);
 	free(window);
 }
 
@@ -1610,6 +1468,8 @@ static struct widget *
 widget_find_widget(struct widget *widget, int32_t x, int32_t y)
 {
 	struct widget *child, *target;
+	int alloc_x, alloc_y, width, height;
+	double scale;
 
 	wl_list_for_each(child, &widget->child_list, link) {
 		target = widget_find_widget(child, x, y);
@@ -1617,10 +1477,24 @@ widget_find_widget(struct widget *widget, int32_t x, int32_t y)
 			return target;
 	}
 
-	if (widget->allocation.x <= x &&
-	    x < widget->allocation.x + widget->allocation.width &&
-	    widget->allocation.y <= y &&
-	    y < widget->allocation.y + widget->allocation.height) {
+	alloc_x = widget->allocation.x;
+	alloc_y = widget->allocation.y;
+	width = widget->allocation.width;
+	height = widget->allocation.height;
+
+	if (widget->viewport_dest_width != -1 &&
+	    widget->viewport_dest_height != -1) {
+		scale = widget->viewport_dest_width / (double) width;
+		alloc_x = alloc_x * scale;
+		width = widget->viewport_dest_width;
+
+		scale = widget->viewport_dest_height / (double) height;
+		alloc_y = alloc_y * scale;
+		height = widget->viewport_dest_height;
+	}
+
+	if (alloc_x <= x && x < alloc_x + width &&
+	    alloc_y <= y && y < alloc_y + height) {
 		return widget;
 	}
 
@@ -1657,7 +1531,10 @@ widget_create(struct window *window, struct surface *surface, void *data)
 	widget->tooltip = NULL;
 	widget->tooltip_count = 0;
 	widget->default_cursor = CURSOR_LEFT_PTR;
+	widget->default_tablet_cursor = CURSOR_LEFT_PTR;
 	widget->use_cairo = 1;
+	widget->viewport_dest_width = -1;
+	widget->viewport_dest_height = -1;
 
 	return widget;
 }
@@ -1712,6 +1589,12 @@ void
 widget_set_default_cursor(struct widget *widget, int cursor)
 {
 	widget->default_cursor = cursor;
+}
+
+void
+widget_set_default_tablet_cursor(struct widget *widget, int cursor)
+{
+	widget->default_tablet_cursor = cursor;
 }
 
 void
@@ -1770,78 +1653,16 @@ static void
 widget_cairo_update_transform(struct widget *widget, cairo_t *cr)
 {
 	struct surface *surface = widget->surface;
-	double angle;
+	struct weston_matrix matrix;
 	cairo_matrix_t m;
-	enum wl_output_transform transform;
-	int surface_width, surface_height;
-	int translate_x, translate_y;
-	int32_t scale;
 
-	surface_width = surface->allocation.width;
-	surface_height = surface->allocation.height;
-
-	transform = surface->buffer_transform;
-	scale = surface->buffer_scale;
-
-	switch (transform) {
-	case WL_OUTPUT_TRANSFORM_FLIPPED:
-	case WL_OUTPUT_TRANSFORM_FLIPPED_90:
-	case WL_OUTPUT_TRANSFORM_FLIPPED_180:
-	case WL_OUTPUT_TRANSFORM_FLIPPED_270:
-		cairo_matrix_init(&m, -1, 0, 0, 1, 0, 0);
-		break;
-	default:
-		cairo_matrix_init_identity(&m);
-		break;
-	}
-
-	switch (transform) {
-	case WL_OUTPUT_TRANSFORM_NORMAL:
-	default:
-		angle = 0;
-		translate_x = 0;
-		translate_y = 0;
-		break;
-	case WL_OUTPUT_TRANSFORM_FLIPPED:
-		angle = 0;
-		translate_x = surface_width;
-		translate_y = 0;
-		break;
-	case WL_OUTPUT_TRANSFORM_90:
-		angle = M_PI_2;
-		translate_x = surface_height;
-		translate_y = 0;
-		break;
-	case WL_OUTPUT_TRANSFORM_FLIPPED_90:
-		angle = M_PI_2;
-		translate_x = surface_height;
-		translate_y = surface_width;
-		break;
-	case WL_OUTPUT_TRANSFORM_180:
-		angle = M_PI;
-		translate_x = surface_width;
-		translate_y = surface_height;
-		break;
-	case WL_OUTPUT_TRANSFORM_FLIPPED_180:
-		angle = M_PI;
-		translate_x = 0;
-		translate_y = surface_height;
-		break;
-	case WL_OUTPUT_TRANSFORM_270:
-		angle = M_PI + M_PI_2;
-		translate_x = 0;
-		translate_y = surface_width;
-		break;
-	case WL_OUTPUT_TRANSFORM_FLIPPED_270:
-		angle = M_PI + M_PI_2;
-		translate_x = 0;
-		translate_y = 0;
-		break;
-	}
-
-	cairo_scale(cr, scale, scale);
-	cairo_translate(cr, translate_x, translate_y);
-	cairo_rotate(cr, angle);
+	weston_matrix_init_transform(&matrix, surface->buffer_transform,
+				     0, 0,
+				     surface->allocation.width,
+				     surface->allocation.height,
+				     surface->buffer_scale);
+	cairo_matrix_init(&m, matrix.d[0], matrix.d[4], matrix.d[1],
+			  matrix.d[5], matrix.d[12], matrix.d[13]);
 	cairo_transform(cr, &m);
 }
 
@@ -1997,6 +1818,62 @@ widget_set_axis_handlers(struct widget *widget,
 	widget->axis_discrete_handler = axis_discrete_handler;
 }
 
+void
+widget_set_tablet_tool_axis_handlers(struct widget *widget,
+				     widget_tablet_tool_motion_handler_t motion,
+				     widget_tablet_tool_pressure_handler_t pressure,
+				     widget_tablet_tool_distance_handler_t distance,
+				     widget_tablet_tool_tilt_handler_t tilt,
+				     widget_tablet_tool_rotation_handler_t rotation,
+				     widget_tablet_tool_slider_handler_t slider,
+				     widget_tablet_tool_wheel_handler_t wheel)
+{
+	widget->tablet_tool_motion_handler = motion;
+	widget->tablet_tool_pressure_handler = pressure;
+	widget->tablet_tool_distance_handler = distance;
+	widget->tablet_tool_tilt_handler = tilt;
+	widget->tablet_tool_rotation_handler = rotation;
+	widget->tablet_tool_slider_handler = slider;
+	widget->tablet_tool_wheel_handler = wheel;
+}
+
+void
+widget_set_tablet_tool_up_handler(struct widget *widget,
+				  widget_tablet_tool_up_handler_t handler)
+{
+	widget->tablet_tool_up_handler = handler;
+}
+
+void
+widget_set_tablet_tool_down_handler(struct widget *widget,
+				    widget_tablet_tool_down_handler_t handler)
+{
+	widget->tablet_tool_down_handler = handler;
+}
+
+void
+widget_set_tablet_tool_proximity_handlers(struct widget *widget,
+					  widget_tablet_tool_proximity_in_handler_t in_handler,
+					  widget_tablet_tool_proximity_out_handler_t out_handler)
+{
+	widget->tablet_tool_prox_in_handler = in_handler;
+	widget->tablet_tool_prox_out_handler = out_handler;
+}
+
+void
+widget_set_tablet_tool_button_handler(struct widget *widget,
+				      widget_tablet_tool_button_handler_t handler)
+{
+	widget->tablet_tool_button_handler = handler;
+}
+
+void
+widget_set_tablet_tool_frame_handler(struct widget *widget,
+				     widget_tablet_tool_frame_handler_t handler)
+{
+	widget->tablet_tool_frame_handler = handler;
+}
+
 static void
 window_schedule_redraw_task(struct window *window);
 
@@ -2013,6 +1890,39 @@ widget_set_use_cairo(struct widget *widget,
 		     int use_cairo)
 {
 	widget->use_cairo = use_cairo;
+}
+
+int
+widget_set_viewport_destination(struct widget *widget, int width, int height)
+{
+	struct window *window = widget->window;
+	struct display *display = window->display;
+	struct surface *surface = widget->surface;
+	if (!display->viewporter)
+		return -1;
+
+	if (width == -1 && height == -1) {
+		if (surface->viewport) {
+			wp_viewport_destroy(surface->viewport);
+			surface->viewport = NULL;
+		}
+
+		widget->viewport_dest_width = -1;
+		widget->viewport_dest_height = -1;
+		return 0;
+	}
+
+	if (!surface->viewport) {
+		surface->viewport = wp_viewporter_get_viewport(display->viewporter,
+				surface->surface);
+		if (!surface->viewport)
+			return -1;
+	}
+
+	widget->viewport_dest_width = width;
+	widget->viewport_dest_height = height;
+
+	return 0;
 }
 
 cairo_surface_t *
@@ -2156,9 +2066,9 @@ widget_set_tooltip(struct widget *parent, char *entry, float x, float y)
 	if (parent->tooltip_count > 1)
 		return 0;
 
-        tooltip = malloc(sizeof *tooltip);
-        if (!tooltip)
-                return -1;
+	tooltip = malloc(sizeof *tooltip);
+	if (!tooltip)
+		return -1;
 
 	parent->tooltip = tooltip;
 	tooltip->parent = parent;
@@ -2505,6 +2415,54 @@ frame_touch_up_handler(struct widget *widget,
 	frame_handle_status(frame, input, time, THEME_LOCATION_CLIENT_AREA);
 }
 
+static int
+frame_tablet_tool_motion_handler(struct widget *widget,
+				 struct tablet_tool *tool,
+				 float x, float y,
+				 void *data)
+{
+	struct window_frame *frame = data;
+	enum theme_location location;
+
+	location = frame_tablet_tool_motion(frame->frame, tool, x, y);
+	if (frame_status(frame->frame) & FRAME_STATUS_REPAINT)
+		widget_schedule_redraw(frame->widget);
+
+	frame_get_pointer_image_for_location(data, location);
+
+	return CURSOR_LEFT_PTR;
+}
+
+static void
+frame_tablet_tool_down_handler(struct widget *widget,
+			       struct tablet_tool *tool,
+			       void *data)
+{
+	struct window_frame *frame = data;
+	enum theme_location location;
+	uint32_t time = 0; /* FIXME: we should be doing this in the frame
+			      handler where we have the timestamp  */
+
+	/* Map a stylus touch to the left mouse button */
+	location = frame_pointer_button(frame->frame, tool, BTN_LEFT, 1);
+	frame_handle_status(frame, tool->input, time, location);
+}
+
+static void
+frame_tablet_tool_up_handler(struct widget *widget, struct tablet_tool *tool,
+			     void *data)
+{
+	struct window_frame *frame = data;
+	enum theme_location location;
+	uint32_t time = 0; /* FIXME: we should be doing this in the frame
+			      handler where we have the timestamp  */
+
+	/* Map the stylus leaving contact with the tablet as releasing the left
+	 * mouse button */
+	location = frame_pointer_button(frame->frame, tool, BTN_LEFT, 0);
+	frame_handle_status(frame, tool->input, time, location);
+}
+
 struct widget *
 window_frame_create(struct window *window, void *data)
 {
@@ -2520,6 +2478,10 @@ window_frame_create(struct window *window, void *data)
 	frame = xzalloc(sizeof *frame);
 	frame->frame = frame_create(window->display->theme, 0, 0,
 	                            buttons, window->title, NULL);
+	if (!frame->frame) {
+		free(frame);
+		return NULL;
+	}
 
 	frame->widget = window_add_widget(window, frame);
 	frame->child = widget_add_widget(frame->widget, data);
@@ -2532,6 +2494,12 @@ window_frame_create(struct window *window, void *data)
 	widget_set_button_handler(frame->widget, frame_button_handler);
 	widget_set_touch_down_handler(frame->widget, frame_touch_down_handler);
 	widget_set_touch_up_handler(frame->widget, frame_touch_up_handler);
+	widget_set_tablet_tool_axis_handlers(frame->widget,
+					     frame_tablet_tool_motion_handler,
+					     NULL, NULL, NULL,
+					     NULL, NULL, NULL);
+	widget_set_tablet_tool_down_handler(frame->widget, frame_tablet_tool_down_handler);
+	widget_set_tablet_tool_up_handler(frame->widget, frame_tablet_tool_up_handler);
 
 	window->frame = frame;
 
@@ -2712,6 +2680,16 @@ pointer_handle_enter(void *data, struct wl_pointer *pointer,
 	input->display->serial = serial;
 	input->pointer_enter_serial = serial;
 	input->pointer_focus = window;
+
+	/* Some compositors advertise wl_seat before wl_compositor. This
+	 * makes it potentially impossible to create the pointer surface
+	 * when we bind the seat, so we need to create our pointer surface
+	 * now instead.
+	 */
+	if (!input->pointer_surface)
+		input->pointer_surface = wl_compositor_create_surface(input->display->compositor);
+
+	input->pointer_surface_has_role = false;
 
 	input->sx = sx;
 	input->sy = sy;
@@ -2956,7 +2934,7 @@ keyboard_handle_keymap(void *data, struct wl_keyboard *keyboard,
 		return;
 	}
 
-	map_str = mmap(NULL, size, PROT_READ, MAP_SHARED, fd, 0);
+	map_str = mmap(NULL, size, PROT_READ, MAP_PRIVATE, fd, 0);
 	if (map_str == MAP_FAILED) {
 		close(fd);
 		return;
@@ -3236,6 +3214,11 @@ touch_handle_down(void *data, struct wl_touch *wl_touch,
 	float sx = wl_fixed_to_double(x_w);
 	float sy = wl_fixed_to_double(y_w);
 
+	if (!surface) {
+		/* down event for a window we've just destroyed */
+		return;
+	}
+
 	input->display->serial = serial;
 	input->touch_focus = wl_surface_get_user_data(surface);
 	if (!input->touch_focus) {
@@ -3374,12 +3357,26 @@ touch_handle_cancel(void *data, struct wl_touch *wl_touch)
 	}
 }
 
+static void
+touch_handle_shape(void *data, struct wl_touch *wl_touch, int32_t id,
+			wl_fixed_t major, wl_fixed_t minor)
+{
+}
+
+static void
+touch_handle_orientation(void *data, struct wl_touch *wl_touch, int32_t id,
+			wl_fixed_t orientation)
+{
+}
+
 static const struct wl_touch_listener touch_listener = {
 	touch_handle_down,
 	touch_handle_up,
 	touch_handle_motion,
 	touch_handle_frame,
 	touch_handle_cancel,
+	touch_handle_shape,
+	touch_handle_orientation,
 };
 
 static void
@@ -3579,6 +3576,11 @@ data_device_enter(void *data, struct wl_data_device *data_device,
 	float y = wl_fixed_to_double(y_w);
 	char **p;
 
+	if (!surface) {
+		/* enter event for a window we've just destroyed */
+		return;
+	}
+
 	window = wl_surface_get_user_data(surface);
 	input->drag_enter_serial = serial;
 	input->drag_focus = window,
@@ -3700,6 +3702,7 @@ input_set_pointer_image_index(struct input *input, int index)
 	struct wl_buffer *buffer;
 	struct wl_cursor *cursor;
 	struct wl_cursor_image *image;
+	int dx = 0, dy = 0;
 
 	if (!input->pointer)
 		return;
@@ -3718,13 +3721,24 @@ input_set_pointer_image_index(struct input *input, int index)
 	if (!buffer)
 		return;
 
-	wl_surface_attach(input->pointer_surface, buffer, 0, 0);
+	if (input->pointer_surface_has_role) {
+		dx = input->hotspot_x - image->hotspot_x;
+		dy = input->hotspot_y - image->hotspot_y;
+	}
+	wl_surface_attach(input->pointer_surface, buffer, dx, dy);
 	wl_surface_damage(input->pointer_surface, 0, 0,
 			  image->width, image->height);
 	wl_surface_commit(input->pointer_surface);
-	wl_pointer_set_cursor(input->pointer, input->pointer_enter_serial,
-			      input->pointer_surface,
-			      image->hotspot_x, image->hotspot_y);
+
+	if (!input->pointer_surface_has_role) {
+		wl_pointer_set_cursor(input->pointer,
+				      input->pointer_enter_serial,
+				      input->pointer_surface,
+				      image->hotspot_x, image->hotspot_y);
+		input->pointer_surface_has_role = true;
+	}
+	input->hotspot_x = image->hotspot_x;
+	input->hotspot_y = image->hotspot_y;
 }
 
 static const struct wl_callback_listener pointer_surface_listener;
@@ -3736,11 +3750,14 @@ input_set_pointer_special(struct input *input)
 		wl_pointer_set_cursor(input->pointer,
 				      input->pointer_enter_serial,
 				      NULL, 0, 0);
+		input->pointer_surface_has_role = false;
 		return true;
 	}
 
-	if (input->current_cursor == CURSOR_UNSET)
+	if (input->current_cursor == CURSOR_UNSET) {
+		input->pointer_surface_has_role = false;
 		return true;
+	}
 
 	return false;
 }
@@ -4324,9 +4341,24 @@ xdg_toplevel_handle_close(void *data, struct xdg_toplevel *xdg_surface)
 	window_close(window);
 }
 
+static void
+xdg_toplevel_handle_configure_bounds(void *data, struct xdg_toplevel *xdg_toplevel,
+				     int32_t width, int32_t height)
+{
+}
+
+
+static void
+xdg_toplevel_handle_wm_capabilities(void *data, struct xdg_toplevel *xdg_toplevel,
+				    struct wl_array *caps)
+{
+}
+
 static const struct xdg_toplevel_listener xdg_toplevel_listener = {
 	xdg_toplevel_handle_configure,
 	xdg_toplevel_handle_close,
+	xdg_toplevel_handle_configure_bounds,
+	xdg_toplevel_handle_wm_capabilities,
 };
 
 static void
@@ -4740,6 +4772,22 @@ window_get_title(struct window *window)
 }
 
 void
+window_set_appid(struct window *window, const char *appid)
+{
+	assert(!window->appid);
+	window->appid = strdup(appid);
+
+	if (window->xdg_toplevel)
+		xdg_toplevel_set_app_id(window->xdg_toplevel, window->appid);
+}
+
+const char *
+window_get_appid(struct window *window)
+{
+	return window->appid;
+}
+
+void
 window_set_text_cursor_position(struct window *window, int32_t x, int32_t y)
 {
 	struct text_cursor_position *text_cursor_position =
@@ -4765,7 +4813,7 @@ relative_pointer_handle_motion(void *data, struct zwp_relative_pointer_v1 *point
 {
 	struct input *input = data;
 	struct window *window = input->pointer_focus;
-	uint32_t ms = (((uint64_t) utime_hi) << 32 | utime_lo) / 1000;
+	uint32_t ms = u64_from_u32s(utime_hi, utime_lo) / 1000;
 
 	if (window->locked_pointer_motion_handler &&
 	    window->pointer_locked) {
@@ -5133,6 +5181,7 @@ surface_create(struct window *window)
 	wl_surface_add_listener(surface->surface, &surface_listener, window);
 
 	wl_list_insert(&window->subsurface_list, &surface->link);
+	surface->viewport = NULL;
 
 	return surface;
 }
@@ -5140,11 +5189,6 @@ surface_create(struct window *window)
 static enum window_buffer_type
 get_preferred_buffer_type(struct display *display)
 {
-#ifdef HAVE_CAIRO_EGL
-	if (display->argb_device && !getenv("TOYTOOLKIT_NO_EGL"))
-		return WINDOW_BUFFER_TYPE_EGL_WINDOW;
-#endif
-
 	return WINDOW_BUFFER_TYPE_SHM;
 }
 
@@ -5164,7 +5208,6 @@ window_create_internal(struct display *display, int custom)
 	assert(custom || display->xdg_shell);
 
 	window->custom = custom;
-	window->preferred_format = WINDOW_PREFERRED_FORMAT_NONE;
 
 	surface->buffer_type = get_preferred_buffer_type(display);
 
@@ -5188,14 +5231,14 @@ window_create(struct display *display)
 		window->xdg_surface =
 			xdg_wm_base_get_xdg_surface(window->display->xdg_shell,
 						    window->main_surface->surface);
-		fail_on_null(window->xdg_surface, 0, __FILE__, __LINE__);
+		abort_oom_if_null(window->xdg_surface);
 
 		xdg_surface_add_listener(window->xdg_surface,
 					 &xdg_surface_listener, window);
 
 		window->xdg_toplevel =
 			xdg_surface_get_toplevel(window->xdg_surface);
-		fail_on_null(window->xdg_toplevel, 0, __FILE__, __LINE__);
+		abort_oom_if_null(window->xdg_toplevel);
 
 		xdg_toplevel_add_listener(window->xdg_toplevel,
 					  &xdg_toplevel_listener, window);
@@ -5312,6 +5355,16 @@ menu_touch_up_handler(struct widget *widget,
 }
 
 static void
+menu_tablet_tool_up_handler(struct widget *widget, struct tablet_tool *tool,
+			    void *data)
+{
+	struct menu *menu = data;
+
+	input_ungrab(tool->input);
+	menu_destroy(menu);
+}
+
+static void
 menu_redraw_handler(struct widget *widget, void *data)
 {
 	cairo_t *cr;
@@ -5328,7 +5381,7 @@ menu_redraw_handler(struct widget *widget, void *data)
 	cairo_rectangle(cr, x, y, width, height);
 	cairo_fill(cr);
 
-	cairo_select_font_face(cr, "sans",
+	cairo_select_font_face(cr, "sans-serif",
 			       CAIRO_FONT_SLANT_NORMAL,
 			       CAIRO_FONT_WEIGHT_NORMAL);
 	cairo_set_font_size(cr, 12);
@@ -5400,7 +5453,7 @@ create_menu(struct display *display,
 	menu->widget = window_add_widget(menu->window, menu);
 	menu->frame = frame_create(window->display->theme, 0, 0,
 	                           FRAME_BUTTON_NONE, NULL, NULL);
-	fail_on_null(menu->frame, 0, __FILE__, __LINE__);
+	abort_oom_if_null(menu->frame);
 	menu->entries = entries;
 	menu->count = count;
 	menu->release_count = 0;
@@ -5417,6 +5470,7 @@ create_menu(struct display *display,
 	widget_set_motion_handler(menu->widget, menu_motion_handler);
 	widget_set_button_handler(menu->widget, menu_button_handler);
 	widget_set_touch_up_handler(menu->widget, menu_touch_up_handler);
+	widget_set_tablet_tool_up_handler(menu->widget, menu_tablet_tool_up_handler);
 
 	input_grab(input, menu->widget, 0);
 	frame_resize_inside(menu->frame, 200, count * 20);
@@ -5434,7 +5488,7 @@ create_simple_positioner(struct display *display,
 	struct xdg_positioner *positioner;
 
 	positioner = xdg_wm_base_create_positioner(display->xdg_shell);
-	fail_on_null(positioner, 0, __FILE__, __LINE__);
+	abort_oom_if_null(positioner);
 	xdg_positioner_set_anchor_rect(positioner, x, y, 1, 1);
 	xdg_positioner_set_size(positioner, w, h);
 	xdg_positioner_set_anchor(positioner,
@@ -5479,7 +5533,7 @@ window_show_menu(struct display *display,
 	window->xdg_surface =
 		xdg_wm_base_get_xdg_surface(display->xdg_shell,
 					    window->main_surface->surface);
-	fail_on_null(window->xdg_surface, 0, __FILE__, __LINE__);
+	abort_oom_if_null(window->xdg_surface);
 
 	xdg_surface_add_listener(window->xdg_surface,
 				 &xdg_surface_listener, window);
@@ -5492,7 +5546,7 @@ window_show_menu(struct display *display,
 	window->xdg_popup = xdg_surface_get_popup(window->xdg_surface,
 						  parent->xdg_surface,
 						  positioner);
-	fail_on_null(window->xdg_popup, 0, __FILE__, __LINE__);
+	abort_oom_if_null(window->xdg_popup);
 	xdg_positioner_destroy(positioner);
 	xdg_popup_grab(window->xdg_popup, input->seat,
 		       display_get_serial(window->display));
@@ -5514,13 +5568,6 @@ enum window_buffer_type
 window_get_buffer_type(struct window *window)
 {
 	return window->main_surface->buffer_type;
-}
-
-void
-window_set_preferred_format(struct window *window,
-			    enum preferred_format format)
-{
-	window->preferred_format = format;
 }
 
 struct widget *
@@ -5654,6 +5701,8 @@ output_destroy(struct output *output)
 
 	wl_output_destroy(output->output);
 	wl_list_remove(&output->link);
+	free(output->make);
+	free(output->model);
 	free(output);
 }
 
@@ -5787,6 +5836,8 @@ output_get_model(struct output *output)
 static void
 fini_xkb(struct input *input)
 {
+	xkb_compose_state_unref(input->xkb.compose_state);
+	xkb_compose_table_unref(input->xkb.compose_table);
 	xkb_state_unref(input->xkb.state);
 	xkb_keymap_unref(input->xkb.keymap);
 }
@@ -5795,7 +5846,7 @@ static void
 display_add_input(struct display *d, uint32_t id, int display_seat_version)
 {
 	struct input *input;
-	int seat_version = MIN(display_seat_version, 5);
+	int seat_version = MIN(display_seat_version, 7);
 
 	input = xzalloc(sizeof *input);
 	input->display = d;
@@ -5809,6 +5860,9 @@ display_add_input(struct display *d, uint32_t id, int display_seat_version)
 	wl_list_init(&input->touch_point_list);
 	wl_list_insert(d->input_list.prev, &input->link);
 
+	wl_list_init(&input->tablet_list);
+	wl_list_init(&input->tablet_tool_list);
+
 	wl_seat_add_listener(input->seat, &seat_listener, input);
 	wl_seat_set_user_data(input->seat, input);
 
@@ -5821,7 +5875,7 @@ display_add_input(struct display *d, uint32_t id, int display_seat_version)
 					    input);
 	}
 
-	input->pointer_surface = wl_compositor_create_surface(d->compositor);
+	input->pointer_surface_has_role = false;
 
 	toytimer_init(&input->cursor_timer, CLOCK_MONOTONIC, d,
 		      cursor_timer_func);
@@ -5890,7 +5944,8 @@ input_destroy(struct input *input)
 
 	fini_xkb(input);
 
-	wl_surface_destroy(input->pointer_surface);
+	if (input->pointer_surface)
+		wl_surface_destroy(input->pointer_surface);
 
 	wl_list_remove(&input->link);
 	wl_seat_destroy(input->seat);
@@ -5898,19 +5953,6 @@ input_destroy(struct input *input)
 	toytimer_fini(&input->cursor_timer);
 	free(input);
 }
-
-static void
-shm_format(void *data, struct wl_shm *wl_shm, uint32_t format)
-{
-	struct display *d = data;
-
-	if (format == WL_SHM_FORMAT_RGB565)
-		d->has_rgb565 = 1;
-}
-
-struct wl_shm_listener shm_listener = {
-	shm_format
-};
 
 static void
 xdg_wm_base_ping(void *data, struct xdg_wm_base *shell, uint32_t serial)
@@ -5921,6 +5963,540 @@ xdg_wm_base_ping(void *data, struct xdg_wm_base *shell, uint32_t serial)
 static const struct xdg_wm_base_listener wm_base_listener = {
 	xdg_wm_base_ping,
 };
+
+static void
+tablet_handle_name(void *data, struct zwp_tablet_v2 *zwp_tablet_v2, const char *name)
+{
+	struct tablet *tablet = data;
+
+	tablet->name = xstrdup(name);
+}
+
+static void
+tablet_handle_id(void *data, struct zwp_tablet_v2 *zwp_tablet_v2,
+		 uint32_t vid, uint32_t pid)
+{
+	struct tablet *tablet = data;
+
+	tablet->vid = vid;
+	tablet->pid = pid;
+}
+
+static void
+tablet_handle_path(void *data, struct zwp_tablet_v2 *zwp_tablet_v2, const char *path)
+{
+}
+
+static void
+tablet_handle_done(void *data, struct zwp_tablet_v2 *zwp_tablet_v2)
+{
+}
+
+static void
+tablet_handle_removed(void *data, struct zwp_tablet_v2 *zwp_tablet_v2)
+{
+	struct tablet *tablet = data;
+
+	zwp_tablet_v2_destroy(zwp_tablet_v2);
+
+	wl_list_remove(&tablet->link);
+	free(tablet->name);
+	free(tablet);
+}
+
+static const struct zwp_tablet_v2_listener tablet_listener = {
+	tablet_handle_name,
+	tablet_handle_id,
+	tablet_handle_path,
+	tablet_handle_done,
+	tablet_handle_removed,
+};
+
+static void
+tablet_added(void *data, struct zwp_tablet_seat_v2 *zwp_tablet_seat1,
+	     struct zwp_tablet_v2 *id)
+{
+	struct input *input = data;
+	struct tablet *tablet;
+
+	tablet = zalloc(sizeof *tablet);
+
+	zwp_tablet_v2_add_listener(id, &tablet_listener, tablet);
+	wl_list_insert(&input->tablet_list, &tablet->link);
+	zwp_tablet_v2_set_user_data(id, tablet);
+}
+
+uint32_t
+tablet_tool_get_type(struct tablet_tool *tool)
+{
+	return tool->type;
+}
+
+uint64_t
+tablet_tool_get_serial(struct tablet_tool *tool)
+{
+	return tool->serial;
+}
+
+uint64_t
+tablet_tool_get_hwid(struct tablet_tool *tool)
+{
+	return tool->hwid;
+}
+
+static void
+tablet_tool_handle_type(void *data, struct zwp_tablet_tool_v2 *zwp_tablet_tool_v2,
+			uint32_t tool_type)
+{
+	struct tablet_tool *tool = data;
+
+	tool->type = tool_type;
+}
+
+static void
+tablet_tool_handle_serialid(void *data, struct zwp_tablet_tool_v2 *zwp_tablet_tool_v2,
+			    uint32_t serial_msb, uint32_t serial_lsb)
+{
+	struct tablet_tool *tool = data;
+
+	tool->serial = ((uint64_t)serial_msb << 32) | serial_lsb;
+}
+
+static void
+tablet_tool_handle_hardware_id_wacom(void *data,
+				     struct zwp_tablet_tool_v2 *zwp_tablet_tool_v2,
+				     uint32_t hwid_msb, uint32_t hwid_lsb)
+{
+	struct tablet_tool *tool = data;
+
+	tool->serial = ((uint64_t)hwid_msb << 32) | hwid_lsb;
+}
+
+static void
+tablet_tool_handle_capability(void *data, struct zwp_tablet_tool_v2 *zwp_tablet_tool_v2,
+			      uint32_t capability)
+{
+}
+
+static void
+tablet_tool_handle_done(void *data, struct zwp_tablet_tool_v2 *zwp_tablet_tool_v2)
+{
+}
+
+static void
+tablet_tool_handle_removed(void *data, struct zwp_tablet_tool_v2 *zwp_tablet_tool_v2)
+{
+	struct tablet_tool *tool = data;
+
+	zwp_tablet_tool_v2_destroy(zwp_tablet_tool_v2);
+	wl_list_remove(&tool->link);
+	free(tool);
+}
+
+static const struct wl_callback_listener tablet_tool_cursor_surface_listener;
+
+static void
+tablet_tool_set_cursor_image_index(struct tablet_tool *tool, int index)
+{
+	struct wl_buffer *buffer;
+	struct wl_cursor *cursor;
+	struct wl_cursor_image *image;
+
+	cursor = tool->input->display->cursors[tool->current_cursor];
+	if (index >= (int)cursor->image_count) {
+		fprintf(stderr, "cursor index out of range\n");
+		return;
+	}
+
+	image = cursor->images[index];
+	buffer = wl_cursor_image_get_buffer(image);
+	if (!buffer)
+		return;
+
+	wl_surface_attach(tool->cursor_surface, buffer, 0, 0);
+	wl_surface_damage(tool->cursor_surface, 0, 0,
+			  image->width, image->height);
+	wl_surface_commit(tool->cursor_surface);
+	zwp_tablet_tool_v2_set_cursor(tool->tool, tool->enter_serial,
+				      tool->cursor_surface,
+				      image->hotspot_x, image->hotspot_y);
+}
+
+static void
+tablet_tool_surface_frame_callback(void *data, struct wl_callback *callback,
+				   uint32_t time)
+{
+	struct tablet_tool *tool = data;
+	struct wl_cursor *cursor;
+	int i;
+
+	if (callback) {
+		assert(callback == tool->cursor_frame_cb);
+		wl_callback_destroy(callback);
+		tool->cursor_frame_cb = NULL;
+	}
+
+	if (tool->current_cursor == CURSOR_BLANK) {
+		zwp_tablet_tool_v2_set_cursor(tool->tool, tool->enter_serial,
+					      NULL, 0, 0);
+		return;
+	}
+
+	if (tool->current_cursor == CURSOR_UNSET)
+		return;
+
+	cursor = tool->input->display->cursors[tool->current_cursor];
+	if (!cursor)
+		return;
+
+	/* FIXME We don't have the current time on the first call so we set
+	 * the animation start to the time of the first frame callback. */
+	if (time == 0)
+		tool->cursor_anim_start = 0;
+	else if (tool->cursor_anim_start == 0)
+		tool->cursor_anim_start = time;
+
+	if (time == 0 || tool->cursor_anim_start == 0)
+		i = 0;
+	else
+		i = wl_cursor_frame(cursor, time - tool->cursor_anim_start);
+
+	if (cursor->image_count > 1) {
+		tool->cursor_frame_cb =
+			wl_surface_frame(tool->cursor_surface);
+		wl_callback_add_listener(tool->cursor_frame_cb,
+					 &tablet_tool_cursor_surface_listener,
+					 tool);
+	}
+
+	tablet_tool_set_cursor_image_index(tool, i);
+}
+
+static const struct wl_callback_listener tablet_tool_cursor_surface_listener =  {
+	tablet_tool_surface_frame_callback,
+};
+
+void
+tablet_tool_set_cursor_image(struct tablet_tool *tool, int cursor)
+{
+	bool force = false;
+
+	if (tool->enter_serial > tool->cursor_serial)
+		force = true;
+
+	if (!force && cursor == tool->current_cursor)
+		return;
+
+	tool->current_cursor = cursor;
+	tool->cursor_serial = tool->enter_serial;
+
+	if (!tool->cursor_frame_cb) {
+		tablet_tool_surface_frame_callback(tool, NULL, 0);
+	} else if (force) {
+		/* The current frame callback may be stuck if, for instance,
+		 * the set cursor request was processed by the server after
+		 * this client lost the focus. In this case the cursor surface
+		 * might not be mapped and the frame callback wouldn't ever
+		 * complete. Send a set_cursor and attach to try to map the
+		 * cursor surface again so that the callback will finish
+		 */
+		tablet_tool_set_cursor_image_index(tool, 0);
+	}
+}
+
+static void
+tablet_tool_set_focus_widget(struct tablet_tool *tool, struct window *window,
+			     wl_fixed_t sx, wl_fixed_t sy)
+{
+	struct widget *widget, *old;
+
+	if (tool->input->grab)
+		widget = tool->input->grab;
+	else
+		widget = window_find_widget(window, sx, sy);
+
+	if (tool->focus_widget == widget)
+		return;
+
+	old = tool->focus_widget;
+	if (old && old->tablet_tool_prox_out_handler)
+		old->tablet_tool_prox_out_handler(old, tool,
+						  widget_get_user_data(old));
+
+	if (widget && widget->tablet_tool_prox_in_handler)
+		widget->tablet_tool_prox_in_handler(widget, tool,
+						    tool->current_tablet,
+						    widget_get_user_data(widget));
+
+	tool->focus_widget = widget;
+}
+
+static void
+tablet_tool_handle_proximity_in(void *data,
+				struct zwp_tablet_tool_v2 *zwp_tablet_tool_v2,
+				uint32_t serial,
+				struct zwp_tablet_v2 *zwp_tablet_v2,
+				struct wl_surface *surface)
+{
+	struct tablet_tool *tool = data;
+	struct tablet *tablet = zwp_tablet_v2_get_user_data(zwp_tablet_v2);
+	struct window *window;
+
+	window = wl_surface_get_user_data(surface);
+	if (surface != window->main_surface->surface)
+		return;
+
+	tool->focus = window;
+	tool->current_tablet = tablet;
+	tool->enter_serial = serial;
+
+	tablet_tool_set_cursor_image(tool, window->main_surface->widget->default_tablet_cursor);
+}
+
+static void
+tablet_tool_handle_proximity_out(void *data,
+				 struct zwp_tablet_tool_v2 *zwp_tablet_tool_v2)
+{
+	struct tablet_tool *tool = data;
+
+	tool->focus = NULL;
+	tool->current_tablet = NULL;
+}
+
+static void
+tablet_tool_handle_down(void *data, struct zwp_tablet_tool_v2 *zwp_tablet_tool_v2,
+			uint32_t serial)
+{
+	struct tablet_tool *tool = data;
+	struct widget *focus = tool->focus_widget;
+
+	tool->input->display->serial = serial;
+
+	if (focus && focus->tablet_tool_down_handler)
+		focus->tablet_tool_down_handler(focus, tool, focus->user_data);
+}
+
+static void
+tablet_tool_handle_up(void *data, struct zwp_tablet_tool_v2 *zwp_tablet_tool_v2)
+{
+	struct tablet_tool *tool = data;
+	struct widget *focus = tool->focus_widget;
+
+	if (focus && focus->tablet_tool_up_handler)
+		focus->tablet_tool_up_handler(focus, tool, focus->user_data);
+}
+
+static void
+tablet_tool_handle_motion(void *data, struct zwp_tablet_tool_v2 *zwp_tablet_tool_v2,
+			  wl_fixed_t x, wl_fixed_t y)
+{
+	struct tablet_tool *tool = data;
+	double sx = wl_fixed_to_double(x);
+	double sy = wl_fixed_to_double(y);
+	struct window *window = tool->focus;
+	struct widget *widget;
+	int cursor;
+
+	if (!window)
+		return;
+
+	tool->sx = sx;
+	tool->sy = sy;
+
+	if (sx > window->main_surface->allocation.width ||
+	    sy > window->main_surface->allocation.height)
+		return;
+
+	tablet_tool_set_focus_widget(tool, window, sx, sy);
+	widget = tool->focus_widget;
+	if (widget && widget->tablet_tool_motion_handler) {
+		cursor = widget->tablet_tool_motion_handler(widget, tool,
+							    sx, sy,
+							    widget->user_data);
+	} else {
+		cursor = widget->default_tablet_cursor;
+	}
+
+	tablet_tool_set_cursor_image(tool, cursor);
+}
+
+static void
+tablet_tool_handle_pressure(void *data, struct zwp_tablet_tool_v2 *zwp_tablet_tool_v2,
+			    uint32_t pressure)
+{
+	struct tablet_tool *tool = data;
+	struct widget *widget = tool->focus_widget;
+
+	if (widget && widget->tablet_tool_pressure_handler)
+		widget->tablet_tool_pressure_handler(widget, tool, pressure,
+						     widget->user_data);
+}
+
+static void
+tablet_tool_handle_distance(void *data, struct zwp_tablet_tool_v2 *zwp_tablet_tool_v2,
+			    uint32_t distance)
+{
+	struct tablet_tool *tool = data;
+	struct widget *widget = tool->focus_widget;
+
+	if (widget && widget->tablet_tool_distance_handler)
+		widget->tablet_tool_distance_handler(widget, tool,
+						     distance,
+						     widget->user_data);
+}
+
+static void
+tablet_tool_handle_tilt(void *data, struct zwp_tablet_tool_v2 *zwp_tablet_tool_v2,
+			int32_t tilt_x, int32_t tilt_y)
+{
+	struct tablet_tool *tool = data;
+	struct widget *widget = tool->focus_widget;
+
+	if (widget && widget->tablet_tool_tilt_handler)
+		widget->tablet_tool_tilt_handler(widget, tool,
+						 tilt_x, tilt_y,
+						 widget->user_data);
+}
+
+static void
+tablet_tool_handle_rotation(void *data, struct zwp_tablet_tool_v2 *zwp_tablet_tool_v2,
+			    int32_t rotation)
+{
+	struct tablet_tool *tool = data;
+	struct widget *widget = tool->focus_widget;
+
+	if (widget && widget->tablet_tool_rotation_handler)
+		widget->tablet_tool_rotation_handler(widget, tool,
+						 rotation,
+						 widget->user_data);
+}
+
+static void
+tablet_tool_handle_slider(void *data, struct zwp_tablet_tool_v2 *zwp_tablet_tool_v2,
+			  int32_t slider)
+{
+	struct tablet_tool *tool = data;
+	struct widget *widget = tool->focus_widget;
+
+	if (widget && widget->tablet_tool_slider_handler)
+		widget->tablet_tool_slider_handler(widget, tool,
+						   slider,
+						   widget->user_data);
+}
+
+static void
+tablet_tool_handle_wheel(void *data, struct zwp_tablet_tool_v2 *zwp_tablet_tool_v2,
+			 wl_fixed_t degrees, int32_t clicks)
+{
+	struct tablet_tool *tool = data;
+	struct widget *widget = tool->focus_widget;
+
+	if (widget && widget->tablet_tool_wheel_handler)
+		widget->tablet_tool_wheel_handler(widget, tool,
+						  degrees, clicks,
+						  widget->user_data);
+}
+
+static void
+tablet_tool_handle_button(void *data, struct zwp_tablet_tool_v2 *zwp_tablet_tool_v2,
+			  uint32_t serial, uint32_t button, uint32_t state)
+{
+	struct tablet_tool *tool = data;
+	struct widget *focus = tool->focus_widget;
+
+	tool->input->display->serial = serial;
+
+	if (focus && focus->tablet_tool_button_handler)
+		focus->tablet_tool_button_handler(focus, tool, button, state,
+						  focus->user_data);
+}
+
+static void
+tablet_tool_handle_frame(void *data, struct zwp_tablet_tool_v2 *zwp_tablet_tool_v2,
+			 uint32_t time)
+{
+	struct tablet_tool *tool = data;
+	struct widget *widget = tool->focus_widget;
+
+	if (widget && widget->tablet_tool_frame_handler)
+		widget->tablet_tool_frame_handler(widget, tool, time,
+						  widget->user_data);
+}
+
+static const struct zwp_tablet_tool_v2_listener tablet_tool_listener = {
+	tablet_tool_handle_type,
+	tablet_tool_handle_serialid,
+	tablet_tool_handle_hardware_id_wacom,
+	tablet_tool_handle_capability,
+	tablet_tool_handle_done,
+	tablet_tool_handle_removed,
+	tablet_tool_handle_proximity_in,
+	tablet_tool_handle_proximity_out,
+	tablet_tool_handle_down,
+	tablet_tool_handle_up,
+	tablet_tool_handle_motion,
+	tablet_tool_handle_pressure,
+	tablet_tool_handle_distance,
+	tablet_tool_handle_tilt,
+	tablet_tool_handle_rotation,
+	tablet_tool_handle_slider,
+	tablet_tool_handle_wheel,
+	tablet_tool_handle_button,
+	tablet_tool_handle_frame,
+};
+
+static void
+tablet_tool_added(void *data, struct zwp_tablet_seat_v2 *zwp_tablet_seat1,
+		  struct zwp_tablet_tool_v2 *id)
+{
+	struct input *input = data;
+	struct tablet_tool *tool;
+
+	tool = zalloc(sizeof *tool);
+	zwp_tablet_tool_v2_add_listener(id, &tablet_tool_listener, tool);
+	wl_list_insert(&input->tablet_tool_list, &tool->link);
+
+	tool->tool = id;
+	tool->input = input;
+	tool->cursor_surface =
+		wl_compositor_create_surface(input->display->compositor);
+}
+
+static const struct zwp_tablet_seat_v2_listener tablet_seat_listener = {
+	tablet_added,
+	tablet_tool_added,
+};
+
+static void
+display_bind_tablets(struct display *d, uint32_t id)
+{
+	struct input *input;
+
+	d->tablet_manager = wl_registry_bind(d->registry, id,
+					     &zwp_tablet_manager_v2_interface, 1);
+
+	wl_list_for_each(input, &d->input_list, link) {
+		input->tablet_seat =
+			zwp_tablet_manager_v2_get_tablet_seat(d->tablet_manager,
+							  input->seat);
+		zwp_tablet_seat_v2_add_listener(input->tablet_seat,
+						&tablet_seat_listener,
+						input);
+	}
+}
+
+static void
+global_destroy(struct display *disp, struct global *g)
+{
+	if (disp->global_handler_remove) {
+		disp->global_handler_remove(disp, g->name, g->interface,
+					    g->version, disp->user_data);
+	}
+
+	wl_list_remove(&g->link);
+	free(g->interface);
+	free(g);
+}
 
 static void
 registry_handle_global(void *data, struct wl_registry *registry, uint32_t id,
@@ -5956,12 +6532,12 @@ registry_handle_global(void *data, struct wl_registry *registry, uint32_t id,
 					 1);
 	} else if (strcmp(interface, "wl_shm") == 0) {
 		d->shm = wl_registry_bind(registry, id, &wl_shm_interface, 1);
-		wl_shm_add_listener(d->shm, &shm_listener, d);
 	} else if (strcmp(interface, "wl_data_device_manager") == 0) {
 		display_add_data_device(d, id, version);
 	} else if (strcmp(interface, "xdg_wm_base") == 0) {
 		d->xdg_shell = wl_registry_bind(registry, id,
-						&xdg_wm_base_interface, 1);
+						&xdg_wm_base_interface,
+						MIN(version, 5));
 		xdg_wm_base_add_listener(d->xdg_shell, &wm_base_listener, d);
 	} else if (strcmp(interface, "text_cursor_position") == 0) {
 		d->text_cursor_position =
@@ -5971,6 +6547,12 @@ registry_handle_global(void *data, struct wl_registry *registry, uint32_t id,
 		d->subcompositor =
 			wl_registry_bind(registry, id,
 					 &wl_subcompositor_interface, 1);
+	} else if (!strcmp(interface, "wp_viewporter")) {
+		d->viewporter =
+			wl_registry_bind(registry, id,
+					&wp_viewporter_interface, 1);
+	} else if (strcmp(interface, "zwp_tablet_manager_v2") == 0) {
+		display_bind_tablets(d, id);
 	}
 
 	if (d->global_handler)
@@ -5992,15 +6574,7 @@ registry_handle_global_remove(void *data, struct wl_registry *registry,
 		if (strcmp(global->interface, "wl_output") == 0)
 			display_destroy_output(d, name);
 
-		/* XXX: Should destroy remaining bound globals */
-
-		if (d->global_handler_remove)
-			d->global_handler_remove(d, name, global->interface,
-					global->version, d->user_data);
-
-		wl_list_remove(&global->link);
-		free(global->interface);
-		free(global);
+		global_destroy(d, global);
 	}
 }
 
@@ -6015,90 +6589,6 @@ static const struct wl_registry_listener registry_listener = {
 	registry_handle_global,
 	registry_handle_global_remove
 };
-
-#ifdef HAVE_CAIRO_EGL
-static int
-init_egl(struct display *d)
-{
-	EGLint major, minor;
-	EGLint n;
-
-#ifdef USE_CAIRO_GLESV2
-#  define GL_BIT EGL_OPENGL_ES2_BIT
-#else
-#  define GL_BIT EGL_OPENGL_BIT
-#endif
-
-	static const EGLint argb_cfg_attribs[] = {
-		EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
-		EGL_RED_SIZE, 1,
-		EGL_GREEN_SIZE, 1,
-		EGL_BLUE_SIZE, 1,
-		EGL_ALPHA_SIZE, 1,
-		EGL_DEPTH_SIZE, 1,
-		EGL_RENDERABLE_TYPE, GL_BIT,
-		EGL_NONE
-	};
-
-#ifdef USE_CAIRO_GLESV2
-	static const EGLint context_attribs[] = {
-		EGL_CONTEXT_CLIENT_VERSION, 2,
-		EGL_NONE
-	};
-	EGLint api = EGL_OPENGL_ES_API;
-#else
-	EGLint *context_attribs = NULL;
-	EGLint api = EGL_OPENGL_API;
-#endif
-
-	d->dpy =
-		weston_platform_get_egl_display(EGL_PLATFORM_WAYLAND_KHR,
-						d->display, NULL);
-
-	if (!eglInitialize(d->dpy, &major, &minor)) {
-		fprintf(stderr, "failed to initialize EGL\n");
-		return -1;
-	}
-
-	if (!eglBindAPI(api)) {
-		fprintf(stderr, "failed to bind EGL client API\n");
-		return -1;
-	}
-
-	if (!eglChooseConfig(d->dpy, argb_cfg_attribs,
-			     &d->argb_config, 1, &n) || n != 1) {
-		fprintf(stderr, "failed to choose argb EGL config\n");
-		return -1;
-	}
-
-	d->argb_ctx = eglCreateContext(d->dpy, d->argb_config,
-				       EGL_NO_CONTEXT, context_attribs);
-	if (d->argb_ctx == NULL) {
-		fprintf(stderr, "failed to create EGL context\n");
-		return -1;
-	}
-
-	d->argb_device = cairo_egl_device_create(d->dpy, d->argb_ctx);
-	if (cairo_device_status(d->argb_device) != CAIRO_STATUS_SUCCESS) {
-		fprintf(stderr, "failed to get cairo EGL argb device\n");
-		return -1;
-	}
-
-	return 0;
-}
-
-static void
-fini_egl(struct display *display)
-{
-	cairo_device_destroy(display->argb_device);
-
-	eglMakeCurrent(display->dpy, EGL_NO_SURFACE, EGL_NO_SURFACE,
-		       EGL_NO_CONTEXT);
-
-	eglTerminate(display->dpy);
-	eglReleaseThread();
-}
-#endif
 
 static void
 init_dummy_surface(struct display *display)
@@ -6168,6 +6658,12 @@ display_create(int *argc, char *argv[])
 	if (d == NULL)
 		return NULL;
 
+	wl_list_init(&d->window_list);
+	wl_list_init(&d->deferred_list);
+	wl_list_init(&d->input_list);
+	wl_list_init(&d->output_list);
+	wl_list_init(&d->global_list);
+
 	d->display = wl_display_connect(NULL);
 	if (d->display == NULL) {
 		fprintf(stderr, "failed to connect to Wayland display: %s\n",
@@ -6176,7 +6672,7 @@ display_create(int *argc, char *argv[])
 		return NULL;
 	}
 
-	d->xkb_context = xkb_context_new(0);
+	d->xkb_context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
 	if (d->xkb_context == NULL) {
 		fprintf(stderr, "Failed to create XKB context\n");
 		free(d);
@@ -6189,31 +6685,19 @@ display_create(int *argc, char *argv[])
 	display_watch_fd(d, d->display_fd, EPOLLIN | EPOLLERR | EPOLLHUP,
 			 &d->display_task);
 
-	wl_list_init(&d->deferred_list);
-	wl_list_init(&d->input_list);
-	wl_list_init(&d->output_list);
-	wl_list_init(&d->global_list);
-
 	d->registry = wl_display_get_registry(d->display);
 	wl_registry_add_listener(d->registry, &registry_listener, d);
 
 	if (wl_display_roundtrip(d->display) < 0) {
 		fprintf(stderr, "Failed to process Wayland connection: %s\n",
 			strerror(errno));
+		display_destroy(d);
 		return NULL;
 	}
-
-#ifdef HAVE_CAIRO_EGL
-	if (init_egl(d) < 0)
-		fprintf(stderr, "EGL does not seem to work, "
-			"falling back to software rendering and wl_shm.\n");
-#endif
 
 	create_cursors(d);
 
 	d->theme = theme_create();
-
-	wl_list_init(&d->window_list);
 
 	init_dummy_surface(d);
 
@@ -6243,6 +6727,8 @@ display_destroy_inputs(struct display *display)
 void
 display_destroy(struct display *display)
 {
+	struct global *global, *tmp;
+
 	if (!wl_list_empty(&display->window_list))
 		fprintf(stderr, "toytoolkit warning: %d windows exist.\n",
 			wl_list_length(&display->window_list));
@@ -6250,21 +6736,33 @@ display_destroy(struct display *display)
 	if (!wl_list_empty(&display->deferred_list))
 		fprintf(stderr, "toytoolkit warning: deferred tasks exist.\n");
 
-	cairo_surface_destroy(display->dummy_surface);
-	free(display->dummy_surface_data);
+	if (display->dummy_surface)
+		cairo_surface_destroy(display->dummy_surface);
+	if (display->dummy_surface_data)
+		free(display->dummy_surface_data);
 
 	display_destroy_outputs(display);
 	display_destroy_inputs(display);
 
+	wl_list_for_each_safe(global, tmp, &display->global_list, link)
+		global_destroy(display, global);
+
 	xkb_context_unref(display->xkb_context);
 
-	theme_destroy(display->theme);
+	if (display->theme)
+		theme_destroy(display->theme);
 	destroy_cursors(display);
 
-#ifdef HAVE_CAIRO_EGL
-	if (display->argb_device)
-		fini_egl(display);
-#endif
+	cleanup_after_cairo();
+
+	if (display->relative_pointer_manager)
+		zwp_relative_pointer_manager_v1_destroy(display->relative_pointer_manager);
+
+	if (display->pointer_constraints)
+		zwp_pointer_constraints_v1_destroy(display->pointer_constraints);
+
+	if (display->viewporter)
+		wp_viewporter_destroy(display->viewporter);
 
 	if (display->subcompositor)
 		wl_subcompositor_destroy(display->subcompositor);
@@ -6278,7 +6776,8 @@ display_destroy(struct display *display)
 	if (display->data_device_manager)
 		wl_data_device_manager_destroy(display->data_device_manager);
 
-	wl_compositor_destroy(display->compositor);
+	if (display->compositor)
+		wl_compositor_destroy(display->compositor);
 	wl_registry_destroy(display->registry);
 
 	close(display->epoll_fd);
@@ -6320,12 +6819,6 @@ display_has_subcompositor(struct display *display)
 	return display->subcompositor != NULL;
 }
 
-cairo_device_t *
-display_get_cairo_device(struct display *display)
-{
-	return display->argb_device;
-}
-
 struct output *
 display_get_output(struct display *display)
 {
@@ -6347,12 +6840,6 @@ display_get_serial(struct display *display)
 	return display->serial;
 }
 
-EGLDisplay
-display_get_egl_display(struct display *d)
-{
-	return d->dpy;
-}
-
 struct wl_data_source *
 display_create_data_source(struct display *display)
 {
@@ -6360,38 +6847,6 @@ display_create_data_source(struct display *display)
 		return wl_data_device_manager_create_data_source(display->data_device_manager);
 	else
 		return NULL;
-}
-
-EGLConfig
-display_get_argb_egl_config(struct display *d)
-{
-	return d->argb_config;
-}
-
-int
-display_acquire_window_surface(struct display *display,
-			       struct window *window,
-			       EGLContext ctx)
-{
-	struct surface *surface = window->main_surface;
-
-	if (surface->buffer_type != WINDOW_BUFFER_TYPE_EGL_WINDOW)
-		return -1;
-
-	widget_get_cairo_surface(window->main_surface->widget);
-	return surface->toysurface->acquire(surface->toysurface, ctx);
-}
-
-void
-display_release_window_surface(struct display *display,
-			       struct window *window)
-{
-	struct surface *surface = window->main_surface;
-
-	if (surface->buffer_type != WINDOW_BUFFER_TYPE_EGL_WINDOW)
-		return;
-
-	surface->toysurface->release(surface->toysurface);
 }
 
 void

@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,6 +13,10 @@
 #include "ui/events/event.h"
 #include "ui/events/ozone/evdev/device_event_dispatcher_evdev.h"
 
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+#include "ash/constants/ash_features.h"
+#endif
+
 namespace ui {
 
 namespace {
@@ -22,9 +26,16 @@ float ScaleTilt(int value, int min_value, int num_values) {
   return 180.f * (value - min_value) / num_values - 90.f;
 }
 
-EventPointerType GetToolType(int button_tool) {
-  if (button_tool == BTN_TOOL_RUBBER)
+uint8_t ToolMaskFromButtonTool(int button_tool) {
+  DCHECK_GE(button_tool, BTN_TOOL_PEN);
+  DCHECK_LE(button_tool, BTN_TOOL_LENS);
+  return 1 << (button_tool - BTN_TOOL_PEN);
+}
+
+EventPointerType GetToolType(uint8_t tool_mask) {
+  if (tool_mask & ToolMaskFromButtonTool(BTN_TOOL_RUBBER)) {
     return EventPointerType::kEraser;
+  }
   return EventPointerType::kPen;
 }
 
@@ -64,8 +75,7 @@ TabletEventConverterEvdev::TabletEventConverterEvdev(
     one_side_btn_pen_ = true;
 }
 
-TabletEventConverterEvdev::~TabletEventConverterEvdev() {
-}
+TabletEventConverterEvdev::~TabletEventConverterEvdev() = default;
 
 void TabletEventConverterEvdev::OnFileCanReadWithoutBlocking(int fd) {
   TRACE_EVENT1("evdev",
@@ -90,6 +100,27 @@ void TabletEventConverterEvdev::OnFileCanReadWithoutBlocking(int fd) {
   ProcessEvents(inputs, read_size / sizeof(*inputs));
 }
 
+bool TabletEventConverterEvdev::HasGraphicsTablet() const {
+  return true;
+}
+
+std::ostream& TabletEventConverterEvdev::DescribeForLog(
+    std::ostream& os) const {
+  os << "class=ui::TabletEventConverterEvdev id=" << input_device_.id
+     << std::endl
+     << " x_abs_min=" << x_abs_min_ << std::endl
+     << " x_abs_range=" << x_abs_range_ << std::endl
+     << " y_abs_min=" << y_abs_min_ << std::endl
+     << " y_abs_range=" << y_abs_range_ << std::endl
+     << " tilt_x_min=" << tilt_x_min_ << std::endl
+     << " tilt_x_range=" << tilt_x_range_ << std::endl
+     << " tilt_y_min=" << tilt_y_min_ << std::endl
+     << " tilt_y_range=" << tilt_y_range_ << std::endl
+     << " pressure_max=" << pressure_max_ << std::endl
+     << "base ";
+  return EventConverterEvdev::DescribeForLog(os);
+}
+
 void TabletEventConverterEvdev::ProcessEvents(const input_event* inputs,
                                               int count) {
   for (int i = 0; i < count; ++i) {
@@ -111,10 +142,11 @@ void TabletEventConverterEvdev::ProcessEvents(const input_event* inputs,
 void TabletEventConverterEvdev::ConvertKeyEvent(const input_event& input) {
   // Only handle other events if we have a stylus in proximity
   if (input.code >= BTN_TOOL_PEN && input.code <= BTN_TOOL_LENS) {
+    uint8_t tool_mask = ToolMaskFromButtonTool(input.code);
     if (input.value == 1)
-      stylus_ = input.code;
+      active_tools_ |= tool_mask;
     else if (input.value == 0)
-      stylus_ = 0;
+      active_tools_ &= ~tool_mask;
     else
       LOG(WARNING) << "Unexpected value: " << input.value
                    << " for code: " << input.code;
@@ -124,6 +156,21 @@ void TabletEventConverterEvdev::ConvertKeyEvent(const input_event& input) {
     DispatchMouseButton(input);
     return;
   }
+
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+  if (!ash::features::IsPeripheralCustomizationEnabled()) {
+    return;
+  }
+
+  if ((input.code >= BTN_0 && input.code <= BTN_9) ||
+      (input.code >= BTN_A && input.code <= BTN_Z)) {
+    dispatcher_->DispatchKeyEvent(KeyEventParams{
+        input_device_.id, EF_NONE, input.code, input.code,
+        static_cast<bool>(input.value), /*suppress_auto_repeat=*/false,
+        TimeTicksFromInputEvent(input)});
+    return;
+  }
+#endif
 }
 
 void TabletEventConverterEvdev::ConvertAbsEvent(const input_event& input) {
@@ -196,8 +243,8 @@ void TabletEventConverterEvdev::DispatchMouseButton(const input_event& input) {
 
   dispatcher_->DispatchMouseButtonEvent(MouseButtonEventParams(
       input_device_.id, EF_NONE, cursor_->GetLocation(), button, down,
-      false /* allow_remap */,
-      PointerDetails(GetToolType(stylus_), /* pointer_id*/ 0,
+      MouseButtonMapType::kNone,
+      PointerDetails(GetToolType(active_tools_), /* pointer_id*/ 0,
                      /* radius_x */ 0.0f, /* radius_y */ 0.0f, pressure_,
                      /* twist */ 0.0f, tilt_x_, tilt_y_),
       TimeTicksFromInputEvent(input)));
@@ -208,7 +255,7 @@ void TabletEventConverterEvdev::FlushEvents(const input_event& input) {
     return;
 
   // Prevent propagation of invalid data on stylus lift off
-  if (stylus_ == 0) {
+  if (active_tools_ == 0) {
     abs_value_dirty_ = false;
     return;
   }
@@ -218,10 +265,14 @@ void TabletEventConverterEvdev::FlushEvents(const input_event& input) {
 
   UpdateCursor();
 
+  // Tablet cursor events should not warp us to another display when they get
+  // near the edge of the screen.
+  const int event_flags = EF_NOT_SUITABLE_FOR_MOUSE_WARPING;
+
   dispatcher_->DispatchMouseMoveEvent(MouseMoveEventParams(
-      input_device_.id, EF_NONE, cursor_->GetLocation(),
+      input_device_.id, event_flags, cursor_->GetLocation(),
       /* ordinal_delta */ nullptr,
-      PointerDetails(GetToolType(stylus_), /* pointer_id*/ 0,
+      PointerDetails(GetToolType(active_tools_), /* pointer_id*/ 0,
                      /* radius_x */ 0.0f, /* radius_y */ 0.0f, pressure_,
                      /* twist */ 0.0f, tilt_x_, tilt_y_),
       TimeTicksFromInputEvent(input)));

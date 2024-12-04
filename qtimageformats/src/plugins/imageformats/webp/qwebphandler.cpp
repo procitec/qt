@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2019 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the WebP plugins in the Qt ImageFormats module.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2019 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qwebphandler_p.h"
 #include "webp/mux.h"
@@ -45,6 +9,7 @@
 #include <qdebug.h>
 #include <qpainter.h>
 #include <qvariant.h>
+#include <QtEndian>
 
 static const int riffHeaderSize = 12; // RIFF_HEADER_SIZE from webp/format_constants.h
 
@@ -102,40 +67,41 @@ bool QWebpHandler::ensureScanned() const
 
     m_scanState = ScanError;
 
-    if (device()->isSequential()) {
-        qWarning() << "Sequential devices are not supported";
+    QWebpHandler *that = const_cast<QWebpHandler *>(this);
+    const int headerBytesNeeded = sizeof(WebPBitstreamFeatures);
+    QByteArray header = device()->peek(headerBytesNeeded);
+    if (header.size() < headerBytesNeeded)
+        return false;
+
+    // We do no random access during decoding, just a readAll() of the whole image file. So if
+    // if it is all available already, we can accept a sequential device. The riff header contains
+    // the file size minus 8 bytes header
+    qint64 byteSize = qFromLittleEndian<quint32>(header.constData() + 4);
+    if (device()->isSequential() && device()->bytesAvailable() < byteSize + 8) {
+        qWarning() << "QWebpHandler: Insufficient data available in sequential device";
         return false;
     }
-
-    qint64 oldPos = device()->pos();
-    device()->seek(0);
-
-    QWebpHandler *that = const_cast<QWebpHandler *>(this);
-    QByteArray header = device()->peek(sizeof(WebPBitstreamFeatures));
     if (WebPGetFeatures((const uint8_t*)header.constData(), header.size(), &(that->m_features)) == VP8_STATUS_OK) {
         if (m_features.has_animation) {
             // For animation, we have to read and scan whole file to determine loop count and images count
-            device()->seek(oldPos);
-
             if (that->ensureDemuxer()) {
                 that->m_loop = WebPDemuxGetI(m_demuxer, WEBP_FF_LOOP_COUNT);
                 that->m_frameCount = WebPDemuxGetI(m_demuxer, WEBP_FF_FRAME_COUNT);
                 that->m_bgColor = QColor::fromRgba(QRgb(WebPDemuxGetI(m_demuxer, WEBP_FF_BACKGROUND_COLOR)));
 
-                that->m_composited = new QImage(that->m_features.width, that->m_features.height, QImage::Format_ARGB32);
+                QSize sz(that->m_features.width, that->m_features.height);
+                that->m_composited = new QImage;
+                if (!QImageIOHandler::allocateImage(sz, QImage::Format_ARGB32, that->m_composited))
+                    return false;
                 if (that->m_features.has_alpha)
                     that->m_composited->fill(Qt::transparent);
 
-                // We do not reset device position since we have read in all data
                 m_scanState = ScanSuccess;
-                return true;
             }
         } else {
             m_scanState = ScanSuccess;
         }
     }
-
-    device()->seek(oldPos);
 
     return m_scanState == ScanSuccess;
 }
@@ -159,7 +125,7 @@ bool QWebpHandler::ensureDemuxer()
 
 bool QWebpHandler::read(QImage *image)
 {
-    if (!ensureScanned() || device()->isSequential() || !ensureDemuxer())
+    if (!ensureScanned() || !ensureDemuxer())
         return false;
 
     QRect prevFrameRect;
@@ -195,7 +161,9 @@ bool QWebpHandler::read(QImage *image)
         return false;
 
     QImage::Format format = m_features.has_alpha ? QImage::Format_ARGB32 : QImage::Format_RGB32;
-    QImage frame(m_iter.width, m_iter.height, format);
+    QImage frame;
+    if (!QImageIOHandler::allocateImage(QSize(m_iter.width, m_iter.height), format, &frame))
+        return false;
     uint8_t *output = frame.bits();
     size_t output_size = frame.sizeInBytes();
 #if Q_BYTE_ORDER == Q_LITTLE_ENDIAN
@@ -245,11 +213,9 @@ bool QWebpHandler::write(const QImage &image)
         return false;
     }
 
-    QImage srcImage = image;
-    bool alpha = srcImage.hasAlphaChannel();
+    const bool alpha = image.hasAlphaChannel();
     QImage::Format newFormat = alpha ? QImage::Format_RGBA8888 : QImage::Format_RGB888;
-    if (srcImage.format() != newFormat)
-        srcImage = srcImage.convertToFormat(newFormat);
+    const QImage srcImage = (image.format() == newFormat) ? image : image.convertedTo(newFormat);
 
     WebPPicture picture;
     WebPConfig config;
@@ -264,9 +230,9 @@ bool QWebpHandler::write(const QImage &image)
     picture.use_argb = 1;
     bool failed = false;
     if (alpha)
-        failed = !WebPPictureImportRGBA(&picture, srcImage.bits(), srcImage.bytesPerLine());
+        failed = !WebPPictureImportRGBA(&picture, srcImage.constBits(), srcImage.bytesPerLine());
     else
-        failed = !WebPPictureImportRGB(&picture, srcImage.bits(), srcImage.bytesPerLine());
+        failed = !WebPPictureImportRGB(&picture, srcImage.constBits(), srcImage.bytesPerLine());
 
     if (failed) {
         qWarning() << "failed to import image data to webp picture.";

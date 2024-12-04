@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,24 +6,50 @@
 #define UI_ANDROID_EVENT_FORWARDER_H_
 
 #include "base/android/scoped_java_ref.h"
+#include "base/memory/raw_ptr.h"
+#include "base/observer_list.h"
+#include "ui/android/ui_android_export.h"
 
 namespace ui {
 
+class MotionEventAndroid;
 class ViewAndroid;
 
-class EventForwarder {
+class UI_ANDROID_EXPORT EventForwarder {
  public:
+  // Interface for observing events on the `EventForwarder`.
+  class Observer : public base::CheckedObserver {
+   public:
+    ~Observer() override = default;
+
+    virtual void OnTouchEvent(const ui::MotionEventAndroid&) {}
+
+    virtual void OnMouseEvent(const ui::MotionEventAndroid&) {}
+
+    virtual void OnGenericMotionEvent(const ui::MotionEventAndroid&) {}
+  };
+
+  EventForwarder(const EventForwarder&) = delete;
+  EventForwarder& operator=(const EventForwarder&) = delete;
+
   ~EventForwarder();
 
   base::android::ScopedJavaLocalRef<jobject> GetJavaWindowAndroid(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj);
 
+  // |oldest_event_time| and |latest_event_time| would be same for a MotionEvent
+  // without any historical events attached to it. For cases when there are
+  // historical events |oldest_event_time| will be the event time of earliest
+  // input i.e. MotionEvent.getHistoricalEventTimeNanos(0) and
+  // |latest_event_time| will be the event time of most recent event i.e.
+  // MotionEvent.getEventTimeNanos().
   jboolean OnTouchEvent(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj,
       const base::android::JavaParamRef<jobject>& motion_event,
-      jlong time_ms,
+      jlong oldest_event_time_ns,
+      jlong latest_event_time_ns,
       jint android_action,
       jint pointer_count,
       jint history_size,
@@ -53,7 +79,7 @@ class EventForwarder {
 
   void OnMouseEvent(JNIEnv* env,
                     const base::android::JavaParamRef<jobject>& obj,
-                    jlong time_ms,
+                    jlong time_ns,
                     jint android_action,
                     jfloat x,
                     jfloat y,
@@ -69,10 +95,10 @@ class EventForwarder {
   void OnDragEvent(JNIEnv* env,
                    const base::android::JavaParamRef<jobject>& jobj,
                    jint action,
-                   jint x,
-                   jint y,
-                   jint screen_x,
-                   jint screen_y,
+                   jfloat x,
+                   jfloat y,
+                   jfloat screen_x,
+                   jfloat screen_y,
                    const base::android::JavaParamRef<jobjectArray>& j_mimeTypes,
                    const base::android::JavaParamRef<jstring>& j_content);
 
@@ -86,7 +112,7 @@ class EventForwarder {
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj,
       const base::android::JavaParamRef<jobject>& motion_event,
-      jlong time_ms);
+      jlong time_ns);
 
   jboolean OnKeyUp(JNIEnv* env,
                    const base::android::JavaParamRef<jobject>& obj,
@@ -127,6 +153,10 @@ class EventForwarder {
                    jlong time_ms,
                    jboolean prevent_boosting);
 
+  void AddObserver(Observer* observer);
+
+  void RemoveObserver(Observer* observer);
+
  private:
   friend class ViewAndroid;
 
@@ -134,10 +164,10 @@ class EventForwarder {
 
   base::android::ScopedJavaLocalRef<jobject> GetJavaObject();
 
-  ViewAndroid* const view_;
+  const raw_ptr<ViewAndroid> view_;
   base::android::ScopedJavaGlobalRef<jobject> java_obj_;
 
-  DISALLOW_COPY_AND_ASSIGN(EventForwarder);
+  base::ObserverList<Observer> observers_;
 };
 
 }  // namespace ui

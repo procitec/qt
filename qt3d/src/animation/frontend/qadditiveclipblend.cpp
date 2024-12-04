@@ -1,42 +1,8 @@
-/****************************************************************************
-**
-** Copyright (C) 2017 Klaralvdalens Datakonsult AB (KDAB).
-** Contact: http://www.qt-project.org/legal
-**
-** This file is part of the Qt3D module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL3$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see http://www.qt.io/terms-conditions. For further
-** information use the contact form at http://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPLv3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or later as published by the Free
-** Software Foundation and appearing in the file LICENSE.GPL included in
-** the packaging of this file. Please review the following information to
-** ensure the GNU General Public License version 2.0 requirements will be
-** met: http://www.gnu.org/licenses/gpl-2.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2017 Klaralvdalens Datakonsult AB (KDAB).
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qadditiveclipblend.h"
 #include "qadditiveclipblend_p.h"
-#include <Qt3DAnimation/qclipblendnodecreatedchange.h>
 
 QT_BEGIN_NAMESPACE
 
@@ -45,7 +11,7 @@ namespace Qt3DAnimation {
 
 /*!
     \qmltype AdditiveClipBlend
-    \instantiates Qt3DAnimation::QAdditiveClipBlend
+    \nativetype Qt3DAnimation::QAdditiveClipBlend
     \inqmlmodule Qt3D.Animation
 
     \since 5.9
@@ -135,25 +101,14 @@ QAdditiveClipBlend::~QAdditiveClipBlend()
 {
 }
 
-Qt3DCore::QNodeCreatedChangeBasePtr QAdditiveClipBlend::createNodeCreationChange() const
-{
-    Q_D(const QAdditiveClipBlend);
-    auto creationChange = QClipBlendNodeCreatedChangePtr<QAdditiveClipBlendData>::create(this);
-    QAdditiveClipBlendData &data = creationChange->data;
-    data.baseClipId = Qt3DCore::qIdForNode(d->m_baseClip);
-    data.additiveClipId = Qt3DCore::qIdForNode(d->m_additiveClip);
-    data.additiveFactor = d->m_additiveFactor;
-    return creationChange;
-}
-
 /*!
-    \qmlproperty real AdditiveClipBlend::additiveFactor
+    \qmlproperty real Qt3D.Animation::AdditiveClipBlend::additiveFactor
 
     Specifies the blending factor, typically between 0 and 1, to control the blending of
     two animation clips.
 */
 /*!
-    \property QAdditiveClipBlend::additiveFactor
+    \property Qt3DAnimation::QAdditiveClipBlend::additiveFactor
 
     Specifies the blending factor, typically between 0 and 1, to control the blending of
     two animation clips.
@@ -171,7 +126,7 @@ float QAdditiveClipBlend::additiveFactor() const
     also be the resulting clip of this blend node.
 */
 /*!
-    \property QAdditiveClipBlend::baseClip
+    \property Qt3DAnimation::QAdditiveClipBlend::baseClip
 
     This property holds the base animation clip. When the additiveFactor
     is zero the baseClip will also be the resulting clip of this blend node.
@@ -189,7 +144,7 @@ QAbstractClipBlendNode *QAdditiveClipBlend::baseClip() const
     is controlled by the additiveFactor property.
 */
 /*!
-    \property QAdditiveClipBlend::additiveClip
+    \property Qt3DAnimation::QAdditiveClipBlend::additiveClip
 
     This property holds the additive clip to be blended with the baseClip. The amount of blending
     is controlled by the additiveFactor property.
@@ -252,3 +207,5 @@ void QAdditiveClipBlend::setAdditiveClip(QAbstractClipBlendNode *additiveClip)
 } // Qt3DAnimation
 
 QT_END_NAMESPACE
+
+#include "moc_qadditiveclipblend.cpp"

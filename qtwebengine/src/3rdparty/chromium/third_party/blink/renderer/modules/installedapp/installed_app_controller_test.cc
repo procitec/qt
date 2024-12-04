@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -17,6 +17,7 @@
 #include "third_party/blink/renderer/core/html/html_link_element.h"
 #include "third_party/blink/renderer/core/testing/dummy_page_holder.h"
 #include "third_party/blink/renderer/modules/manifest/manifest_manager.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 #include "third_party/blink/renderer/platform/testing/url_test_helpers.h"
 
@@ -45,22 +46,25 @@ class InstalledAppControllerTest : public testing::Test {
     url_test_helpers::RegisterMockedURLLoad(
         KURL("https://example.com/manifest.json"), "", "");
     GetFrame().Loader().CommitNavigation(
-        WebNavigationParams::CreateWithHTMLBuffer(SharedBuffer::Create(),
-                                                  KURL("https://example.com")),
+        WebNavigationParams::CreateWithHTMLBufferForTesting(
+            SharedBuffer::Create(), KURL("https://example.com")),
         nullptr /* extra_data */);
     test::RunPendingTasks();
 
     auto* link_manifest = MakeGarbageCollected<HTMLLinkElement>(
         GetDocument(), CreateElementFlags());
-    link_manifest->setAttribute(blink::html_names::kRelAttr, "manifest");
+    link_manifest->setAttribute(blink::html_names::kRelAttr,
+                                AtomicString("manifest"));
     GetDocument().head()->AppendChild(link_manifest);
-    link_manifest->setAttribute(html_names::kHrefAttr,
-                                "https://example.com/manifest.json");
+    link_manifest->setAttribute(
+        html_names::kHrefAttr,
+        AtomicString("https://example.com/manifest.json"));
 
     ManifestManager::From(*GetFrame().DomWindow())->DidChangeManifest();
   }
 
  private:
+  test::TaskEnvironment task_environment_;
   std::unique_ptr<DummyPageHolder> holder_;
   v8::HandleScope handle_scope_;
   v8::Local<v8::Context> context_;

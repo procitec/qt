@@ -5,12 +5,6 @@
   },
 
   data: [
-    "-webkit-cursive",
-    "-webkit-fantasy",
-    "-webkit-monospace",
-    "-webkit-sans-serif",
-    "-webkit-serif",
-    "-webkit-pictograph",
     "-webkit-standard",
     "system-ui",
 
@@ -19,11 +13,13 @@
     "Courier New",
     "Courier",
     "Helvetica",
+    "Helvetica Neue",
     "Lucida Grande",
     "Microsoft Sans Serif",
     "MS Sans Serif",
     "MS Serif",
     "MS UI Gothic",
+    "Roboto",
     "Sans",
     "Segoe UI",
     "Times New Roman",
@@ -34,6 +30,7 @@
     "monospace",
     "sans-serif",
     "serif",
+    "math",
 
     "BlinkMacSystemFont",
   ],

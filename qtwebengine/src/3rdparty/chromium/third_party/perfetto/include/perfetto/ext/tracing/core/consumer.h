@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "perfetto/base/export.h"
+#include "perfetto/ext/base/uuid.h"
 #include "perfetto/ext/tracing/core/basic_types.h"
 #include "perfetto/ext/tracing/core/observable_events.h"
 #include "perfetto/tracing/core/forward_decls.h"
@@ -27,7 +28,7 @@ namespace perfetto {
 
 class TracePacket;
 
-class PERFETTO_EXPORT Consumer {
+class PERFETTO_EXPORT_COMPONENT Consumer {
  public:
   virtual ~Consumer();
 
@@ -47,8 +48,9 @@ class PERFETTO_EXPORT Consumer {
   // - The consumer explicitly called DisableTracing()
   // - The TraceConfig's |duration_ms| has been reached.
   // - The TraceConfig's |max_file_size_bytes| has been reached.
-  // - An error occurred while trying to enable tracing.
-  virtual void OnTracingDisabled() = 0;
+  // - An error occurred while trying to enable tracing. In this case |error|
+  //   is non-empty.
+  virtual void OnTracingDisabled(const std::string& error) = 0;
 
   // Called back by the Service (or transport layer) after invoking
   // TracingService::ConsumerEndpoint::ReadBuffers(). This function can be
@@ -76,6 +78,16 @@ class PERFETTO_EXPORT Consumer {
   // TracingService::ConsumerEndpoint::ObserveEvents() whenever one or more
   // ObservableEvents of enabled event types occur.
   virtual void OnObservableEvents(const ObservableEvents&) = 0;
+
+  // Called back by the Service (or transport layer) after invoking
+  // TracingService::ConsumerEndpoint::CloneSession().
+  // TODO(primiano): make pure virtual after various 3way patches.
+  struct OnSessionClonedArgs {
+    bool success;
+    std::string error;
+    base::Uuid uuid;  // UUID of the cloned session.
+  };
+  virtual void OnSessionCloned(const OnSessionClonedArgs&);
 };
 
 }  // namespace perfetto

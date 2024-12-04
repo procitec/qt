@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,11 +10,12 @@
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "ui/gfx/gpu_fence.h"
 #include "ui/gfx/gpu_fence_handle.h"
 #include "ui/gl/gl_surface_egl.h"
 
-#if defined(OS_POSIX) || defined(OS_FUCHSIA)
+#if BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
 #include <unistd.h>
 
 #include "base/posix/eintr_wrapper.h"
@@ -29,13 +30,14 @@ GLFenceAndroidNativeFenceSync::~GLFenceAndroidNativeFenceSync() {}
 // static
 std::unique_ptr<GLFenceAndroidNativeFenceSync>
 GLFenceAndroidNativeFenceSync::CreateInternal(EGLenum type, EGLint* attribs) {
-  DCHECK(GLSurfaceEGL::IsAndroidNativeFenceSyncSupported());
+  DCHECK(GLSurfaceEGL::GetGLDisplayEGL()->IsAndroidNativeFenceSyncSupported());
 
   // Can't use MakeUnique, the no-args constructor is private.
   auto fence = base::WrapUnique(new GLFenceAndroidNativeFenceSync());
 
-  if (!fence->InitializeInternal(type, attribs))
+  if (!fence->InitializeInternal(type, attribs)) {
     return nullptr;
+  }
   return fence;
 }
 
@@ -50,21 +52,22 @@ std::unique_ptr<GLFenceAndroidNativeFenceSync>
 GLFenceAndroidNativeFenceSync::CreateFromGpuFence(
     const gfx::GpuFence& gpu_fence) {
   gfx::GpuFenceHandle handle = gpu_fence.GetGpuFenceHandle().Clone();
-  DCHECK_GE(handle.owned_fd.get(), 0);
+  DCHECK_GE(handle.Peek(), 0);
   EGLint attribs[] = {EGL_SYNC_NATIVE_FENCE_FD_ANDROID,
-                      handle.owned_fd.release(), EGL_NONE};
+                      handle.Release().release(), EGL_NONE};
   return CreateInternal(EGL_SYNC_NATIVE_FENCE_ANDROID, attribs);
 }
 
 std::unique_ptr<gfx::GpuFence> GLFenceAndroidNativeFenceSync::GetGpuFence() {
-  DCHECK(GLSurfaceEGL::IsAndroidNativeFenceSyncSupported());
+  DCHECK(GLSurfaceEGL::GetGLDisplayEGL()->IsAndroidNativeFenceSyncSupported());
 
   const EGLint sync_fd = eglDupNativeFenceFDANDROID(display_, sync_);
-  if (sync_fd < 0)
+  if (sync_fd < 0) {
     return nullptr;
+  }
 
   gfx::GpuFenceHandle handle;
-  handle.owned_fd = base::ScopedFD(sync_fd);
+  handle.Adopt(base::ScopedFD(sync_fd));
 
   return std::make_unique<gfx::GpuFence>(std::move(handle));
 }

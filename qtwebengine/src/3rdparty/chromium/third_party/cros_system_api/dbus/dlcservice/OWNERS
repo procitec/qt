@@ -1,1 +1,1 @@
-include /dlcservice/OWNERS
+include chromiumos/owners:v1:/platform/OWNERS.dlc

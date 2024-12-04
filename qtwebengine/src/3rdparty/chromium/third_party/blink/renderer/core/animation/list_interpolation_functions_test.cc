@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,15 +10,17 @@
 #include "third_party/blink/renderer/core/animation/css_number_interpolation_type.h"
 #include "third_party/blink/renderer/core/animation/interpolation_value.h"
 #include "third_party/blink/renderer/core/animation/underlying_value.h"
+#include "third_party/blink/renderer/core/css/properties/longhands.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 
 namespace blink {
 
 namespace {
 
-class TestNonInterpolableValue : public NonInterpolableValue {
+class TestNonInterpolableValue final : public NonInterpolableValue {
  public:
-  ~TestNonInterpolableValue() final = default;
+  ~TestNonInterpolableValue() override = default;
 
   static scoped_refptr<TestNonInterpolableValue> Create(int value) {
     DCHECK_GE(value, 1);
@@ -55,8 +57,7 @@ class TestUnderlyingValue : public UnderlyingValue {
     return *interpolation_value_.interpolable_value;
   }
 
-  void SetInterpolableValue(
-      std::unique_ptr<InterpolableValue> interpolable_value) final {
+  void SetInterpolableValue(InterpolableValue* interpolable_value) final {
     interpolation_value_.interpolable_value = std::move(interpolable_value);
   }
 
@@ -78,9 +79,9 @@ class TestUnderlyingValue : public UnderlyingValue {
 InterpolationValue CreateInterpolableList(
     const Vector<std::pair<double, int>>& values) {
   return ListInterpolationFunctions::CreateList(
-      values.size(), [&values](size_t i) {
+      values.size(), [&values](wtf_size_t i) {
         return InterpolationValue(
-            std::make_unique<InterpolableNumber>(values[i].first),
+            MakeGarbageCollected<InterpolableNumber>(values[i].first),
             TestNonInterpolableValue::Create(values[i].second));
       });
 }
@@ -89,9 +90,9 @@ InterpolationValue CreateInterpolableList(
 // but a non-interpolable list of nullptrs.
 InterpolationValue CreateInterpolableList(const Vector<double>& values) {
   return ListInterpolationFunctions::CreateList(
-      values.size(), [&values](size_t i) {
+      values.size(), [&values](wtf_size_t i) {
         return InterpolationValue(
-            std::make_unique<InterpolableNumber>(values[i]), nullptr);
+            MakeGarbageCollected<InterpolableNumber>(values[i]), nullptr);
       });
 }
 
@@ -99,8 +100,8 @@ InterpolationValue CreateInterpolableList(const Vector<double>& values) {
 // values, but an interpolable list of zeroes.
 InterpolationValue CreateNonInterpolableList(const Vector<int>& values) {
   return ListInterpolationFunctions::CreateList(
-      values.size(), [&values](size_t i) {
-        return InterpolationValue(std::make_unique<InterpolableNumber>(0),
+      values.size(), [&values](wtf_size_t i) {
+        return InterpolationValue(MakeGarbageCollected<InterpolableNumber>(0),
                                   TestNonInterpolableValue::Create(values[i]));
       });
 }
@@ -155,6 +156,7 @@ void Composite(UnderlyingValue& underlying_value,
 }  // namespace
 
 TEST(ListInterpolationFunctionsTest, EqualMergeSinglesSameLengths) {
+  test::TaskEnvironment task_environment;
   auto list1 = CreateInterpolableList({{1.0, 1}, {2.0, 2}, {3.0, 3}});
   auto list2 = CreateInterpolableList({{1.0, 1}, {2.0, 2}, {3.0, 3}});
 
@@ -167,6 +169,7 @@ TEST(ListInterpolationFunctionsTest, EqualMergeSinglesSameLengths) {
 }
 
 TEST(ListInterpolationFunctionsTest, EqualMergeSinglesDifferentLengths) {
+  test::TaskEnvironment task_environment;
   auto list1 = CreateInterpolableList({1.0, 2.0, 3.0});
   auto list2 = CreateInterpolableList({1.0, 3.0});
 
@@ -179,6 +182,7 @@ TEST(ListInterpolationFunctionsTest, EqualMergeSinglesDifferentLengths) {
 }
 
 TEST(ListInterpolationFunctionsTest, EqualMergeSinglesIncompatibleValues) {
+  test::TaskEnvironment task_environment;
   auto list1 = CreateInterpolableList({{1.0, 1}, {2.0, 2}, {3.0, 3}});
   auto list2 = CreateInterpolableList({{1.0, 1}, {2.0, 4}, {3.0, 3}});
 
@@ -191,6 +195,7 @@ TEST(ListInterpolationFunctionsTest, EqualMergeSinglesIncompatibleValues) {
 }
 
 TEST(ListInterpolationFunctionsTest, EqualMergeSinglesIncompatibleNullptrs) {
+  test::TaskEnvironment task_environment;
   auto list1 = CreateInterpolableList({{1.0, 1}, {2.0, 2}, {3.0, 3}});
   auto list2 = CreateInterpolableList({1, 2, 3});
 
@@ -203,6 +208,7 @@ TEST(ListInterpolationFunctionsTest, EqualMergeSinglesIncompatibleNullptrs) {
 }
 
 TEST(ListInterpolationFunctionsTest, EqualCompositeSameLengths) {
+  test::TaskEnvironment task_environment;
   auto list1 = CreateInterpolableList({{1.0, 1}, {2.0, 2}, {3.0, 3}});
   auto list2 = CreateInterpolableList({{1.0, 1}, {2.0, 2}, {3.0, 3}});
 
@@ -230,6 +236,7 @@ TEST(ListInterpolationFunctionsTest, EqualCompositeSameLengths) {
 // Two lists of different lengths are not interpolable, so we expect the
 // underlying value to be replaced.
 TEST(ListInterpolationFunctionsTest, EqualCompositeDifferentLengths) {
+  test::TaskEnvironment task_environment;
   auto list1 = CreateInterpolableList({1.0, 2.0, 3.0});
   auto list2 = CreateInterpolableList({4.0, 5.0});
 
@@ -313,6 +320,7 @@ TEST(ListInterpolationFunctionsTest,
 }
 
 TEST(ListInterpolationFunctionsTest, BuilderNoModify) {
+  test::TaskEnvironment task_environment;
   auto list = CreateNonInterpolableList({1, 2, 3});
   auto& before = To<NonInterpolableList>(*list.non_interpolable_value);
 
@@ -331,6 +339,7 @@ TEST(ListInterpolationFunctionsTest, BuilderNoModify) {
 }
 
 TEST(ListInterpolationFunctionsTest, BuilderModifyFirst) {
+  test::TaskEnvironment task_environment;
   auto list = CreateNonInterpolableList({1, 2, 3});
   auto& before = To<NonInterpolableList>(*list.non_interpolable_value);
 
@@ -350,6 +359,7 @@ TEST(ListInterpolationFunctionsTest, BuilderModifyFirst) {
 }
 
 TEST(ListInterpolationFunctionsTest, BuilderModifyMiddle) {
+  test::TaskEnvironment task_environment;
   auto list = CreateNonInterpolableList({1, 2, 3});
   auto& before = To<NonInterpolableList>(*list.non_interpolable_value);
 
@@ -369,6 +379,7 @@ TEST(ListInterpolationFunctionsTest, BuilderModifyMiddle) {
 }
 
 TEST(ListInterpolationFunctionsTest, BuilderModifyLast) {
+  test::TaskEnvironment task_environment;
   auto list = CreateNonInterpolableList({1, 2, 3});
   auto& before = To<NonInterpolableList>(*list.non_interpolable_value);
 
@@ -388,6 +399,7 @@ TEST(ListInterpolationFunctionsTest, BuilderModifyLast) {
 }
 
 TEST(ListInterpolationFunctionsTest, BuilderModifyAll) {
+  test::TaskEnvironment task_environment;
   auto list = CreateNonInterpolableList({1, 2, 3});
   auto& before = To<NonInterpolableList>(*list.non_interpolable_value);
 
@@ -409,6 +421,7 @@ TEST(ListInterpolationFunctionsTest, BuilderModifyAll) {
 }
 
 TEST(ListInterpolationFunctionsTest, BuilderModifyReverse) {
+  test::TaskEnvironment task_environment;
   auto list = CreateNonInterpolableList({1, 2, 3, 4, 5});
   auto& before = To<NonInterpolableList>(*list.non_interpolable_value);
 
@@ -431,6 +444,7 @@ TEST(ListInterpolationFunctionsTest, BuilderModifyReverse) {
 }
 
 TEST(ListInterpolationFunctionsTest, BuilderModifyListWithOneItem) {
+  test::TaskEnvironment task_environment;
   auto list = CreateNonInterpolableList({1});
   auto& before = To<NonInterpolableList>(*list.non_interpolable_value);
 

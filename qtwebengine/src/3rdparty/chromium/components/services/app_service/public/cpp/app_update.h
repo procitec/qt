@@ -1,21 +1,30 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef COMPONENTS_SERVICES_APP_SERVICE_PUBLIC_CPP_APP_UPDATE_H_
 #define COMPONENTS_SERVICES_APP_SERVICE_PUBLIC_CPP_APP_UPDATE_H_
 
+#include <ostream>
 #include <string>
 #include <vector>
 
 #include "base/component_export.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
+#include "base/memory/raw_ref.h"
 #include "components/account_id/account_id.h"
-#include "components/services/app_service/public/mojom/types.mojom.h"
+#include "components/services/app_service/public/cpp/app_types.h"
+#include "components/services/app_service/public/cpp/intent_filter.h"
+#include "components/services/app_service/public/cpp/permission.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace apps {
 
-// Wraps two apps::mojom::AppPtr's, a prior state and a delta on top of that
+class AppRegistryCacheTest;
+struct IconKey;
+struct RunOnOsLogin;
+
+// Wraps two apps::AppPtr's, a prior state and a delta on top of that
 // state. The state is conceptually the "sum" of all of the previous deltas,
 // with "addition" or "merging" simply being that the most recent version of
 // each field "wins".
@@ -42,32 +51,55 @@ namespace apps {
 // are const. The constructor caller must guarantee that the AppPtr references
 // remain valid for the lifetime of the AppUpdate.
 //
-// See //components/services/app_service/README.md for more details.
+// See components/services/app_service/README.md for more details.
 class COMPONENT_EXPORT(APP_UPDATE) AppUpdate {
  public:
-  // Modifies |state| by copying over all of |delta|'s known fields: those
-  // fields whose values aren't "unknown". The |state| may not be nullptr.
-  static void Merge(apps::mojom::App* state, const apps::mojom::App* delta);
+  // Modifies `new_delta` by copying over all of `delta`'s known fields: those
+  // fields whose values aren't "unknown". The `new_delta` may not be nullptr.
+  //
+  // For `icon_key`, if `new_delta`'s `update_version` is true, keep that as
+  // true. Otherwise, copying `delta`'s `icon_key` if it has a value.
+  static void MergeDelta(App* new_delta, App* delta);
+
+  // Modifies `state` by copying over all of `delta`'s known fields: those
+  // fields whose values aren't "unknown". The `state` may not be nullptr.
+  //
+  // For `icon_key`, if `delta`'s `update_version` is true, increase `state`'s
+  // `update_version`.
+  static void Merge(App* state, const App* delta);
+
+  // Returns true if there are some changed for `delta` compared with `state`.
+  // Otherwise, returns false. `state` and `delta` must have the same`app_id`.
+  static bool IsChanged(const App* state, const App* delta);
 
   // At most one of |state| or |delta| may be nullptr.
-  AppUpdate(const apps::mojom::App* state,
-            const apps::mojom::App* delta,
-            const AccountId& account_id);
+  AppUpdate(const App* state, const App* delta, const AccountId& account_id);
+
+  AppUpdate(const AppUpdate&) = delete;
+  AppUpdate& operator=(const AppUpdate&) = delete;
 
   // Returns whether this is the first update for the given AppId.
   // Equivalently, there are no previous deltas for the AppId.
   bool StateIsNull() const;
 
-  apps::mojom::AppType AppType() const;
+  apps::AppType AppType() const;
 
   const std::string& AppId() const;
 
-  apps::mojom::Readiness Readiness() const;
+  apps::Readiness Readiness() const;
+  apps::Readiness PriorReadiness() const;
   bool ReadinessChanged() const;
 
+  // The full name of the app. This is the name that should be used by default
+  // in most UIs.
   const std::string& Name() const;
   bool NameChanged() const;
 
+  // A possibly shortened version of the app name. May omit branding (e.g.
+  // "Google" prefixes) or rely on abbreviations (e.g. "YT Music"). If the
+  // developer/publisher does not supply a short name, this will be the same as
+  // the Name() field. May be used in UIs where space is limited and/or we want
+  // to optimize for scannability.
   const std::string& ShortName() const;
   bool ShortNameChanged() const;
 
@@ -83,10 +115,10 @@ class COMPONENT_EXPORT(APP_UPDATE) AppUpdate {
   const std::string& Version() const;
   bool VersionChanged() const;
 
-  std::vector<std::string> AdditionalSearchTerms() const;
+  const std::vector<std::string>& AdditionalSearchTerms() const;
   bool AdditionalSearchTermsChanged() const;
 
-  apps::mojom::IconKeyPtr IconKey() const;
+  absl::optional<apps::IconKey> IconKey() const;
   bool IconKeyChanged() const;
 
   base::Time LastLaunchTime() const;
@@ -95,54 +127,111 @@ class COMPONENT_EXPORT(APP_UPDATE) AppUpdate {
   base::Time InstallTime() const;
   bool InstallTimeChanged() const;
 
-  std::vector<apps::mojom::PermissionPtr> Permissions() const;
+  apps::Permissions Permissions() const;
   bool PermissionsChanged() const;
 
-  apps::mojom::InstallSource InstallSource() const;
+  // The main reason why this app is currently installed on the device (e.g.
+  // because it is required by Policy). This may change over time and is not
+  // necessarily the reason why the app was originally installed.
+  apps::InstallReason InstallReason() const;
+  bool InstallReasonChanged() const;
+
+  // How installation of the app was triggered on this device. Either a UI
+  // surface (e.g. Play Store), or a system component (e.g. Sync).
+  apps::InstallSource InstallSource() const;
   bool InstallSourceChanged() const;
 
-  apps::mojom::OptionalBool InstalledInternally() const;
+  // IDs used for policy to identify the app.
+  // For web apps, it contains the install URL(s).
+  const std::vector<std::string>& PolicyIds() const;
+  bool PolicyIdsChanged() const;
 
-  apps::mojom::OptionalBool IsPlatformApp() const;
+  bool InstalledInternally() const;
+
+  absl::optional<bool> IsPlatformApp() const;
   bool IsPlatformAppChanged() const;
 
-  apps::mojom::OptionalBool Recommendable() const;
+  absl::optional<bool> Recommendable() const;
   bool RecommendableChanged() const;
 
-  apps::mojom::OptionalBool Searchable() const;
+  absl::optional<bool> Searchable() const;
   bool SearchableChanged() const;
 
-  apps::mojom::OptionalBool ShowInLauncher() const;
+  absl::optional<bool> ShowInLauncher() const;
   bool ShowInLauncherChanged() const;
 
-  apps::mojom::OptionalBool ShowInShelf() const;
+  absl::optional<bool> ShowInShelf() const;
   bool ShowInShelfChanged() const;
 
-  apps::mojom::OptionalBool ShowInSearch() const;
+  absl::optional<bool> ShowInSearch() const;
   bool ShowInSearchChanged() const;
 
-  apps::mojom::OptionalBool ShowInManagement() const;
+  absl::optional<bool> ShowInManagement() const;
   bool ShowInManagementChanged() const;
 
-  apps::mojom::OptionalBool HasBadge() const;
+  absl::optional<bool> HandlesIntents() const;
+  bool HandlesIntentsChanged() const;
+
+  absl::optional<bool> AllowUninstall() const;
+  bool AllowUninstallChanged() const;
+
+  absl::optional<bool> HasBadge() const;
   bool HasBadgeChanged() const;
 
-  apps::mojom::OptionalBool Paused() const;
+  absl::optional<bool> Paused() const;
   bool PausedChanged() const;
 
-  std::vector<apps::mojom::IntentFilterPtr> IntentFilters() const;
+  apps::IntentFilters IntentFilters() const;
   bool IntentFiltersChanged() const;
+
+  absl::optional<bool> ResizeLocked() const;
+  bool ResizeLockedChanged() const;
+
+  apps::WindowMode WindowMode() const;
+  bool WindowModeChanged() const;
+
+  absl::optional<apps::RunOnOsLogin> RunOnOsLogin() const;
+  bool RunOnOsLoginChanged() const;
+
+  absl::optional<bool> AllowClose() const;
+  bool AllowCloseChanged() const;
 
   const ::AccountId& AccountId() const;
 
+  absl::optional<uint64_t> AppSizeInBytes() const;
+  bool AppSizeInBytesChanged() const;
+
+  absl::optional<uint64_t> DataSizeInBytes() const;
+  bool DataSizeInBytesChanged() const;
+
+  // App-specified supported locales.
+  const std::vector<std::string>& SupportedLocales() const;
+  bool SupportedLocalesChanged() const;
+
+  // Currently selected locale, empty string means system language is used.
+  // ARC-specific note: Based on Android implementation, `selected_locale`
+  //  is not necessarily part of `supported_locales`.
+  absl::optional<std::string> SelectedLocale() const;
+  bool SelectedLocaleChanged() const;
+
+  absl::optional<base::Value::Dict> Extra() const;
+  bool ExtraChanged() const;
+
+  const App* State() const { return state_.get(); }
+  const App* Delta() const { return delta_.get(); }
+
  private:
-  const apps::mojom::App* state_;
-  const apps::mojom::App* delta_;
+  friend class AppRegistryCacheTest;
 
-  const ::AccountId& account_id_;
+  raw_ptr<const apps::App, DanglingUntriaged> state_ = nullptr;
+  raw_ptr<const apps::App, DanglingUntriaged> delta_ = nullptr;
 
-  DISALLOW_COPY_AND_ASSIGN(AppUpdate);
+  const raw_ref<const ::AccountId> account_id_;
 };
+
+// For logging and debug purposes.
+COMPONENT_EXPORT(APP_UPDATE)
+std::ostream& operator<<(std::ostream& out, const AppUpdate& app);
 
 }  // namespace apps
 

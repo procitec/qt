@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,6 +7,7 @@
 #include <memory>
 
 #include "base/check_op.h"
+#include "base/memory/raw_ptr.h"
 #include "device/bluetooth/bluetooth_classic_device_mac.h"
 #include "device/bluetooth/bluetooth_socket_mac.h"
 
@@ -15,16 +16,16 @@
 @interface BluetoothRfcommChannelDelegate
     : NSObject <IOBluetoothRFCOMMChannelDelegate> {
  @private
-  device::BluetoothRfcommChannelMac* _channel;  // weak
+  raw_ptr<device::BluetoothRfcommChannelMac> _channel;  // weak
 }
 
-- (id)initWithChannel:(device::BluetoothRfcommChannelMac*)channel;
+- (instancetype)initWithChannel:(device::BluetoothRfcommChannelMac*)channel;
 
 @end
 
 @implementation BluetoothRfcommChannelDelegate
 
-- (id)initWithChannel:(device::BluetoothRfcommChannelMac*)channel {
+- (instancetype)initWithChannel:(device::BluetoothRfcommChannelMac*)channel {
   if ((self = [super init]))
     _channel = channel;
 
@@ -77,21 +78,15 @@ std::unique_ptr<BluetoothRfcommChannelMac> BluetoothRfcommChannelMac::OpenAsync(
     IOReturn* status) {
   DCHECK(socket);
   std::unique_ptr<BluetoothRfcommChannelMac> channel(
-      new BluetoothRfcommChannelMac(socket, nil));
+      new BluetoothRfcommChannelMac(socket, /*channel=*/nil));
 
-  // Retain the delegate, because IOBluetoothDevice's
-  // |-openRFCOMMChannelAsync:withChannelID:delegate:| assumes that it can take
-  // ownership of the delegate without calling |-retain| on it...
   DCHECK(channel->delegate_);
-  [channel->delegate_ retain];
   IOBluetoothRFCOMMChannel* rfcomm_channel;
   *status = [device openRFCOMMChannelAsync:&rfcomm_channel
                              withChannelID:channel_id
                                   delegate:channel->delegate_];
   if (*status == kIOReturnSuccess) {
-    // Note: No need to retain the |rfcomm_channel| -- the returned channel is
-    // already retained.
-    channel->channel_.reset(rfcomm_channel);
+    channel->channel_ = rfcomm_channel;
   } else {
     channel.reset();
   }
@@ -107,8 +102,7 @@ void BluetoothRfcommChannelMac::SetSocket(BluetoothSocketMac* socket) {
   // Now that the socket is set, it's safe to associate a delegate, which can
   // call back to the socket.
   DCHECK(!delegate_);
-  delegate_.reset(
-      [[BluetoothRfcommChannelDelegate alloc] initWithChannel:this]);
+  delegate_ = [[BluetoothRfcommChannelDelegate alloc] initWithChannel:this];
   [channel_ setDelegate:delegate_];
 }
 

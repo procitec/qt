@@ -24,6 +24,7 @@
 #include "include/core/SkTypes.h"
 #include "include/utils/SkTextUtils.h"
 #include "tools/ToolUtils.h"
+#include "tools/fonts/FontToolUtils.h"
 
 enum SrcType {
     //! A WxH image with a rectangle in the lower right.
@@ -133,11 +134,12 @@ class XfermodesGM : public skiagm::GM {
      */
     void draw_mode(SkCanvas* canvas, SkBlendMode mode, SrcType srcType, SkScalar x, SkScalar y) {
         SkPaint p;
+        SkSamplingOptions sampling;
         SkMatrix m;
         bool restoreNeeded = false;
         m.setTranslate(x, y);
 
-        canvas->drawBitmap(fSrcB, x, y, &p);
+        canvas->drawImage(fSrcB.asImage(), x, y, sampling, &p);
         p.setBlendMode(mode);
         switch (srcType) {
             case kSmallTransparentImage_SrcType: {
@@ -145,7 +147,7 @@ class XfermodesGM : public skiagm::GM {
 
                 SkAutoCanvasRestore acr(canvas, true);
                 canvas->concat(m);
-                canvas->drawBitmap(fTransparent, 0, 0, &p);
+                canvas->drawImage(fTransparent.asImage(), 0, 0, sampling, &p);
                 break;
             }
             case kQuarterClearInLayer_SrcType: {
@@ -195,7 +197,7 @@ class XfermodesGM : public skiagm::GM {
             case kRectangleImage_SrcType: {
                 SkAutoCanvasRestore acr(canvas, true);
                 canvas->concat(m);
-                canvas->drawBitmap(fDstB, 0, 0, &p);
+                canvas->drawImage(fDstB.asImage(), 0, 0, sampling, &p);
                 break;
             }
             default:
@@ -221,13 +223,9 @@ public:
     XfermodesGM() {}
 
 protected:
-    SkString onShortName() override {
-        return SkString("xfermodes");
-    }
+    SkString getName() const override { return SkString("xfermodes"); }
 
-    SkISize onISize() override {
-        return SkISize::Make(1990, 570);
-    }
+    SkISize getISize() override { return SkISize::Make(1990, 570); }
 
     void onDraw(SkCanvas* canvas) override {
         canvas->translate(SkIntToScalar(10), SkIntToScalar(20));
@@ -236,20 +234,21 @@ protected:
         const SkScalar h = SkIntToScalar(H);
         SkMatrix m;
         m.setScale(SkIntToScalar(6), SkIntToScalar(6));
-        auto s = fBG.makeShader(SkTileMode::kRepeat, SkTileMode::kRepeat, &m);
+        auto s = fBG.makeShader(SkTileMode::kRepeat, SkTileMode::kRepeat,
+                                SkSamplingOptions(), m);
 
         SkPaint labelP;
         labelP.setAntiAlias(true);
 
-        SkFont font(ToolUtils::create_portable_typeface());
+        SkFont font = ToolUtils::DefaultPortableFont();
 
-        const int W = 5;
+        const int kWrap = 5;
 
         SkScalar x0 = 0;
         SkScalar y0 = 0;
         for (int sourceType = 1; sourceType & kAll_SrcType; sourceType <<= 1) {
             SkScalar x = x0, y = y0;
-            for (size_t i = 0; i < SK_ARRAY_COUNT(gModes); i++) {
+            for (size_t i = 0; i < std::size(gModes); i++) {
                 if ((gModes[i].fSourceTypeMask & sourceType) == 0) {
                     continue;
                 }
@@ -276,7 +275,7 @@ protected:
                                         font, labelP, SkTextUtils::kCenter_Align);
 #endif
                 x += w + SkIntToScalar(10);
-                if ((i % W) == W - 1) {
+                if ((i % kWrap) == kWrap - 1) {
                     x = x0;
                     y += h + SkIntToScalar(30);
                 }

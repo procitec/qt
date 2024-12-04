@@ -1,53 +1,45 @@
-#############################################################################
-##
-## Copyright (C) 2017 The Qt Company Ltd.
-## Contact: http://www.qt.io/licensing/
-##
-## This file is part of the provisioning scripts of the Qt Toolkit.
-##
-## $QT_BEGIN_LICENSE:LGPL21$
-## Commercial License Usage
-## Licensees holding valid commercial Qt licenses may use this file in
-## accordance with the commercial license agreement provided with the
-## Software or, alternatively, in accordance with the terms contained in
-## a written agreement between you and The Qt Company. For licensing terms
-## and conditions see http://www.qt.io/terms-conditions. For further
-## information use the contact form at http://www.qt.io/contact-us.
-##
-## GNU Lesser General Public License Usage
-## Alternatively, this file may be used under the terms of the GNU Lesser
-## General Public License version 2.1 or version 3 as published by the Free
-## Software Foundation and appearing in the file LICENSE.LGPLv21 and
-## LICENSE.LGPLv3 included in the packaging of this file. Please review the
-## following information to ensure the GNU Lesser General Public License
-## requirements will be met: https://www.gnu.org/licenses/lgpl.html and
-## http://www.gnu.org/licenses/old-licenses/lgpl-2.1.html.
-##
-## As a special exception, The Qt Company gives you certain additional
-## rights. These rights are described in The Qt Company LGPL Exception
-## version 1.1, included in the file LGPL_EXCEPTION.txt in this package.
-##
-## $QT_END_LICENSE$
-##
-#############################################################################
+# Copyright (C) 2019 The Qt Company Ltd.
+# SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 . "$PSScriptRoot\helpers.ps1"
 
-$majorminorversion = "3.7"
-$version = "3.7.2"
+$majorminorversion = "3.30"
+$version = "3.30.5"
 
-$zip = Get-DownloadLocation ("cmake-" + $version + "-win32-x86.zip")
-$officialurl = "https://cmake.org/files/v" + $majorminorversion + "/cmake-" + $version + "-win32-x86.zip"
-$cachedurl = "\\ci-files01-hki.intra.qt.io\provisioning\cmake\cmake-" + $version + "-win32-x86.zip"
+$cpu_arch = Get-CpuArchitecture
+Write-Host "Installing CMake for architecture $cpu_arch"
+switch ($cpu_arch) {
+    arm64 {
+        $arch = "arm64"
+        $sha1 = "408977a174476407bd660604f110a26ba41a6efd"
+        $majorminorversion = "3.30"
+        $version = "3.30.5"
+        Break
+    }
+    x64 {
+        $arch = "i386"
+        $sha1 = "d0636735c2d13a4443662605cd80c708f265eacc"
+    }
+    default {
+        throw "Unknown architecture $cpu_arch"
+    }
+}
+
+$filename = "cmake-" + $version + "-windows-" + $arch
+$filename_zip = $filename + ".zip"
+
+$zip = Get-DownloadLocation ($filename_zip)
+$officialurl = "https://cmake.org/files/v" + $majorminorversion + "/" + $filename_zip
+$cachedurl = "https://ci-files01-hki.ci.qt.io/input/cmake/" + $filename_zip
 
 Write-Host "Removing old cmake"
-Remove-Item "C:\CMake" -Force -Recurse -ErrorAction SilentlyContinue
+Remove "C:\CMake"
 
 Download $officialurl $cachedurl $zip
-Verify-Checksum $zip "c80c17e858ecfebfaf16fe8af18b174d2600c4e6"
+Verify-Checksum $zip $sha1
 
 Extract-7Zip $zip C:
-$defaultinstallfolder = "C:\cmake-" + $version + "-win32-x86"
+$defaultinstallfolder = "C:\" + $filename
 Rename-Item $defaultinstallfolder C:\CMake
 
 Add-Path "C:\CMake\bin"

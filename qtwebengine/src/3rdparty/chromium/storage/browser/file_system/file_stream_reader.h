@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,7 +12,11 @@
 #include "base/compiler_specific.h"
 #include "base/component_export.h"
 #include "base/files/file.h"
+#include "base/functional/callback_forward.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/weak_ptr.h"
+#include "components/file_access/scoped_file_access.h"
+#include "components/file_access/scoped_file_access_delegate.h"
 #include "components/services/storage/public/cpp/filesystem/filesystem_proxy.h"
 #include "net/base/completion_once_callback.h"
 
@@ -27,9 +31,6 @@ class IOBuffer;
 }
 
 namespace storage {
-class FileSystemContext;
-class FileSystemURL;
-class ObfuscatedFileUtilMemoryDelegate;
 
 // A generic interface for reading a file-like object.
 class FileStreamReader {
@@ -48,57 +49,9 @@ class FileStreamReader {
       scoped_refptr<base::TaskRunner> task_runner,
       const base::FilePath& file_path,
       int64_t initial_offset,
-      const base::Time& expected_modification_time);
-
-  // Creates a new FileReader for a local file |file_path|, which is a
-  // relative path into |filesystem_proxy|.  This function's behavior
-  // is otherwise identical to CreateForLocalFile other than all file operations
-  // going through |filesystem_proxy|.
-  COMPONENT_EXPORT(STORAGE_BROWSER)
-  static std::unique_ptr<FileStreamReader> CreateForFilesystemProxy(
-      scoped_refptr<base::TaskRunner> task_runner,
-      const base::FilePath& file_path,
-      std::unique_ptr<storage::FilesystemProxy> filesystem_proxy,
-      int64_t initial_offset,
-      const base::Time& expected_modification_time);
-
-  // The same as CreateForFilesystemProxy, but will emit diagnostic metrics.
-  COMPONENT_EXPORT(STORAGE_BROWSER)
-  static std::unique_ptr<FileStreamReader> CreateForIndexedDBDataItemReader(
-      scoped_refptr<base::TaskRunner> task_runner,
-      const base::FilePath& file_path,
-      std::unique_ptr<storage::FilesystemProxy> filesystem_proxy,
-      int64_t initial_offset,
-      const base::Time& expected_modification_time);
-
-  // Creates a new FileReader for a memory file |file_path|.
-  // |initial_offset| specifies the offset in the file where the first read
-  // should start.  If the given offset is out of the file range any
-  // read operation may error out with net::ERR_REQUEST_RANGE_NOT_SATISFIABLE.
-  // |expected_modification_time| specifies the expected last modification
-  // If the value is non-null, the reader will check the underlying file's
-  // actual modification time to see if the file has been modified, and if
-  // it does any succeeding read operations should fail with
-  // ERR_UPLOAD_FILE_CHANGED error.
-  COMPONENT_EXPORT(STORAGE_BROWSER)
-  static std::unique_ptr<FileStreamReader> CreateForMemoryFile(
-      scoped_refptr<base::TaskRunner> task_runner,
-      base::WeakPtr<ObfuscatedFileUtilMemoryDelegate> memory_file_util,
-      const base::FilePath& file_path,
-      int64_t initial_offset,
-      const base::Time& expected_modification_time);
-
-  // Creates a new reader for a filesystem URL |url| form |initial_offset|.
-  // |expected_modification_time| specifies the expected last modification if
-  // the value is non-null, the reader will check the underlying file's actual
-  // modification time to see if the file has been modified, and if it does any
-  // succeeding read operations should fail with ERR_UPLOAD_FILE_CHANGED error.
-  COMPONENT_EXPORT(STORAGE_BROWSER)
-  static std::unique_ptr<FileStreamReader> CreateForFileSystemFile(
-      FileSystemContext* context,
-      const FileSystemURL& url,
-      int64_t initial_offset,
-      const base::Time& expected_modification_time);
+      const base::Time& expected_modification_time,
+      file_access::ScopedFileAccessDelegate::RequestFilesAccessIOCallback
+          file_access = base::NullCallback());
 
   // Verify if the underlying file has not been modified.
   COMPONENT_EXPORT(STORAGE_BROWSER)

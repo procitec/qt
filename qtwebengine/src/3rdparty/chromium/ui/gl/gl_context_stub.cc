@@ -1,9 +1,10 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "ui/gl/gl_context_stub.h"
 
+#include "build/build_config.h"
 #include "ui/gl/gl_gl_api_implementation.h"
 #include "ui/gl/gl_stub_api.h"
 
@@ -17,8 +18,8 @@ GLContextStub::GLContextStub(GLShareGroup* share_group)
   SetExtensionsString("GL_EXT_framebuffer_object");
 }
 
-bool GLContextStub::Initialize(GLSurface* compatible_surface,
-                               const GLContextAttribs& attribs) {
+bool GLContextStub::InitializeImpl(GLSurface* compatible_surface,
+                                   const GLContextAttribs& attribs) {
   return true;
 }
 
@@ -75,11 +76,13 @@ bool GLContextStub::HasRobustness() {
          HasExtension("GL_KHR_robustness") || HasExtension("GL_EXT_robustness");
 }
 
-#if defined(OS_APPLE)
+#if BUILDFLAG(IS_MAC)
 void GLContextStub::FlushForDriverCrashWorkaround() {}
 #endif
 
-GLContextStub::~GLContextStub() {}
+GLContextStub::~GLContextStub() {
+  OnContextWillDestroy();
+}
 
 GLApi* GLContextStub::CreateGLApi(DriverGL* driver) {
   if (use_stub_api_) {

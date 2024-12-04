@@ -1,10 +1,11 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef COMPONENTS_OFFLINE_PAGES_CORE_BACKGROUND_LOAD_TERMINATION_LISTENER_H_
 #define COMPONENTS_OFFLINE_PAGES_CORE_BACKGROUND_LOAD_TERMINATION_LISTENER_H_
 
+#include "base/memory/raw_ptr.h"
 #include "components/offline_pages/core/background/offliner.h"
 
 namespace offline_pages {
@@ -16,6 +17,10 @@ namespace offline_pages {
 class LoadTerminationListener {
  public:
   LoadTerminationListener() = default;
+
+  LoadTerminationListener(const LoadTerminationListener&) = delete;
+  LoadTerminationListener& operator=(const LoadTerminationListener&) = delete;
+
   virtual ~LoadTerminationListener() = default;
 
   // Called by Offliner when it takes ownership of this listener. Used to
@@ -24,8 +29,7 @@ class LoadTerminationListener {
 
  protected:
   // Raw pointer because this class is owned by Offliner.
-  Offliner* offliner_ = nullptr;
-  DISALLOW_COPY_AND_ASSIGN(LoadTerminationListener);
+  raw_ptr<Offliner> offliner_ = nullptr;
 };
 
 }  // namespace offline_pages

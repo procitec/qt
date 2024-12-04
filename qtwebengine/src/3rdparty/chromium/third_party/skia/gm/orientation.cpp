@@ -6,6 +6,8 @@
  */
 
 #include "gm/gm.h"
+#include "include/codec/SkEncodedOrigin.h"
+#include "include/core/SkBlurTypes.h"
 #include "include/core/SkCanvas.h"
 #include "include/core/SkFont.h"
 #include "include/core/SkImage.h"
@@ -14,8 +16,11 @@
 #include "include/core/SkSize.h"
 #include "include/core/SkString.h"
 #include "include/core/SkSurface.h"
+#include "tools/DecodeUtils.h"
+#include "tools/EncodeUtils.h"
 #include "tools/Resources.h"
 #include "tools/ToolUtils.h"
+#include "tools/fonts/FontToolUtils.h"
 
 static constexpr int kImgW = 100;
 static constexpr int kImgH =  80;
@@ -23,54 +28,36 @@ static constexpr int kImgH =  80;
 /**
   This function was used to create the images used by these test. It saves them as PNGs (so they
   are lossless). Then the following bash script was used to create the oriented JPGs with
-  imagemagick:
+  imagemagick and exiftool:
 #!/bin/bash
-
-function originname()  {
-  case $1 in
-    1)
-      echo -n "top-left"
-      ;;
-    2)
-      echo -n "top-right"
-      ;;
-    3)
-      echo -n "bottom-right"
-      ;;
-    4)
-      echo -n "bottom-left"
-      ;;
-    5)
-      echo -n "left-top"
-      ;;
-    6)
-      echo -n "right-top"
-      ;;
-    7)
-      echo -n "right-bottom"
-      ;;
-    8)
-      echo -n "left-bottom"
-      ;;
-    *)
-      echo -n "unknown"
-      ;;
-  esac
-}
 
 for s in 444 422 420 440 411 410; do
   for i in {1..8}; do
-    magick convert $i.png -sampling-factor ${s:0:1}:${s:1:1}:${s:2:1} \
-    -orient $(originname $i) $i\_$s.jpg;
+    magick convert $i.png -sampling-factor ${s:0:1}:${s:1:1}:${s:2:1} $i\_$s.jpg;
+    exiftool -orientation=$i -n -m -overwrite_original $i\_$s.jpg;
   done
 done
+
  */
 static void make_images() {
-    auto surf = SkSurface::MakeRaster(SkImageInfo::Make({kImgW, kImgH},
-                                                        kRGBA_8888_SkColorType,
-                                                        kPremul_SkAlphaType));
     for (int i = 1; i <= 8; ++i) {
+        SkISize size{kImgW, kImgH};
+        SkEncodedOrigin origin = static_cast<SkEncodedOrigin>(i);
+        // We apply the inverse transformation to the PNG we generate, convert the PNG to a
+        // a JPEG using magick, then modify the JPEG's tag using exiftool (without modifying the
+        // stored JPEG data).
+        if (origin >= kLeftTop_SkEncodedOrigin) {
+            // The last four SkEncodedOrigin values involve 90 degree rotations
+            using std::swap;
+            swap(size.fWidth, size.fHeight);
+        }
+        using std::swap;
+        auto surf = SkSurfaces::Raster(
+                SkImageInfo::Make(size, kRGBA_8888_SkColorType, kPremul_SkAlphaType));
         auto* canvas = surf->getCanvas();
+        SkMatrix m = SkEncodedOriginToMatrix(origin, kImgW, kImgH);
+        SkAssertResult(m.invert(&m));
+        canvas->concat(m);
         canvas->clear(SK_ColorBLACK);
         SkPaint paint;
         paint.setColor(SK_ColorRED);
@@ -85,7 +72,7 @@ static void make_images() {
         canvas->drawRect(SkRect::MakeXYWH(1, midY, w, h), paint);
         paint.setColor(SK_ColorYELLOW);
         canvas->drawRect(SkRect::MakeXYWH(midX, midY, w, h), paint);
-        SkFont font(ToolUtils::create_portable_typeface(), kImgH / 4.f);
+        SkFont font(ToolUtils::DefaultPortableTypeface(), kImgH / 4.f);
 
         SkPaint blurPaint;
         blurPaint.setMaskFilter(SkMaskFilter::MakeBlur(kNormal_SkBlurStyle, .75f));
@@ -122,7 +109,7 @@ static void make_images() {
         drawLabel("left", kPad - bounds.left(), baseY);
 
         bounds = measure("right");
-        drawLabel("right", midX - kPad - bounds.right(), baseY);
+        drawLabel("right", kImgW - kPad - bounds.right(), baseY);
 
         SkString num = SkStringPrintf("%d", i);
         bounds = measure(num.c_str());
@@ -130,7 +117,7 @@ static void make_images() {
         num.append(".png");
         SkPixmap pm;
         surf->makeImageSnapshot()->peekPixels(&pm);
-        ToolUtils::EncodeImageToFile(num.c_str(), pm, SkEncodedImageFormat::kPNG, 100);
+        ToolUtils::EncodeImageToPngFile(num.c_str(), pm);
     }
 }
 
@@ -141,13 +128,13 @@ static void make_images() {
 // EXIF tag for that image's jpg file.
 static void draw(SkCanvas* canvas, const char* suffix) {
     // Avoid unused function warning.
-    if (0) {
+    if ((false)) {
         make_images();
     }
     canvas->save();
     for (char i = '1'; i <= '8'; i++) {
         SkString path = SkStringPrintf("images/orientation/%c%s.jpg", i, suffix);
-        auto image = GetResourceAsImage(path.c_str());
+        auto image = ToolUtils::GetResourceAsImage(path.c_str());
         if (!image) {
             continue;
         }

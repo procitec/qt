@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,16 +14,15 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 
-namespace openscreen {
-namespace cast {
+namespace openscreen::cast {
 
 class SimpleMessagePort : public MessagePort {
  public:
-  ~SimpleMessagePort() override {}
-  void SetClient(MessagePort::Client* client,
-                 std::string client_sender_id) override {
-    client_ = client;
-  }
+  explicit SimpleMessagePort(const std::string& destination_id)
+      : destination_id_(destination_id) {}
+
+  ~SimpleMessagePort() override = default;
+  void SetClient(MessagePort::Client& client) override { client_ = &client; }
 
   void ResetClient() override { client_ = nullptr; }
 
@@ -32,9 +31,15 @@ class SimpleMessagePort : public MessagePort {
   }
 
   void ReceiveMessage(const std::string& namespace_,
-                      const std::string message) {
+                      const std::string& message) {
+    ReceiveMessage(destination_id_, namespace_, message);
+  }
+
+  void ReceiveMessage(const std::string& sender_id,
+                      const std::string& namespace_,
+                      const std::string& message) {
     ASSERT_NE(client_, nullptr);
-    client_->OnMessage("sender-1234", namespace_, message);
+    client_->OnMessage(sender_id, namespace_, message);
   }
 
   void ReceiveError(Error error) {
@@ -48,17 +53,16 @@ class SimpleMessagePort : public MessagePort {
     posted_messages_.emplace_back(message);
   }
 
-  MessagePort::Client* client() const { return client_; }
   const std::vector<std::string> posted_messages() const {
     return posted_messages_;
   }
 
  private:
   MessagePort::Client* client_ = nullptr;
+  std::string destination_id_;
   std::vector<std::string> posted_messages_;
 };
 
-}  // namespace cast
-}  // namespace openscreen
+}  // namespace openscreen::cast
 
 #endif  // CAST_STREAMING_TESTING_SIMPLE_MESSAGE_PORT_H_

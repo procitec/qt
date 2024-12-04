@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,17 +12,17 @@
 #include <vector>
 
 #include "base/check.h"
-#include "base/optional.h"
-#include "components/cast_channel/cast_message_util.h"
-#include "components/cast_channel/cast_socket.h"
+#include "base/time/time.h"
 #include "components/media_router/common/media_source.h"
+#include "components/media_router/common/providers/cast/channel/cast_device_capability.h"
+#include "components/media_router/common/providers/cast/channel/cast_message_util.h"
+#include "components/media_router/common/providers/cast/channel/cast_socket.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
+using cast_channel::CastDeviceCapabilitySet;
 using cast_channel::ReceiverAppType;
 
 namespace media_router {
-
-static constexpr char kCastStreamingAppId[] = "0F5096E8";
-static constexpr char kCastStreamingAudioAppId[] = "85CDB22F";
 
 // Placeholder app ID advertised by the multizone leader in a receiver status
 // message.
@@ -35,50 +35,12 @@ static const constexpr char* const kMultizoneMemberAppIds[] = {
     "705D30C6"  // MultizoneFollower
 };
 
-static constexpr base::TimeDelta kDefaultLaunchTimeout =
-    base::TimeDelta::FromSeconds(60);
-
-// Class for storing a bitwise OR of enum values.
-//
-// TODO(jrw): Make values of cast_channel::CastDeviceCapability consecutive and
-// store sets of values using a class like v8::base::EnumSet instead of this
-// monstrosity.
-template <typename E, typename T = std::underlying_type_t<E>>
-class BitwiseOr {
- public:
-  constexpr BitwiseOr() : bits_(0) {}
-  constexpr BitwiseOr(std::initializer_list<E> values) : bits_(0) {
-    for (E e : values)
-      Add(e);
-  }
-  static constexpr BitwiseOr FromBits(T bits) { return BitwiseOr(bits); }
-  bool empty() const { return bits_ == 0; }
-  T bits() const { return bits_; }
-  void Add(E value) { bits_ |= Mask(value); }
-  void Remove(E value) { bits_ &= ~Mask(value); }
-  bool Has(E value) const { return (bits_ & Mask(value)) != 0; }
-  bool HasAll(const BitwiseOr& other) const {
-    return (bits_ & other.bits_) == other.bits_;
-  }
-  bool operator==(const BitwiseOr& other) const { return bits_ == other.bits_; }
-  bool operator!=(const BitwiseOr& other) const { return *this != other; }
-
- private:
-  explicit constexpr BitwiseOr(T bits) : bits_(bits) {}
-
-  static T Mask(E value) {
-    const T result = static_cast<T>(value);
-    DCHECK(static_cast<E>(result) == value);
-    return result;
-  }
-  T bits_;
-};
+static constexpr base::TimeDelta kDefaultLaunchTimeout = base::Seconds(60);
 
 // Represents a Cast app and its capabilitity requirements.
 struct CastAppInfo {
-  explicit CastAppInfo(
-      const std::string& app_id,
-      BitwiseOr<cast_channel::CastDeviceCapability> required_capabilities);
+  explicit CastAppInfo(const std::string& app_id,
+                       CastDeviceCapabilitySet required_capabilities);
   ~CastAppInfo();
 
   CastAppInfo(const CastAppInfo& other);
@@ -89,7 +51,7 @@ struct CastAppInfo {
   std::string app_id;
 
   // A bitset of capabilities required by the app.
-  BitwiseOr<cast_channel::CastDeviceCapability> required_capabilities;
+  CastDeviceCapabilitySet required_capabilities;
 };
 
 // Auto-join policy determines when the SDK will automatically connect a sender
@@ -134,7 +96,7 @@ bool IsAutoJoinAllowed(AutoJoinPolicy policy,
                        const url::Origin& origin2,
                        int tab_id2);
 
-// Returns true if |source_id| is a valid origin for site-initiated mirroring.
+// Returns true if |source_id| is valid for site-initiated mirroring.
 bool IsSiteInitiatedMirroringSource(const MediaSource::Id& source_id);
 
 // Represents a MediaSource parsed into structured, Cast specific data. The
@@ -151,6 +113,8 @@ class CastMediaSource {
       const MediaSource::Id& source);
 
   static std::unique_ptr<CastMediaSource> FromAppId(const std::string& app_id);
+
+  static std::unique_ptr<CastMediaSource> ForSiteInitiatedMirroring();
 
   CastMediaSource(const MediaSource::Id& source_id,
                   const std::vector<CastAppInfo>& app_infos,
@@ -182,22 +146,15 @@ class CastMediaSource {
   void set_launch_timeout(base::TimeDelta launch_timeout) {
     launch_timeout_ = launch_timeout;
   }
-  const base::Optional<cast_channel::BroadcastRequest>& broadcast_request()
-      const {
-    return broadcast_request_;
-  }
-  void set_broadcast_request(const cast_channel::BroadcastRequest& request) {
-    broadcast_request_ = request;
-  }
   AutoJoinPolicy auto_join_policy() const { return auto_join_policy_; }
   DefaultActionPolicy default_action_policy() const {
     return default_action_policy_;
   }
-  base::Optional<base::TimeDelta> target_playout_delay() const {
+  absl::optional<base::TimeDelta> target_playout_delay() const {
     return target_playout_delay_;
   }
   void set_target_playout_delay(
-      const base::Optional<base::TimeDelta>& target_playout_delay) {
+      const absl::optional<base::TimeDelta>& target_playout_delay) {
     target_playout_delay_ = target_playout_delay;
   }
   // See also: ProvidesStreamingAudioCapture().
@@ -231,8 +188,7 @@ class CastMediaSource {
   base::TimeDelta launch_timeout_ = kDefaultLaunchTimeout;
   // Optional parameters.
   std::string client_id_;
-  base::Optional<cast_channel::BroadcastRequest> broadcast_request_;
-  base::Optional<base::TimeDelta> target_playout_delay_;
+  absl::optional<base::TimeDelta> target_playout_delay_;
   bool site_requested_audio_capture_ = true;
   std::vector<ReceiverAppType> supported_app_types_ = {ReceiverAppType::kWeb};
   std::string app_params_;

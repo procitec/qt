@@ -1,4 +1,4 @@
-// Copyright (c) 2010 The Chromium Authors. All rights reserved.
+// Copyright 2010 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,10 +6,11 @@
 
 #include <objbase.h>
 
+#include <string_view>
+
+#include "base/containers/contains.h"
 #include "base/files/file_path.h"
-#include "base/macros.h"
 #include "base/scoped_native_library.h"
-#include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/win/scoped_co_mem.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -24,12 +25,14 @@ namespace {
 class ThreadLocaleSaver {
  public:
   ThreadLocaleSaver() : original_locale_id_(GetThreadLocale()) {}
+
+  ThreadLocaleSaver(const ThreadLocaleSaver&) = delete;
+  ThreadLocaleSaver& operator=(const ThreadLocaleSaver&) = delete;
+
   ~ThreadLocaleSaver() { SetThreadLocale(original_locale_id_); }
 
  private:
   LCID original_locale_id_;
-
-  DISALLOW_COPY_AND_ASSIGN(ThreadLocaleSaver);
 };
 
 }  // namespace
@@ -78,11 +81,11 @@ TEST(BaseWinUtilTest, WStringFromGUID) {
                       0xf5b0,
                       0x4328,
                       {0x92, 0x38, 0xbd, 0x70, 0x8a, 0x6d, 0xc9, 0x63}};
-  const base::WStringPiece kGuidStr = L"{7698F759-F5B0-4328-9238-BD708A6DC963}";
+  const std::wstring_view kGuidStr = L"{7698F759-F5B0-4328-9238-BD708A6DC963}";
   auto guid_wstring = WStringFromGUID(kGuid);
   EXPECT_EQ(guid_wstring, kGuidStr);
   wchar_t guid_wchar[39];
-  ::StringFromGUID2(kGuid, guid_wchar, base::size(guid_wchar));
+  ::StringFromGUID2(kGuid, guid_wchar, std::size(guid_wchar));
   EXPECT_STREQ(guid_wstring.c_str(), guid_wchar);
   ScopedCoMem<OLECHAR> clsid_string;
   ::StringFromCLSID(kGuid, &clsid_string);

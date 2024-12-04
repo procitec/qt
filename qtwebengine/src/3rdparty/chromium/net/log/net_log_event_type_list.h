@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -37,7 +37,7 @@ EVENT_TYPE(FAILED)
 EVENT_TYPE(REQUEST_ALIVE)
 
 // ------------------------------------------------------------------------
-// HostResolverImpl
+// HostResolverManager (previously known as HostResolverImpl)
 // ------------------------------------------------------------------------
 
 // The start/end of a host resolve (DNS) request.  Note that these events are
@@ -47,21 +47,22 @@ EVENT_TYPE(REQUEST_ALIVE)
 // The BEGIN phase contains the following parameters:
 //
 //   {
-//     "host": <Hostname associated with the request>,
+//     "host": <Serialized scheme/host/port of the request>,
 //     "dns_query_type": <The type of the DNS query>,
 //     "allow_cached_response": <Whether it is ok to return a result from
 //                               the host cache>,
 //     "is_speculative": <Whether this request was started by the DNS
-//                        prefetcher>
-//     "network_isolation_key": <NetworkIsolationKey associated with the
-//                               request>
+//                        prefetcher>,
+//     "network_isolation_key": <NetworkAnonymizationKey associated with the
+//                               request>,
+//     "secure_dns_policy": <SecureDnsPolicy of the request>,
 //   }
 //
 // If an error occurred, the END phase will contain these parameters:
 //   {
 //     "net_error": <The net error code integer for the failure>,
 //   }
-EVENT_TYPE(HOST_RESOLVER_IMPL_REQUEST)
+EVENT_TYPE(HOST_RESOLVER_MANAGER_REQUEST)
 
 // This event is created (in a source of the same name) when the host resolver
 // creates a UDP socket to check for global IPv6 connectivity.
@@ -70,67 +71,73 @@ EVENT_TYPE(HOST_RESOLVER_IMPL_REQUEST)
 //   {
 //     "ipv6_available": <True if the probe indicates ipv6 connectivity>,
 //   }
-EVENT_TYPE(HOST_RESOLVER_IMPL_IPV6_REACHABILITY_CHECK)
+EVENT_TYPE(HOST_RESOLVER_MANAGER_IPV6_REACHABILITY_CHECK)
 
 // This event is logged when a request is handled by a cache entry.
 // It contains the following parameter:
 //   {
-//     "address_list": <The resolved addresses>,
+//     "results": <HostCache::Entry of results>,
 //   }
-EVENT_TYPE(HOST_RESOLVER_IMPL_CACHE_HIT)
+EVENT_TYPE(HOST_RESOLVER_MANAGER_CACHE_HIT)
 
 // This event is logged when a request is handled by a HOSTS entry.
 // It contains the following parameter:
 //   {
-//     "address_list": <The resolved addresses>,
+//     "results": <HostCache::Entry of results>,
 //   }
-EVENT_TYPE(HOST_RESOLVER_IMPL_HOSTS_HIT)
+EVENT_TYPE(HOST_RESOLVER_MANAGER_HOSTS_HIT)
 
-// This event is created when a new HostResolverImpl::Job is about to be created
-// for a request.
-EVENT_TYPE(HOST_RESOLVER_IMPL_CREATE_JOB)
+// This event is logged when a bootstrap request matches a config preset entry.
+// It contains the following parameter:
+//   {
+//     "results": <HostCache::Entry of results>,
+//   }
+EVENT_TYPE(HOST_RESOLVER_MANAGER_CONFIG_PRESET_MATCH)
 
-// The creation/completion of a HostResolverImpl::Job which is created for
+// This event is created when a new HostResolverManager::Job is about to be
+// created for a request.
+EVENT_TYPE(HOST_RESOLVER_MANAGER_CREATE_JOB)
+
+// The creation/completion of a HostResolverManager::Job which is created for
 // Requests that cannot be resolved synchronously.
 //
 // The BEGIN phase contains the following parameters:
 //
 //   {
-//     "host": <Hostname associated with the request>,
-//     "source_dependency": <Source id, if any, of what created the request>,
+//     "dns_query_type": <DnsQueryType of the job>,
+//     "host": <Serialized scheme/host/port associated with the job>,
+//     "network_isolation_key": <NetworkAnonymizationKey associated with the
+//     job>, "secure_dns_mode": <SecureDnsMode of the job>, "source_dependency":
+//     <Source id, if any, of what created the job>,
 //   }
 //
-// On success, the END phase has these parameters:
-//   {
-//     "address_list": <The host name being resolved>,
-//   }
-// If an error occurred, the END phase will contain these parameters:
+// The END phase will contain these parameters:
 //   {
 //     "net_error": <The net error code integer for the failure>,
 //   }
-EVENT_TYPE(HOST_RESOLVER_IMPL_JOB)
+EVENT_TYPE(HOST_RESOLVER_MANAGER_JOB)
 
-// This event is created when a HostResolverImpl::Job is evicted from
+// This event is created when a HostResolverManager::Job is evicted from
 // PrioritizedDispatcher before it can start, because the limit on number of
 // queued Jobs was reached.
-EVENT_TYPE(HOST_RESOLVER_IMPL_JOB_EVICTED)
+EVENT_TYPE(HOST_RESOLVER_MANAGER_JOB_EVICTED)
 
-// This event is created when a HostResolverImpl::Job is started by
+// This event is created when a HostResolverManager::Job is started by
 // PrioritizedDispatcher.
-EVENT_TYPE(HOST_RESOLVER_IMPL_JOB_STARTED)
+EVENT_TYPE(HOST_RESOLVER_MANAGER_JOB_STARTED)
 
-// This event is created when HostResolverImpl::ProcJob is about to start a new
-// attempt to resolve the host.
+// This event is created when HostResolverManager::ProcTask is about to start a
+// new attempt to resolve the host.
 //
 // The ATTEMPT_STARTED event has the parameters:
 //
 //   {
 //     "attempt_number": <the number of the attempt that is resolving the host>,
 //   }
-EVENT_TYPE(HOST_RESOLVER_IMPL_ATTEMPT_STARTED)
+EVENT_TYPE(HOST_RESOLVER_MANAGER_ATTEMPT_STARTED)
 
-// This event is created when HostResolverImpl::ProcJob has finished resolving
-// the host.
+// This event is created when HostResolverManager::ProcTask has finished
+// resolving the host.
 //
 // The ATTEMPT_FINISHED event has the parameters:
 //
@@ -142,12 +149,12 @@ EVENT_TYPE(HOST_RESOLVER_IMPL_ATTEMPT_STARTED)
 //     "net_error": <The net error code integer for the failure>,
 //     "os_error": <The exact error code integer that getaddrinfo() returned>,
 //   }
-EVENT_TYPE(HOST_RESOLVER_IMPL_ATTEMPT_FINISHED)
+EVENT_TYPE(HOST_RESOLVER_MANAGER_ATTEMPT_FINISHED)
 
 // This is logged for a request when it's attached to a
-// HostResolverImpl::Job. When this occurs without a preceding
-// HOST_RESOLVER_IMPL_CREATE_JOB entry, it means the request was attached to an
-// existing HostResolverImpl::Job.
+// HostResolverManager::Job. When this occurs without a preceding
+// HOST_RESOLVER_MANAGER_CREATE_JOB entry, it means the request was attached to
+// an existing HostResolverManager::Job.
 //
 // The event contains the following parameters:
 //
@@ -155,7 +162,7 @@ EVENT_TYPE(HOST_RESOLVER_IMPL_ATTEMPT_FINISHED)
 //     "source_dependency": <Source identifier for the attached Job>,
 //   }
 //
-EVENT_TYPE(HOST_RESOLVER_IMPL_JOB_ATTACH)
+EVENT_TYPE(HOST_RESOLVER_MANAGER_JOB_ATTACH)
 
 // This event is logged for the job to which the request is attached.
 // In that case, the event contains the following parameters:
@@ -164,7 +171,7 @@ EVENT_TYPE(HOST_RESOLVER_IMPL_JOB_ATTACH)
 //     "source_dependency": <Source identifier for the attached Request>,
 //     "priority": <New priority of the job>,
 //   }
-EVENT_TYPE(HOST_RESOLVER_IMPL_JOB_REQUEST_ATTACH)
+EVENT_TYPE(HOST_RESOLVER_MANAGER_JOB_REQUEST_ATTACH)
 
 // This is logged for a job when a request is cancelled and detached.
 //
@@ -174,10 +181,10 @@ EVENT_TYPE(HOST_RESOLVER_IMPL_JOB_REQUEST_ATTACH)
 //     "source_dependency": <Source identifier for the detached Request>,
 //     "priority": <New priority of the job>,
 //   }
-EVENT_TYPE(HOST_RESOLVER_IMPL_JOB_REQUEST_DETACH)
+EVENT_TYPE(HOST_RESOLVER_MANAGER_JOB_REQUEST_DETACH)
 
-// The creation/completion of a HostResolverImpl::ProcTask to call getaddrinfo.
-// The BEGIN phase contains the following parameters:
+// The creation/completion of a HostResolverSystemTask to call getaddrinfo. The
+// BEGIN phase contains the following parameters:
 //
 //   {
 //     "hostname": <Hostname associated with the request>,
@@ -192,25 +199,56 @@ EVENT_TYPE(HOST_RESOLVER_IMPL_JOB_REQUEST_DETACH)
 //     "net_error": <The net error code integer for the failure>,
 //     "os_error": <The exact error code integer that getaddrinfo() returned>,
 //   }
-EVENT_TYPE(HOST_RESOLVER_IMPL_PROC_TASK)
+EVENT_TYPE(HOST_RESOLVER_SYSTEM_TASK)
 
-// The creation/completion of a HostResolverImpl::DnsTask to manage a
+// The creation/completion of a HostResolverManager::DnsTask to manage a
 // DnsTransaction. The BEGIN phase contains the following parameters:
 //
 //   {
-//     "source_dependency": <Source id of DnsTransaction>,
+//     "secure": <Whether or not the task will use secure DNS>,
+//     "transactions_needed": [{
+//       "dns_query_type": <DnsQueryType for which a transaction is expected>,
+//     }],
 //   }
 //
 // On success, the END phase has these parameters:
 //   {
-//     "address_list": <The resolved addresses>,
+//     "results": <HostCache::Entry of results>,
 //   }
 // If an error occurred, the END phase will contain these parameters:
 //   {
+//     "dns_query_type": <The DnsQueryType of the transaction that failed>,
+//     "error_ttl_sec": <TTL in seconds for caching the error>,
 //     "net_error": <The net error code integer for the failure>,
-//     "dns_error": <The detailed DnsResponse::Result>
+//     "saved_results": <HostCache::Entry of any previously completed
+//                       transactions>,
 //   }
-EVENT_TYPE(HOST_RESOLVER_IMPL_DNS_TASK)
+EVENT_TYPE(HOST_RESOLVER_MANAGER_DNS_TASK)
+
+// Logged when DnsResponseResultExtractor returns an error to
+// HostResolverManager::DnsTask when attempting to extract results from a
+// DnsResponse. Contains the following parameters:
+//
+//   {
+//     "extraction_error": <The DnsResponseResultExtractor::ExtractionError>
+//     "dns_query_type": <The DnsQueryType requested from the extractor>
+//   }
+EVENT_TYPE(HOST_RESOLVER_MANAGER_DNS_TASK_EXTRACTION_FAILURE)
+
+// Logged when a HostResolverManager::DnsTask times out and cancels unfinished
+// transactions.
+// The event contains the following parameters:
+//
+//   {
+//     "started_transactions": [{
+//       "dns_query_type": <DnsQueryType of a started but incomplete
+//       transaction>,
+//     }],
+//     "queued_transactions": [{
+//       "dns_query_type": <DnsQueryType of a not-yet-started transaction>,
+//     }],
+//   }
+EVENT_TYPE(HOST_RESOLVER_MANAGER_DNS_TASK_TIMEOUT)
 
 // ------------------------------------------------------------------------
 // InitProxyResolver
@@ -363,6 +401,48 @@ EVENT_TYPE(SUBMITTED_TO_RESOLVER_THREAD)
 //   }
 EVENT_TYPE(SOCKET_ALIVE)
 
+// Records Open calls to sockets.
+//   {
+//     "net_error": <On failure; net integer error code>
+//   }
+EVENT_TYPE(SOCKET_OPEN)
+
+// Records Connect calls to sockets.
+//   {
+//     "address": <Remote address being connected to>
+//     "net_error": <On failure; net integer error code>
+//   }
+EVENT_TYPE(SOCKET_CONNECT)
+
+// Records BindToNetwork calls to sockets.
+//   {
+//     "network": <Network this socket is being bound to>
+//     "net_error": <On failure; net integer error code>
+//   }
+EVENT_TYPE(SOCKET_BIND_TO_NETWORK)
+
+// ------------------------------------------------------------------------
+// Brokered Socket (Shared by stream and datagram sockets)
+// ------------------------------------------------------------------------
+
+// Marks the begin/end of a brokered socket (TCP/UDP)
+// The BEGIN phase contains the following parameters:
+//
+//   {
+//     "source_dependency": <Source identifier for the controlling entity>,
+//   }
+EVENT_TYPE(BROKERED_SOCKET_ALIVE)
+
+// The start/end of creating a new socketfd in the network service sandbox. This
+// event is only used when a socket needs to be created outside of the network
+// sandbox.
+//
+// The END event wil contain the following parameters:
+//   {
+//     "net_error": <Net integer error code>
+//   }
+EVENT_TYPE(BROKERED_CREATE_SOCKET)
+
 // ------------------------------------------------------------------------
 // StreamSocket
 // ------------------------------------------------------------------------
@@ -392,10 +472,21 @@ EVENT_TYPE(TCP_CONNECT)
 //     "address": <String of the network address>,
 //   }
 //
-// And the END event will contain the system error code if it failed:
+// The END event will contain one of the following:
+//
+// On success:
+//   {
+//     "local_address": <The local address, as a string>,
+//     "remote_address": <The remote address, as a string>,
+//   }
+//
+// On success, but unable to determine the connected address:
+//   {
+//     "get_address_net_error": <Net integer error code>,
+//   }
 //
 //   {
-//     "os_error": <Integer error code the operating system returned>,
+//     "net_error": <Net integer error code>,
 //   }
 EVENT_TYPE(TCP_CONNECT_ATTEMPT)
 
@@ -480,6 +571,13 @@ EVENT_TYPE(SOCKS_UNKNOWN_ADDRESS_TYPE)
 //  }
 EVENT_TYPE(SSL_CONNECT)
 
+// Emitted at the start of an SSL handshakes that use ECH. The following
+// parameters are attached.
+// {
+//     "bytes": <The ECHConfigList used, base64 encoded>
+// }
+EVENT_TYPE(SSL_ECH_CONFIG_LIST)
+
 // The start/end of an SSL server handshake (aka "accept").
 EVENT_TYPE(SSL_SERVER_HANDSHAKE)
 
@@ -531,7 +629,9 @@ EVENT_TYPE(SSL_ALERT_SENT)
 EVENT_TYPE(SSL_CONFIRM_HANDSHAKE)
 
 // An SSL connection sent or received a handshake message.
-// The following parameters are attached:
+// `SSL_ENCRYPTED_CLIENT_HELLO` means the handshake message was not sent over
+// the wire but encrypted with the Encrypted ClientHello (ECH) extension. The
+// following parameters are attached:
 //   {
 //     "type": <The type of the handshake message, as an integer>
 //     "bytes": <The exact bytes sent, Base64 encoded.
@@ -539,6 +639,7 @@ EVENT_TYPE(SSL_CONFIRM_HANDSHAKE)
 //   }
 EVENT_TYPE(SSL_HANDSHAKE_MESSAGE_RECEIVED)
 EVENT_TYPE(SSL_HANDSHAKE_MESSAGE_SENT)
+EVENT_TYPE(SSL_ENCRYPTED_CLIENT_HELLO)
 
 // The specified number of bytes were sent on the socket.  Depending on the
 // source of the event, may be logged either once the data is sent, or when it
@@ -626,20 +727,6 @@ EVENT_TYPE(SIGNED_CERTIFICATE_TIMESTAMPS_CHECKED)
 //    "ct_compliance_status": <string describing compliance status>
 // }
 EVENT_TYPE(CERT_CT_COMPLIANCE_CHECKED)
-
-// The EV certificate was checked for compliance with Certificate Transparency
-// requirements.
-//
-// The following parameters are attached to the event:
-// {
-//    "certificate": <An X.509 certificate, same format as in
-//                   CERT_VERIFIER_JOB.>
-//    "policy_enforcement_required": <boolean>
-//    "build_timely": <boolean>
-//    "ct_compliance_status": <string describing compliance status>
-//    "ev_whitelist_version": <optional; string representing whitelist version>
-// }
-EVENT_TYPE(EV_CERT_CT_COMPLIANCE_CHECKED)
 
 // A Certificate Transparency log entry was audited for inclusion in the
 // log.
@@ -739,8 +826,30 @@ EVENT_TYPE(SOCKS_CONNECT_JOB_CONNECT)
 // The start/end of the HttpProxyConnectJob::Connect().
 EVENT_TYPE(HTTP_PROXY_CONNECT_JOB_CONNECT)
 
-// The start/end of the WebSocketConnectJob::Connect().
-EVENT_TYPE(WEB_SOCKET_TRANSPORT_CONNECT_JOB_CONNECT)
+// A TLS connection attempt failed because ECH was not negotiated. The
+// connection will be retried with a new ECHConfigList from the client-facing
+// server. If the new ECHConfigList is the empty string, the server has rolled
+// back ECH and the new attempt will have ECH disabled.
+//
+//   {
+//     "bytes": <The new ECHConfigList, base64-encoded>
+//   }
+EVENT_TYPE(SSL_CONNECT_JOB_RESTART_WITH_ECH_CONFIG_LIST)
+
+// This event is logged when the TransportConnectJob IPv6 fallback timer expires
+// and the IPv4 addresses are attempted.
+EVENT_TYPE(TRANSPORT_CONNECT_JOB_IPV6_FALLBACK)
+
+// This event is logged whenever the ConnectJob attempts a new TCP connection.
+// association. The ConnectJob may attempt multiple addresses in parallel, so
+// this event does not log when the connection attempt succeeds or fails. The
+// source dependency may be used to determine this.
+//
+//   {
+//     "address": <String of the network address being attempted>,
+//     "source_dependency": <The source identifier for the new socket.>,
+//   }
+EVENT_TYPE(TRANSPORT_CONNECT_JOB_CONNECT_ATTEMPT)
 
 // ------------------------------------------------------------------------
 // ClientSocketPoolBaseHelper
@@ -831,8 +940,9 @@ EVENT_TYPE(SOCKET_POOL_CLOSING_SOCKET)
 //      "initiator": <Initiator origin of the request, if any, or else "not an
 //                    origin">,
 //      "load_flags": <Numeric value of the combined load flags>,
-//      "privacy_mode": <Privacy mode associated with the request>,
 //      "network_isolation_key": <NIK associated with the request>,
+//      "request_type": <Type of the request, which is "main frame", "subframe",
+//                       or "other">,
 //      "priority": <Numeric priority of the request>,
 //      "site_for_cookies": <SiteForCookies associated with the request>,
 //      "traffic_annotation": <int32 for the request's TrafficAnnotationTag>,
@@ -863,6 +973,12 @@ EVENT_TYPE(URL_REQUEST_DELEGATE_CERTIFICATE_REQUESTED)
 EVENT_TYPE(URL_REQUEST_DELEGATE_RECEIVED_REDIRECT)
 EVENT_TYPE(URL_REQUEST_DELEGATE_RESPONSE_STARTED)
 EVENT_TYPE(URL_REQUEST_DELEGATE_SSL_CERTIFICATE_ERROR)
+
+// Like the above events, but the END phase also has the following parameter:
+//   {
+//     "net_error": <Network error code. Only present on error.
+//   }
+EVENT_TYPE(URL_REQUEST_DELEGATE_CONNECTED)
 
 // Logged when a delegate informs the URL_REQUEST of what's currently blocking
 // the request. The parameters attached to the begin event are:
@@ -920,6 +1036,11 @@ EVENT_TYPE(URL_REQUEST_FILTERS_SET)
 EVENT_TYPE(HTTP_CACHE_GET_BACKEND)
 
 // Measures the time while getting a disk cache entry with OpenOrCreateEntry().
+// The following parameters are attached:
+//   {
+//     "net_error": <Network error code.  Only present on error>,
+//     "result": <"opened" or "created".  Only present on success>
+//   }
 EVENT_TYPE(HTTP_CACHE_OPEN_OR_CREATE_ENTRY)
 
 // Measures the time while opening a disk cache entry.
@@ -1058,8 +1179,11 @@ EVENT_TYPE(HTTP_STREAM_REQUEST)
 //      "original_url": <The URL to create a stream for>,
 //      "url": <The URL actually being used, possibly different from
 //              original_url if using an alternate service>,
-//      "alternate_service": <The alternate service being used>,
+//      "expect_spdy": <Boolean indicating whether the Job will use SPDY>,
+//      "using_quic": <Boolean indicating whether the Job will use QUIC>,
 //      "priority": <The priority of the Job>,
+//      "type": <The type of this Job ("main", "alternative", "dns_alpn_h3",
+//               "preconnect")>,
 //   }
 EVENT_TYPE(HTTP_STREAM_JOB)
 
@@ -1094,14 +1218,14 @@ EVENT_TYPE(HTTP_STREAM_JOB_INIT_CONNECTION)
 //   }
 EVENT_TYPE(HTTP_STREAM_REQUEST_BOUND_TO_JOB)
 
-// Identifies the NetLogSource() for the QuicStreamFactory::Job that the
+// Identifies the NetLogSource() for the QuicSessionPool::Job that the
 // HttpStreamFactory::Job was attached to.
 // The event parameters are:
 //  {
-//      "source_dependency": <Source identifier for the QuicStreamFactory::Job
+//      "source_dependency": <Source identifier for the QuicSessionPool::Job
 //                            to which we were attached>,
 //  }
-EVENT_TYPE(HTTP_STREAM_JOB_BOUND_TO_QUIC_STREAM_FACTORY_JOB)
+EVENT_TYPE(HTTP_STREAM_JOB_BOUND_TO_QUIC_SESSION_POOL_JOB)
 
 // Identifies the NetLogSource() for the Request that the Job was attached to.
 // The event parameters are:
@@ -1113,9 +1237,7 @@ EVENT_TYPE(HTTP_STREAM_JOB_BOUND_TO_REQUEST)
 
 // Logs the protocol negotiated with the server. The event parameters are:
 //   {
-//      "status": <The NPN status ("negotiated", "unsupported", "no-overlap")>,
-//      "proto": <The NPN protocol negotiated>,
-//      "server_protos": <The list of server advertised protocols>,
+//      "proto": <The ALPN protocol negotiated>,
 //   }
 EVENT_TYPE(HTTP_STREAM_REQUEST_PROTO)
 
@@ -1139,7 +1261,8 @@ EVENT_TYPE(HTTP_STREAM_JOB_RESUMED)
 // The following parameters are attached:
 //   {
 //      "url": <String of request URL>,
-//      "is_preconnect": <True if controller is created for a preconnect.>,
+//      "is_preconnect": <True if controller is created for a preconnect>,
+//      "private_mode": <Privacy mode of the request>,
 //   }
 EVENT_TYPE(HTTP_STREAM_JOB_CONTROLLER)
 
@@ -1238,6 +1361,13 @@ EVENT_TYPE(HTTP_TRANSACTION_READ_HEADERS)
 //     "headers": <The list of header:value pairs>,
 //   }
 EVENT_TYPE(HTTP_TRANSACTION_READ_RESPONSE_HEADERS)
+
+// This event is sent on receipt of a 103 Early Hints response headers.
+// The following parameters are attached:
+//   {
+//     "headers": <The list of header:value pairs>,
+//   }
+EVENT_TYPE(HTTP_TRANSACTION_READ_EARLY_HINTS_RESPONSE_HEADERS)
 
 // Measures the time to read the entity body from the server.
 EVENT_TYPE(HTTP_TRANSACTION_READ_BODY)
@@ -1350,26 +1480,6 @@ EVENT_TYPE(BIDIRECTIONAL_STREAM_FAILED)
 EVENT_TYPE(BIDIRECTIONAL_STREAM_BOUND_TO_QUIC_SESSION)
 
 // ------------------------------------------------------------------------
-// SERVER_PUSH_LOOKUP_TRANSACTION
-// ------------------------------------------------------------------------
-
-// The start/end of a push lookup transaction for server push.
-//
-// The START event has the parameters:
-//   {
-//     "source_dependency": <Source identifier for the server push lookp.
-//                           It can be a QUIC_SESSION or a HTTP2_SESSION>,
-//     "pushed_url": <The url that has been pushed and looked up>,
-//   }
-//
-// If the transaction doesn't find the resource in cache, then the END phase
-// has these parameters:
-//   {
-//     "net_error": <Net error code integer>,
-//   }
-EVENT_TYPE(SERVER_PUSH_LOOKUP_TRANSACTION)
-
-// ------------------------------------------------------------------------
 // SpdySession
 // ------------------------------------------------------------------------
 
@@ -1417,6 +1527,14 @@ EVENT_TYPE(HTTP2_SESSION_SEND_SETTINGS)
 
 // On sending an HTTP/2 SETTINGS frame with ACK flag.
 EVENT_TYPE(HTTP2_SESSION_SEND_SETTINGS_ACK)
+
+// Receipt of an HTTP/2 ACCEPT_CH frame.
+// The following parameters are attached:
+//   {
+//     "origin": <The origin associated with the settings>,
+//     "accept_ch":  <the raw ACCEPT_CH setting for that origin>,
+//   }
+EVENT_TYPE(HTTP2_SESSION_RECV_ACCEPT_CH)
 
 // Receipt of an HTTP/2 SETTINGS frame without ACK flag.
 EVENT_TYPE(HTTP2_SESSION_RECV_SETTINGS)
@@ -1520,15 +1638,6 @@ EVENT_TYPE(HTTP2_SESSION_SEND_DATA)
 //   }
 EVENT_TYPE(HTTP2_SESSION_RECV_DATA)
 
-// This event is sent for receiving an HTTP/2 PUSH_PROMISE frame.
-// The following parameters are attached:
-//   {
-//     "headers": <The list of header:value pairs>,
-//     "id": <The stream id>,
-//     "promised_stream_id": <The stream id>,
-//   }
-EVENT_TYPE(HTTP2_SESSION_RECV_PUSH_PROMISE)
-
 // A stream is stalled by the session send window being closed.
 EVENT_TYPE(HTTP2_SESSION_STREAM_STALLED_BY_SESSION_SEND_WINDOW)
 
@@ -1620,13 +1729,6 @@ EVENT_TYPE(HTTP2_SESSION_POOL_REMOVE_SESSION)
 // The begin and end of an HTTP/2 STREAM.
 EVENT_TYPE(HTTP2_STREAM)
 
-// A stream is attached to a pushed stream.
-//   {
-//     "stream_id":  <The stream id>,
-//     "url":        <The url of the pushed resource>,
-//   }
-EVENT_TYPE(HTTP2_STREAM_ADOPTED_PUSH_STREAM)
-
 // A stream is unstalled by flow control.
 EVENT_TYPE(HTTP2_STREAM_FLOW_CONTROL_UNSTALLED)
 
@@ -1674,18 +1776,36 @@ EVENT_TYPE(HTTP2_PROXY_CLIENT_SESSION)
 //   }
 
 // ------------------------------------------------------------------------
-// QuicStreamFactory::Job
+// QuicSessionPool
 // ------------------------------------------------------------------------
 
-// Measures the time taken to execute the QuicStreamFactory::Job.
+// This event is emitted whenever a platform notification is received that
+// could possibly trigger connection migration.
+//   {
+//     "signal": <Type of the platform notification>,
+//     "network": <The network that triggered the notification>,
+//   }
+EVENT_TYPE(QUIC_SESSION_POOL_PLATFORM_NOTIFICATION)
+
+// These events track QuicSessionPool's handling of OnIPAddressChanged and
+// whether QuicSessions are closed or marked as going away.
+EVENT_TYPE(QUIC_SESSION_POOL_ON_IP_ADDRESS_CHANGED)
+EVENT_TYPE(QUIC_SESSION_POOL_CLOSE_ALL_SESSIONS)
+EVENT_TYPE(QUIC_SESSION_POOL_MARK_ALL_ACTIVE_SESSIONS_GOING_AWAY)
+
+// ------------------------------------------------------------------------
+// QuicSessionPool::Job
+// ------------------------------------------------------------------------
+
+// Measures the time taken to execute the QuicSessionPool::Job.
 // The event parameters are:
 //   {
 //     "host": <The origin hostname that the Job serves>,
 //     "port": <The origin port>,
 //     "privacy_mode": <The privacy mode of the Job>,
-//     "network_isolation_key": <The NetworkIsolationKey of the Job>,
+//     "network_anonymization_key": <The NetworkAnonymizationKey of the Job>,
 //   }
-EVENT_TYPE(QUIC_STREAM_FACTORY_JOB)
+EVENT_TYPE(QUIC_SESSION_POOL_JOB)
 
 // Identifies the NetLogSource() for the HttpStreamFactory::Job that the Job was
 // attached to.
@@ -1694,7 +1814,7 @@ EVENT_TYPE(QUIC_STREAM_FACTORY_JOB)
 //     "source_dependency": <Source identifier for the HttpStreamFactory::Job to
 //                           which we were attached>,
 //  }
-EVENT_TYPE(QUIC_STREAM_FACTORY_JOB_BOUND_TO_HTTP_STREAM_JOB)
+EVENT_TYPE(QUIC_SESSION_POOL_JOB_BOUND_TO_HTTP_STREAM_JOB)
 
 // Measures the time taken to establish a QUIC connection.
 // The event parameters are:
@@ -1702,24 +1822,24 @@ EVENT_TYPE(QUIC_STREAM_FACTORY_JOB_BOUND_TO_HTTP_STREAM_JOB)
 //     "require_confirmation": <True if we require handshake confirmation
 //                              in the connection>
 //  }
-EVENT_TYPE(QUIC_STREAM_FACTORY_JOB_CONNECT)
+EVENT_TYPE(QUIC_SESSION_POOL_JOB_CONNECT)
 
 // This event indicates that the connection on the default network has failed
 // before the handshake completed and a new connection on the alternate network
 // will be attempted soon.
-EVENT_TYPE(QUIC_STREAM_FACTORY_JOB_RETRY_ON_ALTERNATE_NETWORK)
+EVENT_TYPE(QUIC_SESSION_POOL_JOB_RETRY_ON_ALTERNATE_NETWORK)
 
 // This event indicates that the stale host result is used to try connecting.
-EVENT_TYPE(QUIC_STREAM_FACTORY_JOB_STALE_HOST_TRIED_ON_CONNECTION)
+EVENT_TYPE(QUIC_SESSION_POOL_JOB_STALE_HOST_TRIED_ON_CONNECTION)
 
 // This event indicates that stale host was not used to try connecting.
-EVENT_TYPE(QUIC_STREAM_FACTORY_JOB_STALE_HOST_NOT_USED_ON_CONNECTION)
+EVENT_TYPE(QUIC_SESSION_POOL_JOB_STALE_HOST_NOT_USED_ON_CONNECTION)
 
 // This event indicates that the stale host doesn't match with fresh host.
-EVENT_TYPE(QUIC_STREAM_FACTORY_JOB_STALE_HOST_RESOLUTION_NO_MATCH)
+EVENT_TYPE(QUIC_SESSION_POOL_JOB_STALE_HOST_RESOLUTION_NO_MATCH)
 
 // This event indicates that stale host matches with fresh resolution.
-EVENT_TYPE(QUIC_STREAM_FACTORY_JOB_STALE_HOST_RESOLUTION_MATCHED)
+EVENT_TYPE(QUIC_SESSION_POOL_JOB_STALE_HOST_RESOLUTION_MATCHED)
 
 // ------------------------------------------------------------------------
 // quic::QuicSession
@@ -1730,9 +1850,11 @@ EVENT_TYPE(QUIC_STREAM_FACTORY_JOB_STALE_HOST_RESOLUTION_MATCHED)
 //     "host": <The origin hostname string>,
 //     "port": <The origin port>,
 //     "privacy_mode": <The privacy mode of the session>,
-//     "network_isolation_key": <The NetworkIsolationKey of the session>,
-//     "require_confirmation": <True if the session will wait for a successful
-//                              QUIC handshake before vending streams>,
+//     "network_anonymization_key": <The NetworkAnonymizationKey of the
+//                                   session>,
+//     "require_confirmation": <True if the session will wait for a
+//                              successful QUIC handshake before vending
+//                              streams>,
 //     "cert_verify_flags": <The certificate verification flags for the
 //                           session>,
 //   }
@@ -1788,6 +1910,14 @@ EVENT_TYPE(QUIC_SESSION_PACKET_RETRANSMITTED)
 //     "detection_time": <The time at which the packet was declared lost>
 //   }
 EVENT_TYPE(QUIC_SESSION_PACKET_LOST)
+
+// Congestion control parameters have been configured for the session.
+//   {
+//     "congestion_control_type": <The name of the CC algorithm used>,
+//     "use_pacing": <The bool indicating if pacing is enabled>,
+//     "initial_congestion_window": <The size of the initial congestion window>
+//   }
+EVENT_TYPE(QUIC_CONGESTION_CONTROL_CONFIGURED)
 
 // Session received a QUIC packet with a sequence number that had previously
 // been received.
@@ -1911,9 +2041,6 @@ EVENT_TYPE(QUIC_SESSION_GOAWAY_FRAME_RECEIVED)
 //   }
 EVENT_TYPE(QUIC_SESSION_GOAWAY_FRAME_SENT)
 
-// Session detected path degrading and decided to mark itself as goaway.
-EVENT_TYPE(QUIC_SESSION_CLIENT_GOAWAY_ON_PATH_DEGRADING)
-
 // Session received a PING frame.
 EVENT_TYPE(QUIC_SESSION_PING_FRAME_RECEIVED)
 
@@ -1943,11 +2070,11 @@ EVENT_TYPE(QUIC_SESSION_STOP_WAITING_FRAME_RECEIVED)
 //   }
 EVENT_TYPE(QUIC_SESSION_STOP_WAITING_FRAME_SENT)
 
-// Session recevied a RST_STREAM frame.
+// Session received a RST_STREAM frame.
 //   {
 //     "offset": <Offset in the byte stream which triggered the reset>,
 //     "quic_rst_stream_error": <quic::QuicRstStreamErrorCode in the frame>,
-//     "details": <Human readable description>,
+//     "stream_id": <The stream id which this frame refers to>,
 //   }
 EVENT_TYPE(QUIC_SESSION_RST_STREAM_FRAME_RECEIVED)
 
@@ -1955,7 +2082,7 @@ EVENT_TYPE(QUIC_SESSION_RST_STREAM_FRAME_RECEIVED)
 //   {
 //     "offset": <Offset in the byte stream which triggered the reset>,
 //     "quic_rst_stream_error": <quic::QuicRstStreamErrorCode in the frame>,
-//     "details": <Human readable description>,
+//     "stream_id": <The stream id which this frame refers to>,
 //   }
 EVENT_TYPE(QUIC_SESSION_RST_STREAM_FRAME_SENT)
 
@@ -2037,17 +2164,45 @@ EVENT_TYPE(QUIC_SESSION_TRANSPORT_PARAMETERS_SENT)
 //   }
 EVENT_TYPE(QUIC_SESSION_TRANSPORT_PARAMETERS_RESUMED)
 
+// A WebTransport client is alive.
+EVENT_TYPE(QUIC_SESSION_WEBTRANSPORT_CLIENT_ALIVE)
+
+// A WebTransport client state has changed.
+//   {
+//     "last_state": <The last client state>
+//     "next_state": <The next client state>
+//     "error": <Optionally, error codes and details when an error happened>
+//   }
+EVENT_TYPE(QUIC_SESSION_WEBTRANSPORT_CLIENT_STATE_CHANGED)
+
+// A WebTransport session is ready.
+//   {
+//     "http_datagram_version": <Negotiated HTTP Datagram version>,
+//     "webtransport_http3_version": <Negotiated WebTransport over HTTP/3
+//      version>
+//   }
+EVENT_TYPE(QUIC_SESSION_WEBTRANSPORT_SESSION_READY)
+
 // QUIC with TLS gets 0-RTT rejected.
 EVENT_TYPE(QUIC_SESSION_ZERO_RTT_REJECTED)
 
-// A QUIC connection received a PUSH_PROMISE frame.  The following
-// parameters are attached:
+// Records that the QUIC session received a default network change signal.
 //   {
-//     "headers": <The list of header:value pairs>,
-//     "id": <The stream id>,
-//     "promised_stream_id": <The stream id>,
+//     "new_default_network": <The new default network>
 //   }
-EVENT_TYPE(QUIC_SESSION_PUSH_PROMISE_RECEIVED)
+EVENT_TYPE(QUIC_SESSION_NETWORK_MADE_DEFAULT)
+
+// Records that the QUIC session received a network disconnected signal.
+//   {
+//     "disconnected_network": <The network which was disconnected>
+//   }
+EVENT_TYPE(QUIC_SESSION_NETWORK_DISCONNECTED)
+
+// Records that the QUIC session received a network connected signal.
+//   {
+//     "connected_network": <The network which was connected>
+//   }
+EVENT_TYPE(QUIC_SESSION_NETWORK_CONNECTED)
 
 // Session was closed, either remotely or by the peer.
 //   {
@@ -2109,14 +2264,14 @@ EVENT_TYPE(QUIC_SESSION_CRYPTO_FRAME_RECEIVED)
 // Session sent a STOP_SENDING frame.
 //  {
 //    "stream_id": <The stream id>,
-//    "application_error_code": <The application error code>
+//    "rsr_stream_error_code": <quic::QuicRstStreamErrorCode in the frame>
 //  }
 EVENT_TYPE(QUIC_SESSION_STOP_SENDING_FRAME_SENT)
 
 // Session received a STOP_SENDING frame.
 //  {
 //    "stream_id": <The stream id>,
-//    "application_error_code": <The application error code>
+//    "rsr_stream_error_code": <Tquic::QuicRstStreamErrorCode in the frame>
 //  }
 EVENT_TYPE(QUIC_SESSION_STOP_SENDING_FRAME_RECEIVED)
 
@@ -2223,6 +2378,13 @@ EVENT_TYPE(QUIC_SESSION_MESSAGE_FRAME_RECEIVED)
 // Session received a HANDSHAKE_DONE frame.
 EVENT_TYPE(QUIC_SESSION_HANDSHAKE_DONE_FRAME_RECEIVED)
 
+// Session received an ACCEPT_CH frame
+// {
+//   "origin": <the origin the accept_ch settings apply to>
+//   "accept_ch": <the raw ACCEPT_CH data>
+// }
+EVENT_TYPE(QUIC_ACCEPT_CH_FRAME_RECEIVED)
+
 // Session sent a coalesced QUIC packet.
 // {
 //   "info": <coalesced packet info>
@@ -2247,26 +2409,15 @@ EVENT_TYPE(QUIC_SESSION_DROPPED_UNDECRYPTABLE_PACKET)
 // }
 EVENT_TYPE(QUIC_SESSION_ATTEMPTING_TO_PROCESS_UNDECRYPTABLE_PACKET)
 
+// Session has updated to the next set of 1-RTT keys.
+// {
+//   "reason": <the reason the key update was triggered>
+// }
+EVENT_TYPE(QUIC_SESSION_KEY_UPDATE)
+
 // ------------------------------------------------------------------------
 // QuicHttpStream
 // ------------------------------------------------------------------------
-
-// A stream request's url matches a received push promise.  The
-// promised stream can be adopted for this request once vary header
-// validation is complete (as part of response header processing).
-//   {
-//     "stream_id":  <The stream id>,
-//     "url":        <The url of the pushed resource>,
-//   }
-EVENT_TYPE(QUIC_HTTP_STREAM_PUSH_PROMISE_RENDEZVOUS)
-
-// Vary validation has succeeded, a http stream is attached to
-// a pushed QUIC stream.
-//   {
-//     "stream_id":  <The stream id>,
-//     "url":        <The url of the pushed resource>,
-//   }
-EVENT_TYPE(QUIC_HTTP_STREAM_ADOPTED_PUSH_STREAM)
 
 // Identifies the NetLogSource() for the QuicSession that handled the stream.
 // The event parameters are:
@@ -2284,6 +2435,12 @@ EVENT_TYPE(HTTP_STREAM_REQUEST_BOUND_TO_QUIC_SESSION)
 //     "headers": <The list of header:value pairs>
 //   }
 EVENT_TYPE(QUIC_CHROMIUM_CLIENT_STREAM_SEND_REQUEST_HEADERS)
+
+// The stream has read a 103 Early Hints response headers.
+//   {
+//     "headers": <The list of header:value pairs>
+//   }
+EVENT_TYPE(QUIC_CHROMIUM_CLIENT_STREAM_READ_EARLY_HINTS_RESPONSE_HEADERS)
 
 // The stream has read the response headers.
 //   {
@@ -2320,13 +2477,6 @@ EVENT_TYPE(QUIC_CONNECTION_MIGRATION_TRIGGERED)
 //  }
 EVENT_TYPE(QUIC_CONNECTION_MIGRATION_FAILURE)
 
-// This event is emitted whenenver a platform notification is received that
-// could possibly trigger connection migration.
-//   {
-//     "signal": <Type of the platform notification>
-//   }
-EVENT_TYPE(QUIC_CONNECTION_MIGRATION_PLATFORM_NOTIFICATION)
-
 // Records a successful QUIC connection migration attempt of the session
 // identified by connection_id.
 //  {
@@ -2336,19 +2486,35 @@ EVENT_TYPE(QUIC_CONNECTION_MIGRATION_SUCCESS)
 
 // Records that a QUIC connection migration attempt due to new network
 // being connected.
+// {
+//     "connected_network": <The network we will try to migrate to>
+// }
 EVENT_TYPE(QUIC_CONNECTION_MIGRATION_ON_NETWORK_CONNECTED)
 
 // Records that a QUIC connection migration attempt due to new network
 // being marked as default network.
+// {
+//     "new_default_network": <The new default network>
+// }
 EVENT_TYPE(QUIC_CONNECTION_MIGRATION_ON_NETWORK_MADE_DEFAULT)
 
 // Records that a QUIC connection migration attempt due to old network
 // being disconnected.
+// {
+//     "disconnected_network": <The network which was disconnected>
+// }
 EVENT_TYPE(QUIC_CONNECTION_MIGRATION_ON_NETWORK_DISCONNECTED)
 
 // Records that a QUIC connection migration attempt due to encountering
 // packet write error on the current network.
+// {
+//     "network": <Current network where we encountered the write error>
+// }
 EVENT_TYPE(QUIC_CONNECTION_MIGRATION_ON_WRITE_ERROR)
+
+// Records that no alternate networks were available after either the default
+// network was or a we encountered a packet write error.
+EVENT_TYPE(QUIC_CONNECTION_MIGRATION_WAITING_FOR_NEW_NETWORK)
 
 // Records that a QUIC connection migration attempt due to path
 // degrading on the current network.
@@ -2356,13 +2522,29 @@ EVENT_TYPE(QUIC_CONNECTION_MIGRATION_ON_PATH_DEGRADING)
 
 // Records that a QUIC connection migration attempt due to efforts to
 // migrate back to the default network.
+// {
+//     "retry_count": <Number of attempts to migrate back so far>
+// }
 EVENT_TYPE(QUIC_CONNECTION_MIGRATION_ON_MIGRATE_BACK)
 
 // Records a QUIC connection migration failure after probing.
 EVENT_TYPE(QUIC_CONNECTION_MIGRATION_FAILURE_AFTER_PROBING)
 
 // Records a QUIC connection migration success after probing.
+// {
+//     "migrate_to_network": <The network the probe was successful for>
+// }
 EVENT_TYPE(QUIC_CONNECTION_MIGRATION_SUCCESS_AFTER_PROBING)
+
+// Records a QUIC connection migration timeout while waiting for a new network.
+EVENT_TYPE(QUIC_CONNECTION_MIGRATION_FAILURE_WAITING_FOR_NETWORK)
+
+// Records that a new network was found before QUIC connection migration timed
+// out.
+// {
+//     "network": <The network that was found and we will try to migrate to>
+// }
+EVENT_TYPE(QUIC_CONNECTION_MIGRATION_SUCCESS_WAITING_FOR_NETWORK)
 
 // ------------------------------------------------------------------------
 // QuicConnectivityProbingManager
@@ -2430,6 +2612,38 @@ EVENT_TYPE(QUIC_PORT_MIGRATION_FAILURE)
 //     "connection_id": <Connection ID of the session>
 //  }
 EVENT_TYPE(QUIC_PORT_MIGRATION_SUCCESS)
+
+// ------------------------------------------------------------------------
+// QuicServerPreferredAddress
+// ------------------------------------------------------------------------
+
+// Records that client has received server preferred address.
+EVENT_TYPE(QUIC_ON_SERVER_PREFERRED_ADDRESS_AVAILABLE)
+
+// Records that client starts to validate received server preferred address.
+EVENT_TYPE(QUIC_START_VALIDATING_SERVER_PREFERRED_ADDRESS)
+
+// Records client fails to migrate to server preferred address of the session
+// identified by connection_id.
+//  {
+//     "connection_id": <Connection ID of the session>
+//     "reason": <String of the failure reason>
+//  }
+EVENT_TYPE(QUIC_FAILED_TO_VALIDATE_SERVER_PREFERRED_ADDRESS)
+
+// Records client successfully migrates to server preferred address of the
+// session identified by connection_id.
+//  {
+//     "connection_id": <Connection ID of the session>
+//  }
+EVENT_TYPE(QUIC_SUCCESSFULLY_MIGRATED_TO_SERVER_PREFERRED_ADDRESS)
+
+// A UDP socket error occurred while trying to read a QUIC packet.
+// The following parameters are attached to the event:
+//   {
+//     "net_error": <Integer code for the specific error type>,
+//   }
+EVENT_TYPE(QUIC_READ_ERROR)
 
 // ------------------------------------------------------------------------
 // HttpStreamParser
@@ -2608,6 +2822,9 @@ EVENT_TYPE(AUTH_BOUND_TO_CONTROLLER)
 //      "scheme": <scheme>
 //      "net_error": <Net Error. Only present in case of error.>
 //      "challenge": <challenge string, if NetLogCaptureIncludesSensitive>
+//      "origin": <the origin of the server or proxy which issued the challenge>
+//      "allows_default_credentials": <whether the default credentials may be
+//                                     used for the origin>
 //  }
 EVENT_TYPE(AUTH_HANDLER_CREATE_RESULT)
 
@@ -2616,6 +2833,9 @@ EVENT_TYPE(AUTH_HANDLER_CREATE_RESULT)
 // The END phase has the following parameters:
 //  {
 //       "succeeded": <bool indicating whether the initialization succeeded>
+//       "allows_default_credentials": whether the default credentials may be
+//                                     used for the `origin` passed into
+//                                    `InitFromChallenge`.
 //  }
 EVENT_TYPE(AUTH_HANDLER_INIT)
 
@@ -2719,24 +2939,6 @@ EVENT_TYPE(AUTH_LIBRARY_INIT_SEC_CTX)
 EVENT_TYPE(AUTH_CHANNEL_BINDINGS)
 
 // ------------------------------------------------------------------------
-// HTML5 Application Cache
-// ------------------------------------------------------------------------
-
-// This event is emitted whenever a request is satisfied directly from
-// the appcache.
-EVENT_TYPE(APPCACHE_DELIVERING_CACHED_RESPONSE)
-
-// This event is emitted whenever the appcache uses a fallback response.
-EVENT_TYPE(APPCACHE_DELIVERING_FALLBACK_RESPONSE)
-
-// This event is emitted whenever the appcache generates an error response.
-EVENT_TYPE(APPCACHE_DELIVERING_ERROR_RESPONSE)
-
-// This event is emitted whenever the appcache executes script to compute
-// a response.
-EVENT_TYPE(APPCACHE_DELIVERING_EXECUTABLE_RESPONSE)
-
-// ------------------------------------------------------------------------
 // Global events
 // ------------------------------------------------------------------------
 // These are events which are not grouped by source id, as they have no
@@ -2761,8 +2963,8 @@ EVENT_TYPE(NETWORK_CONNECTIVITY_CHANGED)
 //   }
 EVENT_TYPE(NETWORK_CHANGED)
 
-// This event is emitted whenever HostResolverImpl receives a new DnsConfig
-// from the DnsConfigService.
+// This event is emitted whenever DnsClient receives a new DnsConfig or
+// DnsConfigOverrides.
 //   {
 //     "nameservers":                <List of name server IPs>,
 //     "search":                     <List of domain suffixes>,
@@ -2773,7 +2975,7 @@ EVENT_TYPE(DNS_CONFIG_CHANGED)
 
 // This event is emitted whenever NetworkChangeNotifier determines that a
 // network has connected and network-specific information is available
-// (i.e. the NetworkChangeNotifier::NetworkHandle of the network is known).
+// (i.e. the handles::NetworkHandle of the network is known).
 //   {
 //     "changed_network_handle":        <Network handle>
 //     "changed_network_type":          <Type of network>
@@ -2786,7 +2988,7 @@ EVENT_TYPE(SPECIFIC_NETWORK_CONNECTED)
 
 // This event is emitted whenever NetworkChangeNotifier determines that a
 // network has disconnected and network-specific information is available
-// (i.e. the NetworkChangeNotifier::NetworkHandle of the network is known).
+// (i.e. the handles::NetworkHandle of the network is known).
 //   {
 //     "changed_network_handle":        <Network handle>
 //     "changed_network_type":          <Type of network>
@@ -2799,7 +3001,7 @@ EVENT_TYPE(SPECIFIC_NETWORK_DISCONNECTED)
 
 // This event is emitted whenever NetworkChangeNotifier determines that a
 // network is soon to disconnect and network-specific information is available
-// (i.e. the NetworkChangeNotifier::NetworkHandle of the network is known).
+// (i.e. the handles::NetworkHandle of the network is known).
 //   {
 //     "changed_network_handle":        <Network handle>
 //     "changed_network_type":          <Type of network>
@@ -2812,7 +3014,7 @@ EVENT_TYPE(SPECIFIC_NETWORK_SOON_TO_DISCONNECT)
 
 // This event is emitted whenever NetworkChangeNotifier determines that a
 // network has become the default and network-specific information is available
-// (i.e. the NetworkChangeNotifier::NetworkHandle of the network is known).
+// (i.e. the handles::NetworkHandle of the network is known).
 //   {
 //     "changed_network_handle":        <Network handle>
 //     "changed_network_type":          <Type of network>
@@ -2822,6 +3024,24 @@ EVENT_TYPE(SPECIFIC_NETWORK_SOON_TO_DISCONNECT)
 //                                       networks.>
 //   }
 EVENT_TYPE(SPECIFIC_NETWORK_MADE_DEFAULT)
+
+// This event is emitted whenever CertDatabase determines that the certificate
+// database has changed.
+EVENT_TYPE(CERTIFICATE_DATABASE_TRUST_STORE_CHANGED)
+EVENT_TYPE(CERTIFICATE_DATABASE_CLIENT_CERT_STORE_CHANGED)
+
+// This event is logged when a request to conditionally clear the cached client
+// certificate for a specific host has been received. It contains the following
+// parameters:
+// {
+//    "host": <Serialized scheme/host/port of the request>,
+//    "certificates": <A list of PEM encoded certificates, the first one
+//                    being the new client certificate and the remaining
+//                    being intermediate certificates. May be an empty
+//                    list if no client certificate should be cached.>,
+//    "is_cleared": <boolean>,
+// }
+EVENT_TYPE(CLEAR_CACHED_CLIENT_CERT)
 
 // ------------------------------------------------------------------------
 // Exponential back-off throttling events
@@ -2899,6 +3119,17 @@ EVENT_TYPE(DNS_TRANSACTION_ATTEMPT)
 //   }
 EVENT_TYPE(DNS_TRANSACTION_TCP_ATTEMPT)
 
+// This event is created when DnsTransaction creates a new DoH request and
+// tries to resolve the fully-qualified name.
+//
+// It has a single parameter:
+//
+//   {
+//     "source_dependency": <Source id of the DoH request created for the
+//                           attempt>,
+//   }
+EVENT_TYPE(DNS_TRANSACTION_HTTPS_ATTEMPT)
+
 // This event is created when DnsTransaction receives a matching response.
 //
 // It has the following parameters:
@@ -2906,10 +3137,29 @@ EVENT_TYPE(DNS_TRANSACTION_TCP_ATTEMPT)
 //   {
 //     "rcode": <rcode in the received response>,
 //     "answer_count": <answer_count in the received response>,
+//     "additional_answer_count": <additional_answer_count in the received
+//                                 response>,
 //     "source_dependency": <Source id of the UDP socket that received the
 //                           response>,
+//     "response_buffer": <Raw buffer of the received response>,
 //   }
 EVENT_TYPE(DNS_TRANSACTION_RESPONSE)
+
+// The start/end of a DoH request.
+//
+// The BEGIN phase contains the following parameters:
+//
+// {
+//   "hostname": <The hostname it is trying to resolve>,
+//   "query_type": <Type of the query>,
+// }
+//
+// The END phase contains the following parameters:
+//
+// {
+//   "net_error": <The net error code for the failure, if any>,
+// }
+EVENT_TYPE(DOH_URL_REQUEST)
 
 // ------------------------------------------------------------------------
 // CertVerifier
@@ -2987,12 +3237,12 @@ EVENT_TYPE(CERT_VERIFIER_TASK)
 //   }
 EVENT_TYPE(CERT_VERIFIER_TASK_BOUND)
 
+// This event is created when a CertVerifyProc instance is created.
+EVENT_TYPE(CERT_VERIFY_PROC_CREATED)
+
 // This event is created when CertVerifyProc is verifying a certificate.
 // The BEGIN phase event parameters are:
 // {
-//   "additional_trust_anchors": <Optionally, a list of PEM encoded
-//                                certificates to be used as trust anchors
-//                                in addition to the trust store.>
 //   "certificates": <A list of PEM encoded certificates, the first one
 //                    being the certificate to verify and the remaining
 //                    being intermediate certificates to assist path
@@ -3053,17 +3303,33 @@ EVENT_TYPE(CERT_VERIFY_PROC)
 EVENT_TYPE(CERT_VERIFY_PROC_TARGET_CERT)
 
 // This event is created for each additional certificate passed into
-// CertVerifyProcBulitin.
+// CertVerifyProcBuiltin.
 // The parameters are the same as for CERT_VERIFY_PROC_TARGET_CERT.
 EVENT_TYPE(CERT_VERIFY_PROC_INPUT_CERT)
 
-// This event is created for each additional trust anchor passed into
-// CertVerifyProcBulitin.
-// The parameters are the same as for CERT_VERIFY_PROC_TARGET_CERT.
-EVENT_TYPE(CERT_VERIFY_PROC_ADDITIONAL_TRUST_ANCHOR)
+// This event is created to log the Chrome Root Store version used
+// by CertVerifyProcBuiltin.
+// The event parameters are:
+//   {
+//      "version_major": <The major version of the Chrome Root Store>
+//   }
+EVENT_TYPE(CERT_VERIFY_PROC_CHROME_ROOT_STORE_VERSION)
+
+// This event is created for each additional certificate added to
+// CertVerifyProcBuiltin.
+// The event parameters are:
+//   {
+//      "certificate": <The PEM encoded certificate.>
+//      "spki": <The SPKI that this applies to>
+//      "trust": <The trust setting used for this certificate.>
+//      "errors": <Optionally, a string describing any errors or warnings
+//                 encountered while parsing the certificate.>
+//   }
+// Only one of certificate or spki will be provided, never both.
+EVENT_TYPE(CERT_VERIFY_PROC_ADDITIONAL_CERT)
 
 // This event is created for each path building attempt performed by
-// CertVerifyProcBulitin.
+// CertVerifyProcBuiltin.
 // The BEGIN phase contains the following information:
 // {
 //      "digest_policy": <Specifies which digest methods are accepted in this
@@ -3097,24 +3363,13 @@ EVENT_TYPE(CERT_VERIFY_PROC_PATH_BUILD_ATTEMPT)
 //   }
 EVENT_TYPE(CERT_VERIFY_PROC_PATH_BUILT)
 
-// This event is created when a TrialComparisonCertVerifier starts a
-// verification using the trial verifier.
-//
-// The event parameters are:
-//   {
-//      "trial_success": <True if the trial verification had the same result>,
-//   }
-EVENT_TYPE(TRIAL_CERT_VERIFIER_JOB)
-
-// This event is created when a TrialComparisonCertVerifier begins a trial
-// comparison job for a regular CertVerifier job.
-//
-// The event parameters are:
-//   {
-//      "source_dependency": <Source identifier for the trial comparison job
-//                            that was started>,
-//   }
-EVENT_TYPE(TRIAL_CERT_VERIFIER_JOB_COMPARISON_STARTED)
+// This event is created whenever a debugging message is sent from the path
+// builder.
+// parameters:
+// {
+//    "path_builder_debug": <String - message sent from the path builder>
+// }
+EVENT_TYPE(CERT_VERIFY_PROC_PATH_BUILDER_DEBUG)
 
 // -----------------------------------------------------------------------------
 // FTP events.
@@ -3407,6 +3662,28 @@ EVENT_TYPE(UPLOAD_DATA_STREAM_READ)
 //   "trigger": <Trigger for evaluation that caused request start>
 // }
 EVENT_TYPE(RESOURCE_SCHEDULER_REQUEST_STARTED)
+
+// -----------------------------------------------------------------------------
+// Auxiliary network service in-memory HTTP cache related events
+// -----------------------------------------------------------------------------
+
+// These event are emitted when HTTP response headers are served from the
+// in-memory cache.
+// The following parameters are attached:
+//   {
+//     "headers": <The list of header:value pairs>,
+//   }
+EVENT_TYPE(IN_MEMORY_CACHE_READ_REQUEST_HEADERS)
+EVENT_TYPE(IN_MEMORY_CACHE_READ_RESPONSE_HEADERS)
+
+// This event is emitted when response content are read from the in-memory
+// cache.
+// The following parameters are attached:
+//   {
+//     "byte_count": <Number of bytes that were just sent>,
+//     "bytes": <The exact bytes sent, Base64 encoded>,
+//   }
+EVENT_TYPE(IN_MEMORY_CACHE_BYTES_READ)
 
 // -----------------------------------------------------------------------------
 // Network Quality Estimator related events
@@ -3750,24 +4027,6 @@ EVENT_TYPE(HTTP3_HEADERS_RECEIVED)
 //  }
 EVENT_TYPE(HTTP3_HEADERS_DECODED)
 
-// Event emitted when the receipt of an HTTP/3 PUSH_PROMISE frame is complete.
-//  {
-//    "stream_id": <The ID of the stream on which the PUSH_PROMISE frame is
-//                  received>
-//    "push_id": <The push_id field of the PUSH_PROMISE frame>
-//  }
-EVENT_TYPE(HTTP3_PUSH_PROMISE_RECEIVED)
-
-// Event emitted when headers received in an HTTP/3 PUSH_PROMISE frame are
-// decoded.
-//  {
-//    "stream_id": <The ID of the stream on which the PUSH_PROMISE frame had
-//                  been received>
-//    "push_id": <The push_id field of the PUSH_PROMISE frame>
-//    "headers": <A dictionary of the decoded headers>
-//  }
-EVENT_TYPE(HTTP3_PUSH_PROMISE_DECODED)
-
 // Event emitted when the frame header of an HTTP/3 frame of unknown type is
 // received.
 //  {
@@ -3879,3 +4138,223 @@ EVENT_TYPE(TRUST_TOKEN_OPERATION_BEGIN_REDEMPTION)
 EVENT_TYPE(TRUST_TOKEN_OPERATION_FINALIZE_REDEMPTION)
 
 EVENT_TYPE(TRUST_TOKEN_OPERATION_BEGIN_SIGNING)
+
+// -----------------------------------------------------------------------------
+// CORS preflight events
+// -----------------------------------------------------------------------------
+
+// The start/end of CORS preflight request. It corresponds with the lifetime of
+// CorsURLLoader.
+//
+// The BEGIN phase contains the following parameters.
+// See network.mojom.ResourceRequest for details.
+//
+//  {
+//    "cors_preflight_policy" : <A policy to decide if CORS-preflight fetch
+//                              should be performed>,
+//    "headers" : <The list of header:value pairs>,
+//    "is_revalidating": <Boolean indicating whether request is revalidating>,
+//    "method": <The method ("POST" or "GET" or "HEAD" etc...)>,
+//    "url": <The URL to create a request for>
+//  }
+EVENT_TYPE(CORS_REQUEST)
+
+// This event is logged when CorsURLLoader judges if preflight request is
+// required. If required, the reason of judgement is recorded next.
+// It contains the following parameter:
+//  {
+//    "preflight_required": <Boolean indicating whether preflight request is
+//                          required>,
+//    "preflight_required_reason": <The reason why preflight is required>
+//  }
+EVENT_TYPE(CHECK_CORS_PREFLIGHT_REQUIRED)
+
+// This event is logged when PreflightController checks preflight cache.
+// It contains the following parameter:
+//  {
+//    "status": <The result of cache checking. "hit-and-pass",
+//              "hit-and-fail", "miss" or "stale">
+//  }
+EVENT_TYPE(CHECK_CORS_PREFLIGHT_CACHE)
+
+// This event is logged when PreflightController gets CORS preflight result
+// from preflight request.
+// It contains the following parameter:
+//  {
+//    "access-control-allow-headers": <List of headers given in
+//                                    `Access-Control-Allow-Headers`>,
+//    "access-control-allow-methods": <List of methods given in
+//                                    `Access-Control-Allow-Methods`>
+//  }
+EVENT_TYPE(CORS_PREFLIGHT_RESULT)
+
+// This event is logged when PreflightController detects a failed CORS
+// preflight.
+//
+// It contains the following parameters:
+//  {
+//    "error: <A string representing the network error for the failure.
+//            "ERR_FAILED" for CORS errors.>,
+//    "cors-error": <Optional. An integer representing the more granular reason
+//                  for the CORS error, if any. Values map to
+//                  `network::mojom::CorsError`.>,
+//    "failed-parameter": <Optional, absent if `cors-error` is absent. A string
+//                        representing the parameter that failed validation,
+//                        e.g. a forbidden header.>,
+//  }
+EVENT_TYPE(CORS_PREFLIGHT_ERROR)
+
+// This event identifies the NetLogSource() for a URLRequest of the preflight
+// request.
+EVENT_TYPE(CORS_PREFLIGHT_URL_REQUEST)
+
+// This event is logged when PreflightController gets CORS preflight result
+// from preflight cache.
+// The parameters are the same as for CORS_PREFLIGHT_RESULT.
+EVENT_TYPE(CORS_PREFLIGHT_CACHED_RESULT)
+
+// ------------------------------------------------------------------------
+// Private Network Access
+// ------------------------------------------------------------------------
+
+// This event is logged when a new connection is checked against Private
+// Network Access rules.
+//
+// It contains the following parameters:
+//  {
+//    "client_address_space": <the IP address space of the request client>,
+//    "resource_address_space": <the IP address space of the remote endpoint>,
+//    "result": <the result of the check>,
+//  }
+//
+// If the result is "unexpected-private-network", then the request is
+// interrupted and a preflight request is retried, this time with PNA headers
+// attached. If this second connection fails the check again, the request is
+// failed.
+EVENT_TYPE(PRIVATE_NETWORK_ACCESS_CHECK)
+
+// ------------------------------------------------------------------------
+// Initiator
+// ------------------------------------------------------------------------
+
+// This event is logged to indicate the initiator of the network event.
+// The event contains the following parameters:
+//   {
+//     "source_dependency": <Source identifier for the attached event>
+//   }
+EVENT_TYPE(CREATED_BY)
+
+// This event is logged when a URLRequestHttpJob's privacy mode is computed. It
+// contains the following parameter:
+// {
+//    "privacy_mode": <Privacy mode associated with the request>,
+// }
+EVENT_TYPE(COMPUTED_PRIVACY_MODE)
+
+// ------------------------------------------------------------------------
+// WebSocket
+// ------------------------------------------------------------------------
+
+// This event is logged when an error occurs during WebSocket handshake. It
+// contains the following parameters:
+// {
+//    "net_error": <The number showing network error type>,
+//    "message": <Failure message>,
+// }
+EVENT_TYPE(WEBSOCKET_UPGRADE_FAILURE)
+
+// This event is logged when the WebSocket read buffer size is changed. It
+// contains the following parameters:
+// {
+//    "read_buffer_size_in_bytes": <New read buffer size in bytes>,
+// }
+EVENT_TYPE(WEBSOCKET_READ_BUFFER_SIZE_CHANGED)
+
+// This event is logged to show the received frame header information. It
+// contains the following parameters:
+// {
+//    "final": <Whether it is the last fragment in a message>,
+//    "reserved1": <Whether any extension is defined>,
+//    "reserved2": <Whether any extension is defined>,
+//    "reserved3": <Whether any extension is defined>,
+//    "opcode": <Opcode in the frame header>,
+//    "masked": <Whether the message is encoded>,
+//    "payload_length": <Payload length in the frame header>,
+// }
+EVENT_TYPE(WEBSOCKET_RECV_FRAME_HEADER)
+
+// This event is logged to show the sent frame header information. It
+// contains the following parameters:
+// {
+//    "final": <Whether it is the last fragment in a message>,
+//    "reserved1": <Whether any extension is defined>,
+//    "reserved2": <Whether any extension is defined>,
+//    "reserved3": <Whether any extension is defined>,
+//    "opcode": <Opcode in the frame header>,
+//    "masked": <Whether the message is encoded>,
+//    "payload_length": <Payload length in the frame header>,
+// }
+EVENT_TYPE(WEBSOCKET_SENT_FRAME_HEADER)
+
+// This event is logged when the browser closes the connection instead of the
+// server.
+EVENT_TYPE(WEBSOCKET_CLOSE_TIMEOUT)
+
+// This event is logged when the WebSocket frame is wrong or weird and the
+// browser closes the connection. It contains the following parameters:
+// {
+//    "code": <WebSocket close code based on
+//    https://datatracker.ietf.org/doc/html/rfc6455#section-7.1.5>,
+//    "reason":<WebSocket close reason based on
+//    https://datatracker.ietf.org/doc/html/rfc6455#section-7.1.6>,
+//    "internal_reason": <Detailed reason>,
+// }
+EVENT_TYPE(WEBSOCKET_INVALID_FRAME)
+
+// This event is logged at TransportSecurityState::ShouldUpgradeToSSL.
+// The following parameters are attached:
+//   {
+//     "host": <host name>
+//     "get_sts_state_result": <boolean>,
+//     "should_upgrade_to_ssl": <boolean>,
+//     "host_found_in_hsts_bypass_list": <boolean>,
+//   }
+EVENT_TYPE(TRANSPORT_SECURITY_STATE_SHOULD_UPGRADE_TO_SSL)
+
+// ------------------------------------------------------------------------
+// Oblivious HTTP
+// ------------------------------------------------------------------------
+
+// OBLIVIOUS_HTTP_REQUEST measures the time between when Oblivoius HTTP
+// has begun and when Oblivious HTTP has ended (either success or failure).
+// The following parameters are attached:
+//   {
+//     "net_error": <The net error code integer, can be a failure or a success>,
+//     "outer_response_error_code": <The HTTP error code of the outer relay HTTP
+//     response, set iff the result fails because the outer HTTP response status
+//     code is not HTTP_OK>,
+//     "inner_response_code": <The HTTP code of the inner gateway HTTP response,
+//     parsed out from the binary HTTP structure>
+//   }
+EVENT_TYPE(OBLIVIOUS_HTTP_REQUEST)
+
+// OBLIVIOUS_HTTP_REQUEST_DATA logs either just the byte count of the request or
+// the entire request (depending on capture settings), before encryption.
+EVENT_TYPE(OBLIVIOUS_HTTP_REQUEST_DATA)
+
+// OBLIVIOUS_HTTP_RESPONSE_DATA logs either just the byte count of the response
+// or the entire response (depending on capture settings), after decryption.
+EVENT_TYPE(OBLIVIOUS_HTTP_RESPONSE_DATA)
+
+// OBLIVIOUS_HTTP_RESPONSE_HEADERS logs headers of the response, after
+// decryption.
+EVENT_TYPE(OBLIVIOUS_HTTP_RESPONSE_HEADERS)
+
+// This event is logged when First-Party Sets metadata is requested/received.
+// The following parameters are attached to the "end" event:
+//   {
+//     "cache_filter": <string>,
+//     "frame_entry": <string>,
+//     "top_frame_entry": <string>,
+//   }
+EVENT_TYPE(FIRST_PARTY_SETS_METADATA)

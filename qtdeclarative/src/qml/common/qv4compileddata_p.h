@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtQml module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 #ifndef QV4COMPILEDDATA_P_H
 #define QV4COMPILEDDATA_P_H
 
@@ -52,19 +16,31 @@
 
 #include <functional>
 
-#include <QtCore/qstring.h>
-#include <QtCore/qscopeguard.h>
-#include <QtCore/qvector.h>
-#include <QtCore/qstringlist.h>
+#include <QtCore/qcryptographichash.h>
 #include <QtCore/qhash.h>
+#include <QtCore/qhashfunctions.h>
+#include <QtCore/qlocale.h>
+#include <QtCore/qscopeguard.h>
+#include <QtCore/qstring.h>
+#include <QtCore/qstringlist.h>
+#include <QtCore/qurl.h>
+#include <QtCore/qvector.h>
+#include <QtCore/qversionnumber.h>
 
 #if QT_CONFIG(temporaryfile)
 #include <QtCore/qsavefile.h>
 #endif
 
 #include <private/qendian_p.h>
+#include <private/qqmlnullablevalue_p.h>
+#include <private/qqmlpropertycachevector_p.h>
+#include <private/qqmlrefcount_p.h>
+#include <private/qqmltype_p.h>
+#include <private/qv4compilationunitmapper_p.h>
 #include <private/qv4staticvalue_p.h>
+
 #include <functional>
+#include <limits.h>
 
 QT_BEGIN_NAMESPACE
 
@@ -75,12 +51,18 @@ QT_BEGIN_NAMESPACE
 // Also change the comment behind the number to describe the latest change. This has the added
 // benefit that if another patch changes the version too, it will result in a merge conflict, and
 // not get removed silently.
-#define QV4_DATA_STRUCTURE_VERSION 0x29// support additional required property features
+#define QV4_DATA_STRUCTURE_VERSION 0x42 // Change metatype computation of AOT-compiled functions
 
 class QIODevice;
 class QQmlTypeNameCache;
 class QQmlType;
 class QQmlEngine;
+class QQmlPropertyData;
+class QQmlScriptData;
+
+namespace QQmlPrivate {
+struct AOTCompiledFunction;
+}
 
 namespace QmlIR {
 struct Document;
@@ -95,8 +77,18 @@ struct InternalClass;
 
 struct Function;
 class EvalISelFactory;
+class ResolvedTypeReference;
 
 namespace CompiledData {
+
+// index is per-object binding index
+using BindingPropertyData = QVector<const QQmlPropertyData *>;
+
+// map from name index
+struct ResolvedTypeReferenceMap: public QHash<int, ResolvedTypeReference*>
+{
+    bool addToHash(QCryptographicHash *hash, QHash<quintptr, QByteArray> *checksums) const;
+};
 
 struct String;
 struct Function;
@@ -120,18 +112,45 @@ struct TableIterator
 
 struct Location
 {
-    union {
-        quint32 _dummy;
-        quint32_le_bitfield<0, 20> line;
-        quint32_le_bitfield<20, 12> column;
-    };
-
-    Location() : _dummy(0) { }
+    Location() : m_data(QSpecialIntegerBitfieldZero) {}
+    Location(quint32 l, quint32 c) : Location()
+    {
+        m_data.set<LineField>(l);
+        m_data.set<ColumnField>(c);
+        Q_ASSERT(m_data.get<LineField>() == l);
+        Q_ASSERT(m_data.get<ColumnField>() == c);
+    }
 
     inline bool operator<(const Location &other) const {
-        return line < other.line ||
-               (line == other.line && column < other.column);
+        return m_data.get<LineField>() < other.m_data.get<LineField>()
+                || (m_data.get<LineField>() == other.m_data.get<LineField>()
+                    && m_data.get<ColumnField>() < other.m_data.get<ColumnField>());
     }
+
+    friend size_t qHash(const Location &location, size_t seed = 0)
+    {
+        return QT_PREPEND_NAMESPACE(qHash)(location.m_data.data(), seed);
+    }
+
+    friend bool operator==(const Location &a, const Location &b)
+    {
+        return a.m_data.data()== b.m_data.data();
+    }
+
+    void set(quint32 line, quint32 column)
+    {
+        m_data.set<LineField>(line);
+        m_data.set<ColumnField>(column);
+    }
+
+    quint32 line() const { return m_data.get<LineField>(); }
+    quint32 column() const { return m_data.get<ColumnField>(); }
+
+private:
+    using LineField = quint32_le_bitfield_member<0, 20>;
+    using ColumnField = quint32_le_bitfield_member<20, 12>;
+
+    quint32_le_bitfield_union<LineField, ColumnField> m_data;
 };
 static_assert(sizeof(Location) == 4, "Location structure needs to have the expected size to be binary compatible on disk when generated by host compiler and loaded by target");
 
@@ -142,16 +161,24 @@ struct RegExp
         RegExp_Global     = 0x01,
         RegExp_IgnoreCase = 0x02,
         RegExp_Multiline  = 0x04,
-        RegExp_Unicode    = 0x08,
-        RegExp_Sticky     = 0x10
-    };
-    union {
-        quint32 _dummy;
-        quint32_le_bitfield<0, 5> flags;
-        quint32_le_bitfield<5, 27> stringIndex;
+        RegExp_Sticky     = 0x08,
+        RegExp_Unicode    = 0x10,
     };
 
-    RegExp() : _dummy(0) { }
+    RegExp() : m_data(QSpecialIntegerBitfieldZero) {}
+    RegExp(quint32 flags, quint32 stringIndex) : RegExp()
+    {
+        m_data.set<FlagsField>(flags);
+        m_data.set<StringIndexField>(stringIndex);
+    }
+
+    quint32 flags() const { return m_data.get<FlagsField>(); }
+    quint32 stringIndex() const { return m_data.get<StringIndexField>(); }
+
+private:
+    using FlagsField = quint32_le_bitfield_member<0, 5>;
+    using StringIndexField = quint32_le_bitfield_member<5, 27>;
+    quint32_le_bitfield_union<FlagsField, StringIndexField> m_data;
 };
 static_assert(sizeof(RegExp) == 4, "RegExp structure needs to have the expected size to be binary compatible on disk when generated by host compiler and loaded by target");
 
@@ -164,25 +191,49 @@ struct Lookup
         Type_QmlContextPropertyGetter = 3
     };
 
-    union {
-        quint32 _dummy;
-        quint32_le_bitfield<0, 4> type_and_flags;
-        quint32_le_bitfield<4, 28> nameIndex;
+    enum Mode : unsigned int {
+        Mode_ForStorage = 0,
+        Mode_ForCall = 1
     };
 
-    Lookup() : _dummy(0) { }
+    quint32 type() const { return m_data.get<TypeField>(); }
+    quint32 nameIndex() const { return m_data.get<NameIndexField>(); }
+    quint32 mode() const { return m_data.get<ModeField>(); }
+
+    Lookup() : m_data(QSpecialIntegerBitfieldZero) {}
+    Lookup(Type type, Mode mode, quint32 nameIndex) : Lookup()
+    {
+        m_data.set<TypeField>(type);
+        m_data.set<ModeField>(mode);
+        m_data.set<NameIndexField>(nameIndex);
+    }
+
+private:
+    using TypeField = quint32_le_bitfield_member<0, 2>;
+    using ModeField = quint32_le_bitfield_member<2, 1>;
+    // 1 bit left
+    using NameIndexField = quint32_le_bitfield_member<4, 28>;
+    quint32_le_bitfield_union<TypeField, ModeField, NameIndexField> m_data;
 };
 static_assert(sizeof(Lookup) == 4, "Lookup structure needs to have the expected size to be binary compatible on disk when generated by host compiler and loaded by target");
 
 struct JSClassMember
 {
-    union {
-        quint32 _dummy;
-        quint32_le_bitfield<0, 31> nameOffset;
-        quint32_le_bitfield<31, 1> isAccessor;
-    };
+    JSClassMember() : m_data(QSpecialIntegerBitfieldZero) {}
 
-    JSClassMember() : _dummy(0) { }
+    void set(quint32 nameOffset, bool isAccessor)
+    {
+        m_data.set<NameOffsetField>(nameOffset);
+        m_data.set<IsAccessorField>(isAccessor ? 1 : 0);
+    }
+
+    quint32 nameOffset() const { return m_data.get<NameOffsetField>(); }
+    bool isAccessor() const { return m_data.get<IsAccessorField>() != 0; }
+
+private:
+    using NameOffsetField = quint32_le_bitfield_member<0, 31>;
+    using IsAccessorField = quint32_le_bitfield_member<31, 1>;
+    quint32_le_bitfield_union<NameOffsetField, IsAccessorField> m_data;
 };
 static_assert(sizeof(JSClassMember) == 4, "JSClassMember structure needs to have the expected size to be binary compatible on disk when generated by host compiler and loaded by target");
 
@@ -195,45 +246,25 @@ struct JSClass
 };
 static_assert(sizeof(JSClass) == 4, "JSClass structure needs to have the expected size to be binary compatible on disk when generated by host compiler and loaded by target");
 
-// This data structure is intended to be binary compatible with QStringData/QStaticStringData on
-// 64-bit and 32-bit little-endian architectures, in all directions. So the same structure mapped
-// from a file must be castable to a QStringData regardless of the pointer size. With the first
-// few fields that's easy, they're always 32-bit. However the offset field of QArrayData is a
-// ptrdiff_t and thus variable in size.
-// On 64-bit systems compilers enforce an 8-byte alignment and thus place it at offset 16, while
-// on 32-bit systems offset 12 is sufficient. Therefore the two values don't overlap and contain
-// the same value.
 struct String
 {
-    qint32_le refcount; // -1
     qint32_le size;
-    quint32_le allocAndCapacityReservedFlag; // 0
-    quint32_le offsetOn32Bit;
-    quint64_le offsetOn64Bit;
-    // uint16 strdata[]
 
     static int calculateSize(const QString &str) {
-        return (sizeof(String) + (str.length() + 1) * sizeof(quint16) + 7) & ~0x7;
+        // we cannot enconuter strings larger than INT_MAX anyway, as such a string
+        // would already break in other parts of the compilation process
+        return (sizeof(String) + (int(str.size()) + 1) * sizeof(quint16) + 7) & ~0x7;
     }
 };
-static_assert(sizeof(String) == 24, "String structure needs to have the expected size to be binary compatible on disk when generated by host compiler and loaded by target");
 
-// Ensure compatibility with QString
-static_assert(offsetof(QArrayData, ref) == offsetof(String, refcount), "refcount must be at the same location");
-static_assert(offsetof(QArrayData, size) == offsetof(String, size), "size must be at the same location");
-static_assert(offsetof(String, offsetOn64Bit) == 16, "offset must be at 8-byte aligned location");
-static_assert(offsetof(String, offsetOn32Bit) == 12, "offset must be at 4-byte aligned location");
-#if QT_POINTER_SIZE == 8
-static_assert(offsetof(QArrayData, offset) == offsetof(String, offsetOn64Bit), "offset must be at the same location");
-#else
-static_assert(offsetof(QArrayData, offset) == offsetof(String, offsetOn32Bit), "offset must be at the same location");
-#endif
+static_assert (sizeof (String) == 4, "String structure needs to have the expected size to be binary compatible on disk when generated by host compiler and loaded by target");
 
-struct CodeOffsetToLine {
+struct CodeOffsetToLineAndStatement {
     quint32_le codeOffset;
-    quint32_le line;
+    qint32_le line; // signed because debug instructions get negative line numbers
+    quint32_le statement;
 };
-static_assert(sizeof(CodeOffsetToLine) == 8, "CodeOffsetToLine structure needs to have the expected size to be binary compatible on disk when generated by host compiler and loaded by target");
+static_assert(sizeof(CodeOffsetToLineAndStatement) == 12, "CodeOffsetToLineAndStatement structure needs to have the expected size to be binary compatible on disk when generated by host compiler and loaded by target");
 
 struct Block
 {
@@ -257,19 +288,65 @@ struct Block
 };
 static_assert(sizeof(Block) == 12, "Block structure needs to have the expected size to be binary compatible on disk when generated by host compiler and loaded by target");
 
-enum class BuiltinType : unsigned int {
-    Var = 0, Variant, Int, Bool, Real, String, Url, Color,
-    Font, Time, Date, DateTime, Rect, Point, Size,
-    Vector2D, Vector3D, Vector4D, Matrix4x4, Quaternion, InvalidBuiltin
+enum class NamedBuiltin: unsigned int {
+    Void, Var, Int, Bool, Real, String, Url, DateTime, RegExp
+};
+
+enum class CommonType : unsigned int {
+    // Actual named builtins
+    Void     = uint(NamedBuiltin::Void),
+    Var      = uint(NamedBuiltin::Var),
+    Int      = uint(NamedBuiltin::Int),
+    Bool     = uint(NamedBuiltin::Bool),
+    Real     = uint(NamedBuiltin::Real),
+    String   = uint(NamedBuiltin::String),
+    Url      = uint(NamedBuiltin::Url),
+    DateTime = uint(NamedBuiltin::DateTime),
+    RegExp   = uint(NamedBuiltin::RegExp),
+
+    // Optimization for very common other types
+    Time, Date, Rect, Point, Size,
+
+    // No type specified or not recognized
+    Invalid
 };
 
 struct ParameterType
 {
-    union {
-        quint32 _dummy;
-        quint32_le_bitfield<0, 1> indexIsBuiltinType;
-        quint32_le_bitfield<1, 31> typeNameIndexOrBuiltinType;
+    enum Flag {
+        NoFlag   = 0x0,
+        Common   = 0x1,
+        List     = 0x2,
     };
+    Q_DECLARE_FLAGS(Flags, Flag);
+
+    void set(Flags flags, quint32 typeNameIndexOrCommonType)
+    {
+        m_data.set<IsListField>(flags.testFlag(List) ? 1 : 0);
+        m_data.set<IndexIsCommonTypeField>(flags.testFlag(Common) ? 1 : 0);
+        m_data.set<TypeNameIndexOrCommonTypeField>(typeNameIndexOrCommonType);
+    }
+
+    bool indexIsCommonType() const
+    {
+        return m_data.get<IndexIsCommonTypeField>() != 0;
+    }
+
+    bool isList() const
+    {
+        return m_data.get<IsListField>() != 0;
+    }
+
+    quint32 typeNameIndexOrCommonType() const
+    {
+        return m_data.get<TypeNameIndexOrCommonTypeField>();
+    }
+
+private:
+    using IndexIsCommonTypeField = quint32_le_bitfield_member<0, 1>;
+    using IsListField = quint32_le_bitfield_member<1, 1>;
+    using TypeNameIndexOrCommonTypeField = quint32_le_bitfield_member<2, 30>;
+    quint32_le_bitfield_union<IndexIsCommonTypeField, IsListField, TypeNameIndexOrCommonTypeField> m_data;
 };
 static_assert(sizeof(ParameterType) == 4, "ParameterType structure needs to have the expected size to be binary compatible on disk when generated by host compiler and loaded by target");
 
@@ -287,7 +364,8 @@ struct Function
     enum Flags : unsigned int {
         IsStrict            = 0x1,
         IsArrowFunction     = 0x2,
-        IsGenerator         = 0x4
+        IsGenerator         = 0x4,
+        IsClosureWrapper    = 0x8,
     };
 
     // Absolute offset into file where the code for this function is located.
@@ -301,8 +379,8 @@ struct Function
     ParameterType returnType;
     quint32_le localsOffset;
     quint16_le nLocals;
-    quint16_le nLineNumbers;
-    size_t lineNumberOffset() const { return localsOffset + nLocals * sizeof(quint32); }
+    quint16_le nLineAndStatementNumbers;
+    size_t lineAndStatementNumberOffset() const { return localsOffset + nLocals * sizeof(quint32); }
     quint32_le nestedFunctionIndex; // for functions that only return a single closure, used in signal handlers
 
     quint32_le nRegisters;
@@ -313,7 +391,10 @@ struct Function
     quint16_le firstTemporalDeadZoneRegister;
     quint16_le sizeOfRegisterTemporalDeadZone;
 
-    size_t labelInfosOffset() const { return lineNumberOffset() + nLineNumbers * sizeof(CodeOffsetToLine); }
+    size_t labelInfosOffset() const
+    {
+        return lineAndStatementNumberOffset() + nLineAndStatementNumbers * sizeof(CodeOffsetToLineAndStatement);
+    }
 
     // Keep all unaligned data at the end
     quint8 flags;
@@ -322,9 +403,21 @@ struct Function
     //    quint32 formalsIndex[nFormals]
     //    quint32 localsIndex[nLocals]
 
-    const Parameter *formalsTable() const { return reinterpret_cast<const Parameter *>(reinterpret_cast<const char *>(this) + formalsOffset); }
-    const quint32_le *localsTable() const { return reinterpret_cast<const quint32_le *>(reinterpret_cast<const char *>(this) + localsOffset); }
-    const CodeOffsetToLine *lineNumberTable() const { return reinterpret_cast<const CodeOffsetToLine *>(reinterpret_cast<const char *>(this) + lineNumberOffset()); }
+    const Parameter *formalsTable() const
+    {
+        return reinterpret_cast<const Parameter *>(
+                    reinterpret_cast<const char *>(this) + formalsOffset);
+    }
+    const quint32_le *localsTable() const
+    {
+        return reinterpret_cast<const quint32_le *>(
+                    reinterpret_cast<const char *>(this) + localsOffset);
+    }
+    const CodeOffsetToLineAndStatement *lineAndStatementNumberTable() const
+    {
+        return reinterpret_cast<const CodeOffsetToLineAndStatement *>(
+                    reinterpret_cast<const char *>(this) + lineAndStatementNumberOffset());
+    }
 
     // --- QQmlPropertyCacheCreator interface
     const Parameter *formalsBegin() const { return formalsTable(); }
@@ -335,9 +428,13 @@ struct Function
 
     const char *code() const { return reinterpret_cast<const char *>(this) + codeOffset; }
 
-    static int calculateSize(int nFormals, int nLocals, int nLines, int nInnerfunctions, int labelInfoSize, int codeSize) {
-        int trailingData = nFormals * sizeof(Parameter) + (nLocals + nInnerfunctions + labelInfoSize)*sizeof (quint32)
-                + nLines*sizeof(CodeOffsetToLine);
+    static int calculateSize(
+            int nFormals, int nLocals, int nLinesAndStatements, int nInnerfunctions,
+            int labelInfoSize, int codeSize)
+    {
+        int trailingData = nFormals * sizeof(Parameter)
+                + (nLocals + nInnerfunctions  + labelInfoSize) * sizeof (quint32)
+                + nLinesAndStatements * sizeof(CodeOffsetToLineAndStatement);
         size_t size = align(align(sizeof(Function)) + size_t(trailingData)) + align(codeSize);
         Q_ASSERT(size < INT_MAX);
         return int(size);
@@ -437,10 +534,11 @@ static_assert(sizeof(ImportEntry) == 16, "ImportEntry structure needs to have th
 
 struct TranslationData
 {
+    enum { NoContextIndex = std::numeric_limits<quint32>::max() };
     quint32_le stringIndex;
     quint32_le commentIndex;
     qint32_le number;
-    quint32_le padding;
+    quint32_le contextIndex;
 };
 static_assert(sizeof(TranslationData) == 16, "TranslationData structure needs to have the expected size to be binary compatible on disk when generated by host compiler and loaded by target");
 
@@ -448,7 +546,7 @@ struct Binding
 {
     quint32_le propertyNameIndex;
 
-    enum ValueType : unsigned int {
+    enum Type : unsigned int {
         Type_Invalid,
         Type_Boolean,
         Type_Number,
@@ -462,7 +560,7 @@ struct Binding
         Type_GroupProperty
     };
 
-    enum Flags : unsigned int {
+    enum Flag : unsigned int {
         IsSignalHandlerExpression = 0x1,
         IsSignalHandlerObject = 0x2,
         IsOnAssignment = 0x4,
@@ -472,13 +570,23 @@ struct Binding
         IsBindingToAlias = 0x40,
         IsDeferredBinding = 0x80,
         IsCustomParserBinding = 0x100,
-        IsFunctionExpression = 0x200
+        IsFunctionExpression = 0x200,
+        IsPropertyObserver = 0x400
     };
+    Q_DECLARE_FLAGS(Flags, Flag);
 
-    union {
-        quint32_le_bitfield<0, 16> flags;
-        quint32_le_bitfield<16, 16> type;
-    };
+    using FlagsField = quint32_le_bitfield_member<0, 16>;
+    using TypeField = quint32_le_bitfield_member<16, 16>;
+    quint32_le_bitfield_union<FlagsField, TypeField> flagsAndType;
+
+    void clearFlags() { flagsAndType.set<FlagsField>(0); }
+    void setFlag(Flag flag) { flagsAndType.set<FlagsField>(flagsAndType.get<FlagsField>() | flag); }
+    bool hasFlag(Flag flag) const { return Flags(flagsAndType.get<FlagsField>()) & flag; }
+    Flags flags() const { return Flags(flagsAndType.get<FlagsField>()); }
+
+    void setType(Type type) { flagsAndType.set<TypeField>(type); }
+    Type type() const { return Type(flagsAndType.get<TypeField>()); }
+
     union {
         bool b;
         quint32_le constantValueIndex;
@@ -492,23 +600,31 @@ struct Binding
     Location location;
     Location valueLocation;
 
-    bool isValueBinding() const
+    bool hasSignalHandlerBindingFlag() const
     {
-        if (type == Type_AttachedProperty
-            || type == Type_GroupProperty)
-            return false;
-        if (flags & IsSignalHandlerExpression
-            || flags & IsSignalHandlerObject)
-            return false;
-        return true;
+        const Flags bindingFlags = flags();
+        return bindingFlags & IsSignalHandlerExpression
+                || bindingFlags & IsSignalHandlerObject
+                || bindingFlags & IsPropertyObserver;
     }
 
-    bool isValueBindingNoAlias() const { return isValueBinding() && !(flags & IsBindingToAlias); }
-    bool isValueBindingToAlias() const { return isValueBinding() && (flags & IsBindingToAlias); }
+    bool isValueBinding() const
+    {
+        switch (type()) {
+        case Type_AttachedProperty:
+        case Type_GroupProperty:
+            return false;
+        default:
+            return !hasSignalHandlerBindingFlag();
+        }
+    }
+
+    bool isValueBindingNoAlias() const { return isValueBinding() && !hasFlag(IsBindingToAlias); }
+    bool isValueBindingToAlias() const { return isValueBinding() && hasFlag(IsBindingToAlias); }
 
     bool isSignalHandler() const
     {
-        if (flags & IsSignalHandlerExpression || flags & IsSignalHandlerObject) {
+        if (hasSignalHandlerBindingFlag()) {
             Q_ASSERT(!isValueBinding());
             Q_ASSERT(!isAttachedProperty());
             Q_ASSERT(!isGroupProperty());
@@ -519,7 +635,7 @@ struct Binding
 
     bool isAttachedProperty() const
     {
-        if (type == Type_AttachedProperty) {
+        if (type() == Type_AttachedProperty) {
             Q_ASSERT(!isValueBinding());
             Q_ASSERT(!isSignalHandler());
             Q_ASSERT(!isGroupProperty());
@@ -530,7 +646,7 @@ struct Binding
 
     bool isGroupProperty() const
     {
-        if (type == Type_GroupProperty) {
+        if (type() == Type_GroupProperty) {
             Q_ASSERT(!isValueBinding());
             Q_ASSERT(!isSignalHandler());
             Q_ASSERT(!isAttachedProperty());
@@ -539,13 +655,13 @@ struct Binding
         return false;
     }
 
-    bool isFunctionExpression() const { return (flags & IsFunctionExpression); }
+    bool isFunctionExpression() const { return hasFlag(IsFunctionExpression); }
 
     //reverse of Lexer::singleEscape()
     static QString escapedString(const QString &string)
     {
         QString tmp = QLatin1String("\"");
-        for (int i = 0; i < string.length(); ++i) {
+        for (int i = 0; i < string.size(); ++i) {
             const QChar &c = string.at(i);
             switch (c.unicode()) {
             case 0x08:
@@ -584,16 +700,21 @@ struct Binding
         return tmp;
     }
 
-    bool isTranslationBinding() const { return type == Type_Translation || type == Type_TranslationById; }
-    bool evaluatesToString() const { return type == Type_String || isTranslationBinding(); }
+    bool isTranslationBinding() const
+    {
+        const Binding::Type bindingType = type();
+        return bindingType == Type_Translation || bindingType == Type_TranslationById;
+    }
+    bool evaluatesToString() const { return type() == Type_String || isTranslationBinding(); }
+
+    bool isNumberBinding() const { return type() == Type_Number; }
 
     bool valueAsBoolean() const
     {
-        if (type == Type_Boolean)
+        if (type() == Type_Boolean)
             return value.b;
         return false;
     }
-
 };
 
 static_assert(sizeof(Binding) == 24, "Binding structure needs to have the expected size to be binary compatible on disk when generated by host compiler and loaded by target");
@@ -666,32 +787,57 @@ static_assert(sizeof(Signal) == 12, "Signal structure needs to have the expected
 
 struct Property
 {
-    quint32_le nameIndex;
-    union {
-        quint32_le_bitfield<0, 28> builtinTypeOrTypeNameIndex;
-        quint32_le_bitfield<28, 1> isRequired;
-        quint32_le_bitfield<29, 1> isBuiltinType;
-        quint32_le_bitfield<30, 1> isList;
-        quint32_le_bitfield<31, 1> isReadOnly;
-    };
+private:
+    using CommonTypeOrTypeNameIndexField = quint32_le_bitfield_member<0, 28>;
+    using IsRequiredField = quint32_le_bitfield_member<28, 1>;
+    using IsCommonTypeField = quint32_le_bitfield_member<29, 1>;
+    using IsListField = quint32_le_bitfield_member<30, 1>;
+    using IsReadOnlyField = quint32_le_bitfield_member<31, 1>;
 
+public:
+    quint32_le nameIndex;
+    quint32_le_bitfield_union<
+            CommonTypeOrTypeNameIndexField,
+            IsRequiredField,
+            IsCommonTypeField,
+            IsListField,
+            IsReadOnlyField> data;
     Location location;
 
-    void setBuiltinType(BuiltinType t)
+    void setCommonType(CommonType t)
     {
-        builtinTypeOrTypeNameIndex = static_cast<quint32>(t);
-        isBuiltinType = true;
+        data.set<CommonTypeOrTypeNameIndexField>(static_cast<quint32>(t));
+        data.set<IsCommonTypeField>(true);
     }
-    BuiltinType builtinType() const {
-        if (isBuiltinType)
-            return static_cast<BuiltinType>(quint32(builtinTypeOrTypeNameIndex));
-        return BuiltinType::InvalidBuiltin;
+
+    CommonType commonType() const {
+        if (data.get<IsCommonTypeField>() != 0)
+            return CommonType(data.get<CommonTypeOrTypeNameIndexField>());
+        return CommonType::Invalid;
     }
-    void setCustomType(int nameIndex)
+
+    void setTypeNameIndex(int nameIndex)
     {
-        builtinTypeOrTypeNameIndex = nameIndex;
-        isBuiltinType = false;
+        data.set<CommonTypeOrTypeNameIndexField>(nameIndex);
+        data.set<IsCommonTypeField>(false);
     }
+
+    int typeNameIndex() const
+    {
+        return data.get<IsCommonTypeField>() ? -1 : data.get<CommonTypeOrTypeNameIndexField>();
+    }
+
+    bool isCommonType() const { return data.get<IsCommonTypeField>(); }
+    uint commonTypeOrTypeNameIndex() const { return data.get<CommonTypeOrTypeNameIndexField>(); }
+
+    bool isList() const { return data.get<IsListField>(); }
+    void setIsList(bool isList) { data.set<IsListField>(isList); }
+
+    bool isRequired() const { return data.get<IsRequiredField>(); }
+    void setIsRequired(bool isRequired) { data.set<IsRequiredField>(isRequired); }
+
+    bool isReadOnly() const { return data.get<IsReadOnlyField>(); }
+    void setIsReadOnly(bool isReadOnly) { data.set<IsReadOnlyField>(isReadOnly); }
 };
 static_assert(sizeof(Property) == 12, "Property structure needs to have the expected size to be binary compatible on disk when generated by host compiler and loaded by target");
 
@@ -702,20 +848,28 @@ struct RequiredPropertyExtraData {
 static_assert (sizeof(RequiredPropertyExtraData) == 4, "RequiredPropertyExtraData structure needs to have the expected size to be binary compatible on disk when generated by host compiler and loaded by target");
 
 struct Alias {
-    enum Flags : unsigned int {
+private:
+    using NameIndexField = quint32_le_bitfield_member<0, 29>;
+    using FlagsField = quint32_le_bitfield_member<29, 3>;
+
+    // object id index (in QQmlContextData::idValues)
+    using TargetObjectIdField = quint32_le_bitfield_member<0, 31>;
+    using AliasToLocalAliasField = quint32_le_bitfield_member<31, 1>;
+    using IdIndexField = quint32_le_bitfield_member<0, 32>;
+
+public:
+
+    enum Flag : unsigned int {
         IsReadOnly = 0x1,
         Resolved = 0x2,
         AliasPointsToPointerObject = 0x4
     };
-    union {
-        quint32_le_bitfield<0, 29> nameIndex;
-        quint32_le_bitfield<29, 3> flags;
-    };
-    union {
-        quint32_le idIndex; // string index
-        quint32_le_bitfield<0, 31> targetObjectId; // object id index (in QQmlContextData::idValues)
-        quint32_le_bitfield<31, 1> aliasToLocalAlias;
-    };
+    Q_DECLARE_FLAGS(Flags, Flag)
+
+    quint32_le_bitfield_union<NameIndexField, FlagsField> nameIndexAndFlags;
+    quint32_le_bitfield_union<IdIndexField, TargetObjectIdField, AliasToLocalAliasField>
+                idIndexAndTargetObjectIdAndAliasToLocalAlias;
+
     union {
         quint32_le propertyNameIndex; // string index
         qint32_le encodedMetaPropertyIndex;
@@ -724,34 +878,94 @@ struct Alias {
     Location location;
     Location referenceLocation;
 
-    bool isObjectAlias() const {
-        Q_ASSERT(flags & Resolved);
+    bool hasFlag(Flag flag) const
+    {
+        return nameIndexAndFlags.get<FlagsField>() & flag;
+    }
+
+    void setFlag(Flag flag)
+    {
+        nameIndexAndFlags.set<FlagsField>(nameIndexAndFlags.get<FlagsField>() | flag);
+    }
+
+    void clearFlags()
+    {
+        nameIndexAndFlags.set<FlagsField>(0);
+    }
+
+    quint32 nameIndex() const
+    {
+        return nameIndexAndFlags.get<NameIndexField>();
+    }
+
+    void setNameIndex(quint32 nameIndex)
+    {
+        nameIndexAndFlags.set<NameIndexField>(nameIndex);
+    }
+
+    bool isObjectAlias() const
+    {
+        Q_ASSERT(hasFlag(Resolved));
         return encodedMetaPropertyIndex == -1;
+    }
+
+    quint32 idIndex() const
+    {
+        return idIndexAndTargetObjectIdAndAliasToLocalAlias.get<IdIndexField>();
+    }
+
+    void setIdIndex(quint32 idIndex)
+    {
+        idIndexAndTargetObjectIdAndAliasToLocalAlias.set<IdIndexField>(idIndex);
+    }
+
+
+    bool isAliasToLocalAlias() const
+    {
+        return idIndexAndTargetObjectIdAndAliasToLocalAlias.get<AliasToLocalAliasField>();
+    }
+
+    void setIsAliasToLocalAlias(bool isAliasToLocalAlias)
+    {
+        idIndexAndTargetObjectIdAndAliasToLocalAlias.set<AliasToLocalAliasField>(isAliasToLocalAlias);
+    }
+
+    quint32 targetObjectId() const
+    {
+        return idIndexAndTargetObjectIdAndAliasToLocalAlias.get<TargetObjectIdField>();
+    }
+
+    void setTargetObjectId(quint32 targetObjectId)
+    {
+        idIndexAndTargetObjectIdAndAliasToLocalAlias.set<TargetObjectIdField>(targetObjectId);
     }
 };
 static_assert(sizeof(Alias) == 20, "Alias structure needs to have the expected size to be binary compatible on disk when generated by host compiler and loaded by target");
 
 struct Object
 {
-    enum Flags : unsigned int {
+private:
+    using FlagsField = quint32_le_bitfield_member<0, 15>;
+    using DefaultPropertyIsAliasField = quint32_le_bitfield_member<15, 1>;
+    using IdField = quint32_le_bitfield_member<16, 16, qint32>;
+public:
+    enum Flag : unsigned int {
         NoFlag = 0x0,
         IsComponent = 0x1, // object was identified to be an explicit or implicit component boundary
         HasDeferredBindings = 0x2, // any of the bindings are deferred
         HasCustomParserBindings = 0x4,
         IsInlineComponentRoot = 0x8,
-        InPartOfInlineComponent = 0x10
+        IsPartOfInlineComponent = 0x10
     };
+    Q_DECLARE_FLAGS(Flags, Flag);
 
     // Depending on the use, this may be the type name to instantiate before instantiating this
     // object. For grouped properties the type name will be empty and for attached properties
     // it will be the name of the attached type.
     quint32_le inheritedTypeNameIndex;
     quint32_le idNameIndex;
-    union {
-        quint32_le_bitfield<0, 15> flags;
-        quint32_le_bitfield<15, 1> defaultPropertyIsAlias;
-        qint32_le_bitfield<16, 16> id;
-    };
+    quint32_le_bitfield_union<FlagsField, DefaultPropertyIsAliasField, IdField>
+            flagsAndDefaultPropertyIsAliasAndId;
     qint32_le indexOfDefaultPropertyOrAlias; // -1 means no default property declared in this object
     quint16_le nFunctions;
     quint16_le nProperties;
@@ -779,6 +993,48 @@ struct Object
 //    Binding[]
 //    InlineComponent[]
 //    RequiredPropertyExtraData[]
+
+    Flags flags() const
+    {
+        return Flags(flagsAndDefaultPropertyIsAliasAndId.get<FlagsField>());
+    }
+
+    bool hasFlag(Flag flag) const
+    {
+        return flagsAndDefaultPropertyIsAliasAndId.get<FlagsField>() & flag;
+    }
+
+    void setFlag(Flag flag)
+    {
+        flagsAndDefaultPropertyIsAliasAndId.set<FlagsField>(
+                flagsAndDefaultPropertyIsAliasAndId.get<FlagsField>() | flag);
+    }
+
+    void setFlags(Flags flags)
+    {
+        flagsAndDefaultPropertyIsAliasAndId.set<FlagsField>(flags);
+    }
+
+    bool hasAliasAsDefaultProperty() const
+    {
+        return flagsAndDefaultPropertyIsAliasAndId.get<DefaultPropertyIsAliasField>();
+    }
+
+    void setHasAliasAsDefaultProperty(bool defaultAlias)
+    {
+        flagsAndDefaultPropertyIsAliasAndId.set<DefaultPropertyIsAliasField>(defaultAlias);
+    }
+
+    qint32 objectId() const
+    {
+        return flagsAndDefaultPropertyIsAliasAndId.get<IdField>();
+    }
+
+    void setObjectId(qint32 id)
+    {
+        flagsAndDefaultPropertyIsAliasAndId.set<IdField>(id);
+    }
+
 
     static int calculateSizeExcludingSignalsAndEnums(int nFunctions, int nProperties, int nAliases, int nEnums, int nSignals, int nBindings, int nNamedObjectsInComponent, int nInlineComponents, int nRequiredPropertyExtraData)
     {
@@ -864,6 +1120,7 @@ struct Object
 
     const Binding *bindingsBegin() const { return bindingTable(); }
     const Binding *bindingsEnd() const { return bindingTable() + nBindings; }
+    int bindingCount() const { return nBindings; }
 
     const Property *propertiesBegin() const { return propertyTable(); }
     const Property *propertiesEnd() const { return propertyTable() + nProperties; }
@@ -884,8 +1141,8 @@ struct Object
     InlineComponentIterator inlineComponentsEnd() const {return InlineComponentIterator(this, nInlineComponents);}
 
     typedef TableIterator<RequiredPropertyExtraData, Object, &Object::requiredPropertyExtraDataAt> RequiredPropertyExtraDataIterator;
-    RequiredPropertyExtraDataIterator requiredPropertyExtraDataBegin() const {return RequiredPropertyExtraDataIterator(this, 0); };
-    RequiredPropertyExtraDataIterator requiredPropertyExtraDataEnd() const {return RequiredPropertyExtraDataIterator(this, nRequiredPropertyExtraData); };
+    RequiredPropertyExtraDataIterator requiredPropertyExtraDataBegin() const {return RequiredPropertyExtraDataIterator(this, 0); }
+    RequiredPropertyExtraDataIterator requiredPropertyExtraDataEnd() const {return RequiredPropertyExtraDataIterator(this, nRequiredPropertyExtraData); }
 
     int namedObjectsInComponentCount() const { return nNamedObjectsInComponent; }
     // ---
@@ -905,14 +1162,16 @@ struct Import
     quint32_le uriIndex;
     quint32_le qualifierIndex;
 
-    qint32_le majorVersion;
-    qint32_le minorVersion;
-
     Location location;
+    QTypeRevision version;
+    quint16_le reserved;
 
-    Import() { type = 0; uriIndex = 0; qualifierIndex = 0; majorVersion = 0; minorVersion = 0; }
+    Import()
+    {
+        type = 0; uriIndex = 0; qualifierIndex = 0; version = QTypeRevision::zero(); reserved = 0;
+    }
 };
-static_assert(sizeof(Import) == 24, "Import structure needs to have the expected size to be binary compatible on disk when generated by host compiler and loaded by target");
+static_assert(sizeof(Import) == 20, "Import structure needs to have the expected size to be binary compatible on disk when generated by host compiler and loaded by target");
 
 struct QmlUnit
 {
@@ -957,7 +1216,18 @@ struct Unit
         IsSingleton = 0x4,
         IsSharedLibrary = 0x8, // .pragma shared?
         IsESModule = 0x10,
-        PendingTypeCompilation = 0x20 // the QML data structures present are incomplete and require type compilation
+        PendingTypeCompilation = 0x20, // the QML data structures present are incomplete and require type compilation
+        IsStrict = 0x40,
+        ListPropertyAssignReplaceIfDefault = 0x80,
+        ListPropertyAssignReplaceIfNotDefault = 0x100,
+        ListPropertyAssignReplace
+                = ListPropertyAssignReplaceIfDefault | ListPropertyAssignReplaceIfNotDefault,
+        ComponentsBound = 0x200,
+        FunctionSignaturesIgnored = 0x400,
+        NativeMethodsAcceptThisObject = 0x800,
+        ValueTypesCopied = 0x1000,
+        ValueTypesAddressable = 0x2000,
+        ValueTypesAssertable = 0x4000,
     };
     quint32_le flags;
     quint32_le stringTableSize;
@@ -1011,19 +1281,16 @@ struct Unit
     }
     /* end QML specific fields*/
 
-    QString stringAtInternal(int idx) const {
-        Q_ASSERT(idx < int(stringTableSize));
+    QString stringAtInternal(uint idx) const {
+        Q_ASSERT(idx < stringTableSize);
         const quint32_le *offsetTable = reinterpret_cast<const quint32_le*>((reinterpret_cast<const char *>(this)) + offsetToStringTable);
         const quint32_le offset = offsetTable[idx];
         const String *str = reinterpret_cast<const String*>(reinterpret_cast<const char *>(this) + offset);
-        if (str->size == 0)
-            return QString();
+        Q_ASSERT(str->size >= 0);
 #if Q_BYTE_ORDER == Q_LITTLE_ENDIAN
-        if (flags & StaticData) {
-            const QStringDataPtr holder = { const_cast<QStringData *>(reinterpret_cast<const QStringData*>(str)) };
-            return QString(holder);
-        }
         const QChar *characters = reinterpret_cast<const QChar *>(str + 1);
+        if (flags & StaticData)
+            return QString::fromRawData(characters, str->size);
         return QString(characters, str->size);
 #else
         const quint16_le *characters = reinterpret_cast<const quint16_le *>(str + 1);
@@ -1085,12 +1352,28 @@ struct Unit
         return reinterpret_cast<const TranslationData *>(reinterpret_cast<const char *>(this) + offsetToTranslationTable);
     }
 
+    const quint32_le *translationContextIndex() const{
+        if ( translationTableSize == 0)
+            return nullptr;
+        return reinterpret_cast<const quint32_le*>((reinterpret_cast<const char *>(this))
+                                                    + offsetToTranslationTable
+                                                    + translationTableSize * sizeof(CompiledData::TranslationData)); }
+
+    quint32_le *translationContextIndex() {
+        if ( translationTableSize == 0)
+            return nullptr;
+        return reinterpret_cast<quint32_le*>((reinterpret_cast<char *>(this))
+                                                    + offsetToTranslationTable
+                                                    + translationTableSize * sizeof(CompiledData::TranslationData)); }
+
     const ImportEntry *importEntryTable() const { return reinterpret_cast<const ImportEntry *>(reinterpret_cast<const char *>(this) + offsetToImportEntryTable); }
     const ExportEntry *localExportEntryTable() const { return reinterpret_cast<const ExportEntry *>(reinterpret_cast<const char *>(this) + offsetToLocalExportEntryTable); }
     const ExportEntry *indirectExportEntryTable() const { return reinterpret_cast<const ExportEntry *>(reinterpret_cast<const char *>(this) + offsetToIndirectExportEntryTable); }
     const ExportEntry *starExportEntryTable() const { return reinterpret_cast<const ExportEntry *>(reinterpret_cast<const char *>(this) + offsetToStarExportEntryTable); }
 
     const quint32_le *moduleRequestTable() const { return reinterpret_cast<const quint32_le*>((reinterpret_cast<const char *>(this)) + offsetToModuleRequestTable); }
+
+    bool verifyHeader(QDateTime expectedSourceTimeStamp, QString *errorString) const;
 };
 
 static_assert(sizeof(Unit) == 248, "Unit structure needs to have the expected size to be binary compatible on disk when generated by host compiler and loaded by target");
@@ -1129,8 +1412,8 @@ struct TypeReferenceMap : QHash<int, TypeReference>
         auto prop = obj->propertiesBegin();
         auto const propEnd = obj->propertiesEnd();
         for ( ; prop != propEnd; ++prop) {
-            if (!prop->isBuiltinType) {
-                TypeReference &r = this->add(prop->builtinTypeOrTypeNameIndex, prop->location);
+            if (!prop->isCommonType()) {
+                TypeReference &r = this->add(prop->commonTypeOrTypeNameIndex(), prop->location);
                 r.errorWhenNotFound = true;
             }
         }
@@ -1138,7 +1421,7 @@ struct TypeReferenceMap : QHash<int, TypeReference>
         auto binding = obj->bindingsBegin();
         auto const bindingEnd = obj->bindingsEnd();
         for ( ; binding != bindingEnd; ++binding) {
-            if (binding->type == QV4::CompiledData::Binding::Type_AttachedProperty)
+            if (binding->type() == QV4::CompiledData::Binding::Type_AttachedProperty)
                 this->add(binding->propertyNameIndex, binding->location);
         }
 
@@ -1159,109 +1442,92 @@ struct TypeReferenceMap : QHash<int, TypeReference>
 
 using DependentTypesHasher = std::function<QByteArray()>;
 
-// This is how this hooks into the existing structures:
+struct InlineComponentData {
 
-struct CompilationUnitBase
-{
-    Q_DISABLE_COPY(CompilationUnitBase)
+    InlineComponentData() = default;
+    InlineComponentData(
+            const QQmlType &qmlType, int objectIndex, int nameIndex, int totalObjectCount,
+            int totalBindingCount, int totalParserStatusCount)
+        : qmlType(qmlType)
+        , objectIndex(objectIndex)
+        , nameIndex(nameIndex)
+        , totalObjectCount(totalObjectCount)
+        , totalBindingCount(totalBindingCount)
+        , totalParserStatusCount(totalParserStatusCount)
+    {}
 
-    CompilationUnitBase() = default;
-    ~CompilationUnitBase() = default;
-
-    CompilationUnitBase(CompilationUnitBase &&other) noexcept { *this = std::move(other); }
-
-    CompilationUnitBase &operator=(CompilationUnitBase &&other) noexcept
-    {
-        if (this != &other) {
-            runtimeStrings = other.runtimeStrings;
-            other.runtimeStrings = nullptr;
-            constants = other.constants;
-            other.constants = nullptr;
-            runtimeRegularExpressions = other.runtimeRegularExpressions;
-            other.runtimeRegularExpressions = nullptr;
-            runtimeClasses = other.runtimeClasses;
-            other.runtimeClasses = nullptr;
-            imports = other.imports;
-            other.imports = nullptr;
-        }
-        return *this;
-    }
-
-    // pointers either to data->constants() or little-endian memory copy.
-    Heap::String **runtimeStrings = nullptr; // Array
-    const StaticValue* constants = nullptr;
-    QV4::StaticValue *runtimeRegularExpressions = nullptr;
-    Heap::InternalClass **runtimeClasses = nullptr;
-    const StaticValue** imports = nullptr;
+    QQmlType qmlType;
+    int objectIndex = -1;
+    int nameIndex = -1;
+    int totalObjectCount = 0;
+    int totalBindingCount = 0;
+    int totalParserStatusCount = 0;
 };
 
-Q_STATIC_ASSERT(std::is_standard_layout<CompilationUnitBase>::value);
-Q_STATIC_ASSERT(offsetof(CompilationUnitBase, runtimeStrings) == 0);
-Q_STATIC_ASSERT(offsetof(CompilationUnitBase, constants) == sizeof(QV4::Heap::String **));
-Q_STATIC_ASSERT(offsetof(CompilationUnitBase, runtimeRegularExpressions) == offsetof(CompilationUnitBase, constants) + sizeof(const StaticValue *));
-Q_STATIC_ASSERT(offsetof(CompilationUnitBase, runtimeClasses) == offsetof(CompilationUnitBase, runtimeRegularExpressions) + sizeof(const StaticValue *));
-Q_STATIC_ASSERT(offsetof(CompilationUnitBase, imports) == offsetof(CompilationUnitBase, runtimeClasses) + sizeof(const StaticValue *));
-
-struct CompilationUnit : public CompilationUnitBase
+struct CompilationUnit final : public QQmlRefCounted<CompilationUnit>
 {
-    Q_DISABLE_COPY(CompilationUnit)
+    Q_DISABLE_COPY_MOVE(CompilationUnit)
 
     const Unit *data = nullptr;
     const QmlUnit *qmlData = nullptr;
     QStringList dynamicStrings;
+    const QQmlPrivate::AOTCompiledFunction *aotCompiledFunctions = nullptr;
+
+    // pointers either to data->constants() or little-endian memory copy.
+    const StaticValue *constants = nullptr;
+
+    std::unique_ptr<CompilationUnitMapper> backingFile;
+
+    int m_totalBindingsCount = 0; // Number of bindings used in this type
+    int m_totalParserStatusCount = 0; // Number of instantiated types that are QQmlParserStatus subclasses
+    int m_totalObjectCount = 0; // Number of objects explicitly instantiated
+
+    std::unique_ptr<QString> icRootName;
+    QHash<QString, InlineComponentData> inlineComponentData;
+
+    // index is object index. This allows fast access to the
+    // property data when initializing bindings, avoiding expensive
+    // lookups by string (property name).
+    QVector<BindingPropertyData> bindingPropertyDataPerObject;
+
+    ResolvedTypeReferenceMap resolvedTypes;
+    QQmlRefPointer<QQmlTypeNameCache> typeNameCache;
+
+    QQmlPropertyCacheVector propertyCaches;
+
+    QQmlType qmlType;
+
+    QVector<QQmlRefPointer<QQmlScriptData>> dependentScripts;
+
 public:
-    using CompiledObject = CompiledData::Object;
+    // --- interface for QQmlPropertyCacheCreator
+    using CompiledObject = const CompiledData::Object;
+    using CompiledFunction = const CompiledData::Function;
+    using CompiledBinding = const CompiledData::Binding;
 
-    CompilationUnit(const Unit *unitData = nullptr, const QString &fileName = QString(),
-                    const QString &finalUrlString = QString())
+    // Empty dummy. We don't need to do this when loading from cache.
+    class IdToObjectMap
     {
-        setUnitData(unitData, nullptr, fileName, finalUrlString);
+    public:
+        void insert(int, int) {}
+        void clear() {}
+
+        // We have already checked uniqueness of IDs when creating the CU
+        bool contains(int) { return false; }
+    };
+
+    explicit CompilationUnit(const Unit *unitData, const QQmlPrivate::AOTCompiledFunction *aotCompiledFunctions,
+                             const QString &fileName = QString(), const QString &finalUrlString = QString())
+        : CompilationUnit(unitData, fileName, finalUrlString)
+    {
+        this->aotCompiledFunctions = aotCompiledFunctions;
     }
 
-    ~CompilationUnit()
-    {
-        if (data) {
-            if (data->qmlUnit() != qmlData)
-                free(const_cast<QmlUnit *>(qmlData));
-            qmlData = nullptr;
+    Q_QML_EXPORT CompilationUnit(
+            const Unit *unitData = nullptr, const QString &fileName = QString(),
+            const QString &finalUrlString = QString());
 
-            if (!(data->flags & QV4::CompiledData::Unit::StaticData))
-                free(const_cast<Unit *>(data));
-        }
-        data = nullptr;
-#if Q_BYTE_ORDER == Q_BIG_ENDIAN
-        delete [] constants;
-        constants = nullptr;
-#endif
-
-        delete [] imports;
-        imports = nullptr;
-    }
-
-    CompilationUnit(CompilationUnit &&other) noexcept
-    {
-        *this = std::move(other);
-    }
-
-    CompilationUnit &operator=(CompilationUnit &&other) noexcept
-    {
-        if (this != &other) {
-            data = other.data;
-            other.data = nullptr;
-            qmlData = other.qmlData;
-            other.qmlData = nullptr;
-            dynamicStrings = std::move(other.dynamicStrings);
-            other.dynamicStrings.clear();
-            m_fileName = std::move(other.m_fileName);
-            other.m_fileName.clear();
-            m_finalUrlString = std::move(other.m_finalUrlString);
-            other.m_finalUrlString.clear();
-            m_module = other.m_module;
-            other.m_module = nullptr;
-            CompilationUnitBase::operator=(std::move(other));
-        }
-        return *this;
-    }
+    Q_QML_EXPORT ~CompilationUnit();
 
     const Unit *unitData() const { return data; }
 
@@ -1295,24 +1561,207 @@ public:
         m_finalUrlString = !finalUrlString.isEmpty() ? finalUrlString : stringAt(data->finalUrlIndex);
     }
 
-    QString stringAt(int index) const
+    QString stringAt(uint index) const
     {
-        if (uint(index) >= data->stringTableSize)
-            return dynamicStrings.at(index - data->stringTableSize);
-        return data->stringAtInternal(index);
+        if (index < data->stringTableSize)
+            return data->stringAtInternal(index);
+
+        const qsizetype dynamicIndex = index - data->stringTableSize;
+        Q_ASSERT(dynamicIndex < dynamicStrings.size());
+        return dynamicStrings.at(dynamicIndex);
     }
 
     QString fileName() const { return m_fileName; }
     QString finalUrlString() const { return m_finalUrlString; }
 
-    Heap::Module *module() const { return m_module; }
-    void setModule(Heap::Module *module) { m_module = module; }
+    QString bindingValueAsString(const CompiledData::Binding *binding) const
+    {
+        using namespace CompiledData;
+        switch (binding->type()) {
+        case Binding::Type_Script:
+        case Binding::Type_String:
+            return stringAt(binding->stringIndex);
+        case Binding::Type_Null:
+            return QStringLiteral("null");
+        case Binding::Type_Boolean:
+            return binding->value.b ? QStringLiteral("true") : QStringLiteral("false");
+        case Binding::Type_Number:
+            return QString::number(bindingValueAsNumber(binding), 'g', QLocale::FloatingPointShortest);
+        case Binding::Type_Invalid:
+            return QString();
+        case Binding::Type_TranslationById:
+        case Binding::Type_Translation:
+            return stringAt(data->translations()[binding->value.translationDataIndex].stringIndex);
+        default:
+            break;
+        }
+        return QString();
+    }
+
+    QString bindingValueAsScriptString(const CompiledData::Binding *binding) const
+    {
+        return (binding->type() == CompiledData::Binding::Type_String)
+                ? CompiledData::Binding::escapedString(stringAt(binding->stringIndex))
+                : bindingValueAsString(binding);
+    }
+
+    double bindingValueAsNumber(const CompiledData::Binding *binding) const
+    {
+        if (binding->type() != CompiledData::Binding::Type_Number)
+            return 0.0;
+        return constants[binding->value.constantValueIndex].doubleValue();
+    }
+
+    Q_QML_EXPORT static QString localCacheFilePath(const QUrl &url);
+    Q_QML_EXPORT bool loadFromDisk(
+            const QUrl &url, const QDateTime &sourceTimeStamp, QString *errorString);
+    Q_QML_EXPORT bool saveToDisk(const QUrl &unitUrl, QString *errorString);
+
+    int importCount() const { return qmlData->nImports; }
+    const CompiledData::Import *importAt(int index) const { return qmlData->importAt(index); }
+
+    Q_QML_EXPORT QStringList moduleRequests() const;
+
+    // url() and fileName() shall be used to load the actual QML/JS code or to show errors or
+    // warnings about that code. They include any potential URL interceptions and thus represent the
+    // "physical" location of the code.
+    //
+    // finalUrl() and finalUrlString() shall be used to resolve further URLs referred to in the code
+    // They are _not_ intercepted and thus represent the "logical" name for the code.
+
+    QUrl url() const
+    {
+        if (!m_url.isValid())
+            m_url = QUrl(fileName());
+        return m_url;
+    }
+
+    QUrl finalUrl() const
+    {
+        if (!m_finalUrl.isValid())
+            m_finalUrl = QUrl(finalUrlString());
+        return m_finalUrl;
+    }
+
+    ResolvedTypeReference *resolvedType(int id) const { return resolvedTypes.value(id); }
+    ResolvedTypeReference *resolvedType(QMetaType type) const;
+
+    QQmlPropertyCache::ConstPtr rootPropertyCache() const
+    {
+        return propertyCaches.at(/*root object*/0);
+    }
+
+    int objectCount() const { return qmlData->nObjects; }
+    const CompiledObject *objectAt(int index) const { return qmlData->objectAt(index); }
+
+    int totalBindingsCount() const;
+    int totalParserStatusCount() const;
+    int totalObjectCount() const;
+
+    int inlineComponentId(const QString &inlineComponentName) const
+    {
+        for (uint i = 0; i < qmlData->nObjects; ++i) {
+            auto *object = qmlData->objectAt(i);
+            for (auto it = object->inlineComponentsBegin(), end = object->inlineComponentsEnd();
+                 it != end; ++it) {
+                if (stringAt(it->nameIndex) == inlineComponentName)
+                    return it->objectIndex;
+            }
+        }
+        return -1;
+    }
+
+    void finalizeCompositeType(const QQmlType &type);
+
+    bool verifyChecksum(const CompiledData::DependentTypesHasher &dependencyHasher) const;
+
+    enum class ListPropertyAssignBehavior { Append, Replace, ReplaceIfNotDefault };
+    ListPropertyAssignBehavior listPropertyAssignBehavior() const
+    {
+        if (unitData()->flags & CompiledData::Unit::ListPropertyAssignReplace)
+            return ListPropertyAssignBehavior::Replace;
+        if (unitData()->flags & CompiledData::Unit::ListPropertyAssignReplaceIfNotDefault)
+            return ListPropertyAssignBehavior::ReplaceIfNotDefault;
+        return ListPropertyAssignBehavior::Append;
+    }
+
+    bool ignoresFunctionSignature() const
+    {
+        return unitData()->flags & CompiledData::Unit::FunctionSignaturesIgnored;
+    }
+
+    bool nativeMethodsAcceptThisObjects() const
+    {
+        return unitData()->flags & CompiledData::Unit::NativeMethodsAcceptThisObject;
+    }
+
+    bool valueTypesAreCopied() const
+    {
+        return unitData()->flags & CompiledData::Unit::ValueTypesCopied;
+    }
+
+    bool valueTypesAreAddressable() const
+    {
+        return unitData()->flags & CompiledData::Unit::ValueTypesAddressable;
+    }
+
+    bool valueTypesAreAssertable() const
+    {
+        return unitData()->flags & CompiledData::Unit::ValueTypesAssertable;
+    }
+
+    bool componentsAreBound() const
+    {
+        return unitData()->flags & CompiledData::Unit::ComponentsBound;
+    }
+
+    bool isESModule() const
+    {
+        return unitData()->flags & CompiledData::Unit::IsESModule;
+    }
+
+    bool isSharedLibrary() const
+    {
+        return unitData()->flags & CompiledData::Unit::IsSharedLibrary;
+    }
+
+    struct FunctionIterator
+    {
+        FunctionIterator(const CompiledData::Unit *unit, const CompiledObject *object, int index)
+            : unit(unit), object(object), index(index) {}
+        const CompiledData::Unit *unit;
+        const CompiledObject *object;
+        int index;
+
+        const CompiledFunction *operator->() const
+        {
+            return unit->functionAt(object->functionOffsetTable()[index]);
+        }
+
+        void operator++() { ++index; }
+        bool operator==(const FunctionIterator &rhs) const { return index == rhs.index; }
+        bool operator!=(const FunctionIterator &rhs) const { return index != rhs.index; }
+    };
+
+    FunctionIterator objectFunctionsBegin(const CompiledObject *object) const
+    {
+        return FunctionIterator(unitData(), object, 0);
+    }
+
+    FunctionIterator objectFunctionsEnd(const CompiledObject *object) const
+    {
+        return FunctionIterator(unitData(), object, object->nFunctions);
+    }
+
+    QQmlType qmlTypeForComponent(const QString &inlineComponentName = QString()) const;
+    QMetaType metaType() const { return qmlType.typeId(); }
 
 private:
     QString m_fileName; // initialized from data->sourceFileIndex
     QString m_finalUrlString; // initialized from data->finalUrlIndex
 
-    Heap::Module *m_module = nullptr;
+    mutable QQmlNullableValue<QUrl> m_url;
+    mutable QQmlNullableValue<QUrl> m_finalUrl;
 };
 
 class SaveableUnitPointer
@@ -1351,7 +1800,7 @@ public:
         errorString->clear();
         return true;
 #else
-        Q_UNUSED(outputFileName)
+        Q_UNUSED(outputFileName);
         *errorString = QStringLiteral("features.temporaryfile is disabled.");
         return false;
 #endif
@@ -1385,6 +1834,7 @@ private:
 } // CompiledData namespace
 } // QV4 namespace
 
+Q_DECLARE_OPERATORS_FOR_FLAGS(QV4::CompiledData::ParameterType::Flags);
 Q_DECLARE_TYPEINFO(QV4::CompiledData::JSClassMember, Q_PRIMITIVE_TYPE);
 
 QT_END_NAMESPACE

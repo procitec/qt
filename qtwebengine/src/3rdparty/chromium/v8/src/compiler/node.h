@@ -50,7 +50,7 @@ class V8_EXPORT_PRIVATE Node final {
 
   const Operator* op() const { return op_; }
 
-  IrOpcode::Value opcode() const {
+  constexpr IrOpcode::Value opcode() const {
     DCHECK_GE(IrOpcode::kLast, op_->opcode());
     return static_cast<IrOpcode::Value>(op_->opcode());
   }
@@ -69,14 +69,14 @@ class V8_EXPORT_PRIVATE Node final {
 #endif
 
   Node* InputAt(int index) const {
-    CHECK_LE(0, index);
-    CHECK_LT(index, InputCount());
+    DCHECK_LE(0, index);
+    DCHECK_LT(index, InputCount());
     return *GetInputPtrConst(index);
   }
 
   void ReplaceInput(int index, Node* new_to) {
-    CHECK_LE(0, index);
-    CHECK_LT(index, InputCount());
+    DCHECK_LE(0, index);
+    DCHECK_LT(index, InputCount());
     ZoneNodePtr* input_ptr = GetInputPtr(index);
     Node* old_to = *input_ptr;
     if (old_to != new_to) {
@@ -98,6 +98,7 @@ class V8_EXPORT_PRIVATE Node final {
   void EnsureInputCount(Zone* zone, int new_input_count);
 
   int UseCount() const;
+  int BranchUseCount() const;
   void ReplaceUses(Node* replace_to);
 
   class InputEdges;
@@ -105,6 +106,7 @@ class V8_EXPORT_PRIVATE Node final {
 
   class Inputs;
   inline Inputs inputs() const;
+  inline base::Vector<Node*> inputs_vector() const;
 
   class UseEdges final {
    public:
@@ -236,6 +238,8 @@ class V8_EXPORT_PRIVATE Node final {
   // a node exceeds the maximum inline capacity.
 
   Node(NodeId id, const Operator* op, int inline_count, int inline_capacity);
+  Node(const Node&) = delete;
+  Node& operator=(const Node&) = delete;
 
   inline Address inputs_location() const;
 
@@ -300,8 +304,6 @@ class V8_EXPORT_PRIVATE Node final {
   friend class Edge;
   friend class NodeMarkerBase;
   friend class NodeProperties;
-
-  DISALLOW_COPY_AND_ASSIGN(Node);
 };
 
 Address Node::inputs_location() const {
@@ -364,25 +366,6 @@ class Control : public NodeWrapper {
     DCHECK_GT(value->op()->ControlOutputCount(), 0);
     set_node(value);
     return value;
-  }
-};
-
-class FrameState : public NodeWrapper {
- public:
-  explicit constexpr FrameState(Node* node) : NodeWrapper(node) {
-    // TODO(jgruber): Disallow kStart (needed for PromiseConstructorBasic unit
-    // test, among others).
-    SLOW_DCHECK(node->opcode() == IrOpcode::kFrameState ||
-                node->opcode() == IrOpcode::kStart);
-  }
-
-  // Duplicating here from frame-states.h for ease of access and to keep
-  // header include-balls small. Equality of the two constants is
-  // static-asserted elsewhere.
-  static constexpr int kFrameStateOuterStateInput = 5;
-
-  FrameState outer_frame_state() const {
-    return FrameState{node()->InputAt(kFrameStateOuterStateInput)};
   }
 };
 
@@ -499,6 +482,16 @@ Node::Inputs Node::inputs() const {
     return Inputs(inline_inputs(), inline_count);
   } else {
     return Inputs(outline_inputs()->inputs(), outline_inputs()->count_);
+  }
+}
+
+base::Vector<Node*> Node::inputs_vector() const {
+  int inline_count = InlineCountField::decode(bit_field_);
+  if (inline_count != kOutlineMarker) {
+    return base::VectorOf<Node*>(inline_inputs(), inline_count);
+  } else {
+    return base::VectorOf<Node*>(outline_inputs()->inputs(),
+                                 outline_inputs()->count_);
   }
 }
 
@@ -712,6 +705,13 @@ Node::Uses::const_iterator Node::Uses::begin() const {
 
 
 Node::Uses::const_iterator Node::Uses::end() const { return const_iterator(); }
+
+inline Node::Uses::const_iterator begin(const Node::Uses& uses) {
+  return uses.begin();
+}
+inline Node::Uses::const_iterator end(const Node::Uses& uses) {
+  return uses.end();
+}
 
 }  // namespace compiler
 }  // namespace internal

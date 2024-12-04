@@ -33,7 +33,7 @@
 
 #include "third_party/blink/renderer/core/svg/svg_number.h"
 #include "third_party/blink/renderer/core/svg/svg_parsing_error.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/wtf/casting.h"
 
 namespace blink {
@@ -71,8 +71,8 @@ class SVGNumberOptionalNumber final : public SVGPropertyBase {
   }
   AnimatedPropertyType GetType() const override { return ClassType(); }
 
-  SVGNumber* FirstNumber() const { return first_number_; }
-  SVGNumber* SecondNumber() const { return second_number_; }
+  SVGNumber* FirstNumber() const { return first_number_.Get(); }
+  SVGNumber* SecondNumber() const { return second_number_.Get(); }
 
   void Trace(Visitor*) const override;
 

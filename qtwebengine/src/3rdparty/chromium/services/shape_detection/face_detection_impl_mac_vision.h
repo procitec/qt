@@ -1,16 +1,13 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef SERVICES_SHAPE_DETECTION_FACE_DETECTION_IMPL_MAC_VISION_H_
 #define SERVICES_SHAPE_DETECTION_FACE_DETECTION_IMPL_MAC_VISION_H_
 
-#include <os/availability.h>
-
 #include <memory>
 #include <utility>
 
-#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "mojo/public/cpp/bindings/self_owned_receiver.h"
 #include "services/shape_detection/detection_utils_mac.h"
@@ -22,10 +19,14 @@ namespace shape_detection {
 
 // The FaceDetectionImplMacVision class is the implementation of Face Detection
 // based on Mac OS Vision framework.
-class API_AVAILABLE(macos(10.13)) FaceDetectionImplMacVision
-    : public mojom::FaceDetection {
+class FaceDetectionImplMacVision : public mojom::FaceDetection {
  public:
   FaceDetectionImplMacVision();
+
+  FaceDetectionImplMacVision(const FaceDetectionImplMacVision&) = delete;
+  FaceDetectionImplMacVision& operator=(const FaceDetectionImplMacVision&) =
+      delete;
+
   ~FaceDetectionImplMacVision() override;
 
   void Detect(const SkBitmap& bitmap,
@@ -43,8 +44,6 @@ class API_AVAILABLE(macos(10.13)) FaceDetectionImplMacVision
   DetectCallback detected_callback_;
   mojo::SelfOwnedReceiverRef<mojom::FaceDetection> receiver_;
   base::WeakPtrFactory<FaceDetectionImplMacVision> weak_factory_;
-
-  DISALLOW_COPY_AND_ASSIGN(FaceDetectionImplMacVision);
 };
 
 }  // namespace shape_detection

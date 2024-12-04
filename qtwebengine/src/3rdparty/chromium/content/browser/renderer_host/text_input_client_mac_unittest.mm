@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,13 +7,19 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "base/bind.h"
-#include "base/optional.h"
+#include <optional>
+
+#include "base/functional/bind.h"
+#include "base/memory/raw_ptr.h"
+#include "base/memory/raw_ref.h"
 #include "base/run_loop.h"
-#include "base/single_thread_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
+#include "base/test/scoped_feature_list.h"
 #include "base/threading/thread.h"
+#include "base/time/time.h"
 #include "content/browser/renderer_host/render_process_host_impl.h"
 #include "content/browser/renderer_host/render_view_host_impl.h"
+#include "content/common/features.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/test/browser_task_environment.h"
@@ -73,8 +79,7 @@ class TextInputClientMacTest : public content::RenderViewHostTestHarness {
   void SetUp() override {
     content::RenderViewHostTestHarness::SetUp();
     local_frame_ = std::make_unique<TextInputClientLocalFrame>(web_contents());
-    RenderViewHostTester::For(rvh())->CreateTestRenderView(
-        base::nullopt, MSG_ROUTING_NONE, false);
+    RenderViewHostTester::For(rvh())->CreateTestRenderView();
     widget_ = rvh()->GetWidget();
     FocusWebContentsOnMainFrame();
   }
@@ -93,7 +98,7 @@ class TextInputClientMacTest : public content::RenderViewHostTestHarness {
   // a short delay.
   void PostTask(base::Location from_here, base::OnceClosure task) {
     PostTask(std::move(from_here), std::move(task),
-             base::TimeDelta::FromMilliseconds(kTaskDelayMs));
+             base::Milliseconds(kTaskDelayMs));
   }
 
   void PostTask(base::Location from_here,
@@ -113,7 +118,7 @@ class TextInputClientMacTest : public content::RenderViewHostTestHarness {
  private:
   friend class ScopedTestingThread;
 
-  RenderWidgetHost* widget_;
+  raw_ptr<RenderWidgetHost, DanglingUntriaged> widget_;
   std::unique_ptr<TextInputClientLocalFrame> local_frame_;
 
   base::Thread thread_;
@@ -126,14 +131,12 @@ class TextInputClientMacTest : public content::RenderViewHostTestHarness {
 class ScopedTestingThread {
  public:
   ScopedTestingThread(TextInputClientMacTest* test) : thread_(test->thread_) {
-    thread_.Start();
+    thread_->Start();
   }
-  ~ScopedTestingThread() {
-    thread_.Stop();
-  }
+  ~ScopedTestingThread() { thread_->Stop(); }
 
  private:
-  base::Thread& thread_;
+  const raw_ref<base::Thread> thread_;
 };
 
 }  // namespace
@@ -179,7 +182,7 @@ TEST_F(TextInputClientMacTest, NotFoundCharacterIndex) {
   PostTask(FROM_HERE,
            base::BindOnce(&TextInputClientMac::SetCharacterIndexAndSignal,
                           base::Unretained(service()), UINT32_MAX),
-           base::TimeDelta::FromMilliseconds(kTaskDelayMs) * 2);
+           base::Milliseconds(kTaskDelayMs) * 2);
 
   base::RunLoop run_loop1;
   local_frame()->SetCallback(run_loop1.QuitClosure());
@@ -211,11 +214,17 @@ TEST_F(TextInputClientMacTest, GetRectForRange) {
 }
 
 TEST_F(TextInputClientMacTest, TimeoutRectForRange) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeatureWithParameters(features::kTextInputClient,
+                                                  {{"ipc_timeout", "300ms"}});
+
   base::RunLoop run_loop;
   local_frame()->SetCallback(run_loop.QuitClosure());
+
   gfx::Rect rect =
       service()->GetFirstRectForRange(widget(), gfx::Range(NSMakeRange(0, 32)));
   run_loop.Run();
+
   EXPECT_EQ(gfx::Rect(), rect);
 }
 

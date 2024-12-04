@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,11 +8,12 @@
 #include "build/build_config.h"
 #include "third_party/blink/public/resources/grit/blink_resources.h"
 #include "third_party/blink/renderer/platform/data_resource_helper.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 
 namespace blink {
 
 Vector<char> ChooserResourceLoader::GetSuggestionPickerStyleSheet() {
-#if !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID)
   return UncompressResourceAsBinary(IDR_SUGGESTION_PICKER_CSS);
 #else
   NOTREACHED();
@@ -20,8 +21,18 @@ Vector<char> ChooserResourceLoader::GetSuggestionPickerStyleSheet() {
 #endif
 }
 
+Vector<char> ChooserResourceLoader::GetSuggestionPickerDarkModeStyleSheet() {
+  CHECK(RuntimeEnabledFeatures::SuggestionPickerDarkModeSupportEnabled());
+#if !BUILDFLAG(IS_ANDROID)
+  return UncompressResourceAsBinary(IDR_SUGGESTION_PICKER_DARK_CSS);
+#else
+  NOTREACHED();
+  return Vector<char>();
+#endif
+}
+
 Vector<char> ChooserResourceLoader::GetSuggestionPickerJS() {
-#if !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID)
   return UncompressResourceAsBinary(IDR_SUGGESTION_PICKER_JS);
 #else
   NOTREACHED();
@@ -29,17 +40,8 @@ Vector<char> ChooserResourceLoader::GetSuggestionPickerJS() {
 #endif
 }
 
-Vector<char> ChooserResourceLoader::GetPickerButtonStyleSheet() {
-#if !defined(OS_ANDROID)
-  return UncompressResourceAsBinary(IDR_PICKER_BUTTON_CSS);
-#else
-  NOTREACHED();
-  return Vector<char>();
-#endif
-}
-
 Vector<char> ChooserResourceLoader::GetPickerCommonStyleSheet() {
-#if !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID)
   return UncompressResourceAsBinary(IDR_PICKER_COMMON_CSS);
 #else
   NOTREACHED();
@@ -48,7 +50,7 @@ Vector<char> ChooserResourceLoader::GetPickerCommonStyleSheet() {
 }
 
 Vector<char> ChooserResourceLoader::GetPickerCommonJS() {
-#if !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID)
   return UncompressResourceAsBinary(IDR_PICKER_COMMON_JS);
 #else
   NOTREACHED();
@@ -57,7 +59,7 @@ Vector<char> ChooserResourceLoader::GetPickerCommonJS() {
 }
 
 Vector<char> ChooserResourceLoader::GetCalendarPickerStyleSheet() {
-#if !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID)
   return UncompressResourceAsBinary(IDR_CALENDAR_PICKER_CSS);
 #else
   NOTREACHED();
@@ -66,7 +68,7 @@ Vector<char> ChooserResourceLoader::GetCalendarPickerStyleSheet() {
 }
 
 Vector<char> ChooserResourceLoader::GetCalendarPickerJS() {
-#if !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID)
   return UncompressResourceAsBinary(IDR_CALENDAR_PICKER_JS);
 #else
   NOTREACHED();
@@ -75,7 +77,7 @@ Vector<char> ChooserResourceLoader::GetCalendarPickerJS() {
 }
 
 Vector<char> ChooserResourceLoader::GetMonthPickerJS() {
-#if !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID)
   return UncompressResourceAsBinary(IDR_MONTH_PICKER_JS);
 #else
   NOTREACHED();
@@ -84,7 +86,7 @@ Vector<char> ChooserResourceLoader::GetMonthPickerJS() {
 }
 
 Vector<char> ChooserResourceLoader::GetTimePickerStyleSheet() {
-#if !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID)
   return UncompressResourceAsBinary(IDR_TIME_PICKER_CSS);
 #else
   NOTREACHED();
@@ -93,7 +95,7 @@ Vector<char> ChooserResourceLoader::GetTimePickerStyleSheet() {
 }
 
 Vector<char> ChooserResourceLoader::GetTimePickerJS() {
-#if !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID)
   return UncompressResourceAsBinary(IDR_TIME_PICKER_JS);
 #else
   NOTREACHED();
@@ -102,7 +104,7 @@ Vector<char> ChooserResourceLoader::GetTimePickerJS() {
 }
 
 Vector<char> ChooserResourceLoader::GetDateTimeLocalPickerJS() {
-#if !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID)
   return UncompressResourceAsBinary(IDR_DATETIMELOCAL_PICKER_JS);
 #else
   NOTREACHED();
@@ -111,7 +113,7 @@ Vector<char> ChooserResourceLoader::GetDateTimeLocalPickerJS() {
 }
 
 Vector<char> ChooserResourceLoader::GetColorSuggestionPickerStyleSheet() {
-#if !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID)
   return UncompressResourceAsBinary(IDR_COLOR_SUGGESTION_PICKER_CSS);
 #else
   NOTREACHED();
@@ -120,7 +122,7 @@ Vector<char> ChooserResourceLoader::GetColorSuggestionPickerStyleSheet() {
 }
 
 Vector<char> ChooserResourceLoader::GetColorSuggestionPickerJS() {
-#if !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID)
   return UncompressResourceAsBinary(IDR_COLOR_SUGGESTION_PICKER_JS);
 #else
   NOTREACHED();
@@ -129,7 +131,7 @@ Vector<char> ChooserResourceLoader::GetColorSuggestionPickerJS() {
 }
 
 Vector<char> ChooserResourceLoader::GetColorPickerStyleSheet() {
-#if !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID)
   return UncompressResourceAsBinary(IDR_COLOR_PICKER_CSS);
 #else
   NOTREACHED();
@@ -137,17 +139,8 @@ Vector<char> ChooserResourceLoader::GetColorPickerStyleSheet() {
 #endif
 }
 
-Vector<char> ChooserResourceLoader::GetCalendarPickerRefreshStyleSheet() {
-#if !defined(OS_ANDROID)
-  return UncompressResourceAsBinary(IDR_CALENDAR_PICKER_REFRESH_CSS);
-#else
-  NOTREACHED();
-  return Vector<char>();
-#endif
-}
-
 Vector<char> ChooserResourceLoader::GetColorPickerJS() {
-#if !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID)
   return UncompressResourceAsBinary(IDR_COLOR_PICKER_JS);
 #else
   NOTREACHED();
@@ -156,7 +149,7 @@ Vector<char> ChooserResourceLoader::GetColorPickerJS() {
 }
 
 Vector<char> ChooserResourceLoader::GetColorPickerCommonJS() {
-#if !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID)
   return UncompressResourceAsBinary(IDR_COLOR_PICKER_COMMON_JS);
 #else
   NOTREACHED();
@@ -165,7 +158,7 @@ Vector<char> ChooserResourceLoader::GetColorPickerCommonJS() {
 }
 
 Vector<char> ChooserResourceLoader::GetListPickerStyleSheet() {
-#if !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID)
   return UncompressResourceAsBinary(IDR_LIST_PICKER_CSS);
 #else
   NOTREACHED();
@@ -174,7 +167,7 @@ Vector<char> ChooserResourceLoader::GetListPickerStyleSheet() {
 }
 
 Vector<char> ChooserResourceLoader::GetListPickerJS() {
-#if !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID)
   return UncompressResourceAsBinary(IDR_LIST_PICKER_JS);
 #else
   NOTREACHED();

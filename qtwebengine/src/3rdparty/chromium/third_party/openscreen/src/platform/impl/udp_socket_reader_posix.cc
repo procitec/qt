@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,6 +10,7 @@
 #include "platform/impl/socket_handle_posix.h"
 #include "platform/impl/udp_socket_posix.h"
 #include "util/osp_logging.h"
+#include "util/std_util.h"
 
 namespace openscreen {
 
@@ -65,7 +66,7 @@ void UdpSocketReaderPosix::OnDelete(UdpSocketPosix* socket,
 
 bool UdpSocketReaderPosix::IsMappedReadForTesting(
     UdpSocketPosix* socket) const {
-  return std::find(sockets_.begin(), sockets_.end(), socket) != sockets_.end();
+  return Contains(sockets_, socket);
 }
 
 }  // namespace openscreen

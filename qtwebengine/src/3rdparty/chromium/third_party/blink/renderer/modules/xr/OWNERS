@@ -1,6 +1,4 @@
-alcooper@chromium.org
-bajones@chromium.org
-klausw@chromium.org
+file://components/webxr/OWNERS
 
-# TEAM: xr-dev@chromium.org
-# COMPONENT: Blink>WebXR
+per-file *_type_converter*.*=set noparent
+per-file *_type_converter*.*=file://ipc/SECURITY_OWNERS

@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2019 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtQuick module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2019 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #ifndef QQUICKFLICKABLE_P_H
 #define QQUICKFLICKABLE_P_H
@@ -58,7 +22,7 @@ QT_BEGIN_NAMESPACE
 
 class QQuickFlickablePrivate;
 class QQuickFlickableVisibleArea;
-class Q_QUICK_PRIVATE_EXPORT QQuickFlickable : public QQuickItem
+class Q_QUICK_EXPORT QQuickFlickable : public QQuickItem
 {
     Q_OBJECT
 
@@ -80,7 +44,7 @@ class Q_QUICK_PRIVATE_EXPORT QQuickFlickable : public QQuickItem
     Q_PROPERTY(qreal verticalVelocity READ verticalVelocity NOTIFY verticalVelocityChanged)
 
     Q_PROPERTY(BoundsBehavior boundsBehavior READ boundsBehavior WRITE setBoundsBehavior NOTIFY boundsBehaviorChanged)
-    Q_PROPERTY(BoundsMovement boundsMovement READ boundsMovement WRITE setBoundsMovement NOTIFY boundsMovementChanged REVISION 10)
+    Q_PROPERTY(BoundsMovement boundsMovement READ boundsMovement WRITE setBoundsMovement NOTIFY boundsMovementChanged REVISION(2, 10))
     Q_PROPERTY(QQuickTransition *rebound READ rebound WRITE setRebound NOTIFY reboundChanged)
     Q_PROPERTY(qreal maximumFlickVelocity READ maximumFlickVelocity WRITE setMaximumFlickVelocity NOTIFY maximumFlickVelocityChanged)
     Q_PROPERTY(qreal flickDeceleration READ flickDeceleration WRITE setFlickDeceleration NOTIFY flickDecelerationChanged)
@@ -106,15 +70,16 @@ class Q_QUICK_PRIVATE_EXPORT QQuickFlickable : public QQuickItem
     Q_PROPERTY(QQuickFlickableVisibleArea *visibleArea READ visibleArea CONSTANT)
 
     Q_PROPERTY(bool pixelAligned READ pixelAligned WRITE setPixelAligned NOTIFY pixelAlignedChanged)
-    Q_PROPERTY(bool synchronousDrag READ synchronousDrag WRITE setSynchronousDrag NOTIFY synchronousDragChanged REVISION 12)
+    Q_PROPERTY(bool synchronousDrag READ synchronousDrag WRITE setSynchronousDrag NOTIFY synchronousDragChanged REVISION(2, 12))
 
-    Q_PROPERTY(qreal horizontalOvershoot READ horizontalOvershoot NOTIFY horizontalOvershootChanged REVISION 9)
-    Q_PROPERTY(qreal verticalOvershoot READ verticalOvershoot NOTIFY verticalOvershootChanged REVISION 9)
+    Q_PROPERTY(qreal horizontalOvershoot READ horizontalOvershoot NOTIFY horizontalOvershootChanged REVISION(2, 9))
+    Q_PROPERTY(qreal verticalOvershoot READ verticalOvershoot NOTIFY verticalOvershootChanged REVISION(2, 9))
 
     Q_PROPERTY(QQmlListProperty<QObject> flickableData READ flickableData)
     Q_PROPERTY(QQmlListProperty<QQuickItem> flickableChildren READ flickableChildren)
     Q_CLASSINFO("DefaultProperty", "flickableData")
     QML_NAMED_ELEMENT(Flickable)
+    QML_ADDED_IN_VERSION(2, 0)
 
 public:
     QQuickFlickable(QQuickItem *parent=nullptr);
@@ -252,7 +217,7 @@ Q_SIGNALS:
     void flickableDirectionChanged();
     void interactiveChanged();
     void boundsBehaviorChanged();
-    Q_REVISION(10) void boundsMovementChanged();
+    Q_REVISION(2, 10) void boundsMovementChanged();
     void reboundChanged();
     void maximumFlickVelocityChanged();
     void flickDecelerationChanged();
@@ -264,11 +229,11 @@ Q_SIGNALS:
     void dragStarted();
     void dragEnded();
     void pixelAlignedChanged();
-    Q_REVISION(12) void synchronousDragChanged();
-    Q_REVISION(9) void horizontalOvershootChanged();
-    Q_REVISION(9) void verticalOvershootChanged();
+    Q_REVISION(2, 12) void synchronousDragChanged();
+    Q_REVISION(2, 9) void horizontalOvershootChanged();
+    Q_REVISION(2, 9) void verticalOvershootChanged();
 
-    // The next four signals should be marked as Q_REVISION(12). See QTBUG-71243
+    // The next four signals should be marked as Q_REVISION(2, 12). See QTBUG-71243
     void atXEndChanged();
     void atYEndChanged();
     void atXBeginningChanged();
@@ -279,6 +244,7 @@ protected:
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
+    void touchEvent(QTouchEvent *event) override;
 #if QT_CONFIG(wheelevent)
     void wheelEvent(QWheelEvent *event) override;
 #endif
@@ -302,10 +268,9 @@ protected:
     qreal vHeight() const;
     void componentComplete() override;
     virtual void viewportMoved(Qt::Orientations orient);
-    void geometryChanged(const QRectF &newGeometry,
-                         const QRectF &oldGeometry) override;
+    void geometryChange(const QRectF &newGeometry, const QRectF &oldGeometry) override;
     void mouseUngrabEvent() override;
-    bool filterMouseEvent(QQuickItem *receiver, QMouseEvent *event);
+    bool filterPointerEvent(QQuickItem *receiver, QPointerEvent *event);
 
     bool xflick() const;
     bool yflick() const;
@@ -316,13 +281,10 @@ protected:
 private:
     Q_DISABLE_COPY(QQuickFlickable)
     Q_DECLARE_PRIVATE(QQuickFlickable)
-    friend class QQuickFlickableContentItem;
     friend class QQuickFlickableVisibleArea;
     friend class QQuickFlickableReboundTransition;
 };
 
 QT_END_NAMESPACE
-
-QML_DECLARE_TYPE(QQuickFlickable)
 
 #endif // QQUICKFLICKABLE_P_H

@@ -25,13 +25,17 @@
 
 #include "third_party/blink/renderer/platform/wtf/hash_map.h"
 
+#include <iterator>
 #include <memory>
 
 #include "base/memory/ptr_util.h"
 #include "base/memory/scoped_refptr.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/hash_functions.h"
 #include "third_party/blink/renderer/platform/wtf/ref_counted.h"
+#include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
+#include "third_party/blink/renderer/platform/wtf/text/atomic_string_hash.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 #include "third_party/blink/renderer/platform/wtf/wtf_test_helper.h"
 
@@ -87,12 +91,10 @@ struct TestDoubleHashTraits : HashTraits<double> {
   static const unsigned kMinimumTableSize = 8;
 };
 
-using DoubleHashMap =
-    HashMap<double, int64_t, DefaultHash<double>::Hash, TestDoubleHashTraits>;
+using DoubleHashMap = HashMap<double, int64_t, TestDoubleHashTraits>;
 
 int BucketForKey(double key) {
-  return DefaultHash<double>::Hash::GetHash(key) &
-         (TestDoubleHashTraits::kMinimumTableSize - 1);
+  return WTF::GetHash(key) & (TestDoubleHashTraits::kMinimumTableSize - 1);
 }
 
 TEST(HashMapTest, DoubleHashCollisions) {
@@ -153,30 +155,30 @@ TEST(HashMapTest, OwnPtrAsValue) {
 TEST(HashMapTest, RefPtrAsKey) {
   bool is_deleted = false;
   DummyRefCounted::ref_invokes_count_ = 0;
-  scoped_refptr<DummyRefCounted> ptr =
+  scoped_refptr<DummyRefCounted> object =
       base::AdoptRef(new DummyRefCounted(is_deleted));
   EXPECT_EQ(0, DummyRefCounted::ref_invokes_count_);
   HashMap<scoped_refptr<DummyRefCounted>, int> map;
-  map.insert(ptr, 1);
+  map.insert(object, 1);
   // Referenced only once (to store a copy in the container).
   EXPECT_EQ(1, DummyRefCounted::ref_invokes_count_);
-  EXPECT_EQ(1, map.at(ptr));
+  EXPECT_EQ(1, map.at(object));
 
-  DummyRefCounted* raw_ptr = ptr.get();
+  DummyRefCounted* ptr = object.get();
 
-  EXPECT_TRUE(map.Contains(raw_ptr));
-  EXPECT_NE(map.end(), map.find(raw_ptr));
   EXPECT_TRUE(map.Contains(ptr));
   EXPECT_NE(map.end(), map.find(ptr));
+  EXPECT_TRUE(map.Contains(object));
+  EXPECT_NE(map.end(), map.find(object));
   EXPECT_EQ(1, DummyRefCounted::ref_invokes_count_);
 
-  ptr = nullptr;
+  object = nullptr;
   EXPECT_FALSE(is_deleted);
 
-  map.erase(raw_ptr);
+  map.erase(ptr);
   EXPECT_EQ(1, DummyRefCounted::ref_invokes_count_);
   EXPECT_TRUE(is_deleted);
-  EXPECT_TRUE(map.IsEmpty());
+  EXPECT_TRUE(map.empty());
 }
 
 TEST(HashMaptest, RemoveAdd) {
@@ -186,22 +188,22 @@ TEST(HashMaptest, RemoveAdd) {
   typedef HashMap<int, scoped_refptr<DummyRefCounted>> Map;
   Map map;
 
-  scoped_refptr<DummyRefCounted> ptr =
+  scoped_refptr<DummyRefCounted> object =
       base::AdoptRef(new DummyRefCounted(is_deleted));
   EXPECT_EQ(0, DummyRefCounted::ref_invokes_count_);
 
-  map.insert(1, ptr);
+  map.insert(1, object);
   // Referenced only once (to store a copy in the container).
   EXPECT_EQ(1, DummyRefCounted::ref_invokes_count_);
-  EXPECT_EQ(ptr, map.at(1));
+  EXPECT_EQ(object, map.at(1));
 
-  ptr = nullptr;
+  object = nullptr;
   EXPECT_FALSE(is_deleted);
 
   map.erase(1);
   EXPECT_EQ(1, DummyRefCounted::ref_invokes_count_);
   EXPECT_TRUE(is_deleted);
-  EXPECT_TRUE(map.IsEmpty());
+  EXPECT_TRUE(map.empty());
 
   // Add and remove until the deleted slot is reused.
   for (int i = 1; i < 100; i++) {
@@ -434,7 +436,7 @@ TEST(HashMapTest, UniquePtrAsKey) {
 
   // Insert more to cause a rehash.
   for (int i = 2; i < 32; ++i) {
-    Map::AddResult add_result = map.insert(Pointer(new int(i)), i);
+    Map::AddResult add_result = map.insert(std::make_unique<int>(i), i);
     EXPECT_TRUE(add_result.is_new_entry);
     EXPECT_EQ(i, *add_result.stored_value->key);
     EXPECT_EQ(i, add_result.stored_value->value);
@@ -457,7 +459,7 @@ TEST(HashMapTest, UniquePtrAsValue) {
   using Map = HashMap<int, Pointer>;
   Map map;
   {
-    Map::AddResult add_result = map.insert(1, Pointer(new int(1)));
+    Map::AddResult add_result = map.insert(1, std::make_unique<int>(1));
     EXPECT_TRUE(add_result.is_new_entry);
     EXPECT_EQ(1, add_result.stored_value->key);
     EXPECT_EQ(1, *add_result.stored_value->value);
@@ -475,7 +477,7 @@ TEST(HashMapTest, UniquePtrAsValue) {
   EXPECT_TRUE(iter == map.end());
 
   for (int i = 2; i < 32; ++i) {
-    Map::AddResult add_result = map.insert(i, Pointer(new int(i)));
+    Map::AddResult add_result = map.insert(i, std::make_unique<int>(i));
     EXPECT_TRUE(add_result.is_new_entry);
     EXPECT_EQ(i, add_result.stored_value->key);
     EXPECT_EQ(i, *add_result.stored_value->value);
@@ -578,7 +580,7 @@ HashMap<int, int> ReturnOneTwoThreeMap() {
 
 TEST(HashMapTest, InitializerList) {
   HashMap<int, int> empty({});
-  EXPECT_TRUE(empty.IsEmpty());
+  EXPECT_TRUE(empty.empty());
 
   HashMap<int, int> one({{1, 11}});
   EXPECT_EQ(one.size(), 1u);
@@ -600,7 +602,7 @@ TEST(HashMapTest, InitializerList) {
   one_two_three.insert(9999, 99999);
 
   empty = {};
-  EXPECT_TRUE(empty.IsEmpty());
+  EXPECT_TRUE(empty.empty());
 
   one = {{1, 11}};
   EXPECT_EQ(one.size(), 1u);
@@ -623,7 +625,17 @@ TEST(HashMapTest, InitializerList) {
 }
 
 TEST(HashMapTest, IsValidKey) {
-  bool is_deleted;
+  static_assert(HashTraits<int>::kSafeToCompareToEmptyOrDeleted,
+                "type should be comparable to empty or deleted");
+  static_assert(HashTraits<int*>::kSafeToCompareToEmptyOrDeleted,
+                "type should be comparable to empty or deleted");
+  static_assert(
+      HashTraits<
+          scoped_refptr<DummyRefCounted>>::kSafeToCompareToEmptyOrDeleted,
+      "type should be comparable to empty or deleted");
+  static_assert(!HashTraits<AtomicString>::kSafeToCompareToEmptyOrDeleted,
+                "type should not be comparable to empty or deleted");
+
   EXPECT_FALSE((HashMap<int, int>::IsValidKey(0)));
   EXPECT_FALSE((HashMap<int, int>::IsValidKey(-1)));
   EXPECT_TRUE((HashMap<int, int>::IsValidKey(-2)));
@@ -631,14 +643,90 @@ TEST(HashMapTest, IsValidKey) {
   EXPECT_FALSE((HashMap<int*, int>::IsValidKey(nullptr)));
   EXPECT_TRUE((HashMap<int*, int>::IsValidKey(std::make_unique<int>().get())));
 
+  bool is_deleted;
   auto p = base::MakeRefCounted<DummyRefCounted>(is_deleted);
   EXPECT_TRUE((HashMap<scoped_refptr<DummyRefCounted>, int>::IsValidKey(p)));
   EXPECT_FALSE(
       (HashMap<scoped_refptr<DummyRefCounted>, int>::IsValidKey(nullptr)));
+
+  // Test IsValidKey() on a type that is NOT comparable to empty or deleted.
+  EXPECT_TRUE((HashMap<AtomicString, int>::IsValidKey(AtomicString("foo"))));
+  EXPECT_FALSE((HashMap<AtomicString, int>::IsValidKey(AtomicString())));
 }
 
 static_assert(!IsTraceable<HashMap<int, int>>::value,
               "HashMap<int, int> must not be traceable.");
+
+static_assert(
+    std::is_convertible<
+        std::iterator_traits<HashMap<int, int>::iterator>::iterator_category,
+        std::bidirectional_iterator_tag>(),
+    "hash map iterators should be bidirectional");
+static_assert(
+    std::is_same<std::iterator_traits<HashMap<int, int>::iterator>::value_type,
+                 KeyValuePair<int, int>>(),
+    "hash map iterators should be over key-value pairs");
+
+static_assert(std::is_convertible<
+                  std::iterator_traits<
+                      HashMap<int, int>::const_iterator>::iterator_category,
+                  std::bidirectional_iterator_tag>(),
+              "hash map const iterators should be bidirectional");
+static_assert(
+    std::is_same<
+        std::iterator_traits<HashMap<int, int>::const_iterator>::value_type,
+        KeyValuePair<int, int>>(),
+    "hash map const iterators should be over key-value pairs");
+
+static_assert(
+    std::is_convertible<
+        std::iterator_traits<
+            HashMap<int, unsigned>::iterator::KeysIterator>::iterator_category,
+        std::bidirectional_iterator_tag>(),
+    "hash map key iterators should be bidirectional");
+static_assert(
+    std::is_same<
+        std::iterator_traits<
+            HashMap<int, unsigned>::iterator::KeysIterator>::value_type,
+        int>(),
+    "hash map key iterators should be over keys");
+
+static_assert(std::is_convertible<
+                  std::iterator_traits<HashMap<int, unsigned>::const_iterator::
+                                           KeysIterator>::iterator_category,
+                  std::bidirectional_iterator_tag>(),
+              "hash map const key iterators should be bidirectional");
+static_assert(
+    std::is_same<
+        std::iterator_traits<
+            HashMap<int, unsigned>::const_iterator::KeysIterator>::value_type,
+        int>(),
+    "hash map const key iterators should be over keys");
+
+static_assert(
+    std::is_convertible<
+        std::iterator_traits<HashMap<int, unsigned>::iterator::ValuesIterator>::
+            iterator_category,
+        std::bidirectional_iterator_tag>(),
+    "hash map value iterators should be bidirectional");
+static_assert(
+    std::is_same<
+        std::iterator_traits<
+            HashMap<int, unsigned>::iterator::ValuesIterator>::value_type,
+        unsigned>(),
+    "hash map value iterators should be over values");
+
+static_assert(std::is_convertible<
+                  std::iterator_traits<HashMap<int, unsigned>::const_iterator::
+                                           ValuesIterator>::iterator_category,
+                  std::bidirectional_iterator_tag>(),
+              "hash map const value iterators should be bidirectional");
+static_assert(
+    std::is_same<
+        std::iterator_traits<
+            HashMap<int, unsigned>::const_iterator::ValuesIterator>::value_type,
+        unsigned>(),
+    "hash map const value iterators should be over values");
 
 }  // anonymous namespace
 

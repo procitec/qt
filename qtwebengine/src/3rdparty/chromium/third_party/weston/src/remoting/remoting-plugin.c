@@ -36,17 +36,18 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <fcntl.h>
-#include <gbm.h>
 
 #include <gst/gst.h>
 #include <gst/allocators/gstdmabuf.h>
 #include <gst/app/gstappsrc.h>
 #include <gst/video/gstvideometa.h>
 
-#include "remoting-plugin.h"
+#include <libweston/remoting-plugin.h>
 #include <libweston/backend-drm.h>
 #include "shared/helpers.h"
 #include "shared/timespec-util.h"
+#include "shared/weston-drm-fourcc.h"
+#include "shared/string-helpers.h"
 #include "backend.h"
 #include "libweston-internal.h"
 
@@ -69,6 +70,8 @@ struct remoted_gstpipe {
 
 /* supported gbm format list */
 struct remoted_output_support_gbm_format {
+	/* GBM_FORMAT_* tokens are strictly aliased with DRM_FORMAT_*, so we
+	 * use the latter to avoid a dependency on GBM */
 	uint32_t gbm_format;
 	const char *gst_format_string;
 	GstVideoFormat gst_video_format;
@@ -76,15 +79,15 @@ struct remoted_output_support_gbm_format {
 
 static const struct remoted_output_support_gbm_format supported_formats[] = {
 	{
-		.gbm_format = GBM_FORMAT_XRGB8888,
+		.gbm_format = DRM_FORMAT_XRGB8888,
 		.gst_format_string = "BGRx",
 		.gst_video_format = GST_VIDEO_FORMAT_BGRx,
 	}, {
-		.gbm_format = GBM_FORMAT_RGB565,
+		.gbm_format = DRM_FORMAT_RGB565,
 		.gst_format_string = "RGB16",
 		.gst_video_format = GST_VIDEO_FORMAT_RGB16,
 	}, {
-		.gbm_format = GBM_FORMAT_XRGB2101010,
+		.gbm_format = DRM_FORMAT_XRGB2101010,
 		.gst_format_string = "r210",
 		.gst_video_format = GST_VIDEO_FORMAT_r210,
 	}
@@ -92,7 +95,6 @@ static const struct remoted_output_support_gbm_format supported_formats[] = {
 
 struct remoted_output {
 	struct weston_output *output;
-	void (*saved_destroy)(struct weston_output *output);
 	int (*saved_enable)(struct weston_output *output);
 	int (*saved_disable)(struct weston_output *output);
 	int (*saved_start_repaint_loop)(struct weston_output *output);
@@ -117,6 +119,7 @@ struct remoted_output {
 	struct remoted_gstpipe gstpipe;
 	GstClockTime start_time;
 	int retry_count;
+	enum dpms_enum dpms;
 };
 
 struct mem_free_cb_data {
@@ -475,8 +478,12 @@ remoting_output_finish_frame_handler(void *data)
 		api->finish_frame(output->output, &now, 0);
 	}
 
-	msec = millihz_to_nsec(output->output->current_mode->refresh) / 1000000;
-	wl_event_source_timer_update(output->finish_frame_timer, msec);
+	if (output->dpms == WESTON_DPMS_ON) {
+		msec = millihz_to_nsec(output->output->current_mode->refresh) / 1000000;
+		wl_event_source_timer_update(output->finish_frame_timer, msec);
+	} else {
+		wl_event_source_timer_update(output->finish_frame_timer, 0);
+	}
 	return 0;
 }
 
@@ -504,6 +511,16 @@ lookup_remoted_output(struct weston_output *output)
 	struct weston_compositor *c = output->compositor;
 	struct weston_remoting *remoting = weston_remoting_get(c);
 	struct remoted_output *remoted_output;
+
+	/* XXX: This could happen on the compositor shutdown path with our
+	 * destroy listener being removed, and remoting_output_destroy() being
+	 * called as a virtual destructor.
+	 *
+	 * See https://gitlab.freedesktop.org/wayland/weston/-/issues/591 for
+	 * an alternative to the shutdown sequence.
+	 */
+	if (!remoting)
+		return NULL;
 
 	wl_list_for_each(remoted_output, &remoting->output_list, link) {
 		if (remoted_output->output == output)
@@ -565,7 +582,8 @@ remoting_output_frame(struct weston_output *output_base, int fd, int stride,
 	struct wl_event_loop *loop;
 	GstBuffer *buf;
 	GstMemory *mem;
-	gsize offset = 0;
+	gsize offsets[4] = { 0, };
+	gint strides[4] = { stride, };
 	struct mem_free_cb_data *cb_data;
 	struct gst_frame_buffer_data *frame_data;
 
@@ -587,8 +605,8 @@ remoting_output_frame(struct weston_output *output_base, int fd, int stride,
 				       mode->width,
 				       mode->height,
 				       1,
-				       &offset,
-				       &stride);
+				       offsets,
+				       strides);
 
 	cb_data->output = output;
 	cb_data->output_buffer = output_buffer;
@@ -628,12 +646,15 @@ remoting_output_destroy(struct weston_output *output)
 	struct remoted_output *remoted_output = lookup_remoted_output(output);
 	struct weston_mode *mode, *next;
 
+	if (!remoted_output)
+		return;
+
+	weston_head_release(remoted_output->head);
+
 	wl_list_for_each_safe(mode, next, &output->mode_list, link) {
 		wl_list_remove(&mode->link);
 		free(mode);
 	}
-
-	remoted_output->saved_destroy(output);
 
 	remoting_gst_pipeline_deinit(remoted_output);
 	remoting_gstpipe_release(&remoted_output->gstpipe);
@@ -644,7 +665,6 @@ remoting_output_destroy(struct weston_output *output)
 		free(remoted_output->gst_pipeline);
 
 	wl_list_remove(&remoted_output->link);
-	weston_head_release(remoted_output->head);
 	free(remoted_output->head);
 	free(remoted_output);
 }
@@ -662,6 +682,18 @@ remoting_output_start_repaint_loop(struct weston_output *output)
 	wl_event_source_timer_update(remoted_output->finish_frame_timer, msec);
 
 	return 0;
+}
+
+static void
+remoting_output_set_dpms(struct weston_output *base_output, enum dpms_enum level)
+{
+	struct remoted_output *output = lookup_remoted_output(base_output);
+
+	if (output->dpms == level)
+		return;
+
+	output->dpms = level;
+	remoting_output_finish_frame_handler(output);
 }
 
 static int
@@ -682,6 +714,7 @@ remoting_output_enable(struct weston_output *output)
 
 	remoted_output->saved_start_repaint_loop = output->start_repaint_loop;
 	output->start_repaint_loop = remoting_output_start_repaint_loop;
+	output->set_dpms = remoting_output_set_dpms;
 
 	ret = remoting_gst_pipeline_init(remoted_output);
 	if (ret < 0) {
@@ -695,6 +728,7 @@ remoting_output_enable(struct weston_output *output)
 					remoting_output_finish_frame_handler,
 					remoted_output);
 
+	remoted_output->dpms = WESTON_DPMS_ON;
 	return 0;
 }
 
@@ -720,6 +754,7 @@ remoting_output_create(struct weston_compositor *c, char *name)
 	const char *model = "Virtual Display";
 	const char *serial_number = "unknown";
 	const char *connector_name = "remoting";
+	char *remoting_name;
 
 	if (!name || !strlen(name))
 		return NULL;
@@ -739,14 +774,12 @@ remoting_output_create(struct weston_compositor *c, char *name)
 		goto err;
 	}
 
-	output->output = api->create_output(c, name);
+	output->output = api->create_output(c, name, remoting_output_destroy);
 	if (!output->output) {
 		weston_log("Can not create virtual output\n");
 		goto err;
 	}
 
-	output->saved_destroy = output->output->destroy;
-	output->output->destroy = remoting_output_destroy;
 	output->saved_enable = output->output->enable;
 	output->output->enable = remoting_output_enable;
 	output->saved_disable = output->output->disable;
@@ -754,7 +787,8 @@ remoting_output_create(struct weston_compositor *c, char *name)
 	output->remoting = remoting;
 	wl_list_insert(remoting->output_list.prev, &output->link);
 
-	weston_head_init(head, connector_name);
+	str_printf(&remoting_name, "%s-%s", connector_name, name);
+	weston_head_init(head, remoting_name);
 	weston_head_set_subpixel(head, WL_OUTPUT_SUBPIXEL_NONE);
 	weston_head_set_monitor_strings(head, make, model, serial_number);
 	head->compositor = c;
@@ -764,6 +798,7 @@ remoting_output_create(struct weston_compositor *c, char *name)
 
 	/* set XRGB8888 format */
 	output->format = &supported_formats[0];
+	free(remoting_name);
 
 	return output->output;
 
@@ -911,6 +946,13 @@ weston_module_init(struct weston_compositor *compositor)
 	if (!remoting)
 		return -1;
 
+	if (!weston_compositor_add_destroy_listener_once(compositor,
+							 &remoting->destroy_listener,
+							 weston_remoting_destroy)) {
+		free(remoting);
+		return 0;
+	}
+
 	remoting->virtual_output_api = api;
 	remoting->compositor = compositor;
 	wl_list_init(&remoting->output_list);
@@ -930,11 +972,10 @@ weston_module_init(struct weston_compositor *compositor)
 		goto failed;
 	}
 
-	remoting->destroy_listener.notify = weston_remoting_destroy;
-	wl_signal_add(&compositor->destroy_signal, &remoting->destroy_listener);
 	return 0;
 
 failed:
+	wl_list_remove(&remoting->destroy_listener.link);
 	free(remoting);
 	return -1;
 }

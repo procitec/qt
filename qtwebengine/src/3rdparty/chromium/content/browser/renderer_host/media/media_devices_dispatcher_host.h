@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,10 +10,15 @@
 #include <utility>
 #include <vector>
 
-#include "base/macros.h"
+#include "base/functional/callback.h"
+#include "base/memory/raw_ptr.h"
+#include "build/build_config.h"
+#include "content/browser/bad_message.h"
 #include "content/browser/media/media_devices_util.h"
 #include "content/browser/renderer_host/media/media_devices_manager.h"
 #include "content/common/content_export.h"
+#include "media/base/scoped_async_trace.h"
+#include "media/capture/mojom/video_capture_types.mojom.h"
 #include "media/capture/video/video_capture_device_descriptor.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "third_party/blink/public/mojom/mediastream/media_devices.mojom.h"
@@ -26,14 +31,17 @@ class MediaStreamManager;
 class CONTENT_EXPORT MediaDevicesDispatcherHost
     : public blink::mojom::MediaDevicesDispatcherHost {
  public:
-  MediaDevicesDispatcherHost(int render_process_id,
-                             int render_frame_id,
+  MediaDevicesDispatcherHost(GlobalRenderFrameHostId render_frame_host_id,
                              MediaStreamManager* media_stream_manager);
+
+  MediaDevicesDispatcherHost(const MediaDevicesDispatcherHost&) = delete;
+  MediaDevicesDispatcherHost& operator=(const MediaDevicesDispatcherHost&) =
+      delete;
+
   ~MediaDevicesDispatcherHost() override;
 
   static void Create(
-      int render_process_id,
-      int render_frame_id,
+      GlobalRenderFrameHostId render_frame_host_id,
       MediaStreamManager* media_stream_manager,
       mojo::PendingReceiver<blink::mojom::MediaDevicesDispatcherHost> receiver);
 
@@ -60,64 +68,75 @@ class CONTENT_EXPORT MediaDevicesDispatcherHost
       bool subscribe_audio_output,
       mojo::PendingRemote<blink::mojom::MediaDevicesListener> listener)
       override;
+  void SetCaptureHandleConfig(
+      blink::mojom::CaptureHandleConfigPtr config) override;
+#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
+  void CloseFocusWindowOfOpportunity(const std::string& label) override;
+  void ProduceSubCaptureTargetId(
+      media::mojom::SubCaptureTargetType type,
+      ProduceSubCaptureTargetIdCallback callback) override;
+#endif
 
  private:
+  friend class MediaDevicesDispatcherHostTest;
+
   using GetVideoInputDeviceFormatsCallback =
       GetAllVideoInputDeviceFormatsCallback;
 
-  void GetDefaultVideoInputDeviceID(
+  void OnVideoGotSaltAndOrigin(
       GetVideoInputCapabilitiesCallback client_callback,
-      MediaDeviceSaltAndOrigin salt_and_origin);
-
-  void GotDefaultVideoInputDeviceID(
-      GetVideoInputCapabilitiesCallback client_callback,
-      MediaDeviceSaltAndOrigin salt_and_origin,
-      const std::string& default_device_id);
+      const MediaDeviceSaltAndOrigin& salt_and_origin);
 
   void FinalizeGetVideoInputCapabilities(
       GetVideoInputCapabilitiesCallback client_callback,
       const MediaDeviceSaltAndOrigin& salt_and_origin,
-      const std::string& default_device_id,
       const MediaDeviceEnumeration& enumeration);
 
-  void GetDefaultAudioInputDeviceID(
+  void OnAudioGotSaltAndOrigin(
       GetAudioInputCapabilitiesCallback client_callback,
       const MediaDeviceSaltAndOrigin& salt_and_origin);
 
-  void GotDefaultAudioInputDeviceID(const std::string& default_device_id);
-
-  void GotAudioInputEnumeration(const std::string& default_device_id,
-                                const MediaDeviceEnumeration& enumeration);
+  void GotAudioInputEnumeration(const MediaDeviceEnumeration& enumeration);
 
   void GotAudioInputParameters(
       size_t index,
-      const base::Optional<media::AudioParameters>& parameters);
+      const std::optional<media::AudioParameters>& parameters);
 
   void FinalizeGetAudioInputCapabilities();
 
+  using ScopedMediaStreamTrace =
+      media::TypedScopedAsyncTrace<media::TraceCategory::kMediaStream>;
+
   void GetVideoInputDeviceFormats(
-      const std::string& device_id,
+      const std::string& hashed_device_id,
       bool try_in_use_first,
-      GetVideoInputDeviceFormatsCallback client_callback);
-  void EnumerateVideoDevicesForFormats(
       GetVideoInputDeviceFormatsCallback client_callback,
-      const std::string& device_id,
-      bool try_in_use_first,
+      std::unique_ptr<ScopedMediaStreamTrace> scoped_trace,
       const MediaDeviceSaltAndOrigin& salt_and_origin);
-  void FinalizeGetVideoInputDeviceFormats(
-      GetVideoInputDeviceFormatsCallback client_callback,
-      const std::string& device_id,
+
+  void GetVideoInputDeviceFormatsWithRawId(
+      const std::string& hashed_device_id,
       bool try_in_use_first,
-      const std::string& device_id_salt,
-      const url::Origin& security_origin,
-      const media::VideoCaptureDeviceDescriptors& device_descriptors);
+      GetVideoInputDeviceFormatsCallback client_callback,
+      std::unique_ptr<ScopedMediaStreamTrace> scoped_trace,
+      const std::optional<std::string>& raw_id);
+
+  void ReceivedBadMessage(int render_process_id,
+                          bad_message::BadMessageReason reason);
+
+  void SetBadMessageCallbackForTesting(
+      base::RepeatingCallback<void(int, bad_message::BadMessageReason)>
+          callback);
+
+  void SetCaptureHandleConfigCallbackForTesting(
+      base::RepeatingCallback<
+          void(int, int, blink::mojom::CaptureHandleConfigPtr)> callback);
 
   // The following const fields can be accessed on any thread.
-  const int render_process_id_;
-  const int render_frame_id_;
+  const GlobalRenderFrameHostId render_frame_host_id_;
 
   // The following fields can only be accessed on the IO thread.
-  MediaStreamManager* media_stream_manager_;
+  const raw_ptr<MediaStreamManager> media_stream_manager_;
 
   struct AudioInputCapabilitiesRequest;
   // Queued requests for audio-input capabilities.
@@ -129,9 +148,13 @@ class CONTENT_EXPORT MediaDevicesDispatcherHost
 
   std::vector<uint32_t> subscription_ids_;
 
-  base::WeakPtrFactory<MediaDevicesDispatcherHost> weak_factory_{this};
+  base::RepeatingCallback<void(int, bad_message::BadMessageReason)>
+      bad_message_callback_for_testing_;
 
-  DISALLOW_COPY_AND_ASSIGN(MediaDevicesDispatcherHost);
+  base::RepeatingCallback<void(int, int, blink::mojom::CaptureHandleConfigPtr)>
+      capture_handle_config_callback_for_testing_;
+
+  base::WeakPtrFactory<MediaDevicesDispatcherHost> weak_factory_{this};
 };
 
 }  // namespace content

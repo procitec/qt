@@ -1,12 +1,14 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "chrome/browser/extensions/api/image_writer_private/write_from_url_operation.h"
 
-#include "base/bind.h"
+#include <utility>
+
+#include "base/functional/bind.h"
 #include "base/run_loop.h"
-#include "chrome/browser/extensions/api/image_writer_private/error_messages.h"
+#include "chrome/browser/extensions/api/image_writer_private/error_constants.h"
 #include "chrome/browser/extensions/api/image_writer_private/test_utils.h"
 #include "chrome/test/base/testing_profile.h"
 #include "content/public/browser/browser_task_traits.h"
@@ -57,19 +59,19 @@ class WriteFromUrlOperationForTest : public WriteFromUrlOperation {
   void Start() {
     PostTask(base::BindOnce(&WriteFromUrlOperation::Start, this));
   }
-  void GetDownloadTarget(const base::Closure& continuation) {
+  void GetDownloadTarget(base::OnceClosure continuation) {
     PostTask(base::BindOnce(&WriteFromUrlOperation::GetDownloadTarget, this,
-                            continuation));
+                            std::move(continuation)));
   }
 
-  void Download(const base::Closure& continuation) {
-    PostTask(
-        base::BindOnce(&WriteFromUrlOperation::Download, this, continuation));
+  void Download(base::OnceClosure continuation) {
+    PostTask(base::BindOnce(&WriteFromUrlOperation::Download, this,
+                            std::move(continuation)));
   }
 
-  void VerifyDownload(const base::Closure& continuation) {
+  void VerifyDownload(base::OnceClosure continuation) {
     PostTask(base::BindOnce(&WriteFromUrlOperation::VerifyDownload, this,
-                            continuation));
+                            std::move(continuation)));
   }
 
   void Cancel() {
@@ -84,7 +86,7 @@ class WriteFromUrlOperationForTest : public WriteFromUrlOperation {
   base::FilePath GetImagePath() { return image_path_; }
 
  private:
-  ~WriteFromUrlOperationForTest() override {}
+  ~WriteFromUrlOperationForTest() override = default;
 };
 
 class ImageWriterWriteFromUrlOperationTest : public ImageWriterUnitTestBase {
@@ -116,7 +118,7 @@ class ImageWriterWriteFromUrlOperationTest : public ImageWriterUnitTestBase {
       const std::string& hash) {
     mojo::PendingRemote<network::mojom::URLLoaderFactory>
         url_loader_factory_remote;
-    content::BrowserContext::GetDefaultStoragePartition(&test_profile_)
+    test_profile_.GetDefaultStoragePartition()
         ->GetURLLoaderFactoryForBrowserProcess()
         ->Clone(url_loader_factory_remote.InitWithNewPipeAndPassReceiver());
 
@@ -178,13 +180,11 @@ TEST_F(ImageWriterWriteFromUrlOperationTest, DownloadFile) {
                                              &download_target_path));
   operation->SetImagePath(download_target_path);
 
-  EXPECT_CALL(
-      manager_,
-      OnProgress(kDummyExtensionId, image_writer_api::STAGE_DOWNLOAD, 0))
+  EXPECT_CALL(manager_, OnProgress(kDummyExtensionId,
+                                   image_writer_api::Stage::kDownload, 0))
       .Times(AnyNumber());
-  EXPECT_CALL(
-      manager_,
-      OnProgress(kDummyExtensionId, image_writer_api::STAGE_DOWNLOAD, 100))
+  EXPECT_CALL(manager_, OnProgress(kDummyExtensionId,
+                                   image_writer_api::Stage::kDownload, 100))
       .Times(AnyNumber());
 
   operation->Download(runloop.QuitClosure());
@@ -209,18 +209,16 @@ TEST_F(ImageWriterWriteFromUrlOperationTest, VerifyFile) {
   scoped_refptr<WriteFromUrlOperationForTest> operation =
       CreateOperation(GURL(""), expected_hash);
 
-  EXPECT_CALL(
-      manager_,
-      OnProgress(kDummyExtensionId, image_writer_api::STAGE_VERIFYDOWNLOAD, _))
+  EXPECT_CALL(manager_, OnProgress(kDummyExtensionId,
+                                   image_writer_api::Stage::kVerifyDownload, _))
       .Times(AtLeast(1));
-  EXPECT_CALL(
-      manager_,
-      OnProgress(kDummyExtensionId, image_writer_api::STAGE_VERIFYDOWNLOAD, 0))
+  EXPECT_CALL(manager_, OnProgress(kDummyExtensionId,
+                                   image_writer_api::Stage::kVerifyDownload, 0))
       .Times(AtLeast(1));
   EXPECT_CALL(manager_,
               OnProgress(kDummyExtensionId,
-                         image_writer_api::STAGE_VERIFYDOWNLOAD,
-                         100)).Times(AtLeast(1));
+                         image_writer_api::Stage::kVerifyDownload, 100))
+      .Times(AtLeast(1));
 
   operation->SetImagePath(test_utils_.GetImagePath());
   {
@@ -228,7 +226,7 @@ TEST_F(ImageWriterWriteFromUrlOperationTest, VerifyFile) {
     // The OnProgress tasks are posted with priority USER_VISIBLE priority so
     // post the quit closure with the same priority to ensure it doesn't run too
     // soon.
-    operation->VerifyDownload(base::Bind(
+    operation->VerifyDownload(base::BindOnce(
         [](base::OnceClosure quit_closure) {
           content::GetUIThreadTaskRunner({base::TaskPriority::USER_VISIBLE})
               ->PostTask(FROM_HERE, std::move(quit_closure));

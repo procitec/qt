@@ -1,38 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 Klaralvdalens Datakonsult AB (KDAB).
-** Contact: http://www.qt-project.org/legal
-**
-** This file is part of the Qt3D module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL3$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see http://www.qt.io/terms-conditions. For further
-** information use the contact form at http://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPLv3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or later as published by the Free
-** Software Foundation and appearing in the file LICENSE.GPL included in
-** the packaging of this file. Please review the following information to
-** ensure the GNU General Public License version 2.0 requirements will be
-** met: http://www.gnu.org/licenses/gpl-2.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 Klaralvdalens Datakonsult AB (KDAB).
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qorbitcameracontroller.h"
 #include "qorbitcameracontroller_p.h"
@@ -45,6 +12,12 @@ namespace Qt3DExtras {
 
 QOrbitCameraControllerPrivate::QOrbitCameraControllerPrivate()
     : m_zoomInLimit(2.0f)
+    , m_upVector(0.0f, 1.0f, 0.0f)
+    , m_inverseXTranslate(false)
+    , m_inverseYTranslate(false)
+    , m_inversePan(false)
+    , m_inverseTilt(false)
+    , m_zoomTranslateViewCenter(true)
 {}
 
 /*!
@@ -113,7 +86,7 @@ QOrbitCameraController::~QOrbitCameraController()
 }
 
 /*!
-    \property QOrbitCameraController::zoomInLimit
+    \property Qt3DExtras::QOrbitCameraController::zoomInLimit
 
     Holds the current zoom-in limit. The zoom-in limit determines how close to the view center
     the camera can be zoomed.
@@ -130,6 +103,95 @@ void QOrbitCameraController::setZoomInLimit(float zoomInLimit)
     if (d->m_zoomInLimit != zoomInLimit) {
         d->m_zoomInLimit = zoomInLimit;
         emit zoomInLimitChanged();
+    }
+}
+
+QVector3D QOrbitCameraController::upVector() const {
+    Q_D(const QOrbitCameraController);
+    return d->m_upVector;
+}
+
+void QOrbitCameraController::setUpVector(const QVector3D& upVector)
+{
+    Q_D(QOrbitCameraController);
+    if (d->m_upVector != upVector) {
+        d->m_upVector = upVector;
+        emit upVectorChanged(d->m_upVector);
+    }
+}
+
+bool QOrbitCameraController::inverseXTranslate() const
+{
+    Q_D(const QOrbitCameraController);
+    return d->m_inverseXTranslate;
+}
+
+void QOrbitCameraController::setInverseXTranslate(bool isInverse)
+{
+    Q_D(QOrbitCameraController);
+    if (d->m_inverseXTranslate != isInverse) {
+        d->m_inverseXTranslate = isInverse;
+        emit inverseXTranslateChanged(d->m_inverseXTranslate);
+    }
+}
+
+bool QOrbitCameraController::inverseYTranslate() const
+{
+    Q_D(const QOrbitCameraController);
+    return d->m_inverseYTranslate;
+}
+
+void QOrbitCameraController::setInverseYTranslate(bool isInverse)
+{
+    Q_D(QOrbitCameraController);
+    if (d->m_inverseYTranslate != isInverse) {
+        d->m_inverseYTranslate = isInverse;
+        emit inverseYTranslateChanged(d->m_inverseYTranslate);
+    }
+}
+
+bool QOrbitCameraController::inversePan() const
+{
+    Q_D(const QOrbitCameraController);
+    return d->m_inversePan;
+}
+
+void QOrbitCameraController::setInversePan(bool isInverse)
+{
+    Q_D(QOrbitCameraController);
+    if (d->m_inversePan != isInverse) {
+        d->m_inversePan = isInverse;
+        emit inversePanChanged(d->m_inversePan);
+    }
+}
+
+bool QOrbitCameraController::inverseTilt() const
+{
+    Q_D(const QOrbitCameraController);
+    return d->m_inverseTilt;
+}
+
+void QOrbitCameraController::setInverseTilt(bool isInverse)
+{
+    Q_D(QOrbitCameraController);
+    if (d->m_inverseTilt != isInverse) {
+        d->m_inverseTilt = isInverse;
+        emit inverseTiltChanged(d->m_inverseTilt);
+    }
+}
+
+bool QOrbitCameraController::zoomTranslateViewCenter() const
+{
+    Q_D(const QOrbitCameraController);
+    return d->m_zoomTranslateViewCenter;
+}
+
+void QOrbitCameraController::setZoomTranslateViewCenter(bool isTranslate)
+{
+    Q_D(QOrbitCameraController);
+    if (d->m_zoomTranslateViewCenter != isTranslate) {
+        d->m_zoomTranslateViewCenter = isTranslate;
+        emit zoomTranslateViewCenterChanged(d->m_zoomTranslateViewCenter);
     }
 }
 
@@ -153,8 +215,6 @@ void QOrbitCameraController::moveCamera(const QAbstractCameraController::InputSt
     if (theCamera == nullptr)
         return;
 
-    const QVector3D upVector(0.0f, 1.0f, 0.0f);
-
     // Mouse input
     if (state.leftMouseButtonActive) {
         if (state.rightMouseButtonActive) {
@@ -166,22 +226,22 @@ void QOrbitCameraController::moveCamera(const QAbstractCameraController::InputSt
             }
         } else {
             // Translate
-            theCamera->translate(QVector3D(clampInputs(state.rxAxisValue, state.txAxisValue) * linearSpeed(),
-                                          clampInputs(state.ryAxisValue, state.tyAxisValue) * linearSpeed(),
-                                          0) * dt);
+            theCamera->translate(QVector3D((d->m_inverseXTranslate ? -1.0f : 1.0f) * clampInputs(state.rxAxisValue, state.txAxisValue) * linearSpeed(),
+                                           (d->m_inverseYTranslate ? -1.0f : 1.0f) * clampInputs(state.ryAxisValue, state.tyAxisValue) * linearSpeed(),
+                                           0) * dt);
         }
         return;
     }
     else if (state.rightMouseButtonActive) {
         // Orbit
-        theCamera->panAboutViewCenter((state.rxAxisValue * lookSpeed()) * dt, upVector);
-        theCamera->tiltAboutViewCenter((state.ryAxisValue * lookSpeed()) * dt);
+        theCamera->panAboutViewCenter((d->m_inversePan ? -1.0f : 1.0f) * (state.rxAxisValue * lookSpeed()) * dt, d->m_upVector);
+        theCamera->tiltAboutViewCenter((d->m_inverseTilt ? -1.0f : 1.0f) * (state.ryAxisValue * lookSpeed()) * dt);
     }
 
     // Keyboard Input
     if (state.altKeyActive) {
         // Orbit
-        theCamera->panAboutViewCenter((state.txAxisValue * lookSpeed()) * dt, upVector);
+        theCamera->panAboutViewCenter((state.txAxisValue * lookSpeed()) * dt, d->m_upVector);
         theCamera->tiltAboutViewCenter((state.tyAxisValue * lookSpeed()) * dt);
     } else if (state.shiftKeyActive) {
         if (zoomDistance(camera()->position(), theCamera->viewCenter()) > d->m_zoomInLimit * d->m_zoomInLimit) {
@@ -194,7 +254,8 @@ void QOrbitCameraController::moveCamera(const QAbstractCameraController::InputSt
         // Translate
         theCamera->translate(QVector3D(clampInputs(state.leftMouseButtonActive ? state.rxAxisValue : 0, state.txAxisValue) * linearSpeed(),
                                       clampInputs(state.leftMouseButtonActive ? state.ryAxisValue : 0, state.tyAxisValue) * linearSpeed(),
-                                      state.tzAxisValue * linearSpeed()) * dt);
+                                      state.tzAxisValue * linearSpeed()) * dt,
+                             d->m_zoomTranslateViewCenter ? theCamera->TranslateViewCenter : theCamera->DontTranslateViewCenter);
     }
 }
 

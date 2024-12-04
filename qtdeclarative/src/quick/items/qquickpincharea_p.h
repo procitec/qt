@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtSG module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2020 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #ifndef QQUICKPINCHAREA_H
 #define QQUICKPINCHAREA_H
@@ -51,11 +15,13 @@
 // We mean it.
 //
 
+#include <private/qtquickglobal_p.h>
+
 #include "qquickitem.h"
 
 QT_BEGIN_NAMESPACE
 
-class Q_AUTOTEST_EXPORT QQuickPinch : public QObject
+class Q_QUICK_EXPORT QQuickPinch : public QObject
 {
     Q_OBJECT
 
@@ -71,6 +37,7 @@ class Q_AUTOTEST_EXPORT QQuickPinch : public QObject
     Q_PROPERTY(qreal maximumY READ ymax WRITE setYmax NOTIFY maximumYChanged)
     Q_PROPERTY(bool active READ active NOTIFY activeChanged)
     QML_NAMED_ELEMENT(Pinch)
+    QML_ADDED_IN_VERSION(2, 0)
 
 public:
     QQuickPinch();
@@ -193,25 +160,26 @@ private:
     bool m_active;
 };
 
-class Q_AUTOTEST_EXPORT QQuickPinchEvent : public QObject
+class Q_QUICK_EXPORT QQuickPinchEvent : public QObject
 {
     Q_OBJECT
 
-    Q_PROPERTY(QPointF center READ center)
-    Q_PROPERTY(QPointF startCenter READ startCenter)
-    Q_PROPERTY(QPointF previousCenter READ previousCenter)
-    Q_PROPERTY(qreal scale READ scale)
-    Q_PROPERTY(qreal previousScale READ previousScale)
-    Q_PROPERTY(qreal angle READ angle)
-    Q_PROPERTY(qreal previousAngle READ previousAngle)
-    Q_PROPERTY(qreal rotation READ rotation)
-    Q_PROPERTY(QPointF point1 READ point1)
-    Q_PROPERTY(QPointF startPoint1 READ startPoint1)
-    Q_PROPERTY(QPointF point2 READ point2)
-    Q_PROPERTY(QPointF startPoint2 READ startPoint2)
-    Q_PROPERTY(int pointCount READ pointCount)
-    Q_PROPERTY(bool accepted READ accepted WRITE setAccepted)
+    Q_PROPERTY(QPointF center READ center FINAL)
+    Q_PROPERTY(QPointF startCenter READ startCenter FINAL)
+    Q_PROPERTY(QPointF previousCenter READ previousCenter FINAL)
+    Q_PROPERTY(qreal scale READ scale FINAL)
+    Q_PROPERTY(qreal previousScale READ previousScale FINAL)
+    Q_PROPERTY(qreal angle READ angle FINAL)
+    Q_PROPERTY(qreal previousAngle READ previousAngle FINAL)
+    Q_PROPERTY(qreal rotation READ rotation FINAL)
+    Q_PROPERTY(QPointF point1 READ point1 FINAL)
+    Q_PROPERTY(QPointF startPoint1 READ startPoint1 FINAL)
+    Q_PROPERTY(QPointF point2 READ point2 FINAL)
+    Q_PROPERTY(QPointF startPoint2 READ startPoint2 FINAL)
+    Q_PROPERTY(int pointCount READ pointCount FINAL)
+    Q_PROPERTY(bool accepted READ accepted WRITE setAccepted FINAL)
     QML_ANONYMOUS
+    QML_ADDED_IN_VERSION(2, 0)
 
 public:
     QQuickPinchEvent(QPointF c, qreal s, qreal a, qreal r)
@@ -262,15 +230,15 @@ private:
 };
 
 
-class QQuickMouseEvent;
 class QQuickPinchAreaPrivate;
-class Q_AUTOTEST_EXPORT QQuickPinchArea : public QQuickItem
+class Q_QUICK_EXPORT QQuickPinchArea : public QQuickItem
 {
     Q_OBJECT
 
     Q_PROPERTY(bool enabled READ isEnabled WRITE setEnabled NOTIFY enabledChanged)
     Q_PROPERTY(QQuickPinch *pinch READ pinch CONSTANT)
     QML_NAMED_ELEMENT(PinchArea)
+    QML_ADDED_IN_VERSION(2, 0)
 
 public:
     QQuickPinchArea(QQuickItem *parent=nullptr);
@@ -286,24 +254,21 @@ Q_SIGNALS:
     void pinchStarted(QQuickPinchEvent *pinch);
     void pinchUpdated(QQuickPinchEvent *pinch);
     void pinchFinished(QQuickPinchEvent *pinch);
-    Q_REVISION(5) void smartZoom(QQuickPinchEvent *pinch);
+    Q_REVISION(2, 5) void smartZoom(QQuickPinchEvent *pinch);
 
 protected:
     bool childMouseEventFilter(QQuickItem *i, QEvent *e) override;
     void touchEvent(QTouchEvent *event) override;
 
-    void geometryChanged(const QRectF &newGeometry,
-                         const QRectF &oldGeometry) override;
+    void geometryChange(const QRectF &newGeometry, const QRectF &oldGeometry) override;
     void itemChange(ItemChange change, const ItemChangeData& value) override;
     bool event(QEvent *) override;
 
 private:
-    void clearPinch();
-    void cancelPinch();
-    void updatePinch();
+    void clearPinch(QTouchEvent *event);
+    void cancelPinch(QTouchEvent *event);
+    void updatePinch(QTouchEvent *event, bool filtering);
     void updatePinchTarget();
-    void handlePress();
-    void handleRelease();
 
 private:
     Q_DISABLE_COPY(QQuickPinchArea)
@@ -311,10 +276,6 @@ private:
 };
 
 QT_END_NAMESPACE
-
-QML_DECLARE_TYPE(QQuickPinch)
-QML_DECLARE_TYPE(QQuickPinchEvent)
-QML_DECLARE_TYPE(QQuickPinchArea)
 
 #endif // QQUICKPINCHAREA_H
 

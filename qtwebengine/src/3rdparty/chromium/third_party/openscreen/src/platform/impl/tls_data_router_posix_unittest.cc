@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -42,7 +42,7 @@ class MockSocket : public StreamSocketPosix {
 
 class MockConnection : public TlsConnectionPosix {
  public:
-  explicit MockConnection(int fd, TaskRunner* task_runner)
+  explicit MockConnection(int fd, TaskRunner& task_runner)
       : TlsConnectionPosix(std::make_unique<MockSocket>(fd), task_runner) {}
   MOCK_METHOD0(SendAvailableBytes, void());
   MOCK_METHOD0(TryReceiveMessage, void());
@@ -53,13 +53,11 @@ class MockConnection : public TlsConnectionPosix {
 class TestingDataRouter : public TlsDataRouterPosix {
  public:
   explicit TestingDataRouter(SocketHandleWaiter* waiter)
-      : TlsDataRouterPosix(waiter) {}
+      : TlsDataRouterPosix(waiter) {
+    disable_locking_for_testing_ = true;
+  }
 
   using TlsDataRouterPosix::IsSocketWatched;
-
-  void DeregisterAcceptObserver(StreamSocketPosix* socket) override {
-    TlsDataRouterPosix::OnSocketDestroyed(socket, true);
-  }
 
   bool AnySocketsWatched() {
     std::unique_lock<std::mutex> lock(accept_socket_mutex_);
@@ -78,7 +76,7 @@ class TlsNetworkingManagerPosixTest : public testing::Test {
         task_runner_(&clock_),
         network_manager_(&network_waiter_) {}
 
-  FakeTaskRunner* task_runner() { return &task_runner_; }
+  FakeTaskRunner& task_runner() { return task_runner_; }
   TestingDataRouter* network_manager() { return &network_manager_; }
 
  private:
@@ -99,11 +97,11 @@ TEST_F(TlsNetworkingManagerPosixTest, SocketsWatchedCorrectly) {
   ASSERT_TRUE(network_manager()->IsSocketWatched(ptr));
   ASSERT_TRUE(network_manager()->AnySocketsWatched());
 
-  network_manager()->DeregisterAcceptObserver(ptr);
+  network_manager()->DeregisterAcceptObserver(&observer);
   ASSERT_FALSE(network_manager()->IsSocketWatched(ptr));
   ASSERT_FALSE(network_manager()->AnySocketsWatched());
 
-  network_manager()->DeregisterAcceptObserver(ptr);
+  network_manager()->DeregisterAcceptObserver(&observer);
   ASSERT_FALSE(network_manager()->IsSocketWatched(ptr));
   ASSERT_FALSE(network_manager()->AnySocketsWatched());
 }
@@ -133,6 +131,23 @@ TEST_F(TlsNetworkingManagerPosixTest, CallsReadySocket) {
   EXPECT_CALL(connection3, TryReceiveMessage()).Times(0);
   network_manager()->ProcessReadyHandle(connection2.socket_handle(),
                                         SocketHandleWaiter::Flags::kWriteable);
+}
+
+TEST_F(TlsNetworkingManagerPosixTest, DeregisterTlsConnection) {
+  MockConnection connection1(1, task_runner());
+  MockConnection connection2(2, task_runner());
+  network_manager()->RegisterConnection(&connection1);
+  network_manager()->RegisterConnection(&connection2);
+
+  network_manager()->DeregisterConnection(&connection1);
+  EXPECT_CALL(connection1, SendAvailableBytes()).Times(0);
+  EXPECT_CALL(connection1, TryReceiveMessage()).Times(0);
+  network_manager()->ProcessReadyHandle(connection1.socket_handle(),
+                                        SocketHandleWaiter::Flags::kReadable);
+  EXPECT_CALL(connection2, SendAvailableBytes()).Times(0);
+  EXPECT_CALL(connection2, TryReceiveMessage()).Times(1);
+  network_manager()->ProcessReadyHandle(connection2.socket_handle(),
+                                        SocketHandleWaiter::Flags::kReadable);
 }
 
 }  // namespace openscreen

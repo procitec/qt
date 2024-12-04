@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -200,7 +200,7 @@
 
 #include "base/export_template.h"
 #include "base/hash/md5_constexpr.h"
-#include "base/location.h"
+#include "base/notreached.h"
 #include "base/task/common/task_annotator.h"
 #include "ipc/ipc_message_templates.h"
 #include "ipc/ipc_message_utils.h"
@@ -328,20 +328,20 @@
       base::MD5Hash32Constexpr(IPC_TASK_ANNOTATOR_STRINGIFY(msg_class)); \
   base::TaskAnnotator::ScopedSetIpcHash scoped_ipc_hash(kMessageHash);
 
-#define IPC_BEGIN_MESSAGE_MAP(class_name, msg) \
-  { \
-    typedef class_name _IpcMessageHandlerClass ALLOW_UNUSED_TYPE; \
-    void* param__ = NULL; \
-    (void)param__; \
-    const IPC::Message& ipc_message__ = msg; \
+#define IPC_BEGIN_MESSAGE_MAP(class_name, msg)                   \
+  {                                                              \
+    using _IpcMessageHandlerClass [[maybe_unused]] = class_name; \
+    [[maybe_unused]] void* param__ = nullptr;                    \
+    const IPC::Message& ipc_message__ = msg;                     \
     switch (ipc_message__.type()) {
 
-#define IPC_BEGIN_MESSAGE_MAP_WITH_PARAM(class_name, msg, param)  \
-  {                                                               \
-    typedef class_name _IpcMessageHandlerClass ALLOW_UNUSED_TYPE; \
-    decltype(param) param__ = param;                              \
-    const IPC::Message& ipc_message__ = msg;                      \
+#define IPC_BEGIN_MESSAGE_MAP_WITH_PARAM(class_name, msg, param) \
+  {                                                              \
+    using _IpcMessageHandlerClass [[maybe_unused]] = class_name; \
+    decltype(param) param__ = param;                             \
+    const IPC::Message& ipc_message__ = msg;                     \
     switch (ipc_message__.type()) {
+
 #define IPC_MESSAGE_FORWARD(msg_class, obj, member_func)         \
   case msg_class::ID: {                                          \
     IPC_TASK_ANNOTATOR_CONTEXT(msg_class)                        \
@@ -370,7 +370,7 @@
   case msg_class::ID: {                                                    \
     IPC_TASK_ANNOTATOR_CONTEXT(msg_class)                                  \
     if (!msg_class::DispatchWithParamDelayReply(&ipc_message__, obj,       \
-                                                param__, \ & member_func)) \
+                                                param__, &member_func))    \
       ipc_message__.set_dispatch_error();                                  \
   } break;
 
@@ -525,6 +525,8 @@
   IPC_SYNC_MESSAGE_ROUTED(msg, (a, b, c), (d, e, f))
 #define IPC_SYNC_MESSAGE_ROUTED3_4(msg, a, b, c, d, e, f, g) \
   IPC_SYNC_MESSAGE_ROUTED(msg, (a, b, c), (d, e, f, g))
+#define IPC_SYNC_MESSAGE_ROUTED3_5(msg, a, b, c, d, e, f, g, h) \
+  IPC_SYNC_MESSAGE_ROUTED(msg, (a, b, c), (d, e, f, g, h))
 #define IPC_SYNC_MESSAGE_ROUTED4_0(msg, a, b, c, d) \
   IPC_SYNC_MESSAGE_ROUTED(msg, (a, b, c, d), ())
 #define IPC_SYNC_MESSAGE_ROUTED4_1(msg, a, b, c, d, e) \

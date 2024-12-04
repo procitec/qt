@@ -10,7 +10,6 @@
 #include "include/core/SkCanvas.h"
 #include "include/core/SkColor.h"
 #include "include/core/SkColorFilter.h"
-#include "include/core/SkFilterQuality.h"
 #include "include/core/SkImage.h"
 #include "include/core/SkImageFilter.h"
 #include "include/core/SkImageInfo.h"
@@ -29,6 +28,9 @@
 #include "include/effects/SkImageFilters.h"
 #include "include/effects/SkShaderMaskFilter.h"
 #include "include/gpu/GrDirectContext.h"
+#include "include/gpu/ganesh/SkImageGanesh.h"
+#include "src/core/SkCanvasPriv.h"
+#include "tools/DecodeUtils.h"
 #include "tools/Resources.h"
 #include "tools/ToolUtils.h"
 
@@ -71,14 +73,14 @@ DEF_SIMPLE_GM(imagefilters_xfermodes, canvas, 480, 480) {
 
         // just need an imagefilter to trigger the code-path (which creates a tmp layer)
         sk_sp<SkImageFilter> imf(SkImageFilters::MatrixTransform(SkMatrix::I(),
-                                                                 kNone_SkFilterQuality,
+                                                                 SkSamplingOptions(),
                                                                  nullptr));
 
         const SkBlendMode modes[] = {
             SkBlendMode::kSrcATop, SkBlendMode::kDstIn
         };
 
-        for (size_t i = 0; i < SK_ARRAY_COUNT(modes); ++i) {
+        for (size_t i = 0; i < std::size(modes); ++i) {
             canvas->save();
             do_draw(canvas, modes[i], nullptr);
             canvas->translate(240, 0);
@@ -115,7 +117,7 @@ DEF_SIMPLE_GM(fast_slow_blurimagefilter, canvas, 620, 260) {
         for (SkScalar outset = 0; outset <= 1; ++outset) {
             canvas->save();
             canvas->clipRect(r.makeOutset(outset, outset));
-            canvas->drawImage(image, 0, 0, &paint);
+            canvas->drawImage(image, 0, 0, SkSamplingOptions(), &paint);
             canvas->restore();
             canvas->translate(0, r.height() + 20);
         }
@@ -152,8 +154,8 @@ static void draw_set(SkCanvas* canvas, sk_sp<SkImageFilter> filters[], int count
 class SaveLayerWithBackdropGM : public skiagm::GM {
 protected:
     bool runAsBench() const override { return true; }
-    SkString onShortName() override { return SkString("savelayer_with_backdrop"); }
-    SkISize onISize() override { return SkISize::Make(830, 550); }
+    SkString getName() const override { return SkString("savelayer_with_backdrop"); }
+    SkISize getISize() override { return SkISize::Make(830, 550); }
 
     void onDraw(SkCanvas* canvas) override {
         SkColorMatrix cm;
@@ -177,17 +179,17 @@ protected:
             { 0.125f, 0.125f, 530, 420 },
         };
 
-        SkPaint paint;
-        paint.setFilterQuality(kMedium_SkFilterQuality);
-        sk_sp<SkImage> image(GetResourceAsImage("images/mandrill_512.png"));
+        SkSamplingOptions sampling(SkFilterMode::kLinear,
+                                   SkMipmapMode::kLinear);
+        sk_sp<SkImage> image(ToolUtils::GetResourceAsImage("images/mandrill_512.png"));
 
         canvas->translate(20, 20);
         for (const auto& xform : xforms) {
             canvas->save();
             canvas->translate(xform.fTx, xform.fTy);
             canvas->scale(xform.fSx, xform.fSy);
-            canvas->drawImage(image, 0, 0, &paint);
-            draw_set(canvas, filters, SK_ARRAY_COUNT(filters));
+            canvas->drawImage(image, 0, 0, sampling, nullptr);
+            draw_set(canvas, filters, std::size(filters));
             canvas->restore();
         }
     }
@@ -200,10 +202,10 @@ DEF_GM(return new SaveLayerWithBackdropGM();)
 // Test that color filters and mask filters are applied before the image filter, even if it would
 // normally be a sprite draw that could avoid an auto-saveLayer.
 DEF_SIMPLE_GM(imagefilters_effect_order, canvas, 512, 512) {
-    sk_sp<SkImage> image(GetResourceAsImage("images/mandrill_256.png"));
+    sk_sp<SkImage> image(ToolUtils::GetResourceAsImage("images/mandrill_256.png"));
     auto direct = GrAsDirectContext(canvas->recordingContext());
     if (direct) {
-        if (sk_sp<SkImage> gpuImage = image->makeTextureImage(direct)) {
+        if (sk_sp<SkImage> gpuImage = SkImages::TextureFromImage(direct, image)) {
             image = std::move(gpuImage);
         }
     }
@@ -235,13 +237,13 @@ DEF_SIMPLE_GM(imagefilters_effect_order, canvas, 512, 512) {
     SkRect crop = SkRect::Make(image->bounds());
     canvas->save();
     canvas->clipRect(crop);
-    canvas->drawImage(image, 0, 0, &expectedCFPaint); // Filter applied by draw's SkPaint
+    canvas->drawImage(image, 0, 0, SkSamplingOptions(), &expectedCFPaint); // Filter applied by draw's SkPaint
     canvas->restore();
 
     canvas->save();
     canvas->translate(image->width(), 0);
     canvas->clipRect(crop);
-    canvas->drawImage(image, 0, 0, &testCFPaint);
+    canvas->drawImage(image, 0, 0, SkSamplingOptions(), &testCFPaint);
     canvas->restore();
 
     // Now test mask filters. These should be run before the image filter, and thus have the same
@@ -257,29 +259,71 @@ DEF_SIMPLE_GM(imagefilters_effect_order, canvas, 512, 512) {
     // If edge detector sees the mask filter, it'll have alpha and then blend with the original
     // image; otherwise the mask filter will apply late (incorrectly) and none of the original
     // image will be visible.
-    sk_sp<SkImageFilter> edgeBlend = SkImageFilters::Xfermode(SkBlendMode::kSrcOver,
-            SkImageFilters::Image(image), edgeDetector);
+    sk_sp<SkImageFilter> edgeBlend = SkImageFilters::Blend(SkBlendMode::kSrcOver,
+            SkImageFilters::Image(image, SkFilterMode::kNearest), edgeDetector);
 
     SkPaint testMaskPaint;
     testMaskPaint.setMaskFilter(maskFilter);
     testMaskPaint.setImageFilter(edgeBlend);
 
-    SkPaint alphaPaint;
-    alphaPaint.setShader(alphaMaskShader);
     SkPaint expectedMaskPaint;
     expectedMaskPaint.setImageFilter(SkImageFilters::Compose(edgeBlend,
-            SkImageFilters::Xfermode(SkBlendMode::kSrcIn,
-                                     SkImageFilters::Paint(alphaPaint))));
+            SkImageFilters::Blend(SkBlendMode::kSrcIn,
+                                  SkImageFilters::Shader(alphaMaskShader))));
 
     canvas->save();
     canvas->translate(0, image->height());
     canvas->clipRect(crop);
-    canvas->drawImage(image, 0, 0, &expectedMaskPaint);
+    canvas->drawImage(image, 0, 0, SkSamplingOptions(), &expectedMaskPaint);
     canvas->restore();
 
     canvas->save();
     canvas->translate(image->width(), image->height());
     canvas->clipRect(crop);
-    canvas->drawImage(image, 0, 0, &testMaskPaint);
+    canvas->drawImage(image, 0, 0, SkSamplingOptions(), &testMaskPaint);
     canvas->restore();
+}
+
+DEF_SIMPLE_GM(multiple_filters, canvas, 415, 210) {
+    ToolUtils::draw_checkerboard(canvas);
+    canvas->translate(5, 5);
+
+    auto drawFilteredLayer = [=](SkCanvas::FilterSpan filters) {
+        SkPaint restorePaint;
+        restorePaint.setAlphaf(0.5f);
+        SkCanvas::SaveLayerRec rec = SkCanvasPriv::ScaledBackdropLayer(
+                /*bounds=*/nullptr,
+                &restorePaint,
+                /*backdrop=*/nullptr,
+                /*backdropScale=*/1,
+                /*saveLayerFlags=*/0,
+                filters);
+        canvas->save();
+        canvas->clipRect({0, 0, 200, 200});
+        canvas->saveLayer(rec);
+
+        SkPaint paint;
+        paint.setStyle(SkPaint::kStroke_Style);
+        paint.setStrokeWidth(20);
+        paint.setColor(SK_ColorGREEN);
+        canvas->drawCircle(100, 100, 70, paint);
+
+        canvas->restore();
+        canvas->restore();
+        canvas->translate(205, 0);
+    };
+
+    {
+        // Test with two non-null filters that each change bounds in a different way:
+        sk_sp<SkImageFilter> filters[2] = {SkImageFilters::Dilate(5, 5, nullptr),
+                                           SkImageFilters::Erode(5, 5, nullptr)};
+        drawFilteredLayer(filters);
+    }
+
+    {
+        // Test with one null filter, to more closely mimic the canvas2D layers use-case:
+        sk_sp<SkImageFilter> filters[2] = {
+                SkImageFilters::DropShadowOnly(7, 7, 5, 5, SK_ColorBLUE, nullptr), nullptr};
+        drawFilteredLayer(filters);
+    }
 }

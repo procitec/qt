@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,7 +10,8 @@
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/modules/wake_lock/wake_lock_test_utils.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 #include "v8/include/v8.h"
 
@@ -19,19 +20,20 @@ namespace blink {
 namespace {
 
 WakeLockManager* MakeManager(WakeLockTestingContext& context,
-                             WakeLockType type) {
+                             V8WakeLockType::Enum type) {
   return MakeGarbageCollected<WakeLockManager>(context.DomWindow(), type);
 }
 
 }  // namespace
 
 TEST(WakeLockManagerTest, AcquireWakeLock) {
+  test::TaskEnvironment task_environment;
   MockWakeLockService wake_lock_service;
   WakeLockTestingContext context(&wake_lock_service);
-  auto* manager = MakeManager(context, WakeLockType::kScreen);
+  auto* manager = MakeManager(context, V8WakeLockType::Enum::kScreen);
 
   MockWakeLock& screen_lock =
-      wake_lock_service.get_wake_lock(WakeLockType::kScreen);
+      wake_lock_service.get_wake_lock(V8WakeLockType::Enum::kScreen);
   EXPECT_FALSE(screen_lock.is_acquired());
   EXPECT_FALSE(manager->wake_lock_.is_bound());
 
@@ -62,12 +64,13 @@ TEST(WakeLockManagerTest, AcquireWakeLock) {
 }
 
 TEST(WakeLockManagerTest, ReleaseAllWakeLocks) {
+  test::TaskEnvironment task_environment;
   MockWakeLockService wake_lock_service;
   WakeLockTestingContext context(&wake_lock_service);
-  auto* manager = MakeManager(context, WakeLockType::kScreen);
+  auto* manager = MakeManager(context, V8WakeLockType::Enum::kScreen);
 
   MockWakeLock& screen_lock =
-      wake_lock_service.get_wake_lock(WakeLockType::kScreen);
+      wake_lock_service.get_wake_lock(V8WakeLockType::Enum::kScreen);
 
   auto* resolver =
       MakeGarbageCollected<ScriptPromiseResolver>(context.GetScriptState());
@@ -92,12 +95,13 @@ TEST(WakeLockManagerTest, ReleaseAllWakeLocks) {
 }
 
 TEST(WakeLockManagerTest, ReleaseOneWakeLock) {
+  test::TaskEnvironment task_environment;
   MockWakeLockService wake_lock_service;
   WakeLockTestingContext context(&wake_lock_service);
-  auto* manager = MakeManager(context, WakeLockType::kScreen);
+  auto* manager = MakeManager(context, V8WakeLockType::Enum::kScreen);
 
   MockWakeLock& screen_lock =
-      wake_lock_service.get_wake_lock(WakeLockType::kScreen);
+      wake_lock_service.get_wake_lock(V8WakeLockType::Enum::kScreen);
 
   auto* resolver1 =
       MakeGarbageCollected<ScriptPromiseResolver>(context.GetScriptState());
@@ -128,12 +132,13 @@ TEST(WakeLockManagerTest, ReleaseOneWakeLock) {
 }
 
 TEST(WakeLockManagerTest, ClearEmptyWakeLockSentinelList) {
+  test::TaskEnvironment task_environment;
   MockWakeLockService wake_lock_service;
   WakeLockTestingContext context(&wake_lock_service);
-  auto* manager = MakeManager(context, WakeLockType::kSystem);
+  auto* manager = MakeManager(context, V8WakeLockType::Enum::kSystem);
 
   MockWakeLock& system_lock =
-      wake_lock_service.get_wake_lock(WakeLockType::kSystem);
+      wake_lock_service.get_wake_lock(V8WakeLockType::Enum::kSystem);
   EXPECT_FALSE(system_lock.is_acquired());
 
   manager->ClearWakeLocks();
@@ -143,9 +148,10 @@ TEST(WakeLockManagerTest, ClearEmptyWakeLockSentinelList) {
 }
 
 TEST(WakeLockManagerTest, ClearWakeLocks) {
+  test::TaskEnvironment task_environment;
   MockWakeLockService wake_lock_service;
   WakeLockTestingContext context(&wake_lock_service);
-  auto* manager = MakeManager(context, WakeLockType::kSystem);
+  auto* manager = MakeManager(context, V8WakeLockType::Enum::kSystem);
 
   auto* resolver1 =
       MakeGarbageCollected<ScriptPromiseResolver>(context.GetScriptState());
@@ -155,7 +161,7 @@ TEST(WakeLockManagerTest, ClearWakeLocks) {
   ScriptPromise promise2 = resolver2->Promise();
 
   MockWakeLock& system_lock =
-      wake_lock_service.get_wake_lock(WakeLockType::kSystem);
+      wake_lock_service.get_wake_lock(V8WakeLockType::Enum::kSystem);
 
   manager->AcquireWakeLock(resolver1);
   manager->AcquireWakeLock(resolver2);
@@ -173,9 +179,10 @@ TEST(WakeLockManagerTest, ClearWakeLocks) {
 }
 
 TEST(WakeLockManagerTest, WakeLockConnectionError) {
+  test::TaskEnvironment task_environment;
   MockWakeLockService wake_lock_service;
   WakeLockTestingContext context(&wake_lock_service);
-  auto* manager = MakeManager(context, WakeLockType::kSystem);
+  auto* manager = MakeManager(context, V8WakeLockType::Enum::kSystem);
 
   auto* resolver1 =
       MakeGarbageCollected<ScriptPromiseResolver>(context.GetScriptState());
@@ -185,7 +192,7 @@ TEST(WakeLockManagerTest, WakeLockConnectionError) {
   ScriptPromise promise2 = resolver2->Promise();
 
   MockWakeLock& system_lock =
-      wake_lock_service.get_wake_lock(WakeLockType::kSystem);
+      wake_lock_service.get_wake_lock(V8WakeLockType::Enum::kSystem);
 
   manager->AcquireWakeLock(resolver1);
   manager->AcquireWakeLock(resolver2);

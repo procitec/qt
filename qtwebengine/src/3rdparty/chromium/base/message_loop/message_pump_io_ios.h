@@ -1,17 +1,15 @@
-// Copyright 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef BASE_MESSAGE_LOOP_MESSAGE_PUMP_IO_IOS_H_
 #define BASE_MESSAGE_LOOP_MESSAGE_PUMP_IO_IOS_H_
 
+#include "base/apple/scoped_cffiledescriptorref.h"
+#include "base/apple/scoped_cftyperef.h"
 #include "base/base_export.h"
-#include "base/mac/scoped_cffiledescriptorref.h"
-#include "base/mac/scoped_cftyperef.h"
-#include "base/macros.h"
-#include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
-#include "base/message_loop/message_pump_mac.h"
+#include "base/message_loop/message_pump_apple.h"
 #include "base/message_loop/watchable_io_message_pump_posix.h"
 #include "base/threading/thread_checker.h"
 
@@ -25,6 +23,9 @@ class BASE_EXPORT MessagePumpIOSForIO : public MessagePumpNSRunLoop,
   class FdWatchController : public FdWatchControllerInterface {
    public:
     explicit FdWatchController(const Location& from_here);
+
+    FdWatchController(const FdWatchController&) = delete;
+    FdWatchController& operator=(const FdWatchController&) = delete;
 
     // Implicitly calls StopWatchingFileDescriptor.
     ~FdWatchController() override;
@@ -52,16 +53,18 @@ class BASE_EXPORT MessagePumpIOSForIO : public MessagePumpNSRunLoop,
     void OnFileCanWriteWithoutBlocking(int fd, MessagePumpIOSForIO* pump);
 
     bool is_persistent_ = false;  // false if this event is one-shot.
-    base::mac::ScopedCFFileDescriptorRef fdref_;
+    apple::ScopedCFFileDescriptorRef fdref_;
     CFOptionFlags callback_types_ = 0;
-    base::ScopedCFTypeRef<CFRunLoopSourceRef> fd_source_;
-    base::WeakPtr<MessagePumpIOSForIO> pump_;
+    apple::ScopedCFTypeRef<CFRunLoopSourceRef> fd_source_;
+    WeakPtr<MessagePumpIOSForIO> pump_;
     FdWatcher* watcher_ = nullptr;
-
-    DISALLOW_COPY_AND_ASSIGN(FdWatchController);
   };
 
   MessagePumpIOSForIO();
+
+  MessagePumpIOSForIO(const MessagePumpIOSForIO&) = delete;
+  MessagePumpIOSForIO& operator=(const MessagePumpIOSForIO&) = delete;
+
   ~MessagePumpIOSForIO() override;
 
   bool WatchFileDescriptor(int fd,
@@ -82,8 +85,6 @@ class BASE_EXPORT MessagePumpIOSForIO : public MessagePumpNSRunLoop,
   ThreadChecker watch_file_descriptor_caller_checker_;
 
   base::WeakPtrFactory<MessagePumpIOSForIO> weak_factory_;
-
-  DISALLOW_COPY_AND_ASSIGN(MessagePumpIOSForIO);
 };
 
 }  // namespace base

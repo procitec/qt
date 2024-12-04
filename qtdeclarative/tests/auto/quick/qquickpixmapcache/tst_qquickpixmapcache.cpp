@@ -1,45 +1,53 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the test suite of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:GPL-EXCEPT$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 3 as published by the Free Software
-** Foundation with exceptions as appearing in the file LICENSE.GPL3-EXCEPT
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 #include <qtest.h>
 #include <QtTest/QtTest>
+#include <QtQuick/private/qquickimage_p_p.h>
 #include <QtQuick/private/qquickpixmapcache_p.h>
 #include <QtQml/qqmlengine.h>
 #include <QtQuick/qquickimageprovider.h>
+#include <QtQuick/qquickview.h>
 #include <QtQml/QQmlComponent>
 #include <QNetworkReply>
-#include "../../shared/util.h"
-#include "testhttpserver.h"
-#include <QtNetwork/QNetworkConfigurationManager>
+#include <QtGui/qpainter.h>
+#include <QtQuickTestUtils/private/qmlutils_p.h>
+#include <QtQuickTestUtils/private/testhttpserver_p.h>
+#include <QtQuickTestUtils/private/viewtestutils_p.h>
 
 #if QT_CONFIG(concurrent)
 #include <qtconcurrentrun.h>
 #include <qfuture.h>
 #endif
+
+#include "deviceloadingimage.h"
+
+Q_LOGGING_CATEGORY(lcTests, "qt.quick.tests")
+
+class SlowProvider : public QQuickImageProvider
+{
+public:
+    SlowProvider() : QQuickImageProvider(Image) {}
+
+    QImage requestImage(const QString &id, QSize *size, const QSize& requestedSize) override
+    {
+        const int row = id.toInt();
+        qCDebug(lcTests) << requestCount << QThread::currentThread() << "row" << row << requestedSize;
+        QImage image(requestedSize, QImage::Format_RGB888);
+        QPainter painter(&image);
+        const QColor c(128, row % 8 * 32, 64);
+        painter.fillRect(0, 0, requestedSize.width(), requestedSize.height(), c);
+        if (size)
+            *size = requestedSize;
+        ++requestCount;
+        QThread::currentThread()->msleep(row);
+        return image;
+    }
+
+    int requestCount = 0;
+};
+Q_DECLARE_METATYPE(SlowProvider*);
+
+QT_BEGIN_NAMESPACE
 
 #define PIXMAP_DATA_LEAK_TEST 0
 
@@ -47,10 +55,10 @@ class tst_qquickpixmapcache : public QQmlDataTest
 {
     Q_OBJECT
 public:
-    tst_qquickpixmapcache() {}
+    tst_qquickpixmapcache() : QQmlDataTest(QT_QMLTEST_DATADIR) {}
 
 private slots:
-    void initTestCase();
+    void initTestCase() override;
     void single();
     void single_data();
     void parallel();
@@ -67,6 +75,8 @@ private slots:
 #if PIXMAP_DATA_LEAK_TEST
     void dataLeak();
 #endif
+    void slowDevice();
+    void slowDeviceInterrupted();
 private:
     QQmlEngine engine;
     TestHTTPServer server;
@@ -107,15 +117,6 @@ void tst_qquickpixmapcache::initTestCase()
 
     QVERIFY2(server.listen(), qPrintable(server.errorString()));
 
-#if QT_CONFIG(bearermanagement)
-    // This avoids a race condition/deadlock bug in network config
-    // manager when it is accessed by the HTTP server thread before
-    // anything else. Bug report can be found at:
-    // QTBUG-26355
-    QNetworkConfigurationManager cm;
-    cm.updateConfigurations();
-#endif
-
     server.serveDirectory(testFile("http"));
 }
 
@@ -142,6 +143,11 @@ void tst_qquickpixmapcache::single()
     QFETCH(bool, incache);
     QFETCH(bool, exists);
     QFETCH(bool, neterror);
+
+#if !QT_CONFIG(qml_network)
+    if (target.scheme() == "http")
+        QSKIP("Skipping due to lack of QML network feature");
+#endif
 
     QString expectedError;
     if (neterror) {
@@ -231,6 +237,11 @@ void tst_qquickpixmapcache::parallel()
     QFETCH(int, incache);
     QFETCH(int, cancel);
 
+#if !QT_CONFIG(qml_network)
+    if (target1.scheme() == "http" || target2.scheme() == "http")
+        QSKIP("Skipping due to lack of QML network feature");
+#endif
+
     QList<QUrl> targets;
     targets << target1 << target2;
 
@@ -238,7 +249,7 @@ void tst_qquickpixmapcache::parallel()
     QList<bool> pending;
     QList<Slotter*> getters;
 
-    for (int i=0; i<targets.count(); ++i) {
+    for (int i=0; i<targets.size(); ++i) {
         QUrl target = targets.at(i);
         QQuickPixmap *pixmap = new QQuickPixmap;
 
@@ -258,9 +269,9 @@ void tst_qquickpixmapcache::parallel()
         }
     }
 
-    if (incache + slotters != targets.count())
+    if (incache + slotters != targets.size())
         QFAIL(QString::fromLatin1("pixmap counts don't add up: %1 incache, %2 slotters, %3 total")
-              .arg(incache).arg(slotters).arg(targets.count()).toLatin1().constData());
+              .arg(incache).arg(slotters).arg(targets.size()).toLatin1().constData());
 
     if (cancel >= 0) {
         pixmaps.at(cancel)->clear(getters[cancel]);
@@ -272,7 +283,7 @@ void tst_qquickpixmapcache::parallel()
         QVERIFY(!QTestEventLoop::instance().timeout());
     }
 
-    for (int i=0; i<targets.count(); ++i) {
+    for (int i=0; i<targets.size(); ++i) {
         QQuickPixmap *pixmap = pixmaps[i];
 
         if (i == cancel) {
@@ -350,8 +361,8 @@ public:
     MyPixmapProvider()
     : QQuickImageProvider(Pixmap) {}
 
-    virtual QPixmap requestPixmap(const QString &d, QSize *, const QSize &) {
-        Q_UNUSED(d)
+    QPixmap requestPixmap(const QString &d, QSize *, const QSize &) override {
+        Q_UNUSED(d);
         QPixmap pix(800, 600);
         pix.fill(fillColor);
         return pix;
@@ -427,6 +438,9 @@ void tst_qquickpixmapcache::lockingCrash()
 
 void tst_qquickpixmapcache::uncached()
 {
+#ifdef Q_OS_WEBOS
+    QSKIP("QQuickPixmap always loads with QQuickPixmap::Cache option in webOS");
+#endif
     QQmlEngine engine;
     engine.addImageProvider(QLatin1String("mypixmaps"), new MyPixmapProvider);
 
@@ -482,7 +496,6 @@ void tst_qquickpixmapcache::asynchronousNoCache()
     QScopedPointer<QObject> root {component.create()}; // should not crash
 }
 
-
 #if PIXMAP_DATA_LEAK_TEST
 // This test should not be enabled by default as it
 // produces spurious output in the expected case.
@@ -492,9 +505,9 @@ class DataLeakView : public QQuickView
     Q_OBJECT
 
 public:
-    explicit DataLeakView() : QQuickView()
+    explicit DataLeakView(const QUrl &src) : QQuickView()
     {
-        setSource(testFileUrl("dataLeak.qml"));
+        setSource(src);
     }
 
     void showFor2Seconds()
@@ -512,14 +525,14 @@ Q_GLOBAL_STATIC(QQuickPixmap, dataLeakPixmap)
 void tst_qquickpixmapcache::dataLeak()
 {
     // Should not leak cached QQuickPixmapData.
-    // Unfortunately, since the QQuickPixmapStore
-    // is a global static, and it releases the cache
+    // Unfortunately, since the QQuickPixmapCache
+    // is a singleton, and it releases the cache
     // entries on dtor (application exit), we must use
-    // valgrind to determine whether it leaks or not.
+    // valgrind or ASAN to determine whether it leaks or not.
     QQuickPixmap *p1 = new QQuickPixmap;
     QQuickPixmap *p2 = new QQuickPixmap;
     {
-        QScopedPointer<DataLeakView> test(new DataLeakView);
+        QScopedPointer<DataLeakView> test(new DataLeakView(testFileUrl("dataLeak.qml")));
         test->showFor2Seconds();
         dataLeakPixmap()->load(test->engine(), testFileUrl("exists.png"));
         p1->load(test->engine(), testFileUrl("exists.png"));
@@ -529,11 +542,88 @@ void tst_qquickpixmapcache::dataLeak()
 
     // When the (global static) dataLeakPixmap is deleted, it
     // shouldn't attempt to dereference a QQuickPixmapData
-    // which has been deleted by the QQuickPixmapStore
+    // which has been deleted by the QQuickPixmapCache
     // destructor.
 }
 #endif
 #undef PIXMAP_DATA_LEAK_TEST
+
+/*!
+    Test lots of async QQuickPixmap::loadImageFromDevice() jobs with random
+    sizes and frames, so that cached images are seldom reused. Some jobs get
+    cancelled, some succeed. This should not lead to any cache leaks.
+    Similar to the QtPdf usecase in QTBUG-114953
+*/
+void tst_qquickpixmapcache::slowDevice()
+{
+    QSKIP("Crashes: QTBUG-126047");
+
+#ifdef QT_BUILD_INTERNAL
+    auto *provider = new SlowProvider;
+    engine.addImageProvider("slow", provider); // takes ownership
+
+    {
+        QQuickView window(&engine, nullptr);
+        QVERIFY(QQuickTest::showView(window, testFileUrl("tableViewWithDeviceLoadingImages.qml")));
+        // Timer generates 5 requests / sec; TableView shows multiple delegates (depending on size);
+        // so we should get 100 requests in some fraction of 20 sec. Give it 30 to be sure.
+        QTRY_COMPARE_GE_WITH_TIMEOUT(provider->requestCount, 100, 30000);
+        const int cacheCount = QQuickPixmapCache::instance()->m_cache.size();
+        qCDebug(lcTests) << "cached pixmaps" << cacheCount;
+        QCOMPARE_GT(cacheCount, 0);
+    } // window goes out of scope: all QQuickPixmapData instances should be eventually unreferenced
+
+    QTRY_COMPARE(QQuickPixmapCache::instance()->referencedCost(), 0);
+    const int leakedPixmaps = QQuickPixmapCache::instance()->destroyCache();
+    QCOMPARE(leakedPixmaps, 0);
+#else
+    QSKIP("This test relies on private APIs that are only exported in developer-builds");
+#endif
+}
+
+void tst_qquickpixmapcache::slowDeviceInterrupted()
+{
+#ifdef QT_BUILD_INTERNAL
+    auto *provider = new SlowProvider;
+    engine.addImageProvider("slow", provider); // takes ownership
+
+    const QColor secondExpectedColor(128, 50 % 8 * 32, 64);
+
+    {
+        QQuickView window(&engine, nullptr);
+        QVERIFY(QQuickTest::showView(window, testFileUrl("slowLoading.qml")));
+        DeviceLoadingImage *dlimg = qobject_cast<DeviceLoadingImage *>(window.rootObject());
+        QVERIFY(dlimg);
+        if (dlimg->status() == QQuickImageBase::Ready) {
+            qCDebug(lcTests) << dlimg->source() << "loaded faster than expected";
+        } else {
+            // the declared source: "image://slow/200" should take 200 ms to load
+            QTRY_COMPARE(dlimg->status(), QQuickImageBase::Loading);
+            QVERIFY(dlimg->connectSuccess);
+        }
+        dlimg->setSource(QUrl("image://slow/50"));
+        QTRY_COMPARE(dlimg->requestsFinished, 2);
+        QCOMPARE(provider->requestCount, 2);
+        QCOMPARE(dlimg->status(), QQuickImageBase::Ready);
+        auto *img_d = static_cast<QQuickImagePrivate *>(QQuickImagePrivate::get(dlimg));
+        QCOMPARE(img_d->currentPix->image().pixelColor({1, 1}), secondExpectedColor);
+        QCOMPARE_GE(QQuickPixmapCache::instance()->m_cache.size(), 2);
+        // Unless CI paused at the wrong time for > 200 ms, we cancelled loading
+        // the first image and switched to the second, so QQuickImageBase::requestFinished()
+        // should have only called swap() once. But if this check ends up being flaky in CI,
+        // it can be removed.
+        QCOMPARE(img_d->currentPix, &img_d->pix2);
+    } // window goes out of scope: all QQuickPixmapData instances should be eventually unreferenced
+
+    QTRY_COMPARE(QQuickPixmapCache::instance()->referencedCost(), 0);
+    const int leakedPixmaps = QQuickPixmapCache::instance()->destroyCache();
+    QCOMPARE_LE(leakedPixmaps, 0); // -1 if the cache is already destroyed
+#else
+    QSKIP("This test relies on private APIs that are only exported in developer-builds");
+#endif
+}
+
+QT_END_NAMESPACE
 
 QTEST_MAIN(tst_qquickpixmapcache)
 

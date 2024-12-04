@@ -1,15 +1,15 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef CONTENT_BROWSER_RENDERER_HOST_TEXT_INPUT_CLIENT_MAC_H_
 #define CONTENT_BROWSER_RENDERER_HOST_TEXT_INPUT_CLIENT_MAC_H_
 
-#include "base/callback.h"
-#include "base/mac/scoped_block.h"
-#include "base/macros.h"
+#include "base/functional/callback.h"
+#include "base/gtest_prod_util.h"
 #include "base/synchronization/condition_variable.h"
 #include "base/synchronization/lock.h"
+#include "base/time/time.h"
 #include "content/common/content_export.h"
 #include "ui/base/mojom/attributed_string.mojom-forward.h"
 #include "ui/gfx/geometry/point.h"
@@ -27,7 +27,7 @@ class Range;
 namespace content {
 class RenderWidgetHost;
 
-// This class helps with the Mac OS X dictionary popup. For the design overview,
+// This class helps with the macOS dictionary popup. For the design overview,
 // look at this document:
 //   http://dev.chromium.org/developers/design-documents/system-dictionary-pop-up-architecture
 //
@@ -51,6 +51,9 @@ class CONTENT_EXPORT TextInputClientMac {
  public:
   // Returns the singleton instance.
   static TextInputClientMac* GetInstance();
+
+  TextInputClientMac(const TextInputClientMac&) = delete;
+  TextInputClientMac& operator=(const TextInputClientMac&) = delete;
 
   // Each of the three methods mentioned above has an associated pair of methods
   // to get data from the renderer. The Get*() methods block the calling thread
@@ -100,6 +103,7 @@ class CONTENT_EXPORT TextInputClientMac {
 
  private:
   friend struct base::DefaultSingletonTraits<TextInputClientMac>;
+  FRIEND_TEST_ALL_PREFIXES(TextInputClientMacTest, TimeoutRectForRange);
   TextInputClientMac();
   ~TextInputClientMac();
 
@@ -117,8 +121,9 @@ class CONTENT_EXPORT TextInputClientMac {
 
   base::Lock lock_;
   base::ConditionVariable condition_;
-
-  DISALLOW_COPY_AND_ASSIGN(TextInputClientMac);
+  // The amount of time that the browser process will wait for a response from
+  // the renderer.
+  base::TimeDelta wait_timeout_;
 };
 
 }  // namespace content

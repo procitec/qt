@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,30 +10,18 @@
 #include "base/task/thread_pool/thread_pool_impl.h"
 #include "base/task/thread_pool/thread_pool_instance.h"
 #include "base/threading/post_task_and_reply_impl.h"
+#include "build/build_config.h"
 
 namespace base {
 
 namespace {
 
-class PostTaskAndReplyWithTraitsTaskRunner
-    : public internal::PostTaskAndReplyImpl {
- public:
-  explicit PostTaskAndReplyWithTraitsTaskRunner(const TaskTraits& traits)
-      : traits_(traits) {}
-
- private:
-  bool PostTask(const Location& from_here, OnceClosure task) override {
-    ThreadPool::PostTask(from_here, traits_, std::move(task));
-    return true;
-  }
-
-  const TaskTraits traits_;
-};
 
 internal::ThreadPoolImpl* GetThreadPoolImpl() {
   auto* instance = ThreadPoolInstance::Get();
   DCHECK(instance)
-      << "Ref. Prerequisite section of base/task/thread_pool.h.\n"
+      << "No threadpool instance for this process. See the 'Prerequisite' "
+         "section of base/task/thread_pool.h.\n"
          "Hint: if this is in a unit test, you're likely merely missing a "
          "base::test::TaskEnvironment member in your fixture (or your fixture "
          "is using a base::test::SingleThreadTaskEnvironment and now needs a "
@@ -85,7 +73,10 @@ bool ThreadPool::PostTaskAndReply(const Location& from_here,
                                   const TaskTraits& traits,
                                   OnceClosure task,
                                   OnceClosure reply) {
-  return PostTaskAndReplyWithTraitsTaskRunner(traits).PostTaskAndReply(
+  return internal::PostTaskAndReplyImpl(
+      [&traits](const Location& location, OnceClosure task) {
+        return ThreadPool::PostTask(location, traits, std::move(task));
+      },
       from_here, std::move(task), std::move(reply));
 }
 
@@ -114,13 +105,13 @@ scoped_refptr<SingleThreadTaskRunner> ThreadPool::CreateSingleThreadTaskRunner(
   return GetThreadPoolImpl()->CreateSingleThreadTaskRunner(traits, thread_mode);
 }
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 // static
 scoped_refptr<SingleThreadTaskRunner> ThreadPool::CreateCOMSTATaskRunner(
     const TaskTraits& traits,
     SingleThreadTaskRunnerThreadMode thread_mode) {
   return GetThreadPoolImpl()->CreateCOMSTATaskRunner(traits, thread_mode);
 }
-#endif  // defined(OS_WIN)
+#endif  // BUILDFLAG(IS_WIN)
 
 }  // namespace base

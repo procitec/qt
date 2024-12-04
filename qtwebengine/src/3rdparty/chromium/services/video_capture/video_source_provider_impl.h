@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,10 +7,12 @@
 
 #include <map>
 
+#include "base/memory/raw_ptr.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/receiver_set.h"
 #include "services/video_capture/device_factory.h"
+#include "services/video_capture/devices_changed_notifier.h"
 #include "services/video_capture/public/mojom/video_source_provider.mojom.h"
 
 namespace video_capture {
@@ -22,6 +24,10 @@ class VideoSourceProviderImpl : public mojom::VideoSourceProvider {
   VideoSourceProviderImpl(
       DeviceFactory* device_factory,
       base::RepeatingClosure on_last_client_disconnected_cb);
+
+  VideoSourceProviderImpl(const VideoSourceProviderImpl&) = delete;
+  VideoSourceProviderImpl& operator=(const VideoSourceProviderImpl&) = delete;
+
   ~VideoSourceProviderImpl() override;
 
   void AddClient(mojo::PendingReceiver<mojom::VideoSourceProvider> receiver);
@@ -34,7 +40,6 @@ class VideoSourceProviderImpl : public mojom::VideoSourceProvider {
   void AddSharedMemoryVirtualDevice(
       const media::VideoCaptureDeviceInfo& device_info,
       mojo::PendingRemote<mojom::Producer> producer,
-      bool send_buffer_handles_to_producer_as_raw_file_descriptors,
       mojo::PendingReceiver<mojom::SharedMemoryVirtualDevice>
           virtual_device_receiver) override;
   void AddTextureVirtualDevice(
@@ -44,6 +49,8 @@ class VideoSourceProviderImpl : public mojom::VideoSourceProvider {
   void RegisterVirtualDevicesChangedObserver(
       mojo::PendingRemote<mojom::DevicesChangedObserver> observer,
       bool raise_event_if_virtual_devices_already_present) override;
+  void RegisterDevicesChangedObserver(
+      mojo::PendingRemote<mojom::DevicesChangedObserver> observer) override;
   void Close(CloseCallback callback) override;
 
  private:
@@ -51,13 +58,13 @@ class VideoSourceProviderImpl : public mojom::VideoSourceProvider {
   void OnClientDisconnectedOrClosed();
   void OnVideoSourceLastClientDisconnected(const std::string& device_id);
 
-  DeviceFactory* const device_factory_;
+  const raw_ptr<DeviceFactory, DanglingUntriaged> device_factory_;
   base::RepeatingClosure on_last_client_disconnected_cb_;
   int client_count_ = 0;
   int closed_but_not_yet_disconnected_client_count_ = 0;
   mojo::ReceiverSet<mojom::VideoSourceProvider> receivers_;
   std::map<std::string, std::unique_ptr<VideoSourceImpl>> sources_;
-  DISALLOW_COPY_AND_ASSIGN(VideoSourceProviderImpl);
+  absl::optional<DevicesChangedNotifier> devices_changed_notifier_;
 };
 
 }  // namespace video_capture

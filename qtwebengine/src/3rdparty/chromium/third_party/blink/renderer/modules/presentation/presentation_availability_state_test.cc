@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,6 +9,7 @@
 #include "third_party/blink/renderer/modules/presentation/mock_presentation_service.h"
 #include "third_party/blink/renderer/modules/presentation/presentation_availability_callbacks.h"
 #include "third_party/blink/renderer/modules/presentation/presentation_availability_observer.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
@@ -113,6 +114,7 @@ class PresentationAvailabilityStateTest : public testing::Test {
   const KURL url3_;
   const KURL url4_;
   const Vector<KURL> urls_;
+  test::TaskEnvironment task_environment_;
   Persistent<MockPresentationAvailabilityObserver> mock_observer_all_urls_;
   Persistent<MockPresentationAvailabilityObserver> mock_observer1_;
   Persistent<MockPresentationAvailabilityObserver> mock_observer2_;

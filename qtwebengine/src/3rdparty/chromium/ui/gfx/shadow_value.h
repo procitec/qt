@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,6 +9,7 @@
 #include <tuple>
 #include <vector>
 
+#include "build/build_config.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/geometry/vector2d.h"
 #include "ui/gfx/gfx_export.h"
@@ -18,6 +19,7 @@ namespace gfx {
 class Insets;
 
 class ShadowValue;
+
 typedef std::vector<ShadowValue> ShadowValues;
 
 // ShadowValue encapsulates parameters needed to define a shadow, including the
@@ -39,6 +41,11 @@ class GFX_EXPORT ShadowValue {
            color_ == other.color_;
   }
 
+  constexpr bool operator<(const ShadowValue& other) const {
+    return std::make_tuple(x(), y(), blur_, color_) <
+           std::make_tuple(other.x(), other.y(), other.blur_, other.color_);
+  }
+
   ShadowValue Scale(float scale) const;
 
   std::string ToString() const;
@@ -54,11 +61,35 @@ class GFX_EXPORT ShadowValue {
   // a uniform color.
   static Insets GetBlurRegion(const ShadowValues& shadows);
 
-  // Makes ShadowValues matching MD or Refresh shadows for the given elevation
-  // and color.
-  static ShadowValues MakeRefreshShadowValues(int elevation, SkColor color);
+  // Makes ShadowValues for the given elevation and color. Calls to
+  // MakeShadowValues that expect to fallback to MakeMdShadowValues should pass
+  // in the same base color for |key_shadow_color| and |ambient_shadow_color|
+  // until MakeMdShadowValues is refactored to remove SkColorSetA calls and also
+  // take in its own |key_shadow_color| and |ambient_shadow_color|.
+  // TODO(elainechien): crbug.com/1056950.
+  static ShadowValues MakeShadowValues(int elevation,
+                                       SkColor key_shadow_color,
+                                       SkColor ambient_shadow_color);
+  // Makes ShadowValues for MD shadows. This style is deprecated.
   static ShadowValues MakeMdShadowValues(int elevation,
                                          SkColor color = SK_ColorBLACK);
+  // Makes ShadowValues for MD shadows with customized key and ambient colors.
+  static ShadowValues MakeMdShadowValues(int elevation,
+                                         SkColor key_shadow_color,
+                                         SkColor ambient_shadow_color);
+
+#if BUILDFLAG(IS_CHROMEOS)
+  // Makes ShadowValues for Chrome OS UI components with default colors.
+  static ShadowValues MakeChromeOSSystemUIShadowValues(
+      int elevation,
+      SkColor color = SK_ColorBLACK);
+  // Makes ShadowValues for chrome OS UI components with customized key and
+  // ambient colors.
+  static ShadowValues MakeChromeOSSystemUIShadowValues(
+      int elevation,
+      SkColor key_shadow_color,
+      SkColor ambient_shadow_color);
+#endif
 
  private:
   gfx::Vector2d offset_;

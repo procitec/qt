@@ -1,14 +1,13 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "extensions/renderer/bindings/declarative_event.h"
 
 #include <memory>
+#include <string_view>
 
-#include "base/bind.h"
-#include "base/macros.h"
-#include "base/stl_util.h"
+#include "base/functional/bind.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
 #include "extensions/common/extension_api.h"
@@ -59,6 +58,10 @@ class DeclarativeEventTest : public APIBindingTest {
  public:
   DeclarativeEventTest()
       : type_refs_(APITypeReferenceMap::InitializeTypeCallback()) {}
+
+  DeclarativeEventTest(const DeclarativeEventTest&) = delete;
+  DeclarativeEventTest& operator=(const DeclarativeEventTest&) = delete;
+
   ~DeclarativeEventTest() override {}
 
   void OnRequest(std::unique_ptr<APIRequestHandler::Request> request,
@@ -111,8 +114,6 @@ class DeclarativeEventTest : public APIBindingTest {
   std::unique_ptr<TestInteractionProvider> interaction_provider_;
   std::unique_ptr<APIRequestHandler> request_handler_;
   std::unique_ptr<APIRequestHandler::Request> last_request_;
-
-  DISALLOW_COPY_AND_ASSIGN(DeclarativeEventTest);
 };
 
 // Test that the rules schema behaves properly. This is designed to be more of
@@ -144,7 +145,7 @@ TEST_F(DeclarativeEventTest, TestRulesSchema) {
     v8::Local<v8::Function> function =
         FunctionFromString(context, base::StringPrintf(kAddRules, kGoodRules));
     v8::Local<v8::Value> args[] = {emitter_value};
-    RunFunctionOnGlobal(function, context, base::size(args), args);
+    RunFunctionOnGlobal(function, context, std::size(args), args);
 
     EXPECT_TRUE(last_request());
     reset_last_request();
@@ -171,7 +172,7 @@ TEST_F(DeclarativeEventTest, TestRulesSchema) {
       v8::Local<v8::Function> function =
           FunctionFromString(context, base::StringPrintf(kAddRules, rules));
       v8::Local<v8::Value> args[] = {emitter_value};
-      RunFunctionAndExpectError(function, context, base::size(args), args,
+      RunFunctionAndExpectError(function, context, std::size(args), args,
                                 "Uncaught TypeError: Invalid invocation");
       EXPECT_FALSE(last_request()) << rules;
       reset_last_request();
@@ -187,7 +188,7 @@ class DeclarativeEventWithSchemaTest : public APIBindingsSystemTest {
   std::vector<FakeSpec> GetAPIs() override {
     // events.removeRules and events.getRules are specified in the events.json
     // schema, so we need to load that.
-    base::StringPiece events_schema =
+    std::string_view events_schema =
         ExtensionAPI::GetSharedInstance()->GetSchemaStringPiece("events");
     return {{kDeclarativeAPIName, kDeclarativeAPISpec},
             {"events", events_schema.data()}};
@@ -203,14 +204,12 @@ TEST_F(DeclarativeEventWithSchemaTest, TestAllMethods) {
       kDeclarativeAPIName, context, nullptr);
   ASSERT_FALSE(api.IsEmpty());
 
-  v8::Local<v8::Value> declarative_event =
-      GetPropertyFromObject(api, context, "declarativeEvent");
-  ASSERT_FALSE(declarative_event.IsEmpty());
-  ASSERT_TRUE(declarative_event->IsObject());
-  v8::Local<v8::Value> add_rules = GetPropertyFromObject(
-      declarative_event.As<v8::Object>(), context, "addRules");
-  ASSERT_FALSE(add_rules.IsEmpty());
-  ASSERT_TRUE(add_rules->IsFunction());
+  v8::Local<v8::Object> declarative_event;
+  ASSERT_TRUE(GetPropertyFromObjectAs(api, context, "declarativeEvent",
+                                      &declarative_event));
+  v8::Local<v8::Function> add_rules;
+  ASSERT_TRUE(GetPropertyFromObjectAs(declarative_event, context, "addRules",
+                                      &add_rules));
 
   v8::Local<v8::Value> args[] = {api};
 
@@ -224,8 +223,9 @@ TEST_F(DeclarativeEventWithSchemaTest, TestAllMethods) {
                     actions: ['cat'],
                   }]);
              }))";
-    v8::Local<v8::Function> add_rules = FunctionFromString(context, kAddRules);
-    RunFunctionOnGlobal(add_rules, context, base::size(args), args);
+    v8::Local<v8::Function> add_rules_func =
+        FunctionFromString(context, kAddRules);
+    RunFunctionOnGlobal(add_rules_func, context, std::size(args), args);
     ValidateLastRequest("events.addRules",
                         "['alpha.declarativeEvent',0,"
                         "[{'actions':['cat'],"
@@ -241,7 +241,7 @@ TEST_F(DeclarativeEventWithSchemaTest, TestAllMethods) {
         "})";
     v8::Local<v8::Function> remove_rules =
         FunctionFromString(context, kRemoveRules);
-    RunFunctionOnGlobal(remove_rules, context, base::size(args), args);
+    RunFunctionOnGlobal(remove_rules, context, std::size(args), args);
     ValidateLastRequest("events.removeRules",
                         "['alpha.declarativeEvent',0,['rule']]");
     reset_last_request();
@@ -254,7 +254,7 @@ TEST_F(DeclarativeEventWithSchemaTest, TestAllMethods) {
         "})";
     v8::Local<v8::Function> remove_rules =
         FunctionFromString(context, kGetRules);
-    RunFunctionOnGlobal(remove_rules, context, base::size(args), args);
+    RunFunctionOnGlobal(remove_rules, context, std::size(args), args);
     ValidateLastRequest("events.getRules", "['alpha.declarativeEvent',0,null]");
     reset_last_request();
   }

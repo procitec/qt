@@ -28,6 +28,7 @@
 #include "third_party/blink/renderer/core/frame/web_feature.h"
 #include "third_party/blink/renderer/core/html/forms/html_field_set_element.h"
 #include "third_party/blink/renderer/core/html_names.h"
+#include "third_party/blink/renderer/core/layout/layout_object.h"
 #include "third_party/blink/renderer/core/style/computed_style.h"
 
 namespace blink {
@@ -44,8 +45,15 @@ HTMLFormElement* HTMLLegendElement::form() const {
   return nullptr;
 }
 
-LayoutObject* HTMLLegendElement::CreateLayoutObject(const ComputedStyle& style,
-                                                    LegacyLayout legacy) {
+void HTMLLegendElement::DetachLayoutTree(bool performing_reattach) {
+  LayoutObject* object = GetLayoutObject();
+  if (!performing_reattach && object && object->IsRenderedLegend())
+    object->Parent()->GetNode()->SetForceReattachLayoutTree();
+  HTMLElement::DetachLayoutTree(performing_reattach);
+}
+
+LayoutObject* HTMLLegendElement::CreateLayoutObject(
+    const ComputedStyle& style) {
   // Count text-align property which does not mapped from 'align' content
   // attribute. See crbug.com/880822 and |HTMLElement::
   // CollectStyleForPresentationAttribute()|.
@@ -70,7 +78,7 @@ LayoutObject* HTMLLegendElement::CreateLayoutObject(const ComputedStyle& style,
   if (should_count)
     UseCounter::Count(GetDocument(), WebFeature::kTextAlignSpecifiedToLegend);
 
-  return HTMLElement::CreateLayoutObject(style, legacy);
+  return HTMLElement::CreateLayoutObject(style);
 }
 
 }  // namespace blink

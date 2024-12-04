@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,10 +8,10 @@
 #include <memory>
 #include <vector>
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "net/base/completion_once_callback.h"
 #include "net/base/net_errors.h"
-#include "net/base/network_isolation_key.h"
+#include "net/base/network_anonymization_key.h"
 #include "net/proxy_resolution/proxy_resolver.h"
 #include "net/proxy_resolution/proxy_resolver_factory.h"
 #include "url/gurl.h"
@@ -38,9 +38,9 @@ class MockAsyncProxyResolver : public ProxyResolver {
     ~Job();
 
    private:
-    MockAsyncProxyResolver* resolver_;
+    raw_ptr<MockAsyncProxyResolver> resolver_;
     const GURL url_;
-    ProxyInfo* results_;
+    raw_ptr<ProxyInfo, DanglingUntriaged> results_;
     CompletionOnceCallback callback_;
   };
 
@@ -61,12 +61,14 @@ class MockAsyncProxyResolver : public ProxyResolver {
 
   // ProxyResolver implementation.
   int GetProxyForURL(const GURL& url,
-                     const NetworkIsolationKey& network_isolation_key,
+                     const NetworkAnonymizationKey& network_anonymization_key,
                      ProxyInfo* results,
                      CompletionOnceCallback callback,
                      std::unique_ptr<Request>* request,
                      const NetLogWithSource& /*net_log*/) override;
-  const std::vector<Job*>& pending_jobs() const { return pending_jobs_; }
+  const std::vector<raw_ptr<Job, VectorExperimental>>& pending_jobs() const {
+    return pending_jobs_;
+  }
 
   const std::vector<std::unique_ptr<Job>>& cancelled_jobs() const {
     return cancelled_jobs_;
@@ -76,7 +78,7 @@ class MockAsyncProxyResolver : public ProxyResolver {
   void RemovePendingJob(Job* job);
 
  private:
-  std::vector<Job*> pending_jobs_;
+  std::vector<raw_ptr<Job, VectorExperimental>> pending_jobs_;
   std::vector<std::unique_ptr<Job>> cancelled_jobs_;
 };
 
@@ -136,9 +138,9 @@ class MockAsyncProxyResolverFactory::Request
 
   void FactoryDestroyed();
 
-  MockAsyncProxyResolverFactory* factory_;
+  raw_ptr<MockAsyncProxyResolverFactory> factory_;
   const scoped_refptr<PacFileData> script_data_;
-  std::unique_ptr<ProxyResolver>* resolver_;
+  raw_ptr<std::unique_ptr<ProxyResolver>> resolver_;
   CompletionOnceCallback callback_;
 };
 
@@ -148,18 +150,19 @@ class ForwardingProxyResolver : public ProxyResolver {
  public:
   explicit ForwardingProxyResolver(ProxyResolver* impl);
 
+  ForwardingProxyResolver(const ForwardingProxyResolver&) = delete;
+  ForwardingProxyResolver& operator=(const ForwardingProxyResolver&) = delete;
+
   // ProxyResolver overrides.
   int GetProxyForURL(const GURL& query_url,
-                     const NetworkIsolationKey& network_isolation_key,
+                     const NetworkAnonymizationKey& network_anonymization_key,
                      ProxyInfo* results,
                      CompletionOnceCallback callback,
                      std::unique_ptr<Request>* request,
                      const NetLogWithSource& net_log) override;
 
  private:
-  ProxyResolver* impl_;
-
-  DISALLOW_COPY_AND_ASSIGN(ForwardingProxyResolver);
+  raw_ptr<ProxyResolver> impl_;
 };
 
 }  // namespace net

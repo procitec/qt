@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -21,7 +21,6 @@
 #include <type_traits>
 #include <utility>
 
-#include "absl/types/optional.h"
 #include "platform/api/task_runner.h"
 #include "platform/base/error.h"
 #include "platform/impl/udp_socket_reader_posix.h"
@@ -61,7 +60,7 @@ ErrorOr<int> CreateNonBlockingUdpSocket(int domain) {
 
 }  // namespace
 
-UdpSocketPosix::UdpSocketPosix(TaskRunner* task_runner,
+UdpSocketPosix::UdpSocketPosix(TaskRunner& task_runner,
                                Client* client,
                                SocketHandle handle,
                                const IPEndpoint& local_endpoint,
@@ -71,7 +70,6 @@ UdpSocketPosix::UdpSocketPosix(TaskRunner* task_runner,
       handle_(handle),
       local_endpoint_(local_endpoint),
       platform_client_(platform_client) {
-  OSP_DCHECK(task_runner_);
   OSP_DCHECK(local_endpoint_.address.IsV4() || local_endpoint_.address.IsV6());
 
   if (handle_.fd >= 0) {
@@ -91,7 +89,7 @@ const SocketHandle& UdpSocketPosix::GetHandle() const {
 
 // static
 ErrorOr<std::unique_ptr<UdpSocket>> UdpSocket::Create(
-    TaskRunner* task_runner,
+    TaskRunner& task_runner,
     Client* client,
     const IPEndpoint& endpoint) {
   static std::atomic_bool in_create{false};
@@ -188,37 +186,38 @@ void UdpSocketPosix::Bind() {
     OnError(Error::Code::kSocketOptionSettingFailure);
   }
 
+  bool is_bound = false;
   switch (local_endpoint_.address.version()) {
     case UdpSocket::Version::kV4: {
-      struct sockaddr_in address;
+      struct sockaddr_in address {};
       address.sin_family = AF_INET;
       address.sin_port = htons(local_endpoint_.port);
       local_endpoint_.address.CopyToV4(
           reinterpret_cast<uint8_t*>(&address.sin_addr.s_addr));
       if (bind(handle_.fd, reinterpret_cast<struct sockaddr*>(&address),
-               sizeof(address)) == -1) {
-        OnError(Error::Code::kSocketBindFailure);
+               sizeof(address)) != -1) {
+        is_bound = true;
       }
-      return;
-    }
+    } break;
 
     case UdpSocket::Version::kV6: {
-      struct sockaddr_in6 address;
+      struct sockaddr_in6 address {};
       address.sin6_family = AF_INET6;
-      address.sin6_flowinfo = 0;
       address.sin6_port = htons(local_endpoint_.port);
       local_endpoint_.address.CopyToV6(
           reinterpret_cast<uint8_t*>(&address.sin6_addr));
-      address.sin6_scope_id = 0;
       if (bind(handle_.fd, reinterpret_cast<struct sockaddr*>(&address),
-               sizeof(address)) == -1) {
-        OnError(Error::Code::kSocketBindFailure);
+               sizeof(address)) != -1) {
+        is_bound = true;
       }
-      return;
-    }
+    } break;
   }
 
-  OSP_NOTREACHED();
+  if (is_bound) {
+    client_->OnBound(this);
+  } else {
+    OnError(Error::Code::kSocketBindFailure);
+  }
 }
 
 void UdpSocketPosix::SetMulticastOutboundInterface(
@@ -456,7 +455,7 @@ void UdpSocketPosix::ReceiveMessage() {
   // calling into all the other methods.
 
   if (is_closed()) {
-    task_runner_->PostTask([weak_this = weak_factory_.GetWeakPtr()] {
+    task_runner_.PostTask([weak_this = weak_factory_.GetWeakPtr()] {
       if (auto* self = weak_this.get()) {
         if (auto* client = self->client_) {
           client->OnRead(self, Error::Code::kSocketClosedFailure);
@@ -482,11 +481,11 @@ void UdpSocketPosix::ReceiveMessage() {
     }
   }
 
-  task_runner_->PostTask([weak_this = weak_factory_.GetWeakPtr(),
-                          read_result = std::move(read_result)]() mutable {
+  task_runner_.PostTask([weak_this = weak_factory_.GetWeakPtr(),
+                         result = std::move(read_result)]() mutable {
     if (auto* self = weak_this.get()) {
       if (auto* client = self->client_) {
-        client->OnRead(self, std::move(read_result));
+        client->OnRead(self, std::move(result));
       }
     }
   });
@@ -513,10 +512,9 @@ void UdpSocketPosix::SendMessage(const void* data,
   ssize_t num_bytes_sent = -2;
   switch (local_endpoint_.address.version()) {
     case UdpSocket::Version::kV4: {
-      struct sockaddr_in sa = {
-          .sin_family = AF_INET,
-          .sin_port = htons(dest.port),
-      };
+      struct sockaddr_in sa {};
+      sa.sin_family = AF_INET;
+      sa.sin_port = htons(dest.port);
       dest.address.CopyToV4(reinterpret_cast<uint8_t*>(&sa.sin_addr.s_addr));
       msg.msg_name = &sa;
       msg.msg_namelen = sizeof(sa);
@@ -525,10 +523,8 @@ void UdpSocketPosix::SendMessage(const void* data,
     }
 
     case UdpSocket::Version::kV6: {
-      struct sockaddr_in6 sa = {};
+      struct sockaddr_in6 sa {};
       sa.sin6_family = AF_INET6;
-      sa.sin6_flowinfo = 0;
-      sa.sin6_scope_id = 0;
       sa.sin6_port = htons(dest.port);
       dest.address.CopyToV6(reinterpret_cast<uint8_t*>(&sa.sin6_addr.s6_addr));
       msg.msg_name = &sa;

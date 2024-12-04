@@ -1,10 +1,11 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_CSS_CSSOM_CSS_TRANSLATE_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_CSS_CSSOM_CSS_TRANSLATE_H_
 
+#include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/css/css_primitive_value.h"
 #include "third_party/blink/renderer/core/css/cssom/css_style_value.h"
 #include "third_party/blink/renderer/core/css/cssom/css_transform_component.h"
@@ -47,9 +48,9 @@ class CORE_EXPORT CSSTranslate final : public CSSTransformComponent {
   CSSTranslate& operator=(const CSSTranslate&) = delete;
 
   // Getters and setters for attributes defined in the IDL.
-  CSSNumericValue* x() { return x_; }
-  CSSNumericValue* y() { return y_; }
-  CSSNumericValue* z() { return z_; }
+  CSSNumericValue* x() { return x_.Get(); }
+  CSSNumericValue* y() { return y_.Get(); }
+  CSSNumericValue* z() { return z_.Get(); }
   void setX(CSSNumericValue* x, ExceptionState&);
   void setY(CSSNumericValue* y, ExceptionState&);
   void setZ(CSSNumericValue* z, ExceptionState&);
@@ -75,4 +76,4 @@ class CORE_EXPORT CSSTranslate final : public CSSTransformComponent {
 
 }  // namespace blink
 
-#endif
+#endif  // THIRD_PARTY_BLINK_RENDERER_CORE_CSS_CSSOM_CSS_TRANSLATE_H_

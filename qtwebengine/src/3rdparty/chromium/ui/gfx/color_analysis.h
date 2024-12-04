@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,12 +7,12 @@
 
 #include <stdint.h>
 
-#include "base/callback_forward.h"
-#include "base/compiler_specific.h"
-#include "base/memory/ref_counted.h"
-#include "base/memory/ref_counted_memory.h"
+#include <vector>
+
+#include "base/containers/span.h"
+#include "base/functional/callback_forward.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/skia/include/core/SkColor.h"
-#include "ui/gfx/geometry/matrix3_f.h"
 #include "ui/gfx/gfx_export.h"
 
 class SkBitmap;
@@ -93,15 +93,13 @@ GFX_EXPORT SkColor FindClosestColor(const uint8_t* image, int width, int height,
 //   |upper_bound|. Return that color.
 //   If no color fulfills that requirement return the color with the largest
 //   weight regardless of whether or not it fulfills the equation above.
-GFX_EXPORT SkColor
-    CalculateKMeanColorOfPNG(scoped_refptr<base::RefCountedMemory> png,
-                             const HSL& lower_bound,
-                             const HSL& upper_bound,
-                             KMeanImageSampler* sampler);
+GFX_EXPORT SkColor CalculateKMeanColorOfPNG(base::span<const uint8_t> png,
+                                            const HSL& lower_bound,
+                                            const HSL& upper_bound,
+                                            KMeanImageSampler* sampler);
 // Computes a dominant color using the above algorithm and reasonable defaults
 // for |lower_bound|, |upper_bound| and |sampler|.
-GFX_EXPORT SkColor CalculateKMeanColorOfPNG(
-    scoped_refptr<base::RefCountedMemory> png);
+GFX_EXPORT SkColor CalculateKMeanColorOfPNG(base::span<const uint8_t> png);
 
 // Computes a dominant color for the first |height| rows of |bitmap| using the
 // above algorithm and a reasonable default sampler. If |find_closest| is true,
@@ -178,7 +176,7 @@ GFX_EXPORT std::vector<Swatch> CalculateColorSwatches(
     const SkBitmap& bitmap,
     size_t max_swatches,
     const gfx::Rect& region,
-    base::Optional<ColorSwatchFilter> filter);
+    absl::optional<ColorSwatchFilter> filter);
 
 // Returns a vector of RGB colors that represents the bitmap based on the
 // |color_profiles| provided. For each value, if a value is succesfully
@@ -192,20 +190,6 @@ GFX_EXPORT std::vector<Swatch> CalculateProminentColorsOfBitmap(
     const std::vector<ColorProfile>& color_profiles,
     gfx::Rect* region,
     ColorSwatchFilter filter);
-
-// Compute color covariance matrix for the input bitmap.
-GFX_EXPORT gfx::Matrix3F ComputeColorCovariance(const SkBitmap& bitmap);
-
-// Apply a color reduction transform defined by |color_transform| vector to
-// |source_bitmap|. The result is put into |target_bitmap|, which is expected
-// to be initialized to the required size and type (SkBitmap::kA8_Config).
-// If |fit_to_range|, result is transfored linearly to fit 0-0xFF range.
-// Otherwise, data is clipped.
-// Returns true if the target has been computed.
-GFX_EXPORT bool ApplyColorReduction(const SkBitmap& source_bitmap,
-                                   const gfx::Vector3dF& color_transform,
-                                   bool fit_to_range,
-                                   SkBitmap* target_bitmap);
 
 }  // namespace color_utils
 

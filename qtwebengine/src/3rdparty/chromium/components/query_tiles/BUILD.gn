@@ -1,15 +1,19 @@
-# Copyright 2020 The Chromium Authors. All rights reserved.
+# Copyright 2020 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
 if (is_android) {
   import("//build/config/android/config.gni")
   import("//build/config/android/rules.gni")
+  import("//third_party/jni_zero/jni_zero.gni")
 }
 
 if (is_android) {
   java_group("java") {
-    deps = [ ":public_java" ]
+    deps = [
+      ":public_java",
+      ":query_tile_java",
+    ]
   }
 }
 
@@ -71,9 +75,21 @@ source_set("factory") {
 }
 
 if (is_android) {
-  android_library("public_java") {
+  android_library("query_tile_java") {
     sources = [
       "android/java/src/org/chromium/components/query_tiles/QueryTile.java",
+    ]
+
+    deps = [
+      "//components/browser_ui/widget/android:java",
+      "//third_party/androidx:androidx_annotation_annotation_java",
+      "//url:gurl_java",
+    ]
+  }
+
+  android_library("public_java") {
+    srcjar_deps = [ ":jni_headers" ]
+    sources = [
       "android/java/src/org/chromium/components/query_tiles/QueryTileConstants.java",
       "android/java/src/org/chromium/components/query_tiles/TileProvider.java",
       "android/java/src/org/chromium/components/query_tiles/TileUmaLogger.java",
@@ -82,15 +98,15 @@ if (is_android) {
     ]
 
     deps = [
+      ":query_tile_java",
       "//base:base_java",
-      "//base:jni_java",
+      "//build/android:build_java",
       "//components/browser_ui/widget/android:java",
-      "//third_party/android_deps:androidx_annotation_annotation_java",
-      "//third_party/android_deps:androidx_recyclerview_recyclerview_java",
+      "//third_party/androidx:androidx_annotation_annotation_java",
+      "//third_party/jni_zero:jni_zero_java",
       "//ui/android:ui_java",
+      "//url:gurl_java",
     ]
-
-    annotation_processor_deps = [ "//base/android/jni_generator:jni_processor" ]
   }
 
   generate_jni("jni_headers") {
@@ -103,25 +119,25 @@ if (is_android) {
   }
 
   android_library("test_support_java") {
+    testonly = true
     sources = [ "android/java/src/org/chromium/components/query_tiles/TestTileProvider.java" ]
 
     deps = [
-      ":public_java",
+      ":java",
       "//base:base_java",
+      "//url:gurl_java",
+      "//url:gurl_junit_test_support",
     ]
   }
 
-  android_library("query_tiles_junit_tests") {
-    bypass_platform_checks = true
-    testonly = true
+  robolectric_library("query_tiles_junit_tests") {
     sources = [ "android/java/src/org/chromium/components/query_tiles/TileUmaLoggerTest.java" ]
 
     deps = [
-      ":public_java",
+      ":java",
       ":test_support_java",
       "//base:base_java",
       "//base:base_junit_test_support",
-      "//third_party/android_deps:robolectric_all_java",
       "//third_party/junit",
     ]
   }

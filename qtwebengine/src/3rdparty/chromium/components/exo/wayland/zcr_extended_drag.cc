@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,6 +10,7 @@
 
 #include <cstdint>
 
+#include "base/memory/raw_ptr.h"
 #include "base/notreached.h"
 #include "components/exo/data_offer.h"
 #include "components/exo/data_source.h"
@@ -48,12 +49,12 @@ class ZcrExtendedDragSourceDelegate : public ExtendedDragSource::Delegate {
     return settings_ & ZCR_EXTENDED_DRAG_V1_OPTIONS_LOCK_CURSOR;
   }
 
-  void OnSwallowed(std::string mime_type) override {
+  void OnSwallowed(const std::string& mime_type) override {
     zcr_extended_drag_source_v1_send_swallow(resource_, mime_type.c_str());
     wl_client_flush(wl_resource_get_client(resource_));
   }
 
-  void OnUnswallowed(std::string mime_type,
+  void OnUnswallowed(const std::string& mime_type,
                      const gfx::Vector2d& offset) override {
     zcr_extended_drag_source_v1_send_unswallow(resource_, mime_type.c_str(),
                                                offset.x(), offset.y());
@@ -63,7 +64,7 @@ class ZcrExtendedDragSourceDelegate : public ExtendedDragSource::Delegate {
   void OnDataSourceDestroying() override { delete this; }
 
  private:
-  wl_resource* const resource_;
+  const raw_ptr<wl_resource> resource_;
   const uint32_t settings_;
 };
 
@@ -105,7 +106,7 @@ class ZcrExtendedOfferDelegate : public ExtendedDragOffer::Delegate {
   void OnDataOfferDestroying() override { delete this; }
 
  private:
-  wl_resource* const resource_;
+  const raw_ptr<wl_resource> resource_;
 };
 
 void extended_drag_offer_destroy(wl_client* client, wl_resource* resource) {
@@ -143,7 +144,6 @@ void extended_drag_get_extended_drag_source(wl_client* client,
                                             uint32_t id,
                                             wl_resource* data_source_resource,
                                             uint32_t settings) {
-  Display* display = GetUserDataAs<Display>(resource);
   DataSource* source = GetUserDataAs<DataSource>(data_source_resource);
 
   wl_resource* extended_drag_source_resource =
@@ -153,9 +153,8 @@ void extended_drag_get_extended_drag_source(wl_client* client,
   SetImplementation(extended_drag_source_resource,
                     &extended_drag_source_implementation,
                     std::make_unique<ExtendedDragSource>(
-                        source, display->seat(),
-                        new ZcrExtendedDragSourceDelegate(
-                            extended_drag_source_resource, settings)));
+                        source, new ZcrExtendedDragSourceDelegate(
+                                    extended_drag_source_resource, settings)));
 }
 
 void extended_drag_get_extended_drag_offer(wl_client* client,

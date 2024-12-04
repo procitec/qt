@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,8 +6,9 @@
 
 #include <stdlib.h>
 
+#include <string>
+
 #include "base/memory/ptr_util.h"
-#include "base/strings/string16.h"
 #include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -73,8 +74,8 @@ TEST(EstimateMemoryUsageTest, String) {
 }
 
 TEST(EstimateMemoryUsageTest, String16) {
-  string16 string(777, 'a');
-  EXPECT_EQ(sizeof(char16) * (string.capacity() + 1),
+  std::u16string string(777, 'a');
+  EXPECT_EQ(sizeof(char16_t) * (string.capacity() + 1),
             EstimateMemoryUsage(string));
 }
 
@@ -147,6 +148,30 @@ TEST(EstimateMemoryUsageTest, Vector) {
     expected_size += EstimateMemoryUsage(vector.back());
   }
   EXPECT_EQ(expected_size, EstimateMemoryUsage(vector));
+}
+
+TEST(EstimateMemoryUsageTest, Vector_of_Pointers) {
+  {
+    std::unique_ptr<Data> u_ptr = std::make_unique<Data>(11);
+    std::vector<Data*> vector;
+    vector.reserve(1000);
+    vector.push_back(u_ptr.get());
+
+    size_t capacity = vector.capacity();
+    size_t expected_size = capacity * sizeof(Data*);
+    EXPECT_EQ(expected_size, EstimateMemoryUsage(vector));
+  }
+
+  {
+    std::unique_ptr<Data> u_ptr = std::make_unique<Data>(11);
+    std::vector<raw_ptr<Data>> vector;
+    vector.reserve(1000);
+    vector.push_back(u_ptr.get());
+
+    size_t capacity = vector.capacity();
+    size_t expected_size = capacity * sizeof(raw_ptr<Data>);
+    EXPECT_EQ(expected_size, EstimateMemoryUsage(vector));
+  }
 }
 
 TEST(EstimateMemoryUsageTest, List) {
@@ -246,19 +271,18 @@ TEST(EstimateMemoryUsageTest, IsStandardContainerComplexIteratorTest) {
   };
 
   static_assert(
-      internal::IsStandardContainerComplexIterator<std::list<int>::iterator>(),
+      internal::IsIteratorOfStandardContainer<std::list<int>::iterator>, "");
+  static_assert(
+      internal::IsIteratorOfStandardContainer<std::list<int>::const_iterator>,
       "");
-  static_assert(internal::IsStandardContainerComplexIterator<
-                    std::list<int>::const_iterator>(),
+  static_assert(
+      internal::IsIteratorOfStandardContainer<std::list<int>::reverse_iterator>,
+      "");
+  static_assert(internal::IsIteratorOfStandardContainer<
+                    std::list<int>::const_reverse_iterator>,
                 "");
-  static_assert(internal::IsStandardContainerComplexIterator<
-                    std::list<int>::reverse_iterator>(),
-                "");
-  static_assert(internal::IsStandardContainerComplexIterator<
-                    std::list<int>::const_reverse_iterator>(),
-                "");
-  static_assert(!internal::IsStandardContainerComplexIterator<int>(), "");
-  static_assert(!internal::IsStandardContainerComplexIterator<abstract*>(), "");
+  static_assert(!internal::IsIteratorOfStandardContainer<int>, "");
+  static_assert(!internal::IsIteratorOfStandardContainer<abstract*>, "");
 }
 
 }  // namespace trace_event

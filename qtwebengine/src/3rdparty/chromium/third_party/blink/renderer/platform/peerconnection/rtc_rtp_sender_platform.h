@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,6 +7,7 @@
 
 #include <memory>
 
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/renderer/platform/peerconnection/rtc_stats.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
@@ -52,8 +53,7 @@ class PLATFORM_EXPORT RTCRtpSenderPlatform {
   virtual void SetParameters(Vector<webrtc::RtpEncodingParameters>,
                              absl::optional<webrtc::DegradationPreference>,
                              RTCVoidRequest*) = 0;
-  virtual void GetStats(RTCStatsReportCallback,
-                        const Vector<webrtc::NonStandardGroupId>&) = 0;
+  virtual void GetStats(RTCStatsReportCallback) = 0;
   virtual void SetStreams(const Vector<String>& stream_ids) = 0;
   virtual RTCEncodedAudioStreamTransformer* GetEncodedAudioStreamTransformer()
       const {

@@ -43,16 +43,12 @@ void URLInputType::CountUsage() {
   CountUsageIfVisible(WebFeature::kInputTypeURL);
 }
 
-const AtomicString& URLInputType::FormControlType() const {
-  return input_type_names::kUrl;
-}
-
 bool URLInputType::TypeMismatchFor(const String& value) const {
-  return !value.IsEmpty() && !KURL(NullURL(), value).IsValid();
+  return !value.empty() && !KURL(NullURL(), value).IsValid();
 }
 
 bool URLInputType::TypeMismatch() const {
-  return TypeMismatchFor(GetElement().value());
+  return TypeMismatchFor(GetElement().Value());
 }
 
 String URLInputType::TypeMismatchText() const {

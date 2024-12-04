@@ -26,6 +26,9 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_SCRIPT_PENDING_SCRIPT_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_SCRIPT_PENDING_SCRIPT_H_
 
+#include "base/check_op.h"
+#include "base/time/time.h"
+#include "third_party/blink/public/common/scheduler/task_attribution_id.h"
 #include "third_party/blink/public/mojom/script/script_type.mojom-blink-forward.h"
 #include "third_party/blink/public/platform/scheduler/web_scoped_virtual_time_pauser.h"
 #include "third_party/blink/renderer/core/core_export.h"
@@ -33,7 +36,8 @@
 #include "third_party/blink/renderer/core/script/script_element_base.h"
 #include "third_party/blink/renderer/core/script/script_scheduling_type.h"
 #include "third_party/blink/renderer/platform/bindings/name_client.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
+#include "third_party/blink/renderer/platform/scheduler/public/task_attribution_info.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/wtf/text/text_position.h"
 
@@ -66,7 +70,7 @@ class CORE_EXPORT PendingScript : public GarbageCollected<PendingScript>,
  public:
   PendingScript(const PendingScript&) = delete;
   PendingScript& operator=(const PendingScript&) = delete;
-  virtual ~PendingScript();
+  ~PendingScript() override;
 
   TextPosition StartingPosition() const { return starting_position_; }
   void MarkParserBlockingLoadStartTime();
@@ -89,7 +93,7 @@ class CORE_EXPORT PendingScript : public GarbageCollected<PendingScript>,
   const char* NameInHeapSnapshot() const override { return "PendingScript"; }
 
   // Returns nullptr when "script's script is null", i.e. an error occurred.
-  virtual Script* GetSource(const KURL& document_url) const = 0;
+  virtual Script* GetSource() const = 0;
 
   // https://html.spec.whatwg.org/C/#the-script-is-ready
   virtual bool IsReady() const = 0;
@@ -128,19 +132,35 @@ class CORE_EXPORT PendingScript : public GarbageCollected<PendingScript>,
   // PendingScript::Dispose() is called in ExecuteScriptBlock().
   //
   // This is virtual only for testing.
-  virtual void ExecuteScriptBlock(const KURL&);
+  virtual void ExecuteScriptBlock();
 
-  virtual bool IsEligibleForDelay() const { return false; }
+  // Check if this script is eligible for kLowPriorityAsyncScriptExecution
+  // feature (see crbug/1348467).
+  virtual bool IsEligibleForLowPriorityAsyncScriptExecution() const {
+    return false;
+  }
+
+  bool IsWatchingForLoad() const { return client_ != nullptr; }
 
  protected:
-  PendingScript(ScriptElementBase*, const TextPosition& starting_position);
+  PendingScript(ScriptElementBase*,
+                const TextPosition& starting_position,
+                scheduler::TaskAttributionInfo* parent_task);
 
   virtual void DisposeInternal() = 0;
 
-  PendingScriptClient* Client() { return client_; }
-  bool IsWatchingForLoad() const { return client_; }
+  PendingScriptClient* Client() { return client_.Get(); }
 
   virtual void CheckState() const = 0;
+
+  Document* OriginalElementDocument() const {
+    return original_element_document_.Get();
+  }
+  ExecutionContext* OriginalExecutionContext() const {
+    return original_execution_context_.Get();
+  }
+
+  bool IsDisposed() const { return !element_; }
 
  private:
   static void ExecuteScriptBlockInternal(
@@ -174,6 +194,9 @@ class CORE_EXPORT PendingScript : public GarbageCollected<PendingScript>,
   WeakMember<ExecutionContext> original_execution_context_;
 
   const bool created_during_document_write_;
+
+  // The ID of the parent task that loaded the script.
+  Member<scheduler::TaskAttributionInfo> parent_task_;
 };
 
 }  // namespace blink

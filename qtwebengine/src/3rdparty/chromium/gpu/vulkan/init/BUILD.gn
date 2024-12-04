@@ -1,4 +1,4 @@
-# Copyright 2018 The Chromium Authors. All rights reserved.
+# Copyright 2018 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -17,15 +17,14 @@ component("init") {
 
   defines = [ "IS_VULKAN_INIT_IMPL" ]
 
+  configs += [ "//build/config/compiler:wexit_time_destructors" ]
+
   public_deps = [
     "//base",
     "//gpu/vulkan",
   ]
 
   deps = []
-  if (use_x11) {
-    deps += [ "//gpu/vulkan/x" ]
-  }
   if (is_android) {
     deps += [ "//gpu/vulkan/android" ]
   }
@@ -38,6 +37,9 @@ component("init") {
   if (is_win) {
     deps += [ "//gpu/vulkan/win32" ]
   }
+  if (is_apple) {
+    deps += [ "//gpu/vulkan/mac" ]
+  }
 }
 
 component("skia") {
@@ -49,6 +51,8 @@ component("skia") {
   ]
 
   defines = [ "IS_VULKAN_INIT_IMPL" ]
+
+  configs += [ "//build/config/compiler:wexit_time_destructors" ]
 
   public_deps = [
     "//base",

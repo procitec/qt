@@ -26,7 +26,6 @@
 
 #include "third_party/blink/renderer/core/editing/commands/replace_selection_command.h"
 
-#include "base/macros.h"
 #include "third_party/blink/renderer/core/css/css_property_names.h"
 #include "third_party/blink/renderer/core/css/css_property_value_set.h"
 #include "third_party/blink/renderer/core/css/css_style_declaration.h"
@@ -66,13 +65,15 @@
 #include "third_party/blink/renderer/core/layout/layout_text.h"
 #include "third_party/blink/renderer/core/svg/svg_style_element.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
-#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
 namespace blink {
+
+using mojom::blink::FormControlType;
 
 // --- ReplacementFragment helper class
 
@@ -189,14 +190,13 @@ ReplacementFragment::ReplacementFragment(Document* document,
       // register an event handler.
       &&
       !(shadow_ancestor_element && shadow_ancestor_element->GetLayoutObject() &&
-        shadow_ancestor_element->GetLayoutObject()
-            ->IsTextControlIncludingNG()) &&
-      HasRichlyEditableStyle(*editable_root)) {
+        shadow_ancestor_element->GetLayoutObject()->IsTextControl()) &&
+      IsRichlyEditable(*editable_root)) {
     RemoveInterchangeNodes(fragment_);
     return;
   }
 
-  if (!HasRichlyEditableStyle(*editable_root)) {
+  if (!IsRichlyEditable(*editable_root)) {
     bool is_plain_text = true;
     for (Node& node : NodeTraversal::ChildrenOf(*fragment_)) {
       if (IsInterchangeHTMLBRElement(&node) && &node == fragment_->lastChild())
@@ -213,7 +213,7 @@ ReplacementFragment::ReplacementFragment(Document* document,
       String original_text = fragment_->textContent();
       auto* event =
           MakeGarbageCollected<BeforeTextInsertedEvent>(original_text);
-      editable_root->DispatchEvent(*event);
+      editable_root->DefaultEventHandler(*event);
       if (original_text != event->GetText()) {
         fragment_ = CreateFragmentFromText(
             selection.ToNormalizedEphemeralRange(), event->GetText());
@@ -245,8 +245,8 @@ ReplacementFragment::ReplacementFragment(Document* document,
 
   // Give the root a chance to change the text.
   auto* evt = MakeGarbageCollected<BeforeTextInsertedEvent>(text);
-  editable_root->DispatchEvent(*evt);
-  if (text != evt->GetText() || !HasRichlyEditableStyle(*editable_root)) {
+  editable_root->DefaultEventHandler(*evt);
+  if (text != evt->GetText() || !IsRichlyEditable(*editable_root)) {
     RestoreAndRemoveTestRenderingNodesToFragment(holder);
 
     // TODO(editing-dev): Use of UpdateStyleAndLayout
@@ -411,7 +411,7 @@ inline void ReplaceSelectionCommand::InsertedNodes::WillRemoveNode(Node& node) {
         NodeTraversal::NextSkippingChildren(*first_node_inserted_);
   } else if (last_node_inserted_ == node) {
     last_node_inserted_ =
-        NodeTraversal::PreviousSkippingChildren(*last_node_inserted_);
+        NodeTraversal::PreviousAbsoluteSibling(*last_node_inserted_);
   }
   if (node.contains(ref_node_))
     ref_node_ = NodeTraversal::NextSkippingChildren(node);
@@ -593,7 +593,7 @@ void ReplaceSelectionCommand::RemoveRedundantStylesAndKeepStyleSpanInline(
         }
       }
 
-      ContainerNode* context = element->parentNode();
+      Element* context = element->parentElement();
 
       // If Mail wraps the fragment with a Paste as Quotation blockquote, or if
       // you're pasting into a quoted region, styles from blockquoteNode are
@@ -654,9 +654,8 @@ void ReplaceSelectionCommand::RemoveRedundantStylesAndKeepStyleSpanInline(
       continue;
     }
 
-    if (element->parentNode() &&
-        HasRichlyEditableStyle(*element->parentNode()) &&
-        HasRichlyEditableStyle(*element)) {
+    if (element->parentNode() && IsRichlyEditable(*element->parentNode()) &&
+        IsRichlyEditable(*element)) {
       RemoveElementAttribute(element, html_names::kContenteditableAttr);
     }
   }
@@ -763,7 +762,7 @@ void ReplaceSelectionCommand::MoveElementOutOfAncestor(
     Element* ancestor,
     EditingState* editing_state) {
   DCHECK(element);
-  if (!HasEditableStyle(*ancestor->parentNode()))
+  if (!IsEditable(*ancestor->parentNode()))
     return;
 
   GetDocument().UpdateStyleAndLayout(DocumentUpdateReason::kEditing);
@@ -820,10 +819,13 @@ void ReplaceSelectionCommand::RemoveUnrenderedTextNodesAtEnds(
   // can't insert into those elements.
   auto* first_node_inserted =
       DynamicTo<Text>(inserted_nodes.FirstNodeInserted());
-  if (first_node_inserted && !NodeHasVisibleLayoutText(*first_node_inserted)) {
-    inserted_nodes.WillRemoveNode(*first_node_inserted);
-    // Removing a Text node won't dispatch synchronous events.
-    RemoveNode(first_node_inserted, ASSERT_NO_EDITING_ABORT);
+  if (first_node_inserted) {
+    GetDocument().UpdateStyleAndLayout(DocumentUpdateReason::kEditing);
+    if (!NodeHasVisibleLayoutText(*first_node_inserted)) {
+      inserted_nodes.WillRemoveNode(*first_node_inserted);
+      // Removing a Text node won't dispatch synchronous events.
+      RemoveNode(first_node_inserted, ASSERT_NO_EDITING_ABORT);
+    }
   }
 }
 
@@ -947,7 +949,6 @@ void ReplaceSelectionCommand::MergeEndIfNeeded(EditingState* editing_state) {
 
   // Bail to avoid infinite recursion.
   if (moving_paragraph_) {
-    NOTREACHED();
     return;
   }
 
@@ -1053,17 +1054,20 @@ ElementToSplitToAvoidPastingIntoInlineElementsWithStyle(
 
 void ReplaceSelectionCommand::SetUpStyle(const VisibleSelection& selection) {
   // We can skip matching the style if the selection is plain text.
-  // TODO(editing-dev): Use IsEditablePosition instead of using UserModify
+  // TODO(editing-dev): Use IsEditablePosition instead of using UsedUserModify
   // directly.
   if ((selection.Start().AnchorNode()->GetLayoutObject() &&
        selection.Start()
                .AnchorNode()
                ->GetLayoutObject()
                ->Style()
-               ->UserModify() == EUserModify::kReadWritePlaintextOnly) &&
+               ->UsedUserModify() == EUserModify::kReadWritePlaintextOnly) &&
       (selection.End().AnchorNode()->GetLayoutObject() &&
-       selection.End().AnchorNode()->GetLayoutObject()->Style()->UserModify() ==
-           EUserModify::kReadWritePlaintextOnly))
+       selection.End()
+               .AnchorNode()
+               ->GetLayoutObject()
+               ->Style()
+               ->UsedUserModify() == EUserModify::kReadWritePlaintextOnly))
     match_style_ = false;
 
   if (match_style_) {
@@ -1380,7 +1384,7 @@ void ReplaceSelectionCommand::DoApply(EditingState* editing_state) {
   if ((IsHTMLListElement(inserted_nodes.RefNode()) ||
        (IsHTMLListElement(inserted_nodes.RefNode()->firstChild()))) &&
       block_start && block_start->GetLayoutObject()->IsListItemIncludingNG() &&
-      HasEditableStyle(*block_start->parentNode())) {
+      IsEditable(*block_start->parentNode())) {
     inserted_nodes.SetRefNode(InsertAsListItems(
         To<HTMLElement>(inserted_nodes.RefNode()), block_start, insertion_pos,
         inserted_nodes, editing_state));
@@ -1718,9 +1722,10 @@ bool ReplaceSelectionCommand::ShouldPerformSmartReplace() const {
   TextControlElement* text_control =
       EnclosingTextControl(PositionAtStartOfInsertedContent().DeepEquivalent());
   auto* html_input_element = DynamicTo<HTMLInputElement>(text_control);
-  if (html_input_element &&
-      html_input_element->type() == input_type_names::kPassword)
+  if (html_input_element && html_input_element->FormControlType() ==
+                                FormControlType::kInputPassword) {
     return false;  // Disable smart replace for password fields.
+  }
 
   return true;
 }
@@ -1753,8 +1758,9 @@ void ReplaceSelectionCommand::AddSpacesForSmartReplace(
   if (needs_trailing_space && end_node) {
     bool collapse_white_space =
         !end_node->GetLayoutObject() ||
-        end_node->GetLayoutObject()->Style()->CollapseWhiteSpace();
-    if (auto* end_text_node = DynamicTo<Text>(end_node)) {
+        end_node->GetLayoutObject()->Style()->ShouldCollapseWhiteSpaces();
+    end_text_node = DynamicTo<Text>(end_node);
+    if (end_text_node) {
       InsertTextIntoNode(end_text_node, end_offset,
                          collapse_white_space ? NonBreakingSpaceString() : " ");
       if (end_of_inserted_content_.ComputeContainerNode() == end_node)
@@ -1793,7 +1799,7 @@ void ReplaceSelectionCommand::AddSpacesForSmartReplace(
   if (needs_leading_space && start_node) {
     bool collapse_white_space =
         !start_node->GetLayoutObject() ||
-        start_node->GetLayoutObject()->Style()->CollapseWhiteSpace();
+        start_node->GetLayoutObject()->Style()->ShouldCollapseWhiteSpaces();
     if (auto* start_text_node = DynamicTo<Text>(start_node)) {
       InsertTextIntoNode(start_text_node, start_offset,
                          collapse_white_space ? NonBreakingSpaceString() : " ");

@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 Research In Motion.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtQml module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 Research In Motion.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include <QtQml/qqmlfile.h>
 #include <QtCore/QCoreApplication>
@@ -43,7 +7,9 @@
 #include <QQmlComponent>
 #include "qqmlapplicationengine.h"
 #include "qqmlapplicationengine_p.h"
-#include "qqmlfileselector.h"
+#include <QtQml/private/qqmlcomponent_p.h>
+#include <QtQml/private/qqmldirdata_p.h>
+#include <QtQml/private/qqmlfileselector_p.h>
 
 QT_BEGIN_NAMESPACE
 
@@ -57,10 +23,18 @@ QQmlApplicationEnginePrivate::~QQmlApplicationEnginePrivate()
 {
 }
 
+void QQmlApplicationEnginePrivate::ensureInitialized()
+{
+    if (!isInitialized) {
+        init();
+        isInitialized = true;
+    }
+}
+
 void QQmlApplicationEnginePrivate::cleanUp()
 {
     Q_Q(QQmlApplicationEngine);
-    for (auto obj : qAsConst(objects))
+    for (auto obj : std::as_const(objects))
         obj->disconnect(q);
 
     qDeleteAll(objects);
@@ -73,33 +47,35 @@ void QQmlApplicationEnginePrivate::init()
                &QCoreApplication::quit, Qt::QueuedConnection);
     q->connect(q, &QQmlApplicationEngine::exit, QCoreApplication::instance(),
                &QCoreApplication::exit, Qt::QueuedConnection);
-    q->connect(q, SIGNAL(uiLanguageChanged()), q_func(), SLOT(_q_loadTranslations()));
+    QObject::connect(q, &QJSEngine::uiLanguageChanged, q, [this](){
+        _q_loadTranslations();
+    });
 #if QT_CONFIG(translation)
     QTranslator* qtTranslator = new QTranslator(q);
-    if (qtTranslator->load(QLocale(), QLatin1String("qt"), QLatin1String("_"), QLibraryInfo::location(QLibraryInfo::TranslationsPath), QLatin1String(".qm")))
+    if (qtTranslator->load(QLocale(), QLatin1String("qt"), QLatin1String("_"), QLibraryInfo::path(QLibraryInfo::TranslationsPath), QLatin1String(".qm")))
         QCoreApplication::installTranslator(qtTranslator);
     else
         delete qtTranslator;
 #endif
-    new QQmlFileSelector(q,q);
+    auto *selector = new QQmlFileSelector(q,q);
+    selector->setExtraSelectors(extraFileSelectors);
     QCoreApplication::instance()->setProperty("__qml_using_qqmlapplicationengine", QVariant(true));
 }
 
 void QQmlApplicationEnginePrivate::_q_loadTranslations()
 {
 #if QT_CONFIG(translation)
+    Q_Q(QQmlApplicationEngine);
     if (translationsDirectory.isEmpty())
         return;
 
-    Q_Q(QQmlApplicationEngine);
-
-    QScopedPointer<QTranslator> translator(new QTranslator);
-    if (!uiLanguage.isEmpty()) {
+    auto translator = std::make_unique<QTranslator>();
+    if (!uiLanguage.value().isEmpty()) {
         QLocale locale(uiLanguage);
         if (translator->load(locale, QLatin1String("qml"), QLatin1String("_"), translationsDirectory, QLatin1String(".qm"))) {
             if (activeTranslator)
-                QCoreApplication::removeTranslator(activeTranslator.data());
-            QCoreApplication::installTranslator(translator.data());
+                QCoreApplication::removeTranslator(activeTranslator.get());
+            QCoreApplication::installTranslator(translator.get());
             activeTranslator.swap(translator);
         }
     } else {
@@ -112,6 +88,8 @@ void QQmlApplicationEnginePrivate::_q_loadTranslations()
 void QQmlApplicationEnginePrivate::startLoad(const QUrl &url, const QByteArray &data, bool dataFlag)
 {
     Q_Q(QQmlApplicationEngine);
+
+    ensureInitialized();
 
     if (url.scheme() == QLatin1String("file") || url.scheme() == QLatin1String("qrc")) {
         QFileInfo fi(QQmlFile::urlToLocalFileOrQrc(url));
@@ -128,11 +106,40 @@ void QQmlApplicationEnginePrivate::startLoad(const QUrl &url, const QByteArray &
     else
         c->loadUrl(url);
 
-    if (!c->isLoading()) {
-        finishLoad(c);
-        return;
+    ensureLoadingFinishes(c);
+}
+
+void QQmlApplicationEnginePrivate::startLoad(QAnyStringView uri, QAnyStringView typeName)
+{
+    Q_Q(QQmlApplicationEngine);
+
+    QQmlComponent *c = new QQmlComponent(q, q);
+
+    ensureInitialized();
+
+    auto *componentPriv = QQmlComponentPrivate::get(c);
+    const auto [status, type] = componentPriv->prepareLoadFromModule(uri, typeName);
+
+    if (type.sourceUrl().isValid()) {
+        const auto qmlDirData = typeLoader.getQmldir(type.sourceUrl());
+        const QUrl url = qmlDirData->finalUrl();
+        if (url.scheme() == QLatin1String("file") || url.scheme() == QLatin1String("qrc")) {
+            QFileInfo fi(QQmlFile::urlToLocalFileOrQrc(url));
+            translationsDirectory = fi.path() + QLatin1String("/i18n");
+        } else {
+            translationsDirectory.clear();
+        }
     }
-    QObject::connect(c, &QQmlComponent::statusChanged, q, [this, c] { this->finishLoad(c); });
+
+    /* Translations must be loaded before the QML file. They require translationDirectory to
+     * already be resolved. But, in order to resolve the translationDirectory, the type of the
+     * module to load needs to be known. Therefore, loadFromModule is split into resolution and
+     * loading because the translation directory needs to be set in between.
+     */
+    _q_loadTranslations();
+    componentPriv->completeLoadFromModule(uri, typeName, type, status);
+
+    ensureLoadingFinishes(c);
 }
 
 void QQmlApplicationEnginePrivate::finishLoad(QQmlComponent *c)
@@ -143,6 +150,7 @@ void QQmlApplicationEnginePrivate::finishLoad(QQmlComponent *c)
         qWarning() << "QQmlApplicationEngine failed to load component";
         warning(c->errors());
         q->objectCreated(nullptr, c->url());
+        q->objectCreationFailed(c->url());
         break;
     case QQmlComponent::Ready: {
         auto newObj = initialProperties.empty() ? c->create() : c->createWithInitialProperties(initialProperties);
@@ -151,6 +159,7 @@ void QQmlApplicationEnginePrivate::finishLoad(QQmlComponent *c)
            qWarning() << "QQmlApplicationEngine failed to create component";
            warning(c->errors());
            q->objectCreated(nullptr, c->url());
+           q->objectCreationFailed(c->url());
            break;
         }
 
@@ -165,6 +174,16 @@ void QQmlApplicationEnginePrivate::finishLoad(QQmlComponent *c)
     }
 
     c->deleteLater();
+}
+
+void QQmlApplicationEnginePrivate::ensureLoadingFinishes(QQmlComponent *c)
+{
+    Q_Q(QQmlApplicationEngine);
+    if (!c->isLoading()) {
+        finishLoad(c);
+        return;
+    }
+    QObject::connect(c, &QQmlComponent::statusChanged, q, [this, c] { this->finishLoad(c); });
 }
 
 /*!
@@ -227,14 +246,38 @@ void QQmlApplicationEnginePrivate::finishLoad(QQmlComponent *c)
 */
 
 /*!
+  \fn QQmlApplicationEngine::objectCreationFailed(const QUrl &url)
+  \since 6.4
+
+  This signal is emitted when loading finishes because an error occurred.
+
+  The \a url to the component that failed to load is provided as an argument.
+
+  \code
+    QGuiApplication app(argc, argv);
+    QQmlApplicationEngine engine;
+
+    // exit on error
+    QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed,
+        &app, []() { QCoreApplication::exit(-1); }, Qt::QueuedConnection);
+    engine.load(QUrl());
+    return app.exec();
+  \endcode
+
+  \note If the path to the component was provided as a QString containing a
+  relative path, the \a url will contain a fully resolved path to the file.
+
+  See also \l {QQmlApplicationEngine::objectCreated}, which will be emitted in
+  addition to this signal (even though creation failed).
+*/
+
+/*!
   Create a new QQmlApplicationEngine with the given \a parent. You will have to call load() later in
   order to load a QML file.
 */
 QQmlApplicationEngine::QQmlApplicationEngine(QObject *parent)
 : QQmlEngine(*(new QQmlApplicationEnginePrivate(this)), parent)
 {
-    Q_D(QQmlApplicationEngine);
-    d->init();
     QJSEnginePrivate::addToDebugServer(this);
 }
 
@@ -249,15 +292,36 @@ QQmlApplicationEngine::QQmlApplicationEngine(const QUrl &url, QObject *parent)
 }
 
 /*!
+  Create a new QQmlApplicationEngine and loads the QML type specified by
+  \a uri and \a typeName
+  This is provided as a convenience,  and is the same as using the empty constructor and calling
+  loadFromModule afterwards.
+
+  \since 6.5
+*/
+QQmlApplicationEngine::QQmlApplicationEngine(QAnyStringView uri, QAnyStringView typeName, QObject *parent)
+    : QQmlApplicationEngine(parent)
+{
+    loadFromModule(uri, typeName);
+}
+
+static QUrl urlFromFilePath(const QString &filePath)
+{
+    return filePath.startsWith(QLatin1Char(':'))
+        ? QUrl(QLatin1String("qrc") + filePath)
+        : QUrl::fromUserInput(filePath, QLatin1String("."), QUrl::AssumeLocalFile);
+}
+
+/*!
   Create a new QQmlApplicationEngine and loads the QML file at the given
-  \a filePath, which must be a local file path. If a relative path is
+  \a filePath, which must be a local file or qrc path. If a relative path is
   given then it will be interpreted as relative to the working directory of the
   application.
 
   This is provided as a convenience, and is the same as using the empty constructor and calling load afterwards.
 */
 QQmlApplicationEngine::QQmlApplicationEngine(const QString &filePath, QObject *parent)
-    : QQmlApplicationEngine(QUrl::fromUserInput(filePath, QLatin1String("."), QUrl::AssumeLocalFile), parent)
+    : QQmlApplicationEngine(urlFromFilePath(filePath), parent)
 {
 }
 
@@ -289,16 +353,46 @@ void QQmlApplicationEngine::load(const QUrl &url)
 
 /*!
   Loads the root QML file located at \a filePath. \a filePath must be a path to
-  a local file. If \a filePath is a relative path, it is taken as relative to
-  the application's working directory. The object tree defined by the file is
-  instantiated immediately.
+  a local file or a path to a file in the resource file system. If \a filePath
+  is a relative path, it is taken as relative to the application's working
+  directory. The object tree defined by the file is instantiated immediately.
 
   If an error occurs, error messages are printed with qWarning.
 */
 void QQmlApplicationEngine::load(const QString &filePath)
 {
     Q_D(QQmlApplicationEngine);
-    d->startLoad(QUrl::fromUserInput(filePath, QLatin1String("."), QUrl::AssumeLocalFile));
+    d->startLoad(urlFromFilePath(filePath));
+}
+
+/*!
+    Loads the QML type \a typeName from the module specified by \a uri.
+    If the type originates from a QML file located at a  remote url,
+    the type will be loaded asynchronously.
+    Listen to the \l {QQmlApplicationEngine::objectCreated()}{objectCreated}
+    signal to determine when the object tree is ready.
+
+    If an error occurs, the \l {QQmlApplicationEngine::objectCreated()}{objectCreated}
+    signal is emitted with a null pointer as parameter and error messages are printed
+    with qWarning.
+
+    \code
+    QQmlApplicationEngine engine;
+    engine.loadFromModule("QtQuick", "Rectangle");
+    \endcode
+
+    \note The module identified by \a uri is searched in the
+    \l {QML Import Path}{import path}, in the same way as if
+    you were doing \c{import uri} inside a QML file. If the
+    module cannot be located there, this function will fail.
+
+    \since 6.5
+    \sa QQmlComponent::loadFromModule
+ */
+void QQmlApplicationEngine::loadFromModule(QAnyStringView uri, QAnyStringView typeName)
+{
+    Q_D(QQmlApplicationEngine);
+    d->startLoad(uri, typeName);
 }
 
 /*!
@@ -329,6 +423,26 @@ void QQmlApplicationEngine::setInitialProperties(const QVariantMap &initialPrope
 }
 
 /*!
+  Sets the \a extraFileSelectors to be passed to the internal QQmlFileSelector
+  used for resolving URLs to local files. The \a extraFileSelectors are applied
+  when the first QML file is loaded. Setting them afterwards has no effect.
+
+  \sa QQmlFileSelector
+  \sa QFileSelector::setExtraSelectors
+  \since 6.0
+*/
+void QQmlApplicationEngine::setExtraFileSelectors(const QStringList &extraFileSelectors)
+{
+    Q_D(QQmlApplicationEngine);
+    if (d->isInitialized) {
+        qWarning() << "QQmlApplicationEngine::setExtraFileSelectors()"
+                   << "called after loading QML files. This has no effect.";
+    } else {
+        d->extraFileSelectors = extraFileSelectors;
+    }
+}
+
+/*!
   Loads the QML given in \a data. The object tree defined by \a data is
   instantiated immediately.
 
@@ -356,17 +470,6 @@ QList<QObject *> QQmlApplicationEngine::rootObjects() const
     Q_D(const QQmlApplicationEngine);
     return d->objects;
 }
-
-#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
-/*!
-    \overload
-    \internal
-*/
-QList<QObject *> QQmlApplicationEngine::rootObjects()
-{
-    return qAsConst(*this).rootObjects();
-}
-#endif // < Qt 6
 
 QT_END_NAMESPACE
 

@@ -33,7 +33,8 @@
 
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
+#include "third_party/blink/renderer/platform/heap/member.h"
 #include "third_party/blink/renderer/platform/transforms/affine_transform.h"
 
 namespace blink {
@@ -78,7 +79,7 @@ class CORE_EXPORT SVGMatrixTearOff final : public ScriptWrappable {
   SVGMatrixTearOff* inverse(ExceptionState&);
   SVGMatrixTearOff* rotateFromVector(double x, double y, ExceptionState&);
 
-  SVGTransformTearOff* ContextTransform() { return context_transform_; }
+  SVGTransformTearOff* ContextTransform() { return context_transform_.Get(); }
 
   const AffineTransform& Value() const;
 

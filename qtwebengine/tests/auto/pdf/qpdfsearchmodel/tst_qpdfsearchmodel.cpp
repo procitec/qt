@@ -1,44 +1,13 @@
-/****************************************************************************
-**
-** Copyright (C) 2020 The Qt Company Ltd.
-** Contact: http://www.qt.io/licensing/
-**
-** This file is part of the test suite of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL3$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see http://www.qt.io/terms-conditions. For further
-** information use the contact form at http://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPLv3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or later as published by the Free
-** Software Foundation and appearing in the file LICENSE.GPL included in
-** the packaging of this file. Please review the following information to
-** ensure the GNU General Public License version 2.0 requirements will be
-** met: http://www.gnu.org/licenses/gpl-2.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2020 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
 
 #include <QtTest/QtTest>
 
 #include <QPdfDocument>
 #include <QPdfSearchModel>
+
+Q_LOGGING_CATEGORY(lcTests, "qt.pdf.tests")
 
 class tst_QPdfSearchModel: public QObject
 {
@@ -48,20 +17,51 @@ public:
     tst_QPdfSearchModel() {}
 
 private slots:
+    void findText_data();
     void findText();
 };
 
+void tst_QPdfSearchModel::findText_data()
+{
+    QTest::addColumn<QString>("pdfPath");
+    QTest::addColumn<QString>("searchString");
+    QTest::addColumn<int>("expectedMatchCount");
+    QTest::addColumn<int>("matchIndexToCheck");
+    QTest::addColumn<int>("expectedRectangleCount");
+    QTest::addColumn<int>("rectIndexToCheck");
+    QTest::addColumn<QRect>("expectedMatchBounds");
+
+    QTest::newRow("the search for ai") << QFINDTESTDATA("test.pdf")
+            << "ai" << 3 << 0 << 1 << 0 << QRect(321, 202, 9, 11);
+    QTest::newRow("rotated text") << QFINDTESTDATA("rotated_text.pdf")
+            << "world!" << 2 << 0 << 1 << 0 << QRect(76, 102, 26, 28);
+    QTest::newRow("displaced text") << QFINDTESTDATA("tagged_mcr_multipage.pdf")
+            << "1" << 1 << 0 << 1 << 0 << QRect(34, 22, 3, 8);
+}
+
 void tst_QPdfSearchModel::findText()
 {
+    QFETCH(QString, pdfPath);
+    QFETCH(QString, searchString);
+    QFETCH(int, expectedMatchCount);
+    QFETCH(int, matchIndexToCheck);
+    QFETCH(int, expectedRectangleCount);
+    QFETCH(int, rectIndexToCheck);
+    QFETCH(QRect, expectedMatchBounds);
+
     QPdfDocument document;
-    QCOMPARE(document.load(QFINDTESTDATA("test.pdf")), QPdfDocument::NoError);
+    QCOMPARE(document.load(pdfPath), QPdfDocument::Error::None);
 
     QPdfSearchModel model;
     model.setDocument(&document);
-    QVector<QRectF> matches = model.matches(1, "ai");
+    model.setSearchString(searchString);
 
-    qDebug() << matches;
-    QCOMPARE(matches.count(), 3);
+    QTRY_COMPARE(model.count(), expectedMatchCount); // wait for the timer
+    QPdfLink match = model.resultAtIndex(matchIndexToCheck);
+    qCDebug(lcTests) << match;
+    QList<QRectF> rects = match.rectangles();
+    QCOMPARE(rects.size(), expectedRectangleCount);
+    QCOMPARE(rects.at(rectIndexToCheck).toRect(), expectedMatchBounds);
 }
 
 QTEST_MAIN(tst_QPdfSearchModel)

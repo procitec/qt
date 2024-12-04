@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -44,31 +44,31 @@ std::vector<gfx::Rect> DisplayFeature::ComputeWindowSegments(
 }
 
 // static
-base::Optional<DisplayFeature> DisplayFeature::Create(Orientation orientation,
-                                                      int offset,
-                                                      int mask_length,
-                                                      int width,
-                                                      int height,
-                                                      ParamErrorEnum* error) {
+std::optional<DisplayFeature> DisplayFeature::Create(Orientation orientation,
+                                                     int offset,
+                                                     int mask_length,
+                                                     int width,
+                                                     int height,
+                                                     ParamErrorEnum* error) {
   if (!width && !height) {
     *error = ParamErrorEnum::kDisplayFeatureWithZeroScreenSize;
-    return base::nullopt;
+    return std::nullopt;
   }
 
   if (offset < 0 || mask_length < 0) {
     *error = ParamErrorEnum::kNegativeDisplayFeatureParams;
-    return base::nullopt;
+    return std::nullopt;
   }
 
   if (orientation == Orientation::kVertical && offset + mask_length > width) {
     *error = ParamErrorEnum::kOutsideScreenWidth;
-    return base::nullopt;
+    return std::nullopt;
   }
 
   if (orientation == Orientation::kHorizontal &&
       offset + mask_length > height) {
     *error = ParamErrorEnum::kOutsideScreenHeight;
-    return base::nullopt;
+    return std::nullopt;
   }
 
   return DisplayFeature{orientation, offset, mask_length};

@@ -1,4 +1,4 @@
-// Copyright (c) 2011 The Chromium Authors. All rights reserved.
+// Copyright 2011 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,20 +12,21 @@
 
 #include "base/base_export.h"
 #include "base/files/file_path.h"
+#include "base/memory/raw_ptr_exclusion.h"
 #include "base/strings/string_piece.h"
 #include "build/build_config.h"
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 #include <windows.h>
-#elif defined(OS_APPLE)
+#elif BUILDFLAG(IS_APPLE)
 #import <CoreFoundation/CoreFoundation.h>
 #endif  // OS_*
 
 namespace base {
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 using NativeLibrary = HMODULE;
-#elif defined(OS_APPLE)
+#elif BUILDFLAG(IS_APPLE)
 enum NativeLibraryType {
   BUNDLE,
   DYNAMIC_LIB
@@ -37,37 +38,35 @@ enum NativeLibraryObjCStatus {
 };
 struct NativeLibraryStruct {
   NativeLibraryType type;
-  CFBundleRefNum bundle_resource_ref;
   NativeLibraryObjCStatus objc_status;
   union {
     CFBundleRef bundle;
-    void* dylib;
+    //// This field is not a raw_ptr<> because it was filtered by the rewriter
+    // for: #union
+    RAW_PTR_EXCLUSION void* dylib;
   };
 };
 using NativeLibrary = NativeLibraryStruct*;
-#elif defined(OS_POSIX) || defined(OS_FUCHSIA)
+#elif BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
 using NativeLibrary = void*;
 #endif  // OS_*
 
 struct BASE_EXPORT NativeLibraryLoadError {
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   NativeLibraryLoadError() : code(0) {}
-#endif  // OS_WIN
+#endif  // BUILDFLAG(IS_WIN)
 
   // Returns a string representation of the load error.
   std::string ToString() const;
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   DWORD code;
-#elif defined(OS_POSIX) || defined(OS_FUCHSIA)
+#elif BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
   std::string message;
-#endif  // OS_WIN
+#endif  // BUILDFLAG(IS_WIN)
 };
 
 struct BASE_EXPORT NativeLibraryOptions {
-  NativeLibraryOptions() = default;
-  NativeLibraryOptions(const NativeLibraryOptions& options) = default;
-
   // If |true|, a loaded library is required to prefer local symbol resolution
   // before considering global symbols. Note that this is already the default
   // behavior on most systems. Setting this to |false| does not guarantee the
@@ -82,7 +81,7 @@ struct BASE_EXPORT NativeLibraryOptions {
 BASE_EXPORT NativeLibrary LoadNativeLibrary(const FilePath& library_path,
                                             NativeLibraryLoadError* error);
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 // Loads a native library from the system directory using the appropriate flags.
 // The function first checks to see if the library is already loaded and will
 // get a handle if so. This method results in a lock that may block the calling
@@ -114,7 +113,7 @@ BASE_EXPORT void UnloadNativeLibrary(NativeLibrary library);
 
 // Gets a function pointer from a native library.
 BASE_EXPORT void* GetFunctionPointerFromNativeLibrary(NativeLibrary library,
-                                                      StringPiece name);
+                                                      const char* name);
 
 // Returns the full platform-specific name for a native library. |name| must be
 // ASCII. This is also the default name for the output of a gn |shared_library|

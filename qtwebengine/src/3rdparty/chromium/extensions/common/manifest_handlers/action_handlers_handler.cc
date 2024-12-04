@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -42,10 +42,10 @@ ActionHandlersHandler::ActionHandlersHandler() = default;
 
 ActionHandlersHandler::~ActionHandlersHandler() = default;
 
-bool ActionHandlersHandler::Parse(Extension* extension, base::string16* error) {
+bool ActionHandlersHandler::Parse(Extension* extension, std::u16string* error) {
   const base::Value* entries = nullptr;
   if (!extension->manifest()->GetList(keys::kActionHandlers, &entries)) {
-    *error = base::ASCIIToUTF16(errors::kInvalidActionHandlersType);
+    *error = errors::kInvalidActionHandlersType;
     return false;
   }
 
@@ -54,28 +54,28 @@ bool ActionHandlersHandler::Parse(Extension* extension, base::string16* error) {
     std::string value;
     bool enabled_on_lock_screen = false;
     if (wrapped_value.is_dict()) {
-      const base::Value* action_value = wrapped_value.FindKeyOfType(
-          keys::kActionHandlerActionKey, base::Value::Type::STRING);
-      if (!action_value) {
-        *error = base::ASCIIToUTF16(errors::kInvalidActionHandlerDictionary);
+      const base::Value::Dict& wrapped_dict = wrapped_value.GetDict();
+      const std::string* action =
+          wrapped_dict.FindString(keys::kActionHandlerActionKey);
+      if (!action) {
+        *error = errors::kInvalidActionHandlerDictionary;
         return false;
       }
-      value = action_value->GetString();
-      const base::Value* lock_screen_value = wrapped_value.FindKeyOfType(
-          keys::kActionHandlerEnabledOnLockScreenKey,
-          base::Value::Type::BOOLEAN);
-      if (lock_screen_value) {
-        enabled_on_lock_screen = lock_screen_value->GetBool();
+      value = *action;
+      std::optional<bool> enabled =
+          wrapped_dict.FindBool(keys::kActionHandlerEnabledOnLockScreenKey);
+      if (enabled) {
+        enabled_on_lock_screen = *enabled;
       }
     } else if (wrapped_value.is_string()) {
       value = wrapped_value.GetString();
     } else {
-      *error = base::ASCIIToUTF16(errors::kInvalidActionHandlersType);
+      *error = errors::kInvalidActionHandlersType;
       return false;
     }
 
     app_runtime::ActionType action_type = app_runtime::ParseActionType(value);
-    if (action_type == app_runtime::ACTION_TYPE_NONE) {
+    if (action_type == app_runtime::ActionType::kNone) {
       *error = ErrorUtils::FormatErrorMessageUTF16(
           errors::kInvalidActionHandlersActionType, value);
       return false;

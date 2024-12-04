@@ -1,9 +1,7 @@
-#! /usr/bin/env python
-# Copyright (c) 2012 The Chromium Authors. All rights reserved.
+#!/usr/bin/env python3
+# Copyright 2012 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
-
-from __future__ import print_function
 
 import itertools
 import json
@@ -11,11 +9,6 @@ import os.path
 import pprint
 import re
 import sys
-
-if sys.version_info.major == 2:
-  from itertools import izip_longest as zip_longest
-else:
-  from itertools import zip_longest
 
 from json_parse import OrderedDict
 
@@ -87,8 +80,8 @@ def ProcessComment(comment):
                     .replace('\n', ''))
 
   params = OrderedDict()
-  for (cur_param, next_param) in zip_longest(parameter_starts,
-                                             parameter_starts[1:]):
+  for (cur_param, next_param) in itertools.zip_longest(parameter_starts,
+                                                       parameter_starts[1:]):
     param_name = cur_param.group(1)
 
     # A parameter's comment goes from the end of its introduction to the
@@ -106,15 +99,16 @@ class Callspec(object):
   '''
   Given a Callspec node representing an IDL function declaration, converts into
   a tuple:
-      (name, list of function parameters, return type)
+      (name, list of function parameters, return type, async return)
   '''
   def __init__(self, callspec_node, comment):
     self.node = callspec_node
     self.comment = comment
 
-  def process(self, callbacks):
+  def process(self, use_returns_async, callbacks):
     parameters = []
     return_type = None
+    returns_async = None
     if self.node.GetProperty('TYPEREF') not in ('void', None):
       return_type = Typeref(self.node.GetProperty('TYPEREF'),
                             self.node.parent,
@@ -129,7 +123,31 @@ class Callspec(object):
       if parameter['name'] in self.comment:
         parameter['description'] = self.comment[parameter['name']]
       parameters.append(parameter)
-    return (self.node.GetName(), parameters, return_type)
+    # All functions with an asynchronous return are defined with a trailing
+    # callback in their parameters. For promise supporting functions, pull off
+    # the callback and put it into the separate returns async field.
+    # Note: We only do this for interface types of 'Functions' and 'Properties',
+    # not for 'Events' and callback definitions which have function parameters
+    # that can be called multiple times.
+    if (
+        use_returns_async
+        and len(parameters) > 0
+        and parameters[-1].get('type') == 'function'
+    ):
+      supports_promises = not self.node.GetProperty('doesNotSupportPromises')
+      if supports_promises:
+        returns_async = parameters.pop()
+        # The returns_async field is inherently a function, so doesn't need type
+        # specified on it.
+        returns_async.pop('type')
+    else:
+      assert not self.node.GetProperty('doesNotSupportPromises'), (
+          'Callspec "%s" does not need to specify [doesNotSupportPromises] if '
+          'it does not have a trailing callback'
+          % self.node.GetName()
+      )
+
+    return (self.node.GetName(), parameters, return_type, returns_async)
 
 
 class Param(object):
@@ -163,8 +181,6 @@ class Dictionary(object):
     result = {'id': self.node.GetName(),
               'properties': properties,
               'type': 'object'}
-    if self.node.GetProperty('nodefine'):
-      result['nodefine'] = True
     if self.node.GetProperty('nodoc'):
       result['nodoc'] = True
     elif self.node.GetProperty('inline_doc'):
@@ -172,7 +188,6 @@ class Dictionary(object):
     elif self.node.GetProperty('noinline_doc'):
       result['noinline_doc'] = True
     return result
-
 
 
 class Member(object):
@@ -184,19 +199,25 @@ class Member(object):
   def __init__(self, member_node):
     self.node = member_node
 
-  def process(self, callbacks, functions_are_properties=False):
+  def process(
+      self, callbacks, functions_are_properties=False, use_returns_async=False
+  ):
     properties = OrderedDict()
     name = self.node.GetName()
     if self.node.GetProperty('deprecated'):
       properties['deprecated'] = self.node.GetProperty('deprecated')
 
     for property_name in ['allowAmbiguousOptionalArguments',
-                          'nodoc', 'nocompile', 'nodart', 'nodefine']:
+                          'nodoc', 'nocompile', 'nodart',
+                          'serializableFunction']:
       if self.node.GetProperty(property_name):
         properties[property_name] = True
 
     if self.node.GetProperty('OPTIONAL'):
       properties['optional'] = True
+
+    if self.node.GetProperty('platforms'):
+      properties['platforms'] = list(self.node.GetProperty('platforms'))
 
     for option_name, sanitizer in [
         ('maxListeners', int),
@@ -217,8 +238,9 @@ class Member(object):
         properties['description'] = parent_comment
         properties['jsexterns'] = jsexterns
       elif node.cls == 'Callspec':
-        name, parameters, return_type = (Callspec(node, parameter_comments)
-                                         .process(callbacks))
+        name, parameters, return_type, returns_async = Callspec(
+            node, parameter_comments
+        ).process(use_returns_async, callbacks)
         if functions_are_properties:
           # If functions are treated as properties (which will happen if the
           # interface is named Properties) then this isn't a function, it's a
@@ -240,6 +262,12 @@ class Member(object):
           properties['parameters'] = parameters
           if return_type is not None:
             properties['returns'] = return_type
+          if returns_async is not None:
+            assert return_type is None, (
+                'Function "%s" cannot support promises and also have a '
+                'return value.' % name)
+            properties['returns_async'] = returns_async
+
     properties['name'] = name
     if type_override is not None:
       properties['type'] = type_override
@@ -385,8 +413,8 @@ class Enum(object):
               'description': self.description,
               'type': 'string',
               'enum': enum}
-    for property_name in ('cpp_enum_prefix_override', 'inline_doc',
-                          'noinline_doc', 'nodefine', 'nodoc',):
+    for property_name in ['cpp_enum_prefix_override', 'inline_doc',
+                          'noinline_doc', 'nodoc']:
       if self.node.GetProperty(property_name):
         result[property_name] = self.node.GetProperty(property_name)
     if self.node.GetProperty('deprecated'):
@@ -472,11 +500,19 @@ class Namespace(object):
 
   def process_interface(self, node, functions_are_properties=False):
     members = []
+    # Callspec definitions for Functions and Properties with an asynchronous
+    # return are defined with a trailing callback, but during parsing we move
+    # the details to a returns_async field. We need to pass this info along so
+    # we don't do this for Event definitions or callback definitions themselves.
+    # TODO(tjudkins): Once IDL definitions are changed to describe returning
+    # promises, we can condition on that rather than this special casing here.
+    use_returns_async = node.GetName() in ['Functions', 'Properties']
     for member in node.GetChildren():
       if member.cls == 'Member':
         _, properties = Member(member).process(
             self.callbacks,
-            functions_are_properties=functions_are_properties)
+            functions_are_properties=functions_are_properties,
+            use_returns_async=use_returns_async)
         members.append(properties)
     return members
 
@@ -552,9 +588,8 @@ def Load(filename):
   Python dictionary in a format that the JSON schema compiler expects to see.
   '''
 
-  f = open(filename, 'r')
-  contents = f.read()
-  f.close()
+  with open(filename, 'rb') as handle:
+    contents = handle.read().decode('utf-8')
 
   return Process(contents, filename)
 
@@ -582,6 +617,10 @@ def Main():
       print(json.dumps(schema, indent=2))
   else:
     contents = sys.stdin.read()
+    for i, char in enumerate(contents):
+      if not char.isascii():
+        raise Exception('Non-ascii character "%s" (ord %d) found at offset %d.'
+                        % (char, ord(char), i))
     idl = idl_parser.IDLParser().ParseData(contents, '<stdin>')
     schema = IDLSchema(idl).process()
     print(json.dumps(schema, indent=2))

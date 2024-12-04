@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,24 +6,29 @@
 #define COMPONENTS_EXO_SURFACE_H_
 
 #include <list>
-#include <set>
 #include <utility>
 
-#include "base/callback.h"
-#include "base/macros.h"
-#include "base/memory/ref_counted.h"
+#include "base/functional/callback.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
+#include "base/time/time.h"
 #include "cc/base/region.h"
+#include "chromeos/ui/frame/caption_buttons/snap_controller.h"
+#include "components/exo/buffer.h"
 #include "components/exo/layer_tree_frame_sink_holder.h"
 #include "components/exo/surface_delegate.h"
 #include "components/viz/common/frame_sinks/begin_frame_source.h"
 #include "components/viz/common/resources/transferable_resource.h"
+#include "components/viz/common/surfaces/surface_id.h"
 #include "third_party/skia/include/core/SkBlendMode.h"
 #include "ui/aura/window.h"
+#include "ui/gfx/geometry/mask_filter_info.h"
 #include "ui/gfx/geometry/rect.h"
+#include "ui/gfx/geometry/rrect_f.h"
+#include "ui/gfx/geometry/size_f.h"
+#include "ui/gfx/geometry/transform.h"
 #include "ui/gfx/native_widget_types.h"
-#include "ui/gfx/transform.h"
 
 class SkPath;
 
@@ -40,7 +45,8 @@ class TracedValue;
 namespace gfx {
 class ColorSpace;
 class GpuFence;
-}
+struct PresentationFeedback;
+}  // namespace gfx
 
 namespace viz {
 class CompositorFrame;
@@ -48,6 +54,7 @@ class CompositorFrame;
 
 namespace exo {
 class Buffer;
+class SecurityDelegate;
 class FrameSinkResourceManager;
 class SurfaceObserver;
 
@@ -56,32 +63,66 @@ class PropertyHelper;
 }
 
 // Counter-clockwise rotations.
-enum class Transform { NORMAL, ROTATE_90, ROTATE_180, ROTATE_270 };
+enum class Transform {
+  NORMAL,
+  ROTATE_90,
+  ROTATE_180,
+  ROTATE_270,
+  FLIPPED,
+  FLIPPED_ROTATE_90,
+  FLIPPED_ROTATE_180,
+  FLIPPED_ROTATE_270
+};
+
+// Priority for overlay promotion.
+enum class OverlayPriority { LOW, REGULAR, REQUIRED };
 
 // A property key to store the surface Id set by the client.
-extern const ui::ClassProperty<int32_t>* const kClientSurfaceIdKey;
+extern const ui::ClassProperty<std::string*>* const kClientSurfaceIdKey;
+
+// A property key to store the window session Id set by client or full_restore
+// component.
+extern const ui::ClassProperty<int32_t>* const kWindowSessionId;
+
+// A property key containing a boolean set to true if a surface augmenter is
+// associated with with surface object.
+extern const ui::ClassProperty<bool>* const kSurfaceHasAugmentedSurfaceKey;
 
 // This class represents a rectangular area that is displayed on the screen.
 // It has a location, size and pixel contents.
 class Surface final : public ui::PropertyHandler {
  public:
   using PropertyDeallocator = void (*)(int64_t value);
-  using LeaveEnterCallback = base::RepeatingCallback<void(int64_t, int64_t)>;
+  using LeaveEnterCallback = base::RepeatingCallback<bool(int64_t, int64_t)>;
 
   Surface();
+
+  Surface(const Surface&) = delete;
+  Surface& operator=(const Surface&) = delete;
+
   ~Surface() override;
 
   // Type-checking downcast routine.
   static Surface* AsSurface(const aura::Window* window);
 
-  aura::Window* window() { return window_.get(); }
+  aura::Window* window() const { return window_.get(); }
+
+  std::vector<raw_ptr<aura::Window, VectorExperimental>> GetChildWindows()
+      const;
 
   void set_leave_enter_callback(LeaveEnterCallback callback) {
     leave_enter_callback_ = callback;
   }
 
+  void set_legacy_buffer_release_skippable(bool skippable) {
+    legacy_buffer_release_skippable_ = skippable;
+  }
+
   // Called when the display the surface is on has changed.
-  void UpdateDisplay(int64_t old_id, int64_t new_id);
+  // Returns true if successful, and false if it fails.
+  bool UpdateDisplay(int64_t old_id, int64_t new_id);
+
+  display::Display GetDisplay() const;
 
   // Called when the output is added for new display.
   void OnNewOutputAdded();
@@ -143,13 +184,44 @@ class Surface final : public ui::PropertyHandler {
   // double-buffered and will be applied when Commit() is called.
   void AddSubSurface(Surface* sub_surface);
   void RemoveSubSurface(Surface* sub_surface);
-  void SetSubSurfacePosition(Surface* sub_surface, const gfx::Point& position);
+  // Allow for finer granularity for sub surface positioning.
+  void SetSubSurfacePosition(Surface* sub_surface, const gfx::PointF& position);
   void PlaceSubSurfaceAbove(Surface* sub_surface, Surface* reference);
   void PlaceSubSurfaceBelow(Surface* sub_surface, Surface* sibling);
   void OnSubSurfaceCommit();
 
+  using SubSurfaceEntry = std::pair<Surface*, gfx::PointF>;
+  using SubSurfaceEntryList = std::list<SubSurfaceEntry>;
+  SubSurfaceEntryList& sub_surfaces() { return sub_surfaces_; }
+
+  // `is_root_coordinates` specifies whether `rounded_corners_bounds` is on its
+  // root surface coordinates or on the local surface coordinates.
+  // If `commit` is true, rounded corner bounds are add to committed state,
+  // overriding the previously committed value.
+  void SetRoundedCorners(const gfx::RRectF& rounded_corners_bounds,
+                         bool is_root_coordinates,
+                         bool commit_override);
+  void SetOverlayPriorityHint(OverlayPriority hint);
+
+  // Sets the surface's clip rectangle.
+  void SetClipRect(const absl::optional<gfx::RectF>& clip_rect);
+
+  // Sets the surface's clip rectangle on parent surface coordinates.
+  // TODO(crbug.com/1457446): Remove this.
+  void SetClipRectOnParentSurface(const absl::optional<gfx::RectF>& clip_rect);
+
+  // Sets the surface's transformation matrix.
+  void SetSurfaceTransform(const gfx::Transform& transform);
+
+  // Sets the background color that shall be associated with the next buffer
+  // commit.
+  void SetBackgroundColor(absl::optional<SkColor4f> background_color);
+
+  // Sets that this surface uses trusted damage.
+  void SetTrustedDamage(bool trusted_damage);
+
   // This sets the surface viewport for scaling.
-  void SetViewport(const gfx::Size& viewport);
+  void SetViewport(const gfx::SizeF& viewport);
 
   // This sets the surface crop rectangle.
   void SetCrop(const gfx::RectF& crop);
@@ -167,6 +239,9 @@ class Surface final : public ui::PropertyHandler {
   // Request that surface should have the specified frame type.
   void SetFrame(SurfaceFrameType type);
 
+  // Request that the server should start resize on this surface.
+  void SetServerStartResize();
+
   // Request that surface should use a specific set of frame colors.
   void SetFrameColors(SkColor active_color, SkColor inactive_color);
 
@@ -176,10 +251,26 @@ class Surface final : public ui::PropertyHandler {
   // Request that surface should have a specific application ID string.
   void SetApplicationId(const char* application_id);
 
-  // Whether to hide the shelf when fullscreen. If true, shelf is inaccessible
-  // (plain fullscreen). If false, shelf auto-hides and can be shown with a
-  // mouse gesture (immersive fullscreen).
+  // Whether to show/hide the shelf when fullscreen. If true, the titlebar/shelf
+  // will show when the mouse moves to the top/bottom of the screen. If false
+  // (plain fullscreen), the titlebar and shelf are always hidden.
   void SetUseImmersiveForFullscreen(bool value);
+
+  // Called to show the snap preview to the primary or secondary position, or
+  // to hide it.
+  void ShowSnapPreviewToSecondary();
+  void ShowSnapPreviewToPrimary();
+  void HideSnapPreview();
+
+  // Called when the client was snapped to primary or secondary position, or
+  // reset.
+  void SetSnapPrimary(float snap_ratio);
+  void SetSnapSecondary(float snap_ratio);
+  void UnsetSnap();
+
+  // Whether the current client window can go back, as per its navigation list.
+  void SetCanGoBack();
+  void UnsetCanGoBack();
 
   // This sets the color space for the buffer for this surface.
   void SetColorSpace(gfx::ColorSpace color_space);
@@ -188,23 +279,29 @@ class Surface final : public ui::PropertyHandler {
   void SetParent(Surface* parent, const gfx::Point& position);
 
   // Request that surface should have a specific ID assigned by client.
-  void SetClientSurfaceId(int32_t client_surface_id);
-  int32_t GetClientSurfaceId() const;
+  void SetClientSurfaceId(const char* client_surface_id);
+  std::string GetClientSurfaceId() const;
 
-  // Enable embedding of an arbitrary viz surface in this exo surface.
-  // If the callback is valid, a SurfaceDrawQuad will be emitted targeting
-  // the returned SurfaceId each frame.
-  void SetEmbeddedSurfaceId(
-      base::RepeatingCallback<viz::SurfaceId()> surface_id_callback);
+  // Sets whether the surface contains video.
+  void SetContainsVideo(bool contains_video);
 
-  // Set the size of the embedded surface, to allow proper scaling.
-  void SetEmbeddedSurfaceSize(const gfx::Size& size);
+  // Returns whether this surface or any of its subsurfaces contains a video.
+  bool ContainsVideo();
 
   // Request that the attached surface buffer at the next commit is associated
   // with a gpu fence to be signaled when the buffer is ready for use.
   void SetAcquireFence(std::unique_ptr<gfx::GpuFence> gpu_fence);
   // Returns whether the surface has an uncommitted acquire fence.
   bool HasPendingAcquireFence() const;
+  // Returns whether the surface has a committed acquire fence.
+  bool HasAcquireFence() const;
+
+  // Request a callback when the buffer attached at the next commit is
+  // no longer used by that commit.
+  void SetPerCommitBufferReleaseCallback(
+      Buffer::PerCommitExplicitReleaseCallback callback);
+  // Whether the surface has an uncommitted per-commit buffer release callback.
+  bool HasPendingPerCommitBufferReleaseCallback() const;
 
   // Surface state (damage regions, attached buffers, etc.) is double-buffered.
   // A Commit() call atomically applies all pending state, replacing the
@@ -226,9 +323,11 @@ class Surface final : public ui::PropertyHandler {
 
   // This will append contents for surface and its descendants to frame.
   void AppendSurfaceHierarchyContentsToFrame(
-      const gfx::Point& origin,
-      float device_scale_factor,
+      const gfx::PointF& parent_to_root_px,
+      const gfx::PointF& to_parent_dp,
+      bool needs_full_damage,
       FrameSinkResourceManager* resource_manager,
+      absl::optional<float> device_scale_factor,
       viz::CompositorFrame* frame);
 
   // Returns true if surface is in synchronized mode.
@@ -252,6 +351,9 @@ class Surface final : public ui::PropertyHandler {
   // Returns true if surface has been assigned a surface delegate.
   bool HasSurfaceDelegate() const;
 
+  // Returns a pointer to the SurfaceDelegate for this surface, used by tests.
+  SurfaceDelegate* GetDelegateForTesting();
+
   // Surface does not own observers. It is the responsibility of the observer
   // to remove itself when it is done observing.
   void AddSurfaceObserver(SurfaceObserver* observer);
@@ -265,7 +367,7 @@ class Surface final : public ui::PropertyHandler {
   void SetBeginFrameSource(viz::BeginFrameSource* begin_frame_source);
 
   // Returns the active content size.
-  const gfx::Size& content_size() const { return content_size_; }
+  const gfx::SizeF& content_size() const { return content_size_; }
 
   // Returns the active content bounds for surface hierarchy. ie. the bounding
   // box of the surface and its descendants, in the local coordinate space of
@@ -287,14 +389,27 @@ class Surface final : public ui::PropertyHandler {
   bool FillsBoundsOpaquely() const;
 
   bool HasPendingDamageForTesting(const gfx::Rect& damage) const {
-    return pending_damage_.Contains(damage);
+    return pending_state_.damage.Contains(damage);
+  }
+
+  bool HasLeaveEnterCallbackForTesting() const {
+    return !leave_enter_callback_.is_null();
   }
 
   // Set occlusion tracking region for surface.
   void SetOcclusionTracking(bool tracking);
 
+  void OnScaleFactorChanged(float old_scale_factor, float new_scale_factor);
+
   // Triggers sending an occlusion update to observers.
-  void OnWindowOcclusionChanged();
+  void OnWindowOcclusionChanged(
+      aura::Window::OcclusionState old_occlusion_state,
+      aura::Window::OcclusionState new_occlusion_state);
+
+  // Triggers sending a locking status to observers.
+  // true : lock a frame to normal or restore state
+  // false : unlock the previously locked frame
+  void SetFrameLocked(bool lock);
 
   // True if the window for this surface has its occlusion tracked.
   bool IsTrackingOcclusion();
@@ -305,6 +420,85 @@ class Surface final : public ui::PropertyHandler {
   // Requests that this surface should be made active (i.e. foregrounded).
   void RequestActivation();
 
+  // Requests that surface my have a window session ID assigned by client or
+  // full_restore component.
+  void SetWindowSessionId(int32_t window_session_id);
+  int32_t GetWindowSessionId();
+
+  // Requests that the surface enters PIP mode.
+  void SetPip();
+
+  // Requests that the surface exits PIP mode.
+  void UnsetPip();
+
+  // Requests that the surface maintains the given aspect ratio.
+  void SetAspectRatio(const gfx::SizeF& aspect_ratio);
+
+  // Triggers send desk state of the window to observers.
+  // |state| is the index of the desk which the window moved to,
+  // or -1 for a window assigned to all desks.
+  void OnDeskChanged(int state);
+
+  // Requests that DesksController to move the window to a desk at |desk_index|.
+  void MoveToDesk(int desk_index);
+
+  // Requests that window is visible on all workspaces.
+  void SetVisibleOnAllWorkspaces();
+
+  // Sets the initial workspace to restore a window to the corresponding desk.
+  void SetInitialWorkspace(const char* initial_workspace);
+
+  // Pins/locks a window to the screen so that the user cannot do anything
+  // else before the mode is released. If trusted is set, it is an invocation
+  // from a trusted app like a school test mode app.
+  void Pin(bool trusted);
+
+  // Release the pinned mode and allows the user to do other things again.
+  void Unpin();
+
+  // Starts or ends throttling on the surface.
+  void ThrottleFrameRate(bool on);
+
+  // Informs tooltip is shown.
+  void OnTooltipShown(const std::u16string& text, const gfx::Rect& bounds);
+
+  // Informs tooltip is hidden.
+  void OnTooltipHidden();
+
+  // If true is set, if this window has a focus, key events should be sent to
+  // the app, even if it is an ash shortcut (with some exceptions).
+  // See exo::Keyboard for more details.
+  void SetKeyboardShortcutsInhibited(bool inhibited);
+
+  // Returns whether keyboard shortcuts are inhibited.
+  bool is_keyboard_shortcuts_inhibited() const {
+    return keyboard_shortcuts_inhibited_;
+  }
+
+  // Returns the SecurityDelegate associated with this surface, or nullptr
+  // if one can not be determined. See go/secure-exo-ids for more details.
+  SecurityDelegate* GetSecurityDelegate();
+
+  // Sets the accessibility window ID sent from the shell client to the window.
+  // A negative number removes it.
+  void SetClientAccessibilityId(int id);
+
+  // Set top inset for surface.
+  void SetTopInset(int height);
+
+  // Inform observers and subsurfaces about new fullscreen state
+  void OnFullscreenStateChanged(bool fullscreen);
+
+  OverlayPriority GetOverlayPriorityHint() {
+    return state_.overlay_priority_hint;
+  }
+
+  // Returns the buffer scale of the last committed buffer.
+  float GetBufferScale() const { return state_.basic_state.buffer_scale; }
+
+  // Returns the last committed buffer.
+  Buffer* GetBuffer();
+
  private:
   struct State {
     State();
@@ -314,24 +508,33 @@ class Surface final : public ui::PropertyHandler {
     bool operator!=(const State& other) const { return !(*this == other); }
 
     cc::Region opaque_region;
-    base::Optional<cc::Region> input_region;
+    absl::optional<cc::Region> input_region;
     int input_outset = 0;
     float buffer_scale = 1.0f;
     Transform buffer_transform = Transform::NORMAL;
-    gfx::Size viewport;
+    gfx::SizeF viewport;
     gfx::RectF crop;
     bool only_visible_on_secure_output = false;
     SkBlendMode blend_mode = SkBlendMode::kSrcOver;
     float alpha = 1.0f;
     gfx::Vector2d offset;
-    gfx::ColorSpace color_space;
+    gfx::ColorSpace color_space = gfx::ColorSpace::CreateSRGB();
     bool is_tracking_occlusion = false;
+    // Represents optional background color that must be associated with the
+    // next buffer commit.
+    absl::optional<SkColor4f> background_color;
+    bool contains_video = false;
   };
   class BufferAttachment {
    public:
     BufferAttachment();
+
+    BufferAttachment(const BufferAttachment&) = delete;
+    BufferAttachment& operator=(const BufferAttachment&) = delete;
+
     ~BufferAttachment();
 
+    BufferAttachment(BufferAttachment&& buffer);
     BufferAttachment& operator=(BufferAttachment&& buffer);
 
     base::WeakPtr<Buffer>& buffer();
@@ -342,8 +545,82 @@ class Surface final : public ui::PropertyHandler {
    private:
     base::WeakPtr<Buffer> buffer_;
     gfx::Size size_;
+  };
 
-    DISALLOW_COPY_AND_ASSIGN(BufferAttachment);
+  // State for this surface. State is committed in a three step process:
+  // 1. Pending state is accummulated into before commit.
+  // 2. On commit, state is copied to a cached state. This is to support
+  //    synchronized commit of a tree of surfaces. When the tree of surfaces is
+  //    set to be synchronized, the state of the tree will not be committed
+  //    until the root of the tree (precisely, until a unsynchronized root of a
+  //    subtree) is committed.
+  // 3. State is committed.
+  // Some fields are persisted between commits (e.g. which buffer is attached),
+  // and some fields are not (e.g. acquire fence). For fields that are
+  // persisted, they either need to be copyable, or if they are move only, they
+  // need to be wrapped in absl::optional and only copied on commit if they
+  // have been changed. Not doing this can lead to broken behaviour, such as
+  // losing the attached buffer if some unrelated field is updated in a commit.
+  // If you add new fields to this struct, please document whether the field
+  // should be persisted between commits.
+  // See crbug.com/1283305 for context.
+  struct ExtendedState {
+    ExtendedState();
+    ~ExtendedState();
+
+    State basic_state;
+
+    // The buffer that will become the content of surface.
+    // Persisted between commits.
+    absl::optional<BufferAttachment> buffer;
+    // The rounded corners bounds for the surface.
+    // Persisted between commits.
+    gfx::RRectF rounded_corners_bounds;
+    // True if `rounded_corners_bounds` is on root surface coordinate space.
+    // `rounded_corners_bounds` should be on local surface coordinates, but the
+    // outdated implementation was on root surface coordinate space. This flag
+    // is to support the fallback implementation.
+    // Persisted between commits.
+    // TODO(crbug.com/1470955): Remove this.
+    bool rounded_corners_is_root_coordinates = false;
+    // The damage region to schedule paint for.
+    // Not persisted between commits.
+    cc::Region damage;
+    // These lists contain the callbacks to notify the client when it is a good
+    // time to start producing a new frame.
+    // Not persisted between commits.
+    std::list<FrameCallback> frame_callbacks;
+    // These lists contain the callbacks to notify the client when surface
+    // contents have been presented.
+    // Not persisted between commits.
+    std::list<PresentationCallback> presentation_callbacks;
+    // The acquire gpu fence to associate with the surface buffer.
+    // Not persisted between commits.
+    std::unique_ptr<gfx::GpuFence> acquire_fence;
+    // Callback to notify about the per-commit buffer release. The wayland
+    // Exo backend uses this callback to implement the immediate_release
+    // event of the explicit sync protocol.
+    // Not persisted between commits.
+    Buffer::PerCommitExplicitReleaseCallback
+        per_commit_explicit_release_callback_;
+    // The hint for overlay prioritization
+    // Persisted between commits.
+    OverlayPriority overlay_priority_hint = OverlayPriority::REGULAR;
+    // The clip rect for this surface, in the local coordinate space. This
+    // should only be set for subsurfaces.
+    // Persisted between commits.
+    absl::optional<gfx::RectF> clip_rect;
+    // True if `clip_rect` is on parent coordinate space. `clip_rect` should be
+    // on local surface coordinates, but the outdated implementation was on
+    // parent coordinate space. This flag is to support the fallback
+    // implementation.
+    // Persisted between commits.
+    // TODO(crbug.com/1457446): Remove this.
+    bool clip_rect_is_parent_coordinates = false;
+    // The transform to apply when drawing this surface. This should only be set
+    // for subsurfaces, and doesn't apply to children of this surface.
+    // Persisted between commits.
+    gfx::Transform surface_transform;
   };
 
   friend class subtle::PropertyHelper;
@@ -357,17 +634,24 @@ class Surface final : public ui::PropertyHandler {
   // Updates buffer_transform_ to match the current buffer parameters.
   void UpdateBufferTransform(bool y_invert);
 
+  // Update state_.overlay_priority_hint and notify observers
+  void UpdateOverlayPriorityHint(OverlayPriority overlay_priority_hint);
+
   // Puts the current surface into a draw quad, and appends the draw quads into
   // the |frame|.
-  void AppendContentsToFrame(const gfx::Point& origin,
-                             float device_scale_factor,
+  void AppendContentsToFrame(const gfx::PointF& parent_to_root_px,
+                             const gfx::PointF& to_parent_dp,
+                             bool needs_full_damage,
+                             absl::optional<float> device_scale_factor,
                              viz::CompositorFrame* frame);
 
   // Update surface content size base on current buffer size.
   void UpdateContentSize();
 
   // This returns true when the surface has some contents assigned to it.
-  bool has_contents() const { return !current_buffer_.size().IsEmpty(); }
+  bool has_contents() const {
+    return state_.buffer.has_value() && !state_.buffer->size().IsEmpty();
+  }
 
   // This window has the layer which contains the Surface contents.
   std::unique_ptr<aura::Window> window_;
@@ -375,49 +659,28 @@ class Surface final : public ui::PropertyHandler {
   // This true, if sub_surfaces_ has changes (order, position, etc).
   bool sub_surfaces_changed_ = false;
 
+  // This is true if damage reported by the client should be trusted.
+  bool trusted_damage_ = false;
+
   // This is the size of the last committed contents.
-  gfx::Size content_size_;
+  gfx::SizeF content_size_;
 
   // This is the bounds of the last committed surface hierarchy contents.
   gfx::Rect surface_hierarchy_content_bounds_;
 
-  // This is true when Attach() has been called and new contents should take
-  // effect next time Commit() is called.
+  // This is true when Attach() has been called and new contents should be
+  // cached next time Commit() is called.
   bool has_pending_contents_ = false;
+  // This is true when new contents are cached and should take effect next time
+  // synchronized CommitSurfaceHierarchy() is called.
+  bool has_cached_contents_ = false;
 
-  // The buffer that will become the content of surface when Commit() is called.
-  BufferAttachment pending_buffer_;
-
-  // The damage region to schedule paint for when Commit() is called.
-  cc::Region pending_damage_;
-
-  // The damage region which will be used by
-  // AppendSurfaceHierarchyContentsToFrame() to generate frame.
-  cc::Region damage_;
-
-  // These lists contains the callbacks to notify the client when it is a good
-  // time to start producing a new frame. These callbacks move to
-  // |frame_callbacks_| when Commit() is called. Later they are moved to
-  // |active_frame_callbacks_| when the effect of the Commit() is scheduled to
-  // be drawn. They fire at the first begin frame notification after this.
-  std::list<FrameCallback> pending_frame_callbacks_;
-  std::list<FrameCallback> frame_callbacks_;
-
-  // These lists contains the callbacks to notify the client when surface
-  // contents have been presented. These callbacks move to
-  // |presentation_callbacks_| when Commit() is called. Later they are moved to
-  // |swapping_presentation_callbacks_| when the effect of the Commit() is
-  // scheduled to be drawn and then moved to |swapped_presentation_callbacks_|
-  // after receiving VSync parameters update for the previous frame. They fire
-  // at the next VSync parameters update after that.
-  std::list<PresentationCallback> pending_presentation_callbacks_;
-  std::list<PresentationCallback> presentation_callbacks_;
-
+  // This is the state that has yet to be cached.
+  ExtendedState pending_state_;
   // This is the state that has yet to be committed.
-  State pending_state_;
-
+  ExtendedState cached_state_;
   // This is the state that has been committed.
-  State state_;
+  ExtendedState state_;
 
   // Cumulative input region of surface and its sub-surfaces.
   cc::Region hit_test_region_;
@@ -425,25 +688,14 @@ class Surface final : public ui::PropertyHandler {
   // The stack of sub-surfaces to take effect when Commit() is called.
   // Bottom-most sub-surface at the front of the list and top-most sub-surface
   // at the back.
-  using SubSurfaceEntry = std::pair<Surface*, gfx::Point>;
-  using SubSurfaceEntryList = std::list<SubSurfaceEntry>;
   SubSurfaceEntryList pending_sub_surfaces_;
   SubSurfaceEntryList sub_surfaces_;
-
-  // The buffer that is currently set as content of surface.
-  BufferAttachment current_buffer_;
 
   // The last resource that was sent to a surface.
   viz::TransferableResource current_resource_;
 
   // Whether the last resource that was sent to a surface has an alpha channel.
   bool current_resource_has_alpha_ = false;
-
-  // The acquire gpu fence to associate with the surface buffer when Commit()
-  // is called.
-  std::unique_ptr<gfx::GpuFence> pending_acquire_fence_;
-  // The acquire gpu fence that is currently associated with the surface buffer.
-  std::unique_ptr<gfx::GpuFence> acquire_fence_;
 
   // This is true if a call to Commit() as been made but
   // CommitSurfaceHierarchy() has not yet been called.
@@ -463,39 +715,35 @@ class Surface final : public ui::PropertyHandler {
   // This can be set to have some functions delegated. E.g. ShellSurface class
   // can set this to handle Commit() and apply any double buffered state it
   // maintains.
-  SurfaceDelegate* delegate_ = nullptr;
+  raw_ptr<SurfaceDelegate> delegate_ = nullptr;
 
   // Surface observer list. Surface does not own the observers.
   base::ObserverList<SurfaceObserver, true>::Unchecked observers_;
 
-#if defined(OS_CHROMEOS)
   std::unique_ptr<ash::OutputProtectionDelegate> output_protection_;
-#endif  // defined(OS_CHROMEOS)
-
-  viz::SurfaceId first_embedded_surface_id_;
-  viz::SurfaceId latest_embedded_surface_id_;
-  base::RepeatingCallback<viz::SurfaceId()> get_current_surface_id_;
-
-  // The embedded surface is actually |embedded_surface_size_|. This is used
-  // for calculating clipping and scaling.
-  gfx::Size embedded_surface_size_;
 
   LeaveEnterCallback leave_enter_callback_;
 
-  DISALLOW_COPY_AND_ASSIGN(Surface);
+  bool keyboard_shortcuts_inhibited_ = false;
+  bool legacy_buffer_release_skippable_ = false;
+
+  // Display id state for unmapped surfaces.
+  int64_t display_id_ = display::kInvalidDisplayId;
 };
 
 class ScopedSurface {
  public:
   ScopedSurface(Surface* surface, SurfaceObserver* observer);
-  ~ScopedSurface();
+
+  ScopedSurface(const ScopedSurface&) = delete;
+  ScopedSurface& operator=(const ScopedSurface&) = delete;
+
+  virtual ~ScopedSurface();
   Surface* get() { return surface_; }
 
  private:
-  Surface* const surface_;
-  SurfaceObserver* const observer_;
-
-  DISALLOW_COPY_AND_ASSIGN(ScopedSurface);
+  const raw_ptr<Surface> surface_;
+  const raw_ptr<SurfaceObserver> observer_;
 };
 
 }  // namespace exo

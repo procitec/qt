@@ -1,8 +1,6 @@
-dpranke@google.com
-rmhasan@google.com
-robertma@chromium.org
+smcgruer@chromium.org
 tkent@chromium.org
 wangxianzhu@chromium.org
+weizhong@google.com
 
-# TEAM: blink-infra@chromium.org
-# COMPONENT: Blink>Infra
+per-file run_wpt_tests.py=jonathanjlee@google.com

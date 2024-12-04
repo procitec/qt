@@ -1,27 +1,25 @@
-<link rel="import" href="../../html/polymer.html">
-
-<link rel="import" href="chrome://resources/polymer/v1_0/iron-icon/iron-icon.html">
-<link rel="import" href="../../html/assert.html">
-<link rel="import" href="../../html/util.html">
-<link rel="import" href="../shared_vars_css.html">
-
-<dom-module id="cr-drawer">
-  <template>
     <style>
+      :host {
+        --cr-drawer-width: 256px;
+      }
+
       :host dialog {
-        --drawer-width: 256px;
         --transition-timing: 200ms ease;
         background-color: var(--cr-drawer-background-color, #fff);
         border: none;
+        border-start-end-radius: var(--cr-drawer-border-start-end-radius, 0);
+        border-end-end-radius: var(--cr-drawer-border-end-end-radius, 0);
         bottom: 0;
-        left: calc(-1 * var(--drawer-width));
+        left: calc(-1 * var(--cr-drawer-width));
         margin: 0;
+        max-height: initial;
+        max-width: initial;
         overflow: hidden;
         padding: 0;
         position: absolute;
         top: 0;
         transition: left var(--transition-timing);
-        width: var(--drawer-width);
+        width: var(--cr-drawer-width);
       }
 
       @media (prefers-color-scheme: dark) {
@@ -43,7 +41,7 @@
 
       :host([align=rtl]) dialog {
         left: auto;
-        right: calc(-1 * var(--drawer-width));
+        right: calc(-1 * var(--cr-drawer-width));
         transition: right var(--transition-timing);
       }
 
@@ -71,6 +69,11 @@
         border-bottom: var(--cr-separator-line);
         color: var(--cr-drawer-header-color, inherit);
         display: flex;
+
+        /* Declare "font" property before more granular font properties like
+         * "font-weight", etc. to properly compute font styles.
+         */
+        font: var(--cr-drawer-header-font, inherit);
         font-size: 123.08%;  /* go to 16px from 13px */
         font-weight: var(--cr-drawer-header-font-weight, inherit);
         min-height: 56px;
@@ -87,33 +90,37 @@
         outline: none;
       }
 
-      #iconButton {
-        cursor: pointer;
-        margin-inline-end: 14px;
-        margin-inline-start: 0;
-        outline: none;
-      }
-
-      :host ::slotted(.drawer-content) {
+      :host ::slotted([slot='body']) {
         height: calc(100% - 56px);
         overflow: auto;
       }
+
+      picture {
+        margin-inline-end: 16px;
+      }
+
+      picture,
+      #product-logo {
+        height: 24px;
+        width: 24px;
+      }
     </style>
-    <dialog id="dialog" on-cancel="onDialogCancel_" on-click="onDialogTap_"
+    <dialog id="dialog" on-cancel="onDialogCancel_" on-click="onDialogClick_"
         on-close="onDialogClose_">
-      <div id="container" on-click="onContainerTap_">
+      <div id="container" on-click="onContainerClick_">
         <div class="drawer-header">
-          <!-- Hidden from a11y because this icon is decorative. Clicking closes
-              the dialog, but screen reader users can do this by pressing ESC,
-              so aria-hidden is OK here. -->
-          <iron-icon id="iconButton" icon="[[iconName]]" on-click="onIconTap_"
-              title="[[iconTitle]]" hidden="[[!iconName]]" aria-hidden="true">
-          </iron-icon>
+          <slot name="header-icon">
+            <picture>
+              <source media="(prefers-color-scheme: dark)"
+                  srcset="//resources/images/chrome_logo_dark.svg">
+              <img id="product-logo"
+                  srcset="chrome://theme/current-channel-logo@1x 1x,
+                          chrome://theme/current-channel-logo@2x 2x"
+                  role="presentation">
+            </picture>
+          </slot>
           <div id="heading" tabindex="-1">[[heading]]</div>
         </div>
-        <slot></slot>
+        <slot name="body"></slot>
       </div>
     </dialog>
-  </template>
-  <script src="cr_drawer.js"></script>
-</dom-module>

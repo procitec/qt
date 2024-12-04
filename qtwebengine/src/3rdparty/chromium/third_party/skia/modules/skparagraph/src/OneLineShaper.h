@@ -4,10 +4,10 @@
 
 #include <functional>  // std::function
 #include <queue>
+#include "include/core/SkSpan.h"
 #include "modules/skparagraph/include/TextStyle.h"
 #include "modules/skparagraph/src/ParagraphImpl.h"
 #include "modules/skparagraph/src/Run.h"
-#include "src/core/SkSpan.h"
 
 namespace skia {
 namespace textlayout {
@@ -18,6 +18,8 @@ public:
     explicit OneLineShaper(ParagraphImpl* paragraph)
         : fParagraph(paragraph)
         , fHeight(0.0f)
+        , fUseHalfLeading(false)
+        , fBaselineShift(0.0f)
         , fAdvance(SkPoint::Make(0.0f, 0.0f))
         , fUnresolvedGlyphs(0)
         , fUniqueRunId(paragraph->fRuns.size()){ }
@@ -25,6 +27,14 @@ public:
     bool shape();
 
     size_t unresolvedGlyphs() { return fUnresolvedGlyphs; }
+
+    /**
+     * This method is based on definition of https://unicode.org/reports/tr51/#def_emoji_sequence
+     * It determines if the string begins with an emoji sequence and,
+     * if so, return the first codepoint, moving 'begin' pointer to the next once.
+     * Otherwise it does not move the pointer and returns -1.
+     */
+    static SkUnichar getEmojiSequenceStart(SkUnicode* unicode, const char** begin, const char* end);
 
 private:
 
@@ -55,8 +65,10 @@ private:
             std::function<SkScalar(TextRange textRange, SkSpan<Block>, SkScalar&, TextIndex, uint8_t)>;
     bool iterateThroughShapingRegions(const ShapeVisitor& shape);
 
-    using ShapeSingleFontVisitor = std::function<void(Block, SkTArray<SkShaper::Feature>)>;
-    void iterateThroughFontStyles(TextRange textRange, SkSpan<Block> styleSpan, const ShapeSingleFontVisitor& visitor);
+    using ShapeSingleFontVisitor =
+            std::function<void(Block, skia_private::TArray<SkShaper::Feature>)>;
+    void iterateThroughFontStyles(
+            TextRange textRange, SkSpan<Block> styleSpan, const ShapeSingleFontVisitor& visitor);
 
     enum Resolved {
         Nothing,
@@ -69,7 +81,7 @@ private:
 #ifdef SK_DEBUG
     void printState();
 #endif
-    void finish(TextRange text, SkScalar height, SkScalar& advanceX);
+    void finish(const Block& block, SkScalar height, SkScalar& advanceX);
 
     void beginLine() override {}
     void runInfo(const RunInfo&) override {}
@@ -81,6 +93,8 @@ private:
                                            info,
                                            fCurrentText.start,
                                            fHeight,
+                                           fUseHalfLeading,
+                                           fBaselineShift,
                                            ++fUniqueRunId,
                                            fAdvance.fX);
         return fCurrentRun->newRunBuffer();
@@ -101,6 +115,8 @@ private:
     ParagraphImpl* fParagraph;
     TextRange fCurrentText;
     SkScalar fHeight;
+    bool fUseHalfLeading;
+    SkScalar fBaselineShift;
     SkVector fAdvance;
     size_t fUnresolvedGlyphs;
     size_t fUniqueRunId;
@@ -116,7 +132,7 @@ private:
         FontKey() {}
 
         FontKey(SkUnichar unicode, SkFontStyle fontStyle, SkString locale)
-            : fUnicode(unicode), fFontStyle(fontStyle), fLocale(locale) { }
+            : fUnicode(unicode), fFontStyle(fontStyle), fLocale(std::move(locale)) { }
         SkUnichar fUnicode;
         SkFontStyle fFontStyle;
         SkString fLocale;
@@ -124,10 +140,11 @@ private:
         bool operator==(const FontKey& other) const;
 
         struct Hasher {
-            size_t operator()(const FontKey& key) const;
+            uint32_t operator()(const FontKey& key) const;
         };
     };
-    SkTHashMap<FontKey, sk_sp<SkTypeface>, FontKey::Hasher> fFallbackFonts;
+
+    skia_private::THashMap<FontKey, sk_sp<SkTypeface>, FontKey::Hasher> fFallbackFonts;
 };
 
 }  // namespace textlayout

@@ -1,15 +1,15 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include <stdint.h>
 
+#include "base/command_line.h"
 #include "base/files/file_enumerator.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/process/process_handle.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/strings/stringprintf.h"
 #include "build/build_config.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/browser/webrtc/webrtc_content_browsertest_base.h"
@@ -20,6 +20,8 @@
 #include "content/shell/browser/shell.h"
 #include "media/base/media_switches.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
+#include "third_party/blink/public/common/features.h"
+#include "ui/shell_dialogs/selected_file_info.h"
 
 namespace {
 
@@ -32,9 +34,15 @@ constexpr char kBaseFilename[] = "audio_debug";
 // "/tmp/.com.google.Chrome.Z6UC3P.12345.aec_dump.1".
 base::FilePath GetExpectedAecDumpFileName(const base::FilePath& base_file_path,
                                           int renderer_pid) {
-  return base_file_path.AddExtensionASCII(base::NumberToString(renderer_pid))
-      .AddExtensionASCII("aec_dump")
-      .AddExtensionASCII(base::NumberToString(kExpectedConsumerId));
+  return media::IsChromeWideEchoCancellationEnabled()
+             ? base_file_path
+                   .AddExtensionASCII(base::NumberToString(kExpectedConsumerId))
+                   .AddExtensionASCII("aecdump")
+             : base_file_path
+                   .AddExtensionASCII(base::NumberToString(renderer_pid))
+                   .AddExtensionASCII("aec_dump")
+                   .AddExtensionASCII(
+                       base::NumberToString(kExpectedConsumerId));
 }
 
 // Get the file names of the recordings. The name will be
@@ -66,7 +74,7 @@ bool DeleteFileWithRetryAfterPause(const base::FilePath& path) {
   if (base::DeleteFile(path))
     return true;
 
-  base::PlatformThread::Sleep(base::TimeDelta::FromMilliseconds(100));
+  base::PlatformThread::Sleep(base::Milliseconds(100));
   return base::DeleteFile(path);
 }
 
@@ -84,11 +92,13 @@ class WebRtcAudioDebugRecordingsBrowserTest
   ~WebRtcAudioDebugRecordingsBrowserTest() override {}
 };
 
-#if defined(OS_ANDROID) || defined(OS_LINUX) || defined(OS_CHROMEOS)
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || \
+    BUILDFLAG(IS_FUCHSIA)
 // Renderer crashes under Android ASAN: https://crbug.com/408496.
 // Renderer crashes under Android: https://crbug.com/820934.
 // Failures on Android M. https://crbug.com/535728.
 // Flaky on Linux: https://crbug.com/871182
+// Failed on Fuchsia: https://crbug.com/1470981
 #define MAYBE_CallWithAudioDebugRecordings DISABLED_CallWithAudioDebugRecordings
 #else
 #define MAYBE_CallWithAudioDebugRecordings CallWithAudioDebugRecordings
@@ -116,7 +126,7 @@ IN_PROC_BROWSER_TEST_F(WebRtcAudioDebugRecordingsBrowserTest,
       switches::kAutoplayPolicy,
       switches::autoplay::kNoUserGestureRequiredPolicy);
 
-  bool prev_io_allowed = base::ThreadRestrictions::SetIOAllowed(true);
+  base::ScopedAllowBlockingForTesting allow_blocking;
 
   ASSERT_TRUE(embedded_test_server()->Start());
 
@@ -131,13 +141,14 @@ IN_PROC_BROWSER_TEST_F(WebRtcAudioDebugRecordingsBrowserTest,
 
   // This fakes the behavior of another open tab with webrtc-internals, and
   // enabling audio debug recordings in that tab.
-  WebRTCInternals::GetInstance()->FileSelected(base_file_path, -1, nullptr);
+  WebRTCInternals::GetInstance()->FileSelected(
+      ui::SelectedFileInfo(base_file_path), -1, nullptr);
 
   // Make a call.
   GURL url(embedded_test_server()->GetURL("/media/peerconnection-call.html"));
   EXPECT_TRUE(NavigateToURL(shell(), url));
-  ExecuteJavascriptAndWaitForOk("call({video: true, audio: true});");
-  ExecuteJavascriptAndWaitForOk("hangup();");
+  EXPECT_TRUE(ExecJs(shell(), "call({video: true, audio: true});"));
+  EXPECT_TRUE(ExecJs(shell(), "hangup();"));
 
   WebRTCInternals::GetInstance()->DisableAudioDebugRecordings();
 
@@ -154,7 +165,8 @@ IN_PROC_BROWSER_TEST_F(WebRtcAudioDebugRecordingsBrowserTest,
   // Two files are expected, one for each peer in the call.
   std::vector<base::FilePath> output_files =
       GetRecordingFileNames(FILE_PATH_LITERAL("output"), base_file_path);
-  EXPECT_EQ(output_files.size(), 2u);
+  EXPECT_EQ(output_files.size(),
+            media::IsChromeWideEchoCancellationEnabled() ? 1u : 2u);
   for (const base::FilePath& file_path : output_files) {
     file_size = 0;
     EXPECT_TRUE(base::GetFileSize(file_path, &file_size));
@@ -163,8 +175,12 @@ IN_PROC_BROWSER_TEST_F(WebRtcAudioDebugRecordingsBrowserTest,
   }
 
   // Verify that the expected AEC dump file exists and contains some data.
-  base::ProcessId render_process_id =
-      shell()->web_contents()->GetMainFrame()->GetProcess()->GetProcess().Pid();
+  base::ProcessId render_process_id = shell()
+                                          ->web_contents()
+                                          ->GetPrimaryMainFrame()
+                                          ->GetProcess()
+                                          ->GetProcess()
+                                          .Pid();
   base::FilePath file_path =
       GetExpectedAecDumpFileName(base_file_path, render_process_id);
   EXPECT_TRUE(base::PathExists(file_path));
@@ -176,14 +192,12 @@ IN_PROC_BROWSER_TEST_F(WebRtcAudioDebugRecordingsBrowserTest,
   // Verify that no other files exist and remove temp dir.
   EXPECT_TRUE(base::IsDirectoryEmpty(temp_dir_path));
   EXPECT_TRUE(base::DeleteFile(temp_dir_path));
-
-  base::ThreadRestrictions::SetIOAllowed(prev_io_allowed);
 }
 
 // TODO(grunell): Add test for multiple dumps when re-use of
 // MediaStreamAudioProcessor in AudioCapturer has been removed.
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
 // Renderer crashes under Android ASAN: https://crbug.com/408496.
 // Renderer crashes under Android: https://crbug.com/820934.
 #define MAYBE_CallWithAudioDebugRecordingsEnabledThenDisabled \
@@ -202,7 +216,7 @@ IN_PROC_BROWSER_TEST_F(WebRtcAudioDebugRecordingsBrowserTest,
     return;
   }
 
-  bool prev_io_allowed = base::ThreadRestrictions::SetIOAllowed(true);
+  base::ScopedAllowBlockingForTesting allow_blocking;
 
   ASSERT_TRUE(embedded_test_server()->Start());
 
@@ -217,20 +231,19 @@ IN_PROC_BROWSER_TEST_F(WebRtcAudioDebugRecordingsBrowserTest,
 
   // This fakes the behavior of another open tab with webrtc-internals, and
   // enabling audio debug recordings in that tab, then disabling it.
-  WebRTCInternals::GetInstance()->FileSelected(base_file_path, -1, nullptr);
+  WebRTCInternals::GetInstance()->FileSelected(
+      ui::SelectedFileInfo(base_file_path), -1, nullptr);
   WebRTCInternals::GetInstance()->DisableAudioDebugRecordings();
 
   // Make a call.
   GURL url(embedded_test_server()->GetURL("/media/peerconnection-call.html"));
   EXPECT_TRUE(NavigateToURL(shell(), url));
-  ExecuteJavascriptAndWaitForOk("call({video: true, audio: true});");
-  ExecuteJavascriptAndWaitForOk("hangup();");
+  EXPECT_TRUE(ExecJs(shell(), "call({video: true, audio: true});"));
+  EXPECT_TRUE(ExecJs(shell(), "hangup();"));
 
   // Verify that no files exist and remove temp dir.
   EXPECT_TRUE(base::IsDirectoryEmpty(temp_dir_path));
   EXPECT_TRUE(base::DeleteFile(temp_dir_path));
-
-  base::ThreadRestrictions::SetIOAllowed(prev_io_allowed);
 }
 
 // Same test as CallWithAudioDebugRecordings, but does two parallel calls.
@@ -251,7 +264,7 @@ IN_PROC_BROWSER_TEST_F(WebRtcAudioDebugRecordingsBrowserTest,
       switches::kAutoplayPolicy,
       switches::autoplay::kNoUserGestureRequiredPolicy);
 
-  bool prev_io_allowed = base::ThreadRestrictions::SetIOAllowed(true);
+  base::ScopedAllowBlockingForTesting allow_blocking;
 
   ASSERT_TRUE(embedded_test_server()->Start());
 
@@ -270,21 +283,18 @@ IN_PROC_BROWSER_TEST_F(WebRtcAudioDebugRecordingsBrowserTest,
 
   // This fakes the behavior of another open tab with webrtc-internals, and
   // enabling audio debug recordings in that tab.
-  WebRTCInternals::GetInstance()->FileSelected(base_file_path, -1, nullptr);
+  WebRTCInternals::GetInstance()->FileSelected(
+      ui::SelectedFileInfo(base_file_path), -1, nullptr);
 
   // Make the calls.
   GURL url(embedded_test_server()->GetURL("/media/peerconnection-call.html"));
   EXPECT_TRUE(NavigateToURL(shell(), url));
   EXPECT_TRUE(NavigateToURL(shell2, url));
-  ExecuteJavascriptAndWaitForOk("call({video: true, audio: true});");
-  std::string result;
-  EXPECT_TRUE(ExecuteScriptAndExtractString(
-      shell2, "call({video: true, audio: true});", &result));
-  ASSERT_STREQ("OK", result.c_str());
+  EXPECT_TRUE(ExecJs(shell(), "call({video: true, audio: true});"));
+  EXPECT_TRUE(ExecJs(shell2, "call({video: true, audio: true});"));
 
-  ExecuteJavascriptAndWaitForOk("hangup();");
-  EXPECT_TRUE(ExecuteScriptAndExtractString(shell2, "hangup();", &result));
-  ASSERT_STREQ("OK", result.c_str());
+  EXPECT_TRUE(ExecJs(shell(), "hangup();"));
+  EXPECT_TRUE(ExecJs(shell2, "hangup();"));
 
   WebRTCInternals::GetInstance()->DisableAudioDebugRecordings();
 
@@ -334,8 +344,6 @@ IN_PROC_BROWSER_TEST_F(WebRtcAudioDebugRecordingsBrowserTest,
   // Verify that no other files exist and remove temp dir.
   EXPECT_TRUE(base::IsDirectoryEmpty(temp_dir_path));
   EXPECT_TRUE(base::DeleteFile(temp_dir_path));
-
-  base::ThreadRestrictions::SetIOAllowed(prev_io_allowed);
 }
 
 }  // namespace content

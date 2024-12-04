@@ -31,7 +31,7 @@
 namespace blink {
 
 class Element;
-class HTMLCollectionOrElement;
+class V8UnionElementOrHTMLCollection;
 
 class HTMLAllCollection final : public HTMLCollection {
   DEFINE_WRAPPERTYPEINFO();
@@ -41,8 +41,14 @@ class HTMLAllCollection final : public HTMLCollection {
   HTMLAllCollection(ContainerNode&, CollectionType);
   ~HTMLAllCollection() override;
 
+  V8UnionElementOrHTMLCollection* item(v8::Isolate*, ExceptionState&) {
+    return nullptr;
+  }
+  V8UnionElementOrHTMLCollection* item(v8::Isolate*,
+                                       v8::Local<v8::Value>,
+                                       ExceptionState&);
   Element* AnonymousIndexedGetter(unsigned index);
-  void NamedGetter(const AtomicString& name, HTMLCollectionOrElement&);
+  V8UnionElementOrHTMLCollection* NamedGetter(const AtomicString& name);
 };
 
 }  // namespace blink

@@ -33,10 +33,13 @@
 
 #include "base/synchronization/atomic_flag.h"
 #include "third_party/blink/public/platform/web_crypto.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
 #include "third_party/blink/renderer/platform/wtf/thread_safe_ref_counted.h"
 
 namespace blink {
+
+class ExecutionContext;
 
 // Allows non-Blink webcrypto threads to query for cancellation status.
 class CryptoResultCancel : public ThreadSafeRefCounted<CryptoResultCancel> {
@@ -60,6 +63,10 @@ class PLATFORM_EXPORT CryptoResult : public GarbageCollected<CryptoResult> {
   virtual void CompleteWithKey(const WebCryptoKey&) = 0;
   virtual void CompleteWithKeyPair(const WebCryptoKey& public_key,
                                    const WebCryptoKey& private_key) = 0;
+
+  virtual ExecutionContext* GetExecutionContext() = 0;
+  virtual WebCryptoWarningType GetWarning() = 0;
+  virtual void SetWarning(WebCryptoWarningType code) = 0;
 
   virtual void Trace(Visitor* visitor) const {}
 };

@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,10 +9,11 @@
 
 #include <memory>
 
+#include "base/synchronization/lock.h"
 #include "third_party/blink/renderer/bindings/core/v8/serialization/serialized_script_value.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
+#include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/wtf/thread_safe_ref_counted.h"
-#include "third_party/blink/renderer/platform/wtf/threading_primitives.h"
 #include "third_party/webrtc/api/frame_transformer_interface.h"
 
 namespace blink {
@@ -26,21 +27,29 @@ class RTCEncodedAudioFrameDelegate
     : public WTF::ThreadSafeRefCounted<RTCEncodedAudioFrameDelegate> {
  public:
   explicit RTCEncodedAudioFrameDelegate(
-      std::unique_ptr<webrtc::TransformableFrameInterface> webrtc_frame,
-      Vector<uint32_t> contributing_sources);
+      std::unique_ptr<webrtc::TransformableAudioFrameInterface> webrtc_frame,
+      rtc::ArrayView<const unsigned int> contributing_sources,
+      absl::optional<uint16_t> sequence_number);
 
-  uint64_t Timestamp() const;
+  uint32_t RtpTimestamp() const;
   DOMArrayBuffer* CreateDataBuffer() const;
   void SetData(const DOMArrayBuffer* data);
-  uint32_t Ssrc() const;
+  void SetRtpTimestamp(uint32_t timestamp, ExceptionState& exception_state);
+  absl::optional<uint32_t> Ssrc() const;
+  absl::optional<uint8_t> PayloadType() const;
+  absl::optional<std::string> MimeType() const;
+  absl::optional<uint16_t> SequenceNumber() const;
   Vector<uint32_t> ContributingSources() const;
-  std::unique_ptr<webrtc::TransformableFrameInterface> PassWebRtcFrame();
+  absl::optional<uint64_t> AbsCaptureTime() const;
+  std::unique_ptr<webrtc::TransformableAudioFrameInterface> PassWebRtcFrame();
+  std::unique_ptr<webrtc::TransformableAudioFrameInterface> CloneWebRtcFrame();
 
  private:
-  mutable Mutex mutex_;
-  std::unique_ptr<webrtc::TransformableFrameInterface> webrtc_frame_
-      GUARDED_BY(mutex_);
-  Vector<uint32_t> contributing_sources_;
+  mutable base::Lock lock_;
+  std::unique_ptr<webrtc::TransformableAudioFrameInterface> webrtc_frame_
+      GUARDED_BY(lock_);
+  Vector<uint32_t> contributing_sources_ GUARDED_BY(lock_);
+  absl::optional<uint16_t> sequence_number_ GUARDED_BY(lock_);
 };
 
 class MODULES_EXPORT RTCEncodedAudioFramesAttachment
@@ -51,7 +60,7 @@ class MODULES_EXPORT RTCEncodedAudioFramesAttachment
   ~RTCEncodedAudioFramesAttachment() override = default;
 
   bool IsLockedToAgentCluster() const override {
-    return !encoded_audio_frames_.IsEmpty();
+    return !encoded_audio_frames_.empty();
   }
 
   Vector<scoped_refptr<RTCEncodedAudioFrameDelegate>>& EncodedAudioFrames() {

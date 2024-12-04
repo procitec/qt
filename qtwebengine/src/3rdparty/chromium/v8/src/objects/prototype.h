@@ -31,22 +31,24 @@ class PrototypeIterator {
                            WhereToStart where_to_start = kStartAtPrototype,
                            WhereToEnd where_to_end = END_AT_NULL);
 
-  inline PrototypeIterator(Isolate* isolate, JSReceiver receiver,
+  inline PrototypeIterator(Isolate* isolate, Tagged<JSReceiver> receiver,
                            WhereToStart where_to_start = kStartAtPrototype,
                            WhereToEnd where_to_end = END_AT_NULL);
 
-  inline explicit PrototypeIterator(Isolate* isolate, Map receiver_map,
+  inline explicit PrototypeIterator(Isolate* isolate, Tagged<Map> receiver_map,
                                     WhereToEnd where_to_end = END_AT_NULL);
 
   inline explicit PrototypeIterator(Isolate* isolate, Handle<Map> receiver_map,
                                     WhereToEnd where_to_end = END_AT_NULL);
 
   ~PrototypeIterator() = default;
+  PrototypeIterator(const PrototypeIterator&) = delete;
+  PrototypeIterator& operator=(const PrototypeIterator&) = delete;
 
   inline bool HasAccess() const;
 
   template <typename T = HeapObject>
-  T GetCurrent() const {
+  Tagged<T> GetCurrent() const {
     DCHECK(handle_.is_null());
     return T::cast(object_);
   }
@@ -54,7 +56,7 @@ class PrototypeIterator {
   template <typename T = HeapObject>
   static Handle<T> GetCurrent(const PrototypeIterator& iterator) {
     DCHECK(!iterator.handle_.is_null());
-    DCHECK_EQ(iterator.object_, Object());
+    DCHECK_EQ(iterator.object_, Tagged<HeapObject>());
     return Handle<T>::cast(iterator.handle_);
   }
 
@@ -73,13 +75,11 @@ class PrototypeIterator {
 
  private:
   Isolate* isolate_;
-  Object object_;
+  Tagged<Object> object_ = Tagged<HeapObject>();
   Handle<HeapObject> handle_;
   WhereToEnd where_to_end_;
   bool is_at_end_;
   int seen_proxies_;
-
-  DISALLOW_COPY_AND_ASSIGN(PrototypeIterator);
 };
 
 }  // namespace internal

@@ -1,30 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the test suite of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:GPL-EXCEPT$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 3 as published by the Free Software
-** Foundation with exceptions as appearing in the file LICENSE.GPL3-EXCEPT
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
 #include <qtest.h>
 #include <QDebug>
@@ -32,8 +7,9 @@
 #include <QtQml/qqmlcomponent.h>
 #include <QtQuick/private/qquicksystempalette_p.h>
 #include <qpalette.h>
+#include <QtQuickTestUtils/private/qmlutils_p.h>
 
-class tst_qquicksystempalette : public QObject
+class tst_qquicksystempalette : public QQmlDataTest
 {
     Q_OBJECT
 public:
@@ -51,15 +27,11 @@ private:
     QQmlEngine engine;
 };
 
-tst_qquicksystempalette::tst_qquicksystempalette()
-{
-}
+tst_qquicksystempalette::tst_qquicksystempalette() : QQmlDataTest(QT_QMLTEST_DATADIR) { }
 
 void tst_qquicksystempalette::activePalette()
 {
-    QString componentStr = "import QtQuick 2.0\nSystemPalette { }";
-    QQmlComponent component(&engine);
-    component.setData(componentStr.toLatin1(), QUrl::fromLocalFile(""));
+    QQmlComponent component(&engine, testFileUrl("systemPalette.qml"));
     QQuickSystemPalette *object = qobject_cast<QQuickSystemPalette*>(component.create());
 
     QVERIFY(object != nullptr);
@@ -80,15 +52,15 @@ void tst_qquicksystempalette::activePalette()
     QCOMPARE(palette.shadow().color(), object->shadow());
     QCOMPARE(palette.highlight().color(), object->highlight());
     QCOMPARE(palette.highlightedText().color(), object->highlightedText());
+    QCOMPARE(palette.placeholderText().color(), object->placeholderText());
+    QCOMPARE(palette.accent().color(), object->accent());
 
     delete object;
 }
 
 void tst_qquicksystempalette::inactivePalette()
 {
-    QString componentStr = "import QtQuick 2.0\nSystemPalette { colorGroup: SystemPalette.Inactive }";
-    QQmlComponent component(&engine);
-    component.setData(componentStr.toLatin1(), QUrl::fromLocalFile(""));
+    QQmlComponent component(&engine, testFileUrl("systemPaletteInactive.qml"));
     QQuickSystemPalette *object = qobject_cast<QQuickSystemPalette*>(component.create());
 
     QVERIFY(object != nullptr);
@@ -110,15 +82,15 @@ void tst_qquicksystempalette::inactivePalette()
     QCOMPARE(palette.shadow().color(), object->shadow());
     QCOMPARE(palette.highlight().color(), object->highlight());
     QCOMPARE(palette.highlightedText().color(), object->highlightedText());
+    QCOMPARE(palette.placeholderText().color(), object->placeholderText());
+    QCOMPARE(palette.accent().color(), object->accent());
 
     delete object;
 }
 
 void tst_qquicksystempalette::disabledPalette()
 {
-    QString componentStr = "import QtQuick 2.0\nSystemPalette { colorGroup: SystemPalette.Disabled }";
-    QQmlComponent component(&engine);
-    component.setData(componentStr.toLatin1(), QUrl::fromLocalFile(""));
+    QQmlComponent component(&engine, testFileUrl("systemPaletteDisabled.qml"));
     QQuickSystemPalette *object = qobject_cast<QQuickSystemPalette*>(component.create());
 
     QVERIFY(object != nullptr);
@@ -140,6 +112,8 @@ void tst_qquicksystempalette::disabledPalette()
     QCOMPARE(palette.shadow().color(), object->shadow());
     QCOMPARE(palette.highlight().color(), object->highlight());
     QCOMPARE(palette.highlightedText().color(), object->highlightedText());
+    QCOMPARE(palette.placeholderText().color(), object->placeholderText());
+    QCOMPARE(palette.accent().color(), object->accent());
 
     delete object;
 }
@@ -147,9 +121,7 @@ void tst_qquicksystempalette::disabledPalette()
 #ifndef QT_NO_WIDGETS
 void tst_qquicksystempalette::paletteChanged()
 {
-    QString componentStr = "import QtQuick 2.0\nSystemPalette { }";
-    QQmlComponent component(&engine);
-    component.setData(componentStr.toLatin1(), QUrl::fromLocalFile(""));
+    QQmlComponent component(&engine, testFileUrl("systemPalette.qml"));
     QQuickSystemPalette *object = qobject_cast<QQuickSystemPalette*>(component.create());
 
     QVERIFY(object != nullptr);

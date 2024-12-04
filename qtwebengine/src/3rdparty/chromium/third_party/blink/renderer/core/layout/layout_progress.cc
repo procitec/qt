@@ -29,22 +29,19 @@ namespace blink {
 
 namespace {
 
-constexpr base::TimeDelta kAnimationInterval =
-    base::TimeDelta::FromMilliseconds(125);
-const base::TimeDelta kAnimationDuration = kAnimationInterval * 20;
+constexpr base::TimeDelta kAnimationInterval = base::Milliseconds(125);
+constexpr base::TimeDelta kAnimationDuration = kAnimationInterval * 20;
 
 }  // namespace
 
-LayoutProgress::LayoutProgress(Element* element)
-    : LayoutBlockFlow(element),
+LayoutProgress::LayoutProgress(HTMLProgressElement& node)
+    : LayoutNGBlockFlow(&node),
       position_(HTMLProgressElement::kInvalidPosition),
       animating_(false),
       animation_timer_(
-          element->GetDocument().GetTaskRunner(TaskType::kInternalDefault),
+          node.GetDocument().GetTaskRunner(TaskType::kInternalDefault),
           this,
-          &LayoutProgress::AnimationTimerFired) {
-  DCHECK(IsA<HTMLProgressElement>(element));
-}
+          &LayoutProgress::AnimationTimerFired) {}
 
 LayoutProgress::~LayoutProgress() = default;
 

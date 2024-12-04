@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -18,7 +18,7 @@ import org.chromium.mojo.bindings.BindingsTestUtils.CapturingErrorHandler;
 import org.chromium.mojo.bindings.test.mojom.imported.ImportedInterface;
 import org.chromium.mojo.bindings.test.mojom.sample.Factory;
 import org.chromium.mojo.bindings.test.mojom.sample.NamedObject;
-import org.chromium.mojo.bindings.test.mojom.sample.NamedObject.GetNameResponse;
+import org.chromium.mojo.bindings.test.mojom.sample.NamedObject.GetName_Response;
 import org.chromium.mojo.bindings.test.mojom.sample.Request;
 import org.chromium.mojo.bindings.test.mojom.sample.Response;
 import org.chromium.mojo.system.DataPipe.ConsumerHandle;
@@ -31,21 +31,16 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
-/**
- * Tests for interfaces / proxies / stubs generated for sample_factory.mojom.
- */
+/** Tests for interfaces / proxies / stubs generated for sample_factory.mojom. */
 @RunWith(BaseJUnit4ClassRunner.class)
 public class InterfacesTest {
-    @Rule
-    public MojoTestRule mTestRule = new MojoTestRule();
+    @Rule public MojoTestRule mTestRule = new MojoTestRule();
 
     private static final String OBJECT_NAME = "hello world";
 
     private final List<Closeable> mCloseablesToClose = new ArrayList<Closeable>();
 
-    /**
-     * Basic implementation of {@link NamedObject}.
-     */
+    /** Basic implementation of {@link NamedObject}. */
     public static class MockNamedObjectImpl extends CapturingErrorHandler implements NamedObject {
         private String mName = "";
 
@@ -61,7 +56,7 @@ public class InterfacesTest {
         }
 
         @Override
-        public void getName(GetNameResponse callback) {
+        public void getName(GetName_Response callback) {
             callback.call(mName);
         }
 
@@ -70,10 +65,8 @@ public class InterfacesTest {
         }
     }
 
-    /**
-     * Implementation of {@link GetNameResponse} keeping track of usage.
-     */
-    public static class RecordingGetNameResponse implements GetNameResponse {
+    /** Implementation of {@link GetNameResponse} keeping track of usage. */
+    public static class RecordingGetNameResponse implements GetName_Response {
         private String mName;
         private boolean mCalled;
 
@@ -101,9 +94,7 @@ public class InterfacesTest {
         }
     }
 
-    /**
-     * Basic implementation of {@link Factory}.
-     */
+    /** Basic implementation of {@link Factory}. */
     public class MockFactoryImpl extends CapturingErrorHandler implements Factory {
         private boolean mClosed;
 
@@ -120,7 +111,7 @@ public class InterfacesTest {
         }
 
         @Override
-        public void doStuff(Request request, MessagePipeHandle pipe, DoStuffResponse callback) {
+        public void doStuff(Request request, MessagePipeHandle pipe, DoStuff_Response callback) {
             if (pipe != null) {
                 pipe.close();
             }
@@ -130,7 +121,7 @@ public class InterfacesTest {
         }
 
         @Override
-        public void doStuff2(ConsumerHandle pipe, DoStuff2Response callback) {
+        public void doStuff2(ConsumerHandle pipe, DoStuff2_Response callback) {
             callback.call("World");
         }
 
@@ -140,22 +131,21 @@ public class InterfacesTest {
         }
 
         @Override
-        public void requestImportedInterface(InterfaceRequest<ImportedInterface> obj,
-                RequestImportedInterfaceResponse callback) {
+        public void requestImportedInterface(
+                InterfaceRequest<ImportedInterface> obj,
+                RequestImportedInterface_Response callback) {
             throw new UnsupportedOperationException("Not implemented.");
         }
 
         @Override
         public void takeImportedInterface(
-                ImportedInterface obj, TakeImportedInterfaceResponse callback) {
+                ImportedInterface obj, TakeImportedInterface_Response callback) {
             throw new UnsupportedOperationException("Not implemented.");
         }
     }
 
-    /**
-     * Implementation of DoStuffResponse that keeps track of if the response is called.
-     */
-    public static class DoStuffResponseImpl implements Factory.DoStuffResponse {
+    /** Implementation of DoStuffResponse that keeps track of if the response is called. */
+    public static class DoStuffResponseImpl implements Factory.DoStuff_Response {
         private boolean mResponseCalled;
 
         public boolean wasResponseCalled() {
@@ -249,8 +239,9 @@ public class InterfacesTest {
     @Test
     @SmallTest
     public void testFactoryOverPipe() {
-        Factory.Proxy proxy = BindingsTestUtils.newProxyOverPipe(
-                Factory.MANAGER, new MockFactoryImpl(), mCloseablesToClose);
+        Factory.Proxy proxy =
+                BindingsTestUtils.newProxyOverPipe(
+                        Factory.MANAGER, new MockFactoryImpl(), mCloseablesToClose);
         Pair<NamedObject.Proxy, InterfaceRequest<NamedObject>> request =
                 NamedObject.MANAGER.getInterfaceRequest(CoreImpl.getInstance());
         mCloseablesToClose.add(request.first);

@@ -31,6 +31,7 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_HTML_FORMS_HIDDEN_INPUT_TYPE_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_HTML_FORMS_HIDDEN_INPUT_TYPE_H_
 
+#include "third_party/blink/renderer/core/dom/events/simulated_click_options.h"
 #include "third_party/blink/renderer/core/html/forms/input_type.h"
 #include "third_party/blink/renderer/core/html/forms/input_type_view.h"
 
@@ -39,7 +40,7 @@ namespace blink {
 class HiddenInputType final : public InputType, private InputTypeView {
  public:
   HiddenInputType(HTMLInputElement& element)
-      : InputType(element), InputTypeView(element) {}
+      : InputType(Type::kHidden, element), InputTypeView(element) {}
 
   void Trace(Visitor*) const override;
   using InputType::GetElement;
@@ -47,22 +48,29 @@ class HiddenInputType final : public InputType, private InputTypeView {
  private:
   void CountUsage() override;
   InputTypeView* CreateView() override;
-  const AtomicString& FormControlType() const override;
   bool ShouldSaveAndRestoreFormControlState() const override;
   bool SupportsValidation() const override;
-  LayoutObject* CreateLayoutObject(const ComputedStyle&,
-                                   LegacyLayout) const override;
-  void AccessKeyAction(bool send_mouse_events) override;
+  LayoutObject* CreateLayoutObject(const ComputedStyle&) const override;
+  void AccessKeyAction(SimulatedClickCreationScope creation_scope) override;
   bool LayoutObjectIsNeeded() override;
   ValueMode GetValueMode() const override;
   bool IsInteractiveContent() const override { return false; }
   bool ShouldRespectHeightAndWidthAttributes() override;
+  bool IsAutoDirectionalityFormAssociated() const override;
   void SetValue(const String&,
                 bool,
                 TextFieldEventBehavior,
                 TextControlSetValueSelection) override;
   void AppendToFormData(FormData&) const override;
   bool NeedsShadowSubtree() const override { return false; }
+  void ValueAttributeChanged() override;
+};
+
+template <>
+struct DowncastTraits<HiddenInputType> {
+  static bool AllowFrom(const InputType& type) {
+    return type.IsHiddenInputType();
+  }
 };
 
 }  // namespace blink

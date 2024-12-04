@@ -76,7 +76,7 @@ occupying the View's entire content bounds. [FlexLayout] provides a CSS-like
 layout for horizontal and vertical arrangements of views.
 
 Other commonly-used layouts managers are [BoxLayout], a predecessor of
-FlexLayout, and [GridLayout], which provides a flexible row-and-column
+FlexLayout, and [TableLayout], which provides a flexible row-and-column
 system.
 
 ### Painting
@@ -97,6 +97,10 @@ create a subclass of `Background` or `Border` and install that, rather than
 overriding `::OnPaintBackground` or `::OnPaintBorder`. Doing this helps preserve
 the separation of Views into the three parts described above and makes painting
 code easier to understand.
+
+### Debugging
+
+See [page](../ui_devtools/index.md) for details.
 
 ## Widgets
 
@@ -132,7 +136,7 @@ affecting the client view.
 
 The overall structure of a Widget and its helper Views looks like this:
 
-![views](views.png)
+![views](images/views.png)
 
 ## Dialogs
 
@@ -154,13 +158,14 @@ drawn alongside the window controls as part of the Bubble's Widget's
 NonClientFrameView.
 
 [BoxLayout]: https://cs.chromium.org/chromium/src/ui/views/layout/box_layout.h
-[BubbleDialogDelegateView]: https://cs.chromium.org/chromium/src/ui/views/bubble/bubble_dialog_delegate.h
+[BubbleDialogDelegateView]: https://cs.chromium.org/chromium/src/ui/views/bubble/bubble_dialog_delegate_view.h
 [ClientView]: https://cs.chromium.org/chromium/src/ui/views/window/client_view.h
 [DialogDelegate]: https://cs.chromium.org/chromium/src/ui/views/window/dialog_delegate.h
 [DialogDelegateView]: https://cs.chromium.org/chromium/src/ui/views/window/dialog_delegate.h
 [FillLayout]: https://cs.chromium.org/chromium/src/ui/views/layout/fill_layout.h
+[FlexLayout]: https://cs.chromium.org/chromium/src/ui/views/layout/flex_layout.h
 [FocusManager]: https://cs.chromium.org/chromium/src/ui/views/focus/focus_manager.h
-[GridLayout]: https://cs.chromium.org/chromium/src/ui/views/layout/grid_layout.h
+[TableLayout]: https://cs.chromium.org/chromium/src/ui/views/layout/table_layout.h
 
 [NonClientView]: https://cs.chromium.org/chromium/src/ui/views/window/non_client_view.h
 [NonClientFrameView]: https://cs.chromium.org/chromium/src/ui/views/window/non_client_view.h

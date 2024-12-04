@@ -22,6 +22,7 @@
 #include "include/core/SkTypes.h"
 #include "include/effects/SkDashPathEffect.h"
 #include "tools/ToolUtils.h"
+#include "tools/fonts/FontToolUtils.h"
 
 #include <math.h>
 #include <initializer_list>
@@ -61,9 +62,9 @@ static void show_zero_len_dash(SkCanvas* canvas) {
 }
 
 class DashingGM : public skiagm::GM {
-    SkString onShortName() override { return SkString("dashing"); }
+    SkString getName() const override { return SkString("dashing"); }
 
-    SkISize onISize() override { return {640, 340}; }
+    SkISize getISize() override { return {640, 340}; }
 
     void onDraw(SkCanvas* canvas) override {
         struct Intervals {
@@ -134,15 +135,14 @@ static SkPath make_path_oval(const SkRect& bounds) {
 
 static SkPath make_path_star(const SkRect& bounds) {
     SkPath path = make_unit_star(5);
-    SkMatrix matrix;
-    matrix.setRectToRect(path.getBounds(), bounds, SkMatrix::kCenter_ScaleToFit);
+    SkMatrix matrix = SkMatrix::RectToRect(path.getBounds(), bounds, SkMatrix::kCenter_ScaleToFit);
     return path.makeTransform(matrix);
 }
 
 class Dashing2GM : public skiagm::GM {
-    SkString onShortName() override { return SkString("dashing2"); }
+    SkString getName() const override { return SkString("dashing2"); }
 
-    SkISize onISize() override { return {640, 480}; }
+    SkISize getISize() override { return {640, 480}; }
 
     void onDraw(SkCanvas* canvas) override {
         constexpr int gIntervals[] = {
@@ -168,7 +168,7 @@ class Dashing2GM : public skiagm::GM {
 
         const int* intervals = &gIntervals[1];
         for (int y = 0; y < gIntervals[0]; ++y) {
-            SkScalar vals[SK_ARRAY_COUNT(gIntervals)];  // more than enough
+            SkScalar vals[std::size(gIntervals)];  // more than enough
             int count = *intervals++;
             for (int i = 0; i < count; ++i) {
                 vals[i] = SkIntToScalar(*intervals++);
@@ -176,7 +176,7 @@ class Dashing2GM : public skiagm::GM {
             SkScalar phase = vals[0] / 2;
             paint.setPathEffect(SkDashPathEffect::Make(vals, count, phase));
 
-            for (size_t x = 0; x < SK_ARRAY_COUNT(gProc); ++x) {
+            for (size_t x = 0; x < std::size(gProc); ++x) {
                 SkPath path;
                 SkRect r = bounds;
                 r.offset(x * dx, y * dy);
@@ -190,9 +190,9 @@ class Dashing2GM : public skiagm::GM {
 
 // Test out the on/off line dashing Chrome if fond of
 class Dashing3GM : public skiagm::GM {
-    SkString onShortName() override { return SkString("dashing3"); }
+    SkString getName() const override { return SkString("dashing3"); }
 
-    SkISize onISize() override { return {640, 480}; }
+    SkISize getISize() override { return {640, 480}; }
 
     // Draw a 100x100 block of dashed lines. The horizontal ones are BW
     // while the vertical ones are AA.
@@ -313,9 +313,9 @@ class Dashing3GM : public skiagm::GM {
 //////////////////////////////////////////////////////////////////////////////
 
 class Dashing4GM : public skiagm::GM {
-    SkString onShortName() override { return SkString("dashing4"); }
+    SkString getName() const override { return SkString("dashing4"); }
 
-    SkISize onISize() override { return {640, 1100}; }
+    SkISize getISize() override { return {640, 1100}; }
 
     void onDraw(SkCanvas* canvas) override {
         struct Intervals {
@@ -332,7 +332,9 @@ class Dashing4GM : public skiagm::GM {
         for (int width = 0; width <= 2; ++width) {
             for (const Intervals& data : {Intervals{1, 1},
                                           Intervals{4, 2},
-                                          Intervals{0, 4}}) { // test for zero length on interval
+                                          Intervals{0, 4}}) { // test for zero length on interval.
+                                                              // zero length intervals should draw
+                                                              // a line of squares or circles
                 for (bool aa : {false, true}) {
                     for (auto cap : {SkPaint::kRound_Cap, SkPaint::kSquare_Cap}) {
                         int w = width * width * width;
@@ -409,9 +411,9 @@ public:
 private:
     bool runAsBench() const override { return true; }
 
-    SkString onShortName() override { return SkString(fDoAA ?  "dashing5_aa" : "dashing5_bw"); }
+    SkString getName() const override { return SkString(fDoAA ? "dashing5_aa" : "dashing5_bw"); }
 
-    SkISize onISize() override { return {400, 200}; }
+    SkISize getISize() override { return {400, 200}; }
 
     void onDraw(SkCanvas* canvas) override {
         constexpr int kOn = 4;
@@ -492,7 +494,7 @@ DEF_SIMPLE_GM(longpathdash, canvas, 612, 612) {
     p.setStroke(true);
     p.setStrokeWidth(1);
     const SkScalar intervals[] = { 1, 1 };
-    p.setPathEffect(SkDashPathEffect::Make(intervals, SK_ARRAY_COUNT(intervals), 0));
+    p.setPathEffect(SkDashPathEffect::Make(intervals, std::size(intervals), 0));
 
     canvas->translate(50, 50);
     canvas->drawPath(lines, p);
@@ -505,8 +507,47 @@ DEF_SIMPLE_GM(longlinedash, canvas, 512, 512) {
     p.setStrokeWidth(80);
 
     const SkScalar intervals[] = { 2, 2 };
-    p.setPathEffect(SkDashPathEffect::Make(intervals, SK_ARRAY_COUNT(intervals), 0));
+    p.setPathEffect(SkDashPathEffect::Make(intervals, std::size(intervals), 0));
     canvas->drawRect(SkRect::MakeXYWH(-10000, 100, 20000, 20), p);
+}
+
+DEF_SIMPLE_GM(dashbigrects, canvas, 256, 256) {
+    SkRandom rand;
+
+    constexpr int kHalfStrokeWidth = 8;
+    constexpr int kOnOffInterval = 2*kHalfStrokeWidth;
+
+    canvas->clear(SkColors::kBlack);
+
+    SkPaint p;
+    p.setAntiAlias(true);
+    p.setStroke(true);
+    p.setStrokeWidth(2*kHalfStrokeWidth);
+    p.setStrokeCap(SkPaint::kButt_Cap);
+
+    constexpr SkScalar intervals[] = { kOnOffInterval, kOnOffInterval };
+    p.setPathEffect(SkDashPathEffect::Make(intervals, std::size(intervals), 0));
+
+    constexpr float gWidthHeights[] = {
+        1000000000.0f * kOnOffInterval + kOnOffInterval/2.0f,
+        1000000.0f * kOnOffInterval + kOnOffInterval/2.0f,
+        1000.0f * kOnOffInterval + kOnOffInterval/2.0f,
+        100.0f * kOnOffInterval + kOnOffInterval/2.0f,
+        10.0f * kOnOffInterval + kOnOffInterval/2.0f,
+        9.0f * kOnOffInterval + kOnOffInterval/2.0f,
+        8.0f * kOnOffInterval + kOnOffInterval/2.0f,
+        7.0f * kOnOffInterval + kOnOffInterval/2.0f,
+        6.0f * kOnOffInterval + kOnOffInterval/2.0f,
+        5.0f * kOnOffInterval + kOnOffInterval/2.0f,
+        4.0f * kOnOffInterval + kOnOffInterval/2.0f,
+    };
+
+    for (size_t i = 0; i < std::size(gWidthHeights); ++i) {
+        p.setColor(ToolUtils::color_to_565(rand.nextU() | (0xFF << 24)));
+
+        int offset = 2 * i * kHalfStrokeWidth + kHalfStrokeWidth;
+        canvas->drawRect(SkRect::MakeXYWH(offset, offset, gWidthHeights[i], gWidthHeights[i]), p);
+    }
 }
 
 DEF_SIMPLE_GM(longwavyline, canvas, 512, 512) {
@@ -533,10 +574,10 @@ DEF_SIMPLE_GM(dashtextcaps, canvas, 512, 512) {
     p.setStrokeJoin(SkPaint::kRound_Join);
     p.setARGB(0xff, 0xbb, 0x00, 0x00);
 
-    SkFont font(ToolUtils::create_portable_typeface(), 100);
+    SkFont font(ToolUtils::DefaultPortableTypeface(), 100);
 
     const SkScalar intervals[] = { 12, 12 };
-    p.setPathEffect(SkDashPathEffect::Make(intervals, SK_ARRAY_COUNT(intervals), 0));
+    p.setPathEffect(SkDashPathEffect::Make(intervals, std::size(intervals), 0));
     canvas->drawString("Sausages", 10, 90, font, p);
     canvas->drawLine(8, 120, 456, 120, p);
 }
@@ -544,7 +585,7 @@ DEF_SIMPLE_GM(dashtextcaps, canvas, 512, 512) {
 DEF_SIMPLE_GM(dash_line_zero_off_interval, canvas, 160, 330) {
     static constexpr SkScalar kIntervals[] = {5.f, 0.f, 2.f, 0.f};
     SkPaint dashPaint;
-    dashPaint.setPathEffect(SkDashPathEffect::Make(kIntervals, SK_ARRAY_COUNT(kIntervals), 0.f));
+    dashPaint.setPathEffect(SkDashPathEffect::Make(kIntervals, std::size(kIntervals), 0.f));
     SkASSERT(dashPaint.getPathEffect());
     dashPaint.setStroke(true);
     dashPaint.setStrokeWidth(20.f);
@@ -581,7 +622,7 @@ DEF_SIMPLE_GM(thin_aa_dash_lines, canvas, 330, 110) {
     SkPaint paint;
     static constexpr SkScalar kScale = 100.f;
     static constexpr SkScalar kIntervals[] = {10/kScale, 5/kScale};
-    paint.setPathEffect(SkDashPathEffect::Make(kIntervals, SK_ARRAY_COUNT(kIntervals), 0.f));
+    paint.setPathEffect(SkDashPathEffect::Make(kIntervals, std::size(kIntervals), 0.f));
     paint.setAntiAlias(true);
     paint.setStrokeWidth(0.25f/kScale);
     // substep moves the subpixel offset every iteration.
@@ -598,6 +639,28 @@ DEF_SIMPLE_GM(thin_aa_dash_lines, canvas, 330, 110) {
         }
         canvas->translate(110/kScale, 0);
     }
+}
+
+DEF_SIMPLE_GM(path_effect_empty_result, canvas, 100, 100) {
+    SkPaint p;
+    p.setStroke(true);
+    p.setStrokeWidth(1);
+
+    SkPath path;
+    float r = 70;
+    float l = 70;
+    float t = 70;
+    float b = 70;
+    path.moveTo(l, t);
+    path.lineTo(r, t);
+    path.lineTo(r, b);
+    path.lineTo(l, b);
+    path.close();
+
+    float dashes[] = {2.f, 2.f};
+    p.setPathEffect(SkDashPathEffect::Make(dashes, 2, 0.f));
+
+    canvas->drawPath(path, p);
 }
 
 //////////////////////////////////////////////////////////////////////////////

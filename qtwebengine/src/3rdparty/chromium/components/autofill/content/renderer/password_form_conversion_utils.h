@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,12 +9,10 @@
 #include <memory>
 #include <string>
 #include <utility>
-#include <vector>
 
 #include "base/strings/string_piece.h"
 #include "components/autofill/content/renderer/form_autofill_util.h"
 #include "components/autofill/content/renderer/html_based_username_detector.h"
-#include "components/autofill/core/common/password_form.h"
 #include "third_party/blink/public/platform/web_string.h"
 #include "url/gurl.h"
 
@@ -42,7 +40,7 @@ bool IsGaiaWithSkipSavePasswordForm(const blink::WebFormElement& form);
 
 std::unique_ptr<FormData> CreateFormDataFromWebForm(
     const blink::WebFormElement& web_form,
-    const FieldDataManager* field_data_manager,
+    const FieldDataManager& field_data_manager,
     UsernameDetectorCache* username_detector_cache,
     form_util::ButtonTitlesCache* button_titles_cache);
 
@@ -50,7 +48,7 @@ std::unique_ptr<FormData> CreateFormDataFromWebForm(
 // not enclosed in <form> element.
 std::unique_ptr<FormData> CreateFormDataFromUnownedInputElements(
     const blink::WebLocalFrame& frame,
-    const FieldDataManager* field_data_manager,
+    const FieldDataManager& field_data_manager,
     UsernameDetectorCache* username_detector_cache,
     form_util::ButtonTitlesCache* button_titles_cache);
 

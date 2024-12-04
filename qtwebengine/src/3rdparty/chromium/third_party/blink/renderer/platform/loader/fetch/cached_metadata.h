@@ -32,21 +32,28 @@
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_LOADER_FETCH_CACHED_METADATA_H_
 
 #include <stdint.h>
+
+#include "base/check_op.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/numerics/safe_conversions.h"
 #include "mojo/public/cpp/base/big_buffer.h"
+#include "third_party/blink/renderer/platform/loader/fetch/url_loader/cached_metadata_handler.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
-#include "third_party/blink/renderer/platform/wtf/assertions.h"
 #include "third_party/blink/renderer/platform/wtf/ref_counted.h"
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
 namespace blink {
 
-// |m_serializedData| consists of a 32 bit marker, 32 bits type ID, and actual
-// data.
-constexpr size_t kCacheDataTypeStart = sizeof(uint32_t);
-constexpr size_t kCachedMetaDataStart = kCacheDataTypeStart + sizeof(uint32_t);
+// |m_serializedData| consists of a 32 bit marker, 32 bits type ID, 64 bits tag,
+// and actual data.
+struct CachedMetadataHeader {
+  uint32_t marker;  // Must be CachedMetadataHandler::kSingleEntryWithTag.
+  uint32_t type;
+  uint64_t tag;  // This might be 0 if the caller to CachedMetadata::Create did
+                 // not specify a value.
+};
 
 // Metadata retrieved from the embedding application's cache.
 //
@@ -58,9 +65,32 @@ class PLATFORM_EXPORT CachedMetadata : public RefCounted<CachedMetadata> {
  public:
   static scoped_refptr<CachedMetadata> Create(uint32_t data_type_id,
                                               const uint8_t* data,
-                                              size_t size) {
-    return base::AdoptRef(
-        new CachedMetadata(data_type_id, data, SafeCast<wtf_size_t>(size)));
+                                              size_t size,
+                                              uint64_t tag = 0) {
+    return base::AdoptRef(new CachedMetadata(
+        data_type_id, data, base::checked_cast<wtf_size_t>(size), tag));
+  }
+
+  // Returns a Vector containing the header of serialized metadata.
+  // Callers should append the body to the Vector to get the full serialized
+  // metadata.
+  // The actual body size can be different from `estimated_body_size`.
+  static Vector<uint8_t> GetSerializedDataHeader(uint32_t data_type_id,
+                                                 wtf_size_t estimated_body_size,
+                                                 uint64_t tag = 0) {
+    Vector<uint8_t> vector;
+    vector.ReserveInitialCapacity(sizeof(CachedMetadataHeader) +
+                                  estimated_body_size);
+    uint32_t marker = CachedMetadataHandler::kSingleEntryWithTag;
+    CHECK_EQ(vector.size(), offsetof(CachedMetadataHeader, marker));
+    vector.Append(reinterpret_cast<const uint8_t*>(&marker), sizeof(uint32_t));
+    CHECK_EQ(vector.size(), offsetof(CachedMetadataHeader, type));
+    vector.Append(reinterpret_cast<const uint8_t*>(&data_type_id),
+                  sizeof(uint32_t));
+    CHECK_EQ(vector.size(), offsetof(CachedMetadataHeader, tag));
+    vector.Append(reinterpret_cast<const uint8_t*>(&tag), sizeof(uint64_t));
+    CHECK_EQ(vector.size(), sizeof(CachedMetadataHeader));
+    return vector;
   }
 
   static scoped_refptr<CachedMetadata> CreateFromSerializedData(
@@ -78,31 +108,39 @@ class PLATFORM_EXPORT CachedMetadata : public RefCounted<CachedMetadata> {
   }
 
   uint32_t DataTypeID() const {
-    DCHECK_GE(RawSize(), kCachedMetaDataStart);
-    return *reinterpret_cast_ptr<uint32_t*>(
-        const_cast<uint8_t*>(RawData() + kCacheDataTypeStart));
+    DCHECK_GE(RawSize(), sizeof(CachedMetadataHeader));
+    return (reinterpret_cast<const CachedMetadataHeader*>(RawData()))->type;
   }
 
   const uint8_t* Data() const {
-    DCHECK_GE(RawSize(), kCachedMetaDataStart);
-    return RawData() + kCachedMetaDataStart;
+    DCHECK_GE(RawSize(), sizeof(CachedMetadataHeader));
+    return RawData() + sizeof(CachedMetadataHeader);
   }
 
   uint32_t size() const {
-    DCHECK_GE(RawSize(), kCachedMetaDataStart);
-    return RawSize() - kCachedMetaDataStart;
+    DCHECK_GE(RawSize(), sizeof(CachedMetadataHeader));
+    return RawSize() - sizeof(CachedMetadataHeader);
+  }
+
+  uint64_t tag() const {
+    CHECK_GE(RawSize(), sizeof(CachedMetadataHeader));
+    return (reinterpret_cast<const CachedMetadataHeader*>(RawData()))->tag;
   }
 
  private:
   explicit CachedMetadata(Vector<uint8_t> data);
-  CachedMetadata(uint32_t data_type_id, const uint8_t* data, wtf_size_t);
+  CachedMetadata(uint32_t data_type_id,
+                 const uint8_t* data,
+                 wtf_size_t size,
+                 uint64_t tag);
   explicit CachedMetadata(mojo_base::BigBuffer data);
 
   const uint8_t* RawData() const {
     return buffer_.size() ? buffer_.data() : vector_.data();
   }
   uint32_t RawSize() const {
-    return buffer_.size() ? SafeCast<uint32_t>(buffer_.size()) : vector_.size();
+    return buffer_.size() ? base::checked_cast<uint32_t>(buffer_.size())
+                          : vector_.size();
   }
 
   // Since the serialization format supports random access, storing it in
@@ -113,4 +151,4 @@ class PLATFORM_EXPORT CachedMetadata : public RefCounted<CachedMetadata> {
 
 }  // namespace blink
 
-#endif
+#endif  // THIRD_PARTY_BLINK_RENDERER_PLATFORM_LOADER_FETCH_CACHED_METADATA_H_

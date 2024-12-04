@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,13 +6,19 @@
 
 #include <utility>
 
+#include "base/android/build_info.h"
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
+#include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/notreached.h"
 #include "base/strings/stringprintf.h"
 #include "build/build_config.h"
+#include "components/crash/android/anr_build_id_provider.h"
+#include "components/crash/android/anr_skipped_reason.h"
 #include "components/minidump_uploader/minidump_uploader_jni_headers/CrashReportMimeWriter_jni.h"
+#include "components/version_info/android/channel_getter.h"
+#include "components/version_info/version_info.h"
 #include "third_party/crashpad/crashpad/handler/minidump_to_upload_parameters.h"
 #include "third_party/crashpad/crashpad/snapshot/exception_snapshot.h"
 #include "third_party/crashpad/crashpad/snapshot/minidump/process_snapshot_minidump.h"
@@ -25,7 +31,6 @@ namespace minidump_uploader {
 
 namespace {
 
-#if defined(OS_ANDROID)
 // These values are persisted to logs. Entries should not be renumbered and
 // numeric values should never be reused.
 enum class ProcessedMinidumpCounts {
@@ -36,7 +41,6 @@ enum class ProcessedMinidumpCounts {
   kUtility = 4,
   kMaxValue = kUtility
 };
-#endif  // OS_ANDROID
 
 bool MimeifyReportWithKeyValuePairs(
     const crashpad::CrashReportDatabase::UploadReport& report,
@@ -77,7 +81,6 @@ bool MimeifyReportWithKeyValuePairs(
         crashes_key_value_arr->push_back(kv.first);
         crashes_key_value_arr->push_back(kv.second);
       }
-#if defined(OS_ANDROID)
       if (kv.first == kPtypeKey) {
         const crashpad::ExceptionSnapshot* exception =
             minidump_process_snapshot.Exception();
@@ -99,14 +102,9 @@ bool MimeifyReportWithKeyValuePairs(
               static_cast<uint32_t>(crashpad::Signals::kSimulatedSigno)) {
             UMA_HISTOGRAM_ENUMERATION(
                 "Stability.Android.ProcessedRealMinidumps", count_type);
-          } else {
-            UMA_HISTOGRAM_ENUMERATION(
-                "Stability.Android.ProcessedSimulatedMinidumps", count_type);
           }
         }
-        // TODO(wnwen): Add histogram for number of null exceptions.
       }
-#endif  // OS_ANDROID
     }
   }
 
@@ -213,6 +211,103 @@ void RewriteMinidumpsAsMIMEs(const base::FilePath& src_dir,
         db->DeleteReport(report.uuid);
         continue;
     }
+  }
+}
+
+static void reportAnrUploadFailure(AnrSkippedReason reason) {
+  UMA_HISTOGRAM_ENUMERATION("Crashpad.AnrUpload.Skipped", reason);
+}
+
+void WriteAnrAsMime(crashpad::FileReader* anr_reader,
+                    crashpad::FileWriterInterface* writer,
+                    const std::string& version_number,
+                    const std::string& build_id,
+                    const std::string& anr_file_name) {
+  crashpad::HTTPMultipartBuilder builder;
+  builder.SetFormData("version", version_number);
+  builder.SetFormData("product", "Chrome_Android");
+  std::string channel = std::string(
+      version_info::GetChannelString(version_info::android::GetChannel()));
+  if (channel == "stable") {
+    // Android reports require an empty string instead of "stable".
+    channel = "";
+  }
+  builder.SetFormData("channel", channel);
+
+  if (build_id.empty()) {
+    if (version_number == version_info::GetVersionNumber()) {
+      // We have an ANR where we didn't pre-set the build ID in the process
+      // state summary, but since we are currently on the same version we can
+      // just use our current one.
+      builder.SetFormData("elf_build_id", crash_reporter::GetElfBuildId());
+    }
+  } else {
+    builder.SetFormData("elf_build_id", build_id);
+  }
+
+  // We can't use crashpad::AnnotationList::Get() as it contains a number of
+  // fields which change on each Chrome restart.
+  base::android::BuildInfo* info = base::android::BuildInfo::GetInstance();
+  builder.SetFormData("android_build_id", info->android_build_id());
+  builder.SetFormData("android_build_fp", info->android_build_fp());
+  builder.SetFormData("sdk", base::StringPrintf("%d", info->sdk_int()));
+  builder.SetFormData("device", info->device());
+  builder.SetFormData("model", info->model());
+  builder.SetFormData("brand", info->brand());
+  builder.SetFormData("board", info->board());
+  builder.SetFormData("installer_package_name", info->installer_package_name());
+  builder.SetFormData("abi_name", info->abi_name());
+  builder.SetFormData("custom_themes", info->custom_themes());
+  builder.SetFormData("resources_version", info->resources_version());
+  builder.SetFormData("gms_core_version", info->gms_version_code());
+
+  // The package name and version are used for deobfuscation, but will
+  // only be accurate for the same version of chrome.
+  if (version_number == version_info::GetVersionNumber()) {
+    builder.SetFormData("package", std::string(info->package_name()) + " v" +
+                                       info->package_version_code() + " (" +
+                                       info->package_version_name() + ")");
+  }
+
+  if (anr_reader != nullptr) {
+    builder.SetFileAttachment("anr_data", anr_file_name, anr_reader,
+                              "application/octet-stream");
+  }
+  if (!WriteBodyToFile(builder.GetBodyStream().get(), writer)) {
+    reportAnrUploadFailure(AnrSkippedReason::kFilesystemWriteFailure);
+  }
+}
+
+static void JNI_CrashReportMimeWriter_RewriteAnrsAsMIMEs(
+    JNIEnv* env,
+    const base::android::JavaParamRef<jobjectArray>& j_anrs,
+    const base::android::JavaParamRef<jstring>& j_dest_dir) {
+  std::vector<std::string> anr_strings;
+  base::android::AppendJavaStringArrayToStringVector(env, j_anrs, &anr_strings);
+  std::string dest_dir;
+  base::android::ConvertJavaStringToUTF8(env, j_dest_dir, &dest_dir);
+
+  for (size_t i = 0; i < anr_strings.size(); i += 3) {
+    std::string anr_proto_file_path = anr_strings.at(i);
+    std::string chrome_version = anr_strings.at(i + 1);
+    std::string build_id = anr_strings.at(i + 2);
+    crashpad::FileWriter writer;
+    crashpad::FileReader reader;
+    crashpad::UUID uuid;
+    uuid.InitializeWithNew();
+    std::string anr_file_name = uuid.ToString() + "_ANR.dmp";
+    if (!reader.Open(base::FilePath(anr_proto_file_path))) {
+      reportAnrUploadFailure(AnrSkippedReason::kFilesystemReadFailure);
+      continue;
+    }
+    if (!writer.Open(base::FilePath(dest_dir).Append(anr_file_name),
+                     crashpad::FileWriteMode::kCreateOrFail,
+                     crashpad::FilePermissions::kOwnerOnly)) {
+      reportAnrUploadFailure(AnrSkippedReason::kFilesystemWriteFailure);
+      continue;
+    }
+
+    WriteAnrAsMime(&reader, &writer, chrome_version, build_id, anr_file_name);
   }
 }
 

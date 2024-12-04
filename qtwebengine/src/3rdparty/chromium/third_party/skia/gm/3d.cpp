@@ -8,13 +8,17 @@
 #include "gm/gm.h"
 #include "include/core/SkCanvas.h"
 #include "include/core/SkData.h"
+#include "include/core/SkPicture.h"
+#include "include/core/SkPictureRecorder.h"
+
+#include <cmath>
 
 struct Info {
     float   fNear = 0.05f;
     float   fFar = 4;
     float   fAngle = SK_ScalarPI / 4;
 
-    SkV3    fEye { 0, 0, 1.0f/tan(fAngle/2) - 1 };
+    SkV3    fEye { 0, 0, 1.0f/std::tan(fAngle/2) - 1 };
     SkV3    fCOA { 0, 0, 0 };
     SkV3    fUp  { 0, 1, 0 };
 };
@@ -33,15 +37,12 @@ static SkM44 make_ctm(const Info& info, const SkM44& model, SkSize size) {
     SkScalar w = size.width();
     SkScalar h = size.height();
 
-    perspective = Sk3Perspective(info.fNear, info.fFar, info.fAngle);
-    camera = Sk3LookAt(info.fEye, info.fCOA, info.fUp);
+    perspective = SkM44::Perspective(info.fNear, info.fFar, info.fAngle);
+    camera = SkM44::LookAt(info.fEye, info.fCOA, info.fUp);
     viewport.setScale(w*0.5f, h*0.5f, 1);//.postTranslate(r.centerX(), r.centerY(), 0);
 
     return viewport * perspective * camera * model * inv(viewport);
 }
-
-#include "include/core/SkPicture.h"
-#include "include/core/SkPictureRecorder.h"
 
 static void do_draw(SkCanvas* canvas, SkColor color) {
     SkAutoCanvasRestore acr(canvas, true);
@@ -70,11 +71,5 @@ DEF_SIMPLE_GM(sk3d_simple, real_canvas, 300, 300) {
     do_draw(canvas, 0x880000FF);
 
     auto pic = recorder.finishRecordingAsPicture();
-    if (true) {
-        real_canvas->drawPicture(pic);
-    } else {
-        auto data = pic->serialize();
-        auto pic2 = SkPicture::MakeFromData(data.get());
-        real_canvas->drawPicture(pic2);
-    }
+    real_canvas->drawPicture(pic);
 }

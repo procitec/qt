@@ -21,20 +21,20 @@
 #include "include/core/SkTypeface.h"
 #include "include/core/SkTypes.h"
 #include "src/core/SkAAClip.h"
-#include "src/core/SkClipOpPriv.h"
 #include "src/core/SkMask.h"
 #include "tools/ToolUtils.h"
+#include "tools/fonts/FontToolUtils.h"
 
 namespace skiagm {
 
 static void paint_rgn(SkCanvas* canvas, const SkAAClip& clip,
                       const SkPaint& paint) {
-    SkMask mask;
+    SkMaskBuilder mask;
     SkBitmap bm;
 
     clip.copyToMask(&mask);
 
-    SkAutoMaskFreeImage amfi(mask.fImage);
+    SkAutoMaskFreeImage amfi(mask.image());
 
     bm.installMaskPixels(mask);
 
@@ -43,10 +43,11 @@ static void paint_rgn(SkCanvas* canvas, const SkAAClip& clip,
 
     ToolUtils::copy_to(&bm2, bm.colorType(), bm);
 
-    canvas->drawBitmap(bm2,
-                       SK_Scalar1 * mask.fBounds.fLeft,
-                       SK_Scalar1 * mask.fBounds.fTop,
-                       &paint);
+    canvas->drawImage(bm2.asImage(),
+                      SK_Scalar1 * mask.fBounds.fLeft,
+                      SK_Scalar1 * mask.fBounds.fTop,
+                      SkSamplingOptions(),
+                      &paint);
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -83,11 +84,11 @@ protected:
     }
 
     void buildRgn(SkAAClip* clip, SkClipOp op) {
-        clip->setPath(fBasePath, nullptr, true);
+        clip->setPath(fBasePath, fBasePath.getBounds().roundOut(), true);
 
         SkAAClip clip2;
-        clip2.setPath(fRectPath, nullptr, true);
-        clip->op(clip2, (SkRegion::Op)op);
+        clip2.setPath(fRectPath, fRectPath.getBounds().roundOut(), true);
+        clip->op(clip2, op);
     }
 
     void drawOrig(SkCanvas* canvas) {
@@ -141,7 +142,7 @@ protected:
         canvas->restore();
     }
 
-    SkString onShortName() override {
+    SkString getName() const override {
         SkString str;
         str.printf("simpleaaclip_%s",
                     kRect_GeomType == fGeomType ? "rect" :
@@ -150,9 +151,7 @@ protected:
         return str;
     }
 
-    SkISize onISize() override {
-        return SkISize::Make(500, 240);
-    }
+    SkISize getISize() override { return SkISize::Make(500, 240); }
 
     void onDraw(SkCanvas* canvas) override {
 
@@ -161,15 +160,15 @@ protected:
             const char*     fName;
             SkClipOp        fOp;
         } gOps[] = {
-                {SK_ColorBLACK, "Difference", kDifference_SkClipOp},
-                {SK_ColorRED, "Intersect", kIntersect_SkClipOp},
+                {SK_ColorBLACK, "Difference", SkClipOp::kDifference},
+                {SK_ColorRED, "Intersect", SkClipOp::kIntersect},
         };
 
         SkPaint textPaint;
-        SkFont  font(ToolUtils::create_portable_typeface(), 24);
+        SkFont  font(ToolUtils::DefaultPortableTypeface(), 24);
         int xOff = 0;
 
-        for (size_t op = 0; op < SK_ARRAY_COUNT(gOps); op++) {
+        for (size_t op = 0; op < std::size(gOps); op++) {
             canvas->drawString(gOps[op].fName, 75.0f, 50.0f, font, textPaint);
 
             if (kAAClip_GeomType == fGeomType) {

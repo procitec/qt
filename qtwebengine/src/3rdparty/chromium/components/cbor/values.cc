@@ -1,15 +1,17 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/cbor/values.h"
 
 #include <new>
+#include <ostream>
 #include <utility>
 
 #include "base/check_op.h"
 #include "base/notreached.h"
 #include "base/numerics/safe_conversions.h"
+#include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "components/cbor/constants.h"
 
@@ -55,6 +57,9 @@ Value::Value(Type type) : type_(type) {
     case Type::SIMPLE_VALUE:
       simple_value_ = Value::SimpleValue::UNDEFINED;
       return;
+    case Type::FLOAT_VALUE:
+      float_value_ = 0.0;
+      return;
     case Type::NONE:
       return;
   }
@@ -70,6 +75,9 @@ Value::Value(bool boolean_value) : type_(Type::SIMPLE_VALUE) {
   simple_value_ = boolean_value ? Value::SimpleValue::TRUE_VALUE
                                 : Value::SimpleValue::FALSE_VALUE;
 }
+
+Value::Value(double float_value)
+    : type_(Type::FLOAT_VALUE), float_value_(float_value) {}
 
 Value::Value(int integer_value)
     : Value(base::checked_cast<int64_t>(integer_value)) {}
@@ -113,7 +121,7 @@ Value::Value(base::StringPiece in_string, Type type) : type_(type) {
   switch (type_) {
     case Type::STRING:
       new (&string_value_) std::string();
-      string_value_ = in_string.as_string();
+      string_value_ = std::string(in_string);
       DCHECK(base::IsStringUTF8(string_value_));
       break;
     case Type::BYTE_STRING:
@@ -177,6 +185,8 @@ Value Value::Clone() const {
       return Value();
     case Type::SIMPLE_VALUE:
       return Value(simple_value_);
+    case Type::FLOAT_VALUE:
+      return Value(float_value_);
   }
 
   NOTREACHED();
@@ -191,6 +201,11 @@ Value::SimpleValue Value::GetSimpleValue() const {
 bool Value::GetBool() const {
   CHECK(is_bool());
   return simple_value_ == SimpleValue::TRUE_VALUE;
+}
+
+double Value::GetDouble() const {
+  CHECK(is_double());
+  return float_value_;
 }
 
 const int64_t& Value::GetInteger() const {
@@ -270,6 +285,9 @@ void Value::InternalMoveConstructFrom(Value&& that) {
     case Type::SIMPLE_VALUE:
       simple_value_ = that.simple_value_;
       return;
+    case Type::FLOAT_VALUE:
+      float_value_ = that.float_value_;
+      return;
     case Type::NONE:
       return;
   }
@@ -298,6 +316,7 @@ void Value::InternalCleanup() {
     case Type::UNSIGNED:
     case Type::NEGATIVE:
     case Type::SIMPLE_VALUE:
+    case Type::FLOAT_VALUE:
       break;
   }
   type_ = Type::NONE;

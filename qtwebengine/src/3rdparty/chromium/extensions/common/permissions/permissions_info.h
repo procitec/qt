@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,26 +11,15 @@
 #include <memory>
 #include <set>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
-#include "base/callback.h"
+#include "base/containers/flat_map.h"
 #include "base/containers/span.h"
+#include "base/functional/callback.h"
 #include "base/lazy_instance.h"
-#include "base/macros.h"
+#include "extensions/common/mojom/api_permission_id.mojom-shared.h"
 #include "extensions/common/permissions/api_permission.h"
 #include "extensions/common/permissions/api_permission_set.h"
-
-#if defined(__GNUC__) && __GNUC__ <= 5
-// Provide a custom hasher because GCC 5 still needs it.
-namespace std {
-  template<> struct hash<extensions::APIPermission::ID> {
-    std::size_t operator()(extensions::APIPermission::ID arg) const {
-      return static_cast<std::size_t>(arg);
-    }
-  };
-}
-#endif
 
 namespace extensions {
 
@@ -40,6 +29,9 @@ struct Alias;
 // methods for accessing them.
 class PermissionsInfo {
  public:
+  PermissionsInfo(const PermissionsInfo&) = delete;
+  PermissionsInfo& operator=(const PermissionsInfo&) = delete;
+
   static PermissionsInfo* GetInstance();
 
   // Registers the permissions specified by |infos| along with the
@@ -48,7 +40,7 @@ class PermissionsInfo {
                            base::span<const Alias> aliases);
 
   // Returns the permission with the given |id|, and NULL if it doesn't exist.
-  const APIPermissionInfo* GetByID(APIPermission::ID id) const;
+  const APIPermissionInfo* GetByID(mojom::APIPermissionID id) const;
 
   // Returns the permission with the given |name|, and NULL if none
   // exists.
@@ -82,19 +74,16 @@ class PermissionsInfo {
   void RegisterPermission(std::unique_ptr<APIPermissionInfo> permission);
 
   // Maps permission ids to permissions. Owns the permissions.
-  typedef std::unordered_map<APIPermission::ID,
-                             std::unique_ptr<APIPermissionInfo>>
-      IDMap;
+  using IDMap = base::flat_map<mojom::APIPermissionID,
+                               std::unique_ptr<APIPermissionInfo>>;
 
   // Maps names and aliases to permissions. Doesn't own the permissions.
-  typedef std::map<std::string, APIPermissionInfo*> NameMap;
+  using NameMap = std::map<std::string, APIPermissionInfo*>;
 
   IDMap id_map_;
   NameMap name_map_;
 
   size_t permission_count_;
-
-  DISALLOW_COPY_AND_ASSIGN(PermissionsInfo);
 };
 
 }  // namespace extensions

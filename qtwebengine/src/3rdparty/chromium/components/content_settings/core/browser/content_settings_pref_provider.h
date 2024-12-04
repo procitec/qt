@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,11 +9,11 @@
 
 #include <map>
 #include <memory>
-#include <vector>
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "components/content_settings/core/browser/content_settings_utils.h"
 #include "components/content_settings/core/browser/user_modifiable_provider.h"
+#include "components/content_settings/core/common/content_settings_partition_key.h"
 #include "components/prefs/pref_change_registrar.h"
 
 class PrefService;
@@ -40,29 +40,54 @@ class PrefProvider : public UserModifiableProvider {
                bool off_the_record,
                bool store_last_modified,
                bool restore_session);
+
+  PrefProvider(const PrefProvider&) = delete;
+  PrefProvider& operator=(const PrefProvider&) = delete;
+
   ~PrefProvider() override;
 
   // UserModifiableProvider implementations.
   std::unique_ptr<RuleIterator> GetRuleIterator(
       ContentSettingsType content_type,
-      const ResourceIdentifier& resource_identifier,
-      bool off_the_record) const override;
+      bool off_the_record,
+      const PartitionKey& partition_key) const override;
+
+  std::unique_ptr<Rule> GetRule(
+      const GURL& primary_url,
+      const GURL& secondary_url,
+      ContentSettingsType content_type,
+      bool off_the_record,
+      const PartitionKey& partition_key) const override;
+
   bool SetWebsiteSetting(const ContentSettingsPattern& primary_pattern,
                          const ContentSettingsPattern& secondary_pattern,
                          ContentSettingsType content_type,
-                         const ResourceIdentifier& resource_identifier,
-                         std::unique_ptr<base::Value>&& value,
-                         const ContentSettingConstraints& constraints) override;
-  void ClearAllContentSettingsRules(ContentSettingsType content_type) override;
+                         base::Value&& value,
+                         const ContentSettingConstraints& constraints,
+                         const PartitionKey& partition_key) override;
+  void ClearAllContentSettingsRules(ContentSettingsType content_type,
+                                    const PartitionKey& partition_key) override;
   void ShutdownOnUIThread() override;
-  base::Time GetWebsiteSettingLastModified(
-      const ContentSettingsPattern& primary_pattern,
-      const ContentSettingsPattern& secondary_pattern,
+  bool UpdateLastUsedTime(const GURL& primary_url,
+                          const GURL& secondary_url,
+                          ContentSettingsType content_type,
+                          const base::Time time,
+                          const PartitionKey& partition_key) override;
+  bool ResetLastVisitTime(const ContentSettingsPattern& primary_pattern,
+                          const ContentSettingsPattern& secondary_pattern,
+                          ContentSettingsType content_type,
+                          const PartitionKey& partition_key) override;
+  bool UpdateLastVisitTime(const ContentSettingsPattern& primary_pattern,
+                           const ContentSettingsPattern& secondary_pattern,
+                           ContentSettingsType content_type,
+                           const PartitionKey& partition_key) override;
+  absl::optional<base::TimeDelta> RenewContentSetting(
+      const GURL& primary_url,
+      const GURL& secondary_url,
       ContentSettingsType content_type,
-      const ResourceIdentifier& resource_identifier) override;
+      absl::optional<ContentSetting> setting_to_match,
+      const PartitionKey& partition_key) override;
   void SetClockForTesting(base::Clock* clock) override;
-
-  void ClearPrefs();
 
   ContentSettingsPref* GetPref(ContentSettingsType type) const;
 
@@ -72,7 +97,22 @@ class PrefProvider : public UserModifiableProvider {
   void Notify(const ContentSettingsPattern& primary_pattern,
               const ContentSettingsPattern& secondary_pattern,
               ContentSettingsType content_type,
-              const std::string& resource_identifier);
+              const PartitionKey* partition_key);
+
+  bool SetLastVisitTime(const ContentSettingsPattern& primary_pattern,
+                        const ContentSettingsPattern& secondary_pattern,
+                        ContentSettingsType content_type,
+                        const base::Time time,
+                        const PartitionKey& partition_key);
+
+  // Finds the first setting whose Rule satisfies `is_match`, and performs some
+  // update. `perform_update` may modify the Rule in-place, and should return
+  // true if any modifications were made.  Returns whether or not any setting
+  // was updated.
+  bool UpdateSetting(ContentSettingsType content_type,
+                     base::FunctionRef<bool(const Rule&)> is_match,
+                     base::FunctionRef<bool(Rule&)> perform_update,
+                     const PartitionKey& partition_key);
 
   // Clean up the obsolete preferences from the user's profile.
   void DiscardOrMigrateObsoletePreferences();
@@ -84,26 +124,20 @@ class PrefProvider : public UserModifiableProvider {
   }
 
   // Weak; owned by the Profile and reset in ShutdownOnUIThread.
-  PrefService* prefs_;
+  raw_ptr<PrefService> prefs_;
 
   const bool off_the_record_;
 
   bool store_last_modified_;
 
-  PrefChangeRegistrar pref_change_registrar_;
+  std::unique_ptr<PrefChangeRegistrar> pref_change_registrar_;
 
   std::map<ContentSettingsType, std::unique_ptr<ContentSettingsPref>>
       content_settings_prefs_;
 
-  // TODO(https://crbug.com/850062): Remove after M71, two milestones after
-  // migration of the Flash permissions to ephemeral provider.
-  std::unique_ptr<ContentSettingsPref> flash_content_settings_pref_;
-
   base::ThreadChecker thread_checker_;
 
-  base::Clock* clock_;
-
-  DISALLOW_COPY_AND_ASSIGN(PrefProvider);
+  raw_ptr<base::Clock> clock_;
 };
 
 }  // namespace content_settings

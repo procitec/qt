@@ -1,9 +1,10 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include <memory>
 
+#include "base/memory/raw_ptr.h"
 #include "content/browser/android/gesture_listener_manager.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/browser/web_contents/web_contents_view_android.h"
@@ -12,6 +13,7 @@
 #include "content/public/browser/web_contents_observer.h"
 #include "third_party/blink/public/common/input/web_input_event.h"
 #include "ui/events/android/gesture_event_type.h"
+#include "ui/events/blink/did_overscroll_params.h"
 #include "ui/gfx/geometry/size_f.h"
 
 using blink::WebGestureEvent;
@@ -75,12 +77,15 @@ class GestureListenerManager::ResetScrollObserver : public WebContentsObserver {
   ResetScrollObserver(WebContents* web_contents,
                       GestureListenerManager* manager);
 
-  void DidFinishNavigation(NavigationHandle* navigation_handle) override;
-  void RenderProcessGone(base::TerminationStatus status) override;
+  ResetScrollObserver(const ResetScrollObserver&) = delete;
+  ResetScrollObserver& operator=(const ResetScrollObserver&) = delete;
+
+  void PrimaryPageChanged(Page& page) override;
+  void PrimaryMainFrameRenderProcessGone(
+      base::TerminationStatus status) override;
 
  private:
-  GestureListenerManager* const manager_;
-  DISALLOW_COPY_AND_ASSIGN(ResetScrollObserver);
+  const raw_ptr<GestureListenerManager> manager_;
 };
 
 GestureListenerManager::ResetScrollObserver::ResetScrollObserver(
@@ -88,13 +93,12 @@ GestureListenerManager::ResetScrollObserver::ResetScrollObserver(
     GestureListenerManager* manager)
     : WebContentsObserver(web_contents), manager_(manager) {}
 
-void GestureListenerManager::ResetScrollObserver::DidFinishNavigation(
-    NavigationHandle* navigation_handle) {
-  manager_->OnNavigationFinished(navigation_handle);
+void GestureListenerManager::ResetScrollObserver::PrimaryPageChanged(Page&) {
+  manager_->OnPrimaryPageChanged();
 }
 
-void GestureListenerManager::ResetScrollObserver::RenderProcessGone(
-    base::TerminationStatus status) {
+void GestureListenerManager::ResetScrollObserver::
+    PrimaryMainFrameRenderProcessGone(base::TerminationStatus status) {
   manager_->OnRenderProcessGone();
 }
 
@@ -137,14 +141,14 @@ void GestureListenerManager::SetMultiTouchZoomSupportEnabled(
     rwhva_->SetMultiTouchZoomSupportEnabled(enabled);
 }
 
-void GestureListenerManager::SetHasListenersAttached(JNIEnv* env,
-                                                     jboolean enabled) {
-  if (has_listeners_attached_ == enabled)
-    return;
-
-  has_listeners_attached_ = enabled;
+void GestureListenerManager::SetRootScrollOffsetUpdateFrequency(
+    JNIEnv* env,
+    jint frequency) {
+  auto new_frequency =
+      static_cast<cc::mojom::RootScrollOffsetUpdateFrequency>(frequency);
+  root_scroll_offset_update_frequency_ = new_frequency;
   if (rwhva_)
-    rwhva_->UpdateReportAllRootScrolls();
+    rwhva_->UpdateRootScrollOffsetUpdateFrequency();
 }
 
 void GestureListenerManager::GestureEventAck(
@@ -158,9 +162,21 @@ void GestureListenerManager::GestureEventAck(
   ScopedJavaLocalRef<jobject> j_obj = java_ref_.get(env);
   if (j_obj.is_null())
     return;
+  if (event.GetType() == blink::WebInputEvent::Type::kGestureScrollBegin) {
+    Java_GestureListenerManagerImpl_onScrollBegin(
+        env, j_obj, /*isDirectionUp*/ event.data.scroll_begin.delta_y_hint > 0);
+    return;
+  }
+  bool consumed = ack_result == blink::mojom::InputEventResultState::kConsumed;
+  if (event.GetType() == blink::WebInputEvent::Type::kGestureFlingStart &&
+      consumed) {
+    Java_GestureListenerManagerImpl_onFlingStart(
+        env, j_obj, /*isDirectionUp*/ event.data.scroll_begin.delta_y_hint > 0);
+    return;
+  }
+
   Java_GestureListenerManagerImpl_onEventAck(
-      env, j_obj, static_cast<int>(event.GetType()),
-      ack_result == blink::mojom::InputEventResultState::kConsumed);
+      env, j_obj, static_cast<int>(event.GetType()), consumed);
 }
 
 void GestureListenerManager::DidStopFlinging() {
@@ -196,18 +212,28 @@ bool GestureListenerManager::FilterInputEvent(const WebInputEvent& event) {
       gesture.PositionInWidget().y() * dip_scale);
 }
 
+void GestureListenerManager::DidOverscroll(
+    const ui::DidOverscrollParams& params) {
+  JNIEnv* env = AttachCurrentThread();
+  ScopedJavaLocalRef<jobject> j_obj = java_ref_.get(env);
+  if (j_obj.is_null())
+    return;
+  float x = params.accumulated_overscroll.x();
+  float y = params.accumulated_overscroll.y();
+  return Java_GestureListenerManagerImpl_didOverscroll(env, j_obj, x, y);
+}
+
 // All positions and sizes (except |top_shown_pix|) are in CSS pixels.
 // Note that viewport_width/height is a best effort based.
-void GestureListenerManager::UpdateScrollInfo(
-    const gfx::Vector2dF& scroll_offset,
-    float page_scale_factor,
-    const float min_page_scale,
-    const float max_page_scale,
-    const gfx::SizeF& content,
-    const gfx::SizeF& viewport,
-    const float content_offset,
-    const float top_shown_pix,
-    bool top_changed) {
+void GestureListenerManager::UpdateScrollInfo(const gfx::PointF& scroll_offset,
+                                              float page_scale_factor,
+                                              const float min_page_scale,
+                                              const float max_page_scale,
+                                              const gfx::SizeF& content,
+                                              const gfx::SizeF& viewport,
+                                              const float content_offset,
+                                              const float top_shown_pix,
+                                              bool top_changed) {
   JNIEnv* env = AttachCurrentThread();
   ScopedJavaLocalRef<jobject> obj = java_ref_.get(env);
   if (obj.is_null())
@@ -230,7 +256,7 @@ void GestureListenerManager::UpdateOnTouchDown() {
 }
 
 void GestureListenerManager::OnRootScrollOffsetChanged(
-    const gfx::Vector2dF& root_scroll_offset) {
+    const gfx::PointF& root_scroll_offset) {
   JNIEnv* env = AttachCurrentThread();
   ScopedJavaLocalRef<jobject> obj = java_ref_.get(env);
   if (obj.is_null())
@@ -250,12 +276,8 @@ void GestureListenerManager::UpdateRenderProcessConnection(
   rwhva_ = new_rwhva;
 }
 
-void GestureListenerManager::OnNavigationFinished(
-    NavigationHandle* navigation_handle) {
-  if (navigation_handle->IsInMainFrame() && navigation_handle->HasCommitted() &&
-      !navigation_handle->IsSameDocument()) {
-    ResetPopupsAndInput(false);
-  }
+void GestureListenerManager::OnPrimaryPageChanged() {
+  ResetPopupsAndInput(false);
 }
 
 void GestureListenerManager::OnRenderProcessGone() {

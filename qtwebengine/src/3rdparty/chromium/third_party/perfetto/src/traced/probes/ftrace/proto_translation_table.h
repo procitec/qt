@@ -23,6 +23,7 @@
 #include <iostream>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -30,7 +31,8 @@
 #include "perfetto/ext/base/scoped_file.h"
 #include "src/traced/probes/ftrace/compact_sched.h"
 #include "src/traced/probes/ftrace/event_info.h"
-#include "src/traced/probes/ftrace/format_parser.h"
+#include "src/traced/probes/ftrace/format_parser/format_parser.h"
+#include "src/traced/probes/ftrace/printk_formats_parser.h"
 
 namespace perfetto {
 
@@ -99,11 +101,19 @@ class ProtoTranslationTable {
                         const std::vector<Event>& events,
                         std::vector<Field> common_fields,
                         FtracePageHeaderSpec ftrace_page_header_spec,
-                        CompactSchedEventFormat compact_sched_format);
+                        CompactSchedEventFormat compact_sched_format,
+                        PrintkMap printk_formats);
 
   size_t largest_id() const { return largest_id_; }
 
   const std::vector<Field>& common_fields() const { return common_fields_; }
+
+  const Field* common_pid() const {
+    // corner case: pKVM hypervisor pseudo-tracefs lacks common_pid
+    if (!common_pid_.has_value())
+      return nullptr;
+    return &common_pid_.value();
+  }
 
   // Virtual for testing.
   virtual const Event* GetEvent(const GroupAndName& group_and_name) const {
@@ -164,6 +174,10 @@ class ProtoTranslationTable {
     return compact_sched_format_;
   }
 
+  base::StringView LookupTraceString(uint64_t address) const {
+    return printk_formats_.at(address);
+  }
+
  private:
   ProtoTranslationTable(const ProtoTranslationTable&) = delete;
   ProtoTranslationTable& operator=(const ProtoTranslationTable&) = delete;
@@ -181,9 +195,11 @@ class ProtoTranslationTable {
   std::map<std::string, std::vector<const Event*>> name_to_events_;
   std::map<std::string, std::vector<const Event*>> group_to_events_;
   std::vector<Field> common_fields_;
+  std::optional<Field> common_pid_;  // copy of entry in common_fields_
   FtracePageHeaderSpec ftrace_page_header_spec_{};
   std::set<std::string> interned_strings_;
   CompactSchedEventFormat compact_sched_format_;
+  PrintkMap printk_formats_;
 };
 
 // Class for efficient 'is event with id x enabled?' checks.

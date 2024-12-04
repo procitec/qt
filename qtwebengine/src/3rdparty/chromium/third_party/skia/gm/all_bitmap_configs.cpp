@@ -22,8 +22,10 @@
 #include "include/core/SkScalar.h"
 #include "include/core/SkTypeface.h"
 #include "include/core/SkTypes.h"
+#include "tools/DecodeUtils.h"
 #include "tools/Resources.h"
 #include "tools/ToolUtils.h"
+#include "tools/fonts/FontToolUtils.h"
 
 #include <string.h>
 #include <initializer_list>
@@ -93,7 +95,7 @@ static void color_wheel_native(SkCanvas* canvas) {
 
     SkFont font;
     font.setEdging(SkFont::Edging::kAlias);
-    font.setTypeface(ToolUtils::create_portable_typeface(nullptr, SkFontStyle::Bold()));
+    font.setTypeface(ToolUtils::CreatePortableTypeface("Sans", SkFontStyle::Bold()));
     font.setSize(0.28125f * SCALE);
     draw_center_letter('K', font, SK_ColorBLACK, Z, Z, canvas);
     draw_center_letter('R', font, SK_ColorRED, Z, D, canvas);
@@ -121,7 +123,7 @@ static void draw(SkCanvas* canvas,
                  SkColorType colorType,
                  const char text[]) {
     SkASSERT(src.colorType() == colorType);
-    canvas->drawBitmap(src, 0.0f, 0.0f);
+    canvas->drawImage(src.asImage(), 0.0f, 0.0f);
     canvas->drawSimpleText(text, strlen(text), SkTextEncoding::kUTF8, 0.0f, 12.0f, font, p);
 }
 
@@ -130,12 +132,12 @@ DEF_SIMPLE_GM(all_bitmap_configs, canvas, SCALE, 6 * SCALE) {
     SkPaint p(SkColors::kBlack);
     p.setAntiAlias(true);
 
-    SkFont font(ToolUtils::create_portable_typeface());
+    SkFont font = ToolUtils::DefaultPortableFont();
 
     ToolUtils::draw_checkerboard(canvas, SK_ColorLTGRAY, SK_ColorWHITE, 8);
 
     SkBitmap bitmap;
-    if (GetResourceAsBitmap("images/color_wheel.png", &bitmap)) {
+    if (ToolUtils::GetResourceAsBitmap("images/color_wheel.png", &bitmap)) {
         bitmap.setImmutable();
         draw(canvas, p, font, bitmap, kN32_SkColorType, "Native 32");
 
@@ -181,7 +183,7 @@ sk_sp<SkImage> make_not_native32_color_wheel() {
     static_assert(ct != kN32_SkColorType, "BRGA!=RGBA");
     SkAssertResult(ToolUtils::copy_to(&notN32bitmap, ct, n32bitmap));
     SkASSERT(notN32bitmap.colorType() == ct);
-    return SkImage::MakeFromBitmap(notN32bitmap);
+    return notN32bitmap.asImage();
 }
 
 DEF_SIMPLE_GM(not_native32_bitmap_config, canvas, SCALE, SCALE) {
@@ -249,7 +251,7 @@ DEF_SIMPLE_GM(all_variants_8888, canvas, 4 * SCALE + 30, 2 * SCALE + 10) {
             for (auto colorType : {kRGBA_8888_SkColorType, kBGRA_8888_SkColorType}) {
                 SkBitmap bm;
                 make_color_test_bitmap_variant(colorType, alphaType, colorSpace, &bm);
-                canvas->drawBitmap(bm, 0.0f, 0.0f);
+                canvas->drawImage(bm.asImage(), 0.0f, 0.0f);
                 canvas->translate(SCALE + 10, 0.0f);
             }
             canvas->restore();

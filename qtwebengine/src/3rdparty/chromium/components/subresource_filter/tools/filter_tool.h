@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,10 +8,9 @@
 #include <istream>
 #include <ostream>
 #include <string>
+#include <string_view>
 
-#include "base/macros.h"
 #include "base/memory/scoped_refptr.h"
-#include "base/strings/string_piece.h"
 #include "components/subresource_filter/core/common/memory_mapped_ruleset.h"
 
 namespace url_pattern_index {
@@ -30,6 +29,10 @@ class FilterTool {
   FilterTool(
       scoped_refptr<const subresource_filter::MemoryMappedRuleset> ruleset,
       std::ostream* output);
+
+  FilterTool(const FilterTool&) = delete;
+  FilterTool& operator=(const FilterTool&) = delete;
+
   ~FilterTool();
 
   // Checks the ruleset for a request with document origin |document_origin|,
@@ -57,14 +60,14 @@ class FilterTool {
  private:
   void PrintResult(bool blocked,
                    const url_pattern_index::flat::UrlRule* rule,
-                   base::StringPiece document_origin,
-                   base::StringPiece url,
-                   base::StringPiece type);
+                   std::string_view document_origin,
+                   std::string_view url,
+                   std::string_view type);
 
   const url_pattern_index::flat::UrlRule* MatchImpl(
-      base::StringPiece document_origin,
-      base::StringPiece url,
-      base::StringPiece type,
+      std::string_view document_origin,
+      std::string_view url,
+      std::string_view type,
       bool* blocked);
 
   void MatchBatchImpl(std::istream* request_stream,
@@ -73,8 +76,6 @@ class FilterTool {
 
   scoped_refptr<const subresource_filter::MemoryMappedRuleset> ruleset_;
   std::ostream* output_;
-
-  DISALLOW_COPY_AND_ASSIGN(FilterTool);
 };
 
 }  // namespace subresource_filter

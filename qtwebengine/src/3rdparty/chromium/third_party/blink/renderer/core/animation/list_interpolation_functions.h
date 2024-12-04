@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,6 +8,7 @@
 #include <memory>
 #include "third_party/blink/renderer/core/animation/interpolation_value.h"
 #include "third_party/blink/renderer/core/animation/pairwise_interpolation_value.h"
+#include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
@@ -24,7 +25,7 @@ class CORE_EXPORT ListInterpolationFunctions {
   template <typename CreateItemCallback>
   static InterpolationValue CreateList(wtf_size_t length, CreateItemCallback);
   static InterpolationValue CreateEmptyList() {
-    return InterpolationValue(std::make_unique<InterpolableList>(0));
+    return InterpolationValue(MakeGarbageCollected<InterpolableList>(0));
   }
 
   enum class LengthMatchingStrategy {
@@ -81,7 +82,7 @@ class CORE_EXPORT ListInterpolationFunctions {
                                             const NonInterpolableValue* b);
 };
 
-class CORE_EXPORT NonInterpolableList : public NonInterpolableValue {
+class CORE_EXPORT NonInterpolableList final : public NonInterpolableValue {
  public:
   ~NonInterpolableList() final = default;
 
@@ -144,7 +145,7 @@ InterpolationValue ListInterpolationFunctions::CreateList(
     CreateItemCallback create_item) {
   if (length == 0)
     return CreateEmptyList();
-  auto interpolable_list = std::make_unique<InterpolableList>(length);
+  auto* interpolable_list = MakeGarbageCollected<InterpolableList>(length);
   Vector<scoped_refptr<const NonInterpolableValue>> non_interpolable_values(
       length);
   for (wtf_size_t i = 0; i < length; i++) {
@@ -155,7 +156,7 @@ InterpolationValue ListInterpolationFunctions::CreateList(
     non_interpolable_values[i] = std::move(item.non_interpolable_value);
   }
   return InterpolationValue(
-      std::move(interpolable_list),
+      interpolable_list,
       NonInterpolableList::Create(std::move(non_interpolable_values)));
 }
 

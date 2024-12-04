@@ -42,8 +42,8 @@
 #include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_observer.h"
 #include "third_party/blink/renderer/modules/event_target_modules.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
-#include "third_party/blink/renderer/modules/vibration/navigator_vibration.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/modules/vibration/vibration_controller.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/mojo/heap_mojo_receiver.h"
 #include "third_party/blink/renderer/platform/timer.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
@@ -58,7 +58,7 @@ class V8NotificationPermissionCallback;
 class TimestampTrigger;
 
 class MODULES_EXPORT Notification final
-    : public EventTargetWithInlineData,
+    : public EventTarget,
       public ActiveScriptWrappable<Notification>,
       public ExecutionContextLifecycleObserver,
       public mojom::blink::NonPersistentNotificationListener {
@@ -110,14 +110,15 @@ class MODULES_EXPORT Notification final
   String image() const;
   String icon() const;
   String badge() const;
-  NavigatorVibration::VibrationPattern vibrate() const;
+  VibrationController::VibrationPattern vibrate() const;
   DOMTimeStamp timestamp() const;
   bool renotify() const;
   bool silent() const;
   bool requireInteraction() const;
   ScriptValue data(ScriptState* script_state);
-  Vector<v8::Local<v8::Value>> actions(ScriptState* script_state) const;
-  TimestampTrigger* showTrigger() const { return show_trigger_; }
+  v8::LocalVector<v8::Value> actions(ScriptState* script_state) const;
+  TimestampTrigger* showTrigger() const { return show_trigger_.Get(); }
+  String scenario() const;
 
   static String PermissionString(mojom::blink::PermissionStatus permission);
   static String permission(ExecutionContext* context);
@@ -187,7 +188,7 @@ class MODULES_EXPORT Notification final
 
   String token_;
 
-  TaskRunnerTimer<Notification> prepare_show_timer_;
+  HeapTaskRunnerTimer<Notification> prepare_show_timer_;
 
   Member<NotificationResourcesLoader> loader_;
 

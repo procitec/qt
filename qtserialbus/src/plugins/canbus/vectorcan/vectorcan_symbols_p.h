@@ -1,38 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2017 Denis Shienkov <denis.shienkov@gmail.com>
-** Contact: http://www.qt.io/licensing/
-**
-** This file is part of the QtSerialBus module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL3$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see http://www.qt.io/terms-conditions. For further
-** information use the contact form at http://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPLv3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or later as published by the Free
-** Software Foundation and appearing in the file LICENSE.GPL included in
-** the packaging of this file. Please review the following information to
-** ensure the GNU General Public License version 2.0 requirements will be
-** met: http://www.gnu.org/licenses/gpl-2.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2017 Denis Shienkov <denis.shienkov@gmail.com>
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #ifndef VECTORCAN_SYMBOLS_P_H
 #define VECTORCAN_SYMBOLS_P_H
@@ -354,16 +321,16 @@ typedef struct {
 typedef struct {
      quint32 id;
      quint32 flags;
-     quint16 dlc;
-     quint16 reserved[7];
-     quint16 data[XL_CAN_MAX_DATA_LEN];
+     quint8 dlc;
+     quint8 reserved[7];
+     quint8 data[XL_CAN_MAX_DATA_LEN];
 } XL_CAN_TX_MSG;
 
 typedef struct {
-    quint32 tag;
-    quint32 transId;
-    quint32 channelIndex;
-    quint32 reserved[3];
+    quint16 tag;
+    quint16 transId;
+    quint8 channelIndex;
+    quint8 reserved[3];
     union {
         XL_CAN_TX_MSG canMsg;
     } tagData;

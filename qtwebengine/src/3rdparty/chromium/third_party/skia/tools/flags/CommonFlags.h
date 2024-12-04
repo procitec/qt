@@ -7,9 +7,14 @@
 #pragma once
 
 #include "include/core/SkString.h"
-#include "include/private/SkTArray.h"
+#include "include/private/base/SkTArray.h"
 #include "tools/flags/CommandLineFlags.h"
 
+namespace skgpu::graphite {
+struct ContextOptions;
+};
+
+namespace CommonFlags {
 /**
  *  Helper to assist in collecting image paths from |dir| specified through a command line
  * flag.
@@ -22,8 +27,8 @@
  *  - If |dir| is a single file, assume the user is deliberately testing this image,
  *    regardless of file type.
  */
-bool CollectImages(CommandLineFlags::StringArray dir, SkTArray<SkString>* output);
-
+bool CollectImages(const CommandLineFlags::StringArray& dir,
+                   skia_private::TArray<SkString>* output);
 /**
  *  Helper to set GrContextOptions from common GPU flags, including
  *     --gpuThreads
@@ -31,16 +36,18 @@ bool CollectImages(CommandLineFlags::StringArray dir, SkTArray<SkString>* output
  *     --allPathsVolatile
  *     --(no)gs
  *     --(no)ts
- *     --maxTessellationSegments
  *     --pr
  *     --internalSamples
  *     --disableDriverCorrectnessWorkarounds
  *     --reduceOpsTaskSplitting
  *     --dontReduceOpsTaskSplitting
+ *     --allowMSAAOnNewIntel
  */
-void SetCtxOptionsFromCommonFlags(struct GrContextOptions*);
+void SetCtxOptions(struct GrContextOptions*);
 
 /**
  *  Enable, disable, or force analytic anti-aliasing using --analyticAA and --forceAnalyticAA.
  */
-void SetAnalyticAAFromCommonFlags();
+void SetAnalyticAA();
+
+}  // namespace CommonFlags

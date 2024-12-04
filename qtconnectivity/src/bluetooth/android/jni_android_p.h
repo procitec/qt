@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtBluetooth module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2021 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #ifndef JNI_ANDROID_P_H
 #define JNI_ANDROID_P_H
@@ -51,10 +15,61 @@
 // We mean it.
 //
 
-#include <QtAndroidExtras/QAndroidJniEnvironment>
-#include <QtAndroidExtras/QAndroidJniObject>
+#include "qbluetooth.h"
+#include <QtCore/QJniObject>
+#include <QtCore/private/qglobal_p.h>
+#include <QtCore/qcoreapplication_platform.h>
 
 QT_BEGIN_NAMESPACE
+
+// CLASS declaration implies also TYPE declaration
+Q_DECLARE_JNI_CLASS(QtBtUtility,
+                    "org/qtproject/qt/android/bluetooth/QtBluetoothUtility")
+Q_DECLARE_JNI_CLASS(QtBtBroadcastReceiver,
+                    "org/qtproject/qt/android/bluetooth/QtBluetoothBroadcastReceiver")
+Q_DECLARE_JNI_CLASS(QtBtGattCharacteristic,
+                    "org/qtproject/qt/android/bluetooth/QtBluetoothGattCharacteristic")
+Q_DECLARE_JNI_CLASS(QtBtGattDescriptor,
+                    "org/qtproject/qt/android/bluetooth/QtBluetoothGattDescriptor")
+Q_DECLARE_JNI_CLASS(QtBtInputStreamThread,
+                    "org/qtproject/qt/android/bluetooth/QtBluetoothInputStreamThread")
+Q_DECLARE_JNI_CLASS(QtBtSocketServer, "org/qtproject/qt/android/bluetooth/QtBluetoothSocketServer")
+Q_DECLARE_JNI_CLASS(QtBtLEServer, "org/qtproject/qt/android/bluetooth/QtBluetoothLEServer")
+Q_DECLARE_JNI_CLASS(QtBtLECentral, "org/qtproject/qt/android/bluetooth/QtBluetoothLE")
+Q_DECLARE_JNI_CLASS(BluetoothAdapter, "android/bluetooth/BluetoothAdapter")
+Q_DECLARE_JNI_CLASS(ParcelUuid, "android/os/ParcelUuid")
+Q_DECLARE_JNI_CLASS(AdvertiseDataBuilder, "android/bluetooth/le/AdvertiseData$Builder")
+Q_DECLARE_JNI_CLASS(AdvertiseSettingsBuilder, "android/bluetooth/le/AdvertiseSettings$Builder")
+Q_DECLARE_JNI_CLASS(BluetoothGattService, "android/bluetooth/BluetoothGattService")
+Q_DECLARE_JNI_CLASS(BluetoothGattDescriptor, "android/bluetooth/BluetoothGattDescriptor")
+Q_DECLARE_JNI_CLASS(BluetoothGattCharacteristic, "android/bluetooth/BluetoothGattCharacteristic")
+Q_DECLARE_JNI_CLASS(BluetoothDevice, "android/bluetooth/BluetoothDevice")
+Q_DECLARE_JNI_CLASS(IntentFilter, "android/content/IntentFilter")
+Q_DECLARE_JNI_CLASS(AndroidContext, "android/content/Context")
+
+
+Q_DECLARE_JNI_CLASS(BluetoothManager, "android/bluetooth/BluetoothManager")
+Q_DECLARE_JNI_CLASS(AdvertiseData, "android/bluetooth/le/AdvertiseData")
+Q_DECLARE_JNI_CLASS(AdvertiseSettings, "android/bluetooth/le/AdvertiseSettings")
+Q_DECLARE_JNI_CLASS(InputStream, "java/io/InputStream")
+Q_DECLARE_JNI_CLASS(OutputStream, "java/io/OutputStream")
+Q_DECLARE_JNI_CLASS(BluetoothSocket, "android/bluetooth/BluetoothSocket")
+Q_DECLARE_JNI_CLASS(BroadcastReceiver, "android/content/BroadcastReceiver")
+Q_DECLARE_JNI_CLASS(BluetoothClass, "android/bluetooth/BluetoothClass")
+Q_DECLARE_JNI_CLASS(Bundle, "android/os/Bundle")
+Q_DECLARE_JNI_CLASS(List, "java/util/List")
+
+namespace QtJniTypes {
+using ParcelableArray = QJniArray<Parcelable>;
+using ParcelUuidArray = QJniArray<ParcelUuid>;
+}
+
+// QLowEnergyHandle is a quint16, ensure it is interpreted as jint
+template<>
+constexpr auto QtJniTypes::Traits<QLowEnergyHandle>::signature()
+{
+    return QtJniTypes::Traits<jint>::signature();
+}
 
 enum JavaNames {
     BluetoothAdapter = 0,
@@ -65,7 +80,6 @@ enum JavaNames {
     ActionDiscoveryStarted,
     ActionDiscoveryFinished,
     ActionFound,
-    ActionPairingRequest,
     ActionScanModeChanged,
     ActionUuid,
     ExtraBondState,
@@ -77,7 +91,50 @@ enum JavaNames {
     ExtraUuid
 };
 
-QAndroidJniObject valueForStaticField(JavaNames javaName, JavaNames javaFieldName);
+QString valueFromStaticFieldCache(const char *key, const char *className, const char *fieldName);
+
+
+template<typename Klass, JavaNames Field>
+QString valueForStaticField()
+{
+    constexpr auto className = QtJniTypes::Traits<Klass>::className();
+    constexpr auto fieldName = []() -> auto {
+        if constexpr (Field == JavaNames::ActionAclConnected)
+            return QtJniTypes::CTString("ACTION_ACL_CONNECTED");
+        else if constexpr (Field == ActionAclDisconnected)
+            return QtJniTypes::CTString("ACTION_ACL_DISCONNECTED");
+        else if constexpr (Field == ActionBondStateChanged)
+            return QtJniTypes::CTString("ACTION_BOND_STATE_CHANGED");
+        else if constexpr (Field == ActionDiscoveryStarted)
+            return QtJniTypes::CTString("ACTION_DISCOVERY_STARTED");
+        else if constexpr (Field == ActionDiscoveryFinished)
+            return QtJniTypes::CTString("ACTION_DISCOVERY_FINISHED");
+        else if constexpr (Field == ActionFound)
+            return QtJniTypes::CTString("ACTION_FOUND");
+        else if constexpr (Field == ActionScanModeChanged)
+            return QtJniTypes::CTString("ACTION_SCAN_MODE_CHANGED");
+        else if constexpr (Field == ActionUuid)
+            return QtJniTypes::CTString("ACTION_UUID");
+        else if constexpr (Field == ExtraBondState)
+            return QtJniTypes::CTString("EXTRA_BOND_STATE");
+        else if constexpr (Field == ExtraDevice)
+            return QtJniTypes::CTString("EXTRA_DEVICE");
+        else if constexpr (Field == ExtraPairingKey)
+            return QtJniTypes::CTString("EXTRA_PAIRING_KEY");
+        else if constexpr (Field == ExtraPairingVariant)
+            return QtJniTypes::CTString("EXTRA_PAIRING_VARIANT");
+        else if constexpr (Field == ExtraRssi)
+            return QtJniTypes::CTString("EXTRA_RSSI");
+        else if constexpr (Field == ExtraScanMode)
+            return QtJniTypes::CTString("EXTRA_SCAN_MODE");
+        else if constexpr (Field == ExtraUuid)
+            return QtJniTypes::CTString("EXTRA_UUID");
+        else
+            static_assert(QtPrivate::value_dependent_false<Field>());
+    }();
+
+    return valueFromStaticFieldCache(className + fieldName, className.data(), fieldName.data());
+}
 
 QT_END_NAMESPACE
 

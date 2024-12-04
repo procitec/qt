@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,14 +6,16 @@
 
 #include <list>
 
-#include "base/bind.h"
+#include "base/at_exit.h"
 #include "base/debug/alias.h"
-#include "base/macros.h"
+#include "base/debug/dump_without_crashing.h"
+#include "base/functional/bind.h"
+#include "base/logging.h"
 #include "base/memory/singleton.h"
-#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/synchronization/lock.h"
+#include "base/win/resource_exhaustion.h"
 #include "base/win/win_util.h"
 #include "base/win/wrapped_window_proc.h"
 #include "ui/gfx/win/crash_id_helper.h"
@@ -52,6 +54,9 @@ struct ClassInfo {
 // WARNING: this class may be used on multiple threads.
 class ClassRegistrar {
  public:
+  ClassRegistrar(const ClassRegistrar&) = delete;
+  ClassRegistrar& operator=(const ClassRegistrar&) = delete;
+
   ~ClassRegistrar();
 
   static ClassRegistrar* GetInstance();
@@ -66,7 +71,7 @@ class ClassRegistrar {
   // Represents a registered window class.
   struct RegisteredClass {
     RegisteredClass(const ClassInfo& info,
-                    const base::string16& name,
+                    const std::wstring& name,
                     ATOM atom,
                     HINSTANCE instance);
 
@@ -74,7 +79,7 @@ class ClassRegistrar {
     ClassInfo info;
 
     // The name given to the window class
-    base::string16 name;
+    std::wstring name;
 
     // The atom identifying the window class.
     ATOM atom;
@@ -93,8 +98,6 @@ class ClassRegistrar {
   int registered_count_;
 
   base::Lock lock_;
-
-  DISALLOW_COPY_AND_ASSIGN(ClassRegistrar);
 };
 
 ClassRegistrar::~ClassRegistrar() {}
@@ -126,8 +129,16 @@ ATOM ClassRegistrar::RetrieveClassAtom(const ClassInfo& class_info) {
   }
 
   // No class found, need to register one.
-  base::string16 name = base::string16(WindowImpl::kBaseClassName) +
-                        base::NumberToString16(registered_count_++);
+  std::wstring name = std::wstring(WindowImpl::kBaseClassName) +
+                      base::NumberToWString(registered_count_++);
+  // We're not supposed to have many window classes, so if registered_count_
+  // gets above a certain small threshold, we may as well have a resource leak
+  // caused by repeatedly registering a class with auto-generated name, which
+  // would eventually lead to user atom table exhaustion.
+  // TODO(crbug.com/1470483): remove when source of ATOM leak is found.
+  if (registered_count_ == 128) {
+    base::debug::DumpWithoutCrashing();
+  }
 
   WNDCLASSEX window_class;
   base::win::InitializeWindowClass(
@@ -140,12 +151,7 @@ ATOM ClassRegistrar::RetrieveClassAtom(const ClassInfo& class_info) {
   if (!atom) {
     // Perhaps the Window session has run out of atoms; see
     // https://crbug.com/653493.
-    auto last_error = ::GetLastError();
-    base::debug::Alias(&last_error);
-    wchar_t name_copy[64];
-    base::wcslcpy(name_copy, name.c_str(), base::size(name_copy));
-    base::debug::Alias(name_copy);
-    PCHECK(atom);
+    base::win::OnResourceExhausted();
   }
 
   registered_classes_.push_back(RegisteredClass(
@@ -155,13 +161,10 @@ ATOM ClassRegistrar::RetrieveClassAtom(const ClassInfo& class_info) {
 }
 
 ClassRegistrar::RegisteredClass::RegisteredClass(const ClassInfo& info,
-                                                 const base::string16& name,
+                                                 const std::wstring& name,
                                                  ATOM atom,
                                                  HMODULE instance)
-    : info(info),
-      name(name),
-      atom(atom),
-      instance(instance) {}
+    : info(info), name(name), atom(atom), instance(instance) {}
 
 ClassRegistrar::ClassRegistrar() : registered_count_(0) {}
 
@@ -173,8 +176,6 @@ WindowImpl::WindowImpl(const std::string& debugging_id)
     : debugging_id_(debugging_id), class_style_(CS_DBLCLKS) {}
 
 WindowImpl::~WindowImpl() {
-  if (destroyed_)
-    *destroyed_ = true;
   ClearUserData();
 }
 
@@ -211,12 +212,10 @@ void WindowImpl::Init(HWND parent, const Rect& bounds) {
   }
 
   ATOM atom = GetWindowClassAtom();
-  bool destroyed = false;
-  destroyed_ = &destroyed;
-  HWND hwnd = CreateWindowEx(window_ex_style_,
-                             reinterpret_cast<wchar_t*>(atom), NULL,
-                             window_style_, x, y, width, height,
-                             parent, NULL, NULL, this);
+  auto weak_this = weak_factory_.GetWeakPtr();
+  HWND hwnd = CreateWindowEx(window_ex_style_, reinterpret_cast<wchar_t*>(atom),
+                             NULL, window_style_, x, y, width, height, parent,
+                             NULL, NULL, this);
   const DWORD create_window_error = ::GetLastError();
 
   // First nccalcszie (during CreateWindow) for captioned windows is
@@ -229,8 +228,10 @@ void WindowImpl::Init(HWND parent, const Rect& bounds) {
   }
 
   if (!hwnd_ && create_window_error == 0) {
-    base::debug::Alias(&destroyed);
+    bool still_alive = !!weak_this;
+    base::debug::Alias(&still_alive);
     base::debug::Alias(&hwnd);
+    base::debug::Alias(&atom);
     bool got_create = got_create_;
     base::debug::Alias(&got_create);
     bool got_valid_hwnd = got_valid_hwnd_;
@@ -247,8 +248,6 @@ void WindowImpl::Init(HWND parent, const Rect& bounds) {
     base::debug::Alias(&procs_match);
     CHECK(false);
   }
-  if (!destroyed)
-    destroyed_ = NULL;
 
   CheckWindowCreated(hwnd_, create_window_error);
 

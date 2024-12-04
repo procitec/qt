@@ -1,11 +1,15 @@
-[microFocusCoordinates]
-osx
+[mixLangLocale:eu_ES]
+*
 
-[visibilityState3]
+[navigateOnDrop:file]
+windows
+
+[navigateOnDrop:file_no_navigate]
 windows
 
 [horizontalScrollbarTest]
-osx
+macos
+rhel # flaky
 
-[mixLangLocale:eu_ES]
-*
+[setCursorOnEmbeddedView]
+macos # QTest::mousemove is not reliable

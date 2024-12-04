@@ -1,11 +1,11 @@
-// Copyright 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "cc/trees/layer_tree_host.h"
 
-#include "base/bind.h"
-#include "base/callback.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/location.h"
 #include "base/time/time.h"
 #include "cc/layers/solid_color_layer.h"
@@ -53,7 +53,7 @@ class LayerTreeHostDamageTestSetNeedsRedraw
   DrawResult PrepareToDrawOnThread(LayerTreeHostImpl* impl,
                                    LayerTreeHostImpl::FrameData* frame_data,
                                    DrawResult draw_result) override {
-    EXPECT_EQ(DRAW_SUCCESS, draw_result);
+    EXPECT_EQ(DrawResult::kSuccess, draw_result);
 
     RenderSurfaceImpl* root_surface =
         GetRenderSurface(impl->active_tree()->root_layer());
@@ -115,7 +115,7 @@ class LayerTreeHostDamageTestSetViewportRectAndScale
   DrawResult PrepareToDrawOnThread(LayerTreeHostImpl* impl,
                                    LayerTreeHostImpl::FrameData* frame_data,
                                    DrawResult draw_result) override {
-    EXPECT_EQ(DRAW_SUCCESS, draw_result);
+    EXPECT_EQ(DrawResult::kSuccess, draw_result);
 
     RenderSurfaceImpl* root_surface =
         GetRenderSurface(impl->active_tree()->root_layer());
@@ -145,7 +145,9 @@ class LayerTreeHostDamageTestSetViewportRectAndScale
   FakeContentLayerClient client_;
 };
 
-SINGLE_AND_MULTI_THREAD_TEST_F(LayerTreeHostDamageTestSetViewportRectAndScale);
+// Test is flaky: https://crbug.com/1306984
+// SINGLE_AND_MULTI_THREAD_TEST_F(
+// LayerTreeHostDamageTestSetViewportRectAndScale);
 
 class LayerTreeHostDamageTestNoDamageDoesNotSwap
     : public LayerTreeHostDamageTest {
@@ -170,7 +172,7 @@ class LayerTreeHostDamageTestNoDamageDoesNotSwap
   DrawResult PrepareToDrawOnThread(LayerTreeHostImpl* host_impl,
                                    LayerTreeHostImpl::FrameData* frame_data,
                                    DrawResult draw_result) override {
-    EXPECT_EQ(DRAW_SUCCESS, draw_result);
+    EXPECT_EQ(DrawResult::kSuccess, draw_result);
 
     int source_frame = host_impl->active_tree()->source_frame_number();
     switch (source_frame) {
@@ -255,7 +257,7 @@ class LayerTreeHostDamageTestForcedFullDamage : public LayerTreeHostDamageTest {
   DrawResult PrepareToDrawOnThread(LayerTreeHostImpl* host_impl,
                                    LayerTreeHostImpl::FrameData* frame_data,
                                    DrawResult draw_result) override {
-    EXPECT_EQ(DRAW_SUCCESS, draw_result);
+    EXPECT_EQ(DrawResult::kSuccess, draw_result);
 
     RenderSurfaceImpl* root_surface =
         GetRenderSurface(host_impl->active_tree()->root_layer());
@@ -337,8 +339,11 @@ class LayerTreeHostScrollbarDamageTest : public LayerTreeHostDamageTest {
     content_layer_ = FakePictureLayer::Create(&client_);
     content_layer_->SetElementId(
         LayerIdToElementIdForTesting(content_layer_->id()));
-    content_layer_->SetScrollable(root_layer->bounds());
-    content_layer_->SetScrollOffset(gfx::ScrollOffset(10, 20));
+
+    // The size of the container in which scrolling contents are visible need
+    // to be smaller than the bounds of the layer itself.
+    content_layer_->SetScrollable(gfx::Size(80, 180));
+    content_layer_->SetScrollOffset(gfx::PointF(10, 20));
     content_layer_->SetBounds(gfx::Size(100, 200));
     content_layer_->SetIsDrawable(true);
     root_layer->AddChild(content_layer_);
@@ -376,7 +381,7 @@ class LayerTreeHostDamageTestScrollbarDoesDamage
   DrawResult PrepareToDrawOnThread(LayerTreeHostImpl* host_impl,
                                    LayerTreeHostImpl::FrameData* frame_data,
                                    DrawResult draw_result) override {
-    EXPECT_EQ(DRAW_SUCCESS, draw_result);
+    EXPECT_EQ(DrawResult::kSuccess, draw_result);
     RenderSurfaceImpl* root_surface =
         GetRenderSurface(host_impl->active_tree()->root_layer());
     gfx::Rect root_damage;
@@ -462,7 +467,7 @@ class LayerTreeHostDamageTestScrollbarCommitDoesNoDamage
   DrawResult PrepareToDrawOnThread(LayerTreeHostImpl* host_impl,
                                    LayerTreeHostImpl::FrameData* frame_data,
                                    DrawResult draw_result) override {
-    EXPECT_EQ(DRAW_SUCCESS, draw_result);
+    EXPECT_EQ(DrawResult::kSuccess, draw_result);
     RenderSurfaceImpl* root_surface =
         GetRenderSurface(host_impl->active_tree()->root_layer());
     gfx::Rect root_damage;

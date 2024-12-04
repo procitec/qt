@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,13 +12,13 @@
 #include <string>
 #include <vector>
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
-#include "base/optional.h"
 #include "components/sync/model/model_type_change_processor.h"
 #include "components/sync/model/model_type_store.h"
 #include "components/sync/model/model_type_sync_bridge.h"
 #include "components/sync_user_events/global_id_mapper.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace syncer {
 
@@ -28,21 +28,25 @@ class UserEventSyncBridge : public ModelTypeSyncBridge {
       OnceModelTypeStoreFactory store_factory,
       std::unique_ptr<ModelTypeChangeProcessor> change_processor,
       GlobalIdMapper* global_id_mapper);
+
+  UserEventSyncBridge(const UserEventSyncBridge&) = delete;
+  UserEventSyncBridge& operator=(const UserEventSyncBridge&) = delete;
+
   ~UserEventSyncBridge() override;
 
   // ModelTypeSyncBridge implementation.
   std::unique_ptr<MetadataChangeList> CreateMetadataChangeList() override;
-  base::Optional<ModelError> MergeSyncData(
+  absl::optional<ModelError> MergeFullSyncData(
       std::unique_ptr<MetadataChangeList> metadata_change_list,
       EntityChangeList entity_data) override;
-  base::Optional<ModelError> ApplySyncChanges(
+  absl::optional<ModelError> ApplyIncrementalSyncChanges(
       std::unique_ptr<MetadataChangeList> metadata_change_list,
       EntityChangeList entity_changes) override;
   void GetData(StorageKeyList storage_keys, DataCallback callback) override;
   void GetAllDataForDebugging(DataCallback callback) override;
   std::string GetClientTag(const EntityData& entity_data) override;
   std::string GetStorageKey(const EntityData& entity_data) override;
-  void ApplyStopSyncChanges(
+  void ApplyDisableSyncChanges(
       std::unique_ptr<MetadataChangeList> delete_metadata_change_list) override;
 
   void RecordUserEvent(std::unique_ptr<sync_pb::UserEventSpecifics> specifics);
@@ -55,17 +59,17 @@ class UserEventSyncBridge : public ModelTypeSyncBridge {
   void RecordUserEventImpl(
       std::unique_ptr<sync_pb::UserEventSpecifics> specifics);
 
-  void OnStoreCreated(const base::Optional<ModelError>& error,
+  void OnStoreCreated(const absl::optional<ModelError>& error,
                       std::unique_ptr<ModelTypeStore> store);
-  void OnReadAllMetadata(const base::Optional<ModelError>& error,
+  void OnReadAllMetadata(const absl::optional<ModelError>& error,
                          std::unique_ptr<MetadataBatch> metadata_batch);
-  void OnCommit(const base::Optional<ModelError>& error);
+  void OnCommit(const absl::optional<ModelError>& error);
   void OnReadData(DataCallback callback,
-                  const base::Optional<ModelError>& error,
+                  const absl::optional<ModelError>& error,
                   std::unique_ptr<ModelTypeStore::RecordList> data_records,
                   std::unique_ptr<ModelTypeStore::IdList> missing_id_list);
   void OnReadAllData(DataCallback callback,
-                     const base::Optional<ModelError>& error,
+                     const absl::optional<ModelError>& error,
                      std::unique_ptr<ModelTypeStore::RecordList> data_records);
 
   void HandleGlobalIdChange(int64_t old_global_id, int64_t new_global_id);
@@ -78,11 +82,9 @@ class UserEventSyncBridge : public ModelTypeSyncBridge {
   std::multimap<int64_t, sync_pb::UserEventSpecifics>
       in_flight_nav_linked_events_;
 
-  GlobalIdMapper* global_id_mapper_;
+  const raw_ptr<GlobalIdMapper> global_id_mapper_;
 
   base::WeakPtrFactory<UserEventSyncBridge> weak_ptr_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(UserEventSyncBridge);
 };
 
 }  // namespace syncer

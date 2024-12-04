@@ -2,7 +2,9 @@ Name: test_fonts
 URL: https://pagure.io/lohit, http://www.nongnu.org/freebangfont/downloads.html#mukti, https://dejavu-fonts.github.io/Download.html
 Version: unknown
 License: SIL OPEN FONT LICENSE, GPL v2, Bitstream Vera Fonts Copyright
+License File: LICENSE
 Security Critical: no
+Shipped: no
 
 Description:
 A collection of fonts in the test_fonts directory distributed in a
@@ -58,7 +60,7 @@ Lohit-Gurmukhi.ttf           https://pagure.io/lohit
 Lohit-Tamil.ttf              https://pagure.io/lohit
 MuktiNarrow.ttf              http://www.nongnu.org/freebangfont/downloads.html#mukti
 NotoColorEmoji.ttf           https://github.com/googlefonts/noto-emoji
-NotoSansCJKjp-Regular.otf    https://www.google.com/get/noto/#sans-jpan
+NotoSansCJK-VF.otf.ttc       https://github.com/googlefonts/noto-cjk/tree/main/Sans/Variable/OTC
 NotoSansKhmer-Regular.ttf    https://www.google.com/get/noto/#sans-khmr
 NotoSansSymbols2-Regular.ttf https://github.com/googlefonts/noto-fonts/tree/master/hinted/NotoSansSymbols2
 NotoSansTibetan-Regular.ttf  https://github.com/googlefonts/noto-fonts/tree/master/hinted/NotoSansTibetan

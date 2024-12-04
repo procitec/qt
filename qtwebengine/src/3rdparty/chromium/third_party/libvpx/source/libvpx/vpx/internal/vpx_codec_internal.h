@@ -48,6 +48,8 @@
 #include "../vpx_encoder.h"
 #include <stdarg.h>
 
+#include "vpx_config.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -196,8 +198,7 @@ typedef const struct vpx_codec_ctrl_fn_map {
 typedef vpx_codec_err_t (*vpx_codec_decode_fn_t)(vpx_codec_alg_priv_t *ctx,
                                                  const uint8_t *data,
                                                  unsigned int data_sz,
-                                                 void *user_priv,
-                                                 long deadline);
+                                                 void *user_priv);
 
 /*!\brief Decoded frames iterator
  *
@@ -253,7 +254,7 @@ typedef vpx_codec_err_t (*vpx_codec_encode_fn_t)(vpx_codec_alg_priv_t *ctx,
                                                  vpx_codec_pts_t pts,
                                                  unsigned long duration,
                                                  vpx_enc_frame_flags_t flags,
-                                                 unsigned long deadline);
+                                                 vpx_enc_deadline_t deadline);
 typedef const vpx_codec_cx_pkt_t *(*vpx_codec_get_cx_data_fn_t)(
     vpx_codec_alg_priv_t *ctx, vpx_codec_iter_t *iter);
 
@@ -283,7 +284,7 @@ typedef const struct vpx_codec_enc_cfg_map {
   vpx_codec_enc_cfg_t cfg;
 } vpx_codec_enc_cfg_map_t;
 
-/*!\brief Decoder algorithm interface interface
+/*!\brief Decoder algorithm interface
  *
  * All decoders \ref MUST expose a variable of this type.
  */
@@ -427,6 +428,27 @@ struct vpx_internal_error_info {
   jmp_buf jmp;
 };
 
+#if CONFIG_DEBUG
+#define CHECK_MEM_ERROR(error, lval, expr)                                  \
+  do {                                                                      \
+    assert((error)->setjmp);                                                \
+    (lval) = (expr);                                                        \
+    if (!(lval))                                                            \
+      vpx_internal_error(error, VPX_CODEC_MEM_ERROR,                        \
+                         "Failed to allocate " #lval " at %s:%d", __FILE__, \
+                         __LINE__);                                         \
+  } while (0)
+#else
+#define CHECK_MEM_ERROR(error, lval, expr)             \
+  do {                                                 \
+    assert((error)->setjmp);                           \
+    (lval) = (expr);                                   \
+    if (!(lval))                                       \
+      vpx_internal_error(error, VPX_CODEC_MEM_ERROR,   \
+                         "Failed to allocate " #lval); \
+  } while (0)
+#endif
+
 #define CLANG_ANALYZER_NORETURN
 #if defined(__has_feature)
 #if __has_feature(attribute_analyzer_noreturn)
@@ -435,9 +457,21 @@ struct vpx_internal_error_info {
 #endif
 #endif
 
+// Tells the compiler to perform `printf` format string checking if the
+// compiler supports it; see the 'format' attribute in
+// <https://gcc.gnu.org/onlinedocs/gcc/Common-Function-Attributes.html>.
+#define LIBVPX_FORMAT_PRINTF(string_index, first_to_check)
+#if defined(__has_attribute)
+#if __has_attribute(format)
+#undef LIBVPX_FORMAT_PRINTF
+#define LIBVPX_FORMAT_PRINTF(string_index, first_to_check) \
+  __attribute__((__format__(__printf__, string_index, first_to_check)))
+#endif
+#endif
+
 void vpx_internal_error(struct vpx_internal_error_info *info,
-                        vpx_codec_err_t error, const char *fmt,
-                        ...) CLANG_ANALYZER_NORETURN;
+                        vpx_codec_err_t error, const char *fmt, ...)
+    LIBVPX_FORMAT_PRINTF(3, 4) CLANG_ANALYZER_NORETURN;
 
 #ifdef __cplusplus
 }  // extern "C"

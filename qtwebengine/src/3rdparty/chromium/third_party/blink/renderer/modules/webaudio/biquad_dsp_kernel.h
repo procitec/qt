@@ -26,6 +26,7 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_MODULES_WEBAUDIO_BIQUAD_DSP_KERNEL_H_
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_WEBAUDIO_BIQUAD_DSP_KERNEL_H_
 
+#include "base/synchronization/lock.h"
 #include "third_party/blink/renderer/modules/webaudio/biquad_processor.h"
 #include "third_party/blink/renderer/platform/audio/audio_dsp_kernel.h"
 #include "third_party/blink/renderer/platform/audio/biquad.h"
@@ -41,6 +42,7 @@ class BiquadDSPKernel final : public AudioDSPKernel {
  public:
   explicit BiquadDSPKernel(BiquadProcessor* processor)
       : AudioDSPKernel(processor),
+        biquad_(processor->RenderQuantumFrames()),
         tail_time_(std::numeric_limits<double>::infinity()) {}
 
   // AudioDSPKernel
@@ -61,12 +63,16 @@ class BiquadDSPKernel final : public AudioDSPKernel {
   bool RequiresTailProcessing() const final;
   double TailTime() const override;
   double LatencyTime() const override;
-  // Update the biquad cofficients with the given parameters
+  // Update the biquad coefficients with the given parameters
   void UpdateCoefficients(int number_of_frames,
                           const float* frequency,
                           const float* q,
                           const float* gain,
                           const float* detune);
+
+  // Expose HasConstantValues for unit testing
+  MODULES_EXPORT static bool HasConstantValuesForTesting(float* values,
+                                                         int frames_to_process);
 
  protected:
   Biquad biquad_;
@@ -74,17 +80,16 @@ class BiquadDSPKernel final : public AudioDSPKernel {
     return static_cast<BiquadProcessor*>(Processor());
   }
 
-  // To prevent audio glitches when parameters are changed,
-  // dezippering is used to slowly change the parameters.
-  void UpdateCoefficientsIfNecessary(int);
+  void UpdateCoefficientsIfNecessary(int)
+      EXCLUSIVE_LOCKS_REQUIRED(process_lock_);
 
  private:
   // Compute the tail time using the BiquadFilter coefficients at
-  // index |coef_index|.
+  // index `coef_index`.
   void UpdateTailTime(int coef_index);
 
   // Synchronize process() with getting and setting the filter coefficients.
-  mutable Mutex process_lock_;
+  mutable base::Lock process_lock_;
 
   // The current tail time for biquad filter.
   double tail_time_;

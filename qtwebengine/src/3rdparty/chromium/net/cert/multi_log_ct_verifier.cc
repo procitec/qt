@@ -1,9 +1,10 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "net/cert/multi_log_ct_verifier.h"
 
+#include <string_view>
 #include <vector>
 
 #include "base/logging.h"
@@ -50,31 +51,32 @@ void AddSCTAndLogStatus(scoped_refptr<ct::SignedCertificateTimestamp> sct,
   sct_list->push_back(SignedCertificateTimestampAndStatus(sct, status));
 }
 
+std::map<std::string, scoped_refptr<const CTLogVerifier>> CreateLogsMap(
+    const std::vector<scoped_refptr<const CTLogVerifier>>& log_verifiers) {
+  std::map<std::string, scoped_refptr<const CTLogVerifier>> logs;
+  for (const auto& log_verifier : log_verifiers) {
+    std::string key_id = log_verifier->key_id();
+    logs[key_id] = log_verifier;
+  }
+  return logs;
+}
+
 }  // namespace
 
-MultiLogCTVerifier::MultiLogCTVerifier() {}
+MultiLogCTVerifier::MultiLogCTVerifier(
+    const std::vector<scoped_refptr<const CTLogVerifier>>& log_verifiers)
+    : logs_(CreateLogsMap(log_verifiers)) {}
 
 MultiLogCTVerifier::~MultiLogCTVerifier() = default;
 
-void MultiLogCTVerifier::AddLogs(
-    const std::vector<scoped_refptr<const CTLogVerifier>>& log_verifiers) {
-  for (const auto& log_verifier : log_verifiers) {
-    VLOG(1) << "Adding CT log: " << log_verifier->description();
-    logs_[log_verifier->key_id()] = log_verifier;
-  }
-}
-
 void MultiLogCTVerifier::Verify(
-    base::StringPiece hostname,
     X509Certificate* cert,
-    base::StringPiece stapled_ocsp_response,
-    base::StringPiece sct_list_from_tls_extension,
+    std::string_view stapled_ocsp_response,
+    std::string_view sct_list_from_tls_extension,
     SignedCertificateTimestampAndStatusList* output_scts,
-    const NetLogWithSource& net_log) {
+    const NetLogWithSource& net_log) const {
   DCHECK(cert);
   DCHECK(output_scts);
-
-  base::TimeTicks start = base::TimeTicks::Now();
 
   output_scts->clear();
 
@@ -86,7 +88,7 @@ void MultiLogCTVerifier::Verify(
     if (ct::GetPrecertSignedEntry(cert->cert_buffer(),
                                   cert->intermediate_buffers().front().get(),
                                   &precert_entry)) {
-      VerifySCTs(hostname, embedded_scts, precert_entry,
+      VerifySCTs(embedded_scts, precert_entry,
                  ct::SignedCertificateTimestamp::SCT_EMBEDDED, cert,
                  output_scts);
     }
@@ -109,22 +111,13 @@ void MultiLogCTVerifier::Verify(
 
   ct::SignedEntryData x509_entry;
   if (ct::GetX509SignedEntry(cert->cert_buffer(), &x509_entry)) {
-    VerifySCTs(hostname, sct_list_from_ocsp, x509_entry,
+    VerifySCTs(sct_list_from_ocsp, x509_entry,
                ct::SignedCertificateTimestamp::SCT_FROM_OCSP_RESPONSE, cert,
                output_scts);
 
-    VerifySCTs(hostname, sct_list_from_tls_extension, x509_entry,
+    VerifySCTs(sct_list_from_tls_extension, x509_entry,
                ct::SignedCertificateTimestamp::SCT_FROM_TLS_EXTENSION, cert,
                output_scts);
-  }
-
-  // Only log the verification time if SCTs were provided.
-  if (!output_scts->empty()) {
-    base::TimeDelta verify_time = base::TimeTicks::Now() - start;
-    UMA_HISTOGRAM_CUSTOM_MICROSECONDS_TIMES(
-        "Net.CertificateTransparency.SCT.VerificationTime", verify_time,
-        base::TimeDelta::FromMicroseconds(1),
-        base::TimeDelta::FromMilliseconds(100), 50);
   }
 
   net_log.AddEvent(NetLogEventType::SIGNED_CERTIFICATE_TIMESTAMPS_CHECKED, [&] {
@@ -133,23 +126,22 @@ void MultiLogCTVerifier::Verify(
 }
 
 void MultiLogCTVerifier::VerifySCTs(
-    base::StringPiece hostname,
-    base::StringPiece encoded_sct_list,
+    std::string_view encoded_sct_list,
     const ct::SignedEntryData& expected_entry,
     ct::SignedCertificateTimestamp::Origin origin,
     X509Certificate* cert,
-    SignedCertificateTimestampAndStatusList* output_scts) {
+    SignedCertificateTimestampAndStatusList* output_scts) const {
   if (logs_.empty())
     return;
 
-  std::vector<base::StringPiece> sct_list;
+  std::vector<std::string_view> sct_list;
 
   if (!ct::DecodeSCTList(encoded_sct_list, &sct_list))
     return;
 
-  for (std::vector<base::StringPiece>::const_iterator it = sct_list.begin();
+  for (std::vector<std::string_view>::const_iterator it = sct_list.begin();
        it != sct_list.end(); ++it) {
-    base::StringPiece encoded_sct(*it);
+    std::string_view encoded_sct(*it);
     LogSCTOriginToUMA(origin);
 
     scoped_refptr<ct::SignedCertificateTimestamp> decoded_sct;
@@ -159,26 +151,18 @@ void MultiLogCTVerifier::VerifySCTs(
     }
     decoded_sct->origin = origin;
 
-    base::TimeTicks start = base::TimeTicks::Now();
-    VerifySingleSCT(hostname, decoded_sct, expected_entry, cert, output_scts);
-    base::TimeDelta verify_time = base::TimeTicks::Now() - start;
-    UMA_HISTOGRAM_CUSTOM_MICROSECONDS_TIMES(
-        "Net.CertificateTransparency.SCT.SingleVerificationTime", verify_time,
-        base::TimeDelta::FromMicroseconds(1),
-        base::TimeDelta::FromMilliseconds(100), 50);
+    VerifySingleSCT(decoded_sct, expected_entry, cert, output_scts);
   }
 }
 
 bool MultiLogCTVerifier::VerifySingleSCT(
-    base::StringPiece hostname,
     scoped_refptr<ct::SignedCertificateTimestamp> sct,
     const ct::SignedEntryData& expected_entry,
     X509Certificate* cert,
-    SignedCertificateTimestampAndStatusList* output_scts) {
+    SignedCertificateTimestampAndStatusList* output_scts) const {
   // Assume this SCT is untrusted until proven otherwise.
   const auto& it = logs_.find(sct->log_id);
   if (it == logs_.end()) {
-    DVLOG(1) << "SCT does not match any known log.";
     AddSCTAndLogStatus(sct, ct::SCT_STATUS_LOG_UNKNOWN, output_scts);
     return false;
   }
@@ -186,14 +170,12 @@ bool MultiLogCTVerifier::VerifySingleSCT(
   sct->log_description = it->second->description();
 
   if (!it->second->Verify(expected_entry, *sct.get())) {
-    DVLOG(1) << "Unable to verify SCT signature.";
     AddSCTAndLogStatus(sct, ct::SCT_STATUS_INVALID_SIGNATURE, output_scts);
     return false;
   }
 
   // SCT verified ok, just make sure the timestamp is legitimate.
   if (sct->timestamp > base::Time::Now()) {
-    DVLOG(1) << "SCT is from the future!";
     AddSCTAndLogStatus(sct, ct::SCT_STATUS_INVALID_TIMESTAMP, output_scts);
     return false;
   }

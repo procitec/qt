@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -19,13 +19,6 @@ constexpr bool kIsDotSpaceSuffixIgnored =
     extensions::content_verifier_utils::IsDotSpaceFilenameSuffixIgnored();
 constexpr bool kIsFileAccessCaseInsensitive =
     !extensions::content_verifier_utils::IsFileAccessCaseSensitive();
-
-// Helper to return base64 encode result by value.
-std::string Base64Encode(const std::string& data) {
-  std::string result;
-  base::Base64Encode(data, &result);
-  return result;
-}
 
 struct HashInfo {
   base::FilePath path;
@@ -52,7 +45,7 @@ testing::AssertionResult WriteThenReadComputedHashes(
            << "Failed to write computed_hashes.json";
   }
   extensions::ComputedHashes::Status computed_hashes_status;
-  base::Optional<extensions::ComputedHashes> computed_hashes =
+  std::optional<extensions::ComputedHashes> computed_hashes =
       extensions::ComputedHashes::CreateFromFile(computed_hashes_path,
                                                  &computed_hashes_status);
   if (!computed_hashes)
@@ -140,7 +133,7 @@ TEST(ComputedHashesTest, GetHashesForContent) {
   std::vector<std::string> hashes1 =
       ComputedHashes::GetHashesForContent(content1, block_size);
   ASSERT_EQ(1u, hashes1.size());
-  EXPECT_EQ(content1_expected_hash, Base64Encode(hashes1[0]));
+  EXPECT_EQ(content1_expected_hash, base::Base64Encode(hashes1[0]));
 
   // Multiple blocks input.
   std::string content2;
@@ -152,8 +145,8 @@ TEST(ComputedHashesTest, GetHashesForContent) {
   std::vector<std::string> hashes2 =
       ComputedHashes::GetHashesForContent(content2, block_size);
   ASSERT_EQ(2u, hashes2.size());
-  EXPECT_EQ(content2_expected_hashes[0], Base64Encode(hashes2[0]));
-  EXPECT_EQ(content2_expected_hashes[1], Base64Encode(hashes2[1]));
+  EXPECT_EQ(content2_expected_hashes[0], base::Base64Encode(hashes2[0]));
+  EXPECT_EQ(content2_expected_hashes[1], base::Base64Encode(hashes2[1]));
 
   // Now an empty input.
   std::string content3;
@@ -161,7 +154,7 @@ TEST(ComputedHashesTest, GetHashesForContent) {
       ComputedHashes::GetHashesForContent(content3, block_size);
   ASSERT_EQ(1u, hashes3.size());
   ASSERT_EQ(std::string("47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="),
-            Base64Encode(hashes3[0]));
+            base::Base64Encode(hashes3[0]));
 }
 
 // Tests that dot/space path suffixes are treated correctly in
@@ -179,7 +172,6 @@ TEST(ComputedHashesTest, DotSpaceSuffix) {
            {hash_value}},
       },
       &computed_hashes));
-  std::vector<std::string> read_hashes;
 
   struct TestCase {
     const char* path;

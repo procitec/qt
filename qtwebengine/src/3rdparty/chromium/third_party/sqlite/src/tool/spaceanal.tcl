@@ -581,6 +581,7 @@ set inuse_pgcnt   [expr wide([mem eval $sql])]
 set inuse_percent [percent $inuse_pgcnt $file_pgcnt]
 
 set free_pgcnt    [expr {$file_pgcnt-$inuse_pgcnt-$av_pgcnt}]
+if {$file_bytes>1073741824 && $free_pgcnt>0} {incr free_pgcnt -1}
 set free_percent  [percent $free_pgcnt $file_pgcnt]
 set free_pgcnt2   [db one {PRAGMA freelist_count}]
 set free_percent2 [percent $free_pgcnt2 $file_pgcnt]
@@ -731,7 +732,7 @@ Pages of auto-vacuum overhead
 
 Number of tables in the database
 
-    The number of tables in the database, including the SQLITE_MASTER table
+    The number of tables in the database, including the SQLITE_SCHEMA table
     used to store schema information.
 
 Number of indices
@@ -754,7 +755,7 @@ Size of the file in bytes
 Bytes of user payload stored
 
     The total number of bytes of user payload stored in the database. The
-    schema information in the SQLITE_MASTER table is not counted when
+    schema information in the SQLITE_SCHEMA table is not counted when
     computing this number.  The percentage at the right shows the payload
     divided by the total file size.
 

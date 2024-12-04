@@ -9,35 +9,29 @@ testing DevTools with emscripten generated Wasm binaries.
 """
 
 import argparse
-import platform
 import os
-import subprocess
+import platform
 import sys
 import tarfile
-import tempfile
+import urllib.request
 import zipfile
-
-if sys.version_info >= (3, ):
-    from urllib.request import urlretrieve
-else:
-    from urllib import urlretrieve
 
 BS = 8192
 STAMP_FILE = 'build-revision'
-DOWNLOAD_URL = "https://storage.googleapis.com/webassembly/emscripten-releases-builds/%s/%s/wasm-binaries.%s"
+DOWNLOAD_URL = "https://storage.googleapis.com/webassembly/emscripten-releases-builds/%s/%s/wasm-binaries%s.%s"
 
 
-def check_stamp_file(options):
-    try:
-        with open(os.path.join(options.dest, STAMP_FILE)) as f:
-            return options.tag == f.read().strip()
-    except Exception:
+def check_stamp_file(options, url):
+    file_name = os.path.join(options.dest, STAMP_FILE)
+    if not os.path.isfile(file_name):
         return False
+    with open(file_name) as f:
+        return url == f.read().strip()
 
 
-def write_stamp_file(options):
+def write_stamp_file(options, url):
     with open(os.path.join(options.dest, STAMP_FILE), 'w') as f:
-        return f.write(options.tag)
+        return f.write(url)
 
 
 def unzip(os_name, file, dest):
@@ -55,30 +49,36 @@ def script_main(args):
     if not os.path.isdir(options.dest):
         os.makedirs(options.dest)
 
-    if check_stamp_file(options):
-        return 0
-
     os_name = {
         'Linux': 'linux',
         'Windows': 'win',
         'Darwin': 'mac'
     }[platform.system()]
 
-    url = DOWNLOAD_URL % (os_name, options.tag,
-                          'zip' if os_name == 'win' else 'tbz2')
+    arch_suffix = ''
+    host_arch = platform.machine().lower()
+    if host_arch == 'arm64' or host_arch.startswith('aarch64'):
+        arch_suffix = '-arm64'
 
-    download_size = 0
+    file_extension = 'zip' if os_name == 'win' else 'tbz2'
+
+    url = DOWNLOAD_URL % (os_name, options.tag, arch_suffix, file_extension)
+
+    if check_stamp_file(options, url):
+        return 0
+
     try:
-        filename, _ = urlretrieve(url)
+        filename, _ = urllib.request.urlretrieve(url)
 
         unzip(os_name, filename, options.dest)
 
-        write_stamp_file(options)
-
+        write_stamp_file(options, url)
     except Exception as e:
         sys.stderr.write('Error Downloading URL "{url}": {e}\n'.format(url=url,
                                                                        e=e))
         return 1
+    finally:
+        urllib.request.urlcleanup()
 
 
 if __name__ == '__main__':

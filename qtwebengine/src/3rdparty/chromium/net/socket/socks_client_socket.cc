@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,14 +6,14 @@
 
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/compiler_specific.h"
-#include "base/stl_util.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/sys_byteorder.h"
+#include "net/base/address_list.h"
 #include "net/base/io_buffer.h"
 #include "net/dns/public/dns_query_type.h"
-#include "net/dns/public/secure_dns_mode.h"
+#include "net/dns/public/secure_dns_policy.h"
 #include "net/log/net_log.h"
 #include "net/log/net_log_event_type.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
@@ -63,21 +63,16 @@ static_assert(sizeof(SOCKS4ServerResponse) == kReadHeaderSize,
 SOCKSClientSocket::SOCKSClientSocket(
     std::unique_ptr<StreamSocket> transport_socket,
     const HostPortPair& destination,
-    const NetworkIsolationKey& network_isolation_key,
+    const NetworkAnonymizationKey& network_anonymization_key,
     RequestPriority priority,
     HostResolver* host_resolver,
-    bool disable_secure_dns,
+    SecureDnsPolicy secure_dns_policy,
     const NetworkTrafficAnnotationTag& traffic_annotation)
     : transport_socket_(std::move(transport_socket)),
-      next_state_(STATE_NONE),
-      completed_handshake_(false),
-      bytes_sent_(0),
-      bytes_received_(0),
-      was_ever_used_(false),
       host_resolver_(host_resolver),
-      disable_secure_dns_(disable_secure_dns),
+      secure_dns_policy_(secure_dns_policy),
       destination_(destination),
-      network_isolation_key_(network_isolation_key),
+      network_anonymization_key_(network_anonymization_key),
       priority_(priority),
       net_log_(transport_socket_->NetLog()),
       traffic_annotation_(traffic_annotation) {}
@@ -135,13 +130,6 @@ bool SOCKSClientSocket::WasEverUsed() const {
   return was_ever_used_;
 }
 
-bool SOCKSClientSocket::WasAlpnNegotiated() const {
-  if (transport_socket_)
-    return transport_socket_->WasAlpnNegotiated();
-  NOTREACHED();
-  return false;
-}
-
 NextProto SOCKSClientSocket::GetNegotiatedProtocol() const {
   if (transport_socket_)
     return transport_socket_->GetNegotiatedProtocol();
@@ -154,10 +142,6 @@ bool SOCKSClientSocket::GetSSLInfo(SSLInfo* ssl_info) {
     return transport_socket_->GetSSLInfo(ssl_info);
   NOTREACHED();
   return false;
-}
-
-void SOCKSClientSocket::GetConnectionAttempts(ConnectionAttempts* out) const {
-  out->clear();
 }
 
 int64_t SOCKSClientSocket::GetTotalReceivedBytes() const {
@@ -310,10 +294,9 @@ int SOCKSClientSocket::DoResolveHost() {
   HostResolver::ResolveHostParameters parameters;
   parameters.dns_query_type = DnsQueryType::A;
   parameters.initial_priority = priority_;
-  if (disable_secure_dns_)
-    parameters.secure_dns_mode_override = SecureDnsMode::kOff;
+  parameters.secure_dns_policy = secure_dns_policy_;
   resolve_host_request_ = host_resolver_->CreateRequest(
-      destination_, network_isolation_key_, net_log_, parameters);
+      destination_, network_anonymization_key_, net_log_, parameters);
 
   return resolve_host_request_->Start(
       base::BindOnce(&SOCKSClientSocket::OnIOComplete, base::Unretained(this)));
@@ -340,9 +323,9 @@ const std::string SOCKSClientSocket::BuildHandshakeWriteBuffer() const {
   request.nw_port = base::HostToNet16(destination_.port());
 
   DCHECK(resolve_host_request_->GetAddressResults() &&
-         !resolve_host_request_->GetAddressResults().value().empty());
+         !resolve_host_request_->GetAddressResults()->empty());
   const IPEndPoint& endpoint =
-      resolve_host_request_->GetAddressResults().value().front();
+      resolve_host_request_->GetAddressResults()->front();
 
   // We disabled IPv6 results when resolving the hostname, so none of the
   // results in the list will be IPv6.
@@ -358,7 +341,7 @@ const std::string SOCKSClientSocket::BuildHandshakeWriteBuffer() const {
 
   std::string handshake_data(reinterpret_cast<char*>(&request),
                              sizeof(request));
-  handshake_data.append(kEmptyUserId, base::size(kEmptyUserId));
+  handshake_data.append(kEmptyUserId, std::size(kEmptyUserId));
 
   return handshake_data;
 }
@@ -374,7 +357,7 @@ int SOCKSClientSocket::DoHandshakeWrite() {
 
   int handshake_buf_len = buffer_.size() - bytes_sent_;
   DCHECK_GT(handshake_buf_len, 0);
-  handshake_buf_ = base::MakeRefCounted<IOBuffer>(handshake_buf_len);
+  handshake_buf_ = base::MakeRefCounted<IOBufferWithSize>(handshake_buf_len);
   memcpy(handshake_buf_->data(), &buffer_[bytes_sent_],
          handshake_buf_len);
   return transport_socket_->Write(
@@ -411,7 +394,7 @@ int SOCKSClientSocket::DoHandshakeRead() {
   }
 
   int handshake_buf_len = kReadHeaderSize - bytes_received_;
-  handshake_buf_ = base::MakeRefCounted<IOBuffer>(handshake_buf_len);
+  handshake_buf_ = base::MakeRefCounted<IOBufferWithSize>(handshake_buf_len);
   return transport_socket_->Read(
       handshake_buf_.get(), handshake_buf_len,
       base::BindOnce(&SOCKSClientSocket::OnIOComplete, base::Unretained(this)));

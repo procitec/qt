@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,7 +7,8 @@
 
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/editing/markers/document_marker.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/collection_support/heap_vector.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 
 namespace blink {
 
@@ -21,6 +22,8 @@ class DocumentMarker;
 class CORE_EXPORT DocumentMarkerList
     : public GarbageCollected<DocumentMarkerList> {
  public:
+  DocumentMarkerList(const DocumentMarkerList&) = delete;
+  DocumentMarkerList& operator=(const DocumentMarkerList&) = delete;
   virtual ~DocumentMarkerList();
 
   // Returns the single marker type supported by the list implementation.
@@ -61,13 +64,14 @@ class CORE_EXPORT DocumentMarkerList
                             unsigned old_length,
                             unsigned new_length) = 0;
 
+  // Update the marker list by merging any overlapping markers that should be
+  // merged. Only Custom Highlights and Text Fragment markers need to merge.
+  virtual void MergeOverlappingMarkers() = 0;
+
   virtual void Trace(Visitor* visitor) const {}
 
  protected:
   DocumentMarkerList();
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(DocumentMarkerList);
 };
 
 }  // namespace blink

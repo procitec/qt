@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,14 +6,28 @@
 
 typedef (Request or USVString) RequestInfo;
 
-enum RequestDestination { "", "audio", "audioworklet", "document", "embed", "font", "frame", "iframe", "image", "manifest", "object", "paintworklet", "report",
-    "script", "sharedworker", "style",  "track", "video", "worker", "xslt" };
+enum RequestDestination {
+    // https://fetch.spec.whatwg.org/#requestdestination
+    "", "audio", "audioworklet", "document", "embed", "font", "frame", "iframe", "image", "json", "manifest", "object", "paintworklet", "report",
+    "script", "sharedworker", "style",  "track", "video", "worker", "xslt",
+
+    // https://wicg.github.io/fenced-frame/#new-request-destination
+    "fencedframe",
+
+    // https://github.com/WICG/compression-dictionary-transport
+    "dictionary",
+
+    // https://wicg.github.io/nav-speculation/speculation-rules.html#fetch-destination
+    "speculationrules"
+};
 enum RequestMode { "navigate", "same-origin", "no-cors", "cors" };
 enum RequestCredentials { "omit", "same-origin", "include" };
 enum RequestRedirect { "follow", "error", "manual" };
 enum RequestCache { "default", "no-store", "reload", "no-cache", "force-cache",
                     "only-if-cached" };
-enum RequestImportance {"low", "auto", "high"};
+enum FetchPriority {"low", "auto", "high"};
+enum RequestDuplex {"half"};
+enum IPAddressSpace {"local", "private", "public", "unknown"};
 
 // https://w3c.github.io/webappsec-referrer-policy/#referrer-policies
 
@@ -30,7 +44,6 @@ enum ReferrerPolicy {
 };
 
 [
-    ActiveScriptWrappable,
     Exposed=(Window,Worker)
 ] interface Request {
     [CallWith=ScriptState, RaisesException] constructor(RequestInfo input, optional RequestInit init = {});
@@ -47,11 +60,12 @@ enum ReferrerPolicy {
     readonly attribute DOMString integrity;
     readonly attribute boolean keepalive;
     readonly attribute AbortSignal signal;
+    [RuntimeEnabled=PrivateNetworkAccessPermissionPrompt] readonly attribute IPAddressSpace targetAddressSpace;
 
     [MeasureAs=RequestIsHistoryNavigation] readonly attribute boolean isHistoryNavigation;
-    [RaisesException, CallWith=ScriptState, DoNotTestNewObject, NewObject] Request clone();
+    [RaisesException, CallWith=ScriptState, NewObject] Request clone();
 
-    [RuntimeEnabled=FetchUploadStreaming] readonly attribute ReadableStream? body;
+    [Affects=Everything, RuntimeEnabled=FetchUploadStreaming] readonly attribute ReadableStream? body;
 };
 
 Request includes Body;

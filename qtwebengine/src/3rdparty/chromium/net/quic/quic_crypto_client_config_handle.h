@@ -1,11 +1,10 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef NET_QUIC_QUIC_CRYPTO_CLIENT_CONFIG_HANDLE_H_
 #define NET_QUIC_QUIC_CRYPTO_CLIENT_CONFIG_HANDLE_H_
 
-#include "base/macros.h"
 #include "net/base/net_export.h"
 
 namespace quic {
@@ -23,17 +22,18 @@ namespace net {
 //
 // This ownership model is used instead of refcounting for stronger safety
 // guarantees, and because the underlying QuicCryptoClientConfig depends on
-// other network objects that may be deleted after the QuicStreamFactory.
+// other network objects that may be deleted after the QuicSessionPool.
 class NET_EXPORT_PRIVATE QuicCryptoClientConfigHandle {
  public:
+  QuicCryptoClientConfigHandle& operator=(const QuicCryptoClientConfigHandle&) =
+      delete;
+
   virtual ~QuicCryptoClientConfigHandle();
+
   virtual quic::QuicCryptoClientConfig* GetConfig() const = 0;
 
  protected:
   QuicCryptoClientConfigHandle();
-
- private:
-  DISALLOW_ASSIGN(QuicCryptoClientConfigHandle);
 };
 
 }  // namespace net

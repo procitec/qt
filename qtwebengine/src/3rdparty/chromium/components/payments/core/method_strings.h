@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -25,28 +25,15 @@ extern const char kBasicCard[];
 // https://developers.google.com/pay/api/web/guides/tutorial
 extern const char kGooglePay[];
 
+// Google Pay Authentication method name.
+extern const char kGooglePayAuthentication[];
+
 // Google Play Billing method name.
 extern const char kGooglePlayBilling[];
-
-// Interledger method name.
-// https://w3c.github.io/webpayments/proposals/interledger/
-extern const char kInterledger[];
-
-// Credit Transfer method name.
-// https://w3c.github.io/payment-method-credit-transfer/
-extern const char kPayeeCreditTransfer[];
-
-// Credit Transfer method name.
-// https://w3c.github.io/payment-method-credit-transfer/
-extern const char kPayerCreditTransfer[];
 
 // Secure Payment Confirmation method name.
 // https://github.com/rsolomakhin/secure-payment-confirmation/
 extern const char kSecurePaymentConfirmation[];
-
-// Tokenized Card method name.
-// https://w3c.github.io/webpayments-methods-tokenization/
-extern const char kTokenizedCard[];
 
 }  // namespace methods
 }  // namespace payments

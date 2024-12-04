@@ -1,19 +1,9 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef PLATFORM_BASE_MACROS_H_
 #define PLATFORM_BASE_MACROS_H_
-
-// Use this when declaring/defining _defaulted_ noexcept move constructors, to
-// work around a bug(?) in g++ with deducing noexcept.
-#ifndef MAYBE_NOEXCEPT
-#if defined(__GNUC__)
-#define MAYBE_NOEXCEPT
-#else
-#define MAYBE_NOEXCEPT noexcept
-#endif
-#endif
 
 #ifdef DISALLOW_COPY
 #define OSP_DISALLOW_COPY DISALLOW_COPY

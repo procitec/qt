@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,10 +7,11 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/run_loop.h"
-#include "base/single_thread_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/test/test_mock_time_task_runner.h"
 #include "base/threading/thread.h"
 #include "cc/test/fake_layer_tree_frame_sink_client.h"
@@ -55,8 +56,8 @@ class ThreadTrackingLayerTreeFrameSinkClient
   }
 
  private:
-  base::PlatformThreadId* called_thread_id_;
-  base::RunLoop* run_loop_;
+  raw_ptr<base::PlatformThreadId> called_thread_id_;
+  raw_ptr<base::RunLoop> run_loop_;
 };
 
 TEST(AsyncLayerTreeFrameSinkTest,
@@ -65,7 +66,7 @@ TEST(AsyncLayerTreeFrameSinkTest,
   bg_thread.Start();
 
   scoped_refptr<viz::TestContextProvider> provider =
-      viz::TestContextProvider::Create();
+      viz::TestContextProvider::CreateRaster();
   viz::TestGpuMemoryBufferManager test_gpu_memory_buffer_manager;
 
   mojo::PendingRemote<viz::mojom::CompositorFrameSink> sink_remote;
@@ -79,7 +80,8 @@ TEST(AsyncLayerTreeFrameSinkTest,
   init_params.pipes.compositor_frame_sink_remote = std::move(sink_remote);
   init_params.pipes.client_receiver = client.InitWithNewPipeAndPassReceiver();
   auto layer_tree_frame_sink = std::make_unique<AsyncLayerTreeFrameSink>(
-      std::move(provider), nullptr, &init_params);
+      std::move(provider), nullptr, /*shared_image_interface=*/nullptr,
+      &init_params);
 
   base::PlatformThreadId called_thread_id = base::kInvalidThreadId;
   base::RunLoop close_run_loop;
@@ -129,7 +131,7 @@ class AsyncLayerTreeFrameSinkSimpleTest : public testing::Test {
       : task_runner_(base::MakeRefCounted<base::TestMockTimeTaskRunner>(
             base::TestMockTimeTaskRunner::Type::kStandalone)),
         display_rect_(1, 1) {
-    auto context_provider = viz::TestContextProvider::Create();
+    auto context_provider = viz::TestContextProvider::CreateRaster();
 
     mojo::PendingRemote<viz::mojom::CompositorFrameSink> sink_remote;
     mojo::PendingReceiver<viz::mojom::CompositorFrameSink> sink_receiver =
@@ -143,7 +145,8 @@ class AsyncLayerTreeFrameSinkSimpleTest : public testing::Test {
         client.InitWithNewPipeAndPassReceiver();
 
     layer_tree_frame_sink_ = std::make_unique<AsyncLayerTreeFrameSink>(
-        std::move(context_provider), nullptr, &init_params_);
+        std::move(context_provider), nullptr,
+        /*shared_image_interface=*/nullptr, &init_params_);
 
     viz::LocalSurfaceId local_surface_id(1, base::UnguessableToken::Create());
     layer_tree_frame_sink_->SetLocalSurfaceId(local_surface_id);
@@ -156,9 +159,8 @@ class AsyncLayerTreeFrameSinkSimpleTest : public testing::Test {
                      .SetRenderPassList(std::move(*pass_list))
                      .Build();
     pass_list->clear();
-    layer_tree_frame_sink_->SubmitCompositorFrame(
-        std::move(frame), hit_test_data_changed,
-        /*show_hit_test_borders=*/false);
+    layer_tree_frame_sink_->SubmitCompositorFrame(std::move(frame),
+                                                  hit_test_data_changed);
   }
 
   const viz::HitTestRegionList& GetHitTestData() const {
@@ -179,7 +181,7 @@ TEST_F(AsyncLayerTreeFrameSinkSimpleTest, HitTestRegionListEmpty) {
   auto pass = viz::CompositorRenderPass::Create();
   pass->id = viz::CompositorRenderPassId{1};
   pass->output_rect = display_rect_;
-  pass_list.push_back(move(pass));
+  pass_list.push_back(std::move(pass));
 
   SendRenderPassList(&pass_list, /*hit_test_data_changed=*/false);
   task_runner_->RunUntilIdle();
@@ -194,7 +196,7 @@ TEST_F(AsyncLayerTreeFrameSinkSimpleTest, HitTestRegionListDuplicate) {
   auto pass1 = viz::CompositorRenderPass::Create();
   pass1->id = viz::CompositorRenderPassId{1};
   pass1->output_rect = display_rect_;
-  pass_list.push_back(move(pass1));
+  pass_list.push_back(std::move(pass1));
 
   viz::HitTestRegionList region_list1;
   region_list1.flags = viz::HitTestRegionFlags::kHitTestMine;
@@ -209,7 +211,7 @@ TEST_F(AsyncLayerTreeFrameSinkSimpleTest, HitTestRegionListDuplicate) {
   auto pass2 = viz::CompositorRenderPass::Create();
   pass2->id = viz::CompositorRenderPassId{2};
   pass2->output_rect = display_rect_;
-  pass_list.push_back(move(pass2));
+  pass_list.push_back(std::move(pass2));
 
   SendRenderPassList(&pass_list, /*hit_test_data_changed=*/false);
   task_runner_->RunUntilIdle();
@@ -221,7 +223,7 @@ TEST_F(AsyncLayerTreeFrameSinkSimpleTest, HitTestRegionListDuplicate) {
   auto pass3 = viz::CompositorRenderPass::Create();
   pass3->id = viz::CompositorRenderPassId{3};
   pass3->output_rect = display_rect_;
-  pass_list.push_back(move(pass3));
+  pass_list.push_back(std::move(pass3));
 
   viz::HitTestRegionList region_list2;
   region_list2.flags = viz::HitTestRegionFlags::kHitTestMine;
@@ -242,7 +244,7 @@ TEST_F(AsyncLayerTreeFrameSinkSimpleTest,
   auto pass1 = viz::CompositorRenderPass::Create();
   pass1->id = viz::CompositorRenderPassId{1};
   pass1->output_rect = display_rect_;
-  pass_list.push_back(move(pass1));
+  pass_list.push_back(std::move(pass1));
 
   viz::HitTestRegionList region_list1;
   region_list1.flags = viz::HitTestRegionFlags::kHitTestMine;
@@ -276,7 +278,7 @@ TEST_F(AsyncLayerTreeFrameSinkSimpleTest,
   auto pass3 = viz::CompositorRenderPass::Create();
   pass3->id = viz::CompositorRenderPassId{3};
   pass3->output_rect = display_rect_;
-  pass_list.push_back(move(pass3));
+  pass_list.push_back(std::move(pass3));
 
   viz::HitTestRegionList region_list3;
   region_list3.flags = viz::HitTestRegionFlags::kHitTestChildSurface;

@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,6 +8,7 @@
 #include <iterator>
 
 #include "base/check_op.h"
+#include "base/memory/raw_ptr.h"
 #include "base/strings/string_piece.h"
 
 namespace url_pattern_index {
@@ -22,16 +23,25 @@ namespace url_pattern_index {
 template <typename IsSeparator>
 class StringSplitter {
  public:
-  class Iterator
-      : public std::iterator<std::input_iterator_tag, base::StringPiece> {
+  class Iterator {
    public:
+    using iterator_category = std::input_iterator_tag;
+    using value_type = base::StringPiece;
+    using difference_type = std::ptrdiff_t;
+    using pointer = base::StringPiece*;
+    using reference = base::StringPiece&;
+
     // Creates an iterator, which points to the leftmost token within the
     // |splitter|'s |text|, starting from |head|.
     Iterator(const StringSplitter& splitter,
              base::StringPiece::const_iterator head)
-        : splitter_(&splitter), current_(head, 0), end_(splitter.text_.end()) {
-      DCHECK_GE(head, splitter_->text_.begin());
-      DCHECK_LE(head, end_);
+#if BUILDFLAG(IS_APPLE)
+        : splitter_(&splitter), current_(&*head, 0), end_(splitter.text_.cend()) {
+#else
+        : splitter_(&splitter), current_(head, head), end_(splitter.text_.cend()) {
+#endif
+//      DCHECK_GE(head, splitter_->text_.begin());
+//      DCHECK_LE(head, end_);
 
       Advance();
     }
@@ -64,10 +74,14 @@ class StringSplitter {
       base::StringPiece::const_iterator end = begin;
       while (end != end_ && !splitter_->is_separator_(*end))
         ++end;
-      current_ = base::StringPiece(begin, end - begin);
+#if BUILDFLAG(IS_APPLE)
+      current_ = base::StringPiece(&*begin, end - begin);
+#else
+      current_ = base::StringPiece(begin, end);
+#endif
     }
 
-    const StringSplitter* splitter_;
+    raw_ptr<const StringSplitter<IsSeparator>> splitter_;
 
     // Contains the token currently pointed to by the iterator.
     base::StringPiece current_;
@@ -82,8 +96,8 @@ class StringSplitter {
                  IsSeparator is_separator = IsSeparator())
       : text_(text), is_separator_(is_separator) {}
 
-  Iterator begin() const { return Iterator(*this, text_.begin()); }
-  Iterator end() const { return Iterator(*this, text_.end()); }
+  Iterator begin() const { return Iterator(*this, text_.cbegin()); }
+  Iterator end() const { return Iterator(*this, text_.cend()); }
 
  private:
   base::StringPiece text_;

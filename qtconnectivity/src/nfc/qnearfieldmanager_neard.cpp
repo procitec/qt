@@ -1,53 +1,17 @@
-/***************************************************************************
-**
-** Copyright (C) 2016 BlackBerry Limited. All rights reserved.
-** Copyright (C) 2016 BasysKom GmbH.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtNfc module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 BlackBerry Limited, Copyright (C) 2016 BasysKom GmbH
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qnearfieldmanager_neard_p.h"
 #include "qnearfieldtarget_neard_p.h"
 
-#include "neard/adapter_p.h"
-#include "neard/dbusproperties_p.h"
-#include "neard/dbusobjectmanager_p.h"
+#include "adapter_interface.h"
+#include "properties_interface.h"
+#include "objectmanager_interface.h"
 
 QT_BEGIN_NAMESPACE
 
 Q_DECLARE_LOGGING_CATEGORY(QT_NFC_NEARD)
+Q_LOGGING_CATEGORY(QT_NFC_NEARD, "qt.nfc.neard")
 
 // TODO We need a constructor that lets us select an adapter
 QNearFieldManagerPrivateImpl::QNearFieldManagerPrivateImpl()
@@ -94,7 +58,7 @@ QNearFieldManagerPrivateImpl::~QNearFieldManagerPrivateImpl()
     stopTargetDetection();
 }
 
-bool QNearFieldManagerPrivateImpl::isAvailable() const
+bool QNearFieldManagerPrivateImpl::isEnabled() const
 {
     if (!m_neardHelper->dbusObjectManager()->isValid() || m_adapterPath.isNull()) {
         qCWarning(QT_NFC_NEARD) << "dbus object manager invalid or adapter path invalid";
@@ -117,25 +81,25 @@ bool QNearFieldManagerPrivateImpl::isAvailable() const
     return false;
 }
 
-bool QNearFieldManagerPrivateImpl::isSupported() const
+bool QNearFieldManagerPrivateImpl::isSupported(QNearFieldTarget::AccessMethod accessMethod) const
 {
     if (m_adapterPath.isEmpty()) {
         qCWarning(QT_NFC_NEARD) << "no adapter found, neard daemon running?";
         return false;
     }
 
-    if (!m_neardHelper->dbusObjectManager()->isValid() || m_adapterPath.isNull()) {
+    if (!m_neardHelper->dbusObjectManager()->isValid()) {
         qCWarning(QT_NFC_NEARD) << "dbus object manager invalid or adapter path invalid";
         return false;
     }
 
-    return true;
+    return accessMethod == QNearFieldTarget::NdefAccess;
 }
 
-bool QNearFieldManagerPrivateImpl::startTargetDetection()
+bool QNearFieldManagerPrivateImpl::startTargetDetection(QNearFieldTarget::AccessMethod accessMethod)
 {
     qCDebug(QT_NFC_NEARD) << "starting target detection";
-    if (!isAvailable())
+    if (!isEnabled() || accessMethod != QNearFieldTarget::NdefAccess)
         return false;
 
     OrgFreedesktopDBusPropertiesInterface dbusProperties(QStringLiteral("org.neard"),
@@ -188,7 +152,7 @@ bool QNearFieldManagerPrivateImpl::startTargetDetection()
                                           QDBusConnection::systemBus());
 
     // possible modes: "Target", "Initiator", "Dual"
-    QDBusPendingReply<> replyPollLoop = neardAdapter.StartPollLoop(QStringLiteral("Dual"));
+    QDBusPendingReply<> replyPollLoop = neardAdapter.StartPollLoop(QStringLiteral("Initiator"));
     replyPollLoop.waitForFinished();
     if (replyPollLoop.isError()) {
         qCWarning(QT_NFC_NEARD) << "error when starting polling";
@@ -200,10 +164,10 @@ bool QNearFieldManagerPrivateImpl::startTargetDetection()
     return true;
 }
 
-void QNearFieldManagerPrivateImpl::stopTargetDetection()
+void QNearFieldManagerPrivateImpl::stopTargetDetection(const QString&)
 {
     qCDebug(QT_NFC_NEARD) << "stopping target detection";
-    if (!isAvailable())
+    if (!isEnabled())
         return;
 
     OrgFreedesktopDBusPropertiesInterface dbusProperties(QStringLiteral("org.neard"),
@@ -240,40 +204,10 @@ void QNearFieldManagerPrivateImpl::stopTargetDetection()
     }
 }
 
-int QNearFieldManagerPrivateImpl::registerNdefMessageHandler(QObject *object, const QMetaMethod &method)
-{
-    Q_UNUSED(object);
-    Q_UNUSED(method);
-    return -1;
-}
-
-int QNearFieldManagerPrivateImpl::registerNdefMessageHandler(const QNdefFilter &filter, QObject *object, const QMetaMethod &method)
-{
-    Q_UNUSED(filter);
-    Q_UNUSED(object);
-    Q_UNUSED(method);
-    return -1;
-}
-
-bool QNearFieldManagerPrivateImpl::unregisterNdefMessageHandler(int handlerId)
-{
-    Q_UNUSED(handlerId);
-    return false;
-}
-
-void QNearFieldManagerPrivateImpl::requestAccess(QNearFieldManager::TargetAccessModes accessModes)
-{
-    Q_UNUSED(accessModes);
-}
-
-void QNearFieldManagerPrivateImpl::releaseAccess(QNearFieldManager::TargetAccessModes accessModes)
-{
-    Q_UNUSED(accessModes);
-}
-
 void QNearFieldManagerPrivateImpl::handleTagFound(const QDBusObjectPath &path)
 {
-    NearFieldTarget<QNearFieldTarget> *nfTag = new NearFieldTarget<QNearFieldTarget>(this, path);
+    auto priv = new QNearFieldTargetPrivateImpl(this, path);
+    auto nfTag = new QNearFieldTarget(priv, this);
     m_activeTags.insert(path.path(), nfTag);
     emit targetDetected(nfTag);
 }

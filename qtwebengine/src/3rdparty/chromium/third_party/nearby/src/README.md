@@ -1,66 +1,31 @@
-# Nearby Connections Library
+# Nearby
+
+Nearby is a collection of projects focused on connectivity that enable building cross-device experiences.
 
 This is not an officially supported Google product.
 
-**Coathored by:**
-*  (Java/C++) Varun Kapoor “reznor”
-*  (Java) Maria-Ines Carrera “marianines”
-*  (Java) Will Harmon “xlythe”
-*  (Java/C++/ObjC) Alex Kang “alexanderkang”
-*  (Java/C++) Amanda Lee “ahlee”
-*  (C++) Tracy Zhou “tracyzhou”
-*  (ObjC) Dan Webb “dwebb”
-*  (C++) John Kaczor “johngk”
-*  (C++/ObjC) Edwin Wu “edwinwu”
-*  (C++) Alexey Polyudov “apolyudov”
+## Projects
 
-**Status:** Implemented in C++
+### [Nearby Connections](connections/)
 
-**Design reviewers:** TODO
+A peer-to-peer networking API that allows apps to easily discover, connect to, and exchange data with nearby devices in real-time, regardless of network connectivity.
 
-**Implementation reviewer**: TODO
+### [Fast Pair](fastpair/)
 
-**Last Updated:** TODO
+Utilizes Bluetooth Low Energy (BLE) to discover nearby Bluetooth devices without using significant phone battery, enabling "magical" scenarios based on device proximity.
 
-# Overview
+### [Nearby Presence](presence/)
 
-Nearby Connections is a high level protocol on top of Bluetooth/WiFi that acts
-as a medium-agnostic socket. Devices are able to advertise, scan, and connect
-with one another over any shared medium (eg. BT <-> BT).
-Once connected, the two devices share a list of all supported mediums and
-attempt to upgrade to the one with the highest bandwidth (eg. BT -> WiFi).
-The connection is encrypted, reliable, and fully duplex. BYTE, FILE, and STREAM
-payloads are all supported and will be chunked & transferred internally and
-recombined on the receiving device.
-See [Nearby Connections Overview](https://developers.google.com/nearby/connections/overview)
-for more information.
+An extension to Nearby Connections that features an extensible identity model for authentication and restricted visibility, resource management for system health, and proximity detection through sensor fusion.
 
-# Checkout, build, test instructions
-## Checkout
-pre-requisites: git
-```
-git clone https://github.com/google/nearby-connections
-cd nearby-connections
-git submodule update --init --recursive
-```
+### [Nearby for Embedded Systems](embedded/)
 
-this is a "source root" directory of the project
+A lightweight implementation of Fast Pair intended for embedded systems.
 
-## Build
-pre-requisites:
-openssl, cmake, c++ toolchain (c++17-capable)
+## Contributing
 
-from "source root", run:
+We encourage you to contribute to Nearby! Please check out the [Contributing to Nearby guide](CONTRIBUTING.md) for guidelines about how to proceed.
 
-```
-mkdir build; cd build
-cmake -Dnearby_USE_LOCAL_PROTOBUF=ON -Dnearby_USE_LOCAL_ABSL=ON ..
-make
-```
-## Running unit tests
+## License
 
-from "source root/build", run:
-
-```
-ctest -V
-```
+Nearby is released under the [Apache License 2.0](LICENSE)

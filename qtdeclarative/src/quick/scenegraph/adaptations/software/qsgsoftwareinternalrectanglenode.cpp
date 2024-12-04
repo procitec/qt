@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtQuick module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qsgsoftwareinternalrectanglenode_p.h"
 #include <qmath.h>
@@ -47,6 +11,10 @@ QT_BEGIN_NAMESPACE
 QSGSoftwareInternalRectangleNode::QSGSoftwareInternalRectangleNode()
     : m_penWidth(0)
     , m_radius(0)
+    , m_topLeftRadius(-1)
+    , m_topRightRadius(-1)
+    , m_bottomLeftRadius(-1)
+    , m_bottomRightRadius(-1)
     , m_vertical(true)
     , m_cornerPixmapIsDirty(true)
     , m_devicePixelRatio(1)
@@ -99,17 +67,19 @@ static QGradientStop interpolateStop(const QGradientStop &firstStop, const QGrad
     double distance = secondStop.first - firstStop.first;
     double distanceDelta = newPos - firstStop.first;
     double modifierValue = distanceDelta / distance;
-    int redDelta = (secondStop.second.red() - firstStop.second.red()) * modifierValue;
-    int greenDelta = (secondStop.second.green() - firstStop.second.green()) * modifierValue;
-    int blueDelta = (secondStop.second.blue() - firstStop.second.blue()) * modifierValue;
-    int alphaDelta = (secondStop.second.alpha() - firstStop.second.alpha()) * modifierValue;
+    const auto firstStopRgbColor = firstStop.second.toRgb();
+    const auto secondStopRgbColor = secondStop.second.toRgb();
+    int redDelta = (secondStopRgbColor.red() - firstStopRgbColor.red()) * modifierValue;
+    int greenDelta = (secondStopRgbColor.green() - firstStopRgbColor.green()) * modifierValue;
+    int blueDelta = (secondStopRgbColor.blue() - firstStopRgbColor.blue()) * modifierValue;
+    int alphaDelta = (secondStopRgbColor.alpha() - firstStopRgbColor.alpha()) * modifierValue;
 
     QGradientStop newStop;
     newStop.first = newPos;
-    newStop.second = QColor(firstStop.second.red() + redDelta,
-                            firstStop.second.green() + greenDelta,
-                            firstStop.second.blue() + blueDelta,
-                            firstStop.second.alpha() + alphaDelta);
+    newStop.second = QColor(firstStopRgbColor.red() + redDelta,
+                            firstStopRgbColor.green() + greenDelta,
+                            firstStopRgbColor.blue() + blueDelta,
+                            firstStopRgbColor.alpha() + alphaDelta);
 
     return newStop;
 }
@@ -118,7 +88,7 @@ void QSGSoftwareInternalRectangleNode::setGradientStops(const QGradientStops &st
 {
     //normalize stops
     bool needsNormalization = false;
-    for (const QGradientStop &stop : qAsConst(stops)) {
+    for (const QGradientStop &stop : std::as_const(stops)) {
         if (stop.first < 0.0 || stop.first > 1.0) {
             needsNormalization = true;
             break;
@@ -127,7 +97,7 @@ void QSGSoftwareInternalRectangleNode::setGradientStops(const QGradientStops &st
 
     if (needsNormalization) {
         QGradientStops normalizedStops;
-        if (stops.count() == 1) {
+        if (stops.size() == 1) {
             //If there is only one stop, then the position does not matter
             //It is just treated as a color
             QGradientStop stop = stops.at(0);
@@ -138,7 +108,7 @@ void QSGSoftwareInternalRectangleNode::setGradientStops(const QGradientStops &st
             int below = -1;
             int above = -1;
             QVector<int> between;
-            for (int i = 0; i < stops.count(); ++i) {
+            for (int i = 0; i < stops.size(); ++i) {
                 if (stops.at(i).first < 0.0) {
                     below = i;
                 } else if (stops.at(i).first > 1.0) {
@@ -152,7 +122,7 @@ void QSGSoftwareInternalRectangleNode::setGradientStops(const QGradientStops &st
             //Interpoloate new color values for above and below
             if (below != -1 ) {
                 //If there are more than one stops left, interpolate
-                if (below + 1 < stops.count()) {
+                if (below + 1 < stops.size()) {
                     normalizedStops.append(interpolateStop(stops.at(below), stops.at(below + 1), 0.0));
                 } else {
                     QGradientStop singleStop;
@@ -162,7 +132,7 @@ void QSGSoftwareInternalRectangleNode::setGradientStops(const QGradientStops &st
                 }
             }
 
-            for (int i = 0; i < between.count(); ++i)
+            for (int i = 0; i < between.size(); ++i)
                 normalizedStops.append(stops.at(between.at(i)));
 
             if (above != -1) {
@@ -205,6 +175,42 @@ void QSGSoftwareInternalRectangleNode::setRadius(qreal radius)
     }
 }
 
+void QSGSoftwareInternalRectangleNode::setTopLeftRadius(qreal radius)
+{
+    if (m_topLeftRadius != radius) {
+        m_topLeftRadius = radius;
+        m_cornerPixmapIsDirty = true;
+        markDirty(DirtyMaterial);
+    }
+}
+
+void QSGSoftwareInternalRectangleNode::setTopRightRadius(qreal radius)
+{
+    if (m_topRightRadius != radius) {
+        m_topRightRadius = radius;
+        m_cornerPixmapIsDirty = true;
+        markDirty(DirtyMaterial);
+    }
+}
+
+void QSGSoftwareInternalRectangleNode::setBottomLeftRadius(qreal radius)
+{
+    if (m_bottomLeftRadius != radius) {
+        m_bottomLeftRadius = radius;
+        m_cornerPixmapIsDirty = true;
+        markDirty(DirtyMaterial);
+    }
+}
+
+void QSGSoftwareInternalRectangleNode::setBottomRightRadius(qreal radius)
+{
+    if (m_bottomRightRadius != radius) {
+        m_bottomRightRadius = radius;
+        m_cornerPixmapIsDirty = true;
+        markDirty(DirtyMaterial);
+    }
+}
+
 void QSGSoftwareInternalRectangleNode::setAligned(bool /*aligned*/)
 {
 }
@@ -219,9 +225,8 @@ void QSGSoftwareInternalRectangleNode::update()
     }
 
     if (!m_stops.isEmpty()) {
-        QLinearGradient gradient(QPoint(0,0), QPoint(m_vertical ? 0 : 1, m_vertical ? 1 : 0));
+        QLinearGradient gradient(QPoint(0,0), QPoint(m_vertical ? 0 : m_rect.width(), m_vertical ? m_rect.height() : 0));
         gradient.setStops(m_stops);
-        gradient.setCoordinateMode(QGradient::ObjectBoundingMode);
         m_brush = QBrush(gradient);
     } else {
         m_brush = QBrush(m_color);
@@ -237,8 +242,8 @@ void QSGSoftwareInternalRectangleNode::paint(QPainter *painter)
 {
     //We can only check for a device pixel ratio change when we know what
     //paint device is being used.
-    if (!qFuzzyCompare(painter->device()->devicePixelRatioF(), m_devicePixelRatio)) {
-        m_devicePixelRatio = painter->device()->devicePixelRatioF();
+    if (!qFuzzyCompare(painter->device()->devicePixelRatio(), m_devicePixelRatio)) {
+        m_devicePixelRatio = painter->device()->devicePixelRatio();
         generateCornerPixmap();
     }
 
@@ -246,13 +251,21 @@ void QSGSoftwareInternalRectangleNode::paint(QPainter *painter)
         //Rotated rectangles lose the benefits of direct rendering, and have poor rendering
         //quality when using only blits and fills.
 
-        if (m_radius == 0 && m_penWidth == 0) {
+        if (m_radius == 0
+            && m_penWidth == 0
+            && m_topLeftRadius <= 0
+            && m_topRightRadius <= 0
+            && m_bottomLeftRadius <= 0
+            && m_bottomRightRadius <= 0) {
             //Non-Rounded Rects without borders (fall back to drawRect)
             //Most common case
             painter->setPen(Qt::NoPen);
             painter->setBrush(m_brush);
             painter->drawRect(m_rect);
-        } else {
+        } else if (m_topLeftRadius < 0
+                   && m_topRightRadius < 0
+                   && m_bottomLeftRadius < 0
+                   && m_bottomRightRadius < 0) {
             //Rounded Rects and Rects with Borders
             //Avoids broken behaviors of QPainter::drawRect/roundedRect
             QPixmap pixmap = QPixmap(qRound(m_rect.width() * m_devicePixelRatio), qRound(m_rect.height() * m_devicePixelRatio));
@@ -265,12 +278,34 @@ void QSGSoftwareInternalRectangleNode::paint(QPainter *painter)
             painter->setRenderHint(QPainter::SmoothPixmapTransform, true);
             painter->drawPixmap(m_rect, pixmap);
             painter->setRenderHints(previousRenderHints);
+        } else {
+            // Corners with different radii. Split implementation to avoid
+            // performance regression of the majority of cases
+            QPixmap pixmap = QPixmap(qRound(m_rect.width() * m_devicePixelRatio), qRound(m_rect.height() * m_devicePixelRatio));
+            pixmap.fill(Qt::transparent);
+            pixmap.setDevicePixelRatio(m_devicePixelRatio);
+            QPainter pixmapPainter(&pixmap);
+            // Slow function relying on paths
+            paintRectangleIndividualCorners(&pixmapPainter, QRect(0, 0, m_rect.width(), m_rect.height()));
+
+            QPainter::RenderHints previousRenderHints = painter->renderHints();
+            painter->setRenderHint(QPainter::SmoothPixmapTransform, true);
+            painter->drawPixmap(m_rect, pixmap);
+            painter->setRenderHints(previousRenderHints);
+
         }
 
 
     } else {
         //Paint directly
-        paintRectangle(painter, m_rect);
+        if (m_topLeftRadius < 0
+            && m_topRightRadius < 0
+            && m_bottomLeftRadius < 0
+            && m_bottomRightRadius < 0) {
+            paintRectangle(painter, m_rect);
+        } else {
+            paintRectangleIndividualCorners(painter, m_rect);
+        }
     }
 
 }
@@ -283,8 +318,8 @@ bool QSGSoftwareInternalRectangleNode::isOpaque() const
         return false;
     if (m_penWidth > 0.0f && m_penColor.alpha() < 255)
         return false;
-    if (m_stops.count() > 0) {
-        for (const QGradientStop &stop : qAsConst(m_stops)) {
+    if (m_stops.size() > 0) {
+        for (const QGradientStop &stop : std::as_const(m_stops)) {
             if (stop.second.alpha() < 255)
                 return false;
         }
@@ -419,6 +454,75 @@ void QSGSoftwareInternalRectangleNode::paintRectangle(QPainter *painter, const Q
     }
 
     painter->setRenderHints(previousRenderHints);
+}
+
+void QSGSoftwareInternalRectangleNode::paintRectangleIndividualCorners(QPainter *painter, const QRect &rect)
+{
+    QPainterPath path;
+
+    const float w = m_penWidth;
+
+    // Radius should never exceeds half of the width or half of the height
+    const float radiusTL = qMin(qMin(rect.width(), rect.height()) * 0.5f, float(m_topLeftRadius < 0. ? m_radius : m_topLeftRadius));
+    const float radiusTR = qMin(qMin(rect.width(), rect.height()) * 0.5f, float(m_topRightRadius < 0. ? m_radius : m_topRightRadius));
+    const float radiusBL = qMin(qMin(rect.width(), rect.height()) * 0.5f, float(m_bottomLeftRadius < 0. ? m_radius : m_bottomLeftRadius));
+    const float radiusBR = qMin(qMin(rect.width(), rect.height()) * 0.5f, float(m_bottomRightRadius < 0 ? m_radius : m_bottomRightRadius));
+
+    const float innerRadiusTL = qMin(qMin(rect.width(), rect.height()) * 0.5f, radiusTL - w);
+    const float innerRadiusTR = qMin(qMin(rect.width(), rect.height()) * 0.5f, radiusTR - w);
+    const float innerRadiusBL = qMin(qMin(rect.width(), rect.height()) * 0.5f, radiusBL - w);
+    const float innerRadiusBR = qMin(qMin(rect.width(), rect.height()) * 0.5f, radiusBR - w);
+
+    QRect rect2 = rect.adjusted(0, 0, 1, 1);
+
+    path.moveTo(rect2.topRight() - QPointF(radiusTR, -w));
+    if (innerRadiusTR > 0.)
+        path.arcTo(QRectF(rect2.topRight() - QPointF(radiusTR + innerRadiusTR, -w), 2. * QSizeF(innerRadiusTR, innerRadiusTR)), 90, -90);
+    else
+        path.lineTo(rect2.topRight() - QPointF(w, -w));
+
+    if (innerRadiusBR > 0.)
+        path.arcTo(QRectF(rect2.bottomRight() - QPointF(radiusBR + innerRadiusBR, radiusBR + innerRadiusBR), 2. * QSizeF(innerRadiusBR, innerRadiusBR)), 0, -90);
+    else
+        path.lineTo(rect2.bottomRight() - QPointF(w, w));
+
+    if (innerRadiusBL > 0.)
+        path.arcTo(QRectF(rect2.bottomLeft() - QPointF(-w, radiusBL + innerRadiusBL), 2. * QSizeF(innerRadiusBL, innerRadiusBL)), -90, -90);
+    else
+        path.lineTo(rect2.bottomLeft() - QPointF(-w, w));
+    if (innerRadiusTL > 0.)
+        path.arcTo(QRectF(rect2.topLeft() + QPointF(w, w), 2. * QSizeF(innerRadiusTL, innerRadiusTL)), -180, -90);
+    else
+        path.lineTo(rect2.topLeft() + QPointF(w, w));
+    path.closeSubpath();
+
+    painter->setPen(Qt::NoPen);
+    painter->setBrush(m_brush);
+    painter->drawPath(path);
+
+    if (w > 0) {
+        path.moveTo(rect2.topRight() - QPointF(radiusTR, 0.));
+        if (radiusTR > 0.)
+            path.arcTo(QRectF(rect2.topRight() - 2. * QPointF(radiusTR, 0.), 2. * QSizeF(radiusTR, radiusTR)), 90, -90);
+        else
+            path.lineTo(rect2.topRight());
+        if (radiusBR > 0.)
+            path.arcTo(QRectF(rect2.bottomRight() - 2. * QPointF(radiusBR, radiusBR), 2. * QSizeF(radiusBR, radiusBR)), 0, -90);
+        else
+            path.lineTo(rect2.bottomRight());
+        if (radiusBL > 0.)
+            path.arcTo(QRectF(rect2.bottomLeft() - 2. * QPointF(0., radiusBL), 2. * QSizeF(radiusBL, radiusBL)), -90, -90);
+        else
+            path.lineTo(rect2.bottomLeft());
+        if (radiusTL > 0.)
+            path.arcTo(QRectF(rect2.topLeft() - 2. * QPointF(0., 0.), 2. * QSizeF(radiusTL, radiusTL)), -180, -90);
+        else
+            path.lineTo(rect2.topLeft());
+        path.closeSubpath();
+
+        painter->setBrush(m_penColor);
+        painter->drawPath(path);
+    }
 }
 
 void QSGSoftwareInternalRectangleNode::generateCornerPixmap()

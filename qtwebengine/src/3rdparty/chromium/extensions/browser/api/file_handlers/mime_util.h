@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -13,8 +13,8 @@
 #include <string>
 #include <vector>
 
-#include "base/callback.h"
-#include "base/macros.h"
+#include "base/functional/callback.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 
 namespace content {
@@ -52,6 +52,10 @@ class MimeTypeCollector {
       base::OnceCallback<void(std::unique_ptr<std::vector<std::string>>)>;
 
   explicit MimeTypeCollector(content::BrowserContext* context);
+
+  MimeTypeCollector(const MimeTypeCollector&) = delete;
+  MimeTypeCollector& operator=(const MimeTypeCollector&) = delete;
+
   virtual ~MimeTypeCollector();
 
   // Collects all mime types asynchronously for a vector of URLs and upon
@@ -68,13 +72,14 @@ class MimeTypeCollector {
   // Called, when the |index|-th input file (or URL) got processed.
   void OnMimeTypeCollected(size_t index, const std::string& mime_type);
 
-  content::BrowserContext* context_;
+  // This dangling raw_ptr occurred in:
+  // browser_tests: TabIndex/FilesAppBrowserTest.Test/tabindexFocus
+  // https://ci.chromium.org/ui/p/chromium/builders/try/linux-chromeos-rel/1539288/test-results?q=ExactID%3Aninja%3A%2F%2Fchrome%2Ftest%3Abrowser_tests%2FFilesAppBrowserTest.Test%2FTabIndex.tabindexFocus+VHash%3A282db19e8ac0a6be
+  raw_ptr<content::BrowserContext, FlakyDanglingUntriaged> context_;
   std::unique_ptr<std::vector<std::string>> result_;
   size_t left_;
   CompletionCallback callback_;
   base::WeakPtrFactory<MimeTypeCollector> weak_ptr_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(MimeTypeCollector);
 };
 
 }  // namespace app_file_handler_util

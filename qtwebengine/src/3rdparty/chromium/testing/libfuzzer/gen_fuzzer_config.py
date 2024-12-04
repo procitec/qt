@@ -1,6 +1,6 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 #
-# Copyright (c) 2015 The Chromium Authors. All rights reserved.
+# Copyright 2015 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 """Generate or update an existing config (.options file) for libfuzzer test.
@@ -8,10 +8,14 @@
 Invoked by GN from fuzzer_test.gni.
 """
 
-import ConfigParser
 import argparse
 import os
 import sys
+
+if sys.version_info.major == 2:
+    from ConfigParser import ConfigParser
+else:
+    from configparser import ConfigParser
 
 
 def AddSectionOptions(config, section_name, options):
@@ -37,6 +41,7 @@ def main():
   parser.add_argument('--config', required=True)
   parser.add_argument('--dict')
   parser.add_argument('--libfuzzer_options', nargs='+', default=[])
+  parser.add_argument('--centipede_options', nargs='+', default=[])
   parser.add_argument('--asan_options', nargs='+', default=[])
   parser.add_argument('--msan_options', nargs='+', default=[])
   parser.add_argument('--ubsan_options', nargs='+', default=[])
@@ -54,7 +59,7 @@ def main():
           args.grammar_options):
     return
 
-  config = ConfigParser.ConfigParser()
+  config = ConfigParser()
   libfuzzer_options = []
   if args.dict:
     libfuzzer_options.append(('dict', os.path.basename(args.dict)))
@@ -62,6 +67,13 @@ def main():
       option.split('=') for option in args.libfuzzer_options)
 
   AddSectionOptions(config, 'libfuzzer', libfuzzer_options)
+
+  centipede_options = []
+  if args.dict:
+    centipede_options.append(('dictionary', os.path.basename(args.dict)))
+  centipede_options.extend(
+      option.split('=') for option in args.centipede_options)
+  AddSectionOptions(config, 'centipede', centipede_options)
 
   AddSectionOptions(config, 'asan',
                     [option.split('=') for option in args.asan_options])

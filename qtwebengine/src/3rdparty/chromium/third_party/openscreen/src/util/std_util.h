@@ -1,17 +1,21 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef UTIL_STD_UTIL_H_
 #define UTIL_STD_UTIL_H_
 
+#include <stddef.h>
+
 #include <algorithm>
 #include <map>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "util/stringprintf.h"
 
 namespace openscreen {
 
@@ -31,6 +35,26 @@ template <typename CharT, typename Traits, typename Allocator>
 CharT* data(std::basic_string<CharT, Traits, Allocator>& str) {
   return std::addressof(str[0]);
 }
+
+// Stringify a vector of objects that have an operator<< overload.
+template <typename T>
+std::string Join(const std::vector<T>& vec, const char* delimiter = ", ") {
+  std::stringstream ss;
+
+  auto it = vec.begin();
+  ss << *it;
+  for (++it; it != vec.end(); ++it) {
+    ss << delimiter << *it;
+  }
+
+  return ss.str();
+}
+
+// Removes ALL whitespace in place from the string, based on the present C
+// locale. This includes spaces, tabs, and returns. This is useful for string
+// comparisons where whitespace doesn't matter, or, in the case of JSON
+// serialization, is dependent on build configuration and other settings.
+std::string& RemoveWhitespace(std::string& s);
 
 template <typename Key, typename Value>
 void RemoveValueFromMap(std::map<Key, Value*>* map, Value* value) {
@@ -81,6 +105,24 @@ std::vector<T> GetVectorWithCapacity(size_t size) {
   std::vector<T> results;
   results.reserve(size);
   return results;
+}
+
+// Returns true if an element equal to |element| is found in |container|.
+// C.begin() must return an iterator to the beginning of C and C.end() must
+// return an iterator to the end.
+template <typename C, typename E>
+bool Contains(const C& container, const E& element) {
+  return std::find(container.begin(), container.end(), element) !=
+         container.end();
+}
+
+// Returns true if any element in |container| returns true for |predicate|.
+// C.begin() must return an iterator to the beginning of C and C.end() must
+// return an iterator to the end.
+template <typename C, typename P>
+bool ContainsIf(const C& container, P predicate) {
+  return std::find_if(container.begin(), container.end(),
+                      std::move(predicate)) != container.end();
 }
 
 }  // namespace openscreen

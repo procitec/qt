@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,14 +6,21 @@
 
 #include <CoreServices/CoreServices.h>
 
-#include "base/bind.h"
+#include <memory>
+
+#include "base/apple/osstatus_logging.h"
+#include "base/functional/bind.h"
 #include "base/logging.h"
-#include "base/mac/mac_logging.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/sparse_histogram.h"
+#include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
+
+#if BUILDFLAG(IS_MAC)
 #include "media/audio/mac/audio_manager_mac.h"
-#include "media/base/audio_bus.h"
+#else
+#include "media/audio/ios/audio_manager_ios.h"
+#endif
 
 namespace media {
 
@@ -25,13 +32,13 @@ namespace {
 // should ideally be set to about the same value as in
 // audio_low_latency_input_mac.cc, to make comparing them reasonable.
 const int kInputCallbackStartTimeoutInSeconds = 8;
-}
+}  // namespace
 
 PCMQueueInAudioInputStream::PCMQueueInAudioInputStream(
-    AudioManagerMac* manager,
+    AudioManagerApple* manager,
     const AudioParameters& params)
     : manager_(manager),
-      callback_(NULL),
+      callback_(nullptr),
       audio_queue_(NULL),
       buffer_size_bytes_(0),
       started_(false),
@@ -64,7 +71,7 @@ PCMQueueInAudioInputStream::~PCMQueueInAudioInputStream() {
   DCHECK(!audio_queue_);
 }
 
-bool PCMQueueInAudioInputStream::Open() {
+AudioInputStream::OpenOutcome PCMQueueInAudioInputStream::Open() {
   OSStatus err = AudioQueueNewInput(&format_,
                                     &HandleInputBufferStatic,
                                     this,
@@ -74,9 +81,10 @@ bool PCMQueueInAudioInputStream::Open() {
                                     &audio_queue_);
   if (err != noErr) {
     HandleError(err);
-    return false;
+    return AudioInputStream::OpenOutcome::kFailed;
   }
-  return SetupBuffers();
+  return SetupBuffers() ? AudioInputStream::OpenOutcome::kSuccess
+                        : AudioInputStream::OpenOutcome::kFailed;
 }
 
 void PCMQueueInAudioInputStream::Start(AudioInputCallback* callback) {
@@ -85,19 +93,19 @@ void PCMQueueInAudioInputStream::Start(AudioInputCallback* callback) {
   if (callback_ || !audio_queue_)
     return;
 
+#if BUILDFLAG(IS_MAC)
   // Check if we should defer Start() for http://crbug.com/160920.
-  if (manager_->ShouldDeferStreamStart()) {
+  base::TimeDelta defer_start = manager_->GetDeferStreamStartTimeout();
+  if (!defer_start.is_zero()) {
     // Use a cancellable closure so that if Stop() is called before Start()
     // actually runs, we can cancel the pending start.
     deferred_start_cb_.Reset(base::BindOnce(&PCMQueueInAudioInputStream::Start,
                                             base::Unretained(this), callback));
     manager_->GetTaskRunner()->PostDelayedTask(
-        FROM_HERE,
-        deferred_start_cb_.callback(),
-        base::TimeDelta::FromSeconds(
-            AudioManagerMac::kStartDelayInSecsForPowerEvents));
+        FROM_HERE, deferred_start_cb_.callback(), defer_start);
     return;
   }
+#endif
 
   callback_ = callback;
   OSStatus err = AudioQueueStart(audio_queue_, NULL);
@@ -111,10 +119,9 @@ void PCMQueueInAudioInputStream::Start(AudioInputCallback* callback) {
   // callbacks starts indicating if input audio recording starts as intended.
   // CheckInputStartupSuccess() will check if |input_callback_is_active_| is
   // true when the timer expires.
-  input_callback_timer_.reset(new base::OneShotTimer());
+  input_callback_timer_ = std::make_unique<base::OneShotTimer>();
   input_callback_timer_->Start(
-      FROM_HERE,
-      base::TimeDelta::FromSeconds(kInputCallbackStartTimeoutInSeconds), this,
+      FROM_HERE, base::Seconds(kInputCallbackStartTimeoutInSeconds), this,
       &PCMQueueInAudioInputStream::CheckInputStartupSuccess);
   DCHECK(input_callback_timer_->IsRunning());
 }
@@ -136,7 +143,7 @@ void PCMQueueInAudioInputStream::Stop() {
 
   SetInputCallbackIsActive(false);
   started_ = false;
-  callback_ = NULL;
+  callback_ = nullptr;
 }
 
 void PCMQueueInAudioInputStream::Close() {
@@ -156,31 +163,43 @@ void PCMQueueInAudioInputStream::Close() {
 }
 
 double PCMQueueInAudioInputStream::GetMaxVolume() {
-  NOTREACHED() << "Only supported for low-latency mode.";
-  return 0.0;
+  NOTIMPLEMENTED();
+  return 1.0;
 }
 
 void PCMQueueInAudioInputStream::SetVolume(double volume) {
-  NOTREACHED() << "Only supported for low-latency mode.";
+#if BUILDFLAG(IS_MAC)
+  NOTIMPLEMENTED();
+#else
+  manager_->SetInputVolume(kAudioObjectUnknown, volume);
+#endif
 }
 
 double PCMQueueInAudioInputStream::GetVolume() {
-  NOTREACHED() << "Only supported for low-latency mode.";
-  return 0.0;
+#if BUILDFLAG(IS_MAC)
+  NOTIMPLEMENTED();
+  return 1.0;
+#else
+  return manager_->GetInputVolume(kAudioObjectUnknown);
+#endif
 }
 
 bool PCMQueueInAudioInputStream::IsMuted() {
-  NOTREACHED() << "Only supported for low-latency mode.";
+#if BUILDFLAG(IS_MAC)
+  NOTIMPLEMENTED();
   return false;
+#else
+  return manager_->IsInputMuted(kAudioObjectUnknown);
+#endif
 }
 
 bool PCMQueueInAudioInputStream::SetAutomaticGainControl(bool enabled) {
-  NOTREACHED() << "Only supported for low-latency mode.";
+  NOTIMPLEMENTED();
   return false;
 }
 
 bool PCMQueueInAudioInputStream::GetAutomaticGainControl() {
-  NOTREACHED() << "Only supported for low-latency mode.";
+  NOTIMPLEMENTED();
   return false;
 }
 
@@ -264,7 +283,7 @@ void PCMQueueInAudioInputStream::HandleInputBuffer(
     // TODO(dalecurtis): Delete all this. It shouldn't be necessary now that we
     // have a ring buffer and FIFO on the actual shared memory.
     base::TimeDelta elapsed = base::TimeTicks::Now() - last_fill_;
-    const base::TimeDelta kMinDelay = base::TimeDelta::FromMilliseconds(5);
+    const base::TimeDelta kMinDelay = base::Milliseconds(5);
     if (elapsed < kMinDelay) {
       TRACE_EVENT0("audio",
                    "PCMQueueInAudioInputStream::HandleInputBuffer sleep");
@@ -284,7 +303,7 @@ void PCMQueueInAudioInputStream::HandleInputBuffer(
     DCHECK_EQ(format_.mBitsPerChannel, 16u);
     audio_bus_->FromInterleaved<SignedInt16SampleTypeTraits>(
         reinterpret_cast<int16_t*>(audio_data), audio_bus_->frames());
-    callback_->OnData(audio_bus_.get(), capture_time, 0.0);
+    callback_->OnData(audio_bus_.get(), capture_time, 0.0, {});
 
     last_fill_ = base::TimeTicks::Now();
   }

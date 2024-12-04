@@ -31,6 +31,8 @@ Scripts in tools/ can use this module to start servers that are normally used
 for web tests, outside of the web test runner.
 """
 
+from __future__ import print_function
+
 import logging
 import optparse
 import os
@@ -40,7 +42,6 @@ from blinkpy.common.host import Host
 from blinkpy.common.system.log_utils import configure_logging
 from blinkpy.web_tests.port.base import ARTIFACTS_SUB_DIR
 from blinkpy.web_tests.port.factory import configuration_options
-from blinkpy.web_tests.port.factory import python_server_options
 from blinkpy.web_tests.servers.server_base import ServerError
 
 _log = logging.getLogger(__name__)
@@ -49,14 +50,6 @@ _log = logging.getLogger(__name__)
 class RawTextHelpFormatter(optparse.IndentedHelpFormatter):
     def format_description(self, description):
         return description
-
-
-def parse_python_server_options(argv=None):
-    parse = optparse.OptionParser()
-    for opt in python_server_options():
-        parse.add_option(opt)
-    option, args = parse.parse_args(argv)
-    return option, args
 
 
 def main(server_constructor,
@@ -102,7 +95,7 @@ def main(server_constructor,
     server = server_constructor(port_obj, options.output_dir, **kwargs)
     server.start()
 
-    print 'Press Ctrl-C or `kill {}` to stop the server'.format(os.getpid())
+    print('Press Ctrl-C or `kill {}` to stop the server'.format(os.getpid()))
     try:
         while True:
             sleep_fn()

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,24 +6,25 @@
 #define CHROME_BROWSER_EXTENSIONS_API_DEVELOPER_PRIVATE_DEVELOPER_PRIVATE_API_H_
 
 #include <map>
+#include <optional>
 #include <set>
 
 #include "base/files/file.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
-#include "base/scoped_observer.h"
+#include "base/scoped_observation.h"
 #include "chrome/browser/extensions/api/commands/command_service.h"
 #include "chrome/browser/extensions/api/developer_private/entry_picker.h"
 #include "chrome/browser/extensions/error_console/error_console.h"
+#include "chrome/browser/extensions/extension_allowlist.h"
 #include "chrome/browser/extensions/extension_management.h"
 #include "chrome/browser/extensions/extension_uninstall_dialog.h"
 #include "chrome/browser/extensions/load_error_reporter.h"
 #include "chrome/browser/extensions/pack_extension_job.h"
+#include "chrome/browser/ui/toolbar/toolbar_actions_model.h"
 #include "chrome/common/extensions/api/developer_private.h"
 #include "chrome/common/extensions/webstore_install_result.h"
 #include "components/prefs/pref_change_registrar.h"
-#include "content/public/browser/notification_observer.h"
-#include "content/public/browser/notification_registrar.h"
 #include "extensions/browser/api/file_system/file_system_api.h"
 #include "extensions/browser/app_window/app_window_registry.h"
 #include "extensions/browser/browser_context_keyed_api_factory.h"
@@ -33,6 +34,7 @@
 #include "extensions/browser/extension_prefs_observer.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_registry_observer.h"
+#include "extensions/browser/permissions_manager.h"
 #include "extensions/browser/process_manager.h"
 #include "extensions/browser/process_manager_observer.h"
 #include "extensions/browser/warning_service.h"
@@ -48,6 +50,12 @@ namespace extensions {
 class EventRouter;
 class ExtensionError;
 class ExtensionInfoGenerator;
+
+// A key that indicates whether the safety check warning for this
+// extension has been acknowledged because the user has chosen to keep
+// it in a past review.
+inline constexpr PrefMap kPrefAcknowledgeSafetyCheckWarning = {
+    "ack_safety_check_warning", PrefType::kBool, PrefScope::kExtensionSpecific};
 
 namespace api {
 
@@ -67,16 +75,27 @@ class DeveloperPrivateEventRouter : public ExtensionRegistryObserver,
                                     public AppWindowRegistry::Observer,
                                     public CommandService::Observer,
                                     public ExtensionPrefsObserver,
+                                    public ExtensionAllowlist::Observer,
                                     public ExtensionManagement::Observer,
                                     public WarningService::Observer,
-                                    public content::NotificationObserver {
+                                    public PermissionsManager::Observer,
+                                    public ToolbarActionsModel::Observer {
  public:
   explicit DeveloperPrivateEventRouter(Profile* profile);
+
+  DeveloperPrivateEventRouter(const DeveloperPrivateEventRouter&) = delete;
+  DeveloperPrivateEventRouter& operator=(const DeveloperPrivateEventRouter&) =
+      delete;
+
   ~DeveloperPrivateEventRouter() override;
 
   // Add or remove an ID to the list of extensions subscribed to events.
   void AddExtensionId(const std::string& extension_id);
   void RemoveExtensionId(const std::string& extension_id);
+
+  // Called when the configuration (such as user preferences) for an extension
+  // has changed in a way that may affect the chrome://extensions UI.
+  void OnExtensionConfigurationChanged(const std::string& extension_id);
 
  private:
   // ExtensionRegistryObserver:
@@ -122,6 +141,10 @@ class DeveloperPrivateEventRouter : public ExtensionRegistryObserver,
   void OnExtensionRuntimePermissionsChanged(
       const std::string& extension_id) override;
 
+  // ExtensionAllowlist::Observer
+  void OnExtensionAllowlistWarningStateChanged(const std::string& extension_id,
+                                               bool show_warning) override;
+
   // ExtensionManagement::Observer:
   void OnExtensionManagementSettingsChanged() override;
 
@@ -129,12 +152,24 @@ class DeveloperPrivateEventRouter : public ExtensionRegistryObserver,
   void ExtensionWarningsChanged(
       const ExtensionIdSet& affected_extensions) override;
 
-  // content::NotificationObserver:
-  void Observe(int notification_type,
-               const content::NotificationSource& source,
-               const content::NotificationDetails& details) override;
+  // PermissionsManager::Observer:
+  void OnUserPermissionsSettingsChanged(
+      const PermissionsManager::UserPermissionsSettings& settings) override;
+  void OnExtensionPermissionsUpdated(
+      const Extension& extension,
+      const PermissionSet& permissions,
+      PermissionsManager::UpdateReason reason) override;
 
-  // Handles a profile preferance change.
+  // ToolbarActionsModel::Observer:
+  void OnToolbarActionAdded(const ToolbarActionsModel::ActionId& id) override {}
+  void OnToolbarActionRemoved(
+      const ToolbarActionsModel::ActionId& id) override {}
+  void OnToolbarActionUpdated(
+      const ToolbarActionsModel::ActionId& id) override {}
+  void OnToolbarModelInitialized() override {}
+  void OnToolbarPinnedActionsChanged() override;
+
+  // Handles a profile preference change.
   void OnProfilePrefChanged();
 
   // Broadcasts an event to all listeners.
@@ -146,26 +181,32 @@ class DeveloperPrivateEventRouter : public ExtensionRegistryObserver,
       std::unique_ptr<ExtensionInfoGenerator> info_generator,
       std::vector<api::developer_private::ExtensionInfo> infos);
 
-  ScopedObserver<ExtensionRegistry, ExtensionRegistryObserver>
-      extension_registry_observer_{this};
-  ScopedObserver<ErrorConsole, ErrorConsole::Observer> error_console_observer_{
-      this};
-  ScopedObserver<ProcessManager, ProcessManagerObserver>
-      process_manager_observer_{this};
-  ScopedObserver<AppWindowRegistry, AppWindowRegistry::Observer>
-      app_window_registry_observer_{this};
-  ScopedObserver<WarningService, WarningService::Observer>
-      warning_service_observer_{this};
-  ScopedObserver<ExtensionPrefs, ExtensionPrefsObserver>
-      extension_prefs_observer_{this};
-  ScopedObserver<ExtensionManagement, ExtensionManagement::Observer>
-      extension_management_observer_{this};
-  ScopedObserver<CommandService, CommandService::Observer>
-      command_service_observer_{this};
+  base::ScopedObservation<ExtensionRegistry, ExtensionRegistryObserver>
+      extension_registry_observation_{this};
+  base::ScopedObservation<ErrorConsole, ErrorConsole::Observer>
+      error_console_observation_{this};
+  base::ScopedObservation<ProcessManager, ProcessManagerObserver>
+      process_manager_observation_{this};
+  base::ScopedObservation<AppWindowRegistry, AppWindowRegistry::Observer>
+      app_window_registry_observation_{this};
+  base::ScopedObservation<WarningService, WarningService::Observer>
+      warning_service_observation_{this};
+  base::ScopedObservation<ExtensionPrefs, ExtensionPrefsObserver>
+      extension_prefs_observation_{this};
+  base::ScopedObservation<ExtensionManagement, ExtensionManagement::Observer>
+      extension_management_observation_{this};
+  base::ScopedObservation<CommandService, CommandService::Observer>
+      command_service_observation_{this};
+  base::ScopedObservation<ExtensionAllowlist, ExtensionAllowlist::Observer>
+      extension_allowlist_observer_{this};
+  base::ScopedObservation<PermissionsManager, PermissionsManager::Observer>
+      permissions_manager_observation_{this};
+  base::ScopedObservation<ToolbarActionsModel, ToolbarActionsModel::Observer>
+      toolbar_actions_model_observation_{this};
 
-  Profile* profile_;
+  raw_ptr<Profile> profile_;
 
-  EventRouter* event_router_;
+  raw_ptr<EventRouter> event_router_;
 
   // The set of IDs of the Extensions that have subscribed to DeveloperPrivate
   // events. Since the only consumer of the DeveloperPrivate API is currently
@@ -177,11 +218,7 @@ class DeveloperPrivateEventRouter : public ExtensionRegistryObserver,
 
   PrefChangeRegistrar pref_change_registrar_;
 
-  content::NotificationRegistrar notification_registrar_;
-
   base::WeakPtrFactory<DeveloperPrivateEventRouter> weak_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(DeveloperPrivateEventRouter);
 };
 
 // The profile-keyed service that manages the DeveloperPrivate API.
@@ -191,7 +228,7 @@ class DeveloperPrivateAPI : public BrowserContextKeyedAPI,
   using UnpackedRetryId = std::string;
 
   static BrowserContextKeyedAPIFactory<DeveloperPrivateAPI>*
-      GetFactoryInstance();
+  GetFactoryInstance();
 
   static std::unique_ptr<api::developer_private::ProfileInfo> CreateProfileInfo(
       Profile* profile);
@@ -200,6 +237,10 @@ class DeveloperPrivateAPI : public BrowserContextKeyedAPI,
   static DeveloperPrivateAPI* Get(content::BrowserContext* context);
 
   explicit DeveloperPrivateAPI(content::BrowserContext* context);
+
+  DeveloperPrivateAPI(const DeveloperPrivateAPI&) = delete;
+  DeveloperPrivateAPI& operator=(const DeveloperPrivateAPI&) = delete;
+
   ~DeveloperPrivateAPI() override;
 
   // Adds a path to the list of allowed unpacked paths for the given
@@ -242,6 +283,10 @@ class DeveloperPrivateAPI : public BrowserContextKeyedAPI,
   // Data specific to a given WebContents.
   struct WebContentsData {
     WebContentsData();
+
+    WebContentsData(const WebContentsData&) = delete;
+    WebContentsData& operator=(const WebContentsData&) = delete;
+
     ~WebContentsData();
     WebContentsData(WebContentsData&& other);
 
@@ -258,8 +303,6 @@ class DeveloperPrivateAPI : public BrowserContextKeyedAPI,
 
     // The last dragged path for the WebContents.
     base::FilePath dragged_path;
-
-    DISALLOW_COPY_AND_ASSIGN(WebContentsData);
   };
 
   friend class BrowserContextKeyedAPIFactory<DeveloperPrivateAPI>;
@@ -276,7 +319,7 @@ class DeveloperPrivateAPI : public BrowserContextKeyedAPI,
   WebContentsData* GetOrCreateWebContentsData(
       content::WebContents* web_contents);
 
-  Profile* profile_;
+  raw_ptr<Profile> profile_;
 
   // Used to start the load |load_extension_dialog_| in the last directory that
   // was loaded.
@@ -288,8 +331,6 @@ class DeveloperPrivateAPI : public BrowserContextKeyedAPI,
   std::unique_ptr<DeveloperPrivateEventRouter> developer_private_event_router_;
 
   base::WeakPtrFactory<DeveloperPrivateAPI> weak_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(DeveloperPrivateAPI);
 };
 
 template <>
@@ -324,29 +365,16 @@ class DeveloperPrivateAutoUpdateFunction : public DeveloperPrivateAPIFunction {
   void OnComplete();
 };
 
-class DeveloperPrivateGetItemsInfoFunction
-    : public DeveloperPrivateAPIFunction {
- public:
-  DECLARE_EXTENSION_FUNCTION("developerPrivate.getItemsInfo",
-                             DEVELOPERPRIVATE_GETITEMSINFO)
-  DeveloperPrivateGetItemsInfoFunction();
-
- private:
-  ~DeveloperPrivateGetItemsInfoFunction() override;
-  ResponseAction Run() override;
-
-  void OnInfosGenerated(
-      std::vector<api::developer_private::ExtensionInfo> infos);
-
-  std::unique_ptr<ExtensionInfoGenerator> info_generator_;
-
-  DISALLOW_COPY_AND_ASSIGN(DeveloperPrivateGetItemsInfoFunction);
-};
-
 class DeveloperPrivateGetExtensionsInfoFunction
     : public DeveloperPrivateAPIFunction {
  public:
   DeveloperPrivateGetExtensionsInfoFunction();
+
+  DeveloperPrivateGetExtensionsInfoFunction(
+      const DeveloperPrivateGetExtensionsInfoFunction&) = delete;
+  DeveloperPrivateGetExtensionsInfoFunction& operator=(
+      const DeveloperPrivateGetExtensionsInfoFunction&) = delete;
+
   DECLARE_EXTENSION_FUNCTION("developerPrivate.getExtensionsInfo",
                              DEVELOPERPRIVATE_GETEXTENSIONSINFO)
 
@@ -358,14 +386,18 @@ class DeveloperPrivateGetExtensionsInfoFunction
       std::vector<api::developer_private::ExtensionInfo> infos);
 
   std::unique_ptr<ExtensionInfoGenerator> info_generator_;
-
-  DISALLOW_COPY_AND_ASSIGN(DeveloperPrivateGetExtensionsInfoFunction);
 };
 
 class DeveloperPrivateGetExtensionInfoFunction
     : public DeveloperPrivateAPIFunction {
  public:
   DeveloperPrivateGetExtensionInfoFunction();
+
+  DeveloperPrivateGetExtensionInfoFunction(
+      const DeveloperPrivateGetExtensionInfoFunction&) = delete;
+  DeveloperPrivateGetExtensionInfoFunction& operator=(
+      const DeveloperPrivateGetExtensionInfoFunction&) = delete;
+
   DECLARE_EXTENSION_FUNCTION("developerPrivate.getExtensionInfo",
                              DEVELOPERPRIVATE_GETEXTENSIONINFO)
 
@@ -377,14 +409,18 @@ class DeveloperPrivateGetExtensionInfoFunction
       std::vector<api::developer_private::ExtensionInfo> infos);
 
   std::unique_ptr<ExtensionInfoGenerator> info_generator_;
-
-  DISALLOW_COPY_AND_ASSIGN(DeveloperPrivateGetExtensionInfoFunction);
 };
 
 class DeveloperPrivateGetExtensionSizeFunction
     : public DeveloperPrivateAPIFunction {
  public:
   DeveloperPrivateGetExtensionSizeFunction();
+
+  DeveloperPrivateGetExtensionSizeFunction(
+      const DeveloperPrivateGetExtensionSizeFunction&) = delete;
+  DeveloperPrivateGetExtensionSizeFunction& operator=(
+      const DeveloperPrivateGetExtensionSizeFunction&) = delete;
+
   DECLARE_EXTENSION_FUNCTION("developerPrivate.getExtensionSize",
                              DEVELOPERPRIVATE_GETEXTENSIONSIZE)
 
@@ -392,9 +428,7 @@ class DeveloperPrivateGetExtensionSizeFunction
   ~DeveloperPrivateGetExtensionSizeFunction() override;
   ResponseAction Run() override;
 
-  void OnSizeCalculated(const base::string16& size);
-
-  DISALLOW_COPY_AND_ASSIGN(DeveloperPrivateGetExtensionSizeFunction);
+  void OnSizeCalculated(const std::u16string& size);
 };
 
 class DeveloperPrivateGetProfileConfigurationFunction
@@ -438,6 +472,11 @@ class DeveloperPrivateReloadFunction : public DeveloperPrivateAPIFunction,
 
   DeveloperPrivateReloadFunction();
 
+  DeveloperPrivateReloadFunction(const DeveloperPrivateReloadFunction&) =
+      delete;
+  DeveloperPrivateReloadFunction& operator=(
+      const DeveloperPrivateReloadFunction&) = delete;
+
   // ExtensionRegistryObserver:
   void OnExtensionLoaded(content::BrowserContext* browser_context,
                          const Extension* extension) override;
@@ -467,29 +506,10 @@ class DeveloperPrivateReloadFunction : public DeveloperPrivateAPIFunction,
   // The file path of the extension that's reloading.
   base::FilePath reloading_extension_path_;
 
-  ScopedObserver<ExtensionRegistry, ExtensionRegistryObserver>
-      registry_observer_{this};
-  ScopedObserver<LoadErrorReporter, LoadErrorReporter::Observer>
-      error_reporter_observer_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(DeveloperPrivateReloadFunction);
-};
-
-class DeveloperPrivateShowPermissionsDialogFunction
-    : public DeveloperPrivateAPIFunction {
- public:
-  DECLARE_EXTENSION_FUNCTION("developerPrivate.showPermissionsDialog",
-                             DEVELOPERPRIVATE_PERMISSIONS)
-  DeveloperPrivateShowPermissionsDialogFunction();
-
- protected:
-  // DeveloperPrivateAPIFunction:
-  ~DeveloperPrivateShowPermissionsDialogFunction() override;
-  ResponseAction Run() override;
-
-  void Finish();
-
-  DISALLOW_COPY_AND_ASSIGN(DeveloperPrivateShowPermissionsDialogFunction);
+  base::ScopedObservation<ExtensionRegistry, ExtensionRegistryObserver>
+      registry_observation_{this};
+  base::ScopedObservation<LoadErrorReporter, LoadErrorReporter::Observer>
+      error_reporter_observation_{this};
 };
 
 class DeveloperPrivateChooseEntryFunction : public ExtensionFunction,
@@ -497,7 +517,7 @@ class DeveloperPrivateChooseEntryFunction : public ExtensionFunction,
  protected:
   ~DeveloperPrivateChooseEntryFunction() override;
   bool ShowPicker(ui::SelectFileDialog::Type picker_type,
-                  const base::string16& select_title,
+                  const std::u16string& select_title,
                   const ui::SelectFileDialog::FileTypeInfo& info,
                   int file_type_index);
 };
@@ -546,13 +566,16 @@ class DeveloperPrivateInstallDroppedFileFunction
                              DEVELOPERPRIVATE_INSTALLDROPPEDFILE)
   DeveloperPrivateInstallDroppedFileFunction();
 
+  DeveloperPrivateInstallDroppedFileFunction(
+      const DeveloperPrivateInstallDroppedFileFunction&) = delete;
+  DeveloperPrivateInstallDroppedFileFunction& operator=(
+      const DeveloperPrivateInstallDroppedFileFunction&) = delete;
+
  private:
   ~DeveloperPrivateInstallDroppedFileFunction() override;
 
   // ExtensionFunction:
   ResponseAction Run() override;
-
-  DISALLOW_COPY_AND_ASSIGN(DeveloperPrivateInstallDroppedFileFunction);
 };
 
 class DeveloperPrivateNotifyDragInstallInProgressFunction
@@ -563,14 +586,17 @@ class DeveloperPrivateNotifyDragInstallInProgressFunction
 
   DeveloperPrivateNotifyDragInstallInProgressFunction();
 
+  DeveloperPrivateNotifyDragInstallInProgressFunction(
+      const DeveloperPrivateNotifyDragInstallInProgressFunction&) = delete;
+  DeveloperPrivateNotifyDragInstallInProgressFunction& operator=(
+      const DeveloperPrivateNotifyDragInstallInProgressFunction&) = delete;
+
   ResponseAction Run() override;
 
   static void SetDropPathForTesting(base::FilePath* file_path);
 
  private:
   ~DeveloperPrivateNotifyDragInstallInProgressFunction() override;
-
-  DISALLOW_COPY_AND_ASSIGN(DeveloperPrivateNotifyDragInstallInProgressFunction);
 };
 
 class DeveloperPrivateChoosePathFunction
@@ -591,7 +617,6 @@ class DeveloperPrivateChoosePathFunction
 class DeveloperPrivatePackDirectoryFunction
     : public DeveloperPrivateAPIFunction,
       public PackExtensionJob::Client {
-
  public:
   DECLARE_EXTENSION_FUNCTION("developerPrivate.packDirectory",
                              DEVELOPERPRIVATE_PACKDIRECTORY)
@@ -699,7 +724,7 @@ class DeveloperPrivateRequestFileSourceFunction
  private:
   void Finish(const std::string& file_contents);
 
-  std::unique_ptr<api::developer_private::RequestFileSource::Params> params_;
+  std::optional<api::developer_private::RequestFileSource::Params> params_;
 };
 
 class DeveloperPrivateOpenDevToolsFunction
@@ -789,14 +814,17 @@ class DeveloperPrivateAddHostPermissionFunction
                              DEVELOPERPRIVATE_ADDHOSTPERMISSION)
   DeveloperPrivateAddHostPermissionFunction();
 
+  DeveloperPrivateAddHostPermissionFunction(
+      const DeveloperPrivateAddHostPermissionFunction&) = delete;
+  DeveloperPrivateAddHostPermissionFunction& operator=(
+      const DeveloperPrivateAddHostPermissionFunction&) = delete;
+
  private:
   ~DeveloperPrivateAddHostPermissionFunction() override;
 
   ResponseAction Run() override;
 
   void OnRuntimePermissionsGranted();
-
-  DISALLOW_COPY_AND_ASSIGN(DeveloperPrivateAddHostPermissionFunction);
 };
 
 class DeveloperPrivateRemoveHostPermissionFunction
@@ -806,14 +834,187 @@ class DeveloperPrivateRemoveHostPermissionFunction
                              DEVELOPERPRIVATE_REMOVEHOSTPERMISSION)
   DeveloperPrivateRemoveHostPermissionFunction();
 
+  DeveloperPrivateRemoveHostPermissionFunction(
+      const DeveloperPrivateRemoveHostPermissionFunction&) = delete;
+  DeveloperPrivateRemoveHostPermissionFunction& operator=(
+      const DeveloperPrivateRemoveHostPermissionFunction&) = delete;
+
  private:
   ~DeveloperPrivateRemoveHostPermissionFunction() override;
 
   ResponseAction Run() override;
 
   void OnRuntimePermissionsRevoked();
+};
 
-  DISALLOW_COPY_AND_ASSIGN(DeveloperPrivateRemoveHostPermissionFunction);
+class DeveloperPrivateGetUserSiteSettingsFunction
+    : public DeveloperPrivateAPIFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("developerPrivate.getUserSiteSettings",
+                             DEVELOPERPRIVATE_GETUSERSITESETTINGS)
+  DeveloperPrivateGetUserSiteSettingsFunction();
+
+  DeveloperPrivateGetUserSiteSettingsFunction(
+      const DeveloperPrivateGetUserSiteSettingsFunction&) = delete;
+  DeveloperPrivateGetUserSiteSettingsFunction& operator=(
+      const DeveloperPrivateGetUserSiteSettingsFunction&) = delete;
+
+ private:
+  ~DeveloperPrivateGetUserSiteSettingsFunction() override;
+
+  ResponseAction Run() override;
+};
+
+class DeveloperPrivateAddUserSpecifiedSitesFunction
+    : public DeveloperPrivateAPIFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("developerPrivate.addUserSpecifiedSites",
+                             DEVELOPERPRIVATE_ADDUSERSPECIFIEDSITES)
+  DeveloperPrivateAddUserSpecifiedSitesFunction();
+
+  DeveloperPrivateAddUserSpecifiedSitesFunction(
+      const DeveloperPrivateAddUserSpecifiedSitesFunction&) = delete;
+  DeveloperPrivateAddUserSpecifiedSitesFunction& operator=(
+      const DeveloperPrivateAddUserSpecifiedSitesFunction&) = delete;
+
+ private:
+  ~DeveloperPrivateAddUserSpecifiedSitesFunction() override;
+
+  ResponseAction Run() override;
+};
+
+class DeveloperPrivateRemoveUserSpecifiedSitesFunction
+    : public DeveloperPrivateAPIFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("developerPrivate.removeUserSpecifiedSites",
+                             DEVELOPERPRIVATE_REMOVEUSERSPECIFIEDSITES)
+  DeveloperPrivateRemoveUserSpecifiedSitesFunction();
+
+  DeveloperPrivateRemoveUserSpecifiedSitesFunction(
+      const DeveloperPrivateRemoveUserSpecifiedSitesFunction&) = delete;
+  DeveloperPrivateRemoveUserSpecifiedSitesFunction& operator=(
+      const DeveloperPrivateRemoveUserSpecifiedSitesFunction&) = delete;
+
+ private:
+  ~DeveloperPrivateRemoveUserSpecifiedSitesFunction() override;
+
+  ResponseAction Run() override;
+};
+
+class DeveloperPrivateGetUserAndExtensionSitesByEtldFunction
+    : public DeveloperPrivateAPIFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("developerPrivate.getUserAndExtensionSitesByEtld",
+                             DEVELOPERPRIVATE_GETUSERANDEXTENSIONSITESBYETLD)
+  DeveloperPrivateGetUserAndExtensionSitesByEtldFunction();
+
+  DeveloperPrivateGetUserAndExtensionSitesByEtldFunction(
+      const DeveloperPrivateGetUserAndExtensionSitesByEtldFunction&) = delete;
+  DeveloperPrivateGetUserAndExtensionSitesByEtldFunction& operator=(
+      const DeveloperPrivateGetUserAndExtensionSitesByEtldFunction&) = delete;
+
+ private:
+  ~DeveloperPrivateGetUserAndExtensionSitesByEtldFunction() override;
+
+  ResponseAction Run() override;
+};
+
+class DeveloperPrivateGetMatchingExtensionsForSiteFunction
+    : public DeveloperPrivateAPIFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("developerPrivate.getMatchingExtensionsForSite",
+                             DEVELOPERPRIVATE_GETMATCHINGEXTENSIONSFORSITE)
+  DeveloperPrivateGetMatchingExtensionsForSiteFunction();
+
+  DeveloperPrivateGetMatchingExtensionsForSiteFunction(
+      const DeveloperPrivateGetMatchingExtensionsForSiteFunction&) = delete;
+  DeveloperPrivateGetMatchingExtensionsForSiteFunction& operator=(
+      const DeveloperPrivateGetMatchingExtensionsForSiteFunction&) = delete;
+
+ private:
+  ~DeveloperPrivateGetMatchingExtensionsForSiteFunction() override;
+
+  ResponseAction Run() override;
+};
+
+class DeveloperPrivateUpdateSiteAccessFunction
+    : public DeveloperPrivateAPIFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("developerPrivate.updateSiteAccess",
+                             DEVELOPERPRIVATE_UPDATESITEACCESS)
+  DeveloperPrivateUpdateSiteAccessFunction();
+
+  DeveloperPrivateUpdateSiteAccessFunction(
+      const DeveloperPrivateUpdateSiteAccessFunction&) = delete;
+  DeveloperPrivateUpdateSiteAccessFunction& operator=(
+      const DeveloperPrivateUpdateSiteAccessFunction&) = delete;
+
+ private:
+  ~DeveloperPrivateUpdateSiteAccessFunction() override;
+
+  ResponseAction Run() override;
+
+  void OnSiteSettingsUpdated();
+};
+
+class DeveloperPrivateRemoveMultipleExtensionsFunction
+    : public DeveloperPrivateAPIFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("developerPrivate.removeMultipleExtensions",
+                             DEVELOPERPRIVATE_REMOVEMULTIPLEEXTENSIONS)
+  DeveloperPrivateRemoveMultipleExtensionsFunction();
+
+  DeveloperPrivateRemoveMultipleExtensionsFunction(
+      const DeveloperPrivateRemoveMultipleExtensionsFunction&) = delete;
+  DeveloperPrivateRemoveMultipleExtensionsFunction& operator=(
+      const DeveloperPrivateRemoveMultipleExtensionsFunction&) = delete;
+
+  void accept_bubble_for_testing(bool accept_bubble) {
+    accept_bubble_for_testing_ = accept_bubble;
+  }
+
+ private:
+  ~DeveloperPrivateRemoveMultipleExtensionsFunction() override;
+
+  // ExtensionFunction:
+  ResponseAction Run() override;
+
+  // A callback function to run when the user accepts the action dialog.
+  void OnDialogAccepted();
+
+  // A callback function to run when the user cancels the action dialog.
+  void OnDialogCancelled();
+
+  // The IDs of the extensions to be uninstalled.
+  std::vector<ExtensionId> extension_ids_;
+
+  raw_ptr<Profile> profile_;
+
+  // If true, immediately accept the blocked action dialog by running the
+  // callback.
+  std::optional<bool> accept_bubble_for_testing_;
+};
+
+class DeveloperPrivateDismissSafetyHubExtensionsMenuNotificationFunction
+    : public DeveloperPrivateAPIFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION(
+      "developerPrivate.dismissSafetyHubExtensionsMenuNotification",
+      DEVELOPERPRIVATE_DISMISSSAFETYHUBEXTENSIONSMENUNOTIFICATION)
+  DeveloperPrivateDismissSafetyHubExtensionsMenuNotificationFunction();
+
+  DeveloperPrivateDismissSafetyHubExtensionsMenuNotificationFunction(
+      const DeveloperPrivateDismissSafetyHubExtensionsMenuNotificationFunction&) =
+      delete;
+  DeveloperPrivateDismissSafetyHubExtensionsMenuNotificationFunction& operator=(
+      const DeveloperPrivateDismissSafetyHubExtensionsMenuNotificationFunction&) =
+      delete;
+
+  ResponseAction Run() override;
+
+ private:
+  ~DeveloperPrivateDismissSafetyHubExtensionsMenuNotificationFunction()
+      override;
 };
 
 }  // namespace api

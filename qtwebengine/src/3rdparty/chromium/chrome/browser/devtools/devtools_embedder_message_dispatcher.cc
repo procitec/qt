@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,45 +6,215 @@
 
 #include <memory>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/values.h"
+#if !BUILDFLAG(IS_QTWEBENGINE)
+#include "chrome/browser/browser_features.h"
+#endif  // !BUILDFLAG(IS_QTWEBENGINE)
+#include "chrome/browser/devtools/devtools_settings.h"
+#if !BUILDFLAG(IS_QTWEBENGINE)
+#include "chrome/browser/devtools/visual_logging.h"
+#endif
 
 namespace {
 
 using DispatchCallback = DevToolsEmbedderMessageDispatcher::DispatchCallback;
 
 bool GetValue(const base::Value& value, std::string* result) {
-  return value.GetAsString(result);
+  if (result && value.is_string()) {
+    *result = value.GetString();
+    return true;
+  }
+  return value.is_string();
 }
 
 bool GetValue(const base::Value& value, int* result) {
-  return value.GetAsInteger(result);
+  if (result && value.is_int()) {
+    *result = value.GetInt();
+    return true;
+  }
+  return value.is_int();
 }
 
 bool GetValue(const base::Value& value, double* result) {
-  return value.GetAsDouble(result);
+  if (result && (value.is_double() || value.is_int())) {
+    *result = value.GetDouble();
+    return true;
+  }
+  return value.is_double() || value.is_int();
 }
 
 bool GetValue(const base::Value& value, bool* result) {
-  return value.GetAsBoolean(result);
+  if (result && value.is_bool()) {
+    *result = value.GetBool();
+    return true;
+  }
+  return value.is_bool();
 }
 
 bool GetValue(const base::Value& value, gfx::Rect* rect) {
-  const base::DictionaryValue* dict;
-  if (!value.GetAsDictionary(&dict))
+  if (!value.is_dict())
     return false;
-  int x = 0;
-  int y = 0;
-  int width = 0;
-  int height = 0;
-  if (!dict->GetInteger("x", &x) ||
-      !dict->GetInteger("y", &y) ||
-      !dict->GetInteger("width", &width) ||
-      !dict->GetInteger("height", &height))
+  const base::Value::Dict& dict = value.GetDict();
+  std::optional<int> x = dict.FindInt("x");
+  std::optional<int> y = dict.FindInt("y");
+  std::optional<int> width = dict.FindInt("width");
+  std::optional<int> height = dict.FindInt("height");
+  if (!x.has_value() || !y.has_value() || !width.has_value() ||
+      !height.has_value()) {
     return false;
-  rect->SetRect(x, y, width, height);
+  }
+
+  rect->SetRect(x.value(), y.value(), width.value(), height.value());
   return true;
 }
+
+bool GetValue(const base::Value& value, RegisterOptions* options) {
+  if (!value.is_dict())
+    return false;
+
+  const bool synced = value.GetDict().FindBool("synced").value_or(false);
+  options->sync_mode = synced ? RegisterOptions::SyncMode::kSync
+                              : RegisterOptions::SyncMode::kDontSync;
+  return true;
+}
+
+#if !BUILDFLAG(IS_QTWEBENGINE)
+bool GetValue(const base::Value& value, ImpressionEvent* event) {
+  if (!value.is_dict()) {
+    return false;
+  }
+
+  const base::Value::List* impressions =
+      value.GetDict().FindList("impressions");
+  if (!impressions) {
+    return false;
+  }
+  for (const auto& impression : *impressions) {
+    if (!impression.is_dict()) {
+      return false;
+    }
+    std::optional<int> id = impression.GetDict().FindInt("id");
+    std::optional<int> type = impression.GetDict().FindInt("type");
+    if (!id || !type) {
+      return false;
+    }
+    event->impressions.emplace_back(VisualElementImpression{*id, *type});
+
+    std::optional<int> parent = impression.GetDict().FindInt("parent");
+    if (parent) {
+      event->impressions.back().parent = *parent;
+    }
+    std::optional<int> context = impression.GetDict().FindInt("context");
+    if (context) {
+      event->impressions.back().context = *context;
+    }
+  }
+  return true;
+}
+
+bool GetValue(const base::Value& value, ClickEvent* event) {
+  if (!value.is_dict()) {
+    return false;
+  }
+
+  std::optional<int> veid = value.GetDict().FindInt("veid");
+  if (!veid) {
+    return false;
+  }
+  event->veid = *veid;
+
+  std::optional<int> mouse_button = value.GetDict().FindInt("mouseButton");
+  if (mouse_button) {
+    event->mouse_button = *mouse_button;
+  }
+  std::optional<int> context = value.GetDict().FindInt("context");
+  if (context) {
+    event->context = *context;
+  }
+  return true;
+}
+
+bool GetValue(const base::Value& value, HoverEvent* event) {
+  if (!value.is_dict()) {
+    return false;
+  }
+
+  std::optional<int> veid = value.GetDict().FindInt("veid");
+  if (!veid) {
+    return false;
+  }
+  event->veid = *veid;
+
+  std::optional<int> time = value.GetDict().FindInt("time");
+  if (time) {
+    event->time = *time;
+  }
+  std::optional<int> context = value.GetDict().FindInt("context");
+  if (context) {
+    event->context = *context;
+  }
+  return true;
+}
+
+bool GetValue(const base::Value& value, DragEvent* event) {
+  if (!value.is_dict()) {
+    return false;
+  }
+
+  std::optional<int> veid = value.GetDict().FindInt("veid");
+  if (!veid) {
+    return false;
+  }
+  event->veid = *veid;
+
+  std::optional<int> distance = value.GetDict().FindInt("distance");
+  if (distance) {
+    event->distance = *distance;
+  }
+  std::optional<int> context = value.GetDict().FindInt("context");
+  if (context) {
+    event->context = *context;
+  }
+  return true;
+}
+
+bool GetValue(const base::Value& value, ChangeEvent* event) {
+  if (!value.is_dict()) {
+    return false;
+  }
+
+  std::optional<int> veid = value.GetDict().FindInt("veid");
+  if (!veid) {
+    return false;
+  }
+  event->veid = *veid;
+
+  std::optional<int> context = value.GetDict().FindInt("context");
+  if (context) {
+    event->context = *context;
+  }
+  return true;
+}
+
+bool GetValue(const base::Value& value, KeyDownEvent* event) {
+  if (!value.is_dict()) {
+    return false;
+  }
+
+  std::optional<int> veid = value.GetDict().FindInt("veid");
+  if (!veid) {
+    return false;
+  }
+  event->veid = *veid;
+
+  std::optional<int> context = value.GetDict().FindInt("context");
+  if (context) {
+    event->context = *context;
+  }
+  return true;
+}
+#endif  // !BUILDFLAG(IS_QTWEBENGINE)
 
 template <typename T>
 struct StorageTraits {
@@ -58,37 +228,37 @@ struct StorageTraits<const T&> {
 
 template <typename... Ts>
 struct ParamTuple {
-  bool Parse(const base::ListValue& list,
-             const base::ListValue::const_iterator& it) {
+  bool Parse(const base::Value::List& list,
+             const base::Value::List::const_iterator& it) {
     return it == list.end();
   }
 
   template <typename H, typename... As>
   void Apply(const H& handler, As... args) {
-    handler.Run(args...);
+    handler.Run(std::forward<As>(args)...);
   }
 };
 
 template <typename T, typename... Ts>
 struct ParamTuple<T, Ts...> {
-  bool Parse(const base::ListValue& list,
-             const base::ListValue::const_iterator& it) {
+  bool Parse(const base::Value::List& list,
+             const base::Value::List::const_iterator& it) {
     return it != list.end() && GetValue(*it, &head) && tail.Parse(list, it + 1);
   }
 
   template <typename H, typename... As>
   void Apply(const H& handler, As... args) {
-    tail.template Apply<H, As..., T>(handler, args..., head);
+    tail.template Apply<H, As..., T>(handler, std::forward<As>(args)..., head);
   }
 
   typename StorageTraits<T>::StorageType head;
   ParamTuple<Ts...> tail;
 };
 
-template<typename... As>
-bool ParseAndHandle(const base::Callback<void(As...)>& handler,
-                    const DispatchCallback& callback,
-                    const base::ListValue& list) {
+template <typename... As>
+bool ParseAndHandle(const base::RepeatingCallback<void(As...)>& handler,
+                    DispatchCallback callback,
+                    const base::Value::List& list) {
   ParamTuple<As...> tuple;
   if (!tuple.Parse(list, list.begin()))
     return false;
@@ -96,15 +266,15 @@ bool ParseAndHandle(const base::Callback<void(As...)>& handler,
   return true;
 }
 
-template<typename... As>
+template <typename... As>
 bool ParseAndHandleWithCallback(
-    const base::Callback<void(const DispatchCallback&, As...)>& handler,
-    const DispatchCallback& callback,
-    const base::ListValue& list) {
+    const base::RepeatingCallback<void(DispatchCallback, As...)>& handler,
+    DispatchCallback callback,
+    const base::Value::List& list) {
   ParamTuple<As...> tuple;
   if (!tuple.Parse(list, list.begin()))
     return false;
-  tuple.Apply(handler, callback);
+  tuple.Apply(handler, std::move(callback));
   return true;
 }
 
@@ -120,38 +290,37 @@ bool ParseAndHandleWithCallback(
  */
 class DispatcherImpl : public DevToolsEmbedderMessageDispatcher {
  public:
-  ~DispatcherImpl() override {}
+  ~DispatcherImpl() override = default;
 
-  bool Dispatch(const DispatchCallback& callback,
+  bool Dispatch(DispatchCallback callback,
                 const std::string& method,
-                const base::ListValue* params) override {
+                const base::Value::List& params) override {
     auto it = handlers_.find(method);
-    return it != handlers_.end() && it->second.Run(callback, *params);
+    return it != handlers_.end() && it->second.Run(std::move(callback), params);
   }
 
   template<typename... As>
   void RegisterHandler(const std::string& method,
                        void (Delegate::*handler)(As...),
                        Delegate* delegate) {
-    handlers_[method] = base::Bind(&ParseAndHandle<As...>,
-                                   base::Bind(handler,
-                                              base::Unretained(delegate)));
+    handlers_[method] = base::BindRepeating(
+        &ParseAndHandle<As...>,
+        base::BindRepeating(handler, base::Unretained(delegate)));
   }
 
-  template<typename... As>
-  void RegisterHandlerWithCallback(
-      const std::string& method,
-      void (Delegate::*handler)(const DispatchCallback&, As...),
-      Delegate* delegate) {
-    handlers_[method] = base::Bind(&ParseAndHandleWithCallback<As...>,
-                                   base::Bind(handler,
-                                              base::Unretained(delegate)));
+  template <typename... As>
+  void RegisterHandlerWithCallback(const std::string& method,
+                                   void (Delegate::*handler)(DispatchCallback,
+                                                             As...),
+                                   Delegate* delegate) {
+    handlers_[method] = base::BindRepeating(
+        &ParseAndHandleWithCallback<As...>,
+        base::BindRepeating(handler, base::Unretained(delegate)));
   }
-
 
  private:
-  using Handler = base::Callback<bool(const DispatchCallback&,
-                                      const base::ListValue&)>;
+  using Handler =
+      base::RepeatingCallback<bool(DispatchCallback, const base::Value::List&)>;
   using HandlerMap = std::map<std::string, Handler>;
   HandlerMap handlers_;
 };
@@ -201,12 +370,12 @@ DevToolsEmbedderMessageDispatcher::CreateForDevToolsFrontend(
                      &Delegate::SetDevicesDiscoveryConfig, delegate);
   d->RegisterHandler("setDevicesUpdatesEnabled",
                      &Delegate::SetDevicesUpdatesEnabled, delegate);
-  d->RegisterHandler("performActionOnRemotePage",
-                     &Delegate::PerformActionOnRemotePage, delegate);
   d->RegisterHandler("openRemotePage", &Delegate::OpenRemotePage, delegate);
   d->RegisterHandler("openNodeFrontend", &Delegate::OpenNodeFrontend, delegate);
   d->RegisterHandler("dispatchProtocolMessage",
                      &Delegate::DispatchProtocolMessageFromDevToolsFrontend,
+                     delegate);
+  d->RegisterHandler("recordCountHistogram", &Delegate::RecordCountHistogram,
                      delegate);
   d->RegisterHandler("recordEnumeratedHistogram",
                      &Delegate::RecordEnumeratedHistogram, delegate);
@@ -214,16 +383,30 @@ DevToolsEmbedderMessageDispatcher::CreateForDevToolsFrontend(
                      &Delegate::RecordPerformanceHistogram, delegate);
   d->RegisterHandler("recordUserMetricsAction",
                      &Delegate::RecordUserMetricsAction, delegate);
+#if !BUILDFLAG(IS_QTWEBENGINE)
+  d->RegisterHandler("recordImpression", &Delegate::RecordImpression, delegate);
+  d->RegisterHandler("recordClick", &Delegate::RecordClick, delegate);
+  d->RegisterHandler("recordHover", &Delegate::RecordHover, delegate);
+  d->RegisterHandler("recordDrag", &Delegate::RecordDrag, delegate);
+  d->RegisterHandler("recordChange", &Delegate::RecordChange, delegate);
+  d->RegisterHandler("recordKeyDown", &Delegate::RecordKeyDown, delegate);
+#endif  // !BUILDFLAG(IS_QTWEBENGINE)
   d->RegisterHandlerWithCallback("sendJsonRequest",
                                  &Delegate::SendJsonRequest, delegate);
+  d->RegisterHandler("registerPreference", &Delegate::RegisterPreference,
+                     delegate);
   d->RegisterHandlerWithCallback("getPreferences",
                                  &Delegate::GetPreferences, delegate);
+  d->RegisterHandlerWithCallback("getPreference", &Delegate::GetPreference,
+                                 delegate);
   d->RegisterHandler("setPreference",
                      &Delegate::SetPreference, delegate);
   d->RegisterHandler("removePreference",
                      &Delegate::RemovePreference, delegate);
   d->RegisterHandler("clearPreferences",
                      &Delegate::ClearPreferences, delegate);
+  d->RegisterHandlerWithCallback("getSyncInformation",
+                                 &Delegate::GetSyncInformation, delegate);
   d->RegisterHandlerWithCallback("reattach",
                                  &Delegate::Reattach, delegate);
   d->RegisterHandler("readyForTest",
@@ -233,7 +416,14 @@ DevToolsEmbedderMessageDispatcher::CreateForDevToolsFrontend(
                      &Delegate::SetOpenNewWindowForPopups, delegate);
   d->RegisterHandler("registerExtensionsAPI", &Delegate::RegisterExtensionsAPI,
                      delegate);
-  d->RegisterHandlerWithCallback("getSurveyAPIKey", &Delegate::GetSurveyAPIKey,
+  d->RegisterHandlerWithCallback("showSurvey", &Delegate::ShowSurvey, delegate);
+  d->RegisterHandlerWithCallback("canShowSurvey", &Delegate::CanShowSurvey,
                                  delegate);
+#if !BUILDFLAG(IS_QTWEBENGINE)
+  if (base::FeatureList::IsEnabled(::features::kDevToolsConsoleInsights)) {
+    d->RegisterHandlerWithCallback("doAidaConversation",
+                                   &Delegate::DoAidaConversation, delegate);
+  }
+#endif  // !BUILDFLAG(IS_QTWEBENGINE)
   return d;
 }

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,14 +6,15 @@
 
 #include <memory>
 
-#include "base/bind.h"
-#include "base/memory/ptr_util.h"
+#include "base/functional/bind.h"
+#include "base/task/single_thread_task_runner.h"
 #include "services/device/geolocation/location_api_adapter_android.h"
 
 namespace device {
 
-// LocationProviderAndroid
-LocationProviderAndroid::LocationProviderAndroid() {}
+class GeolocationManager;
+
+LocationProviderAndroid::LocationProviderAndroid() = default;
 
 LocationProviderAndroid::~LocationProviderAndroid() {
   DCHECK(thread_checker_.CalledOnValidThread());
@@ -21,11 +22,16 @@ LocationProviderAndroid::~LocationProviderAndroid() {
 }
 
 void LocationProviderAndroid::NotifyNewGeoposition(
-    const mojom::Geoposition& position) {
+    mojom::GeopositionResultPtr result) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  last_position_ = position;
+  last_result_ = std::move(result);
   if (!callback_.is_null())
-    callback_.Run(this, position);
+    callback_.Run(this, last_result_.Clone());
+}
+
+void LocationProviderAndroid::FillDiagnostics(
+    mojom::GeolocationDiagnostics& diagnostics) {
+  diagnostics.provider_state = state_;
 }
 
 void LocationProviderAndroid::SetUpdateCallback(
@@ -36,6 +42,9 @@ void LocationProviderAndroid::SetUpdateCallback(
 
 void LocationProviderAndroid::StartProvider(bool high_accuracy) {
   DCHECK(thread_checker_.CalledOnValidThread());
+  state_ = high_accuracy
+               ? mojom::GeolocationDiagnostics::ProviderState::kHighAccuracy
+               : mojom::GeolocationDiagnostics::ProviderState::kLowAccuracy;
   LocationApiAdapterAndroid::GetInstance()->Start(
       base::BindRepeating(&LocationProviderAndroid::NotifyNewGeoposition,
                           weak_ptr_factory_.GetWeakPtr()),
@@ -44,12 +53,13 @@ void LocationProviderAndroid::StartProvider(bool high_accuracy) {
 
 void LocationProviderAndroid::StopProvider() {
   DCHECK(thread_checker_.CalledOnValidThread());
+  state_ = mojom::GeolocationDiagnostics::ProviderState::kStopped;
   LocationApiAdapterAndroid::GetInstance()->Stop();
 }
 
-const mojom::Geoposition& LocationProviderAndroid::GetPosition() {
+const mojom::GeopositionResult* LocationProviderAndroid::GetPosition() {
   DCHECK(thread_checker_.CalledOnValidThread());
-  return last_position_;
+  return last_result_.get();
 }
 
 void LocationProviderAndroid::OnPermissionGranted() {
@@ -57,9 +67,10 @@ void LocationProviderAndroid::OnPermissionGranted() {
   // Nothing to do here.
 }
 
-// static
-std::unique_ptr<LocationProvider> NewSystemLocationProvider() {
-  return base::WrapUnique(new LocationProviderAndroid);
+std::unique_ptr<LocationProvider> NewSystemLocationProvider(
+    scoped_refptr<base::SingleThreadTaskRunner> main_task_runner,
+    GeolocationManager* geolocation_manager) {
+  return std::make_unique<LocationProviderAndroid>();
 }
 
 }  // namespace device

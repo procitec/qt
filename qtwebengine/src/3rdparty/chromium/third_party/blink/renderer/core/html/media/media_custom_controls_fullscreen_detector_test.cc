@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,8 +8,9 @@
 #include "third_party/blink/renderer/core/event_type_names.h"
 #include "third_party/blink/renderer/core/html/media/html_video_element.h"
 #include "third_party/blink/renderer/core/testing/dummy_page_holder.h"
-#include "third_party/blink/renderer/platform/geometry/int_rect.h"
 #include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
+#include "ui/gfx/geometry/rect.h"
 
 namespace blink {
 
@@ -21,12 +22,13 @@ class MediaCustomControlsFullscreenDetectorTest : public testing::Test {
   }
 
   HTMLVideoElement* VideoElement() const {
-    return To<HTMLVideoElement>(GetDocument().QuerySelector("video"));
+    return To<HTMLVideoElement>(
+        GetDocument().QuerySelector(AtomicString("video")));
   }
 
   static MediaCustomControlsFullscreenDetector* FullscreenDetectorFor(
       HTMLVideoElement* video_element) {
-    return video_element->custom_controls_fullscreen_detector_;
+    return video_element->custom_controls_fullscreen_detector_.Get();
   }
 
   MediaCustomControlsFullscreenDetector* FullscreenDetector() const {
@@ -44,27 +46,29 @@ class MediaCustomControlsFullscreenDetectorTest : public testing::Test {
       return false;
 
     for (const auto& registered_listener : *listeners) {
-      if (registered_listener.Callback() == listener)
+      if (registered_listener->Callback() == listener) {
         return true;
+      }
     }
     return false;
   }
 
-  static bool IsFullscreen(IntRect target, IntRect screen) {
-    IntRect intersection = Intersection(target, screen);
+  static bool IsFullscreen(gfx::Rect target, gfx::Rect screen) {
+    gfx::Rect intersection = IntersectRects(target, screen);
     return MediaCustomControlsFullscreenDetector::
         IsFullscreenVideoOfDifferentRatioForTesting(
-            target.Size(), screen.Size(), intersection.Size());
+            target.size(), screen.size(), intersection.size());
   }
 
  private:
+  test::TaskEnvironment task_environment_;
   std::unique_ptr<DummyPageHolder> page_holder_;
   std::unique_ptr<DummyPageHolder> new_page_holder_;
   Persistent<HTMLVideoElement> video_;
 };
 
 TEST_F(MediaCustomControlsFullscreenDetectorTest, heuristicForAspectRatios) {
-  IntRect screen(0, 0, 1920, 1080);
+  gfx::Rect screen(0, 0, 1920, 1080);
 
   EXPECT_TRUE(IsFullscreen({0, 130, 1920, 820}, screen))
       << "Ultrawide screen (21:9)";

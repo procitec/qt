@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,14 +7,16 @@
 
 #include <pulse/pulseaudio.h>
 #include <stddef.h>
+
 #include <string>
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/threading/thread_checker.h"
 #include "media/audio/agc_audio_stream.h"
 #include "media/audio/audio_device_name.h"
 #include "media/audio/audio_io.h"
 #include "media/audio/audio_manager.h"
+#include "media/base/amplitude_peak_detector.h"
 #include "media/base/audio_block_fifo.h"
 #include "media/base/audio_parameters.h"
 
@@ -25,16 +27,19 @@ class AudioManagerPulse;
 class PulseAudioInputStream : public AgcAudioStream<AudioInputStream> {
  public:
   PulseAudioInputStream(AudioManagerPulse* audio_manager,
-                        const std::string& device_name,
+                        const std::string& source_name,
                         const AudioParameters& params,
                         pa_threaded_mainloop* mainloop,
                         pa_context* context,
                         AudioManager::LogCallback log_callback);
 
+  PulseAudioInputStream(const PulseAudioInputStream&) = delete;
+  PulseAudioInputStream& operator=(const PulseAudioInputStream&) = delete;
+
   ~PulseAudioInputStream() override;
 
   // Implementation of AudioInputStream.
-  bool Open() override;
+  AudioInputStream::OpenOutcome Open() override;
   void Start(AudioInputCallback* callback) override;
   void Stop() override;
   void Close() override;
@@ -64,9 +69,10 @@ class PulseAudioInputStream : public AgcAudioStream<AudioInputStream> {
   // Utility method used by GetVolume() and IsMuted().
   bool GetSourceInformation(pa_source_info_cb_t callback);
 
-  AudioManagerPulse* audio_manager_;
-  AudioInputCallback* callback_;
-  std::string device_name_;
+  // May be nullptr if not managed by AudioManagerPulse.
+  raw_ptr<AudioManagerPulse> audio_manager_;
+  raw_ptr<AudioInputCallback> callback_;
+  std::string source_name_;
   AudioParameters params_;
   int channels_;
   double volume_;
@@ -80,18 +86,18 @@ class PulseAudioInputStream : public AgcAudioStream<AudioInputStream> {
   AudioBlockFifo fifo_;
 
   // PulseAudio API structs.
-  pa_threaded_mainloop* pa_mainloop_; // Weak.
+  raw_ptr<pa_threaded_mainloop> pa_mainloop_;  // Weak.
 
-  pa_context* pa_context_;  // Weak.
+  raw_ptr<pa_context> pa_context_;  // Weak.
 
   // Callback to send log messages to registered clients.
   AudioManager::LogCallback log_callback_;
 
-  pa_stream* handle_;
+  raw_ptr<pa_stream> handle_;
+
+  AmplitudePeakDetector peak_detector_;
 
   base::ThreadChecker thread_checker_;
-
-  DISALLOW_COPY_AND_ASSIGN(PulseAudioInputStream);
 };
 
 }  // namespace media

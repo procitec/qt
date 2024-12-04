@@ -30,19 +30,17 @@
 
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
 
-#include "third_party/blink/renderer/bindings/core/v8/custom/v8_custom_xpath_ns_resolver.h"
+#include "base/debug/dump_without_crashing.h"
 #include "third_party/blink/renderer/bindings/core/v8/idl_types.h"
 #include "third_party/blink/renderer/bindings/core/v8/native_value_traits_impl.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_controller.h"
-#include "third_party/blink/renderer/bindings/core/v8/v8_array_buffer_view.h"
+#include "third_party/blink/renderer/bindings/core/v8/script_state_impl.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_element.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_event_target.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_html_link_element.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_object_builder.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_script_runner.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_window.h"
-#include "third_party/blink/renderer/bindings/core/v8/v8_worker_global_scope.h"
-#include "third_party/blink/renderer/bindings/core/v8/v8_worklet_global_scope.h"
-#include "third_party/blink/renderer/bindings/core/v8/v8_xpath_ns_resolver.h"
 #include "third_party/blink/renderer/bindings/core/v8/window_proxy.h"
 #include "third_party/blink/renderer/bindings/core/v8/worker_or_worklet_script_controller.h"
 #include "third_party/blink/renderer/core/dom/element.h"
@@ -54,10 +52,13 @@
 #include "third_party/blink/renderer/core/frame/settings.h"
 #include "third_party/blink/renderer/core/inspector/inspector_trace_events.h"
 #include "third_party/blink/renderer/core/loader/frame_loader.h"
+#include "third_party/blink/renderer/core/shadow_realm/shadow_realm_global_scope.h"
 #include "third_party/blink/renderer/core/typed_arrays/flexible_array_buffer_view.h"
+#include "third_party/blink/renderer/core/workers/worker_global_scope.h"
 #include "third_party/blink/renderer/core/workers/worker_or_worklet_global_scope.h"
-#include "third_party/blink/renderer/core/xml/xpath_ns_resolver.h"
+#include "third_party/blink/renderer/core/workers/worklet_global_scope.h"
 #include "third_party/blink/renderer/platform/bindings/runtime_call_stats.h"
+#include "third_party/blink/renderer/platform/bindings/script_state.h"
 #include "third_party/blink/renderer/platform/bindings/v8_binding_macros.h"
 #include "third_party/blink/renderer/platform/bindings/v8_object_constructor.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/traced_value.h"
@@ -84,21 +85,22 @@ void V8SetReturnValue(const v8::PropertyCallbackInfo<v8::Value>& info,
     DCHECK(descriptor.has_writable());
     info.GetReturnValue().Set(
         V8ObjectBuilder(ScriptState::ForCurrentRealm(info))
-            .Add("configurable", descriptor.configurable())
-            .Add("enumerable", descriptor.enumerable())
-            .Add("value", descriptor.value())
-            .Add("writable", descriptor.writable())
+            .AddBoolean("configurable", descriptor.configurable())
+            .AddBoolean("enumerable", descriptor.enumerable())
+            .AddV8Value("value", descriptor.value())
+            .AddBoolean("writable", descriptor.writable())
             .V8Value());
     return;
   }
   // Accessor property
   DCHECK(descriptor.has_get() || descriptor.has_set());
-  info.GetReturnValue().Set(V8ObjectBuilder(ScriptState::ForCurrentRealm(info))
-                                .Add("configurable", descriptor.configurable())
-                                .Add("enumerable", descriptor.enumerable())
-                                .Add("get", descriptor.get())
-                                .Add("set", descriptor.set())
-                                .V8Value());
+  info.GetReturnValue().Set(
+      V8ObjectBuilder(ScriptState::ForCurrentRealm(info))
+          .AddBoolean("configurable", descriptor.configurable())
+          .AddBoolean("enumerable", descriptor.enumerable())
+          .AddV8Value("get", descriptor.get())
+          .AddV8Value("set", descriptor.set())
+          .V8Value());
 }
 
 const int32_t kMaxInt32 = 0x7fffffff;
@@ -113,7 +115,7 @@ static double EnforceRange(double x,
                            double maximum,
                            const char* type_name,
                            ExceptionState& exception_state) {
-  if (std::isnan(x) || std::isinf(x)) {
+  if (!std::isfinite(x)) {
     exception_state.ThrowTypeError(
         "Value is" + String(std::isinf(x) ? " infinite and" : "") +
         " not of type '" + String(type_name) + "'.");
@@ -186,7 +188,7 @@ static inline T ToSmallerInt(v8::Isolate* isolate,
       return 0;
     }
     if (configuration == kClamp)
-      return clampTo<T>(result);
+      return ClampTo<T>(result);
     result %= LimitsTrait::kNumberOfValues;
     return static_cast<T>(result > LimitsTrait::kMaxValue
                               ? result - LimitsTrait::kNumberOfValues
@@ -217,18 +219,23 @@ static inline T ToSmallerInt(v8::Isolate* isolate,
     return 0;
 
   if (configuration == kClamp)
-    return clampTo<T>(number_value);
+    return ClampTo<T>(number_value);
 
   if (std::isinf(number_value))
     return 0;
 
+  // Confine number to (-kNumberOfValues, kNumberOfValues).
   number_value =
       number_value < 0 ? -floor(fabs(number_value)) : floor(fabs(number_value));
   number_value = fmod(number_value, LimitsTrait::kNumberOfValues);
 
-  return static_cast<T>(number_value > LimitsTrait::kMaxValue
-                            ? number_value - LimitsTrait::kNumberOfValues
-                            : number_value);
+  // Adjust range to [-kMinValue, kMaxValue].
+  if (number_value < LimitsTrait::kMinValue)
+    number_value += LimitsTrait::kNumberOfValues;
+  else if (LimitsTrait::kMaxValue < number_value)
+    number_value -= LimitsTrait::kNumberOfValues;
+
+  return static_cast<T>(number_value);
 }
 
 template <typename T>
@@ -250,7 +257,7 @@ static inline T ToSmallerUInt(v8::Isolate* isolate,
       return 0;
     }
     if (configuration == kClamp)
-      return clampTo<T>(result);
+      return ClampTo<T>(result);
     return static_cast<T>(result);
   }
 
@@ -279,7 +286,7 @@ static inline T ToSmallerUInt(v8::Isolate* isolate,
     return 0;
 
   if (configuration == kClamp)
-    return clampTo<T>(number_value);
+    return ClampTo<T>(number_value);
 
   if (std::isinf(number_value))
     return 0;
@@ -351,7 +358,7 @@ int32_t ToInt32Slow(v8::Isolate* isolate,
     return 0;
 
   if (configuration == kClamp)
-    return clampTo<int32_t>(number_value);
+    return ClampTo<int32_t>(number_value);
 
   if (std::isinf(number_value))
     return 0;
@@ -380,7 +387,7 @@ uint32_t ToUInt32Slow(v8::Isolate* isolate,
       return 0;
     }
     DCHECK_EQ(configuration, kClamp);
-    return clampTo<uint32_t>(result);
+    return ClampTo<uint32_t>(result);
   }
 
   // Can the value be converted to a number?
@@ -403,7 +410,7 @@ uint32_t ToUInt32Slow(v8::Isolate* isolate,
     return 0;
 
   if (configuration == kClamp)
-    return clampTo<uint32_t>(number_value);
+    return ClampTo<uint32_t>(number_value);
 
   if (std::isinf(number_value))
     return 0;
@@ -457,7 +464,7 @@ uint64_t ToUInt64Slow(v8::Isolate* isolate,
       return 0;
     }
     DCHECK_EQ(configuration, kClamp);
-    return clampTo<uint64_t>(result);
+    return ClampTo<uint64_t>(result);
   }
 
   v8::Local<v8::Number> number_object;
@@ -480,7 +487,7 @@ uint64_t ToUInt64Slow(v8::Isolate* isolate,
     return 0;
 
   if (configuration == kClamp)
-    return clampTo<uint64_t>(number_value);
+    return ClampTo<uint64_t>(number_value);
 
   return DoubleToInteger(number_value);
 }
@@ -527,7 +534,7 @@ double ToRestrictedDouble(v8::Isolate* isolate,
 static bool HasUnmatchedSurrogates(const String& string) {
   // By definition, 8-bit strings are confined to the Latin-1 code page and
   // have no surrogates, matched or otherwise.
-  if (string.IsEmpty() || string.Is8Bit())
+  if (string.empty() || string.Is8Bit())
     return false;
 
   const UChar* characters = string.Characters16();
@@ -552,7 +559,7 @@ static bool HasUnmatchedSurrogates(const String& string) {
 
 // Replace unmatched surrogates with REPLACEMENT CHARACTER U+FFFD.
 String ReplaceUnmatchedSurrogates(String string) {
-  // This roughly implements http://heycam.github.io/webidl/#dfn-obtain-unicode
+  // This roughly implements https://webidl.spec.whatwg.org/#dfn-obtain-unicode
   // but since Blink strings are 16-bits internally, the output is simply
   // re-encoded to UTF-16.
 
@@ -625,27 +632,21 @@ String ReplaceUnmatchedSurrogates(String string) {
   return String::Adopt(result);
 }
 
-XPathNSResolver* ToXPathNSResolver(ScriptState* script_state,
-                                   v8::Local<v8::Value> value) {
-  XPathNSResolver* resolver = nullptr;
-  if (V8XPathNSResolver::HasInstance(value, script_state->GetIsolate())) {
-    resolver = V8XPathNSResolver::ToImpl(v8::Local<v8::Object>::Cast(value));
-  } else if (value->IsObject()) {
-    resolver = MakeGarbageCollected<V8CustomXPathNSResolver>(
-        script_state, value.As<v8::Object>());
-  }
-  return resolver;
+LocalDOMWindow* ToLocalDOMWindow(const ScriptState* script_state) {
+  return DynamicTo<LocalDOMWindow>(ToExecutionContext(script_state));
 }
 
-DOMWindow* ToDOMWindow(v8::Isolate* isolate, v8::Local<v8::Value> value) {
-  return V8Window::ToImplWithTypeCheck(isolate, value);
+ExecutionContext* ToExecutionContext(const ScriptState* script_state) {
+  RUNTIME_CALL_TIMER_SCOPE(script_state->GetIsolate(),
+                           RuntimeCallStats::CounterId::kToExecutionContext);
+  return static_cast<const ScriptStateImpl*>(script_state)
+      ->GetExecutionContext();
 }
 
 LocalDOMWindow* ToLocalDOMWindow(v8::Local<v8::Context> context) {
   if (context.IsEmpty())
     return nullptr;
-  return To<LocalDOMWindow>(
-      ToDOMWindow(context->GetIsolate(), context->Global()));
+  return DynamicTo<LocalDOMWindow>(ToExecutionContext(context));
 }
 
 LocalDOMWindow* EnteredDOMWindow(v8::Isolate* isolate) {
@@ -666,37 +667,9 @@ LocalDOMWindow* CurrentDOMWindow(v8::Isolate* isolate) {
 }
 
 ExecutionContext* ToExecutionContext(v8::Local<v8::Context> context) {
-  // TODO(jgruber,crbug.com/v8/10460): Change this back to a DCHECK once the
-  // crash has been flushed out.
-  CHECK(!context.IsEmpty());
-
-  RUNTIME_CALL_TIMER_SCOPE(context->GetIsolate(),
-                           RuntimeCallStats::CounterId::kToExecutionContext);
-
-  v8::Local<v8::Object> global_proxy = context->Global();
-
-  // TODO(jgruber,crbug.com/v8/10460): Change these back to a DCHECK once the
-  // crash has been flushed out.
-  CHECK(!global_proxy.IsEmpty());
-  CHECK(global_proxy->IsObject());
-
-  // There are several contexts other than Window, WorkerGlobalScope or
-  // WorkletGlobalScope but entering into ToExecutionContext, namely GC context,
-  // DevTools' context (debug context), and maybe more.  They all don't have
-  // any internal field.
-  if (global_proxy->InternalFieldCount() == 0)
-    return nullptr;
-
-  const WrapperTypeInfo* wrapper_type_info = ToWrapperTypeInfo(global_proxy);
-  if (wrapper_type_info->Equals(V8Window::GetWrapperTypeInfo()))
-    return V8Window::ToImpl(global_proxy)->GetExecutionContext();
-  if (wrapper_type_info->IsSubclass(V8WorkerGlobalScope::GetWrapperTypeInfo()))
-    return V8WorkerGlobalScope::ToImpl(global_proxy)->GetExecutionContext();
-  if (wrapper_type_info->IsSubclass(V8WorkletGlobalScope::GetWrapperTypeInfo()))
-    return V8WorkletGlobalScope::ToImpl(global_proxy)->GetExecutionContext();
-
-  NOTREACHED();
-  return nullptr;
+  DCHECK(!context.IsEmpty());
+  ScriptState* script_state = ScriptState::MaybeFrom(context);
+  return script_state ? ToExecutionContext(script_state) : nullptr;
 }
 
 ExecutionContext* CurrentExecutionContext(v8::Isolate* isolate) {
@@ -711,16 +684,6 @@ LocalFrame* ToLocalFrameIfNotDetached(v8::Local<v8::Context> context) {
   // did return |frame| we could get in trouble because the frame could be
   // navigated to another security origin.
   return nullptr;
-}
-
-void ToFlexibleArrayBufferView(v8::Isolate* isolate,
-                               v8::Local<v8::Value> value,
-                               FlexibleArrayBufferView& result) {
-  if (!value->IsArrayBufferView()) {
-    result.Clear();
-    return;
-  }
-  result.SetContents(value.As<v8::ArrayBufferView>());
 }
 
 static ScriptState* ToScriptStateImpl(LocalFrame* frame,
@@ -745,8 +708,10 @@ v8::Local<v8::Context> ToV8Context(ExecutionContext* context,
       return ToV8Context(frame, world);
   } else if (auto* scope = DynamicTo<WorkerOrWorkletGlobalScope>(context)) {
     if (WorkerOrWorkletScriptController* script = scope->ScriptController()) {
-      if (script->GetScriptState()->ContextIsValid())
-        return script->GetScriptState()->GetContext();
+      if (ScriptState* script_state = script->GetScriptState()) {
+        if (script_state->ContextIsValid())
+          return script_state->GetContext();
+      }
     }
   }
   return v8::Local<v8::Context>();
@@ -768,31 +733,68 @@ v8::Local<v8::Context> ToV8ContextEvenIfDetached(LocalFrame* frame,
   // TODO(crbug.com/1046282): The following bailout is a temporary fix
   // introduced due to crbug.com/1037985 .  Remove this temporary fix once
   // the root cause is fixed.
-  if (frame->IsProvisional())
+  if (frame->IsProvisional()) {
+    base::debug::DumpWithoutCrashing();
     return v8::Local<v8::Context>();
+  }
 
   return frame->WindowProxy(world)->ContextIfInitialized();
+}
+
+v8::Local<v8::Context> ToV8ContextMaybeEmpty(LocalFrame* frame,
+                                             DOMWrapperWorld& world) {
+  DCHECK(frame);
+
+  // TODO(crbug.com/1046282): The following bailout is a temporary fix
+  // introduced due to crbug.com/1037985 .  Remove this temporary fix once
+  // the root cause is fixed.
+  if (frame->IsProvisional()) {
+    base::debug::DumpWithoutCrashing();
+    return v8::Local<v8::Context>();
+  }
+  DCHECK(frame->WindowProxyMaybeUninitialized(world));
+  v8::Local<v8::Context> context =
+      frame->WindowProxyMaybeUninitialized(world)->ContextIfInitialized();
+
+  DCHECK(context.IsEmpty() || frame == ToLocalFrameIfNotDetached(context));
+  return context;
 }
 
 ScriptState* ToScriptState(ExecutionContext* context, DOMWrapperWorld& world) {
   DCHECK(context);
   if (LocalDOMWindow* window = DynamicTo<LocalDOMWindow>(context)) {
-    if (LocalFrame* frame = window->GetFrame())
-      return ToScriptState(frame, world);
+    return ToScriptState(window->GetFrame(), world);
   } else if (auto* scope = DynamicTo<WorkerOrWorkletGlobalScope>(context)) {
-    if (WorkerOrWorkletScriptController* script = scope->ScriptController())
-      return script->GetScriptState();
+    if (WorkerOrWorkletScriptController* script = scope->ScriptController()) {
+      if (ScriptState* script_state = script->GetScriptState()) {
+        if (script_state->ContextIsValid())
+          return script_state;
+      }
+    }
   }
   return nullptr;
 }
 
 ScriptState* ToScriptState(LocalFrame* frame, DOMWrapperWorld& world) {
+  if (!frame)
+    return nullptr;
   v8::HandleScope handle_scope(ToIsolate(frame));
   return ToScriptStateImpl(frame, world);
 }
 
 ScriptState* ToScriptStateForMainWorld(LocalFrame* frame) {
-  return ToScriptState(frame, DOMWrapperWorld::MainWorld());
+  if (!frame) {
+    return nullptr;
+  }
+  auto* isolate = ToIsolate(frame);
+  v8::HandleScope handle_scope(isolate);
+  return ToScriptStateImpl(frame, DOMWrapperWorld::MainWorld(isolate));
+}
+
+ScriptState* ToScriptStateForMainWorld(ExecutionContext* context) {
+  DCHECK(context);
+  return ToScriptState(context,
+                       DOMWrapperWorld::MainWorld(context->GetIsolate()));
 }
 
 bool IsValidEnum(const String& value,
@@ -924,6 +926,34 @@ v8::MicrotaskQueue* ToMicrotaskQueue(ExecutionContext* execution_context) {
 
 v8::MicrotaskQueue* ToMicrotaskQueue(ScriptState* script_state) {
   return ToMicrotaskQueue(ExecutionContext::From(script_state));
+}
+
+scheduler::EventLoop& ToEventLoop(ExecutionContext* execution_context) {
+  DCHECK(execution_context);
+  return *execution_context->GetAgent()->event_loop().get();
+}
+
+scheduler::EventLoop& ToEventLoop(ScriptState* script_state) {
+  return ToEventLoop(ExecutionContext::From(script_state));
+}
+
+bool IsInParallelAlgorithmRunnable(ExecutionContext* execution_context,
+                                   ScriptState* script_state) {
+  if (!execution_context || execution_context->IsContextDestroyed())
+    return false;
+
+  // It's possible that execution_context is the one of the
+  // document tree (i.e. the execution context of the document
+  // that the receiver object currently belongs to) and
+  // script_state is the one of the receiver object's creation
+  // context (i.e. the script state of the V8 context in which
+  // the receiver object was created). So, check the both contexts.
+  // TODO(yukishiino): Find the necessary and sufficient conditions of the
+  // runnability.
+  if (!script_state->ContextIsValid())
+    return false;
+
+  return true;
 }
 
 }  // namespace blink

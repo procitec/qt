@@ -1,7 +1,7 @@
-# Copyright 2017 The Chromium Authors. All rights reserved.
+# Copyright 2017 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
-"""A limited finder & parser for Chromium OWNERS files.
+"""A limited finder & parser for Chromium OWNERS and DIR_METADATA files.
 
 This module is intended to be used within web_tests/external and is
 informative only. For authoritative uses, please rely on `git cl owners`.
@@ -11,6 +11,7 @@ For example, it does not support directives other than email addresses.
 import collections
 import json
 import re
+from typing import NamedTuple, Optional
 
 from blinkpy.common.memoized import memoized
 from blinkpy.common.path_finder import PathFinder
@@ -19,14 +20,22 @@ from blinkpy.common.path_finder import PathFinder
 # In our use case (under external/wpt), we only process the first enclosing
 # OWNERS file for any given path (i.e. always assuming "set noparent"), and we
 # ignore "per-file:" lines, "file:" directives, etc.
+#
+# For DIR_METADATA files, we rely on the dirmd tool from depot_tools to parse
+# them into a JSON blob.
 
 # Recognizes 'X@Y' email addresses. Very simplistic. (from owners.py)
 BASIC_EMAIL_REGEXP = r'^[\w\-\+\%\.]+\@[\w\-\+\%\.]+$'
-WPT_NOTIFY_REGEXP = r'^# *WPT-NOTIFY: *true$'
-COMPONENT_REGEXP = r'^# *COMPONENT: *(.+)$'
 
 
-class DirectoryOwnersExtractor(object):
+class WPTDirMetadata(NamedTuple):
+    team_email: Optional[str] = None
+    monorail_component: Optional[str] = None
+    should_notify: bool = False
+    buganizer_public_component: Optional[str] = None
+
+
+class DirectoryOwnersExtractor:
     def __init__(self, host):
         self.filesystem = host.filesystem
         self.finder = PathFinder(self.filesystem)
@@ -69,22 +78,29 @@ class DirectoryOwnersExtractor(object):
             email_map[tuple(owners)].add(owned_directory_relpath)
         return {
             owners: sorted(owned_directories)
-            for owners, owned_directories in email_map.iteritems()
+            for owners, owned_directories in email_map.items()
         }
 
-    def find_owners_file(self, start_path):
-        """Finds the first enclosing OWNERS file for a given path.
+    def find_owners_file(self, start_path: str) -> Optional[str]:
+        return self._find_first_file(start_path, 'OWNERS')
 
-        Starting from the given path, walks up the directory tree until the
-        first OWNERS file is found or web_tests/external is reached.
+    def find_dir_metadata_file(self, start_path: str) -> Optional[str]:
+        return self._find_first_file(start_path, 'DIR_METADATA')
+
+    def _find_first_file(self, start_path: str,
+                         filename: str) -> Optional[str]:
+        """Find the first enclosing file for a given path.
+
+        Starting from the given path, walk up the directory tree until the first
+        file with the given name is found or web_tests/external is reached.
 
         Args:
             start_path: A relative path from the root of the repository, or an
                 absolute path. The path can be a file or a directory.
+            filename: File to look for in each candidate directory.
 
         Returns:
-            The absolute path to the first OWNERS file found; None if not found
-            or if start_path is outside of web_tests/external.
+            The absolute path to the first file, if found; None otherwise.
         """
         abs_start_path = (start_path if self.filesystem.isabs(start_path) else
                           self.finder.path_from_chromium_base(start_path))
@@ -95,10 +111,10 @@ class DirectoryOwnersExtractor(object):
             return None
         # Stop at web_tests, which is the parent of external_root.
         while directory != self.finder.web_tests_dir():
-            owners_file = self.filesystem.join(directory, 'OWNERS')
+            maybe_file = self.filesystem.join(directory, filename)
             if self.filesystem.isfile(
-                    self.finder.path_from_chromium_base(owners_file)):
-                return owners_file
+                    self.finder.path_from_chromium_base(maybe_file)):
+                return maybe_file
             directory = self.filesystem.dirname(directory)
         return None
 
@@ -120,83 +136,18 @@ class DirectoryOwnersExtractor(object):
                 addresses.append(line)
         return addresses
 
-    def extract_component(self, owners_file):
-        """Extracts the component from an OWNERS file.
-
-        Args:
-            owners_file: An absolute path to an OWNERS file.
-
-        Returns:
-            A string, or None if not found.
-        """
-        dir_metadata = self._read_dir_metadata(owners_file)
-        if dir_metadata and dir_metadata.component:
-            return dir_metadata.component
-
-        contents = self._read_text_file(owners_file)
-        search = re.search(COMPONENT_REGEXP, contents, re.MULTILINE)
-        if search:
-            return search.group(1)
-        return None
-
-    def is_wpt_notify_enabled(self, owners_file):
-        """Checks if the OWNERS file enables WPT-NOTIFY.
-
-        Args:
-            owners_file: An absolute path to an OWNERS file.
-
-        Returns:
-            A boolean.
-        """
-        dir_metadata = self._read_dir_metadata(owners_file)
-        if dir_metadata and dir_metadata.should_notify is not None:
-            return dir_metadata.should_notify
-
-        contents = self._read_text_file(owners_file)
-        return bool(re.search(WPT_NOTIFY_REGEXP, contents, re.MULTILINE))
-
     @memoized
     def _read_text_file(self, path):
         return self.filesystem.read_text_file(path)
 
     @memoized
-    def _read_dir_metadata(self, path):
-        """Read the content from a path.
+    def read_dir_metadata(self, path: str) -> Optional[WPTDirMetadata]:
+        """Read the `DIR_METADATA` of a directory.
 
-        Args:
-            path: An absolute path.
-
-        Returns:
-            A WPTDirMetadata object, or None if not found.
-        """
-        root_path = self.finder.web_tests_dir()
-        dir_path = self.filesystem.dirname(path)
-
-        # dirmd starts with an absolute directory path, `dir_path`, traverses all
-        # parent directories and stops at `root_path` to find the first available DIR_METADATA
-        # file. `root_path` is the web_tests directory.
-        json_data = self.executive.run_command([
-            self.finder.path_from_depot_tools_base('dirmd'), 'compute',
-            '-root', root_path, dir_path
-        ])
-        try:
-            data = json.loads(json_data)
-        except ValueError:
-            return None
-
-        relative_path = self.filesystem.relpath(dir_path, root_path)
-        return WPTDirMetadata(data, relative_path)
-
-
-class WPTDirMetadata(object):
-    def __init__(self, data, path):
-        """Constructor for WPTDirMetadata.
-
-        Args:
-            data: The output of `dirmd` in _read_dir_metadata; e.g.
+        The output of `dirmd` in JSON format looks like:
             {
                 "dirs":{
-                    "tools/binary_size/libsupersize/testdata/mock_source_directory/base":{
+                    "tools/binary_size/libsupersize/testdata":{
                         "monorail":{
                             "project":"chromium",
                             "component":"Blink>Internal"
@@ -210,37 +161,36 @@ class WPTDirMetadata(object):
                 }
             }
 
-            path: The relative directory path of the DIR_METADATA to the web_tests directory;
-                see `relative_path` in _read_dir_metadata.
+        Arguments:
+            path: An absolute path to the directory, *not* the `DIR_METADATA`
+                file itself.
+
+        Returns:
+            A WPTDirMetadata object, or None if not found.
         """
-        self._data = data
-        self._path = path
-
-    def _get_content(self):
-        return self._data['dirs'][self._path]
-
-    def _is_empty(self):
-        return len(self._get_content()) == 0
-
-    @property
-    def team_email(self):
-        if self._is_empty():
-            return None
-        # Only returns a single email.
-        return self._get_content()['teamEmail']
-
-    @property
-    def component(self):
-        if self._is_empty():
-            return None
-        return self._get_content()['monorail']['component']
-
-    @property
-    def should_notify(self):
-        if self._is_empty():
+        # dirmd starts with an absolute directory path, `dir_path`, traverses
+        # all parent directories and stops at `root_path` to find the first
+        # available DIR_METADATA file. `root_path` is the web_tests directory.
+        json_data = self.executive.run_command([
+            self.finder.path_from_depot_tools_base('dirmd'),
+            'read',
+            '-form',
+            'sparse',
+            path,
+        ])
+        # Paths in the dirmd output are relative to the repo root.
+        repo_root = self.finder.path_from_chromium_base()
+        relative_path = self.filesystem.relpath(path, repo_root)
+        try:
+            data = json.loads(json_data)['dirs'][relative_path]
+        except (ValueError, KeyError):
             return None
 
-        notify = self._get_content().get('wpt', {}).get('notify')
         # The value of `notify` is one of ['TRINARY_UNSPECIFIED', 'YES', 'NO'].
-        # Assume that users opt out by default; return True only when notify is 'YES'.
-        return notify == 'YES'
+        # Assume that users opt in by default; return False only when notify is
+        # 'NO'.
+        return WPTDirMetadata(
+            data.get('teamEmail'),
+            data.get('monorail', {}).get('component'),
+            data.get('wpt', {}).get('notify') != 'NO',
+            data.get('buganizerPublic', {}).get('componentId'))

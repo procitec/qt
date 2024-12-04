@@ -1,16 +1,17 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/autofill/core/browser/geo/address_i18n.h"
 
-#include "base/bind.h"
-#include "base/callback.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/notreached.h"
 #include "base/strings/string_split.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/autofill/core/browser/autofill_type.h"
 #include "components/autofill/core/browser/data_model/autofill_profile.h"
+#include "components/autofill/core/browser/field_types.h"
 #include "third_party/libaddressinput/src/cpp/include/libaddressinput/address_data.h"
 #include "third_party/libaddressinput/src/cpp/include/libaddressinput/address_metadata.h"
 
@@ -19,7 +20,7 @@ namespace i18n {
 
 namespace {
 
-base::string16 GetInfoHelper(const AutofillProfile& profile,
+std::u16string GetInfoHelper(const AutofillProfile& profile,
                              const std::string& app_locale,
                              const AutofillType& type) {
   return profile.GetInfo(type, app_locale);
@@ -31,7 +32,7 @@ using ::i18n::addressinput::AddressData;
 using ::i18n::addressinput::AddressField;
 
 std::unique_ptr<AddressData> CreateAddressData(
-    const base::RepeatingCallback<base::string16(const AutofillType&)>&
+    const base::RepeatingCallback<std::u16string(const AutofillType&)>&
         get_info) {
   auto address_data = std::make_unique<AddressData>();
   address_data->recipient =
@@ -39,7 +40,7 @@ std::unique_ptr<AddressData> CreateAddressData(
   address_data->organization =
       base::UTF16ToUTF8(get_info.Run(AutofillType(COMPANY_NAME)));
   address_data->region_code = base::UTF16ToUTF8(
-      get_info.Run(AutofillType(HTML_TYPE_COUNTRY_CODE, HTML_MODE_NONE)));
+      get_info.Run(AutofillType(HtmlFieldType::kCountryCode)));
   address_data->administrative_area =
       base::UTF16ToUTF8(get_info.Run(AutofillType(ADDRESS_HOME_STATE)));
   address_data->locality =
@@ -67,68 +68,57 @@ CreateAddressDataFromAutofillProfile(const AutofillProfile& profile,
   return address_data;
 }
 
-ServerFieldType TypeForField(AddressField address_field, bool billing) {
+FieldType TypeForField(AddressField address_field) {
   switch (address_field) {
     case ::i18n::addressinput::COUNTRY:
-      return billing ? ADDRESS_BILLING_COUNTRY : ADDRESS_HOME_COUNTRY;
+      return ADDRESS_HOME_COUNTRY;
     case ::i18n::addressinput::ADMIN_AREA:
-      return billing ? ADDRESS_BILLING_STATE : ADDRESS_HOME_STATE;
+      return ADDRESS_HOME_STATE;
     case ::i18n::addressinput::LOCALITY:
-      return billing ? ADDRESS_BILLING_CITY : ADDRESS_HOME_CITY;
+      return ADDRESS_HOME_CITY;
     case ::i18n::addressinput::DEPENDENT_LOCALITY:
-      return billing ? ADDRESS_BILLING_DEPENDENT_LOCALITY
-                     : ADDRESS_HOME_DEPENDENT_LOCALITY;
+      return ADDRESS_HOME_DEPENDENT_LOCALITY;
     case ::i18n::addressinput::POSTAL_CODE:
-      return billing ? ADDRESS_BILLING_ZIP : ADDRESS_HOME_ZIP;
+      return ADDRESS_HOME_ZIP;
     case ::i18n::addressinput::SORTING_CODE:
-      return billing ? ADDRESS_BILLING_SORTING_CODE : ADDRESS_HOME_SORTING_CODE;
+      return ADDRESS_HOME_SORTING_CODE;
     case ::i18n::addressinput::STREET_ADDRESS:
-      return billing ? ADDRESS_BILLING_STREET_ADDRESS
-                     : ADDRESS_HOME_STREET_ADDRESS;
+      return ADDRESS_HOME_STREET_ADDRESS;
     case ::i18n::addressinput::ORGANIZATION:
       return COMPANY_NAME;
     case ::i18n::addressinput::RECIPIENT:
-      return billing ? NAME_BILLING_FULL : NAME_FULL;
+      return NAME_FULL;
   }
   NOTREACHED();
   return UNKNOWN_TYPE;
 }
 
-bool FieldForType(ServerFieldType server_type, AddressField* field) {
+bool FieldForType(FieldType server_type, AddressField* field) {
   switch (server_type) {
-    case ADDRESS_BILLING_COUNTRY:
     case ADDRESS_HOME_COUNTRY:
       if (field)
         *field = ::i18n::addressinput::COUNTRY;
       return true;
-    case ADDRESS_BILLING_STATE:
     case ADDRESS_HOME_STATE:
       if (field)
         *field = ::i18n::addressinput::ADMIN_AREA;
       return true;
-    case ADDRESS_BILLING_CITY:
     case ADDRESS_HOME_CITY:
       if (field)
         *field = ::i18n::addressinput::LOCALITY;
       return true;
-    case ADDRESS_BILLING_DEPENDENT_LOCALITY:
     case ADDRESS_HOME_DEPENDENT_LOCALITY:
       if (field)
         *field = ::i18n::addressinput::DEPENDENT_LOCALITY;
       return true;
-    case ADDRESS_BILLING_SORTING_CODE:
     case ADDRESS_HOME_SORTING_CODE:
       if (field)
         *field = ::i18n::addressinput::SORTING_CODE;
       return true;
-    case ADDRESS_BILLING_ZIP:
     case ADDRESS_HOME_ZIP:
       if (field)
         *field = ::i18n::addressinput::POSTAL_CODE;
       return true;
-    case ADDRESS_BILLING_STREET_ADDRESS:
-    case ADDRESS_BILLING_LINE1:
-    case ADDRESS_BILLING_LINE2:
     case ADDRESS_HOME_STREET_ADDRESS:
     case ADDRESS_HOME_LINE1:
     case ADDRESS_HOME_LINE2:
@@ -139,7 +129,6 @@ bool FieldForType(ServerFieldType server_type, AddressField* field) {
       if (field)
         *field = ::i18n::addressinput::ORGANIZATION;
       return true;
-    case NAME_BILLING_FULL:
     case NAME_FULL:
       if (field)
         *field = ::i18n::addressinput::RECIPIENT;
@@ -149,8 +138,7 @@ bool FieldForType(ServerFieldType server_type, AddressField* field) {
   }
 }
 
-bool IsFieldRequired(ServerFieldType server_type,
-                     const std::string& country_code) {
+bool IsFieldRequired(FieldType server_type, const std::string& country_code) {
   ::i18n::addressinput::AddressField field_enum;
   if (FieldForType(server_type, &field_enum)) {
     return ::i18n::addressinput::IsFieldRequired(field_enum, country_code);

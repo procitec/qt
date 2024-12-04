@@ -1,11 +1,13 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef CC_PAINT_FILTER_OPERATION_H_
 #define CC_PAINT_FILTER_OPERATION_H_
 
+#include <array>
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include "base/check_op.h"
@@ -14,7 +16,7 @@
 #include "cc/paint/paint_filter.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "third_party/skia/include/core/SkScalar.h"
-#include "third_party/skia/include/effects/SkBlurImageFilter.h"
+#include "third_party/skia/include/core/SkTileMode.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/rect.h"
 
@@ -28,7 +30,8 @@ namespace cc {
 
 class CC_PAINT_EXPORT FilterOperation {
  public:
-  using Matrix = SkScalar[20];
+  // 4x5 color matrix equivalent to SkColorMatrix.
+  using Matrix = std::array<float, 20>;
   using ShapeRects = std::vector<gfx::Rect>;
   enum FilterType {
     GRAYSCALE,
@@ -46,7 +49,8 @@ class CC_PAINT_EXPORT FilterOperation {
     REFERENCE,
     SATURATING_BRIGHTNESS,  // Not used in CSS/SVG.
     ALPHA_THRESHOLD,        // Not used in CSS/SVG.
-    FILTER_TYPE_LAST = ALPHA_THRESHOLD
+    OFFSET,                 // Not used in CSS/SVG.
+    FILTER_TYPE_LAST = OFFSET
   };
 
   FilterOperation();
@@ -58,22 +62,18 @@ class CC_PAINT_EXPORT FilterOperation {
   FilterType type() const { return type_; }
 
   float amount() const {
+    DCHECK_NE(type_, ALPHA_THRESHOLD);
     DCHECK_NE(type_, COLOR_MATRIX);
     DCHECK_NE(type_, REFERENCE);
     return amount_;
   }
 
-  float outer_threshold() const {
-    DCHECK_EQ(type_, ALPHA_THRESHOLD);
-    return outer_threshold_;
+  gfx::Point offset() const {
+    DCHECK(type_ == DROP_SHADOW || type_ == OFFSET);
+    return offset_;
   }
 
-  gfx::Point drop_shadow_offset() const {
-    DCHECK_EQ(type_, DROP_SHADOW);
-    return drop_shadow_offset_;
-  }
-
-  SkColor drop_shadow_color() const {
+  SkColor4f drop_shadow_color() const {
     DCHECK_EQ(type_, DROP_SHADOW);
     return drop_shadow_color_;
   }
@@ -98,7 +98,7 @@ class CC_PAINT_EXPORT FilterOperation {
     return shape_;
   }
 
-  SkBlurImageFilter::TileMode blur_tile_mode() const {
+  SkTileMode blur_tile_mode() const {
     DCHECK_EQ(type_, BLUR);
     return blur_tile_mode_;
   }
@@ -137,14 +137,13 @@ class CC_PAINT_EXPORT FilterOperation {
 
   static FilterOperation CreateBlurFilter(
       float amount,
-      SkBlurImageFilter::TileMode tile_mode =
-          SkBlurImageFilter::kClampToBlack_TileMode) {
+      SkTileMode tile_mode = SkTileMode::kDecal) {
     return FilterOperation(BLUR, amount, tile_mode);
   }
 
   static FilterOperation CreateDropShadowFilter(const gfx::Point& offset,
                                                 float std_deviation,
-                                                SkColor color) {
+                                                SkColor4f color) {
     return FilterOperation(DROP_SHADOW, offset, std_deviation, color);
   }
 
@@ -165,11 +164,12 @@ class CC_PAINT_EXPORT FilterOperation {
     return FilterOperation(SATURATING_BRIGHTNESS, amount);
   }
 
-  static FilterOperation CreateAlphaThresholdFilter(const ShapeRects& shape,
-                                                    float inner_threshold,
-                                                    float outer_threshold) {
-    return FilterOperation(ALPHA_THRESHOLD, shape, inner_threshold,
-                           outer_threshold);
+  static FilterOperation CreateAlphaThresholdFilter(const ShapeRects& shape) {
+    return FilterOperation(ALPHA_THRESHOLD, shape);
+  }
+
+  static FilterOperation CreateOffsetFilter(const gfx::Point& offset) {
+    return FilterOperation(OFFSET, offset);
   }
 
   bool operator==(const FilterOperation& other) const;
@@ -186,22 +186,18 @@ class CC_PAINT_EXPORT FilterOperation {
   void set_type(FilterType type) { type_ = type; }
 
   void set_amount(float amount) {
+    DCHECK_NE(type_, ALPHA_THRESHOLD);
     DCHECK_NE(type_, COLOR_MATRIX);
     DCHECK_NE(type_, REFERENCE);
     amount_ = amount;
   }
 
-  void set_outer_threshold(float outer_threshold) {
-    DCHECK_EQ(type_, ALPHA_THRESHOLD);
-    outer_threshold_ = outer_threshold;
+  void set_offset(const gfx::Point& offset) {
+    DCHECK(type_ == DROP_SHADOW || type_ == OFFSET);
+    offset_ = offset;
   }
 
-  void set_drop_shadow_offset(const gfx::Point& offset) {
-    DCHECK_EQ(type_, DROP_SHADOW);
-    drop_shadow_offset_ = offset;
-  }
-
-  void set_drop_shadow_color(SkColor color) {
+  void set_drop_shadow_color(SkColor4f color) {
     DCHECK_EQ(type_, DROP_SHADOW);
     drop_shadow_color_ = color;
   }
@@ -227,7 +223,7 @@ class CC_PAINT_EXPORT FilterOperation {
     shape_ = shape;
   }
 
-  void set_blur_tile_mode(SkBlurImageFilter::TileMode tile_mode) {
+  void set_blur_tile_mode(SkTileMode tile_mode) {
     DCHECK_EQ(type_, BLUR);
     blur_tile_mode_ = tile_mode;
   }
@@ -255,38 +251,34 @@ class CC_PAINT_EXPORT FilterOperation {
  private:
   FilterOperation(FilterType type, float amount);
 
-  FilterOperation(FilterType type,
-                  float amount,
-                  SkBlurImageFilter::TileMode tile_mode);
+  FilterOperation(FilterType type, float amount, SkTileMode tile_mode);
 
   FilterOperation(FilterType type,
                   const gfx::Point& offset,
                   float stdDeviation,
-                  SkColor color);
+                  SkColor4f color);
 
   FilterOperation(FilterType, const Matrix& matrix);
 
   FilterOperation(FilterType type, float amount, int inset);
 
+  FilterOperation(FilterType type, const gfx::Point& offset);
+
   FilterOperation(FilterType type, sk_sp<PaintFilter> image_filter);
 
-  FilterOperation(FilterType type,
-                  const ShapeRects& shape,
-                  float inner_threshold,
-                  float outer_threshold);
+  FilterOperation(FilterType type, const ShapeRects& shape);
 
   FilterType type_;
   float amount_;
-  float outer_threshold_;
-  gfx::Point drop_shadow_offset_;
-  SkColor drop_shadow_color_;
+  gfx::Point offset_;
+  SkColor4f drop_shadow_color_;
   sk_sp<PaintFilter> image_filter_;
   Matrix matrix_;
   int zoom_inset_;
 
   // Use a collection of |gfx::Rect| to make serialization simpler.
   ShapeRects shape_;
-  SkBlurImageFilter::TileMode blur_tile_mode_;
+  SkTileMode blur_tile_mode_;
 };
 
 }  // namespace cc

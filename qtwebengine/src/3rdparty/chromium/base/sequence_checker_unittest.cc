@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,21 +10,20 @@
 #include <string>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/bind_helpers.h"
-#include "base/callback_forward.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
+#include "base/sequence_checker_impl.h"
 #include "base/sequence_token.h"
-#include "base/single_thread_task_runner.h"
-#include "base/task/post_task.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/task/thread_pool.h"
-#include "base/test/bind_test_util.h"
+#include "base/test/bind.h"
 #include "base/test/gtest_util.h"
 #include "base/test/task_environment.h"
 #include "base/threading/simple_thread.h"
 #include "base/threading/thread_local.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-namespace base {
+namespace base::internal {
 
 namespace {
 
@@ -58,14 +57,6 @@ void ExpectCalledOnValidSequence(SequenceCheckerImpl* sequence_checker) {
   EXPECT_TRUE(sequence_checker->CalledOnValidSequence());
 }
 
-void ExpectCalledOnValidSequenceWithSequenceToken(
-    SequenceCheckerImpl* sequence_checker,
-    SequenceToken sequence_token) {
-  ScopedSetSequenceTokenForCurrentThread
-      scoped_set_sequence_token_for_current_thread(sequence_token);
-  ExpectCalledOnValidSequence(sequence_checker);
-}
-
 void ExpectNotCalledOnValidSequence(SequenceCheckerImpl* sequence_checker) {
   ASSERT_TRUE(sequence_checker);
   EXPECT_FALSE(sequence_checker->CalledOnValidSequence());
@@ -73,54 +64,89 @@ void ExpectNotCalledOnValidSequence(SequenceCheckerImpl* sequence_checker) {
 
 }  // namespace
 
-TEST(SequenceCheckerTest, CallsAllowedOnSameThreadNoSequenceToken) {
+TEST(SequenceCheckerTest, NoTaskScope) {
   SequenceCheckerImpl sequence_checker;
   EXPECT_TRUE(sequence_checker.CalledOnValidSequence());
 }
 
-TEST(SequenceCheckerTest, CallsAllowedOnSameThreadSameSequenceToken) {
-  ScopedSetSequenceTokenForCurrentThread
-      scoped_set_sequence_token_for_current_thread(SequenceToken::Create());
+TEST(SequenceCheckerTest, TaskScope) {
+  TaskScope task_scope(SequenceToken::Create(),
+                       /* is_thread_bound=*/false);
   SequenceCheckerImpl sequence_checker;
   EXPECT_TRUE(sequence_checker.CalledOnValidSequence());
 }
 
-TEST(SequenceCheckerTest, CallsDisallowedOnDifferentThreadsNoSequenceToken) {
+TEST(SequenceCheckerTest, TaskScopeThreadBound) {
+  TaskScope task_scope(SequenceToken::Create(),
+                       /* is_thread_bound=*/true);
+  SequenceCheckerImpl sequence_checker;
+  EXPECT_TRUE(sequence_checker.CalledOnValidSequence());
+}
+
+TEST(SequenceCheckerTest, DifferentThreadNoTaskScope) {
   SequenceCheckerImpl sequence_checker;
   RunCallbackThread thread(
       BindOnce(&ExpectNotCalledOnValidSequence, Unretained(&sequence_checker)));
 }
 
-TEST(SequenceCheckerTest, CallsAllowedOnDifferentThreadsSameSequenceToken) {
-  const SequenceToken sequence_token(SequenceToken::Create());
-
-  ScopedSetSequenceTokenForCurrentThread
-      scoped_set_sequence_token_for_current_thread(sequence_token);
+TEST(SequenceCheckerTest, DifferentThreadDifferentSequenceToken) {
   SequenceCheckerImpl sequence_checker;
-  EXPECT_TRUE(sequence_checker.CalledOnValidSequence());
-
-  RunCallbackThread thread(
-      BindOnce(&ExpectCalledOnValidSequenceWithSequenceToken,
-               Unretained(&sequence_checker), sequence_token));
+  RunCallbackThread thread(BindLambdaForTesting([&]() {
+    TaskScope task_scope(SequenceToken::Create(),
+                         /* is_thread_bound=*/false);
+    ExpectNotCalledOnValidSequence(&sequence_checker);
+  }));
 }
 
-TEST(SequenceCheckerTest, CallsDisallowedOnSameThreadDifferentSequenceToken) {
+TEST(SequenceCheckerTest, DifferentThreadDifferentSequenceTokenThreadBound) {
+  SequenceCheckerImpl sequence_checker;
+  RunCallbackThread thread(BindLambdaForTesting([&]() {
+    TaskScope task_scope(SequenceToken::Create(),
+                         /* is_thread_bound=*/true);
+    ExpectNotCalledOnValidSequence(&sequence_checker);
+  }));
+}
+
+TEST(SequenceCheckerTest, DifferentThreadSameSequenceToken) {
+  const SequenceToken token = SequenceToken::Create();
+  TaskScope task_scope(token, /* is_thread_bound=*/false);
+  SequenceCheckerImpl sequence_checker;
+  RunCallbackThread thread(BindLambdaForTesting([&]() {
+    TaskScope task_scope(token, /* is_thread_bound=*/false);
+    ExpectCalledOnValidSequence(&sequence_checker);
+  }));
+}
+
+TEST(SequenceCheckerTest, DifferentThreadSameSequenceTokenThreadBound) {
+  // Note: A callback running synchronously in `RunOrPostTask()` may have a
+  // non-thread-bound `TaskScope` associated with the same `SequenceToken` as
+  // another thread-bound `TaskScope`. This test recreates this case.
+  const SequenceToken token = SequenceToken::Create();
+  TaskScope task_scope(token, /* is_thread_bound=*/true);
+  SequenceCheckerImpl sequence_checker;
+  RunCallbackThread thread(BindLambdaForTesting([&]() {
+    TaskScope task_scope(token, /* is_thread_bound=*/false);
+    ExpectCalledOnValidSequence(&sequence_checker);
+  }));
+}
+
+TEST(SequenceCheckerTest, SameThreadDifferentSequenceToken) {
   std::unique_ptr<SequenceCheckerImpl> sequence_checker;
 
   {
-    ScopedSetSequenceTokenForCurrentThread
-        scoped_set_sequence_token_for_current_thread(SequenceToken::Create());
-    sequence_checker.reset(new SequenceCheckerImpl);
+    TaskScope task_scope(SequenceToken::Create(),
+                         /* is_thread_bound=*/false);
+    sequence_checker = std::make_unique<SequenceCheckerImpl>();
   }
 
   {
     // Different SequenceToken.
-    ScopedSetSequenceTokenForCurrentThread
-        scoped_set_sequence_token_for_current_thread(SequenceToken::Create());
+    TaskScope task_scope(SequenceToken::Create(),
+                         /* is_thread_bound=*/false);
     EXPECT_FALSE(sequence_checker->CalledOnValidSequence());
   }
 
-  // No SequenceToken.
+  // No explicit SequenceToken.
   EXPECT_FALSE(sequence_checker->CalledOnValidSequence());
 }
 
@@ -128,9 +154,9 @@ TEST(SequenceCheckerTest, DetachFromSequence) {
   std::unique_ptr<SequenceCheckerImpl> sequence_checker;
 
   {
-    ScopedSetSequenceTokenForCurrentThread
-        scoped_set_sequence_token_for_current_thread(SequenceToken::Create());
-    sequence_checker.reset(new SequenceCheckerImpl);
+    TaskScope task_scope(SequenceToken::Create(),
+                         /* is_thread_bound=*/false);
+    sequence_checker = std::make_unique<SequenceCheckerImpl>();
   }
 
   sequence_checker->DetachFromSequence();
@@ -138,8 +164,8 @@ TEST(SequenceCheckerTest, DetachFromSequence) {
   {
     // Verify that CalledOnValidSequence() returns true when called with
     // a different sequence token after a call to DetachFromSequence().
-    ScopedSetSequenceTokenForCurrentThread
-        scoped_set_sequence_token_for_current_thread(SequenceToken::Create());
+    TaskScope task_scope(SequenceToken::Create(),
+                         /* is_thread_bound=*/false);
     EXPECT_TRUE(sequence_checker->CalledOnValidSequence());
   }
 }
@@ -215,7 +241,7 @@ TEST(SequenceCheckerTest, MoveFromDetachedRebinds) {
 }
 
 TEST(SequenceCheckerTest, MoveOffSequenceBanned) {
-  testing::GTEST_FLAG(death_test_style) = "threadsafe";
+  GTEST_FLAG_SET(death_test_style, "threadsafe");
 
   SequenceCheckerImpl other_sequence;
   other_sequence.DetachFromSequence();
@@ -227,8 +253,8 @@ TEST(SequenceCheckerTest, MoveOffSequenceBanned) {
 }
 
 TEST(SequenceCheckerMacroTest, Macros) {
-  auto scope = std::make_unique<ScopedSetSequenceTokenForCurrentThread>(
-      SequenceToken::Create());
+  auto scope = std::make_unique<TaskScope>(SequenceToken::Create(),
+                                           /* is_thread_bound=*/false);
   SEQUENCE_CHECKER(my_sequence_checker);
 
   {
@@ -258,29 +284,42 @@ TEST(SequenceCheckerMacroTest, Macros) {
 // in ~SequenceCheckerOwner.
 class SequenceCheckerOwner {
  public:
-  SequenceCheckerOwner() = default;
+  explicit SequenceCheckerOwner(SequenceCheckerImpl* other_checker)
+      : other_checker_(other_checker) {}
   SequenceCheckerOwner(const SequenceCheckerOwner&) = delete;
   SequenceCheckerOwner& operator=(const SequenceCheckerOwner&) = delete;
-  ~SequenceCheckerOwner() { EXPECT_TRUE(checker_.CalledOnValidSequence()); }
+  ~SequenceCheckerOwner() {
+    // Check passes on TLS destruction.
+    EXPECT_TRUE(checker_.CalledOnValidSequence());
+
+    // Check also passes on TLS destruction after move assignment.
+    *other_checker_ = std::move(checker_);
+    EXPECT_TRUE(other_checker_->CalledOnValidSequence());
+  }
 
  private:
   SequenceCheckerImpl checker_;
+  raw_ptr<SequenceCheckerImpl> other_checker_;
 };
 
 // Verifies SequenceCheckerImpl::CalledOnValidSequence() returns true if called
 // during thread destruction.
-TEST(SequenceCheckerTest, CalledOnValidSequenceFromThreadDestruction) {
+TEST(SequenceCheckerTest, FromThreadDestruction) {
+  SequenceChecker::EnableStackLogging();
+
+  SequenceCheckerImpl other_checker;
   ThreadLocalOwnedPointer<SequenceCheckerOwner> thread_local_owner;
   {
     test::TaskEnvironment task_environment;
     auto task_runner = ThreadPool::CreateSequencedTaskRunner({});
     task_runner->PostTask(
         FROM_HERE, BindLambdaForTesting([&]() {
-          thread_local_owner.Set(std::make_unique<SequenceCheckerOwner>());
+          thread_local_owner.Set(
+              std::make_unique<SequenceCheckerOwner>(&other_checker));
         }));
     task_runner = nullptr;
     task_environment.RunUntilIdle();
   }
 }
 
-}  // namespace base
+}  // namespace base::internal

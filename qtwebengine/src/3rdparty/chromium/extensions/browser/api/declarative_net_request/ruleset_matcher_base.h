@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,9 +6,8 @@
 #define EXTENSIONS_BROWSER_API_DECLARATIVE_NET_REQUEST_RULESET_MATCHER_BASE_H_
 
 #include <map>
+#include <optional>
 #include <vector>
-
-#include "base/optional.h"
 #include "content/public/browser/global_routing_id.h"
 #include "extensions/browser/api/declarative_net_request/flat/extension_ruleset_generated.h"
 #include "extensions/browser/api/declarative_net_request/request_action.h"
@@ -18,12 +17,11 @@
 class GURL;
 
 namespace content {
+class NavigationHandle;
 class RenderFrameHost;
 }  // namespace content
 
-namespace extensions {
-
-namespace declarative_net_request {
+namespace extensions::declarative_net_request {
 struct RequestParams;
 
 // An abstract class for rule matchers. Overridden by different kinds of
@@ -32,26 +30,46 @@ class RulesetMatcherBase {
  public:
   RulesetMatcherBase(const ExtensionId& extension_id, RulesetID ruleset_id);
 
+  RulesetMatcherBase(const RulesetMatcherBase&) = delete;
+  RulesetMatcherBase& operator=(const RulesetMatcherBase&) = delete;
+
   virtual ~RulesetMatcherBase();
 
   // Returns the ruleset's highest priority matching RequestAction for the
-  // onBeforeRequest phase, or base::nullopt if the ruleset has no matching
+  // onBeforeRequest phase, or std::nullopt if the ruleset has no matching
   // rule. Also takes into account any matching allowAllRequests rules for the
   // ancestor frames.
-  base::Optional<RequestAction> GetBeforeRequestAction(
+  std::optional<RequestAction> GetBeforeRequestAction(
+      const RequestParams& params) const;
+
+  // Returns the ruleset's highest priority matching RequestAction for the
+  // onHeadersReceived phase, or std::nullopt if the ruleset has no matching
+  // rule. Also takes into account any matching allowAllRequests rules for the
+  // ancestor frames.
+  std::optional<RequestAction> GetHeadersReceivedAction(
       const RequestParams& params) const;
 
   // Returns a vector of RequestAction for all matching modifyHeaders rules
   // with priority greater than |min_priority| if specified.
+  // TODO(crbug.com/1141166): Add a version of this that matches modifyHeaders
+  // rules based on response headers too.
   virtual std::vector<RequestAction> GetModifyHeadersActions(
       const RequestParams& params,
-      base::Optional<uint64_t> min_priority) const = 0;
+      std::optional<uint64_t> min_priority) const = 0;
 
   // Returns whether this modifies "extraHeaders".
   virtual bool IsExtraHeadersMatcher() const = 0;
 
   // Returns the number of rules in this matcher.
   virtual size_t GetRulesCount() const = 0;
+
+  // Returns the number of rules to be matched in the onBeforeRequest phase in
+  // this matcher.
+  virtual size_t GetBeforeRequestRulesCount() const = 0;
+
+  // Returns the number of rules to be matched in the onHeadersReceived phase in
+  // this matcher.
+  virtual size_t GetHeadersReceivedRulesCount() const = 0;
 
   // Returns the extension ID with which this matcher is associated.
   const ExtensionId& extension_id() const { return extension_id_; }
@@ -61,11 +79,11 @@ class RulesetMatcherBase {
 
   void OnRenderFrameCreated(content::RenderFrameHost* host);
   void OnRenderFrameDeleted(content::RenderFrameHost* host);
-  void OnDidFinishNavigation(content::RenderFrameHost* host);
+  void OnDidFinishNavigation(content::NavigationHandle* navigation_handle);
 
   // Returns the tracked highest priority matching allowsAllRequests action, if
   // any, for |host|.
-  base::Optional<RequestAction> GetAllowlistedFrameActionForTesting(
+  std::optional<RequestAction> GetAllowlistedFrameActionForTesting(
       content::RenderFrameHost* host) const;
 
  protected:
@@ -88,19 +106,19 @@ class RulesetMatcherBase {
       const url_pattern_index::flat::UrlRule& rule) const;
 
   // Helper to create a RequestAction of type |REDIRECT| with the request
-  // upgraded. Returns base::nullopt if the request is not upgradeable.
-  base::Optional<RequestAction> CreateUpgradeAction(
+  // upgraded. Returns std::nullopt if the request is not upgradeable.
+  std::optional<RequestAction> CreateUpgradeAction(
       const RequestParams& params,
       const url_pattern_index::flat::UrlRule& rule) const;
 
   // Helpers to create a RequestAction of type |REDIRECT| with the appropriate
-  // redirect url. Can return base::nullopt if the redirect url is ill-formed or
+  // redirect url. Can return std::nullopt if the redirect url is ill-formed or
   // same as the current request url.
-  base::Optional<RequestAction> CreateRedirectActionFromMetadata(
+  std::optional<RequestAction> CreateRedirectActionFromMetadata(
       const RequestParams& params,
       const url_pattern_index::flat::UrlRule& rule,
       const ExtensionMetadataList& metadata_list) const;
-  base::Optional<RequestAction> CreateRedirectAction(
+  std::optional<RequestAction> CreateRedirectAction(
       const RequestParams& params,
       const url_pattern_index::flat::UrlRule& rule,
       GURL redirect_url) const;
@@ -114,17 +132,27 @@ class RulesetMatcherBase {
 
  private:
   // Returns the ruleset's highest priority matching allowAllRequests action or
-  // base::nullopt if there is no corresponding matching rule. Only takes into
+  // std::nullopt if there is no corresponding matching rule. Only takes into
   // account the request |params| passed in. This doesn't take any account any
   // matching allowAllRequests rules for ancestor frames.
-  virtual base::Optional<RequestAction> GetAllowAllRequestsAction(
+  // TODO(crbug.com/1141166): Currently, this only examines allowAllRequest
+  // rules that are to be matched in onBeforeRequest.
+  virtual std::optional<RequestAction> GetAllowAllRequestsAction(
       const RequestParams& params) const = 0;
 
   // Returns the ruleset's highest priority matching RequestAction for the
-  // onBeforeRequest phase, or base::nullopt if the ruleset has no matching
+  // onBeforeRequest phase, or std::nullopt if the ruleset has no matching
   // rule. This doesn't take any account any matching allowAllRequests rules for
   // ancestor frames.
-  virtual base::Optional<RequestAction> GetBeforeRequestActionIgnoringAncestors(
+  virtual std::optional<RequestAction> GetBeforeRequestActionIgnoringAncestors(
+      const RequestParams& params) const = 0;
+
+  // Returns the ruleset's highest priority matching RequestAction for the
+  // onHeadersReceived phase, or std::nullopt if the ruleset has no matching
+  // rule. This doesn't take any account any matching allowAllRequests rules for
+  // ancestor frames.
+  virtual std::optional<RequestAction>
+  GetHeadersReceivedActionIgnoringAncestors(
       const RequestParams& params) const = 0;
 
   RequestAction CreateRequestAction(
@@ -132,9 +160,9 @@ class RulesetMatcherBase {
       const url_pattern_index::flat::UrlRule& rule) const;
 
   // Returns the matching RequestAction from |allowlisted_frames_| or
-  // base::nullopt if none is found.
-  base::Optional<RequestAction> GetAllowlistedFrameAction(
-      content::GlobalFrameRoutingId frame_id) const;
+  // std::nullopt if none is found.
+  std::optional<RequestAction> GetAllowlistedFrameAction(
+      content::GlobalRenderFrameHostId frame_id) const;
 
   const ExtensionId extension_id_;
   const RulesetID ruleset_id_;
@@ -142,13 +170,10 @@ class RulesetMatcherBase {
   // Stores the IDs for the RenderFrameHosts which are allow-listed due to an
   // allowAllRequests action and the corresponding highest priority
   // RequestAction.
-  std::map<content::GlobalFrameRoutingId, const RequestAction>
+  std::map<content::GlobalRenderFrameHostId, const RequestAction>
       allowlisted_frames_;
-
-  DISALLOW_COPY_AND_ASSIGN(RulesetMatcherBase);
 };
 
-}  // namespace declarative_net_request
-}  // namespace extensions
+}  // namespace extensions::declarative_net_request
 
 #endif  // EXTENSIONS_BROWSER_API_DECLARATIVE_NET_REQUEST_RULESET_MATCHER_BASE_H_

@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,13 +10,16 @@
 #include <vector>
 
 #include "third_party/libunwindstack/src/libunwindstack/include/unwindstack/Elf.h"
+#include "third_party/libunwindstack/src/libunwindstack/include/unwindstack/Maps.h"
 #include "third_party/libunwindstack/src/libunwindstack/include/unwindstack/Memory.h"
 #include "third_party/libunwindstack/src/libunwindstack/include/unwindstack/Regs.h"
 
 #include "base/memory/ptr_util.h"
+#include "base/metrics/metrics_hashes.h"
 #include "base/notreached.h"
 #include "base/profiler/module_cache.h"
-#include "base/profiler/native_unwinder.h"
+#include "base/profiler/native_unwinder_android_map_delegate.h"
+#include "base/profiler/native_unwinder_android_memory_regions_map_impl.h"
 #include "base/profiler/profile_builder.h"
 #include "build/build_config.h"
 
@@ -33,15 +36,27 @@ namespace {
 
 class NonElfModule : public ModuleCache::Module {
  public:
-  NonElfModule(unwindstack::MapInfo* map_info)
-      : start_(map_info->start),
-        size_(map_info->end - start_),
-        map_info_name_(map_info->name) {}
+  explicit NonElfModule(unwindstack::MapInfo* map_info,
+                        bool is_java_name_hashing_enabled)
+      : start_(map_info->start()),
+        size_(map_info->end() - start_),
+        map_info_name_(map_info->name()),
+        is_java_name_hashing_enabled_(is_java_name_hashing_enabled) {}
   ~NonElfModule() override = default;
 
   uintptr_t GetBaseAddress() const override { return start_; }
 
-  std::string GetId() const override { return std::string(); }
+  std::string GetId() const override {
+    // We provide a non-empty string only if Java name hashing is enabled, to
+    // allow us to easily filter out the results from outside the experiment.
+    if (is_java_name_hashing_enabled_) {
+      // Synthetic build id to use for DEX files that provide hashed function
+      // names rather than instruction pointers.
+      return "44444444BC18564712E780518FB3032B999";
+    } else {
+      return "";
+    }
+  }
 
   FilePath GetDebugBasename() const override {
     return FilePath(map_info_name_);
@@ -57,6 +72,7 @@ class NonElfModule : public ModuleCache::Module {
   const uintptr_t start_;
   const size_t size_;
   const std::string map_info_name_;
+  const bool is_java_name_hashing_enabled_;
 };
 
 std::unique_ptr<unwindstack::Regs> CreateFromRegisterContext(
@@ -106,31 +122,44 @@ size_t UnwindStackMemoryAndroid::Read(uint64_t addr, void* dst, size_t size) {
 }
 
 // static
-std::unique_ptr<unwindstack::Maps> NativeUnwinderAndroid::CreateMaps() {
-  auto maps = std::make_unique<unwindstack::LocalMaps>();
-  if (maps->Parse())
-    return maps;
-  return nullptr;
-}
+std::unique_ptr<NativeUnwinderAndroidMemoryRegionsMap>
+NativeUnwinderAndroid::CreateMemoryRegionsMap(bool use_updatable_maps) {
+  std::unique_ptr<unwindstack::Maps> maps;
+  if (use_updatable_maps) {
+    maps = std::make_unique<unwindstack::LocalUpdatableMaps>();
+  } else {
+    maps = std::make_unique<unwindstack::LocalMaps>();
+  }
+  const bool success = maps->Parse();
+  DCHECK(success);
 
-// static
-std::unique_ptr<unwindstack::Memory>
-NativeUnwinderAndroid::CreateProcessMemory() {
-  return unwindstack::Memory::CreateLocalProcessMemory();
+  return std::make_unique<NativeUnwinderAndroidMemoryRegionsMapImpl>(
+      std::move(maps), unwindstack::Memory::CreateLocalProcessMemory());
 }
 
 NativeUnwinderAndroid::NativeUnwinderAndroid(
-    unwindstack::Maps* memory_regions_map,
-    unwindstack::Memory* process_memory,
-    uintptr_t exclude_module_with_base_address)
-    : memory_regions_map_(memory_regions_map),
-      process_memory_(process_memory),
-      exclude_module_with_base_address_(exclude_module_with_base_address) {}
+    uintptr_t exclude_module_with_base_address,
+    NativeUnwinderAndroidMapDelegate* map_delegate,
+    bool is_java_name_hashing_enabled)
+    : is_java_name_hashing_enabled_(is_java_name_hashing_enabled),
+      exclude_module_with_base_address_(exclude_module_with_base_address),
+      map_delegate_(map_delegate),
+      memory_regions_map_(
+          static_cast<NativeUnwinderAndroidMemoryRegionsMapImpl*>(
+              map_delegate->GetMapReference())) {
+  DCHECK(map_delegate_);
+  DCHECK(memory_regions_map_);
+}
 
-NativeUnwinderAndroid::~NativeUnwinderAndroid() = default;
+NativeUnwinderAndroid::~NativeUnwinderAndroid() {
+  if (module_cache())
+    module_cache()->UnregisterAuxiliaryModuleProvider(this);
 
-void NativeUnwinderAndroid::AddInitialModules(ModuleCache* module_cache) {
-  AddInitialModulesFromMaps(*memory_regions_map_, module_cache);
+  map_delegate_->ReleaseMapReference();
+}
+
+void NativeUnwinderAndroid::InitializeModules() {
+  module_cache()->RegisterAuxiliaryModuleProvider(this);
 }
 
 bool NativeUnwinderAndroid::CanUnwindFrom(const Frame& current_frame) const {
@@ -141,8 +170,7 @@ bool NativeUnwinderAndroid::CanUnwindFrom(const Frame& current_frame) const {
 
 UnwindResult NativeUnwinderAndroid::TryUnwind(RegisterContext* thread_context,
                                               uintptr_t stack_top,
-                                              ModuleCache* module_cache,
-                                              std::vector<Frame>* stack) const {
+                                              std::vector<Frame>* stack) {
   auto regs = CreateFromRegisterContext(thread_context);
   DCHECK(regs);
   unwindstack::ArchEnum arch = regs->Arch();
@@ -150,31 +178,39 @@ UnwindResult NativeUnwinderAndroid::TryUnwind(RegisterContext* thread_context,
   do {
     uint64_t cur_pc = regs->pc();
     uint64_t cur_sp = regs->sp();
-    unwindstack::MapInfo* map_info = memory_regions_map_->Find(cur_pc);
+    unwindstack::MapInfo* map_info =
+        memory_regions_map_->maps()->Find(cur_pc).get();
     if (map_info == nullptr ||
-        map_info->flags & unwindstack::MAPS_FLAGS_DEVICE_MAP) {
+        map_info->flags() & unwindstack::MAPS_FLAGS_DEVICE_MAP) {
       break;
     }
 
     unwindstack::Elf* elf =
-        map_info->GetElf({process_memory_, [](unwindstack::Memory*) {}}, arch);
+        map_info->GetElf(memory_regions_map_->memory(), arch);
     if (!elf->valid())
       break;
 
     UnwindStackMemoryAndroid stack_memory(cur_sp, stack_top);
     uintptr_t rel_pc = elf->GetRelPc(cur_pc, map_info);
+    bool is_signal_frame = false;
     bool finished = false;
+    // map_info->GetElf() may return a valid elf whose memory() is nullptr.
+    // In the case, elf->StepIfSignalHandler() and elf->Step() are not
+    // available, because the method depends on elf->memory().
+    // (Regarding Step(), EvalRegister() needs memory.)
     bool stepped =
-        elf->StepIfSignalHandler(rel_pc, regs.get(), &stack_memory) ||
-        elf->Step(rel_pc, regs.get(), &stack_memory, &finished);
+        elf->memory() &&
+        (elf->StepIfSignalHandler(rel_pc, regs.get(), &stack_memory) ||
+         elf->Step(rel_pc, regs.get(), &stack_memory, &finished,
+                   &is_signal_frame));
     if (stepped && finished)
-      return UnwindResult::COMPLETED;
+      return UnwindResult::kCompleted;
 
     if (!stepped) {
       // Stepping failed. Try unwinding using return address.
       if (stack->size() == 1) {
         if (!regs->SetPcFromReturnAddress(&stack_memory))
-          return UnwindResult::ABORTED;
+          return UnwindResult::kAborted;
       } else {
         break;
       }
@@ -182,21 +218,22 @@ UnwindResult NativeUnwinderAndroid::TryUnwind(RegisterContext* thread_context,
 
     // If the pc and sp didn't change, then consider everything stopped.
     if (cur_pc == regs->pc() && cur_sp == regs->sp())
-      return UnwindResult::ABORTED;
+      return UnwindResult::kAborted;
 
     // Exclusive range of expected stack pointer values after the unwind.
     struct {
       uintptr_t start;
       uintptr_t end;
-    } expected_stack_pointer_range = {cur_sp, stack_top};
+    } expected_stack_pointer_range = {static_cast<uintptr_t>(cur_sp),
+                                      stack_top};
     if (regs->sp() < expected_stack_pointer_range.start ||
         regs->sp() >= expected_stack_pointer_range.end) {
-      return UnwindResult::ABORTED;
+      return UnwindResult::kAborted;
     }
 
     if (regs->dex_pc() != 0) {
       // Add a frame to represent the dex file.
-      EmitDexFrame(regs->dex_pc(), module_cache, stack);
+      EmitDexFrame(regs->dex_pc(), arch, stack);
 
       // Clear the dex pc so that we don't repeat this frame later.
       regs->set_dex_pc(0);
@@ -206,63 +243,68 @@ UnwindResult NativeUnwinderAndroid::TryUnwind(RegisterContext* thread_context,
     // GetExistingModuleForAddress because the unwound-to address may be in a
     // module associated with a different unwinder.
     const ModuleCache::Module* module =
-        module_cache->GetModuleForAddress(regs->pc());
+        module_cache()->GetModuleForAddress(regs->pc());
     stack->emplace_back(regs->pc(), module);
   } while (CanUnwindFrom(stack->back()));
 
   // Restore registers necessary for further unwinding in |thread_context|.
   CopyToRegisterContext(regs.get(), thread_context);
-  return UnwindResult::UNRECOGNIZED_FRAME;
+  return UnwindResult::kUnrecognizedFrame;
 }
 
-// static
-void NativeUnwinderAndroid::AddInitialModulesFromMaps(
-    const unwindstack::Maps& memory_regions_map,
-    ModuleCache* module_cache) {
-  // The effect of this loop is to create modules for the executable regions in
-  // the memory map. Regions composing a mapped ELF file are handled specially
-  // however: for just one module extending from the ELF base address to the
-  // *last* executable region backed by the file is implicitly created by
-  // ModuleCache. This avoids duplicate module instances covering the same
-  // in-memory module in the case that a module has multiple mmapped executable
-  // regions.
-  for (const std::unique_ptr<unwindstack::MapInfo>& region :
-       memory_regions_map) {
-    if (!(region->flags & PROT_EXEC))
-      continue;
-
-    // Use the standard ModuleCache POSIX module representation for ELF files.
-    // This call returns the containing ELF module for the region, creating it
-    // if it doesn't exist.
-    if (module_cache->GetModuleForAddress(
-            static_cast<uintptr_t>(region->start))) {
-      continue;
-    }
-
-    // Non-ELF modules are represented with NonElfModule.
-    module_cache->AddCustomNativeModule(
-        std::make_unique<NonElfModule>(region.get()));
+std::unique_ptr<const ModuleCache::Module>
+NativeUnwinderAndroid::TryCreateModuleForAddress(uintptr_t address) {
+  unwindstack::MapInfo* map_info =
+      memory_regions_map_->maps()->Find(address).get();
+  if (map_info == nullptr || !(map_info->flags() & PROT_EXEC) ||
+      map_info->flags() & unwindstack::MAPS_FLAGS_DEVICE_MAP) {
+    return nullptr;
   }
+  return std::make_unique<NonElfModule>(map_info,
+                                        is_java_name_hashing_enabled_);
+}
+
+unwindstack::DexFiles* NativeUnwinderAndroid::GetOrCreateDexFiles(
+    unwindstack::ArchEnum arch) {
+  if (!dex_files_) {
+    dex_files_ = unwindstack::CreateDexFiles(
+        arch, memory_regions_map_->memory(), search_libs_);
+  }
+  return dex_files_.get();
 }
 
 void NativeUnwinderAndroid::EmitDexFrame(uintptr_t dex_pc,
-                                         ModuleCache* module_cache,
-                                         std::vector<Frame>* stack) const {
+                                         unwindstack::ArchEnum arch,
+                                         std::vector<Frame>* stack) {
   const ModuleCache::Module* module =
-      module_cache->GetExistingModuleForAddress(dex_pc);
+      module_cache()->GetExistingModuleForAddress(dex_pc);
   if (!module) {
-    // The region containing |dex_pc| may not be in |module_cache| since it's
+    // The region containing |dex_pc| may not be in module_cache() since it's
     // usually not executable (.dex file). Since non-executable regions
     // are used much less commonly, it's lazily added here instead of from
     // AddInitialModulesFromMaps().
-    unwindstack::MapInfo* map_info = memory_regions_map_->Find(dex_pc);
+    unwindstack::MapInfo* map_info =
+        memory_regions_map_->maps()->Find(dex_pc).get();
     if (map_info) {
-      auto new_module = std::make_unique<NonElfModule>(map_info);
+      auto new_module = std::make_unique<NonElfModule>(
+          map_info, is_java_name_hashing_enabled_);
       module = new_module.get();
-      module_cache->AddCustomNativeModule(std::move(new_module));
+      module_cache()->AddCustomNativeModule(std::move(new_module));
     }
   }
-  stack->emplace_back(dex_pc, module);
+
+  if (is_java_name_hashing_enabled_) {
+    unwindstack::SharedString function_name;
+    uint64_t function_offset = 0;
+    GetOrCreateDexFiles(arch)->GetFunctionName(
+        memory_regions_map_->maps(), dex_pc, &function_name, &function_offset);
+    stack->emplace_back(
+        HashMetricNameAs32Bits(static_cast<const std::string&>(function_name)),
+        module);
+
+  } else {
+    stack->emplace_back(dex_pc, module);
+  }
 }
 
 }  // namespace base

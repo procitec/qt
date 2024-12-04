@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,60 +8,85 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
 
-#include "base/callback.h"
-#include "base/compiler_specific.h"
 #include "base/component_export.h"
 #include "base/containers/flat_map.h"
-#include "base/macros.h"
-#include "base/no_destructor.h"
+#include "base/containers/span.h"
+#include "base/functional/callback.h"
+#include "base/observer_list.h"
 #include "base/process/process.h"
-#include "base/strings/string16.h"
+#include "base/strings/string_piece.h"
 #include "base/synchronization/lock.h"
 #include "base/threading/platform_thread.h"
 #include "base/threading/thread_checker.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
+#include "build/chromeos_buildflags.h"
 #include "mojo/public/cpp/base/big_buffer.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "third_party/abseil-cpp/absl/types/variant.h"
+#include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/base/clipboard/clipboard_buffer.h"
+#include "ui/base/clipboard/clipboard_content_type.h"
 #include "ui/base/clipboard/clipboard_format_type.h"
+#include "ui/base/clipboard/clipboard_sequence_number_token.h"
+#include "ui/base/clipboard/file_info.h"
+#include "ui/base/data_transfer_policy/data_transfer_endpoint.h"
 
-class SkBitmap;
+class GURL;
 
 namespace ui {
 class TestClipboard;
 class ScopedClipboardWriter;
-class ClipboardDataEndpoint;
 
 // Clipboard:
 // - reads from and writes to the system clipboard.
 // - specifies an ordering in which to write types to the clipboard
 //   (see PortableFormat).
 // - is generalized for all targets/operating systems.
-// TODO(https://crbug.com/443355): Make all functions asynchronous.
-// Currently, only ReadImage() is asynchronous, but eventually, we would like
-// all interfaces to be async.
 class COMPONENT_EXPORT(UI_BASE_CLIPBOARD) Clipboard
     : public base::ThreadChecker {
  public:
-  static bool IsSupportedClipboardBuffer(ClipboardBuffer buffer) {
-    switch (buffer) {
-      case ClipboardBuffer::kCopyPaste:
-        return true;
-      case ClipboardBuffer::kSelection:
-#if !defined(OS_WIN) && !defined(OS_APPLE) && !defined(OS_CHROMEOS)
-        return true;
-#else
-        return false;
-#endif
-      case ClipboardBuffer::kDrag:
-        return false;
-    }
-    NOTREACHED();
-  }
+  using ReadAvailableTypesCallback =
+      base::OnceCallback<void(std::vector<std::u16string> result)>;
+  using ReadTextCallback = base::OnceCallback<void(std::u16string result)>;
+  using ReadAsciiTextCallback = base::OnceCallback<void(std::string result)>;
+  using ReadHtmlCallback = base::OnceCallback<void(std::u16string markup,
+                                                   GURL src_url,
+                                                   uint32_t fragment_start,
+                                                   uint32_t fragment_end)>;
+  using ReadSvgCallback = base::OnceCallback<void(std::u16string result)>;
+  using ReadRTFCallback = base::OnceCallback<void(std::string result)>;
+  using ReadPngCallback =
+      base::OnceCallback<void(const std::vector<uint8_t>& result)>;
+  using ReadCustomDataCallback =
+      base::OnceCallback<void(std::u16string result)>;
+  using ReadFilenamesCallback =
+      base::OnceCallback<void(std::vector<ui::FileInfo> result)>;
+  using ReadBookmarkCallback =
+      base::OnceCallback<void(std::u16string title, GURL url)>;
+  using ReadDataCallback = base::OnceCallback<void(std::string result)>;
+
+  // An observer interface for content copied to the clipboard.
+  class ClipboardWriteObserver : public base::CheckedObserver {
+   public:
+    ~ClipboardWriteObserver() override = default;
+
+    // Notifies observers when a valid URL is copied to the clipboard with a
+    // valid source URL
+    virtual void OnCopyURL(const GURL& url,
+                           const GURL& source_frame_url,
+                           const GURL& source_main_frame_url) = 0;
+  };
+
+  Clipboard(const Clipboard&) = delete;
+  Clipboard& operator=(const Clipboard&) = delete;
+
+  static bool IsSupportedClipboardBuffer(ClipboardBuffer buffer);
 
   // Sets the list of threads that are allowed to access the clipboard.
   static void SetAllowedThreads(
@@ -82,6 +107,8 @@ class COMPONENT_EXPORT(UI_BASE_CLIPBOARD) Clipboard
   // the main UI thread, but Windows has tricky semantics where there have to
   // be two clipboards: one that lives on the UI thread and one that lives on
   // the IO thread.
+  //
+  // The return value should not be cached.
   static Clipboard* GetForCurrentThread();
 
   // Removes and transfers ownership of the current thread's clipboard to the
@@ -102,18 +129,33 @@ class COMPONENT_EXPORT(UI_BASE_CLIPBOARD) Clipboard
 
   virtual void OnPreShutdown() = 0;
 
-  // Returns a sequence number which uniquely identifies clipboard state.
-  // This can be used to version the data on the clipboard and determine
-  // whether it has changed.
-  virtual uint64_t GetSequenceNumber(ClipboardBuffer buffer) const = 0;
+  // Gets the source of the current clipboard buffer contents.
+  virtual absl::optional<DataTransferEndpoint> GetSource(
+      ClipboardBuffer buffer) const = 0;
+
+  // Returns a token which uniquely identifies clipboard state.
+  // ClipboardSequenceNumberTokens are used since there may be multiple
+  // ui::Clipboard instances that have the same sequence number.
+  virtual const ClipboardSequenceNumberToken& GetSequenceNumber(
+      ClipboardBuffer buffer) const = 0;
+
+  // Returns all the standard MIME types that are present on the clipboard.
+  // The standard MIME types are the formats that are well defined by the
+  // Clipboard API
+  // spec(https://w3c.github.io/clipboard-apis/#mandatory-data-types-x).
+  // Currently we support text/html, text/plain, text/rtf, image/png &
+  // text/uri-list.
+  // TODO(snianu): Create a more generalized function for standard formats that
+  // can be shared by all platforms.
+  virtual std::vector<std::u16string> GetStandardFormats(
+      ClipboardBuffer buffer,
+      const DataTransferEndpoint* data_dst) const = 0;
 
   // Tests whether the clipboard contains a certain format.
-  // TODO(crbug.com/1103614): Update |data_dst| in all references to its
-  // appropriate ClipboardDataEndpoint for web-originates uses.
   virtual bool IsFormatAvailable(
       const ClipboardFormatType& format,
       ClipboardBuffer buffer,
-      const ClipboardDataEndpoint* data_dst) const = 0;
+      const DataTransferEndpoint* data_dst) const = 0;
 
   // Returns whether the clipboard has data that is marked by its originator as
   // confidential. This is available for opt-in checking by the user of this API
@@ -129,95 +171,103 @@ class COMPONENT_EXPORT(UI_BASE_CLIPBOARD) Clipboard
   // Clear the clipboard data.
   virtual void Clear(ClipboardBuffer buffer) = 0;
 
-  // TODO(huangdarwin): Refactor ReadAvailableTypes to return |types|.
   // TODO(huangdarwin): Rename to ReadAvailablePortableFormatNames().
   // Includes all sanitized types.
   // Also, includes pickled types by splitting them out of the pickled format.
-  // TODO(crbug.com/1103614): Update |data_dst| in all references to its
-  // appropriate ClipboardDataEndpoint for web-originated uses.
   virtual void ReadAvailableTypes(ClipboardBuffer buffer,
-                                  const ClipboardDataEndpoint* data_dst,
-                                  std::vector<base::string16>* types) const = 0;
-  // Includes all types, including unsanitized types.
-  // Omits formats held within pickles, as they're different from what a native
-  // application would see.
-  // TODO(crbug.com/1103614): Update |dst| in all references to its appropriate
-  // ClipboardDataEndpoint for web-originates uses.
-  virtual std::vector<base::string16> ReadAvailablePlatformSpecificFormatNames(
-      ClipboardBuffer buffer,
-      const ClipboardDataEndpoint* data_dst) const = 0;
+                                  const DataTransferEndpoint* data_dst,
+                                  ReadAvailableTypesCallback callback) const;
 
   // Reads Unicode text from the clipboard, if available.
-  // TODO(crbug.com/1103614): Update |data_dst| in all references to its
-  // appropriate ClipboardDataEndpoint for web-originates uses.
   virtual void ReadText(ClipboardBuffer buffer,
-                        const ClipboardDataEndpoint* data_dst,
-                        base::string16* result) const = 0;
+                        const DataTransferEndpoint* data_dst,
+                        ReadTextCallback callback) const;
 
   // Reads ASCII text from the clipboard, if available.
-  // TODO(crbug.com/1103614): Update |data_dst| in all references to its
-  // appropriate ClipboardDataEndpoint for web-originates uses.
   virtual void ReadAsciiText(ClipboardBuffer buffer,
-                             const ClipboardDataEndpoint* data_dst,
-                             std::string* result) const = 0;
+                             const DataTransferEndpoint* data_dst,
+                             ReadAsciiTextCallback callback) const;
 
   // Reads HTML from the clipboard, if available. If the HTML fragment requires
   // context to parse, |fragment_start| and |fragment_end| are indexes into
   // markup indicating the beginning and end of the actual fragment. Otherwise,
   // they will contain 0 and markup->size().
-  // TODO(crbug.com/1103614): Update |data_dst| in all references to its
-  // appropriate ClipboardDataEndpoint for web-originates uses.
   virtual void ReadHTML(ClipboardBuffer buffer,
-                        const ClipboardDataEndpoint* data_dst,
-                        base::string16* markup,
-                        std::string* src_url,
-                        uint32_t* fragment_start,
-                        uint32_t* fragment_end) const = 0;
+                        const DataTransferEndpoint* data_dst,
+                        ReadHtmlCallback callback) const;
 
   // Reads an SVG image from the clipboard, if available.
-  // TODO(crbug.com/1103614): Update |data_dst| in all references to its
-  // appropriate ClipboardDataEndpoint for web-originates uses.
   virtual void ReadSvg(ClipboardBuffer buffer,
-                       const ClipboardDataEndpoint* data_dst,
-                       base::string16* result) const = 0;
+                       const DataTransferEndpoint* data_dst,
+                       ReadSvgCallback callback) const;
+
   // Reads RTF from the clipboard, if available. Stores the result as a byte
   // vector.
-  // TODO(crbug.com/1103614): Update |data_dst| in all references to its
-  // appropriate ClipboardDataEndpoint for web-originates uses.
   virtual void ReadRTF(ClipboardBuffer buffer,
-                       const ClipboardDataEndpoint* data_dst,
-                       std::string* result) const = 0;
+                       const DataTransferEndpoint* data_dst,
+                       ReadRTFCallback callback) const;
 
-  using ReadImageCallback = base::OnceCallback<void(const SkBitmap&)>;
+  // Reads a png from the clipboard, if available.
+  virtual void ReadPng(ClipboardBuffer buffer,
+                       const DataTransferEndpoint* data_dst,
+                       ReadPngCallback callback) const = 0;
 
-  // Reads an image from the clipboard, if available.
-  // TODO(crbug.com/1103614): Update |data_dst| in all references to its
-  // appropriate ClipboardDataEndpoint for web-originates uses.
-  virtual void ReadImage(ClipboardBuffer buffer,
-                         const ClipboardDataEndpoint* data_dst,
-                         ReadImageCallback callback) const = 0;
-
-  // TODO(crbug.com/1103614): Update |data_dst| in all references to its
-  // appropriate ClipboardDataEndpoint for web-originates uses.
   virtual void ReadCustomData(ClipboardBuffer buffer,
-                              const base::string16& type,
-                              const ClipboardDataEndpoint* data_dst,
-                              base::string16* result) const = 0;
+                              const std::u16string& type,
+                              const DataTransferEndpoint* data_dst,
+                              ReadCustomDataCallback callback) const;
+
+  // Reads filenames from the clipboard, if available.
+  virtual void ReadFilenames(ClipboardBuffer buffer,
+                             const DataTransferEndpoint* data_dst,
+                             ReadFilenamesCallback callback) const;
 
   // Reads a bookmark from the clipboard, if available.
   // |title| or |url| may be null.
-  // TODO(crbug.com/1103614): Update |data_dst| in all references to its
-  // appropriate ClipboardDataEndpoint for web-originates uses.
-  virtual void ReadBookmark(const ClipboardDataEndpoint* data_dst,
-                            base::string16* title,
-                            std::string* url) const = 0;
+  virtual void ReadBookmark(const DataTransferEndpoint* data_dst,
+                            ReadBookmarkCallback callback) const;
 
-  // Reads raw data from the clipboard with the given format type. Stores result
+  // Reads data from the clipboard with the given format type. Stores result
   // as a byte vector.
-  // TODO(crbug.com/1103614): Update |data_dst| in all references to its
-  // appropriate ClipboardDataEndpoint for web-originates uses.
   virtual void ReadData(const ClipboardFormatType& format,
-                        const ClipboardDataEndpoint* data_dst,
+                        const DataTransferEndpoint* data_dst,
+                        ReadDataCallback callback) const;
+
+  // Synchronous reads are deprecated (https://crbug.com/443355). Please use the
+  // equivalent functions that take callbacks above.
+  virtual void ReadAvailableTypes(ClipboardBuffer buffer,
+                                  const DataTransferEndpoint* data_dst,
+                                  std::vector<std::u16string>* types) const = 0;
+  virtual void ReadText(ClipboardBuffer buffer,
+                        const DataTransferEndpoint* data_dst,
+                        std::u16string* result) const = 0;
+  virtual void ReadAsciiText(ClipboardBuffer buffer,
+                             const DataTransferEndpoint* data_dst,
+                             std::string* result) const = 0;
+  virtual void ReadHTML(ClipboardBuffer buffer,
+                        const DataTransferEndpoint* data_dst,
+                        std::u16string* markup,
+                        std::string* src_url,
+                        uint32_t* fragment_start,
+                        uint32_t* fragment_end) const = 0;
+  virtual void ReadSvg(ClipboardBuffer buffer,
+                       const DataTransferEndpoint* data_dst,
+                       std::u16string* result) const = 0;
+  virtual void ReadRTF(ClipboardBuffer buffer,
+                       const DataTransferEndpoint* data_dst,
+                       std::string* result) const = 0;
+  virtual void ReadCustomData(ClipboardBuffer buffer,
+                              const std::u16string& type,
+                              const DataTransferEndpoint* data_dst,
+                              std::u16string* result) const = 0;
+  virtual void ReadFilenames(ClipboardBuffer buffer,
+                             const DataTransferEndpoint* data_dst,
+                             std::vector<ui::FileInfo>* result) const = 0;
+  virtual void ReadBookmark(const DataTransferEndpoint* data_dst,
+                            std::u16string* title,
+                            std::string* url) const = 0;
+  virtual void ReadData(const ClipboardFormatType& format,
+                        const DataTransferEndpoint* data_dst,
                         std::string* result) const = 0;
 
   // Returns an estimate of the time the clipboard was last updated.  If the
@@ -227,60 +277,137 @@ class COMPONENT_EXPORT(UI_BASE_CLIPBOARD) Clipboard
   // Resets the clipboard last modified time to Time::Time().
   virtual void ClearLastModifiedTime();
 
-#if defined(USE_OZONE)
-  // Returns whether the selection buffer is available.  This is true for some
-  // Linux platforms.
-  virtual bool IsSelectionBufferAvailable() const = 0;
-#endif  // defined(USE_OZONE)
+  // Reads the web custom format map (which is in JSON format) from the
+  // clipboard if it's available. Parses the JSON string that has the mapping of
+  // MIME type to custom format name and fetches the list of custom MIME types.
+  // e.g. on Windows, the mapping is represented as "text/html":"Web Custom
+  // Format(0-99)".
+  std::map<std::string, std::string> ExtractCustomPlatformNames(
+      ClipboardBuffer buffer,
+      const DataTransferEndpoint* data_dst) const;
+
+  std::vector<std::u16string> ReadAvailableStandardAndCustomFormatNames(
+      ClipboardBuffer buffer,
+      const DataTransferEndpoint* data_dst) const;
+
+  // Add an observer for text pasted to clipboard with a URL source.
+  void AddObserver(ClipboardWriteObserver* observer);
+
+  // Remove an observer for text pasted to clipboard with a URL source.
+  void RemoveObserver(ClipboardWriteObserver* observer);
+
+  // Notify all subscribers of new text pasted to the clipboard when there is a
+  // source URL.
+  void NotifyCopyWithUrl(const base::StringPiece text,
+                         const GURL& frame,
+                         const GURL& main_frame);
 
  protected:
-  // PortableFormat designates the type of data to be stored in the clipboard.
-  // This designation is shared across all OSes. The system-specific designation
-  // is defined by ClipboardFormatType. A single PortableFormat might be
-  // represented by several system-specific ClipboardFormatTypes. For example,
-  // on Linux the kText PortableFormat maps to "text/plain", "STRING", and
-  // several other formats. On windows it maps to CF_UNICODETEXT.
-  //
-  // The order below is the order in which data will be written to the
-  // clipboard, so more specific types must be listed before less specific
-  // types. For example, placing an image on the clipboard might cause the
-  // clipboard to contain a bitmap, HTML markup representing the image, a URL to
-  // the image, and the image's alt text. Having the types follow this order
-  // maximizes the amount of data that can be extracted by various programs.
-  enum class PortableFormat {
-    kBitmap,  // Bitmap from shared memory.
-    kHtml,
-    kRtf,
-    kBookmark,
-    kText,
-    kWebkit,
-    kData,  // Arbitrary block of bytes.
-    kSvg,
+  struct BitmapData {
+    SkBitmap bitmap;
   };
+  struct HtmlData {
+    HtmlData() noexcept;
+    ~HtmlData();
+    HtmlData(const HtmlData&);
+    HtmlData& operator=(const HtmlData&);
+    HtmlData(HtmlData&&);
+    HtmlData& operator=(HtmlData&&);
+
+    std::string markup;
+    absl::optional<std::string> source_url;
+  };
+  struct RtfData {
+    std::string data;
+  };
+  struct BookmarkData {
+    std::string title;
+    std::string url;
+  };
+  struct TextData {
+    std::string data;
+  };
+  struct WebkitData {
+    // Empty: this is just a placeholder for the WebKit smart paste marker.
+  };
+  struct RawData {
+    RawData() noexcept;
+    ~RawData();
+    RawData(const RawData&);
+    RawData& operator=(const RawData&);
+    RawData(RawData&&);
+    RawData& operator=(RawData&&);
+
+    ClipboardFormatType format;
+    std::vector<uint8_t> data;
+  };
+  struct SvgData {
+    std::string markup;
+  };
+  struct FilenamesData {
+    std::string text_uri_list;
+  };
+  struct WebCustomFormatMapData {
+    // TODO(dcheng): Describe format here.
+    std::string data;
+  };
+#if BUILDFLAG(IS_CHROMEOS_LACROS)
+  struct EncodedDataTransferEndpointData {
+    std::string data;
+  };
+#endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
+
+  // Data is a variant that that represents all types that Chromium supports
+  // writing to the clipboard. This representation is OS-agnostic; the
+  // system-specific designation is defined by ClipboardFormatType. A single
+  // piece of data represented by this variant might be represented by several
+  // system-specific ClipboardFormatTypes. For example, on Linux the kText
+  // PortableFormat maps to "text/plain", "STRING", and several other formats.
+  // On Windows it maps to CF_UNICODETEXT.
+  //
+  // The order of types in the variant is the order in which data will be
+  // written to the clipboard, so more specific types must be listed before less
+  // specific types. For example, placing an image on the clipboard might cause
+  // the clipboard to contain a bitmap, HTML markup representing the image, a
+  // URL to the image, and the image's alt text. Having the types follow this
+  // order maximizes the amount of data that can be extracted by various
+  // programs.  Documentation on motivation for format ordering is also
+  // available here:
+  // https://docs.microsoft.com/en-us/windows/win32/dataxchg/clipboard-formats#multiple-clipboard-formats
+  using Data = absl::variant<BitmapData,
+                             HtmlData,
+                             RtfData,
+                             BookmarkData,
+                             TextData,
+                             WebkitData,
+                             RawData,
+                             SvgData,
+                             FilenamesData,
+#if BUILDFLAG(IS_CHROMEOS_LACROS)
+                             WebCustomFormatMapData,
+                             EncodedDataTransferEndpointData
+#else
+                             WebCustomFormatMapData
+#endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
+                             >;
 
   // TODO (https://crbug.com/994928): Rename ObjectMap-related types.
-  // ObjectMap is a map from PortableFormat to associated data.
-  // The data is organized differently for each PortableFormat. The following
-  // table summarizes what kind of data is stored for each key.
-  // * indicates an optional argument.
-  //
-  // Key        Arguments    Type
-  // -------------------------------------
-  // kBitmap    bitmap       A pointer to a SkBitmap. The caller must ensure
-  //                         the SkBitmap remains live for the duration of
-  //                         the WritePortableRepresentations call.
-  // kHtml      html         char array
-  //            url*         char array
-  // kRtf       data         byte array
-  // kBookmark  html         char array
-  //            url          char array
-  // kText      text         char array
-  // kWebkit    none         empty vector
-  // kData      format       char array
-  //            data         byte array
-  using ObjectMapParam = std::vector<char>;
-  using ObjectMapParams = std::vector<ObjectMapParam>;
-  using ObjectMap = base::flat_map<PortableFormat, ObjectMapParams>;
+  struct ObjectMapParams {
+    ObjectMapParams();
+    ObjectMapParams(Data data, ClipboardContentType content_type);
+
+    ObjectMapParams(const ObjectMapParams& other);
+    ObjectMapParams& operator=(const ObjectMapParams& other);
+    ObjectMapParams(ObjectMapParams&& other);
+    ObjectMapParams& operator=(ObjectMapParams&& other);
+
+    ~ObjectMapParams();
+    // The index is the variant's index, to ensure that this map only holds one
+    // of each possible variant subtype.
+    Data data;
+    ClipboardContentType content_type;
+  };
+  using ObjectMap = std::map<size_t, ObjectMapParams>;
 
   // PlatformRepresentation is used for DispatchPlatformRepresentations, and
   // supports writing directly to the system clipboard, without custom type
@@ -299,58 +426,45 @@ class COMPONENT_EXPORT(UI_BASE_CLIPBOARD) Clipboard
   Clipboard();
   virtual ~Clipboard();
 
-  // Write a bunch of objects to the system clipboard. Copies are made of the
-  // contents of |objects|. Also, adds the source of the data to the clipboard,
-  // which can be used when we need to restrict the clipboard data between a set
-  // of confidential documents. The data source maybe passed as nullptr.
-  virtual void WritePortableRepresentations(
+  // Write platform & portable formats, in the order of their appearance in
+  // `platform_representations` & `ObjectMap`. Also, adds the source of the data
+  // to the clipboard, which can be used when we need to restrict the clipboard
+  // data between a set of confidential documents. The data source maybe passed
+  // as nullptr.
+  virtual void WritePortableAndPlatformRepresentations(
       ClipboardBuffer buffer,
       const ObjectMap& objects,
-      std::unique_ptr<ClipboardDataEndpoint> data_src) = 0;
-
-  // Write |platform_representations|, in the order of their appearance in
-  // |platform_representations|. Also, adds the source of the data to the
-  // clipboard, which can be used when we need to restrict the clipboard data
-  // between a set of confidential documents. The data source maybe passed as
-  // nullptr.
-  virtual void WritePlatformRepresentations(
-      ClipboardBuffer buffer,
       std::vector<Clipboard::PlatformRepresentation> platform_representations,
-      std::unique_ptr<ClipboardDataEndpoint> data_src) = 0;
+      std::unique_ptr<DataTransferEndpoint> data_src) = 0;
 
-  void DispatchPortableRepresentation(PortableFormat format,
-                                      const ObjectMapParams& params);
+  void DispatchPortableRepresentation(const ObjectMapParams& params);
 
   // Write directly to the system clipboard.
   void DispatchPlatformRepresentations(
       std::vector<Clipboard::PlatformRepresentation> platform_representations);
 
-  virtual void WriteText(const char* text_data, size_t text_len) = 0;
+  virtual void WriteText(base::StringPiece text) = 0;
 
-  virtual void WriteHTML(const char* markup_data,
-                         size_t markup_len,
-                         const char* url_data,
-                         size_t url_len) = 0;
+  virtual void WriteHTML(base::StringPiece markup,
+                         absl::optional<base::StringPiece> source_url,
+                         ClipboardContentType content_type) = 0;
 
-  virtual void WriteSvg(const char* markup_data, size_t markup_len) = 0;
+  virtual void WriteSvg(base::StringPiece markup) = 0;
 
-  virtual void WriteRTF(const char* rtf_data, size_t data_len) = 0;
+  virtual void WriteRTF(base::StringPiece rtf) = 0;
 
-  virtual void WriteBookmark(const char* title_data,
-                             size_t title_len,
-                             const char* url_data,
-                             size_t url_len) = 0;
+  virtual void WriteFilenames(std::vector<ui::FileInfo> filenames) = 0;
+
+  virtual void WriteBookmark(base::StringPiece title,
+                             base::StringPiece url) = 0;
 
   virtual void WriteWebSmartPaste() = 0;
 
   virtual void WriteBitmap(const SkBitmap& bitmap) = 0;
 
-  // |data_data| is shared memory, and is still writable from the renderer.
-  // Therefore, |data_data| must not be branched on, and *|data_data| must not
-  // be accessed, except to copy it into private memory.
+  // Note: |data| may reference shared memory and may be concurrently mutated.
   virtual void WriteData(const ClipboardFormatType& format,
-                         const char* data_data,
-                         size_t data_len) = 0;
+                         base::span<const uint8_t> data) = 0;
 
  private:
   // For access to WritePortableRepresentations().
@@ -361,6 +475,12 @@ class COMPONENT_EXPORT(UI_BASE_CLIPBOARD) Clipboard
   friend struct std::default_delete<Clipboard>;
 
   static base::PlatformThreadId GetAndValidateThreadID();
+
+#if BUILDFLAG(IS_OZONE)
+  // Returns whether the selection buffer is available.  This is true for some
+  // Linux platforms.
+  virtual bool IsSelectionBufferAvailable() const = 0;
+#endif  // BUILDFLAG(IS_OZONE)
 
   // A list of allowed threads. By default, this is empty and no thread checking
   // is done (in the unit test case), but a user (like content) can set which
@@ -375,7 +495,7 @@ class COMPONENT_EXPORT(UI_BASE_CLIPBOARD) Clipboard
   // Mutex that controls access to |g_clipboard_map|.
   static base::Lock& ClipboardMapLock();
 
-  DISALLOW_COPY_AND_ASSIGN(Clipboard);
+  base::ObserverList<ClipboardWriteObserver> write_observers_;
 };
 
 }  // namespace ui

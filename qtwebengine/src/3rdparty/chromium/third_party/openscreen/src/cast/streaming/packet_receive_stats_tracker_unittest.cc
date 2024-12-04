@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,8 +11,7 @@
 #include "gtest/gtest.h"
 #include "util/chrono_helpers.h"
 
-namespace openscreen {
-namespace cast {
+namespace openscreen::cast {
 namespace {
 
 // Returns a RtcpReportBlock with all fields set to known values to see how the
@@ -194,9 +193,9 @@ TEST(PacketReceiveStatsTrackerTest, ComputesJitterCorrectly) {
   const auto diff = kTrueJitter - report.jitter.ToDuration<Clock::duration>(
                                       kRtpVideoTimebase);
   constexpr auto kMaxDiffAtEnd = Clock::to_duration(milliseconds(2));
-  EXPECT_NEAR(0, diff.count(), kMaxDiffAtEnd.count());
+  EXPECT_NEAR(0, static_cast<double>(diff.count()),
+              static_cast<double>(kMaxDiffAtEnd.count()));
 }
 
 }  // namespace
-}  // namespace cast
-}  // namespace openscreen
+}  // namespace openscreen::cast

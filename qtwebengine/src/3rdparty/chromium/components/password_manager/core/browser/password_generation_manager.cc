@@ -1,25 +1,28 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/password_manager/core/browser/password_generation_manager.h"
 
 #include <map>
+#include <unordered_set>
 #include <utility>
 
-#include "base/callback.h"
-#include "base/time/default_clock.h"
+#include "base/functional/callback.h"
+#include "base/memory/raw_ptr.h"
+#include "base/ranges/algorithm.h"
 #include "components/password_manager/core/browser/form_saver.h"
 #include "components/password_manager/core/browser/password_form_manager_for_ui.h"
 #include "components/password_manager/core/browser/password_manager_client.h"
 #include "components/password_manager/core/browser/password_manager_driver.h"
+#include "components/password_manager/core/browser/password_manager_util.h"
 #include "components/password_manager/core/common/password_manager_features.h"
 
 namespace password_manager {
 namespace {
 
 std::vector<PasswordForm> DeepCopyVector(
-    const std::vector<const PasswordForm*>& forms) {
+    const std::vector<raw_ptr<const PasswordForm, VectorExperimental>>& forms) {
   std::vector<PasswordForm> result;
   result.reserve(forms.size());
   for (const PasswordForm* form : forms)
@@ -31,43 +34,47 @@ std::vector<PasswordForm> DeepCopyVector(
 // a conflict in generation.
 class PasswordDataForUI : public PasswordFormManagerForUI {
  public:
-  PasswordDataForUI(PasswordForm pending_form,
-                    const std::vector<const PasswordForm*>& matches,
-                    const std::vector<const PasswordForm*>& federated,
-                    base::RepeatingCallback<void(bool, const PasswordForm&)>
-                        bubble_interaction);
+  PasswordDataForUI(
+      PasswordForm pending_form,
+      const std::vector<raw_ptr<const PasswordForm, VectorExperimental>>&
+          matches,
+      const std::vector<raw_ptr<const PasswordForm, VectorExperimental>>&
+          federated,
+      base::RepeatingCallback<void(bool, const PasswordForm&)>
+          bubble_interaction);
   ~PasswordDataForUI() override = default;
   PasswordDataForUI(const PasswordDataForUI&) = delete;
   PasswordDataForUI& operator=(const PasswordDataForUI&) = delete;
 
   // PasswordFormManagerForUI:
   const GURL& GetURL() const override;
-  const std::vector<const PasswordForm*>& GetBestMatches() const override;
-  std::vector<const PasswordForm*> GetFederatedMatches() const override;
+  const std::vector<raw_ptr<const PasswordForm, VectorExperimental>>&
+  GetBestMatches() const override;
+  std::vector<raw_ptr<const PasswordForm, VectorExperimental>>
+  GetFederatedMatches() const override;
   const PasswordForm& GetPendingCredentials() const override;
   metrics_util::CredentialSourceType GetCredentialSource() const override;
   PasswordFormMetricsRecorder* GetMetricsRecorder() override;
   base::span<const InteractionsStats> GetInteractionsStats() const override;
-  base::span<const CompromisedCredentials> GetCompromisedCredentials()
-      const override;
-  bool IsBlacklisted() const override;
-  bool WasUnblacklisted() const override;
+  std::vector<raw_ptr<const PasswordForm, VectorExperimental>>
+  GetInsecureCredentials() const override;
+  bool IsBlocklisted() const override;
   bool IsMovableToAccountStore() const override;
   void Save() override;
   void Update(const PasswordForm& credentials_to_update) override;
-  void OnUpdateUsernameFromPrompt(const base::string16& new_username) override;
-  void OnUpdatePasswordFromPrompt(const base::string16& new_password) override;
+  void OnUpdateUsernameFromPrompt(const std::u16string& new_username) override;
+  void OnUpdatePasswordFromPrompt(const std::u16string& new_password) override;
   void OnNopeUpdateClicked() override;
   void OnNeverClicked() override;
   void OnNoInteraction(bool is_update) override;
-  void PermanentlyBlacklist() override;
+  void Blocklist() override;
   void OnPasswordsRevealed() override;
   void MoveCredentialsToAccountStore() override;
   void BlockMovingCredentialsToAccountStore() override;
 
  private:
   PasswordForm pending_form_;
-  std::vector<const PasswordForm*> matches_;
+  std::vector<raw_ptr<const PasswordForm, VectorExperimental>> matches_;
   const std::vector<PasswordForm> federated_matches_;
   const std::vector<PasswordForm> non_federated_matches_;
 
@@ -80,8 +87,9 @@ class PasswordDataForUI : public PasswordFormManagerForUI {
 
 PasswordDataForUI::PasswordDataForUI(
     PasswordForm pending_form,
-    const std::vector<const PasswordForm*>& matches,
-    const std::vector<const PasswordForm*>& federated,
+    const std::vector<raw_ptr<const PasswordForm, VectorExperimental>>& matches,
+    const std::vector<raw_ptr<const PasswordForm, VectorExperimental>>&
+        federated,
     base::RepeatingCallback<void(bool, const PasswordForm&)> bubble_interaction)
     : pending_form_(std::move(pending_form)),
       federated_matches_(DeepCopyVector(federated)),
@@ -95,17 +103,17 @@ const GURL& PasswordDataForUI::GetURL() const {
   return pending_form_.url;
 }
 
-const std::vector<const PasswordForm*>& PasswordDataForUI::GetBestMatches()
-    const {
+const std::vector<raw_ptr<const PasswordForm, VectorExperimental>>&
+PasswordDataForUI::GetBestMatches() const {
   return matches_;
 }
 
-std::vector<const PasswordForm*> PasswordDataForUI::GetFederatedMatches()
-    const {
-  std::vector<const PasswordForm*> result(federated_matches_.size());
-  std::transform(federated_matches_.begin(), federated_matches_.end(),
-                 result.begin(),
-                 [](const PasswordForm& form) { return &form; });
+std::vector<raw_ptr<const PasswordForm, VectorExperimental>>
+PasswordDataForUI::GetFederatedMatches() const {
+  std::vector<raw_ptr<const PasswordForm, VectorExperimental>> result(
+      federated_matches_.size());
+  base::ranges::transform(federated_matches_, result.begin(),
+                          [](const PasswordForm& form) { return &form; });
   return result;
 }
 
@@ -127,18 +135,13 @@ base::span<const InteractionsStats> PasswordDataForUI::GetInteractionsStats()
   return {};
 }
 
-base::span<const CompromisedCredentials>
-PasswordDataForUI::GetCompromisedCredentials() const {
+std::vector<raw_ptr<const PasswordForm, VectorExperimental>>
+PasswordDataForUI::GetInsecureCredentials() const {
   return {};
 }
 
-bool PasswordDataForUI::IsBlacklisted() const {
+bool PasswordDataForUI::IsBlocklisted() const {
   // 'true' would suppress the bubble.
-  return false;
-}
-
-bool PasswordDataForUI::WasUnblacklisted() const {
-  // This information should not be relevant hereconst.
   return false;
 }
 
@@ -157,12 +160,12 @@ void PasswordDataForUI::Update(const PasswordForm&) {
 }
 
 void PasswordDataForUI::OnUpdateUsernameFromPrompt(
-    const base::string16& new_username) {
+    const std::u16string& new_username) {
   pending_form_.username_value = new_username;
 }
 
 void PasswordDataForUI::OnUpdatePasswordFromPrompt(
-    const base::string16& new_password) {
+    const std::u16string& new_password) {
   // Ignore. The generated password can be edited in-place.
 }
 
@@ -178,7 +181,7 @@ void PasswordDataForUI::OnNoInteraction(bool is_update) {
   bubble_interaction_cb_.Run(false, pending_form_);
 }
 
-void PasswordDataForUI::PermanentlyBlacklist() {}
+void PasswordDataForUI::Blocklist() {}
 
 void PasswordDataForUI::OnPasswordsRevealed() {}
 
@@ -189,18 +192,128 @@ void PasswordDataForUI::BlockMovingCredentialsToAccountStore() {}
 // Returns a form from |matches| that causes a name conflict with |generated|.
 const PasswordForm* FindUsernameConflict(
     const PasswordForm& generated,
-    const std::vector<const PasswordForm*>& matches) {
-  for (const auto* form : matches) {
+    const std::vector<raw_ptr<const PasswordForm, VectorExperimental>>&
+        matches) {
+  for (const password_manager::PasswordForm* form : matches) {
     if (form->username_value == generated.username_value)
       return form;
   }
   return nullptr;
 }
+
+// For the given |password| string, return a set of characters inside the string
+// that satisfies |belongs_to_character_class| boolean predicate.
+std::unordered_set<char16_t> FindSetOfCharacterClassInPassword(
+    const std::u16string& password,
+    const base::FunctionRef<bool(char16_t)>& belongs_to_character_class) {
+  std::unordered_set<char16_t> result;
+  base::ranges::copy_if(password, std::inserter(result, result.begin()),
+                        belongs_to_character_class);
+  return result;
+}
+
+void EmitUmaForCharacterClassChange(const std::string& uma_character_class,
+                                    CharacterClassPresenceChange change) {
+  base::UmaHistogramEnumeration(
+      "PasswordGeneration.EditsInGeneratedPassword." + uma_character_class,
+      change);
+}
+
+// For the given 2 strings calculates character class presence change, e.g if
+// numerics were deleted('abcde123' => 'abcde') or only some characters
+// belonging to the class are changed('abcde123' => 'acbde456'). Also emits UMA
+// metrics on the change. Returns true if the character class was added or
+// removed.
+bool CalculateAndEmitPresenceChangeForCharacterClass(
+    const std::u16string& suggested_password,
+    const std::u16string& submitted_password,
+    const base::FunctionRef<bool(char16_t)>& belongs_to_character_class,
+    const std::string& uma_character_class) {
+  std::unordered_set<char16_t> suggested_character_set =
+      FindSetOfCharacterClassInPassword(suggested_password,
+                                        belongs_to_character_class);
+  std::unordered_set<char16_t> submitted_character_set =
+      FindSetOfCharacterClassInPassword(submitted_password,
+                                        belongs_to_character_class);
+
+  if (suggested_character_set == submitted_character_set) {
+    EmitUmaForCharacterClassChange(uma_character_class,
+                                   CharacterClassPresenceChange::kNoChange);
+    return false;
+  }
+
+  if (suggested_character_set.empty() != submitted_character_set.empty()) {
+    EmitUmaForCharacterClassChange(uma_character_class,
+                                   submitted_character_set.empty()
+                                       ? CharacterClassPresenceChange::kDeleted
+                                       : CharacterClassPresenceChange::kAdded);
+    return true;
+  }
+
+  EmitUmaForCharacterClassChange(
+      uma_character_class,
+      CharacterClassPresenceChange::kSpecificCharactersChanged);
+  return false;
+}
+
+// Emits UMA metrics on changes (character classes, length and together as a
+// mask) between generated and submitted passwords.
+void SendUmaHistogramsOnGeneratedPasswordAttributeChanges(
+    const std::u16string& generated_password,
+    const std::u16string& submitted_password) {
+  bool letters_presence_changed =
+      CalculateAndEmitPresenceChangeForCharacterClass(
+          generated_password, submitted_password,
+          password_manager_util::IsLetter, "Letters");
+  // Also emit dedicated metrics for upper- and lowercase letters specifically
+  // just in case there are websites that treat them differently (e.g. allow
+  // only lowercase letters).
+  CalculateAndEmitPresenceChangeForCharacterClass(
+      generated_password, submitted_password,
+      password_manager_util::IsUppercaseLetter, "Uppercase");
+  CalculateAndEmitPresenceChangeForCharacterClass(
+      generated_password, submitted_password,
+      password_manager_util::IsLowercaseLetter, "Lowercase");
+  bool numerics_presence_changed =
+      CalculateAndEmitPresenceChangeForCharacterClass(
+          generated_password, submitted_password,
+          password_manager_util::IsNumeric, "Numerics");
+  bool symbols_presence_changed =
+      CalculateAndEmitPresenceChangeForCharacterClass(
+          generated_password, submitted_password,
+          password_manager_util::IsSpecialSymbol, "Symbols");
+
+  bool length_changed = generated_password.size() != submitted_password.size();
+
+  if (length_changed && !letters_presence_changed &&
+      !numerics_presence_changed && !symbols_presence_changed) {
+    // Only length changed and no character class presence is changed. If
+    // character class presence is changed, length increase/decrease will
+    // be a side effect. This metric will calculate whether our password is too
+    // long or too short, so that it would be possible to adapt length if
+    // necessary.
+    base::UmaHistogramBoolean(
+        "PasswordGeneration.EditsInGeneratedPassword.AlteredLengthIncreased",
+        generated_password.size() < submitted_password.size());
+  }
+
+  // Make sure the order of attributes coincides with the order of attributes in
+  // the metric.
+  uint8_t attributes_mask =
+      (length_changed << 0) | (letters_presence_changed << 1) |
+      (numerics_presence_changed << 2) | (symbols_presence_changed << 3);
+  if (attributes_mask != 0) {
+    base::UmaHistogramExactLinear(
+        "PasswordGeneration.EditsInGeneratedPassword.AttributesMask",
+        attributes_mask, 16 /*exclusive_max*/);
+  }
+}
+
 }  // namespace
 
 PasswordGenerationManager::PasswordGenerationManager(
     PasswordManagerClient* client)
-    : client_(client), clock_(new base::DefaultClock) {}
+    : client_(client) {}
 
 PasswordGenerationManager::~PasswordGenerationManager() = default;
 
@@ -213,8 +326,10 @@ std::unique_ptr<PasswordGenerationManager> PasswordGenerationManager::Clone()
 
 void PasswordGenerationManager::GeneratedPasswordAccepted(
     PasswordForm generated,
-    const std::vector<const PasswordForm*>& non_federated_matches,
-    const std::vector<const PasswordForm*>& federated_matches,
+    const std::vector<raw_ptr<const PasswordForm, VectorExperimental>>&
+        non_federated_matches,
+    const std::vector<raw_ptr<const PasswordForm, VectorExperimental>>&
+        federated_matches,
     base::WeakPtr<PasswordManagerDriver> driver) {
   // Clear the username value if there are already saved credentials with
   // the same username in order to prevent overwriting.
@@ -237,21 +352,22 @@ void PasswordGenerationManager::GeneratedPasswordAccepted(
 
 void PasswordGenerationManager::PresaveGeneratedPassword(
     PasswordForm generated,
-    const std::vector<const PasswordForm*>& matches,
+    const std::vector<raw_ptr<const PasswordForm, VectorExperimental>>& matches,
     FormSaver* form_saver) {
-  DCHECK(!generated.password_value.empty());
+  CHECK(!generated.password_value.empty());
   // Clear the username value if there are already saved credentials with
   // the same username in order to prevent overwriting.
   if (FindUsernameConflict(generated, matches))
     generated.username_value.clear();
-  generated.date_created = clock_->Now();
+  generated.date_created = base::Time::Now();
   if (presaved_) {
     form_saver->UpdateReplace(generated, {} /* matches */,
-                              base::string16() /* old_password */,
+                              std::u16string() /* old_password */,
                               presaved_.value() /* old_primary_key */);
   } else {
     form_saver->Save(generated, {} /* matches */,
-                     base::string16() /* old_password */);
+                     std::u16string() /* old_password */);
+    initial_generated_password_ = generated.password_value;
   }
   presaved_ = std::move(generated);
 }
@@ -261,18 +377,26 @@ void PasswordGenerationManager::PasswordNoLongerGenerated(
   DCHECK(presaved_);
   form_saver->Remove(*presaved_);
   presaved_.reset();
+  initial_generated_password_.clear();
 }
 
 void PasswordGenerationManager::CommitGeneratedPassword(
     PasswordForm generated,
-    const std::vector<const PasswordForm*>& matches,
-    const base::string16& old_password,
+    const std::vector<raw_ptr<const PasswordForm, VectorExperimental>>& matches,
+    const std::u16string& old_password,
     FormSaver* form_saver) {
   DCHECK(presaved_);
-  generated.date_last_used = clock_->Now();
-  generated.date_created = clock_->Now();
+  generated.date_last_used = base::Time::Now();
+  generated.date_created = base::Time::Now();
+  if (initial_generated_password_ != generated.password_value) {
+    // If the generated password was edited, send UMA metrics on what kind of
+    // changes were there.
+    SendUmaHistogramsOnGeneratedPasswordAttributeChanges(
+        initial_generated_password_, generated.password_value);
+  }
   form_saver->UpdateReplace(generated, matches, old_password,
                             presaved_.value() /* old_primary_key */);
+  presaved_ = std::move(generated);
 }
 
 void PasswordGenerationManager::OnPresaveBubbleResult(
@@ -280,8 +404,16 @@ void PasswordGenerationManager::OnPresaveBubbleResult(
     bool accepted,
     const PasswordForm& pending) {
   weak_factory_.InvalidateWeakPtrs();
+  // See https://crbug.com/1210341 for when `driver` might be null due to a
+  // compromised renderer.
+  if (!driver) {
+    return;
+  }
+
   if (accepted) {
     driver->GeneratedPasswordAccepted(pending.password_value);
+  } else {
+    driver->ClearPreviewedForm();
   }
 }
 

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,8 +12,7 @@
 #include <string>
 #include <vector>
 
-#include "base/mac/scoped_nsobject.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "content/browser/renderer_host/popup_menu_helper_mac.h"
 #include "content/browser/renderer_host/render_view_host_delegate_view.h"
 #include "content/browser/web_contents/web_contents_view.h"
@@ -58,7 +57,11 @@ class WebContentsViewMac : public WebContentsView,
   // our lifetime. This doesn't need to be the case, but is this way currently
   // because that's what was easiest when they were split.
   WebContentsViewMac(WebContentsImpl* web_contents,
-                     WebContentsViewDelegate* delegate);
+                     std::unique_ptr<WebContentsViewDelegate> delegate);
+
+  WebContentsViewMac(const WebContentsViewMac&) = delete;
+  WebContentsViewMac& operator=(const WebContentsViewMac&) = delete;
+
   ~WebContentsViewMac() override;
 
   // WebContentsView implementation --------------------------------------------
@@ -72,32 +75,40 @@ class WebContentsViewMac : public WebContentsView,
   void RestoreFocus() override;
   void FocusThroughTabTraversal(bool reverse) override;
   DropData* GetDropData() const override;
+  void TransferDragSecurityInfo(WebContentsView* view) override;
   gfx::Rect GetViewBounds() const override;
   void CreateView(gfx::NativeView context) override;
   RenderWidgetHostViewBase* CreateViewForWidget(
       RenderWidgetHost* render_widget_host) override;
   RenderWidgetHostViewBase* CreateViewForChildWidget(
       RenderWidgetHost* render_widget_host) override;
-  void SetPageTitle(const base::string16& title) override;
+  void SetPageTitle(const std::u16string& title) override;
   void RenderViewReady() override;
   void RenderViewHostChanged(RenderViewHost* old_host,
                              RenderViewHost* new_host) override;
   void SetOverscrollControllerEnabled(bool enabled) override;
   bool CloseTabAfterEventTrackingIfNeeded() override;
+  void OnCapturerCountChanged() override;
+  void FullscreenStateChanged(bool is_fullscreen) override;
+  void UpdateWindowControlsOverlay(const gfx::Rect& bounding_rect) override;
 
   // RenderViewHostDelegateView:
   void StartDragging(const DropData& drop_data,
+                     const url::Origin& source_origin,
                      blink::DragOperationsMask allowed_operations,
                      const gfx::ImageSkia& image,
-                     const gfx::Vector2d& image_offset,
+                     const gfx::Vector2d& cursor_offset,
+                     const gfx::Rect& drag_obj_rect,
                      const blink::mojom::DragEventSourceInfo& event_info,
                      RenderWidgetHostImpl* source_rwh) override;
-  void UpdateDragCursor(blink::DragOperation operation) override;
+  void UpdateDragOperation(ui::mojom::DragOperation operation,
+                           bool document_is_handling_drag) override;
   void GotFocus(RenderWidgetHostImpl* render_widget_host) override;
   void LostFocus(RenderWidgetHostImpl* render_widget_host) override;
   void TakeFocus(bool reverse) override;
-  void ShowContextMenu(RenderFrameHost* render_frame_host,
+  void ShowContextMenu(RenderFrameHost& render_frame_host,
                        const ContextMenuParams& params) override;
+#if BUILDFLAG(USE_EXTERNAL_POPUP_MENU)
   void ShowPopupMenu(
       RenderFrameHost* render_frame_host,
       mojo::PendingRemote<blink::mojom::PopupMenuClient> popup_client,
@@ -108,6 +119,7 @@ class WebContentsViewMac : public WebContentsView,
       std::vector<blink::mojom::MenuItemPtr> menu_items,
       bool right_aligned,
       bool allow_multiple_selection) override;
+#endif
 
   // PopupMenuHelper::Delegate:
   void OnMenuClosed() override;
@@ -120,6 +132,7 @@ class WebContentsViewMac : public WebContentsView,
   void ViewsHostableMakeFirstResponder() override;
   void ViewsHostableSetParentAccessible(
       gfx::NativeViewAccessible parent_accessibility_element) override;
+  gfx::NativeViewAccessible ViewsHostableGetParentAccessible() override;
   gfx::NativeViewAccessible ViewsHostableGetAccessibilityElement() override;
 
   // A helper method for closing the tab in the
@@ -128,7 +141,7 @@ class WebContentsViewMac : public WebContentsView,
 
   WebContentsImpl* web_contents() { return web_contents_; }
   WebContentsViewDelegate* delegate() { return delegate_.get(); }
-  WebDragDest* drag_dest() const { return drag_dest_.get(); }
+  WebDragDest* drag_dest() const { return drag_dest_; }
 
   using RenderWidgetHostViewCreateFunction =
       RenderWidgetHostViewMac* (*)(RenderWidgetHost*);
@@ -157,6 +170,7 @@ class WebContentsViewMac : public WebContentsView,
   bool DragPromisedFileTo(const base::FilePath& file_path,
                           const DropData& drop_data,
                           const GURL& download_url,
+                          const url::Origin& source_origin,
                           base::FilePath* out_file_path) override;
   void EndDrag(uint32_t drag_opeation,
                const gfx::PointF& local_point,
@@ -172,6 +186,7 @@ class WebContentsViewMac : public WebContentsView,
   void DragPromisedFileTo(const base::FilePath& file_path,
                           const DropData& drop_data,
                           const GURL& download_url,
+                          const url::Origin& source_origin,
                           DragPromisedFileToCallback callback) override;
 
   // Return the list of child RenderWidgetHostViewMacs. This will remove any
@@ -179,10 +194,10 @@ class WebContentsViewMac : public WebContentsView,
   std::list<RenderWidgetHostViewMac*> GetChildViews();
 
   // The WebContentsImpl whose contents we display.
-  WebContentsImpl* web_contents_;
+  raw_ptr<WebContentsImpl> web_contents_;
 
   // Destination for drag-drop.
-  base::scoped_nsobject<WebDragDest> drag_dest_;
+  WebDragDest* __strong drag_dest_;
 
   // Tracks the RenderWidgetHost where the current drag started.
   base::WeakPtr<content::RenderWidgetHostImpl> drag_source_start_rwh_;
@@ -198,7 +213,7 @@ class WebContentsViewMac : public WebContentsView,
   std::list<base::WeakPtr<RenderWidgetHostViewBase>> child_views_;
 
   // Interface to the views::View host of this view.
-  ViewsHostableView::Host* views_host_ = nullptr;
+  raw_ptr<ViewsHostableView::Host> views_host_ = nullptr;
 
   // The accessibility element specified via ViewsHostableSetParentAccessible.
   gfx::NativeViewAccessible views_host_accessibility_element_ = nil;
@@ -207,6 +222,12 @@ class WebContentsViewMac : public WebContentsView,
 
   // The id that may be used to look up this NSView.
   const uint64_t ns_view_id_;
+
+  // Bounding rect for the part at the top of the WebContents that is not
+  // covered by window controls when window controls overlay is enabled.
+  // This is cached here in case this rect is set before the web contents has
+  // been attached to a remote view.
+  gfx::Rect window_controls_overlay_bounding_rect_;
 
   // The WebContentsViewCocoa that lives in the NSView hierarchy in this
   // process. This is always non-null, even when the view is being displayed
@@ -222,8 +243,6 @@ class WebContentsViewMac : public WebContentsView,
 
   // Used by CloseTabAfterEventTrackingIfNeeded.
   base::WeakPtrFactory<WebContentsViewMac> deferred_close_weak_ptr_factory_;
-
-  DISALLOW_COPY_AND_ASSIGN(WebContentsViewMac);
 };
 
 }  // namespace content

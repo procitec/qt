@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,6 +8,7 @@
 
 #include <memory>
 
+#include "base/containers/contains.h"
 #include "gpu/command_buffer/service/gpu_service_test.h"
 #include "gpu/command_buffer/service/gpu_switches.h"
 #include "gpu/command_buffer/service/test_helper.h"
@@ -68,7 +69,7 @@ class FeatureInfoTest
         break;
       case ES2_on_Version3_2Compatibility:
       case ES3_on_Version3_2Compatibility:
-        if (extensions_str.find("GL_ARB_compatibility") == std::string::npos) {
+        if (!base::Contains(extensions_str, "GL_ARB_compatibility")) {
           extensions_str += " GL_ARB_compatibility";
         }
         SetupInitExpectationsWithGLVersion(extensions_str.c_str(), "", "3.2");
@@ -213,7 +214,7 @@ TEST_P(FeatureInfoTest, Basic) {
 #define GPU_OP(type, name) EXPECT_FALSE(info_->workarounds().name);
   GPU_DRIVER_BUG_WORKAROUNDS(GPU_OP)
 #undef GPU_OP
-  EXPECT_EQ(0, info_->workarounds().max_texture_size);
+  EXPECT_EQ(0, info_->workarounds().webgl_or_caps_max_texture_size);
   EXPECT_FALSE(info_->workarounds().gl_clear_broken);
 }
 
@@ -369,7 +370,6 @@ TEST_P(FeatureInfoTest, InitializeNoExtensions) {
   EXPECT_FALSE(info_->validators()->equation.IsValid(GL_MIN_EXT));
   EXPECT_FALSE(info_->validators()->equation.IsValid(GL_MAX_EXT));
   EXPECT_FALSE(info_->feature_flags().chromium_sync_query);
-  EXPECT_FALSE(info_->feature_flags().chromium_image_ycbcr_422);
 }
 
 TEST_P(FeatureInfoTest, InitializeWithANGLE) {
@@ -1552,11 +1552,11 @@ TEST_P(FeatureInfoTest, ParseDriverBugWorkaroundsSingle) {
 TEST_P(FeatureInfoTest, ParseDriverBugWorkaroundsMultiple) {
   gpu::GpuDriverBugWorkarounds workarounds;
   workarounds.exit_on_context_lost = true;
-  workarounds.max_texture_size = 4096;
+  workarounds.webgl_or_caps_max_texture_size = 4096;
   // Workarounds should get parsed without the need for a context.
   SetupWithWorkarounds(workarounds);
   EXPECT_TRUE(info_->workarounds().exit_on_context_lost);
-  EXPECT_EQ(4096, info_->workarounds().max_texture_size);
+  EXPECT_EQ(4096, info_->workarounds().webgl_or_caps_max_texture_size);
 }
 
 TEST_P(FeatureInfoTest, InitializeWithARBSync) {
@@ -1695,25 +1695,6 @@ TEST_P(FeatureInfoTest, InitializeEXT_texture_norm16) {
       GL_RGB16_EXT));
   EXPECT_TRUE(info_->validators()->texture_internal_format_storage.IsValid(
       GL_RGBA16_EXT));
-}
-
-TEST_P(FeatureInfoTest, InitializeCHROMIUM_unpremultiply_and_dither_copy) {
-  SetupInitExpectations("");
-  switch (GetParam()) {
-    case ES2_on_Version3_0_Passthrough:
-      EXPECT_FALSE(info_->feature_flags().unpremultiply_and_dither_copy);
-      EXPECT_FALSE(gfx::HasExtension(
-          info_->extensions(), "GL_CHROMIUM_unpremultiply_and_dither_copy"));
-      break;
-    case ES2_on_Version3_0:
-    case ES2_on_Version3_2Compatibility:
-    case ES3_on_Version3_0:
-    case ES3_on_Version3_2Compatibility:
-      EXPECT_TRUE(info_->feature_flags().unpremultiply_and_dither_copy);
-      EXPECT_TRUE(gfx::HasExtension(
-          info_->extensions(), "GL_CHROMIUM_unpremultiply_and_dither_copy"));
-      break;
-  }
 }
 
 TEST_P(FeatureInfoTest, InitializeMESAFramebufferFlipYExtensionTrue) {

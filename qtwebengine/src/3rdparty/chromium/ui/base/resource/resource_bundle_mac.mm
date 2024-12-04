@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,16 +7,18 @@
 #import <AppKit/AppKit.h>
 #include <stddef.h>
 
+#include "base/apple/bundle_locations.h"
+#include "base/apple/foundation_util.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
-#include "base/mac/bundle_locations.h"
-#include "base/mac/scoped_nsobject.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/notreached.h"
+#include "base/numerics/safe_conversions.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/synchronization/lock.h"
 #include "ui/base/resource/resource_handle.h"
+#include "ui/base/resource/resource_scale_factor.h"
 #include "ui/gfx/image/image.h"
 
 namespace ui {
@@ -29,14 +31,14 @@ base::FilePath GetResourcesPakFilePath(NSString* name, NSString* mac_locale) {
   // (chrome_main.cc: SubprocessNeedsResourceBundle()). Fetch the same locale
   // as the already-running browser instead of using what NSBundle might pick
   // based on values at helper launch time.
-  if ([mac_locale length]) {
-    resource_path = [base::mac::FrameworkBundle() pathForResource:name
-                                                           ofType:@"pak"
-                                                      inDirectory:@""
-                                                  forLocalization:mac_locale];
+  if (mac_locale.length) {
+    resource_path = [base::apple::FrameworkBundle() pathForResource:name
+                                                             ofType:@"pak"
+                                                        inDirectory:@""
+                                                    forLocalization:mac_locale];
   } else {
-    resource_path = [base::mac::FrameworkBundle() pathForResource:name
-                                                           ofType:@"pak"];
+    resource_path = [base::apple::FrameworkBundle() pathForResource:name
+                                                             ofType:@"pak"];
   }
 
   if (!resource_path) {
@@ -44,20 +46,20 @@ base::FilePath GetResourcesPakFilePath(NSString* name, NSString* mac_locale) {
     return base::FilePath(base::SysNSStringToUTF8(name) + ".pak");
   }
 
-  return base::FilePath([resource_path fileSystemRepresentation]);
+  return base::apple::NSStringToFilePath(resource_path);
 }
 
 }  // namespace
 
 void ResourceBundle::LoadCommonResources() {
-  AddDataPackFromPath(GetResourcesPakFilePath(@"chrome_100_percent",
-                        nil), SCALE_FACTOR_100P);
+  AddDataPackFromPath(GetResourcesPakFilePath(@"chrome_100_percent", nil),
+                      k100Percent);
 
   // On Mac we load 1x and 2x resources and we let the UI framework decide
   // which one to use.
-  if (IsScaleFactorSupported(SCALE_FACTOR_200P)) {
+  if (IsScaleFactorSupported(k200Percent)) {
     AddDataPackFromPath(GetResourcesPakFilePath(@"chrome_200_percent", nil),
-                        SCALE_FACTOR_200P);
+                        k200Percent);
   }
 }
 
@@ -66,7 +68,7 @@ base::FilePath ResourceBundle::GetLocaleFilePath(
     const std::string& app_locale) {
   NSString* mac_locale = base::SysUTF8ToNSString(app_locale);
 
-  // Mac OS X uses "_" instead of "-", so swap to get a Mac-style value.
+  // macOS uses "_" instead of "-", so swap to get a Mac-style value.
   mac_locale = [mac_locale stringByReplacingOccurrencesOfString:@"-"
                                                      withString:@"_"];
 
@@ -88,35 +90,28 @@ base::FilePath ResourceBundle::GetLocaleFilePath(
 
 gfx::Image& ResourceBundle::GetNativeImageNamed(int resource_id) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
   // Check to see if the image is already in the cache.
-  auto found = images_.find(resource_id);
-  if (found != images_.end()) {
-    if (!found->second.HasRepresentation(gfx::Image::kImageRepCocoa)) {
-      DLOG(WARNING)
-          << "ResourceBundle::GetNativeImageNamed() is returning a"
-          << " cached gfx::Image that isn't backed by an NSImage. The image"
-          << " will be converted, rather than going through the NSImage loader."
-          << " resource_id = " << resource_id;
-    }
+  if (auto found = images_.find(resource_id); found != images_.end())
     return found->second;
-  }
 
   gfx::Image image;
   if (delegate_)
     image = delegate_->GetNativeImageNamed(resource_id);
 
   if (image.IsEmpty()) {
-    base::scoped_nsobject<NSImage> ns_image;
-    for (size_t i = 0; i < data_packs_.size(); ++i) {
+    NSImage* ns_image;
+    for (const auto& resource_handle : resource_handles_) {
       scoped_refptr<base::RefCountedStaticMemory> data(
-          data_packs_[i]->GetStaticMemory(resource_id));
+          resource_handle->GetStaticMemory(
+              base::checked_cast<uint16_t>(resource_id)));
       if (!data.get())
         continue;
 
-      base::scoped_nsobject<NSData> ns_data(
-          [[NSData alloc] initWithBytes:data->front() length:data->size()]);
-      if (!ns_image.get()) {
-        ns_image.reset([[NSImage alloc] initWithData:ns_data]);
+      NSData* ns_data = [[NSData alloc] initWithBytes:data->front()
+                                               length:data->size()];
+      if (!ns_image) {
+        ns_image = [[NSImage alloc] initWithData:ns_data];
       } else {
         NSImageRep* image_rep = [NSBitmapImageRep imageRepWithData:ns_data];
         if (image_rep)
@@ -124,7 +119,7 @@ gfx::Image& ResourceBundle::GetNativeImageNamed(int resource_id) {
       }
     }
 
-    if (!ns_image.get()) {
+    if (!ns_image) {
       LOG(WARNING) << "Unable to load image with id " << resource_id;
       NOTREACHED();  // Want to assert in debug mode.
       return GetEmptyImage();

@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,7 +9,6 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/notreached.h"
-#include "base/strings/string16.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "build/build_config.h"
@@ -37,8 +36,6 @@ OfflinePagesNamespaceEnumeration ToNamespaceEnum(
     return OfflinePagesNamespaceEnumeration::DOWNLOAD;
   else if (name_space == kNTPSuggestionsNamespace)
     return OfflinePagesNamespaceEnumeration::NTP_SUGGESTION;
-  else if (name_space == kSuggestedArticlesNamespace)
-    return OfflinePagesNamespaceEnumeration::SUGGESTED_ARTICLES;
   else if (name_space == kBrowserActionsNamespace)
     return OfflinePagesNamespaceEnumeration::BROWSER_ACTIONS;
   else if (name_space == kLivePageSharingNamespace)
@@ -46,7 +43,6 @@ OfflinePagesNamespaceEnumeration ToNamespaceEnum(
   else if (name_space == kAutoAsyncNamespace)
     return OfflinePagesNamespaceEnumeration::ASYNC_AUTO_LOADING;
 
-  NOTREACHED();
   return OfflinePagesNamespaceEnumeration::DEFAULT;
 }
 
@@ -63,7 +59,7 @@ std::string AddHistogramSuffix(const std::string& name_space,
 }
 
 base::FilePath GenerateUniqueFilenameForOfflinePage(
-    const base::string16& title,
+    const std::u16string& title,
     const GURL& url,
     const base::FilePath& target_dir) {
   std::string kMHTMLMimeType = "multipart/related";
@@ -75,13 +71,10 @@ base::FilePath GenerateUniqueFilenameForOfflinePage(
 
   // Find a unique name based on |suggested_path|.
   int uniquifier = base::GetUniquePathNumber(suggested_path);
-  base::FilePath::StringType suffix;
-  if (uniquifier > 0)
-#if defined(OS_WIN)
-    suffix = base::StringPrintf(L" (%d)", uniquifier);
-#else   // defined(OS_WIN)
+  std::string suffix;
+  if (uniquifier > 0) {
     suffix = base::StringPrintf(" (%d)", uniquifier);
-#endif  // defined(OS_WIN)
+  }
 
   // Truncation.
   int max_path_component_length =
@@ -90,13 +83,15 @@ base::FilePath GenerateUniqueFilenameForOfflinePage(
     int limit = max_path_component_length -
                 suggested_path.Extension().length() - suffix.length();
     if (limit <= 0 ||
-        !filename_generation::TruncateFilename(&suggested_path, limit))
+        !filename_generation::TruncateFilename(&suggested_path, limit)) {
       return base::FilePath();
+    }
   }
 
   // Adding uniquifier suffix if needed.
-  if (uniquifier > 0)
-    suggested_path = suggested_path.InsertBeforeExtension(suffix);
+  if (!suffix.empty()) {
+    suggested_path = suggested_path.InsertBeforeExtensionASCII(suffix);
+  }
 
   return suggested_path;
 }

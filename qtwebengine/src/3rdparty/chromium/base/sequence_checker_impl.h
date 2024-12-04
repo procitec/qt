@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,10 +8,15 @@
 #include <memory>
 
 #include "base/base_export.h"
+#include "base/sequence_token.h"
 #include "base/synchronization/lock.h"
 #include "base/thread_annotations.h"
+#include "base/threading/platform_thread_ref.h"
 
 namespace base {
+namespace debug {
+class StackTrace;
+}
 
 // Real implementation of SequenceChecker for use in debug mode or for temporary
 // use in release mode (e.g. to CHECK on a threading issue seen only in the
@@ -19,10 +24,13 @@ namespace base {
 //
 // Note: You should almost always use the SequenceChecker class to get the right
 // version for your build configuration.
-// Note: This is only a check, not a "lock". It is marked "LOCKABLE" only in
-// order to support thread_annotations.h.
-class LOCKABLE BASE_EXPORT SequenceCheckerImpl {
+// Note: This is marked with "context" capability in order to support
+// thread_annotations.h.
+class THREAD_ANNOTATION_ATTRIBUTE__(capability("context"))
+    BASE_EXPORT SequenceCheckerImpl {
  public:
+  static void EnableStackLogging();
+
   SequenceCheckerImpl();
 
   // Allow move construct/assign. This must be called on |other|'s associated
@@ -39,21 +47,34 @@ class LOCKABLE BASE_EXPORT SequenceCheckerImpl {
 
   // Returns true if called in sequence with previous calls to this method and
   // the constructor.
-  bool CalledOnValidSequence() const WARN_UNUSED_RESULT;
+  // On returning false, if logging is enabled with EnableStackLogging() and
+  // `out_bound_at` is not null, this method allocates a StackTrace and returns
+  // it in the out-parameter, storing inside it the stack from where the failing
+  // SequenceChecker was bound to its sequence. Otherwise, out_bound_at is left
+  // untouched.
+  [[nodiscard]] bool CalledOnValidSequence(
+      std::unique_ptr<debug::StackTrace>* out_bound_at = nullptr) const;
 
   // Unbinds the checker from the currently associated sequence. The checker
   // will be re-bound on the next call to CalledOnValidSequence().
   void DetachFromSequence();
 
  private:
-  class Core;
+  void EnsureAssigned() const EXCLUSIVE_LOCKS_REQUIRED(lock_);
 
-  // Calls straight to ThreadLocalStorage::HasBeenDestroyed(). Exposed purely
-  // for 'friend' to work.
-  static bool HasThreadLocalStorageBeenDestroyed();
+  // Members are mutable so that `CalledOnValidSequence()` can set them.
 
   mutable Lock lock_;
-  mutable std::unique_ptr<Core> core_ GUARDED_BY(lock_);
+
+  // Stack from which this was bound (set if `EnableStackLogging()` was called).
+  mutable std::unique_ptr<debug::StackTrace> bound_at_ GUARDED_BY(lock_);
+
+  // Sequence to which this is bound.
+  mutable internal::SequenceToken sequence_token_ GUARDED_BY(lock_);
+
+  // Thread to which this is bound. Only used to evaluate
+  // `CalledOnValidSequence()` after TLS destruction.
+  mutable PlatformThreadRef thread_ref_ GUARDED_BY(lock_);
 };
 
 }  // namespace base

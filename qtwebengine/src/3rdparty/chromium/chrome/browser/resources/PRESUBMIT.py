@@ -1,4 +1,4 @@
-# Copyright 2014 The Chromium Authors. All rights reserved.
+# Copyright 2014 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -9,9 +9,10 @@ for more details about the presubmit API built into depot_tools.
 """
 
 ACTION_XML_PATH = '../../../tools/metrics/actions/actions.xml'
+PRESUBMIT_VERSION = '2.0.0'
 
 
-def CheckUserActionUpdate(input_api, output_api, action_xml_path):
+def InternalCheckUserActionUpdate(input_api, output_api, action_xml_path):
   """Checks if any new user action has been added."""
   if any('actions.xml' == input_api.os_path.basename(f) for f in
          input_api.change.LocalPaths()):
@@ -29,7 +30,7 @@ def CheckUserActionUpdate(input_api, output_api, action_xml_path):
         # Loads contents in tools/metrics/actions/actions.xml to memory. It's
         # loaded only once.
         if not current_actions:
-          with open(action_xml_path) as actions_f:
+          with open(action_xml_path, encoding='utf-8') as actions_f:
             current_actions = actions_f.read()
 
         metric_name = match.group(2)
@@ -43,6 +44,10 @@ def CheckUserActionUpdate(input_api, output_api, action_xml_path):
             'tools/metrics/actions/extract_actions.py to update.'
             % (f.LocalPath(), line_num, metric_name), [])]
   return []
+
+
+def CheckUserActionUpdate(input_api, output_api):
+  return InternalCheckUserActionUpdate(input_api, output_api, ACTION_XML_PATH)
 
 
 def IsActionPresent(current_actions, metric_name, is_boolean):
@@ -93,14 +98,7 @@ def CheckHtml(input_api, output_api):
       input_api, output_api, 80, lambda x: x.LocalPath().endswith('.html'))
 
 
-def RunOptimizeWebUiTests(input_api, output_api):
-  presubmit_path = input_api.PresubmitLocalPath()
-  sources = ['optimize_webui_test.py', 'unpack_pak_test.py']
-  tests = [input_api.os_path.join(presubmit_path, s) for s in sources]
-  return input_api.canned_checks.RunUnitTests(input_api, output_api, tests)
-
-
-def _CheckSvgsOptimized(input_api, output_api):
+def CheckSvgsOptimized(input_api, output_api):
   results = []
   try:
     import sys
@@ -114,42 +112,69 @@ def _CheckSvgsOptimized(input_api, output_api):
   return results
 
 
-def _CheckWebDevStyle(input_api, output_api):
-  results = []
-
+def _ImportWebDevStyle(input_api):
   try:
     import sys
     old_sys_path = sys.path[:]
     cwd = input_api.PresubmitLocalPath()
     sys.path += [input_api.os_path.join(cwd, '..', '..', '..', 'tools')]
     from web_dev_style import presubmit_support
-    results += presubmit_support.CheckStyle(input_api, output_api)
   finally:
     sys.path = old_sys_path
+  return presubmit_support
 
-  return results
+
+def CheckWebDevStyle(input_api, output_api):
+  presubmit_support = _ImportWebDevStyle(input_api)
+  return presubmit_support.CheckStyle(input_api, output_api)
 
 
-def _CheckChangeOnUploadOrCommit(input_api, output_api):
-  results = CheckUserActionUpdate(input_api, output_api, ACTION_XML_PATH)
-  affected = input_api.AffectedFiles()
-  if any(f for f in affected if f.LocalPath().endswith('.html')):
-    results += CheckHtml(input_api, output_api)
+def CheckNoNewJs(input_api, output_api):
+  EXCLUDED_PATHS = [
+    'chrome/browser/resources/.eslintrc',
+    'chrome/browser/resources/about_sys/',
+    'chrome/browser/resources/ash/settings/.eslintrc',
+    'chrome/browser/resources/bluetooth_internals/',
+    'chrome/browser/resources/chromeos/',
+    'chrome/browser/resources/device_log/',
+    'chrome/browser/resources/explore_sites_internals/',
+    'chrome/browser/resources/family_link_user_internals/',
+    'chrome/browser/resources/feed_internals/',
+    'chrome/browser/resources/gaia_auth_host/',
+    'chrome/browser/resources/hangout_services/',
+    'chrome/browser/resources/image_editor/',
+    'chrome/browser/resources/identity_scope_approval_dialog/',
+    'chrome/browser/resources/internals/lens/',
+    'chrome/browser/resources/internals/notifications/',
+    'chrome/browser/resources/internals/query_tiles/',
+    'chrome/browser/resources/inspect/',
+    'chrome/browser/resources/nearby_internals/',
+    'chrome/browser/resources/nearby_share/',
+    'chrome/browser/resources/net_internals/',
+    'chrome/browser/resources/network_speech_synthesis/',
+    'chrome/browser/resources/new_tab_page_incognito_guest/',
+    'chrome/browser/resources/new_tab_page/untrusted/',
+    'chrome/browser/resources/offline_pages/',
+    'chrome/browser/resources/omnibox/',
+    'chrome/browser/resources/settings/',
+    'chrome/browser/resources/tools/',
+  ]
 
-  webui_sources = set(['optimize_webui.py', 'unpack_pak.py'])
-  affected_files = [input_api.os_path.basename(f.LocalPath()) for f in affected]
-  if webui_sources.intersection(set(affected_files)):
-    results += RunOptimizeWebUiTests(input_api, output_api)
-  results += _CheckSvgsOptimized(input_api, output_api)
-  results += _CheckWebDevStyle(input_api, output_api)
-  results += input_api.canned_checks.CheckPatchFormatted(input_api, output_api,
+  normalized_excluded_paths = []
+  for path in EXCLUDED_PATHS:
+    normalized_excluded_paths.append(input_api.os_path.normpath(path))
+
+  def excluded_path(f):
+    for path in normalized_excluded_paths:
+      if f.LocalPath().startswith(path) or '.eslintrc.js' in f.LocalPath():
+        return True
+    return False
+
+  presubmit_support = _ImportWebDevStyle(input_api)
+  return presubmit_support.DisallowNewJsFiles(input_api, output_api,
+                                              lambda f: not excluded_path(f))
+
+def CheckPatchFormatted(input_api, output_api):
+  results = input_api.canned_checks.CheckPatchFormatted(input_api, output_api,
                                                          check_js=True)
   return results
-
-
-def CheckChangeOnUpload(input_api, output_api):
-  return _CheckChangeOnUploadOrCommit(input_api, output_api)
-
-
-def CheckChangeOnCommit(input_api, output_api):
-  return _CheckChangeOnUploadOrCommit(input_api, output_api)

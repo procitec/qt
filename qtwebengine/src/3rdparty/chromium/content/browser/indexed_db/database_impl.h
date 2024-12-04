@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,22 +6,20 @@
 #define CONTENT_BROWSER_INDEXED_DB_DATABASE_IMPL_H_
 
 #include <memory>
+#include <string>
 #include <vector>
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/sequence_checker.h"
-#include "base/strings/string16.h"
+#include "components/services/storage/privileged/mojom/indexed_db_client_state_checker.mojom.h"
+#include "components/services/storage/public/cpp/buckets/bucket_info.h"
+#include "components/services/storage/public/cpp/buckets/bucket_locator.h"
 #include "mojo/public/cpp/bindings/pending_associated_receiver.h"
 #include "mojo/public/cpp/bindings/pending_associated_remote.h"
 #include "third_party/blink/public/common/indexeddb/indexeddb_key.h"
 #include "third_party/blink/public/common/indexeddb/indexeddb_key_path.h"
 #include "third_party/blink/public/mojom/indexeddb/indexeddb.mojom.h"
-#include "url/origin.h"
-
-namespace base {
-class SequencedTaskRunner;
-}
 
 namespace blink {
 class IndexedDBKeyRange;
@@ -29,21 +27,24 @@ class IndexedDBKeyRange;
 
 namespace content {
 class IndexedDBConnection;
-class IndexedDBContextImpl;
-class IndexedDBDispatcherHost;
 
 class DatabaseImpl : public blink::mojom::IDBDatabase {
  public:
-  explicit DatabaseImpl(std::unique_ptr<IndexedDBConnection> connection,
-                        const url::Origin& origin,
-                        IndexedDBDispatcherHost* dispatcher_host,
-                        scoped_refptr<base::SequencedTaskRunner> idb_runner);
+  static mojo::PendingAssociatedRemote<blink::mojom::IDBDatabase> CreateAndBind(
+      std::unique_ptr<IndexedDBConnection> connection);
+
   ~DatabaseImpl() override;
+
+ private:
+  explicit DatabaseImpl(std::unique_ptr<IndexedDBConnection> connection);
+
+  DatabaseImpl(const DatabaseImpl&) = delete;
+  DatabaseImpl& operator=(const DatabaseImpl&) = delete;
 
   // blink::mojom::IDBDatabase implementation
   void RenameObjectStore(int64_t transaction_id,
                          int64_t object_store_id,
-                         const base::string16& new_name) override;
+                         const std::u16string& new_name) override;
   void CreateTransaction(
       mojo::PendingAssociatedReceiver<blink::mojom::IDBTransaction>
           transaction_receiver,
@@ -51,15 +52,7 @@ class DatabaseImpl : public blink::mojom::IDBDatabase {
       const std::vector<int64_t>& object_store_ids,
       blink::mojom::IDBTransactionMode mode,
       blink::mojom::IDBTransactionDurability durability) override;
-  void Close() override;
   void VersionChangeIgnored() override;
-  void AddObserver(int64_t transaction_id,
-                   int32_t observer_id,
-                   bool include_transaction,
-                   bool no_records,
-                   bool values,
-                   uint32_t operation_types) override;
-  void RemoveObservers(const std::vector<int32_t>& observers) override;
   void Get(int64_t transaction_id,
            int64_t object_store_id,
            int64_t index_id,
@@ -94,26 +87,22 @@ class DatabaseImpl : public blink::mojom::IDBDatabase {
              int64_t object_store_id,
              int64_t index_id,
              const blink::IndexedDBKeyRange& key_range,
-             mojo::PendingAssociatedRemote<blink::mojom::IDBCallbacks>
-                 pending_callbacks) override;
+             CountCallback callback) override;
   void DeleteRange(int64_t transaction_id,
                    int64_t object_store_id,
                    const blink::IndexedDBKeyRange& key_range,
-                   mojo::PendingAssociatedRemote<blink::mojom::IDBCallbacks>
-                       pending_callbacks) override;
+                   DeleteRangeCallback success_callback) override;
   void GetKeyGeneratorCurrentNumber(
       int64_t transaction_id,
       int64_t object_store_id,
-      mojo::PendingAssociatedRemote<blink::mojom::IDBCallbacks>
-          pending_callbacks) override;
+      GetKeyGeneratorCurrentNumberCallback callback) override;
   void Clear(int64_t transaction_id,
              int64_t object_store_id,
-             mojo::PendingAssociatedRemote<blink::mojom::IDBCallbacks>
-                 pending_callbacks) override;
+             ClearCallback callback) override;
   void CreateIndex(int64_t transaction_id,
                    int64_t object_store_id,
                    int64_t index_id,
-                   const base::string16& name,
+                   const std::u16string& name,
                    const blink::IndexedDBKeyPath& key_path,
                    bool unique,
                    bool multi_entry) override;
@@ -123,21 +112,18 @@ class DatabaseImpl : public blink::mojom::IDBDatabase {
   void RenameIndex(int64_t transaction_id,
                    int64_t object_store_id,
                    int64_t index_id,
-                   const base::string16& new_name) override;
+                   const std::u16string& new_name) override;
   void Abort(int64_t transaction_id) override;
+  void DidBecomeInactive() override;
 
- private:
-  // This raw pointer is safe because all DatabaseImpl instances are owned by
-  // an IndexedDBDispatcherHost.
-  IndexedDBDispatcherHost* dispatcher_host_;
-  scoped_refptr<IndexedDBContextImpl> indexed_db_context_;
+  // It is an error to call either of these after `connection_->IsConnected()`
+  // is no longer true.
+  const storage::BucketInfo& GetBucketInfo();
+  storage::BucketLocator GetBucketLocator();
+
   std::unique_ptr<IndexedDBConnection> connection_;
-  const url::Origin origin_;
-  scoped_refptr<base::SequencedTaskRunner> idb_runner_;
 
   SEQUENCE_CHECKER(sequence_checker_);
-
-  DISALLOW_COPY_AND_ASSIGN(DatabaseImpl);
 };
 
 }  // namespace content

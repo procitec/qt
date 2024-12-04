@@ -1,11 +1,9 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef CAST_COMMON_CERTIFICATE_CAST_CRL_H_
 #define CAST_COMMON_CERTIFICATE_CAST_CRL_H_
-
-#include <openssl/x509.h>
 
 #include <memory>
 #include <string>
@@ -17,8 +15,7 @@
 #include "cast/common/certificate/proto/revocation.pb.h"
 #include "platform/base/macros.h"
 
-namespace openscreen {
-namespace cast {
+namespace openscreen::cast {
 
 // TODO(crbug.com/openscreen/90): Remove these after Chromium is migrated to
 // openscreen::cast
@@ -26,6 +23,9 @@ using CrlBundle = ::cast::certificate::CrlBundle;
 using Crl = ::cast::certificate::Crl;
 using TbsCrl = ::cast::certificate::TbsCrl;
 using SerialNumberRange = ::cast::certificate::SerialNumberRange;
+
+class ParsedCertificate;
+class TrustStore;
 
 // This class represents the certificate revocation list information parsed from
 // the binary in a protobuf message.
@@ -46,8 +46,9 @@ class CastCRL {
   //
   // Output:
   // Returns true if no certificate in the chain was revoked.
-  bool CheckRevocation(const std::vector<X509*>& trusted_chain,
-                       const DateTime& time) const;
+  bool CheckRevocation(
+      const std::vector<const ParsedCertificate*>& trusted_chain,
+      const DateTime& time) const;
 
  private:
   struct SerialNumberRange {
@@ -71,24 +72,20 @@ class CastCRL {
   OSP_DISALLOW_COPY_AND_ASSIGN(CastCRL);
 };
 
-struct TrustStore;
-
 // Parses and verifies the CRL used to verify the revocation status of
 // Cast device certificates, using the built-in Cast CRL trust anchors.
 //
 // Inputs:
 // * |crl_proto| is a serialized cast_certificate.CrlBundle proto.
 // * |time| is the timestamp to use for determining if the CRL is valid.
-// * |trust_store| is the set of trust anchors to use.  This should be nullptr
-//   in production, but can be overridden in tests.
+// * |trust_store| is the set of trust anchors to use.
 //
 // Output:
 // Returns the CRL object if success, nullptr otherwise.
 std::unique_ptr<CastCRL> ParseAndVerifyCRL(const std::string& crl_proto,
                                            const DateTime& time,
-                                           TrustStore* trust_store = nullptr);
+                                           TrustStore* trust_store);
 
-}  // namespace cast
-}  // namespace openscreen
+}  // namespace openscreen::cast
 
 #endif  // CAST_COMMON_CERTIFICATE_CAST_CRL_H_

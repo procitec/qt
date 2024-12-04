@@ -1,31 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2017 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt Network Auth module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:GPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 3 or (at your option) any later version
-** approved by the KDE Free Qt Foundation. The licenses are as published by
-** the Free Software Foundation and appearing in the file LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2017 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
 #ifndef QOAUTH1_H
 #define QOAUTH1_H
@@ -64,15 +38,15 @@ public:
 
     QString clientSharedSecret() const;
     void setClientSharedSecret(const QString &clientSharedSecret);
-    QPair<QString, QString> clientCredentials() const;
-    void setClientCredentials(const QPair<QString, QString> &clientCredentials);
+    std::pair<QString, QString> clientCredentials() const;
+    void setClientCredentials(const std::pair<QString, QString> &clientCredentials);
     void setClientCredentials(const QString &clientIdentifier, const QString &clientSharedSecret);
 
     // Token credentials: https://tools.ietf.org/html/rfc5849#section-2.3
     QString tokenSecret() const;
     void setTokenSecret(const QString &tokenSecret);
-    QPair<QString, QString> tokenCredentials() const;
-    void setTokenCredentials(const QPair<QString, QString> &tokenCredentials);
+    std::pair<QString, QString> tokenCredentials() const;
+    void setTokenCredentials(const std::pair<QString, QString> &tokenCredentials);
     void setTokenCredentials(const QString &token, const QString &tokenSecret);
 
     // Temporary Credentials: https://tools.ietf.org/html/rfc5849#section-2.1
@@ -87,7 +61,9 @@ public:
     SignatureMethod signatureMethod() const;
     void setSignatureMethod(SignatureMethod value);
 
-public:
+    void prepareRequest(QNetworkRequest *request, const QByteArray &verb,
+                                const QByteArray &body = QByteArray()) override;
+
     QNetworkReply *head(const QUrl &url, const QVariantMap &parameters = QVariantMap()) override;
     QNetworkReply *get(const QUrl &url, const QVariantMap &parameters = QVariantMap()) override;
 
@@ -114,7 +90,7 @@ protected:
 
     QNetworkReply *requestTokenCredentials(QNetworkAccessManager::Operation operation,
                                            const QUrl &url,
-                                           const QPair<QString, QString> &temporaryToken,
+                                           const std::pair<QString, QString> &temporaryToken,
                                            const QVariantMap &parameters = QVariantMap());
 
     void setup(QNetworkRequest *request,

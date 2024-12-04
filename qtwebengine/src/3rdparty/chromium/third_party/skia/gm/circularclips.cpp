@@ -15,7 +15,6 @@
 #include "include/core/SkSize.h"
 #include "include/core/SkString.h"
 #include "include/core/SkTypes.h"
-#include "src/core/SkClipOpPriv.h"
 
 class CircularClipsGM : public skiagm::GM {
     SkScalar fX1, fX2, fY, fR;
@@ -35,18 +34,14 @@ protected:
 
     bool runAsBench() const override { return true; }
 
-    SkString onShortName() override {
-        return SkString("circular-clips");
-    }
+    SkString getName() const override { return SkString("circular-clips"); }
 
-    SkISize onISize() override {
-        return SkISize::Make(800, 200);
-    }
+    SkISize getISize() override { return SkISize::Make(800, 200); }
 
     void onDraw(SkCanvas* canvas) override {
         const SkClipOp ops[] = {
-            kDifference_SkClipOp,
-            kIntersect_SkClipOp
+            SkClipOp::kDifference,
+            SkClipOp::kIntersect
         };
 
         SkRect rect = SkRect::MakeLTRB(fX1 - fR, fY - fR, fX2 + fR, fY + fR);
@@ -74,7 +69,7 @@ protected:
             }
 
             canvas->save();
-            for (size_t op = 0; op < SK_ARRAY_COUNT(ops); op++) {
+            for (size_t op = 0; op < std::size(ops); op++) {
                 canvas->save();
 
                 canvas->clipPath(fCircle1);

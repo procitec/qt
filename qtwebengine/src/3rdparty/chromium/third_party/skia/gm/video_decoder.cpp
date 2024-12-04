@@ -17,14 +17,9 @@ public:
     VideoDecoderGM() {}
 
 protected:
+    SkString getName() const override { return SkString("videodecoder"); }
 
-    SkString onShortName() override {
-        return SkString("videodecoder");
-    }
-
-    SkISize onISize() override {
-        return SkISize::Make(1024, 768);
-    }
+    SkISize getISize() override { return SkISize::Make(1024, 768); }
 
     void onOnceBeforeDraw() override {
         if (!fDecoder.loadStream(SkStream::MakeFromFile("/skia/ice.mp4"))) {
@@ -51,7 +46,7 @@ protected:
             if (0) {
                 SkDebugf("ts %g\n", timeStamp);
             }
-            canvas->drawImage(img, 10, 10, nullptr);
+            canvas->drawImage(img, 10, 10);
         }
     }
 

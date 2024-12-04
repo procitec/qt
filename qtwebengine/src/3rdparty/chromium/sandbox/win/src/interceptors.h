@@ -1,9 +1,9 @@
-// Copyright (c) 2011 The Chromium Authors. All rights reserved.
+// Copyright 2011 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef SANDBOX_SRC_INTERCEPTORS_H_
-#define SANDBOX_SRC_INTERCEPTORS_H_
+#ifndef SANDBOX_WIN_SRC_INTERCEPTORS_H_
+#define SANDBOX_WIN_SRC_INTERCEPTORS_H_
 
 #if defined(_WIN64)
 #include "sandbox/win/src/interceptors_64.h"
@@ -29,8 +29,6 @@ enum InterceptorId {
   QUERY_ATTRIB_FILE_ID,
   QUERY_FULL_ATTRIB_FILE_ID,
   SET_INFO_FILE_ID,
-  // Named pipe dispatcher:
-  CREATE_NAMED_PIPE_ID,
   // Process-thread dispatcher:
   CREATE_PROCESSW_ID,
   CREATE_PROCESSA_ID,
@@ -46,28 +44,15 @@ enum InterceptorId {
   GDIINITIALIZE_ID,
   GETSTOCKOBJECT_ID,
   REGISTERCLASSW_ID,
-  ENUMDISPLAYMONITORS_ID,
-  ENUMDISPLAYDEVICESA_ID,
-  GETMONITORINFOA_ID,
-  GETMONITORINFOW_ID,
-  CREATEOPMPROTECTEDOUTPUTS_ID,
-  GETCERTIFICATE_ID,
-  GETCERTIFICATESIZE_ID,
-  GETCERTIFICATEBYHANDLE_ID,
-  GETCERTIFICATESIZEBYHANDLE_ID,
-  DESTROYOPMPROTECTEDOUTPUT_ID,
-  CONFIGUREOPMPROTECTEDOUTPUT_ID,
-  GETOPMINFORMATION_ID,
-  GETOPMRANDOMNUMBER_ID,
-  GETSUGGESTEDOPMPROTECTEDOUTPUTARRAYSIZE_ID,
-  SETOPMSIGNINGKEYANDSEQUENCENUMBERS_ID,
   // Signed dispatcher:
   CREATE_SECTION_ID,
   INTERCEPTOR_MAX_ID
 };
 
-typedef void* OriginalFunctions[INTERCEPTOR_MAX_ID];
+struct OriginalFunctions {
+  void* functions[INTERCEPTOR_MAX_ID];
+};
 
 }  // namespace sandbox
 
-#endif  // SANDBOX_SRC_INTERCEPTORS_H_
+#endif  // SANDBOX_WIN_SRC_INTERCEPTORS_H_

@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,9 +6,9 @@
 
 #include <stddef.h>
 
-#include <algorithm>
 #include <cmath>
 
+#include "base/ranges/algorithm.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "components/favicon_base/favicon_types.h"
@@ -16,16 +16,18 @@
 #include "skia/ext/image_operations.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkCanvas.h"
-#include "ui/base/layout.h"
+#include "third_party/skia/include/core/SkImage.h"
+#include "ui/base/resource/resource_scale_factor.h"
 #include "ui/gfx/codec/png_codec.h"
 #include "ui/gfx/favicon_size.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/image/image_png_rep.h"
 #include "ui/gfx/image/image_skia.h"
+#include "ui/gfx/image/image_skia_rep.h"
 
-#if defined(OS_MAC)
+#if BUILDFLAG(IS_MAC)
 #include "base/mac/mac_util.h"
-#endif  // defined(OS_MAC)
+#endif  // BUILDFLAG(IS_MAC)
 
 namespace favicon_base {
 namespace {
@@ -127,9 +129,10 @@ SkBitmap ResizeBitmapByDownsamplingIfPossible(
     if (!best_bitmap.isOpaque())
       bitmap.eraseARGB(0, 0, 0, 0);
 
-    SkCanvas canvas(bitmap);
-    canvas.drawBitmapRect(best_bitmap,
-                          SkRect::MakeIWH(desired_size, desired_size), nullptr);
+    SkCanvas canvas(bitmap, SkSurfaceProps{});
+    canvas.drawImageRect(best_bitmap.asImage(),
+                         SkRect::MakeIWH(desired_size, desired_size),
+                         SkSamplingOptions());
     return bitmap;
   }
   return skia::ImageOperations::Resize(best_bitmap,
@@ -142,26 +145,19 @@ SkBitmap ResizeBitmapByDownsamplingIfPossible(
 
 std::vector<float> GetFaviconScales() {
   const float kScale1x = 1.0f;
-  std::vector<ui::ScaleFactor> resource_scale_factors =
-      ui::GetSupportedScaleFactors();
 
   // TODO(ios): 1.0f should not be necessary on iOS retina devices. However
   // the sync service only supports syncing 100p favicons. Until sync supports
   // other scales 100p is needed in the list of scales to retrieve and
   // store the favicons in both 100p for sync and 200p for display. cr/160503.
   std::vector<float> favicon_scales(1, kScale1x);
-  for (size_t i = 0; i < resource_scale_factors.size(); ++i) {
-    if (resource_scale_factors[i] != ui::SCALE_FACTOR_100P)
+  for (const auto scale_factor : ui::GetSupportedResourceScaleFactors()) {
+    if (scale_factor != ui::k100Percent) {
       favicon_scales.push_back(
-          ui::GetScaleForScaleFactor(resource_scale_factors[i]));
+          ui::GetScaleForResourceScaleFactor(scale_factor));
+    }
   }
   return favicon_scales;
-}
-
-void SetFaviconColorSpace(gfx::Image* image) {
-#if defined(OS_MAC)
-  image->SetSourceColorSpace(base::mac::GetSystemColorSpace());
-#endif  // defined(OS_MAC)
 }
 
 gfx::Image SelectFaviconFramesFromPNGs(
@@ -193,8 +189,8 @@ gfx::Image SelectFaviconFramesFromPNGs(
 
   std::vector<float> favicon_scales_to_generate = favicon_scales;
   for (size_t i = 0; i < png_reps.size(); ++i) {
-    auto iter = std::find(favicon_scales_to_generate.begin(),
-                          favicon_scales_to_generate.end(), png_reps[i].scale);
+    auto iter =
+        base::ranges::find(favicon_scales_to_generate, png_reps[i].scale);
     if (iter != favicon_scales_to_generate.end())
       favicon_scales_to_generate.erase(iter);
   }
@@ -247,9 +243,9 @@ gfx::Image SelectFaviconFramesFromPNGs(
 }
 
 favicon_base::FaviconRawBitmapResult ResizeFaviconBitmapResult(
+    int desired_size_in_pixel,
     const std::vector<favicon_base::FaviconRawBitmapResult>&
-        favicon_bitmap_results,
-    int desired_size_in_pixel) {
+        favicon_bitmap_results) {
   TRACE_EVENT0("browser", "FaviconUtil::ResizeFaviconBitmapResult");
 
   if (favicon_bitmap_results.empty() || !favicon_bitmap_results[0].is_valid())

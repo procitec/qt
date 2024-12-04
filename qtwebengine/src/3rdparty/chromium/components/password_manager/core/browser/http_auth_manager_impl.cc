@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -56,11 +56,14 @@ void HttpAuthManagerImpl::SetObserverAndDeliverCredentials(
   if (observer_)
     observer_->OnLoginModelDestroying();
   observer_ = observer;
+
+  if (!client_->IsFillingEnabled(observed_form.url)) {
+    return;
+  }
   // Initialize the form manager.
   form_manager_ = std::make_unique<PasswordFormManager>(
-      client_, PasswordStore::FormDigest(observed_form),
-      nullptr /* form_fetcher */,
-      PasswordSaveManagerImpl::CreatePasswordSaveManagerImpl(client_));
+      client_, PasswordFormDigest(observed_form), nullptr /* form_fetcher */,
+      std::make_unique<PasswordSaveManagerImpl>(client_));
 }
 
 void HttpAuthManagerImpl::ProvisionallySaveForm(
@@ -82,8 +85,10 @@ void HttpAuthManagerImpl::Autofill(
 
 void HttpAuthManagerImpl::OnPasswordFormSubmitted(
     const PasswordForm& password_form) {
-  if (client_->IsSavingAndFillingEnabled(password_form.url))
+  if (client_->IsSavingAndFillingEnabled(password_form.url) &&
+      !password_form.password_value.empty()) {
     ProvisionallySaveForm(password_form);
+  }
 }
 
 void HttpAuthManagerImpl::OnPasswordFormDismissed() {
@@ -140,6 +145,11 @@ void HttpAuthManagerImpl::OnLoginSuccesfull() {
     client_->PromptUserToSaveOrUpdatePassword(std::move(form_manager_),
                                               is_update);
     LogMessage(Logger::STRING_HTTPAUTH_ON_PROMPT_USER);
+  } else {
+    // For existing credentials that haven't been updated invoke
+    // form_manager_->Save() in order to update meta data fields (e.g. last used
+    // timestamp).
+    form_manager_->Save();
   }
 }
 

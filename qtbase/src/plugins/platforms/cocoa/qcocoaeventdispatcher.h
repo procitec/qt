@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the plugins of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 /****************************************************************************
 **
@@ -91,20 +55,26 @@
 #include <QtCore/private/qabstracteventdispatcher_p.h>
 #include <QtCore/private/qcfsocketnotifier_p.h>
 #include <QtCore/private/qtimerinfo_unix_p.h>
+#include <QtCore/qloggingcategory.h>
+#include <QtCore/qpointer.h>
 
 #include <CoreFoundation/CoreFoundation.h>
 
+Q_FORWARD_DECLARE_OBJC_CLASS(NSWindow);
+
 QT_BEGIN_NAMESPACE
+
+Q_DECLARE_LOGGING_CATEGORY(lcEventDispatcher);
 
 typedef struct _NSModalSession *NSModalSession;
 typedef struct _QCocoaModalSessionInfo {
     QPointer<QWindow> window;
     NSModalSession session;
-    void *nswindow;
+    NSWindow *nswindow;
 } QCocoaModalSessionInfo;
 
 class QCocoaEventDispatcherPrivate;
-class QCocoaEventDispatcher : public QAbstractEventDispatcher
+class QCocoaEventDispatcher : public QAbstractEventDispatcherV2
 {
     Q_OBJECT
     Q_DECLARE_PRIVATE(QCocoaEventDispatcher)
@@ -112,24 +82,22 @@ class QCocoaEventDispatcher : public QAbstractEventDispatcher
 public:
     QCocoaEventDispatcher(QAbstractEventDispatcherPrivate &priv, QObject *parent = nullptr);
     explicit QCocoaEventDispatcher(QObject *parent = nullptr);
-    ~QCocoaEventDispatcher();
+    ~QCocoaEventDispatcher() override;
 
-    bool processEvents(QEventLoop::ProcessEventsFlags flags);
-    bool hasPendingEvents();
+    bool processEvents(QEventLoop::ProcessEventsFlags flags) override;
 
-    void registerSocketNotifier(QSocketNotifier *notifier);
-    void unregisterSocketNotifier(QSocketNotifier *notifier);
+    void registerSocketNotifier(QSocketNotifier *notifier) override;
+    void unregisterSocketNotifier(QSocketNotifier *notifier) override;
 
-    void registerTimer(int timerId, int interval, Qt::TimerType timerType, QObject *object);
-    bool unregisterTimer(int timerId);
-    bool unregisterTimers(QObject *object);
-    QList<TimerInfo> registeredTimers(QObject *object) const;
+    void registerTimer(Qt::TimerId timerId, Duration interval, Qt::TimerType timerType,
+                       QObject *object) final;
+    bool unregisterTimer(Qt::TimerId timerId) final;
+    bool unregisterTimers(QObject *object) final;
+    QList<TimerInfoV2> timersForObject(QObject *object) const final;
+    Duration remainingTime(Qt::TimerId timerId) const final;
 
-    int remainingTime(int timerId);
-
-    void wakeUp();
-    void interrupt();
-    void flush();
+    void wakeUp() override;
+    void interrupt() override;
 
     static void clearCurrentThreadCocoaEventDispatcherInterruptFlag();
 
@@ -142,6 +110,7 @@ class QCocoaEventDispatcherPrivate : public QAbstractEventDispatcherPrivate
 
 public:
     QCocoaEventDispatcherPrivate();
+    ~QCocoaEventDispatcherPrivate() override;
 
     uint processEventsFlags;
 
@@ -164,6 +133,7 @@ public:
     QStack<QCocoaModalSessionInfo> cocoaModalSessionStack;
     bool currentExecIsNSAppRun;
     bool nsAppRunCalledByQt;
+    bool initializingNSApplication = false;
     bool cleanupModalSessionsNeeded;
     uint processEventsCalled;
     NSModalSession currentModalSessionCached;
@@ -182,7 +152,6 @@ public:
     QList<void *> queuedUserInputEvents; // NSEvent *
     CFRunLoopSourceRef postedEventsSource;
     CFRunLoopObserverRef waitingObserver;
-    CFRunLoopObserverRef firstTimeObserver;
     QAtomicInt serialNumber;
     int lastSerial;
     bool interrupt;
@@ -191,7 +160,6 @@ public:
     static void postedEventsSourceCallback(void *info);
     static void waitingObserverCallback(CFRunLoopObserverRef observer,
                                         CFRunLoopActivity activity, void *info);
-    static void firstLoopEntry(CFRunLoopObserverRef ref, CFRunLoopActivity activity, void *info);
     bool sendQueuedUserInputEvents();
     void processPostedEvents();
 };

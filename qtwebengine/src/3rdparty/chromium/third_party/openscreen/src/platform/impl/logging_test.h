@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -18,15 +18,6 @@ namespace openscreen {
 // only be called for tests as it creates an append-only buffer of log messages
 // in memory.
 void SetLogBufferForTest(std::vector<std::string>* messages);
-
-// Disables the mechanism to abort a process on an assertion failure.
-//
-// ***DANGEROUS!*** This will effectively disable assertion enforcement and
-// should only be called for assertion macro tests.
-//
-// *break_was_called will be set to true when Break() is called afterwards.
-// Calling with nullptr re-enables normal assertion behavior.
-void DisableBreakForTest(bool* break_was_called);
 
 }  // namespace openscreen
 

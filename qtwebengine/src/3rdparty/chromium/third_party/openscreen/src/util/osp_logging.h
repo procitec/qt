@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,8 +10,7 @@
 
 #include "platform/api/logging.h"
 
-namespace openscreen {
-namespace internal {
+namespace openscreen::internal {
 
 // The stream-based logging macros below are adapted from Chromium's
 // base/logging.h.
@@ -47,8 +46,7 @@ class Voidify {
   void operator&(std::ostream&) {}
 };
 
-}  // namespace internal
-}  // namespace openscreen
+}  // namespace openscreen::internal
 
 #define OSP_LAZY_STREAM(condition, stream) \
   !(condition) ? (void)0 : openscreen::internal::Voidify() & (stream)
@@ -133,6 +131,13 @@ class Voidify {
     }                                                                 \
   }
 
-#define OSP_NOTREACHED() OSP_LOG_FATAL << __func__ << ": NOTREACHED() hit."
+// Since Break() is annotated as noreturn, this will properly signal to the
+// compiler that this code is truly not reached (and thus doesn't need a return
+// statement for non-void returning functions/methods).
+#define OSP_NOTREACHED()                                \
+  {                                                     \
+    OSP_LOG_FATAL << __func__ << ": NOTREACHED() hit."; \
+    Break();                                            \
+  }
 
 #endif  // UTIL_OSP_LOGGING_H_

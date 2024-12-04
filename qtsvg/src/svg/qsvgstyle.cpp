@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt SVG module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2021 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qsvgstyle_p.h"
 
@@ -54,14 +18,15 @@
 QT_BEGIN_NAMESPACE
 
 QSvgExtraStates::QSvgExtraStates()
-    : fillOpacity(1.0)
-    , strokeOpacity(1.0)
-    , svgFont(0)
-    , textAnchor(Qt::AlignLeft)
-    , fontWeight(400)
-    , fillRule(Qt::WindingFill)
-    , strokeDashOffset(0)
-    , vectorEffect(false)
+    : fillOpacity(1.0),
+      strokeOpacity(1.0),
+      svgFont(0),
+      textAnchor(Qt::AlignLeft),
+      fontWeight(QFont::Normal),
+      fillRule(Qt::WindingFill),
+      strokeDashOffset(0),
+      vectorEffect(false),
+      imageRendering(QSvgQualityStyle::ImageRenderingAuto)
 {
 }
 
@@ -69,28 +34,58 @@ QSvgStyleProperty::~QSvgStyleProperty()
 {
 }
 
-void QSvgFillStyleProperty::apply(QPainter *, const QSvgNode *, QSvgExtraStates &)
+void QSvgPaintStyleProperty::apply(QPainter *, const QSvgNode *, QSvgExtraStates &)
 {
     Q_ASSERT(!"This should not be called!");
 }
 
-void QSvgFillStyleProperty::revert(QPainter *, QSvgExtraStates &)
+void QSvgPaintStyleProperty::revert(QPainter *, QSvgExtraStates &)
 {
     Q_ASSERT(!"This should not be called!");
 }
 
 
 QSvgQualityStyle::QSvgQualityStyle(int color)
+    : m_imageRendering(QSvgQualityStyle::ImageRenderingAuto)
+    , m_oldImageRendering(QSvgQualityStyle::ImageRenderingAuto)
+    , m_imageRenderingSet(0)
 {
     Q_UNUSED(color);
 }
-void QSvgQualityStyle::apply(QPainter *, const QSvgNode *, QSvgExtraStates &)
-{
 
+void QSvgQualityStyle::setImageRendering(ImageRendering hint) {
+    m_imageRendering = hint;
+    m_imageRenderingSet = 1;
 }
-void QSvgQualityStyle::revert(QPainter *, QSvgExtraStates &)
-{
 
+void QSvgQualityStyle::apply(QPainter *p, const QSvgNode *, QSvgExtraStates &states)
+{
+   m_oldImageRendering = states.imageRendering;
+   if (m_imageRenderingSet) {
+       states.imageRendering = m_imageRendering;
+   }
+   if (m_imageRenderingSet) {
+       bool smooth = false;
+       if (m_imageRendering == ImageRenderingAuto)
+           // auto (the spec says to prefer quality)
+           smooth = true;
+       else
+           smooth = (m_imageRendering == ImageRenderingOptimizeQuality);
+       p->setRenderHint(QPainter::SmoothPixmapTransform, smooth);
+   }
+}
+
+void QSvgQualityStyle::revert(QPainter *p, QSvgExtraStates &states)
+{
+    if (m_imageRenderingSet) {
+        states.imageRendering = m_oldImageRendering;
+        bool smooth = false;
+        if (m_oldImageRendering == ImageRenderingAuto)
+            smooth = true;
+        else
+            smooth = (m_oldImageRendering == ImageRenderingOptimizeQuality);
+        p->setRenderHint(QPainter::SmoothPixmapTransform, smooth);
+    }
 }
 
 QSvgFillStyle::QSvgFillStyle()
@@ -99,7 +94,7 @@ QSvgFillStyle::QSvgFillStyle()
     , m_oldFillRule(Qt::WindingFill)
     , m_fillOpacity(1.0)
     , m_oldFillOpacity(0)
-    , m_gradientResolved(1)
+    , m_paintStyleResolved(1)
     , m_fillRuleSet(0)
     , m_fillOpacitySet(0)
     , m_fillSet(0)
@@ -118,7 +113,7 @@ void QSvgFillStyle::setFillOpacity(qreal opacity)
     m_fillOpacity = opacity;
 }
 
-void QSvgFillStyle::setFillStyle(QSvgFillStyleProperty* style)
+void QSvgFillStyle::setFillStyle(QSvgPaintStyleProperty* style)
 {
     m_style = style;
     m_fillSet = 1;
@@ -127,11 +122,11 @@ void QSvgFillStyle::setFillStyle(QSvgFillStyleProperty* style)
 void QSvgFillStyle::setBrush(QBrush brush)
 {
     m_fill = std::move(brush);
-    m_style = 0;
+    m_style = nullptr;
     m_fillSet = 1;
 }
 
-void QSvgFillStyle::apply(QPainter *p, const QSvgNode *, QSvgExtraStates &states)
+void QSvgFillStyle::apply(QPainter *p, const QSvgNode *n, QSvgExtraStates &states)
 {
     m_oldFill = p->brush();
     m_oldFillRule = states.fillRule;
@@ -141,7 +136,7 @@ void QSvgFillStyle::apply(QPainter *p, const QSvgNode *, QSvgExtraStates &states
         states.fillRule = m_fillRule;
     if (m_fillSet) {
         if (m_style)
-            p->setBrush(m_style->brush(p, states));
+            p->setBrush(m_style->brush(p, n, states));
         else
             p->setBrush(m_fill);
     }
@@ -199,26 +194,6 @@ QSvgFontStyle::QSvgFontStyle()
 {
 }
 
-int QSvgFontStyle::SVGToQtWeight(int weight) {
-    switch (weight) {
-    case 100:
-    case 200:
-        return QFont::Light;
-    case 300:
-    case 400:
-        return QFont::Normal;
-    case 500:
-    case 600:
-        return QFont::DemiBold;
-    case 700:
-    case 800:
-        return QFont::Bold;
-    case 900:
-        return QFont::Black;
-    }
-    return QFont::Normal;
-}
-
 void QSvgFontStyle::apply(QPainter *p, const QSvgNode *, QSvgExtraStates &states)
 {
     m_oldQFont = p->font();
@@ -246,13 +221,15 @@ void QSvgFontStyle::apply(QPainter *p, const QSvgNode *, QSvgExtraStates &states
 
     if (m_weightSet) {
         if (m_weight == BOLDER) {
-            states.fontWeight = qMin(states.fontWeight + 100, 900);
+            states.fontWeight = qMin(states.fontWeight + 100, static_cast<int>(QFont::Black));
         } else if (m_weight == LIGHTER) {
-            states.fontWeight = qMax(states.fontWeight - 100, 100);
+            states.fontWeight = qMax(states.fontWeight - 100, static_cast<int>(QFont::Thin));
         } else {
             states.fontWeight = m_weight;
         }
-        font.setWeight(SVGToQtWeight(states.fontWeight));
+        font.setWeight(QFont::Weight(qBound(static_cast<int>(QFont::Weight::Thin),
+                                            states.fontWeight,
+                                            static_cast<int>(QFont::Weight::Black))));
     }
 
     p->setFont(font);
@@ -272,7 +249,7 @@ QSvgStrokeStyle::QSvgStrokeStyle()
     , m_strokeDashOffset(0)
     , m_oldStrokeDashOffset(0)
     , m_style(0)
-    , m_gradientResolved(1)
+    , m_paintStyleResolved(1)
     , m_vectorEffect(0)
     , m_oldVectorEffect(0)
     , m_strokeSet(0)
@@ -287,7 +264,7 @@ QSvgStrokeStyle::QSvgStrokeStyle()
 {
 }
 
-void QSvgStrokeStyle::apply(QPainter *p, const QSvgNode *, QSvgExtraStates &states)
+void QSvgStrokeStyle::apply(QPainter *p, const QSvgNode *n, QSvgExtraStates &states)
 {
     m_oldStroke = p->pen();
     m_oldStrokeOpacity = states.strokeOpacity;
@@ -312,7 +289,7 @@ void QSvgStrokeStyle::apply(QPainter *p, const QSvgNode *, QSvgExtraStates &stat
 
     if (m_strokeSet) {
         if (m_style)
-            pen.setBrush(m_style->brush(p, states));
+            pen.setBrush(m_style->brush(p, n, states));
         else
             pen.setBrush(m_stroke.brush());
     }
@@ -336,7 +313,7 @@ void QSvgStrokeStyle::apply(QPainter *p, const QSvgNode *, QSvgExtraStates &stat
             setDashOffsetNeeded = true;
         } else {
             // If dash array was set, but not the width, the dash array has to be scaled with respect to the old width.
-            QVector<qreal> dashes = m_stroke.dashPattern();
+            QList<qreal> dashes = m_stroke.dashPattern();
             for (int i = 0; i < dashes.size(); ++i)
                 dashes[i] /= oldWidth;
             pen.setDashPattern(dashes);
@@ -344,7 +321,7 @@ void QSvgStrokeStyle::apply(QPainter *p, const QSvgNode *, QSvgExtraStates &stat
         }
     } else if (m_strokeWidthSet && pen.style() != Qt::SolidLine && scale != 1) {
         // If the width was set, but not the dash array, the old dash array must be scaled with respect to the new width.
-        QVector<qreal> dashes = pen.dashPattern();
+        QList<qreal> dashes = pen.dashPattern();
         for (int i = 0; i < dashes.size(); ++i)
             dashes[i] *= scale;
         pen.setDashPattern(dashes);
@@ -381,10 +358,10 @@ void QSvgStrokeStyle::revert(QPainter *p, QSvgExtraStates &states)
     states.vectorEffect = m_oldVectorEffect;
 }
 
-void QSvgStrokeStyle::setDashArray(const QVector<qreal> &dashes)
+void QSvgStrokeStyle::setDashArray(const QList<qreal> &dashes)
 {
     if (m_strokeWidthSet) {
-        QVector<qreal> d = dashes;
+        QList<qreal> d = dashes;
         qreal w = m_stroke.widthF();
         if (w != 0 && w != 1) {
             for (int i = 0; i < d.size(); ++i)
@@ -407,7 +384,7 @@ QSvgGradientStyle::QSvgGradientStyle(QGradient *grad)
 {
 }
 
-QBrush QSvgGradientStyle::brush(QPainter *, QSvgExtraStates &)
+QBrush QSvgGradientStyle::brush(QPainter *, const QSvgNode *, QSvgExtraStates &)
 {
     if (!m_link.isEmpty()) {
         resolveStops();
@@ -433,6 +410,20 @@ void QSvgGradientStyle::setTransform(const QTransform &transform)
     m_transform = transform;
 }
 
+QSvgPatternStyle::QSvgPatternStyle(QSvgPattern *pattern)
+    : m_pattern(pattern)
+{
+
+}
+
+QBrush QSvgPatternStyle::brush(QPainter *p, const QSvgNode *node, QSvgExtraStates &states)
+{
+    m_patternImage = m_pattern->patternImage(p, states, node);
+    QBrush b(m_patternImage);
+    b.setTransform(m_pattern->appliedTransform());
+    return b;
+}
+
 QSvgTransformStyle::QSvgTransformStyle(const QTransform &trans)
     : m_transform(trans)
 {
@@ -440,13 +431,15 @@ QSvgTransformStyle::QSvgTransformStyle(const QTransform &trans)
 
 void QSvgTransformStyle::apply(QPainter *p, const QSvgNode *, QSvgExtraStates &)
 {
-    m_oldWorldTransform = p->worldTransform();
+    m_oldWorldTransform.push(p->worldTransform());
     p->setWorldTransform(m_transform, true);
 }
 
 void QSvgTransformStyle::revert(QPainter *p, QSvgExtraStates &)
 {
-    p->setWorldTransform(m_oldWorldTransform, false /* don't combine */);
+    QTransform oldTransform = m_oldWorldTransform.size() == 1 ? m_oldWorldTransform.top()
+                              : m_oldWorldTransform.pop();
+    p->setWorldTransform(oldTransform, false /* don't combine */);
 }
 
 QSvgStyleProperty::Type QSvgQualityStyle::type() const
@@ -482,6 +475,11 @@ QSvgStyleProperty::Type QSvgSolidColorStyle::type() const
 QSvgStyleProperty::Type QSvgGradientStyle::type() const
 {
     return GRADIENT;
+}
+
+QSvgStyleProperty::Type QSvgPatternStyle::type() const
+{
+    return PATTERN;
 }
 
 QSvgStyleProperty::Type QSvgTransformStyle::type() const
@@ -542,9 +540,8 @@ void QSvgStyle::apply(QPainter *p, const QSvgNode *node, QSvgExtraStates &states
         transform->apply(p, node, states);
     }
 
-    if (animateColor) {
-        animateColor->apply(p, node, states);
-    }
+    for (auto it = animateColors.constBegin(); it != animateColors.constEnd(); ++it)
+        (*it)->apply(p, node, states);
 
     //animated transforms have to be applied
     //_after_ the original object transformations
@@ -620,9 +617,8 @@ void QSvgStyle::revert(QPainter *p, QSvgExtraStates &states)
         transform->revert(p, states);
     }
 
-    if (animateColor) {
-        animateColor->revert(p, states);
-    }
+    for (auto it = animateColors.constBegin(); it != animateColors.constEnd(); ++it)
+        (*it)->revert(p, states);
 
     if (opacity) {
         opacity->revert(p, states);
@@ -633,28 +629,64 @@ void QSvgStyle::revert(QPainter *p, QSvgExtraStates &states)
     }
 }
 
-QSvgAnimateTransform::QSvgAnimateTransform(int startMs, int endMs, int byMs )
+QSvgAnimate::QSvgAnimate()
     : QSvgStyleProperty(),
-      m_from(startMs),
-      m_totalRunningTime(endMs - startMs),
-      m_type(Empty),
-      m_additive(Replace),
-      m_count(0),
-      m_finished(false),
-      m_freeze(false),
-      m_repeatCount(-1.),
-      m_transformApplied(false)
+      m_from(-1),
+      m_totalRunningTime(0),
+      m_end(0),
+      m_repeatCount(-1.0),
+      m_finished(false)
+
+{}
+
+void QSvgAnimate::setRepeatCount(qreal repeatCount)
 {
-    Q_UNUSED(byMs);
+    m_repeatCount = repeatCount;
 }
 
-void QSvgAnimateTransform::setArgs(TransformType type, Additive additive, const QVector<qreal> &args)
+void QSvgAnimate::setRunningTime(int startMs, int durMs, int endMs, int by)
+{
+    Q_UNUSED(by)
+    m_from = startMs;
+    m_end = endMs;
+    m_totalRunningTime = startMs + durMs;
+}
+
+qreal QSvgAnimate::lerp(qreal a, qreal b, qreal t) const
+{
+    return a + (b - a) * t;
+}
+
+qreal QSvgAnimate::currentIterTimeFraction(qreal elpasedTime)
+{
+    qreal fractionOfTotalTime = 0;
+    if (m_totalRunningTime != 0) {
+        fractionOfTotalTime = (elpasedTime - m_from) / m_totalRunningTime;
+        if (m_repeatCount >= 0 && m_repeatCount < fractionOfTotalTime) {
+            m_finished = true;
+            fractionOfTotalTime = m_repeatCount;
+        }
+    }
+
+    return fractionOfTotalTime - std::trunc(fractionOfTotalTime);
+}
+
+QSvgAnimateTransform::QSvgAnimateTransform()
+    : m_type(Empty),
+      m_additive(Replace),
+      m_count(0),
+      m_freeze(false),
+      m_transformApplied(false)
+{
+}
+
+void QSvgAnimateTransform::setArgs(TransformType type, Additive additive, const QList<qreal> &args)
 {
     m_type = type;
     m_args = args;
     m_additive = additive;
-    Q_ASSERT(!(args.count()%3));
-    m_count = args.count() / 3;
+    Q_ASSERT(!(args.size()%3));
+    m_count = args.size() / 3;
 }
 
 void QSvgAnimateTransform::apply(QPainter *p, const QSvgNode *node, QSvgExtraStates &)
@@ -673,29 +705,16 @@ void QSvgAnimateTransform::revert(QPainter *p, QSvgExtraStates &)
 
 void QSvgAnimateTransform::resolveMatrix(const QSvgNode *node)
 {
-    static const qreal deg2rad = qreal(0.017453292519943295769);
-    qreal totalTimeElapsed = node->document()->currentElapsed();
-    if (totalTimeElapsed < m_from || m_finished)
+    qreal elapsedTime = node->document()->currentElapsed();
+    if (elapsedTime < m_from || m_finished)
         return;
 
-    qreal animationFrame = 0;
-    if (m_totalRunningTime != 0) {
-        animationFrame = (totalTimeElapsed - m_from) / m_totalRunningTime;
-
-        if (m_repeatCount >= 0 && m_repeatCount < animationFrame) {
-            m_finished = true;
-            animationFrame = m_repeatCount;
-        }
-    }
-
-    qreal percentOfAnimation = animationFrame;
-    if (percentOfAnimation > 1) {
-        percentOfAnimation -= ((int)percentOfAnimation);
-    }
-
-    qreal currentPosition = percentOfAnimation * (m_count - 1);
-    int endElem   = qCeil(currentPosition);
+    qreal fractionOfCurrentIterationTime = currentIterTimeFraction(elapsedTime);
+    qreal currentIndexPosition = fractionOfCurrentIterationTime * (m_count - 1);
+    int endElem = qCeil(currentIndexPosition);
     int startElem = qMax(endElem - 1, 0);
+
+    qreal fractionOfCurrentElement = currentIndexPosition - std::trunc(currentIndexPosition);
 
     switch(m_type)
     {
@@ -709,10 +728,8 @@ void QSvgAnimateTransform::resolveMatrix(const QSvgNode *node)
         to1   = m_args[endElem++];
         to2   = m_args[endElem++];
 
-        qreal transXDiff = (to1-from1) * percentOfAnimation;
-        qreal transX = from1 + transXDiff;
-        qreal transYDiff = (to2-from2) * percentOfAnimation;
-        qreal transY = from2 + transYDiff;
+        qreal transX = lerp(from1, to1, fractionOfCurrentElement);
+        qreal transY = lerp(from2, to2, fractionOfCurrentElement);
         m_transform = QTransform();
         m_transform.translate(transX, transY);
         break;
@@ -727,14 +744,12 @@ void QSvgAnimateTransform::resolveMatrix(const QSvgNode *node)
         to1   = m_args[endElem++];
         to2   = m_args[endElem++];
 
-        qreal transXDiff = (to1-from1) * percentOfAnimation;
-        qreal transX = from1 + transXDiff;
-        qreal transYDiff = (to2-from2) * percentOfAnimation;
-        qreal transY = from2 + transYDiff;
-        if (transY == 0)
-            transY = transX;
+        qreal scaleX = lerp(from1, to1, fractionOfCurrentElement);
+        qreal scaleY = lerp(from2, to2, fractionOfCurrentElement);
+        if (scaleY == 0)
+            scaleY = scaleX;
         m_transform = QTransform();
-        m_transform.scale(transX, transY);
+        m_transform.scale(scaleX, scaleY);
         break;
     }
     case Rotate: {
@@ -749,13 +764,10 @@ void QSvgAnimateTransform::resolveMatrix(const QSvgNode *node)
         to2   = m_args[endElem++];
         to3   = m_args[endElem++];
 
-        qreal rotationDiff = (to1 - from1) * percentOfAnimation;
-        //qreal rotation = from1 + rotationDiff;
+        qreal rotationDiff = (to1 - from1) * fractionOfCurrentElement;
 
-        qreal transXDiff = (to2-from2) * percentOfAnimation;
-        qreal transX = from2 + transXDiff;
-        qreal transYDiff = (to3-from3) * percentOfAnimation;
-        qreal transY = from3 + transYDiff;
+        qreal transX = lerp(from2, to2, fractionOfCurrentElement);
+        qreal transY = lerp(from3, to3, fractionOfCurrentElement);
         m_transform = QTransform();
         m_transform.translate(transX, transY);
         m_transform.rotate(rotationDiff);
@@ -770,10 +782,9 @@ void QSvgAnimateTransform::resolveMatrix(const QSvgNode *node)
         from1 = m_args[startElem++];
         to1   = m_args[endElem++];
 
-        qreal transXDiff = (to1-from1) * percentOfAnimation;
-        qreal transX = from1 + transXDiff;
+        qreal skewX = lerp(from1, to1, fractionOfCurrentElement);
         m_transform = QTransform();
-        m_transform.shear(qTan(transX * deg2rad), 0);
+        m_transform.shear(qTan(qDegreesToRadians(skewX)), 0);
         break;
     }
     case SkewY: {
@@ -784,11 +795,9 @@ void QSvgAnimateTransform::resolveMatrix(const QSvgNode *node)
         from1 = m_args[startElem++];
         to1   = m_args[endElem++];
 
-
-        qreal transYDiff = (to1 - from1) * percentOfAnimation;
-        qreal transY = from1 + transYDiff;
+        qreal skewY = lerp(from1, to1, fractionOfCurrentElement);
         m_transform = QTransform();
-        m_transform.shear(0, qTan(transY * deg2rad));
+        m_transform.shear(0, qTan(qDegreesToRadians(skewY)));
         break;
     }
     default:
@@ -806,21 +815,10 @@ void QSvgAnimateTransform::setFreeze(bool freeze)
     m_freeze = freeze;
 }
 
-void QSvgAnimateTransform::setRepeatCount(qreal repeatCount)
+QSvgAnimateColor::QSvgAnimateColor()
+    : m_fill(false),
+      m_freeze(false)
 {
-    m_repeatCount = repeatCount;
-}
-
-QSvgAnimateColor::QSvgAnimateColor(int startMs, int endMs, int byMs)
-    : QSvgStyleProperty(),
-      m_from(startMs),
-      m_totalRunningTime(endMs - startMs),
-      m_fill(false),
-      m_finished(false),
-      m_freeze(false),
-      m_repeatCount(-1.)
-{
-    Q_UNUSED(byMs);
 }
 
 void QSvgAnimateColor::setArgs(bool fill,
@@ -835,32 +833,15 @@ void QSvgAnimateColor::setFreeze(bool freeze)
     m_freeze = freeze;
 }
 
-void QSvgAnimateColor::setRepeatCount(qreal repeatCount)
-{
-    m_repeatCount = repeatCount;
-}
-
 void QSvgAnimateColor::apply(QPainter *p, const QSvgNode *node, QSvgExtraStates &)
 {
-    qreal totalTimeElapsed = node->document()->currentElapsed();
-    if (totalTimeElapsed < m_from || m_finished)
+    qreal elapsedTime = node->document()->currentElapsed();
+    if (elapsedTime < m_from || m_finished)
         return;
 
-    qreal animationFrame = 0;
-    if (m_totalRunningTime != 0)
-        animationFrame = (totalTimeElapsed - m_from) / m_totalRunningTime;
+    qreal fractionOfCurrentIterationTime = currentIterTimeFraction(elapsedTime);
 
-    if (m_repeatCount >= 0 && m_repeatCount < animationFrame) {
-        m_finished = true;
-        animationFrame = m_repeatCount;
-    }
-
-    qreal percentOfAnimation = animationFrame;
-    if (percentOfAnimation > 1) {
-        percentOfAnimation -= ((int)percentOfAnimation);
-    }
-
-    qreal currentPosition = percentOfAnimation * (m_colors.count() - 1);
+    qreal currentPosition = fractionOfCurrentIterationTime * (m_colors.size() - 1);
 
     int startElem = qFloor(currentPosition);
     int endElem   = qCeil(currentPosition);
@@ -872,16 +853,10 @@ void QSvgAnimateColor::apply(QPainter *p, const QSvgNode *node, QSvgExtraStates 
         percentOfColorMorph -= ((int)percentOfColorMorph);
     }
 
-    // Interpolate between the two fixed colors start and end
-    qreal aDiff = (end.alpha() - start.alpha()) * percentOfColorMorph;
-    qreal rDiff = (end.red()   - start.red()) * percentOfColorMorph;
-    qreal gDiff = (end.green() - start.green()) * percentOfColorMorph;
-    qreal bDiff = (end.blue()  - start.blue()) * percentOfColorMorph;
-
-    int alpha  = int(start.alpha() + aDiff);
-    int red    = int(start.red() + rDiff);
-    int green  = int(start.green() + gDiff);
-    int blue   = int(start.blue() + bDiff);
+    int alpha  = lerp(start.alpha(), end.alpha(), percentOfColorMorph);
+    int red    = lerp(start.red(), end.red(), percentOfColorMorph);
+    int green  = lerp(start.green(), end.green(), percentOfColorMorph);
+    int blue   = lerp(start.blue(), end.blue(), percentOfColorMorph);;
 
     QColor color(red, green, blue, alpha);
 

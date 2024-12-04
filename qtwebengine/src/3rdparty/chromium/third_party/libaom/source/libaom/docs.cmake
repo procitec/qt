@@ -25,6 +25,7 @@ set(AOM_DOXYGEN_SOURCES
     "${AOM_ROOT}/aom/aom_codec.h"
     "${AOM_ROOT}/aom/aom_decoder.h"
     "${AOM_ROOT}/aom/aom_encoder.h"
+    "${AOM_ROOT}/aom/aom_external_partition.h"
     "${AOM_ROOT}/aom/aom_frame_buffer.h"
     "${AOM_ROOT}/aom/aom_image.h"
     "${AOM_ROOT}/aom/aom_integer.h"
@@ -99,7 +100,7 @@ if(CONFIG_AV1_ENCODER)
                                        "Scalable encoder loop.")
 
   set(AOM_DOXYGEN_EXAMPLE_SOURCES ${AOM_DOXYGEN_EXAMPLE_SOURCES}
-                                  "${AOM_ROOT}/examples/svc_encoder_rtc.c")
+                                  "${AOM_ROOT}/examples/svc_encoder_rtc.cc")
 
   set(AOM_DOXYGEN_EXAMPLE_DESCRIPTIONS ${AOM_DOXYGEN_EXAMPLE_DESCRIPTIONS}
                                        "Layered encoder for RTC.")
@@ -150,7 +151,9 @@ if(CONFIG_AV1_ENCODER)
       "${AOM_ROOT}/av1/encoder/temporal_filter.c"
       "${AOM_ROOT}/av1/encoder/tpl_model.h"
       "${AOM_ROOT}/av1/encoder/tx_search.h"
+      "${AOM_ROOT}/av1/encoder/txb_rdopt.h"
       "${AOM_ROOT}/av1/encoder/var_based_part.h"
+      "${AOM_ROOT}/av1/encoder/nonrd_opt.h"
       "${AOM_ROOT}/av1/encoder/nonrd_pickmode.c")
 endif()
 
@@ -220,7 +223,7 @@ function(setup_documentation_targets)
   list(LENGTH AOM_DOXYGEN_EXAMPLE_SOURCES num_sources)
   list(LENGTH AOM_DOXYGEN_EXAMPLE_DESCRIPTIONS num_descs)
   if(NOT ${num_sources} EQUAL ${num_descs})
-    message(FATAL_ERROR "Unqeual example and description totals.")
+    message(FATAL_ERROR "Unequal example and description totals.")
   endif()
 
   # Take the list of examples and produce example_basename.dox for each file in

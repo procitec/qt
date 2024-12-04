@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -57,34 +57,34 @@ enum ChannelLayout {
   // Front L, Front R, Front C, LFE, Side L, Side R, Front LofC, Front RofC
   CHANNEL_LAYOUT_7_1_WIDE = 15,
 
-  // Stereo L, Stereo R
+  // Front L, Front R
   CHANNEL_LAYOUT_STEREO_DOWNMIX = 16,
 
-  // Stereo L, Stereo R, LFE
+  // Front L, Front R, LFE
   CHANNEL_LAYOUT_2POINT1 = 17,
 
-  // Stereo L, Stereo R, Front C, LFE
+  // Front L, Front R, Front C, LFE
   CHANNEL_LAYOUT_3_1 = 18,
 
-  // Stereo L, Stereo R, Front C, Rear C, LFE
+  // Front L, Front R, Front C, Rear C, LFE
   CHANNEL_LAYOUT_4_1 = 19,
 
-  // Stereo L, Stereo R, Front C, Side L, Side R, Back C
+  // Front L, Front R, Front C, Side L, Side R, Back C
   CHANNEL_LAYOUT_6_0 = 20,
 
-  // Stereo L, Stereo R, Side L, Side R, Front LofC, Front RofC
+  // Front L, Front R, Side L, Side R, Front LofC, Front RofC
   CHANNEL_LAYOUT_6_0_FRONT = 21,
 
-  // Stereo L, Stereo R, Front C, Rear L, Rear R, Rear C
+  // Front L, Front R, Front C, Rear L, Rear R, Rear C
   CHANNEL_LAYOUT_HEXAGONAL = 22,
 
-  // Stereo L, Stereo R, Front C, LFE, Side L, Side R, Rear Center
+  // Front L, Front R, Front C, LFE, Side L, Side R, Rear Center
   CHANNEL_LAYOUT_6_1 = 23,
 
-  // Stereo L, Stereo R, Front C, LFE, Back L, Back R, Rear Center
+  // Front L, Front R, Front C, LFE, Back L, Back R, Rear Center
   CHANNEL_LAYOUT_6_1_BACK = 24,
 
-  // Stereo L, Stereo R, Side L, Side R, Front LofC, Front RofC, LFE
+  // Front L, Front R, Side L, Side R, Front LofC, Front RofC, LFE
   CHANNEL_LAYOUT_6_1_FRONT = 25,
 
   // Front L, Front R, Front C, Side L, Side R, Front LofC, Front RofC
@@ -99,6 +99,7 @@ enum ChannelLayout {
   // Channels are not explicitly mapped to speakers.
   CHANNEL_LAYOUT_DISCRETE = 29,
 
+  // Deprecated, but keeping the enum value for UMA consistency.
   // Front L, Front R, Front C. Front C contains the keyboard mic audio. This
   // layout is only intended for input for WebRTC. The Front C channel
   // is stripped away in the WebRTC audio input pipeline and never seen outside
@@ -113,8 +114,14 @@ enum ChannelLayout {
   // pass-through mode).
   CHANNEL_LAYOUT_BITSTREAM = 32,
 
+  // Front L, Front R, Front C, LFE, Side L, Side R,
+  // Front Height L, Front Height R, Rear Height L, Rear Height R
+  // Will be represented as six channels (5.1) due to eight channel limit
+  // kMaxConcurrentChannels
+  CHANNEL_LAYOUT_5_1_4_DOWNMIX = 33,
+
   // Max value, must always equal the largest entry ever logged.
-  CHANNEL_LAYOUT_MAX = CHANNEL_LAYOUT_BITSTREAM
+  CHANNEL_LAYOUT_MAX = CHANNEL_LAYOUT_5_1_4_DOWNMIX
 };
 
 // Note: Do not reorder or reassign these values; other code depends on their

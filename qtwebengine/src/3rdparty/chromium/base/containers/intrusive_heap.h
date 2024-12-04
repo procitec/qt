@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -130,16 +130,20 @@
 // Most users should be using approach 2 or 3.
 
 #include <algorithm>
+#include <compare>
 #include <functional>
 #include <limits>
+#include <memory>
 #include <type_traits>
 #include <utility>
 #include <vector>
 
 #include "base/base_export.h"
+#include "base/check.h"
 #include "base/check_op.h"
-#include "base/macros.h"
 #include "base/memory/ptr_util.h"
+#include "base/ranges/algorithm.h"
+#include "third_party/abseil-cpp/absl/container/inlined_vector.h"
 
 namespace base {
 
@@ -174,24 +178,10 @@ class BASE_EXPORT HeapHandle {
   bool IsValid() const { return index_ != kInvalidIndex; }
 
   // Comparison operators.
-  friend bool operator==(const HeapHandle& lhs, const HeapHandle& rhs) {
-    return lhs.index_ == rhs.index_;
-  }
-  friend bool operator!=(const HeapHandle& lhs, const HeapHandle& rhs) {
-    return lhs.index_ != rhs.index_;
-  }
-  friend bool operator<(const HeapHandle& lhs, const HeapHandle& rhs) {
-    return lhs.index_ < rhs.index_;
-  }
-  friend bool operator>(const HeapHandle& lhs, const HeapHandle& rhs) {
-    return lhs.index_ > rhs.index_;
-  }
-  friend bool operator<=(const HeapHandle& lhs, const HeapHandle& rhs) {
-    return lhs.index_ <= rhs.index_;
-  }
-  friend bool operator>=(const HeapHandle& lhs, const HeapHandle& rhs) {
-    return lhs.index_ >= rhs.index_;
-  }
+  friend bool operator==(const HeapHandle& lhs,
+                         const HeapHandle& rhs) = default;
+  friend std::strong_ordering operator<=>(const HeapHandle& lhs,
+                                          const HeapHandle& rhs) = default;
 
  private:
   template <typename T, typename Compare, typename HeapHandleAccessor>
@@ -404,6 +394,50 @@ class IntrusiveHeap {
   // "front" or "take").
   void pop() { erase(0u); }
 
+  // Erases every element that matches the predicate. This is done in-place for
+  // maximum efficiency. Also, to avoid re-entrancy issues, elements are deleted
+  // at the very end.
+  // Note: This function is currently tuned for a use-case where there are
+  // usually 8 or less elements removed at a time. Consider adding a template
+  // parameter if a different tuning is needed.
+  template <typename Functor>
+  void EraseIf(Functor predicate) {
+    // Stable partition ensures that if no elements are erased, the heap remains
+    // intact.
+    auto erase_start = std::stable_partition(
+        impl_.heap_.begin(), impl_.heap_.end(),
+        [&](const auto& element) { return !predicate(element); });
+
+    // Clear the heap handle of every element that will be erased.
+    for (size_t i = static_cast<size_t>(erase_start - impl_.heap_.begin());
+         i < impl_.heap_.size(); ++i) {
+      ClearHeapHandle(i);
+    }
+
+    // Deleting an element can potentially lead to reentrancy, we move all the
+    // elements to be erased into a temporary container before deleting them.
+    // This is to avoid changing the underlying container during the erase()
+    // call.
+    absl::InlinedVector<value_type, 8> elements_to_delete;
+    std::move(erase_start, impl_.heap_.end(),
+              std::back_inserter(elements_to_delete));
+
+    impl_.heap_.erase(erase_start, impl_.heap_.end());
+
+    // If no elements were removed, then the heap is still intact.
+    if (elements_to_delete.empty()) {
+      return;
+    }
+
+    // Repair the heap and ensure handles are pointing to the right index.
+    ranges::make_heap(impl_.heap_, value_comp());
+    for (size_t i = 0; i < size(); ++i)
+      SetHeapHandle(i);
+
+    // Explicitly delete elements last.
+    elements_to_delete.clear();
+  }
+
   //////////////////////////////////////////////////////////////////////////////
   // Updating.
   //
@@ -445,6 +479,16 @@ class IntrusiveHeap {
     return Update(ToIndex(pos));
   }
 
+  // Applies a modification function to the object at the given location, then
+  // repairs the heap. To be used to modify an element in the heap in-place
+  // while keeping the heap intact.
+  template <typename P, typename UnaryOperation>
+  const_iterator Modify(P pos, UnaryOperation unary_op) {
+    size_type index = ToIndex(pos);
+    unary_op(impl_.heap_.at(index));
+    return Update(index);
+  }
+
   //////////////////////////////////////////////////////////////////////////////
   // Access to helper functors.
 
@@ -466,9 +510,6 @@ class IntrusiveHeap {
   friend bool operator==(const IntrusiveHeap& lhs, const IntrusiveHeap& rhs) {
     return lhs.impl_.heap_ == rhs.impl_.heap_;
   }
-  friend bool operator!=(const IntrusiveHeap& lhs, const IntrusiveHeap& rhs) {
-    return lhs.impl_.heap_ != rhs.impl_.heap_;
-  }
 
   //////////////////////////////////////////////////////////////////////////////
   // Utility functions.
@@ -482,7 +523,7 @@ class IntrusiveHeap {
  private:
   // Templated version of ToIndex that lets insert/erase/Replace work with all
   // integral types.
-  template <typename I, typename = std::enable_if_t<std::is_integral<I>::value>>
+  template <typename I, typename = std::enable_if_t<std::is_integral_v<I>>>
   size_type ToIndex(I pos) {
     return static_cast<size_type>(pos);
   }
@@ -650,20 +691,9 @@ class WithHeapHandle : public InternalHeapHandleStorage {
   friend bool operator==(const WithHeapHandle& lhs, const WithHeapHandle& rhs) {
     return lhs.value_ == rhs.value_;
   }
-  friend bool operator!=(const WithHeapHandle& lhs, const WithHeapHandle& rhs) {
-    return lhs.value_ != rhs.value_;
-  }
-  friend bool operator<=(const WithHeapHandle& lhs, const WithHeapHandle& rhs) {
-    return lhs.value_ <= rhs.value_;
-  }
-  friend bool operator<(const WithHeapHandle& lhs, const WithHeapHandle& rhs) {
-    return lhs.value_ < rhs.value_;
-  }
-  friend bool operator>=(const WithHeapHandle& lhs, const WithHeapHandle& rhs) {
-    return lhs.value_ >= rhs.value_;
-  }
-  friend bool operator>(const WithHeapHandle& lhs, const WithHeapHandle& rhs) {
-    return lhs.value_ > rhs.value_;
+  friend auto operator<=>(const WithHeapHandle& lhs,
+                          const WithHeapHandle& rhs) {
+    return lhs.value_ <=> rhs.value_;
   }
 
  private:
@@ -1027,8 +1057,8 @@ IntrusiveHeap<T, Compare, HeapHandleAccessor>::InsertImpl(U element) {
   // MoveHoleUpAndFill can tolerate the initial hole being in a slot that
   // doesn't yet exist. It will be created by MoveHole by copy/move, thus
   // removing the need for a default constructor.
-  size_t i = MoveHoleUpAndFill(size(), std::move_if_noexcept(element));
-  return cbegin() + i;
+  size_type i = MoveHoleUpAndFill(size(), std::move_if_noexcept(element));
+  return cbegin() + static_cast<difference_type>(i);
 }
 
 template <typename T, typename Compare, typename HeapHandleAccessor>
@@ -1045,7 +1075,7 @@ IntrusiveHeap<T, Compare, HeapHandleAccessor>::ReplaceImpl(size_type pos,
   } else {
     i = MoveHoleDownAndFill<WithElement>(pos, std::move_if_noexcept(element));
   }
-  return cbegin() + i;
+  return cbegin() + static_cast<difference_type>(i);
 }
 
 template <typename T, typename Compare, typename HeapHandleAccessor>
@@ -1055,7 +1085,7 @@ IntrusiveHeap<T, Compare, HeapHandleAccessor>::ReplaceTopImpl(U element) {
   MakeHole(0u);
   size_type i =
       MoveHoleDownAndFill<WithElement>(0u, std::move_if_noexcept(element));
-  return cbegin() + i;
+  return cbegin() + static_cast<difference_type>(i);
 }
 
 ////////////////////////////////////////////////////////////////////////////////

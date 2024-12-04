@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,19 +13,12 @@
 #include <utility>
 
 #include "base/base_export.h"
+#include "base/check.h"
 #include "base/check_op.h"
-#include "base/task/task_traits_extension.h"
 #include "base/traits_bag.h"
 #include "build/build_config.h"
 
-// TODO(gab): This is backwards, thread_pool.h should include task_traits.h
-// but it this is necessary to have it in this direction during the migration
-// from old code that used base::ThreadPool as a trait.
-#include "base/task/thread_pool.h"
-
 namespace base {
-
-class PostTaskAndroid;
 
 // Valid priorities supported by the task scheduling infrastructure.
 //
@@ -113,7 +106,10 @@ enum class TaskShutdownBehavior : uint8_t {
   // until they're executed. Generally, this should be used only to save
   // critical user data.
   //
-  // Note: Background threads will be promoted to normal threads at shutdown
+  // Note 1: Delayed tasks cannot block shutdown. Delayed tasks posted as part
+  // of a BLOCK_SHUTDOWN sequence will behave like SKIP_ON_SHUTDOWN tasks.
+  //
+  // Note 2: Background threads will be promoted to normal threads at shutdown
   // (i.e. TaskPriority::BEST_EFFORT + TaskShutdownBehavior::BLOCK_SHUTDOWN will
   // resolve without a priority inversion).
   BLOCK_SHUTDOWN,
@@ -148,8 +144,8 @@ enum class ThreadPolicy : uint8_t {
   // - The TaskPriority is BEST_EFFORT.
   // - Background thread priority is supported by the platform (see
   //   environment_config_unittest.cc).
-  // - No extension trait (e.g. BrowserThread) is used.
-  // - ThreadPoolInstance::Shutdown() hadn't been called when the task started running.
+  // - ThreadPoolInstance::Shutdown() hadn't been called when the task started
+  // running.
   //       (Remaining TaskShutdownBehavior::BLOCK_SHUTDOWN tasks use foreground
   //        threads during shutdown regardless of TaskPriority)
   // Otherwise, it runs on a normal priority thread.
@@ -206,7 +202,6 @@ class BASE_EXPORT TaskTraits {
     ValidTrait(ThreadPolicy);
     ValidTrait(MayBlock);
     ValidTrait(WithBaseSyncPrimitives);
-    ValidTrait(ThreadPool);
   };
 
   // Invoking this constructor without arguments produces default TaskTraits
@@ -236,15 +231,12 @@ class BASE_EXPORT TaskTraits {
   // constexpr base::TaskTraits other_user_visible_may_block_traits = {
   //     base::MayBlock(), base::TaskPriority::USER_VISIBLE
   // };
-  template <class... ArgTypes,
-            class CheckArgumentsAreValid = std::enable_if_t<
-                trait_helpers::AreValidTraits<ValidTrait, ArgTypes...>::value ||
-                trait_helpers::AreValidTraitsForExtension<ArgTypes...>::value>>
+  template <class... ArgTypes>
+    requires trait_helpers::AreValidTraits<ValidTrait, ArgTypes...>
+  // TaskTraits are intended to be implicitly-constructable (eg {}).
+  // NOLINTNEXTLINE(google-explicit-constructor)
   constexpr TaskTraits(ArgTypes... args)
-      : extension_(trait_helpers::GetTaskTraitsExtension(
-            trait_helpers::AreValidTraits<ValidTrait, ArgTypes...>{},
-            args...)),
-        priority_(
+      : priority_(
             trait_helpers::GetEnum<TaskPriority, TaskPriority::USER_BLOCKING>(
                 args...)),
         shutdown_behavior_(
@@ -265,23 +257,12 @@ class BASE_EXPORT TaskTraits {
                  : 0)),
         may_block_(trait_helpers::HasTrait<MayBlock, ArgTypes...>()),
         with_base_sync_primitives_(
-            trait_helpers::HasTrait<WithBaseSyncPrimitives, ArgTypes...>()),
-        use_thread_pool_(trait_helpers::HasTrait<ThreadPool, ArgTypes...>()) {}
+            trait_helpers::HasTrait<WithBaseSyncPrimitives, ArgTypes...>()) {}
 
   constexpr TaskTraits(const TaskTraits& other) = default;
   TaskTraits& operator=(const TaskTraits& other) = default;
 
-  // TODO(eseckler): Default the comparison operator once C++20 arrives.
-  bool operator==(const TaskTraits& other) const {
-    static_assert(sizeof(TaskTraits) == 15,
-                  "Update comparison operator when TaskTraits change");
-    return extension_ == other.extension_ && priority_ == other.priority_ &&
-           shutdown_behavior_ == other.shutdown_behavior_ &&
-           thread_policy_ == other.thread_policy_ &&
-           may_block_ == other.may_block_ &&
-           with_base_sync_primitives_ == other.with_base_sync_primitives_ &&
-           use_thread_pool_ == other.use_thread_pool_;
-  }
+  friend bool operator==(const TaskTraits&, const TaskTraits&) = default;
 
   // Sets the priority of tasks with these traits to |priority|.
   void UpdatePriority(TaskPriority priority) { priority_ = priority; }
@@ -318,59 +299,17 @@ class BASE_EXPORT TaskTraits {
     return with_base_sync_primitives_;
   }
 
-  // Returns true if tasks with these traits execute on the thread pool.
-  constexpr bool use_thread_pool() const { return use_thread_pool_; }
-
-  uint8_t extension_id() const { return extension_.extension_id; }
-
-  // Access the extension data by parsing it into the provided extension type.
-  // See task_traits_extension.h for requirements on the extension type.
-  template <class TaskTraitsExtension>
-  const TaskTraitsExtension GetExtension() const {
-    DCHECK_EQ(TaskTraitsExtension::kExtensionId, extension_.extension_id);
-    return TaskTraitsExtension::Parse(extension_);
-  }
-
  private:
-  friend PostTaskAndroid;
-
-  // For use by PostTaskAndroid.
-  TaskTraits(TaskPriority priority,
-             bool may_block,
-             bool use_thread_pool,
-             TaskTraitsExtensionStorage extension)
-      : extension_(extension),
-        priority_(priority),
-        shutdown_behavior_(
-            static_cast<uint8_t>(TaskShutdownBehavior::SKIP_ON_SHUTDOWN)),
-        thread_policy_(static_cast<uint8_t>(ThreadPolicy::PREFER_BACKGROUND)),
-        may_block_(may_block),
-        with_base_sync_primitives_(false),
-        use_thread_pool_(use_thread_pool) {
-    static_assert(sizeof(TaskTraits) == 15, "Keep this constructor up to date");
-
-    // Java is expected to provide an explicit destination. See TODO in
-    // TaskTraits.java to move towards API-as-a-destination there as well.
-    const bool has_extension =
-        (extension_.extension_id !=
-         TaskTraitsExtensionStorage::kInvalidExtensionId);
-    DCHECK(use_thread_pool_ ^ has_extension)
-        << "Traits must explicitly specify a destination (e.g. ThreadPool or a "
-           "named thread like BrowserThread)";
-  }
-
   // This bit is set in |priority_|, |shutdown_behavior_| and |thread_policy_|
   // when the value was set explicitly.
   static constexpr uint8_t kIsExplicitFlag = 0x80;
 
   // Ordered for packing.
-  TaskTraitsExtensionStorage extension_;
   TaskPriority priority_;
   uint8_t shutdown_behavior_;
   uint8_t thread_policy_;
   bool may_block_;
   bool with_base_sync_primitives_;
-  bool use_thread_pool_;
 };
 
 // Returns string literals for the enums defined in this file. These methods

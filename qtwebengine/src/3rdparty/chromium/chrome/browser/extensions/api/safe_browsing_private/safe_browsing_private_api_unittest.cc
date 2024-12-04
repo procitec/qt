@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,35 +10,43 @@
 #include <vector>
 
 #include "base/feature_list.h"
-#include "base/task/post_task.h"
+#include "base/strings/string_number_conversions.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/extensions/extension_function_test_utils.h"
 #include "chrome/browser/extensions/extension_service_test_base.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/net/system_network_context_manager.h"
+#include "chrome/browser/password_manager/account_password_store_factory.h"
+#include "chrome/browser/password_manager/profile_password_store_factory.h"
 #include "chrome/browser/safe_browsing/test_safe_browsing_service.h"
 #include "chrome/browser/sessions/session_tab_helper_factory.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/test/base/test_browser_window.h"
 #include "chrome/test/base/testing_browser_process.h"
+#include "components/password_manager/core/browser/password_manager_test_utils.h"
+#include "components/password_manager/core/browser/password_store/mock_password_store_interface.h"
 #include "components/sessions/content/session_tab_helper.h"
-#include "content/public/browser/browser_task_traits.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/test/browser_task_environment.h"
 #include "content/public/test/web_contents_tester.h"
+#include "extensions/browser/api_test_utils.h"
 
 namespace extensions {
 
 namespace {
 
-std::unique_ptr<base::Value> RunGetReferrerChainFunction(Browser* browser,
-                                                         int tab_id) {
+using testing::NiceMock;
+
+std::optional<base::Value> RunGetReferrerChainFunction(
+    content::BrowserContext* browser_context,
+    int tab_id) {
   scoped_refptr<SafeBrowsingPrivateGetReferrerChainFunction> function(
       base::MakeRefCounted<SafeBrowsingPrivateGetReferrerChainFunction>());
-  std::unique_ptr<base::Value> value(
-      extension_function_test_utils::RunFunctionAndReturnSingleResult(
-          function.get(), "[" + std::to_string(tab_id) + "]", browser));
+  std::optional<base::Value> value =
+      api_test_utils::RunFunctionAndReturnSingleResult(
+          function.get(), "[" + base::NumberToString(tab_id) + "]",
+          browser_context);
   return value;
 }
 
@@ -66,9 +74,14 @@ std::unique_ptr<content::WebContents> CreateWebContentsWithHistory(
 }  // namespace
 
 class SafeBrowsingPrivateApiUnitTest : public ExtensionServiceTestBase {
+ public:
+  SafeBrowsingPrivateApiUnitTest(SafeBrowsingPrivateApiUnitTest&) = delete;
+  SafeBrowsingPrivateApiUnitTest& operator=(SafeBrowsingPrivateApiUnitTest&) =
+      delete;
+
  protected:
-  SafeBrowsingPrivateApiUnitTest() {}
-  ~SafeBrowsingPrivateApiUnitTest() override {}
+  SafeBrowsingPrivateApiUnitTest() = default;
+  ~SafeBrowsingPrivateApiUnitTest() override = default;
 
   Browser* browser() { return browser_.get(); }
 
@@ -78,8 +91,6 @@ class SafeBrowsingPrivateApiUnitTest : public ExtensionServiceTestBase {
 
   std::unique_ptr<TestBrowserWindow> browser_window_;
   std::unique_ptr<Browser> browser_;
-
-  DISALLOW_COPY_AND_ASSIGN(SafeBrowsingPrivateApiUnitTest);
 };
 
 void SafeBrowsingPrivateApiUnitTest::SetUp() {
@@ -90,7 +101,21 @@ void SafeBrowsingPrivateApiUnitTest::SetUp() {
   Browser::CreateParams params(profile(), true);
   params.type = Browser::TYPE_NORMAL;
   params.window = browser_window_.get();
-  browser_ = std::make_unique<Browser>(params);
+  browser_ = std::unique_ptr<Browser>(Browser::Create(params));
+
+  ProfilePasswordStoreFactory::GetInstance()->SetTestingFactoryAndUse(
+      profile(),
+      base::BindRepeating(
+          &password_manager::BuildPasswordStoreInterface<
+              content::BrowserContext,
+              NiceMock<password_manager::MockPasswordStoreInterface>>));
+
+  AccountPasswordStoreFactory::GetInstance()->SetTestingFactoryAndUse(
+      profile(),
+      base::BindRepeating(
+          &password_manager::BuildPasswordStoreInterface<
+              content::BrowserContext,
+              NiceMock<password_manager::MockPasswordStoreInterface>>));
 
   // Initialize Safe Browsing service.
   safe_browsing::TestSafeBrowsingServiceFactory sb_service_factory;
@@ -103,7 +128,7 @@ void SafeBrowsingPrivateApiUnitTest::SetUp() {
 
 void SafeBrowsingPrivateApiUnitTest::TearDown() {
   while (!browser()->tab_strip_model()->empty())
-    browser()->tab_strip_model()->DetachWebContentsAt(0);
+    browser()->tab_strip_model()->DetachAndDeleteWebContentsAt(0);
   browser_window_.reset();
 
   // Make sure the NetworkContext owned by SafeBrowsingService is destructed
@@ -135,8 +160,8 @@ TEST_F(SafeBrowsingPrivateApiUnitTest, GetReferrerChain) {
   browser()->tab_strip_model()->AppendWebContents(std::move(web_contents),
                                                   true);
 
-  std::unique_ptr<base::Value> referrer_chain(
-      RunGetReferrerChainFunction(browser(), tab_id));
+  std::optional<base::Value> referrer_chain =
+      RunGetReferrerChainFunction(profile(), tab_id);
   ASSERT_TRUE(referrer_chain);
 }
 
@@ -157,8 +182,8 @@ TEST_F(SafeBrowsingPrivateApiUnitTest, GetReferrerChainForNonSafeBrowsingUser) {
   browser()->tab_strip_model()->AppendWebContents(std::move(web_contents),
                                                   true);
 
-  std::unique_ptr<base::Value> referrer_chain(
-      RunGetReferrerChainFunction(browser(), tab_id));
+  std::optional<base::Value> referrer_chain =
+      RunGetReferrerChainFunction(profile(), tab_id);
   ASSERT_FALSE(referrer_chain);
 }
 

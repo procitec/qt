@@ -1,4 +1,4 @@
-// Copyright (c) 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,35 +6,29 @@
 
 #include <memory>
 
-#include "base/stl_util.h"
 #include "base/test/task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/platform/fonts/font_cache.h"
 #include "third_party/blink/renderer/platform/fonts/shaping/caching_word_shape_iterator.h"
 #include "third_party/blink/renderer/platform/fonts/shaping/shape_result_test_info.h"
+#include "third_party/blink/renderer/platform/testing/font_test_base.h"
 
 namespace blink {
 
-class CachingWordShaperTest : public testing::Test {
+class CachingWordShaperTest : public FontTestBase {
  protected:
   void SetUp() override {
     font_description.SetComputedSize(12.0);
-    font_description.SetLocale(LayoutLocale::Get("en"));
+    font_description.SetLocale(LayoutLocale::Get(AtomicString("en")));
     ASSERT_EQ(USCRIPT_LATIN, font_description.GetScript());
     font_description.SetGenericFamily(FontDescription::kStandardFamily);
 
-    font = Font(font_description);
-    ASSERT_TRUE(font.CanShapeWordByWord());
-    fallback_fonts = nullptr;
     cache = std::make_unique<ShapeCache>();
   }
 
-  base::test::TaskEnvironment task_environment_;
   FontCachePurgePreventer font_cache_purge_preventer;
   FontDescription font_description;
-  Font font;
   std::unique_ptr<ShapeCache> cache;
-  HashSet<const SimpleFontData*>* fallback_fonts;
   unsigned start_index = 0;
   unsigned num_glyphs = 0;
   hb_script_t script = HB_SCRIPT_INVALID;
@@ -46,6 +40,8 @@ static inline const ShapeResultTestInfo* TestInfo(
 }
 
 TEST_F(CachingWordShaperTest, LatinLeftToRightByWord) {
+  Font font(font_description);
+
   TextRun text_run(reinterpret_cast<const LChar*>("ABC DEF."), 8);
 
   scoped_refptr<const ShapeResult> result;
@@ -75,6 +71,8 @@ TEST_F(CachingWordShaperTest, LatinLeftToRightByWord) {
 }
 
 TEST_F(CachingWordShaperTest, CommonAccentLeftToRightByWord) {
+  Font font(font_description);
+
   const UChar kStr[] = {0x2F, 0x301, 0x2E, 0x20, 0x2E, 0x0};
   TextRun text_run(kStr, 5);
 
@@ -110,6 +108,8 @@ TEST_F(CachingWordShaperTest, CommonAccentLeftToRightByWord) {
 }
 
 TEST_F(CachingWordShaperTest, SegmentCJKByCharacter) {
+  Font font(font_description);
+
   const UChar kStr[] = {0x56FD, 0x56FD,  // CJK Unified Ideograph
                         'a',    'b',
                         0x56FD,  // CJK Unified Ideograph
@@ -145,6 +145,8 @@ TEST_F(CachingWordShaperTest, SegmentCJKByCharacter) {
 }
 
 TEST_F(CachingWordShaperTest, SegmentCJKAndCommon) {
+  Font font(font_description);
+
   const UChar kStr[] = {'a',    'b',
                         0xFF08,  // FULLWIDTH LEFT PARENTHESIS (script=common)
                         0x56FD,  // CJK Unified Ideograph
@@ -173,6 +175,8 @@ TEST_F(CachingWordShaperTest, SegmentCJKAndCommon) {
 }
 
 TEST_F(CachingWordShaperTest, SegmentCJKAndInherit) {
+  Font font(font_description);
+
   const UChar kStr[] = {
       0x304B,  // HIRAGANA LETTER KA
       0x304B,  // HIRAGANA LETTER KA
@@ -197,6 +201,8 @@ TEST_F(CachingWordShaperTest, SegmentCJKAndInherit) {
 }
 
 TEST_F(CachingWordShaperTest, SegmentCJKAndNonCJKCommon) {
+  Font font(font_description);
+
   const UChar kStr[] = {0x56FD,  // CJK Unified Ideograph
                         ' ', 0x0};
   TextRun text_run(kStr, 2);
@@ -214,22 +220,24 @@ TEST_F(CachingWordShaperTest, SegmentCJKAndNonCJKCommon) {
 }
 
 TEST_F(CachingWordShaperTest, SegmentEmojiSequences) {
+  Font font(font_description);
+
   std::vector<std::string> test_strings = {
       // A family followed by a couple with heart emoji sequence,
       // the latter including a variation selector.
-      u8"\U0001f468\u200D\U0001f469\u200D\U0001f467\u200D\U0001f466\U0001f469"
-      u8"\u200D\u2764\uFE0F\u200D\U0001f48b\u200D\U0001f468",
+      "\U0001f468\u200D\U0001f469\u200D\U0001f467\u200D\U0001f466\U0001f469"
+      "\u200D\u2764\uFE0F\u200D\U0001f48b\u200D\U0001f468",
       // Pirate flag
-      u8"\U0001F3F4\u200D\u2620\uFE0F",
+      "\U0001F3F4\u200D\u2620\uFE0F",
       // Pilot, judge sequence
-      u8"\U0001f468\U0001f3fb\u200D\u2696\uFE0F\U0001f468\U0001f3fb\u200D\u2708"
-      u8"\uFE0F",
+      "\U0001f468\U0001f3fb\u200D\u2696\uFE0F\U0001f468\U0001f3fb\u200D\u2708"
+      "\uFE0F",
       // Woman, Kiss, Man sequence
-      u8"\U0001f469\u200D\u2764\uFE0F\u200D\U0001f48b\u200D\U0001f468",
+      "\U0001f469\u200D\u2764\uFE0F\u200D\U0001f48b\u200D\U0001f468",
       // Signs of horns with skin tone modifier
-      u8"\U0001f918\U0001f3fb",
+      "\U0001f918\U0001f3fb",
       // Man, dark skin tone, red hair
-      u8"\U0001f468\U0001f3ff\u200D\U0001f9b0"};
+      "\U0001f468\U0001f3ff\u200D\U0001f9b0"};
 
   for (auto test_string : test_strings) {
     String emoji_string = String::FromUTF8(test_string);
@@ -246,6 +254,8 @@ TEST_F(CachingWordShaperTest, SegmentEmojiSequences) {
 }
 
 TEST_F(CachingWordShaperTest, SegmentEmojiExtraZWJPrefix) {
+  Font font(font_description);
+
   // A ZWJ, followed by a family and a heart-kiss sequence.
   const UChar kStr[] = {0x200D, 0xD83D, 0xDC68, 0x200D, 0xD83D, 0xDC69,
                         0x200D, 0xD83D, 0xDC67, 0x200D, 0xD83D, 0xDC66,
@@ -266,6 +276,8 @@ TEST_F(CachingWordShaperTest, SegmentEmojiExtraZWJPrefix) {
 }
 
 TEST_F(CachingWordShaperTest, SegmentEmojiSubdivisionFlags) {
+  Font font(font_description);
+
   // Subdivision flags for Wales, Scotland, England.
   const UChar kStr[] = {0xD83C, 0xDFF4, 0xDB40, 0xDC67, 0xDB40, 0xDC62, 0xDB40,
                         0xDC77, 0xDB40, 0xDC6C, 0xDB40, 0xDC73, 0xDB40, 0xDC7F,
@@ -273,7 +285,7 @@ TEST_F(CachingWordShaperTest, SegmentEmojiSubdivisionFlags) {
                         0xDC73, 0xDB40, 0xDC63, 0xDB40, 0xDC74, 0xDB40, 0xDC7F,
                         0xD83C, 0xDFF4, 0xDB40, 0xDC67, 0xDB40, 0xDC62, 0xDB40,
                         0xDC65, 0xDB40, 0xDC6E, 0xDB40, 0xDC67, 0xDB40, 0xDC7F};
-  TextRun text_run(kStr, base::size(kStr));
+  TextRun text_run(kStr, std::size(kStr));
 
   scoped_refptr<const ShapeResult> word_result;
   CachingWordShapeIterator iterator(cache.get(), text_run, &font);
@@ -285,6 +297,8 @@ TEST_F(CachingWordShaperTest, SegmentEmojiSubdivisionFlags) {
 }
 
 TEST_F(CachingWordShaperTest, SegmentCJKCommon) {
+  Font font(font_description);
+
   const UChar kStr[] = {0xFF08,  // FULLWIDTH LEFT PARENTHESIS (script=common)
                         0xFF08,  // FULLWIDTH LEFT PARENTHESIS (script=common)
                         0xFF08,  // FULLWIDTH LEFT PARENTHESIS (script=common)
@@ -301,6 +315,8 @@ TEST_F(CachingWordShaperTest, SegmentCJKCommon) {
 }
 
 TEST_F(CachingWordShaperTest, SegmentCJKCommonAndNonCJK) {
+  Font font(font_description);
+
   const UChar kStr[] = {0xFF08,  // FULLWIDTH LEFT PARENTHESIS (script=common)
                         'a', 'b', 0x0};
   TextRun text_run(kStr, 3);
@@ -318,6 +334,8 @@ TEST_F(CachingWordShaperTest, SegmentCJKCommonAndNonCJK) {
 }
 
 TEST_F(CachingWordShaperTest, SegmentCJKSmallFormVariants) {
+  Font font(font_description);
+
   const UChar kStr[] = {0x5916,  // CJK UNIFIED IDEOGRPAH
                         0xFE50,  // SMALL COMMA
                         0x0};
@@ -333,6 +351,8 @@ TEST_F(CachingWordShaperTest, SegmentCJKSmallFormVariants) {
 }
 
 TEST_F(CachingWordShaperTest, SegmentHangulToneMark) {
+  Font font(font_description);
+
   const UChar kStr[] = {0xC740,  // HANGUL SYLLABLE EUN
                         0x302E,  // HANGUL SINGLE DOT TONE MARK
                         0x0};
@@ -347,38 +367,19 @@ TEST_F(CachingWordShaperTest, SegmentHangulToneMark) {
   ASSERT_FALSE(iterator.Next(&word_result));
 }
 
-TEST_F(CachingWordShaperTest, TextOrientationFallbackShouldNotInFallbackList) {
-  const UChar kStr[] = {
-      'A',  // code point for verticalRightOrientationFontData()
-      // Ideally we'd like to test uprightOrientationFontData() too
-      // using code point such as U+3042, but it'd fallback to system
-      // fonts as the glyph is missing.
-      0x0};
-  TextRun text_run(kStr, 1);
-
-  font_description.SetOrientation(FontOrientation::kVerticalMixed);
-  Font vertical_mixed_font = Font(font_description);
-  ASSERT_TRUE(vertical_mixed_font.CanShapeWordByWord());
-
-  CachingWordShaper shaper(vertical_mixed_font);
-  FloatRect glyph_bounds;
-  HashSet<const SimpleFontData*> fallback_fonts;
-  ASSERT_GT(shaper.Width(text_run, &fallback_fonts, &glyph_bounds), 0);
-  EXPECT_EQ(0u, fallback_fonts.size());
-}
-
 TEST_F(CachingWordShaperTest, GlyphBoundsWithSpaces) {
+  Font font(font_description);
   CachingWordShaper shaper(font);
 
   TextRun periods(reinterpret_cast<const LChar*>(".........."), 10);
-  FloatRect periods_glyph_bounds;
-  float periods_width = shaper.Width(periods, nullptr, &periods_glyph_bounds);
+  gfx::RectF periods_glyph_bounds;
+  float periods_width = shaper.Width(periods, &periods_glyph_bounds);
 
   TextRun periods_and_spaces(
       reinterpret_cast<const LChar*>(". . . . . . . . . ."), 19);
-  FloatRect periods_and_spaces_glyph_bounds;
-  float periods_and_spaces_width = shaper.Width(
-      periods_and_spaces, nullptr, &periods_and_spaces_glyph_bounds);
+  gfx::RectF periods_and_spaces_glyph_bounds;
+  float periods_and_spaces_width =
+      shaper.Width(periods_and_spaces, &periods_and_spaces_glyph_bounds);
 
   // The total width of periods and spaces should be longer than the width of
   // periods alone.
@@ -386,8 +387,8 @@ TEST_F(CachingWordShaperTest, GlyphBoundsWithSpaces) {
 
   // The glyph bounds of periods and spaces should be longer than the glyph
   // bounds of periods alone.
-  ASSERT_GT(periods_and_spaces_glyph_bounds.Width(),
-            periods_glyph_bounds.Width());
+  ASSERT_GT(periods_and_spaces_glyph_bounds.width(),
+            periods_glyph_bounds.width());
 }
 
 }  // namespace blink

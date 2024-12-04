@@ -1,4 +1,4 @@
-// Copyright 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,9 +8,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <algorithm>
 #include <utility>
 #include <vector>
 
+#include "base/memory/raw_ptr_exclusion.h"
 #include "base/memory/ref_counted.h"
 #include "cc/paint/draw_image.h"
 #include "cc/raster/tile_task.h"
@@ -27,7 +29,12 @@ class TileManager;
 class CC_EXPORT Tile {
  public:
   struct CreateInfo {
-    const PictureLayerTiling* tiling = nullptr;
+    // RAW_PTR_EXCLUSION: Performance reasons: on-stack pointer + based on
+    // analysis of sampling profiler data
+    // (PictureLayerTilingSet::UpdateTilePriorities ->
+    // PictureLayerTiling::ComputeTilePriorityRects ->
+    // PictureLayerTiling::SetLiveTilesRect -> creates Tile::CreateInfo).
+    RAW_PTR_EXCLUSION const PictureLayerTiling* tiling = nullptr;
     int tiling_i_index = 0;
     int tiling_j_index = 0;
     gfx::Rect enclosing_layer_rect;
@@ -74,7 +81,10 @@ class CC_EXPORT Tile {
   const TileDrawInfo& draw_info() const { return draw_info_; }
   TileDrawInfo& draw_info() { return draw_info_; }
 
-  float contents_scale_key() const { return raster_transform_.scale(); }
+  float contents_scale_key() const {
+    const gfx::Vector2dF& scale = raster_transform_.scale();
+    return std::max(scale.x(), scale.y());
+  }
   const gfx::AxisTransform2d& raster_transform() const {
     return raster_transform_;
   }
@@ -107,6 +117,8 @@ class CC_EXPORT Tile {
 
   bool HasRasterTask() const { return !!raster_task_.get(); }
 
+  bool HasMissingLCPCandidateImages() const;
+
   void set_solid_color_analysis_performed(bool performed) {
     is_solid_color_analysis_performed_ = performed;
   }
@@ -127,6 +139,10 @@ class CC_EXPORT Tile {
   const PictureLayerTiling* tiling() const { return tiling_; }
   void set_tiling(const PictureLayerTiling* tiling) { tiling_ = tiling; }
 
+  void mark_used() { used_ = true; }
+  void clear_used() { used_ = false; }
+  bool used() const { return used_; }
+
  private:
   friend class TileManager;
   friend class FakeTileManager;
@@ -139,8 +155,14 @@ class CC_EXPORT Tile {
        int source_frame_number,
        int flags);
 
-  TileManager* const tile_manager_;
-  const PictureLayerTiling* tiling_;
+  // RAW_PTR_EXCLUSION: Performance reasons: based on analysis of sampling
+  // profiler data (PictureLayerTilingSet::UpdateTilePriorities ->
+  // PictureLayerTiling::ComputeTilePriorityRects ->
+  // PictureLayerTiling::SetLiveTilesRect -> PictureLayerTiling::CreateTile ->
+  // allocates Tile).
+  RAW_PTR_EXCLUSION TileManager* const tile_manager_;
+  RAW_PTR_EXCLUSION const PictureLayerTiling* tiling_;
+
   const gfx::Rect content_rect_;
   const gfx::Rect enclosing_layer_rect_;
   const gfx::AxisTransform2d raster_transform_;
@@ -158,14 +180,14 @@ class CC_EXPORT Tile {
 
   unsigned scheduled_priority_ = 0;
 
-  bool required_for_activation_ : 1;
-  bool required_for_draw_ : 1;
-  bool is_solid_color_analysis_performed_ : 1;
+  bool required_for_activation_ : 1 = false;
+  bool required_for_draw_ : 1 = false;
+  bool is_solid_color_analysis_performed_ : 1 = false;
   const bool can_use_lcd_text_ : 1;
 
   // Set to true if there is a raster task scheduled for this tile that will
   // rasterize a resource with checker images.
-  bool raster_task_scheduled_with_checker_images_ : 1;
+  bool raster_task_scheduled_with_checker_images_ : 1 = false;
 
   Id id_;
 
@@ -179,6 +201,8 @@ class CC_EXPORT Tile {
   gfx::Rect invalidated_content_rect_;
 
   scoped_refptr<TileTask> raster_task_;
+
+  bool used_ = false;
 };
 
 }  // namespace cc

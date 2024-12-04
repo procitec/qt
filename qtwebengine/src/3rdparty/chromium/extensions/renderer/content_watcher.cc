@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,13 +7,15 @@
 #include <stddef.h>
 
 #include <set>
+#include <string_view>
 
+#include "base/memory/raw_ref.h"
 #include "content/public/renderer/render_frame.h"
 #include "content/public/renderer/render_frame_observer.h"
 #include "content/public/renderer/render_frame_observer_tracker.h"
 #include "content/public/renderer/render_frame_visitor.h"
-#include "content/public/renderer/render_view.h"
 #include "extensions/common/extension_messages.h"
+#include "extensions/renderer/extension_frame_helper.h"
 #include "third_party/blink/public/web/web_document.h"
 #include "third_party/blink/public/web/web_element.h"
 #include "third_party/blink/public/web/web_local_frame.h"
@@ -29,6 +31,10 @@ class FrameContentWatcher
  public:
   FrameContentWatcher(content::RenderFrame* render_frame,
                       const blink::WebVector<blink::WebString>& css_selectors);
+
+  FrameContentWatcher(const FrameContentWatcher&) = delete;
+  FrameContentWatcher& operator=(const FrameContentWatcher&) = delete;
+
   ~FrameContentWatcher() override;
 
   // content::RenderFrameObserver:
@@ -57,8 +63,6 @@ class FrameContentWatcher
   blink::WebVector<blink::WebString> css_selectors_;
   std::set<std::string> matching_selectors_;
   bool document_created_ = false;
-
-  DISALLOW_COPY_AND_ASSIGN(FrameContentWatcher);
 };
 
 FrameContentWatcher::FrameContentWatcher(
@@ -68,7 +72,7 @@ FrameContentWatcher::FrameContentWatcher(
       content::RenderFrameObserverTracker<FrameContentWatcher>(render_frame),
       css_selectors_(css_selectors) {}
 
-FrameContentWatcher::~FrameContentWatcher() {}
+FrameContentWatcher::~FrameContentWatcher() = default;
 
 void FrameContentWatcher::OnDestruct() {
   delete this;
@@ -112,7 +116,7 @@ void FrameContentWatcher::NotifyBrowserOfChange() {
     return;
   }
 
-  std::set<base::StringPiece> transitive_selectors;
+  std::set<std::string_view> transitive_selectors;
   for (blink::WebFrame* frame = top_frame; frame;
        frame = frame->TraverseNext()) {
     if (frame->IsWebLocalFrame() &&
@@ -127,20 +131,19 @@ void FrameContentWatcher::NotifyBrowserOfChange() {
   }
 
   std::vector<std::string> selector_strings;
-  for (const base::StringPiece& selector : transitive_selectors)
-    selector_strings.push_back(selector.as_string());
+  for (std::string_view selector : transitive_selectors) {
+    selector_strings.push_back(std::string(selector));
+  }
 
-  // TODO(devlin): Frame-ify this message.
-  content::RenderView* view =
-      content::RenderView::FromWebView(top_frame->View());
-  view->Send(new ExtensionHostMsg_OnWatchedPageChange(view->GetRoutingID(),
-                                                      selector_strings));
+  ExtensionFrameHelper::Get(render_frame())
+      ->GetLocalFrameHost()
+      ->WatchedPageChange(selector_strings);
 }
 
 }  // namespace
 
-ContentWatcher::ContentWatcher() {}
-ContentWatcher::~ContentWatcher() {}
+ContentWatcher::ContentWatcher() = default;
+ContentWatcher::~ContentWatcher() = default;
 
 void ContentWatcher::OnWatchPages(
     const std::vector<std::string>& new_css_selectors_utf8) {
@@ -157,7 +160,7 @@ void ContentWatcher::OnWatchPages(
   if (!changed)
     return;
 
-  css_selectors_.Swap(new_css_selectors);
+  css_selectors_.swap(new_css_selectors);
 
   // Tell each frame's document about the new set of watched selectors. These
   // will trigger calls to DidMatchCSS after Blink has a chance to apply the new
@@ -168,11 +171,13 @@ void ContentWatcher::OnWatchPages(
         : css_selectors(css_selectors) {}
 
     bool Visit(content::RenderFrame* frame) override {
-      FrameContentWatcher::Get(frame)->UpdateCSSSelectors(css_selectors);
+      FrameContentWatcher::Get(frame)->UpdateCSSSelectors(*css_selectors);
       return true;  // Continue visiting.
     }
 
-    const blink::WebVector<blink::WebString>& css_selectors;
+    const raw_ref<const blink::WebVector<blink::WebString>,
+                  ExperimentalRenderer>
+        css_selectors;
   };
   WatchSelectors visitor(css_selectors_);
   content::RenderFrame::ForEach(&visitor);

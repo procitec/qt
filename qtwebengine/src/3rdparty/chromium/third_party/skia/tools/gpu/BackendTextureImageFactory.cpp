@@ -7,71 +7,131 @@
 
 #include "tools/gpu/BackendTextureImageFactory.h"
 
+#include "include/core/SkColorSpace.h"
 #include "include/core/SkImage.h"
 #include "include/core/SkPixmap.h"
+#include "src/core/SkAutoPixmapStorage.h"
+#include "tools/gpu/ManagedBackendTexture.h"
+
+#ifdef SK_GANESH
 #include "include/gpu/GrBackendSurface.h"
 #include "include/gpu/GrDirectContext.h"
-#include "src/core/SkAutoPixmapStorage.h"
+#include "include/gpu/ganesh/SkImageGanesh.h"
+#endif
 
-namespace {
-class ManagedBackendTexture : public SkNVRefCnt<ManagedBackendTexture> {
-public:
-    ~ManagedBackendTexture() {
-        if (fDContext && fTexture.isValid()) {
-            fDContext->submit(true);
-            fDContext->deleteBackendTexture(fTexture);
-        }
-    }
-
-    static void Release(void* context) { static_cast<ManagedBackendTexture*>(context)->unref(); }
-
-    template <typename... Args>
-    static sk_sp<ManagedBackendTexture> Make(GrDirectContext* dContext, Args&&... args) {
-        sk_sp<ManagedBackendTexture> mbet(new ManagedBackendTexture);
-        mbet->fDContext = dContext;
-        mbet->fTexture = dContext->createBackendTexture(std::forward<Args>(args)..., Release,
-                                                        mbet->refAndPassAsContext());
-        return mbet;
-    }
-
-    const GrBackendTexture& texture() { return fTexture; }
-
-    void* refAndPassAsContext() {
-        this->ref();
-        return static_cast<void*>(this);
-    }
-
-private:
-    ManagedBackendTexture() = default;
-    GrDirectContext* fDContext = nullptr;
-    GrBackendTexture fTexture;
-};
-}  // namespace
+#ifdef SK_GRAPHITE
+#include "include/core/SkBitmap.h"
+#include "include/gpu/graphite/Image.h"
+#include "include/gpu/graphite/Recorder.h"
+#include "src/gpu/graphite/RecorderPriv.h"
+#endif
 
 namespace sk_gpu_test {
+#ifdef SK_GANESH
 sk_sp<SkImage> MakeBackendTextureImage(GrDirectContext* dContext,
                                        const SkPixmap& pixmap,
-                                       GrRenderable renderable,
-                                       GrSurfaceOrigin origin) {
-    const SkPixmap* src = &pixmap;
-    SkAutoPixmapStorage temp;
-    if (origin == kBottomLeft_GrSurfaceOrigin) {
-        temp.alloc(src->info());
-        auto s = static_cast<const char*>(src->addr(0, pixmap.height() - 1));
-        auto d = static_cast<char*>(temp.writable_addr(0, 0));
-        for (int y = 0; y < temp.height(); ++y, s -= pixmap.rowBytes(), d += temp.rowBytes()) {
-            std::copy_n(s, temp.info().minRowBytes(), d);
-        }
-        src = &temp;
+                                       Renderable renderable,
+                                       GrSurfaceOrigin origin,
+                                       Protected isProtected) {
+    auto mbet = ManagedBackendTexture::MakeWithData(dContext,
+                                                    pixmap,
+                                                    origin,
+                                                    renderable,
+                                                    isProtected);
+    if (!mbet) {
+        return nullptr;
     }
-    auto mbet = ManagedBackendTexture::Make(dContext, src, 1, renderable, GrProtected::kNo);
-    return SkImage::MakeFromTexture(dContext,
-                                    mbet->texture(),
-                                    origin,
-                                    src->colorType(),
-                                    src->alphaType(),
-                                    src->refColorSpace(),
-                                    ManagedBackendTexture::Release,
-                                    mbet->refAndPassAsContext());
+    return SkImages::BorrowTextureFrom(dContext,
+                                       mbet->texture(),
+                                       origin,
+                                       pixmap.colorType(),
+                                       pixmap.alphaType(),
+                                       pixmap.refColorSpace(),
+                                       ManagedBackendTexture::ReleaseProc,
+                                       mbet->releaseContext());
 }
+
+sk_sp<SkImage> MakeBackendTextureImage(GrDirectContext* dContext,
+                                       const SkImageInfo& info,
+                                       SkColor4f color,
+                                       Mipmapped mipmapped,
+                                       Renderable renderable,
+                                       GrSurfaceOrigin origin,
+                                       Protected isProtected) {
+    if (info.alphaType() == kOpaque_SkAlphaType) {
+        color = color.makeOpaque();
+    } else if (info.alphaType() == kPremul_SkAlphaType) {
+        auto pmColor = color.premul();
+        color = {pmColor.fR, pmColor.fG, pmColor.fB, pmColor.fA};
+    }
+    auto mbet = ManagedBackendTexture::MakeWithData(dContext,
+                                                    info.width(),
+                                                    info.height(),
+                                                    info.colorType(),
+                                                    color,
+                                                    mipmapped,
+                                                    renderable,
+                                                    isProtected);
+    if (!mbet) {
+        return nullptr;
+    }
+    return SkImages::BorrowTextureFrom(dContext,
+                                       mbet->texture(),
+                                       origin,
+                                       info.colorType(),
+                                       info.alphaType(),
+                                       info.refColorSpace(),
+                                       ManagedBackendTexture::ReleaseProc,
+                                       mbet->releaseContext());
+}
+#endif  // SK_GANESH
+
+#ifdef SK_GRAPHITE
+using Recorder = skgpu::graphite::Recorder;
+sk_sp<SkImage> MakeBackendTextureImage(Recorder* recorder,
+                                       const SkPixmap& pixmap,
+                                       skgpu::Mipmapped isMipmapped,
+                                       Renderable isRenderable,
+                                       Origin origin,
+                                       Protected isProtected) {
+    auto mbet = ManagedGraphiteTexture::MakeFromPixmap(recorder,
+                                                       pixmap,
+                                                       isMipmapped,
+                                                       isRenderable,
+                                                       isProtected);
+    if (!mbet) {
+        return nullptr;
+    }
+
+    return SkImages::WrapTexture(recorder,
+                                 mbet->texture(),
+                                 pixmap.colorType(),
+                                 pixmap.alphaType(),
+                                 pixmap.refColorSpace(),
+                                 origin,
+                                 sk_gpu_test::ManagedGraphiteTexture::ImageReleaseProc,
+                                 mbet->releaseContext());
+}
+
+sk_sp<SkImage> MakeBackendTextureImage(Recorder* recorder,
+                                       const SkImageInfo& ii,
+                                       SkColor4f color,
+                                       skgpu::Mipmapped isMipmapped,
+                                       Renderable isRenderable,
+                                       Origin origin,
+                                       Protected isProtected) {
+    if (ii.alphaType() == kOpaque_SkAlphaType) {
+        color = color.makeOpaque();
+    }
+
+    SkBitmap bitmap;
+    bitmap.allocPixels(ii);
+
+    bitmap.eraseColor(color);
+
+    return MakeBackendTextureImage(recorder, bitmap.pixmap(), isMipmapped, isRenderable,
+                                   origin, isProtected);
+}
+#endif  // SK_GRAPHITE
+
 }  // namespace sk_gpu_test

@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,10 +10,10 @@
 
 namespace blink {
 
-std::unique_ptr<InterpolableNumber> ConsumeControlAxis(double value,
-                                                       bool is_absolute,
-                                                       double current_value) {
-  return std::make_unique<InterpolableNumber>(
+InterpolableNumber* ConsumeControlAxis(double value,
+                                       bool is_absolute,
+                                       double current_value) {
+  return MakeGarbageCollected<InterpolableNumber>(
       is_absolute ? value : current_value + value);
 }
 
@@ -21,16 +21,18 @@ float ConsumeInterpolableControlAxis(const InterpolableValue* number,
                                      bool is_absolute,
                                      double current_value) {
   double value = To<InterpolableNumber>(number)->Value();
-  return clampTo<float>(is_absolute ? value : value - current_value);
+  return ClampTo<float>(is_absolute ? value : value - current_value);
 }
 
-std::unique_ptr<InterpolableNumber>
-ConsumeCoordinateAxis(double value, bool is_absolute, double& current_value) {
-  if (is_absolute)
+InterpolableNumber* ConsumeCoordinateAxis(double value,
+                                          bool is_absolute,
+                                          double& current_value) {
+  if (is_absolute) {
     current_value = value;
-  else
+  } else {
     current_value += value;
-  return std::make_unique<InterpolableNumber>(current_value);
+  }
+  return MakeGarbageCollected<InterpolableNumber>(current_value);
 }
 
 float ConsumeInterpolableCoordinateAxis(const InterpolableValue* number,
@@ -38,16 +40,15 @@ float ConsumeInterpolableCoordinateAxis(const InterpolableValue* number,
                                         double& current_value) {
   double previous_value = current_value;
   current_value = To<InterpolableNumber>(number)->Value();
-  return clampTo<float>(is_absolute ? current_value
+  return ClampTo<float>(is_absolute ? current_value
                                     : current_value - previous_value);
 }
 
-std::unique_ptr<InterpolableValue> ConsumeClosePath(
-    const PathSegmentData&,
-    PathCoordinates& coordinates) {
+InterpolableValue* ConsumeClosePath(const PathSegmentData&,
+                                    PathCoordinates& coordinates) {
   coordinates.current_x = coordinates.initial_x;
   coordinates.current_y = coordinates.initial_y;
-  return std::make_unique<InterpolableList>(0);
+  return MakeGarbageCollected<InterpolableList>(0);
 }
 
 PathSegmentData ConsumeInterpolableClosePath(const InterpolableValue&,
@@ -61,11 +62,10 @@ PathSegmentData ConsumeInterpolableClosePath(const InterpolableValue&,
   return segment;
 }
 
-std::unique_ptr<InterpolableValue> ConsumeSingleCoordinate(
-    const PathSegmentData& segment,
-    PathCoordinates& coordinates) {
+InterpolableValue* ConsumeSingleCoordinate(const PathSegmentData& segment,
+                                           PathCoordinates& coordinates) {
   bool is_absolute = IsAbsolutePathSegType(segment.command);
-  auto result = std::make_unique<InterpolableList>(2);
+  auto* result = MakeGarbageCollected<InterpolableList>(2);
   result->Set(0, ConsumeCoordinateAxis(segment.X(), is_absolute,
                                        coordinates.current_x));
   result->Set(1, ConsumeCoordinateAxis(segment.Y(), is_absolute,
@@ -78,7 +78,7 @@ std::unique_ptr<InterpolableValue> ConsumeSingleCoordinate(
     coordinates.initial_y = coordinates.current_y;
   }
 
-  return std::move(result);
+  return result;
 }
 
 PathSegmentData ConsumeInterpolableSingleCoordinate(
@@ -89,9 +89,9 @@ PathSegmentData ConsumeInterpolableSingleCoordinate(
   bool is_absolute = IsAbsolutePathSegType(seg_type);
   PathSegmentData segment;
   segment.command = seg_type;
-  segment.target_point.SetX(ConsumeInterpolableCoordinateAxis(
+  segment.target_point.set_x(ConsumeInterpolableCoordinateAxis(
       list.Get(0), is_absolute, coordinates.current_x));
-  segment.target_point.SetY(ConsumeInterpolableCoordinateAxis(
+  segment.target_point.set_y(ConsumeInterpolableCoordinateAxis(
       list.Get(1), is_absolute, coordinates.current_y));
 
   if (ToAbsolutePathSegType(seg_type) == kPathSegMoveToAbs) {
@@ -104,11 +104,10 @@ PathSegmentData ConsumeInterpolableSingleCoordinate(
   return segment;
 }
 
-std::unique_ptr<InterpolableValue> ConsumeCurvetoCubic(
-    const PathSegmentData& segment,
-    PathCoordinates& coordinates) {
+InterpolableValue* ConsumeCurvetoCubic(const PathSegmentData& segment,
+                                       PathCoordinates& coordinates) {
   bool is_absolute = IsAbsolutePathSegType(segment.command);
-  auto result = std::make_unique<InterpolableList>(6);
+  auto* result = MakeGarbageCollected<InterpolableList>(6);
   result->Set(
       0, ConsumeControlAxis(segment.X1(), is_absolute, coordinates.current_x));
   result->Set(
@@ -121,7 +120,7 @@ std::unique_ptr<InterpolableValue> ConsumeCurvetoCubic(
                                        coordinates.current_x));
   result->Set(5, ConsumeCoordinateAxis(segment.Y(), is_absolute,
                                        coordinates.current_y));
-  return std::move(result);
+  return result;
 }
 
 PathSegmentData ConsumeInterpolableCurvetoCubic(const InterpolableValue& value,
@@ -131,26 +130,25 @@ PathSegmentData ConsumeInterpolableCurvetoCubic(const InterpolableValue& value,
   bool is_absolute = IsAbsolutePathSegType(seg_type);
   PathSegmentData segment;
   segment.command = seg_type;
-  segment.point1.SetX(ConsumeInterpolableControlAxis(list.Get(0), is_absolute,
-                                                     coordinates.current_x));
-  segment.point1.SetY(ConsumeInterpolableControlAxis(list.Get(1), is_absolute,
-                                                     coordinates.current_y));
-  segment.point2.SetX(ConsumeInterpolableControlAxis(list.Get(2), is_absolute,
-                                                     coordinates.current_x));
-  segment.point2.SetY(ConsumeInterpolableControlAxis(list.Get(3), is_absolute,
-                                                     coordinates.current_y));
-  segment.target_point.SetX(ConsumeInterpolableCoordinateAxis(
+  segment.point1.set_x(ConsumeInterpolableControlAxis(list.Get(0), is_absolute,
+                                                      coordinates.current_x));
+  segment.point1.set_y(ConsumeInterpolableControlAxis(list.Get(1), is_absolute,
+                                                      coordinates.current_y));
+  segment.point2.set_x(ConsumeInterpolableControlAxis(list.Get(2), is_absolute,
+                                                      coordinates.current_x));
+  segment.point2.set_y(ConsumeInterpolableControlAxis(list.Get(3), is_absolute,
+                                                      coordinates.current_y));
+  segment.target_point.set_x(ConsumeInterpolableCoordinateAxis(
       list.Get(4), is_absolute, coordinates.current_x));
-  segment.target_point.SetY(ConsumeInterpolableCoordinateAxis(
+  segment.target_point.set_y(ConsumeInterpolableCoordinateAxis(
       list.Get(5), is_absolute, coordinates.current_y));
   return segment;
 }
 
-std::unique_ptr<InterpolableValue> ConsumeCurvetoQuadratic(
-    const PathSegmentData& segment,
-    PathCoordinates& coordinates) {
+InterpolableValue* ConsumeCurvetoQuadratic(const PathSegmentData& segment,
+                                           PathCoordinates& coordinates) {
   bool is_absolute = IsAbsolutePathSegType(segment.command);
-  auto result = std::make_unique<InterpolableList>(4);
+  auto* result = MakeGarbageCollected<InterpolableList>(4);
   result->Set(
       0, ConsumeControlAxis(segment.X1(), is_absolute, coordinates.current_x));
   result->Set(
@@ -159,7 +157,7 @@ std::unique_ptr<InterpolableValue> ConsumeCurvetoQuadratic(
                                        coordinates.current_x));
   result->Set(3, ConsumeCoordinateAxis(segment.Y(), is_absolute,
                                        coordinates.current_y));
-  return std::move(result);
+  return result;
 }
 
 PathSegmentData ConsumeInterpolableCurvetoQuadratic(
@@ -170,32 +168,35 @@ PathSegmentData ConsumeInterpolableCurvetoQuadratic(
   bool is_absolute = IsAbsolutePathSegType(seg_type);
   PathSegmentData segment;
   segment.command = seg_type;
-  segment.point1.SetX(ConsumeInterpolableControlAxis(list.Get(0), is_absolute,
-                                                     coordinates.current_x));
-  segment.point1.SetY(ConsumeInterpolableControlAxis(list.Get(1), is_absolute,
-                                                     coordinates.current_y));
-  segment.target_point.SetX(ConsumeInterpolableCoordinateAxis(
+  segment.point1.set_x(ConsumeInterpolableControlAxis(list.Get(0), is_absolute,
+                                                      coordinates.current_x));
+  segment.point1.set_y(ConsumeInterpolableControlAxis(list.Get(1), is_absolute,
+                                                      coordinates.current_y));
+  segment.target_point.set_x(ConsumeInterpolableCoordinateAxis(
       list.Get(2), is_absolute, coordinates.current_x));
-  segment.target_point.SetY(ConsumeInterpolableCoordinateAxis(
+  segment.target_point.set_y(ConsumeInterpolableCoordinateAxis(
       list.Get(3), is_absolute, coordinates.current_y));
   return segment;
 }
 
-std::unique_ptr<InterpolableValue> ConsumeArc(const PathSegmentData& segment,
-                                              PathCoordinates& coordinates) {
+InterpolableValue* ConsumeArc(const PathSegmentData& segment,
+                              PathCoordinates& coordinates) {
   bool is_absolute = IsAbsolutePathSegType(segment.command);
-  auto result = std::make_unique<InterpolableList>(7);
+  auto* result = MakeGarbageCollected<InterpolableList>(7);
   result->Set(0, ConsumeCoordinateAxis(segment.X(), is_absolute,
                                        coordinates.current_x));
   result->Set(1, ConsumeCoordinateAxis(segment.Y(), is_absolute,
                                        coordinates.current_y));
-  result->Set(2, std::make_unique<InterpolableNumber>(segment.R1()));
-  result->Set(3, std::make_unique<InterpolableNumber>(segment.R2()));
-  result->Set(4, std::make_unique<InterpolableNumber>(segment.ArcAngle()));
+  result->Set(2,
+              MakeGarbageCollected<InterpolableNumber>(segment.ArcRadiusX()));
+  result->Set(3,
+              MakeGarbageCollected<InterpolableNumber>(segment.ArcRadiusY()));
+  result->Set(4, MakeGarbageCollected<InterpolableNumber>(segment.ArcAngle()));
   // TODO(alancutter): Make these flags part of the NonInterpolableValue.
-  result->Set(5, std::make_unique<InterpolableNumber>(segment.LargeArcFlag()));
-  result->Set(6, std::make_unique<InterpolableNumber>(segment.SweepFlag()));
-  return std::move(result);
+  result->Set(5,
+              MakeGarbageCollected<InterpolableNumber>(segment.LargeArcFlag()));
+  result->Set(6, MakeGarbageCollected<InterpolableNumber>(segment.SweepFlag()));
+  return result;
 }
 
 PathSegmentData ConsumeInterpolableArc(const InterpolableValue& value,
@@ -205,21 +206,20 @@ PathSegmentData ConsumeInterpolableArc(const InterpolableValue& value,
   bool is_absolute = IsAbsolutePathSegType(seg_type);
   PathSegmentData segment;
   segment.command = seg_type;
-  segment.target_point.SetX(ConsumeInterpolableCoordinateAxis(
+  segment.target_point.set_x(ConsumeInterpolableCoordinateAxis(
       list.Get(0), is_absolute, coordinates.current_x));
-  segment.target_point.SetY(ConsumeInterpolableCoordinateAxis(
+  segment.target_point.set_y(ConsumeInterpolableCoordinateAxis(
       list.Get(1), is_absolute, coordinates.current_y));
-  segment.ArcRadii().SetX(To<InterpolableNumber>(list.Get(2))->Value());
-  segment.ArcRadii().SetY(To<InterpolableNumber>(list.Get(3))->Value());
+  segment.SetArcRadiusX(To<InterpolableNumber>(list.Get(2))->Value());
+  segment.SetArcRadiusY(To<InterpolableNumber>(list.Get(3))->Value());
   segment.SetArcAngle(To<InterpolableNumber>(list.Get(4))->Value());
   segment.arc_large = To<InterpolableNumber>(list.Get(5))->Value() >= 0.5;
   segment.arc_sweep = To<InterpolableNumber>(list.Get(6))->Value() >= 0.5;
   return segment;
 }
 
-std::unique_ptr<InterpolableValue> ConsumeLinetoHorizontal(
-    const PathSegmentData& segment,
-    PathCoordinates& coordinates) {
+InterpolableValue* ConsumeLinetoHorizontal(const PathSegmentData& segment,
+                                           PathCoordinates& coordinates) {
   bool is_absolute = IsAbsolutePathSegType(segment.command);
   return ConsumeCoordinateAxis(segment.X(), is_absolute, coordinates.current_x);
 }
@@ -231,14 +231,13 @@ PathSegmentData ConsumeInterpolableLinetoHorizontal(
   bool is_absolute = IsAbsolutePathSegType(seg_type);
   PathSegmentData segment;
   segment.command = seg_type;
-  segment.target_point.SetX(ConsumeInterpolableCoordinateAxis(
+  segment.target_point.set_x(ConsumeInterpolableCoordinateAxis(
       &value, is_absolute, coordinates.current_x));
   return segment;
 }
 
-std::unique_ptr<InterpolableValue> ConsumeLinetoVertical(
-    const PathSegmentData& segment,
-    PathCoordinates& coordinates) {
+InterpolableValue* ConsumeLinetoVertical(const PathSegmentData& segment,
+                                         PathCoordinates& coordinates) {
   bool is_absolute = IsAbsolutePathSegType(segment.command);
   return ConsumeCoordinateAxis(segment.Y(), is_absolute, coordinates.current_y);
 }
@@ -250,16 +249,15 @@ PathSegmentData ConsumeInterpolableLinetoVertical(
   bool is_absolute = IsAbsolutePathSegType(seg_type);
   PathSegmentData segment;
   segment.command = seg_type;
-  segment.target_point.SetY(ConsumeInterpolableCoordinateAxis(
+  segment.target_point.set_y(ConsumeInterpolableCoordinateAxis(
       &value, is_absolute, coordinates.current_y));
   return segment;
 }
 
-std::unique_ptr<InterpolableValue> ConsumeCurvetoCubicSmooth(
-    const PathSegmentData& segment,
-    PathCoordinates& coordinates) {
+InterpolableValue* ConsumeCurvetoCubicSmooth(const PathSegmentData& segment,
+                                             PathCoordinates& coordinates) {
   bool is_absolute = IsAbsolutePathSegType(segment.command);
-  auto result = std::make_unique<InterpolableList>(4);
+  auto* result = MakeGarbageCollected<InterpolableList>(4);
   result->Set(
       0, ConsumeControlAxis(segment.X2(), is_absolute, coordinates.current_x));
   result->Set(
@@ -279,20 +277,20 @@ PathSegmentData ConsumeInterpolableCurvetoCubicSmooth(
   bool is_absolute = IsAbsolutePathSegType(seg_type);
   PathSegmentData segment;
   segment.command = seg_type;
-  segment.point2.SetX(ConsumeInterpolableControlAxis(list.Get(0), is_absolute,
-                                                     coordinates.current_x));
-  segment.point2.SetY(ConsumeInterpolableControlAxis(list.Get(1), is_absolute,
-                                                     coordinates.current_y));
-  segment.target_point.SetX(ConsumeInterpolableCoordinateAxis(
+  segment.point2.set_x(ConsumeInterpolableControlAxis(list.Get(0), is_absolute,
+                                                      coordinates.current_x));
+  segment.point2.set_y(ConsumeInterpolableControlAxis(list.Get(1), is_absolute,
+                                                      coordinates.current_y));
+  segment.target_point.set_x(ConsumeInterpolableCoordinateAxis(
       list.Get(2), is_absolute, coordinates.current_x));
-  segment.target_point.SetY(ConsumeInterpolableCoordinateAxis(
+  segment.target_point.set_y(ConsumeInterpolableCoordinateAxis(
       list.Get(3), is_absolute, coordinates.current_y));
   return segment;
 }
 
-std::unique_ptr<InterpolableValue>
-SVGPathSegInterpolationFunctions::ConsumePathSeg(const PathSegmentData& segment,
-                                                 PathCoordinates& coordinates) {
+InterpolableValue* SVGPathSegInterpolationFunctions::ConsumePathSeg(
+    const PathSegmentData& segment,
+    PathCoordinates& coordinates) {
   switch (segment.command) {
     case kPathSegClosePath:
       return ConsumeClosePath(segment, coordinates);

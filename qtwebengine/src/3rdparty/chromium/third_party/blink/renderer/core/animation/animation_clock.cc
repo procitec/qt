@@ -37,8 +37,7 @@ namespace blink {
 namespace {
 // This is an approximation of time between frames, used when ticking the
 // animation clock outside of animation frame callbacks.
-constexpr base::TimeDelta kApproximateFrameTime =
-    base::TimeDelta::FromSecondsD(1 / 60.0);
+constexpr base::TimeDelta kApproximateFrameTime = base::Seconds(1 / 60.0);
 }  // namespace
 
 unsigned AnimationClock::currently_running_task_ = 0;
@@ -71,6 +70,9 @@ base::TimeTicks AnimationClock::CurrentTime() {
   // comments on |SetAllowedToDynamicallyUpdateTime|.
   const base::TimeTicks current_time = clock_->NowTicks();
   base::TimeTicks new_time = time_;
+
+  // TODO(crbug.com/1497922) timestamps outside rendering updates should be
+  // coarsened.
   if (time_ < current_time) {
     // Attempt to predict what the most recent timestamp would have been. This
     // may not produce a result greater than |time_|, but it greatly reduces the

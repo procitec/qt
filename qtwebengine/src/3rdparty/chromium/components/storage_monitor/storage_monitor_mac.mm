@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,8 +6,11 @@
 
 #include <stdint.h>
 
-#include "base/bind.h"
-#include "base/mac/foundation_util.h"
+#include <memory>
+
+#include "base/apple/bridging.h"
+#include "base/apple/foundation_util.h"
+#include "base/functional/bind.h"
 #include "base/mac/mac_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
@@ -24,24 +27,24 @@ namespace storage_monitor {
 
 namespace {
 
-const char kDiskImageModelName[] = "Disk Image";
+const char16_t kDiskImageModelName[] = u"Disk Image";
 
-base::string16 GetUTF16FromDictionary(CFDictionaryRef dictionary,
+std::u16string GetUTF16FromDictionary(CFDictionaryRef dictionary,
                                       CFStringRef key) {
   CFStringRef value =
-      base::mac::GetValueFromDictionary<CFStringRef>(dictionary, key);
+      base::apple::GetValueFromDictionary<CFStringRef>(dictionary, key);
   if (!value)
-    return base::string16();
+    return std::u16string();
   return base::SysCFStringRefToUTF16(value);
 }
 
-base::string16 JoinName(const base::string16& name,
-                        const base::string16& addition) {
+std::u16string JoinName(const std::u16string& name,
+                        const std::u16string& addition) {
   if (addition.empty())
     return name;
   if (name.empty())
     return addition;
-  return name + static_cast<base::char16>(' ') + addition;
+  return name + u' ' + addition;
 }
 
 StorageInfo::Type GetDeviceType(bool is_removable, bool has_dcim) {
@@ -53,53 +56,55 @@ StorageInfo::Type GetDeviceType(bool is_removable, bool has_dcim) {
 }
 
 StorageInfo BuildStorageInfo(
-    CFDictionaryRef dict, std::string* bsd_name) {
+    base::apple::ScopedCFTypeRef<CFDictionaryRef> scoped_dict,
+    std::string* bsd_name) {
   base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
                                                 base::BlockingType::MAY_BLOCK);
+  CFDictionaryRef dict = scoped_dict.get();
 
-  CFStringRef device_bsd_name = base::mac::GetValueFromDictionary<CFStringRef>(
-      dict, kDADiskDescriptionMediaBSDNameKey);
+  CFStringRef device_bsd_name =
+      base::apple::GetValueFromDictionary<CFStringRef>(
+          dict, kDADiskDescriptionMediaBSDNameKey);
   if (device_bsd_name && bsd_name)
     *bsd_name = base::SysCFStringRefToUTF8(device_bsd_name);
 
-  CFURLRef url = base::mac::GetValueFromDictionary<CFURLRef>(
+  CFURLRef url = base::apple::GetValueFromDictionary<CFURLRef>(
       dict, kDADiskDescriptionVolumePathKey);
-  NSURL* nsurl = base::mac::CFToNSCast(url);
-  base::FilePath location = base::mac::NSStringToFilePath([nsurl path]);
-  CFNumberRef size_number =
-      base::mac::GetValueFromDictionary<CFNumberRef>(
-          dict, kDADiskDescriptionMediaSizeKey);
+  base::FilePath location =
+      base::apple::NSURLToFilePath(base::apple::CFToNSPtrCast(url));
+  CFNumberRef size_number = base::apple::GetValueFromDictionary<CFNumberRef>(
+      dict, kDADiskDescriptionMediaSizeKey);
   uint64_t size_in_bytes = 0;
   if (size_number)
     CFNumberGetValue(size_number, kCFNumberLongLongType, &size_in_bytes);
 
-  base::string16 vendor = GetUTF16FromDictionary(
-      dict, kDADiskDescriptionDeviceVendorKey);
-  base::string16 model = GetUTF16FromDictionary(
-      dict, kDADiskDescriptionDeviceModelKey);
-  base::string16 label = GetUTF16FromDictionary(
-      dict, kDADiskDescriptionVolumeNameKey);
+  std::u16string vendor =
+      GetUTF16FromDictionary(dict, kDADiskDescriptionDeviceVendorKey);
+  std::u16string model =
+      GetUTF16FromDictionary(dict, kDADiskDescriptionDeviceModelKey);
+  std::u16string label =
+      GetUTF16FromDictionary(dict, kDADiskDescriptionVolumeNameKey);
 
-  CFUUIDRef uuid = base::mac::GetValueFromDictionary<CFUUIDRef>(
+  CFUUIDRef uuid = base::apple::GetValueFromDictionary<CFUUIDRef>(
       dict, kDADiskDescriptionVolumeUUIDKey);
   std::string unique_id;
   if (uuid) {
-    base::ScopedCFTypeRef<CFStringRef> uuid_string(
-        CFUUIDCreateString(NULL, uuid));
+    base::apple::ScopedCFTypeRef<CFStringRef> uuid_string(
+        CFUUIDCreateString(nullptr, uuid));
     if (uuid_string.get())
-      unique_id = base::SysCFStringRefToUTF8(uuid_string);
+      unique_id = base::SysCFStringRefToUTF8(uuid_string.get());
   }
   if (unique_id.empty()) {
-    base::string16 revision = GetUTF16FromDictionary(
-        dict, kDADiskDescriptionDeviceRevisionKey);
-    base::string16 unique_id2 = vendor;
+    std::u16string revision =
+        GetUTF16FromDictionary(dict, kDADiskDescriptionDeviceRevisionKey);
+    std::u16string unique_id2 = vendor;
     unique_id2 = JoinName(unique_id2, model);
     unique_id2 = JoinName(unique_id2, revision);
     unique_id = base::UTF16ToUTF8(unique_id2);
   }
 
   CFBooleanRef is_removable_ref =
-      base::mac::GetValueFromDictionary<CFBooleanRef>(
+      base::apple::GetValueFromDictionary<CFBooleanRef>(
           dict, kDADiskDescriptionMediaRemovableKey);
   bool is_removable = is_removable_ref && CFBooleanGetValue(is_removable_ref);
   // Checking for DCIM only matters on removable devices.
@@ -116,7 +121,7 @@ StorageInfo BuildStorageInfo(
 struct EjectDiskOptions {
   std::string bsd_name;
   base::OnceCallback<void(StorageMonitor::EjectStatus)> callback;
-  base::ScopedCFTypeRef<DADiskRef> disk;
+  base::apple::ScopedCFTypeRef<DADiskRef> disk;
 };
 
 void PostEjectCallback(DADiskRef disk,
@@ -153,42 +158,34 @@ void EjectDisk(EjectDiskOptions* options) {
 
 }  // namespace
 
-StorageMonitorMac::StorageMonitorMac() : pending_disk_updates_(0) {
-}
+StorageMonitorMac::StorageMonitorMac() = default;
 
 StorageMonitorMac::~StorageMonitorMac() {
   if (session_.get()) {
-    DASessionUnscheduleFromRunLoop(
-        session_, CFRunLoopGetCurrent(), kCFRunLoopCommonModes);
+    DASessionUnscheduleFromRunLoop(session_.get(), CFRunLoopGetCurrent(),
+                                   kCFRunLoopCommonModes);
   }
 }
 
 void StorageMonitorMac::Init() {
-  session_.reset(DASessionCreate(NULL));
+  session_.reset(DASessionCreate(nullptr));
 
   // Register for callbacks for attached, changed, and removed devices.
   // This will send notifications for existing devices too.
-  DARegisterDiskAppearedCallback(
-      session_,
-      kDADiskDescriptionMatchVolumeMountable,
-      DiskAppearedCallback,
-      this);
-  DARegisterDiskDisappearedCallback(
-      session_,
-      kDADiskDescriptionMatchVolumeMountable,
-      DiskDisappearedCallback,
-      this);
+  DARegisterDiskAppearedCallback(session_.get(),
+                                 kDADiskDescriptionMatchVolumeMountable,
+                                 DiskAppearedCallback, this);
+  DARegisterDiskDisappearedCallback(session_.get(),
+                                    kDADiskDescriptionMatchVolumeMountable,
+                                    DiskDisappearedCallback, this);
   DARegisterDiskDescriptionChangedCallback(
-      session_,
-      kDADiskDescriptionMatchVolumeMountable,
-      kDADiskDescriptionWatchVolumePath,
-      DiskDescriptionChangedCallback,
-      this);
+      session_.get(), kDADiskDescriptionMatchVolumeMountable,
+      kDADiskDescriptionWatchVolumePath, DiskDescriptionChangedCallback, this);
 
-  DASessionScheduleWithRunLoop(
-      session_, CFRunLoopGetCurrent(), kCFRunLoopCommonModes);
+  DASessionScheduleWithRunLoop(session_.get(), CFRunLoopGetCurrent(),
+                               kCFRunLoopCommonModes);
 
-  image_capture_device_manager_.reset(new ImageCaptureDeviceManager);
+  image_capture_device_manager_ = std::make_unique<ImageCaptureDeviceManager>();
   image_capture_device_manager_->SetNotifications(receiver());
 }
 
@@ -289,14 +286,14 @@ void StorageMonitorMac::EjectDevice(
 
   receiver()->ProcessDetach(device_id);
 
-  base::ScopedCFTypeRef<DADiskRef> disk(
-      DADiskCreateFromBSDName(NULL, session_, bsd_name.c_str()));
+  base::apple::ScopedCFTypeRef<DADiskRef> disk(
+      DADiskCreateFromBSDName(nullptr, session_.get(), bsd_name.c_str()));
   if (!disk.get()) {
     std::move(callback).Run(StorageMonitor::EJECT_FAILURE);
     return;
   }
   // Get the reference to the full disk for ejecting.
-  disk.reset(DADiskCopyWholeDisk(disk));
+  disk.reset(DADiskCopyWholeDisk(disk.get()));
   if (!disk.get()) {
     std::move(callback).Run(StorageMonitor::EJECT_FAILURE);
     return;
@@ -337,12 +334,14 @@ void StorageMonitorMac::GetDiskInfoAndUpdate(
 
   pending_disk_updates_++;
 
-  base::ScopedCFTypeRef<CFDictionaryRef> dict(DADiskCopyDescription(disk));
+  base::apple::ScopedCFTypeRef<CFDictionaryRef> dict(
+      DADiskCopyDescription(disk));
   std::string* bsd_name = new std::string;
   base::ThreadPool::PostTaskAndReplyWithResult(
       FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
       base::BindOnce(&BuildStorageInfo, dict, bsd_name),
-      base::BindOnce(&StorageMonitorMac::UpdateDisk, AsWeakPtr(), update_type,
+      base::BindOnce(&StorageMonitorMac::UpdateDisk,
+                     weak_ptr_factory_.GetWeakPtr(), update_type,
                      base::Owned(bsd_name)));
 }
 
@@ -351,19 +350,17 @@ bool StorageMonitorMac::ShouldPostNotificationForDisk(
     const StorageInfo& info) const {
   // Only post notifications about disks that have no empty fields and
   // are removable. Also exclude disk images (DMGs).
-  return !info.device_id().empty() &&
-         !info.location().empty() &&
-         info.model_name() != base::ASCIIToUTF16(kDiskImageModelName) &&
+  return !info.device_id().empty() && !info.location().empty() &&
+         info.model_name() != kDiskImageModelName &&
          StorageInfo::IsMassStorageDevice(info.device_id());
 }
 
 bool StorageMonitorMac::FindDiskWithMountPoint(
     const base::FilePath& mount_point,
     StorageInfo* info) const {
-  for (std::map<std::string, StorageInfo>::const_iterator
-      it = disk_info_map_.begin(); it != disk_info_map_.end(); ++it) {
-    if (it->second.location() == mount_point.value()) {
-      *info = it->second;
+  for (const auto& disk_info : disk_info_map_) {
+    if (disk_info.second.location() == mount_point.value()) {
+      *info = disk_info.second;
       return true;
     }
   }

@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,14 +6,16 @@
 
 #include <utility>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/values.h"
+#include "build/chromeos_buildflags.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/policy/profile_policy_connector.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/managed_ui.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/webui_url_constants.h"
+#include "components/supervised_user/core/common/pref_names.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_data_source.h"
 
@@ -37,7 +39,7 @@ void ManagedUIHandler::InitializeInternal(content::WebUI* web_ui,
                                           content::WebUIDataSource* source,
                                           Profile* profile) {
   auto handler = std::make_unique<ManagedUIHandler>(profile);
-  source->AddLocalizedStrings(*handler->GetDataSourceUpdate());
+  source->AddLocalizedStrings(handler->GetDataSourceUpdate());
   handler->source_name_ = source->GetSource();
   web_ui->AddMessageHandler(std::move(handler));
 }
@@ -58,7 +60,8 @@ void ManagedUIHandler::RegisterMessages() {
                           base::Unretained(this)));
 }
 
-void ManagedUIHandler::HandleObserveManagedUI(const base::ListValue* /*args*/) {
+void ManagedUIHandler::HandleObserveManagedUI(
+    const base::Value::List& /*args*/) {
   AllowJavascript();
   AddObservers();
 }
@@ -107,16 +110,15 @@ void ManagedUIHandler::RemoveObservers() {
   pref_registrar_.RemoveAll();
 }
 
-std::unique_ptr<base::DictionaryValue> ManagedUIHandler::GetDataSourceUpdate()
-    const {
-  auto update = std::make_unique<base::DictionaryValue>();
-  update->SetKey("browserManagedByOrg",
-                 base::Value(chrome::GetManagedUiWebUILabel(profile_)));
-#if defined(OS_CHROMEOS)
-  update->SetKey("deviceManagedByOrg",
-                 base::Value(chrome::GetDeviceManagedUiWebUILabel(profile_)));
+base::Value::Dict ManagedUIHandler::GetDataSourceUpdate() const {
+  base::Value::Dict update;
+  update.Set("managedByIcon", chrome::GetManagedUiWebUIIcon(profile_));
+  update.Set("managementPageUrl", chrome::GetManagedUiUrl(profile_).spec());
+  update.Set("browserManagedByOrg", chrome::GetManagedUiWebUILabel(profile_));
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+  update.Set("deviceManagedByOrg", chrome::GetDeviceManagedUiWebUILabel());
 #endif
-  update->SetKey("isManaged", base::Value(managed_));
+  update.Set("isManaged", managed_);
   return update;
 }
 

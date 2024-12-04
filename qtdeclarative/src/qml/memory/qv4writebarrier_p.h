@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtQml module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 #ifndef QV4WRITEBARRIER_P_H
 #define QV4WRITEBARRIER_P_H
 
@@ -51,56 +15,114 @@
 //
 
 #include <private/qv4global_p.h>
+#include <private/qv4enginebase_p.h>
 
 QT_BEGIN_NAMESPACE
 
-#define WRITEBARRIER_none 1
-
-#define WRITEBARRIER(x) (1/WRITEBARRIER_##x == 1)
-
 namespace QV4 {
 struct EngineBase;
+typedef quint64 ReturnedValue;
 
-namespace WriteBarrier {
+struct WriteBarrier {
 
-enum Type {
-    NoBarrier,
-    Barrier
+    static constexpr bool isInsertionBarrier = true;
+
+    Q_ALWAYS_INLINE static void write(EngineBase *engine, Heap::Base *base, ReturnedValue *slot, ReturnedValue value)
+    {
+        if (engine->isGCOngoing)
+            write_slowpath(engine, base, slot, value);
+        *slot = value;
+    }
+    Q_QML_EXPORT Q_NEVER_INLINE static void write_slowpath(
+            EngineBase *engine, Heap::Base *base,
+            ReturnedValue *slot, ReturnedValue value);
+
+    Q_ALWAYS_INLINE static void write(EngineBase *engine, Heap::Base *base, Heap::Base **slot, Heap::Base *value)
+    {
+        if (engine->isGCOngoing)
+            write_slowpath(engine, base, slot, value);
+        *slot = value;
+    }
+    Q_QML_EXPORT Q_NEVER_INLINE static void write_slowpath(
+            EngineBase *engine, Heap::Base *base,
+            Heap::Base **slot, Heap::Base *value);
+
+    // MemoryManager isn't a complete type here, so make Engine a template argument
+    // so that we can still call engine->memoryManager->markStack()
+    template<typename F, typename Engine = EngineBase>
+    static void markCustom(Engine *engine, F &&markFunction) {
+        if (engine->isGCOngoing)
+            (std::forward<F>(markFunction))(engine->memoryManager->markStack());
+    }
+
+    // HeapObjectWrapper(Base) are helper classes to ensure that
+    // we always use a WriteBarrier when setting heap-objects
+    // they are also trivial; if triviality is not required, use Pointer instead
+    struct HeapObjectWrapperBase
+    {
+        // enum class avoids accidental construction via brace-init
+        enum class PointerWrapper : quintptr {};
+        PointerWrapper wrapped;
+
+        void clear() { wrapped = PointerWrapper(quintptr(0)); }
+    };
+
+    template<typename HeapType>
+    struct HeapObjectWrapperCommon : HeapObjectWrapperBase
+    {
+        HeapType *get() const { return reinterpret_cast<HeapType *>(wrapped); }
+        operator HeapType *() const { return get(); }
+        HeapType * operator->() const { return get(); }
+
+        template <typename ConvertibleToHeapType>
+        void set(QV4::EngineBase *engine, ConvertibleToHeapType *heapObject)
+        {
+            WriteBarrier::markCustom(engine, [heapObject](QV4::MarkStack *ms){
+                if (heapObject)
+                    heapObject->mark(ms);
+            });
+            wrapped = static_cast<HeapObjectWrapperBase::PointerWrapper>(quintptr(heapObject));
+        }
+    };
+
+    // all types are trivial; we however want to block copies bypassing the write barrier
+    // therefore, all members use a PhantomTag to reduce the likelihood
+    template<typename HeapType, int PhantomTag>
+    struct HeapObjectWrapper : HeapObjectWrapperCommon<HeapType> {};
+
+    /* similar Heap::Pointer, but without the Base conversion (and its inUse assert)
+       and for storing references in engine classes stored on the native heap
+       Stores a "non-owning" reference to a heap-item (in the C++ sense), but should
+       generally mark the heap-item; therefore set goes through a write-barrier
+    */
+    template<typename T>
+    struct Pointer
+    {
+        Pointer() = default;
+        ~Pointer() = default;
+        Q_DISABLE_COPY_MOVE(Pointer)
+        T* operator->() const { return get(); }
+        operator T* () const { return get(); }
+
+        void set(EngineBase *e, T *newVal) {
+            WriteBarrier::markCustom(e, [newVal](QV4::MarkStack *ms) {
+                if (newVal)
+                    newVal->mark(ms);
+            });
+            ptr = newVal;
+        }
+
+        T* get() const { return ptr; }
+
+
+
+    private:
+        T *ptr = nullptr;
+    };
 };
 
-enum NewValueType {
-    Primitive,
-    Object,
-    Unknown
-};
-
-// ### this needs to be filled with a real memory fence once marking is concurrent
+       // ### this needs to be filled with a real memory fence once marking is concurrent
 Q_ALWAYS_INLINE void fence() {}
-
-#if WRITEBARRIER(none)
-
-template <NewValueType type>
-static Q_CONSTEXPR inline bool isRequired() {
-    return false;
-}
-
-inline void write(EngineBase *engine, Heap::Base *base, ReturnedValue *slot, ReturnedValue value)
-{
-    Q_UNUSED(engine);
-    Q_UNUSED(base);
-    *slot = value;
-}
-
-inline void write(EngineBase *engine, Heap::Base *base, Heap::Base **slot, Heap::Base *value)
-{
-    Q_UNUSED(engine);
-    Q_UNUSED(base);
-    *slot = value;
-}
-
-#endif
-
-}
 
 }
 

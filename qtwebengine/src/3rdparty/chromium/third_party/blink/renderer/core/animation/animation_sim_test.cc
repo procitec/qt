@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,7 +16,7 @@
 #include "third_party/blink/renderer/core/testing/sim/sim_compositor.h"
 #include "third_party/blink/renderer/core/testing/sim/sim_request.h"
 #include "third_party/blink/renderer/core/testing/sim/sim_test.h"
-#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 
 namespace blink {
@@ -35,13 +35,11 @@ TEST_F(AnimationSimTest, CustomPropertyBaseComputedStyle) {
   // around and not be valid in the exit frame of the next custom property
   // animation.
 
-  ScopedWebAnimationsAPIForTest web_animations(true);
-
   SimRequest main_resource("https://example.com/", "text/html");
   LoadURL("https://example.com/");
   main_resource.Complete("<div id=\"target\"></div>");
 
-  Element* target = GetDocument().getElementById("target");
+  Element* target = GetDocument().getElementById(AtomicString("target"));
 
   // CSS.registerProperty({
   //   name: '--x',
@@ -60,12 +58,13 @@ TEST_F(AnimationSimTest, CustomPropertyBaseComputedStyle) {
 
   // target.animate({'--x': '100%'}, 1000);
   auto* keyframe = MakeGarbageCollected<StringKeyframe>();
-  keyframe->SetCSSPropertyValue("--x", "100%", Window().GetSecureContextMode(),
+  keyframe->SetCSSPropertyValue(AtomicString("--x"), "100%",
+                                Window().GetSecureContextMode(),
                                 GetDocument().ElementSheet().Contents());
   StringKeyframeVector keyframes;
   keyframes.push_back(keyframe);
   Timing timing;
-  timing.iteration_duration = AnimationTimeDelta::FromSecondsD(1);
+  timing.iteration_duration = ANIMATION_TIME_DELTA_FROM_SECONDS(1);
 
   auto* keyframe_effect = MakeGarbageCollected<KeyframeEffect>(
       target, MakeGarbageCollected<StringKeyframeEffectModel>(keyframes),
@@ -83,12 +82,13 @@ TEST_F(AnimationSimTest, CustomPropertyBaseComputedStyle) {
 
   // target.animate({'--x': '100%'}, 1000);
   keyframe = MakeGarbageCollected<StringKeyframe>();
-  keyframe->SetCSSPropertyValue("--x", "100%", Window().GetSecureContextMode(),
+  keyframe->SetCSSPropertyValue(AtomicString("--x"), "100%",
+                                Window().GetSecureContextMode(),
                                 GetDocument().ElementSheet().Contents());
   keyframes.clear();
   keyframes.push_back(std::move(keyframe));
   timing = Timing();
-  timing.iteration_duration = AnimationTimeDelta::FromSecondsD(1);
+  timing.iteration_duration = ANIMATION_TIME_DELTA_FROM_SECONDS(1);
 
   keyframe_effect = MakeGarbageCollected<KeyframeEffect>(
       target, MakeGarbageCollected<StringKeyframeEffectModel>(keyframes),

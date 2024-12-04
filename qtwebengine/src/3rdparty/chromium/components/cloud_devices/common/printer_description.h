@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,7 +11,10 @@
 #include <vector>
 
 #include "build/build_config.h"
+#include "build/chromeos_buildflags.h"
 #include "components/cloud_devices/common/description_items.h"
+#include "ui/gfx/geometry/rect.h"
+#include "ui/gfx/geometry/size.h"
 
 // Defines printer options, CDD and CJT items.
 // https://developers.google.com/cloud-print/docs/cdd
@@ -75,6 +78,10 @@ class RangeVendorCapability {
                         const std::string& max_value,
                         const std::string& default_value);
   RangeVendorCapability(RangeVendorCapability&& other);
+
+  RangeVendorCapability(const RangeVendorCapability&) = delete;
+  RangeVendorCapability& operator=(const RangeVendorCapability&) = delete;
+
   ~RangeVendorCapability();
 
   RangeVendorCapability& operator=(RangeVendorCapability&& other);
@@ -85,16 +92,14 @@ class RangeVendorCapability {
   }
 
   bool IsValid() const;
-  bool LoadFrom(const base::Value& dict);
-  void SaveTo(base::Value* dict) const;
+  bool LoadFrom(const base::Value::Dict& dict);
+  void SaveTo(base::Value::Dict* dict) const;
 
  private:
   ValueType value_type_;
   std::string min_value_;
   std::string max_value_;
   std::string default_value_;
-
-  DISALLOW_COPY_AND_ASSIGN(RangeVendorCapability);
 };
 
 struct SelectVendorCapabilityOption {
@@ -127,6 +132,11 @@ class TypedValueVendorCapability {
   TypedValueVendorCapability(ValueType value_type,
                              const std::string& default_value);
   TypedValueVendorCapability(TypedValueVendorCapability&& other);
+
+  TypedValueVendorCapability(const TypedValueVendorCapability&) = delete;
+  TypedValueVendorCapability& operator=(const TypedValueVendorCapability&) =
+      delete;
+
   ~TypedValueVendorCapability();
 
   TypedValueVendorCapability& operator=(TypedValueVendorCapability&& other);
@@ -137,14 +147,12 @@ class TypedValueVendorCapability {
   }
 
   bool IsValid() const;
-  bool LoadFrom(const base::Value& dict);
-  void SaveTo(base::Value* dict) const;
+  bool LoadFrom(const base::Value::Dict& dict);
+  void SaveTo(base::Value::Dict* dict) const;
 
  private:
   ValueType value_type_;
   std::string default_value_;
-
-  DISALLOW_COPY_AND_ASSIGN(TypedValueVendorCapability);
 };
 
 class VendorCapability {
@@ -167,6 +175,10 @@ class VendorCapability {
                    const std::string& display_name,
                    TypedValueVendorCapability typed_value_capability);
   VendorCapability(VendorCapability&& other);
+
+  VendorCapability(const VendorCapability&) = delete;
+  VendorCapability& operator=(const VendorCapability&) = delete;
+
   ~VendorCapability();
 
   bool operator==(const VendorCapability& other) const;
@@ -175,8 +187,8 @@ class VendorCapability {
   }
 
   bool IsValid() const;
-  bool LoadFrom(const base::Value& dict);
-  void SaveTo(base::Value* dict) const;
+  bool LoadFrom(const base::Value::Dict& dict);
+  void SaveTo(base::Value::Dict* dict) const;
 
  private:
   void InternalCleanup();
@@ -191,8 +203,18 @@ class VendorCapability {
     SelectVendorCapability select_capability_;
     TypedValueVendorCapability typed_value_capability_;
   };
+};
 
-  DISALLOW_COPY_AND_ASSIGN(VendorCapability);
+struct VendorItem {
+  VendorItem();
+  VendorItem(const std::string& id, const std::string& value);
+
+  bool IsValid() const;
+  bool operator==(const VendorItem& other) const;
+  bool operator!=(const VendorItem& other) const { return !(*this == other); }
+
+  std::string id;
+  std::string value;
 };
 
 enum class ColorType {
@@ -272,7 +294,7 @@ enum class FitToPageType {
   FILL_PAGE,
 };
 
-enum class MediaType {
+enum class MediaSize {
   CUSTOM_MEDIA,
 
   // North American standard sheet media names.
@@ -451,31 +473,86 @@ enum class MediaType {
 };
 
 struct Media {
+  // Use `MediaBuilder` below to build struct `Media` in an organized fashion.
   Media();
 
-  explicit Media(MediaType type);
-
-  Media(MediaType type, int32_t width_um, int32_t height_um);
-
-  Media(const std::string& custom_display_name,
-        const std::string& vendor_id,
-        int32_t width_um,
-        int32_t height_um);
-
   Media(const Media& other);
-
-  bool MatchBySize();
+  Media& operator=(const Media& other);
 
   bool IsValid() const;
   bool operator==(const Media& other) const;
   bool operator!=(const Media& other) const { return !(*this == other); }
 
-  MediaType type;
-  int32_t width_um;
-  int32_t height_um;
+  MediaSize size_name;
+  gfx::Size size_um;
   bool is_continuous_feed;
   std::string custom_display_name;
   std::string vendor_id;
+  gfx::Rect printable_area_um;
+  // When `is_continuous_feed` is true, the min height will be stored in
+  // `size_um` and the max height is stored in `max_height_um`.  When
+  // `is_continuous_feed` is false, `max_height_um` is not used.  This only
+  // supports a variable height, not width, so the width is always fixed.
+  int max_height_um;
+  bool has_borderless_variant;
+};
+
+// Builds `Media` structs. The caller must call at least one method that sets
+// the name, and follow any special requirements described by the methods below.
+//
+// Note that the build result can be invalid, e.g. If the caller passes in an
+// empty size or forgets to specify the size.
+//
+// Note that there is no requirement that the size corresponds to the
+// `MediaSize`. e.g. `MediaSize::NA_LETTER` and a size of 100x200 is considered
+// valid.
+class MediaBuilder {
+ public:
+  MediaBuilder();
+
+  // Sets the name to `size_name` and clears the display name and vendor ID.
+  MediaBuilder& WithStandardName(MediaSize size_name);
+
+  // Sets the name to `MediaSize::CUSTOM_MEDIA`. Sets the display name and
+  // vendor ID based on the input parameters.
+  MediaBuilder& WithCustomName(const std::string& custom_display_name,
+                               const std::string& vendor_id);
+
+  // The default printable area is the entire medium.
+  MediaBuilder& WithSizeAndDefaultPrintableArea(const gfx::Size& size_um);
+  MediaBuilder& WithSizeAndPrintableArea(const gfx::Size& size_um,
+                                         const gfx::Rect& printable_area_um);
+  MediaBuilder& WithMaxHeight(int max_height_um);
+  MediaBuilder& WithBorderlessVariant(bool has_borderless_variant);
+
+  // This is equivalent to calling WithCustomName(), except it also tries to
+  // match the name to a standard `MediaSize`.
+  // This requires the caller to call WithSizeAndDefaultPrintableArea() or
+  // WithSizeAndPrintableArea() first.
+  MediaBuilder& WithNameMaybeBasedOnSize(const std::string& custom_display_name,
+                                         const std::string& vendor_id);
+
+  // Sets the size and printable area based on the standard name, For example,
+  // if the name is `MediaSize::NA_LETTER`, then this sets the size to
+  // 215900x279400.
+  // This requires the caller to call WithStandardName() first with a name other
+  // than `MediaSize::CUSTOM_MEDIA`.
+  MediaBuilder& WithSizeAndPrintableAreaBasedOnStandardName();
+
+  // Can be called repeatedly to build `Media` structs.
+  Media Build() const;
+
+ private:
+  bool IsContinuousFeed() const;
+
+  MediaSize size_name_;
+  std::string custom_display_name_;
+  std::string vendor_id_;
+
+  gfx::Size size_um_;
+  gfx::Rect printable_area_um_;
+  int max_height_um_ = 0;
+  bool has_borderless_variant_ = false;
 };
 
 struct Interval {
@@ -492,6 +569,20 @@ struct Interval {
 
 typedef std::vector<Interval> PageRange;
 
+struct MediaType {
+  MediaType();
+  MediaType(const std::string& vendor_id,
+            const std::string& custom_display_name);
+
+  bool operator==(const MediaType& other) const;
+  bool operator!=(const MediaType& other) const { return !(*this == other); }
+
+  bool IsValid() const;
+
+  std::string vendor_id;
+  std::string custom_display_name;
+};
+
 class ContentTypeTraits;
 class PwgRasterConfigTraits;
 class VendorCapabilityTraits;
@@ -502,10 +593,12 @@ class MarginsTraits;
 class DpiTraits;
 class FitToPageTraits;
 class MediaTraits;
+class MediaTypeTraits;
 class PageRangeTraits;
 class CollateTraits;
 class CopiesCapabilityTraits;
 class CopiesTicketItemTraits;
+class VendorItemTraits;
 
 typedef ListCapability<ContentType, ContentTypeTraits> ContentTypesCapability;
 typedef ValueCapability<PwgRasterConfig, PwgRasterConfigTraits>
@@ -520,15 +613,16 @@ typedef SelectionCapability<Margins, MarginsTraits> MarginsCapability;
 typedef SelectionCapability<Dpi, DpiTraits> DpiCapability;
 typedef SelectionCapability<FitToPageType, FitToPageTraits> FitToPageCapability;
 typedef SelectionCapability<Media, MediaTraits> MediaCapability;
+typedef SelectionCapability<MediaType, MediaTypeTraits> MediaTypeCapability;
 typedef ValueCapability<Copies, class CopiesCapabilityTraits> CopiesCapability;
 typedef EmptyCapability<class PageRangeTraits> PageRangeCapability;
 typedef BooleanCapability<class CollateTraits> CollateCapability;
 typedef BooleanCapability<class ReverseTraits> ReverseCapability;
-#if defined(OS_CHROMEOS)
+#if BUILDFLAG(IS_CHROMEOS)
 // This capability is not a part of standard CDD description. It's used for
 // providing PIN printing opportunity in Chrome OS native printing.
 typedef ValueCapability<bool, class PinTraits> PinCapability;
-#endif  // defined(OS_CHROMEOS)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 typedef TicketItem<PwgRasterConfig, PwgRasterConfigTraits>
     PwgRasterConfigTicketItem;
@@ -543,6 +637,7 @@ typedef TicketItem<int32_t, CopiesTicketItemTraits> CopiesTicketItem;
 typedef TicketItem<PageRange, PageRangeTraits> PageRangeTicketItem;
 typedef TicketItem<bool, CollateTraits> CollateTicketItem;
 typedef TicketItem<bool, ReverseTraits> ReverseTicketItem;
+typedef ListTicketItem<VendorItem, VendorItemTraits> VendorTicketItems;
 
 }  // namespace printer
 

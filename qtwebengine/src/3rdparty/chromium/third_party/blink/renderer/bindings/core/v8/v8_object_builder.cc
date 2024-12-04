@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -36,6 +36,13 @@ V8ObjectBuilder& V8ObjectBuilder::AddNumber(const StringView& name,
   return *this;
 }
 
+V8ObjectBuilder& V8ObjectBuilder::AddInteger(const StringView& name,
+                                             uint64_t value) {
+  AddInternal(name,
+              ToV8Traits<IDLUnsignedLongLong>::ToV8(script_state_, value));
+  return *this;
+}
+
 V8ObjectBuilder& V8ObjectBuilder::AddString(const StringView& name,
                                             const StringView& value) {
   AddInternal(name, V8String(script_state_->GetIsolate(), value));
@@ -49,6 +56,12 @@ V8ObjectBuilder& V8ObjectBuilder::AddStringOrNull(const StringView& name,
   } else {
     AddInternal(name, V8String(script_state_->GetIsolate(), value));
   }
+  return *this;
+}
+
+V8ObjectBuilder& V8ObjectBuilder::AddV8Value(const StringView& name,
+                                             v8::Local<v8::Value> value) {
+  AddInternal(name, value);
   return *this;
 }
 

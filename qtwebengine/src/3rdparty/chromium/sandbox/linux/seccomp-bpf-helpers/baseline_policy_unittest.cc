@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -24,12 +24,14 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <tuple>
+
 #include "base/clang_profiling_buildflags.h"
 #include "base/files/scoped_file.h"
-#include "base/macros.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/threading/thread.h"
 #include "build/build_config.h"
+#include "build/chromeos_buildflags.h"
 #include "sandbox/linux/seccomp-bpf-helpers/sigsys_handlers.h"
 #include "sandbox/linux/seccomp-bpf/bpf_tests.h"
 #include "sandbox/linux/seccomp-bpf/sandbox_bpf.h"
@@ -149,10 +151,21 @@ BPF_TEST_C(BaselinePolicy, ForkArmEperm, BaselinePolicy) {
   BPF_ASSERT_EQ(EPERM, fork_errno);
 }
 
-BPF_TEST_C(BaselinePolicy, SystemEperm, BaselinePolicy) {
+// system() calls into vfork() on old Android builds and returns when vfork is
+// blocked. This causes undefined behavior on x86 Android builds on versions
+// prior to Q, which causes the stack to get corrupted, so this test cannot be
+// made to pass.
+#if BUILDFLAG(IS_ANDROID) && defined(__i386__)
+#define MAYBE_SystemEperm DISABLED_SystemEperm
+#else
+#define MAYBE_SystemEperm SystemEperm
+#endif
+BPF_TEST_C(BaselinePolicy, MAYBE_SystemEperm, BaselinePolicy) {
   errno = 0;
   int ret_val = system("echo SHOULD NEVER RUN");
-  BPF_ASSERT_EQ(-1, ret_val);
+  // glibc >= 2.33 changed the ret code: 127 is now expected on bits 15-8
+  // previously it was simply -1, so check for not zero
+  BPF_ASSERT_NE(0, ret_val);
   BPF_ASSERT_EQ(EPERM, errno);
 }
 
@@ -182,7 +195,7 @@ BPF_TEST_C(BaselinePolicy, CreateThread, BaselinePolicy) {
 }
 
 // Rseq should be enabled if it exists (i.e. shouldn't receive EPERM).
-#if !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID)
 BPF_TEST_C(BaselinePolicy, RseqEnabled, BaselinePolicy) {
   errno = 0;
   int res = syscall(__NR_rseq, 0, 0, 0, 0);
@@ -192,7 +205,7 @@ BPF_TEST_C(BaselinePolicy, RseqEnabled, BaselinePolicy) {
   // EINVAL, or ENOSYS if the kernel is too old to recognize the system call.
   BPF_ASSERT(EINVAL == errno || ENOSYS == errno);
 }
-#endif  // !defined(OS_ANDROID)
+#endif  // !BUILDFLAG(IS_ANDROID)
 
 BPF_DEATH_TEST_C(BaselinePolicy,
                  DisallowedCloneFlagCrashes,
@@ -231,15 +244,29 @@ BPF_TEST_C(BaselinePolicy, Socketpair, BaselinePolicy) {
 #define GRND_NONBLOCK 1
 #endif
 
+#if !defined(GRND_INSECURE)
+#define GRND_INSECURE 4
+#endif
+
 BPF_TEST_C(BaselinePolicy, GetRandom, BaselinePolicy) {
   char buf[1];
 
   // Many systems do not yet support getrandom(2) so ENOSYS is a valid result
   // here.
+  errno = 0;
   int ret = HANDLE_EINTR(syscall(__NR_getrandom, buf, sizeof(buf), 0));
   BPF_ASSERT((ret == -1 && errno == ENOSYS) || ret == 1);
+  errno = 0;
   ret = HANDLE_EINTR(syscall(__NR_getrandom, buf, sizeof(buf), GRND_NONBLOCK));
   BPF_ASSERT((ret == -1 && (errno == ENOSYS || errno == EAGAIN)) || ret == 1);
+
+  // GRND_INSECURE is not supported on versions of Android < 12, and Android
+  // returns EINVAL in that case.
+  errno = 0;
+  ret = HANDLE_EINTR(syscall(__NR_getrandom, buf, sizeof(buf), GRND_INSECURE));
+  BPF_ASSERT(
+      (ret == -1 && (errno == ENOSYS || errno == EAGAIN || errno == EINVAL)) ||
+      ret == 1);
 }
 
 // Not all architectures can restrict the domain for socketpair().
@@ -249,7 +276,7 @@ BPF_DEATH_TEST_C(BaselinePolicy,
                  DEATH_SEGV_MESSAGE(GetErrorMessageContentForTests()),
                  BaselinePolicy) {
   int sv[2];
-  ignore_result(socketpair(AF_INET, SOCK_STREAM, 0, sv));
+  std::ignore = socketpair(AF_INET, SOCK_STREAM, 0, sv);
   _exit(1);
 }
 #endif  // defined(__x86_64__) || defined(__arm__) || defined(__aarch64__)
@@ -317,12 +344,11 @@ TEST_BASELINE_SIGSYS(__NR_syslog)
 TEST_BASELINE_SIGSYS(__NR_timer_create)
 
 #if !defined(__aarch64__)
-TEST_BASELINE_SIGSYS(__NR_eventfd)
 TEST_BASELINE_SIGSYS(__NR_inotify_init)
 TEST_BASELINE_SIGSYS(__NR_vserver)
 #endif
 
-#if defined(LIBC_GLIBC) && !defined(OS_CHROMEOS)
+#if defined(LIBC_GLIBC) && !BUILDFLAG(IS_CHROMEOS_ASH)
 BPF_TEST_C(BaselinePolicy, FutexEINVAL, BaselinePolicy) {
   int ops[] = {
       FUTEX_CMP_REQUEUE_PI, FUTEX_CMP_REQUEUE_PI_PRIVATE,
@@ -359,7 +385,7 @@ BPF_DEATH_TEST_C(BaselinePolicy,
   syscall(__NR_futex, nullptr, FUTEX_UNLOCK_PI_PRIVATE, 0, nullptr, nullptr, 0);
   _exit(1);
 }
-#endif  // defined(LIBC_GLIBC) && !defined(OS_CHROMEOS)
+#endif  // defined(LIBC_GLIBC) && !BUILDFLAG(IS_CHROMEOS_ASH)
 
 BPF_TEST_C(BaselinePolicy, PrctlDumpable, BaselinePolicy) {
   const int is_dumpable = prctl(PR_GET_DUMPABLE, 0, 0, 0, 0);

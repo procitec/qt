@@ -4,7 +4,7 @@
 
 #include "src/base/cpu.h"
 
-#if defined(STARBOARD)
+#if defined(V8_OS_STARBOARD)
 #include "starboard/cpu_features.h"
 #endif
 
@@ -14,7 +14,7 @@
 #if V8_OS_LINUX
 #include <linux/auxvec.h>  // AT_HWCAP
 #endif
-#if V8_GLIBC_PREREQ(2, 16)
+#if V8_GLIBC_PREREQ(2, 16) || V8_OS_ANDROID
 #include <sys/auxv.h>  // getauxval()
 #endif
 #if V8_OS_QNX
@@ -31,6 +31,12 @@
 #ifndef POWER_9
 #define POWER_9 0x20000
 #endif
+#ifndef POWER_10
+#define POWER_10 0x40000
+#endif
+#endif
+#if V8_OS_DARWIN
+#include <sys/sysctl.h>  // sysctlbyname
 #endif
 #if V8_OS_POSIX
 #include <unistd.h>  // sysconf()
@@ -41,11 +47,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
 #include <algorithm>
 
 #include "src/base/logging.h"
+#include "src/base/platform/wrappers.h"
 #if V8_OS_WIN
-#include "src/base/win32-headers.h"  // NOLINT
+#include <windows.h>
+
+#include "src/base/win32-headers.h"
 #endif
 
 namespace v8 {
@@ -79,8 +89,8 @@ static V8_INLINE void __cpuid(int cpu_info[4], int info_type) {
 
 #endif  // !V8_LIBC_MSVCRT
 
-#elif V8_HOST_ARCH_ARM || V8_HOST_ARCH_ARM64 || V8_HOST_ARCH_MIPS || \
-    V8_HOST_ARCH_MIPS64
+#elif V8_HOST_ARCH_ARM || V8_HOST_ARCH_ARM64 || V8_HOST_ARCH_MIPS64 || \
+    V8_HOST_ARCH_RISCV64
 
 #if V8_OS_LINUX
 
@@ -153,18 +163,28 @@ static V8_INLINE void __cpuid(int cpu_info[4], int info_type) {
 #define HWCAP_SB (1 << 29)
 #define HWCAP_PACA (1 << 30)
 #define HWCAP_PACG (1UL << 31)
-
+// See <uapi/asm/hwcap.h> kernel header.
+/*
+ * HWCAP2 flags - for elf_hwcap2 (in kernel) and AT_HWCAP2
+ */
+#define HWCAP2_MTE (1 << 18)
 #endif  // V8_HOST_ARCH_ARM64
 
 #if V8_HOST_ARCH_ARM || V8_HOST_ARCH_ARM64
 
-static uint32_t ReadELFHWCaps() {
-  uint32_t result = 0;
-#if V8_GLIBC_PREREQ(2, 16)
-  result = static_cast<uint32_t>(getauxval(AT_HWCAP));
+static std::tuple<uint32_t, uint32_t> ReadELFHWCaps() {
+  uint32_t hwcap = 0;
+  uint32_t hwcap2 = 0;
+#if (V8_GLIBC_PREREQ(2, 16) || V8_OS_ANDROID) && defined(AT_HWCAP)
+  hwcap = static_cast<uint32_t>(getauxval(AT_HWCAP));
+#if defined(AT_HWCAP2)
+  hwcap2 = static_cast<uint32_t>(getauxval(AT_HWCAP2));
+#endif  // AT_HWCAP2
 #else
   // Read the ELF HWCAP flags by parsing /proc/self/auxv.
-  FILE* fp = fopen("/proc/self/auxv", "r");
+  // If getauxval is not available, the kernel/libc is also not new enough to
+  // expose hwcap2.
+  FILE* fp = base::Fopen("/proc/self/auxv", "r");
   if (fp != nullptr) {
     struct {
       uint32_t tag;
@@ -176,59 +196,17 @@ static uint32_t ReadELFHWCaps() {
         break;
       }
       if (entry.tag == AT_HWCAP) {
-        result = entry.value;
+        hwcap = entry.value;
         break;
       }
     }
-    fclose(fp);
+    base::Fclose(fp);
   }
 #endif
-  return result;
+  return std::make_tuple(hwcap, hwcap2);
 }
 
 #endif  // V8_HOST_ARCH_ARM || V8_HOST_ARCH_ARM64
-
-#if V8_HOST_ARCH_MIPS
-int __detect_fp64_mode(void) {
-  double result = 0;
-  // Bit representation of (double)1 is 0x3FF0000000000000.
-  __asm__ volatile(
-      ".set push\n\t"
-      ".set noreorder\n\t"
-      ".set oddspreg\n\t"
-      "lui $t0, 0x3FF0\n\t"
-      "ldc1 $f0, %0\n\t"
-      "mtc1 $t0, $f1\n\t"
-      "sdc1 $f0, %0\n\t"
-      ".set pop\n\t"
-      : "+m"(result)
-      :
-      : "t0", "$f0", "$f1", "memory");
-
-  return !(result == 1);
-}
-
-
-int __detect_mips_arch_revision(void) {
-  // TODO(dusmil): Do the specific syscall as soon as it is implemented in mips
-  // kernel.
-  uint32_t result = 0;
-  __asm__ volatile(
-      "move $v0, $zero\n\t"
-      // Encoding for "addi $v0, $v0, 1" on non-r6,
-      // which is encoding for "bovc $v0, %v0, 1" on r6.
-      // Use machine code directly to avoid compilation errors with different
-      // toolchains and maintain compatibility.
-      ".word 0x20420001\n\t"
-      "sw $v0, %0\n\t"
-      : "=m"(result)
-      :
-      : "v0", "memory");
-  // Result is 0 on r6 architectures, 1 on other architecture revisions.
-  // Fall-back to the least common denominator which is mips32 revision 1.
-  return result ? 1 : 6;
-}
-#endif  // V8_HOST_ARCH_MIPS
 
 // Extract the information exposed by the kernel via /proc/cpuinfo.
 class CPUInfo final {
@@ -238,7 +216,7 @@ class CPUInfo final {
     // required because files under /proc do not always return a valid size
     // when using fseek(0, SEEK_END) + ftell(). Nor can the be mmap()-ed.
     static const char PATHNAME[] = "/proc/cpuinfo";
-    FILE* fp = fopen(PATHNAME, "r");
+    FILE* fp = base::Fopen(PATHNAME, "r");
     if (fp != nullptr) {
       for (;;) {
         char buffer[256];
@@ -248,12 +226,12 @@ class CPUInfo final {
         }
         datalen_ += n;
       }
-      fclose(fp);
+      base::Fclose(fp);
     }
 
     // Read the contents of the cpuinfo file.
     data_ = new char[datalen_ + 1];
-    fp = fopen(PATHNAME, "r");
+    fp = base::Fopen(PATHNAME, "r");
     if (fp != nullptr) {
       for (size_t offset = 0; offset < datalen_; ) {
         size_t n = fread(data_ + offset, 1, datalen_ - offset, fp);
@@ -262,7 +240,7 @@ class CPUInfo final {
         }
         offset += n;
       }
-      fclose(fp);
+      base::Fclose(fp);
     }
 
     // Zero-terminate the data.
@@ -349,12 +327,11 @@ static bool HasListItem(const char* list, const char* item) {
 #endif  // V8_OS_LINUX
 
 #endif  // V8_HOST_ARCH_ARM || V8_HOST_ARCH_ARM64 ||
-        // V8_HOST_ARCH_MIPS || V8_HOST_ARCH_MIPS64
+        // V8_HOST_ARCH_MIPS64 || V8_HOST_ARCH_RISCV64
 
-#if defined(STARBOARD)
+#if defined(V8_OS_STARBOARD)
 
 bool CPU::StarboardDetectCPU() {
-#if (SB_API_VERSION >= 11)
   SbCPUFeatures features;
   if (!SbCPUFeaturesGet(&features)) {
     return false;
@@ -381,6 +358,7 @@ bool CPU::StarboardDetectCPU() {
       has_sse41_ = features.x86.has_sse41;
       has_sahf_ = features.x86.has_sahf;
       has_avx_ = features.x86.has_avx;
+      has_avx2_ = features.x86.has_avx2;
       has_fma3_ = features.x86.has_fma3;
       has_bmi1_ = features.x86.has_bmi1;
       has_bmi2_ = features.x86.has_bmi2;
@@ -392,9 +370,6 @@ bool CPU::StarboardDetectCPU() {
   }
 
   return true;
-#else  // SB_API_VERSION >= 11
-  return false;
-#endif
 }
 
 #endif
@@ -410,8 +385,9 @@ CPU::CPU()
       architecture_(0),
       variant_(-1),
       part_(0),
-      icache_line_size_(UNKNOWN_CACHE_LINE_SIZE),
-      dcache_line_size_(UNKNOWN_CACHE_LINE_SIZE),
+      icache_line_size_(kUnknownCacheLineSize),
+      dcache_line_size_(kUnknownCacheLineSize),
+      num_virtual_address_bits_(kUnknownNumVirtualAddressBits),
       has_fpu_(false),
       has_cmov_(false),
       has_sahf_(false),
@@ -423,8 +399,10 @@ CPU::CPU()
       has_sse41_(false),
       has_sse42_(false),
       is_atom_(false),
+      has_intel_jcc_erratum_(false),
       has_osxsave_(false),
       has_avx_(false),
+      has_avx2_(false),
       has_fma3_(false),
       has_bmi1_(false),
       has_bmi2_(false),
@@ -437,12 +415,18 @@ CPU::CPU()
       has_vfp3_(false),
       has_vfp3_d32_(false),
       has_jscvt_(false),
+      has_dot_prod_(false),
+      has_lse_(false),
+      has_mte_(false),
       is_fp64_mode_(false),
       has_non_stop_time_stamp_counter_(false),
-      has_msa_(false) {
+      is_running_in_vm_(false),
+      has_msa_(false),
+      riscv_mmu_(RV_MMU_MODE::kRiscvSV48),
+      has_rvv_(false) {
   memcpy(vendor_, "Unknown", 8);
 
-#if defined(STARBOARD)
+#if defined(V8_OS_STARBOARD)
   if (StarboardDetectCPU()) {
     return;
   }
@@ -467,6 +451,12 @@ CPU::CPU()
   // Interpret CPU feature information.
   if (num_ids > 0) {
     __cpuid(cpu_info, 1);
+
+    int cpu_info7[4] = {0};
+    if (num_ids >= 7) {
+      __cpuid(cpu_info7, 7);
+    }
+
     stepping_ = cpu_info[0] & 0xF;
     model_ = ((cpu_info[0] >> 4) & 0xF) + ((cpu_info[0] >> 12) & 0xF0);
     family_ = (cpu_info[0] >> 8) & 0xF;
@@ -485,7 +475,17 @@ CPU::CPU()
     has_popcnt_ = (cpu_info[2] & 0x00800000) != 0;
     has_osxsave_ = (cpu_info[2] & 0x08000000) != 0;
     has_avx_ = (cpu_info[2] & 0x10000000) != 0;
+    has_avx2_ = (cpu_info7[1] & 0x00000020) != 0;
     has_fma3_ = (cpu_info[2] & 0x00001000) != 0;
+    // CET shadow stack feature flag. See
+    // https://en.wikipedia.org/wiki/CPUID#EAX=7,_ECX=0:_Extended_Features
+    has_cetss_ = (cpu_info7[2] & 0x00000080) != 0;
+    // "Hypervisor Present Bit: Bit 31 of ECX of CPUID leaf 0x1."
+    // See https://lwn.net/Articles/301888/
+    // This is checking for any hypervisor. Hypervisors may choose not to
+    // announce themselves. Hypervisors trap CPUID and sometimes return
+    // different results to underlying hardware.
+    is_running_in_vm_ = (cpu_info[2] & 0x80000000) != 0;
 
     if (family_ == 0x6) {
       switch (model_) {
@@ -500,6 +500,34 @@ CPU::CPU()
         case 0x4C:  // AMT
         case 0x6E:
           is_atom_ = true;
+      }
+
+      // CPUs that are affected by Intel JCC erratum:
+      // https://www.intel.com/content/dam/support/us/en/documents/processors/mitigations-jump-conditional-code-erratum.pdf
+      switch (model_) {
+        case 0x4E:
+          has_intel_jcc_erratum_ = stepping_ == 0x3;
+          break;
+        case 0x55:
+          has_intel_jcc_erratum_ = stepping_ == 0x4 || stepping_ == 0x7;
+          break;
+        case 0x5E:
+          has_intel_jcc_erratum_ = stepping_ == 0x3;
+          break;
+        case 0x8E:
+          has_intel_jcc_erratum_ = stepping_ == 0x9 || stepping_ == 0xA ||
+                                   stepping_ == 0xB || stepping_ == 0xC;
+          break;
+        case 0x9E:
+          has_intel_jcc_erratum_ = stepping_ == 0x9 || stepping_ == 0xA ||
+                                   stepping_ == 0xB || stepping_ == 0xD;
+          break;
+        case 0xA6:
+          has_intel_jcc_erratum_ = stepping_ == 0x0;
+          break;
+        case 0xAE:
+          has_intel_jcc_erratum_ = stepping_ == 0xA;
+          break;
       }
     }
   }
@@ -530,6 +558,29 @@ CPU::CPU()
     has_non_stop_time_stamp_counter_ = (cpu_info[3] & (1 << 8)) != 0;
   }
 
+  const unsigned virtual_physical_address_bits = 0x80000008;
+  if (num_ext_ids >= virtual_physical_address_bits) {
+    __cpuid(cpu_info, virtual_physical_address_bits);
+    num_virtual_address_bits_ = (cpu_info[0] >> 8) & 0xff;
+  }
+
+  // This logic is replicated from cpu.cc present in chromium.src
+  if (!has_non_stop_time_stamp_counter_ && is_running_in_vm_) {
+    int cpu_info_hv[4] = {};
+    __cpuid(cpu_info_hv, 0x40000000);
+    if (cpu_info_hv[1] == 0x7263694D &&  // Micr
+        cpu_info_hv[2] == 0x666F736F &&  // osof
+        cpu_info_hv[3] == 0x76482074) {  // t Hv
+      // If CPUID says we have a variant TSC and a hypervisor has identified
+      // itself and the hypervisor says it is Microsoft Hyper-V, then treat
+      // TSC as invariant.
+      //
+      // Microsoft Hyper-V hypervisor reports variant TSC as there are some
+      // scenarios (eg. VM live migration) where the TSC is variant, but for
+      // our purposes we can treat it as invariant.
+      has_non_stop_time_stamp_counter_ = true;
+    }
+  }
 #elif V8_HOST_ARCH_ARM
 
 #if V8_OS_LINUX
@@ -617,7 +668,8 @@ CPU::CPU()
   }
 
   // Try to extract the list of CPU features from ELF hwcaps.
-  uint32_t hwcaps = ReadELFHWCaps();
+  uint32_t hwcaps, hwcaps2;
+  std::tie(hwcaps, hwcaps2) = ReadELFHWCaps();
   if (hwcaps != 0) {
     has_idiva_ = (hwcaps & HWCAP_IDIVA) != 0;
     has_neon_ = (hwcaps & HWCAP_NEON) != 0;
@@ -692,7 +744,7 @@ CPU::CPU()
 
 #endif  // V8_OS_LINUX
 
-#elif V8_HOST_ARCH_MIPS || V8_HOST_ARCH_MIPS64
+#elif V8_HOST_ARCH_MIPS64
 
   // Simple detection of FPU at runtime for Linux.
   // It is based on /proc/cpuinfo, which reveals hardware configuration
@@ -706,10 +758,6 @@ CPU::CPU()
   has_msa_ = HasListItem(ASEs, "msa");
   delete[] cpu_model;
   delete[] ASEs;
-#ifdef V8_HOST_ARCH_MIPS
-  is_fp64_mode_ = __detect_fp64_mode();
-  architecture_ = __detect_mips_arch_revision();
-#endif
 
 #elif V8_HOST_ARCH_ARM64
 #ifdef V8_OS_WIN
@@ -717,18 +765,70 @@ CPU::CPU()
   // user-space.
   has_non_stop_time_stamp_counter_ = true;
 
+  // Defined in winnt.h, but only in 10.0.20348.0 version of the Windows SDK.
+  // Copy the value here to support older versions as well.
+#if !defined(PF_ARM_V83_JSCVT_INSTRUCTIONS_AVAILABLE)
+  constexpr int PF_ARM_V83_JSCVT_INSTRUCTIONS_AVAILABLE = 44;
+#endif
+#if !defined(PF_ARM_V82_DP_INSTRUCTIONS_AVAILABLE)
+  constexpr int PF_ARM_V82_DP_INSTRUCTIONS_AVAILABLE = 43;
+#endif
+
+  has_jscvt_ =
+      IsProcessorFeaturePresent(PF_ARM_V83_JSCVT_INSTRUCTIONS_AVAILABLE);
+  has_dot_prod_ =
+      IsProcessorFeaturePresent(PF_ARM_V82_DP_INSTRUCTIONS_AVAILABLE);
+
 #elif V8_OS_LINUX
   // Try to extract the list of CPU features from ELF hwcaps.
-  uint32_t hwcaps = ReadELFHWCaps();
+  uint32_t hwcaps, hwcaps2;
+  std::tie(hwcaps, hwcaps2) = ReadELFHWCaps();
+  has_mte_ = (hwcaps2 & HWCAP2_MTE) != 0;
   if (hwcaps != 0) {
     has_jscvt_ = (hwcaps & HWCAP_JSCVT) != 0;
+    has_dot_prod_ = (hwcaps & HWCAP_ASIMDDP) != 0;
+    has_lse_ = (hwcaps & HWCAP_ATOMICS) != 0;
   } else {
     // Try to fallback to "Features" CPUInfo field
     CPUInfo cpu_info;
     char* features = cpu_info.ExtractField("Features");
     has_jscvt_ = HasListItem(features, "jscvt");
+    has_dot_prod_ = HasListItem(features, "asimddp");
+    has_lse_ = HasListItem(features, "atomics");
     delete[] features;
   }
+#elif V8_OS_DARWIN
+#if V8_OS_IOS
+  int64_t feat_jscvt = 0;
+  size_t feat_jscvt_size = sizeof(feat_jscvt);
+  if (sysctlbyname("hw.optional.arm.FEAT_JSCVT", &feat_jscvt, &feat_jscvt_size,
+                   nullptr, 0) == -1) {
+    has_jscvt_ = false;
+  } else {
+    has_jscvt_ = feat_jscvt;
+  }
+  int64_t feat_dot_prod = 0;
+  size_t feat_dot_prod_size = sizeof(feat_dot_prod);
+  if (sysctlbyname("hw.optional.arm.FEAT_DotProd", &feat_dot_prod,
+                   &feat_dot_prod_size, nullptr, 0) == -1) {
+    has_dot_prod_ = false;
+  } else {
+    has_dot_prod_ = feat_dot_prod;
+  }
+  int64_t feat_lse = 0;
+  size_t feat_lse_size = sizeof(feat_lse);
+  if (sysctlbyname("hw.optional.arm.FEAT_LSE", &feat_lse, &feat_lse_size,
+                   nullptr, 0) == -1) {
+    has_lse_ = false;
+  } else {
+    has_lse_ = feat_lse;
+  }
+#else
+  // ARM64 Macs always have JSCVT, ASIMDDP and LSE.
+  has_jscvt_ = true;
+  has_dot_prod_ = true;
+  has_lse_ = true;
+#endif  // V8_OS_IOS
 #endif  // V8_OS_WIN
 
 #elif V8_HOST_ARCH_PPC || V8_HOST_ARCH_PPC64
@@ -737,7 +837,7 @@ CPU::CPU()
 #if V8_OS_LINUX
   // Read processor info from /proc/self/auxv.
   char* auxv_cpu_type = nullptr;
-  FILE* fp = fopen("/proc/self/auxv", "r");
+  FILE* fp = base::Fopen("/proc/self/auxv", "r");
   if (fp != nullptr) {
 #if V8_TARGET_ARCH_PPC64
     Elf64_auxv_t entry;
@@ -761,51 +861,80 @@ CPU::CPU()
           break;
       }
     }
-    fclose(fp);
+    base::Fclose(fp);
   }
 
   part_ = -1;
   if (auxv_cpu_type) {
-    if (strcmp(auxv_cpu_type, "power9") == 0) {
-      part_ = PPC_POWER9;
+    if (strcmp(auxv_cpu_type, "power10") == 0) {
+      part_ = kPPCPower10;
+    } else if (strcmp(auxv_cpu_type, "power9") == 0) {
+      part_ = kPPCPower9;
     } else if (strcmp(auxv_cpu_type, "power8") == 0) {
-      part_ = PPC_POWER8;
+      part_ = kPPCPower8;
     } else if (strcmp(auxv_cpu_type, "power7") == 0) {
-      part_ = PPC_POWER7;
+      part_ = kPPCPower7;
     } else if (strcmp(auxv_cpu_type, "power6") == 0) {
-      part_ = PPC_POWER6;
+      part_ = kPPCPower6;
     } else if (strcmp(auxv_cpu_type, "power5") == 0) {
-      part_ = PPC_POWER5;
+      part_ = kPPCPower5;
     } else if (strcmp(auxv_cpu_type, "ppc970") == 0) {
-      part_ = PPC_G5;
+      part_ = kPPCG5;
     } else if (strcmp(auxv_cpu_type, "ppc7450") == 0) {
-      part_ = PPC_G4;
+      part_ = kPPCG4;
     } else if (strcmp(auxv_cpu_type, "pa6t") == 0) {
-      part_ = PPC_PA6T;
+      part_ = kPPCPA6T;
     }
   }
 
 #elif V8_OS_AIX
   switch (_system_configuration.implementation) {
+    case POWER_10:
+      part_ = kPPCPower10;
+      break;
     case POWER_9:
-      part_ = PPC_POWER9;
+      part_ = kPPCPower9;
       break;
     case POWER_8:
-      part_ = PPC_POWER8;
+      part_ = kPPCPower8;
       break;
     case POWER_7:
-      part_ = PPC_POWER7;
+      part_ = kPPCPower7;
       break;
     case POWER_6:
-      part_ = PPC_POWER6;
+      part_ = kPPCPower6;
       break;
     case POWER_5:
-      part_ = PPC_POWER5;
+      part_ = kPPCPower5;
       break;
   }
 #endif  // V8_OS_AIX
 #endif  // !USE_SIMULATOR
-#endif  // V8_HOST_ARCH_PPC || V8_HOST_ARCH_PPC64
+
+#elif V8_HOST_ARCH_RISCV64
+#if V8_OS_LINUX
+  CPUInfo cpu_info;
+  char* features = cpu_info.ExtractField("isa");
+
+  if (HasListItem(features, "rv64imafdc")) {
+    has_fpu_ = true;
+  }
+  if (HasListItem(features, "rv64imafdcv")) {
+    has_fpu_ = true;
+    has_rvv_ = true;
+  }
+  char* mmu = cpu_info.ExtractField("mmu");
+  if (HasListItem(mmu, "sv48")) {
+    riscv_mmu_ = RV_MMU_MODE::kRiscvSV48;
+  }
+  if (HasListItem(mmu, "sv39")) {
+    riscv_mmu_ = RV_MMU_MODE::kRiscvSV39;
+  }
+  if (HasListItem(mmu, "sv57")) {
+    riscv_mmu_ = RV_MMU_MODE::kRiscvSV57;
+  }
+#endif
+#endif  // V8_HOST_ARCH_RISCV64
 }
 
 }  // namespace base

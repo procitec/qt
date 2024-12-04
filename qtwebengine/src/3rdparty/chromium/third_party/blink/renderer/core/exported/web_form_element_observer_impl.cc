@@ -1,9 +1,10 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/core/exported/web_form_element_observer_impl.h"
 
+#include "base/functional/callback.h"
 #include "third_party/blink/public/web/web_form_control_element.h"
 #include "third_party/blink/public/web/web_form_element.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_mutation_observer_init.h"
@@ -79,10 +80,9 @@ void WebFormElementObserverImpl::ObserverCallback::Deliver(
         Disconnect();
         return;
       }
-    } else {
+    } else if (auto* element = DynamicTo<Element>(record->target())) {
       // Either "style" or "class" was modified. Check the computed style.
-      auto* style =
-          MakeGarbageCollected<CSSComputedStyleDeclaration>(record->target());
+      auto* style = MakeGarbageCollected<CSSComputedStyleDeclaration>(element);
       if (style->GetPropertyValue(CSSPropertyID::kDisplay) == "none") {
         std::move(callback_).Run();
         Disconnect();
@@ -109,7 +109,7 @@ WebFormElementObserver* WebFormElementObserver::Create(
     WebFormElement& element,
     base::OnceClosure callback) {
   return MakeGarbageCollected<WebFormElementObserverImpl>(
-      util::PassKey<WebFormElementObserver>(),
+      base::PassKey<WebFormElementObserver>(),
       *element.Unwrap<HTMLFormElement>(), std::move(callback));
 }
 
@@ -117,15 +117,14 @@ WebFormElementObserver* WebFormElementObserver::Create(
     WebFormControlElement& element,
     base::OnceClosure callback) {
   return MakeGarbageCollected<WebFormElementObserverImpl>(
-      util::PassKey<WebFormElementObserver>(), *element.Unwrap<HTMLElement>(),
+      base::PassKey<WebFormElementObserver>(), *element.Unwrap<HTMLElement>(),
       std::move(callback));
 }
 
 WebFormElementObserverImpl::WebFormElementObserverImpl(
-    util::PassKey<WebFormElementObserver>,
+    base::PassKey<WebFormElementObserver>,
     HTMLElement& element,
-    base::OnceClosure callback)
-    : self_keep_alive_(PERSISTENT_FROM_HERE, this) {
+    base::OnceClosure callback) {
   mutation_callback_ =
       MakeGarbageCollected<ObserverCallback>(element, std::move(callback));
 }

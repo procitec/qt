@@ -123,8 +123,8 @@ Things to do, in order of involvedness and effectiveness:
   example.
 
 - Try to reproduce the problem locally. First, set up two build directories
-  with identical args.gn, then do a full build at the last known green
-  revision in the first build directory:
+  with identical args.gn. Then do a full build at the last known green revision
+  in the first build directory:
 
     ```
     $ gn clean out/gn

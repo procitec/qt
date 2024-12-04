@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,33 +9,17 @@
 
 #include "platform/base/interface_info.h"
 
-namespace openscreen {
-namespace discovery {
+namespace openscreen::discovery {
 
 // This struct provides parameters needed to initialize the discovery pipeline.
 struct Config {
-  struct NetworkInfo {
-    enum AddressFamilies : uint8_t {
-      kNoAddressFamily = 0,
-      kUseIpV4 = 0x01 << 0,
-      kUseIpV6 = 0x01 << 1
-    };
-
-    // Network Interface on which discovery should be run.
-    InterfaceInfo interface;
-
-    // IP Address Families supported by this network interface and on which the
-    // mDNS Service should listen for and/or publish records.
-    AddressFamilies supported_address_families;
-  };
-
   /*****************************************
    * Common Settings
    *****************************************/
 
   // Interfaces on which services should be published, and on which discovery
   // should listen for announced service instances.
-  std::vector<NetworkInfo> network_info;
+  std::vector<InterfaceInfo> network_info;
 
   // Maximum allowed size in bytes for the rdata in an incoming record. All
   // received records with rdata size exceeding this size will be dropped.
@@ -98,33 +82,6 @@ struct Config {
   bool ignore_nsec_responses = false;
 };
 
-inline Config::NetworkInfo::AddressFamilies operator&(
-    Config::NetworkInfo::AddressFamilies lhs,
-    Config::NetworkInfo::AddressFamilies rhs) {
-  return static_cast<Config::NetworkInfo::AddressFamilies>(
-      static_cast<uint8_t>(lhs) & static_cast<uint8_t>(rhs));
-}
-
-inline Config::NetworkInfo::AddressFamilies operator|(
-    Config::NetworkInfo::AddressFamilies lhs,
-    Config::NetworkInfo::AddressFamilies rhs) {
-  return static_cast<Config::NetworkInfo::AddressFamilies>(
-      static_cast<uint8_t>(lhs) | static_cast<uint8_t>(rhs));
-}
-
-inline Config::NetworkInfo::AddressFamilies operator|=(
-    Config::NetworkInfo::AddressFamilies& lhs,
-    Config::NetworkInfo::AddressFamilies rhs) {
-  return lhs = lhs | rhs;
-}
-
-inline Config::NetworkInfo::AddressFamilies operator&=(
-    Config::NetworkInfo::AddressFamilies& lhs,
-    Config::NetworkInfo::AddressFamilies rhs) {
-  return lhs = lhs & rhs;
-}
-
-}  // namespace discovery
-}  // namespace openscreen
+}  // namespace openscreen::discovery
 
 #endif  // DISCOVERY_COMMON_CONFIG_H_

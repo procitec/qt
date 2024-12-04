@@ -1,9 +1,10 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/user_manager/user.h"
 
+#include "base/memory/raw_ptr.h"
 #include "components/account_id/account_id.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -22,14 +23,16 @@ TEST(UserTest, DeviceLocalAccountAffiliation) {
   class ScopedUser {
    public:
     ScopedUser(const User* const user) : user_(user) {}
+
+    ScopedUser(const ScopedUser&) = delete;
+    ScopedUser& operator=(const ScopedUser&) = delete;
+
     ~ScopedUser() { delete user_; }
 
     bool IsAffiliated() const { return user_ && user_->IsAffiliated(); }
 
    private:
-    const User* const user_;
-
-    DISALLOW_COPY_AND_ASSIGN(ScopedUser);
+    const raw_ptr<const User, DanglingUntriaged> user_;
   };
 
   const AccountId account_id = AccountId::FromUserEmailGaiaId(kEmail, kGaiaId);

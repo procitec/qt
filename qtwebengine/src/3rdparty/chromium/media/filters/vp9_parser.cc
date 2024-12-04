@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -13,13 +13,11 @@
 
 #include <algorithm>
 
-#include "base/bind.h"
-#include "base/bind_helpers.h"
 #include "base/containers/circular_deque.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/logging.h"
-#include "base/numerics/ranges.h"
 #include "base/numerics/safe_conversions.h"
-#include "base/stl_util.h"
 #include "base/sys_byteorder.h"
 #include "media/filters/vp9_compressed_header_parser.h"
 #include "media/filters/vp9_uncompressed_header_parser.h"
@@ -139,7 +137,7 @@ const int16_t kAcQLookup[][kQIndexRange] = {
 };
 // clang-format on
 
-static_assert(base::size(kDcQLookup[0]) == base::size(kAcQLookup[0]),
+static_assert(std::size(kDcQLookup[0]) == std::size(kAcQLookup[0]),
               "quantizer lookup arrays of incorrect size");
 
 size_t ClampQ(int64_t q) {
@@ -150,7 +148,7 @@ size_t ClampQ(int64_t q) {
 
 int ClampLf(int lf) {
   constexpr int kMaxLoopFilterLevel = 63;
-  return base::ClampToRange(lf, 0, kMaxLoopFilterLevel);
+  return std::clamp(lf, 0, kMaxLoopFilterLevel);
 }
 
 std::string IncrementIV(const std::string& iv, uint32_t by) {
@@ -374,7 +372,7 @@ bool Vp9FrameContext::IsValid() const {
     for (auto& ai : a) {
       for (auto& aj : ai) {
         for (auto& ak : aj) {
-          int max_l = (ak == aj[0]) ? 3 : 6;
+          int max_l = (+ak == +aj[0]) ? 3 : 6;
           for (int l = 0; l < max_l; l++) {
             for (auto& x : ak[l]) {
               if (x == 0) {
@@ -447,99 +445,22 @@ bool Vp9FrameContext::IsValid() const {
   return true;
 }
 
-Vp9Parser::Context::Vp9FrameContextManager::Vp9FrameContextManager() {}
-
-Vp9Parser::Context::Vp9FrameContextManager::~Vp9FrameContextManager() = default;
-
-const Vp9FrameContext&
-Vp9Parser::Context::Vp9FrameContextManager::frame_context() const {
-  DCHECK(initialized_);
-  DCHECK(!needs_client_update_);
-  return frame_context_;
-}
-
-void Vp9Parser::Context::Vp9FrameContextManager::Reset() {
-  initialized_ = false;
-  needs_client_update_ = false;
-  weak_ptr_factory_.InvalidateWeakPtrs();
-}
-
-void Vp9Parser::Context::Vp9FrameContextManager::SetNeedsClientUpdate() {
-  DCHECK(!needs_client_update_);
-  initialized_ = true;
-  needs_client_update_ = true;
-}
-
-Vp9Parser::ContextRefreshCallback
-Vp9Parser::Context::Vp9FrameContextManager::GetUpdateCb() {
-  if (needs_client_update_) {
-    return base::BindOnce(&Vp9FrameContextManager::UpdateFromClient,
-                          weak_ptr_factory_.GetWeakPtr());
-  }
-
-  return {};
-}
-
-void Vp9Parser::Context::Vp9FrameContextManager::Update(
-    const Vp9FrameContext& frame_context) {
-  // DCHECK because we can trust values from our parser.
-  DCHECK(frame_context.IsValid());
-  initialized_ = true;
-  frame_context_ = frame_context;
-
-  // For frame context we are updating, it may be still awaiting previous
-  // ContextRefreshCallback. Because we overwrite the value of context here and
-  // previous ContextRefreshCallback no longer matters, invalidate the weak ptr
-  // to prevent previous ContextRefreshCallback run.
-  // With this optimization, we may be able to parse more frames while previous
-  // are still decoding.
-  weak_ptr_factory_.InvalidateWeakPtrs();
-  needs_client_update_ = false;
-}
-
-void Vp9Parser::Context::Vp9FrameContextManager::UpdateFromClient(
-    const Vp9FrameContext& frame_context) {
-  DVLOG(2) << "Got external frame_context update";
-  DCHECK(needs_client_update_);
-  if (!frame_context.IsValid()) {
-    DLOG(ERROR) << "Invalid prob value in frame_context";
-    return;
-  }
-  needs_client_update_ = false;
-  initialized_ = true;
-  frame_context_ = frame_context;
-}
-
 void Vp9Parser::Context::Reset() {
   memset(&segmentation_, 0, sizeof(segmentation_));
   memset(&loop_filter_, 0, sizeof(loop_filter_));
   memset(&ref_slots_, 0, sizeof(ref_slots_));
-  for (auto& manager : frame_context_managers_)
-    manager.Reset();
-}
-
-void Vp9Parser::Context::MarkFrameContextForUpdate(size_t frame_context_idx) {
-  DCHECK_LT(frame_context_idx, base::size(frame_context_managers_));
-  frame_context_managers_[frame_context_idx].SetNeedsClientUpdate();
-}
-
-void Vp9Parser::Context::UpdateFrameContext(
-    size_t frame_context_idx,
-    const Vp9FrameContext& frame_context) {
-  DCHECK_LT(frame_context_idx, base::size(frame_context_managers_));
-  frame_context_managers_[frame_context_idx].Update(frame_context);
 }
 
 const Vp9Parser::ReferenceSlot& Vp9Parser::Context::GetRefSlot(
     size_t ref_type) const {
-  DCHECK_LT(ref_type, base::size(ref_slots_));
+  DCHECK_LT(ref_type, std::size(ref_slots_));
   return ref_slots_[ref_type];
 }
 
 void Vp9Parser::Context::UpdateRefSlot(
     size_t ref_type,
     const Vp9Parser::ReferenceSlot& ref_slot) {
-  DCHECK_LT(ref_type, base::size(ref_slots_));
+  DCHECK_LT(ref_type, std::size(ref_slots_));
   ref_slots_[ref_type] = ref_slot;
 }
 
@@ -623,45 +544,17 @@ bool Vp9Parser::ParseUncompressedHeader(const FrameInfo& frame_info,
 bool Vp9Parser::ParseCompressedHeader(const FrameInfo& frame_info,
                                       Result* result) {
   *result = kInvalidStream;
-  size_t frame_context_idx = curr_frame_header_.frame_context_idx;
-  const Context::Vp9FrameContextManager& context_to_load =
-      context_.frame_context_managers_[frame_context_idx];
-  if (!context_to_load.initialized()) {
-    // 8.2 Frame order constraints
-    // must load an initialized set of probabilities.
-    DVLOG(1) << "loading uninitialized frame context, index="
-             << frame_context_idx;
-    *result = kInvalidStream;
-    return true;
-  }
-  if (context_to_load.needs_client_update()) {
-    DVLOG(3) << "waiting frame_context_idx=" << frame_context_idx
-             << " to update";
-    curr_frame_info_ = frame_info;
-    *result = kAwaitingRefresh;
-    return true;
-  }
-  curr_frame_header_.initial_frame_context = curr_frame_header_.frame_context =
-      context_to_load.frame_context();
 
   Vp9CompressedHeaderParser compressed_parser;
-  if (!compressed_parser.Parse(
-          frame_info.ptr + curr_frame_header_.uncompressed_header_size,
-          curr_frame_header_.header_size_in_bytes, &curr_frame_header_)) {
+  bool parse_success;
+  parse_success = compressed_parser.ParseNoContext(
+      frame_info.ptr + curr_frame_header_.uncompressed_header_size,
+      curr_frame_header_.header_size_in_bytes, &curr_frame_header_);
+  if (!parse_success) {
     *result = kInvalidStream;
     return true;
   }
 
-  if (curr_frame_header_.refresh_frame_context) {
-    // In frame parallel mode, we can refresh the context without decoding
-    // tile data.
-    if (curr_frame_header_.frame_parallel_decoding_mode) {
-      context_.UpdateFrameContext(frame_context_idx,
-                                  curr_frame_header_.frame_context);
-    } else {
-      context_.MarkFrameContextForUpdate(frame_context_idx);
-    }
-  }
   return false;
 }
 
@@ -721,7 +614,7 @@ Vp9Parser::Result Vp9Parser::ParseNextFrame(
 
   if (parsing_compressed_header_) {
     if (ParseCompressedHeader(frame_info, &result)) {
-      DCHECK(result != kAwaitingRefresh || curr_frame_info_.IsValid());
+      DCHECK(curr_frame_info_.IsValid());
       return result;
     }
   }
@@ -745,15 +638,6 @@ Vp9Parser::Result Vp9Parser::ParseNextFrame(
   }
 
   return kOk;
-}
-
-Vp9Parser::ContextRefreshCallback Vp9Parser::GetContextRefreshCb(
-    size_t frame_context_idx) {
-  DCHECK_LT(frame_context_idx, base::size(context_.frame_context_managers_));
-  auto& frame_context_manager =
-      context_.frame_context_managers_[frame_context_idx];
-
-  return frame_context_manager.GetUpdateCb();
 }
 
 std::unique_ptr<DecryptConfig> Vp9Parser::NextFrameDecryptContextForTesting() {

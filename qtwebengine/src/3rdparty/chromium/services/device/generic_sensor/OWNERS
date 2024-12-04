@@ -1,6 +1,1 @@
-juncai@chromium.org
-raphael.kubo.da.costa@intel.com
-timvolodine@chromium.org
-
-# COMPONENT: Blink>Sensor
-# TEAM: device-dev@chromium.org
+file://third_party/blink/renderer/modules/sensor/OWNERS

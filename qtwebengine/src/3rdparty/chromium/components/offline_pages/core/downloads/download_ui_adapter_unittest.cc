@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,19 +12,19 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
-#include "base/bind_helpers.h"
-#include "base/callback.h"
 #include "base/files/file_path.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
+#include "base/functional/callback_helpers.h"
+#include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
-#include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/test/bind_test_util.h"
+#include "base/task/single_thread_task_runner.h"
+#include "base/test/bind.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/mock_callback.h"
 #include "base/test/test_mock_time_task_runner.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "components/offline_items_collection/core/offline_content_provider.h"
 #include "components/offline_pages/core/background/offliner_stub.h"
@@ -57,19 +57,16 @@ static const char kTestBadGuid[] = "ccccccc-cccc-0ccc-0ccc-ccccccccccc0";
 static const ClientId kTestClientIdOtherNamespace(kLastNNamespace, kTestGuid1);
 static const ClientId kTestClientIdOtherGuid(kLastNNamespace, kTestBadGuid);
 static const ClientId kTestClientId1(kAsyncNamespace, kTestGuid1);
-static const ClientId kTestClientIdPrefetch(kSuggestedArticlesNamespace,
-                                            kTestGuid1);
-static const ClientId kTestClientIdPrefetch2(kSuggestedArticlesNamespace,
-                                             kTestGuid2);
+static const ClientId kTestClientId2(kAsyncNamespace, kTestGuid2);
 static const ContentId kTestContentId1(kOfflinePageNamespace, kTestGuid1);
 static const base::FilePath kTestFilePath =
     base::FilePath(FILE_PATH_LITERAL("foo/bar.mhtml"));
 static const int kFileSize = 1000;
 static const base::Time kTestCreationTime = base::Time::Now();
-static const base::string16 kTestTitle = base::ASCIIToUTF16("test title");
+static const std::u16string kTestTitle = u"test title";
 
-void GetItemAndVerify(const base::Optional<OfflineItem>& expected,
-                      const base::Optional<OfflineItem>& actual) {
+void GetItemAndVerify(const absl::optional<OfflineItem>& expected,
+                      const absl::optional<OfflineItem>& actual) {
   EXPECT_EQ(expected.has_value(), actual.has_value());
   if (!expected.has_value() || !actual.has_value())
     return;
@@ -90,15 +87,10 @@ class DownloadUIAdapterDelegate : public DownloadUIAdapter::Delegate {
   void OpenItem(const OfflineItem& item,
                 int64_t offline_id,
                 const OpenParams& open_params) override {}
-  bool MaybeSuppressNotification(const std::string& origin,
-                                 const ClientId& item) override {
-    return maybe_suppress_notification_;
-  }
   MOCK_METHOD2(GetShareInfoForItem,
                void(const ContentId&, OfflineContentProvider::ShareCallback));
 
   bool is_visible = true;
-  bool maybe_suppress_notification_ = false;
 };
 
 class MockVisualsDecoder : public VisualsDecoder {
@@ -117,6 +109,9 @@ class MockOfflinePageModel : public StubOfflinePageModel {
  public:
   explicit MockOfflinePageModel(base::TestMockTimeTaskRunner* task_runner)
       : observer_(nullptr), task_runner_(task_runner) {}
+
+  MockOfflinePageModel(const MockOfflinePageModel&) = delete;
+  MockOfflinePageModel& operator=(const MockOfflinePageModel&) = delete;
 
   ~MockOfflinePageModel() override {}
 
@@ -210,10 +205,8 @@ class MockOfflinePageModel : public StubOfflinePageModel {
   std::unique_ptr<OfflinePageVisuals> visuals_by_offline_id_result;
 
  private:
-  OfflinePageModel::Observer* observer_;
-  base::TestMockTimeTaskRunner* task_runner_;
-
-  DISALLOW_COPY_AND_ASSIGN(MockOfflinePageModel);
+  raw_ptr<OfflinePageModel::Observer> observer_;
+  raw_ptr<base::TestMockTimeTaskRunner> task_runner_;
 };
 
 // Creates mock versions for OfflinePageModel, RequestCoordinator and their
@@ -238,8 +231,9 @@ class DownloadUIAdapterTest : public testing::Test,
   // DownloadUIAdapter::Observer
   void OnItemsAdded(const std::vector<OfflineItem>& items) override;
   void OnItemUpdated(const OfflineItem& item,
-                     const base::Optional<UpdateDelta>& update_delta) override;
+                     const absl::optional<UpdateDelta>& update_delta) override;
   void OnItemRemoved(const ContentId& id) override;
+  void OnContentProviderGoingDown() override;
 
   // Runs until all of the tasks that are not delayed are gone from the task
   // queue.
@@ -256,20 +250,21 @@ class DownloadUIAdapterTest : public testing::Test,
   std::vector<std::string> added_guids, updated_guids, deleted_guids;
   int64_t download_progress_bytes;
   std::unique_ptr<MockOfflinePageModel> model;
-  DownloadUIAdapterDelegate* adapter_delegate;
+  raw_ptr<DownloadUIAdapterDelegate> adapter_delegate;
   std::unique_ptr<DownloadUIAdapter> adapter;
-  OfflinerStub* offliner_stub;
-  MockVisualsDecoder* visuals_decoder;
+  raw_ptr<OfflinerStub> offliner_stub;
+  raw_ptr<MockVisualsDecoder> visuals_decoder;
 
  private:
   std::unique_ptr<RequestCoordinatorStubTaco> request_coordinator_taco_;
   scoped_refptr<base::TestMockTimeTaskRunner> task_runner_;
-  base::ThreadTaskRunnerHandle task_runner_handle_;
+  base::SingleThreadTaskRunner::CurrentDefaultHandle
+      task_runner_current_default_handle_;
 };
 
 DownloadUIAdapterTest::DownloadUIAdapterTest()
     : task_runner_(new base::TestMockTimeTaskRunner),
-      task_runner_handle_(task_runner_) {}
+      task_runner_current_default_handle_(task_runner_) {}
 
 DownloadUIAdapterTest::~DownloadUIAdapterTest() {}
 
@@ -305,7 +300,7 @@ void DownloadUIAdapterTest::OnItemsAdded(
 
 void DownloadUIAdapterTest::OnItemUpdated(
     const OfflineItem& item,
-    const base::Optional<UpdateDelta>& update_delta) {
+    const absl::optional<UpdateDelta>& update_delta) {
   updated_guids.push_back(item.id.id);
   download_progress_bytes += item.received_bytes;
 }
@@ -313,6 +308,8 @@ void DownloadUIAdapterTest::OnItemUpdated(
 void DownloadUIAdapterTest::OnItemRemoved(const ContentId& id) {
   deleted_guids.push_back(id.id);
 }
+
+void DownloadUIAdapterTest::OnContentProviderGoingDown() {}
 
 void DownloadUIAdapterTest::PumpLoop() {
   task_runner_->RunUntilIdle();
@@ -349,9 +346,9 @@ TEST_F(DownloadUIAdapterTest, InitialItemConversion) {
 
   bool called = false;
   auto callback =
-      base::BindLambdaForTesting([&](const base::Optional<OfflineItem>& item) {
+      base::BindLambdaForTesting([&](const absl::optional<OfflineItem>& item) {
         EXPECT_EQ(kTestGuid1, item.value().id.id);
-        EXPECT_EQ(kTestUrl, item.value().page_url.spec());
+        EXPECT_EQ(kTestUrl, item.value().url.spec());
         EXPECT_EQ(OfflineItemState::COMPLETE, item.value().state);
         EXPECT_EQ(kFileSize, item.value().received_bytes);
         EXPECT_EQ(kTestFilePath, item.value().file_path);
@@ -369,13 +366,13 @@ TEST_F(DownloadUIAdapterTest, InitialItemConversion) {
 TEST_F(DownloadUIAdapterTest, ItemDeletedAdded) {
   AddInitialPage();
   // Add page, notify adapter.
-  OfflinePageItem page(GURL(kTestUrl), kTestOfflineId2, kTestClientIdPrefetch2,
+  OfflinePageItem page(GURL(kTestUrl), kTestOfflineId2, kTestClientId2,
                        base::FilePath(kTestFilePath), kFileSize,
                        kTestCreationTime);
   model->AddPageAndNotifyAdapter(page);
   PumpLoop();
-  EXPECT_EQ(1UL, added_guids.size());
-  EXPECT_EQ(kTestGuid2, added_guids[0]);
+  ASSERT_EQ(1UL, updated_guids.size());
+  EXPECT_EQ(kTestGuid2, updated_guids[0]);
   // Remove pages, notify adapter.
   model->DeletePageAndNotifyAdapter(kTestGuid1);
   model->DeletePageAndNotifyAdapter(kTestGuid2);
@@ -406,21 +403,6 @@ TEST_F(DownloadUIAdapterTest, PageInvisibleOnUIAdded) {
   model->AddPageAndNotifyAdapter(page);
   PumpLoop();
   EXPECT_EQ(0UL, added_guids.size());
-  // TODO(dimich): we currently don't report updated items since OPM doesn't
-  // have support for that. Add as needed, this will have to be updated when
-  // support is added.
-  EXPECT_EQ(0UL, updated_guids.size());
-}
-
-TEST_F(DownloadUIAdapterTest, PageVisibleOnUIAdded) {
-  // Add a new page which should be shown in UI.
-  OfflinePageItem page(GURL(kTestUrl), kTestOfflineId1, kTestClientIdPrefetch,
-                       base::FilePath(kTestFilePath), kFileSize,
-                       kTestCreationTime);
-  model->AddPageAndNotifyAdapter(page);
-  PumpLoop();
-  EXPECT_EQ(1UL, added_guids.size());
-  EXPECT_EQ(kTestGuid1, added_guids[0]);
   // TODO(dimich): we currently don't report updated items since OPM doesn't
   // have support for that. Add as needed, this will have to be updated when
   // support is added.
@@ -474,7 +456,7 @@ TEST_F(DownloadUIAdapterTest, RemoveRequest) {
   EXPECT_EQ(1UL, deleted_guids.size());
   EXPECT_EQ(kTestClientId1.id, deleted_guids[0]);
   adapter->GetItemById(kTestContentId1,
-                       base::BindOnce(&GetItemAndVerify, base::nullopt));
+                       base::BindOnce(&GetItemAndVerify, absl::nullopt));
   PumpLoop();
 }
 
@@ -501,7 +483,7 @@ TEST_F(DownloadUIAdapterTest, PauseAndResume) {
 
   // Resume the download. It should fire OnChanged again and move the item to
   // IN_PROGRESS.
-  adapter->ResumeDownload(kTestContentId1, true);
+  adapter->ResumeDownload(kTestContentId1);
   PumpLoop();
 
   EXPECT_GE(updated_guids.size(), num_updates);
@@ -574,7 +556,7 @@ TEST_F(DownloadUIAdapterTest, RequestBecomesPage) {
 }
 
 TEST_F(DownloadUIAdapterTest, GetVisualsForItem) {
-  AddInitialPage(kTestClientIdPrefetch);
+  AddInitialPage(kTestClientId1);
   model->visuals_by_offline_id_result =
       std::make_unique<OfflinePageVisuals>(kVisuals);
   const int kImageWidth = 24;
@@ -606,15 +588,13 @@ TEST_F(DownloadUIAdapterTest, GetVisualsForItem) {
       kTestContentId1, GetVisualsOptions::IconAndCustomFavicon(), callback);
   PumpLoop();
 
-  histogram_tester.ExpectUniqueSample(
-      "OfflinePages.DownloadUI.PrefetchedItemHasThumbnail", true, 1);
   EXPECT_TRUE(called);
 }
 
 TEST_F(DownloadUIAdapterTest, GetVisualsForItemInvalidItem) {
   EXPECT_CALL(*visuals_decoder, DecodeAndCropImage_(kThumbnailData, _))
       .Times(0);
-  AddInitialPage(kTestClientIdPrefetch);
+  AddInitialPage(kTestClientId1);
   const ContentId kContentID("not", "valid");
   bool called = false;
   auto callback = base::BindLambdaForTesting(
@@ -631,13 +611,11 @@ TEST_F(DownloadUIAdapterTest, GetVisualsForItemInvalidItem) {
       kContentID, GetVisualsOptions::IconAndCustomFavicon(), callback);
   PumpLoop();
 
-  histogram_tester.ExpectTotalCount(
-      "OfflinePages.DownloadUI.PrefetchedItemHasThumbnail", 0);
   EXPECT_TRUE(called);
 }
 
 TEST_F(DownloadUIAdapterTest, GetVisualsForItemNoVisuals) {
-  AddInitialPage(kTestClientIdPrefetch);
+  AddInitialPage(kTestClientId1);
   model->visuals_by_offline_id_result = nullptr;
   EXPECT_CALL(*visuals_decoder, DecodeAndCropImage_(_, _)).Times(0);
   EXPECT_CALL(*visuals_decoder, DecodeAndCropImage_(_, _)).Times(0);
@@ -657,14 +635,12 @@ TEST_F(DownloadUIAdapterTest, GetVisualsForItemNoVisuals) {
       kTestContentId1, GetVisualsOptions::IconAndCustomFavicon(), callback);
   PumpLoop();
 
-  histogram_tester.ExpectUniqueSample(
-      "OfflinePages.DownloadUI.PrefetchedItemHasThumbnail", false, 1);
   EXPECT_TRUE(called);
 }
 
 TEST_F(DownloadUIAdapterTest, GetVisualsForItemNoThumbnail) {
   const int kImageWidth = 24;
-  AddInitialPage(kTestClientIdPrefetch);
+  AddInitialPage(kTestClientId1);
   model->visuals_by_offline_id_result =
       std::make_unique<OfflinePageVisuals>(kVisuals);
   model->visuals_by_offline_id_result->thumbnail = "";
@@ -696,14 +672,12 @@ TEST_F(DownloadUIAdapterTest, GetVisualsForItemNoThumbnail) {
       kTestContentId1, GetVisualsOptions::IconAndCustomFavicon(), callback);
   PumpLoop();
 
-  histogram_tester.ExpectUniqueSample(
-      "OfflinePages.DownloadUI.PrefetchedItemHasThumbnail", false, 1);
   EXPECT_TRUE(called);
 }
 
 TEST_F(DownloadUIAdapterTest, GetVisualsForItemNoFavicon) {
   const int kImageWidth = 24;
-  AddInitialPage(kTestClientIdPrefetch);
+  AddInitialPage(kTestClientId1);
   model->visuals_by_offline_id_result =
       std::make_unique<OfflinePageVisuals>(kVisuals);
   model->visuals_by_offline_id_result->favicon = "";
@@ -735,13 +709,11 @@ TEST_F(DownloadUIAdapterTest, GetVisualsForItemNoFavicon) {
       kTestContentId1, GetVisualsOptions::IconAndCustomFavicon(), callback);
   PumpLoop();
 
-  histogram_tester.ExpectUniqueSample(
-      "OfflinePages.DownloadUI.PrefetchedItemHasThumbnail", true, 1);
   EXPECT_TRUE(called);
 }
 
 TEST_F(DownloadUIAdapterTest, GetVisualsForItemBadDecode) {
-  AddInitialPage(kTestClientIdPrefetch);
+  AddInitialPage(kTestClientId1);
   model->visuals_by_offline_id_result =
       std::make_unique<OfflinePageVisuals>(kVisuals);
   EXPECT_CALL(*visuals_decoder, DecodeAndCropImage_(kThumbnailData, _))
@@ -769,13 +741,11 @@ TEST_F(DownloadUIAdapterTest, GetVisualsForItemBadDecode) {
       kTestContentId1, GetVisualsOptions::IconAndCustomFavicon(), callback);
   PumpLoop();
 
-  histogram_tester.ExpectUniqueSample(
-      "OfflinePages.DownloadUI.PrefetchedItemHasThumbnail", false, 1);
   EXPECT_TRUE(called);
 }
 
 TEST_F(DownloadUIAdapterTest, GetShareInfoForItem) {
-  AddInitialPage(kTestClientIdPrefetch);
+  AddInitialPage(kTestClientId1);
 
   EXPECT_CALL(*adapter_delegate, GetShareInfoForItem(kTestContentId1, _));
   auto callback = base::BindLambdaForTesting(

@@ -1,37 +1,50 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "base/path_service.h"
 
 #include <unordered_map>
-
-#if defined(OS_WIN)
-#include <windows.h>
-#include <shellapi.h>
-#include <shlobj.h>
-#endif
+#include <utility>
 
 #include "base/check_op.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
+#include "base/memory/raw_ptr.h"
+#include "base/memory/raw_ptr_exclusion.h"
 #include "base/synchronization/lock.h"
 #include "build/build_config.h"
 
+#if BUILDFLAG(IS_WIN)
+#include <windows.h>
+
+#include <shellapi.h>
+#include <shlobj.h>
+#endif
+
+#define ENABLE_BEHAVIOUR_OVERRIDE_PROVIDER                                    \
+  ((BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_APPLE) && !BUILDFLAG(IS_ANDROID)) || \
+   BUILDFLAG(IS_WIN))
+
 namespace base {
+
+// Custom behaviour providers.
+bool EnvOverridePathProvider(int key, FilePath* result);
 
 bool PathProvider(int key, FilePath* result);
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 bool PathProviderWin(int key, FilePath* result);
-#elif defined(OS_APPLE)
+#elif BUILDFLAG(IS_MAC)
 bool PathProviderMac(int key, FilePath* result);
-#elif defined(OS_ANDROID)
+#elif BUILDFLAG(IS_IOS)
+bool PathProviderIOS(int key, FilePath* result);
+#elif BUILDFLAG(IS_ANDROID)
 bool PathProviderAndroid(int key, FilePath* result);
-#elif defined(OS_FUCHSIA)
+#elif BUILDFLAG(IS_FUCHSIA)
 bool PathProviderFuchsia(int key, FilePath* result);
-#elif defined(OS_POSIX)
+#elif BUILDFLAG(IS_POSIX)
 // PathProviderPosix is the default path provider on POSIX OSes other than
 // Mac and Android.
 bool PathProviderPosix(int key, FilePath* result);
@@ -45,7 +58,9 @@ typedef std::unordered_map<int, FilePath> PathMap;
 // providers claim overlapping keys.
 struct Provider {
   PathService::ProviderFunc func;
-  struct Provider* next;
+  // This field is not a raw_ptr<> because it was filtered by the rewriter for:
+  // #reinterpret-cast-trivial-type, #global-scope
+  RAW_PTR_EXCLUSION struct Provider* next;
 #ifndef NDEBUG
   int key_start;
   int key_end;
@@ -59,19 +74,20 @@ Provider base_provider = {PathProvider, nullptr,
 #endif
                           true};
 
-#if defined(OS_WIN)
-Provider base_provider_win = {
-  PathProviderWin,
-  &base_provider,
+#if BUILDFLAG(IS_WIN)
+Provider win_provider = {PathProviderWin, &base_provider,
 #ifndef NDEBUG
-  PATH_WIN_START,
-  PATH_WIN_END,
+                         PATH_WIN_START, PATH_WIN_END,
 #endif
-  true
-};
+                         true};
+Provider base_provider_win = {EnvOverridePathProvider, &win_provider,
+#ifndef NDEBUG
+                              PATH_START, PATH_END,
+#endif
+                              true};
 #endif
 
-#if defined(OS_APPLE)
+#if BUILDFLAG(IS_MAC)
 Provider base_provider_mac = {
   PathProviderMac,
   &base_provider,
@@ -83,7 +99,19 @@ Provider base_provider_mac = {
 };
 #endif
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_IOS)
+Provider base_provider_ios = {
+  PathProviderIOS,
+  &base_provider,
+#ifndef NDEBUG
+  PATH_IOS_START,
+  PATH_IOS_END,
+#endif
+  true
+};
+#endif
+
+#if BUILDFLAG(IS_ANDROID)
 Provider base_provider_android = {
   PathProviderAndroid,
   &base_provider,
@@ -95,7 +123,7 @@ Provider base_provider_android = {
 };
 #endif
 
-#if defined(OS_FUCHSIA)
+#if BUILDFLAG(IS_FUCHSIA)
 Provider base_provider_fuchsia = {PathProviderFuchsia, &base_provider,
 #ifndef NDEBUG
                                   0, 0,
@@ -103,17 +131,17 @@ Provider base_provider_fuchsia = {PathProviderFuchsia, &base_provider,
                                   true};
 #endif
 
-#if defined(OS_POSIX) && !defined(OS_APPLE) && !defined(OS_ANDROID) && \
-    !defined(OS_FUCHSIA)
-Provider base_provider_posix = {
-  PathProviderPosix,
-  &base_provider,
+#if BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_APPLE) && !BUILDFLAG(IS_ANDROID)
+Provider posix_provider = {PathProviderPosix, &base_provider,
 #ifndef NDEBUG
-  PATH_POSIX_START,
-  PATH_POSIX_END,
+                           PATH_POSIX_START, PATH_POSIX_END,
 #endif
-  true
-};
+                           true};
+Provider base_provider_posix = {EnvOverridePathProvider, &posix_provider,
+#ifndef NDEBUG
+                                PATH_START, PATH_END,
+#endif
+                                true};
 #endif
 
 
@@ -121,19 +149,21 @@ struct PathData {
   Lock lock;
   PathMap cache;        // Cache mappings from path key to path value.
   PathMap overrides;    // Track path overrides.
-  Provider* providers;  // Linked list of path service providers.
+  raw_ptr<Provider> providers;  // Linked list of path service providers.
   bool cache_disabled;  // Don't use cache if true;
 
   PathData() : cache_disabled(false) {
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
     providers = &base_provider_win;
-#elif defined(OS_APPLE)
+#elif BUILDFLAG(IS_MAC)
     providers = &base_provider_mac;
-#elif defined(OS_ANDROID)
+#elif BUILDFLAG(IS_IOS)
+    providers = &base_provider_ios;
+#elif BUILDFLAG(IS_ANDROID)
     providers = &base_provider_android;
-#elif defined(OS_FUCHSIA)
+#elif BUILDFLAG(IS_FUCHSIA)
     providers = &base_provider_fuchsia;
-#elif defined(OS_POSIX)
+#elif BUILDFLAG(IS_POSIX)
     providers = &base_provider_posix;
 #endif
   }
@@ -182,9 +212,9 @@ bool PathService::Get(int key, FilePath* result) {
   PathData* path_data = GetPathData();
   DCHECK(path_data);
   DCHECK(result);
-  DCHECK_GE(key, DIR_CURRENT);
+  DCHECK_GT(key, PATH_START);
 
-  // special case the current directory because it can never be cached
+  // Special case the current directory because it can never be cached.
   if (key == DIR_CURRENT)
     return GetCurrentDirectory(result);
 
@@ -250,18 +280,15 @@ bool PathService::OverrideAndCreateIfNeeded(int key,
                                             bool create) {
   PathData* path_data = GetPathData();
   DCHECK(path_data);
-  DCHECK_GT(key, DIR_CURRENT) << "invalid path key";
+  DCHECK_GT(key, PATH_START) << "invalid path key";
 
   FilePath file_path = path;
 
-  // For some locations this will fail if called from inside the sandbox there-
-  // fore we protect this call with a flag.
-  if (create) {
-    // Make sure the directory exists. We need to do this before we translate
-    // this to the absolute path because on POSIX, MakeAbsoluteFilePath fails
-    // if called on a non-existent path.
-    if (!PathExists(file_path) && !CreateDirectory(file_path))
-      return false;
+  // Create the directory if requested by the caller. Do this before resolving
+  // `file_path` to an absolute path because on POSIX, MakeAbsoluteFilePath
+  // requires that the path exists.
+  if (create && !CreateDirectory(file_path)) {
+    return false;
   }
 
   // We need to have an absolute path.
@@ -278,13 +305,13 @@ bool PathService::OverrideAndCreateIfNeeded(int key,
   // on the value we are overriding, and are now out of sync with reality.
   path_data->cache.clear();
 
-  path_data->overrides[key] = file_path;
+  path_data->overrides[key] = std::move(file_path);
 
   return true;
 }
 
 // static
-bool PathService::RemoveOverride(int key) {
+bool PathService::RemoveOverrideForTests(int key) {
   PathData* path_data = GetPathData();
   DCHECK(path_data);
 
@@ -300,6 +327,16 @@ bool PathService::RemoveOverride(int key) {
   path_data->overrides.erase(key);
 
   return true;
+}
+
+// static
+bool PathService::IsOverriddenForTesting(int key) {
+  PathData* path_data = GetPathData();
+  DCHECK(path_data);
+
+  AutoLock scoped_lock(path_data->lock);
+
+  return path_data->overrides.find(key) != path_data->overrides.end();
 }
 
 // static

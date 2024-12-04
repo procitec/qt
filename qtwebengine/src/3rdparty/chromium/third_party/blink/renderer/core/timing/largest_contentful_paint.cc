@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,24 +11,33 @@
 
 namespace blink {
 
-LargestContentfulPaint::LargestContentfulPaint(double start_time,
-                                               base::TimeDelta render_time,
-                                               uint64_t size,
-                                               base::TimeDelta load_time,
-                                               const AtomicString& id,
-                                               const String& url,
-                                               Element* element)
-    : PerformanceEntry(g_empty_atom, start_time, start_time),
+LargestContentfulPaint::LargestContentfulPaint(
+    double start_time,
+    DOMHighResTimeStamp render_time,
+    uint64_t size,
+    DOMHighResTimeStamp load_time,
+    DOMHighResTimeStamp first_animated_frame_time,
+    const AtomicString& id,
+    const String& url,
+    Element* element,
+    DOMWindow* source,
+    bool is_triggered_by_soft_navigation)
+    : PerformanceEntry(g_empty_atom,
+                       start_time,
+                       start_time,
+                       source,
+                       is_triggered_by_soft_navigation),
       size_(size),
       render_time_(render_time),
       load_time_(load_time),
+      first_animated_frame_time_(first_animated_frame_time),
       id_(id),
       url_(url),
       element_(element) {}
 
 LargestContentfulPaint::~LargestContentfulPaint() = default;
 
-AtomicString LargestContentfulPaint::entryType() const {
+const AtomicString& LargestContentfulPaint::entryType() const {
   return performance_entry_names::kLargestContentfulPaint;
 }
 
@@ -45,17 +54,17 @@ Element* LargestContentfulPaint::element() const {
   if (!document.IsActive() || !document.GetFrame())
     return nullptr;
 
-  return element_;
+  return element_.Get();
 }
 
 void LargestContentfulPaint::BuildJSONValue(V8ObjectBuilder& builder) const {
   PerformanceEntry::BuildJSONValue(builder);
-  builder.Add("size", size_);
-  builder.Add("renderTime", render_time_.InMillisecondsF());
-  builder.Add("loadTime", load_time_.InMillisecondsF());
-  builder.Add("id", id_);
-  builder.Add("url", url_);
-  builder.Add("element", element());
+  builder.AddInteger("size", size_);
+  builder.AddNumber("renderTime", render_time_);
+  builder.AddNumber("loadTime", load_time_);
+  builder.AddNumber("firstAnimatedFrameTime", first_animated_frame_time_);
+  builder.AddString("id", id_);
+  builder.AddString("url", url_);
 }
 
 void LargestContentfulPaint::Trace(Visitor* visitor) const {

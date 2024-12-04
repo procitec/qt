@@ -9,9 +9,11 @@
 #include "include/core/SkCanvas.h"
 #include "include/core/SkFont.h"
 #include "include/core/SkTypeface.h"
-#include "include/utils/SkRandom.h"
+#include "src/base/SkRandom.h"
+#include "src/base/SkUTF.h"
+#include "src/core/SkFontPriv.h"
 #include "src/utils/SkCharToGlyphCache.h"
-#include "src/utils/SkUTF.h"
+#include "tools/fonts/FontToolUtils.h"
 
 enum {
     NGLYPHS = 100
@@ -42,14 +44,14 @@ static void charsToGlyphs_proc(const Rec& r) {
     uint16_t glyphs[NGLYPHS];
     SkASSERT(r.fCount <= NGLYPHS);
 
-    SkTypeface* face = r.fFont.getTypefaceOrDefault();
+    SkTypeface* face = r.fFont.getTypeface();
     for (int i = 0; i < r.fLoops; ++i) {
         face->unicharsToGlyphs(r.fText, r.fCount, glyphs);
     }
 }
 
 static void addcache_proc(const Rec& r) {
-    for (int i = 0; i < r.fLoops; ++i) {
+    for (int loop = 0; loop < r.fLoops; ++loop) {
         SkCharToGlyphCache cache;
         for (int i = 0; i < r.fCount; ++i) {
             cache.addCharAndGlyph(r.fText[i], i);
@@ -58,7 +60,7 @@ static void addcache_proc(const Rec& r) {
 }
 
 static void findcache_proc(const Rec& r) {
-    for (int i = 0; i < r.fLoops; ++i) {
+    for (int loop = 0; loop < r.fLoops; ++loop) {
         for (int i = 0; i < r.fCount; ++i) {
             r.fCache.findGlyphIndex(r.fText[i]);
         }
@@ -86,7 +88,7 @@ public:
             fText[i] = rand.nextU() & 0xFFFF;
             fCache.addCharAndGlyph(fText[i], i);
         }
-        fFont.setTypeface(SkTypeface::MakeDefault());
+        fFont.setTypeface(ToolUtils::DefaultPortableTypeface());
     }
 
     bool isSuitableFor(Backend backend) override {

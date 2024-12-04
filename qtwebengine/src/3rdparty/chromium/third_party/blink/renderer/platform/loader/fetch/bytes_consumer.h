@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,8 +8,9 @@
 #include <ostream>
 
 #include "base/memory/scoped_refptr.h"
+#include "base/notreached.h"
 #include "third_party/blink/renderer/platform/blob/blob_data.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/network/encoded_form_data.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
@@ -91,15 +92,15 @@ class PLATFORM_EXPORT BytesConsumer : public GarbageCollected<BytesConsumer> {
   //
   // |*buffer| will be set to null and |*available| will be set to 0 if not
   // readable.
-  virtual Result BeginRead(const char** buffer,
-                           size_t* available) WARN_UNUSED_RESULT = 0;
+  [[nodiscard]] virtual Result BeginRead(const char** buffer,
+                                         size_t* available) = 0;
 
   // Ends a two-phase read.
   // This function can modify this BytesConsumer's state.
   // Returns Ok when the consumer stays readable or waiting.
   // Returns Done when it's closed.
   // Returns Error when it's errored.
-  virtual Result EndRead(size_t read_size) WARN_UNUSED_RESULT = 0;
+  [[nodiscard]] virtual Result EndRead(size_t read_size) = 0;
 
   // Drains the data as a BlobDataHandle.
   // When this function returns a non-null value, the returned blob handle
@@ -175,7 +176,6 @@ class PLATFORM_EXPORT BytesConsumer : public GarbageCollected<BytesConsumer> {
   // This InternalState directly corresponds to the states in the class
   // comments. This enum is defined here for subclasses.
   enum class InternalState {
-    kReadable,
     kWaiting,
     kClosed,
     kErrored,
@@ -183,7 +183,6 @@ class PLATFORM_EXPORT BytesConsumer : public GarbageCollected<BytesConsumer> {
 
   static PublicState GetPublicStateFromInternalState(InternalState state) {
     switch (state) {
-      case InternalState::kReadable:
       case InternalState::kWaiting:
         return PublicState::kReadableOrWaiting;
       case InternalState::kClosed:
@@ -192,7 +191,6 @@ class PLATFORM_EXPORT BytesConsumer : public GarbageCollected<BytesConsumer> {
         return PublicState::kErrored;
     }
     NOTREACHED();
-    return PublicState::kReadableOrWaiting;
   }
 };
 

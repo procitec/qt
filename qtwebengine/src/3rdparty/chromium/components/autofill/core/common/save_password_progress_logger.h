@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,7 +9,6 @@
 
 #include <string>
 
-#include "base/macros.h"
 #include "components/autofill/core/common/form_data.h"
 #include "url/gurl.h"
 
@@ -54,7 +53,6 @@ class SavePasswordProgressLogger {
     STRING_CONFIRMATION_PASSWORD_ELEMENT_RENDERER_ID,
     STRING_PASSWORD_GENERATED,
     STRING_TIMES_USED,
-    STRING_PSL_MATCH,
     STRING_NAME_OR_ID,
     STRING_MESSAGE,
     STRING_SET_AUTH_METHOD,
@@ -78,10 +76,13 @@ class SavePasswordProgressLogger {
     STRING_SYNC_CREDENTIAL,
     STRING_BLOCK_PASSWORD_SAME_ORIGIN_INSECURE_SCHEME,
     STRING_ON_PASSWORD_FORMS_RENDERED_METHOD,
-    STRING_ON_SAME_DOCUMENT_NAVIGATION,
+    STRING_ON_DYNAMIC_FORM_SUBMISSION,
+    STRING_ON_PASSWORD_FORM_CLEARED,
+    STRING_ON_SUBFRAME_FORM_SUBMISSION,
     STRING_ON_ASK_USER_OR_SAVE_PASSWORD,
     STRING_CAN_PROVISIONAL_MANAGER_SAVE_METHOD,
     STRING_NO_PROVISIONAL_SAVE_MANAGER,
+    STRING_ANOTHER_MANAGER_WAS_SUBMITTED,
     STRING_NUMBER_OF_VISIBLE_FORMS,
     STRING_PASSWORD_FORM_REAPPEARED,
     STRING_SAVING_DISABLED,
@@ -103,6 +104,7 @@ class SavePasswordProgressLogger {
     STRING_SHOW_LOGIN_PROMPT_METHOD,
     STRING_NEW_UI_STATE,
     STRING_FORM_SIGNATURE,
+    STRING_ALTERNATIVE_FORM_SIGNATURE,
     STRING_FORM_FETCHER_STATE,
     STRING_UNOWNED_INPUTS_VISIBLE,
     STRING_ON_FILL_PASSWORD_FORM_METHOD,
@@ -120,7 +122,7 @@ class SavePasswordProgressLogger {
     STRING_GENERATION_DISABLED_SAVING_DISABLED,
     STRING_GENERATION_DISABLED_NO_SYNC,
     STRING_GENERATION_RENDERER_AUTOMATIC_GENERATION_AVAILABLE,
-    STRING_GENERATION_RENDERER_SHOW_MANUAL_GENERATION_POPUP,
+    STRING_GENERATION_RENDERER_SHOW_GENERATION_POPUP,
     STRING_GENERATION_RENDERER_GENERATED_PASSWORD_ACCEPTED,
     STRING_SUCCESSFUL_SUBMISSION_INDICATOR_EVENT,
     STRING_MAIN_FRAME_ORIGIN,
@@ -144,7 +146,7 @@ class SavePasswordProgressLogger {
     STRING_LEAK_DETECTION_TOKEN_REQUEST_ERROR,
     STRING_LEAK_DETECTION_NETWORK_ERROR,
     STRING_LEAK_DETECTION_QUOTA_LIMIT,
-    STRING_PASSWORD_REQUIREMENTS_VOTE_FOR_LOWERCASE,
+    STRING_PASSWORD_REQUIREMENTS_VOTE_FOR_LETTER,
     STRING_PASSWORD_REQUIREMENTS_VOTE_FOR_SPECIAL_SYMBOL,
     STRING_PASSWORD_REQUIREMENTS_VOTE_FOR_SPECIFIC_SPECIAL_SYMBOL,
     STRING_PASSWORD_REQUIREMENTS_VOTE_FOR_PASSWORD_LENGTH,
@@ -155,12 +157,16 @@ class SavePasswordProgressLogger {
     STRING_USERNAME_FIRST_FLOW_VOTE,
     STRING_POSSIBLE_USERNAME_USED,
     STRING_POSSIBLE_USERNAME_NOT_USED,
-    STRING_LOCALLY_SAVED_PREDICTION,
     STRING_INVALID,  // Represents a string returned in a case of an error.
     STRING_MAX = STRING_INVALID
   };
 
   SavePasswordProgressLogger();
+
+  SavePasswordProgressLogger(const SavePasswordProgressLogger&) = delete;
+  SavePasswordProgressLogger& operator=(const SavePasswordProgressLogger&) =
+      delete;
+
   virtual ~SavePasswordProgressLogger();
 
   // Call these methods to log information. They sanitize the input and call
@@ -175,23 +181,19 @@ class SavePasswordProgressLogger {
   void LogNumber(StringID label, size_t unsigned_number);
   void LogMessage(StringID message);
 
-  // Removes privacy sensitive parts of |url| (currently all but host and
+  // Returns a log string representing `field`.
+  static std::string GetFormFieldDataLogString(const FormFieldData& field);
+
+  // Removes privacy sensitive parts of `url` (currently all but host and
   // scheme).
   static std::string ScrubURL(const GURL& url);
-
- protected:
-  // Sends |log| immediately for display.
-  virtual void SendLog(const std::string& log) = 0;
-
-  // Converts |log| and its |label| to a string and calls SendLog on the result.
-  void LogValue(StringID label, const base::Value& log);
 
   // Replaces all characters satisfying IsUnwantedInElementID with a ' '.
   // This damages some valid HTML element IDs or names, but it is likely that it
   // will be still possible to match the scrubbed string to the original ID or
   // name in the HTML doc. That's good enough for the logging purposes, and
   // provides some security benefits.
-  static std::string ScrubElementID(const base::string16& element_id);
+  static std::string ScrubElementID(const std::u16string& element_id);
 
   // The UTF-8 version of the function above.
   static std::string ScrubElementID(std::string element_id);
@@ -199,8 +201,12 @@ class SavePasswordProgressLogger {
   // Translates the StringID values into the corresponding strings.
   static std::string GetStringFromID(SavePasswordProgressLogger::StringID id);
 
- private:
-  DISALLOW_COPY_AND_ASSIGN(SavePasswordProgressLogger);
+ protected:
+  // Sends `log` immediately for display.
+  virtual void SendLog(const std::string& log) = 0;
+
+  // Converts `log` and its `label` to a string and calls SendLog on the result.
+  void LogValue(StringID label, const base::Value& log);
 };
 
 }  // namespace autofill

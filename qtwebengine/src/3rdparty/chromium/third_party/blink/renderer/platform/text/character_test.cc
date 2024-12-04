@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -23,10 +23,27 @@ testing::AssertionResult IsCJKIdeographOrSymbolWithMessage(UChar32 codepoint) {
                                      << " is not a CJKIdeographOrSymbol.";
 }
 
-TEST(CharacterTest, HammerEmojiVsCJKIdeographOrSymbol) {
-  for (UChar32 test_char = 0; test_char < kMaxCodepoint; test_char++) {
-    if (Character::IsEmojiEmojiDefault(test_char)) {
-      EXPECT_TRUE(IsCJKIdeographOrSymbolWithMessage(test_char));
+// Test Unicode-derived functions work as intended.
+// These functions may need to be adjusted if Unicode changes.
+TEST(CharacterTest, Derived) {
+  for (UChar32 ch = 0; ch < kMaxCodepoint; ++ch) {
+    if (Character::IsEmojiEmojiDefault(ch)) {
+      EXPECT_TRUE(IsCJKIdeographOrSymbolWithMessage(ch));
+    }
+
+    const UBlockCode block = ublock_getCode(ch);
+    EXPECT_EQ(Character::IsBlockCjkSymbolsAndPunctuation(ch),
+              block == UBLOCK_CJK_SYMBOLS_AND_PUNCTUATION);
+    EXPECT_EQ(Character::IsBlockHalfwidthAndFullwidthForms(ch),
+              block == UBLOCK_HALFWIDTH_AND_FULLWIDTH_FORMS);
+
+    const UEastAsianWidth eaw = Character::EastAsianWidth(ch);
+    EXPECT_EQ(Character::IsEastAsianWidthFullwidth(ch),
+              eaw == UEastAsianWidth::U_EA_FULLWIDTH);
+
+    if (!Character::MaybeHanKerningOpenOrClose(ch)) {
+      DCHECK(!Character::MaybeHanKerningOpenSlow(ch));
+      DCHECK(!Character::MaybeHanKerningCloseSlow(ch));
     }
   }
 }
@@ -226,6 +243,30 @@ TEST(CharacterTest, TestIsCJKIdeographOrSymbol) {
   TestSpecificUChar32RangeIdeographSymbol(0x1F1E6, 0x1F6FF);
 }
 
+TEST(CharacterTest, HanKerning) {
+  struct Data {
+    UChar32 ch;
+    HanKerningCharType type;
+  } data_list[] = {
+      {kLeftDoubleQuotationMarkCharacter, HanKerningCharType::kOpenQuote},
+      {kRightDoubleQuotationMarkCharacter, HanKerningCharType::kCloseQuote},
+      {kMiddleDotCharacter, HanKerningCharType::kMiddle},
+      {kIdeographicSpaceCharacter, HanKerningCharType::kMiddle},
+      {kFullwidthComma, HanKerningCharType::kDot},
+      {0x3008, HanKerningCharType::kOpen},
+      {0xFF5F, HanKerningCharType::kOpen},
+      {0x3009, HanKerningCharType::kClose},
+      {0xFF60, HanKerningCharType::kClose},
+      {0x0028, HanKerningCharType::kOpenNarrow},
+      {0xFF62, HanKerningCharType::kOpenNarrow},
+      {0x0029, HanKerningCharType::kCloseNarrow},
+      {0xFF63, HanKerningCharType::kCloseNarrow},
+  };
+  for (const Data& data : data_list) {
+    EXPECT_EQ(Character::GetHanKerningCharType(data.ch), data.type);
+  }
+}
+
 TEST(CharacterTest, CanTextDecorationSkipInk) {
   // ASCII
   EXPECT_TRUE(Character::CanTextDecorationSkipInk('a'));
@@ -412,7 +453,7 @@ TEST(CharacterTest, TransformedIsUprightInMixedVertical) {
 }
 
 TEST(CharacterTest, IsVerticalMathCharacter) {
-  // https://mathml-refresh.github.io/mathml-core/#stretchy-operator-axis
+  // https://w3c.github.io/mathml-core/#stretchy-operator-axis
   const UChar stretchy_operator_with_inline_axis[]{
       0x003D, 0x005E, 0x005F, 0x007E, 0x00AF, 0x02C6, 0x02C7, 0x02C9, 0x02CD,
       0x02DC, 0x02F7, 0x0302, 0x0332, 0x203E, 0x20D0, 0x20D1, 0x20D6, 0x20D7,
@@ -433,11 +474,11 @@ TEST(CharacterTest, IsVerticalMathCharacter) {
     } else if (test_char == kArabicMathematicalOperatorHahWithDal) {
       EXPECT_FALSE(Character::IsVerticalMathCharacter(test_char));
     } else {
-      bool in_vertical = !std::binary_search(
-          stretchy_operator_with_inline_axis,
-          stretchy_operator_with_inline_axis +
-              base::size(stretchy_operator_with_inline_axis),
-          test_char);
+      bool in_vertical =
+          !std::binary_search(stretchy_operator_with_inline_axis,
+                              stretchy_operator_with_inline_axis +
+                                  std::size(stretchy_operator_with_inline_axis),
+                              test_char);
       EXPECT_TRUE(Character::IsVerticalMathCharacter(test_char) == in_vertical);
     }
   }

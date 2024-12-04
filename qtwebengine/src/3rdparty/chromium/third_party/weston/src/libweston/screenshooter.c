@@ -40,12 +40,15 @@
 #include "shared/timespec-util.h"
 #include "backend.h"
 #include "libweston-internal.h"
+#include "pixel-formats.h"
 
 #include "wcap/wcap-decode.h"
 
 struct screenshooter_frame_listener {
-	struct wl_listener listener;
+	struct wl_listener frame_listener;
+	struct wl_listener buffer_destroy_listener;
 	struct weston_buffer *buffer;
+	struct weston_output *output;
 	weston_screenshooter_done_func_t done;
 	void *data;
 };
@@ -118,15 +121,20 @@ screenshooter_frame_notify(struct wl_listener *listener, void *data)
 {
 	struct screenshooter_frame_listener *l =
 		container_of(listener,
-			     struct screenshooter_frame_listener, listener);
-	struct weston_output *output = data;
+			     struct screenshooter_frame_listener,
+			     frame_listener);
+	struct weston_output *output = l->output;
 	struct weston_compositor *compositor = output->compositor;
+	const pixman_format_code_t pixman_format =
+		compositor->read_format->pixman_format;
 	int32_t stride;
 	uint8_t *pixels, *d, *s;
 
-	output->disable_planes--;
+	weston_output_disable_planes_decr(output);
 	wl_list_remove(&listener->link);
-	stride = l->buffer->width * (PIXMAN_FORMAT_BPP(compositor->read_format) / 8);
+	wl_list_remove(&l->buffer_destroy_listener.link);
+
+	stride = l->buffer->width * (PIXMAN_FORMAT_BPP(pixman_format) / 8);
 	pixels = malloc(stride * l->buffer->height);
 
 	if (pixels == NULL) {
@@ -147,7 +155,7 @@ screenshooter_frame_notify(struct wl_listener *listener, void *data)
 
 	wl_shm_buffer_begin_access(l->buffer->shm_buffer);
 
-	switch (compositor->read_format) {
+	switch (pixman_format) {
 	case PIXMAN_a8r8g8b8:
 	case PIXMAN_x8r8g8b8:
 		if (compositor->capabilities & WESTON_CAP_CAPTURE_YFLIP)
@@ -173,6 +181,22 @@ screenshooter_frame_notify(struct wl_listener *listener, void *data)
 	free(l);
 }
 
+static void
+buffer_destroy_handle(struct wl_listener *listener, void *data)
+{
+	struct screenshooter_frame_listener *l =
+		container_of(listener,
+			     struct screenshooter_frame_listener,
+			     buffer_destroy_listener);
+
+	weston_output_disable_planes_decr(l->output);
+	wl_list_remove(&listener->link);
+	wl_list_remove(&l->frame_listener.link);
+	l->done(l->data, WESTON_SCREENSHOOTER_BAD_BUFFER);
+
+	free(l);
+}
+
 WL_EXPORT int
 weston_screenshooter_shoot(struct weston_output *output,
 			   struct weston_buffer *buffer,
@@ -180,14 +204,10 @@ weston_screenshooter_shoot(struct weston_output *output,
 {
 	struct screenshooter_frame_listener *l;
 
-	if (!wl_shm_buffer_get(buffer->resource)) {
+	if (buffer->type != WESTON_BUFFER_SHM) {
 		done(data, WESTON_SCREENSHOOTER_BAD_BUFFER);
 		return -1;
 	}
-
-	buffer->shm_buffer = wl_shm_buffer_get(buffer->resource);
-	buffer->width = wl_shm_buffer_get_width(buffer->shm_buffer);
-	buffer->height = wl_shm_buffer_get_height(buffer->shm_buffer);
 
 	if (buffer->width < output->current_mode->width ||
 	    buffer->height < output->current_mode->height) {
@@ -202,12 +222,18 @@ weston_screenshooter_shoot(struct weston_output *output,
 	}
 
 	l->buffer = buffer;
+	l->output = output;
 	l->done = done;
 	l->data = data;
-	l->listener.notify = screenshooter_frame_notify;
-	wl_signal_add(&output->frame_signal, &l->listener);
-	output->disable_planes++;
-	weston_output_damage(output);
+
+	l->frame_listener.notify = screenshooter_frame_notify;
+	wl_signal_add(&output->frame_signal, &l->frame_listener);
+
+	l->buffer_destroy_listener.notify = buffer_destroy_handle;
+	wl_signal_add(&buffer->destroy_signal, &l->buffer_destroy_listener);
+
+	weston_output_disable_planes_incr(output);
+	weston_output_schedule_repaint(output);
 
 	return 0;
 }
@@ -261,7 +287,7 @@ weston_recorder_frame_notify(struct wl_listener *listener, void *data)
 {
 	struct weston_recorder *recorder =
 		container_of(listener, struct weston_recorder, frame_listener);
-	struct weston_output *output = data;
+	struct weston_output *output = recorder->output;
 	struct weston_compositor *compositor = output->compositor;
 	uint32_t msecs = timespec_to_msec(&output->frame_time);
 	pixman_box32_t *r;
@@ -285,12 +311,10 @@ weston_recorder_frame_notify(struct wl_listener *listener, void *data)
 
 	pixman_region32_init(&damage);
 	pixman_region32_init(&transformed_damage);
-	pixman_region32_intersect(&damage, &output->region,
-				  &output->previous_damage);
-	pixman_region32_translate(&damage, -output->x, -output->y);
-	weston_transformed_region(output->width, output->height,
-				 output->transform, output->current_scale,
-				 &damage, &transformed_damage);
+	pixman_region32_intersect(&damage, &output->region, data);
+	weston_region_global_to_output(&transformed_damage,
+				       output,
+				       &damage);
 	pixman_region32_fini(&damage);
 
 	r = pixman_region32_rectangles(&transformed_damage, &n);
@@ -417,7 +441,7 @@ weston_recorder_create(struct weston_output *output, const char *filename)
 
 	header.magic = WCAP_HEADER_MAGIC;
 
-	switch (compositor->read_format) {
+	switch (compositor->read_format->pixman_format) {
 	case PIXMAN_x8r8g8b8:
 	case PIXMAN_a8r8g8b8:
 		header.format = WCAP_FORMAT_XRGB8888;
@@ -445,7 +469,7 @@ weston_recorder_create(struct weston_output *output, const char *filename)
 
 	recorder->frame_listener.notify = weston_recorder_frame_notify;
 	wl_signal_add(&output->frame_signal, &recorder->frame_listener);
-	output->disable_planes++;
+	weston_output_disable_planes_incr(output);
 	weston_output_damage(output);
 
 	return recorder;
@@ -460,7 +484,7 @@ weston_recorder_destroy(struct weston_recorder *recorder)
 {
 	wl_list_remove(&recorder->frame_listener.link);
 	close(recorder->fd);
-	recorder->output->disable_planes--;
+	weston_output_disable_planes_decr(recorder->output);
 	weston_recorder_free(recorder);
 }
 

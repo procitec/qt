@@ -7,7 +7,6 @@
 
 #include <string>
 
-#include "base/macros.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/gl/gl_context.h"
 #include "ui/gl/gl_export.h"
@@ -22,8 +21,8 @@ class GL_EXPORT GLContextWGL : public GLContextReal {
   explicit GLContextWGL(GLShareGroup* share_group);
 
   // Implement GLContext.
-  bool Initialize(GLSurface* compatible_surface,
-                  const GLContextAttribs& attribs) override;
+  bool InitializeImpl(GLSurface* compatible_surface,
+                      const GLContextAttribs& attribs) override;
   bool MakeCurrentImpl(GLSurface* surface) override;
   void ReleaseCurrent(GLSurface* surface) override;
   bool IsCurrent(GLSurface* surface) override;
@@ -34,8 +33,6 @@ class GL_EXPORT GLContextWGL : public GLContextReal {
   void Destroy();
 
   HGLRC context_;
-
-  DISALLOW_COPY_AND_ASSIGN(GLContextWGL);
 };
 
 }  // namespace gl

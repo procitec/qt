@@ -1,4 +1,4 @@
-// Copyright (c) 2011 The Chromium Authors. All rights reserved.
+// Copyright 2011 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,9 +13,10 @@
 #include "base/notreached.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/timer/elapsed_timer.h"
+#include "base/trace_event/base_tracing.h"
 #include "build/build_config.h"
 
-#if defined(OS_POSIX) || defined(OS_FUCHSIA)
+#if BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
 #include <errno.h>
 #endif
 
@@ -27,7 +28,7 @@ File::Info::~Info() = default;
 
 File::File() = default;
 
-#if !defined(OS_NACL)
+#if !BUILDFLAG(IS_NACL)
 File::File(const FilePath& path, uint32_t flags) : error_details_(FILE_OK) {
   Initialize(path, flags);
 }
@@ -40,7 +41,7 @@ File::File(PlatformFile platform_file) : File(platform_file, false) {}
 
 File::File(ScopedPlatformFile platform_file, bool async)
     : file_(std::move(platform_file)), error_details_(FILE_OK), async_(async) {
-#if defined(OS_POSIX) || defined(OS_FUCHSIA)
+#if BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
   DCHECK_GE(file_.get(), -1);
 #endif
 }
@@ -49,7 +50,7 @@ File::File(PlatformFile platform_file, bool async)
     : file_(platform_file),
       error_details_(FILE_OK),
       async_(async) {
-#if defined(OS_POSIX) || defined(OS_FUCHSIA)
+#if BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
   DCHECK_GE(platform_file, -1);
 #endif
 }
@@ -78,12 +79,12 @@ File& File::operator=(File&& other) {
   return *this;
 }
 
-#if !defined(OS_NACL)
+#if !BUILDFLAG(IS_NACL)
 void File::Initialize(const FilePath& path, uint32_t flags) {
   if (path.ReferencesParent()) {
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
     ::SetLastError(ERROR_ACCESS_DENIED);
-#elif defined(OS_POSIX) || defined(OS_FUCHSIA)
+#elif BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
     errno = EACCES;
 #else
 #error Unsupported platform
@@ -98,26 +99,64 @@ void File::Initialize(const FilePath& path, uint32_t flags) {
 }
 #endif
 
+absl::optional<size_t> File::Read(int64_t offset, span<uint8_t> data) {
+  span<char> chars = base::as_writable_chars(data);
+  int size = checked_cast<int>(chars.size());
+  int result = Read(offset, chars.data(), size);
+  if (result < 0) {
+    return absl::nullopt;
+  }
+  return checked_cast<size_t>(result);
+}
+
 bool File::ReadAndCheck(int64_t offset, span<uint8_t> data) {
-  int size = checked_cast<int>(data.size());
-  return Read(offset, reinterpret_cast<char*>(data.data()), size) == size;
+  // Size checked in span form of Read() above.
+  return Read(offset, data) == static_cast<int>(data.size());
+}
+
+absl::optional<size_t> File::ReadAtCurrentPos(span<uint8_t> data) {
+  span<char> chars = base::as_writable_chars(data);
+  int size = checked_cast<int>(chars.size());
+  int result = ReadAtCurrentPos(chars.data(), size);
+  if (result < 0) {
+    return absl::nullopt;
+  }
+  return checked_cast<size_t>(result);
 }
 
 bool File::ReadAtCurrentPosAndCheck(span<uint8_t> data) {
-  int size = checked_cast<int>(data.size());
-  return ReadAtCurrentPos(reinterpret_cast<char*>(data.data()), size) == size;
+  // Size checked in span form of ReadAtCurrentPos() above.
+  return ReadAtCurrentPos(data) == static_cast<int>(data.size());
+}
+
+absl::optional<size_t> File::Write(int64_t offset, span<const uint8_t> data) {
+  span<const char> chars = base::as_chars(data);
+  int size = checked_cast<int>(chars.size());
+  int result = Write(offset, chars.data(), size);
+  if (result < 0) {
+    return absl::nullopt;
+  }
+  return checked_cast<size_t>(result);
 }
 
 bool File::WriteAndCheck(int64_t offset, span<const uint8_t> data) {
-  int size = checked_cast<int>(data.size());
-  return Write(offset, reinterpret_cast<const char*>(data.data()), size) ==
-         size;
+  // Size checked in span form of Write() above.
+  return Write(offset, data) == static_cast<int>(data.size());
+}
+
+absl::optional<size_t> File::WriteAtCurrentPos(span<const uint8_t> data) {
+  span<const char> chars = base::as_chars(data);
+  int size = checked_cast<int>(chars.size());
+  int result = WriteAtCurrentPos(chars.data(), size);
+  if (result < 0) {
+    return absl::nullopt;
+  }
+  return checked_cast<size_t>(result);
 }
 
 bool File::WriteAtCurrentPosAndCheck(span<const uint8_t> data) {
-  int size = checked_cast<int>(data.size());
-  return WriteAtCurrentPos(reinterpret_cast<const char*>(data.data()), size) ==
-         size;
+  // Size checked in span form of WriteAtCurrentPos() above.
+  return WriteAtCurrentPos(data) == static_cast<int>(data.size());
 }
 
 // static
@@ -163,6 +202,14 @@ std::string File::ErrorToString(Error error) {
 
   NOTREACHED();
   return "";
+}
+
+void File::WriteIntoTrace(perfetto::TracedValue context) const {
+  auto dict = std::move(context).WriteDictionary();
+  dict.Add("is_valid", IsValid());
+  dict.Add("created", created_);
+  dict.Add("async", async_);
+  dict.Add("error_details", ErrorToString(error_details_));
 }
 
 }  // namespace base

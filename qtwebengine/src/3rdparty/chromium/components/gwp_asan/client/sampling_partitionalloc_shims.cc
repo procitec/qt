@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,8 +7,8 @@
 #include <algorithm>
 #include <utility>
 
-#include "base/allocator/partition_allocator/partition_alloc.h"
-#include "base/partition_alloc_buildflags.h"
+#include "base/allocator/partition_allocator/src/partition_alloc/flags.h"
+#include "base/allocator/partition_allocator/src/partition_alloc/partition_alloc.h"
 #include "components/crash/core/common/crash_key.h"
 #include "components/gwp_asan/client/export.h"
 #include "components/gwp_asan/client/guarded_page_allocator.h"
@@ -27,13 +27,20 @@ SamplingState<PARTITIONALLOC> sampling_state;
 // for every access.
 GuardedPageAllocator* gpa = nullptr;
 
-bool AllocationHook(void** out, int flags, size_t size, const char* type_name) {
+bool AllocationHook(void** out,
+                    partition_alloc::AllocFlags flags,
+                    size_t size,
+                    const char* type_name) {
   if (UNLIKELY(sampling_state.Sample())) {
     // Ignore allocation requests with unknown flags.
-    constexpr int kKnownFlags =
-        base::PartitionAllocReturnNull | base::PartitionAllocZeroFill;
-    if (flags & ~kKnownFlags)
+    // TODO(crbug.com/1469794): Add support for memory tagging in GWP-Asan.
+    constexpr auto kKnownFlags = partition_alloc::AllocFlags::kReturnNull |
+                                 partition_alloc::AllocFlags::kZeroFill;
+    if (!ContainsFlags(kKnownFlags, flags)) {
+      // Skip if |flags| is not a subset of |kKnownFlags|.
+      // i.e. if we find an unknown flag.
       return false;
+    }
 
     if (void* allocation = gpa->Allocate(size, 0, type_name)) {
       *out = allocation;
@@ -81,8 +88,8 @@ void InstallPartitionAllocHooks(
   sampling_state.Init(sampling_frequency);
   // TODO(vtsyrklevich): Allow SetOverrideHooks to be passed in so we can hook
   // PDFium's PartitionAlloc fork.
-  base::PartitionAllocHooks::SetOverrideHooks(&AllocationHook, &FreeHook,
-                                              &ReallocHook);
+  partition_alloc::PartitionAllocHooks::SetOverrideHooks(
+      &AllocationHook, &FreeHook, &ReallocHook);
 }
 
 }  // namespace internal

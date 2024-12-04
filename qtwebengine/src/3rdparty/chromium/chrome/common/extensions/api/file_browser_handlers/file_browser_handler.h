@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "extensions/common/extension.h"
+#include "extensions/common/extension_id.h"
 #include "extensions/common/manifest_handler.h"
 #include "extensions/common/url_pattern.h"
 #include "extensions/common/url_pattern_set.h"
@@ -22,10 +23,14 @@ class FileBrowserHandler {
   using List = std::vector<std::unique_ptr<FileBrowserHandler>>;
 
   FileBrowserHandler();
+
+  FileBrowserHandler(const FileBrowserHandler&) = delete;
+  FileBrowserHandler& operator=(const FileBrowserHandler&) = delete;
+
   ~FileBrowserHandler();
 
   // extension id
-  std::string extension_id() const { return extension_id_; }
+  extensions::ExtensionId extension_id() const { return extension_id_; }
   void set_extension_id(const std::string& extension_id) {
     extension_id_ = extension_id;
   }
@@ -70,10 +75,16 @@ class FileBrowserHandler {
   // Returns the file browser handlers associated with the |extension|.
   static List* GetHandlers(const extensions::Extension* extension);
 
+  // Returns file browser handler in |extension| matching |action_id|, or
+  // nullptr if not found.
+  static const FileBrowserHandler* FindForActionId(
+      const extensions::Extension* extension,
+      const std::string& action_id);
+
  private:
   // The id for the extension this action belongs to (as defined in the
   // extension manifest).
-  std::string extension_id_;
+  extensions::ExtensionId extension_id_;
   std::string title_;
   std::string default_icon_path_;
   // The id for the FileBrowserHandler, for example: "PdfFileAction".
@@ -82,22 +93,22 @@ class FileBrowserHandler {
 
   // A list of file filters.
   extensions::URLPatternSet url_set_;
-
-  DISALLOW_COPY_AND_ASSIGN(FileBrowserHandler);
 };
 
 // Parses the "file_browser_handlers" extension manifest key.
 class FileBrowserHandlerParser : public extensions::ManifestHandler {
  public:
   FileBrowserHandlerParser();
+
+  FileBrowserHandlerParser(const FileBrowserHandlerParser&) = delete;
+  FileBrowserHandlerParser& operator=(const FileBrowserHandlerParser&) = delete;
+
   ~FileBrowserHandlerParser() override;
 
-  bool Parse(extensions::Extension* extension, base::string16* error) override;
+  bool Parse(extensions::Extension* extension, std::u16string* error) override;
 
  private:
   base::span<const char* const> Keys() const override;
-
-  DISALLOW_COPY_AND_ASSIGN(FileBrowserHandlerParser);
 };
 
 #endif  // CHROME_COMMON_EXTENSIONS_API_FILE_BROWSER_HANDLERS_FILE_BROWSER_HANDLER_H_

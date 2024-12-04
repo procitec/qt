@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2017 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the plugins of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2017 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include <QtGui/qtguiglobal.h>
 #if QT_CONFIG(accessibility)
@@ -97,35 +61,6 @@ void clearVariant(VARIANT *variant)
 {
     variant->vt = VT_EMPTY;
     variant->punkVal = nullptr;
-}
-
-void setVariantI4(int value, VARIANT *variant)
-{
-    variant->vt = VT_I4;
-    variant->lVal = value;
-}
-
-void setVariantBool(bool value, VARIANT *variant)
-{
-    variant->vt = VT_BOOL;
-    variant->boolVal = value ? -1 : 0;
-}
-
-void setVariantDouble(double value, VARIANT *variant)
-{
-    variant->vt = VT_R8;
-    variant->dblVal = value;
-}
-
-BSTR bStrFromQString(const QString &value)
-{
-    return SysAllocString(reinterpret_cast<const wchar_t *>(value.utf16()));
-}
-
-void setVariantString(const QString &value, VARIANT *variant)
-{
-    variant->vt = VT_BSTR;
-    variant->bstrVal = bStrFromQString(value);
 }
 
 // Scales a rect to native coordinates, according to high dpi settings.
@@ -212,6 +147,9 @@ long roleToControlTypeId(QAccessible::Role role)
         {QAccessible::PageTabList, UIA_TabControlTypeId},
         {QAccessible::Clock, UIA_CustomControlTypeId},
         {QAccessible::Splitter, UIA_CustomControlTypeId},
+        {QAccessible::Paragraph, UIA_TextControlTypeId},
+        {QAccessible::WebDocument, UIA_DocumentControlTypeId},
+        {QAccessible::Heading, UIA_TextControlTypeId},
     };
 
     return mapping.value(role, UIA_CustomControlTypeId);

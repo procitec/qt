@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,22 +9,10 @@
 
 namespace prefs {
 
+extern const char kComponentUpdatesEnabled[];
+
 extern const char kRecoveryComponentVersion[];
 extern const char kRecoveryComponentUnpackPath[];
-
-#if defined(OS_WIN)
-// Local state prefs.
-extern const char kSwReporterLastExitCode[];
-extern const char kSwReporterLastTimeTriggered[];
-extern const char kSwReporterLastTimeSentReport[];
-extern const char kSwReporterEnabled[];
-
-// Profile prefs.
-extern const char kSwReporterPromptReason[];
-extern const char kSwReporterPromptVersion[];
-extern const char kSwReporterPromptSeed[];
-extern const char kSwReporterReportingEnabled[];
-#endif
 
 }  // namespace prefs
 

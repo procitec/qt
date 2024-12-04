@@ -1,10 +1,12 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef UI_VIEWS_CONTROLS_TEXTFIELD_TEXTFIELD_TEST_API_H_
 #define UI_VIEWS_CONTROLS_TEXTFIELD_TEXTFIELD_TEST_API_H_
 
+#include "base/memory/raw_ptr.h"
+#include "ui/compositor/layer.h"
 #include "ui/views/controls/textfield/textfield.h"
 
 namespace views {
@@ -35,7 +37,7 @@ class TextfieldTestApi {
     return textfield_->context_menu_contents_.get();
   }
 
-  ui::TouchEditingControllerDeprecated* touch_selection_controller() const {
+  TouchSelectionController* touch_selection_controller() const {
     return textfield_->touch_selection_controller_.get();
   }
 
@@ -56,11 +58,23 @@ class TextfieldTestApi {
 
   bool ShouldShowCursor() const;
 
+  float CursorLayerOpacity() {
+    return textfield_->cursor_view_->layer()->opacity();
+  }
+
+  void SetCursorLayerOpacity(float opacity) {
+    textfield_->cursor_view_->layer()->SetOpacity(opacity);
+  }
+
+  void UpdateCursorVisibility() { textfield_->UpdateCursorVisibility(); }
+
+  void FlashCursor() { textfield_->OnCursorBlinkTimerFired(); }
+
   int GetDisplayOffsetX() const;
   void SetDisplayOffsetX(int x) const;
 
  private:
-  Textfield* textfield_;
+  const raw_ptr<Textfield> textfield_;
 };
 
 }  // namespace views

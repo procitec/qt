@@ -1,0 +1,21 @@
+# Copyright (C) 2024 The Qt Company Ltd.
+# SPDX-License-Identifier: BSD-3-Clause
+
+add_subdirectory(qgaxis-abstract)
+add_subdirectory(qgaxis-barcategory)
+add_subdirectory(qgaxis-value)
+if (QT_FEATURE_timezone)
+    add_subdirectory(qgaxis-datetime)
+endif()
+add_subdirectory(qgbars)
+add_subdirectory(qgbars-set)
+add_subdirectory(qglines)
+add_subdirectory(qgpieslice)
+add_subdirectory(qgpieseries)
+add_subdirectory(qgscatter)
+add_subdirectory(qgxychart)
+add_subdirectory(qgsplines)
+add_subdirectory(qgarea)
+add_subdirectory(qgbarmodelmapper)
+add_subdirectory(qgpiemodelmapper)
+add_subdirectory(qgxymodelmapper)

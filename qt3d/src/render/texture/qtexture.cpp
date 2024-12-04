@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2015 Klaralvdalens Datakonsult AB (KDAB).
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt3D module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2015 Klaralvdalens Datakonsult AB (KDAB).
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qtextureimage.h"
 #include "qabstracttextureimage.h"
@@ -52,11 +16,11 @@
 #include <Qt3DCore/private/qscene_p.h>
 #include <Qt3DCore/qaspectengine.h>
 #include <Qt3DCore/private/qdownloadhelperservice_p.h>
+#include <Qt3DCore/private/qurlhelper_p.h>
 #include <Qt3DRender/private/qrenderaspect_p.h>
 #include <Qt3DRender/private/nodemanagers_p.h>
 #include <Qt3DRender/private/managers_p.h>
 #include <Qt3DRender/private/texture_p.h>
-#include <Qt3DRender/private/qurlhelper_p.h>
 #include <qmath.h>
 
 QT_BEGIN_NAMESPACE
@@ -544,7 +508,7 @@ QTextureImageDataPtr setKtxFile(QIODevice *source)
     }
 
     const int bytesToSkip = decode(header.bytesOfKeyValueData);
-    if (source->read(bytesToSkip).count() != bytesToSkip) {
+    if (source->read(bytesToSkip).size() != bytesToSkip) {
         qWarning("Unexpected end of ktx data");
         return imageData;
     }
@@ -1001,7 +965,7 @@ QTextureImageDataPtr TextureLoadingHelper::loadTextureData(const QUrl &url, bool
             || url.scheme() == QLatin1String("assets")
 #endif
             ) {
-        const QString source = Qt3DRender::QUrlHelper::urlToLocalFileOrQrc(url);
+        const QString source = Qt3DCore::QUrlHelper::urlToLocalFileOrQrc(url);
         QFile f(source);
         if (!f.open(QIODevice::ReadOnly))
             qWarning() << "Failed to open" << source;
@@ -1076,7 +1040,7 @@ QTextureDataPtr QTextureFromSourceGenerator::operator ()()
         QT_PREPEND_NAMESPACE(QBuffer) buffer(&m_sourceData);
         if (buffer.open(QIODevice::ReadOnly)) {
             QString suffix = m_url.toString();
-            suffix = suffix.right(suffix.length() - suffix.lastIndexOf('.'));
+            suffix = suffix.right(suffix.size() - suffix.lastIndexOf(QLatin1Char('.')));
 
             QStringList ext(suffix);
 
@@ -1086,9 +1050,9 @@ QTextureDataPtr QTextureFromSourceGenerator::operator ()()
                 ext << mtype.suffixes();
             }
 
-            for (const QString &s: qAsConst(ext)) {
+            for (const QString &s: std::as_const(ext)) {
                 textureData = TextureLoadingHelper::loadTextureData(&buffer, s, true, m_mirrored);
-                if (textureData && textureData->data().length() > 0)
+                if (textureData && textureData->data().size() > 0)
                     break;
             }
         }
@@ -1100,7 +1064,7 @@ QTextureDataPtr QTextureFromSourceGenerator::operator ()()
     if (textureData && m_format != QAbstractTexture::NoFormat && m_format != QAbstractTexture::Automatic)
         textureData->setFormat(static_cast<QOpenGLTexture::TextureFormat>(m_format));
 
-    if (textureData && textureData->data().length() > 0) {
+    if (textureData && textureData->data().size() > 0) {
         generatedData->setTarget(static_cast<QAbstractTexture::Target>(textureData->target()));
         generatedData->setFormat(static_cast<QAbstractTexture::TextureFormat>(textureData->format()));
         generatedData->setWidth(textureData->width());
@@ -1158,7 +1122,7 @@ void TextureDownloadRequest::onCompleted()
  */
 /*!
     \qmltype Texture1D
-    \instantiates Qt3DRender::QTexture1D
+    \nativetype Qt3DRender::QTexture1D
     \inqmlmodule Qt3D.Render
     \since 5.5
     \brief An AbstractTexture with a Target1D target format.
@@ -1186,7 +1150,7 @@ QTexture1D::~QTexture1D()
  */
 /*!
     \qmltype Texture1DArray
-    \instantiates Qt3DRender::QTexture1DArray
+    \nativetype Qt3DRender::QTexture1DArray
     \inqmlmodule Qt3D.Render
     \since 5.5
     \brief An AbstractTexture with a Target1DArray target format.
@@ -1214,7 +1178,7 @@ QTexture1DArray::~QTexture1DArray()
  */
 /*!
     \qmltype Texture2D
-    \instantiates Qt3DRender::QTexture2D
+    \nativetype Qt3DRender::QTexture2D
     \inqmlmodule Qt3D.Render
     \since 5.5
     \brief An AbstractTexture with a Target2D target format.
@@ -1242,7 +1206,7 @@ QTexture2D::~QTexture2D()
  */
 /*!
     \qmltype Texture2DArray
-    \instantiates Qt3DRender::QTexture2DArray
+    \nativetype Qt3DRender::QTexture2DArray
     \inqmlmodule Qt3D.Render
     \since 5.5
     \brief An AbstractTexture with a Target2DArray target format.
@@ -1270,7 +1234,7 @@ QTexture2DArray::~QTexture2DArray()
  */
 /*!
     \qmltype Texture3D
-    \instantiates Qt3DRender::QTexture3D
+    \nativetype Qt3DRender::QTexture3D
     \inqmlmodule Qt3D.Render
     \since 5.5
     \brief An AbstractTexture with a Target3D target format.
@@ -1298,7 +1262,7 @@ QTexture3D::~QTexture3D()
  */
 /*!
     \qmltype TextureCubeMap
-    \instantiates Qt3DRender::QTextureCubeMap
+    \nativetype Qt3DRender::QTextureCubeMap
     \inqmlmodule Qt3D.Render
     \since 5.5
     \brief An AbstractTexture with a TargetCubeMap target format.
@@ -1326,7 +1290,7 @@ QTextureCubeMap::~QTextureCubeMap()
  */
 /*!
     \qmltype TextureCubeMapArray
-    \instantiates Qt3DRender::QTextureCubeMapArray
+    \nativetype Qt3DRender::QTextureCubeMapArray
     \inqmlmodule Qt3D.Render
     \since 5.5
     \brief An AbstractTexture with a TargetCubeMapArray target format.
@@ -1354,7 +1318,7 @@ QTextureCubeMapArray::~QTextureCubeMapArray()
  */
 /*!
     \qmltype Texture2DMultisample
-    \instantiates Qt3DRender::QTexture2DMultisample
+    \nativetype Qt3DRender::QTexture2DMultisample
     \inqmlmodule Qt3D.Render
     \since 5.5
     \brief An AbstractTexture with a Target2DMultisample target format.
@@ -1382,7 +1346,7 @@ QTexture2DMultisample::~QTexture2DMultisample()
  */
 /*!
     \qmltype Texture2DMultisampleArray
-    \instantiates Qt3DRender::QTexture2DMultisampleArray
+    \nativetype Qt3DRender::QTexture2DMultisampleArray
     \inqmlmodule Qt3D.Render
     \since 5.5
     \brief An AbstractTexture with a Target2DMultisampleArray target format.
@@ -1410,7 +1374,7 @@ QTexture2DMultisampleArray::~QTexture2DMultisampleArray()
  */
 /*!
     \qmltype TextureRectangle
-    \instantiates Qt3DRender::QTextureRectangle
+    \nativetype Qt3DRender::QTextureRectangle
     \inqmlmodule Qt3D.Render
     \since 5.5
     \brief An AbstractTexture with a TargetRectangle target format.
@@ -1438,7 +1402,7 @@ QTextureRectangle::~QTextureRectangle()
  */
 /*!
     \qmltype TextureBuffer
-    \instantiates Qt3DRender::QTextureBuffer
+    \nativetype Qt3DRender::QTextureBuffer
     \inqmlmodule Qt3D.Render
     \since 5.5
     \brief An AbstractTexture with a TargetBuffer target format.
@@ -1484,7 +1448,7 @@ void QTextureLoaderPrivate::updateGenerator()
 */
 /*!
    \qmltype TextureLoader
-   \instantiates Qt3DRender::QTextureLoader
+   \nativetype Qt3DRender::QTextureLoader
    \inqmlmodule Qt3D.Render
 
    \brief Handles the texture loading and setting the texture's properties.
@@ -1514,12 +1478,12 @@ QTextureLoader::QTextureLoader(QNode *parent)
 
     // Regenerate the texture functor when properties we support overriding
     // from QAbstractTexture get changed.
-    Q_D(QTextureLoader);
-    auto regenerate = [=] () {
+    auto regenerate = [this] () {
+        Q_D(QTextureLoader);
         if (!notificationsBlocked())    // check the change doesn't come from the backend
             d->updateGenerator();
     };
-    connect(this, &QAbstractTexture::formatChanged, regenerate);
+    connect(this, &QAbstractTexture::formatChanged, this, regenerate);
 }
 
 /*! \internal */
@@ -1528,7 +1492,7 @@ QTextureLoader::~QTextureLoader()
 }
 
 /*!
-    \property QTextureLoader::source
+    \property Qt3DRender::QTextureLoader::source
 
     \brief The current texture source.
 */
@@ -1731,7 +1695,7 @@ bool QTextureFromSourceGenerator::isMirrored() const
 
 /*!
     \qmltype SharedGLTexture
-    \instantiates Qt3DRender::QSharedGLTexture
+    \nativetype Qt3DRender::QSharedGLTexture
     \inqmlmodule Qt3D.Render
     \brief Allows to use a textureId from a separate OpenGL context in a Qt 3D scene.
     \since 5.13
@@ -1775,3 +1739,5 @@ void QSharedGLTexture::setTextureId(int id)
 } // namespace Qt3DRender
 
 QT_END_NAMESPACE
+
+#include "moc_qtexture.cpp"

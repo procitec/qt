@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -205,7 +205,7 @@ class WeakPtrFactory {
 
   void Reset(T* instance) {
     // T is owned externally to WeakPtrFactory. Thus, provide a no-op Deleter.
-    bookkeeper_ = {instance, [](T* instance) {}};
+    bookkeeper_ = {instance, [](T*) {}};
   }
 
   // Manages the std::weak_ptr's referring to T. Does not own T.

@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,6 +7,7 @@
 
 #include "content/browser/accessibility/hit_testing_browsertest.h"
 
+#include "base/test/scoped_feature_list.h"
 #include "base/win/scoped_variant.h"
 #include "content/browser/accessibility/browser_accessibility.h"
 #include "content/browser/accessibility/browser_accessibility_manager.h"
@@ -14,7 +15,7 @@
 #include "content/public/test/browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
 #include "content/shell/browser/shell.h"
-#include "ui/accessibility/accessibility_switches.h"
+#include "ui/accessibility/accessibility_features.h"
 
 #include <objbase.h>
 #include <uiautomation.h>
@@ -32,17 +33,10 @@ namespace content {
 class AccessibilityHitTestingWinBrowserTest
     : public AccessibilityHitTestingBrowserTest {
  public:
-  void SetUpCommandLine(base::CommandLine* command_line) override {
-    AccessibilityHitTestingBrowserTest::SetUpCommandLine(command_line);
-
-    base::CommandLine::ForCurrentProcess()->AppendSwitch(
-        ::switches::kEnableExperimentalUIAutomation);
-  }
-
   ComPtr<IAccessible> GetWebContentRootIAccessible() {
     ComPtr<IAccessible> content_root;
     GetRootBrowserAccessibilityManager()
-        ->GetRoot()
+        ->GetBrowserAccessibilityRoot()
         ->GetNativeViewAccessible()
         ->QueryInterface(IID_PPV_ARGS(&content_root));
     return content_root;
@@ -63,12 +57,15 @@ class AccessibilityHitTestingWinBrowserTest
     content_root->GetPatternProvider(UIA_TextPatternId, &text_provider);
     return text_provider;
   }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_{::features::kUiaProvider};
 };
 
 INSTANTIATE_TEST_SUITE_P(
     All,
     AccessibilityHitTestingWinBrowserTest,
-    ::testing::Combine(::testing::Values(1, 2), ::testing::Bool()),
+    ::testing::Values(1, 2),
     AccessibilityHitTestingBrowserTest::TestPassToString());
 
 IN_PROC_BROWSER_TEST_P(AccessibilityHitTestingWinBrowserTest, AccHitTest) {
@@ -82,7 +79,7 @@ IN_PROC_BROWSER_TEST_P(AccessibilityHitTestingWinBrowserTest, AccHitTest) {
   GURL url(embedded_test_server()->GetURL(
       "/accessibility/hit_testing/simple_rectangles.html"));
   EXPECT_TRUE(NavigateToURL(shell(), url));
-  waiter.WaitForNotification();
+  ASSERT_TRUE(waiter.WaitForNotification());
 
   WaitForAccessibilityTreeToContainNodeWithName(shell()->web_contents(),
                                                 "rectA");
@@ -146,7 +143,7 @@ IN_PROC_BROWSER_TEST_P(AccessibilityHitTestingWinBrowserTest,
   GURL url(embedded_test_server()->GetURL(
       "/accessibility/hit_testing/simple_rectangles.html"));
   EXPECT_TRUE(NavigateToURL(shell(), url));
-  waiter.WaitForNotification();
+  ASSERT_TRUE(waiter.WaitForNotification());
 
   WaitForAccessibilityTreeToContainNodeWithName(shell()->web_contents(),
                                                 "rectA");
@@ -202,7 +199,7 @@ IN_PROC_BROWSER_TEST_P(AccessibilityHitTestingWinBrowserTest,
   GURL url(embedded_test_server()->GetURL(
       "/accessibility/hit_testing/text_ranges.html"));
   EXPECT_TRUE(NavigateToURL(shell(), url));
-  waiter.WaitForNotification();
+  ASSERT_TRUE(waiter.WaitForNotification());
 
   WaitForAccessibilityTreeToContainNodeWithName(shell()->web_contents(),
                                                 "rectA");

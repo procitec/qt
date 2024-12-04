@@ -1,14 +1,13 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include <utility>
 
-#include "base/bind.h"
-#include "base/bind_helpers.h"
 #include "base/files/file.h"
 #include "base/files/file_util.h"
-#include "base/macros.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/metrics/field_trial.h"
 #include "base/metrics/field_trial_param_associator.h"
 #include "base/run_loop.h"
@@ -17,6 +16,8 @@
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/threading/platform_thread.h"
+#include "base/time/time.h"
+#include "build/build_config.h"
 #include "net/base/completion_once_callback.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
@@ -45,6 +46,7 @@ using net::test::IsOk;
 using base::Time;
 using disk_cache::EntryResult;
 using disk_cache::EntryResultCallback;
+using disk_cache::RangeResult;
 using disk_cache::ScopedEntryPtr;
 
 // Tests that can run with different types of caches.
@@ -103,8 +105,7 @@ class DiskCacheEntryTest : public DiskCacheTestWithCache {
 // This part of the test runs on the background thread.
 void DiskCacheEntryTest::InternalSyncIOBackground(disk_cache::Entry* entry) {
   const int kSize1 = 10;
-  scoped_refptr<net::IOBuffer> buffer1 =
-      base::MakeRefCounted<net::IOBuffer>(kSize1);
+  auto buffer1 = base::MakeRefCounted<net::IOBufferWithSize>(kSize1);
   CacheTestFillBuffer(buffer1->data(), kSize1, false);
   EXPECT_EQ(0, entry->ReadData(0, 0, buffer1.get(), kSize1,
                                net::CompletionOnceCallback()));
@@ -118,10 +119,8 @@ void DiskCacheEntryTest::InternalSyncIOBackground(disk_cache::Entry* entry) {
 
   const int kSize2 = 5000;
   const int kSize3 = 10000;
-  scoped_refptr<net::IOBuffer> buffer2 =
-      base::MakeRefCounted<net::IOBuffer>(kSize2);
-  scoped_refptr<net::IOBuffer> buffer3 =
-      base::MakeRefCounted<net::IOBuffer>(kSize3);
+  auto buffer2 = base::MakeRefCounted<net::IOBufferWithSize>(kSize2);
+  auto buffer3 = base::MakeRefCounted<net::IOBufferWithSize>(kSize3);
   memset(buffer3->data(), 0, kSize3);
   CacheTestFillBuffer(buffer2->data(), kSize2, false);
   base::strlcpy(buffer2->data(), "The really big data goes here", kSize2);
@@ -218,12 +217,9 @@ void DiskCacheEntryTest::InternalAsyncIO() {
   const int kSize1 = 10;
   const int kSize2 = 5000;
   const int kSize3 = 10000;
-  scoped_refptr<net::IOBuffer> buffer1 =
-      base::MakeRefCounted<net::IOBuffer>(kSize1);
-  scoped_refptr<net::IOBuffer> buffer2 =
-      base::MakeRefCounted<net::IOBuffer>(kSize2);
-  scoped_refptr<net::IOBuffer> buffer3 =
-      base::MakeRefCounted<net::IOBuffer>(kSize3);
+  auto buffer1 = base::MakeRefCounted<net::IOBufferWithSize>(kSize1);
+  auto buffer2 = base::MakeRefCounted<net::IOBufferWithSize>(kSize2);
+  auto buffer3 = base::MakeRefCounted<net::IOBufferWithSize>(kSize3);
   CacheTestFillBuffer(buffer1->data(), kSize1, false);
   CacheTestFillBuffer(buffer2->data(), kSize2, false);
   CacheTestFillBuffer(buffer3->data(), kSize3, false);
@@ -352,10 +348,8 @@ TEST_F(DiskCacheEntryTest, MemoryOnlyInternalAsyncIO) {
 void DiskCacheEntryTest::ExternalSyncIOBackground(disk_cache::Entry* entry) {
   const int kSize1 = 17000;
   const int kSize2 = 25000;
-  scoped_refptr<net::IOBuffer> buffer1 =
-      base::MakeRefCounted<net::IOBuffer>(kSize1);
-  scoped_refptr<net::IOBuffer> buffer2 =
-      base::MakeRefCounted<net::IOBuffer>(kSize2);
+  auto buffer1 = base::MakeRefCounted<net::IOBufferWithSize>(kSize1);
+  auto buffer2 = base::MakeRefCounted<net::IOBufferWithSize>(kSize2);
   CacheTestFillBuffer(buffer1->data(), kSize1, false);
   CacheTestFillBuffer(buffer2->data(), kSize2, false);
   base::strlcpy(buffer1->data(), "the data", kSize1);
@@ -445,12 +439,9 @@ void DiskCacheEntryTest::ExternalAsyncIO() {
   const int kSize1 = 17000;
   const int kSize2 = 25000;
   const int kSize3 = 25000;
-  scoped_refptr<net::IOBuffer> buffer1 =
-      base::MakeRefCounted<net::IOBuffer>(kSize1);
-  scoped_refptr<net::IOBuffer> buffer2 =
-      base::MakeRefCounted<net::IOBuffer>(kSize2);
-  scoped_refptr<net::IOBuffer> buffer3 =
-      base::MakeRefCounted<net::IOBuffer>(kSize3);
+  auto buffer1 = base::MakeRefCounted<net::IOBufferWithSize>(kSize1);
+  auto buffer2 = base::MakeRefCounted<net::IOBufferWithSize>(kSize2);
+  auto buffer3 = base::MakeRefCounted<net::IOBufferWithSize>(kSize3);
   CacheTestFillBuffer(buffer1->data(), kSize1, false);
   CacheTestFillBuffer(buffer2->data(), kSize2, false);
   CacheTestFillBuffer(buffer3->data(), kSize3, false);
@@ -549,7 +540,7 @@ TEST_F(DiskCacheEntryTest, ExternalAsyncIO) {
 }
 
 // TODO(http://crbug.com/497101): This test is flaky.
-#if defined(OS_IOS)
+#if BUILDFLAG(IS_IOS)
 #define MAYBE_ExternalAsyncIONoBuffer DISABLED_ExternalAsyncIONoBuffer
 #else
 #define MAYBE_ExternalAsyncIONoBuffer ExternalAsyncIONoBuffer
@@ -573,8 +564,7 @@ void DiskCacheEntryTest::ReleaseBuffer(int stream_index) {
   ASSERT_TRUE(nullptr != entry);
 
   const int kBufferSize = 1024;
-  scoped_refptr<net::IOBuffer> buffer =
-      base::MakeRefCounted<net::IOBuffer>(kBufferSize);
+  auto buffer = base::MakeRefCounted<net::IOBufferWithSize>(kBufferSize);
   CacheTestFillBuffer(buffer->data(), kBufferSize, false);
 
   net::ReleaseBufferCompletionCallback cb(buffer.get());
@@ -604,12 +594,11 @@ void DiskCacheEntryTest::StreamAccess() {
   const int kBufferSize = 1024;
   const int kNumStreams = 3;
   scoped_refptr<net::IOBuffer> reference_buffers[kNumStreams];
-  for (int i = 0; i < kNumStreams; i++) {
-    reference_buffers[i] = base::MakeRefCounted<net::IOBuffer>(kBufferSize);
-    CacheTestFillBuffer(reference_buffers[i]->data(), kBufferSize, false);
+  for (auto& reference_buffer : reference_buffers) {
+    reference_buffer = base::MakeRefCounted<net::IOBufferWithSize>(kBufferSize);
+    CacheTestFillBuffer(reference_buffer->data(), kBufferSize, false);
   }
-  scoped_refptr<net::IOBuffer> buffer1 =
-      base::MakeRefCounted<net::IOBuffer>(kBufferSize);
+  auto buffer1 = base::MakeRefCounted<net::IOBufferWithSize>(kBufferSize);
   for (int i = 0; i < kNumStreams; i++) {
     EXPECT_EQ(
         kBufferSize,
@@ -630,8 +619,7 @@ void DiskCacheEntryTest::StreamAccess() {
   const int kFinalReadSize = kBufferSize - kReadBufferSize;
   static_assert(kFinalReadSize < kReadBufferSize,
                 "should be exactly two reads");
-  scoped_refptr<net::IOBuffer> buffer2 =
-      base::MakeRefCounted<net::IOBuffer>(kReadBufferSize);
+  auto buffer2 = base::MakeRefCounted<net::IOBufferWithSize>(kReadBufferSize);
   for (int i = 0; i < kNumStreams; i++) {
     memset(buffer2->data(), 0, kReadBufferSize);
     EXPECT_EQ(kReadBufferSize,
@@ -742,8 +730,7 @@ void DiskCacheEntryTest::GetTimes(int stream_index) {
   Time t3 = Time::Now();
   EXPECT_TRUE(t3 > t2);
   const int kSize = 200;
-  scoped_refptr<net::IOBuffer> buffer =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
+  auto buffer = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
   EXPECT_EQ(kSize, ReadData(entry, stream_index, 0, buffer.get(), kSize));
   if (type_ == net::APP_CACHE) {
     EXPECT_TRUE(entry->GetLastUsed() < t2);
@@ -787,10 +774,8 @@ void DiskCacheEntryTest::GrowData(int stream_index) {
   ASSERT_THAT(CreateEntry(key1, &entry), IsOk());
 
   const int kSize = 20000;
-  scoped_refptr<net::IOBuffer> buffer1 =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
-  scoped_refptr<net::IOBuffer> buffer2 =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
+  auto buffer1 = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
+  auto buffer2 = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
   CacheTestFillBuffer(buffer1->data(), kSize, false);
   memset(buffer2->data(), 0, kSize);
 
@@ -877,10 +862,8 @@ void DiskCacheEntryTest::TruncateData(int stream_index) {
 
   const int kSize1 = 20000;
   const int kSize2 = 20000;
-  scoped_refptr<net::IOBuffer> buffer1 =
-      base::MakeRefCounted<net::IOBuffer>(kSize1);
-  scoped_refptr<net::IOBuffer> buffer2 =
-      base::MakeRefCounted<net::IOBuffer>(kSize2);
+  auto buffer1 = base::MakeRefCounted<net::IOBufferWithSize>(kSize1);
+  auto buffer2 = base::MakeRefCounted<net::IOBufferWithSize>(kSize2);
 
   CacheTestFillBuffer(buffer1->data(), kSize1, false);
   memset(buffer2->data(), 0, kSize2);
@@ -975,8 +958,7 @@ void DiskCacheEntryTest::ZeroLengthIO(int stream_index) {
   // Let's verify the actual content.
   const int kSize = 20;
   const char zeros[kSize] = {};
-  scoped_refptr<net::IOBuffer> buffer =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
+  auto buffer = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
 
   CacheTestFillBuffer(buffer->data(), kSize, false);
   EXPECT_EQ(kSize, ReadData(entry, stream_index, 500, buffer.get(), kSize));
@@ -1018,10 +1000,8 @@ void DiskCacheEntryTest::Buffering() {
   ASSERT_THAT(CreateEntry(key, &entry), IsOk());
 
   const int kSize = 200;
-  scoped_refptr<net::IOBuffer> buffer1 =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
-  scoped_refptr<net::IOBuffer> buffer2 =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
+  auto buffer1 = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
+  auto buffer2 = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
   CacheTestFillBuffer(buffer1->data(), kSize, true);
   CacheTestFillBuffer(buffer2->data(), kSize, true);
 
@@ -1133,10 +1113,8 @@ void DiskCacheEntryTest::SizeChanges(int stream_index) {
 
   const int kSize = 200;
   const char zeros[kSize] = {};
-  scoped_refptr<net::IOBuffer> buffer1 =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
-  scoped_refptr<net::IOBuffer> buffer2 =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
+  auto buffer1 = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
+  auto buffer2 = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
   CacheTestFillBuffer(buffer1->data(), kSize, true);
   CacheTestFillBuffer(buffer2->data(), kSize, true);
 
@@ -1244,8 +1222,7 @@ void DiskCacheEntryTest::ReuseEntry(int size, int stream_index) {
   std::string key2("the second key");
   ASSERT_THAT(CreateEntry(key2, &entry), IsOk());
 
-  scoped_refptr<net::IOBuffer> buffer =
-      base::MakeRefCounted<net::IOBuffer>(size);
+  auto buffer = base::MakeRefCounted<net::IOBufferWithSize>(size);
   CacheTestFillBuffer(buffer->data(), size, false);
 
   for (int i = 0; i < 15; i++) {
@@ -1296,12 +1273,9 @@ void DiskCacheEntryTest::InvalidData(int stream_index) {
   const int kSize1 = 20000;
   const int kSize2 = 20000;
   const int kSize3 = 20000;
-  scoped_refptr<net::IOBuffer> buffer1 =
-      base::MakeRefCounted<net::IOBuffer>(kSize1);
-  scoped_refptr<net::IOBuffer> buffer2 =
-      base::MakeRefCounted<net::IOBuffer>(kSize2);
-  scoped_refptr<net::IOBuffer> buffer3 =
-      base::MakeRefCounted<net::IOBuffer>(kSize3);
+  auto buffer1 = base::MakeRefCounted<net::IOBufferWithSize>(kSize1);
+  auto buffer2 = base::MakeRefCounted<net::IOBufferWithSize>(kSize2);
+  auto buffer3 = base::MakeRefCounted<net::IOBufferWithSize>(kSize3);
 
   CacheTestFillBuffer(buffer1->data(), kSize1, false);
   memset(buffer2->data(), 0, kSize2);
@@ -1386,8 +1360,7 @@ void DiskCacheEntryTest::ReadWriteDestroyBuffer(int stream_index) {
   ASSERT_THAT(CreateEntry(key, &entry), IsOk());
 
   const int kSize = 200;
-  scoped_refptr<net::IOBuffer> buffer =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
+  auto buffer = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
   CacheTestFillBuffer(buffer->data(), kSize, false);
 
   net::TestCompletionCallback cb;
@@ -1400,7 +1373,7 @@ void DiskCacheEntryTest::ReadWriteDestroyBuffer(int stream_index) {
   EXPECT_EQ(kSize, cb.WaitForResult());
 
   // And now test with a Read().
-  buffer = base::MakeRefCounted<net::IOBuffer>(kSize);
+  buffer = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
   CacheTestFillBuffer(buffer->data(), kSize, false);
 
   EXPECT_EQ(
@@ -1425,8 +1398,7 @@ void DiskCacheEntryTest::DoomNormalEntry() {
   entry->Close();
 
   const int kSize = 20000;
-  scoped_refptr<net::IOBuffer> buffer =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
+  auto buffer = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
   CacheTestFillBuffer(buffer->data(), kSize, true);
   buffer->data()[19999] = '\0';
 
@@ -1508,10 +1480,8 @@ void DiskCacheEntryTest::DoomedEntry(int stream_index) {
 
   const int kSize1 = 2000;
   const int kSize2 = 2000;
-  scoped_refptr<net::IOBuffer> buffer1 =
-      base::MakeRefCounted<net::IOBuffer>(kSize1);
-  scoped_refptr<net::IOBuffer> buffer2 =
-      base::MakeRefCounted<net::IOBuffer>(kSize2);
+  auto buffer1 = base::MakeRefCounted<net::IOBufferWithSize>(kSize1);
+  auto buffer2 = base::MakeRefCounted<net::IOBufferWithSize>(kSize2);
   CacheTestFillBuffer(buffer1->data(), kSize1, false);
   memset(buffer2->data(), 0, kSize2);
 
@@ -1547,8 +1517,7 @@ TEST_F(DiskCacheEntryTest, MissingData) {
 
   // Write to an external file.
   const int kSize = 20000;
-  scoped_refptr<net::IOBuffer> buffer =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
+  auto buffer = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
   CacheTestFillBuffer(buffer->data(), kSize, false);
   EXPECT_EQ(kSize, WriteData(entry, 0, 0, buffer.get(), kSize, false));
   entry->Close();
@@ -1575,7 +1544,7 @@ TEST_F(DiskCacheEntryTest, MemoryOnlyEnumerationWithSparseEntries) {
   InitCache();
 
   const int kSize = 4096;
-  scoped_refptr<net::IOBuffer> buf = base::MakeRefCounted<net::IOBuffer>(kSize);
+  auto buf = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
   CacheTestFillBuffer(buf->data(), kSize, false);
 
   std::string key("the first key");
@@ -1601,7 +1570,7 @@ TEST_F(DiskCacheEntryTest, MemoryOnlyEnumerationWithSparseEntries) {
     ++count;
     disk_cache::MemEntryImpl* mem_entry =
         reinterpret_cast<disk_cache::MemEntryImpl*>(entry);
-    EXPECT_EQ(disk_cache::MemEntryImpl::PARENT_ENTRY, mem_entry->type());
+    EXPECT_EQ(disk_cache::MemEntryImpl::EntryType::kParent, mem_entry->type());
     mem_entry->Close();
   }
   EXPECT_EQ(1, count);
@@ -1636,8 +1605,7 @@ void VerifyContentSparseIO(disk_cache::Entry* entry,
                            int size) {
   net::TestCompletionCallback cb;
 
-  scoped_refptr<net::IOBuffer> buf_1 =
-      base::MakeRefCounted<net::IOBuffer>(size);
+  auto buf_1 = base::MakeRefCounted<net::IOBufferWithSize>(size);
   memset(buf_1->data(), 0, size);
   int ret = entry->ReadSparseData(offset, buf_1.get(), size, cb.callback());
   EXPECT_EQ(size, cb.GetResult(ret));
@@ -1650,10 +1618,8 @@ void DiskCacheEntryTest::BasicSparseIO() {
   ASSERT_THAT(CreateEntry(key, &entry), IsOk());
 
   const int kSize = 2048;
-  scoped_refptr<net::IOBuffer> buf_1 =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
-  scoped_refptr<net::IOBuffer> buf_2 =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
+  auto buf_1 = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
+  auto buf_2 = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
   CacheTestFillBuffer(buf_1->data(), kSize, false);
 
   // Write at offset 0.
@@ -1693,10 +1659,8 @@ void DiskCacheEntryTest::HugeSparseIO() {
 
   // Write 1.2 MB so that we cover multiple entries.
   const int kSize = 1200 * 1024;
-  scoped_refptr<net::IOBuffer> buf_1 =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
-  scoped_refptr<net::IOBuffer> buf_2 =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
+  auto buf_1 = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
+  auto buf_2 = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
   CacheTestFillBuffer(buf_1->data(), kSize, false);
 
   // Write at offset 0x20F0000 (33 MB - 64 KB).
@@ -1726,7 +1690,7 @@ void DiskCacheEntryTest::GetAvailableRangeTest() {
   ASSERT_THAT(CreateEntry(key, &entry), IsOk());
 
   const int kSize = 16 * 1024;
-  scoped_refptr<net::IOBuffer> buf = base::MakeRefCounted<net::IOBuffer>(kSize);
+  auto buf = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
   CacheTestFillBuffer(buf->data(), kSize, false);
 
   // Write at offset 0x20F0000 (33 MB - 64 KB), and 0x20F4400 (33 MB - 47 KB).
@@ -1734,57 +1698,66 @@ void DiskCacheEntryTest::GetAvailableRangeTest() {
   EXPECT_EQ(kSize, WriteSparseData(entry, 0x20F4400, buf.get(), kSize));
 
   // We stop at the first empty block.
-  int64_t start;
-  net::TestCompletionCallback cb;
-  int rv = entry->GetAvailableRange(
-      0x20F0000, kSize * 2, &start, cb.callback());
-  EXPECT_EQ(kSize, cb.GetResult(rv));
-  EXPECT_EQ(0x20F0000, start);
+  TestRangeResultCompletionCallback cb;
+  RangeResult result = cb.GetResult(
+      entry->GetAvailableRange(0x20F0000, kSize * 2, cb.callback()));
+  EXPECT_EQ(net::OK, result.net_error);
+  EXPECT_EQ(kSize, result.available_len);
+  EXPECT_EQ(0x20F0000, result.start);
 
-  start = 0;
-  rv = entry->GetAvailableRange(0, kSize, &start, cb.callback());
-  EXPECT_EQ(0, cb.GetResult(rv));
-  rv = entry->GetAvailableRange(
-      0x20F0000 - kSize, kSize, &start, cb.callback());
-  EXPECT_EQ(0, cb.GetResult(rv));
-  rv = entry->GetAvailableRange(0, 0x2100000, &start, cb.callback());
-  EXPECT_EQ(kSize, cb.GetResult(rv));
-  EXPECT_EQ(0x20F0000, start);
+  result = cb.GetResult(entry->GetAvailableRange(0, kSize, cb.callback()));
+  EXPECT_EQ(net::OK, result.net_error);
+  EXPECT_EQ(0, result.available_len);
+
+  result = cb.GetResult(
+      entry->GetAvailableRange(0x20F0000 - kSize, kSize, cb.callback()));
+  EXPECT_EQ(net::OK, result.net_error);
+  EXPECT_EQ(0, result.available_len);
+
+  result = cb.GetResult(entry->GetAvailableRange(0, 0x2100000, cb.callback()));
+  EXPECT_EQ(net::OK, result.net_error);
+  EXPECT_EQ(kSize, result.available_len);
+  EXPECT_EQ(0x20F0000, result.start);
 
   // We should be able to Read based on the results of GetAvailableRange.
-  start = -1;
-  rv = entry->GetAvailableRange(0x2100000, kSize, &start, cb.callback());
-  EXPECT_EQ(0, cb.GetResult(rv));
-  rv = entry->ReadSparseData(start, buf.get(), kSize, cb.callback());
-  EXPECT_EQ(0, cb.GetResult(rv));
+  net::TestCompletionCallback read_cb;
+  result =
+      cb.GetResult(entry->GetAvailableRange(0x2100000, kSize, cb.callback()));
+  EXPECT_EQ(net::OK, result.net_error);
+  EXPECT_EQ(0, result.available_len);
+  int rv =
+      entry->ReadSparseData(result.start, buf.get(), kSize, read_cb.callback());
+  EXPECT_EQ(0, read_cb.GetResult(rv));
 
-  start = 0;
-  rv = entry->GetAvailableRange(0x20F2000, kSize, &start, cb.callback());
-  EXPECT_EQ(0x2000, cb.GetResult(rv));
-  EXPECT_EQ(0x20F2000, start);
-  EXPECT_EQ(0x2000, ReadSparseData(entry, start, buf.get(), kSize));
+  result =
+      cb.GetResult(entry->GetAvailableRange(0x20F2000, kSize, cb.callback()));
+  EXPECT_EQ(net::OK, result.net_error);
+  EXPECT_EQ(0x2000, result.available_len);
+  EXPECT_EQ(0x20F2000, result.start);
+  EXPECT_EQ(0x2000, ReadSparseData(entry, result.start, buf.get(), kSize));
 
   // Make sure that we respect the |len| argument.
-  start = 0;
-  rv = entry->GetAvailableRange(
-      0x20F0001 - kSize, kSize, &start, cb.callback());
-  EXPECT_EQ(1, cb.GetResult(rv));
-  EXPECT_EQ(0x20F0000, start);
+  result = cb.GetResult(
+      entry->GetAvailableRange(0x20F0001 - kSize, kSize, cb.callback()));
+  EXPECT_EQ(net::OK, result.net_error);
+  EXPECT_EQ(1, result.available_len);
+  EXPECT_EQ(0x20F0000, result.start);
 
   // Use very small ranges. Write at offset 50.
   const int kTinyLen = 10;
   EXPECT_EQ(kTinyLen, WriteSparseData(entry, 50, buf.get(), kTinyLen));
 
-  start = -1;
-  rv = entry->GetAvailableRange(kTinyLen * 2, kTinyLen, &start, cb.callback());
-  EXPECT_EQ(0, cb.GetResult(rv));
-  EXPECT_EQ(kTinyLen * 2, start);
+  result = cb.GetResult(
+      entry->GetAvailableRange(kTinyLen * 2, kTinyLen, cb.callback()));
+  EXPECT_EQ(net::OK, result.net_error);
+  EXPECT_EQ(0, result.available_len);
+  EXPECT_EQ(kTinyLen * 2, result.start);
 
   // Get a huge range with maximum boundary
-  start = -1;
-  rv = entry->GetAvailableRange(0x2100000, std::numeric_limits<int32_t>::max(),
-                                &start, cb.callback());
-  EXPECT_EQ(0, cb.GetResult(rv));
+  result = cb.GetResult(entry->GetAvailableRange(
+      0x2100000, std::numeric_limits<int32_t>::max(), cb.callback()));
+  EXPECT_EQ(net::OK, result.net_error);
+  EXPECT_EQ(0, result.available_len);
 
   entry->Close();
 }
@@ -1810,13 +1783,11 @@ TEST_F(DiskCacheEntryTest, GetAvailableRangeBlockFileDiscontinuous) {
   disk_cache::Entry* entry;
   ASSERT_THAT(CreateEntry(key, &entry), IsOk());
 
-  scoped_refptr<net::IOBuffer> buf_2k =
-      base::MakeRefCounted<net::IOBuffer>(2 * 1024);
+  auto buf_2k = base::MakeRefCounted<net::IOBufferWithSize>(2 * 1024);
   CacheTestFillBuffer(buf_2k->data(), 2 * 1024, false);
 
   const int kSmallSize = 612;  // sub-1k
-  scoped_refptr<net::IOBuffer> buf_small =
-      base::MakeRefCounted<net::IOBuffer>(kSmallSize);
+  auto buf_small = base::MakeRefCounted<net::IOBufferWithSize>(kSmallSize);
   CacheTestFillBuffer(buf_small->data(), kSmallSize, false);
 
   // Sets some bits for blocks representing 1K ranges [1024, 3072),
@@ -1831,24 +1802,27 @@ TEST_F(DiskCacheEntryTest, GetAvailableRangeBlockFileDiscontinuous) {
   // Try to query a range starting from that block 0.
   // The cache tracks: [0, 612) [1024, 3072).
   // The request is for: [812, 2059) so response should be [1024, 2059), which
-  // has lenth = 1035. Previously this return a negative number for rv.
-  int64_t start = -1;
-  net::TestCompletionCallback cb;
-  int rv = entry->GetAvailableRange(812, 1247, &start, cb.callback());
-  EXPECT_EQ(1035, cb.GetResult(rv));
-  EXPECT_EQ(1024, start);
+  // has length = 1035. Previously this return a negative number for rv.
+  TestRangeResultCompletionCallback cb;
+  RangeResult result =
+      cb.GetResult(entry->GetAvailableRange(812, 1247, cb.callback()));
+  EXPECT_EQ(net::OK, result.net_error);
+  EXPECT_EQ(1035, result.available_len);
+  EXPECT_EQ(1024, result.start);
 
   // Now query [512, 1536). This matches both [512, 612) and [1024, 1536),
   // so this should return [512, 612).
-  rv = entry->GetAvailableRange(512, 1024, &start, cb.callback());
-  EXPECT_EQ(100, cb.GetResult(rv));
-  EXPECT_EQ(512, start);
+  result = cb.GetResult(entry->GetAvailableRange(512, 1024, cb.callback()));
+  EXPECT_EQ(net::OK, result.net_error);
+  EXPECT_EQ(100, result.available_len);
+  EXPECT_EQ(512, result.start);
 
   // Now query next portion, [612, 1636). This now just should produce
   // [1024, 1636)
-  rv = entry->GetAvailableRange(612, 1024, &start, cb.callback());
-  EXPECT_EQ(612, cb.GetResult(rv));
-  EXPECT_EQ(1024, start);
+  result = cb.GetResult(entry->GetAvailableRange(612, 1024, cb.callback()));
+  EXPECT_EQ(net::OK, result.net_error);
+  EXPECT_EQ(612, result.available_len);
+  EXPECT_EQ(1024, result.start);
 
   // Do a continuous small write, this one at [3072, 3684).
   // This means the cache tracks [1024, 3072) via bitmaps and [3072, 3684)
@@ -1857,9 +1831,10 @@ TEST_F(DiskCacheEntryTest, GetAvailableRangeBlockFileDiscontinuous) {
                                         buf_small.get(), kSmallSize));
 
   // Query [2048, 4096). Should get [2048, 3684)
-  rv = entry->GetAvailableRange(2048, 2048, &start, cb.callback());
-  EXPECT_EQ(1636, cb.GetResult(rv));
-  EXPECT_EQ(2048, start);
+  result = cb.GetResult(entry->GetAvailableRange(2048, 2048, cb.callback()));
+  EXPECT_EQ(net::OK, result.net_error);
+  EXPECT_EQ(1636, result.available_len);
+  EXPECT_EQ(2048, result.start);
 
   // Now write at [4096, 4708). Since only one sub-kb thing is tracked, this
   // now tracks  [1024, 3072) via bitmaps and [4096, 4708) as the last write.
@@ -1867,22 +1842,26 @@ TEST_F(DiskCacheEntryTest, GetAvailableRangeBlockFileDiscontinuous) {
                                         buf_small.get(), kSmallSize));
 
   // Query [2048, 4096). Should get [2048, 3072)
-  rv = entry->GetAvailableRange(2048, 2048, &start, cb.callback());
-  EXPECT_EQ(1024, cb.GetResult(rv));
-  EXPECT_EQ(2048, start);
+  result = cb.GetResult(entry->GetAvailableRange(2048, 2048, cb.callback()));
+  EXPECT_EQ(net::OK, result.net_error);
+  EXPECT_EQ(1024, result.available_len);
+  EXPECT_EQ(2048, result.start);
 
   // Query 2K more after that: [3072, 5120). Should get [4096, 4708)
-  rv = entry->GetAvailableRange(3072, 2048, &start, cb.callback());
-  EXPECT_EQ(612, cb.GetResult(rv));
-  EXPECT_EQ(4096, start);
+  result = cb.GetResult(entry->GetAvailableRange(3072, 2048, cb.callback()));
+  EXPECT_EQ(net::OK, result.net_error);
+  EXPECT_EQ(612, result.available_len);
+  EXPECT_EQ(4096, result.start);
 
   // Also double-check that offsets within later children are correctly
   // computed.
   EXPECT_EQ(kSmallSize, WriteSparseData(entry, /* offset = */ 0x200400,
                                         buf_small.get(), kSmallSize));
-  rv = entry->GetAvailableRange(0x100000, 0x200000, &start, cb.callback());
-  EXPECT_EQ(kSmallSize, cb.GetResult(rv));
-  EXPECT_EQ(0x200400, start);
+  result =
+      cb.GetResult(entry->GetAvailableRange(0x100000, 0x200000, cb.callback()));
+  EXPECT_EQ(net::OK, result.net_error);
+  EXPECT_EQ(kSmallSize, result.available_len);
+  EXPECT_EQ(0x200400, result.start);
 
   entry->Close();
 }
@@ -1896,10 +1875,8 @@ TEST_F(DiskCacheEntryTest, SparseWriteDropped) {
   ASSERT_THAT(CreateEntry(key, &entry), IsOk());
 
   const int kSize = 180;
-  scoped_refptr<net::IOBuffer> buf_1 =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
-  scoped_refptr<net::IOBuffer> buf_2 =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
+  auto buf_1 = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
+  auto buf_2 = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
   CacheTestFillBuffer(buf_1->data(), kSize, false);
 
   // Do small writes (180 bytes) that get increasingly close to a 1024-byte
@@ -1908,42 +1885,46 @@ TEST_F(DiskCacheEntryTest, SparseWriteDropped) {
   int offset = 1024 - 500;
   int rv = 0;
   net::TestCompletionCallback cb;
-  int64_t start;
+  TestRangeResultCompletionCallback range_cb;
+  RangeResult result;
   for (int i = 0; i < 5; i++) {
     // Check result of last GetAvailableRange.
-    EXPECT_EQ(0, rv);
+    EXPECT_EQ(0, result.available_len);
 
     rv = entry->WriteSparseData(offset, buf_1.get(), kSize, cb.callback());
     EXPECT_EQ(kSize, cb.GetResult(rv));
 
-    rv = entry->GetAvailableRange(offset - 100, kSize, &start, cb.callback());
-    EXPECT_EQ(0, cb.GetResult(rv));
+    result = range_cb.GetResult(
+        entry->GetAvailableRange(offset - 100, kSize, range_cb.callback()));
+    EXPECT_EQ(net::OK, result.net_error);
+    EXPECT_EQ(0, result.available_len);
 
-    rv = entry->GetAvailableRange(offset, kSize, &start, cb.callback());
-    rv = cb.GetResult(rv);
-    if (!rv) {
+    result = range_cb.GetResult(
+        entry->GetAvailableRange(offset, kSize, range_cb.callback()));
+    if (!result.available_len) {
       rv = entry->ReadSparseData(offset, buf_2.get(), kSize, cb.callback());
       EXPECT_EQ(0, cb.GetResult(rv));
-      rv = 0;
     }
     offset += 1024 * i + 100;
   }
 
   // The last write started 100 bytes below a bundary, so there should be 80
   // bytes after the boundary.
-  EXPECT_EQ(80, rv);
-  EXPECT_EQ(1024 * 7, start);
-  rv = entry->ReadSparseData(start, buf_2.get(), kSize, cb.callback());
+  EXPECT_EQ(80, result.available_len);
+  EXPECT_EQ(1024 * 7, result.start);
+  rv = entry->ReadSparseData(result.start, buf_2.get(), kSize, cb.callback());
   EXPECT_EQ(80, cb.GetResult(rv));
   EXPECT_EQ(0, memcmp(buf_1.get()->data() + 100, buf_2.get()->data(), 80));
 
   // And even that part is dropped when another write changes the offset.
-  offset = start;
+  offset = result.start;
   rv = entry->WriteSparseData(0, buf_1.get(), kSize, cb.callback());
   EXPECT_EQ(kSize, cb.GetResult(rv));
 
-  rv = entry->GetAvailableRange(offset, kSize, &start, cb.callback());
-  EXPECT_EQ(0, cb.GetResult(rv));
+  result = range_cb.GetResult(
+      entry->GetAvailableRange(offset, kSize, range_cb.callback()));
+  EXPECT_EQ(net::OK, result.net_error);
+  EXPECT_EQ(0, result.available_len);
   entry->Close();
 }
 
@@ -1955,24 +1936,25 @@ TEST_F(DiskCacheEntryTest, SparseSquentialWriteNotDropped) {
   ASSERT_THAT(CreateEntry(key, &entry), IsOk());
 
   const int kSize = 180;
-  scoped_refptr<net::IOBuffer> buf_1 =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
-  scoped_refptr<net::IOBuffer> buf_2 =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
+  auto buf_1 = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
+  auto buf_2 = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
   CacheTestFillBuffer(buf_1->data(), kSize, false);
 
   // Any starting offset is fine as long as it is 1024-bytes aligned.
   int rv = 0;
+  RangeResult result;
   net::TestCompletionCallback cb;
-  int64_t start;
+  TestRangeResultCompletionCallback range_cb;
   int64_t offset = 1024 * 11;
   for (; offset < 20000; offset += kSize) {
     rv = entry->WriteSparseData(offset, buf_1.get(), kSize, cb.callback());
     EXPECT_EQ(kSize, cb.GetResult(rv));
 
-    rv = entry->GetAvailableRange(offset, kSize, &start, cb.callback());
-    EXPECT_EQ(kSize, cb.GetResult(rv));
-    EXPECT_EQ(offset, start);
+    result = range_cb.GetResult(
+        entry->GetAvailableRange(offset, kSize, range_cb.callback()));
+    EXPECT_EQ(net::OK, result.net_error);
+    EXPECT_EQ(kSize, result.available_len);
+    EXPECT_EQ(offset, result.start);
 
     rv = entry->ReadSparseData(offset, buf_2.get(), kSize, cb.callback());
     EXPECT_EQ(kSize, cb.GetResult(rv));
@@ -1985,9 +1967,11 @@ TEST_F(DiskCacheEntryTest, SparseSquentialWriteNotDropped) {
   // Verify again the last write made.
   ASSERT_THAT(OpenEntry(key, &entry), IsOk());
   offset -= kSize;
-  rv = entry->GetAvailableRange(offset, kSize, &start, cb.callback());
-  EXPECT_EQ(kSize, cb.GetResult(rv));
-  EXPECT_EQ(offset, start);
+  result = range_cb.GetResult(
+      entry->GetAvailableRange(offset, kSize, range_cb.callback()));
+  EXPECT_EQ(net::OK, result.net_error);
+  EXPECT_EQ(kSize, result.available_len);
+  EXPECT_EQ(offset, result.start);
 
   rv = entry->ReadSparseData(offset, buf_2.get(), kSize, cb.callback());
   EXPECT_EQ(kSize, cb.GetResult(rv));
@@ -2002,7 +1986,7 @@ void DiskCacheEntryTest::CouldBeSparse() {
   ASSERT_THAT(CreateEntry(key, &entry), IsOk());
 
   const int kSize = 16 * 1024;
-  scoped_refptr<net::IOBuffer> buf = base::MakeRefCounted<net::IOBuffer>(kSize);
+  auto buf = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
   CacheTestFillBuffer(buf->data(), kSize, false);
 
   // Write at offset 0x20F0000 (33 MB - 64 KB).
@@ -2048,10 +2032,8 @@ TEST_F(DiskCacheEntryTest, MemoryOnlyMisalignedSparseIO) {
   InitCache();
 
   const int kSize = 8192;
-  scoped_refptr<net::IOBuffer> buf_1 =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
-  scoped_refptr<net::IOBuffer> buf_2 =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
+  auto buf_1 = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
+  auto buf_2 = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
   CacheTestFillBuffer(buf_1->data(), kSize, false);
 
   std::string key("the first key");
@@ -2060,8 +2042,8 @@ TEST_F(DiskCacheEntryTest, MemoryOnlyMisalignedSparseIO) {
 
   // This loop writes back to back starting from offset 0 and 9000.
   for (int i = 0; i < kSize; i += 1024) {
-    scoped_refptr<net::WrappedIOBuffer> buf_3 =
-        base::MakeRefCounted<net::WrappedIOBuffer>(buf_1->data() + i);
+    auto buf_3 =
+        base::MakeRefCounted<net::WrappedIOBuffer>(buf_1->span().subspan(i));
     VerifySparseIO(entry, i, buf_3.get(), 1024, buf_2.get());
     VerifySparseIO(entry, 9000 + i, buf_3.get(), 1024, buf_2.get());
   }
@@ -2081,7 +2063,7 @@ TEST_F(DiskCacheEntryTest, MemoryOnlyMisalignedGetAvailableRange) {
   InitCache();
 
   const int kSize = 8192;
-  scoped_refptr<net::IOBuffer> buf = base::MakeRefCounted<net::IOBuffer>(kSize);
+  auto buf = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
   CacheTestFillBuffer(buf->data(), kSize, false);
 
   disk_cache::Entry* entry;
@@ -2100,40 +2082,46 @@ TEST_F(DiskCacheEntryTest, MemoryOnlyMisalignedGetAvailableRange) {
   EXPECT_EQ(8192, entry->WriteSparseData(50000, buf.get(), 8192,
                                          net::CompletionOnceCallback()));
 
-  int64_t start;
-  net::TestCompletionCallback cb;
+  TestRangeResultCompletionCallback cb;
   // Test that we stop at a discontinuous child at the second block.
-  int rv = entry->GetAvailableRange(0, 10000, &start, cb.callback());
-  EXPECT_EQ(1024, cb.GetResult(rv));
-  EXPECT_EQ(0, start);
+  RangeResult result =
+      cb.GetResult(entry->GetAvailableRange(0, 10000, cb.callback()));
+  EXPECT_EQ(net::OK, result.net_error);
+  EXPECT_EQ(1024, result.available_len);
+  EXPECT_EQ(0, result.start);
 
   // Test that number of bytes is reported correctly when we start from the
   // middle of a filled region.
-  rv = entry->GetAvailableRange(512, 10000, &start, cb.callback());
-  EXPECT_EQ(512, cb.GetResult(rv));
-  EXPECT_EQ(512, start);
+  result = cb.GetResult(entry->GetAvailableRange(512, 10000, cb.callback()));
+  EXPECT_EQ(net::OK, result.net_error);
+  EXPECT_EQ(512, result.available_len);
+  EXPECT_EQ(512, result.start);
 
   // Test that we found bytes in the child of next block.
-  rv = entry->GetAvailableRange(1024, 10000, &start, cb.callback());
-  EXPECT_EQ(1024, cb.GetResult(rv));
-  EXPECT_EQ(5120, start);
+  result = cb.GetResult(entry->GetAvailableRange(1024, 10000, cb.callback()));
+  EXPECT_EQ(net::OK, result.net_error);
+  EXPECT_EQ(1024, result.available_len);
+  EXPECT_EQ(5120, result.start);
 
   // Test that the desired length is respected. It starts within a filled
   // region.
-  rv = entry->GetAvailableRange(5500, 512, &start, cb.callback());
-  EXPECT_EQ(512, cb.GetResult(rv));
-  EXPECT_EQ(5500, start);
+  result = cb.GetResult(entry->GetAvailableRange(5500, 512, cb.callback()));
+  EXPECT_EQ(net::OK, result.net_error);
+  EXPECT_EQ(512, result.available_len);
+  EXPECT_EQ(5500, result.start);
 
   // Test that the desired length is respected. It starts before a filled
   // region.
-  rv = entry->GetAvailableRange(5000, 620, &start, cb.callback());
-  EXPECT_EQ(500, cb.GetResult(rv));
-  EXPECT_EQ(5120, start);
+  result = cb.GetResult(entry->GetAvailableRange(5000, 620, cb.callback()));
+  EXPECT_EQ(net::OK, result.net_error);
+  EXPECT_EQ(500, result.available_len);
+  EXPECT_EQ(5120, result.start);
 
   // Test that multiple blocks are scanned.
-  rv = entry->GetAvailableRange(40000, 20000, &start, cb.callback());
-  EXPECT_EQ(8192, cb.GetResult(rv));
-  EXPECT_EQ(50000, start);
+  result = cb.GetResult(entry->GetAvailableRange(40000, 20000, cb.callback()));
+  EXPECT_EQ(net::OK, result.net_error);
+  EXPECT_EQ(8192, result.available_len);
+  EXPECT_EQ(50000, result.start);
 
   entry->Close();
 }
@@ -2144,10 +2132,8 @@ void DiskCacheEntryTest::UpdateSparseEntry() {
   ASSERT_THAT(CreateEntry(key, &entry1), IsOk());
 
   const int kSize = 2048;
-  scoped_refptr<net::IOBuffer> buf_1 =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
-  scoped_refptr<net::IOBuffer> buf_2 =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
+  auto buf_1 = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
+  auto buf_2 = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
   CacheTestFillBuffer(buf_1->data(), kSize, false);
 
   // Write at offset 0.
@@ -2189,7 +2175,7 @@ void DiskCacheEntryTest::DoomSparseEntry() {
   ASSERT_THAT(CreateEntry(key2, &entry2), IsOk());
 
   const int kSize = 4 * 1024;
-  scoped_refptr<net::IOBuffer> buf = base::MakeRefCounted<net::IOBuffer>(kSize);
+  auto buf = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
   CacheTestFillBuffer(buf->data(), kSize, false);
 
   int64_t offset = 1024;
@@ -2228,7 +2214,7 @@ void DiskCacheEntryTest::DoomSparseEntry() {
       // Most likely we are waiting for the result of reading the sparse info
       // (it's always async on Posix so it is easy to miss). Unfortunately we
       // don't have any signal to watch for so we can only wait.
-      base::PlatformThread::Sleep(base::TimeDelta::FromMilliseconds(500));
+      base::PlatformThread::Sleep(base::Milliseconds(500));
       base::RunLoop().RunUntilIdle();
     }
     EXPECT_EQ(0, cache_->GetEntryCount());
@@ -2257,6 +2243,10 @@ class SparseTestCompletionCallback: public net::TestCompletionCallback {
       std::unique_ptr<disk_cache::Backend> cache)
       : cache_(std::move(cache)) {}
 
+  SparseTestCompletionCallback(const SparseTestCompletionCallback&) = delete;
+  SparseTestCompletionCallback& operator=(const SparseTestCompletionCallback&) =
+      delete;
+
  private:
   void SetResult(int result) override {
     cache_.reset();
@@ -2264,7 +2254,6 @@ class SparseTestCompletionCallback: public net::TestCompletionCallback {
   }
 
   std::unique_ptr<disk_cache::Backend> cache_;
-  DISALLOW_COPY_AND_ASSIGN(SparseTestCompletionCallback);
 };
 
 // Tests that we don't crash when the backend is deleted while we are working
@@ -2277,7 +2266,7 @@ TEST_F(DiskCacheEntryTest, DoomSparseEntry2) {
   ASSERT_THAT(CreateEntry(key, &entry), IsOk());
 
   const int kSize = 4 * 1024;
-  scoped_refptr<net::IOBuffer> buf = base::MakeRefCounted<net::IOBuffer>(kSize);
+  auto buf = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
   CacheTestFillBuffer(buf->data(), kSize, false);
 
   int64_t offset = 1024;
@@ -2291,7 +2280,7 @@ TEST_F(DiskCacheEntryTest, DoomSparseEntry2) {
 
   entry->Close();
   disk_cache::Backend* cache = cache_.get();
-  SparseTestCompletionCallback cb(std::move(cache_));
+  SparseTestCompletionCallback cb(TakeCache());
   int rv = cache->DoomEntry(key, net::HIGHEST, cb.callback());
   EXPECT_THAT(rv, IsError(net::ERR_IO_PENDING));
   EXPECT_THAT(cb.WaitForResult(), IsOk());
@@ -2306,8 +2295,7 @@ void DiskCacheEntryTest::PartialSparseEntry() {
   // of a sparse entry, at least to write a big range without leaving holes.
   const int kSize = 4 * 1024;
   const int kSmallSize = 128;
-  scoped_refptr<net::IOBuffer> buf1 =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
+  auto buf1 = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
   CacheTestFillBuffer(buf1->data(), kSize, false);
 
   // The first write is just to extend the entry. The third write occupies
@@ -2320,8 +2308,7 @@ void DiskCacheEntryTest::PartialSparseEntry() {
   entry->Close();
   ASSERT_THAT(OpenEntry(key, &entry), IsOk());
 
-  scoped_refptr<net::IOBuffer> buf2 =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
+  auto buf2 = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
   memset(buf2->data(), 0, kSize);
   EXPECT_EQ(0, ReadSparseData(entry, 8000, buf2.get(), kSize));
 
@@ -2338,53 +2325,64 @@ void DiskCacheEntryTest::PartialSparseEntry() {
   EXPECT_EQ(500, ReadSparseData(entry, kSize, buf2.get(), kSize));
   EXPECT_EQ(0, ReadSparseData(entry, 99, buf2.get(), kSize));
 
-  int rv;
-  int64_t start;
-  net::TestCompletionCallback cb;
+  TestRangeResultCompletionCallback cb;
+  RangeResult result;
   if (memory_only_ || simple_cache_mode_) {
-    rv = entry->GetAvailableRange(0, 600, &start, cb.callback());
-    EXPECT_EQ(100, cb.GetResult(rv));
-    EXPECT_EQ(500, start);
+    result = cb.GetResult(entry->GetAvailableRange(0, 600, cb.callback()));
+    EXPECT_EQ(net::OK, result.net_error);
+    EXPECT_EQ(100, result.available_len);
+    EXPECT_EQ(500, result.start);
   } else {
-    rv = entry->GetAvailableRange(0, 2048, &start, cb.callback());
-    EXPECT_EQ(1024, cb.GetResult(rv));
-    EXPECT_EQ(1024, start);
+    result = cb.GetResult(entry->GetAvailableRange(0, 2048, cb.callback()));
+    EXPECT_EQ(net::OK, result.net_error);
+    EXPECT_EQ(1024, result.available_len);
+    EXPECT_EQ(1024, result.start);
   }
-  rv = entry->GetAvailableRange(kSize, kSize, &start, cb.callback());
-  EXPECT_EQ(500, cb.GetResult(rv));
-  EXPECT_EQ(kSize, start);
-  rv = entry->GetAvailableRange(20 * 1024, 10000, &start, cb.callback());
+  result = cb.GetResult(entry->GetAvailableRange(kSize, kSize, cb.callback()));
+  EXPECT_EQ(net::OK, result.net_error);
+  EXPECT_EQ(500, result.available_len);
+  EXPECT_EQ(kSize, result.start);
+  result =
+      cb.GetResult(entry->GetAvailableRange(20 * 1024, 10000, cb.callback()));
+  EXPECT_EQ(net::OK, result.net_error);
   if (memory_only_ || simple_cache_mode_)
-    EXPECT_EQ(3616, cb.GetResult(rv));
+    EXPECT_EQ(3616, result.available_len);
   else
-    EXPECT_EQ(3072, cb.GetResult(rv));
+    EXPECT_EQ(3072, result.available_len);
 
-  EXPECT_EQ(20 * 1024, start);
+  EXPECT_EQ(20 * 1024, result.start);
 
   // 1. Query before a filled 1KB block.
   // 2. Query within a filled 1KB block.
   // 3. Query beyond a filled 1KB block.
   if (memory_only_ || simple_cache_mode_) {
-    rv = entry->GetAvailableRange(19400, kSize, &start, cb.callback());
-    EXPECT_EQ(3496, cb.GetResult(rv));
-    EXPECT_EQ(20000, start);
+    result =
+        cb.GetResult(entry->GetAvailableRange(19400, kSize, cb.callback()));
+    EXPECT_EQ(net::OK, result.net_error);
+    EXPECT_EQ(3496, result.available_len);
+    EXPECT_EQ(20000, result.start);
   } else {
-    rv = entry->GetAvailableRange(19400, kSize, &start, cb.callback());
-    EXPECT_EQ(3016, cb.GetResult(rv));
-    EXPECT_EQ(20480, start);
+    result =
+        cb.GetResult(entry->GetAvailableRange(19400, kSize, cb.callback()));
+    EXPECT_EQ(net::OK, result.net_error);
+    EXPECT_EQ(3016, result.available_len);
+    EXPECT_EQ(20480, result.start);
   }
-  rv = entry->GetAvailableRange(3073, kSize, &start, cb.callback());
-  EXPECT_EQ(1523, cb.GetResult(rv));
-  EXPECT_EQ(3073, start);
-  rv = entry->GetAvailableRange(4600, kSize, &start, cb.callback());
-  EXPECT_EQ(0, cb.GetResult(rv));
-  EXPECT_EQ(4600, start);
+  result = cb.GetResult(entry->GetAvailableRange(3073, kSize, cb.callback()));
+  EXPECT_EQ(net::OK, result.net_error);
+  EXPECT_EQ(1523, result.available_len);
+  EXPECT_EQ(3073, result.start);
+  result = cb.GetResult(entry->GetAvailableRange(4600, kSize, cb.callback()));
+  EXPECT_EQ(net::OK, result.net_error);
+  EXPECT_EQ(0, result.available_len);
+  EXPECT_EQ(4600, result.start);
 
   // Now make another write and verify that there is no hole in between.
   EXPECT_EQ(kSize, WriteSparseData(entry, 500 + kSize, buf1.get(), kSize));
-  rv = entry->GetAvailableRange(1024, 10000, &start, cb.callback());
-  EXPECT_EQ(7 * 1024 + 500, cb.GetResult(rv));
-  EXPECT_EQ(1024, start);
+  result = cb.GetResult(entry->GetAvailableRange(1024, 10000, cb.callback()));
+  EXPECT_EQ(net::OK, result.net_error);
+  EXPECT_EQ(7 * 1024 + 500, result.available_len);
+  EXPECT_EQ(1024, result.start);
   EXPECT_EQ(kSize, ReadSparseData(entry, kSize, buf2.get(), kSize));
   EXPECT_EQ(0, memcmp(buf2->data(), buf1->data() + kSize - 500, 500));
   EXPECT_EQ(0, memcmp(buf2->data() + 500, buf1->data(), kSize - 500));
@@ -2409,7 +2407,7 @@ void DiskCacheEntryTest::SparseInvalidArg() {
   ASSERT_THAT(CreateEntry(key, &entry), IsOk());
 
   const int kSize = 2048;
-  scoped_refptr<net::IOBuffer> buf = base::MakeRefCounted<net::IOBuffer>(kSize);
+  auto buf = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
   CacheTestFillBuffer(buf->data(), kSize, false);
 
   EXPECT_EQ(net::ERR_INVALID_ARGUMENT,
@@ -2462,11 +2460,10 @@ void DiskCacheEntryTest::SparseClipEnd(int64_t max_index,
   ASSERT_THAT(CreateEntry(key, &entry), IsOk());
 
   const int kSize = 1024;
-  scoped_refptr<net::IOBuffer> buf = base::MakeRefCounted<net::IOBuffer>(kSize);
+  auto buf = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
   CacheTestFillBuffer(buf->data(), kSize, false);
 
-  scoped_refptr<net::IOBuffer> read_buf =
-      base::MakeRefCounted<net::IOBuffer>(kSize * 2);
+  auto read_buf = base::MakeRefCounted<net::IOBufferWithSize>(kSize * 2);
   CacheTestFillBuffer(read_buf->data(), kSize * 2, false);
 
   const int64_t kOffset = max_index - kSize;
@@ -2483,17 +2480,17 @@ void DiskCacheEntryTest::SparseClipEnd(int64_t max_index,
     EXPECT_EQ(0, memcmp(buf->data(), read_buf->data(), kSize));
   }
 
-  int64_t out_start = 0;
-  net::TestCompletionCallback cb;
-  rv = entry->GetAvailableRange(kOffset - kSize, kSize * 3, &out_start,
-                                cb.callback());
-  rv = cb.GetResult(rv);
+  TestRangeResultCompletionCallback cb;
+  RangeResult result = cb.GetResult(
+      entry->GetAvailableRange(kOffset - kSize, kSize * 3, cb.callback()));
   if (expect_unsupported) {
     // GetAvailableRange just returns nothing found, not an error.
-    EXPECT_EQ(rv, 0);
+    EXPECT_EQ(net::OK, result.net_error);
+    EXPECT_EQ(result.available_len, 0);
   } else {
-    EXPECT_EQ(kSize, rv);
-    EXPECT_EQ(kOffset, out_start);
+    EXPECT_EQ(net::OK, result.net_error);
+    EXPECT_EQ(kSize, result.available_len);
+    EXPECT_EQ(kOffset, result.start);
   }
 
   entry->Close();
@@ -2504,7 +2501,7 @@ TEST_F(DiskCacheEntryTest, SparseClipEnd) {
 
   // Blockfile refuses to deal with sparse indices over 64GiB.
   SparseClipEnd(std::numeric_limits<int64_t>::max(),
-                /* expect_unsupported = */ true);
+                /*expected_unsupported=*/true);
 }
 
 TEST_F(DiskCacheEntryTest, SparseClipEnd2) {
@@ -2513,7 +2510,7 @@ TEST_F(DiskCacheEntryTest, SparseClipEnd2) {
   const int64_t kLimit = 64ll * 1024 * 1024 * 1024;
   // Separate test for blockfile for indices right at the edge of its address
   // space limit. kLimit must match kMaxEndOffset in sparse_control.cc
-  SparseClipEnd(kLimit, /* expect_unsupported = */ false);
+  SparseClipEnd(kLimit, /*expected_unsupported=*/false);
 
   // Test with things after kLimit, too, which isn't an issue for backends
   // supporting the entire 64-bit offset range.
@@ -2522,7 +2519,7 @@ TEST_F(DiskCacheEntryTest, SparseClipEnd2) {
   ASSERT_THAT(CreateEntry(key, &entry), IsOk());
 
   const int kSize = 1024;
-  scoped_refptr<net::IOBuffer> buf = base::MakeRefCounted<net::IOBuffer>(kSize);
+  auto buf = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
   CacheTestFillBuffer(buf->data(), kSize, false);
 
   // Try to write after --- fails.
@@ -2534,11 +2531,11 @@ TEST_F(DiskCacheEntryTest, SparseClipEnd2) {
   EXPECT_EQ(net::ERR_CACHE_OPERATION_NOT_SUPPORTED, rv);
 
   // GetAvailableRange just returns nothing.
-  net::TestCompletionCallback cb;
-  int64_t out_start = 0;
-  rv = entry->GetAvailableRange(kLimit, kSize * 3, &out_start, cb.callback());
-  rv = cb.GetResult(rv);
-  EXPECT_EQ(rv, 0);
+  TestRangeResultCompletionCallback cb;
+  RangeResult result =
+      cb.GetResult(entry->GetAvailableRange(kLimit, kSize * 3, cb.callback()));
+  EXPECT_EQ(net::OK, result.net_error);
+  EXPECT_EQ(0, result.available_len);
   entry->Close();
 }
 
@@ -2546,14 +2543,14 @@ TEST_F(DiskCacheEntryTest, MemoryOnlySparseClipEnd) {
   SetMemoryOnlyMode();
   InitCache();
   SparseClipEnd(std::numeric_limits<int64_t>::max(),
-                /* expect_unsupported = */ false);
+                /* expected_unsupported = */ false);
 }
 
 TEST_F(DiskCacheEntryTest, SimpleSparseClipEnd) {
   SetSimpleCacheMode();
   InitCache();
   SparseClipEnd(std::numeric_limits<int64_t>::max(),
-                /* expect_unsupported = */ false);
+                /* expected_unsupported = */ false);
 }
 
 // Tests that corrupt sparse children are removed automatically.
@@ -2564,8 +2561,7 @@ TEST_F(DiskCacheEntryTest, CleanupSparseEntry) {
   ASSERT_THAT(CreateEntry(key, &entry), IsOk());
 
   const int kSize = 4 * 1024;
-  scoped_refptr<net::IOBuffer> buf1 =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
+  auto buf1 = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
   CacheTestFillBuffer(buf1->data(), kSize, false);
 
   const int k1Meg = 1024 * 1024;
@@ -2577,16 +2573,16 @@ TEST_F(DiskCacheEntryTest, CleanupSparseEntry) {
 
   std::unique_ptr<TestIterator> iter = CreateIterator();
   int count = 0;
-  std::string child_key[2];
+  std::string child_keys[2];
   while (iter->OpenNextEntry(&entry) == net::OK) {
     ASSERT_TRUE(entry != nullptr);
     // Writing to an entry will alter the LRU list and invalidate the iterator.
     if (entry->GetKey() != key && count < 2)
-      child_key[count++] = entry->GetKey();
+      child_keys[count++] = entry->GetKey();
     entry->Close();
   }
-  for (int i = 0; i < 2; i++) {
-    ASSERT_THAT(OpenEntry(child_key[i], &entry), IsOk());
+  for (const auto& child_key : child_keys) {
+    ASSERT_THAT(OpenEntry(child_key, &entry), IsOk());
     // Overwrite the header's magic and signature.
     EXPECT_EQ(12, WriteData(entry, 2, 0, buf1.get(), 12, false));
     entry->Close();
@@ -2616,18 +2612,18 @@ TEST_F(DiskCacheEntryTest, CancelSparseIO) {
   ASSERT_THAT(CreateEntry(key, &entry), IsOk());
 
   const int kSize = 40 * 1024;
-  scoped_refptr<net::IOBuffer> buf = base::MakeRefCounted<net::IOBuffer>(kSize);
+  auto buf = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
   CacheTestFillBuffer(buf->data(), kSize, false);
 
   // This will open and write two "real" entries.
-  net::TestCompletionCallback cb1, cb2, cb3, cb4, cb5;
+  net::TestCompletionCallback cb1, cb2, cb3, cb4;
   int rv = entry->WriteSparseData(
       1024 * 1024 - 4096, buf.get(), kSize, cb1.callback());
   EXPECT_THAT(rv, IsError(net::ERR_IO_PENDING));
 
-  int64_t offset = 0;
-  rv = entry->GetAvailableRange(offset, kSize, &offset, cb5.callback());
-  rv = cb5.GetResult(rv);
+  TestRangeResultCompletionCallback cb5;
+  RangeResult result =
+      cb5.GetResult(entry->GetAvailableRange(0, kSize, cb5.callback()));
   if (!cb1.have_result()) {
     // We may or may not have finished writing to the entry. If we have not,
     // we cannot start another operation at this time.
@@ -2646,10 +2642,10 @@ TEST_F(DiskCacheEntryTest, CancelSparseIO) {
 
   if (!cb1.have_result()) {
     EXPECT_EQ(net::ERR_CACHE_OPERATION_NOT_SUPPORTED,
-              entry->ReadSparseData(offset, buf.get(), kSize,
+              entry->ReadSparseData(result.start, buf.get(), kSize,
                                     net::CompletionOnceCallback()));
     EXPECT_EQ(net::ERR_CACHE_OPERATION_NOT_SUPPORTED,
-              entry->WriteSparseData(offset, buf.get(), kSize,
+              entry->WriteSparseData(result.start, buf.get(), kSize,
                                      net::CompletionOnceCallback()));
   }
 
@@ -2661,8 +2657,10 @@ TEST_F(DiskCacheEntryTest, CancelSparseIO) {
   EXPECT_THAT(cb3.WaitForResult(), IsOk());
   EXPECT_THAT(cb4.WaitForResult(), IsOk());
 
-  rv = entry->GetAvailableRange(offset, kSize, &offset, cb5.callback());
-  EXPECT_EQ(0, cb5.GetResult(rv));
+  result = cb5.GetResult(
+      entry->GetAvailableRange(result.start, kSize, cb5.callback()));
+  EXPECT_EQ(net::OK, result.net_error);
+  EXPECT_EQ(0, result.available_len);
   entry->Close();
 }
 
@@ -2850,8 +2848,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheReuseInternalEntry) {
 
 TEST_F(DiskCacheEntryTest, SimpleCacheGiantEntry) {
   const int kBufSize = 32 * 1024;
-  scoped_refptr<net::IOBuffer> buffer =
-      base::MakeRefCounted<net::IOBuffer>(kBufSize);
+  auto buffer = base::MakeRefCounted<net::IOBufferWithSize>(kBufSize);
   CacheTestFillBuffer(buffer->data(), kBufSize, false);
 
   // Make sure SimpleCache can write up to 5MiB entry even with a 20MiB cache
@@ -2951,8 +2948,7 @@ bool DiskCacheEntryTest::SimpleCacheMakeBadChecksumEntry(const std::string& key,
     return false;
   }
 
-  scoped_refptr<net::IOBuffer> buffer =
-      base::MakeRefCounted<net::IOBuffer>(data_size);
+  auto buffer = base::MakeRefCounted<net::IOBufferWithSize>(data_size);
   memset(buffer->data(), 'A', data_size);
 
   EXPECT_EQ(data_size, WriteData(entry, 1, 0, buffer.get(), data_size, false));
@@ -2989,8 +2985,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheBadChecksum) {
   ScopedEntryPtr entry_closer(entry);
 
   EXPECT_GE(kLargeSize, entry->GetDataSize(1));
-  scoped_refptr<net::IOBuffer> read_buffer =
-      base::MakeRefCounted<net::IOBuffer>(kLargeSize);
+  auto read_buffer = base::MakeRefCounted<net::IOBufferWithSize>(kLargeSize);
   EXPECT_EQ(net::ERR_CACHE_CHECKSUM_MISMATCH,
             ReadData(entry, 1, 0, read_buffer.get(), kLargeSize));
 }
@@ -3011,8 +3006,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheErrorThenDoom) {
   ScopedEntryPtr entry_closer(entry);
 
   EXPECT_GE(kLargeSize, entry->GetDataSize(1));
-  scoped_refptr<net::IOBuffer> read_buffer =
-      base::MakeRefCounted<net::IOBuffer>(kLargeSize);
+  auto read_buffer = base::MakeRefCounted<net::IOBufferWithSize>(kLargeSize);
   EXPECT_EQ(net::ERR_CACHE_CHECKSUM_MISMATCH,
             ReadData(entry, 1, 0, read_buffer.get(), kLargeSize));
   entry->Doom();  // Should not crash.
@@ -3029,8 +3023,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheCreateAfterDiskLayerDoom) {
 
   const char key[] = "the key";
   const int kSize1 = 10;
-  scoped_refptr<net::IOBuffer> buffer1 =
-      base::MakeRefCounted<net::IOBuffer>(kSize1);
+  auto buffer1 = base::MakeRefCounted<net::IOBufferWithSize>(kSize1);
   CacheTestFillBuffer(buffer1->data(), kSize1, false);
 
   disk_cache::Entry* entry = nullptr;
@@ -3118,8 +3111,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheDoomErrorRace) {
 
   const char kKey[] = "the first key";
   const int kSize1 = 10;
-  scoped_refptr<net::IOBuffer> buffer1 =
-      base::MakeRefCounted<net::IOBuffer>(kSize1);
+  auto buffer1 = base::MakeRefCounted<net::IOBufferWithSize>(kSize1);
   CacheTestFillBuffer(buffer1->data(), kSize1, false);
 
   disk_cache::Entry* entry = nullptr;
@@ -3301,14 +3293,10 @@ TEST_F(DiskCacheEntryTest, SimpleCacheOptimistic) {
   int expected = 0;
   const int kSize1 = 10;
   const int kSize2 = 20;
-  scoped_refptr<net::IOBuffer> buffer1 =
-      base::MakeRefCounted<net::IOBuffer>(kSize1);
-  scoped_refptr<net::IOBuffer> buffer1_read =
-      base::MakeRefCounted<net::IOBuffer>(kSize1);
-  scoped_refptr<net::IOBuffer> buffer2 =
-      base::MakeRefCounted<net::IOBuffer>(kSize2);
-  scoped_refptr<net::IOBuffer> buffer2_read =
-      base::MakeRefCounted<net::IOBuffer>(kSize2);
+  auto buffer1 = base::MakeRefCounted<net::IOBufferWithSize>(kSize1);
+  auto buffer1_read = base::MakeRefCounted<net::IOBufferWithSize>(kSize1);
+  auto buffer2 = base::MakeRefCounted<net::IOBufferWithSize>(kSize2);
+  auto buffer2_read = base::MakeRefCounted<net::IOBufferWithSize>(kSize2);
   CacheTestFillBuffer(buffer1->data(), kSize1, false);
   CacheTestFillBuffer(buffer2->data(), kSize2, false);
 
@@ -3445,8 +3433,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheOptimistic4) {
 
   net::TestCompletionCallback cb;
   const int kSize1 = 10;
-  scoped_refptr<net::IOBuffer> buffer1 =
-      base::MakeRefCounted<net::IOBuffer>(kSize1);
+  auto buffer1 = base::MakeRefCounted<net::IOBufferWithSize>(kSize1);
   CacheTestFillBuffer(buffer1->data(), kSize1, false);
 
   EntryResult result =
@@ -3514,8 +3501,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheOptimistic5) {
 
   net::TestCompletionCallback cb;
   const int kSize1 = 10;
-  scoped_refptr<net::IOBuffer> buffer1 =
-      base::MakeRefCounted<net::IOBuffer>(kSize1);
+  auto buffer1 = base::MakeRefCounted<net::IOBufferWithSize>(kSize1);
   CacheTestFillBuffer(buffer1->data(), kSize1, false);
 
   EntryResult result =
@@ -3549,10 +3535,8 @@ TEST_F(DiskCacheEntryTest, SimpleCacheOptimistic6) {
 
   net::TestCompletionCallback cb;
   const int kSize1 = 10;
-  scoped_refptr<net::IOBuffer> buffer1 =
-      base::MakeRefCounted<net::IOBuffer>(kSize1);
-  scoped_refptr<net::IOBuffer> buffer1_read =
-      base::MakeRefCounted<net::IOBuffer>(kSize1);
+  auto buffer1 = base::MakeRefCounted<net::IOBufferWithSize>(kSize1);
+  auto buffer1_read = base::MakeRefCounted<net::IOBufferWithSize>(kSize1);
   CacheTestFillBuffer(buffer1->data(), kSize1, false);
 
   EntryResult result =
@@ -3596,8 +3580,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheOptimisticWriteReleases) {
   ScopedEntryPtr entry_closer(entry);
 
   const int kWriteSize = 512;
-  scoped_refptr<net::IOBuffer> buffer1 =
-      base::MakeRefCounted<net::IOBuffer>(kWriteSize);
+  auto buffer1 = base::MakeRefCounted<net::IOBufferWithSize>(kWriteSize);
   EXPECT_TRUE(buffer1->HasOneRef());
   CacheTestFillBuffer(buffer1->data(), kWriteSize, false);
 
@@ -3624,8 +3607,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheCreateDoomRace) {
 
   net::TestCompletionCallback cb;
   const int kSize1 = 10;
-  scoped_refptr<net::IOBuffer> buffer1 =
-      base::MakeRefCounted<net::IOBuffer>(kSize1);
+  auto buffer1 = base::MakeRefCounted<net::IOBufferWithSize>(kSize1);
   CacheTestFillBuffer(buffer1->data(), kSize1, false);
 
   EntryResult result =
@@ -3713,15 +3695,13 @@ TEST_F(DiskCacheEntryTest, SimpleCacheDoomCreateOptimistic) {
 
   // Do some I/O to make sure it's alive.
   const int kSize = 2048;
-  scoped_refptr<net::IOBuffer> buf_1 =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
-  scoped_refptr<net::IOBuffer> buf_2 =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
+  auto buf_1 = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
+  auto buf_2 = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
   CacheTestFillBuffer(buf_1->data(), kSize, false);
 
-  EXPECT_EQ(kSize, WriteData(entry2, /* stream_index = */ 1, /* offset = */ 0,
+  EXPECT_EQ(kSize, WriteData(entry2, /* index = */ 1, /* offset = */ 0,
                              buf_1.get(), kSize, /* truncate = */ false));
-  EXPECT_EQ(kSize, ReadData(entry2, /* stream_index = */ 1, /* offset = */ 0,
+  EXPECT_EQ(kSize, ReadData(entry2, /* index = */ 1, /* offset = */ 0,
                             buf_2.get(), kSize));
 
   doom_callback.WaitForResult();
@@ -3929,8 +3909,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheEvictOldEntries) {
   std::string key1("the first key");
   disk_cache::Entry* entry;
   ASSERT_THAT(CreateEntry(key1, &entry), IsOk());
-  scoped_refptr<net::IOBuffer> buffer =
-      base::MakeRefCounted<net::IOBuffer>(kWriteSize);
+  auto buffer = base::MakeRefCounted<net::IOBufferWithSize>(kWriteSize);
   CacheTestFillBuffer(buffer->data(), kWriteSize, false);
   EXPECT_EQ(kWriteSize,
             WriteData(entry, 1, 0, buffer.get(), kWriteSize, false));
@@ -3980,8 +3959,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheInFlightTruncate)  {
   // the point of the test which coverred two concurrent disk ops, with
   // portions of work happening on the workpool.
   const int kBufferSize = 50000;
-  scoped_refptr<net::IOBuffer> write_buffer =
-      base::MakeRefCounted<net::IOBuffer>(kBufferSize);
+  auto write_buffer = base::MakeRefCounted<net::IOBufferWithSize>(kBufferSize);
   CacheTestFillBuffer(write_buffer->data(), kBufferSize, false);
 
   disk_cache::Entry* entry = nullptr;
@@ -4000,8 +3978,8 @@ TEST_F(DiskCacheEntryTest, SimpleCacheInFlightTruncate)  {
 
   // Make a short read.
   const int kReadBufferSize = 512;
-  scoped_refptr<net::IOBuffer> read_buffer =
-      base::MakeRefCounted<net::IOBuffer>(kReadBufferSize);
+  auto read_buffer =
+      base::MakeRefCounted<net::IOBufferWithSize>(kReadBufferSize);
   CallbackTest read_callback(&helper, false);
   EXPECT_EQ(net::ERR_IO_PENDING,
             entry->ReadData(1, 0, read_buffer.get(), kReadBufferSize,
@@ -4010,8 +3988,8 @@ TEST_F(DiskCacheEntryTest, SimpleCacheInFlightTruncate)  {
   ++expected;
 
   // Truncate the entry to the length of that read.
-  scoped_refptr<net::IOBuffer> truncate_buffer =
-      base::MakeRefCounted<net::IOBuffer>(kReadBufferSize);
+  auto truncate_buffer =
+      base::MakeRefCounted<net::IOBufferWithSize>(kReadBufferSize);
   CacheTestFillBuffer(truncate_buffer->data(), kReadBufferSize, false);
   CallbackTest truncate_callback(&helper, false);
   EXPECT_EQ(
@@ -4046,8 +4024,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheInFlightRead) {
   ScopedEntryPtr entry_closer(entry);
 
   const int kBufferSize = 1024;
-  scoped_refptr<net::IOBuffer> write_buffer =
-      base::MakeRefCounted<net::IOBuffer>(kBufferSize);
+  auto write_buffer = base::MakeRefCounted<net::IOBufferWithSize>(kBufferSize);
   CacheTestFillBuffer(write_buffer->data(), kBufferSize, false);
 
   MessageLoopHelper helper;
@@ -4061,8 +4038,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheInFlightRead) {
                              true));
   ++expected;
 
-  scoped_refptr<net::IOBuffer> read_buffer =
-      base::MakeRefCounted<net::IOBuffer>(kBufferSize);
+  auto read_buffer = base::MakeRefCounted<net::IOBufferWithSize>(kBufferSize);
   CallbackTest read_callback(&helper, false);
   EXPECT_EQ(net::ERR_IO_PENDING,
             entry->ReadData(1, 0, read_buffer.get(), kBufferSize,
@@ -4116,10 +4092,8 @@ TEST_F(DiskCacheEntryTest, SimpleCacheMultipleReadersCheckCRC2) {
   int size = 50000;
   ASSERT_TRUE(SimpleCacheMakeBadChecksumEntry(key, size));
 
-  scoped_refptr<net::IOBuffer> read_buffer1 =
-      base::MakeRefCounted<net::IOBuffer>(size);
-  scoped_refptr<net::IOBuffer> read_buffer2 =
-      base::MakeRefCounted<net::IOBuffer>(size);
+  auto read_buffer1 = base::MakeRefCounted<net::IOBufferWithSize>(size);
+  auto read_buffer2 = base::MakeRefCounted<net::IOBufferWithSize>(size);
 
   // Advance the first reader a little.
   disk_cache::Entry* entry = nullptr;
@@ -4154,8 +4128,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheReadCombineCRC) {
 
   const int kHalfSize = 200;
   const int kSize = 2 * kHalfSize;
-  scoped_refptr<net::IOBuffer> buffer1 =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
+  auto buffer1 = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
   CacheTestFillBuffer(buffer1->data(), kSize, false);
   disk_cache::Entry* entry = nullptr;
 
@@ -4172,16 +4145,14 @@ TEST_F(DiskCacheEntryTest, SimpleCacheReadCombineCRC) {
   // Read the first half of the data.
   int offset = 0;
   int buf_len = kHalfSize;
-  scoped_refptr<net::IOBuffer> buffer1_read1 =
-      base::MakeRefCounted<net::IOBuffer>(buf_len);
+  auto buffer1_read1 = base::MakeRefCounted<net::IOBufferWithSize>(buf_len);
   EXPECT_EQ(buf_len, ReadData(entry2, 1, offset, buffer1_read1.get(), buf_len));
   EXPECT_EQ(0, memcmp(buffer1->data(), buffer1_read1->data(), buf_len));
 
   // Read the second half of the data.
   offset = buf_len;
   buf_len = kHalfSize;
-  scoped_refptr<net::IOBuffer> buffer1_read2 =
-      base::MakeRefCounted<net::IOBuffer>(buf_len);
+  auto buffer1_read2 = base::MakeRefCounted<net::IOBufferWithSize>(buf_len);
   EXPECT_EQ(buf_len, ReadData(entry2, 1, offset, buffer1_read2.get(), buf_len));
   char* buffer1_data = buffer1->data() + offset;
   EXPECT_EQ(0, memcmp(buffer1_data, buffer1_read2->data(), buf_len));
@@ -4207,10 +4178,8 @@ TEST_F(DiskCacheEntryTest, SimpleCacheNonSequentialWrite) {
 
   const int kHalfSize = 200;
   const int kSize = 2 * kHalfSize;
-  scoped_refptr<net::IOBuffer> buffer1 =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
-  scoped_refptr<net::IOBuffer> buffer2 =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
+  auto buffer1 = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
+  auto buffer2 = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
   CacheTestFillBuffer(buffer1->data(), kSize, false);
   char* buffer1_data = buffer1->data() + kHalfSize;
   memcpy(buffer2->data(), buffer1_data, kHalfSize);
@@ -4235,8 +4204,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheNonSequentialWrite) {
 
     ASSERT_THAT(OpenEntry(key, &entry), IsOk());
 
-    scoped_refptr<net::IOBuffer> buffer1_read1 =
-        base::MakeRefCounted<net::IOBuffer>(kSize);
+    auto buffer1_read1 = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
     EXPECT_EQ(kSize, ReadData(entry, i, 0, buffer1_read1.get(), kSize));
     EXPECT_EQ(0, memcmp(buffer1->data(), buffer1_read1->data(), kSize));
     // Check that we are not leaking.
@@ -4254,10 +4222,8 @@ TEST_F(DiskCacheEntryTest, SimpleCacheStream1SizeChanges) {
   disk_cache::Entry* entry = nullptr;
   const std::string key("the key");
   const int kSize = 100;
-  scoped_refptr<net::IOBuffer> buffer =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
-  scoped_refptr<net::IOBuffer> buffer_read =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
+  auto buffer = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
+  auto buffer_read = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
   CacheTestFillBuffer(buffer->data(), kSize, false);
 
   ASSERT_THAT(CreateEntry(key, &entry), IsOk());
@@ -4301,7 +4267,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheStream1SizeChanges) {
   EXPECT_TRUE((eof_record.flags & disk_cache::SimpleFileEOF::FLAG_HAS_CRC32) ==
               disk_cache::SimpleFileEOF::FLAG_HAS_CRC32);
 
-  buffer_read = base::MakeRefCounted<net::IOBuffer>(kSize);
+  buffer_read = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
   EXPECT_EQ(kSize, ReadData(entry, 0, 0, buffer_read.get(), kSize));
   EXPECT_EQ(0, memcmp(buffer->data(), buffer_read->data(), kSize));
 
@@ -4312,7 +4278,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheStream1SizeChanges) {
   entry->Close();
 
   // Check that stream0 data has not been modified.
-  buffer_read = base::MakeRefCounted<net::IOBuffer>(kSize);
+  buffer_read = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
   ASSERT_THAT(OpenEntry(key, &entry), IsOk());
   EXPECT_EQ(kSize, ReadData(entry, 0, 0, buffer_read.get(), kSize));
   EXPECT_EQ(0, memcmp(buffer->data(), buffer_read->data(), kSize));
@@ -4333,10 +4299,8 @@ TEST_F(DiskCacheEntryTest, SimpleCacheCRCRewrite) {
 
   const int kHalfSize = 200;
   const int kSize = 2 * kHalfSize;
-  scoped_refptr<net::IOBuffer> buffer1 =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
-  scoped_refptr<net::IOBuffer> buffer2 =
-      base::MakeRefCounted<net::IOBuffer>(kHalfSize);
+  auto buffer1 = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
+  auto buffer2 = base::MakeRefCounted<net::IOBufferWithSize>(kHalfSize);
   CacheTestFillBuffer(buffer1->data(), kSize, false);
   CacheTestFillBuffer(buffer2->data(), kHalfSize, false);
 
@@ -4360,8 +4324,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheCRCRewrite) {
 
     ASSERT_THAT(OpenEntry(key, &entry), IsOk());
 
-    scoped_refptr<net::IOBuffer> buffer1_read1 =
-        base::MakeRefCounted<net::IOBuffer>(kSize);
+    auto buffer1_read1 = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
     EXPECT_EQ(kSize, ReadData(entry, i, 0, buffer1_read1.get(), kSize));
     EXPECT_EQ(0, memcmp(buffer1->data(), buffer1_read1->data(), kHalfSize));
     EXPECT_EQ(
@@ -4391,8 +4354,7 @@ void DiskCacheEntryTest::CreateEntryWithHeaderBodyAndSideData(
     const std::string& key,
     int data_size) {
   // Use one buffer for simplicity.
-  scoped_refptr<net::IOBuffer> buffer =
-      base::MakeRefCounted<net::IOBuffer>(data_size);
+  auto buffer = base::MakeRefCounted<net::IOBufferWithSize>(data_size);
   CacheTestFillBuffer(buffer->data(), data_size, false);
 
   disk_cache::Entry* entry = nullptr;
@@ -4421,11 +4383,10 @@ void DiskCacheEntryTest::TruncateFileFromEnd(int file_index,
 void DiskCacheEntryTest::UseAfterBackendDestruction() {
   disk_cache::Entry* entry = nullptr;
   ASSERT_THAT(CreateEntry("the first key", &entry), IsOk());
-  cache_.reset();
+  ResetCaches();
 
   const int kSize = 100;
-  scoped_refptr<net::IOBuffer> buffer =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
+  auto buffer = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
   CacheTestFillBuffer(buffer->data(), kSize, false);
 
   // Do some writes and reads, but don't change the result. We're OK
@@ -4439,15 +4400,14 @@ void DiskCacheEntryTest::UseAfterBackendDestruction() {
 
 void DiskCacheEntryTest::CloseSparseAfterBackendDestruction() {
   const int kSize = 100;
-  scoped_refptr<net::IOBuffer> buffer =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
+  auto buffer = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
   CacheTestFillBuffer(buffer->data(), kSize, false);
 
   disk_cache::Entry* entry = nullptr;
   ASSERT_THAT(CreateEntry("the first key", &entry), IsOk());
   WriteSparseData(entry, 20000, buffer.get(), kSize);
 
-  cache_.reset();
+  ResetCaches();
 
   // This call shouldn't DCHECK or crash.
   entry->Close();
@@ -4482,8 +4442,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheOmittedThirdStream2) {
   const int kHalfSize = 8;
   const int kSize = kHalfSize * 2;
   const char key[] = "key";
-  scoped_refptr<net::IOBuffer> buffer =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
+  auto buffer = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
   CacheTestFillBuffer(buffer->data(), kHalfSize, false);
 
   disk_cache::Entry* entry;
@@ -4508,10 +4467,8 @@ TEST_F(DiskCacheEntryTest, SimpleCacheOmittedThirdStream3) {
   const int kHalfSize = 8;
   const int kSize = kHalfSize * 2;
   const char key[] = "key";
-  scoped_refptr<net::IOBuffer> buffer1 =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
-  scoped_refptr<net::IOBuffer> buffer2 =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
+  auto buffer1 = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
+  auto buffer2 = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
   CacheTestFillBuffer(buffer1->data(), kHalfSize, false);
 
   disk_cache::Entry* entry;
@@ -4544,10 +4501,8 @@ TEST_F(DiskCacheEntryTest, SimpleCacheOmittedThirdStream4) {
   const int kHalfSize = 8;
   const int kSize = kHalfSize * 2;
   const char key[] = "key";
-  scoped_refptr<net::IOBuffer> buffer1 =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
-  scoped_refptr<net::IOBuffer> buffer2 =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
+  auto buffer1 = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
+  auto buffer2 = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
   CacheTestFillBuffer(buffer1->data(), kHalfSize, false);
 
   disk_cache::Entry* entry;
@@ -4582,8 +4537,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheOmittedThirdStream5) {
   const int kHalfSize = 8;
   const int kSize = kHalfSize * 2;
   const char key[] = "key";
-  scoped_refptr<net::IOBuffer> buffer =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
+  auto buffer = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
   CacheTestFillBuffer(buffer->data(), kHalfSize, false);
 
   disk_cache::Entry* entry;
@@ -4609,10 +4563,8 @@ TEST_F(DiskCacheEntryTest, SimpleCacheDoomOptimisticWritesRace) {
   const char key[] = "the first key";
 
   const int kSize = 200;
-  scoped_refptr<net::IOBuffer> buffer1 =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
-  scoped_refptr<net::IOBuffer> buffer2 =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
+  auto buffer1 = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
+  auto buffer2 = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
   CacheTestFillBuffer(buffer1->data(), kSize, false);
   CacheTestFillBuffer(buffer2->data(), kSize, false);
 
@@ -4765,8 +4717,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheTruncateLargeSparseFile) {
   ASSERT_THAT(CreateEntry(key, &entry), IsOk());
   EXPECT_NE(null, entry);
 
-  scoped_refptr<net::IOBuffer> buffer =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
+  auto buffer = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
   CacheTestFillBuffer(buffer->data(), kSize, false);
   net::TestCompletionCallback callback;
   int ret;
@@ -4831,7 +4782,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheNoSideDataEOF) {
   SetSimpleCacheMode();
   InitCache();
 
-  const std::string key("the first key");
+  const char key[] = "the first key";
   const int kSize = 1024;
   CreateEntryWithHeaderBodyAndSideData(key, kSize);
 
@@ -4841,7 +4792,19 @@ TEST_F(DiskCacheEntryTest, SimpleCacheNoSideDataEOF) {
 
   TruncateFileFromEnd(1 /*side data file_index*/, key, kSize,
                       static_cast<int>(sizeof(disk_cache::SimpleFileEOF)));
-  EXPECT_THAT(OpenEntry(key, &entry), IsError(net::ERR_FAILED));
+  EXPECT_THAT(OpenEntry(key, &entry), IsOk());
+  // The corrupted stream should have been deleted.
+  EXPECT_FALSE(SimpleCacheThirdStreamFileExists(key));
+  // _0 should still exist.
+  base::FilePath path_0 = cache_path_.AppendASCII(
+      disk_cache::simple_util::GetFilenameFromKeyAndFileIndex(key, 0));
+  EXPECT_TRUE(base::PathExists(path_0));
+
+  auto check_stream_data = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
+  EXPECT_EQ(kSize, ReadData(entry, 0, 0, check_stream_data.get(), kSize));
+  EXPECT_EQ(kSize, ReadData(entry, 1, 0, check_stream_data.get(), kSize));
+  EXPECT_EQ(0, entry->GetDataSize(2));
+  entry->Close();
 }
 
 TEST_F(DiskCacheEntryTest, SimpleCacheReadWithoutKeySHA256) {
@@ -4854,13 +4817,13 @@ TEST_F(DiskCacheEntryTest, SimpleCacheReadWithoutKeySHA256) {
   ASSERT_THAT(CreateEntry(key, &entry), IsOk());
 
   const std::string stream_0_data = "data for stream zero";
-  scoped_refptr<net::IOBuffer> stream_0_iobuffer =
+  auto stream_0_iobuffer =
       base::MakeRefCounted<net::StringIOBuffer>(stream_0_data);
   EXPECT_EQ(static_cast<int>(stream_0_data.size()),
             WriteData(entry, 0, 0, stream_0_iobuffer.get(),
                       stream_0_data.size(), false));
   const std::string stream_1_data = "FOR STREAM ONE, QUITE DIFFERENT THINGS";
-  scoped_refptr<net::IOBuffer> stream_1_iobuffer =
+  auto stream_1_iobuffer =
       base::MakeRefCounted<net::StringIOBuffer>(stream_1_data);
   EXPECT_EQ(static_cast<int>(stream_1_data.size()),
             WriteData(entry, 1, 0, stream_1_iobuffer.get(),
@@ -4868,7 +4831,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheReadWithoutKeySHA256) {
   entry->Close();
 
   base::RunLoop().RunUntilIdle();
-  disk_cache::SimpleBackendImpl::FlushWorkerPoolForTesting();
+  disk_cache::FlushCacheThreadForTesting();
   base::RunLoop().RunUntilIdle();
 
   EXPECT_TRUE(
@@ -4877,8 +4840,8 @@ TEST_F(DiskCacheEntryTest, SimpleCacheReadWithoutKeySHA256) {
   ScopedEntryPtr entry_closer(entry);
 
   EXPECT_EQ(static_cast<int>(stream_0_data.size()), entry->GetDataSize(0));
-  scoped_refptr<net::IOBuffer> check_stream_0_data =
-      base::MakeRefCounted<net::IOBuffer>(stream_0_data.size());
+  auto check_stream_0_data =
+      base::MakeRefCounted<net::IOBufferWithSize>(stream_0_data.size());
   EXPECT_EQ(
       static_cast<int>(stream_0_data.size()),
       ReadData(entry, 0, 0, check_stream_0_data.get(), stream_0_data.size()));
@@ -4887,8 +4850,8 @@ TEST_F(DiskCacheEntryTest, SimpleCacheReadWithoutKeySHA256) {
                                      stream_0_data.size()));
 
   EXPECT_EQ(static_cast<int>(stream_1_data.size()), entry->GetDataSize(1));
-  scoped_refptr<net::IOBuffer> check_stream_1_data =
-      base::MakeRefCounted<net::IOBuffer>(stream_1_data.size());
+  auto check_stream_1_data =
+      base::MakeRefCounted<net::IOBufferWithSize>(stream_1_data.size());
   EXPECT_EQ(
       static_cast<int>(stream_1_data.size()),
       ReadData(entry, 1, 0, check_stream_1_data.get(), stream_1_data.size()));
@@ -4908,7 +4871,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheDoubleOpenWithoutKeySHA256) {
   entry->Close();
 
   base::RunLoop().RunUntilIdle();
-  disk_cache::SimpleBackendImpl::FlushWorkerPoolForTesting();
+  disk_cache::FlushCacheThreadForTesting();
   base::RunLoop().RunUntilIdle();
 
   EXPECT_TRUE(
@@ -4917,7 +4880,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheDoubleOpenWithoutKeySHA256) {
   entry->Close();
 
   base::RunLoop().RunUntilIdle();
-  disk_cache::SimpleBackendImpl::FlushWorkerPoolForTesting();
+  disk_cache::FlushCacheThreadForTesting();
   base::RunLoop().RunUntilIdle();
 
   ASSERT_THAT(OpenEntry(key, &entry), IsOk());
@@ -4935,7 +4898,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheReadCorruptKeySHA256) {
   entry->Close();
 
   base::RunLoop().RunUntilIdle();
-  disk_cache::SimpleBackendImpl::FlushWorkerPoolForTesting();
+  disk_cache::FlushCacheThreadForTesting();
   base::RunLoop().RunUntilIdle();
 
   EXPECT_TRUE(
@@ -4953,7 +4916,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheReadCorruptLength) {
   entry->Close();
 
   base::RunLoop().RunUntilIdle();
-  disk_cache::SimpleBackendImpl::FlushWorkerPoolForTesting();
+  disk_cache::FlushCacheThreadForTesting();
   base::RunLoop().RunUntilIdle();
 
   EXPECT_TRUE(
@@ -4961,8 +4924,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheReadCorruptLength) {
   EXPECT_NE(net::OK, OpenEntry(key, &entry));
 }
 
-// TODO(crbug.com/999584): Flaky on platforms which use POSIX-based file I/O.
-TEST_F(DiskCacheEntryTest, DISABLED_SimpleCacheCreateRecoverFromRmdir) {
+TEST_F(DiskCacheEntryTest, SimpleCacheCreateRecoverFromRmdir) {
   // This test runs as APP_CACHE to make operations more synchronous.
   // (in particular we want to see if create succeeded or not, so we don't
   //  want an optimistic one).
@@ -4973,7 +4935,7 @@ TEST_F(DiskCacheEntryTest, DISABLED_SimpleCacheCreateRecoverFromRmdir) {
   // Pretend someone deleted the cache dir. This shouldn't be too scary in
   // the test since cache_path_ is set as:
   //   CHECK(temp_dir_.CreateUniqueTempDir());
-  //   cache_path_ = temp_dir_.GetPath();
+  //   cache_path_ = temp_dir_.GetPath().AppendASCII("cache");
   disk_cache::DeleteCache(cache_path_,
                           true /* delete the dir, what we really want*/);
 
@@ -5004,14 +4966,13 @@ TEST_F(DiskCacheEntryTest, SimpleCacheSparseErrorHandling) {
   ASSERT_THAT(CreateEntry(key, &entry), IsOk());
 
   const int kSize = 1024;
-  scoped_refptr<net::IOBuffer> buffer =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
+  auto buffer = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
   CacheTestFillBuffer(buffer->data(), kSize, false);
 
   EXPECT_EQ(kSize, WriteSparseData(entry, 0, buffer.get(), kSize));
   entry->Close();
 
-  disk_cache::SimpleBackendImpl::FlushWorkerPoolForTesting();
+  disk_cache::FlushCacheThreadForTesting();
   EXPECT_TRUE(base::PathExists(path_0));
   EXPECT_TRUE(base::PathExists(path_s));
 
@@ -5042,9 +5003,11 @@ TEST_F(DiskCacheEntryTest, SimpleCacheSparseErrorHandling) {
   // Similarly for other ops.
   EXPECT_EQ(net::ERR_FAILED, WriteSparseData(entry, 0, buffer.get(), kSize));
   net::TestCompletionCallback cb;
-  int64_t start;
-  int rv = entry->GetAvailableRange(0, 1024, &start, cb.callback());
-  EXPECT_EQ(net::ERR_FAILED, cb.GetResult(rv));
+
+  TestRangeResultCompletionCallback range_cb;
+  RangeResult result = range_cb.GetResult(
+      entry->GetAvailableRange(0, 1024, range_cb.callback()));
+  EXPECT_EQ(net::ERR_FAILED, result.net_error);
 
   entry->Close();
   disk_cache::FlushCacheThreadForTesting();
@@ -5063,12 +5026,9 @@ TEST_F(DiskCacheEntryTest, SimpleCacheCreateCollision) {
       "\xbc\x60\x64\x92\xbc\xa0\x5c\x15\x17\x93\x29\x2d\xe4\x21\xbd\x03";
 
   const int kSize = 256;
-  scoped_refptr<net::IOBuffer> buffer1 =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
-  scoped_refptr<net::IOBuffer> buffer2 =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
-  scoped_refptr<net::IOBuffer> read_buffer =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
+  auto buffer1 = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
+  auto buffer2 = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
+  auto read_buffer = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
   CacheTestFillBuffer(buffer1->data(), kSize, false);
   CacheTestFillBuffer(buffer2->data(), kSize, false);
 
@@ -5103,8 +5063,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheConvertToSparseStream2LeftOver) {
   // Testcase for what happens when we have a sparse stream and a left over
   // empty stream 2 file.
   const int kSize = 10;
-  scoped_refptr<net::IOBuffer> buffer =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
+  auto buffer = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
   CacheTestFillBuffer(buffer->data(), kSize, false);
 
   SetSimpleCacheMode();
@@ -5124,8 +5083,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheConvertToSparseStream2LeftOver) {
 
   // Reopen, and try to get the sparse data back.
   ASSERT_THAT(OpenEntry(key, &entry), IsOk());
-  scoped_refptr<net::IOBuffer> buffer2 =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
+  auto buffer2 = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
   EXPECT_EQ(kSize, ReadSparseData(entry, 5, buffer2.get(), kSize));
   EXPECT_EQ(0, memcmp(buffer->data(), buffer2->data(), kSize));
   entry->Close();
@@ -5134,8 +5092,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheConvertToSparseStream2LeftOver) {
 TEST_F(DiskCacheEntryTest, SimpleCacheLazyStream2CreateFailure) {
   // Testcase for what happens when lazy-creation of stream 2 fails.
   const int kSize = 10;
-  scoped_refptr<net::IOBuffer> buffer =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
+  auto buffer = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
   CacheTestFillBuffer(buffer->data(), kSize, false);
 
   // Synchronous ops, for ease of disk state;
@@ -5166,13 +5123,11 @@ TEST_F(DiskCacheEntryTest, SimpleCacheChecksumpScrewUp) {
   // Test for a bug that occurred during development of  movement of CRC
   // computation off I/O thread.
   const int kSize = 10;
-  scoped_refptr<net::IOBuffer> buffer =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
+  auto buffer = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
   CacheTestFillBuffer(buffer->data(), kSize, false);
 
   const int kDoubleSize = kSize * 2;
-  scoped_refptr<net::IOBuffer> big_buffer =
-      base::MakeRefCounted<net::IOBuffer>(kDoubleSize);
+  auto big_buffer = base::MakeRefCounted<net::IOBufferWithSize>(kDoubleSize);
   CacheTestFillBuffer(big_buffer->data(), kDoubleSize, false);
 
   SetSimpleCacheMode();
@@ -5198,8 +5153,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheChecksumpScrewUp) {
   entry->Close();
 
   ASSERT_THAT(OpenEntry(kKey, &entry), IsOk());
-  scoped_refptr<net::IOBuffer> buffer2 =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
+  auto buffer2 = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
   EXPECT_EQ(kSize, ReadData(entry, 1, 0, buffer2.get(), kSize));
   EXPECT_EQ(0, memcmp(buffer->data(), buffer2->data(), kSize));
   EXPECT_EQ(kSize, ReadData(entry, 1, kSize, buffer2.get(), kSize));
@@ -5243,8 +5197,7 @@ void DiskCacheEntryTest::LastUsedTimePersists() {
   disk_cache::Entry* entry1 = nullptr;
   ASSERT_THAT(CreateEntry(kKey, &entry1), IsOk());
   ASSERT_TRUE(nullptr != entry1);
-  base::Time modified_last_used =
-      entry1->GetLastUsed() - base::TimeDelta::FromMinutes(5);
+  base::Time modified_last_used = entry1->GetLastUsed() - base::Minutes(5);
   entry1->SetLastUsedTimeForTest(modified_last_used);
   entry1->Close();
 
@@ -5253,8 +5206,8 @@ void DiskCacheEntryTest::LastUsedTimePersists() {
   ASSERT_TRUE(nullptr != entry2);
 
   base::TimeDelta diff = modified_last_used - entry2->GetLastUsed();
-  EXPECT_LT(diff, base::TimeDelta::FromSeconds(2));
-  EXPECT_GT(diff, -base::TimeDelta::FromSeconds(2));
+  EXPECT_LT(diff, base::Seconds(2));
+  EXPECT_GT(diff, -base::Seconds(2));
   entry2->Close();
 }
 
@@ -5282,30 +5235,28 @@ void DiskCacheEntryTest::TruncateBackwards() {
   const int kBigSize = 40 * 1024;
   const int kSmallSize = 9727;
 
-  scoped_refptr<net::IOBuffer> buffer =
-      base::MakeRefCounted<net::IOBuffer>(kBigSize);
+  auto buffer = base::MakeRefCounted<net::IOBufferWithSize>(kBigSize);
   CacheTestFillBuffer(buffer->data(), kBigSize, false);
-  scoped_refptr<net::IOBuffer> read_buf =
-      base::MakeRefCounted<net::IOBuffer>(kBigSize);
+  auto read_buf = base::MakeRefCounted<net::IOBufferWithSize>(kBigSize);
 
-  ASSERT_EQ(kSmallSize, WriteData(entry, /* stream_index = */ 0,
+  ASSERT_EQ(kSmallSize, WriteData(entry, /* index = */ 0,
                                   /* offset = */ kBigSize, buffer.get(),
                                   /* size = */ kSmallSize,
                                   /* truncate = */ false));
   memset(read_buf->data(), 0, kBigSize);
-  ASSERT_EQ(kSmallSize, ReadData(entry, /* stream_index = */ 0,
+  ASSERT_EQ(kSmallSize, ReadData(entry, /* index = */ 0,
                                  /* offset = */ kBigSize, read_buf.get(),
                                  /* size = */ kSmallSize));
   EXPECT_EQ(0, memcmp(read_buf->data(), buffer->data(), kSmallSize));
 
   // A partly overlapping truncate before the previous write.
   ASSERT_EQ(kBigSize,
-            WriteData(entry, /* stream_index = */ 0,
+            WriteData(entry, /* index = */ 0,
                       /* offset = */ 3, buffer.get(), /* size = */ kBigSize,
                       /* truncate = */ true));
   memset(read_buf->data(), 0, kBigSize);
   ASSERT_EQ(kBigSize,
-            ReadData(entry, /* stream_index = */ 0,
+            ReadData(entry, /* index = */ 0,
                      /* offset = */ 3, read_buf.get(), /* size = */ kBigSize));
   EXPECT_EQ(0, memcmp(read_buf->data(), buffer->data(), kBigSize));
   EXPECT_EQ(kBigSize + 3, entry->GetDataSize(0));
@@ -5338,22 +5289,21 @@ void DiskCacheEntryTest::ZeroWriteBackwards() {
   ASSERT_TRUE(entry != nullptr);
 
   const int kSize = 1024;
-  scoped_refptr<net::IOBuffer> buffer =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
+  auto buffer = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
   CacheTestFillBuffer(buffer->data(), kSize, false);
 
   // Offset here needs to be > blockfile's kMaxBlockSize to hit
   // https://crbug.com/946538, as writes close to beginning are handled
   // specially.
-  EXPECT_EQ(0, WriteData(entry, /* stream_index = */ 0,
+  EXPECT_EQ(0, WriteData(entry, /* index = */ 0,
                          /* offset = */ 17000, buffer.get(),
                          /* size = */ 0, /* truncate = */ true));
 
-  EXPECT_EQ(0, WriteData(entry, /* stream_index = */ 0,
+  EXPECT_EQ(0, WriteData(entry, /* index = */ 0,
                          /* offset = */ 0, buffer.get(),
                          /* size = */ 0, /* truncate = */ false));
 
-  EXPECT_EQ(kSize, ReadData(entry, /* stream_index = */ 0,
+  EXPECT_EQ(kSize, ReadData(entry, /* index = */ 0,
                             /* offset = */ 0, buffer.get(),
                             /* size = */ kSize));
   for (int i = 0; i < kSize; ++i) {
@@ -5398,8 +5348,7 @@ void DiskCacheEntryTest::SparseOffset64Bit() {
   // even if they happen after a bunch of shifting right.
   const int64_t kOffset = (1ll << 61);
 
-  scoped_refptr<net::IOBuffer> buffer =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
+  auto buffer = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
   CacheTestFillBuffer(buffer->data(), kSize, false);
 
   EXPECT_EQ(blockfile ? net::ERR_CACHE_OPERATION_NOT_SUPPORTED : kSize,
@@ -5436,8 +5385,7 @@ TEST_F(DiskCacheEntryTest, MemoryOnlySparseOffset64Bit) {
 
 TEST_F(DiskCacheEntryTest, SimpleCacheCloseResurrection) {
   const int kSize = 10;
-  scoped_refptr<net::IOBuffer> buffer =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
+  auto buffer = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
   CacheTestFillBuffer(buffer->data(), kSize, false);
 
   const char kKey[] = "key";
@@ -5450,7 +5398,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheCloseResurrection) {
 
   // Let optimistic create finish.
   base::RunLoop().RunUntilIdle();
-  disk_cache::SimpleBackendImpl::FlushWorkerPoolForTesting();
+  disk_cache::FlushCacheThreadForTesting();
   base::RunLoop().RunUntilIdle();
 
   int rv = entry->WriteData(1, 0, buffer.get(), kSize,
@@ -5477,12 +5425,11 @@ TEST_F(DiskCacheEntryTest, SimpleCacheCloseResurrection) {
 
   // Get first close a chance to finish.
   base::RunLoop().RunUntilIdle();
-  disk_cache::SimpleBackendImpl::FlushWorkerPoolForTesting();
+  disk_cache::FlushCacheThreadForTesting();
   base::RunLoop().RunUntilIdle();
 
   // Make sure |entry2| is still usable.
-  scoped_refptr<net::IOBuffer> buffer2 =
-      base::MakeRefCounted<net::IOBuffer>(kSize);
+  auto buffer2 = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
   memset(buffer2->data(), 0, kSize);
   EXPECT_EQ(kSize, ReadData(entry2, 1, 0, buffer2.get(), kSize));
   EXPECT_EQ(0, memcmp(buffer->data(), buffer2->data(), kSize));
@@ -5503,7 +5450,7 @@ TEST_F(DiskCacheEntryTest, BlockFileSparsePendingAfterDtor) {
 
   const int kSize = 61184;
 
-  scoped_refptr<net::IOBuffer> buf = base::MakeRefCounted<net::IOBuffer>(kSize);
+  auto buf = base::MakeRefCounted<net::IOBufferWithSize>(kSize);
   CacheTestFillBuffer(buf->data(), kSize, false);
 
   // The write pattern here avoids the second write being handled by the
@@ -5512,7 +5459,7 @@ TEST_F(DiskCacheEntryTest, BlockFileSparsePendingAfterDtor) {
   EXPECT_EQ(net::ERR_IO_PENDING,
             entry->WriteSparseData(2560, buf.get(), kSize, base::DoNothing()));
   entry->Close();
-  cache_.reset();
+  ResetCaches();
 
   // Create a new instance as a way of flushing the thread.
   InitCache();
@@ -5526,7 +5473,7 @@ class DiskCacheSimplePrefetchTest : public DiskCacheEntryTest {
   enum { kEntrySize = 1024 };
 
   void SetUp() override {
-    payload_ = base::MakeRefCounted<net::IOBuffer>(kEntrySize);
+    payload_ = base::MakeRefCounted<net::IOBufferWithSize>(kEntrySize);
     CacheTestFillBuffer(payload_->data(), kEntrySize, false);
     DiskCacheEntryTest::SetUp();
   }
@@ -5576,8 +5523,7 @@ class DiskCacheSimplePrefetchTest : public DiskCacheEntryTest {
     // the checksum in that case.  Do it with identical contents, though,
     // so that the only difference between here and InitCacheAndCreateEntry()
     // would be whether the result has a checkum or not.
-    scoped_refptr<net::IOBuffer> second_half =
-        base::MakeRefCounted<net::IOBuffer>(kRemSize);
+    auto second_half = base::MakeRefCounted<net::IOBufferWithSize>(kRemSize);
     memcpy(second_half->data(), payload_->data() + kHalfSize, kRemSize);
     ASSERT_EQ(kRemSize, WriteData(entry, 1, kHalfSize, second_half.get(),
                                   kRemSize, false));
@@ -5587,8 +5533,7 @@ class DiskCacheSimplePrefetchTest : public DiskCacheEntryTest {
   void TryRead(const std::string& key, bool expect_preread_stream1) {
     disk_cache::Entry* entry = nullptr;
     ASSERT_THAT(OpenEntry(key, &entry), IsOk());
-    scoped_refptr<net::IOBuffer> read_buf =
-        base::MakeRefCounted<net::IOBuffer>(kEntrySize);
+    auto read_buf = base::MakeRefCounted<net::IOBufferWithSize>(kEntrySize);
     net::TestCompletionCallback cb;
     int rv = entry->ReadData(1, 0, read_buf.get(), kEntrySize, cb.callback());
 
@@ -5722,8 +5667,7 @@ TEST_F(DiskCacheSimplePrefetchTest, PrefetchReadsSync) {
 
   disk_cache::Entry* entry = nullptr;
   ASSERT_THAT(OpenEntry(kKey, &entry), IsOk());
-  scoped_refptr<net::IOBuffer> read_buf =
-      base::MakeRefCounted<net::IOBuffer>(kEntrySize);
+  auto read_buf = base::MakeRefCounted<net::IOBufferWithSize>(kEntrySize);
 
   // That this is entry->ReadData(...) rather than ReadData(entry, ...) is
   // meaningful here, as the latter is a helper in the test fixture that blocks
@@ -5744,10 +5688,6 @@ TEST_F(DiskCacheSimplePrefetchTest, NoFullNoSpeculative) {
 
   histogram_tester.ExpectUniqueSample("SimpleCache.Http.SyncOpenPrefetchMode",
                                       disk_cache::OPEN_PREFETCH_NONE, 1);
-  histogram_tester.ExpectTotalCount("SimpleCache.Http.EntryTrailerPrefetchSize",
-                                    0);
-  histogram_tester.ExpectTotalCount(
-      "SimpleCache.Http.EntryTrailerPrefetchDelta", 0);
 }
 
 TEST_F(DiskCacheSimplePrefetchTest, NoFullSmallSpeculative) {
@@ -5760,10 +5700,6 @@ TEST_F(DiskCacheSimplePrefetchTest, NoFullSmallSpeculative) {
 
   histogram_tester.ExpectUniqueSample("SimpleCache.Http.SyncOpenPrefetchMode",
                                       disk_cache::OPEN_PREFETCH_TRAILER, 1);
-  histogram_tester.ExpectTotalCount("SimpleCache.Http.EntryTrailerPrefetchSize",
-                                    1);
-  histogram_tester.ExpectTotalCount(
-      "SimpleCache.Http.EntryTrailerPrefetchDelta", 1);
 }
 
 TEST_F(DiskCacheSimplePrefetchTest, NoFullLargeSpeculative) {
@@ -5778,10 +5714,6 @@ TEST_F(DiskCacheSimplePrefetchTest, NoFullLargeSpeculative) {
 
   histogram_tester.ExpectUniqueSample("SimpleCache.Http.SyncOpenPrefetchMode",
                                       disk_cache::OPEN_PREFETCH_FULL, 1);
-  histogram_tester.ExpectTotalCount("SimpleCache.Http.EntryTrailerPrefetchSize",
-                                    0);
-  histogram_tester.ExpectTotalCount(
-      "SimpleCache.Http.EntryTrailerPrefetchDelta", 0);
 }
 
 TEST_F(DiskCacheSimplePrefetchTest, SmallFullNoSpeculative) {
@@ -5794,10 +5726,6 @@ TEST_F(DiskCacheSimplePrefetchTest, SmallFullNoSpeculative) {
 
   histogram_tester.ExpectUniqueSample("SimpleCache.Http.SyncOpenPrefetchMode",
                                       disk_cache::OPEN_PREFETCH_NONE, 1);
-  histogram_tester.ExpectTotalCount("SimpleCache.Http.EntryTrailerPrefetchSize",
-                                    0);
-  histogram_tester.ExpectTotalCount(
-      "SimpleCache.Http.EntryTrailerPrefetchDelta", 0);
 }
 
 TEST_F(DiskCacheSimplePrefetchTest, LargeFullNoSpeculative) {
@@ -5810,10 +5738,6 @@ TEST_F(DiskCacheSimplePrefetchTest, LargeFullNoSpeculative) {
 
   histogram_tester.ExpectUniqueSample("SimpleCache.Http.SyncOpenPrefetchMode",
                                       disk_cache::OPEN_PREFETCH_FULL, 1);
-  histogram_tester.ExpectTotalCount("SimpleCache.Http.EntryTrailerPrefetchSize",
-                                    0);
-  histogram_tester.ExpectTotalCount(
-      "SimpleCache.Http.EntryTrailerPrefetchDelta", 0);
 }
 
 TEST_F(DiskCacheSimplePrefetchTest, SmallFullSmallSpeculative) {
@@ -5826,10 +5750,6 @@ TEST_F(DiskCacheSimplePrefetchTest, SmallFullSmallSpeculative) {
 
   histogram_tester.ExpectUniqueSample("SimpleCache.Http.SyncOpenPrefetchMode",
                                       disk_cache::OPEN_PREFETCH_TRAILER, 1);
-  histogram_tester.ExpectTotalCount("SimpleCache.Http.EntryTrailerPrefetchSize",
-                                    1);
-  histogram_tester.ExpectTotalCount(
-      "SimpleCache.Http.EntryTrailerPrefetchDelta", 1);
 }
 
 TEST_F(DiskCacheSimplePrefetchTest, LargeFullSmallSpeculative) {
@@ -5843,10 +5763,6 @@ TEST_F(DiskCacheSimplePrefetchTest, LargeFullSmallSpeculative) {
 
   histogram_tester.ExpectUniqueSample("SimpleCache.Http.SyncOpenPrefetchMode",
                                       disk_cache::OPEN_PREFETCH_FULL, 1);
-  histogram_tester.ExpectTotalCount("SimpleCache.Http.EntryTrailerPrefetchSize",
-                                    0);
-  histogram_tester.ExpectTotalCount(
-      "SimpleCache.Http.EntryTrailerPrefetchDelta", 0);
 }
 
 class DiskCacheSimpleAppCachePrefetchTest : public DiskCacheSimplePrefetchTest {
@@ -5865,10 +5781,6 @@ TEST_F(DiskCacheSimpleAppCachePrefetchTest, NoFullNoSpeculative) {
 
   histogram_tester.ExpectUniqueSample("SimpleCache.App.SyncOpenPrefetchMode",
                                       disk_cache::OPEN_PREFETCH_TRAILER, 1);
-  histogram_tester.ExpectTotalCount("SimpleCache.App.EntryTrailerPrefetchSize",
-                                    1);
-  histogram_tester.ExpectUniqueSample(
-      "SimpleCache.App.EntryTrailerPrefetchDelta", 0, 1);
 }
 
 TEST_F(DiskCacheSimpleAppCachePrefetchTest, NoFullSmallSpeculative) {
@@ -5881,10 +5793,6 @@ TEST_F(DiskCacheSimpleAppCachePrefetchTest, NoFullSmallSpeculative) {
 
   histogram_tester.ExpectUniqueSample("SimpleCache.App.SyncOpenPrefetchMode",
                                       disk_cache::OPEN_PREFETCH_TRAILER, 1);
-  histogram_tester.ExpectTotalCount("SimpleCache.App.EntryTrailerPrefetchSize",
-                                    1);
-  histogram_tester.ExpectUniqueSample(
-      "SimpleCache.App.EntryTrailerPrefetchDelta", 0, 1);
 }
 
 TEST_F(DiskCacheSimpleAppCachePrefetchTest, NoFullLargeSpeculative) {
@@ -5900,10 +5808,6 @@ TEST_F(DiskCacheSimpleAppCachePrefetchTest, NoFullLargeSpeculative) {
 
   histogram_tester.ExpectUniqueSample("SimpleCache.App.SyncOpenPrefetchMode",
                                       disk_cache::OPEN_PREFETCH_TRAILER, 1);
-  histogram_tester.ExpectTotalCount("SimpleCache.App.EntryTrailerPrefetchSize",
-                                    1);
-  histogram_tester.ExpectUniqueSample(
-      "SimpleCache.App.EntryTrailerPrefetchDelta", 0, 1);
 }
 
 TEST_F(DiskCacheSimpleAppCachePrefetchTest, SmallFullNoSpeculative) {
@@ -5916,10 +5820,6 @@ TEST_F(DiskCacheSimpleAppCachePrefetchTest, SmallFullNoSpeculative) {
 
   histogram_tester.ExpectUniqueSample("SimpleCache.App.SyncOpenPrefetchMode",
                                       disk_cache::OPEN_PREFETCH_TRAILER, 1);
-  histogram_tester.ExpectTotalCount("SimpleCache.App.EntryTrailerPrefetchSize",
-                                    1);
-  histogram_tester.ExpectUniqueSample(
-      "SimpleCache.App.EntryTrailerPrefetchDelta", 0, 1);
 }
 
 TEST_F(DiskCacheSimpleAppCachePrefetchTest, LargeFullNoSpeculative) {
@@ -5933,10 +5833,6 @@ TEST_F(DiskCacheSimpleAppCachePrefetchTest, LargeFullNoSpeculative) {
 
   histogram_tester.ExpectUniqueSample("SimpleCache.App.SyncOpenPrefetchMode",
                                       disk_cache::OPEN_PREFETCH_FULL, 1);
-  histogram_tester.ExpectTotalCount("SimpleCache.App.EntryTrailerPrefetchSize",
-                                    0);
-  histogram_tester.ExpectTotalCount("SimpleCache.App.EntryTrailerPrefetchDelta",
-                                    0);
 }
 
 TEST_F(DiskCacheSimpleAppCachePrefetchTest, SmallFullSmallSpeculative) {
@@ -5949,10 +5845,6 @@ TEST_F(DiskCacheSimpleAppCachePrefetchTest, SmallFullSmallSpeculative) {
 
   histogram_tester.ExpectUniqueSample("SimpleCache.App.SyncOpenPrefetchMode",
                                       disk_cache::OPEN_PREFETCH_TRAILER, 1);
-  histogram_tester.ExpectTotalCount("SimpleCache.App.EntryTrailerPrefetchSize",
-                                    1);
-  histogram_tester.ExpectTotalCount("SimpleCache.App.EntryTrailerPrefetchDelta",
-                                    1);
 }
 
 TEST_F(DiskCacheSimpleAppCachePrefetchTest, LargeFullSmallSpeculative) {
@@ -5966,8 +5858,4 @@ TEST_F(DiskCacheSimpleAppCachePrefetchTest, LargeFullSmallSpeculative) {
 
   histogram_tester.ExpectUniqueSample("SimpleCache.App.SyncOpenPrefetchMode",
                                       disk_cache::OPEN_PREFETCH_FULL, 1);
-  histogram_tester.ExpectTotalCount("SimpleCache.App.EntryTrailerPrefetchSize",
-                                    0);
-  histogram_tester.ExpectTotalCount("SimpleCache.App.EntryTrailerPrefetchDelta",
-                                    0);
 }

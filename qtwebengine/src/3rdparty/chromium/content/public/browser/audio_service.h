@@ -1,15 +1,16 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef CONTENT_PUBLIC_BROWSER_AUDIO_SERVICE_H_
 #define CONTENT_PUBLIC_BROWSER_AUDIO_SERVICE_H_
 
-#include "base/callback.h"
+#include "base/auto_reset.h"
+#include "base/functional/callback.h"
 #include "content/common/content_export.h"
+#include "media/mojo/mojom/audio_stream_factory.mojom.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "services/audio/public/mojom/audio_service.mojom.h"
-#include "services/audio/public/mojom/stream_factory.mojom.h"
 
 namespace media {
 class AudioSystem;
@@ -22,15 +23,20 @@ namespace content {
 // subprocess.
 CONTENT_EXPORT audio::mojom::AudioService& GetAudioService();
 
+// Provides an override for the reference returned by
+// |GetAudioService()|.
+CONTENT_EXPORT base::AutoReset<audio::mojom::AudioService*>
+OverrideAudioServiceForTesting(audio::mojom::AudioService* service);
+
 // Creates an instance of AudioSystem for use with the Audio Service, bound to
 // the thread it's used on for the first time.
 CONTENT_EXPORT std::unique_ptr<media::AudioSystem>
 CreateAudioSystemForAudioService();
 
 // Returns a callback that can be invoked from any sequence to safely bind a
-// StreamFactory interface receiver in the Audio Service.
+// AudioStreamFactory interface receiver in the Audio Service.
 using AudioServiceStreamFactoryBinder = base::RepeatingCallback<void(
-    mojo::PendingReceiver<audio::mojom::StreamFactory>)>;
+    mojo::PendingReceiver<media::mojom::AudioStreamFactory>)>;
 CONTENT_EXPORT AudioServiceStreamFactoryBinder
 GetAudioServiceStreamFactoryBinder();
 

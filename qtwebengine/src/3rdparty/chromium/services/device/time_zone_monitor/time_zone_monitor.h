@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,9 +7,8 @@
 
 #include <memory>
 #include <string>
+#include <string_view>
 
-#include "base/macros.h"
-#include "base/strings/string_piece_forward.h"
 #include "base/threading/thread_checker.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
@@ -56,6 +55,8 @@ class TimeZoneMonitor : public device::mojom::TimeZoneMonitor {
   static std::unique_ptr<TimeZoneMonitor> Create(
       scoped_refptr<base::SequencedTaskRunner> file_task_runner);
 
+  TimeZoneMonitor(const TimeZoneMonitor&) = delete;
+  TimeZoneMonitor& operator=(const TimeZoneMonitor&) = delete;
   ~TimeZoneMonitor() override;
 
   void Bind(mojo::PendingReceiver<device::mojom::TimeZoneMonitor> receiver);
@@ -65,7 +66,7 @@ class TimeZoneMonitor : public device::mojom::TimeZoneMonitor {
 
   // Notifies clients that the system time zone may have changed and is now
   // zone_id_str.
-  void NotifyClients(base::StringPiece zone_id_str);
+  void NotifyClients(std::string_view zone_id_str);
 
   // Sets ICU's default TimeZone for the process and calls NotifyClients().
   void UpdateIcuAndNotifyClients(std::unique_ptr<icu::TimeZone> new_zone);
@@ -88,7 +89,6 @@ class TimeZoneMonitor : public device::mojom::TimeZoneMonitor {
 
   mojo::ReceiverSet<device::mojom::TimeZoneMonitor> receivers_;
   mojo::RemoteSet<device::mojom::TimeZoneMonitorClient> clients_;
-  DISALLOW_COPY_AND_ASSIGN(TimeZoneMonitor);
 };
 
 }  // namespace device

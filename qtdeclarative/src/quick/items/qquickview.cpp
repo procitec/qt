@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtQuick module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qquickview.h"
 #include "qquickview_p.h"
@@ -48,6 +12,8 @@
 #include <private/qqmlengine_p.h>
 #include <private/qv4qobjectwrapper_p.h>
 #include <QtCore/qbasictimer.h>
+
+#include <memory>
 
 QT_BEGIN_NAMESPACE
 
@@ -69,7 +35,7 @@ void QQuickViewPrivate::init(QQmlEngine* e)
         // The content item has CppOwnership policy (set in QQuickWindow). Ensure the presence of a JS
         // wrapper so that the garbage collector can see the policy.
         QV4::ExecutionEngine *v4 = engine.data()->handle();
-        QV4::QObjectWrapper::wrap(v4, contentItem);
+        QV4::QObjectWrapper::ensureWrapper(v4, contentItem);
     }
 }
 
@@ -82,12 +48,11 @@ QQuickViewPrivate::~QQuickViewPrivate()
 {
 }
 
-void QQuickViewPrivate::execute()
+QQuickViewPrivate::ExecuteState QQuickViewPrivate::executeHelper()
 {
-    Q_Q(QQuickView);
     if (!engine) {
         qWarning() << "QQuickView: invalid qml engine.";
-        return;
+        return Stop;
     }
 
     if (root)
@@ -96,6 +61,14 @@ void QQuickViewPrivate::execute()
         delete component;
         component = nullptr;
     }
+    return ExecuteState::Continue;
+}
+
+void QQuickViewPrivate::execute()
+{
+    if (executeHelper() == Stop)
+        return;
+    Q_Q(QQuickView);
     if (!source.isEmpty()) {
         component = new QQmlComponent(engine.data(), source, q);
         if (!component->isLoading()) {
@@ -105,6 +78,22 @@ void QQuickViewPrivate::execute()
                              q, SLOT(continueExecute()));
         }
     }
+}
+
+void QQuickViewPrivate::execute(QAnyStringView uri, QAnyStringView typeName)
+{
+    if (executeHelper() == Stop)
+        return;
+    Q_Q(QQuickView);
+
+    component = new QQmlComponent(engine.data(), uri, typeName, q);
+    if (!component->isLoading()) {
+        q->continueExecute();
+    } else {
+        QObject::connect(component, SIGNAL(statusChanged(QQmlComponent::Status)),
+                         q, SLOT(continueExecute()));
+    }
+
 }
 
 void QQuickViewPrivate::itemGeometryChanged(QQuickItem *resizeItem, QQuickGeometryChange change,
@@ -163,13 +152,26 @@ QQuickView::QQuickView(QWindow *parent)
 
 /*!
   Constructs a QQuickView with the given QML \a source and \a parent.
-  The default value of \a parent is 0.
+  The default value of \a parent is \c{nullptr}.
 
 */
 QQuickView::QQuickView(const QUrl &source, QWindow *parent)
     : QQuickView(parent)
 {
     setSource(source);
+}
+
+/*!
+  \since 6.7
+  Constructs a QQuickView with the element specified by \a uri and \a typeName
+  and parent \a parent.
+  The default value of \a parent is \c{nullptr}.
+  \sa loadFromModule
+ */
+QQuickView::QQuickView(QAnyStringView uri, QAnyStringView typeName, QWindow *parent)
+    : QQuickView(parent)
+{
+    loadFromModule(uri, typeName);
 }
 
 /*!
@@ -234,6 +236,26 @@ void QQuickView::setSource(const QUrl& url)
     Q_D(QQuickView);
     d->source = url;
     d->execute();
+}
+
+/*!
+    \since 6.7
+    Loads the QML component identified by \a uri and \a typeName. If the component
+    is backed by a QML file, \l{source} will be set accordingly. For types defined
+    in \c{C++}, \c{source} will be empty.
+
+    If any \l{source} was set before this method was called, it will be cleared.
+
+    Calling this method multiple times with the same \a uri and \a typeName will result
+    in the QML component being reinstantiated.
+
+    \sa setSource, QQmlComponent::loadFromModule, QQmlApplicationEngine::loadFromModule
+ */
+void QQuickView::loadFromModule(QAnyStringView uri, QAnyStringView typeName)
+{
+    Q_D(QQuickView);
+    d->source = {}; // clear URL
+    d->execute(uri, typeName);
 }
 
 /*!
@@ -488,9 +510,9 @@ void QQuickView::continueExecute()
         return;
     }
 
-    QScopedPointer<QObject> obj(d->initialProperties.empty()
-                                ? d->component->create()
-                                : d->component->createWithInitialProperties(d->initialProperties));
+    std::unique_ptr<QObject> obj(d->initialProperties.empty()
+                                 ? d->component->create()
+                                 : d->component->createWithInitialProperties(d->initialProperties));
 
     if (d->component->isError()) {
         const QList<QQmlError> errorList = d->component->errors();
@@ -502,8 +524,13 @@ void QQuickView::continueExecute()
         return;
     }
 
+    // If we used loadFromModule, we might not have a URL so far.
+    // Thus, query the component to retrieve the associated URL, if any
+    if (d->source.isEmpty())
+        d->source = d->component->url();
+
     if (d->setRootObject(obj.get()))
-        obj.take();
+        Q_UNUSED(obj.release());
     emit statusChanged(status());
 }
 
@@ -528,6 +555,7 @@ bool QQuickViewPrivate::setRootObject(QObject *obj)
 
     if (QQuickItem *sgItem = qobject_cast<QQuickItem *>(obj)) {
         root = sgItem;
+        root->setFlag(QQuickItem::ItemIsViewport);
         sgItem->setParentItem(q->QQuickWindow::contentItem());
         QQml_setParent_noEvent(sgItem, q->QQuickWindow::contentItem());
         initialSize = rootObjectSize();

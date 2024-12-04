@@ -1,11 +1,15 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "services/network/public/cpp/proxy_config_mojom_traits.h"
 
+#include "base/debug/dump_without_crashing.h"
+#include "mojo/public/cpp/bindings/scoped_message_error_crash_key.h"
+#include "net/base/proxy_chain.h"
+#include "net/base/proxy_string_util.h"
+#include "services/network/public/cpp/network_param_mojom_traits.h"
 #include "url/gurl.h"
-#include "url/mojom/url_gurl_mojom_traits.h"
 
 namespace mojo {
 
@@ -27,33 +31,25 @@ bool StructTraits<network::mojom::ProxyBypassRulesDataView,
   if (!data.ReadRules(&rules))
     return false;
   for (const auto& rule : rules) {
-    if (!out_proxy_bypass_rules->AddRuleFromString(rule))
+    if (!out_proxy_bypass_rules->AddRuleFromString(rule)) {
+      mojo::debug::ScopedMessageErrorCrashKey crash_key_value(
+          "AddRuleFromString fault");
+      base::debug::DumpWithoutCrashing();
       return false;
+    }
   }
   return true;
-}
-
-std::vector<std::string>
-StructTraits<network::mojom::ProxyListDataView, net::ProxyList>::proxies(
-    const net::ProxyList& r) {
-  std::vector<std::string> out;
-  for (const auto& proxy : r.GetAll()) {
-    out.push_back(proxy.ToPacString());
-  }
-  return out;
 }
 
 bool StructTraits<network::mojom::ProxyListDataView, net::ProxyList>::Read(
     network::mojom::ProxyListDataView data,
     net::ProxyList* out_proxy_list) {
-  std::vector<std::string> proxies;
-  if (!data.ReadProxies(&proxies))
+  std::vector<net::ProxyChain> proxy_chains;
+  if (!data.ReadProxies(&proxy_chains)) {
     return false;
-  for (const auto& proxy : proxies) {
-    net::ProxyServer proxy_server = net::ProxyServer::FromPacString(proxy);
-    if (!proxy_server.is_valid())
-      return false;
-    out_proxy_list->AddProxyServer(proxy_server);
+  }
+  for (const auto& proxy_chain : proxy_chains) {
+    out_proxy_list->AddProxyChain(proxy_chain);
   }
   return true;
 }
@@ -117,6 +113,7 @@ bool StructTraits<network::mojom::ProxyConfigDataView, net::ProxyConfig>::Read(
 
   out_proxy_config->set_auto_detect(data.auto_detect());
   out_proxy_config->set_pac_mandatory(data.pac_mandatory());
+  out_proxy_config->set_from_system(data.from_system());
   return true;
 }
 

@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,7 +11,7 @@
 #include "third_party/blink/renderer/core/animation/string_keyframe.h"
 #include "third_party/blink/renderer/core/animation/underlying_length_checker.h"
 #include "third_party/blink/renderer/core/svg/svg_point_list.h"
-#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 
 namespace blink {
 
@@ -26,10 +26,10 @@ InterpolationValue SVGPointListInterpolationType::MaybeConvertNeutral(
   if (underlying_length == 0)
     return nullptr;
 
-  auto result = std::make_unique<InterpolableList>(underlying_length);
+  auto* result = MakeGarbageCollected<InterpolableList>(underlying_length);
   for (wtf_size_t i = 0; i < underlying_length; i++)
-    result->Set(i, std::make_unique<InterpolableNumber>(0));
-  return InterpolationValue(std::move(result));
+    result->Set(i, MakeGarbageCollected<InterpolableNumber>(0));
+  return InterpolationValue(result);
 }
 
 InterpolationValue SVGPointListInterpolationType::MaybeConvertSVGValue(
@@ -38,14 +38,15 @@ InterpolationValue SVGPointListInterpolationType::MaybeConvertSVGValue(
     return nullptr;
 
   const auto& point_list = To<SVGPointList>(svg_value);
-  auto result = std::make_unique<InterpolableList>(point_list.length() * 2);
+  auto* result =
+      MakeGarbageCollected<InterpolableList>(point_list.length() * 2);
   for (wtf_size_t i = 0; i < point_list.length(); i++) {
     const SVGPoint& point = *point_list.at(i);
-    result->Set(2 * i, std::make_unique<InterpolableNumber>(point.X()));
-    result->Set(2 * i + 1, std::make_unique<InterpolableNumber>(point.Y()));
+    result->Set(2 * i, MakeGarbageCollected<InterpolableNumber>(point.X()));
+    result->Set(2 * i + 1, MakeGarbageCollected<InterpolableNumber>(point.Y()));
   }
 
-  return InterpolationValue(std::move(result));
+  return InterpolationValue(result);
 }
 
 PairwiseInterpolationValue SVGPointListInterpolationType::MaybeMergeSingles(
@@ -86,9 +87,8 @@ SVGPropertyBase* SVGPointListInterpolationType::AppliedSVGValue(
   const auto& list = To<InterpolableList>(interpolable_value);
   DCHECK_EQ(list.length() % 2, 0U);
   for (wtf_size_t i = 0; i < list.length(); i += 2) {
-    FloatPoint point =
-        FloatPoint(To<InterpolableNumber>(list.Get(i))->Value(),
-                   To<InterpolableNumber>(list.Get(i + 1))->Value());
+    gfx::PointF point(To<InterpolableNumber>(list.Get(i))->Value(),
+                      To<InterpolableNumber>(list.Get(i + 1))->Value());
     result->Append(MakeGarbageCollected<SVGPoint>(point));
   }
 

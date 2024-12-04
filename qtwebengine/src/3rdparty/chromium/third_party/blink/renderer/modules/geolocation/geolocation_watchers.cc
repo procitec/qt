@@ -1,11 +1,10 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/modules/geolocation/geolocation_watchers.h"
 
 #include "third_party/blink/renderer/modules/geolocation/geo_notifier.h"
-#include "third_party/blink/renderer/platform/wtf/assertions.h"
 
 namespace blink {
 
@@ -28,7 +27,7 @@ GeoNotifier* GeolocationWatchers::Find(int id) const {
   IdToNotifierMap::const_iterator iter = id_to_notifier_map_.find(id);
   if (iter == id_to_notifier_map_.end())
     return nullptr;
-  return iter->value;
+  return iter->value.Get();
 }
 
 void GeolocationWatchers::Remove(int id) {
@@ -65,7 +64,7 @@ void GeolocationWatchers::Clear() {
 }
 
 bool GeolocationWatchers::IsEmpty() const {
-  return id_to_notifier_map_.IsEmpty();
+  return id_to_notifier_map_.empty();
 }
 
 void GeolocationWatchers::Swap(GeolocationWatchers& other) {

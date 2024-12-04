@@ -4,12 +4,15 @@
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
  */
-
-
 #include "include/utils/SkParse.h"
 
-#include <string.h>
+#include "include/core/SkColor.h"
+#include "include/core/SkTypes.h"
+
 #include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
 #include <iterator>
 
 static constexpr const char* gColorNames[] = {

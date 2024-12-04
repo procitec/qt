@@ -38,9 +38,8 @@ namespace blink {
 HTMLWBRElement::HTMLWBRElement(Document& document)
     : HTMLElement(html_names::kWbrTag, document) {}
 
-LayoutObject* HTMLWBRElement::CreateLayoutObject(const ComputedStyle& style,
-                                                 LegacyLayout) {
-  return new LayoutWordBreak(this);
+LayoutObject* HTMLWBRElement::CreateLayoutObject(const ComputedStyle&) {
+  return MakeGarbageCollected<LayoutWordBreak>(*this);
 }
 
 }  // namespace blink

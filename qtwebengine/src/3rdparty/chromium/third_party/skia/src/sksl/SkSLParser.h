@@ -1,5 +1,5 @@
 /*
- * Copyright 2016 Google Inc.
+ * Copyright 2021 Google LLC.
  *
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
@@ -8,97 +8,60 @@
 #ifndef SKSL_PARSER
 #define SKSL_PARSER
 
-#include <vector>
-#include <memory>
-#include <unordered_map>
-#include <unordered_set>
-#include "src/sksl/SkSLASTFile.h"
-#include "src/sksl/SkSLASTNode.h"
-#include "src/sksl/SkSLErrorReporter.h"
+#include "include/core/SkTypes.h"
+#include "src/sksl/SkSLDefines.h"
 #include "src/sksl/SkSLLexer.h"
+#include "src/sksl/SkSLOperator.h"
+#include "src/sksl/SkSLPosition.h"
+#include "src/sksl/SkSLProgramSettings.h"
 #include "src/sksl/ir/SkSLLayout.h"
+#include "src/sksl/ir/SkSLModifiers.h"
 
-struct yy_buffer_state;
-#define YY_TYPEDEF_YY_BUFFER_STATE
-typedef struct yy_buffer_state *YY_BUFFER_STATE;
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <string_view>
+#include <vector>
 
 namespace SkSL {
 
-struct Modifiers;
+class Compiler;
+class ErrorReporter;
+class Expression;
+class FunctionDeclaration;
+struct Module;
+struct Program;
+class ProgramElement;
+enum class ProgramKind : int8_t;
+class Statement;
 class SymbolTable;
+class Type;
+class VarDeclaration;
+class Variable;
 
 /**
- * Consumes .sksl text and produces an abstract syntax tree describing the contents.
+ * Consumes .sksl text and converts it into an IR tree, encapsulated in a Program.
  */
 class Parser {
 public:
-    enum class LayoutToken {
-        LOCATION,
-        OFFSET,
-        BINDING,
-        INDEX,
-        SET,
-        BUILTIN,
-        INPUT_ATTACHMENT_INDEX,
-        ORIGIN_UPPER_LEFT,
-        OVERRIDE_COVERAGE,
-        BLEND_SUPPORT_ALL_EQUATIONS,
-        BLEND_SUPPORT_MULTIPLY,
-        BLEND_SUPPORT_SCREEN,
-        BLEND_SUPPORT_OVERLAY,
-        BLEND_SUPPORT_DARKEN,
-        BLEND_SUPPORT_LIGHTEN,
-        BLEND_SUPPORT_COLORDODGE,
-        BLEND_SUPPORT_COLORBURN,
-        BLEND_SUPPORT_HARDLIGHT,
-        BLEND_SUPPORT_SOFTLIGHT,
-        BLEND_SUPPORT_DIFFERENCE,
-        BLEND_SUPPORT_EXCLUSION,
-        BLEND_SUPPORT_HSL_HUE,
-        BLEND_SUPPORT_HSL_SATURATION,
-        BLEND_SUPPORT_HSL_COLOR,
-        BLEND_SUPPORT_HSL_LUMINOSITY,
-        PUSH_CONSTANT,
-        POINTS,
-        LINES,
-        LINE_STRIP,
-        LINES_ADJACENCY,
-        TRIANGLES,
-        TRIANGLE_STRIP,
-        TRIANGLES_ADJACENCY,
-        MAX_VERTICES,
-        INVOCATIONS,
-        MARKER,
-        WHEN,
-        KEY,
-        TRACKED,
-        SRGB_UNPREMUL,
-        CTYPE,
-        SKPMCOLOR4F,
-        SKV4,
-        SKRECT,
-        SKIRECT,
-        SKPMCOLOR,
-        SKM44,
-        BOOL,
-        INT,
-        FLOAT,
-    };
+    Parser(Compiler* compiler,
+           const ProgramSettings& settings,
+           ProgramKind kind,
+           std::unique_ptr<std::string> text);
+    ~Parser();
 
-    Parser(const char* text, size_t length, SymbolTable& symbols, ErrorReporter& errors);
+    std::unique_ptr<Program> programInheritingFrom(const Module* module);
 
-    /**
-     * Consumes a complete .sksl file and returns the parse tree. Errors are reported via the
-     * ErrorReporter; the return value may contain some declarations even when errors have occurred.
-     */
-    std::unique_ptr<ASTFile> file();
+    std::unique_ptr<Module> moduleInheritingFrom(const Module* parentModule);
 
-    StringFragment text(Token token);
+    std::string_view text(Token token);
 
     Position position(Token token);
 
 private:
-    static void InitLayoutMap();
+    class AutoDepth;
+    class AutoSymbolTable;
+    class Checkpoint;
 
     /**
      * Return the next token, including whitespace tokens, from the parse stream.
@@ -129,6 +92,13 @@ private:
     bool checkNext(Token::Kind kind, Token* result = nullptr);
 
     /**
+     * Behaves like checkNext(TK_IDENTIFIER), but also verifies that identifier is not a builtin
+     * type. If the token was actually a builtin type, false is returned (the next token is not
+     * considered to be an identifier).
+     */
+    bool checkIdentifier(Token* result = nullptr);
+
+    /**
      * Reads the next non-whitespace token and generates an error if it is not the expected type.
      * The 'expected' string is part of the error message, which reads:
      *
@@ -138,127 +108,203 @@ private:
      * Returns true if the read token was as expected, false otherwise.
      */
     bool expect(Token::Kind kind, const char* expected, Token* result = nullptr);
-    bool expect(Token::Kind kind, String expected, Token* result = nullptr);
+    bool expect(Token::Kind kind, std::string expected, Token* result = nullptr);
 
-    void error(Token token, String msg);
-    void error(int offset, String msg);
     /**
-     * Returns true if the 'name' identifier refers to a type name. For instance, isType("int") will
-     * always return true.
+     * Behaves like expect(TK_IDENTIFIER), but also verifies that identifier is not a type.
+     * If the token was actually a type, generates an error message of the form:
+     *
+     * "expected an identifier, but found type 'float2'"
      */
-    bool isType(StringFragment name);
+    bool expectIdentifier(Token* result);
 
-    // The pointer to the node may be invalidated by modifying the fNodes vector
-    ASTNode& getNode(ASTNode::ID id) {
-        SkASSERT(id.fValue >= 0 && id.fValue < (int) fFile->fNodes.size());
-        return fFile->fNodes[id.fValue];
-    }
+    /** If the next token is a newline, consumes it and returns true. If not, returns false. */
+    bool expectNewline();
+
+    void error(Token token, std::string_view msg);
+    void error(Position position, std::string_view msg);
+
+    // Returns the range from `start` to the current parse position.
+    Position rangeFrom(Position start);
+    Position rangeFrom(Token start);
 
     // these functions parse individual grammar rules from the current parse position; you probably
     // don't need to call any of these outside of the parser. The function declarations in the .cpp
     // file have comments describing the grammar rules.
 
-    ASTNode::ID precision();
+    void declarations();
 
-    ASTNode::ID directive();
+    /**
+     * Parses an expression representing an array size. Reports errors if the array size is not
+     * valid (out of bounds, not a literal integer). Returns true if an expression was
+     * successfully parsed, even if that array size is not actually valid. In the event of a true
+     * return, outResult always contains a valid array size (even if the parsed array size was not
+     * actually valid; invalid array sizes result in a 1 to avoid additional errors downstream).
+     */
+    bool arraySize(SKSL_INT* outResult);
 
-    ASTNode::ID section();
+    void directive(bool allowVersion);
 
-    ASTNode::ID enumDeclaration();
+    void extensionDirective(Position start);
 
-    ASTNode::ID declaration();
+    void versionDirective(Position start, bool allowVersion);
 
-    ASTNode::ID varDeclarations();
+    bool declaration();
 
-    ASTNode::ID structDeclaration();
+    bool functionDeclarationEnd(Position start,
+                                Modifiers& modifiers,
+                                const Type* returnType,
+                                const Token& name);
 
-    ASTNode::ID structVarDeclaration(Modifiers modifiers);
+    bool prototypeFunction(SkSL::FunctionDeclaration* decl);
 
-    ASTNode::ID varDeclarationEnd(Modifiers modifiers, ASTNode::ID type, StringFragment name);
+    bool defineFunction(SkSL::FunctionDeclaration* decl);
 
-    ASTNode::ID parameter();
+    struct VarDeclarationsPrefix {
+        Position fPosition;
+        Modifiers fModifiers;
+        const Type* fType;
+        Token fName;
+    };
+
+    bool varDeclarationsPrefix(VarDeclarationsPrefix* prefixData);
+
+    std::unique_ptr<Statement> varDeclarationsOrExpressionStatement();
+
+    std::unique_ptr<Statement> varDeclarations();
+
+    const Type* structDeclaration();
+
+    void structVarDeclaration(Position start, const Modifiers& modifiers);
+
+    bool allowUnsizedArrays() {
+        return ProgramConfig::IsCompute(fKind) || ProgramConfig::IsFragment(fKind) ||
+               ProgramConfig::IsVertex(fKind);
+    }
+
+    const Type* arrayType(const Type* base, int count, Position pos);
+
+    const Type* unsizedArrayType(const Type* base, Position pos);
+
+    bool parseArrayDimensions(Position pos, const Type** type);
+
+    bool parseInitializer(Position pos, std::unique_ptr<Expression>* initializer);
+
+    void addGlobalVarDeclaration(std::unique_ptr<SkSL::VarDeclaration> decl);
+
+    void globalVarDeclarationEnd(Position position, const Modifiers& mods,
+                                 const Type* baseType, Token name);
+
+    std::unique_ptr<Statement> localVarDeclarationEnd(Position position,
+                                                      const Modifiers& mods,
+                                                      const Type* baseType,
+                                                      Token name);
+
+    bool modifiersDeclarationEnd(const Modifiers& mods);
+
+    bool parameter(std::unique_ptr<SkSL::Variable>* outParam);
 
     int layoutInt();
 
-    StringFragment layoutIdentifier();
+    std::string_view layoutIdentifier();
 
-    StringFragment layoutCode();
-
-    Layout::Key layoutKey();
-
-    Layout::CType layoutCType();
-
-    Layout layout();
+    SkSL::Layout layout();
 
     Modifiers modifiers();
 
-    Modifiers modifiersWithDefaults(int defaultFlags);
+    std::unique_ptr<Statement> statementOrNop(Position pos, std::unique_ptr<Statement> stmt);
 
-    ASTNode::ID statement();
+    std::unique_ptr<Statement> statement(bool bracesIntroduceNewScope = true);
 
-    ASTNode::ID type();
+    const Type* findType(Position pos, Modifiers* modifiers, std::string_view name);
 
-    ASTNode::ID interfaceBlock(Modifiers mods);
+    const Type* type(Modifiers* modifiers);
 
-    ASTNode::ID ifStatement();
+    bool interfaceBlock(const Modifiers& mods);
 
-    ASTNode::ID doStatement();
+    std::unique_ptr<Statement> ifStatement();
 
-    ASTNode::ID whileStatement();
+    std::unique_ptr<Statement> doStatement();
 
-    ASTNode::ID forStatement();
+    std::unique_ptr<Statement> whileStatement();
 
-    ASTNode::ID switchCase();
+    std::unique_ptr<Statement> forStatement();
 
-    ASTNode::ID switchStatement();
+    bool switchCaseBody(ExpressionArray* values,
+                        StatementArray* caseBlocks,
+                        std::unique_ptr<Expression> value);
 
-    ASTNode::ID returnStatement();
+    bool switchCase(ExpressionArray* values, StatementArray* caseBlocks);
 
-    ASTNode::ID breakStatement();
+    std::unique_ptr<Statement> switchStatement();
 
-    ASTNode::ID continueStatement();
+    std::unique_ptr<Statement> returnStatement();
 
-    ASTNode::ID discardStatement();
+    std::unique_ptr<Statement> breakStatement();
 
-    ASTNode::ID block();
+    std::unique_ptr<Statement> continueStatement();
 
-    ASTNode::ID expressionStatement();
+    std::unique_ptr<Statement> discardStatement();
 
-    ASTNode::ID expression();
+    std::unique_ptr<Statement> block(bool introduceNewScope,
+                                     std::unique_ptr<SymbolTable>* adoptExistingSymbolTable);
 
-    ASTNode::ID assignmentExpression();
+    std::unique_ptr<Statement> expressionStatement();
 
-    ASTNode::ID ternaryExpression();
+    using BinaryParseFn = std::unique_ptr<Expression> (Parser::*)();
+    [[nodiscard]] bool operatorRight(AutoDepth& depth,
+                                     Operator::Kind op,
+                                     BinaryParseFn rightFn,
+                                     std::unique_ptr<Expression>& expr);
 
-    ASTNode::ID logicalOrExpression();
+    std::unique_ptr<Expression> poison(Position pos);
 
-    ASTNode::ID logicalXorExpression();
+    std::unique_ptr<Expression> expressionOrPoison(Position pos, std::unique_ptr<Expression> expr);
 
-    ASTNode::ID logicalAndExpression();
+    std::unique_ptr<Expression> expression();
 
-    ASTNode::ID bitwiseOrExpression();
+    std::unique_ptr<Expression> assignmentExpression();
 
-    ASTNode::ID bitwiseXorExpression();
+    std::unique_ptr<Expression> ternaryExpression();
 
-    ASTNode::ID bitwiseAndExpression();
+    std::unique_ptr<Expression> logicalOrExpression();
 
-    ASTNode::ID equalityExpression();
+    std::unique_ptr<Expression> logicalXorExpression();
 
-    ASTNode::ID relationalExpression();
+    std::unique_ptr<Expression> logicalAndExpression();
 
-    ASTNode::ID shiftExpression();
+    std::unique_ptr<Expression> bitwiseOrExpression();
 
-    ASTNode::ID additiveExpression();
+    std::unique_ptr<Expression> bitwiseXorExpression();
 
-    ASTNode::ID multiplicativeExpression();
+    std::unique_ptr<Expression> bitwiseAndExpression();
 
-    ASTNode::ID unaryExpression();
+    std::unique_ptr<Expression> equalityExpression();
 
-    ASTNode::ID postfixExpression();
+    std::unique_ptr<Expression> relationalExpression();
 
-    ASTNode::ID suffix(ASTNode::ID base);
+    std::unique_ptr<Expression> shiftExpression();
 
-    ASTNode::ID term();
+    std::unique_ptr<Expression> additiveExpression();
+
+    std::unique_ptr<Expression> multiplicativeExpression();
+
+    std::unique_ptr<Expression> unaryExpression();
+
+    std::unique_ptr<Expression> postfixExpression();
+
+    std::unique_ptr<Expression> swizzle(Position pos,
+                                        std::unique_ptr<Expression> base,
+                                        std::string_view swizzleMask,
+                                        Position maskPos);
+
+    std::unique_ptr<Expression> call(Position pos,
+                                     std::unique_ptr<Expression> base,
+                                     ExpressionArray args);
+
+    std::unique_ptr<Expression> suffix(std::unique_ptr<Expression> base);
+
+    std::unique_ptr<Expression> term();
 
     bool intLiteral(SKSL_INT* dest);
 
@@ -266,24 +312,22 @@ private:
 
     bool boolLiteral(bool* dest);
 
-    bool identifier(StringFragment* dest);
+    bool identifier(std::string_view* dest);
 
-    static std::unordered_map<String, LayoutToken>* layoutTokens;
+    SymbolTable* symbolTable();
 
-    const char* fText;
+    Compiler& fCompiler;
+    ProgramSettings fSettings;
+    ErrorReporter* fErrorReporter;
+    bool fEncounteredFatalError;
+    ProgramKind fKind;
+    std::unique_ptr<std::string> fText;
+    std::vector<std::unique_ptr<SkSL::ProgramElement>> fProgramElements;
     Lexer fLexer;
-    YY_BUFFER_STATE fBuffer;
     // current parse depth, used to enforce a recursion limit to try to keep us from overflowing the
     // stack on pathological inputs
     int fDepth = 0;
     Token fPushback;
-    SymbolTable& fSymbols;
-    ErrorReporter& fErrors;
-
-    std::unique_ptr<ASTFile> fFile;
-
-    friend class AutoDepth;
-    friend class HCodeGenerator;
 };
 
 }  // namespace SkSL

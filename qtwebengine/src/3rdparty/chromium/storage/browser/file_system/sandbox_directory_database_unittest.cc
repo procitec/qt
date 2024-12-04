@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,7 +14,6 @@
 #include "base/files/file.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "storage/browser/test/sandbox_database_test_helper.h"
@@ -40,13 +39,17 @@ class SandboxDirectoryDatabaseTest : public testing::Test {
     InitDatabase();
   }
 
+  SandboxDirectoryDatabaseTest(const SandboxDirectoryDatabaseTest&) = delete;
+  SandboxDirectoryDatabaseTest& operator=(const SandboxDirectoryDatabaseTest&) =
+      delete;
+
   SandboxDirectoryDatabase* db() { return db_.get(); }
 
   void InitDatabase() {
     // Call CloseDatabase() to avoid having multiple database instances for
     // single directory at once.
     CloseDatabase();
-    db_.reset(new SandboxDirectoryDatabase(path(), nullptr));
+    db_ = std::make_unique<SandboxDirectoryDatabase>(path(), nullptr);
   }
 
   void CloseDatabase() { db_.reset(); }
@@ -98,7 +101,7 @@ class SandboxDirectoryDatabaseTest : public testing::Test {
     db_.reset();
     ASSERT_TRUE(base::DeletePathRecursively(path()));
     ASSERT_TRUE(base::CreateDirectory(path()));
-    db_.reset(new SandboxDirectoryDatabase(path(), nullptr));
+    db_ = std::make_unique<SandboxDirectoryDatabase>(path(), nullptr);
   }
 
   bool RepairDatabase() {
@@ -136,9 +139,6 @@ class SandboxDirectoryDatabaseTest : public testing::Test {
   // Common temp base for nondestructive uses.
   base::ScopedTempDir base_;
   std::unique_ptr<SandboxDirectoryDatabase> db_;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(SandboxDirectoryDatabaseTest);
 };
 
 TEST_F(SandboxDirectoryDatabaseTest, TestMissingFileGetInfo) {
@@ -383,8 +383,8 @@ TEST_F(SandboxDirectoryDatabaseTest, TestUpdateModificationTime) {
   EXPECT_EQ(info0.name, info1.name);
   EXPECT_EQ(info0.parent_id, info1.parent_id);
   EXPECT_EQ(info0.data_path, info1.data_path);
-  EXPECT_EQ(floor(info0.modification_time.ToDoubleT()),
-            info1.modification_time.ToDoubleT());
+  EXPECT_EQ(floor(info0.modification_time.InSecondsFSinceUnixEpoch()),
+            info1.modification_time.InSecondsFSinceUnixEpoch());
 
   EXPECT_TRUE(db()->UpdateModificationTime(file_id, base::Time::UnixEpoch()));
   EXPECT_TRUE(db()->GetFileInfo(file_id, &info1));
@@ -392,8 +392,8 @@ TEST_F(SandboxDirectoryDatabaseTest, TestUpdateModificationTime) {
   EXPECT_EQ(info0.parent_id, info1.parent_id);
   EXPECT_EQ(info0.data_path, info1.data_path);
   EXPECT_NE(info0.modification_time, info1.modification_time);
-  EXPECT_EQ(info1.modification_time.ToDoubleT(),
-            floor(base::Time::UnixEpoch().ToDoubleT()));
+  EXPECT_EQ(info1.modification_time.InSecondsFSinceUnixEpoch(),
+            floor(base::Time::UnixEpoch().InSecondsFSinceUnixEpoch()));
 
   EXPECT_FALSE(db()->UpdateModificationTime(999, base::Time::UnixEpoch()));
 }
@@ -412,8 +412,8 @@ TEST_F(SandboxDirectoryDatabaseTest, TestSimpleFileOperations) {
   EXPECT_EQ(info0.parent_id, info1.parent_id);
   EXPECT_EQ(info0.data_path, info1.data_path);
   EXPECT_EQ(info0.name, info1.name);
-  EXPECT_EQ(floor(info0.modification_time.ToDoubleT()),
-            info1.modification_time.ToDoubleT());
+  EXPECT_EQ(floor(info0.modification_time.InSecondsFSinceUnixEpoch()),
+            info1.modification_time.InSecondsFSinceUnixEpoch());
 }
 
 TEST_F(SandboxDirectoryDatabaseTest, TestOverwritingMoveFileSrcDirectory) {

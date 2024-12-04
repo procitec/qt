@@ -1,53 +1,20 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtQuick module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+
+#undef QT_NO_FOREACH // this file contains unported legacy Q_FOREACH uses
 
 #include "qquickparticleemitter_p.h"
-#include <private/qqmlengine_p.h>
-#include <private/qqmlglobal_p.h>
-#include <private/qjsvalue_p.h>
-#include <QRandomGenerator>
-QT_BEGIN_NAMESPACE
 
+#include <private/qqmlglobal_p.h>
+#include <private/qquickv4particledata_p.h>
+
+#include <QtCore/qrandom.h>
+
+QT_BEGIN_NAMESPACE
 
 /*!
     \qmltype Emitter
-    \instantiates QQuickParticleEmitter
+//!    \nativetype QQuickParticleEmitter
     \inqmlmodule QtQuick.Particles
     \brief Emits logical particles.
     \ingroup qtquick-particles
@@ -63,7 +30,6 @@ QT_BEGIN_NAMESPACE
     in the particle's lifetime by any Affector element in the same
     ParticleSystem. This includes attributes like lifespan.
 */
-
 
 /*!
     \qmlproperty ParticleSystem QtQuick.Particles::Emitter::system
@@ -243,10 +209,10 @@ QQuickParticleEmitter::QQuickParticleEmitter(QQuickItem *parent) :
 
 {
     //TODO: Reset velocity/acc back to null vector? Or allow null pointer?
-    connect(this, SIGNAL(particlesPerSecondChanged(qreal)),
-            this, SIGNAL(particleCountChanged()));
-    connect(this, SIGNAL(particleDurationChanged(int)),
-            this, SIGNAL(particleCountChanged()));
+    connect(this, &QQuickParticleEmitter::particlesPerSecondChanged,
+            this, &QQuickParticleEmitter::particleCountChanged);
+    connect(this, &QQuickParticleEmitter::particleDurationChanged,
+            this, &QQuickParticleEmitter::particleCountChanged);
 }
 
 QQuickParticleEmitter::~QQuickParticleEmitter()
@@ -257,7 +223,8 @@ QQuickParticleEmitter::~QQuickParticleEmitter()
 
 bool QQuickParticleEmitter::isEmitConnected()
 {
-    IS_SIGNAL_CONNECTED(this, QQuickParticleEmitter, emitParticles, (const QJSValue &));
+    IS_SIGNAL_CONNECTED(
+            this, QQuickParticleEmitter, emitParticles, (const QList<QQuickV4ParticleData> &));
 }
 
 void QQuickParticleEmitter::reclaculateGroupId() const
@@ -317,15 +284,15 @@ void QQuickParticleEmitter::setMaxParticleCount(int arg)
 {
     if (m_maxParticleCount != arg) {
         if (arg < 0 && m_maxParticleCount >= 0){
-            connect(this, SIGNAL(particlesPerSecondChanged(qreal)),
-                    this, SIGNAL(particleCountChanged()));
-            connect(this, SIGNAL(particleDurationChanged(int)),
-                    this, SIGNAL(particleCountChanged()));
-        }else if (arg >= 0 && m_maxParticleCount < 0){
-            disconnect(this, SIGNAL(particlesPerSecondChanged(qreal)),
-                    this, SIGNAL(particleCountChanged()));
-            disconnect(this, SIGNAL(particleDurationChanged(int)),
-                    this, SIGNAL(particleCountChanged()));
+            connect(this, &QQuickParticleEmitter::particlesPerSecondChanged,
+                    this, &QQuickParticleEmitter::particleCountChanged);
+            connect(this, &QQuickParticleEmitter::particleDurationChanged,
+                    this, &QQuickParticleEmitter::particleCountChanged);
+        } else if (arg >= 0 && m_maxParticleCount < 0){
+            disconnect(this, &QQuickParticleEmitter::particlesPerSecondChanged,
+                       this, &QQuickParticleEmitter::particleCountChanged);
+            disconnect(this, &QQuickParticleEmitter::particleDurationChanged,
+                       this, &QQuickParticleEmitter::velocityFromMovementChanged);
         }
         m_overwrite = arg < 0;
         m_maxParticleCount = arg;
@@ -485,25 +452,19 @@ void QQuickParticleEmitter::emitWindow(int timeStamp)
             m_system->emitParticle(d, this);
 
     if (isEmitConnected()) {
-        QQmlEngine *qmlEngine = ::qmlEngine(this);
-        QV4::ExecutionEngine *v4 = qmlEngine->handle();
-        QV4::Scope scope(v4);
-
         //Done after emitParticle so that the Painter::load is done first, this allows you to customize its static variables
         //We then don't need to request another reload, because the first reload isn't scheduled until we get back to the render thread
-        QV4::ScopedArrayObject array(scope, v4->newArrayObject(toEmit.size()));
-        QV4::ScopedValue v(scope);
-        for (int i=0; i<toEmit.size(); i++)
-            array->put(i, (v = toEmit[i]->v4Value(m_system)));
 
-        QJSValue particles;
-        QJSValuePrivate::setValue(&particles, v4, array);
+        QList<QQuickV4ParticleData> particles;
+        particles.reserve(toEmit.size());
+        for (QQuickParticleData *particle : std::as_const(toEmit))
+            particles.push_back(particle->v4Value(m_system));
+
         emit emitParticles(particles);//A chance for arbitrary JS changes
     }
 
     m_last_emission = pt;
 
-    m_last_last_last_emitter = m_last_last_emitter;
     m_last_last_emitter = m_last_emitter;
     m_last_emitter = QPointF(x(), y());
     m_last_timestamp = time;

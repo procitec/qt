@@ -1,16 +1,16 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "extensions/browser/api/declarative_net_request/filter_list_converter/converter.h"
 
+#include <optional>
 #include "base/check_op.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/json/json_file_value_serializer.h"
 #include "base/json/json_reader.h"
-#include "base/optional.h"
 #include "base/strings/string_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -27,11 +27,9 @@ void TestConversion(std::vector<std::string> filter_list_rules,
 
   base::FilePath input_path = temp_dir.GetPath().AppendASCII("filterlist.txt");
   std::string filterlist = base::JoinString(filter_list_rules, "\n");
-  CHECK_EQ(filterlist.size(),
-           static_cast<size_t>(base::WriteFile(input_path, filterlist.c_str(),
-                                               filterlist.size())));
+  CHECK(base::WriteFile(input_path, filterlist));
 
-  base::Optional<base::Value> expected_json =
+  std::optional<base::Value> expected_json =
       base::JSONReader::Read(json_result);
   CHECK(expected_json.has_value());
 
@@ -104,7 +102,7 @@ TEST_P(FilterListConverterTest, Convert) {
        "condition": {
           "resourceTypes": [ "other", "script", "stylesheet", "object",
               "xmlhttprequest", "sub_frame", "ping", "media", "font",
-              "websocket" ],
+              "websocket", "webtransport", "webbundle"],
           "urlFilter": "|https://*.abc.com|",
           "domainType": "thirdParty"
        },

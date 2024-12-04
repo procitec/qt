@@ -29,16 +29,16 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_MODULES_WEBDATABASE_DATABASE_TASK_H_
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_WEBDATABASE_DATABASE_TASK_H_
 
-#include <memory>
-
-#include "base/macros.h"
+#include "base/dcheck_is_on.h"
 #include "base/memory/ptr_util.h"
+#include "base/memory/raw_ptr.h"
+#include "base/memory/raw_ref.h"
 #include "base/synchronization/waitable_event.h"
 #include "third_party/blink/renderer/modules/webdatabase/database.h"
 #include "third_party/blink/renderer/modules/webdatabase/database_basic_types.h"
 #include "third_party/blink/renderer/modules/webdatabase/database_error.h"
 #include "third_party/blink/renderer/modules/webdatabase/sql_transaction_backend.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/persistent.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 #include "third_party/blink/renderer/platform/wtf/threading.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
@@ -49,6 +49,9 @@ class DatabaseTask {
   USING_FAST_MALLOC(DatabaseTask);
 
  public:
+  DatabaseTask(const DatabaseTask&) = delete;
+  DatabaseTask& operator=(const DatabaseTask&) = delete;
+
   virtual ~DatabaseTask();
 
   void Run();
@@ -63,14 +66,12 @@ class DatabaseTask {
   virtual void TaskCancelled() {}
 
   CrossThreadPersistent<Database> database_;
-  base::WaitableEvent* complete_event_;
+  raw_ptr<base::WaitableEvent, ExperimentalRenderer> complete_event_;
 
 #if DCHECK_IS_ON()
   virtual const char* DebugTaskName() const = 0;
   bool complete_;
 #endif
-
-  DISALLOW_COPY_AND_ASSIGN(DatabaseTask);
 };
 
 class Database::DatabaseOpenTask final : public DatabaseTask {
@@ -89,9 +90,9 @@ class Database::DatabaseOpenTask final : public DatabaseTask {
 #endif
 
   bool set_version_in_new_database_;
-  DatabaseError& error_;
-  String& error_message_;
-  bool& success_;
+  const raw_ref<DatabaseError, ExperimentalRenderer> error_;
+  const raw_ref<String, ExperimentalRenderer> error_message_;
+  const raw_ref<bool, ExperimentalRenderer> success_;
 };
 
 class Database::DatabaseCloseTask final : public DatabaseTask {
@@ -135,7 +136,7 @@ class Database::DatabaseTableNamesTask final : public DatabaseTask {
   const char* DebugTaskName() const override;
 #endif
 
-  Vector<String>& table_names_;
+  const raw_ref<Vector<String>, ExperimentalRenderer> table_names_;
 };
 
 }  // namespace blink

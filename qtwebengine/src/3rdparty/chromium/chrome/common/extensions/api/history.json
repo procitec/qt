@@ -1,11 +1,11 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 [
   {
     "namespace": "history",
-    "description": "Use the <code>chrome.history</code> API to interact with the browser's record of visited pages. You can add, remove, and query for URLs in the browser's history. To override the history page with your own version, see <a href='override'>Override Pages</a>.",
+    "description": "Use the <code>chrome.history</code> API to interact with the browser's record of visited pages. You can add, remove, and query for URLs in the browser's history. To override the history page with your own version, see <a href='develop/ui/override-chrome-pages'>Override Pages</a>.",
     "types": [
       {
         "id": "TransitionType",
@@ -31,14 +31,22 @@
         "type": "object",
         "description": "An object encapsulating one visit to a URL.",
         "properties": {
-          "id": {"type": "string", "minimum": 0, "description": "The unique identifier for the item."},
+          "id": {"type": "string", "minimum": 0, "description": "The unique identifier for the corresponding $(ref:history.HistoryItem)."},
           "visitId": {"type": "string", "description": "The unique identifier for this visit."},
           "visitTime": {"type": "number", "optional": true, "description": "When this visit occurred, represented in milliseconds since the epoch."},
           "referringVisitId": {"type": "string", "description": "The visit ID of the referrer."},
           "transition": {
             "$ref": "TransitionType",
             "description": "The <a href='#transition_types'>transition type</a> for this visit from its referrer."
-          }
+          },
+          "isLocal": { "type": "boolean", "description": "True if the visit originated on this device. False if it was synced from a different device." }
+        }
+      },
+      {
+        "id": "UrlDetails",
+        "type": "object",
+        "properties": {
+          "url": {"type": "string", "description": "The URL for the operation. It must be in the format as returned from a call to history.search."}
         }
       }
     ],
@@ -57,15 +65,14 @@
               "endTime": {"type": "number", "optional": true, "description": "Limit results to those visited before this date, represented in milliseconds since the epoch."},
               "maxResults": {"type": "integer", "optional": true, "minimum": 0, "description": "The maximum number of results to retrieve.  Defaults to 100."}
             }
-          },
-          {
-            "name": "callback",
-            "type": "function",
-            "parameters": [
-              { "name": "results", "type": "array", "items": { "$ref": "HistoryItem"} }
-            ]
           }
-        ]
+        ],
+        "returns_async": {
+          "name": "callback",
+          "parameters": [
+            { "name": "results", "type": "array", "items": { "$ref": "HistoryItem"} }
+          ]
+        }
       },
       {
         "name": "getVisits",
@@ -74,19 +81,15 @@
         "parameters": [
           {
             "name": "details",
-            "type": "object",
-            "properties": {
-              "url": {"type": "string", "description": "The URL for which to retrieve visit information.  It must be in the format as returned from a call to history.search."}
-            }
-          },
-          {
-            "name": "callback",
-            "type": "function",
-            "parameters": [
-              { "name": "results", "type": "array", "items": { "$ref": "VisitItem"} }
-            ]
+            "$ref": "UrlDetails"
           }
-        ]
+        ],
+        "returns_async": {
+          "name": "callback",
+          "parameters": [
+            { "name": "results", "type": "array", "items": { "$ref": "VisitItem"} }
+          ]
+        }
       },
       {
         "name": "addUrl",
@@ -95,18 +98,14 @@
         "parameters": [
           {
             "name": "details",
-            "type": "object",
-            "properties": {
-              "url": {"type": "string", "description": "The URL to add."}
-            }
-          },
-          {
-            "name": "callback",
-            "type": "function",
-            "optional": true,
-            "parameters": []
+            "$ref": "UrlDetails"
           }
-        ]
+        ],
+        "returns_async": {
+          "name": "callback",
+          "optional": true,
+          "parameters": []
+        }
       },
       {
         "name": "deleteUrl",
@@ -115,18 +114,14 @@
         "parameters": [
           {
             "name": "details",
-            "type": "object",
-            "properties": {
-              "url": {"type": "string", "description": "The URL to remove."}
-            }
-          },
-          {
-            "name": "callback",
-            "type": "function",
-            "optional": true,
-            "parameters": []
+            "$ref": "UrlDetails"
           }
-        ]
+        ],
+        "returns_async": {
+          "name": "callback",
+          "optional": true,
+          "parameters": []
+        }
       },
       {
         "name": "deleteRange",
@@ -140,21 +135,22 @@
               "startTime": { "type": "number", "description": "Items added to history after this date, represented in milliseconds since the epoch." },
               "endTime": { "type": "number", "description": "Items added to history before this date, represented in milliseconds since the epoch." }
             }
-          },
-          {
-            "name": "callback", "type": "function", "parameters": []
           }
-        ]
+        ],
+        "returns_async": {
+          "name": "callback",
+          "parameters": []
+        }
       },
       {
         "name": "deleteAll",
         "type": "function",
         "description": "Deletes all items from the history.",
-        "parameters": [
-          {
-            "name": "callback", "type": "function", "parameters": []
-          }
-        ]
+        "parameters": [],
+        "returns_async": {
+          "name": "callback",
+          "parameters": []
+        }
       }
     ],
     "events": [

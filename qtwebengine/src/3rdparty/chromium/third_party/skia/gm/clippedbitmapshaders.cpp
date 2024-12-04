@@ -9,7 +9,6 @@
 #include "include/core/SkBitmap.h"
 #include "include/core/SkCanvas.h"
 #include "include/core/SkColor.h"
-#include "include/core/SkFilterQuality.h"
 #include "include/core/SkMatrix.h"
 #include "include/core/SkPaint.h"
 #include "include/core/SkRect.h"
@@ -59,7 +58,7 @@ protected:
     SkTileMode fMode;
     bool fHQ;
 
-    SkString onShortName() override {
+    SkString getName() const override {
         SkString descriptor;
         switch (fMode) {
             case SkTileMode::kRepeat:
@@ -82,7 +81,7 @@ protected:
         return descriptor;
     }
 
-    SkISize onISize() override { return {300, 300}; }
+    SkISize getISize() override { return {300, 300}; }
 
     void onDraw(SkCanvas* canvas) override {
         SkBitmap bmp = create_bitmap();
@@ -91,11 +90,10 @@ protected:
         s.setScale(8, 8);
         s.postTranslate(SLIDE_SIZE / 2, SLIDE_SIZE / 2);
         SkPaint paint;
-        paint.setShader(bmp.makeShader(fMode, fMode, &s));
-
-        if (fHQ) {
-            paint.setFilterQuality(kHigh_SkFilterQuality);
-        }
+        paint.setShader(bmp.makeShader(fMode, fMode,
+                                       fHQ ? SkSamplingOptions(SkCubicResampler::Mitchell())
+                                           : SkSamplingOptions(),
+                                       s));
 
         SkScalar margin = (SLIDE_SIZE / 3 - RECT_SIZE) / 2;
         for (int i = 0; i < 3; i++) {

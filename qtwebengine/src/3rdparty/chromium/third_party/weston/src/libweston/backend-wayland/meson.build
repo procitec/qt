@@ -10,7 +10,7 @@ srcs_wlwl = [
 	fullscreen_shell_unstable_v1_protocol_c,
 	presentation_time_protocol_c,
 	presentation_time_server_protocol_h,
-	xdg_shell_server_protocol_h,
+	xdg_shell_client_protocol_h,
 	xdg_shell_protocol_c,
 ]
 
@@ -18,8 +18,10 @@ deps_wlwl = [
 	dependency('wayland-client'),
 	dependency('wayland-cursor'),
 	dep_pixman,
-	dep_libweston,
+	dep_libweston_private,
+	dep_libdrm_headers,
 	dep_lib_cairo_shared,
+	dep_lib_gl_borders,
 ]
 
 if get_option('renderer-gl')
@@ -33,7 +35,7 @@ endif
 plugin_wlwl = shared_library(
 	'wayland-backend',
 	srcs_wlwl,
-	include_directories: include_directories('../..', '../../shared'),
+	include_directories: common_inc,
 	dependencies: deps_wlwl,
 	name_prefix: '',
 	install: true,

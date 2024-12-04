@@ -1,7 +1,8 @@
-# Copyright 2014 The Chromium Authors. All rights reserved.
+# Copyright 2014 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//build/config/chrome_build.gni")
 import("//build/config/ui.gni")
 
 if (is_android) {
@@ -25,14 +26,18 @@ static_library("core") {
     "simple_alert_infobar_delegate.h",
   ]
 
+  if (is_chrome_for_testing) {
+    sources += [ "infobars_switches.h" ]
+  }
+
   public_deps = [
-    ":feature_flags",
+    "//base",
+    "//build:branding_buildflags",
     "//skia",
+    "//ui/base",
   ]
 
   deps = [
-    "//base",
-    "//ui/base",
     "//ui/gfx",
     "//ui/gfx/animation",
     "//ui/strings",
@@ -44,22 +49,13 @@ static_library("core") {
   }
 }
 
-source_set("feature_flags") {
-  sources = [
-    "infobar_feature.cc",
-    "infobar_feature.h",
-  ]
-
-  public_deps = [ "//base" ]
-}
-
 if (is_android) {
   java_cpp_enum("infobar_generated_enums") {
     sources = [ "infobar_delegate.h" ]
   }
 
   android_library("infobar_enums_java") {
-    deps = [ "//third_party/android_deps:androidx_annotation_annotation_java" ]
+    deps = [ "//third_party/androidx:androidx_annotation_annotation_java" ]
 
     srcjar_deps = [ ":infobar_generated_enums" ]
   }

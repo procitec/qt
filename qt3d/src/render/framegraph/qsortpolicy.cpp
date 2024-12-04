@@ -1,52 +1,14 @@
-/****************************************************************************
-**
-** Copyright (C) 2014 Klaralvdalens Datakonsult AB (KDAB).
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt3D module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2014 Klaralvdalens Datakonsult AB (KDAB).
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qsortpolicy_p.h"
-#include <Qt3DCore/qpropertyvalueaddedchange.h>
-#include <Qt3DCore/qpropertyvalueremovedchange.h>
-#include <Qt3DRender/qframegraphnodecreatedchange.h>
 
 QT_BEGIN_NAMESPACE
 
-using namespace Qt3DCore;
 
 namespace Qt3DRender {
+
+using namespace Qt3DCore;
 
 QSortPolicyPrivate::QSortPolicyPrivate()
     : QFrameGraphNodePrivate()
@@ -73,7 +35,7 @@ QSortPolicyPrivate::QSortPolicyPrivate()
     \qmltype SortPolicy
     \inqmlmodule Qt3D.Render
     \since 5.7
-    \instantiates Qt3DRender::QSortPolicy
+    \nativetype Qt3DRender::QSortPolicy
     \inherits FrameGraphNode
     \brief Provides storage for the sort types to be used.
 
@@ -86,7 +48,7 @@ QSortPolicyPrivate::QSortPolicyPrivate()
  */
 
 /*!
-    \enum QSortPolicy::SortType
+    \enum Qt3DRender::QSortPolicy::SortType
 
     This enum type describes the available sort types.
 
@@ -109,7 +71,7 @@ QSortPolicyPrivate::QSortPolicyPrivate()
 */
 
 /*!
-    \property QSortPolicy::sortTypes
+    \property Qt3DRender::QSortPolicy::sortTypes
     Specifies the sorting types to be used.
 */
 
@@ -152,33 +114,24 @@ QSortPolicy::QSortPolicy(QSortPolicyPrivate &dd, QNode *parent)
 {
 }
 
-QNodeCreatedChangeBasePtr QSortPolicy::createNodeCreationChange() const
-{
-    auto creationChange = QFrameGraphNodeCreatedChangePtr<QSortPolicyData>::create(this);
-    QSortPolicyData &data = creationChange->data;
-    Q_D(const QSortPolicy);
-    data.sortTypes = d->m_sortTypes;
-    return creationChange;
-}
-
 /*!
     \return the current sort types in use
  */
-QVector<QSortPolicy::SortType> QSortPolicy::sortTypes() const
+QList<QSortPolicy::SortType> QSortPolicy::sortTypes() const
 {
     Q_D(const QSortPolicy);
     return d->m_sortTypes;
 }
 
-QVector<int> QSortPolicy::sortTypesInt() const
+QList<int> QSortPolicy::sortTypesInt() const
 {
     Q_D(const QSortPolicy);
-    QVector<int> sortTypesInt;
+    QList<int> sortTypesInt;
     transformVector(d->m_sortTypes, sortTypesInt);
     return sortTypesInt;
 }
 
-void QSortPolicy::setSortTypes(const QVector<SortType> &sortTypes)
+void QSortPolicy::setSortTypes(const QList<SortType> &sortTypes)
 {
     Q_D(QSortPolicy);
     if (sortTypes != d->m_sortTypes) {
@@ -191,9 +144,9 @@ void QSortPolicy::setSortTypes(const QVector<SortType> &sortTypes)
     }
 }
 
-void QSortPolicy::setSortTypes(const QVector<int> &sortTypesInt)
+void QSortPolicy::setSortTypes(const QList<int> &sortTypesInt)
 {
-    QVector<SortType> sortTypes;
+    QList<SortType> sortTypes;
     transformVector(sortTypesInt, sortTypes);
     setSortTypes(sortTypes);
 }
@@ -201,3 +154,5 @@ void QSortPolicy::setSortTypes(const QVector<int> &sortTypesInt)
 } // namespace Qt3DRender
 
 QT_END_NAMESPACE
+
+#include "moc_qsortpolicy.cpp"

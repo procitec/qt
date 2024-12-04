@@ -1,10 +1,10 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 package osp
 
-// TODO(pthatcher):
+// TODO(jophba):
 // - avoid NetworkIdleTimeout
 // - make a client object that can send and receive more than one stream
 // - make a server object that can send and receive more than one stream
@@ -56,7 +56,7 @@ func readAllStreams(ctx context.Context, session quic.Session, streams chan<- io
 
 // Returns a quic.Session object with a .OpenStreamSync method to send streams
 func DialAsQuicClient(ctx context.Context, hostname string, port int) (quic.Session, error) {
-	// TODO(pthatcher): Change InsecureSkipVerify
+	// TODO(jophba): Change InsecureSkipVerify
 	tlsConfig := &tls.Config{InsecureSkipVerify: true}
 	addr := fmt.Sprintf("%s:%d", hostname, port)
 	session, err := quic.DialAddrContext(ctx, addr, tlsConfig, nil)

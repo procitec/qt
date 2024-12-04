@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -18,15 +18,15 @@ namespace {
 ::logging::LogSeverity MapLogLevel(LogLevel level) {
   switch (level) {
     case LogLevel::kVerbose:
-      return ::logging::LOG_VERBOSE;
+      return ::logging::LOGGING_VERBOSE;
     case LogLevel::kInfo:
-      return ::logging::LOG_INFO;
+      return ::logging::LOGGING_INFO;
     case LogLevel::kWarning:
-      return ::logging::LOG_WARNING;
+      return ::logging::LOGGING_WARNING;
     case LogLevel::kError:
-      return ::logging::LOG_ERROR;
+      return ::logging::LOGGING_ERROR;
     case LogLevel::kFatal:
-      return ::logging::LOG_FATAL;
+      return ::logging::LOGGING_FATAL;
   }
 }
 
@@ -49,9 +49,12 @@ void LogWithLevel(LogLevel level,
 
 void Break() {
 #if defined(OFFICIAL_BUILD) && defined(NDEBUG)
-  IMMEDIATE_CRASH();
+  base::ImmediateCrash();
 #else
-  ::base::debug::BreakDebugger();
+  // Chrome's base::debug::BreakDebugger is not properly annotated as
+  // [[noreturn]], so we abort instead. This may need to be revisited
+  // if we want MSVC support in the future.
+  std::abort();
 #endif
 }
 

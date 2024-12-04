@@ -37,10 +37,11 @@
 
 #include "base/notreached.h"
 #include "base/time/time.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/common/common_export.h"
 #include "third_party/blink/public/mojom/input/input_event.mojom-shared.h"
+#include "ui/events/event_latency_metadata.h"
 #include "ui/events/types/event_type.h"
-#include "ui/events/types/scroll_input_type.h"
 #include "ui/gfx/geometry/point_f.h"
 #include "ui/gfx/geometry/vector2d_f.h"
 
@@ -140,11 +141,20 @@ class BLINK_COMMON_EXPORT WebInputEvent {
     // ancestor frames moved within its embedding page's viewport recently.
     kTargetFrameMovedRecently = 1 << 24,
 
+    // TODO(szager): This is the same as kTargetFrameMovedRecently, but it
+    // overrides that value for iframes that are using IntersectionObserver V2
+    // features (i.e. occlusion detection). The purpose of this distinction is
+    // to preserve existing behavior for IOv2-using iframes while dialing in the
+    // feature parameters for kDiscardInputEventsToRecentlyMovedFrames, which is
+    // broader in scope. At the end of that process, this flag should be removed
+    // in favor of kTargetFrameMovedRecently.
+    kTargetFrameMovedRecentlyForIOv2 = 1 << 25,
+
     // When an event is forwarded to the main thread, this modifier will tell if
     // the event was already handled by the compositor thread or not. Based on
     // this, the decision of whether or not the main thread should handle this
     // event for the scrollbar can then be made.
-    kScrollbarManipulationHandledOnCompositorThread = 1 << 25,
+    kScrollbarManipulationHandledOnCompositorThread = 1 << 26,
 
     // The set of non-stateful modifiers that specifically change the
     // interpretation of the key being pressed. For example; IsLeft,
@@ -274,6 +284,7 @@ class BLINK_COMMON_EXPORT WebInputEvent {
       CASE_TYPE(GestureTapCancel);
       CASE_TYPE(GestureDoubleTap);
       CASE_TYPE(GestureTwoFingerTap);
+      CASE_TYPE(GestureShortPress);
       CASE_TYPE(GestureLongPress);
       CASE_TYPE(GestureLongTap);
       CASE_TYPE(GesturePinchBegin);
@@ -313,8 +324,19 @@ class BLINK_COMMON_EXPORT WebInputEvent {
   base::TimeTicks TimeStamp() const { return time_stamp_; }
   void SetTimeStamp(base::TimeTicks time_stamp) { time_stamp_ = time_stamp; }
 
+  const ui::EventLatencyMetadata& GetEventLatencyMetadata() const {
+    return event_latency_metadata_;
+  }
+  ui::EventLatencyMetadata& GetModifiableEventLatencyMetadata() {
+    return event_latency_metadata_;
+  }
+
   void SetTargetFrameMovedRecently() {
     modifiers_ |= kTargetFrameMovedRecently;
+  }
+
+  void SetTargetFrameMovedRecentlyForIOv2() {
+    modifiers_ |= kTargetFrameMovedRecentlyForIOv2;
   }
 
   void SetScrollbarManipulationHandledOnCompositorThread() {
@@ -331,10 +353,6 @@ class BLINK_COMMON_EXPORT WebInputEvent {
 
   // Merge the current event with attributes from |event|.
   virtual void Coalesce(const WebInputEvent& event) = 0;
-
-  // Returns the scroll input type if this is a scroll event; otherwise,
-  // returns base::nullopt.
-  virtual base::Optional<ui::ScrollInputType> GetScrollInputType() const;
 
   // Convert this WebInputEvent::Type to a ui::EventType. Note that this is
   // not a 1:1 relationship. Multiple blink types convert to the same
@@ -360,8 +378,10 @@ class BLINK_COMMON_EXPORT WebInputEvent {
   base::TimeTicks time_stamp_;
   Type type_ = Type::kUndefined;
   int modifiers_ = kNoModifiers;
+
+  ui::EventLatencyMetadata event_latency_metadata_;
 };
 
 }  // namespace blink
 
-#endif
+#endif  // THIRD_PARTY_BLINK_PUBLIC_COMMON_INPUT_WEB_INPUT_EVENT_H_

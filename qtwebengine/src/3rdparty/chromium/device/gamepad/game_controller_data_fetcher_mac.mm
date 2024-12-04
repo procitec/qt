@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,8 +7,9 @@
 #import <GameController/GameController.h>
 #include <string.h>
 
+#include <string>
+
 #include "base/mac/mac_util.h"
-#include "base/strings/string16.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "device/gamepad/gamepad_standard_mappings.h"
@@ -21,39 +22,24 @@ const int kGCControllerPlayerIndexCount = 4;
 
 // Returns true if |controller| should be enumerated by this data fetcher.
 bool IsSupported(GCController* controller) {
-  // We only support the extendedGamepad profile, the basic gamepad profile
-  // appears to only be for iOS devices.
-  if (![controller extendedGamepad])
+  // We only support the extendedGamepad profile.
+  if (!controller.extendedGamepad) {
     return false;
+  }
 
-  // In OS X 10.15, Game Controller API added support for Xbox Wireless
-  // Controller and Dualshock 4. A productCategory property was added to
-  // GCController to allow applications to detect these new categories of
-  // devices.
-  //
-  // In Chrome for Mac, Xbox Wireless Controller and Dualshock 4 are
-  // enumerated by XboxDataFetcher and GamepadPlatformDataFetcherMac,
-  // respectively. If GameControllerDataFetcherMac also enumerates these
-  // devices, it will add duplicate gamepads to the gamepad list.
-  //
-  // On macOS 10.15 or later, use the productCategory property to distinguish
-  // Xbox One and Dualshock 4 and block them from being enumerated by this
-  // data fetcher. On 10.14 or earlier, compare the |vendor_name| against
-  // known values for these devices. Once Chrome no longer supports 10.14, the
-  // |vendor_name| path may be removed.
-  if (base::mac::IsAtLeastOS10_15()) {
-    NSString* product_category =
-        [controller performSelector:@selector(productCategory)];
-    if ([product_category isEqualToString:@"Xbox One"])
-      return false;
-    if ([product_category isEqualToString:@"DualShock 4"])
-      return false;
-  } else {
-    NSString* vendor_name = [controller vendorName];
-    if ([vendor_name isEqualToString:@"Xbox Wireless Controller"])
-      return false;
-    if ([vendor_name isEqualToString:@"Wireless Controller"])
-      return false;
+  // In macOS 10.15, support for some console gamepads was added to the Game
+  // Controller framework and a productCategory property was added to enable
+  // applications to detect the new devices. These gamepads are already
+  // supported in Chrome through other data fetchers and must be blocked here to
+  // avoid double-enumeration.
+  NSString* product_category = controller.productCategory;
+  if ([product_category isEqualToString:@"HID"] ||
+      [product_category isEqualToString:@"Xbox One"] ||
+      [product_category isEqualToString:@"DualShock 4"] ||
+      [product_category isEqualToString:@"DualSense"] ||
+      [product_category isEqualToString:@"Switch Pro Controller"] ||
+      [product_category isEqualToString:@"Nintendo Switch JoyCon (L/R)"]) {
+    return false;
   }
 
   return true;
@@ -61,9 +47,9 @@ bool IsSupported(GCController* controller) {
 
 }  // namespace
 
-GameControllerDataFetcherMac::GameControllerDataFetcherMac() {}
+GameControllerDataFetcherMac::GameControllerDataFetcherMac() = default;
 
-GameControllerDataFetcherMac::~GameControllerDataFetcherMac() {}
+GameControllerDataFetcherMac::~GameControllerDataFetcherMac() = default;
 
 GamepadSource GameControllerDataFetcherMac::source() {
   return Factory::static_source();
@@ -114,7 +100,7 @@ void GameControllerDataFetcherMac::GetGamepadData(bool) {
     // done once.
     if (!state->is_initialized) {
       state->is_initialized = true;
-      NSString* vendorName = [controller vendorName];
+      NSString* vendorName = controller.vendorName;
       NSString* ident =
           [NSString stringWithFormat:@"%@ (STANDARD GAMEPAD)",
                                      vendorName ? vendorName : @"Unknown"];
@@ -134,33 +120,33 @@ void GameControllerDataFetcherMac::GetGamepadData(bool) {
 
     auto extended_gamepad = [controller extendedGamepad];
     pad.axes[AXIS_INDEX_LEFT_STICK_X] =
-        [[[extended_gamepad leftThumbstick] xAxis] value];
+        extended_gamepad.leftThumbstick.xAxis.value;
     pad.axes[AXIS_INDEX_LEFT_STICK_Y] =
-        -[[[extended_gamepad leftThumbstick] yAxis] value];
+        -extended_gamepad.leftThumbstick.yAxis.value;
     pad.axes[AXIS_INDEX_RIGHT_STICK_X] =
-        [[[extended_gamepad rightThumbstick] xAxis] value];
+        extended_gamepad.rightThumbstick.xAxis.value;
     pad.axes[AXIS_INDEX_RIGHT_STICK_Y] =
-        -[[[extended_gamepad rightThumbstick] yAxis] value];
+        -extended_gamepad.rightThumbstick.yAxis.value;
 
 #define BUTTON(i, b)                      \
   pad.buttons[i].pressed = [b isPressed]; \
   pad.buttons[i].value = [b value];
 
-    BUTTON(BUTTON_INDEX_PRIMARY, [extended_gamepad buttonA]);
-    BUTTON(BUTTON_INDEX_SECONDARY, [extended_gamepad buttonB]);
-    BUTTON(BUTTON_INDEX_TERTIARY, [extended_gamepad buttonX]);
-    BUTTON(BUTTON_INDEX_QUATERNARY, [extended_gamepad buttonY]);
-    BUTTON(BUTTON_INDEX_LEFT_SHOULDER, [extended_gamepad leftShoulder]);
-    BUTTON(BUTTON_INDEX_RIGHT_SHOULDER, [extended_gamepad rightShoulder]);
-    BUTTON(BUTTON_INDEX_LEFT_TRIGGER, [extended_gamepad leftTrigger]);
-    BUTTON(BUTTON_INDEX_RIGHT_TRIGGER, [extended_gamepad rightTrigger]);
+    BUTTON(BUTTON_INDEX_PRIMARY, extended_gamepad.buttonA);
+    BUTTON(BUTTON_INDEX_SECONDARY, extended_gamepad.buttonB);
+    BUTTON(BUTTON_INDEX_TERTIARY, extended_gamepad.buttonX);
+    BUTTON(BUTTON_INDEX_QUATERNARY, extended_gamepad.buttonY);
+    BUTTON(BUTTON_INDEX_LEFT_SHOULDER, extended_gamepad.leftShoulder);
+    BUTTON(BUTTON_INDEX_RIGHT_SHOULDER, extended_gamepad.rightShoulder);
+    BUTTON(BUTTON_INDEX_LEFT_TRIGGER, extended_gamepad.leftTrigger);
+    BUTTON(BUTTON_INDEX_RIGHT_TRIGGER, extended_gamepad.rightTrigger);
 
     // No start, select, or thumbstick buttons
 
-    BUTTON(BUTTON_INDEX_DPAD_UP, [[extended_gamepad dpad] up]);
-    BUTTON(BUTTON_INDEX_DPAD_DOWN, [[extended_gamepad dpad] down]);
-    BUTTON(BUTTON_INDEX_DPAD_LEFT, [[extended_gamepad dpad] left]);
-    BUTTON(BUTTON_INDEX_DPAD_RIGHT, [[extended_gamepad dpad] right]);
+    BUTTON(BUTTON_INDEX_DPAD_UP, extended_gamepad.dpad.up);
+    BUTTON(BUTTON_INDEX_DPAD_DOWN, extended_gamepad.dpad.down);
+    BUTTON(BUTTON_INDEX_DPAD_LEFT, extended_gamepad.dpad.left);
+    BUTTON(BUTTON_INDEX_DPAD_RIGHT, extended_gamepad.dpad.right);
 
 #undef BUTTON
   }

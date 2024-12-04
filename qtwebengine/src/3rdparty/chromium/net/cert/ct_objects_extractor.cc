@@ -1,10 +1,12 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "net/cert/ct_objects_extractor.h"
 
 #include <string.h>
+
+#include <string_view>
 
 #include "base/hash/sha1.h"
 #include "base/logging.h"
@@ -16,16 +18,9 @@
 #include "third_party/boringssl/src/include/openssl/bytestring.h"
 #include "third_party/boringssl/src/include/openssl/mem.h"
 
-namespace net {
-
-namespace ct {
+namespace net::ct {
 
 namespace {
-
-// The wire form of the OID 1.3.6.1.4.1.11129.2.4.2. See Section 3.3 of
-// RFC6962.
-const uint8_t kEmbeddedSCTOid[] = {0x2B, 0x06, 0x01, 0x04, 0x01,
-                                   0xD6, 0x79, 0x02, 0x04, 0x02};
 
 // The wire form of the OID 1.3.6.1.4.1.11129.2.4.5 - OCSP SingleExtension for
 // X.509v3 Certificate Transparency Signed Certificate Timestamp List, see
@@ -91,10 +86,8 @@ bool CopyAfter(const CBS& outer, const CBS& inner, CBB* out) {
 bool SkipTBSCertificateToExtensions(CBS* tbs_cert) {
   constexpr unsigned kVersionTag =
       CBS_ASN1_CONTEXT_SPECIFIC | CBS_ASN1_CONSTRUCTED | 0;
-  constexpr unsigned kIssuerUniqueIDTag =
-      CBS_ASN1_CONTEXT_SPECIFIC | CBS_ASN1_CONSTRUCTED | 1;
-  constexpr unsigned kSubjectUniqueIDTag =
-      CBS_ASN1_CONTEXT_SPECIFIC | CBS_ASN1_CONSTRUCTED | 2;
+  constexpr unsigned kIssuerUniqueIDTag = CBS_ASN1_CONTEXT_SPECIFIC | 1;
+  constexpr unsigned kSubjectUniqueIDTag = CBS_ASN1_CONTEXT_SPECIFIC | 2;
   return SkipOptionalElement(tbs_cert, kVersionTag) &&
          SkipElements(tbs_cert,
                       6 /* serialNumber through subjectPublicKeyInfo */) &&
@@ -178,13 +171,13 @@ bool FindMatchingSingleResponse(CBS* responses,
                                 const CRYPTO_BUFFER* issuer,
                                 const std::string& cert_serial_number,
                                 CBS* out_single_response) {
-  base::StringPiece issuer_spki;
+  std::string_view issuer_spki;
   if (!asn1::ExtractSPKIFromDERCert(
           x509_util::CryptoBufferAsStringPiece(issuer), &issuer_spki))
     return false;
 
   // In OCSP, only the key itself is under hash.
-  base::StringPiece issuer_spk;
+  std::string_view issuer_spk;
   if (!asn1::ExtractSubjectPublicKeyFromSPKI(issuer_spki, &issuer_spk))
     return false;
 
@@ -200,7 +193,7 @@ bool FindMatchingSingleResponse(CBS* responses,
   // TODO(ekasper): only compute the hashes on demand.
   std::string issuer_key_sha256_hash = crypto::SHA256HashString(issuer_spk);
   std::string issuer_key_sha1_hash =
-      base::SHA1HashString(issuer_spk.as_string());
+      base::SHA1HashString(std::string(issuer_spk));
 
   while (CBS_len(responses) > 0) {
     CBS single_response, cert_id;
@@ -325,7 +318,7 @@ bool GetPrecertSignedEntry(const CRYPTO_BUFFER* leaf,
   bssl::UniquePtr<uint8_t> scoped_new_tbs_cert_der(new_tbs_cert_der);
 
   // Extract the issuer's public key.
-  base::StringPiece issuer_key;
+  std::string_view issuer_key;
   if (!asn1::ExtractSPKIFromDERCert(
           x509_util::CryptoBufferAsStringPiece(issuer), &issuer_key)) {
     return false;
@@ -353,11 +346,11 @@ bool GetX509SignedEntry(const CRYPTO_BUFFER* leaf, SignedEntryData* result) {
 
 bool ExtractSCTListFromOCSPResponse(const CRYPTO_BUFFER* issuer,
                                     const std::string& cert_serial_number,
-                                    base::StringPiece ocsp_response,
+                                    std::string_view ocsp_response,
                                     std::string* sct_list) {
-  // The input is an OCSPResponse. See RFC2560, section 4.2.1. The SCT list is
-  // in the extensions field of the SingleResponse which matches the input
-  // certificate.
+  // The input is an bssl::OCSPResponse. See RFC2560, section 4.2.1. The SCT
+  // list is in the extensions field of the SingleResponse which matches the
+  // input certificate.
   CBS cbs;
   CBS_init(&cbs, reinterpret_cast<const uint8_t*>(ocsp_response.data()),
            ocsp_response.size());
@@ -426,6 +419,4 @@ bool ExtractSCTListFromOCSPResponse(const CRYPTO_BUFFER* issuer,
                                     sizeof(kOCSPExtensionOid), sct_list);
 }
 
-}  // namespace ct
-
-}  // namespace net
+}  // namespace net::ct

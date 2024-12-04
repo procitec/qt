@@ -1,101 +1,58 @@
 Version: 2
+Include: [
+  macos.yaml: [
+     "macos-universal-on-x86_64",
+     "macos-12-x86_64-tests",
+     "macos-12-arm-on-arm64-tests"
+  ],
+  cmake_platforms.yaml: [
+    "ubuntu-22.04",
+    "ubuntu-22.04-documentation",
+    "opensuse-15.5-developer-build",
+    "sles-15_sp5-static",
+    "windows-10_22h2-msvc2019",
+    "windows-10_22h2-msvc2022",
+    "rhel-8.10",
+    "windows-10_22h2-mingw13",
+    "windows-10_22h2-llvm",
+    "windows-11_23H2-msvc2019"
+  ],
+  cmake_platforms_qemu_qnx710.yaml: [
+    "qnx-710-x86_64-developer-build-on-linux",
+    "qnx-710-arm64-on-linux",
+    "qnx-710-armv7-on-linux"
+  ]
+]
+# Static build configurations for tools
 Configurations:
 -
-    Template: 'qtci-windows-10-x86_64-52'
-    Target os: 'Windows_10_Static'
-    Compiler: 'Mingw'
-    Features: ['Packaging']
-    Environment variables: ['PATH=C:\MINGW810\mingw64\bin;$PATH']
-    Configure arguments: '-opensource -confirm-license -verbose -prefix c:\Users\qt\work\install -release -nomake tests -nomake examples -no-icu -opengl dynamic -openssl -I %OPENSSL_INCLUDE_x64% -L %OPENSSL_LIB_x64% -plugin-sql-mysql -plugin-sql-sqlite -plugin-sql-odbc -I %MYSQL_INCLUDE_x64% -L %MYSQL_LIB_x64% -static -no-icu'
--
-    Template: 'qtci-windows-10-x86_64-52'
-    Compiler: 'Mingw'
-    Environment variables: ['PATH=C:\MINGW810\mingw64\bin;$PATH']
-    Features: ['Packaging']
-    Configure arguments: '-opensource -confirm-license -verbose -prefix c:\Users\qt\work\install -release -force-debug-info -separate-debug-info -nomake tests -nomake examples -opengl dynamic -openssl -I %OPENSSL_INCLUDE_x64% -L %OPENSSL_LIB_x64% -no-sql-mysql -plugin-sql-sqlite -plugin-sql-odbc -I %MYSQL_INCLUDE_x64% -L %MYSQL_LIB_x64% -plugin-sql-psql -I %POSTGRESQL_INCLUDE_x64% -L %POSTGRESQL_LIB_x64% -platform win32-g++ QMAKE_LFLAGS_APP+=-s -qt-zlib'
--
-    Template: 'qtci-windows-7-x86-3'
-    Target os: 'Windows_7_Static'
-    Compiler: 'Mingw73'
-    Environment variables: ['PATH=C:\MINGW730\mingw32\bin;$PATH']
-    Configure arguments: '-opensource -confirm-license -verbose -prefix c:\Users\qt\work\install -developer-build -release -nomake tests -opengl dynamic -nomake examples -openssl -I %OPENSSL_INCLUDE_x86% -L %OPENSSL_LIB_x86% -plugin-sql-mysql -plugin-sql-sqlite -plugin-sql-odbc -I %MYSQL_INCLUDE_x86% -L %MYSQL_LIB_x86% -plugin-sql-psql -I %POSTGRESQL_INCLUDE_x86% -L %POSTGRESQL_LIB_x86% -platform win32-g++ -qt-zlib'
--
-    Template: 'qtci-windows-10-x86_64-52'
-    Target os: 'Windows_10_Static'
-    Compiler: 'MSVC2015'
-    Features: ['Packaging']
-    Configure arguments: '-opensource -confirm-license -verbose -prefix c:\Users\qt\work\install -debug-and-release -release -force-debug-info -nomake tests -nomake examples -opengl dynamic -openssl -I %OPENSSL_INCLUDE_x64% -L %OPENSSL_LIB_x64% -no-sql-mysql -plugin-sql-sqlite -plugin-sql-odbc -I %MYSQL_INCLUDE_x64% -L %MYSQL_LIB_x64% -plugin-sql-psql -I %POSTGRESQL_INCLUDE_x64% -L %POSTGRESQL_LIB_x64% -qt-zlib -static -no-icu'
--
-    Template: 'qtci-windows-10-x86_64-52'
-    Target os: 'Windows_10_Static'
-    Compiler: 'MSVC2019'
-    Features: ['Packaging']
-    Configure arguments: '-opensource -confirm-license -verbose -prefix c:\Users\qt\work\install -debug-and-release -release -force-debug-info -nomake tests -opengl dynamic -nomake examples -openssl -I %OPENSSL_INCLUDE_x64% -L %OPENSSL_LIB_x64% -no-sql-mysql -plugin-sql-sqlite -plugin-sql-odbc -I %MYSQL_INCLUDE_x64% -L %MYSQL_LIB_x64% -plugin-sql-psql -I %POSTGRESQL_INCLUDE_x64% -L %POSTGRESQL_LIB_x64% -static -no-icu'
--
-    Template: 'qtci-windows-10-x86_64-52'
-    Compiler: 'MSVC2019'
-    Features: ['Packaging', 'DisableTests']
-    Configure arguments: '-opensource -confirm-license -verbose -prefix c:\Users\qt\work\install -debug-and-release -release -force-debug-info -nomake tests -opengl dynamic -nomake examples -openssl -I %OPENSSL_INCLUDE_x64% -L %OPENSSL_LIB_x64% -no-sql-mysql -plugin-sql-sqlite -plugin-sql-odbc -I %MYSQL_INCLUDE_x64% -L %MYSQL_LIB_x64% -plugin-sql-psql -I %POSTGRESQL_INCLUDE_x64% -L %POSTGRESQL_LIB_x64% -qt-zlib'
--
-    Template: 'qtci-linux-RHEL-7.6-x86_64'
-    Target os: 'RHEL_7_6_Static'
-    Compiler: 'GCC'
-    Features: ['Packaging']
-    Configure arguments: '-opensource -confirm-license -verbose -prefix /home/qt/work/install -release -nomake tests -nomake examples -no-libudev -no-use-gold-linker -force-debug-info -no-sql-mysql -plugin-sql-psql -plugin-sql-sqlite -qt-libjpeg -qt-libpng -sysconfdir /etc/xdg -qt-pcre -qt-harfbuzz -openssl -I {{.Env.OPENSSL_HOME}}/include -L {{.Env.OPENSSL_HOME}}/lib QMAKE_LFLAGS_APP+=-s -static -no-icu'
--
-    Template: 'qtci-macos-10.14-x86_64'
-    Target os: 'MacOS_10_14_Static'
+    Id: 'macos-latest-xcode-universal-static-build'
+    Template: 'qtci-macos-12-x86_64-107'
     Compiler: 'Clang'
-    Features: ['Packaging']
-    Configure arguments: '-opensource -confirm-license -verbose -prefix /Users/qt/work/install -debug-and-release -release -nomake tests -nomake examples -no-sql-mysql -plugin-sql-psql -plugin-sql-sqlite -sysconfdir /Library/Preferences/Qt -I/usr/local/opt/openssl/include -static -no-icu'
+    Target arch: 'x86_64-arm64'
+    Features: ['Packaging', 'Sccache', 'UseConfigure', 'MinimalStaticTests']
+    Configure arguments: '-static -nomake examples -release -no-framework -no-icu -qt-doubleconversion -no-sql-mysql'
+    Environment variables: [
+        'CMAKE_ARGS=-DCMAKE_OSX_ARCHITECTURES="x86_64;arm64"'
+    ]
 -
-    Template: 'qtci-macos-10.14-x86_64'
-    Target os: 'MacOS_10_14'
-    Compiler: 'Clang'
-    Features: ['Packaging', 'DisableTests']
-    Configure arguments: '-opensource -confirm-license -verbose -prefix /Users/qt/work/install -debug-and-release -release -nomake tests -no-sql-mysql -plugin-sql-psql -plugin-sql-sqlite -sysconfdir /Library/Preferences/Qt -I/usr/local/opt/openssl/include'
--
-    Template: 'qtci-linux-Ubuntu-18.04-x86_64'
-    Target os: 'QEMU'
-    Target arch: 'mips64'
+    Id: 'Linux-RHEL_8_10_Static'
+    Template: 'qtci-linux-RHEL-8.10-x86_64-51'
     Compiler: 'GCC'
-    Features: ['DisableTests']
-    Configure arguments: '-opensource -confirm-license -verbose -prefix /home/qt/work/install -release -nomake tests -nomake examples -no-xcb -R . -openssl -device linux-generic-g++ -device-option CROSS_COMPILE=/opt/yocto-mips64/sysroots/x86_64-pokysdk-linux/usr/bin/mips64-poky-linux/mips64-poky-linux- -device-option DISTRO_OPTS=boot2qt -sysroot /opt/yocto-mips64/sysroots/mips64-poky-linux -extprefix /home/qt/work/install -mysql_config /opt/yocto-mips64/sysroots/mips64-poky-linux/usr/bin/mysql_config -psql_config /dev/null -tslib'
+    Features: ['Packaging', 'Sccache', 'UseConfigure', 'MinimalStaticTests']
+    Configure arguments: '-static -no-icu -nomake examples -release -headersclean -qt-libjpeg -qt-libpng -qt-pcre -qt-harfbuzz -qt-doubleconversion -no-libudev -bundled-xcb-xinput -no-sql-mysql'
+    Environment variables: [
+        'CMAKE_ARGS=-DOpenGL_GL_PREFERENCE=LEGACY',
+        'NON_QTBASE_CMAKE_ARGS=-DINPUT_headersclean=ON'
+    ]
 -
-    Template: 'qtci-windows-10-x86_64-52'
-    Target os: 'QNX_700'
-    Target arch: 'armv7'
-    Compiler: 'Mingw'
-    Environment variables: ['PATH=C:\Program Files\Git\bin;C:\MINGW810\mingw64\bin;$PATH;C:\qnx700\host\win64\x86_64\usr\bin;C:\qnx700\.qnx\bin', 'MAKEFLAGS=-j4 -Ic:\qnx700\target\qnx7\usr\include', 'QNX_CONFIGURATION=c:/qnx700/.qnx', 'QNX_CONFIGURATION_EXCLUSIVE=c:/qnx700/.qnx', 'QNX_TARGET=c:/qnx700/target/qnx7', 'QNX_HOST=c:/qnx700/host/win64/x86_64', 'LIB=""', 'INCLUDE=""']
-    Features: ['Packaging', 'DisableTests']
-    Configure arguments: '-opensource -confirm-license -verbose -extprefix c:\Users\qt\work\install -release -nomake tests -nomake examples -no-sql-mysql -opengl es2 -xplatform qnx-armle-v7-qcc -Ic:\qnx700\target\qnx7\usr\include\openssl1_1'
--
-    Template: 'qtci-windows-10-x86_64-52'
-    Target os: 'QNX_700'
-    Target arch: 'armv8'
-    Compiler: 'Mingw'
-    Environment variables: ['PATH=C:\Program Files\Git\bin;C:\MINGW810\mingw64\bin;$PATH;C:\qnx700\host\win64\x86_64\usr\bin;C:\qnx700\.qnx\bin', 'MAKEFLAGS=-j4 -Ic:\qnx700\target\qnx7\usr\include', 'QNX_CONFIGURATION=c:/qnx700/.qnx', 'QNX_CONFIGURATION_EXCLUSIVE=c:/qnx700/.qnx', 'QNX_TARGET=c:/qnx700/target/qnx7', 'QNX_HOST=c:/qnx700/host/win64/x86_64', 'LIB=""', 'INCLUDE=""']
-    Features: ['Packaging', 'DisableTests']
-    Configure arguments: '-opensource -confirm-license -verbose -extprefix c:\Users\qt\work\install -release -opengl es2 -nomake tests -nomake examples -no-sql-mysql -xplatform qnx-aarch64le-qcc -Ic:\qnx700\target\qnx7\usr\include\openssl1_1'
--
-    Template: 'qtci-windows-10-x86_64-52'
-    Target os: 'QNX_700'
-    Target arch: 'x86_64'
-    Compiler: 'Mingw'
-    Environment variables: ['PATH=C:\Program Files\Git\bin;C:\MINGW810\mingw64\bin;$PATH;C:\qnx700\host\win64\x86_64\usr\bin;C:\qnx700\.qnx\bin', 'MAKEFLAGS=-j4 -Ic:\qnx700\target\qnx7\usr\include', 'QNX_CONFIGURATION=c:/qnx700/.qnx', 'QNX_CONFIGURATION_EXCLUSIVE=c:/qnx700/.qnx', 'QNX_TARGET=c:/qnx700/target/qnx7', 'QNX_HOST=c:/qnx700/host/win64/x86_64', 'LIB=""', 'INCLUDE=""']
-    Features: ['Packaging', 'DisableTests']
-    Configure arguments: '-opensource -confirm-license -verbose -extprefix c:\Users\qt\work\install -release -nomake tests -nomake examples -no-sql-mysql -opengl es2 -xplatform qnx-x86-64-qcc -Ic:\qnx700\target\qnx7\usr\include\openssl1_1'
--
-    Template: 'qtci-linux-RHEL-7.6-x86_64'
-    Target os: 'QNX_700'
-    Target arch: 'armv8'
-    Compiler: 'GCC'
-    Features: ['Packaging', 'DisableTests']
-    Configure arguments: '-opensource -confirm-license -verbose -extprefix /home/qt/work/install -release -nomake tests -nomake examples -no-sql-mysql -opengl es2 -qpa qnx -xplatform qnx-aarch64le-qcc -I /opt/qnx700/target/qnx7/usr/include/openssl1_1'
--
-    Template: 'qtci-linux-RHEL-7.6-x86_64'
-    Target os: 'QNX_700'
-    Target arch: 'x86_64'
-    Compiler: 'GCC'
-    Features: ['Packaging', 'DisableTests']
-    Configure arguments: '-opensource -confirm-license -verbose -extprefix /home/qt/work/install -release -nomake tests -nomake examples -no-sql-mysql -opengl es2 -qpa qnx -xplatform qnx-x86-64-qcc -I /opt/qnx700/target/qnx7/usr/include/openssl1_1'
+    Id: 'Windows-MSVC2019_Static'
+    Template: 'qtci-windows-10_22H2-x86_64-52'
+    Compiler: 'MSVC2019'
+    Features: ['Packaging', 'Sccache', 'UseConfigure', 'MinimalStaticTests']
+    Configure arguments: '-release -headersclean -nomake examples -qt-zlib -static -no-icu -no-sql-mysql -no-sql-odbc -no-sql-psql -plugin-sql-sqlite -plugin-sql-odbc'
+    Environment variables: [
+        'CMAKE_ARGS=-DFEATURE_msvc_obj_debug_info=ON -DOPENSSL_ROOT_DIR={{.Env.OPENSSL_INCLUDE_x64}}\..',
+        'LLVM_INSTALL_DIR={{.Env.LLVM_INSTALL_DIR_msvc}}',
+        'NON_QTBASE_CMAKE_ARGS=-DINPUT_headersclean=ON'
+    ]

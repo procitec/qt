@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtQuick module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #ifndef QQUICKIMAGEBASE_P_H
 #define QQUICKIMAGEBASE_P_H
@@ -58,7 +22,7 @@
 QT_BEGIN_NAMESPACE
 
 class QQuickImageBasePrivate;
-class Q_QUICK_PRIVATE_EXPORT QQuickImageBase : public QQuickImplicitSizeItem
+class Q_QUICK_EXPORT QQuickImageBase : public QQuickImplicitSizeItem
 {
     Q_OBJECT
 
@@ -67,14 +31,15 @@ class Q_QUICK_PRIVATE_EXPORT QQuickImageBase : public QQuickImplicitSizeItem
     Q_PROPERTY(qreal progress READ progress NOTIFY progressChanged)
     Q_PROPERTY(bool asynchronous READ asynchronous WRITE setAsynchronous NOTIFY asynchronousChanged)
     Q_PROPERTY(bool cache READ cache WRITE setCache NOTIFY cacheChanged)
-    Q_PROPERTY(QSize sourceSize READ sourceSize WRITE setSourceSize RESET resetSourceSize NOTIFY sourceSizeChanged)
     Q_PROPERTY(bool mirror READ mirror WRITE setMirror NOTIFY mirrorChanged)
-    Q_PROPERTY(int currentFrame READ currentFrame WRITE setCurrentFrame NOTIFY currentFrameChanged REVISION 14)
-    Q_PROPERTY(int frameCount READ frameCount NOTIFY frameCountChanged REVISION 14)
-    Q_PROPERTY(QColorSpace colorSpace READ colorSpace WRITE setColorSpace NOTIFY colorSpaceChanged REVISION 15)
+    Q_PROPERTY(bool mirrorVertically READ mirrorVertically WRITE setMirrorVertically NOTIFY mirrorVerticallyChanged REVISION(6, 2))
+    Q_PROPERTY(bool retainWhileLoading READ retainWhileLoading WRITE setRetainWhileLoading NOTIFY retainWhileLoadingChanged REVISION(6, 8))
+    Q_PROPERTY(int currentFrame READ currentFrame WRITE setCurrentFrame NOTIFY currentFrameChanged REVISION(2, 14))
+    Q_PROPERTY(int frameCount READ frameCount NOTIFY frameCountChanged REVISION(2, 14))
+    Q_PROPERTY(QColorSpace colorSpace READ colorSpace WRITE setColorSpace NOTIFY colorSpaceChanged REVISION(2, 15))
 
     QML_NAMED_ELEMENT(ImageBase);
-    QML_ADDED_IN_MINOR_VERSION(14)
+    QML_ADDED_IN_VERSION(2, 14)
     QML_UNCREATABLE("ImageBase is an abstract base class.")
 
 public:
@@ -116,6 +81,9 @@ public:
     virtual void setMirror(bool mirror);
     bool mirror() const;
 
+    virtual void setMirrorVertically(bool mirror);
+    bool mirrorVertically() const;
+
     virtual void setCurrentFrame(int frame);
     virtual int currentFrame() const;
 
@@ -126,6 +94,9 @@ public:
 
     QColorSpace colorSpace() const;
     virtual void setColorSpace(const QColorSpace &colorSpace);
+
+    bool retainWhileLoading() const;
+    void setRetainWhileLoading(bool retain);
 
     static void resolve2xLocalFile(const QUrl &url, qreal targetDevicePixelRatio, QUrl *sourceUrl, qreal *sourceDevicePixelRatio);
 
@@ -141,10 +112,12 @@ Q_SIGNALS:
     void asynchronousChanged();
     void cacheChanged();
     void mirrorChanged();
-    Q_REVISION(14) void currentFrameChanged();
-    Q_REVISION(14) void frameCountChanged();
-    Q_REVISION(15) void sourceClipRectChanged();
-    Q_REVISION(15) void colorSpaceChanged();
+    Q_REVISION(2, 14) void currentFrameChanged();
+    Q_REVISION(2, 14) void frameCountChanged();
+    Q_REVISION(2, 15) void sourceClipRectChanged();
+    Q_REVISION(2, 15) void colorSpaceChanged();
+    Q_REVISION(6, 2) void mirrorVerticallyChanged();
+    Q_REVISION(6, 8) void retainWhileLoadingChanged();
 
 protected:
     void loadEmptyUrl();

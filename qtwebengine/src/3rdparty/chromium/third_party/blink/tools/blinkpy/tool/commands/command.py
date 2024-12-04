@@ -27,10 +27,13 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import optparse
+import os
 import logging
 import sys
+from typing import Collection, Set
 
 from blinkpy.tool.grammar import pluralize
+from blinkpy.web_tests.port.base import Port
 
 _log = logging.getLogger(__name__)
 
@@ -148,3 +151,33 @@ class HelpPrintingOptionParser(optparse.OptionParser):
         if self.epilog_method:
             return '\n%s\n' % self.epilog_method()
         return ''
+
+
+def check_file_option(option, _opt_str, value, parser):
+    if value:
+        value = os.path.expanduser(value)
+        if not os.path.isfile(value):
+            raise optparse.OptionValueError('%s is not a regular file.' %
+                                            value)
+    setattr(parser.values, option.dest, value)
+
+
+def check_dir_option(option, _opt_str, value, parser):
+    if value:
+        value = os.path.expanduser(value)
+        if not os.path.isdir(value):
+            raise optparse.OptionValueError('%s is not a directory.' % value)
+    setattr(parser.values, option.dest, value)
+
+
+def resolve_test_patterns(port: Port,
+                          test_patterns: Collection[str]) -> Set[str]:
+    tests = set()
+    for pattern in sorted(test_patterns):
+        resolved_tests = port.tests([pattern])
+        if not resolved_tests:
+            _log.warning(
+                '%r does not represent any tests and may be misspelled.',
+                pattern)
+        tests.update(resolved_tests)
+    return tests

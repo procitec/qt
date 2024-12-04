@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,6 +7,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <map>
+#include <string>
 #include <utility>
 
 #include "base/files/file.h"
@@ -36,30 +38,27 @@ TEST(DataPackTest, LoadFromPath) {
       dir.GetPath().Append(FILE_PATH_LITERAL("sample.pak"));
 
   // Dump contents into the pak file.
-  ASSERT_TRUE(base::WriteFile(
-      data_path, base::StringPiece(kSamplePakContentsV4, kSamplePakSizeV4)));
+  ASSERT_TRUE(
+      base::WriteFile(data_path, {kSamplePakContentsV4, kSamplePakSizeV4}));
 
   // Load the file through the data pack API.
-  DataPack pack(SCALE_FACTOR_100P);
+  DataPack pack(k100Percent);
   ASSERT_TRUE(pack.LoadFromPath(data_path));
 
-  base::StringPiece data;
   ASSERT_TRUE(pack.HasResource(4));
-  ASSERT_TRUE(pack.GetStringPiece(4, &data));
-  EXPECT_EQ("this is id 4", data);
+  ASSERT_EQ(pack.GetStringPiece(4),
+            absl::make_optional(base::StringPiece{"this is id 4"}));
   ASSERT_TRUE(pack.HasResource(6));
-  ASSERT_TRUE(pack.GetStringPiece(6, &data));
-  EXPECT_EQ("this is id 6", data);
+  ASSERT_EQ(pack.GetStringPiece(6),
+            absl::make_optional(base::StringPiece{"this is id 6"}));
 
   // Try reading zero-length data blobs, just in case.
-  ASSERT_TRUE(pack.GetStringPiece(1, &data));
-  EXPECT_EQ(0U, data.length());
-  ASSERT_TRUE(pack.GetStringPiece(10, &data));
-  EXPECT_EQ(0U, data.length());
+  ASSERT_EQ(pack.GetStringPiece(1), absl::make_optional(base::StringPiece{}));
+  ASSERT_EQ(pack.GetStringPiece(10), absl::make_optional(base::StringPiece{}));
 
   // Try looking up an invalid key.
   ASSERT_FALSE(pack.HasResource(140));
-  ASSERT_FALSE(pack.GetStringPiece(140, &data));
+  ASSERT_FALSE(pack.GetStringPiece(140).has_value());
 }
 
 TEST(DataPackTest, LoadFromPathCompressed) {
@@ -71,30 +70,27 @@ TEST(DataPackTest, LoadFromPathCompressed) {
   // Dump contents into a compressed pak file.
   std::string compressed;
   ASSERT_TRUE(compression::GzipCompress(
-      base::StringPiece(kSamplePakContentsV4, kSamplePakSizeV4), &compressed));
+      {kSamplePakContentsV4, kSamplePakSizeV4}, &compressed));
   ASSERT_TRUE(base::WriteFile(data_path, compressed));
 
   // Load the file through the data pack API.
-  DataPack pack(SCALE_FACTOR_100P);
+  DataPack pack(k100Percent);
   ASSERT_TRUE(pack.LoadFromPath(data_path));
 
-  base::StringPiece data;
   ASSERT_TRUE(pack.HasResource(4));
-  ASSERT_TRUE(pack.GetStringPiece(4, &data));
-  EXPECT_EQ("this is id 4", data);
+  ASSERT_EQ(pack.GetStringPiece(4),
+            absl::make_optional(base::StringPiece{"this is id 4"}));
   ASSERT_TRUE(pack.HasResource(6));
-  ASSERT_TRUE(pack.GetStringPiece(6, &data));
-  EXPECT_EQ("this is id 6", data);
+  ASSERT_EQ(pack.GetStringPiece(6),
+            absl::make_optional(base::StringPiece{"this is id 6"}));
 
   // Try reading zero-length data blobs, just in case.
-  ASSERT_TRUE(pack.GetStringPiece(1, &data));
-  EXPECT_EQ(0U, data.length());
-  ASSERT_TRUE(pack.GetStringPiece(10, &data));
-  EXPECT_EQ(0U, data.length());
+  ASSERT_EQ(pack.GetStringPiece(1), absl::make_optional(base::StringPiece{}));
+  ASSERT_EQ(pack.GetStringPiece(10), absl::make_optional(base::StringPiece{}));
 
   // Try looking up an invalid key.
   ASSERT_FALSE(pack.HasResource(140));
-  ASSERT_FALSE(pack.GetStringPiece(140, &data));
+  ASSERT_FALSE(pack.GetStringPiece(140).has_value());
 }
 
 TEST(DataPackTest, LoadFromFile) {
@@ -104,33 +100,30 @@ TEST(DataPackTest, LoadFromFile) {
       dir.GetPath().Append(FILE_PATH_LITERAL("sample.pak"));
 
   // Dump contents into the pak file.
-  ASSERT_TRUE(base::WriteFile(
-      data_path, base::StringPiece(kSamplePakContentsV4, kSamplePakSizeV4)));
+  ASSERT_TRUE(
+      base::WriteFile(data_path, {kSamplePakContentsV4, kSamplePakSizeV4}));
 
   base::File file(data_path, base::File::FLAG_OPEN | base::File::FLAG_READ);
   ASSERT_TRUE(file.IsValid());
 
   // Load the file through the data pack API.
-  DataPack pack(SCALE_FACTOR_100P);
+  DataPack pack(k100Percent);
   ASSERT_TRUE(pack.LoadFromFile(std::move(file)));
 
-  base::StringPiece data;
   ASSERT_TRUE(pack.HasResource(4));
-  ASSERT_TRUE(pack.GetStringPiece(4, &data));
-  EXPECT_EQ("this is id 4", data);
+  ASSERT_EQ(pack.GetStringPiece(4),
+            absl::make_optional(base::StringPiece{"this is id 4"}));
   ASSERT_TRUE(pack.HasResource(6));
-  ASSERT_TRUE(pack.GetStringPiece(6, &data));
-  EXPECT_EQ("this is id 6", data);
+  ASSERT_EQ(pack.GetStringPiece(6),
+            absl::make_optional(base::StringPiece{"this is id 6"}));
 
   // Try reading zero-length data blobs, just in case.
-  ASSERT_TRUE(pack.GetStringPiece(1, &data));
-  EXPECT_EQ(0U, data.length());
-  ASSERT_TRUE(pack.GetStringPiece(10, &data));
-  EXPECT_EQ(0U, data.length());
+  ASSERT_EQ(pack.GetStringPiece(1), absl::make_optional(base::StringPiece{}));
+  ASSERT_EQ(pack.GetStringPiece(10), absl::make_optional(base::StringPiece{}));
 
   // Try looking up an invalid key.
   ASSERT_FALSE(pack.HasResource(140));
-  ASSERT_FALSE(pack.GetStringPiece(140, &data));
+  ASSERT_FALSE(pack.GetStringPiece(140).has_value());
 }
 
 TEST(DataPackTest, LoadFromFileRegion) {
@@ -144,80 +137,72 @@ TEST(DataPackTest, LoadFromFileRegion) {
   const uint8_t kPadding[5678] = {0};
   ASSERT_TRUE(base::WriteFile(data_path, kPadding));
   ASSERT_TRUE(
-      base::AppendToFile(data_path, kSamplePakContentsV4, kSamplePakSizeV4));
+      base::AppendToFile(data_path, {kSamplePakContentsV4, kSamplePakSizeV4}));
 
   base::File file(data_path, base::File::FLAG_OPEN | base::File::FLAG_READ);
   ASSERT_TRUE(file.IsValid());
 
   // Load the file through the data pack API.
-  DataPack pack(SCALE_FACTOR_100P);
+  DataPack pack(k100Percent);
   base::MemoryMappedFile::Region region = {sizeof(kPadding), kSamplePakSizeV4};
   ASSERT_TRUE(pack.LoadFromFileRegion(std::move(file), region));
 
-  base::StringPiece data;
   ASSERT_TRUE(pack.HasResource(4));
-  ASSERT_TRUE(pack.GetStringPiece(4, &data));
-  EXPECT_EQ("this is id 4", data);
+  ASSERT_EQ(pack.GetStringPiece(4),
+            absl::make_optional(base::StringPiece{"this is id 4"}));
   ASSERT_TRUE(pack.HasResource(6));
-  ASSERT_TRUE(pack.GetStringPiece(6, &data));
-  EXPECT_EQ("this is id 6", data);
+  ASSERT_EQ(pack.GetStringPiece(6),
+            absl::make_optional(base::StringPiece{"this is id 6"}));
 
   // Try reading zero-length data blobs, just in case.
-  ASSERT_TRUE(pack.GetStringPiece(1, &data));
-  EXPECT_EQ(0U, data.length());
-  ASSERT_TRUE(pack.GetStringPiece(10, &data));
-  EXPECT_EQ(0U, data.length());
+  ASSERT_EQ(pack.GetStringPiece(1), absl::make_optional(base::StringPiece{}));
+  ASSERT_EQ(pack.GetStringPiece(10), absl::make_optional(base::StringPiece{}));
 
   // Try looking up an invalid key.
   ASSERT_FALSE(pack.HasResource(140));
-  ASSERT_FALSE(pack.GetStringPiece(140, &data));
+  ASSERT_FALSE(pack.GetStringPiece(140).has_value());
 }
 
 TEST(DataPackTest, LoadFromBufferV4) {
-  DataPack pack(SCALE_FACTOR_100P);
+  DataPack pack(k100Percent);
 
-  ASSERT_TRUE(pack.LoadFromBuffer(
-      base::StringPiece(kSamplePakContentsV4, kSamplePakSizeV4)));
+  ASSERT_TRUE(pack.LoadFromBuffer({kSamplePakContentsV4, kSamplePakSizeV4}));
 
-  base::StringPiece data;
   ASSERT_TRUE(pack.HasResource(4));
-  ASSERT_TRUE(pack.GetStringPiece(4, &data));
-  EXPECT_EQ("this is id 4", data);
+  ASSERT_EQ(pack.GetStringPiece(4),
+            absl::make_optional(base::StringPiece{"this is id 4"}));
   ASSERT_TRUE(pack.HasResource(6));
-  ASSERT_TRUE(pack.GetStringPiece(6, &data));
-  EXPECT_EQ("this is id 6", data);
+  ASSERT_EQ(pack.GetStringPiece(6),
+            absl::make_optional(base::StringPiece{"this is id 6"}));
 
   // Try reading zero-length data blobs, just in case.
-  ASSERT_TRUE(pack.GetStringPiece(1, &data));
-  EXPECT_EQ(0U, data.length());
-  ASSERT_TRUE(pack.GetStringPiece(10, &data));
-  EXPECT_EQ(0U, data.length());
+  ASSERT_EQ(pack.GetStringPiece(1), absl::make_optional(base::StringPiece{}));
+  ASSERT_EQ(pack.GetStringPiece(10), absl::make_optional(base::StringPiece{}));
 
   // Try looking up an invalid key.
   ASSERT_FALSE(pack.HasResource(140));
-  ASSERT_FALSE(pack.GetStringPiece(140, &data));
+  ASSERT_FALSE(pack.GetStringPiece(140).has_value());
 }
 
 TEST(DataPackTest, LoadFromBufferV5) {
-  DataPack pack(SCALE_FACTOR_100P);
+  DataPack pack(k100Percent);
 
-  ASSERT_TRUE(pack.LoadFromBuffer(base::StringPiece(
-      kSampleCompressPakContentsV5, kSampleCompressPakSizeV5)));
+  ASSERT_TRUE(pack.LoadFromBuffer(
+      {kSampleCompressPakContentsV5, kSampleCompressPakSizeV5}));
 
-  base::StringPiece data;
   ASSERT_TRUE(pack.HasResource(4));
-  ASSERT_TRUE(pack.GetStringPiece(4, &data));
-  EXPECT_EQ("this is id 4", data);
+  ASSERT_EQ(pack.GetStringPiece(4),
+            absl::make_optional(base::StringPiece{"this is id 4"}));
   ASSERT_TRUE(pack.HasResource(6));
-  ASSERT_TRUE(pack.GetStringPiece(6, &data));
+  ASSERT_TRUE(pack.GetStringPiece(6).has_value());
   ASSERT_TRUE(pack.HasResource(8));
-  ASSERT_TRUE(pack.GetStringPiece(8, &data));
-  ASSERT_TRUE(pack.GetStringPiece(10, &data));
-  ASSERT_EQ("this is id 4", data);
+  ASSERT_TRUE(pack.GetStringPiece(8).has_value());
+  ASSERT_EQ(pack.GetStringPiece(10),
+            absl::make_optional(base::StringPiece{"this is id 4"}));
 
   // Try looking up an invalid key.
   ASSERT_FALSE(pack.HasResource(140));
-  ASSERT_FALSE(pack.GetStringPiece(140, &data));
+  ASSERT_FALSE(pack.GetStringPiece(140).has_value());
 }
 
 INSTANTIATE_TEST_SUITE_P(WriteBINARY,
@@ -235,7 +220,7 @@ TEST(DataPackTest, LoadFileWithTruncatedHeader) {
   ASSERT_TRUE(base::PathService::Get(UI_DIR_TEST_DATA, &data_path));
   data_path = data_path.AppendASCII("data_pack_unittest/truncated-header.pak");
 
-  DataPack pack(SCALE_FACTOR_100P);
+  DataPack pack(k100Percent);
   ASSERT_FALSE(pack.LoadFromPath(data_path));
 }
 
@@ -259,24 +244,23 @@ TEST_P(DataPackTest, Write) {
   ASSERT_TRUE(DataPack::WritePack(file, resources, GetParam()));
 
   // Now try to read the data back in.
-  DataPack pack(SCALE_FACTOR_100P);
+  DataPack pack(k100Percent);
   ASSERT_TRUE(pack.LoadFromPath(file));
   EXPECT_EQ(pack.GetTextEncodingType(), GetParam());
 
-  base::StringPiece data;
-  ASSERT_TRUE(pack.GetStringPiece(1, &data));
-  EXPECT_EQ(one, data);
-  ASSERT_TRUE(pack.GetStringPiece(2, &data));
-  EXPECT_EQ(two, data);
-  ASSERT_TRUE(pack.GetStringPiece(3, &data));
-  EXPECT_EQ(three, data);
-  ASSERT_TRUE(pack.GetStringPiece(4, &data));
-  EXPECT_EQ(four, data);
-  ASSERT_TRUE(pack.GetStringPiece(15, &data));
-  EXPECT_EQ(fifteen, data);
+  ASSERT_EQ(pack.GetStringPiece(1),
+            absl::make_optional(base::StringPiece{one}));
+  ASSERT_EQ(pack.GetStringPiece(2),
+            absl::make_optional(base::StringPiece{two}));
+  ASSERT_EQ(pack.GetStringPiece(3),
+            absl::make_optional(base::StringPiece{three}));
+  ASSERT_EQ(pack.GetStringPiece(4),
+            absl::make_optional(base::StringPiece{four}));
+  ASSERT_EQ(pack.GetStringPiece(15),
+            absl::make_optional(base::StringPiece{fifteen}));
 
   EXPECT_EQ(5U, pack.GetResourceTableSizeForTesting());
-  EXPECT_EQ(0U, pack.GetAliasTableSizeForTesting());
+  EXPECT_EQ(0U, pack.GetAliasTableSize());
 }
 
 TEST_P(DataPackTest, WriteWithAliases) {
@@ -301,40 +285,33 @@ TEST_P(DataPackTest, WriteWithAliases) {
   ASSERT_TRUE(DataPack::WritePack(file, resources, GetParam()));
 
   // Now try to read the data back in.
-  DataPack pack(SCALE_FACTOR_100P);
+  DataPack pack(k100Percent);
   ASSERT_TRUE(pack.LoadFromPath(file));
   EXPECT_EQ(pack.GetTextEncodingType(), GetParam());
 
-  base::StringPiece data;
-  ASSERT_TRUE(pack.GetStringPiece(1, &data));
-  EXPECT_EQ(one, data);
-  ASSERT_TRUE(pack.GetStringPiece(2, &data));
-  EXPECT_EQ(two, data);
-  ASSERT_TRUE(pack.GetStringPiece(3, &data));
-  EXPECT_EQ(three, data);
-  ASSERT_TRUE(pack.GetStringPiece(4, &data));
-  EXPECT_EQ(four, data);
-  ASSERT_TRUE(pack.GetStringPiece(15, &data));
-  EXPECT_EQ(fifteen, data);
-  ASSERT_TRUE(pack.GetStringPiece(10, &data));
-  EXPECT_EQ(one, data);
-  ASSERT_TRUE(pack.GetStringPiece(11, &data));
-  EXPECT_EQ(three, data);
+  ASSERT_EQ(pack.GetStringPiece(1),
+            absl::make_optional(base::StringPiece{one}));
+  ASSERT_EQ(pack.GetStringPiece(2),
+            absl::make_optional(base::StringPiece{two}));
+  ASSERT_EQ(pack.GetStringPiece(3),
+            absl::make_optional(base::StringPiece{three}));
+  ASSERT_EQ(pack.GetStringPiece(4),
+            absl::make_optional(base::StringPiece{four}));
+  ASSERT_EQ(pack.GetStringPiece(15),
+            absl::make_optional(base::StringPiece{fifteen}));
+  ASSERT_EQ(pack.GetStringPiece(10),
+            absl::make_optional(base::StringPiece{one}));
+  ASSERT_EQ(pack.GetStringPiece(11),
+            absl::make_optional(base::StringPiece{three}));
 
-  base::StringPiece data2;
-  ASSERT_TRUE(pack.GetStringPiece(1, &data));
-  ASSERT_TRUE(pack.GetStringPiece(10, &data2));
-  EXPECT_EQ(data.data(), data2.data());
-
-  ASSERT_TRUE(pack.GetStringPiece(3, &data));
-  ASSERT_TRUE(pack.GetStringPiece(11, &data2));
-  EXPECT_EQ(data.data(), data2.data());
+  ASSERT_EQ(pack.GetStringPiece(1)->data(), pack.GetStringPiece(10)->data());
+  ASSERT_EQ(pack.GetStringPiece(3)->data(), pack.GetStringPiece(11)->data());
 
   EXPECT_EQ(5U, pack.GetResourceTableSizeForTesting());
-  EXPECT_EQ(2U, pack.GetAliasTableSizeForTesting());
+  EXPECT_EQ(2U, pack.GetAliasTableSize());
 }
 
-#if defined(OS_POSIX)
+#if BUILDFLAG(IS_POSIX)
 TEST(DataPackTest, ModifiedWhileUsed) {
   base::ScopedTempDir dir;
   ASSERT_TRUE(dir.CreateUniqueTempDir());
@@ -342,28 +319,33 @@ TEST(DataPackTest, ModifiedWhileUsed) {
       dir.GetPath().Append(FILE_PATH_LITERAL("sample.pak"));
 
   // Dump contents into the pak file.
-  ASSERT_TRUE(base::WriteFile(
-      data_path, base::StringPiece(kSamplePakContentsV4, kSamplePakSizeV4)));
+  ASSERT_TRUE(
+      base::WriteFile(data_path, {kSamplePakContentsV4, kSamplePakSizeV4}));
 
   base::File file(data_path, base::File::FLAG_OPEN | base::File::FLAG_READ);
   ASSERT_TRUE(file.IsValid());
 
   // Load the file through the data pack API.
-  DataPack pack(SCALE_FACTOR_100P);
+  DataPack pack(k100Percent);
   ASSERT_TRUE(pack.LoadFromFile(std::move(file)));
 
-  base::StringPiece data;
   ASSERT_TRUE(pack.HasResource(10));
-  ASSERT_TRUE(pack.GetStringPiece(10, &data));
+  ASSERT_TRUE(pack.GetStringPiece(10).has_value());
 
   ASSERT_TRUE(base::WriteFile(
-      data_path,
-      base::StringPiece(kSampleCorruptPakContents, kSampleCorruptPakSize)));
+      data_path, {kSampleCorruptPakContents, kSampleCorruptPakSize}));
 
   // Reading asset #10 should now fail as it extends past the end of the file.
   ASSERT_TRUE(pack.HasResource(10));
-  ASSERT_FALSE(pack.GetStringPiece(10, &data));
+  ASSERT_FALSE(pack.GetStringPiece(10).has_value());
 }
 #endif
+
+TEST(DataPackTest, Misordered) {
+  DataPack pack(k100Percent);
+
+  ASSERT_FALSE(pack.LoadFromBuffer(
+      {kSampleMisorderedPakContents, kSampleMisorderedPakSize}));
+}
 
 }  // namespace ui

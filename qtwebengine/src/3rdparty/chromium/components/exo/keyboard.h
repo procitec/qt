@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,9 +10,10 @@
 #include "ash/ime/ime_controller_impl.h"
 #include "ash/public/cpp/keyboard/keyboard_controller_observer.h"
 #include "base/containers/flat_map.h"
-#include "base/containers/flat_set.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/observer_list.h"
+#include "base/time/time.h"
+#include "components/exo/key_state.h"
 #include "components/exo/keyboard_observer.h"
 #include "components/exo/seat_observer.h"
 #include "components/exo/surface_observer.h"
@@ -20,7 +21,7 @@
 #include "ui/events/event_handler.h"
 
 namespace ui {
-enum class DomCode;
+enum class DomCode : uint32_t;
 class KeyEvent;
 }
 
@@ -39,6 +40,8 @@ class Keyboard : public ui::EventHandler,
                  public ash::ImeControllerImpl::Observer {
  public:
   Keyboard(std::unique_ptr<KeyboardDelegate> delegate, Seat* seat);
+  Keyboard(const Keyboard&) = delete;
+  Keyboard& operator=(const Keyboard&) = delete;
   ~Keyboard() override;
 
   KeyboardDelegate* delegate() const { return delegate_.get(); }
@@ -64,19 +67,29 @@ class Keyboard : public ui::EventHandler,
   void OnSurfaceDestroying(Surface* surface) override;
 
   // Overridden from SeatObserver:
-  void OnSurfaceFocusing(Surface* gaining_focus) override;
-  void OnSurfaceFocused(Surface* gained_focus) override;
+  void OnSurfaceFocused(Surface* gained_focus,
+                        Surface* lost_focus,
+                        bool has_focused_surface) override;
+  void OnKeyboardModifierUpdated() override;
 
-  // Overridden from ash::KeyboardControllerObserver
-  void OnKeyboardEnabledChanged(bool is_enabled) override;
+  // Overridden from ash::KeyboardControllerObserver:
+  void OnKeyboardEnableFlagsChanged(
+      const std::set<keyboard::KeyboardEnableFlag>& flags) override;
   void OnKeyRepeatSettingsChanged(
       const ash::KeyRepeatSettings& settings) override;
 
-  // Overridden from ash::ImeControllerImpl::Observer
+  // Overridden from ash::ImeControllerImpl::Observer:
   void OnCapsLockChanged(bool enabled) override;
   void OnKeyboardLayoutNameChanged(const std::string& layout_name) override;
 
+  Surface* focused_surface_for_testing() const { return focus_; }
+
  private:
+  // Returns a set of keys with keys that should not be handled by the surface
+  // filtered out from pressed_keys_.
+  base::flat_map<ui::DomCode, KeyState> GetPressedKeysForSurface(
+      Surface* surface);
+
   // Change keyboard focus to |surface|.
   void SetFocus(Surface* surface);
 
@@ -95,27 +108,31 @@ class Keyboard : public ui::EventHandler,
   void AddEventHandler();
   void RemoveEventHandler();
 
+  // Notify the current keyboard type.
+  void UpdateKeyboardType();
+
   // The delegate instance that all events except for events about device
   // configuration are dispatched to.
   std::unique_ptr<KeyboardDelegate> delegate_;
 
   // Seat that the Keyboard recieves focus events from.
-  Seat* const seat_;
+  const raw_ptr<Seat> seat_;
 
   // The delegate instance that events about device configuration are dispatched
   // to.
-  KeyboardDeviceConfigurationDelegate* device_configuration_delegate_ = nullptr;
+  raw_ptr<KeyboardDeviceConfigurationDelegate> device_configuration_delegate_ =
+      nullptr;
 
   // Indicates that each key event is expected to be acknowledged.
   bool are_keyboard_key_acks_needed_ = false;
 
   // The current focus surface for the keyboard.
-  Surface* focus_ = nullptr;
+  raw_ptr<Surface> focus_ = nullptr;
 
   // Set of currently pressed keys. First value is a platform code and second
   // value is the code that was delivered to client. See Seat.h for more
   // details.
-  base::flat_map<ui::DomCode, ui::DomCode> pressed_keys_;
+  base::flat_map<ui::DomCode, KeyState> pressed_keys_;
 
   // Key state changes that are expected to be acknowledged.
   using KeyStateChange = std::pair<ui::KeyEvent, base::TimeTicks>;
@@ -127,16 +144,17 @@ class Keyboard : public ui::EventHandler,
   // Delay until a key state change expected to be acknowledged is expired.
   const base::TimeDelta expiration_delay_for_pending_key_acks_;
 
+  // Tracks whether the last key event is the target of autorepeat.
+  bool auto_repeat_enabled_ = true;
+
   // True when the ARC app window is focused.
   // TODO(yhanada, https://crbug.com/847500): Remove this when we find a way to
   // fix https://crbug.com/847500 without breaking ARC++ apps.
-  bool focus_belongs_to_arc_app_ = false;
+  bool focused_on_ime_supported_surface_ = false;
 
   base::ObserverList<KeyboardObserver>::Unchecked observer_list_;
 
   base::WeakPtrFactory<Keyboard> weak_ptr_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(Keyboard);
 };
 
 }  // namespace exo

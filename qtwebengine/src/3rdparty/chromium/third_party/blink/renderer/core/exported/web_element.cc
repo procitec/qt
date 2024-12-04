@@ -30,30 +30,40 @@
 
 #include "third_party/blink/public/web/web_element.h"
 
-#include "third_party/blink/public/platform/web_rect.h"
+#include "third_party/blink/public/web/web_label_element.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_element.h"
+#include "third_party/blink/renderer/core/clipboard/data_object.h"
+#include "third_party/blink/renderer/core/clipboard/data_transfer.h"
+#include "third_party/blink/renderer/core/clipboard/data_transfer_access_policy.h"
 #include "third_party/blink/renderer/core/css/css_computed_style_declaration.h"
 #include "third_party/blink/renderer/core/css/css_property_names.h"
 #include "third_party/blink/renderer/core/dom/element.h"
+#include "third_party/blink/renderer/core/dom/focus_params.h"
 #include "third_party/blink/renderer/core/editing/editing_utilities.h"
-#include "third_party/blink/renderer/core/fullscreen/fullscreen.h"
+#include "third_party/blink/renderer/core/editing/frame_selection.h"
+#include "third_party/blink/renderer/core/editing/ime/input_method_controller.h"
+#include "third_party/blink/renderer/core/editing/selection_template.h"
+#include "third_party/blink/renderer/core/editing/visible_selection.h"
+#include "third_party/blink/renderer/core/events/clipboard_event.h"
+#include "third_party/blink/renderer/core/events/text_event.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
+#include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/html/custom/custom_element.h"
-#include "third_party/blink/renderer/core/html/custom/v0_custom_element.h"
-#include "third_party/blink/renderer/core/html/custom/v0_custom_element_processing_stack.h"
+#include "third_party/blink/renderer/core/html/forms/html_label_element.h"
 #include "third_party/blink/renderer/core/html/forms/text_control_element.h"
+#include "third_party/blink/renderer/core/html/html_element.h"
 #include "third_party/blink/renderer/core/html_names.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/graphics/image.h"
 #include "third_party/blink/renderer/platform/wtf/casting.h"
-#include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 #include "ui/gfx/geometry/size.h"
 
 namespace blink {
 
-WebElement WebElement::FromV8Value(v8::Local<v8::Value> value) {
-  Element* element =
-      V8Element::ToImplWithTypeCheck(v8::Isolate::GetCurrent(), value);
+WebElement WebElement::FromV8Value(v8::Isolate* isolate,
+                                   v8::Local<v8::Value> value) {
+  Element* element = V8Element::ToWrappable(isolate, value);
   return WebElement(element);
 }
 
@@ -67,7 +77,7 @@ bool WebElement::IsEditable() const {
   const Element* element = ConstUnwrap<Element>();
 
   element->GetDocument().UpdateStyleAndLayoutTree();
-  if (HasEditableStyle(*element))
+  if (blink::IsEditable(*element))
     return true;
 
   if (auto* text_control = ToTextControlOrNull(element)) {
@@ -83,15 +93,13 @@ WebString WebElement::TagName() const {
   return ConstUnwrap<Element>()->tagName();
 }
 
+WebString WebElement::GetIdAttribute() const {
+  return ConstUnwrap<Element>()->GetIdAttribute();
+}
+
 bool WebElement::HasHTMLTagName(const WebString& tag_name) const {
-  // How to create                     class              nodeName localName
-  // createElement('input')            HTMLInputElement   INPUT    input
-  // createElement('INPUT')            HTMLInputElement   INPUT    input
-  // createElementNS(xhtmlNS, 'input') HTMLInputElement   INPUT    input
-  // createElementNS(xhtmlNS, 'INPUT') HTMLUnknownElement INPUT    INPUT
   const Element* element = ConstUnwrap<Element>();
-  return html_names::xhtmlNamespaceURI == element->namespaceURI() &&
-         element->localName() == String(tag_name).LowerASCII();
+  return element->IsHTMLWithTagName(String(tag_name));
 }
 
 bool WebElement::HasAttribute(const WebString& attr_name) const {
@@ -104,46 +112,162 @@ WebString WebElement::GetAttribute(const WebString& attr_name) const {
 
 void WebElement::SetAttribute(const WebString& attr_name,
                               const WebString& attr_value) {
-  // TODO: Custom element callbacks need to be called on WebKit API methods that
-  // mutate the DOM in any way.
-  V0CustomElementProcessingStack::CallbackDeliveryScope
-      deliver_custom_element_callbacks;
   Unwrap<Element>()->setAttribute(attr_name, attr_value,
                                   IGNORE_EXCEPTION_FOR_TESTING);
 }
 
-unsigned WebElement::AttributeCount() const {
-  if (!ConstUnwrap<Element>()->hasAttributes())
-    return 0;
-  return ConstUnwrap<Element>()->Attributes().size();
-}
-
-WebString WebElement::AttributeLocalName(unsigned index) const {
-  if (index >= AttributeCount())
-    return WebString();
-  return ConstUnwrap<Element>()->Attributes().at(index).LocalName();
-}
-
-WebString WebElement::AttributeValue(unsigned index) const {
-  if (index >= AttributeCount())
-    return WebString();
-  return ConstUnwrap<Element>()->Attributes().at(index).Value();
-}
-
 WebString WebElement::TextContent() const {
   return ConstUnwrap<Element>()->textContent();
+}
+WebString WebElement::TextContentAbridged(const unsigned int max_length) const {
+  return ConstUnwrap<Element>()->textContent(false, nullptr, max_length);
 }
 
 WebString WebElement::InnerHTML() const {
   return ConstUnwrap<Element>()->innerHTML();
 }
 
+bool WebElement::IsContentEditable() const {
+  const auto* html_element =
+      blink::DynamicTo<HTMLElement>(ConstUnwrap<Element>());
+  if (!html_element) {
+    return false;
+  }
+  ContentEditableType normalized_value =
+      html_element->contentEditableNormalized();
+  return normalized_value == ContentEditableType::kContentEditable ||
+         normalized_value == ContentEditableType::kPlaintextOnly;
+}
+
+bool WebElement::ContainsFrameSelection() const {
+  auto& e = *ConstUnwrap<Element>();
+  LocalFrame* frame = e.GetDocument().GetFrame();
+  if (!frame) {
+    return false;
+  }
+  Element* root = frame->Selection().RootEditableElementOrDocumentElement();
+  if (!root) {
+    return false;
+  }
+  // For form controls, the selection's root editable is a contenteditable in
+  // a shadow DOM tree.
+  return (e.IsFormControlElement() ? root->OwnerShadowHost() : root) == e;
+}
+
+WebString WebElement::SelectedText() const {
+  if (!ContainsFrameSelection()) {
+    return "";
+  }
+  return ConstUnwrap<Element>()
+      ->GetDocument()
+      .GetFrame()
+      ->Selection()
+      .SelectedText(TextIteratorBehavior::Builder()
+                        .SetEntersOpenShadowRoots(true)
+                        .SetSkipsUnselectableContent(true)
+                        .SetEntersTextControls(true)
+                        .Build());
+}
+
+void WebElement::PasteText(const WebString& text, bool replace_all) {
+  if (!IsEditable()) {
+    return;
+  }
+  auto* element = Unwrap<Element>();
+  LocalFrame* frame = element->GetDocument().GetFrame();
+  if (!frame) {
+    return;
+  }
+
+  // Returns true if JavaScript handlers destroyed the `frame`.
+  auto is_destroyed = [](LocalFrame& frame) {
+    return frame.GetDocument()->GetFrame() != frame;
+  };
+
+  if (replace_all || !ContainsFrameSelection()) {
+    // Makes sure the selection is inside `element`: if `replace_all`, selects
+    // all inside `element`; otherwise, selects an empty range at the end.
+    if (auto* text_control_element =
+            blink::DynamicTo<TextControlElement>(element)) {
+      if (replace_all) {
+        text_control_element->select();
+      } else {
+        text_control_element->Focus(FocusParams(
+            SelectionBehaviorOnFocus::kNone, mojom::blink::FocusType::kScript,
+            nullptr, FocusOptions::Create()));
+        text_control_element->setSelectionStart(
+            std::numeric_limits<int>::max());
+      }
+    } else {
+      Position base = FirstPositionInOrBeforeNode(*element);
+      Position extent = LastPositionInOrAfterNode(*element);
+      if (!replace_all) {
+        base = extent;
+      }
+      frame->Selection().SetSelection(
+          SelectionInDOMTree::Builder().SetBaseAndExtent(base, extent).Build(),
+          SetSelectionOptions());
+    }
+    // JavaScript handlers may have destroyed the frame or moved the selection.
+    if (is_destroyed(*frame) || !ContainsFrameSelection()) {
+      return;
+    }
+  }
+
+  // Simulates a paste command, except that it does not access the system
+  // clipboard but instead pastes `text`. This block is a stripped-down version
+  // of ClipboardCommands::Paste() that's limited to pasting plain text.
+  Element* target = FindEventTargetFrom(
+      *frame, frame->Selection().ComputeVisibleSelectionInDOMTree());
+  auto create_data_transfer = [](const WebString& text) {
+    return DataTransfer::Create(DataTransfer::kCopyAndPaste,
+                                DataTransferAccessPolicy::kReadable,
+                                DataObject::CreateFromString(text));
+  };
+  // Fires "paste" event.
+  if (target->DispatchEvent(*ClipboardEvent::Create(
+          event_type_names::kPaste, create_data_transfer(text))) !=
+      DispatchEventResult::kNotCanceled) {
+    return;
+  }
+  // Fires "beforeinput" event.
+  if (DispatchBeforeInputDataTransfer(
+          target, InputEvent::InputType::kInsertFromPaste,
+          create_data_transfer(text)) != DispatchEventResult::kNotCanceled) {
+    return;
+  }
+  // No DOM mutation if EditContext is active.
+  if (frame->GetInputMethodController().GetActiveEditContext()) {
+    return;
+  }
+  // Fires "textInput" and "input".
+  target->DispatchEvent(
+      *TextEvent::CreateForPlainTextPaste(frame->DomWindow(), text,
+                                          /*should_smart_replace=*/true));
+}
+
+WebVector<WebLabelElement> WebElement::Labels() const {
+  auto* html_element = blink::DynamicTo<HTMLElement>(ConstUnwrap<Element>());
+  if (!html_element)
+    return {};
+  LabelsNodeList* html_labels =
+      const_cast<HTMLElement*>(html_element)->labels();
+  if (!html_labels)
+    return {};
+  Vector<WebLabelElement> labels;
+  for (unsigned i = 0; i < html_labels->length(); i++) {
+    if (auto* label_element =
+            blink::DynamicTo<HTMLLabelElement>(html_labels->item(i))) {
+      labels.push_back(label_element);
+    }
+  }
+  return labels;
+}
+
 bool WebElement::IsAutonomousCustomElement() const {
   auto* element = ConstUnwrap<Element>();
   if (element->GetCustomElementState() == CustomElementState::kCustom)
     return CustomElement::IsValidName(element->localName());
-  if (element->GetV0CustomElementState() == Node::kV0Upgraded)
-    return V0CustomElement::IsValidName(element->localName());
   return false;
 }
 
@@ -154,6 +278,13 @@ WebNode WebElement::ShadowRoot() const {
   return WebNode(root);
 }
 
+WebElement WebElement::OwnerShadowHost() const {
+  if (auto* host = ConstUnwrap<Element>()->OwnerShadowHost()) {
+    return WebElement(host);
+  }
+  return WebElement();
+}
+
 WebNode WebElement::OpenOrClosedShadowRoot() {
   if (IsNull())
     return WebNode();
@@ -162,8 +293,8 @@ WebNode WebElement::OpenOrClosedShadowRoot() {
   return WebNode(root);
 }
 
-WebRect WebElement::BoundsInViewport() const {
-  return ConstUnwrap<Element>()->BoundsInViewport();
+gfx::Rect WebElement::BoundsInWidget() const {
+  return ConstUnwrap<Element>()->BoundsInWidget();
 }
 
 SkBitmap WebElement::ImageContents() {
@@ -175,7 +306,7 @@ SkBitmap WebElement::ImageContents() {
 
 std::vector<uint8_t> WebElement::CopyOfImageData() {
   Image* image = GetImage();
-  if (!image || !image->Data())
+  if (!image || !image->HasData())
     return std::vector<uint8_t>();
   return image->Data()->CopyAs<std::vector<uint8_t>>();
 }
@@ -194,9 +325,14 @@ gfx::Size WebElement::GetImageSize() {
   return gfx::Size(image->width(), image->height());
 }
 
-void WebElement::RequestFullscreen() {
-  Element* element = Unwrap<Element>();
-  Fullscreen::RequestFullscreen(*element);
+gfx::Size WebElement::GetClientSize() const {
+  Element* element = const_cast<Element*>(ConstUnwrap<Element>());
+  return gfx::Size(element->clientWidth(), element->clientHeight());
+}
+
+gfx::Size WebElement::GetScrollSize() const {
+  Element* element = const_cast<Element*>(ConstUnwrap<Element>());
+  return gfx::Size(element->scrollWidth(), element->scrollHeight());
 }
 
 WebString WebElement::GetComputedValue(const WebString& property_name) {
@@ -204,7 +340,7 @@ WebString WebElement::GetComputedValue(const WebString& property_name) {
     return WebString();
 
   Element* element = Unwrap<Element>();
-  CSSPropertyID property_id = cssPropertyID(
+  CSSPropertyID property_id = CssPropertyID(
       element->GetDocument().GetExecutionContext(), property_name);
   if (property_id == CSSPropertyID::kInvalid)
     return WebString();

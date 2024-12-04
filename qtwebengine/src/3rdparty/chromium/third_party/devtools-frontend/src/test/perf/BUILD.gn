@@ -18,9 +18,15 @@ ts_library("tests") {
   deps = [
     "application",
     "helpers",
+    "panels/performance",
+    "report",
+    "setup",
   ]
 }
 
 copy_to_gen("config") {
-  sources = [ ".mocharc.js" ]
+  sources = [
+    ".mocharc.js",
+    "test-runner-config.json",
+  ]
 }

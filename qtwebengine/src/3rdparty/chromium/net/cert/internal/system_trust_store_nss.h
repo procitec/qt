@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,21 +12,12 @@
 namespace net {
 
 // Create a SystemTrustStore that will accept trust for:
-// (*) built-in certificates
-// (*) test root certificates
-// (*) additional trust anchors (added through SystemTrustStore::AddTrustAnchor)
-// (*) certificates stored on the |user_slot|.
+// (*) Chrome Root Store certificates
+// (*) certificates stored on the |user_slot_restriction|, if non-null.
 NET_EXPORT std::unique_ptr<SystemTrustStore>
-CreateSslSystemTrustStoreNSSWithUserSlotRestriction(
-    crypto::ScopedPK11Slot user_slot);
-
-// Create a SystemTrustStore that will accept trust for:
-// (*) built-in certificates
-// (*) test root certificates
-// (*) additional trust anchors (added through SystemTrustStore::AddTrustAnchor)
-// It will not accept trust for certificates stored on other slots.
-NET_EXPORT std::unique_ptr<SystemTrustStore>
-CreateSslSystemTrustStoreNSSWithNoUserSlots();
+CreateSslSystemTrustStoreChromeRootWithUserSlotRestriction(
+    std::unique_ptr<TrustStoreChrome> chrome_root,
+    crypto::ScopedPK11Slot user_slot_restriction);
 
 }  // namespace net
 

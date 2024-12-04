@@ -1,12 +1,10 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/feed/core/v2/feed_network.h"
 
-#include "components/feed/core/proto/v2/wire/discover_actions_service.pb.h"
-#include "components/feed/core/proto/v2/wire/request.pb.h"
-#include "components/feed/core/proto/v2/wire/response.pb.h"
+#include "components/feed/core/v2/metrics_reporter.h"
 
 namespace feed {
 
@@ -17,13 +15,24 @@ FeedNetwork::QueryRequestResult::QueryRequestResult(QueryRequestResult&&) =
 FeedNetwork::QueryRequestResult& FeedNetwork::QueryRequestResult::operator=(
     QueryRequestResult&&) = default;
 
-FeedNetwork::ActionRequestResult::ActionRequestResult() = default;
-FeedNetwork::ActionRequestResult::~ActionRequestResult() = default;
-FeedNetwork::ActionRequestResult::ActionRequestResult(ActionRequestResult&&) =
+FeedNetwork::KidFriendlyQueryRequestResult::KidFriendlyQueryRequestResult() =
     default;
-FeedNetwork::ActionRequestResult& FeedNetwork::ActionRequestResult::operator=(
-    ActionRequestResult&&) = default;
+FeedNetwork::KidFriendlyQueryRequestResult::~KidFriendlyQueryRequestResult() =
+    default;
+FeedNetwork::KidFriendlyQueryRequestResult::KidFriendlyQueryRequestResult(
+    KidFriendlyQueryRequestResult&&) = default;
+FeedNetwork::KidFriendlyQueryRequestResult&
+FeedNetwork::KidFriendlyQueryRequestResult::operator=(
+    KidFriendlyQueryRequestResult&&) = default;
 
 FeedNetwork::~FeedNetwork() = default;
+
+// static
+void FeedNetwork::ParseAndForwardApiResponseStarted(
+    NetworkRequestType request_type,
+    const RawResponse& raw_response) {
+  MetricsReporter::NetworkRequestComplete(request_type,
+                                          raw_response.response_info);
+}
 
 }  // namespace feed

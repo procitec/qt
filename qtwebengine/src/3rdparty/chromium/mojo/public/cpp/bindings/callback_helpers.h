@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,9 +8,8 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback.h"
-#include "base/macros.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/memory/ptr_util.h"
 
 // This is a helper utility to wrap a base::OnceCallback such that if the
@@ -27,13 +26,17 @@
 // connection error callback.
 //
 // Caveats:
-// 1) The default form of the callback, called when the original was dropped
-// before running, may not run on the thread you expected. If this is a problem
-// for your code, DO NOT USE these helpers.
+// 1) The default form of the callback (the one called when the original is
+//    dropped before running) will run on the thread where the callback's
+//    destructor runs - it may not run on the thread you expected. If this is a
+//    problem for your code, DO NOT USE these helpers. This is *not* a problem
+//    for callbacks for mojo asynchronous methods, because in this case the
+//    callback is run and destroyed on the same thread - the thread that
+//    mojo::Remote is bound to.
 // 2) There is no type information that indicates the wrapped object has special
-// destructor behavior.  It is therefore not recommended to pass these wrapped
-// callbacks into deep call graphs where code readers could be confused whether
-// or not the Run() mehtod should be invoked.
+//    destructor behavior.  It is therefore not recommended to pass these
+//    wrapped callbacks into deep call graphs where code readers could be
+//    confused whether or not the Run() method should be invoked.
 //
 // Example:
 //   foo->DoWorkAndReturnResult(
@@ -82,6 +85,9 @@ class CallbackWithDeleteHelper<void(Args...)> {
       : callback_(std::move(callback)),
         delete_callback_(std::move(delete_callback)) {}
 
+  CallbackWithDeleteHelper(const CallbackWithDeleteHelper&) = delete;
+  CallbackWithDeleteHelper& operator=(const CallbackWithDeleteHelper&) = delete;
+
   ~CallbackWithDeleteHelper() {
     if (delete_callback_)
       std::move(delete_callback_).Run();
@@ -95,8 +101,6 @@ class CallbackWithDeleteHelper<void(Args...)> {
  private:
   CallbackType callback_;
   base::OnceClosure delete_callback_;
-
-  DISALLOW_COPY_AND_ASSIGN(CallbackWithDeleteHelper);
 };
 
 }  // namespace internal

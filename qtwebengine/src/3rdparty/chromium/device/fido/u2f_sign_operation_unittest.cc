@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -29,7 +29,7 @@ namespace {
 
 using TestSignCallback = ::device::test::StatusAndValueCallbackReceiver<
     CtapDeviceResponseCode,
-    base::Optional<AuthenticatorGetAssertionResponse>>;
+    absl::optional<AuthenticatorGetAssertionResponse>>;
 
 }  // namespace
 
@@ -73,9 +73,12 @@ TEST_F(U2fSignOperationTest, SignSuccess) {
   sign_callback_receiver().WaitForCallback();
   EXPECT_EQ(CtapDeviceResponseCode::kSuccess,
             sign_callback_receiver().status());
-  EXPECT_THAT(sign_callback_receiver().value()->signature(),
+  absl::optional<AuthenticatorGetAssertionResponse> response =
+      sign_callback_receiver().TakeValue();
+  ASSERT_TRUE(response);
+  EXPECT_THAT(response->signature,
               ::testing::ElementsAreArray(test_data::kU2fSignature));
-  EXPECT_THAT(sign_callback_receiver().value()->raw_credential_id(),
+  EXPECT_THAT(response->credential->id,
               ::testing::ElementsAreArray(test_data::kU2fSignKeyHandle));
 }
 
@@ -100,19 +103,16 @@ TEST_F(U2fSignOperationTest, SignSuccessWithFakeDevice) {
   ASSERT_GE(32u + 1u + 4u + 8u,  // Minimal ECDSA signature is 8 bytes
             sign_callback_receiver()
                 .value()
-                ->auth_data()
-                .SerializeToByteArray()
+                ->authenticator_data.SerializeToByteArray()
                 .size());
   EXPECT_EQ(0x01,
             sign_callback_receiver()
                 .value()
-                ->auth_data()
-                .SerializeToByteArray()[32]);  // UP flag
+                ->authenticator_data.SerializeToByteArray()[32]);  // UP flag
   // Counter starts at zero and is incremented for every sign request.
   EXPECT_EQ(1, sign_callback_receiver()
                    .value()
-                   ->auth_data()
-                   .SerializeToByteArray()[36]);  // counter
+                   ->authenticator_data.SerializeToByteArray()[36]);  // counter
 }
 
 TEST_F(U2fSignOperationTest, DelayedSuccess) {
@@ -140,9 +140,9 @@ TEST_F(U2fSignOperationTest, DelayedSuccess) {
   sign_callback_receiver().WaitForCallback();
   EXPECT_EQ(CtapDeviceResponseCode::kSuccess,
             sign_callback_receiver().status());
-  EXPECT_THAT(sign_callback_receiver().value()->signature(),
+  EXPECT_THAT(sign_callback_receiver().value()->signature,
               ::testing::ElementsAreArray(test_data::kU2fSignature));
-  EXPECT_THAT(sign_callback_receiver().value()->raw_credential_id(),
+  EXPECT_THAT(sign_callback_receiver().value()->credential->id,
               ::testing::ElementsAreArray(test_data::kU2fSignKeyHandle));
 }
 
@@ -175,9 +175,9 @@ TEST_F(U2fSignOperationTest, MultipleHandles) {
   sign_callback_receiver().WaitForCallback();
   EXPECT_EQ(CtapDeviceResponseCode::kSuccess,
             sign_callback_receiver().status());
-  EXPECT_THAT(sign_callback_receiver().value()->signature(),
+  EXPECT_THAT(sign_callback_receiver().value()->signature,
               ::testing::ElementsAreArray(test_data::kU2fSignature));
-  EXPECT_THAT(sign_callback_receiver().value()->raw_credential_id(),
+  EXPECT_THAT(sign_callback_receiver().value()->credential->id,
               ::testing::ElementsAreArray(test_data::kU2fSignKeyHandle));
 }
 
@@ -208,9 +208,9 @@ TEST_F(U2fSignOperationTest, MultipleHandlesLengthError) {
   sign_callback_receiver().WaitForCallback();
   EXPECT_EQ(CtapDeviceResponseCode::kSuccess,
             sign_callback_receiver().status());
-  EXPECT_THAT(sign_callback_receiver().value()->signature(),
+  EXPECT_THAT(sign_callback_receiver().value()->signature,
               ::testing::ElementsAreArray(test_data::kU2fSignature));
-  EXPECT_THAT(sign_callback_receiver().value()->raw_credential_id(),
+  EXPECT_THAT(sign_callback_receiver().value()->credential->id,
               ::testing::ElementsAreArray(test_data::kU2fSignKeyHandle));
 }
 
@@ -351,11 +351,11 @@ TEST_F(U2fSignOperationTest, AlternativeApplicationParameter) {
   EXPECT_EQ(CtapDeviceResponseCode::kSuccess,
             sign_callback_receiver().status());
   const auto& response_value = sign_callback_receiver().value();
-  EXPECT_THAT(response_value->signature(),
+  EXPECT_THAT(response_value->signature,
               ::testing::ElementsAreArray(test_data::kU2fSignature));
-  EXPECT_THAT(response_value->raw_credential_id(),
+  EXPECT_THAT(response_value->credential->id,
               ::testing::ElementsAreArray(test_data::kU2fSignKeyHandle));
-  EXPECT_THAT(response_value->GetRpIdHash(),
+  EXPECT_THAT(response_value->authenticator_data.application_parameter(),
               ::testing::ElementsAreArray(base::span<const uint8_t, 32>(
                   test_data::kAlternativeApplicationParameter)));
 }

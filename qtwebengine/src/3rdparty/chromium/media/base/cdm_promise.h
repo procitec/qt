@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,7 +11,6 @@
 
 #include "base/check.h"
 #include "base/logging.h"
-#include "base/macros.h"
 #include "media/base/cdm_key_information.h"
 #include "media/base/media_export.h"
 
@@ -49,7 +48,9 @@ class MEDIA_EXPORT CdmPromise {
   };
 
   // These values are reported to UMA. Never change existing values. Only add
-  // new values at the bottom of the list.
+  // new values at the bottom of the list. Note that values less than 1000000
+  // are reserved for errors reported by the CDM and from 1100000 are specified
+  // in MediaDrmBridge::MediaDrmSystemCode.
   // TODO(xhwang): Make SystemCode an enum class and pass |system_code| as
   // SystemCode everywhere.
   enum SystemCode : uint32_t {
@@ -62,6 +63,10 @@ class MEDIA_EXPORT CdmPromise {
   };
 
   CdmPromise() = default;
+
+  CdmPromise(const CdmPromise&) = delete;
+  CdmPromise& operator=(const CdmPromise&) = delete;
+
   virtual ~CdmPromise() = default;
 
   // Used to indicate that the operation failed. |exception_code| must be
@@ -75,9 +80,6 @@ class MEDIA_EXPORT CdmPromise {
   // Used to determine the template type of CdmPromiseTemplate<T> so that
   // saved CdmPromise objects can be cast to the correct templated version.
   virtual ResolveParameterType GetResolveParameterType() const = 0;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(CdmPromise);
 };
 
 template <typename... T>
@@ -110,15 +112,14 @@ class CdmPromiseTemplate : public CdmPromise {
  public:
   CdmPromiseTemplate() : is_settled_(false) {}
 
+  CdmPromiseTemplate(const CdmPromiseTemplate&) = delete;
+  CdmPromiseTemplate& operator=(const CdmPromiseTemplate&) = delete;
+
   virtual ~CdmPromiseTemplate() { DCHECK(is_settled_); }
 
   virtual void resolve(const T&... result) = 0;
 
   // CdmPromise implementation.
-  virtual void reject(Exception exception_code,
-                      uint32_t system_code,
-                      const std::string& error_message) = 0;
-
   ResolveParameterType GetResolveParameterType() const final;
 
  protected:
@@ -146,8 +147,6 @@ class CdmPromiseTemplate : public CdmPromise {
  private:
   // Keep track of whether the promise has been resolved or rejected yet.
   bool is_settled_;
-
-  DISALLOW_COPY_AND_ASSIGN(CdmPromiseTemplate);
 };
 
 // Explicitly defining all variants of GetResolveParameterType().
@@ -168,6 +167,25 @@ CdmPromiseTemplate<std::string>::GetResolveParameterType() const;
 template <>
 MEDIA_EXPORT CdmPromise::ResolveParameterType CdmPromiseTemplate<
     CdmKeyInformation::KeyStatus>::GetResolveParameterType() const;
+
+// A dummy CdmPromise that does nothing. Used for APIs requiring a CdmPromise
+// while the result will be ignored.
+template <typename... T>
+class MEDIA_EXPORT DoNothingCdmPromise : public CdmPromiseTemplate<T...> {
+ public:
+  DoNothingCdmPromise() = default;
+  DoNothingCdmPromise(const DoNothingCdmPromise&) = delete;
+  DoNothingCdmPromise& operator=(const DoNothingCdmPromise&) = delete;
+  ~DoNothingCdmPromise() override = default;
+
+  // CdmPromiseTemplate.
+  void resolve() final { CdmPromiseTemplate<T...>::MarkPromiseSettled(); }
+  void reject(CdmPromise::Exception exception_code,
+              uint32_t system_code,
+              const std::string& error_message) final {
+    CdmPromiseTemplate<T...>::MarkPromiseSettled();
+  }
+};
 
 }  // namespace media
 

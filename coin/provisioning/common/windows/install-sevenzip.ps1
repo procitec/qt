@@ -1,52 +1,36 @@
-############################################################################
-##
-## Copyright (C) 2017 The Qt Company Ltd.
-## Contact: http://www.qt.io/licensing/
-##
-## This file is part of the provisioning scripts of the Qt Toolkit.
-##
-## $QT_BEGIN_LICENSE:LGPL21$
-## Commercial License Usage
-## Licensees holding valid commercial Qt licenses may use this file in
-## accordance with the commercial license agreement provided with the
-## Software or, alternatively, in accordance with the terms contained in
-## a written agreement between you and The Qt Company. For licensing terms
-## and conditions see http://www.qt.io/terms-conditions. For further
-## information use the contact form at http://www.qt.io/contact-us.
-##
-## GNU Lesser General Public License Usage
-## Alternatively, this file may be used under the terms of the GNU Lesser
-## General Public License version 2.1 or version 3 as published by the Free
-## Software Foundation and appearing in the file LICENSE.LGPLv21 and
-## LICENSE.LGPLv3 included in the packaging of this file. Please review the
-## following information to ensure the GNU Lesser General Public License
-## requirements will be met: https://www.gnu.org/licenses/lgpl.html and
-## http://www.gnu.org/licenses/old-licenses/lgpl-2.1.html.
-##
-## As a special exception, The Qt Company gives you certain additional
-## rights. These rights are described in The Qt Company LGPL Exception
-## version 1.1, included in the file LGPL_EXCEPTION.txt in this package.
-##
-## $QT_END_LICENSE$
-##
-#############################################################################
+# Copyright (C) 2017 The Qt Company Ltd.
+# SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 . "$PSScriptRoot\helpers.ps1"
 
 # This script installs 7-Zip
 
-$version = "16.04"
-$nonDottedVersion = "1604"
+$version = "23.01"
+$nonDottedVersion = "2301"
 
-if (Is64BitWinHost) {
-    $arch = "-x64"
-    $sha1 = "338A5CC5200E98EDD644FC21807FDBE59910C4D0"
-} else {
-    $arch = ""
-    $sha1 = "dd1cb1163c5572951c9cd27f5a8dd550b33c58a4"
+$cpu_arch = Get-CpuArchitecture
+switch ($cpu_arch) {
+    arm64 {
+        $arch = "-arm64"
+        $sha1 = "be65c2ea6119c04945c66b13413892f2bb03d9a7"
+        Break
+    }
+    x64 {
+        $arch = "-x64"
+        $sha1 = "7DF28D340D7084647921CC25A8C2068BB192BDBB"
+        Break
+    }
+    x86 {
+        $arch = ""
+        $sha1 = "D5D00E6EA8B8E68CE7A704FD478DC950E543C25C"
+        Break
+    }
+    default {
+        throw "Unknown architecture $cpu_arch"
+    }
 }
 
-$url_cache = "\\ci-files01-hki.intra.qt.io\provisioning\windows\7z" + $nonDottedVersion + $arch + ".exe"
+$url_cache = "https://ci-files01-hki.ci.qt.io/input/windows/7z" + $nonDottedVersion + $arch + ".exe"
 $url_official = "http://www.7-zip.org/a/7z" + $nonDottedVersion + $arch + ".exe"
 $7zPackage = "C:\Windows\Temp\7zip-$nonDottedVersion.exe"
 $7zTargetLocation = "C:\Utils\sevenzip\"
@@ -56,7 +40,7 @@ Verify-Checksum $7zPackage $sha1
 Run-Executable $7zPackage "/S","/D=$7zTargetLocation"
 
 Write-Host "Cleaning $7zPackage.."
-Remove-Item -Recurse -Force -Path "$7zPackage"
+Remove "$7zPackage"
 
 Add-Path $7zTargetLocation
 

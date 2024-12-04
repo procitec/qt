@@ -1,4 +1,4 @@
-// Copyright (c) 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,10 +10,9 @@
 #include <memory>
 #include <vector>
 
-#include "base/callback_forward.h"
 #include "base/component_export.h"
 #include "base/files/file.h"
-#include "base/macros.h"
+#include "base/functional/callback_forward.h"
 #include "components/services/filesystem/public/mojom/types.mojom.h"
 #include "storage/browser/file_system/file_system_operation.h"
 
@@ -50,9 +49,11 @@ class AsyncFileUtil {
  public:
   using StatusCallback = base::OnceCallback<void(base::File::Error result)>;
 
-  // |on_close_callback| will be called after the |file| is closed in the
-  // child process. |on_close_callback|.is_null() can be true, if no operation
-  // is needed on closing the file.
+  // Used for CreateOrOpen(). File util implementations can specify an
+  // `on_close_callback` if an operation is needed after closing a file. If
+  // non-null, CreateOrOpen() callers must run the callback (on the IO thread)
+  // after the file closes. If the file is duped, the callback should not be run
+  // until all dups of the file have been closed.
   using CreateOrOpenCallback =
       base::OnceCallback<void(base::File file,
                               base::OnceClosure on_close_callback)>;
@@ -76,17 +77,20 @@ class AsyncFileUtil {
 
   using CopyFileProgressCallback = base::RepeatingCallback<void(int64_t size)>;
 
-  using CopyOrMoveOption = FileSystemOperation::CopyOrMoveOption;
+  using CopyOrMoveOptionSet = FileSystemOperation::CopyOrMoveOptionSet;
   using GetMetadataField = FileSystemOperation::GetMetadataField;
+  using GetMetadataFieldSet = FileSystemOperation::GetMetadataFieldSet;
 
-  // Creates an AsyncFileUtil instance which performs file operations on
-  // local native file system. The created instance assumes
-  // FileSystemURL::path() has the target platform path.
+  // Creates an AsyncFileUtil instance which performs file operations on local
+  // file system. The created instance assumes FileSystemURL::path() has the
+  // target platform path.
   COMPONENT_EXPORT(STORAGE_BROWSER)
   static AsyncFileUtil* CreateForLocalFileSystem();
 
-  AsyncFileUtil() {}
-  virtual ~AsyncFileUtil() {}
+  AsyncFileUtil() = default;
+  AsyncFileUtil(const AsyncFileUtil&) = delete;
+  AsyncFileUtil& operator=(const AsyncFileUtil&) = delete;
+  virtual ~AsyncFileUtil() = default;
 
   // Creates or opens a file with the given flags.
   // If File::FLAG_CREATE is set in |file_flags| it always tries to create
@@ -98,7 +102,7 @@ class AsyncFileUtil {
   //
   virtual void CreateOrOpen(std::unique_ptr<FileSystemOperationContext> context,
                             const FileSystemURL& url,
-                            int file_flags,
+                            uint32_t file_flags,
                             CreateOrOpenCallback callback) = 0;
 
   // Ensures that the given |url| exist.  This creates a empty new file
@@ -148,7 +152,7 @@ class AsyncFileUtil {
   //
   virtual void GetFileInfo(std::unique_ptr<FileSystemOperationContext> context,
                            const FileSystemURL& url,
-                           int fields,
+                           GetMetadataFieldSet fields,
                            GetFileInfoCallback callback) = 0;
 
   // Reads contents of a directory at |path|.
@@ -213,6 +217,8 @@ class AsyncFileUtil {
   //
   // FileSystemOperationImpl::Copy calls this for same-filesystem copy case.
   //
+  // It should succeed (and overwrite) if |dest_url| exists and is a file.
+  //
   // This reports following error code via |callback|:
   // - File::FILE_ERROR_NOT_FOUND if |src_url|
   //   or the parent directory of |dest_url| does not exist.
@@ -226,7 +232,7 @@ class AsyncFileUtil {
       std::unique_ptr<FileSystemOperationContext> context,
       const FileSystemURL& src_url,
       const FileSystemURL& dest_url,
-      CopyOrMoveOption option,
+      CopyOrMoveOptionSet options,
       CopyFileProgressCallback progress_callback,
       StatusCallback callback) = 0;
 
@@ -235,6 +241,8 @@ class AsyncFileUtil {
   // (i.e. type() and origin() of the |src_url| and |dest_url| must match).
   //
   // FileSystemOperationImpl::Move calls this for same-filesystem move case.
+  //
+  // It should succeed (and overwrite) if |dest_url| exists and is a file.
   //
   // This reports following error code via |callback|:
   // - File::FILE_ERROR_NOT_FOUND if |src_url|
@@ -249,7 +257,7 @@ class AsyncFileUtil {
       std::unique_ptr<FileSystemOperationContext> context,
       const FileSystemURL& src_url,
       const FileSystemURL& dest_url,
-      CopyOrMoveOption option,
+      CopyOrMoveOptionSet options,
       StatusCallback callback) = 0;
 
   // Copies in a single file from a different filesystem.
@@ -350,9 +358,6 @@ class AsyncFileUtil {
       std::unique_ptr<FileSystemOperationContext> context,
       const FileSystemURL& url,
       CreateSnapshotFileCallback callback) = 0;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(AsyncFileUtil);
 };
 
 }  // namespace storage

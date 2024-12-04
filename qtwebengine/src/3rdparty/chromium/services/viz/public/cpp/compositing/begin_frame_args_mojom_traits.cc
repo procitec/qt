@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -50,11 +50,14 @@ bool StructTraits<viz::mojom::BeginFrameArgsDataView, viz::BeginFrameArgs>::
     Read(viz::mojom::BeginFrameArgsDataView data, viz::BeginFrameArgs* out) {
   if (!data.ReadFrameTime(&out->frame_time) ||
       !data.ReadDeadline(&out->deadline) ||
-      !data.ReadInterval(&out->interval) || !data.ReadType(&out->type)) {
+      !data.ReadInterval(&out->interval) || !data.ReadType(&out->type) ||
+      !data.ReadDispatchTime(&out->dispatch_time) ||
+      !data.ReadClientArrivalTime(&out->client_arrival_time)) {
     return false;
   }
   out->frame_id.source_id = data.source_id();
   out->frame_id.sequence_number = data.sequence_number();
+  out->frames_throttled_since_last = data.frames_throttled_since_last();
   out->trace_id = data.trace_id();
   out->on_critical_path = data.on_critical_path();
   out->animate_only = data.animate_only();

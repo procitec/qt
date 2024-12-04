@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,20 +9,22 @@
 #include <string>
 #include <vector>
 
-#include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/functional/callback_helpers.h"
+#include "base/memory/page_size.h"
 #include "base/no_destructor.h"
 #include "base/path_service.h"
-#include "base/process/process_metrics.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/gtest_util.h"
 #include "base/test/multiprocess_test.h"
 #include "base/test/test_timeouts.h"
 #include "build/build_config.h"
 #include "components/gwp_asan/client/guarded_page_allocator.h"
+#include "components/gwp_asan/client/lightweight_detector/poison_metadata_recorder.h"
 #include "components/gwp_asan/common/crash_key_name.h"
+#include "components/gwp_asan/common/lightweight_detector_state.h"
 #include "components/gwp_asan/crash_handler/crash.pb.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/multiprocess_func_list.h"
@@ -34,7 +36,7 @@
 #include "third_party/crashpad/crashpad/snapshot/minidump/process_snapshot_minidump.h"
 #include "third_party/crashpad/crashpad/tools/tool_support.h"
 
-#if defined(OS_LINUX) || defined(OS_CHROMEOS) || defined(OS_ANDROID)
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID)
 #include "third_party/crashpad/crashpad/snapshot/sanitized/sanitization_information.h"
 #endif
 
@@ -45,9 +47,9 @@ namespace {
 
 constexpr size_t kAllocationSize = 902;
 constexpr int kSuccess = 0;
-constexpr size_t kTotalPages = AllocatorState::kMaxSlots;
+constexpr size_t kTotalPages = AllocatorState::kMaxRequestedSlots;
 
-#if !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID)
 int HandlerMainAdaptor(int argc, char* argv[]) {
   crashpad::UserStreamDataSources user_stream_data_sources;
   user_stream_data_sources.push_back(
@@ -60,7 +62,7 @@ MULTIPROCESS_TEST_MAIN(CrashpadHandler) {
   base::CommandLine* cmd_line = base::CommandLine::ForCurrentProcess();
 
   // Remove the --test-child-process argument from argv and launch crashpad.
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   std::vector<wchar_t*> argv;
   for (auto& arg : cmd_line->argv()) {
     if (arg.find(L"test-child-process") == std::string::npos)
@@ -80,20 +82,16 @@ MULTIPROCESS_TEST_MAIN(CrashpadHandler) {
 
   return 0;
 }
-#endif  // !defined(OS_ANDROID)
+#endif  // !BUILDFLAG(IS_ANDROID)
 
 // Child process that launches the crashpad handler and then crashes.
 MULTIPROCESS_TEST_MAIN(CrashingProcess) {
-#if defined(OS_APPLE)
+#if BUILDFLAG(IS_APPLE)
   // Disable the system crash reporter from inspecting this crash (it is slow
   // and causes test timeouts.)
   crashpad::CrashpadInfo::GetCrashpadInfo()
       ->set_system_crash_reporter_forwarding(crashpad::TriState::kDisabled);
 #endif
-
-  base::NoDestructor<GuardedPageAllocator> gpa;
-  gpa->Init(AllocatorState::kMaxMetadata, AllocatorState::kMaxMetadata,
-            kTotalPages, base::DoNothing(), false);
 
   base::CommandLine* cmd_line = base::CommandLine::ForCurrentProcess();
   base::FilePath directory = cmd_line->GetSwitchValuePath("directory");
@@ -112,21 +110,37 @@ MULTIPROCESS_TEST_MAIN(CrashingProcess) {
     return kSuccess;
   }
 
-  std::string gpa_addr = gpa->GetCrashKey();
-  static crashpad::Annotation gpa_annotation(
-      crashpad::Annotation::Type::kString, annotation_name,
-      const_cast<char*>(gpa_addr.c_str()));
-  gpa_annotation.SetSize(gpa_addr.size());
+  base::NoDestructor<GuardedPageAllocator> gpa;
+  gpa->Init(AllocatorState::kMaxMetadata, AllocatorState::kMaxMetadata,
+            kTotalPages, base::DoNothing(), allocator == "partitionalloc");
+
+  static crashpad::StringAnnotation<24> gpa_annotation(annotation_name);
+  gpa_annotation.Set(gpa->GetCrashKey());
+
+  if (cmd_line->HasSwitch("enable-lightweight-detector")) {
+    lud::PoisonMetadataRecorder::Init(LightweightDetectorMode::kBrpQuarantine,
+                                      1);
+    static crashpad::StringAnnotation<24> lightweight_detector_annotation(
+        kLightweightDetectorCrashKey);
+    lightweight_detector_annotation.Set(
+        lud::PoisonMetadataRecorder::Get()->GetCrashKey());
+  }
 
   base::FilePath metrics_dir(FILE_PATH_LITERAL(""));
   std::map<std::string, std::string> annotations;
   std::vector<std::string> arguments;
 
-#if defined(OS_LINUX) || defined(OS_CHROMEOS) || defined(OS_ANDROID)
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID)
   static crashpad::SanitizationInformation sanitization_info = {};
   static crashpad::SanitizationAllowedMemoryRanges allowed_memory_ranges;
   if (cmd_line->HasSwitch("sanitize")) {
     auto memory_ranges = gpa->GetInternalMemoryRegions();
+    if (cmd_line->HasSwitch("enable-lightweight-detector")) {
+      auto detector_memory_ranges =
+          lud::PoisonMetadataRecorder::Get()->GetInternalMemoryRegions();
+      memory_ranges.insert(memory_ranges.end(), detector_memory_ranges.begin(),
+                           detector_memory_ranges.end());
+    }
     auto* range_array =
         new crashpad::SanitizationAllowedMemoryRanges::Range[memory_ranges
                                                                  .size()];
@@ -145,12 +159,12 @@ MULTIPROCESS_TEST_MAIN(CrashingProcess) {
   }
 #endif
 
-#if !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID)
   arguments.push_back("--test-child-process=CrashpadHandler");
 #endif
 
   crashpad::CrashpadClient* client = new crashpad::CrashpadClient();
-#if defined(OS_LINUX) || defined(OS_CHROMEOS)
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
   bool handler =
       client->StartHandlerAtCrash(/* handler */ cmd_line->GetProgram(),
                                   /* database */ directory,
@@ -158,7 +172,7 @@ MULTIPROCESS_TEST_MAIN(CrashingProcess) {
                                   /* url */ "",
                                   /* annotations */ annotations,
                                   /* arguments */ arguments);
-#elif defined(OS_ANDROID)
+#elif BUILDFLAG(IS_ANDROID)
   // TODO: Once the minSdkVersion is >= Q define a CrashpadHandlerMain() and
   // use the /system/bin/linker approach instead of using
   // libchrome_crashpad_handler.so
@@ -225,7 +239,7 @@ MULTIPROCESS_TEST_MAIN(CrashingProcess) {
     gpa->Deallocate(ptrs[0]);
 
     // Take the remaining metadata slot with an allocation on a different page.
-    while (1) {
+    while (true) {
       void* new_alloc = gpa->Allocate(1);
       if (new_alloc != ptrs[0])
         break;
@@ -235,6 +249,11 @@ MULTIPROCESS_TEST_MAIN(CrashingProcess) {
     // Cause a crash accessing an allocation that no longer has metadata
     // associated with it.
     *(uint8_t*)(ptrs[0]) = 0;
+  } else if (test_name == "LightweightDetectorUseAfterFree") {
+    uint8_t fake_alloc[kAllocationSize];
+    lud::PoisonMetadataRecorder::Get()->RecordAndZap(&fake_alloc,
+                                                     sizeof(fake_alloc));
+    **(int**)fake_alloc = 0;
   } else {
     LOG(ERROR) << "Unknown test name " << test_name;
   }
@@ -243,18 +262,28 @@ MULTIPROCESS_TEST_MAIN(CrashingProcess) {
   return kSuccess;
 }
 
+enum class ShouldSanitize : bool { kNo, kYes };
+enum class EnableLightweightDetector : bool { kNo, kYes };
+enum class HasAllocation : bool { kNo, kYes };
+enum class HasDeallocation : bool { kNo, kYes };
+
 struct TestParams {
-  TestParams(const char* allocator, bool sanitize)
-      : allocator(allocator), sanitize(sanitize) {}
+  TestParams(const char* allocator,
+             ShouldSanitize sanitize,
+             EnableLightweightDetector enable_lightweight_detector)
+      : allocator(allocator),
+        sanitize(sanitize),
+        enable_lightweight_detector(enable_lightweight_detector) {}
 
   const char* allocator;
-  bool sanitize;
+  ShouldSanitize sanitize;
+  EnableLightweightDetector enable_lightweight_detector;
 };
 
-class CrashHandlerTest : public base::MultiProcessTest,
-                         public testing::WithParamInterface<TestParams> {
+class BaseCrashHandlerTest : public base::MultiProcessTest,
+                             public testing::WithParamInterface<TestParams> {
  protected:
-  CrashHandlerTest() : params_(GetParam()) {}
+  BaseCrashHandlerTest() : params_(GetParam()) {}
 
   // Launch a child process and wait for it to crash. Set |gwp_asan_found_| if a
   // GWP-ASan data was found and if so, read it into |proto_|.
@@ -288,17 +317,23 @@ class CrashHandlerTest : public base::MultiProcessTest,
     cmd_line.AppendSwitchASCII("test-name", test_name);
     cmd_line.AppendSwitchASCII("allocator", params_.allocator);
 
-    if (params_.sanitize)
+    if (params_.sanitize == ShouldSanitize::kYes) {
       cmd_line.AppendSwitch("sanitize");
+    }
+
+    if (params_.enable_lightweight_detector ==
+        EnableLightweightDetector::kYes) {
+      cmd_line.AppendSwitch("enable-lightweight-detector");
+    }
 
     base::LaunchOptions options;
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
     options.start_hidden = true;
-#endif  // defined(OS_WIN)
+#endif  // BUILDFLAG(IS_WIN)
     base::Process process =
         base::SpawnMultiProcessTestChild("CrashingProcess", cmd_line, options);
 
-#if !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID)
     int exit_code = -1;
     EXPECT_TRUE(WaitForMultiprocessTestChildExit(
         process, TestTimeouts::action_max_timeout(), &exit_code));
@@ -354,7 +389,9 @@ class CrashHandlerTest : public base::MultiProcessTest,
     }
   }
 
-  void checkProto(Crash_ErrorType error_type, bool has_deallocation) {
+  void checkProto(Crash_ErrorType error_type,
+                  HasAllocation has_allocation,
+                  HasDeallocation has_deallocation) {
     EXPECT_TRUE(proto_.has_error_type());
     EXPECT_EQ(proto_.error_type(), error_type);
 
@@ -363,27 +400,40 @@ class CrashHandlerTest : public base::MultiProcessTest,
     EXPECT_TRUE(proto_.has_allocation_size());
     EXPECT_EQ(proto_.allocation_size(), kAllocationSize);
 
-    EXPECT_TRUE(proto_.has_allocation());
-    EXPECT_TRUE(proto_.allocation().has_thread_id());
-    EXPECT_NE(proto_.allocation().thread_id(),
-              static_cast<uint64_t>(base::kInvalidThreadId));
-    EXPECT_GT(proto_.allocation().stack_trace_size(), 0);
+    EXPECT_EQ(proto_.has_allocation(), has_allocation == HasAllocation::kYes);
+    if (proto_.has_allocation()) {
+      EXPECT_TRUE(proto_.allocation().has_thread_id());
+      EXPECT_NE(proto_.allocation().thread_id(),
+                static_cast<uint64_t>(base::kInvalidThreadId));
+      EXPECT_GT(proto_.allocation().stack_trace_size(), 0);
+    }
 
-    EXPECT_EQ(proto_.has_deallocation(), has_deallocation);
-    if (has_deallocation) {
+    EXPECT_EQ(proto_.has_deallocation(),
+              has_deallocation == HasDeallocation::kYes);
+    if (proto_.has_deallocation()) {
       EXPECT_TRUE(proto_.deallocation().has_thread_id());
       EXPECT_NE(proto_.deallocation().thread_id(),
                 static_cast<uint64_t>(base::kInvalidThreadId));
-      EXPECT_EQ(proto_.allocation().thread_id(),
-                proto_.deallocation().thread_id());
       EXPECT_GT(proto_.deallocation().stack_trace_size(), 0);
     }
 
-    EXPECT_TRUE(proto_.has_region_start());
-    EXPECT_TRUE(proto_.has_region_size());
-    EXPECT_EQ(proto_.region_start() & (base::GetPageSize() - 1), 0U);
-    EXPECT_EQ(proto_.region_size(),
-              base::GetPageSize() * (2 * kTotalPages + 1));
+    if (proto_.has_allocation() && proto_.has_deallocation()) {
+      EXPECT_EQ(proto_.allocation().thread_id(),
+                proto_.deallocation().thread_id());
+    }
+
+    if (proto_.has_region_start() || proto_.has_region_size()) {
+      EXPECT_TRUE(proto_.has_region_start());
+      EXPECT_TRUE(proto_.has_region_size());
+      EXPECT_EQ(proto_.region_start() & (base::GetPageSize() - 1), 0U);
+      // We can't have a more precise check of the region size because it
+      // depends on the PartitionAlloc metadata layout.
+      EXPECT_GE(proto_.region_size(),
+                base::GetPageSize() * (2 * kTotalPages + 1));
+      EXPECT_LE(
+          proto_.region_size(),
+          base::GetPageSize() * (2 * AllocatorState::kMaxReservedSlots + 1));
+    }
 
     EXPECT_TRUE(proto_.has_missing_metadata());
     EXPECT_FALSE(proto_.missing_metadata());
@@ -402,7 +452,9 @@ class CrashHandlerTest : public base::MultiProcessTest,
   bool gwp_asan_found_;
 };
 
-#if defined(ADDRESS_SANITIZER) && (defined(OS_WIN) || defined(OS_ANDROID))
+class CrashHandlerTest : public BaseCrashHandlerTest {};
+
+#if defined(ADDRESS_SANITIZER) && (BUILDFLAG(IS_WIN) || BUILDFLAG(IS_ANDROID))
 // ASan intercepts crashes and crashpad doesn't have a chance to see them.
 #define MAYBE_DISABLED(name) DISABLED_ ##name
 #else
@@ -411,27 +463,32 @@ class CrashHandlerTest : public base::MultiProcessTest,
 
 TEST_P(CrashHandlerTest, MAYBE_DISABLED(UseAfterFree)) {
   ASSERT_TRUE(gwp_asan_found_);
-  checkProto(Crash_ErrorType_USE_AFTER_FREE, true);
+  checkProto(Crash_ErrorType_USE_AFTER_FREE, HasAllocation::kYes,
+             HasDeallocation::kYes);
 }
 
 TEST_P(CrashHandlerTest, MAYBE_DISABLED(DoubleFree)) {
   ASSERT_TRUE(gwp_asan_found_);
-  checkProto(Crash_ErrorType_DOUBLE_FREE, true);
+  checkProto(Crash_ErrorType_DOUBLE_FREE, HasAllocation::kYes,
+             HasDeallocation::kYes);
 }
 
 TEST_P(CrashHandlerTest, MAYBE_DISABLED(Underflow)) {
   ASSERT_TRUE(gwp_asan_found_);
-  checkProto(Crash_ErrorType_BUFFER_UNDERFLOW, false);
+  checkProto(Crash_ErrorType_BUFFER_UNDERFLOW, HasAllocation::kYes,
+             HasDeallocation::kNo);
 }
 
 TEST_P(CrashHandlerTest, MAYBE_DISABLED(Overflow)) {
   ASSERT_TRUE(gwp_asan_found_);
-  checkProto(Crash_ErrorType_BUFFER_OVERFLOW, false);
+  checkProto(Crash_ErrorType_BUFFER_OVERFLOW, HasAllocation::kYes,
+             HasDeallocation::kNo);
 }
 
 TEST_P(CrashHandlerTest, MAYBE_DISABLED(FreeInvalidAddress)) {
   ASSERT_TRUE(gwp_asan_found_);
-  checkProto(Crash_ErrorType_FREE_INVALID_ADDRESS, false);
+  checkProto(Crash_ErrorType_FREE_INVALID_ADDRESS, HasAllocation::kYes,
+             HasDeallocation::kNo);
   EXPECT_TRUE(proto_.has_free_invalid_address());
 }
 
@@ -458,11 +515,43 @@ TEST_P(CrashHandlerTest, MAYBE_DISABLED(UnrelatedException)) {
 INSTANTIATE_TEST_SUITE_P(VaryAllocator,
                          CrashHandlerTest,
                          testing::Values(
-#if defined(OS_LINUX) || defined(OS_CHROMEOS) || defined(OS_ANDROID)
-                             TestParams("malloc", true),
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID)
+                             TestParams("malloc",
+                                        ShouldSanitize::kYes,
+                                        EnableLightweightDetector::kNo),
 #endif
-                             TestParams("malloc", false),
-                             TestParams("partitionalloc", false)));
+                             TestParams("malloc",
+                                        ShouldSanitize::kNo,
+                                        EnableLightweightDetector::kNo),
+                             TestParams("partitionalloc",
+                                        ShouldSanitize::kNo,
+                                        EnableLightweightDetector::kNo)));
+
+// ASan hides the fault address from the analyzer.
+// The detector is not used on 32-bit systems because pointers there aren't big
+// enough to safely store metadata IDs.
+#if !defined(ADDRESS_SANITIZER) && defined(ARCH_CPU_64_BITS)
+class LightweightDetectorCrashHandlerTest : public BaseCrashHandlerTest {};
+
+TEST_P(LightweightDetectorCrashHandlerTest, LightweightDetectorUseAfterFree) {
+  ASSERT_TRUE(gwp_asan_found_);
+
+  checkProto(Crash_ErrorType_LIGHTWEIGHT_USE_AFTER_FREE, HasAllocation::kNo,
+             HasDeallocation::kYes);
+}
+
+INSTANTIATE_TEST_SUITE_P(VarySanitization,
+                         LightweightDetectorCrashHandlerTest,
+                         testing::Values(
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID)
+                             TestParams("partitionalloc",
+                                        ShouldSanitize::kYes,
+                                        EnableLightweightDetector::kYes),
+#endif
+                             TestParams("partitionalloc",
+                                        ShouldSanitize::kNo,
+                                        EnableLightweightDetector::kYes)));
+#endif  // !defined(ADDRESS_SANITIZER) && defined(ARCH_CPU_64_BITS)
 
 }  // namespace
 

@@ -1,4 +1,4 @@
-# Copyright 2019 The Chromium Authors. All rights reserved.
+# Copyright 2019 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 """Enforces command buffer autogen matches script output.
@@ -8,7 +8,7 @@ for more details on the presubmit API built into depot_tools.
 """
 
 import os.path
-
+import tempfile
 
 def _IsGLES2CmdBufferFile(affected_file):
   filename = os.path.basename(affected_file.LocalPath())
@@ -56,14 +56,14 @@ def CommonChecks(input_api, output_api):
 
   messages = []
 
-  with input_api.temporary_directory() as temp_dir:
+  with tempfile.TemporaryDirectory() as temp_dir:
     commands = []
     if len(gles2_cmd_buffer_files) > 0:
       commands.append(
           input_api.Command(
               name='build_gles2_cmd_buffer',
               cmd=[
-                  input_api.python_executable, 'build_gles2_cmd_buffer.py',
+                  input_api.python3_executable, 'build_gles2_cmd_buffer.py',
                   '--check', '--output-dir=' + temp_dir
               ],
               kwargs={},
@@ -73,7 +73,7 @@ def CommonChecks(input_api, output_api):
           input_api.Command(
               name='build_raster_cmd_buffer',
               cmd=[
-                  input_api.python_executable, 'build_raster_cmd_buffer.py',
+                  input_api.python3_executable, 'build_raster_cmd_buffer.py',
                   '--check', '--output-dir=' + temp_dir
               ],
               kwargs={},
@@ -83,7 +83,7 @@ def CommonChecks(input_api, output_api):
           input_api.Command(
               name='build_webgpu_cmd_buffer',
               cmd=[
-                  input_api.python_executable, 'build_webgpu_cmd_buffer.py',
+                  input_api.python3_executable, 'build_webgpu_cmd_buffer.py',
                   '--check', '--output-dir=' + temp_dir
               ],
               kwargs={},

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,11 +12,9 @@
 // http://msdn.microsoft.com/library/default.asp?url=/library/en-us/shellcc/platform/commctls/userex/topics/partsandstates.asp
 #include <windows.h>
 
-#include "base/compiler_specific.h"
-#include "base/macros.h"
 #include "base/no_destructor.h"
-#include "base/optional.h"
 #include "base/win/registry.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/sys_color_change_listener.h"
@@ -51,6 +49,9 @@ class NATIVE_THEME_EXPORT NativeThemeWin : public NativeTheme,
     LAST
   };
 
+  NativeThemeWin(const NativeThemeWin&) = delete;
+  NativeThemeWin& operator=(const NativeThemeWin&) = delete;
+
   // Closes cached theme handles so we can unload the DLL or update our UI
   // for a theme change.
   static void CloseHandles();
@@ -60,25 +61,34 @@ class NATIVE_THEME_EXPORT NativeThemeWin : public NativeTheme,
                         State state,
                         const ExtraParams& extra) const override;
   void Paint(cc::PaintCanvas* canvas,
+             const ui::ColorProvider* color_provider,
              Part part,
              State state,
              const gfx::Rect& rect,
              const ExtraParams& extra,
-             ColorScheme color_scheme) const override;
-  SkColor GetSystemColor(
-      ColorId color_id,
-      ColorScheme color_scheme = ColorScheme::kDefault) const override;
+             ColorScheme color_scheme,
+             const absl::optional<SkColor>& accent_color) const override;
   bool SupportsNinePatch(Part part) const override;
   gfx::Size GetNinePatchCanvasSize(Part part) const override;
   gfx::Rect GetNinePatchAperture(Part part) const override;
   bool ShouldUseDarkColors() const override;
+
+  // On Windows, we look at the high contrast setting to calculate the color
+  // scheme. If high contrast is enabled, the preferred color scheme calculation
+  // will ignore the state of dark mode. Instead, preferred color scheme will be
+  // light or dark depending on the OS high contrast theme. If high contrast is
+  // off, the preferred color scheme calculation will be based of the state of
+  // dark mode.
   PreferredColorScheme CalculatePreferredColorScheme() const override;
+
+  PreferredContrast CalculatePreferredContrast() const override;
   ColorScheme GetDefaultSystemColorScheme() const override;
 
  protected:
   friend class NativeTheme;
   friend class base::NoDestructor<NativeThemeWin>;
 
+  // NativeTheme:
   void ConfigureWebInstance() override;
 
   NativeThemeWin(bool configure_web_instance, bool should_only_use_dark_colors);
@@ -88,7 +98,7 @@ class NATIVE_THEME_EXPORT NativeThemeWin : public NativeTheme,
   bool IsUsingHighContrastThemeInternal() const;
   void CloseHandlesInternal();
 
-  // gfx::SysColorChangeListener implementation:
+  // gfx::SysColorChangeListener:
   void OnSysColorChange() override;
 
   // Update the locally cached set of system colors.
@@ -96,14 +106,14 @@ class NATIVE_THEME_EXPORT NativeThemeWin : public NativeTheme,
 
   // Painting functions that paint to PaintCanvas.
   void PaintMenuSeparator(cc::PaintCanvas* canvas,
-                          const MenuSeparatorExtraParams& params,
-                          ColorScheme color_scheme) const;
+                          const ColorProvider* color_provider,
+                          const MenuSeparatorExtraParams& params) const;
   void PaintMenuGutter(cc::PaintCanvas* canvas,
-                       const gfx::Rect& rect,
-                       ColorScheme color_scheme) const;
+                       const ColorProvider* color_provider,
+                       const gfx::Rect& rect) const;
   void PaintMenuBackground(cc::PaintCanvas* canvas,
-                           const gfx::Rect& rect,
-                           ColorScheme color_scheme) const;
+                           const ColorProvider* color_provider,
+                           const gfx::Rect& rect) const;
 
   // Paint directly to canvas' HDC.
   void PaintDirect(SkCanvas* destination_canvas,
@@ -193,14 +203,21 @@ class NATIVE_THEME_EXPORT NativeThemeWin : public NativeTheme,
   HANDLE GetThemeHandle(ThemeName theme_name) const;
 
   void RegisterThemeRegkeyObserver();
+  void RegisterColorFilteringRegkeyObserver();
   void UpdateDarkModeStatus();
+  void UpdatePrefersReducedTransparency();
+  void UpdateInvertedColors();
 
-  // Returns the platform provided high contrast color for the given
-  // |color_id|.
-  base::Optional<SkColor> GetPlatformHighContrastColor(ColorId color_id) const;
+  // True if Windows supports dark mode. This does NOT indicate whether the
+  // system is in dark mode, only that it is supported by this version of
+  // Windows.
+  const bool supports_windows_dark_mode_;
 
-  // Dark Mode registry key.
+  // Dark Mode/Transparency registry key.
   base::win::RegKey hkcu_themes_regkey_;
+
+  // Inverted colors registry key
+  base::win::RegKey hkcu_color_filtering_regkey_;
 
   // A cache of open theme handles.
   mutable HANDLE theme_handles_[LAST];
@@ -209,11 +226,9 @@ class NATIVE_THEME_EXPORT NativeThemeWin : public NativeTheme,
   gfx::ScopedSysColorChangeListener color_change_listener_;
 
   // Used to notify the web native theme of changes to dark mode, high
-  // contrast, and preferred color scheme.
+  // contrast, preferred color scheme, and preferred contrast.
   std::unique_ptr<NativeTheme::ColorSchemeNativeThemeObserver>
       color_scheme_observer_;
-
-  DISALLOW_COPY_AND_ASSIGN(NativeThemeWin);
 };
 
 }  // namespace ui

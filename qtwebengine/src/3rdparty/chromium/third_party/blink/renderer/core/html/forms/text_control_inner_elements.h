@@ -37,11 +37,11 @@ class EditingViewPortElement final : public HTMLDivElement {
   explicit EditingViewPortElement(Document&);
 
  protected:
-  scoped_refptr<ComputedStyle> CustomStyleForLayoutObject() override;
+  const ComputedStyle* CustomStyleForLayoutObject(
+      const StyleRecalcContext&) override;
 
  private:
-  bool TypeShouldForceLegacyLayout() const final { return true; }
-  bool SupportsFocus() const override { return false; }
+  bool SupportsFocus(UpdateBehavior) const override { return false; }
 };
 
 class TextControlInnerEditorElement final : public HTMLDivElement {
@@ -52,13 +52,12 @@ class TextControlInnerEditorElement final : public HTMLDivElement {
 
   void SetVisibility(bool is_visible);
   void FocusChanged();
-  scoped_refptr<ComputedStyle> CreateInnerEditorStyle() const;
 
  private:
-  LayoutObject* CreateLayoutObject(const ComputedStyle&, LegacyLayout) override;
-  bool TypeShouldForceLegacyLayout() const final { return true; }
-  scoped_refptr<ComputedStyle> CustomStyleForLayoutObject() override;
-  bool SupportsFocus() const override { return false; }
+  LayoutObject* CreateLayoutObject(const ComputedStyle&) override;
+  const ComputedStyle* CustomStyleForLayoutObject(
+      const StyleRecalcContext&) override;
+  bool SupportsFocus(UpdateBehavior) const override { return false; }
   bool is_visible_ = true;
 };
 
@@ -70,8 +69,7 @@ class SearchFieldCancelButtonElement final : public HTMLDivElement {
   bool WillRespondToMouseClickEvents() override;
 
  private:
-  bool TypeShouldForceLegacyLayout() const final { return true; }
-  bool SupportsFocus() const override { return false; }
+  bool SupportsFocus(UpdateBehavior) const override { return false; }
 };
 
 class PasswordRevealButtonElement final : public HTMLDivElement {
@@ -82,9 +80,17 @@ class PasswordRevealButtonElement final : public HTMLDivElement {
   bool WillRespondToMouseClickEvents() override;
 
  private:
-  bool SupportsFocus() const override { return false; }
+  bool SupportsFocus(UpdateBehavior) const override { return false; }
+};
+
+class PasswordStrongLabelElement final : public HTMLDivElement {
+ public:
+  explicit PasswordStrongLabelElement(Document&);
+
+ private:
+  bool SupportsFocus(UpdateBehavior) const override { return false; }
 };
 
 }  // namespace blink
 
-#endif
+#endif  // THIRD_PARTY_BLINK_RENDERER_CORE_HTML_FORMS_TEXT_CONTROL_INNER_ELEMENTS_H_

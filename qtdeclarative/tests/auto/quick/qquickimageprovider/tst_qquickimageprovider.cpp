@@ -1,30 +1,6 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the test suite of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:GPL-EXCEPT$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 3 as published by the Free Software
-** Foundation with exceptions as appearing in the file LICENSE.GPL3-EXCEPT
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
+
 #include <qtest.h>
 #include <QtTest/QtTest>
 #include <QtQml/qqmlengine.h>
@@ -34,14 +10,16 @@
 #include <QWaitCondition>
 #include <QThreadPool>
 #include <private/qqmlengine_p.h>
+#include <QQmlComponent>
+#include <QtQuickTestUtils/private/qmlutils_p.h>
 
 Q_DECLARE_METATYPE(QQuickImageProvider*);
 
-class tst_qquickimageprovider : public QObject
+class tst_qquickimageprovider : public QQmlDataTest
 {
     Q_OBJECT
 public:
-    tst_qquickimageprovider()
+    tst_qquickimageprovider() : QQmlDataTest(QT_QMLTEST_DATADIR)
     {
     }
 
@@ -72,7 +50,7 @@ private slots:
 
 private:
     QString newImageFileName() const;
-    void fillRequestTestsData(const QString &id);
+    void fillRequestTestsData(const char *id);
     void runTest(bool async, QQuickImageProvider *provider);
 };
 
@@ -92,7 +70,7 @@ public:
             *deleteWatch = true;
     }
 
-    QImage requestImage(const QString &id, QSize *size, const QSize& requestedSize)
+    QImage requestImage(const QString &id, QSize *size, const QSize& requestedSize) override
     {
         lastImageId = id;
 
@@ -129,7 +107,7 @@ public:
             *deleteWatch = true;
     }
 
-    QPixmap requestPixmap(const QString &id, QSize *size, const QSize& requestedSize)
+    QPixmap requestPixmap(const QString &id, QSize *size, const QSize& requestedSize) override
     {
         lastImageId = id;
 
@@ -161,7 +139,7 @@ QString tst_qquickimageprovider::newImageFileName() const
     return QString("image://test/image-%1.png").arg(count++);
 }
 
-void tst_qquickimageprovider::fillRequestTestsData(const QString &id)
+void tst_qquickimageprovider::fillRequestTestsData(const char *id)
 {
     QTest::addColumn<QString>("source");
     QTest::addColumn<QString>("imageId");
@@ -170,39 +148,39 @@ void tst_qquickimageprovider::fillRequestTestsData(const QString &id)
     QTest::addColumn<QString>("error");
 
     QString fileName = newImageFileName();
-    QTest::newRow(QTest::toString(id + " simple test"))
+    QTest::addRow("%s simple test", id)
             << "image://test/" + fileName << fileName << "" << QSize(100,100) << "";
 
     fileName = newImageFileName();
-    QTest::newRow(QTest::toString(id + " simple test with capitalization"))//As it's a URL, should make no difference
+    QTest::addRow("%s simple test with capitalization", id)//As it's a URL, should make no difference
             << "image://Test/" + fileName << fileName << "" << QSize(100,100) << "";
 
     fileName = newImageFileName();
-    QTest::newRow(QTest::toString(id + " url with no id"))
+    QTest::addRow("%s url with no id", id)
         << "image://test/" + fileName << "" + fileName << "" << QSize(100,100) << "";
 
     fileName = newImageFileName();
-    QTest::newRow(QTest::toString(id + " url with path"))
+    QTest::addRow("%s url with path", id)
         << "image://test/test/path" + fileName << "test/path" + fileName << "" << QSize(100,100) << "";
 
     fileName = newImageFileName();
-    QTest::newRow(QTest::toString(id + " url with fragment"))
+    QTest::addRow("%s url with fragment", id)
         << "image://test/faq.html?#question13" + fileName << "faq.html?#question13" + fileName << "" << QSize(100,100) << "";
 
     fileName = newImageFileName();
-    QTest::newRow(QTest::toString(id + " url with query"))
+    QTest::addRow("%s url with query", id)
         << "image://test/cgi-bin/drawgraph.cgi?type=pie&color=green" + fileName << "cgi-bin/drawgraph.cgi?type=pie&color=green" + fileName
         << "" << QSize(100,100) << "";
 
     fileName = newImageFileName();
-    QTest::newRow(QTest::toString(id + " scaled image"))
+    QTest::addRow("%s scaled image", id)
             << "image://test/" + fileName << fileName << "sourceSize: \"80x30\"" << QSize(80,30) << "";
 
-    QTest::newRow(QTest::toString(id + " missing"))
+    QTest::addRow("%s missing", id)
         << "image://test/no-such-file.png" << "no-such-file.png" << "" << QSize(100,100)
         << "<Unknown File>:2:1: QML Image: Failed to get image from provider: image://test/no-such-file.png";
 
-    QTest::newRow(QTest::toString(id + " unknown provider"))
+    QTest::addRow("%s unknown provider", id)
         << "image://bogus/exists.png" << "" << "" << QSize()
         << "<Unknown File>:2:1: QML Image: Invalid image provider: image://bogus/exists.png";
 }
@@ -401,7 +379,7 @@ class TestThreadProvider : public QQuickImageProvider
 
         ~TestThreadProvider() {}
 
-        QImage requestImage(const QString &id, QSize *size, const QSize& requestedSize)
+        QImage requestImage(const QString &id, QSize *size, const QSize& requestedSize) override
         {
             mutex.lock();
             if (!ok)
@@ -445,21 +423,19 @@ void tst_qquickimageprovider::threadTest()
     QObject *obj = component.create();
     //MUST not deadlock
     QVERIFY(obj != nullptr);
-    QList<QQuickImage *> images = obj->findChildren<QQuickImage *>();
-    QCOMPARE(images.count(), 4);
+    const QList<QQuickImage *> images = obj->findChildren<QQuickImage *>();
+    QCOMPARE(images.size(), 4);
     QTest::qWait(100);
-    foreach (QQuickImage *img, images) {
+    for (QQuickImage *img : images)
         QCOMPARE(img->status(), QQuickImage::Loading);
-    }
     {
         QMutexLocker lock(&provider->mutex);
         provider->ok = true;
         provider->cond.wakeAll();
     }
     QTest::qWait(250);
-    foreach (QQuickImage *img, images) {
+    for (QQuickImage *img : images)
         QTRY_COMPARE(img->status(), QQuickImage::Ready);
-    }
 }
 
 class TestImageResponseRunner : public QObject, public QRunnable {
@@ -470,7 +446,7 @@ public:
     Q_SIGNAL void finished(QQuickTextureFactory *texture);
     TestImageResponseRunner(QMutex *lock, QWaitCondition *condition, bool *ok, const QString &id, const QSize &requestedSize)
         : m_lock(lock), m_condition(condition), m_ok(ok), m_id(id), m_requestedSize(requestedSize) {}
-    void run()
+    void run() override
     {
         m_lock->lock();
         if (!(*m_ok)) {
@@ -503,7 +479,7 @@ class TestImageResponse : public QQuickImageResponse
             pool->start(runnable);
         }
 
-        QQuickTextureFactory *textureFactory() const
+        QQuickTextureFactory *textureFactory() const override
         {
             return m_texture;
         }
@@ -531,7 +507,7 @@ class TestAsyncProvider : public QQuickAsyncImageProvider
 
         ~TestAsyncProvider() {}
 
-        QQuickImageResponse *requestImageResponse(const QString &id, const QSize &requestedSize)
+        QQuickImageResponse *requestImageResponse(const QString &id, const QSize &requestedSize) override
         {
             TestImageResponse *response = new TestImageResponse(&lock, &condition, &ok, id, requestedSize, &pool);
             return response;
@@ -564,21 +540,19 @@ void tst_qquickimageprovider::asyncTextureTest()
     QObject *obj = component.create();
     //MUST not deadlock
     QVERIFY(obj != nullptr);
-    QList<QQuickImage *> images = obj->findChildren<QQuickImage *>();
-    QCOMPARE(images.count(), 4);
+    const QList<QQuickImage *> images = obj->findChildren<QQuickImage *>();
+    QCOMPARE(images.size(), 4);
 
     QTRY_COMPARE(provider->pool.activeThreadCount(), 4);
-    foreach (QQuickImage *img, images) {
+    for (QQuickImage *img : images)
         QTRY_COMPARE(img->status(), QQuickImage::Loading);
-    }
     {
         QMutexLocker lock(&provider->lock);
         provider->ok = true;
         provider->condition.wakeAll();
     }
-    foreach (QQuickImage *img, images) {
+    for (QQuickImage *img : images)
         QTRY_COMPARE(img->status(), QQuickImage::Ready);
-    }
 }
 
 class InstantAsyncImageResponse : public QQuickImageResponse
@@ -594,7 +568,7 @@ class InstantAsyncImageResponse : public QQuickImageResponse
             emit finished();
         }
 
-        QQuickTextureFactory *textureFactory() const
+        QQuickTextureFactory *textureFactory() const override
         {
             return m_texture;
         }
@@ -611,7 +585,7 @@ class InstancAsyncProvider : public QQuickAsyncImageProvider
 
         ~InstancAsyncProvider() {}
 
-        QQuickImageResponse *requestImageResponse(const QString &id, const QSize &requestedSize)
+        QQuickImageResponse *requestImageResponse(const QString &id, const QSize &requestedSize) override
         {
             return new InstantAsyncImageResponse(id, requestedSize);
         }
@@ -638,7 +612,7 @@ void tst_qquickimageprovider::instantAsyncTextureTest()
 
     QVERIFY(!obj.isNull());
     const QList<QQuickImage *> images = obj->findChildren<QQuickImage *>();
-    QCOMPARE(images.count(), 4);
+    QCOMPARE(images.size(), 4);
 
     for (QQuickImage *img: images) {
         QTRY_COMPARE(img->status(), QQuickImage::Ready);
@@ -696,7 +670,7 @@ public:
 
     ~WaitingAsyncProvider() {}
 
-    QQuickImageResponse *requestImageResponse(const QString & /* id */, const QSize & /* requestedSize */)
+    QQuickImageResponse *requestImageResponse(const QString & /* id */, const QSize & /* requestedSize */) override
     {
         auto response = new WaitingAsyncImageResponse(m_providerRemovedMutex, m_providerRemovedCond, m_providerRemoved, m_imageRequestedMutex, m_imageRequestedCondition, m_imageRequested);
         pool.start(response);

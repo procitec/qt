@@ -28,19 +28,12 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_FRAME_SETTINGS_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_FRAME_SETTINGS_H_
 
-#include <memory>
-
-#include "base/macros.h"
 #include "third_party/blink/public/common/css/navigation_controls.h"
-#include "third_party/blink/public/common/css/preferred_color_scheme.h"
-#include "third_party/blink/public/common/web_preferences/editing_behavior_types.h"
-#include "third_party/blink/public/common/web_preferences/image_animation_policy.h"
-#include "third_party/blink/public/common/web_preferences/viewport_style.h"
 #include "third_party/blink/public/mojom/manifest/display_mode.mojom-shared.h"
 #include "third_party/blink/public/mojom/v8_cache_options.mojom-blink.h"
+#include "third_party/blink/public/mojom/webpreferences/web_preferences.mojom-blink.h"
 #include "third_party/blink/public/platform/web_effective_connection_type.h"
 #include "third_party/blink/renderer/core/core_export.h"
-#include "third_party/blink/renderer/core/dom/events/add_event_listener_options_defaults.h"
 #include "third_party/blink/renderer/core/editing/selection_strategy.h"
 #include "third_party/blink/renderer/core/frame/settings_delegate.h"
 #include "third_party/blink/renderer/core/html/media/autoplay_policy.h"
@@ -49,10 +42,12 @@
 #include "third_party/blink/renderer/core/loader/frame_loader_types.h"
 #include "third_party/blink/renderer/core/settings_macros.h"
 #include "third_party/blink/renderer/platform/fonts/generic_font_family_settings.h"
-#include "third_party/blink/renderer/platform/geometry/int_size.h"
+#include "third_party/blink/renderer/platform/graphics/lcd_text_preference.h"
 #include "third_party/blink/renderer/platform/timer.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "ui/base/pointer/pointer_device.h"
+#include "ui/base/ui_base_types.h"
+#include "ui/gfx/geometry/size.h"
 
 namespace blink {
 
@@ -62,27 +57,21 @@ class CORE_EXPORT Settings {
  public:
   Settings();
 
+  // Default copy and assignment are forbidden because SettingsDelegate only
+  // supports 1:1 relationship with Settings.
+  Settings(const Settings&) = delete;
+  Settings& operator=(const Settings&) = delete;
+
   GenericFontFamilySettings& GetGenericFontFamilySettings() {
     return generic_font_family_settings_;
   }
   void NotifyGenericFontFamilyChange() {
-    Invalidate(SettingsDelegate::kFontFamilyChange);
-  }
-
-  void SetTextAutosizingEnabled(bool);
-  bool TextAutosizingEnabled() const { return text_autosizing_enabled_; }
-
-  void SetBypassCSP(bool enabled) { bypass_csp_ = enabled; }
-  bool BypassCSP() const { return bypass_csp_; }
-
-  // Only set by web tests, and only used if TextAutosizingEnabled() returns
-  // true.
-  void SetTextAutosizingWindowSizeOverride(const IntSize&);
-  const IntSize& TextAutosizingWindowSizeOverride() const {
-    return text_autosizing_window_size_override_;
+    Invalidate(SettingsDelegate::ChangeType::kFontFamily);
   }
 
   SETTINGS_GETTERS_AND_SETTERS
+
+  void SetPreferCompositingToLCDTextForTesting(bool enabled);
 
   void SetDelegate(SettingsDelegate*);
 
@@ -92,13 +81,8 @@ class CORE_EXPORT Settings {
   SettingsDelegate* delegate_;
 
   GenericFontFamilySettings generic_font_family_settings_;
-  IntSize text_autosizing_window_size_override_;
-  bool text_autosizing_enabled_ : 1;
-  bool bypass_csp_ = false;
 
   SETTINGS_MEMBER_VARIABLES
-
-  DISALLOW_COPY_AND_ASSIGN(Settings);
 };
 
 }  // namespace blink

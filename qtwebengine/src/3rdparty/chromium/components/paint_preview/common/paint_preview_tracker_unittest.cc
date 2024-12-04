@@ -1,12 +1,14 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/paint_preview/common/paint_preview_tracker.h"
 
 #include "base/containers/flat_map.h"
+#include "base/memory/raw_ptr.h"
 #include "base/unguessable_token.h"
 #include "components/paint_preview/common/serial_utils.h"
+#include "skia/ext/font_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkPicture.h"
@@ -21,7 +23,7 @@ namespace paint_preview {
 namespace {
 
 struct TestContext {
-  const gfx::Rect* rect;
+  raw_ptr<const gfx::Rect> rect;
   bool was_called;
 };
 
@@ -96,7 +98,7 @@ TEST(PaintPreviewTrackerTest, TestGlyphRunList) {
   PaintPreviewTracker tracker(base::UnguessableToken::Create(), kEmbeddingToken,
                               true);
   std::string unichars = "abc";
-  auto typeface = SkTypeface::MakeDefault();
+  auto typeface = skia::DefaultTypeface();
   SkFont font(typeface);
   auto blob = SkTextBlob::MakeFromString(unichars.c_str(), font);
   tracker.AddGlyphs(blob.get());

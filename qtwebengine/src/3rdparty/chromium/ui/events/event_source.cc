@@ -1,10 +1,12 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "ui/events/event_source.h"
 
 #include "base/logging.h"
+#include "base/memory/raw_ptr.h"
+#include "ui/events/event_rewriter.h"
 #include "ui/events/event_rewriter_continuation.h"
 #include "ui/events/event_sink.h"
 
@@ -44,6 +46,11 @@ class EventSource::EventRewriterContinuationImpl
       : source_(source),
         rewriter_(rewriter),
         self_(source->rewriter_list_.end()) {}
+
+  EventRewriterContinuationImpl(const EventRewriterContinuationImpl&) = delete;
+  EventRewriterContinuationImpl& operator=(
+      const EventRewriterContinuationImpl&) = delete;
+
   ~EventRewriterContinuationImpl() override {}
 
   EventRewriter* rewriter() const { return rewriter_; }
@@ -72,12 +79,11 @@ class EventSource::EventRewriterContinuationImpl
   }
 
  private:
-  EventSource* const source_;
-  EventRewriter* rewriter_;
+  const raw_ptr<EventSource> source_;
+  raw_ptr<EventRewriter, DanglingUntriaged> rewriter_;
   EventRewriterList::iterator self_;
 
   base::WeakPtrFactory<EventRewriterContinuationImpl> weak_ptr_factory_{this};
-  DISALLOW_COPY_AND_ASSIGN(EventRewriterContinuationImpl);
 };
 
 EventSource::EventSource() {}
@@ -116,17 +122,7 @@ EventDispatchDetails EventSource::DeliverEventToSink(Event* event) {
 EventDispatchDetails EventSource::SendEventToSinkFromRewriter(
     const Event* event,
     const EventRewriter* rewriter) {
-  std::unique_ptr<ui::Event> event_for_rewriting_ptr;
-  const Event* event_for_rewriting = event;
-  if (!rewriter_list_.empty() && IsLocatedEventWithDifferentLocations(*event)) {
-    // EventRewriters don't expect an event with differing location and
-    // root-location (because they don't honor the target). Provide such an
-    // event.
-    event_for_rewriting_ptr = ui::Event::Clone(*event);
-    event_for_rewriting_ptr->AsLocatedEvent()->set_location_f(
-        event_for_rewriting_ptr->AsLocatedEvent()->root_location_f());
-    event_for_rewriting = event_for_rewriting_ptr.get();
-  }
+  std::unique_ptr<Event> event_clone;
   EventRewriterList::iterator it = rewriter_list_.begin();
   if (rewriter) {
     // If a rewriter reposted |event|, only send it to subsequent rewriters.
@@ -134,10 +130,26 @@ EventDispatchDetails EventSource::SendEventToSinkFromRewriter(
     CHECK(it != rewriter_list_.end());
     ++it;
   }
-  if (it == rewriter_list_.end())
+  if (it == rewriter_list_.end()) {
     return DeliverEventToSink(const_cast<Event*>(event));
-  return (*it)->rewriter()->RewriteEvent(*event_for_rewriting,
-                                         (*it)->GetWeakPtr());
+  }
+
+  const Event* event_for_rewriting = event;
+  EventRewriterContinuationImpl* const next = it->get();
+  // Historically, EventRewriters are not expected to honor the event target.
+  // Though, due to observed crashes (see https://crbug.com/1347192), rewriters
+  // are being refactored to honor it. Thus, unless the next rewriter supports
+  // such behavior, event location must be equal to its root_location and target
+  // unset, which is not copied by Event::Clone() call below.
+  if (IsLocatedEventWithDifferentLocations(*event) &&
+      !next->rewriter()->SupportsNonRootLocation()) {
+    event_clone = event->Clone();
+    event_clone->AsLocatedEvent()->set_location_f(
+        event_clone->AsLocatedEvent()->root_location_f());
+    event_for_rewriting = event_clone.get();
+  }
+  return next->rewriter()->RewriteEvent(*event_for_rewriting,
+                                        next->GetWeakPtr());
 }
 
 EventSource::EventRewriterList::iterator EventSource::FindContinuation(

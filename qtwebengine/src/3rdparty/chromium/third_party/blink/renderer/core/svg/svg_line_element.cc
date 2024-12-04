@@ -23,8 +23,9 @@
 #include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/svg/svg_animated_length.h"
 #include "third_party/blink/renderer/core/svg/svg_length.h"
+#include "third_party/blink/renderer/core/svg/svg_length_context.h"
 #include "third_party/blink/renderer/platform/graphics/path.h"
-#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 
 namespace blink {
 
@@ -49,12 +50,7 @@ SVGLineElement::SVGLineElement(Document& document)
           this,
           svg_names::kY2Attr,
           SVGLengthMode::kHeight,
-          SVGLength::Initial::kUnitlessZero)) {
-  AddToPropertyMap(x1_);
-  AddToPropertyMap(y1_);
-  AddToPropertyMap(x2_);
-  AddToPropertyMap(y2_);
-}
+          SVGLength::Initial::kUnitlessZero)) {}
 
 void SVGLineElement::Trace(Visitor* visitor) const {
   visitor->Trace(x1_);
@@ -70,15 +66,17 @@ Path SVGLineElement::AsPath() const {
   SVGLengthContext length_context(this);
   DCHECK(GetComputedStyle());
 
-  path.MoveTo(FloatPoint(x1()->CurrentValue()->Value(length_context),
-                         y1()->CurrentValue()->Value(length_context)));
-  path.AddLineTo(FloatPoint(x2()->CurrentValue()->Value(length_context),
-                            y2()->CurrentValue()->Value(length_context)));
+  path.MoveTo(gfx::PointF(x1()->CurrentValue()->Value(length_context),
+                          y1()->CurrentValue()->Value(length_context)));
+  path.AddLineTo(gfx::PointF(x2()->CurrentValue()->Value(length_context),
+                             y2()->CurrentValue()->Value(length_context)));
 
   return path;
 }
 
-void SVGLineElement::SvgAttributeChanged(const QualifiedName& attr_name) {
+void SVGLineElement::SvgAttributeChanged(
+    const SvgAttributeChangedParams& params) {
+  const QualifiedName& attr_name = params.name;
   if (attr_name == svg_names::kX1Attr || attr_name == svg_names::kY1Attr ||
       attr_name == svg_names::kX2Attr || attr_name == svg_names::kY2Attr) {
     UpdateRelativeLengthsInformation();
@@ -86,13 +84,34 @@ void SVGLineElement::SvgAttributeChanged(const QualifiedName& attr_name) {
     return;
   }
 
-  SVGGeometryElement::SvgAttributeChanged(attr_name);
+  SVGGeometryElement::SvgAttributeChanged(params);
 }
 
 bool SVGLineElement::SelfHasRelativeLengths() const {
   return x1_->CurrentValue()->IsRelative() ||
          y1_->CurrentValue()->IsRelative() ||
          x2_->CurrentValue()->IsRelative() || y2_->CurrentValue()->IsRelative();
+}
+
+SVGAnimatedPropertyBase* SVGLineElement::PropertyFromAttribute(
+    const QualifiedName& attribute_name) const {
+  if (attribute_name == svg_names::kX1Attr) {
+    return x1_.Get();
+  } else if (attribute_name == svg_names::kY1Attr) {
+    return y1_.Get();
+  } else if (attribute_name == svg_names::kX2Attr) {
+    return x2_.Get();
+  } else if (attribute_name == svg_names::kY2Attr) {
+    return y2_.Get();
+  } else {
+    return SVGGeometryElement::PropertyFromAttribute(attribute_name);
+  }
+}
+
+void SVGLineElement::SynchronizeAllSVGAttributes() const {
+  SVGAnimatedPropertyBase* attrs[]{x1_.Get(), y1_.Get(), x2_.Get(), y2_.Get()};
+  SynchronizeListOfSVGAttributes(attrs);
+  SVGGeometryElement::SynchronizeAllSVGAttributes();
 }
 
 }  // namespace blink

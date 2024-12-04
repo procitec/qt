@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,14 +6,14 @@
 
 #include <utility>
 
-#include "base/bind.h"
 #include "base/check_op.h"
+#include "base/functional/bind.h"
 #include "base/location.h"
-#include "base/task/post_task.h"
 #include "base/unguessable_token.h"
+#include "content/browser/media/audio_stream_broker_helper.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
-#include "services/audio/public/mojom/stream_factory.mojom.h"
+#include "media/mojo/mojom/audio_stream_factory.mojom.h"
 
 namespace content {
 
@@ -49,7 +49,8 @@ AudioLoopbackStreamBroker::AudioLoopbackStreamBroker(
   // Notify the source that we are capturing from it.
   source_->AddLoopbackSink(this);
 
-  NotifyProcessHostOfStartedStream(render_process_id);
+  NotifyFrameHostOfAudioStreamStarted(render_process_id, render_frame_id,
+                                      /*is_capturing=*/true);
 }
 
 AudioLoopbackStreamBroker::~AudioLoopbackStreamBroker() {
@@ -58,11 +59,12 @@ AudioLoopbackStreamBroker::~AudioLoopbackStreamBroker() {
   if (source_)
     source_->RemoveLoopbackSink(this);
 
-  NotifyProcessHostOfStoppedStream(render_process_id());
+  NotifyFrameHostOfAudioStreamStopped(render_process_id(), render_frame_id(),
+                                      /*is_capturing=*/true);
 }
 
 void AudioLoopbackStreamBroker::CreateStream(
-    audio::mojom::StreamFactory* factory) {
+    media::mojom::AudioStreamFactory* factory) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   DCHECK(!observer_receiver_.is_bound());
   DCHECK(!client_receiver_);
@@ -115,7 +117,7 @@ void AudioLoopbackStreamBroker::StreamCreated(
   renderer_factory_client_->StreamCreated(
       std::move(stream), std::move(client_receiver_), std::move(data_pipe),
       false /* |initially_muted|: Loopback streams are never muted. */,
-      base::nullopt /* |stream_id|: Loopback streams don't have ids */);
+      std::nullopt /* |stream_id|: Loopback streams don't have ids */);
 }
 
 void AudioLoopbackStreamBroker::Cleanup() {

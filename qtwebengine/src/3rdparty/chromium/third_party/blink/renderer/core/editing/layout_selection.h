@@ -22,21 +22,26 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_EDITING_LAYOUT_SELECTION_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_EDITING_LAYOUT_SELECTION_H_
 
-#include "base/optional.h"
-#include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/editing/forward.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
+#include "third_party/blink/renderer/platform/heap/member.h"
+
+namespace gfx {
+class Rect;
+}
 
 namespace blink {
 
-class IntRect;
+class FrameSelection;
+class InlineCursor;
+class InlineCursorPosition;
 class LayoutObject;
 class LayoutText;
-class NGInlineCursor;
-class FrameSelection;
+class SelectionPaintRange;
+enum class SelectionState;
 struct LayoutSelectionStatus;
 struct LayoutTextSelectionStatus;
-class SelectionPaintRange;
+struct TextOffsetRange;
 
 class LayoutSelection final : public GarbageCollected<LayoutSelection> {
  public:
@@ -45,11 +50,20 @@ class LayoutSelection final : public GarbageCollected<LayoutSelection> {
   void SetHasPendingSelection();
   void Commit();
 
-  IntRect AbsoluteSelectionBounds();
-  void InvalidatePaintForSelection();
+  gfx::Rect AbsoluteSelectionBounds();
+  void InvalidateStyleAndPaintForSelection();
 
   LayoutTextSelectionStatus ComputeSelectionStatus(const LayoutText&) const;
-  LayoutSelectionStatus ComputeSelectionStatus(const NGInlineCursor&) const;
+  LayoutSelectionStatus ComputeSelectionStatus(const InlineCursor&) const;
+
+  // Compute the layout selection state relative to the current item of the
+  // given InlineCursor. E.g. a state of kStart means that the selection
+  // starts within the position (and ends elsewhere), where kStartAndEnd means
+  // the selection both starts and ends within the position. This information is
+  // used at paint time to determine the edges of the layout selection.
+  SelectionState ComputePaintingSelectionStateForCursor(
+      const InlineCursorPosition&) const;
+
   static bool IsSelected(const LayoutObject&);
 
   void ContextDestroyed();
@@ -57,6 +71,12 @@ class LayoutSelection final : public GarbageCollected<LayoutSelection> {
   void Trace(Visitor*) const;
 
  private:
+  LayoutSelectionStatus ComputeSelectionStatus(const InlineCursor&,
+                                               const TextOffsetRange&) const;
+  SelectionState ComputeSelectionStateFromOffsets(SelectionState state,
+                                                  unsigned start_offset,
+                                                  unsigned end_offset) const;
+
   void AssertIsValid() const;
 
   Member<FrameSelection> frame_selection_;
@@ -67,4 +87,4 @@ class LayoutSelection final : public GarbageCollected<LayoutSelection> {
 
 }  // namespace blink
 
-#endif
+#endif  // THIRD_PARTY_BLINK_RENDERER_CORE_EDITING_LAYOUT_SELECTION_H_

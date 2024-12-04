@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,8 +6,9 @@
 
 #include <memory>
 
-#include "third_party/blink/renderer/core/css/css_color_value.h"
+#include "third_party/blink/renderer/core/css/css_color.h"
 #include "third_party/blink/renderer/core/css/css_keyframe_rule.h"
+#include "third_party/blink/renderer/core/css/css_try_rule.h"
 #include "third_party/blink/renderer/core/css/parser/css_parser_fast_paths.h"
 #include "third_party/blink/renderer/core/css/parser/css_parser_impl.h"
 #include "third_party/blink/renderer/core/css/parser/css_parser_token_stream.h"
@@ -20,8 +21,11 @@
 #include "third_party/blink/renderer/core/css/style_color.h"
 #include "third_party/blink/renderer/core/css/style_rule.h"
 #include "third_party/blink/renderer/core/css/style_sheet_contents.h"
+#include "third_party/blink/renderer/core/execution_context/security_context.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/layout/layout_theme.h"
-#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
+#include "third_party/blink/renderer/platform/heap/thread_state.h"
 
 namespace blink {
 
@@ -40,30 +44,40 @@ void CSSParser::ParseDeclarationListForInspector(
                                                   observer);
 }
 
-CSSSelectorList CSSParser::ParseSelector(
+base::span<CSSSelector> CSSParser::ParseSelector(
     const CSSParserContext* context,
+    CSSNestingType nesting_type,
+    StyleRule* parent_rule_for_nesting,
+    bool is_within_scope,
     StyleSheetContents* style_sheet_contents,
-    const String& selector) {
+    const String& selector,
+    HeapVector<CSSSelector>& arena) {
   CSSTokenizer tokenizer(selector);
   const auto tokens = tokenizer.TokenizeToEOF();
-  return CSSSelectorParser::ParseSelector(CSSParserTokenRange(tokens), context,
-                                          style_sheet_contents);
+  return CSSSelectorParser::ParseSelector(
+      CSSParserTokenRange(tokens), context, nesting_type,
+      parent_rule_for_nesting, is_within_scope,
+      /* semicolon_aborts_nested_selector */ false, style_sheet_contents,
+      arena);
 }
 
-CSSSelectorList CSSParser::ParsePageSelector(
+CSSSelectorList* CSSParser::ParsePageSelector(
     const CSSParserContext& context,
     StyleSheetContents* style_sheet_contents,
     const String& selector) {
   CSSTokenizer tokenizer(selector);
   const auto tokens = tokenizer.TokenizeToEOF();
   return CSSParserImpl::ParsePageSelector(CSSParserTokenRange(tokens),
-                                          style_sheet_contents);
+                                          style_sheet_contents, context);
 }
 
 StyleRuleBase* CSSParser::ParseRule(const CSSParserContext* context,
                                     StyleSheetContents* style_sheet,
+                                    CSSNestingType nesting_type,
+                                    StyleRule* parent_rule_for_nesting,
                                     const String& rule) {
-  return CSSParserImpl::ParseRule(rule, context, style_sheet,
+  return CSSParserImpl::ParseRule(rule, context, nesting_type,
+                                  parent_rule_for_nesting, style_sheet,
                                   CSSParserImpl::kAllowImportRules);
 }
 
@@ -88,46 +102,94 @@ void CSSParser::ParseSheetForInspector(const CSSParserContext* context,
 MutableCSSPropertyValueSet::SetResult CSSParser::ParseValue(
     MutableCSSPropertyValueSet* declaration,
     CSSPropertyID unresolved_property,
-    const String& string,
+    StringView string,
     bool important,
-    SecureContextMode secure_context_mode) {
-  return ParseValue(declaration, unresolved_property, string, important,
-                    secure_context_mode,
-                    static_cast<StyleSheetContents*>(nullptr));
+    const ExecutionContext* execution_context) {
+  return ParseValue(
+      declaration, unresolved_property, string, important,
+      execution_context ? execution_context->GetSecureContextMode()
+                        : SecureContextMode::kInsecureContext,
+      static_cast<StyleSheetContents*>(nullptr), execution_context);
+}
+
+static inline const CSSParserContext* GetParserContext(
+    SecureContextMode secure_context_mode,
+    StyleSheetContents* style_sheet,
+    const ExecutionContext* execution_context,
+    CSSParserMode parser_mode) {
+  if (style_sheet) {
+    if (style_sheet->ParserContext()->GetMode() == parser_mode) {
+      // We can reuse this, to save on the construction.
+      return style_sheet->ParserContext();
+    } else {
+      // This can happen when parsing e.g. SVG attributes in the context of
+      // an HTML document.
+      CSSParserContext* mutable_context =
+          MakeGarbageCollected<CSSParserContext>(style_sheet->ParserContext());
+      mutable_context->SetMode(parser_mode);
+      return mutable_context;
+    }
+  } else if (IsA<LocalDOMWindow>(execution_context)) {
+    // Create parser context using document if it exists so it can check for
+    // origin trial enabled property/value.
+    CSSParserContext* mutable_context = MakeGarbageCollected<CSSParserContext>(
+        *To<LocalDOMWindow>(execution_context)->document());
+    mutable_context->SetMode(parser_mode);
+    return mutable_context;
+  } else {
+    return MakeGarbageCollected<CSSParserContext>(parser_mode,
+                                                  secure_context_mode);
+  }
 }
 
 MutableCSSPropertyValueSet::SetResult CSSParser::ParseValue(
     MutableCSSPropertyValueSet* declaration,
     CSSPropertyID unresolved_property,
-    const String& string,
+    StringView string,
     bool important,
     SecureContextMode secure_context_mode,
-    StyleSheetContents* style_sheet) {
-  if (string.IsEmpty()) {
-    bool did_parse = false;
-    bool did_change = false;
-    return MutableCSSPropertyValueSet::SetResult{did_parse, did_change};
+    StyleSheetContents* style_sheet,
+    const ExecutionContext* execution_context) {
+  DCHECK(ThreadState::Current()->IsAllocationAllowed());
+  if (string.empty()) {
+    return MutableCSSPropertyValueSet::kParseError;
   }
 
-  CSSPropertyID resolved_property = resolveCSSPropertyID(unresolved_property);
+  CSSPropertyID resolved_property = ResolveCSSPropertyID(unresolved_property);
   CSSParserMode parser_mode = declaration->CssParserMode();
-  CSSValue* value = CSSParserFastPaths::MaybeParseValue(resolved_property,
-                                                        string, parser_mode);
+  const CSSParserContext* context = GetParserContext(
+      secure_context_mode, style_sheet, execution_context, parser_mode);
+
+  // See if this property has a specific fast-path parser.
+  const CSSValue* value =
+      CSSParserFastPaths::MaybeParseValue(resolved_property, string, context);
   if (value) {
-    bool did_parse = true;
-    bool did_change = declaration->SetProperty(CSSPropertyValue(
+    return declaration->SetLonghandProperty(CSSPropertyValue(
         CSSPropertyName(resolved_property), *value, important));
-    return MutableCSSPropertyValueSet::SetResult{did_parse, did_change};
   }
-  CSSParserContext* context;
-  if (style_sheet) {
-    context =
-        MakeGarbageCollected<CSSParserContext>(style_sheet->ParserContext());
-    context->SetMode(parser_mode);
-  } else {
-    context = MakeGarbageCollected<CSSParserContext>(parser_mode,
-                                                     secure_context_mode);
+
+  // OK, that didn't work (either the property doesn't have a fast path,
+  // or the string is on some form that the fast-path parser doesn't support,
+  // e.g. a parse error). See if the value we are looking for is a longhand;
+  // if so, we can use a faster parsing function. In particular, we don't need
+  // to set up a vector for the results, since there will be only one.
+  //
+  // We only allow this path in standards mode, which rules out situations
+  // like @font-face parsing etc. (which have their own rules).
+  const CSSProperty& property = CSSProperty::Get(resolved_property);
+  if (parser_mode == kHTMLStandardMode && property.IsProperty() &&
+      !property.IsShorthand()) {
+    CSSTokenizer tokenizer(string);
+    const auto tokens = tokenizer.TokenizeToEOF();
+    value =
+        CSSPropertyParser::ParseSingleValue(resolved_property, tokens, context);
+    if (value != nullptr) {
+      return declaration->SetLonghandProperty(CSSPropertyValue(
+          CSSPropertyName(resolved_property), *value, important));
+    }
   }
+
+  // OK, that didn't work either, so we'll need the full-blown parser.
   return ParseValue(declaration, unresolved_property, string, important,
                     context);
 }
@@ -135,16 +197,15 @@ MutableCSSPropertyValueSet::SetResult CSSParser::ParseValue(
 MutableCSSPropertyValueSet::SetResult CSSParser::ParseValueForCustomProperty(
     MutableCSSPropertyValueSet* declaration,
     const AtomicString& property_name,
-    const String& value,
+    StringView value,
     bool important,
     SecureContextMode secure_context_mode,
     StyleSheetContents* style_sheet,
     bool is_animation_tainted) {
+  DCHECK(ThreadState::Current()->IsAllocationAllowed());
   DCHECK(CSSVariableParser::IsValidVariableName(property_name));
-  if (value.IsEmpty()) {
-    bool did_parse = false;
-    bool did_change = false;
-    return MutableCSSPropertyValueSet::SetResult{did_parse, did_change};
+  if (value.empty()) {
+    return MutableCSSPropertyValueSet::kParseError;
   }
   CSSParserMode parser_mode = declaration->CssParserMode();
   CSSParserContext* context;
@@ -164,9 +225,10 @@ MutableCSSPropertyValueSet::SetResult CSSParser::ParseValueForCustomProperty(
 MutableCSSPropertyValueSet::SetResult CSSParser::ParseValue(
     MutableCSSPropertyValueSet* declaration,
     CSSPropertyID unresolved_property,
-    const String& string,
+    StringView string,
     bool important,
     const CSSParserContext* context) {
+  DCHECK(ThreadState::Current()->IsAllocationAllowed());
   return CSSParserImpl::ParseValue(declaration, unresolved_property, string,
                                    important, context);
 }
@@ -174,11 +236,14 @@ MutableCSSPropertyValueSet::SetResult CSSParser::ParseValue(
 const CSSValue* CSSParser::ParseSingleValue(CSSPropertyID property_id,
                                             const String& string,
                                             const CSSParserContext* context) {
-  if (string.IsEmpty())
+  DCHECK(ThreadState::Current()->IsAllocationAllowed());
+  if (string.empty()) {
     return nullptr;
-  if (CSSValue* value = CSSParserFastPaths::MaybeParseValue(property_id, string,
-                                                            context->Mode()))
+  }
+  if (CSSValue* value =
+          CSSParserFastPaths::MaybeParseValue(property_id, string, context)) {
     return value;
+  }
   CSSTokenizer tokenizer(string);
   const auto tokens = tokenizer.TokenizeToEOF();
   return CSSPropertyParser::ParseSingleValue(
@@ -199,36 +264,62 @@ ImmutableCSSPropertyValueSet* CSSParser::ParseInlineStyleDeclaration(
                                                     secure_context_mode);
 }
 
-std::unique_ptr<Vector<double>> CSSParser::ParseKeyframeKeyList(
+std::unique_ptr<Vector<KeyframeOffset>> CSSParser::ParseKeyframeKeyList(
+    const CSSParserContext* context,
     const String& key_list) {
-  return CSSParserImpl::ParseKeyframeKeyList(key_list);
+  return CSSParserImpl::ParseKeyframeKeyList(context, key_list);
 }
 
 StyleRuleKeyframe* CSSParser::ParseKeyframeRule(const CSSParserContext* context,
                                                 const String& rule) {
   StyleRuleBase* keyframe = CSSParserImpl::ParseRule(
-      rule, context, nullptr, CSSParserImpl::kKeyframeRules);
+      rule, context, CSSNestingType::kNone, /*parent_rule_for_nesting=*/nullptr,
+      nullptr, CSSParserImpl::kKeyframeRules);
   return To<StyleRuleKeyframe>(keyframe);
 }
 
-bool CSSParser::ParseSupportsCondition(const String& condition,
-                                       SecureContextMode secure_context_mode) {
+String CSSParser::ParseCustomPropertyName(const String& name_text) {
+  return CSSParserImpl::ParseCustomPropertyName(name_text);
+}
+
+StyleRuleTry* CSSParser::ParseTryRule(const CSSParserContext* context,
+                                      const String& rule) {
+  StyleRuleBase* try_rule = CSSParserImpl::ParseRule(
+      rule, context, CSSNestingType::kNone, /*parent_rule_for_nesting=*/nullptr,
+      nullptr, CSSParserImpl::kTryRules);
+  return To<StyleRuleTry>(try_rule);
+}
+bool CSSParser::ParseSupportsCondition(
+    const String& condition,
+    const ExecutionContext* execution_context) {
   // window.CSS.supports requires to parse as-if it was wrapped in parenthesis.
   String wrapped_condition = "(" + condition + ")";
   CSSTokenizer tokenizer(wrapped_condition);
   CSSParserTokenStream stream(tokenizer);
-  CSSParserImpl parser(StrictCSSParserContext(secure_context_mode));
+  DCHECK(execution_context);
+  // Create parser context using document so it can check for origin trial
+  // enabled property/value.
+  CSSParserContext* context = MakeGarbageCollected<CSSParserContext>(
+      *To<LocalDOMWindow>(execution_context)->document());
+  // Override the parser mode interpreted from the document as the spec
+  // https://quirks.spec.whatwg.org/#css requires quirky values and colors
+  // must not be supported in CSS.supports() method.
+  context->SetMode(kHTMLStandardMode);
+  CSSParserImpl parser(context);
   CSSSupportsParser::Result result =
       CSSSupportsParser::ConsumeSupportsCondition(stream, parser);
-  if (!stream.AtEnd())
+  if (!stream.AtEnd()) {
     result = CSSSupportsParser::Result::kParseFailure;
+  }
 
   return result == CSSSupportsParser::Result::kSupported;
 }
 
 bool CSSParser::ParseColor(Color& color, const String& string, bool strict) {
-  if (string.IsEmpty())
+  DCHECK(ThreadState::Current()->IsAllocationAllowed());
+  if (string.empty()) {
     return false;
+  }
 
   // The regular color parsers don't resolve named colors, so explicitly
   // handle these first.
@@ -238,21 +329,27 @@ bool CSSParser::ParseColor(Color& color, const String& string, bool strict) {
     return true;
   }
 
-  const CSSValue* value = CSSParserFastPaths::ParseColor(
-      string, strict ? kHTMLStandardMode : kHTMLQuirksMode);
-  // TODO(timloh): Why is this always strict mode?
-  if (!value) {
-    // NOTE(ikilpatrick): We will always parse color value in the insecure
-    // context mode. If a function/unit/etc will require a secure context check
-    // in the future, plumbing will need to be added.
-    value = ParseSingleValue(
-        CSSPropertyID::kColor, string,
-        StrictCSSParserContext(SecureContextMode::kInsecureContext));
+  switch (CSSParserFastPaths::ParseColor(
+      string, strict ? kHTMLStandardMode : kHTMLQuirksMode, color)) {
+    case ParseColorResult::kFailure:
+      break;
+    case ParseColorResult::kKeyword:
+      return false;
+    case ParseColorResult::kColor:
+      return true;
   }
 
-  auto* color_value = DynamicTo<cssvalue::CSSColorValue>(value);
-  if (!color_value)
+  // TODO(timloh): Why is this always strict mode?
+  // NOTE(ikilpatrick): We will always parse color value in the insecure
+  // context mode. If a function/unit/etc will require a secure context check
+  // in the future, plumbing will need to be added.
+  const CSSValue* value = ParseSingleValue(
+      CSSPropertyID::kColor, string,
+      StrictCSSParserContext(SecureContextMode::kInsecureContext));
+  auto* color_value = DynamicTo<cssvalue::CSSColor>(value);
+  if (!color_value) {
     return false;
+  }
 
   color = color_value->Value();
   return true;
@@ -260,12 +357,14 @@ bool CSSParser::ParseColor(Color& color, const String& string, bool strict) {
 
 bool CSSParser::ParseSystemColor(Color& color,
                                  const String& color_string,
-                                 ColorScheme color_scheme) {
+                                 mojom::blink::ColorScheme color_scheme,
+                                 const ui::ColorProvider* color_provider) {
   CSSValueID id = CssValueKeywordID(color_string);
-  if (!StyleColor::IsSystemColor(id))
+  if (!StyleColor::IsSystemColorIncludingDeprecated(id)) {
     return false;
+  }
 
-  color = LayoutTheme::GetTheme().SystemColor(id, color_scheme);
+  color = LayoutTheme::GetTheme().SystemColor(id, color_scheme, color_provider);
   return true;
 }
 
@@ -283,29 +382,41 @@ const CSSValue* CSSParser::ParseFontFaceDescriptor(
 
 CSSPrimitiveValue* CSSParser::ParseLengthPercentage(
     const String& string,
-    const CSSParserContext* context) {
-  if (string.IsEmpty() || !context)
+    const CSSParserContext* context,
+    CSSPrimitiveValue::ValueRange value_range) {
+  if (string.empty() || !context) {
     return nullptr;
+  }
   CSSTokenizer tokenizer(string);
   const auto tokens = tokenizer.TokenizeToEOF();
   CSSParserTokenRange range(tokens);
-  return css_parsing_utils::ConsumeLengthOrPercent(range, *context,
-                                                   kValueRangeAll);
+  // Trim whitespace from the string. It's only necessary to consume leading
+  // whitespaces, since ConsumeLengthOrPercent always consumes trailing ones.
+  range.ConsumeWhitespace();
+  CSSPrimitiveValue* parsed_value =
+      css_parsing_utils::ConsumeLengthOrPercent(range, *context, value_range);
+  return range.AtEnd() ? parsed_value : nullptr;
 }
 
-MutableCSSPropertyValueSet* CSSParser::ParseFont(const String& string,
-                                                 SecureContextMode mode) {
+MutableCSSPropertyValueSet* CSSParser::ParseFont(
+    const String& string,
+    const ExecutionContext* execution_context) {
+  DCHECK(ThreadState::Current()->IsAllocationAllowed());
   auto* set =
       MakeGarbageCollected<MutableCSSPropertyValueSet>(kHTMLStandardMode);
-  ParseValue(set, CSSPropertyID::kFont, string, true /* important */, mode);
-  if (set->IsEmpty())
+  ParseValue(set, CSSPropertyID::kFont, string, true /* important */,
+             execution_context);
+  if (set->IsEmpty()) {
     return nullptr;
+  }
   const CSSValue* font_size =
       set->GetPropertyCSSValue(CSSPropertyID::kFontSize);
-  if (!font_size || font_size->IsCSSWideKeyword())
+  if (!font_size || font_size->IsCSSWideKeyword()) {
     return nullptr;
-  if (font_size->IsPendingSubstitutionValue())
+  }
+  if (font_size->IsPendingSubstitutionValue()) {
     return nullptr;
+  }
   return set;
 }
 

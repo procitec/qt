@@ -1,18 +1,17 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "content/browser/renderer_host/pepper/pepper_proxy_lookup_helper.h"
 
 #include <memory>
+#include <optional>
 #include <string>
 
-#include "base/bind.h"
-#include "base/callback.h"
 #include "base/check_op.h"
-#include "base/macros.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/memory/weak_ptr.h"
-#include "base/optional.h"
 #include "base/run_loop.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
@@ -80,7 +79,7 @@ class PepperProxyLookupHelperTest : public testing::Test {
   }
 
   // Get the proxy information passed into OnLookupCompleteOnIOThread().
-  const base::Optional<net::ProxyInfo>& proxy_info() const {
+  const std::optional<net::ProxyInfo>& proxy_info() const {
     return proxy_info_;
   }
 
@@ -128,7 +127,7 @@ class PepperProxyLookupHelperTest : public testing::Test {
 
   // Invoked by |lookup_helper_| on the IO thread once the proxy lookup has
   // completed.
-  void OnLookupCompleteOnIOThread(base::Optional<net::ProxyInfo> proxy_info) {
+  void OnLookupCompleteOnIOThread(std::optional<net::ProxyInfo> proxy_info) {
     DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
     proxy_info_ = std::move(proxy_info);
@@ -147,7 +146,7 @@ class PepperProxyLookupHelperTest : public testing::Test {
 
   std::unique_ptr<PepperProxyLookupHelper> lookup_helper_;
 
-  base::Optional<net::ProxyInfo> proxy_info_;
+  std::optional<net::ProxyInfo> proxy_info_;
   mojo::Remote<network::mojom::ProxyLookupClient> proxy_lookup_client_;
 
   base::RunLoop lookup_complete_run_loop_;
@@ -160,7 +159,7 @@ TEST_F(PepperProxyLookupHelperTest, Success) {
   ClaimProxyLookupClient()->OnProxyLookupComplete(net::OK, proxy_info_response);
   WaitForLookupCompletion();
   ASSERT_TRUE(proxy_info());
-  EXPECT_EQ("PROXY result:80", proxy_info()->ToPacString());
+  EXPECT_EQ("PROXY result:80", proxy_info()->ToDebugString());
 }
 
 // Basic failure case - an error is passed to the PepperProxyLookupHelper
@@ -168,7 +167,7 @@ TEST_F(PepperProxyLookupHelperTest, Success) {
 TEST_F(PepperProxyLookupHelperTest, Failure) {
   StartLookup();
   ClaimProxyLookupClient()->OnProxyLookupComplete(net::ERR_FAILED,
-                                                  base::nullopt);
+                                                  std::nullopt);
   WaitForLookupCompletion();
   EXPECT_FALSE(proxy_info());
 }

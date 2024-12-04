@@ -1,14 +1,16 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "chrome/renderer/extensions/chrome_extensions_renderer_client.h"
 
 #include <memory>
+#include <optional>
 #include <utility>
 
-#include "base/bind.h"
 #include "base/command_line.h"
+#include "base/features.h"
+#include "base/functional/bind.h"
 #include "base/lazy_instance.h"
 #include "base/metrics/histogram_functions.h"
 #include "chrome/common/chrome_isolated_world_ids.h"
@@ -18,7 +20,6 @@
 #include "chrome/common/url_constants.h"
 #include "chrome/renderer/chrome_render_thread_observer.h"
 #include "chrome/renderer/extensions/chrome_extensions_dispatcher_delegate.h"
-#include "chrome/renderer/extensions/extension_process_policy.h"
 #include "chrome/renderer/extensions/renderer_permissions_policy_delegate.h"
 #include "chrome/renderer/extensions/resource_request_policy.h"
 #include "content/public/common/content_constants.h"
@@ -28,17 +29,16 @@
 #include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_set.h"
-#include "extensions/common/extensions_client.h"
 #include "extensions/common/manifest_handlers/background_info.h"
+#include "extensions/common/mojom/context_type.mojom.h"
 #include "extensions/common/permissions/permissions_data.h"
 #include "extensions/common/switches.h"
 #include "extensions/renderer/dispatcher.h"
 #include "extensions/renderer/extension_frame_helper.h"
+#include "extensions/renderer/extension_web_view_helper.h"
 #include "extensions/renderer/extensions_render_frame_observer.h"
+#include "extensions/renderer/extensions_renderer_api_provider.h"
 #include "extensions/renderer/extensions_renderer_client.h"
-#include "extensions/renderer/guest_view/extensions_guest_view_container.h"
-#include "extensions/renderer/guest_view/extensions_guest_view_container_dispatcher.h"
-#include "extensions/renderer/guest_view/mime_handler_view/mime_handler_view_container.h"
 #include "extensions/renderer/guest_view/mime_handler_view/mime_handler_view_container_manager.h"
 #include "extensions/renderer/renderer_extension_registry.h"
 #include "extensions/renderer/script_context.h"
@@ -46,6 +46,7 @@
 #include "net/cookies/site_for_cookies.h"
 #include "services/metrics/public/cpp/mojo_ukm_recorder.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
+#include "third_party/blink/public/common/security/protocol_handler_security_level.h"
 #include "third_party/blink/public/platform/web_url.h"
 #include "third_party/blink/public/web/web_document.h"
 #include "third_party/blink/public/web/web_local_frame.h"
@@ -73,16 +74,6 @@ enum class GoogleDocsExtensionAvailablity {
   kNotAvailableIncognito = 3,
   kMaxValue = kNotAvailableIncognito
 };
-
-bool ExtensionHasAccessToUrl(const Extension* extension,
-                             int tab_id,
-                             const GURL& url) {
-  return extension->permissions_data()->GetPageAccess(url, tab_id, nullptr) ==
-             extensions::PermissionsData::PageAccess::kAllowed ||
-         extension->permissions_data()->GetContentScriptAccess(url, tab_id,
-                                                               nullptr) ==
-             extensions::PermissionsData::PageAccess::kAllowed;
-}
 
 }  // namespace
 
@@ -125,10 +116,6 @@ bool ChromeExtensionsRendererClient::ExtensionAPIEnabledForServiceWorkerScript(
   if (!script_url.SchemeIs(extensions::kExtensionScheme))
     return false;
 
-  if (!extensions::ExtensionsClient::Get()
-           ->ExtensionAPIEnabledInExtensionServiceWorkers())
-    return false;
-
   const Extension* extension =
       extensions::RendererExtensionRegistry::Get()->GetExtensionOrAppByURL(
           script_url);
@@ -152,19 +139,25 @@ void ChromeExtensionsRendererClient::RenderThreadStarted() {
   // injects it using SetExtensionDispatcher(). Don't overwrite it.
   if (!extension_dispatcher_) {
     extension_dispatcher_ = std::make_unique<extensions::Dispatcher>(
-        std::make_unique<ChromeExtensionsDispatcherDelegate>());
+        std::make_unique<ChromeExtensionsDispatcherDelegate>(),
+        std::move(api_providers_));
   }
   extension_dispatcher_->OnRenderThreadStarted(thread);
-  permissions_policy_delegate_.reset(
-      new extensions::RendererPermissionsPolicyDelegate(
-          extension_dispatcher_.get()));
-  resource_request_policy_.reset(
-      new extensions::ResourceRequestPolicy(extension_dispatcher_.get()));
-  guest_view_container_dispatcher_.reset(
-      new extensions::ExtensionsGuestViewContainerDispatcher());
+  permissions_policy_delegate_ =
+      std::make_unique<extensions::RendererPermissionsPolicyDelegate>(
+
+          extension_dispatcher_.get());
+  resource_request_policy_ =
+      std::make_unique<extensions::ResourceRequestPolicy>(
+          extension_dispatcher_.get());
 
   thread->AddObserver(extension_dispatcher_.get());
-  thread->AddObserver(guest_view_container_dispatcher_.get());
+}
+
+void ChromeExtensionsRendererClient::WebViewCreated(
+    blink::WebView* web_view,
+    const url::Origin* outermost_origin) {
+  new extensions::ExtensionWebViewHelper(web_view, outermost_origin);
 }
 
 void ChromeExtensionsRendererClient::RenderFrameCreated(
@@ -197,19 +190,47 @@ bool ChromeExtensionsRendererClient::AllowPopup() {
 
   // See http://crbug.com/117446 for the subtlety of this check.
   switch (current_context->context_type()) {
-    case extensions::Feature::UNSPECIFIED_CONTEXT:
-    case extensions::Feature::WEB_PAGE_CONTEXT:
-    case extensions::Feature::UNBLESSED_EXTENSION_CONTEXT:
-    case extensions::Feature::WEBUI_CONTEXT:
-    case extensions::Feature::WEBUI_UNTRUSTED_CONTEXT:
-    case extensions::Feature::LOCK_SCREEN_EXTENSION_CONTEXT:
+    case extensions::mojom::ContextType::kUnspecified:
+    case extensions::mojom::ContextType::kWebPage:
+    case extensions::mojom::ContextType::kUnprivilegedExtension:
+    case extensions::mojom::ContextType::kWebUi:
+    case extensions::mojom::ContextType::kUntrustedWebUi:
+    case extensions::mojom::ContextType::kOffscreenExtension:
+    case extensions::mojom::ContextType::kUserScript:
+    case extensions::mojom::ContextType::kLockscreenExtension:
       return false;
-    case extensions::Feature::BLESSED_EXTENSION_CONTEXT:
+    case extensions::mojom::ContextType::kPrivilegedExtension:
       return !current_context->IsForServiceWorker();
-    case extensions::Feature::CONTENT_SCRIPT_CONTEXT:
+    case extensions::mojom::ContextType::kContentScript:
       return true;
-    case extensions::Feature::BLESSED_WEB_PAGE_CONTEXT:
-      return !current_context->web_frame()->Parent();
+    case extensions::mojom::ContextType::kPrivilegedWebPage:
+      return current_context->web_frame()->IsOutermostMainFrame();
+  }
+}
+
+blink::ProtocolHandlerSecurityLevel
+ChromeExtensionsRendererClient::GetProtocolHandlerSecurityLevel() {
+  // WARNING: This must match the logic of
+  // Browser::GetProtocolHandlerSecurityLevel().
+  extensions::ScriptContext* current_context =
+      extension_dispatcher_->script_context_set().GetCurrent();
+  if (!current_context || !current_context->extension())
+    return blink::ProtocolHandlerSecurityLevel::kStrict;
+
+  switch (current_context->context_type()) {
+    case extensions::mojom::ContextType::kPrivilegedWebPage:
+    case extensions::mojom::ContextType::kContentScript:
+    case extensions::mojom::ContextType::kLockscreenExtension:
+    case extensions::mojom::ContextType::kOffscreenExtension:
+    case extensions::mojom::ContextType::kUnprivilegedExtension:
+    case extensions::mojom::ContextType::kUnspecified:
+    case extensions::mojom::ContextType::kUserScript:
+    case extensions::mojom::ContextType::kWebUi:
+    case extensions::mojom::ContextType::kUntrustedWebUi:
+    case extensions::mojom::ContextType::kWebPage:
+      return blink::ProtocolHandlerSecurityLevel::kStrict;
+    case extensions::mojom::ContextType::kPrivilegedExtension:
+      return blink::ProtocolHandlerSecurityLevel::kExtensionFeatures;
   }
 }
 
@@ -219,10 +240,8 @@ void ChromeExtensionsRendererClient::WillSendRequest(
     const blink::WebURL& url,
     const net::SiteForCookies& site_for_cookies,
     const url::Origin* initiator_origin,
-    GURL* new_url,
-    bool* force_ignore_site_for_cookies) {
+    GURL* new_url) {
   std::string extension_id;
-  GURL request_url(url);
   if (initiator_origin &&
       initiator_origin->scheme() == extensions::kExtensionScheme) {
     extension_id = initiator_origin->host();
@@ -236,40 +255,7 @@ void ChromeExtensionsRendererClient::WillSendRequest(
     const extensions::RendererExtensionRegistry* extension_registry =
         extensions::RendererExtensionRegistry::Get();
     const Extension* extension = extension_registry->GetByID(extension_id);
-    if (extension) {
-      int tab_id = extensions::ExtensionFrameHelper::Get(
-                       content::RenderFrame::FromWebFrame(frame))
-                       ->tab_id();
-      bool extension_has_access_to_request_url =
-          ExtensionHasAccessToUrl(extension, tab_id, request_url);
-
-      bool initiator_ok = true;
-      // In the case where the site_for_cookies is an extension URL, we also
-      // want to check that the initiator and the requested URL are same-site,
-      // and that the extension has permission for both the requested URL and
-      // the initiator origin.
-      // Ideally we would walk up the frame tree and check that each ancestor is
-      // first-party to the main frame (treating the extension as "first-party"
-      // to any URLs it has permission for). But for now we make do with just
-      // checking the direct initiator of the request.
-      // We also want to check same-siteness between the initiator and the
-      // requested URL, because setting |force_ignore_site_for_cookies| to true
-      // causes Strict cookies to be attached, and having the initiator be
-      // same-site to the request URL is a requirement for Strict cookies
-      // (see net::cookie_util::ComputeSameSiteContext).
-      if (initiator_origin &&
-          initiator_origin->scheme() != extensions::kExtensionScheme) {
-        initiator_ok =
-            ExtensionHasAccessToUrl(extension, tab_id,
-                                    initiator_origin->GetURL()) &&
-            net::registry_controlled_domains::SameDomainOrHost(
-                request_url, *initiator_origin,
-                net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES);
-      }
-
-      *force_ignore_site_for_cookies =
-          extension_has_access_to_request_url && initiator_ok;
-    } else {
+    if (!extension) {
       // If there is no extension installed for the origin, it may be from a
       // recently uninstalled extension.  The tabs of such extensions are
       // automatically closed, but subframes and content scripts may stick
@@ -278,21 +264,27 @@ void ChromeExtensionsRendererClient::WillSendRequest(
     }
   }
 
+  // The rest of this method is only concerned with extensions URLs.
+  if (base::FeatureList::IsEnabled(base::features::kOptimizeDataUrls) &&
+      !url.ProtocolIs(extensions::kExtensionScheme)) {
+    return;
+  }
+
   if (url.ProtocolIs(extensions::kExtensionScheme) &&
-      !resource_request_policy_->CanRequestResource(GURL(url), frame,
-                                                    transition_type)) {
+      !resource_request_policy_->CanRequestResource(
+          GURL(url), frame, transition_type, initiator_origin)) {
     *new_url = GURL(chrome::kExtensionInvalidRequestURL);
   }
 
   // TODO(https://crbug.com/588766): Remove metrics after bug is fixed.
+  GURL request_url(url);
   if (url.ProtocolIs(extensions::kExtensionScheme) &&
       request_url.host_piece() == extension_misc::kDocsOfflineExtensionId) {
     if (!ukm_recorder_) {
-      mojo::PendingRemote<ukm::mojom::UkmRecorderInterface> recorder;
+      mojo::Remote<ukm::mojom::UkmRecorderFactory> factory;
       content::RenderThread::Get()->BindHostReceiver(
-          recorder.InitWithNewPipeAndPassReceiver());
-      ukm_recorder_ =
-          std::make_unique<ukm::MojoUkmRecorder>(std::move(recorder));
+          factory.BindNewPipeAndPassReceiver());
+      ukm_recorder_ = ukm::MojoUkmRecorder::Create(*factory);
     }
 
     const ukm::SourceId source_id = frame->GetDocument().GetUkmSourceId();
@@ -321,27 +313,15 @@ void ChromeExtensionsRendererClient::WillSendRequest(
 void ChromeExtensionsRendererClient::SetExtensionDispatcherForTest(
     std::unique_ptr<extensions::Dispatcher> extension_dispatcher) {
   extension_dispatcher_ = std::move(extension_dispatcher);
-  permissions_policy_delegate_.reset(
-      new extensions::RendererPermissionsPolicyDelegate(
-          extension_dispatcher_.get()));
+  permissions_policy_delegate_ =
+      std::make_unique<extensions::RendererPermissionsPolicyDelegate>(
+
+          extension_dispatcher_.get());
 }
 
 extensions::Dispatcher*
 ChromeExtensionsRendererClient::GetExtensionDispatcherForTest() {
   return extension_dispatcher();
-}
-
-// static
-guest_view::GuestViewContainer*
-ChromeExtensionsRendererClient::CreateBrowserPluginDelegate(
-    content::RenderFrame* render_frame,
-    const content::WebPluginInfo& info,
-    const std::string& mime_type,
-    const GURL& original_url) {
-  if (mime_type == content::kBrowserPluginMimeType)
-    return new extensions::ExtensionsGuestViewContainer(render_frame);
-  return new extensions::MimeHandlerViewContainer(render_frame, info, mime_type,
-                                                  original_url);
 }
 
 // static

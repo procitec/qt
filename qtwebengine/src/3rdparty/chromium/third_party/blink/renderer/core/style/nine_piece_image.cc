@@ -24,14 +24,15 @@
 
 #include "third_party/blink/renderer/core/style/nine_piece_image.h"
 
-#include "third_party/blink/renderer/core/style/data_equivalency.h"
+#include "base/memory/values_equivalent.h"
 
 namespace blink {
 
-static DataRef<NinePieceImageData>& DefaultData() {
-  static DataRef<NinePieceImageData>* data = new DataRef<NinePieceImageData>;
-  if (!data->Get())
-    data->Init();
+static scoped_refptr<NinePieceImageData>& DefaultData() {
+  static scoped_refptr<NinePieceImageData>* data = nullptr;
+  if (!data) {
+    data = new scoped_refptr<NinePieceImageData>(NinePieceImageData::Create());
+  }
   return *data;
 }
 
@@ -44,14 +45,14 @@ NinePieceImage::NinePieceImage(StyleImage* image,
                                const BorderImageLengthBox& outset,
                                ENinePieceImageRule horizontal_rule,
                                ENinePieceImageRule vertical_rule) {
-  data_.Init();
-  data_.Access()->image = image;
-  data_.Access()->image_slices = image_slices;
-  data_.Access()->border_slices = border_slices;
-  data_.Access()->outset = outset;
-  data_.Access()->fill = fill;
-  data_.Access()->horizontal_rule = horizontal_rule;
-  data_.Access()->vertical_rule = vertical_rule;
+  data_ = NinePieceImageData::Create();
+  Access()->image = image;
+  Access()->image_slices = image_slices;
+  Access()->border_slices = border_slices;
+  Access()->outset = outset;
+  Access()->fill = fill;
+  Access()->horizontal_rule = horizontal_rule;
+  Access()->vertical_rule = vertical_rule;
 }
 
 NinePieceImageData::NinePieceImageData()
@@ -67,7 +68,7 @@ NinePieceImageData::NinePieceImageData()
       outset(0, 0, 0, 0) {}
 
 bool NinePieceImageData::operator==(const NinePieceImageData& other) const {
-  return DataEquivalent(image, other.image) &&
+  return base::ValuesEquivalent(image, other.image) &&
          image_slices == other.image_slices && fill == other.fill &&
          border_slices == other.border_slices && outset == other.outset &&
          horizontal_rule == other.horizontal_rule &&

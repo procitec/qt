@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,13 +10,14 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "base/containers/span.h"
 #include "base/files/file_path.h"
-#include "base/macros.h"
 #include "base/version.h"
 #include "extensions/browser/content_verifier/content_verifier_utils.h"
+#include "extensions/common/extension_id.h"
 
 namespace extensions {
 
@@ -28,6 +29,9 @@ using CanonicalRelativePath = content_verifier_utils::CanonicalRelativePath;
 // corruption of extension files on local disk.
 class VerifiedContents {
  public:
+  VerifiedContents(const VerifiedContents&) = delete;
+  VerifiedContents& operator=(const VerifiedContents&) = delete;
+
   ~VerifiedContents();
 
   // Returns verified contents after successfully parsing verified_contents.json
@@ -35,12 +39,19 @@ class VerifiedContents {
   // failure.
   // Note: |public_key| must remain valid for the lifetime of the returned
   // object.
-  static std::unique_ptr<VerifiedContents> Create(
+  static std::unique_ptr<VerifiedContents> CreateFromFile(
       base::span<const uint8_t> public_key,
       const base::FilePath& path);
 
+  // Returns verified contents after successfully parsing |contents| and
+  // validating the enclosed signature. Returns nullptr on failure. Note:
+  // |public_key| must remain valid for the lifetime of the returned object.
+  static std::unique_ptr<VerifiedContents> Create(
+      base::span<const uint8_t> public_key,
+      std::string_view contents);
+
   int block_size() const { return block_size_; }
-  const std::string& extension_id() const { return extension_id_; }
+  const ExtensionId& extension_id() const { return extension_id_; }
   const base::Version& version() const { return version_; }
 
   bool HasTreeHashRoot(const base::FilePath& relative_path) const;
@@ -60,9 +71,9 @@ class VerifiedContents {
   // Note: the public_key must remain valid for the lifetime of this object.
   explicit VerifiedContents(base::span<const uint8_t> public_key);
 
-  // Returns the base64url-decoded "payload" field from the json at |path|, if
+  // Returns the base64url-decoded "payload" field from the |contents|, if
   // the signature was valid.
-  bool GetPayload(const base::FilePath& path, std::string* payload);
+  bool GetPayload(std::string_view contents, std::string* payload);
 
   // The |protected_value| and |payload| arguments should be base64url encoded
   // strings, and |signature_bytes| should be a byte array. See comments in the
@@ -82,7 +93,7 @@ class VerifiedContents {
   int block_size_;
 
   // Information about which extension these signed hashes are for.
-  std::string extension_id_;
+  ExtensionId extension_id_;
   base::Version version_;
 
   // The expected treehash root hashes for each file.
@@ -100,8 +111,6 @@ class VerifiedContents {
   // statically detect.
   typedef std::multimap<CanonicalRelativePath, std::string> RootHashes;
   RootHashes root_hashes_;
-
-  DISALLOW_COPY_AND_ASSIGN(VerifiedContents);
 };
 
 }  // namespace extensions

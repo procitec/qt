@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,8 +7,8 @@
 
 #include <vector>
 
-#include "base/macros.h"
 #include "base/observer_list.h"
+#include "build/chromeos_buildflags.h"
 #include "ui/display/display_list.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/ozone/public/platform_screen.h"
@@ -18,6 +18,10 @@ namespace ui {
 class HeadlessScreen : public PlatformScreen {
  public:
   HeadlessScreen();
+
+  HeadlessScreen(const HeadlessScreen&) = delete;
+  HeadlessScreen& operator=(const HeadlessScreen&) = delete;
+
   ~HeadlessScreen() override;
 
   // Overridden from ui::PlatformScreen:
@@ -34,13 +38,14 @@ class HeadlessScreen : public PlatformScreen {
       const gfx::Rect& match_rect) const override;
   void AddObserver(display::DisplayObserver* observer) override;
   void RemoveObserver(display::DisplayObserver* observer) override;
+#if BUILDFLAG(IS_CHROMEOS_LACROS)
+  display::TabletState GetTabletState() const override;
+#endif
 
  private:
   display::DisplayList display_list_;
 
   base::ObserverList<display::DisplayObserver> observers_;
-
-  DISALLOW_COPY_AND_ASSIGN(HeadlessScreen);
 };
 
 }  // namespace ui

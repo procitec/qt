@@ -20,7 +20,7 @@
 #include "include/core/SkString.h"
 #include "include/core/SkSurface.h"
 #include "include/gpu/GrDirectContext.h"
-#include "include/private/SkMalloc.h"
+#include "include/private/base/SkMalloc.h"
 #include "tools/ToolUtils.h"
 
 static sk_sp<SkSurface> make_surface(SkCanvas* root, int N, int padLeft, int padTop,
@@ -96,13 +96,9 @@ public:
     LatticeGM() {}
 
 protected:
-    SkString onShortName() override {
-        return SkString("lattice");
-    }
+    SkString getName() const override { return SkString("lattice"); }
 
-    SkISize onISize() override {
-        return SkISize::Make(800, 800);
-    }
+    SkISize getISize() override { return SkISize::Make(800, 800); }
 
     void onDrawHelper(GrDirectContext* dContext, SkCanvas* canvas, int padLeft, int padTop,
                       int padRight, int padBottom) {
@@ -125,7 +121,7 @@ protected:
             { 200, 200, },
         };
 
-        canvas->drawImage(image, 10, 10, nullptr);
+        canvas->drawImage(image, 10, 10);
 
         SkScalar x = SkIntToScalar(100);
         SkScalar y = SkIntToScalar(100);
@@ -230,13 +226,9 @@ DEF_GM( return new LatticeGM; )
 class LatticeGM2 : public skiagm::GM {
 public:
     LatticeGM2() {}
-    SkString onShortName() override {
-        return SkString("lattice2");
-    }
+    SkString getName() const override { return SkString("lattice2"); }
 
-    SkISize onISize() override {
-        return SkISize::Make(800, 800);
-    }
+    SkISize getISize() override { return SkISize::Make(800, 800); }
 
     sk_sp<SkImage> makeImage(SkCanvas* root, int padLeft, int padTop, int padRight, int padBottom) {
         const int kSize = 80;
@@ -299,7 +291,7 @@ public:
 
         sk_sp<SkImage> image = makeImage(canvas, padLeft, padTop, padRight, padBottom);
 
-        canvas->drawImage(image, 10, 10, nullptr);
+        canvas->drawImage(image, 10, 10);
 
         SkCanvas::Lattice lattice;
         lattice.fXCount = 2;
@@ -325,13 +317,15 @@ public:
         lattice.fColors = colors;
         paint.setColor(0xFFFFFFFF);
         canvas->drawImageLattice(image.get(), lattice,
-                                 SkRect::MakeXYWH(100, 100, 200, 200), &paint);
+                                 SkRect::MakeXYWH(100, 100, 200, 200),
+                                 SkFilterMode::kNearest, &paint);
 
         //draw the same content with alpha
         canvas->translate(400, 0);
         paint.setColor(0x80000FFF);
         canvas->drawImageLattice(image.get(), lattice,
-                                 SkRect::MakeXYWH(100, 100, 200, 200), &paint);
+                                 SkRect::MakeXYWH(100, 100, 200, 200),
+                                 SkFilterMode::kNearest, &paint);
 
         canvas->restore();
     }
@@ -379,5 +373,6 @@ DEF_SIMPLE_GM_BG(lattice_alpha, canvas, 120, 120, SK_ColorWHITE) {
 
     SkPaint paint;
     paint.setColor(SK_ColorMAGENTA);
-    canvas->drawImageLattice(image.get(), lattice, SkRect::MakeWH(120, 120), &paint);
+    canvas->drawImageLattice(image.get(), lattice, SkRect::MakeWH(120, 120),
+                             SkFilterMode::kNearest, &paint);
 }

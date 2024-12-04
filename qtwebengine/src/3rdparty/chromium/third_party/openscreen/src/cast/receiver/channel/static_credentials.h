@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,14 +9,11 @@
 #include <string>
 #include <vector>
 
-#include "absl/strings/string_view.h"
-#include "cast/common/certificate/cast_cert_validator_internal.h"
 #include "cast/receiver/channel/device_auth_namespace_handler.h"
 #include "platform/base/error.h"
 #include "platform/base/tls_credentials.h"
 
-namespace openscreen {
-namespace cast {
+namespace openscreen::cast {
 
 class StaticCredentialsProvider final
     : public DeviceAuthNamespaceHandler::CredentialsProvider {
@@ -26,14 +23,14 @@ class StaticCredentialsProvider final
                             std::vector<uint8_t> tls_cert_der);
 
   StaticCredentialsProvider(const StaticCredentialsProvider&) = delete;
-  StaticCredentialsProvider(StaticCredentialsProvider&&);
+  StaticCredentialsProvider(StaticCredentialsProvider&&) noexcept;
   StaticCredentialsProvider& operator=(const StaticCredentialsProvider&) =
       delete;
   StaticCredentialsProvider& operator=(StaticCredentialsProvider&&);
   ~StaticCredentialsProvider();
 
-  absl::Span<const uint8_t> GetCurrentTlsCertAsDer() override {
-    return absl::Span<uint8_t>(tls_cert_der);
+  ByteView GetCurrentTlsCertAsDer() override {
+    return ByteBuffer(tls_cert_der);
   }
   const DeviceCredentials& GetCurrentDeviceCredentials() override {
     return device_creds;
@@ -49,19 +46,21 @@ struct GeneratedCredentials {
   std::vector<uint8_t> root_cert_der;
 };
 
-// Generates a valid set of credentials for use with the TLS Server socket,
-// including a generated X509 certificate generated from the static private key
-// stored in private_key_der.h. The certificate is valid for
-// kCertificateDuration from when this function is called.
-ErrorOr<GeneratedCredentials> GenerateCredentials(
-    const std::string& device_certificate_id);
+// Generates a private key and root TLS server certificate for use with cast
+// sockets.
+void GenerateDeveloperCredentialsToFile();
 
+// Generates a valid set of credentials for use with cast sockets/TLS.
+// Both the private key and server certificate paths are required, except
+// in testing where they can be omitted.
 ErrorOr<GeneratedCredentials> GenerateCredentials(
     const std::string& device_certificate_id,
     const std::string& private_key_path,
     const std::string& server_certificate_path);
 
-}  // namespace cast
-}  // namespace openscreen
+ErrorOr<GeneratedCredentials> GenerateCredentialsForTesting(
+    const std::string& device_certificate_id);
+
+}  // namespace openscreen::cast
 
 #endif  // CAST_RECEIVER_CHANNEL_STATIC_CREDENTIALS_H_

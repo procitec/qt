@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,10 +7,10 @@
 
 #include <memory>
 
-#include "content/common/content_export.h"
 #include "content/renderer/service_worker/service_worker_provider_context.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "third_party/blink/public/mojom/service_worker/controller_service_worker.mojom-forward.h"
+#include "third_party/blink/public/mojom/service_worker/service_worker_fetch_handler_bypass_option.mojom-shared.h"
 #include "third_party/blink/public/mojom/service_worker/service_worker_provider.mojom-forward.h"
 #include "third_party/blink/public/platform/modules/service_worker/web_service_worker_network_provider.h"
 
@@ -18,7 +18,7 @@ namespace content {
 class RenderFrameImpl;
 
 // The WebServiceWorkerNetworkProvider implementation used for frames.
-class CONTENT_EXPORT ServiceWorkerNetworkProviderForFrame final
+class ServiceWorkerNetworkProviderForFrame final
     : public blink::WebServiceWorkerNetworkProvider {
  public:
   // Creates a network provider for |frame|.
@@ -44,17 +44,16 @@ class CONTENT_EXPORT ServiceWorkerNetworkProviderForFrame final
 
   // Implements WebServiceWorkerNetworkProvider.
   void WillSendRequest(blink::WebURLRequest& request) override;
-  std::unique_ptr<blink::WebURLLoader> CreateURLLoader(
-      const blink::WebURLRequest& request,
-      std::unique_ptr<blink::scheduler::WebResourceLoadingTaskRunnerHandle>
-          task_runner_handle) override;
+  scoped_refptr<network::SharedURLLoaderFactory> GetSubresourceLoaderFactory(
+      const network::ResourceRequest& network_request,
+      bool is_from_origin_dirty_style_sheet) override;
   blink::mojom::ControllerServiceWorkerMode GetControllerServiceWorkerMode()
       override;
+  blink::mojom::ServiceWorkerFetchHandlerType GetFetchHandlerType() override;
+  blink::mojom::ServiceWorkerFetchHandlerBypassOption
+  GetFetchHandlerBypassOption() override;
   int64_t ControllerServiceWorkerID() override;
   void DispatchNetworkQuiet() override;
-  blink::CrossVariantMojoReceiver<
-      blink::mojom::WorkerTimingContainerInterfaceBase>
-  TakePendingWorkerTimingReceiver(int request_id) override;
 
   ServiceWorkerProviderContext* context() { return context_.get(); }
 

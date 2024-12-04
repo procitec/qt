@@ -1,8 +1,6 @@
-# Copyright 2016 The Chromium Authors. All rights reserved.
+# Copyright 2016 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
-
-from __future__ import print_function
 
 import argparse
 import copy
@@ -10,20 +8,22 @@ from datetime import datetime
 from functools import partial
 import json
 import os
+import posixpath
 import re
 import sys
 
-from code import Code
+from code_util import Code
 import json_parse
 
 # The template for the header file of the generated FeatureProvider.
 HEADER_FILE_TEMPLATE = """
-// Copyright %(year)s The Chromium Authors. All rights reserved.
+// Copyright %(year)s The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 // GENERATED FROM THE FEATURES FILE:
 //   %(source_files)s
+// by tools/json_schema_compiler.
 // DO NOT EDIT.
 
 #ifndef %(header_guard)s
@@ -41,12 +41,13 @@ void %(method_name)s(FeatureProvider* provider);
 
 # The beginning of the .cc file for the generated FeatureProvider.
 CC_FILE_BEGIN = """
-// Copyright %(year)s The Chromium Authors. All rights reserved.
+// Copyright %(year)s The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 // GENERATED FROM THE FEATURES FILE:
 //   %(source_files)s
+// by tools/json_schema_compiler.
 // DO NOT EDIT.
 
 #include "%(header_file_path)s"
@@ -55,6 +56,9 @@ CC_FILE_BEGIN = """
 #include "extensions/common/features/feature_provider.h"
 #include "extensions/common/features/manifest_feature.h"
 #include "extensions/common/features/permission_feature.h"
+#include "extensions/common/mojom/context_type.mojom.h"
+#include "extensions/common/mojom/feature_session_type.mojom.h"
+#include "printing/buildflags/buildflags.h"
 
 namespace extensions {
 
@@ -68,9 +72,12 @@ CC_FILE_END = """
 }  // namespace extensions
 """
 
-# Legacy keys for the allow and blocklists.
-LEGACY_ALLOWLIST_KEY = 'whitelist'
-LEGACY_BLOCKLIST_KEY = 'blacklist'
+def ToPosixPath(path):
+  """Returns |path| with separator converted to POSIX style.
+
+  This is needed to generate C++ #include paths.
+  """
+  return path.replace(os.path.sep, posixpath.sep)
 
 # Returns true if the list 'l' only contains strings that are a hex-encoded SHA1
 # hashes.
@@ -100,9 +107,9 @@ def ListContainsOnlySha1Hashes(l):
 #                a value of "all" for a list value, and will replace it with
 #                the collection of all possible values. For instance, if a
 #                feature specifies 'contexts': 'all', the generated C++ will
-#                assign the list of Feature::BLESSED_EXTENSION_CONTEXT,
-#                Feature::BLESSED_WEB_PAGE_CONTEXT et al for contexts. If not
-#                specified, defaults to false.
+#                assign the list of mojom::ContextType::kPrivilegedExtension,
+#                mojom::ContextType::kPrivilegedWebPage et al for contexts. If
+#                not specified, defaults to false.
 #   'allow_empty': Only applicable for lists. Whether an empty list is a valid
 #                  value. If omitted, empty lists are prohibited.
 #   'validators': A list of (function, str) pairs with a function to run on the
@@ -124,7 +131,16 @@ FEATURE_GRAMMAR = ({
         str: {},
         'shared': True
     },
-    LEGACY_BLOCKLIST_KEY: {
+    'allowlist': {
+        list: {
+            'subtype':
+            str,
+            'validators':
+            [(ListContainsOnlySha1Hashes,
+              'list should only have hex-encoded SHA1 hashes of extension ids')]
+        }
+    },
+    'blocklist': {
         list: {
             'subtype':
             str,
@@ -153,15 +169,19 @@ FEATURE_GRAMMAR = ({
     'contexts': {
         list: {
             'enum_map': {
-                'blessed_extension': 'Feature::BLESSED_EXTENSION_CONTEXT',
-                'blessed_web_page': 'Feature::BLESSED_WEB_PAGE_CONTEXT',
-                'content_script': 'Feature::CONTENT_SCRIPT_CONTEXT',
+                'blessed_extension': 'mojom::ContextType::kPrivilegedExtension',
+                'blessed_web_page': 'mojom::ContextType::kPrivilegedWebPage',
+                'content_script': 'mojom::ContextType::kContentScript',
                 'lock_screen_extension':
-                'Feature::LOCK_SCREEN_EXTENSION_CONTEXT',
-                'web_page': 'Feature::WEB_PAGE_CONTEXT',
-                'webui': 'Feature::WEBUI_CONTEXT',
-                'webui_untrusted': 'Feature::WEBUI_UNTRUSTED_CONTEXT',
-                'unblessed_extension': 'Feature::UNBLESSED_EXTENSION_CONTEXT',
+                    'mojom::ContextType::kLockscreenExtension',
+                'offscreen_extension':
+                    'mojom::ContextType::kOffscreenExtension',
+                'user_script': 'mojom::ContextType::kUserScript',
+                'web_page': 'mojom::ContextType::kWebPage',
+                'webui': 'mojom::ContextType::kWebUi',
+                'webui_untrusted': 'mojom::ContextType::kUntrustedWebUi',
+                'unblessed_extension':
+                    'mojom::ContextType::kUnprivilegedExtension',
             },
             'allow_all': True,
             'allow_empty': True
@@ -180,6 +200,9 @@ FEATURE_GRAMMAR = ({
             'subtype': str
         }
     },
+    'developer_mode_only': {
+        bool: {}
+    },
     'disallow_for_service_workers': {
         bool: {}
     },
@@ -194,6 +217,8 @@ FEATURE_GRAMMAR = ({
                 'theme': 'Manifest::TYPE_THEME',
                 'login_screen_extension':
                 'Manifest::TYPE_LOGIN_SCREEN_EXTENSION',
+                'chromeos_system_extension':
+                'Manifest::TYPE_CHROMEOS_SYSTEM_EXTENSION',
             },
             'allow_all': True
         },
@@ -232,6 +257,11 @@ FEATURE_GRAMMAR = ({
             'values': [2, 3]
         }
     },
+    'requires_delegated_availability_check': {
+        bool: {
+            'values': [True]
+        }
+    },
     'noparent': {
         bool: {
             'values': [True]
@@ -241,6 +271,7 @@ FEATURE_GRAMMAR = ({
         list: {
             'enum_map': {
                 'chromeos': 'Feature::CHROMEOS_PLATFORM',
+                'fuchsia': 'Feature::FUCHSIA_PLATFORM',
                 'lacros': 'Feature::LACROS_PLATFORM',
                 'linux': 'Feature::LINUX_PLATFORM',
                 'mac': 'Feature::MACOSX_PLATFORM',
@@ -248,27 +279,24 @@ FEATURE_GRAMMAR = ({
             }
         }
     },
+    'required_buildflags': {
+        list: {
+            'values': ['use_cups']
+        }
+    },
     'session_types': {
         list: {
             'enum_map': {
-                'regular': 'FeatureSessionType::REGULAR',
-                'kiosk': 'FeatureSessionType::KIOSK',
-                'kiosk.autolaunched': 'FeatureSessionType::AUTOLAUNCHED_KIOSK',
+                'regular': 'mojom::FeatureSessionType::kRegular',
+                'kiosk': 'mojom::FeatureSessionType::kKiosk',
+                'kiosk.autolaunched':
+                  'mojom::FeatureSessionType::kAutolaunchedKiosk',
             }
         }
     },
     'source': {
         str: {},
         'shared': True
-    },
-    LEGACY_ALLOWLIST_KEY: {
-        list: {
-            'subtype':
-            str,
-            'validators':
-            [(ListContainsOnlySha1Hashes,
-              'list should only have hex-encoded SHA1 hashes of extension ids')]
-        }
     },
 })
 
@@ -286,6 +314,13 @@ def DoesNotHaveAllProperties(property_names, value):
 
 def DoesNotHaveProperty(property_name, value):
   return property_name not in value
+
+def DoesNotHavePropertyInComplexFeature(property_name, feature, all_features):
+  if type(feature) is ComplexFeature:
+    for child_feature in feature.feature_list:
+      if child_feature.GetValue(property_name):
+        return False
+  return True
 
 def IsEmptyContextsAllowed(feature, all_features):
   # An alias feature wouldn't have the 'contexts' feature value.
@@ -341,7 +376,7 @@ def IsFeatureCrossReference(property_name, reverse_property_name, feature,
 # Verifies that a feature with an allowlist is not available to hosted apps,
 # returning true on success.
 def DoesNotHaveAllowlistForHostedApps(value):
-  if not LEGACY_ALLOWLIST_KEY in value:
+  if not 'allowlist' in value:
     return True
 
   # Hack Alert: |value| here has the code for the generated C++ feature. Since
@@ -371,8 +406,8 @@ def DoesNotHaveAllowlistForHostedApps(value):
   # what the allowlist looks like) to a python list of strings.
   def cpp_list_to_list(cpp_list):
     assert type(cpp_list) is str
-    assert cpp_list[0] is '{'
-    assert cpp_list[-1] is '}'
+    assert cpp_list[0] == '{'
+    assert cpp_list[-1] == '}'
     new_list = json.loads('[%s]' % cpp_list[1:-1])
     assert type(new_list) is list
     return new_list
@@ -380,12 +415,10 @@ def DoesNotHaveAllowlistForHostedApps(value):
   # Exceptions (see the feature files).
   # DO NOT ADD MORE.
   HOSTED_APP_EXCEPTIONS = [
-      '99060B01DE911EB85FD630C8BA6320C9186CA3AB',
       'B44D08FD98F1523ED5837D78D0A606EA9D6206E5',
-      '2653F6F6C39BC6EEBD36A09AFB92A19782FF7EB4',
   ]
 
-  allowlist = cpp_list_to_list(value[LEGACY_ALLOWLIST_KEY])
+  allowlist = cpp_list_to_list(value['allowlist'])
   for entry in allowlist:
     if entry not in HOSTED_APP_EXCEPTIONS:
       return False
@@ -405,7 +438,7 @@ VALIDATION = ({
     (partial(HasAtLeastOneProperty, ['channel', 'dependencies']),
      'Features must specify either a channel or dependencies'),
     (DoesNotHaveAllowlistForHostedApps,
-     'Hosted apps are not allowed to use restricted features')
+     'Hosted apps are not allowed to use restricted features'),
   ],
   'APIFeature': [
     (partial(HasProperty, 'contexts'),
@@ -422,12 +455,24 @@ VALIDATION = ({
      'ManifestFeatures do not support alias.'),
     (partial(DoesNotHaveProperty, 'source'),
      'ManifestFeatures do not support source.'),
+    # The `required_buildflags` field is intended to be used to toggle the
+    # availability of certain APIs; if we support this for feature types other
+    # than APIFeature, we may emit warnings that are visible to developers which
+    # is not desirable.
+    (partial(DoesNotHaveProperty, 'required_buildflags'),
+     'ManifestFeatures do not support required_buildflags.'),
   ],
   'BehaviorFeature': [
     (partial(DoesNotHaveProperty, 'alias'),
      'BehaviorFeatures do not support alias.'),
     (partial(DoesNotHaveProperty, 'source'),
      'BehaviorFeatures do not support source.'),
+    (partial(DoesNotHaveProperty, 'required_buildflags'),
+    # The `required_buildflags` field is intended to be used to toggle the
+    # availability of certain APIs; if we support this for feature types other
+    # than APIFeature, we may emit warnings that are visible to developers which
+    # is not desirable.
+     'BehaviorFeatures do not support required_buildflags.'),
    ],
   'PermissionFeature': [
     (partial(HasProperty, 'extension_types'),
@@ -438,11 +483,23 @@ VALIDATION = ({
      'PermissionFeatures do not support alias.'),
     (partial(DoesNotHaveProperty, 'source'),
      'PermissionFeatures do not support source.'),
+    (partial(DoesNotHaveProperty, 'required_buildflags'),
+    # The `required_buildflags` field is intended to be used to toggle the
+    # availability of certain APIs; if we support this for feature types other
+    # than APIFeature, we may emit warnings that are visible to developers which
+    # is not desirable.
+     'PermissionFeatures do not support required_buildflags.'),
   ],
 })
 
 FINAL_VALIDATION = ({
-  'all': [],
+  'all': [
+    # A complex feature requires at least one child entry at all times; with
+    # `required_buildflags` it becomes harder to guarantee that this holds for
+    # every potential combination of the provided flags.
+    (partial(DoesNotHavePropertyInComplexFeature, 'required_buildflags'),
+     'required_buildflags cannot be nested in a ComplexFeature'),
+  ],
   'APIFeature': [
     (partial(IsFeatureCrossReference, 'alias', 'source'),
      'A feature alias property should reference a feature whose source '
@@ -458,9 +515,8 @@ FINAL_VALIDATION = ({
   'PermissionFeature': []
 })
 
-# These keys are used to find the parents of different features, but are not
-# compiled into the features themselves.
-IGNORED_KEYS = ['default_parent']
+# These keys can not be set on a feature and are hence ignored.
+IGNORED_KEYS = ['default_parent', 'required_buildflags']
 
 # By default, if an error is encountered, assert to stop the compilation. This
 # can be disabled for testing.
@@ -471,16 +527,9 @@ def GetCodeForFeatureValues(feature_values):
   c = Code()
   for key in sorted(feature_values.keys()):
     if key in IGNORED_KEYS:
-      continue;
+      continue
 
-    # TODO(devlin): Remove this hack as part of 842387.
-    set_key = key
-    if key == LEGACY_ALLOWLIST_KEY:
-      set_key = 'allowlist'
-    elif key == LEGACY_BLOCKLIST_KEY:
-      set_key = 'blocklist'
-
-    c.Append('feature->set_%s(%s);' % (set_key, feature_values[key]))
+    c.Append('feature->set_%s(%s);' % (key, feature_values[key]))
   return c
 
 class Feature(object):
@@ -493,16 +542,6 @@ class Feature(object):
     self.errors = []
     self.feature_values = {}
     self.shared_values = {}
-
-  def _GetType(self, value):
-    """Returns the type of the given value.
-    """
-    # For Py3 compatibility we use str in the grammar and treat unicode as str
-    # in Py2.
-    if sys.version_info.major == 2 and type(value) is unicode:
-      return str
-
-    return type(value)
 
   def AddError(self, error):
     """Adds an error to the feature. If ENABLE_ASSERTIONS is active, this will
@@ -539,7 +578,7 @@ class Feature(object):
       self._AddKeyError(key, 'Illegal value: "%s"' % value)
       valid = False
 
-    t = self._GetType(value)
+    t = type(value)
     if expected_type and t is not expected_type:
       self._AddKeyError(key, 'Illegal value: "%s"' % value)
       valid = False
@@ -551,6 +590,8 @@ class Feature(object):
       return enum_map[value]
 
     if t is str:
+      if key == 'required_buildflags':
+        return value
       return '"%s"' % str(value)
     if t is int:
       return str(value)
@@ -580,7 +621,7 @@ class Feature(object):
       self._AddKeyError(key, 'Key can be set at most once per feature.')
       return
 
-    value_type = self._GetType(v)
+    value_type = type(v)
     if value_type not in grammar:
       self._AddKeyError(key, 'Illegal value: "%s"' % v)
       return
@@ -620,7 +661,8 @@ class Feature(object):
                                               sub_value)
         if cpp_sub_value:
           cpp_value.append(cpp_sub_value)
-      cpp_value = '{' + ','.join(cpp_value) + '}'
+      if key != 'required_buildflags':
+        cpp_value = '{' + ','.join(cpp_value) + '}'
     else:
       cpp_value = self._GetCheckedValue(key, expected_type, expected_values,
                                         enum_map, v)
@@ -830,6 +872,13 @@ class FeatureCompiler(object):
 
     # Handle complex features, which are lists of simple features.
     if type(feature_value) is list:
+      assert len(feature_value) > 1, (
+          'Error parsing feature "%s": A complex feature ' % feature_name +
+          'definition is only needed when there are multiple objects ' +
+          'specifying different groups of properties for feature ' +
+          'availability. You can reduce it down to a single object on the ' +
+          'feature key instead of a list.')
+
       feature = ComplexFeature(feature_name)
 
       # This doesn't handle nested complex features. I think that's probably for
@@ -873,8 +922,16 @@ class FeatureCompiler(object):
     for k in sorted(self._features.keys()):
       c.Sblock('{')
       feature = self._features[k]
+      required_buildflags = feature.GetValue('required_buildflags')
+      if required_buildflags:
+        formatted_buildflags = [
+          'BUILDFLAG(%s)' % format(flag.upper()) for flag in required_buildflags
+        ]
+        c.Append('#if %s' % format(' && '.join(formatted_buildflags)))
       c.Concat(feature.GetCode(self._feature_type))
       c.Append('provider->AddFeature("%s", feature);' % k)
+      if required_buildflags:
+        c.Append('#endif')
       c.Eblock('}')
     c.Eblock()
     return c
@@ -896,7 +953,7 @@ class FeatureCompiler(object):
         'header_guard': (header_file_path.replace('/', '_').
                              replace('.', '_').upper()),
         'method_name': self._method_name,
-        'source_files': str(self._source_files),
+        'source_files': str([ToPosixPath(f) for f in self._source_files]),
         'year': str(datetime.now().year)
     })
     if not os.path.exists(self._out_root):

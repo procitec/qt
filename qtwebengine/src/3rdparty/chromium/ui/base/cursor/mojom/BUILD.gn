@@ -1,4 +1,4 @@
-# Copyright 2016 The Chromium Authors. All rights reserved.
+# Copyright 2016 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -33,12 +33,13 @@ source_set("mojom_traits") {
   ]
   public_deps = [
     ":mojom_shared",
-    "//ui/base/cursor:cursor_base",
+    "//ui/base/cursor",
   ]
   deps = [
     "//skia",
     "//skia/public/mojom:shared_typemap_traits",
     "//ui/gfx/geometry",
+    "//ui/gfx/geometry:geometry_skia",
     "//ui/gfx/geometry/mojom:mojom_traits",
   ]
 }
@@ -56,8 +57,9 @@ source_set("unittests") {
     ":mojom_traits",
     "//testing/gtest",
     "//ui/base",
-    "//ui/base/cursor:cursor_base",
-    "//ui/gfx:geometry_skia",
+    "//ui/base/cursor",
+    "//ui/gfx:gfx_skia",
+    "//ui/gfx:test_support",
     "//ui/gfx/geometry/mojom:mojom_traits",
   ]
 }

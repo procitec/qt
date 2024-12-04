@@ -1,31 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2017 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt Network Auth module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:GPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 3 or (at your option) any later version
-** approved by the KDE Free Qt Foundation. The licenses are as published by
-** the Free Software Foundation and appearing in the file LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2017 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
 #include <QtNetwork/qtnetwork-config.h>
 
@@ -44,7 +18,13 @@
 #include <QtNetwork/qnetworkaccessmanager.h>
 #include <QtNetwork/qhttpmultipart.h>
 
+#ifndef QT_NO_SSL
+#include <QtNetwork/qsslconfiguration.h>
+#endif
+
 QT_BEGIN_NAMESPACE
+
+using namespace Qt::StringLiterals;
 
 /*!
     \class QAbstractOAuth2
@@ -63,10 +43,76 @@ QT_BEGIN_NAMESPACE
     \l {https://tools.ietf.org/html/rfc6749}{The OAuth 2.0
     Authorization Framework}
 */
+
+/*!
+    \page oauth-http-method-alternatives
+    \title OAuth2 HTTP method alternatives
+    \brief This page provides alternatives for QtNetworkAuth
+    OAuth2 HTTP methods.
+
+    QtNetworkAuth provides HTTP Methods such as \l {QAbstractOAuth::get()}
+    for issuing authenticated requests. In the case of OAuth2,
+    this typically means setting the
+    \l {QHttpHeaders::WellKnownHeader}{Authorization} header, as
+    specified in \l {https://datatracker.ietf.org/doc/html/rfc6750#section-2.1}
+    {RFC 6750}.
+
+    Since this operation is straightforward to do, it is better to use
+    the normal QtNetwork HTTP method APIs directly, and set this header
+    manually. These QtNetwork APIs have less assumptions on the message
+    content types and provide a broader set of APIs.
+
+    See \l QRestAccessManager, \l QNetworkAccessManager, QNetworkRequest,
+    QNetworkRequestFactory.
+
+    \section1 QNetworkRequest
+
+    The needed \e Authorization header can be set directly on each
+    request needing authorization.
+
+    \code
+    using namespace Qt::StringLiterals;
+
+    QOAuth2AuthorizationCodeFlow m_oauth;
+    QNetworkRequest request;
+
+    QHttpHeaders headers;
+    headers.append(QHttpHeaders::WellKnownHeader::Authorization, u"Bearer "_s + m_oauth.token());
+    request.setHeaders(headers);
+    \endcode
+
+    After setting the header, use the request normally with either
+    \l QRestAccessManager or \l QNetworkAccessManager.
+
+    \section1 QNetworkRequestFactory
+
+    QNetworkRequestFactory is a convenience class introduced in Qt 6.7.
+    It provides a suitable method for this task:
+    \l {QNetworkRequestFactory::setBearerToken()}, as illustrated
+    by the code below.
+
+    \code
+    QNetworkRequestFactory m_api({"https://www.example.com/v3"});
+    QOAuth2AuthorizationCodeFlow m_oauth;
+    // ...
+    connect(&m_oauth, &QOAuth2AuthorizationCodeFlow::granted, this, [this]{
+        m_api.setBearerToken(m_oauth.token().toLatin1());
+    });
+    \endcode
+
+    After setting the bearer token, use the request factory normally
+    with either \l QRestAccessManager or \l QNetworkAccessManager.
+*/
+
 /*!
     \property QAbstractOAuth2::scope
     \brief This property holds the desired scope which defines the
     permissions requested by the client.
+
+    The scope value is updated to the scope value granted by the
+    authorization server. In case of an empty scope response, the
+    \l {https://datatracker.ietf.org/doc/html/rfc6749#section-5.1}
+    {requested scope is assumed as granted and does not change}.
 */
 
 /*!
@@ -99,10 +145,14 @@ QT_BEGIN_NAMESPACE
 /*!
     \fn QAbstractOAuth2::error(const QString &error, const QString &errorDescription, const QUrl &uri)
 
-    Signal emitted when the server responds to the request with an
-    error: \a error is the name of the error; \a errorDescription describes
-    the error and \a uri is an optional URI containing more
-    information about the error.
+    Signal emitted when the server responds to the authorization request with
+    an error as defined in \l {https://www.rfc-editor.org/rfc/rfc6749#section-5.2}
+    {RFC 6749 error response}.
+
+    \a error is the name of the error; \a errorDescription describes the error
+    and \a uri is an optional URI containing more information about the error.
+
+    \sa QAbstractOAuth::requestFailed()
 */
 
 /*!
@@ -113,23 +163,26 @@ QT_BEGIN_NAMESPACE
     from the server.
 */
 
-using Key = QAbstractOAuth2Private::OAuth2KeyString;
-const QString Key::accessToken =        QStringLiteral("access_token");
-const QString Key::apiKey =             QStringLiteral("api_key");
-const QString Key::clientIdentifier =   QStringLiteral("client_id");
-const QString Key::clientSharedSecret = QStringLiteral("client_secret");
-const QString Key::code =               QStringLiteral("code");
-const QString Key::error =              QStringLiteral("error");
-const QString Key::errorDescription =   QStringLiteral("error_description");
-const QString Key::errorUri =           QStringLiteral("error_uri");
-const QString Key::expiresIn =          QStringLiteral("expires_in");
-const QString Key::grantType =          QStringLiteral("grant_type");
-const QString Key::redirectUri =        QStringLiteral("redirect_uri");
-const QString Key::refreshToken =       QStringLiteral("refresh_token");
-const QString Key::responseType =       QStringLiteral("response_type");
-const QString Key::scope =              QStringLiteral("scope");
-const QString Key::state =              QStringLiteral("state");
-const QString Key::tokenType =          QStringLiteral("token_type");
+using OAuth2 = QAbstractOAuth2Private::OAuth2KeyString;
+const QString OAuth2::accessToken =        u"access_token"_s;
+const QString OAuth2::apiKey =             u"api_key"_s;
+const QString OAuth2::clientIdentifier =   u"client_id"_s;
+const QString OAuth2::clientSharedSecret = u"client_secret"_s;
+const QString OAuth2::code =               u"code"_s;
+const QString OAuth2::error =              u"error"_s;
+const QString OAuth2::errorDescription =   u"error_description"_s;
+const QString OAuth2::errorUri =           u"error_uri"_s;
+const QString OAuth2::expiresIn =          u"expires_in"_s;
+const QString OAuth2::grantType =          u"grant_type"_s;
+const QString OAuth2::redirectUri =        u"redirect_uri"_s;
+const QString OAuth2::refreshToken =       u"refresh_token"_s;
+const QString OAuth2::responseType =       u"response_type"_s;
+const QString OAuth2::scope =              u"scope"_s;
+const QString OAuth2::state =              u"state"_s;
+const QString OAuth2::tokenType =          u"token_type"_s;
+const QString OAuth2::codeVerifier =       u"code_verifier"_s;
+const QString OAuth2::codeChallenge =      u"code_challenge"_s;
+const QString OAuth2::codeChallengeMethod = u"code_challenge_method"_s;
 
 QAbstractOAuth2Private::QAbstractOAuth2Private(const QPair<QString, QString> &clientCredentials,
                                                const QUrl &authorizationUrl,
@@ -169,14 +222,17 @@ QNetworkRequest QAbstractOAuth2Private::createRequest(QUrl url, const QVariantMa
     return request;
 }
 
-void QAbstractOAuth2Private::prepareRequestImpl(QNetworkRequest *request,
-                                                const QByteArray &verb,
-                                                const QByteArray &body)
+/*!
+    \reimp
+*/
+void QAbstractOAuth2::prepareRequest(QNetworkRequest *request, const QByteArray &verb,
+                                     const QByteArray &body)
 {
-    Q_UNUSED(verb)
-    Q_UNUSED(body)
-    request->setHeader(QNetworkRequest::UserAgentHeader, userAgent);
-    const QString bearer = bearerFormat.arg(token);
+    Q_D(QAbstractOAuth2);
+    Q_UNUSED(verb);
+    Q_UNUSED(body);
+    request->setHeader(QNetworkRequest::UserAgentHeader, d->userAgent);
+    const QString bearer = d->bearerFormat.arg(d->token);
     request->setRawHeader("Authorization", bearer.toUtf8());
 }
 
@@ -230,7 +286,7 @@ QUrl QAbstractOAuth2::createAuthenticatedUrl(const QUrl &url, const QVariantMap 
     }
     QUrl ret = url;
     QUrlQuery query(ret.query());
-    query.addQueryItem(Key::accessToken, d->token);
+    query.addQueryItem(OAuth2::accessToken, d->token);
     for (auto it = parameters.begin(), end = parameters.end(); it != end ;++it)
         query.addQueryItem(it.key(), it.value().toString());
     ret.setQuery(query);
@@ -238,6 +294,9 @@ QUrl QAbstractOAuth2::createAuthenticatedUrl(const QUrl &url, const QVariantMap 
 }
 
 /*!
+    \deprecated [6.11] Please use QtNetwork classes directly instead, see
+    \l {OAuth2 HTTP method alternatives}{HTTP method alternatives}.
+
     Sends an authenticated HEAD request and returns a new
     QNetworkReply. The \a url and \a parameters are used to create
     the request.
@@ -249,11 +308,14 @@ QNetworkReply *QAbstractOAuth2::head(const QUrl &url, const QVariantMap &paramet
 {
     Q_D(QAbstractOAuth2);
     QNetworkReply *reply = d->networkAccessManager()->head(d->createRequest(url, &parameters));
-    connect(reply, &QNetworkReply::finished, [this, reply]() { emit finished(reply); });
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() { emit finished(reply); });
     return reply;
 }
 
 /*!
+    \deprecated [6.11] Please use QtNetwork classes directly instead, see
+    \l {OAuth2 HTTP method alternatives}{HTTP method alternatives}.
+
     Sends an authenticated GET request and returns a new
     QNetworkReply. The \a url and \a parameters are used to create
     the request.
@@ -265,11 +327,14 @@ QNetworkReply *QAbstractOAuth2::get(const QUrl &url, const QVariantMap &paramete
 {
     Q_D(QAbstractOAuth2);
     QNetworkReply *reply = d->networkAccessManager()->get(d->createRequest(url, &parameters));
-    connect(reply, &QNetworkReply::finished, [this, reply]() { emit finished(reply); });
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() { emit finished(reply); });
     return reply;
 }
 
 /*!
+    \deprecated [6.11] Please use QtNetwork classes directly instead, see
+    \l {OAuth2 HTTP method alternatives}{HTTP method alternatives}.
+
     Sends an authenticated POST request and returns a new
     QNetworkReply. The \a url and \a parameters are used to create
     the request.
@@ -281,10 +346,13 @@ QNetworkReply *QAbstractOAuth2::post(const QUrl &url, const QVariantMap &paramet
 {
     Q_D(QAbstractOAuth2);
     const auto data = d->convertParameters(parameters);
-    return post(url, data);
+    QT_IGNORE_DEPRECATIONS(return post(url, data);)
 }
 
 /*!
+    \deprecated [6.11] Please use QtNetwork classes directly instead, see
+    \l {OAuth2 HTTP method alternatives}{HTTP method alternatives}.
+
     \since 5.10
 
     \overload
@@ -300,11 +368,14 @@ QNetworkReply *QAbstractOAuth2::post(const QUrl &url, const QByteArray &data)
 {
     Q_D(QAbstractOAuth2);
     QNetworkReply *reply = d->networkAccessManager()->post(d->createRequest(url), data);
-    connect(reply, &QNetworkReply::finished, [this, reply]() { emit finished(reply); });
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() { emit finished(reply); });
     return reply;
 }
 
 /*!
+    \deprecated [6.11] Please use QtNetwork classes directly instead, see
+    \l {OAuth2 HTTP method alternatives}{HTTP method alternatives}.
+
     \since 5.10
 
     \overload
@@ -320,11 +391,14 @@ QNetworkReply *QAbstractOAuth2::post(const QUrl &url, QHttpMultiPart *multiPart)
 {
     Q_D(QAbstractOAuth2);
     QNetworkReply *reply = d->networkAccessManager()->post(d->createRequest(url), multiPart);
-    connect(reply, &QNetworkReply::finished, [this, reply]() { emit finished(reply); });
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() { emit finished(reply); });
     return reply;
 }
 
 /*!
+    \deprecated [6.11] Please use QtNetwork classes directly instead, see
+    \l {OAuth2 HTTP method alternatives}{HTTP method alternatives}.
+
     Sends an authenticated PUT request and returns a new
     QNetworkReply. The \a url and \a parameters are used to create
     the request.
@@ -336,10 +410,13 @@ QNetworkReply *QAbstractOAuth2::put(const QUrl &url, const QVariantMap &paramete
 {
     Q_D(QAbstractOAuth2);
     const auto data = d->convertParameters(parameters);
-    return put(url, data);
+    QT_IGNORE_DEPRECATIONS(return put(url, data);)
 }
 
 /*!
+    \deprecated [6.11] Please use QtNetwork classes directly instead, see
+    \l {OAuth2 HTTP method alternatives}{HTTP method alternatives}.
+
     \since 5.10
 
     \overload
@@ -355,11 +432,14 @@ QNetworkReply *QAbstractOAuth2::put(const QUrl &url, const QByteArray &data)
 {
     Q_D(QAbstractOAuth2);
     QNetworkReply *reply = d->networkAccessManager()->put(d->createRequest(url), data);
-    connect(reply, &QNetworkReply::finished, std::bind(&QAbstractOAuth::finished, this, reply));
+    connect(reply, &QNetworkReply::finished, this, std::bind(&QAbstractOAuth::finished, this, reply));
     return reply;
 }
 
 /*!
+    \deprecated [6.11] Please use QtNetwork classes directly instead, see
+    \l {OAuth2 HTTP method alternatives}{HTTP method alternatives}.
+
     \since 5.10
 
     \overload
@@ -375,11 +455,14 @@ QNetworkReply *QAbstractOAuth2::put(const QUrl &url, QHttpMultiPart *multiPart)
 {
     Q_D(QAbstractOAuth2);
     QNetworkReply *reply = d->networkAccessManager()->put(d->createRequest(url), multiPart);
-    connect(reply, &QNetworkReply::finished, std::bind(&QAbstractOAuth::finished, this, reply));
+    connect(reply, &QNetworkReply::finished, this, std::bind(&QAbstractOAuth::finished, this, reply));
     return reply;
 }
 
 /*!
+    \deprecated [6.11] Please use QtNetwork classes directly instead, see
+    \l {OAuth2 HTTP method alternatives}{HTTP method alternatives}.
+
     Sends an authenticated DELETE request and returns a new
     QNetworkReply. The \a url and \a parameters are used to create
     the request.
@@ -392,7 +475,7 @@ QNetworkReply *QAbstractOAuth2::deleteResource(const QUrl &url, const QVariantMa
     Q_D(QAbstractOAuth2);
     QNetworkReply *reply = d->networkAccessManager()->deleteResource(
                 d->createRequest(url, &parameters));
-    connect(reply, &QNetworkReply::finished, [this, reply]() { emit finished(reply); });
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() { emit finished(reply); });
     return reply;
 }
 
@@ -503,6 +586,52 @@ void QAbstractOAuth2::setRefreshToken(const QString &refreshToken)
     }
 }
 
+#ifndef QT_NO_SSL
+/*!
+    \since 6.5
+
+    Returns the TLS configuration to be used when establishing a mutual TLS
+    connection between the client and the Authorization Server.
+
+    \sa setSslConfiguration(), sslConfigurationChanged()
+*/
+QSslConfiguration QAbstractOAuth2::sslConfiguration() const
+{
+    Q_D(const QAbstractOAuth2);
+    return d->sslConfiguration.value_or(QSslConfiguration());
+}
+
+/*!
+    \since 6.5
+
+    Sets the TLS \a configuration to be used when establishing
+    a mutual TLS connection between the client and the Authorization Server.
+
+    \sa sslConfiguration(), sslConfigurationChanged()
+*/
+void QAbstractOAuth2::setSslConfiguration(const QSslConfiguration &configuration)
+{
+    Q_D(QAbstractOAuth2);
+    const bool configChanged = !d->sslConfiguration || (*d->sslConfiguration != configuration);
+    if (configChanged) {
+        d->sslConfiguration = configuration;
+        Q_EMIT sslConfigurationChanged(configuration);
+    }
+}
+
+/*!
+    \fn void QAbstractOAuth2::sslConfigurationChanged(const QSslConfiguration &configuration)
+    \since 6.5
+
+    The signal is emitted when the TLS configuration has changed.
+    The \a configuration parameter contains the new TLS configuration.
+
+    \sa sslConfiguration(), setSslConfiguration()
+*/
+#endif // !QT_NO_SSL
+
 QT_END_NAMESPACE
+
+#include "moc_qabstractoauth2.cpp"
 
 #endif // QT_NO_HTTP

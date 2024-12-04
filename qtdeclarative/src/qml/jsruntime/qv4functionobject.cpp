@@ -1,50 +1,11 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtQml module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qv4object_p.h"
-#include "qv4objectproto_p.h"
-#include "qv4stringobject_p.h"
 #include "qv4function_p.h"
 #include "qv4symbol_p.h"
 #include <private/qv4mm_p.h>
 
-#include "qv4arrayobject_p.h"
 #include "qv4scopedvalue_p.h"
 #include "qv4argumentsobject_p.h"
 
@@ -63,86 +24,63 @@
 
 #include <QtCore/QDebug>
 #include <algorithm>
-#include "qv4profiling_p.h"
 
 using namespace QV4;
 
 
 DEFINE_OBJECT_VTABLE(FunctionObject);
 
-void Heap::FunctionObject::init(QV4::ExecutionContext *scope, QV4::String *name, VTable::Call call)
+void Heap::FunctionObject::init(QV4::ExecutionEngine *engine, QV4::String *name)
 {
-    jsCall = call;
-    jsConstruct = nullptr;
-
     Object::init();
-    this->scope.set(scope->engine(), scope->d());
-    Scope s(scope->engine());
+    Scope s(engine);
     ScopedFunctionObject f(s, this);
     if (name)
         f->setName(name);
 }
 
-void Heap::FunctionObject::init(QV4::ExecutionContext *scope, QV4::String *name)
+void Heap::FunctionObject::init(QV4::ExecutionEngine *engine, const QString &name)
 {
-    ExecutionEngine *e = scope->engine();
-
-    jsCall = vtable()->call;
-    jsConstruct = vtable()->callAsConstructor;
-
-    Object::init();
-    this->scope.set(scope->engine(), scope->d());
-    Scope s(e);
-    ScopedFunctionObject f(s, this);
-    if (name)
-        f->setName(name);
-}
-
-
-
-void Heap::FunctionObject::init(QV4::ExecutionContext *scope, Function *function, QV4::String *n)
-{
-    jsCall = vtable()->call;
-    jsConstruct = vtable()->callAsConstructor;
-
-    Object::init();
-    setFunction(function);
-    this->scope.set(scope->engine(), scope->d());
-    Scope s(scope->engine());
-    ScopedString name(s, n ? n->d() : function->name());
-    ScopedFunctionObject f(s, this);
-    if (name)
-        f->setName(name);
-}
-
-void Heap::FunctionObject::init(QV4::ExecutionContext *scope, const QString &name)
-{
-    Scope valueScope(scope);
-    ScopedString s(valueScope, valueScope.engine->newString(name));
-    init(scope, s);
+    Scope valueScope(engine);
+    ScopedString s(valueScope, engine->newString(name));
+    init(engine, s);
 }
 
 void Heap::FunctionObject::init()
 {
-    jsCall = vtable()->call;
-    jsConstruct = vtable()->callAsConstructor;
-
-    Object::init();
-    this->scope.set(internalClass->engine, internalClass->engine->rootContext()->d());
+    init(internalClass->engine, static_cast<QV4::String *>(nullptr));
 }
 
-void Heap::FunctionObject::setFunction(Function *f)
+void Heap::JavaScriptFunctionObject::init(
+        QV4::ExecutionContext *scope, Function *function, QV4::String *n)
+{
+    Q_ASSERT(n || function);
+    Scope s(scope->engine());
+    ScopedString name(s, n ? n->d() : function->name());
+    FunctionObject::init(s.engine, name);
+    this->scope.set(s.engine, scope->d());
+    setFunction(function);
+}
+
+void Heap::JavaScriptFunctionObject::setFunction(Function *f)
 {
     if (f) {
         function = f;
         function->executableCompilationUnit()->addref();
     }
 }
-void Heap::FunctionObject::destroy()
+void Heap::JavaScriptFunctionObject::destroy()
 {
     if (function)
         function->executableCompilationUnit()->release();
-    Object::destroy();
+    FunctionObject::destroy();
+}
+
+void Heap::DynamicFunctionObject::init(
+        QV4::ExecutionEngine *engine, QV4::String *name, VTable::Call call)
+{
+    FunctionObject::init(engine, name);
+    jsCall = call;
 }
 
 void FunctionObject::createDefaultPrototypeProperty(uint protoConstructorSlot)
@@ -158,12 +96,27 @@ void FunctionObject::createDefaultPrototypeProperty(uint protoConstructorSlot)
 
 ReturnedValue FunctionObject::name() const
 {
-    return get(scope()->internalClass->engine->id_name());
+    return get(engine()->id_name());
 }
 
-ReturnedValue FunctionObject::virtualCall(const FunctionObject *, const Value *, const Value *, int)
+ReturnedValue FunctionObject::failCall() const
 {
-    return Encode::undefined();
+    return engine()->throwTypeError(QStringLiteral("Function can only be called with |new|."));
+}
+
+ReturnedValue FunctionObject::failCallAsConstructor() const
+{
+    return engine()->throwTypeError(QStringLiteral("Function is not a constructor."));
+}
+
+void FunctionObject::virtualConvertAndCall(
+        const FunctionObject *f, QObject *thisObject,
+        void **argv, const QMetaType *types, int argc)
+{
+    QV4::convertAndCall(f->engine(), thisObject, argv, types, argc,
+                        [f](const Value *thisObject, const Value *argv, int argc) {
+        return f->call(thisObject, argv, argc);
+    });
 }
 
 Heap::FunctionObject *FunctionObject::createScriptFunction(ExecutionContext *scope, Function *function)
@@ -173,15 +126,20 @@ Heap::FunctionObject *FunctionObject::createScriptFunction(ExecutionContext *sco
     return scope->engine()->memoryManager->allocate<ScriptFunction>(scope, function);
 }
 
-Heap::FunctionObject *FunctionObject::createConstructorFunction(ExecutionContext *scope, Function *function, Object *homeObject, bool isDerivedConstructor)
+Heap::FunctionObject *FunctionObject::createConstructorFunction(
+        ExecutionContext *scope, Function *function, Object *homeObject, bool isDerivedConstructor)
 {
+    QV4::ExecutionEngine *engine = scope->engine();
     if (!function) {
-        Heap::DefaultClassConstructorFunction *c = scope->engine()->memoryManager->allocate<DefaultClassConstructorFunction>(scope);
+        Heap::DefaultClassConstructorFunction *c
+                = engine->memoryManager->allocate<DefaultClassConstructorFunction>(scope);
         c->isDerivedConstructor = isDerivedConstructor;
         return c;
     }
-    Heap::ConstructorFunction *c = scope->engine()->memoryManager->allocate<ConstructorFunction>(scope, function);
-    c->homeObject.set(scope->engine(), homeObject->d());
+
+    Heap::ConstructorFunction *c
+            = engine->memoryManager->allocate<ConstructorFunction>(scope, function);
+    c->homeObject.set(engine, homeObject->d());
     c->isDerivedConstructor = isDerivedConstructor;
     return c;
 }
@@ -198,9 +156,10 @@ Heap::FunctionObject *FunctionObject::createBuiltinFunction(ExecutionEngine *eng
     Scope scope(engine);
     ScopedString name(scope, nameOrSymbol);
     if (!name)
-        name = engine->newString(QChar::fromLatin1('[') + nameOrSymbol->toQString().midRef(1) + QChar::fromLatin1(']'));
+        name = engine->newString(QChar::fromLatin1('[') + QStringView{nameOrSymbol->toQString()}.mid(1) + QChar::fromLatin1(']'));
 
-    ScopedFunctionObject function(scope, engine->memoryManager->allocate<FunctionObject>(engine->rootContext(), name, code));
+    ScopedFunctionObject function(
+            scope, engine->memoryManager->allocate<DynamicFunctionObject>(engine, name, code));
     function->defineReadonlyConfigurableProperty(engine->id_length(), Value::fromInt32(argumentCount));
     return function->d();
 }
@@ -216,16 +175,29 @@ ReturnedValue FunctionObject::getHomeObject() const
     return Encode::undefined();
 }
 
-QQmlSourceLocation FunctionObject::sourceLocation() const
+DEFINE_OBJECT_VTABLE(JavaScriptFunctionObject);
+
+QQmlSourceLocation JavaScriptFunctionObject::sourceLocation() const
 {
     return d()->function->sourceLocation();
 }
 
+DEFINE_OBJECT_VTABLE(DynamicFunctionObject);
+
+ReturnedValue DynamicFunctionObject::virtualCall(
+        const FunctionObject *f, const Value *thisObject, const Value *argv, int argc) {
+    Heap::DynamicFunctionObject *d = static_cast<const DynamicFunctionObject *>(f)->d();
+    if (d->jsCall)
+        return d->jsCall(f, thisObject, argv, argc);
+    return d->internalClass->engine->throwTypeError(
+            QStringLiteral("Function can only be called with |new|."));
+}
+
 DEFINE_OBJECT_VTABLE(FunctionCtor);
 
-void Heap::FunctionCtor::init(QV4::ExecutionContext *scope)
+void Heap::FunctionCtor::init(QV4::ExecutionEngine *engine)
 {
-    Heap::FunctionObject::init(scope, QStringLiteral("Function"));
+    Heap::FunctionObject::init(engine, QStringLiteral("Function"));
 }
 
 // 15.3.2
@@ -273,7 +245,7 @@ QQmlRefPointer<ExecutableCompilationUnit> FunctionCtor::parse(ExecutionEngine *e
     if (engine->hasException)
         return nullptr;
 
-    return ExecutableCompilationUnit::create(cg.generateCompilationUnit());
+    return engine->insertCompilationUnit(cg.generateCompilationUnit());
 }
 
 ReturnedValue FunctionCtor::virtualCallAsConstructor(const FunctionObject *f, const Value *argv, int argc, const Value *newTarget)
@@ -285,7 +257,7 @@ ReturnedValue FunctionCtor::virtualCallAsConstructor(const FunctionObject *f, co
     if (engine->hasException)
         return Encode::undefined();
 
-    Function *vmf = compilationUnit->linkToEngine(engine);
+    Function *vmf = compilationUnit->rootFunction();
     ExecutionContext *global = engine->scriptContext();
     ReturnedValue o = Encode(FunctionObject::createScriptFunction(global, vmf));
 
@@ -328,6 +300,12 @@ void FunctionPrototype::init(ExecutionEngine *engine, Object *ctor)
     defineDefaultProperty(engine->symbol_hasInstance(), method_hasInstance, 1, Attr_ReadOnly);
 }
 
+ReturnedValue FunctionPrototype::virtualCall(
+        const FunctionObject *, const Value *, const Value *, int)
+{
+    return Encode::undefined();
+}
+
 ReturnedValue FunctionPrototype::method_toString(const FunctionObject *b, const Value *thisObject, const Value *, int)
 {
     ExecutionEngine *v4 = b->engine();
@@ -364,36 +342,31 @@ ReturnedValue FunctionPrototype::method_apply(const QV4::FunctionObject *b, cons
     if (!arr)
         return v4->throwTypeError();
 
-    const qint64 len64 = arr->getLength();
-    if (len64 < 0ll || len64 > qint64(std::numeric_limits<int>::max()))
-        return v4->throwRangeError(QStringLiteral("Invalid array length."));
-    if (len64 > qint64(v4->jsStackLimit - v4->jsStackTop))
-        return v4->throwRangeError(QStringLiteral("Array too large for apply()."));
-
-    const uint len = uint(len64);
-
     Scope scope(v4);
+    const int len = v4->safeForAllocLength(arr->getLength());
+    CHECK_EXCEPTION();
+
     Value *arguments = scope.alloc<Scope::Uninitialized>(len);
     if (len) {
         if (ArgumentsObject::isNonStrictArgumentsObject(arr) && !arr->cast<ArgumentsObject>()->fullyCreated()) {
             QV4::ArgumentsObject *a = arr->cast<ArgumentsObject>();
-            int l = qMin(len, (uint)a->d()->context->argc());
+            int l = qMin(len, a->d()->context->argc());
             memcpy(arguments, a->d()->context->args(), l*sizeof(Value));
-            for (quint32 i = l; i < len; ++i)
+            for (int i = l; i < len; ++i)
                 arguments[i] = Value::undefinedValue();
         } else if (arr->arrayType() == Heap::ArrayData::Simple && !arr->protoHasArray()) {
             auto sad = static_cast<Heap::SimpleArrayData *>(arr->arrayData());
-            uint alen = sad ? sad->values.size : 0;
+            int alen = sad ? sad->values.size : 0;
             if (alen > len)
                 alen = len;
-            for (uint i = 0; i < alen; ++i)
+            for (int i = 0; i < alen; ++i)
                 arguments[i] = sad->data(i);
-            for (quint32 i = alen; i < len; ++i)
+            for (int i = alen; i < len; ++i)
                 arguments[i] = Value::undefinedValue();
         } else {
             // need to init the arguments array, as the get() calls below can have side effects
             memset(arguments, 0, len*sizeof(Value));
-            for (quint32 i = 0; i < len; ++i)
+            for (int i = 0; i < len; ++i)
                 arguments[i] = arr->get(i);
         }
     }
@@ -449,10 +422,13 @@ ReturnedValue FunctionPrototype::method_bind(const FunctionObject *b, const Valu
             boundArgs->set(scope.engine, i, argv[i + 1]);
     }
 
-    ScopedContext ctx(scope, target->scope());
-    Heap::BoundFunction *bound = BoundFunction::create(ctx, target, boundThis, boundArgs);
-    bound->setFunction(target->function());
-    return bound->asReturnedValue();
+    if (target->isConstructor()) {
+        return scope.engine->memoryManager->allocate<BoundConstructor>(target, boundThis, boundArgs)
+                ->asReturnedValue();
+    }
+
+    return scope.engine->memoryManager->allocate<BoundFunction>(target, boundThis, boundArgs)
+            ->asReturnedValue();
 }
 
 ReturnedValue FunctionPrototype::method_hasInstance(const FunctionObject *, const Value *thisObject, const Value *argv, int argc)
@@ -487,18 +463,18 @@ ReturnedValue ScriptFunction::virtualCallAsConstructor(const FunctionObject *fo,
     }
     ScopedValue thisObject(scope, v4->memoryManager->allocObject<Object>(ic));
 
-    CppStackFrame frame;
-    frame.init(v4, f->function(), argv, argc);
+    JSTypesStackFrame frame;
+    frame.init(f->function(), argv, argc);
     frame.setupJSFrame(v4->jsStackTop, *f, f->scope(),
                        thisObject,
                        newTarget ? *newTarget : Value::undefinedValue());
 
-    frame.push();
+    frame.push(v4);
     v4->jsStackTop += frame.requiredJSStackFrameSize();
 
     ReturnedValue result = Moth::VME::exec(&frame, v4);
 
-    frame.pop();
+    frame.pop(v4);
 
     if (Q_UNLIKELY(v4->hasException))
         return Encode::undefined();
@@ -509,49 +485,87 @@ ReturnedValue ScriptFunction::virtualCallAsConstructor(const FunctionObject *fo,
 
 DEFINE_OBJECT_VTABLE(ArrowFunction);
 
-ReturnedValue ArrowFunction::virtualCall(const FunctionObject *fo, const Value *thisObject, const Value *argv, int argc)
+void ArrowFunction::virtualCallWithMetaTypes(const FunctionObject *fo, QObject *thisObject,
+                                             void **a, const QMetaType *types, int argc)
+{
+    const ArrowFunction *self = static_cast<const ArrowFunction *>(fo);
+    Function *function = self->function();
+    if (function->kind != Function::AotCompiled) {
+        QV4::convertAndCall(fo->engine(), thisObject, a, types, argc,
+                            [fo](const Value *thisObject, const Value *argv, int argc) {
+            return ArrowFunction::virtualCall(fo, thisObject, argv, argc);
+        });
+        return;
+    }
+
+    QV4::Scope scope(fo->engine());
+    QV4::Scoped<ExecutionContext> context(scope, self->scope());
+    MetaTypesStackFrame frame;
+    frame.init(function, thisObject, context, a, types, argc);
+    frame.push(scope.engine);
+    Moth::VME::exec(&frame, scope.engine);
+    frame.pop(scope.engine);
+}
+
+static ReturnedValue qfoDoCall(
+        const QV4::JavaScriptFunctionObject *fo, const QV4::Value *thisObject,
+        const QV4::Value *argv, int argc)
 {
     ExecutionEngine *engine = fo->engine();
-    CppStackFrame frame;
-    frame.init(engine, fo->function(), argv, argc, true);
+    JSTypesStackFrame frame;
+    frame.init(fo->function(), argv, argc, true);
     frame.setupJSFrame(engine->jsStackTop, *fo, fo->scope(),
-                       thisObject ? *thisObject : Value::undefinedValue(),
-                       Value::undefinedValue());
+                       thisObject ? *thisObject : Value::undefinedValue());
 
-    frame.push();
+    frame.push(engine);
     engine->jsStackTop += frame.requiredJSStackFrameSize();
 
     ReturnedValue result;
 
     do {
-        frame.pendingTailCall = false;
+        frame.setPendingTailCall(false);
         result = Moth::VME::exec(&frame, engine);
-        frame.isTailCalling = true;
-    } while (frame.pendingTailCall);
+        frame.setTailCalling(true);
+    } while (frame.pendingTailCall());
 
-    frame.pop();
+    frame.pop(engine);
 
     return result;
 }
 
+ReturnedValue ArrowFunction::virtualCall(const QV4::FunctionObject *fo, const Value *thisObject,
+                                         const QV4::Value *argv, int argc)
+{
+    const ArrowFunction *self = static_cast<const ArrowFunction *>(fo);
+    Function *function = self->function();
+    switch (function->kind) {
+    case Function::AotCompiled:
+        return QV4::convertAndCall(
+                    fo->engine(), &function->aotCompiledFunction, thisObject, argv, argc,
+                    [fo](QObject *thisObject, void **a, const QMetaType *types, int argc) {
+            ArrowFunction::virtualCallWithMetaTypes(fo, thisObject, a, types, argc);
+        });
+    case Function::JsTyped:
+        return QV4::coerceAndCall(
+                fo->engine(), &function->jsTypedFunction, function->compiledFunction, argv, argc,
+                [self, thisObject](const Value *argv, int argc) {
+            return qfoDoCall(self, thisObject, argv, argc);
+        });
+    default:
+        break;
+    }
+
+    return qfoDoCall(self, thisObject, argv, argc);
+}
+
 void Heap::ArrowFunction::init(QV4::ExecutionContext *scope, Function *function, QV4::String *n)
 {
-    FunctionObject::init();
-    this->scope.set(scope->engine(), scope->d());
-
-    setFunction(function);
     Q_ASSERT(function);
+    JavaScriptFunctionObject::init(scope, function, n);
 
     Scope s(scope);
-    ScopedFunctionObject f(s, this);
-
-    ScopedString name(s, n ? n->d() : function->name());
-    if (name)
-        f->setName(name);
-
     Q_ASSERT(internalClass && internalClass->verifyIndex(s.engine->id_length()->propertyKey(), Index_Length));
     setProperty(s.engine, Index_Length, Value::fromInt32(int(function->compiledFunction->length)));
-    canBeTailCalled = true;
 }
 
 void Heap::ScriptFunction::init(QV4::ExecutionContext *scope, Function *function)
@@ -562,6 +576,13 @@ void Heap::ScriptFunction::init(QV4::ExecutionContext *scope, Function *function
     Scope s(scope);
     ScopedFunctionObject f(s, this);
     f->createDefaultPrototypeProperty(Heap::FunctionObject::Index_ProtoConstructor);
+}
+
+void Heap::DefaultClassConstructorFunction::init(QV4::ExecutionContext *scope)
+{
+    Scope s(scope->engine());
+    FunctionObject::init(s.engine, nullptr);
+    this->scope.set(s.engine, scope->d());
 }
 
 Heap::InternalClass *ScriptFunction::classForConstructor() const
@@ -590,19 +611,19 @@ ReturnedValue ConstructorFunction::virtualCallAsConstructor(const FunctionObject
 
     ExecutionEngine *v4 = f->engine();
 
-    CppStackFrame frame;
-    frame.init(v4, f->function(), argv, argc);
-    frame.setupJSFrame(v4->jsStackTop, *f, f->scope(),
+    JSTypesStackFrame frame;
+    frame.init(c->function(), argv, argc);
+    frame.setupJSFrame(v4->jsStackTop, *f, c->scope(),
                        Value::emptyValue(),
                        newTarget ? *newTarget : Value::undefinedValue());
 
-    frame.push();
+    frame.push(v4);
     v4->jsStackTop += frame.requiredJSStackFrameSize();
 
     ReturnedValue result = Moth::VME::exec(&frame, v4);
     ReturnedValue thisObject = frame.jsFrame->thisObject.asReturnedValue();
 
-    frame.pop();
+    frame.pop(v4);
 
     if (Q_UNLIKELY(v4->hasException))
         return Encode::undefined();
@@ -644,20 +665,20 @@ ReturnedValue DefaultClassConstructorFunction::virtualCallAsConstructor(const Fu
     ScopedFunctionObject super(scope, f->getPrototypeOf());
     Q_ASSERT(super->isFunctionObject());
 
-    CppStackFrame frame;
-    frame.init(v4, nullptr, argv, argc);
-    frame.setupJSFrame(v4->jsStackTop, *f, f->scope(),
+    JSTypesStackFrame frame;
+    frame.init(nullptr, argv, argc);
+    frame.setupJSFrame(v4->jsStackTop, *f, c->scope(),
                        Value::undefinedValue(),
                        newTarget ? *newTarget : Value::undefinedValue(), argc, argc);
 
-    frame.push();
+    frame.push(v4);
     v4->jsStackTop += frame.requiredJSStackFrameSize(argc);
 
     // Do a super call
     ReturnedValue result = super->callAsConstructor(argv, argc, newTarget);
     ReturnedValue thisObject = frame.jsFrame->thisObject.asReturnedValue();
 
-    frame.pop();
+    frame.pop(v4);
 
     if (Q_UNLIKELY(v4->hasException))
         return Encode::undefined();
@@ -683,33 +704,39 @@ DEFINE_OBJECT_VTABLE(IndexedBuiltinFunction);
 
 DEFINE_OBJECT_VTABLE(BoundFunction);
 
-void Heap::BoundFunction::init(QV4::ExecutionContext *scope, QV4::FunctionObject *target,
-                               const Value &boundThis, QV4::MemberData *boundArgs)
+void Heap::BoundFunction::init(
+        QV4::FunctionObject *target, const Value &boundThis, QV4::MemberData *boundArgs)
 {
-    Scope s(scope);
-    Heap::FunctionObject::init(scope, QStringLiteral("__bound function__"));
+    ExecutionEngine *engine = target->engine();
+    Scope s(engine);
+    ScopedString name(s, engine->newString(QStringLiteral("__bound function__")));
+    if (auto *js = target->as<QV4::JavaScriptFunctionObject>()) {
+        ScopedContext ctx(s, js->scope());
+        JavaScriptFunctionObject::init(ctx, js->function(), name);
+    } else {
+        Q_ASSERT(name);
+        JavaScriptFunctionObject::init(engine->rootContext(), nullptr, name);
+    }
+
     this->target.set(s.engine, target->d());
     this->boundArgs.set(s.engine, boundArgs ? boundArgs->d() : nullptr);
-    this->boundThis.set(scope->engine(), boundThis);
-
-    if (!target->isConstructor())
-        jsConstruct = nullptr;
+    this->boundThis.set(s.engine, boundThis);
 
     ScopedObject f(s, this);
 
-    ScopedValue l(s, target->get(s.engine->id_length()));
+    ScopedValue l(s, target->get(engine->id_length()));
     int len = l->toUInt32();
     if (boundArgs)
         len -= boundArgs->size();
     if (len < 0)
         len = 0;
-    f->defineReadonlyConfigurableProperty(s.engine->id_length(), Value::fromInt32(len));
+    f->defineReadonlyConfigurableProperty(engine->id_length(), Value::fromInt32(len));
 
     ScopedProperty pd(s);
-    pd->value = s.engine->thrower();
-    pd->set = s.engine->thrower();
-    f->insertMember(s.engine->id_arguments(), pd, Attr_Accessor|Attr_NotConfigurable|Attr_NotEnumerable);
-    f->insertMember(s.engine->id_caller(), pd, Attr_Accessor|Attr_NotConfigurable|Attr_NotEnumerable);
+    pd->value = engine->thrower();
+    pd->set = engine->thrower();
+    f->insertMember(engine->id_arguments(), pd, Attr_Accessor|Attr_NotConfigurable|Attr_NotEnumerable);
+    f->insertMember(engine->id_caller(), pd, Attr_Accessor|Attr_NotConfigurable|Attr_NotEnumerable);
 }
 
 ReturnedValue BoundFunction::virtualCall(const FunctionObject *fo, const Value *, const Value *argv, int argc)
@@ -722,9 +749,9 @@ ReturnedValue BoundFunction::virtualCall(const FunctionObject *fo, const Value *
     Scope scope(v4);
     Scoped<MemberData> boundArgs(scope, f->boundArgs());
     ScopedFunctionObject target(scope, f->target());
-    JSCallData jsCallData(scope, (boundArgs ? boundArgs->size() : 0) + argc);
-    *jsCallData->thisObject = f->boundThis();
-    Value *argp = jsCallData->args;
+    JSCallArguments jsCallData(scope, (boundArgs ? boundArgs->size() : 0) + argc);
+    *jsCallData.thisObject = f->boundThis();
+    Value *argp = jsCallData.args;
     if (boundArgs) {
         memcpy(argp, boundArgs->data(), boundArgs->size()*sizeof(Value));
         argp += boundArgs->size();
@@ -733,7 +760,10 @@ ReturnedValue BoundFunction::virtualCall(const FunctionObject *fo, const Value *
     return checkedResult(v4, target->call(jsCallData));
 }
 
-ReturnedValue BoundFunction::virtualCallAsConstructor(const FunctionObject *fo, const Value *argv, int argc, const Value *)
+DEFINE_OBJECT_VTABLE(BoundConstructor);
+
+ReturnedValue BoundConstructor::virtualCallAsConstructor(
+        const FunctionObject *fo, const Value *argv, int argc, const Value *)
 {
     const BoundFunction *f = static_cast<const BoundFunction *>(fo);
     Scope scope(f->engine());
@@ -743,8 +773,8 @@ ReturnedValue BoundFunction::virtualCallAsConstructor(const FunctionObject *fo, 
 
     Scoped<MemberData> boundArgs(scope, f->boundArgs());
     ScopedFunctionObject target(scope, f->target());
-    JSCallData jsCallData(scope, (boundArgs ? boundArgs->size() : 0) + argc);
-    Value *argp = jsCallData->args;
+    JSCallArguments jsCallData(scope, (boundArgs ? boundArgs->size() : 0) + argc);
+    Value *argp = jsCallData.args;
     if (boundArgs) {
         memcpy(argp, boundArgs->data(), boundArgs->size()*sizeof(Value));
         argp += boundArgs->size();

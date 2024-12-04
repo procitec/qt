@@ -1,4 +1,4 @@
-// Copyright (c) 2006-2008 The Chromium Authors. All rights reserved.
+// Copyright 2006-2008 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -144,39 +144,6 @@ TEST(ColorUtils, ColorToHSLRegisterSpill) {
   EXPECT_EQ(SkColorGetB(input), SkColorGetB(result));
 }
 
-TEST(ColorUtils, CalculateBoringScore_Empty) {
-  SkBitmap bitmap;
-  EXPECT_DOUBLE_EQ(1.0, CalculateBoringScore(bitmap));
-}
-
-TEST(ColorUtils, CalculateBoringScore_SingleColor) {
-  const gfx::Size kSize(20, 10);
-  gfx::Canvas canvas(kSize, 1.0f, true);
-  // Fill all pixels in black.
-  canvas.FillRect(gfx::Rect(kSize), SK_ColorBLACK);
-
-  SkBitmap bitmap = canvas.GetBitmap();
-  // The thumbnail should deserve the highest boring score.
-  EXPECT_DOUBLE_EQ(1.0, CalculateBoringScore(bitmap));
-}
-
-TEST(ColorUtils, CalculateBoringScore_TwoColors) {
-  const gfx::Size kSize(20, 10);
-
-  gfx::Canvas canvas(kSize, 1.0f, true);
-  // Fill all pixels in black.
-  canvas.FillRect(gfx::Rect(kSize), SK_ColorBLACK);
-  // Fill the left half pixels in white.
-  canvas.FillRect(gfx::Rect(0, 0, kSize.width() / 2, kSize.height()),
-                  SK_ColorWHITE);
-
-  SkBitmap bitmap = canvas.GetBitmap();
-  ASSERT_EQ(kSize.width(), bitmap.width());
-  ASSERT_EQ(kSize.height(), bitmap.height());
-  // The thumbnail should be less boring because two colors are used.
-  EXPECT_DOUBLE_EQ(0.5, CalculateBoringScore(bitmap));
-}
-
 TEST(ColorUtils, AlphaBlend) {
   SkColor fore = SkColorSetARGB(255, 200, 200, 200);
   SkColor back = SkColorSetARGB(255, 100, 100, 100);
@@ -215,8 +182,7 @@ TEST(ColorUtils, IsDarkDarkestColorChange) {
 
 TEST(ColorUtils, MidpointLuminanceMatches) {
   const SkColor old_darkest_color = SetDarkestColorForTesting(SK_ColorBLACK);
-  float darkest, midpoint, lightest;
-  std::tie(darkest, midpoint, lightest) = GetLuminancesForTesting();
+  auto [darkest, midpoint, lightest] = GetLuminancesForTesting();
   EXPECT_FLOAT_EQ(GetContrastRatio(darkest, midpoint),
                   GetContrastRatio(midpoint, lightest));
 
@@ -333,7 +299,7 @@ TEST(ColorUtils, BlendForMinContrast_MatchesNaiveImplementation) {
   SkAlpha alpha = SK_AlphaTRANSPARENT;
   SkColor color = default_foreground;
   for (int i = SK_AlphaTRANSPARENT; i <= SK_AlphaOPAQUE; ++i) {
-    alpha = SkAlpha{i};
+    alpha = static_cast<SkAlpha>(i);
     color = AlphaBlend(high_contrast_foreground, default_foreground, alpha);
     if (GetContrastRatio(color, background) >= kContrastRatio)
       break;
@@ -341,6 +307,126 @@ TEST(ColorUtils, BlendForMinContrast_MatchesNaiveImplementation) {
 
   EXPECT_EQ(alpha, result.alpha);
   EXPECT_EQ(color, result.color);
+}
+
+TEST(ColorUtils, PickGoogleColor) {
+  // If the input color already has sufficient contrast, it should be accepted.
+  EXPECT_EQ(gfx::kGoogleBlue800,
+            PickGoogleColor(gfx::kGoogleBlue800, gfx::kGoogleBlue700, 1.1f));
+  EXPECT_EQ(gfx::kGoogleBlue600,
+            PickGoogleColor(gfx::kGoogleBlue600, gfx::kGoogleBlue700, 1.1f));
+
+  // If it does not, it should stay on the same side of the background if
+  // possible.
+  EXPECT_EQ(gfx::kGoogleBlue900,
+            PickGoogleColor(gfx::kGoogleBlue800, gfx::kGoogleBlue700, 1.25f));
+  EXPECT_EQ(gfx::kGoogleBlue500,
+            PickGoogleColor(gfx::kGoogleBlue600, gfx::kGoogleBlue700, 1.25f));
+
+  // If even Blue 900 does not contrast enough, Grey 900 is a slightly darker
+  // color.
+  EXPECT_EQ(gfx::kGoogleGrey900,
+            PickGoogleColor(gfx::kGoogleBlue800, gfx::kGoogleBlue700, 1.5f));
+
+  // If no dark colors have enough contrast, the result should be a lighter
+  // color instead.
+  EXPECT_EQ(gfx::kGoogleBlue200,
+            PickGoogleColor(gfx::kGoogleBlue800, gfx::kGoogleBlue700, 3.0f));
+
+  // If the requested contrast is too high for any color to be sufficient, the
+  // result should be the most-contrasting endpoint.
+  EXPECT_EQ(SK_ColorWHITE,
+            PickGoogleColor(gfx::kGoogleBlue800, gfx::kGoogleBlue700,
+                            kMaximumPossibleContrast));
+
+  // Matching the background exactly is reasonable, if the minimum contrast is
+  // zero.
+  EXPECT_EQ(
+      gfx::kGoogleBlue700,
+      PickGoogleColor(gfx::kGoogleBlue800, gfx::kGoogleBlue700, 0.0f, 1.2f));
+
+  // Blue 600 is the only color that fits in the requested contrast window, but
+  // it's on the other side of the background from the input, so something
+  // closer to the input is used instead.
+  EXPECT_EQ(
+      gfx::kGoogleBlue800,
+      PickGoogleColor(gfx::kGoogleBlue900, gfx::kGoogleBlue700, 1.18f, 1.2f));
+}
+
+TEST(ColorUtils, PickGoogleColorTwoBackgrounds) {
+  // If the input color already has sufficient contrast, it should be accepted.
+  EXPECT_EQ(gfx::kGoogleBlue800, PickGoogleColorTwoBackgrounds(
+                                     gfx::kGoogleBlue800, gfx::kGoogleBlue700,
+                                     gfx::kGoogleBlue200, 1.1f));
+  EXPECT_EQ(gfx::kGoogleBlue600, PickGoogleColorTwoBackgrounds(
+                                     gfx::kGoogleBlue600, gfx::kGoogleBlue700,
+                                     gfx::kGoogleBlue200, 1.1f));
+  EXPECT_EQ(gfx::kGoogleBlue300, PickGoogleColorTwoBackgrounds(
+                                     gfx::kGoogleBlue300, gfx::kGoogleBlue700,
+                                     gfx::kGoogleBlue200, 1.1f));
+  EXPECT_EQ(gfx::kGoogleBlue100, PickGoogleColorTwoBackgrounds(
+                                     gfx::kGoogleBlue100, gfx::kGoogleBlue700,
+                                     gfx::kGoogleBlue200, 1.1f));
+
+  // If it does not, it should stay on the same side of the background if
+  // possible.
+  EXPECT_EQ(gfx::kGoogleBlue900, PickGoogleColorTwoBackgrounds(
+                                     gfx::kGoogleBlue800, gfx::kGoogleBlue700,
+                                     gfx::kGoogleBlue200, 1.25f));
+  EXPECT_EQ(gfx::kGoogleBlue500, PickGoogleColorTwoBackgrounds(
+                                     gfx::kGoogleBlue600, gfx::kGoogleBlue700,
+                                     gfx::kGoogleBlue200, 1.25f));
+  EXPECT_EQ(gfx::kGoogleBlue400, PickGoogleColorTwoBackgrounds(
+                                     gfx::kGoogleBlue300, gfx::kGoogleBlue700,
+                                     gfx::kGoogleBlue200, 1.3f));
+  EXPECT_EQ(gfx::kGoogleBlue050, PickGoogleColorTwoBackgrounds(
+                                     gfx::kGoogleBlue100, gfx::kGoogleBlue700,
+                                     gfx::kGoogleBlue200, 1.3f));
+
+  // If the blue endpoints do not contrast enough, the grey endpoints are
+  // available.
+  EXPECT_EQ(gfx::kGoogleGrey900, PickGoogleColorTwoBackgrounds(
+                                     gfx::kGoogleBlue800, gfx::kGoogleBlue700,
+                                     gfx::kGoogleBlue200, 1.5f));
+  EXPECT_EQ(SK_ColorWHITE, PickGoogleColorTwoBackgrounds(
+                               gfx::kGoogleBlue100, gfx::kGoogleBlue700,
+                               gfx::kGoogleBlue200, 1.5f));
+
+  // If it's not possible to achieve sufficient contrast on the same side of the
+  // background, then the result color should cross to the other side.
+  EXPECT_EQ(gfx::kGoogleBlue500, PickGoogleColorTwoBackgrounds(
+                                     gfx::kGoogleBlue100, gfx::kGoogleBlue200,
+                                     gfx::kGoogleBlue900, 1.7f));
+  EXPECT_EQ(gfx::kGoogleBlue100, PickGoogleColorTwoBackgrounds(
+                                     gfx::kGoogleBlue800, gfx::kGoogleBlue700,
+                                     gfx::kGoogleBlue600, 3.0f));
+
+  // If the requested contrast is too high for any color to be sufficient, the
+  // result should be the most-contrasting point.
+  EXPECT_EQ(SK_ColorWHITE, PickGoogleColorTwoBackgrounds(
+                               gfx::kGoogleBlue800, gfx::kGoogleBlue700,
+                               gfx::kGoogleBlue600, kMaximumPossibleContrast));
+  EXPECT_EQ(gfx::kGoogleGrey900,
+            PickGoogleColorTwoBackgrounds(
+                gfx::kGoogleBlue100, gfx::kGoogleBlue200, gfx::kGoogleBlue300,
+                kMaximumPossibleContrast));
+  EXPECT_EQ(gfx::kGoogleBlue400,
+            PickGoogleColorTwoBackgrounds(
+                gfx::kGoogleBlue100, gfx::kGoogleBlue900, gfx::kGoogleBlue050,
+                kMaximumPossibleContrast));
+
+  // Matching the background exactly is reasonable, if the minimum contrast is
+  // zero.
+  EXPECT_EQ(gfx::kGoogleBlue700, PickGoogleColorTwoBackgrounds(
+                                     gfx::kGoogleBlue800, gfx::kGoogleBlue700,
+                                     gfx::kGoogleBlue600, 0.0f, 1.2f));
+
+  // Blue 600 is the only color that fits in the requested contrast window, but
+  // it's on the other side of the background from the input, so something
+  // closer to the input is used instead.
+  EXPECT_EQ(gfx::kGoogleBlue800, PickGoogleColorTwoBackgrounds(
+                                     gfx::kGoogleBlue900, gfx::kGoogleBlue700,
+                                     gfx ::kGoogleBlue500, 1.18f, 1.2f));
 }
 
 }  // namespace color_utils

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,7 +7,7 @@
 
 #include <vector>
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "ui/aura/aura_export.h"
 #include "ui/aura/window_observer.h"
 
@@ -19,10 +19,14 @@ class AURA_EXPORT WindowTracker : public WindowObserver {
  public:
   // A vector is used for tracking the windows (instead of a set) as some places
   // care about ordering.
-  using WindowList = std::vector<Window*>;
+  using WindowList = std::vector<raw_ptr<Window, VectorExperimental>>;
 
   explicit WindowTracker(const WindowList& windows);
   WindowTracker();
+
+  WindowTracker(const WindowTracker&) = delete;
+  WindowTracker& operator=(const WindowTracker&) = delete;
+
   ~WindowTracker() override;
 
   // Returns the set of windows being observed.
@@ -47,8 +51,6 @@ class AURA_EXPORT WindowTracker : public WindowObserver {
 
  private:
   WindowList windows_;
-
-  DISALLOW_COPY_AND_ASSIGN(WindowTracker);
 };
 
 }  // namespace aura

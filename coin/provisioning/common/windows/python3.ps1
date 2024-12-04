@@ -1,36 +1,6 @@
-#############################################################################
-##
-## Copyright (C) 2019 The Qt Company Ltd.
-## Copyright (C) 2017 Pelagicore AG
-## Contact: http://www.qt.io/licensing/
-##
-## This file is part of the provisioning scripts of the Qt Toolkit.
-##
-## $QT_BEGIN_LICENSE:LGPL21$
-## Commercial License Usage
-## Licensees holding valid commercial Qt licenses may use this file in
-## accordance with the commercial license agreement provided with the
-## Software or, alternatively, in accordance with the terms contained in
-## a written agreement between you and The Qt Company. For licensing terms
-## and conditions see http://www.qt.io/terms-conditions. For further
-## information use the contact form at http://www.qt.io/contact-us.
-##
-## GNU Lesser General Public License Usage
-## Alternatively, this file may be used under the terms of the GNU Lesser
-## General Public License version 2.1 or version 3 as published by the Free
-## Software Foundation and appearing in the file LICENSE.LGPLv21 and
-## LICENSE.LGPLv3 included in the packaging of this file. Please review the
-## following information to ensure the GNU Lesser General Public License
-## requirements will be met: https://www.gnu.org/licenses/lgpl.html and
-## http://www.gnu.org/licenses/old-licenses/lgpl-2.1.html.
-##
-## As a special exception, The Qt Company gives you certain additional
-## rights. These rights are described in The Qt Company LGPL Exception
-## version 1.1, included in the file LGPL_EXCEPTION.txt in this package.
-##
-## $QT_END_LICENSE$
-##
-#############################################################################
+# Copyright (C) 2019 The Qt Company Ltd.
+# Copyright (C) 2017 Pelagicore AG
+# SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 # This script installs Python $version.
 # Python3 is required for building some qt modules.
@@ -46,13 +16,26 @@ param(
 $package = "C:\Windows\temp\python-$version.exe"
 
 # check bit version
-if ( $archVer -eq 64 ) {
-    Write-Host "Installing 64 bit Python"
-    $externalUrl = "https://www.python.org/ftp/python/$version/python-$version-amd64.exe"
-    $internalUrl = "http://ci-files01-hki.intra.qt.io/input/windows/python-$version-amd64.exe"
-} else {
-    $externalUrl = "https://www.python.org/ftp/python/$version/python-$version.exe"
-    $internalUrl = "http://ci-files01-hki.intra.qt.io/input/windows/python-$version.exe"
+$cpu_arch = Get-CpuArchitecture
+Write-Host "Installing $cpu_arch Python"
+switch ($cpu_arch) {
+    arm64 {
+        $externalUrl = "https://www.python.org/ftp/python/$version/python-$version-arm64.exe"
+        $internalUrl = "http://ci-files01-hki.ci.qt.io/input/windows/python-$version-arm64.exe"
+        Break
+    }
+    x64 {
+        if ($archVer -eq "64") {
+            $externalUrl = "https://www.python.org/ftp/python/$version/python-$version-amd64.exe"
+            $internalUrl = "http://ci-files01-hki.ci.qt.io/input/windows/python-$version-amd64.exe"
+        } else {
+            $externalUrl = "https://www.python.org/ftp/python/$version/python-$version.exe"
+            $internalUrl = "http://ci-files01-hki.ci.qt.io/input/windows/python-$version.exe"
+        }
+    }
+    default {
+        throw "Unknown architecture $cpu_arch"
+    }
 }
 
 Write-Host "Fetching from URL..."
@@ -60,8 +43,7 @@ Download $externalUrl $internalUrl $package
 Verify-Checksum $package $sha1
 Write-Host "Installing $package..."
 Run-Executable "$package" "/q TargetDir=$install_path"
-Write-Host "Remove $package..."
-Remove-Item -Path $package
+Remove "$package"
 
 # For cross-compilation we export some helper env variable
 if (($archVer -eq 32) -And (Is64BitWinHost)) {
@@ -91,17 +73,22 @@ if (IsProxyEnabled) {
 Write-Host "Upgrade pip3 to the latest version available."
 Run-Executable "$install_path\python.exe" "-m pip install --upgrade pip"
 
-Run-Executable "$install_path\Scripts\pip3.exe" "$pip_args install virtualenv wheel"
+Write-Host "Configure pip"
+Run-Executable "$install_path\python.exe" "-m pip config --user set global.index https://ci-files01-hki.ci.qt.io/input/python_module_cache"
+Run-Executable "$install_path\python.exe" "-m pip config --user set global.extra-index-url https://pypi.org/simple/"
+Run-Executable "$install_path\Scripts\pip3.exe" "$pip_args install virtualenv wheel html5lib"
 
-# Install all needed packages in a special wheel cache directory
-$python3_wheel_dir="$install_path\python3-wheels"
-Run-Executable "$install_path\Scripts\pip3.exe" "$pip_args wheel --wheel-dir $python3_wheel_dir -r $PSScriptRoot\..\shared\requirements.txt"
-
-Set-EnvironmentVariable "PYTHON3_WHEEL_CACHE-$version-$archVer" "$python3_wheel_dir"
-# PYTHON3_WHEEL_CACHE is already in use so we should keep it pointing to 64 bit default
-# wheel cache
-if (($setDefault) -And ($archVer -eq 64)) {
-    Set-EnvironmentVariable "PYTHON3_WHEEL_CACHE" "$python3_wheel_dir"
+# Check if python version is higher than 3.10.
+# ntia-conformance-checker requires at least 3.8
+# reuse requires at least 3.9, to avoid conflict with installed conan jinja package,
+# at least until we use virtual envs.
+# The lowest version available on all windows platforms that we currently run on that satisfies
+# these requirements is 3.10.
+if ([version]::Parse($version) -gt [version]::Parse("3.10")) {
+    Run-Executable "$install_path\Scripts\pip3.exe" "$pip_args install -r $PSScriptRoot\..\shared\sbom_requirements.txt"
+    # Set the environment variable for the build system to know which python path to use for SBOM
+    # processing.
+    Set-EnvironmentVariable "SBOM_PYTHON_APPS_PATH" "$install_path\Scripts"
 }
 
 # Install PyPDF2 for QSR documentation

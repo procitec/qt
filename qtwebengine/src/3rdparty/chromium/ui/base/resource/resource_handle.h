@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,10 +6,15 @@
 #define UI_BASE_RESOURCE_RESOURCE_HANDLE_H_
 
 #include <stdint.h>
+#include <vector>
 
+#include <vector>
+
+#include "base/component_export.h"
+#include "base/dcheck_is_on.h"
 #include "base/strings/string_piece.h"
-#include "ui/base/resource/data_pack_export.h"
-#include "ui/base/resource/scale_factor.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "ui/base/resource/resource_scale_factor.h"
 
 namespace base {
 class RefCountedStaticMemory;
@@ -17,7 +22,7 @@ class RefCountedStaticMemory;
 
 namespace ui {
 
-class UI_DATA_PACK_EXPORT ResourceHandle {
+class COMPONENT_EXPORT(UI_DATA_PACK) ResourceHandle {
  public:
   // What type of encoding the text resources use.
   enum TextEncodingType {
@@ -34,8 +39,8 @@ class UI_DATA_PACK_EXPORT ResourceHandle {
   // Get resource by id |resource_id|, filling in |data|.
   // The data is owned by the DataPack object and should not be modified.
   // Returns false if the resource id isn't found.
-  virtual bool GetStringPiece(uint16_t resource_id,
-                              base::StringPiece* data) const = 0;
+  virtual absl::optional<base::StringPiece> GetStringPiece(
+      uint16_t resource_id) const = 0;
 
   // Like GetStringPiece(), but returns a reference to memory.
   // Caller owns the returned object.
@@ -47,7 +52,14 @@ class UI_DATA_PACK_EXPORT ResourceHandle {
 
   // The scale of images in this resource pack relative to images in the 1x
   // resource pak.
-  virtual ScaleFactor GetScaleFactor() const = 0;
+  virtual ResourceScaleFactor GetResourceScaleFactor() const = 0;
+
+#if DCHECK_IS_ON()
+  // Checks to see if any resource in this DataPack already exists in the list
+  // of resources.
+  virtual void CheckForDuplicateResources(
+      const std::vector<std::unique_ptr<ResourceHandle>>& packs) = 0;
+#endif
 };
 
 }  // namespace ui

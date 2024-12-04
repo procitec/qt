@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtQuick module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qquickimage_p.h"
 #include "qquickimage_p_p.h"
@@ -83,7 +47,7 @@ QQuickImagePrivate::QQuickImagePrivate()
 
 /*!
     \qmltype Image
-    \instantiates QQuickImage
+    \nativetype QQuickImage
     \inqmlmodule QtQuick
     \ingroup qtquick-visual
     \inherits Item
@@ -103,6 +67,8 @@ QQuickImagePrivate::QQuickImagePrivate()
     to be scaled to that size. This behavior can be changed by setting the
     \l fillMode property, allowing the image to be stretched and tiled instead.
 
+    It is possible to provide \l {High Resolution Versions of Images}{"@nx" high DPI syntax}.
+
     \section1 Example Usage
 
     The following example shows the simplest usage of the Image type.
@@ -115,19 +81,33 @@ QQuickImagePrivate::QQuickImagePrivate()
 
     \clearfloat
 
-    \section1 OpenGL Texture Files
+    \section1 Compressed Texture Files
 
-    When the default OpenGL \l{Qt Quick Scene Graph}{scene graph} backend is in
-    use, images can also be supplied in compressed texture files. The content
-    must be a simple RGB(A) format 2D texture. Supported compression schemes
-    are only limited by the underlying OpenGL driver and GPU. The following
-    container file formats are supported:
+    When supported by the implementation of the underlying graphics API at run
+    time, images can also be supplied in compressed texture files. The content
+    must be a simple RGB(A) format 2D texture. Supported compression schemes are
+    only limited by the underlying driver and GPU. The following container file
+    formats are supported:
 
     \list
     \li \c PKM (since Qt 5.10)
     \li \c KTX (since Qt 5.11)
     \li \c ASTC (since Qt 5.13)
     \endlist
+
+    \note The intended vertical orientation of an image in a texture file is not generally well
+    defined. Different texture compression tools have different defaults and options of when to
+    perform vertical flipping of the input image. If an image from a texture file appears upside
+    down, flipping may need to be toggled in the asset conditioning process. Alternatively, the
+    Image element itself can be flipped by either applying a suitable transformation via the
+    transform property or, more conveniently, by setting the mirrorVertically property:
+    \badcode
+    transform: [ Translate { y: -myImage.height }, Scale { yScale: -1 } ]
+    \endcode
+    or
+    \badcode
+    mirrorVertically: true
+    \endcode
 
     \note Semi-transparent original images require alpha pre-multiplication
     prior to texture compression in order to be correctly displayed in Qt
@@ -137,6 +117,43 @@ QQuickImagePrivate::QQuickImagePrivate()
     convert foo.png \( +clone -alpha Extract \) -channel RGB -compose Multiply -composite foo_pm.png
     \endcode
 
+    Do not confuse container formats, such as, \c KTX, and the format of the
+    actual texture data stored in the container file. For example, reading a
+    \c KTX file is supported on all platforms, independently of what GPU driver is
+    used at run time. However, this does not guarantee that the compressed
+    texture format, used by the data in the file, is supported at run time. For
+    example, if the KTX file contains compressed data with the format
+    \c{ETC2 RGBA8}, and the 3D graphics API implementation used at run time does not
+    support \c ETC2 compressed textures, the Image item will not display
+    anything.
+
+    \note Compressed texture format support is not under Qt's control, and it
+    is up to the application or device developer to ensure the compressed
+    texture data is provided in the appropriate format for the target
+    environment(s).
+
+    Do not assume that compressed format support is specific to a platform. It
+    may also be specific to the driver and 3D API implementation in use on that
+    particular platform. In practice, implementations of different 3D graphics
+    APIs (e.g., Vulkan and OpenGL) on the same platform (e.g., Windows) from
+    the same vendor for the same hardware may offer a different set of
+    compressed texture formats.
+
+    When targeting desktop environments (Windows, macOS, Linux) only, a general
+    recommendation is to consider using the \c{DXTn}/\c{BCn} formats since
+    these tend to have the widest support amongst the implementations of Direct
+    3D, Vulkan, OpenGL, and Metal on these platforms. In contrast, when
+    targeting mobile or embedded devices, the \c ETC2 or \c ASTC formats are
+    likely to be a better choice since these are typically the formats
+    supported by the OpenGL ES implementations on such hardware.
+
+    An application that intends to run across desktop, mobile, and embedded
+    hardware should plan and design its use of compressed textures carefully.
+    It is highly likely that relying on a single format is not going to be
+    sufficient, and therefore the application will likely need to branch based
+    on the platform to use compressed textures in a format appropriate there,
+    or perhaps to skip using compressed textures in some cases.
+
     \section1 Automatic Detection of File Extension
 
     If the \l source URL indicates a non-existing local file or resource, the
@@ -144,10 +161,10 @@ QQuickImagePrivate::QQuickImagePrivate()
     file can be found by appending any of the supported image file extensions
     to the \l source URL, then that file will be loaded.
 
-    If the OpenGL \l{Qt Quick Scene Graph}{scene graph} backend is in use, the
-    file search the attempts the OpenGL texture file extensions first. If the
-    search is unsuccessful, it attempts to search with the file extensions for
-    the \l{QImageReader::supportedImageFormats()}{conventional image file
+    The file search attempts to look for compressed texture container file
+    extensions first. If the search is unsuccessful, it attempts to search with
+    the file extensions for the
+    \l{QImageReader::supportedImageFormats()}{conventional image file
     types}. For example:
 
     \snippet qml/image-ext.qml ext
@@ -203,22 +220,16 @@ QQuickImage::~QQuickImage()
 void QQuickImagePrivate::setImage(const QImage &image)
 {
     Q_Q(QQuickImage);
-    pix.setImage(image);
-
+    currentPix->setImage(image);
     q->pixmapChange();
-    status = pix.isNull() ? QQuickImageBase::Null : QQuickImageBase::Ready;
-
     q->update();
 }
 
 void QQuickImagePrivate::setPixmap(const QQuickPixmap &pixmap)
 {
     Q_Q(QQuickImage);
-    pix.setPixmap(pixmap);
-
+    currentPix->setPixmap(pixmap);
     q->pixmapChange();
-    status = pix.isNull() ? QQuickImageBase::Null : QQuickImageBase::Ready;
-
     q->update();
 }
 
@@ -227,15 +238,15 @@ void QQuickImagePrivate::setPixmap(const QQuickPixmap &pixmap)
 
     Set this property to define what happens when the source image has a different size
     than the item.
-    \list
-    \li Image.Stretch - the image is scaled to fit
-    \li Image.PreserveAspectFit - the image is scaled uniformly to fit without cropping
-    \li Image.PreserveAspectCrop - the image is scaled uniformly to fill, cropping if necessary
-    \li Image.Tile - the image is duplicated horizontally and vertically
-    \li Image.TileVertically - the image is stretched horizontally and tiled vertically
-    \li Image.TileHorizontally - the image is stretched vertically and tiled horizontally
-    \li Image.Pad - the image is not transformed
-    \endlist
+
+    \value Image.Stretch            the image is scaled to fit
+    \value Image.PreserveAspectFit  the image is scaled uniformly to fit without cropping
+    \value Image.PreserveAspectCrop the image is scaled uniformly to fill, cropping if necessary
+    \value Image.Tile               the image is duplicated horizontally and vertically
+    \value Image.TileVertically     the image is stretched horizontally and tiled vertically
+    \value Image.TileHorizontally   the image is stretched vertically and tiled horizontally
+    \value Image.Pad                the image is not transformed
+    \br
 
     \table
 
@@ -370,12 +381,11 @@ qreal QQuickImage::paintedHeight() const
     \readonly
 
     This property holds the status of image loading.  It can be one of:
-    \list
-    \li Image.Null - no image has been set
-    \li Image.Ready - the image has been loaded
-    \li Image.Loading - the image is currently being loaded
-    \li Image.Error - an error occurred while loading the image
-    \endlist
+
+    \value Image.Null       No image has been set
+    \value Image.Ready      The image has been loaded
+    \value Image.Loading    The image is currently being loaded
+    \value Image.Error      An error occurred while loading the image
 
     Use this status to provide an update or respond to the status change in some way.
     For example, you could:
@@ -480,6 +490,8 @@ qreal QQuickImage::paintedHeight() const
 
     \note \e {Changing this property dynamically causes the image source to be reloaded,
     potentially even from the network, if it is not in the disk cache.}
+
+    \sa {Qt Quick Examples - Pointer Handlers}
 */
 
 /*!
@@ -534,7 +546,7 @@ qreal QQuickImage::paintedHeight() const
 
     The URL may be absolute, or relative to the URL of the component.
 
-    \sa QQuickImageProvider {OpenGL Texture Files} {Automatic Detection of File Extension}
+    \sa QQuickImageProvider, {Compressed Texture Files}, {Automatic Detection of File Extension}
 */
 
 /*!
@@ -570,6 +582,17 @@ qreal QQuickImage::paintedHeight() const
 */
 
 /*!
+    \qmlproperty bool QtQuick::Image::mirrorVertically
+
+    This property holds whether the image should be vertically inverted
+    (effectively displaying a mirrored image).
+
+    The default value is false.
+
+    \since 6.2
+*/
+
+/*!
     \qmlproperty enumeration QtQuick::Image::horizontalAlignment
     \qmlproperty enumeration QtQuick::Image::verticalAlignment
 
@@ -584,12 +607,12 @@ void QQuickImage::updatePaintedGeometry()
     Q_D(QQuickImage);
 
     if (d->fillMode == PreserveAspectFit) {
-        if (!d->pix.width() || !d->pix.height()) {
+        if (!d->currentPix->width() || !d->currentPix->height()) {
             setImplicitSize(0, 0);
             return;
         }
-        const qreal pixWidth = d->pix.width() / d->devicePixelRatio;
-        const qreal pixHeight = d->pix.height() / d->devicePixelRatio;
+        const qreal pixWidth = d->currentPix->width() / d->devicePixelRatio;
+        const qreal pixHeight = d->currentPix->height() / d->devicePixelRatio;
         const qreal w = widthValid() ? width() : pixWidth;
         const qreal widthScale = w / pixWidth;
         const qreal h = heightValid() ? height() : pixHeight;
@@ -606,10 +629,10 @@ void QQuickImage::updatePaintedGeometry()
         setImplicitSize(iWidth, iHeight);
 
     } else if (d->fillMode == PreserveAspectCrop) {
-        if (!d->pix.width() || !d->pix.height())
+        if (!d->currentPix->width() || !d->currentPix->height())
             return;
-        const qreal pixWidth = d->pix.width() / d->devicePixelRatio;
-        const qreal pixHeight = d->pix.height() / d->devicePixelRatio;
+        const qreal pixWidth = d->currentPix->width() / d->devicePixelRatio;
+        const qreal pixHeight = d->currentPix->height() / d->devicePixelRatio;
         qreal widthScale = width() / pixWidth;
         qreal heightScale = height() / pixHeight;
         if (widthScale < heightScale) {
@@ -621,8 +644,8 @@ void QQuickImage::updatePaintedGeometry()
         d->paintedHeight = heightScale * pixHeight;
         d->paintedWidth = widthScale * pixWidth;
     } else if (d->fillMode == Pad) {
-        d->paintedWidth = d->pix.width() / d->devicePixelRatio;
-        d->paintedHeight = d->pix.height() / d->devicePixelRatio;
+        d->paintedWidth = d->currentPix->width() / d->devicePixelRatio;
+        d->paintedHeight = d->currentPix->height() / d->devicePixelRatio;
     } else {
         d->paintedWidth = width();
         d->paintedHeight = height();
@@ -630,9 +653,9 @@ void QQuickImage::updatePaintedGeometry()
     emit paintedGeometryChanged();
 }
 
-void QQuickImage::geometryChanged(const QRectF &newGeometry, const QRectF &oldGeometry)
+void QQuickImage::geometryChange(const QRectF &newGeometry, const QRectF &oldGeometry)
 {
-    QQuickImageBase::geometryChanged(newGeometry, oldGeometry);
+    QQuickImageBase::geometryChange(newGeometry, oldGeometry);
     if (newGeometry.size() != oldGeometry.size())
         updatePaintedGeometry();
 }
@@ -664,7 +687,7 @@ QSGTextureProvider *QQuickImage::textureProvider() const
         dd->provider = new QQuickImageTextureProvider;
         dd->provider->m_smooth = d->smooth;
         dd->provider->m_mipmap = d->mipmap;
-        dd->provider->updateTexture(d->sceneGraphRenderContext()->textureForFactory(d->pix.textureFactory(), window()));
+        dd->provider->updateTexture(d->sceneGraphRenderContext()->textureForFactory(d->currentPix->textureFactory(), window()));
     }
 
     return d->provider;
@@ -690,7 +713,7 @@ QSGNode *QQuickImage::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
 {
     Q_D(QQuickImage);
 
-    QSGTexture *texture = d->sceneGraphRenderContext()->textureForFactory(d->pix.textureFactory(), window());
+    QSGTexture *texture = d->sceneGraphRenderContext()->textureForFactory(d->currentPix->textureFactory(), window());
 
     // Copy over the current texture state into the texture provider...
     if (d->provider) {
@@ -715,8 +738,8 @@ QSGNode *QQuickImage::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
     QSGTexture::WrapMode hWrap = QSGTexture::ClampToEdge;
     QSGTexture::WrapMode vWrap = QSGTexture::ClampToEdge;
 
-    qreal pixWidth = (d->fillMode == PreserveAspectFit) ? d->paintedWidth : d->pix.width() / d->devicePixelRatio;
-    qreal pixHeight = (d->fillMode == PreserveAspectFit) ? d->paintedHeight :  d->pix.height() / d->devicePixelRatio;
+    qreal pixWidth = (d->fillMode == PreserveAspectFit) ? d->paintedWidth : d->currentPix->width() / d->devicePixelRatio;
+    qreal pixHeight = (d->fillMode == PreserveAspectFit) ? d->paintedHeight :  d->currentPix->height() / d->devicePixelRatio;
 
     int xOffset = 0;
     if (d->hAlign == QQuickImage::AlignHCenter)
@@ -733,36 +756,36 @@ QSGNode *QQuickImage::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
     switch (d->fillMode) {
     case Stretch:
         targetRect = QRectF(0, 0, width(), height());
-        sourceRect = d->pix.rect();
+        sourceRect = d->currentPix->rect();
         break;
 
     case PreserveAspectFit:
         targetRect = QRectF(xOffset, yOffset, d->paintedWidth, d->paintedHeight);
-        sourceRect = d->pix.rect();
+        sourceRect = d->currentPix->rect();
         break;
 
     case PreserveAspectCrop: {
         targetRect = QRectF(0, 0, width(), height());
-        qreal wscale = width() / qreal(d->pix.width());
-        qreal hscale = height() / qreal(d->pix.height());
+        qreal wscale = width() / qreal(d->currentPix->width());
+        qreal hscale = height() / qreal(d->currentPix->height());
 
         if (wscale > hscale) {
-            int src = (hscale / wscale) * qreal(d->pix.height());
+            int src = (hscale / wscale) * qreal(d->currentPix->height());
             int y = 0;
             if (d->vAlign == QQuickImage::AlignVCenter)
-                y = qCeil((d->pix.height() - src) / 2.);
+                y = qCeil((d->currentPix->height() - src) / 2.);
             else if (d->vAlign == QQuickImage::AlignBottom)
-                y = qCeil(d->pix.height() - src);
-            sourceRect = QRectF(0, y, d->pix.width(), src);
+                y = qCeil(d->currentPix->height() - src);
+            sourceRect = QRectF(0, y, d->currentPix->width(), src);
 
         } else {
-            int src = (wscale / hscale) * qreal(d->pix.width());
+            int src = (wscale / hscale) * qreal(d->currentPix->width());
             int x = 0;
             if (d->hAlign == QQuickImage::AlignHCenter)
-                x = qCeil((d->pix.width() - src) / 2.);
+                x = qCeil((d->currentPix->width() - src) / 2.);
             else if (d->hAlign == QQuickImage::AlignRight)
-                x = qCeil(d->pix.width() - src);
-            sourceRect = QRectF(x, 0, src, d->pix.height());
+                x = qCeil(d->currentPix->width() - src);
+            sourceRect = QRectF(x, 0, src, d->currentPix->height());
         }
         }
         break;
@@ -776,13 +799,13 @@ QSGNode *QQuickImage::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
 
     case TileHorizontally:
         targetRect = QRectF(0, 0, width(), height());
-        sourceRect = QRectF(-xOffset, 0, width(), d->pix.height());
+        sourceRect = QRectF(-xOffset, 0, width(), d->currentPix->height());
         hWrap = QSGTexture::Repeat;
         break;
 
     case TileVertically:
         targetRect = QRectF(0, 0, width(), height());
-        sourceRect = QRectF(0, -yOffset, d->pix.width(), height());
+        sourceRect = QRectF(0, -yOffset, d->currentPix->width(), height());
         vWrap = QSGTexture::Repeat;
         break;
 
@@ -796,8 +819,8 @@ QSGNode *QQuickImage::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
         break;
     }
 
-    qreal nsWidth = (hWrap == QSGTexture::Repeat || d->fillMode == Pad) ? d->pix.width() / d->devicePixelRatio : d->pix.width();
-    qreal nsHeight = (vWrap == QSGTexture::Repeat || d->fillMode == Pad) ? d->pix.height() / d->devicePixelRatio : d->pix.height();
+    qreal nsWidth = (hWrap == QSGTexture::Repeat || d->fillMode == Pad) ? d->currentPix->width() / d->devicePixelRatio : d->currentPix->width();
+    qreal nsHeight = (vWrap == QSGTexture::Repeat || d->fillMode == Pad) ? d->currentPix->height() / d->devicePixelRatio : d->currentPix->height();
     QRectF nsrect(sourceRect.x() / nsWidth,
                   sourceRect.y() / nsHeight,
                   sourceRect.width() / nsWidth,
@@ -829,7 +852,7 @@ QSGNode *QQuickImage::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
     node->setTargetRect(targetRect);
     node->setInnerTargetRect(targetRect);
     node->setSubSourceRect(nsrect);
-    node->setMirror(d->mirror);
+    node->setMirror(d->mirrorHorizontally, d->mirrorVertically);
     node->setAntialiasing(d->antialiasing);
     node->update();
 
@@ -919,6 +942,8 @@ void QQuickImage::setMipmap(bool use)
     emit mipmapChanged(d->mipmap);
 
     d->pixmapChanged = true;
+    if (isComponentComplete())
+        load();
     update();
 }
 
@@ -944,4 +969,27 @@ void QQuickImage::setMipmap(bool use)
     frameCount is the number of frames in the image. Most images have only one frame.
 */
 
+/*!
+    \qmlproperty bool QtQuick::Image::retainWhileLoading
+    \since 6.8
+
+//! [qml-image-retainwhileloading]
+    This property defines the behavior when the \l source property is changed and loading happens
+    asynchronously. This is the case when the \l asynchronous property is set to \c true, or if the
+    image is not on the local file system.
+
+    If \c retainWhileLoading is \c false (the default), the old image is discarded immediately, and
+    the component is cleared while the new image is being loaded. If set to \c true, the old image
+    is retained and remains visible until the new one is ready.
+
+    Enabling this property can avoid flickering in cases where loading the new image takes a long
+    time. It comes at the cost of some extra memory use for double buffering while the new image is
+    being loaded.
+//! [qml-image-retainwhileloading]
+ */
+
 QT_END_NAMESPACE
+
+#include "moc_qquickimage_p_p.cpp"
+
+#include "moc_qquickimage_p.cpp"

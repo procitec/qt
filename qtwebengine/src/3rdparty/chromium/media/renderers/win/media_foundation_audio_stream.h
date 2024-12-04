@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,8 +8,10 @@
 #include <mfapi.h>
 #include <mfidl.h>
 
+#include "media/base/win/mf_helpers.h"
 #include "media/renderers/win/media_foundation_stream_wrapper.h"
 
+#include "media/base/media_log.h"
 #include "media/media_buildflags.h"
 
 namespace media {
@@ -20,6 +22,7 @@ class MediaFoundationAudioStream : public MediaFoundationStreamWrapper {
   static HRESULT Create(int stream_id,
                         IMFMediaSource* parent_source,
                         DemuxerStream* demuxer_stream,
+                        std::unique_ptr<MediaLog> media_log,
                         MediaFoundationStreamWrapper** stream_out);
   bool IsEncrypted() const override;
   HRESULT GetMediaType(IMFMediaType** media_type_out) override;
@@ -36,6 +39,14 @@ class MediaFoundationAACAudioStream : public MediaFoundationAudioStream {
   bool enable_adts_header_removal_ = false;
 };
 #endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
+
+#if BUILDFLAG(ENABLE_PLATFORM_AC4_AUDIO)
+// The AC4 specific audio stream.
+class MediaFoundationAC4AudioStream : public MediaFoundationAudioStream {
+ public:
+  HRESULT GetMediaType(IMFMediaType** media_type_out) override;
+};
+#endif  // BUILDFLAG(ENABLE_PLATFORM_AC4_AUDIO)
 
 }  // namespace media
 

@@ -28,7 +28,6 @@
 
 #include <memory>
 
-#include "base/macros.h"
 #include "third_party/blink/renderer/platform/language.h"
 #include "third_party/blink/renderer/platform/text/date_components.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
@@ -181,6 +180,8 @@ class PLATFORM_EXPORT Locale {
   String FormatDateTime(const DateComponents&,
                         FormatType = kFormatTypeUnspecified);
 
+  Locale(const Locale&) = delete;
+  Locale& operator=(const Locale&) = delete;
   virtual ~Locale();
 
  protected:
@@ -190,6 +191,15 @@ class PLATFORM_EXPORT Locale {
     kGroupSeparatorIndex = 11,
     kDecimalSymbolsSize
   };
+
+  static constexpr char kFallbackWeekdayShortNames[7][4] = {
+      "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+  static constexpr char kFallbackMonthShortNames[12][4] = {
+      "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+      "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+  static constexpr const char* kFallbackMonthNames[12] = {
+      "January", "February", "March",     "April",   "May",      "June",
+      "July",    "August",   "September", "October", "November", "December"};
 
   Locale() : has_locale_data_(false) {}
   virtual void InitializeLocaleData() = 0;
@@ -216,9 +226,7 @@ class PLATFORM_EXPORT Locale {
   // Does the locale use single character filtering to do additional number
   // input validation?
   bool uses_single_char_number_filtering_;
-
-  DISALLOW_COPY_AND_ASSIGN(Locale);
 };
 
 }  // namespace blink
-#endif
+#endif  // THIRD_PARTY_BLINK_RENDERER_PLATFORM_TEXT_PLATFORM_LOCALE_H_

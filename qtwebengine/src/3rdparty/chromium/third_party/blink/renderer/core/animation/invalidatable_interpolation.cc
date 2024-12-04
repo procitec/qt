@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,31 +13,28 @@
 namespace blink {
 
 void InvalidatableInterpolation::Interpolate(int, double fraction) {
-  if (fraction == current_fraction_)
+  if (fraction == current_fraction_) {
     return;
-
-  if (current_fraction_ == 0 || current_fraction_ == 1 || fraction == 0 ||
-      fraction == 1) {
-    ClearConversionCache();
   }
 
   current_fraction_ = fraction;
-  if (is_conversion_cached_ && cached_pair_conversion_)
+  if (is_conversion_cached_ && cached_pair_conversion_) {
     cached_pair_conversion_->InterpolateValue(fraction, cached_value_);
+  }
   // We defer the interpolation to ensureValidConversion() if
   // |cached_pair_conversion_| is null.
 }
 
-std::unique_ptr<PairwisePrimitiveInterpolation>
+PairwisePrimitiveInterpolation*
 InvalidatableInterpolation::MaybeConvertPairwise(
     const InterpolationEnvironment& environment,
     const UnderlyingValueOwner& underlying_value_owner) const {
-  DCHECK(current_fraction_ != 0 && current_fraction_ != 1);
   for (const auto& interpolation_type : *interpolation_types_) {
     if ((start_keyframe_->IsNeutral() || end_keyframe_->IsNeutral()) &&
         (!underlying_value_owner ||
-         underlying_value_owner.GetType() != *interpolation_type))
+         underlying_value_owner.GetType() != *interpolation_type)) {
       continue;
+    }
     ConversionCheckers conversion_checkers;
     PairwiseInterpolationValue result =
         interpolation_type->MaybeConvertPairwise(
@@ -45,7 +42,7 @@ InvalidatableInterpolation::MaybeConvertPairwise(
             underlying_value_owner.Value(), conversion_checkers);
     AddConversionCheckers(*interpolation_type, conversion_checkers);
     if (result) {
-      return std::make_unique<PairwisePrimitiveInterpolation>(
+      return MakeGarbageCollected<PairwisePrimitiveInterpolation>(
           *interpolation_type, std::move(result.start_interpolable_value),
           std::move(result.end_interpolable_value),
           std::move(result.non_interpolable_value));
@@ -54,24 +51,25 @@ InvalidatableInterpolation::MaybeConvertPairwise(
   return nullptr;
 }
 
-std::unique_ptr<TypedInterpolationValue>
-InvalidatableInterpolation::ConvertSingleKeyframe(
+TypedInterpolationValue* InvalidatableInterpolation::ConvertSingleKeyframe(
     const PropertySpecificKeyframe& keyframe,
     const InterpolationEnvironment& environment,
     const UnderlyingValueOwner& underlying_value_owner) const {
-  if (keyframe.IsNeutral() && !underlying_value_owner)
+  if (keyframe.IsNeutral() && !underlying_value_owner) {
     return nullptr;
+  }
   for (const auto& interpolation_type : *interpolation_types_) {
     if (keyframe.IsNeutral() &&
-        underlying_value_owner.GetType() != *interpolation_type)
+        underlying_value_owner.GetType() != *interpolation_type) {
       continue;
+    }
     ConversionCheckers conversion_checkers;
     InterpolationValue result = interpolation_type->MaybeConvertSingle(
         keyframe, environment, underlying_value_owner.Value(),
         conversion_checkers);
     AddConversionCheckers(*interpolation_type, conversion_checkers);
     if (result) {
-      return std::make_unique<TypedInterpolationValue>(
+      return MakeGarbageCollected<TypedInterpolationValue>(
           *interpolation_type, std::move(result.interpolable_value),
           std::move(result.non_interpolable_value));
     }
@@ -89,14 +87,14 @@ void InvalidatableInterpolation::AddConversionCheckers(
   }
 }
 
-std::unique_ptr<TypedInterpolationValue>
+TypedInterpolationValue*
 InvalidatableInterpolation::MaybeConvertUnderlyingValue(
     const InterpolationEnvironment& environment) const {
   for (const auto& interpolation_type : *interpolation_types_) {
     InterpolationValue result =
         interpolation_type->MaybeConvertUnderlyingValue(environment);
     if (result) {
-      return std::make_unique<TypedInterpolationValue>(
+      return MakeGarbageCollected<TypedInterpolationValue>(
           *interpolation_type, std::move(result.interpolable_value),
           std::move(result.non_interpolable_value));
     }
@@ -105,82 +103,84 @@ InvalidatableInterpolation::MaybeConvertUnderlyingValue(
 }
 
 bool InvalidatableInterpolation::DependsOnUnderlyingValue() const {
-  return (start_keyframe_->UnderlyingFraction() != 0 &&
-          current_fraction_ != 1) ||
-         (end_keyframe_->UnderlyingFraction() != 0 && current_fraction_ != 0);
+  return start_keyframe_->UnderlyingFraction() != 0 ||
+         end_keyframe_->UnderlyingFraction() != 0;
 }
 
 bool InvalidatableInterpolation::IsNeutralKeyframeActive() const {
-  return (start_keyframe_->IsNeutral() && current_fraction_ != 1) ||
-         (end_keyframe_->IsNeutral() && current_fraction_ != 0);
+  return start_keyframe_->IsNeutral() || end_keyframe_->IsNeutral();
 }
 
-void InvalidatableInterpolation::ClearConversionCache() const {
+void InvalidatableInterpolation::ClearConversionCache(
+    InterpolationEnvironment& environment) const {
+  if (auto* css_environment =
+          DynamicTo<CSSInterpolationEnvironment>(environment)) {
+    css_environment->GetState().SetAffectsCompositorSnapshots();
+  }
+
   is_conversion_cached_ = false;
-  cached_pair_conversion_.reset();
+  cached_pair_conversion_.Clear();
   conversion_checkers_.clear();
-  cached_value_.reset();
+  cached_value_.Clear();
 }
 
 bool InvalidatableInterpolation::IsConversionCacheValid(
     const InterpolationEnvironment& environment,
     const UnderlyingValueOwner& underlying_value_owner) const {
-  if (!is_conversion_cached_)
+  if (!is_conversion_cached_) {
     return false;
+  }
   if (IsNeutralKeyframeActive()) {
-    if (cached_pair_conversion_ && cached_pair_conversion_->IsFlip())
+    if (cached_pair_conversion_ && cached_pair_conversion_->IsFlip()) {
       return false;
+    }
     // Pairwise interpolation can never happen between different
     // InterpolationTypes, neutral values always represent the underlying value.
     if (!underlying_value_owner || !cached_value_ ||
-        cached_value_->GetType() != underlying_value_owner.GetType())
+        cached_value_->GetType() != underlying_value_owner.GetType()) {
       return false;
+    }
   }
   for (const auto& checker : conversion_checkers_) {
-    if (!checker->IsValid(environment, underlying_value_owner.Value()))
+    if (!checker->IsValid(environment, underlying_value_owner.Value())) {
       return false;
+    }
   }
   return true;
 }
 
 const TypedInterpolationValue*
 InvalidatableInterpolation::EnsureValidConversion(
-    const InterpolationEnvironment& environment,
+    InterpolationEnvironment& environment,
     const UnderlyingValueOwner& underlying_value_owner) const {
   DCHECK(!std::isnan(current_fraction_));
   DCHECK(interpolation_types_ &&
          interpolation_types_version_ ==
              environment.GetInterpolationTypesMap().Version());
-  if (IsConversionCacheValid(environment, underlying_value_owner))
-    return cached_value_.get();
-  ClearConversionCache();
-  if (current_fraction_ == 0) {
-    cached_value_ = ConvertSingleKeyframe(*start_keyframe_, environment,
-                                          underlying_value_owner);
-  } else if (current_fraction_ == 1) {
-    cached_value_ = ConvertSingleKeyframe(*end_keyframe_, environment,
-                                          underlying_value_owner);
-  } else {
-    std::unique_ptr<PairwisePrimitiveInterpolation> pairwise_conversion =
-        MaybeConvertPairwise(environment, underlying_value_owner);
-    if (pairwise_conversion) {
-      cached_value_ = pairwise_conversion->InitialValue();
-      cached_pair_conversion_ = std::move(pairwise_conversion);
-    } else {
-      cached_pair_conversion_ = std::make_unique<FlipPrimitiveInterpolation>(
-          ConvertSingleKeyframe(*start_keyframe_, environment,
-                                underlying_value_owner),
-          ConvertSingleKeyframe(*end_keyframe_, environment,
-                                underlying_value_owner));
-    }
-    cached_pair_conversion_->InterpolateValue(current_fraction_, cached_value_);
+  if (IsConversionCacheValid(environment, underlying_value_owner)) {
+    return cached_value_.Get();
   }
+  ClearConversionCache(environment);
+
+  PairwisePrimitiveInterpolation* pairwise_conversion =
+      MaybeConvertPairwise(environment, underlying_value_owner);
+  if (pairwise_conversion) {
+    cached_value_ = pairwise_conversion->InitialValue();
+    cached_pair_conversion_ = std::move(pairwise_conversion);
+  } else {
+    cached_pair_conversion_ = MakeGarbageCollected<FlipPrimitiveInterpolation>(
+        ConvertSingleKeyframe(*start_keyframe_, environment,
+                              underlying_value_owner),
+        ConvertSingleKeyframe(*end_keyframe_, environment,
+                              underlying_value_owner));
+  }
+  cached_pair_conversion_->InterpolateValue(current_fraction_, cached_value_);
   is_conversion_cached_ = true;
-  return cached_value_.get();
+  return cached_value_.Get();
 }
 
 void InvalidatableInterpolation::EnsureValidInterpolationTypes(
-    const InterpolationEnvironment& environment) const {
+    InterpolationEnvironment& environment) const {
   const InterpolationTypesMap& map = environment.GetInterpolationTypesMap();
   size_t latest_version = map.Version();
   if (interpolation_types_ && interpolation_types_version_ == latest_version) {
@@ -189,7 +189,7 @@ void InvalidatableInterpolation::EnsureValidInterpolationTypes(
   const InterpolationTypes* latest_interpolation_types = &map.Get(property_);
   DCHECK(latest_interpolation_types);
   if (interpolation_types_ != latest_interpolation_types) {
-    ClearConversionCache();
+    ClearConversionCache(environment);
   }
   interpolation_types_ = latest_interpolation_types;
   interpolation_types_version_ = latest_version;
@@ -197,12 +197,14 @@ void InvalidatableInterpolation::EnsureValidInterpolationTypes(
 
 void InvalidatableInterpolation::SetFlagIfInheritUsed(
     InterpolationEnvironment& environment) const {
-  if (!property_.IsCSSProperty() && !property_.IsPresentationAttribute())
+  if (!property_.IsCSSProperty() && !property_.IsPresentationAttribute()) {
     return;
+  }
   StyleResolverState& state =
       To<CSSInterpolationEnvironment>(environment).GetState();
-  if (!state.ParentStyle())
+  if (!state.ParentStyle()) {
     return;
+  }
   const CSSValue* start_value =
       To<CSSPropertySpecificKeyframe>(*start_keyframe_).Value();
   const CSSValue* end_value =
@@ -214,10 +216,12 @@ void InvalidatableInterpolation::SetFlagIfInheritUsed(
 }
 
 double InvalidatableInterpolation::UnderlyingFraction() const {
-  if (current_fraction_ == 0)
+  if (current_fraction_ == 0) {
     return start_keyframe_->UnderlyingFraction();
-  if (current_fraction_ == 1)
+  }
+  if (current_fraction_ == 1) {
     return end_keyframe_->UnderlyingFraction();
+  }
   return cached_pair_conversion_->InterpolateUnderlyingFraction(
       start_keyframe_->UnderlyingFraction(),
       end_keyframe_->UnderlyingFraction(), current_fraction_);
@@ -226,7 +230,7 @@ double InvalidatableInterpolation::UnderlyingFraction() const {
 void InvalidatableInterpolation::ApplyStack(
     const ActiveInterpolations& interpolations,
     InterpolationEnvironment& environment) {
-  DCHECK(!interpolations.IsEmpty());
+  DCHECK(!interpolations.empty());
   wtf_size_t starting_index = 0;
 
   // Compute the underlying value to composite onto.
@@ -241,6 +245,7 @@ void InvalidatableInterpolation::ApplyStack(
     const TypedInterpolationValue* first_value =
         first_interpolation.EnsureValidConversion(environment,
                                                   underlying_value_owner);
+
     // Fast path for replace interpolations that are the only one to apply.
     if (interpolations.size() == 1) {
       if (first_value) {
@@ -265,18 +270,20 @@ void InvalidatableInterpolation::ApplyStack(
     const TypedInterpolationValue* current_value =
         current_interpolation.EnsureValidConversion(environment,
                                                     underlying_value_owner);
-    if (!current_value)
+    if (!current_value) {
       continue;
+    }
+
     should_apply = true;
     current_interpolation.SetFlagIfInheritUsed(environment);
-    double underlying_fraction = current_interpolation.UnderlyingFraction();
-    if (underlying_fraction == 0 || !underlying_value_owner ||
+    if (!current_interpolation.DependsOnUnderlyingValue() ||
+        !underlying_value_owner ||
         underlying_value_owner.GetType() != current_value->GetType()) {
       underlying_value_owner.Set(current_value);
     } else {
       current_value->GetType().Composite(
-          underlying_value_owner, underlying_fraction, current_value->Value(),
-          current_interpolation.current_fraction_);
+          underlying_value_owner, current_interpolation.UnderlyingFraction(),
+          current_value->Value(), current_interpolation.current_fraction_);
     }
   }
 

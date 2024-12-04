@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,15 +9,13 @@
 #include <string>
 #include <vector>
 
-#include "base/callback_forward.h"
 #include "base/compiler_specific.h"
-#include "base/macros.h"
-#include "base/time/clock.h"
+#include "base/functional/callback_forward.h"
 #include "base/time/tick_clock.h"
 #include "base/time/time.h"
 #include "components/domain_reliability/domain_reliability_export.h"
 #include "components/domain_reliability/uploader.h"
-#include "net/http/http_response_info.h"
+#include "net/http/http_connection_info.h"
 
 namespace base {
 class Location;
@@ -37,7 +35,7 @@ bool GetDomainReliabilityBeaconStatus(
     std::string* beacon_status_out);
 
 std::string GetDomainReliabilityProtocol(
-    net::HttpResponseInfo::ConnectionInfo connection_info,
+    net::HttpConnectionInfo connection_info,
     bool ssl_info_populated);
 
 // Based on the network error code, HTTP response code, and Retry-After value,
@@ -55,8 +53,7 @@ GURL SanitizeURLForReport(
 // Mockable wrapper around TimeTicks::Now and Timer. Mock version is in
 // test_util.h.
 // TODO(juliatuttle): Rename to Time{Provider,Source,?}.
-class DOMAIN_RELIABILITY_EXPORT MockableTime : public base::Clock,
-                                               public base::TickClock {
+class DOMAIN_RELIABILITY_EXPORT MockableTime {
  public:
   // Mockable wrapper around (a subset of) base::Timer.
   class DOMAIN_RELIABILITY_EXPORT Timer {
@@ -73,21 +70,21 @@ class DOMAIN_RELIABILITY_EXPORT MockableTime : public base::Clock,
     Timer();
   };
 
-  ~MockableTime() override;
+  MockableTime(const MockableTime&) = delete;
+  MockableTime& operator=(const MockableTime&) = delete;
 
-  // Clock impl; returns base::Time::Now() or a mocked version thereof.
-  base::Time Now() const override = 0;
-  // TickClock impl; returns base::TimeTicks::Now() or a mocked version thereof.
-  base::TimeTicks NowTicks() const override = 0;
+  virtual ~MockableTime();
+
+  virtual base::Time Now() const = 0;
+  virtual base::TimeTicks NowTicks() const = 0;
 
   // Returns a new Timer, or a mocked version thereof.
   virtual std::unique_ptr<MockableTime::Timer> CreateTimer() = 0;
 
+  virtual const base::TickClock* AsTickClock() const = 0;
+
  protected:
   MockableTime();
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(MockableTime);
 };
 
 // Implementation of MockableTime that passes through to
@@ -102,6 +99,7 @@ class DOMAIN_RELIABILITY_EXPORT ActualTime : public MockableTime {
   base::Time Now() const override;
   base::TimeTicks NowTicks() const override;
   std::unique_ptr<MockableTime::Timer> CreateTimer() override;
+  const base::TickClock* AsTickClock() const override;
 };
 
 }  // namespace domain_reliability

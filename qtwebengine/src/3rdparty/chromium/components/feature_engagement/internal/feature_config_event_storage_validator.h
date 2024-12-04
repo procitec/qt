@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,19 +9,27 @@
 #include <unordered_map>
 #include <unordered_set>
 
-#include "base/macros.h"
 #include "components/feature_engagement/internal/event_storage_validator.h"
 #include "components/feature_engagement/public/feature_list.h"
+#include "components/feature_engagement/public/group_list.h"
 
 namespace feature_engagement {
 class Configuration;
 struct EventConfig;
 struct FeatureConfig;
+struct GroupConfig;
 
-// A EventStorageValidator that uses the FeatureConfig as the source of truth.
+// A EventStorageValidator that uses the FeatureConfig and GroupConfig as the
+// source of truth.
 class FeatureConfigEventStorageValidator : public EventStorageValidator {
  public:
   FeatureConfigEventStorageValidator();
+
+  FeatureConfigEventStorageValidator(
+      const FeatureConfigEventStorageValidator&) = delete;
+  FeatureConfigEventStorageValidator& operator=(
+      const FeatureConfigEventStorageValidator&) = delete;
+
   ~FeatureConfigEventStorageValidator() override;
 
   // EventStorageValidator implementation.
@@ -30,8 +38,10 @@ class FeatureConfigEventStorageValidator : public EventStorageValidator {
                   uint32_t event_day,
                   uint32_t current_day) const override;
 
-  // Set up internal configuration required for the given |features|.
-  void InitializeFeatures(FeatureVector features,
+  // Set up internal configuration required for the given |features| and
+  // |groups|.
+  void InitializeFeatures(const FeatureVector& features,
+                          const GroupVector& groups,
                           const Configuration& configuration);
 
   // Resets the full state of this EventStorageValidator. After calling this
@@ -44,6 +54,10 @@ class FeatureConfigEventStorageValidator : public EventStorageValidator {
   void InitializeFeatureConfig(const FeatureConfig& feature_config);
 
   // Updates the internal configuration with conditions from the given
+  // |group_config|.
+  void InitializeGroupConfig(const GroupConfig& group_config);
+
+  // Updates the internal configuration with conditions from the given
   // |event_config|.
   void InitializeEventConfig(const EventConfig& event_config);
 
@@ -54,8 +68,6 @@ class FeatureConfigEventStorageValidator : public EventStorageValidator {
   // Contains the longest time to store each event across all EventConfigs,
   // as a number of days.
   std::unordered_map<std::string, uint32_t> longest_storage_times_;
-
-  DISALLOW_COPY_AND_ASSIGN(FeatureConfigEventStorageValidator);
 };
 
 }  // namespace feature_engagement

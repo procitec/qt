@@ -18,20 +18,19 @@
 #include "include/core/SkShader.h"
 #include "include/core/SkSize.h"
 #include "include/core/SkString.h"
+#include "include/core/SkSurface.h"
 #include "include/core/SkTypeface.h"
 #include "src/core/SkBlurMask.h"
 #include "src/effects/SkEmbossMaskFilter.h"
+#include "tools/fonts/FontToolUtils.h"
 
-static SkBitmap make_bm() {
-    SkBitmap bm;
-    bm.allocN32Pixels(100, 100);
+static sk_sp<SkImage> make_bm() {
+    auto surf = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(100, 100));
 
-    SkCanvas canvas(bm);
-    canvas.clear(0);
     SkPaint paint;
     paint.setAntiAlias(true);
-    canvas.drawCircle(50, 50, 50, paint);
-    return bm;
+    surf->getCanvas()->drawCircle(50, 50, 50, paint);
+    return surf->makeImageSnapshot();
 }
 
 class EmbossGM : public skiagm::GM {
@@ -40,31 +39,27 @@ public:
     }
 
 protected:
-    SkString onShortName() override {
-        return SkString("emboss");
-    }
+    SkString getName() const override { return SkString("emboss"); }
 
-    SkISize onISize() override {
-        return SkISize::Make(600, 120);
-    }
+    SkISize getISize() override { return SkISize::Make(600, 120); }
 
     void onDraw(SkCanvas* canvas) override {
         SkPaint paint;
-        SkBitmap bm = make_bm();
-        canvas->drawBitmap(bm, 10, 10, &paint);
-        canvas->translate(bm.width() + SkIntToScalar(10), 0);
+        auto img = make_bm();
+        canvas->drawImage(img, 10, 10);
+        canvas->translate(img->width() + SkIntToScalar(10), 0);
 
         paint.setMaskFilter(SkEmbossMaskFilter::Make(
             SkBlurMask::ConvertRadiusToSigma(3),
             { { SK_Scalar1, SK_Scalar1, SK_Scalar1 }, 0, 128, 16*2 }));
-        canvas->drawBitmap(bm, 10, 10, &paint);
-        canvas->translate(bm.width() + SkIntToScalar(10), 0);
+        canvas->drawImage(img, 10, 10, SkSamplingOptions(), &paint);
+        canvas->translate(img->width() + SkIntToScalar(10), 0);
 
         // this combination of emboss+colorfilter used to crash -- so we exercise it to
         // confirm that we have a fix.
         paint.setColorFilter(SkColorFilters::Blend(0xFFFF0000, SkBlendMode::kSrcATop));
-        canvas->drawBitmap(bm, 10, 10, &paint);
-        canvas->translate(bm.width() + SkIntToScalar(10), 0);
+        canvas->drawImage(img, 10, 10, SkSamplingOptions(), &paint);
+        canvas->translate(img->width() + SkIntToScalar(10), 0);
 
         paint.setAntiAlias(true);
         paint.setStyle(SkPaint::kStroke_Style);
@@ -79,12 +74,13 @@ protected:
                            SkIntToScalar(30), paint);
         canvas->translate(SkIntToScalar(100), 0);
 
+        SkFont font = SkFont(ToolUtils::DefaultPortableTypeface(), 50);
         paint.setStyle(SkPaint::kFill_Style);
-        canvas->drawString("Hello", 0, 50, SkFont(nullptr, 50), paint);
+        canvas->drawString("Hello", 0, 50, font, paint);
 
         paint.setShader(nullptr);
         paint.setColor(SK_ColorGREEN);
-        canvas->drawString("World", 0, 100, SkFont(nullptr, 50), paint);
+        canvas->drawString("World", 0, 100, font, paint);
     }
 
 private:

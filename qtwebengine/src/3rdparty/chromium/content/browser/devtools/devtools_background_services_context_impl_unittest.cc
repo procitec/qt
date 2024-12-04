@@ -1,23 +1,28 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "content/browser/devtools/devtools_background_services_context_impl.h"
 
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/containers/flat_map.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/run_loop.h"
+#include "base/time/time.h"
 #include "content/browser/devtools/devtools_background_services.pb.h"
 #include "content/browser/service_worker/embedded_worker_test_helper.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/common/content_client.h"
 #include "content/public/test/browser_task_environment.h"
 #include "content/public/test/test_browser_context.h"
+#include "content/public/test/test_utils.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/public/common/storage_key/storage_key.h"
+#include "third_party/blink/public/mojom/service_worker/service_worker_registration_options.mojom.h"
 #include "url/origin.h"
 
 namespace content {
@@ -94,6 +99,11 @@ class DevToolsBackgroundServicesContextTest
       : task_environment_(BrowserTaskEnvironment::IO_MAINLOOP),
         embedded_worker_test_helper_(base::FilePath() /* in memory */) {}
 
+  DevToolsBackgroundServicesContextTest(
+      const DevToolsBackgroundServicesContextTest&) = delete;
+  DevToolsBackgroundServicesContextTest& operator=(
+      const DevToolsBackgroundServicesContextTest&) = delete;
+
   ~DevToolsBackgroundServicesContextTest() override = default;
 
   void SetUp() override {
@@ -103,7 +113,9 @@ class DevToolsBackgroundServicesContextTest
               blink::mojom::kInvalidServiceWorkerRegistrationId);
 
     browser_client_ = std::make_unique<TestBrowserClient>();
-    SetBrowserClientForTesting(browser_client_.get());
+    scoped_content_browser_client_setting_ =
+        std::make_unique<ScopedContentBrowserClientSetting>(
+            browser_client_.get());
 
     SimulateBrowserRestart();
   }
@@ -127,14 +139,14 @@ class DevToolsBackgroundServicesContextTest
     if (context_)
       context_->RemoveObserver(this);
     // Create |context_|.
-    context_ = base::MakeRefCounted<DevToolsBackgroundServicesContextImpl>(
+    context_ = std::make_unique<DevToolsBackgroundServicesContextImpl>(
         &browser_context_, embedded_worker_test_helper_.context_wrapper());
     context_->AddObserver(this);
     ASSERT_TRUE(context_);
   }
 
   void SimulateOneWeekPassing() {
-    base::Time one_week_ago = base::Time::Now() - base::TimeDelta::FromDays(7);
+    base::Time one_week_ago = base::Time::Now() - base::Days(7);
     context_->expiration_times_
         [devtools::proto::BackgroundService::BACKGROUND_FETCH] = one_week_ago;
   }
@@ -164,8 +176,9 @@ class DevToolsBackgroundServicesContextTest
   }
 
   void LogTestBackgroundServiceEvent(const std::string& log_message) {
-    context_->LogBackgroundServiceEventOnCoreThread(
-        service_worker_registration_id_, origin_,
+    context_->LogBackgroundServiceEvent(
+        service_worker_registration_id_,
+        blink::StorageKey::CreateFirstParty(origin_),
         DevToolsBackgroundService::kBackgroundFetch, kEventName, kInstanceId,
         {{"key", log_message}});
   }
@@ -206,6 +219,7 @@ class DevToolsBackgroundServicesContextTest
  private:
   int64_t RegisterServiceWorker() {
     GURL script_url(origin_.GetURL().spec() + "sw.js");
+    const blink::StorageKey key = blink::StorageKey::CreateFirstParty(origin_);
     int64_t service_worker_registration_id =
         blink::mojom::kInvalidServiceWorkerRegistrationId;
 
@@ -214,10 +228,13 @@ class DevToolsBackgroundServicesContextTest
       options.scope = origin_.GetURL();
       base::RunLoop run_loop;
       embedded_worker_test_helper_.context()->RegisterServiceWorker(
-          script_url, options, blink::mojom::FetchClientSettingsObject::New(),
+          script_url, key, options,
+          blink::mojom::FetchClientSettingsObject::New(),
           base::BindOnce(&DidRegisterServiceWorker,
                          &service_worker_registration_id,
-                         run_loop.QuitClosure()));
+                         run_loop.QuitClosure()),
+          /*requesting_frame_id=*/GlobalRenderFrameHostId(),
+          PolicyContainerPolicies());
 
       run_loop.Run();
     }
@@ -231,7 +248,7 @@ class DevToolsBackgroundServicesContextTest
     {
       base::RunLoop run_loop;
       embedded_worker_test_helper_.context()->registry()->FindRegistrationForId(
-          service_worker_registration_id, origin_,
+          service_worker_registration_id, key,
           base::BindOnce(&DidFindServiceWorkerRegistration,
                          &service_worker_registration_,
                          run_loop.QuitClosure()));
@@ -251,15 +268,24 @@ class DevToolsBackgroundServicesContextTest
 
   EmbeddedWorkerTestHelper embedded_worker_test_helper_;
   TestBrowserContext browser_context_;
-  scoped_refptr<DevToolsBackgroundServicesContextImpl> context_;
+  std::unique_ptr<DevToolsBackgroundServicesContextImpl> context_;
   scoped_refptr<ServiceWorkerRegistration> service_worker_registration_;
   std::unique_ptr<ContentBrowserClient> browser_client_;
-
-  DISALLOW_COPY_AND_ASSIGN(DevToolsBackgroundServicesContextTest);
+  std::unique_ptr<ScopedContentBrowserClientSetting>
+      scoped_content_browser_client_setting_;
 };
 
+// Flaky on Fuchsia.
+// TODO(crbug.com/1492963): Reenable test on Fuchsia.
+#if BUILDFLAG(IS_FUCHSIA)
+#define MAYBE_NothingStoredWithRecordingModeOff \
+  DISABLED_NothingStoredWithRecordingModeOff
+#else
+#define MAYBE_NothingStoredWithRecordingModeOff \
+  NothingStoredWithRecordingModeOff
+#endif
 TEST_F(DevToolsBackgroundServicesContextTest,
-       NothingStoredWithRecordingModeOff) {
+       MAYBE_NothingStoredWithRecordingModeOff) {
   // Initially there are no entries.
   EXPECT_TRUE(GetLoggedBackgroundServiceEvents().empty());
 

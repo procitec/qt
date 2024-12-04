@@ -1,9 +1,10 @@
-// Copyright (c) 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/core/editing/commands/insert_text_command.h"
 
+#include "build/buildflag.h"
 #include "third_party/blink/renderer/core/editing/frame_selection.h"
 #include "third_party/blink/renderer/core/editing/selection_template.h"
 #include "third_party/blink/renderer/core/editing/testing/editing_test_base.h"
@@ -16,7 +17,7 @@ class InsertTextCommandTest : public EditingTestBase {};
 // http://crbug.com/714311
 TEST_F(InsertTextCommandTest, WithTypingStyle) {
   SetBodyContent("<div contenteditable=true><option id=sample></option></div>");
-  Element* const sample = GetDocument().getElementById("sample");
+  Element* const sample = GetDocument().getElementById(AtomicString("sample"));
   Selection().SetSelection(
       SelectionInDOMTree::Builder().Collapse(Position(sample, 0)).Build(),
       SetSelectionOptions());
@@ -213,8 +214,9 @@ TEST_F(InsertTextCommandTest, WhitespaceFixupAfterParagraph) {
 TEST_F(InsertTextCommandTest, NoVisibleSelectionAfterDeletingSelection) {
   GetDocument().SetCompatibilityMode(Document::kQuirksMode);
   InsertStyleElement(
-      "ruby {display: inline-block; height: 100%}"
-      "navi {float: left}");
+      ":root { font-size: 10px; }"
+      "ruby { display: inline-block; height: 100%; }"
+      "navi { float: left; }");
   Selection().SetSelection(
       SetSelectionTextToBody("<div contenteditable>"
                              "  <ruby><strike>"
@@ -240,8 +242,8 @@ TEST_F(InsertTextCommandTest, NoVisibleSelectionAfterDeletingSelection) {
 TEST_F(InsertTextCommandTest, CheckTabSpanElementNoCrash) {
   InsertStyleElement(
       "head {-webkit-text-stroke-color: black; display: list-item;}");
-  Element* head = GetDocument().QuerySelector("head");
-  Element* style = GetDocument().QuerySelector("style");
+  Element* head = GetDocument().QuerySelector(AtomicString("head"));
+  Element* style = GetDocument().QuerySelector(AtomicString("style"));
   Element* body = GetDocument().body();
   body->parentNode()->appendChild(style);
   GetDocument().setDesignMode("on");
@@ -276,12 +278,12 @@ TEST_F(InsertTextCommandTest, AnchorElementWithBlockCrash) {
   //   </a>
   // </a>
   // Since the HTML parser rejects it as there are nested <a> elements.
-  // We are contructing the remaining DOM manually.
-  Element* const anchor = GetDocument().QuerySelector("a");
+  // We are constructing the remaining DOM manually.
+  Element* const anchor = GetDocument().QuerySelector(AtomicString("a"));
   Element* nested_anchor = GetDocument().CreateRawElement(html_names::kATag);
   Element* iElement = GetDocument().CreateRawElement(html_names::kITag);
 
-  nested_anchor->setAttribute("href", "www");
+  nested_anchor->setAttribute(html_names::kHrefAttr, AtomicString("www"));
   iElement->setInnerHTML("home");
 
   anchor->AppendChild(nested_anchor);
@@ -297,10 +299,22 @@ TEST_F(InsertTextCommandTest, AnchorElementWithBlockCrash) {
   // Crash happens here with when '\n' is inserted.
   GetDocument().execCommand("inserttext", false, "a\n", ASSERT_NO_EXCEPTION);
   EXPECT_EQ(
-      "<i style=\"display: block;\">"
-      "<a href=\"www\" style=\"display: block;\">a</a>"
-      "</i>|",
+      "<a href=\"www\" style=\"display:block\"><i>a</i></a><a href=\"www\" "
+      "style=\"display:block\"><i>|<br></i></a>",
       GetSelectionTextFromBody());
+}
+
+// http://crbug.com/1197977
+TEST_F(InsertTextCommandTest, MultilineSelectionCrash) {
+  // Force line break between A and B.
+  InsertStyleElement("body { width: 1px; }");
+  Selection().SetSelection(SetSelectionTextToBody("A^<span> B|</span>"),
+                           SetSelectionOptions());
+  GetDocument().setDesignMode("on");
+
+  // Shouldn't crash inside.
+  GetDocument().execCommand("InsertText", false, "x", ASSERT_NO_EXCEPTION);
+  EXPECT_EQ("A<span>x|</span>", GetSelectionTextFromBody());
 }
 
 }  // namespace blink

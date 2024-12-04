@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,9 +10,7 @@
 #include "net/base/net_export.h"
 #include "net/base/network_change_notifier.h"
 
-namespace net {
-namespace nqe {
-namespace internal {
+namespace net::nqe::internal {
 
 // NetworkID is used to uniquely identify a network.
 // For the purpose of network quality estimation and caching, a network is
@@ -59,11 +57,12 @@ struct NET_EXPORT_PRIVATE NetworkID {
   // poor signal strength while 4 represents a very strong signal strength. The
   // range is capped between 0 and 4 to ensure that a change in the value
   // indicates a non-negligible change in the signal quality.
+  //
+  // TODO(crbug.com/1495477): This should use absl::optional instead of a magic
+  // value.
   int32_t signal_strength;
 };
 
-}  // namespace internal
-}  // namespace nqe
-}  // namespace net
+}  // namespace net::nqe::internal
 
 #endif  // NET_NQE_NETWORK_ID_H_

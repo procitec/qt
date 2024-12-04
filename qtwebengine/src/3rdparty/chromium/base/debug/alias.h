@@ -1,4 +1,4 @@
-// Copyright (c) 2011 The Chromium Authors. All rights reserved.
+// Copyright 2011 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -40,7 +40,7 @@ namespace debug {
 // call stack. In this case there is no memory that needs to be on
 // the stack so we can use nullptr. The call to base::debug::Alias() needs to
 // happen after the call that is suspected to be tail called. Note: This
-// technique will prevent taill calls at the specific call site only. To prevent
+// technique will prevent tail calls at the specific call site only. To prevent
 // them for all invocations of a function look at NOT_TAIL_CALLED.
 //
 // Example usage:
@@ -55,13 +55,13 @@ namespace debug {
 // cause the same address to be assigned to different functions if they are
 // identical. If finding the precise signature of a function in the call-stack
 // is important and it's suspected the function is identical to other functions
-// it can be made unique using base::debug::Alias().
+// it can be made unique using NO_CODE_FOLDING which is a wrapper around
+// base::debug::Alias();
 //
 // Example usage:
 //   NOINLINE void Foo(){
+//     NO_CODE_FOLDING();
 //     Bar();
-//     const int line_number = __LINE__;
-//     base::debug::Alias(&line_number);
 //   }
 //
 // Finally please note that these effects compound. This means that saving a
@@ -72,16 +72,50 @@ void BASE_EXPORT Alias(const void* var);
 
 }  // namespace debug
 
+// The canonical definitions/declarations for `strlcpy()`, `u16cstrlcpy()`,
+// and `wcslcpy()` are in //base/strings/string_util.{cc,h}. These prototypes
+// are forward declared here to avoid having to include string_utils.h and its
+// transitive tree of headers in an otherwise small header (which is itself
+// included in some very popular headers).
 BASE_EXPORT size_t strlcpy(char* dst, const char* src, size_t dst_size);
+BASE_EXPORT size_t u16cstrlcpy(char16_t* dst,
+                               const char16_t* src,
+                               size_t dst_size);
+BASE_EXPORT size_t wcslcpy(wchar_t* dst, const wchar_t* src, size_t dst_size);
 
 }  // namespace base
 
-// Convenience macro that copies the null-terminated string from |c_str| into a
-// stack-allocated char array named |var_name| that holds up to |char_count|
+// Convenience macro that copies the null-terminated string from `c_str` into a
+// stack-allocated char array named `var_name` that holds up to `array_size - 1`
 // characters and should be preserved in memory dumps.
-#define DEBUG_ALIAS_FOR_CSTR(var_name, c_str, char_count) \
-  char var_name[char_count];                              \
-  ::base::strlcpy(var_name, (c_str), sizeof(var_name));   \
-  ::base::debug::Alias(var_name);
+#define DEBUG_ALIAS_FOR_CSTR(var_name, c_str, array_size)  \
+  char var_name[array_size] = {};                          \
+  ::base::strlcpy(var_name, (c_str), std::size(var_name)); \
+  ::base::debug::Alias(var_name)
+
+#define DEBUG_ALIAS_FOR_U16CSTR(var_name, c_str, array_size)   \
+  char16_t var_name[array_size] = {};                          \
+  ::base::u16cstrlcpy(var_name, (c_str), std::size(var_name)); \
+  ::base::debug::Alias(var_name)
+
+#define DEBUG_ALIAS_FOR_WCHARCSTR(var_name, c_str, array_size) \
+  wchar_t var_name[array_size] = {};                           \
+  ::base::wcslcpy(var_name, (c_str), std::size(var_name));     \
+  ::base::debug::Alias(var_name)
+
+// Code folding is a linker optimization whereby the linker identifies functions
+// that are bit-identical and overlays them. This saves space but it leads to
+// confusing call stacks because multiple symbols are at the same address and
+// it is unpredictable which one will be displayed. Disabling of code folding is
+// particularly useful when function names are used as signatures in crashes.
+// This macro doesn't guarantee that code folding will be prevented but it
+// greatly reduces the odds and always prevents it within one source file.
+// If using in a function that terminates the process it is safest to put the
+// NO_CODE_FOLDING macro at the top of the function.
+// Use like:
+//   void FooBarFailure(size_t size) { NO_CODE_FOLDING(); OOM_CRASH(size); }
+#define NO_CODE_FOLDING()           \
+  const int line_number = __LINE__; \
+  base::debug::Alias(&line_number)
 
 #endif  // BASE_DEBUG_ALIAS_H_

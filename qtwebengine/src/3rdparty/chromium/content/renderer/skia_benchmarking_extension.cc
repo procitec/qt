@@ -1,4 +1,4 @@
-// Copyright (c) 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,7 +7,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <utility>
+
 #include "base/base64.h"
+#include "base/memory/raw_ref.h"
 #include "base/time/time.h"
 #include "base/values.h"
 #include "cc/base/math_util.h"
@@ -19,10 +22,12 @@
 #include "gin/handle.h"
 #include "gin/object_template_builder.h"
 #include "skia/ext/benchmarking_canvas.h"
-#include "third_party/blink/public/web/blink.h"
+#include "skia/ext/legacy_display_globals.h"
+#include "third_party/blink/public/platform/scheduler/web_agent_group_scheduler.h"
 #include "third_party/blink/public/web/web_array_buffer.h"
 #include "third_party/blink/public/web/web_array_buffer_converter.h"
 #include "third_party/blink/public/web/web_local_frame.h"
+#include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkColorPriv.h"
 #include "third_party/skia/include/core/SkGraphics.h"
@@ -31,8 +36,13 @@
 #include "ui/gfx/codec/jpeg_codec.h"
 #include "ui/gfx/codec/png_codec.h"
 #include "ui/gfx/geometry/rect_conversions.h"
-#include "ui/gfx/skia_util.h"
-#include "v8/include/v8.h"
+#include "ui/gfx/geometry/skia_conversions.h"
+#include "v8/include/v8-container.h"
+#include "v8/include/v8-context.h"
+#include "v8/include/v8-isolate.h"
+#include "v8/include/v8-local-handle.h"
+#include "v8/include/v8-object.h"
+#include "v8/include/v8-primitive.h"
 
 namespace content {
 
@@ -71,25 +81,20 @@ std::unique_ptr<Picture> ParsePictureStr(v8::Isolate* isolate,
   if (!picture_value)
     return nullptr;
   // Decode the picture from base64.
-  std::string encoded;
-  if (!picture_value->GetAsString(&encoded))
-    return nullptr;
-  return CreatePictureFromEncodedString(encoded);
+  const std::string* encoded = picture_value->GetIfString();
+  return encoded ? CreatePictureFromEncodedString(*encoded) : nullptr;
 }
 
 std::unique_ptr<Picture> ParsePictureHash(v8::Isolate* isolate,
                                           v8::Local<v8::Value> arg) {
   std::unique_ptr<base::Value> picture_value = ParsePictureArg(isolate, arg);
-  if (!picture_value)
-    return nullptr;
-  const base::DictionaryValue* value = nullptr;
-  if (!picture_value->GetAsDictionary(&value))
+  if (!picture_value || !picture_value->is_dict())
     return nullptr;
   // Decode the picture from base64.
-  std::string encoded;
-  if (!value->GetString("skp64", &encoded))
+  std::string* encoded = picture_value->GetDict().FindString("skp64");
+  if (!encoded)
     return nullptr;
-  return CreatePictureFromEncodedString(encoded);
+  return CreatePictureFromEncodedString(std::move(*encoded));
 }
 
 class PicturePlaybackController : public SkPicture::AbortCallback {
@@ -98,10 +103,10 @@ class PicturePlaybackController : public SkPicture::AbortCallback {
                             size_t count)
       : canvas_(canvas), playback_count_(count) {}
 
-  bool abort() override { return canvas_.CommandCount() > playback_count_; }
+  bool abort() override { return canvas_->CommandCount() > playback_count_; }
 
  private:
-  const skia::BenchmarkingCanvas& canvas_;
+  const raw_ref<const skia::BenchmarkingCanvas, ExperimentalRenderer> canvas_;
   size_t playback_count_;
 };
 
@@ -111,7 +116,7 @@ gin::WrapperInfo SkiaBenchmarking::kWrapperInfo = {gin::kEmbedderNativeGin};
 
 // static
 void SkiaBenchmarking::Install(blink::WebLocalFrame* frame) {
-  v8::Isolate* isolate = blink::MainThreadIsolate();
+  v8::Isolate* isolate = frame->GetAgentGroupScheduler()->Isolate();
   v8::HandleScope handle_scope(isolate);
   v8::Local<v8::Context> context = frame->MainWorldScriptContext();
   if (context.IsEmpty())
@@ -180,13 +185,14 @@ void SkiaBenchmarking::Rasterize(gin::Arguments* args) {
     std::unique_ptr<base::Value> params_value =
         content::V8ValueConverter::Create()->FromV8Value(params, context);
 
-    const base::DictionaryValue* params_dict = nullptr;
-    if (params_value.get() && params_value->GetAsDictionary(&params_dict)) {
-      params_dict->GetDouble("scale", &scale);
-      params_dict->GetInteger("stop", &stop_index);
+    if (params_value && params_value->is_dict()) {
+      const base::Value::Dict& params_dict = params_value->GetDict();
+      scale = params_dict.FindDouble("scale").value_or(scale);
+      if (std::optional<int> stop = params_dict.FindInt("stop")) {
+        stop_index = *stop;
+      }
 
-      const base::Value* clip_value = nullptr;
-      if (params_dict->Get("clip", &clip_value))
+      if (const base::Value* clip_value = params_dict.Find("clip"))
         cc::MathUtil::FromValue(clip_value, &clip_rect);
     }
   }
@@ -199,7 +205,7 @@ void SkiaBenchmarking::Rasterize(gin::Arguments* args) {
     return;
   bitmap.eraseARGB(0, 0, 0, 0);
 
-  SkCanvas canvas(bitmap);
+  SkCanvas canvas(bitmap, SkSurfaceProps{});
   canvas.translate(SkIntToScalar(-clip_rect.x()),
                    SkIntToScalar(-clip_rect.y()));
   canvas.clipRect(gfx::RectToSkRect(snapped_clip));
@@ -229,7 +235,7 @@ void SkiaBenchmarking::Rasterize(gin::Arguments* args) {
                    .Set("width", snapped_clip.width())
                    .Set("height", snapped_clip.height())
                    .Set("data", blink::WebArrayBufferConverter::ToV8Value(
-                                    &buffer, context->Global(), isolate))
+                                    &buffer, isolate))
                    .Build());
 }
 
@@ -243,14 +249,16 @@ void SkiaBenchmarking::GetOps(gin::Arguments* args) {
   if (!picture.get())
     return;
 
-  SkCanvas canvas(picture->layer_rect.width(), picture->layer_rect.height());
+  SkSurfaceProps props = skia::LegacyDisplayGlobals::GetSkSurfaceProps();
+  SkCanvas canvas(picture->layer_rect.width(), picture->layer_rect.height(),
+                  &props);
   skia::BenchmarkingCanvas benchmarking_canvas(&canvas);
   picture->picture->playback(&benchmarking_canvas);
 
   v8::Local<v8::Context> context = isolate->GetCurrentContext();
 
   args->Return(content::V8ValueConverter::Create()->ToV8Value(
-      &benchmarking_canvas.Commands(), context));
+      benchmarking_canvas.Commands(), context));
 }
 
 void SkiaBenchmarking::GetOpTimings(gin::Arguments* args) {
@@ -268,14 +276,14 @@ void SkiaBenchmarking::GetOpTimings(gin::Arguments* args) {
   // Measure the total time by drawing straight into a bitmap-backed canvas.
   SkBitmap bitmap;
   bitmap.allocN32Pixels(bounds.width(), bounds.height());
-  SkCanvas bitmap_canvas(bitmap);
+  SkCanvas bitmap_canvas(bitmap, SkSurfaceProps{});
   bitmap_canvas.clear(SK_ColorTRANSPARENT);
   base::TimeTicks t0 = base::TimeTicks::Now();
   picture->picture->playback(&bitmap_canvas);
   base::TimeDelta total_time = base::TimeTicks::Now() - t0;
 
   // Gather per-op timing info by drawing into a BenchmarkingCanvas.
-  SkCanvas canvas(bitmap);
+  SkCanvas canvas(bitmap, SkSurfaceProps{});
   canvas.clear(SK_ColorTRANSPARENT);
   skia::BenchmarkingCanvas benchmarking_canvas(&canvas);
   picture->picture->playback(&benchmarking_canvas);

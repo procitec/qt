@@ -1,43 +1,6 @@
-/****************************************************************************
-**
-** Copyright (C) 2018 Crimson AS <info@crimson.no>
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtQml module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2018 Crimson AS <info@crimson.no>
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
-#include "qv4setobject_p.h" // ### temporary
 #include "qv4mapobject_p.h"
 #include "qv4mapiterator_p.h"
 #include "qv4estable_p.h"
@@ -49,14 +12,14 @@ DEFINE_OBJECT_VTABLE(WeakMapCtor);
 DEFINE_OBJECT_VTABLE(MapCtor);
 DEFINE_OBJECT_VTABLE(MapObject);
 
-void Heap::WeakMapCtor::init(QV4::ExecutionContext *scope)
+void Heap::WeakMapCtor::init(QV4::ExecutionEngine *engine)
 {
-    Heap::FunctionObject::init(scope, QStringLiteral("WeakMap"));
+    Heap::FunctionObject::init(engine, QStringLiteral("WeakMap"));
 }
 
-void Heap::MapCtor::init(QV4::ExecutionContext *scope)
+void Heap::MapCtor::init(QV4::ExecutionEngine *engine)
 {
-    Heap::FunctionObject::init(scope, QStringLiteral("Map"));
+    Heap::FunctionObject::init(engine, QStringLiteral("Map"));
 }
 
 ReturnedValue WeakMapCtor::construct(const FunctionObject *f, const Value *argv, int argc, const Value *newTarget, bool weakMap)
@@ -111,8 +74,7 @@ ReturnedValue WeakMapCtor::construct(const FunctionObject *f, const Value *argv,
                 if (scope.hasException())
                     break;
             }
-            ScopedValue falsey(scope, Encode(false));
-            return Runtime::IteratorClose::call(scope.engine, iter, falsey);
+            return Runtime::IteratorClose::call(scope.engine, iter);
         }
     }
     return a->asReturnedValue();
@@ -252,6 +214,17 @@ ReturnedValue WeakMapPrototype::method_set(const FunctionObject *b, const Value 
         (!argc || !argv[0].isObject()))
         return scope.engine->throwTypeError();
 
+    QV4::WriteBarrier::markCustom(scope.engine, [&](QV4::MarkStack *ms) {
+        if (scope.engine->memoryManager->gcStateMachine->state <= GCState::FreeWeakMaps)
+            return;
+        Q_ASSERT(argv[0].heapObject());
+        argv[0].heapObject()->mark(ms);
+        if (argc > 1) {
+            if (auto *h = argv[1].heapObject())
+                h->mark(ms);
+        }
+    });
+
     that->d()->esTable->set(argv[0], argc > 1 ? argv[1] : Value::undefinedValue());
     return that.asReturnedValue();
 }
@@ -307,12 +280,21 @@ ReturnedValue MapPrototype::method_forEach(const FunctionObject *b, const Value 
 
     Value *arguments = scope.alloc(3);
     arguments[2] = that;
-    for (uint i = 0; i < that->d()->esTable->size(); ++i) {
-        that->d()->esTable->iterate(i, &arguments[1], &arguments[0]); // fill in key (0), value (1)
+
+    ESTable::ShiftObserver observer{};
+    that->d()->esTable->observeShifts(observer);
+
+    while (observer.pivot < that->d()->esTable->size()) {
+        that->d()->esTable->iterate(observer.pivot, &arguments[1], &arguments[0]); // fill in key (0), value (1)
 
         callbackfn->call(thisArg, arguments, 3);
         CHECK_EXCEPTION();
+
+        observer.next();
     }
+
+    that->d()->esTable->stopObservingShifts(observer);
+
     return Encode::undefined();
 }
 
@@ -354,6 +336,15 @@ ReturnedValue MapPrototype::method_set(const FunctionObject *b, const Value *thi
     Scoped<MapObject> that(scope, thisObject);
     if (!that || that->d()->isWeakMap)
         return scope.engine->throwTypeError();
+
+    QV4::WriteBarrier::markCustom(scope.engine, [&](QV4::MarkStack *ms) {
+        if  (auto *h = argv[0].heapObject())
+            h->mark(ms);
+        if (argc > 1) {
+            if (auto *h = argv[1].heapObject())
+                h->mark(ms);
+        }
+    });
 
     that->d()->esTable->set(argc ? argv[0] : Value::undefinedValue(), argc > 1 ? argv[1] : Value::undefinedValue());
     return that.asReturnedValue();

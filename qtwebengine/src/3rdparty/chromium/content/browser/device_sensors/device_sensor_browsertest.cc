@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,15 +6,13 @@
 #include <string>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/bind_helpers.h"
 #include "base/command_line.h"
-#include "base/macros.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/run_loop.h"
 #include "base/threading/platform_thread.h"
 #include "build/build_config.h"
-#include "components/network_session_configurator/common/network_switches.h"
-#include "content/browser/generic_sensor/sensor_provider_proxy_impl.h"
+#include "content/browser/generic_sensor/web_contents_sensor_provider_proxy.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
@@ -23,6 +21,7 @@
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
+#include "content/public/test/content_mock_cert_verifier.h"
 #include "content/public/test/test_navigation_observer.h"
 #include "content/public/test/test_utils.h"
 #include "content/shell/browser/shell.h"
@@ -45,19 +44,41 @@ using device::FakeSensorProvider;
 class DeviceSensorBrowserTest : public ContentBrowserTest {
  public:
   DeviceSensorBrowserTest() {
-    SensorProviderProxyImpl::OverrideSensorProviderBinderForTesting(
+    WebContentsSensorProviderProxy::OverrideSensorProviderBinderForTesting(
         base::BindRepeating(&DeviceSensorBrowserTest::BindSensorProvider,
                             base::Unretained(this)));
   }
 
   ~DeviceSensorBrowserTest() override {
-    SensorProviderProxyImpl::OverrideSensorProviderBinderForTesting(
+    WebContentsSensorProviderProxy::OverrideSensorProviderBinderForTesting(
         base::NullCallback());
   }
 
+  void WaitForAlertDialogAndQuitAfterDelay(base::TimeDelta delay) {
+    ShellJavaScriptDialogManager* dialog_manager =
+        static_cast<ShellJavaScriptDialogManager*>(
+            shell()->GetJavaScriptDialogManager(shell()->web_contents()));
+
+    base::RunLoop run_loop;
+    dialog_manager->set_dialog_request_callback(base::BindOnce(
+        [](base::TimeDelta delay, base::OnceClosure quit_closure) {
+          base::PlatformThread::Sleep(delay);
+          std::move(quit_closure).Run();
+        },
+        delay, run_loop.QuitWhenIdleClosure()));
+    run_loop.Run();
+  }
+
+  std::unique_ptr<FakeSensorProvider> sensor_provider_;
+  std::unique_ptr<net::EmbeddedTestServer> https_embedded_test_server_;
+
+ private:
   void SetUpOnMainThread() override {
-    https_embedded_test_server_.reset(
-        new net::EmbeddedTestServer(net::EmbeddedTestServer::TYPE_HTTPS));
+    ContentBrowserTest::SetUpOnMainThread();
+    mock_cert_verifier_.mock_cert_verifier()->set_default_result(net::OK);
+
+    https_embedded_test_server_ = std::make_unique<net::EmbeddedTestServer>(
+        net::EmbeddedTestServer::TYPE_HTTPS);
     // Serve both a.com and b.com (and any other domain).
     host_resolver()->AddRule("*", "127.0.0.1");
     ASSERT_TRUE(https_embedded_test_server_->InitializeAndListen());
@@ -75,35 +96,26 @@ class DeviceSensorBrowserTest : public ContentBrowserTest {
   }
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
-    // HTTPS server only serves a valid cert for localhost, so this is needed
-    // to load pages from other hosts without an error.
-    command_line->AppendSwitch(switches::kIgnoreCertificateErrors);
+    ContentBrowserTest::SetUpCommandLine(command_line);
+    mock_cert_verifier_.SetUpCommandLine(command_line);
   }
 
-  void DelayAndQuit(base::TimeDelta delay) {
-    base::PlatformThread::Sleep(delay);
-    base::RunLoop::QuitCurrentWhenIdleDeprecated();
+  void SetUpInProcessBrowserTestFixture() override {
+    ContentBrowserTest::SetUpInProcessBrowserTestFixture();
+    mock_cert_verifier_.SetUpInProcessBrowserTestFixture();
   }
 
-  void WaitForAlertDialogAndQuitAfterDelay(base::TimeDelta delay) {
-    ShellJavaScriptDialogManager* dialog_manager =
-        static_cast<ShellJavaScriptDialogManager*>(
-            shell()->GetJavaScriptDialogManager(shell()->web_contents()));
-
-    scoped_refptr<MessageLoopRunner> runner = new MessageLoopRunner();
-    dialog_manager->set_dialog_request_callback(base::BindOnce(
-        &DeviceSensorBrowserTest::DelayAndQuit, base::Unretained(this), delay));
-    runner->Run();
+  void TearDownInProcessBrowserTestFixture() override {
+    ContentBrowserTest::TearDownInProcessBrowserTestFixture();
+    mock_cert_verifier_.TearDownInProcessBrowserTestFixture();
   }
 
-  std::unique_ptr<FakeSensorProvider> sensor_provider_;
-  std::unique_ptr<net::EmbeddedTestServer> https_embedded_test_server_;
-
- private:
   void BindSensorProvider(
       mojo::PendingReceiver<device::mojom::SensorProvider> receiver) {
     sensor_provider_->Bind(std::move(receiver));
   }
+
+  content::ContentMockCertVerifier mock_cert_verifier_;
 };
 
 IN_PROC_BROWSER_TEST_F(DeviceSensorBrowserTest, OrientationTest) {
@@ -197,7 +209,6 @@ IN_PROC_BROWSER_TEST_F(DeviceSensorBrowserTest, MotionNullTest) {
   EXPECT_EQ("pass", shell()->web_contents()->GetLastCommittedURL().ref());
 }
 
-// Disabled due to flakiness: https://crbug.com/783891
 IN_PROC_BROWSER_TEST_F(DeviceSensorBrowserTest,
                        MotionOnlySomeSensorsAreAvailableTest) {
   // The test page registers an event handler for motion events and
@@ -231,7 +242,7 @@ IN_PROC_BROWSER_TEST_F(DeviceSensorBrowserTest, NullTestWithAlert) {
 
   // TODO(timvolodine): investigate if it is possible to test this without
   // delay, crbug.com/360044.
-  WaitForAlertDialogAndQuitAfterDelay(base::TimeDelta::FromMilliseconds(500));
+  WaitForAlertDialogAndQuitAfterDelay(base::Milliseconds(500));
 
   same_tab_observer.Wait();
   EXPECT_EQ("pass", shell()->web_contents()->GetLastCommittedURL().ref());
@@ -255,7 +266,7 @@ IN_PROC_BROWSER_TEST_F(DeviceSensorBrowserTest,
   navigation_observer.Wait();
 
   content::RenderFrameHost* iframe =
-      ChildFrameAt(shell()->web_contents()->GetMainFrame(), 0);
+      ChildFrameAt(shell()->web_contents()->GetPrimaryMainFrame(), 0);
   ASSERT_TRUE(iframe);
   EXPECT_EQ("fail", iframe->GetLastCommittedURL().ref());
 }
@@ -273,16 +284,16 @@ IN_PROC_BROWSER_TEST_F(DeviceSensorBrowserTest,
 
   EXPECT_TRUE(NavigateToURL(shell(), main_frame_url));
   // Now allow 'accelerometer' and 'gyroscope' policy features.
-  EXPECT_TRUE(ExecuteScript(shell(),
-                            "document.getElementById('cross_origin_iframe')."
-                            "allow='accelerometer; gyroscope'"));
+  EXPECT_TRUE(ExecJs(shell(),
+                     "document.getElementById('cross_origin_iframe')."
+                     "allow='accelerometer; gyroscope'"));
   EXPECT_TRUE(NavigateIframeToURL(shell()->web_contents(),
                                   "cross_origin_iframe", iframe_url));
 
   navigation_observer.Wait();
 
   content::RenderFrameHost* iframe =
-      ChildFrameAt(shell()->web_contents()->GetMainFrame(), 0);
+      ChildFrameAt(shell()->web_contents()->GetPrimaryMainFrame(), 0);
   ASSERT_TRUE(iframe);
   EXPECT_EQ("pass", iframe->GetLastCommittedURL().ref());
 }
@@ -305,7 +316,7 @@ IN_PROC_BROWSER_TEST_F(DeviceSensorBrowserTest,
   navigation_observer.Wait();
 
   content::RenderFrameHost* iframe =
-      ChildFrameAt(shell()->web_contents()->GetMainFrame(), 0);
+      ChildFrameAt(shell()->web_contents()->GetPrimaryMainFrame(), 0);
   ASSERT_TRUE(iframe);
   EXPECT_EQ("fail", iframe->GetLastCommittedURL().ref());
 }
@@ -323,22 +334,22 @@ IN_PROC_BROWSER_TEST_F(DeviceSensorBrowserTest,
 
   EXPECT_TRUE(NavigateToURL(shell(), main_frame_url));
   // Now allow 'accelerometer' and 'gyroscope' policy features.
-  EXPECT_TRUE(ExecuteScript(shell(),
-                            "document.getElementById('cross_origin_iframe')."
-                            "allow='accelerometer; gyroscope'"));
+  EXPECT_TRUE(ExecJs(shell(),
+                     "document.getElementById('cross_origin_iframe')."
+                     "allow='accelerometer; gyroscope'"));
   EXPECT_TRUE(NavigateIframeToURL(shell()->web_contents(),
                                   "cross_origin_iframe", iframe_url));
 
   navigation_observer.Wait();
 
   content::RenderFrameHost* iframe =
-      ChildFrameAt(shell()->web_contents()->GetMainFrame(), 0);
+      ChildFrameAt(shell()->web_contents()->GetPrimaryMainFrame(), 0);
   ASSERT_TRUE(iframe);
   EXPECT_EQ("pass", iframe->GetLastCommittedURL().ref());
 }
 
 IN_PROC_BROWSER_TEST_F(DeviceSensorBrowserTest,
-                       DeviceOrientationFeaturePolicyWarning) {
+                       DeviceOrientationPermissionsPolicyWarning) {
   // Main frame is on a.com, iframe is on b.com.
   GURL main_frame_url =
       https_embedded_test_server_->GetURL("a.com", "/cross_origin_iframe.html");
@@ -347,9 +358,9 @@ IN_PROC_BROWSER_TEST_F(DeviceSensorBrowserTest,
 
   const char kWarningMessage[] =
       "The deviceorientationabsolute events are blocked by "
-      "feature policy. See "
-      "https://github.com/WICG/feature-policy/blob/"
-      "master/features.md#sensor-features";
+      "permissions policy. See "
+      "https://github.com/w3c/webappsec-permissions-policy/blob/master/"
+      "features.md#sensor-features";
 
   WebContentsConsoleObserver console_observer(shell()->web_contents());
   console_observer.SetPattern(kWarningMessage);
@@ -358,7 +369,7 @@ IN_PROC_BROWSER_TEST_F(DeviceSensorBrowserTest,
   EXPECT_TRUE(NavigateIframeToURL(shell()->web_contents(),
                                   "cross_origin_iframe", iframe_url));
 
-  console_observer.Wait();
+  ASSERT_TRUE(console_observer.Wait());
   EXPECT_EQ(kWarningMessage, console_observer.GetMessageAt(0u));
 }
 

@@ -1,8 +1,10 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "cc/metrics/total_frame_counter.h"
+
+#include <cmath>
 
 #include "base/logging.h"
 #include "components/viz/common/frame_sinks/begin_frame_args.h"
@@ -64,9 +66,16 @@ size_t TotalFrameCounter::ComputeTotalVisibleFrames(
     return total_frames_;
   }
 
-  DCHECK_GE(until, last_shown_timestamp_);
+  // We have two sources for timestamps. Show/Hide uses the Renderer time
+  // source. While viz::BeginFrameArgs will be either timestamps from the
+  // physical GPU, or fallbacks in the GPU/Viz process. This could be the cause
+  // of a drift. We don't error on these edgecases, we just return the
+  // `total_frames_` which reflects the latest OnBeginFrame.
+  if (until < last_shown_timestamp_) {
+    return total_frames_;
+  }
   auto frames_since =
-      std::round((until - last_shown_timestamp_) / latest_interval_);
+      std::ceil((until - last_shown_timestamp_) / latest_interval_);
   return total_frames_ + frames_since;
 }
 

@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,13 +11,14 @@
 
 #if defined(OS_ANDROID)
 #include "base/android/library_loader/anchor_functions.h"
-#include "base/android/library_loader/anchor_functions_buildflags.h"
 #endif
+#include "base/android/library_loader/anchor_functions_buildflags.h"
 #include "base/debug/elf_reader.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_file.h"
 #include "base/format_macros.h"
+#include "base/memory/page_size.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/process/process_metrics.h"
 #include "base/strings/string_number_conversions.h"
@@ -26,6 +27,7 @@
 #include "base/threading/thread_restrictions.h"
 #include "build/build_config.h"
 #include "services/resource_coordinator/public/cpp/memory_instrumentation/os_metrics.h"
+#include "third_party/abseil-cpp/absl/strings/ascii.h"
 
 // Symbol with virtual address of the start of ELF header of the current binary.
 extern char __ehdr_start;
@@ -71,8 +73,7 @@ bool ResetPeakRSSIfPossible(base::ProcessId pid) {
   base::ScopedFD clear_refs_fd(open(clear_refs_file.value().c_str(), O_WRONLY));
   is_peak_rss_resettable =
       clear_refs_fd.get() >= 0 &&
-      base::WriteFileDescriptor(clear_refs_fd.get(), kClearPeakRssCommand,
-                                sizeof(kClearPeakRssCommand) - 1);
+      base::WriteFileDescriptor(clear_refs_fd.get(), kClearPeakRssCommand);
   return is_peak_rss_resettable;
 }
 
@@ -97,7 +98,12 @@ ModuleData GetMainModuleData() {
     size_t build_id_length =
         base::debug::ReadElfBuildId(&__ehdr_start, true, build_id);
     if (build_id_length) {
-      module_data.path = dl_info.dli_fname;
+      base::FilePath module_data_path = base::FilePath(dl_info.dli_fname);
+      if (module_data_path.IsAbsolute()) {
+        module_data.path = dl_info.dli_fname;
+      } else {
+        module_data.path = base::MakeAbsoluteFilePath(module_data_path).value();
+      }
       module_data.build_id = std::string(build_id, build_id_length);
     }
   }
@@ -213,7 +219,8 @@ uint32_t ReadLinuxProcSmapsFile(FILE* smaps_file,
     line[0] = '\0';
     if (fgets(line, kMaxLineSize, smaps_file) == nullptr || !strlen(line))
       break;
-    if (isxdigit(line[0]) && !isupper(line[0])) {
+    if (absl::ascii_isxdigit(static_cast<unsigned char>(line[0])) &&
+        !absl::ascii_isupper(static_cast<unsigned char>(line[0]))) {
       region = VmRegion();
       counters_parsed_for_current_region = 0;
       should_add_current_region =
@@ -301,7 +308,7 @@ bool OSMetrics::FillOSMemoryDump(base::ProcessId pid,
 
   auto process_metrics = CreateProcessMetrics(pid);
 
-  const static size_t page_size = base::GetPageSize();
+  static const size_t page_size = base::GetPageSize();
   uint64_t rss_anon_bytes = (resident_pages - shared_pages) * page_size;
   uint64_t vm_swap_bytes = process_metrics->GetVmSwapBytes();
 
@@ -311,7 +318,7 @@ bool OSMetrics::FillOSMemoryDump(base::ProcessId pid,
   dump->peak_resident_set_kb = GetPeakResidentSetSize(pid);
   dump->is_peak_rss_resettable = ResetPeakRSSIfPossible(pid);
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
 #if BUILDFLAG(SUPPORTS_CODE_ORDERING)
   if (!base::android::AreAnchorsSane()) {
     DLOG(WARNING) << "Incorrect code ordering";
@@ -335,7 +342,7 @@ bool OSMetrics::FillOSMemoryDump(base::ProcessId pid,
 
   dump->native_library_pages_bitmap = std::move(accessed_pages_bitmap);
 #endif  // BUILDFLAG(SUPPORTS_CODE_ORDERING)
-#endif  //  defined(OS_ANDROID)
+#endif  //  BUILDFLAG(IS_ANDROID)
 
   return true;
 }

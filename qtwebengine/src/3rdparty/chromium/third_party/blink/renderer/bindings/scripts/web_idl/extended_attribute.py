@@ -1,4 +1,4 @@
-# Copyright 2019 The Chromium Authors. All rights reserved.
+# Copyright 2019 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -8,7 +8,7 @@ import itertools
 class ExtendedAttribute(object):
     """
     Represents a single extended attribute.
-    https://heycam.github.io/webidl/#dfn-extended-attribute
+    https://webidl.spec.whatwg.org/#dfn-extended-attribute
     """
 
     # [Key]
@@ -141,6 +141,10 @@ class ExtendedAttribute(object):
             self.syntactic_form))
 
     @property
+    def has_name(self):
+        return self._format == self._FORM_NAMED_ARG_LIST
+
+    @property
     def name(self):
         """
         Returns |Name| for format NamedArgList.  Otherwise, raises a ValueError.
@@ -165,7 +169,7 @@ class ExtendedAttributes(object):
         'B': (ExtendedAttribute('B', value='baz')),
       }
 
-    https://heycam.github.io/webidl/#idl-extended-attributes
+    https://webidl.spec.whatwg.org/#idl-extended-attributes
     """
 
     def __init__(self, extended_attributes=None):

@@ -9,16 +9,29 @@
 #define SkTextBlob_DEFINED
 
 #include "include/core/SkFont.h"
-#include "include/core/SkPaint.h"
+#include "include/core/SkFontTypes.h"
+#include "include/core/SkRect.h"
 #include "include/core/SkRefCnt.h"
-#include "include/core/SkString.h"
-#include "include/private/SkTemplates.h"
+#include "include/core/SkScalar.h"
+#include "include/core/SkTypes.h"
+#include "include/private/base/SkDebug.h"
+#include "include/private/base/SkTemplates.h"
 
 #include <atomic>
+#include <cstdint>
+#include <cstring>
 
+class SkData;
+class SkPaint;
+class SkTypeface;
+struct SkDeserialProcs;
+struct SkPoint;
 struct SkRSXform;
 struct SkSerialProcs;
-struct SkDeserialProcs;
+
+namespace sktext {
+class GlyphRunList;
+}
 
 /** \class SkTextBlob
     SkTextBlob combines multiple text runs into an immutable container. Each text
@@ -199,6 +212,11 @@ public:
             SkTypeface*     fTypeface;
             int             fGlyphCount;
             const uint16_t* fGlyphIndices;
+#ifdef SK_UNTIL_CRBUG_1187654_IS_FIXED
+            const uint32_t* fClusterIndex_forTest;
+            int             fUtf8Size_forTest;
+            const char*     fUtf8_forTest;
+#endif
         };
 
         Iter(const SkTextBlob&);
@@ -208,6 +226,15 @@ public:
          * If this returns false, there are no more runs, and the Run parameter will be ignored.
          */
         bool next(Run*);
+
+        // Experimental, DO NO USE, will change/go-away
+        struct ExperimentalRun {
+            SkFont          font;
+            int             count;
+            const uint16_t* glyphs;
+            const SkPoint*  positions;
+        };
+        bool experimentalNext(ExperimentalRun*);
 
     private:
         const RunRecord* fRunRecord;
@@ -230,14 +257,16 @@ private:
 
     static unsigned ScalarsPerGlyph(GlyphPositioning pos);
 
+    using PurgeDelegate = void (*)(uint32_t blobID, uint32_t cacheID);
+
     // Call when this blob is part of the key to a cache entry. This allows the cache
     // to know automatically those entries can be purged when this SkTextBlob is deleted.
-    void notifyAddedToCache(uint32_t cacheID) const {
+    void notifyAddedToCache(uint32_t cacheID, PurgeDelegate purgeDelegate) const {
         fCacheID.store(cacheID);
+        fPurgeDelegate.store(purgeDelegate);
     }
 
-    friend class SkGlyphRunList;
-    friend class GrTextBlobCache;
+    friend class sktext::GlyphRunList;
     friend class SkTextBlobBuilder;
     friend class SkTextBlobPriv;
     friend class SkTextBlobRunIterator;
@@ -245,6 +274,7 @@ private:
     const SkRect                  fBounds;
     const uint32_t                fUniqueID;
     mutable std::atomic<uint32_t> fCacheID;
+    mutable std::atomic<PurgeDelegate> fPurgeDelegate;
 
     SkDEBUGCODE(size_t fStorageSize;)
 
@@ -296,10 +326,10 @@ public:
         array, one per glyph.
     */
     struct RunBuffer {
-        SkGlyphID* glyphs;   //!< storage for glyphs in run
-        SkScalar*  pos;      //!< storage for positions in run
-        char*      utf8text; //!< reserved for future use
-        uint32_t*  clusters; //!< reserved for future use
+        SkGlyphID* glyphs;   //!< storage for glyph indexes in run
+        SkScalar*  pos;      //!< storage for glyph positions in run
+        char*      utf8text; //!< storage for text UTF-8 code units in run
+        uint32_t*  clusters; //!< storage for glyph clusters (index of UTF-8 code unit)
 
         // Helpers, since the "pos" field can be different types (always some number of floats).
         SkPoint*    points() const { return reinterpret_cast<SkPoint*>(pos); }
@@ -309,7 +339,7 @@ public:
     /** Returns run with storage for glyphs. Caller must write count glyphs to
         RunBuffer::glyphs before next call to SkTextBlobBuilder.
 
-        RunBuffer::utf8text, and RunBuffer::clusters should be ignored.
+        RunBuffer::pos, RunBuffer::utf8text, and RunBuffer::clusters should be ignored.
 
         Glyphs share metrics in font.
 
@@ -325,16 +355,16 @@ public:
         @param x       horizontal offset within the blob
         @param y       vertical offset within the blob
         @param bounds  optional run bounding box
-        @return        writable glyph buffer
+        @return writable glyph buffer
     */
     const RunBuffer& allocRun(const SkFont& font, int count, SkScalar x, SkScalar y,
                               const SkRect* bounds = nullptr);
 
     /** Returns run with storage for glyphs and positions along baseline. Caller must
-        write count glyphs to RunBuffer::glyphs, and count scalars to RunBuffer::pos;
+        write count glyphs to RunBuffer::glyphs and count scalars to RunBuffer::pos
         before next call to SkTextBlobBuilder.
 
-        RunBuffer::utf8text, and RunBuffer::clusters should be ignored.
+        RunBuffer::utf8text and RunBuffer::clusters should be ignored.
 
         Glyphs share metrics in font.
 
@@ -349,16 +379,16 @@ public:
         @param count   number of glyphs
         @param y       vertical offset within the blob
         @param bounds  optional run bounding box
-        @return        writable glyph buffer and x-axis position buffer
+        @return writable glyph buffer and x-axis position buffer
     */
     const RunBuffer& allocRunPosH(const SkFont& font, int count, SkScalar y,
                                   const SkRect* bounds = nullptr);
 
     /** Returns run with storage for glyphs and SkPoint positions. Caller must
-        write count glyphs to RunBuffer::glyphs, and count SkPoint to RunBuffer::pos;
+        write count glyphs to RunBuffer::glyphs and count SkPoint to RunBuffer::pos
         before next call to SkTextBlobBuilder.
 
-        RunBuffer::utf8text, and RunBuffer::clusters should be ignored.
+        RunBuffer::utf8text and RunBuffer::clusters should be ignored.
 
         Glyphs share metrics in font.
 
@@ -372,7 +402,7 @@ public:
         @param font    SkFont used for this run
         @param count   number of glyphs
         @param bounds  optional run bounding box
-        @return        writable glyph buffer and SkPoint buffer
+        @return writable glyph buffer and SkPoint buffer
     */
     const RunBuffer& allocRunPos(const SkFont& font, int count,
                                  const SkRect* bounds = nullptr);
@@ -380,24 +410,87 @@ public:
     // RunBuffer.pos points to SkRSXform array
     const RunBuffer& allocRunRSXform(const SkFont& font, int count);
 
-private:
-    const RunBuffer& allocRunText(const SkFont& font,
-                                  int count,
-                                  SkScalar x,
-                                  SkScalar y,
-                                  int textByteCount,
-                                  SkString lang,
-                                  const SkRect* bounds = nullptr);
-    const RunBuffer& allocRunTextPosH(const SkFont& font, int count, SkScalar y,
-                                      int textByteCount, SkString lang,
+    /** Returns run with storage for glyphs, text, and clusters. Caller must
+        write count glyphs to RunBuffer::glyphs, textByteCount UTF-8 code units
+        into RunBuffer::utf8text, and count monotonic indexes into utf8text
+        into RunBuffer::clusters before next call to SkTextBlobBuilder.
+
+        RunBuffer::pos should be ignored.
+
+        Glyphs share metrics in font.
+
+        Glyphs are positioned on a baseline at (x, y), using font metrics to
+        determine their relative placement.
+
+        bounds defines an optional bounding box, used to suppress drawing when SkTextBlob
+        bounds does not intersect SkSurface bounds. If bounds is nullptr, SkTextBlob bounds
+        is computed from (x, y) and RunBuffer::glyphs metrics.
+
+        @param font          SkFont used for this run
+        @param count         number of glyphs
+        @param x             horizontal offset within the blob
+        @param y             vertical offset within the blob
+        @param textByteCount number of UTF-8 code units
+        @param bounds        optional run bounding box
+        @return writable glyph buffer, text buffer, and cluster buffer
+    */
+    const RunBuffer& allocRunText(const SkFont& font, int count, SkScalar x, SkScalar y,
+                                  int textByteCount, const SkRect* bounds = nullptr);
+
+    /** Returns run with storage for glyphs, positions along baseline, text,
+        and clusters. Caller must write count glyphs to RunBuffer::glyphs,
+        count scalars to RunBuffer::pos, textByteCount UTF-8 code units into
+        RunBuffer::utf8text, and count monotonic indexes into utf8text into
+        RunBuffer::clusters before next call to SkTextBlobBuilder.
+
+        Glyphs share metrics in font.
+
+        Glyphs are positioned on a baseline at y, using x-axis positions written by
+        caller to RunBuffer::pos.
+
+        bounds defines an optional bounding box, used to suppress drawing when SkTextBlob
+        bounds does not intersect SkSurface bounds. If bounds is nullptr, SkTextBlob bounds
+        is computed from y, RunBuffer::pos, and RunBuffer::glyphs metrics.
+
+        @param font          SkFont used for this run
+        @param count         number of glyphs
+        @param y             vertical offset within the blob
+        @param textByteCount number of UTF-8 code units
+        @param bounds        optional run bounding box
+        @return writable glyph buffer, x-axis position buffer, text buffer, and cluster buffer
+    */
+    const RunBuffer& allocRunTextPosH(const SkFont& font, int count, SkScalar y, int textByteCount,
                                       const SkRect* bounds = nullptr);
-    const RunBuffer& allocRunTextPos(const SkFont& font, int count,
-                                     int textByteCount, SkString lang,
-                                     const SkRect* bounds = nullptr);
-    const RunBuffer& allocRunRSXform(const SkFont& font, int count,
-                                     int textByteCount, SkString lang,
+
+    /** Returns run with storage for glyphs, SkPoint positions, text, and
+        clusters. Caller must write count glyphs to RunBuffer::glyphs, count
+        SkPoint to RunBuffer::pos, textByteCount UTF-8 code units into
+        RunBuffer::utf8text, and count monotonic indexes into utf8text into
+        RunBuffer::clusters before next call to SkTextBlobBuilder.
+
+        Glyphs share metrics in font.
+
+        Glyphs are positioned using SkPoint written by caller to RunBuffer::pos, using
+        two scalar values for each SkPoint.
+
+        bounds defines an optional bounding box, used to suppress drawing when SkTextBlob
+        bounds does not intersect SkSurface bounds. If bounds is nullptr, SkTextBlob bounds
+        is computed from RunBuffer::pos, and RunBuffer::glyphs metrics.
+
+        @param font          SkFont used for this run
+        @param count         number of glyphs
+        @param textByteCount number of UTF-8 code units
+        @param bounds        optional run bounding box
+        @return writable glyph buffer, SkPoint buffer, text buffer, and cluster buffer
+    */
+    const RunBuffer& allocRunTextPos(const SkFont& font, int count, int textByteCount,
                                      const SkRect* bounds = nullptr);
 
+    // RunBuffer.pos points to SkRSXform array
+    const RunBuffer& allocRunTextRSXform(const SkFont& font, int count, int textByteCount,
+                                         const SkRect* bounds = nullptr);
+
+private:
     void reserve(size_t size);
     void allocInternal(const SkFont& font, SkTextBlob::GlyphPositioning positioning,
                        int count, int textBytes, SkPoint offset, const SkRect* bounds);
@@ -411,7 +504,7 @@ private:
     friend class SkTextBlobPriv;
     friend class SkTextBlobBuilderPriv;
 
-    SkAutoTMalloc<uint8_t> fStorage;
+    skia_private::AutoTMalloc<uint8_t> fStorage;
     size_t                 fStorageSize;
     size_t                 fStorageUsed;
 

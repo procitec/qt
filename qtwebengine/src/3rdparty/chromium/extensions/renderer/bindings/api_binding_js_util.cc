@@ -1,9 +1,10 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "extensions/renderer/bindings/api_binding_js_util.h"
 
+#include <optional>
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
 #include "content/public/renderer/v8_value_converter.h"
@@ -33,7 +34,7 @@ APIBindingJSUtil::APIBindingJSUtil(APITypeReferenceMap* type_refs,
       event_handler_(event_handler),
       exception_handler_(exception_handler) {}
 
-APIBindingJSUtil::~APIBindingJSUtil() {}
+APIBindingJSUtil::~APIBindingJSUtil() = default;
 
 gin::ObjectTemplateBuilder APIBindingJSUtil::GetObjectTemplateBuilder(
     v8::Isolate* isolate) {
@@ -48,6 +49,7 @@ gin::ObjectTemplateBuilder APIBindingJSUtil::GetObjectTemplateBuilder(
       .SetMethod("setLastError", &APIBindingJSUtil::SetLastError)
       .SetMethod("clearLastError", &APIBindingJSUtil::ClearLastError)
       .SetMethod("hasLastError", &APIBindingJSUtil::HasLastError)
+      .SetMethod("getLastErrorMessage", &APIBindingJSUtil::GetLastErrorMessage)
       .SetMethod("runCallbackWithLastError",
                  &APIBindingJSUtil::RunCallbackWithLastError)
       .SetMethod("handleException", &APIBindingJSUtil::HandleException)
@@ -61,7 +63,7 @@ gin::ObjectTemplateBuilder APIBindingJSUtil::GetObjectTemplateBuilder(
 void APIBindingJSUtil::SendRequest(
     gin::Arguments* arguments,
     const std::string& name,
-    const std::vector<v8::Local<v8::Value>>& request_args,
+    const v8::LocalVector<v8::Value>& request_args,
     v8::Local<v8::Value> options) {
   v8::Isolate* isolate = arguments->isolate();
   v8::HandleScope handle_scope(isolate);
@@ -87,22 +89,28 @@ void APIBindingJSUtil::SendRequest(
     options_dict.Get("customCallback", &custom_callback);
   }
 
-  std::unique_ptr<base::ListValue> converted_arguments;
-  v8::Local<v8::Function> callback;
-
   // Some APIs (like fileSystem and contextMenus) don't provide arguments that
   // match the expected schema. For now, we need to ignore these and trust the
   // JS gives us something we expect.
   // TODO(devlin): We should ideally always be able to validate these, meaning
   // that we either need to make the APIs give us the expected signature, or
   // need to have a way of indicating an internal signature.
+  // TODO(tjudkins): This call into ConvertArgumentsIgnoringSchema can hit a
+  // CHECK or DCHECK if the caller leaves off an optional callback. Since all
+  // the callers are only internally defined JS hooks we know none of them do at
+  // the moment, but this should be fixed and will need to be resolved for
+  // supporting promises through this codepath.
   APISignature::JSONParseResult parse_result =
       signature->ConvertArgumentsIgnoringSchema(context, request_args);
   CHECK(parse_result.succeeded());
+  // We don't currently support promise based requests through SendRequest here.
+  // See the above comment for more details.
+  DCHECK_NE(binding::AsyncResponseType::kPromise, parse_result.async_type);
 
-  request_handler_->StartRequest(context, name,
-                                 std::move(parse_result.arguments),
-                                 parse_result.callback, custom_callback);
+  request_handler_->StartRequest(
+      context, name, std::move(*parse_result.arguments_list),
+      parse_result.async_type, parse_result.callback, custom_callback,
+      binding::ResultModifierFunction());
 }
 
 void APIBindingJSUtil::RegisterEventArgumentMassager(
@@ -201,6 +209,22 @@ void APIBindingJSUtil::HasLastError(gin::Arguments* arguments) {
   arguments->Return(has_last_error);
 }
 
+void APIBindingJSUtil::GetLastErrorMessage(gin::Arguments* arguments) {
+  v8::Isolate* isolate = arguments->isolate();
+  v8::HandleScope handle_scope(isolate);
+
+  std::optional<std::string> last_error_message =
+      request_handler_->last_error()->GetErrorMessage(
+          arguments->GetHolderCreationContext());
+  if (last_error_message) {
+    arguments->Return(*last_error_message);
+  } else {
+    // TODO(tjudkins): It would be nicer to return a v8::Undefined here, but the
+    // gin converter doesn't support it at the moment.
+    arguments->Return(v8::Local<v8::Value>());
+  }
+}
+
 void APIBindingJSUtil::RunCallbackWithLastError(
     gin::Arguments* arguments,
     const std::string& error,
@@ -295,9 +319,10 @@ void APIBindingJSUtil::AddCustomSignature(
 
   type_refs_->AddCustomSignature(
       custom_signature_name,
-      std::make_unique<APISignature>(*base_signature,
-                                     false /*api_supports_promises*/,
-                                     nullptr /*access_checker*/));
+      APISignature::CreateFromValues(*base_signature, nullptr /*returns_async*/,
+                                     nullptr /*access_checker*/,
+                                     custom_signature_name,
+                                     false /*is_event_signature*/));
 }
 
 void APIBindingJSUtil::ValidateCustomSignature(
@@ -314,7 +339,7 @@ void APIBindingJSUtil::ValidateCustomSignature(
     NOTREACHED();
   }
 
-  std::vector<v8::Local<v8::Value>> vector_arguments;
+  v8::LocalVector<v8::Value> vector_arguments(isolate);
   if (!gin::ConvertFromV8(isolate, arguments_to_validate, &vector_arguments)) {
     NOTREACHED();
     return;

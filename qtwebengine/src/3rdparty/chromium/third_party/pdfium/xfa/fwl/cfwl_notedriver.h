@@ -1,4 +1,4 @@
-// Copyright 2014 PDFium Authors. All rights reserved.
+// Copyright 2014 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -15,8 +15,8 @@
 #include "v8/include/cppgc/garbage-collected.h"
 #include "v8/include/cppgc/member.h"
 #include "v8/include/cppgc/visitor.h"
+#include "xfa/fgas/graphics/cfgas_gegraphics.h"
 #include "xfa/fwl/cfwl_widget.h"
-#include "xfa/fxgraphics/cxfa_graphics.h"
 
 class CFWL_Event;
 
@@ -36,7 +36,7 @@ class CFWL_NoteDriver final : public cppgc::GarbageCollected<CFWL_NoteDriver> {
   void SetGrab(CFWL_Widget* pGrab) { m_pGrab = pGrab; }
 
  private:
-  class Target {
+  class Target : public cppgc::GarbageCollected<Target> {
    public:
     explicit Target(CFWL_Widget* pListener);
     ~Target();
@@ -45,7 +45,7 @@ class CFWL_NoteDriver final : public cppgc::GarbageCollected<CFWL_NoteDriver> {
     void SetEventSource(CFWL_Widget* pSource);
     bool ProcessEvent(CFWL_Event* pEvent);
     bool IsValid() const { return m_bValid; }
-    void FlagInvalid() { m_bValid = false; }
+    void Invalidate() { m_bValid = false; }
 
    private:
     bool m_bValid = true;
@@ -53,7 +53,7 @@ class CFWL_NoteDriver final : public cppgc::GarbageCollected<CFWL_NoteDriver> {
     std::set<cppgc::Member<CFWL_Widget>> m_widgets;
   };
 
-  CFWL_NoteDriver();
+  explicit CFWL_NoteDriver(CFWL_App* pApp);
 
   bool DispatchMessage(CFWL_Message* pMessage, CFWL_Widget* pMessageForm);
   bool DoSetFocus(CFWL_Message* pMsg, CFWL_Widget* pMessageForm);
@@ -64,10 +64,11 @@ class CFWL_NoteDriver final : public cppgc::GarbageCollected<CFWL_NoteDriver> {
   bool DoMouseEx(CFWL_Message* pMsg, CFWL_Widget* pMessageForm);
   void MouseSecondary(CFWL_Message* pMsg);
 
-  std::map<uint64_t, std::unique_ptr<Target>> m_eventTargets;
+  cppgc::Member<CFWL_App> m_pApp;
   cppgc::Member<CFWL_Widget> m_pHover;
   cppgc::Member<CFWL_Widget> m_pFocus;
   cppgc::Member<CFWL_Widget> m_pGrab;
+  std::map<uint64_t, cppgc::Member<Target>> m_eventTargets;
 };
 
 #endif  // XFA_FWL_CFWL_NOTEDRIVER_H_

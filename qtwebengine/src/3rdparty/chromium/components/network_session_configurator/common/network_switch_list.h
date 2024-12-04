@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,9 +12,6 @@ NETWORK_SWITCH(kDisableQuic, "disable-quic")
 // Disables the HTTP/2 protocol.
 NETWORK_SWITCH(kDisableHttp2, "disable-http2")
 
-// Enable Websocket over HTTP/2.
-NETWORK_SWITCH(kEnableWebsocketOverHttp2, "enable-websocket-over-http2")
-
 // Enables Alternate-Protocol when the port is user controlled (> 1024).
 NETWORK_SWITCH(kEnableUserAlternateProtocolPorts,
                "enable-user-controlled-alternate-protocol-ports")
@@ -27,6 +24,9 @@ NETWORK_SWITCH(kIgnoreCertificateErrors, "ignore-certificate-errors")
 
 // Specifies a comma separated list of host-port pairs to force use of QUIC on.
 NETWORK_SWITCH(kOriginToForceQuicOn, "origin-to-force-quic-on")
+
+// Disables known-root checks for outgoing WebTransport connections.
+NETWORK_SWITCH(kWebTransportDeveloperMode, "webtransport-developer-mode")
 
 // Specifies a comma separated list of QUIC connection options to send to
 // the server.
@@ -65,10 +65,9 @@ NETWORK_SWITCH(kTestingFixedHttpsPort, "testing-fixed-https-port")
 // useful.
 NETWORK_SWITCH(kHostRules, "host-rules")
 
-// Enable "greasing" HTTP/2, that is, sending SETTINGS parameters with reserved
-// identifiers and sending frames of reserved types, respectively.  See
-// https://tools.ietf.org/html/draft-bishop-httpbis-grease-00 for more detail.
-NETWORK_SWITCH(kHttp2GreaseSettings, "http2-grease-settings")
+// Enable "greasing" HTTP/2 frame types, that is, sending frames of reserved
+// types.  See https://tools.ietf.org/html/draft-bishop-httpbis-grease-00 for
+// more detail.
 NETWORK_SWITCH(kHttp2GreaseFrameType, "http2-grease-frame-type")
 
 // If request has no body, close the stream not by setting END_STREAM flag on

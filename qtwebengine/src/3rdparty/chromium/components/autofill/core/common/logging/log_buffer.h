@@ -1,19 +1,21 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef COMPONENTS_AUTOFILL_CORE_COMMON_LOGGING_LOG_BUFFER_H_
 #define COMPONENTS_AUTOFILL_CORE_COMMON_LOGGING_LOG_BUFFER_H_
 
+#include <concepts>
 #include <string>
-#include <type_traits>
+#include <string_view>
 #include <vector>
 
-#include "base/macros.h"
-#include "base/strings/string16.h"
+#include "base/memory/raw_ptr.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
+#include "base/types/strong_alias.h"
 #include "base/values.h"
+#include "components/autofill/core/common/logging/log_macros.h"
 #include "url/gurl.h"
 
 // The desired pattern to generate log messages is to pass a scope, a log
@@ -47,6 +49,21 @@
 //   LogBuffer buffer;
 //   for (...) { buffer << something; }
 //   LogBuffer() << std::move(buffer);
+//
+// In practice the LogBuffer requires a boolean parameter indicating whether
+// logging should happen. You should rely on
+// components/autofill/core/common/logging/log_macros.h and follow one of the
+// following patterns:
+//
+// (1) void MyFunction(LogManager* log_manager) {
+//       LOG_AF(log_mannager) << "foobar";
+//     }
+// (2) void MyFunction(LogManager* log_manager) {
+//       LogBuffer buffer(
+//          /*active=*/ log_manager && log_manager->IsLoggingActive());
+//       LOG_AF(buffer) << "foobar";
+//       LOG_AF(log_manager) << std::move(buffer);
+//     }
 
 namespace autofill {
 
@@ -60,7 +77,7 @@ struct Tag {
 struct CTag {
   CTag() = default;
   // |opt_name| is not used, and only exists for readability.
-  explicit CTag(base::StringPiece opt_name) {}
+  explicit CTag(std::string_view opt_name) {}
 };
 
 // Attribute of an HTML Tag (e.g. class="foo" would be represented by
@@ -77,27 +94,35 @@ struct Br {};
 // See LogTableRowBuffer below.
 struct Tr {};
 
+class LogManager;
+
 // A buffer into which you can stream values. See the top of this header file
 // for samples.
 class LogBuffer {
  public:
-  LogBuffer();
-  LogBuffer(LogBuffer&& other) noexcept;
+  using IsActive = base::StrongAlias<struct ActiveTag, bool>;
+
+  explicit LogBuffer(IsActive active = IsActive(true));
   ~LogBuffer();
 
-  // Returns the contents of the buffer and empties it.
-  base::Value RetrieveResult();
+  LogBuffer(LogBuffer&& other) noexcept;
+  LogBuffer& operator=(LogBuffer&& other);
+
+  LogBuffer(const LogBuffer& other) = delete;
+  LogBuffer& operator=(const LogBuffer& other) = delete;
+
+  // Returns the contents of the buffer if any and empties it.
+  std::optional<base::Value::Dict> RetrieveResult();
 
   // Returns whether an active WebUI is listening. If false, the buffer may
   // not do any logging.
   bool active() const { return active_; }
-  void set_active(bool active) { active_ = active; }
 
  private:
   friend LogBuffer& operator<<(LogBuffer& buf, Tag&& tag);
   friend LogBuffer& operator<<(LogBuffer& buf, CTag&& tag);
   friend LogBuffer& operator<<(LogBuffer& buf, Attrib&& attrib);
-  friend LogBuffer& operator<<(LogBuffer& buf, base::StringPiece text);
+  friend LogBuffer& operator<<(LogBuffer& buf, std::string_view text);
   friend LogBuffer& operator<<(LogBuffer& buf, LogBuffer&& buffer);
 
   // The stack of values being constructed. Each item is a dictionary with the
@@ -110,16 +135,14 @@ class LogBuffer {
   // constructed. Once it is read (i.e. closed via a CTag), it is popped from
   // the stack and attached as a child of the previously second last element.
   // Only the first element of buffer_ is a 'fragment' and it is never closed.
-  std::vector<base::Value> buffer_;
+  std::vector<base::Value::Dict> buffer_;
 
   bool active_ = true;
-
-  DISALLOW_COPY_AND_ASSIGN(LogBuffer);
 };
 
 // Enable streaming numbers of all types.
-template <typename T,
-          typename = std::enable_if_t<std::is_arithmetic<T>::value, T>>
+template <typename T>
+  requires(std::integral<T> || std::floating_point<T>)
 LogBuffer& operator<<(LogBuffer& buf, T number) {
   return buf << base::NumberToString(number);
 }
@@ -132,7 +155,7 @@ LogBuffer& operator<<(LogBuffer& buf, Attrib&& attrib);
 
 LogBuffer& operator<<(LogBuffer& buf, Br&& tag);
 
-LogBuffer& operator<<(LogBuffer& buf, base::StringPiece text);
+LogBuffer& operator<<(LogBuffer& buf, std::string_view text);
 
 LogBuffer& operator<<(LogBuffer& buf, base::StringPiece16 text);
 
@@ -185,7 +208,7 @@ class LogTableRowBuffer {
   friend LogTableRowBuffer&& operator<<(LogTableRowBuffer&& buf,
                                         Attrib&& attrib);
 
-  LogBuffer* parent_ = nullptr;
+  raw_ptr<LogBuffer> parent_ = nullptr;
 };
 
 LogTableRowBuffer operator<<(LogBuffer& buf, Tr&& tr);
@@ -199,9 +222,33 @@ LogTableRowBuffer&& operator<<(LogTableRowBuffer&& buf, T&& value) {
 LogTableRowBuffer&& operator<<(LogTableRowBuffer&& buf, Attrib&& attrib);
 
 // Highlights the first |needle| in |haystack| by wrapping it in <b> tags.
-LogBuffer HighlightValue(base::StringPiece haystack, base::StringPiece needle);
+LogBuffer HighlightValue(std::string_view haystack, std::string_view needle);
 LogBuffer HighlightValue(base::StringPiece16 haystack,
                          base::StringPiece16 needle);
+
+namespace internal {
+
+// Traits for LOG_AF() macro for `LogBuffer*`.
+template <std::convertible_to<const LogBuffer*> T>
+struct LoggerTraits<T> {
+  static bool active(const LogBuffer* log_buffer) {
+    return log_buffer && log_buffer->active();
+  }
+
+  static LogBuffer& get_stream(LogBuffer* log_buffer) { return *log_buffer; }
+};
+
+// Traits for LOG_AF() macro for `LogBuffer&`.
+template <std::convertible_to<const LogBuffer&> T>
+struct LoggerTraits<T> {
+  static bool active(const LogBuffer& log_buffer) {
+    return log_buffer.active();
+  }
+
+  static LogBuffer& get_stream(LogBuffer& log_buffer) { return log_buffer; }
+};
+
+}  // namespace internal
 
 }  // namespace autofill
 

@@ -15,7 +15,8 @@
 # The file contains Docker container identifiers currently used by test scripts.
 # Test scripts should source this file to get the identifiers.
 
-readonly LINUX_ALPINE_CONTAINER="gcr.io/google.com/absl-177019/alpine:20191016"
-readonly LINUX_CLANG_LATEST_CONTAINER="gcr.io/google.com/absl-177019/linux_hybrid-latest:20200909"
-readonly LINUX_GCC_LATEST_CONTAINER="gcr.io/google.com/absl-177019/linux_hybrid-latest:20200909"
-readonly LINUX_GCC_49_CONTAINER="gcr.io/google.com/absl-177019/linux_gcc-4.9:20191018"
+readonly LINUX_ALPINE_CONTAINER="gcr.io/google.com/absl-177019/alpine:20230612"
+readonly LINUX_CLANG_LATEST_CONTAINER="gcr.io/google.com/absl-177019/linux_hybrid-latest:20231218"
+readonly LINUX_ARM_CLANG_LATEST_CONTAINER="gcr.io/google.com/absl-177019/linux_arm_hybrid-latest:20231219"
+readonly LINUX_GCC_LATEST_CONTAINER="gcr.io/google.com/absl-177019/linux_hybrid-latest:20231218"
+readonly LINUX_GCC_FLOOR_CONTAINER="gcr.io/google.com/absl-177019/linux_gcc-floor:20230120"

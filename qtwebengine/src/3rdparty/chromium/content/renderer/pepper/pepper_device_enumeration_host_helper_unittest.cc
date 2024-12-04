@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,7 +9,6 @@
 
 #include "base/check.h"
 #include "base/compiler_specific.h"
-#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/run_loop.h"
 #include "base/test/task_environment.h"
@@ -45,10 +44,12 @@ std::vector<ppapi::DeviceRefData> TestEnumerationData() {
   return data;
 }
 
-class TestDelegate : public PepperDeviceEnumerationHostHelper::Delegate,
-                     public base::SupportsWeakPtr<TestDelegate> {
+class TestDelegate : public PepperDeviceEnumerationHostHelper::Delegate {
  public:
   TestDelegate() : last_used_id_(0u) {}
+
+  TestDelegate(const TestDelegate&) = delete;
+  TestDelegate& operator=(const TestDelegate&) = delete;
 
   ~TestDelegate() override { CHECK(monitoring_callbacks_.empty()); }
 
@@ -89,14 +90,23 @@ class TestDelegate : public PepperDeviceEnumerationHostHelper::Delegate,
 
   size_t last_used_id() const { return last_used_id_; }
 
+  base::WeakPtr<TestDelegate> AsWeakPtr() {
+    return weak_ptr_factory_.GetWeakPtr();
+  }
+
  private:
   std::map<size_t, DevicesCallback> monitoring_callbacks_;
   size_t last_used_id_;
-
-  DISALLOW_COPY_AND_ASSIGN(TestDelegate);
+  base::WeakPtrFactory<TestDelegate> weak_ptr_factory_{this};
 };
 
 class PepperDeviceEnumerationHostHelperTest : public testing::Test {
+ public:
+  PepperDeviceEnumerationHostHelperTest(
+      const PepperDeviceEnumerationHostHelperTest&) = delete;
+  PepperDeviceEnumerationHostHelperTest& operator=(
+      const PepperDeviceEnumerationHostHelperTest&) = delete;
+
  protected:
   PepperDeviceEnumerationHostHelperTest()
       : ppapi_host_(&sink_, ppapi::PpapiPermissions()),
@@ -148,9 +158,6 @@ class PepperDeviceEnumerationHostHelperTest : public testing::Test {
   PepperDeviceEnumerationHostHelper device_enumeration_;
   base::test::SingleThreadTaskEnvironment
       task_environment_;  // required for async calls to work.
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(PepperDeviceEnumerationHostHelperTest);
 };
 
 }  // namespace

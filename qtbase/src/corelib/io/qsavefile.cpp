@@ -1,45 +1,9 @@
-/****************************************************************************
-**
-** Copyright (C) 2012 David Faure <faure@kde.org>
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtCore module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2012 David Faure <faure@kde.org>
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qsavefile.h"
 
-#ifndef QT_NO_TEMPORARYFILE
+#if QT_CONFIG(temporaryfile)
 
 #include "qplatformdefs.h"
 #include "private/qsavefile_p.h"
@@ -54,6 +18,8 @@
 #endif
 
 QT_BEGIN_NAMESPACE
+
+using namespace Qt::StringLiterals;
 
 QSaveFilePrivate::QSaveFilePrivate()
     : writeError(QFileDevice::NoError),
@@ -147,10 +113,10 @@ QSaveFile::QSaveFile(const QString &name, QObject *parent)
 QSaveFile::~QSaveFile()
 {
     Q_D(QSaveFile);
-    QFileDevice::close();
-    if (d->fileEngine) {
+    if (isOpen()) {
+        QFileDevice::close();
+        Q_ASSERT(d->fileEngine);
         d->fileEngine->remove();
-        d->fileEngine.reset();
     }
 }
 
@@ -186,7 +152,7 @@ void QSaveFile::setFileName(const QString &name)
     QIODevice::ReadWrite, QIODevice::Append, QIODevice::NewOnly and
     QIODevice::ExistingOnly are not supported at the moment.
 
-    \sa QIODevice::OpenMode, setFileName()
+    \sa QIODevice::OpenMode, setFileName(), QT_USE_NODISCARD_FILE_OPEN
 */
 bool QSaveFile::open(OpenMode mode)
 {
@@ -204,7 +170,7 @@ bool QSaveFile::open(OpenMode mode)
     // In the future we could implement ReadWrite by copying from the existing file to the temp file...
     // The implications of NewOnly and ExistingOnly when used with QSaveFile need to be considered carefully...
     if (mode & (ReadOnly | Append | NewOnly | ExistingOnly)) {
-        qWarning("QSaveFile::open: Unsupported open mode 0x%x", int(mode));
+        qWarning("QSaveFile::open: Unsupported open mode 0x%x", uint(mode.toInt()));
         return false;
     }
 
@@ -234,7 +200,7 @@ bool QSaveFile::open(OpenMode mode)
     }
 
     auto openDirectly = [&]() {
-        d->fileEngine.reset(QAbstractFileEngine::create(d->finalFileName));
+        d->fileEngine = QAbstractFileEngine::create(d->finalFileName);
         if (d->fileEngine->open(mode | QIODevice::Unbuffered)) {
             d->useTemporaryFile = false;
             QFileDevice::open(mode);
@@ -246,10 +212,10 @@ bool QSaveFile::open(OpenMode mode)
     bool requiresDirectWrite = false;
 #ifdef Q_OS_WIN
     // check if it is an Alternate Data Stream
-    requiresDirectWrite = d->finalFileName == d->fileName && d->fileName.indexOf(QLatin1Char(':'), 2) > 1;
+    requiresDirectWrite = d->finalFileName == d->fileName && d->fileName.indexOf(u':', 2) > 1;
 #elif defined(Q_OS_ANDROID)
     // check if it is a content:// URL
-    requiresDirectWrite  = d->fileName.startsWith(QLatin1String("content://"));
+    requiresDirectWrite  = d->fileName.startsWith("content://"_L1);
 #endif
     if (requiresDirectWrite) {
         // yes, we can't rename onto it...
@@ -332,7 +298,7 @@ bool QSaveFile::commit()
     }
     QFileDevice::close(); // calls flush()
 
-    const auto fe = std::move(d->fileEngine);
+    const auto &fe = d->fileEngine;
 
     // Sync to disk if possible. Ignore errors (e.g. not supported).
     fe->syncToDisk();
@@ -446,4 +412,4 @@ QT_END_NAMESPACE
 #include "moc_qsavefile.cpp"
 #endif
 
-#endif // QT_NO_TEMPORARYFILE
+#endif // QT_CONFIG(temporaryfile)

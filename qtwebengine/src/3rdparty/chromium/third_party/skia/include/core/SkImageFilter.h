@@ -8,12 +8,16 @@
 #ifndef SkImageFilter_DEFINED
 #define SkImageFilter_DEFINED
 
-#include "include/core/SkFilterQuality.h"
 #include "include/core/SkFlattenable.h"
-#include "include/core/SkMatrix.h"
 #include "include/core/SkRect.h"
+#include "include/core/SkRefCnt.h"
+#include "include/private/base/SkAPI.h"
+
+#include <cstddef>
 
 class SkColorFilter;
+class SkMatrix;
+struct SkDeserialProcs;
 
 /**
  *  Base class for image filters. If one is installed in the paint, then all drawing occurs as
@@ -30,39 +34,6 @@ class SkColorFilter;
  */
 class SK_API SkImageFilter : public SkFlattenable {
 public:
-    class CropRect {
-    public:
-        enum CropEdge {
-            kHasLeft_CropEdge   = 0x01,
-            kHasTop_CropEdge    = 0x02,
-            kHasWidth_CropEdge  = 0x04,
-            kHasHeight_CropEdge = 0x08,
-            kHasAll_CropEdge    = 0x0F,
-        };
-        CropRect() {}
-        explicit CropRect(const SkRect& rect, uint32_t flags = kHasAll_CropEdge)
-            : fRect(rect), fFlags(flags) {}
-        uint32_t flags() const { return fFlags; }
-        const SkRect& rect() const { return fRect; }
-
-        /**
-         *  Apply this cropRect to the imageBounds. If a given edge of the cropRect is not set, then
-         *  the corresponding edge from imageBounds will be used. If "embiggen" is true, the crop
-         *  rect is allowed to enlarge the size of the rect, otherwise it may only reduce the rect.
-         *  Filters that can affect transparent black should pass "true", while all other filters
-         *  should pass "false".
-         *
-         *  Note: imageBounds is in "device" space, as the output cropped rectangle will be, so the
-         *  matrix is ignored for those. It is only applied to the cropRect's bounds.
-         */
-        void applyTo(const SkIRect& imageBounds, const SkMatrix& matrix, bool embiggen,
-                     SkIRect* cropped) const;
-
-    private:
-        SkRect fRect;
-        uint32_t fFlags;
-    };
-
     enum MapDirection {
         kForward_MapDirection,
         kReverse_MapDirection,
@@ -126,22 +97,6 @@ public:
      *  else return null.
      */
     sk_sp<SkImageFilter> makeWithLocalMatrix(const SkMatrix& matrix) const;
-
-    /**
-     * Return an imagefilter which transforms its input by the given matrix.
-     * DEPRECATED: Use include/effects/SkImageFilters::MatrixTransform
-     */
-    static sk_sp<SkImageFilter> MakeMatrixFilter(const SkMatrix& matrix,
-                                                 SkFilterQuality quality,
-                                                 sk_sp<SkImageFilter> input);
-
-    static SkFlattenable::Type GetFlattenableType() {
-        return kSkImageFilter_Type;
-    }
-
-    SkFlattenable::Type getFlattenableType() const override {
-        return kSkImageFilter_Type;
-    }
 
     static sk_sp<SkImageFilter> Deserialize(const void* data, size_t size,
                                           const SkDeserialProcs* procs = nullptr) {

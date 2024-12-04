@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,7 +11,7 @@ namespace net {
 ct::CTPolicyCompliance DefaultCTPolicyEnforcer::CheckCompliance(
     X509Certificate* cert,
     const ct::SCTList& verified_scts,
-    const NetLogWithSource& net_log) {
+    const NetLogWithSource& net_log) const {
   return ct::CTPolicyCompliance::CT_POLICY_BUILD_NOT_TIMELY;
 }
 

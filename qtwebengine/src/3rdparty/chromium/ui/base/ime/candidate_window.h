@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,7 +12,6 @@
 #include <vector>
 
 #include "base/component_export.h"
-#include "base/macros.h"
 #include "ui/base/ime/infolist_entry.h"
 
 namespace ui {
@@ -42,6 +41,11 @@ class COMPONENT_EXPORT(UI_BASE_IME_TYPES) CandidateWindow {
     // The index of the current chosen candidate out of total candidates
     int current_candidate_index;
     int total_candidates;
+
+    // If the user is selecting from candidates.
+    // If this is false, candidate window is not shown or is showing
+    // suggestions.
+    bool is_user_selecting;
   };
 
   // Represents a candidate entry.
@@ -49,14 +53,18 @@ class COMPONENT_EXPORT(UI_BASE_IME_TYPES) CandidateWindow {
     Entry();
     Entry(const Entry& other);
     virtual ~Entry();
-    base::string16 value;
-    base::string16 label;
-    base::string16 annotation;
-    base::string16 description_title;
-    base::string16 description_body;
+    std::u16string value;
+    std::u16string label;
+    std::u16string annotation;
+    std::u16string description_title;
+    std::u16string description_body;
   };
 
   CandidateWindow();
+
+  CandidateWindow(const CandidateWindow&) = delete;
+  CandidateWindow& operator=(const CandidateWindow&) = delete;
+
   virtual ~CandidateWindow();
 
   // Returns true if the given |candidate_window| is equal to myself.
@@ -133,11 +141,14 @@ class COMPONENT_EXPORT(UI_BASE_IME_TYPES) CandidateWindow {
     property_->show_window_at_composition = show_window_at_composition;
   }
 
+  bool is_user_selecting() const { return property_->is_user_selecting; }
+  void set_is_user_selecting(bool is_user_selecting) {
+    property_->is_user_selecting = is_user_selecting;
+  }
+
  private:
   std::unique_ptr<CandidateWindowProperty> property_;
   std::vector<Entry> candidates_;
-
-  DISALLOW_COPY_AND_ASSIGN(CandidateWindow);
 };
 
 }  // namespace ui

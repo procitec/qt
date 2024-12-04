@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,7 +8,7 @@
 #include <memory>
 #include <string>
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "cc/layers/texture_layer.h"
 #include "cc/layers/texture_layer_client.h"
@@ -33,6 +33,9 @@ class CrossThreadSharedBitmap;
 }
 
 namespace gpu {
+
+class ClientSharedImage;
+
 namespace gles2 {
 class GLES2Interface;
 }
@@ -62,6 +65,10 @@ class TestPlugin : public blink::WebPlugin, public cc::TextureLayerClient {
   static TestPlugin* Create(const blink::WebPluginParams& params,
                             TestRunner* test_runner,
                             blink::WebLocalFrame* frame);
+
+  TestPlugin(const TestPlugin&) = delete;
+  TestPlugin& operator=(const TestPlugin&) = delete;
+
   ~TestPlugin() override;
 
   static const blink::WebString& MimeType();
@@ -76,10 +83,10 @@ class TestPlugin : public blink::WebPlugin, public cc::TextureLayerClient {
   bool CanProcessDrag() const override;
   bool SupportsKeyboardFocus() const override;
   void UpdateAllLifecyclePhases(blink::DocumentUpdateReason) override {}
-  void Paint(cc::PaintCanvas* canvas, const blink::WebRect& rect) override {}
-  void UpdateGeometry(const blink::WebRect& window_rect,
-                      const blink::WebRect& clip_rect,
-                      const blink::WebRect& unobscured_rect,
+  void Paint(cc::PaintCanvas* canvas, const gfx::Rect& rect) override {}
+  void UpdateGeometry(const gfx::Rect& window_rect,
+                      const gfx::Rect& clip_rect,
+                      const gfx::Rect& unobscured_rect,
                       bool is_visible) override;
   void UpdateFocus(bool focus, blink::mojom::FocusType focus_type) override {}
   void UpdateVisibility(bool visibility) override {}
@@ -96,12 +103,13 @@ class TestPlugin : public blink::WebPlugin, public cc::TextureLayerClient {
   void DidFinishLoading() override {}
   void DidFailLoading(const blink::WebURLError& error) override {}
   bool IsPlaceholder() override;
+  v8::Local<v8::Object> V8ScriptableObject(v8::Isolate*) override;
 
   // cc::TextureLayerClient methods:
   bool PrepareTransferableResource(
       cc::SharedBitmapIdRegistrar* bitmap_registrar,
       viz::TransferableResource* resource,
-      std::unique_ptr<viz::SingleReleaseCallback>* release_callback) override;
+      viz::ReleaseCallback* release_callback) override;
 
  private:
   TestPlugin(const blink::WebPluginParams& params,
@@ -163,38 +171,38 @@ class TestPlugin : public blink::WebPlugin, public cc::TextureLayerClient {
       bool lost);
   static void ReleaseSharedImage(
       scoped_refptr<ContextProviderRef> context_provider,
-      const gpu::Mailbox& mailbox,
+      scoped_refptr<gpu::ClientSharedImage> shared_image,
       const gpu::SyncToken& sync_token,
       bool lost);
 
-  TestRunner* test_runner_;
-  blink::WebPluginContainer* container_;
-  blink::WebLocalFrame* web_local_frame_;
+  raw_ptr<TestRunner, ExperimentalRenderer> test_runner_;
+  raw_ptr<blink::WebPluginContainer, ExperimentalRenderer> container_;
+  raw_ptr<blink::WebLocalFrame, ExperimentalRenderer> web_local_frame_;
 
-  blink::WebRect rect_;
+  gfx::Rect rect_;
   scoped_refptr<ContextProviderRef> context_provider_;
-  gpu::gles2::GLES2Interface* gl_;
-  gpu::Mailbox mailbox_;
+  raw_ptr<gpu::gles2::GLES2Interface, ExperimentalRenderer> gl_;
+  scoped_refptr<gpu::ClientSharedImage> shared_image_;
   gpu::SyncToken sync_token_;
   scoped_refptr<cc::CrossThreadSharedBitmap> shared_bitmap_;
-  bool content_changed_;
-  GLuint framebuffer_;
+  bool content_changed_ = false;
+  GLuint framebuffer_ = 0;
   Scene scene_;
   scoped_refptr<cc::TextureLayer> layer_;
 
-  blink::WebPluginContainer::TouchEventRequestType touch_event_request_;
+  v8::Persistent<v8::Object> scriptable_object_;
+
+  blink::WebPluginContainer::TouchEventRequestType touch_event_request_ =
+      blink::WebPluginContainer::kTouchEventRequestTypeNone;
   // Requests touch events from the WebPluginContainerImpl multiple times to
   // tickle webkit.org/b/108381
-  bool re_request_touch_events_;
-  bool print_event_details_;
-  bool print_user_gesture_status_;
-  bool can_process_drag_;
-  bool supports_keyboard_focus_;
+  bool re_request_touch_events_ = false;
+  bool print_event_details_ = false;
+  bool print_user_gesture_status_ = false;
+  bool can_process_drag_ = false;
+  bool supports_keyboard_focus_ = false;
 
   bool is_persistent_;
-  bool can_create_without_renderer_;
-
-  DISALLOW_COPY_AND_ASSIGN(TestPlugin);
 };
 
 }  // namespace content

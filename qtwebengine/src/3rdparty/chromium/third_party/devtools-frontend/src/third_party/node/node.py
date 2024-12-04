@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env vpython3
 # Copyright 2017 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
@@ -10,10 +10,21 @@ import sys
 import os
 
 
+def get_mac_architecture():
+    if platform.machine() == "x86_64":
+        is_translated = subprocess.run(
+            ["sysctl", "-n", "sysctl.proc_translated"],
+            capture_output=True,
+            text=True).stdout.strip() == "1"
+        return "arm64" if is_translated else "x86_64"
+    return platform.machine()
+
+
 def GetBinaryPath():
     return os_path.join(
         os_path.dirname(__file__), *{
-            'Darwin': ('mac', 'node-darwin-x64', 'bin', 'node'),
+            'Darwin': ('mac', 'node-darwin-arm64' if get_mac_architecture()
+                       == 'arm64' else 'node-darwin-x64', 'bin', 'node'),
             'Linux': ('linux', 'node-linux-x64', 'bin', 'node'),
             'Windows': ('win', 'node.exe'),
         }[platform.system()])
@@ -24,11 +35,12 @@ def RunNode(cmd_parts, output=subprocess.PIPE):
     process = subprocess.Popen(cmd,
                                cwd=os.getcwd(),
                                stdout=output,
-                               stderr=output)
+                               stderr=output,
+                               universal_newlines=True)
     stdout, stderr = process.communicate()
 
-    if process.returncode is not 0:
-        print('%s failed:\n%s' % (cmd, stdout + stderr))
+    if process.returncode != 0:
+        print('%s failed:\n%s\n%s' % (cmd, stdout, stderr))
         exit(process.returncode)
 
     return stdout

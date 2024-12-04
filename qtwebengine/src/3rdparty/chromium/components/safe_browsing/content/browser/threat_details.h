@@ -1,4 +1,4 @@
-// Copyright (c) 2011 The Chromium Authors. All rights reserved.
+// Copyright 2011 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -18,14 +18,22 @@
 #include <vector>
 
 #include "base/gtest_prod_util.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
+#include "components/safe_browsing/content/browser/web_contents_key.h"
 #include "components/safe_browsing/content/common/safe_browsing.mojom.h"
-#include "components/safe_browsing/core/proto/csd.pb.h"
+#include "components/safe_browsing/core/common/proto/csd.pb.h"
+#include "components/security_interstitials/core/base_safe_browsing_error_ui.h"
+#include "components/security_interstitials/core/controller_client.h"
 #include "components/security_interstitials/core/unsafe_resource.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/browser/web_contents_observer.h"
+#include "content/public/browser/weak_document_ptr.h"
 #include "mojo/public/cpp/bindings/remote.h"
+
+namespace content {
+class BrowserContext;
+class WebContents;
+}  // namespace content
 
 namespace history {
 class HistoryService;
@@ -67,14 +75,16 @@ using FrameTreeIdToChildIdsMap =
 
 // Callback used to notify a caller that ThreatDetails has finished creating and
 // sending a report.
-using ThreatDetailsDoneCallback =
-    base::OnceCallback<void(content::WebContents*)>;
+using ThreatDetailsDoneCallback = base::OnceCallback<void(WebContentsKey)>;
 
-class ThreatDetails : public content::WebContentsObserver {
+class ThreatDetails {
  public:
   typedef security_interstitials::UnsafeResource UnsafeResource;
 
-  ~ThreatDetails() override;
+  ThreatDetails(const ThreatDetails&) = delete;
+  ThreatDetails& operator=(const ThreatDetails&) = delete;
+
+  virtual ~ThreatDetails();
 
   // Constructs a new ThreatDetails instance, using the factory.
   static std::unique_ptr<ThreatDetails> NewThreatDetails(
@@ -99,16 +109,25 @@ class ThreatDetails : public content::WebContentsObserver {
   // in UI thread; then do cache collection back in IO thread. We also record
   // if the user did proceed with the warning page, and how many times user
   // visited this page before. When we are done, we send the report.
-  virtual void FinishCollection(bool did_proceed, int num_visits);
+  virtual void FinishCollection(
+      bool did_proceed,
+      int num_visits,
+      std::unique_ptr<security_interstitials::InterstitialInteractionMap>
+          interstitial_interactions,
+      absl::optional<int64_t> warning_shown_ts = absl::nullopt);
 
   void OnCacheCollectionReady();
 
-  void OnRedirectionCollectionReady();
+  void SetIsHatsCandidate(bool is_hats_candidate) {
+    is_hats_candidate_ = is_hats_candidate;
+  }
 
-  // WebContentsObserver implementation:
-  void FrameDeleted(content::RenderFrameHost* render_frame_host) override;
-  void RenderFrameHostChanged(content::RenderFrameHost* old_host,
-                              content::RenderFrameHost* new_host) override;
+  void SetShouldSendReport(bool should_send_report) {
+    should_send_report_ = should_send_report;
+  }
+
+  // Overridden during tests
+  virtual void OnRedirectionCollectionReady();
 
   base::WeakPtr<ThreatDetails> GetWeakPtr();
 
@@ -169,7 +188,7 @@ class ThreatDetails : public content::WebContentsObserver {
 
   void OnReceivedThreatDOMDetails(
       mojo::Remote<mojom::ThreatReporter> threat_reporter,
-      content::RenderFrameHost* sender,
+      content::WeakDocumentPtr sender,
       std::vector<mojom::ThreatDOMDetailsNodePtr> params);
 
   void AddRedirectUrlList(const std::vector<GURL>& urls);
@@ -189,21 +208,42 @@ class ThreatDetails : public content::WebContentsObserver {
                      const std::string& inner_html,
                      const ClientSafeBrowsingReportRequest::Resource* resource);
 
-  // Populates the referrer chain data in |report_|. This may be skipped if the
-  // referrer chain provider isn't available, or the type of report doesn't
-  // include the referrer chain.
-  void MaybeFillReferrerChain();
+  // Indicates whether the ReferrerChain should be populated for being sent to
+  // Safe Browsing.
+  bool ShouldFillReferrerChain();
+
+  // Populates the referrer chain data in |out_referrer_chain|.
+  void FillReferrerChain(google::protobuf::RepeatedPtrField<ReferrerChainEntry>*
+                             out_referrer_chain);
+
+  // Indicates whether the InterstitialInteractions should be populated for
+  // being sent to Safe Browsing.
+  bool ShouldFillInterstitialInteractions();
+
+  // Populates interstitial interactions in |out_interstitial_interactions|.
+  void FillInterstitialInteractions(
+      google::protobuf::RepeatedPtrField<
+          ClientSafeBrowsingReportRequest::InterstitialInteraction>*
+          out_interstitial_interactions);
+
+  // Populates CSBRR fields to be included as Product Specific Data for
+  // a HaTS survey response if the user is a HaTS candidate.
+  void MaybeAttachThreatDetailsAndLaunchSurvey();
 
   // Called when the report is complete. Runs |done_callback_|.
   void AllDone();
 
+  // `this` is owned by TriggerManager which prevents this from outliving
+  // the WebContents.
+  raw_ptr<content::WebContents> web_contents_ = nullptr;
+
   scoped_refptr<BaseUIManager> ui_manager_;
 
-  content::BrowserContext* browser_context_;
+  raw_ptr<content::BrowserContext> browser_context_;
 
   const UnsafeResource resource_;
 
-  ReferrerChainProvider* referrer_chain_provider_;
+  raw_ptr<ReferrerChainProvider> referrer_chain_provider_;
 
   // For every Url we collect we create a Resource message. We keep
   // them in a map so we can avoid duplicates.
@@ -237,6 +277,13 @@ class ThreatDetails : public content::WebContentsObserver {
   // How many times this user has visited this page before.
   int num_visits_;
 
+  // Interactions the user had with the interstitial.
+  std::unique_ptr<security_interstitials::InterstitialInteractionMap>
+      interstitial_interactions_;
+
+  // Timestamp of when the warning was shown to the user.
+  absl::optional<int64_t> warning_shown_ts_;
+
   // Whether this report should be trimmed down to only ad tags, not the entire
   // page contents. Used for sampling ads.
   bool trim_to_ad_tags_;
@@ -252,10 +299,10 @@ class ThreatDetails : public content::WebContentsObserver {
   static ThreatDetailsFactory* factory_;
 
   // Used to collect details from the HTTP Cache.
-  scoped_refptr<ThreatDetailsCacheCollector> cache_collector_;
+  std::unique_ptr<ThreatDetailsCacheCollector> cache_collector_;
 
   // Used to collect redirect urls from the history service
-  scoped_refptr<ThreatDetailsRedirectsCollector> redirects_collector_;
+  std::unique_ptr<ThreatDetailsRedirectsCollector> redirects_collector_;
 
   // Callback to run when the report is finished.
   ThreatDetailsDoneCallback done_callback_;
@@ -267,9 +314,12 @@ class ThreatDetails : public content::WebContentsObserver {
   // Whether the |done_callback_| has been invoked.
   bool is_all_done_;
 
-  // The set of RenderFrameHosts that have pending requests and haven't been
-  // deleted.
-  std::vector<content::RenderFrameHost*> pending_render_frame_hosts_;
+  // Whether this ThreatDetails should be included as Product Specific Data as
+  // part of a HaTS survey response.
+  bool is_hats_candidate_;
+
+  // Whether ThreatDetails should be sent to Safe Browsing.
+  bool should_send_report_;
 
   // Used for references to |this| bound in callbacks.
   base::WeakPtrFactory<ThreatDetails> weak_factory_{this};
@@ -284,8 +334,7 @@ class ThreatDetails : public content::WebContentsObserver {
   FRIEND_TEST_ALL_PREFIXES(ThreatDetailsTest, ThreatDOMDetails_MultipleFrames);
   FRIEND_TEST_ALL_PREFIXES(ThreatDetailsTest, ThreatDOMDetails_TrimToAdTags);
   FRIEND_TEST_ALL_PREFIXES(ThreatDetailsTest, ThreatDOMDetails);
-
-  DISALLOW_COPY_AND_ASSIGN(ThreatDetails);
+  FRIEND_TEST_ALL_PREFIXES(ThreatDetailsTest, CanCancelDuringCollection);
 };
 
 // Factory for creating ThreatDetails.  Useful for tests.

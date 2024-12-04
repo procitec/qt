@@ -5,10 +5,10 @@
 
 %define ARCH_X86_64 1
 
-%define HAVE_AVX512ICL 1
+%define FORCE_VEX_ENCODING 0
 
 %define PIC 1
 
-; %define STACK_ALIGNMENT 32 -- Stack alignment is controlled by Chromium
+; %define STACK_ALIGNMENT 16 -- Stack alignment is controlled by Chromium
 
 %define private_prefix dav1d

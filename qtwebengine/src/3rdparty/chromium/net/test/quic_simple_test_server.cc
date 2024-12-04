@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,9 +7,9 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
+#include "base/functional/bind.h"
 #include "base/message_loop/message_pump_type.h"
 #include "base/path_service.h"
 #include "base/strings/string_number_conversions.h"
@@ -18,11 +18,11 @@
 #include "base/threading/thread.h"
 #include "net/base/ip_address.h"
 #include "net/base/ip_endpoint.h"
+#include "net/base/port_util.h"
 #include "net/quic/crypto/proof_source_chromium.h"
 #include "net/test/test_data_directory.h"
-#include "net/third_party/quiche/src/quic/core/quic_dispatcher.h"
-#include "net/third_party/quiche/src/quic/tools/quic_memory_cache_backend.h"
-#include "net/third_party/quiche/src/spdy/core/spdy_header_block.h"
+#include "net/third_party/quiche/src/quiche/quic/core/quic_dispatcher.h"
+#include "net/third_party/quiche/src/quiche/quic/tools/quic_memory_cache_backend.h"
 #include "net/tools/quic/quic_simple_server.h"
 
 namespace {
@@ -61,12 +61,16 @@ int g_quic_server_port = 0;
 
 namespace net {
 
-const std::string QuicSimpleTestServer::GetDomain() {
+std::string const QuicSimpleTestServer::GetDomain() {
   return kTestServerDomain;
 }
 
-const std::string QuicSimpleTestServer::GetHost() {
+std::string const QuicSimpleTestServer::GetHost() {
   return kTestServerHost;
+}
+
+HostPortPair const QuicSimpleTestServer::GetHostPort() {
+  return HostPortPair(kTestServerHost, GetPort());
 }
 
 GURL QuicSimpleTestServer::GetFileURL(const std::string& file_path) {
@@ -79,39 +83,39 @@ GURL QuicSimpleTestServer::GetHelloURL() {
   return GURL("https://test.example.com").Resolve(kHelloPath);
 }
 
-const std::string QuicSimpleTestServer::GetStatusHeaderName() {
+std::string const QuicSimpleTestServer::GetStatusHeaderName() {
   return kStatusHeader;
 }
 
 // Hello Url returns response with HTTP/2 headers and trailers.
-const std::string QuicSimpleTestServer::GetHelloPath() {
+std::string const QuicSimpleTestServer::GetHelloPath() {
   return kHelloPath;
 }
 
-const std::string QuicSimpleTestServer::GetHelloBodyValue() {
+std::string const QuicSimpleTestServer::GetHelloBodyValue() {
   return kHelloBodyValue;
 }
-const std::string QuicSimpleTestServer::GetHelloStatus() {
+std::string const QuicSimpleTestServer::GetHelloStatus() {
   return kHelloStatus;
 }
 
-const std::string QuicSimpleTestServer::GetHelloHeaderName() {
+std::string const QuicSimpleTestServer::GetHelloHeaderName() {
   return kHelloHeaderName;
 }
 
-const std::string QuicSimpleTestServer::GetHelloHeaderValue() {
+std::string const QuicSimpleTestServer::GetHelloHeaderValue() {
   return kHelloHeaderValue;
 }
 
-const std::string QuicSimpleTestServer::GetCombinedHeaderName() {
+std::string const QuicSimpleTestServer::GetCombinedHeaderName() {
   return kCombinedHeaderName;
 }
 
-const std::string QuicSimpleTestServer::GetHelloTrailerName() {
+std::string const QuicSimpleTestServer::GetHelloTrailerName() {
   return kHelloTrailerName;
 }
 
-const std::string QuicSimpleTestServer::GetHelloTrailerValue() {
+std::string const QuicSimpleTestServer::GetHelloTrailerValue() {
   return kHelloTrailerValue;
 }
 
@@ -121,28 +125,28 @@ GURL QuicSimpleTestServer::GetSimpleURL() {
   return GURL("https://test.example.com").Resolve(kSimplePath);
 }
 
-const std::string QuicSimpleTestServer::GetSimpleBodyValue() {
+std::string const QuicSimpleTestServer::GetSimpleBodyValue() {
   return kSimpleBodyValue;
 }
 
-const std::string QuicSimpleTestServer::GetSimpleStatus() {
+std::string const QuicSimpleTestServer::GetSimpleStatus() {
   return kSimpleStatus;
 }
 
-const std::string QuicSimpleTestServer::GetSimpleHeaderName() {
+std::string const QuicSimpleTestServer::GetSimpleHeaderName() {
   return kSimpleHeaderName;
 }
 
-const std::string QuicSimpleTestServer::GetSimpleHeaderValue() {
+std::string const QuicSimpleTestServer::GetSimpleHeaderValue() {
   return kSimpleHeaderValue;
 }
 
 void SetupQuicMemoryCacheBackend() {
-  spdy::SpdyHeaderBlock headers;
+  spdy::Http2HeaderBlock headers;
   headers[kHelloHeaderName] = kHelloHeaderValue;
   headers[kStatusHeader] = kHelloStatus;
   headers[kCombinedHeaderName] = kCombinedHelloHeaderValue;
-  spdy::SpdyHeaderBlock trailers;
+  spdy::Http2HeaderBlock trailers;
   trailers[kHelloTrailerName] = kHelloTrailerValue;
   g_quic_cache_backend = new quic::QuicMemoryCacheBackend();
   g_quic_cache_backend->AddResponse(base::StringPrintf("%s", kTestServerHost),
@@ -157,28 +161,44 @@ void SetupQuicMemoryCacheBackend() {
 
 void StartQuicServerOnServerThread(const base::FilePath& test_files_root,
                                    base::WaitableEvent* server_started_event) {
-  DCHECK(g_quic_server_thread->task_runner()->BelongsToCurrentThread());
-  DCHECK(!g_quic_server);
+  CHECK(g_quic_server_thread->task_runner()->BelongsToCurrentThread());
+  CHECK(!g_quic_server);
 
   quic::QuicConfig config;
   // Set up server certs.
   base::FilePath directory;
   directory = test_files_root;
-  std::unique_ptr<ProofSourceChromium> proof_source(new ProofSourceChromium());
+  auto proof_source = std::make_unique<ProofSourceChromium>();
   CHECK(proof_source->Initialize(directory.AppendASCII("quic-chain.pem"),
                                  directory.AppendASCII("quic-leaf-cert.key"),
                                  base::FilePath()));
   SetupQuicMemoryCacheBackend();
 
-  g_quic_server =
-      new QuicSimpleServer(std::move(proof_source), config,
-                           quic::QuicCryptoServerConfig::ConfigOptions(),
-                           quic::AllSupportedVersions(), g_quic_cache_backend);
+  // If we happen to list on a disallowed port, connections will fail. Try in a
+  // loop until we get an allowed port.
+  std::unique_ptr<QuicSimpleServer> server;
+  bool got_allowed_port = false;
+  constexpr int kMaxTries = 100;
+  int rv = 0;
 
-  // Start listening on an unbound port.
-  int rv = g_quic_server->Listen(IPEndPoint(IPAddress::IPv4AllZeros(), 0));
-  CHECK_GE(rv, 0) << "Quic server fails to start";
-  g_quic_server_port = g_quic_server->server_address().port();
+  for (int tries = 0; !got_allowed_port && tries < kMaxTries; ++tries) {
+    server = std::make_unique<QuicSimpleServer>(
+        std::move(proof_source), config,
+        quic::QuicCryptoServerConfig::ConfigOptions(),
+        quic::AllSupportedVersions(), g_quic_cache_backend);
+
+    // Start listening on an unbound port.
+    rv = server->Listen(IPEndPoint(IPAddress::IPv4AllZeros(), 0));
+    if (rv >= 0) {
+      got_allowed_port |= IsPortAllowedForScheme(
+          server->server_address().port(), url::kHttpsScheme);
+    }
+  }
+
+  CHECK_GE(rv, 0) << "QuicSimpleTestServer: Listen failed";
+  CHECK(got_allowed_port);
+  g_quic_server_port = server->server_address().port();
+  g_quic_server = server.release();
   server_started_event->Signal();
 }
 
@@ -200,13 +220,13 @@ void ShutdownDispatcherOnServerThread(
 }
 
 bool QuicSimpleTestServer::Start() {
-  DVLOG(3) << g_quic_server_thread;
-  DCHECK(!g_quic_server_thread);
+  CHECK(!g_quic_server_thread);
   g_quic_server_thread = new base::Thread("quic server thread");
   base::Thread::Options thread_options;
   thread_options.message_pump_type = base::MessagePumpType::IO;
-  bool started = g_quic_server_thread->StartWithOptions(thread_options);
-  DCHECK(started);
+  bool started =
+      g_quic_server_thread->StartWithOptions(std::move(thread_options));
+  CHECK(started);
   base::FilePath test_files_root = GetTestCertsDirectory();
 
   base::WaitableEvent server_started_event(
@@ -217,6 +237,31 @@ bool QuicSimpleTestServer::Start() {
                                 &server_started_event));
   server_started_event.Wait();
   return true;
+}
+
+void QuicSimpleTestServer::AddResponse(const std::string& path,
+                                       spdy::Http2HeaderBlock response_headers,
+                                       const std::string& response_body) {
+  g_quic_cache_backend->AddResponse(
+      base::StringPrintf("%s:%d", kTestServerHost, GetPort()), path,
+      std::move(response_headers), response_body);
+}
+
+void QuicSimpleTestServer::AddResponseWithEarlyHints(
+    const std::string& path,
+    const spdy::Http2HeaderBlock& response_headers,
+    const std::string& response_body,
+    const std::vector<spdy::Http2HeaderBlock>& early_hints) {
+  g_quic_cache_backend->AddResponseWithEarlyHints(kTestServerHost, path,
+                                                  response_headers.Clone(),
+                                                  response_body, early_hints);
+}
+
+void QuicSimpleTestServer::SetResponseDelay(const std::string& path,
+                                            base::TimeDelta delay) {
+  g_quic_cache_backend->SetResponseDelay(
+      base::StringPrintf("%s:%d", kTestServerHost, GetPort()), path,
+      quic::QuicTime::Delta::FromMicroseconds(delay.InMicroseconds()));
 }
 
 // Shut down the server dispatcher, and the stream should error out.

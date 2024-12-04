@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,16 +12,14 @@
 #include <set>
 #include <vector>
 
-#include "base/macros.h"
 #include "ui/events/devices/device_data_manager.h"
+#include "ui/events/devices/keyboard_device.h"
 #include "ui/events/devices/x11/events_devices_x11_export.h"
 #include "ui/events/event_constants.h"
 #include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/events/platform_event.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/x/event.h"
-#include "ui/gfx/x/x11.h"
-#include "ui/gfx/x/x11_types.h"
 #include "ui/gfx/x/xinput.h"
 
 namespace ui {
@@ -97,6 +95,12 @@ class EVENTS_DEVICES_X11_EXPORT DeviceDataManagerX11
     DT_TOUCH_RAW_TIMESTAMP,
 
     // End of touch data types.
+    // Beginning of stylus data types.
+    DT_STYLUS_POSITION_X,  // Position in X-axis
+    DT_STYLUS_POSITION_Y,  // Position in Y-axis
+    DT_STYLUS_PRESSURE,    // Pressure of contact
+    DT_STYLUS_TILT_X,      // Tilt in X-axis
+    DT_STYLUS_TILT_Y,      // Tilt in Y-axis
 
     DT_LAST_ENTRY  // This must come last.
   };
@@ -113,9 +117,13 @@ class EVENTS_DEVICES_X11_EXPORT DeviceDataManagerX11
   // We use int because enums can be casted to ints but not vice versa.
   static bool IsCMTDataType(const int type);
   static bool IsTouchDataType(const int type);
+  static bool IsStylusDataType(const int type);
 
   // Returns the DeviceDataManagerX11 singleton.
   static DeviceDataManagerX11* GetInstance();
+
+  DeviceDataManagerX11(const DeviceDataManagerX11&) = delete;
+  DeviceDataManagerX11& operator=(const DeviceDataManagerX11&) = delete;
 
   // Returns if XInput2 is available on the system.
   bool IsXInput2Available() const;
@@ -147,6 +155,9 @@ class EVENTS_DEVICES_X11_EXPORT DeviceDataManagerX11
   // (i.e. XIDeviceEvent). This rules out things like hierarchy changes,
   /// device changes, property changes and so on.
   bool IsXIDeviceEvent(const x11::Event& xev) const;
+
+  // Check if the event comes from stylus devices.
+  bool IsStylusXInputEvent(const x11::Event& xev) const;
 
   // Check if the event comes from touchpad devices.
   bool IsTouchpadXInputEvent(const x11::Event& xev) const;
@@ -276,7 +287,7 @@ class EVENTS_DEVICES_X11_EXPORT DeviceDataManagerX11
  protected:
   // DeviceHotplugEventObserver:
   void OnKeyboardDevicesUpdated(
-      const std::vector<InputDevice>& devices) override;
+      const std::vector<KeyboardDevice>& devices) override;
 
  private:
   // Information about scroll valuators
@@ -309,18 +320,14 @@ class EVENTS_DEVICES_X11_EXPORT DeviceDataManagerX11
   DeviceDataManagerX11();
   ~DeviceDataManagerX11() override;
 
-  // Initialize the XInput related system information.
-  bool InitializeXInputInternal();
-
   void InitializeValuatorsForTest(int deviceid,
                                   int start_valuator,
                                   int end_valuator,
                                   double min_value,
                                   double max_value);
 
-  // Updates a device based on a Valuator class info. Returns true if the
-  // device is a possible CMT device.
-  bool UpdateValuatorClassDevice(
+  // Updates a device based on a Valuator class info.
+  DataType UpdateValuatorClassDevice(
       const x11::Input::DeviceClass::Valuator& valuator_class_info,
       x11::Atom* atoms,
       uint16_t deviceid);
@@ -342,13 +349,11 @@ class EVENTS_DEVICES_X11_EXPORT DeviceDataManagerX11
   static const int kMaxXIEventType = 32;
   static const int kMaxSlotNum = 10;
 
-  // Major opcode for the XInput extension. Used to identify XInput events.
-  int xi_opcode_;
-
   // A quick lookup table for determining if events from the pointer device
   // should be processed.
   std::bitset<kMaxDeviceNum> cmt_devices_;
   std::bitset<kMaxDeviceNum> touchpads_;
+  std::bitset<kMaxDeviceNum> stylus_;
 
   // List of the master pointer devices.
   std::vector<x11::Input::DeviceId> master_pointers_;
@@ -389,11 +394,9 @@ class EVENTS_DEVICES_X11_EXPORT DeviceDataManagerX11
 
   // Map that stores meta-data for blocked keyboards. This is needed to restore
   // devices when they are re-enabled.
-  std::map<x11::Input::DeviceId, ui::InputDevice> blocked_keyboard_devices_;
+  std::map<x11::Input::DeviceId, ui::KeyboardDevice> blocked_keyboard_devices_;
 
   std::vector<uint8_t> button_map_;
-
-  DISALLOW_COPY_AND_ASSIGN(DeviceDataManagerX11);
 };
 
 }  // namespace ui

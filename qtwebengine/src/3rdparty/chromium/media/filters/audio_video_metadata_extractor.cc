@@ -1,10 +1,10 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "media/filters/audio_video_metadata_extractor.h"
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/time/time.h"
@@ -24,7 +24,7 @@ void OnError(bool* succeeded) {
 bool ExtractString(AVDictionaryEntry* tag,
                    const char* expected_key,
                    std::string* destination) {
-  if (!base::LowerCaseEqualsASCII(std::string(tag->key), expected_key))
+  if (!base::EqualsCaseInsensitiveASCII(std::string(tag->key), expected_key))
     return false;
 
   if (destination->empty())
@@ -37,7 +37,7 @@ bool ExtractString(AVDictionaryEntry* tag,
 bool ExtractInt(AVDictionaryEntry* tag,
                 const char* expected_key,
                 int* destination) {
-  if (!base::LowerCaseEqualsASCII(std::string(tag->key), expected_key))
+  if (!base::EqualsCaseInsensitiveASCII(std::string(tag->key), expected_key))
     return false;
 
   int temporary = -1;
@@ -78,7 +78,8 @@ bool AudioVideoMetadataExtractor::Extract(DataSource* source,
   DCHECK(!extracted_);
 
   bool read_ok = true;
-  media::BlockingUrlProtocol protocol(source, base::Bind(&OnError, &read_ok));
+  media::BlockingUrlProtocol protocol(source,
+                                      base::BindRepeating(&OnError, &read_ok));
   media::FFmpegGlue glue(&protocol);
   AVFormatContext* format_context = glue.format_context();
 
@@ -111,6 +112,18 @@ bool AudioVideoMetadataExtractor::Extract(DataSource* source,
     AVStream* stream = format_context->streams[i];
     if (!stream)
       continue;
+
+    for (int j = 0; j < stream->codecpar->nb_coded_side_data; j++) {
+      const AVPacketSideData& sd = stream->codecpar->coded_side_data[j];
+      if (sd.type == AV_PKT_DATA_DISPLAYMATRIX) {
+        CHECK_EQ(sd.size, sizeof(int32_t) * 3 * 3);
+        rotation_ = VideoTransformation::FromFFmpegDisplayMatrix(
+                        reinterpret_cast<int32_t*>(sd.data))
+                        .rotation;
+        info.tags["rotate"] = base::NumberToString(rotation_);
+        break;
+      }
+    }
 
     // Extract dictionary from streams also. Needed for containers that attach
     // metadata to contained streams instead the container itself, like OGG.
@@ -254,8 +267,6 @@ void AudioVideoMetadataExtractor::ExtractDictionary(AVDictionary* metadata,
     if (raw_tags->find(tag->key) == raw_tags->end())
       (*raw_tags)[tag->key] = tag->value;
 
-    if (ExtractInt(tag, "rotate", &rotation_))
-      continue;
     if (ExtractString(tag, "album", &album_))
       continue;
     if (ExtractString(tag, "artist", &artist_))

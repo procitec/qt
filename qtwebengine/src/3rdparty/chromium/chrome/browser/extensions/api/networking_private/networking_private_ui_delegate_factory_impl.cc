@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,22 +7,17 @@
 #include <memory>
 
 #include "build/build_config.h"
+#include "build/chromeos_buildflags.h"
 
-#if defined(OS_CHROMEOS)
+#if BUILDFLAG(IS_CHROMEOS_ASH)
 #include "chrome/browser/extensions/api/networking_private/networking_private_ui_delegate_chromeos.h"
 #endif
 
 namespace extensions {
 
-NetworkingPrivateUIDelegateFactoryImpl::
-    NetworkingPrivateUIDelegateFactoryImpl() {}
-
-NetworkingPrivateUIDelegateFactoryImpl::
-    ~NetworkingPrivateUIDelegateFactoryImpl() {}
-
 std::unique_ptr<NetworkingPrivateDelegate::UIDelegate>
 NetworkingPrivateUIDelegateFactoryImpl::CreateDelegate() {
-#if defined(OS_CHROMEOS)
+#if BUILDFLAG(IS_CHROMEOS_ASH)
   return std::make_unique<
       chromeos::extensions::NetworkingPrivateUIDelegateChromeOS>();
 #else

@@ -25,6 +25,7 @@
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_FONTS_SIMPLE_FONT_DATA_H_
 
 #include <memory>
+#include <mutex>
 #include <utility>
 
 #include "build/build_config.h"
@@ -37,14 +38,15 @@
 #include "third_party/blink/renderer/platform/fonts/font_platform_data.h"
 #include "third_party/blink/renderer/platform/fonts/font_vertical_position_type.h"
 #include "third_party/blink/renderer/platform/fonts/glyph.h"
+#include "third_party/blink/renderer/platform/fonts/shaping/han_kerning.h"
 #include "third_party/blink/renderer/platform/fonts/typesetting_features.h"
-#include "third_party/blink/renderer/platform/geometry/float_rect.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
 #include "third_party/blink/renderer/platform/wtf/casting.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_hash.h"
 #include "third_party/skia/include/core/SkFont.h"
+#include "ui/gfx/geometry/rect_f.h"
 
-#if defined(OS_MAC)
+#if BUILDFLAG(IS_APPLE)
 #include "third_party/blink/renderer/platform/fonts/glyph_metrics_map.h"
 #endif
 
@@ -69,7 +71,7 @@ struct GlyphData {
 
 class FontDescription;
 
-class PLATFORM_EXPORT SimpleFontData : public FontData {
+class PLATFORM_EXPORT SimpleFontData final : public FontData {
  public:
   // Used to create platform fonts.
   static scoped_refptr<SimpleFontData> Create(
@@ -80,10 +82,17 @@ class PLATFORM_EXPORT SimpleFontData : public FontData {
         platform_data, std::move(custom_data), subpixel_ascent_descent));
   }
 
+  SimpleFontData(const SimpleFontData&) = delete;
+  SimpleFontData(SimpleFontData&&) = delete;
+  ~SimpleFontData() override;
+  SimpleFontData& operator=(const SimpleFontData&) = delete;
+  SimpleFontData& operator=(const SimpleFontData&&) = delete;
+
   const FontPlatformData& PlatformData() const { return platform_data_; }
 
   scoped_refptr<SimpleFontData> SmallCapsFontData(const FontDescription&) const;
-  scoped_refptr<SimpleFontData> EmphasisMarkFontData(const FontDescription&) const;
+  scoped_refptr<SimpleFontData> EmphasisMarkFontData(
+      const FontDescription&) const;
   scoped_refptr<SimpleFontData> MetricsOverriddenFontData(
       const FontMetricsOverride&) const;
 
@@ -96,6 +105,12 @@ class PLATFORM_EXPORT SimpleFontData : public FontData {
   float InternalLeading() const {
     return GetFontMetrics().FloatHeight() - PlatformData().size();
   }
+
+  // The approximated advance of fullwidth ideographic characters in the inline
+  // axis. This is currently used to support the `ic` unit.
+  // https://drafts.csswg.org/css-values-4/#ic
+  const absl::optional<float>& IdeographicInlineSize() const;
+  absl::optional<float> IdeographicAdvanceWidth() const;
 
   // |sTypoAscender| and |sTypoDescender| in |OS/2| table, normalized to 1em.
   // This metrics can simulate ideographics em-box when the font doesn't have
@@ -118,11 +133,13 @@ class PLATFORM_EXPORT SimpleFontData : public FontData {
     avg_char_width_ = avg_char_width;
   }
 
-  FloatRect BoundsForGlyph(Glyph) const;
+  const HanKerning::FontData& HanKerningData(const LayoutLocale& locale,
+                                             bool is_horizontal) const;
+
+  gfx::RectF BoundsForGlyph(Glyph) const;
   void BoundsForGlyphs(const Vector<Glyph, 256>&, Vector<SkRect, 256>*) const;
-  FloatRect PlatformBoundsForGlyph(Glyph) const;
+  gfx::RectF PlatformBoundsForGlyph(Glyph) const;
   float WidthForGlyph(Glyph) const;
-  float PlatformWidthForGlyph(Glyph) const;
 
   float SpaceWidth() const { return space_width_; }
   void SetSpaceWidth(float space_width) { space_width_ = space_width; }
@@ -143,6 +160,9 @@ class PLATFORM_EXPORT SimpleFontData : public FontData {
   bool IsLoadingFallback() const override {
     return custom_font_data_ ? custom_font_data_->IsLoadingFallback() : false;
   }
+  bool IsPendingDataUrlCustomFont() const {
+    return custom_font_data_ ? custom_font_data_->IsPendingDataUrl() : false;
+  }
   bool IsSegmented() const override;
   bool ShouldSkipDrawing() const override {
     return custom_font_data_ && custom_font_data_->ShouldSkipDrawing();
@@ -150,27 +170,13 @@ class PLATFORM_EXPORT SimpleFontData : public FontData {
 
   CustomFontData* GetCustomFontData() const { return custom_font_data_.get(); }
 
-  unsigned VisualOverflowInflationForAscent() const {
-    return visual_overflow_inflation_for_ascent_;
-  }
-  unsigned VisualOverflowInflationForDescent() const {
-    return visual_overflow_inflation_for_descent_;
-  }
-
-  bool HasAdvanceOverride() const override {
-    return advance_override_.has_value();
-  }
-
-  float GetAdvanceOverride() const { return advance_override_.value_or(0); }
-
- protected:
+ private:
   SimpleFontData(
       const FontPlatformData&,
       scoped_refptr<CustomFontData> custom_data,
       bool subpixel_ascent_descent = false,
       const FontMetricsOverride& metrics_override = FontMetricsOverride());
 
- private:
   void PlatformInit(bool subpixel_ascent_descent, const FontMetricsOverride&);
   void PlatformGlyphInit();
 
@@ -181,86 +187,77 @@ class PLATFORM_EXPORT SimpleFontData : public FontData {
   bool TrySetNormalizedTypoAscentAndDescent(float ascent, float descent) const;
 
   FontMetrics font_metrics_;
-  float max_char_width_;
-  float avg_char_width_;
+  float max_char_width_ = -1;
+  float avg_char_width_ = -1;
 
-  FontPlatformData platform_data_;
-  SkFont font_;
+  const FontPlatformData platform_data_;
+  const SkFont font_;
 
-  Glyph space_glyph_;
-  float space_width_;
-  Glyph zero_glyph_;
+  Glyph space_glyph_ = 0;
+  float space_width_ = 0;
+  Glyph zero_glyph_ = 0;
 
-  struct DerivedFontData {
+  struct DerivedFontData final {
     USING_FAST_MALLOC(DerivedFontData);
 
    public:
     DerivedFontData() = default;
+    DerivedFontData(const DerivedFontData&) = delete;
+    DerivedFontData(DerivedFontData&&) = delete;
+    DerivedFontData& operator=(const DerivedFontData&) = delete;
+    DerivedFontData& operator=(DerivedFontData&&) = delete;
 
     scoped_refptr<SimpleFontData> small_caps;
     scoped_refptr<SimpleFontData> emphasis_mark;
-
-    DISALLOW_COPY_AND_ASSIGN(DerivedFontData);
   };
 
   mutable std::unique_ptr<DerivedFontData> derived_font_data_;
 
-  scoped_refptr<CustomFontData> custom_font_data_;
+  const scoped_refptr<CustomFontData> custom_font_data_;
 
-  // These are set to non-zero when ascent or descent is rounded or shifted
-  // to be smaller than the actual ascent or descent. When calculating visual
-  // overflows, we should add the inflations.
-  unsigned visual_overflow_inflation_for_ascent_;
-  unsigned visual_overflow_inflation_for_descent_;
+  mutable std::once_flag ideographic_inline_size_once_;
+  mutable std::once_flag ideographic_advance_width_once_;
+  mutable absl::optional<float> ideographic_inline_size_;
+  mutable absl::optional<float> ideographic_advance_width_;
 
-  // The additional spacing between letters as defined by the
-  // advance-override value in @font-face.
-  base::Optional<float> advance_override_;
+  // Simple LRU cache for `HanKerning::FontData`. The cache has 2 entries
+  // because one additional language or horizontal/vertical mixed document is
+  // possible, but more than that are very unlikely.
+  struct HanKerningCacheEntry {
+    scoped_refptr<const LayoutLocale> locale;
+    bool is_horizontal;
+    HanKerning::FontData data;
+  };
+  mutable HanKerningCacheEntry han_kerning_cache_[2];
 
   mutable FontHeight normalized_typo_ascent_descent_;
 
-// See discussion on crbug.com/631032 and Skiaissue
+// See discussion on crbug.com/631032 and Skia issue
 // https://bugs.chromium.org/p/skia/issues/detail?id=5328 :
 // On Mac we're still using path based glyph metrics, and they seem to be
 // too slow to be able to remove the caching layer we have here.
-#if defined(OS_MAC)
-  mutable std::unique_ptr<GlyphMetricsMap<FloatRect>> glyph_to_bounds_map_;
-  mutable GlyphMetricsMap<float> glyph_to_width_map_;
+#if BUILDFLAG(IS_APPLE)
+  mutable std::unique_ptr<GlyphMetricsMap<gfx::RectF>> glyph_to_bounds_map_;
 #endif
 };
 
-ALWAYS_INLINE FloatRect SimpleFontData::BoundsForGlyph(Glyph glyph) const {
-#if !defined(OS_MAC)
+ALWAYS_INLINE gfx::RectF SimpleFontData::BoundsForGlyph(Glyph glyph) const {
+#if !BUILDFLAG(IS_APPLE)
   return PlatformBoundsForGlyph(glyph);
 #else
-  FloatRect bounds_result;
   if (glyph_to_bounds_map_) {
-    bounds_result = glyph_to_bounds_map_->MetricsForGlyph(glyph);
-    if (bounds_result.Width() != kCGlyphSizeUnknown)
-      return bounds_result;
+    if (absl::optional<gfx::RectF> glyph_bounds =
+            glyph_to_bounds_map_->MetricsForGlyph(glyph)) {
+      return *glyph_bounds;
+    }
   }
 
-  bounds_result = PlatformBoundsForGlyph(glyph);
+  gfx::RectF bounds_result = PlatformBoundsForGlyph(glyph);
   if (!glyph_to_bounds_map_)
-    glyph_to_bounds_map_ = std::make_unique<GlyphMetricsMap<FloatRect>>();
+    glyph_to_bounds_map_ = std::make_unique<GlyphMetricsMap<gfx::RectF>>();
   glyph_to_bounds_map_->SetMetricsForGlyph(glyph, bounds_result);
 
   return bounds_result;
-#endif
-}
-
-ALWAYS_INLINE float SimpleFontData::WidthForGlyph(Glyph glyph) const {
-#if !defined(OS_MAC)
-  return PlatformWidthForGlyph(glyph);
-#else
-  float width = glyph_to_width_map_.MetricsForGlyph(glyph);
-  if (width != kCGlyphSizeUnknown)
-    return width;
-
-  width = PlatformWidthForGlyph(glyph);
-
-  glyph_to_width_map_.SetMetricsForGlyph(glyph, width);
-  return width;
 #endif
 }
 

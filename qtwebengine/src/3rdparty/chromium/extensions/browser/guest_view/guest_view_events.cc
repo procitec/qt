@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,7 +7,6 @@
 #include <map>
 
 #include "base/lazy_instance.h"
-#include "base/macros.h"
 #include "components/guest_view/common/guest_view_constants.h"
 #include "extensions/browser/guest_view/extension_options/extension_options_constants.h"
 #include "extensions/browser/guest_view/web_view/web_view_constants.h"
@@ -17,6 +16,16 @@ namespace extensions {
 namespace guest_view_events {
 
 namespace {
+
+// WebRequest API events.
+constexpr char kEventAuthRequired[] = "webViewInternal.onAuthRequired";
+constexpr char kEventBeforeRedirect[] = "webViewInternal.onBeforeRedirect";
+constexpr char kEventBeforeRequest[] = "webViewInternal.onBeforeRequest";
+constexpr char kEventBeforeSendHeaders[] =
+    "webViewInternal.onBeforeSendHeaders";
+constexpr char kEventCompleted[] = "webViewInternal.onCompleted";
+constexpr char kEventErrorOccurred[] = "webViewInternal.onErrorOccurred";
+constexpr char kEventSendHeaders[] = "webViewInternal.onSendHeaders";
 
 class EventMap {
  public:
@@ -36,17 +45,15 @@ class EventMap {
         {guest_view::kEventResize, events::GUEST_VIEW_INTERNAL_ON_RESIZE},
         {webview::kEventAudioStateChanged,
          events::WEB_VIEW_INTERNAL_ON_AUDIO_STATE_CHANGED},
-        {webview::kEventBeforeRequest,
-         events::WEB_VIEW_INTERNAL_ON_BEFORE_REQUEST},
-        {webview::kEventBeforeSendHeaders,
+        {kEventBeforeRequest, events::WEB_VIEW_INTERNAL_ON_BEFORE_REQUEST},
+        {kEventBeforeSendHeaders,
          events::WEB_VIEW_INTERNAL_ON_BEFORE_SEND_HEADERS},
         {webview::kEventClose, events::WEB_VIEW_INTERNAL_ON_CLOSE},
-        {webview::kEventCompleted, events::WEB_VIEW_INTERNAL_ON_COMPLETED},
+        {kEventCompleted, events::WEB_VIEW_INTERNAL_ON_COMPLETED},
         {webview::kEventConsoleMessage,
          events::WEB_VIEW_INTERNAL_ON_CONSOLE_MESSAGE},
         {webview::kEventContentLoad, events::WEB_VIEW_INTERNAL_ON_CONTENT_LOAD},
         {webview::kEventDialog, events::WEB_VIEW_INTERNAL_ON_DIALOG},
-        {webview::kEventDropLink, events::WEB_VIEW_INTERNAL_ON_DROP_LINK},
         {webview::kEventExit, events::WEB_VIEW_INTERNAL_ON_EXIT},
         {webview::kEventExitFullscreen,
          events::WEB_VIEW_INTERNAL_ON_EXIT_FULLSCREEN},
@@ -73,18 +80,18 @@ class EventMap {
         {webview::kEventUnresponsive,
          events::WEB_VIEW_INTERNAL_ON_UNRESPONSIVE},
         {webview::kEventZoomChange, events::WEB_VIEW_INTERNAL_ON_ZOOM_CHANGE},
-        {webview::kEventAuthRequired,
-         events::WEB_VIEW_INTERNAL_ON_AUTH_REQUIRED},
-        {webview::kEventBeforeRedirect,
-         events::WEB_VIEW_INTERNAL_ON_BEFORE_REDIRECT},
-        {webview::kEventErrorOccurred,
-         events::WEB_VIEW_INTERNAL_ON_ERROR_OCCURRED},
-        {webview::kEventSendHeaders, events::WEB_VIEW_INTERNAL_ON_SEND_HEADERS},
+        {kEventAuthRequired, events::WEB_VIEW_INTERNAL_ON_AUTH_REQUIRED},
+        {kEventBeforeRedirect, events::WEB_VIEW_INTERNAL_ON_BEFORE_REDIRECT},
+        {kEventErrorOccurred, events::WEB_VIEW_INTERNAL_ON_ERROR_OCCURRED},
+        {kEventSendHeaders, events::WEB_VIEW_INTERNAL_ON_SEND_HEADERS},
     };
     for (const auto& name_and_value : names_and_values) {
       values_[name_and_value.name] = name_and_value.value;
     }
   }
+
+  EventMap(const EventMap&) = delete;
+  EventMap& operator=(const EventMap&) = delete;
 
   events::HistogramValue Get(const std::string& event_name) {
     auto value = values_.find(event_name);
@@ -93,8 +100,6 @@ class EventMap {
 
  private:
   std::map<std::string, events::HistogramValue> values_;
-
-  DISALLOW_COPY_AND_ASSIGN(EventMap);
 };
 
 base::LazyInstance<EventMap>::DestructorAtExit g_event_map =

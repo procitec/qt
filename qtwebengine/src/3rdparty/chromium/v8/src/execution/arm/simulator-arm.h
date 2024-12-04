@@ -77,6 +77,8 @@ class Simulator : public SimulatorBase {
     r14,
     r15,
     num_registers,
+    fp = 11,
+    ip = 12,
     sp = 13,
     lr = 14,
     pc = 15,
@@ -231,8 +233,13 @@ class Simulator : public SimulatorBase {
 
   Address get_sp() const { return static_cast<Address>(get_register(sp)); }
 
-  // Accessor to the internal simulator stack area.
+  // Accessor to the internal simulator stack area. Adds a safety
+  // margin to prevent overflows (kAdditionalStackMargin).
   uintptr_t StackLimit(uintptr_t c_limit) const;
+
+  // Return current stack view, without additional safety margins.
+  // Users, for example wasm::StackMemory, can add their own.
+  base::Vector<uint8_t> GetCurrentStackView() const;
 
   // Executes ARM instructions until the PC reaches end_sim_pc.
   void Execute();
@@ -255,8 +262,10 @@ class Simulator : public SimulatorBase {
   uintptr_t PopAddress();
 
   // Debugger input.
-  void set_last_debugger_input(char* input);
-  char* last_debugger_input() { return last_debugger_input_; }
+  void set_last_debugger_input(ArrayUniquePtr<char> input) {
+    last_debugger_input_ = std::move(input);
+  }
+  const char* last_debugger_input() { return last_debugger_input_.get(); }
 
   // Redirection support.
   static void SetRedirectInstruction(Instruction* instruction);
@@ -278,6 +287,11 @@ class Simulator : public SimulatorBase {
     return false;
 #endif
   }
+
+  // Manage instruction tracing.
+  bool InstructionTracingEnabled();
+
+  void ToggleInstructionTracing();
 
  private:
   enum special_values {
@@ -332,6 +346,14 @@ class Simulator : public SimulatorBase {
   void SoftwareInterrupt(Instruction* instr);
   void DebugAtNextPC();
 
+  // Take a copy of v8 simulator tracing flag because flags are frozen after
+  // start.
+  bool instruction_tracing_ = v8_flags.trace_sim;
+
+  // Helper to write back values to register.
+  void AdvancedSIMDElementOrStructureLoadStoreWriteback(int Rn, int Rm,
+                                                        int ebytes);
+
   // Stop helper functions.
   inline bool isWatchedStop(uint32_t bkpt_code);
   inline bool isEnabledStop(uint32_t bkpt_code);
@@ -385,6 +407,16 @@ class Simulator : public SimulatorBase {
   void DecodeTypeVFP(Instruction* instr);
   void DecodeType6CoprocessorIns(Instruction* instr);
   void DecodeSpecialCondition(Instruction* instr);
+
+  void DecodeFloatingPointDataProcessing(Instruction* instr);
+  void DecodeUnconditional(Instruction* instr);
+  void DecodeAdvancedSIMDDataProcessing(Instruction* instr);
+  void DecodeMemoryHintsAndBarriers(Instruction* instr);
+  void DecodeAdvancedSIMDElementOrStructureLoadStore(Instruction* instr);
+  void DecodeAdvancedSIMDLoadStoreMultipleStructures(Instruction* instr);
+  void DecodeAdvancedSIMDLoadSingleStructureToAllLanes(Instruction* instr);
+  void DecodeAdvancedSIMDLoadStoreSingleStructureToOneLane(Instruction* instr);
+  void DecodeAdvancedSIMDTwoOrThreeRegisters(Instruction* instr);
 
   void DecodeVMOVBetweenCoreAndSinglePrecisionRegisters(Instruction* instr);
   void DecodeVCMP(Instruction* instr);
@@ -448,13 +480,20 @@ class Simulator : public SimulatorBase {
   bool underflow_vfp_flag_;
   bool inexact_vfp_flag_;
 
-  // Simulator support.
-  char* stack_;
+  // Simulator support for the stack.
+  uint8_t* stack_;
+  static const size_t kAllocatedStackSize = 1 * MB;
+  // We leave a small buffer below the usable stack to protect against potential
+  // stack underflows.
+  static const int kStackMargin = 64;
+  // Added in Simulator::StackLimit()
+  static const int kAdditionalStackMargin = 4 * KB;
+  static const size_t kUsableStackSize = kAllocatedStackSize - kStackMargin;
   bool pc_modified_;
   int icount_;
 
   // Debugger input.
-  char* last_debugger_input_;
+  ArrayUniquePtr<char> last_debugger_input_;
 
   // Registered breakpoints.
   Instruction* break_pc_;

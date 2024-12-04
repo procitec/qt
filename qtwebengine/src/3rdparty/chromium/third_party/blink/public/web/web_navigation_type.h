@@ -38,10 +38,12 @@ enum WebNavigationType {
   kWebNavigationTypeFormSubmitted,
   kWebNavigationTypeBackForward,
   kWebNavigationTypeReload,
-  kWebNavigationTypeFormResubmitted,
+  kWebNavigationTypeFormResubmittedBackForward,
+  kWebNavigationTypeFormResubmittedReload,
+  kWebNavigationTypeRestore,
   kWebNavigationTypeOther
 };
 
 }  // namespace blink
 
-#endif
+#endif  // THIRD_PARTY_BLINK_PUBLIC_WEB_WEB_NAVIGATION_TYPE_H_

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,21 +7,25 @@
 
 #include <unordered_map>
 #include <utility>
-#include <vector>
 
+#include "base/auto_reset.h"
 #include "base/base_export.h"
-#include "base/bind.h"
+#include "base/check.h"
 #include "base/check_op.h"
-#include "base/lazy_instance.h"
+#include "base/containers/contains.h"
+#include "base/dcheck_is_on.h"
+#include "base/debug/stack_trace.h"
+#include "base/functional/bind.h"
 #include "base/location.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/observer_list.h"
-#include "base/sequenced_task_runner.h"
-#include "base/stl_util.h"
+#include "base/strings/strcat.h"
 #include "base/synchronization/lock.h"
-#include "base/threading/sequenced_task_runner_handle.h"
-#include "base/threading/thread_local.h"
+#include "base/task/sequenced_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #include "build/build_config.h"
+#include "third_party/abseil-cpp/absl/base/attributes.h"
 
 ///////////////////////////////////////////////////////////////////////////////
 //
@@ -39,12 +43,25 @@
 //      callback.
 //    * If one sequence is notifying observers concurrently with an observer
 //      removing itself from the observer list, the notifications will be
-//      silently dropped.
+//      silently dropped. However if the observer is currently inside a
+//      notification callback, the callback will finish running.
+//
+//   By default, observers can be removed from any sequence. However this can be
+//   error-prone since an observer may be running a callback when it's removed,
+//   in which case it isn't safe to delete until the callback is finished.
+//   Consider using the RemoveObserverPolicy::kAddingSequenceOnly template
+//   parameter, which will CHECK that observers are only removed from the
+//   sequence where they were added (which is also the sequence that runs
+//   callbacks).
 //
 //   The drawback of the threadsafe observer list is that notifications are not
 //   as real-time as the non-threadsafe version of this class. Notifications
 //   will always be done via PostTask() to another sequence, whereas with the
-//   non-thread-safe observer_list, notifications happen synchronously.
+//   non-thread-safe ObserverList, notifications happen synchronously.
+//
+//   Note: this class previously supported synchronous notifications for
+//   same-sequence observers, but it was error-prone and removed in
+//   crbug.com/1193750, think twice before re-considering this paradigm.
 //
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -54,6 +71,14 @@ namespace internal {
 class BASE_EXPORT ObserverListThreadSafeBase
     : public RefCountedThreadSafe<ObserverListThreadSafeBase> {
  public:
+  struct NotificationDataBase {
+    NotificationDataBase(void* observer_list_in, const Location& from_here_in)
+        : observer_list(observer_list_in), from_here(from_here_in) {}
+
+    raw_ptr<void> observer_list;
+    Location from_here;
+  };
+
   ObserverListThreadSafeBase() = default;
   ObserverListThreadSafeBase(const ObserverListThreadSafeBase&) = delete;
   ObserverListThreadSafeBase& operator=(const ObserverListThreadSafeBase&) =
@@ -72,18 +97,9 @@ class BASE_EXPORT ObserverListThreadSafeBase
     }
   };
 
-  struct NotificationDataBase {
-    NotificationDataBase(void* observer_list_in, const Location& from_here_in)
-        : observer_list(observer_list_in), from_here(from_here_in) {}
-
-    void* observer_list;
-    Location from_here;
-  };
+  static const NotificationDataBase*& GetCurrentNotification();
 
   virtual ~ObserverListThreadSafeBase() = default;
-
-  static LazyInstance<ThreadLocalPointer<const NotificationDataBase>>::Leaky
-      tls_current_notification_;
 
  private:
   friend class RefCountedThreadSafe<ObserverListThreadSafeBase>;
@@ -91,9 +107,29 @@ class BASE_EXPORT ObserverListThreadSafeBase
 
 }  // namespace internal
 
-template <class ObserverType>
+enum class RemoveObserverPolicy {
+  // Observers can be removed from any sequence.
+  kAnySequence,
+  // Observers can only be removed from the sequence that added them.
+  kAddingSequenceOnly,
+};
+
+template <class ObserverType,
+          RemoveObserverPolicy RemovePolicy =
+              RemoveObserverPolicy::kAnySequence>
 class ObserverListThreadSafe : public internal::ObserverListThreadSafeBase {
+  using Self = ObserverListThreadSafe<ObserverType, RemovePolicy>;
+
  public:
+  enum class AddObserverResult {
+    kBecameNonEmpty,
+    kWasAlreadyNonEmpty,
+  };
+  enum class RemoveObserverResult {
+    kWasOrBecameEmpty,
+    kRemainsNonEmpty,
+  };
+
   ObserverListThreadSafe() = default;
   explicit ObserverListThreadSafe(ObserverListPolicy policy)
       : policy_(policy) {}
@@ -101,10 +137,11 @@ class ObserverListThreadSafe : public internal::ObserverListThreadSafeBase {
   ObserverListThreadSafe& operator=(const ObserverListThreadSafe&) = delete;
 
   // Adds |observer| to the list. |observer| must not already be in the list.
-  void AddObserver(ObserverType* observer) {
-    DCHECK(SequencedTaskRunnerHandle::IsSet())
-        << "An observer can only be registered when SequencedTaskRunnerHandle "
-           "is set. If this is in a unit test, you're likely merely missing a "
+  AddObserverResult AddObserver(ObserverType* observer) {
+    DCHECK(SequencedTaskRunner::HasCurrentDefault())
+        << "An observer can only be registered when "
+           "SequencedTaskRunner::HasCurrentDefault. If this is in a unit test, "
+           "you're likely merely missing a "
            "base::test::(SingleThread)TaskEnvironment in your fixture. "
            "Otherwise, try running this code on a named thread (main/UI/IO) or "
            "from a task posted to a base::SequencedTaskRunner or "
@@ -112,11 +149,23 @@ class ObserverListThreadSafe : public internal::ObserverListThreadSafeBase {
 
     AutoLock auto_lock(lock_);
 
+    bool was_empty = observers_.empty();
+
     // Add |observer| to the list of observers.
     DCHECK(!Contains(observers_, observer));
     const scoped_refptr<SequencedTaskRunner> task_runner =
-        SequencedTaskRunnerHandle::Get();
-    observers_[observer] = task_runner;
+        SequencedTaskRunner::GetCurrentDefault();
+    // Each observer gets a unique identifier. These unique identifiers are used
+    // to avoid execution of pending posted-tasks over removed or released
+    // observers.
+    const size_t observer_id = ++observer_id_counter_;
+#if DCHECK_IS_ON()
+    ObserverTaskRunnerInfo task_info = {task_runner, base::debug::StackTrace(),
+                                        observer_id};
+#else
+    ObserverTaskRunnerInfo task_info = {task_runner, observer_id};
+#endif
+    observers_[observer] = std::move(task_info);
 
     // If this is called while a notification is being dispatched on this thread
     // and |policy_| is ALL, |observer| must be notified (if a notification is
@@ -124,17 +173,28 @@ class ObserverListThreadSafe : public internal::ObserverListThreadSafeBase {
     // may not make it to |observer| depending on the outcome of the race to
     // |lock_|).
     if (policy_ == ObserverListPolicy::ALL) {
-      const NotificationDataBase* current_notification =
-          tls_current_notification_.Get().Get();
-      if (current_notification && current_notification->observer_list == this) {
+      if (const NotificationDataBase* const current_notification =
+              GetCurrentNotification();
+          current_notification && current_notification->observer_list == this) {
+        const NotificationData* notification_data =
+            static_cast<const NotificationData*>(current_notification);
         task_runner->PostTask(
             current_notification->from_here,
-            BindOnce(
-                &ObserverListThreadSafe<ObserverType>::NotifyWrapper, this,
-                observer,
-                *static_cast<const NotificationData*>(current_notification)));
+            BindOnce(&Self::NotifyWrapper, this,
+                     // While `observer` may be dangling, we pass it and
+                     // check it wasn't deallocated in NotifyWrapper() which can
+                     // check `observers_` to verify presence (the owner of the
+                     // observer is responsible for removing it from that list
+                     // before deallocation).
+                     UnsafeDangling(observer),
+                     NotificationData(this, observer_id,
+                                      current_notification->from_here,
+                                      notification_data->method)));
       }
     }
+
+    return was_empty ? AddObserverResult::kBecameNonEmpty
+                     : AddObserverResult::kWasAlreadyNonEmpty;
   }
 
   // Remove an observer from the list if it is in the list.
@@ -142,16 +202,26 @@ class ObserverListThreadSafe : public internal::ObserverListThreadSafeBase {
   // If a notification was sent to the observer but hasn't started to run yet,
   // it will be aborted. If a notification has started to run, removing the
   // observer won't stop it.
-  void RemoveObserver(ObserverType* observer) {
+  RemoveObserverResult RemoveObserver(ObserverType* observer) {
     AutoLock auto_lock(lock_);
+    if constexpr (RemovePolicy == RemoveObserverPolicy::kAddingSequenceOnly) {
+      const auto it = observers_.find(observer);
+      CHECK(it == observers_.end() ||
+            it->second.task_runner->RunsTasksInCurrentSequence());
+    }
     observers_.erase(observer);
+    return observers_.empty() ? RemoveObserverResult::kWasOrBecameEmpty
+                              : RemoveObserverResult::kRemainsNonEmpty;
   }
 
   // Verifies that the list is currently empty (i.e. there are no observers).
   void AssertEmpty() const {
 #if DCHECK_IS_ON()
     AutoLock auto_lock(lock_);
-    DCHECK(observers_.empty());
+    bool observers_is_empty = observers_.empty();
+    DUMP_WILL_BE_CHECK(observers_is_empty)
+        << "\n"
+        << GetObserversCreationStackStringLocked();
 #endif
   }
 
@@ -167,45 +237,17 @@ class ObserverListThreadSafe : public internal::ObserverListThreadSafeBase {
 
     AutoLock lock(lock_);
     for (const auto& observer : observers_) {
-      observer.second->PostTask(
+      observer.second.task_runner->PostTask(
           from_here,
-          BindOnce(&ObserverListThreadSafe<ObserverType>::NotifyWrapper, this,
-                   observer.first, NotificationData(this, from_here, method)));
-    }
-  }
-
-  // Like Notify() but attempts to synchronously invoke callbacks if they are
-  // associated with this thread.
-  template <typename Method, typename... Params>
-  void NotifySynchronously(const Location& from_here,
-                           Method m,
-                           Params&&... params) {
-    RepeatingCallback<void(ObserverType*)> method =
-        BindRepeating(&Dispatcher<ObserverType, Method>::Run, m,
-                      std::forward<Params>(params)...);
-
-    // The observers may make reentrant calls (which can be a problem due to the
-    // lock), so we extract a list to call synchronously.
-    std::vector<ObserverType*> current_sequence_observers;
-
-    {
-      AutoLock lock(lock_);
-      current_sequence_observers.reserve(observers_.size());
-      for (const auto& observer : observers_) {
-        if (observer.second->RunsTasksInCurrentSequence()) {
-          current_sequence_observers.push_back(observer.first);
-        } else {
-          observer.second->PostTask(
-              from_here,
-              BindOnce(&ObserverListThreadSafe<ObserverType>::NotifyWrapper,
-                       this, observer.first,
-                       NotificationData(this, from_here, method)));
-        }
-      }
-    }
-
-    for (ObserverType* observer : current_sequence_observers) {
-      NotifyWrapper(observer, NotificationData(this, from_here, method));
+          BindOnce(&Self::NotifyWrapper, this,
+                   // While `observer.first` may be dangling, we pass it and
+                   // check it wasn't deallocated in NotifyWrapper() which can
+                   // check `observers_` to verify presence (the owner of the
+                   // observer is responsible for removing it from that list
+                   // before deallocation).
+                   UnsafeDangling(observer.first),
+                   NotificationData(this, observer.second.observer_id,
+                                    from_here, method)));
     }
   }
 
@@ -214,55 +256,77 @@ class ObserverListThreadSafe : public internal::ObserverListThreadSafeBase {
 
   struct NotificationData : public NotificationDataBase {
     NotificationData(ObserverListThreadSafe* observer_list_in,
+                     size_t observer_id_in,
                      const Location& from_here_in,
                      const RepeatingCallback<void(ObserverType*)>& method_in)
         : NotificationDataBase(observer_list_in, from_here_in),
-          method(method_in) {}
+          method(method_in),
+          observer_id(observer_id_in) {}
 
     RepeatingCallback<void(ObserverType*)> method;
+    size_t observer_id;
   };
 
   ~ObserverListThreadSafe() override = default;
 
-  void NotifyWrapper(ObserverType* observer,
+  void NotifyWrapper(MayBeDangling<ObserverType> observer,
                      const NotificationData& notification) {
     {
       AutoLock auto_lock(lock_);
 
       // Check whether the observer still needs a notification.
+      DCHECK_EQ(notification.observer_list, this);
       auto it = observers_.find(observer);
-      if (it == observers_.end())
+      if (it == observers_.end() ||
+          it->second.observer_id != notification.observer_id) {
         return;
-      DCHECK(it->second->RunsTasksInCurrentSequence());
+      }
+      DCHECK(it->second.task_runner->RunsTasksInCurrentSequence());
     }
 
     // Keep track of the notification being dispatched on the current thread.
     // This will be used if the callback below calls AddObserver().
     //
-    // Note: |tls_current_notification_| may not be nullptr if this runs in a
+    // Note: GetCurrentNotification() may not return null if this runs in a
     // nested loop started by a notification callback. In that case, it is
     // important to save the previous value to restore it later.
-    auto& tls_current_notification = tls_current_notification_.Get();
-    const NotificationDataBase* const previous_notification =
-        tls_current_notification.Get();
-    tls_current_notification.Set(&notification);
+    const AutoReset<const NotificationDataBase*> resetter_(
+        &GetCurrentNotification(), &notification);
 
     // Invoke the callback.
     notification.method.Run(observer);
+  }
 
-    // Reset the notification being dispatched on the current thread to its
-    // previous value.
-    tls_current_notification.Set(previous_notification);
+  std::string GetObserversCreationStackStringLocked() const
+      EXCLUSIVE_LOCKS_REQUIRED(lock_) {
+    std::string result;
+#if DCHECK_IS_ON()
+    for (const auto& observer : observers_) {
+      StrAppend(&result,
+                {observer.second.add_observer_stack_.ToString(), "\n"});
+    }
+#endif
+    return result;
   }
 
   const ObserverListPolicy policy_ = ObserverListPolicy::ALL;
 
   mutable Lock lock_;
 
+  size_t observer_id_counter_ GUARDED_BY(lock_) = 0;
+
+  struct ObserverTaskRunnerInfo {
+    scoped_refptr<SequencedTaskRunner> task_runner;
+#if DCHECK_IS_ON()
+    base::debug::StackTrace add_observer_stack_;
+#endif
+    size_t observer_id = 0;
+  };
+
   // Keys are observers. Values are the SequencedTaskRunners on which they must
   // be notified.
-  std::unordered_map<ObserverType*, scoped_refptr<SequencedTaskRunner>>
-      observers_ GUARDED_BY(lock_);
+  std::unordered_map<ObserverType*, ObserverTaskRunnerInfo> observers_
+      GUARDED_BY(lock_);
 };
 
 }  // namespace base

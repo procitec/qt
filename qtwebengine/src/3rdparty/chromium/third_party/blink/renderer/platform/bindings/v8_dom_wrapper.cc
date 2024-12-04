@@ -37,22 +37,16 @@
 
 namespace blink {
 
-v8::Local<v8::Object> V8DOMWrapper::CreateWrapper(
-    v8::Isolate* isolate,
-    v8::Local<v8::Object> creation_context,
-    const WrapperTypeInfo* type) {
-  RUNTIME_CALL_TIMER_SCOPE(isolate,
+v8::Local<v8::Object> V8DOMWrapper::CreateWrapper(ScriptState* script_state,
+                                                  const WrapperTypeInfo* type) {
+  RUNTIME_CALL_TIMER_SCOPE(script_state->GetIsolate(),
                            RuntimeCallStats::CounterId::kCreateWrapper);
 
-  // TODO(adithyas): We should abort wrapper creation if the context access
-  // check fails and throws an exception.
-  V8WrapperInstantiationScope scope(creation_context, isolate, type);
-  CHECK(!scope.AccessCheckFailed());
+  const V8WrapperInstantiationScope scope(script_state);
 
-  V8PerContextData* per_context_data =
-      V8PerContextData::From(scope.GetContext());
   v8::Local<v8::Object> wrapper;
-  if (per_context_data) {
+  auto* per_context_data = V8PerContextData::From(scope.GetContext());
+  if (LIKELY(per_context_data)) {
     wrapper = per_context_data->CreateWrapperFromCache(type);
     CHECK(!wrapper.IsEmpty());
   } else {
@@ -62,7 +56,8 @@ v8::Local<v8::Object> V8DOMWrapper::CreateWrapper(
     // V8PerContextData::createWrapperFromCache, though there is no need to
     // cache resulting objects or their constructors.
     const DOMWrapperWorld& world = DOMWrapperWorld::World(scope.GetContext());
-    wrapper = type->DomTemplate(isolate, world)
+    wrapper = type->GetV8ClassTemplate(script_state->GetIsolate(), world)
+                  .As<v8::FunctionTemplate>()
                   ->InstanceTemplate()
                   ->NewInstance(scope.GetContext())
                   .ToLocalChecked();
@@ -86,7 +81,8 @@ bool V8DOMWrapper::IsWrapper(v8::Isolate* isolate, v8::Local<v8::Value> value) {
   V8PerIsolateData* per_isolate_data = V8PerIsolateData::From(isolate);
   if (!(untrusted_wrapper_type_info && per_isolate_data))
     return false;
-  return per_isolate_data->HasInstance(untrusted_wrapper_type_info, object);
+  return per_isolate_data->HasInstanceOfUntrustedType(
+      untrusted_wrapper_type_info, object);
 }
 
 bool V8DOMWrapper::HasInternalFieldsSet(v8::Local<v8::Value> value) {
@@ -100,8 +96,7 @@ bool V8DOMWrapper::HasInternalFieldsSet(v8::Local<v8::Value> value) {
   if (object->InternalFieldCount() < kV8DefaultWrapperInternalFieldCount)
     return false;
 
-  // The untyped wrappable can either be ScriptWrappable or CustomWrappable.
-  const void* untrused_wrappable = ToUntypedWrappable(object);
+  const ScriptWrappable* untrused_wrappable = ToScriptWrappable(object);
   const WrapperTypeInfo* untrusted_wrapper_type_info =
       ToWrapperTypeInfo(object);
   return untrused_wrappable && untrusted_wrapper_type_info &&

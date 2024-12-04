@@ -1,34 +1,9 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the test suite of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:GPL-EXCEPT$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 3 as published by the Free Software
-** Foundation with exceptions as appearing in the file LICENSE.GPL3-EXCEPT
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
 #include "debugutil_p.h"
 #include "qqmldebugprocess_p.h"
-#include "../../../shared/util.h"
+#include <QtQuickTestUtils/private/qmlutils_p.h>
 
 #include <private/qqmldebugclient_p.h>
 #include <private/qqmldebugconnection_p.h>
@@ -47,6 +22,9 @@ class tst_QQmlDebuggingEnabler : public QQmlDebugTest
 {
     Q_OBJECT
 
+public:
+    tst_QQmlDebuggingEnabler();
+
 private slots:
     void qmlscene_data();
     void qmlscene();
@@ -63,14 +41,14 @@ void tst_QQmlDebuggingEnabler::data()
     QTest::addColumn<bool>("blockMode");
     QTest::addColumn<QStringList>("services");
 
-    QStringList connectors({
+    const QStringList connectors({
         QLatin1String("QQmlDebugServer"),
         QLatin1String("QQmlNativeDebugConnector")
     });
 
-    QList<bool> blockModes({ true, false });
+    const QList<bool> blockModes({ true, false });
 
-    QList<QStringList> serviceLists({
+    const QList<QStringList> serviceLists({
         QStringList(),
         QQmlDebuggingEnabler::nativeDebuggerServices(),
         QQmlDebuggingEnabler::debuggerServices(),
@@ -79,9 +57,9 @@ void tst_QQmlDebuggingEnabler::data()
         QQmlDebuggingEnabler::debuggerServices() + QQmlDebuggingEnabler::inspectorServices()
     });
 
-    foreach (const QString &connector, connectors) {
-        foreach (bool blockMode, blockModes) {
-            foreach (const QStringList &serviceList, serviceLists) {
+    for (const QString &connector : connectors) {
+        for (bool blockMode : blockModes) {
+            for (const QStringList &serviceList : serviceLists) {
                 QString name = connector + QLatin1Char(',')
                         + QLatin1String(blockMode ? "block" : "noblock") + QLatin1Char(',')
                         + serviceList.join(QLatin1Char('-'));
@@ -89,6 +67,11 @@ void tst_QQmlDebuggingEnabler::data()
             }
         }
     }
+}
+
+tst_QQmlDebuggingEnabler::tst_QQmlDebuggingEnabler()
+    : QQmlDebugTest(QT_QMLTEST_DATADIR)
+{
 }
 
 void tst_QQmlDebuggingEnabler::qmlscene_data()
@@ -103,7 +86,7 @@ void tst_QQmlDebuggingEnabler::qmlscene()
     QFETCH(QStringList, services);
 
     m_process = new QQmlDebugProcess(
-                QLibraryInfo::location(QLibraryInfo::BinariesPath) + "/qmlscene", this);
+                QLibraryInfo::path(QLibraryInfo::BinariesPath) + "/qmlscene", this);
     m_process->setMaximumBindErrors(1);
     m_process->start(QStringList()
                      << QString::fromLatin1("-qmljsdebugger=connector:%1%2%3%4")
@@ -120,7 +103,7 @@ void tst_QQmlDebuggingEnabler::qmlscene()
         m_clients = QQmlDebugTest::createOtherClients(m_connection);
         m_connection->connectToHost("127.0.0.1", m_process->debugPort());
         QVERIFY(m_connection->waitForConnected());
-        foreach (QQmlDebugClient *client, m_clients)
+        for (QQmlDebugClient *client : std::as_const(m_clients))
             QCOMPARE(client->state(), (services.isEmpty() || services.contains(client->name())) ?
                          QQmlDebugClient::Enabled : QQmlDebugClient::Unavailable);
     }
@@ -167,7 +150,7 @@ void tst_QQmlDebuggingEnabler::custom()
         m_clients = QQmlDebugTest::createOtherClients(m_connection);
         m_connection->connectToHost("127.0.0.1", m_process->debugPort());
         QVERIFY(m_connection->waitForConnected());
-        for (QQmlDebugClient *client : qAsConst(m_clients))
+        for (QQmlDebugClient *client : std::as_const(m_clients))
             QCOMPARE(client->state(), (services.isEmpty() || services.contains(client->name())) ?
                          QQmlDebugClient::Enabled : QQmlDebugClient::Unavailable);
     }

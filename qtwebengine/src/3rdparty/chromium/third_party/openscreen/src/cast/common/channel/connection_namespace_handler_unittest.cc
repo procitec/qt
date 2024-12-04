@@ -1,14 +1,19 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "cast/common/channel/connection_namespace_handler.h"
 
+#include <optional>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
 #include "cast/common/channel/message_util.h"
 #include "cast/common/channel/testing/fake_cast_socket.h"
 #include "cast/common/channel/testing/mock_socket_error_handler.h"
 #include "cast/common/channel/virtual_connection.h"
-#include "cast/common/channel/virtual_connection_manager.h"
 #include "cast/common/channel/virtual_connection_router.h"
 #include "cast/common/public/cast_socket.h"
 #include "gmock/gmock.h"
@@ -17,8 +22,7 @@
 #include "util/json/json_value.h"
 #include "util/osp_logging.h"
 
-namespace openscreen {
-namespace cast {
+namespace openscreen::cast {
 namespace {
 
 using ::testing::_;
@@ -42,7 +46,7 @@ class MockVirtualConnectionPolicy
 CastMessage MakeVersionedConnectMessage(
     const std::string& source_id,
     const std::string& destination_id,
-    absl::optional<CastMessage_ProtocolVersion> version,
+    std::optional<CastMessage_ProtocolVersion> version,
     std::vector<CastMessage_ProtocolVersion> version_list) {
   CastMessage connect_message = MakeConnectMessage(source_id, destination_id);
   Json::Value message(Json::ValueType::objectValue);
@@ -102,7 +106,7 @@ class ConnectionNamespaceHandlerTest : public ::testing::Test {
                                                        CastMessage message) {
           VerifyConnectionMessage(message, source_id, destination_id);
           Json::Value value = ParseConnectionMessage(message);
-          absl::optional<absl::string_view> type = MaybeGetString(
+          std::optional<std::string_view> type = MaybeGetString(
               value, JSON_EXPAND_FIND_CONSTANT_ARGS(kMessageKeyType));
           ASSERT_TRUE(type) << message.payload_utf8();
           EXPECT_EQ(type.value(), kMessageTypeClose) << message.payload_utf8();
@@ -113,19 +117,19 @@ class ConnectionNamespaceHandlerTest : public ::testing::Test {
       MockCastSocketClient* mock_client,
       const std::string& source_id,
       const std::string& destination_id,
-      absl::optional<CastMessage_ProtocolVersion> version = absl::nullopt) {
+      std::optional<CastMessage_ProtocolVersion> version = std::nullopt) {
     EXPECT_CALL(*mock_client, OnMessage(_, _))
         .WillOnce(Invoke([&source_id, &destination_id, version](
                              CastSocket* socket, CastMessage message) {
           VerifyConnectionMessage(message, source_id, destination_id);
           Json::Value value = ParseConnectionMessage(message);
-          absl::optional<absl::string_view> type = MaybeGetString(
+          std::optional<std::string_view> type = MaybeGetString(
               value, JSON_EXPAND_FIND_CONSTANT_ARGS(kMessageKeyType));
           ASSERT_TRUE(type) << message.payload_utf8();
           EXPECT_EQ(type.value(), kMessageTypeConnected)
               << message.payload_utf8();
           if (version) {
-            absl::optional<int> message_version = MaybeGetInt(
+            std::optional<int> message_version = MaybeGetInt(
                 value,
                 JSON_EXPAND_FIND_CONSTANT_ARGS(kMessageKeyProtocolVersion));
             ASSERT_TRUE(message_version) << message.payload_utf8();
@@ -139,9 +143,8 @@ class ConnectionNamespaceHandlerTest : public ::testing::Test {
   CastSocket* socket_;
 
   NiceMock<MockVirtualConnectionPolicy> vc_policy_;
-  VirtualConnectionManager vc_manager_;
-  VirtualConnectionRouter router_{&vc_manager_};
-  ConnectionNamespaceHandler connection_namespace_handler_{&vc_manager_,
+  VirtualConnectionRouter router_;
+  ConnectionNamespaceHandler connection_namespace_handler_{&router_,
                                                            &vc_policy_};
 
   const std::string sender_id_{"sender-5678"};
@@ -151,7 +154,7 @@ class ConnectionNamespaceHandlerTest : public ::testing::Test {
 TEST_F(ConnectionNamespaceHandlerTest, Connect) {
   connection_namespace_handler_.OnMessage(
       &router_, socket_, MakeConnectMessage(sender_id_, receiver_id_));
-  EXPECT_TRUE(vc_manager_.GetConnectionData(
+  EXPECT_TRUE(router_.GetConnectionData(
       VirtualConnection{receiver_id_, sender_id_, socket_->socket_id()}));
 
   EXPECT_CALL(fake_cast_socket_pair_.mock_peer_client, OnMessage(_, _))
@@ -166,7 +169,7 @@ TEST_F(ConnectionNamespaceHandlerTest, PolicyDeniesConnection) {
                      sender_id_);
   connection_namespace_handler_.OnMessage(
       &router_, socket_, MakeConnectMessage(sender_id_, receiver_id_));
-  EXPECT_FALSE(vc_manager_.GetConnectionData(
+  EXPECT_FALSE(router_.GetConnectionData(
       VirtualConnection{receiver_id_, sender_id_, socket_->socket_id()}));
 }
 
@@ -179,7 +182,7 @@ TEST_F(ConnectionNamespaceHandlerTest, ConnectWithVersion) {
       MakeVersionedConnectMessage(
           sender_id_, receiver_id_,
           ::cast::channel::CastMessage_ProtocolVersion_CASTV2_1_2, {}));
-  EXPECT_TRUE(vc_manager_.GetConnectionData(
+  EXPECT_TRUE(router_.GetConnectionData(
       VirtualConnection{receiver_id_, sender_id_, socket_->socket_id()}));
 }
 
@@ -194,33 +197,32 @@ TEST_F(ConnectionNamespaceHandlerTest, ConnectWithVersionList) {
           ::cast::channel::CastMessage_ProtocolVersion_CASTV2_1_2,
           {::cast::channel::CastMessage_ProtocolVersion_CASTV2_1_3,
            ::cast::channel::CastMessage_ProtocolVersion_CASTV2_1_0}));
-  EXPECT_TRUE(vc_manager_.GetConnectionData(
+  EXPECT_TRUE(router_.GetConnectionData(
       VirtualConnection{receiver_id_, sender_id_, socket_->socket_id()}));
 }
 
 TEST_F(ConnectionNamespaceHandlerTest, Close) {
   connection_namespace_handler_.OnMessage(
       &router_, socket_, MakeConnectMessage(sender_id_, receiver_id_));
-  EXPECT_TRUE(vc_manager_.GetConnectionData(
+  EXPECT_TRUE(router_.GetConnectionData(
       VirtualConnection{receiver_id_, sender_id_, socket_->socket_id()}));
 
   connection_namespace_handler_.OnMessage(
       &router_, socket_, MakeCloseMessage(sender_id_, receiver_id_));
-  EXPECT_FALSE(vc_manager_.GetConnectionData(
+  EXPECT_FALSE(router_.GetConnectionData(
       VirtualConnection{receiver_id_, sender_id_, socket_->socket_id()}));
 }
 
 TEST_F(ConnectionNamespaceHandlerTest, CloseUnknown) {
   connection_namespace_handler_.OnMessage(
       &router_, socket_, MakeConnectMessage(sender_id_, receiver_id_));
-  EXPECT_TRUE(vc_manager_.GetConnectionData(
+  EXPECT_TRUE(router_.GetConnectionData(
       VirtualConnection{receiver_id_, sender_id_, socket_->socket_id()}));
 
   connection_namespace_handler_.OnMessage(
       &router_, socket_, MakeCloseMessage(sender_id_ + "098", receiver_id_));
-  EXPECT_TRUE(vc_manager_.GetConnectionData(
+  EXPECT_TRUE(router_.GetConnectionData(
       VirtualConnection{receiver_id_, sender_id_, socket_->socket_id()}));
 }
 
-}  // namespace cast
-}  // namespace openscreen
+}  // namespace openscreen::cast

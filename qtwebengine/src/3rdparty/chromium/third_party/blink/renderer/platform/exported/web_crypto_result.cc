@@ -31,7 +31,6 @@
 #include "third_party/blink/public/platform/web_crypto.h"
 
 #include "third_party/blink/renderer/platform/crypto_result.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
 
 namespace blink {
 
@@ -79,6 +78,10 @@ void WebCryptoResult::CompleteWithKeyPair(const WebCryptoKey& public_key,
 
 bool WebCryptoResult::Cancelled() const {
   return cancel_->Cancelled();
+}
+
+void WebCryptoResult::SetWarning(WebCryptoWarningType code) {
+  impl_->SetWarning(code);
 }
 
 WebCryptoResult::WebCryptoResult(CryptoResult* impl,

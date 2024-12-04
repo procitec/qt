@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,18 +9,19 @@
 
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "base/containers/span.h"
-#include "base/macros.h"
-#include "base/memory/ref_counted.h"
-#include "base/strings/string_piece.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/time/time.h"
 #include "crypto/signature_verifier.h"
 #include "net/base/hash_value.h"
 #include "net/base/net_export.h"
+#include "net/cert/x509_certificate.h"
 #include "third_party/boringssl/src/include/openssl/base.h"
 #include "third_party/boringssl/src/include/openssl/pool.h"
+#include "third_party/boringssl/src/pki/parsed_certificate.h"
 
 namespace crypto {
 class RSAPrivateKey;
@@ -28,16 +29,36 @@ class RSAPrivateKey;
 
 namespace net {
 
-struct ParseCertificateOptions;
-class X509Certificate;
-
 namespace x509_util {
+
+// Convert a vector of bytes into X509Certificate objects.
+// This will silently drop all input that does not parse, so be careful using
+// this.
+NET_EXPORT net::CertificateList ConvertToX509CertificatesIgnoreErrors(
+    const std::vector<std::vector<uint8_t>>& certs_bytes);
+
+// Parse all certificiates with default parsing options. Return those that
+// parse.
+// This will silently drop all certs with parsing errors, so be careful using
+// this.
+NET_EXPORT bssl::ParsedCertificateList ParseAllValidCerts(
+    const CertificateList& x509_certs);
 
 // Supported digest algorithms for signing certificates.
 enum DigestAlgorithm { DIGEST_SHA256 };
 
 // Adds a RFC 5280 Time value to the given CBB.
 NET_EXPORT bool CBBAddTime(CBB* cbb, base::Time time);
+
+// Adds an X.509 name to |cbb|. The name is determined by parsing |name| as
+// a comma-separated list of type=value pairs, such as "O=Organization,
+// CN=Common Name".
+//
+// WARNING: This function does not implement the full RFC 4514 syntax for
+// distinguished names. It should only be used if |name| is a constant
+// value, rather than programmatically constructed. If programmatic support
+// is needed, this input should be replaced with a richer type.
+NET_EXPORT bool AddName(CBB* cbb, std::string_view name);
 
 // Generate a 'tls-server-end-point' channel binding based on the specified
 // certificate. Channel bindings are based on RFC 5929.
@@ -50,7 +71,7 @@ NET_EXPORT_PRIVATE bool GetTLSServerEndPointChannelBinding(
 // The certificate is signed by the private key in |key|. The key length and
 // signature algorithm may be updated periodically to match best practices.
 //
-// |subject| is a distinguished name defined in RFC4514.
+// |subject| specifies the subject and issuer names as in AddName()
 //
 // SECURITY WARNING
 //
@@ -82,6 +103,8 @@ struct NET_EXPORT Extension {
 
 // Creates a self-signed certificate from a provided key, using the specified
 // hash algorithm.
+//
+// |subject| specifies the subject and issuer names as in AddName().
 NET_EXPORT bool CreateSelfSignedCert(
     EVP_PKEY* key,
     DigestAlgorithm alg,
@@ -97,24 +120,33 @@ NET_EXPORT CRYPTO_BUFFER_POOL* GetBufferPool();
 
 // Creates a CRYPTO_BUFFER in the same pool returned by GetBufferPool.
 NET_EXPORT bssl::UniquePtr<CRYPTO_BUFFER> CreateCryptoBuffer(
-    const uint8_t* data,
-    size_t length);
+    base::span<const uint8_t> data);
 
 // Creates a CRYPTO_BUFFER in the same pool returned by GetBufferPool.
 NET_EXPORT bssl::UniquePtr<CRYPTO_BUFFER> CreateCryptoBuffer(
-    const base::StringPiece& data);
+    std::string_view data);
 
 // Overload with no definition, to disallow creating a CRYPTO_BUFFER from a
 // char* due to StringPiece implicit ctor.
 NET_EXPORT bssl::UniquePtr<CRYPTO_BUFFER> CreateCryptoBuffer(
     const char* invalid_data);
 
+// Creates a CRYPTO_BUFFER in the same pool returned by GetBufferPool backed by
+// |data| without copying. |data| must be immutable and last for the lifetime
+// of the address space.
+NET_EXPORT bssl::UniquePtr<CRYPTO_BUFFER>
+CreateCryptoBufferFromStaticDataUnsafe(base::span<const uint8_t> data);
+
 // Compares two CRYPTO_BUFFERs and returns true if they have the same contents.
 NET_EXPORT bool CryptoBufferEqual(const CRYPTO_BUFFER* a,
                                   const CRYPTO_BUFFER* b);
 
 // Returns a StringPiece pointing to the data in |buffer|.
-NET_EXPORT base::StringPiece CryptoBufferAsStringPiece(
+NET_EXPORT std::string_view CryptoBufferAsStringPiece(
+    const CRYPTO_BUFFER* buffer);
+
+// Returns a span pointing to the data in |buffer|.
+NET_EXPORT base::span<const uint8_t> CryptoBufferAsSpan(
     const CRYPTO_BUFFER* buffer);
 
 // Creates a new X509Certificate from the chain in |buffers|, which must have at
@@ -122,14 +154,23 @@ NET_EXPORT base::StringPiece CryptoBufferAsStringPiece(
 NET_EXPORT scoped_refptr<X509Certificate> CreateX509CertificateFromBuffers(
     const STACK_OF(CRYPTO_BUFFER) * buffers);
 
+// Parses certificates from a PKCS#7 SignedData structure, appending them to
+// |handles|. Returns true on success (in which case zero or more elements were
+// added to |handles|) and false on error (in which case |handles| is
+// unmodified).
+NET_EXPORT bool CreateCertBuffersFromPKCS7Bytes(
+    base::span<const uint8_t> data,
+    std::vector<bssl::UniquePtr<CRYPTO_BUFFER>>* handles);
+
 // Returns the default ParseCertificateOptions for the net stack.
-NET_EXPORT ParseCertificateOptions DefaultParseCertificateOptions();
+NET_EXPORT bssl::ParseCertificateOptions DefaultParseCertificateOptions();
 
 // On success, returns true and updates |hash| to be the SHA-256 hash of the
 // subjectPublicKeyInfo of the certificate in |buffer|. If |buffer| is not a
 // valid certificate, returns false and |hash| is in an undefined state.
-NET_EXPORT bool CalculateSha256SpkiHash(const CRYPTO_BUFFER* buffer,
-                                        HashValue* hash) WARN_UNUSED_RESULT;
+[[nodiscard]] NET_EXPORT bool CalculateSha256SpkiHash(
+    const CRYPTO_BUFFER* buffer,
+    HashValue* hash);
 
 // Calls |verifier->VerifyInit|, using the public key from |certificate|,
 // checking if the digitalSignature key usage bit is present, and returns true
@@ -140,8 +181,10 @@ NET_EXPORT bool SignatureVerifierInitWithCertificate(
     base::span<const uint8_t> signature,
     const CRYPTO_BUFFER* certificate);
 
-// Returns true if the signature on the certificate uses SHA-1.
-NET_EXPORT_PRIVATE bool HasSHA1Signature(const CRYPTO_BUFFER* cert_buffer);
+// Returns true if the signature on the certificate is RSASSA-PKCS1-v1_5 with
+// SHA-1.
+NET_EXPORT_PRIVATE bool HasRsaPkcs1Sha1Signature(
+    const CRYPTO_BUFFER* cert_buffer);
 
 }  // namespace x509_util
 

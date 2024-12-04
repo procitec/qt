@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,15 +7,18 @@
 #include <utility>
 
 #include "base/check_op.h"
-#include "base/stl_util.h"
-#include "content/browser/indexed_db/indexed_db_class_factory.h"
+#include "base/containers/contains.h"
+#include "base/functional/callback_helpers.h"
+#include "base/trace_event/base_tracing.h"
+#include "components/services/storage/privileged/mojom/indexed_db_client_state_checker.mojom-forward.h"
+#include "content/browser/indexed_db/indexed_db_bucket_context.h"
 #include "content/browser/indexed_db/indexed_db_database_callbacks.h"
 #include "content/browser/indexed_db/indexed_db_database_error.h"
-#include "content/browser/indexed_db/indexed_db_factory_impl.h"
-#include "content/browser/indexed_db/indexed_db_observer.h"
-#include "content/browser/indexed_db/indexed_db_origin_state.h"
-#include "content/browser/indexed_db/indexed_db_tracing.h"
 #include "content/browser/indexed_db/indexed_db_transaction.h"
+#include "mojo/public/cpp/bindings/pending_associated_receiver.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "mojo/public/cpp/bindings/remote.h"
+#include "storage/browser/quota/quota_manager_proxy.h"
 #include "third_party/blink/public/mojom/indexeddb/indexeddb.mojom.h"
 
 namespace content {
@@ -27,20 +30,23 @@ static int32_t g_next_indexed_db_connection_id;
 }  // namespace
 
 IndexedDBConnection::IndexedDBConnection(
-    IndexedDBOriginStateHandle origin_state_handle,
-    IndexedDBClassFactory* indexed_db_class_factory,
+    IndexedDBBucketContext& bucket_context,
     base::WeakPtr<IndexedDBDatabase> database,
     base::RepeatingClosure on_version_change_ignored,
     base::OnceCallback<void(IndexedDBConnection*)> on_close,
-    scoped_refptr<IndexedDBDatabaseCallbacks> callbacks)
+    std::unique_ptr<IndexedDBDatabaseCallbacks> callbacks,
+    mojo::Remote<storage::mojom::IndexedDBClientStateChecker>
+        client_state_checker)
     : id_(g_next_indexed_db_connection_id++),
-      origin_state_handle_(std::move(origin_state_handle)),
-      indexed_db_class_factory_(indexed_db_class_factory),
+      bucket_context_handle_(bucket_context),
       database_(std::move(database)),
       on_version_change_ignored_(std::move(on_version_change_ignored)),
       on_close_(std::move(on_close)),
-      callbacks_(callbacks) {
+      callbacks_(std::move(callbacks)),
+      client_state_checker_(std::move(client_state_checker)) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  bucket_context_handle_->quota_manager()->NotifyBucketAccessed(
+      bucket_context_handle_->bucket_locator(), base::Time::Now());
 }
 
 IndexedDBConnection::~IndexedDBConnection() {
@@ -52,21 +58,18 @@ IndexedDBConnection::~IndexedDBConnection() {
   // during destruction. This is likely the case during regular execution, but
   // is definitely not the case in unit tests.
 
-  leveldb::Status status =
-      AbortTransactionsAndClose(CloseErrorHandling::kAbortAllReturnLastError);
-  if (!status.ok())
-    origin_state_handle_.origin_state()->tear_down_callback().Run(status);
+  AbortTransactionsAndClose(CloseErrorHandling::kAbortAllReturnLastError);
 }
 
-leveldb::Status IndexedDBConnection::AbortTransactionsAndClose(
+std::unique_ptr<IndexedDBDatabaseCallbacks>
+IndexedDBConnection::AbortTransactionsAndClose(
     CloseErrorHandling error_handling) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  if (!IsConnected())
-    return leveldb::Status::OK();
+  if (!IsConnected()) {
+    return {};
+  }
 
   DCHECK(database_);
-  active_observers_.clear();
-  callbacks_ = nullptr;
 
   // Finish up any transaction, in case there were any running.
   IndexedDBDatabaseError error(blink::mojom::IDBException::kUnknownError,
@@ -81,22 +84,25 @@ leveldb::Status IndexedDBConnection::AbortTransactionsAndClose(
       break;
   }
 
+  std::unique_ptr<IndexedDBDatabaseCallbacks> callbacks = std::move(callbacks_);
   std::move(on_close_).Run(this);
-  origin_state_handle_.Release();
-  active_observers_.clear();
-  return status;
+  client_keep_active_remotes_.Clear();
+  bucket_context_handle_->quota_manager()->NotifyBucketAccessed(
+      bucket_context_handle_->bucket_locator(), base::Time::Now());
+  if (!status.ok()) {
+    bucket_context_handle_->delegate().on_fatal_error.Run(status, {});
+  }
+  bucket_context_handle_.Release();
+  return callbacks;
 }
 
-leveldb::Status IndexedDBConnection::CloseAndReportForceClose() {
+void IndexedDBConnection::CloseAndReportForceClose() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (!IsConnected())
-    return leveldb::Status::OK();
+    return;
 
-  scoped_refptr<IndexedDBDatabaseCallbacks> callbacks(callbacks_);
-  leveldb::Status last_error =
-      AbortTransactionsAndClose(CloseErrorHandling::kAbortAllReturnLastError);
-  callbacks->OnForcedClose();
-  return last_error;
+  AbortTransactionsAndClose(CloseErrorHandling::kAbortAllReturnLastError)
+      ->OnForcedClose();
 }
 
 void IndexedDBConnection::VersionChangeIgnored() {
@@ -109,66 +115,45 @@ bool IndexedDBConnection::IsConnected() {
   return callbacks_.get();
 }
 
-// The observers begin listening to changes only once they are activated.
-void IndexedDBConnection::ActivatePendingObservers(
-    std::vector<std::unique_ptr<IndexedDBObserver>> pending_observers) {
+IndexedDBTransaction* IndexedDBConnection::CreateVersionChangeTransaction(
+    int64_t id,
+    const std::set<int64_t>& scope,
+    IndexedDBBackingStore::Transaction* backing_store_transaction) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  for (auto& observer : pending_observers) {
-    active_observers_.push_back(std::move(observer));
-  }
-  pending_observers.clear();
-}
-
-void IndexedDBConnection::RemoveObservers(
-    const std::vector<int32_t>& observer_ids_to_remove) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  std::vector<int32_t> pending_observer_ids;
-  for (int32_t id_to_remove : observer_ids_to_remove) {
-    const auto& it = std::find_if(
-        active_observers_.begin(), active_observers_.end(),
-        [&id_to_remove](const std::unique_ptr<IndexedDBObserver>& o) {
-          return o->id() == id_to_remove;
-        });
-    if (it != active_observers_.end())
-      active_observers_.erase(it);
-    else
-      pending_observer_ids.push_back(id_to_remove);
-  }
-  if (pending_observer_ids.empty())
-    return;
-
-  for (const auto& it : transactions_) {
-    it.second->RemovePendingObservers(pending_observer_ids);
-  }
+  CHECK_EQ(GetTransaction(id), nullptr) << "Duplicate transaction id." << id;
+  return (transactions_[id] = std::make_unique<IndexedDBTransaction>(
+              id, this, scope, blink::mojom::IDBTransactionMode::VersionChange,
+              bucket_context_handle_, backing_store_transaction))
+      .get();
 }
 
 IndexedDBTransaction* IndexedDBConnection::CreateTransaction(
+    mojo::PendingAssociatedReceiver<blink::mojom::IDBTransaction>
+        transaction_receiver,
     int64_t id,
     const std::set<int64_t>& scope,
     blink::mojom::IDBTransactionMode mode,
     IndexedDBBackingStore::Transaction* backing_store_transaction) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   CHECK_EQ(GetTransaction(id), nullptr) << "Duplicate transaction id." << id;
-  IndexedDBOriginState* origin_state = origin_state_handle_.origin_state();
-  std::unique_ptr<IndexedDBTransaction> transaction =
-      indexed_db_class_factory_->CreateIndexedDBTransaction(
-          id, this, scope, mode, database()->tasks_available_callback(),
-          origin_state ? origin_state->tear_down_callback()
-                       : IndexedDBTransaction::TearDownCallback(),
-          backing_store_transaction);
-  IndexedDBTransaction* transaction_ptr = transaction.get();
-  transactions_[id] = std::move(transaction);
-  return transaction_ptr;
+  IndexedDBTransaction* transaction =
+      (transactions_[id] = std::make_unique<IndexedDBTransaction>(
+           id, this, scope, mode, bucket_context_handle_,
+           backing_store_transaction))
+          .get();
+  transaction->BindReceiver(std::move(transaction_receiver));
+  return transaction;
 }
 
 void IndexedDBConnection::AbortTransactionAndTearDownOnError(
     IndexedDBTransaction* transaction,
     const IndexedDBDatabaseError& error) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  IDB_TRACE1("IndexedDBDatabase::Abort(error)", "txn.id", transaction->id());
+  TRACE_EVENT1("IndexedDB", "IndexedDBDatabase::Abort(error)", "txn.id",
+               transaction->id());
   leveldb::Status status = transaction->Abort(error);
   if (!status.ok())
-    origin_state_handle_.origin_state()->tear_down_callback().Run(status);
+    bucket_context_handle_->delegate().on_fatal_error.Run(status, {});
 }
 
 leveldb::Status IndexedDBConnection::AbortAllTransactions(
@@ -177,8 +162,8 @@ leveldb::Status IndexedDBConnection::AbortAllTransactions(
   for (const auto& pair : transactions_) {
     auto& transaction = pair.second;
     if (transaction->state() != IndexedDBTransaction::FINISHED) {
-      IDB_TRACE1("IndexedDBDatabase::Abort(error)", "transaction.id",
-                 transaction->id());
+      TRACE_EVENT1("IndexedDB", "IndexedDBDatabase::Abort(error)",
+                   "transaction.id", transaction->id());
       leveldb::Status status = transaction->Abort(error);
       if (!status.ok())
         return status;
@@ -194,8 +179,8 @@ leveldb::Status IndexedDBConnection::AbortAllTransactionsAndIgnoreErrors(
   for (const auto& pair : transactions_) {
     auto& transaction = pair.second;
     if (transaction->state() != IndexedDBTransaction::FINISHED) {
-      IDB_TRACE1("IndexedDBDatabase::Abort(error)", "transaction.id",
-                 transaction->id());
+      TRACE_EVENT1("IndexedDB", "IndexedDBDatabase::Abort(error)",
+                   "transaction.id", transaction->id());
       leveldb::Status status = transaction->Abort(error);
       if (!status.ok())
         last_error = status;
@@ -212,26 +197,34 @@ IndexedDBTransaction* IndexedDBConnection::GetTransaction(int64_t id) const {
   return it->second.get();
 }
 
-base::WeakPtr<IndexedDBTransaction>
-IndexedDBConnection::AddTransactionForTesting(
-    std::unique_ptr<IndexedDBTransaction> transaction) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  DCHECK(!base::Contains(transactions_, transaction->id()));
-  base::WeakPtr<IndexedDBTransaction> transaction_ptr =
-      transaction->ptr_factory_.GetWeakPtr();
-  transactions_[transaction->id()] = std::move(transaction);
-  return transaction_ptr;
-}
-
 void IndexedDBConnection::RemoveTransaction(int64_t id) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   transactions_.erase(id);
 }
 
-void IndexedDBConnection::ClearStateAfterClose() {
-  callbacks_ = nullptr;
-  active_observers_.clear();
-  origin_state_handle_.Release();
+void IndexedDBConnection::DisallowInactiveClient(
+    storage::mojom::DisallowInactiveClientReason reason,
+    base::OnceCallback<void(bool)> callback) {
+  if (!client_state_checker_.is_bound()) {
+    // If the remote is no longer connected, we expect the client will terminate
+    // the connection soon, so marking `was_active` true here.
+    std::move(callback).Run(/*was_active=*/true);
+    return;
+  }
+
+  if (reason ==
+      storage::mojom::DisallowInactiveClientReason::kClientEventIsTriggered) {
+    // It's only necessary to keep the client active under this scenario.
+    mojo::Remote<storage::mojom::IndexedDBClientKeepActive>
+        client_keep_active_remote;
+    client_state_checker_->DisallowInactiveClient(
+        reason, client_keep_active_remote.BindNewPipeAndPassReceiver(),
+        std::move(callback));
+    client_keep_active_remotes_.Add(std::move(client_keep_active_remote));
+  } else {
+    client_state_checker_->DisallowInactiveClient(reason, mojo::NullReceiver(),
+                                                  std::move(callback));
+  }
 }
 
 }  // namespace content

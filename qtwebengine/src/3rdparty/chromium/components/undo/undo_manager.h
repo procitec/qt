@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,11 +8,11 @@
 #include <stddef.h>
 
 #include <memory>
+#include <string>
 #include <vector>
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/observer_list.h"
-#include "base/strings/string16.h"
 
 class UndoManagerObserver;
 class UndoOperation;
@@ -24,6 +24,10 @@ class UndoOperation;
 class UndoGroup {
  public:
   UndoGroup();
+
+  UndoGroup(const UndoGroup&) = delete;
+  UndoGroup& operator=(const UndoGroup&) = delete;
+
   ~UndoGroup();
 
   void AddOperation(std::unique_ptr<UndoOperation> operation);
@@ -45,8 +49,6 @@ class UndoGroup {
   // The resource string id describing the undo and redo action.
   int undo_label_id_;
   int redo_label_id_;
-
-  DISALLOW_COPY_AND_ASSIGN(UndoGroup);
 };
 
 // UndoManager ----------------------------------------------------------------
@@ -56,6 +58,10 @@ class UndoGroup {
 class UndoManager {
  public:
   UndoManager();
+
+  UndoManager(const UndoManager&) = delete;
+  UndoManager& operator=(const UndoManager&) = delete;
+
   ~UndoManager();
 
   // Perform an undo or redo operation.
@@ -65,8 +71,8 @@ class UndoManager {
   size_t undo_count() const { return undo_actions_.size(); }
   size_t redo_count() const { return redo_actions_.size(); }
 
-  base::string16 GetUndoLabel() const;
-  base::string16 GetRedoLabel() const;
+  std::u16string GetUndoLabel() const;
+  std::u16string GetRedoLabel() const;
 
   void AddUndoOperation(std::unique_ptr<UndoOperation> operation);
 
@@ -99,7 +105,7 @@ class UndoManager {
   void NotifyOnUndoManagerStateChange();
 
   // Handle the addition of |new_undo_group| to the active undo group container.
-  void AddUndoGroup(UndoGroup* new_undo_group);
+  void AddUndoGroup(std::unique_ptr<UndoGroup> new_undo_group);
 
   // Returns the undo or redo UndoGroup container that should store the next
   // change taking into account if an undo or redo is being executed.
@@ -119,7 +125,7 @@ class UndoManager {
   std::unique_ptr<UndoGroup> pending_grouped_action_;
 
   // The action that is in the process of being undone.
-  UndoGroup* undo_in_progress_action_;
+  raw_ptr<UndoGroup> undo_in_progress_action_;
 
   // Supports the suspension of undo tracking.
   int undo_suspended_count_;
@@ -128,8 +134,6 @@ class UndoManager {
   // processed.
   bool performing_undo_;
   bool performing_redo_;
-
-  DISALLOW_COPY_AND_ASSIGN(UndoManager);
 };
 
 #endif  // COMPONENTS_UNDO_UNDO_MANAGER_H_

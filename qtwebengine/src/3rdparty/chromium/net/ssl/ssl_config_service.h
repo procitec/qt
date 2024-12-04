@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,10 +7,10 @@
 
 #include <vector>
 
-#include "base/memory/ref_counted.h"
 #include "base/observer_list.h"
 #include "net/base/net_export.h"
 #include "net/ssl/ssl_config.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace net {
 
@@ -22,20 +22,23 @@ struct NET_EXPORT SSLContextConfig {
   SSLContextConfig& operator=(const SSLContextConfig&);
   SSLContextConfig& operator=(SSLContextConfig&&);
 
+  bool operator==(const SSLContextConfig&) const;
+
+  // Returns whether insecure hashes are allowed in TLS handshakes.
+  bool InsecureHashesInTLSHandshakesEnabled() const;
+
+  // Returns whether post-quantum key agreement is enabled in TLS handshakes.
+  bool PostQuantumKeyAgreementEnabled() const;
+
   // The minimum and maximum protocol versions that are enabled.
   // (Use the SSL_PROTOCOL_VERSION_xxx enumerators defined in ssl_config.h.)
-  // SSL 2.0 and SSL 3.0 are not supported. If version_max < version_min, it
-  // means no protocol versions are enabled.
-  //
-  // version_min_warn is the minimum protocol version that won't cause cert
-  // errors (e.g., in Chrome we'll show a security interstitial for connections
-  // using a version lower than version_min_warn).
+  // SSL 2.0/3.0 and TLS 1.0/1.1 are not supported. If version_max <
+  // version_min, it means no protocol versions are enabled.
   uint16_t version_min = kDefaultSSLVersionMin;
-  uint16_t version_min_warn = kDefaultSSLVersionMinWarn;
   uint16_t version_max = kDefaultSSLVersionMax;
 
-  // Presorted list of cipher suites which should be explicitly prevented from
-  // being used in addition to those disabled by the net built-in policy.
+  // A list of cipher suites which should be explicitly prevented from being
+  // used in addition to those disabled by the net built-in policy.
   //
   // Though cipher suites are sent in TLS as "uint8_t CipherSuite[2]", in
   // big-endian form, they should be declared in host byte order, with the
@@ -43,6 +46,29 @@ struct NET_EXPORT SSLContextConfig {
   // Ex: To disable TLS_RSA_WITH_RC4_128_MD5, specify 0x0004, while to
   // disable TLS_ECDH_ECDSA_WITH_RC4_128_SHA, specify 0xC002.
   std::vector<uint16_t> disabled_cipher_suites;
+
+  // If specified, controls whether post-quantum key agreement in TLS
+  // connections is allowed. If `absl::nullopt`, this is determined by feature
+  // flags.
+  absl::optional<bool> post_quantum_override;
+
+  // Controls whether ECH is enabled.
+  bool ech_enabled = true;
+
+  // If specified, controls whether insecure hashes are allowed in TLS
+  // handshakes. If `absl::nullopt`, this is determined by feature flags.
+  absl::optional<bool> insecure_hash_override;
+
+  // If specified, controls whether the X.509 keyUsage extension is checked in
+  // TLS 1.2 for RSA certificates that chain to a local trust anchor. If
+  // `absl::nullopt`, this is determined by feature flags.
+  //
+  // Independent of the setting of this value, keyUsage is always checked at TLS
+  // 1.3, for ECDSA certificates, and for all certificates that chain to a known
+  // root.
+  //
+  // TODO(crbug.com/795089): Enable this unconditionally.
+  absl::optional<bool> rsa_key_usage_for_local_anchors_override;
 };
 
 // The interface for retrieving global SSL configuration.  This interface
@@ -58,7 +84,7 @@ class NET_EXPORT SSLConfigService {
     virtual void OnSSLContextConfigChanged() = 0;
 
    protected:
-    virtual ~Observer() {}
+    virtual ~Observer() = default;
   };
 
   SSLConfigService();
@@ -93,12 +119,6 @@ class NET_EXPORT SSLConfigService {
   virtual bool CanShareConnectionWithClientCerts(
       const std::string& hostname) const = 0;
 
-  // Returns true if connections to |hostname| should not trigger legacy TLS
-  // warnings. This allows implementations to override the warnings for specific
-  // sites.
-  virtual bool ShouldSuppressLegacyTLSWarning(
-      const std::string& hostname) const = 0;
-
   // Add an observer of this service.
   void AddObserver(Observer* observer);
 
@@ -108,12 +128,6 @@ class NET_EXPORT SSLConfigService {
   // Calls the OnSSLContextConfigChanged method of registered observers. Should
   // only be called on the IO thread.
   void NotifySSLContextConfigChange();
-
-  // Checks if the config-service managed fields in two SSLContextConfigs are
-  // the same.
-  static bool SSLContextConfigsAreEqualForTesting(
-      const SSLContextConfig& config1,
-      const SSLContextConfig& config2);
 
  protected:
   // Process before/after config update. If |force_notification| is true,

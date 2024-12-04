@@ -1,11 +1,10 @@
 # Consumer User Types
 
 This document gives a brief description of consumer user types that can log in
-to a Chrome OS devices.
+to a ChromeOS devices.
 
 This does not include enterprise user types. For more information about
 enterprise user types, see
-*   [Active Directory integration](../enterprise/active_directory_integration.md),
 *   [kiosk and public sessions](../enterprise/kiosk_public_session.md),
 *   [SAML authentication](../enterprise/saml_authentication.md)
 
@@ -16,9 +15,12 @@ Regular users that were registered using their GAIA account.
 ## Child users
 
 Users that logged in using
-*   a child account - an account designated for children under the age of 13.
+*   a Unicorn account - an account designated for children under the age of
+    consent in their jurisdiction.
 *   a Geller account - an account with parental supervision that has no age
     restrictions.
+*   a Griffin account - similar to a Geller account, but for compliance with
+    European Union laws.
 
 In order to add a child user to the device, the user has to go through an
 adapted GAIA flow, which also requires their parent to authenticate.

@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,19 +7,19 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/location.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/run_loop.h"
-#include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/current_thread.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/test/task_environment.h"
 #include "base/test/test_mock_time_task_runner.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
+#include "build/chromeos_buildflags.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/geometry/size.h"
@@ -30,6 +30,8 @@
 #include "ui/message_center/public/cpp/message_center_constants.h"
 #include "ui/message_center/public/cpp/notification_types.h"
 #include "ui/message_center/public/cpp/notifier_id.h"
+
+#include "base/logging.h"
 
 using base::UTF8ToUTF16;
 
@@ -45,15 +47,16 @@ class CheckObserver : public MessageCenterObserver {
     DCHECK(!target_id.empty());
   }
 
+  CheckObserver(const CheckObserver&) = delete;
+  CheckObserver& operator=(const CheckObserver&) = delete;
+
   void OnNotificationUpdated(const std::string& notification_id) override {
     EXPECT_TRUE(message_center_->FindVisibleNotificationById(target_id_));
   }
 
  private:
-  MessageCenter* message_center_;
+  raw_ptr<MessageCenter> message_center_;
   std::string target_id_;
-
-  DISALLOW_COPY_AND_ASSIGN(CheckObserver);
 };
 
 class RemoveObserver : public MessageCenterObserver {
@@ -64,15 +67,16 @@ class RemoveObserver : public MessageCenterObserver {
     DCHECK(!target_id.empty());
   }
 
+  RemoveObserver(const RemoveObserver&) = delete;
+  RemoveObserver& operator=(const RemoveObserver&) = delete;
+
   void OnNotificationUpdated(const std::string& notification_id) override {
     message_center_->RemoveNotification(target_id_, false);
   }
 
  private:
-  MessageCenter* message_center_;
+  raw_ptr<MessageCenter> message_center_;
   std::string target_id_;
-
-  DISALLOW_COPY_AND_ASSIGN(RemoveObserver);
 };
 
 class TestAddObserver : public MessageCenterObserver {
@@ -103,7 +107,7 @@ class TestAddObserver : public MessageCenterObserver {
 
  private:
   std::map<std::string, std::string> logs_;
-  MessageCenter* message_center_;
+  raw_ptr<MessageCenter> message_center_;
 };
 
 class TestDelegate : public NotificationDelegate {
@@ -113,8 +117,12 @@ class TestDelegate : public NotificationDelegate {
     log_ += "Close_";
     log_ += (by_user ? "by_user_" : "programmatically_");
   }
-  void Click(const base::Optional<int>& button_index,
-             const base::Optional<base::string16>& reply) override {
+
+  TestDelegate(const TestDelegate&) = delete;
+  TestDelegate& operator=(const TestDelegate&) = delete;
+
+  void Click(const absl::optional<int>& button_index,
+             const absl::optional<std::u16string>& reply) override {
     if (button_index) {
       if (!reply) {
         log_ += "ButtonClick_";
@@ -133,8 +141,6 @@ class TestDelegate : public NotificationDelegate {
  private:
   ~TestDelegate() override = default;
   std::string log_;
-
-  DISALLOW_COPY_AND_ASSIGN(TestDelegate);
 };
 
 class DeleteOnCloseDelegate : public NotificationDelegate {
@@ -149,24 +155,27 @@ class DeleteOnCloseDelegate : public NotificationDelegate {
     // Removing the same notification inside Close should be a noop.
     message_center_->RemoveNotification(notification_id_, false /* by_user */);
   }
-  void Click(const base::Optional<int>& button_index,
-             const base::Optional<base::string16>& reply) override {}
+  void Click(const absl::optional<int>& button_index,
+             const absl::optional<std::u16string>& reply) override {}
 
  private:
   ~DeleteOnCloseDelegate() override = default;
 
-  MessageCenter* message_center_;
+  raw_ptr<MessageCenter> message_center_;
   std::string notification_id_;
 };
 
 // The default app id used to create simple notifications.
-const std::string kDefaultAppId = "app1";
+const char kDefaultAppId[] = "app1";
 
 }  // anonymous namespace
 
 class MessageCenterImplTest : public testing::Test {
  public:
   MessageCenterImplTest() = default;
+
+  MessageCenterImplTest(const MessageCenterImplTest&) = delete;
+  MessageCenterImplTest& operator=(const MessageCenterImplTest&) = delete;
 
   void SetUp() override {
     MessageCenter::Initialize(std::make_unique<FakeLockScreenController>());
@@ -186,7 +195,7 @@ class MessageCenterImplTest : public testing::Test {
 
   MessageCenter* message_center() const { return message_center_; }
   MessageCenterImpl* message_center_impl() const {
-    return reinterpret_cast<MessageCenterImpl*>(message_center_);
+    return reinterpret_cast<MessageCenterImpl*>(message_center_.get());
   }
 
   base::RunLoop* run_loop() const { return run_loop_.get(); }
@@ -208,6 +217,22 @@ class MessageCenterImplTest : public testing::Test {
         NOTIFICATION_TYPE_SIMPLE);
   }
 
+  std::unique_ptr<Notification> CreateSimpleNotificationWithDelegate(
+      const std::string& id,
+      scoped_refptr<NotificationDelegate> delegate) {
+    return CreateNotificationWithNotifierIdAndDelegate(
+        id, kDefaultAppId, NOTIFICATION_TYPE_SIMPLE, delegate,
+        RichNotificationData());
+  }
+
+  std::unique_ptr<Notification> CreateSimpleNotificationWithOptionalFields(
+      const std::string& id,
+      const RichNotificationData& optional_fields) {
+    return CreateNotificationWithNotifierIdAndDelegate(
+        id, kDefaultAppId, NOTIFICATION_TYPE_SIMPLE,
+        base::MakeRefCounted<TestDelegate>(), optional_fields);
+  }
+
   std::unique_ptr<Notification> CreateNotification(const std::string& id,
                                                    NotificationType type) {
     return CreateNotificationWithNotifierId(id, kDefaultAppId, type);
@@ -217,14 +242,22 @@ class MessageCenterImplTest : public testing::Test {
       const std::string& id,
       const std::string& notifier_id,
       NotificationType type) {
-    RichNotificationData optional_fields;
-    optional_fields.buttons.emplace_back(UTF8ToUTF16("foo"));
-    optional_fields.buttons.emplace_back(UTF8ToUTF16("foo"));
+    return CreateNotificationWithNotifierIdAndDelegate(
+        id, notifier_id, type, base::MakeRefCounted<TestDelegate>(),
+        RichNotificationData());
+  }
+
+  std::unique_ptr<Notification> CreateNotificationWithNotifierIdAndDelegate(
+      const std::string& id,
+      const std::string& notifier_id,
+      NotificationType type,
+      scoped_refptr<NotificationDelegate> delegate,
+      const RichNotificationData& optional_fields) {
     return std::make_unique<Notification>(
-        type, id, UTF8ToUTF16("title"), UTF8ToUTF16(id),
-        gfx::Image() /* icon */, base::string16() /* display_source */, GURL(),
+        type, id, u"title", UTF8ToUTF16(id), ui::ImageModel() /* icon */,
+        std::u16string() /* display_source */, GURL(),
         NotifierId(NotifierType::APPLICATION, notifier_id), optional_fields,
-        base::MakeRefCounted<TestDelegate>());
+        delegate);
   }
 
   TestDelegate* GetDelegate(const std::string& id) const {
@@ -238,12 +271,10 @@ class MessageCenterImplTest : public testing::Test {
   }
 
  private:
-  MessageCenter* message_center_;
+  raw_ptr<MessageCenter> message_center_;
   std::unique_ptr<base::test::SingleThreadTaskEnvironment> task_environment_;
   std::unique_ptr<base::RunLoop> run_loop_;
   base::RepeatingClosure closure_;
-
-  DISALLOW_COPY_AND_ASSIGN(MessageCenterImplTest);
 };
 
 namespace {
@@ -252,6 +283,11 @@ class ToggledNotificationBlocker : public NotificationBlocker {
  public:
   explicit ToggledNotificationBlocker(MessageCenter* message_center)
       : NotificationBlocker(message_center) {}
+
+  ToggledNotificationBlocker(const ToggledNotificationBlocker&) = delete;
+  ToggledNotificationBlocker& operator=(const ToggledNotificationBlocker&) =
+      delete;
+
   ~ToggledNotificationBlocker() override = default;
 
   void SetPopupNotificationsEnabled(bool enabled) {
@@ -283,8 +319,6 @@ class ToggledNotificationBlocker : public NotificationBlocker {
  private:
   bool notifications_enabled_ = true;
   bool popup_notifications_enabled_ = true;
-
-  DISALLOW_COPY_AND_ASSIGN(ToggledNotificationBlocker);
 };
 
 class PopupNotificationBlocker : public ToggledNotificationBlocker {
@@ -293,6 +327,10 @@ class PopupNotificationBlocker : public ToggledNotificationBlocker {
                            const NotifierId& allowed_notifier)
       : ToggledNotificationBlocker(message_center),
         allowed_notifier_(allowed_notifier) {}
+
+  PopupNotificationBlocker(const PopupNotificationBlocker&) = delete;
+  PopupNotificationBlocker& operator=(const PopupNotificationBlocker&) = delete;
+
   ~PopupNotificationBlocker() override = default;
 
   // NotificationBlocker overrides:
@@ -303,26 +341,48 @@ class PopupNotificationBlocker : public ToggledNotificationBlocker {
             notification);
   }
 
- private:
-  NotifierId allowed_notifier_;
-
-  DISALLOW_COPY_AND_ASSIGN(PopupNotificationBlocker);
+ protected:
+  const NotifierId allowed_notifier_;
 };
 
-class TotalNotificationBlocker : public PopupNotificationBlocker {
+class NearTotalNotificationBlocker : public PopupNotificationBlocker {
  public:
-  TotalNotificationBlocker(MessageCenter* message_center,
-                           const NotifierId& allowed_notifier)
+  NearTotalNotificationBlocker(MessageCenter* message_center,
+                               const NotifierId& allowed_notifier)
       : PopupNotificationBlocker(message_center, allowed_notifier) {}
-  ~TotalNotificationBlocker() override = default;
+
+  NearTotalNotificationBlocker(const NearTotalNotificationBlocker&) = delete;
+  NearTotalNotificationBlocker& operator=(const NearTotalNotificationBlocker&) =
+      delete;
+
+  ~NearTotalNotificationBlocker() override = default;
 
   // NotificationBlocker overrides:
   bool ShouldShowNotification(const Notification& notification) const override {
-    return ShouldShowNotificationAsPopup(notification);
+    return (notification.notifier_id() == allowed_notifier_) ||
+           ToggledNotificationBlocker::ShouldShowNotification(notification);
+  }
+};
+
+class TotalNotificationBlocker : public NotificationBlocker {
+ public:
+  explicit TotalNotificationBlocker(MessageCenter* message_center)
+      : NotificationBlocker(message_center) {}
+
+  TotalNotificationBlocker(const TotalNotificationBlocker&) = delete;
+  TotalNotificationBlocker& operator=(const TotalNotificationBlocker&) = delete;
+
+  ~TotalNotificationBlocker() override = default;
+
+  // NotificationBlocker:
+  bool ShouldShowNotification(const Notification& notification) const override {
+    return false;
   }
 
- private:
-  DISALLOW_COPY_AND_ASSIGN(TotalNotificationBlocker);
+  bool ShouldShowNotificationAsPopup(
+      const Notification& notification) const override {
+    return false;
+  }
 };
 
 bool PopupNotificationsContain(
@@ -360,7 +420,8 @@ class MockPopupTimersController : public PopupTimersController {
   ~MockPopupTimersController() override = default;
 
   void TimerFinished(const std::string& id) override {
-    base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE, quit_closure_);
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,
+                                                                quit_closure_);
     timer_finished_++;
     last_id_ = id;
   }
@@ -389,8 +450,7 @@ TEST_F(MessageCenterImplTest, PopupTimersEmptyController) {
 TEST_F(MessageCenterImplTest, PopupTimersControllerStartTimer) {
   std::unique_ptr<MockPopupTimersController> popup_timers_controller =
       std::make_unique<MockPopupTimersController>(message_center(), closure());
-  popup_timers_controller->StartTimer("test",
-                                      base::TimeDelta::FromMilliseconds(1));
+  popup_timers_controller->StartTimer("test", base::Milliseconds(1));
   run_loop()->Run();
   EXPECT_EQ(popup_timers_controller->timer_finished(), 1);
 }
@@ -398,8 +458,7 @@ TEST_F(MessageCenterImplTest, PopupTimersControllerStartTimer) {
 TEST_F(MessageCenterImplTest, PopupTimersControllerCancelTimer) {
   std::unique_ptr<MockPopupTimersController> popup_timers_controller =
       std::make_unique<MockPopupTimersController>(message_center(), closure());
-  popup_timers_controller->StartTimer("test",
-                                      base::TimeDelta::FromMilliseconds(1));
+  popup_timers_controller->StartTimer("test", base::Milliseconds(1));
   popup_timers_controller->CancelTimer("test");
   run_loop()->RunUntilIdle();
 
@@ -409,8 +468,7 @@ TEST_F(MessageCenterImplTest, PopupTimersControllerCancelTimer) {
 TEST_F(MessageCenterImplTest, PopupTimersControllerPauseAllTimers) {
   std::unique_ptr<MockPopupTimersController> popup_timers_controller =
       std::make_unique<MockPopupTimersController>(message_center(), closure());
-  popup_timers_controller->StartTimer("test",
-                                      base::TimeDelta::FromMilliseconds(1));
+  popup_timers_controller->StartTimer("test", base::Milliseconds(1));
   popup_timers_controller->PauseAll();
   run_loop()->RunUntilIdle();
 
@@ -420,8 +478,7 @@ TEST_F(MessageCenterImplTest, PopupTimersControllerPauseAllTimers) {
 TEST_F(MessageCenterImplTest, PopupTimersControllerStartAllTimers) {
   std::unique_ptr<MockPopupTimersController> popup_timers_controller =
       std::make_unique<MockPopupTimersController>(message_center(), closure());
-  popup_timers_controller->StartTimer("test",
-                                      base::TimeDelta::FromMilliseconds(1));
+  popup_timers_controller->StartTimer("test", base::Milliseconds(1));
   popup_timers_controller->PauseAll();
   popup_timers_controller->StartAll();
   run_loop()->Run();
@@ -433,8 +490,7 @@ TEST_F(MessageCenterImplTest, PopupTimersControllerStartMultipleTimers) {
   std::unique_ptr<MockPopupTimersController> popup_timers_controller =
       std::make_unique<MockPopupTimersController>(message_center(), closure());
   popup_timers_controller->StartTimer("test", base::TimeDelta::Max());
-  popup_timers_controller->StartTimer("test2",
-                                      base::TimeDelta::FromMilliseconds(1));
+  popup_timers_controller->StartTimer("test2", base::Milliseconds(1));
   popup_timers_controller->StartTimer("test3", base::TimeDelta::Max());
   popup_timers_controller->PauseAll();
   popup_timers_controller->StartAll();
@@ -446,7 +502,7 @@ TEST_F(MessageCenterImplTest, PopupTimersControllerStartMultipleTimers) {
 
 TEST_F(MessageCenterImplTest, PopupTimersControllerRestartOnUpdate) {
   scoped_refptr<base::SingleThreadTaskRunner> old_task_runner =
-      base::ThreadTaskRunnerHandle::Get();
+      base::SingleThreadTaskRunner::GetCurrentDefault();
 
   scoped_refptr<base::TestMockTimeTaskRunner> task_runner =
       base::MakeRefCounted<base::TestMockTimeTaskRunner>(
@@ -456,10 +512,9 @@ TEST_F(MessageCenterImplTest, PopupTimersControllerRestartOnUpdate) {
   NotifierId notifier_id(GURL("https://example.com"));
 
   message_center()->AddNotification(std::make_unique<Notification>(
-      NOTIFICATION_TYPE_SIMPLE, "id1", UTF8ToUTF16("title"),
-      UTF8ToUTF16("message"), gfx::Image() /* icon */,
-      base::string16() /* display_source */, GURL(), notifier_id,
-      RichNotificationData(), nullptr));
+      NOTIFICATION_TYPE_SIMPLE, "id1", u"title", u"message",
+      ui::ImageModel() /* icon */, std::u16string() /* display_source */,
+      GURL(), notifier_id, RichNotificationData(), nullptr));
 
   std::unique_ptr<MockPopupTimersController> popup_timers_controller =
       std::make_unique<MockPopupTimersController>(message_center(), closure());
@@ -467,7 +522,7 @@ TEST_F(MessageCenterImplTest, PopupTimersControllerRestartOnUpdate) {
   popup_timers_controller->OnNotificationDisplayed("id1", DISPLAY_SOURCE_POPUP);
   ASSERT_EQ(popup_timers_controller->timer_finished(), 0);
 
-#if defined(OS_CHROMEOS)
+#if BUILDFLAG(IS_CHROMEOS_ASH)
   const int dismiss_time =
       popup_timers_controller->GetNotificationTimeoutDefault();
 #else
@@ -476,7 +531,7 @@ TEST_F(MessageCenterImplTest, PopupTimersControllerRestartOnUpdate) {
 
   // Fast forward the |task_runner| by one second less than the auto-close timer
   // frequency for Web Notifications. (As set by the |notifier_id|.)
-  task_runner->FastForwardBy(base::TimeDelta::FromSeconds(dismiss_time - 1));
+  task_runner->FastForwardBy(base::Seconds(dismiss_time - 1));
   ASSERT_EQ(popup_timers_controller->timer_finished(), 0);
 
   // Trigger a replacement of the notification in the timer controller.
@@ -484,12 +539,12 @@ TEST_F(MessageCenterImplTest, PopupTimersControllerRestartOnUpdate) {
 
   // Fast forward the |task_runner| by one second less than the auto-close timer
   // frequency for Web Notifications again. It should have been reset.
-  task_runner->FastForwardBy(base::TimeDelta::FromSeconds(dismiss_time - 1));
+  task_runner->FastForwardBy(base::Seconds(dismiss_time - 1));
   ASSERT_EQ(popup_timers_controller->timer_finished(), 0);
 
   // Now fast forward the |task_runner| by two seconds (to avoid flakiness),
   // after which the timer should have fired.
-  task_runner->FastForwardBy(base::TimeDelta::FromSeconds(2));
+  task_runner->FastForwardBy(base::Seconds(2));
   ASSERT_EQ(popup_timers_controller->timer_finished(), 1);
 
   base::CurrentThread::Get()->SetTaskRunner(old_task_runner);
@@ -529,18 +584,18 @@ TEST_F(MessageCenterImplTest, NotificationBlocker) {
   // Multiple blockers to verify the case that one blocker blocks but another
   // doesn't.
   ToggledNotificationBlocker blocker1(message_center());
+  blocker1.Init();
   ToggledNotificationBlocker blocker2(message_center());
+  blocker2.Init();
 
   message_center()->AddNotification(std::make_unique<Notification>(
-      NOTIFICATION_TYPE_SIMPLE, "id1", UTF8ToUTF16("title"),
-      UTF8ToUTF16("message"), gfx::Image() /* icon */,
-      base::string16() /* display_source */, GURL(), notifier_id,
-      RichNotificationData(), nullptr));
+      NOTIFICATION_TYPE_SIMPLE, "id1", u"title", u"message",
+      ui::ImageModel() /* icon */, std::u16string() /* display_source */,
+      GURL(), notifier_id, RichNotificationData(), nullptr));
   message_center()->AddNotification(std::make_unique<Notification>(
-      NOTIFICATION_TYPE_SIMPLE, "id2", UTF8ToUTF16("title"),
-      UTF8ToUTF16("message"), gfx::Image() /* icon */,
-      base::string16() /* display_source */, GURL(), notifier_id,
-      RichNotificationData(), nullptr));
+      NOTIFICATION_TYPE_SIMPLE, "id2", u"title", u"message",
+      ui::ImageModel() /* icon */, std::u16string() /* display_source */,
+      GURL(), notifier_id, RichNotificationData(), nullptr));
   EXPECT_EQ(2u, message_center()->GetPopupNotifications().size());
   EXPECT_EQ(2u, message_center()->GetVisibleNotifications().size());
 
@@ -580,15 +635,135 @@ TEST_F(MessageCenterImplTest, NotificationBlocker) {
   EXPECT_EQ(2u, message_center()->GetVisibleNotifications().size());
 }
 
+TEST_F(MessageCenterImplTest, MarkPopupAsShownWhileBlocked) {
+  const std::string kMarkedId = "id1";
+  const std::string kNotMarkedId = "id2";
+
+  ToggledNotificationBlocker blocker(message_center());
+  blocker.Init();
+
+  message_center()->AddNotification(CreateSimpleNotification(kMarkedId));
+  message_center()->AddNotification(CreateSimpleNotification(kNotMarkedId));
+
+  EXPECT_EQ(message_center()->GetPopupNotifications().size(), 2u);
+  EXPECT_EQ(message_center()->GetVisibleNotifications().size(), 2u);
+
+  // Block all notifications. There should be no popups or visible
+  // notifications.
+  blocker.SetPopupNotificationsEnabled(false);
+  blocker.SetNotificationsEnabled(false);
+  EXPECT_TRUE(message_center()->GetPopupNotifications().empty());
+  EXPECT_TRUE(message_center()->GetVisibleNotifications().empty());
+  EXPECT_EQ(message_center()->GetNotifications().size(), 2u);
+
+  // Mark one notification as being shown as a popup, so that when blocking ends
+  // it will not be displayed.
+  message_center()->MarkSinglePopupAsShown(kMarkedId, false);
+
+  // Stop blocking notifications, which should cause notifications to show as
+  // popups and in notifications center depending on their state.
+  blocker.SetPopupNotificationsEnabled(true);
+  blocker.SetNotificationsEnabled(true);
+
+  // Only the notification we did not mark should show as a popup.
+  NotificationList::PopupNotifications popups =
+      message_center()->GetPopupNotifications();
+  EXPECT_EQ(popups.size(), 1u);
+  EXPECT_TRUE(PopupNotificationsContain(popups, kNotMarkedId));
+
+  // Both notifications should be visible.
+  EXPECT_EQ(message_center()->GetNotifications().size(), 2u);
+  EXPECT_EQ(message_center()->GetVisibleNotifications().size(), 2u);
+}
+
+TEST_F(MessageCenterImplTest, VisibleNotificationsWithoutBlocker) {
+  NotifierId notifier_id1(NotifierType::APPLICATION, /*id=*/"app1");
+  NotifierId notifier_id2(NotifierType::APPLICATION, /*id=*/"app2");
+  NearTotalNotificationBlocker blocker_1(message_center(), notifier_id1);
+  blocker_1.Init();
+  NearTotalNotificationBlocker blocker_2(message_center(), notifier_id2);
+  blocker_2.Init();
+
+  message_center()->AddNotification(std::make_unique<Notification>(
+      NOTIFICATION_TYPE_SIMPLE, "id1", u"title", u"message",
+      ui::ImageModel() /* icon */, std::u16string() /* display_source */,
+      GURL(), notifier_id1, RichNotificationData(), nullptr));
+  message_center()->AddNotification(std::make_unique<Notification>(
+      NOTIFICATION_TYPE_SIMPLE, "id2", u"title", u"message",
+      ui::ImageModel() /* icon */, std::u16string() /* display_source */,
+      GURL(), notifier_id2, RichNotificationData(), nullptr));
+
+  blocker_1.SetNotificationsEnabled(false);
+  blocker_2.SetNotificationsEnabled(false);
+
+  // Without blocker 1, notification 2 is visible.
+  NotificationList::Notifications notifications_1 =
+      message_center()->GetVisibleNotificationsWithoutBlocker(&blocker_1);
+  EXPECT_EQ(1u, notifications_1.size());
+  EXPECT_TRUE(NotificationsContain(notifications_1, "id2"));
+
+  // Without blocker 2, notification 1 is visible.
+  NotificationList::Notifications notifications_2 =
+      message_center()->GetVisibleNotificationsWithoutBlocker(&blocker_2);
+  EXPECT_EQ(1u, notifications_2.size());
+  EXPECT_TRUE(NotificationsContain(notifications_2, "id1"));
+}
+
+TEST_F(MessageCenterImplTest, PopupsWithoutBlocker) {
+  NotifierId notifier_id1(NotifierType::APPLICATION, "app1");
+  NotifierId notifier_id2(NotifierType::APPLICATION, "app2");
+  NotifierId notifier_id3(NotifierType::APPLICATION, "app3");
+  PopupNotificationBlocker blocker_1(message_center(), notifier_id1);
+  blocker_1.Init();
+  PopupNotificationBlocker blocker_2(message_center(), notifier_id2);
+  blocker_2.Init();
+  PopupNotificationBlocker blocker_3(message_center(), notifier_id3);
+  blocker_3.Init();
+
+  message_center()->AddNotification(std::make_unique<Notification>(
+      NOTIFICATION_TYPE_SIMPLE, "id1", u"title", u"message",
+      ui::ImageModel() /* icon */, std::u16string() /* display_source */,
+      GURL(), notifier_id1, RichNotificationData(), nullptr));
+  message_center()->AddNotification(std::make_unique<Notification>(
+      NOTIFICATION_TYPE_SIMPLE, "id2", u"title", u"message",
+      ui::ImageModel() /* icon */, std::u16string() /* display_source */,
+      GURL(), notifier_id2, RichNotificationData(), nullptr));
+
+  // Verify that the method doesn't mark popups as seen.
+  NotificationList::PopupNotifications initial_popups =
+      message_center()->GetPopupNotificationsWithoutBlocker(blocker_3);
+  NotificationList::PopupNotifications final_popups =
+      message_center()->GetPopupNotificationsWithoutBlocker(blocker_3);
+  EXPECT_EQ(2u, initial_popups.size());
+  EXPECT_TRUE(PopupNotificationsContain(initial_popups, "id1"));
+  EXPECT_TRUE(PopupNotificationsContain(initial_popups, "id2"));
+  EXPECT_EQ(initial_popups, final_popups);
+
+  blocker_1.SetPopupNotificationsEnabled(false);
+  blocker_2.SetPopupNotificationsEnabled(false);
+
+  // Without blocker 1, popup 2 can be seen.
+  NotificationList::PopupNotifications popups_1 =
+      message_center()->GetPopupNotificationsWithoutBlocker(blocker_1);
+  EXPECT_EQ(1u, popups_1.size());
+  EXPECT_TRUE(PopupNotificationsContain(popups_1, "id2"));
+
+  // Without blocker 2, popup 1 can be seen.
+  NotificationList::PopupNotifications popups_2 =
+      message_center()->GetPopupNotificationsWithoutBlocker(blocker_2);
+  EXPECT_EQ(1u, popups_2.size());
+  EXPECT_TRUE(PopupNotificationsContain(popups_2, "id1"));
+}
+
 TEST_F(MessageCenterImplTest, NotificationsDuringBlocked) {
   NotifierId notifier_id(NotifierType::APPLICATION, "app1");
   ToggledNotificationBlocker blocker(message_center());
+  blocker.Init();
 
   message_center()->AddNotification(std::make_unique<Notification>(
-      NOTIFICATION_TYPE_SIMPLE, "id1", UTF8ToUTF16("title"),
-      UTF8ToUTF16("message"), gfx::Image() /* icon */,
-      base::string16() /* display_source */, GURL(), notifier_id,
-      RichNotificationData(), nullptr));
+      NOTIFICATION_TYPE_SIMPLE, "id1", u"title", u"message",
+      ui::ImageModel() /* icon */, std::u16string() /* display_source */,
+      GURL(), notifier_id, RichNotificationData(), nullptr));
   EXPECT_EQ(1u, message_center()->GetPopupNotifications().size());
   EXPECT_EQ(1u, message_center()->GetVisibleNotifications().size());
 
@@ -598,10 +773,9 @@ TEST_F(MessageCenterImplTest, NotificationsDuringBlocked) {
   // Create a notification during blocked. Still no popups.
   blocker.SetPopupNotificationsEnabled(false);
   message_center()->AddNotification(std::make_unique<Notification>(
-      NOTIFICATION_TYPE_SIMPLE, "id2", UTF8ToUTF16("title"),
-      UTF8ToUTF16("message"), gfx::Image() /* icon */,
-      base::string16() /* display_source */, GURL(), notifier_id,
-      RichNotificationData(), nullptr));
+      NOTIFICATION_TYPE_SIMPLE, "id2", u"title", u"message",
+      ui::ImageModel() /* icon */, std::u16string() /* display_source */,
+      GURL(), notifier_id, RichNotificationData(), nullptr));
   EXPECT_TRUE(message_center()->GetPopupNotifications().empty());
   EXPECT_EQ(2u, message_center()->GetVisibleNotifications().size());
 
@@ -617,13 +791,13 @@ TEST_F(MessageCenterImplTest, NotificationsDuringBlocked) {
 TEST_F(MessageCenterImplTest, GetNotifications) {
   NotifierId notifier_id(NotifierType::APPLICATION, "app1");
   ToggledNotificationBlocker blocker(message_center());
+  blocker.Init();
 
   // Create a notification without any blockers.
   message_center()->AddNotification(std::make_unique<Notification>(
-      NOTIFICATION_TYPE_SIMPLE, "id1", UTF8ToUTF16("title"),
-      UTF8ToUTF16("message"), gfx::Image() /* icon */,
-      base::string16() /* display_source */, GURL(), notifier_id,
-      RichNotificationData(), nullptr));
+      NOTIFICATION_TYPE_SIMPLE, "id1", u"title", u"message",
+      ui::ImageModel() /* icon */, std::u16string() /* display_source */,
+      GURL(), notifier_id, RichNotificationData(), nullptr));
   EXPECT_EQ(1u, message_center()->GetPopupNotifications().size());
   EXPECT_EQ(1u, message_center()->GetVisibleNotifications().size());
   EXPECT_EQ(1u, message_center()->GetNotifications().size());
@@ -631,10 +805,9 @@ TEST_F(MessageCenterImplTest, GetNotifications) {
   // Create a notification while blocking popup notifications.
   blocker.SetPopupNotificationsEnabled(false);
   message_center()->AddNotification(std::make_unique<Notification>(
-      NOTIFICATION_TYPE_SIMPLE, "id2", UTF8ToUTF16("title"),
-      UTF8ToUTF16("message"), gfx::Image() /* icon */,
-      base::string16() /* display_source */, GURL(), notifier_id,
-      RichNotificationData(), nullptr));
+      NOTIFICATION_TYPE_SIMPLE, "id2", u"title", u"message",
+      ui::ImageModel() /* icon */, std::u16string() /* display_source */,
+      GURL(), notifier_id, RichNotificationData(), nullptr));
   EXPECT_EQ(0u, message_center()->GetPopupNotifications().size());
   EXPECT_EQ(2u, message_center()->GetVisibleNotifications().size());
   EXPECT_EQ(2u, message_center()->GetNotifications().size());
@@ -642,10 +815,9 @@ TEST_F(MessageCenterImplTest, GetNotifications) {
   // Create a notification while any notification is blocked.
   blocker.SetNotificationsEnabled(false);
   message_center()->AddNotification(std::make_unique<Notification>(
-      NOTIFICATION_TYPE_SIMPLE, "id3", UTF8ToUTF16("title"),
-      UTF8ToUTF16("message"), gfx::Image() /* icon */,
-      base::string16() /* display_source */, GURL(), notifier_id,
-      RichNotificationData(), nullptr));
+      NOTIFICATION_TYPE_SIMPLE, "id3", u"title", u"message",
+      ui::ImageModel() /* icon */, std::u16string() /* display_source */,
+      GURL(), notifier_id, RichNotificationData(), nullptr));
   EXPECT_EQ(0u, message_center()->GetPopupNotifications().size());
   EXPECT_EQ(0u, message_center()->GetVisibleNotifications().size());
   EXPECT_EQ(3u, message_center()->GetNotifications().size());
@@ -669,17 +841,16 @@ TEST_F(MessageCenterImplTest, NotificationBlockerAllowsPopups) {
   NotifierId notifier_id1(NotifierType::APPLICATION, "app1");
   NotifierId notifier_id2(NotifierType::APPLICATION, "app2");
   PopupNotificationBlocker blocker(message_center(), notifier_id2);
+  blocker.Init();
 
   message_center()->AddNotification(std::make_unique<Notification>(
-      NOTIFICATION_TYPE_SIMPLE, "id1", UTF8ToUTF16("title"),
-      UTF8ToUTF16("message"), gfx::Image() /* icon */,
-      base::string16() /* display_source */, GURL(), notifier_id1,
-      RichNotificationData(), nullptr));
+      NOTIFICATION_TYPE_SIMPLE, "id1", u"title", u"message",
+      ui::ImageModel() /* icon */, std::u16string() /* display_source */,
+      GURL(), notifier_id1, RichNotificationData(), nullptr));
   message_center()->AddNotification(std::make_unique<Notification>(
-      NOTIFICATION_TYPE_SIMPLE, "id2", UTF8ToUTF16("title"),
-      UTF8ToUTF16("message"), gfx::Image() /* icon */,
-      base::string16() /* display_source */, GURL(), notifier_id2,
-      RichNotificationData(), nullptr));
+      NOTIFICATION_TYPE_SIMPLE, "id2", u"title", u"message",
+      ui::ImageModel() /* icon */, std::u16string() /* display_source */,
+      GURL(), notifier_id2, RichNotificationData(), nullptr));
 
   // "id1" is displayed as a pop-up so that it will be closed when blocked.
   message_center()->DisplayedNotification("id1", DISPLAY_SOURCE_POPUP);
@@ -693,15 +864,13 @@ TEST_F(MessageCenterImplTest, NotificationBlockerAllowsPopups) {
   EXPECT_EQ(2u, message_center()->GetVisibleNotifications().size());
 
   message_center()->AddNotification(std::make_unique<Notification>(
-      NOTIFICATION_TYPE_SIMPLE, "id3", UTF8ToUTF16("title"),
-      UTF8ToUTF16("message"), gfx::Image() /* icon */,
-      base::string16() /* display_source */, GURL(), notifier_id1,
-      RichNotificationData(), nullptr));
+      NOTIFICATION_TYPE_SIMPLE, "id3", u"title", u"message",
+      ui::ImageModel() /* icon */, std::u16string() /* display_source */,
+      GURL(), notifier_id1, RichNotificationData(), nullptr));
   message_center()->AddNotification(std::make_unique<Notification>(
-      NOTIFICATION_TYPE_SIMPLE, "id4", UTF8ToUTF16("title"),
-      UTF8ToUTF16("message"), gfx::Image() /* icon */,
-      base::string16() /* display_source */, GURL(), notifier_id2,
-      RichNotificationData(), nullptr));
+      NOTIFICATION_TYPE_SIMPLE, "id4", u"title", u"message",
+      ui::ImageModel() /* icon */, std::u16string() /* display_source */,
+      GURL(), notifier_id2, RichNotificationData(), nullptr));
   popups = message_center()->GetPopupNotifications();
   EXPECT_EQ(2u, popups.size());
   EXPECT_TRUE(PopupNotificationsContain(popups, "id2"));
@@ -717,27 +886,26 @@ TEST_F(MessageCenterImplTest, NotificationBlockerAllowsPopups) {
   EXPECT_EQ(4u, message_center()->GetVisibleNotifications().size());
 }
 
-// TotalNotificationBlocker suppresses showing notifications even from the list.
-// This would provide the feature to 'separated' message centers per-profile for
-// ChromeOS multi-login.
-TEST_F(MessageCenterImplTest, TotalNotificationBlocker) {
+// NearTotalNotificationBlocker suppresses showing notifications even from the
+// list. This would provide the feature to 'separated' message centers
+// per-profile for ChromeOS multi-login.
+TEST_F(MessageCenterImplTest, NearTotalNotificationBlocker) {
   NotifierId notifier_id1(NotifierType::APPLICATION, "app1");
   NotifierId notifier_id2(NotifierType::APPLICATION, "app2");
-  TotalNotificationBlocker blocker(message_center(), notifier_id2);
+  NearTotalNotificationBlocker blocker(message_center(), notifier_id2);
+  blocker.Init();
 
   message_center()->AddNotification(std::make_unique<Notification>(
-      NOTIFICATION_TYPE_SIMPLE, "id1", UTF8ToUTF16("title"),
-      UTF8ToUTF16("message"), gfx::Image() /* icon */,
-      base::string16() /* display_source */, GURL(), notifier_id1,
-      RichNotificationData(), nullptr));
+      NOTIFICATION_TYPE_SIMPLE, "id1", u"title", u"message",
+      ui::ImageModel() /* icon */, std::u16string() /* display_source */,
+      GURL(), notifier_id1, RichNotificationData(), nullptr));
   message_center()->AddNotification(std::make_unique<Notification>(
-      NOTIFICATION_TYPE_SIMPLE, "id2", UTF8ToUTF16("title"),
-      UTF8ToUTF16("message"), gfx::Image() /* icon */,
-      base::string16() /* display_source */, GURL(), notifier_id2,
-      RichNotificationData(), nullptr));
+      NOTIFICATION_TYPE_SIMPLE, "id2", u"title", u"message",
+      ui::ImageModel() /* icon */, std::u16string() /* display_source */,
+      GURL(), notifier_id2, RichNotificationData(), nullptr));
 
   // "id1" becomes invisible while "id2" is still visible.
-  blocker.SetPopupNotificationsEnabled(false);
+  blocker.SetNotificationsEnabled(false);
   EXPECT_EQ(1u, message_center()->NotificationCount());
   NotificationList::Notifications notifications =
       message_center()->GetVisibleNotifications();
@@ -745,15 +913,13 @@ TEST_F(MessageCenterImplTest, TotalNotificationBlocker) {
   EXPECT_TRUE(NotificationsContain(notifications, "id2"));
 
   message_center()->AddNotification(std::make_unique<Notification>(
-      NOTIFICATION_TYPE_SIMPLE, "id3", UTF8ToUTF16("title"),
-      UTF8ToUTF16("message"), gfx::Image() /* icon */,
-      base::string16() /* display_source */, GURL(), notifier_id1,
-      RichNotificationData(), nullptr));
+      NOTIFICATION_TYPE_SIMPLE, "id3", u"title", u"message",
+      ui::ImageModel() /* icon */, std::u16string() /* display_source */,
+      GURL(), notifier_id1, RichNotificationData(), nullptr));
   message_center()->AddNotification(std::make_unique<Notification>(
-      NOTIFICATION_TYPE_SIMPLE, "id4", UTF8ToUTF16("title"),
-      UTF8ToUTF16("message"), gfx::Image() /* icon */,
-      base::string16() /* display_source */, GURL(), notifier_id2,
-      RichNotificationData(), nullptr));
+      NOTIFICATION_TYPE_SIMPLE, "id4", u"title", u"message",
+      ui::ImageModel() /* icon */, std::u16string() /* display_source */,
+      GURL(), notifier_id2, RichNotificationData(), nullptr));
   EXPECT_EQ(2u, message_center()->NotificationCount());
   notifications = message_center()->GetVisibleNotifications();
   EXPECT_FALSE(NotificationsContain(notifications, "id1"));
@@ -761,7 +927,7 @@ TEST_F(MessageCenterImplTest, TotalNotificationBlocker) {
   EXPECT_FALSE(NotificationsContain(notifications, "id3"));
   EXPECT_TRUE(NotificationsContain(notifications, "id4"));
 
-  blocker.SetPopupNotificationsEnabled(true);
+  blocker.SetNotificationsEnabled(true);
   EXPECT_EQ(4u, message_center()->NotificationCount());
   notifications = message_center()->GetVisibleNotifications();
   EXPECT_TRUE(NotificationsContain(notifications, "id1"));
@@ -770,11 +936,11 @@ TEST_F(MessageCenterImplTest, TotalNotificationBlocker) {
   EXPECT_TRUE(NotificationsContain(notifications, "id4"));
 
   // Remove just visible notifications.
-  blocker.SetPopupNotificationsEnabled(false);
+  blocker.SetNotificationsEnabled(false);
   message_center()->RemoveAllNotifications(
       false /* by_user */, MessageCenter::RemoveType::NON_PINNED);
   EXPECT_EQ(0u, message_center()->NotificationCount());
-  blocker.SetPopupNotificationsEnabled(true);
+  blocker.SetNotificationsEnabled(true);
   EXPECT_EQ(2u, message_center()->NotificationCount());
   notifications = message_center()->GetVisibleNotifications();
   EXPECT_TRUE(NotificationsContain(notifications, "id1"));
@@ -783,39 +949,144 @@ TEST_F(MessageCenterImplTest, TotalNotificationBlocker) {
   EXPECT_FALSE(NotificationsContain(notifications, "id4"));
 
   // And remove all including invisible notifications.
-  blocker.SetPopupNotificationsEnabled(false);
+  blocker.SetNotificationsEnabled(false);
   message_center()->RemoveAllNotifications(false /* by_user */,
                                            MessageCenter::RemoveType::ALL);
   EXPECT_EQ(0u, message_center()->NotificationCount());
+}
+
+// Tests that notification state is updated when a notification blocker is
+// added.
+TEST_F(MessageCenterImplTest, NotificationsUpdatedWhenBlockerAdded) {
+  // Add a notification and display it as a popup.
+  NotifierId notifier_id1(NotifierType::APPLICATION, "app1");
+  message_center()->AddNotification(
+      CreateSimpleNotificationWithNotifierId("id1", notifier_id1.id));
+  message_center()->DisplayedNotification("id1", DISPLAY_SOURCE_POPUP);
+
+  // Verify that it is not blocked.
+  ASSERT_EQ(1u, message_center()->NotificationCount());
+  NotificationList::Notifications notifications =
+      message_center()->GetVisibleNotifications();
+  ASSERT_TRUE(NotificationsContain(notifications, "id1"));
+  NotificationList::PopupNotifications popups =
+      message_center()->GetPopupNotifications();
+  ASSERT_EQ(1u, popups.size());
+  ASSERT_TRUE(PopupNotificationsContain(popups, "id1"));
+
+  // Create a `NotificationBlocker` that blocks all notifications (even popups).
+  TotalNotificationBlocker blocker(message_center());
+  blocker.Init();
+
+  // Verify that "id1" is now blocked.
+  EXPECT_EQ(0u, message_center()->NotificationCount());
+  EXPECT_FALSE(
+      NotificationsContain(message_center()->GetVisibleNotifications(), "id1"));
+  popups = message_center()->GetPopupNotifications();
+  EXPECT_EQ(0u, popups.size());
+  EXPECT_FALSE(PopupNotificationsContain(popups, "id1"));
+}
+
+// Tests that notification state is updated when a notification blocker is
+// removed.
+TEST_F(MessageCenterImplTest, NotificationsUpdatedWhenBlockerRemoved) {
+  // Add two notifications and display them as popups.
+  NotifierId notifier_id1(NotifierType::APPLICATION, "app1");
+  NotifierId notifier_id2(NotifierType::APPLICATION, "app2");
+  message_center()->AddNotification(
+      CreateSimpleNotificationWithNotifierId("id1", notifier_id1.id));
+  message_center()->AddNotification(
+      CreateSimpleNotificationWithNotifierId("id2", notifier_id2.id));
+  message_center()->DisplayedNotification("id1", DISPLAY_SOURCE_POPUP);
+  message_center()->DisplayedNotification("id2", DISPLAY_SOURCE_POPUP);
+
+  // Verify that they are not blocked.
+  ASSERT_EQ(2u, message_center()->NotificationCount());
+  NotificationList::Notifications notifications =
+      message_center()->GetVisibleNotifications();
+  ASSERT_TRUE(NotificationsContain(notifications, "id1"));
+  ASSERT_TRUE(NotificationsContain(notifications, "id2"));
+  NotificationList::PopupNotifications popups =
+      message_center()->GetPopupNotifications();
+  ASSERT_EQ(2u, popups.size());
+  ASSERT_TRUE(PopupNotificationsContain(popups, "id1"));
+  ASSERT_TRUE(PopupNotificationsContain(popups, "id2"));
+
+  {
+    // Block all notifications, including popups (except those from
+    // `notifier_id2`).
+    NearTotalNotificationBlocker blocker(message_center(), notifier_id2);
+    blocker.Init();
+    blocker.SetNotificationsEnabled(false);
+    blocker.SetPopupNotificationsEnabled(false);
+
+    // Verify that "id1" is blocked and "id2" is not.
+    ASSERT_EQ(1u, message_center()->NotificationCount());
+    ASSERT_FALSE(NotificationsContain(
+        message_center()->GetVisibleNotifications(), "id1"));
+    ASSERT_TRUE(NotificationsContain(
+        message_center()->GetVisibleNotifications(), "id2"));
+    popups = message_center()->GetPopupNotifications();
+    ASSERT_EQ(1u, popups.size());
+    ASSERT_FALSE(PopupNotificationsContain(popups, "id1"));
+    ASSERT_TRUE(PopupNotificationsContain(popups, "id2"));
+
+    // Add a third notification.
+    message_center()->AddNotification(
+        CreateSimpleNotificationWithNotifierId("id3", notifier_id1.id));
+    message_center()->DisplayedNotification("id3", DISPLAY_SOURCE_POPUP);
+
+    // Verify that "id3" is blocked.
+    ASSERT_EQ(1u, message_center()->NotificationCount());
+    ASSERT_FALSE(NotificationsContain(
+        message_center()->GetVisibleNotifications(), "id3"));
+    popups = message_center()->GetPopupNotifications();
+    ASSERT_EQ(1u, popups.size());
+    ASSERT_FALSE(PopupNotificationsContain(popups, "id3"));
+
+    // Remove the blocker (it is removed in its dtor, which is called when
+    // exiting this scope).
+  }
+
+  // Verify that the notifications are not blocked, and in particular that "id2"
+  // is now shown as a popup since it didn't initially get to show as a popup.
+  EXPECT_EQ(3u, message_center()->NotificationCount());
+  notifications = message_center()->GetVisibleNotifications();
+  EXPECT_TRUE(NotificationsContain(notifications, "id1"));
+  EXPECT_TRUE(NotificationsContain(notifications, "id2"));
+  EXPECT_TRUE(NotificationsContain(notifications, "id3"));
+  popups = message_center()->GetPopupNotifications();
+  EXPECT_EQ(2u, popups.size());
+  EXPECT_TRUE(PopupNotificationsContain(popups, "id2"));
+  EXPECT_TRUE(PopupNotificationsContain(popups, "id3"));
 }
 
 TEST_F(MessageCenterImplTest, RemoveAllNotifications) {
   NotifierId notifier_id1(NotifierType::APPLICATION, "app1");
   NotifierId notifier_id2(NotifierType::APPLICATION, "app2");
 
-  TotalNotificationBlocker blocker(message_center(), notifier_id1);
-  blocker.SetPopupNotificationsEnabled(false);
+  NearTotalNotificationBlocker blocker(message_center(), notifier_id1);
+  blocker.Init();
+  blocker.SetNotificationsEnabled(false);
 
   // Notification 1: Visible, non-pinned
   message_center()->AddNotification(std::make_unique<Notification>(
-      NOTIFICATION_TYPE_SIMPLE, "id1", UTF8ToUTF16("title"),
-      UTF8ToUTF16("message"), gfx::Image() /* icon */,
-      base::string16() /* display_source */, GURL(), notifier_id1,
-      RichNotificationData(), nullptr));
+      NOTIFICATION_TYPE_SIMPLE, "id1", u"title", u"message",
+      ui::ImageModel() /* icon */, std::u16string() /* display_source */,
+      GURL(), notifier_id1, RichNotificationData(), nullptr));
 
   // Notification 2: Invisible, non-pinned
   message_center()->AddNotification(std::make_unique<Notification>(
-      NOTIFICATION_TYPE_SIMPLE, "id2", UTF8ToUTF16("title"),
-      UTF8ToUTF16("message"), gfx::Image() /* icon */,
-      base::string16() /* display_source */, GURL(), notifier_id2,
-      RichNotificationData(), nullptr));
+      NOTIFICATION_TYPE_SIMPLE, "id2", u"title", u"message",
+      ui::ImageModel() /* icon */, std::u16string() /* display_source */,
+      GURL(), notifier_id2, RichNotificationData(), nullptr));
 
   // Remove all the notifications which are visible and non-pinned.
   message_center()->RemoveAllNotifications(
       false /* by_user */, MessageCenter::RemoveType::NON_PINNED);
 
   EXPECT_EQ(0u, message_center()->NotificationCount());
-  blocker.SetPopupNotificationsEnabled(true);  // Show invisible notifications.
+  blocker.SetNotificationsEnabled(true);  // Show invisible notifications.
   EXPECT_EQ(1u, message_center()->NotificationCount());
 
   NotificationList::Notifications notifications =
@@ -826,43 +1097,40 @@ TEST_F(MessageCenterImplTest, RemoveAllNotifications) {
   EXPECT_TRUE(NotificationsContain(notifications, "id2"));
 }
 
-#if defined(OS_CHROMEOS)
+#if BUILDFLAG(IS_CHROMEOS_ASH)
 TEST_F(MessageCenterImplTest, RemoveAllNotificationsWithPinned) {
   NotifierId notifier_id1(NotifierType::APPLICATION, "app1");
   NotifierId notifier_id2(NotifierType::APPLICATION, "app2");
 
-  TotalNotificationBlocker blocker(message_center(), notifier_id1);
-  blocker.SetPopupNotificationsEnabled(false);
+  NearTotalNotificationBlocker blocker(message_center(), notifier_id1);
+  blocker.Init();
+  blocker.SetNotificationsEnabled(false);
 
   // Notification 1: Visible, non-pinned
   message_center()->AddNotification(std::make_unique<Notification>(
-      NOTIFICATION_TYPE_SIMPLE, "id1", UTF8ToUTF16("title"),
-      UTF8ToUTF16("message"), gfx::Image() /* icon */,
-      base::string16() /* display_source */, GURL(), notifier_id1,
-      RichNotificationData(), nullptr));
+      NOTIFICATION_TYPE_SIMPLE, "id1", u"title", u"message",
+      ui::ImageModel() /* icon */, std::u16string() /* display_source */,
+      GURL(), notifier_id1, RichNotificationData(), nullptr));
 
   // Notification 2: Invisible, non-pinned
   message_center()->AddNotification(std::make_unique<Notification>(
-      NOTIFICATION_TYPE_SIMPLE, "id2", UTF8ToUTF16("title"),
-      UTF8ToUTF16("message"), gfx::Image() /* icon */,
-      base::string16() /* display_source */, GURL(), notifier_id2,
-      RichNotificationData(), nullptr));
+      NOTIFICATION_TYPE_SIMPLE, "id2", u"title", u"message",
+      ui::ImageModel() /* icon */, std::u16string() /* display_source */,
+      GURL(), notifier_id2, RichNotificationData(), nullptr));
 
   // Notification 3: Visible, pinned
   auto notification3 = std::make_unique<Notification>(
-      NOTIFICATION_TYPE_SIMPLE, "id3", UTF8ToUTF16("title"),
-      UTF8ToUTF16("message"), gfx::Image() /* icon */,
-      base::string16() /* display_source */, GURL(), notifier_id1,
-      RichNotificationData(), nullptr);
+      NOTIFICATION_TYPE_SIMPLE, "id3", u"title", u"message",
+      ui::ImageModel() /* icon */, std::u16string() /* display_source */,
+      GURL(), notifier_id1, RichNotificationData(), nullptr);
   notification3->set_pinned(true);
   message_center()->AddNotification(std::move(notification3));
 
   // Notification 4: Invisible, pinned
   auto notification4 = std::make_unique<Notification>(
-      NOTIFICATION_TYPE_SIMPLE, "id4", UTF8ToUTF16("title"),
-      UTF8ToUTF16("message"), gfx::Image() /* icon */,
-      base::string16() /* display_source */, GURL(), notifier_id2,
-      RichNotificationData(), nullptr);
+      NOTIFICATION_TYPE_SIMPLE, "id4", u"title", u"message",
+      ui::ImageModel() /* icon */, std::u16string() /* display_source */,
+      GURL(), notifier_id2, RichNotificationData(), nullptr);
   notification4->set_pinned(true);
   message_center()->AddNotification(std::move(notification4));
 
@@ -871,7 +1139,7 @@ TEST_F(MessageCenterImplTest, RemoveAllNotificationsWithPinned) {
       false /* by_user */, MessageCenter::RemoveType::NON_PINNED);
 
   EXPECT_EQ(1u, message_center()->NotificationCount());
-  blocker.SetPopupNotificationsEnabled(true);  // Show invisible notifications.
+  blocker.SetNotificationsEnabled(true);  // Show invisible notifications.
   EXPECT_EQ(3u, message_center()->NotificationCount());
 
   NotificationList::Notifications notifications =
@@ -983,13 +1251,14 @@ TEST_F(MessageCenterImplTest, RemoveNonVisibleNotification) {
 
   // Add a blocker to block all notifications.
   NotifierId allowed_notifier_id(NotifierType::APPLICATION, "notifier");
-  TotalNotificationBlocker blocker(message_center(), allowed_notifier_id);
-  blocker.SetPopupNotificationsEnabled(false);
+  NearTotalNotificationBlocker blocker(message_center(), allowed_notifier_id);
+  blocker.Init();
+  blocker.SetNotificationsEnabled(false);
   EXPECT_EQ(0u, message_center()->GetVisibleNotifications().size());
 
   // Removing a non-visible notification should work.
   message_center()->RemoveNotification("id1", false);
-  blocker.SetPopupNotificationsEnabled(true);
+  blocker.SetNotificationsEnabled(true);
   EXPECT_EQ(1u, message_center()->GetVisibleNotifications().size());
 
   // Also try removing a visible notification.
@@ -998,15 +1267,11 @@ TEST_F(MessageCenterImplTest, RemoveNonVisibleNotification) {
 }
 
 TEST_F(MessageCenterImplTest, RemoveInCloseHandler) {
-  std::string id("id1");
+  const std::string id("id1");
 
   // Create a notification that calls RemoveNotification() on close.
-  auto notification = std::make_unique<Notification>(
-      NOTIFICATION_TYPE_SIMPLE, id, UTF8ToUTF16("title"), UTF8ToUTF16(id),
-      gfx::Image() /* icon */, base::string16() /* display_source */, GURL(),
-      NotifierId(NotifierType::APPLICATION, kDefaultAppId),
-      RichNotificationData(),
-      base::MakeRefCounted<DeleteOnCloseDelegate>(message_center(), id));
+  auto notification = CreateSimpleNotificationWithDelegate(
+      id, base::MakeRefCounted<DeleteOnCloseDelegate>(message_center(), id));
   message_center()->AddNotification(std::move(notification));
   EXPECT_TRUE(message_center()->FindVisibleNotificationById(id));
 
@@ -1015,53 +1280,79 @@ TEST_F(MessageCenterImplTest, RemoveInCloseHandler) {
   EXPECT_FALSE(message_center()->FindVisibleNotificationById(id));
 }
 
+// Regression test for https://crbug.com/1135709
+TEST_F(MessageCenterImplTest, RemoveInCloseHandlerCloseAll) {
+  const std::string id1("id1");
+  const std::string id2("id2");
+
+  // Create two notifications that call RemoveNotification() on close.
+  auto notification1 = CreateSimpleNotificationWithDelegate(
+      id1, base::MakeRefCounted<DeleteOnCloseDelegate>(message_center(), id1));
+  auto notification2 = CreateSimpleNotificationWithDelegate(
+      id2, base::MakeRefCounted<DeleteOnCloseDelegate>(message_center(), id2));
+  message_center()->AddNotification(std::move(notification1));
+  message_center()->AddNotification(std::move(notification2));
+  EXPECT_TRUE(message_center()->FindVisibleNotificationById(id1));
+  EXPECT_TRUE(message_center()->FindVisibleNotificationById(id2));
+
+  // Then remove all notifications which calls RemoveNotification() reentrantly.
+  message_center()->RemoveAllNotifications(
+      true /* by_user */,
+      message_center::MessageCenter::RemoveType::NON_PINNED);
+  EXPECT_FALSE(message_center()->FindVisibleNotificationById(id1));
+  EXPECT_FALSE(message_center()->FindVisibleNotificationById(id2));
+}
+
 TEST_F(MessageCenterImplTest, FindNotificationsByAppId) {
   message_center()->SetHasMessageCenterView(true);
 
   const std::string app_id1("app_id1");
-  const std::string id1("id1");
-
-  // Add a notification for |app_id1|.
-  std::unique_ptr<Notification> notification =
-      CreateNotificationWithNotifierId(id1, app_id1, NOTIFICATION_TYPE_SIMPLE);
-  message_center()->AddNotification(std::move(notification));
-  EXPECT_EQ(1u, message_center()->FindNotificationsByAppId(app_id1).size());
-
-  // Mark the notification as shown but not read.
-  message_center()->MarkSinglePopupAsShown(id1, false);
-  EXPECT_EQ(1u, message_center()->FindNotificationsByAppId(app_id1).size());
-
-  // Mark the notification as shown and read.
-  message_center()->MarkSinglePopupAsShown(id1, true);
-  EXPECT_EQ(1u, message_center()->FindNotificationsByAppId(app_id1).size());
-
-  // Remove the notification.
-  message_center()->RemoveNotification(id1, true);
-  EXPECT_EQ(0u, message_center()->FindNotificationsByAppId(app_id1).size());
-
-  // Add two notifications for |app_id1|.
-  notification =
-      CreateNotificationWithNotifierId(id1, app_id1, NOTIFICATION_TYPE_SIMPLE);
-  message_center()->AddNotification(std::move(notification));
-
-  const std::string id2("id2");
-  notification =
-      CreateNotificationWithNotifierId(id2, app_id1, NOTIFICATION_TYPE_SIMPLE);
-  message_center()->AddNotification(std::move(notification));
-  EXPECT_EQ(2u, message_center()->FindNotificationsByAppId(app_id1).size());
-
-  // Remove |id2|,there should only be one notification for |app_id1|.
-  message_center()->RemoveNotification(id2, true);
-  EXPECT_EQ(1u, message_center()->FindNotificationsByAppId(app_id1).size());
-
-  // Add a notification for |app_id2|.
   const std::string app_id2("app_id2");
-  const std::string id3("id3");
-  notification =
-      CreateNotificationWithNotifierId(id3, app_id2, NOTIFICATION_TYPE_SIMPLE);
-  message_center()->AddNotification(std::move(notification));
-  EXPECT_EQ(1u, message_center()->FindNotificationsByAppId(app_id1).size());
-  EXPECT_EQ(1u, message_center()->FindNotificationsByAppId(app_id2).size());
+
+  {
+    // Add a notification for |app_id1|.
+    const std::string id1("id1");
+    std::unique_ptr<Notification> notification =
+        CreateNotificationWithNotifierId(id1, app_id1,
+                                         NOTIFICATION_TYPE_SIMPLE);
+    message_center()->AddNotification(std::move(notification));
+    EXPECT_EQ(1u, message_center()->FindNotificationsByAppId(app_id1).size());
+
+    // Mark the notification as shown but not read.
+    message_center()->MarkSinglePopupAsShown(id1, false);
+    EXPECT_EQ(1u, message_center()->FindNotificationsByAppId(app_id1).size());
+
+    // Mark the notification as shown and read.
+    message_center()->MarkSinglePopupAsShown(id1, true);
+    EXPECT_EQ(1u, message_center()->FindNotificationsByAppId(app_id1).size());
+
+    // Remove the notification.
+    message_center()->RemoveNotification(id1, true);
+    EXPECT_EQ(0u, message_center()->FindNotificationsByAppId(app_id1).size());
+
+    // Add two notifications for |app_id1|.
+    notification = CreateNotificationWithNotifierId(id1, app_id1,
+                                                    NOTIFICATION_TYPE_SIMPLE);
+    message_center()->AddNotification(std::move(notification));
+
+    const std::string id2("id2");
+    notification = CreateNotificationWithNotifierId(id2, app_id1,
+                                                    NOTIFICATION_TYPE_SIMPLE);
+    message_center()->AddNotification(std::move(notification));
+    EXPECT_EQ(2u, message_center()->FindNotificationsByAppId(app_id1).size());
+
+    // Remove |id2|,there should only be one notification for |app_id1|.
+    message_center()->RemoveNotification(id2, true);
+    EXPECT_EQ(1u, message_center()->FindNotificationsByAppId(app_id1).size());
+
+    // Add a notification for |app_id2|.
+    const std::string id3("id3");
+    notification = CreateNotificationWithNotifierId(id3, app_id2,
+                                                    NOTIFICATION_TYPE_SIMPLE);
+    message_center()->AddNotification(std::move(notification));
+    EXPECT_EQ(1u, message_center()->FindNotificationsByAppId(app_id1).size());
+    EXPECT_EQ(1u, message_center()->FindNotificationsByAppId(app_id2).size());
+  }
 
   for (std::string app_id : {app_id1, app_id2}) {
     for (auto* notification :
@@ -1124,7 +1415,7 @@ TEST_F(MessageCenterImplTest, UpdateNonProgressNotificationWhenCenterVisible) {
   message_center()->ClickOnNotification("n");
   message_center()->SetVisibility(VISIBILITY_MESSAGE_CENTER);
   observer.reset_logs();
-  notification_copy.set_title(base::ASCIIToUTF16("title2"));
+  notification_copy.set_title(u"title2");
   message_center()->UpdateNotification(
       notification_copy.id(),
       std::make_unique<Notification>(notification_copy));
@@ -1181,14 +1472,63 @@ TEST_F(MessageCenterImplTest, ButtonClick) {
   EXPECT_EQ("ButtonClick_1_", GetDelegate(id)->log());
 }
 
+TEST_F(MessageCenterImplTest, RemoveAfterClick) {
+  const std::string id = "n";
+  RichNotificationData notification_data;
+
+  ASSERT_FALSE(message_center()->FindNotificationById(id));
+  message_center()->AddNotification(
+      CreateSimpleNotificationWithOptionalFields(id, notification_data));
+  ASSERT_TRUE(message_center()->FindNotificationById(id));
+
+  message_center()->ClickOnNotification(id);
+  EXPECT_TRUE(message_center()->FindNotificationById(id));
+
+  message_center()->RemoveNotification(id, false);
+  ASSERT_FALSE(message_center()->FindNotificationById(id));
+
+  notification_data.remove_on_click = true;
+
+  message_center()->AddNotification(
+      CreateSimpleNotificationWithOptionalFields(id, notification_data));
+  ASSERT_TRUE(message_center()->FindNotificationById(id));
+
+  message_center()->ClickOnNotification(id);
+  EXPECT_FALSE(message_center()->FindNotificationById(id));
+}
+
+TEST_F(MessageCenterImplTest, RemoveAfterButtonClick) {
+  const std::string id = "n";
+  RichNotificationData notification_data;
+  notification_data.buttons.emplace_back(u"button");
+
+  message_center()->AddNotification(
+      CreateSimpleNotificationWithOptionalFields(id, notification_data));
+  ASSERT_TRUE(message_center()->FindNotificationById(id));
+
+  message_center()->ClickOnNotificationButton(id, 0);
+  EXPECT_TRUE(message_center()->FindNotificationById(id));
+
+  message_center()->RemoveNotification(id, false);
+  ASSERT_FALSE(message_center()->FindNotificationById(id));
+
+  notification_data.remove_on_click = true;
+
+  message_center()->AddNotification(
+      CreateSimpleNotificationWithOptionalFields(id, notification_data));
+  ASSERT_TRUE(message_center()->FindNotificationById(id));
+
+  message_center()->ClickOnNotificationButton(id, 0);
+  EXPECT_FALSE(message_center()->FindNotificationById(id));
+}
+
 TEST_F(MessageCenterImplTest, ButtonClickWithReply) {
   TestAddObserver observer(message_center());
   std::string id("n");
 
   std::unique_ptr<Notification> notification = CreateSimpleNotification(id);
   message_center()->AddNotification(std::move(notification));
-  message_center()->ClickOnNotificationButtonWithReply(
-      id, 1, base::UTF8ToUTF16("REPLYTEXT"));
+  message_center()->ClickOnNotificationButtonWithReply(id, 1, u"REPLYTEXT");
 
   EXPECT_EQ("ReplyButtonClick_1_REPLYTEXT_", GetDelegate(id)->log());
 }
@@ -1292,8 +1632,7 @@ TEST_F(MessageCenterImplTest, ButtonClickWithReplyOnLockScreen) {
 
   std::unique_ptr<Notification> notification = CreateSimpleNotification(id);
   message_center()->AddNotification(std::move(notification));
-  message_center()->ClickOnNotificationButtonWithReply(
-      id, 1, base::UTF8ToUTF16("REPLYTEXT"));
+  message_center()->ClickOnNotificationButtonWithReply(id, 1, u"REPLYTEXT");
 
   EXPECT_EQ("", GetDelegate(id)->log());
   EXPECT_TRUE(lock_screen_controller()->HasPendingCallback());

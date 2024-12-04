@@ -1,30 +1,6 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the test suite of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:GPL-EXCEPT$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 3 as published by the Free Software
-** Foundation with exceptions as appearing in the file LICENSE.GPL3-EXCEPT
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
+
 #include <qtest.h>
 #include <QtQuick/private/qquickitem_p.h>
 #include <QtQuick/private/qquicktext_p.h>
@@ -38,7 +14,7 @@
 #include <QtCore/qtranslator.h>
 #include <QSignalSpy>
 
-#include "../../shared/util.h"
+#include <QtQuickTestUtils/private/qmlutils_p.h>
 
 Q_DECLARE_METATYPE(QList<int>)
 Q_DECLARE_METATYPE(QList<QVariantHash>)
@@ -73,13 +49,14 @@ class tst_qqmllistmodelworkerscript : public QQmlDataTest
     Q_OBJECT
 public:
     tst_qqmllistmodelworkerscript()
+        : QQmlDataTest(QT_QMLTEST_DATADIR)
     {
         qRegisterMetaType<QVector<int> >();
     }
 
 private:
     int roleFromName(const QQmlListModel *model, const QString &roleName);
-    QQuickItem *createWorkerTest(QQmlEngine *eng, QQmlComponent *component, QQmlListModel *model);
+    std::unique_ptr<QQuickItem> createWorkerTest(QQmlEngine *eng, QQmlComponent *component, QQmlListModel *model);
     void waitForWorker(QQuickItem *item);
 
     static bool compareVariantList(const QVariantList &testList, QVariant object);
@@ -115,12 +92,12 @@ bool tst_qqmllistmodelworkerscript::compareVariantList(const QVariantList &testL
     if (model == nullptr)
         return false;
 
-    if (model->count() != testList.count())
+    if (model->count() != testList.size())
         return false;
 
-    for (int i=0 ; i < testList.count() ; ++i) {
+    for (int i=0 ; i < testList.size() ; ++i) {
         const QVariant &testVariant = testList.at(i);
-        if (testVariant.type() != QVariant::Map)
+        if (testVariant.typeId() != QMetaType::QVariantMap)
             return false;
         const QVariantMap &map = testVariant.toMap();
 
@@ -139,7 +116,7 @@ bool tst_qqmllistmodelworkerscript::compareVariantList(const QVariantList &testL
 
             const QVariant &modelData = model->data(model->index(i, 0, QModelIndex()), roleIndex);
 
-            if (testData.type() == QVariant::List) {
+            if (testData.typeId() == QMetaType::QVariantList) {
                 const QVariantList &subList = testData.toList();
                 allOk = allOk && compareVariantList(subList, modelData);
             } else {
@@ -158,9 +135,9 @@ int tst_qqmllistmodelworkerscript::roleFromName(const QQmlListModel *model, cons
     return model->roleNames().key(roleName.toUtf8(), -1);
 }
 
-QQuickItem *tst_qqmllistmodelworkerscript::createWorkerTest(QQmlEngine *eng, QQmlComponent *component, QQmlListModel *model)
+std::unique_ptr<QQuickItem> tst_qqmllistmodelworkerscript::createWorkerTest(QQmlEngine *eng, QQmlComponent *component, QQmlListModel *model)
 {
-    QQuickItem *item = qobject_cast<QQuickItem*>(component->create());
+    std::unique_ptr<QQuickItem> item { qobject_cast<QQuickItem*>(component->create()) };
     QQmlEngine::setContextForObject(model, eng->rootContext());
     if (item)
         item->setProperty("model", QVariant::fromValue(model));
@@ -350,15 +327,16 @@ void tst_qqmllistmodelworkerscript::dynamic_worker()
     model.setDynamicRoles(dynamicRoles);
     QQmlEngine eng;
     QQmlComponent component(&eng, testFileUrl("model.qml"));
-    QQuickItem *item = createWorkerTest(&eng, &component, &model);
-    QVERIFY(item != nullptr);
+    std::unique_ptr<QQuickItem> item = createWorkerTest(&eng, &component, &model);
+    QVERIFY(item);
 
     QSignalSpy spyCount(&model, SIGNAL(countChanged()));
 
-    if (script[0] == QLatin1Char('{') && script[script.length()-1] == QLatin1Char('}'))
-        script = script.mid(1, script.length() - 2);
+    if (script[0] == QLatin1Char('{') && script[script.size()-1] == QLatin1Char('}'))
+        script = script.mid(1, script.size() - 2);
     QVariantList operations;
-    foreach (const QString &s, script.split(';')) {
+    const QStringList statements = script.split(';');
+    for (const QString &s : statements) {
         if (!s.isEmpty())
             operations << s;
     }
@@ -366,15 +344,15 @@ void tst_qqmllistmodelworkerscript::dynamic_worker()
     if (isValidErrorMessage(warning, dynamicRoles))
         QTest::ignoreMessage(QtWarningMsg, warning.toLatin1());
 
-    QVERIFY(QMetaObject::invokeMethod(item, "evalExpressionViaWorker",
+    QVERIFY(QMetaObject::invokeMethod(item.get(), "evalExpressionViaWorker",
             Q_ARG(QVariant, operations)));
-    waitForWorker(item);
-    QCOMPARE(QQmlProperty(item, "result").read().toInt(), result);
+    waitForWorker(item.get());
+    QCOMPARE(QQmlProperty(item.get(), "result").read().toInt(), result);
 
     if (model.count() > 0)
-        QVERIFY(spyCount.count() > 0);
+        QVERIFY(spyCount.size() > 0);
 
-    delete item;
+    item.reset();
     qApp->processEvents();
 }
 
@@ -401,13 +379,14 @@ void tst_qqmllistmodelworkerscript::dynamic_worker_sync()
     model.setDynamicRoles(dynamicRoles);
     QQmlEngine eng;
     QQmlComponent component(&eng, testFileUrl("model.qml"));
-    QQuickItem *item = createWorkerTest(&eng, &component, &model);
-    QVERIFY(item != nullptr);
+    std::unique_ptr<QQuickItem> item = createWorkerTest(&eng, &component, &model);
+    QVERIFY(item);
 
-    if (script[0] == QLatin1Char('{') && script[script.length()-1] == QLatin1Char('}'))
-        script = script.mid(1, script.length() - 2);
+    if (script[0] == QLatin1Char('{') && script[script.size()-1] == QLatin1Char('}'))
+        script = script.mid(1, script.size() - 2);
     QVariantList operations;
-    foreach (const QString &s, script.split(';')) {
+    const QStringList statements = script.split(';');
+    for (const QString &s : statements) {
         if (!s.isEmpty())
             operations << s;
     }
@@ -417,14 +396,14 @@ void tst_qqmllistmodelworkerscript::dynamic_worker_sync()
 
     // execute a set of commands on the worker list model, then check the
     // changes are reflected in the list model in the main thread
-    QVERIFY(QMetaObject::invokeMethod(item, "evalExpressionViaWorker",
-            Q_ARG(QVariant, operations.mid(0, operations.length()-1))));
-    waitForWorker(item);
+    QVERIFY(QMetaObject::invokeMethod(item.get(), "evalExpressionViaWorker",
+            Q_ARG(QVariant, operations.mid(0, operations.size()-1))));
+    waitForWorker(item.get());
 
     QQmlExpression e(eng.rootContext(), &model, operations.last().toString());
     QCOMPARE(e.evaluate().toInt(), result);
 
-    delete item;
+    item.reset();
     qApp->processEvents();
 }
 
@@ -464,42 +443,40 @@ void tst_qqmllistmodelworkerscript::get_worker()
     model.setDynamicRoles(dynamicRoles);
     QQmlEngine eng;
     QQmlComponent component(&eng, testFileUrl("model.qml"));
-    QQuickItem *item = createWorkerTest(&eng, &component, &model);
-    QVERIFY(item != nullptr);
+    std::unique_ptr<QQuickItem> item = createWorkerTest(&eng, &component, &model);
+    QVERIFY(item);
 
     // Add some values like get() test
-    RUNEVAL(item, "model.append({roleA: 100})");
-    RUNEVAL(item, "model.append({roleA: 200, roleB: 400})");
-    RUNEVAL(item, "model.append({roleA: 200, roleB: 400})");
-    RUNEVAL(item, "model.append({roleC: {} })");
-    RUNEVAL(item, "model.append({roleD: [ { a:1, b:2 }, { c: 3 } ] })");
+    RUNEVAL(item.get(), "model.append({roleA: 100})");
+    RUNEVAL(item.get(), "model.append({roleA: 200, roleB: 400})");
+    RUNEVAL(item.get(), "model.append({roleA: 200, roleB: 400})");
+    RUNEVAL(item.get(), "model.append({roleC: {} })");
+    RUNEVAL(item.get(), "model.append({roleD: [ { a:1, b:2 }, { c: 3 } ] })");
 
     int role = roleFromName(&model, roleName);
     QVERIFY(role >= 0);
 
-    QSignalSpy spy(&model, SIGNAL(dataChanged(QModelIndex,QModelIndex,QVector<int>)));
+    QSignalSpy spy(&model, SIGNAL(dataChanged(QModelIndex,QModelIndex,QList<int>)));
 
     // in the worker thread, change the model data and call sync()
-    QVERIFY(QMetaObject::invokeMethod(item, "evalExpressionViaWorker",
+    QVERIFY(QMetaObject::invokeMethod(item.get(), "evalExpressionViaWorker",
             Q_ARG(QVariant, QStringList(expression))));
-    waitForWorker(item);
+    waitForWorker(item.get());
 
     // see if we receive the model changes in the main thread's model
-    if (roleValue.type() == QVariant::List) {
+    if (roleValue.typeId() == QMetaType::QVariantList) {
         const QVariantList &list = roleValue.toList();
         QVERIFY(compareVariantList(list, model.data(index, role)));
     } else {
         QCOMPARE(model.data(index, role), roleValue);
     }
 
-    QCOMPARE(spy.count(), 1);
+    QCOMPARE(spy.size(), 1);
 
     QList<QVariant> spyResult = spy.takeFirst();
     QCOMPARE(spyResult.at(0).value<QModelIndex>(), model.index(index, 0, QModelIndex()));
     QCOMPARE(spyResult.at(1).value<QModelIndex>(), model.index(index, 0, QModelIndex()));  // only 1 item is modified at a time
     QVERIFY(spyResult.at(2).value<QVector<int> >().contains(role));
-
-    delete item;
 }
 
 void tst_qqmllistmodelworkerscript::get_worker_data()
@@ -594,29 +571,29 @@ void tst_qqmllistmodelworkerscript::property_changes_worker()
     QQmlEngine engine;
     QQmlComponent component(&engine, testFileUrl("model.qml"));
     QVERIFY2(component.errorString().isEmpty(), component.errorString().toUtf8());
-    QQuickItem *item = createWorkerTest(&engine, &component, &model);
-    QVERIFY(item != nullptr);
+    std::unique_ptr<QQuickItem> item = createWorkerTest(&engine, &component, &model);
+    QVERIFY(item);
 
     QQmlExpression expr(engine.rootContext(), &model, script_setup);
     expr.evaluate();
-    QVERIFY2(!expr.hasError(), QTest::toString(expr.error().toString()));
+    QVERIFY2(!expr.hasError(), qPrintable(expr.error().toString()));
 
-    QSignalSpy spyItemsChanged(&model, SIGNAL(dataChanged(QModelIndex,QModelIndex,QVector<int>)));
+    QSignalSpy spyItemsChanged(&model, SIGNAL(dataChanged(QModelIndex,QModelIndex,QList<int>)));
 
-    QVERIFY(QMetaObject::invokeMethod(item, "evalExpressionViaWorker",
+    QVERIFY(QMetaObject::invokeMethod(item.get(), "evalExpressionViaWorker",
             Q_ARG(QVariant, QStringList(script_change))));
-    waitForWorker(item);
+    waitForWorker(item.get());
 
     // test itemsChanged() is emitted correctly
     if (itemsChanged) {
-        QCOMPARE(spyItemsChanged.count(), 1);
+        QCOMPARE(spyItemsChanged.size(), 1);
         QCOMPARE(spyItemsChanged.at(0).at(0).value<QModelIndex>(), model.index(listIndex, 0, QModelIndex()));
         QCOMPARE(spyItemsChanged.at(0).at(1).value<QModelIndex>(), model.index(listIndex, 0, QModelIndex()));
     } else {
-        QCOMPARE(spyItemsChanged.count(), 0);
+        QCOMPARE(spyItemsChanged.size(), 0);
     }
 
-    delete item;
+    item.reset();
     qApp->processEvents();
 }
 
@@ -641,12 +618,12 @@ void tst_qqmllistmodelworkerscript::worker_sync()
     model.setDynamicRoles(dynamicRoles);
     QQmlEngine eng;
     QQmlComponent component(&eng, testFileUrl("workersync.qml"));
-    QQuickItem *item = createWorkerTest(&eng, &component, &model);
-    QVERIFY(item != nullptr);
+    std::unique_ptr<QQuickItem> item = createWorkerTest(&eng, &component, &model);
+    QVERIFY(item);
 
     QCOMPARE(model.count(), 0);
 
-    QVERIFY(QMetaObject::invokeMethod(item, "addItem0"));
+    QVERIFY(QMetaObject::invokeMethod(item.get(), "addItem0"));
 
     QCOMPARE(model.count(), 2);
     QVariant childData = model.data(0, 0);
@@ -657,39 +634,39 @@ void tst_qqmllistmodelworkerscript::worker_sync()
     QSignalSpy spyModelInserted(&model, SIGNAL(rowsInserted(QModelIndex,int,int)));
     QSignalSpy spyChildInserted(childModel, SIGNAL(rowsInserted(QModelIndex,int,int)));
 
-    QVERIFY(QMetaObject::invokeMethod(item, "addItemViaWorker"));
-    waitForWorker(item);
+    QVERIFY(QMetaObject::invokeMethod(item.get(), "addItemViaWorker"));
+    waitForWorker(item.get());
 
     QCOMPARE(model.count(), 2);
     QCOMPARE(childModel->count(), 1);
-    QCOMPARE(spyModelInserted.count(), 0);
-    QCOMPARE(spyChildInserted.count(), 0);
+    QCOMPARE(spyModelInserted.size(), 0);
+    QCOMPARE(spyChildInserted.size(), 0);
 
-    QVERIFY(QMetaObject::invokeMethod(item, "doSync"));
-    waitForWorker(item);
-
-    QCOMPARE(model.count(), 2);
-    QCOMPARE(childModel->count(), 2);
-    QCOMPARE(spyModelInserted.count(), 0);
-    QCOMPARE(spyChildInserted.count(), 1);
-
-    QVERIFY(QMetaObject::invokeMethod(item, "addItemViaWorker"));
-    waitForWorker(item);
+    QVERIFY(QMetaObject::invokeMethod(item.get(), "doSync"));
+    waitForWorker(item.get());
 
     QCOMPARE(model.count(), 2);
     QCOMPARE(childModel->count(), 2);
-    QCOMPARE(spyModelInserted.count(), 0);
-    QCOMPARE(spyChildInserted.count(), 1);
+    QCOMPARE(spyModelInserted.size(), 0);
+    QCOMPARE(spyChildInserted.size(), 1);
 
-    QVERIFY(QMetaObject::invokeMethod(item, "doSync"));
-    waitForWorker(item);
+    QVERIFY(QMetaObject::invokeMethod(item.get(), "addItemViaWorker"));
+    waitForWorker(item.get());
+
+    QCOMPARE(model.count(), 2);
+    QCOMPARE(childModel->count(), 2);
+    QCOMPARE(spyModelInserted.size(), 0);
+    QCOMPARE(spyChildInserted.size(), 1);
+
+    QVERIFY(QMetaObject::invokeMethod(item.get(), "doSync"));
+    waitForWorker(item.get());
 
     QCOMPARE(model.count(), 2);
     QCOMPARE(childModel->count(), 3);
-    QCOMPARE(spyModelInserted.count(), 0);
-    QCOMPARE(spyChildInserted.count(), 2);
+    QCOMPARE(spyModelInserted.size(), 0);
+    QCOMPARE(spyChildInserted.size(), 2);
 
-    delete item;
+    item.reset();
     qApp->processEvents();
 }
 
@@ -706,53 +683,51 @@ void tst_qqmllistmodelworkerscript::worker_remove_element()
     model.setDynamicRoles(dynamicRoles);
     QQmlEngine eng;
     QQmlComponent component(&eng, testFileUrl("workerremoveelement.qml"));
-    QQuickItem *item = createWorkerTest(&eng, &component, &model);
-    QVERIFY(item != nullptr);
+    std::unique_ptr<QQuickItem> item = createWorkerTest(&eng, &component, &model);
+    QVERIFY(item);
 
     QSignalSpy spyModelRemoved(&model, SIGNAL(rowsRemoved(QModelIndex,int,int)));
 
     QCOMPARE(model.count(), 0);
-    QCOMPARE(spyModelRemoved.count(), 0);
+    QCOMPARE(spyModelRemoved.size(), 0);
 
-    QVERIFY(QMetaObject::invokeMethod(item, "addItem"));
-
-    QCOMPARE(model.count(), 1);
-
-    QVERIFY(QMetaObject::invokeMethod(item, "removeItemViaWorker"));
-    waitForWorker(item);
+    QVERIFY(QMetaObject::invokeMethod(item.get(), "addItem"));
 
     QCOMPARE(model.count(), 1);
-    QCOMPARE(spyModelRemoved.count(), 0);
 
-    QVERIFY(QMetaObject::invokeMethod(item, "doSync"));
-    waitForWorker(item);
+    QVERIFY(QMetaObject::invokeMethod(item.get(), "removeItemViaWorker"));
+    waitForWorker(item.get());
+
+    QCOMPARE(model.count(), 1);
+    QCOMPARE(spyModelRemoved.size(), 0);
+
+    QVERIFY(QMetaObject::invokeMethod(item.get(), "doSync"));
+    waitForWorker(item.get());
 
     QCOMPARE(model.count(), 0);
-    QCOMPARE(spyModelRemoved.count(), 1);
+    QCOMPARE(spyModelRemoved.size(), 1);
 
-    delete item;
+    item.reset();
     qApp->processEvents();
 
     {
         //don't crash if model was deleted earlier
-        QQmlListModel* model = new QQmlListModel;
+        std::unique_ptr<QQmlListModel> model = std::make_unique<QQmlListModel>();
         model->setDynamicRoles(dynamicRoles);
         QQmlEngine eng;
         QQmlComponent component(&eng, testFileUrl("workerremoveelement.qml"));
-        QQuickItem *item = createWorkerTest(&eng, &component, model);
-        QVERIFY(item != nullptr);
+        std::unique_ptr<QQuickItem> item = createWorkerTest(&eng, &component, model.get());
+        QVERIFY(item);
 
-        QVERIFY(QMetaObject::invokeMethod(item, "addItem"));
+        QVERIFY(QMetaObject::invokeMethod(item.get(), "addItem"));
 
         QCOMPARE(model->count(), 1);
 
-        QVERIFY(QMetaObject::invokeMethod(item, "removeItemViaWorker"));
-        QVERIFY(QMetaObject::invokeMethod(item, "doSync"));
-        delete model;
+        QVERIFY(QMetaObject::invokeMethod(item.get(), "removeItemViaWorker"));
+        QVERIFY(QMetaObject::invokeMethod(item.get(), "doSync"));
+        model.reset();
         qApp->processEvents(); //must not crash here
-        waitForWorker(item);
-
-        delete item;
+        waitForWorker(item.get());
     }
 }
 
@@ -769,31 +744,31 @@ void tst_qqmllistmodelworkerscript::worker_remove_list()
     model.setDynamicRoles(dynamicRoles);
     QQmlEngine eng;
     QQmlComponent component(&eng, testFileUrl("workerremovelist.qml"));
-    QQuickItem *item = createWorkerTest(&eng, &component, &model);
-    QVERIFY(item != nullptr);
+    std::unique_ptr<QQuickItem> item = createWorkerTest(&eng, &component, &model);
+    QVERIFY(item);
 
     QSignalSpy spyModelRemoved(&model, SIGNAL(rowsRemoved(QModelIndex,int,int)));
 
     QCOMPARE(model.count(), 0);
-    QCOMPARE(spyModelRemoved.count(), 0);
+    QCOMPARE(spyModelRemoved.size(), 0);
 
-    QVERIFY(QMetaObject::invokeMethod(item, "addList"));
-
-    QCOMPARE(model.count(), 1);
-
-    QVERIFY(QMetaObject::invokeMethod(item, "removeListViaWorker"));
-    waitForWorker(item);
+    QVERIFY(QMetaObject::invokeMethod(item.get(), "addList"));
 
     QCOMPARE(model.count(), 1);
-    QCOMPARE(spyModelRemoved.count(), 0);
 
-    QVERIFY(QMetaObject::invokeMethod(item, "doSync"));
-    waitForWorker(item);
+    QVERIFY(QMetaObject::invokeMethod(item.get(), "removeListViaWorker"));
+    waitForWorker(item.get());
+
+    QCOMPARE(model.count(), 1);
+    QCOMPARE(spyModelRemoved.size(), 0);
+
+    QVERIFY(QMetaObject::invokeMethod(item.get(), "doSync"));
+    waitForWorker(item.get());
 
     QCOMPARE(model.count(), 0);
-    QCOMPARE(spyModelRemoved.count(), 1);
+    QCOMPARE(spyModelRemoved.size(), 1);
 
-    delete item;
+    item.reset();
     qApp->processEvents();
 }
 
@@ -816,30 +791,31 @@ void tst_qqmllistmodelworkerscript::dynamic_role()
     model.setDynamicRoles(true);
     QQmlEngine engine;
     QQmlComponent component(&engine, testFileUrl("model.qml"));
-    QQuickItem *item = createWorkerTest(&engine, &component, &model);
-    QVERIFY(item != nullptr);
+    std::unique_ptr<QQuickItem> item = createWorkerTest(&engine, &component, &model);
+    QVERIFY(item);
 
     QQmlExpression preExp(engine.rootContext(), &model, preamble);
     QCOMPARE(preExp.evaluate().toInt(), 0);
 
-    if (script[0] == QLatin1Char('{') && script[script.length()-1] == QLatin1Char('}'))
-        script = script.mid(1, script.length() - 2);
+    if (script[0] == QLatin1Char('{') && script[script.size()-1] == QLatin1Char('}'))
+        script = script.mid(1, script.size() - 2);
     QVariantList operations;
-    foreach (const QString &s, script.split(';')) {
+    const QStringList statements = script.split(';');
+    for (const QString &s : statements) {
         if (!s.isEmpty())
             operations << s;
     }
 
     // execute a set of commands on the worker list model, then check the
     // changes are reflected in the list model in the main thread
-    QVERIFY(QMetaObject::invokeMethod(item, "evalExpressionViaWorker",
-            Q_ARG(QVariant, operations.mid(0, operations.length()-1))));
-    waitForWorker(item);
+    QVERIFY(QMetaObject::invokeMethod(item.get(), "evalExpressionViaWorker",
+            Q_ARG(QVariant, operations.mid(0, operations.size()-1))));
+    waitForWorker(item.get());
 
     QQmlExpression e(engine.rootContext(), &model, operations.last().toString());
     QCOMPARE(e.evaluate().toInt(), result);
 
-    delete item;
+    item.reset();
     qApp->processEvents();
 }
 

@@ -13,10 +13,11 @@
 // limitations under the License.
 
 
-import * as m from 'mithril';
+import m from 'mithril';
 
-import {Actions} from '../common/actions';
-import {QueryResponse} from '../common/queries';
+import {QueryResponse, runQuery} from '../common/queries';
+import {raf} from '../core/raf_scheduler';
+import {EngineProxy} from '../trace_processor/engine';
 
 import {globals} from './globals';
 import {createPage} from './pages';
@@ -30,26 +31,36 @@ interface StatsSectionAttrs {
   queryId: string;
 }
 
+function getEngine(name: string): EngineProxy|undefined {
+  const currentEngine = globals.getCurrentEngine();
+  if (currentEngine === undefined) return undefined;
+  const engineId = currentEngine.id;
+  return globals.engines.get(engineId)?.getProxy(name);
+}
+
 // Generic class that generate a <section> + <table> from the stats table.
 // The caller defines the query constraint, title and styling.
 // Used for errors, data losses and debugging sections.
 class StatsSection implements m.ClassComponent<StatsSectionAttrs> {
-  private queryDispatched = false;
+  private queryResponse?: QueryResponse;
+
+  constructor({attrs}: m.CVnode<StatsSectionAttrs>) {
+    const engine = getEngine('StatsSection');
+    if (engine === undefined) {
+      return;
+    }
+    const query = `select name, value, cast(ifnull(idx, '') as text) as idx,
+              description, severity, source from stats
+              where ${attrs.sqlConstraints || '1=1'}
+              order by name, idx`;
+    runQuery(query, engine).then((resp: QueryResponse) => {
+      this.queryResponse = resp;
+      raf.scheduleFullRedraw();
+    });
+  }
 
   view({attrs}: m.CVnode<StatsSectionAttrs>) {
-    if (!this.queryDispatched) {
-      this.queryDispatched = true;
-      globals.dispatch(Actions.executeQuery({
-        engineId: '0',
-        queryId: attrs.queryId,
-        query: `select name, value, cast(ifnull(idx, '') as text) as idx,
-                description, severity, source from stats
-                where ${attrs.sqlConstraints || '1=1'}
-                order by name, idx`,
-      }));
-    }
-
-    const resp = globals.queryResults.get(attrs.queryId) as QueryResponse;
+    const resp = this.queryResponse;
     if (resp === undefined || resp.totalRowCount === 0) {
       return m('');
     }
@@ -58,13 +69,14 @@ class StatsSection implements m.ClassComponent<StatsSectionAttrs> {
     const tableRows = [];
     for (const row of resp.rows) {
       const help = [];
+      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
       if (row.description) {
         help.push(m('i.material-icons.contextual-help', 'help_outline'));
       }
       const idx = row.idx !== '' ? `[${row.idx}]` : '';
       tableRows.push(m(
           'tr',
-          m('td', {title: row.description}, `${row.name}${idx}`, help),
+          m('td.name', {title: row.description}, `${row.name}${idx}`, help),
           m('td', `${row.value}`),
           m('td', `${row.severity} (${row.source})`),
           ));
@@ -96,21 +108,39 @@ class MetricErrors implements m.ClassComponent {
 }
 
 class TraceMetadata implements m.ClassComponent {
-  private queryDispatched = false;
-  private readonly QUERY_ID = 'info_metadata';
+  private queryResponse?: QueryResponse;
+
+  constructor() {
+    const engine = getEngine('StatsSection');
+    if (engine === undefined) {
+      return;
+    }
+    const query = `with 
+          metadata_with_priorities as (select
+            name, ifnull(str_value, cast(int_value as text)) as value,
+            name in (
+               "trace_size_bytes", 
+               "cr-os-arch",
+               "cr-os-name",
+               "cr-os-version",
+               "cr-physical-memory",
+               "cr-product-version",
+               "cr-hardware-class"
+            ) as priority 
+            from metadata
+          )
+          select name, value
+          from metadata_with_priorities 
+          order by priority desc, name`;
+    runQuery(query, engine).then((resp: QueryResponse) => {
+      this.queryResponse = resp;
+      raf.scheduleFullRedraw();
+    });
+  }
+
 
   view() {
-    if (!this.queryDispatched) {
-      this.queryDispatched = true;
-      globals.dispatch(Actions.executeQuery({
-        engineId: '0',
-        queryId: this.QUERY_ID,
-        query: `select name, ifnull(str_value, cast(int_value as text)) as value
-                from metadata order by name`,
-      }));
-    }
-
-    const resp = globals.queryResults.get(this.QUERY_ID) as QueryResponse;
+    const resp = this.queryResponse;
     if (resp === undefined || resp.totalRowCount === 0) {
       return m('');
     }
@@ -119,7 +149,7 @@ class TraceMetadata implements m.ClassComponent {
     for (const row of resp.rows) {
       tableRows.push(m(
           'tr',
-          m('td', `${row.name}`),
+          m('td.name', `${row.name}`),
           m('td', `${row.value}`),
           ));
     }
@@ -136,22 +166,131 @@ class TraceMetadata implements m.ClassComponent {
   }
 }
 
-class PackageList implements m.ClassComponent {
-  private queryDispatched = false;
-  private readonly QUERY_ID = 'info_package_list';
+class AndroidGameInterventionList implements m.ClassComponent {
+  private queryResponse?: QueryResponse;
+
+  constructor() {
+    const engine = getEngine('StatsSection');
+    if (engine === undefined) {
+      return;
+    }
+    const query = `select
+                package_name,
+                uid,
+                current_mode,
+                standard_mode_supported,
+                standard_mode_downscale,
+                standard_mode_use_angle,
+                standard_mode_fps,
+                perf_mode_supported,
+                perf_mode_downscale,
+                perf_mode_use_angle,
+                perf_mode_fps,
+                battery_mode_supported,
+                battery_mode_downscale,
+                battery_mode_use_angle,
+                battery_mode_fps
+                from android_game_intervention_list`;
+    runQuery(query, engine).then((resp: QueryResponse) => {
+      this.queryResponse = resp;
+      raf.scheduleFullRedraw();
+    });
+  }
+
 
   view() {
-    if (!this.queryDispatched) {
-      this.queryDispatched = true;
-      globals.dispatch(Actions.executeQuery({
-        engineId: '0',
-        queryId: this.QUERY_ID,
-        query: `select package_name, version_code, debuggable,
-                profileable_from_shell from package_list`,
-      }));
+    const resp = this.queryResponse;
+    if (resp === undefined || resp.totalRowCount === 0) {
+      return m('');
     }
 
-    const resp = globals.queryResults.get(this.QUERY_ID) as QueryResponse;
+    const tableRows = [];
+    let standardInterventions = '';
+    let perfInterventions = '';
+    let batteryInterventions = '';
+    for (const row of resp.rows) {
+      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
+      if (row.standard_mode_supported) {
+        standardInterventions =
+            `angle=${row.standard_mode_use_angle},downscale=${
+                row.standard_mode_downscale},fps=${row.standard_mode_fps}`;
+      } else {
+        standardInterventions = 'Not supported';
+      }
+
+      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
+      if (row.perf_mode_supported) {
+        perfInterventions = `angle=${row.perf_mode_use_angle},downscale=${
+            row.perf_mode_downscale},fps=${row.perf_mode_fps}`;
+      } else {
+        perfInterventions = 'Not supported';
+      }
+
+      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
+      if (row.battery_mode_supported) {
+        batteryInterventions = `angle=${row.battery_mode_use_angle},downscale=${
+            row.battery_mode_downscale},fps=${row.battery_mode_fps}`;
+      } else {
+        batteryInterventions = 'Not supported';
+      }
+      // Game mode numbers are defined in
+      // https://cs.android.com/android/platform/superproject/+/main:frameworks/base/core/java/android/app/GameManager.java;l=68
+      if (row.current_mode === 1) {
+        row.current_mode = 'Standard';
+      } else if (row.current_mode === 2) {
+        row.current_mode = 'Performance';
+      } else if (row.current_mode === 3) {
+        row.current_mode = 'Battery';
+      }
+      tableRows.push(m(
+          'tr',
+          m('td.name', `${row.package_name}`),
+          m('td', `${row.current_mode}`),
+          m('td', standardInterventions),
+          m('td', perfInterventions),
+          m('td', batteryInterventions),
+          ));
+    }
+
+    return m(
+        'section',
+        m('h2', 'Game Intervention List'),
+        m(
+            'table',
+            m('thead',
+              m(
+                  'tr',
+                  m('td', 'Name'),
+                  m('td', 'Current mode'),
+                  m('td', 'Standard mode interventions'),
+                  m('td', 'Performance mode interventions'),
+                  m('td', 'Battery mode interventions'),
+                  )),
+            m('tbody', tableRows),
+            ),
+    );
+  }
+}
+
+class PackageList implements m.ClassComponent {
+  private queryResponse?: QueryResponse;
+
+  constructor() {
+    const engine = getEngine('StatsSection');
+    if (engine === undefined) {
+      return;
+    }
+    const query = `select package_name, version_code, debuggable,
+                profileable_from_shell from package_list`;
+    runQuery(query, engine).then((resp: QueryResponse) => {
+      this.queryResponse = resp;
+      raf.scheduleFullRedraw();
+    });
+  }
+
+
+  view() {
+    const resp = this.queryResponse;
     if (resp === undefined || resp.totalRowCount === 0) {
       return m('');
     }
@@ -160,11 +299,13 @@ class PackageList implements m.ClassComponent {
     for (const row of resp.rows) {
       tableRows.push(m(
           'tr',
-          m('td', `${row.package_name}`),
+          m('td.name', `${row.package_name}`),
           m('td', `${row.version_code}`),
+          /* eslint-disable @typescript-eslint/strict-boolean-expressions */
           m('td',
             `${row.debuggable ? 'debuggable' : ''} ${
                 row.profileable_from_shell ? 'profileable' : ''}`),
+          /* eslint-enable */
           ));
     }
 
@@ -206,12 +347,13 @@ export const TraceInfoPage = createPage({
           cssClass: '.errors',
           subTitle:
               `These counters are collected at trace recording time. The trace
-               data for one or more data sources was droppped and hence some
+               data for one or more data sources was dropped and hence some
                track contents will be incomplete.`,
           sqlConstraints: `severity = 'data_loss' and value > 0`,
         }),
         m(TraceMetadata),
         m(PackageList),
+        m(AndroidGameInterventionList),
         m(StatsSection, {
           queryId: 'info_all',
           title: 'Debugging stats',
@@ -222,5 +364,5 @@ export const TraceInfoPage = createPage({
 
         }),
     );
-  }
+  },
 });

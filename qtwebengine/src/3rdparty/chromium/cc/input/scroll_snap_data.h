@@ -1,17 +1,20 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef CC_INPUT_SCROLL_SNAP_DATA_H_
 #define CC_INPUT_SCROLL_SNAP_DATA_H_
 
+#include <set>
+#include <utility>
 #include <vector>
 
-#include "base/optional.h"
+#include <optional>
+#include "base/gtest_prod_util.h"
 #include "cc/cc_export.h"
 #include "cc/paint/element_id.h"
 #include "ui/gfx/geometry/rect_f.h"
-#include "ui/gfx/geometry/scroll_offset.h"
+#include "ui/gfx/geometry/vector2d_f.h"
 #include "ui/gfx/range/range_f.h"
 
 namespace cc {
@@ -111,7 +114,17 @@ class SnapSearchResult {
   ElementId element_id() const { return element_id_; }
   void set_element_id(ElementId id) { element_id_ = id; }
 
+  std::optional<gfx::RangeF> covered_range() const { return covered_range_; }
+  void set_covered_range(const gfx::RangeF& range) { covered_range_ = range; }
+
  private:
+  // Scroll offset corresponding to this snap position. If covered_range_ is set
+  // then this will be a position inside the range. In the covered case, the
+  // result from FindClosestValidArea has a snap_offset_ equal to the
+  // intended_position() of the SnapSelectionStrategy.
+  // TODO(crbug.com/1472410): With refactoring it may be possible to replace
+  // snap_offset_ and covered_range_ with a single range field with start == end
+  // for "aligned" snap positions.
   float snap_offset_;
   // This is the range on the cross axis, within which the SnapArea generating
   // this |snap_offset| is visible. We expect the range to be in order (as
@@ -120,6 +133,15 @@ class SnapSearchResult {
 
   // The ElementId of the snap area that corresponds to this SnapSearchResult.
   ElementId element_id_;
+
+  // This is set if the validity of this result derives from the fact that the
+  // snap area covers the viewport, as described in the spec section on
+  // "Snapping Boxes that Overflow the Scrollport":
+  // https://drafts.csswg.org/css-scroll-snap-1/#snap-overflow
+  //
+  // If set, indicates the range of scroll offsets for which the snap area
+  // covers the viewport. The snap_offset_ will be a point within this range.
+  std::optional<gfx::RangeF> covered_range_;
 };
 
 // Snap area is a bounding box that could be snapped to when a scroll happens in
@@ -182,6 +204,47 @@ struct TargetSnapAreaElementIds {
 
 typedef std::vector<SnapAreaData> SnapAreaList;
 
+// Represents the result of a call to SnapContainerData::FindSnapPosition.
+struct SnapPositionData {
+  enum class Type { kNone, kAligned, kCovered };
+
+  // What kind of snap position (if any) was found.
+  Type type = Type::kNone;
+
+  // The scroll offset of the snap position.
+  gfx::PointF position;
+
+  // The elements generating the snap areas on both axes.
+  TargetSnapAreaElementIds target_element_ids;
+
+  std::optional<gfx::RangeF> covered_range_x;
+  std::optional<gfx::RangeF> covered_range_y;
+};
+
+class CC_EXPORT SnappedTargetData {
+ public:
+  SnappedTargetData();
+  SnappedTargetData(const SnappedTargetData&);
+  explicit SnappedTargetData(const std::set<ElementId>& ids);
+  ~SnappedTargetData();
+  const std::set<ElementId>& GetSnappedTargetIds() const {
+    return snapped_target_ids_;
+  }
+  void SetSnappedTargetIds(const std::set<ElementId>& ids) {
+    snapped_target_ids_ = std::move(ids);
+  }
+
+ private:
+  // The set of snap areas an associated snap container was considered snapped
+  // to at the last snap position. While the snap computation logic picks only
+  // one snap target per axis, multiple areas might be at the same scroll offset
+  // and be considered snapped to so |snapped_target_ids_| will be a superset of
+  // |SnapContainerData::target_snap_area_element_ids_|.
+  // TODO(awogbemila): move SnapContainerData::target_snap_area_element_ids_
+  // into SnappedTargetData.
+  std::set<ElementId> snapped_target_ids_;
+};
+
 // Snap container is a scroll container that at least one snap area assigned to
 // it.  If the snap-type is not 'none', then it can be snapped to one of its
 // snap areas when a scroll happens.
@@ -197,7 +260,7 @@ class CC_EXPORT SnapContainerData {
   explicit SnapContainerData(ScrollSnapType type);
   SnapContainerData(ScrollSnapType type,
                     const gfx::RectF& rect,
-                    const gfx::ScrollOffset& max);
+                    const gfx::PointF& max);
   SnapContainerData(const SnapContainerData& other);
   SnapContainerData(SnapContainerData&& other);
   ~SnapContainerData();
@@ -218,10 +281,13 @@ class CC_EXPORT SnapContainerData {
     return !(*this == other);
   }
 
-  // Returns true if a snap position was found.
-  bool FindSnapPosition(const SnapSelectionStrategy& strategy,
-                        gfx::ScrollOffset* snap_position,
-                        TargetSnapAreaElementIds* target_element_ids) const;
+  SnapPositionData FindSnapPositionWithViewportAdjustment(
+      const SnapSelectionStrategy& strategy,
+      double snapport_height_adjustment);
+
+  SnapPositionData FindSnapPosition(
+      const SnapSelectionStrategy& strategy,
+      const ElementId& active_element_id = ElementId()) const;
 
   const TargetSnapAreaElementIds& GetTargetSnapAreaElementIds() const;
   // Returns true if the target snap area element ids were changed.
@@ -229,7 +295,7 @@ class CC_EXPORT SnapContainerData {
 
   void AddSnapAreaData(SnapAreaData snap_area_data);
   size_t size() const { return snap_area_list_.size(); }
-  const SnapAreaData& at(int index) const { return snap_area_list_[index]; }
+  const SnapAreaData& at(size_t index) const { return snap_area_list_[index]; }
 
   void set_scroll_snap_type(ScrollSnapType type) { scroll_snap_type_ = type; }
   ScrollSnapType scroll_snap_type() const { return scroll_snap_type_; }
@@ -237,15 +303,17 @@ class CC_EXPORT SnapContainerData {
   void set_rect(const gfx::RectF& rect) { rect_ = rect; }
   gfx::RectF rect() const { return rect_; }
 
-  void set_max_position(gfx::ScrollOffset position) {
-    max_position_ = position;
-  }
-  gfx::ScrollOffset max_position() const { return max_position_; }
+  void set_max_position(gfx::PointF position) { max_position_ = position; }
+  gfx::PointF max_position() const { return max_position_; }
 
-  void set_proximity_range(const gfx::ScrollOffset& range) {
+  void set_proximity_range(const gfx::PointF& range) {
     proximity_range_ = range;
   }
-  gfx::ScrollOffset proximity_range() const { return proximity_range_; }
+  gfx::PointF proximity_range() const { return proximity_range_; }
+
+  static std::set<ElementId> FindSnappedTargetsAtScrollOffset(
+      const SnapContainerData* container_data,
+      const gfx::PointF& scroll_offset);
 
  private:
   // Finds the best SnapArea candidate that's optimal for the given selection
@@ -260,25 +328,35 @@ class CC_EXPORT SnapContainerData {
   // |snap_offset| and its visible range on the cross axis.
   // When |should_consider_covering| is true, the current offset can be valid if
   // it makes a snap area cover the snapport.
-  base::Optional<SnapSearchResult> FindClosestValidAreaInternal(
+  // When |active_element_range| is provided, only snap areas that overlap
+  // the active element are considered.
+  std::optional<SnapSearchResult> FindClosestValidAreaInternal(
       SearchAxis axis,
       const SnapSelectionStrategy& strategy,
       const SnapSearchResult& cross_axis_snap_result,
-      bool should_consider_covering = true) const;
+      const ElementId& active_element_id,
+      bool should_consider_covering = true,
+      std::optional<gfx::RangeF> active_element_range = std::nullopt) const;
 
   // A wrapper of FindClosestValidAreaInternal(). If
   // FindClosestValidAreaInternal() doesn't return a valid result when the snap
   // type is mandatory and the strategy has an intended direction, we relax the
   // strategy to ignore the direction and find again.
-  base::Optional<SnapSearchResult> FindClosestValidArea(
+  std::optional<SnapSearchResult> FindClosestValidArea(
       SearchAxis axis,
       const SnapSelectionStrategy& strategy,
-      const SnapSearchResult& cross_axis_snap_result) const;
+      const SnapSearchResult& cross_axis_snap_result,
+      const ElementId& active_element_id) const;
+
+  bool FindSnapPositionForMutualSnap(const SnapSelectionStrategy& strategy,
+                                     gfx::PointF* snap_position) const;
 
   // Finds the snap area associated with the target snap area element id for the
   // given axis.
-  base::Optional<SnapSearchResult> GetTargetSnapAreaSearchResult(
-      SearchAxis axis) const;
+  std::optional<SnapSearchResult> GetTargetSnapAreaSearchResult(
+      const SnapSelectionStrategy& strategy,
+      SearchAxis axis,
+      SnapSearchResult cross_axis_snap_result) const;
 
   // Returns all the info needed to snap at this area on the given axis,
   // including:
@@ -293,21 +371,37 @@ class CC_EXPORT SnapContainerData {
                                float current_offset,
                                const gfx::RectF& area_rect) const;
 
+  void UpdateSnapAreaForTesting(ElementId element_id,
+                                SnapAreaData snap_area_data);
+
+  std::optional<SnapSearchResult> FindCoveringCandidate(
+      const SnapAreaData& area,
+      SearchAxis axis,
+      const SnapSearchResult& aligned_candidate,
+      float intended_position) const;
+
+  bool IsSnappedToArea(const SnapAreaData& area,
+                       const gfx::PointF& scroll_offset) const;
+
+  gfx::RectF snapport() const;
+
   // Specifies whether a scroll container is a scroll snap container, how
   // strictly it snaps, and which axes are considered.
   // See https://www.w3.org/TR/css-scroll-snap-1/#scroll-snap-type for details.
   ScrollSnapType scroll_snap_type_;
 
-  // The rect of the snap_container relative to its boundary.
+  // The rect of the snap_container relative to its boundary.  This is the
+  // snapport supplied by Blink; it is subject to browser controls adjustment
+  // through snapport_height_adjustment_.
   gfx::RectF rect_;
 
   // The maximal scroll position of the SnapContainer, in the same coordinate
   // with blink's scroll position.
-  gfx::ScrollOffset max_position_;
+  gfx::PointF max_position_;
 
   // A valid snap position should be within the |proximity_range_| of the
   // current offset on the snapping axis.
-  gfx::ScrollOffset proximity_range_;
+  gfx::PointF proximity_range_;
 
   // The SnapAreaData for the snap areas in this snap container. When a scroll
   // happens, we iterate through the snap_area_list to find the best snap
@@ -318,6 +412,15 @@ class CC_EXPORT SnapContainerData {
   // ElementId(s) will be invalid (ElementId::kInvalidElementId) if the snap
   // container is not snapped to a position.
   TargetSnapAreaElementIds target_snap_area_element_ids_;
+
+  // Transient adjustment to the height of the snapport (rect_) to account for
+  // showing or hiding browser controls during a scroll gesture.  This is only
+  // set while a call to FindSnapPosition is executing.
+  double snapport_height_adjustment_ = 0;
+
+  FRIEND_TEST_ALL_PREFIXES(ScrollSnapDataTest, SnapToFocusedElementHorizontal);
+  FRIEND_TEST_ALL_PREFIXES(ScrollSnapDataTest, SnapToFocusedElementVertical);
+  FRIEND_TEST_ALL_PREFIXES(ScrollSnapDataTest, SnapToFocusedElementBoth);
 };
 
 CC_EXPORT std::ostream& operator<<(std::ostream&, const SnapAreaData&);

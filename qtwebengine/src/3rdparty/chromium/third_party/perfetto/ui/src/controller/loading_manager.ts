@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import {LoadingTracker} from '../common/engine';
-import {globals} from './globals';
+import {publishLoading} from '../frontend/publish';
+import {LoadingTracker} from '../trace_processor/engine';
 
 // Used to keep track of whether the engine is currently querying.
 export class LoadingManager implements LoadingTracker {
@@ -22,6 +22,7 @@ export class LoadingManager implements LoadingTracker {
   private numLastUpdate = 0;
 
   static get getInstance(): LoadingManager {
+    // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
     return this._instance || (this._instance = new this());
   }
 
@@ -38,7 +39,7 @@ export class LoadingManager implements LoadingTracker {
     if (this.numQueuedQueries === 0 ||
         Math.abs(this.numLastUpdate - this.numQueuedQueries) > 2) {
       this.numLastUpdate = this.numQueuedQueries;
-      globals.publish('Loading', this.numQueuedQueries);
+      publishLoading(this.numQueuedQueries);
     }
   }
 }

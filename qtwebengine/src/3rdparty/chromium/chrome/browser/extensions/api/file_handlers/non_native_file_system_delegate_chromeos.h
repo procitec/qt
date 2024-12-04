@@ -1,15 +1,15 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef CHROME_BROWSER_EXTENSIONS_API_FILE_HANDLERS_NON_NATIVE_FILE_SYSTEM_DELEGATE_CHROMEOS_H_
 #define CHROME_BROWSER_EXTENSIONS_API_FILE_HANDLERS_NON_NATIVE_FILE_SYSTEM_DELEGATE_CHROMEOS_H_
 
+#include <optional>
 #include <string>
 
-#include "base/callback.h"
 #include "base/files/file_path.h"
-#include "base/optional.h"
+#include "base/functional/callback.h"
 #include "extensions/browser/api/file_handlers/non_native_file_system_delegate.h"
 
 namespace content {
@@ -22,6 +22,12 @@ class NonNativeFileSystemDelegateChromeOS
     : public extensions::NonNativeFileSystemDelegate {
  public:
   NonNativeFileSystemDelegateChromeOS();
+
+  NonNativeFileSystemDelegateChromeOS(
+      const NonNativeFileSystemDelegateChromeOS&) = delete;
+  NonNativeFileSystemDelegateChromeOS& operator=(
+      const NonNativeFileSystemDelegateChromeOS&) = delete;
+
   ~NonNativeFileSystemDelegateChromeOS() override;
 
   // extensions::NonNativeFileSystemDelegate:
@@ -32,7 +38,7 @@ class NonNativeFileSystemDelegateChromeOS
   void GetNonNativeLocalPathMimeType(
       content::BrowserContext* context,
       const base::FilePath& path,
-      base::OnceCallback<void(const base::Optional<std::string>&)> callback)
+      base::OnceCallback<void(const std::optional<std::string>&)> callback)
       override;
   void IsNonNativeLocalPathDirectory(
       content::BrowserContext* context,
@@ -42,9 +48,6 @@ class NonNativeFileSystemDelegateChromeOS
       content::BrowserContext* context,
       const base::FilePath& path,
       base::OnceCallback<void(bool)> callback) override;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(NonNativeFileSystemDelegateChromeOS);
 };
 
 }  // namespace extensions

@@ -1,4 +1,4 @@
-# Copyright 2020 The Chromium Authors. All rights reserved.
+# Copyright 2020 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -8,7 +8,7 @@ They are actually shared with a bunch other projects.
 """
 
 load("//lib/swarming.star", "swarming")
-load("//project.star", "ACTIVE_BRANCHES")
+load("//project.star", "ACTIVE_MILESTONES")
 
 # Set up permissions that apply to all Chromium pools.
 swarming.root_permissions()
@@ -44,8 +44,7 @@ swarming.task_triggerers(
     builder_realm = "@root",
     pool_realm = "@root",
     groups = [
-        "mdb/chrome-troopers",
-        "google/luci-task-force@google.com",
+        "mdb/chrome-browser-infra",
     ],
 )
 
@@ -58,7 +57,21 @@ swarming.task_triggerers(
 # projects).
 swarming.pool_realm(
     name = "pools/ci",
-    projects = ["chromium-%s" % m for m, _ in ACTIVE_BRANCHES],
+    projects = [details.project for details in ACTIVE_MILESTONES.values()],
+)
+
+swarming.task_triggerers(
+    builder_realm = "ci",
+    pool_realm = "pools/ci",
+    groups = [
+        "mdb/chrome-build-access-sphinx",
+    ],
+    users = [
+        "chromium-ci-builder@chops-service-accounts.iam.gserviceaccount.com",
+
+        # Used by Findit to re-run swarming tasks for bisection purposes.
+        "findit-for-me@appspot.gserviceaccount.com",
+    ],
 )
 
 # Realm with bots that run try builds.
@@ -66,7 +79,7 @@ swarming.pool_realm(
 # The tasks here are also triggered via Buildbucket. See comment above.
 swarming.pool_realm(
     name = "pools/try",
-    projects = ["chromium-%s" % m for m, _ in ACTIVE_BRANCHES],
+    projects = [details.project for details in ACTIVE_MILESTONES.values()],
 )
 
 # LED users that can trigger try builds via LED.
@@ -74,9 +87,15 @@ swarming.task_triggerers(
     builder_realm = "try",
     pool_realm = "pools/try",
     groups = [
+        "mdb/chrome-build-access-sphinx",
+        # Prefer the above sphinx group for led access. But if folks outside
+        # Chrome need access, can add them to chromium-led-users.
         "chromium-led-users",
     ],
     users = [
+        # Build Recipes Tester launches orchestrator led builds which needs to
+        # trigger compilator led builds
+        "chromium-orchestrator@chops-service-accounts.iam.gserviceaccount.com",
         # An account used by "Build Recipes Tester" builder infra/try bucket
         # used to tests changes to Chromium recipes using LED before commit.
         "infra-try-recipes-tester@chops-service-accounts.iam.gserviceaccount.com",
@@ -107,6 +126,10 @@ swarming.pool_realm(
         "project-webrtc-ci-task-accounts",
         "project-webrtc-try-task-accounts",
 
+        # ... and Angle.
+        "project-angle-ci-task-accounts",
+        "project-angle-try-task-accounts",
+
         # Used by Pinpoint to trigger bisect jobs on machines in the Chrome-GPU pool.
         "service-account-chromeperf",
     ],
@@ -132,8 +155,10 @@ swarming.task_triggerers(
 swarming.pool_realm(
     name = "pools/tests-mac-arm64",
     groups = [
-        # Allow CI builders (mac-arm64-rel-tests) to trigger tests.
+        # Allow CI builders (mac*-arm64-rel-tests) to trigger tests.
         "project-chromium-ci-task-accounts",
+        # V8 *CI* is using these Macs, too.
+        "project-v8-ci-task-accounts",
     ],
 )
 

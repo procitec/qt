@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -19,14 +19,26 @@
 #include "base/strings/string_util.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 
 // Not defined on AIX by default.
-#if defined(OS_AIX)
+#if BUILDFLAG(IS_AIX)
 #define NAME_MAX 255
 #endif
 
 namespace base {
 namespace internal {
+
+namespace {
+
+void TrimKeyValuePairs(StringPairs* pairs) {
+  for (auto& pair : *pairs) {
+    TrimWhitespaceASCII(pair.first, TRIM_ALL, &pair.first);
+    TrimWhitespaceASCII(pair.second, TRIM_ALL, &pair.second);
+  }
+}
+
+}  // namespace
 
 const char kProcDir[] = "/proc";
 
@@ -60,13 +72,82 @@ bool ReadProcFile(const FilePath& file, std::string* buffer) {
   DCHECK(FilePath(kProcDir).IsParent(file));
   buffer->clear();
   // Synchronously reading files in /proc is safe.
-  ThreadRestrictions::ScopedAllowIO allow_io;
+  ScopedAllowBlocking scoped_allow_blocking;
 
   if (!ReadFileToString(file, buffer)) {
     DLOG(WARNING) << "Failed to read " << file.MaybeAsASCII();
     return false;
   }
   return !buffer->empty();
+}
+
+bool ReadProcFileToTrimmedStringPairs(pid_t pid,
+                                      StringPiece filename,
+                                      StringPairs* key_value_pairs) {
+  std::string status_data;
+  FilePath status_file = GetProcPidDir(pid).Append(filename);
+  if (!ReadProcFile(status_file, &status_data)) {
+    return false;
+  }
+  SplitStringIntoKeyValuePairs(status_data, ':', '\n', key_value_pairs);
+  TrimKeyValuePairs(key_value_pairs);
+  return true;
+}
+
+size_t ReadProcStatusAndGetKbFieldAsSizeT(pid_t pid, StringPiece field) {
+  StringPairs pairs;
+  if (!ReadProcFileToTrimmedStringPairs(pid, "status", &pairs)) {
+    return 0;
+  }
+
+  for (const auto& pair : pairs) {
+    const std::string& key = pair.first;
+    const std::string& value_str = pair.second;
+    if (key != field) {
+      continue;
+    }
+
+    std::vector<StringPiece> split_value_str =
+        SplitStringPiece(value_str, " ", TRIM_WHITESPACE, SPLIT_WANT_ALL);
+    if (split_value_str.size() != 2 || split_value_str[1] != "kB") {
+      NOTREACHED();
+      return 0;
+    }
+    size_t value;
+    if (!StringToSizeT(split_value_str[0], &value)) {
+      NOTREACHED();
+      return 0;
+    }
+    return value;
+  }
+  // This can be reached if the process dies when proc is read -- in that case,
+  // the kernel can return missing fields.
+  return 0;
+}
+
+bool ReadProcStatusAndGetFieldAsUint64(pid_t pid,
+                                       StringPiece field,
+                                       uint64_t* result) {
+  StringPairs pairs;
+  if (!ReadProcFileToTrimmedStringPairs(pid, "status", &pairs)) {
+    return false;
+  }
+
+  for (const auto& pair : pairs) {
+    const std::string& key = pair.first;
+    const std::string& value_str = pair.second;
+    if (key != field) {
+      continue;
+    }
+
+    uint64_t value;
+    if (!StringToUint64(value_str, &value)) {
+      return false;
+    }
+    *result = value;
+    return true;
+  }
+  return false;
 }
 
 bool ReadProcStats(pid_t pid, std::string* buffer) {
@@ -211,10 +292,10 @@ TimeDelta GetUserCpuTimeSinceBoot() {
   if (!StringToUint64(cpu[0], &user) || !StringToUint64(cpu[1], &nice))
     return TimeDelta();
 
-  return ClockTicksToTimeDelta(user + nice);
+  return ClockTicksToTimeDelta(checked_cast<int64_t>(user + nice));
 }
 
-TimeDelta ClockTicksToTimeDelta(int clock_ticks) {
+TimeDelta ClockTicksToTimeDelta(int64_t clock_ticks) {
   // This queries the /proc-specific scaling factor which is
   // conceptually the system hertz.  To dump this value on another
   // system, try
@@ -223,10 +304,9 @@ TimeDelta ClockTicksToTimeDelta(int clock_ticks) {
   //   0000040          17         100           3   134512692
   // which means the answer is 100.
   // It may be the case that this value is always 100.
-  static const int kHertz = sysconf(_SC_CLK_TCK);
+  static const long kHertz = sysconf(_SC_CLK_TCK);
 
-  return TimeDelta::FromMicroseconds(
-      Time::kMicrosecondsPerSecond * clock_ticks / kHertz);
+  return Microseconds(Time::kMicrosecondsPerSecond * clock_ticks / kHertz);
 }
 
 }  // namespace internal

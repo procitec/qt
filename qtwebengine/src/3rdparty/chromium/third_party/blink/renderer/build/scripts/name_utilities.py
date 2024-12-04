@@ -44,6 +44,10 @@ def cpp_name(entry):
 
 
 def enum_key_for_css_keyword(keyword):
+    # To make sure different enum keys are generated for infinity and -infinity.
+    # Design doc : https://bit.ly/349gXjq
+    if (not isinstance(keyword, str)) and keyword.original == '-infinity':
+        return 'kNegative' + _upper_camel_case(keyword)
     return 'k' + _upper_camel_case(keyword)
 
 
@@ -69,3 +73,10 @@ def _upper_camel_case(property_name):
     converter = NameStyleConverter(property_name) if isinstance(
         property_name, str) else property_name
     return converter.to_upper_camel_case()
+
+
+def tag_symbol_for_entry(json_entry):
+    suffix = "OrUnknown" if json_entry.get('runtimeFlagHasOriginTrial',
+                                           False) else ""
+    return 'k' + NameStyleConverter(
+        json_entry['name'].original).to_upper_camel_case() + suffix

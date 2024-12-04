@@ -1,12 +1,14 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef UI_GFX_X_XPROTO_INTERNAL_H_
 #define UI_GFX_X_XPROTO_INTERNAL_H_
 
+#include "base/memory/raw_ptr.h"
+
 #ifndef IS_X11_IMPL
-#error "This file should only be included by //ui/gfx/x:xprotos"
+#error "This file should only be included by //ui/gfx/x"
 #endif
 
 #include <bitset>
@@ -15,14 +17,13 @@
 #include "base/component_export.h"
 #include "base/logging.h"
 #include "base/memory/ref_counted_memory.h"
-#include "base/optional.h"
-#include "ui/gfx/x/connection.h"
+#include "ui/gfx/x/future.h"
+#include "ui/gfx/x/xproto.h"
 #include "ui/gfx/x/xproto_types.h"
 
 namespace x11 {
 
-template <class Reply>
-class Future;
+class Connection;
 
 template <typename T, typename Enable = void>
 struct EnumBase {
@@ -36,6 +37,9 @@ struct EnumBase<T, typename std::enable_if_t<std::is_enum<T>::value>> {
 
 template <typename T>
 using EnumBaseType = typename EnumBase<T>::type;
+
+template <typename T>
+void ReadError(T* error, ReadBuffer* buf);
 
 // Calls free() on the underlying data when the count drops to 0.
 class COMPONENT_EXPORT(X11) MallocedRefCountedMemory
@@ -51,9 +55,16 @@ class COMPONENT_EXPORT(X11) MallocedRefCountedMemory
   size_t size() const override;
 
  private:
+  struct deleter {
+    void operator()(uint8_t* data) {
+      if (data) {
+        free(data);
+      }
+    }
+  };
   ~MallocedRefCountedMemory() override;
 
-  uint8_t* const data_;
+  std::unique_ptr<uint8_t, deleter> data_;
 };
 
 // Wraps another RefCountedMemory, giving a view into it.  Similar to
@@ -113,8 +124,9 @@ void Read(T* t, ReadBuffer* buf) {
 
 inline void Pad(WriteBuffer* buf, size_t amount) {
   uint8_t zero = 0;
-  for (size_t i = 0; i < amount; i++)
+  for (size_t i = 0; i < amount; i++) {
     buf->Write(&zero);
+  }
 }
 
 inline void Pad(ReadBuffer* buf, size_t amount) {
@@ -129,20 +141,6 @@ inline void Align(ReadBuffer* buf, size_t align) {
   Pad(buf, (align - (buf->offset % align)) % align);
 }
 
-base::Optional<unsigned int> SendRequestImpl(x11::Connection* connection,
-                                             WriteBuffer* buf,
-                                             bool is_void,
-                                             bool reply_has_fds);
-
-template <typename Reply>
-Future<Reply> SendRequest(x11::Connection* connection,
-                          WriteBuffer* buf,
-                          bool reply_has_fds) {
-  auto sequence = SendRequestImpl(connection, buf, std::is_void<Reply>::value,
-                                  reply_has_fds);
-  return {sequence ? connection : nullptr, sequence};
-}
-
 // Helper function for xcbproto popcount.  Given an integral type, returns the
 // number of 1 bits present.
 template <typename T>
@@ -155,8 +153,9 @@ size_t PopCount(T t) {
 template <typename F, typename T>
 auto SumOf(F&& f, T& t) {
   decltype(f(t[0])) sum = 0;
-  for (auto& v : t)
+  for (auto& v : t) {
     sum += f(v);
+  }
   return sum;
 }
 
@@ -192,13 +191,14 @@ auto BitNot(T t) {
 template <typename T>
 auto SwitchVar(T enum_val, bool condition, bool is_bitcase, T* switch_var) {
   using EnumInt = EnumBaseType<T>;
-  if (!condition)
+  if (!condition) {
     return;
+  }
   EnumInt switch_int = static_cast<EnumInt>(*switch_var);
   if (is_bitcase) {
     *switch_var = static_cast<T>(switch_int | static_cast<EnumInt>(enum_val));
   } else {
-    DCHECK(!switch_int);
+    CHECK(!switch_int);
     *switch_var = enum_val;
   }
 }

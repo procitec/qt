@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,9 +9,11 @@
 
 #include <memory>
 
-#include "base/bind.h"
-#include "gpu/command_buffer/common/activity_flags.h"
+#include "base/functional/bind.h"
+#include "base/memory/raw_ptr.h"
+#include "build/build_config.h"
 #include "gpu/command_buffer/common/gles2_cmd_format.h"
+#include "gpu/command_buffer/common/shm_count.h"
 #include "gpu/command_buffer/service/gl_utils.h"
 #include "gpu/command_buffer/service/gpu_service_test.h"
 #include "gpu/command_buffer/service/shader_manager.h"
@@ -81,17 +83,24 @@ class MemoryProgramCacheTest : public GpuServiceTest, public DecoderClient {
       : cache_(new MemoryProgramCache(kCacheSizeBytes,
                                       kDisableGpuDiskCache,
                                       kDisableCachingForTransformFeedback,
-                                      &activity_flags_)),
+                                      &use_shader_cache_shm_count_)),
         shader_manager_(nullptr),
         vertex_shader_(nullptr),
         fragment_shader_(nullptr),
         shader_cache_count_(0) {}
-  ~MemoryProgramCacheTest() override { shader_manager_.Destroy(false); }
+  ~MemoryProgramCacheTest() override {
+    vertex_shader_ = nullptr;
+    fragment_shader_ = nullptr;
+    shader_manager_.Destroy(false);
+  }
 
   void OnConsoleMessage(int32_t id, const std::string& message) override {}
-  void CacheShader(const std::string& key, const std::string& shader) override {
+  void CacheBlob(gpu::GpuDiskCacheType type,
+                 const std::string& key,
+                 const std::string& blob) override {
+    ASSERT_EQ(type, gpu::GpuDiskCacheType::kGlShaders);
     shader_cache_count_++;
-    shader_cache_shader_ = shader;
+    shader_cache_shader_ = blob;
   }
   void OnFenceSyncRelease(uint64_t release) override {}
   void OnDescheduleUntilFinished() override {}
@@ -196,11 +205,12 @@ class MemoryProgramCacheTest : public GpuServiceTest, public DecoderClient {
                 .WillOnce(SetArgPointee<2>(GL_FALSE));
   }
 
-  GpuProcessActivityFlags activity_flags_;
+  GpuProcessShmCount use_shader_cache_shm_count_;
   std::unique_ptr<MemoryProgramCache> cache_;
   ShaderManager shader_manager_;
-  Shader* vertex_shader_;
-  Shader* fragment_shader_;
+  // These shaders are owned by |shader_manager_|.
+  raw_ptr<Shader> vertex_shader_;
+  raw_ptr<Shader> fragment_shader_;
   int32_t shader_cache_count_;
   std::string shader_cache_shader_;
   std::vector<std::string> varyings_;
@@ -303,7 +313,7 @@ TEST_F(MemoryProgramCacheTest, CacheLoadMatchesSave) {
 
   // apparently the hash_map implementation on android doesn't have the
   // equality operator
-#if !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID)
   EXPECT_EQ(vertex_attrib_map, vertex_shader_->attrib_map());
   EXPECT_EQ(vertex_uniform_map, vertex_shader_->uniform_map());
   EXPECT_EQ(vertex_varying_map, vertex_shader_->varying_map());
@@ -365,7 +375,7 @@ TEST_F(MemoryProgramCacheTest, LoadProgramMatchesSave) {
 
   // apparently the hash_map implementation on android doesn't have the
   // equality operator
-#if !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID)
   EXPECT_EQ(vertex_attrib_map, vertex_shader_->attrib_map());
   EXPECT_EQ(vertex_uniform_map, vertex_shader_->uniform_map());
   EXPECT_EQ(vertex_varying_map, vertex_shader_->varying_map());
@@ -499,7 +509,7 @@ TEST_F(MemoryProgramCacheTest, LoadFailIfTransformFeedbackCachingDisabled) {
   // Forcibly reset the program cache so we can disable caching of
   // programs which include transform feedback varyings.
   cache_.reset(new MemoryProgramCache(kCacheSizeBytes, kDisableGpuDiskCache,
-                                      true, &activity_flags_));
+                                      true, &use_shader_cache_shm_count_));
   varyings_.push_back("test");
   cache_->SaveLinkedProgram(kProgramId, vertex_shader_, fragment_shader_,
                             nullptr, varyings_, GL_INTERLEAVED_ATTRIBS, this);

@@ -1,9 +1,11 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef CC_LAYERS_PAINTED_SCROLLBAR_LAYER_IMPL_H_
 #define CC_LAYERS_PAINTED_SCROLLBAR_LAYER_IMPL_H_
+
+#include <memory>
 
 #include "cc/cc_export.h"
 #include "cc/input/scrollbar.h"
@@ -29,14 +31,18 @@ class CC_EXPORT PaintedScrollbarLayerImpl : public ScrollbarLayerImplBase {
       delete;
 
   // LayerImpl implementation.
-  std::unique_ptr<LayerImpl> CreateLayerImpl(LayerTreeImpl* tree_impl) override;
+  std::unique_ptr<LayerImpl> CreateLayerImpl(
+      LayerTreeImpl* tree_impl) const override;
   void PushPropertiesTo(LayerImpl* layer) override;
 
   bool WillDraw(DrawMode draw_mode,
                 viz::ClientResourceProvider* resource_provider) override;
   void AppendQuads(viz::CompositorRenderPass* render_pass,
                    AppendQuadsData* append_quads_data) override;
-  gfx::Rect GetEnclosingRectInTargetSpace() const override;
+  gfx::Rect GetEnclosingVisibleRectInTargetSpace() const override;
+  gfx::Rect ComputeThumbQuadRect() const override;
+  gfx::Rect ComputeHitTestableThumbQuadRect() const override;
+  gfx::Rect ComputeHitTestableExpandedThumbQuadRect() const override;
 
   void SetJumpOnTrackClick(bool jump_on_track_click);
   void SetSupportsDragSnapBack(bool supports_drag_snap_back);
@@ -45,16 +51,13 @@ class CC_EXPORT PaintedScrollbarLayerImpl : public ScrollbarLayerImplBase {
   void SetThumbThickness(int thumb_thickness);
   void SetThumbLength(int thumb_length);
   void SetTrackRect(gfx::Rect track_rect);
+  void SetScrollbarPaintedOpacity(float opacity);
 
   void set_track_ui_resource_id(UIResourceId uid) {
     track_ui_resource_id_ = uid;
   }
   void set_thumb_ui_resource_id(UIResourceId uid) {
     thumb_ui_resource_id_ = uid;
-  }
-
-  void set_scrollbar_painted_opacity(float opacity) {
-    painted_opacity_ = opacity;
   }
   float OverlayScrollbarOpacity() const override;
 
@@ -89,6 +92,11 @@ class CC_EXPORT PaintedScrollbarLayerImpl : public ScrollbarLayerImplBase {
 
  private:
   const char* LayerTypeAsString() const override;
+  // Expand the scrollbar thumb's hit testable rect to be able to capture the
+  // thumb across the entire width of the track rect.
+  gfx::Rect ExpandFluentScrollbarThumb(gfx::Rect thumb_rect) const;
+  // Position composited Fluent scrollbar thumb in the center of the track.
+  gfx::Rect CenterFluentScrollbarThumb(gfx::Rect thumb_rect) const;
 
   UIResourceId track_ui_resource_id_;
   UIResourceId thumb_ui_resource_id_;

@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,33 +6,45 @@
 
 #include <stddef.h>
 
-#include "base/mac/bundle_locations.h"
+#include "base/apple/bundle_locations.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/ios/wait_util.h"
+#include "base/test/metrics/histogram_tester.h"
+#import "base/values.h"
 #include "components/autofill/core/browser/logging/log_manager.h"
 #include "components/autofill/core/common/form_data.h"
 #include "components/autofill/core/common/password_form_fill_data.h"
+#import "components/autofill/ios/form_util/autofill_test_with_web_state.h"
+#import "components/autofill/ios/form_util/form_handlers_java_script_feature.h"
+#import "components/autofill/ios/form_util/form_util_java_script_feature.h"
 #include "components/autofill/ios/form_util/unique_id_data_tab_helper.h"
+#import "components/autofill/ios/form_util/unique_id_data_tab_helper.h"
 #include "components/password_manager/ios/account_select_fill_data.h"
+#include "components/password_manager/ios/password_manager_java_script_feature.h"
 #include "components/password_manager/ios/test_helpers.h"
+#include "components/ukm/ios/ukm_url_recorder.h"
+#include "components/ukm/test_ukm_recorder.h"
+#import "ios/web/public/js_messaging/script_message.h"
+#import "ios/web/public/js_messaging/web_frame.h"
+#import "ios/web/public/js_messaging/web_frames_manager.h"
 #import "ios/web/public/test/fakes/fake_navigation_context.h"
-#include "ios/web/public/test/fakes/test_web_client.h"
+#include "ios/web/public/test/fakes/fake_web_client.h"
+#import "ios/web/public/test/fakes/fake_web_state.h"
 #import "ios/web/public/test/web_test_with_web_state.h"
+#import "ios/web/public/web_client.h"
 #import "ios/web/public/web_state.h"
+#include "services/metrics/public/cpp/ukm_builders.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/gtest_mac.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
+#import "third_party/ocmock/OCMock/OCMock.h"
+#import "third_party/ocmock/gtest_support.h"
 
 NS_ASSUME_NONNULL_BEGIN
 
 using autofill::FieldRendererId;
 using autofill::FormData;
 using autofill::FormRendererId;
-using autofill::PasswordForm;
 using autofill::PasswordFormFillData;
 using base::test::ios::kWaitForJSCompletionTimeout;
 using base::test::ios::WaitUntilConditionOrTimeout;
@@ -42,35 +54,32 @@ using test_helpers::SetFillData;
 using test_helpers::SetFormData;
 
 namespace {
-// Returns a string containing the JavaScript loaded from a
-// bundled resource file with the given name (excluding extension).
-NSString* GetPageScript(NSString* script_file_name) {
-  EXPECT_NE(nil, script_file_name);
-  NSString* path =
-      [base::mac::FrameworkBundle() pathForResource:script_file_name
-                                             ofType:@"js"];
-  EXPECT_NE(nil, path);
-  NSError* error = nil;
-  NSString* content = [NSString stringWithContentsOfFile:path
-                                                encoding:NSUTF8StringEncoding
-                                                   error:&error];
-  EXPECT_EQ(nil, error);
-  EXPECT_NE(nil, content);
-  return content;
-}
 
-class TestWebClientWithScript : public web::TestWebClient {
+// A FakeWebState that returns nullopt as the last trusted committed URL.
+class FakeWebStateWithoutTrustedCommittedUrl : public web::FakeWebState {
  public:
-  NSString* GetDocumentStartScriptForMainFrame(
-      web::BrowserState* browser_state) const override {
-    return GetPageScript(@"test_bundle");
+  ~FakeWebStateWithoutTrustedCommittedUrl() override {}
+
+  // WebState implementation.
+  std::optional<GURL> GetLastCommittedURLIfTrusted() const override {
+    return std::nullopt;
   }
 };
 
-class PasswordFormHelperTest : public web::WebTestWithWebState {
+class PasswordFormHelperTest : public AutofillTestWithWebState {
  public:
   PasswordFormHelperTest()
-      : web::WebTestWithWebState(std::make_unique<TestWebClientWithScript>()) {}
+      : AutofillTestWithWebState(std::make_unique<web::FakeWebClient>()) {
+    web::FakeWebClient* web_client =
+        static_cast<web::FakeWebClient*>(GetWebClient());
+    web_client->SetJavaScriptFeatures(
+        {autofill::FormHandlersJavaScriptFeature::GetInstance(),
+         autofill::FormUtilJavaScriptFeature::GetInstance(),
+         password_manager::PasswordManagerJavaScriptFeature::GetInstance()});
+  }
+
+  PasswordFormHelperTest(const PasswordFormHelperTest&) = delete;
+  PasswordFormHelperTest& operator=(const PasswordFormHelperTest&) = delete;
 
   ~PasswordFormHelperTest() override = default;
 
@@ -78,6 +87,7 @@ class PasswordFormHelperTest : public web::WebTestWithWebState {
     WebTestWithWebState::SetUp();
     UniqueIDDataTabHelper::CreateForWebState(web_state());
     helper_ = [[PasswordFormHelper alloc] initWithWebState:web_state()];
+    ukm::InitializeSourceUrlRecorderForWebState(web_state());
   }
 
   void TearDown() override {
@@ -86,11 +96,68 @@ class PasswordFormHelperTest : public web::WebTestWithWebState {
     web::WebTestWithWebState::TearDown();
   }
 
+  web::WebFrame* GetMainFrame() {
+    password_manager::PasswordManagerJavaScriptFeature* feature =
+        password_manager::PasswordManagerJavaScriptFeature::GetInstance();
+    return feature->GetWebFramesManager(web_state())->GetMainWebFrame();
+  }
+
+  // Sets up unique form ids and returns true if successful.
+  bool SetUpUniqueIDs() {
+    __block web::WebFrame* main_frame = nullptr;
+    bool success =
+        WaitUntilConditionOrTimeout(kWaitForJSCompletionTimeout, ^bool {
+          main_frame = GetMainFrame();
+          return main_frame != nullptr;
+        });
+    if (!success) {
+      return false;
+    }
+    DCHECK(main_frame);
+    SetUpForUniqueIds(main_frame);
+
+    if (!success) {
+      return false;
+    }
+
+    // Run password forms search to set up unique IDs.
+    __block bool complete = false;
+    password_manager::PasswordManagerJavaScriptFeature::GetInstance()
+        ->FindPasswordFormsInFrame(main_frame,
+                                   base::BindOnce(^(NSString* forms) {
+                                     complete = true;
+                                   }));
+
+    return WaitUntilConditionOrTimeout(kWaitForJSCompletionTimeout, ^bool {
+      return complete;
+    });
+  }
+
+  // Returns a valid form submitted message body.
+  std::unique_ptr<base::Value> ValidFormSubmittedMessageBody(
+      std::string frame_id) {
+    return std::make_unique<base::Value>(
+        base::Value::Dict()
+            .Set("name", "test_form")
+            .Set("origin", BaseUrl())
+            .Set("fields", base::Value::List().Append(
+                               base::Value::Dict()
+                                   .Set("name", "test_field")
+                                   .Set("form_control_type", "password")))
+            .Set("frame_id", frame_id));
+  }
+
+  // Returns a script message that can represent a form submission.
+  web::ScriptMessage ScriptMessageForSubmit(std::unique_ptr<base::Value> body) {
+    return web::ScriptMessage(std::move(body),
+                              /*is_user_interacting=*/true,
+                              /*is_main_frame=*/true,
+                              /*request_url=*/std::nullopt);
+  }
+
  protected:
   // PasswordFormHelper for testing.
   PasswordFormHelper* helper_;
-
-  DISALLOW_COPY_AND_ASSIGN(PasswordFormHelperTest);
 };
 
 struct FindPasswordFormTestData {
@@ -160,11 +227,12 @@ TEST_F(PasswordFormHelperTest, FindPasswordFormsInView) {
     LoadHtml(data.html_string);
     __block std::vector<FormData> forms;
     __block BOOL block_was_called = NO;
-    [helper_ findPasswordFormsWithCompletionHandler:^(
-                 const std::vector<FormData>& result, uint32_t maxID) {
-      block_was_called = YES;
-      forms = result;
-    }];
+    [helper_ findPasswordFormsInFrame:GetMainFrame()
+                    completionHandler:^(const std::vector<FormData>& result,
+                                        uint32_t maxID) {
+                      block_was_called = YES;
+                      forms = result;
+                    }];
     EXPECT_TRUE(
         WaitUntilConditionOrTimeout(kWaitForJSCompletionTimeout, ^bool() {
           return block_was_called;
@@ -219,19 +287,24 @@ static NSString* kInputFieldValueVerificationScript =
 
 // Tests that filling password forms with fill data works correctly.
 TEST_F(PasswordFormHelperTest, FillPasswordFormWithFillData) {
+  ukm::TestAutoSetUkmRecorder test_recorder;
+  base::HistogramTester histogram_tester;
   LoadHtml(
       @"<form><input id='u1' type='text' name='un1'>"
        "<input id='p1' type='password' name='pw1'></form>");
-  ExecuteJavaScript(@"__gCrWeb.fill.setUpForUniqueIDs(0);");
-  // Run password forms search to set up unique IDs.
-  EXPECT_TRUE(ExecuteJavaScript(@"__gCrWeb.passwords.findPasswordForms();"));
+
+  ASSERT_TRUE(SetUpUniqueIDs());
   const std::string base_url = BaseUrl();
+  FieldRendererId username_field_id(2);
+  FieldRendererId password_field_id(3);
   FillData fill_data;
-  SetFillData(base_url, 0, 1, "john.doe@gmail.com", 2, "super!secret",
-              &fill_data);
+  SetFillData(base_url, 1, username_field_id.value(), "john.doe@gmail.com",
+              password_field_id.value(), "super!secret", &fill_data);
 
   __block int call_counter = 0;
   [helper_ fillPasswordFormWithFillData:fill_data
+                                inFrame:GetMainFrame()
+                       triggeredOnField:username_field_id
                       completionHandler:^(BOOL complete) {
                         ++call_counter;
                         EXPECT_TRUE(complete);
@@ -241,38 +314,51 @@ TEST_F(PasswordFormHelperTest, FillPasswordFormWithFillData) {
   }));
   id result = ExecuteJavaScript(kInputFieldValueVerificationScript);
   EXPECT_NSEQ(@"u1=john.doe@gmail.com;p1=super!secret;", result);
+
+  histogram_tester.ExpectUniqueSample("PasswordManager.FillingSuccessIOS", true,
+                                      1);
+  // Check recorded UKM.
+  auto entries = test_recorder.GetEntriesByName(
+      ukm::builders::PasswordManager_PasswordFillingIOS::kEntryName);
+  // Expect one recorded metric.
+  ASSERT_EQ(1u, entries.size());
+  test_recorder.ExpectEntryMetric(entries[0], "FillingSuccess", true);
 }
 
-// Tests that a form is found and the found form is filled in with the given
-// username and password.
-TEST_F(PasswordFormHelperTest, FindAndFillOnePasswordForm) {
-  LoadHtml(
-      @"<form><input id='u1' type='text' name='un1'>"
-       "<input id='p1' type='password' name='pw1'></form>");
-  ExecuteJavaScript(@"__gCrWeb.fill.setUpForUniqueIDs(0);");
-  // Run password forms search to set up unique IDs.
-  EXPECT_TRUE(ExecuteJavaScript(@"__gCrWeb.passwords.findPasswordForms();"));
+// Tests that failure in filling password forms with fill data is recorded.
+TEST_F(PasswordFormHelperTest, FillPasswordFormWithFillDataFillingFailure) {
+  ukm::TestAutoSetUkmRecorder test_recorder;
+  base::HistogramTester histogram_tester;
+  LoadHtml(@"<form><input id='p1' type='password' name='pw1'></form>");
 
-  PasswordFormFillData form_data;
-  SetPasswordFormFillData(BaseUrl(), "gChrome~form~0", 0, "u1", 1,
-                          "john.doe@gmail.com", "p1", 2, "super!secret",
-                          nullptr, nullptr, false, &form_data);
+  ASSERT_TRUE(SetUpUniqueIDs());
+  const std::string base_url = BaseUrl();
+  FieldRendererId username_field_id(0);
+  // The password renderer id does not exist, that's why the filling will fail
+  FieldRendererId password_field_id(404);
+  FillData fill_data;
+  SetFillData(base_url, 1, username_field_id.value(), "",
+              password_field_id.value(), "super!secret", &fill_data);
 
   __block int call_counter = 0;
-  __block int success_counter = 0;
-  [helper_ fillPasswordForm:form_data
-          completionHandler:^(BOOL complete) {
-            ++call_counter;
-            if (complete) {
-              ++success_counter;
-            }
-          }];
+  [helper_ fillPasswordFormWithFillData:fill_data
+                                inFrame:GetMainFrame()
+                       triggeredOnField:password_field_id
+                      completionHandler:^(BOOL complete) {
+                        ++call_counter;
+                      }];
   EXPECT_TRUE(WaitUntilConditionOrTimeout(kWaitForJSCompletionTimeout, ^{
     return call_counter == 1;
   }));
-  EXPECT_EQ(1, success_counter);
-  id result = ExecuteJavaScript(kInputFieldValueVerificationScript);
-  EXPECT_NSEQ(@"u1=john.doe@gmail.com;p1=super!secret;", result);
+
+  histogram_tester.ExpectUniqueSample("PasswordManager.FillingSuccessIOS",
+                                      false, 1);
+  // Check recorded UKM.
+  auto entries = test_recorder.GetEntriesByName(
+      ukm::builders::PasswordManager_PasswordFillingIOS::kEntryName);
+  // Expect one recorded metric.
+  ASSERT_EQ(1u, entries.size());
+  test_recorder.ExpectEntryMetric(entries[0], "FillingSuccess", false);
 }
 
 // Tests that extractPasswordFormData extracts wanted form on page with mutiple
@@ -284,13 +370,14 @@ TEST_F(PasswordFormHelperTest, ExtractPasswordFormData) {
             "<input id='p2' type='password' name='pw2'></form>"
             "<form><input id='u3' type='text' name='un3'>"
             "<input id='p3' type='password' name='pw3'></form>");
-  ExecuteJavaScript(@"__gCrWeb.fill.setUpForUniqueIDs(0);");
-  // Run password forms search to set up unique IDs.
-  EXPECT_TRUE(ExecuteJavaScript(@"__gCrWeb.passwords.findPasswordForms();"));
+
+  ASSERT_TRUE(SetUpUniqueIDs());
+
   __block int call_counter = 0;
   __block int success_counter = 0;
   __block FormData result = FormData();
-  [helper_ extractPasswordFormData:FormRendererId(0)
+  [helper_ extractPasswordFormData:FormRendererId(1)
+                           inFrame:GetMainFrame()
                  completionHandler:^(BOOL complete, const FormData& form) {
                    ++call_counter;
                    if (complete) {
@@ -302,13 +389,14 @@ TEST_F(PasswordFormHelperTest, ExtractPasswordFormData) {
     return call_counter == 1;
   }));
   EXPECT_EQ(1, success_counter);
-  EXPECT_EQ(result.unique_renderer_id, FormRendererId(0));
+  EXPECT_EQ(result.unique_renderer_id, FormRendererId(1));
 
   call_counter = 0;
   success_counter = 0;
   result = FormData();
 
   [helper_ extractPasswordFormData:FormRendererId(404)
+                           inFrame:GetMainFrame()
                  completionHandler:^(BOOL complete, const FormData& form) {
                    ++call_counter;
                    if (complete) {
@@ -322,95 +410,189 @@ TEST_F(PasswordFormHelperTest, ExtractPasswordFormData) {
   EXPECT_EQ(0, success_counter);
 }
 
-// Tests that a form with credentials fillied on user trigger
-// is not autorefilled.
-TEST_F(PasswordFormHelperTest, RefillFormFilledOnUserTrigger) {
+// Tests that a form with username typed by user is not refilled when
+// the user selects filling suggestion on password field.
+TEST_F(PasswordFormHelperTest, FillPasswordIntoFormWithUserTypedUsername) {
   LoadHtml(@"<form><input id='u1' type='text' name='un1'>"
             "<input id='p1' type='password' name='pw1'></form>");
-  ExecuteJavaScript(@"__gCrWeb.fill.setUpForUniqueIDs(0);");
-  // Run password forms search to set up unique IDs.
-  EXPECT_TRUE(ExecuteJavaScript(@"__gCrWeb.passwords.findPasswordForms();"));
 
-  // Fill the form on user trigger.
-  const std::string base_url = BaseUrl();
-  FillData fill_data;
-  SetFillData(base_url, 0, 1, "john.doe@gmail.com", 2, "super!secret",
-              &fill_data);
-  __block int call_counter = 0;
-  [helper_ fillPasswordFormWithFillData:fill_data
-                      completionHandler:^(BOOL complete) {
-                        ++call_counter;
-                        EXPECT_TRUE(complete);
-                      }];
-  EXPECT_TRUE(WaitUntilConditionOrTimeout(kWaitForJSCompletionTimeout, ^{
-    return call_counter == 1;
-  }));
+  ASSERT_TRUE(SetUpUniqueIDs());
 
-  // Try to autofill the form.
-  PasswordFormFillData form_data;
-  SetPasswordFormFillData(BaseUrl(), "", 0, "", 1, "someacc@store.com", "", 2,
-                          "store!pw", "", "", NO, &form_data);
-
-  __block bool called = NO;
-  __block bool success = NO;
-  [helper_ fillPasswordForm:form_data
-          completionHandler:^(BOOL res) {
-            called = YES;
-            success = res;
-          }];
-  EXPECT_TRUE(WaitUntilConditionOrTimeout(kWaitForJSCompletionTimeout, ^{
-    return called;
-  }));
-  EXPECT_EQ(success, NO);
-}
-
-// Tests that a form with credentials typed by user
-// is not autorefilled.
-TEST_F(PasswordFormHelperTest, RefillFormWithUserTypedInput) {
-  LoadHtml(@"<form><input id='u1' type='text' name='un1'>"
-            "<input id='p1' type='password' name='pw1'></form>");
-  ExecuteJavaScript(@"__gCrWeb.fill.setUpForUniqueIDs(0);");
-  // Run password forms search to set up unique IDs.
-  EXPECT_TRUE(ExecuteJavaScript(@"__gCrWeb.passwords.findPasswordForms();"));
+  FieldRendererId username_field_id(2);
+  FieldRendererId password_field_id(3);
 
   ExecuteJavaScript(
-      @"document.getElementById('u1').value = 'john.doe@gmail.com';");
-  [helper_ updateFieldDataOnUserInput:FieldRendererId(1)
-                           inputValue:@"john.doe@gmail.com"];
-
-  ExecuteJavaScript(@"document.getElementById('p1').value = 'super!secret';");
-  [helper_ updateFieldDataOnUserInput:FieldRendererId(2)
-                           inputValue:@"super!secret"];
+      @"document.getElementById('u1').value = 'typed@typed.com';");
+  [helper_ updateFieldDataOnUserInput:username_field_id
+                           inputValue:@"typed@typed.com"];
 
   // Try to autofill the form.
-  PasswordFormFillData form_data;
-  SetPasswordFormFillData(BaseUrl(), "", 0, "", 1, "someacc@store.com", "", 2,
-                          "store!pw", "", "", NO, &form_data);
+  FillData fill_data;
+  SetFillData(BaseUrl(), 1, username_field_id.value(), "someacc@store.com",
+              password_field_id.value(), "store!pw", &fill_data);
 
   __block bool called = NO;
   __block bool success = NO;
-  [helper_ fillPasswordForm:form_data
-          completionHandler:^(BOOL res) {
-            called = YES;
-            success = res;
-          }];
+  [helper_ fillPasswordFormWithFillData:fill_data
+                                inFrame:GetMainFrame()
+                       triggeredOnField:password_field_id
+                      completionHandler:^(BOOL res) {
+                        called = YES;
+                        success = res;
+                      }];
   EXPECT_TRUE(WaitUntilConditionOrTimeout(kWaitForJSCompletionTimeout, ^{
     return called;
   }));
-  EXPECT_EQ(success, NO);
+  EXPECT_EQ(success, YES);
+  id result = ExecuteJavaScript(kInputFieldValueVerificationScript);
+  EXPECT_NSEQ(@"u1=typed@typed.com;p1=store!pw;", result);
+}
 
-  // Make sure that this form can be filled again after a navigation.
-  web::FakeNavigationContext context;
-  [helper_ webState:web_state() didFinishNavigation:&context];
+// Tests that the form submit message is fully handled when in the correct
+// format and with the minimal viable content.
+TEST_F(PasswordFormHelperTest, HandleFormSubmittedMessage) {
+  id delegate = OCMStrictProtocolMock(@protocol(PasswordFormHelperDelegate));
+  OCMExpect([[delegate ignoringNonObjectArgs] formHelper:helper_
+                                           didSubmitForm:FormData()
+                                                 inFrame:GetMainFrame()]);
+  helper_.delegate = delegate;
 
-  success = NO;
-  [helper_ fillPasswordForm:form_data
-          completionHandler:^(BOOL res) {
-            success = res;
-          }];
-  EXPECT_TRUE(WaitUntilConditionOrTimeout(kWaitForJSCompletionTimeout, ^{
-    return success;
-  }));
+  LoadHtml(@"<p>");
+
+  // Set a message with the minimal viable body to succeed in form data
+  // extraction.
+  web::ScriptMessage submit_message = ScriptMessageForSubmit(
+      ValidFormSubmittedMessageBody(GetMainFrame()->GetFrameId()));
+
+  HandleSubmittedFormStatus status =
+      [helper_ handleFormSubmittedMessage:submit_message];
+
+  EXPECT_EQ(HandleSubmittedFormStatus::kHandled, status);
+
+  EXPECT_OCMOCK_VERIFY(delegate);
+}
+
+// Tests that the form submit message isn't handled when the message isn't in
+// the correct format.
+TEST_F(PasswordFormHelperTest, HandleFormSubmittedMessage_InvalidFormat) {
+  // Set the delegate mock in a way that the test will crash if there is any
+  // delegate call to handle the message.
+  id delegate = OCMStrictProtocolMock(@protocol(PasswordFormHelperDelegate));
+  helper_.delegate = delegate;
+
+  LoadHtml(@"<p>");
+
+  // Set the message value content as a string which is an invalid format
+  // because a dictionary is expected.
+  auto invalid_body =
+      std::make_unique<base::Value>(base::Value("invalid_because_expect_dict"));
+
+  web::ScriptMessage submit_message =
+      ScriptMessageForSubmit(std::move(invalid_body));
+
+  HandleSubmittedFormStatus status =
+      [helper_ handleFormSubmittedMessage:submit_message];
+
+  EXPECT_EQ(HandleSubmittedFormStatus::kRejectedMessageBodyNotADict, status);
+
+  // Verify that the delegate is never called because the message isn't handled
+  // because of the early return.
+  EXPECT_OCMOCK_VERIFY(delegate);
+}
+
+// Tests that the form submit message isn't handled when there is no trusted URL
+// loaded in the webstate.
+TEST_F(PasswordFormHelperTest, HandleFormSubmittedMessage_NoTrustedUrl) {
+  FakeWebStateWithoutTrustedCommittedUrl web_state;
+  UniqueIDDataTabHelper::CreateForWebState(&web_state);
+  PasswordFormHelper* helper =
+      [[PasswordFormHelper alloc] initWithWebState:&web_state];
+
+  // Set the delegate mock in a way that the test will crash if there is any
+  // delegate call to handle the message.
+  id delegate = OCMStrictProtocolMock(@protocol(PasswordFormHelperDelegate));
+  helper.delegate = delegate;
+
+  // Set a dummy message.
+  web::ScriptMessage submit_message =
+      ScriptMessageForSubmit(std::make_unique<base::Value>("whatever"));
+
+  HandleSubmittedFormStatus status =
+      [helper handleFormSubmittedMessage:submit_message];
+
+  EXPECT_EQ(HandleSubmittedFormStatus::kRejectedNoTrustedUrl, status);
+
+  // Verify that the delegate is never called because the message isn't handled
+  // because of the early return.
+  EXPECT_OCMOCK_VERIFY(delegate);
+}
+
+// Tests that the form submit message isn't handled when there is no webstate.
+TEST_F(PasswordFormHelperTest, HandleFormSubmittedMessage_NoWebState) {
+  // Set the delegate mock in a way that the test will crash if there is any
+  // delegate call to handle the message.
+  id delegate = OCMStrictProtocolMock(@protocol(PasswordFormHelperDelegate));
+  helper_.delegate = delegate;
+
+  // Set a dummy message.
+  web::ScriptMessage submit_message =
+      ScriptMessageForSubmit(std::make_unique<base::Value>("whatever"));
+
+  // Destroying the webstate will nullify the webstate pointer in the helper.
+  DestroyWebState();
+
+  HandleSubmittedFormStatus status =
+      [helper_ handleFormSubmittedMessage:submit_message];
+
+  EXPECT_EQ(HandleSubmittedFormStatus::kRejectedNoWebState, status);
+
+  // Verify that the delegate is never called because the message isn't handled
+  // because of the early return.
+  EXPECT_OCMOCK_VERIFY(delegate);
+}
+
+// Tests that the form submit message isn't handled when there is no frame
+// matching the provided frame id.
+TEST_F(PasswordFormHelperTest, HandleFormSubmittedMessage_NoFormMatchingId) {
+  id delegate = OCMStrictProtocolMock(@protocol(PasswordFormHelperDelegate));
+  helper_.delegate = delegate;
+
+  LoadHtml(@"<p>");
+
+  // Set a message with an nonexisting frame id.
+  web::ScriptMessage submit_message = ScriptMessageForSubmit(
+      ValidFormSubmittedMessageBody("nonexisting_frame_id"));
+
+  HandleSubmittedFormStatus status =
+      [helper_ handleFormSubmittedMessage:submit_message];
+
+  EXPECT_EQ(HandleSubmittedFormStatus::kRejectedNoFrameMatchingId, status);
+
+  EXPECT_OCMOCK_VERIFY(delegate);
+}
+
+// Tests that the form submit message isn't handled when form data can't be
+// extracted from the message's body.
+TEST_F(PasswordFormHelperTest, HandleFormSubmittedMessage_CantExtractFormData) {
+  id delegate = OCMStrictProtocolMock(@protocol(PasswordFormHelperDelegate));
+  helper_.delegate = delegate;
+
+  LoadHtml(@"<p>");
+
+  auto incomplete_message_body = std::make_unique<base::Value>(
+      base::Value::Dict().Set("frame_id", GetMainFrame()->GetFrameId()));
+
+  // Set a message with an incomplete body that misses the required keys to be
+  // parsed to form data.
+  web::ScriptMessage submit_message =
+      ScriptMessageForSubmit(std::move(incomplete_message_body));
+
+  HandleSubmittedFormStatus status =
+      [helper_ handleFormSubmittedMessage:submit_message];
+
+  EXPECT_EQ(HandleSubmittedFormStatus::kRejectedCantExtractFormData, status);
+
+  EXPECT_OCMOCK_VERIFY(delegate);
 }
 
 }  // namespace

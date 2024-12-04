@@ -1,13 +1,13 @@
-#!/usr/bin/env python
-# Copyright 2015 The Chromium Authors. All rights reserved.
+#!/usr/bin/env python3
+# Copyright 2015 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import html_checker
+from . import html_checker
 from os import path as os_path
 import re
 from sys import path as sys_path
-import test_util
+from . import test_util
 import unittest
 
 _HERE = os_path.dirname(os_path.abspath(__file__))
@@ -165,24 +165,6 @@ class HtmlCheckerTest(unittest.TestCase):
     ]
     for line in lines:
       self.ShouldPassCheck(line, self.checker.I18nContentJavaScriptCaseCheck)
-
-  def testImportCorrectPolymerHtmlFails(self):
-    bad_url = 'chrome://resources/polymer/v1_0/polymer/polymer.html'
-    lines = [
-      '<link rel="import" href="%s">' % bad_url,
-      '<link href="%s" rel="import">' % bad_url,
-    ]
-    for line in lines:
-      self.ShouldFailCheck(line, self.checker.ImportCorrectPolymerHtml)
-
-  def testImportCorrectPolymerHtmlPasses(self):
-    good_url = 'chrome://resources/html/polymer.html'
-    lines = [
-      '<link rel="import" href="%s">' % good_url,
-      '<link href="%s" rel="import">' % good_url,
-    ]
-    for line in lines:
-      self.ShouldPassCheck(line, self.checker.ImportCorrectPolymerHtml)
 
   def testLabelCheckFails(self):
     lines = [

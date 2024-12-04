@@ -50,7 +50,8 @@ static void draw_1_bitmap(SkCanvas* canvas, const SkBitmap& bm, bool doClip,
         canvas->save();
         canvas->clipRect(clipR);
     }
-    canvas->drawBitmap(bm, SkIntToScalar(dx), SkIntToScalar(dy), &paint);
+    canvas->drawImage(bm.asImage(), SkIntToScalar(dx), SkIntToScalar(dy),
+                      SkSamplingOptions(), &paint);
     if (doClip) {
         canvas->restore();
     }
@@ -64,14 +65,9 @@ public:
     SpriteBitmapGM() {}
 
 protected:
+    SkString getName() const override { return SkString("spritebitmap"); }
 
-    SkString onShortName() override {
-        return SkString("spritebitmap");
-    }
-
-    SkISize onISize() override {
-        return SkISize::Make(640, 480);
-    }
+    SkISize getISize() override { return SkISize::Make(640, 480); }
 
     void onDraw(SkCanvas* canvas) override {
         SkBitmap bm;

@@ -85,6 +85,16 @@ static INLINE __m128i xx_set1_64_from_32i(int32_t a) {
 #endif
 }
 
+// Fill an SSE register using an interleaved pair of values, ie. set the
+// 8 channels to {a, b, a, b, a, b, a, b}, using the same channel ordering
+// as when a register is stored to / loaded from memory.
+//
+// This is useful for rearranging filter kernels for use with the _mm_madd_epi16
+// instruction
+static INLINE __m128i xx_set2_epi16(int16_t a, int16_t b) {
+  return _mm_setr_epi16(a, b, a, b, a, b, a, b);
+}
+
 static INLINE __m128i xx_round_epu16(__m128i v_val_w) {
   return _mm_avg_epu16(v_val_w, _mm_setzero_si128());
 }
@@ -98,6 +108,12 @@ static INLINE __m128i xx_roundn_epu32(__m128i v_val_d, int bits) {
   const __m128i v_bias_d = _mm_set1_epi32((1 << bits) >> 1);
   const __m128i v_tmp_d = _mm_add_epi32(v_val_d, v_bias_d);
   return _mm_srli_epi32(v_tmp_d, bits);
+}
+
+static INLINE __m128i xx_roundn_epi16_unsigned(__m128i v_val_d, int bits) {
+  const __m128i v_bias_d = _mm_set1_epi16((1 << bits) >> 1);
+  const __m128i v_tmp_d = _mm_add_epi16(v_val_d, v_bias_d);
+  return _mm_srai_epi16(v_tmp_d, bits);
 }
 
 // This is equivalent to ROUND_POWER_OF_TWO(v_val_d, bits)

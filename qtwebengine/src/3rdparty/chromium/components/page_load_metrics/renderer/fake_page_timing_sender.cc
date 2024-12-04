@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,6 +6,8 @@
 
 #include <algorithm>
 
+#include "testing/gmock/include/gmock/gmock-matchers.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace page_load_metrics {
@@ -18,23 +20,26 @@ FakePageTimingSender::~FakePageTimingSender() {}
 void FakePageTimingSender::SendTiming(
     const mojom::PageLoadTimingPtr& timing,
     const mojom::FrameMetadataPtr& metadata,
-    mojom::PageLoadFeaturesPtr new_features,
+    const std::vector<blink::UseCounterFeature>& new_features,
     std::vector<mojom::ResourceDataUpdatePtr> resources,
     const mojom::FrameRenderDataUpdate& render_data,
     const mojom::CpuTimingPtr& cpu_timing,
-    mojom::DeferredResourceCountsPtr new_deferred_resource_data,
-    const mojom::InputTimingPtr new_input_timing) {
+    const mojom::InputTimingPtr new_input_timing,
+    const absl::optional<blink::SubresourceLoadMetrics>&
+        subresource_load_metrics,
+    const mojom::SoftNavigationMetricsPtr& soft_navigation_metrics) {
   validator_->UpdateTiming(timing, metadata, new_features, resources,
-                           render_data, cpu_timing, new_deferred_resource_data,
-                           new_input_timing);
+                           render_data, cpu_timing, new_input_timing,
+                           subresource_load_metrics, soft_navigation_metrics);
 }
 
 void FakePageTimingSender::SetUpSmoothnessReporting(
     base::ReadOnlySharedMemoryRegion shared_memory) {}
 
-FakePageTimingSender::PageTimingValidator::PageTimingValidator()
-    : expected_input_timing(mojom::InputTiming::New()),
-      actual_input_timing(mojom::InputTiming::New()) {}
+FakePageTimingSender::PageTimingValidator::PageTimingValidator() {
+  expected_input_timing.max_event_durations =
+      mojom::UserInteractionLatencies::NewUserInteractionLatencies({});
+}
 
 FakePageTimingSender::PageTimingValidator::~PageTimingValidator() {
   VerifyExpectedTimings();
@@ -64,23 +69,62 @@ void FakePageTimingSender::PageTimingValidator::VerifyExpectedTimings() const {
   }
 }
 
-void FakePageTimingSender::PageTimingValidator::UpdateExpectedInputTiming(
-    const base::TimeDelta input_delay) {
-  expected_input_timing->num_input_events++;
-  expected_input_timing->total_input_delay += input_delay;
-  expected_input_timing->total_adjusted_input_delay +=
-      base::TimeDelta::FromMilliseconds(
-          std::max(int64_t(0), input_delay.InMilliseconds() - int64_t(50)));
+void FakePageTimingSender::PageTimingValidator::ExpectSoftNavigationMetrics(
+    const mojom::SoftNavigationMetrics& soft_navigation_metrics) {
+  VerifyExpectedSoftNavigationMetrics();
+  expected_soft_navigation_metrics_.push_back(soft_navigation_metrics.Clone());
 }
-void FakePageTimingSender::PageTimingValidator::VerifyExpectedInputTiming()
-    const {
-  ASSERT_EQ(expected_input_timing.is_null(), actual_input_timing.is_null());
-  ASSERT_EQ(expected_input_timing->num_input_events,
-            actual_input_timing->num_input_events);
-  ASSERT_EQ(expected_input_timing->total_input_delay,
-            actual_input_timing->total_input_delay);
-  ASSERT_EQ(expected_input_timing->total_adjusted_input_delay,
-            actual_input_timing->total_adjusted_input_delay);
+
+void FakePageTimingSender::PageTimingValidator::
+    VerifyExpectedSoftNavigationMetrics() const {
+  ASSERT_EQ(actual_soft_navigation_metrics_.size(),
+            expected_soft_navigation_metrics_.size());
+  for (size_t i = 0; i < actual_soft_navigation_metrics_.size(); ++i) {
+    if (actual_soft_navigation_metrics_.at(i)->Equals(
+            *expected_soft_navigation_metrics_.at(i))) {
+      continue;
+    }
+    ADD_FAILURE() << "Observed soft navigation metric != expected one at index "
+                  << i;
+  }
+}
+
+void FakePageTimingSender::PageTimingValidator::UpdateExpectedInteractionTiming(
+    const base::TimeDelta interaction_duration,
+    mojom::UserInteractionType interaction_type,
+    uint64_t interaction_offset,
+    const base::TimeTicks interaction_time) {
+  expected_input_timing.num_interactions++;
+  expected_input_timing.max_event_durations->get_user_interaction_latencies()
+      .emplace_back(mojom::UserInteractionLatency::New(
+          interaction_duration, interaction_type, interaction_offset,
+          interaction_time));
+}
+void FakePageTimingSender::PageTimingValidator::
+    VerifyExpectedInteractionTiming() const {
+  ASSERT_EQ(expected_input_timing.num_interactions,
+            actual_input_timing.num_interactions);
+  auto& expected_latencies = expected_input_timing.max_event_durations
+                                 ->get_user_interaction_latencies();
+  auto& actual_latencies =
+      actual_input_timing.max_event_durations->get_user_interaction_latencies();
+
+  for (size_t i = 0; i < expected_latencies.size(); ++i) {
+    ASSERT_EQ(expected_latencies[i]->interaction_latency,
+              actual_latencies[i]->interaction_latency);
+  }
+}
+
+void FakePageTimingSender::PageTimingValidator::
+    UpdateExpectedSubresourceLoadMetrics(
+        const blink::SubresourceLoadMetrics& subresource_load_metrics) {
+  expected_subresource_load_metrics_ = subresource_load_metrics;
+}
+
+void FakePageTimingSender::PageTimingValidator::
+    VerifyExpectedSubresourceLoadMetrics() const {
+  ASSERT_EQ(expected_subresource_load_metrics_,
+            actual_subresource_load_metrics_);
 }
 
 void FakePageTimingSender::PageTimingValidator::VerifyExpectedCpuTimings()
@@ -95,105 +139,88 @@ void FakePageTimingSender::PageTimingValidator::VerifyExpectedCpuTimings()
 }
 
 void FakePageTimingSender::PageTimingValidator::UpdateExpectPageLoadFeatures(
-    const blink::mojom::WebFeature feature) {
+    const blink::UseCounterFeature& feature) {
   expected_features_.insert(feature);
 }
 
-void FakePageTimingSender::PageTimingValidator::
-    UpdateExpectPageLoadCssProperties(
-        blink::mojom::CSSSampleId css_property_id) {
-  expected_css_properties_.insert(css_property_id);
-}
-
 void FakePageTimingSender::PageTimingValidator::VerifyExpectedFeatures() const {
-  ASSERT_EQ(actual_features_.size(), expected_features_.size());
-  std::vector<blink::mojom::WebFeature> diff;
-  std::set_difference(actual_features_.begin(), actual_features_.end(),
-                      expected_features_.begin(), expected_features_.end(),
-                      diff.begin());
-  EXPECT_TRUE(diff.empty())
-      << "Expected more features than the actual features observed";
-
-  std::set_difference(expected_features_.begin(), expected_features_.end(),
-                      actual_features_.begin(), actual_features_.end(),
-                      diff.begin());
-  EXPECT_TRUE(diff.empty())
-      << "More features are actually observed than expected";
-}
-
-void FakePageTimingSender::PageTimingValidator::VerifyExpectedCssProperties()
-    const {
-  ASSERT_EQ(actual_css_properties_.size(), expected_css_properties_.size());
-  std::vector<blink::mojom::CSSSampleId> diff;
-  std::set_difference(actual_css_properties_.begin(),
-                      actual_css_properties_.end(),
-                      expected_css_properties_.begin(),
-                      expected_css_properties_.end(), diff.begin());
-  EXPECT_TRUE(diff.empty())
-      << "Expected more CSS properties than the actual features observed";
-
-  std::set_difference(expected_css_properties_.begin(),
-                      expected_css_properties_.end(),
-                      actual_css_properties_.begin(),
-                      actual_css_properties_.end(), diff.begin());
-  EXPECT_TRUE(diff.empty())
-      << "More CSS Properties are actually observed than expected";
+  EXPECT_THAT(actual_features_, ::testing::ContainerEq(expected_features_));
 }
 
 void FakePageTimingSender::PageTimingValidator::VerifyExpectedRenderData()
     const {
-  EXPECT_FLOAT_EQ(expected_render_data_.layout_shift_delta,
+  EXPECT_FLOAT_EQ(expected_render_data_.is_null()
+                      ? 0.0
+                      : expected_render_data_->layout_shift_delta,
                   actual_render_data_.layout_shift_delta);
 }
 
 void FakePageTimingSender::PageTimingValidator::
-    VerifyExpectedFrameIntersectionUpdate() const {
-  if (!expected_frame_intersection_update_.is_null()) {
-    EXPECT_FALSE(actual_frame_intersection_update_.is_null());
-    EXPECT_TRUE(expected_frame_intersection_update_->Equals(
-        *actual_frame_intersection_update_));
-  }
+    VerifyExpectedMainFrameIntersectionRect() const {
+  EXPECT_EQ(expected_main_frame_intersection_rect_,
+            actual_main_frame_intersection_rect_);
+}
+
+void FakePageTimingSender::PageTimingValidator::
+    VerifyExpectedMainFrameViewportRect() const {
+  EXPECT_EQ(expected_main_frame_viewport_rect_,
+            actual_main_frame_viewport_rect_);
 }
 
 void FakePageTimingSender::PageTimingValidator::UpdateTiming(
     const mojom::PageLoadTimingPtr& timing,
     const mojom::FrameMetadataPtr& metadata,
-    const mojom::PageLoadFeaturesPtr& new_features,
+    const std::vector<blink::UseCounterFeature>& new_features,
     const std::vector<mojom::ResourceDataUpdatePtr>& resources,
     const mojom::FrameRenderDataUpdate& render_data,
     const mojom::CpuTimingPtr& cpu_timing,
-    const mojom::DeferredResourceCountsPtr& new_deferred_resource_data,
-    const mojom::InputTimingPtr& new_input_timing) {
+    const mojom::InputTimingPtr& new_input_timing,
+    const absl::optional<blink::SubresourceLoadMetrics>&
+        subresource_load_metrics,
+    const mojom::SoftNavigationMetricsPtr& soft_navigation_metrics) {
   actual_timings_.push_back(timing.Clone());
+  actual_soft_navigation_metrics_.push_back(soft_navigation_metrics->Clone());
   if (!cpu_timing->task_time.is_zero()) {
     actual_cpu_timings_.push_back(cpu_timing.Clone());
   }
-  for (const auto feature : new_features->features) {
+  for (const blink::UseCounterFeature& feature : new_features) {
     EXPECT_EQ(actual_features_.find(feature), actual_features_.end())
-        << "Feature " << feature << "has been sent more than once";
+        << "Feature " << feature.type() << ": " << feature.value()
+        << " has been sent more than once";
     actual_features_.insert(feature);
   }
-  for (const auto css_property_id : new_features->css_properties) {
-    EXPECT_EQ(actual_css_properties_.find(css_property_id),
-              actual_css_properties_.end())
-        << "CSS Property ID " << css_property_id
-        << "has been sent more than once";
-    actual_css_properties_.insert(css_property_id);
-  }
-  actual_render_data_.layout_shift_delta = render_data.layout_shift_delta;
-  actual_frame_intersection_update_ = metadata->intersection_update.Clone();
 
-  actual_input_timing->num_input_events += new_input_timing->num_input_events;
-  actual_input_timing->total_input_delay += new_input_timing->total_input_delay;
-  actual_input_timing->total_adjusted_input_delay +=
-      new_input_timing->total_adjusted_input_delay;
+  actual_render_data_.layout_shift_delta = render_data.layout_shift_delta;
+  actual_main_frame_intersection_rect_ = metadata->main_frame_intersection_rect;
+  actual_main_frame_viewport_rect_ = metadata->main_frame_viewport_rect;
+
+  if (new_input_timing->num_interactions > 0 &&
+      actual_input_timing.num_interactions == 0) {
+    actual_input_timing.max_event_durations =
+        mojom::UserInteractionLatencies::NewUserInteractionLatencies({});
+  }
+  actual_input_timing.num_interactions = new_input_timing->num_interactions;
+  for (const mojom::UserInteractionLatencyPtr& user_interaction :
+       new_input_timing->max_event_durations
+           ->get_user_interaction_latencies()) {
+    actual_input_timing.max_event_durations->get_user_interaction_latencies()
+        .emplace_back(mojom::UserInteractionLatency::New(
+            user_interaction->interaction_latency,
+            user_interaction->interaction_type,
+            user_interaction->interaction_offset,
+            user_interaction->interaction_time));
+  }
+
+  actual_subresource_load_metrics_ = subresource_load_metrics;
 
   VerifyExpectedTimings();
   VerifyExpectedCpuTimings();
   VerifyExpectedFeatures();
-  VerifyExpectedCssProperties();
   VerifyExpectedRenderData();
-  VerifyExpectedFrameIntersectionUpdate();
+  VerifyExpectedMainFrameIntersectionRect();
+  VerifyExpectedMainFrameViewportRect();
+  VerifyExpectedSubresourceLoadMetrics();
+  VerifyExpectedSoftNavigationMetrics();
 }
 
 }  // namespace page_load_metrics

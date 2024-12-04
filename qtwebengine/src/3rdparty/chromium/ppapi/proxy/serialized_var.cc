@@ -1,11 +1,11 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "ppapi/proxy/serialized_var.h"
 
-#include "base/bind.h"
 #include "base/check.h"
+#include "base/functional/bind.h"
 #include "base/notreached.h"
 #include "ipc/ipc_message_utils.h"
 #include "ppapi/c/pp_instance.h"
@@ -66,18 +66,12 @@ SerializedVar::Inner::~Inner() {
 
 PP_Var SerializedVar::Inner::GetVar() {
   DCHECK(serialization_rules_.get());
-
-#if defined(NACL_WIN64)
-  NOTREACHED();
-  return PP_MakeUndefined();
-#else
   if (raw_var_data_.get()) {
     var_ = raw_var_data_->CreatePPVar(instance_);
     raw_var_data_.reset(nullptr);
   }
 
   return var_;
-#endif
 }
 
 void SerializedVar::Inner::SetVar(PP_Var var) {
@@ -120,7 +114,7 @@ void SerializedVar::Inner::WriteToMessage(base::Pickle* m) const {
       RawVarDataGraph::Create(var_, instance_);
   if (data) {
     m->WriteBool(true);  // Success.
-    data->Write(m, base::Bind(&DefaultHandleWriter));
+    data->Write(m, base::BindRepeating(&DefaultHandleWriter));
   } else {
     m->WriteBool(false);  // Failure.
   }

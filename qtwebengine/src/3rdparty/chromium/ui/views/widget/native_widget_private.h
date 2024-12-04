@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,7 +8,6 @@
 #include <memory>
 #include <string>
 
-#include "base/strings/string16.h"
 #include "ui/base/dragdrop/mojom/drag_drop_types.mojom-forward.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/gfx/native_widget_types.h"
@@ -85,6 +84,8 @@ class VIEWS_EXPORT NativeWidgetPrivate : public NativeWidget {
   // initialization.
   virtual void OnWidgetInitDone() = 0;
 
+  virtual void ReparentNativeViewImpl(gfx::NativeView new_parent) = 0;
+
   // Returns a NonClientFrameView for the widget's NonClientView, or NULL if
   // the NativeWidget wants no special NonClientFrameView.
   virtual std::unique_ptr<NonClientFrameView> CreateNonClientFrameView() = 0;
@@ -154,13 +155,15 @@ class VIEWS_EXPORT NativeWidgetPrivate : public NativeWidget {
                                   ui::WindowShowState* show_state) const = 0;
 
   // Sets the NativeWindow title. Returns true if the title changed.
-  virtual bool SetWindowTitle(const base::string16& title) = 0;
+  virtual bool SetWindowTitle(const std::u16string& title) = 0;
 
   // Sets the Window icons. |window_icon| is a 16x16 icon suitable for use in
   // a title bar. |app_icon| is a larger size for use in the host environment
   // app switching UI.
   virtual void SetWindowIcons(const gfx::ImageSkia& window_icon,
                               const gfx::ImageSkia& app_icon) = 0;
+  virtual const gfx::ImageSkia* GetWindowIcon() = 0;
+  virtual const gfx::ImageSkia* GetWindowAppIcon() = 0;
 
   // Initializes the modal type of the window to |modal_type|. Called from
   // NativeWidgetDelegate::OnNativeWidgetCreated() before the widget is
@@ -177,6 +180,7 @@ class VIEWS_EXPORT NativeWidgetPrivate : public NativeWidget {
   virtual void SetSize(const gfx::Size& size) = 0;
   virtual void StackAbove(gfx::NativeView native_view) = 0;
   virtual void StackAtTop() = 0;
+  virtual bool IsStackedAbove(gfx::NativeView native_view) = 0;
   virtual void SetShape(std::unique_ptr<Widget::ShapeRects> shape) = 0;
   virtual void Close() = 0;
   virtual void CloseNow() = 0;
@@ -187,6 +191,7 @@ class VIEWS_EXPORT NativeWidgetPrivate : public NativeWidget {
   virtual void Activate() = 0;
   virtual void Deactivate() = 0;
   virtual bool IsActive() const = 0;
+  virtual void PaintAsActiveChanged();
   virtual void SetZOrderLevel(ui::ZOrderLevel order) = 0;
   virtual ui::ZOrderLevel GetZOrderLevel() const = 0;
   virtual void SetVisibleOnAllWorkspaces(bool always_visible) = 0;
@@ -196,12 +201,21 @@ class VIEWS_EXPORT NativeWidgetPrivate : public NativeWidget {
   virtual bool IsMaximized() const = 0;
   virtual bool IsMinimized() const = 0;
   virtual void Restore() = 0;
-  virtual void SetFullscreen(bool fullscreen) = 0;
+  virtual void SetFullscreen(bool fullscreen, int64_t target_display_id) = 0;
   virtual bool IsFullscreen() const = 0;
   virtual void SetCanAppearInExistingFullscreenSpaces(
       bool can_appear_in_existing_fullscreen_spaces) = 0;
   virtual void SetOpacity(float opacity) = 0;
-  virtual void SetAspectRatio(const gfx::SizeF& aspect_ratio) = 0;
+  // The size of the widget will be set such that it is in the same proportion
+  // as `aspect_ratio` after subtracting `excluded_margin` from the widget size.
+  //
+  // This allows the aspect ratio to refer to just a subrectangle of the widget,
+  // to leave room for, e.g., a client-drawn title bar or window decorations.
+  // System-drawn decorations are excluded automatically, but the system has no
+  // idea if we decide to draw our own.  By setting `excluded_margin` to our
+  // custom-drawn decorations, we can maintain the same behavior.
+  virtual void SetAspectRatio(const gfx::SizeF& aspect_ratio,
+                              const gfx::Size& excluded_margin) = 0;
   virtual void FlashFrame(bool flash) = 0;
   virtual void RunShellDrag(View* view,
                             std::unique_ptr<ui::OSExchangeData> data,
@@ -210,13 +224,14 @@ class VIEWS_EXPORT NativeWidgetPrivate : public NativeWidget {
                             ui::mojom::DragEventSource source) = 0;
   virtual void SchedulePaintInRect(const gfx::Rect& rect) = 0;
   virtual void ScheduleLayout() = 0;
-  virtual void SetCursor(gfx::NativeCursor cursor) = 0;
+  virtual void SetCursor(const ui::Cursor& cursor) = 0;
   virtual void ShowEmojiPanel();
   virtual bool IsMouseEventsEnabled() const = 0;
   // Returns true if any mouse button is currently down.
   virtual bool IsMouseButtonDown() const = 0;
   virtual void ClearNativeFocus() = 0;
   virtual gfx::Rect GetWorkAreaBoundsInScreen() const = 0;
+  virtual bool IsMoveLoopSupported() const;
   virtual Widget::MoveLoopResult RunMoveLoop(
       const gfx::Vector2d& drag_offset,
       Widget::MoveLoopSource source,
@@ -227,8 +242,8 @@ class VIEWS_EXPORT NativeWidgetPrivate : public NativeWidget {
       const base::TimeDelta& duration) = 0;
   virtual void SetVisibilityAnimationTransition(
       Widget::VisibilityTransition transition) = 0;
-  virtual bool IsTranslucentWindowOpacitySupported() const = 0;
   virtual ui::GestureRecognizer* GetGestureRecognizer() = 0;
+  virtual ui::GestureConsumer* GetGestureConsumer() = 0;
   virtual void OnSizeConstraintsChanged() = 0;
   // Called before and after re-parenting of this or an ancestor widget.
   virtual void OnNativeViewHierarchyWillChange() = 0;
@@ -236,6 +251,8 @@ class VIEWS_EXPORT NativeWidgetPrivate : public NativeWidget {
 
   // Returns an internal name that matches the name of the associated Widget.
   virtual std::string GetName() const = 0;
+
+  virtual base::WeakPtr<NativeWidgetPrivate> GetWeakPtr() = 0;
 
   // Overridden from NativeWidget:
   internal::NativeWidgetPrivate* AsNativeWidgetPrivate() override;

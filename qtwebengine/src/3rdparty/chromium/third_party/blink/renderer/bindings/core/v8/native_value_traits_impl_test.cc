@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,11 +9,13 @@
 #include "testing/gtest/include/gtest/gtest-death-test.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/bindings/core/v8/idl_types.h"
-#include "third_party/blink/renderer/bindings/core/v8/to_v8_for_core.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_testing.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_internals.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_test_sequence_callback.h"
+#include "third_party/blink/renderer/core/testing/internals.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
+#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
 namespace blink {
@@ -35,6 +37,7 @@ v8::Local<v8::Array> EvaluateScriptForArray(V8TestingScope& scope,
 }
 
 TEST(NativeValueTraitsImplTest, IDLInterface) {
+  test::TaskEnvironment task_environment;
   V8TestingScope scope;
   DummyExceptionStateForTesting exception_state;
   Internals* internals = NativeValueTraits<Internals>::NativeValue(
@@ -47,6 +50,7 @@ TEST(NativeValueTraitsImplTest, IDLInterface) {
 }
 
 TEST(NativeValueTraitsImplTest, IDLRecord) {
+  test::TaskEnvironment task_environment;
   V8TestingScope scope;
   {
     v8::Local<v8::Object> v8_object = v8::Object::New(scope.GetIsolate());
@@ -54,7 +58,7 @@ TEST(NativeValueTraitsImplTest, IDLRecord) {
     const auto& record =
         NativeValueTraits<IDLRecord<IDLString, IDLOctet>>::NativeValue(
             scope.GetIsolate(), v8_object, exception_state);
-    EXPECT_TRUE(record.IsEmpty());
+    EXPECT_TRUE(record.empty());
   }
   {
     v8::Local<v8::Object> v8_object =
@@ -87,7 +91,7 @@ TEST(NativeValueTraitsImplTest, IDLRecord) {
   }
   {
     // Exceptions are being thrown in this test, so we need another scope.
-    V8TestingScope scope;
+    V8TestingScope scope2;
     v8::Local<v8::Object> original_object = EvaluateScriptForObject(
         scope, "(self.originalObject = {foo: 34, bar: 42})");
 
@@ -110,14 +114,14 @@ TEST(NativeValueTraitsImplTest, IDLRecord) {
             .As<v8::Proxy>();
 
     ExceptionState exception_state_from_proxy(
-        scope.GetIsolate(), ExceptionState::kExecutionContext,
+        scope.GetIsolate(), ExceptionContextType::kOperationInvoke,
         "NativeValueTraitsImplTest", "IDLRecordTest");
     const auto& record_from_proxy =
         NativeValueTraits<IDLRecord<IDLString, IDLLong>>::NativeValue(
             scope.GetIsolate(), proxy, exception_state_from_proxy);
     EXPECT_EQ(0U, record_from_proxy.size());
     EXPECT_TRUE(exception_state_from_proxy.HadException());
-    EXPECT_TRUE(exception_state_from_proxy.Message().IsEmpty());
+    EXPECT_TRUE(exception_state_from_proxy.Message().empty());
     v8::Local<v8::Value> v8_exception =
         exception_state_from_proxy.GetException();
     EXPECT_TRUE(v8_exception->IsString());
@@ -165,9 +169,9 @@ TEST(NativeValueTraitsImplTest, IDLRecord) {
     const auto& record =
         NativeValueTraits<IDLRecord<IDLString, IDLShort>>::NativeValue(
             scope.GetIsolate(), v8_object, exception_state);
-    EXPECT_TRUE(record.IsEmpty());
+    EXPECT_TRUE(record.empty());
     EXPECT_TRUE(exception_state.HadException());
-    EXPECT_TRUE(exception_state.Message().IsEmpty());
+    EXPECT_TRUE(exception_state.Message().empty());
   }
   {
     v8::Local<v8::Object> v8_object =
@@ -177,7 +181,7 @@ TEST(NativeValueTraitsImplTest, IDLRecord) {
     auto record =
         NativeValueTraits<IDLRecord<IDLString, IDLUnsignedLong>>::NativeValue(
             scope.GetIsolate(), v8_object, exception_state);
-    EXPECT_TRUE(record.IsEmpty());
+    EXPECT_TRUE(record.empty());
 
     v8_object =
         EvaluateScriptForObject(scope,
@@ -207,6 +211,7 @@ TEST(NativeValueTraitsImplTest, IDLRecord) {
 }
 
 TEST(NativeValueTraitsImplTest, IDLSequence) {
+  test::TaskEnvironment task_environment;
   V8TestingScope scope;
   {
     v8::Local<v8::Array> v8_array = v8::Array::New(scope.GetIsolate());
@@ -214,7 +219,7 @@ TEST(NativeValueTraitsImplTest, IDLSequence) {
     const auto& sequence =
         NativeValueTraits<IDLSequence<IDLOctet>>::NativeValue(
             scope.GetIsolate(), v8_array, exception_state);
-    EXPECT_TRUE(sequence.IsEmpty());
+    EXPECT_TRUE(sequence.empty());
   }
   {
     v8::Local<v8::Array> v8_array =
@@ -249,7 +254,7 @@ TEST(NativeValueTraitsImplTest, IDLSequence) {
 
     NonThrowableExceptionState exception_state;
     HeapVector<ScriptValue> script_value_vector =
-        NativeValueTraits<IDLSequence<ScriptValue>>::NativeValue(
+        NativeValueTraits<IDLSequence<IDLAny>>::NativeValue(
             scope.GetIsolate(), v8_array, exception_state);
     EXPECT_EQ(3U, script_value_vector.size());
     String report_on_zela;
@@ -319,6 +324,64 @@ TEST(NativeValueTraitsImplTest, IDLSequence) {
         NativeValueTraits<IDLSequence<IDLBoolean>>::NativeValue(
             scope.GetIsolate(), v8_object, exception_state);
     EXPECT_EQ(Vector<bool>({true, false}), boolean_sequence);
+  }
+}
+
+TEST(NativeValueTraitsImplTest, IDLBigint) {
+  test::TaskEnvironment task_environment;
+  V8TestingScope scope;
+  {
+    v8::Local<v8::BigInt> v8_bigint = v8::BigInt::New(scope.GetIsolate(), 123);
+    NonThrowableExceptionState exception_state;
+    const blink::BigInt& bigint = NativeValueTraits<IDLBigint>::NativeValue(
+        scope.GetIsolate(), v8_bigint, exception_state);
+    absl::optional<absl::uint128> val = bigint.ToUInt128();
+    ASSERT_TRUE(val.has_value());
+    EXPECT_EQ(*val, 123u);
+  }
+  {
+    // Numbers don't convert to BigInt.
+    v8::Local<v8::Number> v8_number = v8::Number::New(scope.GetIsolate(), 123);
+    DummyExceptionStateForTesting exception_state;
+    const blink::BigInt& bigint = NativeValueTraits<IDLBigint>::NativeValue(
+        scope.GetIsolate(), v8_number, exception_state);
+    EXPECT_TRUE(exception_state.HadException());
+  }
+  {
+    // Strings do convert to BigInt.
+    v8::Local<v8::String> v8_string =
+        v8::String::NewFromUtf8Literal(scope.GetIsolate(), "123");
+    NonThrowableExceptionState exception_state;
+    const blink::BigInt& bigint = NativeValueTraits<IDLBigint>::NativeValue(
+        scope.GetIsolate(), v8_string, exception_state);
+    absl::optional<absl::uint128> val = bigint.ToUInt128();
+    ASSERT_TRUE(val.has_value());
+    EXPECT_EQ(*val, 123u);
+  }
+  {
+    // Can also go via valueOf.
+    const char kScript[] = R"(
+      let obj = {
+        valueOf: () => BigInt(123)
+      }; obj
+    )";
+    v8::Local<v8::Object> v8_object = EvaluateScriptForObject(scope, kScript);
+    NonThrowableExceptionState exception_state;
+    const blink::BigInt& bigint = NativeValueTraits<IDLBigint>::NativeValue(
+        scope.GetIsolate(), v8_object, exception_state);
+    absl::optional<absl::uint128> val = bigint.ToUInt128();
+    ASSERT_TRUE(val.has_value());
+    EXPECT_EQ(*val, 123u);
+  }
+  {
+    // Test legacy behavior.
+    ScopedWebIDLBigIntUsesToBigIntForTest disable_to_bigint(false);
+    v8::Local<v8::String> v8_string =
+        v8::String::NewFromUtf8Literal(scope.GetIsolate(), "123");
+    DummyExceptionStateForTesting exception_state;
+    const blink::BigInt& bigint = NativeValueTraits<IDLBigint>::NativeValue(
+        scope.GetIsolate(), v8_string, exception_state);
+    EXPECT_TRUE(exception_state.HadException());
   }
 }
 

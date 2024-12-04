@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,9 +8,12 @@
 
 #include <algorithm>
 #include <iterator>
+#include <map>
+#include <vector>
 
 #include "base/containers/circular_deque.h"
-#include "base/stl_util.h"
+#include "base/memory/raw_ptr.h"
+#include "base/ranges/algorithm.h"
 #include "base/strings/string_piece.h"
 
 namespace {
@@ -37,9 +40,9 @@ std::string Escape(base::StringPiece id) {
 
 }  // namespace
 
-DependencyGraph::DependencyGraph() {}
+DependencyGraph::DependencyGraph() = default;
 
-DependencyGraph::~DependencyGraph() {}
+DependencyGraph::~DependencyGraph() = default;
 
 void DependencyGraph::AddNode(DependencyNode* node) {
   all_nodes_.push_back(node);
@@ -47,17 +50,11 @@ void DependencyGraph::AddNode(DependencyNode* node) {
 }
 
 void DependencyGraph::RemoveNode(DependencyNode* node) {
-  base::Erase(all_nodes_, node);
+  std::erase(all_nodes_, node);
 
-  // Remove all dependency edges that contain this node.
-  auto it = edges_.begin();
-  while (it != edges_.end()) {
-    auto temp = it;
-    ++it;
-
-    if (temp->first == node || temp->second == node)
-      edges_.erase(temp);
-  }
+  std::erase_if(edges_, [node](const auto& edge) {
+    return edge.first == node || edge.second == node;
+  });
 
   construction_order_.clear();
 }
@@ -69,7 +66,7 @@ void DependencyGraph::AddEdge(DependencyNode* depended,
 }
 
 bool DependencyGraph::GetConstructionOrder(
-    std::vector<DependencyNode*>* order) {
+    std::vector<raw_ptr<DependencyNode, VectorExperimental>>* order) {
   if (construction_order_.empty() && !BuildConstructionOrder())
     return false;
 
@@ -77,7 +74,8 @@ bool DependencyGraph::GetConstructionOrder(
   return true;
 }
 
-bool DependencyGraph::GetDestructionOrder(std::vector<DependencyNode*>* order) {
+bool DependencyGraph::GetDestructionOrder(
+    std::vector<raw_ptr<DependencyNode, VectorExperimental>>* order) {
   if (construction_order_.empty() && !BuildConstructionOrder())
     return false;
 
@@ -97,7 +95,7 @@ bool DependencyGraph::BuildConstructionOrder() {
     base::Erase(queue, pair.second);
 
   // Step 2: Do the Kahn topological sort.
-  std::vector<DependencyNode*> output;
+  std::vector<raw_ptr<DependencyNode, VectorExperimental>> output;
   EdgeMap edges(edges_);
   while (!queue.empty()) {
     DependencyNode* node = queue.front();
@@ -113,13 +111,8 @@ bool DependencyGraph::BuildConstructionOrder() {
       it++;
       edges.erase(temp);
 
-      bool has_incoming_edges = false;
-      for (auto jt = edges.begin(); jt != edges.end(); ++jt) {
-        if (jt->second == dest) {
-          has_incoming_edges = true;
-          break;
-        }
-      }
+      bool has_incoming_edges = base::ranges::any_of(
+          edges, [dest](const auto& edge) { return edge.second == dest; });
 
       if (!has_incoming_edges)
         queue.push_back(dest);

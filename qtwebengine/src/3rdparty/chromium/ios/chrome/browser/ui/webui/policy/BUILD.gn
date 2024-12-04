@@ -1,10 +1,8 @@
-# Copyright 2020 The Chromium Authors. All rights reserved.
+# Copyright 2020 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
 source_set("policy") {
-  configs += [ "//build/config/compiler:enable_arc" ]
-
   sources = [
     "policy_ui.h",
     "policy_ui.mm",
@@ -14,14 +12,24 @@ source_set("policy") {
 
   deps = [
     "//base",
+    "//components/enterprise",
     "//components/policy:generated",
     "//components/policy/core/browser",
     "//components/policy/core/common",
-    "//components/resources",
+    "//components/policy/resources/webui:resources",
+    "//components/prefs",
+    "//components/signin/public/identity_manager",
     "//components/strings",
-    "//ios/chrome/browser:chrome_url_constants",
-    "//ios/chrome/browser/browser_state",
-    "//ios/chrome/browser/policy",
+    "//components/version_info",
+    "//components/version_ui",
+    "//ios/chrome/app/strings",
+    "//ios/chrome/browser/policy/model",
+    "//ios/chrome/browser/shared/model/application_context",
+    "//ios/chrome/browser/shared/model/browser_state",
+    "//ios/chrome/browser/shared/model/url:constants",
+    "//ios/chrome/browser/shared/ui/util",
+    "//ios/chrome/browser/signin/model",
+    "//ios/chrome/common",
     "//ios/web/public/webui",
     "//ui/base",
   ]

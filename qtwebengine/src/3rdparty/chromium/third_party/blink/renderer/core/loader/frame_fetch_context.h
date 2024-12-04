@@ -31,15 +31,18 @@ n * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_LOADER_FRAME_FETCH_CONTEXT_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_LOADER_FRAME_FETCH_CONTEXT_H_
 
-#include "base/optional.h"
-#include "base/single_thread_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
+#include "base/types/optional_ref.h"
 #include "services/network/public/mojom/web_client_hints_types.mojom-blink-forward.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "third_party/blink/public/common/subresource_load_metrics.h"
 #include "third_party/blink/public/common/user_agent/user_agent_metadata.h"
+#include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom-blink-forward.h"
 #include "third_party/blink/public/mojom/loader/content_security_notifier.mojom-blink.h"
 #include "third_party/blink/public/mojom/service_worker/service_worker_object.mojom-blink-forward.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/loader/base_fetch_context.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/loader/fetch/client_hints_preferences.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_parameters.h"
 #include "third_party/blink/renderer/platform/loader/fetch/loading_behavior_observer.h"
@@ -64,6 +67,17 @@ class WebContentSettingsClient;
 class CORE_EXPORT FrameFetchContext final : public BaseFetchContext,
                                             public LoadingBehaviorObserver {
  public:
+  // Returns true if execution of scripts from the url are allowed. Compared to
+  // AllowScriptFromSource(), this method does not generate any
+  // notification to the `WebContentSettingsClient` that the execution of the
+  // script was blocked. This method should be called only when there is a need
+  // to check the settings, and where blocked setting doesn't really imply that
+  // JavaScript was blocked from being executed.
+  static bool AllowScriptFromSourceWithoutNotifying(
+      const KURL& url,
+      WebContentSettingsClient* settings_client,
+      Settings* settings);
+
   static ResourceFetcher* CreateFetcherForCommittedDocument(DocumentLoader&,
                                                             Document&);
   FrameFetchContext(DocumentLoader& document_loader,
@@ -71,60 +85,67 @@ class CORE_EXPORT FrameFetchContext final : public BaseFetchContext,
                     const DetachableResourceFetcherProperties&);
   ~FrameFetchContext() override = default;
 
-  void AddAdditionalRequestHeaders(ResourceRequest&) override;
-  base::Optional<ResourceRequestBlockedReason> CanRequest(
+  absl::optional<ResourceRequestBlockedReason> CanRequest(
       ResourceType type,
       const ResourceRequest& resource_request,
       const KURL& url,
       const ResourceLoaderOptions& options,
       ReportingDisposition reporting_disposition,
-      const base::Optional<ResourceRequest::RedirectInfo>& redirect_info)
+      base::optional_ref<const ResourceRequest::RedirectInfo> redirect_info)
       const override;
   mojom::FetchCacheMode ResourceRequestCachePolicy(
       const ResourceRequest&,
       ResourceType,
       FetchParameters::DeferOption) const override;
   void PrepareRequest(ResourceRequest&,
-                      const FetchInitiatorInfo&,
+                      ResourceLoaderOptions&,
                       WebScopedVirtualTimePauser&,
                       ResourceType) override;
 
-  void AddResourceTiming(const ResourceTimingInfo&) override;
+  void AddResourceTiming(mojom::blink::ResourceTimingInfoPtr,
+                         const AtomicString& initiator_type) override;
   bool AllowImage(bool images_enabled, const KURL&) const override;
 
   void PopulateResourceRequest(ResourceType,
-                               const ClientHintsPreferences&,
-                               const FetchParameters::ResourceWidth&,
+                               const absl::optional<float> resource_width,
                                ResourceRequest&,
                                const ResourceLoaderOptions&) override;
 
+  bool IsPrerendering() const override;
+
+  bool DoesLCPPHaveAnyHintData() override;
+
   // Exposed for testing.
   void ModifyRequestForCSP(ResourceRequest&);
-  void AddClientHintsIfNecessary(const ClientHintsPreferences&,
-                                 const FetchParameters::ResourceWidth&,
+  void AddClientHintsIfNecessary(const absl::optional<float> resource_width,
                                  ResourceRequest&);
+
+  void AddReducedAcceptLanguageIfNecessary(ResourceRequest&);
 
   FetchContext* Detach() override;
 
   void Trace(Visitor*) const override;
 
   bool CalculateIfAdSubresource(
-      const ResourceRequest& resource_request,
+      const ResourceRequestHead& resource_request,
+      base::optional_ref<const KURL> alias_url,
       ResourceType type,
       const FetchInitiatorInfo& initiator_info) override;
-
-  bool SendConversionRequestInsteadOfRedirecting(
-      const KURL& url,
-      const base::Optional<ResourceRequest::RedirectInfo>& redirect_info,
-      ReportingDisposition reporting_disposition) const override;
-
-  mojo::PendingReceiver<mojom::blink::WorkerTimingContainer>
-  TakePendingWorkerTimingReceiver(int request_id) override;
 
   // LoadingBehaviorObserver overrides:
   void DidObserveLoadingBehavior(LoadingBehaviorFlag) override;
 
+  std::unique_ptr<ResourceLoadInfoNotifierWrapper>
+  CreateResourceLoadInfoNotifierWrapper() override;
+
   mojom::blink::ContentSecurityNotifier& GetContentSecurityNotifier() const;
+
+  ExecutionContext* GetExecutionContext() const override;
+
+  void UpdateSubresourceLoadMetrics(
+      const SubresourceLoadMetrics& subresource_load_metrics) override;
+
+  scoped_refptr<const SecurityOrigin> GetTopFrameOrigin() const override;
 
  private:
   friend class FrameFetchContextTest;
@@ -140,18 +161,14 @@ class CORE_EXPORT FrameFetchContext final : public BaseFetchContext,
 
   // BaseFetchContext overrides:
   net::SiteForCookies GetSiteForCookies() const override;
-  scoped_refptr<const SecurityOrigin> GetTopFrameOrigin() const override;
   SubresourceFilter* GetSubresourceFilter() const override;
-  PreviewsResourceLoadingHints* GetPreviewsResourceLoadingHints()
-      const override;
-  PreviewsState previews_state() const override;
   bool AllowScriptFromSource(const KURL&) const override;
   bool ShouldBlockRequestByInspector(const KURL&) const override;
   void DispatchDidBlockRequest(const ResourceRequest&,
-                               const FetchInitiatorInfo&,
+                               const ResourceLoaderOptions&,
                                ResourceRequestBlockedReason,
                                ResourceType) const override;
-  const ContentSecurityPolicy* GetContentSecurityPolicyForWorld(
+  ContentSecurityPolicy* GetContentSecurityPolicyForWorld(
       const DOMWrapperWorld* world) const override;
   bool IsSVGImageChromeClient() const override;
   void CountUsage(WebFeature) const override;
@@ -161,42 +178,34 @@ class CORE_EXPORT FrameFetchContext final : public BaseFetchContext,
       override;
   bool ShouldBlockFetchByMixedContentCheck(
       mojom::blink::RequestContextType request_context,
-      const base::Optional<ResourceRequest::RedirectInfo>& redirect_info,
+      network::mojom::blink::IPAddressSpace target_address_space,
+      base::optional_ref<const ResourceRequest::RedirectInfo> redirect_info,
       const KURL& url,
       ReportingDisposition reporting_disposition,
-      const base::Optional<String>& devtools_id) const override;
+      const String& devtools_id) const override;
   bool ShouldBlockFetchAsCredentialedSubresource(const ResourceRequest&,
                                                  const KURL&) const override;
 
   const KURL& Url() const override;
-  const SecurityOrigin* GetParentSecurityOrigin() const override;
-  const ContentSecurityPolicy* GetContentSecurityPolicy() const override;
-  void AddConsoleMessage(ConsoleMessage*) const override;
+  ContentSecurityPolicy* GetContentSecurityPolicy() const override;
 
   WebContentSettingsClient* GetContentSettingsClient() const;
   Settings* GetSettings() const;
   String GetUserAgent() const;
-  base::Optional<UserAgentMetadata> GetUserAgentMetadata() const;
-  const FeaturePolicy* GetFeaturePolicy() const override;
+  absl::optional<UserAgentMetadata> GetUserAgentMetadata() const;
+  const PermissionsPolicy* GetPermissionsPolicy() const override;
   const ClientHintsPreferences GetClientHintsPreferences() const;
   float GetDevicePixelRatio() const;
+  String GetReducedAcceptLanguage() const;
 
   enum class ClientHintsMode { kLegacy, kStandard };
   bool ShouldSendClientHint(ClientHintsMode mode,
-                            const FeaturePolicy*,
+                            const PermissionsPolicy*,
                             const url::Origin& resource_origin,
                             bool is_1p_origin,
                             network::mojom::blink::WebClientHintsType,
                             const ClientHintsPreferences&) const;
   void SetFirstPartyCookie(ResourceRequest&);
-
-  // Returns true if execution of scripts from the url are allowed. Compared to
-  // AllowScriptFromSource(), this method does not generate any
-  // notification to the |WebContentSettingsClient| that the execution of the
-  // script was blocked. This method should be called only when there is a need
-  // to check the settings, and where blocked setting doesn't really imply that
-  // JavaScript was blocked from being executed.
-  bool AllowScriptFromSourceWithoutNotifying(const KURL&) const;
 
   // Returns true if the origin of |url| is same as the origin of the top level
   // frame's main resource.
@@ -208,15 +217,10 @@ class CORE_EXPORT FrameFetchContext final : public BaseFetchContext,
   Member<DocumentLoader> document_loader_;
   Member<Document> document_;
 
-  // The value of |save_data_enabled_| is read once per frame from
-  // NetworkStateNotifier, which is guarded by a mutex lock, and cached locally
-  // here for performance.
-  const bool save_data_enabled_;
-
   // Non-null only when detached.
-  Member<const FrozenState> frozen_state_;
+  Member<FrozenState> frozen_state_;
 };
 
 }  // namespace blink
 
-#endif
+#endif  // THIRD_PARTY_BLINK_RENDERER_CORE_LOADER_FRAME_FETCH_CONTEXT_H_

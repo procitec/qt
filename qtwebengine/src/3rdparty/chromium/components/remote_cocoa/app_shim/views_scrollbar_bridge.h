@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,7 +7,6 @@
 
 #import <Cocoa/Cocoa.h>
 
-#import "base/mac/scoped_nsobject.h"
 #include "components/remote_cocoa/app_shim/remote_cocoa_app_shim_export.h"
 
 // The delegate set to ViewsScrollbarBridge.
@@ -21,10 +20,7 @@ class REMOTE_COCOA_APP_SHIM_EXPORT ViewsScrollbarBridgeDelegate {
 // A bridge to NSScroller managed by NativeCocoaScrollbar. Serves as a helper
 // class to bridge NSScroller notifications and functions to CocoaScrollbar.
 REMOTE_COCOA_APP_SHIM_EXPORT
-@interface ViewsScrollbarBridge : NSObject {
- @private
-  ViewsScrollbarBridgeDelegate* _delegate;  // Weak. Owns this.
-}
+@interface ViewsScrollbarBridge : NSObject
 
 // Initializes with the given delegate and registers for notifications on
 // scroller style changes.
@@ -33,9 +29,9 @@ REMOTE_COCOA_APP_SHIM_EXPORT
 // Sets |delegate_| to nullptr.
 - (void)clearDelegate;
 
-// Returns the style of scrollers that OSX is using.
-+ (NSScrollerStyle)getPreferredScrollerStyle;
+// Returns the style of scrollers that macOS is using.
++ (NSScrollerStyle)preferredScrollerStyle;
 
 @end
 
-#endif
+#endif  // COMPONENTS_REMOTE_COCOA_APP_SHIM_VIEWS_SCROLLBAR_BRIDGE_H_

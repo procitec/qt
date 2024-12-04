@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,25 +8,26 @@
 #include <stdint.h>
 
 #include <map>
-#include <memory>
+#include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
+#include "base/containers/contains.h"
 #include "base/files/file_enumerator.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/json/json_file_value_serializer.h"
 #include "base/logging.h"
-#include "base/macros.h"
 #include "base/metrics/field_trial.h"
-#include "base/metrics/histogram_macros.h"
+#include "base/strings/escape.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/values.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_icon_set.h"
@@ -40,10 +41,11 @@
 #include "extensions/common/manifest_handlers/default_locale_handler.h"
 #include "extensions/common/manifest_handlers/icons_handler.h"
 #include "extensions/strings/grit/extensions_strings.h"
-#include "net/base/escape.h"
 #include "net/base/filename_util.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "url/gurl.h"
+
+using extensions::mojom::ManifestLocation;
 
 namespace extensions {
 namespace file_util {
@@ -184,16 +186,45 @@ base::FilePath InstallExtension(const base::FilePath& unpacked_source_dir,
   return version_dir;
 }
 
-void UninstallExtension(const base::FilePath& extensions_dir,
-                        const std::string& id) {
+void UninstallExtension(const base::FilePath& profile_dir,
+                        const base::FilePath& extensions_install_dir,
+                        const base::FilePath& extension_dir_to_delete) {
+  // The below conditions are asserting that we should only be deleting
+  // directories that are inside the `extensions_install_dir` which should be
+  // inside the profile directory. Anything outside of that would be considered
+  // invalid and dangerous since this is effectively an `rm -rf
+  // <extension_delete_path>`.
+
+  // Confirm that all the directories involved are not empty and are absolute so
+  // that the subsequent comparisons have some value.
+  if (profile_dir.empty() || extensions_install_dir.empty() ||
+      extension_dir_to_delete.empty() || !profile_dir.IsAbsolute() ||
+      !extensions_install_dir.IsAbsolute() ||
+      !extension_dir_to_delete.IsAbsolute()) {
+    return;
+  }
+
+  // Confirm the directory where we install extensions is a direct subdir of the
+  // profile dir.
+  if (extensions_install_dir.DirName() != profile_dir) {
+    return;
+  }
+
+  // Confirm the directory we are obliterating is a direct subdir of the
+  // extensions install directory.
+  if (extension_dir_to_delete.DirName() != extensions_install_dir) {
+    return;
+  }
+
+  base::DeletePathRecursively(extension_dir_to_delete);
+
   // We don't care about the return value. If this fails (and it can, due to
   // plugins that aren't unloaded yet), it will get cleaned up by
   // ExtensionGarbageCollector::GarbageCollectExtensions.
-  base::DeletePathRecursively(extensions_dir.AppendASCII(id));
 }
 
 scoped_refptr<Extension> LoadExtension(const base::FilePath& extension_path,
-                                       Manifest::Location location,
+                                       ManifestLocation location,
                                        int flags,
                                        std::string* error) {
   return LoadExtension(extension_path, nullptr, std::string(), location, flags,
@@ -202,7 +233,7 @@ scoped_refptr<Extension> LoadExtension(const base::FilePath& extension_path,
 
 scoped_refptr<Extension> LoadExtension(const base::FilePath& extension_path,
                                        const std::string& extension_id,
-                                       Manifest::Location location,
+                                       ManifestLocation location,
                                        int flags,
                                        std::string* error) {
   return LoadExtension(extension_path, nullptr, extension_id, location, flags,
@@ -213,20 +244,20 @@ scoped_refptr<Extension> LoadExtension(
     const base::FilePath& extension_path,
     const base::FilePath::CharType* manifest_file,
     const std::string& extension_id,
-    Manifest::Location location,
+    ManifestLocation location,
     int flags,
     std::string* error) {
-  std::unique_ptr<base::DictionaryValue> manifest;
+  std::optional<base::Value::Dict> manifest;
   if (!manifest_file) {
     manifest = LoadManifest(extension_path, error);
   } else {
     manifest = LoadManifest(extension_path, manifest_file, error);
   }
-  if (!manifest.get())
+  if (!manifest)
     return nullptr;
 
   if (!extension_l10n_util::LocalizeExtension(
-          extension_path, manifest.get(),
+          extension_path, &manifest.value(),
           extension_l10n_util::GetGzippedMessagesPermissionForLocation(
               location),
           error)) {
@@ -246,27 +277,27 @@ scoped_refptr<Extension> LoadExtension(
   return extension;
 }
 
-std::unique_ptr<base::DictionaryValue> LoadManifest(
+std::optional<base::Value::Dict> LoadManifest(
     const base::FilePath& extension_path,
     std::string* error) {
   return LoadManifest(extension_path, kManifestFilename, error);
 }
 
-std::unique_ptr<base::DictionaryValue> LoadManifest(
+std::optional<base::Value::Dict> LoadManifest(
     const base::FilePath& extension_path,
     const base::FilePath::CharType* manifest_filename,
     std::string* error) {
   base::FilePath manifest_path = extension_path.Append(manifest_filename);
   if (!base::PathExists(manifest_path)) {
     *error = l10n_util::GetStringUTF8(IDS_EXTENSION_MANIFEST_UNREADABLE);
-    return nullptr;
+    return std::nullopt;
   }
 
   JSONFileValueDeserializer deserializer(manifest_path);
   std::unique_ptr<base::Value> root(deserializer.Deserialize(nullptr, error));
   if (!root.get()) {
     if (error->empty()) {
-      // If |error| is empty, than the file could not be read.
+      // If |error| is empty, then the file could not be read.
       // It would be cleaner to have the JSON reader give a specific error
       // in this case, but other code tests for a file error with
       // error->empty().  For now, be consistent.
@@ -275,15 +306,15 @@ std::unique_ptr<base::DictionaryValue> LoadManifest(
       *error = base::StringPrintf(
           "%s  %s", manifest_errors::kManifestParseError, error->c_str());
     }
-    return nullptr;
+    return std::nullopt;
   }
 
   if (!root->is_dict()) {
     *error = l10n_util::GetStringUTF8(IDS_EXTENSION_MANIFEST_INVALID);
-    return nullptr;
+    return std::nullopt;
   }
 
-  return base::DictionaryValue::From(std::move(root));
+  return std::move(*root).TakeDict();
 }
 
 bool ValidateExtension(const Extension* extension,
@@ -297,14 +328,15 @@ bool ValidateExtension(const Extension* extension,
   // not on the reserved list. We only warn, and do not block the loading of the
   // extension.
   std::string warning;
-  if (!CheckForIllegalFilenames(extension->path(), &warning))
-    warnings->push_back(InstallWarning(warning));
+  if (!CheckForIllegalFilenames(extension->path(), &warning)) {
+    warnings->emplace_back(warning);
+  }
 
   // Check that the extension does not include any Windows reserved filenames.
   std::string windows_reserved_warning;
   if (!CheckForWindowsReservedFilenames(extension->path(),
                                         &windows_reserved_warning)) {
-    warnings->push_back(InstallWarning(windows_reserved_warning));
+    warnings->emplace_back(windows_reserved_warning);
   }
 
   // Check that extensions don't include private key files.
@@ -320,10 +352,9 @@ bool ValidateExtension(const Extension* extension,
       return false;
     }
   } else {
-    for (size_t i = 0; i < private_keys.size(); ++i) {
-      warnings->push_back(InstallWarning(
-          l10n_util::GetStringFUTF8(IDS_EXTENSION_CONTAINS_PRIVATE_KEY,
-                                    private_keys[i].LossyDisplayName())));
+    for (const auto& private_key : private_keys) {
+      warnings->emplace_back(l10n_util::GetStringFUTF8(
+          IDS_EXTENSION_CONTAINS_PRIVATE_KEY, private_key.LossyDisplayName()));
     }
     // Only warn; don't block loading the extension.
   }
@@ -443,13 +474,13 @@ base::FilePath GetInstallTempDir(const base::FilePath& extensions_dir) {
 }
 
 base::FilePath ExtensionURLToRelativeFilePath(const GURL& url) {
-  base::StringPiece url_path = url.path_piece();
+  std::string_view url_path = url.path_piece();
   if (url_path.empty() || url_path[0] != '/')
     return base::FilePath();
 
   // Convert %-encoded UTF8 to regular UTF8.
   std::string file_path;
-  if (!net::UnescapeBinaryURLComponentSafe(
+  if (!base::UnescapeBinaryURLComponentSafe(
           url_path, true /* fail_on_path_separators */, &file_path)) {
     // There shouldn't be any escaped path separators or control characters in
     // the path. However, if there are, it's best to just fail.
@@ -479,7 +510,6 @@ void SetReportErrorForInvisibleIconForTesting(bool value) {
 bool ValidateExtensionIconSet(const ExtensionIconSet& icon_set,
                               const Extension* extension,
                               const char* manifest_key,
-                              SkColor background_color,
                               std::string* error) {
   for (const auto& entry : icon_set.map()) {
     const base::FilePath path =
@@ -492,18 +522,9 @@ bool ValidateExtensionIconSet(const ExtensionIconSet& icon_set,
       return false;
     }
 
-    if (extension->location() == Manifest::UNPACKED) {
+    if (extension->location() == ManifestLocation::kUnpacked) {
       const bool is_sufficiently_visible =
           image_util::IsIconAtPathSufficientlyVisible(path);
-      const bool is_sufficiently_visible_rendered =
-          image_util::IsRenderedIconAtPathSufficientlyVisible(path,
-                                                              background_color);
-      UMA_HISTOGRAM_BOOLEAN(
-          "Extensions.ManifestIconSetIconWasVisibleForUnpacked",
-          is_sufficiently_visible);
-      UMA_HISTOGRAM_BOOLEAN(
-          "Extensions.ManifestIconSetIconWasVisibleForUnpackedRendered",
-          is_sufficiently_visible_rendered);
       if (!is_sufficiently_visible && g_report_error_for_invisible_icon) {
         constexpr char kIconNotSufficientlyVisibleError[] =
             "Icon '%s' specified in '%s' is not sufficiently visible.";
@@ -532,7 +553,7 @@ MessageBundle* LoadMessageBundle(
 
   base::FilePath default_locale_path = locale_path.AppendASCII(default_locale);
   if (default_locale.empty() ||
-      chrome_locales.find(default_locale) == chrome_locales.end() ||
+      !base::Contains(chrome_locales, default_locale) ||
       !base::PathExists(default_locale_path)) {
     *error = l10n_util::GetStringUTF8(
         IDS_EXTENSION_LOCALES_NO_DEFAULT_LOCALE_SPECIFIED);
@@ -543,55 +564,6 @@ MessageBundle* LoadMessageBundle(
       locale_path, default_locale, gzip_permission, error);
 
   return message_bundle;
-}
-
-MessageBundle::SubstitutionMap* LoadMessageBundleSubstitutionMap(
-    const base::FilePath& extension_path,
-    const std::string& extension_id,
-    const std::string& default_locale,
-    extension_l10n_util::GzippedMessagesPermission gzip_permission) {
-  return LoadMessageBundleSubstitutionMapFromPaths(
-      {extension_path}, extension_id, default_locale, gzip_permission);
-}
-
-MessageBundle::SubstitutionMap* LoadNonLocalizedMessageBundleSubstitutionMap(
-    const std::string& extension_id) {
-  MessageBundle::SubstitutionMap* return_value =
-      new MessageBundle::SubstitutionMap();
-
-  // Add @@extension_id reserved message here.
-  return_value->insert(
-      std::make_pair(MessageBundle::kExtensionIdKey, extension_id));
-
-  return return_value;
-}
-
-MessageBundle::SubstitutionMap* LoadMessageBundleSubstitutionMapFromPaths(
-    const std::vector<base::FilePath>& paths,
-    const std::string& extension_id,
-    const std::string& default_locale,
-    extension_l10n_util::GzippedMessagesPermission gzip_permission) {
-  MessageBundle::SubstitutionMap* return_value =
-      LoadNonLocalizedMessageBundleSubstitutionMap(extension_id);
-
-  // Touch disk only if extension is localized.
-  if (default_locale.empty())
-    return return_value;
-
-  std::string error;
-  for (const base::FilePath& path : paths) {
-    std::unique_ptr<MessageBundle> bundle(
-        LoadMessageBundle(path, default_locale, gzip_permission, &error));
-    if (bundle) {
-      for (const auto& iter : *bundle->dictionary()) {
-        // |insert| only adds new entries, and does not replace entries in
-        // the main extension or previously processed imports.
-        return_value->insert(std::make_pair(iter.first, iter.second));
-      }
-    }
-  }
-
-  return return_value;
 }
 
 base::FilePath GetVerifiedContentsPath(const base::FilePath& extension_path) {

@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,6 +10,7 @@
 #include "cc/cc_export.h"
 #include "cc/layers/layer.h"
 #include "cc/resources/ui_resource_client.h"
+#include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/gfx/geometry/rect.h"
 
 namespace cc {
@@ -23,13 +24,16 @@ class CC_EXPORT UIResourceLayer : public Layer {
   UIResourceLayer(const UIResourceLayer&) = delete;
   UIResourceLayer& operator=(const UIResourceLayer&) = delete;
 
-  void PushPropertiesTo(LayerImpl* layer) override;
+  void PushPropertiesTo(LayerImpl* layer,
+                        const CommitState& commit_state,
+                        const ThreadUnsafeCommitState& unsafe_state) override;
 
   void SetLayerTreeHost(LayerTreeHost* host) override;
 
   // Sets the resource. If they don't exist already, the shared UI resource and
   // ID are generated and cached in a map in the associated UIResourceManager.
-  // Currently, this resource will never be released by the UIResourceManager.
+  // This resource will be released when all references of SkPixelRefs outside
+  // the associated UIResourceManager's map are dropped
   void SetBitmap(const SkBitmap& skbitmap);
 
   // An alternative way of setting the resource where an ID is used directly. If
@@ -53,21 +57,22 @@ class CC_EXPORT UIResourceLayer : public Layer {
 
   bool HasDrawableContent() const override;
 
-  UIResourceId resource_id() const { return resource_id_; }
+  UIResourceId resource_id() const { return resource_id_.Read(*this); }
 
  private:
-  std::unique_ptr<LayerImpl> CreateLayerImpl(LayerTreeImpl* tree_impl) override;
+  std::unique_ptr<LayerImpl> CreateLayerImpl(
+      LayerTreeImpl* tree_impl) const override;
   void RecreateUIResourceIdFromBitmap();
   void SetUIResourceIdInternal(UIResourceId resource_id);
 
   // The resource ID will be zero when it's unset or when there's no associated
   // LayerTreeHost.
-  UIResourceId resource_id_ = 0;
-  SkBitmap bitmap_;
+  ProtectedSequenceReadable<UIResourceId> resource_id_;
+  ProtectedSequenceForbidden<SkBitmap> bitmap_;
 
-  gfx::PointF uv_top_left_;
-  gfx::PointF uv_bottom_right_;
-  float vertex_opacity_[4];
+  ProtectedSequenceReadable<gfx::PointF> uv_top_left_;
+  ProtectedSequenceReadable<gfx::PointF> uv_bottom_right_;
+  ProtectedSequenceReadable<float[4]> vertex_opacity_;
 };
 
 }  // namespace cc

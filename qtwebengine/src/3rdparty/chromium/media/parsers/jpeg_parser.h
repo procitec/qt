@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,6 +8,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "base/containers/span.h"
 #include "media/parsers/media_parsers_export.h"
 
 namespace media {
@@ -148,17 +149,14 @@ struct JpegParseResult {
 // valid and JPEG baseline sequential process is present. If parsed
 // successfully, |result| is the parsed result.
 MEDIA_PARSERS_EXPORT
-bool ParseJpegPicture(const uint8_t* buffer,
-                      size_t length,
+bool ParseJpegPicture(base::span<const uint8_t> buffer,
                       JpegParseResult* result);
 
 // Parses the first image of JPEG stream in |buffer| with |length|.  Returns
 // true iff header is valid and JPEG baseline sequential process is present.
 // If parsed successfully, |result| is the parsed result.
 MEDIA_PARSERS_EXPORT
-bool ParseJpegStream(const uint8_t* buffer,
-                     size_t length,
-                     JpegParseResult* result);
+bool ParseJpegStream(base::span<const uint8_t> buffer, JpegParseResult* result);
 
 }  // namespace media
 

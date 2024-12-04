@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,13 +11,12 @@
 #include <map>
 #include <string>
 
-#include "base/callback_forward.h"
 #include "base/compiler_specific.h"
 #include "base/gtest_prod_util.h"
-#include "base/scoped_observer.h"
+#include "base/memory/raw_ptr.h"
+#include "base/scoped_observation.h"
 #include "components/keyed_service/core/keyed_service.h"
-#include "content/public/browser/notification_observer.h"
-#include "content/public/browser/notification_registrar.h"
+#include "extensions/browser/extension_host_registry.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_registry_observer.h"
 #include "extensions/browser/lazy_context_id.h"
@@ -40,10 +39,14 @@ class ExtensionHost;
 // only with extensions that have not-yet-loaded lazy background pages.
 class LazyBackgroundTaskQueue : public KeyedService,
                                 public LazyContextTaskQueue,
-                                public content::NotificationObserver,
-                                public ExtensionRegistryObserver {
+                                public ExtensionRegistryObserver,
+                                public ExtensionHostRegistry::Observer {
  public:
   explicit LazyBackgroundTaskQueue(content::BrowserContext* browser_context);
+
+  LazyBackgroundTaskQueue(const LazyBackgroundTaskQueue&) = delete;
+  LazyBackgroundTaskQueue& operator=(const LazyBackgroundTaskQueue&) = delete;
+
   ~LazyBackgroundTaskQueue() override;
 
   // Convenience method to return the LazyBackgroundTaskQueue for a given
@@ -55,7 +58,14 @@ class LazyBackgroundTaskQueue : public KeyedService,
   // extension has a lazy background page that is being suspended this method
   // cancels that suspension.
   bool ShouldEnqueueTask(content::BrowserContext* context,
-                         const Extension* extension) override;
+                         const Extension* extension) const override;
+
+  // Returns true if the lazy background is ready to run tasks. This currently
+  // means this and `ShouldEnqueueTask()` will return true at the same time. But
+  // because of experiments on service workers needs to be separated out into
+  // its own function.
+  bool IsReadyToRunTasks(content::BrowserContext* context,
+                         const Extension* extension) const override;
 
   // Adds a task to the queue for a given extension. If this is the first
   // task added for the extension, its lazy background page will be loaded.
@@ -71,17 +81,17 @@ class LazyBackgroundTaskQueue : public KeyedService,
   FRIEND_TEST_ALL_PREFIXES(LazyBackgroundTaskQueueTest, ProcessPendingTasks);
   FRIEND_TEST_ALL_PREFIXES(LazyBackgroundTaskQueueTest,
                            CreateLazyBackgroundPageOnExtensionLoaded);
+  using PendingTasksList = std::vector<PendingTask>;
   // A map between a LazyContextId and the queue of tasks pending the load of
   // its background page.
-  using PendingTasksKey = LazyContextId;
-  using PendingTasksList = std::vector<PendingTask>;
-  using PendingTasksMap =
-      std::map<PendingTasksKey, std::unique_ptr<PendingTasksList>>;
+  using PendingTasksMap = std::map<LazyContextId, PendingTasksList>;
 
-  // content::NotificationObserver interface.
-  void Observe(int type,
-               const content::NotificationSource& source,
-               const content::NotificationDetails& details) override;
+  // ExtensionHostRegistry::Observer:
+  void OnExtensionHostCompletedFirstLoad(
+      content::BrowserContext* browser_context,
+      ExtensionHost* host) override;
+  void OnExtensionHostDestroyed(content::BrowserContext* browser_context,
+                                ExtensionHost* host) override;
 
   // ExtensionRegistryObserver interface.
   void OnExtensionLoaded(content::BrowserContext* browser_context,
@@ -109,14 +119,14 @@ class LazyBackgroundTaskQueue : public KeyedService,
       content::BrowserContext* browser_context,
       const Extension* extension);
 
-  content::BrowserContext* browser_context_;
-  content::NotificationRegistrar registrar_;
+  raw_ptr<content::BrowserContext, DanglingUntriaged> browser_context_;
   PendingTasksMap pending_tasks_;
 
-  ScopedObserver<ExtensionRegistry, ExtensionRegistryObserver>
-      extension_registry_observer_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(LazyBackgroundTaskQueue);
+  base::ScopedObservation<ExtensionRegistry, ExtensionRegistryObserver>
+      extension_registry_observation_{this};
+  base::ScopedObservation<ExtensionHostRegistry,
+                          ExtensionHostRegistry::Observer>
+      extension_host_registry_observation_{this};
 };
 
 }  // namespace extensions

@@ -32,7 +32,7 @@
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_CRYPTO_WORKER_GLOBAL_SCOPE_CRYPTO_H_
 
 #include "third_party/blink/renderer/core/workers/worker_global_scope.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/supplementable.h"
 
 namespace blink {
@@ -46,11 +46,11 @@ class WorkerGlobalScopeCrypto final
  public:
   static const char kSupplementName[];
 
-  static WorkerGlobalScopeCrypto& From(Supplementable<WorkerGlobalScope>&);
-  static Crypto* crypto(Supplementable<WorkerGlobalScope>&);
+  static WorkerGlobalScopeCrypto& From(WorkerGlobalScope&);
+  static Crypto* crypto(WorkerGlobalScope&);
   Crypto* crypto() const;
 
-  WorkerGlobalScopeCrypto();
+  explicit WorkerGlobalScopeCrypto(WorkerGlobalScope& worker_scope);
 
   void Trace(Visitor*) const override;
 

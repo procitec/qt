@@ -1,4 +1,5 @@
 kbr@chromium.org
 zmo@chromium.org
+magchen@chromium.org
 
-# COMPONENT: Internals>GPU>Internals
+per-file webgpu*=file://third_party/blink/renderer/modules/webgpu/OWNERS

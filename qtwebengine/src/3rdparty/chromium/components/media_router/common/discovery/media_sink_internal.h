@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,11 +8,23 @@
 #include <utility>
 
 #include "components/media_router/common/media_sink.h"
+#include "components/media_router/common/providers/cast/channel/cast_device_capability.h"
 #include "net/base/ip_address.h"
 #include "net/base/ip_endpoint.h"
 #include "url/gurl.h"
 
 namespace media_router {
+
+// Default Cast control port to open Cast Socket.
+static constexpr int kCastControlPort = 8009;
+
+// The method by which the cast sink was discovered.
+enum class CastDiscoveryType {
+  kMdns,
+  kDial,
+  kAccessCodeManualEntry,
+  kAccessCodeRememberedDevice,
+};
 
 // Extra data for DIAL media sink.
 struct DialSinkExtraData {
@@ -41,17 +53,17 @@ struct CastSinkExtraData {
   // Model name of the sink.
   std::string model_name;
 
-  // A bit vector representing the capabilities of the sink. The values are
-  // defined in media_router.mojom.
-  uint8_t capabilities = 0;
+  // An enum set representing the capabilities of the sink. The enum values are
+  // defined in cast_device_capability.h.
+  cast_channel::CastDeviceCapabilitySet capabilities;
 
   // ID of Cast channel opened for the sink. The caller must set this value to a
   // valid cast_channel_id. The cast_channel_id may change over time as the
   // browser reconnects to a device.
   int cast_channel_id = 0;
 
-  // True if Cast channel is opened from DIAL sink.
-  bool discovered_by_dial = false;
+  // The method used to discover the cast sink.
+  CastDiscoveryType discovery_type = CastDiscoveryType::kMdns;
 
   CastSinkExtraData();
   CastSinkExtraData(const CastSinkExtraData& other);

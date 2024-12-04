@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -30,9 +30,12 @@ extern ContentType const ContentTypeImage;
 // should contain all schemes considered valid. |groupUserDefaults| is the
 // NSUserDefaults used to store information on pasteboard entry expiration. This
 // information will be shared with other applications in the application group.
+// |onlyUseClipboardAsync| holds whether the clipboard should only be access
+// asynchronously.
 - (instancetype)initWithMaxAge:(NSTimeInterval)maxAge
              authorizedSchemes:(NSSet<NSString*>*)authorizedSchemes
                   userDefaults:(NSUserDefaults*)groupUserDefaults
+         onlyUseClipboardAsync:(BOOL)onlyUseClipboardAsync
                       delegate:(id<ClipboardRecentContentDelegate>)delegate
     NS_DESIGNATED_INITIALIZER;
 
@@ -52,6 +55,11 @@ extern ContentType const ContentTypeImage;
 // not been suppressed and will not trigger a pasteboard access notification.
 // Otherwise, returns nil.
 - (UIImage*)recentImageFromClipboard;
+
+// Returns the set of content types being currently used on the clipboard; will
+// be nil if the current pasteboard contents are unknown, or if the clipboard
+// content age is expired.
+- (NSSet<ContentType>*)cachedClipboardContentTypes;
 
 // Uses the new iOS 14 pasteboard detection pattern API to asynchronously detect
 // if the clipboard contains content (that has not been suppressed) of the

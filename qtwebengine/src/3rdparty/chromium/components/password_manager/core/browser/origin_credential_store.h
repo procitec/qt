@@ -1,35 +1,32 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef COMPONENTS_PASSWORD_MANAGER_CORE_BROWSER_ORIGIN_CREDENTIAL_STORE_H_
 #define COMPONENTS_PASSWORD_MANAGER_CORE_BROWSER_ORIGIN_CREDENTIAL_STORE_H_
 
+#include <string>
 #include <vector>
 
 #include "base/containers/span.h"
-#include "base/strings/string16.h"
-#include "base/util/type_safety/strong_alias.h"
-#include "components/password_manager/core/browser/password_form_forward.h"
+#include "base/time/time.h"
+#include "base/types/strong_alias.h"
+#include "components/password_manager/core/browser/password_manager_util.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 
 namespace password_manager {
 
+struct PasswordForm;
+
 // Encapsulates the data from the password manager backend as used by the UI.
 class UiCredential {
  public:
-  using IsPublicSuffixMatch =
-      util::StrongAlias<class IsPublicSuffixMatchTag, bool>;
-
-  using IsAffiliationBasedMatch =
-      util::StrongAlias<class IsAffiliationBasedMatchTag, bool>;
-
-  UiCredential(base::string16 username,
-               base::string16 password,
+  UiCredential(std::u16string username,
+               std::u16string password,
                url::Origin origin,
-               IsPublicSuffixMatch is_public_suffix_match,
-               IsAffiliationBasedMatch is_affiliation_based_match);
+               password_manager_util::GetLoginMatchType match_type,
+               base::Time last_used);
   UiCredential(const PasswordForm& form, const url::Origin& affiliated_origin);
   UiCredential(UiCredential&&);
   UiCredential(const UiCredential&);
@@ -37,26 +34,44 @@ class UiCredential {
   UiCredential& operator=(const UiCredential&);
   ~UiCredential();
 
-  const base::string16& username() const { return username_; }
+  const std::u16string& username() const { return username_; }
 
-  const base::string16& password() const { return password_; }
+  const std::u16string& password() const { return password_; }
 
   const url::Origin& origin() const { return origin_; }
 
-  IsPublicSuffixMatch is_public_suffix_match() const {
-    return is_public_suffix_match_;
+  // Domain or App name displayed in the UI for affiliated or PSL matches.
+  const std::string& display_name() const { return display_name_; }
+
+  password_manager_util::GetLoginMatchType match_type() const {
+    return match_type_;
   }
 
-  IsAffiliationBasedMatch is_affiliation_based_match() const {
-    return is_affiliation_based_match_;
+  base::Time last_used() const { return last_used_; }
+
+  bool is_shared() const { return is_shared_; }
+
+  const std::u16string& sender_name() const { return sender_name_; }
+
+  const GURL& sender_profile_image_url() const {
+    return sender_profile_image_url_;
+  }
+
+  bool sharing_notification_displayed() const {
+    return sharing_notification_displayed_;
   }
 
  private:
-  base::string16 username_;
-  base::string16 password_;
+  std::u16string username_;
+  std::u16string password_;
   url::Origin origin_;
-  IsPublicSuffixMatch is_public_suffix_match_{false};
-  IsAffiliationBasedMatch is_affiliation_based_match_{false};
+  std::string display_name_;
+  password_manager_util::GetLoginMatchType match_type_;
+  base::Time last_used_;
+  bool is_shared_ = false;
+  std::u16string sender_name_;
+  GURL sender_profile_image_url_;
+  bool sharing_notification_displayed_ = false;
 };
 
 bool operator==(const UiCredential& lhs, const UiCredential& rhs);
@@ -68,14 +83,14 @@ std::ostream& operator<<(std::ostream& os, const UiCredential& credential);
 // credentials without creating unnecessary copies.
 class OriginCredentialStore {
  public:
-  enum class BlacklistedStatus {
-    // The origin was not blacklisted at the moment this store was initialized.
-    kNeverBlacklisted,
-    // The origin was blacklisted when the store was initialized, but it isn't
-    // currently blacklisted.
-    kWasBlacklisted,
-    // The origin is currently blacklisted.
-    kIsBlacklisted
+  enum class BlocklistedStatus {
+    // The origin was not blocklisted at the moment this store was initialized.
+    kNeverBlocklisted,
+    // The origin was blocklisted when the store was initialized, but it isn't
+    // currently blocklisted.
+    kWasBlocklisted,
+    // The origin is currently blocklisted.
+    kIsBlocklisted
   };
 
   explicit OriginCredentialStore(url::Origin origin);
@@ -86,18 +101,28 @@ class OriginCredentialStore {
   // Saves credentials so that they can be used in the UI.
   void SaveCredentials(std::vector<UiCredential> credentials);
 
-  // Returns references to the held credentials (or an empty set if aren't any).
+  // Returns references to the held credentials (or an empty set if there aren't
+  // any).
   base::span<const UiCredential> GetCredentials() const;
 
-  // Sets the blacklisted status. The possible transitions are:
-  // (*, is_blacklisted = true) -> kIsBlacklisted
-  // ((kIsBlacklisted|kWasBlacklisted), is_blacklisted = false)
-  //      -> kWasBlacklisted
-  // (kNeverBlacklisted, is_blacklisted = false) -> kNeverBlacklisted
-  void SetBlacklistedStatus(bool is_blacklisted);
+  // Saved credentials that have been received via the password sharing feature
+  // and not yet notified to the user. This is important to mark them notified
+  // upon user interaction with the UI.
+  void SaveUnnotifiedSharedCredentials(std::vector<PasswordForm> credentials);
+
+  // Returns references to the held unnotified shared credentials (or an empty
+  // set if there aren't any).
+  base::span<const PasswordForm> GetUnnotifiedSharedCredentials() const;
+
+  // Sets the blocklisted status. The possible transitions are:
+  // (*, is_blocklisted = true) -> kIsBlocklisted
+  // ((kIsBlocklisted|kWasBlocklisted), is_blocklisted = false)
+  //      -> kWasBlocklisted
+  // (kNeverBlocklisted, is_blocklisted = false) -> kNeverBlocklisted
+  void SetBlocklistedStatus(bool is_blocklisted);
 
   // Returns the blacklsited status for |origin_|.
-  BlacklistedStatus GetBlacklistedStatus() const;
+  BlocklistedStatus GetBlocklistedStatus() const;
 
   // Removes all credentials from the store.
   void ClearCredentials();
@@ -109,10 +134,14 @@ class OriginCredentialStore {
   // Contains all previously stored of credentials.
   std::vector<UiCredential> credentials_;
 
-  // The blacklisted status for |origin_|.
-  // Used to know whether unblacklisting UI needs to be displayed and what
+  // Contains all credentials that have been received via the password sharing
+  // feature and not yet notified to the user.
+  std::vector<PasswordForm> unnotified_shared_credentials_;
+
+  // The blocklisted status for |origin_|.
+  // Used to know whether unblocklisting UI needs to be displayed and what
   // state it should display;
-  BlacklistedStatus blacklisted_status_ = BlacklistedStatus::kNeverBlacklisted;
+  BlocklistedStatus blocklisted_status_ = BlocklistedStatus::kNeverBlocklisted;
 
   // The origin which all stored passwords are related to.
   const url::Origin origin_;

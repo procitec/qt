@@ -7,7 +7,6 @@
 
 #include "gm/gm.h"
 #include "include/core/SkCanvas.h"
-#include "include/core/SkFilterQuality.h"
 #include "include/core/SkFont.h"
 #include "include/core/SkImageFilter.h"
 #include "include/core/SkMatrix.h"
@@ -18,6 +17,7 @@
 #include "include/core/SkTypes.h"
 #include "include/effects/SkImageFilters.h"
 #include "tools/ToolUtils.h"
+#include "tools/fonts/FontToolUtils.h"
 
 #define WIDTH 640
 #define HEIGHT 480
@@ -29,10 +29,10 @@ DEF_SIMPLE_GM(imageresizetiled, canvas, WIDTH, HEIGHT) {
         SkMatrix matrix;
         matrix.setScale(RESIZE_FACTOR, RESIZE_FACTOR);
         paint.setImageFilter(SkImageFilters::MatrixTransform(matrix,
-                                                             kNone_SkFilterQuality,
+                                                             SkSamplingOptions(),
                                                              nullptr));
 
-        SkFont         font(ToolUtils::create_portable_typeface(), 100);
+        SkFont         font(ToolUtils::DefaultPortableTypeface(), 100);
         const SkScalar tile_size = SkIntToScalar(100);
         for (SkScalar y = 0; y < HEIGHT; y += tile_size) {
             for (SkScalar x = 0; x < WIDTH; x += tile_size) {
@@ -48,7 +48,7 @@ DEF_SIMPLE_GM(imageresizetiled, canvas, WIDTH, HEIGHT) {
                     "the lazy dog.",
                 };
                 float posY = 0;
-                for (unsigned i = 0; i < SK_ARRAY_COUNT(str); i++) {
+                for (unsigned i = 0; i < std::size(str); i++) {
                     posY += 100.0f;
                     canvas->drawString(str[i], 0.0f, posY, font, SkPaint());
                 }

@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2019 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the config.tests of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2019 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #ifndef QWAYLANDSURFACE_P_H
 #define QWAYLANDSURFACE_P_H
@@ -54,6 +18,7 @@
 #include <QtGui/QScreen>
 
 #include <QtWaylandClient/private/qwayland-wayland.h>
+#include <QtCore/private/qglobal_p.h>
 
 QT_BEGIN_NAMESPACE
 
@@ -71,21 +36,29 @@ public:
     ~QWaylandSurface() override;
     QWaylandScreen *oldestEnteredScreen();
     QWaylandWindow *waylandWindow() const { return m_window; }
+    std::optional<int32_t> preferredBufferScale() const { return m_preferredBufferScale; }
+    std::optional<wl_output_transform> preferredBufferTransform() const { return m_preferredBufferTransform; }
 
     static QWaylandSurface *fromWlSurface(::wl_surface *surface);
 
-signals:
+Q_SIGNALS:
     void screensChanged();
+    void preferredBufferScaleChanged();
+    void preferredBufferTransformChanged();
 
-private slots:
+private Q_SLOTS:
     void handleScreenRemoved(QScreen *qScreen);
 
 protected:
     void surface_enter(struct ::wl_output *output) override;
     void surface_leave(struct ::wl_output *output) override;
+    void surface_preferred_buffer_scale(int32_t scale) override;
+    void surface_preferred_buffer_transform(uint32_t transform) override;
 
-    QVector<QWaylandScreen *> m_screens; //As seen by wl_surface.enter/leave events. Chronological order.
+    QList<QWaylandScreen *> m_screens; //As seen by wl_surface.enter/leave events. Chronological order.
     QWaylandWindow *m_window = nullptr;
+    std::optional<int32_t> m_preferredBufferScale;
+    std::optional<wl_output_transform> m_preferredBufferTransform;
 
     friend class QWaylandWindow; // TODO: shouldn't need to be friends
 };

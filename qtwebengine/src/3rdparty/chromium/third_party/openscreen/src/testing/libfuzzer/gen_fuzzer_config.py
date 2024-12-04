@@ -1,6 +1,6 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 #
-# Copyright (c) 2015 The Chromium Authors. All rights reserved.
+# Copyright (c) 2015 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 """Generate or update an existing config (.options file) for libfuzzer test.
@@ -8,8 +8,8 @@
 Invoked by GN from fuzzer_test.gni.
 """
 
-import ConfigParser
 import argparse
+import configparser
 import os
 import sys
 
@@ -52,7 +52,7 @@ def main():
           args.asan_options or args.msan_options or args.ubsan_options):
     return
 
-  config = ConfigParser.ConfigParser()
+  config = configparser.ConfigParser()
   libfuzzer_options = []
   if args.dict:
     libfuzzer_options.append(('dict', os.path.basename(args.dict)))

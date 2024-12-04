@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,18 +6,26 @@
 
 #include "base/memory/ptr_util.h"
 #include "base/strings/pattern.h"
+#include "base/strings/string_piece.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_tokenizer.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/trace_event/trace_event.h"
 
-namespace base {
-namespace trace_event {
+namespace base::trace_event {
 
 namespace {
+
 const char kIncludedCategoriesParam[] = "included_categories";
 const char kExcludedCategoriesParam[] = "excluded_categories";
+
+bool AreStringListsEquivalent(const std::vector<std::string>& list1,
+                              const std::vector<std::string>& list2) {
+  std::unordered_set<std::string> set1(list1.begin(), list1.end());
+  std::unordered_set<std::string> set2(list2.begin(), list2.end());
+  return set1 == set2;
+}
 }
 
 TraceConfigCategoryFilter::TraceConfigCategoryFilter() = default;
@@ -30,6 +38,16 @@ TraceConfigCategoryFilter::~TraceConfigCategoryFilter() = default;
 TraceConfigCategoryFilter& TraceConfigCategoryFilter::operator=(
     const TraceConfigCategoryFilter& rhs) = default;
 
+bool TraceConfigCategoryFilter::IsEquivalentTo(
+    const TraceConfigCategoryFilter& other) const {
+  return AreStringListsEquivalent(included_categories_,
+                                  other.included_categories_) &&
+         AreStringListsEquivalent(disabled_categories_,
+                                  other.disabled_categories_) &&
+         AreStringListsEquivalent(excluded_categories_,
+                                  other.excluded_categories_);
+}
+
 void TraceConfigCategoryFilter::InitializeFromString(
     const StringPiece& category_filter_string) {
   std::vector<StringPiece> split = SplitStringPiece(
@@ -41,22 +59,23 @@ void TraceConfigCategoryFilter::InitializeFromString(
     if (category.front() == '-') {
       // Excluded categories start with '-'.
       // Remove '-' from category string.
-      excluded_categories_.push_back(category.substr(1).as_string());
+      excluded_categories_.emplace_back(category.substr(1));
     } else if (StartsWith(category, TRACE_DISABLED_BY_DEFAULT(""))) {
-      disabled_categories_.push_back(category.as_string());
+      disabled_categories_.emplace_back(category);
     } else {
-      included_categories_.push_back(category.as_string());
+      included_categories_.emplace_back(category);
     }
   }
 }
 
-void TraceConfigCategoryFilter::InitializeFromConfigDict(const Value& dict) {
-  const Value* included_category_list =
-      dict.FindListKey(kIncludedCategoriesParam);
+void TraceConfigCategoryFilter::InitializeFromConfigDict(
+    const Value::Dict& dict) {
+  const Value::List* included_category_list =
+      dict.FindList(kIncludedCategoriesParam);
   if (included_category_list)
     SetCategoriesFromIncludedList(*included_category_list);
-  const Value* excluded_category_list =
-      dict.FindListKey(kExcludedCategoriesParam);
+  const Value::List* excluded_category_list =
+      dict.FindList(kExcludedCategoriesParam);
   if (excluded_category_list)
     SetCategoriesFromExcludedList(*excluded_category_list);
 }
@@ -65,8 +84,8 @@ bool TraceConfigCategoryFilter::IsCategoryGroupEnabled(
     const StringPiece& category_group_name) const {
   bool had_enabled_by_default = false;
   DCHECK(!category_group_name.empty());
-  CStringTokenizer category_group_tokens(category_group_name.begin(),
-                                         category_group_name.end(), ",");
+  CStringTokenizer category_group_tokens(&*category_group_name.begin(),
+                                         &*category_group_name.end(), ",");
   while (category_group_tokens.GetNext()) {
     StringPiece category_group_token = category_group_tokens.token_piece();
     // Don't allow empty tokens, nor tokens with leading or trailing space.
@@ -159,7 +178,7 @@ void TraceConfigCategoryFilter::Clear() {
   excluded_categories_.clear();
 }
 
-void TraceConfigCategoryFilter::ToDict(Value* dict) const {
+void TraceConfigCategoryFilter::ToDict(Value::Dict& dict) const {
   StringList categories(included_categories_);
   categories.insert(categories.end(), disabled_categories_.begin(),
                     disabled_categories_.end());
@@ -176,9 +195,9 @@ std::string TraceConfigCategoryFilter::ToFilterString() const {
 }
 
 void TraceConfigCategoryFilter::SetCategoriesFromIncludedList(
-    const Value& included_list) {
+    const Value::List& included_list) {
   included_categories_.clear();
-  for (const Value& item : included_list.GetList()) {
+  for (const Value& item : included_list) {
     if (!item.is_string())
       continue;
     const std::string& category = item.GetString();
@@ -192,9 +211,9 @@ void TraceConfigCategoryFilter::SetCategoriesFromIncludedList(
 }
 
 void TraceConfigCategoryFilter::SetCategoriesFromExcludedList(
-    const Value& excluded_list) {
+    const Value::List& excluded_list) {
   excluded_categories_.clear();
-  for (const Value& item : excluded_list.GetList()) {
+  for (const Value& item : excluded_list) {
     if (item.is_string())
       excluded_categories_.push_back(item.GetString());
   }
@@ -203,14 +222,14 @@ void TraceConfigCategoryFilter::SetCategoriesFromExcludedList(
 void TraceConfigCategoryFilter::AddCategoriesToDict(
     const StringList& categories,
     const char* param,
-    Value* dict) const {
+    Value::Dict& dict) const {
   if (categories.empty())
     return;
 
-  std::vector<base::Value> list;
+  Value::List list;
   for (const std::string& category : categories)
-    list.emplace_back(category);
-  dict->SetKey(param, base::Value(std::move(list)));
+    list.Append(category);
+  dict.Set(param, std::move(list));
 }
 
 void TraceConfigCategoryFilter::WriteCategoryFilterString(
@@ -232,5 +251,4 @@ bool TraceConfigCategoryFilter::IsCategoryNameAllowed(StringPiece str) {
   return !str.empty() && str.front() != ' ' && str.back() != ' ';
 }
 
-}  // namespace trace_event
-}  // namespace base
+}  // namespace base::trace_event

@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,18 +8,25 @@
 #include <utility>
 
 #include "cast/standalone_receiver/avcodec_glue.h"
+#include "util/enum_name_table.h"
 #include "util/osp_logging.h"
 #include "util/trace_logging.h"
 
-namespace openscreen {
-namespace cast {
+namespace openscreen::cast {
 
 namespace {
 constexpr char kVideoMediaType[] = "video";
 }  // namespace
 
+constexpr EnumNameTable<VideoCodec, 6> kFfmpegCodecDescriptors{
+    {{"h264", VideoCodec::kH264},
+     {"vp8", VideoCodec::kVp8},
+     {"hevc", VideoCodec::kHevc},
+     {"vp9", VideoCodec::kVp9},
+     {"libaom-av1", VideoCodec::kAv1}}};
+
 SDLVideoPlayer::SDLVideoPlayer(ClockNowFunctionPtr now_function,
-                               TaskRunner* task_runner,
+                               TaskRunner& task_runner,
                                Receiver* receiver,
                                VideoCodec codec,
                                SDL_Renderer* renderer,
@@ -27,7 +34,7 @@ SDLVideoPlayer::SDLVideoPlayer(ClockNowFunctionPtr now_function,
     : SDLPlayerBase(now_function,
                     task_runner,
                     receiver,
-                    CodecToString(codec),
+                    GetEnumName(kFfmpegCodecDescriptors, codec).value(),
                     std::move(error_callback),
                     kVideoMediaType),
       renderer_(renderer) {
@@ -202,5 +209,4 @@ uint32_t SDLVideoPlayer::GetSDLPixelFormat(const AVFrame& picture) {
   return SDL_PIXELFORMAT_UNKNOWN;
 }
 
-}  // namespace cast
-}  // namespace openscreen
+}  // namespace openscreen::cast

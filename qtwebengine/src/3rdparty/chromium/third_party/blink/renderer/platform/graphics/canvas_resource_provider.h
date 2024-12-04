@@ -1,21 +1,30 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_GRAPHICS_CANVAS_RESOURCE_PROVIDER_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_GRAPHICS_CANVAS_RESOURCE_PROVIDER_H_
 
+#include <memory>
+
+#include "base/feature_list.h"
+#include "base/memory/raw_ptr.h"
+#include "base/notreached.h"
 #include "cc/paint/skia_paint_canvas.h"
 #include "cc/raster/playback_image_provider.h"
 #include "gpu/command_buffer/common/shared_image_usage.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/renderer/platform/graphics/canvas_resource.h"
-#include "third_party/blink/renderer/platform/graphics/identifiability_paint_op_digest.h"
+#include "third_party/blink/renderer/platform/graphics/canvas_resource_host.h"
 #include "third_party/blink/renderer/platform/graphics/image_orientation.h"
 #include "third_party/blink/renderer/platform/graphics/memory_managed_paint_recorder.h"
 #include "third_party/blink/renderer/platform/graphics/paint/paint_recorder.h"
+#include "third_party/blink/renderer/platform/graphics/scoped_raster_timer.h"
 #include "third_party/blink/renderer/platform/instrumentation/canvas_memory_dump_provider.h"
 #include "third_party/blink/renderer/platform/wtf/thread_specific.h"
+#include "third_party/blink/renderer/platform/wtf/vector.h"
 #include "third_party/skia/include/core/SkSurface.h"
+#include "third_party/skia/include/gpu/GrTypes.h"
 
 class GrDirectContext;
 
@@ -40,6 +49,8 @@ class RasterInterface;
 
 namespace blink {
 
+PLATFORM_EXPORT BASE_DECLARE_FEATURE(kCanvas2DAutoFlushParams);
+
 class CanvasResourceDispatcher;
 class WebGraphicsContext3DProviderWrapper;
 
@@ -58,101 +69,108 @@ class WebGraphicsContext3DProviderWrapper;
 //   2) use Canvas() to get a drawing interface
 //   3) Call Snapshot() to acquire a bitmap with the rendered image in it.
 
-#if defined(__cpp_enumerator_attributes) && __cpp_enumerator_attributes >= 201411
-#define ENUM_DEPECATED [[deprecated]]
-#else
-#define ENUM_DEPECATED
-#endif
-
 class PLATFORM_EXPORT CanvasResourceProvider
     : public WebGraphicsContext3DProviderWrapper::DestructionObserver,
       public base::CheckedObserver,
-      public CanvasMemoryDumpClient {
+      public CanvasMemoryDumpClient,
+      public MemoryManagedPaintRecorder::Client,
+      public ScopedRasterTimer::Host {
  public:
   // These values are persisted to logs. Entries should not be renumbered and
   // numeric values should never be reused.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
   enum ResourceProviderType {
-    kTexture ENUM_DEPECATED = 0,
+    kTexture [[deprecated]] = 0,
     kBitmap = 1,
     kSharedBitmap = 2,
-    kTextureGpuMemoryBuffer ENUM_DEPECATED = 3,
-    kBitmapGpuMemoryBuffer ENUM_DEPECATED = 4,
+    kTextureGpuMemoryBuffer [[deprecated]] = 3,
+    kBitmapGpuMemoryBuffer [[deprecated]] = 4,
     kSharedImage = 5,
-    kDirectGpuMemoryBuffer ENUM_DEPECATED = 6,
+    kDirectGpuMemoryBuffer [[deprecated]] = 6,
     kPassThrough = 7,
     kSwapChain = 8,
-    kSkiaDawnSharedImage = 9,
+    kSkiaDawnSharedImage [[deprecated]] = 9,
     kMaxValue = kSkiaDawnSharedImage,
   };
-
-  using RestoreMatrixClipStackCb =
-      base::RepeatingCallback<void(cc::PaintCanvas*)>;
-
-  // TODO(juanmihd@ bug/1078518) Check whether SkFilterQuality is needed in all
-  // these Create methods below, or just call setFilterQuality explicitly.
+#pragma GCC diagnostic pop
 
   // Used to determine if the provider is going to be initialized or not,
   // ignored by PassThrough
   enum class ShouldInitialize { kNo, kCallClear };
 
   static std::unique_ptr<CanvasResourceProvider> CreateBitmapProvider(
-      const IntSize& size,
-      SkFilterQuality filter_quality,
-      const CanvasColorParams& color_params,
-      ShouldInitialize initialize_provider);
+      const SkImageInfo& info,
+      cc::PaintFlags::FilterQuality filter_quality,
+      ShouldInitialize initialize_provider,
+      CanvasResourceHost* resource_host = nullptr);
 
   static std::unique_ptr<CanvasResourceProvider> CreateSharedBitmapProvider(
-      const IntSize& size,
-      SkFilterQuality filter_quality,
-      const CanvasColorParams& color_params,
+      const SkImageInfo& info,
+      cc::PaintFlags::FilterQuality filter_quality,
       ShouldInitialize initialize_provider,
-      base::WeakPtr<CanvasResourceDispatcher>);
+      base::WeakPtr<CanvasResourceDispatcher> resource_dispatcher,
+      CanvasResourceHost* resource_host = nullptr);
 
   static std::unique_ptr<CanvasResourceProvider> CreateSharedImageProvider(
-      const IntSize& size,
-      SkFilterQuality filter_quality,
-      const CanvasColorParams& color_params,
+      const SkImageInfo& info,
+      cc::PaintFlags::FilterQuality filter_quality,
       ShouldInitialize initialize_provider,
       base::WeakPtr<WebGraphicsContext3DProviderWrapper>,
       RasterMode raster_mode,
-      bool is_origin_top_left,
-      uint32_t shared_image_usage_flags);
+      uint32_t shared_image_usage_flags,
+      CanvasResourceHost* resource_host = nullptr);
+
+  static std::unique_ptr<CanvasResourceProvider> CreateWebGPUImageProvider(
+      const SkImageInfo& info,
+      uint32_t shared_image_usage_flags = 0,
+      CanvasResourceHost* resource_host = nullptr);
 
   static std::unique_ptr<CanvasResourceProvider> CreatePassThroughProvider(
-      const IntSize& size,
-      SkFilterQuality filter_quality,
-      const CanvasColorParams& color_params,
+      const SkImageInfo& info,
+      cc::PaintFlags::FilterQuality filter_quality,
       base::WeakPtr<WebGraphicsContext3DProviderWrapper>,
       base::WeakPtr<CanvasResourceDispatcher>,
-      bool is_origin_top_left);
+      bool is_origin_top_left,
+      CanvasResourceHost* resource_host = nullptr);
 
   static std::unique_ptr<CanvasResourceProvider> CreateSwapChainProvider(
-      const IntSize& size,
-      SkFilterQuality filter_quality,
-      const CanvasColorParams& color_params,
+      const SkImageInfo& info,
+      cc::PaintFlags::FilterQuality filter_quality,
       ShouldInitialize initialize_provider,
       base::WeakPtr<WebGraphicsContext3DProviderWrapper>,
       base::WeakPtr<CanvasResourceDispatcher>,
-      bool is_origin_top_left);
+      CanvasResourceHost* resource_host = nullptr);
 
   // Use Snapshot() for capturing a frame that is intended to be displayed via
   // the compositor. Cases that are destined to be transferred via a
   // TransferableResource should call ProduceCanvasResource() instead.
   // The ImageOrientationEnum conveys the desired orientation of the image, and
   // should be derived from the source of the bitmap data.
-  virtual scoped_refptr<CanvasResource> ProduceCanvasResource() = 0;
+  virtual scoped_refptr<CanvasResource> ProduceCanvasResource(FlushReason) = 0;
   virtual scoped_refptr<StaticBitmapImage> Snapshot(
-      const ImageOrientation& = kDefaultImageOrientation) = 0;
+      FlushReason,
+      ImageOrientation = ImageOrientationEnum::kDefault) = 0;
+
+  void SetCanvasResourceHost(CanvasResourceHost* resource_host) {
+    resource_host_ = resource_host;
+  }
 
   // WebGraphicsContext3DProvider::DestructionObserver implementation.
   void OnContextDestroyed() override;
 
-  cc::PaintCanvas* Canvas();
+  cc::PaintCanvas* Canvas(bool needs_will_draw = false);
   void ReleaseLockedImages();
-  sk_sp<cc::PaintRecord> FlushCanvas();
-  const CanvasColorParams& ColorParams() const { return color_params_; }
-  void SetFilterQuality(SkFilterQuality quality) { filter_quality_ = quality; }
-  const IntSize& Size() const { return size_; }
+  // FlushCanvas and preserve recording only if IsPrinting or
+  // FlushReason indicates printing in progress.
+  absl::optional<cc::PaintRecord> FlushCanvas(FlushReason);
+  const SkImageInfo& GetSkImageInfo() const { return info_; }
+  SkSurfaceProps GetSkSurfaceProps() const;
+  gfx::ColorSpace GetColorSpace() const;
+  void SetFilterQuality(cc::PaintFlags::FilterQuality quality) {
+    filter_quality_ = quality;
+  }
+  gfx::Size Size() const;
   bool IsOriginTopLeft() const { return is_origin_top_left_; }
   virtual bool IsValid() const = 0;
   virtual bool IsAccelerated() const = 0;
@@ -179,9 +197,9 @@ class PLATFORM_EXPORT CanvasResourceProvider
   void TryEnableSingleBuffering();
 
   // Only works in single buffering mode.
-  bool ImportResource(scoped_refptr<CanvasResource>);
+  bool ImportResource(scoped_refptr<CanvasResource>&&);
 
-  void RecycleResource(scoped_refptr<CanvasResource>);
+  void RecycleResource(scoped_refptr<CanvasResource>&&);
   void SetResourceRecyclingEnabled(bool);
   void ClearRecycledResources();
   scoped_refptr<CanvasResource> NewOrRecycledResource();
@@ -204,7 +222,13 @@ class PLATFORM_EXPORT CanvasResourceProvider
     NOTREACHED();
     return nullptr;
   }
+  virtual uint32_t GetSharedImageUsageFlags() const {
+    NOTREACHED();
+    return 0;
+  }
 
+  CanvasResourceProvider(const CanvasResourceProvider&) = delete;
+  CanvasResourceProvider& operator=(const CanvasResourceProvider&) = delete;
   ~CanvasResourceProvider() override;
 
   base::WeakPtr<CanvasResourceProvider> CreateWeakPtr() {
@@ -219,24 +243,37 @@ class PLATFORM_EXPORT CanvasResourceProvider
     return canvas_resources_.size();
   }
 
-  void SkipQueuedDrawCommands();
-  void SetRestoreClipStackCallback(RestoreMatrixClipStackCb);
-  bool needs_flush() const { return needs_flush_; }
-  virtual void RestoreBackBuffer(const cc::PaintImage&);
+  FlushReason printing_fallback_reason() { return printing_fallback_reason_; }
+
+  void RestoreBackBuffer(const cc::PaintImage&);
 
   ResourceProviderType GetType() const { return type_; }
-  bool HasRecordedDrawOps() const;
 
   void OnDestroyResource();
 
-  // Gets an immutable reference to the IdentifiabilityPaintOpDigest, which
-  // contains the current PaintOp digest, and taint bits (encountered
-  // partially-digested images, encountered skipped ops).
-  //
-  // The digest is updated based on the results of every FlushCanvas(); this
-  // method also calls FlushCanvas() to ensure that all operations are accounted
-  // for in the digest.
-  const IdentifiabilityPaintOpDigest& GetIdentifiablityPaintOpDigest();
+  virtual void OnAcquireRecyclableCanvasResource() {}
+  virtual void OnDestroyRecyclableCanvasResource(
+      const gpu::SyncToken& sync_token) {}
+
+  void FlushIfRecordingLimitExceeded();
+
+  MemoryManagedPaintRecorder& Recorder() { return *recorder_; }
+  std::unique_ptr<MemoryManagedPaintRecorder> ReleaseRecorder();
+  void SetRecorder(std::unique_ptr<MemoryManagedPaintRecorder> recorder);
+
+  void InitializeForRecording(cc::PaintCanvas* canvas) const override;
+
+  bool IsPrinting() { return resource_host_ && resource_host_->IsPrinting(); }
+
+  static void NotifyWillTransfer(cc::PaintImage::ContentId content_id);
+
+  void AlwaysEnableRasterTimersForTesting(bool value) {
+    always_enable_raster_timers_for_testing_ = value;
+  }
+
+  const absl::optional<cc::PaintRecord>& LastRecording() {
+    return last_recording_;
+  }
 
  protected:
   class CanvasImageProvider;
@@ -244,42 +281,59 @@ class PLATFORM_EXPORT CanvasResourceProvider
   gpu::gles2::GLES2Interface* ContextGL() const;
   gpu::raster::RasterInterface* RasterInterface() const;
   GrDirectContext* GetGrContext() const;
-  base::WeakPtr<WebGraphicsContext3DProviderWrapper> ContextProviderWrapper() {
+  base::WeakPtr<WebGraphicsContext3DProviderWrapper> ContextProviderWrapper()
+      const {
     return context_provider_wrapper_;
   }
   GrSurfaceOrigin GetGrSurfaceOrigin() const {
     return is_origin_top_left_ ? kTopLeft_GrSurfaceOrigin
                                : kBottomLeft_GrSurfaceOrigin;
   }
-  SkFilterQuality FilterQuality() const { return filter_quality_; }
-  scoped_refptr<StaticBitmapImage> SnapshotInternal(const ImageOrientation&);
+  cc::PaintFlags::FilterQuality FilterQuality() const {
+    return filter_quality_;
+  }
+
+  scoped_refptr<StaticBitmapImage> SnapshotInternal(ImageOrientation,
+                                                    FlushReason);
   scoped_refptr<CanvasResource> GetImportedResource() const;
 
-  CanvasResourceProvider(const ResourceProviderType&,
-                         const IntSize&,
-                         SkFilterQuality,
-                         const CanvasColorParams&,
-                         bool is_origin_top_left,
-                         base::WeakPtr<WebGraphicsContext3DProviderWrapper>,
-                         base::WeakPtr<CanvasResourceDispatcher>);
+  CanvasResourceProvider(
+      const ResourceProviderType&,
+      const SkImageInfo&,
+      cc::PaintFlags::FilterQuality,
+      bool is_origin_top_left,
+      base::WeakPtr<WebGraphicsContext3DProviderWrapper>
+          context_provider_wrapper,
+      base::WeakPtr<CanvasResourceDispatcher> resource_dispatcher,
+      CanvasResourceHost* resource_host);
 
   // Its important to use this method for generating PaintImage wrapped canvas
   // snapshots to get a cache hit from cc's ImageDecodeCache. This method
   // ensures that the PaintImage ID for the snapshot, used for keying
   // decodes/uploads in the cache is invalidated only when the canvas contents
   // change.
-  cc::PaintImage MakeImageSnapshot();
-  virtual void RasterRecord(sk_sp<cc::PaintRecord>);
+  cc::PaintImage MakeImageSnapshot(FlushReason);
+  virtual void RasterRecord(cc::PaintRecord);
+  void RasterRecordOOP(cc::PaintRecord last_recording,
+                       bool needs_clear,
+                       gpu::Mailbox mailbox);
+
   CanvasImageProvider* GetOrCreateCanvasImageProvider();
   void TearDownSkSurface();
+
+  // Will only notify a will draw if its needed. This is initially done for the
+  // CanvasResourceProviderSharedImage use case.
+  virtual void WillDrawIfNeeded() {}
 
   ResourceProviderType type_;
   mutable sk_sp<SkSurface> surface_;  // mutable for lazy init
   SkSurface::ContentChangeMode mode_ = SkSurface::kRetain_ContentChangeMode;
 
+  virtual void OnFlushForImage(cc::PaintImage::ContentId content_id);
+  void OnMemoryDump(base::trace_event::ProcessMemoryDump*) override;
+
  private:
   friend class FlushForImageListener;
-  void OnFlushForImage(cc::PaintImage::ContentId content_id);
   virtual sk_sp<SkSurface> CreateSkSurface() const = 0;
   virtual scoped_refptr<CanvasResource> CreateResource();
   virtual bool UseOopRasterization() { return false; }
@@ -291,27 +345,30 @@ class PLATFORM_EXPORT CanvasResourceProvider
   virtual void WillDraw() {}
 
   size_t ComputeSurfaceSize() const;
-  void OnMemoryDump(base::trace_event::ProcessMemoryDump*) override;
   size_t GetSize() const override;
 
   cc::ImageDecodeCache* ImageDecodeCacheRGBA8();
   cc::ImageDecodeCache* ImageDecodeCacheF16();
   void EnsureSkiaCanvas();
-  void SetNeedsFlush() { needs_flush_ = true; }
 
   void Clear();
 
+  // Called after the recording was cleared from any draw ops it might have had.
+  void RecordingCleared() override;
+
   base::WeakPtr<WebGraphicsContext3DProviderWrapper> context_provider_wrapper_;
   base::WeakPtr<CanvasResourceDispatcher> resource_dispatcher_;
-  const IntSize size_;
-  SkFilterQuality filter_quality_;
-  const CanvasColorParams color_params_;
+  // Note that `info_` should be const, but the relevant SkImageInfo
+  // constructors do not exist.
+  SkImageInfo info_;
+  cc::PaintFlags::FilterQuality filter_quality_;
   const bool is_origin_top_left_;
   std::unique_ptr<CanvasImageProvider> canvas_image_provider_;
   std::unique_ptr<cc::SkiaPaintCanvas> skia_canvas_;
+  raw_ptr<CanvasResourceHost, ExperimentalRenderer> resource_host_ = nullptr;
+  // Recording accumulating draw ops. This pointer is always valid and safe to
+  // dereference.
   std::unique_ptr<MemoryManagedPaintRecorder> recorder_;
-
-  bool needs_flush_ = false;
 
   const cc::PaintImage::Id snapshot_paint_image_id_;
   cc::PaintImage::ContentId snapshot_paint_image_content_id_ =
@@ -323,27 +380,33 @@ class PLATFORM_EXPORT CanvasResourceProvider
   WTF::Vector<scoped_refptr<CanvasResource>> canvas_resources_;
   bool resource_recycling_enabled_ = true;
   bool is_single_buffered_ = false;
+  bool oopr_uses_dmsaa_ = false;
+  bool always_enable_raster_timers_for_testing_ = false;
 
-  // The maximum number of in-flight resources waiting to be used for recycling.
-  static constexpr int kMaxRecycledCanvasResources = 2;
+  // The maximum number of in-flight resources waiting to be used for
+  // recycling.
+  static constexpr int kMaxRecycledCanvasResources = 3;
   // The maximum number of draw ops executed on the canvas, after which the
   // underlying GrContext is flushed.
+  // Note: This parameter does not affect the flushing of recorded PaintOps.
+  // See kMaxRecordedOpBytes above.
   static constexpr int kMaxDrawsBeforeContextFlush = 50;
 
-  size_t num_inflight_resources_ = 0;
-  size_t max_inflight_resources_ = 0;
+  int num_inflight_resources_ = 0;
+  int max_inflight_resources_ = 0;
 
-  RestoreMatrixClipStackCb restore_clip_stack_callback_;
+  // Parameters for the auto-flushing heuristic.
+  size_t max_recorded_op_bytes_;
+  size_t max_pinned_image_bytes_;
 
-  // For identifiability metrics -- PaintOps are serialized so that digests can
-  // be calculated using hashes of the serialized output.
-  IdentifiabilityPaintOpDigest identifiability_paint_op_digest_;
+  bool clear_frame_ = true;
+  FlushReason last_flush_reason_ = FlushReason::kNone;
+  FlushReason printing_fallback_reason_ = FlushReason::kNone;
+  absl::optional<cc::PaintRecord> last_recording_;
 
   base::WeakPtrFactory<CanvasResourceProvider> weak_ptr_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(CanvasResourceProvider);
 };
 
 }  // namespace blink
 
-#endif
+#endif  // THIRD_PARTY_BLINK_RENDERER_PLATFORM_GRAPHICS_CANVAS_RESOURCE_PROVIDER_H_

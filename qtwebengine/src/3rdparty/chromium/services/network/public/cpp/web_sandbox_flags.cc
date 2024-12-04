@@ -1,10 +1,12 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "services/network/public/cpp/web_sandbox_flags.h"
+
 #include <set>
-#include "base/stl_util.h"
+
+#include "base/containers/cxx20_erase.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "services/network/public/mojom/web_sandbox_flags.mojom.h"
@@ -18,7 +20,7 @@ namespace {
 // This is different from: base::kWhitespaceASCII.
 const char* kHtmlWhitespace = " \n\t\r\f";
 
-WebSandboxFlags ParseWebSandboxToken(const base::StringPiece& token) {
+WebSandboxFlags ParseWebSandboxToken(std::string_view token) {
   constexpr struct {
     const char* token;
     WebSandboxFlags flags;
@@ -28,7 +30,8 @@ WebSandboxFlags ParseWebSandboxToken(const base::StringPiece& token) {
       {"allow-modals", WebSandboxFlags::kModals},
       {"allow-orientation-lock", WebSandboxFlags::kOrientationLock},
       {"allow-pointer-lock", WebSandboxFlags::kPointerLock},
-      {"allow-popups", WebSandboxFlags::kPopups},
+      {"allow-popups", WebSandboxFlags::kPopups |
+                           WebSandboxFlags::kTopNavigationToCustomProtocols},
       {"allow-popups-to-escape-sandbox",
        WebSandboxFlags::kPropagatesToAuxiliaryBrowsingContexts},
       {"allow-presentation", WebSandboxFlags::kPresentationController},
@@ -37,13 +40,17 @@ WebSandboxFlags ParseWebSandboxToken(const base::StringPiece& token) {
        WebSandboxFlags::kAutomaticFeatures | WebSandboxFlags::kScripts},
       {"allow-storage-access-by-user-activation",
        WebSandboxFlags::kStorageAccessByUserActivation},
-      {"allow-top-navigation", WebSandboxFlags::kTopNavigation},
+      {"allow-top-navigation",
+       WebSandboxFlags::kTopNavigation |
+           WebSandboxFlags::kTopNavigationToCustomProtocols},
       {"allow-top-navigation-by-user-activation",
        WebSandboxFlags::kTopNavigationByUserActivation},
+      {"allow-top-navigation-to-custom-protocols",
+       WebSandboxFlags::kTopNavigationToCustomProtocols},
   };
 
   for (const auto& it : table) {
-    if (CompareCaseInsensitiveASCII(it.token, token) == 0)
+    if (base::CompareCaseInsensitiveASCII(it.token, token) == 0)
       return it.flags;
   }
 
@@ -54,12 +61,12 @@ WebSandboxFlags ParseWebSandboxToken(const base::StringPiece& token) {
 
 // See: http://www.w3.org/TR/html5/the-iframe-element.html#attr-iframe-sandbox
 WebSandboxFlagsParsingResult ParseWebSandboxPolicy(
-    const base::StringPiece& input,
+    std::string_view input,
     WebSandboxFlags ignored_flags) {
   WebSandboxFlagsParsingResult out;
   out.flags = WebSandboxFlags::kAll;
 
-  std::vector<base::StringPiece> error_tokens;
+  std::vector<std::string_view> error_tokens;
   for (const auto& token :
        base::SplitStringPiece(input, kHtmlWhitespace, base::KEEP_WHITESPACE,
                               base::SPLIT_WANT_NONEMPTY)) {
@@ -74,7 +81,7 @@ WebSandboxFlagsParsingResult ParseWebSandboxPolicy(
     // Some tests expect the order of error tokens to be preserved, while
     // removing the duplicates:
     // See /fast/frames/sandboxed-iframe-attribute-parsing-03.html
-    std::set<base::StringPiece> set;
+    std::set<std::string_view> set;
     base::EraseIf(error_tokens, [&](auto x) { return !set.insert(x).second; });
 
     out.error_message =

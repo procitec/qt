@@ -51,10 +51,6 @@ void WeekInputType::CountUsage() {
   CountUsageIfVisible(WebFeature::kInputTypeWeek);
 }
 
-const AtomicString& WeekInputType::FormControlType() const {
-  return input_type_names::kWeek;
-}
-
 StepRange WeekInputType::CreateStepRange(
     AnyStepHandling any_step_handling) const {
   DEFINE_STATIC_LOCAL(
@@ -126,7 +122,7 @@ bool WeekInputType::IsValidFormat(bool has_year,
   return has_year && has_week;
 }
 
-String WeekInputType::AriaRoleForPickerIndicator() const {
+String WeekInputType::AriaLabelForPickerIndicator() const {
   return GetLocale().QueryString(IDS_AX_CALENDAR_SHOW_WEEK_PICKER);
 }
 

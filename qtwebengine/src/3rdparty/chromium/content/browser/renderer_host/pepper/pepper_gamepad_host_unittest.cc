@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,7 +9,6 @@
 
 #include <memory>
 
-#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/run_loop.h"
 #include "build/build_config.h"
@@ -32,10 +31,15 @@ class PepperGamepadHostTest : public testing::Test,
                               public BrowserPpapiHostTest {
  public:
   PepperGamepadHostTest() {}
+
+  PepperGamepadHostTest(const PepperGamepadHostTest&) = delete;
+  PepperGamepadHostTest& operator=(const PepperGamepadHostTest&) = delete;
+
   ~PepperGamepadHostTest() override {}
 
   void ConstructService(const device::Gamepads& test_data) {
-    service_.reset(new device::GamepadServiceTestConstructor(test_data));
+    service_ =
+        std::make_unique<device::GamepadServiceTestConstructor>(test_data);
   }
 
   device::GamepadService* gamepad_service() {
@@ -44,8 +48,6 @@ class PepperGamepadHostTest : public testing::Test,
 
  protected:
   std::unique_ptr<device::GamepadServiceTestConstructor> service_;
-
-  DISALLOW_COPY_AND_ASSIGN(PepperGamepadHostTest);
 };
 
 }  // namespace
@@ -105,8 +107,11 @@ TEST_F(PepperGamepadHostTest, WaitForReply) {
   EXPECT_EQ(button_down_data.items[0].buttons_length,
             buffer->data.items[0].buttons_length);
   for (size_t i = 0; i < device::Gamepad::kButtonsLengthCap; i++) {
-    EXPECT_EQ(button_down_data.items[0].buttons[i].value,
-              buffer->data.items[0].buttons[i].value);
+    // Gamepad data is packed, so `value` is misaligned. `EXPECT_EQ` internally
+    // takes a reference to the value, so we must copy into a correctly-aligned
+    // temporary first.
+    EXPECT_EQ(double{button_down_data.items[0].buttons[i].value},
+              double{buffer->data.items[0].buttons[i].value});
     EXPECT_EQ(button_down_data.items[0].buttons[i].pressed,
               buffer->data.items[0].buttons[i].pressed);
   }

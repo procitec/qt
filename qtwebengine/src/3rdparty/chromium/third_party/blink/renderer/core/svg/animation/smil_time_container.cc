@@ -26,6 +26,8 @@
 #include "third_party/blink/renderer/core/svg/animation/smil_time_container.h"
 
 #include <algorithm>
+
+#include "base/auto_reset.h"
 #include "third_party/blink/renderer/core/animation/document_timeline.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/element_traversal.h"
@@ -37,6 +39,7 @@
 #include "third_party/blink/renderer/core/svg/graphics/svg_image.h"
 #include "third_party/blink/renderer/core/svg/svg_svg_element.h"
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 
 namespace blink {
 
@@ -117,7 +120,7 @@ class SMILTimeContainer::TimingUpdate {
 SMILTimeContainer::TimingUpdate::~TimingUpdate() {
   if (!ShouldDispatchEvents())
     return;
-  DCHECK(IsSeek() || updated_elements_.IsEmpty());
+  DCHECK(IsSeek() || updated_elements_.empty());
   for (const auto& entry : updated_elements_) {
     SVGSMILElement* element = entry.key;
     if (auto events_to_dispatch = element->ComputeSeekEvents(entry.value))
@@ -215,7 +218,7 @@ void SMILTimeContainer::Reschedule(SVGSMILElement* animation,
 }
 
 bool SMILTimeContainer::HasAnimations() const {
-  return !animated_targets_.IsEmpty();
+  return !animated_targets_.empty();
 }
 
 bool SMILTimeContainer::HasPendingSynchronization() const {
@@ -235,8 +238,7 @@ SMILTime SMILTimeContainer::Elapsed() const {
           base::TimeDelta()) -
       reference_time_;
   DCHECK_GE(time_offset, base::TimeDelta());
-  SMILTime elapsed = presentation_time_ +
-                     SMILTime::FromMicroseconds(time_offset.InMicroseconds());
+  SMILTime elapsed = presentation_time_ + SMILTime::FromTimeDelta(time_offset);
   DCHECK_GE(elapsed, SMILTime());
   return ClampPresentationTime(elapsed);
 }
@@ -330,7 +332,8 @@ void SMILTimeContainer::SetPresentationTime(SMILTime new_presentation_time) {
   // yield the same value.
   max_presentation_time_ = SMILTime::Latest() - SMILTime::Epsilon();
   presentation_time_ = ClampPresentationTime(new_presentation_time);
-  if (AnimationPolicy() != web_pref::kImageAnimationPolicyAnimateOnce)
+  if (AnimationPolicy() !=
+      mojom::blink::ImageAnimationPolicy::kImageAnimationPolicyAnimateOnce)
     return;
   const SMILTime kAnimationPolicyOnceDuration = SMILTime::FromSecondsD(3);
   max_presentation_time_ =
@@ -363,13 +366,21 @@ void SMILTimeContainer::SetElapsed(SMILTime elapsed) {
   UpdateAnimationsAndScheduleFrameIfNeeded(update);
 }
 
-void SMILTimeContainer::ScheduleAnimationFrame(base::TimeDelta delay_time) {
+void SMILTimeContainer::ScheduleAnimationFrame(base::TimeDelta delay_time,
+                                               bool disable_throttling) {
   DCHECK(IsTimelineRunning());
   DCHECK(!wakeup_timer_.IsActive());
   DCHECK(GetDocument().IsActive());
 
+  // Skip the comparison against kLocalMinimumDelay if an animation is
+  // not visible.
+  if (!disable_throttling) {
+    ScheduleWakeUp(delay_time, kFutureAnimationFrame);
+    return;
+  }
+
   const base::TimeDelta kLocalMinimumDelay =
-      base::TimeDelta::FromSecondsD(DocumentTimeline::kMinimumDelay);
+      base::Seconds(DocumentTimeline::kMinimumDelay);
   if (delay_time < kLocalMinimumDelay) {
     ServiceOnNextFrame();
   } else {
@@ -401,24 +412,34 @@ void SMILTimeContainer::WakeupTimerFired(TimerBase*) {
   // document, so this should be turned into a DCHECK.
   if (!GetDocument().IsActive())
     return;
+  TimingUpdate update(*this, Elapsed(), TimingUpdate::kNormal);
   if (previous_frame_scheduling_state == kFutureAnimationFrame) {
     DCHECK(IsTimelineRunning());
+    if (RuntimeEnabledFeatures::SmilAutoSuspendOnLagEnabled()) {
+      // Advance time to just before the next event.
+      const SMILTime next_event_time =
+          !priority_queue_.IsEmpty()
+              ? priority_queue_.Min() - SMILTime::Epsilon()
+              : SMILTime::Unresolved();
+      update.TryAdvanceTime(next_event_time);
+    }
     ServiceOnNextFrame();
   } else {
-    TimingUpdate update(*this, Elapsed(), TimingUpdate::kNormal);
     UpdateAnimationsAndScheduleFrameIfNeeded(update);
   }
 }
 
-web_pref::ImageAnimationPolicy SMILTimeContainer::AnimationPolicy() const {
+mojom::blink::ImageAnimationPolicy SMILTimeContainer::AnimationPolicy() const {
   const Settings* settings = GetDocument().GetSettings();
-  return settings ? settings->GetImageAnimationPolicy()
-                  : web_pref::kImageAnimationPolicyAllowed;
+  return settings
+             ? settings->GetImageAnimationPolicy()
+             : mojom::blink::ImageAnimationPolicy::kImageAnimationPolicyAllowed;
 }
 
 bool SMILTimeContainer::AnimationsDisabled() const {
-  return !GetDocument().IsActive() ||
-         AnimationPolicy() == web_pref::kImageAnimationPolicyNoAnimation;
+  return !GetDocument().IsActive() || AnimationPolicy() ==
+                                          mojom::blink::ImageAnimationPolicy::
+                                              kImageAnimationPolicyNoAnimation;
 }
 
 void SMILTimeContainer::UpdateDocumentOrderIndexes() {
@@ -444,52 +465,84 @@ void SMILTimeContainer::ServiceOnNextFrame() {
   }
 }
 
-void SMILTimeContainer::ServiceAnimations() {
+bool SMILTimeContainer::ServiceAnimations() {
   // If a synchronization is pending, we can flush it now.
+  FrameSchedulingState previous_frame_scheduling_state =
+      frame_scheduling_state_;
   if (frame_scheduling_state_ == kSynchronizeAnimations) {
     DCHECK(wakeup_timer_.IsActive());
     wakeup_timer_.Stop();
     frame_scheduling_state_ = kAnimationFrame;
   }
   if (frame_scheduling_state_ != kAnimationFrame)
-    return;
+    return false;
   frame_scheduling_state_ = kIdle;
   // TODO(fs): The timeline should not be running if we're in an inactive
   // document, so this should be turned into a DCHECK.
   if (!GetDocument().IsActive())
-    return;
-  TimingUpdate update(*this, Elapsed(), TimingUpdate::kNormal);
-  UpdateAnimationsAndScheduleFrameIfNeeded(update);
+    return false;
+  SMILTime elapsed = Elapsed();
+  if (RuntimeEnabledFeatures::SmilAutoSuspendOnLagEnabled()) {
+    // If an unexpectedly long amount of time has passed since we last
+    // ticked animations, behave as if we paused the timeline after
+    // |kMaxAnimationLag| and now automatically resume the animation.
+    constexpr SMILTime kMaxAnimationLag = SMILTime::FromSecondsD(60);
+    const SMILTime elapsed_limit = latest_update_time_ + kMaxAnimationLag;
+    if (previous_frame_scheduling_state == kAnimationFrame &&
+        elapsed > elapsed_limit) {
+      // We've passed the lag limit. Compute the excess lag and then
+      // rewind/adjust the timeline by that amount to make it appear as if only
+      // kMaxAnimationLag has passed.
+      const SMILTime excess_lag = elapsed - elapsed_limit;
+      // Since Elapsed() is clamped, the limit should fall within the clamped
+      // time range as well.
+      DCHECK_EQ(ClampPresentationTime(presentation_time_ - excess_lag),
+                presentation_time_ - excess_lag);
+      presentation_time_ = presentation_time_ - excess_lag;
+      elapsed = Elapsed();
+    }
+  }
+  TimingUpdate update(*this, elapsed, TimingUpdate::kNormal);
+  return UpdateAnimationsAndScheduleFrameIfNeeded(update);
 }
 
-void SMILTimeContainer::UpdateAnimationsAndScheduleFrameIfNeeded(
+bool SMILTimeContainer::UpdateAnimationsAndScheduleFrameIfNeeded(
     TimingUpdate& update) {
   DCHECK(GetDocument().IsActive());
   DCHECK(!wakeup_timer_.IsActive());
   // If the priority queue is empty, there are no timed elements to process and
   // no animations to apply, so we are done.
   if (priority_queue_.IsEmpty())
-    return;
+    return false;
   AnimationTargetsMutationsForbidden scope(this);
   UpdateTimedElements(update);
-  ApplyTimedEffects(update.TargetTime());
+  bool disable_throttling = ApplyTimedEffects(update.TargetTime());
   DCHECK(!wakeup_timer_.IsActive());
   DCHECK(!HasPendingSynchronization());
 
   if (!IsTimelineRunning())
-    return;
-  SMILTime next_progress_time = NextProgressTime(update.TargetTime());
+    return false;
+  SMILTime next_progress_time =
+      NextProgressTime(update.TargetTime(), disable_throttling);
   if (!next_progress_time.IsFinite())
-    return;
+    return false;
   SMILTime delay_time = next_progress_time - update.TargetTime();
   DCHECK(delay_time.IsFinite());
-  ScheduleAnimationFrame(
-      base::TimeDelta::FromMicroseconds(delay_time.InMicroseconds()));
+  ScheduleAnimationFrame(delay_time.ToTimeDelta(), disable_throttling);
+  return true;
 }
 
-SMILTime SMILTimeContainer::NextProgressTime(SMILTime presentation_time) const {
+SMILTime SMILTimeContainer::NextProgressTime(SMILTime presentation_time,
+                                             bool disable_throttling) const {
   if (presentation_time == max_presentation_time_)
     return SMILTime::Unresolved();
+
+  // If the element is not rendered, skip any updates within the active
+  // intervals and step to the next "event" time (begin, repeat or end).
+  if (!disable_throttling) {
+    return priority_queue_.Min();
+  }
+
   SMILTime next_progress_time = SMILTime::Unresolved();
   for (const auto& entry : priority_queue_) {
     next_progress_time = std::min(
@@ -582,21 +635,31 @@ void SMILTimeContainer::UpdateTimedElements(TimingUpdate& update) {
   }
 }
 
-void SMILTimeContainer::ApplyTimedEffects(SMILTime elapsed) {
+bool SMILTimeContainer::ApplyTimedEffects(SMILTime elapsed) {
   if (document_order_indexes_dirty_)
     UpdateDocumentOrderIndexes();
 
   bool did_apply_effects = false;
+  bool disable_throttling =
+      !RuntimeEnabledFeatures::InvisibleSVGAnimationThrottlingEnabled();
   for (auto& entry : animated_targets_) {
     ElementSMILAnimations* animations = entry.key->GetSMILAnimations();
-    if (animations && animations->Apply(elapsed))
+    if (animations && animations->Apply(elapsed)) {
       did_apply_effects = true;
+
+      if (!disable_throttling && (entry.key->GetLayoutObject() ||
+                                  !entry.key->InstancesForElement().empty())) {
+        disable_throttling = true;
+      }
+    }
   }
 
   if (did_apply_effects) {
     UseCounter::Count(&GetDocument(),
                       WebFeature::kSVGSMILAnimationAppliedEffect);
   }
+
+  return disable_throttling;
 }
 
 void SMILTimeContainer::AdvanceFrameForTesting() {
@@ -605,9 +668,23 @@ void SMILTimeContainer::AdvanceFrameForTesting() {
 }
 
 void SMILTimeContainer::Trace(Visitor* visitor) const {
+  visitor->Trace(wakeup_timer_);
   visitor->Trace(animated_targets_);
   visitor->Trace(priority_queue_);
   visitor->Trace(owner_svg_element_);
+}
+
+void SMILTimeContainer::DidAttachLayoutObject() {
+  if (!IsTimelineRunning()) {
+    return;
+  }
+  // If we're waiting on a scheduled timer to fire, trigger an animation
+  // update on the next visual update.
+  if (frame_scheduling_state_ != kFutureAnimationFrame) {
+    return;
+  }
+  CancelAnimationFrame();
+  ServiceOnNextFrame();
 }
 
 }  // namespace blink

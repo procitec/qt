@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,7 +14,8 @@
 #include <vector>
 
 #include "base/check_op.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
+#include "base/memory/raw_ref.h"
 #include "base/memory/ref_counted.h"
 #include "gpu/command_buffer/service/common_decoder.h"
 #include "gpu/command_buffer/service/gl_utils.h"
@@ -74,8 +75,6 @@ inline constexpr UniformApiType operator&(UniformApiType a, UniformApiType b) {
 class GPU_GLES2_EXPORT Program : public base::RefCounted<Program> {
  public:
   static const int kMaxAttachedShaders = 2;
-
-  enum VaryingsPackingOption { kCountOnlyStaticallyUsed, kCountAll };
 
   struct ProgramOutputInfo {
     ProgramOutputInfo(GLuint _color_name,
@@ -180,7 +179,7 @@ class GPU_GLES2_EXPORT Program : public base::RefCounted<Program> {
     }
 
    private:
-    T* shader_variable_;  // Pointer to *_info_ vector entry.
+    raw_ptr<T> shader_variable_;  // Pointer to *_info_ vector entry.
     bool inactive_;
   };
 
@@ -318,7 +317,6 @@ class GPU_GLES2_EXPORT Program : public base::RefCounted<Program> {
 
   // Performs glLinkProgram and related activities.
   bool Link(ShaderManager* manager,
-            VaryingsPackingOption varyings_packing_option,
             DecoderClient* client);
 
   // Performs glValidateProgram and related activities.
@@ -392,7 +390,7 @@ class GPU_GLES2_EXPORT Program : public base::RefCounted<Program> {
 
   // Return false if varyings can't be packed into the max available
   // varying registers.
-  bool CheckVaryingsPacking(VaryingsPackingOption option) const;
+  bool CheckVaryingsPacking() const;
 
   void TransformFeedbackVaryings(GLsizei count, const char* const* varyings,
       GLenum buffer_mode);
@@ -498,9 +496,6 @@ class GPU_GLES2_EXPORT Program : public base::RefCounted<Program> {
   // Updates the program log info from GL
   void UpdateLogInfo();
 
-  // Clears all the uniforms.
-  void ClearUniforms(std::vector<uint8_t>* zero_buffer);
-
   // Updates the draw id uniform location used by ANGLE_multi_draw
   void UpdateDrawIDUniformLocation();
 
@@ -543,7 +538,7 @@ class GPU_GLES2_EXPORT Program : public base::RefCounted<Program> {
 
   void ClearVertexInputMasks();
 
-  ProgramManager* manager_;
+  raw_ptr<ProgramManager> manager_;
 
   int use_count_;
 
@@ -653,6 +648,10 @@ class GPU_GLES2_EXPORT ProgramManager {
                  const GpuPreferences& gpu_preferences,
                  FeatureInfo* feature_info,
                  gl::ProgressReporter* progress_reporter);
+
+  ProgramManager(const ProgramManager&) = delete;
+  ProgramManager& operator=(const ProgramManager&) = delete;
+
   ~ProgramManager();
 
   // Must call before destruction.
@@ -678,9 +677,6 @@ class GPU_GLES2_EXPORT ProgramManager {
 
   // Makes a program as unused. If deleted the program will be removed.
   void UnuseProgram(ShaderManager* shader_manager, Program* program);
-
-  // Clears the uniforms for this program.
-  void ClearUniforms(Program* program);
 
   // Updates the draw id location for this program for ANGLE_multi_draw
   void UpdateDrawIDUniformLocation(Program* program);
@@ -738,22 +734,20 @@ class GPU_GLES2_EXPORT ProgramManager {
   // Used to clear uniforms.
   std::vector<uint8_t> zero_;
 
-  ProgramCache* program_cache_;
+  raw_ptr<ProgramCache> program_cache_;
 
   uint32_t max_varying_vectors_;
   uint32_t max_draw_buffers_;
   uint32_t max_dual_source_draw_buffers_;
   uint32_t max_vertex_attribs_;
 
-  const GpuPreferences& gpu_preferences_;
+  const raw_ref<const GpuPreferences> gpu_preferences_;
   scoped_refptr<FeatureInfo> feature_info_;
 
   // Used to notify the watchdog thread of progress during destruction,
   // preventing time-outs when destruction takes a long time. May be null when
   // using in-process command buffer.
-  gl::ProgressReporter* progress_reporter_;
-
-  DISALLOW_COPY_AND_ASSIGN(ProgramManager);
+  raw_ptr<gl::ProgressReporter> progress_reporter_;
 };
 
 inline const FeatureInfo& Program::feature_info() const {

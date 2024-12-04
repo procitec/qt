@@ -1,17 +1,17 @@
-// Copyright (c) 2011 The Chromium Authors. All rights reserved.
+// Copyright 2011 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef NET_SSL_SSL_CERT_REQUEST_INFO_H_
 #define NET_SSL_SSL_CERT_REQUEST_INFO_H_
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
 #include "base/memory/ref_counted.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/net_export.h"
-#include "net/ssl/ssl_client_cert_type.h"
 
 namespace net {
 
@@ -44,13 +44,15 @@ class NET_EXPORT SSLCertRequestInfo
 
   // True if the server that issues this request was the HTTPS proxy used in
   // the request.  False, if the server was the origin server.
-  bool is_proxy;
+  bool is_proxy = false;
 
   // List of DER-encoded X.509 DistinguishedName of certificate authorities
   // allowed by the server.
   std::vector<std::string> cert_authorities;
 
-  std::vector<SSLClientCertType> cert_key_types;
+  // List of signature algorithms (using TLS 1.3 SignatureScheme constants)
+  // advertised as supported by the server.
+  std::vector<uint16_t> signature_algorithms;
 
  private:
   friend class base::RefCountedThreadSafe<SSLCertRequestInfo>;

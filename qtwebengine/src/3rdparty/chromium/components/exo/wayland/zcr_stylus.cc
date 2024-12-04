@@ -1,19 +1,17 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/exo/wayland/zcr_stylus.h"
 
-#include <stylus-unstable-v2-server-protocol.h>
-
+#include "base/memory/raw_ptr.h"
 #include "components/exo/pointer.h"
 #include "components/exo/pointer_stylus_delegate.h"
 #include "components/exo/touch.h"
 #include "components/exo/touch_stylus_delegate.h"
 #include "components/exo/wayland/server_util.h"
 
-namespace exo {
-namespace wayland {
+namespace exo::wayland {
 namespace {
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -25,6 +23,11 @@ class WaylandTouchStylusDelegate : public TouchStylusDelegate {
       : resource_(resource), touch_(touch) {
     touch_->SetStylusDelegate(this);
   }
+
+  WaylandTouchStylusDelegate(const WaylandTouchStylusDelegate&) = delete;
+  WaylandTouchStylusDelegate& operator=(const WaylandTouchStylusDelegate&) =
+      delete;
+
   ~WaylandTouchStylusDelegate() override {
     if (touch_ != nullptr)
       touch_->SetStylusDelegate(nullptr);
@@ -54,10 +57,8 @@ class WaylandTouchStylusDelegate : public TouchStylusDelegate {
   }
 
  private:
-  wl_resource* resource_;
-  Touch* touch_;
-
-  DISALLOW_COPY_AND_ASSIGN(WaylandTouchStylusDelegate);
+  raw_ptr<wl_resource> resource_;
+  raw_ptr<Touch> touch_;
 };
 
 void touch_stylus_destroy(wl_client* client, wl_resource* resource) {
@@ -83,7 +84,7 @@ class WaylandPointerStylusDelegate : public PointerStylusDelegate {
     if (pointer_ != nullptr)
       pointer_->SetStylusDelegate(nullptr);
   }
-  void OnPointerDestroying(Pointer* pointer_) override { pointer_ = nullptr; }
+  void OnPointerDestroying(Pointer* pointer) override { pointer_ = nullptr; }
   void OnPointerToolChange(ui::EventPointerType type) override {
     uint wayland_type = ZCR_POINTER_STYLUS_V2_TOOL_TYPE_NONE;
     if (type == ui::EventPointerType::kTouch)
@@ -122,8 +123,8 @@ class WaylandPointerStylusDelegate : public PointerStylusDelegate {
   }
 
  private:
-  wl_resource* resource_;
-  Pointer* pointer_;
+  raw_ptr<wl_resource> resource_;
+  raw_ptr<Pointer> pointer_;
   bool supports_force_ = false;
   bool supports_tilt_ = false;
 };
@@ -195,5 +196,4 @@ void bind_stylus_v2(wl_client* client,
                                  nullptr);
 }
 
-}  // namespace wayland
-}  // namespace exo
+}  // namespace exo::wayland

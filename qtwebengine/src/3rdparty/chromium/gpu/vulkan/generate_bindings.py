@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-# Copyright 2018 The Chromium Authors. All rights reserved.
+# Copyright 2018 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-"""code generator for Vulkan function pointers."""
+"""Code generator for Vulkan function pointers."""
 
 import filecmp
 import optparse
@@ -15,7 +15,7 @@ from string import Template
 from subprocess import call
 
 vulkan_reg_path = path.join(path.dirname(__file__), "..", "..", "third_party",
-                            "vulkan_headers", "registry")
+                            "vulkan-deps", "vulkan-headers", "src", "registry")
 sys.path.append(vulkan_reg_path)
 from reg import Registry
 
@@ -45,12 +45,15 @@ VULKAN_INSTANCE_FUNCTIONS = [
       'vkEnumerateDeviceLayerProperties',
       'vkEnumeratePhysicalDevices',
       'vkGetDeviceProcAddr',
+      'vkGetPhysicalDeviceExternalSemaphoreProperties',
       'vkGetPhysicalDeviceFeatures2',
       'vkGetPhysicalDeviceFormatProperties',
+      'vkGetPhysicalDeviceFormatProperties2',
       'vkGetPhysicalDeviceImageFormatProperties2',
       'vkGetPhysicalDeviceMemoryProperties',
       'vkGetPhysicalDeviceMemoryProperties2',
       'vkGetPhysicalDeviceProperties',
+      'vkGetPhysicalDeviceProperties2',
       'vkGetPhysicalDeviceQueueFamilyProperties',
     ]
   },
@@ -72,15 +75,21 @@ VULKAN_INSTANCE_FUNCTIONS = [
     ]
   },
   {
-    'ifdef': 'defined(USE_VULKAN_XLIB)',
-    'extension': 'VK_KHR_XLIB_SURFACE_EXTENSION_NAME',
+    'extension': 'VK_EXT_HEADLESS_SURFACE_EXTENSION_NAME',
     'functions': [
-      'vkCreateXlibSurfaceKHR',
-      'vkGetPhysicalDeviceXlibPresentationSupportKHR',
+      'vkCreateHeadlessSurfaceEXT',
     ]
   },
   {
-    'ifdef': 'defined(OS_WIN)',
+    'ifdef': 'defined(USE_VULKAN_XCB)',
+    'extension': 'VK_KHR_XCB_SURFACE_EXTENSION_NAME',
+    'functions': [
+      'vkCreateXcbSurfaceKHR',
+      'vkGetPhysicalDeviceXcbPresentationSupportKHR',
+    ]
+  },
+  {
+    'ifdef': 'BUILDFLAG(IS_WIN)',
     'extension': 'VK_KHR_WIN32_SURFACE_EXTENSION_NAME',
     'functions': [
       'vkCreateWin32SurfaceKHR',
@@ -88,14 +97,14 @@ VULKAN_INSTANCE_FUNCTIONS = [
     ]
   },
   {
-    'ifdef': 'defined(OS_ANDROID)',
+    'ifdef': 'BUILDFLAG(IS_ANDROID)',
     'extension': 'VK_KHR_ANDROID_SURFACE_EXTENSION_NAME',
     'functions': [
       'vkCreateAndroidSurfaceKHR',
     ]
   },
   {
-    'ifdef': 'defined(OS_FUCHSIA)',
+    'ifdef': 'BUILDFLAG(IS_FUCHSIA)',
     'extension': 'VK_FUCHSIA_IMAGEPIPE_SURFACE_EXTENSION_NAME',
     'functions': [
       'vkCreateImagePipeSurfaceFUCHSIA',
@@ -115,20 +124,30 @@ VULKAN_DEVICE_FUNCTIONS = [
       'vkBindImageMemory',
       'vkBindImageMemory2',
       'vkCmdBeginRenderPass',
+      'vkCmdBindDescriptorSets',
+      'vkCmdBindPipeline',
+      'vkCmdBindVertexBuffers',
       'vkCmdCopyBuffer',
       'vkCmdCopyBufferToImage',
+      'vkCmdCopyImageToBuffer',
+      'vkCmdDraw',
       'vkCmdEndRenderPass',
       'vkCmdExecuteCommands',
       'vkCmdNextSubpass',
       'vkCmdPipelineBarrier',
+      'vkCmdPushConstants',
+      'vkCmdSetScissor',
+      'vkCmdSetViewport',
       'vkCreateBuffer',
       'vkCreateCommandPool',
       'vkCreateDescriptorPool',
       'vkCreateDescriptorSetLayout',
       'vkCreateFence',
       'vkCreateFramebuffer',
+      'vkCreateGraphicsPipelines',
       'vkCreateImage',
       'vkCreateImageView',
+      'vkCreatePipelineLayout',
       'vkCreateRenderPass',
       'vkCreateSampler',
       'vkCreateSemaphore',
@@ -142,6 +161,8 @@ VULKAN_DEVICE_FUNCTIONS = [
       'vkDestroyFramebuffer',
       'vkDestroyImage',
       'vkDestroyImageView',
+      'vkDestroyPipeline',
+      'vkDestroyPipelineLayout',
       'vkDestroyRenderPass',
       'vkDestroySampler',
       'vkDestroySemaphore',
@@ -160,6 +181,7 @@ VULKAN_DEVICE_FUNCTIONS = [
       'vkGetFenceStatus',
       'vkGetImageMemoryRequirements',
       'vkGetImageMemoryRequirements2',
+      'vkGetImageSubresourceLayout',
       'vkMapMemory',
       'vkQueueSubmit',
       'vkQueueWaitIdle',
@@ -171,7 +193,7 @@ VULKAN_DEVICE_FUNCTIONS = [
     ]
   },
   {
-    'ifdef': 'defined(OS_ANDROID)',
+    'ifdef': 'BUILDFLAG(IS_ANDROID)',
     'extension':
         'VK_ANDROID_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER_EXTENSION_NAME',
     'functions': [
@@ -179,7 +201,8 @@ VULKAN_DEVICE_FUNCTIONS = [
     ]
   },
   {
-    'ifdef': 'defined(OS_LINUX) || defined(OS_CHROMEOS) || defined(OS_ANDROID)',
+    'ifdef':
+    'BUILDFLAG(IS_POSIX)',
     'extension': 'VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME',
     'functions': [
       'vkGetSemaphoreFdKHR',
@@ -187,7 +210,7 @@ VULKAN_DEVICE_FUNCTIONS = [
     ]
   },
   {
-    'ifdef': 'defined(OS_WIN)',
+    'ifdef': 'BUILDFLAG(IS_WIN)',
     'extension': 'VK_KHR_EXTERNAL_SEMAPHORE_WIN32_EXTENSION_NAME',
     'functions': [
       'vkGetSemaphoreWin32HandleKHR',
@@ -195,7 +218,8 @@ VULKAN_DEVICE_FUNCTIONS = [
     ]
   },
   {
-    'ifdef': 'defined(OS_LINUX) || defined(OS_CHROMEOS) || defined(OS_ANDROID)',
+    'ifdef':
+    'BUILDFLAG(IS_POSIX)',
     'extension': 'VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME',
     'functions': [
       'vkGetMemoryFdKHR',
@@ -203,7 +227,7 @@ VULKAN_DEVICE_FUNCTIONS = [
     ]
   },
   {
-    'ifdef': 'defined(OS_WIN)',
+    'ifdef': 'BUILDFLAG(IS_WIN)',
     'extension': 'VK_KHR_EXTERNAL_MEMORY_WIN32_EXTENSION_NAME',
     'functions': [
       'vkGetMemoryWin32HandleKHR',
@@ -211,7 +235,7 @@ VULKAN_DEVICE_FUNCTIONS = [
     ]
   },
   {
-    'ifdef': 'defined(OS_FUCHSIA)',
+    'ifdef': 'BUILDFLAG(IS_FUCHSIA)',
     'extension': 'VK_FUCHSIA_EXTERNAL_SEMAPHORE_EXTENSION_NAME',
     'functions': [
       'vkImportSemaphoreZirconHandleFUCHSIA',
@@ -219,18 +243,18 @@ VULKAN_DEVICE_FUNCTIONS = [
     ]
   },
   {
-    'ifdef': 'defined(OS_FUCHSIA)',
+    'ifdef': 'BUILDFLAG(IS_FUCHSIA)',
     'extension': 'VK_FUCHSIA_EXTERNAL_MEMORY_EXTENSION_NAME',
     'functions': [
       'vkGetMemoryZirconHandleFUCHSIA',
     ]
   },
   {
-    'ifdef': 'defined(OS_FUCHSIA)',
+    'ifdef': 'BUILDFLAG(IS_FUCHSIA)',
     'extension': 'VK_FUCHSIA_BUFFER_COLLECTION_EXTENSION_NAME',
     'functions': [
       'vkCreateBufferCollectionFUCHSIA',
-      'vkSetBufferCollectionConstraintsFUCHSIA',
+      'vkSetBufferCollectionImageConstraintsFUCHSIA',
       'vkGetBufferCollectionPropertiesFUCHSIA',
       'vkDestroyBufferCollectionFUCHSIA',
     ]
@@ -244,14 +268,20 @@ VULKAN_DEVICE_FUNCTIONS = [
       'vkGetSwapchainImagesKHR',
       'vkQueuePresentKHR',
     ]
+  },
+  {
+    'ifdef': 'BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)',
+    'extension': 'VK_EXT_IMAGE_DRM_FORMAT_MODIFIER_EXTENSION_NAME',
+    'functions': [
+      'vkGetImageDrmFormatModifierPropertiesEXT',
+    ]
   }
-
 ]
 
 SELF_LOCATION = os.path.dirname(os.path.abspath(__file__))
 
 LICENSE_AND_HEADER = """\
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -262,6 +292,18 @@ LICENSE_AND_HEADER = """\
 // DO NOT EDIT!
 
 """
+
+def WriteReset(out_file, functions):
+ for group in functions:
+    if 'ifdef' in group:
+      out_file.write('#if %s\n' % group['ifdef'])
+
+    for func in group['functions']:
+      out_file.write('%s = nullptr;\n' % func)
+
+    if 'ifdef' in group:
+      out_file.write('#endif  // %s\n' % group['ifdef'])
+    out_file.write('\n')
 
 def WriteFunctionsInternal(out_file, functions, gen_content,
                            check_extension=False):
@@ -334,7 +376,18 @@ def WriteMacros(out_file, functions):
       pdecl += text + tail
     n = len(params)
 
-    callstat = 'return gpu::GetVulkanFunctionPointers()->%s(' % func
+    callstat = ''
+    if func in ('vkQueueSubmit', 'vkQueueWaitIdle', 'vkQueuePresentKHR'):
+        callstat = 'base::Lock* lock = nullptr;\n'
+        callstat += '''auto it = gpu::GetVulkanFunctionPointers()->
+        per_queue_lock_map.find(queue);\n'''
+        callstat += '''if (it != gpu::GetVulkanFunctionPointers()->
+        per_queue_lock_map.end()) {\n'''
+        callstat += '\tlock = it->second.get();\n'
+        callstat += '}\n'
+        callstat += 'base::AutoLockMaybe auto_lock(lock);\n'
+
+    callstat += 'return gpu::GetVulkanFunctionPointers()->%s(' % func
     paramdecl = '('
     if n > 0:
       paramnames = (''.join(t for t in p.itertext())
@@ -363,17 +416,21 @@ def GenerateHeaderFile(out_file):
 
 #include <vulkan/vulkan.h>
 
+#include <memory>
+
 #include "base/compiler_specific.h"
 #include "base/component_export.h"
+#include "base/containers/flat_map.h"
 #include "base/native_library.h"
+#include "base/synchronization/lock.h"
 #include "build/build_config.h"
 #include "ui/gfx/extension_set.h"
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
 #include <vulkan/vulkan_android.h>
 #endif
 
-#if defined(OS_FUCHSIA)
+#if BUILDFLAG(IS_FUCHSIA)
 #include <zircon/types.h>
 // <vulkan/vulkan_fuchsia.h> must be included after <zircon/types.h>
 #include <vulkan/vulkan_fuchsia.h>
@@ -381,14 +438,13 @@ def GenerateHeaderFile(out_file):
 #include "gpu/vulkan/fuchsia/vulkan_fuchsia_ext.h"
 #endif
 
-#if defined(USE_VULKAN_XLIB)
-typedef struct _XDisplay Display;
-typedef unsigned long Window;
-typedef unsigned long VisualID;
-#include <vulkan/vulkan_xlib.h>
+#if defined(USE_VULKAN_XCB)
+#include <xcb/xcb.h>
+// <vulkan/vulkan_xcb.h> must be included after <xcb/xcb.h>
+#include <vulkan/vulkan_xcb.h>
 #endif
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 #include <vulkan/vulkan_win32.h>
 #endif
 
@@ -404,7 +460,9 @@ struct COMPONENT_EXPORT(VULKAN) VulkanFunctionPointers {
   VulkanFunctionPointers();
   ~VulkanFunctionPointers();
 
-  bool BindUnassociatedFunctionPointers();
+  bool BindUnassociatedFunctionPointersFromLoaderLib(base::NativeLibrary lib);
+  bool BindUnassociatedFunctionPointersFromGetProcAddr(
+      PFN_vkGetInstanceProcAddr proc);
 
   // These functions assume that vkGetInstanceProcAddr has been populated.
   bool BindInstanceFunctionPointers(
@@ -418,7 +476,13 @@ struct COMPONENT_EXPORT(VULKAN) VulkanFunctionPointers {
       uint32_t api_version,
       const gfx::ExtensionSet& enabled_extensions);
 
-  base::NativeLibrary vulkan_loader_library = nullptr;
+  void ResetForTesting();
+
+  // This is used to allow thread safe access to a given vulkan queue when
+  // multiple gpu threads are accessing it. Note that this map will be only
+  // accessed by multiple gpu threads concurrently to read the data, so it
+  // should be thread safe to use this map by multiple threads.
+  base::flat_map<VkQueue, std::unique_ptr<base::Lock>> per_queue_lock_map;
 
   template<typename T>
   class VulkanFunction;
@@ -437,6 +501,8 @@ struct COMPONENT_EXPORT(VULKAN) VulkanFunctionPointers {
     }
 
     Fn get() const { return fn_; }
+
+    void OverrideForTesting(Fn fn) { fn_ = fn; }
 
    private:
     friend VulkanFunctionPointers;
@@ -471,6 +537,15 @@ struct COMPONENT_EXPORT(VULKAN) VulkanFunctionPointers {
   WriteFunctionDeclarations(out_file, VULKAN_DEVICE_FUNCTIONS)
 
   out_file.write("""\
+
+ private:
+  bool BindUnassociatedFunctionPointersCommon();
+  // The `Bind*` functions will acquires lock, so should not be called with
+  // with this lock held. Code that writes to members directly should take this
+  // lock as well.
+  base::Lock write_lock_;
+
+  base::NativeLibrary loader_library_ = nullptr;
 };
 
 }  // namespace gpu
@@ -501,11 +576,12 @@ struct COMPONENT_EXPORT(VULKAN) VulkanFunctionPointers {
 
 def WriteFunctionPointerInitialization(out_file, proc_addr_function, parent,
                                        functions):
-  template = Template("""  ${name} = reinterpret_cast<PFN_${name}>(
-    ${get_proc_addr}(${parent}, "${name}${extension_suffix}"));
+  template = Template("""  constexpr char k${name}${extension_suffix}[] =
+    "${name}${extension_suffix}";
+  ${name} = reinterpret_cast<PFN_${name}>(
+    ${get_proc_addr}(${parent}, k${name}${extension_suffix}));
   if (!${name}) {
-    DLOG(WARNING) << "Failed to bind vulkan entrypoint: "
-                  << "${name}${extension_suffix}";
+    LogGetProcError(k${name}${extension_suffix});
     return false;
   }
 
@@ -539,10 +615,18 @@ def GenerateSourceFile(out_file):
 
 #include "gpu/vulkan/vulkan_function_pointers.h"
 
+#include "base/check_op.h"
+#include "base/compiler_specific.h"
 #include "base/logging.h"
 #include "base/no_destructor.h"
 
 namespace gpu {
+
+namespace {
+NOINLINE void LogGetProcError(const char* funcName) {
+  LOG(WARNING) << "Failed to bind vulkan entrypoint: " << funcName;
+}
+}
 
 VulkanFunctionPointers* GetVulkanFunctionPointers() {
   static base::NoDestructor<VulkanFunctionPointers> vulkan_function_pointers;
@@ -552,15 +636,35 @@ VulkanFunctionPointers* GetVulkanFunctionPointers() {
 VulkanFunctionPointers::VulkanFunctionPointers() = default;
 VulkanFunctionPointers::~VulkanFunctionPointers() = default;
 
-bool VulkanFunctionPointers::BindUnassociatedFunctionPointers() {
-  // vkGetInstanceProcAddr must be handled specially since it gets its function
-  // pointer through base::GetFunctionPOinterFromNativeLibrary(). Other Vulkan
-  // functions don't do this.
+bool VulkanFunctionPointers::BindUnassociatedFunctionPointersFromLoaderLib(
+    base::NativeLibrary lib) {
+  base::AutoLock lock(write_lock_);
+  loader_library_ = lib;
+
+  // vkGetInstanceProcAddr must be handled specially since it gets its
+  // function pointer through base::GetFunctionPointerFromNativeLibrary().
+  // Other Vulkan functions don't do this.
   vkGetInstanceProcAddr = reinterpret_cast<PFN_vkGetInstanceProcAddr>(
-      base::GetFunctionPointerFromNativeLibrary(vulkan_loader_library,
+      base::GetFunctionPointerFromNativeLibrary(loader_library_,
                                                 "vkGetInstanceProcAddr"));
-  if (!vkGetInstanceProcAddr)
+  if (!vkGetInstanceProcAddr) {
+    LOG(WARNING) << "Failed to find vkGetInstanceProcAddr";
     return false;
+  }
+  return BindUnassociatedFunctionPointersCommon();
+}
+
+bool VulkanFunctionPointers::BindUnassociatedFunctionPointersFromGetProcAddr(
+  PFN_vkGetInstanceProcAddr proc) {
+  DCHECK(proc);
+  DCHECK(!loader_library_);
+
+  base::AutoLock lock(write_lock_);
+  vkGetInstanceProcAddr = proc;
+  return BindUnassociatedFunctionPointersCommon();
+}
+
+bool VulkanFunctionPointers::BindUnassociatedFunctionPointersCommon() {
 """)
 
   WriteUnassociatedFunctionPointerInitialization(
@@ -576,6 +680,7 @@ bool VulkanFunctionPointers::BindInstanceFunctionPointers(
     uint32_t api_version,
     const gfx::ExtensionSet& enabled_extensions) {
   DCHECK_GE(api_version, kVulkanRequiredApiVersion);
+  base::AutoLock lock(write_lock_);
 """)
 
   WriteInstanceFunctionPointerInitialization(
@@ -591,6 +696,7 @@ bool VulkanFunctionPointers::BindDeviceFunctionPointers(
     uint32_t api_version,
     const gfx::ExtensionSet& enabled_extensions) {
   DCHECK_GE(api_version, kVulkanRequiredApiVersion);
+  base::AutoLock lock(write_lock_);
   // Device functions
 """)
   WriteDeviceFunctionPointerInitialization(out_file, VULKAN_DEVICE_FUNCTIONS)
@@ -598,6 +704,25 @@ bool VulkanFunctionPointers::BindDeviceFunctionPointers(
   out_file.write("""\
 
   return true;
+}
+
+void VulkanFunctionPointers::ResetForTesting() {
+  base::AutoLock lock(write_lock_);
+
+  per_queue_lock_map.clear();
+  loader_library_ = nullptr;
+  vkGetInstanceProcAddr = nullptr;
+
+""")
+
+  WriteReset(
+      out_file, VULKAN_UNASSOCIATED_FUNCTIONS)
+  WriteReset(
+      out_file, VULKAN_INSTANCE_FUNCTIONS)
+  WriteReset(
+      out_file, VULKAN_DEVICE_FUNCTIONS)
+
+  out_file.write("""\
 }
 
 }  // namespace gpu
@@ -632,14 +757,14 @@ def main(argv):
 
   header_file_name = 'vulkan_function_pointers.h'
   header_file = open(
-      os.path.join(output_dir, header_file_name), 'w')
+      os.path.join(output_dir, header_file_name), 'w', newline='\n')
   GenerateHeaderFile(header_file)
   header_file.close()
   ClangFormat(header_file.name)
 
   source_file_name = 'vulkan_function_pointers.cc'
   source_file = open(
-      os.path.join(output_dir, source_file_name), 'w')
+      os.path.join(output_dir, source_file_name), 'w', newline='\n')
   GenerateSourceFile(source_file)
   source_file.close()
   ClangFormat(source_file.name)

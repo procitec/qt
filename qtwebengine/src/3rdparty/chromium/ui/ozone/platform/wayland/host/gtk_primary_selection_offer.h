@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,7 +8,6 @@
 #include <string>
 
 #include "base/files/scoped_file.h"
-#include "base/macros.h"
 #include "ui/ozone/platform/wayland/common/wayland_object.h"
 #include "ui/ozone/platform/wayland/host/wayland_data_offer_base.h"
 
@@ -26,21 +25,23 @@ class GtkPrimarySelectionOffer : public WaylandDataOfferBase {
  public:
   // Takes ownership of data_offer.
   explicit GtkPrimarySelectionOffer(gtk_primary_selection_offer* data_offer);
+
+  GtkPrimarySelectionOffer(const GtkPrimarySelectionOffer&) = delete;
+  GtkPrimarySelectionOffer& operator=(const GtkPrimarySelectionOffer&) = delete;
+
   ~GtkPrimarySelectionOffer() override;
 
   // WaylandDataOfferBase overrides:
   base::ScopedFD Receive(const std::string& mime_type) override;
 
  private:
-  // gtk_primary_selection_offer_listener callbacks.
+  // gtk_primary_selection_offer_listener callbacks:
   static void OnOffer(void* data,
-                      gtk_primary_selection_offer* data_offer,
+                      gtk_primary_selection_offer* selection_offer,
                       const char* mime_type);
 
   // The Wayland object wrapped by this instance.
   wl::Object<gtk_primary_selection_offer> data_offer_;
-
-  DISALLOW_COPY_AND_ASSIGN(GtkPrimarySelectionOffer);
 };
 
 }  // namespace ui

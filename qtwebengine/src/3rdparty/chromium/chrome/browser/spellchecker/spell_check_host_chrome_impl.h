@@ -1,13 +1,14 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef CHROME_BROWSER_SPELLCHECKER_SPELL_CHECK_HOST_CHROME_IMPL_H_
 #define CHROME_BROWSER_SPELLCHECKER_SPELL_CHECK_HOST_CHROME_IMPL_H_
 
-#include "base/callback.h"
 #include "base/containers/unique_ptr_adapters.h"
+#include "base/functional/callback.h"
 #include "build/build_config.h"
+#include "build/chromeos_buildflags.h"
 #include "components/spellcheck/browser/spell_check_host_impl.h"
 #include "components/spellcheck/spellcheck_buildflags.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
@@ -26,6 +27,10 @@ struct SpellCheckResult;
 class SpellCheckHostChromeImpl : public SpellCheckHostImpl {
  public:
   explicit SpellCheckHostChromeImpl(int render_process_id);
+
+  SpellCheckHostChromeImpl(const SpellCheckHostChromeImpl&) = delete;
+  SpellCheckHostChromeImpl& operator=(const SpellCheckHostChromeImpl&) = delete;
+
   ~SpellCheckHostChromeImpl() override;
 
   static void Create(
@@ -44,11 +49,10 @@ class SpellCheckHostChromeImpl : public SpellCheckHostImpl {
   friend class SpellCheckHostChromeImplMacTest;
 
   // SpellCheckHostImpl:
-  void RequestDictionary() override;
-  void NotifyChecked(const base::string16& word, bool misspelled) override;
+  void NotifyChecked(const std::u16string& word, bool misspelled) override;
 
 #if BUILDFLAG(USE_RENDERER_SPELLCHECKER)
-  void CallSpellingService(const base::string16& text,
+  void CallSpellingService(const std::u16string& text,
                            CallSpellingServiceCallback callback) override;
 
   // Invoked when the remote Spelling service has finished checking the
@@ -56,7 +60,7 @@ class SpellCheckHostChromeImpl : public SpellCheckHostImpl {
   void CallSpellingServiceDone(
       CallSpellingServiceCallback callback,
       bool success,
-      const base::string16& text,
+      const std::u16string& text,
       const std::vector<SpellCheckResult>& service_results) const;
 
   // Filter out spelling corrections of custom dictionary words from the
@@ -70,22 +74,16 @@ class SpellCheckHostChromeImpl : public SpellCheckHostImpl {
 #if BUILDFLAG(USE_BROWSER_SPELLCHECKER) && BUILDFLAG(ENABLE_SPELLING_SERVICE)
   // Implementations of the following APIs for build configs that don't use the
   // spelling service are in the base class SpellCheckHostImpl.
-  void CheckSpelling(const base::string16& word,
-                     int route_id,
+  void CheckSpelling(const std::u16string& word,
                      CheckSpellingCallback callback) override;
-  void FillSuggestionList(const base::string16& word,
+  void FillSuggestionList(const std::u16string& word,
                           FillSuggestionListCallback callback) override;
-  void RequestTextCheck(const base::string16& text,
-                        int route_id,
+  void RequestTextCheck(const std::u16string& text,
                         RequestTextCheckCallback callback) override;
 
-#if defined(OS_WIN)
-  void GetPerLanguageSuggestions(
-      const base::string16& word,
-      GetPerLanguageSuggestionsCallback callback) override;
-
+#if BUILDFLAG(IS_WIN)
   void InitializeDictionaries(InitializeDictionariesCallback callback) override;
-#endif  // defined(OS_WIN)
+#endif  // BUILDFLAG(IS_WIN)
 
   // Clears a finished request from |requests_|. Exposed to SpellingRequest.
   void OnRequestFinished(SpellingRequest* request);
@@ -95,13 +93,13 @@ class SpellCheckHostChromeImpl : public SpellCheckHostImpl {
       std::vector<SpellCheckResult>* remote_results,
       const std::vector<SpellCheckResult>& local_results);
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   void OnDictionariesInitialized();
 
   // Callback passed as argument to InitializeDictionaries, and invoked when
   // the dictionaries are loaded for the first time.
   InitializeDictionariesCallback dictionaries_loaded_callback_;
-#endif  // defined(OS_WIN)
+#endif  // BUILDFLAG(IS_WIN)
 
   // All pending requests.
   std::set<std::unique_ptr<SpellingRequest>, base::UniquePtrComparator>
@@ -109,15 +107,13 @@ class SpellCheckHostChromeImpl : public SpellCheckHostImpl {
 #endif  //  BUILDFLAG(USE_BROWSER_SPELLCHECKER) &&
         //  BUILDFLAG(ENABLE_SPELLING_SERVICE)
 
-#if defined(OS_MAC)
-  int ToDocumentTag(int route_id);
-  void RetireDocumentTag(int route_id);
-  std::map<int, int> tag_map_;
-#endif  // defined(OS_MAC)
-
   // Returns the SpellcheckService of our |render_process_id_|. The return
   // is null if the render process is being shut down.
   virtual SpellcheckService* GetSpellcheckService() const;
+
+#if BUILDFLAG(USE_BROWSER_SPELLCHECKER)
+  const int document_tag_;
+#endif
 
   // The process ID of the renderer.
   const int render_process_id_;
@@ -130,8 +126,6 @@ class SpellCheckHostChromeImpl : public SpellCheckHostImpl {
 #if BUILDFLAG(USE_RENDERER_SPELLCHECKER)
   base::WeakPtrFactory<SpellCheckHostChromeImpl> weak_factory_{this};
 #endif
-
-  DISALLOW_COPY_AND_ASSIGN(SpellCheckHostChromeImpl);
 };
 
 #endif  // CHROME_BROWSER_SPELLCHECKER_SPELL_CHECK_HOST_CHROME_IMPL_H_

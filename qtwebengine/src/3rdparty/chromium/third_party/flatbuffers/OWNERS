@@ -1,4 +1,6 @@
 battre@chromium.org
 csharrison@chromium.org
 engedy@chromium.org
-# COMPONENT: Platform>Extensions>API
+
+# Flatbuffers' versioning is tightly coupled with TFLite.
+file://third_party/tflite/OWNERS

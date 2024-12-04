@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -23,13 +23,24 @@ void CookieSettingsPolicyHandler::ApplyPolicySettings(
     const policy::PolicyMap& policies,
     PrefValueMap* prefs) {
   const base::Value* third_party_cookie_blocking =
-      policies.GetValue(policy_name());
+      policies.GetValue(policy_name(), base::Value::Type::BOOLEAN);
   if (third_party_cookie_blocking) {
     prefs->SetInteger(
         prefs::kCookieControlsMode,
         static_cast<int>(third_party_cookie_blocking->GetBool()
                              ? CookieControlsMode::kBlockThirdParty
                              : CookieControlsMode::kOff));
+  }
+
+  // If there is a Cookie BLOCK default content setting, then this implicitly
+  // also blocks 3PC.
+  const base::Value* default_cookie_setting = policies.GetValue(
+      policy::key::kDefaultCookiesSetting, base::Value::Type::INTEGER);
+  if (default_cookie_setting &&
+      static_cast<ContentSetting>(default_cookie_setting->GetInt()) ==
+          CONTENT_SETTING_BLOCK) {
+    prefs->SetInteger(prefs::kCookieControlsMode,
+                      static_cast<int>(CookieControlsMode::kBlockThirdParty));
   }
 }
 

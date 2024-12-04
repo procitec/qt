@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,10 +7,9 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/memory/weak_ptr.h"
-#include "base/no_destructor.h"
-#include "base/task/post_task.h"
 #include "base/task/thread_pool.h"
 #include "components/services/heap_profiling/connection_manager.h"
 #include "components/services/heap_profiling/public/mojom/heap_profiling_client.mojom.h"
@@ -39,17 +38,23 @@ class ProfilingServiceImpl
       : heap_profiler_receiver_(this, std::move(profiler_receiver)),
         helper_(std::move(helper)) {}
 
+  ProfilingServiceImpl(const ProfilingServiceImpl&) = delete;
+  ProfilingServiceImpl& operator=(const ProfilingServiceImpl&) = delete;
+
   ~ProfilingServiceImpl() override = default;
 
   // mojom::ProfilingService implementation:
-  void AddProfilingClient(base::ProcessId pid,
-                          mojo::PendingRemote<mojom::ProfilingClient> client,
-                          mojom::ProcessType process_type,
-                          mojom::ProfilingParamsPtr params) override {
+  void AddProfilingClient(
+      base::ProcessId pid,
+      mojo::PendingRemote<mojom::ProfilingClient> client,
+      mojom::ProcessType process_type,
+      mojom::ProfilingParamsPtr params,
+      base::OnceClosure started_profiling_closure) override {
     if (params->sampling_rate == 0)
       params->sampling_rate = 1;
     connection_manager_.OnNewConnection(pid, std::move(client), process_type,
-                                        std::move(params));
+                                        std::move(params),
+                                        std::move(started_profiling_closure));
   }
 
   void GetProfiledPids(GetProfiledPidsCallback callback) override {
@@ -59,12 +64,14 @@ class ProfilingServiceImpl
   // memory_instrumentation::mojom::HeapProfiler implementation:
   void DumpProcessesForTracing(
       bool strip_path_from_mapped_files,
+      bool write_proto,
       DumpProcessesForTracingCallback callback) override {
     std::vector<base::ProcessId> pids =
         connection_manager_.GetConnectionPidsThatNeedVmRegions();
     if (pids.empty()) {
       connection_manager_.DumpProcessesForTracing(
-          strip_path_from_mapped_files, std::move(callback), VmRegions());
+          strip_path_from_mapped_files, write_proto, std::move(callback),
+          VmRegions());
       return;
     }
 
@@ -75,17 +82,18 @@ class ProfilingServiceImpl
         base::BindOnce(&ProfilingServiceImpl::
                            OnGetVmRegionsCompleteForDumpProcessesForTracing,
                        weak_factory_.GetWeakPtr(), strip_path_from_mapped_files,
-                       std::move(callback)));
+                       write_proto, std::move(callback)));
   }
 
  private:
   void OnGetVmRegionsCompleteForDumpProcessesForTracing(
       bool strip_path_from_mapped_files,
+      bool write_proto,
       DumpProcessesForTracingCallback callback,
       VmRegions vm_regions) {
-    connection_manager_.DumpProcessesForTracing(strip_path_from_mapped_files,
-                                                std::move(callback),
-                                                std::move(vm_regions));
+    connection_manager_.DumpProcessesForTracing(
+        strip_path_from_mapped_files, write_proto, std::move(callback),
+        std::move(vm_regions));
   }
 
   mojo::Receiver<memory_instrumentation::mojom::HeapProfiler>
@@ -94,8 +102,6 @@ class ProfilingServiceImpl
   ConnectionManager connection_manager_;
 
   base::WeakPtrFactory<ProfilingServiceImpl> weak_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(ProfilingServiceImpl);
 };
 
 void RunHeapProfilingService(

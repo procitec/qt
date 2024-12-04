@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,18 +6,23 @@
 
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/service_worker_context.h"
+#include "content/public/browser/storage_partition.h"
 #include "extensions/common/constants.h"
 
 namespace extensions {
 namespace service_worker_test_utils {
 
+content::ServiceWorkerContext* GetServiceWorkerContext(
+    content::BrowserContext* browser_context) {
+  return browser_context->GetDefaultStoragePartition()
+      ->GetServiceWorkerContext();
+}
 // TestRegistrationObserver ----------------------------------------------------
 
 TestRegistrationObserver::TestRegistrationObserver(
     content::BrowserContext* browser_context)
-    : context_(
-          content::BrowserContext::GetDefaultStoragePartition(browser_context)
-              ->GetServiceWorkerContext()) {
+    : context_(browser_context->GetDefaultStoragePartition()
+                   ->GetServiceWorkerContext()) {
   context_->AddObserver(this);
 }
 
@@ -28,6 +33,14 @@ TestRegistrationObserver::~TestRegistrationObserver() {
 
 void TestRegistrationObserver::WaitForRegistrationStored() {
   stored_run_loop_.Run();
+}
+
+void TestRegistrationObserver::WaitForWorkerStart() {
+  started_run_loop_.Run();
+}
+
+void TestRegistrationObserver::WaitForWorkerActivated() {
+  activated_run_loop_.Run();
 }
 
 int TestRegistrationObserver::GetCompletedCount(const GURL& scope) const {
@@ -46,6 +59,18 @@ void TestRegistrationObserver::OnRegistrationStored(int64_t registration_id,
   }
 }
 
+void TestRegistrationObserver::OnVersionStartedRunning(
+    int64_t version_id,
+    const content::ServiceWorkerRunningInfo& running_info) {
+  running_version_id_ = version_id;
+  started_run_loop_.Quit();
+}
+
+void TestRegistrationObserver::OnVersionActivated(int64_t version_id,
+                                                  const GURL& scope) {
+  activated_run_loop_.Quit();
+}
+
 void TestRegistrationObserver::OnDestruct(
     content::ServiceWorkerContext* context) {
   context_->RemoveObserver(this);
@@ -57,7 +82,7 @@ UnregisterWorkerObserver::UnregisterWorkerObserver(
     ProcessManager* process_manager,
     const ExtensionId& extension_id)
     : extension_id_(extension_id) {
-  observer_.Add(process_manager);
+  observation_.Observe(process_manager);
 }
 
 UnregisterWorkerObserver::~UnregisterWorkerObserver() = default;

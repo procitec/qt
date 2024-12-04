@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -12,10 +12,15 @@
 // no-include-guard-because-multiply-included
 // NOLINT(build/header_guard)
 
+static void GL_BINDING_CALL Mock_glAcquireTexturesANGLE(GLuint numTextures,
+                                                        const GLuint* textures,
+                                                        const GLenum* layouts);
 static void GL_BINDING_CALL Mock_glActiveShaderProgram(GLuint pipeline,
                                                        GLuint program);
 static void GL_BINDING_CALL Mock_glActiveTexture(GLenum texture);
 static void GL_BINDING_CALL Mock_glAttachShader(GLuint program, GLuint shader);
+static void GL_BINDING_CALL
+Mock_glBeginPixelLocalStorageANGLE(GLsizei n, const GLenum* loadops);
 static void GL_BINDING_CALL Mock_glBeginQuery(GLenum target, GLuint id);
 static void GL_BINDING_CALL Mock_glBeginQueryARB(GLenum target, GLuint id);
 static void GL_BINDING_CALL Mock_glBeginQueryEXT(GLenum target, GLuint id);
@@ -168,6 +173,16 @@ static void GL_BINDING_CALL Mock_glBlitFramebufferEXT(GLint srcX0,
                                                       GLint dstY1,
                                                       GLbitfield mask,
                                                       GLenum filter);
+static void GL_BINDING_CALL Mock_glBlitFramebufferNV(GLint srcX0,
+                                                     GLint srcY0,
+                                                     GLint srcX1,
+                                                     GLint srcY1,
+                                                     GLint dstX0,
+                                                     GLint dstY0,
+                                                     GLint dstX1,
+                                                     GLint dstY1,
+                                                     GLbitfield mask,
+                                                     GLenum filter);
 static void GL_BINDING_CALL Mock_glBufferData(GLenum target,
                                               GLsizeiptr size,
                                               const void* data,
@@ -237,6 +252,7 @@ static GLenum GL_BINDING_CALL Mock_glClientWaitSync(GLsync sync,
 static GLenum GL_BINDING_CALL Mock_glClientWaitSyncAPPLE(GLsync sync,
                                                          GLbitfield flags,
                                                          GLuint64 timeout);
+static void GL_BINDING_CALL Mock_glClipControlEXT(GLenum origin, GLenum depth);
 static void GL_BINDING_CALL Mock_glColorMask(GLboolean red,
                                              GLboolean green,
                                              GLboolean blue,
@@ -430,9 +446,6 @@ Mock_glCoverStrokePathInstancedNV(GLsizei numPaths,
                                   const GLfloat* transformValues);
 static void GL_BINDING_CALL Mock_glCoverStrokePathNV(GLuint name,
                                                      GLenum coverMode);
-static void GL_BINDING_CALL
-Mock_glCoverageModulationCHROMIUM(GLenum components);
-static void GL_BINDING_CALL Mock_glCoverageModulationNV(GLenum components);
 static void GL_BINDING_CALL
 Mock_glCreateMemoryObjectsEXT(GLsizei n, GLuint* memoryObjects);
 static GLuint GL_BINDING_CALL Mock_glCreateProgram(void);
@@ -634,6 +647,8 @@ static void GL_BINDING_CALL Mock_glEnable(GLenum cap);
 static void GL_BINDING_CALL Mock_glEnableVertexAttribArray(GLuint index);
 static void GL_BINDING_CALL Mock_glEnablei(GLenum target, GLuint index);
 static void GL_BINDING_CALL Mock_glEnableiOES(GLenum target, GLuint index);
+static void GL_BINDING_CALL
+Mock_glEndPixelLocalStorageANGLE(GLsizei n, const GLenum* storeops);
 static void GL_BINDING_CALL Mock_glEndQuery(GLenum target);
 static void GL_BINDING_CALL Mock_glEndQueryARB(GLenum target);
 static void GL_BINDING_CALL Mock_glEndQueryEXT(GLenum target);
@@ -654,12 +669,25 @@ static void GL_BINDING_CALL Mock_glFlushMappedBufferRange(GLenum target,
 static void GL_BINDING_CALL Mock_glFlushMappedBufferRangeEXT(GLenum target,
                                                              GLintptr offset,
                                                              GLsizeiptr length);
+static void GL_BINDING_CALL
+Mock_glFramebufferMemorylessPixelLocalStorageANGLE(GLint plane,
+                                                   GLenum internalformat);
 static void GL_BINDING_CALL Mock_glFramebufferParameteri(GLenum target,
                                                          GLenum pname,
                                                          GLint param);
 static void GL_BINDING_CALL Mock_glFramebufferParameteriMESA(GLenum target,
                                                              GLenum pname,
                                                              GLint param);
+static void GL_BINDING_CALL
+Mock_glFramebufferPixelLocalClearValuefvANGLE(GLint plane,
+                                              const GLfloat* value);
+static void GL_BINDING_CALL
+Mock_glFramebufferPixelLocalClearValueivANGLE(GLint plane, const GLint* value);
+static void GL_BINDING_CALL
+Mock_glFramebufferPixelLocalClearValueuivANGLE(GLint plane,
+                                               const GLuint* value);
+static void GL_BINDING_CALL Mock_glFramebufferPixelLocalStorageInterruptANGLE();
+static void GL_BINDING_CALL Mock_glFramebufferPixelLocalStorageRestoreANGLE();
 static void GL_BINDING_CALL
 Mock_glFramebufferRenderbuffer(GLenum target,
                                GLenum attachment,
@@ -706,6 +734,11 @@ Mock_glFramebufferTextureMultiviewOVR(GLenum target,
                                       GLint level,
                                       GLint baseViewIndex,
                                       GLsizei numViews);
+static void GL_BINDING_CALL
+Mock_glFramebufferTexturePixelLocalStorageANGLE(GLint plane,
+                                                GLuint backingtexture,
+                                                GLint level,
+                                                GLint layer);
 static void GL_BINDING_CALL Mock_glFrontFace(GLenum mode);
 static void GL_BINDING_CALL Mock_glGenBuffers(GLsizei n, GLuint* buffers);
 static void GL_BINDING_CALL Mock_glGenFencesAPPLE(GLsizei n, GLuint* fences);
@@ -872,6 +905,26 @@ Mock_glGetFramebufferParameterivRobustANGLE(GLenum target,
                                             GLsizei bufSize,
                                             GLsizei* length,
                                             GLint* params);
+static void GL_BINDING_CALL
+Mock_glGetFramebufferPixelLocalStorageParameterfvANGLE(GLint plane,
+                                                       GLenum pname,
+                                                       GLfloat* params);
+static void GL_BINDING_CALL
+Mock_glGetFramebufferPixelLocalStorageParameterfvRobustANGLE(GLint plane,
+                                                             GLenum pname,
+                                                             GLsizei bufSize,
+                                                             GLsizei* length,
+                                                             GLfloat* params);
+static void GL_BINDING_CALL
+Mock_glGetFramebufferPixelLocalStorageParameterivANGLE(GLint plane,
+                                                       GLenum pname,
+                                                       GLint* params);
+static void GL_BINDING_CALL
+Mock_glGetFramebufferPixelLocalStorageParameterivRobustANGLE(GLint plane,
+                                                             GLenum pname,
+                                                             GLsizei bufSize,
+                                                             GLsizei* length,
+                                                             GLint* params);
 static GLenum GL_BINDING_CALL Mock_glGetGraphicsResetStatus(void);
 static GLenum GL_BINDING_CALL Mock_glGetGraphicsResetStatusARB(void);
 static GLenum GL_BINDING_CALL Mock_glGetGraphicsResetStatusEXT(void);
@@ -1159,6 +1212,10 @@ static void GL_BINDING_CALL Mock_glGetTexLevelParameterfv(GLenum target,
                                                           GLint level,
                                                           GLenum pname,
                                                           GLfloat* params);
+static void GL_BINDING_CALL Mock_glGetTexLevelParameterfvANGLE(GLenum target,
+                                                               GLint level,
+                                                               GLenum pname,
+                                                               GLfloat* params);
 static void GL_BINDING_CALL
 Mock_glGetTexLevelParameterfvRobustANGLE(GLenum target,
                                          GLint level,
@@ -1170,6 +1227,10 @@ static void GL_BINDING_CALL Mock_glGetTexLevelParameteriv(GLenum target,
                                                           GLint level,
                                                           GLenum pname,
                                                           GLint* params);
+static void GL_BINDING_CALL Mock_glGetTexLevelParameterivANGLE(GLenum target,
+                                                               GLint level,
+                                                               GLenum pname,
+                                                               GLint* params);
 static void GL_BINDING_CALL
 Mock_glGetTexLevelParameterivRobustANGLE(GLenum target,
                                          GLint level,
@@ -1495,10 +1556,15 @@ static void GL_BINDING_CALL Mock_glPathStencilFuncNV(GLenum func,
                                                      GLint ref,
                                                      GLuint mask);
 static void GL_BINDING_CALL Mock_glPauseTransformFeedback(void);
+static void GL_BINDING_CALL Mock_glPixelLocalStorageBarrierANGLE();
 static void GL_BINDING_CALL Mock_glPixelStorei(GLenum pname, GLint param);
 static void GL_BINDING_CALL Mock_glPointParameteri(GLenum pname, GLint param);
 static void GL_BINDING_CALL Mock_glPolygonMode(GLenum face, GLenum mode);
+static void GL_BINDING_CALL Mock_glPolygonModeANGLE(GLenum face, GLenum mode);
 static void GL_BINDING_CALL Mock_glPolygonOffset(GLfloat factor, GLfloat units);
+static void GL_BINDING_CALL Mock_glPolygonOffsetClampEXT(GLfloat factor,
+                                                         GLfloat units,
+                                                         GLfloat clamp);
 static void GL_BINDING_CALL Mock_glPopDebugGroup();
 static void GL_BINDING_CALL Mock_glPopDebugGroupKHR();
 static void GL_BINDING_CALL Mock_glPopGroupMarkerEXT(void);
@@ -1682,6 +1748,7 @@ Mock_glProgramUniformMatrix4x3fv(GLuint program,
                                  GLsizei count,
                                  GLboolean transpose,
                                  const GLfloat* value);
+static void GL_BINDING_CALL Mock_glProvokingVertexANGLE(GLenum provokeMode);
 static void GL_BINDING_CALL Mock_glPushDebugGroup(GLenum source,
                                                   GLuint id,
                                                   GLsizei length,
@@ -1725,6 +1792,9 @@ static void GL_BINDING_CALL Mock_glReadnPixelsRobustANGLE(GLint x,
                                                           GLsizei* rows,
                                                           void* data);
 static void GL_BINDING_CALL Mock_glReleaseShaderCompiler(void);
+static void GL_BINDING_CALL Mock_glReleaseTexturesANGLE(GLuint numTextures,
+                                                        const GLuint* textures,
+                                                        GLenum* layouts);
 static void GL_BINDING_CALL Mock_glRenderbufferStorage(GLenum target,
                                                        GLenum internalformat,
                                                        GLsizei width,
@@ -2097,7 +2167,8 @@ Mock_glTexStorageMemFlags2DANGLE(GLenum target,
                                  GLuint memory,
                                  GLuint64 offset,
                                  GLbitfield createFlags,
-                                 GLbitfield usageFlags);
+                                 GLbitfield usageFlags,
+                                 const void* imageCreateInfoPNext);
 static void GL_BINDING_CALL Mock_glTexSubImage2D(GLenum target,
                                                  GLint level,
                                                  GLint xoffset,

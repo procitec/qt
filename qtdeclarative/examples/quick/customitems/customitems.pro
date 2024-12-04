@@ -1,14 +1,7 @@
 TEMPLATE = subdirs
 SUBDIRS = \
-    painteditem \
-    maskedmousearea
+    painteditem
 
 EXAMPLE_FILES = \
     dialcontrol \
-    flipable \
-    progressbar \
-    scrollbar \
-    searchbox \
-    slideswitch \
-    spinner \
-    tabwidget
+    flipable

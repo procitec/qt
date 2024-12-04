@@ -1,213 +1,347 @@
-/****************************************************************************
-**
-** Copyright (C) 2008-2012 NVIDIA Corporation.
-** Copyright (C) 2019 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of Qt Quick 3D.
-**
-** $QT_BEGIN_LICENSE:GPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 3 or (at your option) any later version
-** approved by the KDE Free Qt Foundation. The licenses are as published by
-** the Free Software Foundation and appearing in the file LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2008-2012 NVIDIA Corporation.
+// Copyright (C) 2019 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
 #include <QtQuick3DRuntimeRender/private/qssgrenderlayer_p.h>
 #include <QtQuick3DRuntimeRender/private/qssgrendershadowmap_p.h>
-#include <QtQuick3DRuntimeRender/private/qssgrenderresourcemanager_p.h>
-#include <QtQuick3DRuntimeRender/private/qssgrendererimpllayerrenderdata_p.h>
-#include <QtQuick3DRender/private/qssgrendershaderconstant_p.h>
-#include <QtQuick3DRender/private/qssgrendershaderprogram_p.h>
+#include <QtQuick3DRuntimeRender/private/qssglayerrenderdata_p.h>
+#include "qssgrendercontextcore.h"
 
 QT_BEGIN_NAMESPACE
 
-QSSGRenderShadowMap::QSSGRenderShadowMap(const QSSGRef<QSSGRenderContextInterface> &inContext)
+static QRhiTexture *allocateRhiShadowTexture(QRhi *rhi, QRhiTexture::Format format, const QSize &size, quint32 numLayers, QRhiTexture::Flags flags)
+{
+    auto texture = rhi->newTexture(format, size, 1, flags);
+    if (flags & QRhiTexture::TextureArray)
+        texture->setArraySize(numLayers);
+    if (!texture->create())
+        qWarning("Failed to create shadow map texture of size %dx%d", size.width(), size.height());
+    return texture;
+}
+
+static QRhiRenderBuffer *allocateRhiShadowRenderBuffer(QRhi *rhi, QRhiRenderBuffer::Type type, const QSize &size)
+{
+    auto renderBuffer = rhi->newRenderBuffer(type, size, 1);
+    if (!renderBuffer->create())
+        qWarning("Failed to build depth-stencil buffer of size %dx%d", size.width(), size.height());
+    return renderBuffer;
+}
+
+static QRhiTexture::Format getShadowMapTextureFormat(QRhi *rhi)
+{
+    QRhiTexture::Format rhiFormat = QRhiTexture::R16F;
+    if (!rhi->isTextureFormatSupported(rhiFormat))
+        rhiFormat = QRhiTexture::R16;
+
+    return rhiFormat;
+}
+
+static quint8 mapSizeToIndex(quint32 mapSize)
+{
+    Q_ASSERT(!(mapSize & (mapSize - 1)) && "shadow map resolution is power of 2");
+    Q_ASSERT(mapSize >= 256);
+    quint8 index = qCountTrailingZeroBits(mapSize) - 8;
+    Q_ASSERT(index <= 4);
+    return index;
+}
+
+static quint32 indexToMapSize(quint8 index)
+{
+    Q_ASSERT(index <= 4);
+    return 1 << (index + 8);
+}
+
+QSSGRenderShadowMap::QSSGRenderShadowMap(const QSSGRenderContextInterface &inContext)
     : m_context(inContext)
-{}
+{
+}
 
 QSSGRenderShadowMap::~QSSGRenderShadowMap()
 {
+    releaseCachedResources();
+}
+
+void QSSGRenderShadowMap::releaseCachedResources()
+{
+    for (QSSGShadowMapEntry &entry : m_shadowMapList)
+        entry.destroyRhiResources();
+
+    for (auto& textureArray : m_depthTextureArrays) {
+        delete textureArray;
+    }
+    m_depthTextureArrays.clear();
     m_shadowMapList.clear();
 }
 
-//static bool isDepthFormat(QSSGRenderTextureFormat format)
-//{
-//    switch (format.format) {
-//    case QSSGRenderTextureFormat::Depth16:
-//    case QSSGRenderTextureFormat::Depth24:
-//    case QSSGRenderTextureFormat::Depth32:
-//    case QSSGRenderTextureFormat::Depth24Stencil8:
-//        return true;
-//    default:
-//        return false;
-//    }
-//}
-
-void QSSGRenderShadowMap::addShadowMapEntry(qint32 index,
-                                              qint32 width,
-                                              qint32 height,
-                                              QSSGRenderTextureFormat format,
-                                              qint32 samples,
-                                              ShadowMapModes mode,
-                                              ShadowFilterValues filter)
+void QSSGRenderShadowMap::addShadowMaps(const QSSGShaderLightList &renderableLights)
 {
-    const QSSGRef<QSSGResourceManager> &theManager(m_context->resourceManager());
-    QSSGShadowMapEntry *pEntry = nullptr;
+    QRhi *rhi = m_context.rhiContext()->rhi();
+    // Bail out if there is no QRhi, since we can't add entries without it
+    if (!rhi)
+        return;
 
-    if (index < m_shadowMapList.size())
-        pEntry = &m_shadowMapList[index];
+    constexpr quint32 MAX_SPLITS = 4;
+    const quint32 numLights = renderableLights.size();
+    qsizetype numShadows = 0;
+    std::array<quint8, 4> textureSizeLayerCount = {};
+    QVarLengthArray<quint8, 16> lightIndexToLayerStartIndex;
+    lightIndexToLayerStartIndex.resize(numLights * MAX_SPLITS);
 
-    if (pEntry) {
-        if ((nullptr != pEntry->m_depthMap) && (mode == ShadowMapModes::CUBE)) {
-            theManager->release(pEntry->m_depthMap);
-            theManager->release(pEntry->m_depthCopy);
-            theManager->release(pEntry->m_depthRender);
-            pEntry->m_depthCube = theManager->allocateTextureCube(width, height, format, samples);
-            pEntry->m_cubeCopy = theManager->allocateTextureCube(width, height, format, samples);
-            pEntry->m_depthRender = theManager->allocateTexture2D(width, height, QSSGRenderTextureFormat::Depth24Stencil8, samples);
-            pEntry->m_depthMap = nullptr;
-            pEntry->m_depthCopy = nullptr;
-        } else if ((nullptr != pEntry->m_depthCube) && (mode != ShadowMapModes::CUBE)) {
-            theManager->release(pEntry->m_depthCube);
-            theManager->release(pEntry->m_cubeCopy);
-            theManager->release(pEntry->m_depthRender);
-            pEntry->m_depthMap = theManager->allocateTexture2D(width, height, format, samples);
-            pEntry->m_depthCopy = theManager->allocateTexture2D(width, height, format, samples);
-            pEntry->m_depthCube = nullptr;
-            pEntry->m_cubeCopy = nullptr;
-            pEntry->m_depthRender = theManager->allocateTexture2D(width, height, QSSGRenderTextureFormat::Depth24Stencil8, samples);
-        } else if (nullptr != pEntry->m_depthMap) {
-            QSSGTextureDetails theDetails(pEntry->m_depthMap->textureDetails());
+    for (quint32 lightIndex = 0; lightIndex < numLights; ++lightIndex) {
+        const QSSGShaderLight &shaderLight = renderableLights.at(lightIndex);
+        ShadowMapModes mapMode = (shaderLight.light->type == QSSGRenderLight::Type::PointLight) ? ShadowMapModes::CUBE
+                                                                                                : ShadowMapModes::VSM;
+        if (shaderLight.shadows)
+            numShadows += 1;
+        if (!shaderLight.shadows || mapMode == ShadowMapModes::CUBE)
+            continue;
 
-            // If anything differs about the map we're looking for, let's recreate it.
-            if (theDetails.format != format || theDetails.width != width || theDetails.height != height
-                || theDetails.sampleCount != samples) {
-                // release texture
-                theManager->release(pEntry->m_depthMap);
-                theManager->release(pEntry->m_depthCopy);
-                theManager->release(pEntry->m_depthRender);
-                pEntry->m_depthMap = theManager->allocateTexture2D(width, height, format, samples);
-                pEntry->m_depthCopy = theManager->allocateTexture2D(width, height, format, samples);
-                pEntry->m_depthCube = nullptr;
-                pEntry->m_cubeCopy = nullptr;
-                pEntry->m_depthRender = theManager->allocateTexture2D(width, height, QSSGRenderTextureFormat::Depth24Stencil8, samples);
-            }
-        } else {
-            QSSGTextureDetails theDetails(pEntry->m_depthCube->textureDetails());
-
-            // If anything differs about the map we're looking for, let's recreate it.
-            if (theDetails.format != format || theDetails.width != width || theDetails.height != height
-                || theDetails.sampleCount != samples) {
-                // release texture
-                theManager->release(pEntry->m_depthCube);
-                theManager->release(pEntry->m_cubeCopy);
-                theManager->release(pEntry->m_depthRender);
-                pEntry->m_depthCube = theManager->allocateTextureCube(width, height, format, samples);
-                pEntry->m_cubeCopy = theManager->allocateTextureCube(width, height, format, samples);
-                pEntry->m_depthRender = theManager->allocateTexture2D(width, height, QSSGRenderTextureFormat::Depth24Stencil8, samples);
-                pEntry->m_depthMap = nullptr;
-                pEntry->m_depthCopy = nullptr;
-            }
-        }
-
-        pEntry->m_shadowMapMode = mode;
-        pEntry->m_shadowFilterFlags = filter;
-    } else if (mode == ShadowMapModes::CUBE) {
-        QSSGRef<QSSGRenderTextureCube> theDepthTex = theManager->allocateTextureCube(width, height, format, samples);
-        QSSGRef<QSSGRenderTextureCube> theDepthCopy = theManager->allocateTextureCube(width, height, format, samples);
-        QSSGRef<QSSGRenderTexture2D> theDepthTemp = theManager->allocateTexture2D(width,
-                                                                                      height,
-                                                                                      QSSGRenderTextureFormat::Depth24Stencil8,
-                                                                                      samples);
-        m_shadowMapList.push_back(QSSGShadowMapEntry(index, mode, filter, theDepthTex, theDepthCopy, theDepthTemp));
-
-        pEntry = &m_shadowMapList.back();
-    } else {
-        QSSGRef<QSSGRenderTexture2D> theDepthMap = theManager->allocateTexture2D(width, height, format, samples);
-        QSSGRef<QSSGRenderTexture2D> theDepthCopy = theManager->allocateTexture2D(width, height, format, samples);
-        QSSGRef<QSSGRenderTexture2D> theDepthTemp = theManager->allocateTexture2D(width,
-                                                                                      height,
-                                                                                      QSSGRenderTextureFormat::Depth24Stencil8,
-                                                                                      samples);
-        m_shadowMapList.push_back(QSSGShadowMapEntry(index, mode, filter, theDepthMap, theDepthCopy, theDepthTemp));
-
-        pEntry = &m_shadowMapList.back();
+        quint32 mapSize = shaderLight.light->m_shadowMapRes;
+        quint8 &layerCount = textureSizeLayerCount[mapSizeToIndex(mapSize)];
+        quint8 layerIndex = layerCount;
+        layerCount += shaderLight.light->m_csmNumSplits + 1;
+        lightIndexToLayerStartIndex[lightIndex] = layerIndex;
     }
 
-    if (pEntry) {
-        // setup some texture settings
-        if (pEntry->m_depthMap) {
-            pEntry->m_depthMap->setMinFilter(QSSGRenderTextureMinifyingOp::Linear);
-            pEntry->m_depthMap->setMagFilter(QSSGRenderTextureMagnifyingOp::Linear);
-            pEntry->m_depthMap->setTextureWrapS(QSSGRenderTextureCoordOp::ClampToEdge);
-            pEntry->m_depthMap->setTextureWrapT(QSSGRenderTextureCoordOp::ClampToEdge);
+    // Only recreate shadow assets if something has changed
+    bool needsRebuild = numShadows != shadowMapEntryCount();
+    if (!needsRebuild) {
+        // Check if relevant shadow properties has changed
+        for (quint32 lightIndex = 0; lightIndex < numLights; ++lightIndex) {
+            const QSSGShaderLight &shaderLight = renderableLights.at(lightIndex);
+            if (!shaderLight.shadows)
+                continue;
 
-            pEntry->m_depthCopy->setMinFilter(QSSGRenderTextureMinifyingOp::Linear);
-            pEntry->m_depthCopy->setMagFilter(QSSGRenderTextureMagnifyingOp::Linear);
-            pEntry->m_depthCopy->setTextureWrapS(QSSGRenderTextureCoordOp::ClampToEdge);
-            pEntry->m_depthCopy->setTextureWrapT(QSSGRenderTextureCoordOp::ClampToEdge);
+            QSSGShadowMapEntry *pEntry = shadowMapEntry(lightIndex);
+            if (!pEntry) {
+                needsRebuild = true;
+                break;
+            }
 
-            pEntry->m_depthRender->setMinFilter(QSSGRenderTextureMinifyingOp::Linear);
-            pEntry->m_depthRender->setMagFilter(QSSGRenderTextureMagnifyingOp::Linear);
-            pEntry->m_depthRender->setTextureWrapS(QSSGRenderTextureCoordOp::ClampToEdge);
-            pEntry->m_depthRender->setTextureWrapT(QSSGRenderTextureCoordOp::ClampToEdge);
-        } else {
-            pEntry->m_depthCube->setMinFilter(QSSGRenderTextureMinifyingOp::Linear);
-            pEntry->m_depthCube->setMagFilter(QSSGRenderTextureMagnifyingOp::Linear);
-            pEntry->m_depthCube->setTextureWrapS(QSSGRenderTextureCoordOp::ClampToEdge);
-            pEntry->m_depthCube->setTextureWrapT(QSSGRenderTextureCoordOp::ClampToEdge);
-
-            pEntry->m_cubeCopy->setMinFilter(QSSGRenderTextureMinifyingOp::Linear);
-            pEntry->m_cubeCopy->setMagFilter(QSSGRenderTextureMagnifyingOp::Linear);
-            pEntry->m_cubeCopy->setTextureWrapS(QSSGRenderTextureCoordOp::ClampToEdge);
-            pEntry->m_cubeCopy->setTextureWrapT(QSSGRenderTextureCoordOp::ClampToEdge);
-
-            pEntry->m_depthRender->setMinFilter(QSSGRenderTextureMinifyingOp::Linear);
-            pEntry->m_depthRender->setMagFilter(QSSGRenderTextureMagnifyingOp::Linear);
-            pEntry->m_depthRender->setTextureWrapS(QSSGRenderTextureCoordOp::ClampToEdge);
-            pEntry->m_depthRender->setTextureWrapT(QSSGRenderTextureCoordOp::ClampToEdge);
+            ShadowMapModes mapMode = (shaderLight.light->type == QSSGRenderLight::Type::PointLight) ? ShadowMapModes::CUBE
+                                                                                                    : ShadowMapModes::VSM;
+            quint32 mapSize = shaderLight.light->m_shadowMapRes;
+            quint32 csmNumSplits = shaderLight.light->m_csmNumSplits;
+            quint32 layerIndex = mapMode == ShadowMapModes::VSM ? lightIndexToLayerStartIndex[lightIndex] : 0;
+            if (!pEntry->isCompatible(QSize(mapSize, mapSize), layerIndex, csmNumSplits, mapMode)) {
+                needsRebuild = true;
+                break;
+            }
         }
+    }
 
-        pEntry->m_lightIndex = index;
+    if (!needsRebuild)
+        return;
+
+    releaseCachedResources();
+
+    // Create VSM texture arrays
+    for (quint32 i = 0; i < textureSizeLayerCount.size(); i++) {
+        const quint32 numLayers = textureSizeLayerCount[i];
+        if (numLayers == 0)
+            continue;
+
+        const quint32 mapSize = indexToMapSize(i);
+        QSize texSize = QSize(mapSize, mapSize);
+        QRhiTexture::Format rhiFormat = getShadowMapTextureFormat(rhi);
+        auto texture = allocateRhiShadowTexture(rhi, rhiFormat, texSize, numLayers, QRhiTexture::RenderTarget | QRhiTexture::TextureArray);
+        m_depthTextureArrays.insert(texSize, texture);
+    }
+
+    // Setup render targets
+    for (quint32 lightIdx = 0; lightIdx < numLights; ++lightIdx) {
+        const auto &shaderLight = renderableLights.at(lightIdx);
+        if (!shaderLight.shadows)
+            continue;
+
+        QSize mapSize = QSize(shaderLight.light->m_shadowMapRes, shaderLight.light->m_shadowMapRes);
+        ShadowMapModes mapMode = (shaderLight.light->type == QSSGRenderLight::Type::PointLight) ? ShadowMapModes::CUBE
+                                                                                                : ShadowMapModes::VSM;
+        switch (mapMode) {
+        case ShadowMapModes::VSM: {
+            quint32 layerStartIndex = lightIndexToLayerStartIndex.value(lightIdx);
+            quint32 csmNumSplits = shaderLight.light->m_csmNumSplits;
+            addDirectionalShadowMap(lightIdx, mapSize, layerStartIndex, csmNumSplits, shaderLight.light->debugObjectName);
+            break;
+        }
+        case ShadowMapModes::CUBE: {
+            addCubeShadowMap(lightIdx, mapSize, shaderLight.light->debugObjectName);
+            break;
+        }
+        default:
+            Q_UNREACHABLE();
+            break;
+        }
     }
 }
 
-QSSGShadowMapEntry *QSSGRenderShadowMap::getShadowMapEntry(int index)
+QSSGShadowMapEntry *QSSGRenderShadowMap::addDirectionalShadowMap(qint32 lightIdx,
+                                                                 QSize size,
+                                                                 quint32 layerStartIndex,
+                                                                 quint32 csmNumSplits,
+                                                                 const QString &renderNodeObjName)
 {
-    if (index < 0) {
-        Q_UNREACHABLE();
-        return nullptr;
+    QRhi *rhi = m_context.rhiContext()->rhi();
+    QSSGShadowMapEntry *pEntry = shadowMapEntry(lightIdx);
+
+    Q_ASSERT(rhi);
+    Q_ASSERT(!pEntry);
+
+    auto texture = m_depthTextureArrays.value(size);
+    Q_ASSERT(texture);
+    m_shadowMapList.push_back(QSSGShadowMapEntry::withRhiDepthMap(lightIdx, ShadowMapModes::VSM, texture));
+
+    pEntry = &m_shadowMapList.back();
+    pEntry->m_csmNumSplits = csmNumSplits;
+
+    // Additional graphics resources: samplers, render targets.
+    for (quint32 splitIndex = 0; splitIndex < csmNumSplits + 1; splitIndex++) {
+        QRhiTextureRenderTarget *&rt(pEntry->m_rhiRenderTargets[splitIndex]);
+        Q_ASSERT(!rt);
+
+        pEntry->m_rhiDepthStencil[splitIndex] = allocateRhiShadowRenderBuffer(rhi, QRhiRenderBuffer::DepthStencil, size);
+
+        QRhiTextureRenderTargetDescription rtDesc;
+        QRhiColorAttachment attachment(pEntry->m_rhiDepthTextureArray);
+        attachment.setLayer(layerStartIndex + splitIndex);
+        rtDesc.setColorAttachments({ attachment });
+        rtDesc.setDepthStencilBuffer(pEntry->m_rhiDepthStencil[splitIndex]);
+        rt = rhi->newTextureRenderTarget(rtDesc);
+        rt->setDescription(rtDesc);
+        // The same renderpass descriptor can be reused since the
+        // format, load/store ops are the same regardless of the shadow mode.
+        if (!pEntry->m_rhiRenderPassDesc[splitIndex])
+            pEntry->m_rhiRenderPassDesc[splitIndex] = rt->newCompatibleRenderPassDescriptor();
+        rt->setRenderPassDescriptor(pEntry->m_rhiRenderPassDesc[splitIndex]);
+        if (!rt->create())
+            qWarning("Failed to build shadow map render target");
+
+        const QByteArray rtName = renderNodeObjName.toLatin1();
+        rt->setName(rtName + QByteArrayLiteral(" shadow map"));
     }
-    QSSGShadowMapEntry *pEntry = nullptr;
+
+    pEntry->m_lightIndex = lightIdx;
+    pEntry->m_depthArrayIndex = layerStartIndex;
+
+    return pEntry;
+}
+
+QSSGShadowMapEntry *QSSGRenderShadowMap::addCubeShadowMap(qint32 lightIdx, QSize size, const QString &renderNodeObjName)
+{
+    QRhi *rhi = m_context.rhiContext()->rhi();
+    QSSGShadowMapEntry *pEntry = shadowMapEntry(lightIdx);
+
+    Q_ASSERT(rhi);
+    Q_ASSERT(!pEntry);
+
+    QRhiTexture::Format rhiFormat = getShadowMapTextureFormat(rhi);
+    QRhiTexture *depthMap = allocateRhiShadowTexture(rhi, rhiFormat, size, 0, QRhiTexture::RenderTarget | QRhiTexture::CubeMap);
+    QRhiRenderBuffer *depthStencil = allocateRhiShadowRenderBuffer(rhi, QRhiRenderBuffer::DepthStencil, size);
+    m_shadowMapList.push_back(QSSGShadowMapEntry::withRhiDepthCubeMap(lightIdx, ShadowMapModes::CUBE, depthMap, depthStencil));
+    pEntry = &m_shadowMapList.back();
+
+    const QByteArray rtName = renderNodeObjName.toLatin1();
+
+    for (const auto face : QSSGRenderTextureCubeFaces) {
+        QRhiTextureRenderTarget *&rt(pEntry->m_rhiRenderTargets[quint8(face)]);
+        Q_ASSERT(!rt);
+        QRhiColorAttachment att(pEntry->m_rhiDepthCube);
+        att.setLayer(quint8(face)); // 6 render targets, each referencing one face of the cubemap
+        QRhiTextureRenderTargetDescription rtDesc;
+        rtDesc.setColorAttachments({ att });
+        rtDesc.setDepthStencilBuffer(pEntry->m_rhiDepthStencil[0]);
+        rt = rhi->newTextureRenderTarget(rtDesc);
+        rt->setDescription(rtDesc);
+        if (!pEntry->m_rhiRenderPassDesc[0])
+            pEntry->m_rhiRenderPassDesc[0] = rt->newCompatibleRenderPassDescriptor();
+        rt->setRenderPassDescriptor(pEntry->m_rhiRenderPassDesc[0]);
+        if (!rt->create())
+            qWarning("Failed to build shadow map render target");
+        rt->setName(rtName + QByteArrayLiteral(" shadow cube face: ") + QSSGBaseTypeHelpers::displayName(face));
+    }
+
+    return pEntry;
+}
+
+QSSGShadowMapEntry *QSSGRenderShadowMap::shadowMapEntry(int lightIdx)
+{
+    Q_ASSERT(lightIdx >= 0);
 
     for (int i = 0; i < m_shadowMapList.size(); i++) {
-        pEntry = &m_shadowMapList[i];
-        if (pEntry->m_lightIndex == quint32(index))
+        QSSGShadowMapEntry *pEntry = &m_shadowMapList[i];
+        if (pEntry->m_lightIndex == quint32(lightIdx))
             return pEntry;
     }
 
     return nullptr;
 }
 
-QSSGRef<QSSGRenderShadowMap> QSSGRenderShadowMap::create(const QSSGRef<QSSGRenderContextInterface> &inContext)
+QSSGShadowMapEntry::QSSGShadowMapEntry()
+    : m_lightIndex(std::numeric_limits<quint32>::max())
+    , m_shadowMapMode(ShadowMapModes::VSM)
 {
-    return QSSGRef<QSSGRenderShadowMap>(new QSSGRenderShadowMap(inContext));
+}
+
+QSSGShadowMapEntry QSSGShadowMapEntry::withRhiDepthMap(quint32 lightIdx, ShadowMapModes mode, QRhiTexture *textureArray)
+{
+    QSSGShadowMapEntry e;
+    e.m_lightIndex = lightIdx;
+    e.m_shadowMapMode = mode;
+    e.m_rhiDepthTextureArray = textureArray;
+    return e;
+}
+
+QSSGShadowMapEntry QSSGShadowMapEntry::withRhiDepthCubeMap(quint32 lightIdx, ShadowMapModes mode, QRhiTexture *depthCube, QRhiRenderBuffer *depthStencil)
+{
+    QSSGShadowMapEntry e;
+    e.m_lightIndex = lightIdx;
+    e.m_shadowMapMode = mode;
+    e.m_rhiDepthCube = depthCube;
+    e.m_rhiDepthStencil[0] = depthStencil;
+    return e;
+}
+
+bool QSSGShadowMapEntry::isCompatible(QSize mapSize, quint32 layerIndex, quint32 csmNumSplits, ShadowMapModes mapMode)
+{
+    if (csmNumSplits != m_csmNumSplits)
+        return false;
+
+    if (mapMode != m_shadowMapMode)
+        return false;
+
+    switch (mapMode) {
+    case ShadowMapModes::CUBE: {
+        if (mapSize != m_rhiDepthCube->pixelSize()) {
+            return false;
+        }
+        break;
+    }
+    case ShadowMapModes::VSM: {
+        if (mapSize != m_rhiDepthTextureArray->pixelSize() || int(layerIndex) >= m_rhiDepthTextureArray->arraySize()) {
+            return false;
+        }
+        break;
+    }
+    default:
+        Q_UNREACHABLE();
+        break;
+    }
+
+    return true;
+}
+
+void QSSGShadowMapEntry::destroyRhiResources()
+{
+    m_rhiDepthTextureArray = nullptr;
+
+    delete m_rhiDepthCube;
+    m_rhiDepthCube = nullptr;
+    qDeleteAll(m_rhiDepthStencil);
+    m_rhiDepthStencil.fill(nullptr);
+    qDeleteAll(m_rhiRenderTargets);
+    m_rhiRenderTargets.fill(nullptr);
+    qDeleteAll(m_rhiRenderPassDesc);
+    m_rhiRenderPassDesc.fill(nullptr);
 }
 
 QT_END_NAMESPACE

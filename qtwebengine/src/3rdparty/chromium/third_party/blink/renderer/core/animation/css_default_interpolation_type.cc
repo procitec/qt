@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -35,7 +35,7 @@ InterpolationValue CSSDefaultInterpolationType::MaybeConvertSingle(
   if (!css_value)
     return nullptr;
 
-  return InterpolationValue(std::make_unique<InterpolableList>(0),
+  return InterpolationValue(MakeGarbageCollected<InterpolableList>(0),
                             CSSDefaultNonInterpolableValue::Create(css_value));
 }
 

@@ -1,4 +1,4 @@
-// Copyright (c) 2011 The Chromium Authors. All rights reserved.
+// Copyright 2011 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,7 +12,7 @@
 #include "ui/gfx/animation/test_animation_delegate.h"
 #include "ui/gfx/switches.h"
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 #include <windows.h>
 #endif
 
@@ -80,11 +80,11 @@ class EndAnimation : public LinearAnimation {
 // DeletingAnimationDelegate
 
 // AnimationDelegate implementation that deletes the animation in ended.
-class DeletingAnimationDelegate : public AnimationDelegate {
+class DeletingAnimationDelegate : public TestAnimationDelegate {
  public:
   void AnimationEnded(const Animation* animation) override {
     delete animation;
-    base::RunLoop::QuitCurrentWhenIdleDeprecated();
+    QuitRunLoop();
   }
 };
 
@@ -94,21 +94,25 @@ class DeletingAnimationDelegate : public AnimationDelegate {
 // LinearCase
 
 TEST_F(AnimationTest, RunCase) {
+  base::RunLoop loop;
   TestAnimationDelegate ad;
+  ad.set_quit_closure(loop.QuitWhenIdleClosure());
   RunAnimation a1(150, &ad);
-  a1.SetDuration(base::TimeDelta::FromSeconds(2));
+  a1.SetDuration(base::Seconds(2));
   a1.Start();
-  base::RunLoop().Run();
+  loop.Run();
 
   EXPECT_TRUE(ad.finished());
   EXPECT_FALSE(ad.canceled());
 }
 
 TEST_F(AnimationTest, CancelCase) {
+  base::RunLoop loop;
   TestAnimationDelegate ad;
-  CancelAnimation a2(base::TimeDelta::FromSeconds(2), 150, &ad);
+  ad.set_quit_closure(loop.QuitWhenIdleClosure());
+  CancelAnimation a2(base::Seconds(2), 150, &ad);
   a2.Start();
-  base::RunLoop().Run();
+  loop.Run();
 
   EXPECT_TRUE(ad.finished());
   EXPECT_TRUE(ad.canceled());
@@ -117,10 +121,12 @@ TEST_F(AnimationTest, CancelCase) {
 // Lets an animation run, invoking End part way through and make sure we get the
 // right delegate methods invoked.
 TEST_F(AnimationTest, EndCase) {
+  base::RunLoop loop;
   TestAnimationDelegate ad;
-  EndAnimation a2(base::TimeDelta::FromSeconds(2), 150, &ad);
+  ad.set_quit_closure(loop.QuitWhenIdleClosure());
+  EndAnimation a2(base::Seconds(2), 150, &ad);
   a2.Start();
-  base::RunLoop().Run();
+  loop.Run();
 
   EXPECT_TRUE(ad.finished());
   EXPECT_FALSE(ad.canceled());
@@ -128,15 +134,17 @@ TEST_F(AnimationTest, EndCase) {
 
 // Runs an animation with a delegate that deletes the animation in end.
 TEST_F(AnimationTest, DeleteFromEnd) {
+  base::RunLoop loop;
   DeletingAnimationDelegate delegate;
+  delegate.set_quit_closure(loop.QuitWhenIdleClosure());
   RunAnimation* animation = new RunAnimation(150, &delegate);
   animation->Start();
-  base::RunLoop().Run();
+  loop.Run();
   // delegate should have deleted animation.
 }
 
 TEST_F(AnimationTest, ShouldRenderRichAnimation) {
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   BOOL result;
   ASSERT_NE(0,
             ::SystemParametersInfo(SPI_GETCLIENTAREAANIMATION, 0, &result, 0));
@@ -150,7 +158,7 @@ TEST_F(AnimationTest, ShouldRenderRichAnimation) {
 
 // Test that current value is always 0 after Start() is called.
 TEST_F(AnimationTest, StartState) {
-  LinearAnimation animation(base::TimeDelta::FromMilliseconds(100), 60, NULL);
+  LinearAnimation animation(base::Milliseconds(100), 60, NULL);
   EXPECT_EQ(0.0, animation.GetCurrentValue());
   animation.Start();
   EXPECT_EQ(0.0, animation.GetCurrentValue());

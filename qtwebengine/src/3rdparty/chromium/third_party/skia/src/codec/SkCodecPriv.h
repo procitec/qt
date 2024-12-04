@@ -13,7 +13,9 @@
 #include "include/core/SkTypes.h"
 #include "include/private/SkColorData.h"
 #include "include/private/SkEncodedInfo.h"
-#include "src/codec/SkColorTable.h"
+#include "src/codec/SkColorPalette.h"
+
+#include <string_view>
 
 #ifdef SK_PRINT_CODEC_MESSAGES
     #define SkCodecPrintf SkDebugf
@@ -52,7 +54,7 @@ static inline int get_scaled_dimension(int srcDimension, int sampleSize) {
  *
  * This does not need to be called and is not called when sampleFactor == 1.
  */
-static inline int get_start_coord(int sampleFactor) { return sampleFactor / 2; };
+static inline int get_start_coord(int sampleFactor) { return sampleFactor / 2; }
 
 /*
  * Given a coordinate in the original image, this returns the corresponding
@@ -62,7 +64,7 @@ static inline int get_start_coord(int sampleFactor) { return sampleFactor / 2; }
  *
  * This does not need to be called and is not called when sampleFactor == 1.
  */
-static inline int get_dst_coord(int srcCoord, int sampleFactor) { return srcCoord / sampleFactor; };
+static inline int get_dst_coord(int srcCoord, int sampleFactor) { return srcCoord / sampleFactor; }
 
 /*
  * When scaling, we will discard certain y-coordinates (rows) and
@@ -104,7 +106,7 @@ static inline bool valid_alpha(SkAlphaType dstAlpha, bool srcIsOpaque) {
 /*
  * If there is a color table, get a pointer to the colors, otherwise return nullptr
  */
-static inline const SkPMColor* get_color_ptr(SkColorTable* colorTable) {
+static inline const SkPMColor* get_color_ptr(SkColorPalette* colorTable) {
      return nullptr != colorTable ? colorTable->readColors() : nullptr;
 }
 
@@ -197,6 +199,14 @@ static inline uint16_t get_endian_short(const uint8_t* data, bool littleEndian) 
     return (data[0] << 8) | (data[1]);
 }
 
+static inline uint32_t get_endian_int(const uint8_t* data, bool littleEndian) {
+    if (littleEndian) {
+        return (data[3] << 24) | (data[2] << 16) | (data[1] << 8) | (data[0]);
+    }
+
+    return (data[0] << 24) | (data[1] << 16) | (data[2] << 8) | (data[3]);
+}
+
 static inline SkPMColor premultiply_argb_as_rgba(U8CPU a, U8CPU r, U8CPU g, U8CPU b) {
     if (a != 255) {
         r = SkMulDiv255Round(r, a);
@@ -245,6 +255,8 @@ static inline PackColorProc choose_pack_color_proc(bool isPremul, SkColorType co
     }
 }
 
-bool is_orientation_marker(const uint8_t* data, size_t data_length, SkEncodedOrigin* orientation);
+namespace SkCodecs {
+bool HasDecoder(std::string_view id);
+}
 
 #endif // SkCodecPriv_DEFINED

@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtQuick module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #ifndef QQUICKTEXT_P_P_H
 #define QQUICKTEXT_P_P_H
@@ -59,13 +23,13 @@
 #include <QtGui/qtextlayout.h>
 #include <private/qquickstyledtext_p.h>
 #include <private/qlazilyallocated_p.h>
+#include <private/qquicktextdocument_p.h>
 
 QT_BEGIN_NAMESPACE
 
 class QTextLayout;
-class QQuickTextDocumentWithImageResources;
 
-class Q_QUICK_PRIVATE_EXPORT QQuickTextPrivate : public QQuickImplicitSizeItemPrivate
+class Q_QUICK_EXPORT QQuickTextPrivate : public QQuickImplicitSizeItemPrivate
 {
     Q_DECLARE_PUBLIC(QQuickText)
 public:
@@ -84,11 +48,12 @@ public:
     void setLineGeometry(QTextLine &line, qreal lineWidth, qreal &height);
 
     int lineHeightOffset() const;
-    QString elidedText(qreal lineWidth, const QTextLine &line, QTextLine *nextLine = nullptr) const;
+    QString elidedText(qreal lineWidth, const QTextLine &line, const QTextLine *nextLine = nullptr) const;
     void elideFormats(int start, int length, int offset, QVector<QTextLayout::FormatRange> *elidedFormats);
     void clearFormats();
 
     void processHoverEvent(QHoverEvent *event);
+    bool transformChanged(QQuickItem *transformedItem) override;
 
     QRectF layedOutTextRect;
     QSizeF advance;
@@ -106,18 +71,20 @@ public:
         bool explicitRightPadding : 1;
         bool explicitBottomPadding : 1;
         qreal lineHeight;
-        QQuickTextDocumentWithImageResources *doc;
+        QTextDocument *doc;
+        QQuickTextImageHandler *imageHandler = nullptr;
         QString activeLink;
         QString hoveredLink;
         int minimumPixelSize;
         int minimumPointSize;
-        int nbActiveDownloads;
         int maximumLineCount;
+        int renderTypeQuality;
         bool lineHeightValid : 1;
         QQuickText::LineHeightMode lineHeightMode;
         QQuickText::FontSizeMode fontSizeMode;
         QList<QQuickStyledTextImgTag*> imgTags;
         QList<QQuickStyledTextImgTag*> visibleImgTags;
+        QList<QQuickPixmap *> pixmapsInProgress;
         QUrl baseUrl;
     };
     QLazilyAllocated<ExtraData> extra;
@@ -128,8 +95,8 @@ public:
     QFontInfo fontInfo;
 
     QTextLayout layout;
-    QTextLayout *elideLayout;
-    QQuickTextLine *textLine;
+    QScopedPointer<QTextLayout> elideLayout;
+    QScopedPointer<QQuickTextLine> textLine;
 
     qreal lineWidth;
 
@@ -177,8 +144,10 @@ public:
     bool formatModifiesFontSize:1;
     bool polishSize:1; // Workaround for problem with polish called after updateSize (QTBUG-42636)
     bool updateSizeRecursionGuard:1;
+    bool containsUnscalableGlyphs:1;
 
     static const QChar elideChar;
+    static const int largeTextSizeThreshold;
 
     qreal getImplicitWidth() const override;
     qreal getImplicitHeight() const override;
@@ -193,16 +162,32 @@ public:
     void setBottomPadding(qreal value, bool reset = false);
 
     void ensureDoc();
+    void updateDocumentText();
+
+    qreal devicePixelRatio() const;
 
     QRectF setupTextLayout(qreal * const baseline);
     void setupCustomLineGeometry(QTextLine &line, qreal &height, int fullLayoutTextLength, int lineOffset = 0);
     bool isLinkActivatedConnected();
     bool isLinkHoveredConnected();
+    QStringList links() const;
+
+    struct LinkDesc {
+        QString m_anchor;
+        QString m_anchorTarget;
+        int m_startIndex;
+        int m_endIndex;
+        QRect rect;
+    };
+
+    QVector<LinkDesc> getLinks() const;
+
     static QString anchorAt(const QTextLayout *layout, const QPointF &mousePos);
     QString anchorAt(const QPointF &pos) const;
 
     inline qreal lineHeight() const { return extra.isAllocated() ? extra->lineHeight : 1.0; }
     inline int maximumLineCount() const { return extra.isAllocated() ? extra->maximumLineCount : INT_MAX; }
+    inline int renderTypeQuality() const { return extra.isAllocated() ? extra->renderTypeQuality : QQuickText::DefaultRenderTypeQuality; }
     inline QQuickText::LineHeightMode lineHeightMode() const { return extra.isAllocated() ? extra->lineHeightMode : QQuickText::ProportionalHeight; }
     inline QQuickText::FontSizeMode fontSizeMode() const { return extra.isAllocated() ? extra->fontSizeMode : QQuickText::FixedSize; }
     inline int minimumPixelSize() const { return extra.isAllocated() ? extra->minimumPixelSize : 12; }

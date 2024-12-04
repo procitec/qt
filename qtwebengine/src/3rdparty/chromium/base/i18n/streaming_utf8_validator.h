@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,8 +16,8 @@
 
 #include <string>
 
+#include "base/containers/span.h"
 #include "base/i18n/base_i18n_export.h"
-#include "base/macros.h"
 
 namespace base {
 
@@ -34,14 +34,20 @@ class BASE_I18N_EXPORT StreamingUtf8Validator {
   };
 
   StreamingUtf8Validator() : state_(0u) {}
+
+  // This type could be made copyable but there is currently no use-case for
+  // it.
+  StreamingUtf8Validator(const StreamingUtf8Validator&) = delete;
+  StreamingUtf8Validator& operator=(const StreamingUtf8Validator&) = delete;
+
   // Trivial destructor intentionally omitted.
 
-  // Validate |size| bytes starting at |data|. If the concatenation of all calls
+  // Validate bytes described by |data|. If the concatenation of all calls
   // to AddBytes() since this object was constructed or reset is a valid UTF-8
   // string, returns VALID_ENDPOINT. If it could be the prefix of a valid UTF-8
   // string, returns VALID_MIDPOINT. If an invalid byte or UTF-8 sequence was
   // present, returns INVALID.
-  State AddBytes(const char* data, size_t size);
+  State AddBytes(base::span<const uint8_t> data);
 
   // Return the object to a freshly-constructed state so that it can be re-used.
   void Reset();
@@ -55,10 +61,6 @@ class BASE_I18N_EXPORT StreamingUtf8Validator {
   // The state is stored as an offset into |kUtf8ValidatorTables|. The special
   // state |kUtf8InvalidState| is invalid.
   uint8_t state_;
-
-  // This type could be made copyable but there is currently no use-case for
-  // it.
-  DISALLOW_COPY_AND_ASSIGN(StreamingUtf8Validator);
 };
 
 }  // namespace base

@@ -1,16 +1,15 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef COMPONENTS_SUBRESOURCE_FILTER_CONTENT_RENDERER_WEB_DOCUMENT_SUBRESOURCE_FILTER_IMPL_H_
 #define COMPONENTS_SUBRESOURCE_FILTER_CONTENT_RENDERER_WEB_DOCUMENT_SUBRESOURCE_FILTER_IMPL_H_
 
-#include "base/callback.h"
 #include "base/files/file.h"
-#include "base/macros.h"
+#include "base/functional/callback.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
-#include "base/single_thread_task_runner.h"
-#include "components/subresource_filter/content/renderer/ad_resource_tracker.h"
+#include "base/task/single_thread_task_runner.h"
 #include "components/subresource_filter/core/common/document_subresource_filter.h"
 #include "components/url_pattern_index/proto/rules.pb.h"
 #include "third_party/blink/public/platform/web_document_subresource_filter.h"
@@ -20,9 +19,8 @@ namespace subresource_filter {
 
 class MemoryMappedRuleset;
 // Performs filtering of subresource loads in the scope of a given document.
-class WebDocumentSubresourceFilterImpl
-    : public blink::WebDocumentSubresourceFilter,
-      public base::SupportsWeakPtr<WebDocumentSubresourceFilterImpl> {
+class WebDocumentSubresourceFilterImpl final
+    : public blink::WebDocumentSubresourceFilter {
  public:
   // This builder class is used for creating the subresource filter for workers
   // and worklets. For workers and threaded worklets, this is created on the
@@ -34,6 +32,10 @@ class WebDocumentSubresourceFilterImpl
                 mojom::ActivationState activation_state,
                 base::File ruleset_file,
                 base::OnceClosure first_disallowed_load_callback);
+
+    BuilderImpl(const BuilderImpl&) = delete;
+    BuilderImpl& operator=(const BuilderImpl&) = delete;
+
     ~BuilderImpl() override;
 
     std::unique_ptr<blink::WebDocumentSubresourceFilter> Build() override;
@@ -44,8 +46,6 @@ class WebDocumentSubresourceFilterImpl
     base::File ruleset_file_;
     base::OnceClosure first_disallowed_load_callback_;
     scoped_refptr<base::SingleThreadTaskRunner> main_task_runner_;
-
-    DISALLOW_COPY_AND_ASSIGN(BuilderImpl);
   };
 
   // See DocumentSubresourceFilter description.
@@ -58,6 +58,11 @@ class WebDocumentSubresourceFilterImpl
       scoped_refptr<const MemoryMappedRuleset> ruleset,
       base::OnceClosure first_disallowed_load_callback);
 
+  WebDocumentSubresourceFilterImpl(const WebDocumentSubresourceFilterImpl&) =
+      delete;
+  WebDocumentSubresourceFilterImpl& operator=(
+      const WebDocumentSubresourceFilterImpl&) = delete;
+
   ~WebDocumentSubresourceFilterImpl() override;
 
   const DocumentSubresourceFilter& filter() const { return filter_; }
@@ -67,16 +72,17 @@ class WebDocumentSubresourceFilterImpl
                            blink::mojom::RequestContextType) override;
   LoadPolicy GetLoadPolicyForWebSocketConnect(
       const blink::WebURL& url) override;
+  LoadPolicy GetLoadPolicyForWebTransportConnect(
+      const blink::WebURL& url) override;
   void ReportDisallowedLoad() override;
   bool ShouldLogToConsole() override;
-  void ReportAdRequestId(int request_id) override;
 
   const mojom::ActivationState& activation_state() const {
     return filter_.activation_state();
   }
 
-  void set_ad_resource_tracker(AdResourceTracker* ad_resource_tracker) {
-    ad_resource_tracker_ = ad_resource_tracker;
+  base::WeakPtr<WebDocumentSubresourceFilterImpl> AsWeakPtr() {
+    return weak_ptr_factory_.GetWeakPtr();
   }
 
  private:
@@ -87,13 +93,8 @@ class WebDocumentSubresourceFilterImpl
   mojom::ActivationState activation_state_;
   DocumentSubresourceFilter filter_;
   base::OnceClosure first_disallowed_load_callback_;
-
-  // Manages all AdResource observers. Only non-null for the
-  // WebDocumentSubresourceFilter most recently created by the
-  // SubresourceFilterAgent.
-  AdResourceTracker* ad_resource_tracker_;
-
-  DISALLOW_COPY_AND_ASSIGN(WebDocumentSubresourceFilterImpl);
+  base::WeakPtrFactory<WebDocumentSubresourceFilterImpl> weak_ptr_factory_{
+      this};
 };
 
 }  // namespace subresource_filter

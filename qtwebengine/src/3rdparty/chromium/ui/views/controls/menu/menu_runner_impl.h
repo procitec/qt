@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,15 +9,18 @@
 
 #include <memory>
 #include <set>
+#include <string>
 
-#include "base/compiler_specific.h"
-#include "base/containers/flat_set.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "ui/views/controls/menu/menu_controller_delegate.h"
 #include "ui/views/controls/menu/menu_runner_impl_interface.h"
 #include "ui/views/views_export.h"
+
+namespace gfx {
+class RoundedCornersF;
+}  // namespace gfx
 
 namespace views {
 
@@ -37,7 +40,10 @@ namespace internal {
 class VIEWS_EXPORT MenuRunnerImpl : public MenuRunnerImplInterface,
                                     public MenuControllerDelegate {
  public:
-  explicit MenuRunnerImpl(MenuItemView* menu);
+  explicit MenuRunnerImpl(std::unique_ptr<MenuItemView> menu);
+
+  MenuRunnerImpl(const MenuRunnerImpl&) = delete;
+  MenuRunnerImpl& operator=(const MenuRunnerImpl&) = delete;
 
   bool IsRunning() const override;
   void Release() override;
@@ -45,7 +51,11 @@ class VIEWS_EXPORT MenuRunnerImpl : public MenuRunnerImplInterface,
                  MenuButtonController* button_controller,
                  const gfx::Rect& bounds,
                  MenuAnchorPosition anchor,
-                 int32_t run_types) override;
+                 int32_t run_types,
+                 gfx::NativeView native_view_for_gestures,
+                 absl::optional<gfx::RoundedCornersF> corners = absl::nullopt,
+                 absl::optional<std::string> show_menu_host_duration_histogram =
+                     absl::nullopt) override;
   void Cancel() override;
   base::TimeTicks GetClosingEventTime() const override;
 
@@ -63,9 +73,8 @@ class VIEWS_EXPORT MenuRunnerImpl : public MenuRunnerImplInterface,
   // Returns true if mnemonics should be shown in the menu.
   bool ShouldShowMnemonics(int32_t run_types);
 
-  // The menu. We own this. We don't use scoped_ptr as the destructor is
-  // protected and we're a friend.
-  MenuItemView* menu_;
+  // The menu.
+  std::unique_ptr<MenuItemView> menu_;
 
   // Any sibling menus. Does not include |menu_|. We own these too.
   std::set<MenuItemView*> sibling_menus_;
@@ -77,27 +86,25 @@ class VIEWS_EXPORT MenuRunnerImpl : public MenuRunnerImplInterface,
   std::unique_ptr<MenuDelegate> empty_delegate_;
 
   // Are we in run waiting for it to return?
-  bool running_;
+  bool running_ = false;
 
   // Set if |running_| and Release() has been invoked.
-  bool delete_after_run_;
+  bool delete_after_run_ = false;
 
   // Are we running for a drop?
-  bool for_drop_;
+  bool for_drop_ = false;
 
   // The controller.
   base::WeakPtr<MenuController> controller_;
 
   // Do we own the controller?
-  bool owns_controller_;
+  bool owns_controller_ = false;
 
   // The timestamp of the event which closed the menu - or 0.
   base::TimeTicks closing_event_time_;
 
   // Used to detect deletion of |this| when notifying delegate of success.
   base::WeakPtrFactory<MenuRunnerImpl> weak_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(MenuRunnerImpl);
 };
 
 }  // namespace internal

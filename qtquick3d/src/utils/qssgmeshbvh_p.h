@@ -1,31 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2020 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of Qt Quick 3D.
-**
-** $QT_BEGIN_LICENSE:GPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 3 or (at your option) any later version
-** approved by the KDE Free Qt Foundation. The licenses are as published by
-** the Free Software Foundation and appearing in the file LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2020 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
 #ifndef QSSGMESHBVH_H
 #define QSSGMESHBVH_H
@@ -43,30 +17,60 @@
 
 #include <QtQuick3DUtils/private/qtquick3dutilsglobal_p.h>
 #include <QtQuick3DUtils/private/qssgbounds3_p.h>
+#include <QtQuick3DUtils/private/qssgassert_p.h>
 
 #include <QtGui/QVector2D>
 #include <QtCore/QVector>
 
 QT_BEGIN_NAMESPACE
 
-struct Q_QUICK3DUTILS_EXPORT QSSGMeshBVHNode {
-    ~QSSGMeshBVHNode() {
-        delete left;
-        delete right;
-    }
+class QSSGMeshBVH;
+
+class Q_QUICK3DUTILS_EXPORT QSSGMeshBVHNode
+{
+public:
+    class Handle
+    {
+    public:
+        Handle() = default;
+        bool isNull() const { return !m_owner || m_idx < size_t(FallbackIndex::Count); }
+
+        inline explicit operator const QSSGMeshBVHNode *() const;
+        inline QSSGMeshBVHNode *operator->() const;
+    private:
+        friend class QSSGMeshBVH;
+        Handle(QSSGMeshBVH *owner, size_t idx)
+            : m_owner(owner)
+            , m_idx(idx)
+        {}
+        QSSGMeshBVH *m_owner = nullptr;
+        size_t m_idx = 0;
+    };
 
     // Internal
-    QSSGMeshBVHNode *left = nullptr;
-    QSSGMeshBVHNode *right = nullptr;
+    Handle left;
+    Handle right;
     QSSGBounds3 boundingData;
     //splitAxis
 
     // Leaf
     int offset = 0;
     int count = 0;
+
+private:
+    friend class QSSGMeshBVH;
+    friend class QSSGMeshBVHBuilder;
+
+    enum class FallbackIndex : quint8
+    {
+        InvalidRead  = 0,
+        InvalidWrite = 1,
+        Count
+    };
 };
 
-struct Q_QUICK3DUTILS_EXPORT QSSGMeshBVHTriangle {
+struct Q_QUICK3DUTILS_EXPORT QSSGMeshBVHTriangle
+{
     QSSGBounds3 bounds;
     QVector3D vertex1;
     QVector3D vertex2;
@@ -76,18 +80,60 @@ struct Q_QUICK3DUTILS_EXPORT QSSGMeshBVHTriangle {
     QVector2D uvCoord3;
 };
 
-struct Q_QUICK3DUTILS_EXPORT QSSGMeshBVH
+using QSSGMeshBVHTriangles = std::vector<QSSGMeshBVHTriangle>;
+using QSSGMeshBVHRoots = std::vector<QSSGMeshBVHNode::Handle>;
+using QSSGMeshBVHNodes = std::vector<QSSGMeshBVHNode>;
+
+class Q_QUICK3DUTILS_EXPORT QSSGMeshBVH
 {
-    QSSGMeshBVH(const QVector<QSSGMeshBVHNode *> &bvhRoots,
-                const QVector<QSSGMeshBVHTriangle *> &bvhTriangles)
-        : roots(bvhRoots)
-        , triangles(bvhTriangles)
-    {}
+public:
+    QSSGMeshBVH() = default;
     ~QSSGMeshBVH();
 
-    QVector<QSSGMeshBVHNode *> roots;
-    QVector<QSSGMeshBVHTriangle *> triangles;
+    [[nodiscard]] QSSGMeshBVHNode::Handle newHandle()
+    {
+        m_nodes.emplace_back();
+        return { this, m_nodes.size() - 1 };
+    }
+
+    [[nodiscard]] const QSSGMeshBVHTriangles &triangles() const { return m_triangles; }
+    [[nodiscard]] const QSSGMeshBVHRoots &roots() const { return m_roots; }
+    [[nodiscard]] const QSSGMeshBVHNodes &nodes() const { return m_nodes; }
+
+private:
+    friend class QSSGMeshBVHNode::Handle;
+    friend class QSSGMeshBVHBuilder;
+    using FallbackIndex = QSSGMeshBVHNode::FallbackIndex;
+    size_t getNodeIndex(size_t idx, FallbackIndex op) const
+    {
+        const bool valid = (idx >= size_t(FallbackIndex::Count) && idx < m_nodes.size());
+        return  (valid * idx) + (!valid * size_t(op));
+    }
+
+    QSSGMeshBVHNode &mutableValue(qsizetype idx)
+    {
+        return m_nodes[getNodeIndex(idx, FallbackIndex::InvalidWrite)];
+    }
+
+    const QSSGMeshBVHNode &value(qsizetype idx) const
+    {
+        return m_nodes[getNodeIndex(idx, FallbackIndex::InvalidRead)];
+    }
+
+    QSSGMeshBVHRoots m_roots;
+    QSSGMeshBVHNodes m_nodes { { /* 0 - reserved for invalid reads */ }, { /* 1 - reserved for invalid writes */ } };
+    QSSGMeshBVHTriangles m_triangles;
 };
+
+QSSGMeshBVHNode::Handle::operator const QSSGMeshBVHNode *() const
+{
+    return &m_owner->value(m_idx);
+}
+
+QSSGMeshBVHNode *QSSGMeshBVHNode::Handle::operator->() const
+{
+    return &m_owner->mutableValue(m_idx);
+}
 
 QT_END_NAMESPACE
 

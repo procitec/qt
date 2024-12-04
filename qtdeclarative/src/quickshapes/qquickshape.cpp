@@ -1,58 +1,22 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtQuick module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qquickshape_p.h"
 #include "qquickshape_p_p.h"
 #include "qquickshapegenericrenderer_p.h"
-#include "qquickshapenvprrenderer_p.h"
 #include "qquickshapesoftwarerenderer_p.h"
+#include "qquickshapecurverenderer_p.h"
 #include <private/qsgplaintexture_p.h>
 #include <private/qquicksvgparser_p.h>
 #include <QtGui/private/qdrawhelper_p.h>
 #include <QOpenGLFunctions>
 #include <QLoggingCategory>
-#include <QtGui/private/qrhi_p.h>
+#include <rhi/qrhi.h>
 
 static void initResources()
 {
 #if defined(QT_STATIC)
-    Q_INIT_RESOURCE(qtquickshapes);
+    Q_INIT_RESOURCE(qtquickshapes_shaders);
 #endif
 }
 
@@ -61,6 +25,7 @@ QT_BEGIN_NAMESPACE
 Q_LOGGING_CATEGORY(QQSHAPE_LOG_TIME_DIRTY_SYNC, "qt.shape.time.sync")
 
 /*!
+    \keyword Qt Quick Shapes
     \qmlmodule QtQuick.Shapes 1.\QtMinorVersion
     \title Qt Quick Shapes QML Types
     \ingroup qmlmodules
@@ -68,10 +33,46 @@ Q_LOGGING_CATEGORY(QQSHAPE_LOG_TIME_DIRTY_SYNC, "qt.shape.time.sync")
 
     To use the types in this module, import the module with the following line:
 
-    \qml \QtMinorVersion
-    import QtQuick.Shapes 1.\1
+    \qml
+    import QtQuick.Shapes
     \endqml
+
+    Qt Quick Shapes provides tools for drawing arbitrary shapes in a Qt Quick scene.
+    \l{Shape}{Shapes} can be constructed from basic building blocks like \l{PathLine}{lines} and
+    \l{PathCubic}{curves} that define sub-shapes. The sub-shapes can then be filled with solid
+    colors or gradients, and an outline stroke can be defined.
+
+    Qt Quick Shapes also supports higher level path element types, such as \l{PathText}{text} and
+    \l{PathSvg}{SVG path descriptions}. The currently supported element types is: PathMove,
+    PathLine, PathQuad, PathCubic, PathArc, PathText and PathSvg.
+
+    Qt Quick Shapes triangulates the shapes and renders the corresponding triangles on the GPU.
+    Therefore, altering the control points of elements will lead to re-triangulation of the
+    affected paths, at some performance cost. In addition, curves are flattened before they are
+    rendered, so applying a very high scale to the shape may show artifacts where it is visible
+    that the curves are represented by a sequence of smaller, straight lines.
+
+    \note By default, Qt Quick Shapes relies on multi-sampling for anti-aliasing. This can be
+    enabled for the entire application or window using the corresponding settings in QSurfaceFormat.
+    It can also be enabled for only the shape, by setting its \l{Item::layer.enabled}{layer.enabled}
+    property to true and then adjusting the \l{Item::layer.samples}{layer.samples} property. In the
+    latter case, multi-sampling will not be applied to the entire scene, but the shape will be
+    rendered via an intermediate off-screen buffer. Alternatively, the
+    \l{QtQuick.Shapes::Shape::preferredRendererType}{preferredRendererType} property can be set
+    to \c{Shape.CurveRenderer}. This has anti-aliasing built in and generally renders the shapes
+    at a higher quality, but at some additional performance cost.
+
+    For further information, the \l{Qt Quick Examples - Shapes}{Shapes example} shows how to
+    implement different types of shapes, fills and strokes, and the \l{Weather Forecast Example}
+    shows examples of different ways shapes might be useful in a user interface.
 */
+
+void QQuickShapes_initializeModule()
+{
+    QQuickShapesModule::defineModule();
+}
+
+Q_CONSTRUCTOR_FUNCTION(QQuickShapes_initializeModule)
 
 void QQuickShapesModule::defineModule()
 {
@@ -88,14 +89,15 @@ QQuickShapeStrokeFillParams::QQuickShapeStrokeFillParams()
       capStyle(QQuickShapePath::SquareCap),
       strokeStyle(QQuickShapePath::SolidLine),
       dashOffset(0),
-      fillGradient(nullptr)
+      fillGradient(nullptr),
+      fillItem(nullptr)
 {
     dashPattern << 4 << 2; // 4 * strokeWidth dash followed by 2 * strokeWidth space
 }
 
 /*!
     \qmltype ShapePath
-    //! \instantiates QQuickShapePath
+    //! \nativetype QQuickShapePath
     \inqmlmodule QtQuick.Shapes
     \ingroup qtquick-paths
     \ingroup qtquick-views
@@ -149,7 +151,7 @@ QQuickShapeStrokeFillParams::QQuickShapeStrokeFillParams()
 
     \image visualpath-code-example.png
 
-    \sa {Qt Quick Examples - Shapes}, Shape
+    \sa {Qt Quick Examples - Shapes}, {Weather Forecast Example}, Shape
  */
 
 QQuickShapePathPrivate::QQuickShapePathPrivate()
@@ -240,6 +242,9 @@ void QQuickShapePath::setStrokeWidth(qreal w)
     When set to \c transparent, no filling occurs.
 
     The default value is \c white.
+
+    \note If either \l fillGradient or \l fillItem are set to something other than \c null, these
+    will take precedence over \c fillColor. The \c fillColor will be ignored in this case.
  */
 
 QColor QQuickShapePath::fillColor() const
@@ -390,10 +395,8 @@ void QQuickShapePath::setCapStyle(CapStyle style)
     This property defines the style of stroking. The default value is
     ShapePath.SolidLine.
 
-    \list
-    \li ShapePath.SolidLine - A plain line.
-    \li ShapePath.DashLine - Dashes separated by a few pixels.
-    \endlist
+    \value ShapePath.SolidLine  A plain line.
+    \value ShapePath.DashLine   Dashes separated by a few pixels.
  */
 
 QQuickShapePath::StrokeStyle QQuickShapePath::strokeStyle() const
@@ -476,14 +479,14 @@ void QQuickShapePath::setDashPattern(const QVector<qreal> &array)
     \qmlproperty ShapeGradient QtQuick.Shapes::ShapePath::fillGradient
 
     This property defines the fill gradient. By default no gradient is enabled
-    and the value is \c null. In this case the fill uses a solid color based
-    on the value of ShapePath.fillColor.
-
-    When set, ShapePath.fillColor is ignored and filling is done using one of
-    the ShapeGradient subtypes.
+    and the value is \c null. In this case the fill will either be based on the \l fillItem
+    property if it is set, and otherwise the \l{fillColor} property will be used.
 
     \note The Gradient type cannot be used here. Rather, prefer using one of
     the advanced subtypes, like LinearGradient.
+
+    \note If set to something other than \c{null}, the \c fillGradient will take precedence over
+    both \l fillItem and \l fillColor.
  */
 
 QQuickShapeGradient *QQuickShapePath::fillGradient() const
@@ -508,6 +511,11 @@ void QQuickShapePath::setFillGradient(QQuickShapeGradient *gradient)
     }
 }
 
+void QQuickShapePath::resetFillGradient()
+{
+    setFillGradient(nullptr);
+}
+
 void QQuickShapePathPrivate::_q_fillGradientChanged()
 {
     Q_Q(QQuickShapePath);
@@ -515,14 +523,151 @@ void QQuickShapePathPrivate::_q_fillGradientChanged()
     emit q->shapePathChanged();
 }
 
-void QQuickShapePath::resetFillGradient()
+/*!
+    \qmlproperty Item QtQuick.Shapes::ShapePath::fillItem
+    \since 6.8
+
+    This property defines another Qt Quick Item to use as fill by the shape. The item must be
+    texture provider (such as a \l {Item Layers} {layered item}, a \l{ShaderEffectSource} or an
+    \l{Image}). If it is not a valid texture provider, this property will be ignored.
+
+    \note When using a layered item as a \c fillItem, you may see pixelation effects when
+    transforming the fill. Setting the \l {QtQuick::Item::}{layer.smooth} property to true will
+    give better visual results in this case.
+
+    By default no fill item is set and the value is \c null.
+
+    \note If set to something other than \c null, the \c fillItem property takes precedence over
+    \l fillColor. The \l fillGradient property in turn takes precedence over both \c fillItem and
+    \l{fillColor}.
+ */
+
+QQuickItem *QQuickShapePath::fillItem() const
 {
-    setFillGradient(nullptr);
+    Q_D(const QQuickShapePath);
+    return d->sfp.fillItem;
+}
+
+void QQuickShapePath::setFillItem(QQuickItem *fillItem)
+{
+    Q_D(QQuickShapePath);
+    if (d->sfp.fillItem != fillItem) {
+        if (d->sfp.fillItem != nullptr) {
+            qmlobject_disconnect(d->sfp.fillItem, QQuickItem, SIGNAL(destroyed()),
+                                 this, QQuickShapePath, SLOT(_q_fillItemDestroyed()));
+        }
+        d->sfp.fillItem = fillItem;
+        if (d->sfp.fillItem != nullptr) {
+            qmlobject_connect(d->sfp.fillItem, QQuickItem, SIGNAL(destroyed()),
+                              this, QQuickShapePath, SLOT(_q_fillItemDestroyed()));
+        }
+        emit fillItemChanged();
+
+        d->dirty |= QQuickShapePathPrivate::DirtyFillItem;
+        emit shapePathChanged();
+    }
+}
+
+void QQuickShapePathPrivate::_q_fillItemDestroyed()
+{
+    Q_Q(QQuickShapePath);
+    sfp.fillItem = nullptr;
+    dirty |= DirtyFillItem;
+    emit q->fillItemChanged();
+    emit q->shapePathChanged();
+}
+
+/*!
+    \qmlproperty PathHints QtQuick.Shapes::ShapePath::pathHints
+    \since 6.7
+
+    This property describes characteristics of the shape. If set, these hints may allow
+    optimized rendering. By default, no hints are set. It can be a combination of the following
+    values:
+
+    \value ShapePath.PathLinear
+        The path only has straight lines, no curves.
+    \value ShapePath.PathQuadratic
+        The path does not have any cubic curves: only lines and quadratic Bezier curves.
+    \value ShapePath.PathConvex
+        The path does not have any dents or holes. All straight lines between two points
+        inside the shape will be completely inside the shape.
+    \value ShapePath.PathFillOnRight
+        The path follows the TrueType convention where outlines around solid fill have their
+        control points ordered clockwise, and outlines around holes in the shape have their
+        control points ordered counter-clockwise.
+    \value ShapePath.PathSolid
+        The path has no holes, or mathematically speaking it is \e{simply connected}.
+    \value ShapePath.PathNonIntersecting
+        The path outline does not cross itself.
+    \value ShapePath.PathNonOverlappingControlPointTriangles
+        The triangles defined by the curve control points do not overlap with each other,
+        or with any of the line segments. Also, no line segments intersect.
+        This implies \c PathNonIntersecting.
+
+    Not all hints are logically independent, but the dependencies are not enforced.
+    For example, \c PathLinear implies \c PathQuadratic, but it is valid to have \c PathLinear
+    without \c PathQuadratic.
+
+    The pathHints property describes a set of statements known to be true; the absence of a hint
+    does not necessarily mean that the corresponding statement is false.
+*/
+
+QQuickShapePath::PathHints QQuickShapePath::pathHints() const
+{
+    Q_D(const QQuickShapePath);
+    return d->pathHints;
+}
+
+void QQuickShapePath::setPathHints(PathHints newPathHints)
+{
+     Q_D(QQuickShapePath);
+    if (d->pathHints == newPathHints)
+        return;
+    d->pathHints = newPathHints;
+    emit pathHintsChanged();
+}
+
+/*!
+    \qmlproperty matrix4x4 QtQuick.Shapes::ShapePath::fillTransform
+    \since 6.8
+
+    This property defines a transform to be applied to the path's fill pattern (\l fillGradient or
+    \l fillItem). It has no effect if the fill is a solid color or transparent. By default no fill
+    transform is enabled and the value of this property is the \c identity matrix.
+
+    This example displays a rectangle filled with the contents of \c myImageItem rotated 45 degrees
+    around the center point of \c myShape:
+
+    \qml
+    ShapePath {
+        fillItem: myImageItem
+        fillTransform: PlanarTransform.fromRotate(45, myShape.width / 2, myShape.height / 2)
+        PathRectangle { x: 10; y: 10; width: myShape.width - 20; height: myShape.height - 20 }
+    }
+    \endqml
+*/
+
+QMatrix4x4 QQuickShapePath::fillTransform() const
+{
+    Q_D(const QQuickShapePath);
+    return d->sfp.fillTransform.matrix();
+}
+
+void QQuickShapePath::setFillTransform(const QMatrix4x4 &matrix)
+{
+    Q_D(QQuickShapePath);
+    if (d->sfp.fillTransform != matrix) {
+        d->sfp.fillTransform.setMatrix(matrix);
+        d->dirty |= QQuickShapePathPrivate::DirtyFillTransform;
+        emit fillTransformChanged();
+        emit shapePathChanged();
+    }
 }
 
 /*!
     \qmltype Shape
-    //! \instantiates QQuickShape
+    //! \nativetype QQuickShape
     \inqmlmodule QtQuick.Shapes
     \ingroup qtquick-paths
     \ingroup qtquick-views
@@ -530,9 +675,7 @@ void QQuickShapePath::resetFillGradient()
     \brief Renders a path.
     \since 5.10
 
-    Renders a path either by generating geometry via QPainterPath and manual
-    triangulation or by using a GPU vendor extension like
-    \c{GL_NV_path_rendering}.
+    Renders a path by triangulating geometry from a QPainterPath.
 
     This approach is different from rendering shapes via QQuickPaintedItem or
     the 2D Canvas because the path never gets rasterized in software.
@@ -546,7 +689,7 @@ void QQuickShapePath::resetFillGradient()
     Shape. However, not all Shape implementations support all path
     element types, while some may not make sense for PathView. Shape's
     currently supported subset is: PathMove, PathLine, PathQuad, PathCubic,
-    PathArc, and PathSvg.
+    PathArc, PathText and PathSvg.
 
     See \l Path for a detailed overview of the supported path elements.
 
@@ -588,19 +731,12 @@ void QQuickShapePath::resetFillGradient()
 
     \list
 
-    \li When running with the OpenGL backend of Qt Quick, both the generic,
-    triangulation-based and the NVIDIA-specific \c{GL_NV_path_rendering}
-    methods are available. By default only the generic approach is used.
-    Setting Shape.vendorExtensionsEnabled property to \c true leads to using
-    NV_path_rendering on NVIDIA systems when running directly on OpenGL, and
-    the generic method on others. When OpenGL is not used directly by the scene
-    graph, for example because it is using the graphics abstraction layer
-    (QRhi), only the generic shape renderer is available.
+    \li When Qt Quick is running with the default, hardware-accelerated backend (RHI),
+    the generic shape renderer will be used. This converts the shapes into triangles
+    which are passed to the renderer.
 
     \li The \c software backend is fully supported. The path is rendered via
     QPainter::strokePath() and QPainter::fillPath() in this case.
-
-    \li The Direct 3D 12 backend is not currently supported.
 
     \li The OpenVG backend is not currently supported.
 
@@ -626,16 +762,10 @@ void QQuickShapePath::resetFillGradient()
     a frequently changing property can still result in a lower overall system
     load than with imperative painting approaches (for example, QPainter).
 
-    \li If animating properties other than stroke and fill colors is a must,
-    it is recommended to target systems providing \c{GL_NV_path_rendering}
-    where the cost of property changes is smaller.
-
     \li At the same time, attention must be paid to the number of Shape
-    elements in the scene, in particular when using this special accelerated
-    approach for \c{GL_NV_path_rendering}. The way such a Shape item is
-    represented in the scene graph is different from an ordinary
-    geometry-based item, and incurs a certain cost when it comes to OpenGL
-    state changes.
+    elements in the scene. The way such a Shape item is represented in
+    the scene graph is different from an ordinary geometry-based item,
+    and incurs a certain cost when it comes to OpenGL state changes.
 
     \li As a general rule, scenes should avoid using separate Shape items when
     it is not absolutely necessary. Prefer using one Shape item with multiple
@@ -643,7 +773,7 @@ void QQuickShapePath::resetFillGradient()
 
     \endlist
 
-    \sa {Qt Quick Examples - Shapes}, Path, PathMove, PathLine, PathQuad, PathCubic, PathArc, PathSvg
+    \sa {Qt Quick Examples - Shapes}, {Weather Forecast Example}, Path, PathMove, PathLine, PathQuad, PathCubic, PathArc, PathSvg
 */
 
 QQuickShapePrivate::QQuickShapePrivate()
@@ -661,6 +791,15 @@ void QQuickShapePrivate::_q_shapePathChanged()
     Q_Q(QQuickShape);
     spChanged = true;
     q->polish();
+    emit q->boundingRectChanged();
+    auto br = q->boundingRect();
+    q->setImplicitSize(br.right(), br.bottom());
+}
+
+void QQuickShapePrivate::handleSceneChange(QQuickWindow *w)
+{
+    if (renderer != nullptr)
+        renderer->handleSceneChange(w);
 }
 
 void QQuickShapePrivate::setStatus(QQuickShape::Status newStatus)
@@ -670,6 +809,18 @@ void QQuickShapePrivate::setStatus(QQuickShape::Status newStatus)
         status = newStatus;
         emit q->statusChanged();
     }
+}
+
+qreal QQuickShapePrivate::getImplicitWidth() const
+{
+    Q_Q(const QQuickShape);
+    return q->boundingRect().right();
+}
+
+qreal QQuickShapePrivate::getImplicitHeight() const
+{
+    Q_Q(const QQuickShape);
+    return q->boundingRect().bottom();
 }
 
 QQuickShape::QQuickShape(QQuickItem *parent)
@@ -684,6 +835,7 @@ QQuickShape::~QQuickShape()
 
 /*!
     \qmlproperty enumeration QtQuick.Shapes::Shape::rendererType
+    \readonly
 
     This property determines which path rendering backend is active.
 
@@ -691,21 +843,33 @@ QQuickShape::~QQuickShape()
            The renderer is unknown.
 
     \value Shape.GeometryRenderer
-           The generic, driver independent solution for OpenGL. Uses the same
+           The generic, driver independent solution for GPU rendering. Uses the same
            CPU-based triangulation approach as QPainter's OpenGL 2 paint
-           engine. This is the default on non-NVIDIA hardware when the default,
-           OpenGL Qt Quick scenegraph backend is in use.
-
-    \value Shape.NvprRenderer
-           Path items are rendered by performing OpenGL calls using the
-           \c{GL_NV_path_rendering} extension. This is the default on NVIDIA
-           hardware when the default, OpenGL Qt Quick scenegraph backend is in
-           use.
+           engine. This is the default when the RHI-based Qt Quick scenegraph
+           backend is in use.
 
     \value Shape.SoftwareRenderer
            Pure QPainter drawing using the raster paint engine. This is the
            default, and only, option when the Qt Quick scenegraph is running
            with the \c software backend.
+
+    \value Shape.CurveRenderer
+           GPU-based renderer that aims to preserve curvature at any scale.
+           In contrast to \c Shape.GeometryRenderer, curves are not approximated by short straight
+           lines. Instead, curves are rendered using a specialized fragment shader. This improves
+           visual quality and avoids re-tesselation performance hit when zooming. Also,
+           \c Shape.CurveRenderer provides native, high-quality anti-aliasing, without the
+           performance cost of multi- or supersampling.
+
+    By default, \c Shape.GeometryRenderer will be selected unless the Qt Quick scenegraph is running
+    with the \c software backend. In that case, \c Shape.SoftwareRenderer will be used.
+    \c Shape.CurveRenderer may be requested using the \l preferredRendererType property.
+
+    \note The \c Shape.CurveRenderer will approximate cubic curves with quadratic ones and may
+    therefore diverge slightly from the mathematically correct visualization of the shape. In
+    addition, if the shape is being rendered into a Qt Quick 3D scene and the OpenGL backend for
+    RHI is active, the \c GL_OES_standard_derivatives extension to OpenGL is required (this is
+    available by default on OpenGL ES 3 and later, but optional in OpenGL ES 2.)
 */
 
 QQuickShape::RendererType QQuickShape::rendererType() const
@@ -715,12 +879,58 @@ QQuickShape::RendererType QQuickShape::rendererType() const
 }
 
 /*!
+    \qmlproperty enumeration QtQuick.Shapes::Shape::preferredRendererType
+    \since 6.6
+
+    Requests a specific backend to use for rendering the shape. The possible values are the same as
+    for \l rendererType. The default is \c Shape.UnknownRenderer, indicating no particular preference.
+
+    If the requested renderer type is not supported for the current Qt Quick backend, the default
+    renderer for that backend will be used instead. This will be reflected in the \l rendererType
+    when the backend is initialized.
+
+    \c Shape.SoftwareRenderer can currently not be selected without running the scenegraph with
+    the \c software backend, in which case it will be selected regardless of the
+    \c preferredRendererType.
+
+    See \l rendererType for more information on the implications.
+*/
+
+QQuickShape::RendererType QQuickShape::preferredRendererType() const
+{
+    Q_D(const QQuickShape);
+    return d->preferredType;
+}
+
+void QQuickShape::setPreferredRendererType(QQuickShape::RendererType preferredType)
+{
+    Q_D(QQuickShape);
+    if (d->preferredType == preferredType)
+        return;
+
+    d->preferredType = preferredType;
+    // (could bail out here if selectRenderType shows no change?)
+
+    for (int i = 0; i < d->sp.size(); ++i) {
+        QQuickShapePath *p = d->sp[i];
+        QQuickShapePathPrivate *pp = QQuickShapePathPrivate::get(p);
+        pp->dirty |= QQuickShapePathPrivate::DirtyAll;
+    }
+    d->spChanged = true;
+    d->_q_shapePathChanged();
+    polish();
+    update();
+
+    emit preferredRendererTypeChanged();
+}
+
+/*!
     \qmlproperty bool QtQuick.Shapes::Shape::asynchronous
 
-    When rendererType is \c Shape.GeometryRenderer, the input path is
-    triangulated on the CPU during the polishing phase of the Shape. This is
-    potentially expensive. To offload this work to separate worker threads,
-    set this property to \c true.
+    When rendererType is \c Shape.GeometryRenderer or \c Shape.CurveRenderer, a certain amount of
+    preprocessing of the input path is performed on the CPU during the polishing phase of the
+    Shape. This is potentially expensive. To offload this work to separate worker threads, set this
+    property to \c true.
 
     When enabled, making a Shape visible will not wait for the content to
     become available. Instead, the GUI/main thread is not blocked and the
@@ -748,28 +958,33 @@ void QQuickShape::setAsynchronous(bool async)
 }
 
 /*!
+    \qmlproperty rect QtQuick.Shapes::Shape::boundingRect
+    \readonly
+    \since 6.6
+
+    Contains the united bounding rect of all sub paths in the shape.
+ */
+QRectF QQuickShape::boundingRect() const
+{
+    Q_D(const QQuickShape);
+    QRectF brect;
+    for (QQuickShapePath *path : d->sp) {
+        qreal pw = path->strokeColor().alpha() ? path->strokeWidth() : 0;
+        qreal d = path->capStyle() == QQuickShapePath::SquareCap ? pw * M_SQRT1_2 : pw / 2;
+        brect = brect.united(path->path().boundingRect().adjusted(-d, -d, d, d));
+    }
+
+    return brect;
+}
+
+/*!
     \qmlproperty bool QtQuick.Shapes::Shape::vendorExtensionsEnabled
 
-    This property controls the usage of non-standard OpenGL extensions like
-    \c GL_NV_path_rendering.
+    This property controls the usage of non-standard OpenGL extensions.
 
     The default value is \c false.
 
-    As of Qt 5.12 Shape.NvprRenderer is disabled by default and a uniform
-    behavior, based on triangulating the path and generating QSGGeometryNode
-    instances, is used regardless of the graphics card and drivers. To enable
-    using vendor-specific path rendering approaches set the value to \c true.
-    Depending on the platform and content, this can lead to improved
-    performance. Setting the value to \c true is safe in any case since
-    rendering falls back to the default method when the vendor-specific
-    approach, such as \c GL_NV_path_rendering, is not supported at run time.
-
-    \deprecated
-
-    Changing the default value (false) is not recommended. In particular,
-    support for Shape.NvprRenderer will not be available in future Qt versions.
-    Applications experiencing rendering problems with the property set to true
-    are advised to set it to false.
+    As of Qt 6.0 there are no vendor-specific rendering paths implemented.
  */
 
 bool QQuickShape::vendorExtensionsEnabled() const
@@ -789,6 +1004,7 @@ void QQuickShape::setVendorExtensionsEnabled(bool enable)
 
 /*!
     \qmlproperty enumeration QtQuick.Shapes::Shape::status
+    \readonly
 
     This property determines the status of the Shape and is relevant when
     Shape.asynchronous is set to \c true.
@@ -865,6 +1081,80 @@ bool QQuickShape::contains(const QPointF &point) const
     return false;
 }
 
+/*!
+    \qmlproperty enumeration QtQuick.Shapes::Shape::fillMode
+    \since QtQuick.Shapes 6.7
+
+     Set this property to define what happens when the path has a different size
+     than the item.
+
+    \value Shape.NoResize           the shape is rendered at its native size, independent of the size of the item. This is the default
+    \value Shape.Stretch            the shape is scaled to fit the item, changing the aspect ratio if necessary.
+                                    Note that non-uniform scaling may cause reduced quality of anti-aliasing when using the curve renderer
+    \value Shape.PreserveAspectFit  the shape is scaled uniformly to fit inside the item
+    \value Shape.PreserveAspectCrop the shape is scaled uniformly to fill the item fully, extending outside the item if necessary.
+                                    Note that this only actually crops the content if \l clip is true
+*/
+
+QQuickShape::FillMode QQuickShape::fillMode() const
+{
+    Q_D(const QQuickShape);
+    return d->fillMode;
+}
+
+void QQuickShape::setFillMode(FillMode newFillMode)
+{
+    Q_D(QQuickShape);
+    if (d->fillMode == newFillMode)
+        return;
+    d->fillMode = newFillMode;
+    emit fillModeChanged();
+}
+
+/*!
+    \qmlproperty enumeration QtQuick.Shapes::Shape::horizontalAlignment
+    \qmlproperty enumeration QtQuick.Shapes::Shape::verticalAlignment
+    \since 6.7
+
+    Sets the horizontal and vertical alignment of the shape within the item.
+    By default, the shape is aligned with \c{(0,0)} on the top left corner.
+
+    The valid values for \c horizontalAlignment are \c Shape.AlignLeft,
+    \c Shape.AlignRight and \c Shape.AlignHCenter. The valid values for
+    \c verticalAlignment are \c Shape.AlignTop, \c Shape.AlignBottom and
+    \c Shape.AlignVCenter.
+*/
+
+QQuickShape::HAlignment QQuickShape::horizontalAlignment() const
+{
+    Q_D(const QQuickShape);
+    return d->horizontalAlignment;
+}
+
+void QQuickShape::setHorizontalAlignment(HAlignment newHorizontalAlignment)
+{
+    Q_D(QQuickShape);
+    if (d->horizontalAlignment == newHorizontalAlignment)
+        return;
+    d->horizontalAlignment = newHorizontalAlignment;
+    emit horizontalAlignmentChanged();
+}
+
+QQuickShape::VAlignment QQuickShape::verticalAlignment() const
+{
+    Q_D(const QQuickShape);
+    return d->verticalAlignment;
+}
+
+void QQuickShape::setVerticalAlignment(VAlignment newVerticalAlignment)
+{
+    Q_D(QQuickShape);
+    if (d->verticalAlignment == newVerticalAlignment)
+        return;
+    d->verticalAlignment = newVerticalAlignment;
+    emit verticalAlignmentChanged();
+}
+
 static void vpe_append(QQmlListProperty<QObject> *property, QObject *obj)
 {
     QQuickShape *item = static_cast<QQuickShape *>(property->object);
@@ -904,7 +1194,7 @@ static void vpe_clear(QQmlListProperty<QObject> *property)
     Shape. It can also contain any other type of objects, since Shape, like
     Item, allows adding any visual or non-visual objects as children.
 
-    \default
+    \qmldefault
  */
 
 QQmlListProperty<QObject> QQuickShape::data()
@@ -945,6 +1235,12 @@ void QQuickShape::updatePolish()
     d->spChanged = false;
     d->effectRefCount = currentEffectRefCount;
 
+    QQuickShape::RendererType expectedRenderer = d->selectRendererType();
+    if (d->rendererType != expectedRenderer) {
+        delete d->renderer;
+        d->renderer = nullptr;
+    }
+
     if (!d->renderer) {
         d->createRenderer();
         if (!d->renderer)
@@ -957,8 +1253,6 @@ void QQuickShape::updatePolish()
     // when the item is visible.
     if (isVisible() || d->effectRefCount > 0)
         d->sync();
-
-    update();
 }
 
 void QQuickShape::itemChange(ItemChange change, const ItemChangeData &data)
@@ -969,9 +1263,10 @@ void QQuickShape::itemChange(ItemChange change, const ItemChangeData &data)
     if (change == ItemVisibleHasChanged && data.boolValue)
         d->_q_shapePathChanged();
     else if (change == QQuickItem::ItemSceneChange) {
-        for (int i = 0; i < d->sp.count(); ++i)
+        for (int i = 0; i < d->sp.size(); ++i)
             QQuickShapePathPrivate::get(d->sp[i])->dirty = QQuickShapePathPrivate::DirtyAll;
         d->_q_shapePathChanged();
+        d->handleSceneChange(data.window);
     }
 
     QQuickItem::itemChange(change, data);
@@ -981,47 +1276,109 @@ QSGNode *QQuickShape::updatePaintNode(QSGNode *node, UpdatePaintNodeData *)
 {
     // Called on the render thread, with the gui thread blocked. We can now
     // safely access gui thread data.
-
     Q_D(QQuickShape);
-    if (d->renderer) {
-        if (!node)
+
+    if (d->renderer || d->rendererChanged) {
+        if (!node || d->rendererChanged) {
+            d->rendererChanged = false;
+            delete node;
             node = d->createNode();
-        d->renderer->updateNode();
+        }
+        if (d->renderer)
+            d->renderer->updateNode();
+
+        // TODO: only add transform node when needed (and then make sure static_cast is safe)
+        QMatrix4x4 fillModeTransform;
+        qreal xScale = 1.0;
+        qreal yScale = 1.0;
+
+        if (d->fillMode != NoResize) {
+            xScale = width() / implicitWidth();
+            yScale = height() / implicitHeight();
+
+            if (d->fillMode == PreserveAspectFit)
+                xScale = yScale = qMin(xScale, yScale);
+            else if (d->fillMode == PreserveAspectCrop)
+                xScale = yScale = qMax(xScale, yScale);
+            fillModeTransform.scale(xScale, yScale);
+        }
+        if (d->horizontalAlignment != AlignLeft || d->verticalAlignment != AlignTop) {
+            qreal tx = 0;
+            qreal ty = 0;
+            qreal w = xScale * implicitWidth();
+            qreal h = yScale * implicitHeight();
+            if (d->horizontalAlignment == AlignRight)
+                tx = width() - w;
+            else if (d->horizontalAlignment == AlignHCenter)
+                tx = (width() - w) / 2;
+            if (d->verticalAlignment == AlignBottom)
+                ty = height() - h;
+            else if (d->verticalAlignment == AlignVCenter)
+                ty = (height() - h) / 2;
+            fillModeTransform.translate(tx / xScale, ty / yScale);
+        }
+
+        QSGTransformNode *transformNode = static_cast<QSGTransformNode *>(node);
+        if (fillModeTransform != transformNode->matrix())
+            transformNode->setMatrix(fillModeTransform);
     }
     return node;
+}
+
+QQuickShape::RendererType QQuickShapePrivate::selectRendererType()
+{
+    QQuickShape::RendererType res = QQuickShape::UnknownRenderer;
+    Q_Q(QQuickShape);
+    QSGRendererInterface *ri = q->window()->rendererInterface();
+    if (!ri)
+        return res;
+
+    static const bool environmentPreferCurve =
+        qEnvironmentVariable("QT_QUICKSHAPES_BACKEND").toLower() == QLatin1String("curverenderer");
+
+    switch (ri->graphicsApi()) {
+    case QSGRendererInterface::Software:
+        res = QQuickShape::SoftwareRenderer;
+        break;
+    default:
+        if (QSGRendererInterface::isApiRhiBased(ri->graphicsApi())) {
+            if (preferredType == QQuickShape::CurveRenderer || environmentPreferCurve) {
+                res = QQuickShape::CurveRenderer;
+            } else {
+                res = QQuickShape::GeometryRenderer;
+            }
+        } else {
+            qWarning("No path backend for this graphics API yet");
+        }
+        break;
+    }
+
+    return res;
 }
 
 // the renderer object lives on the gui thread
 void QQuickShapePrivate::createRenderer()
 {
     Q_Q(QQuickShape);
-    QSGRendererInterface *ri = q->window()->rendererInterface();
-    if (!ri)
+    QQuickShape::RendererType selectedType = selectRendererType();
+    if (selectedType == QQuickShape::UnknownRenderer)
         return;
 
-    switch (ri->graphicsApi()) {
-#if QT_CONFIG(opengl)
-    case QSGRendererInterface::OpenGL:
-        if (enableVendorExts && QQuickShapeNvprRenderNode::isSupported()) {
-            rendererType = QQuickShape::NvprRenderer;
-            renderer = new QQuickShapeNvprRenderer;
-        } else {
-            rendererType = QQuickShape::GeometryRenderer;
-            renderer = new QQuickShapeGenericRenderer(q);
-        }
-        break;
-#endif
-    case QSGRendererInterface::Software:
-        rendererType = QQuickShape::SoftwareRenderer;
+    rendererType = selectedType;
+    rendererChanged = true;
+
+    switch (selectedType) {
+    case QQuickShape::SoftwareRenderer:
         renderer = new QQuickShapeSoftwareRenderer;
         break;
+    case QQuickShape::GeometryRenderer:
+        renderer = new QQuickShapeGenericRenderer(q);
+        break;
+    case QQuickShape::CurveRenderer:
+        renderer = new QQuickShapeCurveRenderer(q);
+        break;
     default:
-        if (QSGRendererInterface::isApiRhiBased(ri->graphicsApi())) {
-            rendererType = QQuickShape::GeometryRenderer;
-            renderer = new QQuickShapeGenericRenderer(q);
-        } else {
-            qWarning("No path backend for this graphics API yet");
-        }
+        Q_UNREACHABLE();
         break;
     }
 }
@@ -1031,41 +1388,38 @@ QSGNode *QQuickShapePrivate::createNode()
 {
     Q_Q(QQuickShape);
     QSGNode *node = nullptr;
-    if (!q->window())
+    if (!q->window() || !renderer)
         return node;
     QSGRendererInterface *ri = q->window()->rendererInterface();
     if (!ri)
         return node;
 
+    QSGNode *pathNode = nullptr;
     switch (ri->graphicsApi()) {
-#if QT_CONFIG(opengl)
-    case QSGRendererInterface::OpenGL:
-        if (enableVendorExts && QQuickShapeNvprRenderNode::isSupported()) {
-            node = new QQuickShapeNvprRenderNode;
-            static_cast<QQuickShapeNvprRenderer *>(renderer)->setNode(
-                static_cast<QQuickShapeNvprRenderNode *>(node));
-        } else {
-            node = new QQuickShapeGenericNode;
-            static_cast<QQuickShapeGenericRenderer *>(renderer)->setRootNode(
-                static_cast<QQuickShapeGenericNode *>(node));
-        }
-        break;
-#endif
     case QSGRendererInterface::Software:
-        node = new QQuickShapeSoftwareRenderNode(q);
+        pathNode = new QQuickShapeSoftwareRenderNode(q);
         static_cast<QQuickShapeSoftwareRenderer *>(renderer)->setNode(
-                    static_cast<QQuickShapeSoftwareRenderNode *>(node));
+                    static_cast<QQuickShapeSoftwareRenderNode *>(pathNode));
         break;
     default:
         if (QSGRendererInterface::isApiRhiBased(ri->graphicsApi())) {
-            node = new QQuickShapeGenericNode;
-            static_cast<QQuickShapeGenericRenderer *>(renderer)->setRootNode(
-                static_cast<QQuickShapeGenericNode *>(node));
+            if (rendererType == QQuickShape::CurveRenderer) {
+                pathNode = new QSGNode;
+                static_cast<QQuickShapeCurveRenderer *>(renderer)->setRootNode(pathNode);
+            } else {
+                pathNode = new QQuickShapeGenericNode;
+                static_cast<QQuickShapeGenericRenderer *>(renderer)->setRootNode(
+                    static_cast<QQuickShapeGenericNode *>(pathNode));
+            }
         } else {
             qWarning("No path backend for this graphics API yet");
         }
         break;
     }
+
+    // TODO: only create transform node when needed
+    node = new QSGTransformNode;
+    node->appendChildNode(pathNode);
 
     return node;
 }
@@ -1081,7 +1435,7 @@ void QQuickShapePrivate::asyncShapeReady(void *data)
 
 void QQuickShapePrivate::sync()
 {
-    syncTimingTotalDirty = 0;
+    int totalDirty = 0;
     syncTimingActive = QQSHAPE_LOG_TIME_DIRTY_SYNC().isDebugEnabled();
     if (syncTimingActive)
         syncTimer.start();
@@ -1092,13 +1446,15 @@ void QQuickShapePrivate::sync()
         renderer->setAsyncCallback(asyncShapeReady, this);
     }
 
-    const int count = sp.count();
-    renderer->beginSync(count);
+    const int count = sp.size();
+    bool countChanged = false;
+    renderer->beginSync(count, &countChanged);
+    renderer->setTriangulationScale(triangulationScale);
 
     for (int i = 0; i < count; ++i) {
         QQuickShapePath *p = sp[i];
         int &dirty(QQuickShapePathPrivate::get(p)->dirty);
-        syncTimingTotalDirty |= dirty;
+        totalDirty |= dirty;
 
         if (dirty & QQuickShapePathPrivate::DirtyPath)
             renderer->setPath(i, p);
@@ -1118,10 +1474,23 @@ void QQuickShapePrivate::sync()
             renderer->setStrokeStyle(i, p->strokeStyle(), p->dashOffset(), p->dashPattern());
         if (dirty & QQuickShapePathPrivate::DirtyFillGradient)
             renderer->setFillGradient(i, p->fillGradient());
+        if (dirty & QQuickShapePathPrivate::DirtyFillTransform)
+            renderer->setFillTransform(i, QQuickShapePathPrivate::get(p)->sfp.fillTransform);
+        if (dirty & QQuickShapePathPrivate::DirtyFillItem) {
+            if (p->fillItem() == nullptr) {
+                renderer->setFillTextureProvider(i, nullptr);
+            } else if (p->fillItem()->isTextureProvider()) {
+                renderer->setFillTextureProvider(i, p->fillItem());
+            } else {
+                renderer->setFillTextureProvider(i, nullptr);
+                qWarning() << "QQuickShape: Fill item is not texture provider";
+            }
+        }
 
         dirty = 0;
     }
 
+    syncTimingTotalDirty = totalDirty;
     if (syncTimingTotalDirty)
         ++syncTimeCounter;
     else
@@ -1135,13 +1504,19 @@ void QQuickShapePrivate::sync()
             qDebug("[Shape %p] [%d] [dirty=0x%x] update took %lld ms",
                    q_func(), syncTimeCounter, syncTimingTotalDirty, syncTimer.elapsed());
     }
+
+    // Must dirty the QQuickItem if something got changed, nothing
+    // else does this for us.
+    Q_Q(QQuickShape);
+    if (totalDirty || countChanged)
+        q->update();
 }
 
 // ***** gradient support *****
 
 /*!
     \qmltype ShapeGradient
-    //! \instantiates QQuickShapeGradient
+    //! \nativetype QQuickShapeGradient
     \inqmlmodule QtQuick.Shapes
     \ingroup qtquick-paths
     \ingroup qtquick-views
@@ -1192,7 +1567,7 @@ void QQuickShapeGradient::setSpread(SpreadMode mode)
 
 /*!
     \qmltype LinearGradient
-    //! \instantiates QQuickShapeLinearGradient
+    //! \nativetype QQuickShapeLinearGradient
     \inqmlmodule QtQuick.Shapes
     \ingroup qtquick-paths
     \ingroup qtquick-views
@@ -1283,7 +1658,7 @@ void QQuickShapeLinearGradient::setY2(qreal v)
 
 /*!
     \qmltype RadialGradient
-    //! \instantiates QQuickShapeRadialGradient
+    //! \nativetype QQuickShapeRadialGradient
     \inqmlmodule QtQuick.Shapes
     \ingroup qtquick-paths
     \ingroup qtquick-views
@@ -1436,7 +1811,7 @@ void QQuickShapeRadialGradient::setFocalRadius(qreal v)
 
 /*!
     \qmltype ConicalGradient
-    //! \instantiates QQuickShapeConicalGradient
+    //! \nativetype QQuickShapeConicalGradient
     \inqmlmodule QtQuick.Shapes
     \ingroup qtquick-paths
     \ingroup qtquick-views
@@ -1516,187 +1891,6 @@ void QQuickShapeConicalGradient::setAngle(qreal v)
         emit updated();
     }
 }
-
-static void generateGradientColorTable(const QQuickShapeGradientCacheKey &gradient,
-                                       uint *colorTable, int size, float opacity)
-{
-    int pos = 0;
-    const QGradientStops &s = gradient.stops;
-    const bool colorInterpolation = true;
-
-    uint alpha = qRound(opacity * 256);
-    uint current_color = ARGB_COMBINE_ALPHA(s[0].second.rgba(), alpha);
-    qreal incr = 1.0 / qreal(size);
-    qreal fpos = 1.5 * incr;
-    colorTable[pos++] = ARGB2RGBA(qPremultiply(current_color));
-
-    while (fpos <= s.first().first) {
-        colorTable[pos] = colorTable[pos - 1];
-        pos++;
-        fpos += incr;
-    }
-
-    if (colorInterpolation)
-        current_color = qPremultiply(current_color);
-
-    const int sLast = s.size() - 1;
-    for (int i = 0; i < sLast; ++i) {
-        qreal delta = 1/(s[i+1].first - s[i].first);
-        uint next_color = ARGB_COMBINE_ALPHA(s[i + 1].second.rgba(), alpha);
-        if (colorInterpolation)
-            next_color = qPremultiply(next_color);
-
-        while (fpos < s[i+1].first && pos < size) {
-            int dist = int(256 * ((fpos - s[i].first) * delta));
-            int idist = 256 - dist;
-            if (colorInterpolation)
-                colorTable[pos] = ARGB2RGBA(INTERPOLATE_PIXEL_256(current_color, idist, next_color, dist));
-            else
-                colorTable[pos] = ARGB2RGBA(qPremultiply(INTERPOLATE_PIXEL_256(current_color, idist, next_color, dist)));
-            ++pos;
-            fpos += incr;
-        }
-        current_color = next_color;
-    }
-
-    Q_ASSERT(s.size() > 0);
-
-    uint last_color = ARGB2RGBA(qPremultiply(ARGB_COMBINE_ALPHA(s[sLast].second.rgba(), alpha)));
-    for ( ; pos < size; ++pos)
-        colorTable[pos] = last_color;
-
-    colorTable[size-1] = last_color;
-}
-
-QQuickShapeGradientCache::~QQuickShapeGradientCache()
-{
-    qDeleteAll(m_textures);
-}
-
-QQuickShapeGradientCache *QQuickShapeGradientCache::cacheForRhi(QRhi *rhi)
-{
-    static QHash<QRhi *, QQuickShapeGradientCache *> caches;
-    auto it = caches.constFind(rhi);
-    if (it != caches.constEnd())
-        return *it;
-
-    QQuickShapeGradientCache *cache = new QQuickShapeGradientCache;
-    rhi->addCleanupCallback([cache](QRhi *rhi) {
-        caches.remove(rhi);
-        delete cache;
-    });
-    caches.insert(rhi, cache);
-    return cache;
-}
-
-QSGTexture *QQuickShapeGradientCache::get(const QQuickShapeGradientCacheKey &grad)
-{
-    QSGPlainTexture *tx = m_textures[grad];
-    if (!tx) {
-        static const int W = 1024; // texture size is 1024x1
-        QImage gradTab(W, 1, QImage::Format_RGBA8888_Premultiplied);
-        generateGradientColorTable(grad, reinterpret_cast<uint *>(gradTab.bits()), W, 1.0f);
-        tx = new QSGPlainTexture;
-        tx->setImage(gradTab);
-        switch (grad.spread) {
-        case QQuickShapeGradient::PadSpread:
-            tx->setHorizontalWrapMode(QSGTexture::ClampToEdge);
-            tx->setVerticalWrapMode(QSGTexture::ClampToEdge);
-            break;
-        case QQuickShapeGradient::RepeatSpread:
-            tx->setHorizontalWrapMode(QSGTexture::Repeat);
-            tx->setVerticalWrapMode(QSGTexture::Repeat);
-            break;
-        case QQuickShapeGradient::ReflectSpread:
-            tx->setHorizontalWrapMode(QSGTexture::MirroredRepeat);
-            tx->setVerticalWrapMode(QSGTexture::MirroredRepeat);
-            break;
-        default:
-            qWarning("Unknown gradient spread mode %d", grad.spread);
-            break;
-        }
-        tx->setFiltering(QSGTexture::Linear);
-        m_textures[grad] = tx;
-    }
-    return tx;
-}
-
-#if QT_CONFIG(opengl)
-
-// contexts sharing with each other get the same cache instance
-class QQuickShapeGradientCacheWrapper
-{
-public:
-    QQuickShapeGradientOpenGLCache *get(QOpenGLContext *context)
-    {
-        return m_resource.value<QQuickShapeGradientOpenGLCache>(context);
-    }
-
-private:
-    QOpenGLMultiGroupSharedResource m_resource;
-};
-
-QQuickShapeGradientOpenGLCache *QQuickShapeGradientOpenGLCache::currentCache()
-{
-    static QQuickShapeGradientCacheWrapper qt_path_gradient_caches;
-    return qt_path_gradient_caches.get(QOpenGLContext::currentContext());
-}
-
-// let QOpenGLContext manage the lifetime of the cached textures
-QQuickShapeGradientOpenGLCache::~QQuickShapeGradientOpenGLCache()
-{
-    m_cache.clear();
-}
-
-void QQuickShapeGradientOpenGLCache::invalidateResource()
-{
-    m_cache.clear();
-}
-
-void QQuickShapeGradientOpenGLCache::freeResource(QOpenGLContext *)
-{
-    qDeleteAll(m_cache);
-    m_cache.clear();
-}
-
-QSGTexture *QQuickShapeGradientOpenGLCache::get(const QQuickShapeGradientCacheKey &grad)
-{
-    QSGPlainTexture *tx = m_cache[grad];
-    if (!tx) {
-        QOpenGLFunctions *f = QOpenGLContext::currentContext()->functions();
-        GLuint id;
-        f->glGenTextures(1, &id);
-        f->glBindTexture(GL_TEXTURE_2D, id);
-        static const uint W = 1024; // texture size is 1024x1
-        uint buf[W];
-        generateGradientColorTable(grad, buf, W, 1.0f);
-        f->glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, W, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, buf);
-        tx = new QSGPlainTexture;
-        tx->setTextureId(id);
-        switch (grad.spread) {
-        case QQuickShapeGradient::PadSpread:
-            tx->setHorizontalWrapMode(QSGTexture::ClampToEdge);
-            tx->setVerticalWrapMode(QSGTexture::ClampToEdge);
-            break;
-        case QQuickShapeGradient::RepeatSpread:
-            tx->setHorizontalWrapMode(QSGTexture::Repeat);
-            tx->setVerticalWrapMode(QSGTexture::Repeat);
-            break;
-        case QQuickShapeGradient::ReflectSpread:
-            tx->setHorizontalWrapMode(QSGTexture::MirroredRepeat);
-            tx->setVerticalWrapMode(QSGTexture::MirroredRepeat);
-            break;
-        default:
-            qWarning("Unknown gradient spread mode %d", grad.spread);
-            break;
-        }
-        tx->setFiltering(QSGTexture::Linear);
-        m_cache[grad] = tx;
-    }
-    return tx;
-}
-
-#endif // QT_CONFIG(opengl)
 
 QT_END_NAMESPACE
 

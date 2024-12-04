@@ -25,6 +25,7 @@
 
 #include "third_party/blink/renderer/core/dom/scripted_animation_controller.h"
 
+#include "third_party/blink/public/mojom/frame/lifecycle.mojom-blink.h"
 #include "third_party/blink/renderer/core/css/media_query_list_listener.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
@@ -34,7 +35,10 @@
 #include "third_party/blink/renderer/core/inspector/inspector_trace_events.h"
 #include "third_party/blink/renderer/core/loader/document_loader.h"
 #include "third_party/blink/renderer/core/page/page.h"
+#include "third_party/blink/renderer/core/page/page_animator.h"
 #include "third_party/blink/renderer/core/probe/core_probes.h"
+#include "third_party/blink/renderer/platform/wtf/functional.h"
+#include "third_party/blink/renderer/platform/wtf/wtf_size_t.h"
 
 namespace blink {
 
@@ -53,7 +57,7 @@ void ScriptedAnimationController::EraseFromPerFrameEventsMap(
   if (it != per_frame_events_.end()) {
     HashSet<const StringImpl*>& set = it->value;
     set.erase(event->type().Impl());
-    if (set.IsEmpty())
+    if (set.empty())
       per_frame_events_.erase(target);
   }
 }
@@ -69,6 +73,7 @@ void ScriptedAnimationController::Trace(Visitor* visitor) const {
   visitor->Trace(callback_collection_);
   visitor->Trace(event_queue_);
   visitor->Trace(media_query_list_listeners_);
+  visitor->Trace(media_query_list_listeners_set_);
   visitor->Trace(per_frame_events_);
 }
 
@@ -79,20 +84,21 @@ void ScriptedAnimationController::ContextLifecycleStateChanged(
 }
 
 void ScriptedAnimationController::DispatchEventsAndCallbacksForPrinting() {
-  DispatchEvents(event_interface_names::kMediaQueryListEvent);
+  DispatchEvents(WTF::BindRepeating([](Event* event) {
+    return event->InterfaceName() ==
+           event_interface_names::kMediaQueryListEvent;
+  }));
   CallMediaQueryListListeners();
 }
 
 void ScriptedAnimationController::ScheduleVideoFrameCallbacksExecution(
     ExecuteVfcCallback execute_vfc_callback) {
-  DCHECK(RuntimeEnabledFeatures::RequestVideoFrameCallbackEnabled());
   vfc_execution_queue_.push_back(std::move(execute_vfc_callback));
   ScheduleAnimationIfNeeded();
 }
 
 ScriptedAnimationController::CallbackId
-ScriptedAnimationController::RegisterFrameCallback(
-    FrameRequestCallbackCollection::FrameCallback* callback) {
+ScriptedAnimationController::RegisterFrameCallback(FrameCallback* callback) {
   CallbackId id = callback_collection_.RegisterFrameCallback(callback);
   ScheduleAnimationIfNeeded();
   return id;
@@ -104,7 +110,7 @@ void ScriptedAnimationController::CancelFrameCallback(CallbackId id) {
 
 bool ScriptedAnimationController::HasFrameCallback() const {
   return callback_collection_.HasFrameCallback() ||
-         !vfc_execution_queue_.IsEmpty();
+         !vfc_execution_queue_.empty();
 }
 
 void ScriptedAnimationController::RunTasks() {
@@ -114,16 +120,15 @@ void ScriptedAnimationController::RunTasks() {
     std::move(task).Run();
 }
 
-void ScriptedAnimationController::DispatchEvents(
-    const AtomicString& event_interface_filter) {
+bool ScriptedAnimationController::DispatchEvents(DispatchFilter filter) {
   HeapVector<Member<Event>> events;
-  if (event_interface_filter.IsEmpty()) {
+  if (filter.is_null()) {
     events.swap(event_queue_);
     per_frame_events_.clear();
   } else {
     HeapVector<Member<Event>> remaining;
     for (auto& event : event_queue_) {
-      if (event && event->InterfaceName() == event_interface_filter) {
+      if (event && filter.Run(event)) {
         EraseFromPerFrameEventsMap(event.Get());
         events.push_back(event.Release());
       } else {
@@ -133,19 +138,24 @@ void ScriptedAnimationController::DispatchEvents(
     remaining.swap(event_queue_);
   }
 
+  bool did_dispatch = false;
+
   for (const auto& event : events) {
+    did_dispatch = true;
     EventTarget* event_target = event->target();
     // FIXME: we should figure out how to make dispatchEvent properly virtual to
     // avoid special casting window.
     // FIXME: We should not fire events for nodes that are no longer in the
     // tree.
     probe::AsyncTask async_task(event_target->GetExecutionContext(),
-                                event->async_task_id());
+                                event->async_task_context());
     if (LocalDOMWindow* window = event_target->ToLocalDOMWindow())
       window->DispatchEvent(*event, nullptr);
     else
       event_target->DispatchEvent(*event);
   }
+
+  return did_dispatch;
 }
 
 void ScriptedAnimationController::ExecuteVideoFrameCallbacks() {
@@ -170,7 +180,8 @@ void ScriptedAnimationController::ExecuteFrameCallbacks() {
 
 void ScriptedAnimationController::CallMediaQueryListListeners() {
   MediaQueryListListeners listeners;
-  listeners.Swap(media_query_list_listeners_);
+  listeners.swap(media_query_list_listeners_);
+  media_query_list_listeners_set_.clear();
 
   for (const auto& listener : listeners) {
     listener->NotifyMediaQueryChanged();
@@ -178,73 +189,16 @@ void ScriptedAnimationController::CallMediaQueryListListeners() {
 }
 
 bool ScriptedAnimationController::HasScheduledFrameTasks() const {
-  return callback_collection_.HasFrameCallback() || !task_queue_.IsEmpty() ||
-         !event_queue_.IsEmpty() || !media_query_list_listeners_.IsEmpty() ||
+  return callback_collection_.HasFrameCallback() || !task_queue_.empty() ||
+         !event_queue_.empty() || !media_query_list_listeners_.empty() ||
          GetWindow()->document()->HasAutofocusCandidates() ||
-         !vfc_execution_queue_.IsEmpty();
+         !vfc_execution_queue_.empty();
 }
 
-void ScriptedAnimationController::ServiceScriptedAnimations(
-    base::TimeTicks monotonic_time_now) {
-  if (!GetExecutionContext() || GetExecutionContext()->IsContextPaused())
-    return;
-  auto* loader = GetWindow()->document()->Loader();
-  if (!loader)
-    return;
-
-  current_frame_time_ms_ =
-      loader->GetTiming()
-          .MonotonicTimeToZeroBasedDocumentTime(monotonic_time_now)
-          .InMillisecondsF();
-  current_frame_legacy_time_ms_ =
-      loader->GetTiming()
-          .MonotonicTimeToPseudoWallTime(monotonic_time_now)
-          .InMillisecondsF();
-  current_frame_had_raf_ = HasFrameCallback();
-
-  if (!HasScheduledFrameTasks())
-    return;
-
-  // https://html.spec.whatwg.org/C/#update-the-rendering
-
-  // 10.5. For each fully active Document in docs, flush autofocus
-  // candidates for that Document if its browsing context is a top-level
-  // browsing context.
-  GetWindow()->document()->FlushAutofocusCandidates();
-
-  // 10.8. For each fully active Document in docs, evaluate media
-  // queries and report changes for that Document, passing in now as the
-  // timestamp
-  CallMediaQueryListListeners();
-
-  // 10.6. For each fully active Document in docs, run the resize steps
-  // for that Document, passing in now as the timestamp.
-  // 10.7. For each fully active Document in docs, run the scroll steps
-  // for that Document, passing in now as the timestamp.
-  // 10.9. For each fully active Document in docs, update animations and
-  // send events for that Document, passing in now as the timestamp.
-  //
-  // We share a single event queue for them.
-  DispatchEvents();
-
-  // 10.10. For each fully active Document in docs, run the fullscreen
-  // steps for that Document, passing in now as the timestamp.
-  RunTasks();
-
-  if (RuntimeEnabledFeatures::RequestVideoFrameCallbackEnabled()) {
-    // Run the fulfilled HTMLVideoELement.requestVideoFrameCallback() callbacks.
-    // See https://wicg.github.io/video-rvfc/.
-    ExecuteVideoFrameCallbacks();
-  }
-
-  // 10.11. For each fully active Document in docs, run the animation
-  // frame callbacks for that Document, passing in now as the timestamp.
-  ExecuteFrameCallbacks();
-  next_frame_has_pending_raf_ = HasFrameCallback();
-
-  // See LocalFrameView::RunPostLifecycleSteps() for 10.12.
-
-  ScheduleAnimationIfNeeded();
+PageAnimator* ScriptedAnimationController::GetPageAnimator() {
+  if (GetWindow()->document() && GetWindow()->document()->GetPage())
+    return &(GetWindow()->document()->GetPage()->Animator());
+  return nullptr;
 }
 
 void ScriptedAnimationController::EnqueueTask(base::OnceClosure task) {
@@ -253,8 +207,8 @@ void ScriptedAnimationController::EnqueueTask(base::OnceClosure task) {
 }
 
 void ScriptedAnimationController::EnqueueEvent(Event* event) {
-  probe::AsyncTaskScheduled(event->target()->GetExecutionContext(),
-                            event->type(), event->async_task_id());
+  event->async_task_context()->Schedule(event->target()->GetExecutionContext(),
+                                        event->type());
   event_queue_.push_back(event);
   ScheduleAnimationIfNeeded();
 }
@@ -268,8 +222,13 @@ void ScriptedAnimationController::EnqueuePerFrameEvent(Event* event) {
 void ScriptedAnimationController::EnqueueMediaQueryChangeListeners(
     HeapVector<Member<MediaQueryListListener>>& listeners) {
   for (const auto& listener : listeners) {
-    media_query_list_listeners_.insert(listener);
+    if (!media_query_list_listeners_set_.Contains(listener)) {
+      media_query_list_listeners_.push_back(listener);
+      media_query_list_listeners_set_.insert(listener);
+    }
   }
+  DCHECK_EQ(media_query_list_listeners_.size(),
+            media_query_list_listeners_set_.size());
   ScheduleAnimationIfNeeded();
 }
 

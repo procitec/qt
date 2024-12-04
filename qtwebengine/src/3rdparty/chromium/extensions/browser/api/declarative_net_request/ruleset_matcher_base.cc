@@ -1,13 +1,16 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "extensions/browser/api/declarative_net_request/ruleset_matcher_base.h"
 
+#include <string_view>
 #include <tuple>
 
+#include "base/ranges/algorithm.h"
 #include "base/strings/strcat.h"
 #include "components/url_pattern_index/flat/url_pattern_index_generated.h"
+#include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "extensions/browser/api/declarative_net_request/request_action.h"
@@ -70,40 +73,45 @@ bool GetModifiedQuery(const GURL& url,
     return false;
   }
 
-  std::vector<base::StringPiece> remove_query_params;
+  std::vector<std::string_view> remove_query_params;
   if (!IsEmpty(transform.remove_query_params())) {
     remove_query_params.reserve(transform.remove_query_params()->size());
     for (const ::flatbuffers::String* str : *transform.remove_query_params())
-      remove_query_params.push_back(CreateString<base::StringPiece>(*str));
+      remove_query_params.push_back(str->string_view());
   }
 
   // We don't use a map from keys to vector of values to ensure the relative
   // order of different params specified by the extension is respected. We use a
   // std::list to support fast removal from middle of the list. Note that the
   // key value pairs should already be escaped.
-  std::list<std::pair<base::StringPiece, base::StringPiece>>
-      add_or_replace_query_params;
+  struct QueryReplace {
+    std::string_view key;
+    std::string_view value;
+    bool replace_only = false;
+  };
+  std::list<QueryReplace> add_or_replace_query_params;
+
   if (!IsEmpty(transform.add_or_replace_query_params())) {
     for (const flat::QueryKeyValue* query_pair :
          *transform.add_or_replace_query_params()) {
       DCHECK(query_pair->key());
       DCHECK(query_pair->value());
-      add_or_replace_query_params.emplace_back(
-          CreateString<base::StringPiece>(*query_pair->key()),
-          CreateString<base::StringPiece>(*query_pair->value()));
+      add_or_replace_query_params.emplace_back(QueryReplace{
+          query_pair->key()->string_view(), query_pair->value()->string_view(),
+          query_pair->replace_only()});
     }
   }
 
   std::vector<std::string> query_parts;
 
-  auto create_query_part = [](base::StringPiece key,
-                              base::StringPiece value) -> std::string {
+  auto create_query_part = [](std::string_view key,
+                              std::string_view value) -> std::string {
     return base::StrCat({key, "=", value});
   };
 
   bool query_changed = false;
   for (net::QueryIterator it(url); !it.IsAtEnd(); it.Advance()) {
-    std::string key = it.GetKey();
+    const std::string_view key = it.GetKey();
     // Remove query param.
     if (std::binary_search(remove_query_params.begin(),
                            remove_query_params.end(), key)) {
@@ -111,11 +119,8 @@ bool GetModifiedQuery(const GURL& url,
       continue;
     }
 
-    auto replace_iterator = std::find_if(
-        add_or_replace_query_params.begin(), add_or_replace_query_params.end(),
-        [&key](const std::pair<base::StringPiece, base::StringPiece>& param) {
-          return param.first == key;
-        });
+    auto replace_iterator = base::ranges::find(add_or_replace_query_params, key,
+                                               &QueryReplace::key);
 
     // Nothing to do.
     if (replace_iterator == add_or_replace_query_params.end()) {
@@ -125,15 +130,17 @@ bool GetModifiedQuery(const GURL& url,
 
     // Replace query param.
     query_changed = true;
-    query_parts.push_back(create_query_part(key, replace_iterator->second));
+    query_parts.push_back(create_query_part(key, replace_iterator->value));
     add_or_replace_query_params.erase(replace_iterator);
   }
 
   // Append any remaining query params.
-  for (const auto& params : add_or_replace_query_params)
-    query_parts.push_back(create_query_part(params.first, params.second));
-
-  query_changed |= !add_or_replace_query_params.empty();
+  for (const auto& params : add_or_replace_query_params) {
+    if (!params.replace_only) {
+      query_parts.push_back(create_query_part(params.key, params.value));
+      query_changed = true;
+    }
+  }
 
   if (!query_changed)
     return false;
@@ -147,23 +154,22 @@ GURL GetTransformedURL(const RequestParams& params,
   GURL::Replacements replacements;
 
   if (transform.scheme())
-    replacements.SetSchemeStr(
-        CreateString<base::StringPiece>(*transform.scheme()));
+    replacements.SetSchemeStr(transform.scheme()->string_view());
 
   if (transform.host())
-    replacements.SetHostStr(CreateString<base::StringPiece>(*transform.host()));
+    replacements.SetHostStr(transform.host()->string_view());
 
   DCHECK(!(transform.clear_port() && transform.port()));
   if (transform.clear_port())
     replacements.ClearPort();
   else if (transform.port())
-    replacements.SetPortStr(CreateString<base::StringPiece>(*transform.port()));
+    replacements.SetPortStr(transform.port()->string_view());
 
   DCHECK(!(transform.clear_path() && transform.path()));
   if (transform.clear_path())
     replacements.ClearPath();
   else if (transform.path())
-    replacements.SetPathStr(CreateString<base::StringPiece>(*transform.path()));
+    replacements.SetPathStr(transform.path()->string_view());
 
   // |query| is defined outside the if conditions since url::Replacements does
   // not own the strings it uses.
@@ -171,8 +177,7 @@ GURL GetTransformedURL(const RequestParams& params,
   if (transform.clear_query()) {
     replacements.ClearQuery();
   } else if (transform.query()) {
-    replacements.SetQueryStr(
-        CreateString<base::StringPiece>(*transform.query()));
+    replacements.SetQueryStr(transform.query()->string_view());
   } else if (GetModifiedQuery(*params.url, transform, &query)) {
     replacements.SetQueryStr(query);
   }
@@ -181,16 +186,13 @@ GURL GetTransformedURL(const RequestParams& params,
   if (transform.clear_fragment())
     replacements.ClearRef();
   else if (transform.fragment())
-    replacements.SetRefStr(
-        CreateString<base::StringPiece>(*transform.fragment()));
+    replacements.SetRefStr(transform.fragment()->string_view());
 
   if (transform.password())
-    replacements.SetPasswordStr(
-        CreateString<base::StringPiece>(*transform.password()));
+    replacements.SetPasswordStr(transform.password()->string_view());
 
   if (transform.username())
-    replacements.SetUsernameStr(
-        CreateString<base::StringPiece>(*transform.username()));
+    replacements.SetUsernameStr(transform.username()->string_view());
 
   return params.url->ReplaceComponents(replacements);
 }
@@ -202,11 +204,21 @@ RulesetMatcherBase::RulesetMatcherBase(const ExtensionId& extension_id,
     : extension_id_(extension_id), ruleset_id_(ruleset_id) {}
 RulesetMatcherBase::~RulesetMatcherBase() = default;
 
-base::Optional<RequestAction> RulesetMatcherBase::GetBeforeRequestAction(
+std::optional<RequestAction> RulesetMatcherBase::GetBeforeRequestAction(
     const RequestParams& params) const {
-  base::Optional<RequestAction> action =
+  std::optional<RequestAction> action =
       GetBeforeRequestActionIgnoringAncestors(params);
-  base::Optional<RequestAction> parent_action =
+  std::optional<RequestAction> parent_action =
+      GetAllowlistedFrameAction(params.parent_routing_id);
+
+  return GetMaxPriorityAction(std::move(action), std::move(parent_action));
+}
+
+std::optional<RequestAction> RulesetMatcherBase::GetHeadersReceivedAction(
+    const RequestParams& params) const {
+  std::optional<RequestAction> action =
+      GetHeadersReceivedActionIgnoringAncestors(params);
+  std::optional<RequestAction> parent_action =
       GetAllowlistedFrameAction(params.parent_routing_id);
 
   return GetMaxPriorityAction(std::move(action), std::move(parent_action));
@@ -214,7 +226,7 @@ base::Optional<RequestAction> RulesetMatcherBase::GetBeforeRequestAction(
 
 void RulesetMatcherBase::OnRenderFrameCreated(content::RenderFrameHost* host) {
   DCHECK(host);
-  content::RenderFrameHost* parent = host->GetParent();
+  content::RenderFrameHost* parent = host->GetParentOrOuterDocument();
   if (!parent)
     return;
 
@@ -223,62 +235,57 @@ void RulesetMatcherBase::OnRenderFrameCreated(content::RenderFrameHost* host) {
   // commit for the frame is received in the browser (via DidFinishNavigation).
   // Hence if the parent frame is allowlisted, we allow list the current frame
   // as well in OnRenderFrameCreated.
-  content::GlobalFrameRoutingId parent_frame_id(parent->GetProcess()->GetID(),
-                                                parent->GetRoutingID());
-  base::Optional<RequestAction> parent_action =
-      GetAllowlistedFrameAction(parent_frame_id);
+  std::optional<RequestAction> parent_action =
+      GetAllowlistedFrameAction(parent->GetGlobalId());
   if (!parent_action)
     return;
 
-  content::GlobalFrameRoutingId frame_id(host->GetProcess()->GetID(),
-                                         host->GetRoutingID());
-
   bool inserted = false;
   std::tie(std::ignore, inserted) = allowlisted_frames_.insert(
-      std::make_pair(frame_id, std::move(*parent_action)));
+      std::make_pair(host->GetGlobalId(), std::move(*parent_action)));
   DCHECK(inserted);
 }
 
 void RulesetMatcherBase::OnRenderFrameDeleted(content::RenderFrameHost* host) {
   DCHECK(host);
-  allowlisted_frames_.erase(content::GlobalFrameRoutingId(
-      host->GetProcess()->GetID(), host->GetRoutingID()));
+  allowlisted_frames_.erase(host->GetGlobalId());
 }
 
-void RulesetMatcherBase::OnDidFinishNavigation(content::RenderFrameHost* host) {
+void RulesetMatcherBase::OnDidFinishNavigation(
+    content::NavigationHandle* navigation_handle) {
+  content::RenderFrameHost* host = navigation_handle->GetRenderFrameHost();
+
   // Note: we only start tracking frames on navigation, since a document only
   // issues network requests after the corresponding navigation is committed.
   // Hence we need not listen to OnRenderFrameCreated.
   DCHECK(host);
 
-  RequestParams params(host);
+  // TODO(crbug.com/1141166): Investigate if allowAllRequest rule should be
+  // supported based on response headers or if response headers are visible at
+  // this stage.
+  RequestParams params(host, navigation_handle->IsPost(),
+                       /*response_headers=*/nullptr);
 
   // Find the highest priority allowAllRequests action corresponding to this
   // frame.
-  base::Optional<RequestAction> parent_action =
+  std::optional<RequestAction> parent_action =
       GetAllowlistedFrameAction(params.parent_routing_id);
-  base::Optional<RequestAction> frame_action =
-      GetAllowAllRequestsAction(params);
-  base::Optional<RequestAction> action =
+  std::optional<RequestAction> frame_action = GetAllowAllRequestsAction(params);
+  std::optional<RequestAction> action =
       GetMaxPriorityAction(std::move(parent_action), std::move(frame_action));
 
-  content::GlobalFrameRoutingId frame_id(host->GetProcess()->GetID(),
-                                         host->GetRoutingID());
-
+  content::GlobalRenderFrameHostId frame_id = host->GetGlobalId();
   allowlisted_frames_.erase(frame_id);
 
   if (action)
     allowlisted_frames_.insert(std::make_pair(frame_id, std::move(*action)));
 }
 
-base::Optional<RequestAction>
+std::optional<RequestAction>
 RulesetMatcherBase::GetAllowlistedFrameActionForTesting(
     content::RenderFrameHost* host) const {
   DCHECK(host);
-
-  content::GlobalFrameRoutingId frame_id(host->GetProcess()->GetID(),
-                                         host->GetRoutingID());
-  return GetAllowlistedFrameAction(frame_id);
+  return GetAllowlistedFrameAction(host->GetGlobalId());
 }
 
 RequestAction RulesetMatcherBase::CreateBlockOrCollapseRequestAction(
@@ -302,20 +309,20 @@ RequestAction RulesetMatcherBase::CreateAllowAllRequestsAction(
   return CreateRequestAction(RequestAction::Type::ALLOW_ALL_REQUESTS, rule);
 }
 
-base::Optional<RequestAction> RulesetMatcherBase::CreateUpgradeAction(
+std::optional<RequestAction> RulesetMatcherBase::CreateUpgradeAction(
     const RequestParams& params,
     const url_pattern_index::flat::UrlRule& rule) const {
   if (!IsUpgradeableUrl(*params.url)) {
     // TODO(crbug.com/1033780): this results in counterintuitive behavior.
-    return base::nullopt;
+    return std::nullopt;
   }
   RequestAction upgrade_action =
       CreateRequestAction(RequestAction::Type::UPGRADE, rule);
   upgrade_action.redirect_url = GetUpgradedUrl(*params.url);
-  return std::move(upgrade_action);
+  return upgrade_action;
 }
 
-base::Optional<RequestAction>
+std::optional<RequestAction>
 RulesetMatcherBase::CreateRedirectActionFromMetadata(
     const RequestParams& params,
     const url_pattern_index::flat::UrlRule& rule,
@@ -331,8 +338,7 @@ RulesetMatcherBase::CreateRedirectActionFromMetadata(
 
   GURL redirect_url;
   if (metadata->redirect_url())
-    redirect_url =
-        GURL(CreateString<base::StringPiece>(*metadata->redirect_url()));
+    redirect_url = GURL(metadata->redirect_url()->string_view());
   else
     redirect_url = GetTransformedURL(params, *metadata->transform());
 
@@ -345,23 +351,23 @@ RulesetMatcherBase::CreateRedirectActionFromMetadata(
   return CreateRedirectAction(params, rule, std::move(redirect_url));
 }
 
-base::Optional<RequestAction> RulesetMatcherBase::CreateRedirectAction(
+std::optional<RequestAction> RulesetMatcherBase::CreateRedirectAction(
     const RequestParams& params,
     const url_pattern_index::flat::UrlRule& rule,
     GURL redirect_url) const {
   // Redirecting WebSocket handshake request is prohibited.
   // TODO(crbug.com/1033780): this results in counterintuitive behavior.
   if (params.element_type == flat_rule::ElementType_WEBSOCKET)
-    return base::nullopt;
+    return std::nullopt;
 
   // Prevent a redirect loop where a URL continuously redirects to itself.
   if (!redirect_url.is_valid() || *params.url == redirect_url)
-    return base::nullopt;
+    return std::nullopt;
 
   RequestAction redirect_action =
       CreateRequestAction(RequestAction::Type::REDIRECT, rule);
   redirect_action.redirect_url = std::move(redirect_url);
-  return std::move(redirect_action);
+  return redirect_action;
 }
 
 std::vector<RequestAction>
@@ -410,11 +416,11 @@ RequestAction RulesetMatcherBase::CreateRequestAction(
                        extension_id());
 }
 
-base::Optional<RequestAction> RulesetMatcherBase::GetAllowlistedFrameAction(
-    content::GlobalFrameRoutingId frame_id) const {
+std::optional<RequestAction> RulesetMatcherBase::GetAllowlistedFrameAction(
+    content::GlobalRenderFrameHostId frame_id) const {
   auto it = allowlisted_frames_.find(frame_id);
   if (it == allowlisted_frames_.end())
-    return base::nullopt;
+    return std::nullopt;
 
   return it->second.Clone();
 }

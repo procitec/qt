@@ -1,12 +1,14 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/modules/bluetooth/bluetooth_uuid.h"
 
+#include "third_party/blink/renderer/bindings/core/v8/v8_union_string_unsignedlong.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/wtf/hash_map.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
+#include "third_party/blink/renderer/platform/wtf/text/string_hash.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 #include "third_party/blink/renderer/platform/wtf/uuid.h"
 
@@ -316,28 +318,32 @@ NameToAssignedNumberMap* GetAssignedNumberForDescriptorNameMap() {
   return &descriptors_map;
 }
 
+String GetUUIDFromV8Value(const V8UnionStringOrUnsignedLong* value) {
+  // unsigned long values interpret as 16-bit UUID values as per
+  // https://btprodspecificationrefs.blob.core.windows.net/assigned-values/16-bit%20UUID%20Numbers%20Document.pdf.
+  if (value->IsUnsignedLong()) {
+    return blink::BluetoothUUID::canonicalUUID(value->GetAsUnsignedLong());
+  }
+
+  return value->GetAsString();
+}
+
 String GetUUIDForGATTAttribute(GATTAttribute attribute,
-                               StringOrUnsignedLong name,
+                               const V8UnionStringOrUnsignedLong* name,
                                ExceptionState& exception_state) {
+  DCHECK(name);
   // Implementation of BluetoothUUID.getService, BluetoothUUID.getCharacteristic
   // and BluetoothUUID.getDescriptor algorithms:
   // https://webbluetoothcg.github.io/web-bluetooth/#dom-bluetoothuuid-getservice
   // https://webbluetoothcg.github.io/web-bluetooth/#dom-bluetoothuuid-getcharacteristic
   // https://webbluetoothcg.github.io/web-bluetooth/#dom-bluetoothuuid-getdescriptor
 
-  // If name is an unsigned long, return BluetoothUUID.cannonicalUUI(name) and
-  // abort this steps.
-  if (name.IsUnsignedLong())
-    return BluetoothUUID::canonicalUUID(name.GetAsUnsignedLong());
-
-  String name_str = name.GetAsString();
-
-  // If name is a valid UUID, return name and abort these steps.
+  const String name_str = GetUUIDFromV8Value(name);
   if (WTF::IsValidUUID(name_str))
     return name_str;
 
   // If name is in the corresponding attribute map return
-  // BluetoothUUID.cannonicalUUID(alias).
+  // BluetoothUUID.canonicalUUID(alias).
   NameToAssignedNumberMap* map = nullptr;
   const char* attribute_type = nullptr;
   switch (attribute) {
@@ -392,22 +398,28 @@ String GetUUIDForGATTAttribute(GATTAttribute attribute,
 
 }  // namespace
 
+String GetBluetoothUUIDFromV8Value(const V8UnionStringOrUnsignedLong* value) {
+  const String value_str = GetUUIDFromV8Value(value);
+  return WTF::IsValidUUID(value_str) ? value_str : "";
+}
+
 // static
-String BluetoothUUID::getService(StringOrUnsignedLong name,
+String BluetoothUUID::getService(const V8BluetoothServiceUUID* name,
                                  ExceptionState& exception_state) {
   return GetUUIDForGATTAttribute(GATTAttribute::kService, name,
                                  exception_state);
 }
 
 // static
-String BluetoothUUID::getCharacteristic(StringOrUnsignedLong name,
-                                        ExceptionState& exception_state) {
+String BluetoothUUID::getCharacteristic(
+    const V8BluetoothCharacteristicUUID* name,
+    ExceptionState& exception_state) {
   return GetUUIDForGATTAttribute(GATTAttribute::kCharacteristic, name,
                                  exception_state);
 }
 
 // static
-String BluetoothUUID::getDescriptor(StringOrUnsignedLong name,
+String BluetoothUUID::getDescriptor(const V8BluetoothDescriptorUUID* name,
                                     ExceptionState& exception_state) {
   return GetUUIDForGATTAttribute(GATTAttribute::kDescriptor, name,
                                  exception_state);

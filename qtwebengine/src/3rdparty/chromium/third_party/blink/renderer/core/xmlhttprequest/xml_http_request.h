@@ -26,22 +26,24 @@
 #include <memory>
 
 #include "base/memory/scoped_refptr.h"
+#include "base/time/time.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
+#include "services/network/public/mojom/attribution.mojom-blink.h"
 #include "services/network/public/mojom/trust_tokens.mojom-blink.h"
 #include "services/network/public/mojom/url_loader_factory.mojom-blink.h"
 #include "third_party/blink/renderer/bindings/core/v8/active_script_wrappable.h"
-#include "third_party/blink/renderer/bindings/core/v8/v8_trust_token.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_typedefs.h"
+#include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/dom/document_parser_client.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_observer.h"
 #include "third_party/blink/renderer/core/loader/threadable_loader_client.h"
-#include "third_party/blink/renderer/core/probe/async_task_id.h"
+#include "third_party/blink/renderer/core/probe/async_task_context.h"
 #include "third_party/blink/renderer/core/xmlhttprequest/xml_http_request_event_target.h"
 #include "third_party/blink/renderer/core/xmlhttprequest/xml_http_request_progress_event_throttle.h"
 #include "third_party/blink/renderer/platform/bindings/exception_code.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
-#include "third_party/blink/renderer/platform/bindings/trace_wrapper_v8_string.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_response.h"
 #include "third_party/blink/renderer/platform/network/encoded_form_data.h"
 #include "third_party/blink/renderer/platform/network/http_header_map.h"
@@ -50,12 +52,12 @@
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
+#include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
 namespace blink {
 
-class
-    DocumentOrBlobOrArrayBufferOrArrayBufferViewOrFormDataOrURLSearchParamsOrUSVString;
+class AttributionReportingRequestOptions;
 class Blob;
 class BlobDataHandle;
 class DOMArrayBuffer;
@@ -66,26 +68,27 @@ class DocumentParser;
 class ExceptionState;
 class ExecutionContext;
 class FormData;
+class PrivateToken;
 class ScriptState;
+class ScriptValue;
 class TextResourceDecoder;
 class ThreadableLoader;
 class URLSearchParams;
 class XMLHttpRequestUpload;
 
-class XMLHttpRequest final : public XMLHttpRequestEventTarget,
-                             public ThreadableLoaderClient,
-                             public DocumentParserClient,
-                             public ActiveScriptWrappable<XMLHttpRequest>,
-                             public ExecutionContextLifecycleObserver {
+class CORE_EXPORT XMLHttpRequest final
+    : public XMLHttpRequestEventTarget,
+      public ThreadableLoaderClient,
+      public DocumentParserClient,
+      public ActiveScriptWrappable<XMLHttpRequest>,
+      public ExecutionContextLifecycleObserver {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
   static XMLHttpRequest* Create(ScriptState*);
   static XMLHttpRequest* Create(ExecutionContext*);
 
-  XMLHttpRequest(ExecutionContext*,
-                 v8::Isolate*,
-                 scoped_refptr<const DOMWrapperWorld> world);
+  XMLHttpRequest(ExecutionContext*, scoped_refptr<const DOMWrapperWorld> world);
   ~XMLHttpRequest() override;
 
   // These exact numeric values are important because JS expects them.
@@ -134,23 +137,22 @@ class XMLHttpRequest final : public XMLHttpRequestEventTarget,
             const KURL&,
             bool async,
             ExceptionState&);
-  void send(
-      const DocumentOrBlobOrArrayBufferOrArrayBufferViewOrFormDataOrURLSearchParamsOrUSVString&,
-      ExceptionState&);
+  void send(const V8UnionDocumentOrXMLHttpRequestBodyInit* body,
+            ExceptionState& exception_state);
   void abort();
   void Dispose();
   void setRequestHeader(const AtomicString& name,
                         const AtomicString& value,
                         ExceptionState&);
-  void setTrustToken(const TrustToken*, ExceptionState&);
+  void setPrivateToken(const PrivateToken*, ExceptionState&);
+  void setAttributionReporting(const AttributionReportingRequestOptions*,
+                               ExceptionState&);
   void overrideMimeType(const AtomicString& override, ExceptionState&);
   String getAllResponseHeaders() const;
   const AtomicString& getResponseHeader(const AtomicString&) const;
-  v8::Local<v8::String> responseText(ExceptionState&);
-  v8::Local<v8::String> ResponseJSONSource();
+  String responseText(ExceptionState&);
   Document* responseXML(ExceptionState&);
-  Blob* ResponseBlob();
-  DOMArrayBuffer* ResponseArrayBuffer();
+  ScriptValue response(ScriptState*, ExceptionState&);
   unsigned timeout() const {
     return static_cast<unsigned>(timeout_.InMilliseconds());
   }
@@ -159,9 +161,6 @@ class XMLHttpRequest final : public XMLHttpRequestEventTarget,
   String responseType();
   void setResponseType(const String&, ExceptionState&);
   String responseURL();
-  DOMException* trustTokenOperationError() const {
-    return trust_token_operation_error_;
-  }
 
   // For Inspector.
   void SendForInspectorXHRReplay(scoped_refptr<EncodedFormData>,
@@ -170,12 +169,14 @@ class XMLHttpRequest final : public XMLHttpRequestEventTarget,
   XMLHttpRequestUpload* upload();
   bool IsAsync() { return async_; }
 
-  probe::AsyncTaskId* async_task_id() { return &async_task_id_; }
+  probe::AsyncTaskContext* async_task_context() { return &async_task_context_; }
 
   DEFINE_ATTRIBUTE_EVENT_LISTENER(readystatechange, kReadystatechange)
 
   void Trace(Visitor*) const override;
   const char* NameInHeapSnapshot() const override { return "XMLHttpRequest"; }
+
+  bool HasRequestHeaderForTesting(AtomicString name) const;
 
  private:
   class BlobLoader;
@@ -190,8 +191,8 @@ class XMLHttpRequest final : public XMLHttpRequestEventTarget,
   void DidDownloadData(uint64_t data_length) override;
   void DidDownloadToBlob(scoped_refptr<BlobDataHandle>) override;
   void DidFinishLoading(uint64_t identifier) override;
-  void DidFail(const ResourceError&) override;
-  void DidFailRedirectCheck() override;
+  void DidFail(uint64_t, const ResourceError&) override;
+  void DidFailRedirectCheck(uint64_t) override;
 
   // BlobLoader notifications.
   void DidFinishLoadingInternal();
@@ -203,6 +204,10 @@ class XMLHttpRequest final : public XMLHttpRequestEventTarget,
 
   void EndLoading();
 
+  v8::Local<v8::Value> ResponseJSON(v8::Isolate*, ExceptionState&);
+  Blob* ResponseBlob();
+  DOMArrayBuffer* ResponseArrayBuffer();
+
   // Returns the MIME type part of mime_type_override_ if present and
   // successfully parsed, or returns one of the "Content-Type" header value
   // of the received response.
@@ -211,10 +216,11 @@ class XMLHttpRequest final : public XMLHttpRequestEventTarget,
   // spec but doesn't convert the result to ASCII lowercase as specified in
   // the spec. Must be lowered later or compared using case insensitive
   // comparison functions if required.
-  AtomicString FinalResponseMIMEType() const;
+  AtomicString FinalResponseMIMETypeInternal() const;
   // The same as finalResponseMIMEType() but fallbacks to "text/xml" if
   // finalResponseMIMEType() returns an empty string.
-  AtomicString FinalResponseMIMETypeWithFallback() const;
+  // https://xhr.spec.whatwg.org/#response-body
+  AtomicString GetResponseMIMEType() const;
   // Returns the "final charset" defined in
   // https://xhr.spec.whatwg.org/#final-charset.
   WTF::TextEncoding FinalResponseCharset() const;
@@ -275,10 +281,7 @@ class XMLHttpRequest final : public XMLHttpRequestEventTarget,
   // Handles didFail() call for timeout.
   void HandleDidTimeout();
 
-  void HandleRequestError(DOMExceptionCode,
-                          const AtomicString&,
-                          int64_t,
-                          int64_t);
+  void HandleRequestError(DOMExceptionCode, const AtomicString&);
 
   void UpdateContentTypeAndCharset(const AtomicString& content_type,
                                    const String& charset);
@@ -288,9 +291,6 @@ class XMLHttpRequest final : public XMLHttpRequestEventTarget,
   // Report the memory usage associated with this object to V8 so that V8 can
   // schedule GC accordingly.  This function should be called whenever the
   // internal memory usage changes except for the following members.
-  // - response_text_ of type TraceWrapperV8String
-  //   ScriptString internally creates and holds a v8::String, so V8 is aware of
-  //   its memory usage.
   // - response_array_buffer_ of type DOMArrayBuffer
   //   DOMArrayBuffer supports the memory usage reporting system on their own,
   //   so there is no need.
@@ -304,7 +304,6 @@ class XMLHttpRequest final : public XMLHttpRequestEventTarget,
   AtomicString method_;
   HTTPHeaderMap request_headers_;
   network::mojom::blink::TrustTokenParamsPtr trust_token_params_;
-  Member<DOMException> trust_token_operation_error_;
   // Not converted to ASCII lowercase. Must be lowered later or compared
   // using case insensitive comparison functions if needed.
   AtomicString mime_type_override_;
@@ -320,9 +319,9 @@ class XMLHttpRequest final : public XMLHttpRequestEventTarget,
 
   std::unique_ptr<TextResourceDecoder> decoder_;
 
-  // Avoid using a flat WTF::String here and rather use a traced v8::String
-  // which internally builds a string rope.
-  GC_PLUGIN_IGNORE("crbug.com/841830") TraceWrapperV8String response_text_;
+  StringBuilder response_text_;
+  bool response_text_overflow_ = false;
+  size_t response_text_last_reported_size_ = 0;
   Member<Document> response_document_;
   Member<DocumentParser> response_document_parser_;
 
@@ -347,7 +346,6 @@ class XMLHttpRequest final : public XMLHttpRequestEventTarget,
   // attribute.
   ResponseTypeCode response_type_code_ = kResponseTypeDefault;
 
-  v8::Isolate* const isolate_;
   // The DOMWrapperWorld in which the request initiated. Can be null.
   scoped_refptr<const DOMWrapperWorld> world_;
   // Stores the SecurityOrigin associated with the |world_| if it's an isolated
@@ -358,14 +356,13 @@ class XMLHttpRequest final : public XMLHttpRequestEventTarget,
   // |m_responseTypeCode| is NOT ResponseTypeBlob.
   Member<BlobLoader> blob_loader_;
 
-  // Positive if we are dispatching events.
-  // This is an integer specifying the recursion level rather than a boolean
-  // because in some cases we have recursive dispatching.
-  int event_dispatch_recursion_level_ = 0;
-
   bool async_ = true;
 
   bool with_credentials_ = false;
+
+  network::mojom::AttributionReportingEligibility
+      attribution_reporting_eligibility_ =
+          network::mojom::AttributionReportingEligibility::kUnset;
 
   // Used to skip m_responseDocument creation if it's done previously. We need
   // this separate flag since m_responseDocument can be 0 for some cases.
@@ -376,11 +373,10 @@ class XMLHttpRequest final : public XMLHttpRequestEventTarget,
   // True iff the ongoing resource loading is using the downloadToBlob
   // option.
   bool downloading_to_blob_ = false;
-  bool response_text_overflow_ = false;
   bool send_flag_ = false;
   bool response_array_buffer_failure_ = false;
 
-  probe::AsyncTaskId async_task_id_;
+  probe::AsyncTaskContext async_task_context_;
 };
 
 std::ostream& operator<<(std::ostream&, const XMLHttpRequest*);

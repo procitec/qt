@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,8 +10,9 @@
 #include <memory>
 #include <vector>
 
-#include "base/macros.h"
+#include "base/functional/callback.h"
 #include "base/memory/aligned_memory.h"
+#include "base/memory/raw_ptr.h"
 #include "media/base/audio_sample_types.h"
 #include "media/base/media_shmem_export.h"
 
@@ -29,7 +30,7 @@ class MEDIA_SHMEM_EXPORT AudioBus {
  public:
   // Guaranteed alignment of each channel's data; use 16-byte alignment for easy
   // SSE optimizations.
-  enum { kChannelAlignment = 16 };
+  static constexpr size_t kChannelAlignment = 16;
 
   // Creates a new AudioBus and allocates |channels| of length |frames|.  Uses
   // channels() and frames_per_buffer() from AudioParameters if given.
@@ -70,11 +71,21 @@ class MEDIA_SHMEM_EXPORT AudioBus {
   static int CalculateMemorySize(int channels, int frames);
   static int CalculateMemorySize(const AudioParameters& params);
 
+  // Checks if buffer is properly aligned to be used in `SetChannelData()`
+  static bool IsAligned(void* ptr);
+
   // Methods that are expected to be called after AudioBus::CreateWrapper() in
   // order to wrap externally allocated memory. Note: It is illegal to call
   // these methods when using a factory method other than CreateWrapper().
   void SetChannelData(int channel, float* data);
   void set_frames(int frames);
+
+  // Method optionally called after AudioBus::CreateWrapper().
+  // Runs |deleter| when on |this|' destruction, freeing external data
+  // referenced by SetChannelData().
+  // Note: It is illegal to call this method when using a factory method other
+  // than CreateWrapper().
+  void SetWrappedDataDeleter(base::OnceClosure deleter);
 
   // Methods for compressed bitstream formats. The data size may not be equal to
   // the capacity of the AudioBus. Also, the frame count may not be equal to the
@@ -104,11 +115,6 @@ class MEDIA_SHMEM_EXPORT AudioBus {
       const typename SourceSampleTypeTraits::ValueType* source_buffer,
       int num_frames_to_write);
 
-  // DEPRECATED (https://crbug.com/580391)
-  // Please use the version templated with SourceSampleTypeTraits instead.
-  // TODO(chfremer): Remove (https://crbug.com/619623)
-  void FromInterleaved(const void* source, int frames, int bytes_per_sample);
-
   // Similar to FromInterleaved...(), but overwrites the frames starting at a
   // given offset |write_offset_in_frames| and does not zero out frames that are
   // not overwritten.
@@ -117,12 +123,6 @@ class MEDIA_SHMEM_EXPORT AudioBus {
       const typename SourceSampleTypeTraits::ValueType* source_buffer,
       int write_offset_in_frames,
       int num_frames_to_write);
-
-  // DEPRECATED (https://crbug.com/580391)
-  // Please use the version templated with SourceSampleTypeTraits instead.
-  // TODO(chfremer): Remove (https://crbug.com/619623)
-  void FromInterleavedPartial(const void* source, int start_frame, int frames,
-                              int bytes_per_sample);
 
   // Reads the sample values stored in this AudioBus instance and places them
   // into the given |dest_buffer| in interleaved format using the sample format
@@ -133,11 +133,6 @@ class MEDIA_SHMEM_EXPORT AudioBus {
   void ToInterleaved(
       int num_frames_to_read,
       typename TargetSampleTypeTraits::ValueType* dest_buffer) const;
-
-  // DEPRECATED (https://crbug.com/580391)
-  // Please use the version templated with TargetSampleTypeTraits instead.
-  // TODO(chfremer): Remove (https://crbug.com/619623)
-  void ToInterleaved(int frames, int bytes_per_sample, void* dest) const;
 
   // Similar to ToInterleaved(), but reads the frames starting at a given
   // offset |read_offset_in_frames|.
@@ -190,6 +185,9 @@ class MEDIA_SHMEM_EXPORT AudioBus {
   // the channels are valid.
   void SwapChannels(int a, int b);
 
+  AudioBus(const AudioBus&) = delete;
+  AudioBus& operator=(const AudioBus&) = delete;
+
   virtual ~AudioBus();
 
  protected:
@@ -233,13 +231,17 @@ class MEDIA_SHMEM_EXPORT AudioBus {
   // that channel. If the memory is owned by this instance, this will
   // point to the memory in |data_|. Otherwise, it may point to memory provided
   // by the client.
-  std::vector<float*> channel_data_;
+  // FIELD excluded due to ptr arithmetic in audio_buss.cc channel_data_[i][j]
+  RAW_PTR_EXCLUSION std::vector<float*> channel_data_;
   int frames_;
 
-  // Protect SetChannelData() and set_frames() for use by CreateWrapper().
-  bool can_set_channel_data_;
+  // Protect SetChannelData(), set_frames() and SetWrappedDataDeleter() for use
+  // by CreateWrapper().
+  bool is_wrapper_;
 
-  DISALLOW_COPY_AND_ASSIGN(AudioBus);
+  // Run on destruction. Frees memory to the data set via SetChannelData().
+  // Only used with CreateWrapper().
+  base::OnceClosure wrapped_data_deleter_cb_;
 };
 
 // Delegates to FromInterleavedPartial()

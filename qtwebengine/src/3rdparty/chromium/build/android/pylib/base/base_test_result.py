@@ -1,34 +1,37 @@
-# Copyright (c) 2013 The Chromium Authors. All rights reserved.
+# Copyright 2013 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
 """Module containing base test results classes."""
 
+
+import functools
+import re
+import sys
 import threading
 
+from lib.results import result_types  # pylint: disable=import-error
 
-class ResultType(object):
-  """Class enumerating test types."""
-  # The test passed.
-  PASS = 'SUCCESS'
+# This must match the source adding the suffix: bit.ly/3Zmwwyx
+MULTIPROCESS_SUFFIX = '__multiprocess_mode'
 
-  # The test was intentionally skipped.
-  SKIP = 'SKIPPED'
+# This must match the source adding the suffix: bit.ly/3Qt0Ww4
+_NULL_MUTATION_SUFFIX = '__null_'
+_MUTATION_SUFFIX_PATTERN = re.compile(r'^(.*)__([a-zA-Z]+)\.\.([a-zA-Z]+)_$')
 
-  # The test failed.
-  FAIL = 'FAILURE'
 
-  # The test caused the containing process to crash.
-  CRASH = 'CRASH'
+class ResultType:
+  """Class enumerating test types.
 
-  # The test timed out.
-  TIMEOUT = 'TIMEOUT'
-
-  # The test ran, but we couldn't determine what happened.
-  UNKNOWN = 'UNKNOWN'
-
-  # The test did not run.
-  NOTRUN = 'NOTRUN'
+  Wraps the results defined in //build/util/lib/results/.
+  """
+  PASS = result_types.PASS
+  SKIP = result_types.SKIP
+  FAIL = result_types.FAIL
+  CRASH = result_types.CRASH
+  TIMEOUT = result_types.TIMEOUT
+  UNKNOWN = result_types.UNKNOWN
+  NOTRUN = result_types.NOTRUN
 
   @staticmethod
   def GetTypes():
@@ -38,10 +41,11 @@ class ResultType(object):
             ResultType.NOTRUN]
 
 
-class BaseTestResult(object):
+@functools.total_ordering
+class BaseTestResult:
   """Base class for a single test result."""
 
-  def __init__(self, name, test_type, duration=0, log=''):
+  def __init__(self, name, test_type, duration=0, log='', failure_reason=None):
     """Construct a BaseTestResult.
 
     Args:
@@ -56,7 +60,9 @@ class BaseTestResult(object):
     self._test_type = test_type
     self._duration = duration
     self._log = log
+    self._failure_reason = failure_reason
     self._links = {}
+    self._webview_multiprocess_mode = MULTIPROCESS_SUFFIX in name
 
   def __str__(self):
     return self._name
@@ -64,9 +70,11 @@ class BaseTestResult(object):
   def __repr__(self):
     return self._name
 
-  def __cmp__(self, other):
-    # pylint: disable=W0212
-    return cmp(self._name, other._name)
+  def __eq__(self, other):
+    return self.GetName() == other.GetName()
+
+  def __lt__(self, other):
+    return self.GetName() < other.GetName()
 
   def __hash__(self):
     return hash(self._name)
@@ -82,6 +90,43 @@ class BaseTestResult(object):
   def GetName(self):
     """Get the test name."""
     return self._name
+
+  def GetNameForResultSink(self):
+    """Get the test name to be reported to resultsink."""
+    raw_name = self.GetName()
+
+    # The name can include suffixes encoding Webview variant data:
+    # a Webview multiprocess mode suffix and an AwSettings mutation suffix.
+    # If both are present, the mutation suffix will come after the multiprocess
+    # suffix. The mutation suffix can either be "__null_" or "__{key}..{value}_"
+    #
+    # Examples:
+    # (...)AwSettingsTest#testAssetUrl__multiprocess_mode__allMutations..true_
+    # (...)AwSettingsTest#testAssetUrl__multiprocess_mode__null_
+    # (...)AwSettingsTest#testAssetUrl__allMutations..true_
+    # org.chromium.android_webview.test.AwSettingsTest#testAssetUrl__null_
+
+    # first, strip any AwSettings mutation parameter information
+    # from the RHS of the raw_name
+    if raw_name.endswith(_NULL_MUTATION_SUFFIX):
+      raw_name = raw_name[:-len(_NULL_MUTATION_SUFFIX)]
+    elif match := _MUTATION_SUFFIX_PATTERN.search(raw_name):
+      raw_name = match.group(1)
+
+    # At this stage, the name will only have the multiprocess suffix appended,
+    # if applicable.
+    #
+    # Examples:
+    # (...)AwSettingsTest#testAssetUrl__multiprocess_mode
+    # org.chromium.android_webview.test.AwSettingsTest#testAssetUrl
+
+    # then check for multiprocess mode suffix and strip it, if present
+    if self._webview_multiprocess_mode:
+      assert raw_name.endswith(
+          MULTIPROCESS_SUFFIX
+      ), 'multiprocess mode test raw name should have the corresponding suffix'
+      return raw_name[:-len(MULTIPROCESS_SUFFIX)]
+    return raw_name
 
   def SetType(self, test_type):
     """Set the test result type."""
@@ -104,6 +149,22 @@ class BaseTestResult(object):
     """Get the test log."""
     return self._log
 
+  def SetFailureReason(self, failure_reason):
+    """Set the reason the test failed.
+
+    This should be the first failure the test encounters and exclude any stack
+    trace.
+    """
+    self._failure_reason = failure_reason
+
+  def GetFailureReason(self):
+    """Get the reason the test failed.
+
+    Returns None if the test did not fail or if the reason the test failed is
+    unknown.
+    """
+    return self._failure_reason
+
   def SetLink(self, name, link_url):
     """Set link with test result data."""
     self._links[name] = link_url
@@ -112,8 +173,18 @@ class BaseTestResult(object):
     """Get dict containing links to test result data."""
     return self._links
 
+  def GetVariantForResultSink(self):
+    """Get the variant dict to be reported to result sink."""
+    variants = {}
+    if match := _MUTATION_SUFFIX_PATTERN.search(self.GetName()):
+      # variant keys need to be lowercase
+      variants[match.group(2).lower()] = match.group(3)
+    if self._webview_multiprocess_mode:
+      variants['webview_multiprocess_mode'] = 'Yes'
+    return variants or None
 
-class TestRunResults(object):
+
+class TestRunResults:
   """Set of results for a test run."""
 
   def __init__(self):
@@ -139,7 +210,10 @@ class TestRunResults(object):
             log = t.GetLog()
             if log:
               s.append('[%s] %s:' % (test_type, t))
-              s.append(unicode(log, 'utf-8'))
+              s.append(log)
+      if sys.version_info.major == 2:
+        decoded = [u.decode(encoding='utf-8', errors='ignore') for u in s]
+        return '\n'.join(decoded)
       return '\n'.join(s)
 
   def GetGtestForm(self):

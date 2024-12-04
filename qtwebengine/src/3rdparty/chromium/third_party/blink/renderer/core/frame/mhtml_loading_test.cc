@@ -28,7 +28,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "base/bind_helpers.h"
+#include "base/functional/callback_helpers.h"
 #include "build/build_config.h"
 #include "services/network/public/cpp/web_sandbox_flags.h"
 #include "services/network/public/mojom/web_sandbox_flags.mojom-blink.h"
@@ -46,18 +46,31 @@
 #include "third_party/blink/renderer/core/frame/location.h"
 #include "third_party/blink/renderer/core/frame/web_local_frame_impl.h"
 #include "third_party/blink/renderer/core/page/page.h"
+#include "third_party/blink/renderer/core/testing/mock_policy_container_host.h"
 #include "third_party/blink/renderer/platform/loader/static_data_navigation_body_loader.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "third_party/blink/renderer/platform/testing/testing_platform_support.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 #include "third_party/blink/renderer/platform/testing/url_test_helpers.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/weborigin/scheme_registry.h"
 
+// Note: See also test suite for MHTML document:
+// content/browser/navigation_browsertest
+// Those have the advantage of running with a real browser process.
+
 using blink::url_test_helpers::ToKURL;
 
 namespace blink {
 namespace test {
 
+const network::mojom::blink::WebSandboxFlags kMhtmlSandboxFlags =
+    ~network::mojom::blink::WebSandboxFlags::kPopups &
+    ~network::mojom::blink::WebSandboxFlags::
+        kPropagatesToAuxiliaryBrowsingContexts;
+
+// See the NavigationMhtmlBrowserTest for more up to date tests running with a
+// full browser + renderer(s) processes.
 class MHTMLLoadingTest : public testing::Test {
  public:
   MHTMLLoadingTest() = default;
@@ -75,6 +88,11 @@ class MHTMLLoadingTest : public testing::Test {
     params->response.SetMimeType("multipart/related");
     params->response.SetHttpStatusCode(200);
     params->response.SetExpectedContentLength(buffer->size());
+    MockPolicyContainerHost mock_policy_container_host;
+    params->policy_container = std::make_unique<blink::WebPolicyContainer>(
+        blink::WebPolicyContainerPolicies(),
+        mock_policy_container_host.BindNewEndpointAndPassDedicatedRemote());
+    params->policy_container->policies.sandbox_flags = kMhtmlSandboxFlags;
     auto body_loader = std::make_unique<StaticDataNavigationBodyLoader>();
     body_loader->Write(*buffer);
     body_loader->Finish();
@@ -86,6 +104,7 @@ class MHTMLLoadingTest : public testing::Test {
   Page* GetPage() const { return helper_.GetWebView()->GetPage(); }
 
  private:
+  test::TaskEnvironment task_environment_;
   ScopedTestingPlatformSupport<TestingPlatformSupport> platform_;
   frame_test_helpers::WebViewHelper helper_;
 };
@@ -107,6 +126,7 @@ TEST_F(MHTMLLoadingTest, CheckDomain) {
 }
 
 // Checks that full sandboxing protection has been turned on.
+// See also related test: NavigationMhtmlBrowserTest.SandboxedIframe.
 TEST_F(MHTMLLoadingTest, EnforceSandboxFlags) {
   const char kURL[] = "http://www.example.com";
 
@@ -119,11 +139,7 @@ TEST_F(MHTMLLoadingTest, EnforceSandboxFlags) {
 
   // Full sandboxing with the exception to new top-level windows should be
   // turned on.
-  EXPECT_EQ(network::mojom::blink::WebSandboxFlags::kAll &
-                ~(network::mojom::blink::WebSandboxFlags::kPopups |
-                  network::mojom::blink::WebSandboxFlags::
-                      kPropagatesToAuxiliaryBrowsingContexts),
-            window->GetSandboxFlags());
+  EXPECT_EQ(kMhtmlSandboxFlags, window->GetSandboxFlags());
 
   // MHTML document should be loaded into unique origin.
   EXPECT_TRUE(window->GetSecurityOrigin()->IsOpaque());
@@ -131,7 +147,7 @@ TEST_F(MHTMLLoadingTest, EnforceSandboxFlags) {
   EXPECT_FALSE(window->CanExecuteScripts(kNotAboutToExecuteScript));
 
   // The element to be created by the script is not there.
-  EXPECT_FALSE(window->document()->getElementById("mySpan"));
+  EXPECT_FALSE(window->document()->getElementById(AtomicString("mySpan")));
 
   // Make sure the subframe is also sandboxed.
   LocalFrame* child_frame =
@@ -140,11 +156,7 @@ TEST_F(MHTMLLoadingTest, EnforceSandboxFlags) {
   LocalDOMWindow* child_window = child_frame->DomWindow();
   ASSERT_TRUE(child_window);
 
-  EXPECT_EQ(network::mojom::blink::WebSandboxFlags::kAll &
-                ~(network::mojom::blink::WebSandboxFlags::kPopups |
-                  network::mojom::blink::WebSandboxFlags::
-                      kPropagatesToAuxiliaryBrowsingContexts),
-            child_window->GetSandboxFlags());
+  EXPECT_EQ(kMhtmlSandboxFlags, child_window->GetSandboxFlags());
 
   // MHTML document should be loaded into unique origin.
   EXPECT_TRUE(child_window->GetSecurityOrigin()->IsOpaque());
@@ -152,7 +164,8 @@ TEST_F(MHTMLLoadingTest, EnforceSandboxFlags) {
   EXPECT_FALSE(child_window->CanExecuteScripts(kNotAboutToExecuteScript));
 
   // The element to be created by the script is not there.
-  EXPECT_FALSE(child_window->document()->getElementById("mySpan"));
+  EXPECT_FALSE(
+      child_window->document()->getElementById(AtomicString("mySpan")));
 }
 
 TEST_F(MHTMLLoadingTest, EnforceSandboxFlagsInXSLT) {
@@ -167,11 +180,7 @@ TEST_F(MHTMLLoadingTest, EnforceSandboxFlagsInXSLT) {
 
   // Full sandboxing with the exception to new top-level windows should be
   // turned on.
-  EXPECT_EQ(network::mojom::blink::WebSandboxFlags::kAll &
-                ~(network::mojom::blink::WebSandboxFlags::kPopups |
-                  network::mojom::blink::WebSandboxFlags::
-                      kPropagatesToAuxiliaryBrowsingContexts),
-            window->GetSandboxFlags());
+  EXPECT_EQ(kMhtmlSandboxFlags, window->GetSandboxFlags());
 
   // MHTML document should be loaded into unique origin.
   EXPECT_TRUE(window->GetSecurityOrigin()->IsOpaque());
@@ -189,19 +198,22 @@ TEST_F(MHTMLLoadingTest, ShadowDom) {
   Document* document = frame->GetDocument();
   ASSERT_TRUE(document);
 
-  EXPECT_TRUE(IsShadowHost(document->getElementById("h2")));
+  EXPECT_TRUE(IsShadowHost(document->getElementById(AtomicString("h2"))));
   // The nested shadow DOM tree is created.
-  EXPECT_TRUE(IsShadowHost(
-      document->getElementById("h2")->GetShadowRoot()->getElementById("h3")));
+  EXPECT_TRUE(IsShadowHost(document->getElementById(AtomicString("h2"))
+                               ->GetShadowRoot()
+                               ->getElementById(AtomicString("h3"))));
 
-  EXPECT_TRUE(IsShadowHost(document->getElementById("h4")));
+  EXPECT_TRUE(IsShadowHost(document->getElementById(AtomicString("h4"))));
   // The static element in the shadow dom template is found.
-  EXPECT_TRUE(
-      document->getElementById("h4")->GetShadowRoot()->getElementById("s1"));
+  EXPECT_TRUE(document->getElementById(AtomicString("h4"))
+                  ->GetShadowRoot()
+                  ->getElementById(AtomicString("s1")));
   // The element to be created by the script in the shadow dom template is
   // not found because the script is blocked.
-  EXPECT_FALSE(
-      document->getElementById("h4")->GetShadowRoot()->getElementById("s2"));
+  EXPECT_FALSE(document->getElementById(AtomicString("h4"))
+                   ->GetShadowRoot()
+                   ->getElementById(AtomicString("s2")));
 }
 
 TEST_F(MHTMLLoadingTest, FormControlElements) {
@@ -214,13 +226,16 @@ TEST_F(MHTMLLoadingTest, FormControlElements) {
   Document* document = frame->GetDocument();
   ASSERT_TRUE(document);
 
-  HTMLCollection* formControlElements = document->getElementsByClassName("fc");
+  HTMLCollection* formControlElements =
+      document->getElementsByClassName(AtomicString("fc"));
   ASSERT_TRUE(formControlElements);
   for (Element* element : *formControlElements)
     EXPECT_TRUE(element->IsDisabledFormControl());
 
-  EXPECT_FALSE(document->getElementById("h1")->IsDisabledFormControl());
-  EXPECT_FALSE(document->getElementById("fm")->IsDisabledFormControl());
+  EXPECT_FALSE(
+      document->getElementById(AtomicString("h1"))->IsDisabledFormControl());
+  EXPECT_FALSE(
+      document->getElementById(AtomicString("fm"))->IsDisabledFormControl());
 }
 
 TEST_F(MHTMLLoadingTest, LoadMHTMLContainingSoftLineBreaks) {
@@ -237,8 +252,8 @@ TEST_F(MHTMLLoadingTest, LoadMHTMLContainingSoftLineBreaks) {
 
   // We should not have problem to concatenate body lines separated by soft
   // line breaks.
-  EXPECT_TRUE(document->getElementById(
-      "AVeryLongID012345678901234567890123456789012345678901234567890End"));
+  EXPECT_TRUE(document->getElementById(AtomicString(
+      "AVeryLongID012345678901234567890123456789012345678901234567890End")));
 }
 
 }  // namespace test

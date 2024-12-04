@@ -1,0 +1,13 @@
+dependencies:
+  ../qtdeclarative:
+    ref: b34fca34941ecdbf99819bbf58b45332ac9e6fa7
+    required: true
+  ../qtpositioning:
+    ref: 9a8565dc6c94e7d7a977c0c2e8d3efd49879eca0
+    required: false
+  ../qttools:
+    ref: b0d66c51cbda17b213bed73d379f0900c77f457c
+    required: false
+  ../qtwebchannel:
+    ref: 211a053cc3f8776baad9e61b36778a76441a55ff
+    required: false

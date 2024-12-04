@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,7 +10,7 @@
 #include "third_party/blink/renderer/core/css/cssom/css_transform_component.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
 #include "third_party/blink/renderer/platform/bindings/v8_binding.h"
-#include "third_party/blink/renderer/platform/heap/heap_allocator.h"
+#include "third_party/blink/renderer/platform/heap/collection_support/heap_vector.h"
 
 namespace blink {
 
@@ -45,7 +45,7 @@ class CORE_EXPORT CSSTransformValue final : public CSSStyleValue {
   StyleValueType GetType() const override { return kTransformType; }
 
   CSSTransformComponent* AnonymousIndexedGetter(wtf_size_t index) {
-    return transform_components_.at(index);
+    return transform_components_.at(index).Get();
   }
   IndexedPropertySetterResult AnonymousIndexedSetter(
       unsigned,

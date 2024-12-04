@@ -1,4 +1,4 @@
-// Copyright (c) 2011 The Chromium Authors. All rights reserved.
+// Copyright 2011 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,6 +10,7 @@
 
 #include "base/debug/debugging_buildflags.h"
 #include "base/debug/stack_trace.h"
+#include "base/immediate_crash.h"
 #include "base/logging.h"
 #include "base/process/kill.h"
 #include "base/process/process_handle.h"
@@ -20,18 +21,25 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/multiprocess_func_list.h"
 
-#if defined(OS_POSIX) && !defined(OS_ANDROID) && !defined(OS_IOS)
+#include "base/allocator/buildflags.h"
+#include "base/allocator/partition_allocator/src/partition_alloc/partition_alloc.h"
+#if BUILDFLAG(USE_ALLOCATOR_SHIM)
+#include "base/allocator/partition_allocator/src/partition_alloc/shim/allocator_shim.h"
+#endif
+
+#if BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
 #include "base/test/multiprocess_test.h"
 #endif
 
 namespace base {
 namespace debug {
 
-#if defined(OS_POSIX) && !defined(OS_ANDROID) && !defined(OS_IOS)
+#if BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
 typedef MultiProcessTest StackTraceTest;
 #else
 typedef testing::Test StackTraceTest;
 #endif
+typedef testing::Test StackTraceDeathTest;
 
 #if !defined(__UCLIBC__) && !defined(_AIX)
 // StackTrace::OutputToStream() is not implemented under uclibc, nor AIX.
@@ -48,40 +56,23 @@ TEST_F(StackTraceTest, OutputToStream) {
   // ToString() should produce the same output.
   EXPECT_EQ(backtrace_message, trace.ToString());
 
-  size_t frames_found = 0;
-  const void* const* addresses = trace.Addresses(&frames_found);
+  span<const void* const> addresses = trace.addresses();
 
 #if defined(OFFICIAL_BUILD) && \
-    ((defined(OS_POSIX) && !defined(OS_APPLE)) || defined(OS_FUCHSIA))
+    ((BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_APPLE)) || BUILDFLAG(IS_FUCHSIA))
   // Stack traces require an extra data table that bloats our binaries,
   // so they're turned off for official builds. Stop the test here, so
   // it at least verifies that StackTrace calls don't crash.
   return;
 #endif  // defined(OFFICIAL_BUILD) &&
-        // ((defined(OS_POSIX) && !defined(OS_APPLE)) || defined(OS_FUCHSIA))
+        // ((BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_APPLE)) ||
+        // BUILDFLAG(IS_FUCHSIA))
 
-  ASSERT_TRUE(addresses);
-  ASSERT_GT(frames_found, 5u) << "Too few frames found.";
+  ASSERT_GT(addresses.size(), 5u) << "Too few frames found.";
+  ASSERT_TRUE(addresses[0]);
 
-#if defined(OFFICIAL_BUILD) && defined(OS_APPLE)
-  // Official Mac OS X builds contain enough information to unwind the stack,
-  // but not enough to symbolize the output.
-  return;
-#endif  // defined(OFFICIAL_BUILD) && defined(OS_APPLE)
-
-#if defined(OS_FUCHSIA) || defined(OS_ANDROID)
-  // Under Fuchsia and Android, StackTrace emits executable build-Ids and
-  // address offsets which are symbolized on the test host system, rather than
-  // being symbolized in-process.
-  return;
-#endif  // defined(OS_FUCHSIA) || defined(OS_ANDROID)
-
-#if defined(ADDRESS_SANITIZER) || defined(THREAD_SANITIZER) || \
-    defined(MEMORY_SANITIZER)
-  // Sanitizer configurations (ASan, TSan, MSan) emit unsymbolized stacks.
-  return;
-#endif  // defined(ADDRESS_SANITIZER) || defined(THREAD_SANITIZER) ||
-        // defined(MEMORY_SANITIZER)
+  if (!StackTrace::WillSymbolizeToStreamForTesting())
+    return;
 
   // Check if the output has symbol initialization warning.  If it does, fail.
   ASSERT_EQ(backtrace_message.find("Dumping unresolved backtrace"),
@@ -114,13 +105,10 @@ TEST_F(StackTraceTest, OutputToStream) {
 TEST_F(StackTraceTest, TruncatedTrace) {
   StackTrace trace;
 
-  size_t count = 0;
-  trace.Addresses(&count);
-  ASSERT_LT(2u, count);
+  ASSERT_LT(2u, trace.addresses().size());
 
   StackTrace truncated(2);
-  truncated.Addresses(&count);
-  EXPECT_EQ(2u, count);
+  EXPECT_EQ(2u, truncated.addresses().size());
 }
 #endif  // !defined(OFFICIAL_BUILD) && !defined(NO_UNWIND_TABLES)
 
@@ -172,32 +160,93 @@ TEST_F(StackTraceTest, DebugOutputToStreamWithNullPrefix) {
 
 #endif  // !defined(__UCLIBC__) && !defined(_AIX)
 
-#if defined(OS_POSIX) && !defined(OS_ANDROID)
-#if !defined(OS_IOS)
-static char* newArray() {
-  // Clang warns about the mismatched new[]/delete if they occur in the same
-  // function.
-  return new char[10];
+#if BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_ANDROID)
+// Since Mac's base::debug::StackTrace().Print() is not malloc-free, skip
+// StackDumpSignalHandlerIsMallocFree if BUILDFLAG(IS_MAC).
+#if BUILDFLAG(USE_ALLOCATOR_SHIM) && !BUILDFLAG(IS_MAC)
+
+namespace {
+
+// ImmediateCrash if a signal handler incorrectly uses malloc().
+// In an actual implementation, this could cause infinite recursion into the
+// signal handler or other problems. Because malloc() is not guaranteed to be
+// async signal safe.
+void* BadMalloc(const allocator_shim::AllocatorDispatch*, size_t, void*) {
+  base::ImmediateCrash();
 }
 
-MULTIPROCESS_TEST_MAIN(MismatchedMallocChildProcess) {
-  char* pointer = newArray();
-  delete pointer;
-  return 2;
+void* BadCalloc(const allocator_shim::AllocatorDispatch*,
+                size_t,
+                size_t,
+                void* context) {
+  base::ImmediateCrash();
 }
 
-// Regression test for StackDumpingSignalHandler async-signal unsafety.
-// Combined with tcmalloc's debugallocation, that signal handler
-// and e.g. mismatched new[]/delete would cause a hang because
-// of re-entering malloc.
-TEST_F(StackTraceTest, AsyncSignalUnsafeSignalHandlerHang) {
-  Process child = SpawnChild("MismatchedMallocChildProcess");
-  ASSERT_TRUE(child.IsValid());
-  int exit_code;
-  ASSERT_TRUE(
-      child.WaitForExitWithTimeout(TestTimeouts::action_timeout(), &exit_code));
+void* BadAlignedAlloc(const allocator_shim::AllocatorDispatch*,
+                      size_t,
+                      size_t,
+                      void*) {
+  base::ImmediateCrash();
 }
-#endif  // !defined(OS_IOS)
+
+void* BadAlignedRealloc(const allocator_shim::AllocatorDispatch*,
+                        void*,
+                        size_t,
+                        size_t,
+                        void*) {
+  base::ImmediateCrash();
+}
+
+void* BadRealloc(const allocator_shim::AllocatorDispatch*,
+                 void*,
+                 size_t,
+                 void*) {
+  base::ImmediateCrash();
+}
+
+void BadFree(const allocator_shim::AllocatorDispatch*, void*, void*) {
+  base::ImmediateCrash();
+}
+
+allocator_shim::AllocatorDispatch g_bad_malloc_dispatch = {
+    &BadMalloc,         /* alloc_function */
+    &BadMalloc,         /* alloc_unchecked_function */
+    &BadCalloc,         /* alloc_zero_initialized_function */
+    &BadAlignedAlloc,   /* alloc_aligned_function */
+    &BadRealloc,        /* realloc_function */
+    &BadFree,           /* free_function */
+    nullptr,            /* get_size_estimate_function */
+    nullptr,            /* good_size_function */
+    nullptr,            /* claimed_address_function */
+    nullptr,            /* batch_malloc_function */
+    nullptr,            /* batch_free_function */
+    nullptr,            /* free_definite_size_function */
+    nullptr,            /* try_free_default_function */
+    &BadAlignedAlloc,   /* aligned_malloc_function */
+    &BadAlignedRealloc, /* aligned_realloc_function */
+    &BadFree,           /* aligned_free_function */
+    nullptr,            /* next */
+};
+
+}  // namespace
+
+// Regression test for StackDumpSignalHandler async-signal unsafety.
+// Since malloc() is not guaranteed to be async signal safe, it is not allowed
+// to use malloc() inside StackDumpSignalHandler().
+TEST_F(StackTraceDeathTest, StackDumpSignalHandlerIsMallocFree) {
+  EXPECT_DEATH_IF_SUPPORTED(
+      [] {
+        // On Android, base::debug::EnableInProcessStackDumping() does not
+        // change any actions taken by signals to be StackDumpSignalHandler. So
+        // the StackDumpSignalHandlerIsMallocFree test doesn't work on Android.
+        EnableInProcessStackDumping();
+        allocator_shim::InsertAllocatorDispatch(&g_bad_malloc_dispatch);
+        // Raise SIGSEGV to invoke StackDumpSignalHandler().
+        kill(getpid(), SIGSEGV);
+      }(),
+      "\\[end of stack trace\\]\n");
+}
+#endif  // BUILDFLAG(USE_ALLOCATOR_SHIM)
 
 namespace {
 
@@ -272,7 +321,7 @@ TEST_F(StackTraceTest, itoa_r) {
   EXPECT_EQ("0688", itoa_r_wrapper(0x688, 128, 16, 4));
   EXPECT_EQ("00688", itoa_r_wrapper(0x688, 128, 16, 5));
 }
-#endif  // defined(OS_POSIX) && !defined(OS_ANDROID)
+#endif  // BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_ANDROID)
 
 #if BUILDFLAG(CAN_UNWIND_WITH_FRAME_POINTERS)
 
@@ -283,8 +332,9 @@ class CopyFunction : public StackCopier {
 
 // Copies the current stack segment, starting from the frame pointer of the
 // caller frame. Also fills in |stack_end| for the copied stack.
-static std::unique_ptr<StackBuffer> NOINLINE
-CopyCurrentStackAndRewritePointers(uintptr_t* out_fp, uintptr_t* stack_end) {
+NOINLINE static std::unique_ptr<StackBuffer> CopyCurrentStackAndRewritePointers(
+    uintptr_t* out_fp,
+    uintptr_t* stack_end) {
   const uint8_t* fp =
       reinterpret_cast<const uint8_t*>(__builtin_frame_address(0));
   uintptr_t original_stack_end = GetStackEnd();
@@ -299,10 +349,10 @@ CopyCurrentStackAndRewritePointers(uintptr_t* out_fp, uintptr_t* stack_end) {
 }
 
 template <size_t Depth>
-void NOINLINE ExpectStackFramePointers(const void** frames,
-                                       size_t max_depth,
-                                       bool copy_stack) {
-  code_start:
+NOINLINE NOOPT void ExpectStackFramePointers(const void** frames,
+                                             size_t max_depth,
+                                             bool copy_stack) {
+code_start:
   // Calling __builtin_frame_address() forces compiler to emit
   // frame pointers, even if they are not enabled.
   EXPECT_NE(nullptr, __builtin_frame_address(0));
@@ -312,14 +362,15 @@ void NOINLINE ExpectStackFramePointers(const void** frames,
   const void* frame = frames[frame_index];
   EXPECT_GE(frame, &&code_start) << "For frame at index " << frame_index;
   EXPECT_LE(frame, &&code_end) << "For frame at index " << frame_index;
-  code_end: return;
-  }
+code_end:
+  return;
+}
 
-  template <>
-  void NOINLINE ExpectStackFramePointers<1>(const void** frames,
-                                            size_t max_depth,
-                                            bool copy_stack) {
-  code_start:
+template <>
+NOINLINE NOOPT void ExpectStackFramePointers<1>(const void** frames,
+                                                size_t max_depth,
+                                                bool copy_stack) {
+code_start:
   // Calling __builtin_frame_address() forces compiler to emit
   // frame pointers, even if they are not enabled.
   EXPECT_NE(nullptr, __builtin_frame_address(0));
@@ -338,7 +389,8 @@ void NOINLINE ExpectStackFramePointers(const void** frames,
   const void* frame = frames[0];
   EXPECT_GE(frame, &&code_start) << "For the top frame";
   EXPECT_LE(frame, &&code_end) << "For the top frame";
-  code_end: return;
+code_end:
+  return;
 }
 
 #if defined(MEMORY_SANITIZER)
@@ -356,11 +408,12 @@ TEST_F(StackTraceTest, MAYBE_TraceStackFramePointers) {
   ExpectStackFramePointers<kDepth>(frames, kDepth, /*copy_stack=*/false);
 }
 
-#if defined(MEMORY_SANITIZER)
 // The test triggers use-of-uninitialized-value errors on MSan bots.
 // This is expected because we're walking and reading the stack, and
 // sometimes we read fp / pc from the place that previously held
 // uninitialized value.
+// TODO(crbug.com/1132511): Enable this test on Fuchsia.
+#if defined(MEMORY_SANITIZER) || BUILDFLAG(IS_FUCHSIA)
 #define MAYBE_TraceStackFramePointersFromBuffer \
   DISABLED_TraceStackFramePointersFromBuffer
 #else
@@ -373,7 +426,7 @@ TEST_F(StackTraceTest, MAYBE_TraceStackFramePointersFromBuffer) {
   ExpectStackFramePointers<kDepth>(frames, kDepth, /*copy_stack=*/true);
 }
 
-#if defined(OS_ANDROID) || defined(OS_APPLE)
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_APPLE)
 #define MAYBE_StackEnd StackEnd
 #else
 #define MAYBE_StackEnd DISABLED_StackEnd
@@ -384,6 +437,70 @@ TEST_F(StackTraceTest, MAYBE_StackEnd) {
 }
 
 #endif  // BUILDFLAG(CAN_UNWIND_WITH_FRAME_POINTERS)
+
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_ANDROID)
+
+#if !defined(ADDRESS_SANITIZER) && !defined(UNDEFINED_SANITIZER)
+
+#if !defined(ARCH_CPU_ARM_FAMILY)
+// On Arm architecture invalid math operations such as division by zero are not
+// trapped and do not trigger a SIGFPE.
+// Hence disable the test for Arm platforms.
+TEST(CheckExitCodeAfterSignalHandlerDeathTest, CheckSIGFPE) {
+  // Values are volatile to prevent reordering of instructions, i.e. for
+  // optimization. Reordering may lead to tests erroneously failing due to
+  // SIGFPE being raised outside of EXPECT_EXIT.
+  volatile int const nominator = 23;
+  volatile int const denominator = 0;
+  [[maybe_unused]] volatile int result;
+
+  EXPECT_EXIT(result = nominator / denominator,
+              ::testing::KilledBySignal(SIGFPE), "");
+}
+#endif  // !defined(ARCH_CPU_ARM_FAMILY)
+
+TEST(CheckExitCodeAfterSignalHandlerDeathTest, CheckSIGSEGV) {
+  // Pointee and pointer are volatile to prevent reordering of instructions,
+  // i.e. for optimization. Reordering may lead to tests erroneously failing due
+  // to SIGSEGV being raised outside of EXPECT_EXIT.
+  volatile int* const volatile p_int = nullptr;
+
+  EXPECT_EXIT(*p_int = 1234, ::testing::KilledBySignal(SIGSEGV), "");
+}
+
+#if defined(ARCH_CPU_X86_64)
+TEST(CheckExitCodeAfterSignalHandlerDeathTest,
+     CheckSIGSEGVNonCanonicalAddress) {
+  // Pointee and pointer are volatile to prevent reordering of instructions,
+  // i.e. for optimization. Reordering may lead to tests erroneously failing due
+  // to SIGSEGV being raised outside of EXPECT_EXIT.
+  //
+  // On Linux, the upper half of the address space is reserved by the kernel, so
+  // all upper bits must be 0 for canonical addresses.
+  volatile int* const volatile p_int =
+      reinterpret_cast<int*>(0xabcdabcdabcdabcdULL);
+
+  EXPECT_EXIT(*p_int = 1234, ::testing::KilledBySignal(SIGSEGV), "SI_KERNEL");
+}
+#endif
+
+#endif  // #if !defined(ADDRESS_SANITIZER) && !defined(UNDEFINED_SANITIZER)
+
+TEST(CheckExitCodeAfterSignalHandlerDeathTest, CheckSIGILL) {
+  auto const raise_sigill = []() {
+#if defined(ARCH_CPU_X86_FAMILY)
+    asm("ud2");
+#elif defined(ARCH_CPU_ARM_FAMILY)
+    asm("udf 0");
+#else
+#error Unsupported platform!
+#endif
+  };
+
+  EXPECT_EXIT(raise_sigill(), ::testing::KilledBySignal(SIGILL), "");
+}
+
+#endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_ANDROID)
 
 }  // namespace debug
 }  // namespace base

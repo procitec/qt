@@ -13,13 +13,13 @@
 
 #include <stdio.h>
 
+#include <functional>
 #include <map>
 #include <string>
 #include <utility>
 
 #include "absl/strings/string_view.h"
 #include "logging/rtc_event_log/rtc_event_log_parser.h"
-#include "rtc_base/constructor_magic.h"
 #include "rtc_tools/rtc_event_log_visualizer/analyzer_common.h"
 
 namespace webrtc {
@@ -49,6 +49,9 @@ class TriageHelper {
  public:
   explicit TriageHelper(const AnalyzerConfig& config) : config_(config) {}
 
+  TriageHelper(const TriageHelper&) = delete;
+  TriageHelper& operator=(const TriageHelper&) = delete;
+
   void AnalyzeLog(const ParsedRtcEventLog& parsed_log);
 
   void AnalyzeStreamGaps(const ParsedRtcEventLog& parsed_log,
@@ -56,6 +59,8 @@ class TriageHelper {
   void AnalyzeTransmissionGaps(const ParsedRtcEventLog& parsed_log,
                                PacketDirection direction);
   void Print(FILE* file);
+
+  void ProcessAlerts(std::function<void(int, float, std::string)> f);
 
  private:
   AnalyzerConfig config_;
@@ -78,7 +83,6 @@ class TriageHelper {
       it->second.count += 1;
     }
   }
-  RTC_DISALLOW_COPY_AND_ASSIGN(TriageHelper);
 };
 
 }  // namespace webrtc

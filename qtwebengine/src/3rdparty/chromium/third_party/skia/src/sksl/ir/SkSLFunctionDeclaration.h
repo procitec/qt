@@ -8,61 +8,125 @@
 #ifndef SKSL_FUNCTIONDECLARATION
 #define SKSL_FUNCTIONDECLARATION
 
-#include "src/sksl/ir/SkSLExpression.h"
-#include "src/sksl/ir/SkSLModifiers.h"
+#include "include/core/SkSpan.h"
+#include "include/core/SkTypes.h"
+#include "include/private/base/SkTArray.h"
+#include "src/sksl/SkSLIntrinsicList.h"
+#include "src/sksl/ir/SkSLIRNode.h"
+#include "src/sksl/ir/SkSLModifierFlags.h"
 #include "src/sksl/ir/SkSLSymbol.h"
-#include "src/sksl/ir/SkSLSymbolTable.h"
-#include "src/sksl/ir/SkSLType.h"
-#include "src/sksl/ir/SkSLVariable.h"
 
-#include <atomic>
+#include <memory>
+#include <string>
+#include <string_view>
 
 namespace SkSL {
 
-struct FunctionDefinition;
+class Context;
+class ExpressionArray;
+class FunctionDefinition;
+struct Modifiers;
+class Position;
+class Type;
+class Variable;
 
 /**
  * A function declaration (not a definition -- does not contain a body).
  */
-struct FunctionDeclaration : public Symbol {
-    static constexpr Kind kSymbolKind = Kind::kFunctionDeclaration;
+class FunctionDeclaration final : public Symbol {
+public:
+    inline static constexpr Kind kIRNodeKind = Kind::kFunctionDeclaration;
 
-    FunctionDeclaration(int offset, Modifiers modifiers, StringFragment name,
-                        std::vector<const Variable*> parameters, const Type& returnType,
-                        bool builtin)
-    : INHERITED(offset, kSymbolKind, std::move(name))
-    , fDefinition(nullptr)
-    , fBuiltin(builtin)
-    , fModifiers(modifiers)
-    , fParameters(std::move(parameters))
-    , fReturnType(returnType)
-    , fCallCount(0) {}
+    FunctionDeclaration(const Context& context,
+                        Position pos,
+                        ModifierFlags modifierFlags,
+                        std::string_view name,
+                        skia_private::TArray<Variable*> parameters,
+                        const Type* returnType,
+                        IntrinsicKind intrinsicKind);
 
-    String description() const override {
-        String result = fReturnType.displayName() + " " + fName + "(";
-        String separator;
-        for (auto p : fParameters) {
-            result += separator;
-            separator = ", ";
-            result += p->type().displayName();
-        }
-        result += ")";
-        return result;
+    static FunctionDeclaration* Convert(const Context& context,
+                                        Position pos,
+                                        const Modifiers& modifiers,
+                                        std::string_view name,
+                                        skia_private::TArray<std::unique_ptr<Variable>> parameters,
+                                        Position returnTypePos,
+                                        const Type* returnType);
+
+    ModifierFlags modifierFlags() const {
+        return fModifierFlags;
     }
 
-    bool matches(const FunctionDeclaration& f) const {
-        if (fName != f.fName) {
-            return false;
-        }
-        if (fParameters.size() != f.fParameters.size()) {
-            return false;
-        }
-        for (size_t i = 0; i < fParameters.size(); i++) {
-            if (fParameters[i]->type() != f.fParameters[i]->type()) {
-                return false;
-            }
-        }
-        return true;
+    void setModifierFlags(ModifierFlags m) {
+        fModifierFlags = m;
+    }
+
+    const FunctionDefinition* definition() const {
+        return fDefinition;
+    }
+
+    void setDefinition(const FunctionDefinition* definition) {
+        fDefinition = definition;
+        fIntrinsicKind = kNotIntrinsic;
+    }
+
+    void setNextOverload(FunctionDeclaration* overload) {
+        SkASSERT(!overload || overload->name() == this->name());
+        fNextOverload = overload;
+    }
+
+    SkSpan<Variable* const> parameters() const {
+        return fParameters;
+    }
+
+    const Type& returnType() const {
+        return *fReturnType;
+    }
+
+    bool isBuiltin() const {
+        return fBuiltin;
+    }
+
+    bool isMain() const {
+        return fIsMain;
+    }
+
+    IntrinsicKind intrinsicKind() const {
+        return fIntrinsicKind;
+    }
+
+    bool isIntrinsic() const {
+        return this->intrinsicKind() != kNotIntrinsic;
+    }
+
+    const FunctionDeclaration* nextOverload() const {
+        return fNextOverload;
+    }
+
+    FunctionDeclaration* mutableNextOverload() const {
+        return fNextOverload;
+    }
+
+    std::string mangledName() const;
+
+    std::string description() const override;
+
+    bool matches(const FunctionDeclaration& f) const;
+
+    /**
+     * If this function is main(), and it has the requested parameter, returns that parameter.
+     * For instance, only a runtime-blend program will have a dest-color parameter, in parameter 1;
+     * `getMainDestColorParameter` will return that parameter if this is a runtime-blend main()
+     * function. Otherwise, null is returned.
+     */
+    const Variable* getMainCoordsParameter() const {
+        return fHasMainCoordsParameter ? fParameters[0] : nullptr;
+    }
+    const Variable* getMainInputColorParameter() const {
+        return fHasMainInputColorParameter ? fParameters[0] : nullptr;
+    }
+    const Variable* getMainDestColorParameter() const {
+        return fHasMainDestColorParameter ? fParameters[1] : nullptr;
     }
 
     /**
@@ -80,48 +144,23 @@ struct FunctionDeclaration : public Symbol {
      * that each argument can actually be coerced to the final parameter type, respecting the
      * narrowing-conversions flag. This is handled in callCost(), or in convertCall() (via coerce).
      */
-    bool determineFinalTypes(const std::vector<std::unique_ptr<Expression>>& arguments,
-                             std::vector<const Type*>* outParameterTypes,
-                             const Type** outReturnType) const {
-        SkASSERT(arguments.size() == fParameters.size());
-        int genericIndex = -1;
-        for (size_t i = 0; i < arguments.size(); i++) {
-            const Type& parameterType = fParameters[i]->type();
-            if (parameterType.typeKind() == Type::TypeKind::kGeneric) {
-                std::vector<const Type*> types = parameterType.coercibleTypes();
-                if (genericIndex == -1) {
-                    for (size_t j = 0; j < types.size(); j++) {
-                        if (arguments[i]->type().canCoerceTo(*types[j], /*allowNarrowing=*/true)) {
-                            genericIndex = j;
-                            break;
-                        }
-                    }
-                    if (genericIndex == -1) {
-                        return false;
-                    }
-                }
-                outParameterTypes->push_back(types[genericIndex]);
-            } else {
-                outParameterTypes->push_back(&parameterType);
-            }
-        }
-        if (fReturnType.typeKind() == Type::TypeKind::kGeneric) {
-            if (genericIndex == -1) {
-                return false;
-            }
-            *outReturnType = fReturnType.coercibleTypes()[genericIndex];
-        } else {
-            *outReturnType = &fReturnType;
-        }
-        return true;
-    }
+    using ParamTypes = skia_private::STArray<8, const Type*>;
+    bool determineFinalTypes(const ExpressionArray& arguments,
+                             ParamTypes* outParameterTypes,
+                             const Type** outReturnType) const;
 
-    mutable FunctionDefinition* fDefinition;
-    bool fBuiltin;
-    Modifiers fModifiers;
-    const std::vector<const Variable*> fParameters;
-    const Type& fReturnType;
-    mutable std::atomic<int> fCallCount;
+private:
+    const FunctionDefinition* fDefinition;
+    FunctionDeclaration* fNextOverload = nullptr;
+    skia_private::TArray<Variable*> fParameters;
+    const Type* fReturnType = nullptr;
+    ModifierFlags fModifierFlags;
+    mutable IntrinsicKind fIntrinsicKind = kNotIntrinsic;
+    bool fBuiltin = false;
+    bool fIsMain = false;
+    bool fHasMainCoordsParameter = false;
+    bool fHasMainInputColorParameter = false;
+    bool fHasMainDestColorParameter = false;
 
     using INHERITED = Symbol;
 };

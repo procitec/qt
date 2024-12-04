@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,11 +9,12 @@
 #include <type_traits>
 
 #include "base/compiler_specific.h"
+#include "build/build_config.h"
 
 // WARNING: This block must come before the base/numerics headers are included.
 // These tests deliberately cause arithmetic boundary errors. If the compiler is
 // aggressive enough, it can const detect these errors, so we disable warnings.
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 #pragma warning(disable : 4756)  // Arithmetic overflow.
 #pragma warning(disable : 4293)  // Invalid shift.
 #endif
@@ -28,8 +29,8 @@
 #include "base/logging.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/numerics/safe_math.h"
+#include "base/numerics/wrapping_math.h"
 #include "base/test/gtest_util.h"
-#include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 #if defined(COMPILER_MSVC) && defined(ARCH_CPU_32_BITS)
@@ -71,36 +72,36 @@ static_assert(BigEnoughPromotion<int32_t, uint32_t>::is_contained, "");
 static_assert(BigEnoughPromotion<intmax_t, int8_t>::is_contained, "");
 static_assert(!BigEnoughPromotion<uintmax_t, int8_t>::is_contained, "");
 static_assert(
-    std::is_same<BigEnoughPromotion<int16_t, int8_t>::type, int16_t>::value,
+    std::is_same_v<BigEnoughPromotion<int16_t, int8_t>::type, int16_t>,
     "");
 static_assert(
-    std::is_same<BigEnoughPromotion<int32_t, uint32_t>::type, int64_t>::value,
+    std::is_same_v<BigEnoughPromotion<int32_t, uint32_t>::type, int64_t>,
     "");
 static_assert(
-    std::is_same<BigEnoughPromotion<intmax_t, int8_t>::type, intmax_t>::value,
+    std::is_same_v<BigEnoughPromotion<intmax_t, int8_t>::type, intmax_t>,
     "");
 static_assert(
-    std::is_same<BigEnoughPromotion<uintmax_t, int8_t>::type, uintmax_t>::value,
+    std::is_same_v<BigEnoughPromotion<uintmax_t, int8_t>::type, uintmax_t>,
     "");
 static_assert(BigEnoughPromotion<int16_t, int8_t>::is_contained, "");
 static_assert(BigEnoughPromotion<int32_t, uint32_t>::is_contained, "");
 static_assert(BigEnoughPromotion<intmax_t, int8_t>::is_contained, "");
 static_assert(!BigEnoughPromotion<uintmax_t, int8_t>::is_contained, "");
 static_assert(
-    std::is_same<FastIntegerArithmeticPromotion<int16_t, int8_t>::type,
-                 int32_t>::value,
+    std::is_same_v<FastIntegerArithmeticPromotion<int16_t, int8_t>::type,
+                   int32_t>,
     "");
 static_assert(
-    std::is_same<FastIntegerArithmeticPromotion<int32_t, uint32_t>::type,
-                 int64_t>::value,
+    std::is_same_v<FastIntegerArithmeticPromotion<int32_t, uint32_t>::type,
+                   int64_t>,
     "");
 static_assert(
-    std::is_same<FastIntegerArithmeticPromotion<intmax_t, int8_t>::type,
-                 intmax_t>::value,
+    std::is_same_v<FastIntegerArithmeticPromotion<intmax_t, int8_t>::type,
+                   intmax_t>,
     "");
 static_assert(
-    std::is_same<FastIntegerArithmeticPromotion<uintmax_t, int8_t>::type,
-                 uintmax_t>::value,
+    std::is_same_v<FastIntegerArithmeticPromotion<uintmax_t, int8_t>::type,
+                   uintmax_t>,
     "");
 static_assert(FastIntegerArithmeticPromotion<int16_t, int8_t>::is_contained,
               "");
@@ -109,6 +110,59 @@ static_assert(FastIntegerArithmeticPromotion<int32_t, uint32_t>::is_contained,
 static_assert(!FastIntegerArithmeticPromotion<intmax_t, int8_t>::is_contained,
               "");
 static_assert(!FastIntegerArithmeticPromotion<uintmax_t, int8_t>::is_contained,
+              "");
+
+// Test compile-time (constexpr) evaluation of checking and saturation.
+constexpr int32_t kIntOne = 1;
+static_assert(1 == checked_cast<uint8_t>(kIntOne), "");
+static_assert(1 == saturated_cast<uint8_t>(kIntOne), "");
+static_assert(2U == MakeClampedNum(kIntOne) + 1, "");
+static_assert(2U == (MakeCheckedNum(kIntOne) + 1).ValueOrDie(), "");
+static_assert(0U == MakeClampedNum(kIntOne) - 1, "");
+static_assert(0U == (MakeCheckedNum(kIntOne) - 1).ValueOrDie(), "");
+static_assert(-1 == -MakeClampedNum(kIntOne), "");
+static_assert(-1 == (-MakeCheckedNum(kIntOne)).ValueOrDie(), "");
+static_assert(1U == MakeClampedNum(kIntOne) * 1, "");
+static_assert(1U == (MakeCheckedNum(kIntOne) * 1).ValueOrDie(), "");
+static_assert(1U == MakeClampedNum(kIntOne) / 1, "");
+static_assert(1U == (MakeCheckedNum(kIntOne) / 1).ValueOrDie(), "");
+static_assert(1 == MakeClampedNum(-kIntOne).Abs(), "");
+static_assert(1 == MakeCheckedNum(-kIntOne).Abs().ValueOrDie(), "");
+static_assert(1U == MakeClampedNum(kIntOne) % 2, "");
+static_assert(1U == (MakeCheckedNum(kIntOne) % 2).ValueOrDie(), "");
+static_assert(0U == MakeClampedNum(kIntOne) >> 1U, "");
+static_assert(0U == (MakeCheckedNum(kIntOne) >> 1U).ValueOrDie(), "");
+static_assert(2U == MakeClampedNum(kIntOne) << 1U, "");
+static_assert(2U == (MakeCheckedNum(kIntOne) << 1U).ValueOrDie(), "");
+static_assert(1 == MakeClampedNum(kIntOne) & 1U, "");
+static_assert(1 == (MakeCheckedNum(kIntOne) & 1U).ValueOrDie(), "");
+static_assert(1 == MakeClampedNum(kIntOne) | 1U, "");
+static_assert(1 == (MakeCheckedNum(kIntOne) | 1U).ValueOrDie(), "");
+static_assert(0 == MakeClampedNum(kIntOne) ^ 1U, "");
+static_assert(0 == (MakeCheckedNum(kIntOne) ^ 1U).ValueOrDie(), "");
+constexpr float kFloatOne = 1.0;
+static_assert(1 == int{checked_cast<int8_t>(kFloatOne)}, "");
+static_assert(1 == int{saturated_cast<int8_t>(kFloatOne)}, "");
+static_assert(2U == unsigned{MakeClampedNum(kFloatOne) + 1}, "");
+static_assert(2U ==
+                  (MakeCheckedNum(kFloatOne) + 1).Cast<unsigned>().ValueOrDie(),
+              "");
+static_assert(0U == unsigned{MakeClampedNum(kFloatOne) - 1}, "");
+static_assert(0U ==
+                  (MakeCheckedNum(kFloatOne) - 1).Cast<unsigned>().ValueOrDie(),
+              "");
+static_assert(-1 == int{-MakeClampedNum(kFloatOne)}, "");
+static_assert(-1 == (-MakeCheckedNum(kFloatOne)).Cast<int>().ValueOrDie(), "");
+static_assert(1U == unsigned{MakeClampedNum(kFloatOne) * 1}, "");
+static_assert(1U ==
+                  (MakeCheckedNum(kFloatOne) * 1).Cast<unsigned>().ValueOrDie(),
+              "");
+static_assert(1U == unsigned{MakeClampedNum(kFloatOne) / 1}, "");
+static_assert(1U ==
+                  (MakeCheckedNum(kFloatOne) / 1).Cast<unsigned>().ValueOrDie(),
+              "");
+static_assert(1 == int{MakeClampedNum(-kFloatOne).Abs()}, "");
+static_assert(1 == MakeCheckedNum(-kFloatOne).Abs().Cast<int>().ValueOrDie(),
               "");
 
 template <typename U>
@@ -202,9 +256,9 @@ template <typename Dst>
 static void TestSpecializedArithmetic(
     const char* dst,
     int line,
-    typename std::enable_if<numeric_limits<Dst>::is_integer &&
-                                numeric_limits<Dst>::is_signed,
-                            int>::type = 0) {
+    std::enable_if_t<numeric_limits<Dst>::is_integer &&
+                         numeric_limits<Dst>::is_signed,
+                     int> = 0) {
   using DstLimits = SaturationDefaultLimits<Dst>;
   TEST_EXPECTED_FAILURE(-CheckedNumeric<Dst>(DstLimits::lowest()));
   TEST_EXPECTED_FAILURE(CheckedNumeric<Dst>(DstLimits::lowest()).Abs());
@@ -407,9 +461,9 @@ template <typename Dst>
 static void TestSpecializedArithmetic(
     const char* dst,
     int line,
-    typename std::enable_if<numeric_limits<Dst>::is_integer &&
-                                !numeric_limits<Dst>::is_signed,
-                            int>::type = 0) {
+    std::enable_if_t<numeric_limits<Dst>::is_integer &&
+                         !numeric_limits<Dst>::is_signed,
+                     int> = 0) {
   using DstLimits = SaturationDefaultLimits<Dst>;
   TEST_EXPECTED_SUCCESS(-CheckedNumeric<Dst>(DstLimits::lowest()));
   TEST_EXPECTED_SUCCESS(CheckedNumeric<Dst>(DstLimits::lowest()).Abs());
@@ -565,7 +619,7 @@ template <typename Dst>
 void TestSpecializedArithmetic(
     const char* dst,
     int line,
-    typename std::enable_if<numeric_limits<Dst>::is_iec559, int>::type = 0) {
+    std::enable_if_t<numeric_limits<Dst>::is_iec559, int> = 0) {
   using DstLimits = SaturationDefaultLimits<Dst>;
   TEST_EXPECTED_SUCCESS(-CheckedNumeric<Dst>(DstLimits::lowest()));
 
@@ -618,6 +672,14 @@ void TestSpecializedArithmetic(
 template <typename Dst>
 static void TestArithmetic(const char* dst, int line) {
   using DstLimits = SaturationDefaultLimits<Dst>;
+
+  // Test C++17 class template argument deduction
+  static_assert(
+      std::is_same_v<Dst, typename decltype(CheckedNumeric(Dst{0}))::type>);
+  static_assert(
+      std::is_same_v<Dst, typename decltype(ClampedNumeric(Dst{0}))::type>);
+  static_assert(
+      std::is_same_v<Dst, typename decltype(StrictNumeric(Dst{0}))::type>);
 
   EXPECT_EQ(true, CheckedNumeric<Dst>().IsValid());
   EXPECT_EQ(false, CheckedNumeric<Dst>(CheckedNumeric<Dst>(DstLimits::max()) *
@@ -997,7 +1059,7 @@ struct TestNumericConversion<Dst, Src, SIGN_PRESERVING_VALUE_PRESERVING> {
         // At least twice larger type.
         TEST_EXPECTED_SUCCESS(SrcLimits::max() * checked_dst);
         TEST_EXPECTED_VALUE(SrcLimits::max() * clamped_dst,
-                            Dst(SrcLimits::max()) * SrcLimits::max());
+                            Dst(SrcLimits::max()) * Dst(SrcLimits::max()));
       } else {  // Larger, but not at least twice as large.
         TEST_EXPECTED_FAILURE(SrcLimits::max() * checked_dst);
         TEST_EXPECTED_SUCCESS(checked_dst + 1);
@@ -1021,7 +1083,7 @@ struct TestNumericConversion<Dst, Src, SIGN_PRESERVING_VALUE_PRESERVING> {
     } else if (numeric_limits<Src>::is_signed) {
       // This block reverses the Src to Dst relationship so we don't have to
       // complicate the test macros.
-      if (!std::is_same<Src, Dst>::value) {
+      if (!std::is_same_v<Src, Dst>) {
         TEST_EXPECTED_SUCCESS(CheckDiv(SrcLimits::lowest(), Dst(-1)));
       }
       TEST_EXPECTED_RANGE(RANGE_VALID, static_cast<Src>(-1));
@@ -1358,12 +1420,11 @@ size_t TestOverload(size_t) {  // Overload succeeds.
   return 0;
 }
 
-static_assert(
-    std::is_same<decltype(TestOverload(StrictNumeric<int>())), int>::value,
-    "");
-static_assert(std::is_same<decltype(TestOverload(StrictNumeric<size_t>())),
-                           size_t>::value,
+static_assert(std::is_same_v<decltype(TestOverload(StrictNumeric<int>())), int>,
               "");
+static_assert(
+    std::is_same_v<decltype(TestOverload(StrictNumeric<size_t>())), size_t>,
+    "");
 
 template <typename T>
 struct CastTest1 {
@@ -1482,12 +1543,11 @@ TEST(SafeNumerics, CastTests) {
   auto int8_max = MakeCheckedNum(numeric_limits<int8_t>::max());
   auto double_max = MakeCheckedNum(numeric_limits<double>::max());
   static_assert(
-      std::is_same<int16_t,
-                   decltype(int8_min.ValueOrDie<int16_t>())::type>::value,
+      std::is_same_v<int16_t, decltype(int8_min.ValueOrDie<int16_t>())::type>,
       "ValueOrDie returning incorrect type.");
   static_assert(
-      std::is_same<int16_t,
-                   decltype(int8_min.ValueOrDefault<int16_t>(0))::type>::value,
+      std::is_same_v<int16_t,
+                     decltype(int8_min.ValueOrDefault<int16_t>(0))::type>,
       "ValueOrDefault returning incorrect type.");
   EXPECT_FALSE(IsValidForType<uint8_t>(int8_min));
   EXPECT_TRUE(IsValidForType<uint8_t>(int8_max));
@@ -1535,6 +1595,11 @@ TEST(SafeNumerics, IsValueInRangeForNumericType) {
   EXPECT_FALSE(IsValueInRangeForNumericType<uint32_t>(
       std::numeric_limits<int64_t>::lowest()));
 
+  // Converting to integer types will discard the fractional part first, so -0.9
+  // will be truncated to -0.0.
+  EXPECT_TRUE(IsValueInRangeForNumericType<uint32_t>(-0.9));
+  EXPECT_FALSE(IsValueInRangeForNumericType<uint32_t>(-1.0));
+
   EXPECT_TRUE(IsValueInRangeForNumericType<int32_t>(0));
   EXPECT_TRUE(IsValueInRangeForNumericType<int32_t>(1));
   EXPECT_TRUE(IsValueInRangeForNumericType<int32_t>(2));
@@ -1568,6 +1633,11 @@ TEST(SafeNumerics, IsValueInRangeForNumericType) {
   EXPECT_FALSE(IsValueInRangeForNumericType<uint64_t>(INT64_C(-1)));
   EXPECT_FALSE(IsValueInRangeForNumericType<uint64_t>(
       std::numeric_limits<int64_t>::lowest()));
+
+  // Converting to integer types will discard the fractional part first, so -0.9
+  // will be truncated to -0.0.
+  EXPECT_TRUE(IsValueInRangeForNumericType<uint64_t>(-0.9));
+  EXPECT_FALSE(IsValueInRangeForNumericType<uint64_t>(-1.0));
 
   EXPECT_TRUE(IsValueInRangeForNumericType<int64_t>(0));
   EXPECT_TRUE(IsValueInRangeForNumericType<int64_t>(1));
@@ -1622,6 +1692,46 @@ TEST(SafeNumerics, CompoundNumericOperations) {
   EXPECT_FALSE(too_large.IsValid());
 }
 
+TEST(SafeNumerics, TemplatedSafeMath) {
+  // CheckMul and friends can be confusing, as they change behavior depending on
+  // where the template is specified.
+  uint64_t result;
+  short short_one_thousand = 1000;
+  // In this case, CheckMul uses template deduction to use the <short> variant,
+  // and this will overflow even if assigned to a uint64_t.
+  EXPECT_FALSE(CheckMul(short_one_thousand, short_one_thousand)
+                   .AssignIfValid<uint64_t>(&result));
+  EXPECT_FALSE(CheckMul(short_one_thousand, short_one_thousand).IsValid());
+  // In both cases, CheckMul is forced to use the uint64_t template and will not
+  // overflow.
+  EXPECT_TRUE(CheckMul<uint64_t>(short_one_thousand, short_one_thousand)
+                  .AssignIfValid(&result));
+  EXPECT_TRUE(CheckMul<uint64_t>(short_one_thousand, short_one_thousand)
+                  .AssignIfValid<uint64_t>(&result));
+
+  uint64_t big_one_thousand = 1000u;
+  // Order doesn't matter here: if one of the parameters is uint64_t then the
+  // operation is done on a uint64_t.
+  EXPECT_TRUE(
+      CheckMul(big_one_thousand, short_one_thousand).AssignIfValid(&result));
+  EXPECT_TRUE(
+      CheckMul(short_one_thousand, big_one_thousand).AssignIfValid(&result));
+
+  // Checked math functions can also take two template type parameters. Here are
+  // the results of all four combinations.
+  EXPECT_TRUE((CheckMul<short, uint64_t>(1000, 1000).AssignIfValid(&result)));
+
+  // Note: Order here does not matter.
+  EXPECT_TRUE((CheckMul<uint64_t, short>(1000, 1000).AssignIfValid(&result)));
+
+  // Only if both are short will the operation be invalid.
+  EXPECT_FALSE((CheckMul<short, short>(1000, 1000).AssignIfValid(&result)));
+
+  // Same as above.
+  EXPECT_TRUE(
+      (CheckMul<uint64_t, uint64_t>(1000, 1000).AssignIfValid(&result)));
+}
+
 TEST(SafeNumerics, VariadicNumericOperations) {
   {  // Synthetic scope to avoid variable naming collisions.
     auto a = CheckAdd(1, 2UL, MakeCheckedNum(3LL), 4).ValueOrDie();
@@ -1663,7 +1773,7 @@ TEST(SafeNumerics, VariadicNumericOperations) {
 }
 
 TEST(SafeNumerics, CeilInt) {
-  constexpr float kMax = std::numeric_limits<int>::max();
+  constexpr float kMax = static_cast<float>(std::numeric_limits<int>::max());
   constexpr float kMin = std::numeric_limits<int>::min();
   constexpr float kInfinity = std::numeric_limits<float>::infinity();
   constexpr float kNaN = std::numeric_limits<float>::quiet_NaN();
@@ -1687,7 +1797,7 @@ TEST(SafeNumerics, CeilInt) {
 }
 
 TEST(SafeNumerics, FloorInt) {
-  constexpr float kMax = std::numeric_limits<int>::max();
+  constexpr float kMax = static_cast<float>(std::numeric_limits<int>::max());
   constexpr float kMin = std::numeric_limits<int>::min();
   constexpr float kInfinity = std::numeric_limits<float>::infinity();
   constexpr float kNaN = std::numeric_limits<float>::quiet_NaN();
@@ -1711,7 +1821,7 @@ TEST(SafeNumerics, FloorInt) {
 }
 
 TEST(SafeNumerics, RoundInt) {
-  constexpr float kMax = std::numeric_limits<int>::max();
+  constexpr float kMax = static_cast<float>(std::numeric_limits<int>::max());
   constexpr float kMin = std::numeric_limits<int>::min();
   constexpr float kInfinity = std::numeric_limits<float>::infinity();
   constexpr float kNaN = std::numeric_limits<float>::quiet_NaN();
@@ -1727,7 +1837,9 @@ TEST(SafeNumerics, RoundInt) {
   EXPECT_EQ(-100, ClampRound(-100.1f));
   EXPECT_EQ(-101, ClampRound(-100.5f));
   EXPECT_EQ(-101, ClampRound(-100.9f));
+  EXPECT_EQ(0, ClampRound(std::nextafter(-0.5f, 0.0f)));
   EXPECT_EQ(0, ClampRound(0.0f));
+  EXPECT_EQ(0, ClampRound(std::nextafter(0.5f, 0.0f)));
   EXPECT_EQ(100, ClampRound(100.1f));
   EXPECT_EQ(101, ClampRound(100.5f));
   EXPECT_EQ(101, ClampRound(100.9f));
@@ -1739,7 +1851,8 @@ TEST(SafeNumerics, RoundInt) {
 }
 
 TEST(SafeNumerics, Int64) {
-  constexpr double kMax = std::numeric_limits<int64_t>::max();
+  constexpr double kMax =
+      static_cast<double>(std::numeric_limits<int64_t>::max());
   constexpr double kMin = std::numeric_limits<int64_t>::min();
   constexpr double kInfinity = std::numeric_limits<double>::infinity();
   constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
@@ -1772,6 +1885,82 @@ TEST(SafeNumerics, Int64) {
   EXPECT_EQ(0, ClampFloor<int64_t>(-kNaN));
   EXPECT_EQ(0, ClampCeil<int64_t>(-kNaN));
   EXPECT_EQ(0, ClampRound<int64_t>(-kNaN));
+}
+
+template <typename T>
+void TestWrappingMathSigned() {
+  static_assert(std::is_signed_v<T>);
+  constexpr T kMinusTwo = -2;
+  constexpr T kMinusOne = -1;
+  constexpr T kZero = 0;
+  constexpr T kOne = 1;
+  constexpr T kTwo = 2;
+  constexpr T kThree = 3;
+  constexpr T kMax = std::numeric_limits<T>::max();
+  constexpr T kMin = std::numeric_limits<T>::min();
+
+  EXPECT_EQ(base::WrappingAdd(kOne, kTwo), kThree);
+  static_assert(base::WrappingAdd(kOne, kTwo) == kThree);
+  EXPECT_EQ(base::WrappingAdd(kMax, kOne), kMin);
+  static_assert(base::WrappingAdd(kMax, kOne) == kMin);
+  EXPECT_EQ(base::WrappingAdd(kMax, kTwo), kMin + 1);
+  static_assert(base::WrappingAdd(kMax, kTwo) == kMin + 1);
+  EXPECT_EQ(base::WrappingAdd(kMax, kMax), kMinusTwo);
+  static_assert(base::WrappingAdd(kMax, kMax) == kMinusTwo);
+  EXPECT_EQ(base::WrappingAdd(kMin, kMin), kZero);
+  static_assert(base::WrappingAdd(kMin, kMin) == kZero);
+
+  EXPECT_EQ(base::WrappingSub(kTwo, kOne), kOne);
+  static_assert(base::WrappingSub(kTwo, kOne) == kOne);
+  EXPECT_EQ(base::WrappingSub(kOne, kTwo), kMinusOne);
+  static_assert(base::WrappingSub(kOne, kTwo) == kMinusOne);
+  EXPECT_EQ(base::WrappingSub(kMin, kOne), kMax);
+  static_assert(base::WrappingSub(kMin, kOne) == kMax);
+  EXPECT_EQ(base::WrappingSub(kMin, kTwo), kMax - 1);
+  static_assert(base::WrappingSub(kMin, kTwo) == kMax - 1);
+  EXPECT_EQ(base::WrappingSub(kMax, kMin), kMinusOne);
+  static_assert(base::WrappingSub(kMax, kMin) == kMinusOne);
+  EXPECT_EQ(base::WrappingSub(kMin, kMax), kOne);
+  static_assert(base::WrappingSub(kMin, kMax) == kOne);
+}
+
+template <typename T>
+void TestWrappingMathUnsigned() {
+  static_assert(std::is_unsigned_v<T>);
+  constexpr T kZero = 0;
+  constexpr T kOne = 1;
+  constexpr T kTwo = 2;
+  constexpr T kThree = 3;
+  constexpr T kMax = std::numeric_limits<T>::max();
+
+  EXPECT_EQ(base::WrappingAdd(kOne, kTwo), kThree);
+  static_assert(base::WrappingAdd(kOne, kTwo) == kThree);
+  EXPECT_EQ(base::WrappingAdd(kMax, kOne), kZero);
+  static_assert(base::WrappingAdd(kMax, kOne) == kZero);
+  EXPECT_EQ(base::WrappingAdd(kMax, kTwo), kOne);
+  static_assert(base::WrappingAdd(kMax, kTwo) == kOne);
+  EXPECT_EQ(base::WrappingAdd(kMax, kMax), kMax - 1);
+  static_assert(base::WrappingAdd(kMax, kMax) == kMax - 1);
+
+  EXPECT_EQ(base::WrappingSub(kTwo, kOne), kOne);
+  static_assert(base::WrappingSub(kTwo, kOne) == kOne);
+  EXPECT_EQ(base::WrappingSub(kOne, kTwo), kMax);
+  static_assert(base::WrappingSub(kOne, kTwo) == kMax);
+  EXPECT_EQ(base::WrappingSub(kZero, kOne), kMax);
+  static_assert(base::WrappingSub(kZero, kOne) == kMax);
+  EXPECT_EQ(base::WrappingSub(kZero, kTwo), kMax - 1);
+  static_assert(base::WrappingSub(kZero, kTwo) == kMax - 1);
+}
+
+TEST(SafeNumerics, WrappingMath) {
+  TestWrappingMathSigned<int8_t>();
+  TestWrappingMathUnsigned<uint8_t>();
+  TestWrappingMathSigned<int16_t>();
+  TestWrappingMathUnsigned<uint16_t>();
+  TestWrappingMathSigned<int32_t>();
+  TestWrappingMathUnsigned<uint32_t>();
+  TestWrappingMathSigned<int64_t>();
+  TestWrappingMathUnsigned<uint64_t>();
 }
 
 #if defined(__clang__)

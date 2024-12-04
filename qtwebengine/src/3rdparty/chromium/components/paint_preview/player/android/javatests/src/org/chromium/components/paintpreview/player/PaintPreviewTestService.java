@@ -1,29 +1,31 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 package org.chromium.components.paintpreview.player;
 
+import org.jni_zero.JNINamespace;
+import org.jni_zero.NativeMethods;
+
 import org.chromium.base.Log;
-import org.chromium.base.annotations.JNINamespace;
-import org.chromium.base.annotations.NativeMethods;
 import org.chromium.components.paintpreview.browser.NativePaintPreviewServiceProvider;
 
-/**
- * A simple implementation of {@link NativePaintPreviewServiceProvider} used in tests.
- */
+/** A simple implementation of {@link NativePaintPreviewServiceProvider} used in tests. */
 @JNINamespace("paint_preview")
 public class PaintPreviewTestService implements NativePaintPreviewServiceProvider {
     private static final String TAG = "PPTestService";
+    private long mNativePaintPreviewBaseService;
     private long mNativePaintPreviewTestService;
 
     public PaintPreviewTestService(String path) {
         mNativePaintPreviewTestService = PaintPreviewTestServiceJni.get().getInstance(path);
+        mNativePaintPreviewBaseService =
+                PaintPreviewTestServiceJni.get().getBaseService(mNativePaintPreviewTestService);
     }
 
     @Override
-    public long getNativeService() {
-        return mNativePaintPreviewTestService;
+    public long getNativeBaseService() {
+        return mNativePaintPreviewBaseService;
     }
 
     public boolean createFramesForKey(String key, String url, FrameData rootFrameData) {
@@ -34,8 +36,9 @@ public class PaintPreviewTestService implements NativePaintPreviewServiceProvide
 
         createFrames(rootFrameData, 0);
 
-        boolean ret = PaintPreviewTestServiceJni.get().serializeFrames(
-                mNativePaintPreviewTestService, key, url);
+        boolean ret =
+                PaintPreviewTestServiceJni.get()
+                        .serializeFrames(mNativePaintPreviewTestService, key, url);
 
         if (!ret) {
             Log.e(TAG, "Native failed to setup files for testing.");
@@ -44,10 +47,16 @@ public class PaintPreviewTestService implements NativePaintPreviewServiceProvide
     }
 
     private void createFrames(FrameData frameData, int id) {
-        int[] childIds = PaintPreviewTestServiceJni.get().createSingleSkp(
-                mNativePaintPreviewTestService, id, frameData.getWidth(), frameData.getHeight(),
-                frameData.getFlattenedLinkRects(), frameData.getLinks(),
-                frameData.getFlattenedChildRects());
+        int[] childIds =
+                PaintPreviewTestServiceJni.get()
+                        .createSingleSkp(
+                                mNativePaintPreviewTestService,
+                                id,
+                                frameData.getWidth(),
+                                frameData.getHeight(),
+                                frameData.getFlattenedLinkRects(),
+                                frameData.getLinks(),
+                                frameData.getFlattenedChildRects());
 
         FrameData[] childFrames = frameData.getChildFrames();
         assert childIds.length == childFrames.length;
@@ -59,8 +68,18 @@ public class PaintPreviewTestService implements NativePaintPreviewServiceProvide
     @NativeMethods
     interface Natives {
         long getInstance(String path);
-        int[] createSingleSkp(long nativePaintPreviewTestService, int id, int width, int height,
-                int[] flattenedLinkRects, String[] links, int[] flattenedChildRects);
+
+        long getBaseService(long nativePaintPreviewTestService);
+
+        int[] createSingleSkp(
+                long nativePaintPreviewTestService,
+                int id,
+                int width,
+                int height,
+                int[] flattenedLinkRects,
+                String[] links,
+                int[] flattenedChildRects);
+
         boolean serializeFrames(long nativePaintPreviewTestService, String key, String url);
     }
 }

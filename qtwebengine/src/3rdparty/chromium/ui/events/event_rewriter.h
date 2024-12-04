@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,10 +7,10 @@
 
 #include <memory>
 
-#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "ui/events/event_dispatcher.h"
 #include "ui/events/events_export.h"
+#include "ui/events/platform_event.h"
 
 namespace ui {
 
@@ -80,6 +80,10 @@ class EVENTS_EXPORT EventRewriter {
   using Continuation = base::WeakPtr<EventRewriterContinuation>;
 
   EventRewriter() = default;
+
+  EventRewriter(const EventRewriter&) = delete;
+  EventRewriter& operator=(const EventRewriter&) = delete;
+
   virtual ~EventRewriter() = default;
 
   // Potentially rewrites (replaces) an event, possibly with multiple events,
@@ -120,6 +124,11 @@ class EVENTS_EXPORT EventRewriter {
   virtual EventDispatchDetails RewriteEvent(const Event& event,
                                             const Continuation continuation);
 
+  // Tells if this rewriter supports processing located events with location !=
+  // root_location as well as honors event target when rewriting an event.
+  // TODO(crbug.com/1459680): Remove once all rewriters honor event target.
+  virtual bool SupportsNonRootLocation() const;
+
   // Potentially rewrites (replaces) an event, or requests it be discarded.
   // or discards an event. If the rewriter wants to rewrite an event, and
   // dispatch another event once the rewritten event is dispatched, it should
@@ -143,17 +152,18 @@ class EVENTS_EXPORT EventRewriter {
 
  protected:
   // Forwards an event, through any subsequent rewriters.
-  static EventDispatchDetails SendEvent(const Continuation continuation,
-                                        const Event* event) WARN_UNUSED_RESULT;
+  [[nodiscard]] static EventDispatchDetails SendEvent(
+      const Continuation continuation,
+      const Event* event);
 
   // Forwards an event, skipping any subsequent rewriters.
-  static EventDispatchDetails SendEventFinally(const Continuation continuation,
-                                               const Event* event)
-      WARN_UNUSED_RESULT;
+  [[nodiscard]] static EventDispatchDetails SendEventFinally(
+      const Continuation continuation,
+      const Event* event);
 
   // Discards an event, so that it will not be passed to the sink.
-  static EventDispatchDetails DiscardEvent(const Continuation continuation)
-      WARN_UNUSED_RESULT;
+  [[nodiscard]] static EventDispatchDetails DiscardEvent(
+      const Continuation continuation);
 
   // A helper that calls a protected EventSource function, which sends the event
   // to subsequent event rewriters on the source and onto its event sink.
@@ -161,8 +171,15 @@ class EVENTS_EXPORT EventRewriter {
   EventDispatchDetails SendEventToEventSource(EventSource* source,
                                               Event* event) const;
 
- private:
-  DISALLOW_COPY_AND_ASSIGN(EventRewriter);
+#if BUILDFLAG(IS_CHROMEOS)
+  // Explicitly sets the `Event::native_event_` field bypassing any checks if
+  // the `PlatformEvent` should be copied from one event to another. The
+  // lifetime of `native_event` must be guaranteed to be longer than `event`. In
+  // the context of event rewriting, this is almost always the case.
+  void SetNativeEvent(Event& event, const PlatformEvent& native_event);
+#endif
+
+  void SetEventTarget(Event& event, EventTarget* target);
 };
 
 }  // namespace ui

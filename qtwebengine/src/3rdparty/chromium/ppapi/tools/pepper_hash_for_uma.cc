@@ -1,4 +1,4 @@
-// Copyright (c) 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -25,7 +25,6 @@
 #include <vector>
 
 #include "base/hash/hash.h"
-#include "base/macros.h"
 
 int main(int argc, char **argv) {
   if (argc < 2) {
@@ -38,7 +37,7 @@ int main(int argc, char **argv) {
   }
   std::vector<std::pair<uint32_t, char*>> hashes;
   for (int i = 1; i < argc; i++) {
-    uint32_t data = base::Hash(argv[i], strlen(argv[i]));
+    uint32_t data = base::PersistentHash(argv[i]);
 
     // Strip off the signed bit because UMA doesn't support negative values,
     // but takes a signed int as input.

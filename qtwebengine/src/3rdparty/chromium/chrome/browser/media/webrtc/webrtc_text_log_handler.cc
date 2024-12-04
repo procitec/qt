@@ -1,31 +1,35 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "chrome/browser/media/webrtc/webrtc_text_log_handler.h"
 
 #include <map>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
 #include "base/check_op.h"
 #include "base/cpu.h"
 #include "base/feature_list.h"
+#include "base/functional/bind.h"
+#include "base/i18n/time_formatting.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/notreached.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/system/sys_info.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
-#if !defined(TOOLKIT_QT)
+#include "build/chromeos_buildflags.h"
+#if !BUILDFLAG(IS_QTWEBENGINE)
 #include "chrome/browser/media/audio_service_util.h"
 #endif
 #include "chrome/common/channel_info.h"
-#if !defined(TOOLKIT_QT)
+#if !BUILDFLAG(IS_QTWEBENGINE)
 #include "chrome/common/media/webrtc_logging.mojom.h"
 #else
 #include "qtwebengine/common/media/webrtc_logging.mojom.h"
@@ -40,23 +44,24 @@
 #include "content/public/common/content_features.h"
 #include "gpu/config/gpu_info.h"
 #include "media/audio/audio_manager.h"
-#include "media/webrtc/webrtc_switches.h"
+#include "media/base/media_switches.h"
+#include "media/webrtc/webrtc_features.h"
 #include "net/base/ip_address.h"
 #include "net/base/network_change_notifier.h"
 #include "net/base/network_interfaces.h"
 #include "services/network/public/mojom/network_service.mojom.h"
 
-#if defined(OS_LINUX) || defined(OS_CHROMEOS)
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
 #include "base/linux_util.h"
 #include "base/task/thread_pool.h"
 #endif
 
-#if defined(OS_MAC)
+#if BUILDFLAG(IS_MAC)
 #include "base/mac/mac_util.h"
 #endif
 
-#if defined(OS_CHROMEOS)
-#include "chromeos/system/statistics_provider.h"
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+#include "chromeos/ash/components/system/statistics_provider.h"
 #endif
 
 using base::NumberToString;
@@ -76,8 +81,11 @@ std::string Format(const std::string& message,
                    base::Time start_time) {
   int32_t interval_ms =
       static_cast<int32_t>((timestamp - start_time).InMilliseconds());
-  return base::StringPrintf("[%03d:%03d] %s", interval_ms / 1000,
-                            interval_ms % 1000, message.c_str());
+  // Log start time (current time).
+  const std::string now =
+      base::UnlocalizedTimeFormatWithPattern(base::Time::Now(), "HH:mm:ss.SSS");
+  return base::StringPrintf("[%03d:%03d, %s] %s", interval_ms / 1000,
+                            interval_ms % 1000, now.c_str(), message.c_str());
 }
 
 std::string FormatMetaDataAsLogMessage(const WebRtcLogMetaDataMap& meta_data) {
@@ -117,7 +125,9 @@ std::string IPAddressToSensitiveString(const net::IPAddress& address) {
       sensitive_address = net::IPAddress(stripped).ToString();
       break;
     }
-    default: { break; }
+    default: {
+      break;
+    }
   }
   return sensitive_address;
 #else
@@ -183,8 +193,7 @@ void WebRtcTextLogHandler::SetMetaData(
   FireGenericDoneCallback(std::move(callback), true, "");
 }
 
-bool WebRtcTextLogHandler::StartLogging(WebRtcLogUploader* log_uploader,
-                                        GenericDoneCallback callback) {
+bool WebRtcTextLogHandler::StartLogging(GenericDoneCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(!callback.is_null());
 
@@ -200,7 +209,8 @@ bool WebRtcTextLogHandler::StartLogging(WebRtcLogUploader* log_uploader,
     return false;
   }
 
-  if (!log_uploader->ApplyForStartLogging()) {
+  WebRtcLogUploader* log_uploader = WebRtcLogUploader::GetInstance();
+  if (log_uploader && !log_uploader->ApplyForStartLogging()) {
     FireGenericDoneCallback(std::move(callback), false,
                             "Cannot start, maybe the maximum number of "
                             "simultaneuos logs has been reached.");
@@ -210,9 +220,9 @@ bool WebRtcTextLogHandler::StartLogging(WebRtcLogUploader* log_uploader,
   logging_state_ = STARTING;
 
   DCHECK(!log_buffer_);
-  log_buffer_.reset(new WebRtcLogBuffer());
+  log_buffer_ = std::make_unique<WebRtcLogBuffer>();
   if (!meta_data_)
-    meta_data_.reset(new WebRtcLogMetaDataMap());
+    meta_data_ = std::make_unique<WebRtcLogMetaDataMap>();
 
   content::GetNetworkService()->GetNetworkList(
       net::EXCLUDE_HOST_SCOPE_VIRTUAL_INTERFACES,
@@ -374,7 +384,7 @@ void WebRtcTextLogHandler::FireGenericDoneCallback(
 
   if (error_message.empty()) {
     DCHECK(success);
-    base::SequencedTaskRunnerHandle::Get()->PostTask(
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(std::move(callback), success, error_message));
     return;
   }
@@ -395,15 +405,14 @@ void WebRtcTextLogHandler::FireGenericDoneCallback(
       case LoggingState::STOPPED:
         return "stopped";
     }
-    NOTREACHED();
-    return "";
+    NOTREACHED_NORETURN();
   };
 
   std::string error_message_with_state =
       base::StrCat({error_message, ". State=", state_string(), ". Channel is ",
                     channel_is_closing_ ? "" : "not ", "closing."});
 
-  base::SequencedTaskRunnerHandle::Get()->PostTask(
+  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE,
       base::BindOnce(std::move(callback), success, error_message_with_state));
 }
@@ -415,8 +424,8 @@ void WebRtcTextLogHandler::SetWebAppId(int web_app_id) {
 
 void WebRtcTextLogHandler::OnGetNetworkInterfaceList(
     GenericDoneCallback callback,
-    const base::Optional<net::NetworkInterfaceList>& networks) {
-#if defined(OS_LINUX) || defined(OS_CHROMEOS)
+    const std::optional<net::NetworkInterfaceList>& networks) {
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
   // Hop to a background thread to get the distro string, which can block.
   base::ThreadPool::PostTaskAndReplyWithResult(
       FROM_HERE, {base::MayBlock()}, base::BindOnce(&base::GetLinuxDistro),
@@ -430,7 +439,7 @@ void WebRtcTextLogHandler::OnGetNetworkInterfaceList(
 
 void WebRtcTextLogHandler::OnGetNetworkInterfaceListFinish(
     GenericDoneCallback callback,
-    const base::Optional<net::NetworkInterfaceList>& networks,
+    const std::optional<net::NetworkInterfaceList>& networks,
     const std::string& linux_distro) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
@@ -439,13 +448,9 @@ void WebRtcTextLogHandler::OnGetNetworkInterfaceListFinish(
     return;
   }
 
-  // Log start time (current time). We don't use base/i18n/time_formatting.h
-  // here because we don't want the format of the current locale.
-  base::Time::Exploded now = {0};
-  base::Time::Now().LocalExplode(&now);
-  LogToCircularBuffer(base::StringPrintf("Start %d-%02d-%02d %02d:%02d:%02d",
-                                         now.year, now.month, now.day_of_month,
-                                         now.hour, now.minute, now.second));
+  // Log start time (current time).
+  LogToCircularBuffer(base::UnlocalizedTimeFormatWithPattern(
+      base::Time::Now(), "'Start 'y-MM-dd HH:mm:ss"));
 
   // Write metadata if received before logging started.
   if (meta_data_ && !meta_data_->empty()) {
@@ -454,18 +459,18 @@ void WebRtcTextLogHandler::OnGetNetworkInterfaceListFinish(
   }
 
   // Chrome version
-#if !defined(TOOLKIT_QT)
-  LogToCircularBuffer("Chrome version: " + version_info::GetVersionNumber() +
-                      " " + chrome::GetChannelName());
-#else
-  LogToCircularBuffer("Chrome version: " + version_info::GetVersionNumber());
+  LogToCircularBuffer(
+      base::StrCat({"Chrome version: ", version_info::GetVersionNumber(), " "
+#if !BUILDFLAG(IS_QTWEBENGINE)
+                    , chrome::GetChannelName(chrome::WithExtendedStable(true))
 #endif
+                   }));
 
   // OS
   LogToCircularBuffer(base::SysInfo::OperatingSystemName() + " " +
                       base::SysInfo::OperatingSystemVersion() + " " +
                       base::SysInfo::OperatingSystemArchitecture());
-#if defined(OS_LINUX) || defined(OS_CHROMEOS)
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
   { LogToCircularBuffer("Linux distribution: " + linux_distro); }
 #endif
 
@@ -480,11 +485,14 @@ void WebRtcTextLogHandler::OnGetNetworkInterfaceListFinish(
 
   // Computer model
   std::string computer_model = "Not available";
-#if defined(OS_MAC)
-  computer_model = base::mac::GetModelIdentifier();
-#elif defined(OS_CHROMEOS)
-  chromeos::system::StatisticsProvider::GetInstance()->GetMachineStatistic(
-      chromeos::system::kHardwareClassKey, &computer_model);
+#if BUILDFLAG(IS_MAC)
+  computer_model = base::SysInfo::HardwareModelName();
+#elif BUILDFLAG(IS_CHROMEOS_ASH)
+  if (const std::optional<base::StringPiece> computer_model_statistic =
+          ash::system::StatisticsProvider::GetInstance()->GetMachineStatistic(
+              ash::system::kHardwareClassKey)) {
+    computer_model = std::string(computer_model_statistic.value());
+  }
 #endif
   LogToCircularBuffer("Computer model: " + computer_model);
 
@@ -506,7 +514,7 @@ void WebRtcTextLogHandler::OnGetNetworkInterfaceListFinish(
   auto enabled_or_disabled_feature_string = [](auto& feature) {
     return base::FeatureList::IsEnabled(feature) ? "enabled" : "disabled";
   };
-#if !defined(TOOLKIT_QT)
+#if !BUILDFLAG(IS_QTWEBENGINE)
   auto enabled_or_disabled_bool_string = [](bool value) {
     return value ? "enabled" : "disabled";
   };
@@ -517,12 +525,35 @@ void WebRtcTextLogHandler::OnGetNetworkInterfaceListFinish(
        ", LaunchOnStartup=",
        enabled_or_disabled_feature_string(
            features::kAudioServiceLaunchOnStartup),
-#if !defined(TOOLKIT_QT)
+#if !BUILDFLAG(IS_QTWEBENGINE)
        ", Sandbox=",
        enabled_or_disabled_bool_string(IsAudioServiceSandboxEnabled())}));
 #else
        ""}));
-#endif // !defined(TOOLKIT_QT)
+#endif  // !BUILDFLAG(IS_QTWEBENGINE)
+
+#if BUILDFLAG(CHROME_WIDE_ECHO_CANCELLATION)
+  if (media::IsChromeWideEchoCancellationEnabled()) {
+    LogToCircularBuffer(base::StrCat(
+        {"ChromeWideEchoCancellation : Enabled", ", minimize_resampling = ",
+         media::kChromeWideEchoCancellationMinimizeResampling.Get() ? "true"
+                                                                    : "false",
+         ", allow_all_sample_rates = ",
+         media::kChromeWideEchoCancellationAllowAllSampleRates.Get()
+             ? "true"
+             : "false"}));
+  } else {
+    LogToCircularBuffer("ChromeWideEchoCancellation : Disabled");
+  }
+
+  if (base::FeatureList::IsEnabled(media::kDecreaseProcessingAudioFifoSize)) {
+    LogToCircularBuffer(base::StrCat(
+        {"DecreaseProcessingAudioFifoSize : Enabled", ", fifo_size = ",
+         base::NumberToString(media::GetProcessingAudioFifoSize())}));
+  } else {
+    LogToCircularBuffer("DecreaseProcessingAudioFifoSize : Disabled");
+  }
+#endif
 
   // Audio manager
   // On some platforms, this can vary depending on build flags and failure
@@ -558,10 +589,11 @@ void WebRtcTextLogHandler::OnGetNetworkInterfaceListFinish(
 
   // TODO(darin): Change SetLogMessageCallback to run on the UI thread.
 
-  auto log_message_callback = base::BindRepeating(
-      &ForwardMessageViaTaskRunner, base::SequencedTaskRunnerHandle::Get(),
-      base::BindRepeating(&WebRtcTextLogHandler::LogMessage,
-                          weak_factory_.GetWeakPtr()));
+  auto log_message_callback =
+      base::BindRepeating(&ForwardMessageViaTaskRunner,
+                          base::SequencedTaskRunner::GetCurrentDefault(),
+                          base::BindRepeating(&WebRtcTextLogHandler::LogMessage,
+                                              weak_factory_.GetWeakPtr()));
   content::GetIOThreadTaskRunner({})->PostTask(
       FROM_HERE,
       base::BindOnce(&content::WebRtcLog::SetLogMessageCallback,

@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,19 +13,28 @@
 #include "ui/views/widget/widget.h"
 
 namespace views {
+
+namespace {
+
+bool InkDropStateIsVisible(InkDropState state) {
+  return state != InkDropState::HIDDEN && state != InkDropState::DEACTIVATED;
+}
+
+}  // namespace
+
 InkDropEventHandler::InkDropEventHandler(View* host_view, Delegate* delegate)
     : target_handler_(
           std::make_unique<ui::ScopedTargetHandler>(host_view, this)),
       host_view_(host_view),
       delegate_(delegate) {
-  observer_.Add(host_view_);
+  observation_.Observe(host_view_.get());
 }
 
 InkDropEventHandler::~InkDropEventHandler() = default;
 
-void InkDropEventHandler::AnimateInkDrop(InkDropState state,
+void InkDropEventHandler::AnimateToState(InkDropState state,
                                          const ui::LocatedEvent* event) {
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   // On Windows, don't initiate ink-drops for touch/gesture events.
   // Additionally, certain event states should dismiss existing ink-drop
   // animations. If the state is already other than HIDDEN, presumably from
@@ -39,8 +48,14 @@ void InkDropEventHandler::AnimateInkDrop(InkDropState state,
   }
 #endif
   last_ripple_triggering_event_.reset(
-      event ? ui::Event::Clone(*event).release()->AsLocatedEvent() : nullptr);
-  delegate_->GetInkDrop()->AnimateToState(state);
+      event ? event->Clone().release()->AsLocatedEvent() : nullptr);
+
+  // If no ink drop exists and we are not transitioning to a visible ink drop
+  // state the transition have no visual effect. The call to GetInkDrop() will
+  // lazily create the ink drop when called. Avoid creating the ink drop in
+  // these cases to prevent the creation of unnecessary layers.
+  if (delegate_->HasInkDrop() || InkDropStateIsVisible(state))
+    delegate_->GetInkDrop()->AnimateToState(state);
 }
 
 ui::LocatedEvent* InkDropEventHandler::GetLastRippleTriggeringEvent() const {
@@ -60,9 +75,6 @@ void InkDropEventHandler::OnGestureEvent(ui::GestureEvent* event) {
       if (current_ink_drop_state == InkDropState::ACTIVATED)
         return;
       ink_drop_state = InkDropState::ACTION_PENDING;
-      // The ui::ET_GESTURE_TAP_DOWN event needs to be marked as handled so
-      // that subsequent events for the gesture are sent to |this|.
-      event->SetHandled();
       break;
     case ui::ET_GESTURE_LONG_PRESS:
       if (current_ink_drop_state == InkDropState::ACTIVATED)
@@ -93,7 +105,7 @@ void InkDropEventHandler::OnGestureEvent(ui::GestureEvent* event) {
     // case would prematurely pre-empt these animations.
     return;
   }
-  AnimateInkDrop(ink_drop_state, event);
+  AnimateToState(ink_drop_state, event);
 }
 
 void InkDropEventHandler::OnMouseEvent(ui::MouseEvent* event) {
@@ -111,6 +123,10 @@ void InkDropEventHandler::OnMouseEvent(ui::MouseEvent* event) {
     default:
       break;
   }
+}
+
+base::StringPiece InkDropEventHandler::GetLogContext() const {
+  return "InkDropEventHandler";
 }
 
 void InkDropEventHandler::OnViewVisibilityChanged(View* observed_view,
@@ -154,6 +170,15 @@ void InkDropEventHandler::OnViewFocused(View* observed_view) {
 void InkDropEventHandler::OnViewBlurred(View* observed_view) {
   DCHECK_EQ(host_view_, observed_view);
   delegate_->GetInkDrop()->SetFocused(false);
+}
+
+void InkDropEventHandler::OnViewThemeChanged(View* observed_view) {
+  CHECK_EQ(host_view_, observed_view);
+  // The call to GetInkDrop() will lazily create the ink drop when called. We do
+  // not want to create the ink drop when view theme changed.
+  if (delegate_->HasInkDrop()) {
+    delegate_->GetInkDrop()->HostViewThemeChanged();
+  }
 }
 
 }  // namespace views

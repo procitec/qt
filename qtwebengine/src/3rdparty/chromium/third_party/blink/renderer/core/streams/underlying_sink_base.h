@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,10 +10,6 @@
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
 #include "third_party/blink/renderer/platform/heap/visitor.h"
-
-// Various files depend on us exporting this header.
-// TODO(ricea): Clean up the dependencies and remove this include.
-#include "third_party/blink/renderer/core/streams/writable_stream_default_controller.h"
 
 namespace blink {
 
@@ -59,7 +55,9 @@ class CORE_EXPORT UnderlyingSinkBase : public ScriptWrappable {
   void Trace(Visitor*) const override;
 
  protected:
-  WritableStreamDefaultController* Controller() const { return controller_; }
+  WritableStreamDefaultController* Controller() const {
+    return controller_.Get();
+  }
 
  private:
   Member<WritableStreamDefaultController> controller_;

@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,15 +11,16 @@
 #include <set>
 #include <string>
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "extensions/common/extension_id.h"
 #include "extensions/common/features/feature.h"
+#include "extensions/common/mojom/context_type.mojom-forward.h"
+#include "extensions/common/mojom/view_type.mojom.h"
 #include "extensions/renderer/renderer_extension_registry.h"
 #include "extensions/renderer/script_context_set_iterable.h"
 #include "url/gurl.h"
-#include "v8/include/v8.h"
-
+#include "v8/include/v8-forward.h"
 class GURL;
 
 namespace blink {
@@ -48,6 +49,9 @@ class ScriptContextSet : public ScriptContextSetIterable {
       // Must outlive this. TODO(kalman): Combine this and |extensions|.
       ExtensionIdSet* active_extension_ids);
 
+  ScriptContextSet(const ScriptContextSet&) = delete;
+  ScriptContextSet& operator=(const ScriptContextSet&) = delete;
+
   ~ScriptContextSet() override;
 
   // Returns the number of contexts being tracked by this set.
@@ -58,7 +62,8 @@ class ScriptContextSet : public ScriptContextSetIterable {
   // Returns a weak reference to the new ScriptContext.
   ScriptContext* Register(blink::WebLocalFrame* frame,
                           const v8::Local<v8::Context>& v8_context,
-                          int32_t world_id);
+                          int32_t world_id,
+                          bool is_webview);
 
   // If the specified context is contained in this set, remove it, then delete
   // it asynchronously. After this call returns the context object will still
@@ -91,11 +96,17 @@ class ScriptContextSet : public ScriptContextSetIterable {
   static ScriptContext* GetMainWorldContextForFrame(
       content::RenderFrame* render_frame);
 
-  // ScriptContextIterable:
+  // ScriptContextSetIterable:
   void ForEach(
-      const std::string& extension_id,
+      const mojom::HostID& host_id,
       content::RenderFrame* render_frame,
       const base::RepeatingCallback<void(ScriptContext*)>& callback) override;
+
+  // Runs |callback| after verifying |render_frame| matches context's.
+  void ExecuteCallbackWithContext(
+      ScriptContext* context,
+      content::RenderFrame* render_frame,
+      const base::RepeatingCallback<void(ScriptContext*)>& callback);
 
   // Cleans up contexts belonging to an unloaded extension.
   void OnExtensionUnloaded(const std::string& extension_id);
@@ -116,16 +127,18 @@ class ScriptContextSet : public ScriptContextSetIterable {
                                                  int32_t world_id,
                                                  bool use_effective_url);
 
-  // Returns the Feature::Context type of context for a JavaScript context.
-  Feature::Context ClassifyJavaScriptContext(
+  // Returns the mojom::ContextType type of context for a JavaScript context.
+  mojom::ContextType ClassifyJavaScriptContext(
       const Extension* extension,
       int32_t world_id,
       const GURL& url,
-      const blink::WebSecurityOrigin& origin);
+      const blink::WebSecurityOrigin& origin,
+      mojom::ViewType view_type,
+      bool is_webview);
 
   // Weak reference to all installed Extensions that are also active in this
   // process.
-  ExtensionIdSet* active_extension_ids_;
+  raw_ptr<ExtensionIdSet, ExperimentalRenderer> active_extension_ids_;
 
   // The set of all ScriptContexts we own.
   std::set<ScriptContext*> contexts_;
@@ -133,8 +146,6 @@ class ScriptContextSet : public ScriptContextSetIterable {
   // Whether the script context set is associated with the renderer active on
   // the Chrome OS lock screen.
   bool is_lock_screen_context_ = false;
-
-  DISALLOW_COPY_AND_ASSIGN(ScriptContextSet);
 };
 
 }  // namespace extensions

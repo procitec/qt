@@ -1,4 +1,4 @@
-// Copyright (c) 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,8 +7,10 @@
 #include "content/browser/isolated_origin_util.h"
 
 #include "base/logging.h"
+#include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
+#include "services/network/public/cpp/is_potentially_trustworthy.h"
 #include "url/gurl.h"
 
 const char* kAllSubdomainsWildcard = "[*.]";
@@ -34,7 +36,7 @@ IsolatedOriginPattern& IsolatedOriginPattern::operator=(
     IsolatedOriginPattern&& other) = default;
 
 bool IsolatedOriginPattern::Parse(const base::StringPiece& unparsed_pattern) {
-  pattern_ = unparsed_pattern.as_string();
+  pattern_ = std::string(unparsed_pattern);
   origin_ = url::Origin();
   isolate_all_subdomains_ = false;
   is_valid_ = false;
@@ -107,6 +109,34 @@ bool IsolatedOriginUtil::DoesOriginMatchIsolatedOrigin(
 
 // static
 bool IsolatedOriginUtil::IsValidIsolatedOrigin(const url::Origin& origin) {
+  return IsValidIsolatedOriginImpl(origin,
+                                   /* is_legacy_isolated_origin_check=*/true);
+}
+
+// static
+bool IsolatedOriginUtil::IsValidOriginForOptInIsolation(
+    const url::Origin& origin) {
+  // Per https://html.spec.whatwg.org/C/#initialise-the-document-object,
+  // non-secure contexts cannot be isolated via opt-in origin isolation.
+  return IsValidIsolatedOriginImpl(
+             origin, /* is_legacy_isolated_origin_check=*/false) &&
+         network::IsOriginPotentiallyTrustworthy(origin);
+}
+
+// static
+bool IsolatedOriginUtil::IsValidOriginForOptOutIsolation(
+    const url::Origin& origin) {
+  // Per https://html.spec.whatwg.org/C/#initialise-the-document-object,
+  // non-secure contexts cannot be isolated via opt-in origin isolation,
+  // but we allow non-secure contexts to opt-out for legacy sites.
+  return IsValidIsolatedOriginImpl(origin,
+                                   /* is_legacy_isolated_origin_check=*/false);
+}
+
+// static
+bool IsolatedOriginUtil::IsValidIsolatedOriginImpl(
+    const url::Origin& origin,
+    bool is_legacy_isolated_origin_check) {
   if (origin.opaque())
     return false;
 
@@ -123,19 +153,29 @@ bool IsolatedOriginUtil::IsValidIsolatedOrigin(const url::Origin& origin) {
   // Disallow hosts such as http://co.uk/, which don't have a valid
   // registry-controlled domain.  This prevents subdomain matching from
   // grouping unrelated sites on a registry into the same origin.
-  const bool has_registry_domain =
-      net::registry_controlled_domains::HostHasRegistryControlledDomain(
-          origin.host(),
-          net::registry_controlled_domains::INCLUDE_UNKNOWN_REGISTRIES,
-          net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES);
-  if (!has_registry_domain)
-    return false;
+  //
+  // This is not relevant for opt-in origin isolation, which doesn't need to
+  // match subdomains. (And it'd be bad to check this in that case, as it
+  // prohibits http://localhost/; see https://crbug.com/1142894.)
+  if (is_legacy_isolated_origin_check) {
+    const bool has_registry_domain =
+        net::registry_controlled_domains::HostHasRegistryControlledDomain(
+            origin.host(),
+            net::registry_controlled_domains::INCLUDE_UNKNOWN_REGISTRIES,
+            net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES);
+    if (!has_registry_domain)
+      return false;
+  }
 
-  // For now, disallow hosts with a trailing dot.
-  // TODO(alexmos): Enabling this would require carefully thinking about
+  // Disallow hosts with a trailing dot for legacy isolated origins, but allow
+  // them for opt-in origin isolation since the spec says that they represent
+  // a distinct origin: https://url.spec.whatwg.org/#concept-domain.
+  // TODO(alexmos): Legacy isolated origins should probably support trailing
+  // dots as well, but enabling this would require carefully thinking about
   // whether hosts without a trailing dot should match it.
-  if (origin.host().back() == '.')
+  if (is_legacy_isolated_origin_check && origin.host().back() == '.') {
     return false;
+  }
 
   return true;
 }

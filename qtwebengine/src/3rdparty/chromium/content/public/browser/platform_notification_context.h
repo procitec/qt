@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,10 +7,11 @@
 
 #include <stdint.h>
 
+#include <optional>
 #include <string>
 #include <vector>
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/memory/ref_counted.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_database_data.h"
@@ -147,12 +148,13 @@ class PlatformNotificationContext
                                       bool close_notification,
                                       DeleteResultCallback callback) = 0;
 
-  // Deletes all data of notifications with |tag| belonging to |origin| from the
-  // database and closes the notifications. |callback| will be invoked with the
-  // success status and the number of closed notifications when the operation
-  // has completed.
+  // Deletes all data of notifications with |tag|, optionally filtered by
+  // |is_shown_by_browser|, belonging to |origin| from the database and closes
+  // the notifications. |callback| will be invoked with the success status and
+  // the number of closed notifications when the operation has completed.
   virtual void DeleteAllNotificationDataWithTag(
       const std::string& tag,
+      std::optional<bool> is_shown_by_browser,
       const GURL& origin,
       DeleteAllResultCallback callback) = 0;
 

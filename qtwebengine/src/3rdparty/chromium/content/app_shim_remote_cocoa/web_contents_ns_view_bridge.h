@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,11 +9,11 @@
 
 #include <memory>
 
-#import "base/mac/scoped_nsobject.h"
-#include "base/macros.h"
+#include "base/task/sequenced_task_runner.h"
 #include "components/remote_cocoa/app_shim/ns_view_ids.h"
 #include "content/common/content_export.h"
 #include "content/common/web_contents_ns_view_bridge.mojom.h"
+#include "mojo/public/cpp/bindings/associated_receiver.h"
 #include "mojo/public/cpp/bindings/associated_remote.h"
 #include "mojo/public/cpp/bindings/pending_associated_remote.h"
 
@@ -39,9 +39,16 @@ class CONTENT_EXPORT WebContentsNSViewBridge : public mojom::WebContentsNSView {
   // when all communication is through mojo.
   WebContentsNSViewBridge(uint64_t view_id,
                           content::WebContentsViewMac* web_contents_view);
+
+  WebContentsNSViewBridge(const WebContentsNSViewBridge&) = delete;
+  WebContentsNSViewBridge& operator=(const WebContentsNSViewBridge&) = delete;
+
   ~WebContentsNSViewBridge() override;
 
-  WebContentsViewCocoa* GetNSView() const { return ns_view_.get(); }
+  void Bind(mojo::PendingAssociatedReceiver<mojom::WebContentsNSView> receiver,
+            scoped_refptr<base::SequencedTaskRunner> task_runner);
+
+  WebContentsViewCocoa* GetNSView() const { return ns_view_; }
 
   // mojom::WebContentsNSViewBridge:
   void SetParentNSView(uint64_t parent_ns_view_id) override;
@@ -51,17 +58,20 @@ class CONTENT_EXPORT WebContentsNSViewBridge : public mojom::WebContentsNSView {
   void MakeFirstResponder() override;
   void TakeFocus(bool reverse) override;
   void StartDrag(const content::DropData& drop_data,
+                 const url::Origin& source_origin,
                  uint32_t operation_mask,
                  const gfx::ImageSkia& image,
-                 const gfx::Vector2d& image_offset) override;
+                 const gfx::Vector2d& image_offset,
+                 bool is_privileged) override;
+  void UpdateWindowControlsOverlay(const gfx::Rect& bounding_rect) override;
+  void Destroy() override;
 
  private:
-  base::scoped_nsobject<WebContentsViewCocoa> ns_view_;
+  WebContentsViewCocoa* __strong ns_view_;
+  mojo::AssociatedReceiver<mojom::WebContentsNSView> receiver_{this};
   mojo::AssociatedRemote<mojom::WebContentsNSViewHost> host_;
 
   std::unique_ptr<ScopedNSViewIdMapping> view_id_;
-
-  DISALLOW_COPY_AND_ASSIGN(WebContentsNSViewBridge);
 };
 
 }  // namespace content

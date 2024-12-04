@@ -1,11 +1,12 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 module blink.mojom;
 
+import "services/device/public/mojom/device_posture_provider.mojom";
 import "ui/gfx/geometry/mojom/geometry.mojom";
-import "third_party/blink/public/mojom/widget/screen_orientation.mojom";
+import "ui/display/mojom/screen_orientation.mojom";
 
 enum EmulatedScreenType { kDesktop, kMobile };
 
@@ -42,11 +43,14 @@ struct DeviceEmulationParams {
 
   // Optional screen orientation type, with ScreenOrientation::Undefined
   // value meaning no emulation necessary.
-  ScreenOrientation screen_orientation_type;
+  display.mojom.ScreenOrientation screen_orientation_type;
 
   // Screen orientation angle, used together with screen_orientation_type.
   uint32 screen_orientation_angle;
 
   // Screen window segments dimensions.
   array<gfx.mojom.Rect> window_segments;
+
+  // Posture of the device.
+  device.mojom.DevicePostureType device_posture;
 };

@@ -16,13 +16,13 @@
 
 namespace rtc {
 
-AsyncProxyServerSocket::AsyncProxyServerSocket(AsyncSocket* socket,
+AsyncProxyServerSocket::AsyncProxyServerSocket(Socket* socket,
                                                size_t buffer_size)
     : BufferedReadAdapter(socket, buffer_size) {}
 
 AsyncProxyServerSocket::~AsyncProxyServerSocket() = default;
 
-AsyncSSLServerSocket::AsyncSSLServerSocket(AsyncSocket* socket)
+AsyncSSLServerSocket::AsyncSSLServerSocket(Socket* socket)
     : BufferedReadAdapter(socket, 1024) {
   BufferInput(true);
 }
@@ -55,7 +55,7 @@ void AsyncSSLServerSocket::ProcessInput(char* data, size_t* len) {
   BufferInput(false);
 }
 
-AsyncSocksProxyServerSocket::AsyncSocksProxyServerSocket(AsyncSocket* socket)
+AsyncSocksProxyServerSocket::AsyncSocksProxyServerSocket(Socket* socket)
     : AsyncProxyServerSocket(socket, kBufferSize), state_(SS_HELLO) {
   BufferInput(true);
 }
@@ -63,7 +63,8 @@ AsyncSocksProxyServerSocket::AsyncSocksProxyServerSocket(AsyncSocket* socket)
 void AsyncSocksProxyServerSocket::ProcessInput(char* data, size_t* len) {
   RTC_DCHECK(state_ < SS_CONNECT_PENDING);
 
-  ByteBufferReader response(data, *len);
+  ByteBufferReader response(
+      rtc::MakeArrayView(reinterpret_cast<const uint8_t*>(data), *len));
   if (state_ == SS_HELLO) {
     HandleHello(&response);
   } else if (state_ == SS_AUTH) {
@@ -74,7 +75,9 @@ void AsyncSocksProxyServerSocket::ProcessInput(char* data, size_t* len) {
 
   // Consume parsed data
   *len = response.Length();
-  memmove(data, response.Data(), *len);
+  if (response.Length() > 0) {
+    memmove(data, response.DataView().data(), *len);
+  }
 }
 
 void AsyncSocksProxyServerSocket::DirectSend(const ByteBufferWriter& buf) {

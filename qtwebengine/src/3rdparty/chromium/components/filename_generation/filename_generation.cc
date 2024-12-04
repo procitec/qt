@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,6 +13,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/third_party/icu/icu_utf.h"
 #include "build/build_config.h"
+#include "build/chromeos_buildflags.h"
 #include "components/url_formatter/url_formatter.h"
 #include "net/base/filename_util.h"
 #include "net/base/mime_util.h"
@@ -100,7 +101,7 @@ base::FilePath EnsureMimeExtension(const base::FilePath& name,
   return name;
 }
 
-base::FilePath GenerateFilename(const base::string16& title,
+base::FilePath GenerateFilename(const std::u16string& title,
                                 const GURL& url,
                                 bool can_save_as_complete,
                                 std::string contents_mime_type) {
@@ -115,7 +116,12 @@ base::FilePath GenerateFilename(const base::string16& title,
   // back to a URL, and if it matches the original page URL, we know the page
   // had no title (or had a title equal to its URL, which is fine to treat
   // similarly).
-  if (title == url_formatter::FormatUrl(url)) {
+  if (title == url_formatter::FormatUrl(
+                   url,
+                   url_formatter::kFormatUrlOmitDefaults |
+                       url_formatter::kFormatUrlOmitTrivialSubdomains |
+                       url_formatter::kFormatUrlOmitHTTPS,
+                   base::UnescapeRule::SPACES, nullptr, nullptr, nullptr)) {
     std::string url_path;
     if (!url.SchemeIs(url::kDataScheme)) {
       name_with_proper_ext = net::GenerateFileName(
@@ -161,10 +167,10 @@ bool TruncateFilename(base::FilePath* path, size_t limit) {
 
   // Encoding specific truncation logic.
   base::FilePath::StringType truncated;
-#if defined(OS_CHROMEOS) || defined(OS_APPLE)
+#if BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_APPLE)
   // UTF-8.
   base::TruncateUTF8ToByteSize(name, limit, &truncated);
-#elif defined(OS_WIN)
+#elif BUILDFLAG(IS_WIN)
   // UTF-16.
   DCHECK(name.size() > limit);
   truncated = name.substr(0, CBU16_IS_TRAIL(name[limit]) ? limit - 1 : limit);

@@ -1,13 +1,14 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_SCHEDULER_COMMON_IDLE_HELPER_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_SCHEDULER_COMMON_IDLE_HELPER_H_
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/task/task_observer.h"
+#include "base/time/time.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
 #include "third_party/blink/renderer/platform/scheduler/common/cancelable_closure_holder.h"
 #include "third_party/blink/renderer/platform/scheduler/common/scheduler_helper.h"
@@ -48,6 +49,8 @@ class PLATFORM_EXPORT IdleHelper : public base::TaskObserver,
   class PLATFORM_EXPORT Delegate {
    public:
     Delegate();
+    Delegate(const Delegate&) = delete;
+    Delegate& operator=(const Delegate&) = delete;
     virtual ~Delegate();
 
     // If it's ok to enter a long idle period, return true.  Otherwise return
@@ -69,9 +72,6 @@ class PLATFORM_EXPORT IdleHelper : public base::TaskObserver,
 
     // Signals that the task list has changed.
     virtual void OnPendingTasksChanged(bool has_tasks) = 0;
-
-   private:
-    DISALLOW_COPY_AND_ASSIGN(Delegate);
   };
 
   // Keep IdleHelper::IdlePeriodStateToString in sync with this enum.
@@ -87,16 +87,18 @@ class PLATFORM_EXPORT IdleHelper : public base::TaskObserver,
   };
 
   // The maximum length of an idle period.
-  static const int kMaximumIdlePeriodMillis = 50;
+  static constexpr base::TimeDelta kMaximumIdlePeriod = base::Milliseconds(50);
 
-  // |helper| and |delegate| are not owned by IdleHelper object and must
-  // outlive it.
+  // |helper|, |delegate|, and |idle_queue| are not owned by IdleHelper object
+  // and must outlive it.
   IdleHelper(
       SchedulerHelper* helper,
       Delegate* delegate,
       const char* idle_period_tracing_name,
       base::TimeDelta required_quiescence_duration_before_long_idle_period,
-      scoped_refptr<base::sequence_manager::TaskQueue> idle_queue);
+      base::sequence_manager::TaskQueue* idle_queue);
+  IdleHelper(const IdleHelper&) = delete;
+  IdleHelper& operator=(const IdleHelper&) = delete;
   ~IdleHelper() override;
 
   // Prevents any further idle tasks from running.
@@ -157,15 +159,13 @@ class PLATFORM_EXPORT IdleHelper : public base::TaskObserver,
   friend class idle_helper_unittest::BaseIdleHelperTest;
   friend class idle_helper_unittest::IdleHelperTest;
 
-  const scoped_refptr<base::sequence_manager::TaskQueue>& idle_queue() const {
-    return idle_queue_;
-  }
-
   class State {
    public:
     State(SchedulerHelper* helper,
           Delegate* delegate,
           const char* idle_period_tracing_name);
+    State(const State&) = delete;
+    State& operator=(const State&) = delete;
     virtual ~State();
 
     void UpdateState(IdlePeriodState new_state,
@@ -185,8 +185,8 @@ class PLATFORM_EXPORT IdleHelper : public base::TaskObserver,
                                          base::TimeTicks new_deadline,
                                          base::TimeTicks optional_now);
 
-    SchedulerHelper* helper_;  // NOT OWNED
-    Delegate* delegate_;       // NOT OWNED
+    raw_ptr<SchedulerHelper, ExperimentalRenderer> helper_;  // NOT OWNED
+    raw_ptr<Delegate, ExperimentalRenderer> delegate_;       // NOT OWNED
 
     IdlePeriodState idle_period_state_;
     base::TimeTicks idle_period_deadline_;
@@ -196,8 +196,6 @@ class PLATFORM_EXPORT IdleHelper : public base::TaskObserver,
     bool running_idle_task_for_tracing_;
     const char* idle_period_tracing_name_;
     const char* last_sub_trace_event_name_ = nullptr;
-
-    DISALLOW_COPY_AND_ASSIGN(State);
   };
 
   // The minimum duration of an idle period.
@@ -226,9 +224,10 @@ class PLATFORM_EXPORT IdleHelper : public base::TaskObserver,
   // Returns true if |state| represents being within a long idle period state.
   static bool IsInLongIdlePeriod(IdlePeriodState state);
 
-  SchedulerHelper* helper_;  // NOT OWNED
-  Delegate* delegate_;       // NOT OWNED
-  scoped_refptr<base::sequence_manager::TaskQueue> idle_queue_;
+  raw_ptr<SchedulerHelper, ExperimentalRenderer> helper_;  // NOT OWNED
+  raw_ptr<Delegate, ExperimentalRenderer> delegate_;       // NOT OWNED
+  raw_ptr<base::sequence_manager::TaskQueue, DanglingUntriaged>
+      idle_queue_;  // NOT OWNED
   scoped_refptr<SingleThreadIdleTaskRunner> idle_task_runner_;
 
   CancelableClosureHolder enable_next_long_idle_period_closure_;
@@ -242,8 +241,6 @@ class PLATFORM_EXPORT IdleHelper : public base::TaskObserver,
 
   base::WeakPtr<IdleHelper> weak_idle_helper_ptr_;
   base::WeakPtrFactory<IdleHelper> weak_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(IdleHelper);
 };
 
 }  // namespace scheduler

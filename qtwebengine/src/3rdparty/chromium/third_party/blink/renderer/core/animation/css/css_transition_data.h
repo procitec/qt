@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,8 +7,10 @@
 
 #include <memory>
 
+#include "base/check_op.h"
 #include "base/memory/ptr_util.h"
 #include "third_party/blink/renderer/core/animation/css/css_timing_data.h"
+#include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/css/css_property_names.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
@@ -16,11 +18,13 @@ namespace blink {
 
 class CORE_EXPORT CSSTransitionData final : public CSSTimingData {
  public:
-  enum TransitionPropertyType {
+  enum TransitionAnimationType {
     kTransitionNone,
     kTransitionKnownProperty,
     kTransitionUnknownProperty,
   };
+
+  enum TransitionBehavior { kNormal, kAllowDiscrete };
 
   // FIXME: We shouldn't allow 'none' to be used alongside other properties.
   struct TransitionProperty {
@@ -35,7 +39,7 @@ class CORE_EXPORT CSSTransitionData final : public CSSTimingData {
           unresolved_property(CSSPropertyID::kInvalid),
           property_string(string) {}
 
-    TransitionProperty(TransitionPropertyType type)
+    explicit TransitionProperty(TransitionAnimationType type)
         : property_type(type), unresolved_property(CSSPropertyID::kInvalid) {
       DCHECK_EQ(type, kTransitionNone);
     }
@@ -46,7 +50,7 @@ class CORE_EXPORT CSSTransitionData final : public CSSTimingData {
              property_string == other.property_string;
     }
 
-    TransitionPropertyType property_type;
+    TransitionAnimationType property_type;
     CSSPropertyID unresolved_property;
     AtomicString property_string;
   };
@@ -70,12 +74,24 @@ class CORE_EXPORT CSSTransitionData final : public CSSTimingData {
   }
   Vector<TransitionProperty>& PropertyList() { return property_list_; }
 
+  const Vector<TransitionBehavior>& BehaviorList() const {
+    return behavior_list_;
+  }
+  Vector<TransitionBehavior>& BehaviorList() { return behavior_list_; }
+
+  static absl::optional<double> InitialDuration() { return 0; }
+
   static TransitionProperty InitialProperty() {
     return TransitionProperty(CSSPropertyID::kAll);
   }
 
+  static TransitionBehavior InitialBehavior() {
+    return TransitionBehavior::kNormal;
+  }
+
  private:
   Vector<TransitionProperty> property_list_;
+  Vector<TransitionBehavior> behavior_list_;
 };
 
 }  // namespace blink

@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,6 +11,7 @@
 #include <utility>
 
 #include "base/check_op.h"
+#include "base/memory/raw_ptr.h"
 #include "base/sequence_checker.h"
 #include "sql/recover_module/btree.h"
 #include "sql/recover_module/pager.h"
@@ -62,14 +63,10 @@ class VirtualCursor {
   // |sqlite_cursor| must have been returned by VirtualTable::SqliteCursor().
   static inline VirtualCursor* FromSqliteCursor(
       sqlite3_vtab_cursor* sqlite_cursor) {
-#if 0
-    static_assert(std::is_standard_layout<VirtualCursor>::value,
-                  "needed for the reinterpret_cast below");
-#endif
-    static_assert(offsetof(VirtualCursor, sqlite_cursor_) == 0,
-                  "sqlite_cursor_ must be the first member of the class");
-    VirtualCursor* result = reinterpret_cast<VirtualCursor*>(sqlite_cursor);
-    DCHECK_EQ(sqlite_cursor, &result->sqlite_cursor_);
+    VirtualCursor* result = reinterpret_cast<VirtualCursor*>(
+        (reinterpret_cast<char*>(sqlite_cursor) -
+         offsetof(VirtualCursor, sqlite_cursor_)));
+    CHECK_EQ(sqlite_cursor, &result->sqlite_cursor_);
     return result;
   }
 
@@ -113,7 +110,7 @@ class VirtualCursor {
   // Raw pointer usage is acceptable because SQLite will ensure that the
   // VirtualTable, which is passed around as a sqlite3_vtab*, will outlive this
   // cursor, which is passed around as a sqlite3_cursor*.
-  VirtualTable* const table_;
+  const raw_ptr<VirtualTable> table_;
 
   // Reads database pages for this cursor.
   DatabasePageReader db_reader_;

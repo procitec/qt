@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,18 +7,16 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/location.h"
-#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/run_loop.h"
 #include "base/sequence_checker.h"
-#include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/task/single_thread_task_runner.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/test/browser_test.h"
@@ -212,16 +210,24 @@ class SimpleHttpServer {
     virtual ~Parser() {}
   };
 
-  using SendCallback = base::Callback<void(const std::string&)>;
-  using ParserFactory = base::Callback<Parser*(const SendCallback&)>;
+  using SendCallback = base::RepeatingCallback<void(const std::string&)>;
+  using ParserFactory = base::RepeatingCallback<Parser*(const SendCallback&)>;
 
   SimpleHttpServer(const ParserFactory& factory, net::IPEndPoint endpoint);
+
+  SimpleHttpServer(const SimpleHttpServer&) = delete;
+  SimpleHttpServer& operator=(const SimpleHttpServer&) = delete;
+
   virtual ~SimpleHttpServer();
 
  private:
   class Connection {
    public:
     Connection(net::StreamSocket* socket, const ParserFactory& factory);
+
+    Connection(const Connection&) = delete;
+    Connection& operator=(const Connection&) = delete;
+
     virtual ~Connection();
 
    private:
@@ -241,8 +247,6 @@ class SimpleHttpServer {
     SEQUENCE_CHECKER(sequence_checker_);
 
     base::WeakPtrFactory<Connection> weak_factory_{this};
-
-    DISALLOW_COPY_AND_ASSIGN(Connection);
   };
 
   void OnConnect();
@@ -255,15 +259,13 @@ class SimpleHttpServer {
   SEQUENCE_CHECKER(sequence_checker_);
 
   base::WeakPtrFactory<SimpleHttpServer> weak_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(SimpleHttpServer);
 };
 
 SimpleHttpServer::SimpleHttpServer(const ParserFactory& factory,
                                    net::IPEndPoint endpoint)
     : factory_(factory),
       socket_(new net::TCPServerSocket(nullptr, net::NetLogSource())) {
-  socket_->Listen(endpoint, 5);
+  socket_->Listen(endpoint, 5, /*ipv6_only=*/std::nullopt);
   OnConnect();
 }
 
@@ -274,8 +276,8 @@ SimpleHttpServer::~SimpleHttpServer() {
 SimpleHttpServer::Connection::Connection(net::StreamSocket* socket,
                                          const ParserFactory& factory)
     : socket_(socket),
-      parser_(
-          factory.Run(base::Bind(&Connection::Send, base::Unretained(this)))),
+      parser_(factory.Run(
+          base::BindRepeating(&Connection::Send, base::Unretained(this)))),
       input_buffer_(base::MakeRefCounted<net::GrowableIOBuffer>()),
       output_buffer_(base::MakeRefCounted<net::GrowableIOBuffer>()),
       bytes_to_write_(0),
@@ -352,7 +354,7 @@ void SimpleHttpServer::Connection::OnDataRead(int count) {
     }
   } while (bytes_processed);
   // Posting to avoid deep recursion in case of synchronous IO
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE,
       base::BindOnce(&Connection::ReadData, weak_factory_.GetWeakPtr()));
 }
@@ -386,7 +388,7 @@ void SimpleHttpServer::Connection::OnDataWritten(int count) {
 
   if (bytes_to_write_ != 0)
     // Posting to avoid deep recursion in case of synchronous IO
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE,
         base::BindOnce(&Connection::WriteData, weak_factory_.GetWeakPtr()));
   else if (read_closed_)
@@ -401,7 +403,7 @@ void SimpleHttpServer::OnConnect() {
       base::BindOnce(&SimpleHttpServer::OnAccepted, base::Unretained(this)));
 
   if (accept_result != net::ERR_IO_PENDING)
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(&SimpleHttpServer::OnAccepted,
                                   weak_factory_.GetWeakPtr(), accept_result));
 }
@@ -486,11 +488,10 @@ class AdbParser : public SimpleHttpServer::Parser,
         buffer = std::string();
     }
 
-    int size = response.size();
-    if (size > 0) {
-      static const char kHexChars[] = "0123456789ABCDEF";
-      for (int i = 3; i >= 0; i--)
-        buffer += kHexChars[ (size >> 4*i) & 0x0f ];
+    if (size_t size = response.size(); size > 0) {
+      CHECK_LE(size, 0xffffu);
+      base::AppendHexEncodedByte(static_cast<uint8_t>(size >> 8), buffer);
+      base::AppendHexEncodedByte(static_cast<uint8_t>(size), buffer);
       if (flush_mode_ == FlushWithSize) {
           callback_.Run(buffer);
           buffer = std::string();
@@ -510,21 +511,21 @@ class AdbParser : public SimpleHttpServer::Parser,
   SEQUENCE_CHECKER(sequence_checker_);
 };
 
-static SimpleHttpServer* mock_adb_server_ = NULL;
+static SimpleHttpServer* mock_adb_server_ = nullptr;
 
 void StartMockAdbServerOnIOThread(FlushMode flush_mode) {
   CHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
-  CHECK(mock_adb_server_ == NULL);
+  CHECK(mock_adb_server_ == nullptr);
   net::IPEndPoint endpoint(net::IPAddress(127, 0, 0, 1), kAdbPort);
   mock_adb_server_ = new SimpleHttpServer(
-      base::Bind(&AdbParser::Create, flush_mode), endpoint);
+      base::BindRepeating(&AdbParser::Create, flush_mode), endpoint);
 }
 
 void StopMockAdbServerOnIOThread() {
   CHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
-  CHECK(mock_adb_server_ != NULL);
+  CHECK(mock_adb_server_ != nullptr);
   delete mock_adb_server_;
-  mock_adb_server_ = NULL;
+  mock_adb_server_ = nullptr;
 }
 
 } // namespace
@@ -564,14 +565,14 @@ void MockAndroidConnection::Receive(const std::string& data) {
   if (socket_name_ == "chrome_devtools_remote") {
     if (path == kJsonVersionPath)
       SendHTTPResponse(kSampleChromeVersion);
-    else if (path == kJsonListPath)
+    else if (base::StartsWith(path, kJsonListPath))
       SendHTTPResponse(kSampleChromePages);
     else
       NOTREACHED() << "Unknown command " << request;
   } else if (socket_name_ == "chrome_devtools_remote_1002") {
     if (path == kJsonVersionPath)
       SendHTTPResponse(kSampleChromeBetaVersion);
-    else if (path == kJsonListPath)
+    else if (base::StartsWith(path, kJsonListPath))
       SendHTTPResponse(kSampleChromeBetaPages);
     else
       NOTREACHED() << "Unknown command " << request;
@@ -579,21 +580,21 @@ void MockAndroidConnection::Receive(const std::string& data) {
                               base::CompareCase::SENSITIVE)) {
     if (path == kJsonVersionPath)
       SendHTTPResponse("{}");
-    else if (path == kJsonListPath)
+    else if (base::StartsWith(path, kJsonListPath))
       SendHTTPResponse("[]");
     else
       NOTREACHED() << "Unknown command " << request;
   } else if (socket_name_ == "webview_devtools_remote_2425") {
     if (path == kJsonVersionPath)
       SendHTTPResponse(kSampleWebViewVersion);
-    else if (path == kJsonListPath)
+    else if (base::StartsWith(path, kJsonListPath))
       SendHTTPResponse(kSampleWebViewPages);
     else
       NOTREACHED() << "Unknown command " << request;
   } else if (socket_name_ == "node_devtools_remote") {
     if (path == kJsonVersionPath)
       SendHTTPResponse(kSampleNodeVersion);
-    else if (path == kJsonListPath)
+    else if (base::StartsWith(path, kJsonListPath))
       SendHTTPResponse(kSampleNodePage);
     else
       NOTREACHED() << "Unknown command " << request;

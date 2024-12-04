@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,13 +14,15 @@ namespace url {
 
 namespace {
 
-template <typename CHAR, typename UCHAR>
+template <typename CHAR>
 bool DoCanonicalizeStandardURL(const URLComponentSource<CHAR>& source,
                                const Parsed& parsed,
                                SchemeType scheme_type,
                                CharsetConverter* query_converter,
                                CanonOutput* output,
                                Parsed* new_parsed) {
+  DCHECK(!parsed.has_opaque_path);
+
   // Scheme: this will append the colon.
   bool success = CanonicalizeScheme(source.scheme, parsed.scheme,
                                     output, &new_parsed->scheme);
@@ -59,7 +61,7 @@ bool DoCanonicalizeStandardURL(const URLComponentSource<CHAR>& source,
                                 output, &new_parsed->host);
 
     // Host must not be empty for standard URLs.
-    if (!parsed.host.is_nonempty())
+    if (parsed.host.is_empty())
       success = false;
 
     // Port: the port canonicalizer will handle the colon.
@@ -104,14 +106,20 @@ bool DoCanonicalizeStandardURL(const URLComponentSource<CHAR>& source,
   // Ref: ignore failure for this, since the page can probably still be loaded.
   CanonicalizeRef(source.ref, parsed.ref, output, &new_parsed->ref);
 
+  // Carry over the flag for potentially dangling markup:
+  if (parsed.potentially_dangling_markup)
+    new_parsed->potentially_dangling_markup = true;
+
   return success;
 }
 
 }  // namespace
 
-
 // Returns the default port for the given canonical scheme, or PORT_UNSPECIFIED
 // if the scheme is unknown.
+//
+// Please keep blink::DefaultPortForProtocol and url::DefaultPortForProtocol in
+// sync.
 int DefaultPortForScheme(const char* scheme, int scheme_len) {
   int default_port = PORT_UNSPECIFIED;
   switch (scheme_len) {
@@ -137,33 +145,32 @@ int DefaultPortForScheme(const char* scheme, int scheme_len) {
 
   if (default_port == PORT_UNSPECIFIED)
     if (const CustomScheme* cs = CustomScheme::FindScheme(base::StringPiece(scheme, scheme_len)))
-      return cs->default_port;
+      if (cs->has_port_component())
+        return cs->default_port;
 
   return default_port;
 }
 
 bool CanonicalizeStandardURL(const char* spec,
-                             int spec_len,
                              const Parsed& parsed,
                              SchemeType scheme_type,
                              CharsetConverter* query_converter,
                              CanonOutput* output,
                              Parsed* new_parsed) {
-  return DoCanonicalizeStandardURL<char, unsigned char>(
-      URLComponentSource<char>(spec), parsed, scheme_type, query_converter,
-      output, new_parsed);
+  return DoCanonicalizeStandardURL(URLComponentSource(spec), parsed,
+                                   scheme_type, query_converter, output,
+                                   new_parsed);
 }
 
-bool CanonicalizeStandardURL(const base::char16* spec,
-                             int spec_len,
+bool CanonicalizeStandardURL(const char16_t* spec,
                              const Parsed& parsed,
                              SchemeType scheme_type,
                              CharsetConverter* query_converter,
                              CanonOutput* output,
                              Parsed* new_parsed) {
-  return DoCanonicalizeStandardURL<base::char16, base::char16>(
-      URLComponentSource<base::char16>(spec), parsed, scheme_type,
-      query_converter, output, new_parsed);
+  return DoCanonicalizeStandardURL(URLComponentSource(spec), parsed,
+                                   scheme_type, query_converter, output,
+                                   new_parsed);
 }
 
 // It might be nice in the future to optimize this so unchanged components don't
@@ -185,15 +192,15 @@ bool ReplaceStandardURL(const char* base,
   URLComponentSource<char> source(base);
   Parsed parsed(base_parsed);
   SetupOverrideComponents(base, replacements, &source, &parsed);
-  return DoCanonicalizeStandardURL<char, unsigned char>(
-      source, parsed, scheme_type, query_converter, output, new_parsed);
+  return DoCanonicalizeStandardURL(source, parsed, scheme_type, query_converter,
+                                   output, new_parsed);
 }
 
 // For 16-bit replacements, we turn all the replacements into UTF-8 so the
 // regular code path can be used.
 bool ReplaceStandardURL(const char* base,
                         const Parsed& base_parsed,
-                        const Replacements<base::char16>& replacements,
+                        const Replacements<char16_t>& replacements,
                         SchemeType scheme_type,
                         CharsetConverter* query_converter,
                         CanonOutput* output,
@@ -202,8 +209,8 @@ bool ReplaceStandardURL(const char* base,
   URLComponentSource<char> source(base);
   Parsed parsed(base_parsed);
   SetupUTF16OverrideComponents(base, replacements, &utf8, &source, &parsed);
-  return DoCanonicalizeStandardURL<char, unsigned char>(
-      source, parsed, scheme_type, query_converter, output, new_parsed);
+  return DoCanonicalizeStandardURL(source, parsed, scheme_type, query_converter,
+                                   output, new_parsed);
 }
 
 }  // namespace url

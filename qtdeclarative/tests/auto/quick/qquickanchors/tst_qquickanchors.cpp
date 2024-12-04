@@ -1,30 +1,6 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the test suite of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:GPL-EXCEPT$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 3 as published by the Free Software
-** Foundation with exceptions as appearing in the file LICENSE.GPL3-EXCEPT
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
+
 #include <qtest.h>
 #include <QSignalSpy>
 #include <private/qquickitem_p.h>
@@ -35,18 +11,18 @@
 #include <QtQuick/private/qquicktext_p.h>
 #include <QtQuick/private/qquickanchors_p_p.h>
 #include <QtQuick/private/qquickitem_p.h>
-#include "../../shared/util.h"
-#include "../shared/visualtestutil.h"
+#include <QtQuickTestUtils/private/qmlutils_p.h>
+#include <QtQuickTestUtils/private/visualtestutils_p.h>
 
 Q_DECLARE_METATYPE(QQuickAnchors::Anchor)
 
-using namespace QQuickVisualTestUtil;
+using namespace QQuickVisualTestUtils;
 
 class tst_qquickanchors : public QQmlDataTest
 {
     Q_OBJECT
 public:
-    tst_qquickanchors() {}
+    tst_qquickanchors() : QQmlDataTest(QT_QMLTEST_DATADIR) {}
 
 private slots:
     void basicAnchors();
@@ -168,15 +144,16 @@ void tst_qquickanchors::basicAnchorsRTL()
     qApp->processEvents();
 
     QQuickItem* rootItem = qobject_cast<QQuickItem*>(view->rootObject());
-    foreach (QObject *child, rootItem->children()) {
+    const QObjectList children = rootItem->children();
+    for (QObject *child : children) {
         bool mirrored = QQuickItemPrivate::get(qobject_cast<QQuickItem*>(child))->anchors()->mirrored();
         QCOMPARE(mirrored, false);
     }
 
-    foreach (QObject *child, rootItem->children())
+    for (QObject *child : children)
         mirrorAnchors(qobject_cast<QQuickItem*>(child));
 
-    foreach (QObject *child, rootItem->children()) {
+    for (QObject *child : children) {
         bool mirrored = QQuickItemPrivate::get(qobject_cast<QQuickItem*>(child))->anchors()->mirrored();
         QCOMPARE(mirrored, true);
     }
@@ -298,7 +275,8 @@ void tst_qquickanchors::illegalSets_data()
         << "Rectangle { id: rect; Rectangle { anchors.left: rect.left; anchors.right: rect.right; anchors.horizontalCenter: rect.horizontalCenter } }"
         << "<Unknown File>:2:23: QML Rectangle: Cannot specify left, right, and horizontalCenter anchors at the same time.";
 
-    foreach (const QString &side, QStringList() << "left" << "right") {
+    const QStringList leftRight = {"left", "right"};
+    for (const QString &side : leftRight) {
         QTest::newRow("H - anchor to V")
             << QString("Rectangle { Rectangle { anchors.%1: parent.top } }").arg(side)
             << "<Unknown File>:2:13: QML Rectangle: Cannot anchor a horizontal edge to a vertical edge.";
@@ -321,7 +299,8 @@ void tst_qquickanchors::illegalSets_data()
         << "Rectangle { Text { id: text1; text: \"Hello\" } Text { anchors.baseline: text1.baseline; anchors.top: text1.top; } }"
         << "<Unknown File>:2:47: QML Text: Baseline anchor cannot be used in conjunction with top, bottom, or verticalCenter anchors.";
 
-    foreach (const QString &side, QStringList() << "top" << "bottom" << "baseline") {
+    const QStringList topBottomBaseline = {"top", "bottom", "baseline"};
+    for (const QString &side : topBottomBaseline) {
 
         QTest::newRow("V - anchor to H")
             << QString("Rectangle { Rectangle { anchors.%1: parent.left } }").arg(side)
@@ -541,6 +520,15 @@ void tst_qquickanchors::centerIn()
     QCOMPARE(rect3->x(), 94.5);
     QCOMPARE(rect3->y(), 94.5);
 
+    //QTBUG-95224 (fractional positions are not center-rounded correctly)
+    // The center anchor lines on the parent will be rounded from 41.2 / 2 == 20.6 to 21
+    // rect4 has anchors.alignWhenCentered: false, so no rounding will be done on that items position.
+    // As a result, the expected position of rect4 will be 21 - 0.9/2 = 20.55
+    QQuickRectangle* rect4 = findItem<QQuickRectangle>(view->rootObject(), QLatin1String("centered4"));
+    view->rootObject()->setWidth(41.2);
+    view->rootObject()->setHeight(41.2);
+    QCOMPARE(rect4->x(), 20.55);
+    QCOMPARE(rect4->y(), 20.55);
     delete view;
 }
 

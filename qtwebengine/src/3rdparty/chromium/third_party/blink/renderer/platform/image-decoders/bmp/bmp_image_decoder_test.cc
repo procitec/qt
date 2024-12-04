@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,7 +16,7 @@ namespace {
 
 std::unique_ptr<ImageDecoder> CreateBMPDecoder() {
   return std::make_unique<BMPImageDecoder>(
-      ImageDecoder::kAlphaNotPremultiplied, ColorBehavior::TransformToSRGB(),
+      ImageDecoder::kAlphaNotPremultiplied, ColorBehavior::kTransformToSRGB,
       ImageDecoder::kNoDecodedImageByteLimit);
 }
 
@@ -31,8 +31,8 @@ TEST(BMPImageDecoderTest, isSizeAvailable) {
   std::unique_ptr<ImageDecoder> decoder = CreateBMPDecoder();
   decoder->SetData(data.get(), true);
   EXPECT_TRUE(decoder->IsSizeAvailable());
-  EXPECT_EQ(256, decoder->Size().Width());
-  EXPECT_EQ(256, decoder->Size().Height());
+  EXPECT_EQ(256, decoder->Size().width());
+  EXPECT_EQ(256, decoder->Size().height());
 }
 
 TEST(BMPImageDecoderTest, parseAndDecode) {
@@ -98,6 +98,19 @@ TEST(BMPImageDecoderTest, crbug752898) {
   decoder->DecodeFrameBufferAtIndex(0);
 }
 
+// Verify that decoding an image with an unnecessary EOF marker does not crash.
+TEST(BMPImageDecoderTest, allowEOFWhenPastEndOfImage) {
+  static constexpr char kBmpFile[] = "/images/resources/unnecessary-eof.bmp";
+  scoped_refptr<SharedBuffer> data = ReadFile(kBmpFile);
+  ASSERT_TRUE(data.get());
+
+  std::unique_ptr<ImageDecoder> decoder = CreateBMPDecoder();
+  decoder->SetData(data.get(), true);
+  ImageFrame* frame = decoder->DecodeFrameBufferAtIndex(0);
+  EXPECT_EQ(ImageFrame::kFrameComplete, frame->GetStatus());
+  EXPECT_FALSE(decoder->Failed());
+}
+
 class BMPImageDecoderCorpusTest : public ImageDecoderBaseTest {
  public:
   BMPImageDecoderCorpusTest() : ImageDecoderBaseTest("bmp") {}
@@ -105,7 +118,7 @@ class BMPImageDecoderCorpusTest : public ImageDecoderBaseTest {
  protected:
   std::unique_ptr<ImageDecoder> CreateImageDecoder() const override {
     return std::make_unique<BMPImageDecoder>(
-        ImageDecoder::kAlphaPremultiplied, ColorBehavior::TransformToSRGB(),
+        ImageDecoder::kAlphaPremultiplied, ColorBehavior::kTransformToSRGB,
         ImageDecoder::kNoDecodedImageByteLimit);
   }
 

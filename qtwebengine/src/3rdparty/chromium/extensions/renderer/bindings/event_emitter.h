@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,9 +6,9 @@
 #define EXTENSIONS_RENDERER_BINDINGS_EVENT_EMITTER_H_
 
 #include <map>
-#include <vector>
 
-#include "extensions/common/event_filtering_info.h"
+#include "base/memory/raw_ptr.h"
+#include "extensions/common/mojom/event_dispatcher.mojom-forward.h"
 #include "extensions/renderer/bindings/js_runner.h"
 #include "gin/wrappable.h"
 #include "v8/include/v8.h"
@@ -29,6 +29,10 @@ class EventEmitter final : public gin::Wrappable<EventEmitter> {
   EventEmitter(bool supports_filters,
                std::unique_ptr<APIEventListeners> listeners,
                ExceptionHandler* exception_handler);
+
+  EventEmitter(const EventEmitter&) = delete;
+  EventEmitter& operator=(const EventEmitter&) = delete;
+
   ~EventEmitter() override;
 
   static gin::WrapperInfo kWrapperInfo;
@@ -42,8 +46,8 @@ class EventEmitter final : public gin::Wrappable<EventEmitter> {
   // Warning: This can run arbitrary JS code, so the |context| may be
   // invalidated after this!
   void Fire(v8::Local<v8::Context> context,
-            std::vector<v8::Local<v8::Value>>* args,
-            const EventFilteringInfo* filter,
+            v8::LocalVector<v8::Value>* args,
+            mojom::EventFilteringInfoPtr filter,
             JSRunner::ResultCallback callback);
 
   // Fires the event to any listeners synchronously, and returns the result.
@@ -52,8 +56,8 @@ class EventEmitter final : public gin::Wrappable<EventEmitter> {
   // Warning: This can run arbitrary JS code, so the |context| may be
   // invalidated after this!
   v8::Local<v8::Value> FireSync(v8::Local<v8::Context> context,
-                                std::vector<v8::Local<v8::Value>>* args,
-                                const EventFilteringInfo* filter);
+                                v8::LocalVector<v8::Value>* args,
+                                mojom::EventFilteringInfoPtr filter);
 
   // Removes all listeners and marks this object as invalid so that no more
   // are added.
@@ -73,13 +77,13 @@ class EventEmitter final : public gin::Wrappable<EventEmitter> {
 
   // Dispatches an event synchronously to listeners, returning the result.
   v8::Local<v8::Value> DispatchSync(v8::Local<v8::Context> context,
-                                    std::vector<v8::Local<v8::Value>>* args,
-                                    const EventFilteringInfo* filter);
+                                    v8::LocalVector<v8::Value>* args,
+                                    mojom::EventFilteringInfoPtr filter);
 
   // Dispatches an event asynchronously to listeners.
   void DispatchAsync(v8::Local<v8::Context> context,
-                     std::vector<v8::Local<v8::Value>>* args,
-                     const EventFilteringInfo* filter,
+                     v8::LocalVector<v8::Value>* args,
+                     mojom::EventFilteringInfoPtr filter,
                      JSRunner::ResultCallback callback);
   static void DispatchAsyncHelper(
       const v8::FunctionCallbackInfo<v8::Value>& info);
@@ -94,7 +98,8 @@ class EventEmitter final : public gin::Wrappable<EventEmitter> {
   std::unique_ptr<APIEventListeners> listeners_;
 
   // The associated exception handler; guaranteed to outlive this object.
-  ExceptionHandler* const exception_handler_ = nullptr;
+  const raw_ptr<ExceptionHandler, DanglingUntriaged> exception_handler_ =
+      nullptr;
 
   // The next id to use in the pending_filters_ map.
   int next_filter_id_ = 0;
@@ -102,9 +107,7 @@ class EventEmitter final : public gin::Wrappable<EventEmitter> {
   static constexpr int kInvalidFilterId = -1;
   // The map of EventFilteringInfos for events that are pending dispatch (since
   // JS is suspended).
-  std::map<int, EventFilteringInfo> pending_filters_;
-
-  DISALLOW_COPY_AND_ASSIGN(EventEmitter);
+  std::map<int, mojom::EventFilteringInfoPtr> pending_filters_;
 };
 
 }  // namespace extensions

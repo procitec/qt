@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,21 +7,17 @@
 
 #include <memory>
 
-#include "base/macros.h"
+#include "base/memory/weak_ptr.h"
 #include "base/metrics/field_trial.h"
 #include "base/threading/thread_checker.h"
-
-namespace base {
-class FilePath;
-}
 
 namespace metrics {
 class MetricsService;
 class MetricsServiceClient;
-}
+}  // namespace metrics
 
-namespace rappor {
-class RapporServiceImpl;
+namespace metrics::structured {
+class StructuredMetricsService;
 }
 
 namespace ukm {
@@ -29,8 +25,9 @@ class UkmService;
 }
 
 namespace variations {
+class EntropyProviders;
 class VariationsService;
-}
+}  // namespace variations
 
 namespace metrics_services_manager {
 
@@ -38,45 +35,51 @@ class MetricsServicesManagerClient;
 
 // MetricsServicesManager is a helper class for embedders that use the various
 // metrics-related services in a Chrome-like fashion: MetricsService (via its
-// client), RapporServiceImpl and VariationsService.
+// client) and VariationsService.
 class MetricsServicesManager {
  public:
+  using OnDidStartLoadingCb = base::RepeatingClosure;
+  using OnDidStopLoadingCb = base::RepeatingClosure;
+  using OnRendererUnresponsiveCb = base::RepeatingClosure;
+
   // Creates the MetricsServicesManager with the given client.
   explicit MetricsServicesManager(
       std::unique_ptr<MetricsServicesManagerClient> client);
+
+  MetricsServicesManager(const MetricsServicesManager&) = delete;
+  MetricsServicesManager& operator=(const MetricsServicesManager&) = delete;
+
   virtual ~MetricsServicesManager();
 
-  // Returns the preferred entropy provider used to seed persistent activities
-  // based on whether or not metrics reporting is permitted on this client.
+  // Instantiates the FieldTrialList using Chrome's default entropy provider.
   //
-  // If there's consent to report metrics, this method returns an entropy
-  // provider that has a high source of entropy, partially based on the client
-  // ID. Otherwise, it returns an entropy provider that is based on a low
-  // entropy source.
-  std::unique_ptr<const base::FieldTrial::EntropyProvider>
-  CreateEntropyProvider();
+  // Side effect: Initializes the CleanExitBeacon.
+  void InstantiateFieldTrialList() const;
 
   // Returns the MetricsService, creating it if it hasn't been created yet (and
   // additionally creating the MetricsServiceClient in that case).
   metrics::MetricsService* GetMetricsService();
 
-  // Returns the RapporServiceImpl, creating it if it hasn't been created yet.
-  rappor::RapporServiceImpl* GetRapporServiceImpl();
-
   // Returns the UkmService, creating it if it hasn't been created yet.
   ukm::UkmService* GetUkmService();
+
+  // Returns the StructuredMetricsService associated with the
+  // |metrics_service_client_|.
+  metrics::structured::StructuredMetricsService* GetStructuredMetricsService();
 
   // Returns the VariationsService, creating it if it hasn't been created yet.
   variations::VariationsService* GetVariationsService();
 
-  // Should be called when a plugin loading error occurs.
-  void OnPluginLoadingError(const base::FilePath& plugin_path);
+  // Returns an |OnDidStartLoadingCb| callback.
+  OnDidStartLoadingCb GetOnDidStartLoadingCb();
 
-  // Some embedders use this method to notify the metrics system when a
-  // renderer process exits unexpectedly.
-  void OnRendererProcessCrash();
+  // Returns an |OnDidStopLoadingCb| callback.
+  OnDidStopLoadingCb GetOnDidStopLoadingCb();
 
-  // Update the managed services when permissions for uploading metrics change.
+  // Returns an |OnRendererUnresponsiveCb| callback.
+  OnRendererUnresponsiveCb GetOnRendererUnresponsiveCb();
+
+  // Updates the managed services when permissions for uploading metrics change.
   void UpdateUploadPermissions(bool may_upload);
 
   // Gets the current state of metric reporting.
@@ -85,26 +88,39 @@ class MetricsServicesManager {
   // Gets the current state of metrics consent.
   bool IsMetricsConsentGiven() const;
 
- private:
-  // Update the managed services when permissions for recording/uploading
-  // metrics change.
-  void UpdateRapporServiceImpl();
+  // Returns true iff UKM is allowed for all profiles.
+  bool IsUkmAllowedForAllProfiles();
 
+  // Returns a low entropy provider.
+  std::unique_ptr<const variations::EntropyProviders>
+  CreateEntropyProvidersForTesting();
+
+ private:
   // Returns the MetricsServiceClient, creating it if it hasn't been
   // created yet (and additionally creating the MetricsService in that case).
   metrics::MetricsServiceClient* GetMetricsServiceClient();
 
-  // Update which services are running to match current permissions.
+  // Updates which services are running to match current permissions.
   void UpdateRunningServices();
 
-  // Update the state of UkmService to match current permissions.
+  // Updates the state of UkmService to match current permissions.
   void UpdateUkmService();
 
-  // Update the managed services when permissions for recording/uploading
+  // Updates the state of StructuredMetricsService to match current permissions.
+  void UpdateStructuredMetricsService();
+
+  // Updates the managed services when permissions for recording/uploading
   // metrics change.
   void UpdatePermissions(bool current_may_record,
                          bool current_consent_given,
                          bool current_may_upload);
+
+  // Called when loading state changed.
+  void LoadingStateChanged(bool is_loading);
+
+  // Used by |GetOnRendererUnresponsiveCb| to construct the callback that will
+  // be run by |MetricsServicesWebContentsObserver|.
+  void OnRendererUnresponsive();
 
   // The client passed in from the embedder.
   const std::unique_ptr<MetricsServicesManagerClient> client_;
@@ -124,13 +140,10 @@ class MetricsServicesManager {
   // The MetricsServiceClient. Owns the MetricsService.
   std::unique_ptr<metrics::MetricsServiceClient> metrics_service_client_;
 
-  // The RapporServiceImpl, for RAPPOR metric uploads.
-  std::unique_ptr<rappor::RapporServiceImpl> rappor_service_;
-
   // The VariationsService, for server-side experiments infrastructure.
   std::unique_ptr<variations::VariationsService> variations_service_;
 
-  DISALLOW_COPY_AND_ASSIGN(MetricsServicesManager);
+  base::WeakPtrFactory<MetricsServicesManager> weak_ptr_factory_{this};
 };
 
 }  // namespace metrics_services_manager

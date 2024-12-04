@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,6 +6,7 @@
 #define SERVICES_DEVICE_GENERIC_SENSOR_PLATFORM_SENSOR_UTIL_H_
 
 #include "services/device/public/cpp/generic_sensor/sensor_reading.h"
+#include "services/device/public/mojom/sensor.mojom-shared.h"
 
 namespace device {
 
@@ -24,6 +25,9 @@ namespace device {
 // Units are SI meters per second squared (m/s^2).
 constexpr double kAccelerometerRoundingMultiple = 0.1;
 
+// Units are luxes (lx).
+constexpr int kAlsRoundingMultiple = 50;
+
 // Units are radians/second. This value corresponds to 0.1 deg./sec.
 constexpr double kGyroscopeRoundingMultiple = 0.00174532925199432963;
 
@@ -32,6 +36,11 @@ constexpr double kOrientationEulerRoundingMultiple = 0.1;
 
 // Units are radians. This value corresponds to 0.1 degrees.
 constexpr double kOrientationQuaternionRoundingMultiple = 0.0017453292519943296;
+
+// Some sensor types also ignore value changes below a certain threshold to
+// avoid exposing whether a value is too close to the limit between one
+// rounded value and the next.
+constexpr int kAlsSignificanceThreshold = kAlsRoundingMultiple / 2;
 
 // Round |value| to be a multiple of |multiple|.
 //
@@ -50,6 +59,9 @@ void RoundAccelerometerReading(SensorReadingXYZ* reading);
 
 // Round gyroscope sensor reading to guard user privacy.
 void RoundGyroscopeReading(SensorReadingXYZ* reading);
+
+// Round ambient light sensor reading to guard user privacy.
+void RoundIlluminanceReading(SensorReadingSingle* reading);
 
 // Round orientation Euler angle sensor reading to guard user privacy.
 void RoundOrientationEulerReading(SensorReadingXYZ* reading);

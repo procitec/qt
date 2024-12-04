@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,14 +7,17 @@
 
 #include <memory>
 
-#include "base/callback.h"
-#include "base/macros.h"
+#include "base/functional/callback.h"
 #include "base/memory/weak_ptr.h"
 #include "base/run_loop.h"
+#include "build/build_config.h"
 #include "device/fido/fido_discovery_factory.h"
 #include "device/fido/fido_transport_protocol.h"
 
 namespace device {
+
+class WinWebAuthnApi;
+
 namespace test {
 
 // Fake FIDO discovery simulating the behavior of the production
@@ -65,6 +68,9 @@ class FakeFidoDiscovery : public FidoDeviceDiscovery,
   explicit FakeFidoDiscovery(FidoTransportProtocol transport,
                              StartMode mode = StartMode::kManual);
 
+  FakeFidoDiscovery(const FakeFidoDiscovery&) = delete;
+  FakeFidoDiscovery& operator=(const FakeFidoDiscovery&) = delete;
+
   // Blocks until start is requested.
   void WaitForCallToStart();
 
@@ -85,8 +91,6 @@ class FakeFidoDiscovery : public FidoDeviceDiscovery,
 
   const StartMode mode_;
   base::RunLoop wait_for_start_loop_;
-
-  DISALLOW_COPY_AND_ASSIGN(FakeFidoDiscovery);
 };
 
 // Overrides FidoDeviceDiscovery::Create* to construct FakeFidoDiscoveries.
@@ -95,11 +99,18 @@ class FakeFidoDiscoveryFactory : public device::FidoDiscoveryFactory {
   using StartMode = FakeFidoDiscovery::StartMode;
 
   FakeFidoDiscoveryFactory();
+
+  FakeFidoDiscoveryFactory(const FakeFidoDiscoveryFactory&) = delete;
+  FakeFidoDiscoveryFactory& operator=(const FakeFidoDiscoveryFactory&) = delete;
+
   ~FakeFidoDiscoveryFactory() override;
 
   // Constructs a fake discovery to be returned from the next call to
   // FidoDeviceDiscovery::Create. Returns a raw pointer to the fake so that
   // tests can set it up according to taste.
+  //
+  // ForgeNextPlatformDiscovery() will queue discoveries if called multiple
+  // times.
   //
   // It is an error not to call the relevant method prior to a call to
   // FidoDeviceDiscovery::Create with the respective transport.
@@ -110,17 +121,26 @@ class FakeFidoDiscoveryFactory : public device::FidoDiscoveryFactory {
   FakeFidoDiscovery* ForgeNextPlatformDiscovery(
       StartMode mode = StartMode::kManual);
 
+  // set_discover_win_webauthn_api_authenticator controls whether the
+  // WebWebAuthnApi authenticator will be discovered. Create a
+  // `WinWebAuthnApi::ScopedOverride` before settings to true.
+  void set_discover_win_webauthn_api_authenticator(bool on);
+
   // device::FidoDiscoveryFactory:
   std::vector<std::unique_ptr<FidoDiscoveryBase>> Create(
       FidoTransportProtocol transport) override;
+
+#if BUILDFLAG(IS_WIN)
+  std::unique_ptr<device::FidoDiscoveryBase>
+  MaybeCreateWinWebAuthnApiDiscovery() override;
+#endif
 
  private:
   std::unique_ptr<FakeFidoDiscovery> next_hid_discovery_;
   std::unique_ptr<FakeFidoDiscovery> next_nfc_discovery_;
   std::unique_ptr<FakeFidoDiscovery> next_cable_discovery_;
-  std::unique_ptr<FakeFidoDiscovery> next_platform_discovery_;
-
-  DISALLOW_COPY_AND_ASSIGN(FakeFidoDiscoveryFactory);
+  std::vector<std::unique_ptr<FidoDiscoveryBase>> next_platform_discovery_list_;
+  bool discover_win_webauthn_api_authenticator_ = false;
 };
 
 }  // namespace test

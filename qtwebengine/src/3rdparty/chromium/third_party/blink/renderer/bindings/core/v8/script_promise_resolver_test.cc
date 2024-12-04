@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,36 +13,31 @@
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
+#include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/testing/dummy_page_holder.h"
 #include "third_party/blink/renderer/platform/bindings/script_forbidden_scope.h"
+#include "third_party/blink/renderer/platform/heap/thread_state.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "v8/include/v8.h"
 
 namespace blink {
 
 namespace {
 
-class TestHelperFunction : public ScriptFunction {
+class TestHelperFunction : public ScriptFunction::Callable {
  public:
-  static v8::Local<v8::Function> CreateFunction(ScriptState* script_state,
-                                                String* value) {
-    TestHelperFunction* self =
-        MakeGarbageCollected<TestHelperFunction>(script_state, value);
-    return self->BindToV8Function();
-  }
+  explicit TestHelperFunction(String* value) : value_(value) {}
 
-  TestHelperFunction(ScriptState* script_state, String* value)
-      : ScriptFunction(script_state), value_(value) {}
-
- private:
-  ScriptValue Call(ScriptValue value) override {
+  ScriptValue Call(ScriptState* script_state, ScriptValue value) override {
     DCHECK(!value.IsEmpty());
-    *value_ = ToCoreString(value.V8Value()
-                               ->ToString(GetScriptState()->GetContext())
-                               .ToLocalChecked());
+    *value_ = ToCoreString(
+        script_state->GetIsolate(),
+        value.V8Value()->ToString(script_state->GetContext()).ToLocalChecked());
     return value;
   }
 
+ private:
   String* value_;
 };
 
@@ -53,9 +48,10 @@ class ScriptPromiseResolverTest : public testing::Test {
 
   ~ScriptPromiseResolverTest() override {
     // Execute all pending microtasks
-    v8::MicrotasksScope::PerformCheckpoint(GetIsolate());
+    PerformMicrotaskCheckpoint();
   }
 
+  test::TaskEnvironment task_environment_;
   std::unique_ptr<DummyPageHolder> page_holder_;
   ScriptState* GetScriptState() const {
     return ToScriptStateForMainWorld(&page_holder_->GetFrame());
@@ -64,6 +60,12 @@ class ScriptPromiseResolverTest : public testing::Test {
     return page_holder_->GetFrame().DomWindow();
   }
   v8::Isolate* GetIsolate() const { return GetScriptState()->GetIsolate(); }
+
+  void PerformMicrotaskCheckpoint() {
+    ScriptState::Scope scope(GetScriptState());
+    GetScriptState()->GetContext()->GetMicrotaskQueue()->PerformCheckpoint(
+        GetIsolate());
+  }
 };
 
 TEST_F(ScriptPromiseResolverTest, construct) {
@@ -85,15 +87,18 @@ TEST_F(ScriptPromiseResolverTest, resolve) {
   ASSERT_FALSE(promise.IsEmpty());
   {
     ScriptState::Scope scope(GetScriptState());
-    promise.Then(
-        TestHelperFunction::CreateFunction(GetScriptState(), &on_fulfilled),
-        TestHelperFunction::CreateFunction(GetScriptState(), &on_rejected));
+    promise.Then(MakeGarbageCollected<ScriptFunction>(
+                     GetScriptState(),
+                     MakeGarbageCollected<TestHelperFunction>(&on_fulfilled)),
+                 MakeGarbageCollected<ScriptFunction>(
+                     GetScriptState(),
+                     MakeGarbageCollected<TestHelperFunction>(&on_rejected)));
   }
 
   EXPECT_EQ(String(), on_fulfilled);
   EXPECT_EQ(String(), on_rejected);
 
-  v8::MicrotasksScope::PerformCheckpoint(GetIsolate());
+  PerformMicrotaskCheckpoint();
 
   EXPECT_EQ(String(), on_fulfilled);
   EXPECT_EQ(String(), on_rejected);
@@ -108,14 +113,14 @@ TEST_F(ScriptPromiseResolverTest, resolve) {
   EXPECT_EQ(String(), on_fulfilled);
   EXPECT_EQ(String(), on_rejected);
 
-  v8::MicrotasksScope::PerformCheckpoint(GetIsolate());
+  PerformMicrotaskCheckpoint();
 
   EXPECT_EQ("hello", on_fulfilled);
   EXPECT_EQ(String(), on_rejected);
 
   resolver->Resolve("bye");
   resolver->Reject("bye");
-  v8::MicrotasksScope::PerformCheckpoint(GetIsolate());
+  PerformMicrotaskCheckpoint();
 
   EXPECT_EQ("hello", on_fulfilled);
   EXPECT_EQ(String(), on_rejected);
@@ -134,15 +139,18 @@ TEST_F(ScriptPromiseResolverTest, reject) {
   ASSERT_FALSE(promise.IsEmpty());
   {
     ScriptState::Scope scope(GetScriptState());
-    promise.Then(
-        TestHelperFunction::CreateFunction(GetScriptState(), &on_fulfilled),
-        TestHelperFunction::CreateFunction(GetScriptState(), &on_rejected));
+    promise.Then(MakeGarbageCollected<ScriptFunction>(
+                     GetScriptState(),
+                     MakeGarbageCollected<TestHelperFunction>(&on_fulfilled)),
+                 MakeGarbageCollected<ScriptFunction>(
+                     GetScriptState(),
+                     MakeGarbageCollected<TestHelperFunction>(&on_rejected)));
   }
 
   EXPECT_EQ(String(), on_fulfilled);
   EXPECT_EQ(String(), on_rejected);
 
-  v8::MicrotasksScope::PerformCheckpoint(GetIsolate());
+  PerformMicrotaskCheckpoint();
 
   EXPECT_EQ(String(), on_fulfilled);
   EXPECT_EQ(String(), on_rejected);
@@ -157,14 +165,14 @@ TEST_F(ScriptPromiseResolverTest, reject) {
   EXPECT_EQ(String(), on_fulfilled);
   EXPECT_EQ(String(), on_rejected);
 
-  v8::MicrotasksScope::PerformCheckpoint(GetIsolate());
+  PerformMicrotaskCheckpoint();
 
   EXPECT_EQ(String(), on_fulfilled);
   EXPECT_EQ("hello", on_rejected);
 
   resolver->Resolve("bye");
   resolver->Reject("bye");
-  v8::MicrotasksScope::PerformCheckpoint(GetIsolate());
+  PerformMicrotaskCheckpoint();
 
   EXPECT_EQ(String(), on_fulfilled);
   EXPECT_EQ("hello", on_rejected);
@@ -183,9 +191,12 @@ TEST_F(ScriptPromiseResolverTest, stop) {
   ASSERT_FALSE(promise.IsEmpty());
   {
     ScriptState::Scope scope(GetScriptState());
-    promise.Then(
-        TestHelperFunction::CreateFunction(GetScriptState(), &on_fulfilled),
-        TestHelperFunction::CreateFunction(GetScriptState(), &on_rejected));
+    promise.Then(MakeGarbageCollected<ScriptFunction>(
+                     GetScriptState(),
+                     MakeGarbageCollected<TestHelperFunction>(&on_fulfilled)),
+                 MakeGarbageCollected<ScriptFunction>(
+                     GetScriptState(),
+                     MakeGarbageCollected<TestHelperFunction>(&on_rejected)));
   }
 
   GetExecutionContext()->NotifyContextDestroyed();
@@ -195,7 +206,7 @@ TEST_F(ScriptPromiseResolverTest, stop) {
   }
 
   resolver->Resolve("hello");
-  v8::MicrotasksScope::PerformCheckpoint(GetIsolate());
+  PerformMicrotaskCheckpoint();
 
   EXPECT_EQ(String(), on_fulfilled);
   EXPECT_EQ(String(), on_rejected);
@@ -225,12 +236,12 @@ TEST_F(ScriptPromiseResolverTest, keepAliveUntilResolved) {
   }
   resolver->KeepAliveWhilePending();
   ThreadState::Current()->CollectAllGarbageForTesting(
-      BlinkGC::kNoHeapPointersOnStack);
+      ThreadState::StackState::kNoHeapPointers);
   ASSERT_TRUE(ScriptPromiseResolverKeepAlive::IsAlive());
 
   resolver->Resolve("hello");
   ThreadState::Current()->CollectAllGarbageForTesting(
-      BlinkGC::kNoHeapPointersOnStack);
+      ThreadState::StackState::kNoHeapPointers);
   EXPECT_FALSE(ScriptPromiseResolverKeepAlive::IsAlive());
 }
 
@@ -244,12 +255,12 @@ TEST_F(ScriptPromiseResolverTest, keepAliveUntilRejected) {
   }
   resolver->KeepAliveWhilePending();
   ThreadState::Current()->CollectAllGarbageForTesting(
-      BlinkGC::kNoHeapPointersOnStack);
+      ThreadState::StackState::kNoHeapPointers);
   ASSERT_TRUE(ScriptPromiseResolverKeepAlive::IsAlive());
 
   resolver->Reject("hello");
   ThreadState::Current()->CollectAllGarbageForTesting(
-      BlinkGC::kNoHeapPointersOnStack);
+      ThreadState::StackState::kNoHeapPointers);
   EXPECT_FALSE(ScriptPromiseResolverKeepAlive::IsAlive());
 }
 
@@ -267,14 +278,14 @@ TEST_F(ScriptPromiseResolverTest, keepAliveWhileScriptForbidden) {
     resolver->Resolve("hello");
 
     ThreadState::Current()->CollectAllGarbageForTesting(
-        BlinkGC::kNoHeapPointersOnStack);
+        ThreadState::StackState::kNoHeapPointers);
     EXPECT_TRUE(ScriptPromiseResolverKeepAlive::IsAlive());
   }
 
   base::RunLoop().RunUntilIdle();
 
   ThreadState::Current()->CollectAllGarbageForTesting(
-      BlinkGC::kNoHeapPointersOnStack);
+      ThreadState::StackState::kNoHeapPointers);
   EXPECT_FALSE(ScriptPromiseResolverKeepAlive::IsAlive());
 }
 
@@ -288,12 +299,12 @@ TEST_F(ScriptPromiseResolverTest, keepAliveUntilStopped) {
   }
   resolver->KeepAliveWhilePending();
   ThreadState::Current()->CollectAllGarbageForTesting(
-      BlinkGC::kNoHeapPointersOnStack);
+      ThreadState::StackState::kNoHeapPointers);
   EXPECT_TRUE(ScriptPromiseResolverKeepAlive::IsAlive());
 
   GetExecutionContext()->NotifyContextDestroyed();
   ThreadState::Current()->CollectAllGarbageForTesting(
-      BlinkGC::kNoHeapPointersOnStack);
+      ThreadState::StackState::kNoHeapPointers);
   EXPECT_FALSE(ScriptPromiseResolverKeepAlive::IsAlive());
 }
 
@@ -307,18 +318,18 @@ TEST_F(ScriptPromiseResolverTest, suspend) {
   }
   resolver->KeepAliveWhilePending();
   ThreadState::Current()->CollectAllGarbageForTesting(
-      BlinkGC::kNoHeapPointersOnStack);
+      ThreadState::StackState::kNoHeapPointers);
   ASSERT_TRUE(ScriptPromiseResolverKeepAlive::IsAlive());
 
   page_holder_->GetPage().SetPaused(true);
   resolver->Resolve("hello");
   ThreadState::Current()->CollectAllGarbageForTesting(
-      BlinkGC::kNoHeapPointersOnStack);
+      ThreadState::StackState::kNoHeapPointers);
   EXPECT_TRUE(ScriptPromiseResolverKeepAlive::IsAlive());
 
   GetExecutionContext()->NotifyContextDestroyed();
   ThreadState::Current()->CollectAllGarbageForTesting(
-      BlinkGC::kNoHeapPointersOnStack);
+      ThreadState::StackState::kNoHeapPointers);
   EXPECT_FALSE(ScriptPromiseResolverKeepAlive::IsAlive());
 }
 
@@ -335,13 +346,16 @@ TEST_F(ScriptPromiseResolverTest, resolveVoid) {
   ASSERT_FALSE(promise.IsEmpty());
   {
     ScriptState::Scope scope(GetScriptState());
-    promise.Then(
-        TestHelperFunction::CreateFunction(GetScriptState(), &on_fulfilled),
-        TestHelperFunction::CreateFunction(GetScriptState(), &on_rejected));
+    promise.Then(MakeGarbageCollected<ScriptFunction>(
+                     GetScriptState(),
+                     MakeGarbageCollected<TestHelperFunction>(&on_fulfilled)),
+                 MakeGarbageCollected<ScriptFunction>(
+                     GetScriptState(),
+                     MakeGarbageCollected<TestHelperFunction>(&on_rejected)));
   }
 
   resolver->Resolve();
-  v8::MicrotasksScope::PerformCheckpoint(GetIsolate());
+  PerformMicrotaskCheckpoint();
 
   EXPECT_EQ("undefined", on_fulfilled);
   EXPECT_EQ(String(), on_rejected);
@@ -360,13 +374,16 @@ TEST_F(ScriptPromiseResolverTest, rejectVoid) {
   ASSERT_FALSE(promise.IsEmpty());
   {
     ScriptState::Scope scope(GetScriptState());
-    promise.Then(
-        TestHelperFunction::CreateFunction(GetScriptState(), &on_fulfilled),
-        TestHelperFunction::CreateFunction(GetScriptState(), &on_rejected));
+    promise.Then(MakeGarbageCollected<ScriptFunction>(
+                     GetScriptState(),
+                     MakeGarbageCollected<TestHelperFunction>(&on_fulfilled)),
+                 MakeGarbageCollected<ScriptFunction>(
+                     GetScriptState(),
+                     MakeGarbageCollected<TestHelperFunction>(&on_rejected)));
   }
 
   resolver->Reject();
-  v8::MicrotasksScope::PerformCheckpoint(GetIsolate());
+  PerformMicrotaskCheckpoint();
 
   EXPECT_EQ(String(), on_fulfilled);
   EXPECT_EQ("undefined", on_rejected);

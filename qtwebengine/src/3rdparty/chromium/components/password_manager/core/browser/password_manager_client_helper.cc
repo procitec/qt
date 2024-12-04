@@ -1,17 +1,17 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/password_manager/core/browser/password_manager_client_helper.h"
 
-#include "base/metrics/field_trial_params.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "components/password_manager/core/browser/password_bubble_experiment.h"
 #include "components/password_manager/core/browser/password_feature_manager.h"
 #include "components/password_manager/core/browser/password_form_manager_for_ui.h"
 #include "components/password_manager/core/browser/password_manager.h"
+#include "components/password_manager/core/browser/password_manager_util.h"
 #include "components/password_manager/core/browser/password_sync_util.h"
-#include "components/password_manager/core/common/password_manager_features.h"
 #include "components/password_manager/core/common/password_manager_pref_names.h"
 #include "components/prefs/pref_service.h"
 #include "components/signin/public/identity_manager/account_info.h"
@@ -22,16 +22,18 @@ namespace password_manager {
 
 namespace {
 
+#if !BUILDFLAG(IS_IOS) && !BUILDFLAG(IS_ANDROID)
 bool IsPrimaryAccountSignIn(const signin::IdentityManager& identity_manager,
-                            const base::string16& username,
+                            const std::u16string& username,
                             const std::string& signon_realm) {
-  CoreAccountInfo primary_account = identity_manager.GetPrimaryAccountInfo(
-      signin::ConsentLevel::kNotRequired);
+  CoreAccountInfo primary_account =
+      identity_manager.GetPrimaryAccountInfo(signin::ConsentLevel::kSignin);
   return sync_util::IsGaiaCredentialPage(signon_realm) &&
          !primary_account.IsEmpty() &&
          gaia::AreEmailsSame(base::UTF16ToUTF8(username),
                              primary_account.email);
 }
+#endif  // !BUILDFLAG(IS_IOS) && !BUILDFLAG(IS_ANDROID)
 
 }  // namespace
 
@@ -98,24 +100,26 @@ bool PasswordManagerClientHelper::ShouldPromptToEnableAutoSignIn() const {
   return password_bubble_experiment::
              ShouldShowAutoSignInPromptFirstRunExperience(
                  delegate_->GetPrefs()) &&
-         delegate_->GetPrefs()->GetBoolean(
-             password_manager::prefs::kCredentialsEnableAutosignin) &&
-         !delegate_->IsIncognito();
+         delegate_->IsAutoSignInEnabled() && !delegate_->IsOffTheRecord();
 }
 
 bool PasswordManagerClientHelper::ShouldPromptToMovePasswordToAccount(
     const PasswordFormManagerForUI& submitted_manager) const {
+#if !BUILDFLAG(IS_IOS) && !BUILDFLAG(IS_ANDROID)
   PasswordFeatureManager* feature_manager =
       delegate_->GetPasswordFeatureManager();
   if (!feature_manager->ShouldShowAccountStorageBubbleUi())
     return false;
+  if (!feature_manager->IsOptedInForAccountStorage()) {
+    return false;
+  }
   if (feature_manager->GetDefaultPasswordStore() ==
       PasswordForm::Store::kProfileStore) {
     return false;
   }
   if (!submitted_manager.IsMovableToAccountStore())
     return false;
-  if (delegate_->IsIncognito())
+  if (delegate_->IsOffTheRecord())
     return false;
   // It's not useful to store the password for the primary account inside
   // that same account.
@@ -125,14 +129,12 @@ bool PasswordManagerClientHelper::ShouldPromptToMovePasswordToAccount(
           submitted_manager.GetPendingCredentials().signon_realm)) {
     return false;
   }
-  int max_move_to_account_offers_for_non_opted_in_user =
-      base::GetFieldTrialParamByFeatureAsInt(
-          features::kEnablePasswordsAccountStorage,
-          features::kMaxMoveToAccountOffersForNonOptedInUser,
-          features::kMaxMoveToAccountOffersForNonOptedInUserDefaultValue);
-  return feature_manager->IsOptedInForAccountStorage() ||
-         feature_manager->GetMoveOfferedToNonOptedInUserCount() <
-             max_move_to_account_offers_for_non_opted_in_user;
+  return true;
+#else
+  // On Android and iOS, prompting to move after using a password isn't
+  // implemented.
+  return false;
+#endif  // !BUILDFLAG(IS_IOS) && !BUILDFLAG(IS_ANDROID)
 }
 
 }  // namespace password_manager

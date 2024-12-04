@@ -1,5 +1,8 @@
 # Efficient Fuzzing Guide
 
+This relates to fuzzers created using [libfuzzer] not [FuzzTests] - none of this
+advice is necessary for FuzzTests.
+
 Once you have a fuzz target running, you can analyze and tweak it to improve its
 efficiency. This document describes techniques to minimize fuzzing time and
 maximize your results.
@@ -75,6 +78,11 @@ fuzzing effectiveness:
 * Generate a source-level coverage report for your fuzzer by running the
   [coverage script] stored in the Chromium repository. The script provides
   detailed instructions and a usage example.
+
+For the `out/coverage` target in the coverage script, make sure to add all of
+the gn args you needed to build the `out/libfuzzer` target; this could include
+args like `target_os=chromeos` and `is_asan=true` depending on the [gn config]
+you chose.
 
 *** note
 **Note:** The code coverage of a fuzz target depends heavily on the corpus. A
@@ -290,8 +298,11 @@ crashes).
 [ClusterFuzz status]: libFuzzer_integration.md#Status-Links
 [Corpus GCS Bucket]: https://console.cloud.google.com/storage/clusterfuzz-corpus/libfuzzer
 [Getting Started Guide]: getting_started.md
+[gn config]: getting_started.md#running-the-fuzz-target
 [corpus from ClusterFuzz]: libFuzzer_integration.md#Corpus
 [coverage script]: https://cs.chromium.org/chromium/src/tools/code_coverage/coverage.py
-[fuzzing coverage]: https://chromium-coverage.appspot.com/reports/latest_fuzzers_only/linux/index.html
+[fuzzing coverage]: https://analysis.chromium.org/coverage/p/chromium?platform=fuzz
 [gsutil]: https://cloud.google.com/storage/docs/gsutil
 [startup initialization]: https://llvm.org/docs/LibFuzzer.html#startup-initialization
+[libfuzzer]: getting_started_with_libfuzzer.md
+[fuzztests]: getting_started.md

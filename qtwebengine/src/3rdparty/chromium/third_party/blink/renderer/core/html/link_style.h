@@ -1,15 +1,15 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_HTML_LINK_STYLE_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_HTML_LINK_STYLE_H_
 
+#include "third_party/blink/renderer/core/css/pending_sheet_type.h"
 #include "third_party/blink/renderer/core/css/style_engine.h"
 #include "third_party/blink/renderer/core/dom/node.h"
 #include "third_party/blink/renderer/core/html/link_resource.h"
 #include "third_party/blink/renderer/core/loader/resource/css_style_sheet_resource.h"
-#include "third_party/blink/renderer/platform/loader/fetch/fetch_parameters.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_client.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
 
@@ -31,12 +31,12 @@ class LinkStyle final : public LinkResource, ResourceClient {
   ~LinkStyle() override;
 
   LinkResourceType GetType() const override { return kStyle; }
-  void Process() override;
+  void Process(LinkLoadParameters::Reason reason) override;
   void OwnerRemoved() override;
   bool HasLoaded() const override { return loaded_sheet_; }
   void Trace(Visitor*) const override;
 
-  void StartLoadingDynamicSheet();
+  void SetToPendingState();
   void NotifyLoadedSheetAndAllCriticalSubresources(
       Node::LoadedSheetErrorStatus);
   bool SheetLoaded();
@@ -45,7 +45,7 @@ class LinkStyle final : public LinkResource, ResourceClient {
   void SetSheetTitle(const String&);
 
   bool StyleSheetIsLoading() const;
-  bool HasSheet() const { return sheet_; }
+  bool HasSheet() const { return sheet_ != nullptr; }
   bool IsDisabled() const { return disabled_state_ == kDisabled; }
   bool IsEnabledViaScript() const {
     return disabled_state_ == kEnabledViaScript;
@@ -55,6 +55,8 @@ class LinkStyle final : public LinkResource, ResourceClient {
   bool IsExplicitlyEnabled() const { return explicitly_enabled_; }
 
   CSSStyleSheet* Sheet() const { return sheet_.Get(); }
+
+  void UnblockRenderingForPendingSheet();
 
  private:
   // From ResourceClient
@@ -66,8 +68,6 @@ class LinkStyle final : public LinkResource, ResourceClient {
 
   enum DisabledState { kUnset, kEnabledViaScript, kDisabled };
 
-  enum PendingSheetType { kNone, kNonBlocking, kBlocking };
-
   void ClearSheet();
   void AddPendingSheet(PendingSheetType);
   void RemovePendingSheet();
@@ -75,7 +75,7 @@ class LinkStyle final : public LinkResource, ResourceClient {
   Member<CSSStyleSheet> sheet_;
   DisabledState disabled_state_;
   PendingSheetType pending_sheet_type_;
-  StyleEngineContext style_engine_context_;
+  RenderBlockingBehavior render_blocking_behavior_;
   bool explicitly_enabled_;
   bool loading_;
   bool fired_load_;
@@ -84,4 +84,4 @@ class LinkStyle final : public LinkResource, ResourceClient {
 
 }  // namespace blink
 
-#endif
+#endif  // THIRD_PARTY_BLINK_RENDERER_CORE_HTML_LINK_STYLE_H_

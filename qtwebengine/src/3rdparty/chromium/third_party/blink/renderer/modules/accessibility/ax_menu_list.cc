@@ -25,6 +25,7 @@
 
 #include "third_party/blink/renderer/modules/accessibility/ax_menu_list.h"
 
+#include "base/auto_reset.h"
 #include "third_party/blink/renderer/core/html/forms/html_select_element.h"
 #include "third_party/blink/renderer/core/layout/layout_object.h"
 #include "third_party/blink/renderer/modules/accessibility/ax_menu_list_popup.h"
@@ -38,11 +39,8 @@ AXMenuList::AXMenuList(LayoutObject* layout_object,
   DCHECK(IsA<HTMLSelectElement>(layout_object->GetNode()));
 }
 
-ax::mojom::Role AXMenuList::DetermineAccessibilityRole() {
-  if ((aria_role_ = DetermineAriaRoleAttribute()) != ax::mojom::Role::kUnknown)
-    return aria_role_;
-
-  return ax::mojom::Role::kPopUpButton;
+ax::mojom::blink::Role AXMenuList::NativeRoleIgnoringAria() const {
+  return ax::mojom::blink::Role::kComboBoxSelect;
 }
 
 bool AXMenuList::OnNativeClickAction() {
@@ -54,40 +52,130 @@ bool AXMenuList::OnNativeClickAction() {
     select->HidePopup();
   else
     select->ShowPopup();
+
+  // Send notification that action has been handled.
+  AXObjectCache().HandleClicked(GetNode());
+
   return true;
 }
 
-void AXMenuList::ClearChildren() {
-  children_dirty_ = false;
-  if (children_.IsEmpty())
-    return;
+void AXMenuList::Detach() {
+  // The default implementation of Detach() calls ClearChildren(), but
+  // that is not enough. The popup child needs to be specially removed
+  // from the AXObjectCache.
+  DCHECK_LE(children_.size(), 1U);
 
-  // There's no reason to clear our AXMenuListPopup child. If we get a
-  // call to clearChildren, it's because the options might have changed,
-  // so call it on our popup.
-  DCHECK_EQ(ChildCountIncludingIgnored(), 1);
-  children_[0]->ClearChildren();
+  // Clear the children.
+  if (children_.size()) {
+    // Do not call Remove() while AXObjectCacheImpl() is detaching all objects,
+    // because the hash map of objects does not allow simultaneous iteration and
+    // removal of objects.
+    CHECK(popup_ == children_[0]);
+    children_.clear();
+  }
+
+  // Clear the popup.
+  if (popup_) {
+    if (!AXObjectCache().HasBeenDisposed()) {
+      auto& cache = AXObjectCache();
+      for (auto* const option_grandchild :
+           To<HTMLSelectElement>(GetNode())->GetOptionList()) {
+        cache.Remove(option_grandchild, /* notify_parent */ false);
+      }
+      cache.Remove(popup_, /* notify_parent */ false);
+    }
+    popup_->Detach();
+    popup_ = nullptr;
+  }
+
+  AXLayoutObject::Detach();
 }
 
-void AXMenuList::AddChildren() {
-  DCHECK(!IsDetached());
-  have_children_ = true;
+void AXMenuList::ChildrenChangedWithCleanLayout() {
+  if (!children_.empty()) {
+    CHECK_EQ(children_.size(), 1U);
+    CHECK_EQ(children_[0], popup_);
+    // If we have a child popup, update its children at the same time.
+    popup_->ChildrenChangedWithCleanLayout();
+  }
 
-  AXObjectCacheImpl& cache = AXObjectCache();
+  AXLayoutObject::ChildrenChangedWithCleanLayout();
+}
 
-  AXObject* popup = cache.GetOrCreate(ax::mojom::Role::kMenuListPopup);
-  if (!popup)
-    return;
-
-  To<AXMockObject>(popup)->SetParent(this);
-  if (!popup->AccessibilityIsIncludedInTree()) {
-    cache.Remove(popup->AXObjectID());
+void AXMenuList::SetNeedsToUpdateChildren(bool update) const {
+  if (!update) {
+    AXLayoutObject::SetNeedsToUpdateChildren(false);
     return;
   }
 
-  children_.push_back(popup);
+  if (!children_.empty()) {
+    CHECK_EQ(children_.size(), 1U);
+    CHECK_EQ(children_[0], popup_);
+    // If we have a child popup, update its children at the same time.
+    popup_->SetNeedsToUpdateChildren();
+  }
 
-  popup->AddChildren();
+  AXLayoutObject::SetNeedsToUpdateChildren();
+}
+
+void AXMenuList::ClearChildren() const {
+  if (popup_) {
+    popup_->ClearChildren();
+  }
+  AXLayoutObject::ClearChildren();
+}
+
+void AXMenuList::AddChildren() {
+#if defined(AX_FAIL_FAST_BUILD)
+  DCHECK(!IsDetached());
+  DCHECK(!is_adding_children_) << " Reentering method on " << GetNode();
+  base::AutoReset<bool> reentrancy_protector(&is_adding_children_, true);
+  // ClearChildren() does not clear the menulist popup chld.
+  CHECK(children_.empty()) << "Parent still has " << children_.size()
+                           << " children before adding:"
+                           << "\nParent is " << ToString(true, true)
+                           << "\nFirst child is "
+                           << children_[0]->ToString(true, true);
+#endif
+
+  CHECK(NeedsToUpdateChildren());
+
+  GetOrCreateMockPopupChild();
+  CHECK(popup_);
+  children_.push_back(popup_);
+  popup_->SetParent(this);
+
+  // Update mock AXMenuListPopup children.
+  if (ChildrenNeedToUpdateCachedValues()) {
+    popup_->InvalidateCachedValues();
+  }
+  // Update cached values preemptively, where we can control the
+  // notify_parent_of_ignored_changes parameter, so that we do not try to notify
+  // a parent of children changes (which would be redundant as we are already
+  // processing children changed on the parent).
+  popup_->UpdateCachedAttributeValuesIfNeeded(
+      /*notify_parent_of_ignored_changes*/ false);
+  popup_->UpdateChildrenIfNecessary();
+
+  SetNeedsToUpdateChildren(false);
+}
+
+AXObject* AXMenuList::GetOrCreateMockPopupChild() {
+  if (IsDetached()) {
+    popup_ = nullptr;
+    return nullptr;
+  }
+
+  if (!popup_) {
+    popup_ = AXObjectCache().CreateAndInit(
+        ax::mojom::blink::Role::kMenuListPopup, this);
+    CHECK(popup_);
+    CHECK(!popup_->IsDetached());
+    CHECK_EQ(popup_->CachedParentObject(), this);
+    CHECK(popup_->IsMenuListPopup());
+  }
+
+  return popup_;
 }
 
 bool AXMenuList::IsCollapsed() const {
@@ -106,16 +194,24 @@ AccessibilityExpanded AXMenuList::IsExpanded() const {
   return kExpandedExpanded;
 }
 
-void AXMenuList::DidUpdateActiveOption(int option_index) {
-  bool suppress_notifications =
-      (GetNode() && !GetNode()->IsFinishedParsingChildren());
+void AXMenuList::DidUpdateActiveOption() {
+  if (!GetNode())
+    return;
 
-  if (HasChildren()) {
+  bool suppress_notifications = !GetNode()->IsFinishedParsingChildren();
+
+  // TODO(aleventhal) The  NeedsToUpdateChildren() check is necessary to avoid a
+  // illegal lifecycle while adding children, since this can be called at any
+  // time by AXObjectCacheImpl(). Look into calling with clean layout.
+  if (!NeedsToUpdateChildren()) {
     const auto& child_objects = ChildrenIncludingIgnored();
-    if (!child_objects.IsEmpty()) {
+    if (!child_objects.empty()) {
       DCHECK_EQ(child_objects.size(), 1ul);
       DCHECK(IsA<AXMenuListPopup>(child_objects[0].Get()));
-
+      HTMLSelectElement* select = To<HTMLSelectElement>(GetNode());
+      DCHECK(select);
+      HTMLOptionElement* active_option = select->OptionToBeShown();
+      int option_index = active_option ? active_option->index() : -1;
       if (auto* popup = DynamicTo<AXMenuListPopup>(child_objects[0].Get()))
         popup->DidUpdateActiveOption(option_index, !suppress_notifications);
     }
@@ -142,6 +238,11 @@ void AXMenuList::DidHidePopup() {
 
   if (GetNode() && GetNode()->IsFocused())
     AXObjectCache().PostNotification(this, ax::mojom::Event::kFocus);
+}
+
+void AXMenuList::Trace(Visitor* visitor) const {
+  visitor->Trace(popup_);
+  AXLayoutObject::Trace(visitor);
 }
 
 }  // namespace blink

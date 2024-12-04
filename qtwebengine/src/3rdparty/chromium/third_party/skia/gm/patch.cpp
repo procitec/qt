@@ -20,6 +20,7 @@
 #include "include/core/SkTypes.h"
 #include "include/effects/SkGradientShader.h"
 #include "src/utils/SkPatchUtils.h"
+#include "tools/DecodeUtils.h"
 #include "tools/Resources.h"
 
 static sk_sp<SkShader> make_shader() {
@@ -29,7 +30,7 @@ static sk_sp<SkShader> make_shader() {
     };
     const SkPoint pts[] = { { 100.f / 4.f, 0.f }, { 3.f * 100.f / 4.f, 100.f } };
 
-    return SkGradientShader::MakeLinear(pts, colors, nullptr, SK_ARRAY_COUNT(colors),
+    return SkGradientShader::MakeLinear(pts, colors, nullptr, std::size(colors),
                                         SkTileMode::kMirror);
 }
 
@@ -96,11 +97,12 @@ const SkPoint gTexCoords[SkPatchUtils::kNumCorners] = {
 static void dopatch(SkCanvas* canvas, const SkColor colors[], sk_sp<SkImage> img,
                     const SkMatrix* localMatrix) {
     SkPaint paint;
+    paint.setColor(SK_ColorGREEN);
 
     const SkBlendMode modes[] = {
         SkBlendMode::kSrc,
         SkBlendMode::kDst,
-        SkBlendMode::kModulate,
+        SkBlendMode::kColorDodge,
     };
 
     SkPoint texStorage[4];
@@ -110,7 +112,7 @@ static void dopatch(SkCanvas* canvas, const SkColor colors[], sk_sp<SkImage> img
     if (img) {
         SkScalar w = img->width();
         SkScalar h = img->height();
-        shader = img->makeShader(localMatrix);
+        shader = img->makeShader(SkSamplingOptions(), localMatrix);
         texStorage[0].set(0, 0);
         texStorage[1].set(w, 0);
         texStorage[2].set(w, h);
@@ -163,7 +165,7 @@ DEF_SIMPLE_GM(patch_image, canvas, 1500, 1100) {
     const SkColor colors[SkPatchUtils::kNumCorners] = {
         SK_ColorRED, SK_ColorGREEN, SK_ColorBLUE, SK_ColorCYAN
     };
-    dopatch(canvas, colors, GetResourceAsImage("images/mandrill_128.png"), nullptr);
+    dopatch(canvas, colors, ToolUtils::GetResourceAsImage("images/mandrill_128.png"), nullptr);
 }
 DEF_SIMPLE_GM(patch_image_persp, canvas, 1500, 1100) {
     const SkColor colors[SkPatchUtils::kNumCorners] = {
@@ -172,7 +174,7 @@ DEF_SIMPLE_GM(patch_image_persp, canvas, 1500, 1100) {
     SkMatrix localM;
     localM.reset();
     localM[6] = 0.00001f;    // force perspective
-    dopatch(canvas, colors, GetResourceAsImage("images/mandrill_128.png"), &localM);
+    dopatch(canvas, colors, ToolUtils::GetResourceAsImage("images/mandrill_128.png"), &localM);
 }
 DEF_SIMPLE_GM(patch_alpha, canvas, 1500, 1100) {
     const SkColor colors[SkPatchUtils::kNumCorners] = {
@@ -189,7 +191,7 @@ DEF_SIMPLE_GM(patch_alpha_test, canvas, 550, 250) {
         0x80FF0000, 0x80FF0000, 0x80FF0000, 0x80FF0000,
     };
     SkPaint paint;
-    canvas->drawPatch(gCubics, colors, nullptr, SkBlendMode::kModulate, paint);
+    canvas->drawPatch(gCubics, colors, nullptr, SkBlendMode::kDst, paint);
 
     canvas->translate(300, 0);
 

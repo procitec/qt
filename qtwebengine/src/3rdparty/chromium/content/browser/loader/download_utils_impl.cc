@@ -1,9 +1,10 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "content/browser/loader/download_utils_impl.h"
 
+#include "build/build_config.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/common/content_client.h"
 #include "net/http/http_content_disposition.h"
@@ -16,9 +17,9 @@ namespace {
 // Allow list to rendering mhtml.
 const char* const kAllowListSchemesToRenderingMhtml[] = {
     url::kFileScheme,
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
     url::kContentScheme,
-#endif  // OS_ANDROID
+#endif  // BUILDFLAG(IS_ANDROID)
 };
 
 // Determins whether given url would render the mhtml as html according to
@@ -37,7 +38,8 @@ bool ShouldAlwaysRenderMhtmlAsHtml(const GURL& url) {
 namespace content {
 namespace download_utils {
 
-bool MustDownload(const GURL& url,
+bool MustDownload(BrowserContext* browser_context,
+                  const GURL& url,
                   const net::HttpResponseHeaders* headers,
                   const std::string& mime_type) {
   if (headers) {
@@ -48,9 +50,10 @@ bool MustDownload(const GURL& url,
             .is_attachment()) {
       return true;
     }
-    if (GetContentClient()->browser()->ShouldForceDownloadResource(url,
-                                                                   mime_type))
+    if (GetContentClient()->browser()->ShouldForceDownloadResource(
+            browser_context, url, mime_type)) {
       return true;
+    }
     if (mime_type == "multipart/related" || mime_type == "message/rfc822") {
       // Always allow rendering mhtml for content:// (on Android) and file:///.
       if (ShouldAlwaysRenderMhtmlAsHtml(url))
@@ -68,11 +71,13 @@ bool MustDownload(const GURL& url,
   return false;
 }
 
-bool IsDownload(const GURL& url,
+bool IsDownload(BrowserContext* browser_context,
+                const GURL& url,
                 const net::HttpResponseHeaders* headers,
                 const std::string& mime_type) {
-  if (MustDownload(url, headers, mime_type))
+  if (MustDownload(browser_context, url, headers, mime_type)) {
     return true;
+  }
 
   if (blink::IsSupportedMimeType(mime_type))
     return false;

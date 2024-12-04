@@ -1,13 +1,12 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef GPU_COMMAND_BUFFER_COMMON_SKIA_UTILS_H_
 #define GPU_COMMAND_BUFFER_COMMON_SKIA_UTILS_H_
 
-#include <memory>
-
-#include "base/optional.h"
+#include <cstdint>
+#include <optional>
 #include "gpu/raster_export.h"
 
 class GrDirectContext;
@@ -26,7 +25,7 @@ namespace raster {
 RASTER_EXPORT void DumpGrMemoryStatistics(
     const GrDirectContext* context,
     base::trace_event::ProcessMemoryDump* pmd,
-    base::Optional<uint64_t> tracing_guid);
+    std::optional<uint64_t> tracing_guid);
 
 // Dumps a single"skia/grpu_resources/context_0x{&context}" entry with total
 // cache usage. Designed for background dumps.

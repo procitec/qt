@@ -1,14 +1,14 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "testing/perf/luci_test_result.h"
 
+#include <optional>
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/json/json_reader.h"
-#include "base/optional.h"
 #include "base/strings/stringprintf.h"
 #include "base/time/time.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -18,6 +18,10 @@ namespace perf_test {
 class LuciTestResultTest : public testing::Test {
  public:
   LuciTestResultTest() = default;
+
+  LuciTestResultTest(const LuciTestResultTest&) = delete;
+  LuciTestResultTest& operator=(const LuciTestResultTest&) = delete;
+
   ~LuciTestResultTest() override = default;
 
   // testing::Test:
@@ -39,10 +43,10 @@ class LuciTestResultTest : public testing::Test {
 
     std::string json;
     ASSERT_TRUE(ReadFileToString(GetResultFilePath(), &json));
-    base::Optional<base::Value> value = base::JSONReader::Read(json);
+    std::optional<base::Value> value = base::JSONReader::Read(json);
     ASSERT_TRUE(value.has_value());
 
-    base::Optional<base::Value> expected_value =
+    std::optional<base::Value> expected_value =
         base::JSONReader::Read(expected_json);
     ASSERT_TRUE(expected_value.has_value());
 
@@ -53,8 +57,6 @@ class LuciTestResultTest : public testing::Test {
 
  private:
   base::ScopedTempDir temp_dir_;
-
-  DISALLOW_COPY_AND_ASSIGN(LuciTestResultTest);
 };
 
 TEST_F(LuciTestResultTest, Basic) {
@@ -73,7 +75,7 @@ TEST_F(LuciTestResultTest, Basic) {
       base::Time::FromUTCExploded({2019, 9, 3, 11, 12, 30, 0}, &start_time));
   result.set_start_time(start_time);
 
-  result.set_duration(base::TimeDelta::FromMilliseconds(1500));
+  result.set_duration(base::Milliseconds(1500));
 
   result.AddOutputArtifactContents("plain", "plain data", "text/plain");
   result.AddOutputArtifactContents("new_line", "first\nsecond", "text/plain");
@@ -123,7 +125,7 @@ TEST_F(LuciTestResultTest, Status) {
   LuciTestResult result;
   result.set_test_path("FakeTestSuite.Status");
 
-  const std::string json_template =
+  static constexpr char kJsonTemplate[] =
       R"({
            "testResult":{
              "expected":false,
@@ -147,7 +149,7 @@ TEST_F(LuciTestResultTest, Status) {
   for (const auto& test_case : kTestCases) {
     result.set_status(test_case.status);
     const std::string expected_json =
-        base::StringPrintf(json_template.c_str(), test_case.status_text);
+        base::StringPrintf(kJsonTemplate, test_case.status_text);
     ValidateResult(result, expected_json);
   }
 }
@@ -165,10 +167,20 @@ class LuciTestResultParameterizedTest
 TEST_P(LuciTestResultParameterizedTest, Variant) {
   LuciTestResult result = LuciTestResult::CreateForGTest();
 
-  const std::string json_template =
+  // 2019/9/11 12:30 UTC
+  base::Time start_time;
+  ASSERT_TRUE(
+      base::Time::FromUTCExploded({2019, 9, 3, 11, 12, 30, 0}, &start_time));
+  result.set_start_time(start_time);
+
+  result.set_duration(base::Milliseconds(1500));
+
+  static constexpr char kJsonTemplate[] =
       R"({
            "testResult":{
              "expected":true,
+             "runDuration":"1.50s",
+             "startTime":"2019-09-11T12:30:00.000Z",
              "status":"PASS",
              "testPath":
                  "ZeroToFiveSequence/LuciTestResultParameterizedTest.Variant",
@@ -176,7 +188,7 @@ TEST_P(LuciTestResultParameterizedTest, Variant) {
            }
          })";
   const std::string expected_json =
-      base::StringPrintf(json_template.c_str(), GetParam());
+      base::StringPrintf(kJsonTemplate, GetParam());
   ValidateResult(result, expected_json);
 }
 INSTANTIATE_TEST_SUITE_P(ZeroToFiveSequence,
@@ -197,16 +209,26 @@ TYPED_TEST_SUITE_P(LuciTestResultTypedTest);
 TYPED_TEST_P(LuciTestResultTypedTest, Variant) {
   LuciTestResult result = LuciTestResult::CreateForGTest();
 
+  // 2019/9/11 12:30 UTC
+  base::Time start_time;
+  ASSERT_TRUE(
+      base::Time::FromUTCExploded({2019, 9, 3, 11, 12, 30, 0}, &start_time));
+  result.set_start_time(start_time);
+
+  result.set_duration(base::Milliseconds(1500));
+
   std::string test_suite_name =
       testing::UnitTest::GetInstance()->current_test_info()->test_suite_name();
   auto pos = test_suite_name.rfind('/');
   ASSERT_NE(pos, std::string::npos);
   std::string type_param_name = test_suite_name.substr(pos + 1);
 
-  const std::string json_template =
+  static constexpr char kJsonTemplate[] =
       R"({
            "testResult":{
              "expected":true,
+             "runDuration":"1.50s",
+             "startTime":"2019-09-11T12:30:00.000Z",
              "status":"PASS",
              "testPath":"SomeTypes/LuciTestResultTypedTest/%s.Variant",
              "variant":{"param/instantiation":"%s"}
@@ -215,7 +237,7 @@ TYPED_TEST_P(LuciTestResultTypedTest, Variant) {
   // Note that chromium has RTTI disabled. As a result, type_param() and
   // GetTypeName<> always returns a generic "<type>".
   const std::string expected_json =
-      base::StringPrintf(json_template.c_str(), type_param_name.c_str(),
+      base::StringPrintf(kJsonTemplate, type_param_name.c_str(),
                          testing::internal::GetTypeName<TypeParam>().c_str());
   this->ValidateResult(result, expected_json);
 }

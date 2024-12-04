@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,16 +12,14 @@ import org.chromium.mojo.system.MojoException;
 import org.chromium.service_manager.mojom.Identity;
 import org.chromium.service_manager.mojom.ServiceFilter;
 
-/**
- * This class exposes the ability to bind interfaces from other services in the system.
- */
+/** This class exposes the ability to bind interfaces from other services in the system. */
 public class Connector implements ConnectionErrorHandler {
     private org.chromium.service_manager.mojom.Connector.Proxy mConnector;
 
     private static class ConnectorBindInterfaceResponseImpl
-            implements org.chromium.service_manager.mojom.Connector.BindInterfaceResponse {
+            implements org.chromium.service_manager.mojom.Connector.BindInterface_Response {
         @Override
-        public void call(Integer result, Identity identity) {}
+        public void call(int result, Identity identity) {}
     }
 
     public Connector(MessagePipeHandle handle) {
@@ -41,10 +39,14 @@ public class Connector implements ConnectionErrorHandler {
         ServiceFilter filter = new ServiceFilter();
         filter.serviceName = serviceName;
 
-        org.chromium.service_manager.mojom.Connector.BindInterfaceResponse callback =
+        org.chromium.service_manager.mojom.Connector.BindInterface_Response callback =
                 new ConnectorBindInterfaceResponseImpl();
-        mConnector.bindInterface(filter, interfaceName, request.passHandle(),
-                org.chromium.service_manager.mojom.BindInterfacePriority.IMPORTANT, callback);
+        mConnector.bindInterface(
+                filter,
+                interfaceName,
+                request.passHandle(),
+                org.chromium.service_manager.mojom.BindInterfacePriority.IMPORTANT,
+                callback);
     }
 
     @Override

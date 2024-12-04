@@ -1,10 +1,11 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_HTML_TRACK_TRACK_LIST_BASE_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_HTML_TRACK_TRACK_LIST_BASE_H_
 
+#include "base/notreached.h"
 #include "third_party/blink/renderer/core/dom/events/event_target.h"
 #include "third_party/blink/renderer/core/html/media/html_media_element.h"
 #include "third_party/blink/renderer/core/html/track/track_event.h"
@@ -12,7 +13,7 @@
 namespace blink {
 
 template <class T>
-class TrackListBase : public EventTargetWithInlineData {
+class TrackListBase : public EventTarget {
  public:
   explicit TrackListBase(HTMLMediaElement* media_element)
       : media_element_(media_element) {}
@@ -47,7 +48,7 @@ class TrackListBase : public EventTargetWithInlineData {
   }
 
   void Add(T* track) {
-    track->SetMediaElement(media_element_);
+    track->SetMediaElement(media_element_.Get());
     tracks_.push_back(track);
     ScheduleEvent(TrackEvent::Create(event_type_names::kAddtrack, track));
   }
@@ -80,7 +81,7 @@ class TrackListBase : public EventTargetWithInlineData {
   void Trace(Visitor* visitor) const override {
     visitor->Trace(tracks_);
     visitor->Trace(media_element_);
-    EventTargetWithInlineData::Trace(visitor);
+    EventTarget::Trace(visitor);
   }
 
  private:
@@ -95,4 +96,4 @@ class TrackListBase : public EventTargetWithInlineData {
 
 }  // namespace blink
 
-#endif
+#endif  // THIRD_PARTY_BLINK_RENDERER_CORE_HTML_TRACK_TRACK_LIST_BASE_H_

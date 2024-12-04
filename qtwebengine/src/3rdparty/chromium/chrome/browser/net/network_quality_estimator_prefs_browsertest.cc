@@ -1,22 +1,22 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
 #include <string>
 
-#include "base/bind.h"
 #include "base/check_op.h"
 #include "base/command_line.h"
-#include "base/deferred_sequenced_task_runner.h"
 #include "base/files/file_path.h"
-#include "base/macros.h"
+#include "base/files/file_util.h"
+#include "base/functional/bind.h"
+#include "base/memory/raw_ptr.h"
 #include "base/path_service.h"
 #include "base/process/memory.h"
 #include "base/run_loop.h"
-#include "base/task/post_task.h"
-#include "base/test/metrics/histogram_tester.h"
-#include "base/test/scoped_feature_list.h"
+#include "base/task/deferred_sequenced_task_runner.h"
 #include "base/test/task_environment.h"
+#include "base/threading/thread_restrictions.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browser_process_impl.h"
 #include "chrome/browser/chrome_content_browser_client.h"
@@ -30,19 +30,21 @@
 #include "components/prefs/json_pref_store.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/browser_context.h"
-#include "content/public/browser/browser_task_traits.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/network_service_instance.h"
+#include "content/public/browser/network_service_util.h"
 #include "content/public/browser/storage_partition.h"
-#include "content/public/common/network_service_util.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_base.h"
 #include "content/public/test/browser_test_utils.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/remote.h"
+#include "mojo/public/cpp/bindings/sync_call_restrictions.h"
 #include "net/base/filename_util.h"
 #include "net/nqe/effective_connection_type.h"
 #include "net/nqe/network_quality_estimator.h"
 #include "net/nqe/network_quality_estimator_params.h"
+#include "services/cert_verifier/public/mojom/cert_verifier_service_factory.mojom.h"
 #include "services/network/network_service.h"
 #include "services/network/public/cpp/features.h"
 #include "services/network/public/cpp/network_quality_tracker.h"
@@ -58,34 +60,6 @@ void SimulateNetworkQualityChangeOnNetworkThread(
       ->SimulateNetworkQualityChangeForTesting(type);
 }
 
-// Retries fetching |histogram_name| until it contains at least |count| samples.
-void RetryForHistogramUntilCountReached(base::HistogramTester* histogram_tester,
-                                        const std::string& histogram_name,
-                                        size_t count) {
-  while (true) {
-    const std::vector<base::Bucket> buckets =
-        histogram_tester->GetAllSamples(histogram_name);
-    size_t total_count = 0;
-    for (const auto& bucket : buckets)
-      total_count += bucket.count;
-    if (total_count >= count)
-      return;
-    content::FetchHistogramsFromChildProcesses();
-    metrics::SubprocessMetricsProvider::MergeHistogramDeltasForTesting();
-    base::RunLoop().RunUntilIdle();
-  }
-}
-
-int GetHistogramSamplesSum(base::HistogramTester* histogram_tester,
-                           const std::string& histogram_name) {
-  const std::vector<base::Bucket> buckets =
-      histogram_tester->GetAllSamples(histogram_name);
-  size_t sum = 0;
-  for (const auto& bucket : buckets)
-    sum += (bucket.count * bucket.min);
-  return sum;
-}
-
 class TestNetworkQualityObserver
     : public network::NetworkQualityTracker::EffectiveConnectionTypeObserver {
  public:
@@ -97,6 +71,10 @@ class TestNetworkQualityObserver
         effective_connection_type_(net::EFFECTIVE_CONNECTION_TYPE_UNKNOWN) {
     tracker_->AddEffectiveConnectionTypeObserver(this);
   }
+
+  TestNetworkQualityObserver(const TestNetworkQualityObserver&) = delete;
+  TestNetworkQualityObserver& operator=(const TestNetworkQualityObserver&) =
+      delete;
 
   ~TestNetworkQualityObserver() override {
     tracker_->RemoveEffectiveConnectionTypeObserver(this);
@@ -126,16 +104,14 @@ class TestNetworkQualityObserver
     run_loop_wait_effective_connection_type_ =
         run_loop_wait_effective_connection_type;
     run_loop_->Run();
-    run_loop_.reset(new base::RunLoop());
+    run_loop_ = std::make_unique<base::RunLoop>();
   }
 
  private:
   net::EffectiveConnectionType run_loop_wait_effective_connection_type_;
   std::unique_ptr<base::RunLoop> run_loop_;
-  network::NetworkQualityTracker* tracker_;
+  raw_ptr<network::NetworkQualityTracker> tracker_;
   net::EffectiveConnectionType effective_connection_type_;
-
-  DISALLOW_COPY_AND_ASSIGN(TestNetworkQualityObserver);
 };
 
 }  // namespace
@@ -153,13 +129,12 @@ class NetworkQualityEstimatorPrefsBrowserTest : public InProcessBrowserTest {
 
     mojo::ScopedAllowSyncCallForTesting allow_sync_call;
     content::StoragePartition* partition =
-        content::BrowserContext::GetDefaultStoragePartition(
-            browser()->profile());
+        browser()->profile()->GetDefaultStoragePartition();
     DCHECK(partition->GetNetworkContext());
     DCHECK(content::GetNetworkService());
 
     mojo::Remote<network::mojom::NetworkServiceTest> network_service_test;
-    content::GetNetworkService()->BindTestInterface(
+    content::GetNetworkService()->BindTestInterfaceForTesting(
         network_service_test.BindNewPipeAndPassReceiver());
     base::RunLoop run_loop;
     network_service_test->SimulateNetworkQualityChange(
@@ -167,49 +142,44 @@ class NetworkQualityEstimatorPrefsBrowserTest : public InProcessBrowserTest {
                              base::Unretained(&run_loop)));
     run_loop.Run();
   }
-
-  base::HistogramTester histogram_tester;
 };
 
-// Verify that prefs are read at startup, and the read prefs are notified to the
-// network quality estimator.
-IN_PROC_BROWSER_TEST_F(NetworkQualityEstimatorPrefsBrowserTest,
-                       ReadPrefsAtStartup) {
-  // The check below ensures that "NQE.Prefs.ReadSize" contains at least one
-  // sample. This implies that NQE was notified of the read prefs.
-  RetryForHistogramUntilCountReached(&histogram_tester, "NQE.Prefs.ReadSize",
-                                     1);
-}
-
 // Verify that prefs are read at startup.
+// Flaky on ChromeOS. See https://crbug.com/1484891
+#if BUILDFLAG(IS_CHROMEOS)
+#define MAYBE_ReadPrefsAtStartupCustomPrefFile \
+  DISABLED_ReadPrefsAtStartupCustomPrefFile
+#else
+#define MAYBE_ReadPrefsAtStartupCustomPrefFile ReadPrefsAtStartupCustomPrefFile
+#endif
 IN_PROC_BROWSER_TEST_F(NetworkQualityEstimatorPrefsBrowserTest,
-                       ReadPrefsAtStartupCustomPrefFile) {
-  // The check below ensures that "NQE.Prefs.ReadSize" contains at least one
-  // sample. This implies that NQE was notified of the read prefs.
-  RetryForHistogramUntilCountReached(&histogram_tester, "NQE.Prefs.ReadSize",
-                                     1);
-
-  base::HistogramTester histogram_tester2;
+                       MAYBE_ReadPrefsAtStartupCustomPrefFile) {
+  base::ScopedAllowBlockingForTesting scoped_allow_blocking;
 
   // Create network context with JSON pref store pointing to the temp file.
   mojo::PendingRemote<network::mojom::NetworkContext> network_context;
   network::mojom::NetworkContextParamsPtr context_params =
       network::mojom::NetworkContextParams::New();
   context_params->cert_verifier_params = content::GetCertVerifierParams(
-      network::mojom::CertVerifierCreationParams::New());
-  context_params->http_server_properties_path =
-      browser()->profile()->GetPath().Append(
-          FILE_PATH_LITERAL("Temp Network Persistent State"));
+      cert_verifier::mojom::CertVerifierCreationParams::New());
+  context_params->file_paths = network::mojom::NetworkContextFilePaths::New();
+  const base::FilePath data_path = browser()->profile()->GetPath().Append(
+      FILE_PATH_LITERAL("Network For Testing"));
+  context_params->file_paths->data_directory = data_path;
+  context_params->file_paths->unsandboxed_data_path =
+      browser()->profile()->GetPath();
+  context_params->file_paths->http_server_properties_file_name =
+      base::FilePath(FILE_PATH_LITERAL("Temp Network Persistent State"));
+  context_params->file_paths->trigger_migration = true;
 
-  auto state = base::MakeRefCounted<JsonPrefStore>(
-      context_params->http_server_properties_path.value());
+  base::CreateDirectory(data_path);
+  auto state = base::MakeRefCounted<JsonPrefStore>(data_path.Append(
+      *context_params->file_paths->http_server_properties_file_name));
 
-  base::DictionaryValue pref_value;
-  base::Value value("2G");
-  pref_value.Set("network_id_foo",
-                 base::Value::ToUniquePtrValue(value.Clone()));
-  state->SetValue("net.network_qualities",
-                  base::Value::ToUniquePtrValue(pref_value.Clone()), 0);
+  base::Value::Dict pref_value;
+  pref_value.Set("network_id_foo", "2G");
+  state->SetValue("net.network_qualities", base::Value(std::move(pref_value)),
+                  0);
 
   // Wait for the pending commit to finish before creating the network context.
   base::RunLoop loop;
@@ -217,31 +187,16 @@ IN_PROC_BROWSER_TEST_F(NetworkQualityEstimatorPrefsBrowserTest,
       base::BindOnce([](base::RunLoop* loop) { loop->Quit(); }, &loop));
   loop.Run();
 
-  content::GetNetworkService()->CreateNetworkContext(
+  content::CreateNetworkContextInNetworkService(
       network_context.InitWithNewPipeAndPassReceiver(),
       std::move(context_params));
-
-  RetryForHistogramUntilCountReached(&histogram_tester2, "NQE.Prefs.ReadSize",
-                                     1);
-  // Pref value must be read from the temp file.
-  EXPECT_LE(1,
-            GetHistogramSamplesSum(&histogram_tester2, "NQE.Prefs.ReadSize"));
 }
 
 // Verify that prefs are read at startup, and written to later.
 IN_PROC_BROWSER_TEST_F(NetworkQualityEstimatorPrefsBrowserTest, PrefsWritten) {
-  // The check below ensures that "NQE.Prefs.ReadSize" contains at least one
-  // sample. This implies that NQE was notified of the read prefs.
-  RetryForHistogramUntilCountReached(&histogram_tester, "NQE.Prefs.ReadSize",
-                                     1);
-
-  // Change in network quality is guaranteed to trigger a pref write.
   SimulateNetworkQualityChange(net::EFFECTIVE_CONNECTION_TYPE_2G);
   TestNetworkQualityObserver network_quality_observer(
       g_browser_process->network_quality_tracker());
   network_quality_observer.WaitForNotification(
       net::EFFECTIVE_CONNECTION_TYPE_2G);
-
-  RetryForHistogramUntilCountReached(&histogram_tester, "NQE.Prefs.WriteCount",
-                                     1);
 }

@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,12 +11,14 @@
 #include <string>
 
 #include "base/atomic_sequence_num.h"
-#include "base/bind.h"
-#include "base/optional.h"
+#include "base/functional/bind.h"
+#include "base/memory/raw_ptr.h"
+#include "base/strings/stringprintf.h"
 #include "components/exo/notification.h"
 #include "components/exo/notification_surface.h"
 #include "components/exo/notification_surface_manager.h"
 #include "components/exo/wayland/server_util.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace exo {
 namespace wayland {
@@ -53,6 +55,11 @@ class WaylandNotificationShellNotification {
                             weak_ptr_factory_.GetWeakPtr()));
   }
 
+  WaylandNotificationShellNotification(
+      const WaylandNotificationShellNotification&) = delete;
+  WaylandNotificationShellNotification& operator=(
+      const WaylandNotificationShellNotification&) = delete;
+
   void Close() { notification_->Close(); }
 
  private:
@@ -61,19 +68,17 @@ class WaylandNotificationShellNotification {
     wl_client_flush(wl_resource_get_client(resource_));
   }
 
-  void OnClick(const base::Optional<int>& button_index) {
+  void OnClick(const absl::optional<int>& button_index) {
     int32_t index = button_index ? *button_index : -1;
     zcr_notification_shell_notification_v1_send_clicked(resource_, index);
     wl_client_flush(wl_resource_get_client(resource_));
   }
 
-  wl_resource* const resource_;
+  const raw_ptr<wl_resource> resource_;
   std::unique_ptr<Notification> notification_;
 
   base::WeakPtrFactory<WaylandNotificationShellNotification> weak_ptr_factory_{
       this};
-
-  DISALLOW_COPY_AND_ASSIGN(WaylandNotificationShellNotification);
 };
 
 void notification_destroy(wl_client* client, wl_resource* resource) {
@@ -94,6 +99,9 @@ const struct zcr_notification_shell_notification_v1_interface
 class WaylandNotificationShell {
  public:
   WaylandNotificationShell() : id_(g_next_notification_shell_id.GetNext()) {}
+
+  WaylandNotificationShell(const WaylandNotificationShell&) = delete;
+  WaylandNotificationShell& operator=(const WaylandNotificationShell&) = delete;
 
   ~WaylandNotificationShell() = default;
 
@@ -116,8 +124,6 @@ class WaylandNotificationShell {
  private:
   // Id for this notification shell instance.
   const uint32_t id_;
-
-  DISALLOW_COPY_AND_ASSIGN(WaylandNotificationShell);
 };
 
 void notification_shell_create_notification(wl_client* client,

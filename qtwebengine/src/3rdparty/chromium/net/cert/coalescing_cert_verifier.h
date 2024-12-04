@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,7 +11,6 @@
 #include <memory>
 #include <vector>
 
-#include "base/macros.h"
 #include "net/base/net_export.h"
 #include "net/cert/cert_verifier.h"
 
@@ -28,11 +27,15 @@ namespace net {
 // complete, but any new requests will not be seen as matching, even if they
 // share the same parameters. This ensures configuration changes propagate
 // "immediately" for all new requests.
-class NET_EXPORT CoalescingCertVerifier : public CertVerifier {
+class NET_EXPORT CoalescingCertVerifier : public CertVerifier,
+                                          public CertVerifier::Observer {
  public:
   // Create a new verifier that will forward calls to |verifier|, coalescing
   // any in-flight, not-yet-completed calls to Verify().
   explicit CoalescingCertVerifier(std::unique_ptr<CertVerifier> verifier);
+
+  CoalescingCertVerifier(const CoalescingCertVerifier&) = delete;
+  CoalescingCertVerifier& operator=(const CoalescingCertVerifier&) = delete;
 
   ~CoalescingCertVerifier() override;
 
@@ -43,6 +46,8 @@ class NET_EXPORT CoalescingCertVerifier : public CertVerifier {
              std::unique_ptr<CertVerifier::Request>* out_req,
              const NetLogWithSource& net_log) override;
   void SetConfig(const CertVerifier::Config& config) override;
+  void AddObserver(CertVerifier::Observer* observer) override;
+  void RemoveObserver(CertVerifier::Observer* observer) override;
 
   uint64_t requests_for_testing() const { return requests_; }
   uint64_t inflight_joins_for_testing() const { return inflight_joins_; }
@@ -56,6 +61,10 @@ class NET_EXPORT CoalescingCertVerifier : public CertVerifier {
   // Otherwise, returns nullptr, meaning a new Job should be started.
   Job* FindJob(const RequestParams& params);
   void RemoveJob(Job* job);
+  void IncrementGenerationAndMakeCurrentJobsUnjoinable();
+
+  // CertVerifier::Observer methods:
+  void OnCertVerifierChanged() override;
 
   // Contains the set of Jobs for which an active verification is taking
   // place and which can be used for new requests (e.g. the config is the
@@ -68,11 +77,8 @@ class NET_EXPORT CoalescingCertVerifier : public CertVerifier {
 
   std::unique_ptr<CertVerifier> verifier_;
 
-  uint32_t config_id_;
-  uint64_t requests_;
-  uint64_t inflight_joins_;
-
-  DISALLOW_COPY_AND_ASSIGN(CoalescingCertVerifier);
+  uint64_t requests_ = 0;
+  uint64_t inflight_joins_ = 0;
 };
 
 }  // namespace net

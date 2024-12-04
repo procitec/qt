@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,7 +10,6 @@
 #include <memory>
 #include <string>
 
-#include "base/macros.h"
 #include "net/base/net_export.h"
 #include "net/disk_cache/blockfile/disk_format.h"
 #include "net/disk_cache/blockfile/storage_block-inl.h"
@@ -50,6 +49,9 @@ class NET_EXPORT_PRIVATE EntryImpl
 
   EntryImpl(BackendImpl* backend, Addr address, bool read_only);
 
+  EntryImpl(const EntryImpl&) = delete;
+  EntryImpl& operator=(const EntryImpl&) = delete;
+
   // Background implementation of the Entry interface.
   void DoomImpl();
   int ReadDataImpl(int index,
@@ -71,7 +73,7 @@ class NET_EXPORT_PRIVATE EntryImpl
                           IOBuffer* buf,
                           int buf_len,
                           CompletionOnceCallback callback);
-  int GetAvailableRangeImpl(int64_t offset, int len, int64_t* start);
+  RangeResult GetAvailableRangeImpl(int64_t offset, int len);
   void CancelSparseIOImpl();
   int ReadyForSparseIOImpl(CompletionOnceCallback callback);
 
@@ -153,9 +155,6 @@ class NET_EXPORT_PRIVATE EntryImpl
   // the upgrade tool.
   void SetTimes(base::Time last_used, base::Time last_modified);
 
-  // Generates a histogram for the time spent working on this operation.
-  void ReportIOTime(Operation op, const base::TimeTicks& start);
-
   // Logs a begin event and enables logging for the EntryImpl.  Will also cause
   // an end event to be logged on destruction.  The EntryImpl must have its key
   // initialized before this is called.  |created| is true if the Entry was
@@ -193,10 +192,9 @@ class NET_EXPORT_PRIVATE EntryImpl
                       IOBuffer* buf,
                       int buf_len,
                       CompletionOnceCallback callback) override;
-  int GetAvailableRange(int64_t offset,
-                        int len,
-                        int64_t* start,
-                        CompletionOnceCallback callback) override;
+  RangeResult GetAvailableRange(int64_t offset,
+                                int len,
+                                RangeResultCallback callback) override;
   bool CouldBeSparse() const override;
   void CancelSparseIO() override;
   net::Error ReadyForSparseIO(CompletionOnceCallback callback) override;
@@ -290,7 +288,7 @@ class NET_EXPORT_PRIVATE EntryImpl
   // responsible for deleting the block (or file) from the backing store at some
   // point; there is no need to report any storage-size change, only to do the
   // actual cleanup.
-  void GetData(int index, char** buffer, Addr* address);
+  void GetData(int index, std::unique_ptr<char[]>* buffer, Addr* address);
 
   // |net_log_| should be early since some field destructors (at least
   // ~SparseControl) can touch it.
@@ -303,13 +301,12 @@ class NET_EXPORT_PRIVATE EntryImpl
   // Files to store external user data and key.
   scoped_refptr<File> files_[kNumStreams + 1];
   mutable std::string key_;           // Copy of the key.
-  int unreported_size_[kNumStreams];  // Bytes not reported yet to the backend.
-  bool doomed_;               // True if this entry was removed from the cache.
+  // Bytes not reported yet to the backend.
+  int unreported_size_[kNumStreams] = {};
+  bool doomed_ = false;       // True if this entry was removed from the cache.
   bool read_only_;            // True if not yet writing.
-  bool dirty_;                // True if we detected that this is a dirty entry.
+  bool dirty_ = false;        // True if we detected that this is a dirty entry.
   std::unique_ptr<SparseControl> sparse_;  // Support for sparse entries.
-
-  DISALLOW_COPY_AND_ASSIGN(EntryImpl);
 };
 
 }  // namespace disk_cache

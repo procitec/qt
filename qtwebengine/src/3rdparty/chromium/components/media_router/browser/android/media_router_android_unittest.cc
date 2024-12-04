@@ -1,11 +1,12 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include <memory>
 
 #include "base/android/jni_android.h"
-#include "base/bind_helpers.h"
+#include "base/functional/callback_helpers.h"
+#include "base/memory/raw_ptr.h"
 #include "base/test/mock_callback.h"
 #include "components/media_router/browser/android/media_router_android.h"
 #include "components/media_router/browser/android/media_router_android_bridge.h"
@@ -65,7 +66,7 @@ class MediaRouterAndroidTest : public testing::Test {
   content::BrowserTaskEnvironment task_environment_;
 
   std::unique_ptr<MediaRouterAndroid> router_;
-  MockMediaRouterAndroidBridge* mock_bridge_;
+  raw_ptr<MockMediaRouterAndroidBridge> mock_bridge_;
 };
 
 TEST_F(MediaRouterAndroidTest, DetachRoute) {
@@ -86,12 +87,12 @@ TEST_F(MediaRouterAndroidTest, DetachRoute) {
       .WillOnce(Return());
 
   router_->CreateRoute("source", "sink", url::Origin(), nullptr,
-                       base::DoNothing(), base::TimeDelta(), false);
+                       base::DoNothing(), base::TimeDelta());
   router_->OnRouteCreated("route", "sink", 1, false);
 
   EXPECT_NE(nullptr, router_->FindRouteBySource("source"));
 
-  std::unique_ptr<PresentationConnectionStateSubscription> subscription =
+  base::CallbackListSubscription subscription =
       router_->AddPresentationConnectionStateChangedCallback("route",
                                                              callback.Get());
   router_->DetachRoute("route");
@@ -105,7 +106,7 @@ TEST_F(MediaRouterAndroidTest, OnRouteTerminated) {
           .WillOnce(Return());
 
   router_->CreateRoute("source", "sink", url::Origin(), nullptr,
-                       base::DoNothing(), base::TimeDelta(), false);
+                       base::DoNothing(), base::TimeDelta());
   router_->OnRouteCreated("route", "sink", 1, false);
 
   EXPECT_NE(nullptr, router_->FindRouteBySource("source"));
@@ -134,15 +135,15 @@ TEST_F(MediaRouterAndroidTest, OnRouteClosed) {
           .WillOnce(Return());
 
   router_->CreateRoute("source", "sink", url::Origin(), nullptr,
-                       base::DoNothing(), base::TimeDelta(), false);
+                       base::DoNothing(), base::TimeDelta());
   router_->OnRouteCreated("route", "sink", 1, false);
 
   EXPECT_NE(nullptr, router_->FindRouteBySource("source"));
 
-  std::unique_ptr<PresentationConnectionStateSubscription> subscription =
+  base::CallbackListSubscription subscription =
       router_->AddPresentationConnectionStateChangedCallback("route",
                                                              callback.Get());
-  router_->OnRouteClosed("route", base::nullopt);
+  router_->OnRouteClosed("route", absl::nullopt);
 
   EXPECT_EQ(nullptr, router_->FindRouteBySource("source"));
 }
@@ -162,17 +163,41 @@ TEST_F(MediaRouterAndroidTest, OnRouteClosedWithError) {
           .WillOnce(Return());
 
   router_->CreateRoute("source", "sink", url::Origin(), nullptr,
-                       base::DoNothing(), base::TimeDelta(), false);
+                       base::DoNothing(), base::TimeDelta());
   router_->OnRouteCreated("route", "sink", 1, false);
 
   EXPECT_NE(nullptr, router_->FindRouteBySource("source"));
 
-  std::unique_ptr<PresentationConnectionStateSubscription> subscription =
+  base::CallbackListSubscription subscription =
       router_->AddPresentationConnectionStateChangedCallback("route",
                                                              callback.Get());
   router_->OnRouteClosed("route", "Some failure");
 
   EXPECT_EQ(nullptr, router_->FindRouteBySource("source"));
+}
+
+TEST_F(MediaRouterAndroidTest, OnRouteMediaSourceUpdated) {
+  const std::string route_id = "route-id";
+  const std::string sink_id = "sink-id";
+  const std::string source_id = "source-id";
+  const std::string source_id2 = "source-id2";
+  const url::Origin origin;
+
+  EXPECT_CALL(*mock_bridge_,
+              CreateRoute(source_id, sink_id, _, origin, nullptr, 1))
+      .WillOnce(Return());
+
+  router_->CreateRoute(source_id, sink_id, origin, nullptr, base::DoNothing(),
+                       base::TimeDelta());
+  router_->OnRouteCreated(route_id, sink_id, 1, false);
+
+  EXPECT_NE(nullptr, router_->FindRouteBySource(source_id));
+  EXPECT_EQ(nullptr, router_->FindRouteBySource(source_id2));
+
+  router_->OnRouteMediaSourceUpdated(route_id, source_id2);
+
+  EXPECT_EQ(nullptr, router_->FindRouteBySource(source_id));
+  EXPECT_NE(nullptr, router_->FindRouteBySource(source_id2));
 }
 
 }  // namespace media_router

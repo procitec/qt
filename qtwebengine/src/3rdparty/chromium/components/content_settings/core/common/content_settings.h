@@ -1,4 +1,4 @@
-// Copyright (c) 2011 The Chromium Authors. All rights reserved.
+// Copyright 2011 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,11 +7,14 @@
 
 #include <stddef.h>
 
+#include <map>
 #include <string>
 #include <vector>
 
 #include "base/time/time.h"
 #include "base/values.h"
+#include "components/content_settings/core/common/content_settings_constraints.h"
+#include "components/content_settings/core/common/content_settings_metadata.h"
 #include "components/content_settings/core/common/content_settings_pattern.h"
 #include "components/content_settings/core/common/content_settings_types.h"
 
@@ -36,19 +39,14 @@ enum ContentSetting {
 // Range-checked conversion of an int to a ContentSetting, for use when reading
 // prefs off disk.
 ContentSetting IntToContentSetting(int content_setting);
-
-// Converts a given content setting to its histogram value, for use when saving
-// content settings types to a histogram.
-int ContentSettingTypeToHistogramValue(ContentSettingsType content_setting,
-                                       size_t* num_values);
-
 struct ContentSettingPatternSource {
   ContentSettingPatternSource(const ContentSettingsPattern& primary_pattern,
                               const ContentSettingsPattern& secondary_patttern,
                               base::Value setting_value,
                               const std::string& source,
                               bool incognito,
-                              base::Time expiration = base::Time());
+                              content_settings::RuleMetaData metadata =
+                                  content_settings::RuleMetaData());
   ContentSettingPatternSource(const ContentSettingPatternSource& other);
   ContentSettingPatternSource();
   ContentSettingPatternSource& operator=(
@@ -57,32 +55,54 @@ struct ContentSettingPatternSource {
   ContentSetting GetContentSetting() const;
   bool IsExpired() const;
 
+  bool operator==(const ContentSettingPatternSource& other) const;
+
   ContentSettingsPattern primary_pattern;
   ContentSettingsPattern secondary_pattern;
   base::Value setting_value;
-  base::Time expiration;
+  content_settings::RuleMetaData metadata;
   std::string source;
   bool incognito;
 };
 
+// Formatter method for Google Test.
+std::ostream& operator<<(std::ostream& os,
+                         const ContentSettingPatternSource& source);
+
 typedef std::vector<ContentSettingPatternSource> ContentSettingsForOneType;
+
+typedef std::map<std::string, ContentSettingsForOneType>
+    HostIndexedContentSettings;
 
 struct RendererContentSettingRules {
   // Returns true if |content_type| is a type that is contained in this class.
   // Any new type added below must also update this method.
   static bool IsRendererContentSetting(ContentSettingsType content_type);
 
+  // Filters all the rules by matching the primary pattern with
+  // |outermost_main_frame_url|. Any new type added below that needs to match
+  // the primary pattern with the outermost main frame's url should also update
+  // this method.
+  void FilterRulesByOutermostMainFrameURL(const GURL& outermost_main_frame_url);
+
   RendererContentSettingRules();
   ~RendererContentSettingRules();
+  RendererContentSettingRules(const RendererContentSettingRules& rules);
+  RendererContentSettingRules(RendererContentSettingRules&& rules);
+  RendererContentSettingRules& operator=(
+      const RendererContentSettingRules& rules);
+  RendererContentSettingRules& operator=(RendererContentSettingRules&& rules);
+
+  bool operator==(const RendererContentSettingRules& other) const;
+
   ContentSettingsForOneType image_rules;
   ContentSettingsForOneType script_rules;
   ContentSettingsForOneType popup_redirect_rules;
   ContentSettingsForOneType mixed_content_rules;
+  ContentSettingsForOneType auto_dark_content_rules;
 };
 
 namespace content_settings {
-
-typedef std::string ResourceIdentifier;
 
 // Enum containing the various source for content settings. Settings can be
 // set by policy, extension, the user or by the custodian of a supervised user.
@@ -96,15 +116,17 @@ enum SettingSource {
   SETTING_SOURCE_ALLOWLIST,
   SETTING_SOURCE_SUPERVISED,
   SETTING_SOURCE_INSTALLED_WEBAPP,
+  SETTING_SOURCE_TPCD_GRANT,
 };
 
 // |SettingInfo| provides meta data for content setting values. |source|
 // contains the source of a value. |primary_pattern| and |secondary_pattern|
 // contains the patterns of the appling rule.
 struct SettingInfo {
-  SettingSource source;
+  SettingSource source = SETTING_SOURCE_NONE;
   ContentSettingsPattern primary_pattern;
   ContentSettingsPattern secondary_pattern;
+  RuleMetaData metadata;
 };
 
 }  // namespace content_settings

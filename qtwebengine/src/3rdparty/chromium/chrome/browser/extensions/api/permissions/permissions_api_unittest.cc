@@ -1,15 +1,17 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "chrome/browser/extensions/api/permissions/permissions_api.h"
+
+#include <memory>
+#include <optional>
 
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/strings/stringprintf.h"
 #include "chrome/browser/extensions/chrome_test_extension_loader.h"
 #include "chrome/browser/extensions/extension_api_unittest.h"
-#include "chrome/browser/extensions/extension_function_test_utils.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_service_test_with_install.h"
 #include "chrome/browser/extensions/extension_util.h"
@@ -18,6 +20,8 @@
 #include "chrome/browser/extensions/scripting_permissions_modifier.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/crx_file/id_util.h"
+#include "extensions/browser/api_test_utils.h"
+#include "extensions/browser/extension_util.h"
 #include "extensions/browser/test_extension_registry_observer.h"
 #include "extensions/common/extension_builder.h"
 #include "extensions/common/manifest_handlers/permissions_parser.h"
@@ -36,30 +40,32 @@ constexpr char kNotInManifestError[] =
 using permissions_test_util::GetPatternsAsStrings;
 
 scoped_refptr<const Extension> CreateExtensionWithPermissions(
-    std::unique_ptr<base::Value> permissions,
+    base::Value::List permissions,
     const std::string& name,
     bool allow_file_access) {
   int creation_flags = Extension::NO_FLAGS;
   if (allow_file_access)
     creation_flags |= Extension::ALLOW_FILE_ACCESS;
   return ExtensionBuilder()
-      .SetLocation(Manifest::INTERNAL)
-      .SetManifest(DictionaryBuilder()
+      .SetLocation(mojom::ManifestLocation::kInternal)
+      .SetManifest(base::Value::Dict()
                        .Set("name", name)
                        .Set("description", "foo")
                        .Set("manifest_version", 2)
                        .Set("version", "0.1.2.3")
-                       .Set("permissions", std::move(permissions))
-                       .Build())
+                       .Set("permissions", std::move(permissions)))
       .AddFlags(creation_flags)
       .SetID(crx_file::id_util::GenerateId(name))
       .Build();
 }
 
 // Helper function to create a base::Value from a list of strings.
-std::unique_ptr<base::Value> StringVectorToValue(
-    const std::vector<std::string>& strings) {
-  return ListBuilder().Append(strings.begin(), strings.end()).Build();
+base::Value::List StringVectorToValue(const std::vector<std::string>& strings) {
+  base::Value::List lv;
+  for (const auto& s : strings) {
+    lv.Append(s);
+  }
+  return lv;
 }
 
 // Runs permissions.request() with the provided |args|, and returns the result
@@ -68,15 +74,16 @@ std::unique_ptr<base::Value> StringVectorToValue(
 // new permissions.
 bool RunRequestFunction(
     const Extension& extension,
-    Browser* browser,
+    content::BrowserContext* browser_context,
     const char* args,
     std::unique_ptr<const PermissionSet>* prompted_permissions_out) {
   auto function = base::MakeRefCounted<PermissionsRequestFunction>();
   function->set_user_gesture(true);
   function->set_extension(&extension);
-  std::unique_ptr<base::Value> result(
-      extension_function_test_utils::RunFunctionAndReturnSingleResult(
-          function.get(), args, browser, api_test_utils::NONE));
+  std::optional<base::Value> result =
+      api_test_utils::RunFunctionAndReturnSingleResult(
+          function.get(), args, browser_context,
+          api_test_utils::FunctionMode::kNone);
   if (!function->GetError().empty()) {
     ADD_FAILURE() << "Unexpected function error: " << function->GetError();
     return false;
@@ -97,6 +104,10 @@ bool RunRequestFunction(
 class PermissionsAPIUnitTest : public ExtensionServiceTestWithInstall {
  public:
   PermissionsAPIUnitTest() {}
+
+  PermissionsAPIUnitTest(const PermissionsAPIUnitTest&) = delete;
+  PermissionsAPIUnitTest& operator=(const PermissionsAPIUnitTest&) = delete;
+
   ~PermissionsAPIUnitTest() override {}
   Browser* browser() { return browser_.get(); }
 
@@ -105,22 +116,29 @@ class PermissionsAPIUnitTest : public ExtensionServiceTestWithInstall {
                            const std::string& args_string,
                            bool allow_file_access) {
     SCOPED_TRACE(args_string);
-    ListBuilder required_permissions;
-    required_permissions.Append(manifest_permission);
     scoped_refptr<const Extension> extension = CreateExtensionWithPermissions(
-        required_permissions.Build(), "My Extension", allow_file_access);
+        base::Value::List().Append(manifest_permission), "My Extension",
+        allow_file_access);
     ExtensionPrefs::Get(profile())->SetAllowFileAccess(extension->id(),
                                                        allow_file_access);
     scoped_refptr<PermissionsContainsFunction> function(
         new PermissionsContainsFunction());
     function->set_extension(extension.get());
-    bool run_result = extension_function_test_utils::RunFunction(
-        function.get(), args_string, browser(), api_test_utils::NONE);
+    bool run_result =
+        api_test_utils::RunFunction(function.get(), args_string, profile(),
+                                    api_test_utils::FunctionMode::kNone);
     EXPECT_TRUE(run_result) << function->GetError();
 
-    bool has_permission;
-    EXPECT_TRUE(function->GetResultList()->GetBoolean(0u, &has_permission));
-    return has_permission;
+    const auto& args_list = *function->GetResultListForTest();
+    if (args_list.empty()) {
+      ADD_FAILURE() << "Result unexpectedly empty.";
+      return false;
+    }
+    if (!args_list[0].is_bool()) {
+      ADD_FAILURE() << "Result is not a boolean.";
+      return false;
+    }
+    return args_list[0].GetBool();
   }
 
   // Adds the extension to the ExtensionService, and grants any inital
@@ -136,26 +154,27 @@ class PermissionsAPIUnitTest : public ExtensionServiceTestWithInstall {
   // ExtensionServiceTestBase:
   void SetUp() override {
     ExtensionServiceTestWithInstall::SetUp();
-    PermissionsRequestFunction::SetAutoConfirmForTests(true);
+    dialog_action_ = PermissionsRequestFunction::SetDialogActionForTests(
+        PermissionsRequestFunction::DialogAction::kAutoConfirm);
     InitializeEmptyExtensionService();
-    browser_window_.reset(new TestBrowserWindow());
+    browser_window_ = std::make_unique<TestBrowserWindow>();
     Browser::CreateParams params(profile(), true);
     params.type = Browser::TYPE_NORMAL;
     params.window = browser_window_.get();
-    browser_.reset(new Browser(params));
+    browser_.reset(Browser::Create(params));
   }
   // ExtensionServiceTestBase:
   void TearDown() override {
+    dialog_action_.reset();
     browser_.reset();
     browser_window_.reset();
-    PermissionsRequestFunction::ResetAutoConfirmForTests();
     ExtensionServiceTestWithInstall::TearDown();
   }
 
   std::unique_ptr<TestBrowserWindow> browser_window_;
   std::unique_ptr<Browser> browser_;
-
-  DISALLOW_COPY_AND_ASSIGN(PermissionsAPIUnitTest);
+  std::optional<base::AutoReset<PermissionsRequestFunction::DialogAction>>
+      dialog_action_;
 };
 
 TEST_F(PermissionsAPIUnitTest, Contains) {
@@ -215,14 +234,14 @@ TEST_F(PermissionsAPIUnitTest, ContainsAndGetAllWithRuntimeHostPermissions) {
     SCOPED_TRACE(origin);
     auto function = base::MakeRefCounted<PermissionsContainsFunction>();
     function->set_extension(extension.get());
-    if (!extension_function_test_utils::RunFunction(
+    if (!api_test_utils::RunFunction(
             function.get(),
-            base::StringPrintf(R"([{"origins": ["%s"]}])", origin), browser(),
-            api_test_utils::NONE)) {
+            base::StringPrintf(R"([{"origins": ["%s"]}])", origin), profile(),
+            api_test_utils::FunctionMode::kNone)) {
       ADD_FAILURE() << "Running function failed: " << function->GetError();
     }
 
-    return function->GetResultList()->GetList()[0].GetBool();
+    return (*function->GetResultListForTest())[0].GetBool();
   };
 
   auto get_all = [this, &extension]() {
@@ -230,22 +249,23 @@ TEST_F(PermissionsAPIUnitTest, ContainsAndGetAllWithRuntimeHostPermissions) {
     function->set_extension(extension.get());
 
     std::vector<std::string> origins;
-    if (!extension_function_test_utils::RunFunction(
-            function.get(), "[]", browser(), api_test_utils::NONE)) {
+    if (!api_test_utils::RunFunction(function.get(), "[]", profile(),
+                                     api_test_utils::FunctionMode::kNone)) {
       ADD_FAILURE() << "Running function failed: " << function->GetError();
       return origins;
     }
 
-    const base::Value* results = function->GetResultList();
-    if (results->GetList().size() != 1u || !results->GetList()[0].is_dict()) {
+    const base::Value::List* results = function->GetResultListForTest();
+    if (results->size() != 1u || !(*results)[0].is_dict()) {
       ADD_FAILURE() << "Invalid result value";
       return origins;
     }
 
-    const base::Value* origins_value =
-        results->GetList()[0].FindKeyOfType("origins", base::Value::Type::LIST);
-    for (const auto& value : origins_value->GetList())
+    const base::Value::List* origins_value =
+        (*results)[0].GetDict().FindList("origins");
+    for (const auto& value : *origins_value) {
       origins.push_back(value.GetString());
+    }
 
     return origins;
   };
@@ -301,6 +321,23 @@ TEST_F(PermissionsAPIUnitTest, ContainsAndGetAllWithRuntimeHostPermissions) {
   EXPECT_THAT(get_all(), testing::ElementsAre(kExampleCom));
 }
 
+// Tests requesting permissions that are already granted with the
+// permissions.request() API.
+TEST_F(PermissionsAPIUnitTest, RequestingGrantedPermissions) {
+  // Create an extension with requires all urls, and grant the permission.
+  scoped_refptr<const Extension> extension =
+      ExtensionBuilder("extension").AddPermissions({"<all_urls>"}).Build();
+  AddExtensionAndGrantPermissions(*extension);
+
+  // Request access to any host permissions. No permissions should be prompted,
+  // since permissions that are already granted are not taken into account.
+  std::unique_ptr<const PermissionSet> prompted_permissions;
+  EXPECT_TRUE(RunRequestFunction(*extension, profile(),
+                                 R"([{"origins": ["https://*/*"]}])",
+                                 &prompted_permissions));
+  EXPECT_EQ(prompted_permissions, nullptr);
+}
+
 // Tests requesting withheld permissions with the permissions.request() API.
 TEST_F(PermissionsAPIUnitTest, RequestingWithheldPermissions) {
   // Create an extension with required host permissions, and withhold those
@@ -321,7 +358,7 @@ TEST_F(PermissionsAPIUnitTest, RequestingWithheldPermissions) {
 
   // Request one of the withheld permissions.
   std::unique_ptr<const PermissionSet> prompted_permissions;
-  EXPECT_TRUE(RunRequestFunction(*extension, browser(),
+  EXPECT_TRUE(RunRequestFunction(*extension, profile(),
                                  R"([{"origins": ["https://example.com/*"]}])",
                                  &prompted_permissions));
   ASSERT_TRUE(prompted_permissions);
@@ -359,7 +396,7 @@ TEST_F(PermissionsAPIUnitTest, RequestingWithheldContentScriptPermissions) {
   // Request one of the withheld permissions.
   std::unique_ptr<const PermissionSet> prompted_permissions;
   EXPECT_TRUE(
-      RunRequestFunction(*extension, browser(),
+      RunRequestFunction(*extension, profile(),
                          R"([{"origins": ["https://contentscript.com/*"]}])",
                          &prompted_permissions));
   ASSERT_TRUE(prompted_permissions);
@@ -397,7 +434,7 @@ TEST_F(PermissionsAPIUnitTest,
 
   // Request one of the withheld permissions.
   std::unique_ptr<const PermissionSet> prompted_permissions;
-  EXPECT_TRUE(RunRequestFunction(*extension, browser(),
+  EXPECT_TRUE(RunRequestFunction(*extension, profile(),
                                  R"([{"origins": ["https://example.com/*"]}])",
                                  &prompted_permissions));
   ASSERT_TRUE(prompted_permissions);
@@ -432,8 +469,8 @@ TEST_F(PermissionsAPIUnitTest, ReRequestingWithheldOptionalPermissions) {
   {
     std::unique_ptr<const PermissionSet> prompted_permissions;
     EXPECT_TRUE(RunRequestFunction(
-        *extension, browser(),
-        R"([{"origins": ["https://chromium.org/*"]}])", &prompted_permissions));
+        *extension, profile(), R"([{"origins": ["https://chromium.org/*"]}])",
+        &prompted_permissions));
     ASSERT_TRUE(prompted_permissions);
     EXPECT_THAT(GetPatternsAsStrings(prompted_permissions->effective_hosts()),
                 testing::UnorderedElementsAre("https://chromium.org/*"));
@@ -455,12 +492,14 @@ TEST_F(PermissionsAPIUnitTest, ReRequestingWithheldOptionalPermissions) {
   EXPECT_TRUE(
       permissions_data->active_permissions().effective_hosts().is_empty());
 
-  PermissionsRequestFunction::SetAutoConfirmForTests(false);
+  auto dialog_action_reset =
+      PermissionsRequestFunction::SetDialogActionForTests(
+          PermissionsRequestFunction::DialogAction::kAutoReject);
   {
     std::unique_ptr<const PermissionSet> prompted_permissions;
     EXPECT_FALSE(RunRequestFunction(
-        *extension, browser(),
-        R"([{"origins": ["https://chromium.org/*"]}])", &prompted_permissions));
+        *extension, profile(), R"([{"origins": ["https://chromium.org/*"]}])",
+        &prompted_permissions));
     ASSERT_TRUE(prompted_permissions);
     EXPECT_THAT(GetPatternsAsStrings(prompted_permissions->effective_hosts()),
                 testing::UnorderedElementsAre("https://chromium.org/*"));
@@ -495,7 +534,7 @@ TEST_F(PermissionsAPIUnitTest, RequestingWithheldAndOptionalPermissions) {
   // permission in the same call.
   std::unique_ptr<const PermissionSet> prompted_permissions;
   EXPECT_TRUE(RunRequestFunction(
-      *extension, browser(),
+      *extension, profile(),
       R"([{"origins": ["https://example.com/*", "https://chromium.org/*"]}])",
       &prompted_permissions));
   ASSERT_TRUE(prompted_permissions);
@@ -543,7 +582,7 @@ TEST_F(PermissionsAPIUnitTest, RequestingPermissionsNotSpecifiedInManifest) {
   function->set_user_gesture(true);
   function->set_extension(extension.get());
   EXPECT_EQ(kNotInManifestError,
-            extension_function_test_utils::RunFunctionAndReturnError(
+            api_test_utils::RunFunctionAndReturnError(
                 function.get(),
                 R"([{
                "origins": [
@@ -552,7 +591,7 @@ TEST_F(PermissionsAPIUnitTest, RequestingPermissionsNotSpecifiedInManifest) {
                  "https://google.com/*"
                ]
              }])",
-                browser(), api_test_utils::NONE));
+                profile(), api_test_utils::FunctionMode::kNone));
 }
 
 // Tests requesting withheld permissions that have already been granted.
@@ -582,10 +621,12 @@ TEST_F(PermissionsAPIUnitTest, RequestingAlreadyGrantedWithheldPermissions) {
   // Request the already-granted host permission. The function should succeed
   // (without even prompting the user), and the permission should (still) be
   // granted.
-  PermissionsRequestFunction::SetAutoConfirmForTests(false);
+  auto dialog_action_reset =
+      PermissionsRequestFunction::SetDialogActionForTests(
+          PermissionsRequestFunction::DialogAction::kAutoReject);
 
   std::unique_ptr<const PermissionSet> prompted_permissions;
-  EXPECT_TRUE(RunRequestFunction(*extension, browser(),
+  EXPECT_TRUE(RunRequestFunction(*extension, profile(),
                                  R"([{"origins": ["https://example.com/*"]}])",
                                  &prompted_permissions));
   ASSERT_FALSE(prompted_permissions);
@@ -605,7 +646,7 @@ TEST_F(PermissionsAPIUnitTest, RequestingChromeURLs) {
   scoped_refptr<const Extension> extension =
       ExtensionBuilder("extension")
           .SetManifestKey("optional_permissions",
-                          ListBuilder().Append("<all_urls>").Build())
+                          base::Value::List().Append("<all_urls>"))
           .Build();
   AddExtensionAndGrantPermissions(*extension);
 
@@ -625,10 +666,9 @@ TEST_F(PermissionsAPIUnitTest, RequestingChromeURLs) {
     auto function = base::MakeRefCounted<PermissionsRequestFunction>();
     function->set_user_gesture(true);
     function->set_extension(extension.get());
-    std::string error =
-        extension_function_test_utils::RunFunctionAndReturnError(
-            function.get(), R"([{"origins": ["chrome://settings/*"]}])",
-            browser(), api_test_utils::NONE);
+    std::string error = api_test_utils::RunFunctionAndReturnError(
+        function.get(), R"([{"origins": ["chrome://settings/*"]}])", profile(),
+        api_test_utils::FunctionMode::kNone);
     EXPECT_EQ(kNotInManifestError, error);
   }
   // chrome://settings should still be restricted.
@@ -637,7 +677,7 @@ TEST_F(PermissionsAPIUnitTest, RequestingChromeURLs) {
   // The extension can request <all_urls>, but it should not grant access to the
   // chrome:-scheme.
   std::unique_ptr<const PermissionSet> prompted_permissions;
-  RunRequestFunction(*extension, browser(), R"([{"origins": ["<all_urls>"]}])",
+  RunRequestFunction(*extension, profile(), R"([{"origins": ["<all_urls>"]}])",
                      &prompted_permissions);
   EXPECT_THAT(GetPatternsAsStrings(prompted_permissions->effective_hosts()),
               testing::UnorderedElementsAre("<all_urls>"));
@@ -673,10 +713,9 @@ TEST_F(PermissionsAPIUnitTest, RequestingFilePermissions) {
     auto function = base::MakeRefCounted<PermissionsRequestFunction>();
     function->set_user_gesture(true);
     function->set_extension(extension.get());
-    std::string error =
-        extension_function_test_utils::RunFunctionAndReturnError(
-            function.get(), R"([{"origins": ["file:///*"]}])", browser(),
-            api_test_utils::NONE);
+    std::string error = api_test_utils::RunFunctionAndReturnError(
+        function.get(), R"([{"origins": ["file:///*"]}])", profile(),
+        api_test_utils::FunctionMode::kNone);
     EXPECT_EQ("Extension must have file access enabled to request 'file:///*'.",
               error);
     EXPECT_FALSE(extension->permissions_data()->HasHostPermission(file_url));
@@ -691,7 +730,7 @@ TEST_F(PermissionsAPIUnitTest, RequestingFilePermissions) {
   }
 
   std::unique_ptr<const PermissionSet> prompted_permissions;
-  EXPECT_TRUE(RunRequestFunction(*extension, browser(),
+  EXPECT_TRUE(RunRequestFunction(*extension, profile(),
                                  R"([{"origins": ["file:///*"]}])",
                                  &prompted_permissions));
   // Note: There are no permission warnings associated with requesting file

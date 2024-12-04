@@ -33,14 +33,24 @@
 #include "third_party/blink/public/resources/grit/blink_resources.h"
 #include "third_party/blink/renderer/core/css/media_query_evaluator.h"
 #include "third_party/blink/renderer/core/css/rule_set.h"
+#include "third_party/blink/renderer/core/css/style_engine.h"
 #include "third_party/blink/renderer/core/css/style_sheet_contents.h"
+#include "third_party/blink/renderer/core/execution_context/execution_context.h"
+#include "third_party/blink/renderer/core/execution_context/security_context.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
+#include "third_party/blink/renderer/core/html/forms/html_button_element.h"
+#include "third_party/blink/renderer/core/html/forms/html_input_element.h"
+#include "third_party/blink/renderer/core/html/forms/html_select_element.h"
+#include "third_party/blink/renderer/core/html/forms/html_text_area_element.h"
 #include "third_party/blink/renderer/core/html/html_anchor_element.h"
 #include "third_party/blink/renderer/core/html/html_html_element.h"
+#include "third_party/blink/renderer/core/html/html_meter_element.h"
+#include "third_party/blink/renderer/core/html/html_permission_element.h"
+#include "third_party/blink/renderer/core/html/html_progress_element.h"
 #include "third_party/blink/renderer/core/layout/layout_theme.h"
 #include "third_party/blink/renderer/core/mathml_names.h"
 #include "third_party/blink/renderer/platform/data_resource_helper.h"
-#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/wtf/leak_annotations.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
@@ -52,12 +62,6 @@ CSSDefaultStyleSheets& CSSDefaultStyleSheets::Instance() {
                       css_default_style_sheets,
                       (MakeGarbageCollected<CSSDefaultStyleSheets>()));
   return *css_default_style_sheets;
-}
-
-static const MediaQueryEvaluator& ScreenEval() {
-  DEFINE_STATIC_LOCAL(const Persistent<MediaQueryEvaluator>, static_screen_eval,
-                      (MakeGarbageCollected<MediaQueryEvaluator>("screen")));
-  return *static_screen_eval;
 }
 
 static const MediaQueryEvaluator& PrintEval() {
@@ -75,7 +79,13 @@ static const MediaQueryEvaluator& ForcedColorsEval() {
   return *forced_colors_eval;
 }
 
-static StyleSheetContents* ParseUASheet(const String& str) {
+// static
+void CSSDefaultStyleSheets::Init() {
+  Instance();
+}
+
+// static
+StyleSheetContents* CSSDefaultStyleSheets::ParseUASheet(const String& str) {
   // UA stylesheets always parse in the insecure context mode.
   auto* sheet = MakeGarbageCollected<StyleSheetContents>(
       MakeGarbageCollected<CSSParserContext>(
@@ -87,55 +97,40 @@ static StyleSheetContents* ParseUASheet(const String& str) {
   return sheet;
 }
 
+// static
+const MediaQueryEvaluator& CSSDefaultStyleSheets::ScreenEval() {
+  DEFINE_STATIC_LOCAL(const Persistent<MediaQueryEvaluator>, static_screen_eval,
+                      (MakeGarbageCollected<MediaQueryEvaluator>("screen")));
+  return *static_screen_eval;
+}
+
 CSSDefaultStyleSheets::CSSDefaultStyleSheets()
     : media_controls_style_sheet_loader_(nullptr) {
   // Strict-mode rules.
-  String forced_colors_style_sheet =
-      RuntimeEnabledFeatures::ForcedColorsEnabled()
-          ? UncompressResourceAsASCIIString(IDR_UASTYLE_THEME_FORCED_COLORS_CSS)
-          : String();
   String default_rules = UncompressResourceAsASCIIString(IDR_UASTYLE_HTML_CSS) +
-                         LayoutTheme::GetTheme().ExtraDefaultStyleSheet() +
-                         forced_colors_style_sheet;
+                         LayoutTheme::GetTheme().ExtraDefaultStyleSheet();
 
   default_style_sheet_ = ParseUASheet(default_rules);
 
   // Quirks-mode rules.
-  String quirks_rules =
-      UncompressResourceAsASCIIString(IDR_UASTYLE_QUIRKS_CSS) +
-      LayoutTheme::GetTheme().ExtraQuirksStyleSheet();
+  String quirks_rules = UncompressResourceAsASCIIString(IDR_UASTYLE_QUIRKS_CSS);
   quirks_style_sheet_ = ParseUASheet(quirks_rules);
 
   InitializeDefaultStyles();
-
-#if DCHECK_IS_ON()
-  default_style_->CompactRulesIfNeeded();
-  default_mathml_style_->CompactRulesIfNeeded();
-  default_svg_style_->CompactRulesIfNeeded();
-  default_quirks_style_->CompactRulesIfNeeded();
-  default_print_style_->CompactRulesIfNeeded();
-  default_forced_color_style_->CompactRulesIfNeeded();
-  DCHECK(default_style_->UniversalRules()->IsEmpty());
-  DCHECK(default_mathml_style_->UniversalRules()->IsEmpty());
-  DCHECK(default_svg_style_->UniversalRules()->IsEmpty());
-  DCHECK(default_quirks_style_->UniversalRules()->IsEmpty());
-  DCHECK(default_print_style_->UniversalRules()->IsEmpty());
-  DCHECK(default_forced_color_style_->UniversalRules()->IsEmpty());
-#endif
 }
 
 void CSSDefaultStyleSheets::PrepareForLeakDetection() {
   // Clear the optional style sheets.
-  mobile_viewport_style_sheet_.Clear();
-  television_viewport_style_sheet_.Clear();
-  xhtml_mobile_profile_style_sheet_.Clear();
   svg_style_sheet_.Clear();
   mathml_style_sheet_.Clear();
   media_controls_style_sheet_.Clear();
   text_track_style_sheet_.Clear();
+  forced_colors_style_sheet_.Clear();
   fullscreen_style_sheet_.Clear();
-  webxr_overlay_style_sheet_.Clear();
+  selectlist_style_sheet_.Clear();
   marker_style_sheet_.Clear();
+  form_controls_not_vertical_style_sheet_.Clear();
+  form_controls_not_vertical_style_text_sheet_.Clear();
   // Recreate the default style sheet to clean up possible SVG resources.
   String default_rules = UncompressResourceAsASCIIString(IDR_UASTYLE_HTML_CSS) +
                          LayoutTheme::GetTheme().ExtraDefaultStyleSheet();
@@ -146,21 +141,69 @@ void CSSDefaultStyleSheets::PrepareForLeakDetection() {
   default_view_source_style_.Clear();
 }
 
+void CSSDefaultStyleSheets::VerifyUniversalRuleCount() {
+#if EXPENSIVE_DCHECKS_ARE_ON()
+  // Universal bucket rules need to be checked against every single element,
+  // thus we want avoid them in UA stylesheets.
+  default_html_style_->CompactRulesIfNeeded();
+  DCHECK(default_html_style_->UniversalRules().empty());
+  default_html_quirks_style_->CompactRulesIfNeeded();
+  DCHECK(default_html_quirks_style_->UniversalRules().empty());
+
+  // The RuleSets below currently contain universal bucket rules.
+  // Ideally these should also be empty, DCHECK the current size to only
+  // consciously add more universal bucket rules.
+  if (mathml_style_sheet_) {
+    default_mathml_style_->CompactRulesIfNeeded();
+    DCHECK_EQ(default_mathml_style_->UniversalRules().size(), 24u);
+  }
+
+  if (svg_style_sheet_) {
+    default_svg_style_->CompactRulesIfNeeded();
+    DCHECK_EQ(default_svg_style_->UniversalRules().size(), 1u);
+  }
+
+  if (media_controls_style_sheet_) {
+    default_media_controls_style_->CompactRulesIfNeeded();
+    DCHECK_EQ(default_media_controls_style_->UniversalRules().size(), 4u);
+  }
+
+  if (fullscreen_style_sheet_) {
+    default_fullscreen_style_->CompactRulesIfNeeded();
+    // There are 7 rules by default but if the viewport segments MQs are
+    // resolved then we have an additional rule.
+    DCHECK(default_fullscreen_style_->UniversalRules().size() == 7u ||
+           default_fullscreen_style_->UniversalRules().size() == 8u);
+  }
+
+  if (marker_style_sheet_) {
+    default_pseudo_element_style_->CompactRulesIfNeeded();
+    DCHECK_EQ(default_pseudo_element_style_->UniversalRules().size(), 1u);
+  }
+#endif
+}
+
 void CSSDefaultStyleSheets::InitializeDefaultStyles() {
   // This must be called only from constructor / PrepareForLeakDetection.
-  default_style_ = MakeGarbageCollected<RuleSet>();
+  default_html_style_ = MakeGarbageCollected<RuleSet>();
   default_mathml_style_ = MakeGarbageCollected<RuleSet>();
   default_svg_style_ = MakeGarbageCollected<RuleSet>();
-  default_quirks_style_ = MakeGarbageCollected<RuleSet>();
+  default_html_quirks_style_ = MakeGarbageCollected<RuleSet>();
   default_print_style_ = MakeGarbageCollected<RuleSet>();
-  default_forced_color_style_ = MakeGarbageCollected<RuleSet>();
+  default_media_controls_style_ = MakeGarbageCollected<RuleSet>();
+  default_fullscreen_style_ = MakeGarbageCollected<RuleSet>();
+  default_forced_color_style_.Clear();
   default_pseudo_element_style_.Clear();
 
-  default_style_->AddRulesFromSheet(DefaultStyleSheet(), ScreenEval());
-  default_quirks_style_->AddRulesFromSheet(QuirksStyleSheet(), ScreenEval());
+  default_html_style_->AddRulesFromSheet(DefaultStyleSheet(), ScreenEval());
+  default_html_quirks_style_->AddRulesFromSheet(QuirksStyleSheet(),
+                                                ScreenEval());
   default_print_style_->AddRulesFromSheet(DefaultStyleSheet(), PrintEval());
-  default_forced_color_style_->AddRulesFromSheet(DefaultStyleSheet(),
-                                                 ForcedColorsEval());
+
+  CHECK(default_html_style_->ViewTransitionRules().empty())
+      << "@view-transition is not implemented for the UA stylesheet.";
+
+  VerifyUniversalRuleCount();
 }
 
 RuleSet* CSSDefaultStyleSheets::DefaultViewSourceStyle() {
@@ -171,33 +214,7 @@ RuleSet* CSSDefaultStyleSheets::DefaultViewSourceStyle() {
         UncompressResourceAsASCIIString(IDR_UASTYLE_VIEW_SOURCE_CSS));
     default_view_source_style_->AddRulesFromSheet(stylesheet, ScreenEval());
   }
-  return default_view_source_style_;
-}
-
-StyleSheetContents*
-CSSDefaultStyleSheets::EnsureXHTMLMobileProfileStyleSheet() {
-  if (!xhtml_mobile_profile_style_sheet_) {
-    xhtml_mobile_profile_style_sheet_ =
-        ParseUASheet(UncompressResourceAsASCIIString(IDR_UASTYLE_XHTMLMP_CSS));
-  }
-  return xhtml_mobile_profile_style_sheet_;
-}
-
-StyleSheetContents* CSSDefaultStyleSheets::EnsureMobileViewportStyleSheet() {
-  if (!mobile_viewport_style_sheet_) {
-    mobile_viewport_style_sheet_ = ParseUASheet(
-        UncompressResourceAsASCIIString(IDR_UASTYLE_VIEWPORT_ANDROID_CSS));
-  }
-  return mobile_viewport_style_sheet_;
-}
-
-StyleSheetContents*
-CSSDefaultStyleSheets::EnsureTelevisionViewportStyleSheet() {
-  if (!television_viewport_style_sheet_) {
-    television_viewport_style_sheet_ = ParseUASheet(
-        UncompressResourceAsASCIIString(IDR_UASTYLE_VIEWPORT_TELEVISION_CSS));
-  }
-  return television_viewport_style_sheet_;
+  return default_view_source_style_.Get();
 }
 
 static void AddTextTrackCSSProperties(StringBuilder* builder,
@@ -209,6 +226,32 @@ static void AddTextTrackCSSProperties(StringBuilder* builder,
   builder->Append("; ");
 }
 
+void CSSDefaultStyleSheets::AddRulesToDefaultStyleSheets(
+    StyleSheetContents* rules,
+    NamespaceType type) {
+  switch (type) {
+    case NamespaceType::kHTML:
+      default_html_style_->AddRulesFromSheet(rules, ScreenEval());
+      default_html_quirks_style_->AddRulesFromSheet(rules, ScreenEval());
+      break;
+    case NamespaceType::kSVG:
+      default_svg_style_->AddRulesFromSheet(rules, ScreenEval());
+      break;
+    case NamespaceType::kMathML:
+      default_mathml_style_->AddRulesFromSheet(rules, ScreenEval());
+      break;
+    case NamespaceType::kMediaControls:
+      default_media_controls_style_->AddRulesFromSheet(rules, ScreenEval());
+      break;
+  }
+  // Add to print and forced color for all namespaces.
+  default_print_style_->AddRulesFromSheet(rules, PrintEval());
+  if (default_forced_color_style_) {
+    default_forced_color_style_->AddRulesFromSheet(rules, ForcedColorsEval());
+  }
+  VerifyUniversalRuleCount();
+}
+
 bool CSSDefaultStyleSheets::EnsureDefaultStyleSheetsForElement(
     const Element& element) {
   bool changed_default_style = false;
@@ -216,22 +259,16 @@ bool CSSDefaultStyleSheets::EnsureDefaultStyleSheetsForElement(
   if (element.IsSVGElement() && !svg_style_sheet_) {
     svg_style_sheet_ =
         ParseUASheet(UncompressResourceAsASCIIString(IDR_UASTYLE_SVG_CSS));
-    default_svg_style_->AddRulesFromSheet(SvgStyleSheet(), ScreenEval());
-    default_print_style_->AddRulesFromSheet(SvgStyleSheet(), PrintEval());
-    default_forced_color_style_->AddRulesFromSheet(SvgStyleSheet(),
-                                                   ForcedColorsEval());
+    AddRulesToDefaultStyleSheets(svg_style_sheet_, NamespaceType::kSVG);
     changed_default_style = true;
   }
 
   // FIXME: We should assert that the sheet only styles MathML elements.
   if (element.namespaceURI() == mathml_names::kNamespaceURI &&
       !mathml_style_sheet_) {
-    mathml_style_sheet_ = ParseUASheet(
-        RuntimeEnabledFeatures::MathMLCoreEnabled()
-            ? UncompressResourceAsASCIIString(IDR_UASTYLE_MATHML_CSS)
-            : UncompressResourceAsASCIIString(IDR_UASTYLE_MATHML_FALLBACK_CSS));
-    default_mathml_style_->AddRulesFromSheet(MathmlStyleSheet(), ScreenEval());
-    default_print_style_->AddRulesFromSheet(MathmlStyleSheet(), PrintEval());
+    mathml_style_sheet_ =
+        ParseUASheet(UncompressResourceAsASCIIString(IDR_UASTYLE_MATHML_CSS));
+    AddRulesToDefaultStyleSheets(mathml_style_sheet_, NamespaceType::kMathML);
     changed_default_style = true;
   }
 
@@ -241,11 +278,17 @@ bool CSSDefaultStyleSheets::EnsureDefaultStyleSheetsForElement(
     // and <audio>.
     media_controls_style_sheet_ =
         ParseUASheet(media_controls_style_sheet_loader_->GetUAStyleSheet());
-    default_style_->AddRulesFromSheet(MediaControlsStyleSheet(), ScreenEval());
-    default_print_style_->AddRulesFromSheet(MediaControlsStyleSheet(),
-                                            PrintEval());
-    default_forced_color_style_->AddRulesFromSheet(MediaControlsStyleSheet(),
-                                                   ForcedColorsEval());
+    AddRulesToDefaultStyleSheets(media_controls_style_sheet_,
+                                 NamespaceType::kMediaControls);
+    changed_default_style = true;
+  }
+
+  if (!permission_element_style_sheet_ && IsA<HTMLPermissionElement>(element)) {
+    CHECK(RuntimeEnabledFeatures::PermissionElementEnabled());
+    permission_element_style_sheet_ = ParseUASheet(
+        UncompressResourceAsASCIIString(IDR_UASTYLE_PERMISSION_ELEMENT_CSS));
+    AddRulesToDefaultStyleSheets(permission_element_style_sheet_,
+                                 NamespaceType::kHTML);
     changed_default_style = true;
   }
 
@@ -256,8 +299,6 @@ bool CSSDefaultStyleSheets::EnsureDefaultStyleSheetsForElement(
       builder.Append("video::-webkit-media-text-track-display { ");
       AddTextTrackCSSProperties(&builder, CSSPropertyID::kBackgroundColor,
                                 settings->GetTextTrackWindowColor());
-      AddTextTrackCSSProperties(&builder, CSSPropertyID::kPadding,
-                                settings->GetTextTrackWindowPadding());
       AddTextTrackCSSProperties(&builder, CSSPropertyID::kBorderRadius,
                                 settings->GetTextTrackWindowRadius());
       builder.Append(" } video::cue { ");
@@ -276,15 +317,54 @@ bool CSSDefaultStyleSheets::EnsureDefaultStyleSheetsForElement(
       AddTextTrackCSSProperties(&builder, CSSPropertyID::kFontSize,
                                 settings->GetTextTrackTextSize());
       builder.Append(" } ");
-      text_track_style_sheet_ = ParseUASheet(builder.ToString());
-      default_style_->AddRulesFromSheet(text_track_style_sheet_, ScreenEval());
-      default_print_style_->AddRulesFromSheet(text_track_style_sheet_,
-                                              PrintEval());
+      text_track_style_sheet_ = ParseUASheet(builder.ReleaseString());
+      AddRulesToDefaultStyleSheets(text_track_style_sheet_,
+                                   NamespaceType::kMediaControls);
       changed_default_style = true;
     }
   }
 
-  DCHECK(!default_style_->Features().HasIdsInSelectors());
+  if (!selectlist_style_sheet_ && IsA<HTMLSelectListElement>(element)) {
+    // TODO: We should assert that this sheet only contains rules for
+    // <selectlist>.
+    CHECK(RuntimeEnabledFeatures::HTMLSelectListElementEnabled());
+    selectlist_style_sheet_ = ParseUASheet(
+        UncompressResourceAsASCIIString(IDR_UASTYLE_SELECTLIST_CSS));
+    AddRulesToDefaultStyleSheets(selectlist_style_sheet_, NamespaceType::kHTML);
+    changed_default_style = true;
+  }
+
+  // TODO(crbug.com/681917, crbug.com/484651): We enable vertical writing mode
+  // on form controls using features FormControlsVerticalWritingModeSupport
+  // and FormControlsVerticalWritingModeTextSupport. When it is *disabled*,
+  // we need to force horizontal writing mode.
+  const auto* input = DynamicTo<HTMLInputElement>(element);
+  if (!RuntimeEnabledFeatures::
+          FormControlsVerticalWritingModeSupportEnabled() &&
+      !form_controls_not_vertical_style_sheet_ &&
+      (IsA<HTMLProgressElement>(element) || IsA<HTMLMeterElement>(element) ||
+       IsA<HTMLButtonElement>(element) || IsA<HTMLSelectElement>(element) ||
+       (input && !input->IsTextField()))) {
+    form_controls_not_vertical_style_sheet_ =
+        ParseUASheet(UncompressResourceAsASCIIString(
+            IDR_UASTYLE_FORM_CONTROLS_NOT_VERTICAL_CSS));
+    AddRulesToDefaultStyleSheets(form_controls_not_vertical_style_sheet_,
+                                 NamespaceType::kHTML);
+    changed_default_style = true;
+  }
+  if (!RuntimeEnabledFeatures::
+          FormControlsVerticalWritingModeTextSupportEnabled() &&
+      !form_controls_not_vertical_style_text_sheet_ &&
+      (IsA<HTMLTextAreaElement>(element) || (input && input->IsTextField()))) {
+    form_controls_not_vertical_style_text_sheet_ =
+        ParseUASheet(UncompressResourceAsASCIIString(
+            IDR_UASTYLE_FORM_CONTROLS_NOT_VERTICAL_CSS_TEXT));
+    AddRulesToDefaultStyleSheets(form_controls_not_vertical_style_text_sheet_,
+                                 NamespaceType::kHTML);
+    changed_default_style = true;
+  }
+
+  DCHECK(!default_html_style_->Features().HasIdsInSelectors());
   return changed_default_style;
 }
 
@@ -292,12 +372,14 @@ bool CSSDefaultStyleSheets::EnsureDefaultStyleSheetsForPseudoElement(
     PseudoId pseudo_id) {
   switch (pseudo_id) {
     case kPseudoIdMarker: {
-      if (marker_style_sheet_)
+      if (marker_style_sheet_) {
         return false;
+      }
       marker_style_sheet_ =
           ParseUASheet(UncompressResourceAsASCIIString(IDR_UASTYLE_MARKER_CSS));
-      if (!default_pseudo_element_style_)
+      if (!default_pseudo_element_style_) {
         default_pseudo_element_style_ = MakeGarbageCollected<RuleSet>();
+      }
       default_pseudo_element_style_->AddRulesFromSheet(MarkerStyleSheet(),
                                                        ScreenEval());
       return true;
@@ -312,54 +394,116 @@ void CSSDefaultStyleSheets::SetMediaControlsStyleSheetLoader(
   media_controls_style_sheet_loader_.swap(loader);
 }
 
-bool CSSDefaultStyleSheets::EnsureDefaultStyleSheetForXrOverlay() {
-  if (webxr_overlay_style_sheet_)
-    return false;
-
-  webxr_overlay_style_sheet_ = ParseUASheet(
-      UncompressResourceAsASCIIString(IDR_UASTYLE_WEBXR_OVERLAY_CSS));
-  default_style_->AddRulesFromSheet(webxr_overlay_style_sheet_, ScreenEval());
-  default_print_style_->AddRulesFromSheet(webxr_overlay_style_sheet_,
-                                          PrintEval());
-  default_forced_color_style_->AddRulesFromSheet(webxr_overlay_style_sheet_,
-                                                 ForcedColorsEval());
-  return true;
-}
-
-void CSSDefaultStyleSheets::EnsureDefaultStyleSheetForFullscreen() {
-  if (fullscreen_style_sheet_)
+void CSSDefaultStyleSheets::EnsureDefaultStyleSheetForFullscreen(
+    const Element& element) {
+  if (fullscreen_style_sheet_) {
+    DCHECK(!default_fullscreen_style_->DidMediaQueryResultsChange(
+        MediaQueryEvaluator(element.GetDocument().GetFrame())));
     return;
+  }
 
   String fullscreen_rules =
       UncompressResourceAsASCIIString(IDR_UASTYLE_FULLSCREEN_CSS) +
       LayoutTheme::GetTheme().ExtraFullscreenStyleSheet();
   fullscreen_style_sheet_ = ParseUASheet(fullscreen_rules);
-  default_style_->AddRulesFromSheet(FullscreenStyleSheet(), ScreenEval());
-  default_quirks_style_->AddRulesFromSheet(FullscreenStyleSheet(),
-                                           ScreenEval());
+
+  default_fullscreen_style_->AddRulesFromSheet(
+      fullscreen_style_sheet_,
+      MediaQueryEvaluator(element.GetDocument().GetFrame()));
+  VerifyUniversalRuleCount();
+}
+
+void CSSDefaultStyleSheets::RebuildFullscreenRuleSetIfMediaQueriesChanged(
+    const Element& element) {
+  if (!fullscreen_style_sheet_) {
+    return;
+  }
+
+  if (!default_fullscreen_style_->DidMediaQueryResultsChange(
+          MediaQueryEvaluator(element.GetDocument().GetFrame()))) {
+    return;
+  }
+
+  default_fullscreen_style_ = MakeGarbageCollected<RuleSet>();
+  default_fullscreen_style_->AddRulesFromSheet(
+      fullscreen_style_sheet_,
+      MediaQueryEvaluator(element.GetDocument().GetFrame()));
+  VerifyUniversalRuleCount();
+}
+
+bool CSSDefaultStyleSheets::EnsureDefaultStyleSheetForForcedColors() {
+  if (forced_colors_style_sheet_) {
+    return false;
+  }
+
+  String forced_colors_rules =
+      RuntimeEnabledFeatures::ForcedColorsEnabled()
+          ? UncompressResourceAsASCIIString(IDR_UASTYLE_THEME_FORCED_COLORS_CSS)
+          : String();
+  forced_colors_style_sheet_ = ParseUASheet(forced_colors_rules);
+
+  if (!default_forced_color_style_) {
+    default_forced_color_style_ = MakeGarbageCollected<RuleSet>();
+  }
+  default_forced_color_style_->AddRulesFromSheet(DefaultStyleSheet(),
+                                                 ForcedColorsEval());
+  default_forced_color_style_->AddRulesFromSheet(ForcedColorsStyleSheet(),
+                                                 ForcedColorsEval());
+  if (svg_style_sheet_) {
+    default_forced_color_style_->AddRulesFromSheet(SvgStyleSheet(),
+                                                   ForcedColorsEval());
+  }
+  if (media_controls_style_sheet_) {
+    default_forced_color_style_->AddRulesFromSheet(MediaControlsStyleSheet(),
+                                                   ForcedColorsEval());
+  }
+
+  return true;
+}
+
+void CSSDefaultStyleSheets::CollectFeaturesTo(const Document& document,
+                                              RuleFeatureSet& features) {
+  if (DefaultHtmlStyle()) {
+    features.Merge(DefaultHtmlStyle()->Features());
+  }
+  if (DefaultMediaControlsStyle()) {
+    features.Merge(DefaultMediaControlsStyle()->Features());
+  }
+  if (DefaultMathMLStyle()) {
+    features.Merge(DefaultMathMLStyle()->Features());
+  }
+  if (DefaultFullscreenStyle()) {
+    features.Merge(DefaultFullscreenStyle()->Features());
+  }
+  if (document.IsViewSource() && DefaultViewSourceStyle()) {
+    features.Merge(DefaultViewSourceStyle()->Features());
+  }
 }
 
 void CSSDefaultStyleSheets::Trace(Visitor* visitor) const {
-  visitor->Trace(default_style_);
+  visitor->Trace(default_html_style_);
   visitor->Trace(default_mathml_style_);
   visitor->Trace(default_svg_style_);
-  visitor->Trace(default_quirks_style_);
+  visitor->Trace(default_html_quirks_style_);
   visitor->Trace(default_print_style_);
   visitor->Trace(default_view_source_style_);
   visitor->Trace(default_forced_color_style_);
-  visitor->Trace(default_style_sheet_);
   visitor->Trace(default_pseudo_element_style_);
-  visitor->Trace(mobile_viewport_style_sheet_);
-  visitor->Trace(television_viewport_style_sheet_);
-  visitor->Trace(xhtml_mobile_profile_style_sheet_);
+  visitor->Trace(default_media_controls_style_);
+  visitor->Trace(default_fullscreen_style_);
+  visitor->Trace(default_style_sheet_);
   visitor->Trace(quirks_style_sheet_);
   visitor->Trace(svg_style_sheet_);
   visitor->Trace(mathml_style_sheet_);
   visitor->Trace(media_controls_style_sheet_);
+  visitor->Trace(permission_element_style_sheet_);
   visitor->Trace(text_track_style_sheet_);
+  visitor->Trace(forced_colors_style_sheet_);
   visitor->Trace(fullscreen_style_sheet_);
-  visitor->Trace(webxr_overlay_style_sheet_);
+  visitor->Trace(selectlist_style_sheet_);
   visitor->Trace(marker_style_sheet_);
+  visitor->Trace(form_controls_not_vertical_style_sheet_);
+  visitor->Trace(form_controls_not_vertical_style_text_sheet_);
 }
 
 }  // namespace blink

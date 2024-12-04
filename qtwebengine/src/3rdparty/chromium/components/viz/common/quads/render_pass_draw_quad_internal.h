@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,8 +6,6 @@
 #define COMPONENTS_VIZ_COMMON_QUADS_RENDER_PASS_DRAW_QUAD_INTERNAL_H_
 
 #include <stddef.h>
-
-#include <memory>
 
 #include "cc/paint/filter_operations.h"
 #include "components/viz/common/quads/draw_quad.h"
@@ -29,7 +27,7 @@ class VIZ_COMMON_EXPORT RenderPassDrawQuadInternal : public DrawQuad {
   // the render pass physical pixels. This scale is applied to the filter
   // parameters for pixel-moving filters. This scale should include
   // content-to-target-space scale, and device pixel ratio.
-  gfx::Vector2dF filters_scale;
+  gfx::Vector2dF filters_scale{1.0f, 1.0f};
 
   // The origin for post-processing filters which will be used to offset
   // crop rects, lights, etc.
@@ -37,14 +35,13 @@ class VIZ_COMMON_EXPORT RenderPassDrawQuadInternal : public DrawQuad {
 
   gfx::RectF tex_coord_rect;
 
-  float backdrop_filter_quality;
+  float backdrop_filter_quality = 1.0f;
 
-  bool force_anti_aliasing_off;
+  bool force_anti_aliasing_off = false;
 
-  // If the quad has backdrop filters, this flag indicates if the cached
-  // backdrop filtered result can be used instead of having to recompute the
-  // filter operation.
-  mutable bool can_use_backdrop_filter_cache;
+  // Indicates if this quad intersects any damage from quads under it rendering
+  // to the same target.
+  mutable bool intersects_damage_under = true;
 
   ResourceId mask_resource_id() const {
     return resources.ids[kMaskResourceIdIndex];

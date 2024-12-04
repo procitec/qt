@@ -1,10 +1,13 @@
 include_rules = [
     "+base/containers/circular_deque.h",
     "+base/task/task_traits.h",
+    "+base/task/post_job.h",
     "+base/task/thread_pool/thread_pool_instance.h",
     "+cc",
     "+components/viz/client",
     "+components/viz/common",
+    "+gpu/ipc/client/client_shared_image_interface.h",
+    "+services/metrics/public/cpp/mojo_ukm_recorder.h",
 ]
 
 specific_include_rules = {
@@ -13,7 +16,6 @@ specific_include_rules = {
   ],
   "layer_tree_settings\.cc": [
     "+base/base_switches.h",
-    "+base/strings/string_number_conversions.h",
     "+gpu/config/gpu_finch_features.h",
     "+gpu/command_buffer/service/gpu_switches.h",
     "+media/base/media_switches.h",

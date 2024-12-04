@@ -1,45 +1,8 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtQml module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2021 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qv4engine_p.h"
 #include "qv4object_p.h"
-#include "qv4objectproto_p.h"
 #include "qv4mm_p.h"
 #include "qv4qobjectwrapper_p.h"
 #include "qv4identifiertable_p.h"
@@ -50,8 +13,6 @@
 #include <qqmlengine.h>
 #include "PageReservation.h"
 #include "PageAllocation.h"
-#include "PageAllocationAligned.h"
-#include "StdLibExtras.h"
 
 #include <QElapsedTimer>
 #include <QMap>
@@ -63,7 +24,8 @@
 #include "qv4profiling_p.h"
 #include "qv4mapobject_p.h"
 #include "qv4setobject_p.h"
-#include "qv4writebarrier_p.h"
+
+#include <chrono>
 
 //#define MM_STATS
 
@@ -98,6 +60,12 @@ Q_LOGGING_CATEGORY(lcGcStats, "qt.qml.gc.statistics")
 Q_DECLARE_LOGGING_CATEGORY(lcGcStats)
 Q_LOGGING_CATEGORY(lcGcAllocatorStats, "qt.qml.gc.allocatorStats")
 Q_DECLARE_LOGGING_CATEGORY(lcGcAllocatorStats)
+Q_LOGGING_CATEGORY(lcGcStateTransitions, "qt.qml.gc.stateTransitions")
+Q_DECLARE_LOGGING_CATEGORY(lcGcStateTransitions)
+Q_LOGGING_CATEGORY(lcGcForcedRuns, "qt.qml.gc.forcedRuns")
+Q_DECLARE_LOGGING_CATEGORY(lcGcForcedRuns)
+Q_LOGGING_CATEGORY(lcGcStepExecution, "qt.qml.gc.stepExecution")
+Q_DECLARE_LOGGING_CATEGORY(lcGcStepExecution)
 
 using namespace WTF;
 
@@ -122,7 +90,7 @@ struct MemorySegment {
 
     MemorySegment(size_t size)
     {
-        size += Chunk::ChunkSize; // make sure we can get enough 64k aligment memory
+        size += Chunk::ChunkSize; // make sure we can get enough 64k alignment memory
         if (size < SegmentSize)
             size = SegmentSize;
 
@@ -311,9 +279,6 @@ bool Chunk::sweep(ExecutionEngine *engine)
     HeapItem *o = realBase();
     bool lastSlotFree = false;
     for (uint i = 0; i < Chunk::EntriesInBitmap; ++i) {
-#if WRITEBARRIER(none)
-        Q_ASSERT((grayBitmap[i] | blackBitmap[i]) == blackBitmap[i]); // check that we don't have gray only objects
-#endif
         quintptr toFree = objectBitmap[i] ^ blackBitmap[i];
         Q_ASSERT((toFree & objectBitmap[i]) == toFree); // check all black objects are marked as being used
         quintptr e = extendsBitmap[i];
@@ -357,7 +322,6 @@ bool Chunk::sweep(ExecutionEngine *engine)
                                                       - (blackBitmap[i] | e)) * Chunk::SlotSize,
                              Profiling::SmallItem);
         objectBitmap[i] = blackBitmap[i];
-        grayBitmap[i] = 0;
         hasUsedSlots |= (blackBitmap[i] != 0);
         extendsBitmap[i] = e;
         lastSlotFree = !((objectBitmap[i]|extendsBitmap[i]) >> (sizeof(quintptr)*8 - 1));
@@ -407,7 +371,6 @@ void Chunk::freeAll(ExecutionEngine *engine)
         Q_V4_PROFILE_DEALLOC(engine, (qPopulationCount(objectBitmap[i]|extendsBitmap[i])
                              - qPopulationCount(e)) * Chunk::SlotSize, Profiling::SmallItem);
         objectBitmap[i] = 0;
-        grayBitmap[i] = 0;
         extendsBitmap[i] = e;
         o += Chunk::Bits;
     }
@@ -417,36 +380,6 @@ void Chunk::freeAll(ExecutionEngine *engine)
 void Chunk::resetBlackBits()
 {
     memset(blackBitmap, 0, sizeof(blackBitmap));
-}
-
-void Chunk::collectGrayItems(MarkStack *markStack)
-{
-    //    DEBUG << "sweeping chunk" << this << (*freeList);
-    HeapItem *o = realBase();
-    for (uint i = 0; i < Chunk::EntriesInBitmap; ++i) {
-#if WRITEBARRIER(none)
-        Q_ASSERT((grayBitmap[i] | blackBitmap[i]) == blackBitmap[i]); // check that we don't have gray only objects
-#endif
-        quintptr toMark = blackBitmap[i] & grayBitmap[i]; // correct for a Steele type barrier
-        Q_ASSERT((toMark & objectBitmap[i]) == toMark); // check all black objects are marked as being used
-        //        DEBUG << hex << "   index=" << i << toFree;
-        while (toMark) {
-            uint index = qCountTrailingZeroBits(toMark);
-            quintptr bit = (static_cast<quintptr>(1) << index);
-
-            toMark ^= bit; // mask out marked slot
-            //            DEBUG << "       index" << hex << index << toFree;
-
-            HeapItem *itemToFree = o + index;
-            Heap::Base *b = *itemToFree;
-            Q_ASSERT(b->inUse());
-            markStack->push(b);
-        }
-        grayBitmap[i] = 0;
-        o += Chunk::Bits;
-    }
-    //    DEBUG << "swept chunk" << this << "freed" << slotsFreed << "slots.";
-
 }
 
 void Chunk::sortIntoBins(HeapItem **bins, uint nBins)
@@ -597,6 +530,14 @@ HeapItem *BlockAllocator::allocate(size_t size, bool forceAllocation) {
     if (!m) {
         if (!forceAllocation)
             return nullptr;
+        if (nFree) {
+            // Save any remaining slots of the current chunk
+            // for later, smaller allocations.
+            size_t bin = binForSlots(nFree);
+            nextFree->freeData.next = freeBins[bin];
+            nextFree->freeData.availableSlots = nFree;
+            freeBins[bin] = nextFree;
+        }
         Chunk *newChunk = chunkAllocator->allocate();
         Q_V4_PROFILE_ALLOC(engine, Chunk::DataSize, Profiling::HeapPage);
         chunks.push_back(newChunk);
@@ -659,13 +600,6 @@ void BlockAllocator::resetBlackBits()
 {
     for (auto c : chunks)
         c->resetBlackBits();
-}
-
-void BlockAllocator::collectGrayItems(MarkStack *markStack)
-{
-    for (auto c : chunks)
-        c->collectGrayItems(markStack);
-
 }
 
 HeapItem *HugeItemAllocator::allocate(size_t size) {
@@ -737,24 +671,235 @@ void HugeItemAllocator::resetBlackBits()
         Chunk::clearBit(c.chunk->blackBitmap, c.chunk->first() - c.chunk->realBase());
 }
 
-void HugeItemAllocator::collectGrayItems(MarkStack *markStack)
-{
-    for (auto c : chunks)
-        // Correct for a Steele type barrier
-        if (Chunk::testBit(c.chunk->blackBitmap, c.chunk->first() - c.chunk->realBase()) &&
-            Chunk::testBit(c.chunk->grayBitmap, c.chunk->first() - c.chunk->realBase())) {
-            HeapItem *i = c.chunk->first();
-            Heap::Base *b = *i;
-            b->mark(markStack);
-        }
-}
-
 void HugeItemAllocator::freeAll()
 {
     for (auto &c : chunks) {
         Q_V4_PROFILE_DEALLOC(engine, c.size, Profiling::LargeItem);
         freeHugeChunk(chunkAllocator, c, nullptr);
     }
+}
+
+namespace {
+using ExtraData = GCStateInfo::ExtraData;
+GCState markStart(GCStateMachine *that, ExtraData &)
+{
+    //Initialize the mark stack
+    that->mm->m_markStack = std::make_unique<MarkStack>(that->mm->engine);
+    that->mm->engine->isGCOngoing = true;
+    return GCState::MarkGlobalObject;
+}
+
+GCState markGlobalObject(GCStateMachine *that, ExtraData &)
+{
+    that->mm->engine->markObjects(that->mm->m_markStack.get());
+    return GCState::MarkJSStack;
+}
+
+GCState markJSStack(GCStateMachine *that, ExtraData &)
+{
+    that->mm->collectFromJSStack(that->mm->markStack());
+    return GCState::InitMarkPersistentValues;
+}
+
+GCState initMarkPersistentValues(GCStateMachine *that, ExtraData &stateData)
+{
+    if (!that->mm->m_persistentValues)
+        return GCState::InitMarkWeakValues; // no persistent values to mark
+    stateData = GCIteratorStorage { that->mm->m_persistentValues->begin() };
+    return GCState::MarkPersistentValues;
+}
+
+static constexpr int markLoopIterationCount = 1024;
+
+bool wasDrainNecessary(MarkStack *ms, QDeadlineTimer deadline)
+{
+    if (ms->remainingBeforeSoftLimit() > markLoopIterationCount)
+        return false;
+    // drain
+    ms->drain(deadline);
+    return true;
+}
+
+GCState markPersistentValues(GCStateMachine *that, ExtraData &stateData) {
+    auto markStack = that->mm->markStack();
+    if (wasDrainNecessary(markStack, that->deadline) && that->deadline.hasExpired())
+        return GCState::MarkPersistentValues;
+    PersistentValueStorage::Iterator& it = get<GCIteratorStorage>(stateData).it;
+    // avoid repeatedly hitting the timer constantly by batching iterations
+    for (int i = 0; i < markLoopIterationCount; ++i) {
+        if (!it.p)
+            return GCState::InitMarkWeakValues;
+        if (Managed *m = (*it).as<Managed>())
+            m->mark(markStack);
+        ++it;
+    }
+    return GCState::MarkPersistentValues;
+}
+
+GCState initMarkWeakValues(GCStateMachine *that, ExtraData &stateData)
+{
+    stateData = GCIteratorStorage { that->mm->m_weakValues->begin() };
+    return GCState::MarkWeakValues;
+}
+
+GCState markWeakValues(GCStateMachine *that, ExtraData &stateData)
+{
+    auto markStack = that->mm->markStack();
+    if (wasDrainNecessary(markStack, that->deadline) && that->deadline.hasExpired())
+        return GCState::MarkWeakValues;
+    PersistentValueStorage::Iterator& it = get<GCIteratorStorage>(stateData).it;
+    // avoid repeatedly hitting the timer constantly by batching iterations
+    for (int i = 0; i < markLoopIterationCount; ++i) {
+        if (!it.p)
+            return GCState::MarkDrain;
+        QObjectWrapper *qobjectWrapper = (*it).as<QObjectWrapper>();
+        ++it;
+        if (!qobjectWrapper)
+            continue;
+        QObject *qobject = qobjectWrapper->object();
+        if (!qobject)
+            continue;
+        bool keepAlive = QQmlData::keepAliveDuringGarbageCollection(qobject);
+
+        if (!keepAlive) {
+            if (QObject *parent = qobject->parent()) {
+                while (parent->parent())
+                    parent = parent->parent();
+                keepAlive = QQmlData::keepAliveDuringGarbageCollection(parent);
+            }
+        }
+
+        if (keepAlive)
+            qobjectWrapper->mark(that->mm->markStack());
+    }
+    return GCState::MarkWeakValues;
+}
+
+GCState markDrain(GCStateMachine *that, ExtraData &)
+{
+    if (that->deadline.isForever()) {
+        that->mm->markStack()->drain();
+        return GCState::MarkReady;
+    }
+    auto drainState = that->mm->m_markStack->drain(that->deadline);
+    return drainState == MarkStack::DrainState::Complete
+            ? GCState::MarkReady
+            : GCState::MarkDrain;
+}
+
+GCState markReady(GCStateMachine *, ExtraData &)
+{
+    //Possibility to do some clean up, stat printing, etc...
+    return GCState::InitCallDestroyObjects;
+}
+
+/** \!internal
+collects new references from the stack, then drains the mark stack again
+*/
+void redrain(GCStateMachine *that)
+{
+    that->mm->collectFromJSStack(that->mm->markStack());
+    that->mm->m_markStack->drain();
+}
+
+GCState initCallDestroyObjects(GCStateMachine *that, ExtraData &stateData)
+{
+    // as we don't have a deletion barrier, we need to rescan the stack
+    redrain(that);
+    if (!that->mm->m_weakValues)
+        return GCState::FreeWeakMaps; // no need to call destroy objects
+    stateData = GCIteratorStorage { that->mm->m_weakValues->begin() };
+    return GCState::CallDestroyObjects;
+}
+GCState callDestroyObject(GCStateMachine *that, ExtraData &stateData)
+{
+    PersistentValueStorage::Iterator& it = get<GCIteratorStorage>(stateData).it;
+    // destroyObject might call user code, which really shouldn't call back into the gc
+    auto oldState = std::exchange(that->mm->gcBlocked, QV4::MemoryManager::Blockness::InCriticalSection);
+    auto cleanup = qScopeGuard([&]() {
+        that->mm->gcBlocked = oldState;
+    });
+    // avoid repeatedly hitting the timer constantly by batching iterations
+    for (int i = 0; i < markLoopIterationCount; ++i) {
+        if (!it.p)
+            return GCState::FreeWeakMaps;
+        Managed *m = (*it).managed();
+        ++it;
+        if (!m || m->markBit())
+            continue;
+        // we need to call destroyObject on qobjectwrappers now, so that they can emit the destroyed
+        // signal before we start sweeping the heap
+        if (QObjectWrapper *qobjectWrapper = m->as<QObjectWrapper>())
+            qobjectWrapper->destroyObject(/*lastSweep =*/false);
+    }
+    return GCState::CallDestroyObjects;
+}
+
+void freeWeakMaps(MemoryManager *mm)
+{
+    for (auto [map, lastMap] = std::tuple {mm->weakMaps, &mm->weakMaps }; map; map = map->nextWeakMap)  {
+        if (!map->isMarked())
+            continue;
+        map->removeUnmarkedKeys();
+        *lastMap = map;
+        lastMap = &map->nextWeakMap;
+    }
+}
+
+GCState freeWeakMaps(GCStateMachine *that, ExtraData &)
+{
+    freeWeakMaps(that->mm);
+    return GCState::FreeWeakSets;
+}
+
+void freeWeakSets(MemoryManager *mm)
+{
+    for (auto [set, lastSet] = std::tuple {mm->weakSets, &mm->weakSets}; set; set = set->nextWeakSet) {
+
+        if (!set->isMarked())
+            continue;
+        set->removeUnmarkedKeys();
+        *lastSet = set;
+        lastSet = &set->nextWeakSet;
+    }
+}
+
+GCState freeWeakSets(GCStateMachine *that, ExtraData &)
+{
+    freeWeakSets(that->mm);
+    return GCState::HandleQObjectWrappers;
+}
+
+GCState handleQObjectWrappers(GCStateMachine *that, ExtraData &)
+{
+    that->mm->cleanupDeletedQObjectWrappersInSweep();
+    return GCState::DoSweep;
+}
+
+GCState doSweep(GCStateMachine *that, ExtraData &)
+{
+    auto mm = that->mm;
+
+    mm->engine->identifierTable->sweep();
+    mm->blockAllocator.sweep();
+    mm->hugeItemAllocator.sweep(that->mm->gcCollectorStats ? increaseFreedCountForClass : nullptr);
+    mm->icAllocator.sweep();
+
+    // reset all black bits
+    mm->blockAllocator.resetBlackBits();
+    mm->hugeItemAllocator.resetBlackBits();
+    mm->icAllocator.resetBlackBits();
+
+    mm->usedSlotsAfterLastFullSweep = mm->blockAllocator.usedSlotsAfterLastSweep + mm->icAllocator.usedSlotsAfterLastSweep;
+    mm->gcBlocked = MemoryManager::Unblocked;
+    mm->m_markStack.reset();
+    mm->engine->isGCOngoing = false;
+
+    mm->updateUnmanagedHeapSizeGCLimit();
+
+    return GCState::Invalid;
+}
+
 }
 
 
@@ -777,6 +922,70 @@ MemoryManager::MemoryManager(ExecutionEngine *engine)
     memset(statistics.allocations, 0, sizeof(statistics.allocations));
     if (gcStats)
         blockAllocator.allocationStats = statistics.allocations;
+
+    gcStateMachine = std::make_unique<GCStateMachine>();
+    gcStateMachine->mm = this;
+
+    gcStateMachine->stateInfoMap[GCState::MarkStart] = {
+        markStart,
+        false,
+    };
+    gcStateMachine->stateInfoMap[GCState::MarkGlobalObject] = {
+        markGlobalObject,
+        false,
+    };
+    gcStateMachine->stateInfoMap[GCState::MarkJSStack] = {
+        markJSStack,
+        false,
+    };
+    gcStateMachine->stateInfoMap[GCState::InitMarkPersistentValues] = {
+        initMarkPersistentValues,
+        false,
+    };
+    gcStateMachine->stateInfoMap[GCState::MarkPersistentValues] = {
+        markPersistentValues,
+        false,
+    };
+    gcStateMachine->stateInfoMap[GCState::InitMarkWeakValues] = {
+        initMarkWeakValues,
+        false,
+    };
+    gcStateMachine->stateInfoMap[GCState::MarkWeakValues] = {
+        markWeakValues,
+        false,
+    };
+    gcStateMachine->stateInfoMap[GCState::MarkDrain] = {
+        markDrain,
+        false,
+    };
+    gcStateMachine->stateInfoMap[GCState::MarkReady] = {
+        markReady,
+        false,
+    };
+    gcStateMachine->stateInfoMap[GCState::InitCallDestroyObjects] = {
+        initCallDestroyObjects,
+        false,
+    };
+    gcStateMachine->stateInfoMap[GCState::CallDestroyObjects] = {
+        callDestroyObject,
+        false,
+    };
+    gcStateMachine->stateInfoMap[GCState::FreeWeakMaps] = {
+        freeWeakMaps,
+        false,
+    };
+    gcStateMachine->stateInfoMap[GCState::FreeWeakSets] = {
+        freeWeakSets,
+        true, // ensure that handleQObjectWrappers runs in isolation
+    };
+    gcStateMachine->stateInfoMap[GCState::HandleQObjectWrappers] = {
+        handleQObjectWrappers,
+        false,
+    };
+    gcStateMachine->stateInfoMap[GCState::DoSweep] = {
+        doSweep,
+        false,
+    };
 }
 
 Heap::Base *MemoryManager::allocString(std::size_t unmanagedSize)
@@ -836,8 +1045,8 @@ Heap::Object *MemoryManager::allocObjectWithMemberData(const QV4::VTable *vtable
             Chunk::setBit(c->objectBitmap, index);
             Chunk::clearBit(c->extendsBitmap, index);
         }
-        o->memberData.set(engine, m);
         m->internalClass.set(engine, engine->internalClasses(EngineBase::Class_MemberData));
+        o->memberData.set(engine, m);
         Q_ASSERT(o->memberData->internalClass);
         m->values.alloc = static_cast<uint>((memberSize - sizeof(Heap::MemberData) + sizeof(Value))/sizeof(Value));
         m->values.size = o->memberData->values.alloc;
@@ -862,99 +1071,102 @@ MarkStack::MarkStack(ExecutionEngine *engine)
 
 void MarkStack::drain()
 {
+    // we're not calling drain(QDeadlineTimer::Forever) as that has higher overhead
     while (m_top > m_base) {
         Heap::Base *h = pop();
         ++markStackSize;
         Q_ASSERT(h); // at this point we should only have Heap::Base objects in this area on the stack. If not, weird things might happen.
+        Q_ASSERT(h->internalClass);
         h->internalClass->vtable->markObjects(h, this);
     }
 }
 
-void MemoryManager::collectRoots(MarkStack *markStack)
+MarkStack::DrainState MarkStack::drain(QDeadlineTimer deadline)
 {
-    engine->markObjects(markStack);
-
-//    qDebug() << "   mark stack after engine->mark" << (engine->jsStackTop - markBase);
-
-    collectFromJSStack(markStack);
-
-//    qDebug() << "   mark stack after js stack collect" << (engine->jsStackTop - markBase);
-    m_persistentValues->mark(markStack);
-
-//    qDebug() << "   mark stack after persistants" << (engine->jsStackTop - markBase);
-
-    // Preserve QObject ownership rules within JavaScript: A parent with c++ ownership
-    // keeps all of its children alive in JavaScript.
-
-    // Do this _after_ collectFromStack to ensure that processing the weak
-    // managed objects in the loop down there doesn't make then end up as leftovers
-    // on the stack and thus always get collected.
-    for (PersistentValueStorage::Iterator it = m_weakValues->begin(); it != m_weakValues->end(); ++it) {
-        QObjectWrapper *qobjectWrapper = (*it).as<QObjectWrapper>();
-        if (!qobjectWrapper)
-            continue;
-        QObject *qobject = qobjectWrapper->object();
-        if (!qobject)
-            continue;
-        bool keepAlive = QQmlData::keepAliveDuringGarbageCollection(qobject);
-
-        if (!keepAlive) {
-            if (QObject *parent = qobject->parent()) {
-                while (parent->parent())
-                    parent = parent->parent();
-
-                keepAlive = QQmlData::keepAliveDuringGarbageCollection(parent);
-            }
+    do {
+        for (int i = 0; i <= markLoopIterationCount * 10; ++i) {
+            if (m_top == m_base)
+                return DrainState::Complete;
+            Heap::Base *h = pop();
+            ++markStackSize;
+            Q_ASSERT(h); // at this point we should only have Heap::Base objects in this area on the stack. If not, weird things might happen.
+            Q_ASSERT(h->internalClass);
+            h->internalClass->vtable->markObjects(h, this);
         }
+    } while (!deadline.hasExpired());
+    return DrainState::Ongoing;
+}
 
-        if (keepAlive)
-            qobjectWrapper->mark(markStack);
+void MarkStack::setSoftLimit(size_t size)
+{
+    m_softLimit = m_base + size;
+    Q_ASSERT(m_softLimit < m_hardLimit);
+}
+
+void MemoryManager::onEventLoop()
+{
+    if (engine->inShutdown)
+        return;
+    if (gcBlocked == InCriticalSection) {
+        QMetaObject::invokeMethod(engine->publicEngine, [this]{
+            onEventLoop();
+        }, Qt::QueuedConnection);
+        return;
+    }
+    if (gcStateMachine->inProgress()) {
+        gcStateMachine->step();
     }
 }
 
-void MemoryManager::mark()
+
+void MemoryManager::setGCTimeLimit(int timeMs)
 {
-    markStackSize = 0;
-    MarkStack markStack(engine);
-    collectRoots(&markStack);
-    // dtor of MarkStack drains
+    gcStateMachine->timeLimit = std::chrono::milliseconds(timeMs);
 }
 
 void MemoryManager::sweep(bool lastSweep, ClassDestroyStatsCallback classCountPtr)
 {
+
     for (PersistentValueStorage::Iterator it = m_weakValues->begin(); it != m_weakValues->end(); ++it) {
         Managed *m = (*it).managed();
         if (!m || m->markBit())
             continue;
         // we need to call destroyObject on qobjectwrappers now, so that they can emit the destroyed
         // signal before we start sweeping the heap
-        if (QObjectWrapper *qobjectWrapper = (*it).as<QObjectWrapper>())
+        if (QObjectWrapper *qobjectWrapper = (*it).as<QObjectWrapper>()) {
             qobjectWrapper->destroyObject(lastSweep);
-    }
-
-    // remove objects from weak maps and sets
-    Heap::MapObject *map = weakMaps;
-    Heap::MapObject **lastMap = &weakMaps;
-    while (map) {
-        if (map->isMarked()) {
-            map->removeUnmarkedKeys();
-            *lastMap = map;
-            lastMap = &map->nextWeakMap;
         }
-        map = map->nextWeakMap;
     }
 
-    Heap::SetObject *set = weakSets;
-    Heap::SetObject **lastSet = &weakSets;
-    while (set) {
-        if (set->isMarked()) {
-            set->removeUnmarkedKeys();
-            *lastSet = set;
-            lastSet = &set->nextWeakSet;
-        }
-        set = set->nextWeakSet;
+    freeWeakMaps(this);
+    freeWeakSets(this);
+
+    cleanupDeletedQObjectWrappersInSweep();
+
+    if (!lastSweep) {
+        engine->identifierTable->sweep();
+        blockAllocator.sweep(/*classCountPtr*/);
+        hugeItemAllocator.sweep(classCountPtr);
+        icAllocator.sweep(/*classCountPtr*/);
     }
 
+    // reset all black bits
+    blockAllocator.resetBlackBits();
+    hugeItemAllocator.resetBlackBits();
+    icAllocator.resetBlackBits();
+
+    usedSlotsAfterLastFullSweep = blockAllocator.usedSlotsAfterLastSweep + icAllocator.usedSlotsAfterLastSweep;
+    updateUnmanagedHeapSizeGCLimit();
+    gcBlocked = MemoryManager::Unblocked;
+}
+
+/*
+   \internal
+   Helper function used in sweep to clean up the (to-be-freed) QObjectWrapper
+   Used both in MemoryManager::sweep, and the corresponding gc statemachine phase
+*/
+void MemoryManager::cleanupDeletedQObjectWrappersInSweep()
+{
     // onDestruction handlers may have accessed other QObject wrappers and reset their value, so ensure
     // that they are all set to undefined.
     for (PersistentValueStorage::Iterator it = m_weakValues->begin(); it != m_weakValues->end(); ++it) {
@@ -965,7 +1177,7 @@ void MemoryManager::sweep(bool lastSweep, ClassDestroyStatsCallback classCountPt
     }
 
     // Now it is time to free QV4::QObjectWrapper Value, we must check the Value's tag to make sure its object has been destroyed
-    const int pendingCount = m_pendingFreedObjectWrapperValue.count();
+    const int pendingCount = m_pendingFreedObjectWrapperValue.size();
     if (pendingCount) {
         QVector<Value *> remainingWeakQObjectWrappers;
         remainingWeakQObjectWrappers.reserve(pendingCount);
@@ -981,19 +1193,11 @@ void MemoryManager::sweep(bool lastSweep, ClassDestroyStatsCallback classCountPt
 
     if (MultiplyWrappedQObjectMap *multiplyWrappedQObjects = engine->m_multiplyWrappedQObjects) {
         for (MultiplyWrappedQObjectMap::Iterator it = multiplyWrappedQObjects->begin(); it != multiplyWrappedQObjects->end();) {
-            if (!it.value().isNullOrUndefined())
+            if (it.value().isNullOrUndefined())
                 it = multiplyWrappedQObjects->erase(it);
             else
                 ++it;
         }
-    }
-
-
-    if (!lastSweep) {
-        engine->identifierTable->sweep();
-        blockAllocator.sweep(/*classCountPtr*/);
-        hugeItemAllocator.sweep(classCountPtr);
-        icAllocator.sweep(/*classCountPtr*/);
     }
 }
 
@@ -1034,15 +1238,51 @@ static size_t dumpBins(BlockAllocator *b, const char *title)
     return totalSlotMem*Chunk::SlotSize;
 }
 
+/*!
+    \internal
+    Precondition: Incremental garbage collection must be currently active
+    Finishes incremental garbage collection, unless in a critical section
+    Code entering a critical section is expected to check if we need to
+    force a gc completion, and to trigger the gc again if necessary
+    when exiting the critcial section.
+    Returns \c true if the gc cycle completed, false otherwise.
+ */
+bool MemoryManager::tryForceGCCompletion()
+{
+    if (gcBlocked == InCriticalSection) {
+        qCDebug(lcGcForcedRuns)
+            << "Tried to force the GC to complete a run but failed due to being in a critical section.";
+        return false;
+    }
+
+    const bool incrementalGCIsAlreadyRunning = m_markStack != nullptr;
+    Q_ASSERT(incrementalGCIsAlreadyRunning);
+
+    qCDebug(lcGcForcedRuns) << "Forcing the GC to complete a run.";
+
+    auto oldTimeLimit = std::exchange(gcStateMachine->timeLimit, std::chrono::microseconds::max());
+    while (gcStateMachine->inProgress()) {
+        gcStateMachine->step();
+    }
+    gcStateMachine->timeLimit = oldTimeLimit;
+    return true;
+}
+
+void MemoryManager::runFullGC()
+{
+    runGC();
+    const bool incrementalGCStillRunning = m_markStack != nullptr;
+    if (incrementalGCStillRunning)
+        tryForceGCCompletion();
+}
+
 void MemoryManager::runGC()
 {
-    if (gcBlocked) {
-//        qDebug() << "Not running GC.";
+    if (gcBlocked != Unblocked) {
         return;
     }
 
-    QScopedValueRollback<bool> gcBlocker(gcBlocked, true);
-//    qDebug() << "runGC";
+    gcBlocked = MemoryManager::NormalBlocked;
 
     if (gcStats) {
         statistics.maxReservedMem = qMax(statistics.maxReservedMem, getAllocatedMem());
@@ -1050,8 +1290,7 @@ void MemoryManager::runGC()
     }
 
     if (!gcCollectorStats) {
-        mark();
-        sweep();
+        gcStateMachine->step();
     } else {
         bool triggeredByUnmanagedHeap = (unmanagedHeapSize > unmanagedHeapSizeGCLimit);
         size_t oldUnmanagedSize = unmanagedHeapSize;
@@ -1075,13 +1314,11 @@ void MemoryManager::runGC()
 
         QElapsedTimer t;
         t.start();
-        mark();
+        gcStateMachine->step();
         qint64 markTime = t.nsecsElapsed()/1000;
         t.restart();
-        sweep(false, increaseFreedCountForClass);
         const size_t usedAfter = getUsedMem();
         const size_t largeItemsAfter = getLargeItemsMem();
-        qint64 sweepTime = t.nsecsElapsed()/1000;
 
         if (triggeredByUnmanagedHeap) {
             qDebug(stats) << "triggered by unmanaged heap:";
@@ -1093,14 +1330,13 @@ void MemoryManager::runGC()
                 + dumpBins(&icAllocator, "InternalClasss");
         qDebug(stats) << "Marked object in" << markTime << "us.";
         qDebug(stats) << "   " << markStackSize << "objects marked";
-        qDebug(stats) << "Sweeped object in" << sweepTime << "us.";
 
         // sort our object types by number of freed instances
         MMStatsHash freedObjectStats;
         std::swap(freedObjectStats, *freedObjectStatsGlobal());
         typedef std::pair<const char*, int> ObjectStatInfo;
         std::vector<ObjectStatInfo> freedObjectsSorted;
-        freedObjectsSorted.reserve(freedObjectStats.count());
+        freedObjectsSorted.reserve(freedObjectStats.size());
         for (auto it = freedObjectStats.constBegin(); it != freedObjectStats.constEnd(); ++it) {
             freedObjectsSorted.push_back(std::make_pair(it.key(), it.value()));
         }
@@ -1131,21 +1367,6 @@ void MemoryManager::runGC()
 
     if (gcStats)
         statistics.maxUsedMem = qMax(statistics.maxUsedMem, getUsedMem() + getLargeItemsMem());
-
-    if (aggressiveGC) {
-        // ensure we don't 'loose' any memory
-        Q_ASSERT(blockAllocator.allocatedMem()
-                 == blockAllocator.usedMem() + dumpBins(&blockAllocator, nullptr));
-        Q_ASSERT(icAllocator.allocatedMem()
-                 == icAllocator.usedMem() + dumpBins(&icAllocator, nullptr));
-    }
-
-    usedSlotsAfterLastFullSweep = blockAllocator.usedSlotsAfterLastSweep + icAllocator.usedSlotsAfterLastSweep;
-
-    // reset all black bits
-    blockAllocator.resetBlackBits();
-    hugeItemAllocator.resetBlackBits();
-    icAllocator.resetBlackBits();
 }
 
 size_t MemoryManager::getUsedMem() const
@@ -1163,6 +1384,29 @@ size_t MemoryManager::getLargeItemsMem() const
     return hugeItemAllocator.usedMem();
 }
 
+void MemoryManager::updateUnmanagedHeapSizeGCLimit()
+{
+    if (3*unmanagedHeapSizeGCLimit <= 4 * unmanagedHeapSize) {
+        // more than 75% full, raise limit
+        unmanagedHeapSizeGCLimit = std::max(unmanagedHeapSizeGCLimit,
+                                            unmanagedHeapSize) * 2;
+    } else if (unmanagedHeapSize * 4 <= unmanagedHeapSizeGCLimit) {
+        // less than 25% full, lower limit
+        unmanagedHeapSizeGCLimit = qMax(std::size_t(MinUnmanagedHeapSizeGCLimit),
+                                        unmanagedHeapSizeGCLimit/2);
+    }
+
+    if (aggressiveGC && !engine->inShutdown) {
+        // ensure we don't 'loose' any memory
+        // but not during shutdown, because than we skip parts of sweep
+        // and use freeAll instead
+        Q_ASSERT(blockAllocator.allocatedMem()
+                 == blockAllocator.usedMem() + dumpBins(&blockAllocator, nullptr));
+        Q_ASSERT(icAllocator.allocatedMem()
+                 == icAllocator.usedMem() + dumpBins(&icAllocator, nullptr));
+    }
+}
+
 void MemoryManager::registerWeakMap(Heap::MapObject *map)
 {
     map->nextWeakMap = weakMaps;
@@ -1178,10 +1422,22 @@ void MemoryManager::registerWeakSet(Heap::SetObject *set)
 MemoryManager::~MemoryManager()
 {
     delete m_persistentValues;
-
     dumpStats();
 
+    // do one last non-incremental sweep to clean up C++ objects
+    // first, abort any on-going incremental gc operation
+    setGCTimeLimit(-1);
+    if (engine->isGCOngoing) {
+        engine->isGCOngoing = false;
+        m_markStack.reset();
+        gcStateMachine->state = GCState::Invalid;
+        blockAllocator.resetBlackBits();
+        hugeItemAllocator.resetBlackBits();
+        icAllocator.resetBlackBits();
+    }
+    // then sweep
     sweep(/*lastSweep*/true);
+
     blockAllocator.freeAll();
     hugeItemAllocator.freeAll();
     icAllocator.freeAll();
@@ -1225,6 +1481,107 @@ void MemoryManager::collectFromJSStack(MarkStack *markStack) const
     }
 }
 
+GCStateMachine::GCStateMachine()
+    : collectTimings(lcGcStepExecution().isDebugEnabled())
+{
+    // base assumption: target 60fps, use at most 1/3 of time for gc
+    // unless overridden by env variable
+    bool ok = false;
+    auto envTimeLimit = qEnvironmentVariableIntValue("QV4_GC_TIMELIMIT", &ok );
+    if (!ok)
+        envTimeLimit = (1000 / 60) / 3;
+    if (envTimeLimit > 0)
+        timeLimit = std::chrono::milliseconds { envTimeLimit };
+    else
+        timeLimit = std::chrono::milliseconds { 0 };
+}
+
+static void logStepTiming(GCStateMachine* that, quint64 timing) {
+    auto registerTimingWithResetOnOverflow = [](
+        GCStateMachine::StepTiming& storage, quint64 timing, GCState state
+    ) {
+        auto wouldOverflow = [](quint64 lhs, quint64 rhs) {
+            return rhs > 0 && lhs > std::numeric_limits<quint64>::max() - rhs;
+        };
+
+        if (wouldOverflow(storage.rolling_sum, timing) || wouldOverflow(storage.count, 1)) {
+            qDebug(lcGcStepExecution) << "Resetting timings storage for"
+                                      << QMetaEnum::fromType<GCState>().key(state) << "due to overflow.";
+            storage.rolling_sum = timing;
+            storage.count = 1;
+        } else {
+            storage.rolling_sum += timing;
+            storage.count += 1;
+        }
+    };
+
+    GCStateMachine::StepTiming& storage = that->executionTiming[that->state];
+    registerTimingWithResetOnOverflow(storage, timing, that->state);
+
+    qDebug(lcGcStepExecution) << "Performed" << QMetaEnum::fromType<GCState>().key(that->state)
+                              << "in" << timing << "microseconds";
+    qDebug(lcGcStepExecution) << "This step was performed" << storage.count << " time(s), executing in"
+                              << (storage.rolling_sum / storage.count) << "microseconds on average.";
+}
+
+static GCState executeWithLoggingIfEnabled(GCStateMachine* that, GCStateInfo& stateInfo) {
+    if (!that->collectTimings)
+        return stateInfo.execute(that, that->stateData);
+
+    QElapsedTimer timer;
+    timer.start();
+    GCState next = stateInfo.execute(that, that->stateData);
+    logStepTiming(that, timer.nsecsElapsed()/1000);
+    return next;
+}
+
+void GCStateMachine::transition() {
+    if (timeLimit.count() > 0) {
+        deadline = QDeadlineTimer(timeLimit);
+        bool deadlineExpired = false;
+        while (!(deadlineExpired = deadline.hasExpired()) && state != GCState::Invalid) {
+            if (state > GCState::InitCallDestroyObjects) {
+                /* initCallDestroyObjects is the last action which drains the mark
+                   stack by default. But as our write-barrier might end up putting
+                   objects on the markStack which still reference other objects.
+                   Especially when we call user code triggered by Component.onDestruction,
+                   but also when we run into a timeout.
+                   We don't redrain before InitCallDestroyObjects, as that would
+                   potentially lead to useless busy-work (e.g., if the last referencs
+                   to objects are removed while the mark phase is running)
+                */
+                redrain(this);
+            }
+            qCDebug(lcGcStateTransitions) << "Preparing to execute the"
+                                          << QMetaEnum::fromType<GCState>().key(state) << "state";
+            GCStateInfo& stateInfo = stateInfoMap[int(state)];
+            state = executeWithLoggingIfEnabled(this, stateInfo);
+            qCDebug(lcGcStateTransitions) << "Transitioning to the"
+                                          << QMetaEnum::fromType<GCState>().key(state) << "state";
+            if (stateInfo.breakAfter)
+                break;
+        }
+        if (deadlineExpired)
+            handleTimeout(state);
+        if (state != GCState::Invalid)
+            QMetaObject::invokeMethod(mm->engine->publicEngine, [this]{
+                mm->onEventLoop();
+            }, Qt::QueuedConnection);
+    } else {
+        deadline = QDeadlineTimer::Forever;
+        while (state != GCState::Invalid) {
+            qCDebug(lcGcStateTransitions) << "Preparing to execute the"
+                                          << QMetaEnum::fromType<GCState>().key(state) << "state";
+            GCStateInfo& stateInfo = stateInfoMap[int(state)];
+            state = executeWithLoggingIfEnabled(this, stateInfo);
+            qCDebug(lcGcStateTransitions) << "Transitioning to the"
+                                          << QMetaEnum::fromType<GCState>().key(state) << "state";
+        }
+    }
+}
+
 } // namespace QV4
 
 QT_END_NAMESPACE
+
+#include "moc_qv4mm_p.cpp"

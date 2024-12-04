@@ -1,32 +1,6 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 Research In Motion.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the test suite of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:GPL-EXCEPT$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 3 as published by the Free Software
-** Foundation with exceptions as appearing in the file LICENSE.GPL3-EXCEPT
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 Research In Motion.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
-#include "../../shared/util.h"
 #include <QQmlApplicationEngine>
 #include <QScopedPointer>
 #include <QSignalSpy>
@@ -35,16 +9,17 @@
 #include <QProcess>
 #endif
 #include <QDebug>
+#include <QtQuickTestUtils/private/qmlutils_p.h>
 
 class tst_qqmlapplicationengine : public QQmlDataTest
 {
     Q_OBJECT
 public:
-    tst_qqmlapplicationengine() {}
+    tst_qqmlapplicationengine() : QQmlDataTest(QT_QMLTEST_DATADIR) {}
 
 
 private slots:
-    void initTestCase();
+    void initTestCase() override;
     void basicLoading();
     void testNonResolvedPath();
     void application_data();
@@ -53,10 +28,13 @@ private slots:
     void removeObjectsWhenDestroyed();
     void loadTranslation_data();
     void loadTranslation();
+    void loadFromModuleTranslation_data();
+    void loadFromModuleTranslation();
     void translationChange();
     void setInitialProperties();
     void failureToLoadTriggersWarningSignal();
     void errorWhileCreating();
+    void createWithQrcPath();
 
 private:
     QString buildDir;
@@ -75,32 +53,40 @@ void tst_qqmlapplicationengine::basicLoading()
 {
     int size = 0;
 
-    QQmlApplicationEngine *test = new QQmlApplicationEngine(testFileUrl("basicTest.qml"));
+    auto test = std::make_unique<QQmlApplicationEngine>(testFileUrl("basicTest.qml"));
     QCOMPARE(test->rootObjects().size(), ++size);
     QVERIFY(test->rootObjects()[size -1]);
     QVERIFY(test->rootObjects()[size -1]->property("success").toBool());
 
-    QSignalSpy objectCreated(test, SIGNAL(objectCreated(QObject*,QUrl)));
+    QSignalSpy objectCreated(test.get(), &QQmlApplicationEngine::objectCreated);
     test->load(testFileUrl("basicTest.qml"));
-    QCOMPARE(objectCreated.count(), size);//one less than rootObjects().size() because we missed the first one
+    QCOMPARE(objectCreated.size(), size);//one less than rootObjects().size() because we missed the first one
     QCOMPARE(test->rootObjects().size(), ++size);
     QVERIFY(test->rootObjects()[size -1]);
     QVERIFY(test->rootObjects()[size -1]->property("success").toBool());
 
     QByteArray testQml("import QtQml 2.0; QtObject{property bool success: true; property TestItem t: TestItem{}}");
     test->loadData(testQml, testFileUrl("dynamicTest.qml"));
-    QCOMPARE(objectCreated.count(), size);
+    QCOMPARE(objectCreated.size(), size);
     QCOMPARE(test->rootObjects().size(), ++size);
     QVERIFY(test->rootObjects()[size -1]);
     QVERIFY(test->rootObjects()[size -1]->property("success").toBool());
 
-    delete test;
+    test->loadFromModule("QtQuick", "Rectangle");
+    QCOMPARE(objectCreated.size(), size);
+    QCOMPARE(test->rootObjects().size(), ++size);
+    QVERIFY(test->rootObjects()[size -1]);
+    QCOMPARE(test->rootObjects()[size -1]->metaObject()->className(), "QQuickRectangle");
 }
 
 // make sure we resolve a relative URL to an absolute one, otherwise things
 // will break.
 void tst_qqmlapplicationengine::testNonResolvedPath()
 {
+#if defined(Q_OS_INTEGRITY)
+    QSKIP("INTEGRITY stores QML files in resources, and the path to a resource cannot be relative in this case");
+#endif
+
 #ifdef Q_OS_ANDROID
     QSKIP("Android stores QML files in resources, and the path to a resource cannot be relative in this case");
 #endif
@@ -161,7 +147,12 @@ void tst_qqmlapplicationengine::application()
 
 #if QT_CONFIG(process)
     QDir::setCurrent(buildDir);
-    QProcess *testProcess = new QProcess(this);
+    std::unique_ptr<QProcess> testProcess = std::make_unique<QProcess>(this);
+#ifdef Q_OS_QNX
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    env.insert("QT_FORCE_STDERR_LOGGING", "1"); // QTBUG-76546
+    testProcess->setProcessEnvironment(env);
+#endif
     QStringList args;
     args << qmlFile; // QML file passed as an argument is going to be run by testapp.
     testProcess->start(QLatin1String("testapp/testapp"), args);
@@ -176,7 +167,7 @@ void tst_qqmlapplicationengine::application()
     QVERIFY2(QString(testStdErr).endsWith(QString(expectedStdErr)),
              QByteArray("\nExpected ending:\n") + expectedStdErr
              + QByteArray("\nActual output:\n") + testStdErr);
-    delete testProcess;
+    testProcess.reset();
     QDir::setCurrent(srcDir);
 #else // process
     QSKIP("No process support");
@@ -203,7 +194,7 @@ void tst_qqmlapplicationengine::applicationProperties()
     QCoreApplication::setOrganizationName(firstOrganization);
     QCoreApplication::setOrganizationDomain(firstDomain);
 
-    QQmlApplicationEngine *test = new QQmlApplicationEngine(testFileUrl("applicationTest.qml"));
+    std::unique_ptr<QQmlApplicationEngine> test = std::make_unique<QQmlApplicationEngine>(testFileUrl("applicationTest.qml"));
     QObject* root = test->rootObjects().at(0);
     QVERIFY(root);
     QCOMPARE(root->property("originalName").toString(), firstName);
@@ -231,12 +222,10 @@ void tst_qqmlapplicationengine::applicationProperties()
     QCoreApplication::setOrganizationName(originalOrganization);
     QCoreApplication::setOrganizationDomain(originalDomain);
 
-    QCOMPARE(nameChanged.count(), 1);
-    QCOMPARE(versionChanged.count(), 1);
-    QCOMPARE(organizationChanged.count(), 1);
-    QCOMPARE(domainChanged.count(), 1);
-
-    delete test;
+    QCOMPARE(nameChanged.size(), 1);
+    QCOMPARE(versionChanged.size(), 1);
+    QCOMPARE(organizationChanged.size(), 1);
+    QCOMPARE(domainChanged.size(), 1);
 }
 
 void tst_qqmlapplicationengine::removeObjectsWhenDestroyed()
@@ -246,12 +235,12 @@ void tst_qqmlapplicationengine::removeObjectsWhenDestroyed()
 
     QSignalSpy objectCreated(test.data(), SIGNAL(objectCreated(QObject*,QUrl)));
     test->load(testFileUrl("basicTest.qml"));
-    QCOMPARE(objectCreated.count(), 1);
+    QCOMPARE(objectCreated.size(), 1);
 
     QSignalSpy objectDestroyed(test->rootObjects().first(), SIGNAL(destroyed()));
     test->rootObjects().first()->deleteLater();
     objectDestroyed.wait();
-    QCOMPARE(objectDestroyed.count(), 1);
+    QCOMPARE(objectDestroyed.size(), 1);
     QCOMPARE(test->rootObjects().size(), 0);
 }
 
@@ -278,6 +267,53 @@ void tst_qqmlapplicationengine::loadTranslation()
     QVERIFY(rootObject);
 
     QCOMPARE(rootObject->property("translation").toString(), translation);
+}
+
+void tst_qqmlapplicationengine::loadFromModuleTranslation_data()
+{
+    QTest::addColumn<QString>("executable");
+    QTest::addColumn<QLocale::Language>("LANG");
+    QTest::addColumn<QString>("output");
+
+    QString qmlTypeExecutable = "loadFromModuleTranslationsQmlType/i18nLoadFromModuleQmlType";
+    QString cppTypeExecutable = "loadFromModuleTranslationsCppType/i18nLoadFromModuleCppType";
+
+    QTest::newRow("Qml: en -> en") << qmlTypeExecutable << QLocale::English << "Hello";
+    QTest::newRow("Qml: en -> fr") << qmlTypeExecutable << QLocale::French << "Salut";
+    QTest::newRow("Cpp: en -> en") << cppTypeExecutable << QLocale::English << "Hello";
+    QTest::newRow("Cpp: en -> es") << cppTypeExecutable << QLocale::Spanish << "Hola";
+}
+
+void tst_qqmlapplicationengine::loadFromModuleTranslation()
+{
+#if defined(Q_OS_ANDROID)
+    QSKIP("Test doesn't currently run on Android");
+    return;
+#endif
+
+#if QT_CONFIG(process)
+    QFETCH(QString, executable);
+    QFETCH(QLocale::Language, LANG);
+    QFETCH(QString, output);
+
+    QDir::setCurrent(buildDir);
+    QProcess app;
+    auto env = QProcessEnvironment::systemEnvironment();
+    env.insert("qtlang", QString::number(int(LANG)));
+    env.insert("LOADFROMMODULE_TEST_EXPECTED_OUTPUT", output);
+    app.setProcessEnvironment(env);
+    app.start(executable);
+    QVERIFY(app.waitForStarted());
+    QVERIFY(app.waitForFinished());
+
+    auto status = app.exitStatus();
+    auto code = app.exitCode();
+    QVERIFY2(code == 0,
+             QStringLiteral("status: %1, exitCode: %2").arg(status).arg(code).toStdString().c_str());
+    app.kill();
+#else
+    QSKIP("No process support");
+#endif
 }
 
 void tst_qqmlapplicationengine::translationChange()
@@ -331,7 +367,7 @@ void tst_qqmlapplicationengine::failureToLoadTriggersWarningSignal()
     QQmlApplicationEngine test;
     QSignalSpy warningObserver(&test, &QQmlApplicationEngine::warnings);
     test.load(url);
-    QTRY_COMPARE(warningObserver.count(), 1);
+    QTRY_COMPARE(warningObserver.size(), 1);
 }
 
 void tst_qqmlapplicationengine::errorWhileCreating()
@@ -339,16 +375,34 @@ void tst_qqmlapplicationengine::errorWhileCreating()
     auto url = testFileUrl("requiredViolation.qml");
     QQmlApplicationEngine test;
     QSignalSpy observer(&test, &QQmlApplicationEngine::objectCreated);
+    QSignalSpy failureObserver(&test, &QQmlApplicationEngine::objectCreationFailed);
 
     QTest::ignoreMessage(QtMsgType::QtWarningMsg, "QQmlApplicationEngine failed to create component");
     QTest::ignoreMessage(QtMsgType::QtWarningMsg, qPrintable(QStringLiteral("%1:5:5: Required property foo was not initialized").arg(testFileUrl("Required.qml").toString())));
 
     test.load(url);
 
-    QTRY_COMPARE(observer.count(), 1);
+    QTRY_COMPARE(observer.size(), 1);
+    QCOMPARE(failureObserver.size(), 1);
+    QCOMPARE(failureObserver.first().first(), url);
     QList<QVariant> args = observer.takeFirst();
     QVERIFY(args.at(0).isNull());
     QCOMPARE(args.at(1).toUrl(), url);
+}
+
+void tst_qqmlapplicationengine::createWithQrcPath()
+{
+    QTest::ignoreMessage(
+            QtMsgType::QtWarningMsg, "QQmlApplicationEngine failed to load component");
+    QTest::ignoreMessage(
+            QtMsgType::QtWarningMsg, "qrc:/some/qrc/path.qml: No such file or directory");
+    QQmlApplicationEngine test(":/some/qrc/path.qml");
+
+    QTest::ignoreMessage(
+            QtMsgType::QtWarningMsg, "QQmlApplicationEngine failed to load component");
+    QTest::ignoreMessage(
+            QtMsgType::QtWarningMsg, "qrc:/some/other/path.qml: No such file or directory");
+    test.load(":/some/other/path.qml");
 }
 
 QTEST_MAIN(tst_qqmlapplicationengine)

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,21 +12,25 @@
 #include <unordered_set>
 #include <vector>
 
-#include "base/callback.h"
-#include "base/macros.h"
+#include "base/check.h"
+#include "base/functional/callback.h"
 #include "base/memory/ref_counted.h"
 #include "base/strings/string_piece.h"
 #include "base/time/time.h"
+#include "base/trace_event/base_tracing_forward.h"
+#include "base/types/pass_key.h"
+#include "base/values.h"
 #include "net/base/net_export.h"
+#include "net/http/http_util.h"
 #include "net/http/http_version.h"
 #include "net/log/net_log_capture_mode.h"
+#include "third_party/abseil-cpp/absl/container/inlined_vector.h"
 
 namespace base {
 class Pickle;
 class PickleIterator;
 class Time;
 class TimeDelta;
-class Value;
 }
 
 namespace net {
@@ -43,6 +47,54 @@ enum ValidationType {
 class NET_EXPORT HttpResponseHeaders
     : public base::RefCountedThreadSafe<HttpResponseHeaders> {
  public:
+  // This class provides the most efficient way to build an HttpResponseHeaders
+  // object if the headers are all available in memory at once.
+  // Example usage:
+  // scoped_refptr<HttpResponseHeaders> headers =
+  //   HttpResponseHeaders::Builder(HttpVersion(1, 1), 307)
+  //     .AddHeader("Location", url.spec())
+  //     .Build();
+  class NET_EXPORT Builder {
+   public:
+    // Constructs a builder with a particular `version` and `status`. `version`
+    // must be (1,0), (1,1) or (2,0). `status` is the response code optionally
+    // followed by a space and the status text, eg. "200 OK". The caller is
+    // required to guarantee that `status` does not contain embedded nul
+    // characters, and that it will remain valid until Build() is called.
+    Builder(HttpVersion version, base::StringPiece status);
+
+    Builder(const Builder&) = delete;
+    Builder& operator=(const Builder&) = delete;
+
+    ~Builder();
+
+    // Adds a header. Returns a reference to the object so that calls can be
+    // chained. Duplicates will be preserved. Order will be preserved. For
+    // performance reasons, strings are not copied until Build() is called. It
+    // is the caller's responsibility to ensure the values remain valid until
+    // then. The caller is required to guarantee that `name` and `value` are
+    // valid HTTP headers and in particular that they do not contain embedded
+    // nul characters.
+    Builder& AddHeader(base::StringPiece name, base::StringPiece value) {
+      DCHECK(HttpUtil::IsValidHeaderName(name));
+      DCHECK(HttpUtil::IsValidHeaderValue(value));
+      headers_.push_back({name, value});
+      return *this;
+    }
+
+    scoped_refptr<HttpResponseHeaders> Build();
+
+   private:
+    using KeyValuePair = std::pair<base::StringPiece, base::StringPiece>;
+
+    const HttpVersion version_;
+    const base::StringPiece status_;
+    // 40 is enough for 94% of responses on Windows and 98% on Android.
+    absl::InlinedVector<KeyValuePair, 40> headers_;
+  };
+
+  using BuilderPassKey = base::PassKey<Builder>;
+
   // Persist options.
   typedef int PersistOptions;
   static const PersistOptions PERSIST_RAW = -1;  // Raw, unparsed headers.
@@ -63,6 +115,8 @@ class NET_EXPORT HttpResponseHeaders
   };
 
   static const char kContentRange[];
+  static const char kLastModified[];
+  static const char kVary[];
 
   HttpResponseHeaders() = delete;
 
@@ -81,12 +135,24 @@ class NET_EXPORT HttpResponseHeaders
   // be passed to the pickle's various Read* methods.
   explicit HttpResponseHeaders(base::PickleIterator* pickle_iter);
 
+  // Use Builder::Build() rather than calling this directly. The BuilderPassKey
+  // prevents accidental use from other code.
+  HttpResponseHeaders(
+      BuilderPassKey,
+      HttpVersion version,
+      base::StringPiece status,
+      base::span<const std::pair<base::StringPiece, base::StringPiece>>
+          headers);
+
   // Takes headers as an ASCII string and tries to parse them as HTTP response
   // headers. returns nullptr on failure. Unlike the HttpResponseHeaders
   // constructor that takes a std::string, HttpUtil::AssembleRawHeaders should
   // not be called on |headers| before calling this method.
   static scoped_refptr<HttpResponseHeaders> TryToCreate(
       base::StringPiece headers);
+
+  HttpResponseHeaders(const HttpResponseHeaders&) = delete;
+  HttpResponseHeaders& operator=(const HttpResponseHeaders&) = delete;
 
   // Appends a representation of this object to the given pickle.
   // The options argument can be a combination of PersistOptions.
@@ -133,9 +199,19 @@ class NET_EXPORT HttpResponseHeaders
                           int64_t resource_size,
                           bool replace_status_line);
 
-  // Fetch the "normalized" value of a single header, where all values for the
-  // header name are separated by commas.  See the GetNormalizedHeaders for
-  // format details.  Returns false if this header wasn't found.
+  // Fetches the "normalized" value of a single header, where all values for the
+  // header name are separated by commas. This will be the sequence of strings
+  // that would be returned from repeated calls to EnumerateHeader, joined by
+  // the string ", ".
+  //
+  // Returns false if this header wasn't found.
+  //
+  // Example:
+  //   Foo: a, b,c
+  //   Foo: d
+  //
+  //   string value;
+  //   GetNormalizedHeader("Foo", &value);  // Now, |value| is "a, b, c, d".
   //
   // NOTE: Do not make any assumptions about the encoding of this output
   // string.  It may be non-ASCII, and the encoding used by the server is not
@@ -162,6 +238,16 @@ class NET_EXPORT HttpResponseHeaders
   // 'size_t' variable to 0 and pass it by address to EnumerateHeaderLines.
   // Call EnumerateHeaderLines repeatedly until it returns false.  The
   // out-params 'name' and 'value' are set upon success.
+  //
+  // WARNING: In effect, repeatedly calling EnumerateHeaderLines should return
+  // the same collection of (name, value) pairs that you'd obtain from passing
+  // each header name into EnumerateHeader and repeatedly calling
+  // EnumerateHeader. This means the output will *not* necessarily correspond to
+  // the verbatim lines of the headers. For instance, given
+  //   Foo: a, b
+  //   Foo: c
+  // EnumerateHeaderLines will output ("Foo", "a"), ("Foo", "b"), and
+  // ("Foo", "c").
   bool EnumerateHeaderLines(size_t* iter,
                             std::string* name,
                             std::string* value) const;
@@ -299,7 +385,7 @@ class NET_EXPORT HttpResponseHeaders
   bool IsChunkEncoded() const;
 
   // Creates a Value for use with the NetLog containing the response headers.
-  base::Value NetLogParams(NetLogCaptureMode capture_mode) const;
+  base::Value::Dict NetLogParams(NetLogCaptureMode capture_mode) const;
 
   // Returns the HTTP response code.  This is 0 if the response code text seems
   // to exist but could not be parsed.  Otherwise, it defaults to 200 if the
@@ -313,6 +399,14 @@ class NET_EXPORT HttpResponseHeaders
   // with |PERSIST_SANS_COOKIES|.
   static bool IsCookieResponseHeader(base::StringPiece name);
 
+  // Write a representation of this object into tracing proto.
+  void WriteIntoTrace(perfetto::TracedValue context) const;
+
+  // Returns true if this instance precises matches another. This is stronger
+  // than semantic equality as it is intended for verification that the new
+  // Builder implementation works correctly.
+  bool StrictlyEquals(const HttpResponseHeaders& other) const;
+
  private:
   friend class base::RefCountedThreadSafe<HttpResponseHeaders>;
 
@@ -321,6 +415,14 @@ class NET_EXPORT HttpResponseHeaders
   // The members of this structure point into raw_headers_.
   struct ParsedHeader;
   typedef std::vector<ParsedHeader> HeaderList;
+
+  // Whether or not a header value passed to the private AddHeader() method
+  // contains commas.
+  enum class ContainsCommas {
+    kNo,     // Definitely no commas. No need to parse it.
+    kYes,    // Contains commas. Needs to be parsed.
+    kMaybe,  // Unknown whether commas are present. Needs to be parsed.
+  };
 
   ~HttpResponseHeaders();
 
@@ -355,12 +457,15 @@ class NET_EXPORT HttpResponseHeaders
   bool GetCacheControlDirective(base::StringPiece directive,
                                 base::TimeDelta* result) const;
 
-  // Add a header->value pair to our list.  If we already have header in our
-  // list, append the value to it.
+  // Add header->value pair(s) to our list. The value will be split into
+  // multiple values if it contains unquoted commas. If `contains_commas` is
+  // ContainsCommas::kNo then the value will not be parsed as a performance
+  // optimization.
   void AddHeader(std::string::const_iterator name_begin,
                  std::string::const_iterator name_end,
                  std::string::const_iterator value_begin,
-                 std::string::const_iterator value_end);
+                 std::string::const_iterator value_end,
+                 ContainsCommas contains_commas);
 
   // Add to parsed_ given the fields of a ParsedHeader object.
   void AddToParsed(std::string::const_iterator name_begin,
@@ -368,11 +473,13 @@ class NET_EXPORT HttpResponseHeaders
                    std::string::const_iterator value_begin,
                    std::string::const_iterator value_end);
 
-  // Replaces the current headers with the merged version of |raw_headers| and
-  // the current headers without the headers in |headers_to_remove|. Note that
-  // |headers_to_remove| are removed from the current headers (before the
+  // Replaces the current headers with the merged version of `raw_headers` and
+  // the current headers without the headers in `headers_to_remove`. Note that
+  // `headers_to_remove` are removed from the current headers (before the
   // merge), not after the merge.
-  void MergeWithHeaders(const std::string& raw_headers,
+  // `raw_headers` is a std::string, not a const reference to a std::string,
+  // to avoid a potentially excessive copy.
+  void MergeWithHeaders(std::string raw_headers,
                         const HeaderSet& headers_to_remove);
 
   // Adds the values from any 'cache-control: no-cache="foo,bar"' headers.
@@ -413,8 +520,6 @@ class NET_EXPORT HttpResponseHeaders
 
   // The normalized http version (consistent with what GetStatusLine() returns).
   HttpVersion http_version_;
-
-  DISALLOW_COPY_AND_ASSIGN(HttpResponseHeaders);
 };
 
 using ResponseHeadersCallback =

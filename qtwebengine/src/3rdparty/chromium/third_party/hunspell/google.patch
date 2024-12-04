@@ -1,5 +1,5 @@
 diff --git a/src/hunspell/affixmgr.cxx b/src/hunspell/affixmgr.cxx
-index 658a8aa..2ece1cd 100644
+index 658a8aa..78d10ac 100644
 --- a/src/hunspell/affixmgr.cxx
 +++ b/src/hunspell/affixmgr.cxx
 @@ -87,11 +87,19 @@
@@ -177,6 +177,15 @@ index 658a8aa..2ece1cd 100644
  
    return 0;
  }
+@@ -4391,7 +4469,7 @@ void AffixMgr::reverse_condition(std::string& piece) {
+       case '^': {
+         if (*(k - 1) == ']')
+           neg = 1;
+-        else
++        else if (neg)
+           *(k - 1) = *k;
+         break;
+       }
 @@ -4489,6 +4567,7 @@ bool AffixMgr::parse_affix(const std::string& line,
        case 1: {
          np++;
@@ -596,7 +605,7 @@ index 1de1690..770fac1 100644
    if (!afflst) {
      HUNSPELL_WARNING(
          stderr, "Error - could not open affix description file %s\n", affpath);
-@@ -1062,6 +1188,122 @@ bool HashMgr::parse_aliasf(const std::string& line, FileMgr* af) {
+@@ -1062,6 +1188,130 @@ bool HashMgr::parse_aliasf(const std::string& line, FileMgr* af) {
    return true;
  }
  
@@ -636,9 +645,17 @@ index 1de1690..770fac1 100644
 +  // Initialize a hentry struct with the given parameters, and
 +  // append the given string at the end of this hentry struct.
 +  memset(entry, 0, item_size);
-+  FileMgr af(NULL);
-+  entry->alen = static_cast<short>(
-+      const_cast<HashMgr*>(this)->get_aliasf(affix_index, &entry->astr, &af));
++
++  // `get_aliasf` only uses the dictionary file in the case of an error.
++  // Should that occur, `FileMgr::getlinenum` is called. But for a BDICT file,
++  // the line number doesn't help identify the place which caused the parser
++  // error. As a result, `getlinenum` always returns 0. Since we don't actually
++  // need the dictionary file, and since `InitHashEntry` is called for every
++  // dictionary entry, eliminate the overhead of creating the `FileMgr` object
++  // every time.
++  static FileMgr dummyDictionaryFile(NULL);
++  entry->alen = static_cast<short>(const_cast<HashMgr*>(this)->get_aliasf(
++      affix_index, &entry->astr, &dummyDictionaryFile));
 +  entry->blen = static_cast<unsigned char>(word_length);
 +  memcpy(&entry->word, word, word_length);
 +
@@ -723,14 +740,13 @@ diff --git a/src/hunspell/hashmgr.hxx b/src/hunspell/hashmgr.hxx
 index 812171a..af27d6c 100644
 --- a/src/hunspell/hashmgr.hxx
 +++ b/src/hunspell/hashmgr.hxx
-@@ -82,9 +82,23 @@
+@@ -82,9 +82,22 @@
  #include "filemgr.hxx"
  #include "w_char.hxx"
  
 +#ifdef HUNSPELL_CHROME_CLIENT
 +#include <map>
 +
-+#include "base/stl_util.h"
 +#include "base/strings/string_piece.h"
 +#include "third_party/hunspell/google/bdict_reader.h"
 +#endif

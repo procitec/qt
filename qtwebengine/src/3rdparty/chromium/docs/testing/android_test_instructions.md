@@ -1,6 +1,29 @@
-# Android Test Instructions
+# Android Testing in Chromium
 
 [TOC]
+
+## Test Types
+
+-   **[gtests]**: For writing unit tests in C++. Most tests are cross-platform.
+-   **Browser Tests**: Built on top of gtest. Used to write integration tests.
+-   **[Robolectric]**: JUnit tests that run on the host machine by emulating (or
+    mocking) Android APIs.
+-   **[Instrumentation Tests]**: JUnit tests that run on devices / emulators.
+    - **Unit Instrumentation Tests**: Unit tests that do not require
+      initializing the Content layer. These use [BaseActivityTestRule] or
+      [BlankUiTestActivityTestCase] based on `BaseActivityTestRule`.
+    - **Integration Instrumentation Tests**: Instrumentation tests that require
+      initializing the Content layer to test a certain feature in the end-to-end
+      flow. These typically use more specialized test rules such as
+      [ContentShellActivityTestRule] or [ChromeActivityTestRule].
+
+[gtests]: android_gtests.md
+[Robolectric]: android_robolectric_tests.md
+[Instrumentation Tests]: android_instrumentation_tests.md
+[BaseActivityTestRule]: https://source.chromium.org/chromium/chromium/src/+/main:base/test/android/javatests/src/org/chromium/base/test/BaseActivityTestRule.java
+[BlankUiTestActivityTestCase]: https://source.chromium.org/chromium/chromium/src/+/main:ui/android/javatests/src/org/chromium/ui/test/util/BlankUiTestActivityTestCase.java
+[ContentShellActivityTestRule]: https://source.chromium.org/chromium/chromium/src/+/main:content/shell/android/javatests/src/org/chromium/content_shell_apk/ContentShellActivityTestRule.java
+[ChromeActivityTestRule]: https://source.chromium.org/chromium/chromium/src/+/main:chrome/test/android/javatests/src/org/chromium/chrome/test/ChromeActivityTestRule.java
 
 ## Device Setup
 
@@ -62,7 +85,7 @@ adb shell settings put global package_verifier_enable 0
 ### Using Emulators
 
 Running tests on emulators is the same as [on device](#Running-Tests). Refer to
-[android_emulator.md](../android_emulator.md) for setting up emulators.
+[android_emulator.md](/docs/android_emulator.md) for setting up emulators.
 
 ## Building Tests
 
@@ -99,6 +122,16 @@ Java test files vary a bit more widely than their C++ counterparts:
 Once you know what to build, just do it like you normally would build anything
 else, e.g.: `ninja -C out/Release chrome_public_test_apk`
 
+### Determining Test Target
+
+If you do not know what target a test file belongs to, you can use
+`//tools/autotest.py` to figure it out fo you:
+
+```sh
+# Builds relevant test target and then runs the test:
+tools/autotest.py -C <output directory> TestClassName
+```
+
 ## Running Tests
 
 All functional tests should be runnable via the wrapper scripts generated at
@@ -115,6 +148,18 @@ The commands used by the buildbots are printed in the logs. Look at
 https://build.chromium.org/ to duplicate the same test command as a particular
 builder.
 
+### Listing Available Tests
+
+Use `--list-tests` to list what tests are available.
+
+```sh
+# Prints out all available tests:
+<output directory>/bin/run_<target_name> --list-tests
+
+# Prints out all available tests that match a filter:
+<output directory>/bin/run_<target_name> --list-tests -f "*MyFilter*"
+```
+
 ### INSTALL\_FAILED\_CONTAINER\_ERROR or INSTALL\_FAILED\_INSUFFICIENT\_STORAGE
 
 If you see this error when the test runner is attempting to deploy the test
@@ -129,6 +174,12 @@ resize2fs android_emulator_sdk/sdk/system-images/android-25/x86/userdata.img 1G
 # things e2fsprogs does.
 tune2fs -e continue android_emulator_sdk/sdk/system-images/android-25/x86/userdata.img
 ```
+
+### AdbCommandFailedError: failed to stat remote object
+
+There's a known issue (https://crbug.com/1094062) where the unit test binaries can fail on
+Android R and later: if you see this error, try rerunning on an Android version
+with API level <= 29 (Android <= Q).
 
 ## Symbolizing Crashes
 
@@ -154,7 +205,7 @@ export CHROMIUM_OUTPUT_DIR=out/android
 adb logcat -d | third_party/android_platform/development/scripts/stack
 ```
 
-## JUnit tests
+## Robolectric Tests
 
 JUnit tests are Java unittests running on the host instead of the target device.
 They are faster to run and therefore are recommended over instrumentation tests
@@ -180,7 +231,7 @@ out/Default/bin/run_chrome_junit_tests -f "org.chromium.chrome.browser.media.*"
 
 ### Debugging
 
-Similar to [debugging apk targets](../android_debugging_instructions.md#debugging-java):
+Similar to [debugging apk targets](/docs/android_debugging_instructions.md#debugging-java):
 
 ```shell
 out/Default/bin/run_chrome_junit_tests --wait-for-java-debugger
@@ -254,7 +305,7 @@ You might want to add stars `*` to each as a regular expression, e.g.
 
 ### Debugging
 
-Similar to [debugging apk targets](../android_debugging_instructions.md#debugging-java):
+Similar to [debugging apk targets](/docs/android_debugging_instructions.md#debugging-java):
 
 ```shell
 out/Debug/bin/run_content_shell_test_apk --wait-for-java-debugger
@@ -274,6 +325,10 @@ Any stacks produced by test runner output will already be deobfuscated.
 ## Running Blink Web Tests
 
 See [Web Tests](web_tests.md).
+
+## Running Telemetry (Perf) Tests
+
+See [Telemetry](https://chromium.googlesource.com/catapult/+/HEAD/telemetry/README.md).
 
 ## Running GPU tests
 

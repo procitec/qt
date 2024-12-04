@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,32 +11,19 @@
 
 #include <string>
 
-#include "base/stl_util.h"
-#include "base/strings/string_piece.h"
-#include "testing/gtest/include/gtest/gtest.h"
-
-// Define BASE_I18N_UTF8_VALIDATOR_THOROUGH_TEST to verify that this class
-// accepts exactly the same set of 4-byte strings as ICU-based validation. This
-// tests every possible 4-byte string, so it is too slow to run routinely on
-// low-powered machines.
-//
-// #define BASE_I18N_UTF8_VALIDATOR_THOROUGH_TEST
-
-#ifdef BASE_I18N_UTF8_VALIDATOR_THOROUGH_TEST
-
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/memory/ref_counted.h"
+#include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversion_utils.h"
 #include "base/synchronization/lock.h"
-#include "base/task/post_task.h"
-#include "base/task/thread_pool/thread_pool_instance.h"
+#include "base/task/thread_pool.h"
+#include "base/test/task_environment.h"
+#include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/icu/source/common/unicode/utf8.h"
-
-#endif  // BASE_I18N_UTF8_VALIDATOR_THOROUGH_TEST
 
 namespace base {
 namespace {
@@ -48,22 +35,18 @@ const StreamingUtf8Validator::State VALID_MIDPOINT =
     StreamingUtf8Validator::VALID_MIDPOINT;
 const StreamingUtf8Validator::State INVALID = StreamingUtf8Validator::INVALID;
 
-#ifdef BASE_I18N_UTF8_VALIDATOR_THOROUGH_TEST
-
 const uint32_t kThoroughTestChunkSize = 1 << 24;
 
 class StreamingUtf8ValidatorThoroughTest : public ::testing::Test {
  protected:
-  StreamingUtf8ValidatorThoroughTest()
-      : tasks_dispatched_(0), tasks_finished_(0) {}
+  StreamingUtf8ValidatorThoroughTest() = default;
 
   // This uses the same logic as base::IsStringUTF8 except it considers
   // non-characters valid (and doesn't require a string as input).
-  static bool IsStringUtf8(const char* src, int32_t src_len) {
+  static bool IsStringUtf8(const uint8_t* src, int32_t src_len) {
     int32_t char_index = 0;
-
     while (char_index < src_len) {
-      int32_t code_point;
+      base_icu::UChar32 code_point;
       U8_NEXT(src, char_index, src_len, code_point);
       if (!base::IsValidCodepoint(code_point))
         return false;
@@ -75,17 +58,15 @@ class StreamingUtf8ValidatorThoroughTest : public ::testing::Test {
   // verifies that IsStringUtf8 and StreamingUtf8Validator agree on
   // whether it is valid UTF-8 or not.
   void TestNumber(uint32_t n) const {
-    char test[sizeof n];
+    uint8_t test[sizeof n];
     memcpy(test, &n, sizeof n);
     StreamingUtf8Validator validator;
     EXPECT_EQ(IsStringUtf8(test, sizeof n),
-              validator.AddBytes(test, sizeof n) == VALID_ENDPOINT)
+              validator.AddBytes(test) == VALID_ENDPOINT)
         << "Difference of opinion for \""
-        << base::StringPrintf("\\x%02X\\x%02X\\x%02X\\x%02X",
-                              test[0] & 0xFF,
-                              test[1] & 0xFF,
-                              test[2] & 0xFF,
-                              test[3] & 0xFF) << "\"";
+        << base::StringPrintf("\\x%02X\\x%02X\\x%02X\\x%02X", test[0], test[1],
+                              test[2], test[3])
+        << "\"";
   }
 
  public:
@@ -105,18 +86,20 @@ class StreamingUtf8ValidatorThoroughTest : public ::testing::Test {
 
  protected:
   base::Lock lock_;
-  int tasks_dispatched_;
-  int tasks_finished_;
+  int tasks_dispatched_ = 0;
+  int tasks_finished_ = 0;
 };
 
-TEST_F(StreamingUtf8ValidatorThoroughTest, TestEverything) {
-  base::ThreadPoolInstance::CreateAndStartWithDefaultParams(
-      "StreamingUtf8ValidatorThoroughTest");
+// Enable locally to verify that this class accepts exactly the same set of
+// 4-byte strings as ICU-based validation. This tests every possible 4-byte
+// string, so it is too slow to run routinely on low-powered machines.
+TEST_F(StreamingUtf8ValidatorThoroughTest, DISABLED_TestEverything) {
+  base::test::TaskEnvironment task_environment;
   {
     base::AutoLock al(lock_);
     uint32_t begin = 0;
     do {
-      base::PostTask(
+      base::ThreadPool::PostTask(
           FROM_HERE, {base::TaskShutdownBehavior::BLOCK_SHUTDOWN},
           base::BindOnce(&StreamingUtf8ValidatorThoroughTest::TestRange,
                          base::Unretained(this), begin,
@@ -125,12 +108,7 @@ TEST_F(StreamingUtf8ValidatorThoroughTest, TestEverything) {
       begin += kThoroughTestChunkSize;
     } while (begin != 0);
   }
-  base::ThreadPoolInstance::Get()->Shutdown();
-  base::ThreadPoolInstance::Get()->JoinForTesting();
-  base::ThreadPoolInstance::Set(nullptr);
 }
-
-#endif  // BASE_I18N_UTF8_VALIDATOR_THOROUGH_TEST
 
 // These valid and invalid UTF-8 sequences are based on the tests from
 // base/strings/string_util_unittest.cc
@@ -143,7 +121,7 @@ const char* const valid[] = {"\r",           "\n",           "a",
                              "\xef\xbb\xbf",  // UTF-8 BOM
 };
 
-const char* const* const valid_end = valid + base::size(valid);
+const char* const* const valid_end = valid + std::size(valid);
 
 const char* const invalid[] = {
     // always invalid bytes
@@ -176,7 +154,7 @@ const char* const invalid[] = {
     "\xfe\xff", "\xff\xfe",
 };
 
-const char* const* const invalid_end = invalid + base::size(invalid);
+const char* const* const invalid_end = invalid + std::size(invalid);
 
 // A ForwardIterator which returns all the non-empty prefixes of the elements of
 // "valid".
@@ -189,7 +167,7 @@ class PartialIterator {
   // This is a value type; the default copy constructor and assignment operator
   // generated by the compiler are used.
 
-  static PartialIterator end() { return PartialIterator(base::size(valid), 1); }
+  static PartialIterator end() { return PartialIterator(std::size(valid), 1); }
 
   PartialIterator& operator++() {
     Advance();
@@ -212,9 +190,9 @@ class PartialIterator {
       : index_(index), prefix_length_(prefix_length) {}
 
   void Advance() {
-    if (index_ < base::size(valid) && prefix_length_ < strlen(valid[index_]))
+    if (index_ < std::size(valid) && prefix_length_ < strlen(valid[index_]))
       ++prefix_length_;
-    while (index_ < base::size(valid) &&
+    while (index_ < std::size(valid) &&
            prefix_length_ == strlen(valid[index_])) {
       ++index_;
       prefix_length_ = 1;
@@ -238,8 +216,7 @@ class StreamingUtf8ValidatorSingleSequenceTest : public ::testing::Test {
     for (Iterator it = begin; it != end; ++it) {
       StreamingUtf8Validator validator;
       base::StringPiece sequence = *it;
-      EXPECT_EQ(expected,
-                validator.AddBytes(sequence.data(), sequence.size()))
+      EXPECT_EQ(expected, validator.AddBytes(base::as_byte_span(sequence)))
           << "Failed for \"" << sequence << "\"";
     }
   }
@@ -254,7 +231,7 @@ class StreamingUtf8ValidatorSingleSequenceTest : public ::testing::Test {
       base::StringPiece sequence = *it;
       StreamingUtf8Validator::State state = VALID_ENDPOINT;
       for (const auto& cit : sequence) {
-        state = validator.AddBytes(&cit, 1);
+        state = validator.AddBytes(base::as_bytes(base::make_span(&cit, 1u)));
       }
       EXPECT_EQ(expected, state) << "Failed for \"" << sequence << "\"";
     }
@@ -278,8 +255,8 @@ class StreamingUtf8ValidatorDoubleSequenceTest : public ::testing::Test {
       base::StringPiece c1 = *it1;
       for (Iterator2 it2 = begin2; it2 != end2; ++it2) {
         base::StringPiece c2 = *it2;
-        validator.AddBytes(c1.data(), c1.size());
-        EXPECT_EQ(expected, validator.AddBytes(c2.data(), c2.size()))
+        validator.AddBytes(base::as_byte_span(c1));
+        EXPECT_EQ(expected, validator.AddBytes(base::as_byte_span(c2)))
             << "Failed for \"" << c1 << c2 << "\"";
         validator.Reset();
       }
@@ -288,8 +265,7 @@ class StreamingUtf8ValidatorDoubleSequenceTest : public ::testing::Test {
 };
 
 TEST(StreamingUtf8ValidatorTest, NothingIsValid) {
-  static const char kNothing[] = "";
-  EXPECT_EQ(VALID_ENDPOINT, StreamingUtf8Validator().AddBytes(kNothing, 0));
+  EXPECT_EQ(VALID_ENDPOINT, StreamingUtf8Validator().AddBytes({}));
 }
 
 // Because the members of the |valid| array need to be non-zero length
@@ -298,24 +274,28 @@ TEST(StreamingUtf8ValidatorTest, NothingIsValid) {
 // test.
 TEST(StreamingUtf8ValidatorTest, NulIsValid) {
   static const char kNul[] = "\x00";
-  EXPECT_EQ(VALID_ENDPOINT, StreamingUtf8Validator().AddBytes(kNul, 1));
+  EXPECT_EQ(VALID_ENDPOINT, StreamingUtf8Validator().AddBytes(
+                                base::as_bytes(base::make_span(kNul, 1u))));
 }
 
 // Just a basic sanity test before we start getting fancy.
 TEST(StreamingUtf8ValidatorTest, HelloWorld) {
   static const char kHelloWorld[] = "Hello, World!";
-  EXPECT_EQ(
-      VALID_ENDPOINT,
-      StreamingUtf8Validator().AddBytes(kHelloWorld, strlen(kHelloWorld)));
+  EXPECT_EQ(VALID_ENDPOINT,
+            StreamingUtf8Validator().AddBytes(base::as_bytes(
+                base::make_span(kHelloWorld, strlen(kHelloWorld)))));
 }
 
 // Check that the Reset() method works.
 TEST(StreamingUtf8ValidatorTest, ResetWorks) {
   StreamingUtf8Validator validator;
-  EXPECT_EQ(INVALID, validator.AddBytes("\xC0", 1));
-  EXPECT_EQ(INVALID, validator.AddBytes("a", 1));
+  EXPECT_EQ(INVALID,
+            validator.AddBytes(base::as_bytes(base::make_span("\xC0", 1u))));
+  EXPECT_EQ(INVALID,
+            validator.AddBytes(base::as_bytes(base::make_span("a", 1u))));
   validator.Reset();
-  EXPECT_EQ(VALID_ENDPOINT, validator.AddBytes("a", 1));
+  EXPECT_EQ(VALID_ENDPOINT,
+            validator.AddBytes(base::as_bytes(base::make_span("a", 1u))));
 }
 
 TEST_F(StreamingUtf8ValidatorSingleSequenceTest, Valid) {

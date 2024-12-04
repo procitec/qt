@@ -25,19 +25,18 @@
 
 #include "third_party/blink/public/web/web_testing_support.h"
 
-#include "third_party/blink/public/web/web_local_frame.h"
-#include "third_party/blink/renderer/core/testing/scoped_mock_overlay_scrollbars.h"
-#include "third_party/blink/renderer/core/testing/v8/web_core_test_support.h"
-#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
-#include "v8/include/v8.h"
+#include <tuple>
 
-#if defined(USE_BLINK_V8_BINDING_NEW_IDL_INTERFACE)
+#include "third_party/blink/public/platform/scheduler/web_agent_group_scheduler.h"
+#include "third_party/blink/renderer/bindings/core/v8/window_proxy_manager.h"
 #include "third_party/blink/renderer/bindings/modules/v8/init_idl_interfaces_for_testing.h"
 #include "third_party/blink/renderer/bindings/modules/v8/properties_per_feature_installer_for_testing.h"
+#include "third_party/blink/renderer/core/frame/web_local_frame_impl.h"
+#include "third_party/blink/renderer/core/testing/scoped_mock_overlay_scrollbars.h"
+#include "third_party/blink/renderer/core/testing/v8/web_core_test_support.h"
 #include "third_party/blink/renderer/platform/bindings/origin_trial_features.h"
-#else
-#include "third_party/blink/renderer/bindings/modules/v8/v8_internals_partial.h"
-#endif
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
+#include "v8/include/v8.h"
 
 namespace blink {
 
@@ -45,13 +44,12 @@ namespace {
 
 RuntimeEnabledFeatures::Backup* g_features_backup = nullptr;
 
-#if defined(USE_BLINK_V8_BINDING_NEW_IDL_INTERFACE)
-
 InstallPropertiesPerFeatureFuncType
     g_original_install_properties_per_feature_func;
 
-void InstallPropertiesPerFeatureForTesting(ScriptState* script_state,
-                                           OriginTrialFeature feature) {
+void InstallPropertiesPerFeatureForTesting(
+    ScriptState* script_state,
+    mojom::blink::OriginTrialFeature feature) {
   bindings::InstallPropertiesPerFeatureForTesting(script_state, feature);
   if (g_original_install_properties_per_feature_func)
     g_original_install_properties_per_feature_func(script_state, feature);
@@ -66,10 +64,8 @@ bool EnsureV8BindingsForTestingInternal() {
 
 void EnsureV8BindingsForTesting() {
   static bool unused = EnsureV8BindingsForTestingInternal();
-  ALLOW_UNUSED_LOCAL(unused);
+  std::ignore = unused;
 }
-
-#endif  // USE_BLINK_V8_BINDING_NEW_IDL_INTERFACE
 
 }  // namespace
 
@@ -89,28 +85,24 @@ void WebTestingSupport::ResetRuntimeFeatures() {
 }
 
 void WebTestingSupport::InjectInternalsObject(WebLocalFrame* frame) {
-#if defined(USE_BLINK_V8_BINDING_NEW_IDL_INTERFACE)
   EnsureV8BindingsForTesting();
-#else
-  V8InternalsPartial::Initialize();
-#endif
-  v8::HandleScope handle_scope(v8::Isolate::GetCurrent());
+  v8::HandleScope handle_scope(frame->GetAgentGroupScheduler()->Isolate());
   web_core_test_support::InjectInternalsObject(frame->MainWorldScriptContext());
 }
 
 void WebTestingSupport::InjectInternalsObject(v8::Local<v8::Context> context) {
-#if defined(USE_BLINK_V8_BINDING_NEW_IDL_INTERFACE)
   EnsureV8BindingsForTesting();
-#else
-  V8InternalsPartial::Initialize();
-#endif
-  v8::HandleScope handle_scope(v8::Isolate::GetCurrent());
   web_core_test_support::InjectInternalsObject(context);
 }
 
-void WebTestingSupport::ResetInternalsObject(WebLocalFrame* frame) {
-  v8::HandleScope handle_scope(v8::Isolate::GetCurrent());
-  web_core_test_support::ResetInternalsObject(frame->MainWorldScriptContext());
+void WebTestingSupport::ResetMainFrame(WebLocalFrame* main_frame) {
+  auto* main_frame_impl = To<WebLocalFrameImpl>(main_frame);
+  v8::HandleScope handle_scope(main_frame->GetAgentGroupScheduler()->Isolate());
+  web_core_test_support::ResetInternalsObject(
+      main_frame_impl->MainWorldScriptContext());
+  main_frame_impl->GetFrame()
+      ->GetWindowProxyManager()
+      ->ResetIsolatedWorldsForTesting();
 }
 
 }  // namespace blink

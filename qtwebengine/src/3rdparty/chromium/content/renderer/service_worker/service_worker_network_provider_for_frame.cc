@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,15 +6,18 @@
 
 #include <utility>
 
+#include "base/feature_list.h"
 #include "base/memory/ptr_util.h"
-#include "content/common/service_worker/service_worker_utils.h"
+#include "base/memory/raw_ptr.h"
+#include "content/public/common/content_features.h"
 #include "content/public/common/origin_util.h"
 #include "content/public/renderer/render_frame_observer.h"
-#include "content/renderer/loader/web_url_loader_impl.h"
 #include "content/renderer/render_frame_impl.h"
 #include "content/renderer/render_thread_impl.h"
 #include "content/renderer/service_worker/service_worker_provider_context.h"
+#include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
+#include "third_party/blink/public/mojom/service_worker/service_worker_fetch_handler_bypass_option.mojom-shared.h"
 #include "third_party/blink/public/web/web_local_frame.h"
 
 namespace content {
@@ -55,7 +58,7 @@ class ServiceWorkerNetworkProviderForFrame::NewDocumentObserver
   }
 
  private:
-  ServiceWorkerNetworkProviderForFrame* owner_;
+  raw_ptr<ServiceWorkerNetworkProviderForFrame, ExperimentalRenderer> owner_;
 };
 
 // static
@@ -102,58 +105,45 @@ void ServiceWorkerNetworkProviderForFrame::WillSendRequest(
     request.SetFetchWindowId(context()->fetch_request_window_id());
 }
 
-std::unique_ptr<blink::WebURLLoader>
-ServiceWorkerNetworkProviderForFrame::CreateURLLoader(
-    const blink::WebURLRequest& request,
-    std::unique_ptr<blink::scheduler::WebResourceLoadingTaskRunnerHandle>
-        task_runner_handle) {
+scoped_refptr<network::SharedURLLoaderFactory>
+ServiceWorkerNetworkProviderForFrame::GetSubresourceLoaderFactory(
+    const network::ResourceRequest& network_request,
+    bool is_from_origin_dirty_style_sheet) {
   // RenderThreadImpl is nullptr in some tests.
   if (!RenderThreadImpl::current())
     return nullptr;
 
-  // We need SubresourceLoaderFactory populated in order to create our own
-  // URLLoader for subresource loading.
-  if (!context() || !context()->GetSubresourceLoaderFactory())
-    return nullptr;
-
-  // If the URL is not http(s) or otherwise whitelisted, do not intercept the
+  // If the URL is not http(s) or otherwise allowed, do not intercept the
   // request. Schemes like 'blob' and 'file' are not eligible to be intercepted
   // by service workers.
   // TODO(falken): Let ServiceWorkerSubresourceLoaderFactory handle the request
   // and move this check there (i.e., for such URLs, it should use its fallback
   // factory).
-  const GURL gurl(request.Url());
-  if (!gurl.SchemeIsHTTPOrHTTPS() && !OriginCanAccessServiceWorkers(gurl))
+  if (!network_request.url.SchemeIsHTTPOrHTTPS() &&
+      !OriginCanAccessServiceWorkers(network_request.url)) {
     return nullptr;
+  }
+  // If skip_service_worker is true, do not intercept the request.
+  if (network_request.skip_service_worker) {
+    return nullptr;
+  }
 
-  // If GetSkipServiceWorker() returns true, do not intercept the request.
-  if (request.GetSkipServiceWorker())
+  // We need SubresourceLoaderFactory populated.
+  if (!context() || !context()->GetSubresourceLoaderFactory()) {
     return nullptr;
+  }
 
   // Record use counter for intercepting requests from opaque stylesheets.
   // TODO(crbug.com/898497): Remove this feature usage once we have enough data.
-  if (observer_ && request.IsFromOriginDirtyStyleSheet()) {
+  if (observer_ && is_from_origin_dirty_style_sheet) {
     observer_->ReportFeatureUsage(
         blink::mojom::WebFeature::
             kServiceWorkerInterceptedRequestFromOriginDirtyStyleSheet);
   }
 
-  mojo::PendingRemote<mojom::KeepAliveHandle> keep_alive_handle;
-  if (request.GetKeepalive()) {
-    // This cast is safe because NewDocumentObserver is always created with a
-    // RenderFrameImpl.
-    auto* render_frame_impl =
-        static_cast<RenderFrameImpl*>(observer_->render_frame());
-    render_frame_impl->GetFrameHost()->IssueKeepAliveHandle(
-        keep_alive_handle.InitWithNewPipeAndPassReceiver());
-  }
-
-  // Create our own SubresourceLoader to route the request to the controller
+  // Returns our own SubresourceLoader to route the request to the controller
   // ServiceWorker.
-  return std::make_unique<WebURLLoaderImpl>(
-      RenderThreadImpl::current()->resource_dispatcher(),
-      std::move(task_runner_handle), context()->GetSubresourceLoaderFactory(),
-      std::move(keep_alive_handle));
+  return context()->GetSubresourceLoaderFactory();
 }
 
 blink::mojom::ControllerServiceWorkerMode
@@ -161,6 +151,21 @@ ServiceWorkerNetworkProviderForFrame::GetControllerServiceWorkerMode() {
   if (!context())
     return blink::mojom::ControllerServiceWorkerMode::kNoController;
   return context()->GetControllerServiceWorkerMode();
+}
+
+blink::mojom::ServiceWorkerFetchHandlerType
+ServiceWorkerNetworkProviderForFrame::GetFetchHandlerType() {
+  if (!context())
+    return blink::mojom::ServiceWorkerFetchHandlerType::kNotSkippable;
+  return context()->GetFetchHandlerType();
+}
+
+blink::mojom::ServiceWorkerFetchHandlerBypassOption
+ServiceWorkerNetworkProviderForFrame::GetFetchHandlerBypassOption() {
+  if (!context()) {
+    return blink::mojom::ServiceWorkerFetchHandlerBypassOption::kDefault;
+  }
+  return context()->GetFetchHandlerBypassOption();
 }
 
 int64_t ServiceWorkerNetworkProviderForFrame::ControllerServiceWorkerID() {
@@ -173,15 +178,6 @@ void ServiceWorkerNetworkProviderForFrame::DispatchNetworkQuiet() {
   if (!context())
     return;
   context()->DispatchNetworkQuiet();
-}
-
-blink::CrossVariantMojoReceiver<
-    blink::mojom::WorkerTimingContainerInterfaceBase>
-ServiceWorkerNetworkProviderForFrame::TakePendingWorkerTimingReceiver(
-    int request_id) {
-  if (!context())
-    return {};
-  return context()->TakePendingWorkerTimingReceiver(request_id);
 }
 
 void ServiceWorkerNetworkProviderForFrame::NotifyExecutionReady() {

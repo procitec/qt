@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,13 +7,15 @@
 
 #include <stdint.h>
 
-#include <functional>
-#include <memory>
-
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wimplicit-fallthrough"
 #include <SDL2/SDL.h>
 #pragma GCC diagnostic pop
+
+#include <functional>
+#include <memory>
+#include <utility>
+#include <vector>
 
 #include "util/alarm.h"
 
@@ -62,15 +64,19 @@ DEFINE_SDL_UNIQUE_PTR(Texture);
 // event is received.
 class SDLEventLoopProcessor {
  public:
-  SDLEventLoopProcessor(TaskRunner* task_runner,
+  SDLEventLoopProcessor(TaskRunner& task_runner,
                         std::function<void()> quit_callback);
   ~SDLEventLoopProcessor();
+
+  using KeyboardEventCallback = std::function<void(const SDL_KeyboardEvent&)>;
+  void RegisterForKeyboardEvent(KeyboardEventCallback cb);
 
  private:
   void ProcessPendingEvents();
 
   Alarm alarm_;
   std::function<void()> quit_callback_;
+  std::vector<KeyboardEventCallback> keyboard_callbacks_;
 };
 
 }  // namespace cast

@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -15,6 +15,8 @@
 namespace {
 
 const char kPrefPrefix[] = "profile.content_settings.exceptions.";
+const char kPartitionedPrefPrefix[] =
+    "profile.content_settings.partitioned_exceptions.";
 const char kDefaultPrefPrefix[] = "profile.default_content_setting_values.";
 
 std::string GetPreferenceName(const std::string& name, const char* prefix) {
@@ -27,30 +29,31 @@ std::string GetPreferenceName(const std::string& name, const char* prefix) {
 
 namespace content_settings {
 
-WebsiteSettingsInfo::WebsiteSettingsInfo(
-    ContentSettingsType type,
-    const std::string& name,
-    std::unique_ptr<base::Value> initial_default_value,
-    SyncStatus sync_status,
-    LossyStatus lossy_status,
-    ScopingType scoping_type,
-    IncognitoBehavior incognito_behavior)
+WebsiteSettingsInfo::WebsiteSettingsInfo(ContentSettingsType type,
+                                         const std::string& name,
+                                         base::Value initial_default_value,
+                                         SyncStatus sync_status,
+                                         LossyStatus lossy_status,
+                                         ScopingType scoping_type,
+                                         IncognitoBehavior incognito_behavior)
     : type_(type),
       name_(name),
       pref_name_(GetPreferenceName(name, kPrefPrefix)),
+      partitioned_pref_name_(GetPreferenceName(name, kPartitionedPrefPrefix)),
       default_value_pref_name_(GetPreferenceName(name, kDefaultPrefPrefix)),
       initial_default_value_(std::move(initial_default_value)),
       sync_status_(sync_status),
       lossy_status_(lossy_status),
       scoping_type_(scoping_type),
       incognito_behavior_(incognito_behavior) {
-  // For legacy reasons the default value is currently restricted to be an int.
+  // For legacy reasons the default value is currently restricted to be an int
+  // or none.
   // TODO(raymes): We should migrate the underlying pref to be a dictionary
   // rather than an int.
-  DCHECK(!initial_default_value_ || initial_default_value_->is_int());
+  DCHECK(initial_default_value_.is_none() || initial_default_value_.is_int());
 }
 
-WebsiteSettingsInfo::~WebsiteSettingsInfo() {}
+WebsiteSettingsInfo::~WebsiteSettingsInfo() = default;
 
 uint32_t WebsiteSettingsInfo::GetPrefRegistrationFlags() const {
   uint32_t flags = PrefRegistry::NO_REGISTRATION_FLAGS;
@@ -65,9 +68,19 @@ uint32_t WebsiteSettingsInfo::GetPrefRegistrationFlags() const {
 }
 
 bool WebsiteSettingsInfo::SupportsSecondaryPattern() const {
-  return scoping_type_ == COOKIES_SCOPE ||
-         scoping_type_ == SINGLE_ORIGIN_WITH_EMBEDDED_EXCEPTIONS_SCOPE ||
-         scoping_type_ == REQUESTING_ORIGIN_AND_TOP_LEVEL_ORIGIN_SCOPE;
+  switch (scoping_type_) {
+    case REQUESTING_ORIGIN_WITH_TOP_ORIGIN_EXCEPTIONS_SCOPE:
+    case REQUESTING_AND_TOP_ORIGIN_SCOPE:
+    case TOP_ORIGIN_WITH_RESOURCE_EXCEPTIONS_SCOPE:
+    case REQUESTING_AND_TOP_SCHEMEFUL_SITE_SCOPE:
+    case REQUESTING_ORIGIN_AND_TOP_SCHEMEFUL_SITE_SCOPE:
+      return true;
+    case REQUESTING_ORIGIN_ONLY_SCOPE:
+    case TOP_ORIGIN_ONLY_SCOPE:
+    case GENERIC_SINGLE_ORIGIN_SCOPE:
+    case REQUESTING_SCHEMEFUL_SITE_ONLY_SCOPE:
+      return false;
+  }
 }
 
 }  // namespace content_settings

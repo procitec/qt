@@ -1,37 +1,15 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the test suite of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:GPL-EXCEPT$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 3 as published by the Free Software
-** Foundation with exceptions as appearing in the file LICENSE.GPL3-EXCEPT
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 #include <qtest.h>
 #include <QtQuick/private/qquickitem_p.h>
 #include <QtQuick/private/qquicktext_p.h>
 #include <QtQuick/private/qquickanimation_p.h>
+#include <QtQuick/private/qquicklistview_p.h>
+#include <QtQuick/private/qquickrepeater_p.h>
 #include <QtQml/private/qqmlengine_p.h>
 #include <QtQmlModels/private/qqmllistmodel_p.h>
 #include <QtQml/private/qqmlexpression_p.h>
+#include <QtQml/private/qqmlsignalnames_p.h>
 #include <QQmlComponent>
 
 #include <QtCore/qtimer.h>
@@ -39,7 +17,9 @@
 #include <QtCore/qtranslator.h>
 #include <QSignalSpy>
 
-#include "../../shared/util.h"
+#include <QtQuickTestUtils/private/qmlutils_p.h>
+
+using namespace Qt::StringLiterals;
 
 Q_DECLARE_METATYPE(QList<int>)
 Q_DECLARE_METATYPE(QList<QVariantHash>)
@@ -74,6 +54,7 @@ class tst_qqmllistmodel : public QQmlDataTest
     Q_OBJECT
 public:
     tst_qqmllistmodel()
+        : QQmlDataTest(QT_QMLTEST_DATADIR)
     {
         qRegisterMetaType<QVector<int> >();
     }
@@ -121,6 +102,7 @@ private slots:
     void empty_element_warning_data();
     void datetime();
     void datetime_data();
+    void url();
     void about_to_be_signals();
     void modify_through_delegate();
     void bindingsOnGetResult();
@@ -131,6 +113,16 @@ private slots:
     void nestedListModelIteration();
     void undefinedAppendShouldCauseError();
     void nullPropertyCrash();
+    void objectDestroyed();
+    void destroyObject();
+    void emptyStringNotUndefined();
+    void listElementWithTemplateString();
+    void destroyComponentObject();
+    void objectOwnershipFlip();
+    void enumsInListElement();
+    void protectQObjectFromGC();
+    void nestedLists();
+    void deadModelData();
 };
 
 bool tst_qqmllistmodel::compareVariantList(const QVariantList &testList, QVariant object)
@@ -141,12 +133,12 @@ bool tst_qqmllistmodel::compareVariantList(const QVariantList &testList, QVarian
     if (model == nullptr)
         return false;
 
-    if (model->count() != testList.count())
+    if (model->count() != testList.size())
         return false;
 
-    for (int i=0 ; i < testList.count() ; ++i) {
+    for (int i=0 ; i < testList.size() ; ++i) {
         const QVariant &testVariant = testList.at(i);
-        if (testVariant.type() != QVariant::Map)
+        if (testVariant.typeId() != QMetaType::QVariantMap)
             return false;
         const QVariantMap &map = testVariant.toMap();
 
@@ -165,7 +157,7 @@ bool tst_qqmllistmodel::compareVariantList(const QVariantList &testList, QVarian
 
             const QVariant &modelData = model->data(i, roleIndex);
 
-            if (testData.type() == QVariant::List) {
+            if (testData.typeId() == QMetaType::QVariantList) {
                 const QVariantList &subList = testData.toList();
                 allOk = allOk && compareVariantList(subList, modelData);
             } else {
@@ -260,8 +252,8 @@ void tst_qqmllistmodel::static_types()
 
     QVERIFY(!component.isError());
 
-    QObject *obj = component.create();
-    QVERIFY(obj != nullptr);
+    std::unique_ptr<QObject> obj { component.create() };
+    QVERIFY(obj);
 
     if (error.isEmpty()) {
         QVariant actual = obj->property("test");
@@ -269,8 +261,6 @@ void tst_qqmllistmodel::static_types()
         QCOMPARE(actual, value);
         QCOMPARE(actual.toString(), value.toString());
     }
-
-    delete obj;
 }
 
 void tst_qqmllistmodel::static_i18n_data()
@@ -331,15 +321,13 @@ void tst_qqmllistmodel::static_i18n()
 
     QVERIFY(!component.isError());
 
-    QObject *obj = component.create();
-    QVERIFY(obj != nullptr);
+    std::unique_ptr<QObject> obj { component.create() };
+    QVERIFY(obj);
 
     QVariant actual = obj->property("test");
 
     QCOMPARE(actual, value);
     QCOMPARE(actual.toString(), value.toString());
-
-    delete obj;
 }
 
 void tst_qqmllistmodel::dynamic_i18n_data()
@@ -380,16 +368,15 @@ void tst_qqmllistmodel::dynamic_i18n()
 
     QVERIFY(!component.isError());
 
-    QObject *obj = component.create();
-    QVERIFY(obj != nullptr);
+    std::unique_ptr<QObject> obj { component.create() };
+    QVERIFY(obj);
 
     QVariant actual = obj->property("test");
 
     QCOMPARE(actual, value);
     QCOMPARE(actual.toString(), value.toString());
-
-    delete obj;
 }
+
 void tst_qqmllistmodel::static_nestedElements()
 {
     QFETCH(int, elementCount);
@@ -418,14 +405,12 @@ void tst_qqmllistmodel::static_nestedElements()
     QQmlComponent component(&engine);
     component.setData(componentStr.toUtf8(), QUrl::fromLocalFile(""));
 
-    QObject *obj = component.create();
-    QVERIFY(obj != nullptr);
+    std::unique_ptr<QObject> obj { component.create() };
+    QVERIFY(obj);
 
     QVariant count = obj->property("count");
-    QCOMPARE(count.type(), QVariant::Int);
+    QCOMPARE(count.typeId(), QMetaType::Int);
     QCOMPARE(count.toInt(), elementCount);
-
-    delete obj;
 }
 
 void tst_qqmllistmodel::static_nestedElements_data()
@@ -610,7 +595,7 @@ void tst_qqmllistmodel::dynamic()
     QCOMPARE(actual,result);
 
     if (model.count() > 0)
-        QVERIFY(spyCount.count() > 0);
+        QVERIFY(spyCount.size() > 0);
 }
 
 void tst_qqmllistmodel::enumerate()
@@ -618,8 +603,8 @@ void tst_qqmllistmodel::enumerate()
     QQmlEngine eng;
     QQmlComponent component(&eng, testFileUrl("enumerate.qml"));
     QVERIFY(!component.isError());
-    QQuickItem *item = qobject_cast<QQuickItem*>(component.create());
-    QVERIFY(item != nullptr);
+    std::unique_ptr<QQuickItem> item { qobject_cast<QQuickItem*>(component.create()) };
+    QVERIFY(item);
 
     QLatin1String expectedStrings[] = {
         QLatin1String("val1=1Y"),
@@ -650,8 +635,6 @@ void tst_qqmllistmodel::enumerate()
     }
 
     QCOMPARE(matchCount, expectedStringCount);
-
-    delete item;
 }
 
 void tst_qqmllistmodel::error_data()
@@ -718,7 +701,7 @@ void tst_qqmllistmodel::error()
     } else {
         QVERIFY(component.isError());
         QList<QQmlError> errors = component.errors();
-        QCOMPARE(errors.count(),1);
+        QCOMPARE(errors.size(),1);
         QCOMPARE(errors.at(0).description(),error);
     }
 }
@@ -733,9 +716,8 @@ void tst_qqmllistmodel::syncError()
     component.setData(qml.toUtf8(),
                       QUrl::fromLocalFile(QString("dummy.qml")));
     QTest::ignoreMessage(QtWarningMsg,error.toUtf8());
-    QObject *obj = component.create();
-    QVERIFY(obj);
-    delete obj;
+    QScopedPointer<QObject> obj(component.create());
+    QVERIFY2(obj, qPrintable(component.errorString()));
 }
 
 /*
@@ -792,9 +774,9 @@ void tst_qqmllistmodel::get()
     component.setData(
         "import QtQuick 2.0\n"
         "ListModel {}\n", QUrl());
-    QQmlListModel *model = qobject_cast<QQmlListModel*>(component.create());
+    std::unique_ptr<QQmlListModel> model { qobject_cast<QQmlListModel*>(component.create()) };
     model->setDynamicRoles(dynamicRoles);
-    engine.rootContext()->setContextProperty("model", model);
+    engine.rootContext()->setContextProperty("model", model.get());
 
     RUNEXPR("model.append({roleA: 100})");
     RUNEXPR("model.append({roleA: 200, roleB: 400})");
@@ -802,29 +784,27 @@ void tst_qqmllistmodel::get()
     RUNEXPR("model.append({roleC: {} })");
     RUNEXPR("model.append({roleD: [ { a:1, b:2 }, { c: 3 } ] })");
 
-    QSignalSpy spy(model, SIGNAL(dataChanged(QModelIndex,QModelIndex,QVector<int>)));
-    QQmlExpression expr(engine.rootContext(), model, expression);
+    QSignalSpy spy(model.get(), SIGNAL(dataChanged(QModelIndex,QModelIndex,QList<int>)));
+    QQmlExpression expr(engine.rootContext(), model.get(), expression);
     expr.evaluate();
     QVERIFY(!expr.hasError());
 
-    int role = roleFromName(model, roleName);
+    int role = roleFromName(model.get(), roleName);
     QVERIFY(role >= 0);
 
-    if (roleValue.type() == QVariant::List) {
+    if (roleValue.typeId() == QMetaType::QVariantList) {
         const QVariantList &list = roleValue.toList();
         QVERIFY(compareVariantList(list, model->data(index, role)));
     } else {
         QCOMPARE(model->data(index, role), roleValue);
     }
 
-    QCOMPARE(spy.count(), 1);
+    QCOMPARE(spy.size(), 1);
 
     QList<QVariant> spyResult = spy.takeFirst();
     QCOMPARE(spyResult.at(0).value<QModelIndex>(), model->index(index, 0, QModelIndex()));
     QCOMPARE(spyResult.at(1).value<QModelIndex>(), model->index(index, 0, QModelIndex()));  // only 1 item is modified at a time
     QCOMPARE(spyResult.at(2).value<QVector<int> >(), (QVector<int>() << role));
-
-    delete model;
 }
 
 void tst_qqmllistmodel::get_data()
@@ -862,7 +842,7 @@ void tst_qqmllistmodel::get_nested()
     QFETCH(QVariant, roleValue);
     QFETCH(bool, dynamicRoles);
 
-    if (roleValue.type() == QVariant::Map)
+    if (roleValue.typeId() == QMetaType::QVariantMap)
         return;
 
     QQmlEngine engine;
@@ -870,11 +850,11 @@ void tst_qqmllistmodel::get_nested()
     component.setData(
         "import QtQuick 2.0\n"
         "ListModel {}", QUrl());
-    QQmlListModel *model = qobject_cast<QQmlListModel*>(component.create());
+    std::unique_ptr<QQmlListModel> model { qobject_cast<QQmlListModel*>(component.create()) };
     model->setDynamicRoles(dynamicRoles);
     QVERIFY(component.errorString().isEmpty());
     QQmlListModel *childModel;
-    engine.rootContext()->setContextProperty("model", model);
+    engine.rootContext()->setContextProperty("model", model.get());
 
     RUNEXPR("model.append({ listRoleA: [\n"
                             "{ roleA: 100 },\n"
@@ -918,38 +898,36 @@ void tst_qqmllistmodel::get_nested()
     testData << qMakePair(1, QString("listRoleB"));
     testData << qMakePair(1, QString("listRoleC"));
 
-    for (int i=0; i<testData.count(); i++) {
+    for (int i=0; i<testData.size(); i++) {
         int outerListIndex = testData[i].first;
         QString outerListRoleName = testData[i].second;
-        int outerListRole = roleFromName(model, outerListRoleName);
+        int outerListRole = roleFromName(model.get(), outerListRoleName);
         QVERIFY(outerListRole >= 0);
 
         childModel = qobject_cast<QQmlListModel*>(model->data(outerListIndex, outerListRole).value<QObject*>());
         QVERIFY(childModel);
 
         QString extendedExpression = QString("get(%1).%2.%3").arg(outerListIndex).arg(outerListRoleName).arg(expression);
-        QQmlExpression expr(engine.rootContext(), model, extendedExpression);
+        QQmlExpression expr(engine.rootContext(), model.get(), extendedExpression);
 
-        QSignalSpy spy(childModel, SIGNAL(dataChanged(QModelIndex,QModelIndex,QVector<int>)));
+        QSignalSpy spy(childModel, SIGNAL(dataChanged(QModelIndex,QModelIndex,QList<int>)));
         expr.evaluate();
         QVERIFY(!expr.hasError());
 
         int role = roleFromName(childModel, roleName);
         QVERIFY(role >= 0);
-        if (roleValue.type() == QVariant::List) {
+        if (roleValue.typeId() == QMetaType::QVariantList) {
             QVERIFY(compareVariantList(roleValue.toList(), childModel->data(index, role)));
         } else {
             QCOMPARE(childModel->data(index, role), roleValue);
         }
-        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.size(), 1);
 
         QList<QVariant> spyResult = spy.takeFirst();
         QCOMPARE(spyResult.at(0).value<QModelIndex>(), childModel->index(index, 0, QModelIndex()));
         QCOMPARE(spyResult.at(1).value<QModelIndex>(), childModel->index(index, 0, QModelIndex()));  // only 1 item is modified at a time
         QCOMPARE(spyResult.at(2).value<QVector<int> >(), (QVector<int>() << role));
     }
-
-    delete model;
 }
 
 void tst_qqmllistmodel::get_nested_data()
@@ -962,16 +940,14 @@ void tst_qqmllistmodel::crash_model_with_multiple_roles()
 {
     QQmlEngine eng;
     QQmlComponent component(&eng, testFileUrl("multipleroles.qml"));
-    QObject *rootItem = component.create();
+    std::unique_ptr<QObject> rootItem { component.create() };
     QVERIFY(component.errorString().isEmpty());
-    QVERIFY(rootItem != nullptr);
+    QVERIFY(rootItem);
     QQmlListModel *model = rootItem->findChild<QQmlListModel*>("listModel");
     QVERIFY(model != nullptr);
 
     // used to cause a crash
     model->setProperty(0, "black", true);
-
-    delete rootItem;
 }
 
 void tst_qqmllistmodel::crash_model_with_unknown_roles()
@@ -996,22 +972,19 @@ void tst_qqmllistmodel::crash_model_with_dynamic_roles()
         // setting a dynamic role to a QObject value, then triggering dtor
         QQmlEngine eng;
         QQmlComponent component(&eng, testFileUrl("dynamicroles.qml"));
-        QObject *rootItem = component.create();
+        std::unique_ptr<QObject> rootItem { component.create() };
         qWarning() << component.errorString();
         QVERIFY(component.errorString().isEmpty());
-        QVERIFY(rootItem != 0);
+        QVERIFY(rootItem.get() != 0);
         QQmlListModel *model = rootItem->findChild<QQmlListModel*>("listModel");
         QVERIFY(model != 0);
 
         QMetaObject::invokeMethod(model, "appendNewElement");
 
-        QObject *testObj = new QObject;
-        model->setProperty(0, "obj", QVariant::fromValue<QObject*>(testObj));
-        delete testObj;
+        model->setProperty(0, "obj", QVariant::fromValue<QObject*>(std::make_unique<QObject>().get()));
 
-        // delete the root item, which will cause the model dtor to run
-        // previously, this would crash as it attempted to delete testObj.
-        delete rootItem;
+        // Let root item go out of scope to let the model dtor run.
+        // Previously, this would crash as it attempted to delete the already-deleted temporary QObject.
     }
 
     {
@@ -1019,22 +992,18 @@ void tst_qqmllistmodel::crash_model_with_dynamic_roles()
         // DynamicRoleModelNode::updateValues() to trigger unsafe qobject_cast
         QQmlEngine eng;
         QQmlComponent component(&eng, testFileUrl("dynamicroles.qml"));
-        QObject *rootItem = component.create();
+        std::unique_ptr<QObject> rootItem { component.create() };
         qWarning() << component.errorString();
         QVERIFY(component.errorString().isEmpty());
-        QVERIFY(rootItem != 0);
+        QVERIFY(rootItem.get() != 0);
         QQmlListModel *model = rootItem->findChild<QQmlListModel*>("listModel");
         QVERIFY(model != 0);
 
         QMetaObject::invokeMethod(model, "appendNewElement");
 
-        QObject *testObj = new QObject;
-        model->setProperty(0, "obj", QVariant::fromValue<QObject*>(testObj));
-        delete testObj;
+        model->setProperty(0, "obj", QVariant::fromValue<QObject*>(std::make_unique<QObject>().get()));
 
         QMetaObject::invokeMethod(model, "setElementAgain");
-
-        delete rootItem;
     }
 
     {
@@ -1085,12 +1054,10 @@ void tst_qqmllistmodel::set_model_cache()
 {
     QQmlEngine eng;
     QQmlComponent component(&eng, testFileUrl("setmodelcachelist.qml"));
-    QObject *model = component.create();
-    QVERIFY2(component.errorString().isEmpty(), QTest::toString(component.errorString()));
+    QScopedPointer<QObject> model(component.create());
+    QVERIFY2(component.errorString().isEmpty(), qPrintable(component.errorString()));
     QVERIFY(model != nullptr);
     QVERIFY(model->property("ok").toBool());
-
-    delete model;
 }
 
 void tst_qqmllistmodel::property_changes()
@@ -1111,44 +1078,42 @@ void tst_qqmllistmodel::property_changes()
 
     QQmlExpression expr(engine.rootContext(), &model, script_setup);
     expr.evaluate();
-    QVERIFY2(!expr.hasError(), QTest::toString(expr.error().toString()));
+    QVERIFY2(!expr.hasError(), qPrintable(expr.error().toString()));
 
-    QString signalHandler = "on" + QString(roleName[0].toUpper()) + roleName.mid(1, roleName.length()) + "Changed:";
+    QString signalHandler = QQmlSignalNames::propertyNameToChangedHandlerName(roleName);
     QString qml = "import QtQuick 2.0\n"
                   "Connections {\n"
                         "property bool gotSignal: false\n"
                         "target: model.get(" + QString::number(listIndex) + ")\n"
-                        + signalHandler + " gotSignal = true\n"
+                        + signalHandler + ": gotSignal = true\n"
                   "}\n";
 
     QQmlComponent component(&engine);
     component.setData(qml.toUtf8(), QUrl::fromLocalFile(""));
     engine.rootContext()->setContextProperty("model", &model);
-    QObject *connectionsObject = component.create();
-    QVERIFY2(component.errorString().isEmpty(), QTest::toString(component.errorString()));
+    std::unique_ptr<QObject> connectionsObject { component.create() };
+    QVERIFY2(component.errorString().isEmpty(), qPrintable(component.errorString()));
 
-    QSignalSpy spyItemsChanged(&model, SIGNAL(dataChanged(QModelIndex,QModelIndex,QVector<int>)));
+    QSignalSpy spyItemsChanged(&model, SIGNAL(dataChanged(QModelIndex,QModelIndex,QList<int>)));
 
     expr.setExpression(script_change);
     expr.evaluate();
-    QVERIFY2(!expr.hasError(), QTest::toString(expr.error().toString()));
+    QVERIFY2(!expr.hasError(), qPrintable(expr.error().toString()));
 
     // test the object returned by get() emits the correct signals
     QCOMPARE(connectionsObject->property("gotSignal").toBool(), itemsChanged);
 
     // test itemsChanged() is emitted correctly
     if (itemsChanged) {
-        QCOMPARE(spyItemsChanged.count(), 1);
+        QCOMPARE(spyItemsChanged.size(), 1);
         QCOMPARE(spyItemsChanged.at(0).at(0).value<QModelIndex>(), model.index(listIndex, 0, QModelIndex()));
         QCOMPARE(spyItemsChanged.at(0).at(1).value<QModelIndex>(), model.index(listIndex, 0, QModelIndex()));
     } else {
-        QCOMPARE(spyItemsChanged.count(), 0);
+        QCOMPARE(spyItemsChanged.size(), 0);
     }
 
     expr.setExpression(testExpression);
     QCOMPARE(expr.evaluate().toBool(), true);
-
-    delete connectionsObject;
 }
 
 void tst_qqmllistmodel::property_changes_data()
@@ -1283,15 +1248,13 @@ void tst_qqmllistmodel::signal_handlers()
 
     QQmlEngine eng;
     QQmlComponent component(&eng, testFileUrl("signalhandlers.qml"));
-    QObject *model = component.create();
-    QQmlListModel *lm = qobject_cast<QQmlListModel *>(model);
+    QScopedPointer<QObject> model(component.create());
+    QQmlListModel *lm = qobject_cast<QQmlListModel *>(model.data());
     QVERIFY(lm != nullptr);
     lm->setDynamicRoles(dynamicRoles);
-    QVERIFY2(component.errorString().isEmpty(), QTest::toString(component.errorString()));
+    QVERIFY2(component.errorString().isEmpty(), qPrintable(component.errorString()));
     QVERIFY(model != nullptr);
     QVERIFY(model->property("ok").toBool());
-
-    delete model;
 }
 
 void tst_qqmllistmodel::role_mode_data()
@@ -1371,10 +1334,8 @@ void tst_qqmllistmodel::empty_element_warning()
     component.setData(qml.toUtf8(), QUrl::fromLocalFile(QString("dummy.qml")));
     QVERIFY(!component.isError());
 
-    QObject *obj = component.create();
-    QVERIFY(obj != nullptr);
-
-    delete obj;
+    std::unique_ptr<QObject> obj { component.create() };
+    QVERIFY(obj);
 }
 
 void tst_qqmllistmodel::datetime_data()
@@ -1391,6 +1352,18 @@ void tst_qqmllistmodel::datetime_data()
     QTest::newRow("dt2") << "{append({'date':dt0});set(0,{'date':dt1});get(0).date}" << dt1;
     QTest::newRow("dt3") << "{append({'date':dt0});get(0).date=undefined;get(0).date}" << dt;
     QTest::newRow("dt4") << "{append({'date':dt0});setProperty(0,'date',dt1);get(0).date}" << dt1;
+}
+
+void tst_qqmllistmodel::url()
+{
+    QQmlEngine engine;
+    QQmlComponent comp(&engine, testFileUrl("urls.qml"));
+    QScopedPointer<QObject> o {comp.create()};
+    QVERIFY(o);
+    QCOMPARE(o->property("result1").toUrl(), QUrl("http://qt.io"));
+    QCOMPARE(o->property("result2").toUrl(), QUrl("http://qt-project.org"));
+    QCOMPARE(o->property("alive1").toString(), QStringLiteral("indeed"));
+    QCOMPARE(o->property("alive2").toString(), QStringLiteral("and kicking"));
 }
 
 void tst_qqmllistmodel::datetime()
@@ -1554,6 +1527,8 @@ void tst_qqmllistmodel::modify_through_delegate()
         "       ListElement { name: \"Doe\"; age: 33 }\n"
         "   }\n"
         "   ListView {\n"
+        "       height: 100\n" \
+        "       width: 100\n" \
         "       model: testModel\n"
         "       delegate: Item {\n"
         "           Component.onCompleted: model.age = 18;\n"
@@ -1561,7 +1536,7 @@ void tst_qqmllistmodel::modify_through_delegate()
         "   }\n"
         "}\n", QUrl());
 
-    QObject *scene = component.create();
+    QScopedPointer<QObject> scene(component.create());
     QQmlListModel *model = scene->findChild<QQmlListModel*>("testModel");
 
     const QHash<int, QByteArray> roleNames = model->roleNames();
@@ -1599,7 +1574,7 @@ void tst_qqmllistmodel::stringifyModelEntry()
     QQmlListModel *model = scene->findChild<QQmlListModel*>("testModel");
     QQmlExpression expr(engine.rootContext(), model, "JSON.stringify(get(0));");
     QVariant v = expr.evaluate();
-    QVERIFY2(!expr.hasError(), QTest::toString(expr.error().toString()));
+    QVERIFY2(!expr.hasError(), qPrintable(expr.error().toString()));
     const QString expectedString = QStringLiteral("{\"age\":22,\"name\":\"Joe\"}");
     QCOMPARE(v.toString(), expectedString);
 }
@@ -1621,7 +1596,7 @@ void tst_qqmllistmodel::qobjectTrackerForDynamicModelObjects()
     QQmlListModel *model = scene->findChild<QQmlListModel*>("testModel");
     QQmlExpression expr(engine.rootContext(), model, "get(0);");
     QVariant v = expr.evaluate();
-    QVERIFY2(!expr.hasError(), QTest::toString(expr.error().toString()));
+    QVERIFY2(!expr.hasError(), qPrintable(expr.error().toString()));
 
     QObject *obj = v.value<QObject*>();
     QVERIFY(obj);
@@ -1648,8 +1623,8 @@ void tst_qqmllistmodel::crash_append_empty_array()
     QSignalSpy spy(model, &QQmlListModel::rowsAboutToBeInserted);
     QQmlExpression expr(engine.rootContext(), model, "append(new Array())");
     expr.evaluate();
-    QVERIFY2(!expr.hasError(), QTest::toString(expr.error().toString()));
-    QCOMPARE(spy.count(), 0);
+    QVERIFY2(!expr.hasError(), qPrintable(expr.error().toString()));
+    QCOMPARE(spy.size(), 0);
 }
 
 void tst_qqmllistmodel::dynamic_roles_crash_QTBUG_38907()
@@ -1693,7 +1668,7 @@ void tst_qqmllistmodel::nestedListModelIteration()
                 }
             })",
             QUrl());
-    QScopedPointer<QObject>(component.create());
+    delete component.create();
 }
 
 // QTBUG-63569
@@ -1721,7 +1696,7 @@ void tst_qqmllistmodel::undefinedAppendShouldCauseError()
             QUrl());
     QTest::ignoreMessage(QtMsgType::QtWarningMsg, "<Unknown File>: faulty is undefined. Adding an object with a undefined member does not create a role for it.");
     QTest::ignoreMessage(QtMsgType::QtWarningMsg, "<Unknown File>: faulty is null. Adding an object with a null member does not create a role for it.");
-    QScopedPointer<QObject>(component.create());
+    delete component.create();
 }
 
 // QTBUG-89173
@@ -1743,7 +1718,404 @@ void tst_qqmllistmodel::nullPropertyCrash()
             })",
             QUrl());
     QTest::ignoreMessage(QtMsgType::QtWarningMsg, "<Unknown File>: c is null. Adding an object with a null member does not create a role for it.");
-    QScopedPointer<QObject>(component.create());
+    delete component.create();
+}
+
+// QTBUG-91390
+void tst_qqmllistmodel::objectDestroyed()
+{
+    QQmlEngine engine;
+    QQmlComponent component(&engine);
+    component.setData(
+            R"(import QtQuick
+                   ListModel {
+                       id: model
+                       Component.onCompleted: { model.append({"a": contextObject}); }
+                   })",
+            QUrl());
+
+    std::unique_ptr<QObject> obj = std::make_unique<QObject>();
+    connect(obj.get(), &QObject::destroyed, [&]() { obj.release(); });
+
+    engine.rootContext()->setContextProperty(u"contextObject"_s, obj.get());
+    engine.setObjectOwnership(obj.get(), QJSEngine::JavaScriptOwnership);
+
+    delete component.create();
+    QVERIFY(obj);
+    engine.collectGarbage();
+    QTest::qSleep(250);
+    QVERIFY(obj);
+    engine.evaluate(u"model.clear();"_s);
+    engine.collectGarbage();
+    QTRY_VERIFY(!obj);
+}
+
+void tst_qqmllistmodel::destroyObject()
+{
+    QQmlEngine engine;
+    QQmlComponent component(&engine);
+    component.setData(
+                R"(import QtQuick
+                   ListModel {
+                       id: model
+                       Component.onCompleted: { model.append({"a": contextObject}); }
+                   })",
+                QUrl());
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    QScopedPointer<QObject> element(new QObject);
+    engine.rootContext()->setContextProperty(u"contextObject"_s, element.data());
+
+    QScopedPointer<QObject> o(component.create());
+    QVERIFY(!o.isNull());
+
+    QQmlListModel *model = qobject_cast<QQmlListModel *>(o.data());
+    QVERIFY(model);
+    QCOMPARE(model->count(), 1);
+    QCOMPARE(model->get(0).property("a").toQObject(), element.data());
+    element.reset();
+    QCOMPARE(model->get(0).property("a").toQObject(), nullptr);
+}
+
+void tst_qqmllistmodel::emptyStringNotUndefined()
+{
+    QQmlEngine engine;
+    QQmlComponent component(&engine);
+    component.setData(
+            R"(import QtQuick
+                   ListModel {
+                       id: model
+                       Component.onCompleted: { model.append({"a": ""}); }
+                   })",
+            QUrl());
+    QScopedPointer<QObject> root(component.create());
+    QVERIFY(root);
+    auto lm = qobject_cast<QQmlListModel *>(root.get());
+    QVERIFY(lm);
+    QJSValue val = lm->get(0);
+    QVERIFY(val.hasProperty("a"));
+    val = val.property("a");
+    QVERIFY(!val.isUndefined());
+    QVERIFY(val.isString());
+    QCOMPARE(val.toString(), QString());
+}
+
+void tst_qqmllistmodel::listElementWithTemplateString()
+{
+    QQmlEngine engine;
+    QQmlComponent component(&engine);
+    component.setData(R"(
+    import QtQuick
+    ListModel {
+        ListElement {
+            prop: `test`
+        }
+    })", QUrl());
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    QScopedPointer<QObject> root(component.create());
+    QVERIFY(!root.isNull());
+}
+
+//QTBUG-95895
+void tst_qqmllistmodel::destroyComponentObject()
+{
+    QQmlEngine eng;
+    QQmlComponent component(&eng, testFileUrl("destroyObject.qml"));
+    QVERIFY(!component.isError());
+    QScopedPointer<QObject> obj(component.create());
+    QVERIFY(!obj.isNull());
+    QQmlListModel *list = qvariant_cast<QQmlListModel *>(obj->property("projects"));
+    QVERIFY(list != nullptr);
+    QCOMPARE(list->count(), 1);
+    QPointer<QObject> created(qvariant_cast<QObject *>(obj->property("object")));
+    QVERIFY(!created.isNull());
+    QCOMPARE(list->get(0).property("obj").toQObject(), created.data());
+    QVariant retVal;
+    QMetaObject::invokeMethod(obj.data(),
+                              "destroy",
+                               Qt::DirectConnection,
+                               Q_RETURN_ARG(QVariant, retVal));
+    QVERIFY(retVal.toBool());
+    QTRY_VERIFY(created.isNull());
+    QTRY_VERIFY(list->get(0).property("obj").isNull());
+    QCOMPARE(list->count(), 1);
+}
+
+// Used for objectOwnershipFlip
+class TestItem : public QQuickItem
+{
+    Q_OBJECT
+public:
+    // To trigger QQmlData::setImplicitDestructible through QV4::CallArgument::toValue
+    Q_INVOKABLE TestItem* dummy() { return this; }
+};
+
+void tst_qqmllistmodel::objectOwnershipFlip()
+{
+    QQmlEngine engine;
+    QQmlComponent component(&engine, testFileUrl("objectOwnership.qml"));
+    QVERIFY(!component.isError());
+    QScopedPointer<QObject> root(component.create());
+    QVERIFY(!root.isNull());
+    QQmlListModel *model = root->findChild<QQmlListModel*>("listModel");
+    QVERIFY(model != nullptr);
+
+    QScopedPointer<TestItem> item(new TestItem());
+    item->setObjectName("cppOwnedItem");
+    QJSEngine::setObjectOwnership(item.data(), QJSEngine::CppOwnership);
+    QCOMPARE(QJSEngine::objectOwnership(item.data()), QJSEngine::CppOwnership);
+
+    engine.rootContext()->setContextProperty("cppOwnedItem", item.data());
+
+    QMetaObject::invokeMethod(model, "addItem");
+    QCOMPARE(model->count(), 1);
+
+    QMetaObject::invokeMethod(root.data(), "checkItem");
+
+    QCOMPARE(QJSEngine::objectOwnership(item.data()), QJSEngine::CppOwnership);
+}
+
+void tst_qqmllistmodel::enumsInListElement()
+{
+    QQmlEngine engine;
+    QQmlComponent component(&engine, testFileUrl("enumsInListElement.qml"));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    QScopedPointer<QObject> root(component.create());
+    QVERIFY(!root.isNull());
+
+    QQuickListView *listView = qobject_cast<QQuickListView *>(root.data());
+    QVERIFY(listView);
+    QCOMPARE(listView->count(), 3);
+    for (int i = 0; i < 3; ++i) {
+        QCOMPARE(listView->itemAtIndex(i)->property("text"), QVariant(QString::number(i)));
+    }
+}
+
+void tst_qqmllistmodel::protectQObjectFromGC()
+{
+    QQmlEngine engine;
+    QQmlComponent component(&engine, testFileUrl("protectQObjectFromGC.qml"));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    QScopedPointer<QObject> root(component.create());
+    QVERIFY(!root.isNull());
+
+    QQmlListModel *listModel = qobject_cast<QQmlListModel *>(root.data());
+    QVERIFY(listModel);
+    QCOMPARE(listModel->count(), 10);
+
+    for (int i = 0; i < 10; ++i) {
+        QObject *element = qjsvalue_cast<QObject *>(listModel->get(i).property("path"));
+        QVERIFY(element);
+        QCOMPARE(element->property("name").toString(), QString::number(i));
+    }
+}
+
+static QVariantList createLast7Days()
+{
+    QVariantList last7DaysList;
+    for (int i = 0; i < 7; i++) {
+        QVariantMap map;
+        map.insert("_day", i);
+        last7DaysList.append(map);
+    }
+    return last7DaysList;
+}
+
+static QVariantList createWeekChartModels()
+{
+    QVariantList list;
+    for (int i = 0; i < 4; i++) {
+        QVariantMap map;
+        map.insert("_week", createLast7Days());
+        list.append(map);
+    }
+    return list;
+}
+
+static QVariantList createVariantModel()
+{
+    QVariantMap element1;
+    element1.insert("_headline", "Element 1");
+    element1.insert("_weeks", createWeekChartModels());
+
+    QVariantMap element2;
+    element2.insert("_headline", "Element 2");
+    element2.insert("_weeks", createWeekChartModels());
+
+    QVariantMap element3;
+    element3.insert("_headline", "Element 3");
+    element3.insert("_weeks", createWeekChartModels());
+
+    QVariantList list;
+    list.append(element1);
+    list.append(element2);
+    list.append(element3);
+
+    return list;
+}
+
+class Day : public QObject
+{
+    Q_OBJECT
+    Q_PROPERTY(int _day READ _day CONSTANT)
+public:
+    Day(int day, QObject *parent = nullptr) : QObject(parent), day(day) {}
+    int _day() const { return day; }
+private:
+    int day = 0;
+};
+
+class Week : public QObject
+{
+    Q_OBJECT
+    Q_PROPERTY(QQmlListProperty<Day> _week READ _week)
+public:
+    Week(QObject *parent = nullptr) : QObject(parent)
+    {
+        for (int i = 0; i < 7; ++i)
+            week.append(new Day(i, this));
+    }
+
+    QQmlListProperty<Day> _week() { return QQmlListProperty<Day>(this, &week); }
+
+private:
+    QList<Day *> week;
+};
+
+class Month : public QObject
+{
+    Q_OBJECT
+    Q_PROPERTY(QQmlListProperty<Week> _weeks READ _weeks)
+    Q_PROPERTY(QString _headline READ _headline CONSTANT)
+public:
+
+    Month(int i, QObject *parent = nullptr)
+        : QObject(parent)
+        , headline(QLatin1String("Element ") + QString::number(i))
+    {
+        for (int i = 0; i < 4; ++i)
+            weeks.append(new Week(this));
+    }
+
+    QQmlListProperty<Week> _weeks() { return QQmlListProperty<Week>(this, &weeks); }
+    QString _headline() const { return headline; }
+
+private:
+    QList<Week *> weeks;
+    QString headline;
+};
+
+static void verifyLists(const QVariantList &list, QQuickRepeater *topLevel)
+{
+    QVERIFY(topLevel);
+    QCOMPARE(topLevel->count(), 3);
+
+    for (int month = 0; month < 3; ++month) {
+        const QVariantMap monthData = list[month].toMap();
+        const QQuickItem *monthItem = topLevel->itemAt(month);
+        QCOMPARE(monthItem->objectName(), monthData["_headline"].toString());
+        const QQuickRepeater *monthRepeater = monthItem->findChild<QQuickRepeater *>("month");
+        QVERIFY(monthRepeater);
+        QCOMPARE(monthRepeater->count(), 4);
+        const QVariantList weekList = monthData["_weeks"].toList();
+        for (int week = 0; week < 4; ++week) {
+            const QVariantList weekData = weekList[week].toMap()["_week"].toList();
+            const QQuickItem *weekItem = monthRepeater->itemAt(week);
+            QCOMPARE(weekItem->objectName(), QString::number(week));
+            const QQuickRepeater *weekRepeater = weekItem->findChild<QQuickRepeater *>("week");
+            QVERIFY(weekRepeater);
+            QCOMPARE(weekRepeater->count(), 7);
+            for (int day = 0; day < 7; ++day) {
+                const QVariantMap dayData = weekData[day].toMap();
+                const QQuickItem *dayItem = weekRepeater->itemAt(day);
+                QCOMPARE(dayItem->objectName(), dayData["_day"]);
+            }
+        }
+    }
+}
+
+void tst_qqmllistmodel::nestedLists()
+{
+    QQmlEngine engine;
+    QQmlComponent component(&engine, testFileUrl("nestedLists.qml"));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    QScopedPointer<QObject> o(component.create());
+    QVERIFY(!o.isNull());
+
+    QQuickRepeater *topLevel = o->findChild<QQuickRepeater *>("topLevel");
+
+    const QVariantList list = createVariantModel();
+    QMetaObject::invokeMethod(o.data(), "load", Q_ARG(QVariant, QVariant::fromValue(list)));
+    verifyLists(list, topLevel);
+
+    const QObjectList objects {
+        new Month(1, o.data()),
+        new Month(2, o.data()),
+        new Month(3, o.data())
+    };
+
+    QMetaObject::invokeMethod(o.data(), "load", Q_ARG(QVariant, QVariant::fromValue(objects)));
+    verifyLists(list, topLevel);
+}
+
+void tst_qqmllistmodel::deadModelData()
+{
+    QQmlEngine engine;
+    QQmlComponent component(&engine, testFileUrl("deadModelData.qml"));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    QScopedPointer<QObject> o(component.create());
+    QVERIFY(!o.isNull());
+
+    QQmlListModel *l1 = o->property("l1").value<QQmlListModel *>();
+    QVERIFY(l1);
+    QQmlListModel *l2 = o->property("l2").value<QQmlListModel *>();
+    QVERIFY(l2);
+
+    QCOMPARE(l1->count(), 3);
+    QCOMPARE(l2->count(), 3);
+
+    for (int i = 0; i < 3; ++i) {
+        QObject *i1 = qjsvalue_cast<QObject *>(l1->get(i));
+        QVERIFY(i1);
+        QCOMPARE(i1->property("ident").value<double>(), i + 1);
+        QCOMPARE(i1->property("buttonText").value<QString>(),
+                 QLatin1String("B %1").arg(QLatin1Char('0' + i + 1)));
+
+        QObject *i2 = qjsvalue_cast<QObject *>(l2->get(i));
+        QVERIFY(i2);
+        QCOMPARE(i2->property("ident").value<double>(), i + 4);
+        QCOMPARE(i2->property("buttonText").value<QString>(),
+                 QLatin1String("B %1").arg(QLatin1Char('0' + i + 4)));
+    }
+
+    for (int i = 0; i < 6; ++i) {
+        QTest::ignoreMessage(
+                QtWarningMsg,
+                QRegularExpression(".*: ident is undefined. Adding an object with a undefined "
+                                   "member does not create a role for it."));
+        QTest::ignoreMessage(
+                QtWarningMsg,
+                QRegularExpression(".*: buttonText is undefined. Adding an object with a undefined "
+                                   "member does not create a role for it."));
+    }
+
+    QMetaObject::invokeMethod(o.data(), "swapCorpses");
+
+    // We get default-created values for all the roles now.
+
+    QCOMPARE(l1->count(), 3);
+    QCOMPARE(l2->count(), 3);
+
+    for (int i = 0; i < 3; ++i) {
+        QObject *i1 = qjsvalue_cast<QObject *>(l1->get(i));
+        QVERIFY(i1);
+        QCOMPARE(i1->property("ident").value<double>(), double());
+        QCOMPARE(i1->property("buttonText").value<QString>(), QString());
+
+        QObject *i2 = qjsvalue_cast<QObject *>(l2->get(i));
+        QVERIFY(i2);
+        QCOMPARE(i2->property("ident").value<double>(), double());
+        QCOMPARE(i2->property("buttonText").value<QString>(), QString());
+    }
 }
 
 QTEST_MAIN(tst_qqmllistmodel)

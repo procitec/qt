@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -27,6 +27,7 @@ class WebDocumentSubresourceFilter {
   virtual LoadPolicy GetLoadPolicy(const WebURL& resource_url,
                                    mojom::RequestContextType) = 0;
   virtual LoadPolicy GetLoadPolicyForWebSocketConnect(const WebURL&) = 0;
+  virtual LoadPolicy GetLoadPolicyForWebTransportConnect(const WebURL&) = 0;
 
   // Report that a resource loaded by the document (not a preload) was
   // disallowed.
@@ -35,10 +36,6 @@ class WebDocumentSubresourceFilter {
   // Returns true if disallowed resource loads should be logged to the devtools
   // console.
   virtual bool ShouldLogToConsole() = 0;
-
-  // Report that the resource request corresponding to |request_id|  was tagged
-  // as an ad.
-  virtual void ReportAdRequestId(int request_id) {}
 };
 
 }  // namespace blink

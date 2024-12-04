@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "base/containers/flat_set.h"
+#include "base/memory/raw_ptr.h"
 #include "base/unguessable_token.h"
 #include "components/viz/common/surfaces/frame_sink_id.h"
 #include "components/viz/common/surfaces/surface_range.h"
@@ -32,6 +33,10 @@ class VIZ_SERVICE_EXPORT SurfaceAllocationGroup {
   SurfaceAllocationGroup(SurfaceManager* surface_manager,
                          const FrameSinkId& submitter,
                          const base::UnguessableToken& embed_token);
+
+  SurfaceAllocationGroup(const SurfaceAllocationGroup&) = delete;
+  SurfaceAllocationGroup& operator=(const SurfaceAllocationGroup&) = delete;
+
   ~SurfaceAllocationGroup();
 
   // Returns the ID of the FrameSink that is submitting to surfaces in this
@@ -113,22 +118,30 @@ class VIZ_SERVICE_EXPORT SurfaceAllocationGroup {
   // will have their dependency resolved.
   void WillNotRegisterNewSurfaces();
 
+  // Called by surfaces which are blocked by this allocation group. This will
+  // send an Ack to the latest active surface, if it has an un-Acked frame.
+  void AckLastestActiveUnAckedFrame();
+
   // Returns the last surface created in this allocation group.
   Surface* last_created_surface() const {
     return surfaces_.empty() ? nullptr : surfaces_.back();
+  }
+
+  const std::vector<raw_ptr<Surface, VectorExperimental>>& surfaces() const {
+    return surfaces_;
   }
 
  private:
   // Returns an iterator to the latest surface in |surfaces_| whose SurfaceId is
   // older than or equal to |surface_id|. The returned surface may not be active
   // yet.
-  std::vector<Surface*>::const_iterator FindLatestSurfaceUpTo(
-      const SurfaceId& surface_id) const;
+  std::vector<raw_ptr<Surface, VectorExperimental>>::const_iterator
+  FindLatestSurfaceUpTo(const SurfaceId& surface_id) const;
 
   // Returns an iterator to the latest active surface in |surfaces_| whose
   // SurfaceId is older than or equal to |surface_id|.
-  std::vector<Surface*>::const_iterator FindLatestActiveSurfaceUpTo(
-      const SurfaceId& surface_id) const;
+  std::vector<raw_ptr<Surface, VectorExperimental>>::const_iterator
+  FindLatestActiveSurfaceUpTo(const SurfaceId& surface_id) const;
 
   // Notifies SurfaceManager if this allocation group is ready for destruction
   // (see IsReadyToDestroy() for the requirements).
@@ -150,7 +163,7 @@ class VIZ_SERVICE_EXPORT SurfaceAllocationGroup {
   // The list of surfaces in this allocation group in the order of creation. The
   // parent and child sequence numbers of these surfaces is monotonically
   // increasing.
-  std::vector<Surface*> surfaces_;
+  std::vector<raw_ptr<Surface, VectorExperimental>> surfaces_;
 
   // A map from the surfaces that have an unresolved activation dependency in
   // this allocation group, to the said activation dependency.
@@ -162,7 +175,7 @@ class VIZ_SERVICE_EXPORT SurfaceAllocationGroup {
 
   // We keep a pointer to SurfaceManager so we can signal when this object is
   // ready to be destroyed.
-  SurfaceManager* const surface_manager_;
+  const raw_ptr<SurfaceManager> surface_manager_;
 
   // The last SurfaceId of this allocation group that was ever referenced by the
   // active frame of a surface.
@@ -171,8 +184,6 @@ class VIZ_SERVICE_EXPORT SurfaceAllocationGroup {
   // The last SurfaceId of this allocation group that was ever referenced by the
   // active or pending frame of a surface.
   SurfaceId last_reference_;
-
-  DISALLOW_COPY_AND_ASSIGN(SurfaceAllocationGroup);
 };
 
 }  // namespace viz

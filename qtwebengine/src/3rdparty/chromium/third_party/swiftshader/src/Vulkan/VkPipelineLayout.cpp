@@ -14,8 +14,8 @@
 
 #include "VkPipelineLayout.hpp"
 
+#include <algorithm>
 #include <atomic>
-#include <cstring>
 
 namespace vk {
 
@@ -33,6 +33,10 @@ PipelineLayout::PipelineLayout(const VkPipelineLayoutCreateInfo *pCreateInfo, vo
 
 	for(uint32_t i = 0; i < pCreateInfo->setLayoutCount; i++)
 	{
+		if(pCreateInfo->pSetLayouts[i] == VK_NULL_HANDLE)
+		{
+			continue;
+		}
 		const vk::DescriptorSetLayout *setLayout = vk::Cast(pCreateInfo->pSetLayouts[i]);
 		uint32_t bindingsArraySize = setLayout->getBindingsArraySize();
 		descriptorSets[i].bindings = bindingStorage;
@@ -53,23 +57,22 @@ PipelineLayout::PipelineLayout(const VkPipelineLayoutCreateInfo *pCreateInfo, vo
 		}
 	}
 
-	size_t pushConstantRangesSize = pCreateInfo->pushConstantRangeCount * sizeof(VkPushConstantRange);
 	pushConstantRanges = reinterpret_cast<VkPushConstantRange *>(bindingStorage);
-	memcpy(pushConstantRanges, pCreateInfo->pPushConstantRanges, pushConstantRangesSize);
+	std::copy(pCreateInfo->pPushConstantRanges, pCreateInfo->pPushConstantRanges + pCreateInfo->pushConstantRangeCount, pushConstantRanges);
 
 	incRefCount();
 }
 
 void PipelineLayout::destroy(const VkAllocationCallbacks *pAllocator)
 {
-	vk::deallocate(descriptorSets[0].bindings, pAllocator);  // pushConstantRanges are in the same allocation
+	vk::freeHostMemory(descriptorSets[0].bindings, pAllocator);  // pushConstantRanges are in the same allocation
 }
 
 bool PipelineLayout::release(const VkAllocationCallbacks *pAllocator)
 {
 	if(decRefCount() == 0)
 	{
-		vk::deallocate(descriptorSets[0].bindings, pAllocator);  // pushConstantRanges are in the same allocation
+		vk::freeHostMemory(descriptorSets[0].bindings, pAllocator);  // pushConstantRanges are in the same allocation
 		return true;
 	}
 	return false;
@@ -80,6 +83,10 @@ size_t PipelineLayout::ComputeRequiredAllocationSize(const VkPipelineLayoutCreat
 	uint32_t bindingsCount = 0;
 	for(uint32_t i = 0; i < pCreateInfo->setLayoutCount; i++)
 	{
+		if(pCreateInfo->pSetLayouts[i] == VK_NULL_HANDLE)
+		{
+			continue;
+		}
 		bindingsCount += vk::Cast(pCreateInfo->pSetLayouts[i])->getBindingsArraySize();
 	}
 

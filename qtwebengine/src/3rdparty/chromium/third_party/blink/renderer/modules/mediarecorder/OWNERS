@@ -1,10 +1,7 @@
-guidou@chromium.org
+file://media/OWNERS
 handellm@google.com
-peter@chromium.org
+hiroh@chromium.org
+guidou@chromium.org
 
 # Original (legacy) owner.
-emircan@chromium.org
 mcasas@chromium.org
-
-# COMPONENT: Blink>MediaRecording
-# TEAM: media-dev@chromium.org

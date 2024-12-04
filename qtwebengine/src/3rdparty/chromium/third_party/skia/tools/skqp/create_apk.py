@@ -11,8 +11,8 @@ script.  For example:
 
     python create_apk.py arm x86
 
-The environment variables ANDROID_NDK and ANDROID_HOME must be set to the
-locations of the Android NDK and SDK.
+The environment variables ANDROID_NDK_HOME and ANDROID_HOME must be set to
+the locations of the Android NDK and SDK.
 
 Additionally, `ninja` should be in your path.
 
@@ -39,6 +39,7 @@ import sys
 import shutil
 import time
 
+sys.path.append(os.path.abspath(os.path.dirname(os.path.abspath(__file__)) + "../../../gn"))
 import skqp_gn_args
 
 def print_cmd(cmd, o):
@@ -124,7 +125,7 @@ def create_apk_impl(opts):
 
     apps_dir = 'platform_tools/android/apps'
     app = 'skqp'
-    lib = 'lib%s_app.so' % app
+    lib = 'lib%s_jni.so' % app
 
     # These are the locations in the tree where the gradle needs or will create
     # not-checked-in files.  Treat them specially to keep the tree clean.
@@ -198,10 +199,10 @@ class SkQP_Build_Options(object):
         self.error = ''
         if not check_ninja():
             self.error += '`ninja` is not in the path.\n'
-        for var in ['ANDROID_NDK', 'ANDROID_HOME']:
+        for var in ['ANDROID_NDK_HOME', 'ANDROID_HOME']:
             if not os.path.exists(os.environ.get(var, '')):
                 self.error += 'Environment variable `%s` is not set.\n' % var
-        self.android_ndk = os.path.abspath(os.environ['ANDROID_NDK'])
+        self.android_ndk = os.path.abspath(os.environ['ANDROID_NDK_HOME'])
         self.android_home = os.path.abspath(os.environ['ANDROID_HOME'])
         args = sys.argv[1:]
         for arg in args:
@@ -215,10 +216,11 @@ class SkQP_Build_Options(object):
         self.debug = bool(os.environ.get('SKQP_DEBUG', ''))
 
     def gn_args(self, arch):
-        return skqp_gn_args.GetGNArgs(arch, self.android_ndk, self.debug, 26)
+        return skqp_gn_args.GetGNArgs(arch=arch, ndk=self.android_ndk, debug=self.debug,
+                                      api_level=26)
 
     def write(self, o):
-        for k, v in [('ANDROID_NDK', self.android_ndk),
+        for k, v in [('ANDROID_NDK_HOME', self.android_ndk),
                      ('ANDROID_HOME', self.android_home),
                      ('SKQP_OUTPUT_DIR', self.final_output_dir),
                      ('SKQP_BUILD_DIR', self.build_dir),

@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,8 +6,7 @@
 #define CONTENT_COMMON_INPUT_EVENT_WITH_LATENCY_INFO_H_
 
 #include "base/check_op.h"
-#include "base/compiler_specific.h"
-#include "content/common/content_export.h"
+#include "content/public/common/input/native_web_keyboard_event.h"
 #include "third_party/blink/public/common/input/web_gesture_event.h"
 #include "third_party/blink/public/common/input/web_mouse_wheel_event.h"
 #include "third_party/blink/public/common/input/web_touch_event.h"
@@ -36,8 +35,7 @@ class EventWithLatencyInfo {
 
   EventWithLatencyInfo() {}
 
-  bool CanCoalesceWith(const EventWithLatencyInfo& other)
-      const WARN_UNUSED_RESULT {
+  [[nodiscard]] bool CanCoalesceWith(const EventWithLatencyInfo& other) const {
     if (other.event.GetType() != event.GetType())
       return false;
 
@@ -71,6 +69,9 @@ typedef EventWithLatencyInfo<blink::WebMouseEvent>
     MouseEventWithLatencyInfo;
 typedef EventWithLatencyInfo<blink::WebTouchEvent>
     TouchEventWithLatencyInfo;
+
+typedef EventWithLatencyInfo<NativeWebKeyboardEvent>
+    NativeWebKeyboardEventWithLatencyInfo;
 
 }  // namespace content
 

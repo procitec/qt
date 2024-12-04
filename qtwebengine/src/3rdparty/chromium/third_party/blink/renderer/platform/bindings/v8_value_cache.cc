@@ -27,6 +27,7 @@
 
 #include <utility>
 #include "third_party/blink/renderer/platform/bindings/runtime_call_stats.h"
+#include "third_party/blink/renderer/platform/bindings/string_resource.h"
 #include "third_party/blink/renderer/platform/bindings/v8_binding.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_hash.h"
 
@@ -200,8 +201,8 @@ v8::Local<v8::String> StringCache::CreateStringAndInsertIntoCache(
   DCHECK(!string_cache_.Contains(string_impl));
   DCHECK(string_impl->length());
 
-  v8::Local<v8::String> new_string =
-      MakeExternalString(isolate, String(string_impl));
+  String blink_string(string_impl);
+  v8::Local<v8::String> new_string = MakeExternalString(isolate, blink_string);
   DCHECK(!new_string.IsEmpty());
   DCHECK(new_string->Length());
 
@@ -209,7 +210,7 @@ v8::Local<v8::String> StringCache::CreateStringAndInsertIntoCache(
 
   string_impl->AddRef();
   string_cache_.Set(string_impl, std::move(wrapper), &last_v8_string_);
-  last_string_impl_ = string_impl;
+  last_string_impl_ = blink_string.ReleaseImpl();
 
   return new_string;
 }

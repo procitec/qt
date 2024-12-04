@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,28 +7,31 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/views/controls/menu/menu_item_view.h"
 #include "ui/views/controls/menu/menu_runner.h"
+#include "ui/views/test/views_test_base.h"
 
 namespace views {
 
-TEST(SubmenuViewTest, GetLastItem) {
-  MenuItemView* parent = new MenuItemView();
-  MenuRunner menu_runner(parent, 0);
+using SubmenuViewTest = ViewsTestBase;
+
+TEST_F(SubmenuViewTest, GetLastItem) {
+  auto parent_owning = std::make_unique<MenuItemView>();
+  MenuItemView* parent = parent_owning.get();
+  MenuRunner menu_runner(std::move(parent_owning), 0);
 
   SubmenuView* submenu = parent->CreateSubmenu();
   EXPECT_EQ(nullptr, submenu->GetLastItem());
 
-  submenu->AddChildView(new View());
+  submenu->AddChildView(std::make_unique<View>());
   EXPECT_EQ(nullptr, submenu->GetLastItem());
 
-  MenuItemView* first = new MenuItemView();
-  submenu->AddChildView(first);
+  MenuItemView* first = submenu->AddChildView(std::make_unique<MenuItemView>());
   EXPECT_EQ(first, submenu->GetLastItem());
 
-  submenu->AddChildView(new View());
+  submenu->AddChildView(std::make_unique<View>());
   EXPECT_EQ(first, submenu->GetLastItem());
 
-  MenuItemView* second = new MenuItemView();
-  submenu->AddChildView(second);
+  MenuItemView* second =
+      submenu->AddChildView(std::make_unique<MenuItemView>());
   EXPECT_EQ(second, submenu->GetLastItem());
 }
 

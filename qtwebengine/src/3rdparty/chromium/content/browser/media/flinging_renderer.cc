@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,11 +7,11 @@
 #include <utility>
 
 #include "base/memory/ptr_util.h"
-#include "content/browser/renderer_host/render_frame_host_delegate.h"
-#include "content/browser/renderer_host/render_frame_host_impl.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/presentation_service_delegate.h"
 #include "content/public/browser/render_frame_host.h"
+#include "content/public/browser/render_process_host.h"
+#include "content/public/browser/web_contents.h"
 #include "content/public/common/content_client.h"
 
 namespace content {
@@ -45,9 +45,7 @@ std::unique_ptr<FlingingRenderer> FlingingRenderer::Create(
 
   ControllerPresentationServiceDelegate* presentation_delegate =
       browser_client->GetControllerPresentationServiceDelegate(
-          static_cast<RenderFrameHostImpl*>(render_frame_host)
-              ->delegate()
-              ->GetAsWebContents());
+          WebContents::FromRenderFrameHost(render_frame_host));
 
   if (!presentation_delegate)
     return nullptr;
@@ -73,7 +71,7 @@ void FlingingRenderer::Initialize(media::MediaResource* media_resource,
 }
 
 void FlingingRenderer::SetLatencyHint(
-    base::Optional<base::TimeDelta> latency_hint) {}
+    std::optional<base::TimeDelta> latency_hint) {}
 
 void FlingingRenderer::Flush(base::OnceClosure flush_cb) {
   DVLOG(2) << __func__;
@@ -102,10 +100,10 @@ void FlingingRenderer::StartPlayingFrom(base::TimeDelta time) {
 void FlingingRenderer::SetPlaybackRate(double playback_rate) {
   DVLOG(2) << __func__;
   if (playback_rate == 0) {
-    SetExpectedPlayState(PlayState::PAUSED);
+    SetExpectedPlayState(PlayState::kPaused);
     controller_->GetMediaController()->Pause();
   } else {
-    SetExpectedPlayState(PlayState::PLAYING);
+    SetExpectedPlayState(PlayState::kPlaying);
     controller_->GetMediaController()->Play();
   }
 }
@@ -119,9 +117,13 @@ base::TimeDelta FlingingRenderer::GetMediaTime() {
   return controller_->GetApproximateCurrentTime();
 }
 
+media::RendererType FlingingRenderer::GetRendererType() {
+  return media::RendererType::kFlinging;
+}
+
 void FlingingRenderer::SetExpectedPlayState(PlayState state) {
   DVLOG(3) << __func__ << " : state " << static_cast<int>(state);
-  DCHECK(state == PlayState::PLAYING || state == PlayState::PAUSED);
+  DCHECK(state == PlayState::kPlaying || state == PlayState::kPaused);
 
   expected_play_state_ = state;
   play_state_is_stable_ = (expected_play_state_ == last_play_state_received_);
@@ -151,8 +153,8 @@ void FlingingRenderer::OnMediaStatusUpdated(const media::MediaStatus& status) {
   // UNKNOWN and BUFFERING states are uninteresting and can be safely ignored.
   // STOPPED normally causes the session to teardown, and |this| is destroyed
   // shortly after.
-  if (current_state != PlayState::PLAYING &&
-      current_state != PlayState::PAUSED) {
+  if (current_state != PlayState::kPlaying &&
+      current_state != PlayState::kPaused) {
     DVLOG(3) << __func__ << " : external state ignored: "
              << static_cast<int>(current_state);
     return;

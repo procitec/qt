@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,11 +11,9 @@
 #include <string>
 
 #include "base/gtest_prod_util.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/threading/thread_checker.h"
 #include "chrome/browser/media/router/discovery/mdns/dns_sd_registry.h"
-#include "chrome/common/extensions/api/mdns.h"
-#include "extensions/browser/api/async_api_function.h"
 #include "extensions/browser/browser_context_keyed_api_factory.h"
 #include "extensions/browser/event_router.h"
 #include "extensions/browser/extension_function.h"
@@ -34,6 +32,10 @@ class MDnsAPI : public BrowserContextKeyedAPI,
                 public media_router::DnsSdRegistry::DnsSdObserver {
  public:
   explicit MDnsAPI(content::BrowserContext* context);
+
+  MDnsAPI(const MDnsAPI&) = delete;
+  MDnsAPI& operator=(const MDnsAPI&) = delete;
+
   ~MDnsAPI() override;
 
   static MDnsAPI* Get(content::BrowserContext* context);
@@ -74,9 +76,7 @@ class MDnsAPI : public BrowserContextKeyedAPI,
       const media_router::DnsSdRegistry::DnsSdServiceList& services) override;
 
   // BrowserContextKeyedAPI implementation.
-  static const char* service_name() {
-    return "MDnsAPI";
-  }
+  static const char* service_name() { return "MDnsAPI"; }
 
   static const bool kServiceIsCreatedWithBrowserContext = true;
   static const bool kServiceIsNULLWhileTesting = true;
@@ -91,9 +91,8 @@ class MDnsAPI : public BrowserContextKeyedAPI,
                       const std::string& message);
 
   // Returns true if an extension or platform app |extension_id| is allowed to
-  // listen to mDNS events for |service_type|.
-  virtual bool IsMDnsAllowed(const std::string& extension_id,
-                             const std::string& service_type) const;
+  // listen to mDNS events.
+  virtual bool IsMDnsAllowed(const std::string& extension_id) const;
 
   // Finds all all the valid listeners of the mdns.onServiceList event and
   // filters them by service type if |service_type_filter| is non-empty.
@@ -107,30 +106,31 @@ class MDnsAPI : public BrowserContextKeyedAPI,
 
   // Ensure methods are only called on UI thread.
   base::ThreadChecker thread_checker_;
-  content::BrowserContext* const browser_context_;
+  const raw_ptr<content::BrowserContext> browser_context_;
   // Raw pointer to a leaky singleton. Lazily created on first access. Must
   // outlive this object.
-  media_router::DnsSdRegistry* dns_sd_registry_;
+  raw_ptr<media_router::DnsSdRegistry> dns_sd_registry_;
   // Count of active listeners per service type, saved from the previous
   // invocation of UpdateMDnsListeners().
   ServiceTypeCounts prev_service_counts_;
-
-  DISALLOW_COPY_AND_ASSIGN(MDnsAPI);
 };
 
 class MdnsForceDiscoveryFunction : public ExtensionFunction {
  public:
-  MdnsForceDiscoveryFunction();
+  MdnsForceDiscoveryFunction() = default;
+
+  MdnsForceDiscoveryFunction(const MdnsForceDiscoveryFunction&) = delete;
+  MdnsForceDiscoveryFunction& operator=(const MdnsForceDiscoveryFunction&) =
+      delete;
 
  protected:
-  ~MdnsForceDiscoveryFunction() override;
+  ~MdnsForceDiscoveryFunction() override = default;
 
  private:
   // ExtensionFunction override.
   ResponseAction Run() override;
 
   DECLARE_EXTENSION_FUNCTION("mdns.forceDiscovery", MDNS_FORCEDISCOVERY)
-  DISALLOW_COPY_AND_ASSIGN(MdnsForceDiscoveryFunction);
 };
 
 }  // namespace extensions

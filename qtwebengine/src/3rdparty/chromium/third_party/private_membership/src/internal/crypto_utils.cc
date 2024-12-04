@@ -14,7 +14,8 @@
 
 #include "third_party/private_membership/src/internal/crypto_utils.h"
 
-#include "absl/strings/str_cat.h"
+#include <string>
+
 #include "third_party/private_membership/src/internal/aes_ctr_256_with_fixed_iv.h"
 #include "third_party/private_membership/src/internal/id_utils.h"
 #include "third_party/shell-encryption/src/status_macros.h"
@@ -72,23 +73,24 @@ std::string LengthToBytes(uint32_t length) {
 }
 
 std::string HashEncryptedId(absl::string_view encrypted_id,
-                            private_join_and_compute::Context* ctx) {
+                            ::private_join_and_compute::Context* ctx) {
   // Salt used in SHA256 hash function for creating sensitive matching
   // identifier. Randomly generated salt forcing adversaries to re-compute
   // rainbow tables.
-  static constexpr char kSensitiveIdHashSalt[] = {
+  static constexpr unsigned char kSensitiveIdHashSalt[] = {
       0x3C, 0xD1, 0xF3, 0x69, 0x2B, 0x57, 0x40, 0xEA, 0xD8, 0xE4, 0xF4,
       0x4A, 0xB2, 0x5F, 0x7B, 0xAD, 0xC8, 0x10, 0xAA, 0x3D, 0x4C, 0x6E,
       0xCA, 0x57, 0x78, 0x5C, 0x5A, 0xED, 0x06, 0x81, 0x14, 0x7C};
-  return ctx->Sha256String(
-      absl::StrCat(std::string(kSensitiveIdHashSalt, 32), encrypted_id));
+  return ctx->Sha256String(absl::StrCat(
+      std::string(reinterpret_cast<const char*>(kSensitiveIdHashSalt), 32),
+      encrypted_id));
 }
 
 ::rlwe::StatusOr<std::string> GetValueEncryptionKey(
-    absl::string_view encrypted_id, private_join_and_compute::Context* ctx) {
+    absl::string_view encrypted_id, ::private_join_and_compute::Context* ctx) {
   // Salt user in SHA256 hash function to generate value encryption key.
   // Randomly generated salt forcing adversaries to re-compute rainbow tables.
-  static constexpr char kValueEncryptionKeyHashSalt[] = {
+  static constexpr unsigned char kValueEncryptionKeyHashSalt[] = {
       0x89, 0xC3, 0x67, 0xA7, 0x8A, 0x68, 0x2B, 0xE8, 0xC6, 0xB2, 0x22,
       0xB7, 0xE0, 0xB7, 0x4A, 0x37, 0x63, 0x8F, 0x10, 0x79, 0x98, 0x91,
       0x31, 0x94, 0x44, 0x03, 0xB6, 0x76, 0x8F, 0x70, 0xEB, 0xBF};
@@ -96,14 +98,16 @@ std::string HashEncryptedId(absl::string_view encrypted_id,
   static constexpr int kRequiredAesKeyLength = 32;
   return PadOrTruncate(
       ctx->Sha256String(absl::StrCat(
-          std::string(kValueEncryptionKeyHashSalt, 32), encrypted_id)),
+          std::string(
+              reinterpret_cast<const char*>(kValueEncryptionKeyHashSalt), 32),
+          encrypted_id)),
       kRequiredAesKeyLength);
 }
 
 ::rlwe::StatusOr<std::string> EncryptValue(absl::string_view encrypted_id,
                                            absl::string_view value,
                                            uint32_t max_value_byte_length,
-                                           private_join_and_compute::Context* ctx) {
+                                           ::private_join_and_compute::Context* ctx) {
   if (value.length() > max_value_byte_length) {
     return absl::InvalidArgumentError(absl::StrCat(
         "Length of value ", value.length(), " larger than maximum value byte ",
@@ -120,12 +124,17 @@ std::string HashEncryptedId(absl::string_view encrypted_id,
 
 ::rlwe::StatusOr<std::string> DecryptValue(absl::string_view encrypted_id,
                                            absl::string_view encrypted_value,
-                                           private_join_and_compute::Context* ctx) {
+                                           ::private_join_and_compute::Context* ctx) {
   RLWE_ASSIGN_OR_RETURN(auto value_encryption_key,
                         GetValueEncryptionKey(encrypted_id, ctx));
-  RLWE_ASSIGN_OR_RETURN(auto aes_ctr,
-                        AesCtr256WithFixedIV::Create(value_encryption_key));
+  return DecryptValueWithKey(value_encryption_key, encrypted_value, ctx);
+}
 
+::rlwe::StatusOr<std::string> DecryptValueWithKey(
+    absl::string_view encryption_key, absl::string_view encrypted_value,
+    ::private_join_and_compute::Context* ctx) {
+  RLWE_ASSIGN_OR_RETURN(auto aes_ctr,
+                        AesCtr256WithFixedIV::Create(encryption_key));
   RLWE_ASSIGN_OR_RETURN(std::string plaintext,
                         aes_ctr->Decrypt(encrypted_value));
   return Unpad(plaintext);

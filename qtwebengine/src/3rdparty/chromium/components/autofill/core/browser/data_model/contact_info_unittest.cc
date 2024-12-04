@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,11 +7,10 @@
 #include <stddef.h>
 
 #include "base/format_macros.h"
-#include "base/macros.h"
 #include "base/strings/string_util.h"
-#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/scoped_feature_list.h"
+#include "components/autofill/core/browser/autofill_test_utils.h"
 #include "components/autofill/core/browser/autofill_type.h"
 #include "components/autofill/core/browser/data_model/autofill_profile.h"
 #include "components/autofill/core/browser/data_model/autofill_structured_address_utils.h"
@@ -23,8 +22,6 @@ using base::ASCIIToUTF16;
 using base::UTF8ToUTF16;
 
 namespace autofill {
-
-using structured_address::VerificationStatus;
 
 struct FullNameTestCase {
   std::string full_name_input;
@@ -42,7 +39,7 @@ TEST_P(SetFullNameTest, SetFullName) {
   NameInfo name;
   name.SetInfo(AutofillType(NAME_FULL), ASCIIToUTF16(test_case.full_name_input),
                "en-US");
-  name.FinalizeAfterImport();
+  EXPECT_TRUE(name.FinalizeAfterImport());
   EXPECT_EQ(ASCIIToUTF16(test_case.given_name_output),
             name.GetInfo(AutofillType(NAME_FIRST), "en-US"));
   EXPECT_EQ(ASCIIToUTF16(test_case.middle_name_output),
@@ -53,48 +50,45 @@ TEST_P(SetFullNameTest, SetFullName) {
             name.GetInfo(AutofillType(NAME_FULL), "en-US"));
 }
 
-TEST(NameInfoTest, GetMatchingTypesForStructuredName) {
-  base::test::ScopedFeatureList structured_name_feature;
-  structured_name_feature.InitAndEnableFeature(
-      features::kAutofillEnableSupportForMoreStructureInNames);
-
+TEST(NameInfoTest, GetMatchingTypes) {
   NameInfo name;
-  name.SetRawInfoWithVerificationStatus(
-      NAME_FULL, base::ASCIIToUTF16("Mr. Pablo Diego Ruiz y Picasso"),
-      VerificationStatus::kObserved);
+
+  test::FormGroupValues name_values = {
+      {.type = NAME_FULL,
+       .value = "Pablo Diego Ruiz y Picasso",
+       .verification_status = VerificationStatus::kObserved}};
+  test::SetFormGroupValues(name, name_values);
   name.FinalizeAfterImport();
 
-  // TODO(crbug.com/1113617): Honorifics are temporally disabled.
-  // EXPECT_EQ(name.GetRawInfo(NAME_HONORIFIC_PREFIX),
-  // base::ASCIIToUTF16("Mr."));
-  EXPECT_EQ(name.GetRawInfo(NAME_FIRST), base::ASCIIToUTF16("Pablo Diego"));
-  EXPECT_EQ(name.GetRawInfo(NAME_MIDDLE), base::ASCIIToUTF16(""));
-  EXPECT_EQ(name.GetRawInfo(NAME_LAST), base::ASCIIToUTF16("Ruiz y Picasso"));
-  EXPECT_EQ(name.GetRawInfo(NAME_LAST_FIRST), base::ASCIIToUTF16("Ruiz"));
-  EXPECT_EQ(name.GetRawInfo(NAME_LAST_SECOND), base::ASCIIToUTF16("Picasso"));
-  EXPECT_EQ(name.GetRawInfo(NAME_LAST_CONJUNCTION), base::ASCIIToUTF16("y"));
+  test::FormGroupValues expectation = {
+      {.type = NAME_FIRST,
+       .value = "Pablo Diego",
+       .verification_status = VerificationStatus::kParsed},
+      {.type = NAME_MIDDLE,
+       .value = "",
+       .verification_status = VerificationStatus::kParsed},
+      {.type = NAME_LAST,
+       .value = "Ruiz y Picasso",
+       .verification_status = VerificationStatus::kParsed},
+      {.type = NAME_LAST_FIRST,
+       .value = "Ruiz",
+       .verification_status = VerificationStatus::kParsed},
+      {.type = NAME_LAST_SECOND,
+       .value = "Picasso",
+       .verification_status = VerificationStatus::kParsed},
+      {.type = NAME_LAST_CONJUNCTION,
+       .value = "y",
+       .verification_status = VerificationStatus::kParsed}};
 
-  // TODO(crbug.com/1113617): Honorifics are temporally disabled.
-  // EXPECT_EQ(name.GetVerificationStatus(NAME_HONORIFIC_PREFIX),
-  //          VerificationStatus::kParsed);
-  EXPECT_EQ(name.GetVerificationStatus(NAME_FIRST),
-            VerificationStatus::kParsed);
-  EXPECT_EQ(name.GetVerificationStatus(NAME_MIDDLE),
-            VerificationStatus::kParsed);
-  EXPECT_EQ(name.GetVerificationStatus(NAME_LAST), VerificationStatus::kParsed);
-  EXPECT_EQ(name.GetVerificationStatus(NAME_LAST_FIRST),
-            VerificationStatus::kParsed);
-  EXPECT_EQ(name.GetVerificationStatus(NAME_LAST_SECOND),
-            VerificationStatus::kParsed);
-  EXPECT_EQ(name.GetVerificationStatus(NAME_LAST_CONJUNCTION),
-            VerificationStatus::kParsed);
+  test::VerifyFormGroupValues(name, expectation);
 
-  ServerFieldTypeSet matching_types;
-  name.GetMatchingTypes(base::ASCIIToUTF16("Ruiz"), "US", &matching_types);
-  EXPECT_EQ(matching_types, ServerFieldTypeSet({NAME_LAST_FIRST}));
+  FieldTypeSet matching_types;
+  name.GetMatchingTypes(u"Ruiz", "US", &matching_types);
+  EXPECT_EQ(matching_types, FieldTypeSet({NAME_LAST_FIRST}));
 
-  name.GetMatchingTypes(base::ASCIIToUTF16("Mr."), "US", &matching_types);
-  EXPECT_EQ(matching_types, ServerFieldTypeSet({NAME_LAST_FIRST}));
+  // The honorific prefix is ignored.
+  name.GetMatchingTypes(u"Mr.", "US", &matching_types);
+  EXPECT_EQ(matching_types, FieldTypeSet({NAME_LAST_FIRST}));
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -113,244 +107,52 @@ INSTANTIATE_TEST_SUITE_P(
         FullNameTestCase{"Mr. John Smith MD", "John", "", "Smith"},
         FullNameTestCase{"William Hubert J.R.", "William", "Hubert", "J.R."},
         FullNameTestCase{"John Ma", "John", "", "Ma"},
-        !structured_address::StructuredNamesEnabled()
-            ? FullNameTestCase{"John Jacob Jingleheimer Smith", "John Jacob",
-                               "Jingleheimer", "Smith"}
-            : FullNameTestCase{"John Jacob Jingleheimer Smith", "John",
-                               "Jacob Jingleheimer", "Smith"},
-        !structured_address::StructuredNamesEnabled()
-            ? FullNameTestCase{"Virgil", "Virgil", "", ""}
-            : FullNameTestCase{"Virgil", "", "", "Virgil"},
+        FullNameTestCase{"John Jacob Jingleheimer Smith", "John",
+                         "Jacob Jingleheimer", "Smith"},
+        FullNameTestCase{"Virgil", "", "", "Virgil"},
         FullNameTestCase{"Murray Gell-Mann", "Murray", "", "Gell-Mann"},
         FullNameTestCase{"Mikhail Yevgrafovich Saltykov-Shchedrin", "Mikhail",
                          "Yevgrafovich", "Saltykov-Shchedrin"},
-        !structured_address::StructuredNamesEnabled()
-            ? FullNameTestCase{"Arthur Ignatius Conan Doyle", "Arthur Ignatius",
-                               "Conan", "Doyle"}
-            : FullNameTestCase{"Arthur Ignatius Conan Doyle", "Arthur",
-                               "Ignatius Conan", "Doyle"}));
+        FullNameTestCase{"Arthur Ignatius Conan Doyle", "Arthur",
+                         "Ignatius Conan", "Doyle"},
+        FullNameTestCase{"Pablo Diego Ruiz y Picasso", "Pablo Diego", "",
+                         "Ruiz y Picasso"}));
 
-TEST(NameInfoTest, GetFullName) {
-  // This test is not applicable to more-structured names because the logic of
-  // handling the duality between first,middle,last and the full name works
-  // differently.
-  if (structured_address::StructuredNamesEnabled())
-    return;
-
-  NameInfo name;
-  name.SetRawInfo(NAME_FIRST, ASCIIToUTF16("First"));
-  name.SetRawInfo(NAME_MIDDLE, base::string16());
-  name.SetRawInfo(NAME_LAST, base::string16());
-  name.FinalizeAfterImport();
-  EXPECT_EQ(ASCIIToUTF16("First"), name.GetRawInfo(NAME_FIRST));
-  EXPECT_EQ(base::string16(), name.GetRawInfo(NAME_MIDDLE));
-  EXPECT_EQ(base::string16(), name.GetRawInfo(NAME_LAST));
-  // For structured names, the full must contain all of its subcomponents.
-  EXPECT_EQ(structured_address::StructuredNamesEnabled() ? ASCIIToUTF16("First")
-                                                         : base::string16(),
-            name.GetRawInfo(NAME_FULL));
-  EXPECT_EQ(ASCIIToUTF16("First"),
-            name.GetInfo(AutofillType(NAME_FULL), "en-US"));
-
-  name = NameInfo();
-  name.SetRawInfo(NAME_FIRST, base::string16());
-  name.SetRawInfo(NAME_MIDDLE, ASCIIToUTF16("Middle"));
-  name.SetRawInfo(NAME_LAST, base::string16());
-  name.FinalizeAfterImport();
-  EXPECT_EQ(base::string16(), name.GetRawInfo(NAME_FIRST));
-  EXPECT_EQ(ASCIIToUTF16("Middle"), name.GetRawInfo(NAME_MIDDLE));
-  EXPECT_EQ(base::string16(), name.GetRawInfo(NAME_LAST));
-  EXPECT_EQ(base::string16(), name.GetRawInfo(NAME_FULL));
-  EXPECT_EQ(ASCIIToUTF16("Middle"),
-            name.GetInfo(AutofillType(NAME_FULL), "en-US"));
-
-  name = NameInfo();
-  name.SetRawInfo(NAME_FIRST, base::string16());
-  name.SetRawInfo(NAME_MIDDLE, base::string16());
-  name.SetRawInfo(NAME_LAST, ASCIIToUTF16("Last"));
-  name.FinalizeAfterImport();
-  EXPECT_EQ(base::string16(), name.GetRawInfo(NAME_FIRST));
-  EXPECT_EQ(base::string16(), name.GetRawInfo(NAME_MIDDLE));
-  EXPECT_EQ(ASCIIToUTF16("Last"), name.GetRawInfo(NAME_LAST));
-  EXPECT_EQ(base::string16(), name.GetRawInfo(NAME_FULL));
-  EXPECT_EQ(ASCIIToUTF16("Last"),
-            name.GetInfo(AutofillType(NAME_FULL), "en-US"));
-
-  name = NameInfo();
-  name.SetRawInfo(NAME_FIRST, ASCIIToUTF16("First"));
-  name.SetRawInfo(NAME_MIDDLE, ASCIIToUTF16("Middle"));
-  name.SetRawInfo(NAME_LAST, base::string16());
-  name.FinalizeAfterImport();
-  EXPECT_EQ(ASCIIToUTF16("First"), name.GetRawInfo(NAME_FIRST));
-  EXPECT_EQ(ASCIIToUTF16("Middle"), name.GetRawInfo(NAME_MIDDLE));
-  EXPECT_EQ(base::string16(), name.GetRawInfo(NAME_LAST));
-  EXPECT_EQ(base::string16(), name.GetRawInfo(NAME_FULL));
-  EXPECT_EQ(ASCIIToUTF16("First Middle"),
-            name.GetInfo(AutofillType(NAME_FULL), "en-US"));
-
-  name = NameInfo();
-  name.SetRawInfo(NAME_FIRST, ASCIIToUTF16("First"));
-  name.SetRawInfo(NAME_MIDDLE, base::string16());
-  name.SetRawInfo(NAME_LAST, ASCIIToUTF16("Last"));
-  name.FinalizeAfterImport();
-  EXPECT_EQ(ASCIIToUTF16("First"), name.GetRawInfo(NAME_FIRST));
-  EXPECT_EQ(base::string16(), name.GetRawInfo(NAME_MIDDLE));
-  EXPECT_EQ(ASCIIToUTF16("Last"), name.GetRawInfo(NAME_LAST));
-  EXPECT_EQ(base::string16(), name.GetRawInfo(NAME_FULL));
-  EXPECT_EQ(ASCIIToUTF16("First Last"),
-            name.GetInfo(AutofillType(NAME_FULL), "en-US"));
-
-  name = NameInfo();
-  name.SetRawInfo(NAME_FIRST, base::string16());
-  name.SetRawInfo(NAME_MIDDLE, ASCIIToUTF16("Middle"));
-  name.SetRawInfo(NAME_LAST, ASCIIToUTF16("Last"));
-  name.FinalizeAfterImport();
-  EXPECT_EQ(base::string16(), name.GetRawInfo(NAME_FIRST));
-  EXPECT_EQ(ASCIIToUTF16("Middle"), name.GetRawInfo(NAME_MIDDLE));
-  EXPECT_EQ(ASCIIToUTF16("Last"), name.GetRawInfo(NAME_LAST));
-  EXPECT_EQ(base::string16(), name.GetRawInfo(NAME_FULL));
-  EXPECT_EQ(ASCIIToUTF16("Middle Last"),
-            name.GetInfo(AutofillType(NAME_FULL), "en-US"));
-
-  name = NameInfo();
-  name.SetRawInfo(NAME_FIRST, ASCIIToUTF16("First"));
-  name.SetRawInfo(NAME_MIDDLE, ASCIIToUTF16("Middle"));
-  name.SetRawInfo(NAME_LAST, ASCIIToUTF16("Last"));
-  name.FinalizeAfterImport();
-  EXPECT_EQ(ASCIIToUTF16("First"), name.GetRawInfo(NAME_FIRST));
-  EXPECT_EQ(ASCIIToUTF16("Middle"), name.GetRawInfo(NAME_MIDDLE));
-  EXPECT_EQ(ASCIIToUTF16("Last"), name.GetRawInfo(NAME_LAST));
-  EXPECT_EQ(base::string16(), name.GetRawInfo(NAME_FULL));
-  EXPECT_EQ(ASCIIToUTF16("First Middle Last"),
-            name.GetInfo(AutofillType(NAME_FULL), "en-US"));
-
-  name.SetRawInfo(NAME_FULL, ASCIIToUTF16("First Middle Last, MD"));
-  EXPECT_EQ(name.GetRawInfo(NAME_FIRST), ASCIIToUTF16("First"));
-  EXPECT_EQ(name.GetRawInfo(NAME_MIDDLE), ASCIIToUTF16("Middle"));
-  EXPECT_EQ(name.GetRawInfo(NAME_LAST), ASCIIToUTF16("Last"));
-  EXPECT_EQ(name.GetRawInfo(NAME_FULL), ASCIIToUTF16("First Middle Last, MD"));
-  EXPECT_EQ(ASCIIToUTF16("First Middle Last, MD"),
-            name.GetInfo(AutofillType(NAME_FULL), "en-US"));
-
-  // Setting a name to the value it already has: no change.
-  name.SetInfo(AutofillType(NAME_FIRST), ASCIIToUTF16("First"), "en-US");
-  EXPECT_EQ(name.GetRawInfo(NAME_FIRST), ASCIIToUTF16("First"));
-  EXPECT_EQ(name.GetRawInfo(NAME_MIDDLE), ASCIIToUTF16("Middle"));
-  EXPECT_EQ(name.GetRawInfo(NAME_LAST), ASCIIToUTF16("Last"));
-  EXPECT_EQ(name.GetRawInfo(NAME_FULL), ASCIIToUTF16("First Middle Last, MD"));
-  EXPECT_EQ(ASCIIToUTF16("First Middle Last, MD"),
-            name.GetInfo(AutofillType(NAME_FULL), "en-US"));
-
-  // Setting raw info: no change. (Even though this leads to a slightly
-  // inconsistent state.)
-  name.SetRawInfo(NAME_FIRST, ASCIIToUTF16("Second"));
-  EXPECT_EQ(name.GetRawInfo(NAME_FIRST), ASCIIToUTF16("Second"));
-  EXPECT_EQ(name.GetRawInfo(NAME_MIDDLE), ASCIIToUTF16("Middle"));
-  EXPECT_EQ(name.GetRawInfo(NAME_LAST), ASCIIToUTF16("Last"));
-  EXPECT_EQ(name.GetRawInfo(NAME_FULL), ASCIIToUTF16("First Middle Last, MD"));
-  EXPECT_EQ(ASCIIToUTF16("First Middle Last, MD"),
-            name.GetInfo(AutofillType(NAME_FULL), "en-US"));
-
-  // Changing something (e.g., the first name) clears the stored full name.
-  name.SetInfo(AutofillType(NAME_FIRST), ASCIIToUTF16("Third"), "en-US");
-  EXPECT_EQ(name.GetRawInfo(NAME_FIRST), ASCIIToUTF16("Third"));
-  EXPECT_EQ(name.GetRawInfo(NAME_MIDDLE), ASCIIToUTF16("Middle"));
-  EXPECT_EQ(name.GetRawInfo(NAME_LAST), ASCIIToUTF16("Last"));
-  EXPECT_EQ(ASCIIToUTF16("Third Middle Last"),
-            name.GetInfo(AutofillType(NAME_FULL), "en-US"));
+TEST(CompanyTest, SetRawInfo) {
+  CompanyInfo company;
+  company.SetRawInfo(COMPANY_NAME, u"Google");
+  EXPECT_EQ(company.GetRawInfo(COMPANY_NAME), u"Google");
 }
 
-TEST(CompanyTest, CompanyName) {
-  AutofillProfile profile;
-  CompanyInfo company(&profile);
-  ASSERT_FALSE(profile.IsVerified());
-
-  auto SetAndGetCompany = [&company](const char* company_name) mutable {
-    company.SetRawInfo(COMPANY_NAME, UTF8ToUTF16(company_name));
-    return base::UTF16ToUTF8(company.GetRawInfo(COMPANY_NAME));
+TEST(CompanyTest, IsValid) {
+  auto set_and_validate = [](const std::u16string& company_name) {
+    CompanyInfo company;
+    company.SetRawInfo(COMPANY_NAME, company_name);
+    return company.IsValid();
   };
 
-  EXPECT_EQ(SetAndGetCompany("Google"), "Google");
-  EXPECT_EQ(SetAndGetCompany("1818"), "1818");
-  EXPECT_EQ(SetAndGetCompany("1987"), "");
-  EXPECT_EQ(SetAndGetCompany("2019"), "");
-  EXPECT_EQ(SetAndGetCompany("2345"), "2345");
-  EXPECT_EQ(SetAndGetCompany("It was 1987."), "It was 1987.");
-  EXPECT_EQ(SetAndGetCompany("1987 was the year."), "1987 was the year.");
-  EXPECT_EQ(SetAndGetCompany("Mr"), "");
-  EXPECT_EQ(SetAndGetCompany("Mr."), "");
-  EXPECT_EQ(SetAndGetCompany("Mrs"), "");
-  EXPECT_EQ(SetAndGetCompany("Mrs."), "");
-  EXPECT_EQ(SetAndGetCompany("Mr. & Mrs."), "Mr. & Mrs.");
-  EXPECT_EQ(SetAndGetCompany("Mr. & Mrs. Smith"), "Mr. & Mrs. Smith");
-  EXPECT_EQ(SetAndGetCompany("Frau"), "");
-  EXPECT_EQ(SetAndGetCompany("Frau Doktor"), "Frau Doktor");
-  EXPECT_EQ(SetAndGetCompany("Herr"), "");
-  EXPECT_EQ(SetAndGetCompany("Mme"), "");
-  EXPECT_EQ(SetAndGetCompany("Ms"), "");
-  EXPECT_EQ(SetAndGetCompany("Dr"), "");
-  EXPECT_EQ(SetAndGetCompany("Dr."), "");
-  EXPECT_EQ(SetAndGetCompany("Prof"), "");
-  EXPECT_EQ(SetAndGetCompany("Prof."), "");
-
-  profile.set_origin("Not empty");
-  ASSERT_TRUE(profile.IsVerified());
-
-  EXPECT_EQ(SetAndGetCompany("Google"), "Google");
-  EXPECT_EQ(SetAndGetCompany("1818"), "1818");
-  EXPECT_EQ(SetAndGetCompany("1987"), "1987");
-  EXPECT_EQ(SetAndGetCompany("2019"), "2019");
-  EXPECT_EQ(SetAndGetCompany("2345"), "2345");
-  EXPECT_EQ(SetAndGetCompany("It was 1987."), "It was 1987.");
-  EXPECT_EQ(SetAndGetCompany("1987 was the year."), "1987 was the year.");
-  EXPECT_EQ(SetAndGetCompany("Mr"), "Mr");
-  EXPECT_EQ(SetAndGetCompany("Mr."), "Mr.");
-  EXPECT_EQ(SetAndGetCompany("Mrs"), "Mrs");
-  EXPECT_EQ(SetAndGetCompany("Mrs."), "Mrs.");
-  EXPECT_EQ(SetAndGetCompany("Mr. & Mrs."), "Mr. & Mrs.");
-  EXPECT_EQ(SetAndGetCompany("Mr. & Mrs. Smith"), "Mr. & Mrs. Smith");
-  EXPECT_EQ(SetAndGetCompany("Frau"), "Frau");
-  EXPECT_EQ(SetAndGetCompany("Frau Doktor"), "Frau Doktor");
-  EXPECT_EQ(SetAndGetCompany("Herr"), "Herr");
-  EXPECT_EQ(SetAndGetCompany("Mme"), "Mme");
-  EXPECT_EQ(SetAndGetCompany("Ms"), "Ms");
-  EXPECT_EQ(SetAndGetCompany("Dr"), "Dr");
-  EXPECT_EQ(SetAndGetCompany("Dr."), "Dr.");
-  EXPECT_EQ(SetAndGetCompany("Prof"), "Prof");
-  EXPECT_EQ(SetAndGetCompany("Prof."), "Prof.");
-}
-
-TEST(CompanyTest, CompanyNameSocialTitleCopy) {
-  AutofillProfile profile;
-  CompanyInfo company(&profile);
-  ASSERT_FALSE(profile.IsVerified());
-
-
-  CompanyInfo company_google(&profile);
-  CompanyInfo company_year(&profile);
-  CompanyInfo company_social_title(&profile);
-
-  company_google.SetRawInfo(COMPANY_NAME, UTF8ToUTF16("Google"));
-  company_year.SetRawInfo(COMPANY_NAME, UTF8ToUTF16("1987"));
-  company_social_title.SetRawInfo(COMPANY_NAME, UTF8ToUTF16("Dr"));
-
-  company_google = company_year;
-  EXPECT_EQ(UTF8ToUTF16(""), company_google.GetRawInfo(COMPANY_NAME));
-  company_google = company_social_title;
-  EXPECT_EQ(UTF8ToUTF16(""), company_google.GetRawInfo(COMPANY_NAME));
-}
-
-TEST(CompanyTest, CompanyNameYearIsEqual) {
-  AutofillProfile profile;
-  ASSERT_FALSE(profile.IsVerified());
-
-  CompanyInfo company_year(&profile);
-  CompanyInfo company_social_title(&profile);
-
-  company_year.SetRawInfo(COMPANY_NAME, UTF8ToUTF16("1987"));
-  company_social_title.SetRawInfo(COMPANY_NAME, UTF8ToUTF16("Dr"));
-
-  EXPECT_EQ(company_year, company_social_title);
+  EXPECT_TRUE(set_and_validate(u"Google"));
+  EXPECT_TRUE(set_and_validate(u"1818"));
+  EXPECT_FALSE(set_and_validate(u"1987"));
+  EXPECT_FALSE(set_and_validate(u"2019"));
+  EXPECT_TRUE(set_and_validate(u"2345"));
+  EXPECT_TRUE(set_and_validate(u"It was 1987."));
+  EXPECT_TRUE(set_and_validate(u"1987 was the year."));
+  EXPECT_FALSE(set_and_validate(u"Mr"));
+  EXPECT_FALSE(set_and_validate(u"Mr."));
+  EXPECT_FALSE(set_and_validate(u"Mrs"));
+  EXPECT_FALSE(set_and_validate(u"Mrs."));
+  EXPECT_TRUE(set_and_validate(u"Mr. & Mrs."));
+  EXPECT_TRUE(set_and_validate(u"Mr. & Mrs. Smith"));
+  EXPECT_FALSE(set_and_validate(u"Frau"));
+  EXPECT_TRUE(set_and_validate(u"Frau Doktor"));
+  EXPECT_FALSE(set_and_validate(u"Herr"));
+  EXPECT_FALSE(set_and_validate(u"Mme"));
+  EXPECT_FALSE(set_and_validate(u"Ms"));
+  EXPECT_FALSE(set_and_validate(u"Dr"));
+  EXPECT_FALSE(set_and_validate(u"Dr."));
+  EXPECT_FALSE(set_and_validate(u"Prof"));
+  EXPECT_FALSE(set_and_validate(u"Prof."));
 }
 
 }  // namespace autofill

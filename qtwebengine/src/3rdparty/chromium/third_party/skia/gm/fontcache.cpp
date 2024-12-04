@@ -22,11 +22,12 @@
 #include "include/core/SkTypeface.h"
 #include "include/gpu/GrContextOptions.h"
 #include "include/gpu/GrDirectContext.h"
-#include "include/private/GrTypesPriv.h"
-#include "src/gpu/GrContextPriv.h"
+#include "include/private/gpu/ganesh/GrTypesPriv.h"
+#include "src/gpu/ganesh/GrDirectContextPriv.h"
 #include "tools/ToolUtils.h"
+#include "tools/fonts/FontToolUtils.h"
 
-class GrRenderTargetContext;
+using MaskFormat = skgpu::MaskFormat;
 
 static SkScalar draw_string(SkCanvas* canvas, const SkString& text, SkScalar x,
                            SkScalar y, const SkFont& font) {
@@ -35,7 +36,7 @@ static SkScalar draw_string(SkCanvas* canvas, const SkString& text, SkScalar x,
     return x + font.measureText(text.c_str(), text.size(), SkTextEncoding::kUTF8);
 }
 
-class FontCacheGM : public skiagm::GpuGM {
+class FontCacheGM : public skiagm::GM {
 public:
     FontCacheGM(GrContextOptions::Enable allowMultipleTextures)
         : fAllowMultipleTextures(allowMultipleTextures) {
@@ -48,7 +49,7 @@ public:
     }
 
 protected:
-    SkString onShortName() override {
+    SkString getName() const override {
         SkString name("fontcache");
         if (GrContextOptions::Enable::kYes == fAllowMultipleTextures) {
             name.append("-mt");
@@ -56,24 +57,24 @@ protected:
         return name;
     }
 
-    SkISize onISize() override { return SkISize::Make(kSize, kSize); }
+    SkISize getISize() override { return SkISize::Make(kSize, kSize); }
 
     void onOnceBeforeDraw() override {
-        fTypefaces[0] = ToolUtils::create_portable_typeface("serif", SkFontStyle::Italic());
-        fTypefaces[1] = ToolUtils::create_portable_typeface("sans-serif", SkFontStyle::Italic());
-        fTypefaces[2] = ToolUtils::create_portable_typeface("serif", SkFontStyle::Normal());
-        fTypefaces[3] = ToolUtils::create_portable_typeface("sans-serif", SkFontStyle::Normal());
-        fTypefaces[4] = ToolUtils::create_portable_typeface("serif", SkFontStyle::Bold());
-        fTypefaces[5] = ToolUtils::create_portable_typeface("sans-serif", SkFontStyle::Bold());
+        fTypefaces[0] = ToolUtils::CreatePortableTypeface("serif", SkFontStyle::Italic());
+        fTypefaces[1] = ToolUtils::CreatePortableTypeface("sans-serif", SkFontStyle::Italic());
+        fTypefaces[2] = ToolUtils::CreatePortableTypeface("serif", SkFontStyle::Normal());
+        fTypefaces[3] = ToolUtils::CreatePortableTypeface("sans-serif", SkFontStyle::Normal());
+        fTypefaces[4] = ToolUtils::CreatePortableTypeface("serif", SkFontStyle::Bold());
+        fTypefaces[5] = ToolUtils::CreatePortableTypeface("sans-serif", SkFontStyle::Bold());
     }
 
-    void onDraw(GrRecordingContext*, GrRenderTargetContext*, SkCanvas* canvas) override {
+    void onDraw(SkCanvas* canvas) override {
         this->drawText(canvas);
         //  Debugging tool for GPU.
         static const bool kShowAtlas = false;
         if (kShowAtlas) {
-            if (auto direct = GrAsDirectContext(canvas->recordingContext())) {
-                auto img = direct->priv().testingOnly_getFontAtlasImage(kA8_GrMaskFormat);
+            if (auto dContext = GrAsDirectContext(canvas->recordingContext())) {
+                auto img = dContext->priv().testingOnly_getFontAtlasImage(MaskFormat::kA8);
                 canvas->drawImage(img, 0, 0);
             }
         }
@@ -87,7 +88,7 @@ private:
                                           SkString("abcdefghijklmnopqrstuvwxyz"),
                                           SkString("0123456789"),
                                           SkString("!@#$%^&*()<>[]{}")};
-        SkFont font;
+        SkFont font = ToolUtils::DefaultPortableFont();
         font.setEdging(SkFont::Edging::kAntiAlias);
         font.setSubpixel(true);
 
@@ -126,14 +127,12 @@ private:
         } while (true);
     }
 
-    static constexpr SkScalar kSize = 1280;
+    inline static constexpr SkScalar kSize = 1280;
 
     GrContextOptions::Enable fAllowMultipleTextures;
     sk_sp<SkTypeface> fTypefaces[6];
     using INHERITED = GM;
 };
-
-constexpr SkScalar FontCacheGM::kSize;
 
 //////////////////////////////////////////////////////////////////////////////
 

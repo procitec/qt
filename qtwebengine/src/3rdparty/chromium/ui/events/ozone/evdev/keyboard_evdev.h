@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,7 +10,8 @@
 #include <bitset>
 
 #include "base/component_export.h"
-#include "base/macros.h"
+#include "base/functional/callback_forward.h"
+#include "base/memory/raw_ptr.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "ui/events/ozone/evdev/event_device_util.h"
@@ -21,7 +22,7 @@
 namespace ui {
 
 class EventModifiers;
-enum class DomCode;
+enum class DomCode : uint32_t;
 
 // Keyboard for evdev.
 //
@@ -32,9 +33,15 @@ enum class DomCode;
 class COMPONENT_EXPORT(EVDEV) KeyboardEvdev
     : public EventAutoRepeatHandler::Delegate {
  public:
-  KeyboardEvdev(EventModifiers* modifiers,
-                KeyboardLayoutEngine* keyboard_layout_engine,
-                const EventDispatchCallback& callback);
+  KeyboardEvdev(
+      EventModifiers* modifiers,
+      KeyboardLayoutEngine* keyboard_layout_engine,
+      const EventDispatchCallback& callback,
+      base::RepeatingCallback<void(bool)> any_keys_are_pressed_callback);
+
+  KeyboardEvdev(const KeyboardEvdev&) = delete;
+  KeyboardEvdev& operator=(const KeyboardEvdev&) = delete;
+
   ~KeyboardEvdev();
 
   // Handlers for raw key presses & releases.
@@ -94,18 +101,18 @@ class COMPONENT_EXPORT(EVDEV) KeyboardEvdev
   // Callback for dispatching events.
   const EventDispatchCallback callback_;
 
+  const base::RepeatingCallback<void(bool)> any_keys_are_pressed_callback_;
+
   // Shared modifier state.
-  EventModifiers* const modifiers_;
+  const raw_ptr<EventModifiers> modifiers_;
 
   // Shared layout engine.
-  KeyboardLayoutEngine* const keyboard_layout_engine_;
+  const raw_ptr<KeyboardLayoutEngine> keyboard_layout_engine_;
 
   // Key repeat handler.
   EventAutoRepeatHandler auto_repeat_handler_;
 
   base::WeakPtrFactory<KeyboardEvdev> weak_ptr_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(KeyboardEvdev);
 };
 
 }  // namespace ui

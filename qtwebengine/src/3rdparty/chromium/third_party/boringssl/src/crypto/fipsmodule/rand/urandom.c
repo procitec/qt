@@ -20,7 +20,7 @@
 
 #include "internal.h"
 
-#if defined(OPENSSL_URANDOM)
+#if defined(OPENSSL_RAND_URANDOM)
 
 #include <assert.h>
 #include <errno.h>
@@ -57,10 +57,6 @@
 #include <sys/auxv.h>
 #endif
 #endif  // OPENSSL_LINUX
-
-#if defined(OPENSSL_MACOS)
-#include <sys/random.h>
-#endif
 
 #include <openssl/thread.h>
 #include <openssl/mem.h>
@@ -126,7 +122,7 @@ static void maybe_set_extra_getrandom_flags(void) {
   }
 
   value[length] = 0;
-  if (strcasecmp(value, "true") == 0) {
+  if (OPENSSL_strcasecmp(value, "true") == 0) {
     *extra_getrandom_flags_for_seed_bss_get() = GRND_RANDOM;
   }
 #endif
@@ -167,24 +163,21 @@ static void init_once(void) {
   }
 #endif  // USE_NR_getrandom
 
-#if defined(OPENSSL_MACOS)
-  // getentropy is available in macOS 10.12 and up. iOS 10 and up may also
-  // support it, but the header is missing. See https://crbug.com/boringssl/287.
-  if (__builtin_available(macos 10.12, *)) {
-    *urandom_fd_bss_get() = kHaveGetrandom;
-    return;
-  }
-#endif
-
-  // Android FIPS builds must support getrandom.
-#if defined(BORINGSSL_FIPS) && defined(OPENSSL_ANDROID)
+  // FIPS builds must support getrandom.
+  //
+  // Historically, only Android FIPS builds required getrandom, while Linux FIPS
+  // builds had a /dev/urandom fallback which used RNDGETENTCNT as a poor
+  // approximation for getrandom's blocking behavior. This is now removed, but
+  // avoid making assumptions on this removal until March 2023, in case it needs
+  // to be restored. This comment can be deleted after March 2023.
+#if defined(BORINGSSL_FIPS)
   perror("getrandom not found");
   abort();
 #endif
 
   int fd;
   do {
-    fd = open("/dev/urandom", O_RDONLY);
+    fd = open("/dev/urandom", O_RDONLY | O_CLOEXEC);
   } while (fd == -1 && errno == EINTR);
 
   if (fd < 0) {
@@ -192,20 +185,6 @@ static void init_once(void) {
     abort();
   }
 
-  int flags = fcntl(fd, F_GETFD);
-  if (flags == -1) {
-    // Native Client doesn't implement |fcntl|.
-    if (errno != ENOSYS) {
-      perror("failed to get flags from urandom fd");
-      abort();
-    }
-  } else {
-    flags |= FD_CLOEXEC;
-    if (fcntl(fd, F_SETFD, flags) == -1) {
-      perror("failed to set FD_CLOEXEC on urandom fd");
-      abort();
-    }
-  }
   *urandom_fd_bss_get() = fd;
 }
 
@@ -255,29 +234,6 @@ static void wait_for_entropy(void) {
 #endif  // USE_NR_getrandom
     return;
   }
-
-#if defined(BORINGSSL_FIPS)
-  // In FIPS mode we ensure that the kernel has sufficient entropy before
-  // continuing. This is automatically handled by getrandom, which requires
-  // that the entropy pool has been initialised, but for urandom we have to
-  // poll.
-  for (;;) {
-    int entropy_bits;
-    if (ioctl(fd, RNDGETENTCNT, &entropy_bits)) {
-      fprintf(stderr,
-              "RNDGETENTCNT on /dev/urandom failed. We cannot continue in this "
-              "case when in FIPS mode.\n");
-      abort();
-    }
-
-    static const int kBitsNeeded = 256;
-    if (entropy_bits >= kBitsNeeded) {
-      break;
-    }
-
-    usleep(250000);
-  }
-#endif  // BORINGSSL_FIPS
 }
 
 // fill_with_entropy writes |len| bytes of entropy into |out|. It returns one
@@ -291,11 +247,14 @@ static int fill_with_entropy(uint8_t *out, size_t len, int block, int seed) {
     return 1;
   }
 
-#if defined(USE_NR_getrandom)
+#if defined(USE_NR_getrandom) || defined(FREEBSD_GETRANDOM)
   int getrandom_flags = 0;
   if (!block) {
     getrandom_flags |= GRND_NONBLOCK;
   }
+#endif
+
+#if defined (USE_NR_getrandom)
   if (seed) {
     getrandom_flags |= *extra_getrandom_flags_for_seed_bss_get();
   }
@@ -315,19 +274,6 @@ static int fill_with_entropy(uint8_t *out, size_t len, int block, int seed) {
     if (*urandom_fd_bss_get() == kHaveGetrandom) {
 #if defined(USE_NR_getrandom)
       r = boringssl_getrandom(out, len, getrandom_flags);
-#elif defined(OPENSSL_MACOS)
-      if (__builtin_available(macos 10.12, *)) {
-        // |getentropy| can only request 256 bytes at a time.
-        size_t todo = len <= 256 ? len : 256;
-        if (getentropy(out, todo) != 0) {
-          r = -1;
-        } else {
-          r = (ssize_t)todo;
-        }
-      } else {
-        fprintf(stderr, "urandom fd corrupt.\n");
-        abort();
-      }
 #else  // USE_NR_getrandom
       fprintf(stderr, "urandom fd corrupt.\n");
       abort();
@@ -348,6 +294,10 @@ static int fill_with_entropy(uint8_t *out, size_t len, int block, int seed) {
   return 1;
 }
 
+void CRYPTO_init_sysrand(void) {
+  CRYPTO_once(rand_once_bss_get(), init_once);
+}
+
 // CRYPTO_sysrand puts |requested| random bytes into |out|.
 void CRYPTO_sysrand(uint8_t *out, size_t requested) {
   if (!fill_with_entropy(out, requested, /*block=*/1, /*seed=*/0)) {
@@ -356,25 +306,12 @@ void CRYPTO_sysrand(uint8_t *out, size_t requested) {
   }
 }
 
-void CRYPTO_init_sysrand(void) {
-  CRYPTO_once(rand_once_bss_get(), init_once);
-}
-
-#if defined(BORINGSSL_FIPS)
 void CRYPTO_sysrand_for_seed(uint8_t *out, size_t requested) {
   if (!fill_with_entropy(out, requested, /*block=*/1, /*seed=*/1)) {
     perror("entropy fill failed");
     abort();
   }
-
-#if defined(BORINGSSL_FIPS_BREAK_CRNG)
-  // This breaks the "continuous random number generator test" defined in FIPS
-  // 140-2, section 4.9.2, and implemented in rand_get_seed().
-  OPENSSL_memset(out, 0, requested);
-#endif
 }
-
-#endif  // BORINGSSL_FIPS
 
 int CRYPTO_sysrand_if_available(uint8_t *out, size_t requested) {
   if (fill_with_entropy(out, requested, /*block=*/0, /*seed=*/0)) {
@@ -388,4 +325,4 @@ int CRYPTO_sysrand_if_available(uint8_t *out, size_t requested) {
   }
 }
 
-#endif  // OPENSSL_URANDOM
+#endif  // OPENSSL_RAND_URANDOM

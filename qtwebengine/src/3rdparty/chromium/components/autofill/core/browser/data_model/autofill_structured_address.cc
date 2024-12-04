@@ -1,124 +1,112 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/autofill/core/browser/data_model/autofill_structured_address.h"
 
-#include <iostream>
+#include <string>
 #include <utility>
-#include "base/i18n/case_conversion.h"
-#include "base/strings/strcat.h"
+
+#include "base/containers/contains.h"
+#include "base/containers/fixed_flat_set.h"
+#include "base/feature_list.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "components/autofill/core/browser/address_rewriter.h"
 #include "components/autofill/core/browser/autofill_type.h"
-#include "components/autofill/core/browser/data_model/autofill_structured_address_constants.h"
+#include "components/autofill/core/browser/data_model/autofill_structured_address_component.h"
 #include "components/autofill/core/browser/data_model/autofill_structured_address_regex_provider.h"
 #include "components/autofill/core/browser/data_model/autofill_structured_address_utils.h"
+#include "components/autofill/core/browser/field_type_utils.h"
 #include "components/autofill/core/browser/field_types.h"
+#include "components/autofill/core/browser/geo/address_rewriter.h"
+#include "components/autofill/core/browser/geo/alternative_state_name_map.h"
+#include "components/autofill/core/browser/metrics/converge_to_extreme_length_address_metrics.h"
+#include "components/autofill/core/common/autofill_features.h"
 
 namespace autofill {
 
-namespace structured_address {
-
-base::string16 AddressComponentWithRewriter::RewriteValue(
-    const base::string16& value) const {
-  // Retrieve the country name from the structured tree the node resides in.
-  base::string16 country = GetRootNode().GetValueForType(ADDRESS_HOME_COUNTRY);
-  // If no country is available (this should not be the case for a valid
-  // importable profile), use the US as a fallback country for the rewriter.
-  return RewriterCache::Rewrite(
-      !country.empty() ? country : base::ASCIIToUTF16("US"), value);
+std::u16string AddressComponentWithRewriter::GetValueForComparison(
+    const std::u16string& value,
+    const AddressComponent& other) const {
+  return NormalizeAndRewrite(GetCommonCountry(other), value,
+                             /*keep_white_space=*/true);
 }
 
-base::string16 AddressComponentWithRewriter::ValueForComparison() const {
-  return RewriteValue(NormalizedValue());
-}
-
-StreetName::StreetName(AddressComponent* parent)
+StreetNameNode::StreetNameNode(SubcomponentsList children)
     : AddressComponent(ADDRESS_HOME_STREET_NAME,
-                       parent,
-                       {},
+                       std::move(children),
                        MergeMode::kDefault) {}
 
-StreetName::~StreetName() = default;
+StreetNameNode::~StreetNameNode() = default;
 
-DependentStreetName::DependentStreetName(AddressComponent* parent)
-    : AddressComponent(ADDRESS_HOME_DEPENDENT_STREET_NAME,
-                       parent,
-                       {},
+StreetLocationNode::StreetLocationNode(SubcomponentsList children)
+    : AddressComponent(ADDRESS_HOME_STREET_LOCATION,
+                       std::move(children),
                        MergeMode::kDefault) {}
 
-DependentStreetName::~DependentStreetName() = default;
+StreetLocationNode::~StreetLocationNode() = default;
 
-StreetAndDependentStreetName::StreetAndDependentStreetName(
-    AddressComponent* parent)
-    : AddressComponent(ADDRESS_HOME_STREET_AND_DEPENDENT_STREET_NAME,
-                       parent,
-                       {&thoroughfare_name_, &dependent_thoroughfare_name_},
-                       MergeMode::kDefault) {}
-
-StreetAndDependentStreetName::~StreetAndDependentStreetName() = default;
-
-HouseNumber::HouseNumber(AddressComponent* parent)
+HouseNumberNode::HouseNumberNode(SubcomponentsList children)
     : AddressComponent(ADDRESS_HOME_HOUSE_NUMBER,
-                       parent,
-                       {},
+                       std::move(children),
                        MergeMode::kDefault) {}
 
-HouseNumber::~HouseNumber() = default;
+HouseNumberNode::~HouseNumberNode() = default;
 
-Premise::Premise(AddressComponent* parent)
-    : AddressComponent(ADDRESS_HOME_PREMISE_NAME,
-                       parent,
-                       {},
+FloorNode::FloorNode(SubcomponentsList children)
+    : AddressComponent(ADDRESS_HOME_FLOOR,
+                       std::move(children),
                        MergeMode::kDefault) {}
 
-Premise::~Premise() = default;
+FloorNode::~FloorNode() = default;
 
-Floor::Floor(AddressComponent* parent)
-    : AddressComponent(ADDRESS_HOME_FLOOR, parent, {}, MergeMode::kDefault) {}
+ApartmentNode::ApartmentNode(SubcomponentsList children)
+    : FeatureGuardedAddressComponent(
+          &features::kAutofillEnableSupportForApartmentNumbers,
+          ADDRESS_HOME_APT_NUM,
+          std::move(children),
+          MergeMode::kDefault) {}
 
-Floor::~Floor() = default;
+ApartmentNode::~ApartmentNode() = default;
 
-Apartment::Apartment(AddressComponent* parent)
-    : AddressComponent(ADDRESS_HOME_APT_NUM, parent, {}, MergeMode::kDefault) {}
-
-Apartment::~Apartment() = default;
-
-SubPremise::SubPremise(AddressComponent* parent)
+SubPremiseNode::SubPremiseNode(SubcomponentsList children)
     : AddressComponent(ADDRESS_HOME_SUBPREMISE,
-                       parent,
-                       {&floor_, &apartment_},
+                       std::move(children),
                        MergeMode::kDefault) {}
 
-SubPremise::~SubPremise() = default;
+SubPremiseNode::~SubPremiseNode() = default;
 
 // Address are mergeable if one is a subset of the other one.
 // Take the longer one. If both addresses have the same tokens apply a recursive
 // strategy to merge the substructure.
-StreetAddress::StreetAddress(AddressComponent* parent)
-    : AddressComponentWithRewriter(
-          ADDRESS_HOME_STREET_ADDRESS,
-          parent,
-          {&streets_, &number_, &premise_, &sub_premise_},
-          MergeMode::kReplaceEmpty | MergeMode::kReplaceSubset |
-              MergeMode::kDefault) {}
+StreetAddressNode::StreetAddressNode(SubcomponentsList children)
+    : AddressComponentWithRewriter(ADDRESS_HOME_STREET_ADDRESS,
+                                   std::move(children),
+                                   MergeMode::kReplaceEmpty |
+                                       MergeMode::kReplaceSubset |
+                                       MergeMode::kDefault) {}
 
-StreetAddress::~StreetAddress() = default;
+StreetAddressNode::~StreetAddressNode() = default;
 
 std::vector<const re2::RE2*>
-StreetAddress::GetParseRegularExpressionsByRelevance() const {
+StreetAddressNode::GetParseRegularExpressionsByRelevance() const {
   auto* pattern_provider = StructuredAddressesRegExProvider::Instance();
   DCHECK(pattern_provider);
-  return {pattern_provider->GetRegEx(RegEx::kParseHouseNumberStreetName),
-          pattern_provider->GetRegEx(RegEx::kParseStreetNameHouseNumber),
+  const std::string country_code =
+      base::UTF16ToUTF8(GetRootNode().GetValueForType(ADDRESS_HOME_COUNTRY));
+  return {pattern_provider->GetRegEx(RegEx::kParseHouseNumberStreetName,
+                                     country_code),
+          pattern_provider->GetRegEx(RegEx::kParseStreetNameHouseNumber,
+                                     country_code),
           pattern_provider->GetRegEx(
-              RegEx::kParseStreetNameHouseNumberSuffixedFloor)};
+              RegEx::kParseStreetNameHouseNumberSuffixedFloor, country_code),
+          pattern_provider->GetRegEx(
+              RegEx::kParseStreetNameHouseNumberSuffixedFloorAndApartmentRe,
+              country_code)};
 }
 
-void StreetAddress::ParseValueAndAssignSubcomponentsByFallbackMethod() {
+void StreetAddressNode::ParseValueAndAssignSubcomponentsByFallbackMethod() {
   // There is no point in doing a line-wise approach if there aren't multiple
   // lines.
   if (address_lines_.size() < 2)
@@ -133,259 +121,341 @@ void StreetAddress::ParseValueAndAssignSubcomponentsByFallbackMethod() {
   }
 }
 
-bool StreetAddress::HasNewerValuePrecendenceInMerging(
+bool StreetAddressNode::HasNewerValuePrecedenceInMerging(
     const AddressComponent& newer_component) const {
   // If the newer component has a better verification status, use the newer one.
-  if (GetVerificationStatus() < newer_component.GetVerificationStatus())
+  if (IsLessSignificantVerificationStatus(
+          GetVerificationStatus(), newer_component.GetVerificationStatus())) {
     return true;
+  }
 
   // If the verification statuses are the same, do not use the newer component
   // if the older one has new lines but the newer one doesn't.
   if (GetVerificationStatus() == newer_component.GetVerificationStatus()) {
-    if (GetValue().find('\n') != base::string16::npos &&
-        newer_component.GetValue().find('\n') == base::string16::npos) {
+    if (GetValue().find('\n') != std::u16string::npos &&
+        newer_component.GetValue().find('\n') == std::u16string::npos) {
       return false;
     }
-    return true;
+    const int old_length = GetValue().size();
+    const int new_length = newer_component.GetValue().size();
+    // By default, we prefer the newer street address over the old one in case
+    // of a tie between verification statuses.
+    if (!base::FeatureList::IsEnabled(
+            features::kAutofillConvergeToExtremeLengthStreetAddress)) {
+      return true;
+    }
+    // If street lengths are equal, prefer the old value. This is to avoid
+    // constantly asking the user to update his profile just for formatting
+    // purposes, which can negatively impact the Autofill experience.
+    if (old_length == new_length) {
+      return false;
+    }
+    // Otherwise, prefer the longer or shorter street address depending on the
+    // feature `kAutofillConvergeToExtremeLengthStreetAddress` parameterization.
+    const bool has_newer_value_precedence =
+        features::kAutofillConvergeToLonger.Get() ? old_length < new_length
+                                                  : old_length > new_length;
+    autofill_metrics::LogAddressUpdateLengthConvergenceStatus(
+        has_newer_value_precedence);
+    return has_newer_value_precedence;
   }
   return false;
 }
 
-base::string16 StreetAddress::GetBestFormatString() const {
-  std::string country_code =
-      base::UTF16ToUTF8(GetRootNode().GetValueForType(ADDRESS_HOME_COUNTRY));
-
-  if (country_code == "BR") {
-    return base::UTF8ToUTF16(
-        "${ADDRESS_HOME_STREET_NAME}${ADDRESS_HOME_HOUSE_NUMBER;, }"
-        "${ADDRESS_HOME_FLOOR;, ;º andar}${ADDRESS_HOME_APT_NUM;, apto ;}");
-  }
-
-  if (country_code == "DE") {
-    return base::ASCIIToUTF16(
-        "${ADDRESS_HOME_STREET_NAME} ${ADDRESS_HOME_HOUSE_NUMBER}"
-        "${ADDRESS_HOME_FLOOR;, ;. Stock}${ADDRESS_HOME_APT_NUM;, ;. Wohnung}");
-  }
-
-  // Use the format for US/UK as the default.
-  return base::ASCIIToUTF16(
-      "${ADDRESS_HOME_HOUSE_NUMBER} ${ADDRESS_HOME_STREET_NAME} "
-      "${ADDRESS_HOME_FLOOR;FL } ${ADDRESS_HOME_APT_NUM;APT }");
-}
-
-void StreetAddress::UnsetValue() {
+void StreetAddressNode::UnsetValue() {
   AddressComponent::UnsetValue();
   address_lines_.clear();
 }
 
-void StreetAddress::SetValue(base::string16 value, VerificationStatus status) {
+void StreetAddressNode::SetValue(std::u16string value,
+                                 VerificationStatus status) {
   AddressComponent::SetValue(value, status);
   CalculateAddressLines();
 }
 
-void StreetAddress::CalculateAddressLines() {
+void StreetAddressNode::CalculateAddressLines() {
   // Recalculate |address_lines_| after changing the street address.
-  address_lines_ =
-      base::SplitString(GetValue(), base::ASCIIToUTF16("\n"),
-                        base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
+  address_lines_ = base::SplitString(GetValue(), u"\n", base::TRIM_WHITESPACE,
+                                     base::SPLIT_WANT_ALL);
 
   // If splitting of the address line results in more than 3 entries, join the
   // additional entries into the third line.
   if (address_lines_.size() > 3) {
     address_lines_[2] =
-        base::JoinString(std::vector<base::string16>(address_lines_.begin() + 2,
+        base::JoinString(std::vector<std::u16string>(address_lines_.begin() + 2,
                                                      address_lines_.end()),
-                         base::ASCIIToUTF16(" "));
+                         u" ");
     // Drop the addition address lines.
     while (address_lines_.size() > 3)
       address_lines_.pop_back();
   }
 }
 
-bool StreetAddress::IsValueValid() const {
-  return !base::Contains(address_lines_, base::string16());
+bool StreetAddressNode::IsValueValid() const {
+  return !base::Contains(address_lines_, std::u16string());
 }
 
-bool StreetAddress::ConvertAndGetTheValueForAdditionalFieldTypeName(
-    const std::string& type_name,
-    base::string16* value) const {
-  if (type_name == AutofillType(ADDRESS_HOME_LINE1).ToString()) {
-    if (value) {
-      *value =
-          address_lines_.size() > 0 ? address_lines_.at(0) : base::string16();
-    }
-    return true;
+std::u16string StreetAddressNode::GetValueForOtherSupportedType(
+    FieldType field_type) const {
+  // It is assumed below that field_type is an address line type.
+  CHECK(IsSupportedType(field_type));
+  return GetAddressLine(field_type);
+}
+
+std::u16string StreetAddressNode::GetAddressLine(FieldType type) const {
+  const size_t line_index = AddressLineIndex(type);
+  return address_lines_.size() > line_index ? address_lines_.at(line_index)
+                                            : std::u16string();
+}
+
+// Implements support for setting the value of the individual address lines.
+void StreetAddressNode::SetValueForOtherSupportedType(
+    FieldType field_type,
+    const std::u16string& value,
+    const VerificationStatus& status) {
+  CHECK(IsSupportedType(field_type));
+  const size_t line_index = AddressLineIndex(field_type);
+  // Make sure that there are enough address lines stored.
+  if (line_index >= address_lines_.size()) {
+    address_lines_.resize(line_index + 1);
   }
-  if (type_name == AutofillType(ADDRESS_HOME_LINE2).ToString()) {
-    if (value) {
-      *value =
-          address_lines_.size() > 1 ? address_lines_.at(1) : base::string16();
-    }
-    return true;
+  const bool change = address_lines_[line_index] != value;
+  if (change) {
+    address_lines_[line_index] = value;
   }
-  if (type_name == AutofillType(ADDRESS_HOME_LINE3).ToString()) {
-    if (value) {
-      *value =
-          address_lines_.size() > 2 ? address_lines_.at(2) : base::string16();
-    }
+  // Remove empty trailing address lines.
+  while (!address_lines_.empty() && address_lines_.back().empty()) {
+    address_lines_.pop_back();
+  }
+  // By calling the base class implementation, the recreation of the address
+  // lines from the street address is omitted.
+  if (change) {
+    AddressComponent::SetValue(base::JoinString(address_lines_, u"\n"), status);
+  }
+}
+
+void StreetAddressNode::PostAssignSanitization() {
+  CalculateAddressLines();
+}
+
+const FieldTypeSet StreetAddressNode::GetAdditionalSupportedFieldTypes() const {
+  constexpr FieldTypeSet additional_supported_field_types{
+      ADDRESS_HOME_LINE1, ADDRESS_HOME_LINE2, ADDRESS_HOME_LINE3};
+  return additional_supported_field_types;
+}
+
+// Country codes are mergeable if they are the same of if one is empty.
+// For merging, pick the non-empty one.
+CountryCodeNode::CountryCodeNode(SubcomponentsList children)
+    : AddressComponent(ADDRESS_HOME_COUNTRY,
+                       std::move(children),
+                       MergeMode::kReplaceEmpty |
+                           MergeMode::kUseBetterOrNewerForSameValue) {}
+
+CountryCodeNode::~CountryCodeNode() = default;
+
+// DependentLocalities are mergeable when the tokens of one is a subset of the
+// other one. Take the longer one.
+DependentLocalityNode::DependentLocalityNode(SubcomponentsList children)
+    : AddressComponent(ADDRESS_HOME_DEPENDENT_LOCALITY,
+                       std::move(children),
+                       MergeMode::kReplaceSubset | MergeMode::kReplaceEmpty) {}
+
+DependentLocalityNode::~DependentLocalityNode() = default;
+
+// Cities are mergeable when the tokens of one is a subset of the other one.
+// Take the shorter non-empty one.
+CityNode::CityNode(SubcomponentsList children)
+    : AddressComponent(ADDRESS_HOME_CITY,
+                       std::move(children),
+                       MergeMode::kReplaceSubset | MergeMode::kReplaceEmpty) {}
+
+CityNode::~CityNode() = default;
+
+// States are mergeable when the tokens of one is a subset of the other one.
+// Take the shorter non-empty one.
+StateNode::StateNode(SubcomponentsList children)
+    : AddressComponentWithRewriter(
+          ADDRESS_HOME_STATE,
+          std::move(children),
+          kPickShorterIfOneContainsTheOther |
+              MergeMode::kMergeBasedOnCanonicalizedValues | kReplaceEmpty) {}
+
+StateNode::~StateNode() = default;
+
+std::optional<std::u16string> StateNode::GetCanonicalizedValue() const {
+  std::string country_code =
+      base::UTF16ToUTF8(GetRootNode().GetValueForType(ADDRESS_HOME_COUNTRY));
+
+  if (country_code.empty()) {
+    return std::nullopt;
+  }
+
+  std::optional<AlternativeStateNameMap::CanonicalStateName>
+      canonicalized_state_name = AlternativeStateNameMap::GetCanonicalStateName(
+          country_code, GetValue());
+
+  if (!canonicalized_state_name.has_value()) {
+    return std::nullopt;
+  }
+
+  return canonicalized_state_name.value().value();
+}
+
+// Zips are mergeable when one is a substring of the other one.
+// For merging, the shorter substring is taken.
+PostalCodeNode::PostalCodeNode(SubcomponentsList children)
+    : AddressComponentWithRewriter(
+          ADDRESS_HOME_ZIP,
+          std::move(children),
+          MergeMode::kUseMostRecentSubstring | kReplaceEmpty) {}
+
+PostalCodeNode::~PostalCodeNode() = default;
+
+std::u16string PostalCodeNode::GetNormalizedValue() const {
+  return NormalizeValue(GetValue(), /*keep_white_space=*/false);
+}
+
+std::u16string PostalCodeNode::GetValueForComparison(
+    const std::u16string& value,
+    const AddressComponent& other) const {
+  return NormalizeAndRewrite(GetCommonCountry(other), value,
+                             /*keep_white_space=*/false);
+}
+
+SortingCodeNode::SortingCodeNode(SubcomponentsList children)
+    : AddressComponent(ADDRESS_HOME_SORTING_CODE,
+                       std::move(children),
+                       MergeMode::kReplaceEmpty | kUseMostRecentSubstring) {}
+
+SortingCodeNode::~SortingCodeNode() = default;
+
+LandmarkNode::LandmarkNode(SubcomponentsList children)
+    : FeatureGuardedAddressComponent(
+          &features::kAutofillEnableSupportForLandmark,
+          ADDRESS_HOME_LANDMARK,
+          std::move(children),
+          MergeMode::kReplaceEmpty | kReplaceSubset) {}
+
+LandmarkNode::~LandmarkNode() = default;
+
+BetweenStreetsNode::BetweenStreetsNode(SubcomponentsList children)
+    : FeatureGuardedAddressComponent(
+          &features::kAutofillEnableSupportForBetweenStreets,
+          ADDRESS_HOME_BETWEEN_STREETS,
+          std::move(children),
+          MergeMode::kReplaceEmpty | kReplaceSubset) {}
+
+BetweenStreetsNode::~BetweenStreetsNode() = default;
+
+BetweenStreets1Node::BetweenStreets1Node(SubcomponentsList children)
+    : FeatureGuardedAddressComponent(
+          &features::kAutofillEnableSupportForBetweenStreets,
+          ADDRESS_HOME_BETWEEN_STREETS_1,
+          std::move(children),
+          MergeMode::kDefault) {}
+
+BetweenStreets1Node::~BetweenStreets1Node() = default;
+
+BetweenStreets2Node::BetweenStreets2Node(SubcomponentsList children)
+    : FeatureGuardedAddressComponent(
+          &features::kAutofillEnableSupportForBetweenStreets,
+          ADDRESS_HOME_BETWEEN_STREETS_2,
+          std::move(children),
+          MergeMode::kDefault) {}
+
+BetweenStreets2Node::~BetweenStreets2Node() = default;
+
+AdminLevel2Node::AdminLevel2Node(SubcomponentsList children)
+    : FeatureGuardedAddressComponent(
+          &features::kAutofillEnableSupportForAdminLevel2,
+          ADDRESS_HOME_ADMIN_LEVEL2,
+          std::move(children),
+          MergeMode::kReplaceEmpty | kReplaceSubset) {}
+
+AdminLevel2Node::~AdminLevel2Node() = default;
+
+AddressOverflowNode::AddressOverflowNode(SubcomponentsList children)
+    : FeatureGuardedAddressComponent(
+          &features::kAutofillEnableSupportForAddressOverflow,
+          ADDRESS_HOME_OVERFLOW,
+          std::move(children),
+          MergeMode::kReplaceEmpty | kReplaceSubset) {}
+
+AddressOverflowNode::~AddressOverflowNode() = default;
+
+AddressOverflowAndLandmarkNode::AddressOverflowAndLandmarkNode(
+    SubcomponentsList children)
+    : FeatureGuardedAddressComponent(
+          &features::kAutofillEnableSupportForAddressOverflowAndLandmark,
+          ADDRESS_HOME_OVERFLOW_AND_LANDMARK,
+          std::move(children),
+          MergeMode::kReplaceEmpty | kReplaceSubset) {}
+
+AddressOverflowAndLandmarkNode::~AddressOverflowAndLandmarkNode() = default;
+
+BetweenStreetsOrLandmarkNode::BetweenStreetsOrLandmarkNode(
+    SubcomponentsList children)
+    : FeatureGuardedAddressComponent(
+          &features::kAutofillEnableSupportForBetweenStreetsOrLandmark,
+          ADDRESS_HOME_BETWEEN_STREETS_OR_LANDMARK,
+          std::move(children),
+          MergeMode::kReplaceEmpty | kReplaceSubset) {}
+
+BetweenStreetsOrLandmarkNode::~BetweenStreetsOrLandmarkNode() = default;
+
+AddressNode::AddressNode() : AddressNode(SubcomponentsList{}) {}
+
+AddressNode::AddressNode(const AddressNode& other) : AddressNode() {
+  CopyFrom(other);
+}
+
+AddressNode& AddressNode::operator=(const AddressNode& other) {
+  CopyFrom(other);
+  return *this;
+}
+
+// Addresses are mergeable when all of their children are mergeable.
+// Reformat the address from the children after merge if it changed.
+AddressNode::AddressNode(SubcomponentsList children)
+    : AddressComponent(ADDRESS_HOME_ADDRESS,
+                       std::move(children),
+                       MergeMode::kMergeChildrenAndReformatIfNeeded) {}
+
+AddressNode::~AddressNode() = default;
+
+bool AddressNode::WipeInvalidStructure() {
+  // For i18n addresses, currently it is sufficient to wipe the structure
+  // of the street address, because this is the only directly assignable value
+  // that has a substructure.
+  AddressComponent* street_address =
+      GetNodeForType(ADDRESS_HOME_STREET_ADDRESS);
+  DCHECK(street_address);
+  if (street_address->WipeInvalidStructure()) {
+    // Unset value for the root, which is the remaining non settings visible
+    // node.
+    UnsetValue();
     return true;
   }
 
   return false;
 }
 
-// Implements support for setting the value of the individual address lines.
-bool StreetAddress::ConvertAndSetValueForAdditionalFieldTypeName(
-    const std::string& type_name,
-    const base::string16& value,
-    const VerificationStatus& status) {
-  size_t index = 0;
-  if (type_name == AutofillType(ADDRESS_HOME_LINE1).ToString()) {
-    index = 0;
-  } else if (type_name == AutofillType(ADDRESS_HOME_LINE2).ToString()) {
-    index = 1;
-  } else if (type_name == AutofillType(ADDRESS_HOME_LINE3).ToString()) {
-    index = 2;
-  } else {
-    return false;
-  }
-
-  // Make sure that there are three address lines stored.
-  if (index >= address_lines_.size())
-    address_lines_.resize(index + 1, base::string16());
-
-  bool change = address_lines_[index] != value;
-  if (change)
-    address_lines_[index] = value;
-
-  while (!address_lines_.empty() && address_lines_.back().empty())
-    address_lines_.pop_back();
-
-  // By calling the base class implementation, the recreation of the address
-  // lines from the street address is omitted.
-  if (change) {
-    AddressComponent::SetValue(
-        base::JoinString(address_lines_, base::ASCIIToUTF16("\n")), status);
-  }
-
-  return true;
-}
-
-void StreetAddress::PostAssignSanitization() {
-  CalculateAddressLines();
-}
-
-void StreetAddress::GetAdditionalSupportedFieldTypes(
-    ServerFieldTypeSet* supported_types) const {
-  supported_types->insert(ADDRESS_HOME_LINE1);
-  supported_types->insert(ADDRESS_HOME_LINE2);
-  supported_types->insert(ADDRESS_HOME_LINE3);
-}
-
-// Country codes are mergeable if they are the same of if one is empty.
-// For merging, pick the non-empty one.
-CountryCode::CountryCode(AddressComponent* parent)
-    : AddressComponent(ADDRESS_HOME_COUNTRY,
-                       parent,
-                       {},
-                       MergeMode::kReplaceEmpty |
-                           MergeMode::kUseBetterOrNewerForSameValue) {}
-
-CountryCode::~CountryCode() = default;
-
-// DependentLocalities are mergeable when the tokens of one is a subset of the
-// other one. Take the longer one.
-DependentLocality::DependentLocality(AddressComponent* parent)
-    : AddressComponent(ADDRESS_HOME_DEPENDENT_LOCALITY,
-                       parent,
-                       {},
-                       MergeMode::kReplaceSubset | MergeMode::kReplaceEmpty) {}
-
-DependentLocality::~DependentLocality() = default;
-
-// Cities are mergeable when the tokens of one is a subset of the other one.
-// Take the shorter non-empty one.
-City::City(AddressComponent* parent)
-    : AddressComponent(ADDRESS_HOME_CITY,
-                       parent,
-                       {},
-                       MergeMode::kReplaceSubset | MergeMode::kReplaceEmpty) {}
-
-City::~City() = default;
-
-// States are mergeable when the tokens of one is a subset of the other one.
-// Take the shorter non-empty one.
-State::State(AddressComponent* parent)
-    : AddressComponentWithRewriter(
-          ADDRESS_HOME_STATE,
-          parent,
-          {},
-          MergeMode::kPickShorterIfOneContainsTheOther | kReplaceEmpty) {}
-
-State::~State() = default;
-
-// Zips are mergeable when one is a substring of the other one.
-// For merging, the shorter substring is taken.
-PostalCode::PostalCode(AddressComponent* parent)
-    : AddressComponentWithRewriter(
-          ADDRESS_HOME_ZIP,
-          parent,
-          {},
-          MergeMode::kUseMostRecentSubstring | kReplaceEmpty) {}
-
-PostalCode::~PostalCode() = default;
-
-base::string16 PostalCode::NormalizedValue() const {
-  return NormalizeValue(GetValue(), /*keep_white_space=*/false);
-}
-
-SortingCode::SortingCode(AddressComponent* parent)
-    : AddressComponent(ADDRESS_HOME_SORTING_CODE,
-                       parent,
-                       {},
-                       MergeMode::kReplaceEmpty | kUseMostRecentSubstring) {}
-
-SortingCode::~SortingCode() = default;
-
-Address::Address() : Address{nullptr} {}
-
-Address::Address(const Address& other) : Address() {
-  *this = other;
-}
-
-// Addresses are mergeable when all of their children are mergeable.
-// Reformat the address from their children after merge.
-Address::Address(AddressComponent* parent)
-    : AddressComponent(ADDRESS_HOME_ADDRESS,
-                       parent,
-                       {&street_address_, &postal_code_, &sorting_code_,
-                        &dependent_locality_, &city_, &state_, &country_code_},
-                       MergeMode::kMergeChildrenAndReformat) {}
-
-Address::~Address() = default;
-
-void Address::MigrateLegacyStructure(bool is_verified_profile) {
+void AddressNode::MigrateLegacyStructure() {
   // If this component already has a verification status, no profile is regarded
   // as already verified.
-  std::cout << "APply migration" << std::endl;
   if (GetVerificationStatus() != VerificationStatus::kNoStatus)
     return;
 
-  // Otherwise set the status of the subcomponents either to observed or
-  // verified depending on |is_verified_profile| if they already have a value
-  // assigned. Note, those are all the tokens that are already present in the
-  // unstructured address representation.
-  for (auto* component : Subcomponents()) {
+  // Otherwise set the status of the subcomponents to observed if they already
+  // have a value assigned. Note, those are all the tokens that are already
+  // present in the unstructured address representation.
+  for (AddressComponent* component : Subcomponents()) {
     if (!component->GetValue().empty() &&
         component->GetVerificationStatus() == VerificationStatus::kNoStatus) {
-      component->SetValue(component->GetValue(),
-                          is_verified_profile
-                              ? VerificationStatus::kUserVerified
-                              : VerificationStatus::kObserved);
+      component->SetValue(component->GetValue(), VerificationStatus::kObserved);
     }
   }
 }
-
-}  // namespace structured_address
 
 }  // namespace autofill

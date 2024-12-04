@@ -1,8 +1,9 @@
-# Copyright 2019 The Chromium Authors.All rights reserved.
-# Use of this source code is governed by a BSD - style license that can be
+# Copyright 2019 The Chromium Authors
+# Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
 import("//build/config/android/rules.gni")
+import("//third_party/jni_zero/jni_zero.gni")
 
 java_cpp_enum("compositor_status_generated_enum") {
   sources = [ "//components/paint_preview/player/compositor_status.h" ]
@@ -10,6 +11,8 @@ java_cpp_enum("compositor_status_generated_enum") {
 
 source_set("android") {
   sources = [
+    "convert_to_java_bitmap.cc",
+    "convert_to_java_bitmap.h",
     "player_compositor_delegate_android.cc",
     "player_compositor_delegate_android.h",
   ]
@@ -19,6 +22,8 @@ source_set("android") {
     "//base",
     "//components/paint_preview/browser",
     "//components/paint_preview/player",
+    "//ui/accessibility:ax_assistant",
+    "//ui/accessibility:ax_base",
     "//ui/gfx",
     "//url",
   ]
@@ -29,7 +34,10 @@ source_set("android") {
 
 source_set("unit_tests") {
   testonly = true
-  sources = [ "player_compositor_delegate_android_unittest.cc" ]
+  sources = [
+    "convert_to_java_bitmap_unittest.cc",
+    "player_compositor_delegate_android_unittest.cc",
+  ]
   deps = [
     ":android",
     "//base",
@@ -48,7 +56,7 @@ generate_jni("jni_headers") {
 }
 
 android_library("java") {
-  annotation_processor_deps = [ "//base/android/jni_generator:jni_processor" ]
+  resources_package = "org.chromium.components.paintpreview.player"
 
   sources = [
     "java/src/org/chromium/components/paintpreview/player/LinkClickHandler.java",
@@ -61,7 +69,7 @@ android_library("java") {
     "java/src/org/chromium/components/paintpreview/player/PlayerSwipeRefreshHandler.java",
     "java/src/org/chromium/components/paintpreview/player/PlayerUserActionRecorder.java",
     "java/src/org/chromium/components/paintpreview/player/PlayerUserFrustrationDetector.java",
-    "java/src/org/chromium/components/paintpreview/player/frame/CompressibleBitmap.java",
+    "java/src/org/chromium/components/paintpreview/player/accessibility/PlayerAccessibilityDelegate.java",
     "java/src/org/chromium/components/paintpreview/player/frame/PlayerFrameBitmapPainter.java",
     "java/src/org/chromium/components/paintpreview/player/frame/PlayerFrameBitmapState.java",
     "java/src/org/chromium/components/paintpreview/player/frame/PlayerFrameBitmapStateController.java",
@@ -79,14 +87,22 @@ android_library("java") {
     "java/src/org/chromium/components/paintpreview/player/frame/PlayerFrameViewport.java",
   ]
 
-  srcjar_deps = [ ":compositor_status_generated_enum" ]
+  srcjar_deps = [
+    ":compositor_status_generated_enum",
+    ":jni_headers",
+  ]
 
   deps = [
     "//base:base_java",
-    "//base:jni_java",
+    "//build/android:build_java",
+    "//components/browser_ui/styles/android:java",
+    "//components/browser_ui/widget/android:java",
     "//components/paint_preview/browser/android:java",
-    "//third_party/android_deps:androidx_annotation_annotation_java",
+    "//content/public/android:content_java",
     "//third_party/android_swipe_refresh:android_swipe_refresh_java",
+    "//third_party/androidx:androidx_annotation_annotation_java",
+    "//third_party/jni_zero:jni_zero_java",
+    "//ui/accessibility:ax_base_java",
     "//ui/android:ui_java",
     "//ui/android:ui_java_resources",
     "//url:gurl_java",
@@ -95,8 +111,8 @@ android_library("java") {
 
 android_library("player_java_test_support") {
   testonly = true
-  annotation_processor_deps = [ "//base/android/jni_generator:jni_processor" ]
 
+  srcjar_deps = [ ":javatests_jni_headers" ]
   sources = [
     "javatests/src/org/chromium/components/paintpreview/player/FrameData.java",
     "javatests/src/org/chromium/components/paintpreview/player/PaintPreviewTestRule.java",
@@ -107,14 +123,13 @@ android_library("player_java_test_support") {
     ":java",
     "//base:base_java",
     "//base:base_java_test_support",
-    "//base:jni_java",
+    "//build/android:build_java",
     "//components/paint_preview/browser/android:java",
-    "//components/signin/core/browser/android:java",
-    "//components/signin/core/browser/android:signin_java_test_support",
+    "//components/signin/public/android:java",
+    "//components/signin/public/android:signin_java_test_support",
     "//content/public/android:content_java",
     "//content/public/test/android:content_java_test_support",
-    "//third_party/android_support_test_runner:rules_java",
-    "//third_party/android_support_test_runner:runner_java",
+    "//third_party/jni_zero:jni_zero_java",
     "//third_party/junit",
     "//url:gurl_java",
   ]
@@ -129,14 +144,15 @@ android_library("javatests") {
     ":player_java_test_support",
     "//base:base_java",
     "//base:base_java_test_support",
+    "//components/paint_preview/browser/android:java",
     "//content/public/android:content_java",
     "//content/public/test/android:content_java_test_support",
-    "//third_party/android_deps:androidx_test_runner_java",
-    "//third_party/android_support_test_runner:rules_java",
-    "//third_party/android_support_test_runner:runner_java",
+    "//third_party/android_deps:espresso_java",
+    "//third_party/androidx:androidx_test_monitor_java",
+    "//third_party/androidx:androidx_test_runner_java",
+    "//third_party/androidx:androidx_test_uiautomator_uiautomator_java",
     "//third_party/hamcrest:hamcrest_java",
     "//third_party/junit",
-    "//third_party/ub-uiautomator:ub_uiautomator_java",
     "//ui/android:ui_java_test_support",
     "//url:gurl_java",
   ]
@@ -165,11 +181,10 @@ source_set("test_support") {
   ]
 }
 
-junit_binary("paint_preview_junit_tests") {
+robolectric_binary("paint_preview_junit_tests") {
   sources = [
     "junit/src/org/chromium/components/paintpreview/player/PlayerManagerTest.java",
     "junit/src/org/chromium/components/paintpreview/player/PlayerUserFrustrationDetectorTest.java",
-    "junit/src/org/chromium/components/paintpreview/player/frame/CompressibleBitmapTest.java",
     "junit/src/org/chromium/components/paintpreview/player/frame/PaintPreviewCustomFlingingShadowScroller.java",
     "junit/src/org/chromium/components/paintpreview/player/frame/PlayerFrameBitmapPainterTest.java",
     "junit/src/org/chromium/components/paintpreview/player/frame/PlayerFrameCoordinatorTest.java",
@@ -183,7 +198,7 @@ junit_binary("paint_preview_junit_tests") {
     "//base:base_java",
     "//base:base_java_test_support",
     "//base:base_junit_test_support",
-    "//third_party/android_deps:androidx_annotation_annotation_java",
+    "//third_party/androidx:androidx_annotation_annotation_java",
     "//ui/android:ui_full_java",
     "//url:gurl_java",
   ]

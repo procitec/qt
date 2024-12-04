@@ -16,8 +16,8 @@
 
 #ifndef SRC_TRACE_PROCESSOR_IMPORTERS_PROTO_PROFILE_PACKET_UTILS_H_
 #define SRC_TRACE_PROCESSOR_IMPORTERS_PROTO_PROFILE_PACKET_UTILS_H_
+#include <optional>
 
-#include "perfetto/ext/base/optional.h"
 #include "perfetto/ext/base/string_view.h"
 #include "src/trace_processor/importers/proto/packet_sequence_state.h"
 #include "src/trace_processor/importers/proto/stack_profile_tracker.h"
@@ -107,6 +107,20 @@ class ProfilePacketUtils {
         return "repeated_frame";
       case Profiling::UNWIND_ERROR_INVALID_ELF:
         return "invalid_elf";
+      case Profiling::UNWIND_ERROR_SYSTEM_CALL:
+        return "system_call";
+      case Profiling::UNWIND_ERROR_THREAD_TIMEOUT:
+        return "thread_timeout";
+      case Profiling::UNWIND_ERROR_THREAD_DOES_NOT_EXIST:
+        return "thread_does_not_exist";
+      case Profiling::UNWIND_ERROR_BAD_ARCH:
+        return "bad_arch";
+      case Profiling::UNWIND_ERROR_MAPS_PARSE:
+        return "maps_parse";
+      case Profiling::UNWIND_ERROR_INVALID_PARAMETER:
+        return "invalid_parameter";
+      case Profiling::UNWIND_ERROR_PTRACE_CALL:
+        return "ptrace_call";
     }
     return "unknown";  // switch should be complete, but gcc needs a hint
   }
@@ -119,7 +133,7 @@ class ProfilePacketInternLookup
       : seq_state_(seq_state) {}
   ~ProfilePacketInternLookup() override;
 
-  base::Optional<base::StringView> GetString(
+  std::optional<base::StringView> GetString(
       SequenceStackProfileTracker::SourceStringId iid,
       SequenceStackProfileTracker::InternedStringType type) const override {
     protos::pbzero::InternedString::Decoder* decoder = nullptr;
@@ -141,39 +155,41 @@ class ProfilePacketInternLookup
         break;
     }
     if (!decoder)
-      return base::nullopt;
+      return std::nullopt;
     return base::StringView(reinterpret_cast<const char*>(decoder->str().data),
                             decoder->str().size);
   }
 
-  base::Optional<SequenceStackProfileTracker::SourceMapping> GetMapping(
+  std::optional<SequenceStackProfileTracker::SourceMapping> GetMapping(
       SequenceStackProfileTracker::SourceMappingId iid) const override {
     auto* decoder = seq_state_->LookupInternedMessage<
         protos::pbzero::InternedData::kMappingsFieldNumber,
         protos::pbzero::Mapping>(iid);
     if (!decoder)
-      return base::nullopt;
+      return std::nullopt;
     return ProfilePacketUtils::MakeSourceMapping(*decoder);
   }
 
-  base::Optional<SequenceStackProfileTracker::SourceFrame> GetFrame(
+  std::optional<SequenceStackProfileTracker::SourceFrame> GetFrame(
       SequenceStackProfileTracker::SourceFrameId iid) const override {
     auto* decoder = seq_state_->LookupInternedMessage<
         protos::pbzero::InternedData::kFramesFieldNumber,
         protos::pbzero::Frame>(iid);
     if (!decoder)
-      return base::nullopt;
+      return std::nullopt;
     return ProfilePacketUtils::MakeSourceFrame(*decoder);
   }
 
-  base::Optional<SequenceStackProfileTracker::SourceCallstack> GetCallstack(
+  std::optional<SequenceStackProfileTracker::SourceCallstack> GetCallstack(
       SequenceStackProfileTracker::SourceCallstackId iid) const override {
-    auto* decoder = seq_state_->LookupInternedMessage<
-        protos::pbzero::InternedData::kCallstacksFieldNumber,
-        protos::pbzero::Callstack>(iid);
-    if (!decoder)
-      return base::nullopt;
-    return ProfilePacketUtils::MakeSourceCallstack(*decoder);
+    auto* interned_message_view = seq_state_->GetInternedMessageView(
+        protos::pbzero::InternedData::kCallstacksFieldNumber, iid);
+    if (!interned_message_view)
+      return std::nullopt;
+    protos::pbzero::Callstack::Decoder decoder(
+        interned_message_view->message().data(),
+        interned_message_view->message().length());
+    return ProfilePacketUtils::MakeSourceCallstack(std::move(decoder));
   }
 
  private:

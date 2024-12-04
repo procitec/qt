@@ -7,10 +7,10 @@
 
 #include <Carbon/Carbon.h>
 
-#include "src/core/SkUtils.h"
-#include "tools/sk_app/mac/WindowContextFactory_mac.h"
+#include "include/core/SkTypes.h"
 #include "tools/sk_app/mac/Window_mac.h"
 #include "tools/skui/ModifierKey.h"
+#include "tools/window/mac/WindowContextFactory_mac.h"
 
 @interface WindowDelegate : NSObject<NSWindowDelegate>
 
@@ -119,13 +119,20 @@ void Window_mac::show() {
 bool Window_mac::attach(BackendType attachType) {
     this->initWindow();
 
-    window_context_factory::MacWindowInfo info;
+    skwindow::MacWindowInfo info;
     info.fMainView = [fWindow contentView];
     switch (attachType) {
-#ifdef SK_DAWN
-        case kDawn_BackendType:
-            fWindowContext = MakeDawnMTLForMac(info, fRequestedDisplayParams);
+#if SK_ANGLE
+        case kANGLE_BackendType:
+            fWindowContext = skwindow::MakeANGLEForMac(info, fRequestedDisplayParams);
             break;
+#endif
+#ifdef SK_DAWN
+#if defined(SK_GRAPHITE)
+        case kGraphiteDawn_BackendType:
+            fWindowContext = MakeGraphiteDawnMetalForMac(info, fRequestedDisplayParams);
+            break;
+#endif
 #endif
 #ifdef SK_VULKAN
         case kVulkan_BackendType:
@@ -136,22 +143,30 @@ bool Window_mac::attach(BackendType attachType) {
         case kMetal_BackendType:
             fWindowContext = MakeMetalForMac(info, fRequestedDisplayParams);
             break;
+#if defined(SK_GRAPHITE)
+        case kGraphiteMetal_BackendType:
+            fWindowContext = MakeGraphiteMetalForMac(info, fRequestedDisplayParams);
+            break;
+#endif
 #endif
 #ifdef SK_GL
         case kNativeGL_BackendType:
-        default:
             fWindowContext = MakeGLForMac(info, fRequestedDisplayParams);
             break;
-#else
-        default:
-#endif
         case kRaster_BackendType:
             fWindowContext = MakeRasterForMac(info, fRequestedDisplayParams);
             break;
+#endif
+        default:
+            SkASSERT_RELEASE(false);
     }
     this->onBackendCreated();
 
     return SkToBool(fWindowContext);
+}
+
+float Window_mac::scaleFactor() const {
+    return skwindow::GetBackingScaleFactor(fWindow.contentView);
 }
 
 void Window_mac::PaintWindows() {
@@ -177,9 +192,9 @@ void Window_mac::PaintWindows() {
 }
 
 - (void)windowDidResize:(NSNotification *)notification {
-    const NSRect mainRect = [fWindow->window().contentView bounds];
-
-    fWindow->onResize(mainRect.size.width, mainRect.size.height);
+    NSView* view = fWindow->window().contentView;
+    CGFloat scale = skwindow::GetBackingScaleFactor(view);
+    fWindow->onResize(view.bounds.size.width * scale, view.bounds.size.height * scale);
     fWindow->inval();
 }
 
@@ -229,7 +244,7 @@ static skui::Key get_key(unsigned short vk) {
         { kVK_ANSI_Z,        skui::Key::kZ },
     };
 
-    for (size_t i = 0; i < SK_ARRAY_COUNT(gPair); i++) {
+    for (size_t i = 0; i < std::size(gPair); i++) {
         if (gPair[i].fVK == vk) {
             return gPair[i].fKey;
         }
@@ -399,19 +414,27 @@ static skui::ModifierKey get_modifiers(const NSEvent* event) {
 }
 
 - (void)mouseDown:(NSEvent *)event {
+    NSView* view = fWindow->window().contentView;
+    CGFloat backingScaleFactor = skwindow::GetBackingScaleFactor(view);
+
     skui::ModifierKey modifiers = [self updateModifierKeys:event];
 
     const NSPoint pos = [event locationInWindow];
-    const NSRect rect = [fWindow->window().contentView frame];
-    fWindow->onMouse(pos.x, rect.size.height - pos.y, skui::InputState::kDown, modifiers);
+    const NSRect rect = [view frame];
+    fWindow->onMouse(pos.x * backingScaleFactor, (rect.size.height - pos.y) * backingScaleFactor,
+                     skui::InputState::kDown, modifiers);
 }
 
 - (void)mouseUp:(NSEvent *)event {
+    NSView* view = fWindow->window().contentView;
+    CGFloat backingScaleFactor = skwindow::GetBackingScaleFactor(view);
+
     skui::ModifierKey modifiers = [self updateModifierKeys:event];
 
     const NSPoint pos = [event locationInWindow];
-    const NSRect rect = [fWindow->window().contentView frame];
-    fWindow->onMouse(pos.x, rect.size.height - pos.y, skui::InputState::kUp, modifiers);
+    const NSRect rect = [view frame];
+    fWindow->onMouse(pos.x * backingScaleFactor, (rect.size.height - pos.y) * backingScaleFactor,
+                     skui::InputState::kUp, modifiers);
 }
 
 - (void)mouseDragged:(NSEvent *)event {
@@ -420,18 +443,30 @@ static skui::ModifierKey get_modifiers(const NSEvent* event) {
 }
 
 - (void)mouseMoved:(NSEvent *)event {
+    NSView* view = fWindow->window().contentView;
+    CGFloat backingScaleFactor = skwindow::GetBackingScaleFactor(view);
+
     skui::ModifierKey modifiers = [self updateModifierKeys:event];
 
     const NSPoint pos = [event locationInWindow];
-    const NSRect rect = [fWindow->window().contentView frame];
-    fWindow->onMouse(pos.x, rect.size.height - pos.y, skui::InputState::kMove, modifiers);
+    const NSRect rect = [view frame];
+    fWindow->onMouse(pos.x * backingScaleFactor, (rect.size.height - pos.y) * backingScaleFactor,
+                     skui::InputState::kMove, modifiers);
 }
 
 - (void)scrollWheel:(NSEvent *)event {
+    NSView* view = fWindow->window().contentView;
+    CGFloat backingScaleFactor = skwindow::GetBackingScaleFactor(view);
+
     skui::ModifierKey modifiers = [self updateModifierKeys:event];
 
     // TODO: support hasPreciseScrollingDeltas?
-    fWindow->onMouseWheel([event scrollingDeltaY], modifiers);
+    const NSPoint pos = [event locationInWindow];
+    const NSRect rect = [view frame];
+    fWindow->onMouseWheel([event scrollingDeltaY],
+                          pos.x * backingScaleFactor,
+                          (rect.size.height - pos.y) * backingScaleFactor,
+                          modifiers);
 }
 
 - (void)drawRect:(NSRect)rect {

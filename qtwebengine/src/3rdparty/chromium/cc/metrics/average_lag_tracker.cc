@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,12 +11,11 @@
 
 namespace cc {
 
-AverageLagTracker::AverageLagTracker(FinishTimeType finish_time_type)
-    : finish_time_type_(finish_time_type) {}
+AverageLagTracker::AverageLagTracker() = default;
 AverageLagTracker::~AverageLagTracker() = default;
 
 void AverageLagTracker::AddScrollEventInFrame(const EventInfo& event_info) {
-  if (event_info.event_type == EventType::ScrollBegin) {
+  if (event_info.event_type == EventType::kScrollbegin) {
     AddScrollBeginInFrame(event_info);
   } else if (!last_event_timestamp_.is_null()) {
     AddScrollUpdateInFrame(event_info);
@@ -28,19 +27,17 @@ void AverageLagTracker::AddScrollEventInFrame(const EventInfo& event_info) {
 }
 
 std::string AverageLagTracker::GetAverageLagMetricName(EventType event) const {
-  std::string metric_name = finish_time_type_ == FinishTimeType::GpuSwapBegin
-                                ? "AverageLag"
-                                : "AverageLagPresentation";
+  std::string metric_name = "AverageLagPresentation";
 
   std::string event_name =
-      event == EventType::ScrollBegin ? "ScrollBegin" : "ScrollUpdate";
+      event == EventType::kScrollbegin ? "ScrollBegin" : "ScrollUpdate";
 
   return base::JoinString(
       {"Event", "Latency", event_name, "Touch", metric_name}, ".");
 }
 
 void AverageLagTracker::AddScrollBeginInFrame(const EventInfo& event_info) {
-  DCHECK_EQ(event_info.event_type, EventType::ScrollBegin);
+  DCHECK_EQ(event_info.event_type, EventType::kScrollbegin);
 
   // Flush all unfinished frames.
   while (!frame_lag_infos_.empty()) {
@@ -55,7 +52,7 @@ void AverageLagTracker::AddScrollBeginInFrame(const EventInfo& event_info) {
   // |accumulated_lag_| should be cleared/reset.
   DCHECK_EQ(accumulated_lag_, 0);
 
-  // Create ScrollBegin report, with report time equals to the frame
+  // Create kScrollbegin report, with report time equals to the frame
   // timestamp.
   LagAreaInFrame first_frame(event_info.finish_timestamp);
   frame_lag_infos_.push_back(first_frame);
@@ -69,7 +66,7 @@ void AverageLagTracker::AddScrollBeginInFrame(const EventInfo& event_info) {
 }
 
 void AverageLagTracker::AddScrollUpdateInFrame(const EventInfo& event_info) {
-  DCHECK_EQ(event_info.event_type, EventType::ScrollUpdate);
+  DCHECK_EQ(event_info.event_type, EventType::kScrollupdate);
 
   // Only accept events in nondecreasing order.
   if ((event_info.event_timestamp - last_event_timestamp_).InMilliseconds() < 0)
@@ -168,53 +165,81 @@ float AverageLagTracker::LagForUnfinishedFrame(
 }
 
 void AverageLagTracker::CalculateAndReportAverageLagUma(bool send_anyway) {
-  DCHECK(!frame_lag_infos_.empty());
+  // TODO(crbug.com/1356794): re-enable DCHECK and remove early-out
+  // once bugs are fixed.
+  // DCHECK(!frame_lag_infos_.empty());
+  if (frame_lag_infos_.empty()) {
+    return;
+  }
   const LagAreaInFrame& frame_lag = frame_lag_infos_.front();
 
-  DCHECK_GE(frame_lag.lag_area, 0.f);
-  DCHECK_GE(frame_lag.lag_area_no_prediction, 0.f);
+  // TODO(crbug.com/1356794): re-enable DCHECKs once bugs are fixed.
+  // DCHECK_GE(frame_lag.lag_area, 0.f);
+  // DCHECK_GE(frame_lag.lag_area_no_prediction, 0.f);
   accumulated_lag_ += frame_lag.lag_area;
   accumulated_lag_no_prediction_ += frame_lag.lag_area_no_prediction;
 
   if (is_begin_) {
-    DCHECK_EQ(accumulated_lag_, accumulated_lag_no_prediction_);
+    // TODO(crbug.com/1356794): re-enable DCHECK once bugs are fixed.
+    // DCHECK_EQ(accumulated_lag_, accumulated_lag_no_prediction_);
   }
 
   // |send_anyway| is true when we are flush all remaining frames on next
-  // |ScrollBegin|. Otherwise record UMA when it's ScrollBegin, or when
+  // |kScrollbegin|. Otherwise record UMA when it's kScrollbegin, or when
   // reaching the 1 second gap.
   if (send_anyway || is_begin_ ||
-      (frame_lag.frame_time - last_reported_time_) >=
-          base::TimeDelta::FromSeconds(1)) {
+      (frame_lag.frame_time - last_reported_time_) >= base::Seconds(1)) {
     const EventType event_type =
-        is_begin_ ? EventType::ScrollBegin : EventType::ScrollUpdate;
+        is_begin_ ? EventType::kScrollbegin : EventType::kScrollupdate;
 
     const float time_delta =
         (frame_lag.frame_time - last_reported_time_).InMillisecondsF();
-    const float scaled_lag = accumulated_lag_ / time_delta;
-    base::UmaHistogramCounts1000(GetAverageLagMetricName(event_type),
-                                 scaled_lag);
+    const float scaled_lag_with_prediction = accumulated_lag_ / time_delta;
+    const float scaled_lag_no_prediction =
+        accumulated_lag_no_prediction_ / time_delta;
 
-    const float prediction_effect =
-        (accumulated_lag_no_prediction_ - accumulated_lag_) / time_delta;
-    // Log positive and negative prediction effects. ScrollBegin currently
+    base::UmaHistogramCounts1000(GetAverageLagMetricName(event_type),
+                                 scaled_lag_with_prediction);
+    base::UmaHistogramCounts1000(
+        base::JoinString({GetAverageLagMetricName(event_type), "NoPrediction"},
+                         "."),
+        scaled_lag_no_prediction);
+
+    const float lag_improvement =
+        scaled_lag_no_prediction - scaled_lag_with_prediction;
+
+    // Log positive and negative prediction effects. kScrollbegin currently
     // doesn't take prediction into account so don't log for it.
     // Positive effect means that the prediction reduced the perceived lag,
     // where negative means prediction made lag worse (most likely due to
     // misprediction).
-    if (event_type == EventType::ScrollUpdate) {
-      if (prediction_effect >= 0.f) {
+    if (event_type == EventType::kScrollupdate) {
+      if (lag_improvement >= 0.f) {
         base::UmaHistogramCounts1000(
             base::JoinString(
                 {GetAverageLagMetricName(event_type), "PredictionPositive"},
                 "."),
-            prediction_effect);
+            lag_improvement);
       } else {
         base::UmaHistogramCounts1000(
             base::JoinString(
                 {GetAverageLagMetricName(event_type), "PredictionNegative"},
                 "."),
-            -prediction_effect);
+            -lag_improvement);
+      }
+
+      if (scaled_lag_no_prediction > 0) {
+        // How much of the original lag wasn't removed by prediction.
+        float remaining_lag_ratio =
+            scaled_lag_with_prediction / scaled_lag_no_prediction;
+
+        // Using custom bucket count for high precision on values in (0, 100).
+        // With 100 buckets, (0, 100) is mapped into 60 buckets.
+        base::UmaHistogramCustomCounts(
+            base::JoinString(
+                {GetAverageLagMetricName(event_type), "RemainingLagPercentage"},
+                "."),
+            100 * remaining_lag_ratio, 1, 500, 100);
       }
     }
     accumulated_lag_ = 0;

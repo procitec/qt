@@ -1,11 +1,16 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef CHROME_COMMON_CHROME_RESULT_CODES_H_
 #define CHROME_COMMON_CHROME_RESULT_CODES_H_
 
+#include "build/chromeos_buildflags.h"
 #include "content/public/common/result_codes.h"
+
+#if BUILDFLAG(IS_CHROMEOS_LACROS)
+#include "chromeos/startup/startup.h"  // nogncheck
+#endif
 
 namespace chrome {
 
@@ -113,12 +118,39 @@ enum ResultCode {
   // viz::ExitCode in components/viz/service/gl/gpu_service_impl.h.
   RESULT_CODE_GPU_EXIT_ON_CONTEXT_LOST,
 
+  // Chrome detected that there was a new version waiting to launch and renamed
+  // the files and launched the new version. This result code is never returned
+  // from the main process, but is instead used as a signal for early
+  // termination of browser. See `IsNormalResultCode` below.
+  RESULT_CODE_NORMAL_EXIT_UPGRADE_RELAUNCHED,
+
+  // An early startup command was executed and the browser must exit.
+  RESULT_CODE_NORMAL_EXIT_PACK_EXTENSION_SUCCESS,
+
+  // The browser process exited because system resource are exhausted. The
+  // system state can't be recovered and will be unstable.
+  RESULT_CODE_SYSTEM_RESOURCE_EXHAUSTED,
+
+  // The Lacros process exited because the post-login parameters received
+  // from Ash are either empty or invalid (Lacros-only).
+  RESULT_CODE_INVALID_POST_LOGIN_PARAMS,
+
   // Last return code (keep this last).
   RESULT_CODE_CHROME_LAST_CODE
 };
 
-static_assert(RESULT_CODE_CHROME_LAST_CODE == 35,
+#if BUILDFLAG(IS_CHROMEOS_LACROS)
+// Defined in chromeos/startup/startup.h.
+static_assert(chromeos::RESULT_CODE_INVALID_POST_LOGIN_PARAMS ==
+              RESULT_CODE_INVALID_POST_LOGIN_PARAMS);
+#endif
+
+static_assert(RESULT_CODE_CHROME_LAST_CODE == 39,
               "Please make sure the enum values are in sync with enums.xml");
+
+// Returns true if the result code should be treated as a normal exit code i.e.
+// content::RESULT_CODE_NORMAL_EXIT.
+bool IsNormalResultCode(ResultCode code);
 
 }  // namespace chrome
 

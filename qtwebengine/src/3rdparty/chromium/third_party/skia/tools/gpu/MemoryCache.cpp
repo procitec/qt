@@ -5,23 +5,24 @@
  * found in the LICENSE file.
  */
 
-#include "include/utils/SkBase64.h"
+#include "src/base/SkBase64.h"
 #include "src/core/SkMD5.h"
-#include "src/gpu/GrPersistentCacheUtils.h"
+#include "src/core/SkReadBuffer.h"
+#include "src/gpu/ganesh/GrPersistentCacheUtils.h"
 #include "tools/gpu/MemoryCache.h"
 
 #if defined(SK_VULKAN)
-#include "src/gpu/vk/GrVkGpu.h"
+#include "src/gpu/ganesh/vk/GrVkGpu.h"
 #endif
 
 // Change this to 1 to log cache hits/misses/stores using SkDebugf.
 #define LOG_MEMORY_CACHE 0
 
 static SkString data_to_str(const SkData& data) {
-    size_t encodeLength = SkBase64::Encode(data.data(), data.size(), nullptr);
+    size_t encodeLength = SkBase64::EncodedSize(data.size());
     SkString str;
     str.resize(encodeLength);
-    SkBase64::Encode(data.data(), data.size(), str.writable_str());
+    SkBase64::Encode(data.data(), data.size(), str.data());
     static constexpr size_t kMaxLength = 60;
     static constexpr char kTail[] = "...";
     static const size_t kTailLen = strlen(kTail);
@@ -52,13 +53,13 @@ sk_sp<SkData> MemoryCache::load(const SkData& key) {
     return result->second.fData;
 }
 
-void MemoryCache::store(const SkData& key, const SkData& data) {
+void MemoryCache::store(const SkData& key, const SkData& data, const SkString& description) {
     if (LOG_MEMORY_CACHE) {
         SkDebugf("Store Key: %s\n\tData: %s\n\n", data_to_str(key).c_str(),
                  data_to_str(data).c_str());
     }
     ++fCacheStoreCnt;
-    fMap[Key(key)] = Value(data);
+    fMap[Key(key)] = Value(data, description);
 }
 
 void MemoryCache::writeShadersToDisk(const char* path, GrBackendApi api) {
@@ -86,25 +87,40 @@ void MemoryCache::writeShadersToDisk(const char* path, GrBackendApi api) {
 #endif
         hash.write(it->first.fKey->bytes(), bytesToHash);
         SkMD5::Digest digest = hash.finish();
-        SkString md5;
-        for (int i = 0; i < 16; ++i) {
-            md5.appendf("%02x", digest.data[i]);
-        }
+        SkString md5 = digest.toLowercaseHexString();
 
-        SkSL::Program::Inputs inputsIgnored[kGrShaderTypeCount];
-        SkSL::String shaders[kGrShaderTypeCount];
+        SkSL::Program::Interface interfacesIgnored[kGrShaderTypeCount];
+        std::string shaders[kGrShaderTypeCount];
         const SkData* data = it->second.fData.get();
-        // Even with the SPIR-V switches, it seems like we must use .spv, or malisc tries to
-        // run glslang on the input.
-        const char* ext = GrBackendApi::kOpenGL == api ? "frag" : "spv";
+        const SkString& description = it->second.fDescription;
         SkReadBuffer reader(data->data(), data->size());
         GrPersistentCacheUtils::GetType(&reader); // Shader type tag
         GrPersistentCacheUtils::UnpackCachedShaders(&reader, shaders,
-                                                    inputsIgnored, kGrShaderTypeCount);
+                                                    interfacesIgnored, kGrShaderTypeCount);
 
-        SkString filename = SkStringPrintf("%s/%s.%s", path, md5.c_str(), ext);
-        SkFILEWStream file(filename.c_str());
-        file.write(shaders[kFragment_GrShaderType].c_str(), shaders[kFragment_GrShaderType].size());
+        // Even with the SPIR-V switches, it seems like we must use .spv, or malisc tries to
+        // run glslang on the input.
+        {
+            const char* ext = GrBackendApi::kOpenGL == api ? "frag" : "frag.spv";
+            SkString filename = SkStringPrintf("%s/%s.%s", path, md5.c_str(), ext);
+            SkFILEWStream file(filename.c_str());
+            file.write(shaders[kFragment_GrShaderType].c_str(),
+                       shaders[kFragment_GrShaderType].size());
+        }
+        {
+            const char* ext = GrBackendApi::kOpenGL == api ? "vert" : "vert.spv";
+            SkString filename = SkStringPrintf("%s/%s.%s", path, md5.c_str(), ext);
+            SkFILEWStream file(filename.c_str());
+            file.write(shaders[kVertex_GrShaderType].c_str(),
+                       shaders[kVertex_GrShaderType].size());
+        }
+
+        if (!description.isEmpty()) {
+            const char* ext = "key";
+            SkString filename = SkStringPrintf("%s/%s.%s", path, md5.c_str(), ext);
+            SkFILEWStream file(filename.c_str());
+            file.write(description.c_str(), description.size());
+        }
     }
 }
 

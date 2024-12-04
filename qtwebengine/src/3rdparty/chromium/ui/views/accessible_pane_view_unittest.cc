@@ -1,14 +1,18 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "ui/views/accessible_pane_view.h"
 
+#include <memory>
 #include <utility>
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "build/build_config.h"
+#include "build/chromeos_buildflags.h"
 #include "ui/base/accelerators/accelerator.h"
+#include "ui/base/metadata/metadata_header_macros.h"
+#include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/views/controls/button/label_button.h"
 #include "ui/views/layout/fill_layout.h"
 #include "ui/views/test/views_test_base.h"
@@ -21,17 +25,20 @@ namespace views {
 
 using AccessiblePaneViewTest = ViewsTestBase;
 
-class TestBarView : public AccessiblePaneView, public ButtonListener {
+class TestBarView : public AccessiblePaneView {
+  METADATA_HEADER(TestBarView, AccessiblePaneView)
+
  public:
   TestBarView();
+
+  TestBarView(const TestBarView&) = delete;
+  TestBarView& operator=(const TestBarView&) = delete;
+
   ~TestBarView() override;
 
-  void ButtonPressed(Button* sender, const ui::Event& event) override;
-  LabelButton* child_button() const { return child_button_.get(); }
-  LabelButton* second_child_button() const {
-    return second_child_button_.get();
-  }
-  LabelButton* third_child_button() const { return third_child_button_.get(); }
+  LabelButton* child_button() const { return child_button_; }
+  LabelButton* second_child_button() const { return second_child_button_; }
+  LabelButton* third_child_button() const { return third_child_button_; }
   LabelButton* not_child_button() const { return not_child_button_.get(); }
 
   View* GetDefaultFocusableChild() override;
@@ -39,12 +46,10 @@ class TestBarView : public AccessiblePaneView, public ButtonListener {
  private:
   void Init();
 
-  std::unique_ptr<LabelButton> child_button_;
-  std::unique_ptr<LabelButton> second_child_button_;
-  std::unique_ptr<LabelButton> third_child_button_;
+  raw_ptr<LabelButton> child_button_;
+  raw_ptr<LabelButton> second_child_button_;
+  raw_ptr<LabelButton> third_child_button_;
   std::unique_ptr<LabelButton> not_child_button_;
-
-  DISALLOW_COPY_AND_ASSIGN(TestBarView);
 };
 
 TestBarView::TestBarView() {
@@ -54,23 +59,21 @@ TestBarView::TestBarView() {
 
 TestBarView::~TestBarView() = default;
 
-void TestBarView::ButtonPressed(Button* sender, const ui::Event& event) {}
-
 void TestBarView::Init() {
   SetLayoutManager(std::make_unique<FillLayout>());
-  base::string16 label;
-  child_button_ = std::make_unique<LabelButton>(this, label);
-  AddChildView(child_button_.get());
-  second_child_button_ = std::make_unique<LabelButton>(this, label);
-  AddChildView(second_child_button_.get());
-  third_child_button_ = std::make_unique<LabelButton>(this, label);
-  AddChildView(third_child_button_.get());
-  not_child_button_ = std::make_unique<LabelButton>(this, label);
+  std::u16string label;
+  child_button_ = AddChildView(std::make_unique<LabelButton>());
+  second_child_button_ = AddChildView(std::make_unique<LabelButton>());
+  third_child_button_ = AddChildView(std::make_unique<LabelButton>());
+  not_child_button_ = std::make_unique<LabelButton>();
 }
 
 View* TestBarView::GetDefaultFocusableChild() {
-  return child_button_.get();
+  return child_button_;
 }
+
+BEGIN_METADATA(TestBarView)
+END_METADATA
 
 TEST_F(AccessiblePaneViewTest, SimpleSetPaneFocus) {
   TestBarView* test_view = new TestBarView();
@@ -142,7 +145,7 @@ TEST_F(AccessiblePaneViewTest, SetPaneFocusAndRestore) {
   // predictable. On Mac, Deactivate() is not implemented. Note that
   // TestBarView calls set_allow_deactivate_on_esc(true), which is only
   // otherwise used in Ash.
-#if !defined(OS_APPLE) || defined(OS_CHROMEOS)
+#if !BUILDFLAG(IS_MAC) || BUILDFLAG(IS_CHROMEOS_ASH)
   // Esc should deactivate the widget.
   test_view_bar->AcceleratorPressed(test_view_bar->escape_key());
   EXPECT_TRUE(widget_main->IsActive());
@@ -235,7 +238,15 @@ TEST_F(AccessiblePaneViewTest, PaneFocusTraversal) {
   widget.reset();
 }
 
-TEST_F(AccessiblePaneViewTest, DoesntCrashOnEscapeWithRemovedView) {
+// TODO(crbug.com/1314275): Re-enable this test
+#if defined(ADDRESS_SANITIZER) && defined(LEAK_SANITIZER)
+#define MAYBE_DoesntCrashOnEscapeWithRemovedView \
+  DISABLED_DoesntCrashOnEscapeWithRemovedView
+#else
+#define MAYBE_DoesntCrashOnEscapeWithRemovedView \
+  DoesntCrashOnEscapeWithRemovedView
+#endif
+TEST_F(AccessiblePaneViewTest, MAYBE_DoesntCrashOnEscapeWithRemovedView) {
   TestBarView* test_view1 = new TestBarView();
   TestBarView* test_view2 = new TestBarView();
   Widget widget;
@@ -264,6 +275,32 @@ TEST_F(AccessiblePaneViewTest, DoesntCrashOnEscapeWithRemovedView) {
   v1->parent()->RemoveChildView(v1);
   // This shouldn't hit a CHECK in the FocusManager.
   EXPECT_TRUE(test_view2->AcceleratorPressed(test_view2->escape_key()));
+}
+
+TEST_F(AccessiblePaneViewTest, AccessibleProperties) {
+  std::unique_ptr<TestBarView> test_view = std::make_unique<TestBarView>();
+  test_view->SetAccessibleName(u"Name");
+  test_view->SetAccessibleDescription(u"Description");
+  EXPECT_EQ(test_view->GetAccessibleName(), u"Name");
+  EXPECT_EQ(test_view->GetAccessibleDescription(), u"Description");
+  EXPECT_EQ(test_view->GetAccessibleRole(), ax::mojom::Role::kPane);
+
+  ui::AXNodeData data;
+  test_view->GetAccessibleNodeData(&data);
+  EXPECT_EQ(data.GetString16Attribute(ax::mojom::StringAttribute::kName),
+            u"Name");
+  EXPECT_EQ(data.GetString16Attribute(ax::mojom::StringAttribute::kDescription),
+            u"Description");
+  EXPECT_EQ(data.role, ax::mojom::Role::kPane);
+
+  data = ui::AXNodeData();
+  test_view->SetAccessibleRole(ax::mojom::Role::kToolbar);
+  test_view->GetAccessibleNodeData(&data);
+  EXPECT_EQ(data.GetString16Attribute(ax::mojom::StringAttribute::kName),
+            u"Name");
+  EXPECT_EQ(data.GetString16Attribute(ax::mojom::StringAttribute::kDescription),
+            u"Description");
+  EXPECT_EQ(data.role, ax::mojom::Role::kToolbar);
 }
 
 }  // namespace views

@@ -34,7 +34,8 @@
 #include "base/memory/scoped_refptr.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_value.h"
 #include "third_party/blink/renderer/core/core_export.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/collection_support/heap_vector.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 #include "v8/include/v8.h"
@@ -43,6 +44,7 @@ namespace blink {
 
 class DOMException;
 class ExceptionState;
+class ScriptFunction;
 
 // ScriptPromise is the class for representing Promise values in C++ world.
 // ScriptPromise holds a Promise.
@@ -69,6 +71,8 @@ class CORE_EXPORT ScriptPromise final {
 
   ScriptPromise Then(v8::Local<v8::Function> on_fulfilled,
                      v8::Local<v8::Function> on_rejected = {});
+  ScriptPromise Then(ScriptFunction* on_fulfilled,
+                     ScriptFunction* on_rejected = nullptr);
 
   bool IsObject() const { return promise_.IsObject(); }
 
@@ -78,9 +82,14 @@ class CORE_EXPORT ScriptPromise final {
     return promise_.IsUndefined() || promise_.IsNull();
   }
 
-  ScriptValue GetScriptValue() const { return promise_; }
+  ScriptValue AsScriptValue() const { return promise_; }
 
   v8::Local<v8::Value> V8Value() const { return promise_.V8Value(); }
+  v8::Local<v8::Promise> V8Promise() const {
+    // This is safe because `promise_` always stores a promise value as long
+    // as it's non-empty.
+    return V8Value().As<v8::Promise>();
+  }
 
   v8::Isolate* GetIsolate() const { return script_state_->GetIsolate(); }
 
@@ -141,7 +150,7 @@ class CORE_EXPORT ScriptPromise final {
     void Resolve(v8::Local<v8::Value>);
     void Reject(v8::Local<v8::Value>);
     void Clear() { resolver_.Clear(); }
-    ScriptState* GetScriptState() const { return script_state_; }
+    ScriptState* GetScriptState() const { return script_state_.Get(); }
     void Trace(Visitor* visitor) const {
       visitor->Trace(script_state_);
       visitor->Trace(resolver_);
@@ -157,9 +166,6 @@ class CORE_EXPORT ScriptPromise final {
   }
 
  private:
-  static void IncreaseInstanceCount();
-  static void DecreaseInstanceCount();
-
   Member<ScriptState> script_state_;
   ScriptValue promise_;
 };

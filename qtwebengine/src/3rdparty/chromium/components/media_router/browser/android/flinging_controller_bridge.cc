@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -105,19 +105,19 @@ void FlingingControllerBridge::OnMediaStatusUpdated(
 
   switch (player_state) {
     case PLAYER_STATE_UNKOWN:
-      status.state = media::MediaStatus::State::UNKNOWN;
+      status.state = media::MediaStatus::State::kUnknown;
       break;
     case PLAYER_STATE_PLAYING:
-      status.state = media::MediaStatus::State::PLAYING;
+      status.state = media::MediaStatus::State::kPlaying;
       break;
     case PLAYER_STATE_PAUSED:
-      status.state = media::MediaStatus::State::PAUSED;
+      status.state = media::MediaStatus::State::kPaused;
       break;
     case PLAYER_STATE_BUFFERING:
-      status.state = media::MediaStatus::State::BUFFERING;
+      status.state = media::MediaStatus::State::kBuffering;
       break;
     case PLAYER_STATE_IDLE:
-      status.state = media::MediaStatus::State::STOPPED;
+      status.state = media::MediaStatus::State::kStopped;
       int idle_reason = Java_MediaStatusBridge_idleReason(env, j_status);
       status.reached_end_of_stream = (idle_reason == IDLE_REASON_FINISHED);
       break;
@@ -131,10 +131,10 @@ void FlingingControllerBridge::OnMediaStatusUpdated(
   status.can_seek = Java_MediaStatusBridge_canSeek(env, j_status);
   status.is_muted = Java_MediaStatusBridge_isMuted(env, j_status);
   status.volume = Java_MediaStatusBridge_volume(env, j_status);
-  status.duration = base::TimeDelta::FromMilliseconds(
-      Java_MediaStatusBridge_duration(env, j_status));
-  status.current_time = base::TimeDelta::FromMilliseconds(
-      Java_MediaStatusBridge_currentTime(env, j_status));
+  status.duration =
+      base::Milliseconds(Java_MediaStatusBridge_duration(env, j_status));
+  status.current_time =
+      base::Milliseconds(Java_MediaStatusBridge_currentTime(env, j_status));
 
   observer_->OnMediaStatusUpdated(status);
 }
@@ -146,7 +146,7 @@ base::TimeDelta FlingingControllerBridge::GetApproximateCurrentTime() {
   long time_in_ms = Java_FlingingControllerBridge_getApproximateCurrentTime(
       env, j_flinging_controller_bridge_);
 
-  return base::TimeDelta::FromMilliseconds(time_in_ms);
+  return base::Milliseconds(time_in_ms);
 }
 
 }  // namespace media_router

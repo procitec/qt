@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -33,6 +33,15 @@ class CookieSettingsPolicyHandlerTest
                base::Value(third_party_cookie_blocking_enabled), nullptr);
     UpdateProviderPolicy(policy);
   }
+
+  void SetDefaultCookiePolicy(ContentSetting content_setting) {
+    policy::PolicyMap policy;
+    policy.Set(policy::key::kDefaultCookiesSetting,
+               policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
+               policy::POLICY_SOURCE_CLOUD, base::Value(content_setting),
+               nullptr);
+    UpdateProviderPolicy(policy);
+  }
 };
 
 TEST_F(CookieSettingsPolicyHandlerTest, ThirdPartyCookieBlockingNotSet) {
@@ -56,6 +65,41 @@ TEST_F(CookieSettingsPolicyHandlerTest, ThirdPartyCookieBlockingDisabled) {
   ASSERT_TRUE(store_->GetValue(prefs::kCookieControlsMode, &value));
   EXPECT_EQ(static_cast<CookieControlsMode>(value->GetInt()),
             CookieControlsMode::kOff);
+}
+
+TEST_F(CookieSettingsPolicyHandlerTest,
+       DefaultCookieContentBlockAllImplicitDisable) {
+  SetDefaultCookiePolicy(CONTENT_SETTING_BLOCK);
+  const base::Value* value;
+  EXPECT_TRUE(store_->GetValue(prefs::kCookieControlsMode, &value));
+  EXPECT_EQ(static_cast<CookieControlsMode>(value->GetInt()),
+            CookieControlsMode::kBlockThirdParty);
+}
+
+TEST_F(CookieSettingsPolicyHandlerTest,
+       DefaultCookieContentAllowedImplicitDisableNotSet) {
+  SetDefaultCookiePolicy(CONTENT_SETTING_ALLOW);
+  const base::Value* value;
+  EXPECT_FALSE(store_->GetValue(prefs::kCookieControlsMode, &value));
+}
+
+TEST_F(CookieSettingsPolicyHandlerTest,
+       DefaultCookieContentBlockOverridesThirdParty) {
+  // A policy which sets the default cookie content setting to block should
+  // override a policy enabling 3P cookies.
+  policy::PolicyMap policy;
+  policy.Set(policy::key::kBlockThirdPartyCookies,
+             policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
+             policy::POLICY_SOURCE_CLOUD, base::Value(false), nullptr);
+  policy.Set(policy::key::kDefaultCookiesSetting,
+             policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
+             policy::POLICY_SOURCE_CLOUD, base::Value(CONTENT_SETTING_BLOCK),
+             nullptr);
+  UpdateProviderPolicy(policy);
+  const base::Value* value;
+  EXPECT_TRUE(store_->GetValue(prefs::kCookieControlsMode, &value));
+  EXPECT_EQ(static_cast<CookieControlsMode>(value->GetInt()),
+            CookieControlsMode::kBlockThirdParty);
 }
 
 }  // namespace content_settings

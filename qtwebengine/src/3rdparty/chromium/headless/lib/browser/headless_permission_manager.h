@@ -1,16 +1,21 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef HEADLESS_LIB_BROWSER_HEADLESS_PERMISSION_MANAGER_H_
 #define HEADLESS_LIB_BROWSER_HEADLESS_PERMISSION_MANAGER_H_
 
-#include "base/callback_forward.h"
-#include "base/macros.h"
+#include "base/functional/callback_forward.h"
+#include "base/memory/raw_ptr.h"
 #include "content/public/browser/permission_controller_delegate.h"
+
+namespace blink {
+enum class PermissionType;
+}
 
 namespace content {
 class BrowserContext;
+struct PermissionResult;
 }
 
 namespace headless {
@@ -18,47 +23,60 @@ namespace headless {
 class HeadlessPermissionManager : public content::PermissionControllerDelegate {
  public:
   explicit HeadlessPermissionManager(content::BrowserContext* browser_context);
+
+  HeadlessPermissionManager(const HeadlessPermissionManager&) = delete;
+  HeadlessPermissionManager& operator=(const HeadlessPermissionManager&) =
+      delete;
+
   ~HeadlessPermissionManager() override;
 
   // PermissionManager implementation.
-  int RequestPermission(content::PermissionType permission,
-                        content::RenderFrameHost* render_frame_host,
-                        const GURL& requesting_origin,
-                        bool user_gesture,
-                        base::OnceCallback<void(blink::mojom::PermissionStatus)>
-                            callback) override;
-  int RequestPermissions(
-      const std::vector<content::PermissionType>& permission,
+  void RequestPermissions(
       content::RenderFrameHost* render_frame_host,
-      const GURL& requesting_origin,
-      bool user_gesture,
+      const content::PermissionRequestDescription& request_description,
       base::OnceCallback<
           void(const std::vector<blink::mojom::PermissionStatus>&)> callback)
       override;
-  void ResetPermission(content::PermissionType permission,
+  void ResetPermission(blink::PermissionType permission,
                        const GURL& requesting_origin,
                        const GURL& embedding_origin) override;
+  void RequestPermissionsFromCurrentDocument(
+      content::RenderFrameHost* render_frame_host,
+      const content::PermissionRequestDescription& request_description,
+      base::OnceCallback<
+          void(const std::vector<blink::mojom::PermissionStatus>&)> callback)
+      override;
   blink::mojom::PermissionStatus GetPermissionStatus(
-      content::PermissionType permission,
+      blink::PermissionType permission,
       const GURL& requesting_origin,
       const GURL& embedding_origin) override;
-  blink::mojom::PermissionStatus GetPermissionStatusForFrame(
-      content::PermissionType permission,
+  content::PermissionResult GetPermissionResultForOriginWithoutContext(
+      blink::PermissionType permission,
+      const url::Origin& requesting_origin,
+      const url::Origin& embedding_origin) override;
+  blink::mojom::PermissionStatus GetPermissionStatusForCurrentDocument(
+      blink::PermissionType permission,
+      content::RenderFrameHost* render_frame_host) override;
+  blink::mojom::PermissionStatus GetPermissionStatusForWorker(
+      blink::PermissionType permission,
+      content::RenderProcessHost* render_process_host,
+      const GURL& worker_origin) override;
+  blink::mojom::PermissionStatus GetPermissionStatusForEmbeddedRequester(
+      blink::PermissionType permission,
       content::RenderFrameHost* render_frame_host,
-      const GURL& requesting_origin) override;
-  SubscriptionId SubscribePermissionStatusChange(
-      content::PermissionType permission,
+      const url::Origin& overridden_origin) override;
+  SubscriptionId SubscribeToPermissionStatusChange(
+      blink::PermissionType permission,
+      content::RenderProcessHost* render_process_host,
       content::RenderFrameHost* render_frame_host,
       const GURL& requesting_origin,
       base::RepeatingCallback<void(blink::mojom::PermissionStatus)> callback)
       override;
-  void UnsubscribePermissionStatusChange(
+  void UnsubscribeFromPermissionStatusChange(
       SubscriptionId subscription_id) override;
 
  private:
-  content::BrowserContext* browser_context_;
-
-  DISALLOW_COPY_AND_ASSIGN(HeadlessPermissionManager);
+  raw_ptr<content::BrowserContext> browser_context_;
 };
 
 }  // namespace content

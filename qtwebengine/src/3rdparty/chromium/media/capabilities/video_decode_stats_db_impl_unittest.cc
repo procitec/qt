@@ -1,21 +1,23 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include <map>
 #include <memory>
 
-#include "base/bind.h"
-#include "base/bind_helpers.h"
-#include "base/callback.h"
 #include "base/check.h"
 #include "base/files/file_path.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/ptr_util.h"
+#include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/simple_test_clock.h"
 #include "base/test/task_environment.h"
+#include "base/time/time.h"
 #include "components/leveldb_proto/testing/fake_db.h"
 #include "media/base/media_switches.h"
 #include "media/base/test_data_util.h"
@@ -58,12 +60,16 @@ class VideoDecodeStatsDBImplTest : public ::testing::Test {
     fake_db_map_ = std::make_unique<FakeDB<DecodeStatsProto>::EntryMap>();
     // |stats_db_| will own this pointer, but we hold a reference to control
     // its behavior.
-    fake_db_ = new FakeDB<DecodeStatsProto>(fake_db_map_.get());
+    auto db = std::make_unique<FakeDB<DecodeStatsProto>>(fake_db_map_.get());
+    fake_db_ = db.get();
 
     // Wrap the fake proto DB with our interface.
-    stats_db_ = base::WrapUnique(new VideoDecodeStatsDBImpl(
-        std::unique_ptr<FakeDB<DecodeStatsProto>>(fake_db_)));
+    stats_db_ = base::WrapUnique(new VideoDecodeStatsDBImpl(std::move(db)));
   }
+
+  VideoDecodeStatsDBImplTest(const VideoDecodeStatsDBImplTest&) = delete;
+  VideoDecodeStatsDBImplTest& operator=(const VideoDecodeStatsDBImplTest&) =
+      delete;
 
   ~VideoDecodeStatsDBImplTest() override {
     // Tests should always complete any pending operations
@@ -71,13 +77,19 @@ class VideoDecodeStatsDBImplTest : public ::testing::Test {
   }
 
   void VerifyOnePendingOp(std::string op_name) {
-    EXPECT_EQ(stats_db_->pending_ops_.size(), 1u);
-    VideoDecodeStatsDBImpl::PendingOperation* pending_op =
-        stats_db_->pending_ops_.begin()->second.get();
+    EXPECT_EQ(stats_db_->pending_operations_.get_pending_ops_for_test().size(),
+              1u);
+    PendingOperations::PendingOperation* pending_op =
+        stats_db_->pending_operations_.get_pending_ops_for_test()
+            .begin()
+            ->second.get();
     EXPECT_EQ(pending_op->uma_str_, op_name);
   }
 
-  void VerifyNoPendingOps() { EXPECT_TRUE(stats_db_->pending_ops_.empty()); }
+  void VerifyNoPendingOps() {
+    EXPECT_TRUE(
+        stats_db_->pending_operations_.get_pending_ops_for_test().empty());
+  }
 
   int GetMaxFramesPerBuffer() {
     return VideoDecodeStatsDBImpl::GetMaxFramesPerBuffer();
@@ -189,20 +201,18 @@ class VideoDecodeStatsDBImplTest : public ::testing::Test {
   // base::Time::FromString.
   base::Time kDefaultWriteTime;
 
-  // See documentation in SetUp()
+  // See documentation in constructor.
   std::unique_ptr<FakeDB<DecodeStatsProto>::EntryMap> fake_db_map_;
-  FakeDB<DecodeStatsProto>* fake_db_;
   std::unique_ptr<VideoDecodeStatsDBImpl> stats_db_;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(VideoDecodeStatsDBImplTest);
+  raw_ptr<FakeDB<DecodeStatsProto>> fake_db_;
 };
 
 TEST_F(VideoDecodeStatsDBImplTest, InitializeFailed) {
   stats_db_->Initialize(base::BindOnce(
       &VideoDecodeStatsDBImplTest::OnInitialize, base::Unretained(this)));
   EXPECT_CALL(*this, OnInitialize(false));
-  fake_db_->InitStatusCallback(leveldb_proto::Enums::InitStatus::kError);
+  fake_db_.ExtractAsDangling()->InitStatusCallback(
+      leveldb_proto::Enums::InitStatus::kError);
 }
 
 TEST_F(VideoDecodeStatsDBImplTest, InitializeTimedOut) {
@@ -213,7 +223,7 @@ TEST_F(VideoDecodeStatsDBImplTest, InitializeTimedOut) {
 
   // Move time forward enough to trigger timeout.
   EXPECT_CALL(*this, OnInitialize(_)).Times(0);
-  task_environment_.FastForwardBy(base::TimeDelta::FromSeconds(100));
+  task_environment_.FastForwardBy(base::Seconds(100));
   task_environment_.RunUntilIdle();
 
   // Verify we didn't get an init callback and task is no longer considered
@@ -223,7 +233,8 @@ TEST_F(VideoDecodeStatsDBImplTest, InitializeTimedOut) {
 
   // Verify callback still works if init completes very late.
   EXPECT_CALL(*this, OnInitialize(false));
-  fake_db_->InitStatusCallback(leveldb_proto::Enums::InitStatus::kError);
+  fake_db_.ExtractAsDangling()->InitStatusCallback(
+      leveldb_proto::Enums::InitStatus::kError);
 }
 
 TEST_F(VideoDecodeStatsDBImplTest, ReadExpectingNothing) {
@@ -298,6 +309,22 @@ TEST_F(VideoDecodeStatsDBImplTest, ConfigureMaxFramesPerBuffer) {
   VerifyReadStats(kStatsKeyVp9, second_entry);
 }
 
+namespace {
+
+class DBClockScope {
+ public:
+  DBClockScope(VideoDecodeStatsDBImplTest* test_class, base::Clock* clock)
+      : test_class_(test_class) {
+    test_class_->SetDBClock(clock);
+  }
+  ~DBClockScope() { test_class_->SetDBClock(nullptr); }
+
+ private:
+  const raw_ptr<VideoDecodeStatsDBImplTest> test_class_;
+};
+
+}  // namespace
+
 TEST_F(VideoDecodeStatsDBImplTest, ConfigureExpireDays) {
   base::test::ScopedFeatureList scoped_feature_list;
   std::unique_ptr<base::FieldTrialList> field_trial_list;
@@ -323,7 +350,7 @@ TEST_F(VideoDecodeStatsDBImplTest, ConfigureExpireDays) {
 
   // Inject a test clock and initialize with the current time.
   base::SimpleTestClock clock;
-  SetDBClock(&clock);
+  DBClockScope clock_scope(this, &clock);
   clock.SetNow(base::Time::Now());
 
   // Append and verify read-back.
@@ -336,15 +363,15 @@ TEST_F(VideoDecodeStatsDBImplTest, ConfigureExpireDays) {
       new_max_days_to_keep_stats - half_days_to_keep_stats;
 
   // Advance time half way through grace period. Verify stats not expired.
-  clock.Advance(base::TimeDelta::FromDays(half_days_to_keep_stats));
+  clock.Advance(base::Days(half_days_to_keep_stats));
   VerifyReadStats(kStatsKeyVp9, DecodeStatsEntry(200, 20, 2));
 
   // Advance time 1 day beyond grace period, verify stats are expired.
-  clock.Advance(base::TimeDelta::FromDays((remaining_days_to_keep_stats) + 1));
+  clock.Advance(base::Days((remaining_days_to_keep_stats) + 1));
   VerifyEmptyStats(kStatsKeyVp9);
 
   // Advance the clock 100 extra days. Verify stats still expired.
-  clock.Advance(base::TimeDelta::FromDays(100));
+  clock.Advance(base::Days(100));
   VerifyEmptyStats(kStatsKeyVp9);
 }
 
@@ -537,21 +564,19 @@ TEST_F(VideoDecodeStatsDBImplTest, NoWriteDateReadAndExpire) {
   // case when the proto update (adding last_write_date) first ships (i.e. we
   // don't want to immediately expire all the existing data).
   base::SimpleTestClock clock;
-  SetDBClock(&clock);
-  clock.SetNow(kDefaultWriteTime - base::TimeDelta::FromDays(10));
+  DBClockScope clock_scope(this, &clock);
+  clock.SetNow(kDefaultWriteTime - base::Days(10));
   // Verify the stats are readable (not expired).
   VerifyReadStats(kStatsKeyVp9, DecodeStatsEntry(100, 10, 1));
 
   // Set "now" to be in the middle of the grace period. Verify stats are still
   // readable (not expired).
-  clock.SetNow(kDefaultWriteTime +
-               base::TimeDelta::FromDays(GetMaxDaysToKeepStats() / 2));
+  clock.SetNow(kDefaultWriteTime + base::Days(GetMaxDaysToKeepStats() / 2));
   VerifyReadStats(kStatsKeyVp9, DecodeStatsEntry(100, 10, 1));
 
   // Set the clock 1 day beyond the expiry date. Verify stats are no longer
   // readable due to expiration.
-  clock.SetNow(kDefaultWriteTime +
-               base::TimeDelta::FromDays(GetMaxDaysToKeepStats() + 1));
+  clock.SetNow(kDefaultWriteTime + base::Days(GetMaxDaysToKeepStats() + 1));
   VerifyEmptyStats(kStatsKeyVp9);
 
   // Write some stats to the entry. Verify we get back exactly what's written
@@ -575,8 +600,8 @@ TEST_F(VideoDecodeStatsDBImplTest, NoWriteDateAppendReadAndExpire) {
   // case when the proto update (adding last_write_date) first ships (i.e. we
   // don't want to immediately expire all the existing data).
   base::SimpleTestClock clock;
-  SetDBClock(&clock);
-  clock.SetNow(kDefaultWriteTime - base::TimeDelta::FromDays(10));
+  DBClockScope clock_scope(this, &clock);
+  clock.SetNow(kDefaultWriteTime - base::Days(10));
   // Verify the stats are readable (not expired).
   VerifyReadStats(kStatsKeyVp9, DecodeStatsEntry(100, 10, 1));
 
@@ -587,14 +612,12 @@ TEST_F(VideoDecodeStatsDBImplTest, NoWriteDateAppendReadAndExpire) {
 
   // Set "now" to be in the middle of the grace period. Verify stats are still
   // readable (not expired).
-  clock.SetNow(kDefaultWriteTime +
-               base::TimeDelta::FromDays(GetMaxDaysToKeepStats() / 2));
+  clock.SetNow(kDefaultWriteTime + base::Days(GetMaxDaysToKeepStats() / 2));
   VerifyReadStats(kStatsKeyVp9, DecodeStatsEntry(300, 30, 3));
 
   // Set the clock 1 day beyond the expiry date. Verify stats are no longer
   // readable due to expiration.
-  clock.SetNow(kDefaultWriteTime +
-               base::TimeDelta::FromDays(GetMaxDaysToKeepStats() + 1));
+  clock.SetNow(kDefaultWriteTime + base::Days(GetMaxDaysToKeepStats() + 1));
   VerifyEmptyStats(kStatsKeyVp9);
 }
 
@@ -603,7 +626,7 @@ TEST_F(VideoDecodeStatsDBImplTest, AppendAndExpire) {
 
   // Inject a test clock and initialize with the current time.
   base::SimpleTestClock clock;
-  SetDBClock(&clock);
+  DBClockScope clock_scope(this, &clock);
   clock.SetNow(base::Time::Now());
 
   // Append and verify read-back.
@@ -611,15 +634,15 @@ TEST_F(VideoDecodeStatsDBImplTest, AppendAndExpire) {
   VerifyReadStats(kStatsKeyVp9, DecodeStatsEntry(200, 20, 2));
 
   // Advance time half way through grace period. Verify stats not expired.
-  clock.Advance(base::TimeDelta::FromDays(GetMaxDaysToKeepStats() / 2));
+  clock.Advance(base::Days(GetMaxDaysToKeepStats() / 2));
   VerifyReadStats(kStatsKeyVp9, DecodeStatsEntry(200, 20, 2));
 
   // Advance time 1 day beyond grace period, verify stats are expired.
-  clock.Advance(base::TimeDelta::FromDays((GetMaxDaysToKeepStats() / 2) + 1));
+  clock.Advance(base::Days((GetMaxDaysToKeepStats() / 2) + 1));
   VerifyEmptyStats(kStatsKeyVp9);
 
   // Advance the clock 100 days. Verify stats still expired.
-  clock.Advance(base::TimeDelta::FromDays(100));
+  clock.Advance(base::Days(100));
   VerifyEmptyStats(kStatsKeyVp9);
 }
 
@@ -704,7 +727,7 @@ TEST_F(VideoDecodeStatsDBImplTest, DiscardCorruptedDBData) {
 
   // Inject a test clock and initialize with the current time.
   base::SimpleTestClock clock;
-  SetDBClock(&clock);
+  DBClockScope clock_scope(this, &clock);
   clock.SetNow(base::Time::Now());
 
   // Construct several distinct key values for storing/retrieving the corrupted
@@ -729,7 +752,7 @@ TEST_F(VideoDecodeStatsDBImplTest, DiscardCorruptedDBData) {
   protoA.set_frames_decoded(100);
   protoA.set_frames_dropped(15);
   protoA.set_frames_power_efficient(50);
-  protoA.set_last_write_date(clock.Now().ToJsTime());
+  protoA.set_last_write_date(clock.Now().InMillisecondsFSinceUnixEpoch());
   protoA.set_unweighted_average_frames_dropped(15.0 / 100);
   protoA.set_unweighted_average_frames_efficient(50.0 / 100);
   protoA.set_num_unweighted_playbacks(1);
@@ -773,7 +796,7 @@ TEST_F(VideoDecodeStatsDBImplTest, DiscardCorruptedDBData) {
   // Make an invalid  proto with a last write date in the future.
   DecodeStatsProto protoG(protoA);
   protoG.set_last_write_date(
-      (clock.Now() + base::TimeDelta::FromDays(1)).ToJsTime());
+      (clock.Now() + base::Days(1)).InMillisecondsFSinceUnixEpoch());
   AppendToProtoDB(keyG, &protoG);
   VerifyEmptyStats(keyG);
 }

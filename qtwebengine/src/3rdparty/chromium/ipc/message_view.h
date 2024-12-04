@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,15 +7,11 @@
 
 #include <vector>
 
+#include <optional>
 #include "base/component_export.h"
 #include "base/containers/span.h"
-#include "base/macros.h"
 #include "ipc/ipc_message.h"
-#if !defined(__GNUC__) || defined(__clang__) || __GNUC__ > 6
 #include "mojo/public/interfaces/bindings/native_struct.mojom-forward.h"
-#else
-#include "mojo/public/interfaces/bindings/native_struct.mojom.h"
-#endif
 
 namespace IPC {
 
@@ -24,20 +20,22 @@ class COMPONENT_EXPORT(IPC_MOJOM) MessageView {
   MessageView();
   MessageView(
       base::span<const uint8_t> bytes,
-      base::Optional<std::vector<mojo::native::SerializedHandlePtr>> handles);
+      std::optional<std::vector<mojo::native::SerializedHandlePtr>> handles);
   MessageView(MessageView&&);
+
+  MessageView(const MessageView&) = delete;
+  MessageView& operator=(const MessageView&) = delete;
+
   ~MessageView();
 
   MessageView& operator=(MessageView&&);
 
   base::span<const uint8_t> bytes() const { return bytes_; }
-  base::Optional<std::vector<mojo::native::SerializedHandlePtr>> TakeHandles();
+  std::optional<std::vector<mojo::native::SerializedHandlePtr>> TakeHandles();
 
  private:
   base::span<const uint8_t> bytes_;
-  base::Optional<std::vector<mojo::native::SerializedHandlePtr>> handles_;
-
-  DISALLOW_COPY_AND_ASSIGN(MessageView);
+  std::optional<std::vector<mojo::native::SerializedHandlePtr>> handles_;
 };
 
 }  // namespace IPC

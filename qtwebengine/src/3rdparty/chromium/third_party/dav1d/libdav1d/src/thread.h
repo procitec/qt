@@ -1,5 +1,5 @@
 /*
- * Copyright © 2018, VideoLAN and dav1d authors
+ * Copyright © 2018-2021, VideoLAN and dav1d authors
  * Copyright © 2018, Two Orioles, LLC
  * All rights reserved.
  *
@@ -33,6 +33,7 @@
 #include <limits.h>
 #include <windows.h>
 
+#define PTHREAD_MUTEX_INITIALIZER SRWLOCK_INIT
 #define PTHREAD_ONCE_INIT INIT_ONCE_STATIC_INIT
 
 typedef struct {
@@ -167,6 +168,14 @@ static inline void dav1d_set_thread_name(const char *const name) {
 
 static inline void dav1d_set_thread_name(const char *const name) {
     pthread_setname_np(pthread_self(), "%s", (void*)name);
+}
+
+#elif defined(__HAIKU__)
+
+#include <os/kernel/OS.h>
+
+static inline void dav1d_set_thread_name(const char *const name) {
+    rename_thread(find_thread(NULL), name);
 }
 
 #else

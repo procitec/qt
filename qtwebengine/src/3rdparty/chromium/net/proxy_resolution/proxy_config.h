@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -113,13 +113,20 @@ class NET_EXPORT ProxyConfig {
     // Returns true if |*this| describes the same configuration as |other|.
     bool Equals(const ProxyRules& other) const;
 
+    static ProxyRules CreateForTesting(const ProxyList& proxy_list) {
+      ProxyRules proxy_rules;
+      proxy_rules.type = Type::PROXY_LIST;
+      proxy_rules.single_proxies = proxy_list;
+      return proxy_rules;
+    }
+
     // Exceptions for when not to use a proxy.
     ProxyBypassRules bypass_rules;
 
     // Reverse the meaning of |bypass_rules|.
-    bool reverse_bypass;
+    bool reverse_bypass = false;
 
-    Type type;
+    Type type = Type::EMPTY;
 
     // Set if |type| is Type::PROXY_LIST.
     ProxyList single_proxies;
@@ -199,6 +206,10 @@ class NET_EXPORT ProxyConfig {
     return auto_detect_;
   }
 
+  void set_from_system(bool from_system) { from_system_ = from_system; }
+
+  bool from_system() const { return from_system_; }
+
   // Helpers to construct some common proxy configurations.
 
   static ProxyConfig CreateDirect() {
@@ -219,16 +230,25 @@ class NET_EXPORT ProxyConfig {
     return config;
   }
 
+  static ProxyConfig CreateForTesting(const ProxyList& proxy_list) {
+    ProxyConfig config;
+    config.proxy_rules_ = ProxyRules::CreateForTesting(proxy_list);
+    return config;
+  }
+
  private:
   // True if the proxy configuration should be auto-detected.
-  bool auto_detect_;
+  bool auto_detect_ = false;
+
+  // True if the proxy configuration was created from system settings.
+  bool from_system_ = false;
 
   // If non-empty, indicates the URL of the proxy auto-config file to use.
   GURL pac_url_;
 
   // If true, blocks all traffic in case fetching the PAC script from |pac_url_|
   // fails. Only valid if |pac_url_| is non-empty.
-  bool pac_mandatory_;
+  bool pac_mandatory_ = false;
 
   // Manual proxy settings.
   ProxyRules proxy_rules_;

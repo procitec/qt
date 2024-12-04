@@ -1,10 +1,11 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef UI_GFX_MOJOM_OVERLAY_TRANSFORM_MOJOM_TRAITS_H_
 #define UI_GFX_MOJOM_OVERLAY_TRANSFORM_MOJOM_TRAITS_H_
 
+#include "base/notreached.h"
 #include "ui/gfx/mojom/overlay_transform.mojom.h"
 #include "ui/gfx/overlay_transform.h"
 
@@ -22,12 +23,15 @@ struct EnumTraits<gfx::mojom::OverlayTransform, gfx::OverlayTransform> {
         return gfx::mojom::OverlayTransform::OVERLAY_TRANSFORM_FLIP_HORIZONTAL;
       case gfx::OverlayTransform::OVERLAY_TRANSFORM_FLIP_VERTICAL:
         return gfx::mojom::OverlayTransform::OVERLAY_TRANSFORM_FLIP_VERTICAL;
-      case gfx::OverlayTransform::OVERLAY_TRANSFORM_ROTATE_90:
-        return gfx::mojom::OverlayTransform::OVERLAY_TRANSFORM_ROTATE_90;
-      case gfx::OverlayTransform::OVERLAY_TRANSFORM_ROTATE_180:
-        return gfx::mojom::OverlayTransform::OVERLAY_TRANSFORM_ROTATE_180;
-      case gfx::OverlayTransform::OVERLAY_TRANSFORM_ROTATE_270:
-        return gfx::mojom::OverlayTransform::OVERLAY_TRANSFORM_ROTATE_270;
+      case gfx::OverlayTransform::OVERLAY_TRANSFORM_ROTATE_CLOCKWISE_90:
+        return gfx::mojom::OverlayTransform::
+            OVERLAY_TRANSFORM_ROTATE_CLOCKWISE_90;
+      case gfx::OverlayTransform::OVERLAY_TRANSFORM_ROTATE_CLOCKWISE_180:
+        return gfx::mojom::OverlayTransform::
+            OVERLAY_TRANSFORM_ROTATE_CLOCKWISE_180;
+      case gfx::OverlayTransform::OVERLAY_TRANSFORM_ROTATE_CLOCKWISE_270:
+        return gfx::mojom::OverlayTransform::
+            OVERLAY_TRANSFORM_ROTATE_CLOCKWISE_270;
     }
     NOTREACHED();
     return gfx::mojom::OverlayTransform::OVERLAY_TRANSFORM_INVALID;
@@ -48,14 +52,14 @@ struct EnumTraits<gfx::mojom::OverlayTransform, gfx::OverlayTransform> {
       case gfx::mojom::OverlayTransform::OVERLAY_TRANSFORM_FLIP_VERTICAL:
         *out = gfx::OverlayTransform::OVERLAY_TRANSFORM_FLIP_VERTICAL;
         return true;
-      case gfx::mojom::OverlayTransform::OVERLAY_TRANSFORM_ROTATE_90:
-        *out = gfx::OverlayTransform::OVERLAY_TRANSFORM_ROTATE_90;
+      case gfx::mojom::OverlayTransform::OVERLAY_TRANSFORM_ROTATE_CLOCKWISE_90:
+        *out = gfx::OverlayTransform::OVERLAY_TRANSFORM_ROTATE_CLOCKWISE_90;
         return true;
-      case gfx::mojom::OverlayTransform::OVERLAY_TRANSFORM_ROTATE_180:
-        *out = gfx::OverlayTransform::OVERLAY_TRANSFORM_ROTATE_180;
+      case gfx::mojom::OverlayTransform::OVERLAY_TRANSFORM_ROTATE_CLOCKWISE_180:
+        *out = gfx::OverlayTransform::OVERLAY_TRANSFORM_ROTATE_CLOCKWISE_180;
         return true;
-      case gfx::mojom::OverlayTransform::OVERLAY_TRANSFORM_ROTATE_270:
-        *out = gfx::OverlayTransform::OVERLAY_TRANSFORM_ROTATE_270;
+      case gfx::mojom::OverlayTransform::OVERLAY_TRANSFORM_ROTATE_CLOCKWISE_270:
+        *out = gfx::OverlayTransform::OVERLAY_TRANSFORM_ROTATE_CLOCKWISE_270;
         return true;
     }
     NOTREACHED();

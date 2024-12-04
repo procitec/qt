@@ -15,15 +15,12 @@
 #include <string>
 
 #include "modules/audio_processing/test/audio_processing_simulator.h"
-#include "rtc_base/ignore_wundef.h"
 
-RTC_PUSH_IGNORING_WUNDEF()
 #ifdef WEBRTC_ANDROID_PLATFORM_BUILD
 #include "external/webrtc/webrtc/modules/audio_processing/debug.pb.h"
 #else
 #include "modules/audio_processing/debug.pb.h"
 #endif
-RTC_POP_IGNORING_WUNDEF()
 
 namespace webrtc {
 namespace test {
@@ -44,10 +41,14 @@ class AecDumpBasedSimulator final : public AudioProcessingSimulator {
   // Processes the messages in the aecdump file.
   void Process() override;
 
+  // Analyzes the data in the aecdump file and reports the resulting statistics.
+  void Analyze() override;
+
  private:
   void HandleEvent(const webrtc::audioproc::Event& event_msg,
-                   int* num_forward_chunks_processed);
-  void HandleMessage(const webrtc::audioproc::Init& msg);
+                   int& num_forward_chunks_processed,
+                   int& init_index);
+  void HandleMessage(const webrtc::audioproc::Init& msg, int init_index);
   void HandleMessage(const webrtc::audioproc::Stream& msg);
   void HandleMessage(const webrtc::audioproc::ReverseStream& msg);
   void HandleMessage(const webrtc::audioproc::Config& msg);
@@ -69,6 +70,7 @@ class AecDumpBasedSimulator final : public AudioProcessingSimulator {
   bool artificial_nearend_eof_reported_ = false;
   InterfaceType interface_used_ = InterfaceType::kNotSpecified;
   std::unique_ptr<std::ofstream> call_order_output_file_;
+  bool finished_processing_specified_init_block_ = false;
 };
 
 }  // namespace test

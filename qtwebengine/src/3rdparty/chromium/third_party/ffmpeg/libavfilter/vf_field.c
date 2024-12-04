@@ -73,7 +73,12 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *inpicref)
     int i;
 
     inpicref->height = outlink->h;
+#if FF_API_INTERLACED_FRAME
+FF_DISABLE_DEPRECATION_WARNINGS
     inpicref->interlaced_frame = 0;
+FF_ENABLE_DEPRECATION_WARNINGS
+#endif
+    inpicref->flags &= ~AV_FRAME_FLAG_INTERLACED;
 
     for (i = 0; i < field->nb_planes; i++) {
         if (field->type == FIELD_TYPE_BOTTOM)
@@ -89,7 +94,6 @@ static const AVFilterPad field_inputs[] = {
         .type         = AVMEDIA_TYPE_VIDEO,
         .filter_frame = filter_frame,
     },
-    { NULL }
 };
 
 static const AVFilterPad field_outputs[] = {
@@ -98,14 +102,13 @@ static const AVFilterPad field_outputs[] = {
         .type         = AVMEDIA_TYPE_VIDEO,
         .config_props = config_props_output,
     },
-    { NULL }
 };
 
-AVFilter ff_vf_field = {
+const AVFilter ff_vf_field = {
     .name        = "field",
     .description = NULL_IF_CONFIG_SMALL("Extract a field from the input video."),
     .priv_size   = sizeof(FieldContext),
-    .inputs      = field_inputs,
-    .outputs     = field_outputs,
+    FILTER_INPUTS(field_inputs),
+    FILTER_OUTPUTS(field_outputs),
     .priv_class  = &field_class,
 };

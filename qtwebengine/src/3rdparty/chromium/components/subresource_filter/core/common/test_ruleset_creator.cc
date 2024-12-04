@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,6 +6,7 @@
 
 #include <memory>
 #include <string>
+#include <string_view>
 
 #include "base/check.h"
 #include "base/files/file_util.h"
@@ -30,11 +31,7 @@ static_assert(CHAR_BIT == 8, "Assumed char was 8 bits.");
 void WriteRulesetContents(const std::vector<uint8_t>& contents,
                           base::FilePath path) {
   base::ScopedAllowBlockingForTesting allow_blocking;
-  int ruleset_size_as_int = base::checked_cast<int>(contents.size());
-  int num_bytes_written =
-      base::WriteFile(path, reinterpret_cast<const char*>(contents.data()),
-                      ruleset_size_as_int);
-  ASSERT_EQ(ruleset_size_as_int, num_bytes_written);
+  ASSERT_TRUE(base::WriteFile(path, contents));
 }
 
 std::vector<uint8_t> SerializeUnindexedRulesetWithMultipleRules(
@@ -56,7 +53,7 @@ std::vector<uint8_t> SerializeIndexedRulesetWithMultipleRules(
   for (const auto& rule : rules)
     EXPECT_TRUE(indexer.AddUrlRule(rule));
   indexer.Finish();
-  return std::vector<uint8_t>(indexer.data(), indexer.data() + indexer.size());
+  return std::vector<uint8_t>(indexer.data().begin(), indexer.data().end());
 }
 
 }  // namespace
@@ -73,7 +70,7 @@ base::File TestRuleset::Open(const TestRuleset& ruleset) {
   base::ScopedAllowBlockingForTesting allow_blocking;
   base::File file;
   file.Initialize(ruleset.path, base::File::FLAG_OPEN | base::File::FLAG_READ |
-                                    base::File::FLAG_SHARE_DELETE);
+                                    base::File::FLAG_WIN_SHARE_DELETE);
   return file;
 }
 
@@ -120,7 +117,7 @@ TestRulesetCreator::~TestRulesetCreator() {
 }
 
 void TestRulesetCreator::CreateRulesetToDisallowURLsWithPathSuffix(
-    base::StringPiece suffix,
+    std::string_view suffix,
     TestRulesetPair* test_ruleset_pair) {
   DCHECK(test_ruleset_pair);
   proto::UrlRule suffix_rule = CreateSuffixRule(suffix);
@@ -128,7 +125,7 @@ void TestRulesetCreator::CreateRulesetToDisallowURLsWithPathSuffix(
 }
 
 void TestRulesetCreator::CreateUnindexedRulesetToDisallowURLsWithPathSuffix(
-    base::StringPiece suffix,
+    std::string_view suffix,
     TestRuleset* test_unindexed_ruleset) {
   DCHECK(test_unindexed_ruleset);
   proto::UrlRule suffix_rule = CreateSuffixRule(suffix);
@@ -136,8 +133,18 @@ void TestRulesetCreator::CreateUnindexedRulesetToDisallowURLsWithPathSuffix(
       CreateUnindexedRulesetWithRules({suffix_rule}, test_unindexed_ruleset));
 }
 
+void TestRulesetCreator::CreateRulesetToDisallowURLWithSubstrings(
+    std::vector<std::string_view> substrings,
+    TestRulesetPair* test_ruleset_pair) {
+  DCHECK(test_ruleset_pair);
+  std::vector<proto::UrlRule> url_rules;
+  for (const auto& substring : substrings)
+    url_rules.push_back(CreateSubstringRule(substring));
+  CreateRulesetWithRules(url_rules, test_ruleset_pair);
+}
+
 void TestRulesetCreator::CreateRulesetToDisallowURLsWithManySuffixes(
-    base::StringPiece suffix,
+    std::string_view suffix,
     int num_of_suffixes,
     TestRulesetPair* test_ruleset_pair) {
   DCHECK(test_ruleset_pair);
@@ -145,7 +152,7 @@ void TestRulesetCreator::CreateRulesetToDisallowURLsWithManySuffixes(
   std::vector<proto::UrlRule> rules;
   for (int i = 0; i < num_of_suffixes; ++i) {
     std::string current_suffix =
-        suffix.as_string() + '_' + base::NumberToString(i);
+        std::string(suffix) + '_' + base::NumberToString(i);
     rules.push_back(CreateSuffixRule(current_suffix));
   }
   CreateRulesetWithRules(rules, test_ruleset_pair);

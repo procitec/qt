@@ -1,15 +1,17 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
 // TODO(dcheng): For efficiency reasons, consider passing custom data around
 // as a vector instead. It allows us to append a
-// std::pair<base::string16, base::string16> and swap the deserialized values.
+// std::pair<std::u16string, std::u16string> and swap the deserialized values.
 
 #include "ui/base/clipboard/custom_data_helper.h"
 
+#include <tuple>
 #include <utility>
 
+#include "base/containers/span.h"
 #include "base/pickle.h"
 
 namespace ui {
@@ -19,18 +21,17 @@ namespace {
 bool SkipString16(base::PickleIterator* iter) {
   DCHECK(iter);
 
-  int len;
+  size_t len;
   if (!iter->ReadLength(&len))
     return false;
-  return iter->SkipBytes(len * sizeof(base::char16));
+  return iter->SkipBytes(len * sizeof(char16_t));
 }
 
 }  // namespace
 
-void ReadCustomDataTypes(const void* data,
-                         size_t data_length,
-                         std::vector<base::string16>* types) {
-  base::Pickle pickle(reinterpret_cast<const char*>(data), data_length);
+void ReadCustomDataTypes(base::span<const uint8_t> data,
+                         std::vector<std::u16string>* types) {
+  base::Pickle pickle(data);
   base::PickleIterator iter(pickle);
 
   uint32_t size = 0;
@@ -43,7 +44,7 @@ void ReadCustomDataTypes(const void* data,
   size_t original_size = types->size();
 
   for (uint32_t i = 0; i < size; ++i) {
-    types->push_back(base::string16());
+    types->push_back(std::u16string());
     if (!iter.ReadString16(&types->back()) || !SkipString16(&iter)) {
       types->resize(original_size);
       return;
@@ -51,59 +52,62 @@ void ReadCustomDataTypes(const void* data,
   }
 }
 
-void ReadCustomDataForType(const void* data,
-                           size_t data_length,
-                           const base::string16& type,
-                           base::string16* result) {
-  base::Pickle pickle(reinterpret_cast<const char*>(data), data_length);
+absl::optional<std::u16string> ReadCustomDataForType(
+    base::span<const uint8_t> data,
+    std::u16string_view type) {
+  base::Pickle pickle(data);
   base::PickleIterator iter(pickle);
 
   uint32_t size = 0;
   if (!iter.ReadUInt32(&size))
-    return;
+    return absl::nullopt;
 
   for (uint32_t i = 0; i < size; ++i) {
-    base::string16 deserialized_type;
-    if (!iter.ReadString16(&deserialized_type))
-      return;
-    if (deserialized_type == type) {
-      ignore_result(iter.ReadString16(result));
-      return;
+    std::u16string deserialized_type;
+    if (!iter.ReadString16(&deserialized_type)) {
+      return absl::nullopt;
     }
-    if (!SkipString16(&iter))
-      return;
+    if (deserialized_type == type) {
+      std::u16string result;
+      if (iter.ReadString16(&result)) {
+        return std::move(result);
+      }
+      return absl::nullopt;
+    }
+    if (!SkipString16(&iter)) {
+      return absl::nullopt;
+    }
   }
+  return absl::nullopt;
 }
 
-void ReadCustomDataIntoMap(
-    const void* data,
-    size_t data_length,
-    std::unordered_map<base::string16, base::string16>* result) {
-  base::Pickle pickle(reinterpret_cast<const char*>(data), data_length);
+absl::optional<std::unordered_map<std::u16string, std::u16string>>
+ReadCustomDataIntoMap(base::span<const uint8_t> data) {
+  base::Pickle pickle(data);
   base::PickleIterator iter(pickle);
 
   uint32_t size = 0;
-  if (!iter.ReadUInt32(&size))
-    return;
-
-  for (uint32_t i = 0; i < size; ++i) {
-    base::string16 type;
-    if (!iter.ReadString16(&type)) {
-      // Data is corrupt, return an empty map.
-      result->clear();
-      return;
-    }
-    auto insert_result = result->insert({type, base::string16()});
-    if (!iter.ReadString16(&insert_result.first->second)) {
-      // Data is corrupt, return an empty map.
-      result->clear();
-      return;
-    }
+  if (!iter.ReadUInt32(&size)) {
+    return absl::nullopt;
   }
+
+  std::unordered_map<std::u16string, std::u16string> result;
+  for (uint32_t i = 0; i < size; ++i) {
+    std::u16string custom_type;
+    if (!iter.ReadString16(&custom_type)) {
+      return absl::nullopt;
+    }
+    std::u16string custom_data;
+    if (!iter.ReadString16(&custom_data)) {
+      return absl::nullopt;
+    }
+    result.insert({std::move(custom_type), std::move(custom_data)});
+  }
+  return std::move(result);
 }
 
 void WriteCustomDataToPickle(
-    const std::unordered_map<base::string16, base::string16>& data,
+    const std::unordered_map<std::u16string, std::u16string>& data,
     base::Pickle* pickle) {
   pickle->WriteUInt32(data.size());
   for (const auto& it : data) {
@@ -113,7 +117,7 @@ void WriteCustomDataToPickle(
 }
 
 void WriteCustomDataToPickle(
-    const base::flat_map<base::string16, base::string16>& data,
+    const base::flat_map<std::u16string, std::u16string>& data,
     base::Pickle* pickle) {
   pickle->WriteUInt32(data.size());
   for (const auto& it : data) {

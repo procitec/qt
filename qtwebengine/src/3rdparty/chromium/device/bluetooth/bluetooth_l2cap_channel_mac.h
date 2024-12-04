@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,8 +12,6 @@
 
 #include <memory>
 
-#include "base/mac/scoped_nsobject.h"
-#include "base/macros.h"
 #include "device/bluetooth/bluetooth_channel_mac.h"
 
 @class BluetoothL2capChannelDelegate;
@@ -24,9 +22,12 @@ class BluetoothL2capChannelMac : public BluetoothChannelMac {
  public:
   // Creates a new L2CAP channel wrapper with the given |socket| and native
   // |channel|.
-  // NOTE: The |channel| is expected to already be retained.
   BluetoothL2capChannelMac(BluetoothSocketMac* socket,
                            IOBluetoothL2CAPChannel* channel);
+
+  BluetoothL2capChannelMac(const BluetoothL2capChannelMac&) = delete;
+  BluetoothL2capChannelMac& operator=(const BluetoothL2capChannelMac&) = delete;
+
   ~BluetoothL2capChannelMac() override;
 
   // Opens a new L2CAP channel with Channel ID |channel_id| to the target
@@ -57,12 +58,10 @@ class BluetoothL2capChannelMac : public BluetoothChannelMac {
 
  private:
   // The wrapped native L2CAP channel.
-  base::scoped_nsobject<IOBluetoothL2CAPChannel> channel_;
+  IOBluetoothL2CAPChannel* __strong channel_;
 
   // The delegate for the native channel.
-  base::scoped_nsobject<BluetoothL2capChannelDelegate> delegate_;
-
-  DISALLOW_COPY_AND_ASSIGN(BluetoothL2capChannelMac);
+  BluetoothL2capChannelDelegate* __strong delegate_;
 };
 
 }  // namespace device

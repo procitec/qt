@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,21 +8,16 @@
 #include <memory>
 #include <string>
 
-#include "base/compiler_specific.h"
-#include "base/macros.h"
+#include <optional>
 #include "build/build_config.h"
 #include "content/public/app/content_main_delegate.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/renderer/content_renderer_client.h"
-#include "headless/lib/browser/headless_platform_event_source.h"
 #include "headless/lib/headless_content_client.h"
 #include "headless/public/headless_browser.h"
 #include "headless/public/headless_export.h"
 
 namespace base {
-namespace debug {
-struct CrashKeyString;
-}  // namespace debug
 class CommandLine;
 }  // namespace base
 
@@ -36,55 +31,58 @@ class HEADLESS_EXPORT HeadlessContentMainDelegate
  public:
   explicit HeadlessContentMainDelegate(
       std::unique_ptr<HeadlessBrowserImpl> browser);
-  explicit HeadlessContentMainDelegate(HeadlessBrowser::Options options);
+
+  HeadlessContentMainDelegate(const HeadlessContentMainDelegate&) = delete;
+  HeadlessContentMainDelegate& operator=(const HeadlessContentMainDelegate&) =
+      delete;
+
   ~HeadlessContentMainDelegate() override;
 
+ private:
   // content::ContentMainDelegate implementation:
-  bool BasicStartupComplete(int* exit_code) override;
+  std::optional<int> BasicStartupComplete() override;
   void PreSandboxStartup() override;
-  int RunProcess(
+  absl::variant<int, content::MainFunctionParams> RunProcess(
       const std::string& process_type,
-      const content::MainFunctionParams& main_function_params) override;
-#if defined(OS_MAC)
-  void PreCreateMainMessageLoop() override;
+      content::MainFunctionParams main_function_params) override;
+  std::optional<int> PreBrowserMain() override;
+#if BUILDFLAG(IS_WIN)
+  bool ShouldHandleConsoleControlEvents() override;
 #endif
   content::ContentClient* CreateContentClient() override;
   content::ContentBrowserClient* CreateContentBrowserClient() override;
   content::ContentUtilityClient* CreateContentUtilityClient() override;
   content::ContentRendererClient* CreateContentRendererClient() override;
 
-  void PostEarlyInitialization(bool is_running_tests) override;
+  std::optional<int> PostEarlyInitialization(InvokedIn invoked_in) override;
+#if BUILDFLAG(IS_MAC)
+  void PlatformPreBrowserMain();
+#endif
 
+  // TODO(caseq): get rid of this method and GetInstance(), tests should get
+  // browser through other means.
+  // Note this is nullptr in processes other than the browser.
   HeadlessBrowserImpl* browser() const { return browser_.get(); }
 
-#if defined(OS_LINUX) || defined(OS_CHROMEOS)
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
   void ZygoteForked() override;
 #endif
 
- private:
   friend class HeadlessBrowserTest;
-
-  void Init();
-
-  HeadlessBrowser::Options* options();
 
   static HeadlessContentMainDelegate* GetInstance();
 
   void InitLogging(const base::CommandLine& command_line);
   void InitCrashReporter(const base::CommandLine& command_line);
 
+  // Other clients may retain pointers to browser, so it should come
+  // first.
+  std::unique_ptr<HeadlessBrowserImpl> const browser_;
+
   std::unique_ptr<content::ContentRendererClient> renderer_client_;
   std::unique_ptr<content::ContentBrowserClient> browser_client_;
   std::unique_ptr<content::ContentUtilityClient> utility_client_;
   HeadlessContentClient content_client_;
-  HeadlessPlatformEventSource platform_event_source_;
-
-  std::unique_ptr<HeadlessBrowserImpl> browser_;
-  std::unique_ptr<HeadlessBrowser::Options> options_;
-
-  base::debug::CrashKeyString* headless_crash_key_;  // Note: never deallocated.
-
-  DISALLOW_COPY_AND_ASSIGN(HeadlessContentMainDelegate);
 };
 
 }  // namespace headless

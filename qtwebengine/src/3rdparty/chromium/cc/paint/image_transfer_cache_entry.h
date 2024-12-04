@@ -1,4 +1,4 @@
-// Copyright (c) 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,13 +10,18 @@
 
 #include <vector>
 
+#include <optional>
 #include "base/atomic_sequence_num.h"
 #include "base/containers/span.h"
-#include "base/optional.h"
+#include "base/memory/raw_ptr.h"
 #include "cc/paint/transfer_cache_entry.h"
 #include "third_party/skia/include/core/SkImageInfo.h"
 #include "third_party/skia/include/core/SkRefCnt.h"
-#include "third_party/skia/include/core/SkYUVASizeInfo.h"
+#include "third_party/skia/include/core/SkYUVAInfo.h"
+#include "third_party/skia/include/gpu/GrTypes.h"
+#include "third_party/skia/include/private/SkGainmapInfo.h"
+#include "ui/gfx/color_space.h"
+#include "ui/gfx/hdr_metadata.h"
 
 class GrDirectContext;
 class SkColorSpace;
@@ -42,19 +47,47 @@ CC_PAINT_EXPORT size_t NumberOfPlanesForYUVDecodeFormat(YUVDecodeFormat format);
 // Client/ServiceImageTransferCacheEntry implement a transfer cache entry
 // for transferring image data. On the client side, this is a CPU SkPixmap,
 // on the service side the image is uploaded and is a GPU SkImage.
-class CC_PAINT_EXPORT ClientImageTransferCacheEntry
+class CC_PAINT_EXPORT ClientImageTransferCacheEntry final
     : public ClientTransferCacheEntryBase<TransferCacheEntryType::kImage> {
  public:
-  explicit ClientImageTransferCacheEntry(const SkPixmap* pixmap,
-                                         const SkColorSpace* target_color_space,
-                                         bool needs_mips);
-  explicit ClientImageTransferCacheEntry(
-      const SkPixmap* y_pixmap,
-      const SkPixmap* u_pixmap,
-      const SkPixmap* v_pixmap,
-      const SkColorSpace* decoded_color_space,
-      SkYUVColorSpace yuv_color_space,
-      bool needs_mips);
+  // Abstraction around RGBA vs YUVA images.
+  struct CC_PAINT_EXPORT Image {
+    Image();
+    Image(const Image&);
+    Image& operator=(const Image&);
+
+    // Constructor for RGBA images.
+    explicit Image(const SkPixmap* pixmap);
+
+    // Constructor for YUVA images.
+    Image(const SkPixmap yuva_pixmaps[],
+          const SkYUVAInfo& yuva_info,
+          const SkColorSpace* color_space);
+
+    // The pixmaps for each plane.
+    std::array<const SkPixmap*, SkYUVAInfo::kMaxPlanes> pixmaps = {
+        nullptr, nullptr, nullptr, nullptr};
+
+    // The YUVA parameters. These should be unchanged for RGBA images.
+    SkYUVAInfo::PlaneConfig yuv_plane_config =
+        SkYUVAInfo::PlaneConfig::kUnknown;
+    SkYUVAInfo::Subsampling yuv_subsampling = SkYUVAInfo::Subsampling::kUnknown;
+    SkYUVColorSpace yuv_color_space = kIdentity_SkYUVColorSpace;
+
+    // The color space that will be assigned to the image when it is
+    // deserialized.
+    raw_ptr<const SkColorSpace> color_space = nullptr;
+  };
+
+  ClientImageTransferCacheEntry(
+      const Image& image,
+      bool needs_mips,
+      const std::optional<gfx::HDRMetadata>& hdr_metadata = std::nullopt,
+      sk_sp<SkColorSpace> target_color_space = nullptr);
+  ClientImageTransferCacheEntry(const Image& image,
+                                const Image& gainmap_image,
+                                const SkGainmapInfo& gainmap_info,
+                                bool needs_mips);
   ~ClientImageTransferCacheEntry() final;
 
   uint32_t Id() const final;
@@ -64,33 +97,32 @@ class CC_PAINT_EXPORT ClientImageTransferCacheEntry
   bool Serialize(base::span<uint8_t> data) const final;
 
   static uint32_t GetNextId() { return s_next_id_.GetNext(); }
-  bool IsYuv() const { return !!yuv_pixmaps_; }
+  bool IsYuv() const {
+    return image_.yuv_plane_config != SkYUVAInfo::PlaneConfig::kUnknown;
+  }
+  bool IsValid() const { return size_ > 0; }
 
  private:
+  void ComputeSize();
+
   const bool needs_mips_ = false;
-  const uint32_t num_planes_ = 1;
-  uint32_t id_;
+  sk_sp<SkColorSpace> target_color_space_;
+  const uint32_t id_;
   uint32_t size_ = 0;
   static base::AtomicSequenceNumber s_next_id_;
 
-  // RGBX-only members.
-  const SkPixmap* const pixmap_;
-  const SkColorSpace* const
-      target_color_space_;  // Unused for YUV because Skia handles colorspaces
-                            // at raster.
+  Image image_;
 
-  // YUVA-only members.
-  base::Optional<std::array<const SkPixmap*, SkYUVASizeInfo::kMaxCount>>
-      yuv_pixmaps_;
-  const SkColorSpace* const decoded_color_space_;
-  SkYUVColorSpace yuv_color_space_;
+  // The gainmap image and parameters. Either both or neither of these must
+  // be specified.
+  std::optional<Image> gainmap_image_;
+  std::optional<SkGainmapInfo> gainmap_info_;
 
-  // DCHECKs that the appropriate data members are set or not set and have
-  // positive size dimensions.
-  void ValidateYUVDataBeforeSerializing() const;
+  // The HDR metadata for non-gainmap HDR metadata.
+  std::optional<gfx::HDRMetadata> hdr_metadata_;
 };
 
-class CC_PAINT_EXPORT ServiceImageTransferCacheEntry
+class CC_PAINT_EXPORT ServiceImageTransferCacheEntry final
     : public ServiceTransferCacheEntryBase<TransferCacheEntryType::kImage> {
  public:
   ServiceImageTransferCacheEntry();
@@ -113,51 +145,70 @@ class CC_PAINT_EXPORT ServiceImageTransferCacheEntry
   // - The colorspace of the resulting RGB image is sRGB.
   //
   // Returns true if the entry can be built, false otherwise.
-  bool BuildFromHardwareDecodedImage(GrDirectContext* context,
+  bool BuildFromHardwareDecodedImage(GrDirectContext* gr_context,
                                      std::vector<sk_sp<SkImage>> plane_images,
-                                     YUVDecodeFormat plane_images_format,
+                                     SkYUVAInfo::PlaneConfig plane_config,
+                                     SkYUVAInfo::Subsampling subsampling,
                                      SkYUVColorSpace yuv_color_space,
                                      size_t buffer_byte_size,
                                      bool needs_mips);
 
   // ServiceTransferCacheEntry implementation:
   size_t CachedSize() const final;
-  bool Deserialize(GrDirectContext* context,
+  bool Deserialize(GrDirectContext* gr_context,
+                   skgpu::graphite::Recorder* graphite_recorder,
                    base::span<const uint8_t> data) final;
 
-  bool fits_on_gpu() const { return fits_on_gpu_; }
-  const std::vector<sk_sp<SkImage>>& plane_images() const {
-    return plane_images_;
-  }
   const sk_sp<SkImage>& image() const { return image_; }
+
+  // Return true if GetImageWithToneMapApplied() should be used instead of
+  // image().
+  bool NeedsToneMapApplied() const { return has_gainmap_ || use_tone_curve_; }
+
+  // Return this image, tone mapped to match the specified HDR headroom.
+  sk_sp<SkImage> GetImageWithToneMapApplied(float hdr_headroom,
+                                            bool needs_mips) const;
 
   // Ensures the cached image has mips.
   void EnsureMips();
-  bool has_mips() const { return has_mips_; }
 
   // Used in tests and for registering each texture for memory dumps.
+  bool has_mips() const;
+  const std::vector<sk_sp<SkImage>>& plane_images() const {
+    return plane_images_;
+  }
   const sk_sp<SkImage>& GetPlaneImage(size_t index) const;
   const std::vector<size_t>& GetPlaneCachedSizes() const {
     return plane_sizes_;
   }
   bool is_yuv() const { return !plane_images_.empty(); }
-  size_t num_planes() const { return is_yuv() ? plane_images_.size() : 1u; }
+  size_t num_planes() const { return plane_images_.size(); }
+  bool fits_on_gpu() const;
 
  private:
-  sk_sp<SkImage> MakeSkImage(const SkPixmap& pixmap,
-                             uint32_t width,
-                             uint32_t height,
-                             sk_sp<SkColorSpace> target_color_space);
-
-  GrDirectContext* context_ = nullptr;
-  std::vector<sk_sp<SkImage>> plane_images_;
-  YUVDecodeFormat plane_images_format_ = YUVDecodeFormat::kUnknown;
-  std::vector<size_t> plane_sizes_;
+  raw_ptr<GrDirectContext, DanglingUntriaged> gr_context_ = nullptr;
+  raw_ptr<skgpu::graphite::Recorder> graphite_recorder_ = nullptr;
   sk_sp<SkImage> image_;
-  base::Optional<SkYUVColorSpace> yuv_color_space_;
-  bool has_mips_ = false;
+
+  // HDR tonemapping may be done with a gainmap (for local tone mapping).
+  bool has_gainmap_ = false;
+  sk_sp<SkImage> gainmap_image_;
+  SkGainmapInfo gainmap_info_;
+
+  // HDR tonemapping may be done with a tone curve (for global tone mapping).
+  bool use_tone_curve_ = false;
+  std::optional<gfx::HDRMetadata> tone_curve_hdr_metadata_;
+
+  // The value of `size_` is computed during deserialization and never updated
+  // (even if the size of the image changes due to mipmaps being requested).
   size_t size_ = 0;
-  bool fits_on_gpu_ = false;
+
+  // The individual planes that are used by `image_` when `image_` is a YUVA
+  // image. The planes are kept around for use in EnsureMips(), memory dumps,
+  // and unit tests.
+  std::optional<SkYUVAInfo> yuva_info_;
+  std::vector<sk_sp<SkImage>> plane_images_;
+  std::vector<size_t> plane_sizes_;
 };
 
 }  // namespace cc

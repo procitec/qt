@@ -1,8 +1,10 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include <stddef.h>
+
+#include <utility>
 
 #include "cc/layers/append_quads_data.h"
 #include "cc/layers/heads_up_display_layer_impl.h"
@@ -12,6 +14,7 @@
 #include "cc/test/layer_tree_impl_test_base.h"
 #include "cc/test/test_task_graph_runner.h"
 #include "cc/trees/layer_tree_impl.h"
+#include "cc/trees/raster_capabilities.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace cc {
@@ -20,7 +23,7 @@ namespace {
 void CheckDrawLayer(HeadsUpDisplayLayerImpl* layer,
                     LayerTreeFrameSink* frame_sink,
                     viz::ClientResourceProvider* resource_provider,
-                    viz::ContextProvider* context_provider,
+                    viz::RasterContextProvider* context_provider,
                     DrawMode draw_mode) {
   auto render_pass = viz::CompositorRenderPass::Create();
   AppendQuadsData data;
@@ -29,8 +32,10 @@ void CheckDrawLayer(HeadsUpDisplayLayerImpl* layer,
     layer->AppendQuads(render_pass.get(), &data);
   viz::CompositorRenderPassList pass_list;
   pass_list.push_back(std::move(render_pass));
-  layer->UpdateHudTexture(draw_mode, frame_sink, resource_provider,
-                          context_provider, pass_list);
+  RasterCapabilities raster_caps;
+  raster_caps.use_gpu_rasterization = context_provider != nullptr;
+  layer->UpdateHudTexture(draw_mode, frame_sink, resource_provider, raster_caps,
+                          pass_list);
   if (will_draw)
     layer->DidDraw(resource_provider);
 
@@ -41,7 +46,12 @@ void CheckDrawLayer(HeadsUpDisplayLayerImpl* layer,
 }
 
 class HeadsUpDisplayLayerImplTest : public LayerTreeImplTestBase,
-                                    public ::testing::Test {};
+                                    public ::testing::Test {
+ public:
+  HeadsUpDisplayLayerImplTest()
+      : LayerTreeImplTestBase(
+            FakeLayerTreeFrameSink::Create3dForGpuRasterization()) {}
+};
 
 TEST_F(HeadsUpDisplayLayerImplTest, ResourcelessSoftwareDrawAfterResourceLoss) {
   host_impl()->CreatePendingTree();

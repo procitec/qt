@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,7 +8,6 @@
 #include <jni.h>
 
 #include "base/android/jni_android.h"
-#include "base/macros.h"
 #include "ui/display/screen_base.h"
 #include "ui/gfx/geometry/size.h"
 
@@ -18,6 +17,9 @@ class WindowAndroid;
 
 class DisplayAndroidManager : public display::ScreenBase {
  public:
+  DisplayAndroidManager(const DisplayAndroidManager&) = delete;
+  DisplayAndroidManager& operator=(const DisplayAndroidManager&) = delete;
+
   ~DisplayAndroidManager() override;
 
   // Screen interface.
@@ -41,7 +43,9 @@ class DisplayAndroidManager : public display::ScreenBase {
                      jint rotationDegrees,
                      jint bitsPerPixel,
                      jint bitsPerComponent,
-                     jboolean isWideColorGamut);
+                     jboolean isWideColorGamut,
+                     jboolean isHdr,
+                     jfloat hdrMaxLuminanceRatio);
   void RemoveDisplay(JNIEnv* env,
                      const base::android::JavaParamRef<jobject>& jobject,
                      jint sdkDisplayId);
@@ -60,12 +64,12 @@ class DisplayAndroidManager : public display::ScreenBase {
                               int rotationDegrees,
                               int bitsPerPixel,
                               int bitsPerComponent,
-                              bool isWideColorGamut);
+                              bool isWideColorGamut,
+                              bool isHdr,
+                              jfloat hdrMaxLuminanceRatio);
 
   const bool use_display_wide_color_gamut_;
   int primary_display_id_ = 0;
-
-  DISALLOW_COPY_AND_ASSIGN(DisplayAndroidManager);
 };
 
 }  // namespace ui

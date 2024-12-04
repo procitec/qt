@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -18,7 +18,7 @@ enum class AccessoryTabType {
   PASSWORDS = 1,
   CREDIT_CARDS = 2,
   ADDRESSES = 3,
-  TOUCH_TO_FILL = 4,
+  OBSOLETE_TOUCH_TO_FILL = 4,
   COUNT,
 };
 
@@ -38,6 +38,8 @@ enum class AccessoryAction {
   GENERATE_PASSWORD_MANUAL = 5,
   TOGGLE_SAVE_PASSWORDS = 6,
   USE_OTHER_PASSWORD = 7,
+  CREDMAN_CONDITIONAL_UI_REENTRY = 8,
+  CROSS_DEVICE_PASSKEY = 9,
   COUNT,
 };
 

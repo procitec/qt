@@ -45,8 +45,8 @@
 
 #define NUM_COMPLEX_REGION_RECTS 9
 
-static int32_t option_complex_confine_region;
-static int32_t option_help;
+static bool option_complex_confine_region;
+static bool option_help;
 
 struct confine {
 	struct display *display;
@@ -423,6 +423,8 @@ confine_create(struct display *display)
 	confine->window = window_create(display);
 	confine->widget = window_frame_create(confine->window, confine);
 	window_set_title(confine->window, "Wayland Confine");
+	window_set_appid(confine->window,
+			"org.freedesktop.weston.wayland-confine");
 	confine->display = display;
 	confine->buffer = NULL;
 

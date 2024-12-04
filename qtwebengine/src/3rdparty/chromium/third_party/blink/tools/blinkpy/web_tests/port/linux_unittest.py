@@ -38,10 +38,8 @@ from blinkpy.web_tests.port import port_testcase
 
 
 class LinuxPortTest(port_testcase.PortTestCase, LoggingTestCase):
-    os_name = 'linux'
-    os_version = 'trusty'
-    port_name = 'linux'
-    full_port_name = 'linux-trusty'
+    os_name = os_version = 'linux'
+    port_name = full_port_name = 'linux'
     port_maker = linux.LinuxPort
 
     def assert_version_properties(self,
@@ -61,12 +59,8 @@ class LinuxPortTest(port_testcase.PortTestCase, LoggingTestCase):
         self.assertEqual(port.version(), expected_version)
 
     def test_versions(self):
-        self.assertTrue(self.make_port().name() in ('linux-trusty', ))
-
-        self.assert_version_properties('linux', 'trusty', 'linux-trusty',
-                                       'trusty')
-        self.assert_version_properties('linux-trusty', None, 'linux-trusty',
-                                       'trusty')
+        self.assertIn(self.make_port().name(), {'linux'})
+        self.assert_version_properties('linux', None, 'linux', 'linux')
         with self.assertRaises(AssertionError):
             self.assert_version_properties('linux-utopic', None, 'ignored',
                                            'ignored', 'ignored')
@@ -82,30 +76,22 @@ class LinuxPortTest(port_testcase.PortTestCase, LoggingTestCase):
     def test_get_platform_tags(self):
         port = self.make_port()
         self.assertEqual(port.get_platform_tags(),
-                         {'linux', 'trusty', 'x86_64', 'release'})
+                         {'linux', 'x86_64', 'release'})
 
     def test_baseline_paths(self):
-        self.assert_baseline_paths('linux', 'trusty', 'linux', '/win')
-        self.assert_baseline_paths('linux-trusty', None, 'linux', '/win')
-
-    def test_check_illegal_port_names(self):
-        # FIXME: Check that, for now, these are illegal port names.
-        # Eventually we should be able to do the right thing here.
-        with self.assertRaises(AssertionError):
-            linux.LinuxPort(MockSystemHost(), port_name='linux-x86')
+        self.assert_baseline_paths('linux', None, 'linux', '/win')
 
     def test_operating_system(self):
         self.assertEqual('linux', self.make_port().operating_system())
 
     def test_driver_name_option(self):
-        # pylint: disable=protected-access
         self.assertTrue(
-            self.make_port()._path_to_driver().endswith('content_shell'))
+            self.make_port().path_to_driver().endswith('content_shell'))
         port = self.make_port(
             options=optparse.Values({
                 'driver_name': 'OtherDriver'
             }))
-        self.assertTrue(port._path_to_driver().endswith('OtherDriver'))
+        self.assertTrue(port.path_to_driver().endswith('OtherDriver'))
 
     def test_path_to_image_diff(self):
         # pylint: disable=protected-access
@@ -121,7 +107,7 @@ class LinuxPortTest(port_testcase.PortTestCase, LoggingTestCase):
         port = self.make_port()
         port.host.executive = MockExecutive(run_command_fn=run_command_fake)
         port.host.environ['HOME'] = '/home/user'
-        port.host.filesystem.files['/home/user/.Xauthority'] = ''
+        port.host.filesystem.write_text_file('/home/user/.Xauthority', '')
 
         # Set up the test run; the temporary home directory should be set up.
         port.setup_test_run()
@@ -139,10 +125,10 @@ class LinuxPortTest(port_testcase.PortTestCase, LoggingTestCase):
 
     def test_xvfb_flags(self):
         port = self.make_port()
-        port.default_child_processes = lambda: 60
+        port._xvfb_supports_maxclients = False
         self.assertEqual(port.xvfb_flags(),
                          ['-screen', '0', '1280x800x24', '-ac', '-dpi', '96'])
-        port.default_child_processes = lambda: 61
+        port._xvfb_supports_maxclients = True
         self.assertEqual(port.xvfb_flags(), [
             '-screen', '0', '1280x800x24', '-ac', '-dpi', '96', '-maxclients',
             '512'
@@ -195,7 +181,7 @@ class LinuxPortTest(port_testcase.PortTestCase, LoggingTestCase):
             return 0
 
         port = self.make_port()
-        port.host.filesystem.files['/tmp/.X99-lock'] = ''
+        port.host.filesystem.write_text_file('/tmp/.X99-lock', '')
         port.host.executive = MockExecutive(run_command_fn=run_command_fake)
 
         self.assertIsNone(port.setup_test_run())
@@ -276,7 +262,7 @@ class LinuxPortTest(port_testcase.PortTestCase, LoggingTestCase):
         # Xvfb is started via Executive.popen, which returns an object for the
         # process. Here we set up a fake process object that acts as if it has
         # exited with return code 1 immediately.
-        proc = MockProcess(stdout='', stderr='', returncode=3)
+        proc = MockProcess(['Xvfb'], stdout='', stderr='', returncode=3)
         port.host.executive = MockExecutive(
             run_command_fn=run_command_fake, proc=proc)
         self.set_logging_level(logging.DEBUG)

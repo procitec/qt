@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,16 +7,16 @@
 
 #include <string>
 
-#include "base/callback_forward.h"
 #include "base/feature_list.h"
-#include "base/macros.h"
+#include "base/functional/callback_forward.h"
+#include "base/gtest_prod_util.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/timer/timer.h"
 #include "components/captive_portal/content/captive_portal_service.h"
 #include "components/captive_portal/core/buildflags.h"
 #include "components/security_interstitials/content/common_name_mismatch_handler.h"
 #include "components/security_interstitials/content/security_interstitial_page.h"
-#include "components/security_interstitials/content/ssl_cert_reporter.h"
 #include "components/security_interstitials/content/ssl_error_assistant.pb.h"
 #include "components/ssl_errors/error_classification.h"
 #include "content/public/browser/certificate_request_result_type.h"
@@ -43,9 +43,9 @@ namespace network_time {
 class NetworkTimeTracker;
 }
 
-extern const base::Feature kMITMSoftwareInterstitial;
-extern const base::Feature kCaptivePortalInterstitial;
-extern const base::Feature kCaptivePortalCertificateList;
+BASE_DECLARE_FEATURE(kMITMSoftwareInterstitial);
+BASE_DECLARE_FEATURE(kCaptivePortalInterstitial);
+BASE_DECLARE_FEATURE(kCaptivePortalCertificateList);
 
 // This class is responsible for deciding what type of interstitial to display
 // for an SSL validation error and actually displaying it. The display of the
@@ -69,7 +69,8 @@ extern const base::Feature kCaptivePortalCertificateList;
 class SSLErrorHandler : public content::WebContentsUserData<SSLErrorHandler>,
                         public content::WebContentsObserver {
  public:
-  typedef base::Callback<void(content::WebContents*)> TimerStartedCallback;
+  typedef base::RepeatingCallback<void(content::WebContents*)>
+      TimerStartedCallback;
   typedef base::OnceCallback<void(
       std::unique_ptr<security_interstitials::SecurityInterstitialPage>)>
       BlockingPageReadyCallback;
@@ -80,6 +81,9 @@ class SSLErrorHandler : public content::WebContentsUserData<SSLErrorHandler>,
   typedef base::RepeatingCallback<
       void(content::WebContents*, const GURL&, const std::string&, int)>
       OnBlockingPageShownCallback;
+
+  SSLErrorHandler(const SSLErrorHandler&) = delete;
+  SSLErrorHandler& operator=(const SSLErrorHandler&) = delete;
 
   ~SSLErrorHandler() override;
 
@@ -101,7 +105,7 @@ class SSLErrorHandler : public content::WebContentsUserData<SSLErrorHandler>,
     SHOW_MITM_SOFTWARE_INTERSTITIAL = 11,
     OS_REPORTS_CAPTIVE_PORTAL = 12,
     SHOW_BLOCKED_INTERCEPTION_INTERSTITIAL = 13,
-    SHOW_LEGACY_TLS_INTERSTITIAL = 14,
+    SHOW_LEGACY_TLS_INTERSTITIAL = 14,  // Deprecated in M98.
     SSL_ERROR_HANDLER_EVENT_COUNT
   };
 
@@ -116,7 +120,7 @@ class SSLErrorHandler : public content::WebContentsUserData<SSLErrorHandler>,
                                  GURL* suggested_url) const = 0;
     virtual void CheckSuggestedUrl(
         const GURL& suggested_url,
-        const CommonNameMismatchHandler::CheckUrlCallback& callback) = 0;
+        CommonNameMismatchHandler::CheckUrlCallback callback) = 0;
     virtual void NavigateToSuggestedURL(const GURL& suggested_url) = 0;
     virtual bool IsErrorOverridable() const = 0;
     virtual void ShowCaptivePortalInterstitial(const GURL& landing_url) = 0;
@@ -129,8 +133,6 @@ class SSLErrorHandler : public content::WebContentsUserData<SSLErrorHandler>,
     virtual void ShowBlockedInterceptionInterstitial() = 0;
     virtual void ReportNetworkConnectivity(base::OnceClosure callback) = 0;
     virtual bool HasBlockedInterception() const = 0;
-    virtual void ShowLegacyTLSInterstitial() = 0;
-    virtual bool HasLegacyTLS() const = 0;
   };
 
   // Entry point for the class. Most parameters are the same as
@@ -152,7 +154,6 @@ class SSLErrorHandler : public content::WebContentsUserData<SSLErrorHandler>,
       int cert_error,
       const net::SSLInfo& ssl_info,
       const GURL& request_url,
-      std::unique_ptr<SSLCertReporter> ssl_cert_reporter,
       BlockingPageReadyCallback blocking_page_ready_callback,
       network_time::NetworkTimeTracker* network_time_tracker,
       captive_portal::CaptivePortalService* captive_portal_service,
@@ -204,6 +205,8 @@ class SSLErrorHandler : public content::WebContentsUserData<SSLErrorHandler>,
  private:
   friend class content::WebContentsUserData<SSLErrorHandler>;
   FRIEND_TEST_ALL_PREFIXES(SSLErrorHandlerTest, CalculateOptionsMask);
+  FRIEND_TEST_ALL_PREFIXES(SSLErrorHandlerTest,
+                           NonPrimaryMainframeShouldNotAffectSSLErrorHandler);
   FRIEND_TEST_ALL_PREFIXES(SSLErrorHandlerNameMismatchTest,
                            ShouldShowCustomInterstitialOnCaptivePortalResult);
   FRIEND_TEST_ALL_PREFIXES(SSLErrorHandlerNameMismatchTest,
@@ -216,7 +219,6 @@ class SSLErrorHandler : public content::WebContentsUserData<SSLErrorHandler>,
                                 ssl_errors::ClockState clock_state);
   void ShowDynamicInterstitial(const DynamicInterstitialInfo interstitial);
   void ShowBlockedInterceptionInterstitial();
-  void ShowLegacyTLSInterstitial();
 
   // Gets the result of whether the suggested URL is valid. Displays
   // common name mismatch interstitial or ssl interstitial accordingly.
@@ -244,20 +246,19 @@ class SSLErrorHandler : public content::WebContentsUserData<SSLErrorHandler>,
   bool IsOnlyCertError(net::CertStatus only_cert_error_expected) const;
 
   std::unique_ptr<Delegate> delegate_;
-  content::WebContents* const web_contents_;
   const int cert_error_;
   const net::SSLInfo ssl_info_;
   const GURL request_url_;
-  network_time::NetworkTimeTracker* network_time_tracker_;
+  raw_ptr<network_time::NetworkTimeTracker> network_time_tracker_;
 
   // The below field is unused if captive portal detection is not enabled,
   // which causes a compiler error.
 #if BUILDFLAG(ENABLE_CAPTIVE_PORTAL_DETECTION)
-  captive_portal::CaptivePortalService* captive_portal_service_;
+  raw_ptr<captive_portal::CaptivePortalService, DanglingUntriaged>
+      captive_portal_service_;
 #endif
 
-  std::unique_ptr<captive_portal::CaptivePortalService::Subscription>
-      subscription_;
+  base::CallbackListSubscription subscription_;
 
   base::OneShotTimer timer_;
 
@@ -266,8 +267,6 @@ class SSLErrorHandler : public content::WebContentsUserData<SSLErrorHandler>,
   base::WeakPtrFactory<SSLErrorHandler> weak_ptr_factory_{this};
 
   WEB_CONTENTS_USER_DATA_KEY_DECL();
-
-  DISALLOW_COPY_AND_ASSIGN(SSLErrorHandler);
 };
 
 #endif  // COMPONENTS_SECURITY_INTERSTITIALS_CONTENT_SSL_ERROR_HANDLER_H_

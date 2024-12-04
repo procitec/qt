@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,9 +14,10 @@
 #include "discovery/mdns/testing/mdns_test_util.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
+#include "util/span_util.h"
+#include "util/std_util.h"
 
-namespace openscreen {
-namespace discovery {
+namespace openscreen::discovery {
 
 // TXT Conversions.
 TEST(DnsSdConversionLayerTest, TestCreateTxtEmpty) {
@@ -39,14 +40,9 @@ TEST(DnsSdConversionLayerTest, TestCreateTxtValidKeyValue) {
   ASSERT_TRUE(record.is_value());
   ASSERT_TRUE(record.value().GetValue("name").is_value());
 
-  // EXPECT_STREQ is causing memory leaks
-  std::string expected = "value";
   ASSERT_TRUE(record.value().GetValue("name").is_value());
-  const std::vector<uint8_t>& value = record.value().GetValue("name").value();
-  ASSERT_EQ(value.size(), expected.size());
-  for (size_t i = 0; i < expected.size(); i++) {
-    EXPECT_EQ(expected[i], value[i]);
-  }
+  ByteView value = record.value().GetValue("name").value();
+  EXPECT_EQ(ByteViewToString(value), "value");
 }
 
 TEST(DnsSdConversionLayerTest, TestCreateTxtInvalidKeyValue) {
@@ -201,11 +197,9 @@ TEST(DnsSdConversionLayerTest, GetDnsRecordsANotPresent) {
       IPEndpoint{IPAddress(FakeDnsRecordFactory::kV6AddressHextets),
                  FakeDnsRecordFactory::kPortNum});
   std::vector<MdnsRecord> records = GetDnsRecords(instance_endpoint);
-  auto it = std::find_if(records.begin(), records.end(),
-                         [](const MdnsRecord& record) {
-                           return record.dns_type() == DnsType::kA;
-                         });
-  EXPECT_EQ(it, records.end());
+  EXPECT_FALSE(ContainsIf(records, [](const MdnsRecord& record) {
+    return record.dns_type() == DnsType::kA;
+  }));
 }
 
 TEST(DnsSdConversionLayerTest, GetDnsRecordsAAAAPresent) {
@@ -247,11 +241,9 @@ TEST(DnsSdConversionLayerTest, GetDnsRecordsAAAANotPresent) {
       IPEndpoint{IPAddress(FakeDnsRecordFactory::kV4AddressOctets),
                  FakeDnsRecordFactory::kPortNum});
   std::vector<MdnsRecord> records = GetDnsRecords(instance_endpoint);
-  auto it = std::find_if(records.begin(), records.end(),
-                         [](const MdnsRecord& record) {
-                           return record.dns_type() == DnsType::kAAAA;
-                         });
-  EXPECT_EQ(it, records.end());
+  EXPECT_FALSE(ContainsIf(records, [](const MdnsRecord& record) {
+    return record.dns_type() == DnsType::kAAAA;
+  }));
 }
 
 TEST(DnsSdConversionLayerTest, GetDnsRecordsTxt) {
@@ -285,14 +277,11 @@ TEST(DnsSdConversionLayerTest, GetDnsRecordsTxt) {
 
   const auto& rdata = absl::get<TxtRecordRdata>(it->rdata());
   EXPECT_EQ(rdata.texts().size(), size_t{2});
-
-  auto it2 =
-      std::find(rdata.texts().begin(), rdata.texts().end(), "name=value");
-  EXPECT_NE(it2, rdata.texts().end());
-
-  it2 = std::find(rdata.texts().begin(), rdata.texts().end(), "boolean");
-  EXPECT_NE(it2, rdata.texts().end());
+  EXPECT_TRUE(Contains(
+      rdata.texts(),
+      std::vector<uint8_t>{'n', 'a', 'm', 'e', '=', 'v', 'a', 'l', 'u', 'e'}));
+  EXPECT_TRUE(Contains(
+      rdata.texts(), std::vector<uint8_t>{'b', 'o', 'o', 'l', 'e', 'a', 'n'}));
 }
 
-}  // namespace discovery
-}  // namespace openscreen
+}  // namespace openscreen::discovery

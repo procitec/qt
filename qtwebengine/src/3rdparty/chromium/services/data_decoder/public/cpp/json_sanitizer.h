@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,9 +7,8 @@
 
 #include <string>
 
-#include "base/callback.h"
-#include "base/macros.h"
-#include "base/optional.h"
+#include "base/functional/callback.h"
+#include "base/types/expected.h"
 
 namespace data_decoder {
 
@@ -22,25 +21,16 @@ namespace data_decoder {
 // the resulting JSON, which might save some space.
 class JsonSanitizer {
  public:
-  struct Result {
-    Result();
-    Result(Result&&);
-    ~Result();
+  using Result = base::expected<std::string, std::string>;
+  using Callback = base::OnceCallback<void(Result)>;
 
-    static Result Error(const std::string& error);
-
-    base::Optional<std::string> value;
-    base::Optional<std::string> error;
-  };
+  JsonSanitizer(const JsonSanitizer&) = delete;
+  JsonSanitizer& operator=(const JsonSanitizer&) = delete;
 
   // Starts sanitizing the passed in unsafe JSON string. The passed |callback|
   // will be called with the result of the sanitization or an error message, but
   // not before the method returns.
-  using Callback = base::OnceCallback<void(Result)>;
   static void Sanitize(const std::string& json, Callback callback);
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(JsonSanitizer);
 };
 
 }  // namespace data_decoder

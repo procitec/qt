@@ -1,47 +1,12 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the plugins of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qsvgiohandler.h"
 
 #ifndef QT_NO_SVGRENDERER
 
 #include "qsvgrenderer.h"
+#include "private/qsvgtinydocument_p.h"
 #include "qimage.h"
 #include "qpixmap.h"
 #include "qpainter.h"
@@ -55,7 +20,7 @@ class QSvgIOHandlerPrivate
 {
 public:
     QSvgIOHandlerPrivate(QSvgIOHandler *qq)
-        : q(qq), loaded(false), readDone(false), backColor(Qt::transparent)
+        : q(qq), loadAttempted(false), loadStatus(false), readDone(false), backColor(Qt::transparent)
     {}
 
     bool load(QIODevice *device);
@@ -67,7 +32,8 @@ public:
     QRect            clipRect;
     QSize            scaledSize;
     QRect            scaledClipRect;
-    bool             loaded;
+    bool             loadAttempted;
+    bool             loadStatus;
     bool             readDone;
     QColor           backColor;
 };
@@ -75,8 +41,9 @@ public:
 
 bool QSvgIOHandlerPrivate::load(QIODevice *device)
 {
-    if (loaded)
-        return true;
+    if (loadAttempted)
+        return loadStatus;
+    loadAttempted = true;
     if (q->format().isEmpty())
         q->canRead();
 
@@ -99,10 +66,10 @@ bool QSvgIOHandlerPrivate::load(QIODevice *device)
 
     if (res) {
         defaultSize = r.defaultSize();
-        loaded = true;
+        loadStatus = true;
     }
 
-    return loaded;
+    return loadStatus;
 }
 
 
@@ -118,34 +85,15 @@ QSvgIOHandler::~QSvgIOHandler()
     delete d;
 }
 
-static bool isPossiblySvg(QIODevice *device, bool *isCompressed = nullptr)
-{
-    constexpr int bufSize = 64;
-    char buf[bufSize];
-    const qint64 readLen = device->peek(buf, bufSize);
-    if (readLen < 8)
-        return false;
-#    ifndef QT_NO_COMPRESS
-    if (quint8(buf[0]) == 0x1f && quint8(buf[1]) == 0x8b) {
-        if (isCompressed)
-            *isCompressed = true;
-        return true;
-    }
-#    endif
-    QTextStream str(QByteArray::fromRawData(buf, readLen));
-    QByteArray ba = str.read(16).trimmed().toLatin1();
-    return ba.startsWith("<?xml") || ba.startsWith("<svg") || ba.startsWith("<!--") || ba.startsWith("<!DOCTYPE svg");
-}
-
 bool QSvgIOHandler::canRead() const
 {
     if (!device())
         return false;
-    if (d->loaded && !d->readDone)
+    if (d->loadStatus && !d->readDone)
         return true;        // Will happen if we have been asked for the size
 
     bool isCompressed = false;
-    if (isPossiblySvg(device(), &isCompressed)) {
+    if (QSvgTinyDocument::isLikelySvg(device(), &isCompressed)) {
         setFormat(isCompressed ? "svgz" : "svg");
         return true;
     }
@@ -181,16 +129,13 @@ bool QSvgIOHandler::read(QImage *image)
             t.translate(tr1.x(), tr1.y());
             bounds = t.mapRect(bounds);
         }
-        if (image->size() != finalSize || !image->reinterpretAsFormat(QImage::Format_ARGB32_Premultiplied)) {
+        if (finalSize.isEmpty()) {
+            *image = QImage();
+        } else {
             if (qMax(finalSize.width(), finalSize.height()) > 0xffff)
                 return false; // Assume corrupted file
-            *image = QImage(finalSize, QImage::Format_ARGB32_Premultiplied);
-            if (!finalSize.isEmpty() && image->isNull()) {
-                qWarning("QSvgIOHandler: QImage allocation failed (size %i x %i)", finalSize.width(), finalSize.height());
+            if (!QImageIOHandler::allocateImage(finalSize, QImage::Format_ARGB32_Premultiplied, image))
                 return false;
-            }
-        }
-        if (!finalSize.isEmpty()) {
             image->fill(d->backColor.rgba());
             QPainter p(image);
             d->r.render(&p, bounds);
@@ -274,7 +219,7 @@ bool QSvgIOHandler::supportsOption(ImageOption option) const
 
 bool QSvgIOHandler::canRead(QIODevice *device)
 {
-    return isPossiblySvg(device);
+    return QSvgTinyDocument::isLikelySvg(device);
 }
 
 QT_END_NAMESPACE

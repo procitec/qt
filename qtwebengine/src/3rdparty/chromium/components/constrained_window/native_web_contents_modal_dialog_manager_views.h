@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,7 +7,7 @@
 
 #include <set>
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "components/web_modal/modal_dialog_host.h"
 #include "components/web_modal/single_web_contents_dialog_manager.h"
 #include "ui/gfx/native_widget_types.h"
@@ -29,6 +29,11 @@ class NativeWebContentsModalDialogManagerViews
       gfx::NativeWindow dialog,
       web_modal::SingleWebContentsDialogManagerDelegate* native_delegate);
 
+  NativeWebContentsModalDialogManagerViews(
+      const NativeWebContentsModalDialogManagerViews&) = delete;
+  NativeWebContentsModalDialogManagerViews& operator=(
+      const NativeWebContentsModalDialogManagerViews&) = delete;
+
   ~NativeWebContentsModalDialogManagerViews() override;
 
   // Sets up this object to manage the |dialog_|. Registers for closing events
@@ -41,6 +46,7 @@ class NativeWebContentsModalDialogManagerViews
   void Close() override;
   void Focus() override;
   void Pulse() override;
+  bool IsActive() const override;
 
   // web_modal::ModalDialogHostObserver:
   void OnPositionRequiresUpdate() override;
@@ -71,14 +77,12 @@ class NativeWebContentsModalDialogManagerViews
  private:
   void WidgetClosing(views::Widget* widget);
 
-  web_modal::SingleWebContentsDialogManagerDelegate* native_delegate_;
+  raw_ptr<web_modal::SingleWebContentsDialogManagerDelegate> native_delegate_;
   gfx::NativeWindow dialog_;
-  web_modal::WebContentsModalDialogHost* host_;
-  bool host_destroying_;
+  raw_ptr<web_modal::WebContentsModalDialogHost> host_ = nullptr;
+  bool host_destroying_ = false;
   std::set<views::Widget*> observed_widgets_;
   std::set<views::Widget*> shown_widgets_;
-
-  DISALLOW_COPY_AND_ASSIGN(NativeWebContentsModalDialogManagerViews);
 };
 
 }  // namespace constrained_window

@@ -5,6 +5,7 @@
  * found in the LICENSE file.
  */
 
+#include "modules/skottie/include/Skottie.h"
 #include "modules/skottie/src/SkottiePriv.h"
 
 #include "include/core/SkImage.h"
@@ -17,11 +18,18 @@ namespace internal {
 
 namespace  {
 
-SkMatrix image_matrix(const sk_sp<SkImage>& image, const SkISize& dest_size) {
-    return image ? SkMatrix::MakeRectToRect(SkRect::Make(image->bounds()),
-                                            SkRect::Make(dest_size),
-                                            SkMatrix::kCenter_ScaleToFit)
-                 : SkMatrix::I();
+SkMatrix image_matrix(const ImageAsset::FrameData& frame_data, const SkISize& dest_size) {
+    if (!frame_data.image) {
+        return SkMatrix::I();
+    }
+
+    const auto size_fit_matrix = frame_data.scaling == ImageAsset::SizeFit::kNone
+            ? SkMatrix::I()
+            : SkMatrix::RectToRect(SkRect::Make(frame_data.image->bounds()),
+                                   SkRect::Make(dest_size),
+                                   static_cast<SkMatrix::ScaleToFit>(frame_data.scaling));
+
+    return frame_data.matrix * size_fit_matrix;
 }
 
 class FootageAnimator final : public Animator {
@@ -45,10 +53,15 @@ public:
             return false;
         }
 
-        auto frame = fAsset->getFrame((t + fTimeBias) * fTimeScale);
-        if (frame != fImageNode->getImage()) {
-            fImageTransformNode->setMatrix(image_matrix(frame, fAssetSize));
-            fImageNode->setImage(std::move(frame));
+        auto frame_data = fAsset->getFrameData((t + fTimeBias) * fTimeScale);
+        const auto m = image_matrix(frame_data, fAssetSize);
+        if (frame_data.image    != fImageNode->getImage() ||
+            frame_data.sampling != fImageNode->getSamplingOptions() ||
+            m                   != fImageTransformNode->getMatrix()) {
+
+            fImageNode->setImage(std::move(frame_data.image));
+            fImageNode->setSamplingOptions(frame_data.sampling);
+            fImageTransformNode->setMatrix(m);
             return true;
         }
 
@@ -68,10 +81,27 @@ private:
 } // namespace
 
 const AnimationBuilder::FootageAssetInfo*
-AnimationBuilder::loadFootageAsset(const skjson::ObjectValue& jimage) const {
-    const skjson::StringValue* name = jimage["p"];
-    const skjson::StringValue* path = jimage["u"];
-    const skjson::StringValue* id   = jimage["id"];
+AnimationBuilder::loadFootageAsset(const skjson::ObjectValue& defaultJImage) const {
+    const skjson::ObjectValue* jimage = &defaultJImage;
+    const skjson::StringValue* slotID = defaultJImage["sid"];
+    if (slotID) {
+        if (!(fSlotsRoot)) {
+            this->log(Logger::Level::kWarning, nullptr,
+                         "Slotid found but no slots were found in the json. Using default asset.");
+        } else {
+            const skjson::ObjectValue* slot = (*(fSlotsRoot))[slotID->begin()];
+            if (!slot) {
+                this->log(Logger::Level::kWarning, nullptr,
+                             "Specified slotID not found in 'slots'. Using default asset.");
+            } else {
+                jimage = (*slot)["p"];
+            }
+        }
+    }
+
+    const skjson::StringValue* name = (*jimage)["p"];
+    const skjson::StringValue* path = (*jimage)["u"];
+    const skjson::StringValue* id   = (*jimage)["id"];
     if (!name || !path || !id) {
         return nullptr;
     }
@@ -82,14 +112,17 @@ AnimationBuilder::loadFootageAsset(const skjson::ObjectValue& jimage) const {
     }
 
     auto asset = fResourceProvider->loadImageAsset(path->begin(), name->begin(), id->begin());
-    if (!asset) {
+    if (!asset && !slotID) {
         this->log(Logger::Level::kError, nullptr, "Could not load image asset: %s/%s (id: '%s').",
                   path->begin(), name->begin(), id->begin());
         return nullptr;
     }
 
-    const auto size = SkISize::Make(ParseDefault<int>(jimage["w"], 0),
-                                    ParseDefault<int>(jimage["h"], 0));
+    if (slotID) {
+        asset = fSlotManager->trackImageValue(SkString(slotID->begin()), std::move(asset));
+    }
+    const auto size = SkISize::Make(ParseDefault<int>((*jimage)["w"], 0),
+                                    ParseDefault<int>((*jimage)["h"], 0));
     return fImageAssetCache.set(res_id, { std::move(asset), size });
 }
 
@@ -102,7 +135,6 @@ sk_sp<sksg::RenderNode> AnimationBuilder::attachFootageAsset(const skjson::Objec
     SkASSERT(asset_info->fAsset);
 
     auto image_node = sksg::Image::Make(nullptr);
-    image_node->setQuality(kMedium_SkFilterQuality);
 
     // Optional image transform (mapping the intrinsic image size to declared asset size).
     sk_sp<sksg::Matrix<SkMatrix>> image_transform;
@@ -121,17 +153,19 @@ sk_sp<sksg::RenderNode> AnimationBuilder::attachFootageAsset(const skjson::Objec
                                                                      1 / fFrameRate));
     } else {
         // No animator needed, resolve the (only) frame upfront.
-        auto frame = asset_info->fAsset->getFrame(0);
-        if (!frame) {
+        auto frame_data = asset_info->fAsset->getFrameData(0);
+        if (!frame_data.image) {
             this->log(Logger::Level::kError, nullptr, "Could not load single-frame image asset.");
             return nullptr;
         }
 
-        if (frame->bounds().size() != asset_info->fSize) {
-            image_transform = sksg::Matrix<SkMatrix>::Make(image_matrix(frame, asset_info->fSize));
+        const auto m = image_matrix(frame_data, asset_info->fSize);
+        if (!m.isIdentity()) {
+            image_transform = sksg::Matrix<SkMatrix>::Make(m);
         }
 
-        image_node->setImage(std::move(frame));
+        image_node->setImage(std::move(frame_data.image));
+        image_node->setSamplingOptions(frame_data.sampling);
     }
 
     // Image layers are sized explicitly.
@@ -139,7 +173,7 @@ sk_sp<sksg::RenderNode> AnimationBuilder::attachFootageAsset(const skjson::Objec
 
     if (!image_transform) {
         // No resize needed.
-        return std::move(image_node);
+        return image_node;
     }
 
     return sksg::TransformEffect::Make(std::move(image_node), std::move(image_transform));

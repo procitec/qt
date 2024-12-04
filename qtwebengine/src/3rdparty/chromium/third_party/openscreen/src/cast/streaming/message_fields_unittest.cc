@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,8 +10,7 @@
 
 #include "gtest/gtest.h"
 
-namespace openscreen {
-namespace cast {
+namespace openscreen::cast {
 namespace {
 
 // NOTE: We don't do an exhaustive check of all values here, to avoid
@@ -22,15 +21,14 @@ TEST(MessageFieldsTest, CanParseEnumToString) {
 }
 
 TEST(MessageFieldsTest, CanStringToEnum) {
-  EXPECT_EQ(AudioCodec::kOpus, StringToAudioCodec("opus"));
-  EXPECT_EQ(VideoCodec::kHevc, StringToVideoCodec("hevc"));
+  EXPECT_EQ(AudioCodec::kOpus, StringToAudioCodec("opus").value());
+  EXPECT_EQ(VideoCodec::kHevc, StringToVideoCodec("hevc").value());
 }
 
 TEST(MessageFieldsTest, Identity) {
-  EXPECT_STREQ("opus", CodecToString(StringToAudioCodec("opus")));
-  EXPECT_STREQ("vp8", CodecToString(StringToVideoCodec("vp8")));
+  EXPECT_STREQ("opus", CodecToString(StringToAudioCodec("opus").value()));
+  EXPECT_STREQ("vp8", CodecToString(StringToVideoCodec("vp8").value()));
 }
 
 }  // namespace
-}  // namespace cast
-}  // namespace openscreen
+}  // namespace openscreen::cast

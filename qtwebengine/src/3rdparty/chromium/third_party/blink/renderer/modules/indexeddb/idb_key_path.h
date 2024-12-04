@@ -26,14 +26,17 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_MODULES_INDEXEDDB_IDB_KEY_PATH_H_
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_INDEXEDDB_IDB_KEY_PATH_H_
 
+#include "base/check_op.h"
 #include "third_party/blink/public/mojom/indexeddb/indexeddb.mojom-shared.h"
-#include "third_party/blink/renderer/bindings/core/v8/string_or_string_sequence.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
+#include "v8/include/v8-forward.h"
 
 namespace blink {
+class ScriptState;
+class V8UnionStringOrStringSequence;
 
 enum IDBKeyPathParseError {
   kIDBKeyPathParseErrorNone,
@@ -51,7 +54,7 @@ class MODULES_EXPORT IDBKeyPath {
   IDBKeyPath() : type_(mojom::IDBKeyPathType::Null) {}
   explicit IDBKeyPath(const String&);
   explicit IDBKeyPath(const Vector<String>& array);
-  explicit IDBKeyPath(const StringOrStringSequence& key_path);
+  explicit IDBKeyPath(const V8UnionStringOrStringSequence* key_path);
 
   mojom::IDBKeyPathType GetType() const { return type_; }
 
@@ -68,6 +71,8 @@ class MODULES_EXPORT IDBKeyPath {
   bool IsNull() const { return type_ == mojom::IDBKeyPathType::Null; }
   bool IsValid() const;
   bool operator==(const IDBKeyPath& other) const;
+
+  v8::Local<v8::Value> ToV8(ScriptState*) const;
 
  private:
   mojom::IDBKeyPathType type_;

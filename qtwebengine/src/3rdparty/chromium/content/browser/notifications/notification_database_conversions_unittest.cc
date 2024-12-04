@@ -1,17 +1,17 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+
+#include "content/browser/notifications/notification_database_conversions.h"
 
 #include <stddef.h>
 #include <stdint.h>
 
-#include "base/macros.h"
-#include "base/optional.h"
-#include "base/stl_util.h"
+#include <optional>
+
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
-#include "content/browser/notifications/notification_database_conversions.h"
 #include "content/browser/notifications/notification_database_data.pb.h"
 #include "content/browser/notifications/notification_database_resources.pb.h"
 #include "content/public/browser/notification_database_data.h"
@@ -21,19 +21,9 @@
 #include "third_party/blink/public/common/notifications/notification_resources.h"
 #include "third_party/blink/public/mojom/notifications/notification.mojom.h"
 #include "third_party/skia/include/core/SkBitmap.h"
+#include "ui/gfx/image/image_unittest_util.h"
 
 namespace content {
-
-namespace {
-
-SkBitmap CreateBitmap(int width, int height, SkColor color) {
-  SkBitmap bitmap;
-  bitmap.allocN32Pixels(width, height);
-  bitmap.eraseColor(color);
-  return bitmap;
-}
-
-}  // namespace
 
 const char kNotificationId[] = "my-notification";
 const int64_t kServiceWorkerRegistrationId = 9001;
@@ -45,12 +35,12 @@ const int kTimeUntilFirstClickMillis = 11111;
 const int kTimeUntilLastClickMillis = 22222;
 const int kTimeUntilCloseMillis = 33333;
 
-const blink::PlatformNotificationActionType kNotificationActionType =
-    blink::PLATFORM_NOTIFICATION_ACTION_TYPE_TEXT;
+const blink::mojom::NotificationActionType kNotificationActionType =
+    blink::mojom::NotificationActionType::TEXT;
 const char kOrigin[] = "https://example.com/";
-const char kNotificationTitle[] = "My Notification";
+const char16_t kNotificationTitle[] = u"My Notification";
 const char kNotificationLang[] = "nl";
-const char kNotificationBody[] = "Hello, world!";
+const char16_t kNotificationBody[] = u"Hello, world!";
 const char kNotificationTag[] = "my_tag";
 const char kNotificationImageUrl[] = "https://example.com/image.jpg";
 const char kNotificationIconUrl[] = "https://example.com/icon.png";
@@ -65,38 +55,38 @@ const bool kHasTriggered = true;
 TEST(NotificationDatabaseConversionsTest, SerializeAndDeserializeData) {
   std::vector<int> vibration_pattern(
       kNotificationVibrationPattern,
-      kNotificationVibrationPattern +
-          base::size(kNotificationVibrationPattern));
+      kNotificationVibrationPattern + std::size(kNotificationVibrationPattern));
 
   std::vector<char> developer_data(
-      kNotificationData, kNotificationData + base::size(kNotificationData));
+      kNotificationData, kNotificationData + std::size(kNotificationData));
 
   blink::PlatformNotificationData notification_data;
-  notification_data.title = base::ASCIIToUTF16(kNotificationTitle);
+  notification_data.title = kNotificationTitle;
   notification_data.direction =
       blink::mojom::NotificationDirection::RIGHT_TO_LEFT;
   notification_data.lang = kNotificationLang;
-  notification_data.body = base::ASCIIToUTF16(kNotificationBody);
+  notification_data.body = kNotificationBody;
   notification_data.tag = kNotificationTag;
   notification_data.image = GURL(kNotificationImageUrl);
   notification_data.icon = GURL(kNotificationIconUrl);
   notification_data.badge = GURL(kNotificationBadgeUrl);
   notification_data.vibration_pattern = vibration_pattern;
-  notification_data.timestamp = base::Time::FromJsTime(kNotificationTimestamp);
+  notification_data.timestamp =
+      base::Time::FromMillisecondsSinceUnixEpoch(kNotificationTimestamp);
   notification_data.renotify = true;
   notification_data.silent = true;
   notification_data.require_interaction = true;
   notification_data.show_trigger_timestamp =
-      base::Time::FromJsTime(kShowTriggerTimestamp);
+      base::Time::FromMillisecondsSinceUnixEpoch(kShowTriggerTimestamp);
   notification_data.data = developer_data;
   for (size_t i = 0; i < blink::kNotificationMaxActions; i++) {
-    blink::PlatformNotificationAction notification_action;
-    notification_action.type = kNotificationActionType;
-    notification_action.action = base::NumberToString(i);
-    notification_action.title = base::NumberToString16(i);
-    notification_action.icon = GURL(kNotificationActionIconUrl);
-    notification_action.placeholder = base::NumberToString16(i);
-    notification_data.actions.push_back(notification_action);
+    auto notification_action = blink::mojom::NotificationAction::New();
+    notification_action->type = kNotificationActionType;
+    notification_action->action = base::NumberToString(i);
+    notification_action->title = base::NumberToString16(i);
+    notification_action->icon = GURL(kNotificationActionIconUrl);
+    notification_action->placeholder = base::NumberToString16(i);
+    notification_data.actions.push_back(std::move(notification_action));
   }
 
   NotificationDatabaseData database_data;
@@ -107,15 +97,17 @@ TEST(NotificationDatabaseConversionsTest, SerializeAndDeserializeData) {
   database_data.replaced_existing_notification = kReplacedExistingNotification;
   database_data.num_clicks = kNumClicks;
   database_data.num_action_button_clicks = kNumActionButtonClicks;
-  database_data.creation_time_millis = base::Time::FromDoubleT(kInitTimeMillis);
+  database_data.creation_time_millis =
+      base::Time::FromSecondsSinceUnixEpoch(kInitTimeMillis);
   database_data.time_until_first_click_millis =
-      base::TimeDelta::FromMilliseconds(kTimeUntilFirstClickMillis);
+      base::Milliseconds(kTimeUntilFirstClickMillis);
   database_data.time_until_last_click_millis =
-      base::TimeDelta::FromMilliseconds(kTimeUntilLastClickMillis);
+      base::Milliseconds(kTimeUntilLastClickMillis);
   database_data.time_until_close_millis =
-      base::TimeDelta::FromMilliseconds(kTimeUntilCloseMillis);
+      base::Milliseconds(kTimeUntilCloseMillis);
   database_data.closed_reason = NotificationDatabaseData::ClosedReason::USER;
   database_data.has_triggered = kHasTriggered;
+  database_data.is_shown_by_browser = true;
   std::string serialized_data;
 
   // Serialize the data in |notification_data| to the string |serialized_data|.
@@ -147,6 +139,7 @@ TEST(NotificationDatabaseConversionsTest, SerializeAndDeserializeData) {
             copied_data.time_until_close_millis);
   EXPECT_EQ(database_data.closed_reason, copied_data.closed_reason);
   EXPECT_EQ(database_data.has_triggered, copied_data.has_triggered);
+  EXPECT_EQ(database_data.is_shown_by_browser, copied_data.is_shown_by_browser);
 
   const blink::PlatformNotificationData& copied_notification_data =
       copied_data.notification_data;
@@ -178,25 +171,27 @@ TEST(NotificationDatabaseConversionsTest, SerializeAndDeserializeData) {
   ASSERT_EQ(notification_data.actions.size(),
             copied_notification_data.actions.size());
   for (size_t i = 0; i < notification_data.actions.size(); ++i) {
-    EXPECT_EQ(notification_data.actions[i].type,
-              copied_notification_data.actions[i].type);
-    EXPECT_EQ(notification_data.actions[i].action,
-              copied_notification_data.actions[i].action);
-    EXPECT_EQ(notification_data.actions[i].title,
-              copied_notification_data.actions[i].title);
-    EXPECT_EQ(notification_data.actions[i].icon,
-              copied_notification_data.actions[i].icon);
-    EXPECT_EQ(notification_data.actions[i].placeholder,
-              copied_notification_data.actions[i].placeholder);
-    EXPECT_TRUE(copied_notification_data.actions[i].placeholder);
+    EXPECT_EQ(notification_data.actions[i]->type,
+              copied_notification_data.actions[i]->type);
+    EXPECT_EQ(notification_data.actions[i]->action,
+              copied_notification_data.actions[i]->action);
+    EXPECT_EQ(notification_data.actions[i]->title,
+              copied_notification_data.actions[i]->title);
+    EXPECT_EQ(notification_data.actions[i]->icon,
+              copied_notification_data.actions[i]->icon);
+    EXPECT_EQ(notification_data.actions[i]->placeholder,
+              copied_notification_data.actions[i]->placeholder);
+    EXPECT_TRUE(copied_notification_data.actions[i]->placeholder);
   }
 }
 
 TEST(NotificationDatabaseConversionsTest, ActionDeserializationIsNotAdditive) {
   NotificationDatabaseData database_data;
 
-  for (size_t i = 0; i < blink::kNotificationMaxActions; ++i)
-    database_data.notification_data.actions.emplace_back();
+  for (size_t i = 0; i < blink::kNotificationMaxActions; ++i) {
+    database_data.notification_data.actions.emplace_back(
+        blink::mojom::NotificationAction::New());
+  }
 
   std::string serialized_data;
   NotificationDatabaseData copied_database_data;
@@ -221,16 +216,16 @@ TEST(NotificationDatabaseConversionsTest, ActionDeserializationIsNotAdditive) {
 }
 
 TEST(NotificationDatabaseConversionsTest, SerializeAndDeserializeActionTypes) {
-  blink::PlatformNotificationActionType action_types[] = {
-      blink::PLATFORM_NOTIFICATION_ACTION_TYPE_BUTTON,
-      blink::PLATFORM_NOTIFICATION_ACTION_TYPE_TEXT};
+  blink::mojom::NotificationActionType action_types[] = {
+      blink::mojom::NotificationActionType::BUTTON,
+      blink::mojom::NotificationActionType::TEXT};
 
-  for (blink::PlatformNotificationActionType action_type : action_types) {
+  for (blink::mojom::NotificationActionType action_type : action_types) {
     blink::PlatformNotificationData notification_data;
 
-    blink::PlatformNotificationAction action;
-    action.type = action_type;
-    notification_data.actions.push_back(action);
+    auto action = blink::mojom::NotificationAction::New();
+    action->type = action_type;
+    notification_data.actions.push_back(std::move(action));
 
     NotificationDatabaseData database_data;
     database_data.notification_data = notification_data;
@@ -243,7 +238,7 @@ TEST(NotificationDatabaseConversionsTest, SerializeAndDeserializeActionTypes) {
     ASSERT_TRUE(
         DeserializeNotificationDatabaseData(serialized_data, &copied_data));
 
-    EXPECT_EQ(action_type, copied_data.notification_data.actions[0].type);
+    EXPECT_EQ(action_type, copied_data.notification_data.actions[0]->type);
   }
 }
 
@@ -253,7 +248,7 @@ TEST(NotificationDatabaseConversionsTest, SerializeAndDeserializeDirections) {
       blink::mojom::NotificationDirection::RIGHT_TO_LEFT,
       blink::mojom::NotificationDirection::AUTO};
 
-  for (size_t i = 0; i < base::size(directions); ++i) {
+  for (size_t i = 0; i < std::size(directions); ++i) {
     blink::PlatformNotificationData notification_data;
     notification_data.direction = directions[i];
 
@@ -279,7 +274,7 @@ TEST(NotificationDatabaseConversionsTest,
       NotificationDatabaseData::ClosedReason::DEVELOPER,
       NotificationDatabaseData::ClosedReason::UNKNOWN};
 
-  for (size_t i = 0; i < base::size(closed_reasons); ++i) {
+  for (size_t i = 0; i < std::size(closed_reasons); ++i) {
     NotificationDatabaseData database_data;
     database_data.closed_reason = closed_reasons[i];
 
@@ -297,12 +292,12 @@ TEST(NotificationDatabaseConversionsTest,
 
 TEST(NotificationDatabaseConversionsTest,
      SerializeAndDeserializeNullPlaceholder) {
-  blink::PlatformNotificationAction action;
-  action.type = kNotificationActionType;
-  action.placeholder = base::nullopt;  // null string.
+  auto action = blink::mojom::NotificationAction::New();
+  action->type = kNotificationActionType;
+  action->placeholder = std::nullopt;  // null string.
 
   blink::PlatformNotificationData notification_data;
-  notification_data.actions.push_back(action);
+  notification_data.actions.push_back(std::move(action));
 
   NotificationDatabaseData database_data;
   database_data.notification_data = notification_data;
@@ -315,7 +310,7 @@ TEST(NotificationDatabaseConversionsTest,
   ASSERT_TRUE(
       DeserializeNotificationDatabaseData(serialized_data, &copied_data));
 
-  EXPECT_FALSE(copied_data.notification_data.actions[0].placeholder);
+  EXPECT_FALSE(copied_data.notification_data.actions[0]->placeholder);
 }
 
 TEST(NotificationDatabaseConversionsTest,
@@ -323,7 +318,7 @@ TEST(NotificationDatabaseConversionsTest,
   blink::PlatformNotificationData notification_data;
 
   // explicitly empty timestamp
-  notification_data.show_trigger_timestamp = base::nullopt;
+  notification_data.show_trigger_timestamp = std::nullopt;
 
   NotificationDatabaseData database_data;
   database_data.notification_data = notification_data;
@@ -344,11 +339,9 @@ TEST(NotificationDatabaseConversionsTest, OptionalFieldsGetCleared) {
   NotificationDatabaseData data_without_fields;
   NotificationDatabaseData data_with_fields;
 
-  data_with_fields.time_until_close_millis = base::TimeDelta::FromSeconds(1);
-  data_with_fields.time_until_first_click_millis =
-      base::TimeDelta::FromSeconds(2);
-  data_with_fields.time_until_last_click_millis =
-      base::TimeDelta::FromSeconds(3);
+  data_with_fields.time_until_close_millis = base::Seconds(1);
+  data_with_fields.time_until_first_click_millis = base::Seconds(2);
+  data_with_fields.time_until_last_click_millis = base::Seconds(3);
   data_with_fields.notification_resources = blink::NotificationResources();
 
   std::string serialized_data;
@@ -361,11 +354,10 @@ TEST(NotificationDatabaseConversionsTest, OptionalFieldsGetCleared) {
   ASSERT_TRUE(DeserializeNotificationDatabaseData(serialized_data,
                                                   &copied_database_data));
 
-  EXPECT_EQ(base::TimeDelta::FromSeconds(1),
-            copied_database_data.time_until_close_millis);
-  EXPECT_EQ(base::TimeDelta::FromSeconds(2),
+  EXPECT_EQ(base::Seconds(1), copied_database_data.time_until_close_millis);
+  EXPECT_EQ(base::Seconds(2),
             copied_database_data.time_until_first_click_millis);
-  EXPECT_EQ(base::TimeDelta::FromSeconds(3),
+  EXPECT_EQ(base::Seconds(3),
             copied_database_data.time_until_last_click_millis);
   EXPECT_FALSE(copied_database_data.notification_resources.has_value());
 
@@ -386,16 +378,19 @@ TEST(NotificationDatabaseConversionsTest,
      SerializeAndDeserializeNotificationResources) {
   blink::NotificationResources notification_resources;
 
-  notification_resources.notification_icon = CreateBitmap(10, 10, SK_ColorBLUE);
-  notification_resources.image = CreateBitmap(20, 20, SK_ColorGREEN);
-  notification_resources.badge = CreateBitmap(30, 30, SK_ColorRED);
+  notification_resources.notification_icon =
+      gfx::test::CreateBitmap(/*size=*/10, SK_ColorBLUE);
+  notification_resources.image =
+      gfx::test::CreateBitmap(/*size=*/20, SK_ColorGREEN);
+  notification_resources.badge =
+      gfx::test::CreateBitmap(/*size=*/30, SK_ColorRED);
 
   notification_resources.action_icons.push_back(
-      CreateBitmap(40, 40, SK_ColorYELLOW));
+      gfx::test::CreateBitmap(/*size=*/40, SK_ColorYELLOW));
   notification_resources.action_icons.push_back(
-      CreateBitmap(41, 41, SK_ColorCYAN));
+      gfx::test::CreateBitmap(/*size=*/41, SK_ColorCYAN));
   notification_resources.action_icons.push_back(
-      CreateBitmap(42, 42, SK_ColorMAGENTA));
+      gfx::test::CreateBitmap(/*size=*/42, SK_ColorMAGENTA));
 
   std::string serialized_resources;
   ASSERT_TRUE(SerializeNotificationDatabaseResources(notification_resources,

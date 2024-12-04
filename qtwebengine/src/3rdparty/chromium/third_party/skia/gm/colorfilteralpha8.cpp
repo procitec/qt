@@ -10,6 +10,7 @@
 #include "include/core/SkCanvas.h"
 #include "include/core/SkColor.h"
 #include "include/core/SkColorFilter.h"
+#include "include/core/SkImage.h"
 #include "include/core/SkImageInfo.h"
 #include "include/core/SkPaint.h"
 #include "include/core/SkSize.h"
@@ -20,13 +21,9 @@ public:
     ColorFilterAlpha8() {}
 
 protected:
-    SkString onShortName() override {
-        return SkString("colorfilteralpha8");
-    }
+    SkString getName() const override { return SkString("colorfilteralpha8"); }
 
-    SkISize onISize() override {
-        return SkISize::Make(400, 400);
-    }
+    SkISize getISize() override { return SkISize::Make(400, 400); }
 
     void onDraw(SkCanvas* canvas) override {
         canvas->clear(SK_ColorRED);
@@ -45,7 +42,7 @@ protected:
         };
         paint.setColorFilter(SkColorFilters::Matrix(opaqueGrayMatrix));
 
-        canvas->drawBitmap(bitmap, 100.0f, 100.0f, &paint);
+        canvas->drawImage(bitmap.asImage(), 100.0f, 100.0f, SkSamplingOptions(), &paint);
     }
 
 private:

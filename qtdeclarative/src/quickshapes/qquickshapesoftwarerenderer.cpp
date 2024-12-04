@@ -1,59 +1,31 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtQuick module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qquickshapesoftwarerenderer_p.h"
 #include <private/qquickpath_p_p.h>
 
 QT_BEGIN_NAMESPACE
 
-void QQuickShapeSoftwareRenderer::beginSync(int totalCount)
+void QQuickShapeSoftwareRenderer::beginSync(int totalCount, bool *countChanged)
 {
-    if (m_sp.count() != totalCount) {
+    if (m_sp.size() != totalCount) {
         m_sp.resize(totalCount);
         m_accDirty |= DirtyList;
+        *countChanged = true;
+    } else {
+        *countChanged = false;
     }
 }
 
 void QQuickShapeSoftwareRenderer::setPath(int index, const QQuickPath *path)
 {
+    setPath(index, path ? path->path() : QPainterPath());
+}
+
+void QQuickShapeSoftwareRenderer::setPath(int index, const QPainterPath &path, QQuickShapePath::PathHints)
+{
     ShapePathGuiData &d(m_sp[index]);
-    d.path = path ? path->path() : QPainterPath();
+    d.path = path;
     d.dirty |= DirtyPath;
     m_accDirty |= DirtyPath;
 }
@@ -70,7 +42,7 @@ void QQuickShapeSoftwareRenderer::setStrokeWidth(int index, qreal w)
 {
     ShapePathGuiData &d(m_sp[index]);
     d.strokeWidth = w;
-    if (w >= 0.0f)
+    if (w > 0.0f)
         d.pen.setWidthF(w);
     d.dirty |= DirtyPen;
     m_accDirty |= DirtyPen;
@@ -171,16 +143,35 @@ void QQuickShapeSoftwareRenderer::setFillGradient(int index, QQuickShapeGradient
     m_accDirty |= DirtyBrush;
 }
 
+void QQuickShapeSoftwareRenderer::setFillTextureProvider(int index, QQuickItem *textureProviderItem)
+{
+    Q_UNUSED(index);
+    Q_UNUSED(textureProviderItem);
+}
+
+void QQuickShapeSoftwareRenderer::handleSceneChange(QQuickWindow *window)
+{
+    Q_UNUSED(window);
+    // No action needed
+}
+
+void QQuickShapeSoftwareRenderer::setFillTransform(int index, const QSGTransform &transform)
+{
+    ShapePathGuiData &d(m_sp[index]);
+    if (!(transform.isIdentity() && d.brush.transform().isIdentity())) // No need to copy if both==I
+        d.brush.setTransform(transform.matrix().toTransform());
+    d.dirty |= DirtyBrush;
+    m_accDirty |= DirtyBrush;
+}
+
 void QQuickShapeSoftwareRenderer::endSync(bool)
 {
 }
 
 void QQuickShapeSoftwareRenderer::setNode(QQuickShapeSoftwareRenderNode *node)
 {
-    if (m_node != node) {
-        m_node = node;
-        m_accDirty |= DirtyList;
-    }
+    m_node = node;
+    m_accDirty |= DirtyList;
 }
 
 void QQuickShapeSoftwareRenderer::updateNode()
@@ -188,7 +179,7 @@ void QQuickShapeSoftwareRenderer::updateNode()
     if (!m_accDirty)
         return;
 
-    const int count = m_sp.count();
+    const int count = m_sp.size();
     const bool listChanged = m_accDirty & DirtyList;
     if (listChanged)
         m_node->m_sp.resize(count);
@@ -257,8 +248,8 @@ void QQuickShapeSoftwareRenderNode::render(const RenderState *state)
     p->setTransform(matrix()->toTransform());
     p->setOpacity(inheritedOpacity());
 
-    for (const ShapePathRenderData &d : qAsConst(m_sp)) {
-        p->setPen(d.strokeWidth >= 0.0f && d.pen.color() != Qt::transparent ? d.pen : Qt::NoPen);
+    for (const ShapePathRenderData &d : std::as_const(m_sp)) {
+        p->setPen(d.strokeWidth > 0.0f && d.pen.color() != Qt::transparent ? d.pen : Qt::NoPen);
         p->setBrush(d.brush.color() != Qt::transparent ? d.brush : Qt::NoBrush);
         p->drawPath(d.path);
     }

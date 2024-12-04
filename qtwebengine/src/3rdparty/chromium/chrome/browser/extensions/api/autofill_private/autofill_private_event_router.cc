@@ -1,14 +1,17 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "chrome/browser/extensions/api/autofill_private/autofill_private_event_router.h"
 
+#include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
-#include "base/bind_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
+#include "base/ranges/algorithm.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/autofill/personal_data_manager_factory.h"
 #include "chrome/browser/browser_process.h"
@@ -20,12 +23,21 @@
 #include "content/public/browser/browser_context.h"
 
 namespace extensions {
+namespace {
+template <class T>
+base::Value::List ToValueList(const std::vector<T>& values) {
+  base::Value::List list;
+  list.reserve(values.size());
+  for (const auto& value : values) {
+    list.Append(value.ToValue());
+  }
+  return list;
+}
+}  // namespace
 
 AutofillPrivateEventRouter::AutofillPrivateEventRouter(
     content::BrowserContext* context)
-    : context_(context),
-      event_router_(nullptr),
-      personal_data_(nullptr) {
+    : context_(context) {
   // Register with the event router so we know when renderers are listening to
   // our events. We first check and see if there *is* an event router, because
   // some unit tests try to create all context services, but don't initialize
@@ -42,15 +54,38 @@ AutofillPrivateEventRouter::AutofillPrivateEventRouter(
   personal_data_->AddObserver(this);
 }
 
-AutofillPrivateEventRouter::~AutofillPrivateEventRouter() {
-}
-
 void AutofillPrivateEventRouter::Shutdown() {
   if (personal_data_)
     personal_data_->RemoveObserver(this);
 }
 
+void AutofillPrivateEventRouter::RebindPersonalDataManagerForTesting(
+    autofill::PersonalDataManager* personal_data) {
+  if (personal_data_) {
+    personal_data_->RemoveObserver(this);
+  }
+  personal_data_ = personal_data;
+  if (personal_data_) {
+    personal_data_->AddObserver(this);
+  }
+}
+
+void AutofillPrivateEventRouter::UnbindPersonalDataManagerForTesting() {
+  if (personal_data_) {
+    personal_data_->RemoveObserver(this);
+    personal_data_ = nullptr;
+  }
+}
+
 void AutofillPrivateEventRouter::OnPersonalDataChanged() {
+  BroadcastCurrentData();
+}
+
+void AutofillPrivateEventRouter::OnPersonalDataSyncStateChanged() {
+  BroadcastCurrentData();
+}
+
+void AutofillPrivateEventRouter::BroadcastCurrentData() {
   // Ignore any updates before data is loaded. This can happen in tests.
   if (!(personal_data_ && personal_data_->IsDataLoaded()))
     return;
@@ -61,10 +96,19 @@ void AutofillPrivateEventRouter::OnPersonalDataChanged() {
   autofill_util::CreditCardEntryList creditCardList =
       extensions::autofill_util::GenerateCreditCardList(*personal_data_);
 
-  std::unique_ptr<base::ListValue> args(
-      api::autofill_private::OnPersonalDataChanged::Create(addressList,
-                                                           creditCardList)
-          .release());
+  autofill_util::IbanEntryList ibanList =
+      extensions::autofill_util::GenerateIbanList(*personal_data_);
+
+  std::optional<api::autofill_private::AccountInfo> account_info =
+      extensions::autofill_util::GetAccountInfo(*personal_data_);
+
+  base::Value::List args;
+  args.Append(ToValueList(addressList));
+  args.Append(ToValueList(creditCardList));
+  args.Append(ToValueList(ibanList));
+  if (account_info.has_value()) {
+    args.Append(account_info->ToValue());
+  }
 
   std::unique_ptr<Event> extension_event(
       new Event(events::AUTOFILL_PRIVATE_ON_PERSONAL_DATA_CHANGED,
@@ -72,11 +116,6 @@ void AutofillPrivateEventRouter::OnPersonalDataChanged() {
                 std::move(args)));
 
   event_router_->BroadcastEvent(std::move(extension_event));
-}
-
-AutofillPrivateEventRouter* AutofillPrivateEventRouter::Create(
-    content::BrowserContext* context) {
-  return new AutofillPrivateEventRouter(context);
 }
 
 }  // namespace extensions

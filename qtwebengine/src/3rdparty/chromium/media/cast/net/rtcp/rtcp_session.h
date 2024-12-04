@@ -1,4 +1,4 @@
-// Copyright (c) 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,7 +16,7 @@ class RtcpSession {
   // Handle incoming RTCP packet.
   // Returns false if it is not a RTCP packet or it is not directed to
   // this session, e.g. SSRC doesn't match.
-  virtual bool IncomingRtcpPacket(const uint8_t* data, size_t length) = 0;
+  virtual bool IncomingRtcpPacket(base::span<const uint8_t> data) = 0;
 };
 
 }  // namespace cast

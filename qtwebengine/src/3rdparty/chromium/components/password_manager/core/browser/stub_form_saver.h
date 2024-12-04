@@ -1,11 +1,11 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef COMPONENTS_PASSWORD_MANAGER_CORE_BROWSER_STUB_FORM_SAVER_H_
 #define COMPONENTS_PASSWORD_MANAGER_CORE_BROWSER_STUB_FORM_SAVER_H_
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "components/password_manager/core/browser/form_saver.h"
 
 namespace password_manager {
@@ -15,26 +15,31 @@ class StubFormSaver : public FormSaver {
  public:
   StubFormSaver() = default;
 
+  StubFormSaver(const StubFormSaver&) = delete;
+  StubFormSaver& operator=(const StubFormSaver&) = delete;
+
   ~StubFormSaver() override = default;
 
   // FormSaver:
-  PasswordForm PermanentlyBlacklist(PasswordStore::FormDigest digest) override;
-  void Unblacklist(const PasswordStore::FormDigest& digest) override;
+  PasswordForm Blocklist(PasswordFormDigest digest) override;
+  void Unblocklist(const PasswordFormDigest& digest) override;
   void Save(PasswordForm pending,
-            const std::vector<const PasswordForm*>& matches,
-            const base::string16& old_password) override {}
-  void Update(PasswordForm pending,
-              const std::vector<const PasswordForm*>& matches,
-              const base::string16& old_password) override {}
-  void UpdateReplace(PasswordForm pending,
-                     const std::vector<const PasswordForm*>& matches,
-                     const base::string16& old_password,
-                     const PasswordForm& old_unique_key) override {}
+            const std::vector<raw_ptr<const PasswordForm, VectorExperimental>>&
+                matches,
+            const std::u16string& old_password) override {}
+  void Update(
+      PasswordForm pending,
+      const std::vector<raw_ptr<const PasswordForm, VectorExperimental>>&
+          matches,
+      const std::u16string& old_password) override {}
+  void UpdateReplace(
+      PasswordForm pending,
+      const std::vector<raw_ptr<const PasswordForm, VectorExperimental>>&
+          matches,
+      const std::u16string& old_password,
+      const PasswordForm& old_unique_key) override {}
   void Remove(const PasswordForm& form) override {}
   std::unique_ptr<FormSaver> Clone() override;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(StubFormSaver);
 };
 
 }  // namespace password_manager

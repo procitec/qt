@@ -1,10 +1,13 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "ui/display/mojom/display_snapshot_mojom_traits.h"
 
+#include <cstdint>
+
 #include "mojo/public/cpp/base/file_path_mojom_traits.h"
+#include "ui/display/mojom/display_snapshot.mojom.h"
 #include "ui/display/types/display_constants.h"
 #include "ui/gfx/color_space.h"
 #include "ui/gfx/geometry/size.h"
@@ -32,6 +35,27 @@ static uint64_t GetModeIndex(
 }
 
 }  // namespace
+
+// static
+bool StructTraits<display::mojom::DisplaySnapshotColorInfoDataView,
+                  display::DisplaySnapshot::ColorInfo>::
+    Read(display::mojom::DisplaySnapshotColorInfoDataView data,
+         display::DisplaySnapshot::ColorInfo* out) {
+  if (!data.ReadColorSpace(&out->color_space)) {
+    return false;
+  }
+  if (!data.ReadEdidPrimaries(&out->edid_primaries)) {
+    return false;
+  }
+  out->edid_gamma = data.edid_gamma();
+  if (!data.ReadHdrStaticMetadata(&out->hdr_static_metadata)) {
+    return false;
+  }
+  out->supports_color_temperature_adjustment =
+      data.supports_color_temperature_adjustment();
+  out->bits_per_channel = data.bits_per_channel();
+  return true;
+}
 
 // static
 std::vector<std::unique_ptr<display::DisplayMode>>
@@ -81,6 +105,10 @@ bool StructTraits<display::mojom::DisplaySnapshotDataView,
   if (!data.ReadType(&type))
     return false;
 
+  std::vector<uint64_t> path_topology;
+  if (!data.ReadPathTopology(&path_topology))
+    return false;
+
   display::PrivacyScreenState privacy_screen_state;
   if (!data.ReadPrivacyScreenState(&privacy_screen_state))
     return false;
@@ -89,9 +117,10 @@ bool StructTraits<display::mojom::DisplaySnapshotDataView,
   if (!data.ReadPanelOrientation(&panel_orientation))
     return false;
 
-  gfx::ColorSpace color_space;
-  if (!data.ReadColorSpace(&color_space))
+  display::DisplaySnapshot::ColorInfo color_info;
+  if (!data.ReadColorInfo(&color_info)) {
     return false;
+  }
 
   std::string display_name;
   if (!data.ReadDisplayName(&display_name))
@@ -137,14 +166,31 @@ bool StructTraits<display::mojom::DisplaySnapshotDataView,
   if (!data.ReadMaximumCursorSize(&maximum_cursor_size))
     return false;
 
+  display::VariableRefreshRateState variable_refresh_rate_state;
+  if (!data.ReadVariableRefreshRateState(&variable_refresh_rate_state))
+    return false;
+
+  const absl::optional<uint16_t> vsync_rate_min =
+      data.vsync_rate_min() > 0 ? absl::make_optional(data.vsync_rate_min())
+                                : absl::nullopt;
+
+  display::DrmFormatsAndModifiers drm_formats_and_modifiers;
+#if BUILDFLAG(IS_CHROMEOS)
+  if (!data.ReadDrmFormatsAndModifiers(&drm_formats_and_modifiers)) {
+    return false;
+  }
+#endif
+
   *out = std::make_unique<display::DisplaySnapshot>(
-      data.display_id(), origin, physical_size, type,
+      data.display_id(), data.port_display_id(), data.edid_display_id(),
+      data.connector_index(), origin, physical_size, type,
+      data.base_connector_id(), path_topology,
       data.is_aspect_preserving_scaling(), data.has_overscan(),
-      privacy_screen_state, data.has_color_correction_matrix(),
-      data.color_correction_in_linear_space(), color_space,
-      data.bits_per_channel(), display_name, file_path, std::move(modes),
-      panel_orientation, std::move(edid), current_mode, native_mode,
-      data.product_code(), data.year_of_manufacture(), maximum_cursor_size);
+      privacy_screen_state, data.has_content_protection_key(), color_info,
+      display_name, file_path, std::move(modes), panel_orientation,
+      std::move(edid), current_mode, native_mode, data.product_code(),
+      data.year_of_manufacture(), maximum_cursor_size,
+      variable_refresh_rate_state, vsync_rate_min, drm_formats_and_modifiers);
   return true;
 }
 

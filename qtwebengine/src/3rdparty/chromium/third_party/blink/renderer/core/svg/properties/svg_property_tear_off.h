@@ -33,7 +33,8 @@
 
 #include "third_party/blink/renderer/core/svg/properties/svg_property.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
+#include "third_party/blink/renderer/platform/heap/member.h"
 
 namespace blink {
 
@@ -56,8 +57,8 @@ class SVGPropertyTearOffBase : public ScriptWrappable {
 
   virtual void CommitChange();
 
-  SVGAnimatedPropertyBase* GetBinding() { return binding_; }
-  SVGElement* ContextElement() const { return context_element_; }
+  SVGAnimatedPropertyBase* GetBinding() { return binding_.Get(); }
+  SVGElement* ContextElement() const { return context_element_.Get(); }
 
   void Bind(SVGAnimatedPropertyBase* binding);
 

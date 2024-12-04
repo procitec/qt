@@ -13,6 +13,14 @@
 #include "include/private/SkColorData.h"
 
 class SkRasterPipeline;
+class SkPaint;
+
+/**
+ *  Sentinel value for SkBlendMode enum.
+ *
+ *  Will never be a valid enum value, but will be storable in a byte.
+ */
+constexpr uint8_t kCustom_SkBlendMode = 0xFF;
 
 bool SkBlendMode_SupportsCoverageAsAlpha(SkBlendMode);
 
@@ -25,9 +33,16 @@ void SkBlendMode_AppendStages(SkBlendMode, SkRasterPipeline*);
 
 SkPMColor4f SkBlendMode_Apply(SkBlendMode, const SkPMColor4f& src, const SkPMColor4f& dst);
 
-#if SK_SUPPORT_GPU
-#include "src/gpu/GrXferProcessor.h"
-const GrXPFactory* SkBlendMode_AsXPFactory(SkBlendMode);
-#endif
+enum class SkBlendFastPath {
+    kNormal,      // draw normally
+    kSrcOver,     //< draw as if in srcover mode
+    kSkipDrawing  //< draw nothing
+};
+
+/**
+ *  Given a paint, determine whether the paint's blend mode can be
+ *  replaced with kSrcOver or not drawn at all. This can inform drawing optimizations.
+ */
+SkBlendFastPath CheckFastPath(const SkPaint&, bool dstIsOpaque);
 
 #endif

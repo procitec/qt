@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,10 +6,11 @@
 #define BASE_MESSAGE_LOOP_MESSAGE_PUMP_FUCHSIA_H_
 
 #include <lib/async/wait.h>
+#include <memory>
 
 #include "base/base_export.h"
 #include "base/location.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/message_loop/message_pump.h"
 #include "base/message_loop/watchable_io_message_pump_posix.h"
@@ -32,13 +33,17 @@ class BASE_EXPORT MessagePumpFuchsia : public MessagePump,
                                      zx_signals_t signals) = 0;
 
    protected:
-    virtual ~ZxHandleWatcher() {}
+    virtual ~ZxHandleWatcher() = default;
   };
 
   // Manages an active watch on an zx_handle_t.
   class ZxHandleWatchController : public async_wait_t {
    public:
     explicit ZxHandleWatchController(const Location& from_here);
+
+    ZxHandleWatchController(const ZxHandleWatchController&) = delete;
+    ZxHandleWatchController& operator=(const ZxHandleWatchController&) = delete;
+
     // Deleting the Controller implicitly calls StopWatchingZxHandle.
     virtual ~ZxHandleWatchController();
 
@@ -79,8 +84,6 @@ class BASE_EXPORT MessagePumpFuchsia : public MessagePump,
     // A watch may be marked as persistent, which means it remains active even
     // after triggering.
     bool persistent_ = false;
-
-    DISALLOW_COPY_AND_ASSIGN(ZxHandleWatchController);
   };
 
   class FdWatchController : public FdWatchControllerInterface,
@@ -88,6 +91,10 @@ class BASE_EXPORT MessagePumpFuchsia : public MessagePump,
                             public ZxHandleWatcher {
    public:
     explicit FdWatchController(const Location& from_here);
+
+    FdWatchController(const FdWatchController&) = delete;
+    FdWatchController& operator=(const FdWatchController&) = delete;
+
     ~FdWatchController() override;
 
     // FdWatchControllerInterface:
@@ -110,8 +117,6 @@ class BASE_EXPORT MessagePumpFuchsia : public MessagePump,
     // Set by WatchFileDescriptor() to hold a reference to the descriptor's
     // fdio.
     fdio_t* io_ = nullptr;
-
-    DISALLOW_COPY_AND_ASSIGN(FdWatchController);
   };
 
   enum Mode {
@@ -121,6 +126,10 @@ class BASE_EXPORT MessagePumpFuchsia : public MessagePump,
   };
 
   MessagePumpFuchsia();
+
+  MessagePumpFuchsia(const MessagePumpFuchsia&) = delete;
+  MessagePumpFuchsia& operator=(const MessagePumpFuchsia&) = delete;
+
   ~MessagePumpFuchsia() override;
 
   bool WatchZxHandle(zx_handle_t handle,
@@ -138,21 +147,31 @@ class BASE_EXPORT MessagePumpFuchsia : public MessagePump,
   void Run(Delegate* delegate) override;
   void Quit() override;
   void ScheduleWork() override;
-  void ScheduleDelayedWork(const TimeTicks& delayed_work_time) override;
+  void ScheduleDelayedWork(
+      const Delegate::NextWorkInfo& next_work_info) override;
 
  private:
   // Handles IO events by running |async_dispatcher_| until |deadline|. Returns
   // true if any events were received or if ScheduleWork() was called.
   bool HandleIoEventsUntil(zx_time_t deadline);
 
-  // This flag is set to false when Run should return.
-  bool keep_running_ = true;
+  struct RunState {
+    explicit RunState(Delegate* delegate_in) : delegate(delegate_in) {}
+
+    // `delegate` is not a raw_ptr<...> for performance reasons (based on
+    // analysis of sampling profiler data and tab_search:top100:2020).
+    RAW_PTR_EXCLUSION Delegate* const delegate;
+
+    // Used to flag that the current Run() invocation should return ASAP.
+    bool should_quit = false;
+  };
+
+  // State for the current invocation of Run(). null if not running.
+  RAW_PTR_EXCLUSION RunState* run_state_ = nullptr;
 
   std::unique_ptr<async::Loop> async_loop_;
 
   base::WeakPtrFactory<MessagePumpFuchsia> weak_factory_;
-
-  DISALLOW_COPY_AND_ASSIGN(MessagePumpFuchsia);
 };
 
 }  // namespace base

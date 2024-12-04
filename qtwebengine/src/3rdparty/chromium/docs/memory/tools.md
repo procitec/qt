@@ -16,7 +16,7 @@ Here is a table of common area of inquiry and suggested tools for examining them
 |----------------------- | ------- |
 | Which subsystems consuming memory per process.  | [Global Memory Dumps](#global-memory-dumps), [Taking memory-infra trace](#memory-infra-trace) |
 | Tracking C++ object allocation over time | [`diff_heap_profiler.py`](#diff-heap-profiler), [Heap Details in chrome://tracing](#heap-dumps-chrome-tracing) |
-| Suspected DOM leaks in the Renderer | [Real World Leak Detector](#real-world-leak-detector) |
+| Suspected DOM leaks in the Renderer | [Developer Tools Heap Snapshots](#dev-tools-heap-snapshots), [Real World Leak Detector](#real-world-leak-detector) |
 | Kernel/Driver Memory and Resource Usage | [perfmon (win), ETW](#os-tools) |
 | Blackbox examination of process memory | [VMMAP (win)](#os-tools) | Understanding fragmentation of the memory space |
 | Symbolized Heap Dump data | [Heap Dumps](#heap-dumps) | Grabs raw data for analysis by other tools |
@@ -40,7 +40,7 @@ To look a the delta between two dumps, control-click two different dark-purple M
 circles.
 
 ### Blindspots
-  * Statistics are self-reported. If the MemoryDumpProvider implemenation does
+  * Statistics are self-reported. If the MemoryDumpProvider implementation does
     not fully cover the resource usage of the subsystem, those resources will
     not be accounted.
 
@@ -116,7 +116,7 @@ TODO(awong): Write about options to script and the flame graph.
 
 ### Instructions
   1. Get 2 or more [symbolized heap dump](#heap-dumps)
-  3. Run resulting traces through [`diff_heap_profiler.py`](https://chromium.googlesource.com/catapult/+/master/experimental/tracing/bin/diff_heap_profiler.py) to show a list of new allocations.
+  3. Run resulting traces through [`diff_heap_profiler.py`](https://chromium.googlesource.com/catapult/+/main/experimental/tracing/bin/diff_heap_profiler.py) to show a list of new allocations.
 
 -----------
 ## <a name="heap-dumps"></a>Heap Dumps
@@ -157,7 +157,7 @@ looking similar due to the nature of DOM node allocation.
 | ------- | ----- |
 | Out of process heap profiling start mode. | This option is somewhat misnamed. It tells OOPHP which processes to profile at startup. Other processes can selected manually later via chrome://memory-internals even if this is set to "disabled". |
 | Keep track of even the small allocations in memlog heap dumps. | By default, small allocations are not emitted in the heap dump to reduce dump size. Enabling this track _all_ allocations. |
-| The type of stack to record for memlog heap dumps | If possible, use Native stack frames as that provides the best information. When those are not availble either due to performance for build (eg, no frame-pointers on arm32 official) configurations, using trace events for a "pseudo stack" can give good information too. |
+| The type of stack to record for memlog heap dumps | If possible, use Native stack frames as that provides the best information. When those are not available either due to performance for build (eg, no frame-pointers on arm32 official) configurations, using trace events for a "pseudo stack" can give good information too. |
 | Heap profiling | Deprecated. Enables the in-process heap profiler. Functionality should be fully subsumed by preceeding options. |
 
 #### Saving a heap dump
@@ -168,7 +168,7 @@ looking similar due to the nature of DOM node allocation.
   2. Symbolize trace using  [`symbolize_trace.py`](../../third_party/catapult/tracing/bin/symbolize_trace). If the Chrome binary was built locally, pass the flag "--is-local-build".
   3. Analyze resuing heap dump using [`diff_heap_profiler.py`](#diff-heap-profiler), or [Heap Profile view in Chrome Tracing](#tracing-heap-profile)
 
-On deskop, using chrome://memory-internals to take a heap dump is more reliable
+On desktop, using chrome://memory-internals to take a heap dump is more reliable
 as it directly saves the heapdump to a file instead of passing the serialized data
 through the chrome://tracing renderer process which can easily OOM. For Android,
 this native file saving was harder to implement and would still leave the
@@ -219,6 +219,27 @@ analyze it.
 TODO(ajwong): Add screenshot or at least reference the more detailed
 memory-infra docs.
 
+-----------
+## <a name="dev-tools-heap-snapshots"></a> Developer Tools Heap Snapshots
+
+Heap snapshots provide views of objects on the Oilpan and V8 heaps and retainer
+relationships between them. General documentation is here:
+https://developer.chrome.com/docs/devtools/memory-problems/heap-snapshots/
+
+By default, many objects on the Oilpan heap will be labeled as "InternalNode".
+To capture detailed symbol names for them, follow these steps:
+
+1. Add the following to gn args and rebuild: `cppgc_enable_object_names = true` <br/>
+   Or use [Chrome for Testing](https://googlechromelabs.github.io/chrome-for-testing/) prebuilt binaries; they have this flag enabled.
+
+2. In Developer Tools, under Settings | Experiments, check "Show option to
+expose internals in heap snapshots"
+
+3. Reload Developer Tools (there will be a button for this at the top of the
+window)
+
+4. On the Memory pane, under Select profiling type | Heap snapshot, check
+"Expose internals (includes additional implementation-specific details)"
 
 -----------
 ## <a name="real-world-leak-detector"></a> Real World Leak Detector (Blink-only)
@@ -259,10 +280,10 @@ can notice kernel resources that are allocated (eg, GPU memory, or drive memory
 such as the Windows Paged and Non-paged pools) as side effects of user mode
 calls nor do they account for memory that does not go through new/malloc
 (manulaly callling `mmap()`, or `VirtualAlloc()`). Querying a full view of
-these allocaitons usually requires admin privileges, the semantics change
+these allocations usually requires admin privileges, the semantics change
 per platform, and the performance can vary from being "constant-ish" to
 being dependent on virtual space size (eg, probing allocation via
-VirtualQueryEx or parsing /proc/self/maps) or number of proccesses in the
+VirtualQueryEx or parsing /proc/self/maps) or number of processes in the
 system (NTQuerySystemInformation).
 
 As an example of error in measurement, PartitionAlloc did not account for

@@ -15,6 +15,8 @@
 #ifndef THIRD_PARTY_PRIVATE_MEMBERSHIP_SRC_INTERNAL_HASHED_BUCKET_ID_H_
 #define THIRD_PARTY_PRIVATE_MEMBERSHIP_SRC_INTERNAL_HASHED_BUCKET_ID_H_
 
+#include <string>
+
 #include "third_party/private-join-and-compute/src/crypto/ec_commutative_cipher.h"
 #include "third_party/private_membership/src/private_membership_rlwe.pb.h"
 #include "absl/hash/hash.h"
@@ -34,12 +36,12 @@ class HashedBucketId {
   // bytes, at most ceil(bit_length/8) bytes, and all bits after the
   // bit_length'th must be set to 0.
   static ::rlwe::StatusOr<HashedBucketId> Create(
-      const std::string& hashed_bucket_id, int bit_length);
+      absl::string_view hashed_bucket_id, int bit_length);
 
   // Creates the object from the plaintet ID and parameters.
   static ::rlwe::StatusOr<HashedBucketId> Create(
       const RlwePlaintextId& id, const HashedBucketsParameters& params,
-      private_join_and_compute::Context* ctx);
+      ::private_join_and_compute::Context* ctx);
 
   // Creates the object from the API proto.
   //
@@ -53,6 +55,12 @@ class HashedBucketId {
   // Creates and returns an API proto representing the object.
   private_membership::rlwe::PrivateMembershipRlweQuery::HashedBucketId
   ToApiProto() const;
+  //
+
+  // Converts the bucket id to an unsigned 32 bit integer representation.
+  //
+  // If the bit length > 32, returns an internal error.
+  ::rlwe::StatusOr<uint32_t> ToUint32() const;
 
   // Creates a debug string for logging.
   std::string DebugString() const;
@@ -72,10 +80,6 @@ class HashedBucketId {
     return H::combine(std::move(hash_state),
                       hashed_bucket_id.hashed_bucket_id_bytes_,
                       hashed_bucket_id.bit_length_);
-  }
-
-  inline std::string hashed_bucket_id_bytes() const {
-    return hashed_bucket_id_bytes_;
   }
 
   inline int bit_length() const { return bit_length_; }

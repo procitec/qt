@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium OS Authors. All rights reserved.
+// Copyright 2018 The ChromiumOS Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,8 +11,7 @@ constexpr char kDlcServiceInterface[] = "org.chromium.DlcServiceInterface";
 constexpr char kDlcServiceServicePath[] = "/org/chromium/DlcService";
 constexpr char kDlcServiceServiceName[] = "org.chromium.DlcService";
 
-constexpr char kInstallMethod[] = "InstallDlc";
-constexpr char kInstallDlcMethod[] = "InstallDlc";
+constexpr char kInstallMethod[] = "Install";
 constexpr char kUninstallMethod[] = "Uninstall";
 constexpr char kPurgeMethod[] = "Purge";
 constexpr char kGetDlcStateMethod[] = "GetDlcState";
@@ -29,6 +28,8 @@ constexpr char kErrorInvalidDlc[] =
     "org.chromium.DlcServiceInterface.INVALID_DLC";
 constexpr char kErrorAllocation[] =
     "org.chromium.DlcServiceInterface.ALLOCATION";
+constexpr char kErrorNoImageFound[] =
+    "org.chromium.DlcServiceInterface.NO_IMAGE_FOUND";
 
 }  // namespace dlcservice
 

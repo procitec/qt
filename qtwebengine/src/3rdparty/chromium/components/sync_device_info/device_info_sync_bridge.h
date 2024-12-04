@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,10 +10,9 @@
 #include <string>
 #include <vector>
 
-#include "base/macros.h"
+#include "base/callback_list.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
-#include "base/optional.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "components/sync/base/sync_mode.h"
@@ -23,9 +22,11 @@
 #include "components/sync_device_info/device_info_tracker.h"
 #include "components/sync_device_info/local_device_info_provider.h"
 #include "components/sync_device_info/local_device_info_util.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace sync_pb {
 class DeviceInfoSpecifics;
+enum SyncEnums_DeviceType : int;
 }  // namespace sync_pb
 
 namespace syncer {
@@ -44,6 +45,10 @@ class DeviceInfoSyncBridge : public ModelTypeSyncBridge,
       OnceModelTypeStoreFactory store_factory,
       std::unique_ptr<ModelTypeChangeProcessor> change_processor,
       std::unique_ptr<DeviceInfoPrefs> device_info_prefs);
+
+  DeviceInfoSyncBridge(const DeviceInfoSyncBridge&) = delete;
+  DeviceInfoSyncBridge& operator=(const DeviceInfoSyncBridge&) = delete;
+
   ~DeviceInfoSyncBridge() override;
 
   LocalDeviceInfoProvider* GetLocalDeviceInfoProvider();
@@ -51,34 +56,44 @@ class DeviceInfoSyncBridge : public ModelTypeSyncBridge,
   // Refresh local copy of device info in memory, and informs sync of the
   // change. Used when the caller knows a property of local device info has
   // changed (e.g. SharingInfo), and must be sync-ed to other devices as soon as
-  // possible, without waiting for the periodic commits. |callback| will be
-  // called when device info is synced.
-  void RefreshLocalDeviceInfo(base::OnceClosure callback);
+  // possible, without waiting for the periodic commits. The device info will be
+  // compared with the local copy. If the data has been updated, then it will be
+  // committed. Otherwise nothing happens.
+  void RefreshLocalDeviceInfoIfNeeded();
+
+  // The |callback| will be invoked on each successful commit with newly enabled
+  // data types list. This is needed to invoke an additional GetUpdates request
+  // for the data types which have been just enabled and subscribed for new
+  // invalidations.
+  void SetCommittedAdditionalInterestedDataTypesCallback(
+      base::RepeatingCallback<void(const ModelTypeSet&)> callback);
 
   // ModelTypeSyncBridge implementation.
   void OnSyncStarting(const DataTypeActivationRequest& request) override;
   std::unique_ptr<MetadataChangeList> CreateMetadataChangeList() override;
-  base::Optional<ModelError> MergeSyncData(
+  absl::optional<ModelError> MergeFullSyncData(
       std::unique_ptr<MetadataChangeList> metadata_change_list,
       EntityChangeList entity_data) override;
-  base::Optional<ModelError> ApplySyncChanges(
+  absl::optional<ModelError> ApplyIncrementalSyncChanges(
       std::unique_ptr<MetadataChangeList> metadata_change_list,
       EntityChangeList entity_changes) override;
   void GetData(StorageKeyList storage_keys, DataCallback callback) override;
   void GetAllDataForDebugging(DataCallback callback) override;
   std::string GetClientTag(const EntityData& entity_data) override;
   std::string GetStorageKey(const EntityData& entity_data) override;
-  void ApplyStopSyncChanges(
+  void ApplyDisableSyncChanges(
       std::unique_ptr<MetadataChangeList> delete_metadata_change_list) override;
+  ModelTypeSyncBridge::CommitAttemptFailedBehavior OnCommitAttemptFailed(
+      syncer::SyncCommitError commit_error) override;
 
   // DeviceInfoTracker implementation.
   bool IsSyncing() const override;
-  std::unique_ptr<DeviceInfo> GetDeviceInfo(
-      const std::string& client_id) const override;
-  std::vector<std::unique_ptr<DeviceInfo>> GetAllDeviceInfo() const override;
+  const DeviceInfo* GetDeviceInfo(const std::string& client_id) const override;
+  std::vector<const DeviceInfo*> GetAllDeviceInfo() const override;
   void AddObserver(Observer* observer) override;
   void RemoveObserver(Observer* observer) override;
-  int CountActiveDevices() const override;
+  std::map<DeviceInfo::FormFactor, int> CountActiveDevicesByType()
+      const override;
   bool IsRecentLocalCacheGuid(const std::string& cache_guid) const override;
 
   // For testing only.
@@ -86,12 +101,32 @@ class DeviceInfoSyncBridge : public ModelTypeSyncBridge,
   void ForcePulseForTest() override;
 
  private:
+  class ImmutableDeviceInfoAndSpecifics {
+   public:
+    explicit ImmutableDeviceInfoAndSpecifics(
+        sync_pb::DeviceInfoSpecifics specifics);
+
+    const sync_pb::DeviceInfoSpecifics& specifics() const { return specifics_; }
+
+    const DeviceInfo& device_info() const { return device_info_; }
+
+   private:
+    const sync_pb::DeviceInfoSpecifics specifics_;
+    const DeviceInfo device_info_;
+  };
+
   // Cache of all syncable and local data, stored by device cache guid.
-  using ClientIdToSpecifics =
-      std::map<std::string, std::unique_ptr<sync_pb::DeviceInfoSpecifics>>;
+  using ClientIdToDeviceInfo =
+      std::map<std::string, ImmutableDeviceInfoAndSpecifics>;
+
+  // Parses the content of |record_list| into |*all_data|. The output
+  // parameter is first for binding purposes.
+  static absl::optional<ModelError> ParseSpecificsOnBackendSequence(
+      ClientIdToDeviceInfo* all_data,
+      std::unique_ptr<ModelTypeStore::RecordList> record_list);
 
   // Store SyncData in the cache and durable storage.
-  void StoreSpecifics(std::unique_ptr<sync_pb::DeviceInfoSpecifics> specifics,
+  void StoreSpecifics(sync_pb::DeviceInfoSpecifics specifics,
                       ModelTypeStore::WriteBatch* batch);
   // Delete SyncData from the cache and durable storage, returns true if there
   // was actually anything at the given tag.
@@ -107,20 +142,22 @@ class DeviceInfoSyncBridge : public ModelTypeSyncBridge,
   void NotifyObservers();
 
   // Methods used as callbacks given to DataTypeStore.
-  void OnStoreCreated(const base::Optional<syncer::ModelError>& error,
+  void OnStoreCreated(const absl::optional<syncer::ModelError>& error,
                       std::unique_ptr<ModelTypeStore> store);
   void OnLocalDeviceNameInfoRetrieved(
       LocalDeviceNameInfo local_device_name_info);
-  void OnReadAllData(std::unique_ptr<ClientIdToSpecifics> all_data,
-                     const base::Optional<syncer::ModelError>& error);
-  void OnReadAllMetadata(const base::Optional<syncer::ModelError>& error,
+  void OnReadAllData(std::unique_ptr<ClientIdToDeviceInfo> all_data,
+                     const absl::optional<syncer::ModelError>& error);
+  void OnSyncInvalidationsInitialized();
+  void OnReadAllMetadata(const absl::optional<syncer::ModelError>& error,
                          std::unique_ptr<MetadataBatch> metadata_batch);
-  void OnCommit(const base::Optional<syncer::ModelError>& error);
+  void OnCommit(const absl::optional<syncer::ModelError>& error);
 
   // Performs reconciliation between the locally provided device info and the
   // stored device info data. If the sets of data differ, then we consider this
-  // a local change and we send it to the processor.
-  void ReconcileLocalAndStored();
+  // a local change and we send it to the processor. Returns true if the local
+  // data has been changed and sent to the processor.
+  bool ReconcileLocalAndStored();
 
   // Stores the updated version of the local copy of device info in durable
   // storage, in memory, and informs sync of the change. Must not be called
@@ -136,12 +173,6 @@ class DeviceInfoSyncBridge : public ModelTypeSyncBridge,
   void CommitAndNotify(std::unique_ptr<ModelTypeStore::WriteBatch> batch,
                        bool should_notify);
 
-  // Counts the number of active devices relative to |now|. The activeness of a
-  // device depends on the amount of time since it was updated, which means
-  // comparing it against the current time. |now| is passed into this method to
-  // allow unit tests to control expected results.
-  int CountActiveDevices(const base::Time now) const;
-
   // Deletes locally old data and metadata entries without issuing tombstones.
   void ExpireOldEntries();
 
@@ -149,11 +180,16 @@ class DeviceInfoSyncBridge : public ModelTypeSyncBridge,
       local_device_info_provider_;
 
   std::string local_cache_guid_;
-  ClientIdToSpecifics all_data_;
+  ClientIdToDeviceInfo all_data_;
 
   LocalDeviceNameInfo local_device_name_info_;
 
-  base::Optional<SyncMode> sync_mode_;
+  absl::optional<SyncMode> sync_mode_;
+
+  // Used to restrict reuploads of local device info on incoming tombstones.
+  // This is necessary to prevent uncontrolled commits based on incoming
+  // updates.
+  bool reuploaded_on_tombstone_ = false;
 
   // Registered observers, not owned.
   base::ObserverList<Observer, true>::Unchecked observers_;
@@ -164,13 +200,20 @@ class DeviceInfoSyncBridge : public ModelTypeSyncBridge,
   // Used to update our local device info once every pulse interval.
   base::OneShotTimer pulse_timer_;
 
+  // Used to force upload of local device info after initialization. Used in
+  // tests only.
+  bool force_reupload_for_test_ = false;
+
   std::vector<base::OnceClosure> device_info_synced_callback_list_;
+
+  // Called when a new interested data type list has been committed. Only newly
+  // enabled data types will be passed. May be empty.
+  base::RepeatingCallback<void(const ModelTypeSet&)>
+      new_interested_data_types_callback_;
 
   const std::unique_ptr<DeviceInfoPrefs> device_info_prefs_;
 
   base::WeakPtrFactory<DeviceInfoSyncBridge> weak_ptr_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(DeviceInfoSyncBridge);
 };
 
 }  // namespace syncer

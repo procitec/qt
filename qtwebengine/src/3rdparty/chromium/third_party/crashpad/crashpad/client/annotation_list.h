@@ -1,4 +1,4 @@
-// Copyright 2017 The Crashpad Authors. All rights reserved.
+// Copyright 2017 The Crashpad Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,10 +15,15 @@
 #ifndef CRASHPAD_CLIENT_ANNOTATION_LIST_H_
 #define CRASHPAD_CLIENT_ANNOTATION_LIST_H_
 
-#include "base/macros.h"
+#include "build/build_config.h"
 #include "client/annotation.h"
 
 namespace crashpad {
+#if BUILDFLAG(IS_IOS)
+namespace internal {
+class InProcessIntermediateDumpHandler;
+}  // namespace internal
+#endif
 
 //! \brief A list that contains all the currently set annotations.
 //!
@@ -29,6 +34,10 @@ namespace crashpad {
 class AnnotationList {
  public:
   AnnotationList();
+
+  AnnotationList(const AnnotationList&) = delete;
+  AnnotationList& operator=(const AnnotationList&) = delete;
+
   ~AnnotationList();
 
   //! \brief Returns the instance of the list that has been registered on the
@@ -71,11 +80,48 @@ class AnnotationList {
     // Copy and assign are required.
   };
 
+  //! \brief An InputIterator for iterating a const AnnotationList.
+  class ConstIterator {
+   public:
+    ~ConstIterator();
+
+    const Annotation* operator*() const;
+    ConstIterator& operator++();
+    bool operator==(const ConstIterator& other) const;
+    bool operator!=(const ConstIterator& other) const {
+      return !(*this == other);
+    }
+
+   private:
+    friend class AnnotationList;
+    ConstIterator(const Annotation* head, const Annotation* tail);
+
+    const Annotation* curr_;
+    const Annotation* const tail_;
+
+    // Copy and assign are required.
+  };
+
   //! \brief Returns an iterator to the first element of the annotation list.
   Iterator begin();
+  ConstIterator begin() const { return cbegin(); }
+  ConstIterator cbegin() const;
 
   //! \brief Returns an iterator past the last element of the annotation list.
   Iterator end();
+  ConstIterator end() const { return cend(); }
+  ConstIterator cend() const;
+
+ protected:
+#if BUILDFLAG(IS_IOS)
+  friend class internal::InProcessIntermediateDumpHandler;
+#endif
+
+  //! \brief Returns a pointer to the tail node.
+  const Annotation* tail_pointer() const { return tail_pointer_; }
+
+  //! \brief Returns a pointer to the head element.
+  const Annotation* head() const { return &head_; }
 
  private:
   // To make it easier for the handler to locate the dummy tail node, store the
@@ -85,8 +131,6 @@ class AnnotationList {
   // Dummy linked-list head and tail elements of \a Annotation::Type::kInvalid.
   Annotation head_;
   Annotation tail_;
-
-  DISALLOW_COPY_AND_ASSIGN(AnnotationList);
 };
 
 }  // namespace crashpad

@@ -1,20 +1,21 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include <stddef.h>
 
 #include <memory>
+#include <optional>
 #include <utility>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/json/json_writer.h"
 #include "base/run_loop.h"
 #include "base/strings/string_util.h"
-#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/waitable_event.h"
-#include "base/test/bind_test_util.h"
+#include "base/test/bind.h"
+#include "base/test/test_future.h"
 #include "base/threading/platform_thread.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
@@ -22,8 +23,8 @@
 #include "chrome/browser/extensions/api/webrtc_audio_private/webrtc_audio_private_api.h"
 #include "chrome/browser/extensions/component_loader.h"
 #include "chrome/browser/extensions/extension_apitest.h"
-#include "chrome/browser/extensions/extension_function_test_utils.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
+#include "chrome/browser/media/webrtc/media_device_salt_service_factory.h"
 #include "chrome/browser/media/webrtc/webrtc_log_uploader.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/recently_audible_helper.h"
@@ -31,23 +32,28 @@
 #include "chrome/common/buildflags.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "components/media_device_salt/media_device_salt_service.h"
+#include "components/network_session_configurator/common/network_switches.h"
 #include "content/public/browser/audio_service.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/media_device_id.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
+#include "extensions/browser/api_test_utils.h"
 #include "extensions/common/permissions/permission_set.h"
 #include "extensions/common/permissions/permissions_data.h"
 #include "media/audio/audio_device_description.h"
 #include "media/audio/audio_system.h"
 #include "media/base/media_switches.h"
+#include "net/dns/mock_host_resolver.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "net/test/embedded_test_server/http_request.h"
 #include "net/test/embedded_test_server/http_response.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/public/common/storage_key/storage_key.h"
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 #include "base/win/windows_version.h"
 #endif
 
@@ -58,8 +64,7 @@ using media::AudioDeviceDescriptions;
 
 namespace extensions {
 
-using extension_function_test_utils::RunFunctionAndReturnError;
-using extension_function_test_utils::RunFunctionAndReturnSingleResult;
+using api_test_utils::RunFunctionAndReturnSingleResult;
 
 namespace {
 
@@ -69,19 +74,13 @@ namespace {
 // resulting from that call.
 void GetAudioDeviceDescriptions(bool for_input,
                                 AudioDeviceDescriptions* device_descriptions) {
-  base::RunLoop run_loop;
+  base::test::TestFuture<AudioDeviceDescriptions>
+      audio_device_descriptions_future;
   std::unique_ptr<media::AudioSystem> audio_system =
       content::CreateAudioSystemForAudioService();
   audio_system->GetDeviceDescriptions(
-      for_input,
-      base::BindOnce(
-          [](base::Closure finished_callback, AudioDeviceDescriptions* result,
-             AudioDeviceDescriptions received) {
-            *result = std::move(received);
-            finished_callback.Run();
-          },
-          run_loop.QuitClosure(), device_descriptions));
-  run_loop.Run();
+      for_input, audio_device_descriptions_future.GetCallback());
+  *device_descriptions = audio_device_descriptions_future.Take();
 }
 
 }  // namespace
@@ -97,7 +96,7 @@ class AudioWaitingExtensionTest : public ExtensionApiTest {
       base::RunLoop().RunUntilIdle();
       if (audio_playing)
         break;
-      base::PlatformThread::Sleep(base::TimeDelta::FromMilliseconds(100));
+      base::PlatformThread::Sleep(base::Milliseconds(100));
     }
     if (!audio_playing)
       FAIL() << "Audio did not start playing within ~5 seconds.";
@@ -106,8 +105,6 @@ class AudioWaitingExtensionTest : public ExtensionApiTest {
 
 class WebrtcAudioPrivateTest : public AudioWaitingExtensionTest {
  public:
-  WebrtcAudioPrivateTest() {}
-
   void SetUpOnMainThread() override {
     AudioWaitingExtensionTest::SetUpOnMainThread();
     // Needs to happen after chrome's schemes are added.
@@ -115,73 +112,79 @@ class WebrtcAudioPrivateTest : public AudioWaitingExtensionTest {
   }
 
  protected:
-  void AppendTabIdToRequestInfo(base::ListValue* params, int tab_id) {
-    std::unique_ptr<base::DictionaryValue> request_info(
-        new base::DictionaryValue());
-    request_info->SetInteger("tabId", tab_id);
-    params->Append(std::move(request_info));
+  void AppendTabIdToRequestInfo(base::Value::List* params, int tab_id) {
+    base::Value::Dict request_info;
+    request_info.Set("tabId", tab_id);
+    params->Append(base::Value(std::move(request_info)));
   }
 
-  std::unique_ptr<base::Value> InvokeGetSinks(base::ListValue** sink_list) {
+  std::optional<base::Value> InvokeGetSinks() {
     scoped_refptr<WebrtcAudioPrivateGetSinksFunction> function =
         new WebrtcAudioPrivateGetSinksFunction();
     function->set_source_url(source_url_);
 
-    std::unique_ptr<base::Value> result(
-        RunFunctionAndReturnSingleResult(function.get(), "[]", browser()));
-    result->GetAsList(sink_list);
-    return result;
+    return RunFunctionAndReturnSingleResult(function.get(), "[]", profile());
+  }
+
+  std::string GetMediaDeviceIDSalt(const url::Origin& origin) {
+    media_device_salt::MediaDeviceSaltService* salt_service =
+        MediaDeviceSaltServiceFactory::GetInstance()->GetForBrowserContext(
+            profile());
+    base::test::TestFuture<const std::string&> future;
+    salt_service->GetSalt(blink::StorageKey::CreateFirstParty(origin),
+                          future.GetCallback());
+    return future.Get();
   }
 
   GURL source_url_;
 };
 
-#if !defined(OS_MAC)
+#if !BUILDFLAG(IS_MAC)
 // http://crbug.com/334579
 IN_PROC_BROWSER_TEST_F(WebrtcAudioPrivateTest, GetSinks) {
   AudioDeviceDescriptions devices;
   GetAudioDeviceDescriptions(false, &devices);
 
-  base::ListValue* sink_list = NULL;
-  std::unique_ptr<base::Value> result = InvokeGetSinks(&sink_list);
+  std::optional<base::Value> result = InvokeGetSinks();
+  const base::Value::List& sink_list = result->GetList();
 
   std::string result_string;
   JSONWriter::Write(*result, &result_string);
   VLOG(2) << result_string;
 
-  EXPECT_EQ(devices.size(), sink_list->GetSize());
+  EXPECT_EQ(devices.size(), sink_list.size());
 
   // Iterate through both lists in lockstep and compare. The order
   // should be identical.
   size_t ix = 0;
   AudioDeviceDescriptions::const_iterator it = devices.begin();
-  for (; ix < sink_list->GetSize() && it != devices.end();
-       ++ix, ++it) {
-    base::DictionaryValue* dict = NULL;
-    sink_list->GetDictionary(ix, &dict);
-    std::string sink_id;
-    dict->GetString("sinkId", &sink_id);
+  for (; ix < sink_list.size() && it != devices.end(); ++ix, ++it) {
+    const base::Value& value = sink_list[ix];
+    EXPECT_TRUE(value.is_dict());
+    const base::Value::Dict& dict = value.GetDict();
+    const std::string* sink_id = dict.FindString("sinkId");
+    EXPECT_TRUE(sink_id);
 
+    url::Origin origin = url::Origin::Create(source_url_);
     std::string expected_id =
         media::AudioDeviceDescription::IsDefaultDevice(it->unique_id)
             ? media::AudioDeviceDescription::kDefaultDeviceId
-            : content::GetHMACForMediaDeviceID(
-                  profile()->GetMediaDeviceIDSalt(),
-                  url::Origin::Create(source_url_.GetOrigin()), it->unique_id);
+            : content::GetHMACForMediaDeviceID(GetMediaDeviceIDSalt(origin),
+                                               origin, it->unique_id);
 
-    EXPECT_EQ(expected_id, sink_id);
-    std::string sink_label;
-    dict->GetString("sinkLabel", &sink_label);
-    EXPECT_EQ(it->device_name, sink_label);
+    EXPECT_EQ(expected_id, *sink_id);
+    const std::string* sink_label = dict.FindString("sinkLabel");
+    EXPECT_TRUE(sink_label);
+    EXPECT_EQ(it->device_name, *sink_label);
 
     // TODO(joi): Verify the contents of these once we start actually
     // filling them in.
-    EXPECT_TRUE(dict->HasKey("isDefault"));
-    EXPECT_TRUE(dict->HasKey("isReady"));
-    EXPECT_TRUE(dict->HasKey("sampleRate"));
+    EXPECT_TRUE(dict.Find("isDefault"));
+    EXPECT_TRUE(dict.Find("isReady"));
+    EXPECT_TRUE(dict.Find("sampleRate"));
   }
 }
-#endif  // OS_MAC
+#endif  // BUILDFLAG(IS_MAC)
 
 IN_PROC_BROWSER_TEST_F(WebrtcAudioPrivateTest, GetAssociatedSink) {
   // Get the list of input devices. We can cheat in the unit test and
@@ -198,19 +201,19 @@ IN_PROC_BROWSER_TEST_F(WebrtcAudioPrivateTest, GetAssociatedSink) {
 
     std::string raw_device_id = device.unique_id;
     VLOG(2) << "Trying to find associated sink for device " << raw_device_id;
-    GURL origin(GURL("http://www.google.com/").GetOrigin());
+    GURL gurl("http://www.google.com/");
+    url::Origin origin = url::Origin::Create(gurl);
     std::string source_id_in_origin = content::GetHMACForMediaDeviceID(
-        profile()->GetMediaDeviceIDSalt(), url::Origin::Create(origin),
-        raw_device_id);
+        GetMediaDeviceIDSalt(origin), origin, raw_device_id);
 
-    base::ListValue parameters;
-    parameters.AppendString(origin.spec());
-    parameters.AppendString(source_id_in_origin);
+    base::Value::List parameters;
+    parameters.Append(gurl.spec());
+    parameters.Append(source_id_in_origin);
     std::string parameter_string;
     JSONWriter::Write(parameters, &parameter_string);
 
-    std::unique_ptr<base::Value> result(RunFunctionAndReturnSingleResult(
-        function.get(), parameter_string, browser()));
+    std::optional<base::Value> result = RunFunctionAndReturnSingleResult(
+        function.get(), parameter_string, profile());
     std::string result_string;
     JSONWriter::Write(*result, &result_string);
     VLOG(2) << "Results: " << result_string;
@@ -230,13 +233,16 @@ IN_PROC_BROWSER_TEST_F(WebrtcAudioPrivateTest, TriggerEvent) {
   service->OnDevicesChanged(base::SystemMonitor::DEVTYPE_AUDIO);
 
   // Check that the extension got the notification.
-  std::string result = ExecuteScriptInBackgroundPage(extension->id(),
-                                                     "reportIfGot()");
+  std::string result =
+      ExecuteScriptInBackgroundPageDeprecated(extension->id(), "reportIfGot()");
   EXPECT_EQ("true", result);
 }
 
 class HangoutServicesBrowserTest : public AudioWaitingExtensionTest {
  public:
+  HangoutServicesBrowserTest()
+      : https_server_(net::EmbeddedTestServer::TYPE_HTTPS) {}
+
   void SetUp() override {
     // Make sure the Hangout Services component extension gets loaded.
     ComponentLoader::EnableBackgroundExtensionsForTesting();
@@ -248,7 +254,20 @@ class HangoutServicesBrowserTest : public AudioWaitingExtensionTest {
     command_line->AppendSwitchASCII(
         switches::kAutoplayPolicy,
         switches::autoplay::kNoUserGestureRequiredPolicy);
+    // This is necessary to use https with arbitrary hostnames.
+    command_line->AppendSwitch(switches::kIgnoreCertificateErrors);
   }
+
+  void SetUpOnMainThread() override {
+    https_server().AddDefaultHandlers(GetChromeTestDataDir());
+    host_resolver()->AddRule("*", "127.0.0.1");
+    AudioWaitingExtensionTest::SetUpOnMainThread();
+  }
+
+  net::EmbeddedTestServer& https_server() { return https_server_; }
+
+ private:
+  net::EmbeddedTestServer https_server_;
 };
 
 #if BUILDFLAG(ENABLE_HANGOUT_SERVICES_EXTENSION)
@@ -257,7 +276,7 @@ IN_PROC_BROWSER_TEST_F(HangoutServicesBrowserTest,
   constexpr char kLogUploadUrlPath[] = "/upload_webrtc_log";
 
   // Set up handling of the log upload request.
-  embedded_test_server()->RegisterRequestHandler(base::BindLambdaForTesting(
+  https_server().RegisterRequestHandler(base::BindLambdaForTesting(
       [&](const net::test_server::HttpRequest& request)
           -> std::unique_ptr<net::test_server::HttpResponse> {
         if (request.relative_url == kLogUploadUrlPath) {
@@ -270,34 +289,29 @@ IN_PROC_BROWSER_TEST_F(HangoutServicesBrowserTest,
 
         return nullptr;
       }));
+  ASSERT_TRUE(https_server().Start());
 
   // This runs the end-to-end JavaScript test for the Hangout Services
   // component extension, which uses the webrtcAudioPrivate API among
   // others.
-  ASSERT_TRUE(StartEmbeddedTestServer());
-  GURL url(embedded_test_server()->GetURL(
-               "/extensions/hangout_services_test.html"));
-  // The "externally connectable" extension permission doesn't seem to
-  // like when we use 127.0.0.1 as the host, but using localhost works.
-  std::string url_spec = url.spec();
-  base::ReplaceFirstSubstringAfterOffset(
-      &url_spec, 0, "127.0.0.1", "localhost");
-  GURL localhost_url(url_spec);
-  ui_test_utils::NavigateToURL(browser(), localhost_url);
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(
+      browser(),
+      https_server().GetURL("any-subdomain.google.com",
+                            "/extensions/hangout_services_test.html")));
 
   WebContents* tab = browser()->tab_strip_model()->GetActiveWebContents();
   WaitUntilAudioIsPlaying(tab);
 
   // Use a test server URL for uploading.
   g_browser_process->webrtc_log_uploader()->SetUploadUrlForTesting(
-      embedded_test_server()->GetURL(kLogUploadUrlPath));
+      https_server().GetURL("any-subdomain.google.com", kLogUploadUrlPath));
 
-  ASSERT_TRUE(content::ExecuteScript(tab, "browsertestRunAllTests();"));
+  ASSERT_TRUE(content::ExecJs(tab, "browsertestRunAllTests();"));
 
-  content::TitleWatcher title_watcher(tab, base::ASCIIToUTF16("success"));
-  title_watcher.AlsoWaitForTitle(base::ASCIIToUTF16("failure"));
-  base::string16 result = title_watcher.WaitAndGetTitle();
-  EXPECT_EQ(base::ASCIIToUTF16("success"), result);
+  content::TitleWatcher title_watcher(tab, u"success");
+  title_watcher.AlsoWaitForTitle(u"failure");
+  std::u16string result = title_watcher.WaitAndGetTitle();
+  EXPECT_EQ(u"success", result);
 }
 #endif  // BUILDFLAG(ENABLE_HANGOUT_SERVICES_EXTENSION)
 

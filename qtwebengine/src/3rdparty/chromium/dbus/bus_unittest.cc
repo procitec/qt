@@ -1,22 +1,23 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "dbus/bus.h"
 
-#include "base/bind.h"
-#include "base/bind_helpers.h"
+#include <memory>
+
 #include "base/files/file_descriptor_watcher_posix.h"
-#include "base/macros.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/ref_counted.h"
 #include "base/message_loop/message_pump_type.h"
 #include "base/run_loop.h"
 #include "base/test/task_environment.h"
 #include "base/threading/thread.h"
+#include "dbus/error.h"
 #include "dbus/exported_object.h"
 #include "dbus/object_path.h"
 #include "dbus/object_proxy.h"
-#include "dbus/scoped_dbus_error.h"
 #include "dbus/test_service.h"
 
 #include "testing/gtest/include/gtest/gtest.h"
@@ -32,13 +33,17 @@ namespace {
 class RunLoopWithExpectedCount {
  public:
   RunLoopWithExpectedCount() : expected_quit_calls_(0), actual_quit_calls_(0) {}
+
+  RunLoopWithExpectedCount(const RunLoopWithExpectedCount&) = delete;
+  RunLoopWithExpectedCount& operator=(const RunLoopWithExpectedCount&) = delete;
+
   ~RunLoopWithExpectedCount() = default;
 
   void Run(int expected_quit_calls) {
     DCHECK_EQ(0, expected_quit_calls_);
     DCHECK_EQ(0, actual_quit_calls_);
     expected_quit_calls_ = expected_quit_calls;
-    run_loop_.reset(new base::RunLoop());
+    run_loop_ = std::make_unique<base::RunLoop>();
     run_loop_->Run();
   }
 
@@ -54,8 +59,6 @@ class RunLoopWithExpectedCount {
   std::unique_ptr<base::RunLoop> run_loop_;
   int expected_quit_calls_;
   int actual_quit_calls_;
-
-  DISALLOW_COPY_AND_ASSIGN(RunLoopWithExpectedCount);
 };
 
 // Test helper for BusTest.ListenForServiceOwnerChange.
@@ -136,7 +139,7 @@ TEST(BusTest, RemoveObjectProxy) {
   base::Thread::Options thread_options;
   thread_options.message_pump_type = base::MessagePumpType::IO;
   base::Thread dbus_thread("D-Bus thread");
-  dbus_thread.StartWithOptions(thread_options);
+  dbus_thread.StartWithOptions(std::move(thread_options));
 
   // Create the bus.
   Bus::Options options;
@@ -214,7 +217,7 @@ TEST(BusTest, UnregisterExportedObject) {
   base::Thread::Options thread_options;
   thread_options.message_pump_type = base::MessagePumpType::IO;
   base::Thread dbus_thread("D-Bus thread");
-  dbus_thread.StartWithOptions(thread_options);
+  dbus_thread.StartWithOptions(std::move(thread_options));
 
   // Create the bus.
   Bus::Options options;
@@ -264,7 +267,7 @@ TEST(BusTest, ShutdownAndBlockWithDBusThread) {
   base::Thread::Options thread_options;
   thread_options.message_pump_type = base::MessagePumpType::IO;
   base::Thread dbus_thread("D-Bus thread");
-  dbus_thread.StartWithOptions(thread_options);
+  dbus_thread.StartWithOptions(std::move(thread_options));
 
   // Create the bus.
   Bus::Options options;
@@ -281,38 +284,33 @@ TEST(BusTest, ShutdownAndBlockWithDBusThread) {
 TEST(BusTest, DoubleAddAndRemoveMatch) {
   Bus::Options options;
   scoped_refptr<Bus> bus = new Bus(options);
-  ScopedDBusError error;
+  dbus::Error error;
 
   bus->Connect();
 
   // Adds the same rule twice.
-  bus->AddMatch(
-      "type='signal',interface='org.chromium.TestService',path='/'",
-      error.get());
-  ASSERT_FALSE(error.is_set());
+  bus->AddMatch("type='signal',interface='org.chromium.TestService',path='/'",
+                &error);
+  ASSERT_FALSE(error.IsValid());
 
-  bus->AddMatch(
-      "type='signal',interface='org.chromium.TestService',path='/'",
-      error.get());
-  ASSERT_FALSE(error.is_set());
+  bus->AddMatch("type='signal',interface='org.chromium.TestService',path='/'",
+                &error);
+  ASSERT_FALSE(error.IsValid());
 
   // Removes the same rule twice.
   ASSERT_TRUE(bus->RemoveMatch(
-      "type='signal',interface='org.chromium.TestService',path='/'",
-      error.get()));
-  ASSERT_FALSE(error.is_set());
+      "type='signal',interface='org.chromium.TestService',path='/'", &error));
+  ASSERT_FALSE(error.IsValid());
 
   // The rule should be still in the bus since it was removed only once.
   // A second removal shouldn't give an error.
   ASSERT_TRUE(bus->RemoveMatch(
-      "type='signal',interface='org.chromium.TestService',path='/'",
-      error.get()));
-  ASSERT_FALSE(error.is_set());
+      "type='signal',interface='org.chromium.TestService',path='/'", &error));
+  ASSERT_FALSE(error.IsValid());
 
   // A third attemp to remove the same rule should fail.
   ASSERT_FALSE(bus->RemoveMatch(
-      "type='signal',interface='org.chromium.TestService',path='/'",
-      error.get()));
+      "type='signal',interface='org.chromium.TestService',path='/'", &error));
 
   bus->ShutdownAndBlock();
 }

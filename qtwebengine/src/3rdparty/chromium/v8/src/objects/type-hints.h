@@ -16,11 +16,11 @@ enum class BinaryOperationHint : uint8_t {
   kNone,
   kSignedSmall,
   kSignedSmallInputs,
-  kSigned32,
   kNumber,
   kNumberOrOddball,
   kString,
   kBigInt,
+  kBigInt64,
   kAny
 };
 
@@ -41,6 +41,7 @@ enum class CompareOperationHint : uint8_t {
   kString,
   kSymbol,
   kBigInt,
+  kBigInt64,
   kReceiver,
   kReceiverOrNullOrUndefined,
   kAny
@@ -62,6 +63,7 @@ enum class ForInHint : uint8_t {
 
 std::ostream& operator<<(std::ostream&, ForInHint);
 
+// TODO(ishell): make it an enum class.
 enum StringAddFlags {
   // Omit both parameter checks.
   STRING_ADD_CHECK_NONE,

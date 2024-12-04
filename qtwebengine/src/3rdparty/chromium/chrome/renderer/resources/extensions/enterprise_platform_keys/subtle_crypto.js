@@ -1,9 +1,9 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 var utils = require('utils');
-var internalAPI = require('enterprise.platformKeys.internalAPI');
+var internalAPI = getInternalApi('enterprise.platformKeysInternal');
 var intersect = require('platformKeys.utils').intersect;
 var subtleCryptoModule = require('platformKeys.SubtleCrypto');
 var SubtleCryptoImpl = subtleCryptoModule.SubtleCryptoImpl;
@@ -14,7 +14,7 @@ var normalizeAlgorithm =
     requireNative('platform_keys_natives').NormalizeAlgorithm;
 
 // This error is thrown by the internal and public API's token functions and
-// must be rethrown by this custom binding. Keep this in sync with the C++ part
+// must be re-thrown by this custom binding. Keep this in sync with the C++ part
 // of this API.
 var errorInvalidToken = 'The token is not valid.';
 
@@ -22,10 +22,6 @@ var errorInvalidToken = 'The token is not valid.';
 // TODO(pneubeck): These should be DOMExceptions.
 function CreateNotSupportedError() {
   return new Error('The algorithm is not supported');
-}
-
-function CreateInvalidAccessError() {
-  return new Error('The requested operation is not valid for the provided key');
 }
 
 function CreateDataError() {
@@ -89,10 +85,12 @@ function equalsStandardPublicExponent(array) {
  * Implementation of WebCrypto.SubtleCrypto used in enterprise.platformKeys.
  * Derived from platformKeys.SubtleCrypto.
  * @param {string} tokenId The id of the backing Token.
+ * @param {boolean} softwareBacked Whether the key operations should be executed
+ *     in software.
  * @constructor
  */
-function EnterpriseSubtleCryptoImpl(tokenId) {
-  $Function.call(SubtleCryptoImpl, this, tokenId);
+function EnterpriseSubtleCryptoImpl(tokenId, softwareBacked) {
+  $Function.call(SubtleCryptoImpl, this, tokenId, softwareBacked);
 }
 
 EnterpriseSubtleCryptoImpl.prototype =
@@ -134,7 +132,8 @@ EnterpriseSubtleCryptoImpl.prototype.generateKey =
     }
 
     internalAPI.generateKey(
-        subtleCrypto.tokenId, normalizedAlgorithmParameters, function(spki) {
+        subtleCrypto.tokenId, normalizedAlgorithmParameters,
+        subtleCrypto.softwareBacked, function(spki) {
           if (catchInvalidTokenError(reject))
             return;
           if (chrome.runtime.lastError) {
@@ -153,7 +152,7 @@ utils.expose(SubtleCrypto, EnterpriseSubtleCryptoImpl, {
   superclass: subtleCryptoModule.SubtleCrypto,
   functions: [
     'generateKey',
-    // 'sign', 'exportKey' are exposed by the base class
+    // 'sign', 'exportKey' are exposed by the base class.
   ],
 });
 

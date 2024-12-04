@@ -1,14 +1,14 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef SERVICES_NETWORK_PUBLIC_CPP_SIMPLE_URL_LOADER_STREAM_CONSUMER_H_
 #define SERVICES_NETWORK_PUBLIC_CPP_SIMPLE_URL_LOADER_STREAM_CONSUMER_H_
 
-#include "base/callback_forward.h"
+#include <string_view>
+
 #include "base/component_export.h"
-#include "base/macros.h"
-#include "base/strings/string_piece.h"
+#include "base/functional/callback_forward.h"
 
 namespace network {
 
@@ -19,6 +19,10 @@ namespace network {
 // will be called during SimpleURLLoader destruction.
 class COMPONENT_EXPORT(NETWORK_CPP) SimpleURLLoaderStreamConsumer {
  public:
+  SimpleURLLoaderStreamConsumer(const SimpleURLLoaderStreamConsumer&) = delete;
+  SimpleURLLoaderStreamConsumer& operator=(
+      const SimpleURLLoaderStreamConsumer&) = delete;
+
   // Called as body data is received.
   //
   // More data will not be read until |resume| is called. It's safe to call
@@ -32,7 +36,7 @@ class COMPONENT_EXPORT(NETWORK_CPP) SimpleURLLoaderStreamConsumer {
   // this method before calling OnComplete, even if partial responses are set to
   // be treated as errors (the default behavior), as it may not yet be known if
   // the request will succeed or fail.
-  virtual void OnDataReceived(base::StringPiece string_piece,
+  virtual void OnDataReceived(std::string_view string_piece,
                               base::OnceClosure resume) = 0;
 
   // Called on successful completion, or error. In the default configuration,
@@ -61,9 +65,6 @@ class COMPONENT_EXPORT(NETWORK_CPP) SimpleURLLoaderStreamConsumer {
  protected:
   SimpleURLLoaderStreamConsumer() {}
   virtual ~SimpleURLLoaderStreamConsumer() {}
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(SimpleURLLoaderStreamConsumer);
 };
 
 }  // namespace network

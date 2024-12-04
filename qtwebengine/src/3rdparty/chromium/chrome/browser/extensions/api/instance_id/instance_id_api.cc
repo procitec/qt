@@ -1,12 +1,10 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "chrome/browser/extensions/api/instance_id/instance_id_api.h"
 
-#include <memory>
-
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/notreached.h"
 #include "base/time/time.h"
@@ -81,7 +79,7 @@ ExtensionFunction::ResponseAction InstanceIDGetIDFunction::DoWork() {
 }
 
 void InstanceIDGetIDFunction::GetIDCompleted(const std::string& id) {
-  Respond(OneArgument(std::make_unique<base::Value>(id)));
+  Respond(WithArguments(id));
 }
 
 InstanceIDGetCreationTimeFunction::InstanceIDGetCreationTimeFunction() {}
@@ -96,8 +94,7 @@ ExtensionFunction::ResponseAction InstanceIDGetCreationTimeFunction::DoWork() {
 
 void InstanceIDGetCreationTimeFunction::GetCreationTimeCompleted(
     const base::Time& creation_time) {
-  Respond(
-      OneArgument(std::make_unique<base::Value>(creation_time.ToDoubleT())));
+  Respond(WithArguments(creation_time.InSecondsFSinceUnixEpoch()));
 }
 
 InstanceIDGetTokenFunction::InstanceIDGetTokenFunction() {}
@@ -105,21 +102,13 @@ InstanceIDGetTokenFunction::InstanceIDGetTokenFunction() {}
 InstanceIDGetTokenFunction::~InstanceIDGetTokenFunction() {}
 
 ExtensionFunction::ResponseAction InstanceIDGetTokenFunction::DoWork() {
-  std::unique_ptr<api::instance_id::GetToken::Params> params =
-      api::instance_id::GetToken::Params::Create(*args_);
-  EXTENSION_FUNCTION_VALIDATE(params.get());
-
-  std::map<std::string, std::string> options;
-  if (params->get_token_params.options.get())
-    options = params->get_token_params.options->additional_properties;
-
-  UMA_HISTOGRAM_COUNTS_100("Extensions.InstanceID.GetToken.OptionsCount",
-                           options.size());
+  std::optional<api::instance_id::GetToken::Params> params =
+      api::instance_id::GetToken::Params::Create(args());
+  EXTENSION_FUNCTION_VALIDATE(params);
 
   GetInstanceID()->GetToken(
       params->get_token_params.authorized_entity,
       params->get_token_params.scope, /*time_to_live=*/base::TimeDelta(),
-      options,
       /*flags=*/{},
       base::BindOnce(&InstanceIDGetTokenFunction::GetTokenCompleted, this));
 
@@ -130,7 +119,7 @@ void InstanceIDGetTokenFunction::GetTokenCompleted(
     const std::string& token,
     instance_id::InstanceID::Result result) {
   if (result == instance_id::InstanceID::SUCCESS)
-    Respond(OneArgument(std::make_unique<base::Value>(token)));
+    Respond(WithArguments(token));
   else
     Respond(Error(InstanceIDResultToError(result)));
 }
@@ -140,9 +129,9 @@ InstanceIDDeleteTokenFunction::InstanceIDDeleteTokenFunction() {}
 InstanceIDDeleteTokenFunction::~InstanceIDDeleteTokenFunction() {}
 
 ExtensionFunction::ResponseAction InstanceIDDeleteTokenFunction::DoWork() {
-  std::unique_ptr<api::instance_id::DeleteToken::Params> params =
-      api::instance_id::DeleteToken::Params::Create(*args_);
-  EXTENSION_FUNCTION_VALIDATE(params.get());
+  std::optional<api::instance_id::DeleteToken::Params> params =
+      api::instance_id::DeleteToken::Params::Create(args());
+  EXTENSION_FUNCTION_VALIDATE(params);
 
   GetInstanceID()->DeleteToken(
       params->delete_token_params.authorized_entity,

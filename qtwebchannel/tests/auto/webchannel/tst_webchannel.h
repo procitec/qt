@@ -1,41 +1,21 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 Klarälvdalens Datakonsult AB, a KDAB Group company, info@kdab.com, author Milian Wolff <milian.wolff@kdab.com>
-** Copyright (C) 2019 Menlo Systems GmbH, author Arno Rehn <a.rehn@menlosystems.com>
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtWebChannel module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:GPL-EXCEPT$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 3 as published by the Free Software
-** Foundation with exceptions as appearing in the file LICENSE.GPL3-EXCEPT
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 Klarälvdalens Datakonsult AB, a KDAB Group company, info@kdab.com, author Milian Wolff <milian.wolff@kdab.com>
+// Copyright (C) 2019 Menlo Systems GmbH, author Arno Rehn <a.rehn@menlosystems.com>
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
 #ifndef TST_WEBCHANNEL_H
 #define TST_WEBCHANNEL_H
 
 #include <QObject>
+#include <QProperty>
 #include <QVariant>
-#include <QVector>
+#include <QList>
 #include <QJsonValue>
 #include <QJsonObject>
 #include <QJsonArray>
+#if QT_CONFIG(future)
+#include <QFuture>
+#endif
+#include <QtDebug>
 
 #include <QtWebChannel/QWebChannelAbstractTransport>
 
@@ -47,7 +27,21 @@ struct TestStruct
     {}
     int foo;
     int bar;
+
+    operator QString() const {
+        return QStringLiteral("TestStruct(foo=%1, bar=%2)").arg(foo).arg(bar);
+    }
 };
+inline bool operator==(const TestStruct &a, const TestStruct &b)
+{
+    return a.foo == b.foo && a.bar == b.bar;
+}
+inline QDebug operator<<(QDebug &dbg, const TestStruct &ts)
+{
+    QDebugStateSaver dbgState(dbg);
+    dbg.noquote() << static_cast<QString>(ts);
+    return dbg;
+}
 Q_DECLARE_METATYPE(TestStruct)
 using TestStructVector = std::vector<TestStruct>;
 Q_DECLARE_METATYPE(TestStructVector)
@@ -68,10 +62,7 @@ public:
         emit messageReceived(message, this);
     }
 
-    QVector<QJsonObject> messagesSent() const
-    {
-        return mMessagesSent;
-    }
+    QList<QJsonObject> messagesSent() const { return mMessagesSent; }
 
 public slots:
     void sendMessage(const QJsonObject &message) override
@@ -79,7 +70,7 @@ public slots:
         mMessagesSent.push_back(message);
     }
 private:
-    QVector<QJsonObject> mMessagesSent;
+    QList<QJsonObject> mMessagesSent;
 };
 
 class TestObject : public QObject
@@ -93,12 +84,13 @@ class TestObject : public QObject
     Q_PROPERTY(QObject * objectProperty READ objectProperty WRITE setObjectProperty NOTIFY objectPropertyChanged)
     Q_PROPERTY(TestObject * returnedObject READ returnedObject WRITE setReturnedObject NOTIFY returnedObjectChanged)
     Q_PROPERTY(QString prop READ prop WRITE setProp NOTIFY propChanged)
+    Q_PROPERTY(QString stringProperty READ readStringProperty WRITE setStringProperty BINDABLE bindableStringProperty)
 
 public:
-    explicit TestObject(QObject *parent = 0)
+    explicit TestObject(QObject *parent = nullptr)
         : QObject(parent)
-        , mObjectProperty(0)
-        , mReturnedObject(Q_NULLPTR)
+        , mObjectProperty(nullptr)
+        , mReturnedObject(nullptr)
     { }
 
     enum Foo {
@@ -132,7 +124,21 @@ public:
         return mProp;
     }
 
+    QString readStringProperty() const { return mStringProperty; }
+
     Q_INVOKABLE void method1() {}
+
+#if QT_CONFIG(future)
+    Q_INVOKABLE QFuture<int> futureIntResult() const;
+    Q_INVOKABLE QFuture<int> futureDelayedIntResult() const;
+#ifdef WEBCHANNEL_TESTS_CAN_USE_CONCURRENT
+    Q_INVOKABLE QFuture<int> futureIntResultFromThread() const;
+#endif
+    Q_INVOKABLE QFuture<void> futureVoidResult() const;
+    Q_INVOKABLE QFuture<QString> futureStringResult() const;
+    Q_INVOKABLE QFuture<int> cancelledFuture() const;
+    Q_INVOKABLE QFuture<int> failedFuture() const;
+#endif
 
 protected:
     Q_INVOKABLE void method2() {}
@@ -178,6 +184,12 @@ public slots:
     QString overload(const QString &str, int i) { return str.toUpper() + QString::number(i + 1); }
     QString overload(const QJsonArray &v) { return QString::number(v[1].toInt()) + v[0].toString(); }
 
+    void setStringProperty(const QString &v) { mStringProperty = v; }
+    QBindable<QString> bindableStringProperty() { return &mStringProperty; }
+    QString getStringProperty() const { return mStringProperty; }
+    void bindStringPropertyToStringProperty2() { bindableStringProperty().setBinding(Qt::makePropertyBinding(mStringProperty2)); }
+    void setStringProperty2(const QString &string) { mStringProperty2 = string; }
+
 protected slots:
     void slot3() {}
 
@@ -188,101 +200,11 @@ public:
     QObject *mObjectProperty;
     TestObject *mReturnedObject;
     QString mProp;
+    Q_OBJECT_BINDABLE_PROPERTY(TestObject, QString, mStringProperty);
+    QProperty<QString> mStringProperty2;
 };
 
 Q_DECLARE_OPERATORS_FOR_FLAGS(TestObject::TestFlags)
-
-class BenchObject : public QObject
-{
-    Q_OBJECT
-
-    Q_PROPERTY(int p0 MEMBER m_p0 NOTIFY p0Changed)
-    Q_PROPERTY(int p1 MEMBER m_p1 NOTIFY p1Changed)
-    Q_PROPERTY(int p2 MEMBER m_p2 NOTIFY p2Changed)
-    Q_PROPERTY(int p3 MEMBER m_p3 NOTIFY p3Changed)
-    Q_PROPERTY(int p4 MEMBER m_p4 NOTIFY p4Changed)
-    Q_PROPERTY(int p5 MEMBER m_p5 NOTIFY p5Changed)
-    Q_PROPERTY(int p6 MEMBER m_p6 NOTIFY p6Changed)
-    Q_PROPERTY(int p7 MEMBER m_p7 NOTIFY p7Changed)
-    Q_PROPERTY(int p8 MEMBER m_p8 NOTIFY p8Changed)
-    Q_PROPERTY(int p9 MEMBER m_p9 NOTIFY p9Changed)
-public:
-    explicit BenchObject(QObject *parent = 0)
-        : QObject(parent)
-        , m_p0(0)
-        , m_p1(0)
-        , m_p2(0)
-        , m_p3(0)
-        , m_p4(0)
-        , m_p5(0)
-        , m_p6(0)
-        , m_p7(0)
-        , m_p8(0)
-        , m_p9(0)
-    { }
-
-    void change()
-    {
-        m_p0++;
-        m_p1++;
-        m_p2++;
-        m_p3++;
-        m_p4++;
-        m_p5++;
-        m_p6++;
-        m_p7++;
-        m_p8++;
-        m_p9++;
-        emit p0Changed(m_p0);
-        emit p1Changed(m_p1);
-        emit p2Changed(m_p2);
-        emit p3Changed(m_p3);
-        emit p4Changed(m_p4);
-        emit p5Changed(m_p5);
-        emit p6Changed(m_p6);
-        emit p7Changed(m_p7);
-        emit p8Changed(m_p8);
-        emit p9Changed(m_p9);
-    }
-
-signals:
-    void s0();
-    void s1();
-    void s2();
-    void s3();
-    void s4();
-    void s5();
-    void s6();
-    void s7();
-    void s8();
-    void s9();
-
-    void p0Changed(int);
-    void p1Changed(int);
-    void p2Changed(int);
-    void p3Changed(int);
-    void p4Changed(int);
-    void p5Changed(int);
-    void p6Changed(int);
-    void p7Changed(int);
-    void p8Changed(int);
-    void p9Changed(int);
-
-public slots:
-    void m0(){};
-    void m1(){};
-    void m2(){};
-    void m3(){};
-    void m4(){};
-    void m5(){};
-    void m6(){};
-    void m7(){};
-    void m8(){};
-    void m9(){};
-
-private:
-    int m_p0, m_p1, m_p2, m_p3, m_p4, m_p5, m_p6, m_p7, m_p8, m_p9;
-};
 
 class TestWebChannel : public QObject
 {
@@ -315,6 +237,9 @@ public slots:
     QJsonArray readJsonArray() const;
     void setJsonArray(const QJsonArray &v);
 
+    QUrl readUrl() const;
+    void setUrl(const QUrl &u);
+
     int readOverload(int i);
     QString readOverload(const QString &arg);
     QString readOverload(const QString &arg, int i);
@@ -343,19 +268,26 @@ private slots:
     void testTransportWrapObjectProperties();
     void testRemoveUnusedTransports();
     void testPassWrappedObjectBack();
+    void testWrapValues_data();
     void testWrapValues();
     void testWrapObjectWithMultipleTransports();
+    void testJsonToVariant_data();
     void testJsonToVariant();
     void testInfiniteRecursion();
     void testAsyncObject();
+    void testQProperty();
+    void testPropertyUpdateInterval_data();
+    void testPropertyUpdateInterval();
+    void testPropertyMultipleTransports();
+    void testQPropertyBlockUpdates();
+    void testBindings();
     void testDeletionDuringMethodInvocation_data();
     void testDeletionDuringMethodInvocation();
 
-    void benchClassInfo();
-    void benchInitializeClients();
-    void benchPropertyUpdates();
-    void benchRegisterObjects();
-    void benchRemoveTransport();
+#if QT_CONFIG(future)
+    void testAsyncMethodReturningFuture_data();
+    void testAsyncMethodReturningFuture();
+#endif
 
     void qtbug46548_overriddenProperties();
     void qtbug62388_wrapObjectMultipleTransports();
@@ -370,6 +302,7 @@ private:
     QJsonValue m_lastJsonValue;
     QJsonObject m_lastJsonObject;
     QJsonArray m_lastJsonArray;
+    QUrl m_lastUrl;
 };
 
 QT_END_NAMESPACE

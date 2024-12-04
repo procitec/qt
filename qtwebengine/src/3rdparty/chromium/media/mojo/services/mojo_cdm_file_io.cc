@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,10 +6,12 @@
 
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback.h"
-#include "base/task/post_task.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
+#include "base/metrics/histogram_macros.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/trace_event/trace_event.h"
+#include "media/cdm/cdm_helpers.h"
 #include "mojo/public/cpp/bindings/callback_helpers.h"
 
 namespace media {
@@ -20,9 +22,12 @@ using ClientStatus = cdm::FileIOClient::Status;
 using FileStatus = media::mojom::CdmFile::Status;
 using StorageStatus = media::mojom::CdmStorage::Status;
 
-// File size limit is 512KB. Licenses saved by the CDM are typically several
-// hundreds of bytes. This value should match what is in CdmFileImpl.
-const int64_t kMaxFileSizeBytes = 512 * 1024;
+// Constants for UMA reporting of file size (in KB) via
+// UMA_HISTOGRAM_CUSTOM_COUNTS. Note that the histogram is log-scaled (rather
+// than linear).
+constexpr int kSizeKBMin = 1;
+const int64_t kMaxFileSizeKB = 512;
+constexpr int kSizeKBBuckets = 100;
 
 const char* ConvertStorageStatus(StorageStatus status) {
   switch (status) {
@@ -45,8 +50,10 @@ const char* ConvertFileStatus(FileStatus status) {
 
 MojoCdmFileIO::MojoCdmFileIO(Delegate* delegate,
                              cdm::FileIOClient* client,
-                             mojom::CdmStorage* cdm_storage)
-    : delegate_(delegate), client_(client), cdm_storage_(cdm_storage) {
+                             mojo::Remote<mojom::CdmStorage> cdm_storage)
+    : delegate_(delegate),
+      client_(client),
+      cdm_storage_(std::move(cdm_storage)) {
   DVLOG(1) << __func__;
   DCHECK(delegate_);
   DCHECK(client_);
@@ -89,6 +96,8 @@ void MojoCdmFileIO::OnFileOpened(
     mojo::PendingAssociatedRemote<mojom::CdmFile> cdm_file) {
   DVLOG(3) << __func__ << " file: " << file_name_ << ", status: " << status;
 
+  UMA_HISTOGRAM_ENUMERATION("Media.EME.CdmFileIO::OpenFile", status);
+
   // This logs the end of the async Open() request, and separately logs
   // how long the client takes in OnOpenComplete().
   TRACE_EVENT_ASYNC_END1("media", "MojoCdmFileIO::Open", this, "status",
@@ -115,7 +124,7 @@ void MojoCdmFileIO::OnFileOpened(
       return;
   }
 
-  NOTREACHED();
+  NOTREACHED_NORETURN();
 }
 
 void MojoCdmFileIO::Read() {
@@ -197,6 +206,10 @@ void MojoCdmFileIO::Write(const uint8_t* data, uint32_t data_size) {
     return;
   }
 
+  UMA_HISTOGRAM_CUSTOM_COUNTS("Media.EME.CdmFileIO.WriteFile.DataSizeKB",
+                              data_size / 1024, kSizeKBMin, kMaxFileSizeKB,
+                              kSizeKBBuckets);
+
   TRACE_EVENT_ASYNC_BEGIN2("media", "MojoCdmFileIO::Write", this, "file_name",
                            file_name_, "bytes_to_write", data_size);
 
@@ -244,7 +257,7 @@ void MojoCdmFileIO::Close() {
 void MojoCdmFileIO::OnError(ErrorType error) {
   DVLOG(3) << __func__ << " file: " << file_name_ << ", error: " << (int)error;
 
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(&MojoCdmFileIO::NotifyClientOfError,
                                 weak_factory_.GetWeakPtr(), error));
 }

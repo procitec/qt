@@ -1,9 +1,11 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "base/run_loop.h"
+#include "base/task/single_thread_task_runner.h"
 #include "build/build_config.h"
+#include "build/chromeos_buildflags.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
 #include "content/browser/renderer_host/render_widget_host_input_event_router.h"
 #include "content/browser/web_contents/web_contents_impl.h"
@@ -13,10 +15,11 @@
 #include "content/public/test/content_browser_test_utils.h"
 #include "content/public/test/hit_test_region_observer.h"
 #include "content/shell/browser/shell.h"
+#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/input/synthetic_web_input_event_builders.h"
 #include "ui/events/gesture_detection/gesture_configuration.h"
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
 #include "content/browser/renderer_host/render_widget_host_view_android.h"
 #endif
 
@@ -25,13 +28,12 @@ using blink::WebMouseWheelEvent;
 namespace {
 void GiveItSomeTime() {
   base::RunLoop run_loop;
-  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-      FROM_HERE, run_loop.QuitClosure(), base::TimeDelta::FromMilliseconds(20));
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
+      FROM_HERE, run_loop.QuitClosure(), base::Milliseconds(20));
   run_loop.Run();
 }
 
 const char kWheelEventLatchingDataURL[] = R"HTML(
-    data:text/html;charset=utf-8,
     <!DOCTYPE html>
     <meta name='viewport' content='width=device-width, minimum-scale=1'>
     <style>
@@ -95,14 +97,14 @@ class WheelScrollLatchingBrowserTest : public ContentBrowserTest {
 
   RenderWidgetHostViewBase* GetRootView() {
     return static_cast<RenderWidgetHostViewBase*>(web_contents()
-                                                      ->GetFrameTree()
-                                                      ->root()
+                                                      ->GetPrimaryFrameTree()
+                                                      .root()
                                                       ->current_frame_host()
                                                       ->GetView());
   }
 
   void LoadURL(const std::string& page_data) {
-    const GURL data_url("data:text/html," + page_data);
+    const GURL data_url("data:text/html;charset=utf-8," + page_data);
     EXPECT_TRUE(NavigateToURL(shell(), data_url));
 
     RenderWidgetHostImpl* host = GetWidgetHost();
@@ -113,24 +115,6 @@ class WheelScrollLatchingBrowserTest : public ContentBrowserTest {
     HitTestRegionObserver hittest_observer(host->GetFrameSinkId());
     hittest_observer.WaitForHitTestData();
   }
-  int ExecuteScriptAndExtractInt(const std::string& script) {
-    int value = 0;
-    EXPECT_TRUE(content::ExecuteScriptAndExtractInt(
-        shell(), "domAutomationController.send(" + script + ")", &value));
-    return value;
-  }
-  double ExecuteScriptAndExtractDouble(const std::string& script) {
-    double value = 0;
-    EXPECT_TRUE(content::ExecuteScriptAndExtractDouble(
-        shell(), "domAutomationController.send(" + script + ")", &value));
-    return value;
-  }
-  std::string ExecuteScriptAndExtractString(const std::string& script) {
-    std::string value;
-    EXPECT_TRUE(content::ExecuteScriptAndExtractString(
-        shell(), "domAutomationController.send(" + script + ")", &value));
-    return value;
-  }
 };
 
 // Start scrolling by mouse wheel on the document: the wheel event will be sent
@@ -139,31 +123,25 @@ class WheelScrollLatchingBrowserTest : public ContentBrowserTest {
 // wheel scroll latching is enabled the wheel event will be still sent to the
 // document's scrolling element and the document's scrolling element will
 // continue scrolling.
-// Disabled on Android due to flakiness. See https://crbug.com/894572.
-#if defined(OS_ANDROID)
-#define MAYBE_WheelEventTarget DISABLED_WheelEventTarget
-#else
-#define MAYBE_WheelEventTarget WheelEventTarget
-#endif
-IN_PROC_BROWSER_TEST_F(WheelScrollLatchingBrowserTest, MAYBE_WheelEventTarget) {
+IN_PROC_BROWSER_TEST_F(WheelScrollLatchingBrowserTest, WheelEventTarget) {
   LoadURL(kWheelEventLatchingDataURL);
-  EXPECT_EQ(0, ExecuteScriptAndExtractInt("documentWheelEventCounter"));
-  EXPECT_EQ(0, ExecuteScriptAndExtractInt("scrollableDivWheelEventCounter"));
+  EXPECT_EQ(0, EvalJs(shell(), "documentWheelEventCounter"));
+  EXPECT_EQ(0, EvalJs(shell(), "scrollableDivWheelEventCounter"));
 
-  MainThreadFrameObserver frame_observer(
-      shell()->web_contents()->GetRenderViewHost()->GetWidget());
+  MainThreadFrameObserver frame_observer(GetWidgetHost());
 
   auto input_msg_watcher = std::make_unique<InputMsgWatcher>(
       GetWidgetHost(), blink::WebInputEvent::Type::kMouseWheel);
 
-  float scrollable_div_top = ExecuteScriptAndExtractDouble(
-      "scrollableDiv.getBoundingClientRect().top");
-  float x = (ExecuteScriptAndExtractDouble(
-                 "scrollableDiv.getBoundingClientRect().left") +
-             ExecuteScriptAndExtractDouble(
-                 "scrollableDiv.getBoundingClientRect().right")) /
+  float scrollable_div_top =
+      EvalJs(shell(), "scrollableDiv.getBoundingClientRect().top")
+          .ExtractDouble();
+  float x = (EvalJs(shell(), "scrollableDiv.getBoundingClientRect().left")
+                 .ExtractDouble() +
+             EvalJs(shell(), "scrollableDiv.getBoundingClientRect().right")
+                 .ExtractDouble()) /
             2;
-  float y = 0.5 * scrollable_div_top;
+  float y = 0.1 * scrollable_div_top;
   float delta_x = 0;
   float delta_y = -0.6 * scrollable_div_top;
   blink::WebMouseWheelEvent wheel_event =
@@ -176,46 +154,50 @@ IN_PROC_BROWSER_TEST_F(WheelScrollLatchingBrowserTest, MAYBE_WheelEventTarget) {
                                     ui::LatencyInfo());
 
   // Runs until we get the InputMsgAck callback.
-  EXPECT_EQ(blink::mojom::InputEventResultState::kNotConsumed,
+  EXPECT_EQ(blink::mojom::InputEventResultState::kSetNonBlocking,
             input_msg_watcher->WaitForAck());
 
-  while (ExecuteScriptAndExtractDouble("document.scrollingElement.scrollTop") <
-         -delta_y) {
+  while (
+      EvalJs(shell(), "document.scrollingElement.scrollTop").ExtractDouble() <
+      -delta_y) {
     frame_observer.Wait();
   }
 
-  EXPECT_EQ(0, ExecuteScriptAndExtractDouble("scrollableDiv.scrollTop"));
-  EXPECT_EQ(1, ExecuteScriptAndExtractInt("documentWheelEventCounter"));
-  EXPECT_EQ(0, ExecuteScriptAndExtractInt("scrollableDivWheelEventCounter"));
+  EXPECT_EQ(0, EvalJs(shell(), "scrollableDiv.scrollTop"));
+  EXPECT_EQ(1, EvalJs(shell(), "documentWheelEventCounter"));
+  EXPECT_EQ(0, EvalJs(shell(), "scrollableDivWheelEventCounter"));
 
   wheel_event.phase = blink::WebMouseWheelEvent::kPhaseChanged;
   GetRouter()->RouteMouseWheelEvent(GetRootView(), &wheel_event,
                                     ui::LatencyInfo());
 
-  while (ExecuteScriptAndExtractDouble("document.scrollingElement.scrollTop") <
-         -2 * delta_y) {
+  while (
+      EvalJs(shell(), "document.scrollingElement.scrollTop").ExtractDouble() <
+      -2 * delta_y) {
     frame_observer.Wait();
   }
-  EXPECT_EQ(0, ExecuteScriptAndExtractDouble("scrollableDiv.scrollTop"));
-  EXPECT_EQ(2, ExecuteScriptAndExtractInt("documentWheelEventCounter"));
-  EXPECT_EQ(0, ExecuteScriptAndExtractInt("scrollableDivWheelEventCounter"));
+  EXPECT_EQ(0, EvalJs(shell(), "scrollableDiv.scrollTop"));
+  EXPECT_EQ(2, EvalJs(shell(), "documentWheelEventCounter"));
+  EXPECT_EQ(0, EvalJs(shell(), "scrollableDivWheelEventCounter"));
 }
 
+// TODO(crbug.com/1248231, crbug.com/1313237): consider removing this test.
 IN_PROC_BROWSER_TEST_F(WheelScrollLatchingBrowserTest,
-                       WheelEventRetargetWhenTargetRemoved) {
+                       DISABLED_WheelEventRetargetWhenTargetRemoved) {
   LoadURL(kWheelEventLatchingDataURL);
-  EXPECT_EQ(0, ExecuteScriptAndExtractInt("documentWheelEventCounter"));
-  EXPECT_EQ(0, ExecuteScriptAndExtractInt("scrollableDivWheelEventCounter"));
+  EXPECT_EQ(0, EvalJs(shell(), "documentWheelEventCounter"));
+  EXPECT_EQ(0, EvalJs(shell(), "scrollableDivWheelEventCounter"));
 
   auto update_msg_watcher = std::make_unique<InputMsgWatcher>(
       GetWidgetHost(), blink::WebInputEvent::Type::kGestureScrollUpdate);
 
-  float scrollable_div_top = ExecuteScriptAndExtractDouble(
-      "scrollableDiv.getBoundingClientRect().top");
-  float x = (ExecuteScriptAndExtractDouble(
-                 "scrollableDiv.getBoundingClientRect().left") +
-             ExecuteScriptAndExtractDouble(
-                 "scrollableDiv.getBoundingClientRect().right")) /
+  float scrollable_div_top =
+      EvalJs(shell(), "scrollableDiv.getBoundingClientRect().top")
+          .ExtractDouble();
+  float x = (EvalJs(shell(), "scrollableDiv.getBoundingClientRect().left")
+                 .ExtractDouble() +
+             EvalJs(shell(), "scrollableDiv.getBoundingClientRect().right")
+                 .ExtractDouble()) /
             2;
   float y = 1.1 * scrollable_div_top;
   float delta_x = 0;
@@ -232,14 +214,13 @@ IN_PROC_BROWSER_TEST_F(WheelScrollLatchingBrowserTest,
   EXPECT_EQ(blink::mojom::InputEventResultState::kConsumed,
             update_msg_watcher->WaitForAck());
 
-  EXPECT_EQ(
-      0, ExecuteScriptAndExtractDouble("document.scrollingElement.scrollTop"));
-  EXPECT_EQ(0, ExecuteScriptAndExtractInt("documentWheelEventCounter"));
-  EXPECT_EQ(1, ExecuteScriptAndExtractInt("scrollableDivWheelEventCounter"));
+  EXPECT_EQ(0, EvalJs(shell(), "document.scrollingElement.scrollTop"));
+  EXPECT_EQ(0, EvalJs(shell(), "documentWheelEventCounter"));
+  EXPECT_EQ(1, EvalJs(shell(), "scrollableDivWheelEventCounter"));
 
   // Remove the scrollableDiv which is the current target for wheel events.
-  EXPECT_TRUE(ExecuteScript(
-      shell(), "scrollableDiv.parentNode.removeChild(scrollableDiv)"));
+  EXPECT_TRUE(
+      ExecJs(shell(), "scrollableDiv.parentNode.removeChild(scrollableDiv)"));
 
   wheel_event.phase = blink::WebMouseWheelEvent::kPhaseChanged;
   GetRouter()->RouteMouseWheelEvent(GetRootView(), &wheel_event,
@@ -250,11 +231,11 @@ IN_PROC_BROWSER_TEST_F(WheelScrollLatchingBrowserTest,
             update_msg_watcher->WaitForAck());
 
   // Wait for the document event listenr to handle the second wheel event.
-  while (ExecuteScriptAndExtractInt("documentWheelEventCounter") != 1) {
+  while (EvalJs(shell(), "documentWheelEventCounter") != 1) {
     GiveItSomeTime();
   }
 
-  EXPECT_EQ(1, ExecuteScriptAndExtractInt("scrollableDivWheelEventCounter"));
+  EXPECT_EQ(1, EvalJs(shell(), "scrollableDivWheelEventCounter"));
 }
 
 // crbug.com/777258 Flaky everywhere.
@@ -262,20 +243,19 @@ IN_PROC_BROWSER_TEST_F(
     WheelScrollLatchingBrowserTest,
     DISABLED_WheelScrollingRelatchWhenLatchedScrollerRemoved) {
   LoadURL(kWheelEventLatchingDataURL);
-  EXPECT_EQ(
-      ExecuteScriptAndExtractDouble("document.scrollingElement.scrollTop"), 0);
-  EXPECT_EQ(ExecuteScriptAndExtractDouble("scrollableDiv.scrollTop"), 0);
-  float x = (ExecuteScriptAndExtractDouble(
-                 "scrollableDiv.getBoundingClientRect().left") +
-             ExecuteScriptAndExtractDouble(
-                 "scrollableDiv.getBoundingClientRect().right")) /
+  EXPECT_EQ(EvalJs(shell(), "document.scrollingElement.scrollTop"), 0);
+  EXPECT_EQ(EvalJs(shell(), "scrollableDiv.scrollTop"), 0);
+  float x = (EvalJs(shell(), "scrollableDiv.getBoundingClientRect().left")
+                 .ExtractDouble() +
+             EvalJs(shell(), "scrollableDiv.getBoundingClientRect().right")
+                 .ExtractDouble()) /
             2;
-  float y = (ExecuteScriptAndExtractDouble(
-                 "scrollableDiv.getBoundingClientRect().top") +
-             ExecuteScriptAndExtractDouble(
-                 "scrollableDiv.getBoundingClientRect().bottom")) /
+  float y = (EvalJs(shell(), "scrollableDiv.getBoundingClientRect().top")
+                 .ExtractDouble() +
+             EvalJs(shell(), "scrollableDiv.getBoundingClientRect().bottom")
+                 .ExtractDouble()) /
             2;
-#if defined(OS_CHROMEOS)
+#if BUILDFLAG(IS_CHROMEOS_ASH)
   bool precise = true;
 #else
   bool precise = false;
@@ -307,23 +287,22 @@ IN_PROC_BROWSER_TEST_F(
   GetRootView()->ProcessGestureEvent(gesture_scroll_update, ui::LatencyInfo());
 
   // Wait for the scrollableDiv to scroll.
-  while (ExecuteScriptAndExtractDouble("scrollableDiv.scrollTop") < 20)
+  while (EvalJs(shell(), "scrollableDiv.scrollTop") < 20) {
     GiveItSomeTime();
+  }
 
   // Remove the scrollableDiv which is the current scroller and send the second
   // GSU.
-  EXPECT_TRUE(ExecuteScript(
-      shell(), "scrollableDiv.parentNode.removeChild(scrollableDiv)"));
+  EXPECT_TRUE(
+      ExecJs(shell(), "scrollableDiv.parentNode.removeChild(scrollableDiv)"));
   GiveItSomeTime();
   GetRootView()->ProcessGestureEvent(gesture_scroll_update, ui::LatencyInfo());
-  while (ExecuteScriptAndExtractDouble("document.scrollingElement.scrollTop") <
-         20) {
+  while (EvalJs(shell(), "document.scrollingElement.scrollTop") < 20) {
     GiveItSomeTime();
   }
 }
 
 const char kWheelRetargetIfPreventedByDefault[] = R"HTML(
-    data:text/html;charset=utf-8,
     <!DOCTYPE html>
     <meta name='viewport' content='width=device-width, minimum-scale=1'>
     <style>
@@ -371,8 +350,8 @@ IN_PROC_BROWSER_TEST_F(WheelScrollLatchingBrowserTest,
                        WheelEventRetargetOnPreventDefault) {
   LoadURL(kWheelRetargetIfPreventedByDefault);
 
-  float x = ExecuteScriptAndExtractDouble("x");
-  float y = ExecuteScriptAndExtractDouble("y");
+  float x = EvalJs(shell(), "x").ExtractDouble();
+  float y = EvalJs(shell(), "y").ExtractDouble();
 
   // Send the first wheel event.
   auto wheel_msg_watcher = std::make_unique<InputMsgWatcher>(
@@ -387,7 +366,7 @@ IN_PROC_BROWSER_TEST_F(WheelScrollLatchingBrowserTest,
   // Run until we get the callback, then check the target.
   EXPECT_EQ(blink::mojom::InputEventResultState::kConsumed,
             wheel_msg_watcher->WaitForAck());
-  EXPECT_EQ("blueDiv", ExecuteScriptAndExtractString("domTarget"));
+  EXPECT_EQ("blueDiv", EvalJs(shell(), "domTarget"));
 
   // Send the second wheel event.
   wheel_msg_watcher = std::make_unique<InputMsgWatcher>(
@@ -397,9 +376,12 @@ IN_PROC_BROWSER_TEST_F(WheelScrollLatchingBrowserTest,
                                     ui::LatencyInfo());
 
   // Run until we get the callback, then check the target.
-  EXPECT_EQ(blink::mojom::InputEventResultState::kNotConsumed,
-            wheel_msg_watcher->WaitForAck());
-  EXPECT_EQ("redDiv", ExecuteScriptAndExtractString("domTarget"));
+  EXPECT_EQ(
+      base::FeatureList::IsEnabled(blink::features::kFixGestureScrollQueuingBug)
+          ? blink::mojom::InputEventResultState::kNotConsumedBlocking
+          : blink::mojom::InputEventResultState::kNotConsumed,
+      wheel_msg_watcher->WaitForAck());
+  EXPECT_EQ("redDiv", EvalJs(shell(), "domTarget"));
 }
 
 }  // namespace content

@@ -13,9 +13,9 @@
 
 #include "absl/types/optional.h"
 #include "api/dtls_transport_interface.h"
+#include "api/ref_count.h"
 #include "api/rtc_error.h"
 #include "api/scoped_refptr.h"
-#include "rtc_base/ref_count.h"
 
 namespace webrtc {
 
@@ -35,6 +35,8 @@ enum class SctpTransportState {
 // http://w3c.github.io/webrtc-pc/#rtcsctptransport-interface
 class RTC_EXPORT SctpTransportInformation {
  public:
+  SctpTransportInformation() = default;
+  SctpTransportInformation(const SctpTransportInformation&) = default;
   explicit SctpTransportInformation(SctpTransportState state);
   SctpTransportInformation(
       SctpTransportState state,
@@ -73,7 +75,7 @@ class SctpTransportObserverInterface {
 // accessed on that thread, except for functions explicitly marked otherwise.
 // References can be held by other threads, and destruction can therefore
 // be initiated by other threads.
-class SctpTransportInterface : public rtc::RefCountInterface {
+class SctpTransportInterface : public webrtc::RefCountInterface {
  public:
   // This function can be called from other threads.
   virtual rtc::scoped_refptr<DtlsTransportInterface> dtls_transport() const = 0;

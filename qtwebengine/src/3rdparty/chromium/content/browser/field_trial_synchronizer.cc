@@ -1,53 +1,56 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "content/browser/field_trial_synchronizer.h"
 
-#include "base/bind.h"
 #include "base/check_op.h"
-#include "base/task/post_task.h"
+#include "base/functional/bind.h"
+#include "base/metrics/field_trial.h"
+#include "base/metrics/field_trial_list_including_low_anonymity.h"
+#include "base/strings/strcat.h"
 #include "base/threading/thread.h"
 #include "components/metrics/persistent_system_profile.h"
+#include "components/variations/active_field_trials.h"
 #include "components/variations/variations_client.h"
 #include "content/common/renderer_variations_configuration.mojom.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_process_host.h"
+#include "ipc/ipc_channel_proxy.h"
 #include "mojo/public/cpp/bindings/associated_remote.h"
 
 namespace content {
 
 namespace {
 
-void AddFieldTrialToPersistentSystemProfile(const std::string& field_trial_name,
-                                            const std::string& group_name) {
-  // Note this in the persistent profile as it will take a while for a new
-  // "complete" profile to be generated.
-  metrics::GlobalPersistentSystemProfile::GetInstance()->AddFieldTrial(
-      field_trial_name, group_name);
-}
+FieldTrialSynchronizer* g_instance = nullptr;
 
-}  // namespace
-
-FieldTrialSynchronizer::FieldTrialSynchronizer() {
-  bool success = base::FieldTrialList::AddObserver(this);
-  // Ensure the observer was actually registered.
-  DCHECK(success);
-
-  variations::VariationsIdsProvider::GetInstance()->AddObserver(this);
-  NotifyAllRenderersOfVariationsHeader();
-}
-
-void FieldTrialSynchronizer::NotifyAllRenderersOfFieldTrial(
-    const std::string& field_trial_name,
-    const std::string& group_name) {
+// Notifies all renderer processes about the |group_name| that is finalized for
+// the given field trail (|field_trial_name|). This is called on UI thread.
+void NotifyAllRenderersOfFieldTrial(const std::string& field_trial_name,
+                                    const std::string& group_name,
+                                    bool is_low_anonymity,
+                                    bool is_overridden) {
   // To iterate over RenderProcessHosts, or to send messages to the hosts, we
   // need to be on the UI thread.
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-  AddFieldTrialToPersistentSystemProfile(field_trial_name, group_name);
+  // Low anonymity or overridden field trials must not be written to persistent
+  // data, otherwise they might end up being logged in metrics.
+  //
+  // TODO(crbug.com/1431156): split this out into a separate class that
+  // registers using |FieldTrialList::AddObserver()| (and so doesn't get told
+  // about low anonymity trials at all).
+  if (!is_low_anonymity) {
+    // Note this in the persistent profile as it will take a while for a new
+    // "complete" profile to be generated.
+    metrics::GlobalPersistentSystemProfile::GetInstance()->AddFieldTrial(
+        field_trial_name,
+        is_overridden ? base::StrCat({group_name, variations::kOverrideSuffix})
+                      : group_name);
+  }
 
   for (RenderProcessHost::iterator it(RenderProcessHost::AllHostsIterator());
        !it.IsAtEnd(); it.Advance()) {
@@ -64,23 +67,43 @@ void FieldTrialSynchronizer::NotifyAllRenderersOfFieldTrial(
   }
 }
 
-void FieldTrialSynchronizer::OnFieldTrialGroupFinalized(
-    const std::string& field_trial_name,
-    const std::string& group_name) {
-  // The FieldTrialSynchronizer may have been created before any BrowserThread
-  // is created, so we don't need to synchronize with child processes in which
-  // case there are no child processes to notify yet. But we want to update the
-  // persistent system profile, thus the histogram data recorded in the reduced
-  // mode will be tagged to its corresponding field trial experiment.
-  if (!BrowserThread::IsThreadInitialized(BrowserThread::UI)) {
-    AddFieldTrialToPersistentSystemProfile(field_trial_name, group_name);
-    return;
-  }
+}  // namespace
 
-  RunOrPostTaskOnThread(
-      FROM_HERE, BrowserThread::UI,
-      base::BindOnce(&FieldTrialSynchronizer::NotifyAllRenderersOfFieldTrial,
-                     this, field_trial_name, group_name));
+// static
+void FieldTrialSynchronizer::CreateInstance() {
+  // Only 1 instance is allowed per process.
+  DCHECK(!g_instance);
+  g_instance = new FieldTrialSynchronizer();
+}
+
+FieldTrialSynchronizer::FieldTrialSynchronizer() {
+  // TODO(crbug.com/1431156): consider whether there is a need to exclude low
+  // anonymity field trials from non-browser processes (or to plumb through the
+  // anonymity property for more fine-grained access).
+  bool success = base::FieldTrialListIncludingLowAnonymity::AddObserver(this);
+  // Ensure the observer was actually registered.
+  DCHECK(success);
+
+  variations::VariationsIdsProvider::GetInstance()->AddObserver(this);
+  NotifyAllRenderersOfVariationsHeader();
+}
+
+void FieldTrialSynchronizer::OnFieldTrialGroupFinalized(
+    const base::FieldTrial& trial,
+    const std::string& group_name) {
+  if (BrowserThread::CurrentlyOn(BrowserThread::UI)) {
+    NotifyAllRenderersOfFieldTrial(trial.trial_name(), group_name,
+                                   trial.is_low_anonymity(),
+                                   trial.IsOverridden());
+  } else {
+    // Note that in some tests, `trial` may not be alive when the posted task is
+    // called.
+    GetUIThreadTaskRunner({})->PostTask(
+        FROM_HERE,
+        base::BindOnce(&NotifyAllRenderersOfFieldTrial, trial.trial_name(),
+                       group_name, trial.is_low_anonymity(),
+                       trial.IsOverridden()));
+  }
 }
 
 // static
@@ -122,15 +145,14 @@ void FieldTrialSynchronizer::UpdateRendererVariationsHeader(
 
 void FieldTrialSynchronizer::VariationIdsHeaderUpdated() {
   // PostTask to avoid recursive lock.
-  base::PostTask(
-      FROM_HERE, BrowserThread::UI,
+  GetUIThreadTaskRunner({})->PostTask(
+      FROM_HERE,
       base::BindOnce(
           &FieldTrialSynchronizer::NotifyAllRenderersOfVariationsHeader));
 }
 
 FieldTrialSynchronizer::~FieldTrialSynchronizer() {
-  base::FieldTrialList::RemoveObserver(this);
-  variations::VariationsIdsProvider::GetInstance()->RemoveObserver(this);
+  NOTREACHED();
 }
 
 }  // namespace content

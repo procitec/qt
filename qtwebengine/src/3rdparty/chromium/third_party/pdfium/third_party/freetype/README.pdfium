@@ -1,9 +1,10 @@
 Name: FreeType
 URL: http://www.freetype.org/
-Version: VER-2-10-2-55
-cpe:/a:freetype:freetype:2.10.1
-Revision: 16ee2a22abb642a310dcbf08accf70b1c38e3181
+Version: VER-2-13-2-93
+Revision: ca76683b781db5d06ef1a0e2cb62a767e7dbe626
+CPEPrefix: cpe:/a:freetype:freetype:2.13.2
 Security Critical: yes
+Shipped: yes
 License: FreeType License (FTL)
 License File: FTL.TXT
 
@@ -14,7 +15,9 @@ Local Modifications:
 
 include/pstables.h: A copy of freetype/src/psnames/pstables.h.  This file is not
 part of the public Freetype API, but pdfium needs it.  Since it won't be
-avilable when building with the system Freetype, we provide it as a convenience.
+available when building with the system Freetype, we provide it as a
+convenience. See https://gitlab.freedesktop.org/freetype/freetype/-/issues/731
+for the request to make this a public Freetype API.
 
 0000-include.patch: Modifications to configuration header files.
 

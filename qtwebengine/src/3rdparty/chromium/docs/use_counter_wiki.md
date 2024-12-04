@@ -20,12 +20,12 @@ break-downs.
 
 UseCounter measures feature usage via UMA histogram and UKM. To add your
 feature to UseCounter, simply:
-+ Add your feature to the blink::WebFeature enum;
++ Add your feature to the
+  [blink::mojom::WebFeature enum](https://source.chromium.org/chromium/chromium/src/+/main:third_party/blink/public/mojom/use_counter/metrics/web_feature.mojom);
 + Usage can be measured via:
     * MeasureAs=\<enum value\> in the feature's IDL definition; Or
     * blink::UseCounter::Count() for blink side features; Or
-    * page_load_metrics::MetricsWebContentsObserver::RecordFeatureUsage()
-      for browser side features.
+    * content::ContentBrowserClient::LogWebFeatureForCurrentPage() for browser side features.
 
 Example:
 ```c++
@@ -46,7 +46,7 @@ OR
 ```c++
   MyInterface::MyBlinkSideFunction() {
     ...
-    UseCounter::Count(context, WebFeature::MyFeature);
+    UseCounter::Count(context, WebFeature::kMyFeature);
     ...
   }
 ```
@@ -54,8 +54,8 @@ OR
 ```c++
   MyBrowserSideFunction() {
     ...
-    page_load_metrics::MetricsWebContentObserver::RecordFeatureUsage(
-      render_frame_host, blink::mojom::WebFeature::MyFeature);
+    GetContentClient()->browser()->LogWebFeatureForCurrentPage(
+      render_frame_host, blink::mojom::WebFeature::kMyFeature);
     ...
   }
 ```
@@ -85,32 +85,16 @@ page visits):
 + For the most dominant milestone.
 
 
-### UMA Timeline with Formula
+### Internal UMA tools
 
-Internally (sorry, Google employees only) you can query the usage of a feature
-with break-downs on platforms, channels, etc on the
-[UMA Timeline dashboard](https://goto.google.com/uma-usecounter).
+See (https://goto.google.com/uma-usecounter) for internal tooling.
 
-To create break-downs, select filters on the top of the dashboard, for example,
-"Platform", and set the `operation` to "split by". Note that you can also see
-data usage within Android Webview by setting a filter on "Platform".
-
-Select Metric:
+Some metrics of interest:
 + "Blink.UseCounter.Features" for HTML and JavaScript features.
 + "Blink.UseCounter.CSSProperties" for CSS properties.
 + "Blink.UseCounter.AnimatedCSSProperties" for animated CSS properties.
 + "Blink.UseCounter.Extensions.Features" for HTML and JacaScript features on
   extensions.
-
-In the metric panel, select "Formula" in the left-most drop-down. Then Click
-"ADD NEW FORMULA" with:
-```
-"MyFeature" / "PageVisits" * 100
-```
-
-This provides timeline data for your feature usage (per page load) with
-break-downs, which should more or less reflects the results on chromestatus.com.
-
 
 ### UseCounter Feature in HTTP Archive
 
@@ -178,7 +162,5 @@ day on [UMA Usage dashboard](https://goto.google.com/uma-usecounter-peruser).
 
 ## Analyze UseCounter UKM Data
 For privacy concerns, UKM data is available for Google employees only.
-
-### UKM Dashboard
-UKM dashboard is accessible to Google employees only. Please see [this internal
-wiki](https://goto.google.com/usecounter-ukm-wiki) for details.
+Please see [this internal
+documentation](https://goto.google.com/ukm-blink-usecounter) for details.

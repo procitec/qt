@@ -31,6 +31,7 @@
 #include "third_party/blink/renderer/core/html/link_rel_attribute.h"
 
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 
 namespace blink {
 
@@ -41,10 +42,9 @@ static inline void TestLinkRelAttribute(const String& value,
                                         bool is_alternate,
                                         bool is_dns_prefetch,
                                         bool is_link_prerender,
-                                        bool is_import = false,
                                         bool is_preconnect = false,
                                         bool is_canonical = false,
-                                        bool is_web_bundle = false) {
+                                        bool is_dictionary = false) {
   SCOPED_TRACE(value.Utf8());
   LinkRelAttribute link_rel_attribute(value);
   ASSERT_EQ(is_style_sheet, link_rel_attribute.IsStyleSheet());
@@ -52,13 +52,13 @@ static inline void TestLinkRelAttribute(const String& value,
   ASSERT_EQ(is_alternate, link_rel_attribute.IsAlternate());
   ASSERT_EQ(is_dns_prefetch, link_rel_attribute.IsDNSPrefetch());
   ASSERT_EQ(is_link_prerender, link_rel_attribute.IsLinkPrerender());
-  ASSERT_EQ(is_import, link_rel_attribute.IsImport());
   ASSERT_EQ(is_preconnect, link_rel_attribute.IsPreconnect());
   ASSERT_EQ(is_canonical, link_rel_attribute.IsCanonical());
-  ASSERT_EQ(is_web_bundle, link_rel_attribute.IsWebBundle());
+  ASSERT_EQ(is_dictionary, link_rel_attribute.IsDictionary());
 }
 
 TEST(LinkRelAttributeTest, Constructor) {
+  test::TaskEnvironment task_environment;
   TestLinkRelAttribute("stylesheet", true,
                        mojom::blink::FaviconIconType::kInvalid, false, false,
                        false);
@@ -120,34 +120,35 @@ TEST(LinkRelAttributeTest, Constructor) {
                        mojom::blink::FaviconIconType::kFavicon, true, false,
                        false);
 
-  TestLinkRelAttribute("import", false, mojom::blink::FaviconIconType::kInvalid,
-                       false, false, false, true);
   TestLinkRelAttribute("alternate import", false,
                        mojom::blink::FaviconIconType::kInvalid, true, false,
-                       false, true);
+                       false);
   TestLinkRelAttribute("stylesheet import", true,
                        mojom::blink::FaviconIconType::kInvalid, false, false,
-                       false, false);
+                       false);
 
   TestLinkRelAttribute("preconnect", false,
                        mojom::blink::FaviconIconType::kInvalid, false, false,
-                       false, false, true);
+                       false, /*is_preconnect=*/true);
   TestLinkRelAttribute("pReCoNnEcT", false,
                        mojom::blink::FaviconIconType::kInvalid, false, false,
-                       false, false, true);
+                       false, /*is_preconnect=*/true);
 
   TestLinkRelAttribute("canonical", false,
                        mojom::blink::FaviconIconType::kInvalid, false, false,
-                       false, false, false, true);
+                       false, /*is_preconnect=*/false, /*is_canonical=*/true);
   TestLinkRelAttribute("caNONiCAL", false,
                        mojom::blink::FaviconIconType::kInvalid, false, false,
-                       false, false, false, true);
-  TestLinkRelAttribute("webbundle", false,
+                       false, /*is_preconnect=*/false, /*is_canonical=*/true);
+
+  TestLinkRelAttribute("dictionary", false,
                        mojom::blink::FaviconIconType::kInvalid, false, false,
-                       false, false, false, false, true);
-  TestLinkRelAttribute("wEbBundle", false,
+                       false, /*is_preconnect=*/false, /*is_canonical=*/false,
+                       /*is_dictionary=*/true);
+  TestLinkRelAttribute("diCtIonAry", false,
                        mojom::blink::FaviconIconType::kInvalid, false, false,
-                       false, false, false, false, true);
+                       false, /*is_preconnect=*/false, /*is_canonical=*/false,
+                       /*is_dictionary=*/true);
 }
 
 }  // namespace blink

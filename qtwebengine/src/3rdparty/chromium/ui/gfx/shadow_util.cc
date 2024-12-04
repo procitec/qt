@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,10 +13,10 @@
 #include "third_party/skia/include/core/SkRRect.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/geometry/insets.h"
+#include "ui/gfx/geometry/skia_conversions.h"
 #include "ui/gfx/image/canvas_image_source.h"
 #include "ui/gfx/shadow_value.h"
 #include "ui/gfx/skia_paint_util.h"
-#include "ui/gfx/skia_util.h"
 
 namespace gfx {
 namespace {
@@ -33,6 +33,10 @@ class ShadowNineboxSource : public CanvasImageSource {
         corner_radius_(corner_radius) {
     DCHECK(!shadows.empty());
   }
+
+  ShadowNineboxSource(const ShadowNineboxSource&) = delete;
+  ShadowNineboxSource& operator=(const ShadowNineboxSource&) = delete;
+
   ~ShadowNineboxSource() override {}
 
   // CanvasImageSource overrides:
@@ -69,35 +73,94 @@ class ShadowNineboxSource : public CanvasImageSource {
   const std::vector<ShadowValue> shadows_;
 
   const float corner_radius_;
-
-  DISALLOW_COPY_AND_ASSIGN(ShadowNineboxSource);
 };
 
-// Map from elevation/corner radius pair to a cached shadow.
-using ShadowDetailsMap = std::map<std::pair<int, int>, ShadowDetails>;
+// A shadow's appearance is determined by its rounded corner radius and shadow
+// values. Make these attributes as the key for shadow details.
+struct ShadowDetailsKey {
+  bool operator==(const ShadowDetailsKey& other) const {
+    return (corner_radius == other.corner_radius) && (values == other.values);
+  }
+
+  bool operator<(const ShadowDetailsKey& other) const {
+    return (corner_radius < other.corner_radius) ||
+           ((corner_radius == other.corner_radius) && (values < other.values));
+  }
+  int corner_radius;
+  ShadowValues values;
+};
+
+// Map from shadow details key to a cached shadow.
+using ShadowDetailsMap = std::map<ShadowDetailsKey, ShadowDetails>;
 base::LazyInstance<ShadowDetailsMap>::DestructorAtExit g_shadow_cache =
     LAZY_INSTANCE_INITIALIZER;
 
 }  // namespace
 
-ShadowDetails::ShadowDetails() {}
+ShadowDetails::ShadowDetails(const gfx::ShadowValues& values,
+                             const gfx::ImageSkia& nine_patch_image)
+    : values(values), nine_patch_image(nine_patch_image) {}
 ShadowDetails::ShadowDetails(const ShadowDetails& other) = default;
 ShadowDetails::~ShadowDetails() {}
 
-const ShadowDetails& ShadowDetails::Get(int elevation, int corner_radius) {
-  auto iter =
-      g_shadow_cache.Get().find(std::make_pair(elevation, corner_radius));
-  if (iter != g_shadow_cache.Get().end())
-    return iter->second;
+const ShadowDetails& ShadowDetails::Get(int elevation,
+                                        int corner_radius,
+                                        ShadowStyle style) {
+  switch (style) {
+    case ShadowStyle::kMaterialDesign:
+      return Get(corner_radius, ShadowValue::MakeMdShadowValues(elevation));
+#if BUILDFLAG(IS_CHROMEOS)
+    case ShadowStyle::kChromeOSSystemUI:
+      return Get(corner_radius,
+                 ShadowValue::MakeChromeOSSystemUIShadowValues(elevation));
+#endif
+  }
+}
 
+const ShadowDetails& ShadowDetails::Get(int elevation,
+                                        int radius,
+                                        SkColor key_color,
+                                        SkColor ambient_color,
+                                        ShadowStyle style) {
+  switch (style) {
+    case ShadowStyle::kMaterialDesign:
+      return Get(radius, ShadowValue::MakeMdShadowValues(elevation, key_color,
+                                                         ambient_color));
+#if BUILDFLAG(IS_CHROMEOS)
+    case ShadowStyle::kChromeOSSystemUI:
+      return Get(radius, ShadowValue::MakeChromeOSSystemUIShadowValues(
+                             elevation, key_color, ambient_color));
+#endif
+  }
+}
+
+const ShadowDetails& ShadowDetails::Get(int radius,
+                                        const gfx::ShadowValues& values) {
+  ShadowDetailsKey key{radius, values};
+  auto iter = g_shadow_cache.Get().find(key);
+  if (iter != g_shadow_cache.Get().end()) {
+    return iter->second;
+  }
+
+  // Evict the details whose ninebox image does not have any shadow owners.
+  std::erase_if(g_shadow_cache.Get(), [](auto& pair) {
+    return pair.second.nine_patch_image.IsUniquelyOwned();
+  });
+
+  auto source =
+      std::make_unique<ShadowNineboxSource>(values, key.corner_radius);
+  const gfx::Size image_size = source->size();
+  auto nine_patch_image = ImageSkia(std::move(source), image_size);
   auto insertion = g_shadow_cache.Get().emplace(
-      std::make_pair(elevation, corner_radius), ShadowDetails());
+      key, ShadowDetails(values, nine_patch_image));
   DCHECK(insertion.second);
-  ShadowDetails* shadow = &insertion.first->second;
-  shadow->values = ShadowValue::MakeMdShadowValues(elevation);
-  auto* source = new ShadowNineboxSource(shadow->values, corner_radius);
-  shadow->ninebox_image = ImageSkia(base::WrapUnique(source), source->size());
-  return *shadow;
+  const std::pair<const ShadowDetailsKey, ShadowDetails>& inserted_item =
+      *(insertion.first);
+  return inserted_item.second;
+}
+
+size_t ShadowDetails::GetDetailsCacheSizeForTest() {
+  return g_shadow_cache.Get().size();
 }
 
 }  // namespace gfx

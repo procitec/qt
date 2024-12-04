@@ -30,14 +30,15 @@
 
 #include "third_party/blink/renderer/core/html/track/vtt/buffered_line_reader.h"
 
-#include "base/stl_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "third_party/blink/renderer/platform/wtf/text/character_names.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
 namespace blink {
 
 TEST(BufferedLineReaderTest, Constructor) {
+  test::TaskEnvironment task_environment;
   BufferedLineReader reader;
   ASSERT_FALSE(reader.IsAtEndOfStream());
   String line;
@@ -45,6 +46,7 @@ TEST(BufferedLineReaderTest, Constructor) {
 }
 
 TEST(BufferedLineReaderTest, EOSNoInput) {
+  test::TaskEnvironment task_environment;
   BufferedLineReader reader;
   String line;
   ASSERT_FALSE(reader.GetLine(line));
@@ -54,6 +56,7 @@ TEST(BufferedLineReaderTest, EOSNoInput) {
 }
 
 TEST(BufferedLineReaderTest, EOSInput) {
+  test::TaskEnvironment task_environment;
   BufferedLineReader reader;
   reader.Append("A");
   reader.SetEndOfStream();
@@ -63,6 +66,7 @@ TEST(BufferedLineReaderTest, EOSInput) {
 }
 
 TEST(BufferedLineReaderTest, EOSMultipleReads_1) {
+  test::TaskEnvironment task_environment;
   BufferedLineReader reader;
   reader.Append("A");
   reader.SetEndOfStream();
@@ -75,6 +79,7 @@ TEST(BufferedLineReaderTest, EOSMultipleReads_1) {
 }
 
 TEST(BufferedLineReaderTest, EOSMultipleReads_2) {
+  test::TaskEnvironment task_environment;
   BufferedLineReader reader;
   reader.Append("A\n");
   reader.SetEndOfStream();
@@ -87,6 +92,7 @@ TEST(BufferedLineReaderTest, EOSMultipleReads_2) {
 }
 
 TEST(BufferedLineReaderTest, LineEndingCR) {
+  test::TaskEnvironment task_environment;
   BufferedLineReader reader;
   reader.Append("X\rY");
   reader.SetEndOfStream();
@@ -98,6 +104,7 @@ TEST(BufferedLineReaderTest, LineEndingCR) {
 }
 
 TEST(BufferedLineReaderTest, LineEndingCR_EOS) {
+  test::TaskEnvironment task_environment;
   BufferedLineReader reader;
   reader.Append("X\r");
   reader.SetEndOfStream();
@@ -108,6 +115,7 @@ TEST(BufferedLineReaderTest, LineEndingCR_EOS) {
 }
 
 TEST(BufferedLineReaderTest, LineEndingLF) {
+  test::TaskEnvironment task_environment;
   BufferedLineReader reader;
   reader.Append("X\nY");
   reader.SetEndOfStream();
@@ -119,6 +127,7 @@ TEST(BufferedLineReaderTest, LineEndingLF) {
 }
 
 TEST(BufferedLineReaderTest, LineEndingLF_EOS) {
+  test::TaskEnvironment task_environment;
   BufferedLineReader reader;
   reader.Append("X\n");
   reader.SetEndOfStream();
@@ -129,6 +138,7 @@ TEST(BufferedLineReaderTest, LineEndingLF_EOS) {
 }
 
 TEST(BufferedLineReaderTest, LineEndingCRLF) {
+  test::TaskEnvironment task_environment;
   BufferedLineReader reader;
   reader.Append("X\r\nY");
   reader.SetEndOfStream();
@@ -140,6 +150,7 @@ TEST(BufferedLineReaderTest, LineEndingCRLF) {
 }
 
 TEST(BufferedLineReaderTest, LineEndingCRLF_EOS) {
+  test::TaskEnvironment task_environment;
   BufferedLineReader reader;
   reader.Append("X\r\n");
   reader.SetEndOfStream();
@@ -170,15 +181,16 @@ const wtf_size_t kBlockSizes[] = {64, 32, 16, 8,  4,  2,  1,  3,
                                   5,  7,  9,  11, 13, 17, 19, 23};
 
 TEST(BufferedLineReaderTest, BufferSizes) {
+  test::TaskEnvironment task_environment;
   const char* lines[] = {"aaaaaaaaaaaaaaaa", "bbbbbbbbbb", "ccccccccccccc", "",
                          "dddddd",           "",           "eeeeeeeeee"};
   const NewlineType kBreaks[] = {kLf, kLf, kLf, kLf, kLf, kLf, kLf};
-  const size_t num_test_lines = base::size(lines);
-  static_assert(num_test_lines == base::size(kBreaks),
+  const size_t num_test_lines = std::size(lines);
+  static_assert(num_test_lines == std::size(kBreaks),
                 "number of test lines and breaks should be the same");
   String data = MakeTestData(lines, kBreaks, num_test_lines);
 
-  for (size_t k = 0; k < base::size(kBlockSizes); ++k) {
+  for (size_t k = 0; k < std::size(kBlockSizes); ++k) {
     size_t line_count = 0;
     BufferedLineReader reader;
     wtf_size_t block_size = kBlockSizes[k];
@@ -196,16 +208,17 @@ TEST(BufferedLineReaderTest, BufferSizes) {
 }
 
 TEST(BufferedLineReaderTest, BufferSizesMixedEndings) {
+  test::TaskEnvironment task_environment;
   const char* lines[] = {
       "aaaaaaaaaaaaaaaa", "bbbbbbbbbb", "ccccccccccccc",      "",
       "dddddd",           "eeeeeeeeee", "fffffffffffffffffff"};
   const NewlineType kBreaks[] = {kCr, kLf, kCrLf, kCr, kLf, kCrLf, kLf};
-  const size_t num_test_lines = base::size(lines);
-  static_assert(num_test_lines == base::size(kBreaks),
+  const size_t num_test_lines = std::size(lines);
+  static_assert(num_test_lines == std::size(kBreaks),
                 "number of test lines and breaks should be the same");
   String data = MakeTestData(lines, kBreaks, num_test_lines);
 
-  for (size_t k = 0; k < base::size(kBlockSizes); ++k) {
+  for (size_t k = 0; k < std::size(kBlockSizes); ++k) {
     size_t line_count = 0;
     BufferedLineReader reader;
     wtf_size_t block_size = kBlockSizes[k];
@@ -223,6 +236,7 @@ TEST(BufferedLineReaderTest, BufferSizesMixedEndings) {
 }
 
 TEST(BufferedLineReaderTest, BufferBoundaryInCRLF_1) {
+  test::TaskEnvironment task_environment;
   BufferedLineReader reader;
   reader.Append("X\r");
   String line;
@@ -233,6 +247,7 @@ TEST(BufferedLineReaderTest, BufferBoundaryInCRLF_1) {
 }
 
 TEST(BufferedLineReaderTest, BufferBoundaryInCRLF_2) {
+  test::TaskEnvironment task_environment;
   BufferedLineReader reader;
   reader.Append("X\r");
   String line;
@@ -247,6 +262,7 @@ TEST(BufferedLineReaderTest, BufferBoundaryInCRLF_2) {
 }
 
 TEST(BufferedLineReaderTest, NormalizedNUL) {
+  test::TaskEnvironment task_environment;
   BufferedLineReader reader;
   reader.Append(String("X\0Y\n", 4u));
   String line;

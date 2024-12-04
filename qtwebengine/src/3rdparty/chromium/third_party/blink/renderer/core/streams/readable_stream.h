@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,29 +6,41 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_STREAMS_READABLE_STREAM_H_
 
 #include <stdint.h>
+#include <memory>
 
-#include "base/optional.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_value.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_typedefs.h"
+#include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/streams/readable_stream_default_reader.h"
+#include "third_party/blink/renderer/core/streams/transferable_streams.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
 #include "third_party/blink/renderer/platform/bindings/trace_wrapper_v8_reference.h"
-#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
+#include "third_party/blink/renderer/platform/heap/visitor.h"
 #include "v8/include/v8.h"
 
 namespace blink {
 
-class AbortSignal;
 class ExceptionState;
 class MessagePort;
+class PipeOptions;
+class ReadableByteStreamController;
+class ReadableStreamBYOBReader;
+class ReadableStreamController;
 class ReadableStreamDefaultController;
+class ReadableStreamGetReaderOptions;
+class ReadableStreamTransferringOptimizer;
+class ReadableWritablePair;
+class ReadIntoRequest;
+class ReadRequest;
 class ScriptPromise;
 class ScriptState;
 class StrategySizeAlgorithm;
 class StreamAlgorithm;
-class StreamPromiseResolver;
+class StreamPipeOptions;
 class StreamStartAlgorithm;
+class UnderlyingByteSourceBase;
 class UnderlyingSourceBase;
-class Visitor;
 class WritableStream;
 
 // C++ implementation of ReadableStream.
@@ -37,55 +49,36 @@ class CORE_EXPORT ReadableStream : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  class PipeOptions : public GarbageCollected<PipeOptions> {
-   public:
-    PipeOptions();
-    PipeOptions(ScriptState* script_state,
-                ScriptValue options,
-                ExceptionState& exception_state);
+  enum State : uint8_t { kReadable, kClosed, kErrored };
 
-    bool PreventClose() const { return prevent_close_; }
-    bool PreventAbort() const { return prevent_abort_; }
-    bool PreventCancel() const { return prevent_cancel_; }
-    AbortSignal* Signal() const { return signal_; }
-
-    void Trace(Visitor*) const;
-
-   private:
-    bool GetBoolean(ScriptState* script_state,
-                    v8::Local<v8::Object> dictionary,
-                    const char* property_name,
-                    ExceptionState& exception_state);
-
-    bool prevent_close_ = false;
-    bool prevent_abort_ = false;
-    bool prevent_cancel_ = false;
-    Member<AbortSignal> signal_;
-  };
-
-  // Create* functions create an appropriate subclass depending on which
-  // implementation is selected by blink features.
+  // Zero-argument form of the constructor called from JavaScript.
   static ReadableStream* Create(ScriptState*, ExceptionState&);
+
+  // One-argument constructor called from JavaScript.
   static ReadableStream* Create(ScriptState*,
                                 ScriptValue underlying_source,
                                 ExceptionState&);
-  enum State : uint8_t { kReadable, kClosed, kErrored };
 
-  // Implements ReadableStream::Create() when this implementation is enabled.
+  // Two-argument constructor called from JavaScript.
   static ReadableStream* Create(ScriptState* script_state,
                                 ScriptValue underlying_source,
                                 ScriptValue strategy,
                                 ExceptionState& exception_state);
 
-  // Implements ReadableStream::CreateWithCountQueueingStrategy() when this
-  // implementation is enabled.
-  //
-  // TODO(ricea): Replace this API with something more efficient when the old
-  // implementation is gone.
+  // Entry point to create a ReadableStream from other C++ APIs.
   static ReadableStream* CreateWithCountQueueingStrategy(
       ScriptState* script_state,
       UnderlyingSourceBase* underlying_source,
       size_t high_water_mark);
+  // Specifying true for `allow_per_chunk_transferring` implies the following:
+  //  1. Each chunk has never been exposed to scripts.
+  //  2. Each chunk is transferable.
+  static ReadableStream* CreateWithCountQueueingStrategy(
+      ScriptState* script_state,
+      UnderlyingSourceBase* underlying_source,
+      size_t high_water_mark,
+      AllowPerChunkTransferring allow_per_chunk_transferring,
+      std::unique_ptr<ReadableStreamTransferringOptimizer> optimizer);
 
   // CreateReadableStream():
   // https://streams.spec.whatwg.org/#create-readable-stream
@@ -97,9 +90,45 @@ class CORE_EXPORT ReadableStream : public ScriptWrappable {
                                 StrategySizeAlgorithm* size_algorithm,
                                 ExceptionState&);
 
+  // https://streams.spec.whatwg.org/#abstract-opdef-createreadablebytestream
+  static ReadableStream* CreateByteStream(ScriptState*,
+                                          StreamStartAlgorithm* start_algorithm,
+                                          StreamAlgorithm* pull_algorithm,
+                                          StreamAlgorithm* cancel_algorithm,
+                                          ExceptionState&);
+
+  // Entry point to create a ReadableByteStream from other C++ APIs.
+  // CreateReadableByteStream():
+  // https://streams.spec.whatwg.org/#abstract-opdef-createreadablebytestream
+  static ReadableStream* CreateByteStream(
+      ScriptState*,
+      UnderlyingByteSourceBase* underlying_byte_source);
+
+  static void InitByteStream(ScriptState*,
+                             ReadableStream*,
+                             UnderlyingByteSourceBase* underlying_byte_source,
+                             ExceptionState&);
+  static void InitByteStream(ScriptState*,
+                             ReadableStream*,
+                             ReadableByteStreamController*,
+                             StreamStartAlgorithm* start_algorithm,
+                             StreamAlgorithm* pull_algorithm,
+                             StreamAlgorithm* cancel_algorithm,
+                             ExceptionState&);
+
   ReadableStream();
 
   ~ReadableStream() override;
+
+  // See CreateWithCountQueueingStrategy() comment above for how to use
+  // `allow_per_chunk_transferring`.
+  void InitWithCountQueueingStrategy(
+      ScriptState*,
+      UnderlyingSourceBase*,
+      size_t high_water_mark,
+      AllowPerChunkTransferring allow_per_chunk_transferring,
+      std::unique_ptr<ReadableStreamTransferringOptimizer>,
+      ExceptionState&);
 
   // https://streams.spec.whatwg.org/#rs-constructor
   bool locked() const;
@@ -109,39 +138,54 @@ class CORE_EXPORT ReadableStream : public ScriptWrappable {
   // https://streams.spec.whatwg.org/#rs-cancel
   ScriptPromise cancel(ScriptState*, ScriptValue reason, ExceptionState&);
 
-  ReadableStreamDefaultReader* getReader(ScriptState*, ExceptionState&);
+  V8ReadableStreamReader* getReader(ScriptState* script_state,
+                                    ExceptionState& exception_state);
 
   // https://streams.spec.whatwg.org/#rs-get-reader
-  ReadableStreamDefaultReader* getReader(ScriptState*,
-                                         ScriptValue options,
-                                         ExceptionState&);
+  V8ReadableStreamReader* getReader(
+      ScriptState* script_state,
+      const ReadableStreamGetReaderOptions* options,
+      ExceptionState& exception_state);
 
-  ScriptValue pipeThrough(ScriptState*,
-                          ScriptValue transform_stream,
-                          ExceptionState&);
+  ReadableStreamDefaultReader* GetDefaultReaderForTesting(ScriptState*,
+                                                          ExceptionState&);
+
+  ReadableStreamBYOBReader* GetBYOBReaderForTesting(ScriptState*,
+                                                    ExceptionState&);
+
+  ReadableStream* pipeThrough(ScriptState*,
+                              ReadableWritablePair* transform,
+                              ExceptionState&);
 
   // https://streams.spec.whatwg.org/#rs-pipe-through
-  ScriptValue pipeThrough(ScriptState*,
-                          ScriptValue transform_stream,
-                          ScriptValue options,
-                          ExceptionState&);
+  ReadableStream* pipeThrough(ScriptState*,
+                              ReadableWritablePair* transform,
+                              const StreamPipeOptions* options,
+                              ExceptionState&);
 
-  ScriptPromise pipeTo(ScriptState*, ScriptValue destination, ExceptionState&);
+  ScriptPromise pipeTo(ScriptState*,
+                       WritableStream* destination,
+                       ExceptionState&);
 
   // https://streams.spec.whatwg.org/#rs-pipe-to
   ScriptPromise pipeTo(ScriptState*,
-                       ScriptValue destination_value,
-                       ScriptValue options,
+                       WritableStream* destination,
+                       const StreamPipeOptions* options,
                        ExceptionState&);
 
   // https://streams.spec.whatwg.org/#rs-tee
-  ScriptValue tee(ScriptState*, ExceptionState&);
+  HeapVector<Member<ReadableStream>> tee(ScriptState*, ExceptionState&);
 
-  // TODO(domenic): cloneForBranch2 argument from spec not supported yet
   void Tee(ScriptState*,
            ReadableStream** branch1,
            ReadableStream** branch2,
+           bool clone_for_branch2,
            ExceptionState&);
+
+  void ByteStreamTee(ScriptState*,
+                     ReadableStream** branch1,
+                     ReadableStream** branch2,
+                     ExceptionState&);
 
   bool IsLocked() const { return IsLocked(this); }
 
@@ -155,18 +199,16 @@ class CORE_EXPORT ReadableStream : public ScriptWrappable {
 
   void LockAndDisturb(ScriptState*);
 
+  // https://streams.spec.whatwg.org/#readablestream-close
+  void CloseStream(ScriptState*, ExceptionState&);
+
   void Serialize(ScriptState*, MessagePort* port, ExceptionState&);
 
-  static ReadableStream* Deserialize(ScriptState*,
-                                     MessagePort* port,
-                                     ExceptionState&);
-
-  // Returns a reader that doesn't have the |for_author_code_| flag set. This is
-  // used in contexts where reads should not be interceptable by user code. This
-  // corresponds to calling AcquireReadableStreamDefaultReader(stream, false) in
-  // specification language. The caller must ensure that the stream is not
-  // locked.
-  ReadableStreamDefaultReader* GetReaderNotForAuthorCode(ScriptState*);
+  static ReadableStream* Deserialize(
+      ScriptState*,
+      MessagePort* port,
+      std::unique_ptr<ReadableStreamTransferringOptimizer> optimizer,
+      ExceptionState&);
 
   //
   // Readable stream abstract operations
@@ -178,13 +220,26 @@ class CORE_EXPORT ReadableStream : public ScriptWrappable {
   }
 
   // https://streams.spec.whatwg.org/#is-readable-stream-locked
-  static bool IsLocked(const ReadableStream* stream) { return stream->reader_; }
+  static bool IsLocked(const ReadableStream* stream) {
+    return stream->reader_ != nullptr;
+  }
 
   // https://streams.spec.whatwg.org/#readable-stream-pipe-to
   static ScriptPromise PipeTo(ScriptState*,
                               ReadableStream*,
                               WritableStream*,
-                              PipeOptions*);
+                              PipeOptions*,
+                              ExceptionState&);
+
+  // https://streams.spec.whatwg.org/#acquire-readable-stream-reader
+  static ReadableStreamDefaultReader* AcquireDefaultReader(ScriptState*,
+                                                           ReadableStream*,
+                                                           ExceptionState&);
+
+  // https://streams.spec.whatwg.org/#acquire-readable-stream-byob-reader
+  static ReadableStreamBYOBReader* AcquireBYOBReader(ScriptState*,
+                                                     ReadableStream*,
+                                                     ExceptionState&);
 
   //
   // Functions exported for use by TransformStream. Not part of the standard.
@@ -202,21 +257,34 @@ class CORE_EXPORT ReadableStream : public ScriptWrappable {
     return stream->state_ == kErrored;
   }
 
-  ReadableStreamDefaultController* GetController() {
-    return readable_stream_controller_;
+  ReadableStreamController* GetController() {
+    return readable_stream_controller_.Get();
   }
 
   v8::Local<v8::Value> GetStoredError(v8::Isolate*) const;
 
+  std::unique_ptr<ReadableStreamTransferringOptimizer>
+  TakeTransferringOptimizer();
+
+  void SetAllowPerChunkTransferringForTesting(AllowPerChunkTransferring value) {
+    allow_per_chunk_transferring_ = value;
+  }
+
   void Trace(Visitor*) const override;
 
  private:
+  friend class ByteStreamTeeEngine;
+  friend class PipeToEngine;
+  friend class ReadableByteStreamController;
+  friend class ReadableStreamBYOBReader;
   friend class ReadableStreamDefaultController;
-  friend class ReadableStreamReader;
+  friend class ReadableStreamDefaultReader;
+  friend class ReadableStreamGenericReader;
+  friend class TeeEngine;
 
-  class PipeToEngine;
+  class PullAlgorithm;
+  class CancelAlgorithm;
   class ReadHandleImpl;
-  class TeeEngine;
 
   // https://streams.spec.whatwg.org/#rs-constructor
   void InitInternal(ScriptState*,
@@ -228,14 +296,12 @@ class CORE_EXPORT ReadableStream : public ScriptWrappable {
   // https://streams.spec.whatwg.org/#initialize-readable-stream
   static void Initialize(ReadableStream*);
 
-  // https://streams.spec.whatwg.org/#acquire-readable-stream-reader
-  static ReadableStreamReader* AcquireDefaultReader(ScriptState*,
-                                                    ReadableStream*,
-                                                    bool for_author_code,
-                                                    ExceptionState&);
+  static void AddReadIntoRequest(ScriptState*,
+                                 ReadableStream*,
+                                 ReadIntoRequest*);
 
   // https://streams.spec.whatwg.org/#readable-stream-add-read-request
-  static StreamPromiseResolver* AddReadRequest(ScriptState*, ReadableStream*);
+  static void AddReadRequest(ScriptState*, ReadableStream*, ReadRequest*);
 
   // https://streams.spec.whatwg.org/#readable-stream-cancel
   static v8::Local<v8::Promise> Cancel(ScriptState*,
@@ -245,46 +311,52 @@ class CORE_EXPORT ReadableStream : public ScriptWrappable {
   // https://streams.spec.whatwg.org/#readable-stream-close
   static void Close(ScriptState*, ReadableStream*);
 
-  // https://streams.spec.whatwg.org/#readable-stream-create-read-result
-  static v8::Local<v8::Value> CreateReadResult(ScriptState*,
-                                               v8::Local<v8::Value> value,
-                                               bool done,
-                                               bool for_author_code);
-
   // https://streams.spec.whatwg.org/#readable-stream-error
   static void Error(ScriptState*, ReadableStream*, v8::Local<v8::Value> e);
+
+  // https://streams.spec.whatwg.org/#readable-stream-fulfill-read-into-request
+  static void FulfillReadIntoRequest(ScriptState*,
+                                     ReadableStream*,
+                                     DOMArrayBufferView* chunk,
+                                     bool done,
+                                     ExceptionState&);
 
   // https://streams.spec.whatwg.org/#readable-stream-fulfill-read-request
   static void FulfillReadRequest(ScriptState*,
                                  ReadableStream*,
                                  v8::Local<v8::Value> chunk,
-                                 bool done);
+                                 bool done,
+                                 ExceptionState&);
+
+  // https://streams.spec.whatwg.org/#readable-stream-get-num-read-into-requests
+  static int GetNumReadIntoRequests(const ReadableStream*);
 
   // https://streams.spec.whatwg.org/#readable-stream-get-num-read-requests
   static int GetNumReadRequests(const ReadableStream*);
 
-  //
-  // TODO(ricea): Functions for transferable streams.
-  //
+  // https://streams.spec.whatwg.org/#readable-stream-has-byob-reader
+  static bool HasBYOBReader(const ReadableStream*);
 
-  // Validates the "options" argument to ReadableStream::getReader().
-  // If an exception is thrown validation failed.
-  static void GetReaderValidateOptions(ScriptState*,
-                                       ScriptValue options,
-                                       ExceptionState&);
+  // https://streams.spec.whatwg.org/#readable-stream-has-default-reader
+  static bool HasDefaultReader(const ReadableStream*);
 
   // Calls Tee() on |readable|, converts the two branches to a JavaScript array
   // and returns them.
-  static ScriptValue CallTeeAndReturnBranchArray(
+  static HeapVector<Member<ReadableStream>> CallTeeAndReturnBranchArray(
       ScriptState* script_state,
       ReadableStream* readable,
+      bool clone_for_branch2,
       ExceptionState& exception_state);
 
   bool is_disturbed_ = false;
+  // When set to true, each chunk can be transferred instead of cloned on
+  // transferring the stream.
+  AllowPerChunkTransferring allow_per_chunk_transferring_{false};
   State state_ = kReadable;
-  Member<ReadableStreamDefaultController> readable_stream_controller_;
-  Member<ReadableStreamReader> reader_;
+  Member<ReadableStreamController> readable_stream_controller_;
+  Member<ReadableStreamGenericReader> reader_;
   TraceWrapperV8Reference<v8::Value> stored_error_;
+  std::unique_ptr<ReadableStreamTransferringOptimizer> transferring_optimizer_;
 };
 
 }  // namespace blink

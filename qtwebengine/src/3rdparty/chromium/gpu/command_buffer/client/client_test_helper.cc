@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -98,11 +98,8 @@ void FakeCommandBufferServiceBase::SetContextLostReason(
   state_.context_lost_reason = reason;
 }
 
-// GCC requires these declarations, but MSVC requires they not be present
-#ifndef _MSC_VER
 const int32_t FakeCommandBufferServiceBase::kTransferBufferBaseId;
 const int32_t FakeCommandBufferServiceBase::kMaxTransferBuffers;
-#endif
 
 MockClientCommandBuffer::MockClientCommandBuffer() {
   DelegateToFake();
@@ -140,6 +137,7 @@ void MockClientCommandBuffer::SetGetBuffer(int transfer_buffer_id) {
 scoped_refptr<gpu::Buffer> MockClientCommandBuffer::CreateTransferBuffer(
     uint32_t size,
     int32_t* id,
+    uint32_t alignment,
     TransferBufferAllocationOption option) {
   return CreateTransferBufferHelper(size, id);
 }
@@ -156,6 +154,13 @@ void MockClientCommandBuffer::DelegateToFake() {
   ON_CALL(*this, DestroyTransferBuffer(_))
       .WillByDefault(Invoke(
           this, &FakeCommandBufferServiceBase::DestroyTransferBufferHelper));
+}
+
+void MockClientCommandBuffer::ForceLostContext(
+    error::ContextLostReason reason) {
+  // TODO(kbr): add a test for a call to this method.
+  SetParseError(error::kLostContext);
+  SetContextLostReason(reason);
 }
 
 MockClientCommandBufferMockFlush::MockClientCommandBufferMockFlush() {
@@ -180,7 +185,9 @@ MockClientGpuControl::~MockClientGpuControl() = default;
 
 FakeDecoderClient::~FakeDecoderClient() = default;
 void FakeDecoderClient::OnConsoleMessage(int32_t, const std::string&) {}
-void FakeDecoderClient::CacheShader(const std::string&, const std::string&) {}
+void FakeDecoderClient::CacheBlob(gpu::GpuDiskCacheType,
+                                  const std::string&,
+                                  const std::string&) {}
 void FakeDecoderClient::OnFenceSyncRelease(uint64_t) {}
 void FakeDecoderClient::OnDescheduleUntilFinished() {}
 void FakeDecoderClient::OnRescheduleAfterFinished() {}

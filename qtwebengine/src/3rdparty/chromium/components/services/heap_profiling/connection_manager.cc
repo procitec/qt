@@ -1,10 +1,13 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/services/heap_profiling/connection_manager.h"
 
-#include "base/bind.h"
+#include <utility>
+
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/json/string_escape.h"
 #include "base/metrics/histogram_macros.h"
 #include "components/services/heap_profiling/json_exporter.h"
@@ -54,8 +57,7 @@ struct ConnectionManager::Connection {
 
   bool HeapDumpNeedsVmRegions() {
     return stack_mode == mojom::StackMode::NATIVE_WITHOUT_THREAD_NAMES ||
-           stack_mode == mojom::StackMode::NATIVE_WITH_THREAD_NAMES ||
-           stack_mode == mojom::StackMode::MIXED;
+           stack_mode == mojom::StackMode::NATIVE_WITH_THREAD_NAMES;
   }
 
   mojo::Remote<mojom::ProfilingClient> client;
@@ -74,7 +76,7 @@ struct ConnectionManager::Connection {
 };
 
 ConnectionManager::ConnectionManager() {
-  metrics_timer_.Start(FROM_HERE, base::TimeDelta::FromHours(24),
+  metrics_timer_.Start(FROM_HERE, base::Hours(24),
                        base::BindRepeating(&ConnectionManager::ReportMetrics,
                                            base::Unretained(this)));
 }
@@ -84,7 +86,8 @@ void ConnectionManager::OnNewConnection(
     base::ProcessId pid,
     mojo::PendingRemote<mojom::ProfilingClient> client,
     mojom::ProcessType process_type,
-    mojom::ProfilingParamsPtr params) {
+    mojom::ProfilingParamsPtr params,
+    base::OnceClosure started_profiling_closure) {
   base::AutoLock lock(connections_lock_);
 
   // Attempting to start profiling on an already profiled processs should have
@@ -110,7 +113,8 @@ void ConnectionManager::OnNewConnection(
       params->sampling_rate, params->stack_mode);
   connection->client->StartProfiling(
       std::move(params), base::BindOnce(&ConnectionManager::OnProfilingStarted,
-                                        weak_factory_.GetWeakPtr(), pid));
+                                        weak_factory_.GetWeakPtr(), pid)
+                             .Then(std::move(started_profiling_closure)));
   connections_[pid] = std::move(connection);
 }
 
@@ -165,6 +169,7 @@ void ConnectionManager::ReportMetrics() {
 
 void ConnectionManager::DumpProcessesForTracing(
     bool strip_path_from_mapped_files,
+    bool write_proto,
     DumpProcessesForTracingCallback callback,
     VmRegions vm_regions) {
   base::AutoLock lock(connections_lock_);
@@ -185,6 +190,11 @@ void ConnectionManager::DumpProcessesForTracing(
   for (auto& it : connections_) {
     base::ProcessId pid = it.first;
     Connection* connection = it.second.get();
+    // TODO(ssid): Stop writing JSON to traces when proto output is enabled,
+    // https://crbug.com/1228548.
+    if (write_proto)
+      connection->client->AddHeapProfileToTrace(base::DoNothing());
+
     connection->client->RetrieveHeapProfile(base::BindOnce(
         &ConnectionManager::HeapProfileRetrieved, weak_factory_.GetWeakPtr(),
         tracking, pid, connection->process_type, strip_path_from_mapped_files,

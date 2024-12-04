@@ -7,17 +7,17 @@
 
 #include "src/core/SkImageFilterCache.h"
 
-#include <vector>
-
-#include "include/core/SkImageFilter.h"
-#include "include/core/SkRefCnt.h"
-#include "include/private/SkMutex.h"
-#include "include/private/SkOnce.h"
-#include "include/private/SkTHash.h"
-#include "src/core/SkOpts.h"
+#include "include/private/base/SkMutex.h"
+#include "include/private/base/SkOnce.h"
+#include "src/base/SkTInternalLList.h"
+#include "src/core/SkChecksum.h"
 #include "src/core/SkSpecialImage.h"
 #include "src/core/SkTDynamicHash.h"
-#include "src/core/SkTInternalLList.h"
+#include "src/core/SkTHash.h"
+
+#include <vector>
+
+using namespace skia_private;
 
 #ifdef SK_BUILD_FOR_IOS
   enum { kDefaultCacheSize = 2 * 1024 * 1024 };
@@ -35,23 +35,23 @@ public:
         fLookup.foreach([&](Value* v) { delete v; });
     }
     struct Value {
-        Value(const Key& key, const skif::FilterResult<For::kOutput>& image,
+        Value(const Key& key, const skif::FilterResult& image,
               const SkImageFilter* filter)
             : fKey(key), fImage(image), fFilter(filter) {}
 
         Key fKey;
-        skif::FilterResult<For::kOutput> fImage;
+        skif::FilterResult fImage;
         const SkImageFilter* fFilter;
         static const Key& GetKey(const Value& v) {
             return v.fKey;
         }
         static uint32_t Hash(const Key& key) {
-            return SkOpts::hash(reinterpret_cast<const uint32_t*>(&key), sizeof(Key));
+            return SkChecksum::Hash32(&key, sizeof(Key));
         }
         SK_DECLARE_INTERNAL_LLIST_INTERFACE(Value);
     };
 
-    bool get(const Key& key, skif::FilterResult<For::kOutput>* result) const override {
+    bool get(const Key& key, skif::FilterResult* result) const override {
         SkASSERT(result);
 
         SkAutoMutexExclusive mutex(fMutex);
@@ -68,7 +68,7 @@ public:
     }
 
     void set(const Key& key, const SkImageFilter* filter,
-             const skif::FilterResult<For::kOutput>& result) override {
+             const skif::FilterResult& result) override {
         SkAutoMutexExclusive mutex(fMutex);
         if (Value* v = fLookup.find(key)) {
             this->removeInternal(v);
@@ -140,24 +140,24 @@ private:
         delete v;
     }
 private:
-    SkTDynamicHash<Value, Key>                            fLookup;
-    mutable SkTInternalLList<Value>                       fLRU;
+    SkTDynamicHash<Value, Key>                          fLookup;
+    mutable SkTInternalLList<Value>                     fLRU;
     // Value* always points to an item in fLookup.
-    SkTHashMap<const SkImageFilter*, std::vector<Value*>> fImageFilterValues;
-    size_t                                                fMaxBytes;
-    size_t                                                fCurrentBytes;
-    mutable SkMutex                                       fMutex;
+    THashMap<const SkImageFilter*, std::vector<Value*>> fImageFilterValues;
+    size_t                                              fMaxBytes;
+    size_t                                              fCurrentBytes;
+    mutable SkMutex                                     fMutex;
 };
 
 } // namespace
 
-SkImageFilterCache* SkImageFilterCache::Create(size_t maxBytes) {
-    return new CacheImpl(maxBytes);
+sk_sp<SkImageFilterCache> SkImageFilterCache::Create(size_t maxBytes) {
+    return sk_make_sp<CacheImpl>(maxBytes);
 }
 
-SkImageFilterCache* SkImageFilterCache::Get() {
+sk_sp<SkImageFilterCache> SkImageFilterCache::Get() {
     static SkOnce once;
-    static SkImageFilterCache* cache;
+    static sk_sp<SkImageFilterCache> cache;
 
     once([]{ cache = SkImageFilterCache::Create(kDefaultCacheSize); });
     return cache;

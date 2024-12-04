@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -55,7 +55,7 @@ TestElfImageBuilder::~TestElfImageBuilder() = default;
 
 TestElfImageBuilder& TestElfImageBuilder::AddLoadSegment(Word flags,
                                                          size_t size) {
-  load_segments_.push_back({flags, size});
+  load_segments_.push_back({flags, static_cast<Word>(size)});
   return *this;
 }
 
@@ -64,23 +64,23 @@ TestElfImageBuilder& TestElfImageBuilder::AddNoteSegment(
     StringPiece name,
     span<const uint8_t> desc) {
   const size_t name_with_null_size = name.size() + 1;
-  std::vector<uint8_t> buffer(sizeof(Nhdr) +
-                                  bits::Align(name_with_null_size, 4) +
-                                  bits::Align(desc.size(), 4),
-                              '\0');
+  std::vector<uint8_t> buffer(
+      sizeof(Nhdr) + bits::AlignUp(name_with_null_size, size_t{4}) +
+          bits::AlignUp(desc.size(), size_t{4}),
+      '\0');
   uint8_t* loc = &buffer.front();
-  Nhdr* nhdr = reinterpret_cast<Nhdr*>(loc);
-  nhdr->n_namesz = name_with_null_size;
-  nhdr->n_descsz = desc.size();
-  nhdr->n_type = type;
-  loc += sizeof(Nhdr);
+  Nhdr nhdr;
+  nhdr.n_namesz = name_with_null_size;
+  nhdr.n_descsz = desc.size();
+  nhdr.n_type = type;
+  loc = AppendHdr(nhdr, loc);
 
   memcpy(loc, name.data(), name.size());
   *(loc + name.size()) = '\0';
-  loc += bits::Align(name_with_null_size, 4);
+  loc += bits::AlignUp(name_with_null_size, size_t{4});
 
   memcpy(loc, &desc.front(), desc.size());
-  loc += bits::Align(desc.size(), 4);
+  loc += bits::AlignUp(desc.size(), size_t{4});
 
   DCHECK_EQ(&buffer.front() + buffer.size(), loc);
 
@@ -135,35 +135,32 @@ TestElfImageBuilder::ImageMeasures TestElfImageBuilder::MeasureSizesAndOffsets()
   size_t offset = sizeof(Ehdr);
 
   // Add space for the program header table.
-  offset = bits::Align(offset, kPhdrAlign);
+  offset = bits::AlignUp(offset, kPhdrAlign);
   offset += sizeof(Phdr) * measures.phdrs_required;
 
   // Add space for the notes.
   measures.note_start = offset;
   if (!note_contents_.empty())
-    offset = bits::Align(offset, kNoteAlign);
+    offset = bits::AlignUp(offset, kNoteAlign);
   for (const std::vector<uint8_t>& contents : note_contents_)
     offset += contents.size();
   measures.note_size = offset - measures.note_start;
 
   // Add space for the load segments.
   for (auto it = load_segments_.begin(); it != load_segments_.end(); ++it) {
-    size_t size = 0;
     // The first non PT_PHDR program header is expected to be a PT_LOAD and
     // start at the already-aligned start of the ELF header.
     if (it == load_segments_.begin()) {
-      size = offset + it->size;
       measures.load_segment_start.push_back(0);
     } else {
-      offset = bits::Align(offset, kLoadAlign);
-      size = it->size;
+      offset = bits::AlignUp(offset, kLoadAlign);
       measures.load_segment_start.push_back(offset);
     }
     offset += it->size;
   }
 
   // Add space for the dynamic segment.
-  measures.dynamic_start = bits::Align(offset, kDynamicAlign);
+  measures.dynamic_start = bits::AlignUp(offset, kDynamicAlign);
   offset += sizeof(Dyn) * (soname_ ? 2 : 1);
   measures.strtab_start = offset;
 
@@ -188,14 +185,14 @@ TestElfImage TestElfImageBuilder::Build() {
   std::vector<uint8_t> buffer(load_bias + (kPageSize - 1) + measures.total_size,
                               '\0');
   uint8_t* const elf_start =
-      bits::Align(&buffer.front() + load_bias, kPageSize);
+      bits::AlignUp(&buffer.front() + load_bias, kPageSize);
   uint8_t* loc = elf_start;
 
   // Add the ELF header.
   loc = AppendHdr(CreateEhdr(measures.phdrs_required), loc);
 
   // Add the program header table.
-  loc = bits::Align(loc, kPhdrAlign);
+  loc = bits::AlignUp(loc, kPhdrAlign);
   loc = AppendHdr(
       CreatePhdr(PT_PHDR, PF_R, kPhdrAlign, loc - elf_start,
                  GetVirtualAddressForOffset(loc - elf_start, elf_start),
@@ -232,7 +229,7 @@ TestElfImage TestElfImageBuilder::Build() {
   }
 
   // Add the notes.
-  loc = bits::Align(loc, kNoteAlign);
+  loc = bits::AlignUp(loc, kNoteAlign);
   for (const std::vector<uint8_t>& contents : note_contents_) {
     memcpy(loc, &contents.front(), contents.size());
     loc += contents.size();
@@ -241,36 +238,36 @@ TestElfImage TestElfImageBuilder::Build() {
   // Add the load segments.
   for (auto it = load_segments_.begin(); it != load_segments_.end(); ++it) {
     if (it != load_segments_.begin())
-      loc = bits::Align(loc, kLoadAlign);
+      loc = bits::AlignUp(loc, kLoadAlign);
     memset(loc, 0, it->size);
     loc += it->size;
   }
 
-  loc = bits::Align(loc, kDynamicAlign);
+  loc = bits::AlignUp(loc, kDynamicAlign);
 
   // Add the soname state.
   if (soname_) {
     // Add a DYNAMIC section for the soname.
-    Dyn* soname_dyn = reinterpret_cast<Dyn*>(loc);
-    soname_dyn->d_tag = DT_SONAME;
-    soname_dyn->d_un.d_val = 1;  // One char into the string table.
-    loc += sizeof(Dyn);
+    Dyn soname_dyn;
+    soname_dyn.d_tag = DT_SONAME;
+    soname_dyn.d_un.d_val = 1;  // One char into the string table.
+    loc = AppendHdr(soname_dyn, loc);
   }
 
-  Dyn* strtab_dyn = reinterpret_cast<Dyn*>(loc);
-  strtab_dyn->d_tag = DT_STRTAB;
-#if defined(OS_FUCHSIA) || defined(OS_ANDROID)
+  Dyn strtab_dyn;
+  strtab_dyn.d_tag = DT_STRTAB;
+#if BUILDFLAG(IS_FUCHSIA) || BUILDFLAG(IS_ANDROID)
   // Fuchsia and Android do not alter the symtab pointer on ELF load -- it's
   // expected to remain a 'virutal address'.
-  strtab_dyn->d_un.d_ptr =
+  strtab_dyn.d_un.d_ptr =
       GetVirtualAddressForOffset(measures.strtab_start, elf_start);
 #else
   // Linux relocates this value on ELF load, so produce the pointer value after
   // relocation. That value will always be equal to the actual memory address.
-  strtab_dyn->d_un.d_ptr =
+  strtab_dyn.d_un.d_ptr =
       reinterpret_cast<uintptr_t>(elf_start + measures.strtab_start);
 #endif
-  loc += sizeof(Dyn);
+  loc = AppendHdr(strtab_dyn, loc);
 
   // Add a string table with one entry for the soname, if necessary.
   *loc++ = '\0';  // The first byte holds a null character.
@@ -290,8 +287,7 @@ TestElfImage TestElfImageBuilder::Build() {
 // static
 template <typename T>
 uint8_t* TestElfImageBuilder::AppendHdr(const T& hdr, uint8_t* loc) {
-  static_assert(std::is_trivially_copyable<T>::value,
-                "T should be a plain struct");
+  static_assert(std::is_trivially_copyable_v<T>, "T should be a plain struct");
   memcpy(loc, &hdr, sizeof(T));
   return loc + sizeof(T);
 }

@@ -1,20 +1,16 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/public/platform/web_font.h"
 
-#include "third_party/blink/public/platform/web_float_rect.h"
+#include "cc/paint/paint_flags.h"
 #include "third_party/blink/public/platform/web_font_description.h"
-#include "third_party/blink/public/platform/web_rect.h"
 #include "third_party/blink/public/platform/web_text_run.h"
 #include "third_party/blink/renderer/platform/fonts/font.h"
 #include "third_party/blink/renderer/platform/fonts/font_cache.h"
 #include "third_party/blink/renderer/platform/fonts/font_description.h"
 #include "third_party/blink/renderer/platform/fonts/text_run_paint_info.h"
-#include "third_party/blink/renderer/platform/graphics/graphics_context.h"
-#include "third_party/blink/renderer/platform/graphics/paint/drawing_recorder.h"
-#include "third_party/blink/renderer/platform/graphics/paint/paint_record_builder.h"
 #include "third_party/blink/renderer/platform/text/text_run.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 
@@ -24,12 +20,11 @@ WebFont* WebFont::Create(const WebFontDescription& description) {
   return new WebFont(description);
 }
 
-class WebFont::Impl final {
-  USING_FAST_MALLOC(WebFont::Impl);
-
+class WebFont::Impl final : public GarbageCollected<WebFont::Impl> {
  public:
-  explicit Impl(const WebFontDescription& description) : font_(description) {
-  }
+  explicit Impl(const WebFontDescription& description) : font_(description) {}
+
+  void Trace(Visitor* visitor) const { visitor->Trace(font_); }
 
   const Font& GetFont() const { return font_; }
 
@@ -38,7 +33,7 @@ class WebFont::Impl final {
 };
 
 WebFont::WebFont(const WebFontDescription& description)
-    : private_(std::make_unique<Impl>(description)) {}
+    : private_(MakeGarbageCollected<Impl>(description)) {}
 
 WebFont::~WebFont() = default;
 
@@ -86,19 +81,10 @@ void WebFont::DrawText(cc::PaintCanvas* canvas,
   TextRun text_run(run);
   TextRunPaintInfo run_info(text_run);
 
-  PaintRecordBuilder builder;
-  GraphicsContext& context = builder.Context();
-
-  {
-    DrawingRecorder recorder(context, builder, DisplayItem::kWebFont);
-    context.Save();
-    context.SetFillColor(color);
-    context.DrawText(private_->GetFont(), run_info, FloatPoint(left_baseline),
-                     kInvalidDOMNodeId);
-    context.Restore();
-  }
-
-  builder.EndRecording(*canvas);
+  cc::PaintFlags flags;
+  flags.setColor(color);
+  flags.setAntiAlias(true);
+  private_->GetFont().DrawText(canvas, run_info, left_baseline, flags);
 }
 
 int WebFont::CalculateWidth(const WebTextRun& run) const {
@@ -107,16 +93,16 @@ int WebFont::CalculateWidth(const WebTextRun& run) const {
 
 int WebFont::OffsetForPosition(const WebTextRun& run, float position) const {
   return private_->GetFont().OffsetForPosition(
-      run, position, IncludePartialGlyphs, DontBreakGlyphs);
+      run, position, kIncludePartialGlyphs, BreakGlyphsOption(false));
 }
 
-WebFloatRect WebFont::SelectionRectForText(const WebTextRun& run,
-                                           const gfx::PointF& left_baseline,
-                                           int height,
-                                           int from,
-                                           int to) const {
-  return private_->GetFont().SelectionRectForText(
-      run, FloatPoint(left_baseline), height, from, to);
+gfx::RectF WebFont::SelectionRectForText(const WebTextRun& run,
+                                         const gfx::PointF& left_baseline,
+                                         int height,
+                                         int from,
+                                         int to) const {
+  return private_->GetFont().SelectionRectForText(run, left_baseline, height,
+                                                  from, to);
 }
 
 }  // namespace blink

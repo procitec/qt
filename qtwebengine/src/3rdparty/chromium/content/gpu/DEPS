@@ -12,6 +12,7 @@ include_rules = [
   "+services/tracing/public/cpp",
   "+services/viz/privileged/mojom",
   "+services/viz/service",
+  "+services/webnn",
   "+sandbox",
   "+skia",
 ]
@@ -22,13 +23,4 @@ specific_include_rules = {
   "browser_exposed_gpu_interfaces\.cc": [
     "+ui/ozone/public/ozone_platform.h",
   ],
-  "gpu_child_thread\.cc": [
-    "+ui/ozone/public/ozone_platform.h",
-  ],
-  "gpu_main\.cc": [
-    "+ui/ozone/public/ozone_platform.h",
-  ],
-  "in_process_gpu_thread\.cc": [
-    "+ui/ozone/public/ozone_platform.h",
-  ]
 }

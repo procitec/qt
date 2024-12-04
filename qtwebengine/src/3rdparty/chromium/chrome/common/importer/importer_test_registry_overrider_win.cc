@@ -1,4 +1,4 @@
-// Copyright (c) 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,8 +10,8 @@
 #include <string>
 
 #include "base/environment.h"
-#include "base/guid.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/uuid.h"
 #include "base/win/registry.h"
 
 namespace {
@@ -25,12 +25,12 @@ const char kTestHKCUOverrideEnvironmentVariable[] =
 // Reads the environment variable set by a previous call to
 // SetTestRegistryOverride() into |key| if it exists and |key| is not NULL.
 // Returns true if the variable was successfully read.
-bool GetTestKeyFromEnvironment(base::string16* key) {
+bool GetTestKeyFromEnvironment(std::wstring* key) {
   std::unique_ptr<base::Environment> env(base::Environment::Create());
   std::string value;
   bool result = env->GetVar(kTestHKCUOverrideEnvironmentVariable, &value);
   if (result)
-    *key = base::UTF8ToUTF16(value);
+    *key = base::UTF8ToWide(value);
   return result;
 }
 
@@ -41,12 +41,13 @@ bool GetTestKeyFromEnvironment(base::string16* key) {
 
 ImporterTestRegistryOverrider::ImporterTestRegistryOverrider()
     : temporary_key_(kTestHKCUOverrideKeyPrefix +
-                     base::UTF8ToUTF16(base::GenerateGUID())) {
+                     base::UTF8ToWide(
+                         base::Uuid::GenerateRandomV4().AsLowercaseString())) {
   DCHECK(!GetTestKeyFromEnvironment(NULL));
 
   std::unique_ptr<base::Environment> env(base::Environment::Create());
   bool success = env->SetVar(kTestHKCUOverrideEnvironmentVariable,
-                             base::UTF16ToUTF8(temporary_key_));
+                             base::WideToUTF8(temporary_key_));
   DCHECK(success);
 }
 
@@ -62,9 +63,8 @@ ImporterTestRegistryOverrider::~ImporterTestRegistryOverrider() {
 }
 
 // static
-base::string16 ImporterTestRegistryOverrider::GetTestRegistryOverride() {
-  base::string16 key;
-  if (!GetTestKeyFromEnvironment(&key))
-    return base::string16();
+std::wstring ImporterTestRegistryOverrider::GetTestRegistryOverride() {
+  std::wstring key;
+  GetTestKeyFromEnvironment(&key);
   return key;
 }

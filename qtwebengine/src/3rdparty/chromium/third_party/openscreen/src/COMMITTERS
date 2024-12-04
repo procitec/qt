@@ -1,9 +1,11 @@
-# Primary reviewers
 mfoltz@chromium.org
 btolsch@chromium.org
-
-# Additional reviewers
 jopbha@chromium.org
-miu@chromium.org
-rwkeane@chromium.org
-yakimakha@chromium.org
+takumif@chromium.org
+
+# Add for LUCI configuration changes.
+cliffordcheng@chromium.org
+
+# Former COMMITTER
+# rwkeane@chromium.org
+

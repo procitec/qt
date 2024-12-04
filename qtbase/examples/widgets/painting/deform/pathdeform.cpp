@@ -1,52 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the demonstration applications of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:BSD$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** BSD License Usage
-** Alternatively, you may use this file under the terms of the BSD license
-** as follows:
-**
-** "Redistribution and use in source and binary forms, with or without
-** modification, are permitted provided that the following conditions are
-** met:
-**   * Redistributions of source code must retain the above copyright
-**     notice, this list of conditions and the following disclaimer.
-**   * Redistributions in binary form must reproduce the above copyright
-**     notice, this list of conditions and the following disclaimer in
-**     the documentation and/or other materials provided with the
-**     distribution.
-**   * Neither the name of The Qt Company Ltd nor the names of its
-**     contributors may be used to endorse or promote products derived
-**     from this software without specific prior written permission.
-**
-**
-** THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-** "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-** LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-** A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-** OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-** SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-** LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-** DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-** THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-** (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-** OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE."
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR BSD-3-Clause
 
 #include "pathdeform.h"
 
@@ -60,7 +13,6 @@
 #include <QPainter>
 #include <QSlider>
 #include <QLabel>
-#include <QDesktopWidget>
 #include <qmath.h>
 
 PathDeformControls::PathDeformControls(QWidget *parent,
@@ -109,13 +61,6 @@ void PathDeformControls::layoutForDesktop()
     QPushButton *showSourceButton = new QPushButton(mainGroup);
     showSourceButton->setText(tr("Show Source"));
 
-#if QT_CONFIG(opengl)
-    QPushButton *enableOpenGLButton = new QPushButton(mainGroup);
-    enableOpenGLButton->setText(tr("Use OpenGL"));
-    enableOpenGLButton->setCheckable(true);
-    enableOpenGLButton->setChecked(m_renderer->usesOpenGL());
-#endif
-
     QPushButton *whatsThisButton = new QPushButton(mainGroup);
     whatsThisButton->setText(tr("What's This?"));
     whatsThisButton->setCheckable(true);
@@ -130,9 +75,6 @@ void PathDeformControls::layoutForDesktop()
     mainGroupLayout->addWidget(textGroup);
     mainGroupLayout->addWidget(animateButton);
     mainGroupLayout->addStretch(1);
-#if QT_CONFIG(opengl)
-    mainGroupLayout->addWidget(enableOpenGLButton);
-#endif
     mainGroupLayout->addWidget(showSourceButton);
     mainGroupLayout->addWidget(whatsThisButton);
 
@@ -156,9 +98,6 @@ void PathDeformControls::layoutForDesktop()
     connect(deformSlider, &QAbstractSlider::valueChanged, m_renderer, &PathDeformRenderer::setIntensity);
     connect(fontSizeSlider, &QAbstractSlider::valueChanged, m_renderer, &PathDeformRenderer::setFontSize);
     connect(animateButton, &QAbstractButton::clicked, m_renderer, &PathDeformRenderer::setAnimated);
-#if QT_CONFIG(opengl)
-    connect(enableOpenGLButton, &QAbstractButton::clicked, m_renderer, &ArthurFrame::enableOpenGL);
-#endif
 
     connect(textInput, &QLineEdit::textChanged, m_renderer, &PathDeformRenderer::setText);
     connect(m_renderer, &ArthurFrame::descriptionEnabledChanged,
@@ -199,13 +138,6 @@ void PathDeformControls::layoutForSmallScreen()
     QPushButton *animateButton = new QPushButton(tr("Animated"), mainGroup);
     animateButton->setCheckable(true);
 
-#if QT_CONFIG(opengl)
-    QPushButton *enableOpenGLButton = new QPushButton(mainGroup);
-    enableOpenGLButton->setText(tr("Use OpenGL"));
-    enableOpenGLButton->setCheckable(mainGroup);
-    enableOpenGLButton->setChecked(m_renderer->usesOpenGL());
-#endif
-
     QPushButton *quitButton = new QPushButton(tr("Quit"), mainGroup);
     QPushButton *okButton = new QPushButton(tr("OK"), mainGroup);
 
@@ -219,9 +151,6 @@ void PathDeformControls::layoutForSmallScreen()
     mainGroupLayout->addWidget(fontSizeLabel, 2, 0, Qt::AlignRight);
     mainGroupLayout->addWidget(fontSizeSlider, 2, 1);
     mainGroupLayout->addWidget(animateButton, 3,0, 1,2);
-#if QT_CONFIG(opengl)
-    mainGroupLayout->addWidget(enableOpenGLButton, 4,0, 1,2);
-#endif
 
     QVBoxLayout *mainLayout = new QVBoxLayout(this);
     mainLayout->addWidget(mainGroup);
@@ -235,10 +164,6 @@ void PathDeformControls::layoutForSmallScreen()
     connect(deformSlider, &QAbstractSlider::valueChanged, m_renderer, &PathDeformRenderer::setIntensity);
     connect(fontSizeSlider, &QAbstractSlider::valueChanged, m_renderer, &PathDeformRenderer::setFontSize);
     connect(animateButton, &QAbstractButton::clicked, m_renderer, &PathDeformRenderer::setAnimated);
-#if QT_CONFIG(opengl)
-    connect(enableOpenGLButton, &QAbstractButton::clicked, m_renderer, &ArthurFrame::enableOpenGL);
-#endif
-
 
     animateButton->animateClick();
     deformSlider->setValue(80);
@@ -428,7 +353,6 @@ void PathDeformRenderer::setAnimated(bool animated)
 
 void PathDeformRenderer::timerEvent(QTimerEvent *e)
 {
-
     if (e->timerId() == m_repaintTimer.timerId()) {
 
         if (QLineF(QPointF(0,0), m_direction).length() > 1)
@@ -462,27 +386,14 @@ void PathDeformRenderer::timerEvent(QTimerEvent *e)
             m_pos.setY(height() - m_radius);
         }
 
-#if QT_CONFIG(opengl)
-        if (usesOpenGL()) {
-            update();
-        } else
-#endif
-        {
-            QRect rectAfter = circle_bounds(m_pos, m_radius, m_fontSize);
-            update(rectAfter | rectBefore);
-        }
+        QRect rectAfter = circle_bounds(m_pos, m_radius, m_fontSize);
+        update(rectAfter | rectBefore);
     }
-//     else if (e->timerId() == m_fpsTimer.timerId()) {
-//         printf("fps: %d\n", m_fpsCounter);
-//         emit frameRate(m_fpsCounter);
-//         m_fpsCounter = 0;
-
-//     }
 }
 
 void PathDeformRenderer::mousePressEvent(QMouseEvent *e)
 {
-    if (m_show_doc) {
+    if (m_showDoc) {
         setDescriptionEnabled(false);
         return;
     }
@@ -490,10 +401,10 @@ void PathDeformRenderer::mousePressEvent(QMouseEvent *e)
 
     m_repaintTimer.stop();
     m_offset = QPointF();
-    if (QLineF(m_pos, e->pos()).length() <= m_radius)
-        m_offset = m_pos - e->pos();
+    if (QLineF(m_pos, e->position().toPoint()).length() <= m_radius)
+        m_offset = m_pos - e->position().toPoint();
 
-    m_mousePress = e->pos();
+    m_mousePress = e->position().toPoint();
 
     // If we're not running in small screen mode, always assume we're dragging
     m_mouseDrag = !m_smallScreen;
@@ -514,27 +425,20 @@ void PathDeformRenderer::mouseReleaseEvent(QMouseEvent *e)
 
 void PathDeformRenderer::mouseMoveEvent(QMouseEvent *e)
 {
-    if (!m_mouseDrag && (QLineF(m_mousePress, e->pos()).length() > 25.0) )
+    if (!m_mouseDrag && (QLineF(m_mousePress, e->position().toPoint()).length() > 25.0) )
         m_mouseDrag = true;
 
     if (m_mouseDrag) {
         QRect rectBefore = circle_bounds(m_pos, m_radius, m_fontSize);
         if (e->type() == QEvent::MouseMove) {
-            QLineF line(m_pos, e->pos() + m_offset);
+            QLineF line(m_pos, e->position().toPoint() + m_offset);
             line.setLength(line.length() * .1);
             QPointF dir(line.dx(), line.dy());
             m_direction = (m_direction + dir) / 2;
         }
-        m_pos = e->pos() + m_offset;
-#if QT_CONFIG(opengl)
-        if (usesOpenGL()) {
-            update();
-        } else
-#endif
-        {
-            QRect rectAfter = circle_bounds(m_pos, m_radius, m_fontSize);
-            update(rectBefore | rectAfter);
-        }
+        m_pos = e->position().toPoint() + m_offset;
+        QRect rectAfter = circle_bounds(m_pos, m_radius, m_fontSize);
+        update(rectBefore | rectAfter);
     }
 }
 
@@ -618,27 +522,13 @@ void PathDeformRenderer::setRadius(int radius)
     qreal max = qMax(m_radius, (qreal)radius);
     m_radius = radius;
     generateLensPixmap();
-    if (!m_animated || m_radius < max) {
-#if QT_CONFIG(opengl)
-        if (usesOpenGL()){
-            update();
-            return;
-        }
-#endif
+    if (!m_animated || m_radius < max)
         update(circle_bounds(m_pos, max, m_fontSize));
-    }
 }
 
 void PathDeformRenderer::setIntensity(int intensity)
 {
     m_intensity = intensity;
-    if (!m_animated) {
-#if QT_CONFIG(opengl)
-        if (usesOpenGL()) {
-            update();
-            return;
-        }
-#endif
+    if (!m_animated)
         update(circle_bounds(m_pos, m_radius, m_fontSize));
-    }
 }

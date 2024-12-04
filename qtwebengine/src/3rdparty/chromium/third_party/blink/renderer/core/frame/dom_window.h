@@ -1,32 +1,41 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_FRAME_DOM_WINDOW_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_FRAME_DOM_WINDOW_H_
 
-#include "mojo/public/cpp/bindings/remote.h"
+#include "base/memory/scoped_refptr.h"
 #include "services/network/public/mojom/cross_origin_opener_policy.mojom-blink.h"
+#include "third_party/blink/public/common/messaging/message_port_channel.h"
+#include "third_party/blink/public/common/tokens/tokens.h"
+#include "third_party/blink/public/mojom/messaging/delegated_capability.mojom-blink.h"
+#include "third_party/blink/public/mojom/use_counter/metrics/web_feature.mojom-blink-forward.h"
 #include "third_party/blink/renderer/bindings/core/v8/serialization/transferables.h"
 #include "third_party/blink/renderer/core/core_export.h"
-#include "third_party/blink/renderer/core/dom/events/event_target.h"
 #include "third_party/blink/renderer/core/frame/frame.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/core/frame/window_properties.h"
+#include "third_party/blink/renderer/platform/heap/collection_support/heap_vector.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
+#include "third_party/blink/renderer/platform/mojo/heap_mojo_remote.h"
 #include "third_party/blink/renderer/platform/wtf/assertions.h"
-#include "third_party/blink/renderer/platform/wtf/forward.h"
-#include "third_party/blink/renderer/platform/wtf/vector.h"
 
 namespace blink {
 
+class ContextLifecycleNotifier;
+class DOMWrapperWorld;
 class InputDeviceCapabilitiesConstants;
 class LocalDOMWindow;
 class Location;
-class MessageEvent;
 class ScriptValue;
 class SecurityOrigin;
 class SerializedScriptValue;
+class UserActivation;
 class WindowPostMessageOptions;
 class WindowProxyManager;
+struct WrapperTypeInfo;
+
+struct BlinkTransferableMessage;
 
 // DOMWindow is an abstract class of Window interface implementations.
 // We have two derived implementation classes;  LocalDOMWindow and
@@ -35,7 +44,7 @@ class WindowProxyManager;
 // TODO(tkent): Rename DOMWindow to Window. The class was named as 'DOMWindow'
 // because WebKit already had KJS::Window.  We have no reasons to avoid
 // blink::Window now.
-class CORE_EXPORT DOMWindow : public EventTargetWithInlineData {
+class CORE_EXPORT DOMWindow : public WindowProperties {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -56,22 +65,25 @@ class CORE_EXPORT DOMWindow : public EventTargetWithInlineData {
     //   frame.
     SECURITY_DCHECK(!frame_ ||
                     (frame_->DomWindow() == this && frame_->GetPage()));
-    return frame_;
+    return frame_.Get();
   }
 
   // GarbageCollected overrides:
   void Trace(Visitor*) const override;
 
   virtual bool IsLocalDOMWindow() const = 0;
-  virtual bool IsRemoteDOMWindow() const = 0;
 
   // ScriptWrappable overrides:
-  v8::Local<v8::Value> Wrap(v8::Isolate*,
-                            v8::Local<v8::Object> creation_context) final;
+  v8::Local<v8::Value> Wrap(ScriptState*) final;
   v8::Local<v8::Object> AssociateWithWrapper(
       v8::Isolate*,
       const WrapperTypeInfo*,
       v8::Local<v8::Object> wrapper) final;
+  v8::Local<v8::Object> AssociateWithWrapper(
+      v8::Isolate* isolate,
+      scoped_refptr<DOMWrapperWorld> world,
+      const WrapperTypeInfo* wrapper_type_info,
+      v8::Local<v8::Object> wrapper);
 
   // EventTarget overrides:
   const AtomicString& InterfaceName() const override;
@@ -85,15 +97,15 @@ class CORE_EXPORT DOMWindow : public EventTargetWithInlineData {
 
   // Self-referential attributes
   DOMWindow* self() const;
-  DOMWindow* window() const { return self(); }
-  DOMWindow* frames() const { return self(); }
+  DOMWindow* window() const;
+  DOMWindow* frames() const;
 
   DOMWindow* opener() const;
   DOMWindow* parent() const;
   DOMWindow* top() const;
 
   void focus(v8::Isolate*);
-  virtual void blur() = 0;
+  void blur();
   void close(v8::Isolate*);
   void Close(LocalDOMWindow* incumbent_window);
 
@@ -110,6 +122,10 @@ class CORE_EXPORT DOMWindow : public EventTargetWithInlineData {
 
   // Indexed properties
   DOMWindow* AnonymousIndexedGetter(uint32_t index);
+
+  // Returns the opener and collects cross-origin access metrics.
+  ScriptValue openerForBindings(v8::Isolate*) const;
+  void setOpenerForBindings(v8::Isolate*, ScriptValue, ExceptionState&);
 
   String SanitizedCrossDomainAccessErrorMessage(
       const LocalDOMWindow* accessing_window,
@@ -137,12 +153,10 @@ class CORE_EXPORT DOMWindow : public EventTargetWithInlineData {
   // Check accesses from |accessing_frame| and every same-origin iframe toward
   // this window. A report is sent to |reporter| when this happens.
   void InstallCoopAccessMonitor(
-      network::mojom::blink::CoopAccessReportType report_type,
       LocalFrame* accessing_frame,
-      mojo::PendingRemote<
-          network::mojom::blink::CrossOriginOpenerPolicyReporter> reporter,
-      bool endpoint_defined,
-      const WTF::String& reported_window_url);
+      network::mojom::blink::CrossOriginOpenerPolicyReporterParamsPtr
+          coop_reporter_params,
+      bool is_in_same_virtual_coop_related_group);
   // Whenever we detect that the enforcement of a report-only COOP policy would
   // have resulted in preventing access to this window, a report is potentially
   // sent when calling this function.
@@ -151,12 +165,35 @@ class CORE_EXPORT DOMWindow : public EventTargetWithInlineData {
   // marked as "CrossOrigin" in the window.idl.
   void ReportCoopAccess(const char* property_name);
 
+  // Records metrics for cross-origin access to the WindowProxy properties,
+  void RecordWindowProxyAccessMetrics(
+      mojom::blink::WebFeature property_access,
+      mojom::blink::WebFeature property_access_from_other_page) const;
+
+  // Returns whether access should be limited by Cross-Origin-Opener-Policy:
+  // restrict-properties. This is the case for pages in the same
+  // CoopRelatedGroup that can reach each other WindowProxies but do not belong
+  // to the same browsing context group. `isolate` represents the isolate in
+  // which the Window access is taking place.
+  bool IsAccessBlockedByCoopRestrictProperties(v8::Isolate* isolate) const;
+
  protected:
   explicit DOMWindow(Frame&);
 
-  virtual void SchedulePostMessage(MessageEvent*,
-                                   scoped_refptr<const SecurityOrigin> target,
-                                   LocalDOMWindow* source) = 0;
+  struct PostedMessage final : GarbageCollected<PostedMessage> {
+    void Trace(Visitor* visitor) const;
+    BlinkTransferableMessage ToBlinkTransferableMessage() &&;
+
+    scoped_refptr<const SecurityOrigin> source_origin;
+    scoped_refptr<const SecurityOrigin> target_origin;
+    scoped_refptr<SerializedScriptValue> data;
+    Vector<MessagePortChannel> channels;
+    Member<LocalDOMWindow> source;
+    Member<UserActivation> user_activation;
+    mojom::blink::DelegatedCapability delegated_capability =
+        mojom::blink::DelegatedCapability::kNone;
+  };
+  virtual void SchedulePostMessage(PostedMessage* message) = 0;
 
   void DisconnectFromFrame() { frame_ = nullptr; }
 
@@ -170,7 +207,7 @@ class CORE_EXPORT DOMWindow : public EventTargetWithInlineData {
   // Removed the CoopAccessMonitor with the given |accessing_main_frame| from
   // the |coop_access_monitor| list. This is called when the COOP reporter is
   // gone or a more recent CoopAccessMonitor is being added.
-  void DisconnectCoopAccessMonitor(base::UnguessableToken accessing_main_frame);
+  void DisconnectCoopAccessMonitor(const LocalFrameToken& accessing_main_frame);
 
   Member<Frame> frame_;
   // Unlike |frame_|, |window_proxy_manager_| is available even after the
@@ -190,15 +227,20 @@ class CORE_EXPORT DOMWindow : public EventTargetWithInlineData {
   // Cross-Origin-Opener-Policy (COOP):
   // Check accesses made toward this window from |accessing_main_frame|. If this
   // happens a report will sent to |reporter|.
-  struct CoopAccessMonitor {
+  struct CoopAccessMonitor : public GarbageCollected<CoopAccessMonitor> {
+    explicit CoopAccessMonitor(ContextLifecycleNotifier* context)
+        : reporter(context) {}
+    void Trace(Visitor* visitor) const { visitor->Trace(reporter); }
+
     network::mojom::blink::CoopAccessReportType report_type;
-    base::UnguessableToken accessing_main_frame;
-    mojo::Remote<network::mojom::blink::CrossOriginOpenerPolicyReporter>
+    blink::LocalFrameToken accessing_main_frame;
+    HeapMojoRemote<network::mojom::blink::CrossOriginOpenerPolicyReporter>
         reporter;
     bool endpoint_defined;
     WTF::String reported_window_url;
+    bool is_in_same_virtual_coop_related_group = false;
   };
-  WTF::Vector<CoopAccessMonitor> coop_access_monitor_;
+  HeapVector<Member<CoopAccessMonitor>> coop_access_monitor_;
 };
 
 }  // namespace blink

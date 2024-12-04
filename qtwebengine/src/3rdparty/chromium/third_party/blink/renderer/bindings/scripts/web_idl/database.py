@@ -1,8 +1,9 @@
-# Copyright 2019 The Chromium Authors. All rights reserved.
+# Copyright 2019 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
 from . import file_io
+from .observable_array import ObservableArray
 from .typedef import Typedef
 from .union import Union
 from .user_defined_type import UserDefinedType
@@ -25,6 +26,7 @@ class DatabaseBody(object):
     """
 
     class Kind(object):
+        ASYNC_ITERATOR = 'async iterator'
         CALLBACK_FUNCTION = 'callback function'
         CALLBACK_INTERFACE = 'callback interface'
         DICTIONARY = 'dictionary'
@@ -32,10 +34,13 @@ class DatabaseBody(object):
         INTERFACE = 'interface'
         INTERFACE_MIXIN = 'interface mixin'
         NAMESPACE = 'namespace'
+        OBSERVABLE_ARRAY = 'observable array'
+        SYNC_ITERATOR = 'sync iterator'
         TYPEDEF = 'typedef'
         UNION = 'union'
 
         _ALL_ENTRIES = (
+            ASYNC_ITERATOR,
             CALLBACK_FUNCTION,
             CALLBACK_INTERFACE,
             DICTIONARY,
@@ -43,6 +48,8 @@ class DatabaseBody(object):
             INTERFACE,
             INTERFACE_MIXIN,
             NAMESPACE,
+            OBSERVABLE_ARRAY,
+            SYNC_ITERATOR,
             TYPEDEF,
             UNION,
         )
@@ -57,7 +64,8 @@ class DatabaseBody(object):
             self._defs[kind] = {}
 
     def register(self, kind, user_defined_type):
-        assert isinstance(user_defined_type, (Typedef, Union, UserDefinedType))
+        assert isinstance(user_defined_type,
+                          (ObservableArray, Typedef, Union, UserDefinedType))
         assert kind in DatabaseBody.Kind.values()
         try:
             self.find_by_identifier(user_defined_type.identifier)
@@ -107,6 +115,11 @@ class Database(object):
         return self._impl.find_by_identifier(identifier)
 
     @property
+    def async_iterators(self):
+        """Returns all async iterators."""
+        return self._view_by_kind(Database._Kind.ASYNC_ITERATOR)
+
+    @property
     def callback_functions(self):
         """Returns all callback functions."""
         return self._view_by_kind(Database._Kind.CALLBACK_FUNCTION)
@@ -146,6 +159,16 @@ class Database(object):
         return self._view_by_kind(Database._Kind.NAMESPACE)
 
     @property
+    def observable_arrays(self):
+        """Returns all observable arrays."""
+        return self._view_by_kind(Database._Kind.OBSERVABLE_ARRAY)
+
+    @property
+    def sync_iterators(self):
+        """Returns all sync iterators."""
+        return self._view_by_kind(Database._Kind.SYNC_ITERATOR)
+
+    @property
     def typedefs(self):
         """Returns all typedef definitions."""
         return self._view_by_kind(Database._Kind.TYPEDEF)
@@ -156,4 +179,4 @@ class Database(object):
         return self._view_by_kind(Database._Kind.UNION)
 
     def _view_by_kind(self, kind):
-        return self._impl.find_by_kind(kind).values()
+        return list(self._impl.find_by_kind(kind).values())

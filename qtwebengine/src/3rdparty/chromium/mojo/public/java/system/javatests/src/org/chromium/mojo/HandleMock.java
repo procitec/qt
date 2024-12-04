@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -20,11 +20,13 @@ import org.chromium.mojo.system.impl.CoreImpl;
 import java.nio.ByteBuffer;
 import java.util.List;
 
-/**
- * A mock handle, that does nothing.
- */
-public class HandleMock implements UntypedHandle, MessagePipeHandle, ProducerHandle, ConsumerHandle,
-                                   SharedBufferHandle {
+/** A mock handle, that does nothing. */
+public class HandleMock
+        implements UntypedHandle,
+                MessagePipeHandle,
+                ProducerHandle,
+                ConsumerHandle,
+                SharedBufferHandle {
     /**
      * @see Handle#close()
      */
@@ -77,7 +79,7 @@ public class HandleMock implements UntypedHandle, MessagePipeHandle, ProducerHan
      * @see Handle#releaseNativeHandle()
      */
     @Override
-    public int releaseNativeHandle() {
+    public long releaseNativeHandle() {
         return 0;
     }
 

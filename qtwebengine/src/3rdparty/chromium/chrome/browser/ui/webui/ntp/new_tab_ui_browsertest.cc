@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -19,6 +19,7 @@
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_navigation_observer.h"
+#include "third_party/blink/public/common/chrome_debug_urls.h"
 #include "url/gurl.h"
 
 using content::OpenURLParams;
@@ -33,8 +34,10 @@ bool HandleMessage(int severity,
                    int line,
                    size_t message_start,
                    const std::string& str) {
-  if (severity == logging::LOG_ERROR && file && file == std::string("CONSOLE"))
+  if (severity == logging::LOGGING_ERROR && file &&
+      file == std::string("CONSOLE")) {
     had_console_errors = true;
+  }
   return false;
 }
 
@@ -46,7 +49,7 @@ class NewTabUIBrowserTest : public InProcessBrowserTest {
     logging::SetLogMessageHandler(&HandleMessage);
   }
 
-  ~NewTabUIBrowserTest() override { logging::SetLogMessageHandler(NULL); }
+  ~NewTabUIBrowserTest() override { logging::SetLogMessageHandler(nullptr); }
 
   void TearDown() override {
     InProcessBrowserTest::TearDown();
@@ -56,8 +59,8 @@ class NewTabUIBrowserTest : public InProcessBrowserTest {
 
 // Navigate to incognito NTP. Fails if there are console errors.
 IN_PROC_BROWSER_TEST_F(NewTabUIBrowserTest, ShowIncognito) {
-  ui_test_utils::NavigateToURL(CreateIncognitoBrowser(),
-                               GURL(chrome::kChromeUINewTabURL));
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(CreateIncognitoBrowser(),
+                                           GURL(chrome::kChromeUINewTabURL)));
 }
 
 class NewTabUIProcessPerTabTest : public NewTabUIBrowserTest {
@@ -75,11 +78,12 @@ class NewTabUIProcessPerTabTest : public NewTabUIBrowserTest {
 // If this flakes, use http://crbug.com/87200
 IN_PROC_BROWSER_TEST_F(NewTabUIProcessPerTabTest, NavBeforeNTPCommits) {
   // Bring up a new tab page.
-  ui_test_utils::NavigateToURL(browser(), GURL(chrome::kChromeUINewTabURL));
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(),
+                                           GURL(chrome::kChromeUINewTabURL)));
 
   // Navigate to chrome://hang/ to stall the process.
   ui_test_utils::NavigateToURLWithDisposition(
-      browser(), GURL(content::kChromeUIHangURL),
+      browser(), GURL(blink::kChromeUIHangURL),
       WindowOpenDisposition::CURRENT_TAB, 0);
 
   // Visit a normal URL in another NTP that hasn't committed.

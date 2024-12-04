@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,11 +9,18 @@
 #include <cmath>
 #include <memory>
 
-#include "base/stl_util.h"
+#include "base/memory/raw_ptr.h"
 #include "base/strings/stringprintf.h"
 #include "content/common/android/gin_java_bridge_value.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "v8/include/v8.h"
+#include "v8/include/v8-array-buffer.h"
+#include "v8/include/v8-context.h"
+#include "v8/include/v8-isolate.h"
+#include "v8/include/v8-microtask-queue.h"
+#include "v8/include/v8-persistent-handle.h"
+#include "v8/include/v8-primitive.h"
+#include "v8/include/v8-script.h"
+#include "v8/include/v8-template.h"
 
 namespace content {
 
@@ -32,7 +39,7 @@ class GinJavaBridgeValueConverterTest : public testing::Test {
 
   void TearDown() override { context_.Reset(); }
 
-  v8::Isolate* isolate_;
+  raw_ptr<v8::Isolate, ExperimentalRenderer> isolate_;
 
   // Context for the JavaScript in the test.
   v8::Persistent<v8::Context> context_;
@@ -101,12 +108,13 @@ TEST_F(GinJavaBridgeValueConverterTest, TypedArrays) {
       v8::Local<v8::Context>::New(isolate_, context_);
   v8::Context::Scope context_scope(context);
   v8::MicrotasksScope microtasks_scope(
-      isolate_, v8::MicrotasksScope::kDoNotRunMicrotasks);
+      context, v8::MicrotasksScope::kDoNotRunMicrotasks);
 
   std::unique_ptr<GinJavaBridgeValueConverter> converter(
       new GinJavaBridgeValueConverter());
 
-  const char* source_template = "(function() {"
+  static constexpr char kSourceTemplate[] =
+      "(function() {"
       "var array_buffer = new ArrayBuffer(%s);"
       "var array_view = new %s(array_buffer);"
       "array_view[0] = 42;"
@@ -118,13 +126,13 @@ TEST_F(GinJavaBridgeValueConverterTest, TypedArrays) {
     "4", "Int32Array", "4", "Uint32Array",
     "4", "Float32Array", "8", "Float64Array"
   };
-  for (size_t i = 0; i < base::size(array_types); i += 2) {
+  for (size_t i = 0; i < std::size(array_types); i += 2) {
     const char* typed_array_type = array_types[i + 1];
     v8::Local<v8::Script> script(
         v8::Script::Compile(
             context,
             v8::String::NewFromUtf8(
-                isolate_, base::StringPrintf(source_template, array_types[i],
+                isolate_, base::StringPrintf(kSourceTemplate, array_types[i],
                                              typed_array_type)
                               .c_str())
                 .ToLocalChecked())
@@ -133,13 +141,22 @@ TEST_F(GinJavaBridgeValueConverterTest, TypedArrays) {
     std::unique_ptr<base::Value> list_value(
         converter->FromV8Value(v8_typed_array, context));
     ASSERT_TRUE(list_value.get()) << typed_array_type;
-    EXPECT_TRUE(list_value->is_list()) << typed_array_type;
-    base::ListValue* list;
-    ASSERT_TRUE(list_value->GetAsList(&list)) << typed_array_type;
-    EXPECT_EQ(1u, list->GetSize()) << typed_array_type;
-    double first_element;
-    ASSERT_TRUE(list->GetDouble(0, &first_element)) << typed_array_type;
-    EXPECT_EQ(42.0, first_element) << typed_array_type;
+    ASSERT_TRUE(list_value->is_list()) << typed_array_type;
+    EXPECT_EQ(1u, list_value->GetList().size()) << typed_array_type;
+
+    const auto value = list_value->GetList().cbegin();
+    if (value->type() == base::Value::Type::BINARY) {
+      std::unique_ptr<const GinJavaBridgeValue> gin_value(
+          GinJavaBridgeValue::FromValue(&*value));
+      EXPECT_EQ(gin_value->GetType(), GinJavaBridgeValue::TYPE_UINT32);
+      uint32_t first_element = 0;
+      ASSERT_TRUE(gin_value->GetAsUInt32(&first_element));
+      EXPECT_EQ(42u, first_element) << typed_array_type;
+
+    } else {
+      ASSERT_TRUE(value->is_double() || value->is_int()) << typed_array_type;
+      EXPECT_EQ(42.0, value->GetDouble()) << typed_array_type;
+    }
   }
 }
 

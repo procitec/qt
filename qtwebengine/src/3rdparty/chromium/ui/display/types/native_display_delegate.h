@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,8 +9,7 @@
 
 #include <vector>
 
-#include "base/callback.h"
-#include "base/containers/flat_map.h"
+#include "base/functional/callback.h"
 #include "ui/display/types/display_configuration_params.h"
 #include "ui/display/types/display_constants.h"
 #include "ui/display/types/display_types_export.h"
@@ -18,19 +17,23 @@
 
 namespace display {
 class DisplaySnapshot;
+class GammaCurve;
 class NativeDisplayObserver;
 
-struct GammaRampRGBEntry;
+struct ColorCalibration;
+struct ColorTemperatureAdjustment;
 struct DisplayConfigurationParams;
+struct GammaAdjustment;
 
-using GetDisplaysCallback =
-    base::OnceCallback<void(const std::vector<DisplaySnapshot*>&)>;
-using ConfigureCallback =
-    base::OnceCallback<void(const base::flat_map<int64_t, bool>&)>;
+using GetDisplaysCallback = base::OnceCallback<void(
+    const std::vector<raw_ptr<DisplaySnapshot, VectorExperimental>>&)>;
+using ConfigureCallback = base::OnceCallback<void(bool)>;
+using SetHdcpKeyPropCallback = base::OnceCallback<void(bool)>;
 using GetHDCPStateCallback =
     base::OnceCallback<void(bool, HDCPState, ContentProtectionMethod)>;
 using SetHDCPStateCallback = base::OnceCallback<void(bool)>;
 using DisplayControlCallback = base::OnceCallback<void(bool)>;
+using SetPrivacyScreenCallback = base::OnceCallback<void(bool)>;
 
 // Interface for classes that perform display configuration actions on behalf
 // of DisplayConfigurator.
@@ -54,13 +57,19 @@ class DISPLAY_TYPES_EXPORT NativeDisplayDelegate {
   // Note the query operation may be expensive and take over 60 milliseconds.
   virtual void GetDisplays(GetDisplaysCallback callback) = 0;
 
-  // Configures the display represented by |output| to use |mode| and positions
-  // the display to |origin| in the framebuffer. |mode| can be NULL, which
-  // represents disabling the display. The callback will return the status of
-  // the operation.
+  // Configures the displays represented by |config_requests| to use |mode| and
+  // positions the display to |origin| in the framebuffer. The callback will
+  // return the status of the operation. Adjusts the behavior of the commit
+  // according to |modeset_flag| (see display::ModesetFlag).
   virtual void Configure(
       const std::vector<display::DisplayConfigurationParams>& config_requests,
-      ConfigureCallback callback) = 0;
+      ConfigureCallback callback,
+      uint32_t modeset_flag) = 0;
+
+  // Sets the HDCP Key Property.
+  virtual void SetHdcpKeyProp(int64_t display_id,
+                              const std::string& key,
+                              SetHdcpKeyPropCallback callback) = 0;
 
   // Gets HDCP state of output.
   virtual void GetHDCPState(const DisplaySnapshot& output,
@@ -72,6 +81,20 @@ class DISPLAY_TYPES_EXPORT NativeDisplayDelegate {
                             ContentProtectionMethod protection_method,
                             SetHDCPStateCallback callback) = 0;
 
+  // Sets the color temperature adjustment (e.g, for night light) for the
+  // specified display.
+  virtual void SetColorTemperatureAdjustment(
+      int64_t display_id,
+      const ColorTemperatureAdjustment& cta) = 0;
+
+  // Sets the color calibration for the specified display.
+  virtual void SetColorCalibration(int64_t display_id,
+                                   const ColorCalibration& calibration) = 0;
+
+  // Sets the display profile space gamma adjustment for the specified display.
+  virtual void SetGammaAdjustment(int64_t display_id,
+                                  const GammaAdjustment& gamma) = 0;
+
   // Sets the given 3x3 |color_matrix| on the display with |display_id|.
   // This doesn't affect gamma or degamma. It returns true the color matrix was
   // sent to the GPU process successfully.
@@ -81,13 +104,14 @@ class DISPLAY_TYPES_EXPORT NativeDisplayDelegate {
   // Sets the given |gamma_lut| and |degamma_lut| on the display with
   // |display_id|. Returns true if the given tables were sent to the GPU process
   // successfully.
-  virtual bool SetGammaCorrection(
-      int64_t display_id,
-      const std::vector<GammaRampRGBEntry>& degamma_lut,
-      const std::vector<GammaRampRGBEntry>& gamma_lut) = 0;
+  virtual bool SetGammaCorrection(int64_t display_id,
+                                  const GammaCurve& degamma,
+                                  const GammaCurve& gamma) = 0;
 
   // Sets the privacy screen state on the display with |display_id|.
-  virtual void SetPrivacyScreen(int64_t display_id, bool enabled) = 0;
+  virtual void SetPrivacyScreen(int64_t display_id,
+                                bool enabled,
+                                SetPrivacyScreenCallback callback) = 0;
 
   virtual void AddObserver(NativeDisplayObserver* observer) = 0;
 

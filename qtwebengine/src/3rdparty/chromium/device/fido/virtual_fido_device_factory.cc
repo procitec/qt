@@ -1,61 +1,14 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "device/fido/virtual_fido_device_factory.h"
 
-#include <utility>
+#include "device/fido/cable/cable_discovery_data.h"
+#include "device/fido/fido_transport_protocol.h"
+#include "device/fido/virtual_fido_device_discovery.h"
 
-#include "base/bind.h"
-#include "base/bind_helpers.h"
-#include "base/location.h"
-#include "base/macros.h"
-#include "base/memory/weak_ptr.h"
-#include "base/threading/sequenced_task_runner_handle.h"
-#include "device/fido/virtual_ctap2_device.h"
-#include "device/fido/virtual_u2f_device.h"
-
-namespace device {
-namespace test {
-
-// A FidoDeviceDiscovery that always vends a single |VirtualFidoDevice|.
-class VirtualFidoDeviceDiscovery
-    : public FidoDeviceDiscovery,
-      public base::SupportsWeakPtr<VirtualFidoDeviceDiscovery> {
- public:
-  explicit VirtualFidoDeviceDiscovery(
-      FidoTransportProtocol transport,
-      scoped_refptr<VirtualFidoDevice::State> state,
-      ProtocolVersion supported_protocol,
-      const VirtualCtap2Device::Config& ctap2_config)
-      : FidoDeviceDiscovery(transport),
-        state_(std::move(state)),
-        supported_protocol_(supported_protocol),
-        ctap2_config_(ctap2_config) {}
-  ~VirtualFidoDeviceDiscovery() override = default;
-
- protected:
-  void StartInternal() override {
-    std::unique_ptr<FidoDevice> device;
-    if (supported_protocol_ == ProtocolVersion::kCtap2) {
-      device = std::make_unique<VirtualCtap2Device>(state_, ctap2_config_);
-    } else {
-      device = std::make_unique<VirtualU2fDevice>(state_);
-    }
-
-    AddDevice(std::move(device));
-    base::SequencedTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE,
-        base::BindOnce(&VirtualFidoDeviceDiscovery::NotifyDiscoveryStarted,
-                       AsWeakPtr(), true /* success */));
-  }
-
- private:
-  scoped_refptr<VirtualFidoDevice::State> state_;
-  const ProtocolVersion supported_protocol_;
-  const VirtualCtap2Device::Config ctap2_config_;
-  DISALLOW_COPY_AND_ASSIGN(VirtualFidoDeviceDiscovery);
-};
+namespace device::test {
 
 VirtualFidoDeviceFactory::VirtualFidoDeviceFactory() = default;
 VirtualFidoDeviceFactory::~VirtualFidoDeviceFactory() = default;
@@ -80,18 +33,50 @@ VirtualFidoDevice::State* VirtualFidoDeviceFactory::mutable_state() {
   return state_.get();
 }
 
+scoped_refptr<VirtualFidoDeviceDiscovery::Trace>
+VirtualFidoDeviceFactory::trace() {
+  return trace_;
+}
+
 std::vector<std::unique_ptr<FidoDiscoveryBase>>
 VirtualFidoDeviceFactory::Create(FidoTransportProtocol transport) {
   if (transport != transport_) {
     return {};
   }
+  const size_t trace_index = trace_->discoveries.size();
+  trace_->discoveries.emplace_back();
   return SingleDiscovery(std::make_unique<VirtualFidoDeviceDiscovery>(
-      transport_, state_, supported_protocol_, ctap2_config_));
+      trace_, trace_index, transport_, state_, supported_protocol_,
+      ctap2_config_, /*disconnect_events=*/nullptr,
+      std::move(contact_device_stream_)));
 }
 
 bool VirtualFidoDeviceFactory::IsTestOverride() {
   return true;
 }
 
-}  // namespace test
-}  // namespace device
+base::RepeatingCallback<void(std::unique_ptr<cablev2::Pairing>)>
+VirtualFidoDeviceFactory::get_cable_contact_callback() {
+  base::RepeatingCallback<void(std::unique_ptr<cablev2::Pairing>)> ret;
+  std::tie(ret, contact_device_stream_) =
+      FidoDiscoveryBase::EventStream<std::unique_ptr<cablev2::Pairing>>::New();
+  return ret;
+}
+
+void VirtualFidoDeviceFactory::set_discover_win_webauthn_api_authenticator(
+    bool on) {
+  discover_win_webauthn_api_authenticator_ = on;
+}
+
+#if BUILDFLAG(IS_WIN)
+std::unique_ptr<device::FidoDiscoveryBase>
+VirtualFidoDeviceFactory::MaybeCreateWinWebAuthnApiDiscovery() {
+  if (!discover_win_webauthn_api_authenticator_) {
+    return nullptr;
+  }
+
+  return FidoDiscoveryFactory::MaybeCreateWinWebAuthnApiDiscovery();
+}
+#endif
+
+}  // namespace device::test

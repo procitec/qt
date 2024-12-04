@@ -1,4 +1,4 @@
-// Copyright (c) 2011 The Chromium Authors. All rights reserved.
+// Copyright 2011 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -47,6 +47,7 @@
 #include <algorithm>
 
 #include "base/logging.h"
+#include "base/ranges/algorithm.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
@@ -58,13 +59,7 @@ namespace net {
 // extensions.
 const size_t HttpChunkedDecoder::kMaxLineBufLen = 16384;
 
-HttpChunkedDecoder::HttpChunkedDecoder()
-    : chunk_remaining_(0),
-      chunk_terminator_remaining_(false),
-      reached_last_chunk_(false),
-      reached_eof_(false),
-      bytes_after_eof_(0) {
-}
+HttpChunkedDecoder::HttpChunkedDecoder() = default;
 
 int HttpChunkedDecoder::FilterBuf(char* buf, int buf_len) {
   int result = 0;
@@ -204,8 +199,7 @@ bool HttpChunkedDecoder::ParseChunkSize(const char* start,
   // Be more restrictive than HexStringToInt64;
   // don't allow inputs with leading "-", "+", "0x", "0X"
   base::StringPiece chunk_size(start, len);
-  if (chunk_size.find_first_not_of("0123456789abcdefABCDEF")
-      != base::StringPiece::npos) {
+  if (!base::ranges::all_of(chunk_size, base::IsHexDigit<char>)) {
     return false;
   }
 

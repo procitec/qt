@@ -22,9 +22,11 @@ above. There are three cases:
 
 * If the value is positive or zero, that indicates a synchronous
   successful return, with a zero return value indicating either zero
-  bytes/EOF or indicating `net::OK`, depending on context.
+  bytes/EOF or indicating `net::OK`, depending on context. If there
+  is a callback argument, it is not invoked.
 * If the value is negative and != `net::ERR_IO_PENDING`, it is an error
-  code specifying a synchronous failure.
+  code specifying a synchronous failure. If there is a callback argument,
+  it is not invoked.
 * If the return value is the special value `net::ERR_IO_PENDING`, it
   indicates that the routine will complete asynchronously. A reference to
   any provided IOBuffer will be retained by the called entity until
@@ -237,4 +239,4 @@ For examples of this idiom, see
 * [HttpStreamParser::DoLoop](https://source.chromium.org/chromium/chromium/src/+/HEAD:net/http/http_stream_parser.cc).
 * [HttpNetworkTransaction::DoLoop](https://source.chromium.org/chromium/chromium/src/+/HEAD:net/http/http_network_transaction.cc)
 
-[net_error_list.h]: https://chromium.googlesource.com/chromium/src/+/master/net/base/net_error_list.h#1
+[net_error_list.h]: https://chromium.googlesource.com/chromium/src/+/main/net/base/net_error_list.h#1

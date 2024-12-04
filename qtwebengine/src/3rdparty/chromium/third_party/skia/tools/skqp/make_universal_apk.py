@@ -11,7 +11,7 @@ script.  For example:
 
     python make_universal_apk.py arm x86
 
-The environment variables ANDROID_NDK and ANDROID_HOME must be set to the
+The environment variables ANDROID_NDK_HOME and ANDROID_HOME must be set to the
 locations of the Android NDK and SDK.
 
 Additionally, `ninja` should be in your path.
@@ -32,7 +32,6 @@ import os
 import sys
 
 import create_apk
-import download_model
 
 def make_apk(opts):
     assert '/' in [os.sep, os.altsep]  # 'a/b' over os.path.join('a', 'b')
@@ -40,21 +39,12 @@ def make_apk(opts):
     skia_dir = os.path.dirname(__file__) + '/../..'
     create_apk.makedirs(opts.build_dir)
     assets_dir = skia_dir + '/platform_tools/android/apps/skqp/src/main/assets'
-    gmkb = assets_dir + '/gmkb'
     resources_path = assets_dir + '/resources'
 
-    with create_apk.RemoveFiles(resources_path, gmkb):  # always clean up
-        create_apk.remove(gmkb)
-        create_apk.make_symlinked_subdir(gmkb, opts.build_dir)
-
+    with create_apk.RemoveFiles(resources_path):  # always clean up
         create_apk.remove(resources_path)
         os.symlink('../../../../../../../resources', resources_path)
 
-        if os.path.exists(assets_dir + '/files.checksum'):
-            download_model.main()
-        else:
-            sys.stderr.write(
-                    '\n* * *  Note: SkQP models are missing!  * * *\n\n')
         create_apk.create_apk(opts)
 
 def main():

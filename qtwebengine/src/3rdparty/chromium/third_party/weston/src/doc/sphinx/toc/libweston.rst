@@ -6,8 +6,9 @@ Libweston
    :caption: Contents:
 
    libweston/compositor.rst
-   libweston/head.rst
-   libweston/output.rst
+   libweston/weston-config.rst
+   libweston/shell-utils.rst
+   libweston/output-management.rst
    libweston/log.rst
 
 `Libweston` is an effort to separate the re-usable parts of Weston into a
@@ -21,11 +22,12 @@ evolving through many Weston releases before it achieves a stable API and
 feature completeness.
 
 `Libweston`'s primary purpose is exporting an API for creating Wayland
-compositors. Libweston's secondary purpose is to export the weston_config API
+compositors. Libweston's secondary purpose is to export the :ref:`weston-config` API
 so that third party plugins and helper programs can read :file:`weston.ini` if
 they want to. However, these two scopes are orthogonal and independent. At no
-point will the compositor functionality use or depend on the weston_config
-functionality.
+point will the compositor functionality use or depend on the :ref:`weston-config`
+functionality. Additional helper functions are grouped together under
+:ref:`shell-utils`, to ease out shell development.
 
 Further work
 ------------

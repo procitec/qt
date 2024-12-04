@@ -1,4 +1,4 @@
-# Copyright 2015 The Chromium Authors. All rights reserved.
+# Copyright 2015 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 import("//extensions/buildflags/buildflags.gni")
@@ -21,6 +21,8 @@ source_set("app_shim") {
     "mach_bootstrap_acceptor.h",
   ]
 
+  configs += [ "//build/config/compiler:wexit_time_destructors" ]
+
   deps = [
     "//chrome/common",
     "//chrome/common:app_mode_app_support",
@@ -30,6 +32,7 @@ source_set("app_shim") {
     "//components/crx_file",
     "//components/remote_cocoa/browser",
     "//components/version_info",
+    "//components/webapps/common",
     "//content/public/browser",
     "//content/public/common",
     "//ui/views:views",
@@ -43,8 +46,11 @@ source_set("app_shim") {
 
     deps += [
       "//apps",
-      "//chrome/browser/web_applications:web_applications_on_extensions",
-      "//chrome/browser/web_applications/components",
+      "//chrome/browser/apps/app_service",
+      "//chrome/browser/apps/app_service:constants",
+      "//chrome/browser:browser_process",
+      "//chrome/browser/profiles:profile",
+      "//chrome/browser/web_applications:web_applications",
       "//services/preferences/public/cpp:cpp",
     ]
   }

@@ -17,12 +17,14 @@
 #include "include/core/SkTypes.h"
 #include "include/effects/SkDashPathEffect.h"
 #include "include/effects/SkTrimPathEffect.h"
-#include "include/private/SkTArray.h"
+#include "include/private/base/SkTArray.h"
 #include "include/utils/SkParsePath.h"
 #include "tools/timer/TimeUtils.h"
 
 #include <math.h>
 #include <utility>
+
+using namespace skia_private;
 
 /*
  *  Inspired by http://code.google.com/p/chromium/issues/detail?id=112145
@@ -74,7 +76,9 @@ DEF_SIMPLE_GM(dashcubics, canvas, 865, 750) {
 
 class TrimGM : public skiagm::GM {
 public:
-    TrimGM() {
+    TrimGM() {}
+
+    void onOnceBeforeDraw() override {
         SkAssertResult(SkParsePath::FromSVGString(
             "M   0,100 C  10, 50 190, 50 200,100"
             "M 200,100 C 210,150 390,150 400,100"
@@ -100,11 +104,9 @@ public:
     }
 
 protected:
-    SkString onShortName() override { return SkString("trimpatheffect"); }
+    SkString getName() const override { return SkString("trimpatheffect"); }
 
-    SkISize onISize() override {
-        return SkISize::Make(1400, 1000);
-    }
+    SkISize getISize() override { return SkISize::Make(1400, 1000); }
 
     void onDraw(SkCanvas* canvas) override {
         static constexpr SkSize kCellSize = { 440, 150 };
@@ -168,7 +170,7 @@ protected:
     }
 
 private:
-    SkTArray<SkPath> fPaths;
+    TArray<SkPath> fPaths;
     SkScalar         fOffset = 0;
 
     using INHERITED = skiagm::GM;

@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,32 +6,39 @@
 
 #include <utility>
 
-#include "base/bind.h"
-#include "base/lazy_instance.h"
-#include "base/optional.h"
+#include "base/functional/bind.h"
+#include "base/no_destructor.h"
+#include "base/task/sequenced_task_runner.h"
+#include "build/build_config.h"
+#include "mojo/public/cpp/bindings/enum_traits.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/net_errors.h"
 #include "net/dns/host_resolver.h"
-#include "net/dns/host_resolver_source.h"
+#include "net/dns/public/host_resolver_source.h"
+#include "net/dns/public/secure_dns_policy.h"
 #include "net/log/net_log.h"
 #include "net/net_buildflags.h"
 #include "services/network/host_resolver_mdns_listener.h"
 #include "services/network/public/cpp/host_resolver_mojom_traits.h"
+#include "services/network/public/mojom/host_resolver.mojom-shared.h"
+#include "services/network/public/mojom/host_resolver.mojom.h"
 #include "services/network/resolve_host_request.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace network {
 namespace {
-static base::LazyInstance<HostResolver::ResolveHostCallback>::Leaky
-    resolve_host_callback;
+
+HostResolver::ResolveHostCallback& GetResolveHostCallback() {
+  static base::NoDestructor<HostResolver::ResolveHostCallback> callback;
+  return *callback;
 }
 
-namespace {
-base::Optional<net::HostResolver::ResolveHostParameters>
+absl::optional<net::HostResolver::ResolveHostParameters>
 ConvertOptionalParameters(
     const mojom::ResolveHostParametersPtr& mojo_parameters) {
   if (!mojo_parameters)
-    return base::nullopt;
+    return absl::nullopt;
 
   net::HostResolver::ResolveHostParameters parameters;
   parameters.dns_query_type = mojo_parameters->dns_query_type;
@@ -54,8 +61,8 @@ ConvertOptionalParameters(
   parameters.include_canonical_name = mojo_parameters->include_canonical_name;
   parameters.loopback_only = mojo_parameters->loopback_only;
   parameters.is_speculative = mojo_parameters->is_speculative;
-  parameters.secure_dns_mode_override = mojo::FromOptionalSecureDnsMode(
-      mojo_parameters->secure_dns_mode_override);
+  mojo::EnumTraits<mojom::SecureDnsPolicy, net::SecureDnsPolicy>::FromMojom(
+      mojo_parameters->secure_dns_policy, &parameters.secure_dns_policy);
   return parameters;
 }
 }  // namespace
@@ -72,7 +79,7 @@ HostResolver::HostResolver(
       net_log_(net_log) {
   // Bind the pending receiver asynchronously to give the resolver a chance
   // to set up (some resolvers need to obtain the system config asynchronously).
-  base::SequencedTaskRunnerHandle::Get()->PostTask(
+  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE,
       base::BindOnce(&HostResolver::AsyncSetUp, weak_factory_.GetWeakPtr()));
 }
@@ -88,8 +95,8 @@ HostResolver::~HostResolver() {
 }
 
 void HostResolver::ResolveHost(
-    const net::HostPortPair& host,
-    const net::NetworkIsolationKey& network_isolation_key,
+    mojom::HostResolverHostPtr host,
+    const net::NetworkAnonymizationKey& network_anonymization_key,
     mojom::ResolveHostParametersPtr optional_parameters,
     mojo::PendingRemote<mojom::ResolveHostClient> response_client) {
 #if !BUILDFLAG(ENABLE_MDNS)
@@ -99,11 +106,14 @@ void HostResolver::ResolveHost(
          optional_parameters->source != net::HostResolverSource::MULTICAST_DNS);
 #endif  // !BUILDFLAG(ENABLE_MDNS)
 
-  if (resolve_host_callback.Get())
-    resolve_host_callback.Get().Run(host.host());
+  if (!GetResolveHostCallback().is_null()) {
+    GetResolveHostCallback().Run(host->is_host_port_pair()
+                                     ? host->get_host_port_pair().host()
+                                     : host->get_scheme_host_port().host());
+  }
 
   auto request = std::make_unique<ResolveHostRequest>(
-      internal_resolver_, host, network_isolation_key,
+      internal_resolver_, std::move(host), network_anonymization_key,
       ConvertOptionalParameters(optional_parameters), net_log_);
 
   mojo::PendingReceiver<mojom::ResolveHostHandle> control_handle_receiver;
@@ -152,7 +162,7 @@ size_t HostResolver::GetNumOutstandingRequestsForTesting() const {
 
 void HostResolver::SetResolveHostCallbackForTesting(
     ResolveHostCallback callback) {
-  resolve_host_callback.Get() = std::move(callback);
+  GetResolveHostCallback() = std::move(callback);
 }
 
 void HostResolver::AsyncSetUp() {

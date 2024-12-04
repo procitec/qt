@@ -1,10 +1,11 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/modules/accessibility/ax_selection.h"
 
 #include "third_party/blink/renderer/core/dom/events/event.h"
+#include "third_party/blink/renderer/core/dom/focus_params.h"
 #include "third_party/blink/renderer/core/dom/node.h"
 #include "third_party/blink/renderer/core/dom/range.h"
 #include "third_party/blink/renderer/core/editing/ephemeral_range.h"
@@ -142,8 +143,7 @@ AXSelection AXSelection::FromCurrentSelection(
     return {};
 
   auto* ax_object_cache_impl = static_cast<AXObjectCacheImpl*>(ax_object_cache);
-  const AXObject* ax_text_control =
-      ax_object_cache_impl->GetOrCreate(&text_control);
+  const AXObject* ax_text_control = ax_object_cache_impl->Get(&text_control);
   DCHECK(ax_text_control);
 
   // We can't directly use "text_control.Selection()" because the selection it
@@ -158,13 +158,13 @@ AXSelection AXSelection::FromCurrentSelection(
   const bool is_backward = (text_control.selectionDirection() == "backward");
   const auto ax_base = AXPosition::CreatePositionInTextObject(
       *ax_text_control,
-      (is_backward ? int(text_control.selectionEnd())
-                   : int(text_control.selectionStart())),
+      static_cast<int>(is_backward ? text_control.selectionEnd()
+                                   : text_control.selectionStart()),
       base_affinity);
   const auto ax_extent = AXPosition::CreatePositionInTextObject(
       *ax_text_control,
-      (is_backward ? int(text_control.selectionStart())
-                   : int(text_control.selectionEnd())),
+      static_cast<int>(is_backward ? text_control.selectionStart()
+                                   : text_control.selectionEnd()),
       extent_affinity);
 
   if (!ax_base.IsValid() || !ax_extent.IsValid())
@@ -264,19 +264,18 @@ bool AXSelection::IsValid() const {
   // boundaries, replaced elements, CSS user-select, etc.
   //
 
-  if (base_.IsTextPosition() &&
-      base_.ContainerObject()->IsNativeTextControl() &&
+  if (base_.IsTextPosition() && base_.ContainerObject()->IsAtomicTextField() &&
       !(base_.ContainerObject() == extent_.ContainerObject() &&
         extent_.IsTextPosition() &&
-        extent_.ContainerObject()->IsNativeTextControl())) {
+        extent_.ContainerObject()->IsAtomicTextField())) {
     return false;
   }
 
   if (extent_.IsTextPosition() &&
-      extent_.ContainerObject()->IsNativeTextControl() &&
+      extent_.ContainerObject()->IsAtomicTextField() &&
       !(base_.ContainerObject() == extent_.ContainerObject() &&
         base_.IsTextPosition() &&
-        base_.ContainerObject()->IsNativeTextControl())) {
+        base_.ContainerObject()->IsAtomicTextField())) {
     return false;
   }
 
@@ -350,16 +349,26 @@ void AXSelection::UpdateSelectionIfNecessary() {
 
 bool AXSelection::Select(const AXSelectionBehavior selection_behavior) {
   if (!IsValid()) {
-    NOTREACHED() << "Trying to select an invalid accessibility selection.";
+    // By the time the selection action gets here, content could have
+    // changed from the content the action was initially prepared for.
     return false;
   }
 
-  base::Optional<AXSelection::TextControlSelection> text_control_selection =
+  absl::optional<AXSelection::TextControlSelection> text_control_selection =
       AsTextControlSelection();
-  if (text_control_selection.has_value()) {
+
+  // We need to make sure we only go into here if we're dealing with a position
+  // in the atomic text field. This is because the offsets are being assumed
+  // to be on the atomic text field, and not on the descendant inline text
+  // boxes.
+  if (text_control_selection.has_value() &&
+      *base_.ContainerObject() ==
+          *base_.ContainerObject()->GetAtomicTextFieldAncestor() &&
+      *extent_.ContainerObject() ==
+          *extent_.ContainerObject()->GetAtomicTextFieldAncestor()) {
     DCHECK_LE(text_control_selection->start, text_control_selection->end);
     TextControlElement& text_control = ToTextControl(
-        *base_.ContainerObject()->GetNativeTextControlAncestor()->GetNode());
+        *base_.ContainerObject()->GetAtomicTextFieldAncestor()->GetNode());
     if (!text_control.SetSelectionRange(text_control_selection->start,
                                         text_control_selection->end,
                                         text_control_selection->direction)) {
@@ -369,7 +378,7 @@ bool AXSelection::Select(const AXSelectionBehavior selection_behavior) {
     // TextControl::SetSelectionRange deliberately does not set focus. But if
     // we're updating the selection, the text control should be focused.
     ScheduleSelectEvent(text_control);
-    text_control.focus();
+    text_control.Focus(FocusParams(FocusTrigger::kUserGesture));
     return true;
   }
 
@@ -423,12 +432,12 @@ bool AXSelection::Select(const AXSelectionBehavior selection_behavior) {
 }
 
 String AXSelection::ToString() const {
-  if (!IsValid())
-    return "Invalid AXSelection";
-  return "AXSelection from " + Base().ToString() + " to " + Extent().ToString();
+  String prefix = IsValid() ? "" : "Invalid ";
+  return prefix + "AXSelection from " + Base().ToString() + " to " +
+         Extent().ToString();
 }
 
-base::Optional<AXSelection::TextControlSelection>
+absl::optional<AXSelection::TextControlSelection>
 AXSelection::AsTextControlSelection() const {
   if (!IsValid() || !base_.IsTextPosition() || !extent_.IsTextPosition() ||
       base_.ContainerObject() != extent_.ContainerObject()) {
@@ -436,7 +445,7 @@ AXSelection::AsTextControlSelection() const {
   }
 
   const AXObject* text_control =
-      base_.ContainerObject()->GetNativeTextControlAncestor();
+      base_.ContainerObject()->GetAtomicTextFieldAncestor();
   if (!text_control)
     return {};
 

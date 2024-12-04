@@ -25,6 +25,7 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_DOM_FIRST_LETTER_PSEUDO_ELEMENT_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_DOM_FIRST_LETTER_PSEUDO_ELEMENT_H_
 
+#include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/pseudo_element.h"
 #include "third_party/blink/renderer/platform/wtf/casting.h"
@@ -42,13 +43,15 @@ class CORE_EXPORT FirstLetterPseudoElement final : public PseudoElement {
   FirstLetterPseudoElement(const FirstLetterPseudoElement&) = delete;
   FirstLetterPseudoElement& operator=(const FirstLetterPseudoElement&) = delete;
   ~FirstLetterPseudoElement() override;
+  void Trace(Visitor*) const override;
 
   static LayoutText* FirstLetterTextLayoutObject(const Element&);
-  static unsigned FirstLetterLength(const String&);
+  static unsigned FirstLetterLength(const String&,
+                                    bool preserve_breaks = false);
 
   void ClearRemainingTextLayoutObject();
   LayoutTextFragment* RemainingTextLayoutObject() const {
-    return remaining_text_layout_object_;
+    return remaining_text_layout_object_.Get();
   }
 
   void UpdateTextFragments();
@@ -58,11 +61,14 @@ class CORE_EXPORT FirstLetterPseudoElement final : public PseudoElement {
   Node* InnerNodeForHitTesting() const override;
 
  private:
-  scoped_refptr<ComputedStyle> CustomStyleForLayoutObject() override;
+  LayoutObject* CreateLayoutObject(const ComputedStyle&) override;
+
+  const ComputedStyle* CustomStyleForLayoutObject(
+      const StyleRecalcContext&) override;
 
   void AttachFirstLetterTextLayoutObjects(LayoutText* first_letter_text);
 
-  LayoutTextFragment* remaining_text_layout_object_;
+  Member<LayoutTextFragment> remaining_text_layout_object_;
 };
 
 template <>

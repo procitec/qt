@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,36 +6,39 @@
 
 namespace features {
 
+// Enables mitigation algorithm to prevent attempt of calibration from an
+// attacker.
+BASE_FEATURE(kComputePressureBreakCalibrationMitigation,
+             "ComputePressureBreakCalibrationMitigation",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
 // Enables an extra set of concrete sensors classes based on Generic Sensor API,
 // which expose previously unexposed platform features, e.g. ALS or Magnetometer
-const base::Feature kGenericSensorExtraClasses{
-    "GenericSensorExtraClasses", base::FEATURE_DISABLED_BY_DEFAULT};
-// Enables usage of the Windows.Devices.Sensors WinRT API for the sensor
-// backend instead of the ISensor API on Windows.
-const base::Feature kWinrtSensorsImplementation{
-    "WinrtSensorsImplementation", base::FEATURE_ENABLED_BY_DEFAULT};
+BASE_FEATURE(kGenericSensorExtraClasses,
+             "GenericSensorExtraClasses",
+             base::FEATURE_DISABLED_BY_DEFAULT);
 // Enables usage of the Windows.Devices.Geolocation WinRT API for the
 // LocationProvider instead of the NetworkLocationProvider on Windows.
-const base::Feature kWinrtGeolocationImplementation{
-    "WinrtGeolocationImplementation", base::FEATURE_DISABLED_BY_DEFAULT};
+BASE_FEATURE(kWinrtGeolocationImplementation,
+             "WinrtGeolocationImplementation",
+             base::FEATURE_DISABLED_BY_DEFAULT);
 // Enables usage of the CoreLocation API for LocationProvider instead of
-// NetworkLocationProvider for macOS. The |kMacCoreLocationImplementation| flag
-// enables a permissions UX workflow that navigates the user to give the
-// browser location permission in the macOS System Preferences. The
-// |kMacCoreLocationBackend| flag switches to using the the macOS Core Location
-// API instead of using the NetworkLocationProvider to gather location through
-// WiFi scans.
-const base::Feature kMacCoreLocationImplementation{
-    "MacCoreLocationImplementation", base::FEATURE_ENABLED_BY_DEFAULT};
-const base::Feature kMacCoreLocationBackend{"MacCoreLocationBackend",
-                                            base::FEATURE_DISABLED_BY_DEFAULT};
-
-#if defined(OS_WIN)
-// Switches from enumerating serial ports using GUID_DEVINTERFACE_SERIALPORT to
-// GUID_DEVINTERFACE_SERENUM_BUS_ENUMERATOR. This is an partial solution to
-// https://crbug.com/1119497.
-const base::Feature kUseSerialBusEnumerator{"UseSerialBusEnumerator",
-                                            base::FEATURE_ENABLED_BY_DEFAULT};
-#endif  // defined(OS_WIN)
+// NetworkLocationProvider for macOS or iOS.
+BASE_FEATURE(kMacCoreLocationBackend,
+             "MacCoreLocationBackend",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+// Reduces the interval between WiFi polls to fetch new WiFi data sooner. This
+// can be useful in situations where new WiFi data is needed frequently.
+BASE_FEATURE(kCrOSGeolocationReducedWifiPollingInterval,
+             "ReducedWifiPollingInterval",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+// Enable serial communication for SPP devices.
+BASE_FEATURE(kEnableBluetoothSerialPortProfileInSerialApi,
+             "EnableBluetoothSerialPortProfileInSerialApi",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+// Enable real-time diagnostic updates in chrome://location-internals.
+BASE_FEATURE(kGeolocationDiagnosticsObserver,
+             "GeolocationDiagnosticsObserver",
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 }  // namespace features

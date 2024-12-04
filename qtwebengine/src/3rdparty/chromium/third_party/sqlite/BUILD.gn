@@ -1,4 +1,4 @@
-# Copyright (c) 2013 The Chromium Authors. All rights reserved.
+# Copyright 2013 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -122,12 +122,16 @@ config("dev_sqlite3_compile_options") {
 config("sqlite_warnings") {
   cflags = []
   if (is_clang) {
-    # sqlite contains a few functions that are unused, at least on
-    # Windows with Chrome's sqlite patches applied
-    # (interiorCursorEOF fts3EvalDeferredPhrase
-    # fts3EvalSelectDeferred sqlite3Fts3InitHashTable
-    # sqlite3Fts3InitTok).
-    cflags += [ "-Wno-unused-function" ]
+    cflags += [
+      "-Wno-shadow",
+
+      # sqlite contains a few functions that are unused, at least on
+      # Windows with Chrome's sqlite patches applied
+      # (interiorCursorEOF fts3EvalDeferredPhrase
+      # fts3EvalSelectDeferred sqlite3Fts3InitHashTable
+      # sqlite3Fts3InitTok).
+      "-Wno-unused-function",
+    ]
 
     if (is_debug || dcheck_always_on) {
       cflags += [
@@ -241,7 +245,15 @@ component("chromium_sqlite3") {
   deps = [ "//third_party/icu" ]
 }
 
-component("dev_sqlite3") {
+# Similar to component("chromium_sqlite") above, but uses the developer tools
+# options at config("dev_sqlite3_compile_options").
+#
+# This target uses source_set instead of component intentionally because turning
+# it into a shared library will result in symbol collisions with "chromium_sqlite".
+# Given that this config is effectively test-only, we should link it statically
+# and allow "chromium_sqlite" to be the only shared library.
+# TODO(altimin): mark this component as testonly = true.
+source_set("dev_sqlite3") {
   visibility = [ ":*" ]
 
   public = [ "dev/sqlite3.h" ]
@@ -261,14 +273,6 @@ component("dev_sqlite3") {
 
   cflags = []
   defines = []
-
-  if (is_component_build) {
-    if (is_win) {
-      defines += [ "SQLITE_API=__declspec(dllexport)" ]
-    } else {
-      defines += [ "SQLITE_API=__attribute__((visibility(\"default\")))" ]
-    }
-  }
 
   if (is_linux || is_chromeos || is_android) {
     defines += [
@@ -338,10 +342,7 @@ group("sqlite") {
 
 group("sqlite_dev") {
   public_deps = [ ":dev_sqlite3" ]
-  public_configs = [
-    ":dev_sqlite3_compile_options",
-    ":sqlite_export",
-  ]
+  public_configs = [ ":dev_sqlite3_compile_options" ]
 }
 
 if (is_win || is_mac || is_linux || is_chromeos) {
@@ -368,6 +369,39 @@ if (is_win || is_mac || is_linux || is_chromeos) {
     configs -= [ "//build/config/compiler:chromium_code" ]
     configs += [
       ":chromium_sqlite3_compile_options",
+      "//build/config/compiler:no_chromium_code",
+
+      # Must be after no_chromium_code for warning flags to be ordered
+      # correctly.
+      ":sqlite_warnings",
+    ]
+  }
+
+  # Similar to executable("sqlite_shell") above, but uses the developer tools
+  # options at config("dev_sqlite3_compile_options") and group("sqlite_dev").
+  executable("sqlite_dev_shell") {
+    include_dirs = [
+      # SQLite's shell.c contains an '#include "sqlite3.h", which we want to be
+      # resolved to //third_party/sqlite/sqlite3.h.
+      ".",
+    ]
+
+    sources = [
+      "sqlite_shell_icu_helper.cc",
+      "sqlite_shell_icu_helper.h",
+      "sqlite_shell_shim.c",
+    ]
+
+    deps = [
+      ":sqlite_dev",
+      "//base",
+      "//base:i18n",
+      "//third_party/icu",
+    ]
+
+    configs -= [ "//build/config/compiler:chromium_code" ]
+    configs += [
+      ":dev_sqlite3_compile_options",
       "//build/config/compiler:no_chromium_code",
 
       # Must be after no_chromium_code for warning flags to be ordered
@@ -402,6 +436,14 @@ source_set("sqlite3_lpm_fuzzer_core") {
     ":lpm_fuzzer_omit_non_websql",
     ":chromium_sqlite3_compile_options",
   ]
+}
+
+source_set("sql_query_proto_to_string") {
+  sources = [
+    "fuzz/sql_query_proto_to_string.cc",
+    "fuzz/sql_query_proto_to_string.h",
+  ]
+  deps = [ ":sqlite3_lpm_fuzzer_input" ]
 }
 
 # LPM-based fuzzer test.
@@ -535,7 +577,7 @@ config("sqlite3_dbfuzz2_config") {
 }
 
 # Upstream fuzzer that tests corrupted database files.
-if (use_fuzzing_engine) {
+if (use_fuzzing_engine && !use_clang_coverage) {
   fuzzer_test("sqlite3_dbfuzz2_fuzzer") {
     include_dirs = [ "." ]
     sources = [ "src/test/dbfuzz2.c" ]

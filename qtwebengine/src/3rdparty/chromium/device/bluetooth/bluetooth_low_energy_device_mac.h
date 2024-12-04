@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,15 +9,14 @@
 #include <stdint.h>
 
 #include <set>
+#include <string_view>
 
-#include "base/mac/scoped_nsobject.h"
-#include "base/macros.h"
-#include "base/optional.h"
 #include "build/build_config.h"
 #include "crypto/sha2.h"
 #include "device/bluetooth/bluetooth_device_mac.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
-#if !defined(OS_IOS)
+#if !BUILDFLAG(IS_IOS)
 #import <IOBluetooth/IOBluetooth.h>
 #endif
 
@@ -25,7 +24,8 @@
 
 namespace device {
 
-class BluetoothAdapterMac;
+class BluetoothAdapter;
+class BluetoothLowEnergyAdapterApple;
 class BluetoothRemoteGattServiceMac;
 class BluetoothRemoteGattCharacteristicMac;
 class BluetoothRemoteGattDescriptorMac;
@@ -34,8 +34,13 @@ class BluetoothUUID;
 class DEVICE_BLUETOOTH_EXPORT BluetoothLowEnergyDeviceMac
     : public BluetoothDeviceMac {
  public:
-  BluetoothLowEnergyDeviceMac(BluetoothAdapterMac* adapter,
+  BluetoothLowEnergyDeviceMac(BluetoothAdapter* adapter,
                               CBPeripheral* peripheral);
+
+  BluetoothLowEnergyDeviceMac(const BluetoothLowEnergyDeviceMac&) = delete;
+  BluetoothLowEnergyDeviceMac& operator=(const BluetoothLowEnergyDeviceMac&) =
+      delete;
+
   ~BluetoothLowEnergyDeviceMac() override;
 
   // BluetoothDevice overrides.
@@ -48,7 +53,7 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothLowEnergyDeviceMac
   uint16_t GetProductID() const override;
   uint16_t GetDeviceID() const override;
   uint16_t GetAppearance() const override;
-  base::Optional<std::string> GetName() const override;
+  absl::optional<std::string> GetName() const override;
   bool IsPaired() const override;
   bool IsConnected() const override;
   bool IsGattConnected() const override;
@@ -62,8 +67,7 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothLowEnergyDeviceMac
                             base::OnceClosure callback,
                             ErrorCallback error_callback) override;
   void Connect(PairingDelegate* pairing_delegate,
-               base::OnceClosure callback,
-               ConnectErrorCallback error_callback) override;
+               ConnectCallback callback) override;
   void SetPinCode(const std::string& pincode) override;
   void SetPasskey(uint32_t passkey) override;
   void ConfirmPairing() override;
@@ -80,11 +84,12 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothLowEnergyDeviceMac
       const device::BluetoothUUID& uuid,
       ConnectToServiceCallback callback,
       ConnectToServiceErrorCallback error_callback) override;
+  bool IsLowEnergyDevice() override;
 
  protected:
   // BluetoothDevice override.
   void CreateGattConnectionImpl(
-      base::Optional<BluetoothUUID> serivce_uuid) override;
+      absl::optional<BluetoothUUID> service_uuid) override;
   void DisconnectGatt() override;
 
   // Methods used by BluetoothLowEnergyPeripheralBridge.
@@ -107,11 +112,11 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothLowEnergyDeviceMac
   // http://crbug.com/507824
   static std::string GetPeripheralHashAddress(CBPeripheral* peripheral);
   static std::string GetPeripheralHashAddress(
-      base::StringPiece device_identifier);
+      std::string_view device_identifier);
 
  private:
-  friend class BluetoothAdapterMac;
-  friend class BluetoothAdapterMacTest;
+  friend class BluetoothLowEnergyAdapterApple;
+  friend class BluetoothLowEnergyAdapterAppleTest;
   friend class BluetoothLowEnergyPeripheralBridge;
   friend class BluetoothRemoteGattServiceMac;
   friend class BluetoothTestMac;
@@ -127,8 +132,8 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothLowEnergyDeviceMac
   void SendNotificationIfDiscoveryComplete();
 
   // Returns the Bluetooth adapter.
-  BluetoothAdapterMac* GetMacAdapter();
-  BluetoothAdapterMac* GetMacAdapter() const;
+  BluetoothLowEnergyAdapterApple* GetLowEnergyAdapter();
+  BluetoothLowEnergyAdapterApple* GetLowEnergyAdapter() const;
 
   // Returns the CoreBluetooth Peripheral.
   CBPeripheral* GetPeripheral();
@@ -149,11 +154,10 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothLowEnergyDeviceMac
   void DidDisconnectPeripheral(NSError* error);
 
   // CoreBluetooth data structure.
-  base::scoped_nsobject<CBPeripheral> peripheral_;
+  CBPeripheral* __strong peripheral_;
 
   // Objective-C delegate for the CBPeripheral.
-  base::scoped_nsobject<BluetoothLowEnergyPeripheralDelegate>
-      peripheral_delegate_;
+  BluetoothLowEnergyPeripheralDelegate* __strong peripheral_delegate_;
 
   // Whether the device is connected.
   bool connected_;
@@ -169,8 +173,6 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothLowEnergyDeviceMac
   // decreases each time DidDiscoverPrimaryServices() is called. Once the
   // value is set to 0, characteristics and properties are discovered.
   int discovery_pending_count_;
-
-  DISALLOW_COPY_AND_ASSIGN(BluetoothLowEnergyDeviceMac);
 };
 
 // Stream operator for logging.

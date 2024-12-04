@@ -8,12 +8,13 @@
 #ifndef SkFontMgr_android_parser_DEFINED
 #define SkFontMgr_android_parser_DEFINED
 
+#include "include/core/SkFontArguments.h"
 #include "include/core/SkFontMgr.h"
 #include "include/core/SkString.h"
 #include "include/core/SkTypes.h"
-#include "include/private/SkTArray.h"
-#include "include/private/SkTDArray.h"
-#include "include/private/SkTHash.h"
+#include "include/private/base/SkTArray.h"
+#include "include/private/base/SkTDArray.h"
+#include "src/core/SkTHash.h"
 
 #include <climits>
 #include <limits>
@@ -30,7 +31,8 @@ public:
     SkLanguage(const SkString& tag) : fTag(tag) { }
     SkLanguage(const char* tag) : fTag(tag) { }
     SkLanguage(const char* tag, size_t len) : fTag(tag, len) { }
-    SkLanguage(const SkLanguage& b) : fTag(b.fTag) { }
+    SkLanguage(const SkLanguage&) = default;
+    SkLanguage& operator=(const SkLanguage&) = default;
 
     /** Gets a BCP 47 language identifier for this SkLanguage.
         @return a BCP 47 language identifier representing this language
@@ -47,10 +49,6 @@ public:
     }
     bool operator!=(const SkLanguage& b) const {
         return fTag != b.fTag;
-    }
-    SkLanguage& operator=(const SkLanguage& b) {
-        fTag = b.fTag;
-        return *this;
     }
 
 private:
@@ -74,7 +72,8 @@ struct FontFileInfo {
     int fIndex;
     int fWeight;
     enum class Style { kAuto, kNormal, kItalic } fStyle;
-    SkTArray<SkFontArguments::VariationPosition::Coordinate, true> fVariationDesignPosition;
+    skia_private::TArray<SkFontArguments::VariationPosition::Coordinate, true>
+            fVariationDesignPosition;
 };
 
 /**
@@ -92,10 +91,10 @@ struct FontFamily {
         , fBasePath(basePath)
     { }
 
-    SkTArray<SkString, true> fNames;
-    SkTArray<FontFileInfo, true> fFonts;
-    SkTArray<SkLanguage, true> fLanguages;
-    SkTHashMap<SkString, std::unique_ptr<FontFamily>> fallbackFamilies;
+    skia_private::TArray<SkString, true> fNames;
+    skia_private::TArray<FontFileInfo, true> fFonts;
+    skia_private::TArray<SkLanguage, true> fLanguages;
+    skia_private::THashMap<SkString, std::unique_ptr<FontFamily>> fallbackFamilies;
     FontVariant fVariant;
     int fOrder; // internal to the parser, not useful to users.
     bool fIsFallbackFont;
@@ -123,7 +122,7 @@ void GetCustomFontFamilies(SkTDArray<FontFamily*>& fontFamilies,
  *
  *  If the string cannot be parsed into 'value', returns false and does not change 'value'.
  */
-template <typename T> static bool parse_non_negative_integer(const char* s, T* value) {
+template <typename T> bool parse_non_negative_integer(const char* s, T* value) {
     static_assert(std::numeric_limits<T>::is_integer, "T_must_be_integer");
 
     if (*s == '\0') {
@@ -160,7 +159,7 @@ template <typename T> static bool parse_non_negative_integer(const char* s, T* v
  *
  *  If the string cannot be parsed into 'value', returns false and does not change 'value'.
  */
-template <int N, typename T> static bool parse_fixed(const char* s, T* value) {
+template <int N, typename T> bool parse_fixed(const char* s, T* value) {
     static_assert(std::numeric_limits<T>::is_integer, "T_must_be_integer");
     static_assert(std::numeric_limits<T>::is_signed, "T_must_be_signed");
     static_assert(sizeof(T) * CHAR_BIT - N >= 5, "N_must_leave_four_bits_plus_sign");

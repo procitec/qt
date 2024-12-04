@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,6 +9,7 @@
 
 #include "absl/algorithm/container.h"
 #include "util/osp_logging.h"
+#include "util/std_util.h"
 
 namespace openscreen {
 
@@ -59,9 +60,7 @@ void SocketHandleWaiter::OnHandleDeletion(Subscriber* subscriber,
       // longer are waiting on a SELECT(...) call to it, since we only signal
       // this condition variable's wait(...) to proceed outside of SELECT(...).
       handle_deletion_block_.wait(lock, [this, handle]() {
-        return std::find(handles_being_deleted_.begin(),
-                         handles_being_deleted_.end(),
-                         handle) == handles_being_deleted_.end();
+        return !Contains(handles_being_deleted_, handle);
       });
       OSP_DVLOG << "\tDone blocking for handle deletion!";
     }

@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtWebEngine module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #ifndef WEB_ENGINE_CONTEXT_H
 #define WEB_ENGINE_CONTEXT_H
@@ -47,21 +11,20 @@
 #include "base/values.h"
 
 #include <QtGui/qtgui-config.h>
-#include <QVector>
+#include <QList>
 
 namespace base {
 class RunLoop;
 class CommandLine;
+class FieldTrialList;
 }
 
 namespace content {
 class BrowserMainRunner;
 class ContentMainRunner;
-class GpuProcess;
 class GpuThreadController;
 class InProcessChildThreadParams;
-class ServiceManagerEnvironment;
-struct StartupData;
+class MojoIpcSupport;
 }
 
 namespace discardable_memory {
@@ -70,7 +33,6 @@ class DiscardableSharedMemoryManager;
 
 namespace gpu {
 struct GpuPreferences;
-class SyncPointManager;
 }
 
 #if QT_CONFIG(webengine_printing_and_pdf)
@@ -86,7 +48,6 @@ struct SandboxInterfaceInfo;
 #endif
 
 QT_FORWARD_DECLARE_CLASS(QObject)
-class WebRtcLogUploader;
 
 namespace QtWebEngineCore {
 
@@ -96,10 +57,6 @@ class DevToolsServerQt;
 class ProfileAdapter;
 
 bool usingSoftwareDynamicGL();
-
-#ifdef Q_OS_WIN
-Q_WEBENGINECORE_PRIVATE_EXPORT sandbox::SandboxInterfaceInfo *staticSandboxInterfaceInfo(sandbox::SandboxInterfaceInfo *info = nullptr);
-#endif
 
 typedef std::tuple<bool, QString, QString> ProxyAuthentication;
 
@@ -117,18 +74,12 @@ public:
 #if QT_CONFIG(webengine_printing_and_pdf)
     printing::PrintJobManager* getPrintJobManager();
 #endif
-#if QT_CONFIG(webengine_webrtc) && QT_CONFIG(webengine_extensions)
-    WebRtcLogUploader *webRtcLogUploader();
-#endif
     void destroyProfileAdapter();
     void addProfileAdapter(ProfileAdapter *profileAdapter);
     void removeProfileAdapter(ProfileAdapter *profileAdapter);
     void destroy();
-    static base::CommandLine* commandLine();
-
-    static gpu::SyncPointManager *syncPointManager();
-
-    static bool isGpuServiceOnUIThread();
+    static base::CommandLine *initCommandLine(bool &useEmbeddedSwitches,
+                                              bool &enableGLSoftwareRendering);
 
 private:
     friend class base::RefCounted<WebEngineContext>;
@@ -137,19 +88,18 @@ private:
     ~WebEngineContext();
 
     static void registerMainThreadFactories();
-    static void destroyGpuProcess();
 
     std::unique_ptr<base::RunLoop> m_runLoop;
     std::unique_ptr<ContentMainDelegateQt> m_mainDelegate;
     std::unique_ptr<content::ContentMainRunner> m_contentRunner;
     std::unique_ptr<content::BrowserMainRunner> m_browserRunner;
     std::unique_ptr<discardable_memory::DiscardableSharedMemoryManager> m_discardableSharedMemoryManager;
-    std::unique_ptr<content::StartupData> m_startupData;
-    std::unique_ptr<content::ServiceManagerEnvironment> m_serviceManagerEnvironment;
+    std::unique_ptr<content::MojoIpcSupport> m_mojoIpcSupport;
     std::unique_ptr<QObject> m_globalQObject;
     std::unique_ptr<ProfileAdapter> m_defaultProfileAdapter;
     std::unique_ptr<DevToolsServerQt> m_devtoolsServer;
-    QVector<ProfileAdapter*> m_profileAdapters;
+    QList<ProfileAdapter*> m_profileAdapters;
+    std::unique_ptr<base::FieldTrialList> m_fieldTrialList;
 #if QT_CONFIG(accessibility)
     std::unique_ptr<AccessibilityActivationObserver> m_accessibilityActivationObserver;
 #endif
@@ -157,13 +107,9 @@ private:
 #if QT_CONFIG(webengine_printing_and_pdf)
     std::unique_ptr<printing::PrintJobManager> m_printJobManager;
 #endif
-#if QT_CONFIG(webengine_webrtc) && QT_CONFIG(webengine_extensions)
-    std::unique_ptr<WebRtcLogUploader> m_webrtcLogUploader;
-#endif
     static scoped_refptr<QtWebEngineCore::WebEngineContext> m_handle;
     static bool m_destroyed;
     static bool m_closingDown;
-    static QAtomicPointer<gpu::SyncPointManager> s_syncPointManager;
 };
 
 } // namespace

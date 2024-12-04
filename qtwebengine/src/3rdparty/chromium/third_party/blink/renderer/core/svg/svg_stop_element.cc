@@ -20,11 +20,12 @@
 
 #include "third_party/blink/renderer/core/svg/svg_stop_element.h"
 
+#include "third_party/blink/renderer/core/css/properties/longhands.h"
 #include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/style/computed_style.h"
 #include "third_party/blink/renderer/core/svg/svg_animated_number.h"
 #include "third_party/blink/renderer/core/svg/svg_gradient_element.h"
-#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 
 namespace blink {
 
@@ -34,8 +35,6 @@ SVGStopElement::SVGStopElement(Document& document)
           this,
           svg_names::kOffsetAttr,
           MakeGarbageCollected<SVGNumberAcceptPercentage>())) {
-  AddToPropertyMap(offset_);
-
   // Since stop elements don't have corresponding layout objects, we rely on
   // style recalc callbacks for invalidation.
   DCHECK(HasCustomStyleCallbacks());
@@ -52,19 +51,21 @@ void InvalidateInstancesAndAncestorResources(SVGStopElement* stop_element) {
   SVGElement::InvalidationGuard invalidation_guard(stop_element);
 
   Element* parent = stop_element->parentElement();
-  if (auto* gradient = DynamicTo<SVGGradientElement>(parent))
-    gradient->InvalidateGradient(layout_invalidation_reason::kChildChanged);
+  if (auto* gradient = DynamicTo<SVGGradientElement>(parent)) {
+    gradient->InvalidateGradient();
+  }
 }
 
 }  // namespace
 
-void SVGStopElement::SvgAttributeChanged(const QualifiedName& attr_name) {
-  if (attr_name == svg_names::kOffsetAttr) {
+void SVGStopElement::SvgAttributeChanged(
+    const SvgAttributeChangedParams& params) {
+  if (params.name == svg_names::kOffsetAttr) {
     InvalidateInstancesAndAncestorResources(this);
     return;
   }
 
-  SVGElement::SvgAttributeChanged(attr_name);
+  SVGElement::SvgAttributeChanged(params);
 }
 
 void SVGStopElement::DidRecalcStyle(const StyleRecalcChange change) {
@@ -77,13 +78,30 @@ Color SVGStopElement::StopColorIncludingOpacity() const {
   const ComputedStyle* style = GetComputedStyle();
 
   // Normally, we should always have a computed style for <stop> elements. But
-  // there are some odd corner cases (*cough* shadow DOM v0 undistributed light
-  // tree *cough*) which leave it null.
+  // there are some odd corner cases which leave it null. It is possible that
+  // the only such corner cases were due to Shadow DOM v0. This may be able
+  // to be removed.
   if (!style)
     return Color::kBlack;
 
   Color base_color = style->VisitedDependentColor(GetCSSPropertyStopColor());
-  return base_color.CombineWithAlpha(style->SvgStyle().StopOpacity());
+  base_color.SetAlpha(style->StopOpacity() * base_color.Alpha());
+  return base_color;
+}
+
+SVGAnimatedPropertyBase* SVGStopElement::PropertyFromAttribute(
+    const QualifiedName& attribute_name) const {
+  if (attribute_name == svg_names::kOffsetAttr) {
+    return offset_.Get();
+  } else {
+    return SVGElement::PropertyFromAttribute(attribute_name);
+  }
+}
+
+void SVGStopElement::SynchronizeAllSVGAttributes() const {
+  SVGAnimatedPropertyBase* attrs[]{offset_.Get()};
+  SynchronizeListOfSVGAttributes(attrs);
+  SVGElement::SynchronizeAllSVGAttributes();
 }
 
 }  // namespace blink

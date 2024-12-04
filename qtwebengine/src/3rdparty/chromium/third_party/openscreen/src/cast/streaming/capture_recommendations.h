@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,8 +10,9 @@
 #include <memory>
 #include <tuple>
 
-namespace openscreen {
-namespace cast {
+#include "cast/streaming/constants.h"
+#include "cast/streaming/resolution.h"
+namespace openscreen::cast {
 
 struct Answer;
 
@@ -27,7 +28,7 @@ namespace capture_recommendations {
 
 // Default maximum delay for both audio and video. Used if the sender fails
 // to provide any constraints.
-constexpr std::chrono::milliseconds kDefaultMaxDelayMs(4000);
+constexpr std::chrono::milliseconds kDefaultMaxDelayMs(400);
 
 // Bit rate limits, used for both audio and video streams.
 struct BitRateLimits {
@@ -52,13 +53,9 @@ constexpr int kDefaultAudioMaxBitRate = 256 * 1000;
 constexpr BitRateLimits kDefaultAudioBitRateLimits{kDefaultAudioMinBitRate,
                                                    kDefaultAudioMaxBitRate};
 
-// Generally speaking, due to the range of human hearing (20Hz-20kHz) and the
-// Nyquist sampling theorem, 44.1kHz captures should capture all the fidelity
-// of the audio source.
-constexpr int kDefaultAudioMaxSampleRate = 44100;
-
-// Default to stereo if channel count is not provided.
-constexpr int kDefaultAudioMaxChannels = 2;
+// While generally audio should be captured at the maximum sample rate, 16kHz is
+// the recommended absolute minimum.
+constexpr int kDefaultAudioMinSampleRate = 16000;
 
 // Audio capture recommendations. Maximum delay is determined by buffer
 // constraints, and capture bit rate may vary between limits as appropriate.
@@ -72,35 +69,22 @@ struct Audio {
   std::chrono::milliseconds max_delay = kDefaultMaxDelayMs;
 
   // Represents the maximum number of audio channels.
-  int max_channels = kDefaultAudioMaxChannels;
+  int max_channels = kDefaultAudioChannels;
 
   // Represents the maximum samples per second.
-  int max_sample_rate = kDefaultAudioMaxSampleRate;
-};
+  int max_sample_rate = kDefaultAudioSampleRate;
 
-struct Resolution {
-  bool operator==(const Resolution& other) const;
-  bool operator<(const Resolution& other) const;
-  bool operator<=(const Resolution& other) const;
-  void set_minimum(const Resolution& other);
-
-  // The effective bit rate is the predicted average bit rate based on the
-  // properties of the Resolution instance, and is currently just the product.
-  constexpr int effective_bit_rate() const {
-    return static_cast<int>(static_cast<double>(width * height) * frame_rate);
-  }
-
-  int width;
-  int height;
-  double frame_rate;
+  // Represents the absolute minimum samples per second. Generally speaking,
+  // audio should be captured at the maximum samples per second rate.
+  int min_sample_rate = kDefaultAudioMinSampleRate;
 };
 
 // The minimum dimensions are as close as possible to low-definition
 // television, factoring in the receiver's aspect ratio if provided.
-constexpr Resolution kDefaultMinResolution{320, 240, 30};
+constexpr Resolution kDefaultMinResolution{kMinVideoWidth, kMinVideoHeight};
 
 // Currently mirroring only supports 1080P.
-constexpr Resolution kDefaultMaxResolution{1920, 1080, 30};
+constexpr Dimensions kDefaultMaxResolution{1920, 1080, kDefaultFrameRate};
 
 // The mirroring spec suggests 300kbps as the absolute minimum bitrate.
 constexpr int kDefaultVideoMinBitRate = 300 * 1000;
@@ -114,7 +98,7 @@ constexpr int kDefaultVideoMaxPixelsPerSecond =
 // Our default limits are merely the product of the minimum and maximum
 // dimensions, and are only used if the receiver fails to give better
 // constraint information.
-constexpr BitRateLimits kDefaultVideoBitRateLimits{
+const BitRateLimits kDefaultVideoBitRateLimits{
     kDefaultVideoMinBitRate, kDefaultMaxResolution.effective_bit_rate()};
 
 // Video capture recommendations.
@@ -128,7 +112,7 @@ struct Video {
   Resolution minimum = kDefaultMinResolution;
 
   // Represents the recommended maximum resolution.
-  Resolution maximum = kDefaultMaxResolution;
+  Dimensions maximum = kDefaultMaxResolution;
 
   // Indicates whether the receiver can scale frames from a different aspect
   // ratio, or if it needs to be done by the sender. Default is false, meaning
@@ -160,7 +144,6 @@ struct Recommendations {
 Recommendations GetRecommendations(const Answer& answer);
 
 }  // namespace capture_recommendations
-}  // namespace cast
-}  // namespace openscreen
+}  // namespace openscreen::cast
 
 #endif  // CAST_STREAMING_CAPTURE_RECOMMENDATIONS_H_

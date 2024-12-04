@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,38 +7,20 @@
 #include <tuple>
 #include <vector>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/location.h"
 #include "components/browsing_data/content/browsing_data_helper.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/shared_worker_service.h"
 #include "content/public/browser/storage_partition.h"
+#include "third_party/blink/public/common/storage_key/storage_key.h"
 
 namespace browsing_data {
 
-SharedWorkerHelper::SharedWorkerInfo::SharedWorkerInfo(
-    const GURL& worker,
-    const std::string& name,
-    const url::Origin& constructor_origin)
-    : worker(worker), name(name), constructor_origin(constructor_origin) {}
-
-SharedWorkerHelper::SharedWorkerInfo::SharedWorkerInfo(
-    const SharedWorkerInfo& other) = default;
-
-SharedWorkerHelper::SharedWorkerInfo::~SharedWorkerInfo() = default;
-
-bool SharedWorkerHelper::SharedWorkerInfo::operator<(
-    const SharedWorkerInfo& other) const {
-  return std::tie(worker, name, constructor_origin) <
-         std::tie(other.worker, other.name, other.constructor_origin);
-}
-
 SharedWorkerHelper::SharedWorkerHelper(
-    content::StoragePartition* storage_partition,
-    content::ResourceContext* resource_context)
-    : storage_partition_(storage_partition),
-      resource_context_(resource_context) {}
+    content::StoragePartition* storage_partition)
+    : storage_partition_(storage_partition) {}
 
 SharedWorkerHelper::~SharedWorkerHelper() = default;
 
@@ -48,35 +30,34 @@ void SharedWorkerHelper::StartFetching(FetchCallback callback) {
 
   // We always return an empty list, as there are no "persistent" shared
   // workers.
-  std::list<SharedWorkerInfo> result;
+  std::list<browsing_data::SharedWorkerInfo> result;
   content::GetUIThreadTaskRunner({})->PostTask(
       FROM_HERE, base::BindOnce(std::move(callback), result));
 }
 void SharedWorkerHelper::DeleteSharedWorker(
     const GURL& worker,
     const std::string& name,
-    const url::Origin& constructor_origin) {
+    const blink::StorageKey& storage_key) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  storage_partition_->GetSharedWorkerService()->TerminateWorker(
-      worker, name, constructor_origin);
+  storage_partition_->GetSharedWorkerService()->TerminateWorker(worker, name,
+                                                                storage_key);
 }
 
 CannedSharedWorkerHelper::CannedSharedWorkerHelper(
-    content::StoragePartition* storage_partition,
-    content::ResourceContext* resource_context)
-    : SharedWorkerHelper(storage_partition, resource_context) {}
+    content::StoragePartition* storage_partition)
+    : SharedWorkerHelper(storage_partition) {}
 
 CannedSharedWorkerHelper::~CannedSharedWorkerHelper() = default;
 
 void CannedSharedWorkerHelper::AddSharedWorker(
     const GURL& worker,
     const std::string& name,
-    const url::Origin& constructor_origin) {
+    const blink::StorageKey& storage_key) {
   if (!HasWebScheme(worker))
     return;  // Non-websafe state is not considered browsing data.
 
   pending_shared_worker_info_.insert(
-      SharedWorkerInfo(worker, name, constructor_origin));
+      browsing_data::SharedWorkerInfo(worker, name, storage_key));
 }
 
 void CannedSharedWorkerHelper::Reset() {
@@ -91,7 +72,7 @@ size_t CannedSharedWorkerHelper::GetSharedWorkerCount() const {
   return pending_shared_worker_info_.size();
 }
 
-const std::set<CannedSharedWorkerHelper::SharedWorkerInfo>&
+const std::set<browsing_data::SharedWorkerInfo>&
 CannedSharedWorkerHelper::GetSharedWorkerInfo() const {
   return pending_shared_worker_info_;
 }
@@ -100,23 +81,22 @@ void CannedSharedWorkerHelper::StartFetching(FetchCallback callback) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   DCHECK(!callback.is_null());
 
-  std::list<SharedWorkerInfo> result;
+  std::list<browsing_data::SharedWorkerInfo> result;
   for (auto& it : pending_shared_worker_info_)
     result.push_back(it);
-  content::GetUIThreadTaskRunner({})->PostTask(
-      FROM_HERE, base::BindOnce(std::move(callback), result));
+  std::move(callback).Run(result);
 }
 
 void CannedSharedWorkerHelper::DeleteSharedWorker(
     const GURL& worker,
     const std::string& name,
-    const url::Origin& constructor_origin) {
+    const blink::StorageKey& storage_key) {
   for (auto it = pending_shared_worker_info_.begin();
        it != pending_shared_worker_info_.end();) {
     if (it->worker == worker && it->name == name &&
-        it->constructor_origin == constructor_origin) {
+        it->storage_key == storage_key) {
       SharedWorkerHelper::DeleteSharedWorker(it->worker, it->name,
-                                             it->constructor_origin);
+                                             it->storage_key);
       it = pending_shared_worker_info_.erase(it);
     } else {
       ++it;

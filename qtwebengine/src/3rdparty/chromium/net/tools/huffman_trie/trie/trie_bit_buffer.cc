@@ -1,17 +1,17 @@
-// Copyright (c) 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "net/tools/huffman_trie/trie/trie_bit_buffer.h"
 
+#include <bit>
+#include <cstdint>
 #include <ostream>
 
 #include "base/check.h"
 #include "net/tools/huffman_trie/bit_writer.h"
 
-namespace net {
-
-namespace huffman_trie {
+namespace net::huffman_trie {
 
 TrieBitBuffer::TrieBitBuffer() = default;
 
@@ -35,19 +35,33 @@ void TrieBitBuffer::WriteBits(uint32_t bits, uint8_t number_of_bits) {
 }
 
 void TrieBitBuffer::WritePosition(uint32_t position, int32_t* last_position) {
+  // NOTE: If either of these values are changed, the corresponding values in
+  // net::extras::PreloadDecoder::Decode must also be changed.
+  constexpr uint8_t kShortOffsetMaxLength = 7;
+  constexpr uint8_t kLongOffsetLengthLength = 4;
+  // The maximum number of lengths in the long form is
+  // 2^kLongOffsetLengthLength, which added to kShortOffsetMaxLength gives the
+  // maximum bit length for |position|.
+  constexpr uint8_t kMaxBitLength =
+      kShortOffsetMaxLength + (1 << kLongOffsetLengthLength);
+
   if (*last_position != -1) {
     int32_t delta = position - *last_position;
     DCHECK(delta > 0) << "delta position is not positive.";
 
-    uint8_t number_of_bits = BitLength(delta);
-    DCHECK(number_of_bits <= 7 + 15) << "positive position delta too large.";
+    uint8_t number_of_bits = std::bit_width<uint32_t>(delta);
+    DCHECK(number_of_bits <= kMaxBitLength)
+        << "positive position delta too large.";
 
-    if (number_of_bits <= 7) {
+    if (number_of_bits <= kShortOffsetMaxLength) {
       WriteBits(0, 1);
-      WriteBits(delta, 7);
+      WriteBits(delta, kShortOffsetMaxLength);
     } else {
       WriteBits(1, 1);
-      WriteBits(number_of_bits - 8, 4);
+      // The smallest length written when using the long offset form is one
+      // more than kShortOffsetMaxLength, and it is written as 0.
+      WriteBits(number_of_bits - kShortOffsetMaxLength - 1,
+                kLongOffsetLengthLength);
       WriteBits(delta, number_of_bits);
     }
 
@@ -62,15 +76,6 @@ void TrieBitBuffer::WritePosition(uint32_t position, int32_t* last_position) {
   AppendPositionElement(position);
 
   *last_position = position;
-}
-
-uint8_t TrieBitBuffer::BitLength(uint32_t input) const {
-  uint8_t number_of_bits = 0;
-  while (input != 0) {
-    number_of_bits++;
-    input >>= 1;
-  }
-  return number_of_bits;
 }
 
 void TrieBitBuffer::WriteChar(uint8_t byte,
@@ -136,8 +141,8 @@ uint32_t TrieBitBuffer::WriteToBitWriter(BitWriter* writer) {
       uint32_t target = element.position;
       DCHECK(target < current) << "Reference is not backwards";
       uint32_t delta = current - target;
-      uint8_t delta_number_of_bits = BitLength(delta);
-      DCHECK(delta_number_of_bits < 32) << "Delta to large";
+      uint8_t delta_number_of_bits = std::bit_width(delta);
+      DCHECK(delta_number_of_bits < 32) << "Delta too large";
       writer->WriteBits(delta_number_of_bits, 5);
       writer->WriteBits(delta, delta_number_of_bits);
     }
@@ -154,6 +159,4 @@ void TrieBitBuffer::Flush() {
   }
 }
 
-}  // namespace huffman_trie
-
-}  // namespace net
+}  // namespace net::huffman_trie

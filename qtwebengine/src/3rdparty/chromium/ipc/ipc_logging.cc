@@ -1,8 +1,11 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "ipc/ipc_logging.h"
+
+#include "base/task/single_thread_task_runner.h"
+#include "build/build_config.h"
 
 #if BUILDFLAG(IPC_MESSAGE_LOG_ENABLED)
 #define IPC_MESSAGE_MACROS_LOG_ENABLED
@@ -11,23 +14,22 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "base/bind.h"
-#include "base/bind_helpers.h"
 #include "base/command_line.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
+#include "base/strings/stringprintf.h"
 #include "base/threading/thread.h"
-#include "base/threading/thread_task_runner_handle.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "ipc/ipc_message_utils.h"
 #include "ipc/ipc_sender.h"
 #include "ipc/ipc_sync_message.h"
 
-#if defined(OS_POSIX)
+#if BUILDFLAG(IS_POSIX)
 #include <unistd.h>
 #endif
 
@@ -49,9 +51,9 @@ Logging::Logging()
       enabled_color_(false),
       queue_invoke_later_pending_(false),
       sender_(nullptr),
-      main_thread_(base::ThreadTaskRunnerHandle::Get()),
+      main_thread_(base::SingleThreadTaskRunner::GetCurrentDefault()),
       consumer_(nullptr) {
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   // getenv triggers an unsafe warning. Simply check how big of a buffer
   // would be needed to fetch the value to see if the enviornment variable is
   // set.
@@ -64,12 +66,12 @@ Logging::Logging()
     if (requiredSize && !strncmp("color", buffer, 6))
       enabled_color_ = true;
   }
-#else  // !defined(OS_WIN)
+#else   // !BUILDFLAG(IS_WIN)
   const char* ipc_logging = getenv("CHROME_IPC_LOGGING");
   bool logging_env_var_set = (ipc_logging != NULL);
   if (ipc_logging && !strcmp(ipc_logging, "color"))
     enabled_color_ = true;
-#endif  //defined(OS_WIN)
+#endif  // BUILDFLAG(IS_WIN)
   if (logging_env_var_set) {
     enabled_ = true;
     enabled_on_stderr_ = true;
@@ -141,13 +143,16 @@ void Logging::OnSendMessage(Message* message) {
   } else {
     // If the time has already been set (i.e. by ChannelProxy), keep that time
     // instead as it's more accurate.
-    if (!message->sent_time())
-      message->set_sent_time(Time::Now().ToInternalValue());
+    if (!message->sent_time()) {
+      message->set_sent_time(
+          Time::Now().ToDeltaSinceWindowsEpoch().InMicroseconds());
+    }
   }
 }
 
 void Logging::OnPreDispatchMessage(const Message& message) {
-  message.set_received_time(Time::Now().ToInternalValue());
+  message.set_received_time(
+      Time::Now().ToDeltaSinceWindowsEpoch().InMicroseconds());
 }
 
 void Logging::OnPostDispatchMessage(const Message& message) {
@@ -233,10 +238,10 @@ void Logging::Log(const LogData& data) {
       queued_logs_.push_back(data);
       if (!queue_invoke_later_pending_) {
         queue_invoke_later_pending_ = true;
-        base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+        base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
             FROM_HERE,
             base::BindOnce(&Logging::OnSendLogs, base::Unretained(this)),
-            base::TimeDelta::FromMilliseconds(kLogSendDelayMs));
+            base::Milliseconds(kLogSendDelayMs));
       }
     }
   }
@@ -248,26 +253,27 @@ void Logging::Log(const LogData& data) {
       message_name = data.message_name;
     }
     double receive_delay =
-        (Time::FromInternalValue(data.receive) -
-         Time::FromInternalValue(data.sent)).InSecondsF();
+        (Time::FromDeltaSinceWindowsEpoch(base::Microseconds(data.receive)) -
+         Time::FromDeltaSinceWindowsEpoch(base::Microseconds(data.sent)))
+            .InSecondsF();
     double dispatch_delay =
-        (Time::FromInternalValue(data.dispatch) -
-         Time::FromInternalValue(data.sent)).InSecondsF();
-    fprintf(stderr,
-            "ipc %d %s %s%s %s%s\n  %18.5f %s%18.5f %s%18.5f%s\n",
-            data.routing_id,
-            data.flags.c_str(),
+        (Time::FromDeltaSinceWindowsEpoch(base::Microseconds(data.dispatch)) -
+         Time::FromDeltaSinceWindowsEpoch(base::Microseconds(data.sent)))
+            .InSecondsF();
+    fprintf(stderr, "ipc %d %s %s%s %s%s\n  %18.5f %s%18.5f %s%18.5f%s\n",
+            data.routing_id, data.flags.c_str(),
             ANSIEscape(sender_ ? ANSI_COLOR_BLUE : ANSI_COLOR_CYAN),
-            message_name.c_str(),
-            ANSIEscape(ANSI_COLOR_RESET),
+            message_name.c_str(), ANSIEscape(ANSI_COLOR_RESET),
             data.params.c_str(),
-            Time::FromInternalValue(data.sent).ToDoubleT(),
+            Time::FromDeltaSinceWindowsEpoch(base::Microseconds(data.sent))
+                .InSecondsFSinceUnixEpoch(),
             ANSIEscape(DelayColor(receive_delay)),
-            Time::FromInternalValue(data.receive).ToDoubleT(),
+            Time::FromDeltaSinceWindowsEpoch(base::Microseconds(data.receive))
+                .InSecondsFSinceUnixEpoch(),
             ANSIEscape(DelayColor(dispatch_delay)),
-            Time::FromInternalValue(data.dispatch).ToDoubleT(),
-            ANSIEscape(ANSI_COLOR_RESET)
-            );
+            Time::FromDeltaSinceWindowsEpoch(base::Microseconds(data.dispatch))
+                .InSecondsFSinceUnixEpoch(),
+            ANSIEscape(ANSI_COLOR_RESET));
   }
 }
 
@@ -303,7 +309,7 @@ void GenerateLogData(const Message& message, LogData* data, bool get_params) {
     data->flags = flags;
     data->sent = message.sent_time();
     data->receive = message.received_time();
-    data->dispatch = Time::Now().ToInternalValue();
+    data->dispatch = Time::Now().ToDeltaSinceWindowsEpoch().InMicroseconds();
     data->params = params;
     data->message_name = message_name;
   }

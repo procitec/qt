@@ -1,14 +1,16 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/web_modal/web_contents_modal_dialog_manager.h"
 
-#include <algorithm>
 #include <utility>
 
 #include "base/check.h"
+#include "base/ranges/algorithm.h"
+#include "components/back_forward_cache/back_forward_cache_disable.h"
 #include "components/web_modal/web_contents_modal_dialog_manager_delegate.h"
+#include "content/public/browser/back_forward_cache.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/web_contents.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
@@ -61,10 +63,7 @@ content::WebContents* WebContentsModalDialogManager::GetWebContents() const {
 }
 
 void WebContentsModalDialogManager::WillClose(gfx::NativeWindow dialog) {
-  auto dlg = std::find_if(child_dialogs_.begin(), child_dialogs_.end(),
-                          [dialog](const DialogState& child_dialog) {
-                            return child_dialog.dialog == dialog;
-                          });
+  auto dlg = base::ranges::find(child_dialogs_, dialog, &DialogState::dialog);
 
   // The Views tab contents modal dialog calls WillClose twice.  Ignore the
   // second invocation.
@@ -85,10 +84,10 @@ void WebContentsModalDialogManager::WillClose(gfx::NativeWindow dialog) {
 WebContentsModalDialogManager::WebContentsModalDialogManager(
     content::WebContents* web_contents)
     : content::WebContentsObserver(web_contents),
-      delegate_(nullptr),
+      content::WebContentsUserData<WebContentsModalDialogManager>(
+          *web_contents),
       web_contents_is_hidden_(web_contents->GetVisibility() ==
-                              content::Visibility::HIDDEN),
-      closing_all_dialogs_(false) {}
+                              content::Visibility::HIDDEN) {}
 
 WebContentsModalDialogManager::DialogState::DialogState(
     gfx::NativeWindow dialog,
@@ -111,7 +110,11 @@ void WebContentsModalDialogManager::BlockWebContentsInteraction(bool blocked) {
     return;
   }
 
-  contents->SetIgnoreInputEvents(blocked);
+  if (blocked) {
+    scoped_ignore_input_events_ = contents->IgnoreInputEvents();
+  } else {
+    scoped_ignore_input_events_.reset();
+  }
   if (delegate_)
     delegate_->SetWebContentsBlocked(contents, blocked);
 }
@@ -129,12 +132,26 @@ void WebContentsModalDialogManager::CloseAllDialogs() {
 
 void WebContentsModalDialogManager::DidFinishNavigation(
     content::NavigationHandle* navigation_handle) {
-  if (!navigation_handle->IsInMainFrame() || !navigation_handle->HasCommitted())
+  if (!navigation_handle->IsInPrimaryMainFrame() ||
+      !navigation_handle->HasCommitted())
     return;
+
+  if (!child_dialogs_.empty()) {
+    // Disable BFCache for the page which had any modal dialog open.
+    // This prevents the page which has print, confirm form resubmission, http
+    // password dialogs, etc. to go in to BFCache. We can't simply dismiss the
+    // dialogs in the case, since they are requesting meaningful input from the
+    // user that affects the loading or display of the content.
+    content::BackForwardCache::DisableForRenderFrameHost(
+        navigation_handle->GetPreviousRenderFrameHostId(),
+        back_forward_cache::DisabledReason(
+            back_forward_cache::DisabledReasonId::kModalDialog));
+  }
 
   // Close constrained windows if necessary.
   if (!net::registry_controlled_domains::SameDomainOrHost(
-          navigation_handle->GetPreviousURL(), navigation_handle->GetURL(),
+          navigation_handle->GetPreviousPrimaryMainFrameURL(),
+          navigation_handle->GetURL(),
           net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES))
     CloseAllDialogs();
 }
@@ -150,16 +167,23 @@ void WebContentsModalDialogManager::OnVisibilityChanged(
   const bool web_contents_was_hidden = web_contents_is_hidden_;
   web_contents_is_hidden_ = visibility == content::Visibility::HIDDEN;
 
-  // Avoid reshowing on transitions between VISIBLE and OCCLUDED.
-  if (child_dialogs_.empty() ||
-      web_contents_is_hidden_ == web_contents_was_hidden) {
+  if (child_dialogs_.empty()) {
     return;
   }
 
-  if (web_contents_is_hidden_)
-    child_dialogs_.front().manager->Hide();
-  else
-    child_dialogs_.front().manager->Show();
+  const bool state_changed = web_contents_is_hidden_ != web_contents_was_hidden;
+  if (web_contents_is_hidden_) {
+    if (state_changed) {
+      child_dialogs_.front().manager->Hide();
+    }
+  } else {
+    // Show the dialog if it transitioned from HIDDEN to VISIBLE or OCCLUDED, or
+    // from OCCLUDED to VISIBLE if the dialog is no longer active.
+    // TODO(crbug.com/1487345): Add an interaction test for this.
+    if (state_changed || !child_dialogs_.front().manager->IsActive()) {
+      child_dialogs_.front().manager->Show();
+    }
+  }
 }
 
 void WebContentsModalDialogManager::WebContentsDestroyed() {
@@ -170,6 +194,6 @@ void WebContentsModalDialogManager::WebContentsDestroyed() {
   CloseAllDialogs();
 }
 
-WEB_CONTENTS_USER_DATA_KEY_IMPL(WebContentsModalDialogManager)
+WEB_CONTENTS_USER_DATA_KEY_IMPL(WebContentsModalDialogManager);
 
 }  // namespace web_modal

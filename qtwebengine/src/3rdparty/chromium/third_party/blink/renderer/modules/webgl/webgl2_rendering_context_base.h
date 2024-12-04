@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,6 +6,7 @@
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_WEBGL_WEBGL2_RENDERING_CONTEXT_BASE_H_
 
 #include <memory>
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/renderer/modules/webgl/webgl_extension.h"
 #include "third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.h"
 
@@ -42,11 +43,11 @@ class WebGL2RenderingContextBase : public WebGLRenderingContextBase {
   // base class.  This is because the above buffer{Sub}Data() hides the name
   // from base class.
   void bufferData(GLenum target, int64_t size, GLenum usage);
-  void bufferData(GLenum target, DOMArrayBuffer* data, GLenum usage);
+  void bufferData(GLenum target, DOMArrayBufferBase* data, GLenum usage);
   void bufferData(GLenum target,
                   MaybeShared<DOMArrayBufferView> data,
                   GLenum usage);
-  void bufferSubData(GLenum target, int64_t offset, DOMArrayBuffer* data);
+  void bufferSubData(GLenum target, int64_t offset, DOMArrayBufferBase* data);
   void bufferSubData(GLenum target,
                      int64_t offset,
                      const FlexibleArrayBufferView& data);
@@ -107,7 +108,7 @@ class WebGL2RenderingContextBase : public WebGLRenderingContextBase {
                   GLenum,
                   GLenum,
                   ImageData*);
-  void texImage2D(ExecutionContext*,
+  void texImage2D(ScriptState*,
                   GLenum,
                   GLint,
                   GLint,
@@ -118,7 +119,7 @@ class WebGL2RenderingContextBase : public WebGLRenderingContextBase {
                   GLenum,
                   HTMLImageElement*,
                   ExceptionState&);
-  void texImage2D(ExecutionContext*,
+  void texImage2D(ScriptState*,
                   GLenum,
                   GLint,
                   GLint,
@@ -129,7 +130,7 @@ class WebGL2RenderingContextBase : public WebGLRenderingContextBase {
                   GLenum,
                   CanvasRenderingContextHost*,
                   ExceptionState&);
-  void texImage2D(ExecutionContext*,
+  void texImage2D(ScriptState*,
                   GLenum,
                   GLint,
                   GLint,
@@ -139,6 +140,17 @@ class WebGL2RenderingContextBase : public WebGLRenderingContextBase {
                   GLenum,
                   GLenum,
                   HTMLVideoElement*,
+                  ExceptionState&);
+  void texImage2D(ScriptState*,
+                  GLenum,
+                  GLint,
+                  GLint,
+                  GLsizei,
+                  GLsizei,
+                  GLint,
+                  GLenum,
+                  GLenum,
+                  VideoFrame*,
                   ExceptionState&);
   void texImage2D(GLenum,
                   GLint,
@@ -179,7 +191,7 @@ class WebGL2RenderingContextBase : public WebGLRenderingContextBase {
                      GLenum,
                      GLenum,
                      ImageData*);
-  void texSubImage2D(ExecutionContext*,
+  void texSubImage2D(ScriptState*,
                      GLenum,
                      GLint,
                      GLint,
@@ -190,7 +202,7 @@ class WebGL2RenderingContextBase : public WebGLRenderingContextBase {
                      GLenum,
                      HTMLImageElement*,
                      ExceptionState&);
-  void texSubImage2D(ExecutionContext*,
+  void texSubImage2D(ScriptState*,
                      GLenum,
                      GLint,
                      GLint,
@@ -201,7 +213,7 @@ class WebGL2RenderingContextBase : public WebGLRenderingContextBase {
                      GLenum,
                      CanvasRenderingContextHost*,
                      ExceptionState&);
-  void texSubImage2D(ExecutionContext*,
+  void texSubImage2D(ScriptState*,
                      GLenum,
                      GLint,
                      GLint,
@@ -211,6 +223,17 @@ class WebGL2RenderingContextBase : public WebGLRenderingContextBase {
                      GLenum,
                      GLenum,
                      HTMLVideoElement*,
+                     ExceptionState&);
+  void texSubImage2D(ScriptState*,
+                     GLenum,
+                     GLint,
+                     GLint,
+                     GLint,
+                     GLsizei,
+                     GLsizei,
+                     GLenum,
+                     GLenum,
+                     VideoFrame*,
                      ExceptionState&);
   void texSubImage2D(GLenum,
                      GLint,
@@ -237,7 +260,7 @@ class WebGL2RenderingContextBase : public WebGLRenderingContextBase {
   // base class.  This is because the above tex{Sub}Image2D() hides the name
   // from base class.
   void texImage2D(GLenum, GLint, GLint, GLenum, GLenum, ImageData*);
-  void texImage2D(ExecutionContext*,
+  void texImage2D(ScriptState*,
                   GLenum,
                   GLint,
                   GLint,
@@ -245,7 +268,7 @@ class WebGL2RenderingContextBase : public WebGLRenderingContextBase {
                   GLenum,
                   HTMLImageElement*,
                   ExceptionState&);
-  void texImage2D(ExecutionContext*,
+  void texImage2D(ScriptState*,
                   GLenum,
                   GLint,
                   GLint,
@@ -253,13 +276,21 @@ class WebGL2RenderingContextBase : public WebGLRenderingContextBase {
                   GLenum,
                   CanvasRenderingContextHost*,
                   ExceptionState&);
-  void texImage2D(ExecutionContext*,
+  void texImage2D(ScriptState*,
                   GLenum,
                   GLint,
                   GLint,
                   GLenum,
                   GLenum,
                   HTMLVideoElement*,
+                  ExceptionState&);
+  void texImage2D(ScriptState*,
+                  GLenum,
+                  GLint,
+                  GLint,
+                  GLenum,
+                  GLenum,
+                  VideoFrame*,
                   ExceptionState&);
   void texImage2D(GLenum,
                   GLint,
@@ -269,7 +300,7 @@ class WebGL2RenderingContextBase : public WebGLRenderingContextBase {
                   ImageBitmap*,
                   ExceptionState&);
   void texSubImage2D(GLenum, GLint, GLint, GLint, GLenum, GLenum, ImageData*);
-  void texSubImage2D(ExecutionContext*,
+  void texSubImage2D(ScriptState*,
                      GLenum,
                      GLint,
                      GLint,
@@ -278,7 +309,7 @@ class WebGL2RenderingContextBase : public WebGLRenderingContextBase {
                      GLenum,
                      HTMLImageElement*,
                      ExceptionState&);
-  void texSubImage2D(ExecutionContext*,
+  void texSubImage2D(ScriptState*,
                      GLenum,
                      GLint,
                      GLint,
@@ -287,7 +318,7 @@ class WebGL2RenderingContextBase : public WebGLRenderingContextBase {
                      GLenum,
                      CanvasRenderingContextHost*,
                      ExceptionState&);
-  void texSubImage2D(ExecutionContext*,
+  void texSubImage2D(ScriptState*,
                      GLenum,
                      GLint,
                      GLint,
@@ -295,6 +326,15 @@ class WebGL2RenderingContextBase : public WebGLRenderingContextBase {
                      GLenum,
                      GLenum,
                      HTMLVideoElement*,
+                     ExceptionState&);
+  void texSubImage2D(ScriptState*,
+                     GLenum,
+                     GLint,
+                     GLint,
+                     GLint,
+                     GLenum,
+                     GLenum,
+                     VideoFrame*,
                      ExceptionState&);
   void texSubImage2D(GLenum,
                      GLint,
@@ -338,7 +378,7 @@ class WebGL2RenderingContextBase : public WebGLRenderingContextBase {
                   GLenum,
                   GLenum,
                   ImageData*);
-  void texImage3D(ExecutionContext*,
+  void texImage3D(ScriptState*,
                   GLenum,
                   GLint,
                   GLint,
@@ -350,7 +390,7 @@ class WebGL2RenderingContextBase : public WebGLRenderingContextBase {
                   GLenum,
                   HTMLImageElement*,
                   ExceptionState&);
-  void texImage3D(ExecutionContext*,
+  void texImage3D(ScriptState*,
                   GLenum,
                   GLint,
                   GLint,
@@ -362,7 +402,7 @@ class WebGL2RenderingContextBase : public WebGLRenderingContextBase {
                   GLenum,
                   CanvasRenderingContextHost*,
                   ExceptionState&);
-  void texImage3D(ExecutionContext*,
+  void texImage3D(ScriptState*,
                   GLenum,
                   GLint,
                   GLint,
@@ -373,6 +413,18 @@ class WebGL2RenderingContextBase : public WebGLRenderingContextBase {
                   GLenum,
                   GLenum,
                   HTMLVideoElement*,
+                  ExceptionState&);
+  void texImage3D(ScriptState*,
+                  GLenum,
+                  GLint,
+                  GLint,
+                  GLsizei,
+                  GLsizei,
+                  GLsizei,
+                  GLint,
+                  GLenum,
+                  GLenum,
+                  VideoFrame*,
                   ExceptionState&);
   void texImage3D(GLenum,
                   GLint,
@@ -429,7 +481,7 @@ class WebGL2RenderingContextBase : public WebGLRenderingContextBase {
                      GLenum,
                      GLenum,
                      ImageData*);
-  void texSubImage3D(ExecutionContext*,
+  void texSubImage3D(ScriptState*,
                      GLenum,
                      GLint,
                      GLint,
@@ -442,7 +494,7 @@ class WebGL2RenderingContextBase : public WebGLRenderingContextBase {
                      GLenum,
                      HTMLImageElement*,
                      ExceptionState&);
-  void texSubImage3D(ExecutionContext*,
+  void texSubImage3D(ScriptState*,
                      GLenum,
                      GLint,
                      GLint,
@@ -455,7 +507,7 @@ class WebGL2RenderingContextBase : public WebGLRenderingContextBase {
                      GLenum,
                      CanvasRenderingContextHost*,
                      ExceptionState&);
-  void texSubImage3D(ExecutionContext*,
+  void texSubImage3D(ScriptState*,
                      GLenum,
                      GLint,
                      GLint,
@@ -467,6 +519,19 @@ class WebGL2RenderingContextBase : public WebGLRenderingContextBase {
                      GLenum,
                      GLenum,
                      HTMLVideoElement*,
+                     ExceptionState&);
+  void texSubImage3D(ScriptState*,
+                     GLenum,
+                     GLint,
+                     GLint,
+                     GLint,
+                     GLint,
+                     GLsizei,
+                     GLsizei,
+                     GLsizei,
+                     GLenum,
+                     GLenum,
+                     VideoFrame*,
                      ExceptionState&);
   void texSubImage3D(GLenum,
                      GLint,
@@ -617,7 +682,7 @@ class WebGL2RenderingContextBase : public WebGLRenderingContextBase {
   void uniform3ui(const WebGLUniformLocation*, GLuint, GLuint, GLuint);
   void uniform4ui(const WebGLUniformLocation*, GLuint, GLuint, GLuint, GLuint);
   void uniform1fv(const WebGLUniformLocation*,
-                  const FlexibleFloat32Array&,
+                  NADCTypedArrayView<GLfloat>,
                   GLuint,
                   GLuint);
   void uniform1fv(const WebGLUniformLocation*,
@@ -625,7 +690,7 @@ class WebGL2RenderingContextBase : public WebGLRenderingContextBase {
                   GLuint,
                   GLuint);
   void uniform2fv(const WebGLUniformLocation*,
-                  const FlexibleFloat32Array&,
+                  NADCTypedArrayView<GLfloat>,
                   GLuint,
                   GLuint);
   void uniform2fv(const WebGLUniformLocation*,
@@ -633,7 +698,7 @@ class WebGL2RenderingContextBase : public WebGLRenderingContextBase {
                   GLuint,
                   GLuint);
   void uniform3fv(const WebGLUniformLocation*,
-                  const FlexibleFloat32Array&,
+                  NADCTypedArrayView<GLfloat>,
                   GLuint,
                   GLuint);
   void uniform3fv(const WebGLUniformLocation*,
@@ -641,7 +706,7 @@ class WebGL2RenderingContextBase : public WebGLRenderingContextBase {
                   GLuint,
                   GLuint);
   void uniform4fv(const WebGLUniformLocation*,
-                  const FlexibleFloat32Array&,
+                  NADCTypedArrayView<GLfloat>,
                   GLuint,
                   GLuint);
   void uniform4fv(const WebGLUniformLocation*,
@@ -649,27 +714,27 @@ class WebGL2RenderingContextBase : public WebGLRenderingContextBase {
                   GLuint,
                   GLuint);
   void uniform1iv(const WebGLUniformLocation*,
-                  const FlexibleInt32Array&,
+                  NADCTypedArrayView<GLint>,
                   GLuint,
                   GLuint);
   void uniform1iv(const WebGLUniformLocation*, Vector<GLint>&, GLuint, GLuint);
   void uniform2iv(const WebGLUniformLocation*,
-                  const FlexibleInt32Array&,
+                  NADCTypedArrayView<GLint>,
                   GLuint,
                   GLuint);
   void uniform2iv(const WebGLUniformLocation*, Vector<GLint>&, GLuint, GLuint);
   void uniform3iv(const WebGLUniformLocation*,
-                  const FlexibleInt32Array&,
+                  NADCTypedArrayView<GLint>,
                   GLuint,
                   GLuint);
   void uniform3iv(const WebGLUniformLocation*, Vector<GLint>&, GLuint, GLuint);
   void uniform4iv(const WebGLUniformLocation*,
-                  const FlexibleInt32Array&,
+                  NADCTypedArrayView<GLint>,
                   GLuint,
                   GLuint);
   void uniform4iv(const WebGLUniformLocation*, Vector<GLint>&, GLuint, GLuint);
   void uniform1uiv(const WebGLUniformLocation*,
-                   const FlexibleUint32Array&,
+                   NADCTypedArrayView<GLuint>,
                    GLuint,
                    GLuint);
   void uniform1uiv(const WebGLUniformLocation*,
@@ -677,7 +742,7 @@ class WebGL2RenderingContextBase : public WebGLRenderingContextBase {
                    GLuint,
                    GLuint);
   void uniform2uiv(const WebGLUniformLocation*,
-                   const FlexibleUint32Array&,
+                   NADCTypedArrayView<GLuint>,
                    GLuint,
                    GLuint);
   void uniform2uiv(const WebGLUniformLocation*,
@@ -685,7 +750,7 @@ class WebGL2RenderingContextBase : public WebGLRenderingContextBase {
                    GLuint,
                    GLuint);
   void uniform3uiv(const WebGLUniformLocation*,
-                   const FlexibleUint32Array&,
+                   NADCTypedArrayView<GLuint>,
                    GLuint,
                    GLuint);
   void uniform3uiv(const WebGLUniformLocation*,
@@ -693,7 +758,7 @@ class WebGL2RenderingContextBase : public WebGLRenderingContextBase {
                    GLuint,
                    GLuint);
   void uniform4uiv(const WebGLUniformLocation*,
-                   const FlexibleUint32Array&,
+                   NADCTypedArrayView<GLuint>,
                    GLuint,
                    GLuint);
   void uniform4uiv(const WebGLUniformLocation*,
@@ -702,7 +767,7 @@ class WebGL2RenderingContextBase : public WebGLRenderingContextBase {
                    GLuint);
   void uniformMatrix2fv(const WebGLUniformLocation*,
                         GLboolean,
-                        MaybeShared<DOMFloat32Array>,
+                        NADCTypedArrayView<GLfloat>,
                         GLuint,
                         GLuint);
   void uniformMatrix2fv(const WebGLUniformLocation*,
@@ -712,7 +777,7 @@ class WebGL2RenderingContextBase : public WebGLRenderingContextBase {
                         GLuint);
   void uniformMatrix3fv(const WebGLUniformLocation*,
                         GLboolean,
-                        MaybeShared<DOMFloat32Array>,
+                        NADCTypedArrayView<GLfloat>,
                         GLuint,
                         GLuint);
   void uniformMatrix3fv(const WebGLUniformLocation*,
@@ -722,7 +787,7 @@ class WebGL2RenderingContextBase : public WebGLRenderingContextBase {
                         GLuint);
   void uniformMatrix4fv(const WebGLUniformLocation*,
                         GLboolean,
-                        MaybeShared<DOMFloat32Array>,
+                        NADCTypedArrayView<GLfloat>,
                         GLuint,
                         GLuint);
   void uniformMatrix4fv(const WebGLUniformLocation*,
@@ -732,7 +797,7 @@ class WebGL2RenderingContextBase : public WebGLRenderingContextBase {
                         GLuint);
   void uniformMatrix2x3fv(const WebGLUniformLocation*,
                           GLboolean,
-                          MaybeShared<DOMFloat32Array>,
+                          NADCTypedArrayView<GLfloat>,
                           GLuint,
                           GLuint);
   void uniformMatrix2x3fv(const WebGLUniformLocation*,
@@ -742,7 +807,7 @@ class WebGL2RenderingContextBase : public WebGLRenderingContextBase {
                           GLuint);
   void uniformMatrix3x2fv(const WebGLUniformLocation*,
                           GLboolean,
-                          MaybeShared<DOMFloat32Array>,
+                          NADCTypedArrayView<GLfloat>,
                           GLuint,
                           GLuint);
   void uniformMatrix3x2fv(const WebGLUniformLocation*,
@@ -752,7 +817,7 @@ class WebGL2RenderingContextBase : public WebGLRenderingContextBase {
                           GLuint);
   void uniformMatrix2x4fv(const WebGLUniformLocation*,
                           GLboolean,
-                          MaybeShared<DOMFloat32Array>,
+                          NADCTypedArrayView<GLfloat>,
                           GLuint,
                           GLuint);
   void uniformMatrix2x4fv(const WebGLUniformLocation*,
@@ -762,7 +827,7 @@ class WebGL2RenderingContextBase : public WebGLRenderingContextBase {
                           GLuint);
   void uniformMatrix4x2fv(const WebGLUniformLocation*,
                           GLboolean,
-                          MaybeShared<DOMFloat32Array>,
+                          NADCTypedArrayView<GLfloat>,
                           GLuint,
                           GLuint);
   void uniformMatrix4x2fv(const WebGLUniformLocation*,
@@ -772,7 +837,7 @@ class WebGL2RenderingContextBase : public WebGLRenderingContextBase {
                           GLuint);
   void uniformMatrix3x4fv(const WebGLUniformLocation*,
                           GLboolean,
-                          MaybeShared<DOMFloat32Array>,
+                          NADCTypedArrayView<GLfloat>,
                           GLuint,
                           GLuint);
   void uniformMatrix3x4fv(const WebGLUniformLocation*,
@@ -782,7 +847,7 @@ class WebGL2RenderingContextBase : public WebGLRenderingContextBase {
                           GLuint);
   void uniformMatrix4x3fv(const WebGLUniformLocation*,
                           GLboolean,
-                          MaybeShared<DOMFloat32Array>,
+                          NADCTypedArrayView<GLfloat>,
                           GLuint,
                           GLuint);
   void uniformMatrix4x3fv(const WebGLUniformLocation*,
@@ -793,46 +858,46 @@ class WebGL2RenderingContextBase : public WebGLRenderingContextBase {
   // Have to re-declare/re-define the following uniform*()
   // functions from the base class. This is because the above
   // uniform*() hide the name from base class.
-  void uniform1fv(const WebGLUniformLocation*, const FlexibleFloat32Array&);
+  void uniform1fv(const WebGLUniformLocation*, NADCTypedArrayView<GLfloat>);
   void uniform1fv(const WebGLUniformLocation*, Vector<GLfloat>&);
-  void uniform2fv(const WebGLUniformLocation*, const FlexibleFloat32Array&);
+  void uniform2fv(const WebGLUniformLocation*, NADCTypedArrayView<GLfloat>);
   void uniform2fv(const WebGLUniformLocation*, Vector<GLfloat>&);
-  void uniform3fv(const WebGLUniformLocation*, const FlexibleFloat32Array&);
+  void uniform3fv(const WebGLUniformLocation*, NADCTypedArrayView<GLfloat>);
   void uniform3fv(const WebGLUniformLocation*, Vector<GLfloat>&);
-  void uniform4fv(const WebGLUniformLocation*, const FlexibleFloat32Array&);
+  void uniform4fv(const WebGLUniformLocation*, NADCTypedArrayView<GLfloat>);
   void uniform4fv(const WebGLUniformLocation*, Vector<GLfloat>&);
-  void uniform1iv(const WebGLUniformLocation*, const FlexibleInt32Array&);
+  void uniform1iv(const WebGLUniformLocation*, NADCTypedArrayView<GLint>);
   void uniform1iv(const WebGLUniformLocation*, Vector<GLint>&);
-  void uniform2iv(const WebGLUniformLocation*, const FlexibleInt32Array&);
+  void uniform2iv(const WebGLUniformLocation*, NADCTypedArrayView<GLint>);
   void uniform2iv(const WebGLUniformLocation*, Vector<GLint>&);
-  void uniform3iv(const WebGLUniformLocation*, const FlexibleInt32Array&);
+  void uniform3iv(const WebGLUniformLocation*, NADCTypedArrayView<GLint>);
   void uniform3iv(const WebGLUniformLocation*, Vector<GLint>&);
-  void uniform4iv(const WebGLUniformLocation*, const FlexibleInt32Array&);
+  void uniform4iv(const WebGLUniformLocation*, NADCTypedArrayView<GLint>);
   void uniform4iv(const WebGLUniformLocation*, Vector<GLint>&);
   void uniformMatrix2fv(const WebGLUniformLocation*,
                         GLboolean transpose,
-                        MaybeShared<DOMFloat32Array> value);
+                        NADCTypedArrayView<GLfloat> value);
   void uniformMatrix2fv(const WebGLUniformLocation*,
                         GLboolean transpose,
                         Vector<GLfloat>& value);
   void uniformMatrix3fv(const WebGLUniformLocation*,
                         GLboolean transpose,
-                        MaybeShared<DOMFloat32Array> value);
+                        NADCTypedArrayView<GLfloat> value);
   void uniformMatrix3fv(const WebGLUniformLocation*,
                         GLboolean transpose,
                         Vector<GLfloat>& value);
   void uniformMatrix4fv(const WebGLUniformLocation*,
                         GLboolean transpose,
-                        MaybeShared<DOMFloat32Array> value);
+                        NADCTypedArrayView<GLfloat> value);
   void uniformMatrix4fv(const WebGLUniformLocation*,
                         GLboolean transpose,
                         Vector<GLfloat>& value);
 
   void vertexAttribI4i(GLuint, GLint, GLint, GLint, GLint);
-  void vertexAttribI4iv(GLuint, MaybeShared<const DOMInt32Array>);
+  void vertexAttribI4iv(GLuint, NADCTypedArrayView<const GLint>);
   void vertexAttribI4iv(GLuint, const Vector<GLint>&);
   void vertexAttribI4ui(GLuint, GLuint, GLuint, GLuint, GLuint);
-  void vertexAttribI4uiv(GLuint, MaybeShared<const DOMUint32Array>);
+  void vertexAttribI4uiv(GLuint, NADCTypedArrayView<const GLuint>);
   void vertexAttribI4uiv(GLuint, const Vector<GLuint>&);
   void vertexAttribIPointer(GLuint index,
                             GLint size,
@@ -853,11 +918,11 @@ class WebGL2RenderingContextBase : public WebGLRenderingContextBase {
 
   /* Multiple Render Targets */
   void drawBuffers(const Vector<GLenum>&);
-  void clearBufferiv(GLenum, GLint, MaybeShared<DOMInt32Array>, GLuint);
+  void clearBufferiv(GLenum, GLint, NADCTypedArrayView<GLint>, GLuint);
   void clearBufferiv(GLenum, GLint, const Vector<GLint>&, GLuint);
-  void clearBufferuiv(GLenum, GLint, MaybeShared<DOMUint32Array>, GLuint);
+  void clearBufferuiv(GLenum, GLint, NADCTypedArrayView<GLuint>, GLuint);
   void clearBufferuiv(GLenum, GLint, const Vector<GLuint>&, GLuint);
-  void clearBufferfv(GLenum, GLint, MaybeShared<DOMFloat32Array>, GLuint);
+  void clearBufferfv(GLenum, GLint, NADCTypedArrayView<GLfloat>, GLuint);
   void clearBufferfv(GLenum, GLint, const Vector<GLfloat>&, GLuint);
   void clearBufferfi(GLenum, GLint, GLfloat, GLint);
 
@@ -902,13 +967,14 @@ class WebGL2RenderingContextBase : public WebGLRenderingContextBase {
   bool ValidateTransformFeedbackPrimitiveMode(const char* function_name,
                                               GLenum primitive_mode);
 
-  void OnBeforeDrawCall() override;
+  void OnBeforeDrawCall(CanvasPerformanceMonitor::DrawType) override;
 
   /* Uniform Buffer Objects and Transform Feedback Buffers */
   void bindBufferBase(GLenum, GLuint, WebGLBuffer*);
   void bindBufferRange(GLenum, GLuint, WebGLBuffer*, int64_t, int64_t);
   virtual ScriptValue getIndexedParameter(ScriptState*, GLenum, GLuint);
-  Vector<GLuint> getUniformIndices(WebGLProgram*, const Vector<String>&);
+  absl::optional<Vector<GLuint>> getUniformIndices(WebGLProgram*,
+                                                   const Vector<String>&);
   ScriptValue getActiveUniforms(ScriptState*,
                                 WebGLProgram*,
                                 const Vector<GLuint>&,
@@ -979,7 +1045,7 @@ class WebGL2RenderingContextBase : public WebGLRenderingContextBase {
   WebGL2RenderingContextBase(
       CanvasRenderingContextHost*,
       std::unique_ptr<WebGraphicsContext3DProvider>,
-      bool using_gpu_compositing,
+      const Platform::GraphicsInfo&,
       const CanvasContextCreationAttributesCore& requested_attributes,
       Platform::ContextType context_type);
 
@@ -1032,17 +1098,7 @@ class WebGL2RenderingContextBase : public WebGLRenderingContextBase {
                                     GLenum,
                                     Vector<GLenum>&);
 
-  IntRect GetTextureSourceSubRectangle(GLsizei width, GLsizei height);
-
-  enum ClearBufferCaller {
-    kClearBufferiv,
-    kClearBufferuiv,
-    kClearBufferfv,
-    kClearBufferfi
-  };
-  void UpdateBuffersToAutoClear(ClearBufferCaller caller,
-                                GLenum buffer,
-                                GLint drawbuffer);
+  gfx::Rect GetTextureSourceSubRectangle(GLsizei width, GLsizei height);
 
   /* WebGLRenderingContextBase overrides */
   unsigned GetMaxWebGLLocationLength() const override { return 1024; }
@@ -1066,14 +1122,18 @@ class WebGL2RenderingContextBase : public WebGLRenderingContextBase {
                                GLsizei height,
                                const char* function_name) override;
 
-  WebGLTexture* ValidateTexImageBinding(const char*,
-                                        TexImageFunctionID,
-                                        GLenum) override;
+  void GetCurrentUnpackState(TexImageParams& params) override;
+  WebGLTexture* ValidateTexImageBinding(const TexImageParams& params) override;
   // Helper function to check texture 3D target and texture bound to the target.
-  // Generate GL errors and return 0 if target is invalid or texture bound is
-  // null.  Otherwise, return the texture bound to the target.
+  // Generates GL errors and returns 0 if target is invalid or texture bound is
+  // null.  Otherwise, returns the texture bound to the target.
+  // If |validate_opaque_textures| is true, the helper will also generate a GL
+  // error when the texture bound to the target is opaque.
+  // See https://www.w3.org/TR/webxrlayers-1/#opaque-texture for details about
+  // opaque textures.
   WebGLTexture* ValidateTexture3DBinding(const char* function_name,
-                                         GLenum target);
+                                         GLenum target,
+                                         bool validate_opaque_textures = false);
 
   WebGLBuffer* ValidateBufferDataTarget(const char* function_name,
                                         GLenum target) override;
@@ -1123,7 +1183,6 @@ class WebGL2RenderingContextBase : public WebGLRenderingContextBase {
 
   HeapVector<Member<WebGLBuffer>> bound_indexed_uniform_buffers_;
   GLint max_transform_feedback_separate_attribs_;
-  wtf_size_t max_bound_uniform_buffer_index_;
 
   Member<WebGLQuery> current_boolean_occlusion_query_;
   Member<WebGLQuery> current_transform_feedback_primitives_written_query_;
@@ -1135,8 +1194,13 @@ class WebGL2RenderingContextBase : public WebGLRenderingContextBase {
   GLint pack_skip_rows_;
   GLint unpack_image_height_;
   GLint unpack_skip_images_;
+
+ private:
+  void RecordInternalFormatParameter(GLenum internalformat,
+                                     GLint* values,
+                                     GLint length);
 };
 
 }  // namespace blink
 
-#endif
+#endif  // THIRD_PARTY_BLINK_RENDERER_MODULES_WEBGL_WEBGL2_RENDERING_CONTEXT_BASE_H_

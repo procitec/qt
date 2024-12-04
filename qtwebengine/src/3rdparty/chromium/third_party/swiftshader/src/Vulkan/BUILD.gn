@@ -12,18 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import("//build/config/ozone.gni")
 import("//build_overrides/build.gni")
+import("//build_overrides/wayland.gni")
 import("../swiftshader.gni")
 import("vulkan.gni")
 
 # Need a separate config to ensure the warnings are added to the end.
 config("swiftshader_libvulkan_private_config") {
-  if (is_linux || is_chromeos) {
-    defines = [
-      "VK_USE_PLATFORM_XLIB_KHR",
-      "VK_USE_PLATFORM_XCB_KHR",
-      "VK_EXPORT=__attribute__((visibility(\"default\")))",
-    ]
+  if (is_linux) {
+    defines = [ "VK_EXPORT=__attribute__((visibility(\"default\")))" ]
+    if (ozone_platform_x11) {
+      defines += [ "VK_USE_PLATFORM_XCB_KHR" ]
+    }
+    if (ozone_platform_wayland) {
+      defines += [ "VK_USE_PLATFORM_WAYLAND_KHR" ]
+    }
+  } else if (is_chromeos) {
+    defines = [ "VK_EXPORT=__attribute__((visibility(\"default\")))" ]
   } else if (is_fuchsia) {
     defines = [
       "VK_USE_PLATFORM_FUCHSIA=1",
@@ -52,8 +58,16 @@ config("swiftshader_libvulkan_private_config") {
   }
 
   defines += [
-     "SWIFTSHADER_ENABLE_ASTC",  # TODO(b/150130101)
+    "SWIFTSHADER_ENABLE_ASTC",  # TODO(b/150130101)
+    "SWIFTSHADER_LEGACY_PRECISION=true",  # TODO(chromium:1299047)
+    "SWIFTSHADER_ZERO_INITIALIZE_DEVICE_MEMORY",
   ]
+
+  if (build_with_chromium) {
+    # Chromium requires higher precision filtering to pass the layout tests with SwiftShader.
+    # http://crbug.com/726075
+    defines += [ "SWIFTSHADER_HIGH_PRECISION_FILTERING" ]
+  }
 }
 
 swiftshader_source_set("swiftshader_libvulkan_headers") {
@@ -72,6 +86,7 @@ swiftshader_source_set("swiftshader_libvulkan_headers") {
     "VkDestroy.hpp",
     "VkDevice.hpp",
     "VkDeviceMemory.hpp",
+    "VkDeviceMemoryExternalHost.hpp",
     "VkEvent.hpp",
     "VkFence.hpp",
     "VkFormat.hpp",
@@ -86,6 +101,7 @@ swiftshader_source_set("swiftshader_libvulkan_headers") {
     "VkPipeline.hpp",
     "VkPipelineCache.hpp",
     "VkPipelineLayout.hpp",
+    "VkPrivateData.hpp",
     "VkQueryPool.hpp",
     "VkQueue.hpp",
     "VkRenderPass.hpp",
@@ -94,6 +110,8 @@ swiftshader_source_set("swiftshader_libvulkan_headers") {
     "VkShaderModule.hpp",
     "VkSpecializationInfo.hpp",
     "VkStringify.hpp",
+    "VkStructConversion.hpp",
+    "VkTimelineSemaphore.hpp",
     "VulkanPlatform.hpp",
   ]
   if (is_linux || is_chromeos || is_android) {
@@ -101,12 +119,14 @@ swiftshader_source_set("swiftshader_libvulkan_headers") {
       "VkDeviceMemoryExternalLinux.hpp",
       "VkSemaphoreExternalLinux.hpp",
     ]
+  } else if (is_mac) {
+    sources += [ "VkDeviceMemoryExternalMac.hpp" ]
   } else if (is_fuchsia) {
     sources += [ "VkSemaphoreExternalFuchsia.hpp" ]
   }
 }
 
-swiftshader_shared_library("swiftshader_libvulkan") {
+swiftshader_source_set("_swiftshader_libvulkan") {
   sources = [
     "VkBuffer.cpp",
     "VkBufferView.cpp",
@@ -119,6 +139,7 @@ swiftshader_shared_library("swiftshader_libvulkan") {
     "VkDescriptorUpdateTemplate.cpp",
     "VkDevice.cpp",
     "VkDeviceMemory.cpp",
+    "VkDeviceMemoryExternalHost.cpp",
     "VkFormat.cpp",
     "VkFramebuffer.cpp",
     "VkGetProcAddress.cpp",
@@ -139,6 +160,7 @@ swiftshader_shared_library("swiftshader_libvulkan") {
     "VkShaderModule.cpp",
     "VkSpecializationInfo.cpp",
     "VkStringify.cpp",
+    "VkTimelineSemaphore.cpp",
     "libVulkan.cpp",
     "main.cpp",
     "resource.h",
@@ -146,40 +168,20 @@ swiftshader_shared_library("swiftshader_libvulkan") {
 
   configs = [ ":swiftshader_libvulkan_private_config" ]
 
-  # TODO(capn): Use the same ICD name on both Windows and non-Windows.
-  if (is_win) {
-    output_name = "vk_swiftshader"
-  } else {
-    output_name = "libvk_swiftshader"
-  }
+  libs = []
 
   if (is_win) {
-    sources += [
-      "Vulkan.rc",
-      "vk_swiftshader.def",
+    libs += [
+      "gdi32.lib",
+      "user32.lib",
     ]
   }
 
-  if (is_mac) {
-    ldflags = [
-      "-Wl,-install_name,@rpath/libvk_swiftshader.dylib",
-      "-Wl,-exported_symbols_list," +
-          rebase_path("vk_swiftshader.exports", root_build_dir),
-    ]
-  } else if (is_linux || is_chromeos || is_fuchsia) {
-    inputs = [
-      "vk_swiftshader.lds",
-    ]
-    ldflags = [
-      # -Bsymbolic binds symbol references to their global definitions within
-      # a shared object, thereby preventing symbol preemption.
-      "-Wl,-Bsymbolic",
-      "-Wl,--version-script=" +
-          rebase_path("vk_swiftshader.lds", root_build_dir) ]
-  }
-
-  deps = [
-    "${swiftshader_spirv_tools_dir}:SPIRV-Tools",
+  public_deps = [
+    ":swiftshader_libvulkan_headers",
+    "../../third_party/SPIRV-Tools:spvtools_headers",
+    "../../third_party/SPIRV-Tools:spvtools_opt",
+    "../../third_party/SPIRV-Tools:spvtools_val",
     "../../third_party/marl:Marl",
     "../Device",
     "../Pipeline",
@@ -191,13 +193,47 @@ swiftshader_shared_library("swiftshader_libvulkan") {
   include_dirs = [
     "..",
     "../../include",
-    "$swiftshader_spirv_tools_dir/include",
-    "$spirv_tools_spirv_headers_dir/include",
+    "../../third_party/SPIRV-Tools/include",
+    "../../third_party/SPIRV-Headers/include",
   ]
+}
 
-  public_deps = [
-    ":swiftshader_libvulkan_headers",
-  ]
+swiftshader_shared_library("swiftshader_libvulkan") {
+  # TODO(capn): Use the same ICD name on both Windows and non-Windows.
+  if (is_win) {
+    output_name = "vk_swiftshader"
+  } else {
+    output_name = "libvk_swiftshader"
+  }
+
+  if (is_win) {
+    sources = [
+      "Vulkan.rc",
+      "vk_swiftshader.def",
+    ]
+  } else if (is_mac) {
+    ldflags = [
+      "-Wl,-install_name,@rpath/libvk_swiftshader.dylib",
+      "-Wl,-exported_symbols_list," +
+          rebase_path("vk_swiftshader.exports", root_build_dir),
+    ]
+  } else if (is_linux || is_chromeos || is_fuchsia) {
+    inputs = [ "vk_swiftshader.lds" ]
+    ldflags = [
+      # -Bsymbolic binds symbol references to their global definitions within
+      # a shared object, thereby preventing symbol preemption.
+      "-Wl,-Bsymbolic",
+      "-Wl,--version-script=" +
+          rebase_path("vk_swiftshader.lds", root_build_dir),
+    ]
+  }
+
+  deps = [ ":_swiftshader_libvulkan" ]
+}
+
+swiftshader_static_library("swiftshader_libvulkan_static") {
+  complete_static_lib = true
+  deps = [ ":_swiftshader_libvulkan" ]
 }
 
 # Generates an ICD JSON file that can be used by all targets in this GN build
@@ -210,6 +246,8 @@ action("icd_file") {
     library_path = ".\\vk_swiftshader.dll"
   } else if (is_mac) {
     library_path = "./libvk_swiftshader.dylib"
+  } else if (is_fuchsia) {
+    library_path = "/pkg/lib/libvk_swiftshader.so"
   } else {
     library_path = "./libvk_swiftshader.so"
   }
@@ -224,14 +262,8 @@ action("icd_file") {
     library_path,
   ]
 
-  inputs = [
-    input_file,
-  ]
-  outputs = [
-    output_icd_file,
-  ]
+  inputs = [ input_file ]
+  outputs = [ output_icd_file ]
 
-  deps = [
-    ":swiftshader_libvulkan",
-  ]
+  deps = [ ":swiftshader_libvulkan" ]
 }

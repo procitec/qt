@@ -166,6 +166,7 @@ int sqlite3UpsertAnalyzeTarget(
         if( pIdx->aiColumn[ii]==XN_EXPR ){
           assert( pIdx->aColExpr!=0 );
           assert( pIdx->aColExpr->nExpr>ii );
+          assert( pIdx->bHasExpr );
           pExpr = pIdx->aColExpr->a[ii].pExpr;
           if( pExpr->op!=TK_COLLATE ){
             sCol[0].pLeft = pExpr;
@@ -177,7 +178,7 @@ int sqlite3UpsertAnalyzeTarget(
           pExpr = &sCol[0];
         }
         for(jj=0; jj<nn; jj++){
-          if( sqlite3ExprCompare(pParse,pTarget->a[jj].pExpr,pExpr,iCursor)<2 ){
+          if( sqlite3ExprCompare(0,pTarget->a[jj].pExpr,pExpr,iCursor)<2 ){
             break;  /* Column ii of the index matches column jj of target */
           }
         }
@@ -287,7 +288,7 @@ void sqlite3UpsertDoUpdate(
         k = sqlite3TableColumnToIndex(pIdx, pPk->aiColumn[i]);
         sqlite3VdbeAddOp3(v, OP_Column, iCur, k, iPk+i);
         VdbeComment((v, "%s.%s", pIdx->zName,
-                    pTab->aCol[pPk->aiColumn[i]].zName));
+                    pTab->aCol[pPk->aiColumn[i]].zCnName));
       }
       sqlite3VdbeVerifyAbortable(v, OE_Abort);
       i = sqlite3VdbeAddOp4Int(v, OP_Found, iDataCur, 0, iPk, nPk);

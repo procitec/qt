@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,15 +8,16 @@
 #include <memory>
 #include <string>
 
-#include "base/callback_forward.h"
-#include "base/macros.h"
+#include "base/functional/callback_forward.h"
 #include "base/memory/ref_counted.h"
 #include "base/time/time.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/net_export.h"
-#include "net/base/network_isolation_key.h"
+#include "net/base/network_anonymization_key.h"
+#include "net/base/proxy_chain.h"
 #include "net/base/request_priority.h"
 #include "net/dns/public/resolve_error_info.h"
+#include "net/dns/public/secure_dns_policy.h"
 #include "net/http/http_auth.h"
 #include "net/quic/quic_chromium_client_session.h"
 #include "net/socket/connect_job.h"
@@ -35,7 +36,7 @@ class ProxyClientSocket;
 class SpdyStreamRequest;
 class SSLSocketParams;
 class TransportSocketParams;
-class QuicStreamRequest;
+class QuicSessionRequest;
 
 // HttpProxySocketParams only needs the socket params for one of the proxy
 // types.  The other param must be NULL.  When using an HTTP proxy,
@@ -44,14 +45,19 @@ class QuicStreamRequest;
 class NET_EXPORT_PRIVATE HttpProxySocketParams
     : public base::RefCounted<HttpProxySocketParams> {
  public:
-  HttpProxySocketParams(scoped_refptr<TransportSocketParams> transport_params,
-                        scoped_refptr<SSLSocketParams> ssl_params,
-                        bool is_quic,
-                        const HostPortPair& endpoint,
-                        bool is_trusted_proxy,
-                        bool tunnel,
-                        const NetworkTrafficAnnotationTag traffic_annotation,
-                        const NetworkIsolationKey& network_isolation_key);
+  HttpProxySocketParams(
+      scoped_refptr<TransportSocketParams> transport_params,
+      scoped_refptr<SSLSocketParams> ssl_params,
+      const HostPortPair& endpoint,
+      const ProxyChain& proxy_chain,
+      size_t proxy_chain_index,
+      bool tunnel,
+      const NetworkTrafficAnnotationTag traffic_annotation,
+      const NetworkAnonymizationKey& network_anonymization_key,
+      SecureDnsPolicy secure_dns_policy);
+
+  HttpProxySocketParams(const HttpProxySocketParams&) = delete;
+  HttpProxySocketParams& operator=(const HttpProxySocketParams&) = delete;
 
   const scoped_refptr<TransportSocketParams>& transport_params() const {
     return transport_params_;
@@ -59,16 +65,20 @@ class NET_EXPORT_PRIVATE HttpProxySocketParams
   const scoped_refptr<SSLSocketParams>& ssl_params() const {
     return ssl_params_;
   }
-  bool is_quic() const { return is_quic_; }
   const HostPortPair& endpoint() const { return endpoint_; }
-  bool is_trusted_proxy() const { return is_trusted_proxy_; }
+  const ProxyChain& proxy_chain() const { return proxy_chain_; }
+  const ProxyServer& proxy_server() const {
+    return proxy_chain_.GetProxyServer(proxy_chain_index_);
+  }
+  size_t proxy_chain_index() const { return proxy_chain_index_; }
   bool tunnel() const { return tunnel_; }
-  const NetworkIsolationKey& network_isolation_key() const {
-    return network_isolation_key_;
+  const NetworkAnonymizationKey& network_anonymization_key() const {
+    return network_anonymization_key_;
   }
   const NetworkTrafficAnnotationTag traffic_annotation() const {
     return traffic_annotation_;
   }
+  SecureDnsPolicy secure_dns_policy() { return secure_dns_policy_; }
 
  private:
   friend class base::RefCounted<HttpProxySocketParams>;
@@ -76,14 +86,13 @@ class NET_EXPORT_PRIVATE HttpProxySocketParams
 
   const scoped_refptr<TransportSocketParams> transport_params_;
   const scoped_refptr<SSLSocketParams> ssl_params_;
-  bool is_quic_;
   const HostPortPair endpoint_;
-  const bool is_trusted_proxy_;
+  const ProxyChain proxy_chain_;
+  const size_t proxy_chain_index_;
   const bool tunnel_;
-  const NetworkIsolationKey network_isolation_key_;
+  const NetworkAnonymizationKey network_anonymization_key_;
   const NetworkTrafficAnnotationTag traffic_annotation_;
-
-  DISALLOW_COPY_AND_ASSIGN(HttpProxySocketParams);
+  const SecureDnsPolicy secure_dns_policy_;
 };
 
 // HttpProxyConnectJob optionally establishes a tunnel through the proxy
@@ -91,12 +100,30 @@ class NET_EXPORT_PRIVATE HttpProxySocketParams
 class NET_EXPORT_PRIVATE HttpProxyConnectJob : public ConnectJob,
                                                public ConnectJob::Delegate {
  public:
+  class NET_EXPORT_PRIVATE Factory {
+   public:
+    Factory() = default;
+    virtual ~Factory() = default;
+
+    virtual std::unique_ptr<HttpProxyConnectJob> Create(
+        RequestPriority priority,
+        const SocketTag& socket_tag,
+        const CommonConnectJobParams* common_connect_job_params,
+        scoped_refptr<HttpProxySocketParams> params,
+        ConnectJob::Delegate* delegate,
+        const NetLogWithSource* net_log);
+  };
+
   HttpProxyConnectJob(RequestPriority priority,
                       const SocketTag& socket_tag,
                       const CommonConnectJobParams* common_connect_job_params,
                       scoped_refptr<HttpProxySocketParams> params,
                       ConnectJob::Delegate* delegate,
                       const NetLogWithSource* net_log);
+
+  HttpProxyConnectJob(const HttpProxyConnectJob&) = delete;
+  HttpProxyConnectJob& operator=(const HttpProxyConnectJob&) = delete;
+
   ~HttpProxyConnectJob() override;
 
   // A single priority is used for tunnels over H2 and QUIC, which can be shared
@@ -140,10 +167,8 @@ class NET_EXPORT_PRIVATE HttpProxyConnectJob : public ConnectJob,
  private:
   enum State {
     STATE_BEGIN_CONNECT,
-    STATE_TCP_CONNECT,
-    STATE_TCP_CONNECT_COMPLETE,
-    STATE_SSL_CONNECT,
-    STATE_SSL_CONNECT_COMPLETE,
+    STATE_TRANSPORT_CONNECT,
+    STATE_TRANSPORT_CONNECT_COMPLETE,
     STATE_HTTP_PROXY_CONNECT,
     STATE_HTTP_PROXY_CONNECT_COMPLETE,
     STATE_SPDY_PROXY_CREATE_STREAM,
@@ -176,12 +201,9 @@ class NET_EXPORT_PRIVATE HttpProxyConnectJob : public ConnectJob,
 
   // Determine if need to go through TCP or SSL path.
   int DoBeginConnect();
-  // Connecting to HTTP Proxy
+  // Connecting to HTTP or HTTPS Proxy
   int DoTransportConnect();
   int DoTransportConnectComplete(int result);
-  // Connecting to HTTPS Proxy
-  int DoSSLConnect();
-  int DoSSLConnectComplete(int result);
 
   int DoHttpProxyConnect();
   int DoHttpProxyConnectComplete(int result);
@@ -200,11 +222,9 @@ class NET_EXPORT_PRIVATE HttpProxyConnectJob : public ConnectJob,
   void ChangePriorityInternal(RequestPriority priority) override;
   void OnTimedOutInternal() override;
 
-  int HandleConnectResult(int result);
-
   void OnAuthChallenge();
 
-  const HostPortPair& GetDestination();
+  const HostPortPair& GetDestination() const;
 
   std::string GetUserAgent() const;
 
@@ -214,16 +234,13 @@ class NET_EXPORT_PRIVATE HttpProxyConnectJob : public ConnectJob,
 
   scoped_refptr<SSLCertRequestInfo> ssl_cert_request_info_;
 
-  State next_state_;
+  State next_state_ = STATE_NONE;
 
-  bool has_restarted_;
-
-  bool using_spdy_;
-  NextProto negotiated_protocol_;
+  bool has_restarted_ = false;
 
   // Set to true once a connection has been successfully established. Remains
   // true even if a new socket is being connected to retry with auth.
-  bool has_established_connection_;
+  bool has_established_connection_ = false;
 
   ResolveErrorInfo resolve_error_info_;
 
@@ -232,7 +249,7 @@ class NET_EXPORT_PRIVATE HttpProxyConnectJob : public ConnectJob,
 
   std::unique_ptr<SpdyStreamRequest> spdy_stream_request_;
 
-  std::unique_ptr<QuicStreamRequest> quic_stream_request_;
+  std::unique_ptr<QuicSessionRequest> quic_session_request_;
   std::unique_ptr<QuicChromiumClientSession::Handle> quic_session_;
 
   scoped_refptr<HttpAuthController> http_auth_controller_;
@@ -243,8 +260,6 @@ class NET_EXPORT_PRIVATE HttpProxyConnectJob : public ConnectJob,
   base::TimeTicks connect_start_time_;
 
   base::WeakPtrFactory<HttpProxyConnectJob> weak_ptr_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(HttpProxyConnectJob);
 };
 
 }  // namespace net

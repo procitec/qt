@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,11 +6,11 @@
 
 #include <memory>
 
-#include "base/bind.h"
 #include "base/files/file_util.h"
-#include "base/files/scoped_temp_dir.h"
+#include "base/functional/bind.h"
 #include "base/run_loop.h"
 #include "base/test/task_environment.h"
+#include "base/test/test_file_util.h"
 #include "base/test/test_mock_time_task_runner.h"
 #include "media/base/test_data_util.h"
 #include "media/filters/file_data_source.h"
@@ -41,10 +41,13 @@ void OnFrameExtracted(ExtractVideoFrameResult* result,
 class VideoFrameExtractorTest : public testing::Test {
  public:
   VideoFrameExtractorTest() {}
+
+  VideoFrameExtractorTest(const VideoFrameExtractorTest&) = delete;
+  VideoFrameExtractorTest& operator=(const VideoFrameExtractorTest&) = delete;
+
   ~VideoFrameExtractorTest() override {}
 
  protected:
-  void SetUp() override { ASSERT_TRUE(temp_dir_.CreateUniqueTempDir()); }
 
   ExtractVideoFrameResult ExtractFrame(const base::FilePath& file_path) {
     base::File file(
@@ -62,15 +65,10 @@ class VideoFrameExtractorTest : public testing::Test {
     return result;
   }
 
-  const base::FilePath& temp_dir() const { return temp_dir_.GetPath(); }
-
  private:
   base::test::TaskEnvironment task_environment_;
-  base::ScopedTempDir temp_dir_;
   std::unique_ptr<FileDataSource> data_source_;
   std::unique_ptr<VideoFrameExtractor> extractor_;
-
-  DISALLOW_COPY_AND_ASSIGN(VideoFrameExtractorTest);
 };
 
 // Verifies the encoded video frame can be extracted correctly.
@@ -78,15 +76,16 @@ TEST_F(VideoFrameExtractorTest, ExtractVideoFrame) {
   auto result = ExtractFrame(GetTestDataFilePath("bear.mp4"));
   EXPECT_TRUE(result.success);
   EXPECT_GT(result.encoded_frame.size(), 0u);
-  EXPECT_EQ(result.decoder_config.codec(), VideoCodec::kCodecH264);
+  EXPECT_EQ(result.decoder_config.codec(), VideoCodec::kH264);
 }
 
 // Verifies graceful failure when trying to extract frame from an invalid video
 // file.
 TEST_F(VideoFrameExtractorTest, ExtractInvalidVideoFile) {
   // Creates a dummy video file, frame extraction should fail.
-  base::FilePath file = temp_dir().AppendASCII("test.txt");
-  EXPECT_GT(base::WriteFile(file, "123", sizeof("123")), 0);
+  base::FilePath file =
+      base::CreateUniqueTempDirectoryScopedToTest().AppendASCII("test.txt");
+  EXPECT_TRUE(base::WriteFile(file, "123"));
 
   auto result = ExtractFrame(file);
   EXPECT_FALSE(result.success);

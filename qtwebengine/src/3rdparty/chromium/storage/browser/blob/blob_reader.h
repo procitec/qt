@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,11 +12,15 @@
 #include <memory>
 #include <vector>
 
+#include <optional>
 #include "base/component_export.h"
+#include "base/functional/callback_forward.h"
+#include "base/functional/callback_helpers.h"
 #include "base/gtest_prod_util.h"
-#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/sequence_checker.h"
+#include "components/file_access/scoped_file_access.h"
+#include "components/file_access/scoped_file_access_delegate.h"
 #include "mojo/public/cpp/base/big_buffer.h"
 #include "mojo/public/cpp/system/data_pipe.h"
 #include "net/base/completion_once_callback.h"
@@ -71,6 +75,10 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) BlobReader {
   };
   enum class Status { NET_ERROR, IO_PENDING, DONE };
   using StatusCallback = base::OnceCallback<void(Status)>;
+
+  BlobReader(const BlobReader&) = delete;
+  BlobReader& operator=(const BlobReader&) = delete;
+
   virtual ~BlobReader();
 
   // This calculates the total size of the blob, and initializes the reading
@@ -102,7 +110,7 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) BlobReader {
   void ReadSideData(StatusCallback done);
 
   // Passes the side data (if any) from ReadSideData() to the caller.
-  base::Optional<mojo_base::BigBuffer> TakeSideData();
+  std::optional<mojo_base::BigBuffer> TakeSideData();
 
   // Used to set the read position.
   // * This should be called after CalculateSize and before Read.
@@ -164,7 +172,7 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) BlobReader {
   FRIEND_TEST_ALL_PREFIXES(BlobReaderTest, HandleBeforeAsyncCancel);
   FRIEND_TEST_ALL_PREFIXES(BlobReaderTest, ReadFromIncompleteBlob);
 
-  BlobReader(const BlobDataHandle* blob_handle);
+  explicit BlobReader(const BlobDataHandle* blob_handle);
 
   bool total_size_calculated() const {
     DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
@@ -204,7 +212,11 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) BlobReader {
   void AdvanceItem();
   void AdvanceBytesRead(int result);
   void ReadBytesItem(const BlobDataItem& item, int bytes_to_read);
-  BlobReader::Status ReadFileItem(FileStreamReader* reader, int bytes_to_read);
+  BlobReader::Status ReadFileItem(
+      FileStreamReader* reader,
+      int bytes_to_read,
+      file_access::ScopedFileAccessDelegate::RequestFilesAccessIOCallback
+          file_access);
   void DidReadFile(int result);
   void DeleteItemReaders();
   Status ReadReadableDataHandle(const BlobDataItem& item, int bytes_to_read);
@@ -244,7 +256,7 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) BlobReader {
   std::unique_ptr<BlobDataSnapshot> blob_data_;
   std::unique_ptr<FileStreamReaderProvider> file_stream_provider_for_testing_;
   scoped_refptr<base::TaskRunner> file_task_runner_;
-  base::Optional<mojo_base::BigBuffer> side_data_;
+  std::optional<mojo_base::BigBuffer> side_data_;
 
   int net_error_;
   bool item_list_populated_ = false;
@@ -270,7 +282,6 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) BlobReader {
   SEQUENCE_CHECKER(sequence_checker_);
 
   base::WeakPtrFactory<BlobReader> weak_factory_{this};
-  DISALLOW_COPY_AND_ASSIGN(BlobReader);
 };
 
 }  // namespace storage

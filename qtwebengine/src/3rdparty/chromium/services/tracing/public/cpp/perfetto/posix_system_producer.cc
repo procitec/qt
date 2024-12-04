@@ -1,12 +1,16 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "services/tracing/public/cpp/perfetto/posix_system_producer.h"
 
+#include <algorithm>
+#include <functional>
+#include <memory>
 #include <utility>
 
-#include "base/bind.h"
+#include "base/command_line.h"
+#include "base/functional/bind.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/trace_event/trace_log.h"
@@ -23,12 +27,22 @@
 #include "third_party/perfetto/include/perfetto/protozero/scattered_stream_writer.h"
 #include "third_party/perfetto/protos/perfetto/common/track_event_descriptor.pbzero.h"
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
 #include "base/android/build_info.h"
-#endif  // defined(OS_ANDROID)
+#endif  // BUILDFLAG(IS_ANDROID)
+
+#if !BUILDFLAG(IS_ANDROID)
+#include "mojo/public/cpp/bindings/remote.h"
+#include "services/tracing/public/cpp/system_tracing_service.h"
+#endif
+
+#if BUILDFLAG(IS_FUCHSIA)
+#include "base/files/scoped_file.h"
+#endif
 
 namespace tracing {
 namespace {
+
 constexpr uint32_t kInitialConnectionBackoffMs = 100;
 constexpr uint32_t kMaxConnectionBackoffMs = 30 * 1000;
 
@@ -48,10 +62,12 @@ perfetto::DataSourceConfig EnsureGuardRailsAreFollowed(
 uint32_t IncreaseBackoff(uint32_t current, uint32_t max) {
   return std::min(current * 2, max);
 }
+
 }  // namespace
 
-PosixSystemProducer::PosixSystemProducer(const char* socket,
-                                         PerfettoTaskRunner* task_runner)
+PosixSystemProducer::PosixSystemProducer(
+    const char* socket,
+    base::tracing::PerfettoTaskRunner* task_runner)
     : SystemProducer(task_runner),
       socket_name_(socket),
       connection_backoff_ms_(kInitialConnectionBackoffMs) {
@@ -206,43 +222,69 @@ void PosixSystemProducer::OnConnect() {
   }
 }
 
-void PosixSystemProducer::OnDisconnect() {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  DCHECK(GetService());
-  // Currently our data sources don't support the concept of the service
-  // disappearing and thus can't shut down cleanly (they would attempt to flush
-  // data across the broken socket). Add a CHECK to catch this if its a problem.
-  //
-  // TODO(nuskos): Fix this, make it so we cleanly shut down on IPC errors.
-  CHECK(!IsTracingActive());
-  // This PostTask is needed because we want to clean up the state AFTER the
-  // |ProducerEndpoint| has finished cleaning up.
+void PosixSystemProducer::FinishDisconnectingAndThenDelayedReconnect(
+    State previous_state) {
+  // This PostTask is needed because we want to clean up the state
+  // AFTER the |ProducerEndpoint| has finished cleaning up.
   task_runner()->GetOrCreateTaskRunner()->PostTask(
       FROM_HERE,
       base::BindOnce(
-          [](base::WeakPtr<PosixSystemProducer> weak_ptr) {
+          [](base::WeakPtr<PosixSystemProducer> weak_ptr,
+             State previous_state) {
             if (!weak_ptr) {
               return;
             }
-            if (weak_ptr->state_ == State::kConnecting) {
+            if (previous_state == State::kConnecting) {
               base::AutoLock lock(weak_ptr->lock_);
-              // We never connected, which means this disconnect is
-              // an error from connecting, which means we don't need
-              // to keep this endpoint (and associated memory around
-              // forever) this prevents the memory leak from getting
-              // excessive.
+              // We never connected, which means this disconnect
+              // is an error from connecting, which means we don't
+              // need to keep this endpoint (and associated memory
+              // around forever) this prevents the memory leak
+              // from getting excessive.
               weak_ptr->services_.erase(weak_ptr->services_.end() - 1);
             }
             weak_ptr->state_ = State::kDisconnected;
             weak_ptr->DelayedReconnect();
           },
-          weak_ptr_factory_.GetWeakPtr()));
+          weak_ptr_factory_.GetWeakPtr(), previous_state));
+}
+
+void PosixSystemProducer::OnDisconnect() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  DCHECK(GetService());
+  // If we never connected then we don't need to keep this service around
+  // because no one will have pointers to its non-existent SMB.
+  // We shouldn't have reentrancy.
+  if (state_ == State::kDisconnecting) {
+    return;
+  }
+  // Inform the service that no further IPCs should be accepted.
+  State old_state = state_;
+  state_ = State::kDisconnecting;
+  GetService()->Disconnect();
+
+  // If we aren't tracing then we are done just finish cleaning up the service
+  if (!IsTracingActive()) {
+    FinishDisconnectingAndThenDelayedReconnect(old_state);
+    return;
+  }
+
+  // If we are tracing then we need to get the system back into a "normal" state
+  // of no tracing.
+  for (auto* const data_source : PerfettoTracedProcess::Get()->data_sources()) {
+    StopDataSource(data_source->data_source_id());
+  }
 }
 
 void PosixSystemProducer::OnTracingSetup() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   // Called by the IPC layer when tracing is first started and after shared
   // memory is set up.
+  DCHECK(MaybeSharedMemoryArbiter());
+  if (MaybeSharedMemoryArbiter()->EnableDirectSMBPatching()) {
+    MaybeSharedMemoryArbiter()->SetBatchCommitsDuration(
+        kShmArbiterBatchCommitDurationMs);
+  }
 }
 
 void PosixSystemProducer::SetupDataSource(perfetto::DataSourceInstanceID,
@@ -280,7 +322,7 @@ void PosixSystemProducer::StartDataSource(
                   base::AutoLock lock(weak_ptr->lock_);
                   ++weak_ptr->data_sources_tracing_;
                 }
-                data_source->StartTracingWithID(
+                data_source->StartTracing(
                     id, weak_ptr.get(),
                     EnsureGuardRailsAreFollowed(data_source_config));
                 weak_ptr->GetService()->NotifyDataSourceStarted(id);
@@ -306,6 +348,11 @@ void PosixSystemProducer::StopDataSource(perfetto::DataSourceInstanceID id) {
               return;
             }
             DCHECK_CALLED_ON_VALID_SEQUENCE(weak_ptr->sequence_checker_);
+            // Flush any commits that might have been batched by
+            // SharedMemoryArbiter.
+            weak_ptr->GetService()
+                ->MaybeSharedMemoryArbiter()
+                ->FlushPendingCommitDataRequests();
             weak_ptr->GetService()->NotifyDataSourceStopped(id);
             {
               base::AutoLock lock(weak_ptr->lock_);
@@ -327,7 +374,8 @@ void PosixSystemProducer::StopDataSource(perfetto::DataSourceInstanceID id) {
 void PosixSystemProducer::Flush(
     perfetto::FlushRequestID id,
     const perfetto::DataSourceInstanceID* data_source_ids,
-    size_t num_data_sources) {
+    size_t num_data_sources,
+    perfetto::FlushFlags /*ignored*/) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   pending_replies_for_latest_flush_ = {id, num_data_sources};
   for (auto* const data_source : PerfettoTracedProcess::Get()->data_sources()) {
@@ -371,10 +419,10 @@ void PosixSystemProducer::ConnectSocket() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   state_ = State::kConnecting;
   const char* host_package_name = nullptr;
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
   host_package_name =
       base::android::BuildInfo::GetInstance()->host_package_name();
-#endif  // defined(OS_ANDROID)
+#endif  // BUILDFLAG(IS_ANDROID)
 
   // On android we want to include if this is webview inside of an app or
   // Android Chrome. To aid this we add the host_package_name to differentiate
@@ -392,21 +440,87 @@ void PosixSystemProducer::ConnectSocket() {
              base::trace_event::TraceLog::GetInstance()->process_id())});
   }
 
-  auto service = perfetto::ProducerIPCClient::Connect(
-      socket_name_.c_str(), this, std::move(producer_name), task_runner(),
-      perfetto::TracingService::ProducerSMBScrapingMode::kEnabled);
+  // If the security sandbox allows making socket connections, open the producer
+  // socket directly. Otherwise, use Mojo to open the socket in the browser
+  // process.
+  if (!SandboxForbidsSocketConnection()) {
+#if BUILDFLAG(IS_FUCHSIA)
+    fuchsia_connector_ = std::make_unique<FuchsiaPerfettoProducerConnector>(
+        task_runner()->GetOrCreateTaskRunner());
+    auto maybe_conn_args = fuchsia_connector_->Connect();
+    if (!maybe_conn_args) {
+      state_ = State::kDisconnected;
+      fuchsia_connector_.reset();
+      return;
+    }
+    perfetto::ipc::Client::ConnArgs conn_args = std::move(*maybe_conn_args);
+#else
+    perfetto::ipc::Client::ConnArgs conn_args(socket_name_.c_str(), false);
+#endif
 
-  base::AutoLock lock(lock_);
-  services_.push_back(std::move(service));
+    auto service = perfetto::ProducerIPCClient::Connect(
+        std::move(conn_args), this, std::move(producer_name), task_runner(),
+        perfetto::TracingService::ProducerSMBScrapingMode::kEnabled,
+        GetPreferredSmbSizeBytes(), kSMBPageSizeBytes);
+
+    base::AutoLock lock(lock_);
+    services_.push_back(std::move(service));
+    return;
+  }
+
+#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_FUCHSIA)
+  // If the child process hasn't received the Mojo remote, try again later.
+  auto& remote = TracedProcessImpl::GetInstance()->system_tracing_service();
+  if (!remote.is_bound()) {
+    // We don't really open the socket using ProducerIPCClient in child
+    // processes and need to reset |state_| to make DelayedReconnect() retry the
+    // connection using mojo.
+    DCHECK(state_ == State::kConnecting);
+    state_ = State::kDisconnected;
+    DelayedReconnect();
+    return;
+  }
+
+  auto callback = base::BindOnce(
+      [](std::string producer_name, base::WeakPtr<PosixSystemProducer> self,
+         base::File file) {
+        if (!self)
+          return;
+
+        if (!file.IsValid()) {
+          // Reset |state_| to make DelayedReconnect() retry the connection.
+          DCHECK(self->state_ == State::kConnecting);
+          self->state_ = State::kDisconnected;
+          self->DelayedReconnect();
+          return;
+        }
+
+        // Connect using an already connected socket.
+        auto service = perfetto::ProducerIPCClient::Connect(
+            perfetto::ipc::Client::ConnArgs(
+                perfetto::base::ScopedFile(file.TakePlatformFile())),
+            self.get(), std::move(producer_name), self->task_runner(),
+            perfetto::TracingService::ProducerSMBScrapingMode::kEnabled,
+            self->GetPreferredSmbSizeBytes(), kSMBPageSizeBytes);
+
+        base::AutoLock lock(self->lock_);
+        self->services_.push_back(std::move(service));
+      },
+      std::move(producer_name), weak_ptr_factory_.GetWeakPtr());
+
+  // Open the socket remotely using Mojo.
+  remote->OpenProducerSocket(std::move(callback));
+#endif  // !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_FUCHSIA)
 }
 
 bool PosixSystemProducer::SkipIfOnAndroidAndPreAndroidPie() const {
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
   return disallow_pre_android_pie_ &&
          base::android::BuildInfo::GetInstance()->sdk_int() <
              base::android::SDK_VERSION_P;
-#endif  // defined(OS_ANDROID)
+#else
   return false;
+#endif  // BUILDFLAG(IS_ANDROID)
 }
 
 void PosixSystemProducer::InvokeStoredOnDisconnectCallbacks() {
@@ -416,6 +530,12 @@ void PosixSystemProducer::InvokeStoredOnDisconnectCallbacks() {
     std::move(callback).Run();
   }
   on_disconnect_callbacks_.clear();
+  if (state_ == State::kDisconnecting) {
+    // Since this is invoked after stopping all data sources this service was
+    // active and we were connected.
+    FinishDisconnectingAndThenDelayedReconnect(
+        /* previous_state = */ State::kConnected);
+  }
 }
 
 void PosixSystemProducer::Connect() {
@@ -440,7 +560,24 @@ void PosixSystemProducer::Connect() {
       // everything.
       OnConnect();
       break;
+    case State::kDisconnecting:
+      // We aren't currently fully disconnected wait for the state to settle.
+      break;
   }
+}
+
+bool PosixSystemProducer::SandboxForbidsSocketConnection() {
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_FUCHSIA)
+  // All process types can connect directly to the system tracing service.
+  return false;
+#else
+  // Connect to the system tracing service using Mojo from non-browser
+  // processes. Note that the network utility process can make socket
+  // connections, but we make it connect using Mojo for simplicity.
+  auto type =
+      base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("type");
+  return !type.empty();
+#endif  // BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_FUCHSIA)
 }
 
 void PosixSystemProducer::DelayedReconnect() {
@@ -469,7 +606,7 @@ void PosixSystemProducer::DelayedReconnect() {
             }
           },
           weak_ptr_factory_.GetWeakPtr()),
-      base::TimeDelta::FromMilliseconds(connection_backoff_ms_));
+      base::Milliseconds(connection_backoff_ms_));
 
   connection_backoff_ms_ =
       IncreaseBackoff(connection_backoff_ms_, kMaxConnectionBackoffMs);
@@ -502,6 +639,7 @@ perfetto::TracingService::ProducerEndpoint* PosixSystemProducer::GetService() {
     case State::kConnecting:
     case State::kConnected:
     case State::kUnregistered:
+    case State::kDisconnecting:
       return services_.back().get();
     default:
       return nullptr;

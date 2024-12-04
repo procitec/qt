@@ -23,9 +23,18 @@ int aom_stop_encode(aom_writer *w) {
   uint32_t bytes;
   unsigned char *data;
   data = od_ec_enc_done(&w->ec, &bytes);
+  if (!data) {
+    od_ec_enc_clear(&w->ec);
+    return -1;
+  }
   nb_bits = od_ec_enc_tell(&w->ec);
   memcpy(w->buffer, data, bytes);
   w->pos = bytes;
   od_ec_enc_clear(&w->ec);
+  return nb_bits;
+}
+
+int aom_tell_size(aom_writer *w) {
+  const int nb_bits = od_ec_enc_tell(&w->ec);
   return nb_bits;
 }

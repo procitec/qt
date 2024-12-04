@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,31 +9,28 @@
 
 namespace extensions {
 
+class AutomationEventRouterInterface;
+
 // A delegate for chrome specific automation api logic.
 class ChromeAutomationInternalApiDelegate
     : public AutomationInternalApiDelegate {
  public:
   ChromeAutomationInternalApiDelegate();
+  ChromeAutomationInternalApiDelegate(
+      const ChromeAutomationInternalApiDelegate&) = delete;
+  ChromeAutomationInternalApiDelegate& operator=(
+      const ChromeAutomationInternalApiDelegate&) = delete;
   ~ChromeAutomationInternalApiDelegate() override;
 
   bool CanRequestAutomation(const Extension* extension,
                             const AutomationInfo* automation_info,
                             content::WebContents* contents) override;
-  bool GetTabById(int tab_id,
-                  content::BrowserContext* browser_context,
-                  bool include_incognito,
-                  content::WebContents** contents,
-                  std::string* error_msg) override;
-  int GetTabId(content::WebContents* contents) override;
-  content::WebContents* GetActiveWebContents(
-      ExtensionFunction* function) override;
   bool EnableTree(const ui::AXTreeID& tree_id) override;
   void EnableDesktop() override;
   ui::AXTreeID GetAXTreeID() override;
-  void SetEventBundleSink(ui::AXEventBundleSink* sink) override;
+  void SetAutomationEventRouterInterface(
+      AutomationEventRouterInterface* router) override;
   content::BrowserContext* GetActiveUserContext() override;
-
-  DISALLOW_COPY_AND_ASSIGN(ChromeAutomationInternalApiDelegate);
 };
 
 }  // namespace extensions

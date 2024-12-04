@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,13 +13,13 @@
 #include <string>
 #include <vector>
 
-#include "base/callback.h"
-#include "base/macros.h"
+#include "base/functional/callback.h"
 #include "base/memory/ref_counted.h"
-#include "base/sequenced_task_runner.h"
-#include "base/strings/string_piece.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/time/time.h"
+#include "base/types/expected.h"
 #include "dbus/dbus_export.h"
+#include "dbus/error.h"
 #include "dbus/object_path.h"
 
 namespace dbus {
@@ -28,7 +28,6 @@ class Bus;
 class ErrorResponse;
 class MethodCall;
 class Response;
-class ScopedDBusError;
 class Signal;
 
 // ObjectProxy is used to communicate with remote objects, mainly for
@@ -47,6 +46,9 @@ class CHROME_DBUS_EXPORT ObjectProxy
               const std::string& service_name,
               const ObjectPath& object_path,
               int options);
+
+  ObjectProxy(const ObjectProxy&) = delete;
+  ObjectProxy& operator=(const ObjectProxy&) = delete;
 
   // Options to be OR-ed together when calling Bus::GetObjectProxyWithOptions().
   // Set the IGNORE_SERVICE_UNKNOWN_ERRORS option to silence logging of
@@ -103,21 +105,16 @@ class CHROME_DBUS_EXPORT ObjectProxy
       base::OnceCallback<void(const std::string&, const std::string&, bool)>;
 
   // Calls the method of the remote object and blocks until the response
-  // is returned. Returns NULL on error with the error details specified
-  // in the |error| object.
+  // is returned.
+  //
+  // If this is failing due to the reason outside of libdbus, this may return
+  // an invalid error to indicate the situation.
+  // This must be called on D-Bus thread.
   //
   // BLOCKING CALL.
-  virtual std::unique_ptr<Response> CallMethodAndBlockWithErrorDetails(
+  virtual base::expected<std::unique_ptr<Response>, Error> CallMethodAndBlock(
       MethodCall* method_call,
-      int timeout_ms,
-      ScopedDBusError* error);
-
-  // Calls the method of the remote object and blocks until the response
-  // is returned. Returns NULL on error.
-  //
-  // BLOCKING CALL.
-  virtual std::unique_ptr<Response> CallMethodAndBlock(MethodCall* method_call,
-                                                       int timeout_ms);
+      int timeout_ms);
 
   // Requests to call the method of the remote object.
   //
@@ -188,6 +185,14 @@ class CHROME_DBUS_EXPORT ObjectProxy
                                SignalCallback signal_callback,
                                OnConnectedCallback on_connected_callback);
 
+  // Blocking version of ConnectToSignal.  Returns true on success.  Must be
+  // called from the DBus thread.
+  //
+  // BLOCKING CALL.
+  virtual bool ConnectToSignalAndBlock(const std::string& interface_name,
+                                       const std::string& signal_name,
+                                       SignalCallback signal_callback);
+
   // Sets a callback for "NameOwnerChanged" signal. The callback is called on
   // the origin thread when D-Bus system sends "NameOwnerChanged" for the name
   // represented by |service_name_|.
@@ -229,6 +234,9 @@ class CHROME_DBUS_EXPORT ObjectProxy
     // This is movable to be bound to an OnceCallback.
     ReplyCallbackHolder(ReplyCallbackHolder&& other);
 
+    ReplyCallbackHolder(const ReplyCallbackHolder&) = delete;
+    ReplyCallbackHolder& operator=(const ReplyCallbackHolder&) = delete;
+
     // |callback_| needs to be destroyed on the origin thread.
     // If this is not destroyed on non-origin thread, it PostTask()s the
     // callback to the origin thread for destroying.
@@ -241,24 +249,20 @@ class CHROME_DBUS_EXPORT ObjectProxy
    private:
     scoped_refptr<base::SequencedTaskRunner> origin_task_runner_;
     ResponseOrErrorCallback callback_;
-    DISALLOW_COPY_AND_ASSIGN(ReplyCallbackHolder);
   };
 
   // Starts the async method call. This is a helper function to implement
   // CallMethod().
   void StartAsyncMethodCall(int timeout_ms,
                             DBusMessage* request_message,
-                            ReplyCallbackHolder callback_holder,
-                            base::TimeTicks start_time);
+                            ReplyCallbackHolder callback_holder);
 
   // Called when the pending call is complete.
   void OnPendingCallIsComplete(ReplyCallbackHolder callback_holder,
-                               base::TimeTicks start_time,
                                DBusPendingCall* pending_call);
 
   // Runs the ResponseOrErrorCallback with the given response object.
-  void RunResponseOrErrorCallback(ReplyCallbackHolder callback_holderk,
-                                  base::TimeTicks start_time,
+  void RunResponseOrErrorCallback(ReplyCallbackHolder callback_holder,
                                   Response* response,
                                   ErrorResponse* error_response);
 
@@ -267,11 +271,6 @@ class CHROME_DBUS_EXPORT ObjectProxy
 
   // Tries to connect to NameOwnerChanged signal, ignores any error.
   void TryConnectToNameOwnerChangedSignal();
-
-  // Helper function for ConnectToSignal().
-  bool ConnectToSignalInternal(const std::string& interface_name,
-                               const std::string& signal_name,
-                               SignalCallback signal_callback);
 
   // Helper function for WaitForServiceToBeAvailable().
   void WaitForServiceToBeAvailableInternal();
@@ -282,9 +281,7 @@ class CHROME_DBUS_EXPORT ObjectProxy
                                   DBusMessage* raw_message);
 
   // Runs the method. Helper function for HandleMessage().
-  void RunMethod(base::TimeTicks start_time,
-                 std::vector<SignalCallback> signal_callbacks,
-                 Signal* signal);
+  void RunMethod(std::vector<SignalCallback> signal_callbacks, Signal* signal);
 
   // Redirects the function call to HandleMessage().
   static DBusHandlerResult HandleMessageThunk(DBusConnection* connection,
@@ -292,10 +289,10 @@ class CHROME_DBUS_EXPORT ObjectProxy
                                               void* user_data);
 
   // Helper method for logging response errors appropriately.
-  void LogMethodCallFailure(const base::StringPiece& interface_name,
-                            const base::StringPiece& method_name,
-                            const base::StringPiece& error_name,
-                            const base::StringPiece& error_message) const;
+  void LogMethodCallFailure(const std::string_view& interface_name,
+                            const std::string_view& method_name,
+                            const std::string_view& error_name,
+                            const std::string_view& error_message) const;
 
   // Used as ResponseOrErrorCallback by CallMethod().
   // Logs error message, and drops |error_response| from the arguments to pass
@@ -356,8 +353,6 @@ class CHROME_DBUS_EXPORT ObjectProxy
   std::string service_name_owner_;
 
   std::set<DBusPendingCall*> pending_calls_;
-
-  DISALLOW_COPY_AND_ASSIGN(ObjectProxy);
 };
 
 }  // namespace dbus

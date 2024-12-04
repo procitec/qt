@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,14 +7,15 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "platform/api/network_interface.h"
 #include "platform/base/error.h"
 #include "platform/base/ip_address.h"
 #include "platform/base/macros.h"
-#include "platform/base/socket_state.h"
 #include "platform/impl/socket_handle.h"
+#include "platform/impl/socket_state.h"
 
 namespace openscreen {
 
@@ -26,7 +27,7 @@ class StreamSocket {
  public:
   StreamSocket() = default;
   StreamSocket(const StreamSocket& other) = delete;
-  StreamSocket(StreamSocket&& other) = default;
+  StreamSocket(StreamSocket&& other) noexcept = default;
   virtual ~StreamSocket() = default;
 
   StreamSocket& operator=(const StreamSocket& other) = delete;
@@ -55,13 +56,13 @@ class StreamSocket {
   virtual const SocketHandle& socket_handle() const = 0;
 
   // Returns the connected remote address, if socket is connected.
-  virtual absl::optional<IPEndpoint> remote_address() const = 0;
+  virtual std::optional<IPEndpoint> remote_address() const = 0;
 
   // Returns the local address, if one is assigned.
-  virtual absl::optional<IPEndpoint> local_address() const = 0;
+  virtual std::optional<IPEndpoint> local_address() const = 0;
 
   // Returns the state of the socket.
-  virtual SocketState state() const = 0;
+  virtual TcpSocketState state() const = 0;
 
   // Returns the IP version of the socket.
   virtual IPAddress::Version version() const = 0;

@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,7 +11,7 @@
 
 #include "base/rand_util.h"
 #include "media/cast/net/rtp/rtp_defines.h"
-#include "media/cast/net/rtp/rtp_packet_builder.h"
+#include "media/cast/test/rtp_packet_builder.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace media {
@@ -45,8 +45,8 @@ class RtpParserTest : public ::testing::Test {
     RtpCastHeader parsed_header;
     const uint8_t* payload = NULL;
     size_t payload_size = static_cast<size_t>(-1);
-    EXPECT_TRUE(rtp_parser_.ParsePacket(
-        packet_, kPacketLength, &parsed_header, &payload, &payload_size));
+    EXPECT_TRUE(rtp_parser_.ParsePacket(packet_, &parsed_header, &payload,
+                                        &payload_size));
 
     EXPECT_EQ(cast_header_.marker, parsed_header.marker);
     EXPECT_EQ(cast_header_.payload_type, parsed_header.payload_type);
@@ -69,8 +69,8 @@ class RtpParserTest : public ::testing::Test {
     RtpCastHeader parsed_header;
     const uint8_t* payload = NULL;
     size_t payload_size = static_cast<size_t>(-1);
-    EXPECT_FALSE(rtp_parser_.ParsePacket(
-        packet_, kPacketLength, &parsed_header, &payload, &payload_size));
+    EXPECT_FALSE(rtp_parser_.ParsePacket(packet_, &parsed_header, &payload,
+                                         &payload_size));
   }
 
   RtpPacketBuilder packet_builder_;

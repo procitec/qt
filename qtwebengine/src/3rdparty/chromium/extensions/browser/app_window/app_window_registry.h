@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,6 +9,7 @@
 #include <set>
 #include <string>
 
+#include "base/memory/raw_ptr.h"
 #include "base/memory/singleton.h"
 #include "base/observer_list.h"
 #include "base/observer_list_types.h"
@@ -54,8 +55,8 @@ class AppWindowRegistry : public KeyedService,
   };
 
   typedef std::list<AppWindow*> AppWindowList;
-  typedef AppWindowList::const_iterator const_iterator;
-  typedef std::set<std::string> InspectedWindowSet;
+  using const_iterator = AppWindowList::const_iterator;
+  using InspectedWindowSet = std::set<std::string>;
 
   explicit AppWindowRegistry(content::BrowserContext* context);
   ~AppWindowRegistry() override;
@@ -115,7 +116,7 @@ class AppWindowRegistry : public KeyedService,
     ~Factory() override;
 
     // BrowserContextKeyedServiceFactory
-    KeyedService* BuildServiceInstanceFor(
+    std::unique_ptr<KeyedService> BuildServiceInstanceForBrowserContext(
         content::BrowserContext* context) const override;
     bool ServiceIsCreatedWithBrowserContext() const override;
     content::BrowserContext* GetBrowserContextToUse(
@@ -147,7 +148,7 @@ class AppWindowRegistry : public KeyedService,
   void DevToolsAgentHostDetached(
       content::DevToolsAgentHost* agent_host) override;
 
-  content::BrowserContext* context_;
+  raw_ptr<content::BrowserContext> context_;
   AppWindowList app_windows_;
   InspectedWindowSet inspected_windows_;
   base::ObserverList<Observer> observers_;

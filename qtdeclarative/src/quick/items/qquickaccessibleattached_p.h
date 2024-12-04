@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtQuick module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #ifndef QQUICKACCESSIBLEATTACHED_H
 #define QQUICKACCESSIBLEATTACHED_H
@@ -66,14 +30,16 @@ QT_BEGIN_NAMESPACE
 
 #define STATE_PROPERTY(P) \
     Q_PROPERTY(bool P READ P WRITE set_ ## P NOTIFY P ## Changed FINAL) \
-    bool P() const { return m_state.P ; } \
+    bool P() const { return m_proxying && !m_stateExplicitlySet.P ? m_proxying->P() : m_state.P ; } \
     void set_ ## P(bool arg) \
     { \
+        if (m_proxying) \
+            m_proxying->set_##P(arg);\
         m_stateExplicitlySet.P = true; \
         if (m_state.P == arg) \
             return; \
         m_state.P = arg; \
-        emit P ## Changed(arg); \
+        Q_EMIT P ## Changed(arg); \
         QAccessible::State changedState; \
         changedState.P = true; \
         QAccessibleStateChangeEvent ev(parent(), changedState); \
@@ -81,21 +47,22 @@ QT_BEGIN_NAMESPACE
     } \
     Q_SIGNAL void P ## Changed(bool arg);
 
-
-class Q_QUICK_PRIVATE_EXPORT QQuickAccessibleAttached : public QObject
+class Q_QUICK_EXPORT QQuickAccessibleAttached : public QObject
 {
     Q_OBJECT
     Q_PROPERTY(QAccessible::Role role READ role WRITE setRole NOTIFY roleChanged FINAL)
     Q_PROPERTY(QString name READ name WRITE setName NOTIFY nameChanged FINAL)
     Q_PROPERTY(QString description READ description WRITE setDescription NOTIFY descriptionChanged FINAL)
+    Q_PROPERTY(QString id READ id WRITE setId NOTIFY idChanged REVISION(6, 8) FINAL)
     Q_PROPERTY(bool ignored READ ignored WRITE setIgnored NOTIFY ignoredChanged FINAL)
 
     QML_NAMED_ELEMENT(Accessible)
+    QML_ADDED_IN_VERSION(2, 0)
     QML_UNCREATABLE("Accessible is only available via attached properties.")
     QML_ATTACHED(QQuickAccessibleAttached)
+    QML_EXTENDED_NAMESPACE(QAccessible)
 
 public:
-    Q_ENUMS(QAccessible::Role QAccessible::Event)
     STATE_PROPERTY(checkable)
     STATE_PROPERTY(checked)
     STATE_PROPERTY(editable)
@@ -120,6 +87,8 @@ public:
     QString name() const {
         if (m_state.passwordEdit)
             return QString();
+        if (!m_nameExplicitlySet && m_proxying && m_proxying->wasNameExplicitlySet())
+            return m_proxying->name();
         return m_name;
     }
 
@@ -135,13 +104,30 @@ public:
     }
     void setNameImplicitly(const QString &name);
 
-    QString description() const { return m_description; }
+    QString description() const {
+        return !m_descriptionExplicitlySet && m_proxying ? m_proxying->description() : m_description;
+    }
     void setDescription(const QString &description)
     {
+        if (!m_descriptionExplicitlySet && m_proxying) {
+            disconnect(m_proxying, &QQuickAccessibleAttached::descriptionChanged, this, &QQuickAccessibleAttached::descriptionChanged);
+        }
+        m_descriptionExplicitlySet = true;
         if (m_description != description) {
             m_description = description;
             Q_EMIT descriptionChanged();
             QAccessibleEvent ev(parent(), QAccessible::DescriptionChanged);
+            QAccessible::updateAccessibility(&ev);
+        }
+    }
+
+    QString id() const { return m_id; }
+    void setId(const QString &id)
+    {
+        if (m_id != id) {
+            m_id = id;
+            Q_EMIT idChanged();
+            QAccessibleEvent ev(parent(), QAccessible::IdentifierChanged);
             QAccessible::updateAccessibility(&ev);
         }
     }
@@ -179,6 +165,13 @@ public:
             if (att && (role == QAccessible::NoRole || att->role() == role)) {
                 break;
             }
+            if (auto action = object->property("action").value<QObject *>(); action) {
+                QQuickAccessibleAttached *att = QQuickAccessibleAttached::attachedProperties(action);
+                if (att && (role == QAccessible::NoRole || att->role() == role)) {
+                    object = action;
+                    break;
+                }
+            }
             object = object->parent();
         }
         return object;
@@ -188,6 +181,11 @@ public:
     bool ignored() const;
     bool doAction(const QString &actionName);
     void availableActions(QStringList *actions) const;
+
+    Q_REVISION(6, 2) Q_INVOKABLE static QString stripHtml(const QString &html);
+    void setProxying(QQuickAccessibleAttached *proxying);
+
+    Q_REVISION(6, 8) Q_INVOKABLE void announce(const QString &message, QAccessible::AnnouncementPoliteness politeness = QAccessible::AnnouncementPoliteness::Polite);
 
 public Q_SLOTS:
     void valueChanged() {
@@ -205,6 +203,7 @@ Q_SIGNALS:
     void roleChanged();
     void nameChanged();
     void descriptionChanged();
+    void idChanged();
     void ignoredChanged();
     void pressAction();
     void toggleAction();
@@ -218,14 +217,15 @@ Q_SIGNALS:
     void nextPageAction();
 
 private:
-    QQuickItem *item() const { return qobject_cast<QQuickItem*>(parent()); }
-
     QAccessible::Role m_role;
     QAccessible::State m_state;
     QAccessible::State m_stateExplicitlySet;
     QString m_name;
     bool m_nameExplicitlySet = false;
     QString m_description;
+    bool m_descriptionExplicitlySet = false;
+    QQuickAccessibleAttached* m_proxying = nullptr;
+    QString m_id;
 
     static QMetaMethod sigPress;
     static QMetaMethod sigToggle;
@@ -244,8 +244,6 @@ public:
 
 
 QT_END_NAMESPACE
-
-QML_DECLARE_TYPE(QQuickAccessibleAttached)
 
 #endif // accessibility
 

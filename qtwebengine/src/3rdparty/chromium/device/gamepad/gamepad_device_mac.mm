@@ -1,14 +1,15 @@
-// Copyright (c) 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "device/gamepad/gamepad_device_mac.h"
 
+#include <CoreFoundation/CoreFoundation.h>
 #import <Foundation/Foundation.h>
 
-#include "base/mac/foundation_util.h"
-#include "base/mac/scoped_cftyperef.h"
-#include "base/stl_util.h"
+#include "base/apple/bridging.h"
+#include "base/apple/foundation_util.h"
+#include "base/apple/scoped_cftyperef.h"
 #include "base/strings/sys_string_conversions.h"
 #include "device/gamepad/dualshock4_controller.h"
 #include "device/gamepad/gamepad_data_fetcher.h"
@@ -35,6 +36,7 @@ const uint16_t kPowerUsageNumber = 0x30;
 const uint16_t kSearchUsageNumber = 0x0221;
 const uint16_t kHomeUsageNumber = 0x0223;
 const uint16_t kBackUsageNumber = 0x0224;
+const uint16_t kRecordUsageNumber = 0xb2;
 
 const int kRumbleMagnitudeMax = 10000;
 
@@ -52,8 +54,9 @@ struct SpecialUsages {
     // Back.
     {kConsumerUsagePage, kHomeUsageNumber},
     {kConsumerUsagePage, kBackUsageNumber},
+    {kConsumerUsagePage, kRecordUsageNumber},
 };
-const size_t kSpecialUsagesLen = base::size(kSpecialUsages);
+const size_t kSpecialUsagesLen = std::size(kSpecialUsages);
 
 float NormalizeAxis(CFIndex value, CFIndex min, CFIndex max) {
   return (2.f * (value - min) / static_cast<float>(max - min)) - 1.f;
@@ -72,7 +75,7 @@ float NormalizeUInt32Axis(uint32_t value, uint32_t min, uint32_t max) {
 }
 
 GamepadBusType QueryBusType(IOHIDDeviceRef device) {
-  CFStringRef transport_cf = base::mac::CFCast<CFStringRef>(
+  CFStringRef transport_cf = base::apple::CFCast<CFStringRef>(
       IOHIDDeviceGetProperty(device, CFSTR(kIOHIDTransportKey)));
   if (transport_cf) {
     std::string transport = base::SysCFStringRefToUTF8(transport_cf);
@@ -90,7 +93,7 @@ GamepadBusType QueryBusType(IOHIDDeviceRef device) {
 
 GamepadDeviceMac::GamepadDeviceMac(int location_id,
                                    IOHIDDeviceRef device_ref,
-                                   base::StringPiece product_name,
+                                   std::string_view product_name,
                                    int vendor_id,
                                    int product_id)
     : location_id_(location_id),
@@ -176,20 +179,27 @@ bool GamepadDeviceMac::AddButtonsAndAxes(Gamepad* gamepad) {
 }
 
 bool GamepadDeviceMac::AddButtons(Gamepad* gamepad) {
-  base::ScopedCFTypeRef<CFArrayRef> elements_cf(IOHIDDeviceCopyMatchingElements(
-      device_ref_, nullptr, kIOHIDOptionsTypeNone));
-  NSArray* elements = base::mac::CFToNSCast(elements_cf);
-  DCHECK(elements);
   DCHECK(gamepad);
   memset(gamepad->buttons, 0, sizeof(gamepad->buttons));
   std::fill(button_elements_, button_elements_ + Gamepad::kButtonsLengthCap,
             nullptr);
 
+  base::apple::ScopedCFTypeRef<CFArrayRef> elements(
+      IOHIDDeviceCopyMatchingElements(device_ref_, /*matching=*/nullptr,
+                                      kIOHIDOptionsTypeNone));
+  if (!elements) {
+    // IOHIDDeviceCopyMatchingElements returns nullptr if we don't have
+    // permission to access the referenced IOHIDDevice.
+    return false;
+  }
+
   std::vector<IOHIDElementRef> special_element(kSpecialUsagesLen, nullptr);
   size_t button_count = 0;
   size_t unmapped_button_count = 0;
-  for (id elem in elements) {
-    IOHIDElementRef element = reinterpret_cast<IOHIDElementRef>(elem);
+
+  for (CFIndex i = 0; i < CFArrayGetCount(elements.get()); ++i) {
+    IOHIDElementRef element =
+        (IOHIDElementRef)CFArrayGetValueAtIndex(elements.get(), i);
     if (!CheckCollection(element))
       continue;
 
@@ -255,9 +265,9 @@ bool GamepadDeviceMac::AddButtons(Gamepad* gamepad) {
 }
 
 bool GamepadDeviceMac::AddAxes(Gamepad* gamepad) {
-  base::ScopedCFTypeRef<CFArrayRef> elements_cf(IOHIDDeviceCopyMatchingElements(
-      device_ref_, nullptr, kIOHIDOptionsTypeNone));
-  NSArray* elements = base::mac::CFToNSCast(elements_cf);
+  base::apple::ScopedCFTypeRef<CFArrayRef> elements(
+      IOHIDDeviceCopyMatchingElements(device_ref_, nullptr,
+                                      kIOHIDOptionsTypeNone));
   DCHECK(elements);
   DCHECK(gamepad);
   memset(gamepad->axes, 0, sizeof(gamepad->axes));
@@ -274,8 +284,9 @@ bool GamepadDeviceMac::AddAxes(Gamepad* gamepad) {
   size_t axis_count = 0;
   size_t unmapped_axis_count = 0;
 
-  for (id elem in elements) {
-    IOHIDElementRef element = reinterpret_cast<IOHIDElementRef>(elem);
+  for (CFIndex i = 0; i < CFArrayGetCount(elements.get()); ++i) {
+    IOHIDElementRef element =
+        (IOHIDElementRef)CFArrayGetValueAtIndex(elements.get(), i);
     if (!CheckCollection(element))
       continue;
 
@@ -302,8 +313,9 @@ bool GamepadDeviceMac::AddAxes(Gamepad* gamepad) {
   if (unmapped_axis_count > 0) {
     // Insert unmapped axes at unused axis indices.
     size_t axis_index = 0;
-    for (id elem in elements) {
-      IOHIDElementRef element = reinterpret_cast<IOHIDElementRef>(elem);
+    for (CFIndex i = 0; i < CFArrayGetCount(elements.get()); ++i) {
+      IOHIDElementRef element =
+          (IOHIDElementRef)CFArrayGetValueAtIndex(elements.get(), i);
       if (!CheckCollection(element))
         continue;
 
@@ -428,20 +440,19 @@ bool GamepadDeviceMac::SupportsVibration() {
   return dualshock4_ || xbox_hid_ || hid_haptics_ || ff_device_ref_;
 }
 
-void GamepadDeviceMac::SetVibration(double strong_magnitude,
-                                    double weak_magnitude) {
+void GamepadDeviceMac::SetVibration(mojom::GamepadEffectParametersPtr params) {
   if (dualshock4_) {
-    dualshock4_->SetVibration(strong_magnitude, weak_magnitude);
+    dualshock4_->SetVibration(std::move(params));
     return;
   }
 
   if (xbox_hid_) {
-    xbox_hid_->SetVibration(strong_magnitude, weak_magnitude);
+    xbox_hid_->SetVibration(std::move(params));
     return;
   }
 
   if (hid_haptics_) {
-    hid_haptics_->SetVibration(strong_magnitude, weak_magnitude);
+    hid_haptics_->SetVibration(std::move(params));
     return;
   }
 
@@ -452,9 +463,9 @@ void GamepadDeviceMac::SetVibration(double strong_magnitude,
     DCHECK(ff_custom_force->rglForceData);
 
     ff_custom_force->rglForceData[0] =
-        static_cast<LONG>(strong_magnitude * kRumbleMagnitudeMax);
+        static_cast<LONG>(params->strong_magnitude * kRumbleMagnitudeMax);
     ff_custom_force->rglForceData[1] =
-        static_cast<LONG>(weak_magnitude * kRumbleMagnitudeMax);
+        static_cast<LONG>(params->weak_magnitude * kRumbleMagnitudeMax);
 
     // Download the effect to the device and start the effect.
     HRESULT res = FFEffectSetParameters(

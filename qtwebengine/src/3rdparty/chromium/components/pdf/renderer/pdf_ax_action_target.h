@@ -1,11 +1,14 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef COMPONENTS_PDF_RENDERER_PDF_AX_ACTION_TARGET_H_
 #define COMPONENTS_PDF_RENDERER_PDF_AX_ACTION_TARGET_H_
 
+#include "base/memory/raw_ptr.h"
+#include "base/memory/raw_ref.h"
 #include "ui/accessibility/ax_action_target.h"
+#include "ui/accessibility/ax_tree_id.h"
 
 namespace ui {
 class AXNode;
@@ -25,41 +28,37 @@ class PdfAXActionTarget : public ui::AXActionTarget {
   PdfAXActionTarget(const ui::AXNode& plugin_node, PdfAccessibilityTree* tree);
   ~PdfAXActionTarget() override;
 
-  const ui::AXNode& AXNode() const { return target_plugin_node_; }
+  const ui::AXNode& AXNode() const { return *target_plugin_node_; }
 
  protected:
   // AXActionTarget overrides.
   Type GetType() const override;
-  bool ClearAccessibilityFocus() const override;
-  bool Click() const override;
-  bool Decrement() const override;
-  bool Increment() const override;
-  bool Focus() const override;
+  bool PerformAction(const ui::AXActionData& action_data) const override;
   gfx::Rect GetRelativeBounds() const override;
   gfx::Point GetScrollOffset() const override;
   gfx::Point MinimumScrollOffset() const override;
   gfx::Point MaximumScrollOffset() const override;
-  bool SetAccessibilityFocus() const override;
   void SetScrollOffset(const gfx::Point& point) const override;
-  bool SetSelected(bool selected) const override;
   bool SetSelection(const ui::AXActionTarget* anchor_object,
                     int anchor_offset,
                     const ui::AXActionTarget* focus_object,
                     int focus_offset) const override;
-  bool SetSequentialFocusNavigationStartingPoint() const override;
-  bool SetValue(const std::string& value) const override;
-  bool ShowContextMenu() const override;
   bool ScrollToMakeVisible() const override;
   bool ScrollToMakeVisibleWithSubFocus(
       const gfx::Rect& rect,
       ax::mojom::ScrollAlignment horizontal_scroll_alignment,
       ax::mojom::ScrollAlignment vertical_scroll_alignment,
       ax::mojom::ScrollBehavior scroll_behavior) const override;
-  bool ScrollToGlobalPoint(const gfx::Point& point) const override;
 
  private:
-  const ui::AXNode& target_plugin_node_;
-  PdfAccessibilityTree* pdf_accessibility_tree_source_;
+  bool Click() const;
+  bool ShowContextMenu() const;
+  bool ScrollToGlobalPoint(const gfx::Point& point) const;
+  bool StitchChildTree(const ui::AXTreeID& child_tree_id) const;
+
+  const raw_ref<const ui::AXNode, ExperimentalRenderer> target_plugin_node_;
+  raw_ptr<PdfAccessibilityTree, ExperimentalRenderer>
+      pdf_accessibility_tree_source_;
 };
 
 }  // namespace pdf

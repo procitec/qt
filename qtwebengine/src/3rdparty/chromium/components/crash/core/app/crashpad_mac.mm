@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,13 +12,13 @@
 #include <map>
 #include <vector>
 
+#include "base/apple/bridging.h"
+#include "base/apple/bundle_locations.h"
+#include "base/apple/foundation_util.h"
 #include "base/check.h"
 #include "base/files/file_path.h"
-#include "base/mac/bundle_locations.h"
-#include "base/mac/foundation_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
-#include "base/strings/stringprintf.h"
 #include "base/strings/sys_string_conversions.h"
 #include "build/branding_buildflags.h"
 #include "components/crash/core/app/crash_reporter_client.h"
@@ -38,12 +38,13 @@ std::map<std::string, std::string> GetProcessSimpleAnnotations() {
   static std::map<std::string, std::string> annotations = []() -> auto {
     std::map<std::string, std::string> process_annotations;
     @autoreleasepool {
-      NSBundle* outer_bundle = base::mac::OuterBundle();
+      NSBundle* outer_bundle = base::apple::OuterBundle();
 #if BUILDFLAG(GOOGLE_CHROME_BRANDING)
       process_annotations["prod"] = "Chrome_Mac";
 #else
-      NSString* product = base::mac::ObjCCast<NSString>([outer_bundle
-          objectForInfoDictionaryKey:base::mac::CFToNSCast(kCFBundleNameKey)]);
+      NSString* product = base::apple::ObjCCast<NSString>(
+          [outer_bundle objectForInfoDictionaryKey:base::apple::CFToNSPtrCast(
+                                                       kCFBundleNameKey)]);
       process_annotations["prod"] =
           base::SysNSStringToUTF8(product).append("_Mac");
 #endif
@@ -54,7 +55,7 @@ std::map<std::string, std::string> GetProcessSimpleAnnotations() {
 #else
       const bool allow_empty_channel = false;
 #endif
-      NSString* channel = base::mac::ObjCCast<NSString>(
+      NSString* channel = base::apple::ObjCCast<NSString>(
           [outer_bundle objectForInfoDictionaryKey:@"KSChannelID"]);
       if (!channel || [channel isEqual:@"arm64"] ||
           [channel isEqual:@"universal"]) {
@@ -65,11 +66,20 @@ std::map<std::string, std::string> GetProcessSimpleAnnotations() {
           channel = [channel substringFromIndex:[@"arm64-" length]];
         else if ([channel hasPrefix:@"universal-"])
           channel = [channel substringFromIndex:[@"universal-" length]];
-        process_annotations["channel"] = base::SysNSStringToUTF8(channel);
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
+        if ([channel isEqual:@"extended"]) {
+          // Extended stable reports as stable with an extra bool.
+          channel = @"";
+          process_annotations["extended_stable_channel"] = "true";
+        }
+#endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
+        if (allow_empty_channel || [channel length]) {
+          process_annotations["channel"] = base::SysNSStringToUTF8(channel);
+        }
       }
 
       NSString* version =
-          base::mac::ObjCCast<NSString>([base::mac::FrameworkBundle()
+          base::apple::ObjCCast<NSString>([base::apple::FrameworkBundle()
               objectForInfoDictionaryKey:@"CFBundleShortVersionString"]);
       process_annotations["ver"] = base::SysNSStringToUTF8(version);
 
@@ -118,14 +128,14 @@ void DumpProcessWithoutCrashing(task_t task_port) {
 
 namespace internal {
 
-base::FilePath PlatformCrashpadInitialization(
+bool PlatformCrashpadInitialization(
     bool initial_client,
     bool browser_process,
     bool embedded_handler,
     const std::string& user_data_dir,
     const base::FilePath& exe_path,
-    const std::vector<std::string>& initial_arguments) {
-  base::FilePath database_path;  // Only valid in the browser process.
+    const std::vector<std::string>& initial_arguments,
+    base::FilePath* database_path) {
   base::FilePath metrics_path;  // Only valid in the browser process.
   DCHECK(!embedded_handler);  // This is not used on Mac.
   DCHECK(exe_path.empty());   // This is not used on Mac.
@@ -133,14 +143,14 @@ base::FilePath PlatformCrashpadInitialization(
 
   if (initial_client) {
     @autoreleasepool {
-      base::FilePath framework_bundle_path = base::mac::FrameworkBundlePath();
+      base::FilePath framework_bundle_path = base::apple::FrameworkBundlePath();
       base::FilePath handler_path =
           framework_bundle_path.Append("Helpers").Append(
               "chrome_crashpad_handler");
 
       // Is there a way to recover if this fails?
       CrashReporterClient* crash_reporter_client = GetCrashReporterClient();
-      crash_reporter_client->GetCrashDumpLocation(&database_path);
+      crash_reporter_client->GetCrashDumpLocation(database_path);
       crash_reporter_client->GetCrashMetricsLocation(&metrics_path);
 
       std::string url = crash_reporter_client->GetUploadUrl();
@@ -166,7 +176,7 @@ base::FilePath PlatformCrashpadInitialization(
       }
 
       bool result = GetCrashpadClient().StartHandler(
-          handler_path, database_path, metrics_path, url,
+          handler_path, *database_path, metrics_path, url,
           GetProcessSimpleAnnotations(), arguments, true, false);
 
       // If this is an initial client that's not the browser process, it's
@@ -175,11 +185,12 @@ base::FilePath PlatformCrashpadInitialization(
       // to the existing handler.
       if (!result && !browser_process) {
         crashpad::CrashpadClient::UseSystemDefaultHandler();
+        return false;
       }
     }  // @autoreleasepool
   }
 
-  return database_path;
+  return true;
 }
 
 }  // namespace internal

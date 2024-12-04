@@ -1,8 +1,11 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "cc/layers/painted_overlay_scrollbar_layer_impl.h"
+
+#include <memory>
+#include <vector>
 
 #include "base/memory/ptr_util.h"
 #include "cc/trees/layer_tree_impl.h"
@@ -40,7 +43,7 @@ PaintedOverlayScrollbarLayerImpl::PaintedOverlayScrollbarLayerImpl(
 PaintedOverlayScrollbarLayerImpl::~PaintedOverlayScrollbarLayerImpl() = default;
 
 std::unique_ptr<LayerImpl> PaintedOverlayScrollbarLayerImpl::CreateLayerImpl(
-    LayerTreeImpl* tree_impl) {
+    LayerTreeImpl* tree_impl) const {
   return PaintedOverlayScrollbarLayerImpl::Create(
       tree_impl, id(), orientation(), is_left_side_vertical_scrollbar());
 }
@@ -128,8 +131,8 @@ void PaintedOverlayScrollbarLayerImpl::AppendThumbQuads(
   for (auto& patch : patches)
     patch.output_rect += offset;
 
-  quad_generator_.AppendQuads(this, thumb_ui_resource_id_, render_pass,
-                              shared_quad_state, patches);
+  quad_generator_.AppendQuadsForCc(this, thumb_ui_resource_id_, render_pass,
+                                   shared_quad_state, patches);
 }
 
 void PaintedOverlayScrollbarLayerImpl::AppendTrackQuads(
@@ -156,13 +159,12 @@ void PaintedOverlayScrollbarLayerImpl::AppendTrackQuads(
   bool flipped = false;
   gfx::PointF uv_top_left(0.f, 0.f);
   gfx::PointF uv_bottom_right(1.f, 1.f);
-  float opacity[] = {1.0f, 1.0f, 1.0f, 1.0f};
   viz::TextureDrawQuad* quad =
       render_pass->CreateAndAppendDrawQuad<viz::TextureDrawQuad>();
   quad->SetNew(
       shared_quad_state, scaled_track_quad_rect, scaled_visible_track_quad_rect,
       needs_blending, track_resource_id, premultipled_alpha, uv_top_left,
-      uv_bottom_right, SK_ColorTRANSPARENT, opacity, flipped, nearest_neighbor,
+      uv_bottom_right, SkColors::kTransparent, flipped, nearest_neighbor,
       /*secure_output_only=*/false, gfx::ProtectedVideoType::kClear);
   ValidateQuadResources(quad);
 }
@@ -222,7 +224,7 @@ void PaintedOverlayScrollbarLayerImpl::SetAperture(const gfx::Rect& aperture) {
 }
 
 float PaintedOverlayScrollbarLayerImpl::TrackLength() const {
-  return track_length_ + (orientation() == ScrollbarOrientation::VERTICAL
+  return track_length_ + (orientation() == ScrollbarOrientation::kVertical
                               ? vertical_adjust()
                               : 0);
 }
@@ -233,10 +235,6 @@ bool PaintedOverlayScrollbarLayerImpl::IsThumbResizable() const {
 
 const char* PaintedOverlayScrollbarLayerImpl::LayerTypeAsString() const {
   return "cc::PaintedOverlayScrollbarLayerImpl";
-}
-
-bool PaintedOverlayScrollbarLayerImpl::HasFindInPageTickmarks() const {
-  return track_ui_resource_id_ != 0;
 }
 
 }  // namespace cc

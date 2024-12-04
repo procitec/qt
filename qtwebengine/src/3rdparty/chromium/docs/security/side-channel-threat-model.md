@@ -3,7 +3,7 @@
 Contributors: awhalley, creis, dcheng, jschuh, jyasskin, lukasza, mkwst, nasko,
 palmer, tsepez. Patches and corrections welcome!
 
-Last Updated: 29 May 2018
+Last Updated: 27 April 2021
 
 [TOC]
 
@@ -134,7 +134,7 @@ timeframe.)
 ##### Incompleteness of CORB
 
 Site Isolation depends on [cross-origin read
-blocking](https://chromium.googlesource.com/chromium/src/+/master/content/browser/loader/cross_origin_read_blocking_explainer.md)
+blocking](https://chromium.googlesource.com/chromium/src/+/main/content/browser/loader/cross_origin_read_blocking_explainer.md)
 (CORB; formerly known as cross-site document blocking or XSDB) to prevent a
 malicious website from pulling in sensitive cross-origin data. Otherwise, an
 attacker could use markup like `<img src="http://example.com/secret.json">` to
@@ -208,35 +208,9 @@ tracked this as [Issue
 ###### Flash
 
 Click To Play greatly reduces the risk that Flash-borne Spectre (and other)
-exploits will be effective at scale.  Additionally, the enterprise policies
-[PluginsBlockedForUrls](https://cloud.google.com/docs/chrome-enterprise/policies/?policy=PluginsBlockedForUrls)
-and
-[PluginsAllowedForUrls](https://cloud.google.com/docs/chrome-enterprise/policies/?policy=PluginsAllowedForUrls)
-can be combined to restrict Flash to specific websites.
+exploits will be effective at scale.
 Even so,
 [we might want to consider teaching CORB about Flash flavour of CORS](https://crbug.com/816318).
-
-##### All Frames In A `<webview>` Run In The Same Process
-
-[`<webview>`s run in a separate renderer
-process](https://developer.chrome.com/apps/tags/webview), but that single
-process hosts all frames in the `<webview>` (even with Strict Site Isolation
-enabled elsewhere in Chrome). Extra work is needed to fix this.
-
-Mitigating factors:
-
-* `<webview>` is available only to Web UI and Chrome Apps (which are deprecated
-  outside of Chrome OS).
-* `<webview>` contents are in a separate storage partition (separate from the
-  normal profile and from the Chrome App using the `<webview>` tag). The Chrome
-  App is also in an additional separate storage partition.
-
-Chrome WebUI pages must not, and Chrome Apps should not, use `<webview>` for
-hosting arbitrary web pages. They must only allow a single trustworthy page or
-set of pages. The user already has to trust the Chrome App to do the right thing
-(there is no Omnibox, for example) and only take the user to safe sites. If we
-can’t enforce this programmatically, we may consider enforcing it through code
-review.
 
 ##### Android `WebView`
 
@@ -327,7 +301,7 @@ we don’t expect that we can get much long-term defensive value from doing so,
 for several reasons:
 
 * There are [many explicit and implicit clocks in the
-  platform](https://bugs.chromium.org/p/chromium/issues/detail?id=798795)
+  platform](https://gruss.cc/files/fantastictimers.pdf)
 * It is not always possible to coarsen or jitter them enough to slow or stop
   exploitation…
 * …while also maintaining web platform compatibility and utility

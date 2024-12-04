@@ -1,15 +1,16 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/modules/media_controls/elements/media_control_slider_element.h"
 
+#include "third_party/blink/renderer/core/dom/shadow_root.h"
+#include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/html/html_div_element.h"
 #include "third_party/blink/renderer/core/html/shadow/shadow_element_names.h"
 #include "third_party/blink/renderer/core/input_type_names.h"
 #include "third_party/blink/renderer/core/layout/layout_box.h"
 #include "third_party/blink/renderer/core/layout/layout_box_model_object.h"
-#include "third_party/blink/renderer/core/layout/layout_view.h"
 #include "third_party/blink/renderer/core/resize_observer/resize_observer.h"
 #include "third_party/blink/renderer/core/resize_observer/resize_observer_entry.h"
 #include "third_party/blink/renderer/modules/media_controls/elements/media_control_elements_helper.h"
@@ -23,8 +24,8 @@ void SetSegmentDivPosition(blink::HTMLDivElement* segment,
                            int width,
                            float zoom_factor) {
   int segment_width =
-      clampTo<int>(floor((position.width * width) / zoom_factor));
-  int segment_left = clampTo<int>(floor((position.left * width) / zoom_factor));
+      ClampTo<int>(floor((position.width * width) / zoom_factor));
+  int segment_left = ClampTo<int>(floor((position.left * width) / zoom_factor));
   int current_width = 0;
   int current_left = 0;
 
@@ -32,7 +33,7 @@ void SetSegmentDivPosition(blink::HTMLDivElement* segment,
   // then it will be a nullptr so we should assume zero.
   blink::LayoutBox* box = segment->GetLayoutBox();
   if (box) {
-    current_width = box->PixelSnappedWidth();
+    current_width = box->LogicalWidth().ToInt();
     current_left = box->LogicalLeft().ToInt();
   }
 
@@ -46,7 +47,8 @@ void SetSegmentDivPosition(blink::HTMLDivElement* segment,
   builder.Append("px; left: ");
   builder.AppendNumber(segment_left);
   builder.Append("px;");
-  segment->setAttribute("style", builder.ToAtomicString());
+  segment->setAttribute(blink::html_names::kStyleAttr,
+                        builder.ToAtomicString());
 }
 
 }  // namespace.
@@ -91,7 +93,7 @@ MediaControlSliderElement::MediaControlSliderElement(
           MakeGarbageCollected<MediaControlSliderElementResizeObserverDelegate>(
               this))) {
   setType(input_type_names::kRange);
-  setAttribute(html_names::kStepAttr, "any");
+  setAttribute(html_names::kStepAttr, AtomicString("any"));
   OnControlsShown();
 }
 
@@ -102,7 +104,8 @@ Element& MediaControlSliderElement::GetTrackElement() {
   // #shadow-root
   //   - div
   //     - div::-webkit-slider-runnable-track#track
-  Element* track = GetShadowRoot()->getElementById(AtomicString("track"));
+  Element* track =
+      GetShadowRoot()->getElementById(shadow_element_names::kIdSliderTrack);
   DCHECK(track);
   return *track;
 }
@@ -124,11 +127,11 @@ void MediaControlSliderElement::SetupBarSegments() {
   //   - div::internal-track-segment-highlight-before (blue highlight)
   //   - div::internal-track-segment-highlight-after (dark gray highlight)
   HTMLDivElement* background = MediaControlElementsHelper::CreateDiv(
-      "-internal-track-segment-background", &track);
+      AtomicString("-internal-track-segment-background"), &track);
   segment_highlight_before_ = MediaControlElementsHelper::CreateDiv(
-      "-internal-track-segment-highlight-before", background);
+      AtomicString("-internal-track-segment-highlight-before"), background);
   segment_highlight_after_ = MediaControlElementsHelper::CreateDiv(
-      "-internal-track-segment-highlight-after", background);
+      AtomicString("-internal-track-segment-highlight-after"), background);
 }
 
 void MediaControlSliderElement::SetBeforeSegmentPosition(
@@ -153,9 +156,8 @@ int MediaControlSliderElement::TrackWidth() {
 }
 
 float MediaControlSliderElement::ZoomFactor() const {
-  if (!GetDocument().GetLayoutView())
-    return 1;
-  return GetDocument().GetLayoutView()->ZoomFactor();
+  const LocalFrame* frame = GetDocument().GetFrame();
+  return frame ? frame->PageZoomFactor() : 1;
 }
 
 void MediaControlSliderElement::NotifyElementSizeChanged() {

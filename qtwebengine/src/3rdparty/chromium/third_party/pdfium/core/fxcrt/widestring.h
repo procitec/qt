@@ -1,4 +1,4 @@
-// Copyright 2017 PDFium Authors. All rights reserved.
+// Copyright 2017 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,18 +7,22 @@
 #ifndef CORE_FXCRT_WIDESTRING_H_
 #define CORE_FXCRT_WIDESTRING_H_
 
+#include <stdarg.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <wchar.h>
+
 #include <functional>
+#include <iosfwd>
 #include <iterator>
-#include <ostream>
 #include <utility>
 
-#include "core/fxcrt/fx_system.h"
 #include "core/fxcrt/retain_ptr.h"
 #include "core/fxcrt/string_data_template.h"
 #include "core/fxcrt/string_view_template.h"
-#include "third_party/base/logging.h"
-#include "third_party/base/optional.h"
-#include "third_party/base/span.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "third_party/base/check.h"
+#include "third_party/base/containers/span.h"
 
 namespace fxcrt {
 
@@ -28,13 +32,15 @@ class ByteString;
 // avoids the cost of std::string's iterator stability guarantees.
 class WideString {
  public:
+  // TODO(crbug.com/pdfium/2031): Consider switching to `char16_t` instead.
   using CharType = wchar_t;
   using const_iterator = const CharType*;
   using const_reverse_iterator = std::reverse_iterator<const_iterator>;
 
-  static WideString Format(const wchar_t* pFormat, ...) WARN_UNUSED_RESULT;
-  static WideString FormatV(const wchar_t* lpszFormat,
-                            va_list argList) WARN_UNUSED_RESULT;
+  [[nodiscard]] static WideString FormatInteger(int i);
+  [[nodiscard]] static WideString Format(const wchar_t* pFormat, ...);
+  [[nodiscard]] static WideString FormatV(const wchar_t* lpszFormat,
+                                          va_list argList);
 
   WideString();
   WideString(const WideString& other);
@@ -42,9 +48,10 @@ class WideString {
   // Move-construct a WideString. After construction, |other| is empty.
   WideString(WideString&& other) noexcept;
 
+  // Make a one-character string from one wide char.
+  explicit WideString(wchar_t ch);
+
   // Deliberately implicit to avoid calling on every string literal.
-  // NOLINTNEXTLINE(runtime/explicit)
-  WideString(wchar_t ch);
   // NOLINTNEXTLINE(runtime/explicit)
   WideString(const wchar_t* ptr);
 
@@ -60,16 +67,14 @@ class WideString {
 
   ~WideString();
 
-  static WideString FromASCII(ByteStringView str) WARN_UNUSED_RESULT;
-  static WideString FromLatin1(ByteStringView str) WARN_UNUSED_RESULT;
-  static WideString FromDefANSI(ByteStringView str) WARN_UNUSED_RESULT;
-  static WideString FromUTF8(ByteStringView str) WARN_UNUSED_RESULT;
-  static WideString FromUTF16LE(const unsigned short* str,
-                                size_t len) WARN_UNUSED_RESULT;
-  static WideString FromUTF16BE(const unsigned short* wstr,
-                                size_t wlen) WARN_UNUSED_RESULT;
+  [[nodiscard]] static WideString FromASCII(ByteStringView str);
+  [[nodiscard]] static WideString FromLatin1(ByteStringView str);
+  [[nodiscard]] static WideString FromDefANSI(ByteStringView str);
+  [[nodiscard]] static WideString FromUTF8(ByteStringView str);
+  [[nodiscard]] static WideString FromUTF16LE(pdfium::span<const uint8_t> data);
+  [[nodiscard]] static WideString FromUTF16BE(pdfium::span<const uint8_t> data);
 
-  static size_t WStringLength(const unsigned short* str) WARN_UNUSED_RESULT;
+  [[nodiscard]] static size_t WStringLength(const unsigned short* str);
 
   // Explicit conversion to C-style wide string.
   // Note: Any subsequent modification of |this| will invalidate the result.
@@ -102,7 +107,9 @@ class WideString {
     return const_reverse_iterator(begin());
   }
 
-  void clear() { m_pData.Reset(); }
+  // Holds on to buffer if possible for later re-use. Assign WideString()
+  // to force immediate release if desired.
+  void clear();
 
   size_t GetLength() const { return m_pData ? m_pData->m_nDataLength : 0; }
   size_t GetStringLength() const {
@@ -150,6 +157,7 @@ class WideString {
   int Compare(const WideString& str) const;
   int CompareNoCase(const wchar_t* str) const;
 
+  WideString Substr(size_t offset) const;
   WideString Substr(size_t first, size_t count) const;
   WideString First(size_t count) const;
   WideString Last(size_t count) const;
@@ -176,16 +184,22 @@ class WideString {
 
   void Reserve(size_t len);
 
+  // Increase the backing store of the string so that it is capable of storing
+  // at least `nMinBufLength` wchars. Returns a span to the entire buffer,
+  // which may be larger than `nMinBufLength` due to rounding by allocators.
   // Note: any modification of the string (including ReleaseBuffer()) may
   // invalidate the span, which must not outlive its buffer.
   pdfium::span<wchar_t> GetBuffer(size_t nMinBufLength);
+
+  // Sets the size of the string to `nNewLength` wchars. Call this after a call
+  // to GetBuffer(), to indicate how much of the buffer was actually used.
   void ReleaseBuffer(size_t nNewLength);
 
   int GetInteger() const;
 
-  Optional<size_t> Find(WideStringView subStr, size_t start = 0) const;
-  Optional<size_t> Find(wchar_t ch, size_t start = 0) const;
-  Optional<size_t> ReverseFind(wchar_t ch) const;
+  absl::optional<size_t> Find(WideStringView subStr, size_t start = 0) const;
+  absl::optional<size_t> Find(wchar_t ch, size_t start = 0) const;
+  absl::optional<size_t> ReverseFind(wchar_t ch) const;
 
   bool Contains(WideStringView lpszSub, size_t start = 0) const {
     return Find(lpszSub, start).has_value();
@@ -250,7 +264,7 @@ inline WideString operator+(WideStringView str1, wchar_t ch) {
   return WideString(str1, WideStringView(ch));
 }
 inline WideString operator+(wchar_t ch, WideStringView str2) {
-  return WideString(ch, str2);
+  return WideString(WideStringView(ch), str2);
 }
 inline WideString operator+(const WideString& str1, const WideString& str2) {
   return WideString(str1.AsStringView(), str2.AsStringView());
@@ -259,7 +273,7 @@ inline WideString operator+(const WideString& str1, wchar_t ch) {
   return WideString(str1.AsStringView(), WideStringView(ch));
 }
 inline WideString operator+(wchar_t ch, const WideString& str2) {
-  return WideString(ch, str2.AsStringView());
+  return WideString(WideStringView(ch), str2.AsStringView());
 }
 inline WideString operator+(const WideString& str1, const wchar_t* str2) {
   return WideString(str1.AsStringView(), str2);
@@ -294,18 +308,26 @@ std::ostream& operator<<(std::ostream& os, const WideString& str);
 std::wostream& operator<<(std::wostream& os, WideStringView str);
 std::ostream& operator<<(std::ostream& os, WideStringView str);
 
+// This is declared here for use in gtest-based tests but is defined in a test
+// support target. This should not be used in production code. Just use
+// operator<< from above instead.
+// In some cases, gtest will automatically use operator<< as well, but in this
+// case, it needs PrintTo() because WideString looks like a container to gtest.
+void PrintTo(const WideString& str, std::ostream* os);
+
 }  // namespace fxcrt
 
 using WideString = fxcrt::WideString;
 
-uint32_t FX_HashCode_GetW(WideStringView str, bool bIgnoreCase);
+uint32_t FX_HashCode_GetW(WideStringView str);
+uint32_t FX_HashCode_GetLoweredW(WideStringView str);
 
 namespace std {
 
 template <>
 struct hash<WideString> {
-  std::size_t operator()(const WideString& str) const {
-    return FX_HashCode_GetW(str.AsStringView(), false);
+  size_t operator()(const WideString& str) const {
+    return FX_HashCode_GetW(str.AsStringView());
   }
 };
 

@@ -1,23 +1,40 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/core/page/scrolling/element_fragment_anchor.h"
 
+#include "base/trace_event/typed_macros.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_scroll_into_view_options.h"
 #include "third_party/blink/renderer/core/accessibility/ax_object_cache.h"
 #include "third_party/blink/renderer/core/display_lock/display_lock_context.h"
+#include "third_party/blink/renderer/core/display_lock/display_lock_utilities.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/element.h"
-#include "third_party/blink/renderer/core/dom/events/event.h"
+#include "third_party/blink/renderer/core/dom/focus_params.h"
 #include "third_party/blink/renderer/core/dom/node.h"
+#include "third_party/blink/renderer/core/editing/frame_selection.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
+#include "third_party/blink/renderer/core/html/html_details_element.h"
 #include "third_party/blink/renderer/core/svg/svg_svg_element.h"
 #include "third_party/blink/renderer/platform/bindings/script_forbidden_scope.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 
 namespace blink {
+
+namespace {
+// TODO(bokan): Move this into FragmentDirective after
+// https://crrev.com/c/3216206 lands.
+String RemoveFragmentDirectives(const String& url_fragment) {
+  wtf_size_t directive_delimiter_ix = url_fragment.Find(":~:");
+  if (directive_delimiter_ix == kNotFound)
+    return url_fragment;
+
+  return url_fragment.Substring(0, directive_delimiter_ix);
+}
+
+}  // namespace
 
 ElementFragmentAnchor* ElementFragmentAnchor::TryCreate(const KURL& url,
                                                         LocalFrame& frame,
@@ -34,7 +51,7 @@ ElementFragmentAnchor* ElementFragmentAnchor::TryCreate(const KURL& url,
   if (!url.HasFragmentIdentifier() && !doc.CssTarget() && !doc.IsSVGDocument())
     return nullptr;
 
-  String fragment = url.FragmentIdentifier();
+  String fragment = RemoveFragmentDirectives(url.FragmentIdentifier());
   Node* anchor_node = doc.FindAnchor(fragment);
 
   // Setting to null will clear the current target.
@@ -63,24 +80,22 @@ ElementFragmentAnchor* ElementFragmentAnchor::TryCreate(const KURL& url,
   if (!should_scroll)
     return nullptr;
 
-  if (RuntimeEnabledFeatures::BeforeMatchEventEnabled(
-          frame.GetDocument()->GetExecutionContext())) {
-    anchor_node->DispatchEvent(
-        *Event::CreateBubble(event_type_names::kBeforematch));
-  }
+  HTMLDetailsElement::ExpandDetailsAncestors(*anchor_node);
+  DisplayLockUtilities::RevealHiddenUntilFoundAncestors(*anchor_node);
 
   return MakeGarbageCollected<ElementFragmentAnchor>(*anchor_node, frame);
 }
 
 ElementFragmentAnchor::ElementFragmentAnchor(Node& anchor_node,
                                              LocalFrame& frame)
-    : anchor_node_(&anchor_node),
-      frame_(&frame),
+    : FragmentAnchor(frame),
+      anchor_node_(&anchor_node),
       needs_focus_(!anchor_node.IsDocumentNode()) {
   DCHECK(frame_->View());
 }
 
 bool ElementFragmentAnchor::Invoke() {
+  TRACE_EVENT("blink", "ElementFragmentAnchor::Invoke");
   if (!frame_ || !anchor_node_)
     return false;
 
@@ -93,15 +108,7 @@ bool ElementFragmentAnchor::Invoke() {
   if (!doc.HaveRenderBlockingResourcesLoaded() || !frame_->View())
     return true;
 
-  Frame* boundary_frame = frame_->FindUnsafeParentScrollPropagationBoundary();
-
-  // FIXME: Handle RemoteFrames
-  auto* boundary_local_frame = DynamicTo<LocalFrame>(boundary_frame);
-  if (boundary_local_frame) {
-    boundary_local_frame->View()->SetSafeToPropagateScrollToParent(false);
-  }
-
-  auto* element_to_scroll = DynamicTo<Element>(anchor_node_.Get());
+  Member<Element> element_to_scroll = DynamicTo<Element>(anchor_node_.Get());
   if (!element_to_scroll)
     element_to_scroll = doc.documentElement();
 
@@ -109,11 +116,7 @@ bool ElementFragmentAnchor::Invoke() {
     ScrollIntoViewOptions* options = ScrollIntoViewOptions::Create();
     options->setBlock("start");
     options->setInlinePosition("nearest");
-    element_to_scroll->ScrollIntoViewNoVisualUpdate(options);
-  }
-
-  if (boundary_local_frame) {
-    boundary_local_frame->View()->SetSafeToPropagateScrollToParent(true);
+    ScrollElementIntoViewWithOptions(element_to_scroll, options);
   }
 
   if (AXObjectCache* cache = doc.ExistingAXObjectCache())
@@ -133,6 +136,13 @@ void ElementFragmentAnchor::Installed() {
   // document lifecycle.
   if (frame_->GetDocument()->HaveRenderBlockingResourcesLoaded())
     ApplyFocusIfNeeded();
+
+  if (needs_focus_) {
+    // Attempts to focus the anchor if we couldn't focus above. This can cause
+    // script to run so we can't do it from Invoke.
+    frame_->GetDocument()->EnqueueAnimationFrameTask(WTF::BindOnce(
+        &ElementFragmentAnchor::ApplyFocusIfNeeded, WrapPersistent(this)));
+  }
 
   needs_invoke_ = true;
 }
@@ -154,10 +164,6 @@ void ElementFragmentAnchor::Trace(Visitor* visitor) const {
   FragmentAnchor::Trace(visitor);
 }
 
-void ElementFragmentAnchor::PerformPreRafActions() {
-  ApplyFocusIfNeeded();
-}
-
 void ElementFragmentAnchor::ApplyFocusIfNeeded() {
   // SVG images can load synchronously during style recalc but it's ok to focus
   // since we disallow scripting. For everything else, focus() could run script
@@ -168,30 +174,45 @@ void ElementFragmentAnchor::ApplyFocusIfNeeded() {
   if (!needs_focus_)
     return;
 
-  if (!frame_->GetDocument()->HaveRenderBlockingResourcesLoaded())
+  if (!anchor_node_) {
+    needs_focus_ = false;
     return;
+  }
 
-  if (!anchor_node_)
+  if (!frame_->GetDocument()->HaveRenderBlockingResourcesLoaded()) {
     return;
+  }
+
+  frame_->GetDocument()->UpdateStyleAndLayoutTree();
+
+  // If caret browsing is enabled, move the caret to the beginning of the
+  // fragment, or to the first non-inert position after it.
+  if (frame_->IsCaretBrowsingEnabled()) {
+    const Position& pos = Position::FirstPositionInOrBeforeNode(*anchor_node_);
+    if (pos.IsConnected()) {
+      frame_->Selection().SetSelection(
+          SelectionInDOMTree::Builder().Collapse(pos).Build(),
+          SetSelectionOptions::Builder()
+              .SetShouldCloseTyping(true)
+              .SetShouldClearTypingStyle(true)
+              .SetDoNotSetFocus(true)
+              .Build());
+    }
+  }
 
   // If the anchor accepts keyboard focus and fragment scrolling is allowed,
   // move focus there to aid users relying on keyboard navigation.
   // If anchorNode is not focusable or fragment scrolling is not allowed,
   // clear focus, which matches the behavior of other browsers.
-  frame_->GetDocument()->UpdateStyleAndLayoutTree();
   auto* element = DynamicTo<Element>(anchor_node_.Get());
   if (element && element->IsFocusable()) {
-    element->focus();
+    element->Focus();
   } else {
     frame_->GetDocument()->SetSequentialFocusNavigationStartingPoint(
         anchor_node_);
     frame_->GetDocument()->ClearFocusedElement();
   }
   needs_focus_ = false;
-}
-
-bool ElementFragmentAnchor::Dismiss() {
-  return false;
 }
 
 }  // namespace blink

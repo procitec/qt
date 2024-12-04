@@ -1,26 +1,25 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef COMPONENTS_OPENSCREEN_PLATFORM_TLS_CLIENT_CONNECTION_H_
 #define COMPONENTS_OPENSCREEN_PLATFORM_TLS_CLIENT_CONNECTION_H_
 
+#include "base/memory/raw_ptr.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "mojo/public/cpp/system/data_pipe.h"
 #include "mojo/public/cpp/system/simple_watcher.h"
 #include "services/network/public/mojom/tcp_socket.mojom.h"
 #include "services/network/public/mojom/tls_socket.mojom.h"
-#include "third_party/openscreen/src/platform/api/task_runner.h"
 #include "third_party/openscreen/src/platform/api/tls_connection.h"
 #include "third_party/openscreen/src/platform/base/error.h"
 #include "third_party/openscreen/src/platform/base/ip_address.h"
 
 namespace openscreen_platform {
 
-class TlsClientConnection : public openscreen::TlsConnection {
+class TlsClientConnection final : public openscreen::TlsConnection {
  public:
   TlsClientConnection(
-      openscreen::TaskRunner* task_runner,
       openscreen::IPEndpoint local_address,
       openscreen::IPEndpoint remote_address,
       mojo::ScopedDataPipeConsumerHandle receive_stream,
@@ -33,7 +32,6 @@ class TlsClientConnection : public openscreen::TlsConnection {
   // TlsConnection overrides.
   void SetClient(Client* client) final;
   bool Send(const void* data, size_t len) final;
-  openscreen::IPEndpoint GetLocalEndpoint() const final;
   openscreen::IPEndpoint GetRemoteEndpoint() const final;
 
   // The maximum size of the vector in any single Client::OnRead() callback.
@@ -51,7 +49,6 @@ class TlsClientConnection : public openscreen::TlsConnection {
       MojoResult result,
       openscreen::Error::Code error_code_if_fatal);
 
-  openscreen::TaskRunner* const task_runner_ = nullptr;
   const openscreen::IPEndpoint local_address_;
   const openscreen::IPEndpoint remote_address_;
   const mojo::ScopedDataPipeConsumerHandle receive_stream_;
@@ -61,7 +58,7 @@ class TlsClientConnection : public openscreen::TlsConnection {
 
   mojo::SimpleWatcher receive_stream_watcher_;
 
-  Client* client_ = nullptr;
+  raw_ptr<Client> client_ = nullptr;
 };
 
 }  // namespace openscreen_platform

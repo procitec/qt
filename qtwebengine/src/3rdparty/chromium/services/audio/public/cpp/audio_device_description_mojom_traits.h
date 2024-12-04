@@ -1,9 +1,9 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef SERVICES_AUDIO_PUBLIC_INTERFACES_AUDIO_DEVICE_DESCRIPTION_MOJOM_TRAITS_H_
-#define SERVICES_AUDIO_PUBLIC_INTERFACES_AUDIO_DEVICE_DESCRIPTION_MOJOM_TRAITS_H_
+#ifndef SERVICES_AUDIO_PUBLIC_CPP_AUDIO_DEVICE_DESCRIPTION_MOJOM_TRAITS_H_
+#define SERVICES_AUDIO_PUBLIC_CPP_AUDIO_DEVICE_DESCRIPTION_MOJOM_TRAITS_H_
 
 #include <string>
 
@@ -24,6 +24,9 @@ struct StructTraits<audio::mojom::AudioDeviceDescriptionDataView,
   static std::string group_id(const media::AudioDeviceDescription& input) {
     return input.group_id;
   }
+  static bool is_system_default(const media::AudioDeviceDescription& input) {
+    return input.is_system_default;
+  }
 
   static bool Read(audio::mojom::AudioDeviceDescriptionDataView data,
                    media::AudioDeviceDescription* output);
@@ -31,4 +34,4 @@ struct StructTraits<audio::mojom::AudioDeviceDescriptionDataView,
 
 }  // namespace mojo
 
-#endif  // SERVICES_AUDIO_PUBLIC_INTERFACES_AUDIO_DEVICE_DESCRIPTION_MOJOM_TRAITS_H_
+#endif  // SERVICES_AUDIO_PUBLIC_CPP_AUDIO_DEVICE_DESCRIPTION_MOJOM_TRAITS_H_

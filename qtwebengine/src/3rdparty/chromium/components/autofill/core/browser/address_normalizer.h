@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,15 +7,20 @@
 
 #include <string>
 
-#include "base/callback_forward.h"
+#include "base/functional/callback_forward.h"
+#include "build/build_config.h"
 #include "third_party/libaddressinput/chromium/chrome_address_validator.h"
+
+#if BUILDFLAG(IS_ANDROID)
+#include "base/android/scoped_java_ref.h"
+#endif
 
 namespace autofill {
 
 class AutofillProfile;
 
 // A class used to normalize addresses.
-class AddressNormalizer : public autofill::LoadRulesListener {
+class AddressNormalizer : public LoadRulesListener {
  public:
   using NormalizationCallback =
       base::OnceCallback<void(bool /*success*/,
@@ -40,6 +45,11 @@ class AddressNormalizer : public autofill::LoadRulesListener {
   // Normalizes |profile| and returns whether it was successful. Callers should
   // call |AreRulesLoadedForRegion| to ensure success.
   virtual bool NormalizeAddressSync(AutofillProfile* profile) = 0;
+
+#if BUILDFLAG(IS_ANDROID)
+  // Return the java object that provides access to the AddressNormalizer.
+  virtual base::android::ScopedJavaLocalRef<jobject> GetJavaObject() = 0;
+#endif  // BUILDFLAG(IS_ANDROID)
 };
 
 }  // namespace autofill

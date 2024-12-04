@@ -25,6 +25,7 @@
 
 #include "third_party/blink/renderer/modules/accessibility/ax_menu_list_popup.h"
 
+#include "base/auto_reset.h"
 #include "third_party/blink/renderer/core/html/forms/html_select_element.h"
 #include "third_party/blink/renderer/modules/accessibility/ax_menu_list_option.h"
 #include "third_party/blink/renderer/modules/accessibility/ax_object_cache_impl.h"
@@ -33,6 +34,20 @@ namespace blink {
 
 AXMenuListPopup::AXMenuListPopup(AXObjectCacheImpl& ax_object_cache)
     : AXMockObject(ax_object_cache), active_index_(-1) {}
+
+void AXMenuListPopup::Init(AXObject* parent) {
+  owner_ = parent;
+  AXMockObject::Init(parent);
+}
+
+void AXMenuListPopup::Detach() {
+  owner_ = nullptr;
+  AXMockObject::Detach();
+}
+
+ax::mojom::blink::Role AXMenuListPopup::NativeRoleIgnoringAria() const {
+  return ax::mojom::blink::Role::kMenuListPopup;
+}
 
 bool AXMenuListPopup::IsVisible() const {
   return !IsOffScreen();
@@ -54,24 +69,31 @@ AXRestriction AXMenuListPopup::Restriction() const {
 bool AXMenuListPopup::ComputeAccessibilityIsIgnored(
     IgnoredReasons* ignored_reasons) const {
   // Base whether the menupopup is ignored on the containing <select>.
-  if (parent_)
+  if (parent_) {
     return parent_->ComputeAccessibilityIsIgnored(ignored_reasons);
+  }
 
   return kIgnoreObject;
 }
 
 AXMenuListOption* AXMenuListPopup::MenuListOptionAXObject(
-    HTMLElement* element) const {
+    HTMLElement* element) {
   DCHECK(element);
-  if (!IsA<HTMLOptionElement>(*element))
-    return nullptr;
+  DCHECK(IsA<HTMLOptionElement>(*element));
 
-  auto* ax_object =
-      DynamicTo<AXMenuListOption>(AXObjectCache().GetOrCreate(element));
-  if (!ax_object)
-    return nullptr;
+  AXObject* ax_object = AXObjectCache().GetOrCreate(element, this);
+  CHECK(ax_object);
+  if (ChildrenNeedToUpdateCachedValues()) {
+    ax_object->InvalidateCachedValues();
+  }
+  // Update cached values preemptively, where we can control the
+  // notify_parent_of_ignored_changes parameter, so that we do not try to notify
+  // a parent of children changes (which would be redundant as we are already
+  // processing children changed on the parent).
+  ax_object->UpdateCachedAttributeValuesIfNeeded(
+      /*notify_parent_of_ignored_changes*/ false);
 
-  return ax_object;
+  return DynamicTo<AXMenuListOption>(ax_object);
 }
 
 int AXMenuListPopup::GetSelectedIndex() const {
@@ -93,7 +115,16 @@ bool AXMenuListPopup::OnNativeClickAction() {
 }
 
 void AXMenuListPopup::AddChildren() {
+#if defined(AX_FAIL_FAST_BUILD)
   DCHECK(!IsDetached());
+  DCHECK(!is_adding_children_) << " Reentering method on " << GetNode();
+  base::AutoReset<bool> reentrancy_protector(&is_adding_children_, true);
+  DCHECK_EQ(children_.size(), 0U)
+      << "Parent still has " << children_.size() << " children before adding:"
+      << "\nParent is " << ToString(true, true) << "\nFirst child is "
+      << children_[0]->ToString(true, true);
+#endif
+
   if (!parent_)
     return;
 
@@ -101,26 +132,22 @@ void AXMenuListPopup::AddChildren() {
   if (!html_select_element)
     return;
 
-  have_children_ = true;
+  DCHECK(children_.empty());
+  CHECK(NeedsToUpdateChildren());
 
-  if (active_index_ == -1)
+  if (active_index_ == -1) {
     active_index_ = GetSelectedIndex();
+  }
 
   for (auto* const option_element : html_select_element->GetOptionList()) {
     AXMenuListOption* option = MenuListOptionAXObject(option_element);
-    if (option) {
-      option->SetParent(this);
+    CHECK_EQ(option->ParentObject(), this);
+    if (option && option->AccessibilityIsIncludedInTree()) {
+      DCHECK(!option->IsDetached());
       children_.push_back(option);
     }
   }
-}
-
-void AXMenuListPopup::UpdateChildrenIfNecessary() {
-  if (have_children_ && parent_ && parent_->NeedsToUpdateChildren())
-    ClearChildren();
-
-  if (!have_children_)
-    AddChildren();
+  SetNeedsToUpdateChildren(false);
 }
 
 void AXMenuListPopup::DidUpdateActiveOption(int option_index,
@@ -137,15 +164,14 @@ void AXMenuListPopup::DidUpdateActiveOption(int option_index,
   if (old_index != option_index && old_index >= 0 &&
       old_index < static_cast<int>(children_.size())) {
     AXObject* previous_child = children_[old_index].Get();
-    cache.PostNotification(previous_child,
-                           ax::mojom::Event::kMenuListItemSelected);
+    cache.MarkAXObjectDirtyWithCleanLayout(previous_child);
   }
 
   if (option_index >= 0 && option_index < static_cast<int>(children_.size())) {
     AXObject* child = children_[option_index].Get();
-    cache.PostNotification(this, ax::mojom::Event::kChildrenChanged);
-    cache.PostNotification(this, ax::mojom::Event::kActiveDescendantChanged);
-    cache.PostNotification(child, ax::mojom::Event::kMenuListItemSelected);
+    cache.MarkAXObjectDirtyWithCleanLayout(child);
+    cache.PostNotification(this,
+                           ax::mojom::blink::Event::kActiveDescendantChanged);
   }
 }
 
@@ -153,15 +179,13 @@ void AXMenuListPopup::DidHide() {
   AXObjectCacheImpl& cache = AXObjectCache();
   AXObject* descendant = ActiveDescendant();
   cache.PostNotification(this, ax::mojom::Event::kHide);
-  if (descendant) {
-    cache.PostNotification(this, ax::mojom::Event::kChildrenChanged);
-    cache.PostNotification(descendant, ax::mojom::Event::kMenuListItemSelected);
-  }
+  if (descendant)  // TODO(accessibility) Try removing. Line below is enough.
+    cache.MarkAXObjectDirtyWithCleanLayout(this);
+  cache.MarkAXSubtreeDirtyWithCleanLayout(ParentObject());
 }
 
 void AXMenuListPopup::DidShow() {
-  if (!have_children_)
-    AddChildren();
+  UpdateChildrenIfNecessary();
 
   AXObjectCacheImpl& cache = AXObjectCache();
   cache.PostNotification(this, ax::mojom::Event::kShow);
@@ -172,6 +196,7 @@ void AXMenuListPopup::DidShow() {
   } else {
     cache.PostNotification(parent_, ax::mojom::Event::kFocus);
   }
+  cache.MarkAXSubtreeDirtyWithCleanLayout(ParentObject());
 }
 
 AXObject* AXMenuListPopup::ActiveDescendant() {
@@ -183,7 +208,18 @@ AXObject* AXMenuListPopup::ActiveDescendant() {
   if (active_index_ < 0 || active_index_ >= ChildCountIncludingIgnored())
     return nullptr;
 
-  return children_[active_index_].Get();
+  auto* select = DynamicTo<HTMLSelectElement>(parent_->GetNode());
+  if (!select)
+    return nullptr;
+
+  HTMLOptionElement* option = select->item(active_index_);
+  DCHECK(option);
+  return AXObjectCache().Get(option);
+}
+
+void AXMenuListPopup::Trace(Visitor* visitor) const {
+  visitor->Trace(owner_);
+  AXMockObject::Trace(visitor);
 }
 
 }  // namespace blink

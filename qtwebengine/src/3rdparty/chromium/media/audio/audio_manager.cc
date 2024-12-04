@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,23 +6,23 @@
 
 #include <stdint.h>
 
+#include <memory>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/bind_helpers.h"
 #include "base/command_line.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/logging.h"
-#include "base/macros.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/power_monitor/power_monitor.h"
-#include "base/single_thread_task_runner.h"
-#include "base/strings/stringprintf.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/thread_annotations.h"
+#include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "media/audio/fake_audio_log_factory.h"
 #include "media/base/media_switches.h"
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 #include "base/win/scoped_com_initializer.h"
 #endif
 
@@ -36,34 +36,33 @@ AudioManager* g_last_created = nullptr;
 class AudioManagerHelper {
  public:
   AudioManagerHelper() = default;
+
+  AudioManagerHelper(const AudioManagerHelper&) = delete;
+  AudioManagerHelper& operator=(const AudioManagerHelper&) = delete;
+
   ~AudioManagerHelper() = default;
 
   AudioLogFactory* fake_log_factory() { return &fake_log_factory_; }
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   // This should be called before creating an AudioManager in tests to ensure
   // that the creating thread is COM initialized.
   void InitializeCOMForTesting() {
-    com_initializer_for_testing_.reset(new base::win::ScopedCOMInitializer());
+    com_initializer_for_testing_ =
+        std::make_unique<base::win::ScopedCOMInitializer>();
   }
 #endif
 
-#if defined(OS_LINUX) || defined(OS_CHROMEOS)
   void set_app_name(const std::string& app_name) { app_name_ = app_name; }
   const std::string& app_name() const { return app_name_; }
-#endif
 
   FakeAudioLogFactory fake_log_factory_;
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   std::unique_ptr<base::win::ScopedCOMInitializer> com_initializer_for_testing_;
 #endif
 
-#if defined(OS_LINUX) || defined(OS_CHROMEOS)
   std::string app_name_;
-#endif
-
-  DISALLOW_COPY_AND_ASSIGN(AudioManagerHelper);
 };
 
 AudioManagerHelper* GetHelper() {
@@ -92,7 +91,7 @@ AudioManager::AudioManager(std::unique_ptr<AudioThread> audio_thread)
     LOG(WARNING) << "Multiple instances of AudioManager detected";
   }
   // We always override |g_last_created| irrespective of whether it is already
-  // set or not becuase it represents the last created instance.
+  // set or not because it represents the last created instance.
   g_last_created = this;
 }
 
@@ -124,13 +123,12 @@ std::unique_ptr<AudioManager> AudioManager::Create(
 // static
 std::unique_ptr<AudioManager> AudioManager::CreateForTesting(
     std::unique_ptr<AudioThread> audio_thread) {
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   GetHelper()->InitializeCOMForTesting();
 #endif
   return Create(std::move(audio_thread), GetHelper()->fake_log_factory());
 }
 
-#if defined(OS_LINUX) || defined(OS_CHROMEOS)
 // static
 void AudioManager::SetGlobalAppName(const std::string& app_name) {
   GetHelper()->set_app_name(app_name);
@@ -140,7 +138,6 @@ void AudioManager::SetGlobalAppName(const std::string& app_name) {
 const std::string& AudioManager::GetGlobalAppName() {
   return GetHelper()->app_name();
 }
-#endif
 
 // static
 AudioManager* AudioManager::Get() {
@@ -170,22 +167,37 @@ bool AudioManager::Shutdown() {
   return true;
 }
 
-void AudioManager::SetDiverterCallbacks(
-    AddDiverterCallback add_callback,
-    RemoveDiverterCallback remove_callback) {
-  add_diverter_callback_ = std::move(add_callback);
-  remove_diverter_callback_ = std::move(remove_callback);
-}
+void AudioManager::TraceAmplitudePeak(bool trace_start) {
+  base::AutoLock scoped_lock(tracing_lock_);
 
-void AudioManager::AddDiverter(const base::UnguessableToken& group_id,
-                               media::AudioSourceDiverter* diverter) {
-  if (!add_diverter_callback_.is_null())
-    add_diverter_callback_.Run(group_id, diverter);
-}
+  constexpr char kTraceName[] = "AmplitudePeak";
 
-void AudioManager::RemoveDiverter(media::AudioSourceDiverter* diverter) {
-  if (!remove_diverter_callback_.is_null())
-    remove_diverter_callback_.Run(diverter);
+  if (trace_start) {
+    // We might have never closed the previous trace. Abort it now.
+    if (is_trace_started_) {
+      TRACE_EVENT_NESTABLE_ASYNC_END1(
+          TRACE_DISABLED_BY_DEFAULT("audio.latency"), kTraceName,
+          current_trace_id_, "aborted", true);
+    }
+
+    TRACE_EVENT_NESTABLE_ASYNC_BEGIN0(
+        TRACE_DISABLED_BY_DEFAULT("audio.latency"), kTraceName,
+        ++current_trace_id_);
+
+    is_trace_started_ = true;
+    return;
+  }
+
+  if (!is_trace_started_) {
+    // Avoid ending traces that were never started.
+    return;
+  }
+
+  TRACE_EVENT_NESTABLE_ASYNC_END1(TRACE_DISABLED_BY_DEFAULT("audio.latency"),
+                                  kTraceName, current_trace_id_, "aborted",
+                                  false);
+
+  is_trace_started_ = false;
 }
 
 }  // namespace media

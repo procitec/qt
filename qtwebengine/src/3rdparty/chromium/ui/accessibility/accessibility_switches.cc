@@ -1,4 +1,4 @@
-// Copyright (c) 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -28,26 +28,18 @@ const char kEnableExperimentalAccessibilityLanguageDetection[] =
 const char kEnableExperimentalAccessibilityLanguageDetectionDynamic[] =
     "enable-experimental-accessibility-language-detection-dynamic";
 
+// Switches accessibility extensions to use extensions manifest v3 while the
+// migration is still in progress.
+const char kEnableExperimentalAccessibilityManifestV3[] =
+    "enable-experimental-accessibility-manifest-v3";
+
 // Enables in progress Switch Access features for text input.
 const char kEnableExperimentalAccessibilitySwitchAccessText[] =
     "enable-experimental-accessibility-switch-access-text";
 
-// Enables annotations feature that hasn't launched yet.
-const char kEnableExperimentalAccessibilityChromeVoxAnnotations[] =
-    "enable-experimental-accessibility-chromevox-annotations";
-
-// Enables interactive tutorial for ChromeVox.
-const char kEnableExperimentalAccessibilityChromeVoxTutorial[] =
-    "enable-experimental-accessibility-chromevox-tutorial";
-
-// Enables new magnifier focus following feature, which provides richer focus
-// following experience.
-const char kEnableExperimentalAccessibilityMagnifierNewFocusFollowing[] =
-    "enable-experimental-accessibility-magnifier-new-focus-following";
-
-// Enables Switch Access point scanning. This feature hasn't launched yet.
-const char kEnableSwitchAccessPointScanning[] =
-    "enable-switch-access-point-scanning";
+// Enables debug feature for drawing rectangle around magnified region, without
+// zooming in.
+const char kEnableMagnifierDebugDrawRect[] = "enable-magnifier-debug-draw-rect";
 
 bool IsExperimentalAccessibilityLanguageDetectionEnabled() {
   return base::CommandLine::ForCurrentProcess()->HasSwitch(
@@ -64,28 +56,16 @@ bool IsExperimentalAccessibilitySwitchAccessTextEnabled() {
       ::switches::kEnableExperimentalAccessibilitySwitchAccessText);
 }
 
-bool IsSwitchAccessPointScanningEnabled() {
+bool IsMagnifierDebugDrawRectEnabled() {
   return base::CommandLine::ForCurrentProcess()->HasSwitch(
-      ::switches::kEnableSwitchAccessPointScanning);
-}
-
-#if defined(OS_WIN)
-// Enables UI Automation platform API in addition to the IAccessible API.
-const char kEnableExperimentalUIAutomation[] =
-    "enable-experimental-ui-automation";
-#endif
-
-bool IsExperimentalAccessibilityPlatformUIAEnabled() {
-#if defined(OS_WIN)
-  return base::CommandLine::ForCurrentProcess()->HasSwitch(
-      ::switches::kEnableExperimentalUIAutomation);
-#else
-  return false;
-#endif
+      ::switches::kEnableMagnifierDebugDrawRect);
 }
 
 // Optionally disable AXMenuList, which makes the internal pop-up menu
 // UI for a select element directly accessible.
 const char kDisableAXMenuList[] = "disable-ax-menu-list";
+
+const char kGenerateAccessibilityTestExpectations[] =
+    "generate-accessibility-test-expectations";
 
 }  // namespace switches

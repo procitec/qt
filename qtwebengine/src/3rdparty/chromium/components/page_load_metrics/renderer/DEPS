@@ -2,13 +2,14 @@ include_rules = [
   "+base",
   "+content/public/common",
   "+content/public/renderer",
-  "+components/data_reduction_proxy/core/common",
   "+components/subresource_filter/content/renderer",
   "+services/network/public/cpp",
   "+services/network/public/mojom",
   "+third_party/blink/public",
   "+ui/gfx/geometry",
   "+url",
+  "+mojo/public/cpp/bindings/type_converter.h",
+  "+net/base",
 ]
 
 specific_include_rules = {

@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,9 +11,10 @@
 #include "base/environment.h"
 #include "base/logging.h"
 #include "base/nix/xdg_util.h"
-#include "base/stl_util.h"
+#include "build/chromeos_buildflags.h"
 #include "media/audio/audio_device_description.h"
 #include "media/audio/pulse/pulse_input.h"
+#include "media/audio/pulse/pulse_loopback_manager.h"
 #include "media/audio/pulse/pulse_output.h"
 #include "media/audio/pulse/pulse_util.h"
 #include "media/base/audio_parameters.h"
@@ -25,13 +26,13 @@ using pulse::AutoPulseLock;
 using pulse::WaitForOperationCompletion;
 
 // Maximum number of output streams that can be open simultaneously.
-constexpr int kMaxOutputStreams = 50;
+constexpr int kMaxOutputStreamsAMP = 50;
 
 constexpr int kMinimumOutputBufferSize = 512;
 constexpr int kMaximumOutputBufferSize = 8192;
-constexpr int kDefaultInputBufferSize = 1024;
-constexpr int kDefaultSampleRate = 48000;
-constexpr int kDefaultChannelCount = 2;
+constexpr int kDefaultInputBufferSizeAMP = 1024;
+constexpr int kDefaultSampleRateAMP = 48000;
+constexpr int kDefaultChannelCountAMP = 2;
 
 AudioManagerPulse::AudioManagerPulse(std::unique_ptr<AudioThread> audio_thread,
                                      AudioLogFactory* audio_log_factory,
@@ -41,12 +42,12 @@ AudioManagerPulse::AudioManagerPulse(std::unique_ptr<AudioThread> audio_thread,
       input_mainloop_(pa_mainloop),
       input_context_(pa_context),
       devices_(nullptr),
-      native_input_sample_rate_(kDefaultSampleRate),
-      native_channel_count_(kDefaultChannelCount),
+      native_input_sample_rate_(kDefaultSampleRateAMP),
+      native_channel_count_(kDefaultChannelCountAMP),
       default_source_is_monitor_(false) {
   DCHECK(input_mainloop_);
   DCHECK(input_context_);
-  SetMaxOutputStreamsAllowed(kMaxOutputStreams);
+  SetMaxOutputStreamsAllowed(kMaxOutputStreamsAMP);
 }
 
 AudioManagerPulse::~AudioManagerPulse() = default;
@@ -55,7 +56,8 @@ void AudioManagerPulse::ShutdownOnAudioThread() {
   AudioManagerBase::ShutdownOnAudioThread();
   // The Pulse objects are the last things to be destroyed since
   // AudioManagerBase::ShutdownOnAudioThread() needs them.
-  pulse::DestroyPulse(input_mainloop_, input_context_);
+  pulse::DestroyPulse(input_mainloop_.ExtractAsDangling(),
+                      input_context_.ExtractAsDangling());
 }
 
 bool AudioManagerPulse::HasAudioOutputDevices() {
@@ -124,11 +126,11 @@ AudioParameters AudioManagerPulse::GetInputStreamParameters(
 
   const int user_buffer_size = GetUserBufferSize();
   const int buffer_size =
-      user_buffer_size ? user_buffer_size : kDefaultInputBufferSize;
+      user_buffer_size ? user_buffer_size : kDefaultInputBufferSizeAMP;
   return AudioParameters(AudioParameters::AUDIO_PCM_LOW_LATENCY,
-                         CHANNEL_LAYOUT_STEREO,
+                         ChannelLayoutConfig::Stereo(),
                          native_input_sample_rate_ ? native_input_sample_rate_
-                                                   : kDefaultSampleRate,
+                                                   : kDefaultSampleRateAMP,
                          buffer_size);
 }
 
@@ -189,7 +191,7 @@ std::string AudioManagerPulse::GetDefaultOutputDeviceID() {
 
 std::string AudioManagerPulse::GetAssociatedOutputDeviceID(
     const std::string& input_device_id) {
-#if defined(OS_CHROMEOS)
+#if BUILDFLAG(IS_CHROMEOS_ASH)
   return AudioManagerBase::GetAssociatedOutputDeviceID(input_device_id);
 #else
   DCHECK(AudioManager::Get()->GetTaskRunner()->BelongsToCurrentThread());
@@ -219,16 +221,16 @@ AudioParameters AudioManagerPulse::GetPreferredOutputStreamParameters(
   // be respected though, so prefer the input parameters for channel count.
   UpdateNativeAudioHardwareInfo();
   int sample_rate = native_input_sample_rate_ ? native_input_sample_rate_
-                                              : kDefaultSampleRate;
-  ChannelLayout channel_layout =
-      GuessChannelLayout(native_channel_count_ ? native_channel_count_ : 2);
+                                              : kDefaultSampleRateAMP;
+  ChannelLayoutConfig channel_layout_config = ChannelLayoutConfig::Guess(
+      native_channel_count_ ? native_channel_count_ : 2);
 
   if (input_params.IsValid()) {
     // Use the system's output channel count for the DISCRETE layout. This is to
     // avoid a crash due to the lack of support on the multi-channel beyond 8 in
     // the PulseAudio layer.
     if (input_params.channel_layout() != CHANNEL_LAYOUT_DISCRETE)
-      channel_layout = input_params.channel_layout();
+      channel_layout_config = input_params.channel_layout_config();
 
     buffer_size =
         std::min(kMaximumOutputBufferSize,
@@ -239,8 +241,8 @@ AudioParameters AudioManagerPulse::GetPreferredOutputStreamParameters(
   if (user_buffer_size)
     buffer_size = user_buffer_size;
 
-  return AudioParameters(AudioParameters::AUDIO_PCM_LOW_LATENCY, channel_layout,
-                         sample_rate, buffer_size);
+  return AudioParameters(AudioParameters::AUDIO_PCM_LOW_LATENCY,
+                         channel_layout_config, sample_rate, buffer_size);
 }
 
 AudioOutputStream* AudioManagerPulse::MakeOutputStream(
@@ -256,6 +258,25 @@ AudioInputStream* AudioManagerPulse::MakeInputStream(
     const AudioParameters& params,
     const std::string& device_id,
     LogCallback log_callback) {
+  if (AudioDeviceDescription::IsLoopbackDevice(device_id)) {
+    // We need a loopback manager if we are opening a loopback device.
+    if (!loopback_manager_) {
+      // Unretained is safe as `this` outlives `loopback_manager_` and all
+      // streams. See ~AudioManagerBase.
+      loopback_manager_ = PulseLoopbackManager::Create(
+          base::BindRepeating(&AudioManagerBase::ReleaseInputStream,
+                              base::Unretained(this)),
+          input_context_, input_mainloop_);
+    }
+
+    if (loopback_manager_) {
+      return loopback_manager_->MakeLoopbackStream(params,
+                                                   std::move(log_callback));
+    }
+
+    return nullptr;
+  }
+
   return new PulseAudioInputStream(this, device_id, params, input_mainloop_,
                                    input_context_, std::move(log_callback));
 }

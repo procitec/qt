@@ -42,6 +42,7 @@
 #include "third_party/blink/renderer/platform/wtf/text/base64.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
+#include "third_party/skia/include/core/SkImage.h"
 #include "third_party/skia/include/core/SkSurface.h"
 #include "third_party/skia/include/core/SkSwizzle.h"
 #include "third_party/skia/include/encode/SkJpegEncoder.h"
@@ -94,7 +95,7 @@ ImageDataBuffer::ImageDataBuffer(scoped_refptr<StaticBitmapImage> image) {
       return;
     }
     MSAN_CHECK_MEM_IS_INITIALIZED(pixmap_.addr(), pixmap_.computeByteSize());
-    retained_image_ = SkImage::MakeRasterData(info, std::move(data), rowBytes);
+    retained_image_ = SkImages::RasterFromData(info, std::move(data), rowBytes);
   } else {
     retained_image_ = paint_image.GetSwSkImage();
     if (!retained_image_->peekPixels(&pixmap_))
@@ -102,11 +103,11 @@ ImageDataBuffer::ImageDataBuffer(scoped_refptr<StaticBitmapImage> image) {
     MSAN_CHECK_MEM_IS_INITIALIZED(pixmap_.addr(), pixmap_.computeByteSize());
   }
   is_valid_ = true;
-  size_ = IntSize(image->width(), image->height());
+  size_ = gfx::Size(image->width(), image->height());
 }
 
 ImageDataBuffer::ImageDataBuffer(const SkPixmap& pixmap)
-    : pixmap_(pixmap), size_(IntSize(pixmap.width(), pixmap.height())) {
+    : pixmap_(pixmap), size_(gfx::Size(pixmap.width(), pixmap.height())) {
   is_valid_ = pixmap_.addr() && !size_.IsEmpty();
 }
 
@@ -170,24 +171,8 @@ bool ImageDataBuffer::EncodeImageInternal(const ImageEncodingMimeType mime_type,
 String ImageDataBuffer::ToDataURL(const ImageEncodingMimeType mime_type,
                                   const double& quality) const {
   DCHECK(is_valid_);
-
-  // toDataURL always encodes in sRGB and does not include the color space
-  // information.
-  sk_sp<SkImage> skia_image = nullptr;
-  SkPixmap pixmap = pixmap_;
-  if (pixmap.colorSpace()) {
-    if (!pixmap.colorSpace()->isSRGB()) {
-      skia_image = SkImage::MakeFromRaster(pixmap, nullptr, nullptr);
-      skia_image = skia_image->makeColorSpace(SkColorSpace::MakeSRGB());
-      if (!skia_image->peekPixels(&pixmap))
-        return "data:,";
-      MSAN_CHECK_MEM_IS_INITIALIZED(pixmap.addr(), pixmap.computeByteSize());
-    }
-    pixmap.setColorSpace(nullptr);
-  }
-
   Vector<unsigned char> result;
-  if (!EncodeImageInternal(mime_type, quality, &result, pixmap))
+  if (!EncodeImageInternal(mime_type, quality, &result, pixmap_))
     return "data:,";
 
   return "data:" + ImageEncodingMimeTypeName(mime_type) + ";base64," +

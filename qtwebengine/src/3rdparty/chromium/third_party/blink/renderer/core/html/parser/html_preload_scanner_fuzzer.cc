@@ -1,9 +1,11 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "third_party/blink/public/mojom/webpreferences/web_preferences.mojom-blink.h"
 #include "third_party/blink/renderer/core/css/media_values_cached.h"
 #include "third_party/blink/renderer/core/html/html_document.h"
+#include "third_party/blink/renderer/core/html/parser/background_html_scanner.h"
 #include "third_party/blink/renderer/core/html/parser/html_document_parser.h"
 #include "third_party/blink/renderer/core/html/parser/resource_preloader.h"
 #include "third_party/blink/renderer/core/html/parser/text_resource_decoder_for_fuzzing.h"
@@ -48,36 +50,37 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   KURL document_url("http://whatever.test/");
 
   // Copied from HTMLPreloadScannerTest. May be worthwhile to fuzz.
-  MediaValuesCached::MediaValuesCachedData media_data;
-  media_data.viewport_width = 500;
-  media_data.viewport_height = 600;
-  media_data.device_width = 700;
-  media_data.device_height = 800;
-  media_data.device_pixel_ratio = 2.0;
-  media_data.color_bits_per_component = 24;
-  media_data.monochrome_bits_per_component = 0;
-  media_data.primary_pointer_type = ui::POINTER_TYPE_FINE;
-  media_data.default_font_size = 16;
-  media_data.three_d_enabled = true;
-  media_data.media_type = media_type_names::kScreen;
-  media_data.strict_mode = true;
-  media_data.display_mode = blink::mojom::DisplayMode::kBrowser;
+  auto media_data =
+      std::make_unique<MediaValuesCached::MediaValuesCachedData>();
+  media_data->viewport_width = 500;
+  media_data->viewport_height = 600;
+  media_data->device_width = 700;
+  media_data->device_height = 800;
+  media_data->device_pixel_ratio = 2.0;
+  media_data->color_bits_per_component = 24;
+  media_data->monochrome_bits_per_component = 0;
+  media_data->primary_pointer_type =
+      mojom::blink::PointerType::kPointerFineType;
+  media_data->three_d_enabled = true;
+  media_data->media_type = media_type_names::kScreen;
+  media_data->strict_mode = true;
+  media_data->display_mode = blink::mojom::DisplayMode::kBrowser;
 
   MockResourcePreloader preloader;
 
   std::unique_ptr<HTMLPreloadScanner> scanner =
       std::make_unique<HTMLPreloadScanner>(
-          options, document_url, std::move(document_parameters), media_data,
-          TokenPreloadScanner::ScannerType::kMainDocument);
+          std::make_unique<HTMLTokenizer>(options), document_url,
+          std::move(document_parameters), std::move(media_data),
+          TokenPreloadScanner::ScannerType::kMainDocument, nullptr);
 
   TextResourceDecoderForFuzzing decoder(fuzzed_data);
   std::string bytes = fuzzed_data.ConsumeRemainingBytes();
   String decoded_bytes = decoder.Decode(bytes.data(), bytes.length());
   scanner->AppendToEnd(decoded_bytes);
-  bool has_csp_meta_tag_unused = false;
-  PreloadRequestStream requests =
-      scanner->Scan(document_url, nullptr, has_csp_meta_tag_unused);
-  preloader.TakeAndPreload(requests);
+  std::unique_ptr<PendingPreloadData> preload_data =
+      scanner->Scan(document_url);
+  preloader.TakeAndPreload(preload_data->requests);
   return 0;
 }
 

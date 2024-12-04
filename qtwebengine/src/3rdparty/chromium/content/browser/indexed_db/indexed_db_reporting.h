@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,9 +10,9 @@
 #include "base/logging.h"
 #include "third_party/leveldatabase/src/include/leveldb/status.h"
 
-namespace url {
-class Origin;
-}
+namespace storage {
+struct BucketLocator;
+}  // namespace storage
 
 namespace content {
 namespace indexed_db {
@@ -57,25 +57,25 @@ enum IndexedDBBackingStoreErrorSource {
 };
 
 // These values are persisted to logs. Entries should not be renumbered and
-// numeric values should never be reused.
+// numeric values should never be reused. Commented out values are deprecated.
 enum IndexedDBBackingStoreOpenResult {
-  INDEXED_DB_BACKING_STORE_OPEN_MEMORY_SUCCESS,
-  INDEXED_DB_BACKING_STORE_OPEN_SUCCESS,
-  INDEXED_DB_BACKING_STORE_OPEN_FAILED_DIRECTORY,
-  INDEXED_DB_BACKING_STORE_OPEN_FAILED_UNKNOWN_SCHEMA,
-  INDEXED_DB_BACKING_STORE_OPEN_CLEANUP_DESTROY_FAILED,
-  INDEXED_DB_BACKING_STORE_OPEN_CLEANUP_REOPEN_FAILED,
-  INDEXED_DB_BACKING_STORE_OPEN_CLEANUP_REOPEN_SUCCESS,
-  INDEXED_DB_BACKING_STORE_OPEN_FAILED_IO_ERROR_CHECKING_SCHEMA,
-  INDEXED_DB_BACKING_STORE_OPEN_FAILED_UNKNOWN_ERR_DEPRECATED,
-  INDEXED_DB_BACKING_STORE_OPEN_MEMORY_FAILED,
-  INDEXED_DB_BACKING_STORE_OPEN_ATTEMPT_NON_ASCII,
-  INDEXED_DB_BACKING_STORE_OPEN_DISK_FULL_DEPRECATED,
-  INDEXED_DB_BACKING_STORE_OPEN_ORIGIN_TOO_LONG,
-  INDEXED_DB_BACKING_STORE_OPEN_NO_RECOVERY,
-  INDEXED_DB_BACKING_STORE_OPEN_FAILED_PRIOR_CORRUPTION,
-  INDEXED_DB_BACKING_STORE_OPEN_FAILED_CLEANUP_JOURNAL_ERROR,
-  INDEXED_DB_BACKING_STORE_OPEN_FAILED_METADATA_SETUP,
+  // INDEXED_DB_BACKING_STORE_OPEN_MEMORY_SUCCESS = 0,
+  INDEXED_DB_BACKING_STORE_OPEN_SUCCESS = 1,
+  INDEXED_DB_BACKING_STORE_OPEN_FAILED_DIRECTORY = 2,
+  INDEXED_DB_BACKING_STORE_OPEN_FAILED_UNKNOWN_SCHEMA = 3,
+  INDEXED_DB_BACKING_STORE_OPEN_CLEANUP_DESTROY_FAILED = 4,
+  INDEXED_DB_BACKING_STORE_OPEN_CLEANUP_REOPEN_FAILED = 5,
+  INDEXED_DB_BACKING_STORE_OPEN_CLEANUP_REOPEN_SUCCESS = 6,
+  INDEXED_DB_BACKING_STORE_OPEN_FAILED_IO_ERROR_CHECKING_SCHEMA = 7,
+  // INDEXED_DB_BACKING_STORE_OPEN_FAILED_UNKNOWN_ERR_DEPRECATED = 8,
+  // INDEXED_DB_BACKING_STORE_OPEN_MEMORY_FAILED = 9,
+  INDEXED_DB_BACKING_STORE_OPEN_ATTEMPT_NON_ASCII = 10,
+  INDEXED_DB_BACKING_STORE_OPEN_DISK_FULL = 11,
+  INDEXED_DB_BACKING_STORE_OPEN_ORIGIN_TOO_LONG = 12,
+  INDEXED_DB_BACKING_STORE_OPEN_NO_RECOVERY = 13,
+  INDEXED_DB_BACKING_STORE_OPEN_FAILED_PRIOR_CORRUPTION = 14,
+  INDEXED_DB_BACKING_STORE_OPEN_FAILED_CLEANUP_JOURNAL_ERROR = 15,
+  INDEXED_DB_BACKING_STORE_OPEN_FAILED_METADATA_SETUP = 16,
   INDEXED_DB_BACKING_STORE_OPEN_MAX,
 };
 
@@ -92,14 +92,10 @@ enum class IndexedDBAction {
 };
 
 void ReportOpenStatus(IndexedDBBackingStoreOpenResult result,
-                      const url::Origin& origin);
+                      const storage::BucketLocator& bucket_locator);
 
 void ReportInternalError(const char* type,
                          IndexedDBBackingStoreErrorSource location);
-
-void ReportSchemaVersion(int version, const url::Origin& origin);
-
-void ReportV2Schema(bool has_broken_blobs, const url::Origin& origin);
 
 void ReportLevelDBError(const std::string& histogram_name,
                         const leveldb::Status& s);
@@ -118,26 +114,6 @@ void ReportLevelDBError(const std::string& histogram_name,
 #define INTERNAL_CONSISTENCY_ERROR(location) \
   REPORT_ERROR("Consistency", location)
 #define INTERNAL_WRITE_ERROR(location) REPORT_ERROR("Write", location)
-
-// Use to signal conditions that usually indicate developer error, but
-// could be caused by data corruption.  A macro is used instead of an
-// inline function so that the assert and log report the line number.
-// TODO(cmumford): Improve test coverage so that all error conditions are
-// "tested" and then delete this macro.
-#define REPORT_ERROR_UNTESTED(type, location)             \
-  do {                                                    \
-    LOG(ERROR) << "IndexedDB " type " Error: " #location; \
-    NOTREACHED();                                         \
-    ::content::indexed_db::ReportInternalError(           \
-        type, ::content::indexed_db::location);           \
-  } while (0)
-
-#define INTERNAL_READ_ERROR_UNTESTED(location) \
-  REPORT_ERROR_UNTESTED("Read", location)
-#define INTERNAL_CONSISTENCY_ERROR_UNTESTED(location) \
-  REPORT_ERROR_UNTESTED("Consistency", location)
-#define INTERNAL_WRITE_ERROR_UNTESTED(location) \
-  REPORT_ERROR_UNTESTED("Write", location)
 
 }  // namespace indexed_db
 }  // namespace content

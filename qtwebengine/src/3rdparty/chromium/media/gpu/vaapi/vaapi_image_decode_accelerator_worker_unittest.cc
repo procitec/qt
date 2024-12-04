@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,10 +13,9 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-#include "base/bind.h"
 #include "base/check_op.h"
 #include "base/containers/span.h"
-#include "base/macros.h"
+#include "base/functional/bind.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/notreached.h"
@@ -103,8 +102,7 @@ class MockVaapiImageDecoder : public VaapiImageDecoder {
       case gpu::ImageDecodeAcceleratorType::kWebP:
         return SkYUVColorSpace::kRec601_SkYUVColorSpace;
       case gpu::ImageDecodeAcceleratorType::kUnknown:
-        NOTREACHED();
-        return SkYUVColorSpace::kIdentity_SkYUVColorSpace;
+        NOTREACHED_NORETURN();
     }
   }
 
@@ -144,6 +142,11 @@ class VaapiImageDecodeAcceleratorWorkerTest : public testing::Test {
         new VaapiImageDecodeAcceleratorWorker(std::move(decoders)));
   }
 
+  VaapiImageDecodeAcceleratorWorkerTest(
+      const VaapiImageDecodeAcceleratorWorkerTest&) = delete;
+  VaapiImageDecodeAcceleratorWorkerTest& operator=(
+      const VaapiImageDecodeAcceleratorWorkerTest&) = delete;
+
   MockVaapiImageDecoder* GetJpegDecoder() const {
     auto result =
         worker_->decoders_.find(gpu::ImageDecodeAcceleratorType::kJpeg);
@@ -168,8 +171,6 @@ class VaapiImageDecodeAcceleratorWorkerTest : public testing::Test {
   base::test::TaskEnvironment task_environment_;
   base::test::ScopedFeatureList feature_list_;
   std::unique_ptr<VaapiImageDecodeAcceleratorWorker> worker_;
-
-  DISALLOW_COPY_AND_ASSIGN(VaapiImageDecodeAcceleratorWorkerTest);
 };
 
 ACTION_P2(ExportAsNativePixmapDmaBufSuccessfully,

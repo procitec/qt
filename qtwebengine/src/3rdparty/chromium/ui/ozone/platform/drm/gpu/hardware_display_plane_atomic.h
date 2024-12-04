@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -21,29 +21,34 @@ namespace ui {
 class HardwareDisplayPlaneAtomic : public HardwareDisplayPlane {
  public:
   explicit HardwareDisplayPlaneAtomic(uint32_t id);
+
+  HardwareDisplayPlaneAtomic(const HardwareDisplayPlaneAtomic&) = delete;
+  HardwareDisplayPlaneAtomic& operator=(const HardwareDisplayPlaneAtomic&) =
+      delete;
+
   ~HardwareDisplayPlaneAtomic() override;
 
   bool Initialize(DrmDevice* drm) override;
 
   // Saves the props locally onto the plane to be committed later.
-  virtual bool AssignPlaneProps(uint32_t crtc_id,
+  virtual bool AssignPlaneProps(DrmDevice* drm,
+                                uint32_t crtc_id,
                                 uint32_t framebuffer,
                                 const gfx::Rect& crtc_rect,
                                 const gfx::Rect& src_rect,
+                                const gfx::Rect& damage_rect,
                                 const gfx::OverlayTransform transform,
-                                int in_fence_fd);
+                                int in_fence_fd,
+                                uint32_t format_fourcc,
+                                bool is_original_buffer);
   // Sets the props on |property_set| for commit.
   bool SetPlaneProps(drmModeAtomicReq* property_set);
-
-  bool SetPlaneCtm(drmModeAtomicReq* property_set, uint32_t ctm_blob_id);
 
   uint32_t AssignedCrtcId() const;
 
  private:
   // Intermediate variable between Assign()ment and Set()ting.
   HardwareDisplayPlane::Properties assigned_props_;
-
-  DISALLOW_COPY_AND_ASSIGN(HardwareDisplayPlaneAtomic);
 };
 
 }  // namespace ui

@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,6 +9,7 @@
 #include "third_party/blink/renderer/core/dom/element.h"
 #include "third_party/blink/renderer/core/dom/focus_params.h"
 #include "third_party/blink/renderer/core/editing/commands/move_commands.h"
+#include "third_party/blink/renderer/core/editing/editing_behavior.h"
 #include "third_party/blink/renderer/core/editing/editor.h"
 #include "third_party/blink/renderer/core/editing/frame_selection.h"
 #include "third_party/blink/renderer/core/editing/selection_template.h"
@@ -22,21 +23,21 @@ class MoveCommandsTest : public EditingTestBase {
  protected:
   void VerifyCaretBrowsingPositionAndFocusUpdate(
       const std::string& initial_selection_text,
-      const AtomicString& initial_focus_element,
+      const char* initial_focus_element,
       bool (*execute)(LocalFrame&, Event*, EditorCommandSource, const String&),
       const std::string& final_selection_text,
-      const AtomicString& final_focus_element) {
+      const char* final_focus_element) {
     Selection().SetSelection(SetSelectionTextToBody(initial_selection_text),
                              SetSelectionOptions());
     GetDocument().SetFocusedElement(
-        GetDocument().QuerySelector(initial_focus_element),
+        GetDocument().QuerySelector(AtomicString(initial_focus_element)),
         FocusParams(SelectionBehaviorOnFocus::kNone,
                     mojom::blink::FocusType::kNone, nullptr));
     GetDocument().GetFrame()->GetSettings()->SetCaretBrowsingEnabled(true);
     execute(*GetDocument().GetFrame(), nullptr,
             EditorCommandSource::kMenuOrKeyBinding, String());
     EXPECT_EQ(final_selection_text, GetSelectionTextFromBody());
-    EXPECT_EQ(GetDocument().QuerySelector(final_focus_element),
+    EXPECT_EQ(GetDocument().QuerySelector(AtomicString(final_focus_element)),
               GetDocument().ActiveElement());
   }
 };
@@ -56,13 +57,13 @@ TEST_F(MoveCommandsTest, CaretBrowsingPositionAndFocusUpdate_MoveDown) {
   VerifyCaretBrowsingPositionAndFocusUpdate(
       "<div>a|b</div><div><a href=\"foo\">cd</a></div>", "body",
       MoveCommands::ExecuteMoveDown,
-#if !defined(OS_MAC)
+#if !BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_IOS)
       "<div>ab</div><div><a href=\"foo\">c|d</a></div>", "a");
-#else   // defined(OS_MAC)
-        // MoveDown navigates visually, placing caret at different position for
-        // macOS.
+#else
+      // MoveDown navigates visually, placing caret at different position for
+      // macOS and iOS.
       "<div>ab</div><div><a href=\"foo\">|cd</a></div>", "a");
-#endif  // !defined(OS_MAC)
+#endif
 }
 
 TEST_F(MoveCommandsTest, CaretBrowsingPositionAndFocusUpdate_MoveForward) {
@@ -184,13 +185,13 @@ TEST_F(MoveCommandsTest, CaretBrowsingPositionAndFocusUpdate_MoveUp) {
   VerifyCaretBrowsingPositionAndFocusUpdate(
       "<div><a href=\"foo\">ab</a></div><div>c|d</div>", "body",
       MoveCommands::ExecuteMoveUp,
-#if !defined(OS_MAC)
+#if !BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_IOS)
       "<div><a href=\"foo\">a|b</a></div><div>cd</div>", "a");
-#else   // defined(OS_MAC)
+#else
       // MoveUp navigates visually, placing caret at different position for
-      // macOS.
+      // macOS and iOS.
       "<div><a href=\"foo\">|ab</a></div><div>cd</div>", "a");
-#endif  // !defined(OS_MAC)
+#endif
 }
 
 TEST_F(MoveCommandsTest, CaretBrowsingPositionAndFocusUpdate_MoveWordBackward) {
@@ -215,10 +216,19 @@ TEST_F(MoveCommandsTest, CaretBrowsingPositionAndFocusUpdate_MoveWordLeft) {
 }
 
 TEST_F(MoveCommandsTest, CaretBrowsingPositionAndFocusUpdate_MoveWordRight) {
+  bool should_skip_spaces = GetDocument()
+                                .GetFrame()
+                                ->GetEditor()
+                                .Behavior()
+                                .ShouldSkipSpaceWhenMovingRight();
   VerifyCaretBrowsingPositionAndFocusUpdate(
       "<div>a|<a href=\"foo\"> b</a></div>", "body",
-      MoveCommands::ExecuteMoveWordRight, "<div>a<a href=\"foo\"> b|</a></div>",
+      MoveCommands::ExecuteMoveWordRight,
+      should_skip_spaces ? "<div>a<a href=\"foo\"> |b</a></div>"
+                         : "<div>a<a href=\"foo\"> b|</a></div>",
       "a");
+  // MoveRight skips the beginning of the word when started after
+  // end of previous word, placing caret at different position for macOS.
 }
 
 // This test verifies that focus returns to the body after browsing out of a
@@ -318,7 +328,7 @@ TEST_F(MoveCommandsTest, CaretBrowsingSelectionUpdate) {
       SetSelectionTextToBody("<div>|a<a href=\"foo\">b</a></div>"),
       SetSelectionOptions());
   GetDocument().SetFocusedElement(
-      GetDocument().QuerySelector("a"),
+      GetDocument().QuerySelector(AtomicString("a")),
       FocusParams(SelectionBehaviorOnFocus::kNone,
                   mojom::blink::FocusType::kNone, nullptr));
   GetDocument().GetFrame()->GetSettings()->SetCaretBrowsingEnabled(true);

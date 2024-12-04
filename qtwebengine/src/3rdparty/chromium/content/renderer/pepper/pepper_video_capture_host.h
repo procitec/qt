@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,12 +10,12 @@
 
 #include <memory>
 
-#include "base/compiler_specific.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "content/public/renderer/renderer_ppapi_host.h"
 #include "content/renderer/pepper/pepper_device_enumeration_host_helper.h"
 #include "content/renderer/pepper/ppb_buffer_impl.h"
+#include "media/base/video_frame_converter.h"
 #include "media/capture/video_capture_types.h"
 #include "ppapi/c/dev/ppp_video_capture_dev.h"
 #include "ppapi/host/host_message_context.h"
@@ -35,6 +35,9 @@ class PepperVideoCaptureHost : public ppapi::host::ResourceHost {
   PepperVideoCaptureHost(RendererPpapiHostImpl* host,
                          PP_Instance instance,
                          PP_Resource resource);
+
+  PepperVideoCaptureHost(const PepperVideoCaptureHost&) = delete;
+  PepperVideoCaptureHost& operator=(const PepperVideoCaptureHost&) = delete;
 
   ~PepperVideoCaptureHost() override;
 
@@ -64,7 +67,7 @@ class PepperVideoCaptureHost : public ppapi::host::ResourceHost {
   void OnError();
 
   // Called when a video frame is ready.
-  void OnFrameReady(const media::VideoFrame& frame);
+  void OnFrameReady(scoped_refptr<media::VideoFrame> frame);
 
  private:
   int32_t OnOpen(ppapi::host::HostMessageContext* context,
@@ -100,11 +103,11 @@ class PepperVideoCaptureHost : public ppapi::host::ResourceHost {
     ~BufferInfo();
 
     bool in_use;
-    void* data;
+    raw_ptr<void, ExperimentalRenderer> data;
     scoped_refptr<PPB_Buffer_Impl> buffer;
   };
 
-  RendererPpapiHostImpl* renderer_ppapi_host_;
+  raw_ptr<RendererPpapiHostImpl, ExperimentalRenderer> renderer_ppapi_host_;
 
   gfx::Size alloc_size_;
   std::vector<BufferInfo> buffers_;
@@ -118,7 +121,7 @@ class PepperVideoCaptureHost : public ppapi::host::ResourceHost {
 
   PepperDeviceEnumerationHostHelper enumeration_helper_;
 
-  DISALLOW_COPY_AND_ASSIGN(PepperVideoCaptureHost);
+  media::VideoFrameConverter frame_converter_;
 };
 
 }  // namespace content

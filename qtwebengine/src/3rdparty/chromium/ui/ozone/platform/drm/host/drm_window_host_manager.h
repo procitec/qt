@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,7 +8,7 @@
 #include <map>
 #include <memory>
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "ui/gfx/native_widget_types.h"
 
 namespace gfx {
@@ -24,6 +24,10 @@ class DrmWindowHost;
 class DrmWindowHostManager {
  public:
   DrmWindowHostManager();
+
+  DrmWindowHostManager(const DrmWindowHostManager&) = delete;
+  DrmWindowHostManager& operator=(const DrmWindowHostManager&) = delete;
+
   ~DrmWindowHostManager();
 
   gfx::AcceleratedWidget NextAcceleratedWidget();
@@ -64,11 +68,9 @@ class DrmWindowHostManager {
 
   gfx::AcceleratedWidget last_allocated_widget_ = 0;
   WidgetToWindowMap window_map_;
-  DrmWindowHost* window_mouse_currently_on_ = nullptr;
+  raw_ptr<DrmWindowHost> window_mouse_currently_on_ = nullptr;
 
   gfx::AcceleratedWidget event_grabber_ = gfx::kNullAcceleratedWidget;
-
-  DISALLOW_COPY_AND_ASSIGN(DrmWindowHostManager);
 };
 
 }  // namespace ui

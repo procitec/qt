@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,9 +7,11 @@
 
 #include <string>
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/memory/ref_counted.h"
-#include "components/safe_browsing/core/db/v4_protocol_manager_util.h"
+#include "base/types/optional_ref.h"
+#include "base/unguessable_token.h"
+#include "components/safe_browsing/core/browser/db/v4_protocol_manager_util.h"
 
 namespace content {
 class WebContents;
@@ -37,9 +39,9 @@ class SafeBrowsingDatabaseManager;
 class UrlCheckerDelegate
     : public base::RefCountedThreadSafe<UrlCheckerDelegate> {
  public:
-  // Destroys prerender contents if necessary. The parameter is a
+  // Destroys NoStatePrefetch contents if necessary. The parameter is a
   // WebContents::OnceGetter, but that type is not visible from here.
-  virtual void MaybeDestroyPrerenderContents(
+  virtual void MaybeDestroyNoStatePrefetchContents(
       base::OnceCallback<content::WebContents*()> web_contents_getter) = 0;
 
   // Starts displaying the SafeBrowsing interstitial page.
@@ -60,17 +62,27 @@ class UrlCheckerDelegate
   // the SafeBrowsing database.
   virtual bool IsUrlAllowlisted(const GURL& url) = 0;
 
+  // Set the Safe Browsing allowlist domains. If the url being checked matches
+  // one of the domains in |allowlist_domains|, it is considered safe and
+  // therefore won't be checked with the SafeBrowsing database. If the current
+  // platform doesn't support the allowlist policy, this function will be no-op.
+  virtual void SetPolicyAllowlistDomains(
+      const std::vector<std::string>& allowlist_domains) = 0;
+
   // If the method returns true, the entire request won't be checked, including
   // the original URL and redirects.
-  // If neither of |render_process_id| and |render_frame_id| is -1, they will be
-  // used to identify the frame making the request; otherwise
-  // |frame_tree_node_id| will be used. Please note that |frame_tree_node_id|
-  // could also be -1, if a request is not associated with a frame.
+  // If neither of |render_process_id| and |render_frame_token| is a sentinel
+  // value, they will be used to identify the frame making the request;
+  // otherwise |frame_tree_node_id| will be used. Please note that
+  // |frame_tree_node_id| could also be a sentinel value, if a request is not
+  // associated with a frame. Also note that these ids are content/ specific.
+  // See comments in content::RenderFrameHost for the meaning of these ids and
+  // their sentinel values.
   virtual bool ShouldSkipRequestCheck(
       const GURL& original_url,
       int frame_tree_node_id,
       int render_process_id,
-      int render_frame_id,
+      base::optional_ref<const base::UnguessableToken> render_frame_token,
       bool originated_from_service_worker) = 0;
 
   // Notifies the SafeBrowsing Trigger Manager that a suspicious site has been

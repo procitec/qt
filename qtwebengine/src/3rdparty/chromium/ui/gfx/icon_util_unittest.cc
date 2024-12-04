@@ -1,4 +1,4 @@
-// Copyright (c) 2011 The Chromium Authors. All rights reserved.
+// Copyright 2011 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -19,6 +19,7 @@
 #include "ui/gfx/icon_util_unittests_resource.h"
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/image/image_family.h"
+#include "ui/gfx/image/image_unittest_util.h"
 
 namespace {
 
@@ -33,7 +34,8 @@ class IconUtilTest : public testing::Test {
   using ScopedHICON = base::win::ScopedHICON;
 
   void SetUp() override {
-    ASSERT_TRUE(base::PathService::Get(base::DIR_SOURCE_ROOT, &test_data_dir_));
+    ASSERT_TRUE(
+        base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &test_data_dir_));
     test_data_dir_ = test_data_dir_.Append(FILE_PATH_LITERAL("ui"))
                          .Append(FILE_PATH_LITERAL("gfx"))
                          .Append(FILE_PATH_LITERAL("test"))
@@ -201,52 +203,15 @@ TEST_F(IconUtilTest, TestBitmapToIconInvalidParameters) {
 // The following test case makes sure IconUtil::CreateIconFileFromImageFamily
 // fails gracefully when called with invalid input parameters.
 TEST_F(IconUtilTest, TestCreateIconFileInvalidParameters) {
-  std::unique_ptr<SkBitmap> bitmap;
   gfx::ImageFamily image_family;
   base::FilePath valid_icon_filename =
       temp_directory_.GetPath().AppendASCII(kTempIconFilename);
   base::FilePath invalid_icon_filename =
       temp_directory_.GetPath().AppendASCII("<>?.ico");
 
-  // Wrong bitmap format.
-  bitmap = std::make_unique<SkBitmap>();
-  ASSERT_NE(bitmap.get(), static_cast<SkBitmap*>(NULL));
-  // Must allocate pixels or else ImageSkia will ignore the bitmap and just
-  // return an empty image.
-  bitmap->allocPixels(SkImageInfo::MakeA8(kSmallIconWidth, kSmallIconHeight));
-  memset(bitmap->getPixels(), 0, bitmap->width() * bitmap->height());
-  image_family.Add(gfx::Image::CreateFrom1xBitmap(*bitmap));
-  EXPECT_FALSE(IconUtil::CreateIconFileFromImageFamily(image_family,
-                                                       valid_icon_filename));
-  EXPECT_FALSE(base::PathExists(valid_icon_filename));
-
-  // Invalid bitmap size.
-  image_family.clear();
-  bitmap = std::make_unique<SkBitmap>();
-  ASSERT_NE(bitmap.get(), static_cast<SkBitmap*>(NULL));
-  bitmap->allocPixels(SkImageInfo::MakeN32Premul(0, 0));
-  image_family.Add(gfx::Image::CreateFrom1xBitmap(*bitmap));
-  EXPECT_FALSE(IconUtil::CreateIconFileFromImageFamily(image_family,
-                                                       valid_icon_filename));
-  EXPECT_FALSE(base::PathExists(valid_icon_filename));
-
-  // Bitmap with no allocated pixels.
-  image_family.clear();
-  bitmap = std::make_unique<SkBitmap>();
-  ASSERT_NE(bitmap.get(), static_cast<SkBitmap*>(NULL));
-  bitmap->setInfo(SkImageInfo::MakeN32Premul(kSmallIconWidth,
-                                             kSmallIconHeight));
-  image_family.Add(gfx::Image::CreateFrom1xBitmap(*bitmap));
-  EXPECT_FALSE(IconUtil::CreateIconFileFromImageFamily(image_family,
-                                                       valid_icon_filename));
-  EXPECT_FALSE(base::PathExists(valid_icon_filename));
-
   // Invalid file name.
   image_family.clear();
-  bitmap->allocPixels();
-  // Setting the pixels to black.
-  memset(bitmap->getPixels(), 0, bitmap->width() * bitmap->height() * 4);
-  image_family.Add(gfx::Image::CreateFrom1xBitmap(*bitmap));
+  image_family.Add(gfx::test::CreateImage(/*size=*/1));
   EXPECT_FALSE(IconUtil::CreateIconFileFromImageFamily(image_family,
                                                        invalid_icon_filename));
   EXPECT_FALSE(base::PathExists(invalid_icon_filename));
@@ -443,7 +408,7 @@ TEST_F(IconUtilTest, TestTransparentIcon) {
   bitmap.allocN32Pixels(size, size, false);
   EXPECT_EQ(bitmap.alphaType(), kPremul_SkAlphaType);
   {
-    SkCanvas canvas(bitmap);
+    SkCanvas canvas(bitmap, SkSurfaceProps{});
     canvas.drawColor(SK_ColorWHITE);
     SkPaint paint;
     paint.setColor(semi_transparent_red);

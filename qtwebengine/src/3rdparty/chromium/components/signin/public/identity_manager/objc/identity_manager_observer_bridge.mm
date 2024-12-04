@@ -1,12 +1,10 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #import "components/signin/public/identity_manager/objc/identity_manager_observer_bridge.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
+#include "components/signin/public/base/account_consistency_method.h"
 
 namespace signin {
 
@@ -21,17 +19,10 @@ IdentityManagerObserverBridge::~IdentityManagerObserverBridge() {
   identity_manager_->RemoveObserver(this);
 }
 
-void IdentityManagerObserverBridge::OnPrimaryAccountSet(
-    const CoreAccountInfo& primary_account_info) {
-  if ([delegate_ respondsToSelector:@selector(onPrimaryAccountSet:)]) {
-    [delegate_ onPrimaryAccountSet:primary_account_info];
-  }
-}
-
-void IdentityManagerObserverBridge::OnPrimaryAccountCleared(
-    const CoreAccountInfo& previous_primary_account_info) {
-  if ([delegate_ respondsToSelector:@selector(onPrimaryAccountCleared:)]) {
-    [delegate_ onPrimaryAccountCleared:previous_primary_account_info];
+void IdentityManagerObserverBridge::OnPrimaryAccountChanged(
+    const signin::PrimaryAccountChangeEvent& event) {
+  if ([delegate_ respondsToSelector:@selector(onPrimaryAccountChanged:)]) {
+    [delegate_ onPrimaryAccountChanged:event];
   }
 }
 
@@ -71,6 +62,20 @@ void IdentityManagerObserverBridge::OnEndBatchOfRefreshTokenStateChanges() {
   if ([delegate_
           respondsToSelector:@selector(onEndBatchOfRefreshTokenStateChanges)]) {
     [delegate_ onEndBatchOfRefreshTokenStateChanges];
+  }
+}
+
+void IdentityManagerObserverBridge::OnExtendedAccountInfoUpdated(
+    const AccountInfo& info) {
+  if ([delegate_ respondsToSelector:@selector(onExtendedAccountInfoUpdated:)]) {
+    [delegate_ onExtendedAccountInfoUpdated:info];
+  }
+}
+
+void IdentityManagerObserverBridge::OnIdentityManagerShutdown(
+    IdentityManager* identity_manager) {
+  if ([delegate_ respondsToSelector:@selector(onIdentityManagerShutdown:)]) {
+    [delegate_ onIdentityManagerShutdown:identity_manager];
   }
 }
 

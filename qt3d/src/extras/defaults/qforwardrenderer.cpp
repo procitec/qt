@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2015 Klaralvdalens Datakonsult AB (KDAB).
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt3D module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2015 Klaralvdalens Datakonsult AB (KDAB).
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qforwardrenderer.h"
 #include "qforwardrenderer_p.h"
@@ -58,9 +22,9 @@ static void initResources()
 
 QT_BEGIN_NAMESPACE
 
-using namespace Qt3DRender;
-
 namespace Qt3DExtras {
+
+using namespace Qt3DRender;
 
 QForwardRendererPrivate::QForwardRendererPrivate()
     : QTechniqueFilterPrivate()
@@ -123,7 +87,7 @@ void QForwardRendererPrivate::init()
     implementation of a forward renderer.
     \since 5.7
     \inqmlmodule Qt3D.Extras
-    \instantiates Qt3DExtras::QForwardRenderer
+    \nativetype Qt3DExtras::QForwardRenderer
 
     Forward rendering is what OpenGL traditionally uses. It renders directly to the backbuffer
     one object at a time shading each one as it goes.
@@ -218,7 +182,7 @@ void QForwardRenderer::setShowDebugOverlay(bool showDebugOverlay)
     Holds the current normalized viewport rectangle.
 */
 /*!
-    \property QForwardRenderer::viewportRect
+    \property Qt3DExtras::QForwardRenderer::viewportRect
 
     Holds the current normalized viewport rectangle.
 */
@@ -235,7 +199,7 @@ QRectF QForwardRenderer::viewportRect() const
     before rendering.
 */
 /*!
-    \property QForwardRenderer::clearColor
+    \property Qt3DExtras::QForwardRenderer::clearColor
 
     Holds the current clear color of the scene. The frame buffer is initialized to the clear color
     before rendering.
@@ -253,7 +217,7 @@ QColor QForwardRenderer::clearColor() const
     \since 5.14
 */
 /*!
-    \property QForwardRenderer::buffersToClear
+    \property Qt3DExtras::QForwardRenderer::buffersToClear
 
     Holds the current buffers to be cleared. Default value is ColorDepthBuffer
     \since 5.14
@@ -272,7 +236,7 @@ QClearBuffers::BufferType QForwardRenderer::buffersToClear() const
     \note A camera is an Entity that has a CameraLens as one of its components.
 */
 /*!
-    \property QForwardRenderer::camera
+    \property Qt3DExtras::QForwardRenderer::camera
 
     Holds the current camera entity used to render the scene.
 
@@ -285,14 +249,14 @@ Qt3DCore::QEntity *QForwardRenderer::camera() const
 }
 
 /*!
-    \qmlproperty Object ForwardRenderer::window
+    \qmlproperty QtObject ForwardRenderer::window
 
     Holds the current render surface.
 
     \deprecated
 */
 /*!
-    \property QForwardRenderer::window
+    \property Qt3DExtras::QForwardRenderer::window
 
     Holds the current render surface.
 
@@ -300,12 +264,12 @@ Qt3DCore::QEntity *QForwardRenderer::camera() const
 */
 
 /*!
-    \qmlproperty Object ForwardRenderer::surface
+    \qmlproperty QtObject ForwardRenderer::surface
 
     Holds the current render surface.
 */
 /*!
-    \property QForwardRenderer::surface
+    \property Qt3DExtras::QForwardRenderer::surface
 
     Holds the current render surface.
 */
@@ -323,7 +287,7 @@ QObject *QForwardRenderer::surface() const
     surface (as set in \l {surface}).
 */
 /*!
-    \property QForwardRenderer::externalRenderTargetSize
+    \property Qt3DExtras::QForwardRenderer::externalRenderTargetSize
 
     Contains the size of the external render target. External render
     targets are relevant when rendering does not target a window
@@ -341,7 +305,7 @@ QSize QForwardRenderer::externalRenderTargetSize() const
     Indicates if the renderer applies frustum culling to the scene.
 */
 /*!
-    \property QForwardRenderer::frustumCulling
+    \property Qt3DExtras::QForwardRenderer::frustumCulling
 
     Indicates if the renderer applies frustum culling to the scene.
 */
@@ -357,7 +321,7 @@ bool QForwardRenderer::isFrustumCullingEnabled() const
     Holds the gamma value the renderer applies to the scene.
 */
 /*!
-    \property QForwardRenderer::gamma
+    \property Qt3DExtras::QForwardRenderer::gamma
 
     Holds the gamma value the renderer applies to the scene.
 */
@@ -377,7 +341,7 @@ float QForwardRenderer::gamma() const
     \since 5.15
 */
 /*!
-    \property QForwardRenderer::showDebugOverlay
+    \property Qt3DExtras::QForwardRenderer::showDebugOverlay
 
     If true, a debug overlay will be rendered over the scene. It will show
     detailed information about the runtime rendering state, let the user
@@ -394,3 +358,5 @@ bool QForwardRenderer::showDebugOverlay() const
 } // namespace Qt3DExtras
 
 QT_END_NAMESPACE
+
+#include "moc_qforwardrenderer.cpp"

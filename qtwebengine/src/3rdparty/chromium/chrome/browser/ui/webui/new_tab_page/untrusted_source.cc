@@ -1,31 +1,32 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "chrome/browser/ui/webui/new_tab_page/untrusted_source.h"
 
+#include <optional>
 #include <string>
 #include <utility>
 
 #include "base/base64.h"
+#include "base/containers/contains.h"
 #include "base/files/file_util.h"
 #include "base/i18n/rtl.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/optional.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
+#include "chrome/browser/new_tab_page/one_google_bar/one_google_bar_data.h"
+#include "chrome/browser/new_tab_page/one_google_bar/one_google_bar_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/search/ntp_features.h"
-#include "chrome/browser/search/one_google_bar/one_google_bar_data.h"
-#include "chrome/browser/search/one_google_bar/one_google_bar_service_factory.h"
 #include "chrome/browser/ui/search/ntp_user_data_logger.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/new_tab_page_resources.h"
+#include "components/search/ntp_features.h"
 #include "content/public/common/url_constants.h"
 #include "net/base/url_util.h"
 #include "services/network/public/mojom/content_security_policy.mojom.h"
@@ -50,16 +51,16 @@ std::string FormatTemplate(int resource_id,
       /* skip_unexpected_placeholder_check= */ true);
 }
 
-std::string ReadBackgroundImageData(const base::FilePath& profile_path) {
+std::string ReadBackgroundImageData(const base::FilePath& path) {
   std::string data_string;
-  base::ReadFileToString(profile_path.AppendASCII("background.jpg"),
-                         &data_string);
+  base::ReadFileToString(path, &data_string);
   return data_string;
 }
 
 void ServeBackgroundImageData(content::URLDataSource::GotDataCallback callback,
                               std::string data_string) {
-  std::move(callback).Run(base::RefCountedString::TakeString(&data_string));
+  std::move(callback).Run(
+      base::MakeRefCounted<base::RefCountedString>(std::move(data_string)));
 }
 
 }  // namespace
@@ -71,7 +72,7 @@ UntrustedSource::UntrustedSource(Profile* profile)
   // |one_google_bar_service_| is null in incognito, or when the feature is
   // disabled.
   if (one_google_bar_service_) {
-    one_google_bar_service_observer_.Add(one_google_bar_service_);
+    one_google_bar_service_observation_.Observe(one_google_bar_service_.get());
   }
 }
 
@@ -94,6 +95,8 @@ std::string UntrustedSource::GetContentSecurityPolicy(
       return std::string();
     case network::mojom::CSPDirectiveName::TrustedTypes:
       return std::string();
+    case network::mojom::CSPDirectiveName::FormAction:
+      return "form-action https://ogs.google.com https://*.corp.google.com;";
     default:
       return content::URLDataSource::GetContentSecurityPolicy(directive);
   }
@@ -117,11 +120,14 @@ void UntrustedSource::StartDataRequest(
         one_google_bar_service_->SetAdditionalQueryParams(query_params);
     one_google_bar_callbacks_.push_back(std::move(callback));
     if (one_google_bar_service_->one_google_bar_data().has_value() &&
-        !wait_for_refresh) {
+        !wait_for_refresh &&
+        base::FeatureList::IsEnabled(ntp_features::kCacheOneGoogleBar)) {
       OnOneGoogleBarDataUpdated();
     }
-    one_google_bar_load_start_time_ = base::TimeTicks::Now();
-    one_google_bar_service_->Refresh();
+    if (one_google_bar_callbacks_.size() == 1) {
+      one_google_bar_load_start_time_ = base::TimeTicks::Now();
+      one_google_bar_service_->Refresh();
+    }
     return;
   }
   if (path == "one_google_bar.js") {
@@ -130,41 +136,33 @@ void UntrustedSource::StartDataRequest(
         IDR_NEW_TAB_PAGE_UNTRUSTED_ONE_GOOGLE_BAR_JS));
     return;
   }
-  if (path == "one_google_bar_api.js") {
-    ui::ResourceBundle& bundle = ui::ResourceBundle::GetSharedInstance();
-    std::move(callback).Run(
-        bundle.LoadDataResourceBytes(IDR_NEW_TAB_PAGE_ONE_GOOGLE_BAR_API_JS));
-    return;
-  }
   if (path == "image" && url_param.is_valid() &&
       (url_param.SchemeIs(url::kHttpsScheme) ||
        url_param.SchemeIs(content::kChromeUIUntrustedScheme))) {
     ui::TemplateReplacements replacements;
     replacements["url"] = url_param.spec();
-    std::string html =
-        FormatTemplate(IDR_NEW_TAB_PAGE_UNTRUSTED_IMAGE_HTML, replacements);
-    std::move(callback).Run(base::RefCountedString::TakeString(&html));
+    std::move(callback).Run(base::MakeRefCounted<base::RefCountedString>(
+        FormatTemplate(IDR_NEW_TAB_PAGE_UNTRUSTED_IMAGE_HTML, replacements)));
     return;
   }
   if (path == "background_image") {
     ServeBackgroundImage(url_param, GURL(), "cover", "no-repeat", "no-repeat",
-                         "center", "center", std::move(callback));
+                         "center", "center", "inherit", std::move(callback));
     return;
   }
   if (path == "custom_background_image") {
     // Parse all query parameters to hash map and decode values.
     std::unordered_map<std::string, std::string> params;
-    url::Component query(0, url.query().length());
+    url::Component query(0, url.query_piece().length());
     url::Component key, value;
     while (
         url::ExtractQueryKeyValue(url.query().c_str(), &query, &key, &value)) {
       url::RawCanonOutputW<kMaxUriDecodeLen> output;
       url::DecodeURLEscapeSequences(
-          url.query().c_str() + value.begin, value.len,
+          url.query_piece().substr(value.begin, value.len),
           url::DecodeURLMode::kUTF8OrIsomorphic, &output);
-      params.insert(
-          {url.query().substr(key.begin, key.len),
-           base::UTF16ToUTF8(base::string16(output.data(), output.length()))});
+      params.insert({std::string(url.query_piece().substr(key.begin, key.len)),
+                     base::UTF16ToUTF8(output.view())});
     }
     // Extract desired values.
     ServeBackgroundImage(
@@ -174,7 +172,7 @@ void UntrustedSource::StartDataRequest(
         params.count("repeatX") == 1 ? params["repeatX"] : "no-repeat",
         params.count("repeatY") == 1 ? params["repeatY"] : "no-repeat",
         params.count("positionX") == 1 ? params["positionX"] : "center",
-        params.count("positionY") == 1 ? params["positionY"] : "center",
+        params.count("positionY") == 1 ? params["positionY"] : "center", "none",
         std::move(callback));
     return;
   }
@@ -184,18 +182,19 @@ void UntrustedSource::StartDataRequest(
         IDR_NEW_TAB_PAGE_UNTRUSTED_BACKGROUND_IMAGE_JS));
     return;
   }
-  if (path == "background.jpg") {
+  if (base::Contains(path, "background.jpg")) {
     base::ThreadPool::PostTaskAndReplyWithResult(
         FROM_HERE, {base::TaskPriority::USER_VISIBLE, base::MayBlock()},
-        base::BindOnce(&ReadBackgroundImageData, profile_->GetPath()),
+        base::BindOnce(&ReadBackgroundImageData,
+                       profile_->GetPath().AppendASCII(path)),
         base::BindOnce(&ServeBackgroundImageData, std::move(callback)));
     return;
   }
   std::move(callback).Run(base::MakeRefCounted<base::RefCountedString>());
 }
 
-std::string UntrustedSource::GetMimeType(const std::string& path) {
-  const std::string stripped_path = path.substr(0, path.find("?"));
+std::string UntrustedSource::GetMimeType(const GURL& url) {
+  const base::StringPiece stripped_path = url.path_piece();
   if (base::EndsWith(stripped_path, ".js",
                      base::CompareCase::INSENSITIVE_ASCII)) {
     return "application/javascript";
@@ -231,45 +230,45 @@ bool UntrustedSource::ShouldServiceRequest(
   return path == "one-google-bar" || path == "one_google_bar.js" ||
          path == "image" || path == "background_image" ||
          path == "custom_background_image" || path == "background_image.js" ||
-         path == "background.jpg" || path == "one_google_bar_api.js";
+         base::Contains(path, "background.jpg");
 }
 
 void UntrustedSource::OnOneGoogleBarDataUpdated() {
-  base::Optional<OneGoogleBarData> data =
+  std::optional<OneGoogleBarData> data =
       one_google_bar_service_->one_google_bar_data();
 
   if (one_google_bar_load_start_time_.has_value()) {
     NTPUserDataLogger::LogOneGoogleBarFetchDuration(
         /*success=*/data.has_value(),
         /*duration=*/base::TimeTicks::Now() - *one_google_bar_load_start_time_);
-    one_google_bar_load_start_time_ = base::nullopt;
+    one_google_bar_load_start_time_ = std::nullopt;
   }
 
   std::string html;
   if (data.has_value()) {
     ui::TemplateReplacements replacements;
     replacements["textdirection"] = base::i18n::IsRTL() ? "rtl" : "ltr";
-    replacements["modalOverlays"] =
-        base::FeatureList::IsEnabled(ntp_features::kOneGoogleBarModalOverlays)
-            ? "modal-overlays"
-            : "";
     replacements["barHtml"] = data->bar_html;
     replacements["inHeadScript"] = data->in_head_script;
     replacements["inHeadStyle"] = data->in_head_style;
     replacements["afterBarScript"] = data->after_bar_script;
     replacements["endOfBodyHtml"] = data->end_of_body_html;
     replacements["endOfBodyScript"] = data->end_of_body_script;
+
     html = FormatTemplate(IDR_NEW_TAB_PAGE_UNTRUSTED_ONE_GOOGLE_BAR_HTML,
                           replacements);
   }
+
+  auto html_ref_counted =
+      base::MakeRefCounted<base::RefCountedString>(std::move(html));
   for (auto& callback : one_google_bar_callbacks_) {
-    std::move(callback).Run(base::RefCountedString::TakeString(&html));
+    std::move(callback).Run(html_ref_counted);
   }
   one_google_bar_callbacks_.clear();
 }
 
 void UntrustedSource::OnOneGoogleBarServiceShuttingDown() {
-  one_google_bar_service_observer_.RemoveAll();
+  one_google_bar_service_observation_.Reset();
   one_google_bar_service_ = nullptr;
 }
 
@@ -281,6 +280,7 @@ void UntrustedSource::ServeBackgroundImage(
     const std::string& repeat_y,
     const std::string& position_x,
     const std::string& position_y,
+    const std::string& scrim_display,
     content::URLDataSource::GotDataCallback callback) {
   if (!url.is_valid() || !(url.SchemeIs(url::kHttpsScheme) ||
                            url.SchemeIs(content::kChromeUIUntrustedScheme))) {
@@ -291,7 +291,7 @@ void UntrustedSource::ServeBackgroundImage(
   replacements["url"] = url.spec();
   if (url_2x.is_valid()) {
     replacements["backgroundUrl"] =
-        base::StringPrintf("-webkit-image-set(url(%s) 1x, url(%s) 2x)",
+        base::StringPrintf("image-set(url(%s) 1x, url(%s) 2x)",
                            url.spec().c_str(), url_2x.spec().c_str());
   } else {
     replacements["backgroundUrl"] =
@@ -302,7 +302,8 @@ void UntrustedSource::ServeBackgroundImage(
   replacements["repeatY"] = repeat_y;
   replacements["positionX"] = position_x;
   replacements["positionY"] = position_y;
-  std::string html = FormatTemplate(
-      IDR_NEW_TAB_PAGE_UNTRUSTED_BACKGROUND_IMAGE_HTML, replacements);
-  std::move(callback).Run(base::RefCountedString::TakeString(&html));
+  replacements["scrimDisplay"] = scrim_display;
+  std::move(callback).Run(
+      base::MakeRefCounted<base::RefCountedString>(FormatTemplate(
+          IDR_NEW_TAB_PAGE_UNTRUSTED_BACKGROUND_IMAGE_HTML, replacements)));
 }

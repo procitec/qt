@@ -1,12 +1,12 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/modules/webaudio/inspector_web_audio_agent.h"
 
 #include <memory>
+
 #include "third_party/blink/renderer/core/page/page.h"
-#include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/modules/webaudio/base_audio_context.h"
 #include "third_party/blink/renderer/modules/webaudio/audio_context.h"
 #include "third_party/blink/renderer/modules/webaudio/audio_graph_tracer.h"
@@ -46,7 +46,7 @@ String StripNodeSuffix(const String& nodeName) {
 }
 
 // Strips out the prefix and returns the actual parameter name. If the name
-// does not match |NodeName.ParamName| pattern, returns "Unknown" instead.
+// does not match `NodeName.ParamName` pattern, returns "Unknown" instead.
 String StripParamPrefix(const String& paramName) {
   Vector<String> name_tokens;
   paramName.Split('.', name_tokens);
@@ -54,8 +54,6 @@ String StripParamPrefix(const String& paramName) {
 }
 
 }  // namespace
-
-using protocol::Response;
 
 InspectorWebAudioAgent::InspectorWebAudioAgent(Page* page)
     : page_(page),
@@ -65,44 +63,50 @@ InspectorWebAudioAgent::InspectorWebAudioAgent(Page* page)
 InspectorWebAudioAgent::~InspectorWebAudioAgent() = default;
 
 void InspectorWebAudioAgent::Restore() {
-  if (!enabled_.Get())
+  if (!enabled_.Get()) {
     return;
+  }
 
   AudioGraphTracer* graph_tracer = AudioGraphTracer::FromPage(page_);
   graph_tracer->SetInspectorAgent(this);
 }
 
-Response InspectorWebAudioAgent::enable() {
-  if (enabled_.Get())
-    return Response::Success();
+protocol::Response InspectorWebAudioAgent::enable() {
+  if (enabled_.Get()) {
+    return protocol::Response::Success();
+  }
   enabled_.Set(true);
   AudioGraphTracer* graph_tracer = AudioGraphTracer::FromPage(page_);
   graph_tracer->SetInspectorAgent(this);
-  return Response::Success();
+  return protocol::Response::Success();
 }
 
-Response InspectorWebAudioAgent::disable() {
-  if (!enabled_.Get())
-    return Response::Success();
+protocol::Response InspectorWebAudioAgent::disable() {
+  if (!enabled_.Get()) {
+    return protocol::Response::Success();
+  }
   enabled_.Clear();
   AudioGraphTracer* graph_tracer = AudioGraphTracer::FromPage(page_);
   graph_tracer->SetInspectorAgent(nullptr);
-  return Response::Success();
+  return protocol::Response::Success();
 }
 
-Response InspectorWebAudioAgent::getRealtimeData(
+protocol::Response InspectorWebAudioAgent::getRealtimeData(
     const protocol::WebAudio::GraphObjectId& contextId,
     std::unique_ptr<ContextRealtimeData>* out_data) {
   auto* const graph_tracer = AudioGraphTracer::FromPage(page_);
-  if (!enabled_.Get())
-    return Response::ServerError("Enable agent first.");
+  if (!enabled_.Get()) {
+    return protocol::Response::ServerError("Enable agent first.");
+  }
 
   BaseAudioContext* context = graph_tracer->GetContextById(contextId);
-  if (!context)
-    return Response::ServerError("Cannot find BaseAudioContext with such id.");
+  if (!context) {
+    return protocol::Response::ServerError(
+        "Cannot find BaseAudioContext with such id.");
+  }
 
   if (!context->HasRealtimeConstraint()) {
-    return Response::ServerError(
+    return protocol::Response::ServerError(
         "ContextRealtimeData is only avaliable for an AudioContext.");
   }
 
@@ -115,7 +119,7 @@ Response InspectorWebAudioAgent::getRealtimeData(
           .setCallbackIntervalMean(metric.mean_callback_interval)
           .setCallbackIntervalVariance(metric.variance_callback_interval)
           .build();
-  return Response::Success();
+  return protocol::Response::Success();
 }
 
 void InspectorWebAudioAgent::DidCreateBaseAudioContext(

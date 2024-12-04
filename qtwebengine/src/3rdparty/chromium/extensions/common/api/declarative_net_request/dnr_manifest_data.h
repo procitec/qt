@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,12 +10,10 @@
 #include <vector>
 
 #include "base/files/file_path.h"
-#include "base/macros.h"
 #include "extensions/common/api/declarative_net_request/constants.h"
 #include "extensions/common/extension.h"
 
-namespace extensions {
-namespace declarative_net_request {
+namespace extensions::declarative_net_request {
 
 // Manifest data required for the kDeclarativeNetRequestKey manifest
 // key.
@@ -52,6 +50,10 @@ struct DNRManifestData : Extension::ManifestData {
   using ManifestIDToRulesetMap = std::map<std::string, const RulesetInfo*>;
 
   explicit DNRManifestData(std::vector<RulesetInfo> ruleset);
+
+  DNRManifestData(const DNRManifestData&) = delete;
+  DNRManifestData& operator=(const DNRManifestData&) = delete;
+
   ~DNRManifestData() override;
 
   // Returns the RulesetInfo for the |extension|. For an extension, which didn't
@@ -73,11 +75,8 @@ struct DNRManifestData : Extension::ManifestData {
 
   // Map from the manifest ID to the corresponding RulesetInfo.
   ManifestIDToRulesetMap manifest_id_to_ruleset_map;
-
-  DISALLOW_COPY_AND_ASSIGN(DNRManifestData);
 };
 
-}  // namespace declarative_net_request
-}  // namespace extensions
+}  // namespace extensions::declarative_net_request
 
 #endif  // EXTENSIONS_COMMON_API_DECLARATIVE_NET_REQUEST_DNR_MANIFEST_DATA_H_

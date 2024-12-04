@@ -26,7 +26,6 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_HTML_FORMS_DATE_TIME_FIELD_ELEMENT_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_HTML_FORMS_DATE_TIME_FIELD_ELEMENT_H_
 
-#include "base/macros.h"
 #include "third_party/blink/public/mojom/input/focus_type.mojom-blink-forward.h"
 #include "third_party/blink/renderer/core/html/html_div_element.h"
 #include "third_party/blink/renderer/core/html/html_span_element.h"
@@ -74,6 +73,9 @@ class DateTimeFieldElement : public HTMLSpanElement {
     virtual void FieldDidChangeValueByKeyboard() = 0;
   };
 
+  DateTimeFieldElement(const DateTimeFieldElement&) = delete;
+  DateTimeFieldElement& operator=(const DateTimeFieldElement&) = delete;
+
   void DefaultEventHandler(Event&) override;
   virtual bool HasValue() const = 0;
   bool IsDisabled() const;
@@ -92,8 +94,6 @@ class DateTimeFieldElement : public HTMLSpanElement {
   virtual String VisibleValue() const = 0;
   void Trace(Visitor*) const override;
   DateTimeField Type() const;
-
-  static float ComputeTextWidth(const ComputedStyle&, const String&);
 
  protected:
   DateTimeFieldElement(Document&, FieldOwner&, DateTimeField);
@@ -118,14 +118,13 @@ class DateTimeFieldElement : public HTMLSpanElement {
   bool IsDateTimeFieldElement() const final;
   bool IsFieldOwnerDisabled() const;
   bool IsFieldOwnerReadOnly() const;
-  bool SupportsFocus() const final;
+  bool SupportsFocus(UpdateBehavior update_behavior =
+                         UpdateBehavior::kStyleAndLayout) const final;
 
   Member<FieldOwner> field_owner_;
   DateTimeField type_;
-
-  DISALLOW_COPY_AND_ASSIGN(DateTimeFieldElement);
 };
 
 }  // namespace blink
 
-#endif
+#endif  // THIRD_PARTY_BLINK_RENDERER_CORE_HTML_FORMS_DATE_TIME_FIELD_ELEMENT_H_

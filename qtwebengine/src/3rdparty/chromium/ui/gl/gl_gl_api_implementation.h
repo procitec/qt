@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,10 +8,9 @@
 #include <memory>
 #include <vector>
 
-#include "base/compiler_specific.h"
+#include "base/memory/raw_ptr.h"
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_export.h"
-#include "ui/gl/gl_workarounds.h"
 
 namespace gl {
 
@@ -26,7 +25,11 @@ GL_EXPORT void ClearBindingsGL();
 bool SetNullDrawGLBindingsEnabled(bool enabled);
 bool GetNullDrawBindingsEnabled();
 
-void SetCurrentGL(CurrentGL* current);
+// This is exported from //ui/gl/gl_bindings.h to retrieve GL bindings.
+GL_EXPORT CurrentGL* GetThreadLocalCurrentGL();
+
+// This is only used internally in //ui/gl to set GL bindings from GLContext.
+void SetThreadLocalCurrentGL(CurrentGL* current);
 
 class GL_EXPORT GLApiBase : public GLApi {
  public:
@@ -40,7 +43,7 @@ class GL_EXPORT GLApiBase : public GLApi {
   ~GLApiBase() override;
   void InitializeBase(DriverGL* driver);
 
-  DriverGL* driver_;
+  raw_ptr<DriverGL> driver_;
 };
 
 // Implemenents the GL API by calling directly into the driver.
@@ -97,7 +100,8 @@ class GL_EXPORT RealGLApi : public GLApiBase {
                                      GLuint memory,
                                      GLuint64 offset,
                                      GLbitfield createFlags,
-                                     GLbitfield usageFlags) override;
+                                     GLbitfield usageFlags,
+                                     const void* imageCreateInfoPNext) override;
 
   void glRenderbufferStorageEXTFn(GLenum target,
                                   GLenum internalformat,
@@ -125,10 +129,6 @@ class GL_EXPORT RealGLApi : public GLApiBase {
                       void* pixels) override;
 
   void glClearFn(GLbitfield mask) override;
-  void glClearColorFn(GLclampf red,
-                      GLclampf green,
-                      GLclampf blue,
-                      GLclampf alpha) override;
   void glDrawArraysFn(GLenum mode, GLint first, GLsizei count) override;
   void glDrawElementsFn(GLenum mode,
                         GLsizei count,
@@ -140,7 +140,6 @@ class GL_EXPORT RealGLApi : public GLApiBase {
 
   void glUseProgramFn(GLuint program) override;
 
-  void set_gl_workarounds(const GLWorkarounds& workarounds);
   void set_version(std::unique_ptr<GLVersionInfo> version);
   void ClearCachedGLExtensions();
 
@@ -148,12 +147,12 @@ class GL_EXPORT RealGLApi : public GLApiBase {
   // Compute |filtered_exts_| & |filtered_exts_str_| from |disabled_ext_|.
   void InitializeFilteredExtensionsIfNeeded();
 
+  const bool logging_enabled_;
   std::vector<std::string> disabled_exts_;
   // Filtered GL_EXTENSIONS we return to glGetString(i) calls.
   std::vector<std::string> filtered_exts_;
   std::string filtered_exts_str_;
 
-  GLWorkarounds gl_workarounds_;
   std::unique_ptr<GLVersionInfo> version_;
 };
 
@@ -169,7 +168,7 @@ class TraceGLApi : public GLApi {
   #include "gl_bindings_api_autogen_gl.h"
 
  private:
-  GLApi* gl_api_;
+  raw_ptr<GLApi> gl_api_;
 };
 
 // Logs debug information for every GL call.
@@ -184,7 +183,7 @@ class LogGLApi : public GLApi {
   #include "gl_bindings_api_autogen_gl.h"
 
  private:
-  GLApi* gl_api_;
+  raw_ptr<GLApi> gl_api_;
 };
 
 // Catches incorrect usage when GL calls are made without a current context.

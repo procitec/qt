@@ -43,9 +43,9 @@ the previous configuration where new steps were added blindly, and could cause
 failures on the tryservers. For more details about the configuration of the
 bots, see the [GPU bot details].
 
-[recipe framework]: https://chromium.googlesource.com/external/github.com/luci/recipes-py/+/master/doc/user_guide.md
-[recipes/chromium]:        https://chromium.googlesource.com/chromium/tools/build/+/master/scripts/slave/recipes/chromium.py
-[recipes/chromium_trybot]: https://chromium.googlesource.com/chromium/tools/build/+/master/scripts/slave/recipes/chromium_trybot.py
+[recipe framework]: https://chromium.googlesource.com/external/github.com/luci/recipes-py/+/main/doc/user_guide.md
+[recipes/chromium]:        https://chromium.googlesource.com/chromium/tools/build/+/main/scripts/slave/recipes/chromium.py
+[recipes/chromium_trybot]: https://chromium.googlesource.com/chromium/tools/build/+/main/scripts/slave/recipes/chromium_trybot.py
 [GPU bot details]: gpu_testing_bot_details.md
 
 The physical hardware for the GPU bots lives in the Swarming pool\*. The
@@ -86,7 +86,7 @@ overview of this documentation and links back to various portions.
 Please see the [GPU Pixel Wrangling instructions] for links to dashboards
 showing the status of various bots in the GPU fleet.
 
-[GPU Pixel Wrangling instructions]: pixel_wrangling.md#Fleet-Status
+[GPU Pixel Wrangling instructions]: http://go/gpu-pixel-wrangler#fleet-status
 
 ## Using the GPU Bots
 
@@ -112,11 +112,11 @@ of the following tryservers' jobs:
 
 *   [linux-rel], formerly on the `tryserver.chromium.linux` waterfall
 *   [mac-rel], formerly on the `tryserver.chromium.mac` waterfall
-*   [win10_chromium_x64_rel_ng], formerly on the `tryserver.chromium.win` waterfall
+*   [win-rel], formerly on the `tryserver.chromium.win` waterfall
 
-[linux-rel]:                 https://ci.chromium.org/p/chromium/builders/luci.chromium.try/linux-rel?limit=100
-[mac-rel]:                   https://ci.chromium.org/p/chromium/builders/luci.chromium.try/mac-rel?limit=100
-[win10_chromium_x64_rel_ng]: https://ci.chromium.org/p/chromium/builders/luci.chromium.try/win10_chromium_x64_rel_ng?limit=100
+[linux-rel]: https://ci.chromium.org/p/chromium/builders/luci.chromium.try/linux-rel?limit=100
+[mac-rel]:   https://ci.chromium.org/p/chromium/builders/luci.chromium.try/mac-rel?limit=100
+[win-rel]:   https://ci.chromium.org/p/chromium/builders/luci.chromium.try/win-rel?limit=100
 
 Scan down through the steps looking for the text "GPU"; that identifies those
 tests run on the GPU bots. For each test the "trigger" step can be ignored; the
@@ -159,7 +159,7 @@ If you find it necessary to try patches against other sub-repositories than
 Chromium (`src/`) and ANGLE (`src/third_party/angle/`), please
 [file a bug](http://crbug.com/new) with component Internals\>GPU\>Testing.
 
-[ANGLE project]: https://chromium.googlesource.com/angle/angle/+/master/README.md
+[ANGLE project]: https://chromium.googlesource.com/angle/angle/+/main/README.md
 [tryserver.chromium.angle]: https://build.chromium.org/p/tryserver.chromium.angle/waterfall
 [file a bug]: http://crbug.com/new
 
@@ -180,16 +180,17 @@ which aren't allowed to run on the regular Chromium waterfalls:
 *   `angle_deqp_gles2_tests`
 *   `angle_deqp_gles3_tests`
 *   `angle_end2end_tests`
-*   `audio_unittests`
 
 The remaining GPU tests are run via Telemetry.  In order to run them, just
-build the `chrome` target and then
+build the `telemetry_gpu_integration_test` target (or
+`telemetry_gpu_integration_test_android_chrome` for Android) and then
 invoke `src/content/test/gpu/run_gpu_integration_test.py` with the appropriate
 argument. The tests this script can invoke are
 in `src/content/test/gpu/gpu_tests/`. For example:
 
 *   `run_gpu_integration_test.py context_lost --browser=release`
-*   `run_gpu_integration_test.py webgl_conformance --browser=release --webgl-conformance-version=1.0.2`
+*   `run_gpu_integration_test.py webgl1_conformance --browser=release`
+*   `run_gpu_integration_test.py webgl2_conformance --browser=release --webgl-conformance-version=2.0.1`
 *   `run_gpu_integration_test.py maps --browser=release`
 *   `run_gpu_integration_test.py screenshot_sync --browser=release`
 *   `run_gpu_integration_test.py trace_test --browser=release`
@@ -198,54 +199,153 @@ The pixel tests are a bit special. See
 [the section on running them locally](#Running-the-pixel-tests-locally) for
 details.
 
-If you're testing on Android and have built and deployed
-`ChromePublic.apk` to the device, use `--browser=android-chromium` to
-invoke it.
+The `--browser=release` argument can be changed to `--browser=debug` if you
+built in a directory such as `out/Debug`. If you built in some non-standard
+directory such as `out/my_special_gn_config`, you can instead specify
+`--browser=exact --browser-executable=out/my_special_gn_config/chrome`.
 
-**Note:** If you are on Linux and see this test harness exit immediately with
-`**Non zero exit code**`, it's probably because of some incompatible Python
-packages being installed. Please uninstall the `python-egenix-mxdatetime` and
-`python-logilab-common` packages in this case; see [Issue
-716241](http://crbug.com/716241). This should not be happening any more since
-the GPU tests were switched to use the infra team's `vpython` harness.
+If you're testing on Android, use `--browser=android-chromium` instead of
+`--browser=release/debug` to invoke it. Additionally, Telemetry will likely
+complain about being unable to find the browser binary on Android if you build
+in a non-standard output directory. Thus, `out/Release` or `out/Debug` are
+suggested when testing on Android.
+
+If you are running on a platform that does not support multiple browser
+instances at a time (Android or ChromeOS), it is also recommended that you pass
+in `--jobs=1`. This only has an effect on test suites that have parallel test
+support, but failure to pass in the argument for those tests on these platforms
+will result in weird failures due to multiple test processes stepping on each
+other. On other platforms, you are still free to specify `--jobs` to get more
+or less parallelization instead of relying on the default of one test process
+per logical core.
+
+**Note:** The tests require some third-party Python packages. Obtaining these
+packages is handled automatically by `vpython3`, and the script's shebang should
+use vpython if running the script directly. Since shebangs are not used on
+Windows, you will need to manually specify the executable if you are on a
+Windows machine. If you're used to invoking `python3` to run a script, simply
+use `vpython3` instead, e.g. `vpython3 run_gpu_integration_test.py ...`.
 
 You can run a subset of tests with this harness:
 
-*   `run_gpu_integration_test.py webgl_conformance --browser=release
+*   `run_gpu_integration_test.py webgl1_conformance --browser=release
     --test-filter=conformance_attribs`
 
-Figuring out the exact command line that was used to invoke the test on the
-bots can be a little tricky. The bots all run their tests via Swarming and
-isolates, meaning that the invocation of a step like `[trigger]
-webgl_conformance_tests on NVIDIA GPU...` will look like:
+The exact command used to invoke the test on the bots can be found in one of
+two ways:
 
-*   `python -u
-    'E:\b\build\slave\Win7_Release__NVIDIA_\build\src\tools\swarming_client\swarming.py'
-    trigger --swarming https://chromium-swarm.appspot.com
-    --isolate-server https://isolateserver.appspot.com
-    --priority 25 --shards 1 --task-name 'webgl_conformance_tests on NVIDIA GPU...'`
+1. Looking at the [json.input][trigger_input] of the trigger step under
+   `requests[task_slices][command]`. The arguments after the last `--` are
+   used to actually run the test.
+1. Looking at the top of a [swarming task][sample_swarming_task].
 
-You can figure out the additional command line arguments that were passed to
-each test on the bots by examining the trigger step and searching for the
-argument separator (<code> -- </code>). For a recent invocation of
-`webgl_conformance_tests`, this looked like:
+In both cases, the following can be omitted when running locally since they're
+only necessary on swarming:
+* `testing/test_env.py`
+* `testing/scripts/run_gpu_integration_test_as_googletest.py`
+* `--isolated-script-test-output`
+* `--isolated-script-test-perf-output`
 
-*   `webgl_conformance --show-stdout '--browser=release' -v
-    '--extra-browser-args=--enable-logging=stderr --js-flags=--expose-gc'
-    '--isolated-script-test-output=${ISOLATED_OUTDIR}/output.json'`
 
-You can leave off the --isolated-script-test-output argument, because that's
-used only by wrapper scripts, so this would leave a full command line of:
-
-*   `run_gpu_integration_test.py
-    webgl_conformance --show-stdout '--browser=release' -v
-    '--extra-browser-args=--enable-logging=stderr --js-flags=--expose-gc'`
+[trigger_input]: https://logs.chromium.org/logs/chromium/buildbucket/cr-buildbucket.appspot.com/8849851608240828544/+/u/test_pre_run__14_/l_trigger__webgl2_conformance_d3d11_passthrough_tests_on_NVIDIA_GPU_on_Windows_on_Windows-10-18363/json.input
+[sample_swarming_task]: https://chromium-swarm.appspot.com/task?id=52f06058bfb31b10
 
 The Maps test requires you to authenticate to cloud storage in order to access
 the Web Page Reply archive containing the test. See [Cloud Storage Credentials]
 for documentation on setting this up.
 
 [Cloud Storage Credentials]: gpu_testing_bot_details.md#Cloud-storage-credentials
+
+### Bisecting ChromeOS Failures Locally
+
+Failures that occur on the ChromeOS amd64-generic configuration are easy to
+reproduce due to the VM being readily available for use, but doing so requires
+some additional steps to the bisect process. The following are steps that can be
+followed using two terminals and the [Simple Chrome SDK] to bisect a ChromeOS
+failure.
+
+1. Terminal 1: Start the bisect as normal `git bisect start`
+   `git bisect good <good_revision>` `git bisect bad <bad_revision>`
+1. Terminal 1: Sync to the revision that git spits out
+   `gclient sync -r src@<revision>`
+1. Terminal 2: Enter the Simple Chrome SDK
+   `cros chrome-sdk --board amd64-generic-vm --log-level info --download-vm --clear-sdk-cache`
+1. Terminal 2: Compile the relevant target (probably the GPU integration tests)
+   `autoninja -C out_amd64-generic-vm/Release/ telemetry_gpu_integration_test`
+1. Terminal 2: Start the VM `cros_vm --start`
+1. Terminal 2: Deploy the Chrome binary to the VM
+   `deploy_chrome --build-dir out_amd64-generic-vm/Release/ --device 127.0.0.1:9222`
+   This will require you to accept a prompt twice, once because of a board
+   mismatch and once because the VM still has rootfs verification enabled.
+1. Terminal 1: Run your test on the VM. For GPU integration tests, this involves
+   specifying `--browser cros-chrome --remote 127.0.0.1 --remote-ssh-port 9222`
+1. Terminal 2: After determining whether the revision is good or bad, shut down
+   the VM `cros_vm --stop`
+1. Terminal 2: Exit the SKD `exit`
+1. Terminal 1: Let git know whether the revision was good or bad
+   `git bisect good`/`git bisect bad`
+1. Repeat from step 2 with the new revision git spits out.
+
+The repeated entry/exit from the SDK between revisions is to ensure that the
+VM image is in sync with the Chromium revision, as it is possible for
+regressions to be caused by an update to the image itself rather than a Chromium
+change.
+
+[Simple Chrome SDK]: https://chromium.googlesource.com/chromiumos/docs/+/HEAD/simple_chrome_workflow.md
+
+### Telemetry Test Suites
+The Telemetry-based tests are all technically the same target,
+`telemetry_gpu_integration_test`, just run with different runtime arguments. The
+first positional argument passed determines which suite will run, and additional
+runtime arguments may cause the step name to change on the bots. Here is a list
+of all suites and resulting step names as of April 15th 2021:
+
+* `context_lost`
+  * `context_lost_passthrough_tests`
+  * `context_lost_tests`
+  * `context_lost_validating_tests`
+* `hardware_accelerated_feature`
+  * `hardware_accelerated_feature_tests`
+* `gpu_process`
+  * `gpu_process_launch_tests`
+* `info_collection`
+  * `info_collection_tests`
+* `maps`
+  * `maps_pixel_passthrough_test`
+  * `maps_pixel_test`
+  * `maps_pixel_validating_test`
+  * `maps_tests`
+* `pixel`
+  * `android_webview_pixel_skia_gold_test`
+  * `egl_pixel_skia_gold_test`
+  * `pixel_skia_gold_passthrough_test`
+  * `pixel_skia_gold_validating_test`
+  * `pixel_tests`
+  * `vulkan_pixel_skia_gold_test`
+* `power`
+  * `power_measurement_test`
+* `screenshot_sync`
+  * `screenshot_sync_passthrough_tests`
+  * `screenshot_sync_tests`
+  * `screenshot_sync_validating_tests`
+* `trace_test`
+  * `trace_test`
+* `webgl_conformance`
+  * `webgl2_conformance_d3d11_passthrough_tests`
+  * `webgl2_conformance_gl_passthrough_tests`
+  * `webgl2_conformance_gles_passthrough_tests`
+  * `webgl2_conformance_tests`
+  * `webgl2_conformance_validating_tests`
+  * `webgl_conformance_d3d11_passthrough_tests`
+  * `webgl_conformance_d3d9_passthrough_tests`
+  * `webgl_conformance_fast_call_tests`
+  * `webgl_conformance_gl_passthrough_tests`
+  * `webgl_conformance_gles_passthrough_tests`
+  * `webgl_conformance_metal_passthrough_tests`
+  * `webgl_conformance_swangle_passthrough_tests`
+  * `webgl_conformance_tests`
+  * `webgl_conformance_validating_tests`
+  * `webgl_conformance_vulkan_passthrough_tests`
 
 ### Running the pixel tests locally
 
@@ -298,10 +398,10 @@ Example usage:
 If, for some reason, the local run code is unable to determine what the git
 revision is, simply pass `--git-revision aabbccdd`. Note that `aabbccdd` must
 be replaced with an actual Chromium src revision (typically whatever revision
-origin/master is currently synced to) in order for the tests to work. This can
+origin/main is currently synced to) in order for the tests to work. This can
 be done automatically using:
 ``run_gpu_integration_test.py pixel --no-skia-gold-failure --local-pixel-tests
---passthrough --git-revision `git rev-parse origin/master` ``
+--passthrough --git-revision `git rev-parse origin/main` ``
 
 ## Running Binaries from the Bots Locally
 
@@ -311,7 +411,7 @@ machine loosely matches the architecture and OS of the bot.
 The easiest way to do this is to find the ID of the swarming task and use
 "swarming.py reproduce" to re-run it:
 
-*   `./src/tools/swarming_client/swarming.py reproduce -S https://chromium-swarm.appspot.com [task ID]`
+*   `./src/tools/luci-go/swarming reproduce -S https://chromium-swarm.appspot.com [task ID]`
 
 The task ID can be found in the stdio for the "trigger" step for the test. For
 example, look at a recent build from the [Mac Release (Intel)] bot, and
@@ -334,38 +434,21 @@ As of this writing, there seems to be a
 [bug](https://github.com/luci/luci-py/issues/250)
 when attempting to re-run the Telemetry based GPU tests in this way. For the
 time being, this can be worked around by instead downloading the contents of
-the isolate. To do so, look more deeply into the trigger step's log:
+the isolate. To do so, look into the "Reproducing the task locally" section on
+a swarming task, which contains something like:
 
-*   <code>python -u
-    /b/build/slave/Mac_10_10_Release__Intel_/build/src/tools/swarming_client/swarming.py
-    trigger [...more args...] --tag data:[ISOLATE_HASH] [...more args...]
-    [ISOLATE_HASH] -- **[...TEST_ARGS...]**</code>
-
-As of this writing, the isolate hash appears twice in the command line. To
-download the isolate's contents into directory `foo` (note, this is in the
-"Help" section associated with the page for the isolate's task, but I'm not
-sure whether that's accessible only to Google employees or all members of the
-chromium.org organization):
-
-*   `python isolateserver.py download -I https://isolateserver.appspot.com
-    --namespace default-gzip -s [ISOLATE_HASH] --target foo`
-
-`isolateserver.py` will tell you the approximate command line to use. You
-should concatenate the `TEST_ARGS` highlighted in red above with
-`isolateserver.py`'s recommendation. The `ISOLATED_OUTDIR` variable can be
-safely replaced with `/tmp`.
-
-Note that `isolateserver.py` downloads a large number of files (everything
-needed to run the test) and may take a while. There is a way to use
-`run_isolated.py` to achieve the same result, but as of this writing, there
-were problems doing so, so this procedure is not documented at this time.
+```
+Download inputs files into directory foo:
+# (if needed, use "\${platform}" as-is) cipd install "infra/tools/luci/cas/\${platform}" -root bar
+# (if needed) ./bar/cas login
+./bar/cas download -cas-instance projects/chromium-swarm/instances/default_instance -digest 68ae1d6b22673b0ab7b4427ca1fc2a4761c9ee53474105b9076a23a67e97a18a/647 -dir foo
+```
 
 Before attempting to download an isolate, you must ensure you have permission
 to access the isolate server. Full instructions can be [found
 here][isolate-server-credentials]. For most cases, you can simply run:
 
-*   `./src/tools/swarming_client/auth.py login
-    --service=https://isolateserver.appspot.com`
+*   `./src/tools/luci-go/isolate login`
 
 The above link requires that you log in with your @google.com credentials. It's
 not known at the present time whether this works with @chromium.org accounts.
@@ -373,15 +456,189 @@ Email kbr@ if you try this and find it doesn't work.
 
 [isolate-server-credentials]: gpu_testing_bot_details.md#Isolate-server-credentials
 
+## Debugging a Specific Subset of Tests on a Specific GPU Bot
+
+When a test exhibits flake on the bots, it can be convenient to run it
+repeatedly with local code modifications on the bot where it is exhibiting
+flake. One way of doing this is via swarming (see the below section). However, a
+lower-overhead alternative that also works in the case where you are looking to
+run on a bot for which you cannot locally build is to locally alter the
+configuration of the bot in question to specify that it should run only the
+tests desired, repeating as many times as desired. Instructions for doing this
+are as follows (see the [example CL] for a concrete instantiation of these
+instructions):
+
+1. In testsuite_exceptions.pyl, find the section for the test suite in question
+   (creating it if it doesn't exist).
+2. Add modifications for the bot in question and specify arguments such that
+   your desired tests are run for the desired number of iterations.
+3. Run testing/buildbot/generate_buildbot_json.py and verify that the JSON file
+   for the bot in question was modified as you would expect.
+4. Upload and run tryjobs on that specific bot via "Choose Tryjobs."
+5. Examine the test results. (You can verify that the tests run were as you
+   expected by examining the test results for individual shards of the run
+   of the test suite in question.)
+6. Add logging/code modifications/etc as desired and go back to step 4,
+   repeating the process until you've uncovered the underlying issue.
+7. Remove the the changes to testsuite_exceptions.pyl and the JSON file if
+   turning the CL into one intended for submission!
+
+Here is an [example CL] that does this.
+
+[example CL]: https://chromium-review.googlesource.com/c/chromium/src/+/3898592/4
+
 ## Running Locally Built Binaries on the GPU Bots
 
-See the [Swarming documentation] for instructions on how to upload your binaries to the isolate server and trigger execution on Swarming.
+The easiest way to run a locally built test on swarming is the `tools/mb/mb.py`
+wrapper. This handles compilation (if necessary), uploading, and task triggering
+with a single command.
 
-Be sure to use the correct swarming dimensions for your desired GPU e.g. "1002:6613" instead of "AMD Radeon R7 240 (1002:6613)" which is how it appears on swarming task page.  You can query bots in the chromium.tests.gpu pool to find the correct dimensions:
+In order to use this, you will need:
 
-*   `python tools\swarming_client\swarming.py bots -S chromium-swarm.appspot.com -d pool chromium.tests.gpu`
+* An output directory set up with the correct GN args you want to use.
+  `out/Release` will be assumed for examples.
+* The dimensions for the type of machine you want to test on. This can be
+  grabbed from an existing swarming task, assuming you are trying to reproduce
+  an issue that has occurred on the bots. These can be found in the `Dimensions`
+  field just above the `CAS Inputs` field near the top of the swarming task's
+  page.
+* The arguments you want to run the test with. These can usually be taken
+  directly from the swarming task, printed out after `Command:` near the top of
+  the task output.
 
-[Swarming documentation]: https://www.chromium.org/developers/testing/isolated-testing/for-swes#TOC-Run-a-test-built-locally-on-Swarming
+The general format for an `mb.py` command is:
+
+```
+tools/mb/mb.py run -s --no-default-dimensions \
+-d dimension_key1 dimension_value1 -d dimension_key2 dimension_value2 ... \
+out/Release target_name \
+--
+test_arg_1 test_arg_2 ...
+```
+
+**Note:** The test is executed from within the output directory, so any
+relative paths passed in as test arguments need to be specified relative to
+that. This generally means prefixing paths with `../../` to get back to the
+Chromium src directory.
+
+The command will compile all necessary targets, upload the necessary files to
+CAS, and trigger a test task using the specified dimensions and test args. Once
+triggered, a swarming task URL will be printed that you can look at and the
+script will hang until it is complete. At this point, it is safe to kill the
+script, as the task has already been queued.
+
+### Concrete Example
+
+Say we wanted to reproduce an issue happening on a Linux NVIDIA machine in the
+WebGL 1 conformance tests. The dimensions for the failed task are:
+
+```
+gpu: NVIDIA GeForce GTX 1660 (10de:2184-440.100)
+os: Ubuntu-18.04.5|Ubuntu-18.04.6
+cpu: x86-64
+pool: chromium.tests.gpu
+```
+
+and the command from the swarming task is:
+
+```
+Additional test environment:
+    CHROME_HEADLESS=1
+    GTEST_SHARD_INDEX=0
+    GTEST_TOTAL_SHARDS=2
+    LANG=en_US.UTF-8
+Command: /b/s/w/ir/.task_template_vpython_cache/vpython/store/python_venv-rrcc1h3jcjhkvqtqf5p39mhf78/contents/bin/python3 \
+  ../../testing/scripts/run_gpu_integration_test_as_googletest.py \
+  ../../content/test/gpu/run_gpu_integration_test.py \
+  --isolated-script-test-output=/b/s/w/io83bc1749/output.json \
+  --isolated-script-test-perf-output=/b/s/w/io83bc1749/perftest-output.json \
+  webgl1_conformance --show-stdout --browser=release --passthrough -v \
+  --stable-jobs \
+  --extra-browser-args=--enable-logging=stderr --js-flags=--expose-gc --use-gl=angle --use-angle=gl --use-cmd-decoder=passthrough --force_high_performance_gpu \
+  --read-abbreviated-json-results-from=../../content/test/data/gpu/webgl1_conformance_linux_runtimes.json \
+  --jobs=4
+```
+
+The resulting `mb.py` command to run an equivalent task with a locally built
+binary would be:
+
+```
+tools/mb/mb.py run -s --no-default-dimensions \
+  -d gpu 10de:2184-440.100 \
+  -d os Ubuntu-18.04.5|Ubuntu-18.04.6 \
+  -d cpu x86-64 \
+  -d pool chromium.tests.gpu \
+  out/Release telemetry_gpu_integration_test \
+  -- \
+  --isolated-script-test-output '${ISOLATED_OUTDIR}/output.json' \
+  webgl1_conformance --show-stdout --browser=release --passthrough -v \
+  --stable-jobs \
+  --extra-browser-args="--enable-logging=stderr --js-flags=--expose-gc --use-gl=angle --use-angle=gl --use-cmd-decoder=passthrough --force_high_performance_gpu" \
+  --read-abbreviated-json-results-from=../../content/test/data/gpu/webgl1_conformance_linux_runtimes.json \
+  --jobs=4 \
+  --total-shards=2 --shard-index=0
+```
+
+Here is a breakdown of what each component does and where it comes from:
+
+* `run -s` - Tells `mb.py` to run a test target on swarming (as opposed to
+  locally)
+* `--no-default-dimensions` - `mb.py` by default assumes the dimensions for
+  Linux GCEs that Chromium commonly uses for testing. Passing this in prevents
+  those dimensions from being auto-added.
+* `-d gpu 10de:2184-440.100` - Specifies the GPU model and driver version to
+  target. This is pulled directly from the `gpu` dimension of the task. Note
+  that the actual dimension starts with the PCI-e vendor ID - the human-readable
+  string (`NVIDIA GeForce GTX 1660`) is just provided for ease-of-use within the
+  swarming UI.
+* `-d os Ubuntu-18.04.5|Ubuntu-18.04.6` - Specifies the OS to target. Pulled
+  directly from the `os` dimension of the task. The use of `|` means that either
+  specified OS version is acceptable.
+* `-d cpu x86-64` - Specifies the CPU architecture in case there are other types
+  such as ARM. Pulled directly from the `cpu` dimension of the task.
+* `-d pool chromium.tests.gpu` - Specifies the hardware pool to use. Pulled
+  directly from the `pool` dimension of the task. Most GPU machines are in
+  `chromium.tests.gpu`, but some configurations are in `chromium.tests` due to
+  sharing capacity with the rest of Chromium.
+* `out/Release` - Specifies the output directory to use. Can usually be changed
+  to whatever output directory you want to use, but this can have an effect on
+  which args you need to pass to the test.
+* `telemetry_gpu_integration_test` - Specifies the GN target to build.
+* `--` - Separates arguments meant for `mb.py` from test arguments.
+* `--isolated-script-test-output '${ISOLATED_OUTDIR}/output.json'` - Taken from
+  the same argument from the swarming task, but with `${ISOLATED_OUTDIR}` used
+  instead of a specific directory since it is random for every task. Note that
+  single quotes are necessary on UNIX-style platforms to avoid having it
+  evaluated on your local machine. The similar
+  `--isolated-script-test-perf-output` argument present in the swarming test
+  command can be omitted since its presence is just due to some legacy behavior.
+* `webgl1_conformance` - Specifies the test suite to run. Taken directly from
+  the swarming task.
+* `--show-stdout --passthrough -v --stable-jobs` - Boilerplate arguments taken
+  directly from the swarming task.
+* `--browser=release` - Specifies the browser to use, which is related to the
+  name of the output directory. `release` and `debug` will automatically map to
+  `out/Release` and `out/Debug`, but other values would require the use of
+  `--browser=exact` and `--browser-executable=path/to/browser`. This should end
+  up being either `./chrome` or `.\chrome.exe` for Linux and Windows,
+  respectively, since the path should be relative to the output directory.
+* `--extra-browser-args="..."` - Extra arguments to pass to Chrome when running
+  the tests. Taken directly from the swarming task, but double or single quotes
+  are necessary in order to have the space-separated values grouped together.
+* `--read-abbreviated-json-results-from=...` - Taken directly from the swarming
+  task. Affects test sharding behavior, so only necessary if reproducing a
+  specific shard (covered later), but does not negatively impact anything if
+  unnecessarily passed in.
+* `--jobs=4` - Taken directly from the swarming task. Affects how many tests are
+  run in parallel.
+* `--total-shards=2 --shard-index=0` - Taken from the environment variables of
+  the swarming task. This will cause only the tests that ran on the particular
+  shard to run instead of all tests from the suite. If specifying these, it is
+  important to also specify `--read-abbreviated-json-results-from` if it is
+  present in the original command, as otherwise the tests that are run will
+  differ from the original swarming task. A possible alternative to this would
+  be explicitly specify the tests you want to run using the appropriate argument
+  for the target, in this case `--test-filter`.
 
 ## Moving Test Binaries from Machine to Machine
 
@@ -390,7 +647,7 @@ the Telemetry-based GPU tests' dependencies, which you can then move
 to another machine for testing:
 
 1. Build Chrome (into `out/Release` in this example).
-1. `python tools/mb/mb.py zip out/Release/ telemetry_gpu_integration_test out/telemetry_gpu_integration_test.zip`
+1. `vpython3 tools/mb/mb.py zip out/Release/ telemetry_gpu_integration_test out/telemetry_gpu_integration_test.zip`
 
 Then copy telemetry_gpu_integration_test.zip to another machine. Unzip
 it, and cd into the resulting directory. Invoke
@@ -451,11 +708,7 @@ all you need to do is make sure that your new test runs correctly via isolates.
 See the documentation from the GPU bot details on [adding new isolated
 tests][new-isolates] for the gn args and authentication needed to upload
 isolates to the isolate server. Most likely the new test will be Telemetry
-based, and included in the `telemetry_gpu_test_run` isolate. You can then
-invoke it via:
-
-*   `./src/tools/swarming_client/run_isolated.py -s [HASH]
-    -I https://isolateserver.appspot.com -- [TEST_NAME] [TEST_ARGUMENTS]`
+based, and included in the `telemetry_gpu_test_run` isolate.
 
 [new-isolates]: gpu_testing_bot_details.md#Adding-a-new-isolated-test-to-the-bots
 
@@ -464,15 +717,15 @@ invoke it via:
 The tests that are run by the GPU bots are described by a couple of JSON files
 in the Chromium workspace:
 
-*   [`chromium.gpu.json`](https://chromium.googlesource.com/chromium/src/+/master/testing/buildbot/chromium.gpu.json)
-*   [`chromium.gpu.fyi.json`](https://chromium.googlesource.com/chromium/src/+/master/testing/buildbot/chromium.gpu.fyi.json)
+*   [`chromium.gpu.json`](https://chromium.googlesource.com/chromium/src/+/main/testing/buildbot/chromium.gpu.json)
+*   [`chromium.gpu.fyi.json`](https://chromium.googlesource.com/chromium/src/+/main/testing/buildbot/chromium.gpu.fyi.json)
 
 These files are autogenerated by the following script:
 
-*   [`generate_buildbot_json.py`](https://chromium.googlesource.com/chromium/src/+/master/testing/buildbot/generate_buildbot_json.py)
+*   [`generate_buildbot_json.py`](https://chromium.googlesource.com/chromium/src/+/main/testing/buildbot/generate_buildbot_json.py)
 
 This script is documented in
-[`testing/buildbot/README.md`](https://chromium.googlesource.com/chromium/src/+/master/testing/buildbot/README.md). The
+[`testing/buildbot/README.md`](https://chromium.googlesource.com/chromium/src/+/main/testing/buildbot/README.md). The
 JSON files are parsed by the chromium and chromium_trybot recipes, and describe
 two basic types of tests:
 
@@ -515,7 +768,7 @@ itself will contain links. In either case, these links will direct to Gold
 pages showing the image produced by the image and the approved image that most
 closely matches it.
 
-Note that for the tests which programatically check colors in certain regions of
+Note that for the tests which programmatically check colors in certain regions of
 the image (tests with `expected_colors` fields in [pixel_test_pages]), there
 likely won't be a closest approved image since those tests only upload data to
 Gold in the event of a failure.
@@ -529,7 +782,7 @@ you will have to approve new images. Simply run your CL through the CQ and
 follow the steps outline [here][pixel wrangling triage] under the "Check if any
 pixel test failures are actual failures or need to be rebaselined." step.
 
-[pixel wrangling triage]: pixel_wrangling.md#How-to-Keep-the-Bots-Green
+[pixel wrangling triage]: http://go/gpu-pixel-wrangler-info#how-to-keep-the-bots-green
 
 If you are adding a new pixel test, it is beneficial to set the
 `grace_period_end` argument in the test's definition. This will allow the test
@@ -638,4 +891,4 @@ include links to the failing builds and copies of the logs, since the logs
 expire after a few days. [GPU pixel wranglers] should give the highest priority
 to eliminating flakiness on the tree.
 
-[GPU pixel wranglers]: pixel_wrangling.md
+[GPU pixel wranglers]: http://go/gpu-pixel-wrangler

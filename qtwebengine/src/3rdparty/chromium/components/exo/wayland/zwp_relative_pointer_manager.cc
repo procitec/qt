@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,6 +10,7 @@
 
 #include <memory>
 
+#include "base/memory/raw_ptr.h"
 #include "components/exo/pointer.h"
 #include "components/exo/relative_pointer_delegate.h"
 #include "components/exo/wayland/server_util.h"
@@ -28,6 +29,11 @@ class WaylandRelativePointerDelegate : public RelativePointerDelegate {
       : resource_(resource), pointer_(pointer) {
     pointer->RegisterRelativePointerDelegate(this);
   }
+
+  WaylandRelativePointerDelegate(const WaylandRelativePointerDelegate&) =
+      delete;
+  WaylandRelativePointerDelegate& operator=(
+      const WaylandRelativePointerDelegate&) = delete;
 
   ~WaylandRelativePointerDelegate() override {
     if (pointer_)
@@ -48,10 +54,8 @@ class WaylandRelativePointerDelegate : public RelativePointerDelegate {
   }
 
  private:
-  wl_resource* const resource_;
-  Pointer* pointer_;
-
-  DISALLOW_COPY_AND_ASSIGN(WaylandRelativePointerDelegate);
+  const raw_ptr<wl_resource> resource_;
+  raw_ptr<Pointer> pointer_;
 };
 
 void relative_pointer_destroy(wl_client* client, wl_resource* resource) {

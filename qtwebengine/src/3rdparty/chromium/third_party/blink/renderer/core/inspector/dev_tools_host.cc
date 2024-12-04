@@ -29,10 +29,13 @@
 
 #include "third_party/blink/renderer/core/inspector/dev_tools_host.h"
 
-#include "third_party/blink/public/web/web_menu_item_info.h"
-#include "third_party/blink/renderer/bindings/core/v8/script_source_code.h"
+#include <utility>
+
+#include "base/json/json_reader.h"
+#include "third_party/blink/public/common/context_menu_data/menu_item_info.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_script_runner.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_show_context_menu_item.h"
 #include "third_party/blink/renderer/core/clipboard/system_clipboard.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
 #include "third_party/blink/renderer/core/dom/events/event_target.h"
@@ -48,6 +51,7 @@
 #include "third_party/blink/renderer/core/page/context_menu_controller.h"
 #include "third_party/blink/renderer/core/page/context_menu_provider.h"
 #include "third_party/blink/renderer/core/page/page.h"
+#include "third_party/blink/renderer/core/script/classic_script.h"
 #include "third_party/blink/renderer/platform/bindings/script_forbidden_scope.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_error.h"
@@ -62,7 +66,7 @@ namespace blink {
 class FrontendMenuProvider final : public ContextMenuProvider {
  public:
   FrontendMenuProvider(DevToolsHost* devtools_host,
-                       WebVector<WebMenuItemInfo> items)
+                       WebVector<MenuItemInfo> items)
       : devtools_host_(devtools_host), items_(std::move(items)) {}
   ~FrontendMenuProvider() override {
     // Verify that this menu provider has been detached.
@@ -82,10 +86,10 @@ class FrontendMenuProvider final : public ContextMenuProvider {
       devtools_host_->ClearMenuProvider();
       devtools_host_ = nullptr;
     }
-    items_.Clear();
+    items_.clear();
   }
 
-  WebVector<WebMenuItemInfo> PopulateContextMenu() override {
+  WebVector<MenuItemInfo> PopulateContextMenu() override {
     return std::move(items_);
   }
 
@@ -98,7 +102,7 @@ class FrontendMenuProvider final : public ContextMenuProvider {
 
  private:
   Member<DevToolsHost> devtools_host_;
-  WebVector<WebMenuItemInfo> items_;
+  WebVector<MenuItemInfo> items_;
 };
 
 DevToolsHost::DevToolsHost(InspectorFrontendClient* client,
@@ -119,18 +123,14 @@ void DevToolsHost::Trace(Visitor* visitor) const {
 void DevToolsHost::EvaluateScript(const String& expression) {
   if (ScriptForbiddenScope::IsScriptForbidden())
     return;
-  if (!frontend_frame_)
-    return;
-  ScriptState* script_state = ToScriptStateForMainWorld(frontend_frame_);
-  if (!script_state)
-    return;
-  ScriptState::Scope scope(script_state);
-  v8::MicrotasksScope microtasks(script_state->GetIsolate(),
-                                 v8::MicrotasksScope::kRunMicrotasks);
-  ScriptSourceCode source_code(expression, ScriptSourceLocationType::kInternal,
-                               nullptr, KURL(), TextPosition());
-  V8ScriptRunner::CompileAndRunInternalScript(script_state->GetIsolate(),
-                                              script_state, source_code);
+  if (RuntimeEnabledFeatures::BlinkLifecycleScriptForbiddenEnabled()) {
+    CHECK(!ScriptForbiddenScope::WillBeScriptForbidden());
+  } else {
+    DCHECK(!ScriptForbiddenScope::WillBeScriptForbidden());
+  }
+  ClassicScript::CreateUnspecifiedScript(expression,
+                                         ScriptSourceLocationType::kInternal)
+      ->RunScriptOnScriptState(ToScriptStateForMainWorld(frontend_frame_));
 }
 
 void DevToolsHost::DisconnectClient() {
@@ -146,8 +146,7 @@ float DevToolsHost::zoomFactor() {
   if (!frontend_frame_)
     return 1;
   float zoom_factor = frontend_frame_->PageZoomFactor();
-  // Cancel the device scale factor applied to the zoom factor in
-  // use-zoom-for-dsf mode.
+  // Cancel the device scale factor applied to the zoom factor.
   const ChromeClient* client =
       frontend_frame_->View()->GetChromeClient();
   float window_to_viewport_ratio =
@@ -160,42 +159,100 @@ void DevToolsHost::copyText(const String& text) {
   frontend_frame_->GetSystemClipboard()->CommitWrite();
 }
 
-static String EscapeUnicodeNonCharacters(const String& str) {
-  const UChar kNonChar = 0xD800;
-
-  unsigned i = 0;
-  while (i < str.length() && str[i] < kNonChar)
-    ++i;
-  if (i == str.length())
-    return str;
-
-  StringBuilder dst;
-  dst.Append(str, 0, i);
-  for (; i < str.length(); ++i) {
-    UChar c = str[i];
-    if (c >= kNonChar) {
-      unsigned symbol = static_cast<unsigned>(c);
-      String symbol_code = String::Format("\\u%04X", symbol);
-      dst.Append(symbol_code);
-    } else {
-      dst.Append(c);
-    }
-  }
-  return dst.ToString();
+String DevToolsHost::platform() const {
+#if BUILDFLAG(IS_MAC)
+  return "mac";
+#elif BUILDFLAG(IS_WIN)
+  return "windows";
+#else  // Unix-like systems
+  return "linux";
+#endif
 }
 
 void DevToolsHost::sendMessageToEmbedder(const String& message) {
-  if (client_)
-    client_->SendMessageToEmbedder(EscapeUnicodeNonCharacters(message));
+  if (client_) {
+    // Strictly convert, as we expect message to be serialized JSON.
+    auto value = base::JSONReader::Read(
+        message.Utf8(WTF::UTF8ConversionMode::kStrictUTF8Conversion));
+    if (!value || !value->is_dict()) {
+      ScriptState* script_state = ToScriptStateForMainWorld(frontend_frame_);
+      if (!script_state)
+        return;
+      V8ThrowException::ThrowTypeError(
+          script_state->GetIsolate(),
+          value ? "Message to embedder must deserialize to a dictionary value"
+                : "Message to embedder couldn't be JSON-deserialized");
+      return;
+    }
+    client_->SendMessageToEmbedder(std::move(*value).TakeDict());
+  }
 }
 
-void DevToolsHost::ShowContextMenu(LocalFrame* target_frame,
-                                   float x,
-                                   float y,
-                                   WebVector<WebMenuItemInfo> items) {
+void DevToolsHost::sendMessageToEmbedder(base::Value::Dict message) {
+  if (client_)
+    client_->SendMessageToEmbedder(std::move(message));
+}
+
+static std::vector<MenuItemInfo> PopulateContextMenuItems(
+    const HeapVector<Member<ShowContextMenuItem>>& item_array) {
+  std::vector<MenuItemInfo> items;
+  for (auto& item : item_array) {
+    MenuItemInfo& item_info = items.emplace_back();
+
+    if (item->type() == "separator") {
+      item_info.type = MenuItemInfo::kSeparator;
+      item_info.enabled = true;
+      item_info.action = DevToolsHost::kMaxContextMenuAction;
+    } else if (item->type() == "subMenu" && item->hasSubItems()) {
+      item_info.type = MenuItemInfo::kSubMenu;
+      item_info.enabled = true;
+      item_info.action = DevToolsHost::kMaxContextMenuAction;
+      item_info.sub_menu_items = PopulateContextMenuItems(item->subItems());
+      String label = item->getLabelOr(String());
+      label.Ensure16Bit();
+      item_info.label = std::u16string(label.Characters16(), label.length());
+    } else {
+      if (!item->hasId() || item->id() >= DevToolsHost::kMaxContextMenuAction) {
+        return std::vector<MenuItemInfo>();
+      }
+
+      if (item->type() == "checkbox") {
+        item_info.type = MenuItemInfo::kCheckableOption;
+      } else {
+        item_info.type = MenuItemInfo::kOption;
+      }
+      String label = item->getLabelOr(String());
+      label.Ensure16Bit();
+      item_info.label = std::u16string(label.Characters16(), label.length());
+      item_info.enabled = item->enabled();
+      item_info.action = item->id();
+      item_info.checked = item->checked();
+    }
+  }
+  return items;
+}
+
+void DevToolsHost::showContextMenuAtPoint(
+    v8::Isolate* isolate,
+    float x,
+    float y,
+    const HeapVector<Member<ShowContextMenuItem>>& items,
+    Document* document) {
   DCHECK(frontend_frame_);
+
+  LocalFrame* target_frame = nullptr;
+  if (document) {
+    target_frame = document->GetFrame();
+  } else if (LocalDOMWindow* window = EnteredDOMWindow(isolate)) {
+    target_frame = window->GetFrame();
+  }
+  if (!target_frame) {
+    return;
+  }
+
+  std::vector<MenuItemInfo> menu_items = PopulateContextMenuItems(items);
   auto* menu_provider =
-      MakeGarbageCollected<FrontendMenuProvider>(this, std::move(items));
+      MakeGarbageCollected<FrontendMenuProvider>(this, std::move(menu_items));
   menu_provider_ = menu_provider;
   float zoom = target_frame->PageZoomFactor();
   {

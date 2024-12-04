@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,24 +16,25 @@
 #include <numeric>
 #include <utility>
 
-#include "base/bind.h"
 #include "base/bits.h"
-#include "base/callback.h"
-#include "base/callback_helpers.h"
 #include "base/command_line.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
+#include "base/functional/callback_helpers.h"
+#include "base/memory/shared_memory_mapping.h"
+#include "base/memory/unsafe_shared_memory_region.h"
 #include "base/numerics/safe_conversions.h"
-#include "base/optional.h"
-#include "base/single_thread_task_runner.h"
-#include "base/stl_util.h"
-#include "base/task/post_task.h"
+#include "base/strings/strcat.h"
+#include "base/task/sequenced_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/trace_event.h"
 #include "media/base/bitstream_buffer.h"
 #include "media/base/color_plane_layout.h"
-#include "media/base/scopedfd_helper.h"
-#include "media/base/unaligned_shared_memory.h"
+#include "media/base/media_log.h"
+#include "media/base/media_switches.h"
+#include "media/base/media_util.h"
 #include "media/base/video_frame_layout.h"
 #include "media/base/video_types.h"
 #include "media/gpu/chromeos/fourcc.h"
@@ -41,35 +42,10 @@
 #include "media/gpu/chromeos/platform_video_frame_utils.h"
 #include "media/gpu/gpu_video_encode_accelerator_helpers.h"
 #include "media/gpu/macros.h"
+#include "media/gpu/v4l2/v4l2_utils.h"
 #include "media/video/h264_level_limits.h"
 #include "media/video/h264_parser.h"
-
-#define NOTIFY_ERROR(x)                      \
-  do {                                       \
-    VLOGF(1) << "Setting error state:" << x; \
-    SetErrorState(x);                        \
-  } while (0)
-
-#define IOCTL_OR_ERROR_RETURN_VALUE(type, arg, value, type_str) \
-  do {                                                          \
-    if (device_->Ioctl(type, arg) != 0) {                       \
-      VPLOGF(1) << "ioctl() failed: " << type_str;              \
-      NOTIFY_ERROR(kPlatformFailureError);                      \
-      return value;                                             \
-    }                                                           \
-  } while (0)
-
-#define IOCTL_OR_ERROR_RETURN(type, arg) \
-  IOCTL_OR_ERROR_RETURN_VALUE(type, arg, ((void)0), #type)
-
-#define IOCTL_OR_ERROR_RETURN_FALSE(type, arg) \
-  IOCTL_OR_ERROR_RETURN_VALUE(type, arg, false, #type)
-
-#define IOCTL_OR_LOG_ERROR(type, arg)              \
-  do {                                             \
-    if (device_->Ioctl(type, arg) != 0)            \
-      VPLOGF(1) << "ioctl() failed: " << #type;    \
-  } while (0)
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace {
 const uint8_t kH264StartCode[] = {0, 0, 0, 1};
@@ -102,7 +78,7 @@ namespace media {
 
 namespace {
 // Convert VideoFrameLayout to ImageProcessor::PortConfig.
-base::Optional<ImageProcessor::PortConfig> VideoFrameLayoutToPortConfig(
+absl::optional<ImageProcessor::PortConfig> VideoFrameLayoutToPortConfig(
     const VideoFrameLayout& layout,
     const gfx::Rect& visible_rect,
     const std::vector<VideoFrame::StorageType>& preferred_storage_types) {
@@ -111,7 +87,7 @@ base::Optional<ImageProcessor::PortConfig> VideoFrameLayoutToPortConfig(
   if (!fourcc) {
     DVLOGF(1) << "Failed to create Fourcc from video pixel format "
               << VideoPixelFormatToString(layout.format());
-    return base::nullopt;
+    return absl::nullopt;
   }
   return ImageProcessor::PortConfig(*fourcc, layout.coded_size(),
                                     layout.planes(), visible_rect,
@@ -119,20 +95,32 @@ base::Optional<ImageProcessor::PortConfig> VideoFrameLayoutToPortConfig(
 }
 
 // Create Layout from |layout| with is_multi_planar = true.
-base::Optional<VideoFrameLayout> AsMultiPlanarLayout(
+absl::optional<VideoFrameLayout> AsMultiPlanarLayout(
     const VideoFrameLayout& layout) {
   if (layout.is_multi_planar())
-    return base::make_optional<VideoFrameLayout>(layout);
+    return absl::make_optional<VideoFrameLayout>(layout);
   return VideoFrameLayout::CreateMultiPlanar(
       layout.format(), layout.coded_size(), layout.planes());
+}
+
+scoped_refptr<base::SequencedTaskRunner> CreateEncoderTaskRunner() {
+  if (base::FeatureList::IsEnabled(kUSeSequencedTaskRunnerForVEA)) {
+    return base::ThreadPool::CreateSequencedTaskRunner(
+        {base::WithBaseSyncPrimitives(), base::TaskPriority::USER_VISIBLE,
+         base::MayBlock()});
+  } else {
+    return base::ThreadPool::CreateSingleThreadTaskRunner(
+        {base::WithBaseSyncPrimitives(), base::MayBlock()},
+        base::SingleThreadTaskRunnerThreadMode::DEDICATED);
+  }
 }
 }  // namespace
 
 struct V4L2VideoEncodeAccelerator::BitstreamBufferRef {
-  BitstreamBufferRef(int32_t id, std::unique_ptr<UnalignedSharedMemory> shm)
-      : id(id), shm(std::move(shm)) {}
+  BitstreamBufferRef(int32_t id, base::WritableSharedMemoryMapping shm_mapping)
+      : id(id), shm_mapping(std::move(shm_mapping)) {}
   const int32_t id;
-  const std::unique_ptr<UnalignedSharedMemory> shm;
+  base::WritableSharedMemoryMapping shm_mapping;
 };
 
 V4L2VideoEncodeAccelerator::InputRecord::InputRecord() = default;
@@ -163,25 +151,24 @@ V4L2VideoEncodeAccelerator::InputFrameInfo::InputFrameInfo(
 
 V4L2VideoEncodeAccelerator::InputFrameInfo::~InputFrameInfo() = default;
 
+// static
+base::AtomicRefCount V4L2VideoEncodeAccelerator::num_instances_(0);
+
 V4L2VideoEncodeAccelerator::V4L2VideoEncodeAccelerator(
     scoped_refptr<V4L2Device> device)
-    : child_task_runner_(base::ThreadTaskRunnerHandle::Get()),
+    : can_use_encoder_(num_instances_.Increment() < kMaxNumOfInstances),
+      child_task_runner_(base::SequencedTaskRunner::GetCurrentDefault()),
       native_input_mode_(false),
       output_buffer_byte_size_(0),
       output_format_fourcc_(0),
-      current_bitrate_(0),
       current_framerate_(0),
       encoder_state_(kUninitialized),
       device_(std::move(device)),
       input_memory_type_(V4L2_MEMORY_USERPTR),
       is_flush_supported_(false),
-      // TODO(akahuang): Change to use SequencedTaskRunner to see if the
-      // performance is affected.
       // TODO(akahuang): Remove WithBaseSyncPrimitives() after replacing poll
       // thread by V4L2DevicePoller.
-      encoder_task_runner_(base::ThreadPool::CreateSingleThreadTaskRunner(
-          {base::WithBaseSyncPrimitives(), base::MayBlock()},
-          base::SingleThreadTaskRunnerThreadMode::DEDICATED)),
+      encoder_task_runner_(CreateEncoderTaskRunner()),
       device_poll_thread_("V4L2EncoderDevicePollThread") {
   DCHECK_CALLED_ON_VALID_SEQUENCE(child_sequence_checker_);
   DETACH_FROM_SEQUENCE(encoder_sequence_checker_);
@@ -193,20 +180,30 @@ V4L2VideoEncodeAccelerator::~V4L2VideoEncodeAccelerator() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(encoder_sequence_checker_);
   DCHECK(!device_poll_thread_.IsRunning());
   VLOGF(2);
+
+  num_instances_.Decrement();
 }
 
-bool V4L2VideoEncodeAccelerator::Initialize(const Config& config,
-                                            Client* client) {
+bool V4L2VideoEncodeAccelerator::Initialize(
+    const Config& config,
+    Client* client,
+    std::unique_ptr<MediaLog> media_log) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(child_sequence_checker_);
   DCHECK_EQ(encoder_state_, kUninitialized);
 
   TRACE_EVENT0("media,gpu", "V4L2VEA::Initialize");
   VLOGF(2) << ": " << config.AsHumanReadableString();
 
+  if (!can_use_encoder_) {
+    MEDIA_LOG(ERROR, media_log.get()) << "Too many encoders are allocated";
+    return false;
+  }
+
   // V4L2VEA doesn't support temporal layers but we let it pass here to support
   // simulcast.
   if (config.HasSpatialLayer()) {
-    VLOGF(1) << "Spatial layer encoding is supported";
+    MEDIA_LOG(ERROR, media_log.get())
+        << "Spatial layer encoding is not yet supported";
     return false;
   }
 
@@ -216,32 +213,34 @@ bool V4L2VideoEncodeAccelerator::Initialize(const Config& config,
   client_ = client_ptr_factory_->GetWeakPtr();
 
   output_format_fourcc_ =
-      V4L2Device::VideoCodecProfileToV4L2PixFmt(config.output_profile, false);
-  if (!output_format_fourcc_) {
-    VLOGF(1) << "invalid output_profile="
-             << GetProfileName(config.output_profile);
+      VideoCodecProfileToV4L2PixFmt(config.output_profile, false);
+  if (output_format_fourcc_ == V4L2_PIX_FMT_INVALID) {
+    MEDIA_LOG(ERROR, media_log.get())
+        << "invalid output_profile=" << GetProfileName(config.output_profile);
     return false;
   }
 
   if (!device_->Open(V4L2Device::Type::kEncoder, output_format_fourcc_)) {
-    VLOGF(1) << "Failed to open device for profile="
-             << GetProfileName(config.output_profile)
-             << ", fourcc=" << FourccToString(output_format_fourcc_);
+    MEDIA_LOG(ERROR, media_log.get())
+        << "Failed to open device for profile="
+        << GetProfileName(config.output_profile)
+        << ", fourcc=" << FourccToString(output_format_fourcc_);
     return false;
   }
 
   gfx::Size min_resolution;
   gfx::Size max_resolution;
-  device_->GetSupportedResolution(output_format_fourcc_, &min_resolution,
-                                  &max_resolution);
+  GetSupportedResolution(base::BindRepeating(&V4L2Device::Ioctl, device_),
+                         output_format_fourcc_, &min_resolution,
+                         &max_resolution);
   if (config.input_visible_size.width() < min_resolution.width() ||
       config.input_visible_size.height() < min_resolution.height() ||
       config.input_visible_size.width() > max_resolution.width() ||
       config.input_visible_size.height() > max_resolution.height()) {
-    VLOGF(1) << "Unsupported resolution: "
-             << config.input_visible_size.ToString()
-             << ", min=" << min_resolution.ToString()
-             << ", max=" << max_resolution.ToString();
+    MEDIA_LOG(ERROR, media_log.get())
+        << "Unsupported resolution: " << config.input_visible_size.ToString()
+        << ", min=" << min_resolution.ToString()
+        << ", max=" << max_resolution.ToString();
     return false;
   }
 
@@ -253,47 +252,49 @@ bool V4L2VideoEncodeAccelerator::Initialize(const Config& config,
   if (!is_flush_supported_)
     VLOGF(2) << "V4L2_ENC_CMD_STOP is not supported.";
 
-  struct v4l2_capability caps {};
+  struct v4l2_capability caps;
+  memset(&caps, 0, sizeof(caps));
   const __u32 kCapsRequired = V4L2_CAP_VIDEO_M2M_MPLANE | V4L2_CAP_STREAMING;
-  IOCTL_OR_ERROR_RETURN_FALSE(VIDIOC_QUERYCAP, &caps);
-  if ((caps.capabilities & kCapsRequired) != kCapsRequired) {
-    VLOGF(1) << "caps check failed: 0x" << std::hex << caps.capabilities;
+  if (device_->Ioctl(VIDIOC_QUERYCAP, &caps) != 0) {
+    MEDIA_LOG(ERROR, media_log.get())
+        << "ioctl() failed: VIDIOC_QUERYCAP, errno=" << errno;
     return false;
   }
 
-  bool result = false;
-  base::WaitableEvent done;
+  if ((caps.capabilities & kCapsRequired) != kCapsRequired) {
+    MEDIA_LOG(ERROR, media_log.get())
+        << "caps check failed: 0x" << std::hex << caps.capabilities;
+    return false;
+  }
+
+  driver_name_ = device_->GetDriverName();
+
   encoder_task_runner_->PostTask(
       FROM_HERE, base::BindOnce(&V4L2VideoEncodeAccelerator::InitializeTask,
-                                weak_this_, config, &result, &done));
-  done.Wait();
-  return result;
+                                weak_this_, config));
+  return true;
 }
 
-void V4L2VideoEncodeAccelerator::InitializeTask(const Config& config,
-                                                bool* result,
-                                                base::WaitableEvent* done) {
+void V4L2VideoEncodeAccelerator::InitializeTask(const Config& config) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(encoder_sequence_checker_);
+  TRACE_EVENT0("media,gpu", "V4L2VEA::InitializeTask");
 
-  // Signal the event when leaving the method.
-  base::ScopedClosureRunner signal_event(
-      base::BindOnce(&base::WaitableEvent::Signal, base::Unretained(done)));
-  *result = false;
+  // Set kInitialized here so that NotifyErrorStatus() is invoked from here.
+  encoder_state_ = kInitialized;
 
   native_input_mode_ =
       config.storage_type.value_or(Config::StorageType::kShmem) ==
-      Config::StorageType::kDmabuf;
+      Config::StorageType::kGpuMemoryBuffer;
 
   input_queue_ = device_->GetQueue(V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE);
   output_queue_ = device_->GetQueue(V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE);
   if (!input_queue_ || !output_queue_) {
-    VLOGF(1) << "Failed to get V4L2Queue.";
-    NOTIFY_ERROR(kPlatformFailureError);
+    SetErrorState({EncoderStatus::Codes::kEncoderInitializationError,
+                   "Failed to get V4L2Queue"});
     return;
   }
 
   if (!SetFormats(config.input_format, config.output_profile)) {
-    VLOGF(1) << "Failed setting up formats";
     return;
   }
 
@@ -306,7 +307,8 @@ void V4L2VideoEncodeAccelerator::InitializeTask(const Config& config,
         std::vector<ColorPlaneLayout>(
             VideoFrame::NumPlanes(config.input_format)));
     if (!input_layout) {
-      VLOGF(1) << "Invalid image processor input layout";
+      SetErrorState({EncoderStatus::Codes::kUnsupportedFrameFormat,
+                     "Invalid image processor input layout"});
       return;
     }
 
@@ -315,7 +317,12 @@ void V4L2VideoEncodeAccelerator::InitializeTask(const Config& config,
                               device_input_layout_->coded_size(),
                               encoder_input_visible_rect_,
                               encoder_input_visible_rect_)) {
-      VLOGF(1) << "Failed to create image processor";
+      SetErrorState(
+          {EncoderStatus::Codes::kEncoderInitializationError,
+           base::StrCat(
+               {"Failed to create image processor ", "for format conversion",
+                VideoPixelFormatToString(input_layout->format()), " -> ",
+                VideoPixelFormatToString(device_input_layout_->format())})});
       return;
     }
 
@@ -324,24 +331,59 @@ void V4L2VideoEncodeAccelerator::InitializeTask(const Config& config,
         image_processor_->output_config().size.height());
     if (!NegotiateInputFormat(device_input_layout_->format(),
                               ip_output_buffer_size)) {
-      VLOGF(1) << "Failed to reconfigure v4l2 encoder driver with the "
-               << "ImageProcessor output buffer: "
-               << ip_output_buffer_size.ToString();
+      SetErrorState(
+          {EncoderStatus::Codes::kUnsupportedFrameFormat,
+           base::StrCat({"Failed to reconfigure v4l2 encoder driver with the ",
+                         "ImageProcessor output buffer: ",
+                         ip_output_buffer_size.ToString()})});
       return;
     }
   }
 
-  if (!InitInputMemoryType(config))
+  if (!InitInputMemoryType(config) || !InitControls(config) ||
+      !CreateOutputBuffers()) {
+    SetErrorState(EncoderStatus::Codes::kEncoderInitializationError);
     return;
-  if (!InitControls(config))
-    return;
-  if (!CreateOutputBuffers())
-    return;
+  }
 
-  encoder_state_ = kInitialized;
+  uint32_t bitrate_mode = V4L2_MPEG_VIDEO_BITRATE_MODE_CBR;
+  switch (config.bitrate.mode()) {
+    case Bitrate::Mode::kConstant:
+      current_bitrate_ = Bitrate::ConstantBitrate(0u);
+      bitrate_mode = V4L2_MPEG_VIDEO_BITRATE_MODE_CBR;
+      break;
+    case Bitrate::Mode::kVariable:
+      if (!base::FeatureList::IsEnabled(kChromeOSHWVBREncoding)) {
+        SetErrorState({EncoderStatus::Codes::kEncoderUnsupportedConfig,
+                       "VBR encoding is disabled"});
+        return;
+      }
+      current_bitrate_ = Bitrate::VariableBitrate(0u, 0u);
+      bitrate_mode = V4L2_MPEG_VIDEO_BITRATE_MODE_VBR;
+      break;
+    default:
+      SetErrorState({EncoderStatus::Codes::kEncoderUnsupportedConfig,
+                     base::StrCat({"Invalid bitrate mode: ",
+                                   base::NumberToString(base::strict_cast<int>(
+                                       config.bitrate.mode()))})});
+      return;
+  }
+
+  if (!device_->SetExtCtrls(
+          V4L2_CID_MPEG_CLASS,
+          {V4L2ExtCtrl(V4L2_CID_MPEG_VIDEO_BITRATE_MODE, bitrate_mode)})) {
+    SetErrorState({EncoderStatus::Codes::kEncoderHardwareDriverError,
+                   base::StrCat({"Failed to configure bitrate mode: ",
+                                 base::NumberToString(base::strict_cast<int>(
+                                     config.bitrate.mode()))})});
+    return;
+  }
+
   RequestEncodingParametersChangeTask(
-      config.initial_bitrate, config.initial_framerate.value_or(
-                                  VideoEncodeAccelerator::kDefaultFramerate));
+      config.bitrate,
+      config.initial_framerate.value_or(
+          VideoEncodeAccelerator::kDefaultFramerate),
+      absl::nullopt);
 
   // input_frame_size_ is the size of input_config of |image_processor_|.
   // On native_input_mode_, since the passed size in RequireBitstreamBuffers()
@@ -357,10 +399,10 @@ void V4L2VideoEncodeAccelerator::InitializeTask(const Config& config,
   // Notify VideoEncoderInfo after initialization.
   VideoEncoderInfo encoder_info;
   encoder_info.implementation_name = "V4L2VideoEncodeAccelerator";
-  encoder_info.has_trusted_rate_controller = true;
-  encoder_info.is_hardware_accelerated = true;
-  encoder_info.supports_native_handle = true;
-  encoder_info.supports_simulcast = false;
+  DCHECK(!encoder_info.has_trusted_rate_controller);
+  DCHECK(encoder_info.is_hardware_accelerated);
+  DCHECK(encoder_info.supports_native_handle);
+  DCHECK(!encoder_info.supports_simulcast);
 
   // V4L2VideoEncodeAccelerator doesn't support either temporal-SVC or
   // spatial-SVC. A single stream shall be output at the desired FPS.
@@ -369,9 +411,6 @@ void V4L2VideoEncodeAccelerator::InitializeTask(const Config& config,
   child_task_runner_->PostTask(
       FROM_HERE,
       base::BindOnce(&Client::NotifyEncoderInfoChange, client_, encoder_info));
-
-  // Finish initialization.
-  *result = true;
 }
 
 bool V4L2VideoEncodeAccelerator::CreateImageProcessor(
@@ -385,51 +424,58 @@ bool V4L2VideoEncodeAccelerator::CreateImageProcessor(
 
   auto ip_input_layout = AsMultiPlanarLayout(input_layout);
   if (!ip_input_layout) {
-    VLOGF(1) << "Failed to get multi-planar input layout, input_layout="
-             << input_layout;
+    LOG(ERROR) << "Failed to get multi-planar input layout, input_layout="
+               << input_layout;
     return false;
   }
 
   VideoFrame::StorageType input_storage_type =
       native_input_mode_ ? VideoFrame::STORAGE_GPU_MEMORY_BUFFER
-                         : VideoFrame::STORAGE_MOJO_SHARED_BUFFER;
+                         : VideoFrame::STORAGE_SHMEM;
   auto input_config = VideoFrameLayoutToPortConfig(
       *ip_input_layout, input_visible_rect, {input_storage_type});
   if (!input_config) {
-    VLOGF(1) << "Failed to create ImageProcessor input config";
+    LOG(ERROR) << "Failed to create ImageProcessor input config";
     return false;
   }
 
   auto platform_layout = GetPlatformVideoFrameLayout(
-      /*gpu_memory_buffer_factory=*/nullptr, output_format, output_size,
-      gfx::BufferUsage::SCANOUT_VEA_READ_CAMERA_AND_CPU_READ_WRITE);
+      output_format, output_size,
+      gfx::BufferUsage::VEA_READ_CAMERA_AND_CPU_READ_WRITE);
   if (!platform_layout) {
-    VLOGF(1) << "Failed to get Platform VideoFrameLayout";
+    LOG(ERROR) << "Failed to get Platform VideoFrameLayout";
     return false;
   }
   auto output_layout = AsMultiPlanarLayout(platform_layout.value());
   if (!output_layout) {
-    VLOGF(1) << "Failed to get multi-planar platform layout, platform_layout="
-             << *platform_layout;
+    LOG(ERROR) << "Failed to get multi-planar platform layout, platform_layout="
+               << *platform_layout;
     return false;
   }
   auto output_config =
       VideoFrameLayoutToPortConfig(*output_layout, output_visible_rect,
                                    {VideoFrame::STORAGE_GPU_MEMORY_BUFFER});
   if (!output_config) {
-    VLOGF(1) << "Failed to create ImageProcessor output config";
+    LOG(ERROR) << "Failed to create ImageProcessor output config";
     return false;
   }
-
-  image_processor_ = ImageProcessorFactory::Create(
-      *input_config, *output_config, {ImageProcessor::OutputMode::IMPORT},
-      kImageProcBufferCount, VIDEO_ROTATION_0, encoder_task_runner_,
+  ImageProcessorFactory::PickFormatCB pick_format_cb =
+      base::BindRepeating([](const std::vector<Fourcc>& fourcc_config,
+                             absl::optional<Fourcc> fourcc) {
+        return absl::make_optional<Fourcc>(fourcc_config[0]);
+      });
+  image_processor_ = ImageProcessorFactory::CreateWithInputCandidates(
+      {}, gfx::Rect(input_config->size), output_config->size,
+      kImageProcBufferCount, encoder_task_runner_, pick_format_cb,
       base::BindRepeating(&V4L2VideoEncodeAccelerator::ImageProcessorError,
-                          weak_this_));
+                          weak_this_),
+      *input_config, *output_config);
+
   if (!image_processor_) {
-    VLOGF(1) << "Failed initializing image processor";
+    LOG(ERROR) << "Failed initializing image processor";
     return false;
   }
+  VLOGF(2) << "ImageProcessor is created: " << image_processor_->backend_type();
   num_frames_in_image_processor_ = 0;
 
   // The output of image processor is the input of encoder. Output coded
@@ -440,9 +486,10 @@ bool V4L2VideoEncodeAccelerator::CreateImageProcessor(
   const auto& ip_output_size = image_processor_->output_config().size;
   if (ip_output_size.width() != output_layout->coded_size().width() ||
       ip_output_size.height() < output_layout->coded_size().height()) {
-    VLOGF(1) << "Invalid image processor output coded size "
-             << ip_output_size.ToString() << ", expected output coded size is "
-             << output_layout->coded_size().ToString();
+    LOG(ERROR) << "Invalid image processor output coded size "
+               << ip_output_size.ToString()
+               << ", expected output coded size is "
+               << output_layout->coded_size().ToString();
     return false;
   }
 
@@ -471,19 +518,18 @@ bool V4L2VideoEncodeAccelerator::AllocateImageProcessorOutputBuffers(
     switch (output_config.storage_type()) {
       case VideoFrame::STORAGE_GPU_MEMORY_BUFFER:
         image_processor_output_buffers_[i] = CreateGpuMemoryBufferVideoFrame(
-            /*gpu_memory_buffer_factory=*/nullptr,
             output_config.fourcc.ToVideoPixelFormat(), output_config.size,
             output_config.visible_rect, output_config.visible_rect.size(),
             base::TimeDelta(),
-            gfx::BufferUsage::SCANOUT_VEA_READ_CAMERA_AND_CPU_READ_WRITE);
+            gfx::BufferUsage::VEA_READ_CAMERA_AND_CPU_READ_WRITE);
         break;
       default:
-        VLOGF(1) << "Unsupported output storage type of image processor: "
-                 << output_config.storage_type();
+        LOG(ERROR) << "Unsupported output storage type of image processor: "
+                   << output_config.storage_type();
         return false;
     }
     if (!image_processor_output_buffers_[i]) {
-      VLOGF(1) << "Failed to create VideoFrame";
+      LOG(ERROR) << "Failed to create VideoFrame";
       return false;
     }
   }
@@ -499,8 +545,8 @@ bool V4L2VideoEncodeAccelerator::InitInputMemoryType(const Config& config) {
     } else if (VideoFrame::IsStorageTypeMappable(storage_type)) {
       input_memory_type_ = V4L2_MEMORY_USERPTR;
     } else {
-      VLOGF(1) << "Unsupported image processor's output StorageType: "
-               << storage_type;
+      LOG(ERROR) << "Unsupported image processor's output StorageType: "
+                 << storage_type;
       return false;
     }
   } else {
@@ -508,7 +554,7 @@ bool V4L2VideoEncodeAccelerator::InitInputMemoryType(const Config& config) {
       case Config::StorageType::kShmem:
         input_memory_type_ = V4L2_MEMORY_USERPTR;
         break;
-      case Config::StorageType::kDmabuf:
+      case Config::StorageType::kGpuMemoryBuffer:
         input_memory_type_ = V4L2_MEMORY_DMABUF;
         break;
     }
@@ -518,8 +564,11 @@ bool V4L2VideoEncodeAccelerator::InitInputMemoryType(const Config& config) {
 
 void V4L2VideoEncodeAccelerator::ImageProcessorError() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(encoder_sequence_checker_);
-  VLOGF(1) << "Image processor error";
-  NOTIFY_ERROR(kPlatformFailureError);
+  LOG(ERROR) << "Image processor error";
+
+  // TODO(b/276005687): Let image processor return a minute error status and
+  // convert it to EncoderStatus.
+  SetErrorState(EncoderStatus::Codes::kFormatConversionError);
 }
 
 void V4L2VideoEncodeAccelerator::Encode(scoped_refptr<VideoFrame> frame,
@@ -544,15 +593,16 @@ void V4L2VideoEncodeAccelerator::UseOutputBitstreamBuffer(
 }
 
 void V4L2VideoEncodeAccelerator::RequestEncodingParametersChange(
-    uint32_t bitrate,
-    uint32_t framerate) {
+    const Bitrate& bitrate,
+    uint32_t framerate,
+    const absl::optional<gfx::Size>& size) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(child_sequence_checker_);
 
   encoder_task_runner_->PostTask(
       FROM_HERE,
       base::BindOnce(
           &V4L2VideoEncodeAccelerator::RequestEncodingParametersChangeTask,
-          weak_this_, bitrate, framerate));
+          weak_this_, bitrate, framerate, size));
 }
 
 void V4L2VideoEncodeAccelerator::Destroy() {
@@ -579,10 +629,18 @@ void V4L2VideoEncodeAccelerator::Flush(FlushCallback flush_callback) {
 void V4L2VideoEncodeAccelerator::FlushTask(FlushCallback flush_callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(encoder_sequence_checker_);
 
+  if (encoder_state_ == kInitialized) {
+    // Flush() is called before either Encode() or UseOutputBitstreamBuffer() is
+    // called. Just return as successful.
+    child_task_runner_->PostTask(
+        FROM_HERE, base::BindOnce(std::move(flush_callback), true));
+    return;
+  }
+
   if (flush_callback_ || encoder_state_ != kEncoding) {
-    VLOGF(1) << "Flush failed: there is a pending flush, "
-             << "or VideoEncodeAccelerator is not in kEncoding state";
-    NOTIFY_ERROR(kIllegalStateError);
+    SetErrorState({EncoderStatus::Codes::kEncoderIllegalState,
+                   "Flush failed: there is a pending flush, or "
+                   "VideoEncodeAccelerator is not in kEncoding state"});
     child_task_runner_->PostTask(
         FROM_HERE, base::BindOnce(std::move(flush_callback), false));
     return;
@@ -598,10 +656,7 @@ bool V4L2VideoEncodeAccelerator::IsFlushSupported() {
 
 VideoEncodeAccelerator::SupportedProfiles
 V4L2VideoEncodeAccelerator::GetSupportedProfiles() {
-  scoped_refptr<V4L2Device> device = V4L2Device::Create();
-  if (!device)
-    return SupportedProfiles();
-
+  auto device = base::MakeRefCounted<V4L2Device>();
   return device->GetSupportedEncodeProfiles();
 }
 
@@ -614,6 +669,10 @@ void V4L2VideoEncodeAccelerator::FrameProcessed(
   DVLOGF(4) << "force_keyframe=" << force_keyframe
             << ", output_buffer_index=" << output_buffer_index;
   DCHECK_GE(output_buffer_index, 0u);
+  TRACE_EVENT_NESTABLE_ASYNC_END2(
+      "media,gpu", "V4L2VEA::ImageProcessor::Process",
+      timestamp.InMicroseconds(), "timestamp", timestamp.InMicroseconds(),
+      "output_size", image_processor_->output_config().size.ToString());
 
   encoder_input_queue_.emplace(std::move(frame), force_keyframe,
                                output_buffer_index);
@@ -641,15 +700,16 @@ size_t V4L2VideoEncodeAccelerator::CopyIntoOutputBuffer(
     std::unique_ptr<BitstreamBufferRef> buffer_ref) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(encoder_sequence_checker_);
 
-  uint8_t* dst_ptr = static_cast<uint8_t*>(buffer_ref->shm->memory());
-  size_t remaining_dst_size = buffer_ref->shm->size();
+  uint8_t* dst_ptr = buffer_ref->shm_mapping.GetMemoryAs<uint8_t>();
+  size_t remaining_dst_size = buffer_ref->shm_mapping.size();
 
   if (!inject_sps_and_pps_) {
     if (bitstream_size <= remaining_dst_size) {
       memcpy(dst_ptr, bitstream_data, bitstream_size);
       return bitstream_size;
     } else {
-      VLOGF(1) << "Output data did not fit in the BitstreamBuffer";
+      SetErrorState({EncoderStatus::Codes::kEncoderFailedEncode,
+                     "Output data did not fit in the BitstreamBuffer"});
       return 0;
     }
   }
@@ -719,7 +779,7 @@ size_t V4L2VideoEncodeAccelerator::CopyIntoOutputBuffer(
                                 &remaining_dst_size);
   }
 
-  return buffer_ref->shm->size() - remaining_dst_size;
+  return buffer_ref->shm_mapping.size() - remaining_dst_size;
 }
 
 void V4L2VideoEncodeAccelerator::EncodeTask(scoped_refptr<VideoFrame> frame,
@@ -733,16 +793,42 @@ void V4L2VideoEncodeAccelerator::EncodeTask(scoped_refptr<VideoFrame> frame,
     return;
   }
 
-  if (frame && !ReconfigureFormatIfNeeded(*frame)) {
-    NOTIFY_ERROR(kPlatformFailureError);
-    encoder_state_ = kError;
-    return;
-  }
+  if (frame) {
+    TRACE_EVENT1("media,gpu", "V4L2VEA::EncodeTask", "timestamp",
+                 frame->timestamp().InMicroseconds());
+    // |frame| can be nullptr to indicate a flush.
+    const bool is_expected_storage_type =
+        native_input_mode_
+            ? frame->storage_type() == VideoFrame::STORAGE_GPU_MEMORY_BUFFER
+            : frame->IsMappable();
+    if (!is_expected_storage_type) {
+      SetErrorState({EncoderStatus::Codes::kInvalidInputFrame,
+                     base::StrCat({"Unexpected storage: ",
+                                   VideoFrame::StorageTypeToString(
+                                       frame->storage_type())})});
+      return;
+    }
 
-  // If a video frame to be encoded is fed, then call VIDIOC_REQBUFS if it has
-  // not been called yet.
-  if (frame && input_buffer_map_.empty() && !CreateInputBuffers())
-    return;
+    if (!ReconfigureFormatIfNeeded(*frame)) {
+      SetErrorState({EncoderStatus::Codes::kUnsupportedFrameFormat,
+                     base::StrCat({"Unsupported frame: ",
+                                   frame->AsHumanReadableString()})});
+      return;
+    }
+
+    // If a video frame to be encoded is fed, then call VIDIOC_REQBUFS if it has
+    // not been called yet.
+    if (input_buffer_map_.empty() && !CreateInputBuffers()) {
+      CHECK_EQ(encoder_state_, kError);
+      return;
+    }
+
+    if (encoder_state_ == kInitialized) {
+      if (!StartDevicePoll())
+        return;
+      encoder_state_ = kEncoding;
+    }
+  }
 
   if (image_processor_) {
     image_processor_input_queue_.emplace(std::move(frame), force_keyframe);
@@ -756,6 +842,13 @@ void V4L2VideoEncodeAccelerator::EncodeTask(scoped_refptr<VideoFrame> frame,
 bool V4L2VideoEncodeAccelerator::ReconfigureFormatIfNeeded(
     const VideoFrame& frame) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(encoder_sequence_checker_);
+  if (input_buffer_map_.empty()) {
+    // Updates |input_natural_size_| on the first VideoFrame.
+    // |input_natural_size_| is a dimension to be encoded (i.e.
+    // |encoder_input_visible_rect_.size()|), but can be different from it
+    // in simulcast case.
+    input_natural_size_ = frame.natural_size();
+  }
 
   if (!native_input_mode_) {
     // frame.coded_size() must be the size specified in
@@ -767,14 +860,13 @@ bool V4L2VideoEncodeAccelerator::ReconfigureFormatIfNeeded(
     // ReconfigureFormatIfNeeded() has been called with the first VideoFrame.
     // We checks here we need to (re)create ImageProcessor because the visible
     // rectangle of |frame| differs from the first VideoFrame.
-    // |frame.natural_size()| is the size to be encoded. It must be the same as
-    // |encoder_input_visible_rect_.size()|, otherwise VEA client must recreate
-    // VEA with the new encoder resolution.
-    if (frame.natural_size() != encoder_input_visible_rect_.size()) {
-      VLOGF(1) << "Encoder resolution is changed during encoding"
-               << ", frame.natural_size()=" << frame.natural_size().ToString()
-               << ", encoder_input_visible_rect_="
-               << encoder_input_visible_rect_.ToString();
+    // |frame.natural_size()| must be unchanged during encoding in the same
+    // VideoEncodeAccelerator  instance. When it is changed, a client has to
+    // recreate VideoEncodeAccelerator.
+    if (frame.natural_size() != input_natural_size_) {
+      LOG(ERROR) << "Encoder resolution is changed during encoding"
+                 << ", frame.natural_size()=" << frame.natural_size().ToString()
+                 << ", input_natural_size_=" << input_natural_size_.ToString();
       return false;
     }
     if (frame.coded_size() == input_frame_size_) {
@@ -823,20 +915,21 @@ bool V4L2VideoEncodeAccelerator::ReconfigureFormatIfNeeded(
                             device_input_layout_->coded_size(),
                             frame.visible_rect(),
                             encoder_input_visible_rect_)) {
+    LOG(ERROR) << "Failed to create image processor";
     return false;
   }
 
   if (gfx::Size(image_processor_->output_config().planes[0].stride,
                 image_processor_->output_config().size.height()) !=
       device_input_layout_->coded_size()) {
-    VLOGF(1) << "Image Processor's output buffer's size is different from "
-             << "input buffer size configure to the encoder driver. "
-             << "ip's output buffer size: "
-             << gfx::Size(image_processor_->output_config().planes[0].stride,
-                          image_processor_->output_config().size.height())
-                    .ToString()
-             << ", encoder's input buffer size: "
-             << device_input_layout_->coded_size().ToString();
+    LOG(ERROR) << "Image Processor's output buffer's size is different from "
+               << "input buffer size configure to the encoder driver. "
+               << "ip's output buffer size: "
+               << gfx::Size(image_processor_->output_config().planes[0].stride,
+                            image_processor_->output_config().size.height())
+                      .ToString()
+               << ", encoder's input buffer size: "
+               << device_input_layout_->coded_size().ToString();
     return false;
   }
   return true;
@@ -853,6 +946,7 @@ void V4L2VideoEncodeAccelerator::MaybeFlushImageProcessor() {
               << "|image_processor_|. Move the flush request to the encoder";
     image_processor_input_queue_.pop();
     encoder_input_queue_.emplace(nullptr, false);
+    Enqueue();
   }
 }
 
@@ -879,24 +973,30 @@ void V4L2VideoEncodeAccelerator::InputImageProcessorTask() {
   auto frame = std::move(frame_info.frame);
   const bool force_keyframe = frame_info.force_keyframe;
   auto timestamp = frame->timestamp();
+  TRACE_EVENT_NESTABLE_ASYNC_BEGIN1(
+      "media,gpu", "V4L2VEA::ImageProcessor::Process",
+      timestamp.InMicroseconds(), "timestamp", timestamp.InMicroseconds());
   if (image_processor_->output_mode() == ImageProcessor::OutputMode::IMPORT) {
     const auto& buf = image_processor_output_buffers_[output_buffer_index];
     auto output_frame = VideoFrame::WrapVideoFrame(
         buf, buf->format(), buf->visible_rect(), buf->natural_size());
-
     if (!image_processor_->Process(
             std::move(frame), std::move(output_frame),
             base::BindOnce(&V4L2VideoEncodeAccelerator::FrameProcessed,
                            weak_this_, force_keyframe, timestamp,
                            output_buffer_index))) {
-      NOTIFY_ERROR(kPlatformFailureError);
+      SetErrorState({EncoderStatus::Codes::kFormatConversionError,
+                     "Failed in ImageProcessor::Process"});
+      return;
     }
   } else {
     if (!image_processor_->Process(
             std::move(frame),
             base::BindOnce(&V4L2VideoEncodeAccelerator::FrameProcessed,
                            weak_this_, force_keyframe, timestamp))) {
-      NOTIFY_ERROR(kPlatformFailureError);
+      SetErrorState({EncoderStatus::Codes::kFormatConversionError,
+                     "Failed in ImageProcessor::Process"});
+      return;
     }
   }
 
@@ -909,18 +1009,22 @@ void V4L2VideoEncodeAccelerator::UseOutputBitstreamBufferTask(
   DCHECK_CALLED_ON_VALID_SEQUENCE(encoder_sequence_checker_);
 
   if (buffer.size() < output_buffer_byte_size_) {
-    NOTIFY_ERROR(kInvalidArgumentError);
-    return;
-  }
-  auto shm = std::make_unique<UnalignedSharedMemory>(buffer.TakeRegion(),
-                                                     buffer.size(), false);
-  if (!shm->MapAt(buffer.offset(), buffer.size())) {
-    NOTIFY_ERROR(kPlatformFailureError);
+    SetErrorState({EncoderStatus::Codes::kInvalidOutputBuffer,
+                   "Provided bitstream buffer too small"});
     return;
   }
 
-  bitstream_buffer_pool_.push_back(
-      std::make_unique<BitstreamBufferRef>(buffer.id(), std::move(shm)));
+  base::UnsafeSharedMemoryRegion shm_region = buffer.TakeRegion();
+  base::WritableSharedMemoryMapping shm_mapping =
+      shm_region.MapAt(buffer.offset(), buffer.size());
+  if (!shm_mapping.IsValid()) {
+    SetErrorState({EncoderStatus::Codes::kSystemAPICallError,
+                   "Failed to map a shared memory buffer"});
+    return;
+  }
+
+  bitstream_buffer_pool_.push_back(std::make_unique<BitstreamBufferRef>(
+      buffer.id(), std::move(shm_mapping)));
   PumpBitstreamBuffers();
 
   if (encoder_state_ == kInitialized) {
@@ -943,7 +1047,7 @@ void V4L2VideoEncodeAccelerator::DestroyTask() {
   }
 
   // Stop streaming and the device_poll_thread_.
-  StopDevicePoll();
+  LOG_IF(ERROR, !StopDevicePoll()) << "Failure in termination";
 
   DestroyInputBuffers();
   DestroyOutputBuffers();
@@ -1003,7 +1107,7 @@ void V4L2VideoEncodeAccelerator::Enqueue() {
   DCHECK(input_queue_ && output_queue_);
   TRACE_EVENT0("media,gpu", "V4L2VEA::Enqueue");
   DVLOGF(4) << "free_input_buffers: " << input_queue_->FreeBuffersCount()
-            << "input_queue: " << encoder_input_queue_.size();
+            << ", input_queue: " << encoder_input_queue_.size();
 
   bool do_streamon = false;
   // Enqueue all the inputs we can.
@@ -1024,11 +1128,14 @@ void V4L2VideoEncodeAccelerator::Enqueue() {
             FROM_HERE, base::BindOnce(std::move(flush_callback_), true));
         return;
       }
-      struct v4l2_encoder_cmd cmd{};
+      struct v4l2_encoder_cmd cmd;
+      memset(&cmd, 0, sizeof(cmd));
       cmd.cmd = V4L2_ENC_CMD_STOP;
       if (device_->Ioctl(VIDIOC_ENCODER_CMD, &cmd) != 0) {
-        VPLOGF(1) << "ioctl() failed: VIDIOC_ENCODER_CMD";
-        NOTIFY_ERROR(kPlatformFailureError);
+        SetErrorState(
+            {EncoderStatus::Codes::kEncoderFailedFlush,
+             base::StrCat({"ioctl() failed: VIDIOC_ENCODER_CMD, errno=",
+                           base::NumberToString(errno)})});
         child_task_runner_->PostTask(
             FROM_HERE, base::BindOnce(std::move(flush_callback_), false));
         return;
@@ -1037,11 +1144,11 @@ void V4L2VideoEncodeAccelerator::Enqueue() {
       break;
     }
 
-    base::Optional<V4L2WritableBufferRef> input_buffer;
+    absl::optional<V4L2WritableBufferRef> input_buffer;
     switch (input_memory_type_) {
       case V4L2_MEMORY_DMABUF:
         input_buffer = input_queue_->GetFreeBufferForFrame(
-            *encoder_input_queue_.front().frame);
+            GetSharedMemoryId(*encoder_input_queue_.front().frame));
         // We may have failed to preserve buffer affinity, fallback to any
         // buffer in that case.
         if (!input_buffer)
@@ -1051,7 +1158,7 @@ void V4L2VideoEncodeAccelerator::Enqueue() {
         input_buffer = input_queue_->GetFreeBuffer();
         break;
     }
-    // input_buffer cannot be base::nullopt since we checked for
+    // input_buffer cannot be absl::nullopt since we checked for
     // input_queue_->FreeBuffersCount() > 0 before entering the loop.
     DCHECK(input_buffer);
     if (!EnqueueInputRecord(std::move(*input_buffer)))
@@ -1096,8 +1203,16 @@ void V4L2VideoEncodeAccelerator::Enqueue() {
     DCHECK(!output_queue_->IsStreaming() && !input_queue_->IsStreaming());
     // When VIDIOC_STREAMON can be executed in OUTPUT queue, it is fine to call
     // STREAMON in CAPTURE queue.
-    output_queue_->Streamon();
-    input_queue_->Streamon();
+    if (!output_queue_->Streamon()) {
+      SetErrorState({EncoderStatus::Codes::kEncoderHardwareDriverError,
+                     "Failed to turn on streaming for CAPTURE queue"});
+      return;
+    }
+    if (!input_queue_->Streamon()) {
+      SetErrorState({EncoderStatus::Codes::kEncoderHardwareDriverError,
+                     "Failed to turn on streaming for OUTPUT queue"});
+      return;
+    }
   }
 }
 
@@ -1114,7 +1229,10 @@ void V4L2VideoEncodeAccelerator::Dequeue() {
 
     auto ret = input_queue_->DequeueBuffer();
     if (!ret.first) {
-      NOTIFY_ERROR(kPlatformFailureError);
+      SetErrorState(
+          {EncoderStatus::Codes::kEncoderHardwareDriverError,
+           base::StrCat({"Failed to dequeue buffer in OUTPUT queue, errno=",
+                         base::NumberToString(errno)})});
       return;
     }
     if (!ret.second) {
@@ -1136,13 +1254,23 @@ void V4L2VideoEncodeAccelerator::Dequeue() {
 
     auto ret = output_queue_->DequeueBuffer();
     if (!ret.first) {
-      NOTIFY_ERROR(kPlatformFailureError);
+      SetErrorState(
+          {EncoderStatus::Codes::kEncoderHardwareDriverError,
+           base::StrCat({"Failed to dequeue buffer in CAPTURE queue, errno=",
+                         base::NumberToString(errno)})});
       return;
     }
     if (!ret.second) {
       // We're just out of buffers to dequeue.
       break;
     }
+
+    const uint64_t timestamp_us =
+        ret.second->GetTimeStamp().tv_usec +
+        ret.second->GetTimeStamp().tv_sec * base::Time::kMicrosecondsPerSecond;
+    TRACE_EVENT_NESTABLE_ASYNC_END2(
+        "media,gpu", "PlatformEncoding.Encode", timestamp_us, "timestamp",
+        timestamp_us, "size", encoder_input_visible_rect_.size().ToString());
 
     output_buffer_queue_.push_back(std::move(ret.second));
     buffer_dequeued = true;
@@ -1181,15 +1309,17 @@ void V4L2VideoEncodeAccelerator::PumpBitstreamBuffers() {
       DVLOGF(4) << "returning buffer_id=" << buffer_id
                 << ", size=" << output_data_size
                 << ", key_frame=" << output_buf->IsKeyframe();
+      const int64_t timestamp_us = output_buf->GetTimeStamp().tv_usec +
+                                   output_buf->GetTimeStamp().tv_sec *
+                                       base::Time::kMicrosecondsPerSecond;
+      TRACE_EVENT2("media,gpu", "V4L2VEA::BitstreamBufferReady", "timestamp",
+                   timestamp_us, "bitstream_buffer_id", buffer_id);
       child_task_runner_->PostTask(
           FROM_HERE,
           base::BindOnce(&Client::BitstreamBufferReady, client_, buffer_id,
                          BitstreamBufferMetadata(
                              output_data_size, output_buf->IsKeyframe(),
-                             base::TimeDelta::FromMicroseconds(
-                                 output_buf->GetTimeStamp().tv_usec +
-                                 output_buf->GetTimeStamp().tv_sec *
-                                     base::Time::kMicrosecondsPerSecond))));
+                             base::Microseconds(timestamp_us))));
     }
 
     if ((encoder_state_ == kFlushing) && output_buf->IsLast()) {
@@ -1200,9 +1330,16 @@ void V4L2VideoEncodeAccelerator::PumpBitstreamBuffers() {
       child_task_runner_->PostTask(
           FROM_HERE, base::BindOnce(std::move(flush_callback_), true));
       // Start the encoder again.
-      struct v4l2_encoder_cmd cmd{};
+      struct v4l2_encoder_cmd cmd;
+      memset(&cmd, 0, sizeof(cmd));
       cmd.cmd = V4L2_ENC_CMD_START;
-      IOCTL_OR_ERROR_RETURN(VIDIOC_ENCODER_CMD, &cmd);
+      if (device_->Ioctl(VIDIOC_ENCODER_CMD, &cmd) != 0) {
+        SetErrorState(
+            {EncoderStatus::Codes::kEncoderFailedFlush,
+             base::StrCat({"ioctl() failed: VIDIOC_ENCODER_CMD, errno=",
+                           base::NumberToString(errno)})});
+        return;
+      }
     }
   }
 
@@ -1227,8 +1364,8 @@ bool V4L2VideoEncodeAccelerator::EnqueueInputRecord(
     if (!device_->SetExtCtrls(
             V4L2_CTRL_CLASS_MPEG,
             {V4L2ExtCtrl(V4L2_CID_MPEG_VIDEO_FORCE_KEY_FRAME)})) {
-      VLOGF(1) << "Failed requesting keyframe";
-      NOTIFY_ERROR(kPlatformFailureError);
+      SetErrorState({EncoderStatus::Codes::kEncoderFailedEncode,
+                     "Failed requesting keyframe"});
       return false;
     }
   }
@@ -1245,7 +1382,7 @@ bool V4L2VideoEncodeAccelerator::EnqueueInputRecord(
   input_buf.SetTimeStamp(timestamp);
 
   DCHECK_EQ(device_input_layout_->format(), frame->format());
-  size_t num_planes = V4L2Device::GetNumPlanesOfV4L2PixFmt(
+  size_t num_planes = GetNumPlanesOfV4L2PixFmt(
       Fourcc::FromVideoPixelFormat(device_input_layout_->format(),
                                    !device_input_layout_->is_multi_planar())
           ->ToV4L2PixFmt());
@@ -1255,8 +1392,8 @@ bool V4L2VideoEncodeAccelerator::EnqueueInputRecord(
   if (input_buf.Memory() == V4L2_MEMORY_DMABUF) {
     gmb_handle = CreateGpuMemoryBufferHandle(frame.get());
     if (gmb_handle.is_null() || gmb_handle.type != gfx::NATIVE_PIXMAP) {
-      VLOGF(1) << "Failed to create native GpuMemoryBufferHandle";
-      NOTIFY_ERROR(kPlatformFailureError);
+      SetErrorState({EncoderStatus::Codes::kSystemAPICallError,
+                     "Failed to create native GpuMemoryBufferHandle"});
       return false;
     }
   }
@@ -1297,36 +1434,73 @@ bool V4L2VideoEncodeAccelerator::EnqueueInputRecord(
         break;
       }
       default:
-        NOTREACHED();
-        return false;
+        NOTREACHED_NORETURN();
     }
 
     input_buf.SetPlaneBytesUsed(i, bytesused);
   }
 
+  TRACE_EVENT_NESTABLE_ASYNC_BEGIN1("media,gpu", "PlatformEncoding.Encode",
+                                    frame->timestamp().InMicroseconds(),
+                                    "timestamp",
+                                    frame->timestamp().InMicroseconds());
+
   switch (input_buf.Memory()) {
     case V4L2_MEMORY_USERPTR: {
-      std::vector<void*> user_ptrs;
-      for (size_t i = 0; i < num_planes; ++i)
-        user_ptrs.push_back(frame->data(i));
-      std::move(input_buf).QueueUserPtr(std::move(user_ptrs));
+      if (frame->storage_type() != VideoFrame::STORAGE_SHMEM) {
+        SetErrorState({EncoderStatus::Codes::kInvalidInputFrame,
+                       "VideoFrame doesn't have shared memory"});
+        return false;
+      }
+
+      // The frame data is readable only and the driver doesn't actually write
+      // the buffer. But USRPTR buffer needs void*. So const_cast<> is required.
+      std::vector<void*> user_ptrs(num_planes);
+      for (size_t i = 0; i < num_planes; ++i) {
+        user_ptrs[i] = const_cast<uint8_t*>(frame->data(i));
+      }
+      if (!std::move(input_buf).QueueUserPtr(std::move(user_ptrs))) {
+        SetErrorState(
+            {EncoderStatus::Codes::kEncoderHardwareDriverError,
+             base::StrCat(
+                 {"Failed queue a USRPTR buffer to input queue, errno=",
+                  base::NumberToString(errno)})});
+        return false;
+      }
       break;
     }
     case V4L2_MEMORY_DMABUF: {
-      std::move(input_buf).QueueDMABuf(gmb_handle.native_pixmap_handle.planes);
+      if (!std::move(input_buf).QueueDMABuf(
+              gmb_handle.native_pixmap_handle.planes)) {
+        SetErrorState(
+            {EncoderStatus::Codes::kEncoderHardwareDriverError,
+             base::StrCat(
+                 {"Failed queue a DMABUF buffer to input queue, errno=",
+                  base::NumberToString(errno)})});
+        return false;
+      }
+
+      // TODO(b/266443239): Remove this workaround once RK3399 boards reaches
+      // EOL. v4lplugin holds v4l2_buffer in QBUF without duplicating the passed
+      // fds and resumes the QBUF request later after VIDIOC_QBUF returns. It is
+      // required to keep the passed fds valid until DQBUF is complete.
+      if (driver_name_ == "hantro-vpu") {
+        frame->AddDestructionObserver(base::BindOnce(
+            [](gfx::GpuMemoryBufferHandle) {}, std::move(gmb_handle)));
+      }
       break;
     }
     default:
-      NOTREACHED() << "Unknown input memory type: "
-                   << static_cast<int>(input_buf.Memory());
+      NOTREACHED();
+      SetErrorState({EncoderStatus::Codes::kEncoderIllegalState,
+                     base::StrCat({"Unknown input memory type: ",
+                                   base::NumberToString(static_cast<int>(
+                                       input_buf.Memory()))})});
       return false;
   }
 
-  // Keep |gmb_handle| alive as long as |frame| is alive so that fds passed
-  // to the driver are valid during encoding.
-  frame->AddDestructionObserver(
-      base::BindOnce([](gfx::GpuMemoryBufferHandle) {}, std::move(gmb_handle)));
-
+  // Keep |frame| in |input_record| so that a client doesn't use |frame| until
+  // a driver finishes using it, that is, VIDIOC_DQBUF is called.
   InputRecord& input_record = input_buffer_map_[buffer_id];
   input_record.frame = frame;
   input_record.ip_output_buffer_index = frame_info.ip_output_buffer_index;
@@ -1342,7 +1516,9 @@ bool V4L2VideoEncodeAccelerator::EnqueueOutputRecord(
 
   // Enqueue an output (VIDEO_CAPTURE) buffer.
   if (!std::move(output_buf).QueueMMap()) {
-    VLOGF(1) << "Failed to QueueMMap.";
+    SetErrorState({EncoderStatus::Codes::kEncoderHardwareDriverError,
+                   base::StrCat({"Failed to QueueMMap, errno=",
+                                 base::NumberToString(errno)})});
     return false;
   }
   return true;
@@ -1355,8 +1531,8 @@ bool V4L2VideoEncodeAccelerator::StartDevicePoll() {
 
   // Start up the device poll thread and schedule its first DevicePollTask().
   if (!device_poll_thread_.Start()) {
-    VLOGF(1) << "StartDevicePoll(): Device thread failed to start";
-    NOTIFY_ERROR(kPlatformFailureError);
+    SetErrorState({EncoderStatus::Codes::kSystemAPICallError,
+                   "StartDevicePoll(): Device thread failed to start"});
     return false;
   }
   // Enqueue a poll task with no devices to poll on -- it will wait only on the
@@ -1394,8 +1570,8 @@ bool V4L2VideoEncodeAccelerator::StopDevicePoll() {
   // Reset all our accounting info.
   while (!encoder_input_queue_.empty())
     encoder_input_queue_.pop();
-  for (auto& input_record : input_buffer_map_) {
-    input_record.frame = nullptr;
+  for (auto& [frame, ip_output_buffer_index] : input_buffer_map_) {
+    frame = nullptr;
   }
 
   bitstream_buffer_pool_.clear();
@@ -1410,7 +1586,8 @@ void V4L2VideoEncodeAccelerator::DevicePollTask(bool poll_device) {
 
   bool event_pending;
   if (!device_->Poll(poll_device, &event_pending)) {
-    NOTIFY_ERROR(kPlatformFailureError);
+    SetErrorState({EncoderStatus::Codes::kSystemAPICallError,
+                   "Failed to start device polloing"});
     return;
   }
 
@@ -1421,74 +1598,97 @@ void V4L2VideoEncodeAccelerator::DevicePollTask(bool poll_device) {
                                 weak_this_));
 }
 
-void V4L2VideoEncodeAccelerator::NotifyError(Error error) {
-  // Note that NotifyError() must be called from SetErrorState() only, so that
-  // NotifyError() will not be called twice.
-  VLOGF(1) << "error=" << error;
-  DCHECK(child_task_runner_);
-
-  if (child_task_runner_->BelongsToCurrentThread()) {
-    if (client_) {
-      client_->NotifyError(error);
-      client_ptr_factory_.reset();
-    }
-    return;
-  }
-
-  // Called on encoder_task_runner_.
-  child_task_runner_->PostTask(
-      FROM_HERE, base::BindOnce(&Client::NotifyError, client_, error));
-}
-
-void V4L2VideoEncodeAccelerator::SetErrorState(Error error) {
+void V4L2VideoEncodeAccelerator::SetErrorState(EncoderStatus status) {
   // We can touch encoder_state_ only if this is the encoder thread or the
   // encoder thread isn't running.
-  if (!encoder_task_runner_->BelongsToCurrentThread()) {
+  if (!encoder_task_runner_->RunsTasksInCurrentSequence()) {
     encoder_task_runner_->PostTask(
         FROM_HERE, base::BindOnce(&V4L2VideoEncodeAccelerator::SetErrorState,
-                                  weak_this_, error));
+                                  weak_this_, status));
     return;
   }
 
-  // Post NotifyError only if we are already initialized, as the API does
-  // not allow doing so before that.
-  if (encoder_state_ != kError && encoder_state_ != kUninitialized)
-    NotifyError(error);
+  CHECK(!status.is_ok());
+  LOG(ERROR) << "SetErrorState: code=" << static_cast<int>(status.code())
+             << ", message=" << status.message();
+  // Post NotifyErrorStatus() only if we are already initialized, as the API
+  // does not allow doing so before that.
+  if (encoder_state_ != kError && encoder_state_ != kUninitialized) {
+    LOG(ERROR) << "Call NotifyErrorStatus(): code="
+               << static_cast<int>(status.code())
+               << ", message=" << status.message();
+    CHECK(child_task_runner_);
+    child_task_runner_->PostTask(
+        FROM_HERE,
+        base::BindOnce(&Client::NotifyErrorStatus, client_, std::move(status)));
+  }
 
   encoder_state_ = kError;
 }
 
 void V4L2VideoEncodeAccelerator::RequestEncodingParametersChangeTask(
-    uint32_t bitrate,
-    uint32_t framerate) {
-  if (current_bitrate_ == bitrate && current_framerate_ == framerate)
-    return;
-
-  VLOGF(2) << "bitrate=" << bitrate << ", framerate=" << framerate;
+    const Bitrate& bitrate,
+    uint32_t framerate,
+    const absl::optional<gfx::Size>& size) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(encoder_sequence_checker_);
-  TRACE_EVENT2("media,gpu", "V4L2VEA::RequestEncodingParametersChangeTask",
-               "bitrate", bitrate, "framerate", framerate);
-
-  DCHECK_GT(bitrate, 0u);
-  DCHECK_GT(framerate, 0u);
-
-  if (current_bitrate_ != bitrate &&
-      !device_->SetExtCtrls(
-          V4L2_CTRL_CLASS_MPEG,
-          {V4L2ExtCtrl(V4L2_CID_MPEG_VIDEO_BITRATE, bitrate)})) {
-    VLOGF(1) << "Failed changing bitrate";
-    NOTIFY_ERROR(kPlatformFailureError);
+  if (size.has_value()) {
+    SetErrorState({EncoderStatus::Codes::kEncoderUnsupportedConfig,
+                   "Update output frame size is not supported"});
+    return;
+  }
+  if (current_bitrate_ == bitrate && current_framerate_ == framerate) {
     return;
   }
 
+  VLOGF(2) << "bitrate=" << bitrate.ToString() << ", framerate=" << framerate;
+  if (bitrate.mode() != current_bitrate_.mode()) {
+    SetErrorState({EncoderStatus::Codes::kEncoderUnsupportedConfig,
+                   "Bitrate mode changed during encoding"});
+    return;
+  }
+
+  TRACE_EVENT2("media,gpu", "V4L2VEA::RequestEncodingParametersChangeTask",
+               "bitrate", bitrate.ToString(), "framerate", framerate);
+  if (current_bitrate_ != bitrate) {
+    switch (bitrate.mode()) {
+      case Bitrate::Mode::kVariable:
+        device_->SetExtCtrls(V4L2_CTRL_CLASS_MPEG,
+                             {V4L2ExtCtrl(V4L2_CID_MPEG_VIDEO_BITRATE_PEAK,
+                                          bitrate.peak_bps())});
+
+        // Both the average and peak bitrate are to be set in VBR.
+        // Only the average bitrate are to be set in CBR.
+        [[fallthrough]];
+      case Bitrate::Mode::kConstant:
+        if (!device_->SetExtCtrls(V4L2_CTRL_CLASS_MPEG,
+                                  {V4L2ExtCtrl(V4L2_CID_MPEG_VIDEO_BITRATE,
+                                               bitrate.target_bps())})) {
+          SetErrorState({EncoderStatus::Codes::kEncoderHardwareDriverError,
+                         "Failed to change average bitrate"});
+          return;
+        }
+        break;
+      case Bitrate::Mode::kExternal:
+        SetErrorState({EncoderStatus::Codes::kEncoderUnsupportedConfig,
+                       "Unsupported rate control mode."});
+        return;
+    }
+  }
+
   if (current_framerate_ != framerate) {
-    struct v4l2_streamparm parms {};
+    struct v4l2_streamparm parms;
+    memset(&parms, 0, sizeof(parms));
     parms.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
     // Note that we are provided "frames per second" but V4L2 expects "time per
     // frame"; hence we provide the reciprocal of the framerate here.
     parms.parm.output.timeperframe.numerator = 1;
     parms.parm.output.timeperframe.denominator = framerate;
-    IOCTL_OR_ERROR_RETURN(VIDIOC_S_PARM, &parms);
+    if (device_->Ioctl(VIDIOC_S_PARM, &parms) != 0) {
+      SetErrorState({EncoderStatus::Codes::kEncoderHardwareDriverError,
+                     base::StrCat({"ioctl() failed: VIDIOC_S_PARM, errno=",
+                                   base::NumberToString(errno)})});
+      return;
+    }
   }
 
   current_bitrate_ = bitrate;
@@ -1505,9 +1705,10 @@ bool V4L2VideoEncodeAccelerator::SetOutputFormat(
   output_buffer_byte_size_ =
       GetEncodeBitstreamBufferSize(encoder_input_visible_rect_.size());
 
-  base::Optional<struct v4l2_format> format = output_queue_->SetFormat(
-      output_format_fourcc_, encoder_input_visible_rect_.size(),
-      output_buffer_byte_size_);
+  // Sets 0 to width and height in CAPTURE queue, which should be ignored by the
+  // driver.
+  absl::optional<struct v4l2_format> format = output_queue_->SetFormat(
+      output_format_fourcc_, gfx::Size(), output_buffer_byte_size_);
   if (!format) {
     return false;
   }
@@ -1520,7 +1721,7 @@ bool V4L2VideoEncodeAccelerator::SetOutputFormat(
   return true;
 }
 
-base::Optional<struct v4l2_format>
+absl::optional<struct v4l2_format>
 V4L2VideoEncodeAccelerator::NegotiateInputFormat(VideoPixelFormat input_format,
                                                  const gfx::Size& size) {
   VLOGF(2);
@@ -1532,9 +1733,9 @@ V4L2VideoEncodeAccelerator::NegotiateInputFormat(VideoPixelFormat input_format,
   std::vector<uint32_t> pix_fmt_candidates;
   auto input_fourcc = Fourcc::FromVideoPixelFormat(input_format, false);
   if (!input_fourcc) {
-    DVLOGF(2) << "Invalid input format "
-              << VideoPixelFormatToString(input_format);
-    return base::nullopt;
+    LOG(ERROR) << "Invalid input format "
+               << VideoPixelFormatToString(input_format);
+    return absl::nullopt;
   }
   pix_fmt_candidates.push_back(input_fourcc->ToV4L2PixFmt());
   // Second try preferred input formats for both single-planar and
@@ -1547,34 +1748,34 @@ V4L2VideoEncodeAccelerator::NegotiateInputFormat(VideoPixelFormat input_format,
   for (const auto pix_fmt : pix_fmt_candidates) {
     DVLOGF(3) << "Trying S_FMT with " << FourccToString(pix_fmt);
 
-    base::Optional<struct v4l2_format> format =
+    absl::optional<struct v4l2_format> format =
         input_queue_->SetFormat(pix_fmt, size, 0);
     if (!format)
       continue;
 
     DVLOGF(3) << "Success: S_FMT with " << FourccToString(pix_fmt);
-    device_input_layout_ = V4L2Device::V4L2FormatToVideoFrameLayout(*format);
+    device_input_layout_ = V4L2FormatToVideoFrameLayout(*format);
     if (!device_input_layout_) {
-      VLOGF(1) << "Invalid device_input_layout_";
-      return base::nullopt;
+      LOG(ERROR) << "Invalid device_input_layout_";
+      return absl::nullopt;
     }
     DVLOG(3) << "Negotiated device_input_layout_: " << *device_input_layout_;
     if (!gfx::Rect(device_input_layout_->coded_size())
              .Contains(gfx::Rect(size))) {
-      VLOGF(1) << "Input size " << size.ToString()
-               << " exceeds encoder capability. Size encoder can handle: "
-               << device_input_layout_->coded_size().ToString();
-      return base::nullopt;
+      LOG(ERROR) << "Input size " << size.ToString()
+                 << " exceeds encoder capability. Size encoder can handle: "
+                 << device_input_layout_->coded_size().ToString();
+      return absl::nullopt;
     }
     // Make sure that the crop is preserved as we have changed the input
     // resolution.
     if (!ApplyCrop()) {
-      return base::nullopt;
+      return absl::nullopt;
     }
 
     return format;
   }
-  return base::nullopt;
+  return absl::nullopt;
 }
 
 bool V4L2VideoEncodeAccelerator::ApplyCrop() {
@@ -1587,7 +1788,8 @@ bool V4L2VideoEncodeAccelerator::ApplyCrop() {
   visible_rect.width = encoder_input_visible_rect_.width();
   visible_rect.height = encoder_input_visible_rect_.height();
 
-  struct v4l2_selection selection_arg{};
+  struct v4l2_selection selection_arg;
+  memset(&selection_arg, 0, sizeof(selection_arg));
   selection_arg.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
   selection_arg.target = V4L2_SEL_TGT_CROP;
   selection_arg.r = visible_rect;
@@ -1595,15 +1797,27 @@ bool V4L2VideoEncodeAccelerator::ApplyCrop() {
   // The width and height might be adjusted by driver.
   // Need to read it back and set to |encoder_input_visible_rect_|.
   if (device_->Ioctl(VIDIOC_S_SELECTION, &selection_arg) == 0) {
-    DVLOGF(2) << "VIDIOC_S_SELECTION is supported";
+    DVLOGF(3) << "VIDIOC_S_SELECTION is supported";
     visible_rect = selection_arg.r;
   } else {
-    VLOGF(2) << "Fallback to VIDIOC_S/G_CROP";
-    struct v4l2_crop crop{};
+    DVLOGF(3) << "Fallback to VIDIOC_S/G_CROP";
+    struct v4l2_crop crop;
+    memset(&crop, 0, sizeof(crop));
     crop.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
     crop.c = visible_rect;
-    IOCTL_OR_ERROR_RETURN_FALSE(VIDIOC_S_CROP, &crop);
-    IOCTL_OR_ERROR_RETURN_FALSE(VIDIOC_G_CROP, &crop);
+    if (device_->Ioctl(VIDIOC_S_CROP, &crop) != 0) {
+      SetErrorState({EncoderStatus::Codes::kEncoderHardwareDriverError,
+                     base::StrCat({"ioctl() failed: VIDIOC_S_CROP, errno=",
+                                   base::NumberToString(errno)})});
+      return false;
+    }
+    if (device_->Ioctl(VIDIOC_G_CROP, &crop) != 0) {
+      SetErrorState({EncoderStatus::Codes::kEncoderHardwareDriverError,
+                     base::StrCat({"ioctl() failed: VIDIOC_G_CROP",
+                                   base::NumberToString(errno)})});
+      return false;
+    }
+
     visible_rect = crop.c;
   }
 
@@ -1611,10 +1825,10 @@ bool V4L2VideoEncodeAccelerator::ApplyCrop() {
                                         visible_rect.width,
                                         visible_rect.height);
   if (encoder_input_visible_rect_ != adjusted_visible_rect) {
-    VLOGF(1) << "Unsupported visible rectangle: "
-             << encoder_input_visible_rect_.ToString()
-             << ", the rectangle adjusted by the driver: "
-             << adjusted_visible_rect.ToString();
+    LOG(ERROR) << "Unsupported visible rectangle: "
+               << encoder_input_visible_rect_.ToString()
+               << ", the rectangle adjusted by the driver: "
+               << adjusted_visible_rect.ToString();
     return false;
   }
   return true;
@@ -1627,15 +1841,18 @@ bool V4L2VideoEncodeAccelerator::SetFormats(VideoPixelFormat input_format,
   DCHECK(!input_queue_->IsStreaming());
   DCHECK(!output_queue_->IsStreaming());
 
-  if (!SetOutputFormat(output_profile))
+  if (!SetOutputFormat(output_profile)) {
+    SetErrorState({EncoderStatus::Codes::kEncoderUnsupportedProfile,
+                   base::StrCat({"Unsupported codec profile: ",
+                                 GetProfileName(output_profile)})});
     return false;
+  }
 
   gfx::Size input_size = encoder_input_visible_rect_.size();
   if (native_input_mode_) {
     auto input_layout = GetPlatformVideoFrameLayout(
-        /*gpu_memory_buffer_factory=*/nullptr, input_format,
-        encoder_input_visible_rect_.size(),
-        gfx::BufferUsage::SCANOUT_VEA_READ_CAMERA_AND_CPU_READ_WRITE);
+        input_format, encoder_input_visible_rect_.size(),
+        gfx::BufferUsage::VEA_READ_CAMERA_AND_CPU_READ_WRITE);
     if (!input_layout)
       return false;
     input_size = gfx::Size(input_layout->planes()[0].stride,
@@ -1644,8 +1861,12 @@ bool V4L2VideoEncodeAccelerator::SetFormats(VideoPixelFormat input_format,
 
   DCHECK(input_frame_size_.IsEmpty());
   auto v4l2_format = NegotiateInputFormat(input_format, input_size);
-  if (!v4l2_format)
+  if (!v4l2_format) {
+    SetErrorState({EncoderStatus::Codes::kUnsupportedFrameFormat,
+                   base::StrCat({"Unsupported input format: ",
+                                 VideoPixelFormatToString(input_format)})});
     return false;
+  }
 
   if (native_input_mode_) {
     input_frame_size_ = VideoFrame::DetermineAlignedSize(
@@ -1659,108 +1880,186 @@ bool V4L2VideoEncodeAccelerator::SetFormats(VideoPixelFormat input_format,
 bool V4L2VideoEncodeAccelerator::InitControls(const Config& config) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(encoder_sequence_checker_);
 
+  // Don't expect other output formats.
+  CHECK(output_format_fourcc_ == V4L2_PIX_FMT_H264 ||
+        output_format_fourcc_ == V4L2_PIX_FMT_VP8);
+
   // Enable frame-level bitrate control. This is the only mandatory control.
   if (!device_->SetExtCtrls(
           V4L2_CTRL_CLASS_MPEG,
           {V4L2ExtCtrl(V4L2_CID_MPEG_VIDEO_FRAME_RC_ENABLE, 1)})) {
-    VLOGF(1) << "Failed enabling bitrate control";
-    NOTIFY_ERROR(kPlatformFailureError);
+    SetErrorState({EncoderStatus::Codes::kEncoderHardwareDriverError,
+                   "Failed enabling bitrate control"});
     return false;
   }
 
-  if (output_format_fourcc_ == V4L2_PIX_FMT_H264) {
-#ifndef V4L2_CID_MPEG_VIDEO_PREPEND_SPSPPS_TO_IDR
-#define V4L2_CID_MPEG_VIDEO_PREPEND_SPSPPS_TO_IDR (V4L2_CID_MPEG_BASE + 644)
-#endif
-    // Request to inject SPS and PPS before each IDR, if the device supports
-    // that feature. Otherwise we'll have to cache and inject ourselves.
-    if (device_->IsCtrlExposed(V4L2_CID_MPEG_VIDEO_PREPEND_SPSPPS_TO_IDR)) {
-      if (!device_->SetExtCtrls(
-              V4L2_CTRL_CLASS_MPEG,
-              {V4L2ExtCtrl(V4L2_CID_MPEG_VIDEO_PREPEND_SPSPPS_TO_IDR, 1)})) {
-        NOTIFY_ERROR(kPlatformFailureError);
+  switch (output_format_fourcc_) {
+    case V4L2_PIX_FMT_H264:
+      if (!InitControlsH264(config)) {
         return false;
       }
-      inject_sps_and_pps_ = false;
-      DVLOGF(2) << "Device supports injecting SPS+PPS before each IDR";
-    } else {
-      inject_sps_and_pps_ = true;
-      DVLOGF(2) << "Will inject SPS+PPS before each IDR, unsupported by device";
-    }
-
-    // Optional H264 controls.
-    std::vector<V4L2ExtCtrl> h264_ctrls;
-
-    // No B-frames, for lowest decoding latency.
-    h264_ctrls.emplace_back(V4L2_CID_MPEG_VIDEO_B_FRAMES, 0);
-    // Quantization parameter maximum value (for variable bitrate control).
-    h264_ctrls.emplace_back(V4L2_CID_MPEG_VIDEO_H264_MAX_QP, 51);
-
-    // Set H.264 profile.
-    int32_t profile_value =
-        V4L2Device::VideoCodecProfileToV4L2H264Profile(config.output_profile);
-    if (profile_value < 0) {
-      NOTIFY_ERROR(kInvalidArgumentError);
+      break;
+    case V4L2_PIX_FMT_VP8:
+      InitControlsVP8(config);
+      break;
+    default:
+      NOTREACHED() << "Unsupported codec "
+                   << FourccToString(output_format_fourcc_);
       return false;
-    }
-    h264_ctrls.emplace_back(V4L2_CID_MPEG_VIDEO_H264_PROFILE, profile_value);
-
-    // Set H.264 output level from config. Use Level 4.0 as fallback default.
-    uint8_t h264_level =
-        config.h264_output_level.value_or(H264SPS::kLevelIDC4p0);
-    constexpr size_t kH264MacroblockSizeInPixels = 16;
-    const uint32_t framerate = config.initial_framerate.value_or(
-        VideoEncodeAccelerator::kDefaultFramerate);
-    const uint32_t mb_width =
-        base::bits::Align(config.input_visible_size.width(),
-                          kH264MacroblockSizeInPixels) /
-        kH264MacroblockSizeInPixels;
-    const uint32_t mb_height =
-        base::bits::Align(config.input_visible_size.height(),
-                          kH264MacroblockSizeInPixels) /
-        kH264MacroblockSizeInPixels;
-    const uint32_t framesize_in_mbs = mb_width * mb_height;
-
-    // Check whether the h264 level is valid.
-    if (!CheckH264LevelLimits(config.output_profile, h264_level,
-                              config.initial_bitrate, framerate,
-                              framesize_in_mbs)) {
-      base::Optional<uint8_t> valid_level =
-          FindValidH264Level(config.output_profile, config.initial_bitrate,
-                             framerate, framesize_in_mbs);
-      if (!valid_level) {
-        VLOGF(1) << "Could not find a valid h264 level for"
-                 << " profile=" << config.output_profile
-                 << " bitrate=" << config.initial_bitrate
-                 << " framerate=" << framerate
-                 << " size=" << config.input_visible_size.ToString();
-        NOTIFY_ERROR(kInvalidArgumentError);
-        return false;
-      }
-
-      h264_level = *valid_level;
-    }
-
-    int32_t level_value = V4L2Device::H264LevelIdcToV4L2H264Level(h264_level);
-    h264_ctrls.emplace_back(V4L2_CID_MPEG_VIDEO_H264_LEVEL, level_value);
-
-    // Ask not to put SPS and PPS into separate bitstream buffers.
-    h264_ctrls.emplace_back(V4L2_CID_MPEG_VIDEO_HEADER_MODE,
-                            V4L2_MPEG_VIDEO_HEADER_MODE_JOINED_WITH_1ST_FRAME);
-
-    // Ignore return value as these controls are optional.
-    device_->SetExtCtrls(V4L2_CTRL_CLASS_MPEG, std::move(h264_ctrls));
   }
 
   // Optional controls:
   // - Enable macroblock-level bitrate control.
-  // - Set GOP length, or default 0 to disable periodic key frames.
   device_->SetExtCtrls(V4L2_CTRL_CLASS_MPEG,
-                       {V4L2ExtCtrl(V4L2_CID_MPEG_VIDEO_MB_RC_ENABLE, 1),
-                        V4L2ExtCtrl(V4L2_CID_MPEG_VIDEO_GOP_SIZE,
-                                    config.gop_length.value_or(0))});
+                       {V4L2ExtCtrl(V4L2_CID_MPEG_VIDEO_MB_RC_ENABLE, 1)});
+
+  // - Set GOP length, or default 0 to disable periodic key frames.
+  device_->SetGOPLength(config.gop_length.value_or(0));
 
   return true;
+}
+
+bool V4L2VideoEncodeAccelerator::InitControlsH264(const Config& config) {
+#ifndef V4L2_CID_MPEG_VIDEO_PREPEND_SPSPPS_TO_IDR
+#define V4L2_CID_MPEG_VIDEO_PREPEND_SPSPPS_TO_IDR (V4L2_CID_MPEG_BASE + 644)
+#endif
+  // Request to inject SPS and PPS before each IDR, if the device supports
+  // that feature. Otherwise we'll have to cache and inject ourselves.
+  if (device_->IsCtrlExposed(V4L2_CID_MPEG_VIDEO_PREPEND_SPSPPS_TO_IDR)) {
+    if (!device_->SetExtCtrls(
+            V4L2_CTRL_CLASS_MPEG,
+            {V4L2ExtCtrl(V4L2_CID_MPEG_VIDEO_PREPEND_SPSPPS_TO_IDR, 1)})) {
+      SetErrorState(
+          {EncoderStatus::Codes::kEncoderHardwareDriverError,
+           "Failed to set V4L2_CID_MPEG_VIDEO_PREPEND_SPSPPS_TO_IDR to 1"});
+      return false;
+    }
+    inject_sps_and_pps_ = false;
+    DVLOGF(2) << "Device supports injecting SPS+PPS before each IDR";
+  } else {
+    inject_sps_and_pps_ = true;
+    DVLOGF(2) << "Will inject SPS+PPS before each IDR, unsupported by device";
+  }
+
+  // No B-frames, for lowest decoding latency.
+  device_->SetExtCtrls(V4L2_CTRL_CLASS_MPEG,
+                       {V4L2ExtCtrl(V4L2_CID_MPEG_VIDEO_B_FRAMES, 0)});
+
+  // Set H.264 profile.
+  int32_t profile_value =
+      V4L2Device::VideoCodecProfileToV4L2H264Profile(config.output_profile);
+  if (profile_value < 0) {
+    SetErrorState({EncoderStatus::Codes::kEncoderUnsupportedProfile,
+                   base::StrCat({"Unexpected h264 profile: ",
+                                 GetProfileName(config.output_profile)})});
+    return false;
+  }
+  if (!device_->SetExtCtrls(
+          V4L2_CTRL_CLASS_MPEG,
+          {V4L2ExtCtrl(V4L2_CID_MPEG_VIDEO_H264_PROFILE, profile_value)})) {
+    SetErrorState({EncoderStatus::Codes::kEncoderUnsupportedProfile,
+                   base::StrCat({"Unsupported h264 profile: ",
+                                 GetProfileName(config.output_profile)})});
+    return false;
+  }
+
+  // Set H.264 output level from config. Use Level 4.0 as fallback default.
+  uint8_t h264_level = config.h264_output_level.value_or(H264SPS::kLevelIDC4p0);
+  constexpr int kH264MacroblockSizeInPixels = 16;
+  const uint32_t framerate = config.initial_framerate.value_or(
+      VideoEncodeAccelerator::kDefaultFramerate);
+  const uint32_t mb_width =
+      base::bits::AlignUpDeprecatedDoNotUse(config.input_visible_size.width(),
+                                            kH264MacroblockSizeInPixels) /
+      kH264MacroblockSizeInPixels;
+  const uint32_t mb_height =
+      base::bits::AlignUpDeprecatedDoNotUse(config.input_visible_size.height(),
+                                            kH264MacroblockSizeInPixels) /
+      kH264MacroblockSizeInPixels;
+  const uint32_t framesize_in_mbs = mb_width * mb_height;
+
+  // Check whether the h264 level is valid.
+  if (!CheckH264LevelLimits(config.output_profile, h264_level,
+                            config.bitrate.target_bps(), framerate,
+                            framesize_in_mbs)) {
+    absl::optional<uint8_t> valid_level =
+        FindValidH264Level(config.output_profile, config.bitrate.target_bps(),
+                           framerate, framesize_in_mbs);
+    if (!valid_level) {
+      SetErrorState(
+          {EncoderStatus::Codes::kEncoderInitializationError,
+           base::StrCat({"Could not find a valid h264 level for"
+                         " profile=",
+                         GetProfileName(config.output_profile), " bitrate=",
+                         base::NumberToString(config.bitrate.target_bps()),
+                         " framerate=", base::NumberToString(framerate),
+                         " size=", config.input_visible_size.ToString()})});
+      return false;
+    }
+
+    h264_level = *valid_level;
+  }
+
+  int32_t level_value = V4L2Device::H264LevelIdcToV4L2H264Level(h264_level);
+  device_->SetExtCtrls(
+      V4L2_CTRL_CLASS_MPEG,
+      {V4L2ExtCtrl(V4L2_CID_MPEG_VIDEO_H264_LEVEL, level_value)});
+
+  // Ask not to put SPS and PPS into separate bitstream buffers.
+  device_->SetExtCtrls(
+      V4L2_CTRL_CLASS_MPEG,
+      {V4L2ExtCtrl(V4L2_CID_MPEG_VIDEO_HEADER_MODE,
+                   V4L2_MPEG_VIDEO_HEADER_MODE_JOINED_WITH_1ST_FRAME)});
+
+  // H264 coding tools parameter. Since a driver may not support some of them,
+  // EXT_S_CTRLS is called to each of them to enable as many coding tools as
+  // possible.
+  // Don't produce Intra-only frame.
+  device_->SetExtCtrls(V4L2_CTRL_CLASS_MPEG,
+                       {V4L2ExtCtrl(V4L2_CID_MPEG_VIDEO_H264_I_PERIOD, 0)});
+  // Enable deblocking filter.
+  device_->SetExtCtrls(
+      V4L2_CTRL_CLASS_MPEG,
+      {V4L2ExtCtrl(V4L2_CID_MPEG_VIDEO_H264_LOOP_FILTER_MODE,
+                   V4L2_MPEG_VIDEO_H264_LOOP_FILTER_MODE_ENABLED)});
+  // Use CABAC in Main and High profiles.
+  if (config.output_profile == H264PROFILE_MAIN ||
+      config.output_profile == H264PROFILE_HIGH) {
+    device_->SetExtCtrls(
+        V4L2_CTRL_CLASS_MPEG,
+        {V4L2ExtCtrl(V4L2_CID_MPEG_VIDEO_H264_ENTROPY_MODE,
+                     V4L2_MPEG_VIDEO_H264_ENTROPY_MODE_CABAC)});
+  }
+  // Use 8x8 transform in High profile.
+  if (config.output_profile == H264PROFILE_HIGH) {
+    device_->SetExtCtrls(
+        V4L2_CTRL_CLASS_MPEG,
+        {V4L2ExtCtrl(V4L2_CID_MPEG_VIDEO_H264_8X8_TRANSFORM, true)});
+  }
+
+  // Quantization parameter. The h264 qp range is 0-51.
+  // Note: Webrtc default values are 24 and 37 respectively, see
+  // h264_encoder_impl.cc.
+  // These values were previously copied from the VA-API encoder.
+  // The MAX_QP parameter needed modification to 51 due to
+  // b/274867782 and b/241549978.
+  // Ignore return values as these controls are optional.
+  device_->SetExtCtrls(V4L2_CTRL_CLASS_MPEG,
+                       {V4L2ExtCtrl(V4L2_CID_MPEG_VIDEO_H264_MAX_QP, 51)});
+  // Don't set MIN_QP with other controls since it is not supported by
+  // some devices and may prevent other controls from being set.
+  device_->SetExtCtrls(V4L2_CTRL_CLASS_MPEG,
+                       {V4L2ExtCtrl(V4L2_CID_MPEG_VIDEO_H264_MIN_QP, 24)});
+  return true;
+}
+
+void V4L2VideoEncodeAccelerator::InitControlsVP8(const Config& config) {
+  // Quantization parameter. They are vp8 ac/dc indices and their ranges are
+  // 0-127. These values were copied from the VA-API encoder.
+  // Ignore return values as these controls are optional.
+  device_->SetExtCtrls(V4L2_CTRL_CLASS_MPEG,
+                       {V4L2ExtCtrl(V4L2_CID_MPEG_VIDEO_VPX_MIN_QP, 4),
+                        V4L2ExtCtrl(V4L2_CID_MPEG_VIDEO_VPX_MAX_QP, 117)});
 }
 
 bool V4L2VideoEncodeAccelerator::CreateInputBuffers() {
@@ -1783,9 +2082,10 @@ bool V4L2VideoEncodeAccelerator::CreateInputBuffers() {
       break;
   }
 
-  if (input_queue_->AllocateBuffers(num_buffers, input_memory_type_) <
-      kInputBufferCount) {
-    VLOGF(1) << "Failed to allocate V4L2 input buffers.";
+  if (input_queue_->AllocateBuffers(num_buffers, input_memory_type_,
+                                    /*incoherent=*/false) < kInputBufferCount) {
+    SetErrorState({EncoderStatus::Codes::kEncoderHardwareDriverError,
+                   "Failed to allocate V4L2 input buffers."});
     return false;
   }
 
@@ -1799,9 +2099,13 @@ bool V4L2VideoEncodeAccelerator::CreateOutputBuffers() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(encoder_sequence_checker_);
   DCHECK(!output_queue_->IsStreaming());
 
-  if (output_queue_->AllocateBuffers(kOutputBufferCount, V4L2_MEMORY_MMAP) <
+  if (output_queue_->AllocateBuffers(kOutputBufferCount, V4L2_MEMORY_MMAP,
+                                     /*incoherent=*/false) <
       kOutputBufferCount) {
-    VLOGF(1) << "Failed to allocate V4L2 output buffers.";
+    SetErrorState(
+        {EncoderStatus::Codes::kEncoderInitializationError,
+         base::StrCat({"Failed to allocate V4L2 output buffers, errno=",
+                       base::NumberToString(errno)})});
     return false;
   }
   return true;
@@ -1815,7 +2119,9 @@ void V4L2VideoEncodeAccelerator::DestroyInputBuffers() {
     return;
 
   DCHECK(!input_queue_->IsStreaming());
-  input_queue_->DeallocateBuffers();
+  if (!input_queue_->DeallocateBuffers())
+    VLOGF(1) << "Failed to deallocate V4L2 input buffers";
+
   input_buffer_map_.clear();
 }
 
@@ -1827,7 +2133,8 @@ void V4L2VideoEncodeAccelerator::DestroyOutputBuffers() {
     return;
 
   DCHECK(!output_queue_->IsStreaming());
-  output_queue_->DeallocateBuffers();
+  if (!output_queue_->DeallocateBuffers())
+    VLOGF(1) << "Failed to deallocate V4L2 output buffers";
 }
 
 }  // namespace media

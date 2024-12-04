@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,6 +6,7 @@
 
 #include <cmath>
 
+#include "base/containers/span.h"
 #include "base/metrics/crc32.h"
 
 namespace base {
@@ -25,8 +26,7 @@ uint32_t BucketRanges::CalculateChecksum() const {
     return 0;
 
   // Checksum is seeded with the ranges "size".
-  return Crc32(static_cast<uint32_t>(ranges_size), &ranges_[0],
-               sizeof(ranges_[0]) * ranges_size);
+  return Crc32(static_cast<uint32_t>(ranges_size), base::as_byte_span(ranges_));
 }
 
 bool BucketRanges::HasValidChecksum() const {

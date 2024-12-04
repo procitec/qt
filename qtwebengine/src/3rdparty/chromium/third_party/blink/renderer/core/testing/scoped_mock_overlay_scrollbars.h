@@ -1,11 +1,13 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_TESTING_SCOPED_MOCK_OVERLAY_SCROLLBARS_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_TESTING_SCOPED_MOCK_OVERLAY_SCROLLBARS_H_
 
+#include "base/check_op.h"
 #include "build/build_config.h"
+#include "build/chromeos_buildflags.h"
 #include "third_party/blink/renderer/core/scroll/scrollbar_theme.h"
 #include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 
@@ -67,8 +69,9 @@ class ScopedMockOverlayScrollbars {
     // platform independent.
     if (use_mock_overlay_scrollbars_)
       return true;
-#if defined(OS_ANDROID) || defined(OS_CHROMEOS)
-    // Non-overlay scrollbar is not supported on Android and ChromeOS.
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_IOS) || \
+    BUILDFLAG(IS_FUCHSIA)
+    // Non-overlay scrollbar is not supported on these platforms.
     return false;
 #else
     return true;
@@ -82,9 +85,9 @@ class ScopedMockOverlayScrollbars {
 };
 
 // This is used in tests that needs non-overlay scrollbars. To make sure the
-// 'return' work, this macro must be used in a test directly, not in a function
+// 'return' works, this macro must be used in a test directly, not in a function
 // called by a test or a compound statement.
-#define USE_NON_OVERLAY_SCROLLBARS()                         \
+#define USE_NON_OVERLAY_SCROLLBARS_OR_QUIT()                 \
   ScopedMockOverlayScrollbars non_overlay_scrollbars(false); \
   if (!non_overlay_scrollbars.IsSuccessful())                \
   return

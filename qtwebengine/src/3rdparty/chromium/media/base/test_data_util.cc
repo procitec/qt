@@ -1,10 +1,11 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "media/base/test_data_util.h"
 
 #include <stdint.h>
+#include <ostream>
 
 #include "base/check_op.h"
 #include "base/containers/flat_map.h"
@@ -12,7 +13,6 @@
 #include "base/no_destructor.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/path_service.h"
-#include "base/stl_util.h"
 #include "media/base/decoder_buffer.h"
 
 namespace media {
@@ -102,6 +102,8 @@ const FileToMimeTypeMap& GetFileToMimeTypeMap() {
        kWebMVorbisAudioVp8Video},
       {"bear-640x360-a_frag-cbcs.mp4", kMp4AacAudio},
       {"bear-640x360-a_frag-cenc.mp4", kMp4AacAudio},
+      {"bear-640x360-a_frag-cenc.mp4;bear-640x360-v_frag-cenc.mp4",
+       kMp4AacAudioAvc1Video},
       {"bear-640x360-a_frag.mp4", kMp4AacAudio},
       {"bear-640x360-av_frag.mp4", kMp4AacAudioAvc1Video},
       {"bear-640x360-v_frag-cbc1.mp4", kMp4Avc1Video},
@@ -167,21 +169,21 @@ const uint8_t kKeyId[] = {0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37,
 // See http://crbug.com/592067
 
 // Common test results.
-const char kFailed[] = "FAILED";
+const char kFailedTitle[] = "FAILED";
 
 // Upper case event name set by Utils.installTitleEventHandler().
-const char kEnded[] = "ENDED";
-const char kErrorEvent[] = "ERROR";
+const char kEndedTitle[] = "ENDED";
+const char kErrorEventTitle[] = "ERROR";
 
 // Lower case event name as set by Utils.failTest().
-const char kError[] = "error";
+const char kErrorTitle[] = "error";
 
 const base::FilePath::CharType kTestDataPath[] =
     FILE_PATH_LITERAL("media/test/data");
 
 base::FilePath GetTestDataFilePath(const std::string& name) {
   base::FilePath file_path;
-  CHECK(base::PathService::Get(base::DIR_SOURCE_ROOT, &file_path));
+  CHECK(base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &file_path));
   return file_path.Append(GetTestDataPath()).AppendASCII(name);
 }
 
@@ -224,16 +226,23 @@ scoped_refptr<DecoderBuffer> ReadTestDataFile(const std::string& name) {
   return buffer;
 }
 
+scoped_refptr<DecoderBuffer> ReadTestDataFile(const std::string& name,
+                                              base::TimeDelta pts) {
+  auto buffer = ReadTestDataFile(name);
+  buffer->set_timestamp(pts);
+  return buffer;
+}
+
 bool LookupTestKeyVector(const std::vector<uint8_t>& key_id,
                          bool allow_rotation,
                          std::vector<uint8_t>* key) {
-  std::vector<uint8_t> starting_key_id(kKeyId, kKeyId + base::size(kKeyId));
+  std::vector<uint8_t> starting_key_id(kKeyId, kKeyId + std::size(kKeyId));
   size_t rotate_limit = allow_rotation ? starting_key_id.size() : 1;
   for (size_t pos = 0; pos < rotate_limit; ++pos) {
     std::rotate(starting_key_id.begin(), starting_key_id.begin() + pos,
                 starting_key_id.end());
     if (key_id == starting_key_id) {
-      key->assign(kSecretKey, kSecretKey + base::size(kSecretKey));
+      key->assign(kSecretKey, kSecretKey + std::size(kSecretKey));
       std::rotate(key->begin(), key->begin() + pos, key->end());
       return true;
     }

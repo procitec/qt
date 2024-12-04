@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,18 +8,13 @@
 #include <stddef.h>
 
 #include <memory>
+#include <optional>
 #include <ostream>
 #include <string>
 
 #include "base/compiler_specific.h"
-#include "base/optional.h"
-#include "base/strings/string16.h"
 #include "url/gurl.h"
 #include "url/origin.h"
-
-namespace autofill {
-struct PasswordForm;
-}
 
 namespace password_manager {
 
@@ -41,46 +36,54 @@ enum class CredentialManagerError {
   UNKNOWN,
 };
 
-enum class CredentialMediationRequirement { kSilent, kOptional, kRequired };
+// This enum described the mediation requirement of a
+// navigator.credentials.get() call. Do not change the meaning or order of these
+// values, since they are being recorded in metrics and in sync with the
+// counterpart in enums.xml. New values can be added at the end.
+enum class CredentialMediationRequirement {
+  kOptional,
+  kSilent,
+  kRequired,
+  kMaxValue = kRequired
+};
 
 std::string CredentialTypeToString(CredentialType value);
 std::ostream& operator<<(std::ostream& os, CredentialType value);
 
 struct CredentialInfo {
   CredentialInfo();
-  CredentialInfo(const autofill::PasswordForm& form, CredentialType form_type);
+  CredentialInfo(CredentialType type,
+                 std::optional<std::u16string> id,
+                 std::optional<std::u16string> name,
+                 GURL icon,
+                 std::optional<std::u16string> password,
+                 url::Origin federation);
+
   CredentialInfo(const CredentialInfo& other);
   ~CredentialInfo();
 
   bool operator==(const CredentialInfo& rhs) const;
 
-  CredentialType type;
+  CredentialType type = CredentialType::CREDENTIAL_TYPE_EMPTY;
 
   // An identifier (username, email address, etc). Corresponds to
   // WebCredential's id property.
-  base::Optional<base::string16> id;
+  std::optional<std::u16string> id;
 
   // An user-friendly name ("Jane Doe"). Corresponds to WebCredential's name
   // property.
-  base::Optional<base::string16> name;
+  std::optional<std::u16string> name;
 
   // The address of this credential's icon (e.g. the user's avatar).
   // Corresponds to WebCredential's icon property.
   GURL icon;
 
   // Corresponds to WebPasswordCredential's password property.
-  base::Optional<base::string16> password;
+  std::optional<std::u16string> password;
 
   // Corresponds to WebFederatedCredential's provider property.
   url::Origin federation;
 };
-
-// Create a new autofill::PasswordForm object based on |info|, valid in the
-// context of |origin|. Returns an empty std::unique_ptr for
-// CREDENTIAL_TYPE_EMPTY.
-std::unique_ptr<autofill::PasswordForm> CreatePasswordFormFromCredentialInfo(
-    const CredentialInfo& info,
-    const url::Origin& origin);
 
 }  // namespace password_manager
 

@@ -1,31 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2017 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtWaylandCompositor module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:GPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 3 or (at your option) any later version
-** approved by the KDE Free Qt Foundation. The licenses are as published by
-** the Free Software Foundation and appearing in the file LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2017 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
 #include "qwldatadevicemanager_p.h"
 
@@ -85,15 +59,17 @@ void DataDeviceManager::setCurrentSelectionSource(DataSource *source)
 
 void DataDeviceManager::sourceDestroyed(DataSource *source)
 {
-    if (m_current_selection_source == source)
+    if (m_current_selection_source == source) {
         finishReadFromClient();
+        m_current_selection_source = nullptr;
+    }
 }
 
 void DataDeviceManager::retain()
 {
     QList<QString> offers = m_current_selection_source->mimeTypes();
     finishReadFromClient();
-    if (m_retainedReadIndex >= offers.count()) {
+    if (m_retainedReadIndex >= offers.size()) {
         QWaylandCompositorPrivate::get(m_compositor)->feedRetainedSelectionData(&m_retainedData);
         return;
     }
@@ -130,7 +106,7 @@ void DataDeviceManager::finishReadFromClient(bool exhausted)
 void DataDeviceManager::readFromClient(int fd)
 {
     static char buf[4096];
-    int obsCount = m_obsoleteRetainedReadNotifiers.count();
+    int obsCount = m_obsoleteRetainedReadNotifiers.size();
     for (int i = 0; i < obsCount; ++i) {
         QSocketNotifier *sn = m_obsoleteRetainedReadNotifiers.at(i);
         if (sn->socket() == fd) {
@@ -188,6 +164,15 @@ void DataDeviceManager::overrideSelection(const QMimeData &mimeData)
 
     m_compositorOwnsSelection = true;
 
+    if (m_current_selection_source) {
+        finishReadFromClient();
+        m_current_selection_source->cancel();
+        // wl_data_source::cancelled will destroy it and
+        // it will make m_current_selection_source as nullptr.
+        // But it will immediately affect the selection here.
+        m_current_selection_source = nullptr;
+    }
+
     QWaylandSeat *dev = m_compositor->defaultSeat();
     QWaylandSurface *focusSurface = dev->keyboardFocus();
     if (focusSurface)
@@ -201,7 +186,7 @@ bool DataDeviceManager::offerFromCompositorToClient(wl_resource *clientDataDevic
         return false;
 
     wl_client *client = wl_resource_get_client(clientDataDeviceResource);
-    //qDebug("compositor offers %d types to %p", m_retainedData.formats().count(), client);
+    //qDebug("compositor offers %d types to %p", int(m_retainedData.formats().count()), client);
 
     struct wl_resource *selectionOffer =
              wl_resource_create(client, &wl_data_offer_interface, -1, 0);
@@ -271,3 +256,5 @@ const struct wl_data_offer_interface DataDeviceManager::compositor_offer_interfa
 } //namespace
 
 QT_END_NAMESPACE
+
+#include "moc_qwldatadevicemanager_p.cpp"

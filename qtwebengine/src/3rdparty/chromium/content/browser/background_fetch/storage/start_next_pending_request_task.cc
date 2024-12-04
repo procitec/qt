@@ -1,14 +1,15 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "content/browser/background_fetch/storage/start_next_pending_request_task.h"
 
-#include "base/bind.h"
-#include "base/guid.h"
+#include "base/functional/bind.h"
+#include "base/uuid.h"
 #include "content/browser/background_fetch/storage/database_helpers.h"
 #include "content/browser/service_worker/service_worker_context_wrapper.h"
 #include "content/common/fetch/fetch_api_request_proto.h"
+#include "third_party/blink/public/common/storage_key/storage_key.h"
 
 namespace content {
 namespace background_fetch {
@@ -65,7 +66,8 @@ void StartNextPendingRequestTask::DidGetPendingRequests(
   // Create an active request.
   proto::BackgroundFetchActiveRequest active_request;
 
-  active_request_.set_download_guid(base::GenerateGUID());
+  active_request_.set_download_guid(
+      base::Uuid::GenerateRandomV4().AsLowercaseString());
   active_request_.set_unique_id(pending_request_.unique_id());
   active_request_.set_request_index(pending_request_.request_index());
   // Transfer ownership of the request to avoid a potentially expensive copy.
@@ -75,7 +77,7 @@ void StartNextPendingRequestTask::DidGetPendingRequests(
 
   service_worker_context()->StoreRegistrationUserData(
       registration_id_.service_worker_registration_id(),
-      registration_id_.origin(),
+      registration_id_.storage_key(),
       {{ActiveRequestKey(active_request_.unique_id(),
                          active_request_.request_index()),
         active_request_.SerializeAsString()}},
@@ -122,15 +124,9 @@ void StartNextPendingRequestTask::DidDeletePendingRequest(
 
 void StartNextPendingRequestTask::FinishWithError(
     blink::mojom::BackgroundFetchError error) {
-  ReportStorageError();
-
   std::move(callback_).Run(error, std::move(next_request_));
 
   Finished();  // Destroys |this|.
-}
-
-std::string StartNextPendingRequestTask::HistogramName() const {
-  return "StartNextPendingRequestTask";
 }
 
 }  // namespace background_fetch

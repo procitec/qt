@@ -15,6 +15,7 @@
 #include "include/core/SkTypes.h"
 #include "modules/skottie/include/ExternalLayer.h"
 #include "modules/skottie/include/SkottieProperty.h"
+#include "modules/skottie/include/SlotManager.h"
 #include "modules/skresources/include/SkResources.h"
 
 #include <memory>
@@ -29,7 +30,7 @@ namespace skjson { class ObjectValue; }
 namespace sksg {
 
 class InvalidationController;
-class Scene;
+class RenderNode;
 
 } // namespace sksg
 
@@ -53,6 +54,29 @@ public:
     virtual void log(Level, const char message[], const char* json = nullptr);
 };
 
+// Evaluates AE expressions.
+template <class T>
+class SK_API ExpressionEvaluator : public SkRefCnt {
+public:
+    // Evaluate the expression at the current time.
+    virtual T evaluate(float t) = 0;
+};
+
+/**
+ * Creates ExpressionEvaluators to evaluate AE expressions and return the results.
+ */
+class SK_API ExpressionManager : public SkRefCnt {
+public:
+    virtual sk_sp<ExpressionEvaluator<float>> createNumberExpressionEvaluator(
+        const char expression[]) = 0;
+
+    virtual sk_sp<ExpressionEvaluator<SkString>> createStringExpressionEvaluator(
+        const char expression[]) = 0;
+
+    virtual sk_sp<ExpressionEvaluator<std::vector<float>>> createArrayExpressionEvaluator(
+        const char expression[]) = 0;
+};
+
 /**
  * Interface for receiving AE composition markers at Animation build time.
  */
@@ -64,7 +88,7 @@ public:
 
 class SK_API Animation : public SkNVRefCnt<Animation> {
 public:
-    class Builder final {
+    class SK_API Builder final {
     public:
         enum Flags : uint32_t {
             kDeferImageLoading   = 0x01, // Normally, all static image frames are resolved at
@@ -127,11 +151,22 @@ public:
         Builder& setPrecompInterceptor(sk_sp<PrecompInterceptor>);
 
         /**
+         * Registers an ExpressionManager to evaluate AE expressions.
+         * If unspecified, expressions in the animation JSON will be ignored.
+         */
+        Builder& setExpressionManager(sk_sp<ExpressionManager>);
+
+        /**
          * Animation factories.
          */
         sk_sp<Animation> make(SkStream*);
         sk_sp<Animation> make(const char* data, size_t length);
         sk_sp<Animation> makeFromFile(const char path[]);
+
+        /**
+         * Get handle for SlotManager after animation is built.
+         */
+        const sk_sp<SlotManager>& getSlotManager() const {return fSlotManager;}
 
     private:
         const uint32_t          fFlags;
@@ -142,6 +177,8 @@ public:
         sk_sp<Logger>             fLogger;
         sk_sp<MarkerObserver  >   fMarkerObserver;
         sk_sp<PrecompInterceptor> fPrecompInterceptor;
+        sk_sp<ExpressionManager>  fExpressionManager;
+        sk_sp<SlotManager>        fSlotManager;
         Stats                     fStats;
     };
 
@@ -239,12 +276,12 @@ private:
         kRequiresTopLevelIsolation = 1 << 0, // Needs to draw into a layer due to layer blending.
     };
 
-    Animation(std::unique_ptr<sksg::Scene>,
+    Animation(sk_sp<sksg::RenderNode>,
               std::vector<sk_sp<internal::Animator>>&&,
               SkString ver, const SkSize& size,
               double inPoint, double outPoint, double duration, double fps, uint32_t flags);
 
-    const std::unique_ptr<sksg::Scene>           fScene;
+    const sk_sp<sksg::RenderNode>                fSceneRoot;
     const std::vector<sk_sp<internal::Animator>> fAnimators;
     const SkString                               fVersion;
     const SkSize                                 fSize;

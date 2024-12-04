@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,11 +8,12 @@
 
 #include "base/check_op.h"
 #include "base/command_line.h"
-#include "base/macros.h"
 #include "base/memory/ptr_util.h"
+#include "base/memory/raw_ptr.h"
 #include "base/threading/simple_thread.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkBitmap.h"
+#include "ui/base/resource/resource_scale_factor.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/image/image_skia_rep.h"
 #include "ui/gfx/image/image_skia_source.h"
@@ -26,19 +27,23 @@ class FixedSource : public ImageSkiaSource {
  public:
   explicit FixedSource(const ImageSkiaRep& image) : image_(image) {}
 
+  FixedSource(const FixedSource&) = delete;
+  FixedSource& operator=(const FixedSource&) = delete;
+
   ~FixedSource() override {}
 
   ImageSkiaRep GetImageForScale(float scale) override { return image_; }
 
  private:
   ImageSkiaRep image_;
-
-  DISALLOW_COPY_AND_ASSIGN(FixedSource);
 };
 
 class FixedScaleSource : public ImageSkiaSource {
  public:
   explicit FixedScaleSource(const ImageSkiaRep& image) : image_(image) {}
+
+  FixedScaleSource(const FixedScaleSource&) = delete;
+  FixedScaleSource& operator=(const FixedScaleSource&) = delete;
 
   ~FixedScaleSource() override {}
 
@@ -50,8 +55,6 @@ class FixedScaleSource : public ImageSkiaSource {
 
  private:
   ImageSkiaRep image_;
-
-  DISALLOW_COPY_AND_ASSIGN(FixedScaleSource);
 };
 
 class DynamicSource : public ImageSkiaSource {
@@ -59,6 +62,9 @@ class DynamicSource : public ImageSkiaSource {
   explicit DynamicSource(const gfx::Size& size)
       : size_(size),
         last_requested_scale_(0.0f) {}
+
+  DynamicSource(const DynamicSource&) = delete;
+  DynamicSource& operator=(const DynamicSource&) = delete;
 
   ~DynamicSource() override {}
 
@@ -76,8 +82,6 @@ class DynamicSource : public ImageSkiaSource {
  private:
   gfx::Size size_;
   float last_requested_scale_;
-
-  DISALLOW_COPY_AND_ASSIGN(DynamicSource);
 };
 
 class NullSource: public ImageSkiaSource {
@@ -85,14 +89,14 @@ class NullSource: public ImageSkiaSource {
   NullSource() {
   }
 
+  NullSource(const NullSource&) = delete;
+  NullSource& operator=(const NullSource&) = delete;
+
   ~NullSource() override {}
 
   ImageSkiaRep GetImageForScale(float scale) override {
     return gfx::ImageSkiaRep();
   }
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(NullSource);
 };
 
 }  // namespace
@@ -106,6 +110,9 @@ class TestOnThread : public base::SimpleThread {
         can_read_(false),
         can_modify_(false) {
   }
+
+  TestOnThread(const TestOnThread&) = delete;
+  TestOnThread& operator=(const TestOnThread&) = delete;
 
   void Run() override {
     can_read_ = image_skia_->CanRead();
@@ -124,33 +131,24 @@ class TestOnThread : public base::SimpleThread {
   bool can_modify() const { return can_modify_; }
 
  private:
-  ImageSkia* image_skia_;
+  raw_ptr<ImageSkia> image_skia_;
 
   bool can_read_;
   bool can_modify_;
-
-  DISALLOW_COPY_AND_ASSIGN(TestOnThread);
 };
 
 }  // namespace test
 
 class ImageSkiaTest : public testing::Test {
  public:
-  ImageSkiaTest() {
-    // In the test, we assume that we support 1.0f and 2.0f DSFs.
-    old_scales_ = ImageSkia::GetSupportedScales();
-
-    // Sets the list of scale factors supported by resource bundle.
-    std::vector<float> supported_scales;
-    supported_scales.push_back(1.0f);
-    supported_scales.push_back(2.0f);
-    ImageSkia::SetSupportedScales(supported_scales);
-  }
-  ~ImageSkiaTest() override { ImageSkia::SetSupportedScales(old_scales_); }
+  ImageSkiaTest() = default;
+  ImageSkiaTest(const ImageSkiaTest&) = delete;
+  ImageSkiaTest& operator=(const ImageSkiaTest&) = delete;
+  ~ImageSkiaTest() override = default;
 
  private:
-  std::vector<float> old_scales_;
-  DISALLOW_COPY_AND_ASSIGN(ImageSkiaTest);
+  ui::test::ScopedSetSupportedResourceScaleFactors
+      scoped_set_supported_scale_factors_{{ui::k100Percent, ui::k200Percent}};
 };
 
 TEST_F(ImageSkiaTest, FixedSource) {
@@ -316,7 +314,7 @@ TEST_F(ImageSkiaTest, GetBitmap) {
   ImageSkia image_skia(std::make_unique<DynamicSource>(Size(100, 200)),
                        Size(100, 200));
   const SkBitmap* bitmap = image_skia.bitmap();
-  EXPECT_NE(static_cast<SkBitmap*>(NULL), bitmap);
+  ASSERT_NE(nullptr, bitmap);
   EXPECT_FALSE(bitmap->isNull());
 }
 
@@ -330,7 +328,7 @@ TEST_F(ImageSkiaTest, GetBitmapFromEmpty) {
   // Check that ImageSkia::bitmap() still returns a valid SkBitmap pointer for
   // the image and all its copies.
   const SkBitmap* bitmap = empty_image_copy.bitmap();
-  ASSERT_NE(static_cast<SkBitmap*>(NULL), bitmap);
+  ASSERT_NE(nullptr, bitmap);
   EXPECT_TRUE(bitmap->isNull());
   EXPECT_TRUE(bitmap->empty());
 }
@@ -471,8 +469,8 @@ TEST_F(ImageSkiaTest, SourceOnThreadTest) {
   image.MakeThreadSafe();
   EXPECT_TRUE(image.IsThreadSafe());
   // Check if image reps are generated for supported scale factors.
-  EXPECT_EQ(ImageSkia::GetSupportedScales().size(),
-           image.image_reps().size());
+  EXPECT_EQ(ui::GetSupportedResourceScaleFactors().size(),
+            image.image_reps().size());
   test::TestOnThread threadsafe_on_thread(&image);
   threadsafe_on_thread.StartAndJoin();
   EXPECT_TRUE(threadsafe_on_thread.can_read());
@@ -625,6 +623,37 @@ TEST_F(ImageSkiaTest, UnscaledImageForArbitraryScaleFactor) {
   EXPECT_EQ("100x200", rep12.pixel_size().ToString());
   EXPECT_TRUE(rep12.unscaled());
   EXPECT_EQ(1U, image.image_reps().size());
+}
+
+// Tests that searching for representation uses supported scale values and that
+// scale values (floats) are not mismatched with scale factors (enums).
+TEST_F(ImageSkiaTest, SupportedScaleValue) {
+  // ui::kScaleFactorNone isn't probably a good choice but we need a scale
+  // factor with the enum value different from its corresponding scale value.
+  // The only enum value which meets this requirement is kScaleFactorNone (enum
+  // value 0 and scale value 1.0f). Enum values for other scale factors are
+  // equal to scale values (for instance enum value for k200Percent is 2 and its
+  // scale value is 2.0f).
+  ui::test::ScopedSetSupportedResourceScaleFactors
+      supported_scale_factors_override(
+          {ui::k200Percent, ui::k300Percent, ui::kScaleFactorNone});
+
+  DynamicSource* source = new DynamicSource(Size(100, 200));
+  ImageSkia image(base::WrapUnique(source), gfx::Size(100, 200));
+
+  image.GetRepresentation(2.0f);
+  EXPECT_EQ(2.0f, source->GetLastRequestedScaleAndReset());
+
+  image.GetRepresentation(3.0f);
+  EXPECT_EQ(3.0f, source->GetLastRequestedScaleAndReset());
+
+  // We request 1.0 scale but k100Percent is not currently supported. However,
+  // kScaleFactorNone also uses 1.0 scale value. 1.0 is a valid scale then, and
+  // we expect that source is asked for this scale. This test case also verifies
+  // the fix for regression introduced in the past, where scale factor enum was
+  // used in place of scale value.
+  image.GetRepresentation(1.0f);
+  EXPECT_EQ(1.0f, source->GetLastRequestedScaleAndReset());
 }
 
 }  // namespace gfx

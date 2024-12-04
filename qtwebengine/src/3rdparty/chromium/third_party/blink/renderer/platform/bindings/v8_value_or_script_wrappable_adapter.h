@@ -1,12 +1,13 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_BINDINGS_V8_VALUE_OR_SCRIPT_WRAPPABLE_ADAPTER_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_BINDINGS_V8_VALUE_OR_SCRIPT_WRAPPABLE_ADAPTER_H_
 
-#include "third_party/blink/renderer/platform/heap/handle.h"
 #include "third_party/blink/renderer/platform/heap/persistent.h"
+#include "third_party/blink/renderer/platform/platform_export.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "v8/include/v8.h"
 
 namespace blink {
@@ -44,7 +45,7 @@ class PLATFORM_EXPORT V8ValueOrScriptWrappableAdapter {
   // Returns the specified v8::Value or the V8 wrapper object of the specified
   // ScriptWrappable.  In the latter case, the wrapper may be created in
   // |creation_context|.
-  v8::Local<v8::Value> V8Value(ScriptState* creation_context) const;
+  v8::Local<v8::Value> V8Value(ScriptState*) const;
 
   // Returns true when none of v8::Value nor ScriptWrappable is specified.
   bool IsEmpty() const { return v8_value_.IsEmpty() && !script_wrappable_; }

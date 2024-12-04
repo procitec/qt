@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,13 +6,13 @@
 
 #include <memory>
 
-#include "base/bind.h"
-#include "base/macros.h"
-#include "base/optional.h"
+#include "base/functional/bind.h"
+#include "base/memory/raw_ptr.h"
 #include "components/feature_engagement/internal/proto/feature_event.pb.h"
 #include "components/feature_engagement/internal/test/event_util.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 using testing::_;
 using testing::Return;
@@ -27,6 +27,10 @@ namespace {
 class MockEventModel : public EventModel {
  public:
   MockEventModel() = default;
+
+  MockEventModel(const MockEventModel&) = delete;
+  MockEventModel& operator=(const MockEventModel&) = delete;
+
   ~MockEventModel() override = default;
 
   // EventModel implementation.
@@ -36,9 +40,13 @@ class MockEventModel : public EventModel {
   MOCK_CONST_METHOD3(GetEventCount,
                      uint32_t(const std::string&, uint32_t, uint32_t));
   MOCK_METHOD2(IncrementEvent, void(const std::string&, uint32_t));
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(MockEventModel);
+  MOCK_METHOD1(ClearEvent, void(const std::string&));
+  MOCK_METHOD3(IncrementSnooze, void(const std::string&, uint32_t, base::Time));
+  MOCK_METHOD1(DismissSnooze, void(const std::string&));
+  MOCK_CONST_METHOD1(GetLastSnoozeTimestamp, base::Time(const std::string&));
+  MOCK_CONST_METHOD3(GetSnoozeCount,
+                     uint32_t(const std::string&, uint32_t, uint32_t));
+  MOCK_CONST_METHOD1(IsSnoozeDismissed, bool(const std::string&));
 };
 
 class InitAwareEventModelTest : public testing::Test {
@@ -47,6 +55,9 @@ class InitAwareEventModelTest : public testing::Test {
     load_callback_ = base::BindOnce(
         &InitAwareEventModelTest::OnModelInitialized, base::Unretained(this));
   }
+
+  InitAwareEventModelTest(const InitAwareEventModelTest&) = delete;
+  InitAwareEventModelTest& operator=(const InitAwareEventModelTest&) = delete;
 
   ~InitAwareEventModelTest() override = default;
 
@@ -60,14 +71,11 @@ class InitAwareEventModelTest : public testing::Test {
   void OnModelInitialized(bool success) { load_success_ = success; }
 
   std::unique_ptr<InitAwareEventModel> model_;
-  MockEventModel* mocked_model_;
+  raw_ptr<MockEventModel> mocked_model_;
 
   // Load callback tracking.
-  base::Optional<bool> load_success_;
+  absl::optional<bool> load_success_;
   EventModel::OnModelInitializationFinished load_callback_;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(InitAwareEventModelTest);
 };
 
 }  // namespace
@@ -196,6 +204,44 @@ TEST_F(InitAwareEventModelTest, QueuedIncrementEventWithUnsuccessfulInit) {
   EXPECT_CALL(*mocked_model_, IncrementEvent("qux", 3U)).Times(0);
   model_->IncrementEvent("qux", 3U);
   EXPECT_EQ(0U, model_->GetQueuedEventCountForTesting());
+}
+
+TEST_F(InitAwareEventModelTest, ClearEvent) {
+  {
+    EXPECT_CALL(*mocked_model_, IsReady()).WillRepeatedly(Return(false));
+
+    model_->IncrementEvent("foo", 0U);
+    model_->IncrementEvent("bar", 1U);
+
+    // Before initialization, ClearEvent() only clears queued events.
+    EXPECT_CALL(*mocked_model_, ClearEvent).Times(0);
+    model_->ClearEvent("foo");
+    EXPECT_EQ(1U, model_->GetQueuedEventCountForTesting());
+  }
+
+  EventModel::OnModelInitializationFinished callback;
+  EXPECT_CALL(*mocked_model_, Initialize(_, 2U))
+      .WillOnce(
+          [&callback](EventModel::OnModelInitializationFinished load_callback,
+                      uint32_t current_day) {
+            callback = std::move(load_callback);
+          });
+  model_->Initialize(std::move(load_callback_), 2U);
+
+  // Since "foo" was cleared, only "bar" is incremented.
+  {
+    Sequence sequence;
+    EXPECT_CALL(*mocked_model_, IncrementEvent("bar", 1U))
+        .Times(1)
+        .InSequence(sequence);
+
+    std::move(callback).Run(true);
+    EXPECT_TRUE(load_success_.value());
+  }
+  EXPECT_CALL(*mocked_model_, IsReady()).WillRepeatedly(Return(true));
+
+  EXPECT_CALL(*mocked_model_, ClearEvent("bar")).Times(1);
+  model_->ClearEvent("bar");
 }
 
 }  // namespace feature_engagement

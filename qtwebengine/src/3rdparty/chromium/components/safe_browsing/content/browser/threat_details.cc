@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -8,42 +8,52 @@
 
 #include <stddef.h>
 #include <stdint.h>
+
+#include <memory>
 #include <unordered_set>
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
+#include "base/containers/contains.h"
+#include "base/containers/cxx20_erase.h"
+#include "base/containers/fixed_flat_set.h"
 #include "base/feature_list.h"
+#include "base/functional/bind.h"
 #include "base/lazy_instance.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/stl_util.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
+#include "base/strings/stringprintf.h"
+#include "components/back_forward_cache/back_forward_cache_disable.h"
 #include "components/history/core/browser/history_service.h"
-#include "components/safe_browsing/content/base_ui_manager.h"
+#include "components/safe_browsing/content/browser/async_check_tracker.h"
+#include "components/safe_browsing/content/browser/base_ui_manager.h"
+#include "components/safe_browsing/content/browser/client_report_util.h"
 #include "components/safe_browsing/content/browser/threat_details_cache.h"
 #include "components/safe_browsing/content/browser/threat_details_history.h"
-#include "components/safe_browsing/content/web_ui/safe_browsing_ui.h"
+#include "components/safe_browsing/content/browser/unsafe_resource_util.h"
+#include "components/safe_browsing/content/browser/web_contents_key.h"
+#include "components/safe_browsing/content/browser/web_ui/safe_browsing_ui.h"
+#include "components/safe_browsing/core/browser/db/hit_report.h"
 #include "components/safe_browsing/core/browser/referrer_chain_provider.h"
-#include "components/safe_browsing/core/db/hit_report.h"
-#include "components/safe_browsing/core/features.h"
-#include "components/security_interstitials/content/unsafe_resource_util.h"
+#include "components/safe_browsing/core/common/features.h"
+#include "components/safe_browsing/core/common/proto/csd.pb.h"
 #include "content/public/browser/back_forward_cache.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/browser/global_routing_id.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
+#include "services/network/public/mojom/fetch_api.mojom.h"
 #include "services/service_manager/public/cpp/interface_provider.h"
+#include "third_party/protobuf/src/google/protobuf/repeated_ptr_field.h"
 
 using content::BrowserThread;
 using content::NavigationEntry;
-using content::RenderFrameHost;
 using content::WebContents;
 
 // Keep in sync with KMaxNodes in components/safe_browsing/content/renderer/
@@ -67,7 +77,7 @@ typedef std::unordered_set<std::string> StringSet;
 // A set of HTTPS headers that are allowed to be collected. Contains both
 // request and response headers. All entries in this list should be lower-case
 // to support case-insensitive comparison.
-struct WhitelistedHttpsHeadersTraits
+struct AllowlistedHttpsHeadersTraits
     : base::internal::DestructorAtExitLazyInstanceTraits<StringSet> {
   static StringSet* New(void* instance) {
     StringSet* headers =
@@ -79,70 +89,21 @@ struct WhitelistedHttpsHeadersTraits
     return headers;
   }
 };
-base::LazyInstance<StringSet, WhitelistedHttpsHeadersTraits>
-    g_https_headers_whitelist = LAZY_INSTANCE_INITIALIZER;
-
-// Helper function that converts SBThreatType to
-// ClientSafeBrowsingReportRequest::ReportType.
-ClientSafeBrowsingReportRequest::ReportType GetReportTypeFromSBThreatType(
-    SBThreatType threat_type) {
-  switch (threat_type) {
-    case SB_THREAT_TYPE_URL_PHISHING:
-      return ClientSafeBrowsingReportRequest::URL_PHISHING;
-    case SB_THREAT_TYPE_URL_MALWARE:
-      return ClientSafeBrowsingReportRequest::URL_MALWARE;
-    case SB_THREAT_TYPE_URL_UNWANTED:
-      return ClientSafeBrowsingReportRequest::URL_UNWANTED;
-    case SB_THREAT_TYPE_URL_CLIENT_SIDE_PHISHING:
-      return ClientSafeBrowsingReportRequest::URL_CLIENT_SIDE_PHISHING;
-    case SB_THREAT_TYPE_URL_CLIENT_SIDE_MALWARE:
-      return ClientSafeBrowsingReportRequest::URL_CLIENT_SIDE_MALWARE;
-    case SB_THREAT_TYPE_BLOCKED_AD_POPUP:
-      return ClientSafeBrowsingReportRequest::BLOCKED_AD_POPUP;
-    case SB_THREAT_TYPE_AD_SAMPLE:
-      return ClientSafeBrowsingReportRequest::AD_SAMPLE;
-    case SB_THREAT_TYPE_BLOCKED_AD_REDIRECT:
-      return ClientSafeBrowsingReportRequest::BLOCKED_AD_REDIRECT;
-    case SB_THREAT_TYPE_SAVED_PASSWORD_REUSE:
-    case SB_THREAT_TYPE_SIGNED_IN_SYNC_PASSWORD_REUSE:
-    case SB_THREAT_TYPE_SIGNED_IN_NON_SYNC_PASSWORD_REUSE:
-    case SB_THREAT_TYPE_ENTERPRISE_PASSWORD_REUSE:
-      return ClientSafeBrowsingReportRequest::URL_PASSWORD_PROTECTION_PHISHING;
-    case SB_THREAT_TYPE_SUSPICIOUS_SITE:
-      return ClientSafeBrowsingReportRequest::URL_SUSPICIOUS;
-    case SB_THREAT_TYPE_BILLING:
-      return ClientSafeBrowsingReportRequest::BILLING;
-    case SB_THREAT_TYPE_APK_DOWNLOAD:
-      return ClientSafeBrowsingReportRequest::APK_DOWNLOAD;
-    case SB_THREAT_TYPE_UNUSED:
-    case SB_THREAT_TYPE_SAFE:
-    case SB_THREAT_TYPE_URL_BINARY_MALWARE:
-    case SB_THREAT_TYPE_EXTENSION:
-    case SB_THREAT_TYPE_BLACKLISTED_RESOURCE:
-    case SB_THREAT_TYPE_API_ABUSE:
-    case SB_THREAT_TYPE_SUBRESOURCE_FILTER:
-    case SB_THREAT_TYPE_CSD_WHITELIST:
-    case SB_THREAT_TYPE_HIGH_CONFIDENCE_ALLOWLIST:
-    case DEPRECATED_SB_THREAT_TYPE_URL_PASSWORD_PROTECTION_PHISHING:
-      // Gated by SafeBrowsingBlockingPage::ShouldReportThreatDetails.
-      NOTREACHED() << "We should not send report for threat type: "
-                   << threat_type;
-      return ClientSafeBrowsingReportRequest::UNKNOWN;
-  }
-}
+base::LazyInstance<StringSet, AllowlistedHttpsHeadersTraits>
+    g_https_headers_allowlist = LAZY_INSTANCE_INITIALIZER;
 
 // Clears the specified HTTPS resource of any sensitive data, only retaining
-// data that is whitelisted for collection.
+// data that is allowlisted for collection.
 void ClearHttpsResource(ClientSafeBrowsingReportRequest::Resource* resource) {
   // Make a copy of the original resource to retain all data.
   ClientSafeBrowsingReportRequest::Resource orig_resource(*resource);
 
-  // Clear the request headers and copy over any whitelisted ones.
+  // Clear the request headers and copy over any allowlisted ones.
   resource->clear_request();
   for (int i = 0; i < orig_resource.request().headers_size(); ++i) {
     ClientSafeBrowsingReportRequest::HTTPHeader* orig_header =
         orig_resource.mutable_request()->mutable_headers(i);
-    if (g_https_headers_whitelist.Get().count(
+    if (g_https_headers_allowlist.Get().count(
             base::ToLowerASCII(orig_header->name())) > 0) {
       resource->mutable_request()->add_headers()->Swap(orig_header);
     }
@@ -158,7 +119,7 @@ void ClearHttpsResource(ClientSafeBrowsingReportRequest::Resource* resource) {
   for (int i = 0; i < orig_resource.response().headers_size(); ++i) {
     ClientSafeBrowsingReportRequest::HTTPHeader* orig_header =
         orig_resource.mutable_response()->mutable_headers(i);
-    if (g_https_headers_whitelist.Get().count(
+    if (g_https_headers_allowlist.Get().count(
             base::ToLowerASCII(orig_header->name())) > 0) {
       resource->mutable_response()->add_headers()->Swap(orig_header);
     }
@@ -175,26 +136,6 @@ void ClearHttpsResource(ClientSafeBrowsingReportRequest::Resource* resource) {
 std::string GetElementKey(const int frame_tree_node_id,
                           const int element_node_id) {
   return base::StringPrintf("%d-%d", frame_tree_node_id, element_node_id);
-}
-
-using CSBRR = safe_browsing::ClientSafeBrowsingReportRequest;
-CSBRR::SafeBrowsingUrlApiType GetUrlApiTypeForThreatSource(
-    safe_browsing::ThreatSource source) {
-  switch (source) {
-    case safe_browsing::ThreatSource::DATA_SAVER:
-      return CSBRR::FLYWHEEL;
-    case safe_browsing::ThreatSource::LOCAL_PVER3:
-      return CSBRR::PVER3_NATIVE;
-    case safe_browsing::ThreatSource::LOCAL_PVER4:
-      return CSBRR::PVER4_NATIVE;
-    case safe_browsing::ThreatSource::REMOTE:
-      return CSBRR::ANDROID_SAFETYNET;
-    case safe_browsing::ThreatSource::UNKNOWN:
-    case safe_browsing::ThreatSource::CLIENT_SIDE_DETECTION:
-    case safe_browsing::ThreatSource::PASSWORD_PROTECTION_SERVICE:
-      break;
-  }
-  return CSBRR::SAFE_BROWSING_URL_API_TYPE_UNSPECIFIED;
 }
 
 void TrimElements(const std::set<int> target_ids,
@@ -319,6 +260,9 @@ void TrimElements(const std::set<int> target_ids,
 // don't leak it.
 class ThreatDetailsFactoryImpl : public ThreatDetailsFactory {
  public:
+  ThreatDetailsFactoryImpl(const ThreatDetailsFactoryImpl&) = delete;
+  ThreatDetailsFactoryImpl& operator=(const ThreatDetailsFactoryImpl&) = delete;
+
   std::unique_ptr<ThreatDetails> CreateThreatDetails(
       BaseUIManager* ui_manager,
       WebContents* web_contents,
@@ -328,9 +272,9 @@ class ThreatDetailsFactoryImpl : public ThreatDetailsFactory {
       ReferrerChainProvider* referrer_chain_provider,
       bool trim_to_ad_tags,
       ThreatDetailsDoneCallback done_callback) override {
-    // We can't use make_unique due to the protected constructor. We can't
-    // directly use std::unique_ptr<ThreatDetails>(new ThreatDetails(...))
-    // due to presubmit errors. So we use base::WrapUnique:
+    // We can't use make_unique due to the protected constructor, so we use bare
+    // new and base::WrapUnique. base::PassKey would allow make_unique to be
+    // used.
     auto threat_details = base::WrapUnique(new ThreatDetails(
         ui_manager, web_contents, unsafe_resource, url_loader_factory,
         history_service, referrer_chain_provider, trim_to_ad_tags,
@@ -343,8 +287,6 @@ class ThreatDetailsFactoryImpl : public ThreatDetailsFactory {
   friend struct base::LazyInstanceTraitsBase<ThreatDetailsFactoryImpl>;
 
   ThreatDetailsFactoryImpl() {}
-
-  DISALLOW_COPY_AND_ASSIGN(ThreatDetailsFactoryImpl);
 };
 
 static base::LazyInstance<ThreatDetailsFactoryImpl>::DestructorAtExit
@@ -363,8 +305,9 @@ std::unique_ptr<ThreatDetails> ThreatDetails::NewThreatDetails(
     ThreatDetailsDoneCallback done_callback) {
   // Set up the factory if this has not been done already (tests do that
   // before this method is called).
-  if (!factory_)
+  if (!factory_) {
     factory_ = g_threat_details_factory_impl.Pointer();
+  }
   return factory_->CreateThreatDetails(
       ui_manager, web_contents, resource, url_loader_factory, history_service,
       referrer_chain_provider, trim_to_ad_tags, std::move(done_callback));
@@ -380,8 +323,8 @@ ThreatDetails::ThreatDetails(
     ReferrerChainProvider* referrer_chain_provider,
     bool trim_to_ad_tags,
     ThreatDetailsDoneCallback done_callback)
-    : content::WebContentsObserver(web_contents),
-      url_loader_factory_(url_loader_factory),
+    : url_loader_factory_(url_loader_factory),
+      web_contents_(web_contents),
       ui_manager_(ui_manager),
       browser_context_(web_contents->GetBrowserContext()),
       resource_(resource),
@@ -390,11 +333,13 @@ ThreatDetails::ThreatDetails(
       did_proceed_(false),
       num_visits_(0),
       trim_to_ad_tags_(trim_to_ad_tags),
-      cache_collector_(new ThreatDetailsCacheCollector),
+      cache_collector_(std::make_unique<ThreatDetailsCacheCollector>()),
       done_callback_(std::move(done_callback)),
       all_done_expected_(false),
-      is_all_done_(false) {
-  redirects_collector_ = new ThreatDetailsRedirectsCollector(
+      is_all_done_(false),
+      is_hats_candidate_(false),
+      should_send_report_(false) {
+  redirects_collector_ = std::make_unique<ThreatDetailsRedirectsCollector>(
       history_service ? history_service->AsWeakPtr()
                       : base::WeakPtr<history::HistoryService>());
 }
@@ -407,16 +352,11 @@ ThreatDetails::ThreatDetails()
       num_visits_(0),
       trim_to_ad_tags_(false),
       all_done_expected_(false),
-      is_all_done_(false) {}
+      is_all_done_(false),
+      is_hats_candidate_(false),
+      should_send_report_(false) {}
 
-ThreatDetails::~ThreatDetails() {
-  DCHECK_EQ(all_done_expected_, is_all_done_);
-}
-
-bool ThreatDetails::IsReportableUrl(const GURL& url) const {
-  // TODO(panayiotis): also skip internal urls.
-  return url.SchemeIs("http") || url.SchemeIs("https");
-}
+ThreatDetails::~ThreatDetails() = default;
 
 // Looks for a Resource for the given url in resources_.  If found, it
 // updates |resource|. Otherwise, it creates a new message, adds it to
@@ -455,15 +395,17 @@ ClientSafeBrowsingReportRequest::Resource* ThreatDetails::AddUrl(
     const GURL& parent,
     const std::string& tagname,
     const std::vector<GURL>* children) {
-  if (!url.is_valid() || !IsReportableUrl(url))
+  if (!url.is_valid() || !client_report_utils::IsReportableUrl(url)) {
     return nullptr;
+  }
 
   // Find (or create) the resource for the url.
   ClientSafeBrowsingReportRequest::Resource* url_resource =
       FindOrCreateResource(url);
-  if (!tagname.empty())
+  if (!tagname.empty()) {
     url_resource->set_tag_name(tagname);
-  if (!parent.is_empty() && IsReportableUrl(parent)) {
+  }
+  if (!parent.is_empty() && client_report_utils::IsReportableUrl(parent)) {
     // Add the resource for the parent.
     ClientSafeBrowsingReportRequest::Resource* parent_resource =
         FindOrCreateResource(parent);
@@ -483,8 +425,9 @@ ClientSafeBrowsingReportRequest::Resource* ThreatDetails::AddUrl(
           break;
         }
       }
-      if (!duplicate_child)
+      if (!duplicate_child) {
         url_resource->add_child_ids(child_resource->id());
+      }
     }
   }
 
@@ -568,36 +511,12 @@ void ThreatDetails::AddDomElement(
 
 void ThreatDetails::StartCollection() {
   DVLOG(1) << "Starting to compute threat details.";
-  report_.reset(new ClientSafeBrowsingReportRequest());
+  report_ = std::make_unique<ClientSafeBrowsingReportRequest>();
 
-  if (IsReportableUrl(resource_.url)) {
-    report_->set_url(resource_.url.spec());
-    report_->set_type(GetReportTypeFromSBThreatType(resource_.threat_type));
-  }
+  client_report_utils::FillReportBasicResourceDetails(report_.get(), resource_);
 
-  GURL referrer_url;
-  GURL page_url;
-
-  // With committed interstitials, the information is pre-filled into the
-  // UnsafeResource, since the navigation entry we have at this point is for the
-  // navigation to the interstitial, and the entry with the page details get
-  // destroyed when leaving the interstitial.
-  if (!resource_.navigation_url.is_empty()) {
-    page_url = resource_.navigation_url;
-    referrer_url = resource_.referrer_url;
-  } else {
-    NavigationEntry* nav_entry = GetNavigationEntryForResource(resource_);
-    if (nav_entry) {
-      page_url = nav_entry->GetURL();
-      referrer_url = nav_entry->GetReferrer().url;
-    }
-  }
-
-  if (IsReportableUrl(page_url))
-    report_->set_page_url(page_url.spec());
-
-  if (IsReportableUrl(referrer_url))
-    report_->set_referrer_url(referrer_url.spec());
+  GURL referrer_url = client_report_utils::GetReferrerUrl(resource_);
+  GURL page_url = client_report_utils::GetPageUrl(resource_);
 
   // Add the nodes, starting from the page url.
   AddUrl(page_url, GURL(), std::string(), nullptr);
@@ -618,8 +537,9 @@ void ThreatDetails::StartCollection() {
   GURL parent_url;
   // Set the original url as the parent of the first redirect url if it's not
   // empty.
-  if (!resource_.original_url.is_empty())
+  if (!resource_.original_url.is_empty()) {
     parent_url = resource_.original_url;
+  }
 
   // Set the previous redirect url as the parent of the next one
   for (size_t i = 0; i < resource_.redirect_urls.size(); ++i) {
@@ -628,61 +548,71 @@ void ThreatDetails::StartCollection() {
   }
 
   // Add the referrer url.
-  if (!referrer_url.is_empty())
+  if (!referrer_url.is_empty()) {
     AddUrl(referrer_url, GURL(), std::string(), nullptr);
+  }
 
-  if (!resource_.IsMainPageLoadBlocked()) {
+  if (!AsyncCheckTracker::IsMainPageLoadPending(resource_)) {
     // Get URLs of frames, scripts etc from the DOM.
     // OnReceivedThreatDOMDetails will be called when the renderer replies.
     // TODO(mattm): In theory, if the user proceeds through the warning DOM
     // detail collection could be started once the page loads.
-    web_contents()->ForEachFrame(base::BindRepeating(
-        &ThreatDetails::RequestThreatDOMDetails, GetWeakPtr()));
+    web_contents_->GetPrimaryMainFrame()->ForEachRenderFrameHost(
+        [this](content::RenderFrameHost* frame) {
+          RequestThreatDOMDetails(frame);
+        });
   }
 }
 
 void ThreatDetails::RequestThreatDOMDetails(content::RenderFrameHost* frame) {
   content::BackForwardCache::DisableForRenderFrameHost(
-      frame, "safe_browsing::ThreatDetails");
+      frame,
+      back_forward_cache::DisabledReason(
+          back_forward_cache::DisabledReasonId::kSafeBrowsingThreatDetails));
+  if (!frame->IsRenderFrameLive()) {
+    // A child frame may have been created browser-side but has not completed
+    // setting up the renderer for it yet. In particular, this occurs if the
+    // child frame was blocked and that's why we're showing a safe browsing page
+    // in the main frame.
+    DCHECK(frame->GetParent());
+    return;
+  }
   mojo::Remote<safe_browsing::mojom::ThreatReporter> threat_reporter;
   frame->GetRemoteInterfaces()->GetInterface(
       threat_reporter.BindNewPipeAndPassReceiver());
   safe_browsing::mojom::ThreatReporter* raw_threat_report =
       threat_reporter.get();
-  pending_render_frame_hosts_.push_back(frame);
   raw_threat_report->GetThreatDOMDetails(
       base::BindOnce(&ThreatDetails::OnReceivedThreatDOMDetails, GetWeakPtr(),
-                     std::move(threat_reporter), frame));
+                     std::move(threat_reporter), frame->GetWeakDocumentPtr()));
 }
 
 // When the renderer is done, this is called.
 void ThreatDetails::OnReceivedThreatDOMDetails(
     mojo::Remote<mojom::ThreatReporter> threat_reporter,
-    content::RenderFrameHost* sender,
+    content::WeakDocumentPtr sender,
     std::vector<mojom::ThreatDOMDetailsNodePtr> params) {
   // If the RenderFrameHost was closed between sending the IPC and this callback
   // running, |sender| will be invalid.
-  const auto sender_it = std::find(pending_render_frame_hosts_.begin(),
-                                   pending_render_frame_hosts_.end(), sender);
-  if (sender_it == pending_render_frame_hosts_.end()) {
+  auto* sender_rfh = sender.AsRenderFrameHostIfValid();
+  if (!sender_rfh) {
     return;
   }
 
-  pending_render_frame_hosts_.erase(sender_it);
-
   // Lookup the FrameTreeNode ID of any child frames in the list of DOM nodes.
-  const int sender_process_id = sender->GetProcess()->GetID();
-  const int sender_frame_tree_node_id = sender->GetFrameTreeNodeId();
+  const int sender_process_id = sender_rfh->GetProcess()->GetID();
+  const int sender_frame_tree_node_id = sender_rfh->GetFrameTreeNodeId();
   KeyToFrameTreeIdMap child_frame_tree_map;
   for (const mojom::ThreatDOMDetailsNodePtr& node : params) {
-    if (node->child_frame_routing_id == 0)
+    if (!node->child_frame_token) {
       continue;
+    }
 
     const std::string cur_element_key =
         GetElementKey(sender_frame_tree_node_id, node->node_id);
     int child_frame_tree_node_id =
-        content::RenderFrameHost::GetFrameTreeNodeIdForRoutingId(
-            sender_process_id, node->child_frame_routing_id);
+        content::RenderFrameHost::GetFrameTreeNodeIdForFrameToken(
+            sender_process_id, node->child_frame_token.value());
     if (child_frame_tree_node_id !=
         content::RenderFrameHost::kNoFrameTreeNodeId) {
       child_frame_tree_map[cur_element_key] = child_frame_tree_node_id;
@@ -702,17 +632,20 @@ void ThreatDetails::AddDOMDetails(
 
   // If we have already started getting redirects from history service,
   // don't modify state, otherwise will invalidate the iterators.
-  if (redirects_collector_->HasStarted())
+  if (redirects_collector_->HasStarted()) {
     return;
+  }
 
   // If we have already started collecting data from the HTTP cache, don't
   // modify our state.
-  if (cache_collector_->HasStarted())
+  if (cache_collector_->HasStarted()) {
     return;
+  }
 
   // Exit early if there are no nodes to process.
-  if (params.empty())
+  if (params.empty()) {
     return;
+  }
 
   // Copy FrameTreeNode IDs for the child frame into the combined mapping.
   iframe_key_to_frame_tree_id_map_.insert(child_frame_tree_map.begin(),
@@ -742,7 +675,12 @@ void ThreatDetails::AddDOMDetails(
 // to take an action, we expect this to be called after
 // OnReceivedThreatDOMDetails in most cases. If not, we don't include
 // the DOM data in our report.
-void ThreatDetails::FinishCollection(bool did_proceed, int num_visit) {
+void ThreatDetails::FinishCollection(
+    bool did_proceed,
+    int num_visit,
+    std::unique_ptr<security_interstitials::InterstitialInteractionMap>
+        interstitial_interactions,
+    absl::optional<int64_t> warning_shown_ts) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   all_done_expected_ = true;
@@ -766,6 +704,8 @@ void ThreatDetails::FinishCollection(bool did_proceed, int num_visit) {
 
   did_proceed_ = did_proceed;
   num_visits_ = num_visit;
+  interstitial_interactions_ = std::move(interstitial_interactions);
+  warning_shown_ts_ = warning_shown_ts;
   std::vector<GURL> urls;
   for (ResourceMap::const_iterator it = resources_.begin();
        it != resources_.end(); ++it) {
@@ -781,8 +721,9 @@ void ThreatDetails::OnRedirectionCollectionReady() {
   const std::vector<RedirectChain>& redirects =
       redirects_collector_->GetCollectedUrls();
 
-  for (size_t i = 0; i < redirects.size(); ++i)
-    AddRedirectUrlList(redirects[i]);
+  for (const auto& redirect : redirects) {
+    AddRedirectUrlList(redirect);
+  }
 
   // Call the cache collector
   cache_collector_->StartCacheCollection(
@@ -836,64 +777,94 @@ void ThreatDetails::OnCacheCollectionReady() {
   report_->set_complete(cache_result_);
 
   report_->mutable_client_properties()->set_url_api_type(
-      GetUrlApiTypeForThreatSource(resource_.threat_source));
+      client_report_utils::GetUrlApiTypeForThreatSource(
+          resource_.threat_source));
 
   // Fill the referrer chain if applicable.
-  MaybeFillReferrerChain();
-
-  // Send the report, using the SafeBrowsingService.
-  std::string serialized;
-  if (!report_->SerializeToString(&serialized)) {
-    DLOG(ERROR) << "Unable to serialize the threat report.";
-    AllDone();
-    return;
+  if (ShouldFillReferrerChain()) {
+    FillReferrerChain(report_->mutable_referrer_chain());
   }
 
-  content::GetUIThreadTaskRunner({})->PostTask(
-      FROM_HERE,
-      base::BindOnce(&WebUIInfoSingleton::AddToCSBRRsSent,
-                     base::Unretained(WebUIInfoSingleton::GetInstance()),
-                     std::move(report_)));
+  // Fill interstitial interactions if applicable.
+  if (ShouldFillInterstitialInteractions()) {
+    client_report_utils::FillInterstitialInteractionsHelper(
+        report_.get(), interstitial_interactions_.get());
+  }
 
-  ui_manager_->SendSerializedThreatDetails(browser_context_, serialized);
+  if (base::FeatureList::IsEnabled(
+          safe_browsing::kAddWarningShownTSToClientSafeBrowsingReport) &&
+      warning_shown_ts_.has_value()) {
+    // Set the warning shown timestamp.
+    report_->set_warning_shown_timestamp_msec(warning_shown_ts_.value());
+  }
+
+  // Add report to HaTS survey response if applicable.
+  MaybeAttachThreatDetailsAndLaunchSurvey();
+
+  // Send the report to Safe Browsing.
+  if (should_send_report_) {
+    ui_manager_->SendThreatDetails(browser_context_, std::move(report_));
+  }
 
   AllDone();
 }
 
-void ThreatDetails::MaybeFillReferrerChain() {
-  if (!referrer_chain_provider_)
-    return;
+bool ThreatDetails::ShouldFillReferrerChain() {
+  static constexpr auto valid_report_types =
+      base::MakeFixedFlatSet<ClientSafeBrowsingReportRequest::ReportType>(
+          {ClientSafeBrowsingReportRequest::URL_SUSPICIOUS,
+           ClientSafeBrowsingReportRequest::APK_DOWNLOAD});
+  return base::Contains(valid_report_types, report_->type());
+}
 
-  if (!report_ ||
-      (report_->type() != ClientSafeBrowsingReportRequest::URL_SUSPICIOUS &&
-       report_->type() != ClientSafeBrowsingReportRequest::APK_DOWNLOAD)) {
+void ThreatDetails::FillReferrerChain(
+    google::protobuf::RepeatedPtrField<ReferrerChainEntry>*
+        out_referrer_chain) {
+  if (!referrer_chain_provider_) {
     return;
   }
+  // We would have cancelled a prerender if it was blocked, so we can use the
+  // primary main frame here.
+  referrer_chain_provider_->IdentifyReferrerChainByRenderFrameHost(
+      web_contents_->GetPrimaryMainFrame(), kThreatDetailsUserGestureLimit,
+      out_referrer_chain);
+}
 
-  referrer_chain_provider_->IdentifyReferrerChainByWebContents(
-      web_contents(), kThreatDetailsUserGestureLimit,
-      report_->mutable_referrer_chain());
+bool ThreatDetails::ShouldFillInterstitialInteractions() {
+  static constexpr auto valid_report_types =
+      base::MakeFixedFlatSet<ClientSafeBrowsingReportRequest::ReportType>(
+          {ClientSafeBrowsingReportRequest::URL_PHISHING,
+           ClientSafeBrowsingReportRequest::URL_CLIENT_SIDE_PHISHING});
+  return base::Contains(valid_report_types, report_->type());
+}
+
+void ThreatDetails::MaybeAttachThreatDetailsAndLaunchSurvey() {
+  if (!is_hats_candidate_) {
+    return;
+  }
+  // Copy fields useful for survey analysis.
+  auto report = std::make_unique<ClientSafeBrowsingReportRequest>();
+  report->set_type(report_->type());
+  report->set_repeat_visit(report_->repeat_visit());
+  report->set_did_proceed(report_->did_proceed());
+  report->set_url(report_->url());
+  report->set_page_url(report_->page_url());
+  report->set_referrer_url(report_->referrer_url());
+  if (report_->has_warning_shown_timestamp_msec()) {
+    report->set_warning_shown_timestamp_msec(
+        report_->warning_shown_timestamp_msec());
+  }
+  client_report_utils::FillInterstitialInteractionsHelper(
+      report.get(), interstitial_interactions_.get());
+  ui_manager_->AttachThreatDetailsAndLaunchSurvey(browser_context_,
+                                                  std::move(report));
 }
 
 void ThreatDetails::AllDone() {
   is_all_done_ = true;
   content::GetUIThreadTaskRunner({})->PostTask(
       FROM_HERE, base::BindOnce(std::move(done_callback_),
-                                base::Unretained(web_contents())));
-}
-
-void ThreatDetails::FrameDeleted(RenderFrameHost* render_frame_host) {
-  auto render_frame_host_it =
-      std::find(pending_render_frame_hosts_.begin(),
-                pending_render_frame_hosts_.end(), render_frame_host);
-  if (render_frame_host_it != pending_render_frame_hosts_.end()) {
-    pending_render_frame_hosts_.erase(render_frame_host_it);
-  }
-}
-
-void ThreatDetails::RenderFrameHostChanged(RenderFrameHost* old_host,
-                                           RenderFrameHost* new_host) {
-  FrameDeleted(old_host);
+                                GetWebContentsKey(web_contents_)));
 }
 
 base::WeakPtr<ThreatDetails> ThreatDetails::GetWeakPtr() {

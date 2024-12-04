@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -22,9 +22,8 @@ using extensions::SharedModuleInfo;
 namespace {
 
 std::string HashHost(const std::string& host) {
-  const std::string id_hash = base::SHA1HashString(host);
-  DCHECK_EQ(id_hash.length(), base::kSHA1Length);
-  return base::HexEncode(id_hash.c_str(), id_hash.length());
+  return base::HexEncode(
+      base::SHA1HashSpan(base::as_bytes(base::make_span(host))));
 }
 
 bool HostIsInSet(const std::string& host, const std::set<std::string>& set) {
@@ -33,21 +32,21 @@ bool HostIsInSet(const std::string& host, const std::set<std::string>& set) {
 
 }  // namespace
 
-bool IsExtensionOrSharedModuleWhitelisted(
+bool IsExtensionOrSharedModuleAllowed(
     const GURL& url,
     const extensions::ExtensionSet* extension_set,
-    const std::set<std::string>& whitelist) {
+    const std::set<std::string>& allowlist) {
   if (!url.is_valid() || !url.SchemeIs(extensions::kExtensionScheme))
     return false;
 
   const std::string host = url.host();
-  if (HostIsInSet(host, whitelist))
+  if (HostIsInSet(host, allowlist))
     return true;
 
   // Check the modules that are imported by this extension to see if any of them
-  // is whitelisted.
-  const Extension* extension = extension_set ? extension_set->GetByID(host)
-                                             : NULL;
+  // is allowed.
+  const Extension* extension =
+      extension_set ? extension_set->GetByID(host) : nullptr;
   if (!extension)
     return false;
 
@@ -58,7 +57,7 @@ bool IsExtensionOrSharedModuleWhitelisted(
         extension_set->GetByID(it->extension_id);
     if (imported_extension &&
         SharedModuleInfo::IsSharedModule(imported_extension) &&
-        HostIsInSet(it->extension_id, whitelist)) {
+        HostIsInSet(it->extension_id, allowlist)) {
       return true;
     }
   }
@@ -93,7 +92,7 @@ bool IsHostAllowedByCommandLine(const GURL& url,
 
   base::StringTokenizer t(allowed_list, ",");
   while (t.GetNext()) {
-    if (t.token() == host)
+    if (t.token_piece() == host)
       return true;
   }
 

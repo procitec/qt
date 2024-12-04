@@ -28,10 +28,10 @@ for how to do this.
 must write code that converts data from a protobuf-based format that represents
 the grammar to a format the target accepts. url_parse_proto_fuzzer is a working
 example of this and is commented extensively. Readers may wish to consult its
-code, which is located in `testing/libfuzzer/fuzzers/url_parse_proto_fuzzer.cc`,
-and `testing/libfuzzer/fuzzers/url.proto`. Its build configuration can be found
-in `testing/libfuzzer/fuzzers/BUILD.gn`. We also provide a walkthrough on how to
-do this in the section after the next.
+code, which is located in `testing/libfuzzer/fuzzers/url_parse_proto_fuzzer.cc`
+and `testing/libfuzzer/proto/url.proto`. Its build configuration can be found
+in `testing/libfuzzer/fuzzers/BUILD.gn` and `testing/libfuzzer/proto/BUILD.gn`.
+We also provide a walkthrough on how to do this in the section after the next.
 * Fuzzing targets that accept more than one argument (such as data and flags).
 In this case, you can define each argument as its own field in your protobuf
 definition.
@@ -46,9 +46,9 @@ url_parse_proto_fuzzer.
 ## Write a fuzz target for code that accepts protobufs
 
 This is almost as easy as writing a standard libFuzzer-based fuzzer. You can
-look at [override_lite_runtime_plugin_test_fuzzer] for an example of a working
-example of this (don't copy the line adding "//testing/libfuzzer:no_clusterfuzz"
-to additional_configs). Or you can follow this walkthrough:
+look at [lpm_test_fuzzer] for an example of a working example of this (don't
+copy the line adding "//testing/libfuzzer:no_clusterfuzz" to
+additional_configs). Or you can follow this walkthrough:
 
 Start by creating a fuzz target. This is what the .cc file will look like:
 
@@ -71,10 +71,10 @@ libFuzzer-based fuzzer_test. However it will also have libprotobuf-mutator in
 its deps. This is an example of what it will look like:
 
 ```python
-// You must wrap the target in "use_libfuzzer" since trying to compile the
-// target without use_libfuzzer will fail (for reasons alluded to in the next
+// You must wrap the target in "use_fuzzing_engine_with_lpm" since trying to compile the
+// target without a suitable fuzzing engine will fail (for reasons alluded to in the next
 // step), which the commit queue will try.
-if (use_libfuzzer) {
+if (use_fuzzing_engine_with_lpm) {
   fuzzer_test("my_fuzzer") {
     sources = [ "my_fuzzer.cc" ]
     deps = [
@@ -96,7 +96,7 @@ line is incompatible with libprotobuf-mutator. Thus, we need to modify the
 `proto_library` build target so that builds when fuzzing are compatible with
 libprotobuf-mutator. To do this, change your `proto_library` to
 `fuzzable_proto_library` (don't worry, this works just like `proto_library` when
-`use_libfuzzer` is `false`) like so:
+`use_fuzzing_engine_with_lpm` is `false`) like so:
 
 ```python
 import("//third_party/libprotobuf-mutator/fuzzable_proto_library.gni")
@@ -135,7 +135,7 @@ message MyProtoFormat {
 }
 ```
 
-See `testing/libfuzzer/fuzzers/url.proto` for an example of this in practice.
+See `testing/libfuzzer/proto/url.proto` for an example of this in practice.
 That example has extensive comments on URL syntax and how that influenced
 the definition of the Url message.
 
@@ -163,7 +163,7 @@ DEFINE_PROTO_FUZZER(const my_fuzzer::MyFormat& my_proto_format) {
     // if it doesn't accept protobufs.
     std::string native_input = convert_to_native_input(my_proto_format);
 
-    // You should provide a way to easily retreive the native input for
+    // You should provide a way to easily retrieve the native input for
     // a given protobuf input. This is useful for debugging and for seeing
     // the inputs that cause targeted_function to crash (which is the reason we
     // are here!). Note how this is done before targeted_function is called
@@ -178,20 +178,21 @@ DEFINE_PROTO_FUZZER(const my_fuzzer::MyFormat& my_proto_format) {
 
 This is very similar to the same step in writing a standard libFuzzer fuzzer.
 The only real differences are accepting protobufs rather than raw data and
-converting them to the desired format. Conversion code can't really be explored
-in this guide since it is format-specific. However, a good example of conversion
-code (and a fuzz target) can be found in
-`testing/libfuzzer/fuzzers/url_parse_proto_fuzzer.cc`. That example thoroughly
-documents how it converts the Url protobuf message into a real URL string.
-A good convention is printing the native input when the `LPM_DUMP_NATIVE_INPUT`
-env variable is set. This will make it easy to retreive the actual input that
-causes the code to crash instead of the protobuf version of it (eg you can get
-the URL string that causes an input to crash rather than a protobuf). Since it
-is only a convention it is strongly recommended even though it isn't necessary.
-You don't need to do this if the native input of targeted_function is protobufs.
-Beware that printing a newline can make the output invalid for some formats. In
-this case you should use `fflush(0)` since otherwise the program may crash
-before native_input is actually printed.
+converting them to the desired format. Conversion code can't really be
+explored in this guide since it is format-specific. However, a good example
+of conversion code (and a fuzz target) can be found in
+`testing/libfuzzer/fuzzers/url_parse_proto_fuzzer.cc`. That example
+thoroughly documents how it converts the Url protobuf message into a real URL
+string. A good convention is printing the native input when the
+`LPM_DUMP_NATIVE_INPUT` env variable is set. This will make it easy to
+retrieve the actual input that causes the code to crash instead of the
+protobuf version of it (e.g. you can get the URL string that causes an input
+to crash rather than a protobuf). Since it is only a convention it is
+strongly recommended even though it isn't necessary. You don't need to do
+this if the native input of targeted_function is protobufs. Beware that
+printing a newline can make the output invalid for some formats. In this case
+you should use `fflush(0)` since otherwise the program may crash before
+native_input is actually printed.
 
 
 ### Define the GN Target
@@ -364,5 +365,5 @@ fuzzer).
 [this]: https://github.com/google/libprotobuf-mutator/tree/master/examples/libfuzzer/libfuzzer_example.cc
 [existing proto fuzzers]: https://cs.chromium.org/search/?q=DEFINE_(BINARY_%7CTEXT_)?PROTO_FUZZER+-file:src/third_party/libprotobuf-mutator/src/src/libfuzzer/libfuzzer_macro.h+lang:cpp&sq=package:chromium&type=cs
 [here]: https://github.com/google/libprotobuf-mutator/blob/master/README.md#utf-8-strings
-[override_lite_runtime_plugin_test_fuzzer]: https://cs.chromium.org/#search&q=override_lite_runtime_plugin_test_fuzzer+file:%5Esrc/third_party/libprotobuf-mutator/BUILD.gn
+[lpm_test_fuzzer]: https://cs.chromium.org/#search&q=lpm_test_fuzzer+file:%5Esrc/third_party/libprotobuf-mutator/BUILD.gn
 [mojo_parse_messages_proto_fuzzer]: https://cs.chromium.org/chromium/src/mojo/public/tools/fuzzers/mojo_parse_message_proto_fuzzer.cc?l=25

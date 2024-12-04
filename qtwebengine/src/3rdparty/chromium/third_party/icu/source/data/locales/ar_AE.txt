@@ -1,10 +1,10 @@
 ﻿// © 2016 and later: Unicode, Inc. and others.
-// License & terms of use: http://www.unicode.org/copyright.html#License
+// License & terms of use: http://www.unicode.org/copyright.html
+// Generated using tools/cldr/cldr-to-icu/build-icu-data.xml
 ar_AE{
     NumberElements{
-        default{"arab"}
+        default{"latn"}
     }
-    Version{"37"}
     calendar{
         gregorian{
             eras{
@@ -23,6 +23,18 @@ ar_AE{
         year{
             relative{
                 "-1"{"السنة الماضية"}
+                "0"{"هذه السنة"}
+                "1"{"السنة التالية"}
+            }
+        }
+        year-narrow{
+            relative{
+                "0"{"هذه السنة"}
+                "1"{"السنة التالية"}
+            }
+        }
+        year-short{
+            relative{
                 "0"{"هذه السنة"}
                 "1"{"السنة التالية"}
             }

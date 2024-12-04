@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,6 +8,8 @@
 #include <string>
 #include <vector>
 
+#include "base/functional/callback.h"
+#include "base/memory/raw_ptr.h"
 #include "components/sync_sessions/open_tabs_ui_delegate.h"
 
 namespace sync_sessions {
@@ -27,14 +29,18 @@ class OpenTabsUIDelegateImpl : public OpenTabsUIDelegate {
       const SyncSessionsClient* sessions_client,
       const SyncedSessionTracker* session_tracker,
       const DeleteForeignSessionCallback& delete_foreign_session_cb);
+
+  OpenTabsUIDelegateImpl(const OpenTabsUIDelegateImpl&) = delete;
+  OpenTabsUIDelegateImpl& operator=(const OpenTabsUIDelegateImpl&) = delete;
+
   ~OpenTabsUIDelegateImpl() override;
 
   // OpenTabsUIDelegate implementation.
   bool GetAllForeignSessions(
-      std::vector<const SyncedSession*>* sessions) override;
-  bool GetForeignSession(
-      const std::string& tag,
-      std::vector<const sessions::SessionWindow*>* windows) override;
+      std::vector<raw_ptr<const SyncedSession, VectorExperimental>>* sessions)
+      override;
+  std::vector<const sessions::SessionWindow*> GetForeignSession(
+      const std::string& tag) override;
   bool GetForeignTab(const std::string& tag,
                      SessionID tab_id,
                      const sessions::SessionTab** tab) override;
@@ -45,11 +51,9 @@ class OpenTabsUIDelegateImpl : public OpenTabsUIDelegate {
   bool GetLocalSession(const SyncedSession** local_session) override;
 
  private:
-  const SyncSessionsClient* const sessions_client_;
-  const SyncedSessionTracker* session_tracker_;
+  const raw_ptr<const SyncSessionsClient> sessions_client_;
+  const raw_ptr<const SyncedSessionTracker> session_tracker_;
   DeleteForeignSessionCallback delete_foreign_session_cb_;
-
-  DISALLOW_COPY_AND_ASSIGN(OpenTabsUIDelegateImpl);
 };
 
 }  // namespace sync_sessions

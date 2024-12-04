@@ -1,8 +1,10 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/media_router/common/discovery/media_sink_internal.h"
+
+#include "components/media_router/common/test/test_helper.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
@@ -34,7 +36,8 @@ media_router::CastSinkExtraData CreateCastSinkExtraData(
   EXPECT_TRUE(ip.AssignFromIPLiteral(ip_address));
   cast_extra_data.ip_endpoint = net::IPEndPoint(ip, 1234);
   cast_extra_data.model_name = model_name;
-  cast_extra_data.capabilities = 2;
+  cast_extra_data.capabilities = {
+      cast_channel::CastDeviceCapability::kVideoOut};
   cast_extra_data.cast_channel_id = 3;
   return cast_extra_data;
 }
@@ -59,7 +62,7 @@ TEST(MediaSinkInternalTest, TestIsValidSinkId) {
 }
 
 TEST(MediaSinkInternalTest, TestConstructorAndAssignment) {
-  MediaSink sink(kSinkId, kSinkName, SinkIconType::CAST);
+  MediaSink sink{CreateCastSink(kSinkId, kSinkName)};
   DialSinkExtraData dial_extra_data = CreateDialSinkExtraData();
   CastSinkExtraData cast_extra_data = CreateCastSinkExtraData();
 
@@ -96,7 +99,7 @@ TEST(MediaSinkInternalTest, TestConstructorAndAssignment) {
 }
 
 TEST(MediaSinkInternalTest, TestSetExtraData) {
-  MediaSink sink(kSinkId, kSinkName, SinkIconType::CAST);
+  MediaSink sink{CreateCastSink(kSinkId, kSinkName)};
   DialSinkExtraData dial_extra_data = CreateDialSinkExtraData();
   CastSinkExtraData cast_extra_data = CreateCastSinkExtraData();
 

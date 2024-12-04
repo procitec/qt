@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,6 +14,8 @@
 #include "build/build_config.h"
 #include "gpu/ipc/common/gpu_memory_buffer_support.h"
 #include "media/base/media_switches.h"
+#include "media/base/video_facing.h"
+#include "media/capture/capture_switches.h"
 
 namespace {
 
@@ -26,7 +28,7 @@ static const int kFakeCaptureMinDeviceCount = 0;
 static const int kFakeCaptureMaxDeviceCount = 10;
 static const int kDefaultDeviceCount = 1;
 
-static const char* kDefaultDeviceIdMask = "/dev/video%d";
+constexpr char kDefaultDeviceIdMask[] = "/dev/video%d";
 static const media::FakeVideoCaptureDevice::DeliveryMode kDefaultDeliveryMode =
     media::FakeVideoCaptureDevice::DeliveryMode::USE_DEVICE_INTERNAL_BUFFERS;
 static constexpr std::array<gfx::Size, 6> kDefaultResolutions{
@@ -42,7 +44,7 @@ static const double kInitialFocusDistance = 50.0;
 
 static const media::VideoPixelFormat kSupportedPixelFormats[] = {
     media::PIXEL_FORMAT_I420, media::PIXEL_FORMAT_Y16,
-    media::PIXEL_FORMAT_MJPEG};
+    media::PIXEL_FORMAT_MJPEG, media::PIXEL_FORMAT_NV12};
 
 template <typename TElement, size_t TSize>
 std::vector<TElement> ArrayToVector(const std::array<TElement, TSize>& arr) {
@@ -54,7 +56,16 @@ media::VideoPixelFormat GetPixelFormatFromDeviceIndex(int device_index) {
     return media::PIXEL_FORMAT_Y16;
   if (device_index == 2)
     return media::PIXEL_FORMAT_MJPEG;
+#if BUILDFLAG(IS_WIN)
+  if (media::IsMediaFoundationD3D11VideoCaptureEnabled() &&
+      switches::IsVideoCaptureUseGpuMemoryBufferEnabled()) {
+    return media::PIXEL_FORMAT_NV12;
+  } else {
+    return media::PIXEL_FORMAT_I420;
+  }
+#else
   return media::PIXEL_FORMAT_I420;
+#endif
 }
 
 void AppendAllCombinationsToFormatsContainer(
@@ -108,6 +119,12 @@ FakeVideoCaptureDeviceFactory::FakeVideoCaptureDeviceFactory() {
   // The default |devices_config_| is the one obtained from an empty options
   // string.
   ParseFakeDevicesConfigFromOptionsString("", &devices_config_);
+#if BUILDFLAG(IS_WIN)
+  if (media::IsMediaFoundationD3D11VideoCaptureEnabled() &&
+      switches::IsVideoCaptureUseGpuMemoryBufferEnabled()) {
+    dxgi_device_manager_ = DXGIDeviceManager::Create(luid_);
+  }
+#endif
 }
 
 FakeVideoCaptureDeviceFactory::~FakeVideoCaptureDeviceFactory() = default;
@@ -187,16 +204,21 @@ void FakeVideoCaptureDeviceFactory::SetToCustomDevicesConfig(
   devices_config_ = config;
 }
 
-std::unique_ptr<VideoCaptureDevice> FakeVideoCaptureDeviceFactory::CreateDevice(
+VideoCaptureErrorOrDevice FakeVideoCaptureDeviceFactory::CreateDevice(
     const VideoCaptureDeviceDescriptor& device_descriptor) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
   for (const auto& entry : devices_config_) {
     if (device_descriptor.device_id != entry.device_id)
       continue;
-    return CreateDeviceWithSettings(entry);
+    auto device = CreateDeviceWithSettings(entry);
+    return device ? VideoCaptureErrorOrDevice(std::move(device))
+                  : VideoCaptureErrorOrDevice(
+                        VideoCaptureError::
+                            kErrorFakeDeviceIntentionallyEmittingErrorEvent);
   }
-  return nullptr;
+  return VideoCaptureErrorOrDevice(
+      VideoCaptureError::kErrorFakeDeviceIntentionallyEmittingErrorEvent);
 }
 
 void FakeVideoCaptureDeviceFactory::GetDevicesInfo(
@@ -208,24 +230,28 @@ void FakeVideoCaptureDeviceFactory::GetDevicesInfo(
   int entry_index = 0;
   for (const auto& entry : devices_config_) {
     VideoCaptureApi api =
-#if defined(OS_LINUX) || defined(OS_CHROMEOS)
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
         VideoCaptureApi::LINUX_V4L2_SINGLE_PLANE;
-#elif defined(OS_MAC)
+#elif BUILDFLAG(IS_IOS)
+        VideoCaptureApi::UNKNOWN;
+#elif BUILDFLAG(IS_MAC)
         VideoCaptureApi::MACOSX_AVFOUNDATION;
-#elif defined(OS_WIN)
+#elif BUILDFLAG(IS_WIN)
         VideoCaptureApi::WIN_DIRECT_SHOW;
-#elif defined(OS_ANDROID)
+#elif BUILDFLAG(IS_ANDROID)
         VideoCaptureApi::ANDROID_API2_LEGACY;
-#elif defined(OS_FUCHSIA)
+#elif BUILDFLAG(IS_FUCHSIA)
         VideoCaptureApi::FUCHSIA_CAMERA3;
 #else
 #error Unsupported platform
 #endif
 
     devices_info.emplace_back(VideoCaptureDeviceDescriptor(
-        base::StringPrintf("fake_device_%d", entry_index), entry.device_id, api,
+        base::StringPrintf("fake_device_%d", entry_index), entry.device_id,
+        /*model_id=*/std::string(), api,
         entry.photo_device_config.control_support,
-        VideoCaptureTransportType::OTHER_TRANSPORT));
+        VideoCaptureTransportType::OTHER_TRANSPORT,
+        media::MEDIA_VIDEO_FACING_NONE, entry.availability));
 
     devices_info.back().supported_formats =
         GetSupportedFormats(entry.device_id);
@@ -267,9 +293,9 @@ void FakeVideoCaptureDeviceFactory::ParseFakeDevicesConfigFromOptionsString(
       FakeVideoCaptureDevice::DisplayMediaType::ANY;
 
   while (option_tokenizer.GetNext()) {
-    std::vector<std::string> param =
-        base::SplitString(option_tokenizer.token(), "=", base::TRIM_WHITESPACE,
-                          base::SPLIT_WANT_NONEMPTY);
+    std::vector<base::StringPiece> param = base::SplitStringPiece(
+        option_tokenizer.token_piece(), "=", base::TRIM_WHITESPACE,
+        base::SPLIT_WANT_NONEMPTY);
 
     if (param.size() != 2u) {
       LOG(WARNING) << "Forget a value '" << options_string
@@ -372,5 +398,19 @@ void FakeVideoCaptureDeviceFactory::ParseFakeDevicesConfigFromOptionsString(
     config->push_back(settings);
   }
 }
+
+#if BUILDFLAG(IS_WIN)
+void FakeVideoCaptureDeviceFactory::OnGpuInfoUpdate(const CHROME_LUID& luid) {
+  luid_ = luid;
+  if (dxgi_device_manager_) {
+    dxgi_device_manager_->OnGpuInfoUpdate(luid_);
+  }
+}
+
+scoped_refptr<DXGIDeviceManager>
+FakeVideoCaptureDeviceFactory::GetDxgiDeviceManager() {
+  return dxgi_device_manager_;
+}
+#endif
 
 }  // namespace media

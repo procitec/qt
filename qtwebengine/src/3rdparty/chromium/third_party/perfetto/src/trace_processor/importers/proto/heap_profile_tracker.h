@@ -17,18 +17,15 @@
 #ifndef SRC_TRACE_PROCESSOR_IMPORTERS_PROTO_HEAP_PROFILE_TRACKER_H_
 #define SRC_TRACE_PROCESSOR_IMPORTERS_PROTO_HEAP_PROFILE_TRACKER_H_
 
+#include <optional>
 #include <set>
 #include <unordered_map>
 
-#include "perfetto/ext/base/optional.h"
 #include "src/trace_processor/importers/proto/stack_profile_tracker.h"
 #include "src/trace_processor/storage/trace_storage.h"
 
 namespace perfetto {
 namespace trace_processor {
-
-std::unique_ptr<tables::ExperimentalFlamegraphNodesTable>
-BuildNativeFlamegraph(TraceStorage* storage, UniquePid upid, int64_t timestamp);
 
 class TraceProcessorContext;
 
@@ -115,11 +112,12 @@ class HeapProfileTracker {
              tables::HeapProfileAllocationTable::Row>
         free_correction;
 
-    base::Optional<uint64_t> prev_index;
+    std::optional<uint64_t> prev_index;
   };
   std::map<uint32_t, SequenceState> sequence_state_;
   TraceProcessorContext* const context_;
   const StringId empty_;
+  const StringId art_heap_;
 };
 
 }  // namespace trace_processor

@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,12 +11,11 @@
 
 #include <string>
 
-// This has to be included first.
-// See http://code.google.com/p/googletest/issues/detail?id=371
+#include "base/memory/raw_ptr.h"
+#include "build/chromeos_buildflags.h"
 #include "testing/gtest/include/gtest/gtest.h"
-
-#include "base/stl_util.h"
 #include "ui/gfx/geometry/size.h"
+#include "ui/gfx/native_pixmap_handle.h"
 
 namespace media {
 
@@ -32,19 +31,21 @@ struct TestParam {
 std::string TestParamToString(
     const testing::TestParamInfo<TestParam>& param_info);
 
-constexpr size_t kMaxNumberPlanes = base::size(VAImage().pitches);
+constexpr size_t kMaxNumberPlanes = std::size(VAImage().pitches);
 static_assert(kMaxNumberPlanes <= 3u, "The number of planes should be <= 3");
 static_assert(
-    base::size(VAImage().pitches) == base::size(VAImage().offsets),
+    std::size(VAImage().pitches) == std::size(VAImage().offsets),
     "The number of VAImage pitches is not equal to the number of offsets");
 
 // A structure to hold generic image decodes in planar format.
 struct DecodedImage {
+  virtual ~DecodedImage();
+
   uint32_t fourcc;
   uint32_t number_of_planes;  // Can not be greater than kMaxNumberPlanes.
   gfx::Size size;
   struct {
-    uint8_t* data;
+    raw_ptr<uint8_t> data;
     int stride;
   } planes[kMaxNumberPlanes];
 };
@@ -52,6 +53,13 @@ struct DecodedImage {
 // Takes a ScopedVAImage and returns a DecodedImage object that represents
 // the same decoded result.
 DecodedImage ScopedVAImageToDecodedImage(const ScopedVAImage* scoped_va_image);
+
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+std::unique_ptr<DecodedImage> NativePixmapToDecodedImage(
+    gfx::NativePixmapHandle& handle,
+    const gfx::Size& size,
+    const gfx::BufferFormat& format);
+#endif
 
 // Compares the result of sw decoding |reference_image| with |hw_decoded_image|
 // using SSIM. Returns true if all conversions work and SSIM is at least

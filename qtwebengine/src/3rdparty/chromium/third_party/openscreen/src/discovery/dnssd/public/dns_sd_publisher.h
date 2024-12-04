@@ -1,21 +1,23 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef DISCOVERY_DNSSD_PUBLIC_DNS_SD_PUBLISHER_H_
 #define DISCOVERY_DNSSD_PUBLIC_DNS_SD_PUBLISHER_H_
 
+#include <string>
+
 #include "discovery/dnssd/public/dns_sd_instance.h"
 #include "platform/base/error.h"
 
-namespace openscreen {
-namespace discovery {
+namespace openscreen::discovery {
+
+class DnsSdInstanceEndpoint;
 
 class DnsSdPublisher {
  public:
   class Client {
    public:
-    virtual ~Client() = default;
 
     // Callback called when an endpoint is successfully claimed and published
     // via the Register() method. These values are expected to only differ in
@@ -25,6 +27,9 @@ class DnsSdPublisher {
     virtual void OnEndpointClaimed(
         const DnsSdInstance& requested_instance,
         const DnsSdInstanceEndpoint& claimed_endpoint) = 0;
+
+   protected:
+    virtual ~Client() = default;
   };
 
   virtual ~DnsSdPublisher() = default;
@@ -52,7 +57,6 @@ class DnsSdPublisher {
   virtual ErrorOr<int> DeregisterAll(const std::string& service) = 0;
 };
 
-}  // namespace discovery
-}  // namespace openscreen
+}  // namespace openscreen::discovery
 
 #endif  // DISCOVERY_DNSSD_PUBLIC_DNS_SD_PUBLISHER_H_

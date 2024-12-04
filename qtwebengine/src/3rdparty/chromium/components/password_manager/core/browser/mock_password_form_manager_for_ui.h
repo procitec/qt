@@ -1,14 +1,13 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef COMPONENTS_PASSWORD_MANAGER_CORE_BROWSER_MOCK_PASSWORD_FORM_MANAGER_FOR_UI_H_
 #define COMPONENTS_PASSWORD_MANAGER_CORE_BROWSER_MOCK_PASSWORD_FORM_MANAGER_FOR_UI_H_
 
-#include "base/macros.h"
-#include "components/password_manager/core/browser/compromised_credentials_table.h"
+#include "base/memory/raw_ptr.h"
 #include "components/password_manager/core/browser/password_form_manager_for_ui.h"
-#include "components/password_manager/core/browser/statistics_table.h"
+#include "components/password_manager/core/browser/password_store/statistics_table.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
 namespace password_manager {
@@ -16,14 +15,20 @@ namespace password_manager {
 class MockPasswordFormManagerForUI : public PasswordFormManagerForUI {
  public:
   MockPasswordFormManagerForUI();
+
+  MockPasswordFormManagerForUI(const MockPasswordFormManagerForUI&) = delete;
+  MockPasswordFormManagerForUI& operator=(const MockPasswordFormManagerForUI&) =
+      delete;
+
   ~MockPasswordFormManagerForUI() override;
 
   MOCK_METHOD(const GURL&, GetURL, (), (const override));
-  MOCK_METHOD(const std::vector<const PasswordForm*>&,
-              GetBestMatches,
-              (),
-              (const override));
-  MOCK_METHOD(std::vector<const PasswordForm*>,
+  MOCK_METHOD(
+      const std::vector<vector_experimental_raw_ptr<const PasswordForm>>&,
+      GetBestMatches,
+      (),
+      (const override));
+  MOCK_METHOD(std::vector<vector_experimental_raw_ptr<const PasswordForm>>,
               GetFederatedMatches,
               (),
               (const override));
@@ -37,32 +42,29 @@ class MockPasswordFormManagerForUI : public PasswordFormManagerForUI {
               GetInteractionsStats,
               (),
               (const override));
-  MOCK_METHOD(base::span<const CompromisedCredentials>,
-              GetCompromisedCredentials,
+  MOCK_METHOD(std::vector<vector_experimental_raw_ptr<const PasswordForm>>,
+              GetInsecureCredentials,
               (),
               (const override));
-  MOCK_METHOD(bool, IsBlacklisted, (), (const override));
-  MOCK_METHOD(bool, WasUnblacklisted, (), (const override));
+  MOCK_METHOD(bool, IsBlocklisted, (), (const override));
   MOCK_METHOD(bool, IsMovableToAccountStore, (), (const override));
   MOCK_METHOD(void, Save, (), (override));
   MOCK_METHOD(void, Update, (const PasswordForm&), (override));
   MOCK_METHOD(void,
               OnUpdateUsernameFromPrompt,
-              (const base::string16&),
+              (const std::u16string&),
               (override));
   MOCK_METHOD(void,
               OnUpdatePasswordFromPrompt,
-              (const base::string16&),
+              (const std::u16string&),
               (override));
   MOCK_METHOD(void, OnNopeUpdateClicked, (), (override));
   MOCK_METHOD(void, OnNeverClicked, (), (override));
   MOCK_METHOD(void, OnNoInteraction, (bool), (override));
-  MOCK_METHOD(void, PermanentlyBlacklist, (), (override));
+  MOCK_METHOD(void, Blocklist, (), (override));
   MOCK_METHOD(void, OnPasswordsRevealed, (), (override));
   MOCK_METHOD(void, MoveCredentialsToAccountStore, (), (override));
   MOCK_METHOD(void, BlockMovingCredentialsToAccountStore, (), (override));
-
-  DISALLOW_COPY_AND_ASSIGN(MockPasswordFormManagerForUI);
 };
 
 }  // namespace password_manager

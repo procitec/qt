@@ -1,14 +1,19 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef COMPONENTS_DOWNLOAD_PUBLIC_COMMON_DOWNLOAD_DANGER_TYPE_H_
 #define COMPONENTS_DOWNLOAD_PUBLIC_COMMON_DOWNLOAD_DANGER_TYPE_H_
 
+#include "components/download/public/common/download_export.h"
+
 namespace download {
 
-// This enum is also used by histograms.  Do not change the ordering or remove
-// items.
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
+// Update enum names in
+// tools/metrics/histograms/metadata/download/enums.xml, and variants
+// in tools/metrics/histograms/metadata/download/histograms.xml on additions.
 enum DownloadDangerType {
   // The download is safe.
   DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS = 0,
@@ -44,8 +49,8 @@ enum DownloadDangerType {
   // Applications and extensions that modify browser and/or computer settings
   DOWNLOAD_DANGER_TYPE_POTENTIALLY_UNWANTED = 8,
 
-  // Download URL whitelisted by enterprise policy.
-  DOWNLOAD_DANGER_TYPE_WHITELISTED_BY_POLICY = 9,
+  // Download URL allowed by enterprise policy.
+  DOWNLOAD_DANGER_TYPE_ALLOWLISTED_BY_POLICY = 9,
 
   // Download is pending a more detailed verdict.
   DOWNLOAD_DANGER_TYPE_ASYNC_SCANNING = 10,
@@ -72,8 +77,8 @@ enum DownloadDangerType {
   // opened by the user.
   DOWNLOAD_DANGER_TYPE_DEEP_SCANNED_OPENED_DANGEROUS = 16,
 
-  // The user is enrolled in the Advanced Protection Program, and the server has
-  // recommended this file be deep scanned.
+  // The user is enrolled in Enhanced Safe Browsing or the Advanced Protection
+  // Program, and the server has recommended this file be deep scanned.
   DOWNLOAD_DANGER_TYPE_PROMPT_FOR_SCANNING = 17,
 
   // The download has a file type that is unsupported for deep scanning, and
@@ -81,10 +86,31 @@ enum DownloadDangerType {
   // policy for details.
   DOWNLOAD_DANGER_TYPE_BLOCKED_UNSUPPORTED_FILETYPE = 18,
 
+  // SafeBrowsing download service has classified this file as being associated
+  // with account compromise through stealing cookies.
+  DOWNLOAD_DANGER_TYPE_DANGEROUS_ACCOUNT_COMPROMISE = 19,
+
+  // The user has chosen to deep scan this file, but the scan has failed. The
+  // safety of this download is unknown.
+  DOWNLOAD_DANGER_TYPE_DEEP_SCANNED_FAILED = 20,
+
+  // The server has recommend this encrypted archive prompt the user for a
+  // pssword to use locally for further scanning.
+  DOWNLOAD_DANGER_TYPE_PROMPT_FOR_LOCAL_PASSWORD_SCANNING = 21,
+
+  // Download is pending a more detailed verdict after a prompt to use the
+  // password locally for further scanning.
+  DOWNLOAD_DANGER_TYPE_ASYNC_LOCAL_PASSWORD_SCANNING = 22,
+
   // Memory space for histograms is determined by the max.
   // ALWAYS ADD NEW VALUES BEFORE THIS ONE.
   DOWNLOAD_DANGER_TYPE_MAX
 };
+
+// Converts DownloadDangerType into their corresponding string, used only
+// for metrics.
+COMPONENTS_DOWNLOAD_EXPORT
+const char* GetDownloadDangerTypeString(const DownloadDangerType& danger_type);
 
 }  // namespace download
 

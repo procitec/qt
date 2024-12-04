@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -26,7 +26,7 @@ TEST_F(SelectionTest, defaultConstructor) {
 TEST_F(SelectionTest, IsBaseFirst) {
   SetBodyContent("<div id='sample'>abcdef</div>");
 
-  Element* sample = GetDocument().getElementById("sample");
+  Element* sample = GetDocument().getElementById(AtomicString("sample"));
   Position base(Position(sample->firstChild(), 4));
   Position extent(Position(sample->firstChild(), 2));
   SelectionInDOMTree::Builder builder;
@@ -44,7 +44,7 @@ TEST_F(SelectionTest, IsBaseFirst) {
 TEST_F(SelectionTest, caret) {
   SetBodyContent("<div id='sample'>abcdef</div>");
 
-  Element* sample = GetDocument().getElementById("sample");
+  Element* sample = GetDocument().getElementById(AtomicString("sample"));
   Position position(Position(sample->firstChild(), 2));
   SelectionInDOMTree::Builder builder;
   builder.Collapse(position);
@@ -60,7 +60,7 @@ TEST_F(SelectionTest, caret) {
 TEST_F(SelectionTest, range) {
   SetBodyContent("<div id='sample'>abcdef</div>");
 
-  Element* sample = GetDocument().getElementById("sample");
+  Element* sample = GetDocument().getElementById(AtomicString("sample"));
   Position base(Position(sample->firstChild(), 2));
   Position extent(Position(sample->firstChild(), 4));
   SelectionInDOMTree::Builder builder;
@@ -78,7 +78,7 @@ TEST_F(SelectionTest, range) {
 TEST_F(SelectionTest, SetAsBacwardAndForward) {
   SetBodyContent("<div id='sample'>abcdef</div>");
 
-  Element* sample = GetDocument().getElementById("sample");
+  Element* sample = GetDocument().getElementById(AtomicString("sample"));
   Position start(Position(sample->firstChild(), 2));
   Position end(Position(sample->firstChild(), 4));
   EphemeralRange range(start, end);
@@ -117,6 +117,37 @@ TEST_F(SelectionTest, SetAsBacwardAndForward) {
   EXPECT_EQ(start, collapsed_selection.ComputeStartPosition());
   EXPECT_EQ(start, collapsed_selection.ComputeEndPosition());
   EXPECT_EQ(EphemeralRange(start, start), collapsed_selection.ComputeRange());
+}
+
+TEST_F(SelectionTest, EquivalentPositions) {
+  SetBodyContent(
+      "<div id='first'></div>"
+      "<div id='last'></div>");
+  Element* first = GetDocument().getElementById(AtomicString("first"));
+  Element* last = GetDocument().getElementById(AtomicString("last"));
+  Position after_first = Position::AfterNode(*first);
+  Position before_last = Position::BeforeNode(*last);
+
+  // Test selections created with different but equivalent positions.
+  EXPECT_NE(after_first, before_last);
+  EXPECT_TRUE(after_first.IsEquivalent(before_last));
+
+  for (bool reversed : {false, true}) {
+    const Position& start = reversed ? before_last : after_first;
+    const Position& end = reversed ? after_first : before_last;
+    EphemeralRange range(start, end);
+
+    const SelectionInDOMTree& selection =
+        SelectionInDOMTree::Builder().Collapse(start).Extend(end).Build();
+    EXPECT_EQ(
+        selection,
+        SelectionInDOMTree::Builder().SetAsForwardSelection(range).Build());
+
+    EXPECT_TRUE(selection.IsCaret());
+    EXPECT_EQ(range, selection.ComputeRange());
+    EXPECT_EQ(start, selection.Base());
+    EXPECT_EQ(start, selection.Extent());
+  }
 }
 
 }  // namespace blink

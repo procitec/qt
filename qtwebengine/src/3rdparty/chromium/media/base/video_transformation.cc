@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,13 +7,16 @@
 #include <math.h>
 #include <stddef.h>
 
+#include "base/logging.h"
 #include "base/notreached.h"
+#include "base/strings/string_number_conversions.h"
 
 namespace media {
 namespace {
 
-double FixedToFloatingPoint(int32_t i) {
-  return static_cast<double>(i >> 16);
+template <size_t decimal_bits>
+double FixedToFloatingPoint(int64_t i) {
+  return i / static_cast<double>(1 << decimal_bits);
 }
 
 }  // namespace
@@ -29,8 +32,7 @@ std::string VideoRotationToString(VideoRotation rotation) {
     case VIDEO_ROTATION_270:
       return "270°";
   }
-  NOTREACHED();
-  return "";
+  NOTREACHED_NORETURN();
 }
 
 bool operator==(const struct VideoTransformation& first,
@@ -38,31 +40,58 @@ bool operator==(const struct VideoTransformation& first,
   return first.rotation == second.rotation && first.mirrored == second.mirrored;
 }
 
-VideoTransformation::VideoTransformation(int32_t matrix[4]) {
+// static
+VideoTransformation VideoTransformation::FromFFmpegDisplayMatrix(
+    const int32_t* matrix3x3) {
+  const int32_t matrix2x2[4] = {
+      matrix3x3[0],
+      matrix3x3[1],
+      matrix3x3[3],
+      matrix3x3[4],
+  };
+  return VideoTransformation(matrix2x2);
+}
+
+VideoTransformation::VideoTransformation(const int32_t matrix[4]) {
+  // Promote to int64_t to avoid abs(int32_min) being undefined.
+  const int64_t matrix64[4] = {matrix[0], matrix[1], matrix[2], matrix[3]};
+
   // Rotation by angle Θ is represented in the matrix as:
   // [ cos(Θ), -sin(Θ)]
   // [ sin(Θ),  cos(Θ)]
   // A vertical flip is represented by the cosine's having opposite signs
   // and a horizontal flip is represented by the sine's having the same sign.
-
   // Check the matrix for validity
-  if (abs(matrix[0]) != abs(matrix[3]) || abs(matrix[1]) != abs(matrix[2])) {
+  if (abs(matrix64[0]) != abs(matrix64[3]) ||
+      abs(matrix64[1]) != abs(matrix64[2])) {
     rotation = VIDEO_ROTATION_0;
     mirrored = false;
     return;
   }
 
-  double angle = acos(FixedToFloatingPoint(matrix[0])) * 180 / base::kPiDouble;
+  double angle =
+      acos(FixedToFloatingPoint<16>(matrix64[0])) * 180 / base::kPiDouble;
+  double check_angle =
+      asin(FixedToFloatingPoint<16>(matrix64[1])) * 180 / base::kPiDouble;
+  double offset = abs(abs(angle) - abs(check_angle));
+  while (offset >= 180.0)
+    offset -= 180.0;
+
+  if (offset > 1e-3) {
+    rotation = VIDEO_ROTATION_0;
+    mirrored = false;
+    return;
+  }
 
   // Calculate angle offsets for rotation - rotating about the X axis
   // can be expressed as a 180 degree rotation and a Y axis rotation
   mirrored = false;
-  if (matrix[0] != matrix[3] && matrix[0] != 0) {
+  if (matrix64[0] != matrix64[3] && matrix64[0] != 0) {
     mirrored = !mirrored;
     angle += 180;
   }
 
-  if (matrix[1] == matrix[3] && matrix[1] != 0) {
+  if (matrix64[1] == matrix64[3] && matrix64[1] != 0) {
     mirrored = !mirrored;
   }
 
@@ -84,8 +113,7 @@ VideoTransformation::VideoTransformation(int32_t matrix[4]) {
   } else if (abs(angle - 180) < 1e-4) {
     rotation = VIDEO_ROTATION_180;
   } else if (abs(angle - 90) < 1e-4) {
-    bool quadrant = asin(FixedToFloatingPoint(matrix[2])) < 0;
-    rotation = quadrant ? VIDEO_ROTATION_90 : VIDEO_ROTATION_270;
+    rotation = (check_angle > 0) ? VIDEO_ROTATION_90 : VIDEO_ROTATION_270;
   } else {
     rotation = VIDEO_ROTATION_0;
     mirrored = false;

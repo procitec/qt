@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,11 +9,8 @@
 #include <utility>
 
 #include "base/run_loop.h"
-#include "base/sequenced_task_runner.h"
-#include "base/task/post_task.h"
 #include "base/test/task_environment.h"
 #include "components/openscreen_platform/network_context.h"
-#include "components/openscreen_platform/task_runner.h"
 #include "components/openscreen_platform/tls_client_connection.h"
 #include "net/base/net_errors.h"
 #include "services/network/public/mojom/network_context.mojom.h"
@@ -65,7 +62,7 @@ class MockTlsConnectionFactoryClient
 class FakeNetworkContext : public network::TestNetworkContext {
  public:
   void CreateTCPConnectedSocket(
-      const base::Optional<net::IPEndPoint>& local_addr,
+      const absl::optional<net::IPEndPoint>& local_addr,
       const net::AddressList& remote_addr_list,
       network::mojom::TCPConnectedSocketOptionsPtr tcp_connected_socket_options,
       const net::MutableNetworkTrafficAnnotationTag& traffic_annotation,
@@ -79,7 +76,7 @@ class FakeNetworkContext : public network::TestNetworkContext {
   int times_called() { return times_called_; }
 
   void ExecuteCreateCallback(int32_t net_result) {
-    std::move(callback_).Run(net_result, base::nullopt, base::nullopt,
+    std::move(callback_).Run(net_result, absl::nullopt, absl::nullopt,
                              mojo::ScopedDataPipeConsumerHandle{},
                              mojo::ScopedDataPipeProducerHandle{});
   }
@@ -94,11 +91,6 @@ class FakeNetworkContext : public network::TestNetworkContext {
 class TlsConnectionFactoryTest : public ::testing::Test {
  public:
   void SetUp() override {
-    task_environment_ = std::make_unique<base::test::TaskEnvironment>();
-
-    task_runner = std::make_unique<openscreen_platform::TaskRunner>(
-        task_environment_->GetMainThreadTaskRunner());
-
     mock_network_context = std::make_unique<FakeNetworkContext>();
     SetNetworkContextGetter(base::BindRepeating(
         &TlsConnectionFactoryTest::GetNetworkContext, base::Unretained(this)));
@@ -113,14 +105,13 @@ class TlsConnectionFactoryTest : public ::testing::Test {
     return mock_network_context.get();
   }
 
-  std::unique_ptr<openscreen_platform::TaskRunner> task_runner;
+  base::test::TaskEnvironment task_environment_;
   std::unique_ptr<FakeNetworkContext> mock_network_context;
-  std::unique_ptr<base::test::TaskEnvironment> task_environment_;
 };
 
 TEST_F(TlsConnectionFactoryTest, CallsNetworkContextCreateMethod) {
   StrictMock<MockTlsConnectionFactoryClient> mock_client;
-  TlsConnectionFactory factory(&mock_client, task_runner.get());
+  TlsConnectionFactory factory(&mock_client);
 
   factory.Connect(kValidOpenscreenEndpoint, TlsConnectOptions{});
 
@@ -131,7 +122,7 @@ TEST_F(TlsConnectionFactoryTest, CallsNetworkContextCreateMethod) {
 TEST_F(TlsConnectionFactoryTest,
        CallsOnConnectionFailedWhenNetworkContextReportsError) {
   StrictMock<MockTlsConnectionFactoryClient> mock_client;
-  TlsConnectionFactory factory(&mock_client, task_runner.get());
+  TlsConnectionFactory factory(&mock_client);
   EXPECT_CALL(mock_client,
               OnConnectionFailed(&factory, kValidOpenscreenEndpoint));
 

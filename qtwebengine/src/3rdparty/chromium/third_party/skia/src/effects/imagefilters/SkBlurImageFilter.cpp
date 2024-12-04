@@ -5,126 +5,284 @@
  * found in the LICENSE file.
  */
 
-#include "include/effects/SkBlurImageFilter.h"
-
-#include <algorithm>
+#include "include/effects/SkImageFilters.h"
 
 #include "include/core/SkBitmap.h"
+#include "include/core/SkColor.h"
+#include "include/core/SkColorType.h"
+#include "include/core/SkFlattenable.h"
+#include "include/core/SkImageFilter.h"
+#include "include/core/SkImageInfo.h"
+#include "include/core/SkRect.h"
+#include "include/core/SkRefCnt.h"
+#include "include/core/SkScalar.h"
+#include "include/core/SkSize.h"
 #include "include/core/SkTileMode.h"
-#include "include/private/SkColorData.h"
-#include "include/private/SkNx.h"
-#include "include/private/SkTFitsIn.h"
-#include "src/core/SkArenaAlloc.h"
-#include "src/core/SkAutoPixmapStorage.h"
-#include "src/core/SkGpuBlurUtils.h"
+#include "include/core/SkTypes.h"
+#include "include/private/base/SkFloatingPoint.h"
+#include "include/private/base/SkMalloc.h"
+#include "include/private/base/SkTo.h"
+#include "src/base/SkArenaAlloc.h"
+#include "src/base/SkVx.h"
+#include "src/core/SkImageFilterTypes.h"
 #include "src/core/SkImageFilter_Base.h"
-#include "src/core/SkOpts.h"
 #include "src/core/SkReadBuffer.h"
 #include "src/core/SkSpecialImage.h"
 #include "src/core/SkWriteBuffer.h"
 
-#if SK_SUPPORT_GPU
-#include "src/gpu/GrTextureProxy.h"
-#include "src/gpu/SkGr.h"
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+#include <cstring>
+#include <optional>
+#include <utility>
+
+struct SkIPoint;
+
+#if defined(SK_GANESH) || defined(SK_GRAPHITE)
+#include "src/gpu/BlurUtils.h"
+#endif
+
+#if SK_CPU_SSE_LEVEL >= SK_CPU_SSE_LEVEL_SSE1
+    #include <xmmintrin.h>
+    #define SK_PREFETCH(ptr) _mm_prefetch(reinterpret_cast<const char*>(ptr), _MM_HINT_T0)
+#elif defined(__GNUC__)
+    #define SK_PREFETCH(ptr) __builtin_prefetch(ptr)
+#else
+    #define SK_PREFETCH(ptr)
 #endif
 
 namespace {
 
-class SkBlurImageFilterImpl final : public SkImageFilter_Base {
+class SkBlurImageFilter final : public SkImageFilter_Base {
 public:
-    SkBlurImageFilterImpl(SkScalar sigmaX, SkScalar sigmaY,  SkTileMode tileMode,
-                          sk_sp<SkImageFilter> input, const CropRect* cropRect)
-            : INHERITED(&input, 1, cropRect)
-            , fSigma{sigmaX, sigmaY}
-            , fTileMode(tileMode) {}
+    SkBlurImageFilter(SkSize sigma, sk_sp<SkImageFilter> input)
+            : SkImageFilter_Base(&input, 1)
+            , fSigma{sigma} {}
+
+    SkBlurImageFilter(SkSize sigma, SkTileMode legacyTileMode, sk_sp<SkImageFilter> input)
+            : SkImageFilter_Base(&input, 1)
+            , fSigma(sigma)
+            , fLegacyTileMode(legacyTileMode) {}
 
     SkRect computeFastBounds(const SkRect&) const override;
 
 protected:
     void flatten(SkWriteBuffer&) const override;
-    sk_sp<SkSpecialImage> onFilterImage(const Context&, SkIPoint* offset) const override;
-    SkIRect onFilterNodeBounds(const SkIRect& src, const SkMatrix& ctm,
-                               MapDirection, const SkIRect* inputRect) const override;
 
 private:
-    friend void SkBlurImageFilter::RegisterFlattenables();
-    SK_FLATTENABLE_HOOKS(SkBlurImageFilterImpl)
+    friend void ::SkRegisterBlurImageFilterFlattenable();
+    SK_FLATTENABLE_HOOKS(SkBlurImageFilter)
 
-#if SK_SUPPORT_GPU
-    sk_sp<SkSpecialImage> gpuFilter(
-            const Context& ctx, SkVector sigma,
-            const sk_sp<SkSpecialImage> &input,
-            SkIRect inputBounds, SkIRect dstBounds, SkIPoint inputOffset, SkIPoint* offset) const;
-#endif
+    skif::FilterResult onFilterImage(const skif::Context& context) const override;
 
-    SkSize     fSigma;
-    SkTileMode fTileMode;
+    skif::LayerSpace<SkIRect> onGetInputLayerBounds(
+            const skif::Mapping& mapping,
+            const skif::LayerSpace<SkIRect>& desiredOutput,
+            std::optional<skif::LayerSpace<SkIRect>> contentBounds) const override;
 
-    using INHERITED = SkImageFilter_Base;
+    std::optional<skif::LayerSpace<SkIRect>> onGetOutputLayerBounds(
+            const skif::Mapping& mapping,
+            std::optional<skif::LayerSpace<SkIRect>> contentBounds) const override;
+
+    skif::LayerSpace<SkSize> mapSigma(const skif::Mapping& mapping, bool gpuBacked) const;
+
+    skif::LayerSpace<SkIRect> kernelBounds(const skif::Mapping& mapping,
+                                           skif::LayerSpace<SkIRect> bounds,
+                                           bool gpuBacked) const {
+        skif::LayerSpace<SkSize> sigma = this->mapSigma(mapping, gpuBacked);
+        bounds.outset(skif::LayerSpace<SkSize>({3 * sigma.width(), 3 * sigma.height()}).ceil());
+        return bounds;
+    }
+
+    skif::ParameterSpace<SkSize> fSigma;
+    // kDecal means no legacy tiling, it will be handled by SkCropImageFilter instead. Legacy
+    // tiling occurs when there's no provided crop rect, and should be deleted once clients create
+    // their filters with defined tiling geometry.
+    SkTileMode fLegacyTileMode = SkTileMode::kDecal;
 };
 
 } // end namespace
 
-static SkTileMode to_sktilemode(SkBlurImageFilter::TileMode tileMode) {
-    switch(tileMode) {
-        case SkBlurImageFilter::kClamp_TileMode:
-            return SkTileMode::kClamp;
-        case SkBlurImageFilter::kRepeat_TileMode:
-            return SkTileMode::kRepeat;
-        case SkBlurImageFilter::kClampToBlack_TileMode:
-            // Fall through
-        default:
-            return SkTileMode::kDecal;
+sk_sp<SkImageFilter> SkImageFilters::Blur(
+        SkScalar sigmaX, SkScalar sigmaY, SkTileMode tileMode, sk_sp<SkImageFilter> input,
+        const CropRect& cropRect) {
+    if (!SkScalarsAreFinite(sigmaX, sigmaY) || sigmaX < 0.f || sigmaY < 0.f) {
+        // Non-finite or negative sigmas are error conditions. We allow 0 sigma for X and/or Y
+        // for 1D blurs; onFilterImage() will detect when no visible blurring would occur based on
+        // the Context mapping.
+        return nullptr;
     }
-}
 
-sk_sp<SkImageFilter> SkBlurImageFilter::Make(SkScalar sigmaX, SkScalar sigmaY,
-                                             sk_sp<SkImageFilter> input,
-                                             const SkImageFilter::CropRect* cropRect,
-                                             TileMode tileMode) {
-    return Make(sigmaX, sigmaY, to_sktilemode(tileMode), std::move(input), cropRect);
-}
-
-sk_sp<SkImageFilter> SkBlurImageFilter::Make(SkScalar sigmaX, SkScalar sigmaY, SkTileMode tileMode,
-                                             sk_sp<SkImageFilter> input,
-                                             const SkImageFilter::CropRect* cropRect) {
-    if (sigmaX < SK_ScalarNearlyZero && sigmaY < SK_ScalarNearlyZero && !cropRect) {
-        return input;
+    // Temporarily allow tiling with no crop rect
+    if (tileMode != SkTileMode::kDecal && !cropRect) {
+        return sk_make_sp<SkBlurImageFilter>(SkSize{sigmaX, sigmaY}, tileMode, std::move(input));
     }
-    return sk_sp<SkImageFilter>(
-          new SkBlurImageFilterImpl(sigmaX, sigmaY, tileMode, input, cropRect));
+
+    // The 'tileMode' behavior is not well-defined if there is no crop. We only apply it if
+    // there is a provided 'cropRect'.
+    sk_sp<SkImageFilter> filter = std::move(input);
+    if (tileMode != SkTileMode::kDecal && cropRect) {
+        // Historically the input image was restricted to the cropRect when tiling was not
+        // kDecal, so that the kernel evaluated the tiled edge conditions, while a kDecal crop
+        // only affected the output.
+        filter = SkImageFilters::Crop(*cropRect, tileMode, std::move(filter));
+    }
+
+    filter = sk_make_sp<SkBlurImageFilter>(SkSize{sigmaX, sigmaY}, std::move(filter));
+    if (cropRect) {
+        // But regardless of the tileMode, the output is always decal cropped
+        filter = SkImageFilters::Crop(*cropRect, SkTileMode::kDecal, std::move(filter));
+    }
+    return filter;
 }
 
-void SkBlurImageFilter::RegisterFlattenables() { SK_REGISTER_FLATTENABLE(SkBlurImageFilterImpl); }
+void SkRegisterBlurImageFilterFlattenable() {
+    SK_REGISTER_FLATTENABLE(SkBlurImageFilter);
+    SkFlattenable::Register("SkBlurImageFilterImpl", SkBlurImageFilter::CreateProc);
+}
 
-///////////////////////////////////////////////////////////////////////////////
-
-sk_sp<SkFlattenable> SkBlurImageFilterImpl::CreateProc(SkReadBuffer& buffer) {
+sk_sp<SkFlattenable> SkBlurImageFilter::CreateProc(SkReadBuffer& buffer) {
     SK_IMAGEFILTER_UNFLATTEN_COMMON(common, 1);
     SkScalar sigmaX = buffer.readScalar();
     SkScalar sigmaY = buffer.readScalar();
     SkTileMode tileMode = buffer.read32LE(SkTileMode::kLastTileMode);
 
-    static_assert(SkBlurImageFilter::kLast_TileMode == 2, "CreateProc");
-
-    return SkBlurImageFilter::Make(
-          sigmaX, sigmaY, tileMode, common.getInput(0), &common.cropRect());
+    // NOTE: For new SKPs, 'tileMode' holds the "legacy" tile mode; any originally specified tile
+    // mode with valid tiling geometry is handled in the SkCropImageFilters that wrap the blur.
+    // In a new SKP, when 'tileMode' is not kDecal, common.cropRect() will be null and the blur
+    // will automatically emulate the legacy tiling.
+    //
+    // In old SKPs, the 'tileMode' and common.cropRect() may not be null. ::Blur() automatically
+    // detects when this is a legacy or valid tiling and constructs the DAG appropriately.
+    return SkImageFilters::Blur(
+          sigmaX, sigmaY, tileMode, common.getInput(0), common.cropRect());
 }
 
-void SkBlurImageFilterImpl::flatten(SkWriteBuffer& buffer) const {
-    this->INHERITED::flatten(buffer);
-    buffer.writeScalar(fSigma.fWidth);
-    buffer.writeScalar(fSigma.fHeight);
+void SkBlurImageFilter::flatten(SkWriteBuffer& buffer) const {
+    this->SkImageFilter_Base::flatten(buffer);
 
-    static_assert((int) SkTileMode::kLastTileMode == 3 && SkBlurImageFilter::kLast_TileMode == 2,
-                  "SkBlurImageFilterImpl::flatten");
-    SkASSERT(fTileMode <= SkTileMode::kLastTileMode);
-    buffer.writeInt(static_cast<int>(fTileMode));
+    buffer.writeScalar(SkSize(fSigma).fWidth);
+    buffer.writeScalar(SkSize(fSigma).fHeight);
+    buffer.writeInt(static_cast<int>(fLegacyTileMode));
 }
 
+///////////////////////////////////////////////////////////////////////////////
+
+namespace {
+
+// TODO: Move these functions into a CPU, 8888-only blur engine implementation; ideally share logic
+// with the similar techniques in SkMaskBlurFilter on 4x A8 data.
+
+// TODO(b/294575803): Provide a more accurate CPU implementation at s<2, at which point the notion
+// of an identity sigma can be consolidated between the different functions.
 // This is defined by the SVG spec:
 // https://drafts.fxtf.org/filter-effects/#feGaussianBlurElement
-static int calculate_window(double sigma) {
+int calculate_window(double sigma) {
+    auto possibleWindow = static_cast<int>(floor(sigma * 3 * sqrt(2 * SK_DoublePI) / 4 + 0.5));
+    return std::max(1, possibleWindow);
+}
+
+// This rather arbitrary-looking value results in a maximum box blur kernel size
+// of 1000 pixels on the raster path, which matches the WebKit and Firefox
+// implementations. Since the GPU path does not compute a box blur, putting
+// the limit on sigma ensures consistent behaviour between the GPU and
+// raster paths.
+static constexpr SkScalar kMaxSigma = 532.f;
+
+class Pass {
+public:
+    explicit Pass(int border) : fBorder(border) {}
+    virtual ~Pass() = default;
+
+    void blur(int srcLeft, int srcRight, int dstRight,
+              const uint32_t* src, int srcStride,
+              uint32_t* dst, int dstStride) {
+        this->startBlur();
+
+        auto srcStart = srcLeft - fBorder,
+                srcEnd   = srcRight - fBorder,
+                dstEnd   = dstRight,
+                srcIdx   = srcStart,
+                dstIdx   = 0;
+
+        const uint32_t* srcCursor = src;
+        uint32_t* dstCursor = dst;
+
+        if (dstIdx < srcIdx) {
+            // The destination pixels are not effected by the src pixels,
+            // change to zero as per the spec.
+            // https://drafts.fxtf.org/filter-effects/#FilterPrimitivesOverviewIntro
+            int commonEnd = std::min(srcIdx, dstEnd);
+            while (dstIdx < commonEnd) {
+                *dstCursor = 0;
+                dstCursor += dstStride;
+                SK_PREFETCH(dstCursor);
+                dstIdx++;
+            }
+        } else if (srcIdx < dstIdx) {
+            // The edge of the source is before the edge of the destination. Calculate the sums for
+            // the pixels before the start of the destination.
+            if (int commonEnd = std::min(dstIdx, srcEnd); srcIdx < commonEnd) {
+                // Preload the blur with values from src before dst is entered.
+                int n = commonEnd - srcIdx;
+                this->blurSegment(n, srcCursor, srcStride, nullptr, 0);
+                srcIdx += n;
+                srcCursor += n * srcStride;
+            }
+            if (srcIdx < dstIdx) {
+                // The weird case where src is out of pixels before dst is even started.
+                int n = dstIdx - srcIdx;
+                this->blurSegment(n, nullptr, 0, nullptr, 0);
+                srcIdx += n;
+            }
+        }
+
+        if (int commonEnd = std::min(dstEnd, srcEnd); dstIdx < commonEnd) {
+            // Both srcIdx and dstIdx are in sync now, and can run in a 1:1 fashion. This is the
+            // normal mode of operation.
+            SkASSERT(srcIdx == dstIdx);
+
+            int n = commonEnd - dstIdx;
+            this->blurSegment(n, srcCursor, srcStride, dstCursor, dstStride);
+            srcCursor += n * srcStride;
+            dstCursor += n * dstStride;
+            dstIdx += n;
+            srcIdx += n;
+        }
+
+        // Drain the remaining blur values into dst assuming 0's for the leading edge.
+        if (dstIdx < dstEnd) {
+            int n = dstEnd - dstIdx;
+            this->blurSegment(n, nullptr, 0, dstCursor, dstStride);
+        }
+    }
+
+protected:
+    virtual void startBlur() = 0;
+    virtual void blurSegment(
+            int n, const uint32_t* src, int srcStride, uint32_t* dst, int dstStride) = 0;
+
+private:
+    const int fBorder;
+};
+
+class PassMaker {
+public:
+    explicit PassMaker(int window) : fWindow{window} {}
+    virtual ~PassMaker() = default;
+    virtual Pass* makePass(void* buffer, SkArenaAlloc* alloc) const = 0;
+    virtual size_t bufferSizeBytes() const = 0;
+    int window() const {return fWindow;}
+
+private:
+    const int fWindow;
+};
+
+// Implement a scanline processor that uses a three-box filter to approximate a Gaussian blur.
+// The GaussPass is limit to processing sigmas < 135.
+class GaussPass final : public Pass {
+public:
     // NB 136 is the largest sigma that will not cause a buffer full of 255 mask values to overflow
     // using the Gauss filter. It also limits the size of buffers used hold intermediate values.
     // Explanation of maximums:
@@ -137,344 +295,547 @@ static int calculate_window(double sigma) {
     //
     //   window = floor(sigma * 3 * sqrt(2 * kPi) / 4 + 0.5)
     //   For window <= 255, the largest value for sigma is 136.
-    sigma = SkTPin(sigma, 0.0, 136.0);
-    auto possibleWindow = static_cast<int>(floor(sigma * 3 * sqrt(2 * SK_DoublePI) / 4 + 0.5));
-    return std::max(1, possibleWindow);
-}
+    static PassMaker* MakeMaker(double sigma, SkArenaAlloc* alloc) {
+        SkASSERT(0 <= sigma);
+        int window = calculate_window(sigma);
+        if (255 <= window) {
+            return nullptr;
+        }
 
-// Calculating the border is tricky. The border is the distance in pixels between the first dst
-// pixel and the first src pixel (or the last src pixel and the last dst pixel).
-// I will go through the odd case which is simpler, and then through the even case. Given a
-// stack of filters seven wide for the odd case of three passes.
-//
-//        S
-//     aaaAaaa
-//     bbbBbbb
-//     cccCccc
-//        D
-//
-// The furthest changed pixel is when the filters are in the following configuration.
-//
-//                 S
-//           aaaAaaa
-//        bbbBbbb
-//     cccCccc
-//        D
-//
-//  The A pixel is calculated using the value S, the B uses A, and the C uses B, and
-// finally D is C. So, with a window size of seven the border is nine. In the odd case, the
-// border is 3*((window - 1)/2).
-//
-// For even cases the filter stack is more complicated. The spec specifies two passes
-// of even filters and a final pass of odd filters. A stack for a width of six looks like
-// this.
-//
-//       S
-//    aaaAaa
-//     bbBbbb
-//    cccCccc
-//       D
-//
-// The furthest pixel looks like this.
-//
-//               S
-//          aaaAaa
-//        bbBbbb
-//    cccCccc
-//       D
-//
-// For a window of six, the border value is eight. In the even case the border is 3 *
-// (window/2) - 1.
-static int calculate_border(int window) {
-    return (window & 1) == 1 ? 3 * ((window - 1) / 2) : 3 * (window / 2) - 1;
-}
+        class Maker : public PassMaker {
+        public:
+            explicit Maker(int window) : PassMaker{window} {}
+            Pass* makePass(void* buffer, SkArenaAlloc* alloc) const override {
+                return GaussPass::Make(this->window(), buffer, alloc);
+            }
 
-static int calculate_buffer(int window) {
-    int bufferSize = window - 1;
-    return (window & 1) == 1 ? 3 * bufferSize : 3 * bufferSize + 1;
-}
+            size_t bufferSizeBytes() const override {
+                int window = this->window();
+                size_t onePassSize = window - 1;
+                // If the window is odd, then there is an obvious middle element. For even sizes
+                // 2 passes are shifted, and the last pass has an extra element. Like this:
+                //       S
+                //    aaaAaa
+                //     bbBbbb
+                //    cccCccc
+                //       D
+                size_t bufferCount = (window & 1) == 1 ? 3 * onePassSize : 3 * onePassSize + 1;
+                return bufferCount * sizeof(skvx::Vec<4, uint32_t>);
+            }
+        };
 
-// blur_one_direction implements the common three pass box filter approximation of Gaussian blur,
-// but combines all three passes into a single pass. This approach is facilitated by three circular
-// buffers the width of the window which track values for trailing edges of each of the three
-// passes. This allows the algorithm to use more precision in the calculation because the values
-// are not rounded each pass. And this implementation also avoids a trap that's easy to fall
-// into resulting in blending in too many zeroes near the edge.
-//
-//  In general, a window sum has the form:
-//     sum_n+1 = sum_n + leading_edge - trailing_edge.
-//  If instead we do the subtraction at the end of the previous iteration, we can just
-// calculate the sums instead of having to do the subtractions too.
-//
-//      In previous iteration:
-//      sum_n+1 = sum_n - trailing_edge.
-//
-//      In this iteration:
-//      sum_n+1 = sum_n + leading_edge.
-//
-//  Now we can stack all three sums and do them at once. Sum0 gets its leading edge from the
-// actual data. Sum1's leading edge is just Sum0, and Sum2's leading edge is Sum1. So, doing the
-// three passes at the same time has the form:
-//
-//    sum0_n+1 = sum0_n + leading edge
-//    sum1_n+1 = sum1_n + sum0_n+1
-//    sum2_n+1 = sum2_n + sum1_n+1
-//
-//    sum2_n+1 / window^3 is the new value of the destination pixel.
-//
-//    Reduce the sums by the trailing edges which were stored in the circular buffers,
-// for the next go around. This is the case for odd sized windows, even windows the the third
-// circular buffer is one larger then the first two circular buffers.
-//
-//    sum2_n+2 = sum2_n+1 - buffer2[i];
-//    buffer2[i] = sum1;
-//    sum1_n+2 = sum1_n+1 - buffer1[i];
-//    buffer1[i] = sum0;
-//    sum0_n+2 = sum0_n+1 - buffer0[i];
-//    buffer0[i] = leading edge
-//
-//   This is all encapsulated in the processValue function below.
-//
-using Pass0And1 = Sk4u[2];
-// The would be dLeft parameter is assumed to be 0.
-static void blur_one_direction(Sk4u* buffer, int window,
-                               int srcLeft, int srcRight, int dstRight,
-                               const uint32_t* src, int srcXStride, int srcYStride, int srcH,
-                                     uint32_t* dst, int dstXStride, int dstYStride) {
+        return alloc->make<Maker>(window);
+    }
 
-    // The circular buffers are one less than the window.
-    auto pass0Count = window - 1,
-         pass1Count = window - 1,
-         pass2Count = (window & 1) == 1 ? window - 1 : window;
+    static GaussPass* Make(int window, void* buffers, SkArenaAlloc* alloc) {
+        // We don't need to store the trailing edge pixel in the buffer;
+        int passSize = window - 1;
+        skvx::Vec<4, uint32_t>* buffer0 = static_cast<skvx::Vec<4, uint32_t>*>(buffers);
+        skvx::Vec<4, uint32_t>* buffer1 = buffer0 + passSize;
+        skvx::Vec<4, uint32_t>* buffer2 = buffer1 + passSize;
+        // If the window is odd just one buffer is needed, but if it's even, then there is one
+        // more element on that pass.
+        skvx::Vec<4, uint32_t>* buffersEnd = buffer2 + ((window & 1) ? passSize : passSize + 1);
 
-    Pass0And1* buffer01Start = (Pass0And1*)buffer;
-    Sk4u*      buffer2Start  = buffer + pass0Count + pass1Count;
-    Pass0And1* buffer01End   = (Pass0And1*)buffer2Start;
-    Sk4u*      buffer2End    = buffer2Start + pass2Count;
+        // Calculating the border is tricky. The border is the distance in pixels between the first
+        // dst pixel and the first src pixel (or the last src pixel and the last dst pixel).
+        // I will go through the odd case which is simpler, and then through the even case. Given a
+        // stack of filters seven wide for the odd case of three passes.
+        //
+        //        S
+        //     aaaAaaa
+        //     bbbBbbb
+        //     cccCccc
+        //        D
+        //
+        // The furthest changed pixel is when the filters are in the following configuration.
+        //
+        //                 S
+        //           aaaAaaa
+        //        bbbBbbb
+        //     cccCccc
+        //        D
+        //
+        // The A pixel is calculated using the value S, the B uses A, and the C uses B, and
+        // finally D is C. So, with a window size of seven the border is nine. In the odd case, the
+        // border is 3*((window - 1)/2).
+        //
+        // For even cases the filter stack is more complicated. The spec specifies two passes
+        // of even filters and a final pass of odd filters. A stack for a width of six looks like
+        // this.
+        //
+        //       S
+        //    aaaAaa
+        //     bbBbbb
+        //    cccCccc
+        //       D
+        //
+        // The furthest pixel looks like this.
+        //
+        //               S
+        //          aaaAaa
+        //        bbBbbb
+        //    cccCccc
+        //       D
+        //
+        // For a window of six, the border value is eight. In the even case the border is 3 *
+        // (window/2) - 1.
+        int border = (window & 1) == 1 ? 3 * ((window - 1) / 2) : 3 * (window / 2) - 1;
 
-    // If the window is odd then the divisor is just window ^ 3 otherwise,
-    // it is window * window * (window + 1) = window ^ 3 + window ^ 2;
-    auto window2 = window * window;
-    auto window3 = window2 * window;
-    auto divisor = (window & 1) == 1 ? window3 : window3 + window2;
+        // If the window is odd then the divisor is just window ^ 3 otherwise,
+        // it is window * window * (window + 1) = window ^ 3 + window ^ 2;
+        int window2 = window * window;
+        int window3 = window2 * window;
+        int divisor = (window & 1) == 1 ? window3 : window3 + window2;
+        return alloc->make<GaussPass>(buffer0, buffer1, buffer2, buffersEnd, border, divisor);
+    }
 
-    // NB the sums in the blur code use the following technique to avoid
-    // adding 1/2 to round the divide.
+    GaussPass(skvx::Vec<4, uint32_t>* buffer0,
+              skvx::Vec<4, uint32_t>* buffer1,
+              skvx::Vec<4, uint32_t>* buffer2,
+              skvx::Vec<4, uint32_t>* buffersEnd,
+              int border,
+              int divisor)
+        : Pass{border}
+        , fBuffer0{buffer0}
+        , fBuffer1{buffer1}
+        , fBuffer2{buffer2}
+        , fBuffersEnd{buffersEnd}
+        , fDivider(divisor) {}
+
+private:
+    void startBlur() override {
+        skvx::Vec<4, uint32_t> zero = {0u, 0u, 0u, 0u};
+        zero.store(fSum0);
+        zero.store(fSum1);
+        auto half = fDivider.half();
+        skvx::Vec<4, uint32_t>{half, half, half, half}.store(fSum2);
+        sk_bzero(fBuffer0, (fBuffersEnd - fBuffer0) * sizeof(skvx::Vec<4, uint32_t>));
+
+        fBuffer0Cursor = fBuffer0;
+        fBuffer1Cursor = fBuffer1;
+        fBuffer2Cursor = fBuffer2;
+    }
+
+    // GaussPass implements the common three pass box filter approximation of Gaussian blur,
+    // but combines all three passes into a single pass. This approach is facilitated by three
+    // circular buffers the width of the window which track values for trailing edges of each of
+    // the three passes. This allows the algorithm to use more precision in the calculation
+    // because the values are not rounded each pass. And this implementation also avoids a trap
+    // that's easy to fall into resulting in blending in too many zeroes near the edge.
     //
-    //   Sum/d + 1/2 == (Sum + h) / d
-    //   Sum + d(1/2) ==  Sum + h
-    //     h == (1/2)d
+    // In general, a window sum has the form:
+    //     sum_n+1 = sum_n + leading_edge - trailing_edge.
+    // If instead we do the subtraction at the end of the previous iteration, we can just
+    // calculate the sums instead of having to do the subtractions too.
     //
-    // But the d/2 it self should be rounded.
-    //    h == d/2 + 1/2 == (d + 1) / 2
+    //      In previous iteration:
+    //      sum_n+1 = sum_n - trailing_edge.
     //
-    // weight = 1 / d * 2 ^ 32
-    auto weight = static_cast<uint32_t>(round(1.0 / divisor * (1ull << 32)));
-    auto half = static_cast<uint32_t>((divisor + 1) / 2);
-
-    auto border = calculate_border(window);
-
-    // Calculate the start and end of the source pixels with respect to the destination start.
-    auto srcStart = srcLeft - border,
-         srcEnd   = srcRight - border,
-         dstEnd   = dstRight;
-
-    for (auto y = 0; y < srcH; y++) {
-        auto buffer01Cursor = buffer01Start;
-        auto buffer2Cursor  = buffer2Start;
-
-        Sk4u sum0{0u};
-        Sk4u sum1{0u};
-        Sk4u sum2{half};
-
-        sk_bzero(buffer01Start, (buffer2End - (Sk4u *) (buffer01Start)) * sizeof(*buffer2Start));
+    //      In this iteration:
+    //      sum_n+1 = sum_n + leading_edge.
+    //
+    // Now we can stack all three sums and do them at once. Sum0 gets its leading edge from the
+    // actual data. Sum1's leading edge is just Sum0, and Sum2's leading edge is Sum1. So, doing the
+    // three passes at the same time has the form:
+    //
+    //    sum0_n+1 = sum0_n + leading edge
+    //    sum1_n+1 = sum1_n + sum0_n+1
+    //    sum2_n+1 = sum2_n + sum1_n+1
+    //
+    //    sum2_n+1 / window^3 is the new value of the destination pixel.
+    //
+    // Reduce the sums by the trailing edges which were stored in the circular buffers for the
+    // next go around. This is the case for odd sized windows, even windows the the third
+    // circular buffer is one larger then the first two circular buffers.
+    //
+    //    sum2_n+2 = sum2_n+1 - buffer2[i];
+    //    buffer2[i] = sum1;
+    //    sum1_n+2 = sum1_n+1 - buffer1[i];
+    //    buffer1[i] = sum0;
+    //    sum0_n+2 = sum0_n+1 - buffer0[i];
+    //    buffer0[i] = leading edge
+    void blurSegment(
+            int n, const uint32_t* src, int srcStride, uint32_t* dst, int dstStride) override {
+        skvx::Vec<4, uint32_t>* buffer0Cursor = fBuffer0Cursor;
+        skvx::Vec<4, uint32_t>* buffer1Cursor = fBuffer1Cursor;
+        skvx::Vec<4, uint32_t>* buffer2Cursor = fBuffer2Cursor;
+        skvx::Vec<4, uint32_t> sum0 = skvx::Vec<4, uint32_t>::Load(fSum0);
+        skvx::Vec<4, uint32_t> sum1 = skvx::Vec<4, uint32_t>::Load(fSum1);
+        skvx::Vec<4, uint32_t> sum2 = skvx::Vec<4, uint32_t>::Load(fSum2);
 
         // Given an expanded input pixel, move the window ahead using the leadingEdge value.
-        auto processValue = [&](const Sk4u& leadingEdge) -> Sk4u {
+        auto processValue = [&](const skvx::Vec<4, uint32_t>& leadingEdge) {
             sum0 += leadingEdge;
             sum1 += sum0;
             sum2 += sum1;
 
-            Sk4u value = sum2.mulHi(weight);
+            skvx::Vec<4, uint32_t> blurred = fDivider.divide(sum2);
 
             sum2 -= *buffer2Cursor;
             *buffer2Cursor = sum1;
-            buffer2Cursor = (buffer2Cursor + 1) < buffer2End ? buffer2Cursor + 1 : buffer2Start;
+            buffer2Cursor = (buffer2Cursor + 1) < fBuffersEnd ? buffer2Cursor + 1 : fBuffer2;
+            sum1 -= *buffer1Cursor;
+            *buffer1Cursor = sum0;
+            buffer1Cursor = (buffer1Cursor + 1) < fBuffer2 ? buffer1Cursor + 1 : fBuffer1;
+            sum0 -= *buffer0Cursor;
+            *buffer0Cursor = leadingEdge;
+            buffer0Cursor = (buffer0Cursor + 1) < fBuffer1 ? buffer0Cursor + 1 : fBuffer0;
 
-            sum1 -= (*buffer01Cursor)[1];
-            (*buffer01Cursor)[1] = sum0;
-            sum0 -= (*buffer01Cursor)[0];
-            (*buffer01Cursor)[0] = leadingEdge;
-            buffer01Cursor =
-                    (buffer01Cursor + 1) < buffer01End ? buffer01Cursor + 1 : buffer01Start;
-
-            return value;
+            return skvx::cast<uint8_t>(blurred);
         };
 
-        auto srcIdx = srcStart;
-        auto dstIdx = 0;
-        const uint32_t* srcCursor = src;
-              uint32_t* dstCursor = dst;
+        auto loadEdge = [&](const uint32_t* srcCursor) {
+            return skvx::cast<uint32_t>(skvx::Vec<4, uint8_t>::Load(srcCursor));
+        };
 
-        // The destination pixels are not effected by the src pixels,
-        // change to zero as per the spec.
-        // https://drafts.fxtf.org/filter-effects/#FilterPrimitivesOverviewIntro
-        while (dstIdx < srcIdx) {
-            *dstCursor = 0;
-            dstCursor += dstXStride;
-            SK_PREFETCH(dstCursor);
-            dstIdx++;
+        if (!src && !dst) {
+            while (n --> 0) {
+                (void)processValue(0);
+            }
+        } else if (src && !dst) {
+            while (n --> 0) {
+                (void)processValue(loadEdge(src));
+                src += srcStride;
+            }
+        } else if (!src && dst) {
+            while (n --> 0) {
+                processValue(0u).store(dst);
+                dst += dstStride;
+            }
+        } else if (src && dst) {
+            while (n --> 0) {
+                processValue(loadEdge(src)).store(dst);
+                src += srcStride;
+                dst += dstStride;
+            }
         }
 
-        // The edge of the source is before the edge of the destination. Calculate the sums for
-        // the pixels before the start of the destination.
-        while (dstIdx > srcIdx) {
-            Sk4u leadingEdge = srcIdx < srcEnd ? SkNx_cast<uint32_t>(Sk4b::Load(srcCursor)) : 0;
-            (void) processValue(leadingEdge);
-            srcCursor += srcXStride;
-            srcIdx++;
+        // Store the state
+        fBuffer0Cursor = buffer0Cursor;
+        fBuffer1Cursor = buffer1Cursor;
+        fBuffer2Cursor = buffer2Cursor;
+
+        sum0.store(fSum0);
+        sum1.store(fSum1);
+        sum2.store(fSum2);
+    }
+
+    skvx::Vec<4, uint32_t>* const fBuffer0;
+    skvx::Vec<4, uint32_t>* const fBuffer1;
+    skvx::Vec<4, uint32_t>* const fBuffer2;
+    skvx::Vec<4, uint32_t>* const fBuffersEnd;
+    const skvx::ScaledDividerU32 fDivider;
+
+    // blur state
+    char fSum0[sizeof(skvx::Vec<4, uint32_t>)];
+    char fSum1[sizeof(skvx::Vec<4, uint32_t>)];
+    char fSum2[sizeof(skvx::Vec<4, uint32_t>)];
+    skvx::Vec<4, uint32_t>* fBuffer0Cursor;
+    skvx::Vec<4, uint32_t>* fBuffer1Cursor;
+    skvx::Vec<4, uint32_t>* fBuffer2Cursor;
+};
+
+// Implement a scanline processor that uses a two-box filter to approximate a Tent filter.
+// The TentPass is limit to processing sigmas < 2183.
+class TentPass final : public Pass {
+public:
+    // NB 2183 is the largest sigma that will not cause a buffer full of 255 mask values to overflow
+    // using the Tent filter. It also limits the size of buffers used hold intermediate values.
+    // Explanation of maximums:
+    //   sum0 = window * 255
+    //   sum1 = window * sum0 -> window * window * 255
+    //
+    //   The value window^2 * 255 must fit in a uint32_t. So,
+    //      window^2 < 2^32. window = 4104.
+    //
+    //   window = floor(sigma * 3 * sqrt(2 * kPi) / 4 + 0.5)
+    //   For window <= 4104, the largest value for sigma is 2183.
+    static PassMaker* MakeMaker(double sigma, SkArenaAlloc* alloc) {
+        SkASSERT(0 <= sigma);
+        int gaussianWindow = calculate_window(sigma);
+        // This is a naive method of using the window size for the Gaussian blur to calculate the
+        // window size for the Tent blur. This seems to work well in practice.
+        //
+        // We can use a single pixel to generate the effective blur area given a window size. For
+        // the Gaussian blur this is 3 * window size. For the Tent filter this is 2 * window size.
+        int tentWindow = 3 * gaussianWindow / 2;
+        if (tentWindow >= 4104) {
+            return nullptr;
         }
 
-        // The dstIdx and srcIdx are in sync now; the code just uses the dstIdx for both now.
-        // Consume the source generating pixels to dst.
-        auto loopEnd = std::min(dstEnd, srcEnd);
-        while (dstIdx < loopEnd) {
-            Sk4u leadingEdge = SkNx_cast<uint32_t>(Sk4b::Load(srcCursor));
-            SkNx_cast<uint8_t>(processValue(leadingEdge)).store(dstCursor);
-            srcCursor += srcXStride;
-            dstCursor += dstXStride;
-            SK_PREFETCH(dstCursor);
-            dstIdx++;
+        class Maker : public PassMaker {
+        public:
+            explicit Maker(int window) : PassMaker{window} {}
+            Pass* makePass(void* buffer, SkArenaAlloc* alloc) const override {
+                return TentPass::Make(this->window(), buffer, alloc);
+            }
+
+            size_t bufferSizeBytes() const override {
+                size_t onePassSize = this->window() - 1;
+                // If the window is odd, then there is an obvious middle element. For even sizes 2
+                // passes are shifted, and the last pass has an extra element. Like this:
+                //       S
+                //    aaaAaa
+                //     bbBbbb
+                //       D
+                size_t bufferCount = 2 * onePassSize;
+                return bufferCount * sizeof(skvx::Vec<4, uint32_t>);
+            }
+        };
+
+        return alloc->make<Maker>(tentWindow);
+    }
+
+    static TentPass* Make(int window, void* buffers, SkArenaAlloc* alloc) {
+        if (window > 4104) {
+            return nullptr;
         }
 
-        // The leading edge is beyond the end of the source. Assume that the pixels
-        // are now 0x0000 until the end of the destination.
-        loopEnd = dstEnd;
-        while (dstIdx < loopEnd) {
-            SkNx_cast<uint8_t>(processValue(0u)).store(dstCursor);
-            dstCursor += dstXStride;
-            SK_PREFETCH(dstCursor);
-            dstIdx++;
+        // We don't need to store the trailing edge pixel in the buffer;
+        int passSize = window - 1;
+        skvx::Vec<4, uint32_t>* buffer0 = static_cast<skvx::Vec<4, uint32_t>*>(buffers);
+        skvx::Vec<4, uint32_t>* buffer1 = buffer0 + passSize;
+        skvx::Vec<4, uint32_t>* buffersEnd = buffer1 + passSize;
+
+        // Calculating the border is tricky. The border is the distance in pixels between the first
+        // dst pixel and the first src pixel (or the last src pixel and the last dst pixel).
+        // I will go through the odd case which is simpler, and then through the even case. Given a
+        // stack of filters seven wide for the odd case of three passes.
+        //
+        //        S
+        //     aaaAaaa
+        //     bbbBbbb
+        //        D
+        //
+        // The furthest changed pixel is when the filters are in the following configuration.
+        //
+        //              S
+        //        aaaAaaa
+        //     bbbBbbb
+        //        D
+        //
+        // The A pixel is calculated using the value S, the B uses A, and the D uses B.
+        // So, with a window size of seven the border is nine. In the odd case, the border is
+        // window - 1.
+        //
+        // For even cases the filter stack is more complicated. It uses two passes
+        // of even filters offset from each other. A stack for a width of six looks like
+        // this.
+        //
+        //       S
+        //    aaaAaa
+        //     bbBbbb
+        //       D
+        //
+        // The furthest pixel looks like this.
+        //
+        //            S
+        //       aaaAaa
+        //     bbBbbb
+        //       D
+        //
+        // For a window of six, the border value is 5. In the even case the border is
+        // window - 1.
+        int border = window - 1;
+
+        int divisor = window * window;
+        return alloc->make<TentPass>(buffer0, buffer1, buffersEnd, border, divisor);
+    }
+
+    TentPass(skvx::Vec<4, uint32_t>* buffer0,
+             skvx::Vec<4, uint32_t>* buffer1,
+             skvx::Vec<4, uint32_t>* buffersEnd,
+             int border,
+             int divisor)
+         : Pass{border}
+         , fBuffer0{buffer0}
+         , fBuffer1{buffer1}
+         , fBuffersEnd{buffersEnd}
+         , fDivider(divisor) {}
+
+private:
+    void startBlur() override {
+        skvx::Vec<4, uint32_t>{0u, 0u, 0u, 0u}.store(fSum0);
+        auto half = fDivider.half();
+        skvx::Vec<4, uint32_t>{half, half, half, half}.store(fSum1);
+        sk_bzero(fBuffer0, (fBuffersEnd - fBuffer0) * sizeof(skvx::Vec<4, uint32_t>));
+
+        fBuffer0Cursor = fBuffer0;
+        fBuffer1Cursor = fBuffer1;
+    }
+
+    // TentPass implements the common two pass box filter approximation of Tent filter,
+    // but combines all both passes into a single pass. This approach is facilitated by two
+    // circular buffers the width of the window which track values for trailing edges of each of
+    // both passes. This allows the algorithm to use more precision in the calculation
+    // because the values are not rounded each pass. And this implementation also avoids a trap
+    // that's easy to fall into resulting in blending in too many zeroes near the edge.
+    //
+    // In general, a window sum has the form:
+    //     sum_n+1 = sum_n + leading_edge - trailing_edge.
+    // If instead we do the subtraction at the end of the previous iteration, we can just
+    // calculate the sums instead of having to do the subtractions too.
+    //
+    //      In previous iteration:
+    //      sum_n+1 = sum_n - trailing_edge.
+    //
+    //      In this iteration:
+    //      sum_n+1 = sum_n + leading_edge.
+    //
+    // Now we can stack all three sums and do them at once. Sum0 gets its leading edge from the
+    // actual data. Sum1's leading edge is just Sum0, and Sum2's leading edge is Sum1. So, doing the
+    // three passes at the same time has the form:
+    //
+    //    sum0_n+1 = sum0_n + leading edge
+    //    sum1_n+1 = sum1_n + sum0_n+1
+    //
+    //    sum1_n+1 / window^2 is the new value of the destination pixel.
+    //
+    // Reduce the sums by the trailing edges which were stored in the circular buffers for the
+    // next go around.
+    //
+    //    sum1_n+2 = sum1_n+1 - buffer1[i];
+    //    buffer1[i] = sum0;
+    //    sum0_n+2 = sum0_n+1 - buffer0[i];
+    //    buffer0[i] = leading edge
+    void blurSegment(
+            int n, const uint32_t* src, int srcStride, uint32_t* dst, int dstStride) override {
+        skvx::Vec<4, uint32_t>* buffer0Cursor = fBuffer0Cursor;
+        skvx::Vec<4, uint32_t>* buffer1Cursor = fBuffer1Cursor;
+        skvx::Vec<4, uint32_t> sum0 = skvx::Vec<4, uint32_t>::Load(fSum0);
+        skvx::Vec<4, uint32_t> sum1 = skvx::Vec<4, uint32_t>::Load(fSum1);
+
+        // Given an expanded input pixel, move the window ahead using the leadingEdge value.
+        auto processValue = [&](const skvx::Vec<4, uint32_t>& leadingEdge) {
+            sum0 += leadingEdge;
+            sum1 += sum0;
+
+            skvx::Vec<4, uint32_t> blurred = fDivider.divide(sum1);
+
+            sum1 -= *buffer1Cursor;
+            *buffer1Cursor = sum0;
+            buffer1Cursor = (buffer1Cursor + 1) < fBuffersEnd ? buffer1Cursor + 1 : fBuffer1;
+            sum0 -= *buffer0Cursor;
+            *buffer0Cursor = leadingEdge;
+            buffer0Cursor = (buffer0Cursor + 1) < fBuffer1 ? buffer0Cursor + 1 : fBuffer0;
+
+            return skvx::cast<uint8_t>(blurred);
+        };
+
+        auto loadEdge = [&](const uint32_t* srcCursor) {
+            return skvx::cast<uint32_t>(skvx::Vec<4, uint8_t>::Load(srcCursor));
+        };
+
+        if (!src && !dst) {
+            while (n --> 0) {
+                (void)processValue(0);
+            }
+        } else if (src && !dst) {
+            while (n --> 0) {
+                (void)processValue(loadEdge(src));
+                src += srcStride;
+            }
+        } else if (!src && dst) {
+            while (n --> 0) {
+                processValue(0u).store(dst);
+                dst += dstStride;
+            }
+        } else if (src && dst) {
+            while (n --> 0) {
+                processValue(loadEdge(src)).store(dst);
+                src += srcStride;
+                dst += dstStride;
+            }
         }
 
-        src += srcYStride;
-        dst += dstYStride;
-    }
-}
-
-static sk_sp<SkSpecialImage> copy_image_with_bounds(
-        const SkImageFilter_Base::Context& ctx, const sk_sp<SkSpecialImage> &input,
-        SkIRect srcBounds, SkIRect dstBounds) {
-    SkBitmap inputBM;
-    if (!input->getROPixels(&inputBM)) {
-        return nullptr;
+        // Store the state
+        fBuffer0Cursor = buffer0Cursor;
+        fBuffer1Cursor = buffer1Cursor;
+        sum0.store(fSum0);
+        sum1.store(fSum1);
     }
 
-    if (inputBM.colorType() != kN32_SkColorType) {
-        return nullptr;
-    }
+    skvx::Vec<4, uint32_t>* const fBuffer0;
+    skvx::Vec<4, uint32_t>* const fBuffer1;
+    skvx::Vec<4, uint32_t>* const fBuffersEnd;
+    const skvx::ScaledDividerU32 fDivider;
 
-    SkBitmap src;
-    inputBM.extractSubset(&src, srcBounds);
+    // blur state
+    char fSum0[sizeof(skvx::Vec<4, uint32_t>)];
+    char fSum1[sizeof(skvx::Vec<4, uint32_t>)];
+    skvx::Vec<4, uint32_t>* fBuffer0Cursor;
+    skvx::Vec<4, uint32_t>* fBuffer1Cursor;
+};
 
-    // Make everything relative to the destination bounds.
-    srcBounds.offset(-dstBounds.x(), -dstBounds.y());
-    dstBounds.offset(-dstBounds.x(), -dstBounds.y());
+// TODO: Implement CPU backend for different fTileMode. This is still worth doing inline with the
+// blur; at the moment the tiling is applied via the CropImageFilter and carried as metadata on
+// the FilterResult. This is forcefully applied in onFilterImage() to get a simple SkSpecialImage to
+// pass to cpu_blur or gpu_blur, which evaluates the tile mode into a kernel-outset buffer that is
+// then processed by these functions. If the tilemode is the only thing being applied, it would be
+// ideal to tile from the input image directly instead of inserting a new temporary image. For CPU
+// blurs this temporary image now creates the appearance of correctness; for GPU blurs that could
+// tile already it may create a regression.
+sk_sp<SkSpecialImage> cpu_blur(const skif::Context& ctx,
+                               skif::LayerSpace<SkSize> sigma,
+                               const sk_sp<SkSpecialImage>& input,
+                               skif::LayerSpace<SkIRect> srcBounds,
+                               skif::LayerSpace<SkIRect> dstBounds) {
+    // map_sigma limits sigma to 532 to match 1000px box filter limit of WebKit and Firefox.
+    // Since this does not exceed the limits of the TentPass (2183), there won't be overflow when
+    // computing a kernel over a pixel window filled with 255.
+    static_assert(kMaxSigma <= 2183.0f);
 
-    auto srcW = srcBounds.width(),
-         dstW = dstBounds.width(),
-         dstH = dstBounds.height();
+    // The input image should fill the srcBounds
+    SkASSERT(input->width() == srcBounds.width() && input->height() == srcBounds.height());
 
-    SkImageInfo dstInfo = SkImageInfo::Make(dstW, dstH, inputBM.colorType(), inputBM.alphaType());
-
-    SkBitmap dst;
-    if (!dst.tryAllocPixels(dstInfo)) {
-        return nullptr;
-    }
-
-    // There is no blurring to do, but we still need to copy the source while accounting for the
-    // dstBounds. Remember that the src was intersected with the dst.
-    int y = 0;
-    size_t dstWBytes = dstW * sizeof(uint32_t);
-    for (;y < srcBounds.top(); y++) {
-        sk_bzero(dst.getAddr32(0, y), dstWBytes);
-    }
-
-    for (;y < srcBounds.bottom(); y++) {
-        int x = 0;
-        uint32_t* dstPtr = dst.getAddr32(0, y);
-        for (;x < srcBounds.left(); x++) {
-            *dstPtr++ = 0;
-        }
-
-        memcpy(dstPtr, src.getAddr32(x - srcBounds.left(), y - srcBounds.top()),
-               srcW * sizeof(uint32_t));
-
-        dstPtr += srcW;
-        x += srcW;
-
-        for (;x < dstBounds.right(); x++) {
-            *dstPtr++ = 0;
-        }
-    }
-
-    for (;y < dstBounds.bottom(); y++) {
-        sk_bzero(dst.getAddr32(0, y), dstWBytes);
-    }
-
-    return SkSpecialImage::MakeFromRaster(SkIRect::MakeWH(dstBounds.width(),
-                                                          dstBounds.height()),
-                                          dst, ctx.surfaceProps());
-}
-
-// TODO: Implement CPU backend for different fTileMode.
-static sk_sp<SkSpecialImage> cpu_blur(
-        const SkImageFilter_Base::Context& ctx,
-        SkVector sigma, const sk_sp<SkSpecialImage> &input,
-        SkIRect srcBounds, SkIRect dstBounds) {
-    auto windowW = calculate_window(sigma.x()),
-         windowH = calculate_window(sigma.y());
-
-    if (windowW <= 1 && windowH <= 1) {
-        return copy_image_with_bounds(ctx, input, srcBounds, dstBounds);
-    }
-
-    SkBitmap inputBM;
-
-    if (!input->getROPixels(&inputBM)) {
-        return nullptr;
-    }
-
-    if (inputBM.colorType() != kN32_SkColorType) {
-        return nullptr;
-    }
-
-    SkBitmap src;
-    inputBM.extractSubset(&src, srcBounds);
-
-    // Make everything relative to the destination bounds.
-    srcBounds.offset(-dstBounds.x(), -dstBounds.y());
-    dstBounds.offset(-dstBounds.x(), -dstBounds.y());
-
-    auto srcW = srcBounds.width(),
-         srcH = srcBounds.height(),
-         dstW = dstBounds.width(),
-         dstH = dstBounds.height();
-
-    SkImageInfo dstInfo = inputBM.info().makeWH(dstW, dstH);
-
-    SkBitmap dst;
-    if (!dst.tryAllocPixels(dstInfo)) {
-        return nullptr;
-    }
-
-    auto bufferSizeW = calculate_buffer(windowW),
-         bufferSizeH = calculate_buffer(windowH);
-
-    // The amount 1024 is enough for buffers up to 10 sigma. The tmp bitmap will be
-    // allocated on the heap.
     SkSTArenaAlloc<1024> alloc;
-    Sk4u* buffer = alloc.makeArrayDefault<Sk4u>(std::max(bufferSizeW, bufferSizeH));
+    auto makeMaker = [&](double sigma) -> PassMaker* {
+        SkASSERT(0 <= sigma && sigma <= 2183); // should be guaranteed after map_sigma
+        if (PassMaker* maker = GaussPass::MakeMaker(sigma, &alloc)) {
+            return maker;
+        }
+        if (PassMaker* maker = TentPass::MakeMaker(sigma, &alloc)) {
+            return maker;
+        }
+        SK_ABORT("Sigma is out of range.");
+    };
+
+    PassMaker* makerX = makeMaker(sigma.width());
+    PassMaker* makerY = makeMaker(sigma.height());
+    // A no-op blur should have been caught earlier in onFilterImage().
+    SkASSERT(makerX->window() > 1 || makerY->window() > 1);
+
+    SkBitmap src;
+    if (!SkSpecialImages::AsBitmap(input.get(), &src)) {
+        return nullptr;
+    }
+    if (src.colorType() != kN32_SkColorType) {
+        return nullptr;
+    }
+
+    auto originalDstBounds = dstBounds;
+    if (makerX->window() > 1) {
+        // Inflate the dst by the window required for the Y pass so that the X pass can prepare it.
+        // The Y pass will be offset to only write to the original rows in dstBounds, but its window
+        // will access these extra rows calculated by the X pass. The SpecialImage factory will
+        // then subset the bitmap so it appears to match 'originalDstBounds' tightly. We make one
+        // slightly larger image to hold this extra data instead of two separate images sized
+        // exactly to each pass because the CPU blur can write in place.
+        const auto yPadding = skif::LayerSpace<SkSize>({0.f, 3 * sigma.height()}).ceil();
+        dstBounds.outset(yPadding);
+    }
+
+    SkBitmap dst;
+    const skif::LayerSpace<SkIPoint> dstOrigin = dstBounds.topLeft();
+    if (!dst.tryAllocPixels(src.info().makeWH(dstBounds.width(), dstBounds.height()))) {
+        return nullptr;
+    }
+    dst.eraseColor(SK_ColorTRANSPARENT);
+
+    auto buffer = alloc.makeBytesAlignedTo(std::max(makerX->bufferSizeBytes(),
+                                                    makerY->bufferSizeBytes()),
+                                           alignof(skvx::Vec<4, uint32_t>));
 
     // Basic Plan: The three cases to handle
     // * Horizontal and Vertical - blur horizontally while copying values from the source to
@@ -482,200 +843,195 @@ static sk_sp<SkSpecialImage> cpu_blur(
     // * Horizontal only - blur horizontally copying values from the source to the destination.
     // * Vertical only - blur vertically copying values from the source to the destination.
 
-    // Default to vertical only blur case. If a horizontal blur is needed, then these values
-    // will be adjusted while doing the horizontal blur.
-    auto intermediateSrc = static_cast<uint32_t *>(src.getPixels());
-    auto intermediateRowBytesAsPixels = src.rowBytesAsPixels();
-    auto intermediateWidth = srcW;
+    // Initialize these assuming the Y-only case
+    int loopStart  = std::max(srcBounds.left(),  dstBounds.left());
+    int loopEnd    = std::min(srcBounds.right(), dstBounds.right());
+    int dstYOffset = 0;
 
-    // Because the border is calculated before the fork of the GPU/CPU path. The border is
-    // the maximum of the two rendering methods. In the case where sigma is zero, then the
-    // src and dst left values are the same. If sigma is small resulting in a window size of
-    // 1, then border calculations add some pixels which will always be zero. Inset the
-    // destination by those zero pixels. This case is very rare.
-    auto intermediateDst = dst.getAddr32(srcBounds.left(), 0);
+    if (makerX->window() > 1) {
+        // First an X-only blur from src into dst, including the extra rows that will become input
+        // for the second Y pass, which will then be performed in place.
+        loopStart = std::max(srcBounds.top(),    dstBounds.top());
+        loopEnd   = std::min(srcBounds.bottom(), dstBounds.bottom());
 
-    // The following code is executed very rarely, I have never seen it in a real web
-    // page. If sigma is small but not zero then shared GPU/CPU border calculation
-    // code adds extra pixels for the border. Just clear everything to clear those pixels.
-    // This solution is overkill, but very simple.
-    if (windowW == 1 || windowH == 1) {
-        dst.eraseColor(0);
+        auto srcAddr = src.getAddr32(0, loopStart - srcBounds.top());
+        auto dstAddr = dst.getAddr32(0, loopStart - dstBounds.top());
+
+        // Iterate over each row to calculate 1D blur along X.
+        Pass* pass = makerX->makePass(buffer, &alloc);
+        for (int y = loopStart; y < loopEnd; ++y) {
+            pass->blur(srcBounds.left()  - dstBounds.left(),
+                       srcBounds.right() - dstBounds.left(),
+                       dstBounds.width(),
+                       srcAddr, 1,
+                       dstAddr, 1);
+            srcAddr += src.rowBytesAsPixels();
+            dstAddr += dst.rowBytesAsPixels();
+        }
+
+        // Set up the Y pass to blur from the full dst into the non-outset portion of dst
+        src = dst;
+        loopStart = originalDstBounds.left();
+        loopEnd   = originalDstBounds.right();
+        // The new 'dst' is equal to dst.extractSubset(originalDstBounds.offset(-dstOrigin)), but
+        // by construction only the Y offset has an interesting value so this is a little more
+        // efficient.
+        dstYOffset = originalDstBounds.top() - dstBounds.top();
+
+        srcBounds = dstBounds;
+        dstBounds = originalDstBounds;
     }
 
-    if (windowW > 1) {
-        // Make int64 to avoid overflow in multiplication below.
-        int64_t shift = srcBounds.top() - dstBounds.top();
+    // Iterate over each column to calculate 1D blur along Y. This is either blurring from src into
+    // dst for a 1D blur; or it's blurring from dst into dst for the second pass of a 2D blur.
+    if (makerY->window() > 1) {
+        auto srcAddr = src.getAddr32(loopStart - srcBounds.left(), 0);
+        auto dstAddr = dst.getAddr32(loopStart - dstBounds.left(), dstYOffset);
 
-        // For the horizontal blur, starts part way down in anticipation of the vertical blur.
-        // For a vertical sigma of zero shift should be zero. But, for small sigma,
-        // shift may be > 0 but the vertical window could be 1.
-        intermediateSrc = static_cast<uint32_t *>(dst.getPixels())
-                          + (shift > 0 ? shift * dst.rowBytesAsPixels() : 0);
-        intermediateRowBytesAsPixels = dst.rowBytesAsPixels();
-        intermediateWidth = dstW;
-        intermediateDst = static_cast<uint32_t *>(dst.getPixels());
-
-        blur_one_direction(
-                buffer, windowW,
-                srcBounds.left(), srcBounds.right(), dstBounds.right(),
-                static_cast<uint32_t *>(src.getPixels()), 1, src.rowBytesAsPixels(), srcH,
-                intermediateSrc, 1, intermediateRowBytesAsPixels);
+        Pass* pass = makerY->makePass(buffer, &alloc);
+        for (int x = loopStart; x < loopEnd; ++x) {
+            pass->blur(srcBounds.top()    - dstBounds.top(),
+                       srcBounds.bottom() - dstBounds.top(),
+                       dstBounds.height(),
+                       srcAddr, src.rowBytesAsPixels(),
+                       dstAddr, dst.rowBytesAsPixels());
+            srcAddr += 1;
+            dstAddr += 1;
+        }
     }
 
-    if (windowH > 1) {
-        blur_one_direction(
-                buffer, windowH,
-                srcBounds.top(), srcBounds.bottom(), dstBounds.bottom(),
-                intermediateSrc, intermediateRowBytesAsPixels, 1, intermediateWidth,
-                intermediateDst, dst.rowBytesAsPixels(), 1);
-    }
-
-    return SkSpecialImage::MakeFromRaster(SkIRect::MakeWH(dstBounds.width(),
-                                                          dstBounds.height()),
-                                          dst, ctx.surfaceProps());
+    originalDstBounds.offset(-dstOrigin); // Make relative to dst's pixels
+    return SkSpecialImages::MakeFromRaster(SkIRect(originalDstBounds),
+                                           dst,
+                                           ctx.backend()->surfaceProps());
 }
 
-// This rather arbitrary-looking value results in a maximum box blur kernel size
-// of 1000 pixels on the raster path, which matches the WebKit and Firefox
-// implementations. Since the GPU path does not compute a box blur, putting
-// the limit on sigma ensures consistent behaviour between the GPU and
-// raster paths.
-#define MAX_SIGMA SkIntToScalar(532)
+}  // namespace
 
-static SkVector map_sigma(const SkSize& localSigma, const SkMatrix& ctm) {
-    SkVector sigma = SkVector::Make(localSigma.width(), localSigma.height());
-    ctm.mapVectors(&sigma, 1);
-    sigma.fX = std::min(SkScalarAbs(sigma.fX), MAX_SIGMA);
-    sigma.fY = std::min(SkScalarAbs(sigma.fY), MAX_SIGMA);
+skif::FilterResult SkBlurImageFilter::onFilterImage(const skif::Context& ctx) const {
+    const bool gpuBacked = SkToBool(ctx.backend()->getBlurEngine());
+
+    skif::Context inputCtx = ctx.withNewDesiredOutput(
+            this->kernelBounds(ctx.mapping(), ctx.desiredOutput(), gpuBacked));
+
+    skif::FilterResult childOutput = this->getChildOutput(0, inputCtx);
+    skif::LayerSpace<SkSize> sigma = this->mapSigma(ctx.mapping(), gpuBacked);
+    if (sigma.width() == 0.f && sigma.height() == 0.f) {
+        // No actual blur, so just return the input unmodified
+        return childOutput;
+    }
+
+    SkASSERT(sigma.width() >= 0.f && sigma.width() <= kMaxSigma &&
+             sigma.height() >= 0.f && sigma.height() <= kMaxSigma);
+
+    // TODO: This is equivalent to what Builder::blur() calculates under the hood, but is calculated
+    // *before* we apply any legacy tile mode since the legacy tiling did not actually cause the
+    // output to extend fully.
+    skif::LayerSpace<SkIRect> maxOutput =
+            this->kernelBounds(ctx.mapping(), childOutput.layerBounds(), gpuBacked);
+    if (!maxOutput.intersect(ctx.desiredOutput())) {
+        return {};
+    }
+
+    if (fLegacyTileMode != SkTileMode::kDecal) {
+        // Legacy tiling applied to the input image when there was no explicit crop rect. Use the
+        // child's output image's layer bounds as the crop rectangle to adjust the edge tile mode
+        // without restricting the image.
+        childOutput = childOutput.applyCrop(inputCtx,
+                                            childOutput.layerBounds(),
+                                            fLegacyTileMode);
+    }
+
+    // TODO(b/40039877): Once the CPU blur functions can handle tile modes and color types beyond
+    // N32, there won't be any need to branch on how to apply the blur to the filter result.
+    if (gpuBacked) {
+        // For non-legacy tiling, 'maxOutput' is equal to the desired output. For decal's it matches
+        // what Builder::blur() calculates internally. For legacy tiling, however, it's dependent on
+        // the original child output's bounds ignoring the tile mode's effect.
+        skif::Context croppedOutput = ctx.withNewDesiredOutput(maxOutput);
+        skif::FilterResult::Builder builder{croppedOutput};
+        builder.add(childOutput);
+        return builder.blur(sigma);
+    }
+
+    // The CPU blur does not yet support tile modes so explicitly resolve it to a special image that
+    // has the tiling rendered into the pixels.
+
+    auto [resolvedChildOutput, origin] = childOutput.imageAndOffset(inputCtx);
+    if (!resolvedChildOutput) {
+        return {};
+    }
+    skif::LayerSpace<SkIRect> srcBounds{SkIRect::MakeXYWH(origin.x(),
+                                                          origin.y(),
+                                                          resolvedChildOutput->width(),
+                                                          resolvedChildOutput->height())};
+
+    return skif::FilterResult{cpu_blur(ctx, sigma, std::move(resolvedChildOutput),
+                                       srcBounds, maxOutput),
+                              maxOutput.topLeft()};
+}
+
+skif::LayerSpace<SkSize> SkBlurImageFilter::mapSigma(const skif::Mapping& mapping,
+                                                     bool gpuBacked) const {
+    skif::LayerSpace<SkSize> sigma = mapping.paramToLayer(fSigma);
+    // Clamp to the maximum sigma
+    sigma = skif::LayerSpace<SkSize>({std::min(sigma.width(), kMaxSigma),
+                                      std::min(sigma.height(), kMaxSigma)});
+
+    // TODO(b/294575803) - The CPU and GPU implementations have different requirements for
+    // "identity", with the GPU able to handle smaller sigmas. calculate_window() returns <= 1 once
+    // sigma is below ~0.8. Ideally we should work out the sigma threshold such that the max
+    // contribution from adjacent pixels is less than 0.5/255 and use that for both backends.
+    // NOTE: For convenience with builds, and the flux that is about to occur with the blur utils,
+    // this GPU logic is just copied from GrBlurUtils
+
+    // Disable bluring on axes that are not finite, or that are small enough that the blur is
+    // effectively an identity.
+    if (!SkScalarIsFinite(sigma.width()) || (!gpuBacked && calculate_window(sigma.width()) <= 1)
+#if defined(SK_GANESH) || defined(SK_GRAPHITE)
+        || (gpuBacked && skgpu::BlurIsEffectivelyIdentity(sigma.width()))
+#endif
+    ) {
+        sigma = skif::LayerSpace<SkSize>({0.f, sigma.height()});
+    }
+
+    if (!SkScalarIsFinite(sigma.height()) || (!gpuBacked && calculate_window(sigma.height()) <= 1)
+#if defined(SK_GANESH) || defined(SK_GRAPHITE)
+        || (gpuBacked && skgpu::BlurIsEffectivelyIdentity(sigma.height()))
+#endif
+    ) {
+        sigma = skif::LayerSpace<SkSize>({sigma.width(), 0.f});
+    }
+
     return sigma;
 }
 
-sk_sp<SkSpecialImage> SkBlurImageFilterImpl::onFilterImage(const Context& ctx,
-                                                           SkIPoint* offset) const {
-    SkIPoint inputOffset = SkIPoint::Make(0, 0);
-
-    sk_sp<SkSpecialImage> input(this->filterInput(0, ctx, &inputOffset));
-    if (!input) {
-        return nullptr;
-    }
-
-    SkIRect inputBounds = SkIRect::MakeXYWH(inputOffset.fX, inputOffset.fY,
-                                            input->width(), input->height());
-
-    // Calculate the destination bounds.
-    SkIRect dstBounds;
-    if (!this->applyCropRect(this->mapContext(ctx), inputBounds, &dstBounds)) {
-        return nullptr;
-    }
-    if (!inputBounds.intersect(dstBounds)) {
-        return nullptr;
-    }
-
-    // Save the offset in preparation to make all rectangles relative to the inputOffset.
-    SkIPoint resultOffset = SkIPoint::Make(dstBounds.fLeft, dstBounds.fTop);
-
-    // Make all bounds relative to the inputOffset.
-    inputBounds.offset(-inputOffset);
-    dstBounds.offset(-inputOffset);
-
-    SkVector sigma = map_sigma(fSigma, ctx.ctm());
-    if (sigma.x() < 0 || sigma.y() < 0) {
-        return nullptr;
-    }
-
-    sk_sp<SkSpecialImage> result;
-#if SK_SUPPORT_GPU
-    if (ctx.gpuBacked()) {
-        // Ensure the input is in the destination's gamut. This saves us from having to do the
-        // xform during the filter itself.
-        input = ImageToColorSpace(input.get(), ctx.colorType(), ctx.colorSpace());
-        result = this->gpuFilter(ctx, sigma, input, inputBounds, dstBounds, inputOffset,
-                                 &resultOffset);
-    } else
-#endif
-    {
-        // NB 135 is the largest sigma that will not cause a buffer full of 255 mask values to overflow
-        // using the Gauss filter. It also limits the size of buffers used hold intermediate values. The
-        // additional + 1 added to window represents adding one more leading element before subtracting the
-        // trailing element.
-        // Explanation of maximums:
-        //   sum0 = (window + 1) * 255
-        //   sum1 = (window + 1) * sum0 -> (window + 1) * (window + 1) * 255
-        //   sum2 = (window + 1) * sum1 -> (window + 1) * (window + 1) * (window + 1) * 255 -> window^3 * 255
-        //
-        //   The value (window + 1)^3 * 255 must fit in a uint32_t. So,
-        //      (window + 1)^3 * 255 < 2^32. window = 255.
-        //
-        //   window = floor(sigma * 3 * sqrt(2 * kPi) / 4)
-        //   For window <= 255, the largest value for sigma is 135.
-        sigma.fX = SkTPin(sigma.fX, 0.0f, 135.0f);
-        sigma.fY = SkTPin(sigma.fY, 0.0f, 135.0f);
-
-        result = cpu_blur(ctx, sigma, input, inputBounds, dstBounds);
-    }
-
-    // Return the resultOffset if the blur succeeded.
-    if (result != nullptr) {
-        *offset = resultOffset;
-    }
-    return result;
+skif::LayerSpace<SkIRect> SkBlurImageFilter::onGetInputLayerBounds(
+        const skif::Mapping& mapping,
+        const skif::LayerSpace<SkIRect>& desiredOutput,
+        std::optional<skif::LayerSpace<SkIRect>> contentBounds) const {
+    // Use gpuBacked=true since that has a more sensitive kernel, ensuring any layer input bounds
+    // will be sufficient for both GPU and CPU evaluations.
+    skif::LayerSpace<SkIRect> requiredInput =
+            this->kernelBounds(mapping, desiredOutput, /*gpuBacked=*/true);
+    return this->getChildInputLayerBounds(0, mapping, requiredInput, contentBounds);
 }
 
-#if SK_SUPPORT_GPU
-sk_sp<SkSpecialImage> SkBlurImageFilterImpl::gpuFilter(
-        const Context& ctx, SkVector sigma, const sk_sp<SkSpecialImage> &input, SkIRect inputBounds,
-        SkIRect dstBounds, SkIPoint inputOffset, SkIPoint* offset) const {
-    if (0 == sigma.x() && 0 == sigma.y()) {
-        offset->fX = inputBounds.x() + inputOffset.fX;
-        offset->fY = inputBounds.y() + inputOffset.fY;
-        return input->makeSubset(inputBounds);
+std::optional<skif::LayerSpace<SkIRect>> SkBlurImageFilter::onGetOutputLayerBounds(
+        const skif::Mapping& mapping,
+        std::optional<skif::LayerSpace<SkIRect>> contentBounds) const {
+    auto childOutput = this->getChildOutputLayerBounds(0, mapping, contentBounds);
+    if (childOutput) {
+        // Use gpuBacked=true since it will ensure output bounds are conservative; CPU-based blurs
+        // may produce 1px inset from this for very small sigmas.
+        return this->kernelBounds(mapping, *childOutput, /*gpuBacked=*/true);
+    } else {
+        return skif::LayerSpace<SkIRect>::Unbounded();
     }
-
-    auto context = ctx.getContext();
-
-    GrSurfaceProxyView inputView = input->view(context);
-    if (!inputView.proxy()) {
-        return nullptr;
-    }
-    SkASSERT(inputView.asTextureProxy());
-
-    // TODO (michaelludwig) - The color space choice is odd, should it just be ctx.refColorSpace()?
-    dstBounds.offset(input->subset().topLeft());
-    inputBounds.offset(input->subset().topLeft());
-    auto renderTargetContext = SkGpuBlurUtils::GaussianBlur(
-            context,
-            std::move(inputView),
-            SkColorTypeToGrColorType(input->colorType()),
-            input->alphaType(),
-            ctx.colorSpace() ? sk_ref_sp(input->getColorSpace()) : nullptr,
-            dstBounds,
-            inputBounds,
-            sigma.x(),
-            sigma.y(),
-            fTileMode);
-    if (!renderTargetContext) {
-        return nullptr;
-    }
-
-    return SkSpecialImage::MakeDeferredFromGpu(context,
-                                               SkIRect::MakeSize(dstBounds.size()),
-                                               kNeedNewImageUniqueID_SpecialImage,
-                                               renderTargetContext->readSurfaceView(),
-                                               renderTargetContext->colorInfo().colorType(),
-                                               sk_ref_sp(input->getColorSpace()),
-                                               ctx.surfaceProps());
 }
-#endif
 
-SkRect SkBlurImageFilterImpl::computeFastBounds(const SkRect& src) const {
+SkRect SkBlurImageFilter::computeFastBounds(const SkRect& src) const {
     SkRect bounds = this->getInput(0) ? this->getInput(0)->computeFastBounds(src) : src;
-    bounds.outset(fSigma.width() * 3, fSigma.height() * 3);
+    bounds.outset(SkSize(fSigma).width() * 3, SkSize(fSigma).height() * 3);
     return bounds;
-}
-
-SkIRect SkBlurImageFilterImpl::onFilterNodeBounds(const SkIRect& src, const SkMatrix& ctm,
-                                                  MapDirection, const SkIRect* inputRect) const {
-    SkVector sigma = map_sigma(fSigma, ctm);
-    return src.makeOutset(SkScalarCeilToInt(sigma.x() * 3), SkScalarCeilToInt(sigma.y() * 3));
 }

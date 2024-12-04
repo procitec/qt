@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,9 +10,11 @@
 #include <utility>
 #include <vector>
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
+#include "extensions/common/context_data.h"
 #include "extensions/common/extension_id.h"
 #include "extensions/common/features/feature.h"
+#include "extensions/common/mojom/context_type.mojom-forward.h"
 #include "url/gurl.h"
 
 namespace extensions {
@@ -29,42 +31,77 @@ class FeatureCache {
   using FeatureNameVector = std::vector<std::string>;
 
   FeatureCache();
+
+  FeatureCache(const FeatureCache&) = delete;
+  FeatureCache& operator=(const FeatureCache&) = delete;
+
   ~FeatureCache();
 
   // Returns the names of features available to the given set of |context_type|,
   // |extension|, and |url| in a lexicographically sorted vector.
   // Note: these contexts should be valid, so WebUI contexts should have no
   // extensions, extension should be non-null for extension contexts, etc.
-  FeatureNameVector GetAvailableFeatures(Feature::Context context_type,
+  FeatureNameVector GetAvailableFeatures(mojom::ContextType context_type,
                                          const Extension* extension,
-                                         const GURL& url);
+                                         const GURL& url,
+                                         const ContextData& context_data);
+
+  // Returns the names of features restricted to developer mode in a
+  // lexicographically sorted vector.
+  FeatureNameVector GetDeveloperModeRestrictedFeatures(
+      mojom::ContextType context_type,
+      const Extension* extension,
+      const GURL& url,
+      const ContextData& context_data);
 
   // Invalidates the cache for the specified extension.
   void InvalidateExtension(const ExtensionId& extension_id);
 
+  // Invalidates the cache for all extensions.
+  void InvalidateAllExtensions();
+
  private:
-  using FeatureVector = std::vector<const Feature*>;
-  // Note: We use a key of ExtensionId, Feature::Context to maximize cache hits.
-  // Unfortunately, this won't always be perfectly accurate, since some features
-  // may have other context-dependent restrictions (such as URLs), but caching
-  // by extension id + context + url would result in significantly fewer hits.
-  using ExtensionCacheMapKey = std::pair<ExtensionId, Feature::Context>;
-  using ExtensionCacheMap = std::map<ExtensionCacheMapKey, FeatureVector>;
+  using FeatureVector = std::vector<raw_ptr<const Feature, VectorExperimental>>;
+  struct ExtensionFeatureData {
+   public:
+    ExtensionFeatureData();
+    ExtensionFeatureData(const ExtensionFeatureData&);
+    ~ExtensionFeatureData();
+
+    // Features that are restricted to developer mode.
+    FeatureVector dev_mode_restricted_features;
+    // Available features that are not restricted to developer mode.
+    FeatureVector available_features;
+  };
+
+  // Note: We use a key of ExtensionId, mojom::ContextType to maximize cache
+  // hits. Unfortunately, this won't always be perfectly accurate, since some
+  // features may have other context-dependent restrictions (such as URLs), but
+  // caching by extension id + context + url would result in significantly fewer
+  // hits.
+  using ExtensionCacheMapKey = std::pair<ExtensionId, mojom::ContextType>;
+  using ExtensionCacheMap =
+      std::map<ExtensionCacheMapKey, ExtensionFeatureData>;
 
   // Cache by origin.
-  using WebUICacheMap = std::map<GURL, FeatureVector>;
+  using WebUICacheMap = std::map<GURL, ExtensionFeatureData>;
 
   // Returns the features available to the given context from the cache,
   // creating a new entry if one doesn't exist.
-  const FeatureVector& GetFeaturesFromCache(Feature::Context context_type,
-                                            const Extension* extension,
-                                            const GURL& origin);
+  const ExtensionFeatureData& GetFeaturesFromCache(
+      mojom::ContextType context_type,
+      const Extension* extension,
+      const GURL& origin,
+      int context_id,
+      const ContextData& context_data);
 
-  // Creates a FeatureVector to be entered into a cache for the specified
+  // Creates ExtensionFeatureData to be entered into a cache for the specified
   // context data.
-  FeatureVector CreateCacheEntry(Feature::Context context_type,
-                                 const Extension* extension,
-                                 const GURL& origin);
+  ExtensionFeatureData CreateCacheEntry(mojom::ContextType context_type,
+                                        const Extension* extension,
+                                        const GURL& origin,
+                                        int context_id,
+                                        const ContextData& context_data);
 
   // The cache of extension-related contexts. These may be invalidated, since
   // extension permissions change.
@@ -74,8 +111,6 @@ class FeatureCache {
   // invalidated (since WebUI permissions don't change), and are cached by
   // origin. These covers chrome:// and chrome-untrusted:// URLs.
   WebUICacheMap webui_cache_;
-
-  DISALLOW_COPY_AND_ASSIGN(FeatureCache);
 };
 
 }  // namespace extensions

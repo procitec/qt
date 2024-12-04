@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -40,6 +40,9 @@ class Warning {
     kReloadTooFrequent,
     // The declarative net request ruleset for the extension failed to load.
     kRulesetFailedToLoad,
+    // The declarative net request ruleset for the extension could not be
+    // enabled because it would exceed the global rules limit.
+    kEnabledRuleCountExceeded,
     kMaxWarningType
   };
 
@@ -62,6 +65,8 @@ class Warning {
       const std::string& extension_id);
   static Warning CreateRulesetFailedToLoadWarning(
       const ExtensionId& extension_id);
+  static Warning CreateEnabledRuleCountExceededWarning(
+      const ExtensionId& extension_id);
 
   // Compare Warnings based on the tuple of (extension_id, type).
   // The message associated with Warnings is purely informational
@@ -72,7 +77,7 @@ class Warning {
   WarningType warning_type() const { return type_; }
 
   // Returns the id of the extension for which this warning is valid.
-  const std::string& extension_id() const { return extension_id_; }
+  const ExtensionId& extension_id() const { return extension_id_; }
 
   // Returns a localized warning message.
   std::string GetLocalizedMessage(const ExtensionSet* extensions) const;
@@ -83,12 +88,12 @@ class Warning {
   // others. The |message_id| refers to an IDS_ string ID. The
   // |message_parameters| are filled into the message template.
   Warning(WarningType type,
-                   const std::string& extension_id,
-                   int message_id,
-                   const std::vector<std::string>& message_parameters);
+          const ExtensionId& extension_id,
+          int message_id,
+          const std::vector<std::string>& message_parameters);
 
   WarningType type_;
-  std::string extension_id_;
+  ExtensionId extension_id_;
   // IDS_* resource ID.
   int message_id_;
   // Parameters to be filled into the string identified by |message_id_|.

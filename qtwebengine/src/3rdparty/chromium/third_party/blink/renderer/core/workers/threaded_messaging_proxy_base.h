@@ -1,14 +1,16 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_WORKERS_THREADED_MESSAGING_PROXY_BASE_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_WORKERS_THREADED_MESSAGING_PROXY_BASE_H_
 
-#include "base/optional.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "third_party/blink/public/common/tokens/tokens.h"
 #include "third_party/blink/public/mojom/devtools/console_message.mojom-blink-forward.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/frame/web_feature_forward.h"
+#include "third_party/blink/renderer/core/inspector/worker_devtools_params.h"
 #include "third_party/blink/renderer/core/workers/parent_execution_context_task_runners.h"
 #include "third_party/blink/renderer/core/workers/worker_backing_thread_startup_data.h"
 #include "third_party/blink/renderer/core/workers/worker_thread.h"
@@ -60,7 +62,7 @@ class CORE_EXPORT ThreadedMessagingProxyBase
                             const String& message,
                             std::unique_ptr<SourceLocation>);
 
-  void WorkerThreadTerminated();
+  virtual void WorkerThreadTerminated();
 
   // Number of live messaging proxies, used by leak detection.
   static int ProxyCount();
@@ -68,14 +70,30 @@ class CORE_EXPORT ThreadedMessagingProxyBase
   virtual void Trace(Visitor*) const;
 
  protected:
-  explicit ThreadedMessagingProxyBase(ExecutionContext*);
+  explicit ThreadedMessagingProxyBase(
+      ExecutionContext*,
+      scoped_refptr<base::SingleThreadTaskRunner>
+          parent_agent_group_task_runner = nullptr);
 
+  // Normally, for dedicated worker and for worklets created in-process, the
+  // devtools params will be derived within this function, based on the parent
+  // (Window) context and/or based on the dedicated worker token. When worklet
+  // creation is proxied via the browser process (e.g. shared storage worklet),
+  // where the original Window context isn't directly accessible,
+  // `client_provided_devtools_params` will be pre-calculated and passed to this
+  // function, and this param will be used directly to start the worklet thread.
   void InitializeWorkerThread(
       std::unique_ptr<GlobalScopeCreationParams>,
-      const base::Optional<WorkerBackingThreadStartupData>&);
+      const absl::optional<WorkerBackingThreadStartupData>&,
+      const absl::optional<const blink::DedicatedWorkerToken>&,
+      std::unique_ptr<WorkerDevToolsParams> client_provided_devtools_params =
+          nullptr);
 
   ExecutionContext* GetExecutionContext() const;
   ParentExecutionContextTaskRunners* GetParentExecutionContextTaskRunners()
+      const;
+
+  scoped_refptr<base::SingleThreadTaskRunner> GetParentAgentGroupTaskRunner()
       const;
 
   // May return nullptr after termination is requested.
@@ -91,9 +109,12 @@ class CORE_EXPORT ThreadedMessagingProxyBase
 
   Member<ExecutionContext> execution_context_;
 
-  // Accessed cross-thread when worker thread posts tasks to the parent.
+  // Accessed cross-thread when worker thread posts tasks to the parent. Only
+  // one of `parent_execution_context_task_runners_` and
+  // `parent_agent_group_task_runner_` will be set.
   CrossThreadPersistent<ParentExecutionContextTaskRunners>
       parent_execution_context_task_runners_;
+  scoped_refptr<base::SingleThreadTaskRunner> parent_agent_group_task_runner_;
 
   std::unique_ptr<WorkerThread> worker_thread_;
 
@@ -109,7 +130,7 @@ class CORE_EXPORT ThreadedMessagingProxyBase
   // Used to keep this alive until the worker thread gets terminated. This is
   // necessary because the co-owner (i.e., Worker or Worklet object) can be
   // destroyed before thread termination.
-  SelfKeepAlive<ThreadedMessagingProxyBase> keep_alive_;
+  SelfKeepAlive<ThreadedMessagingProxyBase> keep_alive_{this};
 };
 
 }  // namespace blink

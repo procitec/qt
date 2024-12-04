@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,13 +10,13 @@
 #include "chrome/common/url_constants.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
-#include "extensions/common/identifiability_metrics.h"
 #include "extensions/common/manifest_constants.h"
 #include "extensions/common/manifest_handlers/icons_handler.h"
 #include "extensions/common/manifest_handlers/web_accessible_resources_info.h"
 #include "extensions/common/manifest_handlers/webview_info.h"
 #include "extensions/renderer/dispatcher.h"
 #include "extensions/renderer/renderer_extension_registry.h"
+#include "pdf/buildflags.h"
 #include "third_party/blink/public/platform/url_conversion.h"
 #include "third_party/blink/public/platform/web_string.h"
 #include "third_party/blink/public/platform/web_url.h"
@@ -27,6 +27,11 @@
 #include "url/gurl.h"
 #include "url/origin.h"
 
+#if BUILDFLAG(ENABLE_PDF)
+#include "base/feature_list.h"
+#include "pdf/pdf_features.h"
+#endif  // BUILDFLAG(ENABLE_PDF)
+
 namespace extensions {
 
 ResourceRequestPolicy::ResourceRequestPolicy(Dispatcher* dispatcher)
@@ -36,18 +41,31 @@ ResourceRequestPolicy::~ResourceRequestPolicy() = default;
 void ResourceRequestPolicy::OnExtensionLoaded(const Extension& extension) {
   if (WebAccessibleResourcesInfo::HasWebAccessibleResources(&extension) ||
       WebviewInfo::HasWebviewAccessibleResources(
-          extension, dispatcher_->webview_partition_id()) ||
+          extension,
+          dispatcher_->webview_partition_id().value_or(std::string())) ||
       // Hosted app icons are accessible.
       // TODO(devlin): Should we incorporate this into
       // WebAccessibleResourcesInfo?
       (extension.is_hosted_app() && !IconsInfo::GetIcons(&extension).empty())) {
-    web_accessible_ids_.insert(extension.id());
+    web_accessible_resources_map_[extension.id()] = extension.guid();
   }
+}
+
+bool ResourceRequestPolicy::IsWebAccessibleHost(const std::string& host) {
+  if (web_accessible_resources_map_.find(host) !=
+      web_accessible_resources_map_.end()) {
+    return true;
+  }
+  for (const auto& [id, guid] : web_accessible_resources_map_) {
+    if (host == guid)
+      return true;
+  }
+  return false;
 }
 
 void ResourceRequestPolicy::OnExtensionUnloaded(
     const ExtensionId& extension_id) {
-  web_accessible_ids_.erase(extension_id);
+  web_accessible_resources_map_.erase(extension_id);
 }
 
 // This method does a security check whether chrome-extension:// URLs can be
@@ -58,7 +76,8 @@ void ResourceRequestPolicy::OnExtensionUnloaded(
 bool ResourceRequestPolicy::CanRequestResource(
     const GURL& resource_url,
     blink::WebLocalFrame* frame,
-    ui::PageTransition transition_type) {
+    ui::PageTransition transition_type,
+    const url::Origin* initiator_origin) {
   CHECK(resource_url.SchemeIs(kExtensionScheme));
 
   GURL frame_url = frame->GetDocument().Url();
@@ -79,7 +98,7 @@ bool ResourceRequestPolicy::CanRequestResource(
   // current extension or has a devtools scheme.
   GURL page_origin = url::Origin(frame->Top()->GetSecurityOrigin()).GetURL();
 
-  GURL extension_origin = resource_url.GetOrigin();
+  GURL extension_origin = resource_url.DeprecatedGetOriginAsURL();
 
   // We always allow loads in the following cases, regardless of web accessible
   // resources:
@@ -95,7 +114,7 @@ bool ResourceRequestPolicy::CanRequestResource(
   // of the frame, to account for about:blank subframes being scripted by an
   // extension parent (though we'll still need the frame origin check for
   // sandboxed frames).
-  if (frame_url.GetOrigin() == extension_origin ||
+  if (frame_url.DeprecatedGetOriginAsURL() == extension_origin ||
       page_origin == extension_origin) {
     return true;
   }
@@ -108,6 +127,26 @@ bool ResourceRequestPolicy::CanRequestResource(
   if (frame_url == content::kUnreachableWebDataURL)
     return true;
 
+#if BUILDFLAG(ENABLE_PDF)
+  // Handle specific cases for the PDF viewer.
+  if (base::FeatureList::IsEnabled(chrome_pdf::features::kPdfOopif) &&
+      extension_origin.scheme() == kExtensionScheme &&
+      extension_origin.host() == extension_misc::kPdfExtensionId) {
+    // For OOPIF PDF viewer, `page_origin` doesn't match the `extension_origin`,
+    // but the PDF extension frame should still be able to request resources
+    // from itself. The PDF content frame should also be able to request
+    // resources from the PDF extension. For both cases, the parent origin of
+    // the current frame matches the extension origin.
+    blink::WebFrame* parent = frame->Parent();
+    if (parent) {
+      GURL parent_origin = url::Origin(parent->GetSecurityOrigin()).GetURL();
+      if (parent_origin == extension_origin) {
+        return true;
+      }
+    }
+  }
+#endif  // BUILDFLAG(ENABLE_PDF)
+
   bool is_dev_tools = page_origin.SchemeIs(content::kChromeDevToolsScheme);
   // Note: we check |web_accessible_ids_| (rather than first looking up the
   // extension in the registry and checking that) to be more resistant against
@@ -116,17 +155,13 @@ bool ResourceRequestPolicy::CanRequestResource(
   // extension with no web accessible resources. We aren't worried about any
   // extensions with web accessible resources, since those are inherently
   // identifiable.
-  if (!is_dev_tools && !web_accessible_ids_.count(extension_origin.host())) {
-    // Failures are recorded here, successes will be in the browser.
-    RecordExtensionResourceAccessResult(
-        base::UkmSourceId::FromInt64(frame->GetDocument().GetUkmSourceId()),
-        resource_url, ExtensionResourceAccessResult::kFailure);
-
+  if (!is_dev_tools && !IsWebAccessibleHost(extension_origin.host())) {
     return false;
   }
 
   const Extension* extension =
-      RendererExtensionRegistry::Get()->GetExtensionOrAppByURL(resource_url);
+      RendererExtensionRegistry::Get()->GetExtensionOrAppByURL(
+          resource_url, true /*include_guid*/);
   if (is_dev_tools) {
     // Allow the load in the case of a non-existent extension. We'll just get a
     // 404 from the browser process.
@@ -154,18 +189,16 @@ bool ResourceRequestPolicy::CanRequestResource(
           .ContainsPath(resource_root_relative_path)) {
     LOG(ERROR) << "Denying load of " << resource_url.spec() << " from "
                << "hosted app.";
-    RecordExtensionResourceAccessResult(
-        base::UkmSourceId::FromInt64(frame->GetDocument().GetUkmSourceId()),
-        resource_url, ExtensionResourceAccessResult::kFailure);
     return false;
   }
 
   // Disallow loading of extension resources which are not explicitly listed
   // as web or WebView accessible if the manifest version is 2 or greater.
   if (!WebAccessibleResourcesInfo::IsResourceWebAccessible(
-          extension, resource_url.path()) &&
+          extension, resource_url.path(), initiator_origin) &&
       !WebviewInfo::IsResourceWebviewAccessible(
-          extension, dispatcher_->webview_partition_id(),
+          extension,
+          dispatcher_->webview_partition_id().value_or(std::string()),
           resource_url.path())) {
     std::string message = base::StringPrintf(
         "Denying load of %s. Resources must be listed in the "
@@ -175,9 +208,6 @@ bool ResourceRequestPolicy::CanRequestResource(
     frame->AddMessageToConsole(
         blink::WebConsoleMessage(blink::mojom::ConsoleMessageLevel::kError,
                                  blink::WebString::FromUTF8(message)));
-    RecordExtensionResourceAccessResult(
-        base::UkmSourceId::FromInt64(frame->GetDocument().GetUkmSourceId()),
-        resource_url, ExtensionResourceAccessResult::kFailure);
     return false;
   }
 

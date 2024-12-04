@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,11 +11,11 @@
 
 #include <iomanip>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/memory/ptr_util.h"
+#include "base/memory/raw_ptr.h"
 #include "base/numerics/math_constants.h"
-#include "base/stl_util.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
 #include "base/win/scoped_propvariant.h"
 #include "services/device/generic_sensor/generic_sensor_consts.h"
@@ -261,6 +261,9 @@ class EventListener
     DCHECK(platform_sensor_reader_);
   }
 
+  EventListener(const EventListener&) = delete;
+  EventListener& operator=(const EventListener&) = delete;
+
   static Microsoft::WRL::ComPtr<ISensorEvents> CreateInstance(
       PlatformSensorReaderWin32* platform_sensor_reader) {
     Microsoft::WRL::ComPtr<EventListener> event_listener =
@@ -315,15 +318,15 @@ class EventListener
     base::TimeTicks ticks_now = base::TimeTicks::Now();
     base::Time time_now = base::Time::NowFromSystemTime();
 
-    base::Time::Exploded exploded;
-    exploded.year = report_time.wYear;
-    exploded.month = report_time.wMonth;
-    exploded.day_of_week = report_time.wDayOfWeek;
-    exploded.day_of_month = report_time.wDay;
-    exploded.hour = report_time.wHour;
-    exploded.minute = report_time.wMinute;
-    exploded.second = report_time.wSecond;
-    exploded.millisecond = report_time.wMilliseconds;
+    const base::Time::Exploded exploded = {
+        .year = report_time.wYear,
+        .month = report_time.wMonth,
+        .day_of_week = report_time.wDayOfWeek,
+        .day_of_month = report_time.wDay,
+        .hour = report_time.wHour,
+        .minute = report_time.wMinute,
+        .second = report_time.wSecond,
+        .millisecond = report_time.wMilliseconds};
 
     base::Time timestamp;
     if (!base::Time::FromUTCExploded(exploded, &timestamp))
@@ -346,10 +349,8 @@ class EventListener
   }
 
  private:
-  PlatformSensorReaderWin32* const platform_sensor_reader_;
+  const raw_ptr<PlatformSensorReaderWin32> platform_sensor_reader_;
   SensorReading last_sensor_reading_;
-
-  DISALLOW_COPY_AND_ASSIGN(EventListener);
 };
 
 // static
@@ -371,11 +372,11 @@ std::unique_ptr<PlatformSensorReaderWinBase> PlatformSensorReaderWin32::Create(
                                    min_interval.Receive());
   if (SUCCEEDED(hr) && min_interval.get().vt == VT_UI4) {
     params->min_reporting_interval =
-        base::TimeDelta::FromMilliseconds(min_interval.get().ulVal);
+        base::Milliseconds(min_interval.get().ulVal);
   }
 
   GUID interests[] = {SENSOR_EVENT_STATE_CHANGED, SENSOR_EVENT_DATA_UPDATED};
-  hr = sensor->SetEventInterest(interests, base::size(interests));
+  hr = sensor->SetEventInterest(interests, std::size(interests));
   if (FAILED(hr))
     return nullptr;
 
@@ -405,7 +406,7 @@ PlatformSensorReaderWin32::PlatformSensorReaderWin32(
     Microsoft::WRL::ComPtr<ISensor> sensor,
     std::unique_ptr<ReaderInitParams> params)
     : init_params_(std::move(params)),
-      task_runner_(base::ThreadTaskRunnerHandle::Get()),
+      com_sta_task_runner_(base::SingleThreadTaskRunner::GetCurrentDefault()),
       sensor_active_(false),
       client_(nullptr),
       sensor_(sensor),
@@ -430,7 +431,7 @@ void PlatformSensorReaderWin32::StopSensor() {
 }
 
 PlatformSensorReaderWin32::~PlatformSensorReaderWin32() {
-  DCHECK(task_runner_->BelongsToCurrentThread());
+  DCHECK(com_sta_task_runner_->BelongsToCurrentThread());
 }
 
 bool PlatformSensorReaderWin32::StartSensor(
@@ -441,7 +442,7 @@ bool PlatformSensorReaderWin32::StartSensor(
     return false;
 
   if (!sensor_active_) {
-    task_runner_->PostTask(
+    com_sta_task_runner_->PostTask(
         FROM_HERE, base::BindOnce(&PlatformSensorReaderWin32::ListenSensorEvent,
                                   weak_factory_.GetWeakPtr()));
     sensor_active_ = true;

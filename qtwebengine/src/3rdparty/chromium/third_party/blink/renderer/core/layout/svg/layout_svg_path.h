@@ -49,14 +49,15 @@ class LayoutSVGPath final : public LayoutSVGShape {
   void StyleDidChange(StyleDifference, const ComputedStyle* old_style) override;
   void WillBeDestroyed() override;
 
-  void UpdateShapeFromElement() override;
+  gfx::RectF UpdateShapeFromElement() override;
 
   const StylePath* GetStylePath() const;
-  void UpdateMarkers();
+  void UpdateMarkerPositions();
+  void UpdateMarkerBounds() override;
 
   Vector<MarkerPosition> marker_positions_;
 };
 
 }  // namespace blink
 
-#endif
+#endif  // THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_SVG_LAYOUT_SVG_PATH_H_

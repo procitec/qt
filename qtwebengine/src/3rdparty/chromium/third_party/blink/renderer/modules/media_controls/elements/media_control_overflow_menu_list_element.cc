@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -20,16 +20,16 @@ MediaControlOverflowMenuListElement::MediaControlOverflowMenuListElement(
     : MediaControlPopupMenuElement(media_controls) {
   SetShadowPseudoId(
       AtomicString("-internal-media-controls-overflow-menu-list"));
-  setAttribute(html_names::kRoleAttr, "menu");
+  setAttribute(html_names::kRoleAttr, AtomicString("menu"));
   CloseOverflowMenu();
 }
 
 void MediaControlOverflowMenuListElement::OpenOverflowMenu() {
-  classList().Remove(kClosedCSSClass);
+  classList().Remove(AtomicString(kClosedCSSClass));
 }
 
 void MediaControlOverflowMenuListElement::CloseOverflowMenu() {
-  classList().Add(kClosedCSSClass);
+  classList().Add(AtomicString(kClosedCSSClass));
 }
 
 void MediaControlOverflowMenuListElement::DefaultEventHandler(Event& event) {
@@ -42,10 +42,12 @@ void MediaControlOverflowMenuListElement::DefaultEventHandler(Event& event) {
 void MediaControlOverflowMenuListElement::SetIsWanted(bool wanted) {
   MediaControlPopupMenuElement::SetIsWanted(wanted);
 
-  if (wanted)
+  if (wanted) {
     OpenOverflowMenu();
-  else if (!GetMediaControls().TextTrackListIsWanted())
+  } else if (!GetMediaControls().TextTrackListIsWanted() &&
+             !GetMediaControls().PlaybackSpeedListIsWanted()) {
     CloseOverflowMenu();
+  }
 }
 
 }  // namespace blink

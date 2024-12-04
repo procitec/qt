@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,7 +7,7 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "components/viz/common/frame_sinks/copy_output_request.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/android/view_android.h"
@@ -20,27 +20,14 @@
 
 namespace ui {
 
-// Sync versions are not supported in Android.  Callers should fall back
-// to the async version.
-bool GrabViewSnapshot(gfx::NativeView view,
-                      const gfx::Rect& snapshot_bounds,
-                      gfx::Image* image) {
-  return GrabWindowSnapshot(view->GetWindowAndroid(), snapshot_bounds, image);
-}
-
-bool GrabWindowSnapshot(gfx::NativeWindow window,
-                        const gfx::Rect& snapshot_bounds,
-                        gfx::Image* image) {
-  return false;
-}
-
 static std::unique_ptr<viz::CopyOutputRequest> CreateCopyRequest(
     gfx::NativeView view,
     const gfx::Rect& source_rect,
     viz::CopyOutputRequest::CopyOutputRequestCallback callback) {
   std::unique_ptr<viz::CopyOutputRequest> request =
       std::make_unique<viz::CopyOutputRequest>(
-          viz::CopyOutputRequest::ResultFormat::RGBA_BITMAP,
+          viz::CopyOutputRequest::ResultFormat::RGBA,
+          viz::CopyOutputRequest::ResultDestination::kSystemMemory,
           std::move(callback));
   float scale = ui::GetScaleFactorForNativeView(view);
   request->set_area(gfx::ScaleToEnclosingRect(source_rect, scale));
@@ -60,7 +47,7 @@ static void MakeAsyncCopyRequest(
 void GrabWindowSnapshotAndScaleAsync(gfx::NativeWindow window,
                                      const gfx::Rect& source_rect,
                                      const gfx::Size& target_size,
-                                     GrabWindowSnapshotAsyncCallback callback) {
+                                     GrabSnapshotImageCallback callback) {
   MakeAsyncCopyRequest(
       window, source_rect,
       CreateCopyRequest(window, source_rect,
@@ -70,7 +57,7 @@ void GrabWindowSnapshotAndScaleAsync(gfx::NativeWindow window,
 
 void GrabWindowSnapshotAsync(gfx::NativeWindow window,
                              const gfx::Rect& source_rect,
-                             GrabWindowSnapshotAsyncCallback callback) {
+                             GrabSnapshotImageCallback callback) {
   MakeAsyncCopyRequest(
       window, source_rect,
       CreateCopyRequest(
@@ -81,7 +68,7 @@ void GrabWindowSnapshotAsync(gfx::NativeWindow window,
 
 void GrabViewSnapshotAsync(gfx::NativeView view,
                            const gfx::Rect& source_rect,
-                           GrabWindowSnapshotAsyncCallback callback) {
+                           GrabSnapshotImageCallback callback) {
   std::unique_ptr<viz::CopyOutputRequest> copy_request =
       view->MaybeRequestCopyOfView(CreateCopyRequest(
           view, source_rect,

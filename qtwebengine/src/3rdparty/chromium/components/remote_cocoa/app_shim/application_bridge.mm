@@ -1,10 +1,12 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/remote_cocoa/app_shim/application_bridge.h"
 
-#include "base/bind.h"
+#include <tuple>
+
+#include "base/functional/bind.h"
 #include "base/no_destructor.h"
 #include "components/remote_cocoa/app_shim/alert.h"
 #include "components/remote_cocoa/app_shim/color_panel_bridge.h"
@@ -43,7 +45,7 @@ class NativeWidgetBridgeOwner : public NativeWidgetNSWindowHostHelper {
   }
 
  private:
-  ~NativeWidgetBridgeOwner() override {}
+  ~NativeWidgetBridgeOwner() override = default;
 
   void OnMojoDisconnect() { delete this; }
 
@@ -58,7 +60,7 @@ class NativeWidgetBridgeOwner : public NativeWidgetNSWindowHostHelper {
       remote_accessibility_element_ =
           ui::RemoteAccessibility::GetRemoteElementFromToken(element_token);
     }
-    return remote_accessibility_element_.get();
+    return remote_accessibility_element_;
   }
   void DispatchKeyEvent(ui::KeyEvent* event) override {
     bool event_handled = false;
@@ -91,13 +93,13 @@ class NativeWidgetBridgeOwner : public NativeWidgetNSWindowHostHelper {
     // Text input doesn't work across mojo yet.
     return nullptr;
   }
+  bool MustPostTaskToRunModalSheetAnimation() const override { return true; }
 
   mojo::AssociatedRemote<mojom::NativeWidgetNSWindowHost> host_remote_;
   mojo::AssociatedRemote<mojom::TextInputHost> text_input_host_remote_;
 
   std::unique_ptr<NativeWidgetNSWindowBridge> bridge_;
-  base::scoped_nsobject<NSAccessibilityRemoteUIElement>
-      remote_accessibility_element_;
+  NSAccessibilityRemoteUIElement* __strong remote_accessibility_element_;
 };
 
 }  // namespace
@@ -116,15 +118,15 @@ void ApplicationBridge::BindReceiver(
 
 void ApplicationBridge::SetContentNSViewCreateCallbacks(
     RenderWidgetHostNSViewCreateCallback render_widget_host_create_callback,
-    WebContentsNSViewCreateCallback web_conents_create_callback) {
+    WebContentsNSViewCreateCallback web_contents_create_callback) {
   render_widget_host_create_callback_ = render_widget_host_create_callback;
-  web_conents_create_callback_ = web_conents_create_callback;
+  web_contents_create_callback_ = web_contents_create_callback;
 }
 
 void ApplicationBridge::CreateAlert(
     mojo::PendingReceiver<mojom::AlertBridge> bridge_receiver) {
   // The resulting object manages its own lifetime.
-  ignore_result(new AlertBridge(std::move(bridge_receiver)));
+  std::ignore = new AlertBridge(std::move(bridge_receiver));
 }
 
 void ApplicationBridge::ShowColorPanel(
@@ -141,17 +143,18 @@ void ApplicationBridge::CreateNativeWidgetNSWindow(
     mojo::PendingAssociatedRemote<mojom::NativeWidgetNSWindowHost> host,
     mojo::PendingAssociatedRemote<mojom::TextInputHost> text_input_host) {
   // The resulting object will be destroyed when its message pipe is closed.
-  ignore_result(
+  std::ignore =
       new NativeWidgetBridgeOwner(bridge_id, std::move(bridge_receiver),
-                                  std::move(host), std::move(text_input_host)));
+                                  std::move(host), std::move(text_input_host));
 }
 
 void ApplicationBridge::CreateRenderWidgetHostNSView(
+    uint64_t view_id,
     mojo::PendingAssociatedRemote<mojom::StubInterface> host,
     mojo::PendingAssociatedReceiver<mojom::StubInterface> view_receiver) {
   if (!render_widget_host_create_callback_)
     return;
-  render_widget_host_create_callback_.Run(host.PassHandle(),
+  render_widget_host_create_callback_.Run(view_id, host.PassHandle(),
                                           view_receiver.PassHandle());
 }
 
@@ -159,10 +162,32 @@ void ApplicationBridge::CreateWebContentsNSView(
     uint64_t view_id,
     mojo::PendingAssociatedRemote<mojom::StubInterface> host,
     mojo::PendingAssociatedReceiver<mojom::StubInterface> view_receiver) {
-  if (!web_conents_create_callback_)
+  if (!web_contents_create_callback_) {
     return;
-  web_conents_create_callback_.Run(view_id, host.PassHandle(),
-                                   view_receiver.PassHandle());
+  }
+  web_contents_create_callback_.Run(view_id, host.PassHandle(),
+                                    view_receiver.PassHandle());
+}
+
+void ApplicationBridge::ForwardCutCopyPaste(
+    mojom::CutCopyPasteCommand command) {
+  ForwardCutCopyPasteToNSApp(command);
+}
+
+// static
+void ApplicationBridge::ForwardCutCopyPasteToNSApp(
+    mojom::CutCopyPasteCommand command) {
+  switch (command) {
+    case mojom::CutCopyPasteCommand::kCut:
+      [NSApp sendAction:@selector(cut:) to:nil from:nil];
+      break;
+    case mojom::CutCopyPasteCommand::kCopy:
+      [NSApp sendAction:@selector(copy:) to:nil from:nil];
+      break;
+    case mojom::CutCopyPasteCommand::kPaste:
+      [NSApp sendAction:@selector(paste:) to:nil from:nil];
+      break;
+  }
 }
 
 ApplicationBridge::ApplicationBridge() = default;

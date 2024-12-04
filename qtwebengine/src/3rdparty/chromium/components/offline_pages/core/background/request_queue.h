@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,13 +9,11 @@
 
 #include <memory>
 #include <set>
-#include <string>
 #include <utility>
 #include <vector>
 
-#include "base/callback.h"
 #include "base/containers/circular_deque.h"
-#include "base/macros.h"
+#include "base/functional/callback.h"
 #include "base/memory/weak_ptr.h"
 #include "components/offline_items_collection/core/fail_state.h"
 #include "components/offline_pages/core/background/cleanup_task_factory.h"
@@ -64,6 +62,10 @@ class RequestQueue : public TaskQueue::Delegate {
   };
 
   explicit RequestQueue(std::unique_ptr<RequestQueueStore> store);
+
+  RequestQueue(const RequestQueue&) = delete;
+  RequestQueue& operator=(const RequestQueue&) = delete;
+
   ~RequestQueue() override;
 
   // TaskQueue::Delegate
@@ -131,7 +133,6 @@ class RequestQueue : public TaskQueue::Delegate {
       OfflinerPolicy* policy,
       PickRequestTask::RequestPickedCallback picked_callback,
       PickRequestTask::RequestNotPickedCallback not_picked_callback,
-      PickRequestTask::RequestCountCallback request_count_callback,
       DeviceConditions conditions,
       const std::set<int64_t>& disabled_requests,
       base::circular_deque<int64_t>* prioritized_requests);
@@ -168,8 +169,6 @@ class RequestQueue : public TaskQueue::Delegate {
 
   // Allows us to pass a weak pointer to callbacks.
   base::WeakPtrFactory<RequestQueue> weak_ptr_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(RequestQueue);
 };
 
 }  // namespace offline_pages

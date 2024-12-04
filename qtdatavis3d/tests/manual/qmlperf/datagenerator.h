@@ -1,55 +1,53 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt Data Visualization module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:GPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 3 or (at your option) any later version
-** approved by the KDE Free Qt Foundation. The licenses are as published by
-** the Free Software Foundation and appearing in the file LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2023 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
 #ifndef DATAGENERATOR_H
 #define DATAGENERATOR_H
 
-#include <QtDataVisualization/QScatter3DSeries>
 #include <QtCore/QFile>
+#include <QtDataVisualization>
 
-using namespace QtDataVisualization;
-
-class DataGenerator  : public QObject
+class DataGenerator : public QObject
 {
     Q_OBJECT
 public:
     DataGenerator(QObject *parent = 0);
-    virtual ~DataGenerator();
+    ~DataGenerator() override;
 
 public Q_SLOTS:
-    void generateData(QScatter3DSeries *series, uint count);
-    void add(QScatter3DSeries *series, uint count);
-    void writeLine(int itemCount, float fps);
+    void generateSurfaceData(QSurface3DSeries *series, uint count);
+    void generateScatterData(QScatter3DSeries *series, uint count);
+    void generateBarData(QBar3DSeries *series, uint count);
+
+    void updateScatterData(QScatter3DSeries *series);
+    void updateSurfaceData(QSurface3DSeries *series);
+    void updateBarData(QBar3DSeries *series);
+
+    void setFilePath(const QUrl &path);
+    void writeLine(const QString &line);
+    void writeCSV(const QString &line);
+
+Q_SIGNALS:
+    void onMessage(const QString &message);
+    void onCaptureInit(long long nanoseconds);
 
 private:
-    QScatter3DSeries m_series;
-    QFile *m_file;
+    QFile *m_file = nullptr;
+    QFile *m_csv = nullptr;
+    QElapsedTimer m_timer;
+    int m_cacheCount = 60;
+
+    QList<QSurfaceDataArray> m_surfaceCaches;
+    QList<QScatterDataArray> m_scatterCaches;
+    QList<QBarDataArray> m_barCaches;
+
+    QSurfaceDataArray *m_surfaceResetArray = nullptr;
+    QScatterDataArray *m_scatterResetArray = nullptr;
+    QBarDataArray *m_barResetArray = nullptr;
+
+    void populateSurfaceCaches(int sideLength);
+    void populateScatterCaches(int sideLength);
+    void populateBarChaches(int sideLength);
 };
 
 #endif // DATAGENERATOR_H

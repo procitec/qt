@@ -23,10 +23,11 @@
 
 #include "third_party/blink/renderer/platform/graphics/filters/fe_color_matrix.h"
 
+#include "base/types/optional_util.h"
+#include "cc/paint/color_filter.h"
 #include "third_party/blink/renderer/platform/graphics/filters/paint_filter_builder.h"
+#include "third_party/blink/renderer/platform/wtf/math_extras.h"
 #include "third_party/blink/renderer/platform/wtf/text/text_stream.h"
-#include "third_party/skia/include/effects/SkColorFilterImageFilter.h"
-#include "third_party/skia/include/effects/SkColorMatrixFilter.h"
 
 namespace blink {
 
@@ -78,8 +79,9 @@ static void SaturateMatrix(float s, float matrix[kColorMatrixSize]) {
 }
 
 static void HueRotateMatrix(float hue, float matrix[kColorMatrixSize]) {
-  float cos_hue = cosf(hue * kPiFloat / 180);
-  float sin_hue = sinf(hue * kPiFloat / 180);
+  const float hue_radians = Deg2rad(hue);
+  const float cos_hue = cosf(hue_radians);
+  const float sin_hue = sinf(hue_radians);
   matrix[0] = 0.213f + cos_hue * 0.787f - sin_hue * 0.213f;
   matrix[1] = 0.715f - cos_hue * 0.715f - sin_hue * 0.715f;
   matrix[2] = 0.072f - cos_hue * 0.072f + sin_hue * 0.928f;
@@ -104,8 +106,8 @@ static void LuminanceToAlphaMatrix(float matrix[kColorMatrixSize]) {
   matrix[17] = 0.0721f;
 }
 
-static sk_sp<SkColorFilter> CreateColorFilter(ColorMatrixType type,
-                                              const Vector<float>& values) {
+static sk_sp<cc::ColorFilter> CreateColorFilter(ColorMatrixType type,
+                                                const Vector<float>& values) {
   // Use defaults if values contains too few/many values.
   float matrix[kColorMatrixSize];
   memset(matrix, 0, kColorMatrixSize * sizeof(float));
@@ -132,7 +134,7 @@ static sk_sp<SkColorFilter> CreateColorFilter(ColorMatrixType type,
       LuminanceToAlphaMatrix(matrix);
       break;
   }
-  return SkColorFilters::Matrix(matrix);
+  return cc::ColorFilter::MakeMatrix(matrix);
 }
 
 bool FEColorMatrix::AffectsTransparentPixels() const {
@@ -145,10 +147,10 @@ bool FEColorMatrix::AffectsTransparentPixels() const {
 sk_sp<PaintFilter> FEColorMatrix::CreateImageFilter() {
   sk_sp<PaintFilter> input(paint_filter_builder::Build(
       InputEffect(0), OperatingInterpolationSpace()));
-  sk_sp<SkColorFilter> filter = CreateColorFilter(type_, values_);
-  PaintFilter::CropRect rect = GetCropRect();
+  sk_sp<cc::ColorFilter> filter = CreateColorFilter(type_, values_);
+  absl::optional<PaintFilter::CropRect> crop_rect = GetCropRect();
   return sk_make_sp<ColorFilterPaintFilter>(std::move(filter), std::move(input),
-                                            &rect);
+                                            base::OptionalToPtr(crop_rect));
 }
 
 static WTF::TextStream& operator<<(WTF::TextStream& ts,
@@ -196,7 +198,7 @@ WTF::TextStream& FEColorMatrix::ExternalRepresentation(WTF::TextStream& ts,
   ts << "[feColorMatrix";
   FilterEffect::ExternalRepresentation(ts);
   ts << " type=\"" << type_ << "\"";
-  if (!values_.IsEmpty() && ValuesIsValidForType(type_, values_)) {
+  if (!values_.empty() && ValuesIsValidForType(type_, values_)) {
     ts << " values=\"";
     Vector<float>::const_iterator ptr = values_.begin();
     const Vector<float>::const_iterator end = values_.end();

@@ -1,17 +1,30 @@
 #!/usr/bin/env python3
-# Copyright 2019 The Dawn Authors
+# Copyright 2019 The Dawn & Tint Authors
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+# 1. Redistributions of source code must retain the above copyright notice, this
+#    list of conditions and the following disclaimer.
 #
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# 2. Redistributions in binary form must reproduce the above copyright notice,
+#    this list of conditions and the following disclaimer in the documentation
+#    and/or other materials provided with the distribution.
+#
+# 3. Neither the name of the copyright holder nor the names of its
+#    contributors may be used to endorse or promote products derived from
+#    this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+# SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+# OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """Module to create generators that render multiple Jinja2 templates for GN.
 
 A helper module that can be used to create generator scripts (clients)
@@ -90,6 +103,16 @@ except ValueError:
     # --jinja2-path isn't passed, ignore the exception and just import Jinja2
     # assuming it already is in the Python PATH.
     pass
+kMarkupSafePath = '--markupsafe-path'
+try:
+    markupsafe_path_argv_index = sys.argv.index(kMarkupSafePath)
+    # Add parent path for the import to succeed.
+    path = os.path.join(sys.argv[markupsafe_path_argv_index + 1], os.pardir)
+    sys.path.insert(1, path)
+except ValueError:
+    # --markupsafe-path isn't passed, ignore the exception and just import
+    # assuming it already is in the Python PATH.
+    pass
 
 import jinja2
 
@@ -109,8 +132,8 @@ class _PreprocessingLoader(jinja2.BaseLoader):
             source = self.preprocess(f.read())
         return source, path, lambda: mtime == os.path.getmtime(path)
 
-    blockstart = re.compile('{%-?\s*(if|elif|else|for|block|macro)[^}]*%}')
-    blockend = re.compile('{%-?\s*(end(if|for|block|macro)|elif|else)[^}]*%}')
+    blockstart = re.compile(r'{%-?\s*(if|elif|else|for|block|macro)[^}]*%}')
+    blockend = re.compile(r'{%-?\s*(end(if|for|block|macro)|elif|else)[^}]*%}')
 
     def preprocess(self, source):
         lines = source.split('\n')
@@ -156,13 +179,15 @@ _FileOutput = namedtuple('FileOutput', ['name', 'content'])
 
 def _do_renders(renders, template_dir):
     loader = _PreprocessingLoader(template_dir)
-    env = jinja2.Environment(loader=loader,
-                             lstrip_blocks=True,
-                             trim_blocks=True,
-                             line_comment_prefix='//*')
+    env = jinja2.Environment(
+        extensions=['jinja2.ext.do', 'jinja2.ext.loopcontrols'],
+        loader=loader,
+        lstrip_blocks=True,
+        trim_blocks=True,
+        line_comment_prefix='//*')
 
-    def do_assert(expr):
-        assert expr
+    def do_assert(expr, message=''):
+        assert expr, message
         return ''
 
     def debug(text):
@@ -201,6 +226,10 @@ def _compute_python_dependencies(root_dir=None):
 
     paths = set()
     for path in module_paths:
+        # Builtin/namespaced modules may return None for the file path.
+        if not path:
+            continue
+
         path = os.path.abspath(path)
 
         if not path.startswith(root_dir):
@@ -213,6 +242,16 @@ def _compute_python_dependencies(root_dir=None):
         paths.add(path)
 
     return paths
+
+
+# Computes the string representing a cmake list of paths.
+def _cmake_path_list(paths):
+    if os.name == "nt":
+        # On Windows CMake still expects paths to be separated by forward
+        # slashes
+        return (";".join(paths)).replace("\\", "/")
+    else:
+        return ";".join(paths)
 
 
 def run_generator(generator):
@@ -231,6 +270,11 @@ def run_generator(generator):
         default=None,
         type=str,
         help='Additional python path to set before loading Jinja2')
+    parser.add_argument(
+        kMarkupSafePath,
+        default=None,
+        type=str,
+        help='Additional python path to set before loading MarkupSafe')
     parser.add_argument(
         '--output-json-tarball',
         default=None,
@@ -253,12 +297,6 @@ def run_generator(generator):
         type=str,
         help=('Optional source root directory for Python dependency '
               'computations'))
-    parser.add_argument(
-        '--allowed-output-dirs-file',
-        default=None,
-        type=str,
-        help=("File containing a list of allowed directories where files "
-              "can be output."))
     parser.add_argument(
         '--print-cmake-dependencies',
         default=False,
@@ -295,7 +333,7 @@ def run_generator(generator):
                         " ".join(dependencies))
 
         if args.print_cmake_dependencies:
-            sys.stdout.write(";".join(dependencies))
+            sys.stdout.write(_cmake_path_list(dependencies))
             return 0
 
     # The caller wants to assert that the outputs are what it expects.
@@ -314,38 +352,14 @@ def run_generator(generator):
 
     # Print the list of all the outputs for cmake.
     if args.print_cmake_outputs:
-        sys.stdout.write(";".join([
-            os.path.join(args.output_dir, render.output) for render in renders
-        ]))
+        sys.stdout.write(
+            _cmake_path_list([
+                os.path.join(args.output_dir, render.output)
+                for render in renders
+            ]))
         return 0
 
     outputs = _do_renders(renders, args.template_dir)
-
-    # The caller wants to assert that the outputs are only in specific
-    # directories.
-    if args.allowed_output_dirs_file != None:
-        with open(args.allowed_output_dirs_file) as f:
-            allowed_dirs = set([line.strip() for line in f.readlines()])
-
-        for directory in allowed_dirs:
-            if not directory.endswith('/'):
-                print('Allowed directory entry "{}" doesn\'t '
-                      'end with /'.format(directory))
-                return 1
-
-        def check_in_subdirectory(path, directory):
-            return path.startswith(
-                directory) and not '/' in path[len(directory):]
-
-        for render in renders:
-            if not any(
-                    check_in_subdirectory(render.output, directory)
-                    for directory in allowed_dirs):
-                print('Output file "{}" is not in the allowed directory '
-                      'list below:'.format(render.output))
-                for directory in sorted(allowed_dirs):
-                    print('    "{}"'.format(directory))
-                return 1
 
     # Output the JSON tarball
     if args.output_json_tarball != None:
@@ -362,8 +376,7 @@ def run_generator(generator):
             output_path = os.path.join(args.output_dir, output.name)
 
             directory = os.path.dirname(output_path)
-            if not os.path.exists(directory):
-                os.makedirs(directory)
+            os.makedirs(directory, exist_ok=True)
 
             with open(output_path, 'w') as outfile:
                 outfile.write(output.content)

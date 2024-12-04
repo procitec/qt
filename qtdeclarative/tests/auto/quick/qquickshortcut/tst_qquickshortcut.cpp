@@ -1,45 +1,27 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtQuick module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:GPL-EXCEPT$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 3 as published by the Free Software
-** Foundation with exceptions as appearing in the file LICENSE.GPL3-EXCEPT
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
 #include <QtTest/qtest.h>
 #include <QtQuick/qquickwindow.h>
 #include <QtQml/qqmlapplicationengine.h>
 #include <QtQuick/qquickitem.h>
+#include <QtQuick/qquickview.h>
 #include <QtTest/qsignalspy.h>
+#ifdef QT_WIDGETS_LIB
+#include <QtWidgets/qboxlayout.h>
+#endif
 #ifdef QT_QUICKWIDGETS_LIB
 #include <QtQuickWidgets/qquickwidget.h>
 #endif
 
-#include "../../shared/util.h"
+#include <QtQuickTestUtils/private/qmlutils_p.h>
 
 class tst_QQuickShortcut : public QQmlDataTest
 {
     Q_OBJECT
+
+public:
+    tst_QQuickShortcut();
 
 private slots:
     void standardShortcuts_data();
@@ -56,9 +38,11 @@ private slots:
     void matcher();
     void multiple_data();
     void multiple();
+    void embedded_data();
+    void embedded();
 #ifdef QT_QUICKWIDGETS_LIB
-    void renderControlShortcuts_data();
-    void renderControlShortcuts();
+    void quickWidgetShortcuts_data();
+    void quickWidgetShortcuts();
 #endif
 };
 
@@ -81,6 +65,11 @@ static QVariant shortcutMap(const QVariant &sequence, Qt::ShortcutContext contex
 static QVariant shortcutMap(const QVariant &key, bool enabled = true, bool autoRepeat = true)
 {
     return shortcutMap(key, Qt::WindowShortcut, enabled, autoRepeat);
+}
+
+tst_QQuickShortcut::tst_QQuickShortcut()
+    : QQmlDataTest(QT_QMLTEST_DATADIR)
+{
 }
 
 void tst_QQuickShortcut::standardShortcuts_data()
@@ -563,12 +552,12 @@ void tst_QQuickShortcut::contextChange()
     QQmlApplicationEngine engine;
 
     engine.load(testFileUrl("multiple.qml"));
-    QQuickWindow *inactivewindow = qobject_cast<QQuickWindow *>(engine.rootObjects().value(0));
-    QVERIFY(inactivewindow);
-    inactivewindow->show();
-    QVERIFY(QTest::qWaitForWindowExposed(inactivewindow));
+    QQuickWindow *inactiveWindow = qobject_cast<QQuickWindow *>(engine.rootObjects().value(0));
+    QVERIFY(inactiveWindow);
+    inactiveWindow->show();
+    QVERIFY(QTest::qWaitForWindowExposed(inactiveWindow));
 
-    QObject *shortcut = inactivewindow->property("shortcut").value<QObject *>();
+    QObject *shortcut = inactiveWindow->property("shortcut").value<QObject *>();
     QVERIFY(shortcut);
 
     shortcut->setProperty("enabled", enabled);
@@ -576,22 +565,107 @@ void tst_QQuickShortcut::contextChange()
     shortcut->setProperty("context", Qt::WindowShortcut);
 
     engine.load(testFileUrl("multiple.qml"));
-    QQuickWindow *activewindow = qobject_cast<QQuickWindow *>(engine.rootObjects().value(1));
-    QVERIFY(activewindow);
-    activewindow->show();
-    QVERIFY(QTest::qWaitForWindowExposed(activewindow));
+    QQuickWindow *activeWindow = qobject_cast<QQuickWindow *>(engine.rootObjects().value(1));
+    QVERIFY(activeWindow);
+    activeWindow->show();
+    QVERIFY(QTest::qWaitForWindowExposed(activeWindow));
+    activeWindow->requestActivate();
+    QVERIFY(QTest::qWaitForWindowActive(activeWindow));
 
-    QTest::keyPress(activewindow, key, modifiers);
-    QCOMPARE(inactivewindow->property("activated").toBool(), false);
+    QTest::keyPress(activeWindow, key, modifiers);
+    QTest::keyRelease(activeWindow, key, modifiers);
+    QCOMPARE(inactiveWindow->property("activated").toBool(), false);
 
     shortcut->setProperty("context", Qt::ApplicationShortcut);
 
-    QTest::keyPress(activewindow, key, modifiers);
-    QCOMPARE(inactivewindow->property("activated").toBool(), activated);
+    QTest::keyPress(activeWindow, key, modifiers);
+    QTest::keyRelease(activeWindow, key, modifiers);
+    QCOMPARE(inactiveWindow->property("activated").toBool(), activated);
+}
+
+void tst_QQuickShortcut::embedded_data()
+{
+    QTest::addColumn<Qt::Key>("testKey");
+    QTest::addColumn<Qt::KeyboardModifiers>("testModifiers");
+    QTest::addColumn<QString>("windowShortcutSequence");
+    QTest::addColumn<bool>("windowShortcutActivated");
+
+    QTest::newRow("windowActivated") << Qt::Key_W << (Qt::ControlModifier|Qt::AltModifier)
+                                     << "Ctrl+Alt+W" << true;
+}
+
+void tst_QQuickShortcut::embedded()
+{
+#ifndef QT_WIDGETS_LIB
+    QSKIP("Skipping due to QT_WIDGETS_LIB is not defined");
+#else
+    QFETCH(Qt::Key, testKey);
+    QFETCH(Qt::KeyboardModifiers, testModifiers);
+    QFETCH(QString, windowShortcutSequence);
+    QFETCH(bool, windowShortcutActivated);
+
+    QWidget window;
+    QVBoxLayout *layout = new QVBoxLayout {&window};
+    QQuickView *quickView = new QQuickView;
+    quickView->setResizeMode(QQuickView::SizeRootObjectToView);
+    quickView->setSource(testFileUrl("embedded.qml"));
+
+    QWidget *container = QWidget::createWindowContainer(quickView);
+    container->setMinimumSize(quickView->size());
+    container->setFocusPolicy(Qt::TabFocus);
+
+    QWidget *widget = new QWidget;
+    // We will set focus to the widget and its default is NoFocus.
+    widget->setFocusPolicy(Qt::FocusPolicy::StrongFocus);
+
+    layout->addWidget(widget);
+    layout->addWidget(container);
+
+    window.show();
+    QTRY_VERIFY(window.isVisible());
+    // The widget can get focused only when the including window has exposed.
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+    widget->setFocus();
+    QTRY_VERIFY(widget->hasFocus());
+
+    // If the window-context shortcut is expected to be activated,
+    // then the QuickView window needs to be active.
+    // On Linux, the embedded QuickView window is active immediately
+    // after the containing window is active, but on Windows,
+    // the embedded QuickView window is activated after a delay
+    // once the containing window is active.
+    if (windowShortcutActivated)
+        QVERIFY(QTest::qWaitForWindowActive(quickView));
+
+    QQuickItem *item = quickView->rootObject();
+    QVERIFY(item);
+
+    QObject *windowShortcut = item->property("shortcut").value<QObject *>();
+    QVERIFY(windowShortcut);
+
+    windowShortcut->setProperty("context", Qt::WindowShortcut);
+    windowShortcut->setProperty("sequence", windowShortcutSequence);
+
+    QTest::keyPress(&window, testKey, testModifiers);
+    QTest::keyRelease(&window, testKey, testModifiers);
+    QCOMPARE(item->property("activated").toBool(), windowShortcutActivated);
+
+    quickView->requestActivate();
+    QTRY_VERIFY(quickView->isActive());
+    QVERIFY(quickView->isActive());
+
+    item->setProperty("activated", false);
+    QVERIFY(!item->property("activated").toBool());
+
+    QTest::keyPress(&window, testKey, testModifiers);
+    QTest::keyRelease(&window, testKey, testModifiers);
+    QCOMPARE(item->property("activated").toBool(), true);
+#endif
 }
 
 #ifdef QT_QUICKWIDGETS_LIB
-void tst_QQuickShortcut::renderControlShortcuts_data()
+void tst_QQuickShortcut::quickWidgetShortcuts_data()
 {
     QTest::addColumn<QVariantList>("shortcuts");
     QTest::addColumn<Qt::Key>("key");
@@ -677,13 +751,16 @@ void tst_QQuickShortcut::renderControlShortcuts_data()
     QTest::newRow("/Shift+F1") << shortcuts << Qt::Key_F1 << Qt::KeyboardModifiers(Qt::ShiftModifier) << "Shift+F1" << "";
 }
 
-void tst_QQuickShortcut::renderControlShortcuts()
+void tst_QQuickShortcut::quickWidgetShortcuts()
 {
     QFETCH(QVariantList, shortcuts);
     QFETCH(Qt::Key, key);
     QFETCH(Qt::KeyboardModifiers, modifiers);
     QFETCH(QString, activatedShortcut);
     QFETCH(QString, ambiguousShortcut);
+
+    // ### Qt 6 figure out what to do with QQuickWidget - disabled for now
+    QSKIP("Skipping due to QQuickWidget");
 
     QScopedPointer<QQuickWidget> quickWidget(new QQuickWidget);
     quickWidget->resize(300,300);

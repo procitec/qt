@@ -1,16 +1,18 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef EXTENSIONS_BROWSER_API_BLUETOOTH_BLUETOOTH_PRIVATE_API_H_
 #define EXTENSIONS_BROWSER_API_BLUETOOTH_BLUETOOTH_PRIVATE_API_H_
 
-#include "base/callback_forward.h"
-#include "base/macros.h"
+#include <optional>
+#include "base/functional/callback_forward.h"
+#include "base/memory/raw_ptr.h"
 #include "device/bluetooth/bluetooth_device.h"
 #include "extensions/browser/api/bluetooth/bluetooth_extension_function.h"
 #include "extensions/browser/browser_context_keyed_api_factory.h"
 #include "extensions/browser/event_router.h"
+#include "extensions/common/api/bluetooth_private.h"
 
 namespace device {
 class BluetoothAdapter;
@@ -43,7 +45,7 @@ class BluetoothPrivateAPI : public BrowserContextKeyedAPI,
  private:
   friend class BrowserContextKeyedAPIFactory<BluetoothPrivateAPI>;
 
-  content::BrowserContext* browser_context_;
+  raw_ptr<content::BrowserContext> browser_context_;
 };
 
 namespace api {
@@ -88,11 +90,17 @@ class BluetoothPrivateSetAdapterStateFunction
                              BLUETOOTHPRIVATE_SETADAPTERSTATE)
   BluetoothPrivateSetAdapterStateFunction();
 
+  BluetoothPrivateSetAdapterStateFunction(
+      const BluetoothPrivateSetAdapterStateFunction&) = delete;
+  BluetoothPrivateSetAdapterStateFunction& operator=(
+      const BluetoothPrivateSetAdapterStateFunction&) = delete;
+
  private:
   ~BluetoothPrivateSetAdapterStateFunction() override;
 
-  base::Closure CreatePropertySetCallback(const std::string& property_name);
-  base::Closure CreatePropertyErrorCallback(const std::string& property_name);
+  base::OnceClosure CreatePropertySetCallback(const std::string& property_name);
+  base::OnceClosure CreatePropertyErrorCallback(
+      const std::string& property_name);
   void OnAdapterPropertySet(const std::string& property);
   void OnAdapterPropertyError(const std::string& property);
   void SendError();
@@ -111,9 +119,7 @@ class BluetoothPrivateSetAdapterStateFunction
   // up state requests.
   bool parsed_ = false;
 
-  std::unique_ptr<bluetooth_private::SetAdapterState::Params> params_;
-
-  DISALLOW_COPY_AND_ASSIGN(BluetoothPrivateSetAdapterStateFunction);
+  std::optional<bluetooth_private::SetAdapterState::Params> params_;
 };
 
 class BluetoothPrivateSetPairingResponseFunction
@@ -122,6 +128,12 @@ class BluetoothPrivateSetPairingResponseFunction
   DECLARE_EXTENSION_FUNCTION("bluetoothPrivate.setPairingResponse",
                              BLUETOOTHPRIVATE_SETPAIRINGRESPONSE)
   BluetoothPrivateSetPairingResponseFunction();
+
+  BluetoothPrivateSetPairingResponseFunction(
+      const BluetoothPrivateSetPairingResponseFunction&) = delete;
+  BluetoothPrivateSetPairingResponseFunction& operator=(
+      const BluetoothPrivateSetPairingResponseFunction&) = delete;
+
   // BluetoothExtensionFunction overrides:
   bool CreateParams() override;
   void DoWork(scoped_refptr<device::BluetoothAdapter> adapter) override;
@@ -129,9 +141,7 @@ class BluetoothPrivateSetPairingResponseFunction
  private:
   ~BluetoothPrivateSetPairingResponseFunction() override;
 
-  std::unique_ptr<bluetooth_private::SetPairingResponse::Params> params_;
-
-  DISALLOW_COPY_AND_ASSIGN(BluetoothPrivateSetPairingResponseFunction);
+  std::optional<bluetooth_private::SetPairingResponse::Params> params_;
 };
 
 class BluetoothPrivateDisconnectAllFunction
@@ -140,6 +150,11 @@ class BluetoothPrivateDisconnectAllFunction
   DECLARE_EXTENSION_FUNCTION("bluetoothPrivate.disconnectAll",
                              BLUETOOTHPRIVATE_DISCONNECTALL)
   BluetoothPrivateDisconnectAllFunction();
+
+  BluetoothPrivateDisconnectAllFunction(
+      const BluetoothPrivateDisconnectAllFunction&) = delete;
+  BluetoothPrivateDisconnectAllFunction& operator=(
+      const BluetoothPrivateDisconnectAllFunction&) = delete;
 
   // BluetoothExtensionFunction overrides:
   bool CreateParams() override;
@@ -152,9 +167,7 @@ class BluetoothPrivateDisconnectAllFunction
   void OnErrorCallback(scoped_refptr<device::BluetoothAdapter> adapter,
                        const std::string& device_address);
 
-  std::unique_ptr<bluetooth_private::DisconnectAll::Params> params_;
-
-  DISALLOW_COPY_AND_ASSIGN(BluetoothPrivateDisconnectAllFunction);
+  std::optional<bluetooth_private::DisconnectAll::Params> params_;
 };
 
 class BluetoothPrivateForgetDeviceFunction : public BluetoothExtensionFunction {
@@ -162,6 +175,11 @@ class BluetoothPrivateForgetDeviceFunction : public BluetoothExtensionFunction {
   DECLARE_EXTENSION_FUNCTION("bluetoothPrivate.forgetDevice",
                              BLUETOOTHPRIVATE_FORGETDEVICE)
   BluetoothPrivateForgetDeviceFunction();
+
+  BluetoothPrivateForgetDeviceFunction(
+      const BluetoothPrivateForgetDeviceFunction&) = delete;
+  BluetoothPrivateForgetDeviceFunction& operator=(
+      const BluetoothPrivateForgetDeviceFunction&) = delete;
 
   // BluetoothExtensionFunction overrides:
   bool CreateParams() override;
@@ -174,9 +192,7 @@ class BluetoothPrivateForgetDeviceFunction : public BluetoothExtensionFunction {
   void OnErrorCallback(scoped_refptr<device::BluetoothAdapter> adapter,
                        const std::string& device_address);
 
-  std::unique_ptr<bluetooth_private::ForgetDevice::Params> params_;
-
-  DISALLOW_COPY_AND_ASSIGN(BluetoothPrivateForgetDeviceFunction);
+  std::optional<bluetooth_private::ForgetDevice::Params> params_;
 };
 
 class BluetoothPrivateSetDiscoveryFilterFunction
@@ -185,6 +201,11 @@ class BluetoothPrivateSetDiscoveryFilterFunction
   DECLARE_EXTENSION_FUNCTION("bluetoothPrivate.setDiscoveryFilter",
                              BLUETOOTHPRIVATE_SETDISCOVERYFILTER)
   BluetoothPrivateSetDiscoveryFilterFunction();
+
+  BluetoothPrivateSetDiscoveryFilterFunction(
+      const BluetoothPrivateSetDiscoveryFilterFunction&) = delete;
+  BluetoothPrivateSetDiscoveryFilterFunction& operator=(
+      const BluetoothPrivateSetDiscoveryFilterFunction&) = delete;
 
  protected:
   ~BluetoothPrivateSetDiscoveryFilterFunction() override;
@@ -197,9 +218,7 @@ class BluetoothPrivateSetDiscoveryFilterFunction
   void OnSuccessCallback();
   void OnErrorCallback();
 
-  std::unique_ptr<bluetooth_private::SetDiscoveryFilter::Params> params_;
-
-  DISALLOW_COPY_AND_ASSIGN(BluetoothPrivateSetDiscoveryFilterFunction);
+  std::optional<bluetooth_private::SetDiscoveryFilter::Params> params_;
 };
 
 class BluetoothPrivateConnectFunction : public BluetoothExtensionFunction {
@@ -208,6 +227,11 @@ class BluetoothPrivateConnectFunction : public BluetoothExtensionFunction {
                              BLUETOOTHPRIVATE_CONNECT)
   BluetoothPrivateConnectFunction();
 
+  BluetoothPrivateConnectFunction(const BluetoothPrivateConnectFunction&) =
+      delete;
+  BluetoothPrivateConnectFunction& operator=(
+      const BluetoothPrivateConnectFunction&) = delete;
+
   // BluetoothExtensionFunction:
   bool CreateParams() override;
   void DoWork(scoped_refptr<device::BluetoothAdapter> adapter) override;
@@ -215,18 +239,20 @@ class BluetoothPrivateConnectFunction : public BluetoothExtensionFunction {
  private:
   ~BluetoothPrivateConnectFunction() override;
 
-  void OnSuccessCallback();
-  void OnErrorCallback(device::BluetoothDevice::ConnectErrorCode error);
+  void OnConnect(
+      std::optional<device::BluetoothDevice::ConnectErrorCode> error);
 
-  std::unique_ptr<bluetooth_private::Connect::Params> params_;
-
-  DISALLOW_COPY_AND_ASSIGN(BluetoothPrivateConnectFunction);
+  std::optional<bluetooth_private::Connect::Params> params_;
 };
 
 class BluetoothPrivatePairFunction : public BluetoothExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("bluetoothPrivate.pair", BLUETOOTHPRIVATE_PAIR)
   BluetoothPrivatePairFunction();
+
+  BluetoothPrivatePairFunction(const BluetoothPrivatePairFunction&) = delete;
+  BluetoothPrivatePairFunction& operator=(const BluetoothPrivatePairFunction&) =
+      delete;
 
   // BluetoothExtensionFunction:
   bool CreateParams() override;
@@ -235,12 +261,10 @@ class BluetoothPrivatePairFunction : public BluetoothExtensionFunction {
  private:
   ~BluetoothPrivatePairFunction() override;
 
-  void OnSuccessCallback();
-  void OnErrorCallback(device::BluetoothDevice::ConnectErrorCode error);
+  void OnPair(
+      std::optional<device::BluetoothDevice::ConnectErrorCode> error_code);
 
-  std::unique_ptr<bluetooth_private::Pair::Params> params_;
-
-  DISALLOW_COPY_AND_ASSIGN(BluetoothPrivatePairFunction);
+  std::optional<bluetooth_private::Pair::Params> params_;
 };
 
 class BluetoothPrivateRecordPairingFunction
@@ -251,6 +275,11 @@ class BluetoothPrivateRecordPairingFunction
 
   BluetoothPrivateRecordPairingFunction();
 
+  BluetoothPrivateRecordPairingFunction(
+      const BluetoothPrivateRecordPairingFunction&) = delete;
+  BluetoothPrivateRecordPairingFunction& operator=(
+      const BluetoothPrivateRecordPairingFunction&) = delete;
+
  protected:
   ~BluetoothPrivateRecordPairingFunction() override;
 
@@ -259,9 +288,7 @@ class BluetoothPrivateRecordPairingFunction
   void DoWork(scoped_refptr<device::BluetoothAdapter> adapter) override;
 
  private:
-  std::unique_ptr<bluetooth_private::RecordPairing::Params> params_;
-
-  DISALLOW_COPY_AND_ASSIGN(BluetoothPrivateRecordPairingFunction);
+  std::optional<bluetooth_private::RecordPairing::Params> params_;
 };
 
 class BluetoothPrivateRecordReconnectionFunction
@@ -272,6 +299,11 @@ class BluetoothPrivateRecordReconnectionFunction
 
   BluetoothPrivateRecordReconnectionFunction();
 
+  BluetoothPrivateRecordReconnectionFunction(
+      const BluetoothPrivateRecordReconnectionFunction&) = delete;
+  BluetoothPrivateRecordReconnectionFunction& operator=(
+      const BluetoothPrivateRecordReconnectionFunction&) = delete;
+
  protected:
   ~BluetoothPrivateRecordReconnectionFunction() override;
 
@@ -280,9 +312,7 @@ class BluetoothPrivateRecordReconnectionFunction
   void DoWork(scoped_refptr<device::BluetoothAdapter> adapter) override;
 
  private:
-  std::unique_ptr<bluetooth_private::RecordReconnection::Params> params_;
-
-  DISALLOW_COPY_AND_ASSIGN(BluetoothPrivateRecordReconnectionFunction);
+  std::optional<bluetooth_private::RecordReconnection::Params> params_;
 };
 
 class BluetoothPrivateRecordDeviceSelectionFunction
@@ -293,6 +323,11 @@ class BluetoothPrivateRecordDeviceSelectionFunction
 
   BluetoothPrivateRecordDeviceSelectionFunction();
 
+  BluetoothPrivateRecordDeviceSelectionFunction(
+      const BluetoothPrivateRecordDeviceSelectionFunction&) = delete;
+  BluetoothPrivateRecordDeviceSelectionFunction& operator=(
+      const BluetoothPrivateRecordDeviceSelectionFunction&) = delete;
+
  protected:
   ~BluetoothPrivateRecordDeviceSelectionFunction() override;
 
@@ -301,9 +336,7 @@ class BluetoothPrivateRecordDeviceSelectionFunction
   void DoWork(scoped_refptr<device::BluetoothAdapter> adapter) override;
 
  private:
-  std::unique_ptr<bluetooth_private::RecordDeviceSelection::Params> params_;
-
-  DISALLOW_COPY_AND_ASSIGN(BluetoothPrivateRecordDeviceSelectionFunction);
+  std::optional<bluetooth_private::RecordDeviceSelection::Params> params_;
 };
 
 }  // namespace api

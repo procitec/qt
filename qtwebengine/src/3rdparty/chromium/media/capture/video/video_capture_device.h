@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -15,24 +15,30 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <list>
 #include <memory>
 #include <string>
 
-#include "base/callback.h"
 #include "base/files/file.h"
-#include "base/memory/ref_counted.h"
+#include "base/functional/callback.h"
 #include "base/memory/unsafe_shared_memory_region.h"
-#include "base/single_thread_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
+#include "base/token.h"
 #include "build/build_config.h"
 #include "media/base/video_frame.h"
 #include "media/capture/capture_export.h"
 #include "media/capture/mojom/image_capture.mojom.h"
+#include "media/capture/mojom/video_capture_types.mojom.h"
 #include "media/capture/video/video_capture_buffer_handle.h"
 #include "media/capture/video/video_capture_device_descriptor.h"
+#include "media/capture/video/video_capture_feedback.h"
 #include "media/capture/video_capture_types.h"
 #include "ui/gfx/gpu_memory_buffer.h"
+
+#if BUILDFLAG(IS_WIN)
+#include <mfobjects.h>
+#include <wrl/client.h>
+#endif
 
 namespace base {
 class Location;
@@ -57,13 +63,36 @@ class CAPTURE_EXPORT VideoFrameConsumerFeedbackObserver {
   // is available for encoding and/or sufficient bandwidth is available for
   // transmission over the network.  The maximum of the two utilization
   // measurements would be used as feedback.
-  //
-  // The parameter |frame_feedback_id| must match a |frame_feedback_id|
-  // previously sent out by the VideoCaptureDevice we are giving feedback about.
-  // It is used to indicate which particular frame the reported utilization
-  // corresponds to.
-  virtual void OnUtilizationReport(int frame_feedback_id,
-                                   media::VideoFrameFeedback feedback) {}
+  virtual void OnUtilizationReport(media::VideoCaptureFeedback feedback) {}
+};
+
+struct CAPTURE_EXPORT CapturedExternalVideoBuffer {
+  CapturedExternalVideoBuffer(gfx::GpuMemoryBufferHandle handle,
+                              VideoCaptureFormat format,
+                              gfx::ColorSpace color_space);
+
+#if BUILDFLAG(IS_WIN)
+  CapturedExternalVideoBuffer(Microsoft::WRL::ComPtr<IMFMediaBuffer> imf_buffer,
+                              gfx::GpuMemoryBufferHandle handle,
+                              VideoCaptureFormat format,
+                              gfx::ColorSpace color_space);
+#endif
+
+  CapturedExternalVideoBuffer(CapturedExternalVideoBuffer&& other);
+  CapturedExternalVideoBuffer& operator=(CapturedExternalVideoBuffer&& other);
+
+  CapturedExternalVideoBuffer(const CapturedExternalVideoBuffer&) = delete;
+  CapturedExternalVideoBuffer& operator=(const CapturedExternalVideoBuffer&) =
+      delete;
+
+  ~CapturedExternalVideoBuffer();
+
+#if BUILDFLAG(IS_WIN)
+  Microsoft::WRL::ComPtr<IMFMediaBuffer> imf_buffer;
+#endif
+  gfx::GpuMemoryBufferHandle handle;
+  VideoCaptureFormat format;
+  gfx::ColorSpace color_space;
 };
 
 class CAPTURE_EXPORT VideoCaptureDevice
@@ -98,9 +127,6 @@ class CAPTURE_EXPORT VideoCaptureDevice
         // Duplicate as an writable (unsafe) shared memory region.
         virtual base::UnsafeSharedMemoryRegion DuplicateAsUnsafeRegion() = 0;
 
-        // Duplicate as a writable (unsafe) mojo buffer.
-        virtual mojo::ScopedSharedBufferHandle DuplicateAsMojoBuffer() = 0;
-
         // Access a |VideoCaptureBufferHandle| for local, writable memory.
         virtual std::unique_ptr<VideoCaptureBufferHandle>
         GetHandleForInProcessAccess() = 0;
@@ -122,6 +148,12 @@ class CAPTURE_EXPORT VideoCaptureDevice
       int frame_feedback_id;
       std::unique_ptr<HandleProvider> handle_provider;
       std::unique_ptr<ScopedAccessPermission> access_permission;
+
+      // Some buffer types may be preemptively mapped in the capturer if
+      // requested by the consumer.
+      // This is used to notify the client that a shared memory region
+      // associated with the buffer is valid.
+      bool is_premapped = false;
     };
 
     // Result code for calls to ReserveOutputBuffer()
@@ -132,6 +164,9 @@ class CAPTURE_EXPORT VideoCaptureDevice
     };
 
     virtual ~Client() {}
+
+    // The configuration of the VideoCaptureDevice has changed.
+    virtual void OnCaptureConfigurationChanged() = 0;
 
     // Captured a new video frame, data for which is pointed to by |data|.
     //
@@ -150,7 +185,6 @@ class CAPTURE_EXPORT VideoCaptureDevice
     // OnConsumerReportingUtilization(). This identifier is needed because
     // frames are consumed asynchronously and multiple frames can be "in flight"
     // at the same time.
-    // TODO(crbug.com/978143): remove |frame_feedback_id| default value.
     virtual void OnIncomingCapturedData(const uint8_t* data,
                                         int length,
                                         const VideoCaptureFormat& frame_format,
@@ -159,7 +193,16 @@ class CAPTURE_EXPORT VideoCaptureDevice
                                         bool flip_y,
                                         base::TimeTicks reference_time,
                                         base::TimeDelta timestamp,
-                                        int frame_feedback_id = 0) = 0;
+                                        int frame_feedback_id) = 0;
+    // Convenience wrapper that passes in 0 as |frame_feedback_id|.
+    void OnIncomingCapturedData(const uint8_t* data,
+                                int length,
+                                const VideoCaptureFormat& frame_format,
+                                const gfx::ColorSpace& color_space,
+                                int clockwise_rotation,
+                                bool flip_y,
+                                base::TimeTicks reference_time,
+                                base::TimeDelta timestamp);
 
     // Captured a new video frame, data for which is stored in the
     // GpuMemoryBuffer pointed to by |buffer|.  The format of the frame is
@@ -169,25 +212,34 @@ class CAPTURE_EXPORT VideoCaptureDevice
     // |buffer| when creating the content of the output buffer.
     // |clockwise_rotation|, |reference_time|, |timestamp|, and
     // |frame_feedback_id| serve the same purposes as in OnIncomingCapturedData.
-    // TODO(crbug.com/978143): remove |frame_feedback_id| default value.
     virtual void OnIncomingCapturedGfxBuffer(
         gfx::GpuMemoryBuffer* buffer,
         const VideoCaptureFormat& frame_format,
         int clockwise_rotation,
         base::TimeTicks reference_time,
         base::TimeDelta timestamp,
-        int frame_feedback_id = 0) = 0;
+        int frame_feedback_id) = 0;
+    // Convenience wrapper that passes in 0 as |frame_feedback_id|.
+    void OnIncomingCapturedGfxBuffer(gfx::GpuMemoryBuffer* buffer,
+                                     const VideoCaptureFormat& frame_format,
+                                     int clockwise_rotation,
+                                     base::TimeTicks reference_time,
+                                     base::TimeDelta timestamp);
 
-    // Captured a new video frame. The data for this frame is in |handle|,
-    // which is owned by the platform-specific capture device, and is kept valid
-    // by |read_access_permission|.
+    // Captured a new video frame. The data for this frame is in
+    // |buffer.handle|, which is owned by the platform-specific capture device.
+    // It is the responsibility of the implementation to prevent the buffer in
+    // |buffer.handle| from being reused by the external capturer. In practice,
+    // this is used only on macOS, the external capturer maintains a
+    // CVPixelBufferPool, and gfx::ScopedInUseIOSurface is used to prevent reuse
+    // of buffers until all consumers have consumed them. |visible_rect|
+    // specifies the region in the memory pointed to by |buffer.handle| that
+    // contains the captured content.
     virtual void OnIncomingCapturedExternalBuffer(
-        gfx::GpuMemoryBufferHandle handle,
-        std::unique_ptr<Buffer::ScopedAccessPermission> read_access_permission,
-        const VideoCaptureFormat& format,
-        const gfx::ColorSpace& color_space,
+        CapturedExternalVideoBuffer buffer,
         base::TimeTicks reference_time,
-        base::TimeDelta timestamp) = 0;
+        base::TimeDelta timestamp,
+        const gfx::Rect& visible_rect) = 0;
 
     // Reserve an output buffer into which contents can be captured directly.
     // The returned |buffer| will always be allocated with a memory size
@@ -199,11 +251,11 @@ class CAPTURE_EXPORT VideoCaptureDevice
     //
     // The buffer stays reserved for use by the caller as long as it
     // holds on to the contained |buffer_read_write_permission|.
-    virtual ReserveResult ReserveOutputBuffer(const gfx::Size& dimensions,
-                                              VideoPixelFormat format,
-                                              int frame_feedback_id,
-                                              Buffer* buffer)
-        WARN_UNUSED_RESULT = 0;
+    [[nodiscard]] virtual ReserveResult ReserveOutputBuffer(
+        const gfx::Size& dimensions,
+        VideoPixelFormat format,
+        int frame_feedback_id,
+        Buffer* buffer) = 0;
 
     // Provides VCD::Client with a populated Buffer containing the content of
     // the next video frame. The |buffer| must originate from an earlier call to
@@ -293,6 +345,30 @@ class CAPTURE_EXPORT VideoCaptureDevice
   // Note: This should only be called after AllocateAndStart() and before
   // StopAndDeAllocate(). Otherwise, its behavior is undefined.
   virtual void Resume() {}
+
+  // Start/stop cropping or restricting a tab-caputre video track.
+  //
+  // Non-empty |target| sets (or changes) the target, and |type| determines
+  // which type of sub-capture mutation is expected.
+  //
+  // Empty |target| reverts the capture to its original state.
+  // In that case, |type| is not generally useful, and is ignored. It can
+  // be expected to match the method called from JS - cropTo() or restrictTo().
+  //
+  // |sub_capture_target_version| must be incremented by at least one for each
+  // call. By including it in frame's metadata, Viz informs Blink what was the
+  // latest invocation of cropTo() or restrictTo() before a given frame was
+  // produced.
+  //
+  // The callback reports success/failure. It is called on an unspecified
+  // thread, it's the caller's responsibility to wrap it (i.e. via BindPostTask)
+  // as needed.
+  virtual void ApplySubCaptureTarget(
+      mojom::SubCaptureTargetType type,
+      const base::Token& target,
+      uint32_t sub_capture_target_version,
+      base::OnceCallback<void(media::mojom::ApplySubCaptureTargetResult)>
+          callback);
 
   // Deallocates the video capturer, possibly asynchronously.
   //

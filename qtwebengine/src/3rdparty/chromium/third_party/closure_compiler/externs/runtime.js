@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2023 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,13 +7,15 @@
 // NOTE: The format of types has changed. 'FooType' is now
 //   'chrome.runtime.FooType'.
 // Please run the closure compiler before committing changes.
-// See https://chromium.googlesource.com/chromium/src/+/master/docs/closure_compilation.md
+// See https://chromium.googlesource.com/chromium/src/+/main/docs/closure_compilation.md
 
-// IMPORTANT NOTE: Work-around for crbug.com/543822
-// s/chrome.runtime.events.Event/chrome.events.Event/
+// TODO(crbug.com/543822): Disable automatic extern generation until fixed.
 // s/chrome.runtime.tabs.Tab/chrome.tabs.Tab/
 
-/** @fileoverview Externs generated from namespace: runtime */
+/**
+ * @fileoverview Externs generated from namespace: runtime
+ * @externs
+ */
 
 /** @const */
 chrome.runtime = {};
@@ -42,20 +44,6 @@ chrome.runtime.Port.prototype.name;
 chrome.runtime.Port.prototype.disconnect = function() {};
 
 /**
- * Fired when the port is disconnected from the other end(s). $(ref:runtime.lastError) may be set if the port was disconnected by an error. If the port is closed via $(ref:Port.disconnect disconnect), then this event is <em>only</em> fired on the other end. This event is fired at most once (see also <a href="messaging#port-lifetime">Port lifetime</a>). The first and only parameter to the event handler is this disconnected port.
- * @type {!chrome.events.Event}
- * @see https://developer.chrome.com/extensions/runtime#type-onDisconnect
- */
-chrome.runtime.Port.prototype.onDisconnect;
-
-/**
- * This event is fired when $(ref:Port.postMessage postMessage) is called by the other end of the port. The first parameter is the message, the second parameter is the port that received the message.
- * @type {!chrome.events.Event}
- * @see https://developer.chrome.com/extensions/runtime#type-onMessage
- */
-chrome.runtime.Port.prototype.onMessage;
-
-/**
  * Send a message to the other end of the port. If the port is disconnected, an
  * error is thrown.
  * @param {*} message The message to send. This object should be JSON-ifiable.
@@ -82,7 +70,9 @@ chrome.runtime.Port.prototype.sender;
  *   url: (string|undefined),
  *   nativeApplication: (string|undefined),
  *   tlsChannelId: (string|undefined),
- *   origin: (string|undefined)
+ *   origin: (string|undefined),
+ *   documentId: (string|undefined),
+ *   documentLifecycle: (string|undefined)
  * }}
  * @see https://developer.chrome.com/extensions/runtime#type-MessageSender
  */
@@ -99,6 +89,7 @@ chrome.runtime.PlatformOs = {
   CROS: 'cros',
   LINUX: 'linux',
   OPENBSD: 'openbsd',
+  FUCHSIA: 'fuchsia',
 };
 
 /**
@@ -169,6 +160,52 @@ chrome.runtime.OnRestartRequiredReason = {
 };
 
 /**
+ * @enum {string}
+ * @see https://developer.chrome.com/extensions/runtime#type-ContextType
+ */
+chrome.runtime.ContextType = {
+  TAB: 'TAB',
+  POPUP: 'POPUP',
+  BACKGROUND: 'BACKGROUND',
+  OFFSCREEN_DOCUMENT: 'OFFSCREEN_DOCUMENT',
+  SIDE_PANEL: 'SIDE_PANEL',
+};
+
+/**
+ * A context hosting extension content.
+ * @typedef {{
+ *   contextType: !chrome.runtime.ContextType,
+ *   contextId: string,
+ *   tabId: number,
+ *   windowId: number,
+ *   documentId: (string|undefined),
+ *   frameId: number,
+ *   documentUrl: (string|undefined),
+ *   documentOrigin: (string|undefined),
+ *   incognito: boolean
+ * }}
+ * @see https://developer.chrome.com/extensions/runtime#type-ExtensionContext
+ */
+chrome.runtime.ExtensionContext;
+
+/**
+ * A filter to match against certain extension contexts. Matching contexts must match all specified filters; any filter that is not specified matches all available contexts. Thus, a filter of `{}` will match all available contexts.
+ * @typedef {{
+ *   contextTypes: (!Array<!chrome.runtime.ContextType>|undefined),
+ *   contextIds: (!Array<string>|undefined),
+ *   tabIds: (!Array<number>|undefined),
+ *   windowIds: (!Array<number>|undefined),
+ *   documentIds: (!Array<string>|undefined),
+ *   frameIds: (!Array<number>|undefined),
+ *   documentUrls: (!Array<string>|undefined),
+ *   documentOrigins: (!Array<string>|undefined),
+ *   incognito: (boolean|undefined)
+ * }}
+ * @see https://developer.chrome.com/extensions/runtime#type-ContextFilter
+ */
+chrome.runtime.ContextFilter;
+
+/**
  * This will be defined during an API method callback if there was an error
  * @typedef {{
  *   message: (string|undefined)
@@ -189,7 +226,7 @@ chrome.runtime.id;
  * inside the current extension/app. If the background page is an event page,
  * the system will ensure it is loaded before calling the callback. If there is
  * no background page, an error is set.
- * @param {function((Object|undefined)):void} callback
+ * @param {function((Window|undefined)): void} callback
  * @see https://developer.chrome.com/extensions/runtime#method-getBackgroundPage
  */
 chrome.runtime.getBackgroundPage = function(callback) {};
@@ -204,7 +241,7 @@ chrome.runtime.getBackgroundPage = function(callback) {};
  * page. It will never cause the caller page to reload.</p><p>If your Extension
  * does not declare an options page, or Chrome failed to create one for some
  * other reason, the callback will set $(ref:lastError).</p>
- * @param {function():void=} callback
+ * @param {function(): void=} callback
  * @see https://developer.chrome.com/extensions/runtime#method-openOptionsPage
  */
 chrome.runtime.openOptionsPage = function(callback) {};
@@ -230,12 +267,12 @@ chrome.runtime.getURL = function(path) {};
 
 /**
  * Sets the URL to be visited upon uninstallation. This may be used to clean up
- * server-side data, do analytics, and implement surveys. Maximum 255
+ * server-side data, do analytics, and implement surveys. Maximum 1023
  * characters.
  * @param {string} url URL to be opened after the extension is uninstalled. This
  *     URL must have an http: or https: scheme. Set an empty string to not open
  *     a new tab upon uninstallation.
- * @param {function():void=} callback Called when the uninstall URL is set. If
+ * @param {function(): void=} callback Called when the uninstall URL is set. If
  *     the given URL is invalid, $(ref:runtime.lastError) will be set.
  * @see https://developer.chrome.com/extensions/runtime#method-setUninstallURL
  */
@@ -251,7 +288,7 @@ chrome.runtime.reload = function() {};
 /**
  * <p>Requests an immediate update check be done for this app/extension.</p>
  * <p><b>Important</b>: Most extensions/apps should <b>not</b> use this method,
- * since chrome already does automatic checks every few hours, and you can
+ * since Chrome already does automatic checks every few hours, and you can
  * listen for the $(ref:runtime.onUpdateAvailable) event without needing to call
  * requestUpdateCheck.</p><p>This method is only appropriate to call in very
  * limited circumstances, such as if your extension/app talks to a backend
@@ -259,10 +296,13 @@ chrome.runtime.reload = function() {};
  * version is very far out of date and you'd like to prompt a user to update.
  * Most other uses of requestUpdateCheck, such as calling it unconditionally
  * based on a repeating timer, probably only serve to waste client, network, and
- * server resources.</p>
- * @param {function(!chrome.runtime.RequestUpdateCheckStatus, ({
- *   version: string
- * }|undefined)):void} callback
+ * server resources.</p><p>Note: When called with a callback, instead of
+ * returning an object this function will return the two properties as separate
+ * arguments passed to the callback.</p>
+ * @param {function({
+ *   status: !chrome.runtime.RequestUpdateCheckStatus,
+ *   version: (string|undefined)
+ * }): void} callback
  * @see https://developer.chrome.com/extensions/runtime#method-requestUpdateCheck
  */
 chrome.runtime.requestUpdateCheck = function(callback) {};
@@ -282,20 +322,19 @@ chrome.runtime.restart = function() {};
  * extension to invoke this API.
  * @param {number} seconds Time to wait in seconds before rebooting the device,
  *     or -1 to cancel a scheduled reboot.
- * @param {function():void=} callback A callback to be invoked when a restart
+ * @param {function(): void=} callback A callback to be invoked when a restart
  *     request was successfully rescheduled.
  * @see https://developer.chrome.com/extensions/runtime#method-restartAfterDelay
  */
 chrome.runtime.restartAfterDelay = function(seconds, callback) {};
 
 /**
- * Attempts to connect to connect listeners within an extension/app (such as the
- * background page), or other extensions/apps. This is useful for content
- * scripts connecting to their extension processes, inter-app/extension
- * communication, and <a href="manifest/externally_connectable.html">web
- * messaging</a>. Note that this does not connect to any listeners in a content
- * script. Extensions may connect to content scripts embedded in tabs via
- * $(ref:tabs.connect).
+ * Attempts to connect listeners within an extension/app (such as the background
+ * page), or other extensions/apps. This is useful for content scripts
+ * connecting to their extension processes, inter-app/extension communication,
+ * and <a href="manifest/externally_connectable.html">web messaging</a>. Note
+ * that this does not connect to any listeners in a content script. Extensions
+ * may connect to content scripts embedded in tabs via $(ref:tabs.connect).
  * @param {string=} extensionId The ID of the extension or app to connect to. If
  *     omitted, a connection will be attempted with your own extension. Required
  *     if sending messages from a web page for <a
@@ -340,24 +379,24 @@ chrome.runtime.connectNative = function(application) {};
  * @param {{
  *   includeTlsChannelId: (boolean|undefined)
  * }=} options
- * @param {function(*):void=} responseCallback
+ * @param {function(*): void=} callback
  * @see https://developer.chrome.com/extensions/runtime#method-sendMessage
  */
-chrome.runtime.sendMessage = function(extensionId, message, options, responseCallback) {};
+chrome.runtime.sendMessage = function(extensionId, message, options, callback) {};
 
 /**
  * Send a single message to a native application.
  * @param {string} application The name of the native messaging host.
  * @param {Object} message The message that will be passed to the native
  *     messaging host.
- * @param {function(*):void=} responseCallback
+ * @param {function(*): void=} callback
  * @see https://developer.chrome.com/extensions/runtime#method-sendNativeMessage
  */
-chrome.runtime.sendNativeMessage = function(application, message, responseCallback) {};
+chrome.runtime.sendNativeMessage = function(application, message, callback) {};
 
 /**
  * Returns information about the current platform.
- * @param {function(!chrome.runtime.PlatformInfo):void} callback Called with
+ * @param {function(!chrome.runtime.PlatformInfo): void} callback Called with
  *     results
  * @see https://developer.chrome.com/extensions/runtime#method-getPlatformInfo
  */
@@ -365,10 +404,21 @@ chrome.runtime.getPlatformInfo = function(callback) {};
 
 /**
  * Returns a DirectoryEntry for the package directory.
- * @param {function(Object):void} callback
+ * @param {function(DirectoryEntry): void} callback
  * @see https://developer.chrome.com/extensions/runtime#method-getPackageDirectoryEntry
  */
 chrome.runtime.getPackageDirectoryEntry = function(callback) {};
+
+/**
+ * Fetches information about active contexts associated with this extension
+ * @param {!chrome.runtime.ContextFilter} filter A filter to find matching
+ *     contexts. A context matches if it matches all specified fields in the
+ *     filter. Any unspecified field in the filter matches all contexts.
+ * @param {function(!Array<!chrome.runtime.ExtensionContext>): void} callback
+ *     Invoked with the matching contexts, if any.
+ * @see https://developer.chrome.com/extensions/runtime#method-getContexts
+ */
+chrome.runtime.getContexts = function(filter, callback) {};
 
 /**
  * Fired when a profile that has this extension installed first starts up. This
@@ -414,7 +464,7 @@ chrome.runtime.onSuspendCanceled;
  * extension is using a persistent background page, the background page of
  * course never gets unloaded, so unless you call chrome.runtime.reload()
  * manually in response to this event the update will not get installed until
- * the next time chrome itself restarts. If no handlers are listening for this
+ * the next time Chrome itself restarts. If no handlers are listening for this
  * event, and your extension has a persistent background page, it behaves as if
  * chrome.runtime.reload() is called in response to this event.
  * @type {!ChromeEvent}
@@ -447,6 +497,13 @@ chrome.runtime.onConnect;
 chrome.runtime.onConnectExternal;
 
 /**
+ * Fired when a connection is made from a user script from this extension.
+ * @type {!ChromeEvent}
+ * @see https://developer.chrome.com/extensions/runtime#event-onUserScriptConnect
+ */
+chrome.runtime.onUserScriptConnect;
+
+/**
  * Fired when a connection is made from a native application. Currently only
  * supported on Chrome OS.
  * @type {!ChromeEvent}
@@ -469,6 +526,14 @@ chrome.runtime.onMessage;
  * @see https://developer.chrome.com/extensions/runtime#event-onMessageExternal
  */
 chrome.runtime.onMessageExternal;
+
+/**
+ * Fired when a message is sent from a user script associated with the same
+ * extension.
+ * @type {!ChromeEvent}
+ * @see https://developer.chrome.com/extensions/runtime#event-onUserScriptMessage
+ */
+chrome.runtime.onUserScriptMessage;
 
 /**
  * Fired when an app or the device that it runs on needs to be restarted. The

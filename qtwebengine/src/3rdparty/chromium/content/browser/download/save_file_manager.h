@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -59,12 +59,14 @@
 #include <unordered_map>
 #include <vector>
 
-#include "base/macros.h"
+#include "base/containers/flat_map.h"
 #include "base/memory/ref_counted.h"
 #include "components/download/public/common/download_interrupt_reasons.h"
 #include "components/services/quarantine/quarantine.h"
 #include "content/browser/download/save_types.h"
 #include "content/common/content_export.h"
+#include "net/base/isolation_info.h"
+#include "services/network/public/cpp/request_mode.h"
 
 class GURL;
 
@@ -87,6 +89,9 @@ class CONTENT_EXPORT SaveFileManager
 
   SaveFileManager();
 
+  SaveFileManager(const SaveFileManager&) = delete;
+  SaveFileManager& operator=(const SaveFileManager&) = delete;
+
   // Lifetime management.
   void Shutdown();
 
@@ -96,6 +101,9 @@ class CONTENT_EXPORT SaveFileManager
       SaveItemId save_item_id,
       const GURL& url,
       const Referrer& referrer,
+      const net::IsolationInfo& isolation_info,
+      network::mojom::RequestMode request_mode,
+      bool is_outermost_main_frame,
       int render_process_host_id,
       int render_view_routing_id,
       int render_frame_routing_id,
@@ -138,6 +146,14 @@ class CONTENT_EXPORT SaveFileManager
   // When the user cancels the saving, we need to remove all remaining saved
   // files of this page saving job from save_file_map_.
   void RemoveSavedFileFromFileMap(const std::vector<SaveItemId>& save_item_ids);
+
+  // Returns a map of current on-disk paths to their final paths for the given
+  // ids in `save_file_map_` by running `callback` on the UI thread.
+  void GetSaveFilePaths(
+      const std::vector<std::pair<SaveItemId, base::FilePath>>&
+          ids_and_final_paths,
+      base::OnceCallback<void(base::flat_map<base::FilePath, base::FilePath>)>
+          callback);
 
  private:
   friend class base::RefCountedThreadSafe<SaveFileManager>;
@@ -230,8 +246,6 @@ class CONTENT_EXPORT SaveFileManager
                      std::unique_ptr<SimpleURLLoaderHelper>,
                      SaveItemId::Hasher>
       url_loader_helpers_;
-
-  DISALLOW_COPY_AND_ASSIGN(SaveFileManager);
 };
 
 }  // namespace content

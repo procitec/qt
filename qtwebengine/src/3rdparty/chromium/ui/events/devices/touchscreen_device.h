@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,6 +7,7 @@
 
 #include <stdint.h>
 
+#include <ostream>
 #include <string>
 
 #include "ui/display/types/display_constants.h"
@@ -26,12 +27,14 @@ struct EVENTS_DEVICES_EXPORT TouchscreenDevice : public InputDevice {
                     const std::string& name,
                     const gfx::Size& size,
                     int touch_points,
-                    bool has_stylus = false);
+                    bool has_stylus = false,
+                    bool has_stylus_garage_switch = false);
 
   TouchscreenDevice(const InputDevice& input_device,
                     const gfx::Size& size,
                     int touch_points,
-                    bool has_stylus = false);
+                    bool has_stylus = false,
+                    bool has_stylus_garage_switch = false);
 
   TouchscreenDevice(const TouchscreenDevice& other);
 
@@ -42,11 +45,16 @@ struct EVENTS_DEVICES_EXPORT TouchscreenDevice : public InputDevice {
   int touch_points = 0;
   // True if the specified touchscreen device is stylus capable.
   bool has_stylus = false;
+  // True if there is a garage/dock switch associated with the stylus.
+  bool has_stylus_garage_switch = false;
+
   // Id of the display the touch device targets.
   // NOTE: when obtaining TouchscreenDevice from DeviceDataManager this value
   // may not have been updated. See
   // DeviceDataManager::AreTouchscreenTargetDisplaysValid() for details.
   int64_t target_display_id = display::kInvalidDisplayId;
+
+  std::ostream& DescribeForLog(std::ostream& os) const override;
 
   // NOTE: If adding fields please update mojo/input_devices.mojom.
 };

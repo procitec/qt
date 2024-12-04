@@ -14,9 +14,8 @@ The to build skia for android are at https://skia.org/user/build#android and rep
 Download the Android NDK
 
 ```
-cipd auth-login
-python2 infra/bots/assets/android_ndk_linux/download.py  -t /tmp/ndk
-
+./bin/fetch-sk
+./bin/sk asset download android_ndk_linux /tmp/ndk
 ```
 
 After this is set up once, build skpbench for your target cpu (assumed to be arm64 here for a Pixel 3)
@@ -29,18 +28,18 @@ ninja -C out/arm64 skpbench
 ## Benchmark an SKP on a connected device.
 
 First, copy the built skpbench binary and an example skp file to the device.
+(or pull a skp corpus using instructions in the section below)
 
 ```
 adb push out/arm64/skpbench /data/local/tmp
 adb push /home/nifong/Downloads/foo.skp /data/local/tmp/skps/
 ```
 
-Run skpbench.py (in my case on a Pixel 3)
+Run skpbench.py
 
 ```
 python tools/skpbench/skpbench.py \
   --adb \
-  --force \
   --config gles \
   /data/local/tmp/skpbench \
   /data/local/tmp/skps/foo.skp
@@ -64,4 +63,11 @@ Output appears in the following format
 ## Production
 
 skpbench is run as a tryjob from gerrit, where it uploads the results to perf.skia.org.
-TODO(nifong, csmartdalton): elaborate on this section.
+Once such job name is `Perf-Android-Clang-Pixel4XL-GPU-Adreno640-arm64-Release-All-Android_Skpbench`
+
+Perf results are available by querying with this or similar.
+  extra_config = Android_Skpbench
+  sub_result = accum_cpu_ms
+
+Example perf query
+https://perf.skia.org/e/?queries=extra_config%3DAndroid_Skpbench%26sub_result%3Daccum_cpu_ms

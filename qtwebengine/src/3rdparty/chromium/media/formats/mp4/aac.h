@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,7 +9,7 @@
 
 #include <vector>
 
-#include "build/build_config.h"
+#include "base/containers/span.h"
 #include "media/base/audio_codecs.h"
 #include "media/base/channel_layout.h"
 #include "media/base/media_export.h"
@@ -35,7 +35,7 @@ class MEDIA_EXPORT AAC {
   // The function will parse the data and get the ElementaryStreamDescriptor,
   // then it will parse the ElementaryStreamDescriptor to get audio stream
   // configurations.
-  bool Parse(const std::vector<uint8_t>& data, MediaLog* media_log);
+  bool Parse(base::span<const uint8_t> data, MediaLog* media_log);
 
   // Gets the output sample rate for the AAC stream.
   // |sbr_in_mimetype| should be set to true if the SBR mode is
@@ -52,25 +52,36 @@ class MEDIA_EXPORT AAC {
   ChannelLayout GetChannelLayout(bool sbr_in_mimetype) const;
 
   // This function converts a raw AAC frame into an AAC frame with an ADTS
-  // header. On success, the function returns true and stores the converted data
-  // in the buffer. The function returns false on failure and leaves the buffer
+  // header. On success, the function returns true, stores the converted data
+  // in the `buffer`, and sets the header size in `adts_header_size`. Otherwise
+  // the function returns false and leaves the `buffer` and `adts_header_size`
   // unchanged.
-  bool ConvertEsdsToADTS(std::vector<uint8_t>* buffer) const;
+  bool ConvertEsdsToADTS(std::vector<uint8_t>* buffer,
+                         int* adts_header_size) const;
+
+  // Converts a raw AAC frame into an AAC frame with an ADTS header. Allocates
+  // new memory and copies the data from `buffer`, with the appropriate ADTS
+  // header. The size of the returned array is `buffer.size` +
+  // `adts_header_size`. Returns nullptr on failure.
+  std::unique_ptr<uint8_t[]> CreateAdtsFromEsds(
+      base::span<const uint8_t> buffer,
+      int* adts_header_size);
 
   // If known, returns the AudioCodecProfile.
   AudioCodecProfile GetProfile() const;
 
-#if defined(OS_ANDROID)
   // Returns the codec specific data needed by android MediaCodec.
   std::vector<uint8_t> codec_specific_data() const {
     return codec_specific_data_;
   }
-#endif
 
  private:
   bool SkipDecoderGASpecificConfig(BitReader* bit_reader) const;
   bool SkipErrorSpecificConfig() const;
   bool SkipGASpecificConfig(BitReader* bit_reader) const;
+
+  // Sets the ADTS header into the given span.
+  void SetAdtsHeader(base::span<uint8_t> adts, size_t total_size) const;
 
   // The following variables store the AAC specific configuration information
   // that are used to generate the ADTS header.
@@ -78,10 +89,8 @@ class MEDIA_EXPORT AAC {
   uint8_t frequency_index_;
   uint8_t channel_config_;
 
-#if defined(OS_ANDROID)
   // The codec specific data needed by the android MediaCodec.
   std::vector<uint8_t> codec_specific_data_;
-#endif
 
   // The following variables store audio configuration information that
   // can be used by Chromium. They are based on the AAC specific

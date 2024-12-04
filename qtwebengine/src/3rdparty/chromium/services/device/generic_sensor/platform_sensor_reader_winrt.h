@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,12 +12,17 @@
 #include <functional>
 #include <memory>
 
-#include "base/callback.h"
-#include "base/optional.h"
+#include "base/functional/callback.h"
+#include "base/memory/raw_ptr.h"
+#include "base/memory/weak_ptr.h"
+#include "base/sequence_checker.h"
 #include "base/synchronization/lock.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/thread_annotations.h"
+#include "base/time/time.h"
 #include "services/device/generic_sensor/platform_sensor_reader_win_base.h"
 #include "services/device/public/cpp/generic_sensor/sensor_reading.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/gfx/geometry/angle_conversions.h"
 
 namespace device {
@@ -66,16 +71,19 @@ class PlatformSensorReaderWinrtBase : public PlatformSensorReaderWinBase {
   // for testing purposes.
   bool IsUnderlyingWinrtObjectValidForTesting() { return sensor_; }
 
-  bool Initialize() WARN_UNUSED_RESULT;
+  [[nodiscard]] bool Initialize();
 
-  bool StartSensor(const PlatformSensorConfiguration& configuration) override
-      WARN_UNUSED_RESULT;
+  [[nodiscard]] bool StartSensor(
+      const PlatformSensorConfiguration& configuration) override;
   base::TimeDelta GetMinimalReportingInterval() const override;
   void StopSensor() override;
 
  protected:
   PlatformSensorReaderWinrtBase();
-  virtual ~PlatformSensorReaderWinrtBase() { StopSensor(); }
+  virtual ~PlatformSensorReaderWinrtBase() {
+    DCHECK_CALLED_ON_VALID_SEQUENCE(com_sta_sequence_checker_);
+    StopSensor();
+  }
 
   // Derived classes should implement this function to handle sensor specific
   // parsing of the sensor reading.
@@ -91,12 +99,16 @@ class PlatformSensorReaderWinrtBase : public PlatformSensorReaderWinBase {
       Microsoft::WRL::ComPtr<ISensorReading> sensor_reading,
       base::TimeDelta* timestamp_delta);
 
-  // Following class member is protected by lock since SetClient,
-  // StartSensor, and StopSensor can all be called from different
-  // threads by PlatformSensorWin.
-  base::Lock lock_;
-  // Null if there is no client to notify, non-null otherwise.
-  Client* client_ GUARDED_BY(lock_);
+  SEQUENCE_CHECKER(com_sta_sequence_checker_);
+  SEQUENCE_CHECKER(main_sequence_checker_);
+
+  mutable base::Lock lock_;
+
+  // Null if there is no client to notify, non-null otherwise. Protected by
+  // |lock_| because SetClient() and StartSensor() are called from the main
+  // task runner rather than the thread where this object is created, and
+  // StopSensor() may be called from the main task runner too.
+  raw_ptr<Client, DanglingUntriaged> client_ GUARDED_BY(lock_);
 
   // Always report the first sample received after starting the sensor.
   bool has_received_first_sample_ = false;
@@ -104,13 +116,21 @@ class PlatformSensorReaderWinrtBase : public PlatformSensorReaderWinBase {
  private:
   base::TimeDelta GetMinimumReportIntervalFromSensor();
 
+  // Task runner where this object was created.
+  scoped_refptr<base::SingleThreadTaskRunner> com_sta_task_runner_;
+
   GetSensorFactoryFunctor get_sensor_factory_callback_;
 
-  // base::nullopt if the sensor has not been started, non-empty otherwise.
-  base::Optional<EventRegistrationToken> reading_callback_token_;
+  // absl::nullopt if the sensor has not been started, non-empty otherwise.
+  absl::optional<EventRegistrationToken> reading_callback_token_;
 
-  base::TimeDelta minimum_report_interval_;
+  // Protected by |lock_| because GetMinimalReportingInterval() is called from
+  // the main task runner.
+  base::TimeDelta minimum_report_interval_ GUARDED_BY(lock_);
+
   Microsoft::WRL::ComPtr<ISensorWinrtClass> sensor_;
+
+  base::WeakPtrFactory<PlatformSensorReaderWinrtBase> weak_ptr_factory_{this};
 };
 
 class PlatformSensorReaderWinrtLightSensor final
@@ -204,7 +224,7 @@ class PlatformSensorReaderWinrtGyrometer final
               Microsoft::WRL::FtmBase>,
           ABI::Windows::Devices::Sensors::IGyrometerReadingChangedEventArgs> {
  public:
-  static constexpr double kDegreeThreshold = 5.0;
+  static constexpr double kDegreeThreshold = 0.1;
 
   static std::unique_ptr<PlatformSensorReaderWinBase> Create();
 
@@ -243,7 +263,7 @@ class PlatformSensorReaderWinrtMagnetometer final
           ABI::Windows::Devices::Sensors::
               IMagnetometerReadingChangedEventArgs> {
  public:
-  static constexpr double kMicroteslaThreshold = 5.0f;
+  static constexpr double kMicroteslaThreshold = 0.1;
 
   static std::unique_ptr<PlatformSensorReaderWinBase> Create();
 
@@ -282,7 +302,7 @@ class PlatformSensorReaderWinrtAbsOrientationEulerAngles final
           ABI::Windows::Devices::Sensors::
               IInclinometerReadingChangedEventArgs> {
  public:
-  static constexpr double kDegreeThreshold = 5.0f;
+  static constexpr double kDegreeThreshold = 0.1;
 
   static std::unique_ptr<PlatformSensorReaderWinBase> Create();
 
@@ -321,7 +341,7 @@ class PlatformSensorReaderWinrtAbsOrientationQuaternion final
           ABI::Windows::Devices::Sensors::
               IOrientationSensorReadingChangedEventArgs> {
  public:
-  static constexpr double kRadianThreshold = gfx::DegToRad(5.0);
+  static constexpr double kRadianThreshold = gfx::DegToRad(0.1);
 
   static std::unique_ptr<PlatformSensorReaderWinBase> Create();
 

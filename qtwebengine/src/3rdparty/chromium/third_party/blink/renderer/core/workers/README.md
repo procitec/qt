@@ -128,12 +128,6 @@ There are some fundamental metrics.
 : Counts of `Worklet#addModule()` calls in `Document`. This includes all worklet
 types. Each worklet type has its own counter, too.
 
-## UMA
-
-The UMA data is internal-only.
-
-- WorkerThread.ExitCode : Records the exit code of `WorkerThread`.
-
 # Tests
 
 When you add a new worker or worklet type, please consider adding tests in
@@ -160,6 +154,7 @@ in the following files and directories to avoid breakage.
 
 - Web Platform Tests
   - [content-security-policy/](https://cs.chromium.org/chromium/src/third_party/blink/web_tests/external/wpt/content-security-policy/)
+  - [cross-origin-embedder-policy/](https://cs.chromium.org/chromium/src/third_party/blink/web_tests/external/wpt/html/cross-origin-embedder-policy/)
   - [fetch/](https://cs.chromium.org/chromium/src/third_party/blink/web_tests/external/wpt/fetch/)
   - [mixed-content/](https://cs.chromium.org/chromium/src/third_party/blink/web_tests/external/wpt/mixed-content/)
   - [performance-timeline/](https://cs.chromium.org/chromium/src/third_party/blink/web_tests/external/wpt/performance-timeline/)
@@ -175,6 +170,7 @@ in the following files and directories to avoid breakage.
   - [chrome/browser/extensions/api/web_request/web_request_apitest.cc](https://cs.chromium.org/chromium/src/chrome/browser/extensions/api/web_request/web_request_apitest.cc)
   - [chrome/browser/ssl/ssl_browsertest.cc](https://cs.chromium.org/chromium/src/chrome/browser/ssl/ssl_browsertest.cc)
   - [chrome/browser/subresource_filter/subresource_filter_browsertest.cc](https://cs.chromium.org/chromium/src/chrome/browser/subresource_filter/subresource_filter_browsertest.cc)
+  - [content/browser/do_not_track_browsertest.cc](https://cs.chromium.org/chromium/src/content/browser/do_not_track_browsertest.cc)
 
 # References
 

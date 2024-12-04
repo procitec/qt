@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,10 +10,12 @@
 #include <set>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/bind_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/location.h"
+#include "base/logging.h"
 #include "base/memory/ptr_util.h"
+#include "base/memory/weak_ptr.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/pickle.h"
 #include "base/strings/stringprintf.h"
@@ -22,8 +24,9 @@
 #include "components/sync/model/entity_change.h"
 #include "components/sync/model/metadata_batch.h"
 #include "components/sync/model/mutable_data_batch.h"
+#include "components/sync/protocol/entity_metadata.pb.h"
 #include "components/sync/protocol/model_type_state.pb.h"
-#include "components/sync/protocol/sync.pb.h"
+#include "components/sync/protocol/session_specifics.pb.h"
 #include "components/sync_device_info/local_device_info_util.h"
 #include "components/sync_sessions/session_sync_prefs.h"
 #include "components/sync_sessions/sync_sessions_client.h"
@@ -45,7 +48,7 @@ std::string EncodeStorageKey(const std::string& session_tag, int tab_node_id) {
   base::Pickle pickle;
   pickle.WriteString(session_tag);
   pickle.WriteInt(tab_node_id);
-  return std::string(static_cast<const char*>(pickle.data()), pickle.size());
+  return std::string(pickle.data_as_char(), pickle.size());
 }
 
 bool DecodeStorageKey(const std::string& storage_key,
@@ -80,21 +83,20 @@ std::unique_ptr<syncer::EntityData> MoveToEntityData(
 std::string GetSessionTagWithPrefs(const std::string& cache_guid,
                                    SessionSyncPrefs* sync_prefs) {
   DCHECK(sync_prefs);
-  const std::string persisted_guid = sync_prefs->GetSyncSessionsGUID();
+
+  // If a legacy GUID exists, keep honoring it.
+  const std::string persisted_guid = sync_prefs->GetLegacySyncSessionsGUID();
   if (!persisted_guid.empty()) {
     DVLOG(1) << "Restoring persisted session sync guid: " << persisted_guid;
     return persisted_guid;
   }
 
-  const std::string new_guid =
-      base::StringPrintf("session_sync%s", cache_guid.c_str());
-  DVLOG(1) << "Creating session sync guid: " << new_guid;
-  sync_prefs->SetSyncSessionsGUID(new_guid);
-  return new_guid;
+  DVLOG(1) << "Using sync cache guid as session sync guid: " << cache_guid;
+  return cache_guid;
 }
 
 void ForwardError(syncer::OnceModelErrorHandler error_handler,
-                  const base::Optional<syncer::ModelError>& error) {
+                  const absl::optional<syncer::ModelError>& error) {
   if (error) {
     std::move(error_handler).Run(*error);
   }
@@ -102,10 +104,11 @@ void ForwardError(syncer::OnceModelErrorHandler error_handler,
 
 // Parses the content of |record_list| into |*initial_data|. The output
 // parameters are first for binding purposes.
-base::Optional<syncer::ModelError> ParseInitialDataOnBackendSequence(
+absl::optional<syncer::ModelError> ParseInitialDataOnBackendSequence(
     std::map<std::string, sync_pb::SessionSpecifics>* initial_data,
     std::string* session_name,
     std::unique_ptr<ModelTypeStore::RecordList> record_list) {
+  TRACE_EVENT0("sync", "sync_sessions::ParseInitialDataOnBackendSequence");
   DCHECK(initial_data);
   DCHECK(initial_data->empty());
   DCHECK(record_list);
@@ -123,13 +126,13 @@ base::Optional<syncer::ModelError> ParseInitialDataOnBackendSequence(
 
   *session_name = syncer::GetPersonalizableDeviceNameBlocking();
 
-  return base::nullopt;
+  return absl::nullopt;
 }
 
 }  // namespace
 
 struct SessionStore::Builder {
-  SyncSessionsClient* sessions_client = nullptr;
+  base::WeakPtr<SyncSessionsClient> sessions_client;
   OpenCallback callback;
   SessionInfo local_session_info;
   std::unique_ptr<syncer::ModelTypeStore> underlying_store;
@@ -138,19 +141,20 @@ struct SessionStore::Builder {
 };
 
 // static
-void SessionStore::Open(
-    const std::string& cache_guid,
-    SyncSessionsClient* sessions_client,
-    OpenCallback callback) {
+void SessionStore::Open(const std::string& cache_guid,
+                        SyncSessionsClient* sessions_client,
+                        OpenCallback callback) {
   DCHECK(sessions_client);
 
   DVLOG(1) << "Opening session store";
 
   auto builder = std::make_unique<Builder>();
-  builder->sessions_client = sessions_client;
+  builder->sessions_client = sessions_client->AsWeakPtr();
   builder->callback = std::move(callback);
 
   builder->local_session_info.device_type = syncer::GetLocalDeviceType();
+  builder->local_session_info.device_form_factor =
+      syncer::GetLocalDeviceFormFactor();
   builder->local_session_info.session_tag = GetSessionTagWithPrefs(
       cache_guid, sessions_client->GetSessionSyncPrefs());
 
@@ -323,7 +327,7 @@ std::string SessionStore::GetTabClientTagForTest(const std::string& session_tag,
 // static
 void SessionStore::OnStoreCreated(
     std::unique_ptr<Builder> builder,
-    const base::Optional<syncer::ModelError>& error,
+    const absl::optional<syncer::ModelError>& error,
     std::unique_ptr<ModelTypeStore> underlying_store) {
   DCHECK(builder);
 
@@ -345,8 +349,9 @@ void SessionStore::OnStoreCreated(
 // static
 void SessionStore::OnReadAllMetadata(
     std::unique_ptr<Builder> builder,
-    const base::Optional<syncer::ModelError>& error,
+    const absl::optional<syncer::ModelError>& error,
     std::unique_ptr<syncer::MetadataBatch> metadata_batch) {
+  TRACE_EVENT0("sync", "sync_sessions::SessionStore::OnReadAllMetadata");
   DCHECK(builder);
 
   if (error) {
@@ -371,7 +376,8 @@ void SessionStore::OnReadAllMetadata(
 // static
 void SessionStore::OnReadAllData(
     std::unique_ptr<Builder> builder,
-    const base::Optional<syncer::ModelError>& error) {
+    const absl::optional<syncer::ModelError>& error) {
+  TRACE_EVENT0("sync", "sync_sessions::SessionStore::OnReadAllData");
   DCHECK(builder);
 
   if (error) {
@@ -392,10 +398,11 @@ void SessionStore::OnReadAllData(
   auto session_store = base::WrapUnique(new SessionStore(
       builder->local_session_info, std::move(builder->underlying_store),
       std::move(builder->initial_data),
-      builder->metadata_batch->GetAllMetadata(), builder->sessions_client));
+      builder->metadata_batch->GetAllMetadata(),
+      builder->sessions_client.get()));
 
   std::move(builder->callback)
-      .Run(/*error=*/base::nullopt, std::move(session_store),
+      .Run(/*error=*/absl::nullopt, std::move(session_store),
            std::move(builder->metadata_batch));
 }
 
@@ -407,12 +414,14 @@ SessionStore::SessionStore(
     SyncSessionsClient* sessions_client)
     : local_session_info_(local_session_info),
       store_(std::move(underlying_store)),
+      sessions_client_(sessions_client),
       session_tracker_(sessions_client) {
-  session_tracker_.InitLocalSession(local_session_info_.session_tag,
-                                    local_session_info_.client_name,
-                                    local_session_info_.device_type);
+  session_tracker_.InitLocalSession(
+      local_session_info_.session_tag, local_session_info_.client_name,
+      local_session_info_.device_type, local_session_info_.device_form_factor);
 
   DCHECK(store_);
+  DCHECK(sessions_client_);
 
   DVLOG(1) << "Initializing session store with " << initial_data.size()
            << " restored entities and " << initial_metadata.size()
@@ -420,10 +429,7 @@ SessionStore::SessionStore(
 
   bool found_local_header = false;
 
-  for (auto& storage_key_and_specifics : initial_data) {
-    const std::string& storage_key = storage_key_and_specifics.first;
-    SessionSpecifics& specifics = storage_key_and_specifics.second;
-
+  for (auto& [storage_key, specifics] : initial_data) {
     // The store should not contain invalid data, but as a precaution we filter
     // out anyway in case the persisted data is corrupted.
     if (!AreValidSpecifics(specifics)) {
@@ -477,7 +483,7 @@ SessionStore::SessionStore(
   // the header.
   for (const SyncedSession* session :
        session_tracker_.LookupAllForeignSessions(SyncedSessionTracker::RAW)) {
-    session_tracker_.CleanupSession(session->session_tag);
+    session_tracker_.CleanupSession(session->GetSessionTag());
   }
 }
 
@@ -541,11 +547,12 @@ std::unique_ptr<SessionStore::WriteBatch> SessionStore::CreateWriteBatch(
 void SessionStore::DeleteAllDataAndMetadata() {
   session_tracker_.Clear();
   store_->DeleteAllDataAndMetadata(base::DoNothing());
+  sessions_client_->GetSessionSyncPrefs()->ClearLegacySyncSessionsGUID();
 
   // At all times, the local session must be tracked.
-  session_tracker_.InitLocalSession(local_session_info_.session_tag,
-                                    local_session_info_.client_name,
-                                    local_session_info_.device_type);
+  session_tracker_.InitLocalSession(
+      local_session_info_.session_tag, local_session_info_.client_name,
+      local_session_info_.device_type, local_session_info_.device_form_factor);
 }
 
 }  // namespace sync_sessions

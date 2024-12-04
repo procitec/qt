@@ -7,7 +7,6 @@
 
 #include "gm/gm.h"
 #include "include/core/SkCanvas.h"
-#include "include/core/SkFilterQuality.h"
 #include "include/core/SkImage.h"
 #include "include/core/SkMatrix.h"
 #include "include/core/SkPaint.h"
@@ -15,16 +14,24 @@
 #include "include/core/SkRefCnt.h"
 #include "include/core/SkSize.h"
 #include "include/core/SkString.h"
-#include "include/private/SkTArray.h"
-#include "include/private/SkTDArray.h"
+#include "include/private/base/SkTArray.h"
+#include "include/private/base/SkTDArray.h"
+#include "tools/DecodeUtils.h"
+#include "tools/GpuToolUtils.h"
 #include "tools/Resources.h"
+#include "tools/ToolUtils.h"
 
 #include <initializer_list>
 
-static sk_sp<SkImage> make_image1() { return GetResourceAsImage("images/mandrill_128.png"); }
+using namespace skia_private;
+
+static sk_sp<SkImage> make_image1() {
+    return ToolUtils::GetResourceAsImage("images/mandrill_128.png");
+}
 
 static sk_sp<SkImage> make_image2() {
-    return GetResourceAsImage("images/brickwork-texture.jpg")->makeSubset({0, 0, 128, 128});
+    return ToolUtils::GetResourceAsImage("images/brickwork-texture.jpg")
+            ->makeSubset(nullptr, {0, 0, 128, 128});
 }
 
 namespace skiagm {
@@ -34,9 +41,9 @@ public:
     PerspImages() = default;
 
 protected:
-    SkString onShortName() override { return SkString("persp_images"); }
+    SkString getName() const override { return SkString("persp_images"); }
 
-    SkISize onISize() override { return SkISize::Make(1150, 1280); }
+    SkISize getISize() override { return SkISize::Make(1150, 1280); }
 
     void onOnceBeforeDraw() override {
         fImages.push_back(make_image1());
@@ -45,10 +52,10 @@ protected:
 
     void onDraw(SkCanvas* canvas) override {
         SkTDArray<SkMatrix> matrices;
-        matrices.push()->setAll(1.f, 0.f,    0.f,
+        matrices.append()->setAll(1.f, 0.f,    0.f,
                                 0.f, 1.f,    0.f,
                                 0.f, 0.005f, 1.f);
-        matrices.push()->setAll(1.f,     0.f,    0.f,
+        matrices.append()->setAll(1.f,     0.f,    0.f,
                                 0.f,     1.f,    0.f,
                                 0.007f, -0.005f, 1.f);
         matrices[1].preSkew(0.2f, -0.1f);
@@ -78,30 +85,35 @@ protected:
             for (const auto& m : matrices) {
                 for (auto aa : {false, true}) {
                     paint.setAntiAlias(aa);
-                    for (auto filter : {kNone_SkFilterQuality, kLow_SkFilterQuality,
-                                        kMedium_SkFilterQuality, kHigh_SkFilterQuality}) {
-                        for (const auto& img : fImages) {
-                            paint.setFilterQuality(filter);
-                            canvas->save();
-                            canvas->concat(m);
-                            SkRect src = {img->width() / 4.f, img->height() / 4.f,
-                                          3.f * img->width() / 4.f, 3.f * img->height() / 4};
-                            SkRect dst = {0, 0,
-                                          3.f / 4.f * img->width(), 3.f / 4.f * img->height()};
-                            switch (type) {
-                                case DrawType::kDrawImage:
-                                    canvas->drawImage(img, 0, 0, &paint);
-                                    break;
-                                case DrawType::kDrawImageRectStrict:
-                                    canvas->drawImageRect(img, src, dst, &paint,
-                                                          SkCanvas::kStrict_SrcRectConstraint);
-                                    break;
-                                case DrawType::kDrawImageRectFast:
-                                    canvas->drawImageRect(img, src, dst, &paint,
-                                                          SkCanvas::kFast_SrcRectConstraint);
-                                    break;
+                    for (auto sampling : {
+                        SkSamplingOptions(SkFilterMode::kNearest),
+                        SkSamplingOptions(SkFilterMode::kLinear),
+                        SkSamplingOptions(SkFilterMode::kLinear, SkMipmapMode::kLinear),
+                        SkSamplingOptions(SkCubicResampler::Mitchell())}) {
+                        for (const auto& origImage : fImages) {
+                            sk_sp<SkImage> img = ToolUtils::MakeTextureImage(canvas, origImage);
+                            if (img) {
+                                canvas->save();
+                                canvas->concat(m);
+                                SkRect src = { img->width() / 4.f, img->height() / 4.f,
+                                               3.f * img->width() / 4.f, 3.f * img->height() / 4 };
+                                SkRect dst = { 0, 0,
+                                               3.f / 4.f * img->width(), 3.f / 4.f * img->height()};
+                                switch (type) {
+                                    case DrawType::kDrawImage:
+                                        canvas->drawImage(img, 0, 0, sampling, &paint);
+                                        break;
+                                    case DrawType::kDrawImageRectStrict:
+                                        canvas->drawImageRect(img, src, dst, sampling, &paint,
+                                                              SkCanvas::kStrict_SrcRectConstraint);
+                                        break;
+                                    case DrawType::kDrawImageRectFast:
+                                        canvas->drawImageRect(img, src, dst, sampling, &paint,
+                                                              SkCanvas::kFast_SrcRectConstraint);
+                                        break;
+                                }
+                                canvas->restore();
                             }
-                            canvas->restore();
                             ++n;
                             if (n < 8) {
                                 canvas->translate(bounds.width() + 10.f, 0);
@@ -120,8 +132,8 @@ protected:
     }
 
 private:
-    static constexpr int kNumImages = 4;
-    SkTArray<sk_sp<SkImage>> fImages;
+    inline static constexpr int kNumImages = 4;
+    TArray<sk_sp<SkImage>> fImages;
 
     using INHERITED = GM;
 };

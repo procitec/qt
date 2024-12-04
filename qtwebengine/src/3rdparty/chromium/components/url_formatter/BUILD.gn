@@ -1,8 +1,9 @@
-# Copyright 2015 The Chromium Authors. All rights reserved.
+# Copyright 2015 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
 import("//build/config/jumbo.gni")
+import("//testing/libfuzzer/fuzzer_test.gni")
 
 if (is_android) {
   import("//build/config/android/rules.gni")
@@ -25,22 +26,17 @@ jumbo_static_library("url_formatter") {
     "elide_url.h",
     "spoof_checks/idn_spoof_checker.cc",
     "spoof_checks/idn_spoof_checker.h",
+    "spoof_checks/idna_metrics.h",
     "url_fixer.cc",
     "url_fixer.h",
     "url_formatter.cc",
     "url_formatter.h",
   ]
 
-  configs += [
-    # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
-    "//build/config/compiler:no_size_t_to_int_warning",
-
-    "//build/config/compiler:noshadowing",
-  ]
-
   deps = [
     "//base",
     "//base:i18n",
+    "//build:robolectric_buildflags",
     "//components/url_formatter:skeleton_generator",
     "//components/url_formatter/spoof_checks/common_words:common",
     "//components/url_formatter/spoof_checks/common_words:common_words_dafsa",
@@ -48,18 +44,21 @@ jumbo_static_library("url_formatter") {
     "//components/url_formatter/spoof_checks/top_domains:generate_top_domains_trie",
     "//net",
     "//net:preload_decoder",
-    "//ui/gfx",
     "//url",
   ]
 
   public_deps = [ "//third_party/icu" ]
 
-  if (is_android) {
+  if (is_robolectric) {
+    # Make jni.h available.
+    configs += [ "//third_party/jdk" ]
+  }
+  if (is_android || is_robolectric) {
     sources += [ "url_formatter_android.cc" ]
-    deps += [
-      "android:jni_headers",
-      "//url:gurl_android",
-    ]
+    deps += [ "android:jni_headers" ]
+  } else {
+    # Used in elide_url.cc
+    deps += [ "//ui/gfx" ]
   }
 }
 
@@ -79,14 +78,25 @@ jumbo_source_set("unit_tests") {
   ]
 
   deps = [
+    ":skeleton_generator",
     ":url_formatter",
     "//base",
     "//base/test:test_support",
-    "//components/url_formatter/spoof_checks/top_domains:generate_top_domains_test_trie",
+    "//components/url_formatter/spoof_checks/top_domains:generate_idn_top_domains_test_trie",
     "//net",
     "//net:preload_decoder",
     "//testing/gtest",
     "//ui/gfx",
+    "//url",
+  ]
+}
+
+fuzzer_test("url_formatter_fixer_fuzzer") {
+  sources = [ "url_fixer_fuzzer.cc" ]
+  deps = [
+    ":url_formatter",
+    "//base",
+    "//base:i18n",
     "//url",
   ]
 }

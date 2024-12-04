@@ -25,9 +25,12 @@
 
 #include "perfetto/base/export.h"
 #include "perfetto/ext/base/scoped_file.h"
+#include "perfetto/ext/base/sys_types.h"
 #include "perfetto/ext/tracing/core/basic_types.h"
 #include "perfetto/ext/tracing/core/shared_memory.h"
+#include "perfetto/ext/tracing/core/trace_packet.h"
 #include "perfetto/tracing/buffer_exhausted_policy.h"
+#include "perfetto/tracing/core/flush_flags.h"
 #include "perfetto/tracing/core/forward_decls.h"
 
 namespace perfetto {
@@ -40,6 +43,7 @@ class Consumer;
 class Producer;
 class SharedMemoryArbiter;
 class TraceWriter;
+class ClientIdentity;
 
 // TODO: for the moment this assumes that all the calls happen on the same
 // thread/sequence. Not sure this will be the case long term in Chrome.
@@ -50,13 +54,19 @@ class TraceWriter;
 //    to the ConnectProducer() method.
 // 2. The transport layer (e.g., src/ipc) when the producer and
 //    the service don't talk locally but via some IPC mechanism.
-class PERFETTO_EXPORT ProducerEndpoint {
+class PERFETTO_EXPORT_COMPONENT ProducerEndpoint {
  public:
   virtual ~ProducerEndpoint();
+
+  // Disconnects the endpoint from the service, while keeping the shared memory
+  // valid. After calling this, the endpoint will no longer call any methods
+  // on the Producer.
+  virtual void Disconnect() = 0;
 
   // Called by the Producer to (un)register data sources. Data sources are
   // identified by their name (i.e. DataSourceDescriptor.name)
   virtual void RegisterDataSource(const DataSourceDescriptor&) = 0;
+  virtual void UpdateDataSource(const DataSourceDescriptor&) = 0;
   virtual void UnregisterDataSource(const std::string& name) = 0;
 
   // Associate the trace writer with the given |writer_id| with
@@ -151,7 +161,7 @@ class PERFETTO_EXPORT ProducerEndpoint {
 //    the ConnectConsumer() method.
 // 2. The transport layer (e.g., src/ipc) when the consumer and
 //    the service don't talk locally but via some IPC mechanism.
-class PERFETTO_EXPORT ConsumerEndpoint {
+class PERFETTO_EXPORT_COMPONENT ConsumerEndpoint {
  public:
   virtual ~ConsumerEndpoint();
 
@@ -179,6 +189,14 @@ class PERFETTO_EXPORT ConsumerEndpoint {
 
   virtual void DisableTracing() = 0;
 
+  // Clones an existing tracing session and attaches to it. The session is
+  // cloned in read-only mode and can only be used to read a snapshot of an
+  // existing tracing session. Will invoke Consumer::OnSessionCloned().
+  // If TracingSessionID == kBugreportSessionId (0xff...ff) the session with the
+  // highest bugreport score is cloned (if any exists).
+  // TODO(primiano): make pure virtual after various 3way patches.
+  virtual void CloneSession(TracingSessionID);
+
   // Requests all data sources to flush their data immediately and invokes the
   // passed callback once all of them have acked the flush (in which case
   // the callback argument |success| will be true) or |timeout_ms| are elapsed
@@ -187,7 +205,15 @@ class PERFETTO_EXPORT ConsumerEndpoint {
   // if that one is not set (or is set to 0), kDefaultFlushTimeoutMs (5s) is
   // used.
   using FlushCallback = std::function<void(bool /*success*/)>;
-  virtual void Flush(uint32_t timeout_ms, FlushCallback) = 0;
+  virtual void Flush(uint32_t timeout_ms, FlushCallback callback, FlushFlags);
+
+  // The only caller of this method is arctraceservice's PerfettoClient.
+  // Everything else in the codebase uses the 3-arg Flush() above.
+  // TODO(primiano): remove the overload without FlushFlags once
+  // arctraceservice moves away from this interface. arctraceservice lives in
+  // the internal repo and changes to this interface require multi-side patches.
+  // Inernally this calls Flush(timeout, callback, FlushFlags(0)).
+  virtual void Flush(uint32_t timeout_ms, FlushCallback callback);
 
   // Tracing data will be delivered invoking Consumer::OnTraceData().
   virtual void ReadBuffers() = 0;
@@ -222,7 +248,29 @@ class PERFETTO_EXPORT ConsumerEndpoint {
   using QueryCapabilitiesCallback =
       std::function<void(const TracingServiceCapabilities&)>;
   virtual void QueryCapabilities(QueryCapabilitiesCallback) = 0;
+
+  // If any tracing session with TraceConfig.bugreport_score > 0 is running,
+  // this will pick the highest-score one, stop it and save it into a fixed
+  // path (See kBugreportTracePath).
+  // The callback is invoked when the file has been saved, in case of success,
+  // or whenever an error occurs.
+  // Args:
+  // - success: if true, an eligible trace was found and saved into file.
+  //            If false, either there was no eligible trace running or
+  //            something else failed (See |msg|).
+  // - msg: human readable diagnostic messages to debug failures.
+  using SaveTraceForBugreportCallback =
+      std::function<void(bool /*success*/, const std::string& /*msg*/)>;
+  virtual void SaveTraceForBugreport(SaveTraceForBugreportCallback) = 0;
 };  // class ConsumerEndpoint.
+
+struct PERFETTO_EXPORT_COMPONENT TracingServiceInitOpts {
+  // Function used by tracing service to compress packets. Takes a pointer to
+  // a vector of TracePackets and replaces the packets in the vector with
+  // compressed ones.
+  using CompressorFn = void (*)(std::vector<TracePacket>*);
+  CompressorFn compressor_fn = nullptr;
+};
 
 // The public API of the tracing Service business logic.
 //
@@ -234,10 +282,15 @@ class PERFETTO_EXPORT ConsumerEndpoint {
 //
 // Subclassed by:
 //   The service business logic in src/core/tracing_service_impl.cc.
-class PERFETTO_EXPORT TracingService {
+class PERFETTO_EXPORT_COMPONENT TracingService {
  public:
   using ProducerEndpoint = perfetto::ProducerEndpoint;
   using ConsumerEndpoint = perfetto::ConsumerEndpoint;
+  using InitOpts = TracingServiceInitOpts;
+
+  // Default sizes used by the service implementation and client library.
+  static constexpr size_t kDefaultShmPageSize = 4096ul;
+  static constexpr size_t kDefaultShmSize = 256 * 1024ul;
 
   enum class ProducerSMBScrapingMode {
     // Use service's default setting for SMB scraping. Currently, the default
@@ -253,10 +306,12 @@ class PERFETTO_EXPORT TracingService {
     kDisabled
   };
 
-  // Implemented in src/core/tracing_service_impl.cc .
+  // Implemented in src/core/tracing_service_impl.cc . CompressorFn can be
+  // nullptr, in which case TracingService will not support compression.
   static std::unique_ptr<TracingService> CreateInstance(
       std::unique_ptr<SharedMemory::Factory>,
-      base::TaskRunner*);
+      base::TaskRunner*,
+      InitOpts init_opts = {});
 
   virtual ~TracingService();
 
@@ -302,14 +357,15 @@ class PERFETTO_EXPORT TracingService {
   // connected.
   virtual std::unique_ptr<ProducerEndpoint> ConnectProducer(
       Producer*,
-      uid_t uid,
+      const ClientIdentity& client_identity,
       const std::string& name,
       size_t shared_memory_size_hint_bytes = 0,
       bool in_process = false,
       ProducerSMBScrapingMode smb_scraping_mode =
           ProducerSMBScrapingMode::kDefault,
       size_t shared_memory_page_size_hint_bytes = 0,
-      std::unique_ptr<SharedMemory> shm = nullptr) = 0;
+      std::unique_ptr<SharedMemory> shm = nullptr,
+      const std::string& sdk_version = {}) = 0;
 
   // Connects a Consumer instance and obtains a ConsumerEndpoint, which is
   // essentially a 1:1 channel between one Consumer and the Service.

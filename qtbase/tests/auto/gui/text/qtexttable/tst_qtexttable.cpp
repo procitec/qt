@@ -1,33 +1,8 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the test suite of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:GPL-EXCEPT$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 3 as published by the Free Software
-** Foundation with exceptions as appearing in the file LICENSE.GPL3-EXCEPT
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
 
-#include <QtTest/QtTest>
+#include <QTest>
 
 #include <qbuffer.h>
 #include <qtextdocument.h>
@@ -100,6 +75,8 @@ private slots:
 #endif
     void checkBorderAttributes_data();
     void checkBorderAttributes();
+    void checkTableBorderAttributes_data();
+    void checkTableBorderAttributes();
 
 #ifndef QT_NO_WIDGETS
     void columnWidthWithSpans();
@@ -146,7 +123,7 @@ void tst_QTextTable::variousTableModifications()
     QTextTableFormat tableFmt;
 
     QTextTable *tab = cursor.insertTable(2, 2, tableFmt);
-    QCOMPARE(doc->toPlainText().length(), 5);
+    QCOMPARE(doc->toPlainText().size(), 5);
     QCOMPARE(tab, cursor.currentTable());
     QCOMPARE(tab->columns(), 2);
     QCOMPARE(tab->rows(), 2);
@@ -201,14 +178,14 @@ void tst_QTextTable::variousTableModifications()
     cursor.movePosition(QTextCursor::NextBlock);
     QCOMPARE(cursor.position(), 1);
     cursor.deleteChar();
-    QCOMPARE(doc->toPlainText().length(), 5);
+    QCOMPARE(doc->toPlainText().size(), 5);
     cursor.movePosition(QTextCursor::NextBlock);
     QCOMPARE(cursor.position(), 2);
     cursor.deleteChar();
-    QCOMPARE(doc->toPlainText().length(), 5);
+    QCOMPARE(doc->toPlainText().size(), 5);
     cursor.deletePreviousChar();
     QCOMPARE(cursor.position(), 2);
-    QCOMPARE(doc->toPlainText().length(), 5);
+    QCOMPARE(doc->toPlainText().size(), 5);
 
     QTextTable *table = cursor.currentTable();
     QCOMPARE(table->rows(), 2);
@@ -217,16 +194,16 @@ void tst_QTextTable::variousTableModifications()
     table->insertRows(2, 1);
     QCOMPARE(table->rows(), 3);
     QCOMPARE(table->columns(), 2);
-    QCOMPARE(doc->toPlainText().length(), 7);
+    QCOMPARE(doc->toPlainText().size(), 7);
     table->insertColumns(2, 2);
     QCOMPARE(table->rows(), 3);
     QCOMPARE(table->columns(), 4);
-    QCOMPARE(doc->toPlainText().length(), 13);
+    QCOMPARE(doc->toPlainText().size(), 13);
 
     table->resize(4, 5);
     QCOMPARE(table->rows(), 4);
     QCOMPARE(table->columns(), 5);
-    QCOMPARE(doc->toPlainText().length(), 21);
+    QCOMPARE(doc->toPlainText().size(), 21);
 }
 
 void tst_QTextTable::tableShrinking()
@@ -234,7 +211,7 @@ void tst_QTextTable::tableShrinking()
     QTextTableFormat tableFmt;
 
     cursor.insertTable(3, 4, tableFmt);
-    QCOMPARE(doc->toPlainText().length(), 13);
+    QCOMPARE(doc->toPlainText().size(), 13);
 
     QTextTable *table = cursor.currentTable();
     QCOMPARE(table->rows(), 3);
@@ -243,16 +220,16 @@ void tst_QTextTable::tableShrinking()
     table->removeRows(1, 1);
     QCOMPARE(table->rows(), 2);
     QCOMPARE(table->columns(), 4);
-    QCOMPARE(doc->toPlainText().length(), 9);
+    QCOMPARE(doc->toPlainText().size(), 9);
     table->removeColumns(1, 2);
     QCOMPARE(table->rows(), 2);
     QCOMPARE(table->columns(), 2);
-    QCOMPARE(doc->toPlainText().length(), 5);
+    QCOMPARE(doc->toPlainText().size(), 5);
 
     table->resize(1, 1);
     QCOMPARE(table->rows(), 1);
     QCOMPARE(table->columns(), 1);
-    QCOMPARE(doc->toPlainText().length(), 2);
+    QCOMPARE(doc->toPlainText().size(), 2);
 }
 
 void tst_QTextTable::spans()
@@ -277,7 +254,7 @@ void tst_QTextTable::variousModifications2()
     QTextTableFormat tableFmt;
 
     cursor.insertTable(2, 5, tableFmt);
-    QCOMPARE(doc->toPlainText().length(), 11);
+    QCOMPARE(doc->toPlainText().size(), 11);
     QTextTable *table = cursor.currentTable();
     QCOMPARE(cursor.position(), 1);
     QCOMPARE(table->rows(), 2);
@@ -1051,30 +1028,30 @@ public:
         PaintEngine()
             : QPaintEngine(QPaintEngine::PaintEngineFeatures{ })
         {}
-        virtual Type type() const
+        virtual Type type() const override
         {
             return User;
         }
-        virtual bool begin(QPaintDevice *)
+        virtual bool begin(QPaintDevice *) override
         {
             return true;
         }
-        virtual bool end()
+        virtual bool end() override
         {
             return true;
         }
-        virtual void updateState(const QPaintEngineState &)
+        virtual void updateState(const QPaintEngineState &) override
         {}
-        virtual void drawRects(const QRect *, int)
+        virtual void drawRects(const QRect *, int) override
         {}
-        virtual void drawRects(const QRectF *r, int)
+        virtual void drawRects(const QRectF *r, int) override
         {
             if (painter()->brush() == QBrush(Qt::green))
             {
                 rects.append(*r);
             }
         }
-        virtual void drawPixmap(const QRectF &, const QPixmap &, const QRectF &)
+        virtual void drawPixmap(const QRectF &, const QPixmap &, const QRectF &) override
         {}
     };
 
@@ -1123,7 +1100,7 @@ public:
         layout.setUnits(QPageLayout::Point);
         setPageLayout(layout);
     }
-    virtual int metric(PaintDeviceMetric metric) const
+    virtual int metric(PaintDeviceMetric metric) const override
     {
         if (PdmDevicePixelRatio == metric)
             return 1;
@@ -1139,11 +1116,11 @@ public:
             return 700;
         return 900;
     }
-    virtual QPaintEngine *paintEngine() const
+    virtual QPaintEngine *paintEngine() const override
     {
         return engine;
     }
-    bool newPage()
+    bool newPage() override
     {
         ++pages;
         return true;
@@ -1164,17 +1141,17 @@ void tst_QTextTable::QTBUG31330_renderBackground()
     cell.setFormat(cellFormat);
 
     QTextCursor tc = cell.firstCursorPosition();
-    for (int i = 0; i < 60; ++i) {
+    for (int i = 0; i < 100; ++i) {
         tc.insertBlock();
     }
     QTBUG31330_PaintDevice::PaintEngine engine;
     QTBUG31330_PaintDevice paintDevice(&engine);
-    paintDevice.setPageSize(QPagedPaintDevice::A4);
+    paintDevice.setPageSize(QPageSize(QPageSize::A4));
     doc.print(&paintDevice);
 
     QVERIFY(paintDevice.pages >= 2);
-    QCOMPARE(engine.rects.count(), paintDevice.pages);
-    for (int i = 0; i < engine.rects.count(); ++i) {
+    QCOMPARE(engine.rects.size(), paintDevice.pages);
+    for (int i = 0; i < engine.rects.size(); ++i) {
         QRectF rect = engine.rects[i];
         QVERIFY(rect.top() > 0);
         QVERIFY(rect.bottom() < 1000);
@@ -1259,6 +1236,7 @@ void tst_QTextTable::checkBorderAttributes()
     QFETCH(QBrush, leftBorderBrush);
     QFETCH(QBrush, rightBorderBrush);
 
+#ifndef QT_NO_TEXTHTMLPARSER
     QTextDocument doc;
     doc.setHtml(html);
     QTextCursor cursor(doc.firstBlock());
@@ -1284,6 +1262,75 @@ void tst_QTextTable::checkBorderAttributes()
             QCOMPARE(cellFormat.brushProperty(QTextFormat::TableCellRightBorderBrush), rightBorderBrush);
         }
     }
+#endif
+}
+
+void tst_QTextTable::checkTableBorderAttributes_data()
+{
+    QTest::addColumn<QString>("html");
+    QTest::addColumn<qreal>("tableBorderWidth");
+    QTest::addColumn<QTextFrameFormat::BorderStyle>("tableBorderStyle");
+    QTest::addColumn<QBrush>("tableBorderBrush");
+
+    const QString tableHtmlStart = QStringLiteral("<html><head><style>");
+    const QString tableHtmlEnd1 = QStringLiteral("</style></head><body>"
+                                                "<table><tr><td>One</td><td>Two</td></tr></table>"
+                                                "</body></html>");
+    const QString tableHtmlEnd2 = QStringLiteral("</style></head><body>"
+                                                "<table border=10><tr><td>One</td><td>Two</td></tr></table>"
+                                                "</body></html>");
+
+    QTest::newRow("table-border-attributes-shorthand")
+            << QString("%1"
+                       "table {"
+                            "border: 2px solid red;"
+                       "}"
+                       "%2").arg(tableHtmlStart).arg(tableHtmlEnd1)
+            << 2.0 << QTextFrameFormat::BorderStyle_Solid << QBrush(Qt::red);
+
+    QTest::newRow("table-border-attributes-explicit")
+            << QString("%1"
+                       "table {"
+                            "border-width: 2px;"
+                            "border-color: red;"
+                            "border-style: dashed;"
+                       "}"
+                       "%2").arg(tableHtmlStart).arg(tableHtmlEnd1)
+            << 2.0 << QTextFrameFormat::BorderStyle_Dashed << QBrush(Qt::red);
+
+    QTest::newRow("table-border-override")
+            << QString("%1"
+                       "table {"
+                          "border: 2px solid red;"
+                       "}"
+                       "%2").arg(tableHtmlStart).arg(tableHtmlEnd2)
+            << 2.0 << QTextFrameFormat::BorderStyle_Solid << QBrush(Qt::red);
+
+    QTest::newRow("table-border-default")
+            << QString("%1"
+                       "%2").arg(tableHtmlStart).arg(tableHtmlEnd2)
+            << 10.0 << QTextFrameFormat::BorderStyle_Outset << QBrush(Qt::darkGray);
+}
+
+void tst_QTextTable::checkTableBorderAttributes()
+{
+    QFETCH(QString, html);
+    QFETCH(qreal, tableBorderWidth);
+    QFETCH(QTextFrameFormat::BorderStyle, tableBorderStyle);
+    QFETCH(QBrush, tableBorderBrush);
+
+#ifndef QT_NO_TEXTHTMLPARSER
+    QTextDocument doc;
+    doc.setHtml(html);
+    QTextCursor cursor(doc.firstBlock());
+    cursor.movePosition(QTextCursor::Right);
+
+    QTextTable *currentTable = cursor.currentTable();
+    QVERIFY(currentTable);
+    QCOMPARE(currentTable->format().border(), tableBorderWidth);
+    QCOMPARE(currentTable->format().borderStyle(), tableBorderStyle);
+    QCOMPARE(currentTable->format().borderBrush(), tableBorderBrush);
+#endif
 }
 
 #ifndef QT_NO_WIDGETS
@@ -1317,8 +1364,7 @@ void tst_QTextTable::columnWidthWithImage_data()
         QBuffer buffer(&imageBytes);
         buffer.open(QIODevice::WriteOnly);
         image.save(&buffer, "png");
-        return QString("<td><img src='data:image/png;base64,%1'/></td>")
-                       .arg(QString::fromLatin1(imageBytes.toBase64()));
+        return QString("<td><img src='data:image/png;base64,%1'/></td>").arg(imageBytes.toBase64());
     };
 
     QTest::addColumn<QString>("leftHtml");
@@ -1343,6 +1389,7 @@ void tst_QTextTable::columnWidthWithImage()
     QFETCH(QString, rightHtml);
     QFETCH(QSize, imageSize);
 
+#ifndef QT_NO_TEXTHTMLPARSER
     QTextDocument doc;
     doc.setHtml(tableTemplate.arg(leftHtml).arg(rightHtml));
     QTextEdit textEdit;
@@ -1362,8 +1409,10 @@ void tst_QTextTable::columnWidthWithImage()
     const QRectF rightRect = currentTable->document()->documentLayout()->blockBoundingRect(block);
     QCOMPARE(leftRect.size().toSize(), imageSize);
     QVERIFY(rightRect.left() > leftRect.right());
+#endif
 }
 #endif
+
 
 QTEST_MAIN(tst_QTextTable)
 #include "tst_qtexttable.moc"

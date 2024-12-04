@@ -2,5 +2,8 @@
 # about the component whose constants you're changing.
 vapier@chromium.org
 ejcaruso@chromium.org
+hidehiko@chromium.org
 
-# COMPONENT: OS>Systems
+# Rust owners.
+per-file Cargo.* = file:src/OWNERS
+per-file build.rs = file:src/OWNERS

@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Copyright 2019 The Chromium Authors. All rights reserved.
+# Copyright 2019 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -13,11 +13,13 @@ from decode_template import HEADER as DECODE_HEADER_TEMPLATE
 from decode_template import IMPL as DECODE_IMPL_TEMPLATE
 import ukm_model
 import gen_builders
+import os
 
+_FILE_DIR = os.path.dirname(__file__)
 
 class GenBuildersTest(unittest.TestCase):
   def testFilterObsoleteMetrics(self):
-    data = gen_builders.ReadFilteredData('../../tools/metrics/ukm/ukm.xml')
+    data = gen_builders.ReadFilteredData(_FILE_DIR + '/ukm.xml')
     for event in data[ukm_model._EVENT_TYPE.tag]:
       self.assertTrue(ukm_model.IsNotObsolete(event))
       for metric in event[ukm_model._METRIC_TYPE.tag]:
@@ -25,8 +27,8 @@ class GenBuildersTest(unittest.TestCase):
 
   def testGenerateCode(self):
     relpath = '.'
-    data = ukm_model.UKM_XML_TYPE.Parse(
-        open('../../tools/metrics/ukm/ukm.xml').read())
+    with open(_FILE_DIR + '/ukm.xml') as f:
+      data = ukm_model.UKM_XML_TYPE.Parse(f.read())
     event = data[ukm_model._EVENT_TYPE.tag][0]
     metric = event[ukm_model._METRIC_TYPE.tag][0]
     self.assertIsNotNone(event)
@@ -47,7 +49,7 @@ class GenBuildersTest(unittest.TestCase):
 class {name} final : public ::ukm::internal::UkmEntryBuilderBase {{
  public:
   explicit {name}(ukm::SourceId source_id);
-  explicit {name}(base::UkmSourceId source_id);
+  explicit {name}(ukm::SourceIdObj source_id);
   ~{name}() override;
 
   static const char kEntryName[];
@@ -77,7 +79,7 @@ const uint64_t {name}::kEntryNameHash;
   ::ukm::internal::UkmEntryBuilderBase(source_id, kEntryNameHash) {{
 }}
 
-{name}::{name}(base::UkmSourceId source_id) :
+{name}::{name}(ukm::SourceIdObj source_id) :
   ::ukm::internal::UkmEntryBuilderBase(source_id, kEntryNameHash) {{
 }}""".format(name=eventInfo.name, rawName=eventInfo.raw_name),
         builders_impl_output)

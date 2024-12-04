@@ -31,7 +31,6 @@
 #include <cstdlib>
 
 #include "PageAllocation.h"
-#include <dlfcn.h>
 #include <errno.h>
 #include <sys/mman.h>
 #include <wtf/Assertions.h>
@@ -98,6 +97,9 @@ static int memfdForUsage(size_t bytes, OSAllocator::Usage usage)
 void* OSAllocator::reserveUncommitted(size_t bytes, Usage usage, bool writable, bool executable)
 {
 #if OS(QNX)
+    UNUSED_PARAM(usage);
+    UNUSED_PARAM(writable);
+    UNUSED_PARAM(executable);
     // Reserve memory with PROT_NONE and MAP_LAZY so it isn't committed now.
     void* result = mmap(0, bytes, PROT_NONE, MAP_LAZY | MAP_PRIVATE | MAP_ANON, -1, 0);
     if (result == MAP_FAILED)
@@ -111,7 +113,6 @@ void* OSAllocator::reserveUncommitted(size_t bytes, Usage usage, bool writable, 
                         (fd == -1 ? MAP_ANON : 0), fd, 0);
     if (result == MAP_FAILED)
         CRASH();
-    madvise(result, bytes, MADV_DONTNEED);
 
     if (fd != -1)
         close(fd);
@@ -218,7 +219,12 @@ void OSAllocator::commit(void* address, size_t bytes, bool writable, bool execut
         protection |= PROT_EXEC;
     if (mprotect(address, bytes, protection))
         CRASH();
-    madvise(address, bytes, MADV_WILLNEED);
+
+    while (madvise(address, bytes, MADV_WILLNEED)) {
+        if (errno != EAGAIN)
+            break; // We don't have to crash here. MADV_WILLNEED is only advisory
+    }
+
 #elif HAVE(MADV_FREE_REUSE)
     UNUSED_PARAM(writable);
     UNUSED_PARAM(executable);
@@ -238,7 +244,12 @@ void OSAllocator::decommit(void* address, size_t bytes)
     // Use PROT_NONE and MAP_LAZY to decommit the pages.
     mmap(address, bytes, PROT_NONE, MAP_FIXED | MAP_LAZY | MAP_PRIVATE | MAP_ANON, -1, 0);
 #elif OS(LINUX)
-    madvise(address, bytes, MADV_DONTNEED);
+    while (madvise(address, bytes, MADV_DONTNEED)) {
+        if (errno != EAGAIN) {
+            memset(address, 0, bytes); // We rely on madvise to zero-out the memory
+            break;
+        }
+    }
     if (mprotect(address, bytes, PROT_NONE))
         CRASH();
 #elif HAVE(MADV_FREE_REUSE)
@@ -262,17 +273,36 @@ void OSAllocator::releaseDecommitted(void* address, size_t bytes)
 
 bool OSAllocator::canAllocateExecutableMemory()
 {
-    int flags = MAP_PRIVATE | MAP_ANON;
+    int flags = MAP_PRIVATE;
 #if PLATFORM(IOS)
     if (executable)
         flags |= MAP_JIT;
 #endif
+
+    // Get a read/write memfd page
     const auto size = pageSize();
-    void *testPage = mmap(nullptr, size, PROT_READ | PROT_WRITE | PROT_EXEC, flags, /*fd*/-1, /*offset*/0);
+#if OS(LINUX)
+    const int fd = memfdForUsage(size, OSAllocator::JSJITCodePages);
+#else
+    const int fd = -1;
+#endif
+    if (fd == -1)
+        flags |= MAP_ANON;
+    void *testPage = mmap(nullptr, size, PROT_READ | PROT_WRITE, flags, fd, /*offset*/0);
+    if (fd != -1)
+        close(fd);
+
     if (testPage == MAP_FAILED)
         return false;
+
+    // Write something into the page, to trigger CoW
+    memset(testPage, 0xab, sizeof(quintptr));
+
+    // Then make it executable
+    const bool result = mprotect(testPage, size, PROT_READ | PROT_EXEC) == 0;
+
     munmap(testPage, size);
-    return true;
+    return result;
 }
 
 } // namespace WTF

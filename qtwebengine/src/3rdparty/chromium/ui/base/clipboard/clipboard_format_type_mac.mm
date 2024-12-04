@@ -1,44 +1,63 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "ui/base/clipboard/clipboard_format_type.h"
 
 #import <Cocoa/Cocoa.h>
+#import <CoreServices/CoreServices.h>  // pre-macOS 11
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h> // macOS 11
 
+#include "base/apple/bridging.h"
+#include "base/apple/foundation_util.h"
+#include "base/no_destructor.h"
+#include "base/strings/strcat.h"
+#include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "ui/base/clipboard/clipboard_constants.h"
 
 namespace ui {
 
+struct ClipboardFormatType::ObjCStorage {
+  // A Uniform Type identifier string.
+  NSString* uttype;
+};
+
 // ClipboardFormatType implementation.
-ClipboardFormatType::ClipboardFormatType() : data_(nil) {}
+ClipboardFormatType::ClipboardFormatType()
+    : objc_storage_(std::make_unique<ObjCStorage>()) {}
 
 ClipboardFormatType::ClipboardFormatType(NSString* native_format)
-    : data_([native_format retain]) {}
+    : ClipboardFormatType() {
+  objc_storage_->uttype = native_format;
+}
 
 ClipboardFormatType::ClipboardFormatType(const ClipboardFormatType& other)
-    : data_([other.data_ retain]) {}
+    : ClipboardFormatType() {
+  objc_storage_->uttype = other.objc_storage_->uttype;
+}
 
 ClipboardFormatType& ClipboardFormatType::operator=(
     const ClipboardFormatType& other) {
   if (this != &other) {
-    [data_ release];
-    data_ = [other.data_ retain];
+    objc_storage_->uttype = other.objc_storage_->uttype;
   }
   return *this;
 }
 
 bool ClipboardFormatType::operator==(const ClipboardFormatType& other) const {
-  return [data_ isEqualToString:other.data_];
+  return [objc_storage_->uttype isEqualToString:other.objc_storage_->uttype];
 }
 
-ClipboardFormatType::~ClipboardFormatType() {
-  [data_ release];
-}
+ClipboardFormatType::~ClipboardFormatType() = default;
 
 std::string ClipboardFormatType::Serialize() const {
-  return base::SysNSStringToUTF8(data_);
+  return base::SysNSStringToUTF8(objc_storage_->uttype);
+}
+
+NSString* ClipboardFormatType::ToNSString() const {
+  return objc_storage_->uttype;
 }
 
 // static
@@ -52,7 +71,28 @@ std::string ClipboardFormatType::GetName() const {
 }
 
 bool ClipboardFormatType::operator<(const ClipboardFormatType& other) const {
-  return [data_ compare:other.data_] == NSOrderedAscending;
+  return [objc_storage_->uttype compare:other.objc_storage_->uttype] ==
+         NSOrderedAscending;
+}
+
+// static
+std::string ClipboardFormatType::WebCustomFormatName(int index) {
+  return base::StrCat(
+      {"org.w3.web-custom-format.type-", base::NumberToString(index)});
+}
+
+// static
+const ClipboardFormatType& ClipboardFormatType::WebCustomFormatMap() {
+  static base::NoDestructor<ClipboardFormatType> type(
+      @"org.w3.web-custom-format.map");
+  return *type;
+}
+
+// static
+ClipboardFormatType ClipboardFormatType::CustomPlatformType(
+    const std::string& format_string) {
+  DCHECK(base::IsStringASCII(format_string));
+  return ClipboardFormatType::Deserialize(format_string);
 }
 
 // Various predefined ClipboardFormatTypes.
@@ -64,56 +104,73 @@ ClipboardFormatType ClipboardFormatType::GetType(
 }
 
 // static
-const ClipboardFormatType& ClipboardFormatType::GetUrlType() {
-  static base::NoDestructor<ClipboardFormatType> type(NSURLPboardType);
+const ClipboardFormatType& ClipboardFormatType::FilenamesType() {
+  // This is an awkward mismatch between macOS which has a "multiple items on a
+  // pasteboard approach" and Chromium which has a "one item containing multiple
+  // items" concept. This works well enough, though, as `NSPasteboard.types` is
+  // a union of all types, and thus will find individual items of this type.
+  static base::NoDestructor<ClipboardFormatType> type(NSPasteboardTypeFileURL);
   return *type;
 }
 
 // static
-const ClipboardFormatType& ClipboardFormatType::GetPlainTextType() {
+const ClipboardFormatType& ClipboardFormatType::UrlType() {
+  static base::NoDestructor<ClipboardFormatType> type(NSPasteboardTypeURL);
+  return *type;
+}
+
+// static
+const ClipboardFormatType& ClipboardFormatType::PlainTextType() {
   static base::NoDestructor<ClipboardFormatType> type(NSPasteboardTypeString);
   return *type;
 }
 
 // static
-const ClipboardFormatType& ClipboardFormatType::GetHtmlType() {
-  static base::NoDestructor<ClipboardFormatType> type(NSHTMLPboardType);
+const ClipboardFormatType& ClipboardFormatType::HtmlType() {
+  static base::NoDestructor<ClipboardFormatType> type(NSPasteboardTypeHTML);
   return *type;
 }
 
-const ClipboardFormatType& ClipboardFormatType::GetSvgType() {
-  static base::NoDestructor<ClipboardFormatType> type(kImageSvg);
+const ClipboardFormatType& ClipboardFormatType::SvgType() {
+  if (@available(macOS 11, *)) {
+    static base::NoDestructor<ClipboardFormatType> type(UTTypeSVG.identifier);
+    return *type;
+  } else {
+    static base::NoDestructor<ClipboardFormatType> type(
+        base::apple::CFToNSPtrCast(kUTTypeScalableVectorGraphics));
+    return *type;
+  }
+}
+
+// static
+const ClipboardFormatType& ClipboardFormatType::RtfType() {
+  static base::NoDestructor<ClipboardFormatType> type(NSPasteboardTypeRTF);
   return *type;
 }
 
 // static
-const ClipboardFormatType& ClipboardFormatType::GetRtfType() {
-  static base::NoDestructor<ClipboardFormatType> type(NSRTFPboardType);
+const ClipboardFormatType& ClipboardFormatType::PngType() {
+  static base::NoDestructor<ClipboardFormatType> type(NSPasteboardTypePNG);
   return *type;
 }
 
 // static
-const ClipboardFormatType& ClipboardFormatType::GetBitmapType() {
-  static base::NoDestructor<ClipboardFormatType> type(NSTIFFPboardType);
+const ClipboardFormatType& ClipboardFormatType::BitmapType() {
+  static base::NoDestructor<ClipboardFormatType> type(NSPasteboardTypeTIFF);
   return *type;
 }
 
 // static
-const ClipboardFormatType& ClipboardFormatType::GetWebKitSmartPasteType() {
-  static base::NoDestructor<ClipboardFormatType> type(kWebSmartPastePboardType);
-  return *type;
-}
-
-// static
-const ClipboardFormatType& ClipboardFormatType::GetWebCustomDataType() {
-  static base::NoDestructor<ClipboardFormatType> type(kWebCustomDataPboardType);
-  return *type;
-}
-
-// static
-const ClipboardFormatType& ClipboardFormatType::GetPepperCustomDataType() {
+const ClipboardFormatType& ClipboardFormatType::WebKitSmartPasteType() {
   static base::NoDestructor<ClipboardFormatType> type(
-      kPepperCustomDataPboardType);
+      kUTTypeWebKitWebSmartPaste);
+  return *type;
+}
+
+// static
+const ClipboardFormatType& ClipboardFormatType::WebCustomDataType() {
+  static base::NoDestructor<ClipboardFormatType> type(
+      kUTTypeChromiumWebCustomData);
   return *type;
 }
 

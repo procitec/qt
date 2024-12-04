@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,8 +6,9 @@
 
 #include "util/osp_logging.h"
 
-namespace openscreen {
-namespace cast {
+namespace openscreen::cast {
+
+ReceiverSocketFactory::Client::~Client() = default;
 
 ReceiverSocketFactory::ReceiverSocketFactory(Client* client,
                                              CastSocket::Client* socket_client)
@@ -32,13 +33,12 @@ void ReceiverSocketFactory::OnConnected(
     TlsConnectionFactory* factory,
     std::vector<uint8_t> der_x509_peer_cert,
     std::unique_ptr<TlsConnection> connection) {
-  OSP_NOTREACHED() << "This factory is accept-only.";
+  OSP_LOG_FATAL << "This factory is accept-only";
 }
 
 void ReceiverSocketFactory::OnConnectionFailed(
     TlsConnectionFactory* factory,
     const IPEndpoint& remote_address) {
-  OSP_DVLOG << "Receiving connection from endpoint failed: " << remote_address;
   client_->OnError(this, Error(Error::Code::kConnectionFailed,
                                "Accepting connection failed."));
 }
@@ -48,5 +48,4 @@ void ReceiverSocketFactory::OnError(TlsConnectionFactory* factory,
   client_->OnError(this, error);
 }
 
-}  // namespace cast
-}  // namespace openscreen
+}  // namespace openscreen::cast

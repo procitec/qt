@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,13 +9,14 @@
 
 #include "build/build_config.h"
 
-#if defined(ARCH_CPU_X86_FAMILY) && !defined(OS_MAC)
+#if defined(ARCH_CPU_X86_FAMILY) && !BUILDFLAG(IS_MAC)
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
+#include "base/check_op.h"
 #include "third_party/blink/renderer/platform/audio/audio_array.h"
-#include "third_party/blink/renderer/platform/wtf/assertions.h"
 
 namespace blink {
 namespace vector_math {
@@ -208,13 +209,14 @@ void Vclip(const float* source_p,
 // source_max = max(abs(source[k])) for all k
 void Vmaxmgv(const float* source_p, float* max_p, uint32_t frames_to_process) {
   constexpr uint32_t kMask = 0x7FFFFFFFu;
-
+  float kMask_float;
+  std::memcpy(&kMask_float, &kMask, 4);
   const float* const source_end_p = source_p + frames_to_process;
 
   DCHECK(IsAligned(source_p));
   DCHECK_EQ(0u, frames_to_process % kPackedFloatsPerRegister);
 
-  MType m_mask = MM_PS(set1)(*reinterpret_cast<const float*>(&kMask));
+  MType m_mask = MM_PS(set1)(kMask_float);
   MType m_max = MM_PS(setzero)();
 
   while (source_p < source_end_p) {
@@ -422,4 +424,4 @@ void Zvmul(const float* real1p,
 }  // namespace vector_math
 }  // namespace blink
 
-#endif  // defined(ARCH_CPU_X86_FAMILY) && !defined(OS_MAC)
+#endif  // defined(ARCH_CPU_X86_FAMILY) && !BUILDFLAG(IS_MAC)

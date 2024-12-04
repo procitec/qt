@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,6 +8,7 @@
 #include <tuple>
 
 #include "base/time/time.h"
+#include "net/base/network_anonymization_key.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 
@@ -16,12 +17,35 @@ namespace net {
 ReportingEndpointGroupKey::ReportingEndpointGroupKey() = default;
 
 ReportingEndpointGroupKey::ReportingEndpointGroupKey(
-    const NetworkIsolationKey& network_isolation_key,
+    const NetworkAnonymizationKey& network_anonymization_key,
     const url::Origin& origin,
     const std::string& group_name)
-    : network_isolation_key(network_isolation_key),
+    : ReportingEndpointGroupKey(network_anonymization_key,
+                                absl::nullopt,
+                                origin,
+                                group_name) {}
+
+ReportingEndpointGroupKey::ReportingEndpointGroupKey(
+    const NetworkAnonymizationKey& network_anonymization_key,
+    absl::optional<base::UnguessableToken> reporting_source,
+    const url::Origin& origin,
+    const std::string& group_name)
+    : network_anonymization_key(network_anonymization_key),
+      reporting_source(std::move(reporting_source)),
       origin(origin),
-      group_name(group_name) {}
+      group_name(group_name) {
+  // If |reporting_source| is present, it must not be empty.
+  DCHECK(!(this->reporting_source.has_value() &&
+           this->reporting_source->is_empty()));
+}
+
+ReportingEndpointGroupKey::ReportingEndpointGroupKey(
+    const ReportingEndpointGroupKey& other,
+    const absl::optional<base::UnguessableToken>& reporting_source)
+    : ReportingEndpointGroupKey(other.network_anonymization_key,
+                                reporting_source,
+                                other.origin,
+                                other.group_name) {}
 
 ReportingEndpointGroupKey::ReportingEndpointGroupKey(
     const ReportingEndpointGroupKey& other) = default;
@@ -37,8 +61,10 @@ ReportingEndpointGroupKey::~ReportingEndpointGroupKey() = default;
 
 bool operator==(const ReportingEndpointGroupKey& lhs,
                 const ReportingEndpointGroupKey& rhs) {
-  return std::tie(lhs.network_isolation_key, lhs.origin, lhs.group_name) ==
-         std::tie(rhs.network_isolation_key, rhs.origin, rhs.group_name);
+  return std::tie(lhs.reporting_source, lhs.network_anonymization_key,
+                  lhs.origin, lhs.group_name) ==
+         std::tie(rhs.reporting_source, rhs.network_anonymization_key,
+                  rhs.origin, rhs.group_name);
 }
 
 bool operator!=(const ReportingEndpointGroupKey& lhs,
@@ -48,18 +74,24 @@ bool operator!=(const ReportingEndpointGroupKey& lhs,
 
 bool operator<(const ReportingEndpointGroupKey& lhs,
                const ReportingEndpointGroupKey& rhs) {
-  return std::tie(lhs.network_isolation_key, lhs.origin, lhs.group_name) <
-         std::tie(rhs.network_isolation_key, rhs.origin, rhs.group_name);
+  return std::tie(lhs.reporting_source, lhs.network_anonymization_key,
+                  lhs.origin, lhs.group_name) <
+         std::tie(rhs.reporting_source, rhs.network_anonymization_key,
+                  rhs.origin, rhs.group_name);
 }
 
 bool operator>(const ReportingEndpointGroupKey& lhs,
                const ReportingEndpointGroupKey& rhs) {
-  return std::tie(lhs.network_isolation_key, lhs.origin, lhs.group_name) >
-         std::tie(rhs.network_isolation_key, rhs.origin, rhs.group_name);
+  return std::tie(lhs.reporting_source, lhs.network_anonymization_key,
+                  lhs.origin, lhs.group_name) >
+         std::tie(rhs.reporting_source, rhs.network_anonymization_key,
+                  rhs.origin, rhs.group_name);
 }
 
 std::string ReportingEndpointGroupKey::ToString() const {
-  return "NIK: " + network_isolation_key.ToDebugString() +
+  return "Source: " +
+         (reporting_source ? reporting_source->ToString() : "null") +
+         "; NAK: " + network_anonymization_key.ToDebugString() +
          "; Origin: " + origin.Serialize() + "; Group name: " + group_name;
 }
 
@@ -111,6 +143,10 @@ CachedReportingEndpointGroup::CachedReportingEndpointGroup(
     : CachedReportingEndpointGroup(endpoint_group.group_key,
                                    endpoint_group.include_subdomains,
                                    now + endpoint_group.ttl /* expires */,
-                                   now /* last_used */) {}
+                                   now /* last_used */) {
+  // Don't cache V1 document endpoints; this should only be used for V0
+  // endpoint groups.
+  DCHECK(!endpoint_group.group_key.IsDocumentEndpoint());
+}
 
 }  // namespace net

@@ -1,12 +1,11 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style license thaT can be
+// Copyright 2017 The Chromium Authors
+// Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_TEXT_WRITING_MODE_UTILS_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_TEXT_WRITING_MODE_UTILS_H_
 
-#include "third_party/blink/renderer/platform/text/text_direction.h"
-#include "third_party/blink/renderer/platform/text/writing_mode.h"
+#include "third_party/blink/renderer/platform/text/writing_direction_mode.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 
 namespace blink {
@@ -42,68 +41,43 @@ class PhysicalToLogical {
   STACK_ALLOCATED();
 
  public:
-  PhysicalToLogical(WritingMode writing_mode,
-                    TextDirection direction,
+  PhysicalToLogical(WritingDirectionMode writing_direction,
                     Value top,
                     Value right,
                     Value bottom,
                     Value left)
-      : writing_mode_(writing_mode),
-        direction_(direction),
+      : writing_direction_(writing_direction),
         top_(top),
         right_(right),
         bottom_(bottom),
         left_(left) {}
 
   Value InlineStart() const {
-    if (IsHorizontalWritingMode(writing_mode_))
-      return IsLtr(direction_) ? left_ : right_;
-    return IsLtr(direction_) ? top_ : bottom_;
+    if (writing_direction_.IsHorizontal())
+      return writing_direction_.IsLtr() ? left_ : right_;
+    return writing_direction_.IsLtr() ? top_ : bottom_;
   }
 
   Value InlineEnd() const {
-    if (IsHorizontalWritingMode(writing_mode_))
-      return IsLtr(direction_) ? right_ : left_;
-    return IsLtr(direction_) ? bottom_ : top_;
+    if (writing_direction_.IsHorizontal())
+      return writing_direction_.IsLtr() ? right_ : left_;
+    return writing_direction_.IsLtr() ? bottom_ : top_;
   }
 
   Value BlockStart() const {
-    if (IsHorizontalWritingMode(writing_mode_))
+    if (writing_direction_.IsHorizontal())
       return top_;
-    return IsFlippedBlocksWritingMode(writing_mode_) ? right_ : left_;
+    return writing_direction_.IsFlippedBlocks() ? right_ : left_;
   }
 
   Value BlockEnd() const {
-    if (IsHorizontalWritingMode(writing_mode_))
+    if (writing_direction_.IsHorizontal())
       return bottom_;
-    return IsFlippedBlocksWritingMode(writing_mode_) ? left_ : right_;
+    return writing_direction_.IsFlippedBlocks() ? left_ : right_;
   }
-
-  Value Over() const {
-    return IsHorizontalWritingMode(writing_mode_) ? top_ : right_;
-  }
-
-  Value Under() const {
-    return IsHorizontalWritingMode(writing_mode_) ? bottom_ : left_;
-  }
-
-  Value LineLeft() const {
-    return IsHorizontalWritingMode(writing_mode_) ? left_ : top_;
-  }
-
-  Value LineRight() const {
-    return IsHorizontalWritingMode(writing_mode_) ? right_ : bottom_;
-  }
-
-  // Legacy logical directions.
-  Value Start() const { return InlineStart(); }
-  Value End() const { return InlineEnd(); }
-  Value Before() const { return BlockStart(); }
-  Value After() const { return BlockEnd(); }
 
  private:
-  WritingMode writing_mode_;
-  TextDirection direction_;
+  WritingDirectionMode writing_direction_;
   Value top_;
   Value right_;
   Value bottom_;
@@ -115,52 +89,82 @@ class LogicalToPhysical {
   STACK_ALLOCATED();
 
  public:
-  LogicalToPhysical(WritingMode writing_mode,
-                    TextDirection direction,
+  LogicalToPhysical(WritingDirectionMode writing_direction,
                     Value inline_start,
                     Value inline_end,
                     Value block_start,
                     Value block_end)
-      : writing_mode_(writing_mode),
-        direction_(direction),
+      : writing_direction_(writing_direction),
         inline_start_(inline_start),
         inline_end_(inline_end),
         block_start_(block_start),
         block_end_(block_end) {}
 
   Value Left() const {
-    if (IsHorizontalWritingMode(writing_mode_))
-      return IsLtr(direction_) ? inline_start_ : inline_end_;
-    return IsFlippedBlocksWritingMode(writing_mode_) ? block_end_
-                                                     : block_start_;
+    if (writing_direction_.IsHorizontal())
+      return writing_direction_.IsLtr() ? inline_start_ : inline_end_;
+    return writing_direction_.IsFlippedBlocks() ? block_end_ : block_start_;
   }
 
   Value Right() const {
-    if (IsHorizontalWritingMode(writing_mode_))
-      return IsLtr(direction_) ? inline_end_ : inline_start_;
-    return IsFlippedBlocksWritingMode(writing_mode_) ? block_start_
-                                                     : block_end_;
+    if (writing_direction_.IsHorizontal())
+      return writing_direction_.IsLtr() ? inline_end_ : inline_start_;
+    return writing_direction_.IsFlippedBlocks() ? block_start_ : block_end_;
   }
 
   Value Top() const {
-    if (IsHorizontalWritingMode(writing_mode_))
+    if (writing_direction_.IsHorizontal())
       return block_start_;
-    return IsLtr(direction_) ? inline_start_ : inline_end_;
+    return writing_direction_.IsLtr() ? inline_start_ : inline_end_;
   }
 
   Value Bottom() const {
-    if (IsHorizontalWritingMode(writing_mode_))
+    if (writing_direction_.IsHorizontal())
       return block_end_;
-    return IsLtr(direction_) ? inline_end_ : inline_start_;
+    return writing_direction_.IsLtr() ? inline_end_ : inline_start_;
   }
 
  private:
-  WritingMode writing_mode_;
-  TextDirection direction_;
+  WritingDirectionMode writing_direction_;
   Value inline_start_;  // a.k.a. start
   Value inline_end_;    // a.k.a. end
   Value block_start_;   // a.k.a. before
   Value block_end_;     // a.k.a. after
+};
+
+template <typename Value>
+class LogicalToLogical {
+  STACK_ALLOCATED();
+
+ public:
+  LogicalToLogical(WritingDirectionMode from_writing_direction,
+                   WritingDirectionMode to_writing_direction,
+                   Value inline_start,
+                   Value inline_end,
+                   Value block_start,
+                   Value block_end)
+      : LogicalToLogical(to_writing_direction,
+                         LogicalToPhysical<Value>(from_writing_direction,
+                                                  inline_start,
+                                                  inline_end,
+                                                  block_start,
+                                                  block_end)) {}
+
+  Value InlineStart() const { return logical_.InlineStart(); }
+  Value BlockStart() const { return logical_.BlockStart(); }
+  Value InlineEnd() const { return logical_.InlineEnd(); }
+  Value BlockEnd() const { return logical_.BlockEnd(); }
+
+ private:
+  LogicalToLogical(WritingDirectionMode to_writing_direction,
+                   LogicalToPhysical<Value> physical)
+      : logical_(to_writing_direction,
+                 physical.Top(),
+                 physical.Right(),
+                 physical.Bottom(),
+                 physical.Left()) {}
+
+  PhysicalToLogical<Value> logical_;
 };
 
 template <typename Value, typename Object>
@@ -169,16 +173,14 @@ class LogicalToPhysicalGetter {
 
  public:
   using Getter = Value (Object::*)() const;
-  LogicalToPhysicalGetter(WritingMode writing_mode,
-                          TextDirection direction,
+  LogicalToPhysicalGetter(WritingDirectionMode writing_direction,
                           const Object& object,
                           Getter inline_start_getter,
                           Getter inline_end_getter,
                           Getter block_start_getter,
                           Getter block_end_getter)
       : object_(object),
-        converter_(writing_mode,
-                   direction,
+        converter_(writing_direction,
                    inline_start_getter,
                    inline_end_getter,
                    block_start_getter,
@@ -200,16 +202,14 @@ class PhysicalToLogicalGetter {
 
  public:
   using Getter = Value (Object::*)() const;
-  PhysicalToLogicalGetter(WritingMode writing_mode,
-                          TextDirection direction,
+  PhysicalToLogicalGetter(WritingDirectionMode writing_direction,
                           const Object& object,
                           Getter top_getter,
                           Getter right_getter,
                           Getter bottom_getter,
                           Getter left_getter)
       : object_(object),
-        converter_(writing_mode,
-                   direction,
+        converter_(writing_direction,
                    top_getter,
                    right_getter,
                    bottom_getter,
@@ -219,51 +219,10 @@ class PhysicalToLogicalGetter {
   Value InlineEnd() const { return (object_.*converter_.InlineEnd())(); }
   Value BlockStart() const { return (object_.*converter_.BlockStart())(); }
   Value BlockEnd() const { return (object_.*converter_.BlockEnd())(); }
-  Value Over() const { return (object_.*converter_.Over())(); }
-  Value Under() const { return (object_.*converter_.Under())(); }
-  Value LineLeft() const { return (object_.*converter_.LineLeft())(); }
-  Value LineRight() const { return (object_.*converter_.LineRight())(); }
-  Value Start() const { return (object_.*converter_.Start())(); }
-  Value End() const { return (object_.*converter_.End())(); }
-  Value Before() const { return (object_.*converter_.Before())(); }
-  Value After() const { return (object_.*converter_.After())(); }
 
  private:
   const Object& object_;
   PhysicalToLogical<Getter> converter_;
-};
-
-template <typename Value, typename Object>
-class PhysicalToLogicalSetter {
-  STACK_ALLOCATED();
-
- public:
-  using Setter = void (Object::*)(Value);
-  PhysicalToLogicalSetter(WritingMode writing_mode,
-                          TextDirection direction,
-                          Object& object,
-                          Setter inline_start_setter,
-                          Setter inline_end_setter,
-                          Setter block_start_setter,
-                          Setter block_end_setter)
-      : object_(object),
-        converter_(writing_mode,
-                   direction,
-                   inline_start_setter,
-                   inline_end_setter,
-                   block_start_setter,
-                   block_end_setter) {}
-
-  void SetLeft(Value v) { (object_.*converter_.Left())(v); }
-  void SetRight(Value v) { (object_.*converter_.Right())(v); }
-  void SetTop(Value v) { (object_.*converter_.Top())(v); }
-  void SetBottom(Value v) { (object_.*converter_.Bottom())(v); }
-
- private:
-  Object& object_;
-  // This converter converts logical setters to physical setters which accept
-  // physical values and call the logical setters to set logical values.
-  LogicalToPhysical<Setter> converter_;
 };
 
 template <typename Value, typename Object>
@@ -272,16 +231,14 @@ class LogicalToPhysicalSetter {
 
  public:
   using Setter = void (Object::*)(Value);
-  LogicalToPhysicalSetter(WritingMode writing_mode,
-                          TextDirection direction,
+  LogicalToPhysicalSetter(WritingDirectionMode writing_direction,
                           Object& object,
                           Setter top_setter,
                           Setter right_setter,
                           Setter bottom_setter,
                           Setter left_setter)
       : object_(object),
-        converter_(writing_mode,
-                   direction,
+        converter_(writing_direction,
                    top_setter,
                    right_setter,
                    bottom_setter,
@@ -291,14 +248,6 @@ class LogicalToPhysicalSetter {
   void SetInlineEnd(Value v) { (object_.*converter_.InlineEnd())(v); }
   void SetBlockStart(Value v) { (object_.*converter_.BlockStart())(v); }
   void SetBlockEnd(Value v) { (object_.*converter_.BlockEnd())(v); }
-  void SetOver(Value v) { (object_.*converter_.Over())(v); }
-  void SetUnder(Value v) { (object_.*converter_.Under())(v); }
-  void SetLineLeft(Value v) { (object_.*converter_.LineLeft())(v); }
-  void SetLineRight(Value v) { (object_.*converter_.LineRight())(v); }
-  void SetStart(Value v) { (object_.*converter_.Start())(v); }
-  void SetEnd(Value v) { (object_.*converter_.End())(v); }
-  void SetBefore(Value v) { (object_.*converter_.Before())(v); }
-  void SetAfter(Value v) { (object_.*converter_.After())(v); }
 
  private:
   Object& object_;

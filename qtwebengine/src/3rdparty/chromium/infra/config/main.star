@@ -1,5 +1,5 @@
 #!/usr/bin/env lucicfg
-# Copyright 2020 The Chromium Authors. All rights reserved.
+# Copyright 2020 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -7,35 +7,45 @@
 # for information on starlark/lucicfg
 
 load("//lib/branches.star", "branches")
+load("//lib/chrome_settings.star", "chrome_settings")
 load("//project.star", "settings")
 
 lucicfg.check_version(
-    min = "1.19.0",
+    min = "1.40.0",
     message = "Update depot_tools",
 )
 
-# Enable LUCI Realms support.
-lucicfg.enable_experiment("crbug.com/1085650")
-
-# Enable tree closing.
-lucicfg.enable_experiment("crbug.com/1054172")
+# Use LUCI Scheduler BBv2 names and add Scheduler realms configs.
+lucicfg.enable_experiment("crbug.com/1182002")
 
 # Tell lucicfg what files it is allowed to touch
 lucicfg.config(
     config_dir = "generated",
     tracked_files = [
-        "commit-queue.cfg",
+        "builders/*/*/*",
+        "builders/*/*/*/*",
+        "builders/gn_args_locations.json",
         "cq-builders.md",
-        "cr-buildbucket.cfg",
-        "luci-logdog.cfg",
-        "luci-milo.cfg",
-        "luci-notify.cfg",
-        "luci-notify/email-templates/*.template",
-        "luci-scheduler.cfg",
-        "project.cfg",
+        "cq-usage/default.cfg",
+        "cq-usage/full.cfg",
+        "cq-usage/mega_cq_bots.txt",
+        "health-specs/health-specs.json",
+        "luci/commit-queue.cfg",
+        "luci/cr-buildbucket.cfg",
+        "luci/luci-analysis.cfg",
+        "luci/luci-bisection.cfg",
+        "luci/luci-logdog.cfg",
+        "luci/luci-milo.cfg",
+        "luci/luci-notify.cfg",
+        "luci/luci-notify/email-templates/*.template",
+        "luci/luci-scheduler.cfg",
+        "luci/project.cfg",
+        "luci/realms.cfg",
+        "luci/tricium-prod.cfg",
+        "outages.pyl",
+        "sheriff-rotations/*.txt",
         "project.pyl",
-        "realms.cfg",
-        "tricium-prod.cfg",
+        "testing/*.pyl",
     ],
     fail_on_warnings = True,
     lint_checks = [
@@ -51,12 +61,25 @@ lucicfg.config(
 
 # Just copy tricium-prod.cfg to the generated outputs
 lucicfg.emit(
-    dest = "tricium-prod.cfg",
+    dest = "luci/tricium-prod.cfg",
     data = io.read_file("tricium-prod.cfg"),
+)
+
+# Just copy LUCI Analysis config to generated outputs.
+lucicfg.emit(
+    dest = "luci/luci-analysis.cfg",
+    data = io.read_file("luci-analysis.cfg"),
+)
+
+# Just copy LUCI Bisection config to generated outputs.
+lucicfg.emit(
+    dest = "luci/luci-bisection.cfg",
+    data = io.read_file("luci-bisection.cfg"),
 )
 
 luci.project(
     name = settings.project,
+    config_dir = "luci",
     buildbucket = "cr-buildbucket.appspot.com",
     logdog = "luci-logdog.appspot.com",
     milo = "luci-milo.appspot.com",
@@ -81,6 +104,33 @@ luci.project(
             groups = "project-chromium-admins",
         ),
     ],
+    bindings = [
+        luci.binding(
+            roles = "role/configs.validator",
+            groups = [
+                "project-chromium-try-task-accounts",
+                "project-chromium-ci-task-accounts",
+            ],
+        ),
+        # Roles for LUCI Analysis.
+        luci.binding(
+            roles = "role/analysis.reader",
+            groups = "all",
+        ),
+        luci.binding(
+            roles = "role/analysis.queryUser",
+            groups = "authenticated-users",
+        ),
+        luci.binding(
+            roles = "role/analysis.editor",
+            groups = ["project-chromium-committers", "googlers"],
+        ),
+        # Role for builder health indicators
+        luci.binding(
+            roles = "role/buildbucket.healthUpdater",
+            users = ["guterman@google.com", "generate-builder@cr-builder-health-indicators.iam.gserviceaccount.com", "tne@google.com"],
+        ),
+    ],
 )
 
 luci.cq(
@@ -101,6 +151,10 @@ luci.notify(
     tree_closing_enabled = True,
 )
 
+chrome_settings.per_builder_outputs(
+    root_dir = "builders",
+)
+
 # An all-purpose public realm.
 luci.realm(
     name = "public",
@@ -117,41 +171,115 @@ luci.realm(
     ],
 )
 
-# Launch Swarming tasks in "realms-aware mode", crbug.com/1136313.
-luci.builder.defaults.experiments.set({"luci.use_realms": 100})
+luci.realm(
+    name = "ci",
+    bindings = [
+        # Allow CI builders to create invocations in their own builds.
+        luci.binding(
+            roles = "role/resultdb.invocationCreator",
+            groups = "project-chromium-ci-task-accounts",
+        ),
+    ],
+)
+
+luci.realm(
+    name = "try",
+    bindings = [
+        # Allow try builders to create invocations in their own builds.
+        luci.binding(
+            roles = "role/resultdb.invocationCreator",
+            groups = [
+                "project-chromium-try-task-accounts",
+                # In order to be able to reproduce test tasks that have
+                # ResultDB enabled (at this point that should be all
+                # tests), a realm must be provided. The ability to
+                # trigger machines in the test pool is associated with
+                # the try realm, so allow those who can trigger swarming
+                # tasks in that pool tasks to create invocations.
+                "chromium-led-users",
+                "project-chromium-tryjob-access",
+            ],
+        ),
+    ],
+)
+
+# Allows builders to write baselines and query ResultDB for new tests.
+# TODO(crbug/1465953) @project is not available, and @root should inherit into
+# project so we'll do this for now until @project is supported.
+luci.realm(
+    name = "@root",
+    bindings = [
+        luci.binding(
+            roles = "role/resultdb.baselineWriter",
+            groups = [
+                "project-chromium-ci-task-accounts",
+                "project-chromium-try-task-accounts",
+            ],
+            users = [
+                "chromium-orchestrator@chops-service-accounts.iam.gserviceaccount.com",
+            ],
+        ),
+        luci.binding(
+            roles = "role/resultdb.baselineReader",
+            groups = [
+                "project-chromium-try-task-accounts",
+            ],
+            users = [
+                "chromium-orchestrator@chops-service-accounts.iam.gserviceaccount.com",
+            ],
+        ),
+    ],
+)
+
+luci.realm(
+    name = "webrtc",
+    bindings = [
+        # Allow WebRTC builders to create invocations in their own builds.
+        luci.binding(
+            roles = "role/resultdb.invocationCreator",
+            groups = "project-chromium-ci-task-accounts",
+        ),
+    ],
+)
+
+luci.builder.defaults.test_presentation.set(resultdb.test_presentation(grouping_keys = ["status", "v.test_suite"]))
 
 exec("//swarming.star")
 
 exec("//recipes.star")
+exec("//gn_args/gn_args.star")
+exec("//targets/basic_suites.star")
+exec("//targets/binaries.star")
+exec("//targets/bundles.star")
+exec("//targets/compile_targets.star")
+exec("//targets/compound_suites.star")
+exec("//targets/matrix_compound_suites.star")
+exec("//targets/mixins.star")
+exec("//targets/tests.star")
+exec("//targets/variants.star")
 
 exec("//notifiers.star")
 
+exec("//subprojects/build/subproject.star")
+exec("//subprojects/chrome/subproject.star")
 exec("//subprojects/chromium/subproject.star")
+exec("//subprojects/infra.star")
 branches.exec("//subprojects/codesearch/subproject.star")
 branches.exec("//subprojects/findit/subproject.star")
+branches.exec("//subprojects/flakiness/subproject.star")
 branches.exec("//subprojects/goma/subproject.star")
+branches.exec("//subprojects/reclient/subproject.star")
+branches.exec("//subprojects/reviver/subproject.star")
 branches.exec("//subprojects/webrtc/subproject.star")
 
+exec("//generators/cq-usage.star")
 branches.exec("//generators/cq-builders-md.star")
 
-# This should be exec'ed before exec'ing scheduler-noop-jobs.star because
-# attempting to read the buildbucket field that is not set for the noop jobs
-# actually causes an empty buildbucket message to be set
-# TODO(https://crbug.com/1062385) The automatic generation of job IDs causes
-# problems when the number of builders with the same name goes from 1 to >1 or
-# vice-versa. This generator makes sure both the bucketed and non-bucketed IDs
-# work so that there aren't transient failures when the configuration changes
-branches.exec("//generators/scheduler-bucketed-jobs.star")
-
-# TODO(https://crbug.com/819899) There are a number of noop jobs for dummy
-# builders defined due to legacy requirements that trybots mirror CI bots
-# no-op scheduler jobs are not supported by the lucicfg libraries, so this
-# generator adds in the necessary no-op jobs
-# The trybots should be update to not require no-op jobs to be triggered so that
-# the no-op jobs can be removed
-exec("//generators/scheduler-noop-jobs.star")
 exec("//generators/sort-consoles.star")
 
+# Execute validators after eveything except the outage file so that we're
+# validating the final non-outages configuration
+exec("//validators/builder-group-triggers.star")
 exec("//validators/builders-in-consoles.star")
 
 # Execute this file last so that any configuration changes needed for handling

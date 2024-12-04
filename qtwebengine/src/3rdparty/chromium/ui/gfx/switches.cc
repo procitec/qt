@@ -1,9 +1,11 @@
-// Copyright 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "build/build_config.h"
 #include "ui/gfx/switches.h"
+
+#include "base/command_line.h"
+#include "build/build_config.h"
 
 namespace switches {
 
@@ -16,10 +18,6 @@ const char kAnimationDurationScale[] = "animation-duration-scale";
 const char kDisableFontSubpixelPositioning[] =
     "disable-font-subpixel-positioning";
 
-// Disable a NV12 format buffer allocation with
-// gfx::BufferUsage::SCANOUT_CPU_READ_WRITE usage.
-const char kDisableYuv420Biplanar[] = "disable-yuv420-biplanar";
-
 // Enable native CPU-mappable GPU memory buffer support on Linux.
 const char kEnableNativeGpuMemoryBuffers[] = "enable-native-gpu-memory-buffers";
 
@@ -30,4 +28,51 @@ const char kForcePrefersReducedMotion[] = "force-prefers-reduced-motion";
 // Run in headless mode, i.e., without a UI or display server dependencies.
 const char kHeadless[] = "headless";
 
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+// Which X11 display to connect to. Emulates the GTK+ "--display=" command line
+// argument. In use only with Ozone/X11.
+const char kX11Display[] = "display";
+// Disables MIT-SHM extension. In use only with Ozone/X11.
+const char kNoXshm[] = "no-xshm";
+#endif
+
 }  // namespace switches
+
+namespace features {
+#if BUILDFLAG(IS_APPLE)
+BASE_FEATURE(kOddHeightMultiPlanarBuffers,
+             "OddHeightMultiPlanarBuffers",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+#else
+BASE_FEATURE(kOddHeightMultiPlanarBuffers,
+             "OddHeightMultiPlanarBuffers",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+#endif
+
+#if BUILDFLAG(IS_APPLE)
+BASE_FEATURE(kOddWidthMultiPlanarBuffers,
+             "OddWidthMultiPlanarBuffers",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+#else
+BASE_FEATURE(kOddWidthMultiPlanarBuffers,
+             "OddWidthMultiPlanarBuffers",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+#endif
+
+#if BUILDFLAG(IS_CHROMEOS_LACROS)
+BASE_FEATURE(kUseSmartRefForGPUFenceHandle,
+             "UseSmartRefForGPUFenceHandle",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+#else
+BASE_FEATURE(kUseSmartRefForGPUFenceHandle,
+             "UseSmartRefForGPUFenceHandle",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+#endif
+
+#if BUILDFLAG(IS_CHROMEOS)
+BASE_FEATURE(kEnableIntelMediaCompression,
+             "EnableIntelMediaCompression",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+#endif
+
+}  // namespace features

@@ -20,13 +20,9 @@ public:
     CrBug224618GM() : fTime(0.f) {}
 
 protected:
-    SkString onShortName() override {
-        return SkString("crbug_224618");
-    }
+    SkString getName() const override { return SkString("crbug_224618"); }
 
-    SkISize onISize() override {
-        return SkISize::Make(kMaxVW, kMaxVW);
-    }
+    SkISize getISize() override { return SkISize::Make(kMaxVW, kMaxVW); }
 
     // This animates the FOV in viewer, to ensure the panorama covering rects are stable across
     // a variety of perspective matrices
@@ -41,7 +37,7 @@ protected:
                 {200.f, 200.f}, 25.f, kColors, nullptr, 2, SkTileMode::kMirror,
                 SkGradientShader::kInterpolateColorsInPremul_Flag, nullptr);
 
-        sk_sp<SkSurface> surface = SkSurface::MakeRasterN32Premul(400, 400);
+        sk_sp<SkSurface> surface = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(400, 400));
 
         SkPaint bgPaint;
         bgPaint.setShader(gradient);
@@ -92,16 +88,16 @@ protected:
 
             SkPaint fillPaint;
             fillPaint.setAntiAlias(true);
-            fillPaint.setFilterQuality(kLow_SkFilterQuality);
             fillPaint.setColor(faceColors[i]);
 
-            // Leverages GrFillRectOp on GPU backend
+            // Leverages FillRectOp on GPU backend
             canvas->drawRect(SkRect::MakeWH(viewportWidth, viewportWidth), fillPaint);
 
-            // Leverages GrTextureOp on GPU backend, to ensure sure both quad paths handle clipping
+            // Leverages TextureOp on GPU backend, to ensure sure both quad paths handle clipping
             canvas->drawImageRect(fCubeImage.get(),
                                   SkRect::MakeWH(fCubeImage->width(), fCubeImage->height()),
-                                  SkRect::MakeWH(viewportWidth, viewportWidth), &fillPaint,
+                                  SkRect::MakeWH(viewportWidth, viewportWidth),
+                                  SkSamplingOptions(SkFilterMode::kLinear), &fillPaint,
                                   SkCanvas::kFast_SrcRectConstraint);
 
             canvas->restore();

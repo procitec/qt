@@ -1,46 +1,55 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "content/browser/media/session/media_session_service_impl.h"
 
+#include <memory>
+
+#include "base/memory/ptr_util.h"
 #include "content/browser/media/session/media_metadata_sanitizer.h"
 #include "content/browser/media/session/media_session_impl.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
+#include "mojo/public/cpp/bindings/self_owned_receiver.h"
 
 namespace content {
 
 MediaSessionServiceImpl::MediaSessionServiceImpl(
     RenderFrameHost* render_frame_host)
-    : render_frame_process_id_(render_frame_host->GetProcess()->GetID()),
-      render_frame_routing_id_(render_frame_host->GetRoutingID()),
+    : render_frame_host_id_(render_frame_host->GetGlobalId()),
       playback_state_(blink::mojom::MediaSessionPlaybackState::NONE) {
   MediaSessionImpl* session = GetMediaSession();
-  if (session)
-    session->OnServiceCreated(this);
+  if (session) {
+    media_session_ = session->GetWeakPtr();
+    media_session_->OnServiceCreated(this);
+  }
 }
 
 MediaSessionServiceImpl::~MediaSessionServiceImpl() {
-  MediaSessionImpl* session = GetMediaSession();
-  if (session)
-    session->OnServiceDestroyed(this);
+  if (media_session_) {
+    media_session_->OnServiceDestroyed(this);
+  }
 }
 
 // static
 void MediaSessionServiceImpl::Create(
     RenderFrameHost* render_frame_host,
     mojo::PendingReceiver<blink::mojom::MediaSessionService> receiver) {
-  MediaSessionServiceImpl* impl =
-      new MediaSessionServiceImpl(render_frame_host);
-  impl->Bind(std::move(receiver));
+  mojo::MakeSelfOwnedReceiver(
+      base::WrapUnique<MediaSessionServiceImpl>(
+          new MediaSessionServiceImpl(render_frame_host)),
+      std::move(receiver));
 }
 
-RenderFrameHost* MediaSessionServiceImpl::GetRenderFrameHost() {
-  return RenderFrameHost::FromID(render_frame_process_id_,
-                                 render_frame_routing_id_);
+GlobalRenderFrameHostId MediaSessionServiceImpl::GetRenderFrameHostId() const {
+  return render_frame_host_id_;
+}
+
+RenderFrameHost* MediaSessionServiceImpl::GetRenderFrameHost() const {
+  return RenderFrameHost::FromID(GetRenderFrameHostId());
 }
 
 void MediaSessionServiceImpl::DidFinishNavigation() {
@@ -63,17 +72,17 @@ void MediaSessionServiceImpl::SetClient(
 void MediaSessionServiceImpl::SetPlaybackState(
     blink::mojom::MediaSessionPlaybackState state) {
   playback_state_ = state;
-  MediaSessionImpl* session = GetMediaSession();
-  if (session)
-    session->OnMediaSessionPlaybackStateChanged(this);
+  if (media_session_) {
+    media_session_->OnMediaSessionPlaybackStateChanged(this);
+  }
 }
 
 void MediaSessionServiceImpl::SetPositionState(
-    const base::Optional<media_session::MediaPosition>& position) {
+    const std::optional<media_session::MediaPosition>& position) {
   position_ = position;
-  MediaSessionImpl* session = GetMediaSession();
-  if (session)
-    session->RebuildAndNotifyMediaPositionChanged();
+  if (media_session_) {
+    media_session_->RebuildAndNotifyMediaPositionChanged();
+  }
 }
 
 void MediaSessionServiceImpl::SetMetadata(
@@ -95,32 +104,48 @@ void MediaSessionServiceImpl::SetMetadata(
     metadata_ = std::move(metadata);
   }
 
-  MediaSessionImpl* session = GetMediaSession();
-  if (session)
-    session->OnMediaSessionMetadataChanged(this);
+  if (media_session_) {
+    media_session_->OnMediaSessionMetadataChanged(this);
+  }
+}
+
+void MediaSessionServiceImpl::SetMicrophoneState(
+    media_session::mojom::MicrophoneState microphone_state) {
+  microphone_state_ = microphone_state;
+  if (media_session_) {
+    media_session_->OnMediaSessionInfoChanged(this);
+  }
+}
+
+void MediaSessionServiceImpl::SetCameraState(
+    media_session::mojom::CameraState camera_state) {
+  camera_state_ = camera_state;
+  if (media_session_) {
+    media_session_->OnMediaSessionInfoChanged(this);
+  }
 }
 
 void MediaSessionServiceImpl::EnableAction(
     media_session::mojom::MediaSessionAction action) {
   actions_.insert(action);
-  MediaSessionImpl* session = GetMediaSession();
-  if (session)
-    session->OnMediaSessionActionsChanged(this);
+  if (media_session_) {
+    media_session_->OnMediaSessionActionsChanged(this);
+  }
 }
 
 void MediaSessionServiceImpl::DisableAction(
     media_session::mojom::MediaSessionAction action) {
   actions_.erase(action);
-  MediaSessionImpl* session = GetMediaSession();
-  if (session)
-    session->OnMediaSessionActionsChanged(this);
+  if (media_session_) {
+    media_session_->OnMediaSessionActionsChanged(this);
+  }
 }
 
 void MediaSessionServiceImpl::ClearActions() {
   actions_.clear();
-  MediaSessionImpl* session = GetMediaSession();
-  if (session)
-    session->OnMediaSessionActionsChanged(this);
+  if (media_session_) {
+    media_session_->OnMediaSessionActionsChanged(this);
+  }
 }
 
 MediaSessionImpl* MediaSessionServiceImpl::GetMediaSession() {
@@ -134,12 +159,6 @@ MediaSessionImpl* MediaSessionServiceImpl::GetMediaSession() {
     return nullptr;
 
   return MediaSessionImpl::Get(contents);
-}
-
-void MediaSessionServiceImpl::Bind(
-    mojo::PendingReceiver<blink::mojom::MediaSessionService> receiver) {
-  receiver_.reset(new mojo::Receiver<blink::mojom::MediaSessionService>(
-      this, std::move(receiver)));
 }
 
 }  // namespace content

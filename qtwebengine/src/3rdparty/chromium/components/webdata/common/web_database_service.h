@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,15 +11,12 @@
 
 #include <memory>
 
-#include "base/callback_forward.h"
 #include "base/compiler_specific.h"
 #include "base/files/file_path.h"
-#include "base/macros.h"
+#include "base/functional/callback_forward.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/ref_counted_delete_on_sequence.h"
 #include "base/memory/weak_ptr.h"
-#include "base/observer_list.h"
-#include "base/single_thread_task_runner.h"
 #include "components/webdata/common/web_data_service_base.h"
 #include "components/webdata/common/web_database.h"
 #include "components/webdata/common/webdata_export.h"
@@ -28,6 +25,7 @@ class WebDatabaseBackend;
 
 namespace base {
 class Location;
+class SequencedTaskRunner;
 }
 
 class WDTypedResult;
@@ -55,10 +53,12 @@ class WEBDATA_EXPORT WebDatabaseService
 
   // WebDatabaseService lives on the UI sequence and posts tasks to the DB
   // sequence.  |path| points to the WebDatabase file.
-  WebDatabaseService(
-      const base::FilePath& path,
-      scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner,
-      scoped_refptr<base::SingleThreadTaskRunner> db_task_runner);
+  WebDatabaseService(const base::FilePath& path,
+                     scoped_refptr<base::SequencedTaskRunner> ui_task_runner,
+                     scoped_refptr<base::SequencedTaskRunner> db_task_runner);
+
+  WebDatabaseService(const WebDatabaseService&) = delete;
+  WebDatabaseService& operator=(const WebDatabaseService&) = delete;
 
   // Adds |table| as a WebDatabaseTable that will participate in
   // managing the database, transferring ownership. All calls to this
@@ -82,6 +82,8 @@ class WEBDATA_EXPORT WebDatabaseService
   virtual void ScheduleDBTask(const base::Location& from_here, WriteTask task);
 
   // Schedule a read task on the DB sequence.
+  // Retrieves a WeakPtr to the |consumer| so that |consumer| does not have to
+  // outlive the WebDatabaseService.
   virtual WebDataServiceBase::Handle ScheduleDBTaskWithResult(
       const base::Location& from_here,
       ReadTask task,
@@ -121,12 +123,10 @@ class WEBDATA_EXPORT WebDatabaseService
   // Callbacks to be called if the DB has failed to load.
   ErrorCallbacks error_callbacks_;
 
-  scoped_refptr<base::SingleThreadTaskRunner> db_task_runner_;
+  scoped_refptr<base::SequencedTaskRunner> db_task_runner_;
 
   // All vended weak pointers are invalidated in ShutdownDatabase().
   base::WeakPtrFactory<WebDatabaseService> weak_ptr_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(WebDatabaseService);
 };
 
 #endif  // COMPONENTS_WEBDATA_COMMON_WEB_DATABASE_SERVICE_H_

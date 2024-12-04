@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,25 +7,21 @@
 #include <string>
 #include <vector>
 
-#include "base/bind.h"
 #include "base/command_line.h"
+#include "base/functional/bind.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/chrome_switches.h"
-#include "chrome/common/render_messages.h"
-#include "chrome/renderer/searchbox/search_bouncer.h"
 #include "chrome/renderer/searchbox/searchbox.h"
 #include "chrome/test/base/chrome_render_view_test.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/network_session_configurator/common/network_switches.h"
-#include "content/public/browser/browser_task_traits.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/common/content_constants.h"
 #include "content/public/renderer/render_frame.h"
-#include "content/public/renderer/render_view.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/mock_render_thread.h"
@@ -40,6 +36,11 @@
 #include "third_party/blink/public/web/web_local_frame.h"
 #include "third_party/blink/public/web/web_plugin_params.h"
 #include "url/gurl.h"
+
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+#include "chrome/common/extensions/extension_test_util.h"
+#include "extensions/common/extensions_client.h"
+#endif
 
 using ChromeContentRendererClientSearchBoxTest = ChromeRenderViewTest;
 
@@ -57,18 +58,17 @@ TEST_F(ChromeContentRendererClientSearchBoxTest, RewriteThumbnailURL) {
   ChromeContentRendererClient* client =
       static_cast<ChromeContentRendererClient*>(content_renderer_client_.get());
 
-  // Create a thumbnail URL containing the correct render view ID and an
+  // Create a thumbnail URL containing the correct render frame ID and an
   // arbitrary instant restricted ID.
   GURL thumbnail_url(base::StringPrintf(
-      "chrome-search:/thumb/%i/1",
-      render_frame->GetRenderView()->GetRoutingID()));
+      "chrome-search:/thumb/%s/1",
+      render_frame->GetWebFrame()->GetLocalFrameToken().ToString().c_str()));
 
   GURL result;
-  bool force_ignore_site_for_cookies;
   // Make sure the SearchBox rewrites a thumbnail request from the main frame.
   client->WillSendRequest(GetMainFrame(), ui::PAGE_TRANSITION_LINK,
                           blink::WebURL(thumbnail_url), net::SiteForCookies(),
-                          nullptr, &result, &force_ignore_site_for_cookies);
+                          nullptr, &result);
   EXPECT_NE(result, thumbnail_url);
 
   // Make sure the SearchBox rewrites a thumbnail request from the iframe.
@@ -79,7 +79,7 @@ TEST_F(ChromeContentRendererClientSearchBoxTest, RewriteThumbnailURL) {
       static_cast<blink::WebLocalFrame*>(child_frame);
   client->WillSendRequest(local_child, ui::PAGE_TRANSITION_LINK,
                           blink::WebURL(thumbnail_url), net::SiteForCookies(),
-                          nullptr, &result, &force_ignore_site_for_cookies);
+                          nullptr, &result);
   EXPECT_NE(result, thumbnail_url);
 }
 
@@ -171,31 +171,50 @@ class ChromeContentRendererClientBrowserTest :
 IN_PROC_BROWSER_TEST_P(ChromeContentRendererClientBrowserTest,
                        RewriteYouTubeFlashEmbed) {
   GURL url(https_server()->GetURL("/flash_embeds.html"));
-  ui_test_utils::NavigateToURL(browser(), url);
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), url));
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
 
   GURL video_url = https_server()->GetURL(GetParam().host, GetParam().path);
-  EXPECT_TRUE(ExecuteScript(web_contents, "appendEmbedToDOM('" +
-                                              video_url.spec() + "','" +
-                                              GetParam().type + "');"));
+  EXPECT_TRUE(ExecJs(web_contents, "appendEmbedToDOM('" + video_url.spec() +
+                                       "','" + GetParam().type + "');"));
   WaitForYouTubeRequest();
 }
 
 IN_PROC_BROWSER_TEST_P(ChromeContentRendererClientBrowserTest,
                        RewriteYouTubeFlashEmbedObject) {
   GURL url(https_server()->GetURL("/flash_embeds.html"));
-  ui_test_utils::NavigateToURL(browser(), url);
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), url));
   content::WebContents* web_contents =
      browser()->tab_strip_model()->GetActiveWebContents();
 
   GURL video_url = https_server()->GetURL(GetParam().host, GetParam().path);
-  EXPECT_TRUE(ExecuteScript(web_contents, "appendDataEmbedToDOM('" +
-                                              video_url.spec() + "','" +
-                                              GetParam().type + "');"));
+  EXPECT_TRUE(ExecJs(web_contents, "appendDataEmbedToDOM('" + video_url.spec() +
+                                       "','" + GetParam().type + "');"));
   WaitForYouTubeRequest();
 }
 
 INSTANTIATE_TEST_SUITE_P(FlashEmbeds,
                          ChromeContentRendererClientBrowserTest,
                          ::testing::ValuesIn(kFlashEmbedsTestData));
+
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+IN_PROC_BROWSER_TEST_F(ChromeContentRendererClientBrowserTest,
+                       AvailabilityMapCreated) {
+  auto* extensions_client = extensions::ExtensionsClient::Get();
+  ASSERT_TRUE(extensions_client);
+
+  // ChromeContentRendererClient initializes the ExtensionClient with the
+  // FeatureDelegatedAvailabilityMap, which will maintain ownership of the map.
+  // Verify that the map is created correctly.
+  {
+    const auto& map =
+        extensions_client->GetFeatureDelegatedAvailabilityCheckMap();
+    EXPECT_EQ(5u, map.size());
+    for (const auto* feature :
+         extension_test_util::GetExpectedDelegatedFeaturesForTest()) {
+      EXPECT_EQ(1u, map.count(feature));
+    }
+  }
+}
+#endif

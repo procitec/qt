@@ -5,13 +5,14 @@
 #include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
-#include <limits>
 
-#include "include/v8config.h"
+#include <limits>
 
 #include "src/base/bits.h"
 #include "src/base/ieee754.h"
+#include "src/base/safe_conversions.h"
 #include "src/common/assert-scope.h"
+#include "src/roots/roots.h"
 #include "src/utils/memcopy.h"
 #include "src/wasm/wasm-objects-inl.h"
 
@@ -35,9 +36,7 @@
 #include "src/utils/utils.h"
 #include "src/wasm/wasm-external-refs.h"
 
-namespace v8 {
-namespace internal {
-namespace wasm {
+namespace v8::internal::wasm {
 
 using base::ReadUnalignedValue;
 using base::WriteUnalignedValue;
@@ -55,7 +54,12 @@ void f32_ceil_wrapper(Address data) {
 }
 
 void f32_nearest_int_wrapper(Address data) {
-  WriteUnalignedValue<float>(data, nearbyintf(ReadUnalignedValue<float>(data)));
+  float input = ReadUnalignedValue<float>(data);
+  float value = nearbyintf(input);
+#if V8_OS_AIX
+  value = FpOpWorkaround<float>(input, value);
+#endif
+  WriteUnalignedValue<float>(data, value);
 }
 
 void f64_trunc_wrapper(Address data) {
@@ -71,8 +75,12 @@ void f64_ceil_wrapper(Address data) {
 }
 
 void f64_nearest_int_wrapper(Address data) {
-  WriteUnalignedValue<double>(data,
-                              nearbyint(ReadUnalignedValue<double>(data)));
+  double input = ReadUnalignedValue<double>(data);
+  double value = nearbyint(input);
+#if V8_OS_AIX
+  value = FpOpWorkaround<double>(input, value);
+#endif
+  WriteUnalignedValue<double>(data, value);
 }
 
 void int64_to_float32_wrapper(Address data) {
@@ -143,7 +151,7 @@ void uint64_to_float32_wrapper(Address data) {
     // the second MSB (a.k.a '<< 23'). The encoded exponent itself is
     // ('actual exponent' - 127).
     int32_t multiplier_bits = ((shift_back - 127) & 0xff) << 23;
-    result *= bit_cast<float>(multiplier_bits);
+    result *= base::bit_cast<float>(multiplier_bits);
     WriteUnalignedValue<float>(data, result);
     return;
   }
@@ -179,12 +187,8 @@ void uint64_to_float64_wrapper(Address data) {
 }
 
 int32_t float32_to_int64_wrapper(Address data) {
-  // We use "<" here to check the upper bound because of rounding problems: With
-  // "<=" some inputs would be considered within int64 range which are actually
-  // not within int64 range.
   float input = ReadUnalignedValue<float>(data);
-  if (input >= static_cast<float>(std::numeric_limits<int64_t>::min()) &&
-      input < static_cast<float>(std::numeric_limits<int64_t>::max())) {
+  if (base::IsValueInRangeForNumericType<int64_t>(input)) {
     WriteUnalignedValue<int64_t>(data, static_cast<int64_t>(input));
     return 1;
   }
@@ -193,11 +197,7 @@ int32_t float32_to_int64_wrapper(Address data) {
 
 int32_t float32_to_uint64_wrapper(Address data) {
   float input = ReadUnalignedValue<float>(data);
-  // We use "<" here to check the upper bound because of rounding problems: With
-  // "<=" some inputs would be considered within uint64 range which are actually
-  // not within uint64 range.
-  if (input > -1.0 &&
-      input < static_cast<float>(std::numeric_limits<uint64_t>::max())) {
+  if (base::IsValueInRangeForNumericType<uint64_t>(input)) {
     WriteUnalignedValue<uint64_t>(data, static_cast<uint64_t>(input));
     return 1;
   }
@@ -205,12 +205,8 @@ int32_t float32_to_uint64_wrapper(Address data) {
 }
 
 int32_t float64_to_int64_wrapper(Address data) {
-  // We use "<" here to check the upper bound because of rounding problems: With
-  // "<=" some inputs would be considered within int64 range which are actually
-  // not within int64 range.
   double input = ReadUnalignedValue<double>(data);
-  if (input >= static_cast<double>(std::numeric_limits<int64_t>::min()) &&
-      input < static_cast<double>(std::numeric_limits<int64_t>::max())) {
+  if (base::IsValueInRangeForNumericType<int64_t>(input)) {
     WriteUnalignedValue<int64_t>(data, static_cast<int64_t>(input));
     return 1;
   }
@@ -218,12 +214,8 @@ int32_t float64_to_int64_wrapper(Address data) {
 }
 
 int32_t float64_to_uint64_wrapper(Address data) {
-  // We use "<" here to check the upper bound because of rounding problems: With
-  // "<=" some inputs would be considered within uint64 range which are actually
-  // not within uint64 range.
   double input = ReadUnalignedValue<double>(data);
-  if (input > -1.0 &&
-      input < static_cast<double>(std::numeric_limits<uint64_t>::max())) {
+  if (base::IsValueInRangeForNumericType<uint64_t>(input)) {
     WriteUnalignedValue<uint64_t>(data, static_cast<uint64_t>(input));
     return 1;
   }
@@ -232,11 +224,7 @@ int32_t float64_to_uint64_wrapper(Address data) {
 
 void float32_to_int64_sat_wrapper(Address data) {
   float input = ReadUnalignedValue<float>(data);
-  // We use "<" here to check the upper bound because of rounding problems: With
-  // "<=" some inputs would be considered within int64 range which are actually
-  // not within int64 range.
-  if (input < static_cast<float>(std::numeric_limits<int64_t>::max()) &&
-      input >= static_cast<float>(std::numeric_limits<int64_t>::min())) {
+  if (base::IsValueInRangeForNumericType<int64_t>(input)) {
     WriteUnalignedValue<int64_t>(data, static_cast<int64_t>(input));
     return;
   }
@@ -253,15 +241,11 @@ void float32_to_int64_sat_wrapper(Address data) {
 
 void float32_to_uint64_sat_wrapper(Address data) {
   float input = ReadUnalignedValue<float>(data);
-  // We use "<" here to check the upper bound because of rounding problems: With
-  // "<=" some inputs would be considered within uint64 range which are actually
-  // not within uint64 range.
-  if (input < static_cast<float>(std::numeric_limits<uint64_t>::max()) &&
-      input >= 0.0) {
+  if (base::IsValueInRangeForNumericType<uint64_t>(input)) {
     WriteUnalignedValue<uint64_t>(data, static_cast<uint64_t>(input));
     return;
   }
-  if (input >= std::numeric_limits<uint64_t>::max()) {
+  if (input >= static_cast<float>(std::numeric_limits<uint64_t>::max())) {
     WriteUnalignedValue<uint64_t>(data, std::numeric_limits<uint64_t>::max());
     return;
   }
@@ -270,11 +254,7 @@ void float32_to_uint64_sat_wrapper(Address data) {
 
 void float64_to_int64_sat_wrapper(Address data) {
   double input = ReadUnalignedValue<double>(data);
-  // We use "<" here to check the upper bound because of rounding problems: With
-  // "<=" some inputs would be considered within int64 range which are actually
-  // not within int64 range.
-  if (input < static_cast<double>(std::numeric_limits<int64_t>::max()) &&
-      input >= static_cast<double>(std::numeric_limits<int64_t>::min())) {
+  if (base::IsValueInRangeForNumericType<int64_t>(input)) {
     WriteUnalignedValue<int64_t>(data, static_cast<int64_t>(input));
     return;
   }
@@ -291,15 +271,11 @@ void float64_to_int64_sat_wrapper(Address data) {
 
 void float64_to_uint64_sat_wrapper(Address data) {
   double input = ReadUnalignedValue<double>(data);
-  // We use "<" here to check the upper bound because of rounding problems: With
-  // "<=" some inputs would be considered within int64 range which are actually
-  // not within int64 range.
-  if (input < static_cast<double>(std::numeric_limits<uint64_t>::max()) &&
-      input >= 0.0) {
+  if (base::IsValueInRangeForNumericType<uint64_t>(input)) {
     WriteUnalignedValue<uint64_t>(data, static_cast<uint64_t>(input));
     return;
   }
-  if (input >= std::numeric_limits<uint64_t>::max()) {
+  if (input >= static_cast<double>(std::numeric_limits<uint64_t>::max())) {
     WriteUnalignedValue<uint64_t>(data, std::numeric_limits<uint64_t>::max());
     return;
   }
@@ -353,46 +329,20 @@ int32_t uint64_mod_wrapper(Address data) {
   return 1;
 }
 
-uint32_t word32_ctz_wrapper(Address data) {
-  return base::bits::CountTrailingZeros(ReadUnalignedValue<uint32_t>(data));
+uint32_t word32_rol_wrapper(uint32_t input, uint32_t shift) {
+  return (input << (shift & 31)) | (input >> ((32 - shift) & 31));
 }
 
-uint32_t word64_ctz_wrapper(Address data) {
-  return base::bits::CountTrailingZeros(ReadUnalignedValue<uint64_t>(data));
+uint32_t word32_ror_wrapper(uint32_t input, uint32_t shift) {
+  return (input >> (shift & 31)) | (input << ((32 - shift) & 31));
 }
 
-uint32_t word32_popcnt_wrapper(Address data) {
-  return base::bits::CountPopulation(ReadUnalignedValue<uint32_t>(data));
+uint64_t word64_rol_wrapper(uint64_t input, uint32_t shift) {
+  return (input << (shift & 63)) | (input >> ((64 - shift) & 63));
 }
 
-uint32_t word64_popcnt_wrapper(Address data) {
-  return base::bits::CountPopulation(ReadUnalignedValue<uint64_t>(data));
-}
-
-uint32_t word32_rol_wrapper(Address data) {
-  uint32_t input = ReadUnalignedValue<uint32_t>(data);
-  uint32_t shift = ReadUnalignedValue<uint32_t>(data + sizeof(input)) & 31;
-  return (input << shift) | (input >> ((32 - shift) & 31));
-}
-
-uint32_t word32_ror_wrapper(Address data) {
-  uint32_t input = ReadUnalignedValue<uint32_t>(data);
-  uint32_t shift = ReadUnalignedValue<uint32_t>(data + sizeof(input)) & 31;
-  return (input >> shift) | (input << ((32 - shift) & 31));
-}
-
-void word64_rol_wrapper(Address data) {
-  uint64_t input = ReadUnalignedValue<uint64_t>(data);
-  uint64_t shift = ReadUnalignedValue<uint64_t>(data + sizeof(input)) & 63;
-  uint64_t result = (input << shift) | (input >> ((64 - shift) & 63));
-  WriteUnalignedValue<uint64_t>(data, result);
-}
-
-void word64_ror_wrapper(Address data) {
-  uint64_t input = ReadUnalignedValue<uint64_t>(data);
-  uint64_t shift = ReadUnalignedValue<uint64_t>(data + sizeof(input)) & 63;
-  uint64_t result = (input >> shift) | (input << ((64 - shift) & 63));
-  WriteUnalignedValue<uint64_t>(data, result);
+uint64_t word64_ror_wrapper(uint64_t input, uint32_t shift) {
+  return (input >> (shift & 63)) | (input << ((64 - shift) & 63));
 }
 
 void float64_pow_wrapper(Address data) {
@@ -405,9 +355,12 @@ template <typename T, T (*float_round_op)(T)>
 void simd_float_round_wrapper(Address data) {
   constexpr int n = kSimd128Size / sizeof(T);
   for (int i = 0; i < n; i++) {
-    WriteUnalignedValue<T>(
-        data + (i * sizeof(T)),
-        float_round_op(ReadUnalignedValue<T>(data + (i * sizeof(T)))));
+    T input = ReadUnalignedValue<T>(data + (i * sizeof(T)));
+    T value = float_round_op(input);
+#if V8_OS_AIX
+    value = FpOpWorkaround<T>(input, value);
+#endif
+    WriteUnalignedValue<T>(data + (i * sizeof(T)), value);
   }
 }
 
@@ -444,7 +397,7 @@ void f32x4_nearest_int_wrapper(Address data) {
 }
 
 namespace {
-class ThreadNotInWasmScope {
+class V8_NODISCARD ThreadNotInWasmScope {
 // Asan on Windows triggers exceptions to allocate shadow memory lazily. When
 // this function is called from WebAssembly, these exceptions would be handled
 // by the trap handler before they get handled by Asan, and thereby confuse the
@@ -479,27 +432,10 @@ class ThreadNotInWasmScope {
 #endif
 };
 
-#ifdef DISABLE_UNTRUSTED_CODE_MITIGATIONS
-inline byte* EffectiveAddress(WasmInstanceObject instance, uint32_t index) {
-  return instance.memory_start() + index;
+inline uint8_t* EffectiveAddress(Tagged<WasmTrustedInstanceData> trusted_data,
+                                 uint32_t mem_index, uintptr_t index) {
+  return trusted_data->memory_base(mem_index) + index;
 }
-
-inline byte* EffectiveAddress(byte* base, size_t size, uint32_t index) {
-  return base + index;
-}
-
-#else
-inline byte* EffectiveAddress(WasmInstanceObject instance, uint32_t index) {
-  // Compute the effective address of the access, making sure to condition
-  // the index even in the in-bounds case.
-  return instance.memory_start() + (index & instance.memory_mask());
-}
-
-inline byte* EffectiveAddress(byte* base, size_t size, uint32_t index) {
-  size_t mem_mask = base::bits::RoundUpToPowerOfTwo(size) - 1;
-  return base + (index & mem_mask);
-}
-#endif
 
 template <typename V>
 V ReadAndIncrementOffset(Address data, size_t* offset) {
@@ -507,93 +443,296 @@ V ReadAndIncrementOffset(Address data, size_t* offset) {
   *offset += sizeof(V);
   return result;
 }
+
+constexpr int32_t kSuccess2 = 1;
+constexpr int32_t kOutOfBounds2 = 0;
 }  // namespace
 
-int32_t memory_init_wrapper(Address data) {
-  constexpr int32_t kSuccess = 1;
-  constexpr int32_t kOutOfBounds = 0;
+int32_t memory_init_wrapper(Address trusted_data_addr, uint32_t mem_index,
+                            uintptr_t dst, uint32_t src, uint32_t seg_index,
+                            uint32_t size) {
   ThreadNotInWasmScope thread_not_in_wasm_scope;
-  DisallowHeapAllocation disallow_heap_allocation;
-  size_t offset = 0;
-  Object raw_instance = ReadAndIncrementOffset<Object>(data, &offset);
-  WasmInstanceObject instance = WasmInstanceObject::cast(raw_instance);
-  uint32_t dst = ReadAndIncrementOffset<uint32_t>(data, &offset);
-  uint32_t src = ReadAndIncrementOffset<uint32_t>(data, &offset);
-  uint32_t seg_index = ReadAndIncrementOffset<uint32_t>(data, &offset);
-  uint32_t size = ReadAndIncrementOffset<uint32_t>(data, &offset);
+  DisallowGarbageCollection no_gc;
+  Tagged<WasmTrustedInstanceData> trusted_data =
+      Tagged<WasmTrustedInstanceData>::cast(Tagged<Object>{trusted_data_addr});
 
-  uint64_t mem_size = instance.memory_size();
-  if (!base::IsInBounds<uint64_t>(dst, size, mem_size)) return kOutOfBounds;
+  uint64_t mem_size = trusted_data->memory_size(mem_index);
+  if (!base::IsInBounds<uint64_t>(dst, size, mem_size)) return kOutOfBounds2;
 
-  uint32_t seg_size = instance.data_segment_sizes()[seg_index];
-  if (!base::IsInBounds<uint32_t>(src, size, seg_size)) return kOutOfBounds;
+  uint32_t seg_size = trusted_data->data_segment_sizes()->get(seg_index);
+  if (!base::IsInBounds<uint32_t>(src, size, seg_size)) return kOutOfBounds2;
 
-  byte* seg_start =
-      reinterpret_cast<byte*>(instance.data_segment_starts()[seg_index]);
-  std::memcpy(EffectiveAddress(instance, dst),
-              EffectiveAddress(seg_start, seg_size, src), size);
-  return kSuccess;
+  uint8_t* seg_start = reinterpret_cast<uint8_t*>(
+      trusted_data->data_segment_starts()->get(seg_index));
+  std::memcpy(EffectiveAddress(trusted_data, mem_index, dst), seg_start + src,
+              size);
+  return kSuccess2;
 }
 
-int32_t memory_copy_wrapper(Address data) {
-  constexpr int32_t kSuccess = 1;
-  constexpr int32_t kOutOfBounds = 0;
+int32_t memory_copy_wrapper(Address trusted_data_addr, uint32_t dst_mem_index,
+                            uint32_t src_mem_index, uintptr_t dst,
+                            uintptr_t src, uintptr_t size) {
   ThreadNotInWasmScope thread_not_in_wasm_scope;
-  DisallowHeapAllocation disallow_heap_allocation;
-  size_t offset = 0;
-  Object raw_instance = ReadAndIncrementOffset<Object>(data, &offset);
-  WasmInstanceObject instance = WasmInstanceObject::cast(raw_instance);
-  uint32_t dst = ReadAndIncrementOffset<uint32_t>(data, &offset);
-  uint32_t src = ReadAndIncrementOffset<uint32_t>(data, &offset);
-  uint32_t size = ReadAndIncrementOffset<uint32_t>(data, &offset);
+  DisallowGarbageCollection no_gc;
+  Tagged<WasmTrustedInstanceData> trusted_data =
+      Tagged<WasmTrustedInstanceData>::cast(Tagged<Object>{trusted_data_addr});
 
-  uint64_t mem_size = instance.memory_size();
-  if (!base::IsInBounds<uint64_t>(dst, size, mem_size)) return kOutOfBounds;
-  if (!base::IsInBounds<uint64_t>(src, size, mem_size)) return kOutOfBounds;
+  uint64_t dst_mem_size = trusted_data->memory_size(dst_mem_index);
+  uint64_t src_mem_size = trusted_data->memory_size(src_mem_index);
+  if (!base::IsInBounds<uint64_t>(dst, size, dst_mem_size)) return kOutOfBounds2;
+  if (!base::IsInBounds<uint64_t>(src, size, src_mem_size)) return kOutOfBounds2;
 
   // Use std::memmove, because the ranges can overlap.
-  std::memmove(EffectiveAddress(instance, dst), EffectiveAddress(instance, src),
-               size);
-  return kSuccess;
+  std::memmove(EffectiveAddress(trusted_data, dst_mem_index, dst),
+               EffectiveAddress(trusted_data, src_mem_index, src), size);
+  return kSuccess2;
 }
 
-int32_t memory_fill_wrapper(Address data) {
-  constexpr int32_t kSuccess = 1;
-  constexpr int32_t kOutOfBounds = 0;
-
+int32_t memory_fill_wrapper(Address trusted_data_addr, uint32_t mem_index,
+                            uintptr_t dst, uint8_t value, uintptr_t size) {
   ThreadNotInWasmScope thread_not_in_wasm_scope;
-  DisallowHeapAllocation disallow_heap_allocation;
+  DisallowGarbageCollection no_gc;
 
-  size_t offset = 0;
-  Object raw_instance = ReadAndIncrementOffset<Object>(data, &offset);
-  WasmInstanceObject instance = WasmInstanceObject::cast(raw_instance);
-  uint32_t dst = ReadAndIncrementOffset<uint32_t>(data, &offset);
-  uint8_t value =
-      static_cast<uint8_t>(ReadAndIncrementOffset<uint32_t>(data, &offset));
-  uint32_t size = ReadAndIncrementOffset<uint32_t>(data, &offset);
+  Tagged<WasmTrustedInstanceData> trusted_data =
+      Tagged<WasmTrustedInstanceData>::cast(Tagged<Object>{trusted_data_addr});
 
-  uint64_t mem_size = instance.memory_size();
-  if (!base::IsInBounds<uint64_t>(dst, size, mem_size)) return kOutOfBounds;
+  uint64_t mem_size = trusted_data->memory_size(mem_index);
+  if (!base::IsInBounds<uint64_t>(dst, size, mem_size)) return kOutOfBounds2;
 
-  std::memset(EffectiveAddress(instance, dst), value, size);
-  return kSuccess;
+  std::memset(EffectiveAddress(trusted_data, mem_index, dst), value, size);
+  return kSuccess2;
 }
 
-static WasmTrapCallbackForTesting wasm_trap_callback_for_testing = nullptr;
-
-void set_trap_callback_for_testing(WasmTrapCallbackForTesting callback) {
-  wasm_trap_callback_for_testing = callback;
+namespace {
+inline void* ArrayElementAddress(Address array, uint32_t index,
+                                 int element_size_bytes) {
+  return reinterpret_cast<void*>(array + WasmArray::kHeaderSize -
+                                 kHeapObjectTag + index * element_size_bytes);
 }
+inline void* ArrayElementAddress(Tagged<WasmArray> array, uint32_t index,
+                                 int element_size_bytes) {
+  return ArrayElementAddress(array.ptr(), index, element_size_bytes);
+}
+}  // namespace
 
-void call_trap_callback_for_testing() {
-  if (wasm_trap_callback_for_testing) {
-    wasm_trap_callback_for_testing();
+void array_copy_wrapper(Address raw_trusted_data, Address raw_dst_array,
+                        uint32_t dst_index, Address raw_src_array,
+                        uint32_t src_index, uint32_t length) {
+  // TODO(clemensb): Remove the raw_trusted_data argument.
+  USE(raw_trusted_data);
+  DCHECK_GT(length, 0);
+  ThreadNotInWasmScope thread_not_in_wasm_scope;
+  DisallowGarbageCollection no_gc;
+  Tagged<WasmArray> dst_array = WasmArray::cast(Tagged<Object>(raw_dst_array));
+  Tagged<WasmArray> src_array = WasmArray::cast(Tagged<Object>(raw_src_array));
+
+  bool overlapping_ranges =
+      dst_array.ptr() == src_array.ptr() &&
+      (dst_index < src_index ? dst_index + length > src_index
+                             : src_index + length > dst_index);
+  wasm::ValueType element_type = src_array->type()->element_type();
+  if (element_type.is_reference()) {
+    ObjectSlot dst_slot = dst_array->ElementSlot(dst_index);
+    ObjectSlot src_slot = src_array->ElementSlot(src_index);
+    Heap* heap = dst_array->GetIsolate()->heap();
+    if (overlapping_ranges) {
+      heap->MoveRange(dst_array, dst_slot, src_slot, length,
+                      UPDATE_WRITE_BARRIER);
+    } else {
+      heap->CopyRange(dst_array, dst_slot, src_slot, length,
+                      UPDATE_WRITE_BARRIER);
+    }
+  } else {
+    int element_size_bytes = element_type.value_kind_size();
+    void* dst = ArrayElementAddress(dst_array, dst_index, element_size_bytes);
+    void* src = ArrayElementAddress(src_array, src_index, element_size_bytes);
+    size_t copy_size = length * element_size_bytes;
+    if (overlapping_ranges) {
+      MemMove(dst, src, copy_size);
+    } else {
+      MemCopy(dst, src, copy_size);
+    }
   }
 }
 
-}  // namespace wasm
-}  // namespace internal
-}  // namespace v8
+void array_fill_wrapper(Address raw_array, uint32_t index, uint32_t length,
+                        uint32_t emit_write_barrier, uint32_t raw_type,
+                        Address initial_value_addr) {
+  ThreadNotInWasmScope thread_not_in_wasm_scope;
+  DisallowGarbageCollection no_gc;
+  ValueType type = ValueType::FromRawBitField(raw_type);
+  int8_t* initial_element_address = reinterpret_cast<int8_t*>(
+      ArrayElementAddress(raw_array, index, type.value_kind_size()));
+  // Stack pointers are only aligned to 4 bytes.
+  int64_t initial_value = base::ReadUnalignedValue<int64_t>(initial_value_addr);
+  const int bytes_to_set = length * type.value_kind_size();
+
+  // If the initial value is zero, we memset the array.
+  if (type.is_numeric() && initial_value == 0) {
+    std::memset(initial_element_address, 0, bytes_to_set);
+    return;
+  }
+
+  // We implement the general case by setting the first 8 bytes manually, then
+  // filling the rest by exponentially growing {memcpy}s.
+
+  DCHECK_GE(static_cast<size_t>(bytes_to_set), sizeof(int64_t));
+
+  switch (type.kind()) {
+    case kI64:
+    case kF64: {
+      // Array elements are only aligned to 4 bytes, therefore
+      // `initial_element_address` may be misaligned as a 64-bit pointer.
+      base::WriteUnalignedValue<int64_t>(
+          reinterpret_cast<Address>(initial_element_address), initial_value);
+      break;
+    }
+    case kI32:
+    case kF32: {
+      int32_t* base = reinterpret_cast<int32_t*>(initial_element_address);
+      base[0] = base[1] = static_cast<int32_t>(initial_value);
+      break;
+    }
+    case kI16: {
+      int16_t* base = reinterpret_cast<int16_t*>(initial_element_address);
+      base[0] = base[1] = base[2] = base[3] =
+          static_cast<int16_t>(initial_value);
+      break;
+    }
+    case kI8: {
+      int8_t* base = reinterpret_cast<int8_t*>(initial_element_address);
+      for (size_t i = 0; i < sizeof(int64_t); i++) {
+        base[i] = static_cast<int8_t>(initial_value);
+      }
+      break;
+    }
+    case kRefNull:
+    case kRef:
+      if constexpr (kTaggedSize == 4) {
+        int32_t* base = reinterpret_cast<int32_t*>(initial_element_address);
+        base[0] = base[1] = static_cast<int32_t>(initial_value);
+      } else {
+        // We use WriteUnalignedValue; see above.
+        base::WriteUnalignedValue(
+            reinterpret_cast<Address>(initial_element_address), initial_value);
+      }
+      break;
+    case kS128:
+    case kRtt:
+    case kVoid:
+    case kBottom:
+      UNREACHABLE();
+  }
+
+  int bytes_already_set = sizeof(int64_t);
+
+  while (bytes_already_set * 2 <= bytes_to_set) {
+    std::memcpy(initial_element_address + bytes_already_set,
+                initial_element_address, bytes_already_set);
+    bytes_already_set *= 2;
+  }
+
+  if (bytes_already_set < bytes_to_set) {
+    std::memcpy(initial_element_address + bytes_already_set,
+                initial_element_address, bytes_to_set - bytes_already_set);
+  }
+
+  if (emit_write_barrier) {
+    DCHECK(type.is_reference());
+    Tagged<WasmArray> array = WasmArray::cast(Tagged<Object>(raw_array));
+    Isolate* isolate = array->GetIsolate();
+    ObjectSlot start(reinterpret_cast<Address>(initial_element_address));
+    ObjectSlot end(
+        reinterpret_cast<Address>(initial_element_address + bytes_to_set));
+    isolate->heap()->WriteBarrierForRange(array, start, end);
+  }
+}
+
+double flat_string_to_f64(Address string_address) {
+  Tagged<String> s = String::cast(Tagged<Object>(string_address));
+  return FlatStringToDouble(s, ALLOW_TRAILING_JUNK,
+                            std::numeric_limits<double>::quiet_NaN());
+}
+
+void sync_stack_limit(Isolate* isolate) {
+  CHECK(v8_flags.experimental_wasm_stack_switching);
+  DisallowGarbageCollection no_gc;
+
+  isolate->SyncStackLimit();
+}
+
+intptr_t switch_to_the_central_stack(Isolate* isolate, uintptr_t current_sp) {
+  CHECK(v8_flags.experimental_wasm_stack_switching);
+
+  ThreadLocalTop* thread_local_top = isolate->thread_local_top();
+  StackGuard* stack_guard = isolate->stack_guard();
+
+  auto secondary_stack_limit = stack_guard->real_jslimit();
+
+  stack_guard->SetStackLimitForStackSwitching(
+      thread_local_top->central_stack_limit_);
+
+  thread_local_top->secondary_stack_limit_ = secondary_stack_limit;
+  thread_local_top->secondary_stack_sp_ = current_sp;
+  thread_local_top->is_on_central_stack_flag_ = true;
+
+  auto counter = isolate->wasm_switch_to_the_central_stack_counter();
+  isolate->set_wasm_switch_to_the_central_stack_counter(counter + 1);
+
+  return thread_local_top->central_stack_sp_;
+}
+
+void switch_from_the_central_stack(Isolate* isolate) {
+  CHECK(v8_flags.experimental_wasm_stack_switching);
+
+  ThreadLocalTop* thread_local_top = isolate->thread_local_top();
+  CHECK_NE(thread_local_top->secondary_stack_sp_, 0);
+  CHECK_NE(thread_local_top->secondary_stack_limit_, 0);
+
+  auto secondary_stack_limit = thread_local_top->secondary_stack_limit_;
+  thread_local_top->secondary_stack_limit_ = 0;
+  thread_local_top->secondary_stack_sp_ = 0;
+  thread_local_top->is_on_central_stack_flag_ = false;
+
+  StackGuard* stack_guard = isolate->stack_guard();
+  stack_guard->SetStackLimitForStackSwitching(secondary_stack_limit);
+}
+
+intptr_t switch_to_the_central_stack_for_js(Address raw_receiver,
+                                            uintptr_t* stack_limit_slot) {
+  Tagged<JSReceiver> receiver = JSReceiver::cast(Tagged<Object>(raw_receiver));
+  Isolate* isolate = receiver->GetIsolate();
+  // Set the suspender's {has_js_frames} field. The suspender contains JS
+  // frames iff it is currently on the central stack.
+  // The wasm-to-js wrapper checks this field when calling a suspending import
+  // and traps if the stack contains JS frames.
+  auto active_suspender =
+      WasmSuspenderObject::cast(isolate->root(RootIndex::kActiveSuspender));
+  active_suspender->set_has_js_frames(1);
+  ThreadLocalTop* thread_local_top = isolate->thread_local_top();
+  StackGuard* stack_guard = isolate->stack_guard();
+  *stack_limit_slot = stack_guard->real_jslimit();
+  stack_guard->SetStackLimitForStackSwitching(
+      thread_local_top->central_stack_limit_);
+  thread_local_top->is_on_central_stack_flag_ = true;
+  return thread_local_top->central_stack_sp_;
+}
+
+void switch_from_the_central_stack_for_js(Address raw_receiver,
+                                          uintptr_t stack_limit) {
+  Tagged<JSReceiver> receiver = JSReceiver::cast(Tagged<Object>(raw_receiver));
+  Isolate* isolate = receiver->GetIsolate();
+  // The stack only contains wasm frames after this JS call.
+  auto active_suspender =
+      WasmSuspenderObject::cast(isolate->root(RootIndex::kActiveSuspender));
+  active_suspender->set_has_js_frames(0);
+  ThreadLocalTop* thread_local_top = isolate->thread_local_top();
+  thread_local_top->is_on_central_stack_flag_ = false;
+  StackGuard* stack_guard = isolate->stack_guard();
+  stack_guard->SetStackLimitForStackSwitching(stack_limit);
+}
+
+}  // namespace v8::internal::wasm
 
 #undef V8_WITH_SANITIZER
 #undef RESET_THREAD_IN_WASM_FLAG_FOR_ASAN_ON_WINDOWS

@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,7 +7,7 @@
 
 #include <memory>
 
-#include "base/macros.h"
+#include "base/unguessable_token.h"
 #include "net/base/net_export.h"
 #include "net/base/rand_callback.h"
 
@@ -27,13 +27,13 @@ class ReportingContext;
 //  - Uploads are allowed for the report's origin (i.e. the origin of the URL
 //    associated with the reported event).
 //  - There is not already a pending upload for any reports sharing the same
-//    (NIK, origin, group) key.
+//    (NAK, origin, group) key.
 //
 // Reports are batched for upload to an endpoint URL such that:
-//  - The available reports with the same (NIK, origin, group) are always
+//  - The available reports with the same (NAK, origin, group) are always
 //    uploaded together.
-//  - All reports uploaded together must share a NIK and origin.
-//  - Reports for the same (NIK, origin) can be uploaded separately if they are
+//  - All reports uploaded together must share a NAK and origin.
+//  - Reports for the same (NAK, origin) can be uploaded separately if they are
 //    for different groups.
 //  - Reports for different groups can be batched together, if they are assigned
 //    to ReportingEndpoints sharing a URL (that is, the upload URL).
@@ -45,6 +45,15 @@ class ReportingContext;
 // delivery attempt.
 class NET_EXPORT ReportingDeliveryAgent {
  public:
+  // These values are persisted to logs. Entries should not be renumbered and
+  // numeric values should never be reused.
+  // They should also be kept in sync with the NetReportingUploadHeaderType
+  // enum in tools/metrics/histograms/enums.xml
+  enum class ReportingUploadHeaderType {
+    kReportTo = 0,
+    kReportingEndpoints = 1,
+    kMaxValue = kReportingEndpoints
+  };
   // Creates a ReportingDeliveryAgent. |context| must outlive the agent.
   static std::unique_ptr<ReportingDeliveryAgent> Create(
       ReportingContext* context,
@@ -57,6 +66,12 @@ class NET_EXPORT ReportingDeliveryAgent {
   // MockOneShotTimer.
   virtual void SetTimerForTesting(
       std::unique_ptr<base::OneShotTimer> timer) = 0;
+
+  // Bypasses the schedule to attempt delivery of all outstanding reports
+  // for a single `reporting_source`. Called when the source document or worker
+  // is being destroyed.
+  virtual void SendReportsForSource(
+      base::UnguessableToken reporting_source) = 0;
 };
 
 }  // namespace net

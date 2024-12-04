@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,8 +7,7 @@
 
 #include <memory>
 
-#include "base/callback_forward.h"
-#include "base/macros.h"
+#include "base/functional/callback_forward.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/synchronization/waitable_event.h"
@@ -30,12 +29,16 @@ class ModelLoader : public base::RefCountedThreadSafe<ModelLoader> {
  public:
   using LoadCallback =
       base::OnceCallback<void(std::unique_ptr<BookmarkLoadDetails>)>;
+
   // Creates the ModelLoader, and schedules loading on a backend task runner.
   // |callback| is run once loading completes (on the main thread).
   static scoped_refptr<ModelLoader> Create(
-      const base::FilePath& profile_path,
+      const base::FilePath& file_path,
       std::unique_ptr<BookmarkLoadDetails> details,
       LoadCallback callback);
+
+  ModelLoader(const ModelLoader&) = delete;
+  ModelLoader& operator=(const ModelLoader&) = delete;
 
   // Blocks until loaded. This is intended for usage on a thread other than
   // the main thread.
@@ -47,6 +50,10 @@ class ModelLoader : public base::RefCountedThreadSafe<ModelLoader> {
     return history_bookmark_model_.get();
   }
 
+  // Test-only factory function that creates a ModelLoader() that is initially
+  // loaded.
+  static scoped_refptr<ModelLoader> CreateForTest(BookmarkLoadDetails* details);
+
  private:
   friend class base::RefCountedThreadSafe<ModelLoader>;
   ModelLoader();
@@ -54,8 +61,7 @@ class ModelLoader : public base::RefCountedThreadSafe<ModelLoader> {
 
   // Performs the load on a background thread.
   std::unique_ptr<BookmarkLoadDetails> DoLoadOnBackgroundThread(
-      const base::FilePath& profile_path,
-      bool emit_experimental_uma,
+      const base::FilePath& file_path,
       std::unique_ptr<BookmarkLoadDetails> details);
 
   scoped_refptr<base::SequencedTaskRunner> backend_task_runner_;
@@ -64,8 +70,6 @@ class ModelLoader : public base::RefCountedThreadSafe<ModelLoader> {
 
   // Signaled once loading completes.
   base::WaitableEvent loaded_signal_;
-
-  DISALLOW_COPY_AND_ASSIGN(ModelLoader);
 };
 
 }  // namespace bookmarks

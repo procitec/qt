@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,15 +9,24 @@
 
 #include <map>
 #include <memory>
+#include <set>
 #include <vector>
 
-#include "base/macros.h"
+#include "base/gtest_prod_util.h"
+#include "base/memory/raw_ptr.h"
 #include "ui/events/event_constants.h"
 #include "ui/events/events_export.h"
 #include "ui/events/gestures/gesture_provider_aura.h"
 #include "ui/events/gestures/gesture_recognizer.h"
 #include "ui/events/types/event_type.h"
 #include "ui/gfx/geometry/point.h"
+
+namespace aura::test {
+FORWARD_DECLARE_TEST(GestureRecognizerTest,
+                     DestroyGestureProviderAuraBeforeAck);
+FORWARD_DECLARE_TEST(GestureRecognizerTest,
+                     ResetGestureRecognizerWithGestureProvider);
+}  // namespace aura::test
 
 namespace ui {
 class GestureConsumer;
@@ -34,9 +43,15 @@ class EVENTS_EXPORT GestureRecognizerImpl : public GestureRecognizer,
   typedef std::map<int, GestureConsumer*> TouchIdToConsumerMap;
 
   GestureRecognizerImpl();
+
+  GestureRecognizerImpl(const GestureRecognizerImpl&) = delete;
+  GestureRecognizerImpl& operator=(const GestureRecognizerImpl&) = delete;
+
   ~GestureRecognizerImpl() override;
 
-  std::vector<GestureEventHelper*>& helpers() { return helpers_; }
+  std::vector<raw_ptr<GestureEventHelper, VectorExperimental>>& helpers() {
+    return helpers_;
+  }
 
   // Returns a list of events of type |type|, one for each pointer down on
   // |consumer|. Event locations are pulled from the active pointers.
@@ -73,6 +88,11 @@ class EVENTS_EXPORT GestureRecognizerImpl : public GestureRecognizer,
                                     GestureConsumer* consumer) override;
 
  private:
+  FRIEND_TEST_ALL_PREFIXES(aura::test::GestureRecognizerTest,
+                           DestroyGestureProviderAuraBeforeAck);
+  FRIEND_TEST_ALL_PREFIXES(aura::test::GestureRecognizerTest,
+                           ResetGestureRecognizerWithGestureProvider);
+
   // Sets up the target consumer for gestures based on the touch-event.
   void SetupTargets(const TouchEvent& event, GestureConsumer* consumer);
 
@@ -81,7 +101,7 @@ class EVENTS_EXPORT GestureRecognizerImpl : public GestureRecognizer,
 
   Gestures AckTouchEvent(uint32_t unique_event_id,
                          ui::EventResult result,
-                         bool is_source_touch_event_set_non_blocking,
+                         bool is_source_touch_event_set_blocking,
                          GestureConsumer* consumer) override;
 
   void CancelActiveTouchesExceptImpl(GestureConsumer* not_cancelled);
@@ -90,16 +110,19 @@ class EVENTS_EXPORT GestureRecognizerImpl : public GestureRecognizer,
   bool CleanupStateForConsumer(GestureConsumer* consumer) override;
   void AddGestureEventHelper(GestureEventHelper* helper) override;
   void RemoveGestureEventHelper(GestureEventHelper* helper) override;
+  bool DoesConsumerHaveActiveTouch(GestureConsumer* consumer) const override;
+  void SendSynthesizedEndEvents(GestureConsumer* consumer) override;
 
   // Overridden from GestureProviderAuraClient
   void OnGestureEvent(GestureConsumer* raw_input_consumer,
                       GestureEvent* event) override;
+  void OnGestureProviderAuraWillBeDestroyed(
+      GestureProviderAura* gesture_provider) override;
 
   // Convenience method to find the GestureEventHelper that can dispatch events
   // to a specific |consumer|.
   GestureEventHelper* FindDispatchHelperForConsumer(GestureConsumer* consumer);
-  std::map<GestureConsumer*, std::unique_ptr<GestureProviderAura>>
-      consumer_gesture_provider_;
+  std::set<GestureConsumer*> consumers_;
 
   // Maps an event via its |unique_event_id| to the corresponding gesture
   // provider. This avoids any invalid reference while routing ACKs for events
@@ -112,9 +135,7 @@ class EVENTS_EXPORT GestureRecognizerImpl : public GestureRecognizer,
   // ET_TOUCH_RELEASE and ET_TOUCH_CANCEL.
   TouchIdToConsumerMap touch_id_target_;
 
-  std::vector<GestureEventHelper*> helpers_;
-
-  DISALLOW_COPY_AND_ASSIGN(GestureRecognizerImpl);
+  std::vector<raw_ptr<GestureEventHelper, VectorExperimental>> helpers_;
 };
 
 }  // namespace ui

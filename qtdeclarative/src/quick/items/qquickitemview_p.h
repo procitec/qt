@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtQuick module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #ifndef QQUICKITEMVIEW_P_H
 #define QQUICKITEMVIEW_P_H
@@ -67,7 +31,7 @@ class QQmlChangeSet;
 
 class QQuickItemViewPrivate;
 
-class Q_QUICK_PRIVATE_EXPORT QQuickItemView : public QQuickFlickable
+class Q_QUICK_EXPORT QQuickItemView : public QQuickFlickable
 {
     Q_OBJECT
 
@@ -79,10 +43,10 @@ class Q_QUICK_PRIVATE_EXPORT QQuickItemView : public QQuickFlickable
     Q_PROPERTY(QQuickItem *currentItem READ currentItem NOTIFY currentItemChanged)
 
     Q_PROPERTY(bool keyNavigationWraps READ isWrapEnabled WRITE setWrapEnabled NOTIFY keyNavigationWrapsChanged)
-    Q_PROPERTY(bool keyNavigationEnabled READ isKeyNavigationEnabled WRITE setKeyNavigationEnabled NOTIFY keyNavigationEnabledChanged REVISION 7)
+    Q_PROPERTY(bool keyNavigationEnabled READ isKeyNavigationEnabled WRITE setKeyNavigationEnabled NOTIFY keyNavigationEnabledChanged REVISION(2, 7))
     Q_PROPERTY(int cacheBuffer READ cacheBuffer WRITE setCacheBuffer NOTIFY cacheBufferChanged)
-    Q_PROPERTY(int displayMarginBeginning READ displayMarginBeginning WRITE setDisplayMarginBeginning NOTIFY displayMarginBeginningChanged REVISION 3)
-    Q_PROPERTY(int displayMarginEnd READ displayMarginEnd WRITE setDisplayMarginEnd NOTIFY displayMarginEndChanged REVISION 3)
+    Q_PROPERTY(int displayMarginBeginning READ displayMarginBeginning WRITE setDisplayMarginBeginning NOTIFY displayMarginBeginningChanged REVISION(2, 3))
+    Q_PROPERTY(int displayMarginEnd READ displayMarginEnd WRITE setDisplayMarginEnd NOTIFY displayMarginEndChanged REVISION(2, 3))
 
     Q_PROPERTY(Qt::LayoutDirection layoutDirection READ layoutDirection WRITE setLayoutDirection NOTIFY layoutDirectionChanged)
     Q_PROPERTY(Qt::LayoutDirection effectiveLayoutDirection READ effectiveLayoutDirection NOTIFY effectiveLayoutDirectionChanged)
@@ -93,6 +57,7 @@ class Q_QUICK_PRIVATE_EXPORT QQuickItemView : public QQuickFlickable
     Q_PROPERTY(QQmlComponent *footer READ footer WRITE setFooter NOTIFY footerChanged)
     Q_PROPERTY(QQuickItem *footerItem READ footerItem NOTIFY footerItemChanged)
 
+#if QT_CONFIG(quick_viewtransitions)
     Q_PROPERTY(QQuickTransition *populate READ populateTransition WRITE setPopulateTransition NOTIFY populateTransitionChanged)
     Q_PROPERTY(QQuickTransition *add READ addTransition WRITE setAddTransition NOTIFY addTransitionChanged)
     Q_PROPERTY(QQuickTransition *addDisplaced READ addDisplacedTransition WRITE setAddDisplacedTransition NOTIFY addDisplacedTransitionChanged)
@@ -101,6 +66,7 @@ class Q_QUICK_PRIVATE_EXPORT QQuickItemView : public QQuickFlickable
     Q_PROPERTY(QQuickTransition *remove READ removeTransition WRITE setRemoveTransition NOTIFY removeTransitionChanged)
     Q_PROPERTY(QQuickTransition *removeDisplaced READ removeDisplacedTransition WRITE setRemoveDisplacedTransition NOTIFY removeDisplacedTransitionChanged)
     Q_PROPERTY(QQuickTransition *displaced READ displacedTransition WRITE setDisplacedTransition NOTIFY displacedTransitionChanged)
+#endif
 
     Q_PROPERTY(QQmlComponent *highlight READ highlight WRITE setHighlight NOTIFY highlightChanged)
     Q_PROPERTY(QQuickItem *highlightItem READ highlightItem NOTIFY highlightItemChanged)
@@ -110,11 +76,11 @@ class Q_QUICK_PRIVATE_EXPORT QQuickItemView : public QQuickFlickable
     Q_PROPERTY(qreal preferredHighlightEnd READ preferredHighlightEnd WRITE setPreferredHighlightEnd NOTIFY preferredHighlightEndChanged RESET resetPreferredHighlightEnd)
     Q_PROPERTY(int highlightMoveDuration READ highlightMoveDuration WRITE setHighlightMoveDuration NOTIFY highlightMoveDurationChanged)
 
-    Q_PROPERTY(bool reuseItems READ reuseItems WRITE setReuseItems NOTIFY reuseItemsChanged REVISION 15)
+    Q_PROPERTY(bool reuseItems READ reuseItems WRITE setReuseItems NOTIFY reuseItemsChanged REVISION(2, 15))
 
     QML_NAMED_ELEMENT(ItemView)
     QML_UNCREATABLE("ItemView is an abstract base class.")
-    QML_ADDED_IN_MINOR_VERSION(1)
+    QML_ADDED_IN_VERSION(2, 1)
 
 public:
     // this holds all layout enum values so they can be referred to by other enums
@@ -180,6 +146,7 @@ public:
     void setHeader(QQmlComponent *);
     QQuickItem *headerItem() const;
 
+#if QT_CONFIG(quick_viewtransitions)
     QQuickTransition *populateTransition() const;
     void setPopulateTransition(QQuickTransition *transition);
 
@@ -203,6 +170,7 @@ public:
 
     QQuickTransition *displacedTransition() const;
     void setDisplacedTransition(QQuickTransition *transition);
+#endif
 
     QQmlComponent *highlight() const;
     void setHighlight(QQmlComponent *);
@@ -237,10 +205,10 @@ public:
     Q_INVOKABLE void positionViewAtIndex(int index, int mode);
     Q_INVOKABLE int indexAt(qreal x, qreal y) const;
     Q_INVOKABLE QQuickItem *itemAt(qreal x, qreal y) const;
-    Q_REVISION(13) Q_INVOKABLE QQuickItem *itemAtIndex(int index) const;
+    Q_REVISION(2, 13) Q_INVOKABLE QQuickItem *itemAtIndex(int index) const;
     Q_INVOKABLE void positionViewAtBeginning();
     Q_INVOKABLE void positionViewAtEnd();
-    Q_REVISION(1) Q_INVOKABLE void forceLayout();
+    Q_REVISION(2, 1) Q_INVOKABLE void forceLayout();
 
     void setContentX(qreal pos) override;
     void setContentY(qreal pos) override;
@@ -255,7 +223,7 @@ Q_SIGNALS:
     void currentItemChanged();
 
     void keyNavigationWrapsChanged();
-    Q_REVISION(7) void keyNavigationEnabledChanged();
+    Q_REVISION(2, 7) void keyNavigationEnabledChanged();
     void cacheBufferChanged();
     void displayMarginBeginningChanged();
     void displayMarginEndChanged();
@@ -269,6 +237,7 @@ Q_SIGNALS:
     void headerItemChanged();
     void footerItemChanged();
 
+#if QT_CONFIG(quick_viewtransitions)
     void populateTransitionChanged();
     void addTransitionChanged();
     void addDisplacedTransitionChanged();
@@ -277,6 +246,7 @@ Q_SIGNALS:
     void removeTransitionChanged();
     void removeDisplacedTransitionChanged();
     void displacedTransitionChanged();
+#endif
 
     void highlightChanged();
     void highlightItemChanged();
@@ -286,12 +256,12 @@ Q_SIGNALS:
     void preferredHighlightEndChanged();
     void highlightMoveDurationChanged();
 
-    Q_REVISION(15) void reuseItemsChanged();
+    Q_REVISION(2, 15) void reuseItemsChanged();
 
 protected:
     void updatePolish() override;
     void componentComplete() override;
-    void geometryChanged(const QRectF &newGeometry, const QRectF &oldGeometry) override;
+    void geometryChange(const QRectF &newGeometry, const QRectF &oldGeometry) override;
     qreal minYExtent() const override;
     qreal maxYExtent() const override;
     qreal minXExtent() const override;
@@ -303,8 +273,8 @@ protected Q_SLOTS:
     virtual void initItem(int index, QObject *item);
     void modelUpdated(const QQmlChangeSet &changeSet, bool reset);
     void destroyingItem(QObject *item);
-    Q_REVISION(15) void onItemPooled(int modelIndex, QObject *object);
-    Q_REVISION(15) void onItemReused(int modelIndex, QObject *object);
+    Q_REVISION(2, 15) void onItemPooled(int modelIndex, QObject *object);
+    Q_REVISION(2, 15) void onItemReused(int modelIndex, QObject *object);
     void animStopped();
     void trackedPositionChanged();
 
@@ -313,30 +283,21 @@ private:
 };
 
 
-class Q_QUICK_PRIVATE_EXPORT QQuickItemViewAttached : public QObject
+class Q_QUICK_EXPORT QQuickItemViewAttached : public QObject
 {
     Q_OBJECT
 
-    Q_PROPERTY(QQuickItemView *view READ view NOTIFY viewChanged)
-    Q_PROPERTY(bool isCurrentItem READ isCurrentItem NOTIFY currentItemChanged)
-    Q_PROPERTY(bool delayRemove READ delayRemove WRITE setDelayRemove NOTIFY delayRemoveChanged)
+    Q_PROPERTY(bool isCurrentItem READ isCurrentItem NOTIFY currentItemChanged FINAL)
+    Q_PROPERTY(bool delayRemove READ delayRemove WRITE setDelayRemove NOTIFY delayRemoveChanged FINAL)
 
-    Q_PROPERTY(QString section READ section NOTIFY sectionChanged)
-    Q_PROPERTY(QString previousSection READ prevSection NOTIFY prevSectionChanged)
-    Q_PROPERTY(QString nextSection READ nextSection NOTIFY nextSectionChanged)
+    Q_PROPERTY(QString section READ section NOTIFY sectionChanged FINAL)
+    Q_PROPERTY(QString previousSection READ prevSection NOTIFY prevSectionChanged FINAL)
+    Q_PROPERTY(QString nextSection READ nextSection NOTIFY nextSectionChanged FINAL)
 
 public:
     QQuickItemViewAttached(QObject *parent)
         : QObject(parent), m_isCurrent(false), m_delayRemove(false) {}
     ~QQuickItemViewAttached() {}
-
-    QQuickItemView *view() const { return m_view; }
-    void setView(QQuickItemView *view) {
-        if (view != m_view) {
-            m_view = view;
-            Q_EMIT viewChanged();
-        }
-    }
 
     bool isCurrentItem() const { return m_isCurrent; }
     void setIsCurrentItem(bool c) {
@@ -412,7 +373,6 @@ Q_SIGNALS:
     void reused();
 
 public:
-    QPointer<QQuickItemView> m_view;
     bool m_isCurrent : 1;
     bool m_delayRemove : 1;
 

@@ -1,17 +1,15 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_FETCH_BODY_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_FETCH_BODY_H_
 
-#include "third_party/blink/renderer/bindings/core/v8/active_script_wrappable.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_value.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_observer.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
 namespace blink {
@@ -20,6 +18,7 @@ class BodyStreamBuffer;
 class ExceptionState;
 class ExecutionContext;
 class ReadableStream;
+class ScriptPromiseResolver;
 class ScriptState;
 
 // This class represents Body mix-in defined in the fetch spec
@@ -32,6 +31,8 @@ class ScriptState;
 class CORE_EXPORT Body : public ExecutionContextClient {
  public:
   explicit Body(ExecutionContext*);
+  Body(const Body&) = delete;
+  Body& operator=(const Body&) = delete;
 
   ScriptPromise arrayBuffer(ScriptState*, ExceptionState&);
   ScriptPromise blob(ScriptState*, ExceptionState&);
@@ -52,8 +53,6 @@ class CORE_EXPORT Body : public ExecutionContextClient {
   // True if the body is locked.
   bool IsBodyLocked() const;
 
-  bool HasPendingActivity() const;
-
  private:
   // TODO(e_hakkinen): Fix |MimeType()| to always contain parameters and
   // remove |ContentType()|.
@@ -65,7 +64,23 @@ class CORE_EXPORT Body : public ExecutionContextClient {
   // an exception if consumption cannot proceed. The caller must check
   // |exception_state| on return.
   void RejectInvalidConsumption(ExceptionState& exception_state) const;
-  DISALLOW_COPY_AND_ASSIGN(Body);
+
+  // The parts of LoadAndConvertBody() that do not depend on the template
+  // parameters are split into this method to reduce binary size. Returns a
+  // freshly-created ScriptPromiseResolver* on success, or nullptr on error. On
+  // error, LoadAndConvertBody() must not continue.
+  ScriptPromiseResolver* PrepareToLoadBody(ScriptState*, ExceptionState&);
+
+  // Common implementation for body-reading accessors. To maximise performance
+  // at the cost of code size, this is templated on the types of the lambdas
+  // that are passed in.
+  template <class Consumer,
+            typename CreateLoaderFunction,
+            typename OnNoBodyFunction>
+  ScriptPromise LoadAndConvertBody(ScriptState*,
+                                   CreateLoaderFunction,
+                                   OnNoBodyFunction,
+                                   ExceptionState&);
 };
 
 }  // namespace blink

@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -22,33 +22,36 @@ import org.chromium.base.test.params.ParameterAnnotations;
 import org.chromium.base.test.params.ParameterAnnotations.UseRunnerDelegate;
 import org.chromium.base.test.params.ParameterSet;
 import org.chromium.base.test.params.ParameterizedRunner;
+import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.Feature;
+import org.chromium.components.embedder_support.R;
 import org.chromium.content_public.browser.test.util.TestThreadUtils;
-import org.chromium.ui.R;
-import org.chromium.ui.test.util.DummyUiActivityTestCase;
+import org.chromium.ui.test.util.BlankUiTestActivityTestCase;
 import org.chromium.ui.test.util.NightModeTestUtils;
 import org.chromium.ui.test.util.RenderTestRule;
 
 import java.io.IOException;
 import java.util.List;
 
-/**
- * Render tests for color picker dialog.
- */
+/** Render tests for color picker dialog. */
 @RunWith(ParameterizedRunner.class)
 @UseRunnerDelegate(BaseJUnit4RunnerDelegate.class)
-public class ColorPickerDialogRenderTest extends DummyUiActivityTestCase {
+@Batch(Batch.UNIT_TESTS)
+public class ColorPickerDialogRenderTest extends BlankUiTestActivityTestCase {
     @ParameterAnnotations.ClassParameter
     private static List<ParameterSet> sClassParams =
             new NightModeTestUtils.NightModeParams().getParameters();
 
     @Rule
-    public RenderTestRule mRenderTestRule = RenderTestRule.Builder.withPublicCorpus().build();
+    public RenderTestRule mRenderTestRule =
+            RenderTestRule.Builder.withPublicCorpus()
+                    .setBugComponent(RenderTestRule.Component.BLINK_FORMS_COLOR)
+                    .build();
 
     private View mView;
 
     public ColorPickerDialogRenderTest(boolean nightModeEnabled) {
-        NightModeTestUtils.setUpNightModeForDummyUiActivity(nightModeEnabled);
+        NightModeTestUtils.setUpNightModeForBlankUiTestActivity(nightModeEnabled);
         mRenderTestRule.setNightModeEnabled(nightModeEnabled);
     }
 
@@ -64,14 +67,15 @@ public class ColorPickerDialogRenderTest extends DummyUiActivityTestCase {
         suggestions[5] = new ColorSuggestion(Color.RED, "red");
         suggestions[6] = new ColorSuggestion(Color.MAGENTA, "magenta");
         suggestions[7] = new ColorSuggestion(Color.CYAN, "cyan");
-        TestThreadUtils.runOnUiThreadBlocking(() -> {
-            Activity activity = getActivity();
-            ColorPickerDialog dialog =
-                    new ColorPickerDialog(activity, (v) -> {}, Color.RED, suggestions);
-            mView = dialog.getContentView();
-            mView.setBackgroundResource(R.color.default_bg_color);
-            activity.setContentView(mView, new LayoutParams(WRAP_CONTENT, WRAP_CONTENT));
-        });
+        TestThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    Activity activity = getActivity();
+                    ColorPickerDialog dialog =
+                            new ColorPickerDialog(activity, (v) -> {}, Color.RED, suggestions);
+                    mView = dialog.getContentView();
+                    mView.setBackgroundResource(R.color.default_bg_color_baseline);
+                    activity.setContentView(mView, new LayoutParams(WRAP_CONTENT, WRAP_CONTENT));
+                });
     }
 
     @Test

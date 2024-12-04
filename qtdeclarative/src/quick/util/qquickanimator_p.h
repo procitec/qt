@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtQuick module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #ifndef QQUICKANIMATOR_P_H
 #define QQUICKANIMATOR_P_H
@@ -59,7 +23,7 @@ class QQuickItem;
 
 class QQuickAnimatorJob;
 class QQuickAnimatorPrivate;
-class Q_QUICK_PRIVATE_EXPORT QQuickAnimator : public QQuickAbstractAnimation
+class Q_QUICK_EXPORT QQuickAnimator : public QQuickAbstractAnimation
 {
     Q_OBJECT
     Q_DECLARE_PRIVATE(QQuickAnimator)
@@ -70,7 +34,7 @@ class Q_QUICK_PRIVATE_EXPORT QQuickAnimator : public QQuickAbstractAnimation
     Q_PROPERTY(qreal from READ from WRITE setFrom NOTIFY fromChanged)
 
     QML_NAMED_ELEMENT(Animator)
-    QML_ADDED_IN_MINOR_VERSION(2)
+    QML_ADDED_IN_VERSION(2, 2)
     QML_UNCREATABLE("Animator is an abstract class")
 
 public:
@@ -109,12 +73,11 @@ Q_SIGNALS:
     void fromChanged(qreal from);
 };
 
-class QQuickScaleAnimatorPrivate;
-class Q_QUICK_PRIVATE_EXPORT QQuickScaleAnimator : public QQuickAnimator
+class Q_QUICK_EXPORT QQuickScaleAnimator : public QQuickAnimator
 {
     Q_OBJECT
     QML_NAMED_ELEMENT(ScaleAnimator)
-    QML_ADDED_IN_MINOR_VERSION(2)
+    QML_ADDED_IN_VERSION(2, 2)
 public:
     QQuickScaleAnimator(QObject *parent = nullptr);
 protected:
@@ -122,11 +85,11 @@ protected:
     QString propertyName() const override { return QStringLiteral("scale"); }
 };
 
-class Q_QUICK_PRIVATE_EXPORT QQuickXAnimator : public QQuickAnimator
+class Q_QUICK_EXPORT QQuickXAnimator : public QQuickAnimator
 {
     Q_OBJECT
     QML_NAMED_ELEMENT(XAnimator)
-    QML_ADDED_IN_MINOR_VERSION(2)
+    QML_ADDED_IN_VERSION(2, 2)
 public:
     QQuickXAnimator(QObject *parent = nullptr);
 protected:
@@ -134,11 +97,11 @@ protected:
     QString propertyName() const override { return QStringLiteral("x"); }
 };
 
-class Q_QUICK_PRIVATE_EXPORT QQuickYAnimator : public QQuickAnimator
+class Q_QUICK_EXPORT QQuickYAnimator : public QQuickAnimator
 {
     Q_OBJECT
     QML_NAMED_ELEMENT(YAnimator)
-    QML_ADDED_IN_MINOR_VERSION(2)
+    QML_ADDED_IN_VERSION(2, 2)
 public:
     QQuickYAnimator(QObject *parent = nullptr);
 protected:
@@ -146,11 +109,11 @@ protected:
     QString propertyName() const override { return QStringLiteral("y"); }
 };
 
-class Q_QUICK_PRIVATE_EXPORT QQuickOpacityAnimator : public QQuickAnimator
+class Q_QUICK_EXPORT QQuickOpacityAnimator : public QQuickAnimator
 {
     Q_OBJECT
     QML_NAMED_ELEMENT(OpacityAnimator)
-    QML_ADDED_IN_MINOR_VERSION(2)
+    QML_ADDED_IN_VERSION(2, 2)
 public:
     QQuickOpacityAnimator(QObject *parent = nullptr);
 protected:
@@ -159,13 +122,13 @@ protected:
 };
 
 class QQuickRotationAnimatorPrivate;
-class Q_QUICK_PRIVATE_EXPORT QQuickRotationAnimator : public QQuickAnimator
+class Q_QUICK_EXPORT QQuickRotationAnimator : public QQuickAnimator
 {
     Q_OBJECT
     Q_DECLARE_PRIVATE(QQuickRotationAnimator)
     Q_PROPERTY(RotationDirection direction READ direction WRITE setDirection NOTIFY directionChanged)
     QML_NAMED_ELEMENT(RotationAnimator)
-    QML_ADDED_IN_MINOR_VERSION(2)
+    QML_ADDED_IN_VERSION(2, 2)
 
 public:
     enum RotationDirection { Numerical, Shortest, Clockwise, Counterclockwise };
@@ -184,15 +147,15 @@ protected:
     QString propertyName() const override { return QStringLiteral("rotation"); }
 };
 
-#if QT_CONFIG(quick_shadereffect) && QT_CONFIG(opengl)
+#if QT_CONFIG(quick_shadereffect)
 class QQuickUniformAnimatorPrivate;
-class Q_QUICK_PRIVATE_EXPORT QQuickUniformAnimator : public QQuickAnimator
+class Q_QUICK_EXPORT QQuickUniformAnimator : public QQuickAnimator
 {
     Q_OBJECT
     Q_DECLARE_PRIVATE(QQuickUniformAnimator)
     Q_PROPERTY(QString uniform READ uniform WRITE setUniform NOTIFY uniformChanged)
     QML_NAMED_ELEMENT(UniformAnimator)
-    QML_ADDED_IN_MINOR_VERSION(2)
+    QML_ADDED_IN_VERSION(2, 2)
 
 public:
     QQuickUniformAnimator(QObject *parent = nullptr);
@@ -211,13 +174,4 @@ protected:
 
 QT_END_NAMESPACE
 
-QML_DECLARE_TYPE(QQuickAnimator)
-QML_DECLARE_TYPE(QQuickXAnimator)
-QML_DECLARE_TYPE(QQuickYAnimator)
-QML_DECLARE_TYPE(QQuickScaleAnimator)
-QML_DECLARE_TYPE(QQuickRotationAnimator)
-QML_DECLARE_TYPE(QQuickOpacityAnimator)
-#if QT_CONFIG(quick_shadereffect) && QT_CONFIG(opengl)
-QML_DECLARE_TYPE(QQuickUniformAnimator)
-#endif
 #endif // QQUICKANIMATOR_P_H

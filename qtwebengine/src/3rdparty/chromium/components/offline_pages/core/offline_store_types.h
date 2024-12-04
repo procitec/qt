@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -78,7 +78,7 @@ class StoreUpdateResult {
 
 // This enum is backed by a UMA histogram therefore its entries should not be
 // deleted or re-ordered and new ones should only be appended.
-// See enum definition with the same name in tools/metrics/histograms/enum.xml.
+// See enum definition with the same name in tools/metrics/histograms/enums.xml.
 enum class OfflinePagesStoreEvent {
   kOpenedFirstTime = 0,
   kReopened = 1,

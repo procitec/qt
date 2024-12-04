@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,8 +11,9 @@
 #include "base/check_op.h"
 #include "base/containers/span.h"
 #include "base/location.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
+#include "build/build_config.h"
 #include "crypto/openssl_util.h"
 #include "net/base/address_list.h"
 #include "net/base/completion_once_callback.h"
@@ -154,7 +155,7 @@ class SocketBIOAdapterTest : public testing::TestWithParam<ReadIfReadySupport>,
   bool expect_read_ready_ = false;
   bool expect_write_ready_ = false;
   MockClientSocketFactory factory_;
-  std::unique_ptr<SocketBIOAdapter>* reset_on_write_ready_ = nullptr;
+  raw_ptr<std::unique_ptr<SocketBIOAdapter>> reset_on_write_ready_ = nullptr;
 };
 
 INSTANTIATE_TEST_SUITE_P(All,
@@ -283,8 +284,14 @@ TEST_P(SocketBIOAdapterTest, ReadEOFSync) {
   ExpectReadError(adapter->bio(), ERR_CONNECTION_CLOSED, tracer);
 }
 
+#if BUILDFLAG(IS_ANDROID)
 // Test that asynchronous EOF is mapped to ERR_CONNECTION_CLOSED.
-TEST_P(SocketBIOAdapterTest, ReadEOFAsync) {
+// TODO(crbug.com/1480024): Test is flaky on Android.
+#define MAYBE_ReadEOFAsync DISABLED_ReadEOFAsync
+#else
+#define MAYBE_ReadEOFAsync ReadEOFAsync
+#endif
+TEST_P(SocketBIOAdapterTest, MAYBE_ReadEOFAsync) {
   crypto::OpenSSLErrStackTracer tracer(FROM_HERE);
 
   MockRead reads[] = {

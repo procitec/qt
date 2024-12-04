@@ -28,8 +28,7 @@
 
 [
     ActiveScriptWrappable,
-    Exposed=Worker,
-    ImmutablePrototype
+    Exposed=Worker
 ] interface WorkerGlobalScope : EventTarget {
     readonly attribute WorkerGlobalScope self;
     readonly attribute WorkerLocation location;
@@ -53,10 +52,6 @@
     // Console is installed by v8 inspector when context is created
     // and is left commented here just for documentation.
 
-    // CORS and RFC1918
-    // https://wicg.github.io/cors-rfc1918/#feature-detect
-    [RuntimeEnabled=AddressSpace, ImplementedAs=addressSpaceForBindings] readonly attribute AddressSpace addressSpace;
-
     // Unhandled Promise Rejection Events
     attribute EventHandler onrejectionhandled;
     attribute EventHandler onunhandledrejection;
@@ -70,15 +65,9 @@
     [Replaceable] readonly attribute DOMString origin;
     void queueMicrotask(VoidFunction callback);
 
-    // FontFaceSource
-    // https://drafts.csswg.org/css-font-loading-3/#font-face-source
-    // TODO(fserb): temporarly until we can enable the interface below.
-    readonly attribute FontFaceSet fonts;
-
-    // TrustedTypes API: http://github.com/wicg/trusted-types
-    [RuntimeEnabled=TrustedDOMTypes] readonly attribute TrustedTypePolicyFactory trustedTypes;
+    // TrustedTypes API: http://github.com/w3c/trusted-types
+    readonly attribute TrustedTypePolicyFactory trustedTypes;
 };
 
 WorkerGlobalScope includes WindowOrWorkerGlobalScope;
-// TODO(fserb): this needs to be enabled once we get out of RuntimeEnabled.
-//WorkerGlobalScope includes FontFaceSource;
+WorkerGlobalScope includes FontFaceSource;

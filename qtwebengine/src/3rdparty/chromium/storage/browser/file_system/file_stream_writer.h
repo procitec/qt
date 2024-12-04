@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -23,10 +23,12 @@ class IOBuffer;
 }
 
 namespace storage {
-class ObfuscatedFileUtilMemoryDelegate;
-}
 
-namespace storage {
+// Indicates whether the flush is done in the middle or at the end of a file.
+enum class FlushMode {
+  kDefault,
+  kEndOfFile,
+};
 
 // A generic interface for writing to a file-like object.
 class FileStreamWriter {
@@ -46,18 +48,11 @@ class FileStreamWriter {
       int64_t initial_offset,
       OpenOrCreate open_or_create);
 
-  // Creates a writer for the existing memory file in the path |file_path|
-  // starting from |initial_offset|.
-  COMPONENT_EXPORT(STORAGE_BROWSER)
-  static std::unique_ptr<FileStreamWriter> CreateForMemoryFile(
-      scoped_refptr<base::TaskRunner> task_runner,
-      base::WeakPtr<ObfuscatedFileUtilMemoryDelegate> memory_file_util,
-      const base::FilePath& file_path,
-      int64_t initial_offset);
-
+  FileStreamWriter(const FileStreamWriter&) = delete;
+  FileStreamWriter& operator=(const FileStreamWriter&) = delete;
   // Closes the file. If there's an in-flight operation, it is canceled (i.e.,
   // the callback function associated with the operation is not called).
-  virtual ~FileStreamWriter() {}
+  virtual ~FileStreamWriter() = default;
 
   // Writes to the current cursor position asynchronously.
   //
@@ -100,13 +95,29 @@ class FileStreamWriter {
 
   // Flushes the data written so far.
   //
+  // The flush_mode argument exists because some implementations may be backed
+  // by cloud-storage APIs (not local disk) that do not support incremental
+  // writes. In such cases, only the final flush does an upload and any earlier
+  // flushes should be no-ops, but the caller still needs to tell the callee
+  // which flush is the final one.
+  //
+  // Some other "stream writer" APIs have separate Flush and Close methods, but
+  // for historical reasons, this API has Flush(FlushMode::kDefault) and
+  // Flush(FlushMode::kEndOfFile). Note that Flush(FlushMode::kEndOfFile), the
+  // equivalent of Close, still takes a callback (it can involve async I/O),
+  // unlike the FileStreamWriter destructor (as destructors have no arguments).
+  //
   // If the flush finished synchronously, it return net::OK. If the flush could
   // not be performed, it returns an error code. Otherwise, net::ERR_IO_PENDING
   // is returned, and the callback will be run on the thread where Flush() was
   // called when the flush has completed.
   //
   // It is invalid to call Flush while there is an in-flight async operation.
-  virtual int Flush(net::CompletionOnceCallback callback) = 0;
+  virtual int Flush(FlushMode flush_mode,
+                    net::CompletionOnceCallback callback) = 0;
+
+ protected:
+  FileStreamWriter() = default;
 };
 
 }  // namespace storage

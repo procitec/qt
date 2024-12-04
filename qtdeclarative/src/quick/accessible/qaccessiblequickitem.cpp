@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtQuick module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qaccessiblequickitem_p.h"
 
@@ -43,13 +7,204 @@
 
 #include "QtQuick/private/qquickitem_p.h"
 #include "QtQuick/private/qquicktext_p.h"
+#include <private/qquicktext_p_p.h>
+
 #include "QtQuick/private/qquicktextinput_p.h"
 #include "QtQuick/private/qquickaccessibleattached_p.h"
 #include "QtQuick/qquicktextdocument.h"
+#include "QtQuick/qquickrendercontrol.h"
 QT_BEGIN_NAMESPACE
 
 #if QT_CONFIG(accessibility)
 
+class QAccessibleHyperlink : public QAccessibleInterface, public QAccessibleHyperlinkInterface {
+public:
+    QAccessibleHyperlink(QQuickItem *parentTextItem, int linkIndex);
+
+    // check for valid pointers
+    bool isValid() const override;
+    QObject *object() const override;
+    QWindow *window() const override;
+
+    // navigation, hierarchy
+    QAccessibleInterface *parent() const override;
+    QAccessibleInterface *child(int index) const override;
+    int childCount() const override;
+    int indexOfChild(const QAccessibleInterface *iface) const override;
+    QAccessibleInterface *childAt(int x, int y) const override;
+
+    // properties and state
+    QString text(QAccessible::Text) const override;
+    void setText(QAccessible::Text, const QString &text) override;
+    QRect rect() const override;
+    QAccessible::Role role() const override;
+    QAccessible::State state() const override;
+
+    void *interface_cast(QAccessible::InterfaceType t) override;
+
+    // QAccessibleHyperlinkInterface
+    QString anchor() const override
+    {
+        const QVector<QQuickTextPrivate::LinkDesc> links = QQuickTextPrivate::get(textItem())->getLinks();
+        if (linkIndex < links.size())
+            return links.at(linkIndex).m_anchor;
+        return QString();
+    }
+
+    QString anchorTarget() const override
+    {
+        const QVector<QQuickTextPrivate::LinkDesc> links = QQuickTextPrivate::get(textItem())->getLinks();
+        if (linkIndex < links.size())
+            return links.at(linkIndex).m_anchorTarget;
+        return QString();
+    }
+
+    int startIndex() const override
+    {
+        const QVector<QQuickTextPrivate::LinkDesc> links = QQuickTextPrivate::get(textItem())->getLinks();
+        if (linkIndex < links.size())
+            return links.at(linkIndex).m_startIndex;
+        return -1;
+    }
+
+    int endIndex() const override
+    {
+        const QVector<QQuickTextPrivate::LinkDesc> links = QQuickTextPrivate::get(textItem())->getLinks();
+        if (linkIndex < links.size())
+            return links.at(linkIndex).m_endIndex;
+        return -1;
+    }
+
+private:
+    QQuickText *textItem() const { return qobject_cast<QQuickText*>(parentTextItem); }
+    QQuickItem *parentTextItem;
+    const int linkIndex;
+
+    friend class QAccessibleQuickItem;
+};
+
+
+QAccessibleHyperlink::QAccessibleHyperlink(QQuickItem *parentTextItem, int linkIndex)
+    : parentTextItem(parentTextItem),
+      linkIndex(linkIndex)
+{
+}
+
+
+bool QAccessibleHyperlink::isValid() const
+{
+    return textItem();
+}
+
+
+QObject *QAccessibleHyperlink::object() const
+{
+    return nullptr;
+}
+
+
+QWindow *QAccessibleHyperlink::window() const
+{
+    return textItem()->window();
+}
+
+
+/* \reimp */
+QRect QAccessibleHyperlink::rect() const
+{
+    const QVector<QQuickTextPrivate::LinkDesc> links = QQuickTextPrivate::get(textItem())->getLinks();
+    if (linkIndex < links.size()) {
+        const QPoint tl = itemScreenRect(textItem()).topLeft();
+        return links.at(linkIndex).rect.translated(tl);
+    }
+    return QRect();
+}
+
+/* \reimp */
+QAccessibleInterface *QAccessibleHyperlink::childAt(int, int) const
+{
+    return nullptr;
+}
+
+/* \reimp */
+QAccessibleInterface *QAccessibleHyperlink::parent() const
+{
+    return QAccessible::queryAccessibleInterface(textItem());
+}
+
+/* \reimp */
+QAccessibleInterface *QAccessibleHyperlink::child(int) const
+{
+    return nullptr;
+}
+
+/* \reimp */
+int QAccessibleHyperlink::childCount() const
+{
+    return 0;
+}
+
+/* \reimp */
+int QAccessibleHyperlink::indexOfChild(const QAccessibleInterface *) const
+{
+    return -1;
+}
+
+/* \reimp */
+QAccessible::State QAccessibleHyperlink::state() const
+{
+    QAccessible::State s;
+    s.selectable = true;
+    s.focusable = true;
+    s.selectableText = true;
+    s.selected = false;
+    return s;
+}
+
+/* \reimp */
+QAccessible::Role QAccessibleHyperlink::role() const
+{
+    return QAccessible::Link;
+}
+
+/* \reimp */
+QString QAccessibleHyperlink::text(QAccessible::Text t) const
+{
+    // AT servers have different behaviors:
+    // Wordpad on windows have this behavior:
+    //   * Name returns the anchor target (URL)
+    //   * Value returns the anchor target (URL)
+
+    // Other AT servers (e.g. MS Edge on Windows) does what seems to be more sensible:
+    //   * Name returns the anchor name
+    //   * Value returns the anchor target (URL)
+    if (t == QAccessible::Name)
+        return anchor();
+    if (t == QAccessible::Value)
+        return anchorTarget();
+    return QString();
+}
+
+/* \reimp */
+void QAccessibleHyperlink::setText(QAccessible::Text, const QString &)
+{
+
+}
+
+/* \reimp */
+void *QAccessibleHyperlink::interface_cast(QAccessible::InterfaceType t)
+{
+    if (t == QAccessible::HyperlinkInterface)
+       return static_cast<QAccessibleHyperlinkInterface*>(this);
+    return nullptr;
+}
+
+
+/*!
+ * \internal
+ * \brief QAccessibleQuickItem::QAccessibleQuickItem
+ * \param item
+ */
 QAccessibleQuickItem::QAccessibleQuickItem(QQuickItem *item)
     : QAccessibleObject(item), m_doc(textDocument())
 {
@@ -57,12 +212,30 @@ QAccessibleQuickItem::QAccessibleQuickItem(QQuickItem *item)
 
 QWindow *QAccessibleQuickItem::window() const
 {
-    return item()->window();
+    QQuickWindow *window = item()->window();
+
+    // For QQuickWidget the above window will be the offscreen QQuickWindow,
+    // which is not a part of the accessibility tree. Detect this case and
+    // return the window for the QQuickWidget instead.
+    if (window && !window->handle()) {
+        if (QQuickRenderControl *renderControl = QQuickWindowPrivate::get(window)->renderControl) {
+            if (QWindow *renderWindow = renderControl->renderWindow(nullptr))
+                return renderWindow;
+        }
+    }
+
+    return window;
 }
 
 int QAccessibleQuickItem::childCount() const
 {
-    return childItems().count();
+    // see comment in QAccessibleQuickItem::child() as to why we do this
+    int cc = 0;
+    if (QQuickText *textItem = qobject_cast<QQuickText*>(item())) {
+        cc = QQuickTextPrivate::get(textItem)->getLinks().size();
+    }
+    cc += childItems().size();
+    return cc;
 }
 
 QRect QAccessibleQuickItem::rect() const
@@ -96,8 +269,20 @@ QAccessibleInterface *QAccessibleQuickItem::childAt(int x, int y) const
             return nullptr;
     }
 
+    // special case for text interfaces
+    if (QQuickText *textItem = qobject_cast<QQuickText*>(item())) {
+        const auto hyperLinkChildCount = QQuickTextPrivate::get(textItem)->getLinks().size();
+        for (auto i = 0; i < hyperLinkChildCount; i++) {
+            QAccessibleInterface *iface = child(i);
+            if (iface->rect().contains(x,y)) {
+                return iface;
+            }
+        }
+    }
+
+    // general item hit test
     const QList<QQuickItem*> kids = accessibleUnignoredChildren(item(), true);
-    for (int i = kids.count() - 1; i >= 0; --i) {
+    for (int i = kids.size() - 1; i >= 0; --i) {
         QAccessibleInterface *childIface = QAccessible::queryAccessibleInterface(kids.at(i));
         if (QAccessibleInterface *childChild = childIface->childAt(x, y))
             return childChild;
@@ -113,19 +298,15 @@ QAccessibleInterface *QAccessibleQuickItem::childAt(int x, int y) const
 QAccessibleInterface *QAccessibleQuickItem::parent() const
 {
     QQuickItem *parent = item()->parentItem();
-    QQuickWindow *window = item()->window();
-    QQuickItem *ci = window ? window->contentItem() : nullptr;
+    QQuickWindow *itemWindow = item()->window();
+    QQuickItem *ci = itemWindow ? itemWindow->contentItem() : nullptr;
     while (parent && !QQuickItemPrivate::get(parent)->isAccessible && parent != ci)
         parent = parent->parentItem();
 
     if (parent) {
         if (parent == ci) {
-            // Jump out to the scene widget if the parent is the root item.
-            // There are two root items, QQuickWindow::rootItem and
-            // QQuickView::declarativeRoot. The former is the true root item,
-            // but is not a part of the accessibility tree. Check if we hit
-            // it here and return an interface for the scene instead.
-            return QAccessible::queryAccessibleInterface(window);
+            // Jump out to the window if the parent is the root item
+            return QAccessible::queryAccessibleInterface(window());
         } else {
             while (parent && !parent->d_func()->isAccessible)
                 parent = parent->parentItem();
@@ -137,19 +318,73 @@ QAccessibleInterface *QAccessibleQuickItem::parent() const
 
 QAccessibleInterface *QAccessibleQuickItem::child(int index) const
 {
-    QList<QQuickItem *> children = childItems();
+    /*  Text with hyperlinks will have dedicated children interfaces representing each hyperlink.
 
-    if (index < 0 || index >= children.count())
+        For the pathological case when a Text node has hyperlinks in its text *and* accessible
+        quick items as children, we put the hyperlink a11y interfaces as the first children, then
+        the other interfaces follows the hyperlink children (as siblings).
+
+        For example, suppose you have two links in the text and an image as a child of the text,
+        it will have the following a11y hierarchy:
+
+       [a11y:TextInterface]
+        |
+        +- [a11y:HyperlinkInterface]
+        +- [a11y:HyperlinkInterface]
+        +- [a11y:ImageInterface]
+
+        Having this order (as opposed to having hyperlink interfaces last) will at least
+        ensure that the child id of hyperlink children is not altered when child is added/removed
+        to the text item and marked accessible.
+        In addition, hyperlink interfaces as children should be the common case, so it is preferred
+        to explore those first when iterating.
+    */
+    if (index < 0)
         return nullptr;
 
-    QQuickItem *child = children.at(index);
-    return QAccessible::queryAccessibleInterface(child);
+
+    if (QQuickText *textItem = qobject_cast<QQuickText*>(item())) {
+        const int hyperLinkChildCount = QQuickTextPrivate::get(textItem)->getLinks().size();
+        if (index < hyperLinkChildCount) {
+            auto it = m_childToId.constFind(index);
+            if (it != m_childToId.constEnd())
+                return QAccessible::accessibleInterface(it.value());
+
+            QAccessibleHyperlink *iface = new QAccessibleHyperlink(item(), index);
+            QAccessible::Id id = QAccessible::registerAccessibleInterface(iface);
+            m_childToId.insert(index, id);
+            return iface;
+        }
+        index -= hyperLinkChildCount;
+    }
+
+    QList<QQuickItem *> children = childItems();
+    if (index < children.size()) {
+        QQuickItem *child = children.at(index);
+        return QAccessible::queryAccessibleInterface(child);
+    }
+    return nullptr;
 }
 
 int QAccessibleQuickItem::indexOfChild(const QAccessibleInterface *iface) const
 {
+    int hyperLinkChildCount = 0;
+    if (QQuickText *textItem = qobject_cast<QQuickText*>(item())) {
+        hyperLinkChildCount = QQuickTextPrivate::get(textItem)->getLinks().size();
+        if (QAccessibleHyperlinkInterface *hyperLinkIface = const_cast<QAccessibleInterface *>(iface)->hyperlinkInterface()) {
+            // ### assumes that there is only one subclass implementing QAccessibleHyperlinkInterface
+            // Alternatively, we could simply iterate with child() and do a linear search for it
+            QAccessibleHyperlink *hyperLink = static_cast<QAccessibleHyperlink*>(hyperLinkIface);
+            if (hyperLink->textItem() == static_cast<QQuickText*>(item())) {
+                return hyperLink->linkIndex;
+            }
+        }
+    }
     QList<QQuickItem*> kids = childItems();
-    return kids.indexOf(static_cast<QQuickItem*>(iface->object()));
+    int idx = kids.indexOf(static_cast<QQuickItem*>(iface->object()));
+    if (idx >= 0)
+        idx += hyperLinkChildCount;
+    return idx;
 }
 
 static void unignoredChildren(QQuickItem *item, QList<QQuickItem *> *items, bool paintOrder)
@@ -177,6 +412,11 @@ QList<QQuickItem *> QAccessibleQuickItem::childItems() const
     return accessibleUnignoredChildren(item());
 }
 
+static bool isTextRole(QAccessible::Role role)
+{
+    return role == QAccessible::EditableText || role == QAccessible::StaticText;
+}
+
 QAccessible::State QAccessibleQuickItem::state() const
 {
     QQuickAccessibleAttached *attached = QQuickAccessibleAttached::attachedProperties(item());
@@ -188,19 +428,23 @@ QAccessible::State QAccessibleQuickItem::state() const
     QRect viewRect_ = viewRect();
     QRect itemRect = rect();
 
-    if (viewRect_.isNull() || itemRect.isNull() || !item()->window() || !item()->window()->isVisible() ||!item()->isVisible() || qFuzzyIsNull(item()->opacity()))
+    if (viewRect_.isNull() || itemRect.isNull() || !window() || !window()->isVisible() ||!item()->isVisible() || qFuzzyIsNull(item()->opacity()))
         state.invisible = true;
     if (!viewRect_.intersects(itemRect))
         state.offscreen = true;
     if ((role() == QAccessible::CheckBox || role() == QAccessible::RadioButton) && object()->property("checked").toBool())
         state.checked = true;
-    if (item()->activeFocusOnTab() || role() == QAccessible::EditableText)
+    if (item()->activeFocusOnTab() || isTextRole(role()))
         state.focusable = true;
     if (item()->hasActiveFocus())
         state.focused = true;
     if (role() == QAccessible::EditableText)
         if (auto ti = qobject_cast<QQuickTextInput *>(item()))
             state.passwordEdit = ti->echoMode() != QQuickTextInput::Normal;
+    if (!item()->isEnabled()) {
+        state.focusable = false;
+        state.disabled = true;
+    }
     return state;
 }
 
@@ -212,7 +456,7 @@ QAccessible::Role QAccessibleQuickItem::role() const
 
     QAccessible::Role role = QAccessible::NoRole;
     if (item())
-        role = QQuickItemPrivate::get(item())->accessibleRole();
+        role = QQuickItemPrivate::get(item())->effectiveAccessibleRole();
     if (role == QAccessible::NoRole) {
         if (qobject_cast<QQuickText*>(const_cast<QQuickItem *>(item())))
             role = QAccessible::StaticText;
@@ -342,7 +586,7 @@ void QAccessibleQuickItem::doAction(const QString &actionName)
 
 QStringList QAccessibleQuickItem::keyBindingsForAction(const QString &actionName) const
 {
-    Q_UNUSED(actionName)
+    Q_UNUSED(actionName);
     return QStringList();
 }
 
@@ -359,6 +603,20 @@ QString QAccessibleQuickItem::text(QAccessible::Text textType) const
         QVariant accessibleDecription = QQuickAccessibleAttached::property(object(), "description");
         if (!accessibleDecription.isNull())
             return accessibleDecription.toString();
+        break;}
+    case QAccessible::Identifier: {
+        QVariant accessibleIdentifier = QQuickAccessibleAttached::property(object(), "id");
+        if (!accessibleIdentifier.isNull())
+            return accessibleIdentifier.toString();
+        auto quickItem = item();
+        if (quickItem->isComponentComplete()) {
+            QQmlContext *context = qmlContext(quickItem);
+            if (context) {
+                const auto objectId = context->nameForObject(quickItem);
+                if (!objectId.isEmpty())
+                    return objectId;
+            }
+        }
         break;}
 #ifdef Q_ACCESSIBLE_QUICK_ITEM_ENABLE_DEBUG_DESCRIPTION
     case QAccessible::DebugDescription: {
@@ -378,6 +636,8 @@ QString QAccessibleQuickItem::text(QAccessible::Text textType) const
     // the following block handles item-specific behavior
     if (role() == QAccessible::EditableText) {
         if (textType == QAccessible::Value) {
+            if (auto textInput = qobject_cast<QQuickTextInput *>(item()))
+                return textInput->displayText();
             if (QTextDocument *doc = textDocument()) {
                 return doc->toPlainText();
             }
@@ -417,9 +677,11 @@ void *QAccessibleQuickItem::interface_cast(QAccessible::InterfaceType t)
             r == QAccessible::ScrollBar))
        return static_cast<QAccessibleValueInterface*>(this);
 
-    if (t == QAccessible::TextInterface &&
-            (r == QAccessible::EditableText))
+    if (t == QAccessible::TextInterface) {
+        if (r == QAccessible::EditableText ||
+            r == QAccessible::StaticText)
         return static_cast<QAccessibleTextInterface*>(this);
+    }
 
     return QAccessibleObject::interface_cast(t);
 }

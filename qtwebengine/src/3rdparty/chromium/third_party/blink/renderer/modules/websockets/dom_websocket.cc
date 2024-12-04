@@ -33,16 +33,14 @@
 #include <string>
 #include <utility>
 
-#include "base/callback.h"
 #include "base/feature_list.h"
+#include "base/functional/callback.h"
 #include "base/location.h"
-#include "base/metrics/histogram_functions.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/platform/task_type.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_controller.h"
-#include "third_party/blink/renderer/bindings/core/v8/source_location.h"
-#include "third_party/blink/renderer/bindings/core/v8/string_or_string_sequence.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_union_string_stringsequence.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/events/message_event.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
@@ -57,14 +55,13 @@
 #include "third_party/blink/renderer/core/typed_arrays/dom_array_buffer_view.h"
 #include "third_party/blink/renderer/modules/websockets/close_event.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
+#include "third_party/blink/renderer/platform/bindings/source_location.h"
 #include "third_party/blink/renderer/platform/blob/blob_data.h"
-#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/heap/persistent.h"
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
-#include "third_party/blink/renderer/platform/network/network_log.h"
 #include "third_party/blink/renderer/platform/weborigin/known_ports.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
-#include "third_party/blink/renderer/platform/wtf/assertions.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 #include "third_party/blink/renderer/platform/wtf/hash_set.h"
 #include "third_party/blink/renderer/platform/wtf/math_extras.h"
@@ -83,8 +80,7 @@ DOMWebSocket::EventQueue::~EventQueue() = default;
 void DOMWebSocket::EventQueue::Dispatch(Event* event) {
   switch (state_) {
     case kActive:
-      DCHECK(events_.IsEmpty());
-      DCHECK(target_->GetExecutionContext());
+      DCHECK(events_.empty());
       target_->DispatchEvent(*event);
       break;
     case kPaused:
@@ -92,14 +88,14 @@ void DOMWebSocket::EventQueue::Dispatch(Event* event) {
       events_.push_back(event);
       break;
     case kStopped:
-      DCHECK(events_.IsEmpty());
+      DCHECK(events_.empty());
       // Do nothing.
       break;
   }
 }
 
 bool DOMWebSocket::EventQueue::IsEmpty() const {
-  return events_.IsEmpty();
+  return events_.empty();
 }
 
 void DOMWebSocket::EventQueue::Pause() {
@@ -116,8 +112,8 @@ void DOMWebSocket::EventQueue::Unpause() {
   state_ = kUnpausePosted;
   target_->GetExecutionContext()
       ->GetTaskRunner(TaskType::kWebSocket)
-      ->PostTask(FROM_HERE,
-                 WTF::Bind(&EventQueue::UnpauseTask, WrapWeakPersistent(this)));
+      ->PostTask(FROM_HERE, WTF::BindOnce(&EventQueue::UnpauseTask,
+                                          WrapWeakPersistent(this)));
 }
 
 void DOMWebSocket::EventQueue::ContextDestroyed() {
@@ -138,16 +134,15 @@ void DOMWebSocket::EventQueue::DispatchQueuedEvents() {
 
   HeapDeque<Member<Event>> events;
   events.Swap(events_);
-  while (!events.IsEmpty()) {
+  while (!events.empty()) {
     if (state_ == kStopped || state_ == kPaused || state_ == kUnpausePosted)
       break;
     DCHECK_EQ(state_, kActive);
-    DCHECK(target_->GetExecutionContext());
     target_->DispatchEvent(*events.TakeFirst());
     // |this| can be stopped here.
   }
   if (state_ == kPaused || state_ == kUnpausePosted) {
-    while (!events_.IsEmpty())
+    while (!events_.empty())
       events.push_back(events_.TakeFirst());
     events.Swap(events_);
   }
@@ -176,7 +171,8 @@ constexpr WebSocketCommon::State DOMWebSocket::kClosing;
 constexpr WebSocketCommon::State DOMWebSocket::kClosed;
 
 DOMWebSocket::DOMWebSocket(ExecutionContext* context)
-    : ExecutionContextLifecycleStateObserver(context),
+    : ActiveScriptWrappable<DOMWebSocket>({}),
+      ExecutionContextLifecycleStateObserver(context),
       buffered_amount_(0),
       consumed_buffered_amount_(0),
       buffered_amount_after_close_(0),
@@ -185,11 +181,11 @@ DOMWebSocket::DOMWebSocket(ExecutionContext* context)
       extensions_(""),
       event_queue_(MakeGarbageCollected<EventQueue>(this)),
       buffered_amount_update_task_pending_(false) {
-  NETWORK_DVLOG(1) << "DOMWebSocket " << this << " created";
+  DVLOG(1) << "DOMWebSocket " << this << " created";
 }
 
 DOMWebSocket::~DOMWebSocket() {
-  NETWORK_DVLOG(1) << "DOMWebSocket " << this << " destroyed";
+  DVLOG(1) << "DOMWebSocket " << this << " destroyed";
   DCHECK(!channel_);
 }
 
@@ -205,14 +201,17 @@ void DOMWebSocket::LogError(const String& message) {
 DOMWebSocket* DOMWebSocket::Create(ExecutionContext* context,
                                    const String& url,
                                    ExceptionState& exception_state) {
-  StringOrStringSequence protocols;
-  return Create(context, url, protocols, exception_state);
+  return Create(
+      context, url,
+      MakeGarbageCollected<V8UnionStringOrStringSequence>(Vector<String>()),
+      exception_state);
 }
 
-DOMWebSocket* DOMWebSocket::Create(ExecutionContext* context,
-                                   const String& url,
-                                   const StringOrStringSequence& protocols,
-                                   ExceptionState& exception_state) {
+DOMWebSocket* DOMWebSocket::Create(
+    ExecutionContext* context,
+    const String& url,
+    const V8UnionStringOrStringSequence* protocols,
+    ExceptionState& exception_state) {
   if (url.IsNull()) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kSyntaxError,
@@ -223,16 +222,18 @@ DOMWebSocket* DOMWebSocket::Create(ExecutionContext* context,
   DOMWebSocket* websocket = MakeGarbageCollected<DOMWebSocket>(context);
   websocket->UpdateStateIfNeeded();
 
-  if (protocols.IsNull()) {
-    Vector<String> protocols_vector;
-    websocket->Connect(url, protocols_vector, exception_state);
-  } else if (protocols.IsString()) {
-    Vector<String> protocols_vector;
-    protocols_vector.push_back(protocols.GetAsString());
-    websocket->Connect(url, protocols_vector, exception_state);
-  } else {
-    DCHECK(protocols.IsStringSequence());
-    websocket->Connect(url, protocols.GetAsStringSequence(), exception_state);
+  DCHECK(protocols);
+  switch (protocols->GetContentType()) {
+    case V8UnionStringOrStringSequence::ContentType::kString: {
+      Vector<String> protocols_vector;
+      protocols_vector.push_back(protocols->GetAsString());
+      websocket->Connect(url, protocols_vector, exception_state);
+      break;
+    }
+    case V8UnionStringOrStringSequence::ContentType::kStringSequence:
+      websocket->Connect(url, protocols->GetAsStringSequence(),
+                         exception_state);
+      break;
   }
 
   if (exception_state.HadException())
@@ -246,7 +247,7 @@ void DOMWebSocket::Connect(const String& url,
                            ExceptionState& exception_state) {
   UseCounter::Count(GetExecutionContext(), WebFeature::kWebSocket);
 
-  NETWORK_DVLOG(1) << "WebSocket " << this << " connect() url=" << url;
+  DVLOG(1) << "WebSocket " << this << " connect() url=" << url;
 
   channel_ = CreateChannel(GetExecutionContext(), this);
   auto result = common_.Connect(GetExecutionContext(), url, protocols, channel_,
@@ -288,8 +289,9 @@ void DOMWebSocket::PostBufferedAmountUpdateTask() {
   buffered_amount_update_task_pending_ = true;
   GetExecutionContext()
       ->GetTaskRunner(TaskType::kWebSocket)
-      ->PostTask(FROM_HERE, WTF::Bind(&DOMWebSocket::BufferedAmountUpdateTask,
-                                      WrapWeakPersistent(this)));
+      ->PostTask(FROM_HERE,
+                 WTF::BindOnce(&DOMWebSocket::BufferedAmountUpdateTask,
+                               WrapWeakPersistent(this)));
 }
 
 void DOMWebSocket::BufferedAmountUpdateTask() {
@@ -301,9 +303,9 @@ void DOMWebSocket::ReflectBufferedAmountConsumption() {
   if (event_queue_->IsPaused())
     return;
   DCHECK_GE(buffered_amount_, consumed_buffered_amount_);
-  NETWORK_DVLOG(1) << "WebSocket " << this
-                   << " reflectBufferedAmountConsumption() " << buffered_amount_
-                   << " => " << (buffered_amount_ - consumed_buffered_amount_);
+  DVLOG(1) << "WebSocket " << this << " reflectBufferedAmountConsumption() "
+           << buffered_amount_ << " => "
+           << (buffered_amount_ - consumed_buffered_amount_);
 
   buffered_amount_ -= consumed_buffered_amount_;
   consumed_buffered_amount_ = 0;
@@ -317,8 +319,7 @@ void DOMWebSocket::ReleaseChannel() {
 
 void DOMWebSocket::send(const String& message,
                         ExceptionState& exception_state) {
-  NETWORK_DVLOG(1) << "WebSocket " << this << " send() Sending String "
-                   << message;
+  DVLOG(1) << "WebSocket " << this << " send() Sending String " << message;
   if (common_.GetState() == kConnecting) {
     SetInvalidStateErrorForSendMethod(exception_state);
     return;
@@ -331,59 +332,55 @@ void DOMWebSocket::send(const String& message,
     return;
   }
 
-  RecordSendTypeHistogram(WebSocketSendType::kString);
-
   DCHECK(channel_);
   buffered_amount_ += encoded_message.length();
   channel_->Send(encoded_message, base::OnceClosure());
+  NotifyWebSocketActivity();
 }
 
 void DOMWebSocket::send(DOMArrayBuffer* binary_data,
                         ExceptionState& exception_state) {
-  NETWORK_DVLOG(1) << "WebSocket " << this << " send() Sending ArrayBuffer "
-                   << binary_data;
+  DVLOG(1) << "WebSocket " << this << " send() Sending ArrayBuffer "
+           << binary_data;
   DCHECK(binary_data);
   if (common_.GetState() == kConnecting) {
     SetInvalidStateErrorForSendMethod(exception_state);
     return;
   }
   if (common_.GetState() == kClosing || common_.GetState() == kClosed) {
-    UpdateBufferedAmountAfterClose(binary_data->ByteLengthAsSizeT());
+    UpdateBufferedAmountAfterClose(binary_data->ByteLength());
     return;
   }
-  RecordSendTypeHistogram(WebSocketSendType::kArrayBuffer);
   DCHECK(channel_);
-  buffered_amount_ += binary_data->ByteLengthAsSizeT();
-  channel_->Send(*binary_data, 0, binary_data->ByteLengthAsSizeT(),
+  buffered_amount_ += binary_data->ByteLength();
+  channel_->Send(*binary_data, 0, binary_data->ByteLength(),
                  base::OnceClosure());
+  NotifyWebSocketActivity();
 }
 
 void DOMWebSocket::send(NotShared<DOMArrayBufferView> array_buffer_view,
                         ExceptionState& exception_state) {
-  NETWORK_DVLOG(1) << "WebSocket " << this << " send() Sending ArrayBufferView "
-                   << array_buffer_view.View();
+  DVLOG(1) << "WebSocket " << this << " send() Sending ArrayBufferView "
+           << array_buffer_view.Get();
   DCHECK(array_buffer_view);
   if (common_.GetState() == kConnecting) {
     SetInvalidStateErrorForSendMethod(exception_state);
     return;
   }
   if (common_.GetState() == kClosing || common_.GetState() == kClosed) {
-    UpdateBufferedAmountAfterClose(
-        array_buffer_view.View()->byteLengthAsSizeT());
+    UpdateBufferedAmountAfterClose(array_buffer_view->byteLength());
     return;
   }
-  RecordSendTypeHistogram(WebSocketSendType::kArrayBufferView);
   DCHECK(channel_);
-  buffered_amount_ += array_buffer_view.View()->byteLengthAsSizeT();
-  channel_->Send(*array_buffer_view.View()->buffer(),
-                 array_buffer_view.View()->byteOffsetAsSizeT(),
-                 array_buffer_view.View()->byteLengthAsSizeT(),
-                 base::OnceClosure());
+  buffered_amount_ += array_buffer_view->byteLength();
+  channel_->Send(*array_buffer_view->buffer(), array_buffer_view->byteOffset(),
+                 array_buffer_view->byteLength(), base::OnceClosure());
+  NotifyWebSocketActivity();
 }
 
 void DOMWebSocket::send(Blob* binary_data, ExceptionState& exception_state) {
-  NETWORK_DVLOG(1) << "WebSocket " << this << " send() Sending Blob "
-                   << binary_data->Uuid();
+  DVLOG(1) << "WebSocket " << this << " send() Sending Blob "
+           << binary_data->Uuid();
   DCHECK(binary_data);
   if (common_.GetState() == kConnecting) {
     SetInvalidStateErrorForSendMethod(exception_state);
@@ -394,7 +391,6 @@ void DOMWebSocket::send(Blob* binary_data, ExceptionState& exception_state) {
     return;
   }
   uint64_t size = binary_data->size();
-  RecordSendTypeHistogram(WebSocketSendType::kBlob);
   buffered_amount_ += size;
   DCHECK(channel_);
 
@@ -404,8 +400,10 @@ void DOMWebSocket::send(Blob* binary_data, ExceptionState& exception_state) {
   // needs to fix the size of the File at this point. For this reason,
   // construct a new BlobDataHandle here with the size that this method
   // observed.
-  channel_->Send(
-      BlobDataHandle::Create(binary_data->Uuid(), binary_data->type(), size));
+  channel_->Send(BlobDataHandle::Create(binary_data->Uuid(),
+                                        binary_data->type(), size,
+                                        binary_data->AsMojoBlob()));
+  NotifyWebSocketActivity();
 }
 
 void DOMWebSocket::close(uint16_t code,
@@ -483,7 +481,7 @@ ExecutionContext* DOMWebSocket::GetExecutionContext() const {
 }
 
 void DOMWebSocket::ContextDestroyed() {
-  NETWORK_DVLOG(1) << "WebSocket " << this << " contextDestroyed()";
+  DVLOG(1) << "WebSocket " << this << " contextDestroyed()";
   event_queue_->ContextDestroyed();
   if (channel_) {
     ReleaseChannel();
@@ -513,18 +511,19 @@ void DOMWebSocket::ContextLifecycleStateChanged(
 
 void DOMWebSocket::DidConnect(const String& subprotocol,
                               const String& extensions) {
-  NETWORK_DVLOG(1) << "WebSocket " << this << " DidConnect()";
+  DVLOG(1) << "WebSocket " << this << " DidConnect()";
   if (common_.GetState() != kConnecting)
     return;
   common_.SetState(kOpen);
   subprotocol_ = subprotocol;
   extensions_ = extensions;
   event_queue_->Dispatch(Event::Create(event_type_names::kOpen));
+  NotifyWebSocketActivity();
 }
 
 void DOMWebSocket::DidReceiveTextMessage(const String& msg) {
-  NETWORK_DVLOG(1) << "WebSocket " << this
-                   << " DidReceiveTextMessage() Text message " << msg;
+  DVLOG(1) << "WebSocket " << this << " DidReceiveTextMessage() Text message "
+           << msg;
   ReflectBufferedAmountConsumption();
   DCHECK_NE(common_.GetState(), kConnecting);
   if (common_.GetState() != kOpen)
@@ -532,6 +531,7 @@ void DOMWebSocket::DidReceiveTextMessage(const String& msg) {
 
   DCHECK(!origin_string_.IsNull());
   event_queue_->Dispatch(MessageEvent::Create(msg, origin_string_));
+  NotifyWebSocketActivity();
 }
 
 void DOMWebSocket::DidReceiveBinaryMessage(
@@ -540,8 +540,8 @@ void DOMWebSocket::DidReceiveBinaryMessage(
   for (const auto& span : data) {
     size += span.size();
   }
-  NETWORK_DVLOG(1) << "WebSocket " << this << " DidReceiveBinaryMessage() "
-                   << size << " byte binary message";
+  DVLOG(1) << "WebSocket " << this << " DidReceiveBinaryMessage() " << size
+           << " byte binary message";
   ReflectBufferedAmountConsumption();
   DCHECK(!origin_string_.IsNull());
 
@@ -567,10 +567,11 @@ void DOMWebSocket::DidReceiveBinaryMessage(
           MessageEvent::Create(array_buffer, origin_string_));
       break;
   }
+  NotifyWebSocketActivity();
 }
 
 void DOMWebSocket::DidError() {
-  NETWORK_DVLOG(1) << "WebSocket " << this << " DidError()";
+  DVLOG(1) << "WebSocket " << this << " DidError()";
   ReflectBufferedAmountConsumption();
   common_.SetState(kClosed);
   event_queue_->Dispatch(Event::Create(event_type_names::kError));
@@ -578,8 +579,8 @@ void DOMWebSocket::DidError() {
 
 void DOMWebSocket::DidConsumeBufferedAmount(uint64_t consumed) {
   DCHECK_GE(buffered_amount_, consumed + consumed_buffered_amount_);
-  NETWORK_DVLOG(1) << "WebSocket " << this << " DidConsumeBufferedAmount("
-                   << consumed << ")";
+  DVLOG(1) << "WebSocket " << this << " DidConsumeBufferedAmount(" << consumed
+           << ")";
   if (common_.GetState() == kClosed)
     return;
   consumed_buffered_amount_ += consumed;
@@ -587,7 +588,7 @@ void DOMWebSocket::DidConsumeBufferedAmount(uint64_t consumed) {
 }
 
 void DOMWebSocket::DidStartClosingHandshake() {
-  NETWORK_DVLOG(1) << "WebSocket " << this << " DidStartClosingHandshake()";
+  DVLOG(1) << "WebSocket " << this << " DidStartClosingHandshake()";
   ReflectBufferedAmountConsumption();
   common_.SetState(kClosing);
 }
@@ -596,7 +597,7 @@ void DOMWebSocket::DidClose(
     ClosingHandshakeCompletionStatus closing_handshake_completion,
     uint16_t code,
     const String& reason) {
-  NETWORK_DVLOG(1) << "WebSocket " << this << " DidClose()";
+  DVLOG(1) << "WebSocket " << this << " DidClose()";
   ReflectBufferedAmountConsumption();
   if (!channel_)
     return;
@@ -614,15 +615,18 @@ void DOMWebSocket::DidClose(
       MakeGarbageCollected<CloseEvent>(was_clean, code, reason));
 }
 
-void DOMWebSocket::RecordSendTypeHistogram(WebSocketSendType type) {
-  base::UmaHistogramEnumeration("WebCore.WebSocket.SendType", type);
+void DOMWebSocket::NotifyWebSocketActivity() {
+  ExecutionContext* context = GetExecutionContext();
+  if (context) {
+    context->NotifyWebSocketActivity();
+  }
 }
 
 void DOMWebSocket::Trace(Visitor* visitor) const {
   visitor->Trace(channel_);
   visitor->Trace(event_queue_);
   WebSocketChannelClient::Trace(visitor);
-  EventTargetWithInlineData::Trace(visitor);
+  EventTarget::Trace(visitor);
   ExecutionContextLifecycleStateObserver::Trace(visitor);
 }
 

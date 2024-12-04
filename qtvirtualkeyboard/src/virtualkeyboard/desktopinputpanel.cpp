@@ -1,32 +1,7 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt Virtual Keyboard module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:GPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 3 or (at your option) any later version
-** approved by the KDE Free Qt Foundation. The licenses are as published by
-** the Free Software Foundation and appearing in the file LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
+#include <QtVirtualKeyboard/private/qvirtualkeyboard_global_p.h>
 #include <QtVirtualKeyboard/private/desktopinputpanel_p.h>
 #include <QtVirtualKeyboard/private/appinputpanel_p_p.h>
 #include <QtVirtualKeyboard/private/inputview_p.h>
@@ -37,13 +12,11 @@
 #include <QQmlEngine>
 #include <QScreen>
 #include <QtVirtualKeyboard/private/virtualkeyboarddebug_p.h>
-#if defined(QT_VIRTUALKEYBOARD_HAVE_XCB)
-#include <xcb/xcb.h>
-#include <xcb/xfixes.h>
-#endif
 #include <qpa/qplatformnativeinterface.h>
 #include <QtCore/private/qobject_p.h>
 #include <QtCore/QLibraryInfo>
+#include <QtCore/qpointer.h>
+#include <QtGui/qscreen.h>
 
 QT_BEGIN_NAMESPACE
 namespace QtVirtualKeyboard {
@@ -74,6 +47,7 @@ public:
     }
 
     QScopedPointer<InputView> view;
+    QPointer<QScreen> m_screen;
     QRectF keyboardRect;
     QRectF previewRect;
     bool previewVisible;
@@ -92,8 +66,6 @@ DesktopInputPanel::DesktopInputPanel(QObject *parent) :
     /*  Activate the alpha buffer for this application.
     */
     QQuickWindow::setDefaultAlphaBuffer(true);
-    QScreen *screen = QGuiApplication::primaryScreen();
-    connect(screen, SIGNAL(virtualGeometryChanged(QRect)), SLOT(repositionView(QRect)));
 }
 
 DesktopInputPanel::~DesktopInputPanel()
@@ -105,7 +77,8 @@ void DesktopInputPanel::show()
     AppInputPanel::show();
     Q_D(DesktopInputPanel);
     if (d->view) {
-        repositionView(QGuiApplication::primaryScreen()->availableGeometry());
+        if (auto *screen = d->m_screen.isNull() ? QGuiApplication::primaryScreen() : d->m_screen.data())
+            repositionView(screen->availableGeometry());
         d->view->show();
     }
 }
@@ -154,7 +127,7 @@ void DesktopInputPanel::createView()
             break;
         }
         d->view->setColor(QColor(Qt::transparent));
-        d->view->setSource(QUrl(QLatin1String("qrc:///QtQuick/VirtualKeyboard/content/InputPanel.qml")));
+        d->view->setSource(QUrl(QLatin1String("qrc:///qt-project.org/imports/QtQuick/VirtualKeyboard/InputPanel.qml")));
         if (QGuiApplication *app = qGuiApp)
             connect(app, SIGNAL(aboutToQuit()), SLOT(destroyView()));
     }
@@ -194,8 +167,34 @@ void DesktopInputPanel::repositionView(const QRect &rect)
 void DesktopInputPanel::focusWindowChanged(QWindow *focusWindow)
 {
     disconnect(this, SLOT(focusWindowVisibleChanged(bool)));
-    if (focusWindow)
+    disconnect(this, SLOT(screenChanged(QScreen*)));
+    if (focusWindow) {
         connect(focusWindow, &QWindow::visibleChanged, this, &DesktopInputPanel::focusWindowVisibleChanged);
+        connect(focusWindow, &QWindow::screenChanged, this, &DesktopInputPanel::screenChanged,
+                Qt::UniqueConnection);
+        screenChanged(focusWindow->screen());
+    }
+}
+
+void DesktopInputPanel::screenChanged(QScreen *screen)
+{
+    Q_D(DesktopInputPanel);
+
+    if (d->m_screen.data() == screen)
+        return;
+
+    if (!d->m_screen.isNull()) {
+        disconnect(d->m_screen.data(), &QScreen::availableGeometryChanged,
+                   this, &DesktopInputPanel::repositionView);
+    }
+
+    d->m_screen = screen;
+
+    if (!d->m_screen.isNull()) {
+        connect(screen, &QScreen::availableGeometryChanged,
+                this, &DesktopInputPanel::repositionView, Qt::UniqueConnection);
+        repositionView(d->m_screen->availableGeometry());
+    }
 }
 
 void DesktopInputPanel::focusWindowVisibleChanged(bool visible)
@@ -225,18 +224,6 @@ void DesktopInputPanel::previewVisibleChanged()
         updateInputRegion();
 }
 
-#if defined(QT_VIRTUALKEYBOARD_HAVE_XCB)
-static inline xcb_rectangle_t qRectToXCBRectangle(const QRect &r)
-{
-    xcb_rectangle_t result;
-    result.x = qMax(SHRT_MIN, r.x());
-    result.y = qMax(SHRT_MIN, r.y());
-    result.width = qMin((int)USHRT_MAX, r.width());
-    result.height = qMin((int)USHRT_MAX, r.height());
-    return result;
-}
-#endif
-
 void DesktopInputPanel::updateInputRegion()
 {
     Q_D(DesktopInputPanel);
@@ -248,36 +235,11 @@ void DesktopInputPanel::updateInputRegion()
     if (!d->view->handle())
         d->view->create();
 
-    switch (d->windowingSystem) {
-    case DesktopInputPanelPrivate::Xcb:
-#if defined(QT_VIRTUALKEYBOARD_HAVE_XCB)
-        {
-            QVector<xcb_rectangle_t> rects;
-            rects.push_back(qRectToXCBRectangle(d->keyboardRect.toRect()));
-            if (d->previewVisible && !d->previewRect.isEmpty())
-                rects.push_back(qRectToXCBRectangle(d->previewRect.toRect()));
+    QRegion inputRegion(d->keyboardRect.toRect());
+    if (d->previewVisible && !d->previewRect.isEmpty())
+        inputRegion += d->previewRect.toRect();
 
-            QWindow *window = d->view.data();
-            QPlatformNativeInterface *platformNativeInterface = QGuiApplication::platformNativeInterface();
-            xcb_connection_t *xbcConnection = static_cast<xcb_connection_t *>(platformNativeInterface->nativeResourceForWindow("connection", window));
-            xcb_xfixes_region_t xbcRegion = xcb_generate_id(xbcConnection);
-            xcb_xfixes_create_region(xbcConnection, xbcRegion, rects.size(), rects.constData());
-            xcb_xfixes_set_window_shape_region(xbcConnection, window->winId(), XCB_SHAPE_SK_INPUT, 0, 0, xbcRegion);
-            xcb_xfixes_destroy_region(xbcConnection, xbcRegion);
-        }
-#endif
-        break;
-
-    default:
-        {
-            QRegion inputRegion(d->keyboardRect.toRect());
-            if (d->previewVisible && !d->previewRect.isEmpty())
-                inputRegion += d->previewRect.toRect();
-
-            d->view->setMask(inputRegion);
-            break;
-        }
-    }
+    d->view->setMask(inputRegion);
 }
 
 } // namespace QtVirtualKeyboard

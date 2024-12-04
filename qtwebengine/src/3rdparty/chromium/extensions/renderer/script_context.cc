@@ -1,33 +1,45 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "extensions/renderer/script_context.h"
 
 #include "base/command_line.h"
+#include "base/containers/contains.h"
 #include "base/containers/flat_set.h"
 #include "base/logging.h"
-#include "base/stl_util.h"
+#include "base/no_destructor.h"
+#include "base/ranges/algorithm.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/url_constants.h"
 #include "content/public/renderer/render_frame.h"
+#include "content/public/renderer/v8_value_converter.h"
 #include "extensions/common/constants.h"
+#include "extensions/common/content_script_injection_url_getter.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_api.h"
 #include "extensions/common/extension_urls.h"
 #include "extensions/common/manifest_handlers/sandboxed_page_info.h"
+#include "extensions/common/mojom/context_type.mojom.h"
 #include "extensions/common/permissions/permissions_data.h"
+#include "extensions/renderer/dispatcher.h"
+#include "extensions/renderer/isolated_world_manager.h"
+#include "extensions/renderer/renderer_context_data.h"
 #include "extensions/renderer/renderer_extension_registry.h"
+#include "extensions/renderer/renderer_frame_context_data.h"
 #include "extensions/renderer/v8_helpers.h"
 #include "third_party/blink/public/mojom/service_worker/service_worker_registration.mojom.h"
-#include "third_party/blink/public/platform/web_security_origin.h"
-#include "third_party/blink/public/web/web_document.h"
 #include "third_party/blink/public/web/web_document_loader.h"
 #include "third_party/blink/public/web/web_local_frame.h"
-#include "v8/include/v8.h"
+#include "v8/include/v8-context.h"
+#include "v8/include/v8-debug.h"
+#include "v8/include/v8-function.h"
+#include "v8/include/v8-isolate.h"
+#include "v8/include/v8-microtask-queue.h"
+#include "v8/include/v8-primitive.h"
 
 namespace extensions {
 
@@ -38,175 +50,35 @@ GURL GetEffectiveDocumentURL(
     const GURL& document_url,
     MatchOriginAsFallbackBehavior match_origin_as_fallback,
     bool allow_inaccessible_parents) {
-  auto should_consider_origin = [document_url, match_origin_as_fallback]() {
-    switch (match_origin_as_fallback) {
-      case MatchOriginAsFallbackBehavior::kNever:
-        return false;
-      case MatchOriginAsFallbackBehavior::kMatchForAboutSchemeAndClimbTree:
-        return document_url.SchemeIs(url::kAboutScheme);
-      case MatchOriginAsFallbackBehavior::kAlways:
-        // TODO(devlin): Add more schemes here - blob, filesystem, etc.
-        return document_url.SchemeIs(url::kAboutScheme) ||
-               document_url.SchemeIs(url::kDataScheme);
-    }
-
-    NOTREACHED();
-  };
-
-  // If we don't need to consider the origin, we're done.
-  if (!should_consider_origin())
-    return document_url;
-
-  // Get the "security origin" for the frame. For about: frames, this is the
-  // origin of that of the controlling frame - e.g., an about:blank frame on
-  // https://example.com will have the security origin of https://example.com.
-  // Other frames, like data: frames, will have an opaque origin. For these,
-  // we can get the precursor origin.
-  const blink::WebSecurityOrigin web_frame_origin = frame->GetSecurityOrigin();
-  const url::Origin frame_origin = web_frame_origin;
-  const url::SchemeHostPort& tuple_or_precursor_tuple =
-      frame_origin.GetTupleOrPrecursorTupleIfOpaque();
-
-  // When there's no valid tuple (which can happen in the case of e.g. a
-  // browser-initiated navigation to an opaque URL), there's no origin to
-  // fallback to. Bail.
-  if (!tuple_or_precursor_tuple.IsValid())
-    return document_url;
-
-  const url::Origin origin_or_precursor_origin =
-      url::Origin::Create(tuple_or_precursor_tuple.GetURL());
-
-  if (!allow_inaccessible_parents &&
-      !web_frame_origin.CanAccess(
-          blink::WebSecurityOrigin(origin_or_precursor_origin))) {
-    // The frame can't access its precursor. Bail.
-    return document_url;
-  }
-
-  // Note: Just because the frame origin can theoretically access its
-  // precursor origin, there may be more restrictions in practice - such as
-  // if the frame has the disallowdocumentaccess attribute. It's okay to
-  // ignore this case for context classification because it's not meant as an
-  // origin boundary (unlike e.g. a sandboxed frame).
-
-  // Looks like the initiator origin is an appropriate fallback!
-
-  if (match_origin_as_fallback == MatchOriginAsFallbackBehavior::kAlways) {
-    // The easy case! We use the origin directly. We're done.
-    return origin_or_precursor_origin.GetURL();
-  }
-
-  DCHECK_EQ(MatchOriginAsFallbackBehavior::kMatchForAboutSchemeAndClimbTree,
-            match_origin_as_fallback);
-
-  // Unfortunately, in this case, we have to climb the frame tree. This is for
-  // match patterns that are associated with paths as well, not just origins.
-  // For instance, if an extension wants to run on google.com/maps/* with
-  // match_about_blank true, then it should run on about:-scheme frames created
-  // by google.com/maps, but not about:-scheme frames created by google.com
-  // (which is what the precursor tuple origin would be).
-
-  // Traverse the frame/window hierarchy to find the closest non-about:-page
-  // with the same origin as the precursor and return its URL.
-  // Note: This can return the incorrect result, e.g. if a parent frame
-  // navigates a grandchild frame.
-  blink::WebFrame* parent = frame;
-  GURL parent_url;
-  blink::WebDocument parent_document;
-  base::flat_set<blink::WebFrame*> already_visited_frames;
-  do {
-    already_visited_frames.insert(parent);
-    if (parent->Parent())
-      parent = parent->Parent();
-    else
-      parent = parent->Opener();
-
-    // Avoid an infinite loop - see https://crbug.com/568432 and
-    // https://crbug.com/883526.
-    if (base::Contains(already_visited_frames, parent))
-      return document_url;
-
-    parent_document = parent && parent->IsWebLocalFrame()
-                          ? parent->ToWebLocalFrame()->GetDocument()
-                          : blink::WebDocument();
-
-    // We reached the end of the ancestral chain without finding a valid parent,
-    // or found a remote web frame (in which case, it's a different origin).
-    // Bail and use the original URL.
-    if (parent_document.IsNull())
-      return document_url;
-
-    url::SchemeHostPort parent_tuple_or_precursor_tuple =
-        url::Origin(parent->GetSecurityOrigin())
-            .GetTupleOrPrecursorTupleIfOpaque();
-    if (!parent_tuple_or_precursor_tuple.IsValid() ||
-        parent_tuple_or_precursor_tuple != tuple_or_precursor_tuple) {
-      // The parent has a different tuple origin than frame; this could happen
-      // in edge cases where a parent navigates an iframe or popup of a child
-      // frame at a different origin. [1] In this case, bail, since we can't
-      // find a full URL (i.e., one including the path) with the same security
-      // origin to use for the frame in question.
-      // [1] Consider a frame tree like:
-      // <html> <!--example.com-->
-      //   <iframe id="a" src="a.com">
-      //     <iframe id="b" src="b.com"></iframe>
-      //   </iframe>
-      // </html>
-      // Frame "a" is cross-origin from the top-level frame, and so the
-      // example.com top-level frame can't directly access frame "b". However,
-      // it can navigate it through
-      // window.frames[0].frames[0].location.href = 'about:blank';
-      // In that case, the precursor origin tuple origin of frame "b" would be
-      // example.com, but the parent tuple origin is a.com.
-      // Note that usually, this would have bailed earlier with a remote frame,
-      // but it may not if we're at the process limit.
-      return document_url;
-    }
-
-    // If we don't allow inaccessible parents, the security origin may still
-    // be restricted if the author has prevented same-origin access via the
-    // disallowdocumentaccess attribute on iframe.
-    if (!allow_inaccessible_parents &&
-        !web_frame_origin.CanAccess(
-            blink::WebSecurityOrigin(parent_document.GetSecurityOrigin()))) {
-      // The frame can't access its precursor. Bail.
-      return document_url;
-    }
-
-    parent_url = GURL(parent_document.Url());
-  } while (parent_url.SchemeIs(url::kAboutScheme));
-
-  DCHECK(!parent_url.is_empty());
-  DCHECK(!parent_document.IsNull());
-
-  // We should know that the frame can access the parent document (unless we
-  // explicitly allow it not to), since it has the same tuple origin as the
-  // frame, and we checked the frame access above.
-  DCHECK(allow_inaccessible_parents ||
-         web_frame_origin.CanAccess(parent_document.GetSecurityOrigin()));
-  return parent_url;
+  return ContentScriptInjectionUrlGetter::Get(
+      RendererFrameContextData(frame), document_url, match_origin_as_fallback,
+      allow_inaccessible_parents);
 }
 
-std::string GetContextTypeDescriptionString(Feature::Context context_type) {
+std::string GetContextTypeDescriptionString(mojom::ContextType context_type) {
   switch (context_type) {
-    case Feature::UNSPECIFIED_CONTEXT:
+    case mojom::ContextType::kUnspecified:
       return "UNSPECIFIED";
-    case Feature::BLESSED_EXTENSION_CONTEXT:
+    case mojom::ContextType::kPrivilegedExtension:
       return "BLESSED_EXTENSION";
-    case Feature::UNBLESSED_EXTENSION_CONTEXT:
+    case mojom::ContextType::kUnprivilegedExtension:
       return "UNBLESSED_EXTENSION";
-    case Feature::CONTENT_SCRIPT_CONTEXT:
+    case mojom::ContextType::kContentScript:
       return "CONTENT_SCRIPT";
-    case Feature::WEB_PAGE_CONTEXT:
+    case mojom::ContextType::kWebPage:
       return "WEB_PAGE";
-    case Feature::BLESSED_WEB_PAGE_CONTEXT:
+    case mojom::ContextType::kPrivilegedWebPage:
       return "BLESSED_WEB_PAGE";
-    case Feature::WEBUI_CONTEXT:
+    case mojom::ContextType::kWebUi:
       return "WEBUI";
-    case Feature::WEBUI_UNTRUSTED_CONTEXT:
+    case mojom::ContextType::kUntrustedWebUi:
       return "WEBUI_UNTRUSTED";
-    case Feature::LOCK_SCREEN_EXTENSION_CONTEXT:
+    case mojom::ContextType::kLockscreenExtension:
       return "LOCK_SCREEN_EXTENSION";
+    case mojom::ContextType::kOffscreenExtension:
+      return "OFFSCREEN_EXTENSION_CONTEXT";
+    case mojom::ContextType::kUserScript:
+      return "USER_SCRIPT_CONTEXT";
   }
   NOTREACHED();
   return std::string();
@@ -255,13 +127,15 @@ ScriptContext::ScopedFrameDocumentLoader::~ScopedFrameDocumentLoader() {
 
 ScriptContext::ScriptContext(const v8::Local<v8::Context>& v8_context,
                              blink::WebLocalFrame* web_frame,
+                             const mojom::HostID& host_id,
                              const Extension* extension,
-                             Feature::Context context_type,
+                             mojom::ContextType context_type,
                              const Extension* effective_extension,
-                             Feature::Context effective_context_type)
+                             mojom::ContextType effective_context_type)
     : is_valid_(true),
       v8_context_(v8_context->GetIsolate(), v8_context),
       web_frame_(web_frame),
+      host_id_(host_id),
       extension_(extension),
       context_type_(context_type),
       effective_extension_(effective_extension),
@@ -274,6 +148,12 @@ ScriptContext::ScriptContext(const v8::Local<v8::Context>& v8_context,
   v8_context_.AnnotateStrongRetainer("extensions::ScriptContext::v8_context_");
   if (web_frame_)
     url_ = GetAccessCheckedFrameURL(web_frame_);
+  // Enforce the invariant that an extension should have a HostID that's set to
+  // the extension id.
+  if (extension_) {
+    CHECK_EQ(host_id_.type, mojom::HostID::HostType::kExtensions);
+    CHECK_EQ(host_id_.id, extension_->id());
+  }
 }
 
 ScriptContext::~ScriptContext() {
@@ -341,42 +221,43 @@ content::RenderFrame* ScriptContext::GetRenderFrame() const {
   DCHECK(thread_checker_.CalledOnValidThread());
   if (web_frame_)
     return content::RenderFrame::FromWebFrame(web_frame_);
-  return NULL;
+  return nullptr;
 }
 
 void ScriptContext::SafeCallFunction(const v8::Local<v8::Function>& function,
                                      int argc,
                                      v8::Local<v8::Value> argv[]) {
-  SafeCallFunction(function, argc, argv,
-                   ScriptInjectionCallback::CompleteCallback());
+  SafeCallFunction(function, argc, argv, blink::WebScriptExecutionCallback());
 }
 
 void ScriptContext::SafeCallFunction(
     const v8::Local<v8::Function>& function,
     int argc,
     v8::Local<v8::Value> argv[],
-    const ScriptInjectionCallback::CompleteCallback& callback) {
+    blink::WebScriptExecutionCallback callback) {
   DCHECK(thread_checker_.CalledOnValidThread());
   v8::HandleScope handle_scope(isolate());
   v8::Context::Scope scope(v8_context());
-  v8::MicrotasksScope microtasks(isolate(),
+  v8::MicrotasksScope microtasks(isolate(), v8_context()->GetMicrotaskQueue(),
                                  v8::MicrotasksScope::kDoNotRunMicrotasks);
   v8::Local<v8::Object> global = v8_context()->Global();
   if (web_frame_) {
-    ScriptInjectionCallback* wrapper_callback = nullptr;
-    if (!callback.is_null()) {
-      // ScriptInjectionCallback manages its own lifetime.
-      wrapper_callback = new ScriptInjectionCallback(callback);
-    }
     web_frame_->RequestExecuteV8Function(v8_context(), function, global, argc,
-                                         argv, wrapper_callback);
+                                         argv, std::move(callback));
   } else {
+    auto start_time = base::TimeTicks::Now();
     v8::MaybeLocal<v8::Value> maybe_result =
         function->Call(v8_context(), global, argc, argv);
     v8::Local<v8::Value> result;
     if (!callback.is_null() && maybe_result.ToLocal(&result)) {
-      std::vector<v8::Local<v8::Value>> results(1, result);
-      callback.Run(results);
+      std::unique_ptr<base::Value> value =
+          content::V8ValueConverter::Create()->FromV8Value(result,
+                                                           v8_context());
+      std::move(callback).Run(
+          value ? std::make_optional(
+                      base::Value::FromUniquePtrValue(std::move(value)))
+                : std::nullopt,
+          start_time);
     }
   }
 }
@@ -390,6 +271,9 @@ Feature::Availability ScriptContext::GetAvailability(
     const std::string& api_name,
     CheckAliasStatus check_alias) {
   DCHECK(thread_checker_.CalledOnValidThread());
+
+  // Special case #1: The `test` API depends on this being run in a test, in
+  // which case the kTestType switch is appended.
   if (base::StartsWith(api_name, "test", base::CompareCase::SENSITIVE)) {
     bool allowed = base::CommandLine::ForCurrentProcess()->
                        HasSwitch(::switches::kTestType);
@@ -398,6 +282,34 @@ Feature::Availability ScriptContext::GetAvailability(
     return Feature::Availability(result,
                                  allowed ? "" : "Only allowed in tests");
   }
+
+  // Special case #2: If it's a user script world, there are specific knobs for
+  // enabling or disabling APIs.
+  if (context_type_ == mojom::ContextType::kUserScript) {
+    CHECK(extension());
+
+    static const constexpr char* kMessagingApis[] = {
+        "runtime.onMessage",
+        "runtime.onConnect",
+        "runtime.sendMessage",
+        "runtime.connect",
+    };
+
+    if (base::ranges::find(kMessagingApis, api_name) !=
+        std::end(kMessagingApis)) {
+      bool is_available =
+          IsolatedWorldManager::GetInstance()
+              .IsMessagingEnabledInUserScriptWorlds(extension()->id());
+      if (!is_available) {
+        return Feature::Availability(
+            Feature::INVALID_CONTEXT,
+            "Messaging APIs are not enabled for this user script world.");
+      }
+    }
+
+    // Otherwise, continue through to the normal checks.
+  }
+
   // Hack: Hosted apps should have the availability of messaging APIs based on
   // the URL of the page (which might have access depending on some extension
   // with externally_connectable), not whether the app has access to messaging
@@ -405,10 +317,11 @@ Feature::Availability ScriptContext::GetAvailability(
   const Extension* extension = extension_.get();
   if (extension && extension->is_hosted_app() &&
       (api_name == "runtime.connect" || api_name == "runtime.sendMessage")) {
-    extension = NULL;
+    extension = nullptr;
   }
   return ExtensionAPI::GetSharedInstance()->IsAvailable(
-      api_name, extension, context_type_, url(), check_alias);
+      api_name, extension, context_type_, url(), check_alias,
+      kRendererProfileId, RendererFrameContextData(web_frame()));
 }
 
 std::string ScriptContext::GetContextTypeDescription() const {
@@ -435,11 +348,18 @@ bool ScriptContext::IsAnyFeatureAvailableToContext(
     const Feature& api,
     CheckAliasStatus check_alias) {
   DCHECK(thread_checker_.CalledOnValidThread());
+  if (web_frame()) {
+    return ExtensionAPI::GetSharedInstance()->IsAnyFeatureAvailableToContext(
+        api, extension(), context_type(),
+        GetDocumentLoaderURLForFrame(web_frame()), check_alias,
+        kRendererProfileId, RendererFrameContextData(web_frame()));
+  }
+
   // TODO(lazyboy): Decide what we should do for service workers, where
   // web_frame() is null.
-  GURL url = web_frame() ? GetDocumentLoaderURLForFrame(web_frame()) : url_;
   return ExtensionAPI::GetSharedInstance()->IsAnyFeatureAvailableToContext(
-      api, extension(), context_type(), url, check_alias);
+      api, extension(), context_type(), url_, check_alias, kRendererProfileId,
+      RendererContextData());
 }
 
 // static
@@ -505,18 +425,17 @@ GURL ScriptContext::GetEffectiveDocumentURLForInjection(
 
 // Grants a set of content capabilities to this context.
 
-bool ScriptContext::HasAPIPermission(APIPermission::ID permission) const {
+bool ScriptContext::HasAPIPermission(mojom::APIPermissionID permission) const {
   DCHECK(thread_checker_.CalledOnValidThread());
   if (effective_extension_.get()) {
     return effective_extension_->permissions_data()->HasAPIPermission(
         permission);
   }
-  if (context_type() == Feature::WEB_PAGE_CONTEXT) {
+  if (context_type() == mojom::ContextType::kWebPage) {
     // Only web page contexts may be granted content capabilities. Other
     // contexts are either privileged WebUI or extensions with their own set of
     // permissions.
-    if (content_capabilities_.find(permission) != content_capabilities_.end())
-      return true;
+    return base::Contains(content_capabilities_, permission);
   }
   return false;
 }
@@ -567,7 +486,7 @@ std::string ScriptContext::GetDebugString() const {
       "  context_type:           %s\n"
       "  effective extension id: %s\n"
       "  effective context type: %s",
-      extension_.get() ? extension_->id().c_str() : "(none)", web_frame_,
+      extension_.get() ? extension_->id().c_str() : "(none)", web_frame_.get(),
       url_.spec().c_str(), GetContextTypeDescription().c_str(),
       effective_extension_.get() ? effective_extension_->id().c_str()
                                  : "(none)",
@@ -599,7 +518,7 @@ std::string ScriptContext::GetStackTraceAsString() const {
 v8::Local<v8::Value> ScriptContext::RunScript(
     v8::Local<v8::String> name,
     v8::Local<v8::String> code,
-    const RunScriptExceptionHandler& exception_handler,
+    RunScriptExceptionHandler exception_handler,
     v8::ScriptCompiler::NoCacheReason no_cache_reason) {
   DCHECK(thread_checker_.CalledOnValidThread());
   v8::EscapableHandleScope handle_scope(isolate());
@@ -615,66 +534,29 @@ v8::Local<v8::Value> ScriptContext::RunScript(
     return v8::Undefined(isolate());
   }
 
-  v8::MicrotasksScope microtasks(
-      isolate(), v8::MicrotasksScope::kDoNotRunMicrotasks);
+  v8::MicrotasksScope microtasks(isolate(), v8_context()->GetMicrotaskQueue(),
+                                 v8::MicrotasksScope::kDoNotRunMicrotasks);
   v8::TryCatch try_catch(isolate());
   try_catch.SetCaptureMessage(true);
-  v8::ScriptOrigin origin(
-      v8_helpers::ToV8StringUnsafe(isolate(), internal_name.c_str()));
+  v8::ScriptOrigin origin(isolate(), v8_helpers::ToV8StringUnsafe(
+                                         isolate(), internal_name.c_str()));
   v8::ScriptCompiler::Source script_source(code, origin);
   v8::Local<v8::Script> script;
   if (!v8::ScriptCompiler::Compile(v8_context(), &script_source,
                                    v8::ScriptCompiler::kNoCompileOptions,
                                    no_cache_reason)
            .ToLocal(&script)) {
-    exception_handler.Run(try_catch);
+    std::move(exception_handler).Run(try_catch);
     return v8::Undefined(isolate());
   }
 
   v8::Local<v8::Value> result;
   if (!script->Run(v8_context()).ToLocal(&result)) {
-    exception_handler.Run(try_catch);
+    std::move(exception_handler).Run(try_catch);
     return v8::Undefined(isolate());
   }
 
   return handle_scope.Escape(result);
-}
-
-v8::Local<v8::Value> ScriptContext::CallFunction(
-    const v8::Local<v8::Function>& function,
-    int argc,
-    v8::Local<v8::Value> argv[]) const {
-  DCHECK(thread_checker_.CalledOnValidThread());
-  v8::EscapableHandleScope handle_scope(isolate());
-  v8::Context::Scope scope(v8_context());
-
-  v8::MicrotasksScope microtasks(isolate(),
-                                 v8::MicrotasksScope::kDoNotRunMicrotasks);
-  if (!is_valid_) {
-    return handle_scope.Escape(
-        v8::Local<v8::Primitive>(v8::Undefined(isolate())));
-  }
-
-  v8::Local<v8::Object> global = v8_context()->Global();
-  if (!web_frame_) {
-    v8::MaybeLocal<v8::Value> maybe_result =
-        function->Call(v8_context(), global, argc, argv);
-    v8::Local<v8::Value> result;
-    if (!maybe_result.ToLocal(&result)) {
-      return handle_scope.Escape(
-          v8::Local<v8::Primitive>(v8::Undefined(isolate())));
-    }
-    return handle_scope.Escape(result);
-  }
-
-  v8::MaybeLocal<v8::Value> result =
-      web_frame_->CallFunctionEvenIfScriptDisabled(function, global, argc,
-                                                   argv);
-
-  // TODO(devlin): Stop coercing this to a v8::Local.
-  v8::Local<v8::Value> coerced_result;
-  ignore_result(result.ToLocal(&coerced_result));
-  return handle_scope.Escape(coerced_result);
 }
 
 }  // namespace extensions

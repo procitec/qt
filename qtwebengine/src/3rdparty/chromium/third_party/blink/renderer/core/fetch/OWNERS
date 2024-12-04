@@ -1,6 +1,7 @@
-hiroshige@chromium.org
-horo@chromium.org
-yhirano@chromium.org
+nidhijaju@chromium.org
+ricea@chromium.org
 
-# TEAM: blink-network-dev@chromium.org
-# COMPONENT: Blink>Network>FetchAPI
+# request_util.* is also used by a type converter, which need to be
+# reviewed by the IPC security reviewer.
+per-file request_util.*=set noparent
+per-file request_util.*=file://ipc/SECURITY_OWNERS

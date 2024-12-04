@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,8 +7,8 @@
 #include <map>
 #include <memory>
 
-#include "base/macros.h"
 #include "base/memory/ptr_util.h"
+#include "base/memory/raw_ptr.h"
 #include "build/build_config.h"
 #include "components/web_modal/single_web_contents_dialog_manager.h"
 #include "components/web_modal/test_web_contents_modal_dialog_manager_delegate.h"
@@ -56,6 +56,11 @@ class TestNativeWebContentsModalDialogManager
       tracker_->SetState(NativeManagerTracker::NOT_SHOWN);
   }
 
+  TestNativeWebContentsModalDialogManager(
+      const TestNativeWebContentsModalDialogManager&) = delete;
+  TestNativeWebContentsModalDialogManager& operator=(
+      const TestNativeWebContentsModalDialogManager&) = delete;
+
   void Show() override {
     if (tracker_)
       tracker_->SetState(NativeManagerTracker::SHOWN);
@@ -73,15 +78,16 @@ class TestNativeWebContentsModalDialogManager
   void Pulse() override {}
   void HostChanged(WebContentsModalDialogHost* new_host) override {}
   gfx::NativeWindow dialog() override { return dialog_; }
+  bool IsActive() const override { return is_active_; }
 
   void StopTracking() { tracker_ = nullptr; }
+  void SetIsActive(bool is_active) { is_active_ = is_active; }
 
  private:
-  SingleWebContentsDialogManagerDelegate* delegate_;
+  raw_ptr<SingleWebContentsDialogManagerDelegate> delegate_;
   gfx::NativeWindow dialog_;
-  NativeManagerTracker* tracker_;
-
-  DISALLOW_COPY_AND_ASSIGN(TestNativeWebContentsModalDialogManager);
+  raw_ptr<NativeManagerTracker> tracker_;
+  bool is_active_;
 };
 
 class WebContentsModalDialogManagerTest
@@ -89,17 +95,24 @@ class WebContentsModalDialogManagerTest
  public:
   WebContentsModalDialogManagerTest() : next_dialog_id(1), manager(nullptr) {}
 
+  WebContentsModalDialogManagerTest(const WebContentsModalDialogManagerTest&) =
+      delete;
+  WebContentsModalDialogManagerTest& operator=(
+      const WebContentsModalDialogManagerTest&) = delete;
+
   void SetUp() override {
     content::RenderViewHostTestHarness::SetUp();
 
-    delegate.reset(new TestWebContentsModalDialogManagerDelegate);
+    delegate = std::make_unique<TestWebContentsModalDialogManagerDelegate>();
     WebContentsModalDialogManager::CreateForWebContents(web_contents());
     manager = WebContentsModalDialogManager::FromWebContents(web_contents());
     manager->SetDelegate(delegate.get());
-    test_api.reset(new WebContentsModalDialogManager::TestApi(manager));
+    test_api =
+        std::make_unique<WebContentsModalDialogManager::TestApi>(manager);
   }
 
   void TearDown() override {
+    manager = nullptr;
     test_api.reset();
     content::RenderViewHostTestHarness::TearDown();
   }
@@ -108,7 +121,7 @@ class WebContentsModalDialogManagerTest
   gfx::NativeWindow MakeFakeDialog() {
     // WebContentsModalDialogManager treats the dialog window as an opaque
     // type, so creating fake dialog windows using reinterpret_cast is valid.
-#if defined(OS_APPLE)
+#if BUILDFLAG(IS_APPLE)
     NSWindow* window = reinterpret_cast<NSWindow*>(next_dialog_id++);
     return gfx::NativeWindow(window);
 #else
@@ -118,10 +131,8 @@ class WebContentsModalDialogManagerTest
 
   int next_dialog_id;
   std::unique_ptr<TestWebContentsModalDialogManagerDelegate> delegate;
-  WebContentsModalDialogManager* manager;
+  raw_ptr<WebContentsModalDialogManager> manager;
   std::unique_ptr<WebContentsModalDialogManager::TestApi> test_api;
-
-  DISALLOW_COPY_AND_ASSIGN(WebContentsModalDialogManagerTest);
 };
 
 // Test that the dialog is shown immediately when the delegate indicates the web
@@ -211,6 +222,33 @@ TEST_F(WebContentsModalDialogManagerTest, VisibilityObservation) {
   EXPECT_TRUE(manager->IsDialogActive());
   EXPECT_TRUE(delegate->web_contents_blocked());
   EXPECT_EQ(NativeManagerTracker::HIDDEN, tracker.state_);
+
+  test_api->WebContentsVisibilityChanged(content::Visibility::VISIBLE);
+
+  EXPECT_TRUE(manager->IsDialogActive());
+  EXPECT_TRUE(delegate->web_contents_blocked());
+  EXPECT_EQ(NativeManagerTracker::SHOWN, tracker.state_);
+
+  native_manager->StopTracking();
+}
+
+// Tests that the dialog shows when switching from occluded to visible.
+TEST_F(WebContentsModalDialogManagerTest, OccludedToVisible) {
+  const gfx::NativeWindow dialog = MakeFakeDialog();
+
+  delegate->set_web_contents_visible(false);
+  test_api->WebContentsVisibilityChanged(content::Visibility::OCCLUDED);
+
+  NativeManagerTracker tracker;
+  TestNativeWebContentsModalDialogManager* native_manager =
+      new TestNativeWebContentsModalDialogManager(dialog, manager, &tracker);
+  native_manager->SetIsActive(false);
+
+  manager->ShowDialogWithManager(dialog, base::WrapUnique(native_manager));
+
+  EXPECT_TRUE(manager->IsDialogActive());
+  EXPECT_TRUE(delegate->web_contents_blocked());
+  EXPECT_EQ(NativeManagerTracker::NOT_SHOWN, tracker.state_);
 
   test_api->WebContentsVisibilityChanged(content::Visibility::VISIBLE);
 

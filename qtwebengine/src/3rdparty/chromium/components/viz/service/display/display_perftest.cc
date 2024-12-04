@@ -1,10 +1,12 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <limits>
 #include <vector>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/test/null_task_runner.h"
 #include "base/time/time.h"
 #include "base/timer/lap_timer.h"
@@ -21,7 +23,7 @@
 #include "components/viz/service/display/overlay_processor_stub.h"
 #include "components/viz/service/display/shared_bitmap_manager.h"
 #include "components/viz/service/display_embedder/server_shared_bitmap_manager.h"
-#include "components/viz/test/fake_output_surface.h"
+#include "components/viz/test/fake_skia_output_surface.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/perf/perf_result_reporter.h"
 
@@ -57,22 +59,31 @@ class RemoveOverdrawQuadPerfTest : public testing::Test {
  public:
   RemoveOverdrawQuadPerfTest()
       : timer_(kWarmupRuns,
-               base::TimeDelta::FromMilliseconds(kTimeLimitMillis),
+               base::Milliseconds(kTimeLimitMillis),
                kTimeCheckInterval),
         task_runner_(base::MakeRefCounted<base::NullTaskRunner>()) {}
 
   std::unique_ptr<Display> CreateDisplay() {
     FrameSinkId frame_sink_id(3, 3);
 
-    auto scheduler = std::make_unique<DisplayScheduler>(&begin_frame_source_,
-                                                        task_runner_.get(), 1);
+    auto scheduler = std::make_unique<DisplayScheduler>(
+        &begin_frame_source_, task_runner_.get(), PendingSwapParams(1));
 
-    std::unique_ptr<FakeOutputSurface> output_surface =
-        FakeOutputSurface::Create3d();
+    std::unique_ptr<FakeSkiaOutputSurface> output_surface =
+        FakeSkiaOutputSurface::Create3d();
 
     auto overlay_processor = std::make_unique<OverlayProcessorStub>();
+    // Normally display will need to take ownership of a
+    // gpu::GpuTaskschedulerhelper in order to keep it alive to share between
+    // the output surface and the overlay processor. In this case the overlay
+    // processor is a stub and the output surface is test only as well, so there
+    // is no need to pass in a real gpu::GpuTaskSchedulerHelper.
+    // TODO(weiliangc): Figure out a better way to set up test without passing
+    // in nullptr.
     auto display = std::make_unique<Display>(
-        &bitmap_manager_, RendererSettings(), &debug_settings_, frame_sink_id,
+        &bitmap_manager_, /*shared_image_manager=*/nullptr,
+        /*sync_point_manager=*/nullptr, RendererSettings(), &debug_settings_,
+        frame_sink_id, nullptr /* gpu::GpuTaskSchedulerHelper */,
         std::move(output_surface), std::move(overlay_processor),
         std::move(scheduler), task_runner_.get());
     return display;
@@ -82,7 +93,6 @@ class RemoveOverdrawQuadPerfTest : public testing::Test {
   SharedQuadState* CreateSharedQuadState(AggregatedRenderPass* render_pass,
                                          gfx::Rect rect) {
     gfx::Transform quad_transform = gfx::Transform();
-    bool is_clipped = false;
     bool are_contents_opaque = true;
     float opacity = 1.f;
     int sorting_context_id = 65536;
@@ -90,8 +100,10 @@ class RemoveOverdrawQuadPerfTest : public testing::Test {
 
     SharedQuadState* state = render_pass->CreateAndAppendSharedQuadState();
     state->SetAll(quad_transform, rect, rect,
-                  /*rounded_corner_bounds=*/gfx::RRectF(), rect, is_clipped,
-                  are_contents_opaque, opacity, blend_mode, sorting_context_id);
+                  /*filter_info=*/gfx::MaskFilterInfo(),
+                  /*clip=*/absl::nullopt, are_contents_opaque, opacity,
+                  blend_mode, sorting_context_id, /*layer_id=*/0u,
+                  /*fast_rounded_corner=*/false);
     return state;
   }
 
@@ -100,12 +112,11 @@ class RemoveOverdrawQuadPerfTest : public testing::Test {
                    int quad_height,
                    int quad_width) {
     bool needs_blending = false;
-    ResourceId resource_id = 1;
+    ResourceId resource_id(1);
     bool premultiplied_alpha = true;
     gfx::PointF uv_top_left(0, 0);
     gfx::PointF uv_bottom_right(1, 1);
-    SkColor background_color = SK_ColorRED;
-    float vertex_opacity[4] = {1.f, 1.f, 1.f, 1.f};
+    SkColor4f background_color = SkColors::kRed;
     bool y_flipped = false;
     bool nearest_neighbor = true;
 
@@ -122,8 +133,8 @@ class RemoveOverdrawQuadPerfTest : public testing::Test {
         gfx::Rect rect(i, j, quad_width, quad_height);
         quad->SetNew(shared_quad_state, rect, rect, needs_blending, resource_id,
                      premultiplied_alpha, uv_top_left, uv_bottom_right,
-                     background_color, vertex_opacity, y_flipped,
-                     nearest_neighbor, /*secure_output_only=*/false,
+                     background_color, y_flipped, nearest_neighbor,
+                     /*secure_output_only=*/false,
                      gfx::ProtectedVideoType::kClear);
         j += quad_height;
       }

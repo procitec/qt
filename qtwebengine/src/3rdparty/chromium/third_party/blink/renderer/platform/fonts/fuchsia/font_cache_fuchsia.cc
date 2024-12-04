@@ -24,6 +24,7 @@
 
 #include "third_party/blink/renderer/platform/fonts/font_cache.h"
 
+#include "skia/ext/font_utils.h"
 #include "third_party/blink/renderer/platform/fonts/font_platform_data.h"
 
 namespace blink {
@@ -40,7 +41,7 @@ const AtomicString& FontCache::SystemFontFamily() {
 
 // static
 void FontCache::SetSystemFontFamily(const AtomicString& family_name) {
-  DCHECK(!family_name.IsEmpty());
+  DCHECK(!family_name.empty());
   MutableSystemFontFamily() = family_name;
 }
 
@@ -49,8 +50,8 @@ scoped_refptr<SimpleFontData> FontCache::PlatformFallbackFontForCharacter(
     UChar32 character,
     const SimpleFontData* font_data_to_substitute,
     FontFallbackPriority fallback_priority) {
-  sk_sp<SkFontMgr> font_mgr(SkFontMgr::RefDefault());
-  std::string family_name = font_description.Family().Family().Utf8();
+  sk_sp<SkFontMgr> font_mgr(skia::DefaultFontMgr());
+  std::string family_name = font_description.Family().FamilyName().Utf8();
   Bcp47Vector locales =
       GetBcp47LocaleForRequest(font_description, fallback_priority);
   sk_sp<SkTypeface> typeface(font_mgr->matchFamilyStyleCharacter(
@@ -59,14 +60,17 @@ scoped_refptr<SimpleFontData> FontCache::PlatformFallbackFontForCharacter(
   if (!typeface)
     return nullptr;
 
-  bool synthetic_bold =
-      font_description.IsSyntheticBold() && !typeface->isBold();
-  bool synthetic_italic =
-      font_description.IsSyntheticItalic() && !typeface->isItalic();
+  bool synthetic_bold = font_description.IsSyntheticBold() &&
+                        !typeface->isBold() &&
+                        font_description.SyntheticBoldAllowed();
+  bool synthetic_italic = font_description.IsSyntheticItalic() &&
+                          !typeface->isItalic() &&
+                          font_description.SyntheticItalicAllowed();
 
   auto font_data = std::make_unique<FontPlatformData>(
       std::move(typeface), std::string(), font_description.EffectiveFontSize(),
-      synthetic_bold, synthetic_italic, font_description.Orientation());
+      synthetic_bold, synthetic_italic, font_description.TextRendering(),
+      ResolvedFontFeatures(), font_description.Orientation());
 
   return FontDataFromFontPlatformData(font_data.get(), kDoNotRetain);
 }

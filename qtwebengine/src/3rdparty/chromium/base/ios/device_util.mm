@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -15,9 +15,10 @@
 
 #include <memory>
 
+#include "base/apple/scoped_cftyperef.h"
 #include "base/check.h"
-#include "base/mac/scoped_cftyperef.h"
-#include "base/strings/string_util.h"
+#include "base/numerics/safe_conversions.h"
+#include "base/posix/sysctl.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/sys_string_conversions.h"
 
@@ -41,7 +42,7 @@ NSString* GenerateClientId() {
   NSString* client_id = [defaults stringForKey:kLegacyClientIdPreferenceKey];
 
   // Some iOS6 devices return a buggy identifierForVendor:
-  // http://openradar.appspot.com/12377282. If this is the case, revert to
+  // https://openradar.appspot.com/12377282. If this is the case, revert to
   // generating a new one.
   if (!client_id || [client_id isEqualToString:kZeroUUID]) {
     client_id = [[[UIDevice currentDevice] identifierForVendor] UUIDString];
@@ -53,15 +54,14 @@ NSString* GenerateClientId() {
 
 }  // namespace
 
-namespace ios {
-namespace device_util {
+namespace ios::device_util {
 
 std::string GetPlatform() {
-  std::string platform;
-  size_t size = 0;
-  sysctlbyname("hw.machine", NULL, &size, NULL, 0);
-  sysctlbyname("hw.machine", base::WriteInto(&platform, size), &size, NULL, 0);
-  return platform;
+#if TARGET_OS_SIMULATOR
+  return getenv("SIMULATOR_MODEL_IDENTIFIER");
+#elif TARGET_OS_IPHONE
+  return base::StringSysctl({CTL_HW, HW_MACHINE}).value();
+#endif
 }
 
 bool RamIsAtLeast512Mb() {
@@ -125,11 +125,11 @@ std::string GetMacAddress(const std::string& interface_name) {
 }
 
 std::string GetRandomId() {
-  base::ScopedCFTypeRef<CFUUIDRef> uuid_object(
+  base::apple::ScopedCFTypeRef<CFUUIDRef> uuid_object(
       CFUUIDCreate(kCFAllocatorDefault));
-  base::ScopedCFTypeRef<CFStringRef> uuid_string(
-      CFUUIDCreateString(kCFAllocatorDefault, uuid_object));
-  return base::SysCFStringRefToUTF8(uuid_string);
+  base::apple::ScopedCFTypeRef<CFStringRef> uuid_string(
+      CFUUIDCreateString(kCFAllocatorDefault, uuid_object.get()));
+  return base::SysCFStringRefToUTF8(uuid_string.get());
 }
 
 std::string GetDeviceIdentifier(const char* salt) {
@@ -157,6 +157,11 @@ std::string GetDeviceIdentifier(const char* salt) {
                          salt ? salt : kDefaultSalt);
 }
 
+std::string GetVendorId() {
+  return base::SysNSStringToUTF8(
+      [[[UIDevice currentDevice] identifierForVendor] UUIDString]);
+}
+
 std::string GetSaltedString(const std::string& in_string,
                             const std::string& salt) {
   DCHECK(salt.length());
@@ -164,15 +169,15 @@ std::string GetSaltedString(const std::string& in_string,
       dataUsingEncoding:NSUTF8StringEncoding];
 
   unsigned char hash[CC_SHA256_DIGEST_LENGTH];
-  CC_SHA256([hash_data bytes], [hash_data length], hash);
+  CC_SHA256([hash_data bytes], base::checked_cast<CC_LONG>([hash_data length]),
+            hash);
   CFUUIDBytes* uuid_bytes = reinterpret_cast<CFUUIDBytes*>(hash);
 
-  base::ScopedCFTypeRef<CFUUIDRef> uuid_object(
+  base::apple::ScopedCFTypeRef<CFUUIDRef> uuid_object(
       CFUUIDCreateFromUUIDBytes(kCFAllocatorDefault, *uuid_bytes));
-  base::ScopedCFTypeRef<CFStringRef> device_id(
-      CFUUIDCreateString(kCFAllocatorDefault, uuid_object));
-  return base::SysCFStringRefToUTF8(device_id);
+  base::apple::ScopedCFTypeRef<CFStringRef> device_id(
+      CFUUIDCreateString(kCFAllocatorDefault, uuid_object.get()));
+  return base::SysCFStringRefToUTF8(device_id.get());
 }
 
-}  // namespace device_util
-}  // namespace ios
+}  // namespace ios::device_util

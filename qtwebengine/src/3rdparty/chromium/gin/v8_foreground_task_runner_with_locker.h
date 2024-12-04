@@ -1,10 +1,11 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef V8_FOREGROUND_TASK_RUNNER_WITH_LOCKER_H
-#define V8_FOREGROUND_TASK_RUNNER_WITH_LOCKER_H
+#ifndef GIN_V8_FOREGROUND_TASK_RUNNER_WITH_LOCKER_H_
+#define GIN_V8_FOREGROUND_TASK_RUNNER_WITH_LOCKER_H_
 
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "gin/v8_foreground_task_runner_base.h"
 
@@ -35,10 +36,18 @@ class V8ForegroundTaskRunnerWithLocker : public V8ForegroundTaskRunnerBase {
   bool NonNestableTasksEnabled() const override;
 
  private:
-  v8::Isolate* isolate_;
+  // This dangles because the isolate must be disposed before the task runner
+  // can safely be destroyed. V8-managed tasks in other threads might try to
+  // post more tasks whilst the isolate is being disposed (before V8 cancels
+  // them as part of disposal).
+  //
+  // Once the isolate is disposed, V8 has made sure that no more tasks should be
+  // running or get posted, and this task runner will quickly get destroyed
+  // afterwards.
+  raw_ptr<v8::Isolate, DanglingUntriaged> isolate_;
   scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
 };
 
 }  // namespace gin
 
-#endif  // V8_FOREGROUND_TASK_RUNNER_WITH_LOCKER_H
+#endif  // GIN_V8_FOREGROUND_TASK_RUNNER_WITH_LOCKER_H_

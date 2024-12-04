@@ -29,21 +29,20 @@ namespace blink {
 SVGGElement::SVGGElement(Document& document, ConstructionType construction_type)
     : SVGGraphicsElement(svg_names::kGTag, document, construction_type) {}
 
-LayoutObject* SVGGElement::CreateLayoutObject(const ComputedStyle& style,
-                                              LegacyLayout) {
+LayoutObject* SVGGElement::CreateLayoutObject(const ComputedStyle& style) {
   // SVG 1.1 testsuite explicitly uses constructs like
   // <g display="none"><linearGradient>
   // We still have to create layoutObjects for the <g> & <linearGradient>
   // element, though the subtree may be hidden - we only want the resource
   // layoutObjects to exist so they can be referenced from somewhere else.
   if (style.Display() == EDisplay::kNone)
-    return new LayoutSVGHiddenContainer(this);
+    return MakeGarbageCollected<LayoutSVGHiddenContainer>(this);
   if (style.Display() == EDisplay::kContents)
     return nullptr;
-  return new LayoutSVGTransformableContainer(this);
+  return MakeGarbageCollected<LayoutSVGTransformableContainer>(this);
 }
 
-bool SVGGElement::LayoutObjectIsNeeded(const ComputedStyle&) const {
+bool SVGGElement::LayoutObjectIsNeeded(const DisplayStyle&) const {
   // Unlike SVGElement::layoutObjectIsNeeded(), we still create layoutObjects,
   // even if display is set to 'none' - which is special to SVG <g> container
   // elements.

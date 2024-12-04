@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,8 +8,8 @@
 #include <memory>
 #include <string>
 
-#include "base/macros.h"
 #include "base/strings/string_piece.h"
+#include "components/metrics/metrics_log.h"
 #include "components/metrics/metrics_log_uploader.h"
 #include "third_party/metrics_proto/reporting_info.pb.h"
 #include "url/gurl.h"
@@ -46,11 +46,15 @@ class NetMetricsLogUploader : public MetricsLogUploader {
       MetricsLogUploader::MetricServiceType service_type,
       const MetricsLogUploader::UploadCallback& on_upload_complete);
 
+  NetMetricsLogUploader(const NetMetricsLogUploader&) = delete;
+  NetMetricsLogUploader& operator=(const NetMetricsLogUploader&) = delete;
+
   ~NetMetricsLogUploader() override;
 
   // MetricsLogUploader:
   // Uploads a log to the server_url specified in the constructor.
   void UploadLog(const std::string& compressed_log_data,
+                 const LogMetadata& log_metadata,
                  const std::string& log_hash,
                  const std::string& log_signature,
                  const ReportingInfo& reporting_info) override;
@@ -58,6 +62,7 @@ class NetMetricsLogUploader : public MetricsLogUploader {
  private:
   // Uploads a log to a URL passed as a parameter.
   void UploadLogToURL(const std::string& compressed_log_data,
+                      const LogMetadata& log_metadata,
                       const std::string& log_hash,
                       const std::string& log_signature,
                       const ReportingInfo& reporting_info,
@@ -80,8 +85,6 @@ class NetMetricsLogUploader : public MetricsLogUploader {
   const MetricsLogUploader::UploadCallback on_upload_complete_;
   // The outstanding transmission appears as a URL Fetch operation.
   std::unique_ptr<network::SimpleURLLoader> url_loader_;
-
-  DISALLOW_COPY_AND_ASSIGN(NetMetricsLogUploader);
 };
 
 }  // namespace metrics

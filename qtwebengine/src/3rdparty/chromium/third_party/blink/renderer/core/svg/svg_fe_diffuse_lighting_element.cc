@@ -19,6 +19,7 @@
 
 #include "third_party/blink/renderer/core/svg/svg_fe_diffuse_lighting_element.h"
 
+#include "third_party/blink/renderer/core/css/properties/longhands.h"
 #include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/style/computed_style.h"
 #include "third_party/blink/renderer/core/svg/graphics/filters/svg_filter_builder.h"
@@ -28,7 +29,8 @@
 #include "third_party/blink/renderer/core/svg/svg_fe_light_element.h"
 #include "third_party/blink/renderer/platform/graphics/filters/fe_diffuse_lighting.h"
 #include "third_party/blink/renderer/platform/graphics/filters/filter.h"
-#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/graphics/filters/light_source.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 
 namespace blink {
 
@@ -47,12 +49,7 @@ SVGFEDiffuseLightingElement::SVGFEDiffuseLightingElement(Document& document)
           this,
           svg_names::kKernelUnitLengthAttr,
           0.0f)),
-      in1_(MakeGarbageCollected<SVGAnimatedString>(this, svg_names::kInAttr)) {
-  AddToPropertyMap(diffuse_constant_);
-  AddToPropertyMap(surface_scale_);
-  AddToPropertyMap(kernel_unit_length_);
-  AddToPropertyMap(in1_);
-}
+      in1_(MakeGarbageCollected<SVGAnimatedString>(this, svg_names::kInAttr)) {}
 
 SVGAnimatedNumber* SVGFEDiffuseLightingElement::kernelUnitLengthX() {
   return kernel_unit_length_->FirstNumber();
@@ -87,42 +84,19 @@ bool SVGFEDiffuseLightingElement::SetFilterEffectAttribute(
     return diffuse_lighting->SetDiffuseConstant(
         diffuse_constant_->CurrentValue()->Value());
 
-  LightSource* light_source =
-      const_cast<LightSource*>(diffuse_lighting->GetLightSource());
-  const SVGFELightElement* light_element =
-      SVGFELightElement::FindLightElement(*this);
-  DCHECK(light_source);
-  DCHECK(light_element);
-  DCHECK(effect->GetFilter());
-
-  if (attr_name == svg_names::kAzimuthAttr)
-    return light_source->SetAzimuth(
-        light_element->azimuth()->CurrentValue()->Value());
-  if (attr_name == svg_names::kElevationAttr)
-    return light_source->SetElevation(
-        light_element->elevation()->CurrentValue()->Value());
-  if (attr_name == svg_names::kXAttr || attr_name == svg_names::kYAttr ||
-      attr_name == svg_names::kZAttr)
-    return light_source->SetPosition(
-        effect->GetFilter()->Resolve3dPoint(light_element->GetPosition()));
-  if (attr_name == svg_names::kPointsAtXAttr ||
-      attr_name == svg_names::kPointsAtYAttr ||
-      attr_name == svg_names::kPointsAtZAttr)
-    return light_source->SetPointsAt(
-        effect->GetFilter()->Resolve3dPoint(light_element->PointsAt()));
-  if (attr_name == svg_names::kSpecularExponentAttr)
-    return light_source->SetSpecularExponent(
-        light_element->specularExponent()->CurrentValue()->Value());
-  if (attr_name == svg_names::kLimitingConeAngleAttr)
-    return light_source->SetLimitingConeAngle(
-        light_element->limitingConeAngle()->CurrentValue()->Value());
-
+  if (const auto* light_element = SVGFELightElement::FindLightElement(*this)) {
+    absl::optional<bool> light_source_update =
+        light_element->SetLightSourceAttribute(diffuse_lighting, attr_name);
+    if (light_source_update)
+      return *light_source_update;
+  }
   return SVGFilterPrimitiveStandardAttributes::SetFilterEffectAttribute(
       effect, attr_name);
 }
 
 void SVGFEDiffuseLightingElement::SvgAttributeChanged(
-    const QualifiedName& attr_name) {
+    const SvgAttributeChangedParams& params) {
+  const QualifiedName& attr_name = params.name;
   if (attr_name == svg_names::kSurfaceScaleAttr ||
       attr_name == svg_names::kDiffuseConstantAttr ||
       attr_name == svg_names::kLightingColorAttr) {
@@ -137,7 +111,7 @@ void SVGFEDiffuseLightingElement::SvgAttributeChanged(
     return;
   }
 
-  SVGFilterPrimitiveStandardAttributes::SvgAttributeChanged(attr_name);
+  SVGFilterPrimitiveStandardAttributes::SvgAttributeChanged(params);
 }
 
 void SVGFEDiffuseLightingElement::LightElementAttributeChanged(
@@ -180,7 +154,31 @@ bool SVGFEDiffuseLightingElement::TaintsOrigin() const {
   // TaintsOrigin() is only called after a successful call to Build()
   // (see above), so we should have a ComputedStyle here.
   DCHECK(style);
-  return style->SvgStyle().LightingColor().IsCurrentColor();
+  return style->LightingColor().IsCurrentColor();
+}
+
+SVGAnimatedPropertyBase* SVGFEDiffuseLightingElement::PropertyFromAttribute(
+    const QualifiedName& attribute_name) const {
+  if (attribute_name == svg_names::kDiffuseConstantAttr) {
+    return diffuse_constant_.Get();
+  } else if (attribute_name == svg_names::kSurfaceScaleAttr) {
+    return surface_scale_.Get();
+  } else if (attribute_name == svg_names::kKernelUnitLengthAttr) {
+    return kernel_unit_length_.Get();
+  } else if (attribute_name == svg_names::kInAttr) {
+    return in1_.Get();
+  } else {
+    return SVGFilterPrimitiveStandardAttributes::PropertyFromAttribute(
+        attribute_name);
+  }
+}
+
+void SVGFEDiffuseLightingElement::SynchronizeAllSVGAttributes() const {
+  SVGAnimatedPropertyBase* attrs[]{diffuse_constant_.Get(),
+                                   surface_scale_.Get(),
+                                   kernel_unit_length_.Get(), in1_.Get()};
+  SynchronizeListOfSVGAttributes(attrs);
+  SVGFilterPrimitiveStandardAttributes::SynchronizeAllSVGAttributes();
 }
 
 }  // namespace blink

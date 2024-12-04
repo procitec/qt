@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,7 +8,6 @@
 #include <string>
 
 #include "base/files/scoped_file.h"
-#include "base/macros.h"
 #include "ui/ozone/platform/wayland/common/wayland_object.h"
 #include "ui/ozone/platform/wayland/host/wayland_data_offer_base.h"
 
@@ -25,28 +24,33 @@ class WaylandDataOffer : public WaylandDataOfferBase {
  public:
   // Takes ownership of data_offer.
   explicit WaylandDataOffer(wl_data_offer* data_offer);
+
+  WaylandDataOffer(const WaylandDataOffer&) = delete;
+  WaylandDataOffer& operator=(const WaylandDataOffer&) = delete;
+
   ~WaylandDataOffer() override;
 
-  void SetAction(uint32_t dnd_actions, uint32_t preferred_action);
   void Accept(uint32_t serial, const std::string& mime_type);
   void Reject(uint32_t serial);
+  void FinishOffer();
 
   // WaylandDataOfferBase overrides:
   base::ScopedFD Receive(const std::string& mime_type) override;
 
-  void FinishOffer();
-  uint32_t source_actions() const;
-  uint32_t dnd_action() const;
+  uint32_t source_actions() const { return source_actions_; }
+  uint32_t dnd_action() const { return dnd_action_; }
+  void SetDndActions(uint32_t dnd_actions);
+  uint32_t id() const { return data_offer_.id(); }
 
  private:
-  // wl_data_offer_listener callbacks.
+  // wl_data_offer_listener callbacks:
   static void OnOffer(void* data,
                       wl_data_offer* data_offer,
                       const char* mime_type);
   // Notifies the source-side available actions
-  static void OnSourceAction(void* data,
-                             wl_data_offer* offer,
-                             uint32_t source_actions);
+  static void OnSourceActions(void* data,
+                              wl_data_offer* offer,
+                              uint32_t source_actions);
   // Notifies the selected action
   static void OnAction(void* data, wl_data_offer* offer, uint32_t dnd_action);
 
@@ -55,8 +59,6 @@ class WaylandDataOffer : public WaylandDataOfferBase {
   uint32_t source_actions_;
   // Action selected by the compositor
   uint32_t dnd_action_;
-
-  DISALLOW_COPY_AND_ASSIGN(WaylandDataOffer);
 };
 
 }  // namespace ui

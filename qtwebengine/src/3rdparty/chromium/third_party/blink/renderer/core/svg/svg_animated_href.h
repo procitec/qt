@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,12 +9,12 @@
 
 namespace blink {
 
-class StringOrTrustedScriptURL;
+class SVGAnimatedPropertyBase;
 
 // This is an "access wrapper" for the 'href' attribute. The object
 // itself holds the value for 'href' in the null/default NS and wraps
-// one for 'href' in the XLink NS. Both objects are added to an
-// SVGElement's property map and hence any updates/synchronization/etc
+// one for 'href' in the XLink NS. Both objects are queryable through
+// PropertyFromAttribute(), and hence any updates/synchronization/etc
 // via the "attribute DOM" (setAttribute and friends) will operate on
 // the independent objects, while users of an 'href' value will be
 // using this interface (which essentially just selects either itself
@@ -26,16 +26,19 @@ class SVGAnimatedHref final : public SVGAnimatedString {
   SVGString* CurrentValue();
   const SVGString* CurrentValue() const;
 
-  void baseVal(StringOrTrustedScriptURL&) override;
-  void setBaseVal(const StringOrTrustedScriptURL&, ExceptionState&) override;
+  V8UnionStringOrTrustedScriptURL* baseVal() override;
+  void setBaseVal(const V8UnionStringOrTrustedScriptURL* value,
+                  ExceptionState& exception_state) override;
   String animVal() override;
 
   bool IsSpecified() const {
     return SVGAnimatedString::IsSpecified() || xlink_href_->IsSpecified();
   }
 
+  SVGAnimatedPropertyBase* PropertyFromAttribute(
+      const QualifiedName& attribute_name);
+
   static bool IsKnownAttribute(const QualifiedName&);
-  void AddToPropertyMap(SVGElement*);
 
   void Trace(Visitor*) const override;
 

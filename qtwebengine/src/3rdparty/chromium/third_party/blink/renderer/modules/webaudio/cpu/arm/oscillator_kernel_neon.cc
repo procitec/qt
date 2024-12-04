@@ -1,8 +1,8 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "third_party/blink/renderer/modules/webaudio/oscillator_node.h"
+#include "third_party/blink/renderer/modules/webaudio/oscillator_handler.h"
 
 #include "third_party/blink/renderer/modules/webaudio/periodic_wave.h"
 
@@ -13,9 +13,11 @@
 namespace blink {
 
 #if defined(CPU_ARM_NEON)
-static float32x4_t WrapVirtualIndexVector(float32x4_t x,
-                                          float32x4_t wave_size,
-                                          float32x4_t inv_wave_size) {
+namespace {
+
+float32x4_t WrapVirtualIndexVector(float32x4_t x,
+                                   float32x4_t wave_size,
+                                   float32x4_t inv_wave_size) {
   // r = x/wave_size, f = truncate(r), truncating towards 0
   const float32x4_t r = vmulq_f32(x, inv_wave_size);
   int32x4_t f = vcvtq_s32_f32(r);
@@ -27,14 +29,22 @@ static float32x4_t WrapVirtualIndexVector(float32x4_t x,
   return vsubq_f32(x, vmulq_f32(vcvtq_f32_s32(f), wave_size));
 }
 
+ALWAYS_INLINE double WrapVirtualIndex(double virtual_index,
+                                      unsigned periodic_wave_size,
+                                      double inv_periodic_wave_size) {
+  return virtual_index -
+         floor(virtual_index * inv_periodic_wave_size) * periodic_wave_size;
+}
+
+}  // namespace
+
 std::tuple<int, double> OscillatorHandler::ProcessKRateVector(
     int n,
     float* dest_p,
     double virtual_read_index,
     float frequency,
     float rate_scale) const {
-  auto periodic_wave = periodic_wave_.Lock();
-  const unsigned periodic_wave_size = periodic_wave->PeriodicWaveSize();
+  const unsigned periodic_wave_size = periodic_wave_->PeriodicWaveSize();
   const double inv_periodic_wave_size = 1.0 / periodic_wave_size;
 
   float* higher_wave_data = nullptr;
@@ -43,7 +53,7 @@ std::tuple<int, double> OscillatorHandler::ProcessKRateVector(
   const float incr = frequency * rate_scale;
   DCHECK_GE(incr, kInterpolate2Point);
 
-  periodic_wave->WaveDataForFundamentalFrequency(
+  periodic_wave_->WaveDataForFundamentalFrequency(
       frequency, lower_wave_data, higher_wave_data, table_interpolation_factor);
 
   const float32x4_t v_wave_size = vdupq_n_f32(periodic_wave_size);
@@ -56,9 +66,10 @@ std::tuple<int, double> OscillatorHandler::ProcessKRateVector(
 
   const float32x4_t v_incr = vdupq_n_f32(4 * incr);
 
+  float virtual_read_index_flt = virtual_read_index;
   float32x4_t v_virt_index = {
-      virtual_read_index + 0 * incr, virtual_read_index + 1 * incr,
-      virtual_read_index + 2 * incr, virtual_read_index + 3 * incr};
+      virtual_read_index_flt + 0 * incr, virtual_read_index_flt + 1 * incr,
+      virtual_read_index_flt + 2 * incr, virtual_read_index_flt + 3 * incr};
 
   // Temporary arrsys to hold the read indices so we can access them
   // individually to get the samples needed for interpolation.
@@ -135,13 +146,6 @@ std::tuple<int, double> OscillatorHandler::ProcessKRateVector(
   return std::make_tuple(k, virtual_read_index);
 }
 
-static ALWAYS_INLINE double WrapVirtualIndex(double virtual_index,
-                                             unsigned periodic_wave_size,
-                                             double inv_periodic_wave_size) {
-  return virtual_index -
-         floor(virtual_index * inv_periodic_wave_size) * periodic_wave_size;
-}
-
 double OscillatorHandler::ProcessARateVectorKernel(
     float* destination,
     double virtual_read_index,
@@ -183,8 +187,10 @@ double OscillatorHandler::ProcessARateVectorKernel(
       static_cast<float>(virt_index[0]), static_cast<float>(virt_index[1]),
       static_cast<float>(virt_index[2]), static_cast<float>(virt_index[3])};
 
-  // Convert virtual index to actual index into wave data.
-  const uint32x4_t v_read0 = vcvtq_u32_f32(v_virt_index);
+  // Convert virtual index to actual index into wave data, wrap the index
+  // around if needed.
+  const uint32x4_t v_read0 =
+      vandq_u32(vcvtq_u32_f32(v_virt_index), vdupq_n_u32(read_index_mask));
 
   // v_read1 = v_read0 + 1, but wrap the index around, if needed.
   const uint32x4_t v_read1 = vandq_u32(vaddq_u32(v_read0, vdupq_n_u32(1)),

@@ -1,15 +1,15 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "osp/impl/quic/quic_service_common.h"
 
 #include <memory>
+#include <utility>
 
 #include "util/osp_logging.h"
 
-namespace openscreen {
-namespace osp {
+namespace openscreen::osp {
 
 // static
 std::unique_ptr<QuicProtocolConnection> QuicProtocolConnection::FromExisting(
@@ -62,10 +62,11 @@ ServiceStreamPair::ServiceStreamPair(
       protocol_connection(std::move(protocol_connection)) {}
 ServiceStreamPair::~ServiceStreamPair() = default;
 
-ServiceStreamPair::ServiceStreamPair(ServiceStreamPair&& other) = default;
-
-ServiceStreamPair& ServiceStreamPair::operator=(ServiceStreamPair&& other) =
+ServiceStreamPair::ServiceStreamPair(ServiceStreamPair&& other) noexcept =
     default;
+
+ServiceStreamPair& ServiceStreamPair::operator=(
+    ServiceStreamPair&& other) noexcept = default;
 
 ServiceConnectionDelegate::ServiceConnectionDelegate(ServiceDelegate* parent,
                                                      const IPEndpoint& endpoint)
@@ -164,5 +165,4 @@ ServiceConnectionData::~ServiceConnectionData() = default;
 ServiceConnectionData& ServiceConnectionData::operator=(
     ServiceConnectionData&&) noexcept = default;
 
-}  // namespace osp
-}  // namespace openscreen
+}  // namespace openscreen::osp

@@ -1,30 +1,32 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/sync_user_events/user_event_sync_bridge.h"
 
+#include <map>
 #include <set>
 #include <utility>
 #include <vector>
 
 #include "base/big_endian.h"
-#include "base/bind.h"
-#include "base/bind_helpers.h"
 #include "base/check_op.h"
+#include "base/containers/contains.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/location.h"
-#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "components/sync/model/data_type_activation_request.h"
 #include "components/sync/model/entity_change.h"
 #include "components/sync/model/metadata_batch.h"
 #include "components/sync/model/mutable_data_batch.h"
-#include "components/sync/protocol/sync.pb.h"
+#include "components/sync/protocol/entity_specifics.pb.h"
+#include "components/sync/protocol/user_event_specifics.pb.h"
 
 namespace syncer {
 
-using sync_pb::ModelTypeState;
 using sync_pb::UserEventSpecifics;
 using IdList = ModelTypeStore::IdList;
 using Record = ModelTypeStore::Record;
@@ -45,7 +47,8 @@ std::string GetStorageKeyFromSpecifics(const UserEventSpecifics& specifics) {
 
 int64_t GetEventTimeFromStorageKey(const std::string& storage_key) {
   int64_t event_time;
-  base::ReadBigEndian(&storage_key[0], &event_time);
+  base::ReadBigEndian(reinterpret_cast<const uint8_t*>(&storage_key[0]),
+                      &event_time);
   return event_time;
 }
 
@@ -81,17 +84,17 @@ UserEventSyncBridge::CreateMetadataChangeList() {
   return WriteBatch::CreateMetadataChangeList();
 }
 
-base::Optional<ModelError> UserEventSyncBridge::MergeSyncData(
+absl::optional<ModelError> UserEventSyncBridge::MergeFullSyncData(
     std::unique_ptr<MetadataChangeList> metadata_change_list,
     EntityChangeList entity_data) {
   DCHECK(entity_data.empty());
   DCHECK(change_processor()->IsTrackingMetadata());
   DCHECK(!change_processor()->TrackedAccountId().empty());
-  return ApplySyncChanges(std::move(metadata_change_list),
-                          std::move(entity_data));
+  return ApplyIncrementalSyncChanges(std::move(metadata_change_list),
+                                     std::move(entity_data));
 }
 
-base::Optional<ModelError> UserEventSyncBridge::ApplySyncChanges(
+absl::optional<ModelError> UserEventSyncBridge::ApplyIncrementalSyncChanges(
     std::unique_ptr<MetadataChangeList> metadata_change_list,
     EntityChangeList entity_changes) {
   std::unique_ptr<WriteBatch> batch = store_->CreateWriteBatch();
@@ -103,10 +106,10 @@ base::Optional<ModelError> UserEventSyncBridge::ApplySyncChanges(
         GetEventTimeFromStorageKey(change->storage_key()));
   }
 
-  // Because we receive ApplySyncChanges with deletions when our commits are
-  // confirmed, this is the perfect time to cleanup our in flight objects which
-  // are no longer in flight.
-  base::EraseIf(in_flight_nav_linked_events_,
+  // Because we receive ApplyIncrementalSyncChanges with deletions when our
+  // commits are confirmed, this is the perfect time to cleanup our in flight
+  // objects which are no longer in flight.
+  std::erase_if(in_flight_nav_linked_events_,
                 [&deleted_event_times](
                     const std::pair<int64_t, sync_pb::UserEventSpecifics> kv) {
                   return base::Contains(deleted_event_times,
@@ -142,17 +145,14 @@ std::string UserEventSyncBridge::GetStorageKey(const EntityData& entity_data) {
   return GetStorageKeyFromSpecifics(entity_data.specifics.user_event());
 }
 
-void UserEventSyncBridge::ApplyStopSyncChanges(
+void UserEventSyncBridge::ApplyDisableSyncChanges(
     std::unique_ptr<MetadataChangeList> delete_metadata_change_list) {
-  if (delete_metadata_change_list) {
-    store_->DeleteAllDataAndMetadata(base::BindOnce(
-        &UserEventSyncBridge::OnCommit, weak_ptr_factory_.GetWeakPtr()));
-  }
+  store_->DeleteAllDataAndMetadata(base::BindOnce(
+      &UserEventSyncBridge::OnCommit, weak_ptr_factory_.GetWeakPtr()));
 }
 
 void UserEventSyncBridge::RecordUserEvent(
     std::unique_ptr<UserEventSpecifics> specifics) {
-  DCHECK(!specifics->has_user_consent());
   if (store_) {
     RecordUserEventImpl(std::move(specifics));
     return;
@@ -208,7 +208,7 @@ void UserEventSyncBridge::RecordUserEventImpl(
 }
 
 void UserEventSyncBridge::OnStoreCreated(
-    const base::Optional<ModelError>& error,
+    const absl::optional<ModelError>& error,
     std::unique_ptr<ModelTypeStore> store) {
   if (error) {
     change_processor()->ReportError(*error);
@@ -221,8 +221,9 @@ void UserEventSyncBridge::OnStoreCreated(
 }
 
 void UserEventSyncBridge::OnReadAllMetadata(
-    const base::Optional<ModelError>& error,
+    const absl::optional<ModelError>& error,
     std::unique_ptr<MetadataBatch> metadata_batch) {
+  TRACE_EVENT0("sync", "syncer::UserEventSyncBridge::OnReadAllMetadata");
   if (error) {
     change_processor()->ReportError(*error);
   } else {
@@ -230,14 +231,14 @@ void UserEventSyncBridge::OnReadAllMetadata(
   }
 }
 
-void UserEventSyncBridge::OnCommit(const base::Optional<ModelError>& error) {
+void UserEventSyncBridge::OnCommit(const absl::optional<ModelError>& error) {
   if (error) {
     change_processor()->ReportError(*error);
   }
 }
 
 void UserEventSyncBridge::OnReadData(DataCallback callback,
-                                     const base::Optional<ModelError>& error,
+                                     const absl::optional<ModelError>& error,
                                      std::unique_ptr<RecordList> data_records,
                                      std::unique_ptr<IdList> missing_id_list) {
   OnReadAllData(std::move(callback), error, std::move(data_records));
@@ -245,7 +246,7 @@ void UserEventSyncBridge::OnReadData(DataCallback callback,
 
 void UserEventSyncBridge::OnReadAllData(
     DataCallback callback,
-    const base::Optional<ModelError>& error,
+    const absl::optional<ModelError>& error,
     std::unique_ptr<RecordList> data_records) {
   if (error) {
     change_processor()->ReportError(*error);
@@ -278,8 +279,8 @@ void UserEventSyncBridge::HandleGlobalIdChange(int64_t old_global_id,
   // not be within our given range, this approach seems less error prone.
   std::vector<std::unique_ptr<UserEventSpecifics>> affected;
 
-  auto range = in_flight_nav_linked_events_.equal_range(old_global_id);
-  for (auto iter = range.first; iter != range.second;) {
+  auto [begin, end] = in_flight_nav_linked_events_.equal_range(old_global_id);
+  for (auto iter = begin; iter != end;) {
     DCHECK_EQ(old_global_id, iter->second.navigation_id());
     affected.emplace_back(std::make_unique<UserEventSpecifics>(iter->second));
     iter = in_flight_nav_linked_events_.erase(iter);

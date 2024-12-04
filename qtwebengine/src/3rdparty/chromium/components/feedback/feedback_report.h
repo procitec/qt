@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,11 +7,10 @@
 
 #include <string>
 
-#include "base/callback_forward.h"
 #include "base/files/file_path.h"
-#include "base/macros.h"
+#include "base/functional/callback_forward.h"
 #include "base/memory/ref_counted.h"
-#include "base/sequenced_task_runner.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/time/time.h"
 
 namespace feedback {
@@ -33,14 +32,19 @@ class FeedbackReport : public base::RefCountedThreadSafe<FeedbackReport> {
                  const base::Time& upload_at,
                  std::unique_ptr<std::string> data,
                  scoped_refptr<base::SequencedTaskRunner> task_runner,
-                 bool has_email);
+                 bool has_email,
+                 int product_id);
 
   // Creates a feedback report from an existing one on-disk at |path|, the
   // |upload_at| time should be set after construction.
   FeedbackReport(base::FilePath path,
                  std::unique_ptr<std::string> data,
                  scoped_refptr<base::SequencedTaskRunner> task_runner,
-                 bool has_email);
+                 bool has_email,
+                 int product_id);
+
+  FeedbackReport(const FeedbackReport&) = delete;
+  FeedbackReport& operator=(const FeedbackReport&) = delete;
 
   // The ID of the product specific data for the crash report IDs as stored by
   // the feedback server.
@@ -53,6 +57,11 @@ class FeedbackReport : public base::RefCountedThreadSafe<FeedbackReport> {
   // The ID of the product specific data for the system logs entry containing
   // mem_usage entries with tab names.
   static const char kMemUsageWithTabTitlesKey[];
+
+  // The ID of the product specific data indicating whether the users want to be
+  // contacted back with any additional questions or updates about the issue
+  // they are reporting.
+  static const char kFeedbackUserCtlConsentKey[];
 
   // Loads the reports still on disk and queues then using the given callback.
   // This call blocks on the file reads.
@@ -67,6 +76,7 @@ class FeedbackReport : public base::RefCountedThreadSafe<FeedbackReport> {
   void set_upload_at(const base::Time& time) { upload_at_ = time; }
   const std::string& data() const { return *data_; }
   bool has_email() const { return has_email_; }
+  bool should_include_variations() const;
   scoped_refptr<base::SequencedTaskRunner> reports_task_runner() const {
     return reports_task_runner_;
   }
@@ -80,14 +90,13 @@ class FeedbackReport : public base::RefCountedThreadSafe<FeedbackReport> {
 
   // True iff the report is being sent with an email.
   const bool has_email_;
+  const int product_id_;
 
   base::FilePath reports_path_;
   base::Time upload_at_;  // Upload this report at or after this time.
   std::unique_ptr<std::string> data_;
 
   scoped_refptr<base::SequencedTaskRunner> reports_task_runner_;
-
-  DISALLOW_COPY_AND_ASSIGN(FeedbackReport);
 };
 
 }  // namespace feedback

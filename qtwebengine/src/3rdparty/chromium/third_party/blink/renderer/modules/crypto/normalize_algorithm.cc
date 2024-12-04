@@ -32,18 +32,16 @@
 
 #include <algorithm>
 #include <memory>
+#include <string>
 
-#include "base/stl_util.h"
-#include "base/strings/char_traits.h"
 #include "third_party/blink/public/platform/web_crypto_algorithm_params.h"
 #include "third_party/blink/public/platform/web_string.h"
-#include "third_party/blink/renderer/bindings/core/v8/array_buffer_or_array_buffer_view.h"
 #include "third_party/blink/renderer/bindings/core/v8/dictionary.h"
-#include "third_party/blink/renderer/bindings/core/v8/v8_array_buffer.h"
-#include "third_party/blink/renderer/bindings/core/v8/v8_array_buffer_view.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_union_object_string.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_crypto_key.h"
 #include "third_party/blink/renderer/core/typed_arrays/dom_array_piece.h"
 #include "third_party/blink/renderer/core/typed_arrays/dom_typed_array.h"
+#include "third_party/blink/renderer/modules/crypto/crypto_key.h"
 #include "third_party/blink/renderer/modules/crypto/crypto_utilities.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/math_extras.h"
@@ -92,7 +90,7 @@ const AlgorithmNameMapping kAlgorithmNameMappings[] = {
 // Reminder to update the table mapping names to IDs whenever adding a new
 // algorithm ID.
 static_assert(kWebCryptoAlgorithmIdLast + 1 ==
-                  base::size(kAlgorithmNameMappings),
+                  std::size(kAlgorithmNameMappings),
               "algorithmNameMappings needs to be updated");
 
 #if DCHECK_IS_ON()
@@ -183,7 +181,7 @@ bool LookupAlgorithmIdByName(const String& algorithm_name,
                              WebCryptoAlgorithmId& id) {
   const AlgorithmNameMapping* begin = kAlgorithmNameMappings;
   const AlgorithmNameMapping* end =
-      kAlgorithmNameMappings + base::size(kAlgorithmNameMappings);
+      kAlgorithmNameMappings + std::size(kAlgorithmNameMappings);
 
 #if DCHECK_IS_ON()
   DCHECK(VerifyAlgorithmNameMappings(begin, end));
@@ -205,12 +203,9 @@ bool LookupAlgorithmIdByName(const String& algorithm_name,
     return false;
 
   id = it->algorithm_id;
-  // TODO(crbug.com/1032821): X25519 and Ed25519 are currently introduced behind
-  // a flag.
-  if (!RuntimeEnabledFeatures::WebCryptoCurve25519Enabled() &&
-      (id == kWebCryptoAlgorithmIdEd25519 ||
-       id == kWebCryptoAlgorithmIdX25519)) {
-    return false;
+
+  if (id == kWebCryptoAlgorithmIdEd25519 || id == kWebCryptoAlgorithmIdX25519) {
+    return RuntimeEnabledFeatures::WebCryptoCurve25519Enabled();
   }
 
   return true;
@@ -240,13 +235,13 @@ class ErrorContext {
 
   // Join all of the string literals into a single String.
   String ToString() const {
-    if (messages_.IsEmpty())
+    if (messages_.empty())
       return String();
 
     StringBuilder result;
     constexpr const char* const separator = ": ";
     constexpr wtf_size_t separator_length =
-        base::CharTraits<char>::length(separator);
+        std::char_traits<char>::length(separator);
 
     wtf_size_t length = (messages_.size() - 1) * separator_length;
     for (wtf_size_t i = 0; i < messages_.size(); ++i)
@@ -299,14 +294,23 @@ bool GetOptionalBufferSource(const Dictionary& raw,
   has_property = true;
 
   if (v8_value->IsArrayBufferView()) {
-    bytes = CopyBytes(
-        V8ArrayBufferView::ToImpl(v8::Local<v8::Object>::Cast(v8_value)));
+    DOMArrayBufferView* array_buffer_view =
+        NativeValueTraits<NotShared<DOMArrayBufferView>>::NativeValue(
+            raw.GetIsolate(), v8_value, exception_state)
+            .Get();
+    if (exception_state.HadException())
+      return false;
+    bytes = CopyBytes(array_buffer_view);
     return true;
   }
 
   if (v8_value->IsArrayBuffer()) {
-    bytes =
-        CopyBytes(V8ArrayBuffer::ToImpl(v8::Local<v8::Object>::Cast(v8_value)));
+    DOMArrayBuffer* array_buffer =
+        NativeValueTraits<DOMArrayBuffer>::NativeValue(
+            raw.GetIsolate(), v8_value, exception_state);
+    if (exception_state.HadException())
+      return false;
+    bytes = CopyBytes(array_buffer);
     return true;
   }
 
@@ -339,13 +343,20 @@ bool GetUint8Array(const Dictionary& raw,
                    WebVector<uint8_t>& bytes,
                    const ErrorContext& context,
                    ExceptionState& exception_state) {
-  DOMUint8Array* array = nullptr;
-  if (!DictionaryHelper::Get(raw, property_name, array) || !array) {
+  v8::Local<v8::Value> v8_value;
+  if (!raw.Get(property_name, v8_value) || !v8_value->IsUint8Array()) {
     SetTypeError(context.ToString(property_name, "Missing or not a Uint8Array"),
                  exception_state);
     return false;
   }
-  bytes = CopyBytes(array);
+
+  MaybeShared<DOMUint8Array> array =
+      NativeValueTraits<MaybeShared<DOMUint8Array>>::NativeValue(
+          raw.GetIsolate(), v8_value, exception_state);
+  if (exception_state.HadException()) {
+    return false;
+  }
+  bytes = CopyBytes(array.Get());
   return true;
 }
 
@@ -496,12 +507,11 @@ bool GetOptionalUint8(const Dictionary& raw,
   return true;
 }
 
-bool GetAlgorithmIdentifier(v8::Isolate* isolate,
-                            const Dictionary& raw,
-                            const char* property_name,
-                            AlgorithmIdentifier& value,
-                            const ErrorContext& context,
-                            ExceptionState& exception_state) {
+V8AlgorithmIdentifier* GetAlgorithmIdentifier(v8::Isolate* isolate,
+                                              const Dictionary& raw,
+                                              const char* property_name,
+                                              const ErrorContext& context,
+                                              ExceptionState& exception_state) {
   // FIXME: This is not correct: http://crbug.com/438060
   //   (1) It may retrieve the property twice from the dictionary, whereas it
   //       should be reading the v8 value once to avoid issues with getters.
@@ -509,20 +519,24 @@ bool GetAlgorithmIdentifier(v8::Isolate* isolate,
   //       instance of DOMString).
   Dictionary dictionary;
   if (raw.Get(property_name, dictionary) && dictionary.IsObject()) {
-    value.SetObject(ScriptValue(isolate, dictionary.V8Value()));
-    return true;
+    return MakeGarbageCollected<V8AlgorithmIdentifier>(
+        ScriptValue(isolate, dictionary.V8Value()));
   }
 
-  String algorithm_name;
-  if (!DictionaryHelper::Get(raw, property_name, algorithm_name)) {
+  absl::optional<String> algorithm_name =
+      raw.Get<IDLString>(property_name, exception_state);
+  if (exception_state.HadException()) {
+    return nullptr;
+  }
+
+  if (!algorithm_name.has_value()) {
     SetTypeError(context.ToString(property_name,
                                   "Missing or not an AlgorithmIdentifier"),
                  exception_state);
-    return false;
+    return nullptr;
   }
 
-  value.SetString(algorithm_name);
-  return true;
+  return MakeGarbageCollected<V8AlgorithmIdentifier>(*algorithm_name);
 }
 
 // Defined by the WebCrypto spec as:
@@ -560,7 +574,7 @@ bool ParseAesKeyGenParams(const Dictionary& raw,
 }
 
 bool ParseAlgorithmIdentifier(v8::Isolate*,
-                              const AlgorithmIdentifier&,
+                              const V8AlgorithmIdentifier&,
                               WebCryptoOperation,
                               WebCryptoAlgorithm&,
                               ErrorContext,
@@ -571,13 +585,15 @@ bool ParseHash(v8::Isolate* isolate,
                WebCryptoAlgorithm& hash,
                ErrorContext context,
                ExceptionState& exception_state) {
-  AlgorithmIdentifier raw_hash;
-  if (!GetAlgorithmIdentifier(isolate, raw, "hash", raw_hash, context,
-                              exception_state))
+  V8AlgorithmIdentifier* raw_hash =
+      GetAlgorithmIdentifier(isolate, raw, "hash", context, exception_state);
+  if (!raw_hash) {
+    DCHECK(exception_state.HadException());
     return false;
+  }
 
   context.Add("hash");
-  return ParseAlgorithmIdentifier(isolate, raw_hash, kWebCryptoOperationDigest,
+  return ParseAlgorithmIdentifier(isolate, *raw_hash, kWebCryptoOperationDigest,
                                   hash, context, exception_state);
 }
 
@@ -809,23 +825,28 @@ const CurveNameMapping kCurveNameMappings[] = {
     {"P-521", kWebCryptoNamedCurveP521}};
 
 // Reminder to update curveNameMappings when adding a new curve.
-static_assert(kWebCryptoNamedCurveLast + 1 == base::size(kCurveNameMappings),
+static_assert(kWebCryptoNamedCurveLast + 1 == std::size(kCurveNameMappings),
               "curveNameMappings needs to be updated");
 
 bool ParseNamedCurve(const Dictionary& raw,
                      WebCryptoNamedCurve& named_curve,
                      ErrorContext context,
                      ExceptionState& exception_state) {
-  String named_curve_string;
-  if (!DictionaryHelper::Get(raw, "namedCurve", named_curve_string)) {
+  absl::optional<String> named_curve_string =
+      raw.Get<IDLString>("namedCurve", exception_state);
+  if (exception_state.HadException()) {
+    return false;
+  }
+
+  if (!named_curve_string.has_value()) {
     SetTypeError(context.ToString("namedCurve", "Missing or not a string"),
                  exception_state);
     return false;
   }
 
-  for (size_t i = 0; i < base::size(kCurveNameMappings); ++i) {
-    if (kCurveNameMappings[i].name == named_curve_string) {
-      named_curve = kCurveNameMappings[i].value;
+  for (const auto& curve_name_mapping : kCurveNameMappings) {
+    if (curve_name_mapping.name == *named_curve_string) {
+      named_curve = curve_name_mapping.value;
       return true;
     }
   }
@@ -880,8 +901,7 @@ bool GetPeerPublicKey(const Dictionary& raw,
     return false;
   }
 
-  CryptoKey* crypto_key =
-      V8CryptoKey::ToImplWithTypeCheck(raw.GetIsolate(), v8_value);
+  CryptoKey* crypto_key = V8CryptoKey::ToWrappable(raw.GetIsolate(), v8_value);
   if (!crypto_key) {
     SetTypeError(context.ToString("public", "Must be a CryptoKey"),
                  exception_state);
@@ -982,48 +1002,6 @@ bool ParseHkdfParams(v8::Isolate* isolate,
   return true;
 }
 
-// TODO(crbug.com/1032821): The implementation of Curve25519 algorithms is
-// experimental. See also the status on
-// https://chromestatus.com/feature/4913922408710144.
-//
-// Ed25519Params in the prototype assumes the same structure as EcdsaParams:
-//
-//     dictionary Ed25519Params : Algorithm {
-//       required HashAlgorithmIdentifier hash;
-//     };
-bool ParseEd25519Params(v8::Isolate* isolate,
-                        const Dictionary& raw,
-                        std::unique_ptr<WebCryptoAlgorithmParams>& params,
-                        const ErrorContext& context,
-                        ExceptionState& exception_state) {
-  WebCryptoAlgorithm hash;
-  if (!ParseHash(isolate, raw, hash, context, exception_state))
-    return false;
-
-  params = std::make_unique<WebCryptoEd25519Params>(hash);
-  return true;
-}
-
-// TODO(crbug.com/1032821): X25519KeyDeriveParams in the prototype assumes the
-// same structure as EcdhKeyDeriveParams:
-//
-//     dictionary X25519KeyDeriveParams : Algorithm {
-//       required CryptoKey public;
-//     };
-bool ParseX25519KeyDeriveParams(
-    const Dictionary& raw,
-    std::unique_ptr<WebCryptoAlgorithmParams>& params,
-    const ErrorContext& context,
-    ExceptionState& exception_state) {
-  WebCryptoKey peer_public_key;
-  if (!GetPeerPublicKey(raw, context, &peer_public_key, exception_state))
-    return false;
-
-  DCHECK(!peer_public_key.IsNull());
-  params = std::make_unique<WebCryptoX25519KeyDeriveParams>(peer_public_key);
-  return true;
-}
-
 bool ParseAlgorithmParams(v8::Isolate* isolate,
                           const Dictionary& raw,
                           WebCryptoAlgorithmParamsType type,
@@ -1088,12 +1066,6 @@ bool ParseAlgorithmParams(v8::Isolate* isolate,
     case kWebCryptoAlgorithmParamsTypePbkdf2Params:
       context.Add("Pbkdf2Params");
       return ParsePbkdf2Params(isolate, raw, params, context, exception_state);
-    case kWebCryptoAlgorithmParamsTypeEd25519Params:
-      context.Add("Ed25519Params");
-      return ParseEd25519Params(isolate, raw, params, context, exception_state);
-    case kWebCryptoAlgorithmParamsTypeX25519KeyDeriveParams:
-      context.Add("X25519KeyDeriveParams");
-      return ParseX25519KeyDeriveParams(raw, params, context, exception_state);
   }
   NOTREACHED();
   return false;
@@ -1170,7 +1142,7 @@ bool ParseAlgorithmDictionary(v8::Isolate* isolate,
 }
 
 bool ParseAlgorithmIdentifier(v8::Isolate* isolate,
-                              const AlgorithmIdentifier& raw,
+                              const V8AlgorithmIdentifier& raw,
                               WebCryptoOperation op,
                               WebCryptoAlgorithm& algorithm,
                               ErrorContext context,
@@ -1186,28 +1158,35 @@ bool ParseAlgorithmIdentifier(v8::Isolate* isolate,
 
   // Get the name of the algorithm from the AlgorithmIdentifier.
   Dictionary params(isolate, raw.GetAsObject().V8Value(), exception_state);
-  if (exception_state.HadException())
+  if (exception_state.HadException()) {
     return false;
+  }
 
-  String algorithm_name;
-  if (!DictionaryHelper::Get(params, "name", algorithm_name)) {
+  absl::optional<String> algorithm_name =
+      params.Get<IDLString>("name", exception_state);
+  if (exception_state.HadException()) {
+    return false;
+  }
+
+  if (!algorithm_name.has_value()) {
     SetTypeError(context.ToString("name", "Missing or not a string"),
                  exception_state);
     return false;
   }
 
-  return ParseAlgorithmDictionary(isolate, algorithm_name, params, op,
+  return ParseAlgorithmDictionary(isolate, *algorithm_name, params, op,
                                   algorithm, context, exception_state);
 }
 
 }  // namespace
 
 bool NormalizeAlgorithm(v8::Isolate* isolate,
-                        const AlgorithmIdentifier& raw,
+                        const V8AlgorithmIdentifier* raw,
                         WebCryptoOperation op,
                         WebCryptoAlgorithm& algorithm,
                         ExceptionState& exception_state) {
-  return ParseAlgorithmIdentifier(isolate, raw, op, algorithm, ErrorContext(),
+  DCHECK(raw);
+  return ParseAlgorithmIdentifier(isolate, *raw, op, algorithm, ErrorContext(),
                                   exception_state);
 }
 

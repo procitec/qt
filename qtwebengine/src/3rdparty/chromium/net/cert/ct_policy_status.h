@@ -1,13 +1,13 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef NET_CERT_CT_POLICY_STATUS_H_
 #define NET_CERT_CT_POLICY_STATUS_H_
 
-namespace net {
+#include "net/base/net_export.h"
 
-namespace ct {
+namespace net::ct {
 
 // Information about the connection's compliance with the CT policy. This value
 // is histogrammed, so do not re-order or change values, and add new values at
@@ -30,8 +30,8 @@ enum class CTPolicyCompliance {
   CT_POLICY_COUNT
 };
 
-}  // namespace ct
+NET_EXPORT const char* CTPolicyComplianceToString(CTPolicyCompliance status);
 
-}  // namespace net
+}  // namespace net::ct
 
 #endif  // NET_CERT_CT_POLICY_STATUS_H_

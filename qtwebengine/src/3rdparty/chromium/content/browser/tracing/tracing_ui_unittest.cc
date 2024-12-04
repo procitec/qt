@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -17,37 +17,29 @@ namespace content {
 
 class TracingUITest : public testing::Test {
  public:
-  TracingUITest() {}
+  TracingUITest() = default;
 };
 
 std::string GetConfig() {
-  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
-  std::unique_ptr<base::Value> filter1(
-      new base::Value(base::trace_event::MemoryDumpManager::kTraceCategory));
-  std::unique_ptr<base::Value> filter2(new base::Value("filter2"));
-  std::unique_ptr<base::ListValue> included(new base::ListValue);
-  included->Append(std::move(filter1));
-  std::unique_ptr<base::ListValue> excluded(new base::ListValue);
-  excluded->Append(std::move(filter2));
-
-  dict->SetList("included_categories", std::move(included));
-  dict->SetList("excluded_categories", std::move(excluded));
-  dict->SetString("record_mode", "record-continuously");
-  dict->SetBoolean("enable_systrace", true);
-  dict->SetString("stream_format", "protobuf");
-
-  std::unique_ptr<base::DictionaryValue> memory_config(
-      new base::DictionaryValue());
-  std::unique_ptr<base::DictionaryValue> trigger(new base::DictionaryValue());
-  trigger->SetString("mode", "detailed");
-  trigger->SetInteger("periodic_interval_ms", 10000);
-  std::unique_ptr<base::ListValue> triggers(new base::ListValue);
-  triggers->Append(std::move(trigger));
-  memory_config->SetList("triggers", std::move(triggers));
-  dict->SetDictionary("memory_dump_config", std::move(memory_config));
+  auto dict =
+      base::Value::Dict()
+          .Set("included_categories",
+               base::Value::List().Append(base::Value(
+                   base::trace_event::MemoryDumpManager::kTraceCategory)))
+          .Set("excluded_categories",
+               base::Value::List().Append(base::Value("filter2")))
+          .Set("record_mode", "record-continuously")
+          .Set("enable_systrace", true)
+          .Set("stream_format", "protobuf")
+          .Set("memory_dump_config",
+               base::Value::Dict().Set(
+                   "triggers", base::Value::List().Append(
+                                   base::Value::Dict()
+                                       .Set("mode", "detailed")
+                                       .Set("periodic_interval_ms", 10000))));
 
   std::string results;
-  if (!base::JSONWriter::Write(*dict.get(), &results))
+  if (!base::JSONWriter::Write(dict, &results))
     return "";
 
   std::string data;
@@ -71,7 +63,7 @@ TEST_F(TracingUITest, ConfigParsing) {
   EXPECT_EQ(config.memory_dump_config().triggers[0].min_time_between_dumps_ms,
             10000u);
   EXPECT_EQ(config.memory_dump_config().triggers[0].level_of_detail,
-            base::trace_event::MemoryDumpLevelOfDetail::DETAILED);
+            base::trace_event::MemoryDumpLevelOfDetail::kDetailed);
 }
 
 }  // namespace content

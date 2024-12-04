@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,6 +9,8 @@
 
 #include "base/containers/flat_map.h"
 #include "base/containers/flat_set.h"
+#include "base/memory/raw_ptr.h"
+#include "base/rand_util.h"
 #include "base/time/time.h"
 #include "components/viz/common/surfaces/surface_id.h"
 #include "components/viz/service/surfaces/surface_observer.h"
@@ -17,6 +19,16 @@
 
 namespace viz {
 class SurfaceManager;
+
+enum class ToggleFrameRateCase : uint8_t {
+  kNone = 0,
+  kHardwareSupported = 1,
+  kSingleVideoPerfectCadenceMatchesDisplay = 2,
+  kSingleVideoPerfectCadenceDiffersFromDisplay = 3,
+  kSingleVideoNoPerfectCadence = 4,
+  kMultipleVideos = 5,
+  kMaxValue = kMultipleVideos
+};
 
 // The class is used to decide the optimal refresh rate the display should run
 // at based on the content sources being updated onscreen and the ideal rate at
@@ -40,7 +52,7 @@ class VIZ_SERVICE_EXPORT FrameRateDecider : public SurfaceObserver {
   // any preferred setting and should let the platform decide the display's
   // refresh rate.
   static constexpr base::TimeDelta UnspecifiedFrameInterval() {
-    return base::TimeDelta::FromSeconds(0);
+    return base::Seconds(0);
   }
 
   // This object should be created and held for the duration when surface
@@ -53,7 +65,7 @@ class VIZ_SERVICE_EXPORT FrameRateDecider : public SurfaceObserver {
     ~ScopedAggregate();
 
    private:
-    FrameRateDecider* const decider_;
+    const raw_ptr<FrameRateDecider> decider_;
   };
 
   // |hw_support_for_multiple_refresh_rates| indicates whether multiple refresh
@@ -61,8 +73,7 @@ class VIZ_SERVICE_EXPORT FrameRateDecider : public SurfaceObserver {
   FrameRateDecider(SurfaceManager* surface_manager,
                    Client* client,
                    bool hw_support_for_multiple_refresh_rates,
-                   bool supports_set_frame_rate,
-                   size_t num_of_frames_to_toggle_interval);
+                   bool supports_set_frame_rate);
   ~FrameRateDecider() override;
 
   void SetSupportedFrameIntervals(
@@ -71,10 +82,6 @@ class VIZ_SERVICE_EXPORT FrameRateDecider : public SurfaceObserver {
 
   void set_min_num_of_frames_to_toggle_interval_for_testing(size_t num) {
     min_num_of_frames_to_toggle_interval_ = num;
-  }
-  void set_frame_interval_for_sinks_with_no_preference_for_testing(
-      base::TimeDelta interval) {
-    frame_interval_for_sinks_with_no_preference_ = interval;
   }
 
   // SurfaceObserver implementation.
@@ -85,9 +92,9 @@ class VIZ_SERVICE_EXPORT FrameRateDecider : public SurfaceObserver {
   void EndAggregation();
   void UpdatePreferredFrameIntervalIfNeeded();
   void SetPreferredInterval(base::TimeDelta new_preferred_interval);
-  bool ShouldToggleFrameInterval(
-      int num_of_frame_sinks_with_fixed_interval,
-      int num_of_frame_sinks_with_no_preference) const;
+  ToggleFrameRateCase GetToggleFrameRateCase(
+      const std::vector<base::TimeDelta>& fixed_interval_frame_sink_intervals)
+      const;
 
   bool multiple_refresh_rates_supported() const;
 
@@ -105,10 +112,11 @@ class VIZ_SERVICE_EXPORT FrameRateDecider : public SurfaceObserver {
   base::TimeDelta current_preferred_frame_interval_;
 
   size_t min_num_of_frames_to_toggle_interval_;
-  base::TimeDelta frame_interval_for_sinks_with_no_preference_;
 
-  SurfaceManager* const surface_manager_;
-  Client* const client_;
+  base::MetricsSubSampler metrics_subsampler_;
+
+  const raw_ptr<SurfaceManager> surface_manager_;
+  const raw_ptr<Client> client_;
   const bool hw_support_for_multiple_refresh_rates_;
   const bool supports_set_frame_rate_;
 };

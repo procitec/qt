@@ -1,4 +1,4 @@
-// Copyright (c) 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,21 +6,26 @@
 
 #include <vector>
 
-#include "base/containers/flat_set.h"
 #include "base/logging.h"
-#include "base/macros.h"
+#include "base/numerics/safe_conversions.h"
 #include "build/build_config.h"
 #include "gpu/vulkan/vulkan_crash_keys.h"
 #include "gpu/vulkan/vulkan_device_queue.h"
 #include "gpu/vulkan/vulkan_function_pointers.h"
 #include "gpu/vulkan/vulkan_util.h"
+#include "ui/gl/gl_angle_util_vulkan.h"
+#include "ui/gl/gl_switches.h"
+
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+#include <sys/sysmacros.h>
+#endif
 
 namespace gpu {
 
 namespace {
 
 #if DCHECK_IS_ON()
-const char* kSkippedErrors[] = {
+constexpr const char* kSkippedErrors[] = {
     // http://anglebug.com/4583
     "VUID-VkGraphicsPipelineCreateInfo-blendEnable-02023",
 };
@@ -34,12 +39,13 @@ VulkanErrorCallback(VkDebugReportFlagsEXT flags,
                     const char* layer_prefix,
                     const char* message,
                     void* user_data) {
-  static base::flat_set<const char*> hitted_errors;
-  for (const char* error : kSkippedErrors) {
-    if (strstr(message, error) != nullptr) {
-      if (hitted_errors.find(error) != hitted_errors.end())
+  static bool encountered_errors[std::size(kSkippedErrors)];
+  for (size_t i = 0; i < std::size(kSkippedErrors); ++i) {
+    if (strstr(message, kSkippedErrors[i])) {
+      if (encountered_errors[i]) {
         return VK_FALSE;
-      hitted_errors.insert(error);
+      }
+      encountered_errors[i] = true;
     }
   }
   LOG(ERROR) << message;
@@ -62,34 +68,69 @@ VulkanWarningCallback(VkDebugReportFlagsEXT flags,
 
 }  // namespace
 
-VulkanInstance::VulkanInstance() = default;
+VulkanInstance::VulkanInstance()
+    : is_from_angle_(base::FeatureList::IsEnabled(features::kVulkanFromANGLE)) {
+}
 
 VulkanInstance::~VulkanInstance() {
   Destroy();
 }
 
 bool VulkanInstance::Initialize(
+    const base::FilePath& vulkan_loader_library_path,
+    const std::vector<const char*>& required_extensions,
+    const std::vector<const char*>& required_layers) {
+  if (!BindUnassignedFunctionPointers(vulkan_loader_library_path))
+    return false;
+  return InitializeInstance(required_extensions, required_layers);
+}
+
+bool VulkanInstance::BindUnassignedFunctionPointers(
+    const base::FilePath& vulkan_loader_library_path) {
+  VulkanFunctionPointers* vulkan_function_pointers =
+      gpu::GetVulkanFunctionPointers();
+  if (is_from_angle_) {
+    PFN_vkGetInstanceProcAddr proc = gl::QueryVkGetInstanceProcAddrFromANGLE();
+    if (!proc) {
+      LOG(ERROR) << "Failed to get vkGetInstanceProcAddr pointer from ANGLE.";
+      return false;
+    }
+    if (!vulkan_function_pointers
+             ->BindUnassociatedFunctionPointersFromGetProcAddr(proc)) {
+      return false;
+    }
+  } else {
+    base::NativeLibraryLoadError error;
+    loader_library_ =
+        base::LoadNativeLibrary(vulkan_loader_library_path, &error);
+    if (!loader_library_) {
+      LOG(ERROR) << "Failed to load '" << vulkan_loader_library_path
+                 << "': " << error.ToString();
+      return false;
+    }
+    if (!vulkan_function_pointers
+             ->BindUnassociatedFunctionPointersFromLoaderLib(loader_library_)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool VulkanInstance::InitializeInstance(
+    const std::vector<const char*>& required_extensions,
+    const std::vector<const char*>& required_layers) {
+  if (is_from_angle_)
+    return InitializeFromANGLE(required_extensions, required_layers);
+  return CreateInstance(required_extensions, required_layers);
+}
+
+bool VulkanInstance::CreateInstance(
     const std::vector<const char*>& required_extensions,
     const std::vector<const char*>& required_layers) {
   DCHECK(!vk_instance_);
 
-  VulkanFunctionPointers* vulkan_function_pointers =
-      gpu::GetVulkanFunctionPointers();
-
-  if (!vulkan_function_pointers->BindUnassociatedFunctionPointers())
+  if (!CollectBasicInfo(required_layers))
     return false;
-
-  VkResult result = vkEnumerateInstanceVersion(&vulkan_info_.api_version);
-  if (result != VK_SUCCESS) {
-    DLOG(ERROR) << "vkEnumerateInstanceVersion() failed: " << result;
-    return false;
-  }
-
-  if (vulkan_info_.api_version < kVulkanRequiredApiVersion)
-    return false;
-
-  gpu::crash_keys::vulkan_api_version.Set(
-      VkVersionToString(vulkan_info_.api_version));
 
   vulkan_info_.used_api_version = kVulkanRequiredApiVersion;
 
@@ -98,38 +139,7 @@ bool VulkanInstance::Initialize(
   app_info.pApplicationName = "Chromium";
   app_info.apiVersion = vulkan_info_.used_api_version;
 
-  // Query the extensions from all layers, including ones that are implicitly
-  // available (identified by passing a null ptr as the layer name).
-  std::vector<const char*> all_required_layers = required_layers;
-
-  // Include the extension properties provided by the Vulkan implementation as
-  // part of the enumeration.
-  all_required_layers.push_back(nullptr);
-
-  for (const char* layer_name : all_required_layers) {
-    vulkan_info_.enabled_instance_extensions = required_extensions;
-    uint32_t num_instance_exts = 0;
-    result = vkEnumerateInstanceExtensionProperties(
-        layer_name, &num_instance_exts, nullptr);
-    if (VK_SUCCESS != result) {
-      DLOG(ERROR) << "vkEnumerateInstanceExtensionProperties(" << layer_name
-                  << ") failed: " << result;
-      return false;
-    }
-
-    const size_t previous_extension_count =
-        vulkan_info_.instance_extensions.size();
-    vulkan_info_.instance_extensions.resize(previous_extension_count +
-                                            num_instance_exts);
-    result = vkEnumerateInstanceExtensionProperties(
-        layer_name, &num_instance_exts,
-        &vulkan_info_.instance_extensions.data()[previous_extension_count]);
-    if (VK_SUCCESS != result) {
-      DLOG(ERROR) << "vkEnumerateInstanceExtensionProperties(" << layer_name
-                  << ") failed: " << result;
-      return false;
-    }
-  }
+  vulkan_info_.enabled_instance_extensions = required_extensions;
 
   for (const VkExtensionProperties& ext_property :
        vulkan_info_.instance_extensions) {
@@ -160,66 +170,35 @@ bool VulkanInstance::Initialize(
   }
 #endif
 
-  std::vector<const char*> enabled_layer_names = required_layers;
-  uint32_t num_instance_layers = 0;
-  result = vkEnumerateInstanceLayerProperties(&num_instance_layers, nullptr);
-  if (VK_SUCCESS != result) {
-    DLOG(ERROR) << "vkEnumerateInstanceLayerProperties(NULL) failed: "
-                << result;
-    return false;
-  }
+  VkInstanceCreateInfo instance_create_info = {
+      VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,  // sType
+      nullptr,                                 // pNext
+      0,                                       // flags
+      &app_info,                               // pApplicationInfo
+      base::checked_cast<uint32_t>(required_layers.size()),
+      // enableLayerCount
+      required_layers.data(),  // ppEnabledLayerNames
+      base::checked_cast<uint32_t>(
+          vulkan_info_.enabled_instance_extensions.size()),
+      // enabledExtensionCount
+      vulkan_info_.enabled_instance_extensions.data(),
+      // ppEnabledExtensionNames
+  };
 
-  vulkan_info_.instance_layers.resize(num_instance_layers);
-  result = vkEnumerateInstanceLayerProperties(
-      &num_instance_layers, vulkan_info_.instance_layers.data());
+  VkResult result =
+      vkCreateInstance(&instance_create_info, nullptr, &owned_vk_instance_);
   if (VK_SUCCESS != result) {
-    DLOG(ERROR) << "vkEnumerateInstanceLayerProperties() failed: " << result;
+    LOG(ERROR) << "vkCreateInstance() failed: " << result;
     return false;
   }
+  vk_instance_ = owned_vk_instance_;
 
   gfx::ExtensionSet enabled_extensions(
       std::begin(vulkan_info_.enabled_instance_extensions),
       std::end(vulkan_info_.enabled_instance_extensions));
 
-#if DCHECK_IS_ON()
-  // TODO(crbug.com/843346): Make validation work in combination with
-  // VK_KHR_xlib_surface or switch to VK_KHR_xcb_surface.
-  bool require_xlib_surface_extension =
-      gfx::HasExtension(enabled_extensions, "VK_KHR_xlib_surface");
-
-  // VK_LAYER_KHRONOS_validation 1.1.106 is required to support
-  // VK_KHR_xlib_surface.
-  constexpr base::StringPiece standard_validation(
-      "VK_LAYER_KHRONOS_validation");
-  for (const VkLayerProperties& layer_property : vulkan_info_.instance_layers) {
-    if (standard_validation != layer_property.layerName)
-      continue;
-    if (!require_xlib_surface_extension ||
-        layer_property.specVersion >= VK_MAKE_VERSION(1, 1, 106)) {
-      enabled_layer_names.push_back(standard_validation.data());
-    }
-    break;
-  }
-#endif  // DCHECK_IS_ON()
-
-  VkInstanceCreateInfo instance_create_info = {
-      VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,           // sType
-      nullptr,                                          // pNext
-      0,                                                // flags
-      &app_info,                                        // pApplicationInfo
-      enabled_layer_names.size(),                       // enableLayerCount
-      enabled_layer_names.data(),                       // ppEnabledLayerNames
-      vulkan_info_.enabled_instance_extensions.size(),  // enabledExtensionCount
-      vulkan_info_.enabled_instance_extensions
-          .data(),  // ppEnabledExtensionNames
-  };
-
-  result = vkCreateInstance(&instance_create_info, nullptr, &vk_instance_);
-  if (VK_SUCCESS != result) {
-    DLOG(ERROR) << "vkCreateInstance() failed: " << result;
-    return false;
-  }
-
+  VulkanFunctionPointers* vulkan_function_pointers =
+      gpu::GetVulkanFunctionPointers();
   if (!vulkan_function_pointers->BindInstanceFunctionPointers(
           vk_instance_, vulkan_info_.used_api_version, enabled_extensions)) {
     return false;
@@ -237,7 +216,7 @@ bool VulkanInstance::Initialize(
                                             nullptr, &error_callback_);
     if (VK_SUCCESS != result) {
       error_callback_ = VK_NULL_HANDLE;
-      DLOG(ERROR) << "vkCreateDebugReportCallbackEXT(ERROR) failed: " << result;
+      LOG(ERROR) << "vkCreateDebugReportCallbackEXT(ERROR) failed: " << result;
       return false;
     }
 
@@ -248,39 +227,176 @@ bool VulkanInstance::Initialize(
                                             nullptr, &warning_callback_);
     if (VK_SUCCESS != result) {
       warning_callback_ = VK_NULL_HANDLE;
-      DLOG(ERROR) << "vkCreateDebugReportCallbackEXT(WARN) failed: " << result;
+      LOG(ERROR) << "vkCreateDebugReportCallbackEXT(WARN) failed: " << result;
       return false;
     }
   }
 #endif
 
-  if (!CollectInfo())
+  if (!CollectDeviceInfo())
     return false;
+
   return true;
 }
 
-bool VulkanInstance::CollectInfo() {
-  uint32_t count = 0;
-  VkResult result = vkEnumeratePhysicalDevices(vk_instance_, &count, nullptr);
+bool VulkanInstance::InitializeFromANGLE(
+    const std::vector<const char*>& required_extensions,
+    const std::vector<const char*>& required_layers) {
+  vk_instance_ = gl::QueryVkInstanceFromANGLE();
+  if (vk_instance_ == VK_NULL_HANDLE)
+    return false;
+
+  uint32_t api_version = gl::QueryVkVersionFromANGLE();
+  if (api_version < kVulkanRequiredApiVersion)
+    return false;
+
+  if (!CollectBasicInfo({}))
+    return false;
+
+  vulkan_info_.used_api_version = api_version;
+
+  auto extensions = gl::QueryVkInstanceExtensionsFromANGLE();
+
+  for (const auto& extension : extensions)
+    vulkan_info_.enabled_instance_extensions.push_back(extension.data());
+
+#if DCHECK_IS_ON()
+  for (const char* required_extension_name : required_extensions) {
+    bool found = false;
+    for (const char* enabled_extension :
+         vulkan_info_.enabled_instance_extensions) {
+      if (strcmp(required_extension_name, enabled_extension) == 0) {
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      DLOG(ERROR) << "Required extension " << required_extension_name
+                  << " missing from enumerated Vulkan extensions. "
+                     "vkCreateInstance will may fail but could succeed if "
+                     "extension has been promoted to core.";
+    }
+  }
+#endif
+
+  VulkanFunctionPointers* vulkan_function_pointers =
+      gpu::GetVulkanFunctionPointers();
+  if (!vulkan_function_pointers->BindInstanceFunctionPointers(
+          vk_instance_, vulkan_info_.used_api_version, extensions)) {
+    return false;
+  }
+
+  VkPhysicalDevice physical_device = gl::QueryVkPhysicalDeviceFromANGLE();
+  if (physical_device == VK_NULL_HANDLE)
+    return false;
+
+  if (!CollectDeviceInfo(physical_device))
+    return false;
+
+  return true;
+}
+
+bool VulkanInstance::CollectBasicInfo(
+    const std::vector<const char*>& required_layers) {
+  VkResult result = vkEnumerateInstanceVersion(&vulkan_info_.api_version);
   if (result != VK_SUCCESS) {
-    DLOG(ERROR) << "vkEnumeratePhysicalDevices failed: " << result;
+    LOG(ERROR) << "vkEnumerateInstanceVersion() failed: " << result;
     return false;
   }
 
-  if (!count) {
-    DLOG(ERROR) << "vkEnumeratePhysicalDevices returns zero device.";
+  if (vulkan_info_.api_version < kVulkanRequiredApiVersion)
     return false;
+
+  gpu::crash_keys::vulkan_api_version.Set(
+      VkVersionToString(vulkan_info_.api_version));
+
+  // Query the extensions from all layers, including ones that are implicitly
+  // available (identified by passing a null ptr as the layer name).
+  std::vector<const char*> all_required_layers = required_layers;
+
+  // Include the extension properties provided by the Vulkan implementation as
+  // part of the enumeration.
+  all_required_layers.push_back(nullptr);
+
+  for (const char* layer_name : all_required_layers) {
+    uint32_t num_instance_exts = 0;
+    result = vkEnumerateInstanceExtensionProperties(
+        layer_name, &num_instance_exts, nullptr);
+    if (VK_SUCCESS != result) {
+      LOG(ERROR) << "vkEnumerateInstanceExtensionProperties(" << layer_name
+                 << ") failed: " << result;
+      return false;
+    }
+
+    const size_t previous_extension_count =
+        vulkan_info_.instance_extensions.size();
+    vulkan_info_.instance_extensions.resize(previous_extension_count +
+                                            num_instance_exts);
+    result = vkEnumerateInstanceExtensionProperties(
+        layer_name, &num_instance_exts,
+        &vulkan_info_.instance_extensions.data()[previous_extension_count]);
+    if (VK_SUCCESS != result) {
+      LOG(ERROR) << "vkEnumerateInstanceExtensionProperties(" << layer_name
+                 << ") failed: " << result;
+      return false;
+    }
   }
 
-  std::vector<VkPhysicalDevice> physical_devices(count);
-  result =
-      vkEnumeratePhysicalDevices(vk_instance_, &count, physical_devices.data());
+  for (const VkExtensionProperties& ext_property :
+       vulkan_info_.instance_extensions) {
+    if (strcmp(ext_property.extensionName,
+               VK_EXT_DEBUG_REPORT_EXTENSION_NAME) == 0) {
+      debug_report_enabled_ = true;
+      vulkan_info_.enabled_instance_extensions.push_back(
+          VK_EXT_DEBUG_REPORT_EXTENSION_NAME);
+    }
+  }
+
+  uint32_t num_instance_layers = 0;
+  result = vkEnumerateInstanceLayerProperties(&num_instance_layers, nullptr);
   if (VK_SUCCESS != result) {
-    DLOG(ERROR) << "vkEnumeratePhysicalDevices() failed: " << result;
+    LOG(ERROR) << "vkEnumerateInstanceLayerProperties(NULL) failed: " << result;
     return false;
   }
 
-  vulkan_info_.physical_devices.reserve(count);
+  vulkan_info_.instance_layers.resize(num_instance_layers);
+  result = vkEnumerateInstanceLayerProperties(
+      &num_instance_layers, vulkan_info_.instance_layers.data());
+  if (VK_SUCCESS != result) {
+    LOG(ERROR) << "vkEnumerateInstanceLayerProperties() failed: " << result;
+    return false;
+  }
+
+  return true;
+}
+
+bool VulkanInstance::CollectDeviceInfo(VkPhysicalDevice physical_device) {
+  std::vector<VkPhysicalDevice> physical_devices;
+  if (physical_device == VK_NULL_HANDLE) {
+    uint32_t count = 0;
+    VkResult result = vkEnumeratePhysicalDevices(vk_instance_, &count, nullptr);
+    if (result != VK_SUCCESS) {
+      LOG(ERROR) << "vkEnumeratePhysicalDevices failed: " << result;
+      return false;
+    }
+
+    if (!count) {
+      LOG(ERROR) << "vkEnumeratePhysicalDevices returns zero device.";
+      return false;
+    }
+
+    physical_devices.resize(count);
+    result = vkEnumeratePhysicalDevices(vk_instance_, &count,
+                                        physical_devices.data());
+    if (VK_SUCCESS != result) {
+      LOG(ERROR) << "vkEnumeratePhysicalDevices() failed: " << result;
+      return false;
+    }
+  } else {
+    physical_devices.push_back(physical_device);
+  }
+
+  vulkan_info_.physical_devices.reserve(physical_devices.size());
   for (VkPhysicalDevice device : physical_devices) {
     vulkan_info_.physical_devices.emplace_back();
     auto& info = vulkan_info_.physical_devices.back();
@@ -288,24 +404,63 @@ bool VulkanInstance::CollectInfo() {
 
     vkGetPhysicalDeviceProperties(device, &info.properties);
 
-    count = 0;
-    result = vkEnumerateDeviceExtensionProperties(
+    uint32_t count = 0;
+    VkResult result = vkEnumerateDeviceExtensionProperties(
         device, nullptr /* pLayerName */, &count, nullptr);
-    DLOG_IF(ERROR, result != VK_SUCCESS)
+    LOG_IF(ERROR, result != VK_SUCCESS)
         << "vkEnumerateDeviceExtensionProperties failed: " << result;
 
     info.extensions.resize(count);
     result = vkEnumerateDeviceExtensionProperties(
         device, nullptr /* pLayerName */, &count, info.extensions.data());
-    DLOG_IF(ERROR, result != VK_SUCCESS)
+    LOG_IF(ERROR, result != VK_SUCCESS)
         << "vkEnumerateDeviceExtensionProperties failed: " << result;
 
     // The API version of the VkInstance might be different than the supported
     // API version of the VkPhysicalDevice, so we need to check the GPU's
     // API version instead of just testing to see if
-    // vkGetPhysicalDeviceFeatures2 is non-null.
+    // vkGetPhysicalDeviceProperties2 and vkGetPhysicalDeviceFeatures2 are
+    // non-null.
     static_assert(kVulkanRequiredApiVersion >= VK_API_VERSION_1_1, "");
     if (info.properties.apiVersion >= kVulkanRequiredApiVersion) {
+      bool has_drm_extension =
+          base::ranges::any_of(info.extensions, [](const auto& ext) {
+            return strcmp(ext.extensionName,
+                          VK_EXT_PHYSICAL_DEVICE_DRM_EXTENSION_NAME) == 0;
+          });
+
+      info.driver_properties = VkPhysicalDeviceDriverProperties{
+          .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES,
+      };
+
+      VkPhysicalDeviceDrmPropertiesEXT drm_properties = {
+          VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRM_PROPERTIES_EXT};
+      if (has_drm_extension) {
+        info.driver_properties.pNext = &drm_properties;
+      }
+
+      VkPhysicalDeviceProperties2 properties2 = {
+          .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
+          .pNext = &info.driver_properties,
+      };
+      vkGetPhysicalDeviceProperties2(device, &properties2);
+
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+      if (has_drm_extension &&
+          (drm_properties.hasRender || drm_properties.hasPrimary)) {
+        static_assert(sizeof(dev_t) <= sizeof(info.drm_device_id),
+                      "unexpected dev_t size");
+        if (drm_properties.hasRender) {
+          info.drm_device_id =
+              makedev(drm_properties.renderMajor, drm_properties.renderMinor);
+        } else {
+          info.drm_device_id =
+              makedev(drm_properties.primaryMajor, drm_properties.primaryMinor);
+        }
+        DCHECK(info.drm_device_id);
+      }
+#endif
+
       VkPhysicalDeviceSamplerYcbcrConversionFeatures ycbcr_conversion_features =
           {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SAMPLER_YCBCR_CONVERSION_FEATURES};
       VkPhysicalDeviceProtectedMemoryFeatures protected_memory_feature = {
@@ -347,15 +502,15 @@ void VulkanInstance::Destroy() {
     }
   }
 #endif
-  if (vk_instance_ != VK_NULL_HANDLE) {
-    vkDestroyInstance(vk_instance_, nullptr);
-    vk_instance_ = VK_NULL_HANDLE;
+  if (owned_vk_instance_ != VK_NULL_HANDLE) {
+    vkDestroyInstance(owned_vk_instance_, nullptr);
+    owned_vk_instance_ = VK_NULL_HANDLE;
   }
-  VulkanFunctionPointers* vulkan_function_pointers =
-      gpu::GetVulkanFunctionPointers();
-  if (vulkan_function_pointers->vulkan_loader_library) {
-    base::UnloadNativeLibrary(vulkan_function_pointers->vulkan_loader_library);
-    vulkan_function_pointers->vulkan_loader_library = nullptr;
+  vk_instance_ = VK_NULL_HANDLE;
+
+  if (loader_library_) {
+    base::UnloadNativeLibrary(loader_library_);
+    loader_library_ = nullptr;
   }
 }
 

@@ -66,8 +66,7 @@ void DriverWGL::InitializeStaticBindings() {
 
 void DriverWGL::InitializeExtensionBindings() {
   std::string platform_extensions(GetPlatformExtensions());
-  gfx::ExtensionSet extensions(gfx::MakeExtensionSet(platform_extensions));
-  ALLOW_UNUSED_LOCAL(extensions);
+  [[maybe_unused]] gfx::ExtensionSet extensions(gfx::MakeExtensionSet(platform_extensions));
 
   ext.b_WGL_ARB_create_context =
       gfx::HasExtension(extensions, "WGL_ARB_create_context");
@@ -125,8 +124,10 @@ HGLRC WGLApiBase::wglCreateContextFn(HDC hdc) {
 HGLRC WGLApiBase::wglCreateContextAttribsARBFn(HDC hDC,
                                                HGLRC hShareContext,
                                                const int* attribList) {
-  return driver_->fn.wglCreateContextAttribsARBFn(hDC, hShareContext,
-                                                  attribList);
+  return driver_->fn.wglCreateContextAttribsARBFn
+             ? driver_->fn.wglCreateContextAttribsARBFn(hDC, hShareContext,
+                                                        attribList)
+             : nullptr;
 }
 
 HGLRC WGLApiBase::wglCreateLayerContextFn(HDC hdc, int iLayerPlane) {

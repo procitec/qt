@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -27,13 +27,6 @@ class MediaControlPopupMenuElement : public MediaControlDivElement {
 
   void Trace(Visitor*) const override;
 
-  // When clicking the scroll bar, chrome will find its first focusable parent
-  // and focus on it. In order to prevent popup menu from losing focus (which
-  // will close the menu), we are setting the popup menu support focus and mouse
-  // focusable.
-  bool IsMouseFocusable() const override { return true; }
-  bool SupportsFocus() const override { return true; }
-
  protected:
   MediaControlPopupMenuElement(MediaControlsImpl&);
 
@@ -52,10 +45,14 @@ class MediaControlPopupMenuElement : public MediaControlDivElement {
   // Actions called by the EventListener object when specific evenst are
   // received.
   void SelectNextItem();
-  void SelectPreviousitem();
+  void SelectPreviousItem();
   void CloseFromKeyboard();
+  void FocusPopupAnchorIfOverflowClosed();
 
   Member<EventListener> event_listener_;
+  // |last_focused_element_| is used to return focus to the proper element
+  // within the media controls popup menu, after the user finishes interacting
+  // with the popup's scrollbar.
   Member<Element> last_focused_element_;
 };
 

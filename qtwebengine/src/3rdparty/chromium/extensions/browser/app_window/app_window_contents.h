@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,7 +9,7 @@
 
 #include <memory>
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "extensions/browser/app_window/app_window.h"
 #include "url/gurl.h"
@@ -21,8 +21,6 @@ class RenderFrameHost;
 
 namespace extensions {
 
-struct DraggableRegion;
-
 // AppWindowContents class specific to app windows. It maintains a
 // WebContents instance and observes it for the purpose of passing
 // messages to the extensions system.
@@ -30,6 +28,10 @@ class AppWindowContentsImpl : public AppWindowContents,
                               public content::WebContentsObserver {
  public:
   explicit AppWindowContentsImpl(AppWindow* host);
+
+  AppWindowContentsImpl(const AppWindowContentsImpl&) = delete;
+  AppWindowContentsImpl& operator=(const AppWindowContentsImpl&) = delete;
+
   ~AppWindowContentsImpl() override;
 
   // AppWindowContents
@@ -44,18 +46,11 @@ class AppWindowContentsImpl : public AppWindowContents,
 
  private:
   // content::WebContentsObserver
-  bool OnMessageReceived(const IPC::Message& message,
-                         content::RenderFrameHost* sender) override;
   void DidFinishNavigation(content::NavigationHandle* handle) override;
 
-  void UpdateDraggableRegions(content::RenderFrameHost* sender,
-                              const std::vector<DraggableRegion>& regions);
-
-  AppWindow* host_;  // This class is owned by |host_|
+  raw_ptr<AppWindow> host_;  // This class is owned by |host_|
   GURL url_;
   std::unique_ptr<content::WebContents> web_contents_;
-
-  DISALLOW_COPY_AND_ASSIGN(AppWindowContentsImpl);
 };
 
 }  // namespace extensions

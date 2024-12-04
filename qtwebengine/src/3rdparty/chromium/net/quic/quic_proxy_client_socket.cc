@@ -1,4 +1,4 @@
-// Copyright (c) 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,10 +7,10 @@
 #include <cstdio>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/bind_helpers.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/values.h"
+#include "net/base/proxy_chain.h"
 #include "net/base/proxy_delegate.h"
 #include "net/http/http_auth_controller.h"
 #include "net/http/http_log_util.h"
@@ -26,20 +26,19 @@ namespace net {
 QuicProxyClientSocket::QuicProxyClientSocket(
     std::unique_ptr<QuicChromiumClientStream::Handle> stream,
     std::unique_ptr<QuicChromiumClientSession::Handle> session,
-    const ProxyServer& proxy_server,
+    const ProxyChain& proxy_chain,
+    size_t proxy_chain_index,
     const std::string& user_agent,
     const HostPortPair& endpoint,
     const NetLogWithSource& net_log,
-    HttpAuthController* auth_controller,
+    scoped_refptr<HttpAuthController> auth_controller,
     ProxyDelegate* proxy_delegate)
-    : next_state_(STATE_DISCONNECTED),
-      stream_(std::move(stream)),
+    : stream_(std::move(stream)),
       session_(std::move(session)),
-      read_buf_(nullptr),
-      write_buf_len_(0),
       endpoint_(endpoint),
-      auth_(auth_controller),
-      proxy_server_(proxy_server),
+      auth_(std::move(auth_controller)),
+      proxy_chain_(proxy_chain),
+      proxy_chain_index_(proxy_chain_index),
       proxy_delegate_(proxy_delegate),
       user_agent_(user_agent),
       net_log_(net_log) {
@@ -74,14 +73,6 @@ int QuicProxyClientSocket::RestartWithAuth(CompletionOnceCallback callback) {
   // created (possibly on top of the same QUIC Session).
   next_state_ = STATE_DISCONNECTED;
   return ERR_UNABLE_TO_REUSE_CONNECTION_FOR_PROXY_AUTH;
-}
-
-bool QuicProxyClientSocket::IsUsingSpdy() const {
-  return false;
-}
-
-NextProto QuicProxyClientSocket::GetProxyNegotiatedProtocol() const {
-  return kProtoQUIC;
 }
 
 // Ignore priority changes, just use priority of initial request. Since multiple
@@ -140,21 +131,16 @@ bool QuicProxyClientSocket::WasEverUsed() const {
   return session_->WasEverUsed();
 }
 
-bool QuicProxyClientSocket::WasAlpnNegotiated() const {
-  return false;
-}
-
 NextProto QuicProxyClientSocket::GetNegotiatedProtocol() const {
+  // Do not delegate to `session_`. While `session_` negotiates ALPN with the
+  // proxy, this object represents the tunneled TCP connection to the origin.
   return kProtoUnknown;
 }
 
 bool QuicProxyClientSocket::GetSSLInfo(SSLInfo* ssl_info) {
-  return session_->GetSSLInfo(ssl_info);
-}
-
-void QuicProxyClientSocket::GetConnectionAttempts(
-    ConnectionAttempts* out) const {
-  out->clear();
+  // Do not delegate to `session_`. While `session_` has a secure channel to the
+  // proxy, this object represents the tunneled TCP connection to the origin.
+  return false;
 }
 
 int64_t QuicProxyClientSocket::GetTotalReceivedBytes() const {
@@ -355,7 +341,7 @@ int QuicProxyClientSocket::DoSendRequest() {
 
   if (proxy_delegate_) {
     HttpRequestHeaders proxy_delegate_headers;
-    proxy_delegate_->OnBeforeTunnelRequest(proxy_server_,
+    proxy_delegate_->OnBeforeTunnelRequest(proxy_chain_, proxy_chain_index_,
                                            &proxy_delegate_headers);
     request_.extra_headers.MergeFrom(proxy_delegate_headers);
   }
@@ -368,8 +354,9 @@ int QuicProxyClientSocket::DoSendRequest() {
                        NetLogEventType::HTTP_TRANSACTION_SEND_TUNNEL_HEADERS,
                        request_line, &request_.extra_headers);
 
-  spdy::SpdyHeaderBlock headers;
-  CreateSpdyHeadersFromHttpRequest(request_, request_.extra_headers, &headers);
+  spdy::Http2HeaderBlock headers;
+  CreateSpdyHeadersFromHttpRequest(request_, absl::nullopt,
+                                   request_.extra_headers, &headers);
 
   return stream_->WriteHeaders(std::move(headers), false, nullptr);
 }
@@ -417,8 +404,8 @@ int QuicProxyClientSocket::DoReadReplyComplete(int result) {
       response_.headers.get());
 
   if (proxy_delegate_) {
-    int rv = proxy_delegate_->OnTunnelHeadersReceived(proxy_server_,
-                                                      *response_.headers);
+    int rv = proxy_delegate_->OnTunnelHeadersReceived(
+        proxy_chain_, proxy_chain_index_, *response_.headers);
     if (rv != OK) {
       DCHECK_NE(ERR_IO_PENDING, rv);
       return rv;
@@ -432,8 +419,7 @@ int QuicProxyClientSocket::DoReadReplyComplete(int result) {
 
     case 407:  // Proxy Authentication Required
       next_state_ = STATE_CONNECT_COMPLETE;
-      if (!SanitizeProxyAuth(&response_))
-        return ERR_TUNNEL_CONNECTION_FAILED;
+      SanitizeProxyAuth(response_);
       return HandleProxyAuthChallenge(auth_.get(), &response_, net_log_);
 
     default:
@@ -444,7 +430,7 @@ int QuicProxyClientSocket::DoReadReplyComplete(int result) {
 }
 
 void QuicProxyClientSocket::OnReadResponseHeadersComplete(int result) {
-  // Convert the now-populated spdy::SpdyHeaderBlock to HttpResponseInfo
+  // Convert the now-populated spdy::Http2HeaderBlock to HttpResponseInfo
   if (result > 0)
     result = ProcessResponseHeaders(response_header_block_);
 
@@ -453,8 +439,8 @@ void QuicProxyClientSocket::OnReadResponseHeadersComplete(int result) {
 }
 
 int QuicProxyClientSocket::ProcessResponseHeaders(
-    const spdy::SpdyHeaderBlock& headers) {
-  if (!SpdyHeadersToHttpResponse(headers, &response_)) {
+    const spdy::Http2HeaderBlock& headers) {
+  if (SpdyHeadersToHttpResponse(headers, &response_) != OK) {
     DLOG(WARNING) << "Invalid headers";
     return ERR_QUIC_PROTOCOL_ERROR;
   }

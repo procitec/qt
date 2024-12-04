@@ -1,8 +1,9 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/optional.h"
+#include <optional>
+
 #include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/content_browser_test.h"
@@ -31,13 +32,13 @@ IN_PROC_BROWSER_TEST_F(DerivedOriginInFetchBrowserTest,
   ASSERT_TRUE(starting_file_url.SchemeIsFile());
   ASSERT_TRUE(NavigateToURL(shell(), starting_file_url));
 
-  EXPECT_TRUE(ExecJs(shell(), JsReplace("fetch($1);", destination)));
+  ExecuteScriptAsync(shell(), JsReplace("fetch($1);", destination));
   monitor.WaitForUrls();
-  base::Optional<network::ResourceRequest> request =
+  std::optional<network::ResourceRequest> request =
       monitor.GetRequestInfo(destination);
 
   ASSERT_TRUE(request);
-  const base::Optional<url::Origin>& initiator = request->request_initiator;
+  const std::optional<url::Origin>& initiator = request->request_initiator;
   ASSERT_TRUE(initiator);
   EXPECT_TRUE(initiator->CanBeDerivedFrom(starting_file_url));
 }

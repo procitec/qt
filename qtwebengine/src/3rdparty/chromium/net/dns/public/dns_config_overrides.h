@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,11 +8,11 @@
 #include <string>
 #include <vector>
 
-#include "base/optional.h"
+#include <optional>
 #include "base/time/time.h"
 #include "net/base/ip_endpoint.h"
 #include "net/base/net_export.h"
-#include "net/dns/public/dns_over_https_server_config.h"
+#include "net/dns/public/dns_over_https_config.h"
 #include "net/dns/public/secure_dns_mode.h"
 
 namespace net {
@@ -38,7 +38,7 @@ struct NET_EXPORT DnsConfigOverrides {
 
   // Creates a new DnsConfig where any field with an overriding value in |this|
   // is replaced with that overriding value. Any field without an overriding
-  // value (|base::nullopt|) will be copied as-is from |config|.
+  // value (|std::nullopt|) will be copied as-is from |config|.
   DnsConfig ApplyOverrides(const DnsConfig& config) const;
 
   // Returns |true| if the overriding configuration is comprehensive and would
@@ -47,19 +47,20 @@ struct NET_EXPORT DnsConfigOverrides {
   bool OverridesEverything() const;
 
   // Overriding values. See same-named fields in DnsConfig for explanations.
-  base::Optional<std::vector<IPEndPoint>> nameservers;
-  base::Optional<std::vector<std::string>> search;
-  base::Optional<bool> append_to_multi_label_name;
-  base::Optional<int> ndots;
-  base::Optional<base::TimeDelta> timeout;
-  base::Optional<int> attempts;
-  base::Optional<int> doh_attempts;
-  base::Optional<bool> rotate;
-  base::Optional<bool> use_local_ipv6;
-  base::Optional<std::vector<DnsOverHttpsServerConfig>> dns_over_https_servers;
-  base::Optional<SecureDnsMode> secure_dns_mode;
-  base::Optional<bool> allow_dns_over_https_upgrade;
-  base::Optional<std::vector<std::string>> disabled_upgrade_providers;
+  std::optional<std::vector<IPEndPoint>> nameservers;
+  std::optional<bool> dns_over_tls_active;
+  std::optional<std::string> dns_over_tls_hostname;
+  std::optional<std::vector<std::string>> search;
+  std::optional<bool> append_to_multi_label_name;
+  std::optional<int> ndots;
+  std::optional<base::TimeDelta> fallback_period;
+  std::optional<int> attempts;
+  std::optional<int> doh_attempts;
+  std::optional<bool> rotate;
+  std::optional<bool> use_local_ipv6;
+  std::optional<DnsOverHttpsConfig> dns_over_https_config;
+  std::optional<SecureDnsMode> secure_dns_mode;
+  std::optional<bool> allow_dns_over_https_upgrade;
 
   // |hosts| is not supported for overriding except to clear it.
   bool clear_hosts = false;

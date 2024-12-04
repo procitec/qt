@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,15 +8,21 @@
 #include <cmath>
 #include <limits>
 #include <utility>
-#include <vector>
 
+#include "base/containers/contains.h"
+#include "base/feature_list.h"
+#include "base/strings/stringprintf.h"
 #include "media/base/limits.h"
+#include "media/base/video_types.h"
 #include "media/mojo/mojom/display_media_information.mojom-blink.h"
+#include "media/webrtc/webrtc_features.h"
+#include "third_party/blink/public/platform/modules/webrtc/webrtc_logging.h"
 #include "third_party/blink/public/platform/web_string.h"
 #include "third_party/blink/public/web/modules/mediastream/media_stream_video_source.h"
+#include "third_party/blink/renderer/modules/mediastream/media_constraints.h"
 #include "third_party/blink/renderer/modules/mediastream/media_stream_constraints_util.h"
 #include "third_party/blink/renderer/modules/mediastream/media_stream_constraints_util_sets.h"
-#include "third_party/blink/renderer/platform/mediastream/media_constraints.h"
+#include "third_party/blink/renderer/platform/wtf/vector.h"
 #include "third_party/blink/renderer/platform/wtf/wtf_size_t.h"
 
 namespace blink {
@@ -30,26 +36,33 @@ using BoolSet = media_constraints::DiscreteSet<bool>;
 // TODO(crbug.com/704136): Replace VideoInputDeviceCapabilities with Blink
 // mojo pointer type once dependent types are migrated to Blink.
 using DeviceInfo = VideoInputDeviceCapabilities;
-using DistanceVector = std::vector<double>;
+using DistanceVector = WTF::Vector<double>;
 
 // Number of default settings to be used as final tie-breaking criteria for
 // settings that are equally good at satisfying constraints:
 // device ID, noise reduction, resolution and frame rate.
 const int kNumDefaultDistanceEntries = 4;
 
-// VideoKind enum values. See https://w3c.github.io/mediacapture-depth.
-const char kVideoKindColor[] = "color";
-const char kVideoKindDepth[] = "depth";
-
-WebString ToWebString(media::VideoFacingMode facing_mode) {
+WebString ToWebString(mojom::blink::FacingMode facing_mode) {
   switch (facing_mode) {
-    case media::MEDIA_VIDEO_FACING_USER:
+    case mojom::blink::FacingMode::kUser:
       return WebString::FromASCII("user");
-    case media::MEDIA_VIDEO_FACING_ENVIRONMENT:
+    case mojom::blink::FacingMode::kEnvironment:
       return WebString::FromASCII("environment");
     default:
       return WebString();
   }
+}
+
+double BoolSetFitness(const BooleanConstraint& constraint, const BoolSet& set) {
+  DCHECK(!set.IsEmpty());
+
+  if (!constraint.HasIdeal()) {
+    return 0.0;
+  }
+
+  bool ideal = constraint.Ideal();
+  return set.Contains(ideal) ? 0.0 : 1.0;
 }
 
 // Returns the fitness distance between the ideal value of |constraint| and
@@ -64,11 +77,34 @@ double NumericValueFitness(const NumericConstraint& constraint,
 }
 
 // Returns the fitness distance between the ideal value of |constraint| and the
+// closest value to it in the range [min, max].
+// If the ideal value is contained in the range, returns 0.
+// If there is no ideal value, returns 0;
+// Based on https://w3c.github.io/mediacapture-main/#dfn-fitness-distance.
+template <typename NumericConstraint>
+double NumericRangeSetFitness(
+    const NumericConstraint& constraint,
+    const media_constraints::NumericRangeSet<decltype(constraint.Min())>&
+        range) {
+  DCHECK(!range.IsEmpty());
+
+  if (!constraint.HasIdeal()) {
+    return 0.0;
+  }
+
+  auto ideal = constraint.Ideal();
+  if (range.Max().has_value() && ideal > *range.Max()) {
+    return NumericConstraintFitnessDistance(ideal, *range.Max());
+  } else if (range.Min().has_value() && ideal < *range.Min()) {
+    return NumericConstraintFitnessDistance(ideal, *range.Min());
+  }
+
+  return 0.0;  // |range| contains |ideal|
+}
+
+// Returns the fitness distance between the ideal value of |constraint| and the
 // closest value to it in the range [min, max] if the constraint is supported.
-// If the constraint is present but not supported, returns 1 if there is no
-// ideal value (to account the failed boolean capability constraint) or 2
-// otherwise (to account the failed boolean capability constraint and failed
-// numeric ideal value constraint).
+// If the constraint is present but not supported, returns 1.
 // If the ideal value is contained in the range, returns 0.
 // If there is no ideal value, returns 0;
 // Based on https://w3c.github.io/mediacapture-main/#dfn-fitness-distance.
@@ -81,18 +117,9 @@ double NumericRangeSupportFitness(
   DCHECK(!range.IsEmpty());
 
   if (constraint_present && !constraint_supported)
-    return 1.0 + (constraint.HasIdeal() ? 1.0 : 0.0);
+    return 1.0;
 
-  if (!constraint.HasIdeal())
-    return 0.0;
-
-  auto ideal = constraint.Ideal();
-  if (range.Max().has_value() && ideal > *range.Max())
-    return NumericConstraintFitnessDistance(ideal, *range.Max());
-  else if (range.Min().has_value() && ideal < *range.Min())
-    return NumericConstraintFitnessDistance(ideal, *range.Min());
-
-  return 0.0;  // |range| contains |ideal|
+  return NumericRangeSetFitness(constraint, range);
 }
 
 // Returns a custom distance between |native_value| and the ideal value and
@@ -122,7 +149,7 @@ double NumericRangeNativeFitness(const NumericConstraint& constraint,
 // Returns the fitness distance between the ideal value of |constraint| and
 // an optional boolean |value|.
 // Based on https://w3c.github.io/mediacapture-main/#dfn-fitness-distance.
-double OptionalBoolFitness(const base::Optional<bool>& value,
+double OptionalBoolFitness(const absl::optional<bool>& value,
                            const BooleanConstraint& constraint) {
   if (!constraint.HasIdeal())
     return 0.0;
@@ -149,6 +176,22 @@ void UpdateFailedConstraintName(const BaseConstraint& constraint,
 // CandidateFormat class keeps track of this.
 class CandidateFormat {
  public:
+  class ApplyConstraintSetResult {
+   public:
+    ApplyConstraintSetResult() = default;
+
+   private:
+    friend class CandidateFormat;
+
+    DoubleRangeSet constrained_frame_rate_;
+    IntRangeSet constrained_width_;
+    IntRangeSet constrained_height_;
+    DoubleRangeSet constrained_aspect_ratio_;
+
+    BoolSet rescale_intersection_;
+    ResolutionSet resolution_intersection_;
+  };
+
   explicit CandidateFormat(const media::VideoCaptureFormat& format)
       : format_(format),
         resolution_set_(1,
@@ -190,10 +233,10 @@ class CandidateFormat {
   }
 
   // Convenience accessors for constrained_frame_rate() fields.
-  const base::Optional<double>& MinFrameRateConstraint() const {
+  const absl::optional<double>& MinFrameRateConstraint() const {
     return constrained_frame_rate_.Min();
   }
-  const base::Optional<double>& MaxFrameRateConstraint() const {
+  const absl::optional<double>& MaxFrameRateConstraint() const {
     return constrained_frame_rate_.Max();
   }
 
@@ -210,74 +253,77 @@ class CandidateFormat {
     return kMinDeviceCaptureFrameRate;
   }
 
-  // Convenience accessor for video kind using Blink type.
-  WebString VideoKind() const { return GetVideoKindForFormat(format_); }
-
-  // This function tries to apply |constraint_set| to this candidate format
-  // and returns true if successful. If |constraint_set| cannot be satisfied,
-  // false is returned, and the name of one of the constraints that
+  // This function tries to apply |constraint_set| and returns the result
+  // if successful. If |constraint_set| cannot be satisfied,
+  // a nullopt is returned, and the name of one of the constraints that
   // could not be satisfied is returned in |failed_constraint_name| if
   // |failed_constraint_name| is not null.
-  bool ApplyConstraintSet(const MediaTrackConstraintSetPlatform& constraint_set,
-                          const char** failed_constraint_name = nullptr) {
-    auto rescale_intersection =
+  absl::optional<ApplyConstraintSetResult> TryToApplyConstraintSet(
+      const MediaTrackConstraintSetPlatform& constraint_set,
+      const char** failed_constraint_name = nullptr) const {
+    absl::optional<ApplyConstraintSetResult> result(absl::in_place);
+
+    result->rescale_intersection_ =
         rescale_set_.Intersection(media_constraints::RescaleSetFromConstraint(
             constraint_set.resize_mode));
-    if (rescale_intersection.IsEmpty()) {
+    if (result->rescale_intersection_.IsEmpty()) {
       UpdateFailedConstraintName(constraint_set.resize_mode,
                                  failed_constraint_name);
-      return false;
+      return absl::nullopt;
     }
 
-    auto resolution_intersection = resolution_set_.Intersection(
+    result->resolution_intersection_ = resolution_set_.Intersection(
         ResolutionSet::FromConstraintSet(constraint_set));
-    if (!rescale_intersection.Contains(true)) {
+    if (!result->rescale_intersection_.Contains(true)) {
       // If rescaling is not allowed, only the native resolution is allowed.
-      resolution_intersection = resolution_intersection.Intersection(
-          ResolutionSet::FromExactResolution(NativeWidth(), NativeHeight()));
+      result->resolution_intersection_ =
+          result->resolution_intersection_.Intersection(
+              ResolutionSet::FromExactResolution(NativeWidth(),
+                                                 NativeHeight()));
     }
-    if (resolution_intersection.IsWidthEmpty()) {
+    if (result->resolution_intersection_.IsWidthEmpty()) {
       UpdateFailedConstraintName(constraint_set.width, failed_constraint_name);
-      return false;
+      return absl::nullopt;
     }
-    if (resolution_intersection.IsHeightEmpty()) {
+    if (result->resolution_intersection_.IsHeightEmpty()) {
       UpdateFailedConstraintName(constraint_set.height, failed_constraint_name);
-      return false;
+      return absl::nullopt;
     }
-    if (resolution_intersection.IsAspectRatioEmpty()) {
+    if (result->resolution_intersection_.IsAspectRatioEmpty()) {
       UpdateFailedConstraintName(constraint_set.aspect_ratio,
                                  failed_constraint_name);
-      return false;
+      return absl::nullopt;
     }
 
     if (!SatisfiesFrameRateConstraint(constraint_set.frame_rate)) {
       UpdateFailedConstraintName(constraint_set.frame_rate,
                                  failed_constraint_name);
-      return false;
+      return absl::nullopt;
     }
 
-    if (!constraint_set.video_kind.Matches(VideoKind())) {
-      UpdateFailedConstraintName(constraint_set.video_kind,
-                                 failed_constraint_name);
-      return false;
-    }
-
-    resolution_set_ = resolution_intersection;
-    rescale_set_ = rescale_intersection;
-    constrained_frame_rate_ = constrained_frame_rate_.Intersection(
+    result->constrained_frame_rate_ = constrained_frame_rate_.Intersection(
         DoubleRangeSet::FromConstraint(constraint_set.frame_rate, 0.0,
                                        media::limits::kMaxFramesPerSecond));
-    constrained_width_ =
+    result->constrained_width_ =
         constrained_width_.Intersection(IntRangeSet::FromConstraint(
             constraint_set.width, 1L, ResolutionSet::kMaxDimension));
-    constrained_height_ =
+    result->constrained_height_ =
         constrained_height_.Intersection(IntRangeSet::FromConstraint(
             constraint_set.height, 1L, ResolutionSet::kMaxDimension));
-    constrained_aspect_ratio_ =
+    result->constrained_aspect_ratio_ =
         constrained_aspect_ratio_.Intersection(DoubleRangeSet::FromConstraint(
             constraint_set.aspect_ratio, 0.0, HUGE_VAL));
 
-    return true;
+    return result;
+  }
+
+  void ApplyResult(const ApplyConstraintSetResult& result) {
+    constrained_frame_rate_ = result.constrained_frame_rate_;
+    constrained_width_ = result.constrained_width_;
+    constrained_height_ = result.constrained_height_;
+    constrained_aspect_ratio_ = result.constrained_aspect_ratio_;
+    resolution_set_ = result.resolution_intersection_;
+    rescale_set_ = result.rescale_intersection_;
   }
 
   // Returns the best fitness distance that can be achieved with this candidate
@@ -299,10 +345,10 @@ class CandidateFormat {
           static_cast<double>(track_settings_with_rescale.target_width()) /
           track_settings_with_rescale.target_height();
       DCHECK(!std::isnan(target_aspect_ratio));
-      double best_supported_frame_rate =
+      absl::optional<double> best_supported_frame_rate =
           track_settings_with_rescale.max_frame_rate();
-      if (best_supported_frame_rate == 0.0 ||
-          best_supported_frame_rate > NativeFrameRate()) {
+      if (!best_supported_frame_rate.has_value() ||
+          *best_supported_frame_rate > NativeFrameRate()) {
         best_supported_frame_rate = NativeFrameRate();
       }
 
@@ -314,7 +360,7 @@ class CandidateFormat {
           NumericValueFitness(basic_constraint_set.width,
                               track_settings_with_rescale.target_width()) +
           NumericValueFitness(basic_constraint_set.frame_rate,
-                              best_supported_frame_rate);
+                              *best_supported_frame_rate);
     }
 
     double track_fitness_without_rescale = HUGE_VAL;
@@ -329,10 +375,10 @@ class CandidateFormat {
             basic_constraint_set, resolution_set(), constrained_frame_rate(),
             format(), false /* enable_rescale */);
         DCHECK(!track_settings_without_rescale.target_size().has_value());
-        double best_supported_frame_rate =
+        absl::optional<double> best_supported_frame_rate =
             track_settings_without_rescale.max_frame_rate();
-        if (best_supported_frame_rate == 0.0 ||
-            best_supported_frame_rate > NativeFrameRate()) {
+        if (!best_supported_frame_rate.has_value() ||
+            *best_supported_frame_rate > NativeFrameRate()) {
           best_supported_frame_rate = NativeFrameRate();
         }
         track_fitness_without_rescale =
@@ -341,7 +387,7 @@ class CandidateFormat {
             NumericValueFitness(basic_constraint_set.height, NativeHeight()) +
             NumericValueFitness(basic_constraint_set.width, NativeWidth()) +
             NumericValueFitness(basic_constraint_set.frame_rate,
-                                best_supported_frame_rate);
+                                *best_supported_frame_rate);
       }
     }
 
@@ -355,19 +401,16 @@ class CandidateFormat {
         track_fitness_with_rescale += 1.0;
       }
     }
-    double fitness = StringConstraintFitnessDistance(
-        VideoKind(), basic_constraint_set.video_kind);
+
     // If rescaling and not rescaling have the same fitness, prefer not
     // rescaling.
     if (track_fitness_without_rescale <= track_fitness_with_rescale) {
-      fitness += track_fitness_without_rescale;
       *track_settings = track_settings_without_rescale;
-    } else {
-      fitness += track_fitness_with_rescale;
-      *track_settings = track_settings_with_rescale;
+      return track_fitness_without_rescale;
     }
 
-    return fitness;
+    *track_settings = track_settings_with_rescale;
+    return track_fitness_with_rescale;
   }
 
   // Returns a custom "native" fitness distance that expresses how close the
@@ -386,7 +429,7 @@ class CandidateFormat {
   }
 
  private:
-  bool SatisfiesFrameRateConstraint(const DoubleConstraint& constraint) {
+  bool SatisfiesFrameRateConstraint(const DoubleConstraint& constraint) const {
     double constraint_min =
         ConstraintHasMin(constraint) ? ConstraintMin(constraint) : -1.0;
     double constraint_max =
@@ -430,11 +473,11 @@ class CandidateFormat {
 
 // Returns true if the facing mode |value| satisfies |constraints|, false
 // otherwise.
-bool FacingModeSatisfiesConstraint(media::VideoFacingMode value,
+bool FacingModeSatisfiesConstraint(mojom::blink::FacingMode value,
                                    const StringConstraint& constraint) {
   WebString string_value = ToWebString(value);
   if (string_value.IsNull())
-    return constraint.Exact().IsEmpty();
+    return constraint.Exact().empty();
 
   return constraint.Matches(string_value);
 }
@@ -498,19 +541,19 @@ class PTZDeviceState {
     return nullptr;
   }
 
-  base::Optional<double> SelectPan(
+  absl::optional<double> SelectPan(
       const MediaTrackConstraintSetPlatform& basic_set) const {
     return SelectProperty(&PTZDeviceState::pan_set_, basic_set,
                           &MediaTrackConstraintSetPlatform::pan);
   }
 
-  base::Optional<double> SelectTilt(
+  absl::optional<double> SelectTilt(
       const MediaTrackConstraintSetPlatform& basic_set) const {
     return SelectProperty(&PTZDeviceState::tilt_set_, basic_set,
                           &MediaTrackConstraintSetPlatform::tilt);
   }
 
-  base::Optional<double> SelectZoom(
+  absl::optional<double> SelectZoom(
       const MediaTrackConstraintSetPlatform& basic_set) const {
     return SelectProperty(&PTZDeviceState::zoom_set_, basic_set,
                           &MediaTrackConstraintSetPlatform::zoom);
@@ -525,7 +568,7 @@ class PTZDeviceState {
   // * If minimum is provided, return minimum.
   // * Otherwise, if maximum is provided, return maximum.
   // * Otherwise, return nullopt.
-  base::Optional<double> SelectProperty(
+  absl::optional<double> SelectProperty(
       DoubleRangeSet PTZDeviceState::*ptz_field,
       const MediaTrackConstraintSetPlatform& basic_set,
       DoubleConstraint MediaTrackConstraintSetPlatform::*basic_set_field)
@@ -551,6 +594,137 @@ class PTZDeviceState {
   DoubleRangeSet pan_set_;
   DoubleRangeSet tilt_set_;
   DoubleRangeSet zoom_set_;
+};
+
+class ImageCaptureDeviceState {
+ public:
+  class ApplyConstraintSetResult {
+   public:
+    ApplyConstraintSetResult() = default;
+
+   private:
+    friend class ImageCaptureDeviceState;
+
+    absl::optional<BoolSet> torch_intersection_;
+    absl::optional<BoolSet> background_blur_intersection_;
+    absl::optional<BoolSet> eye_gaze_correction_intersection_;
+    absl::optional<BoolSet> face_framing_intersection_;
+  };
+
+  explicit ImageCaptureDeviceState(const DeviceInfo& device) {}
+
+  absl::optional<ApplyConstraintSetResult> TryToApplyConstraintSet(
+      const MediaTrackConstraintSetPlatform& constraint_set,
+      const char** failed_constraint_name = nullptr) const {
+    absl::optional<ApplyConstraintSetResult> result(absl::in_place);
+
+    if (!(TryToApplyConstraint(constraint_set.torch, torch_set_,
+                               result->torch_intersection_,
+                               failed_constraint_name) &&
+          TryToApplyConstraint(
+              constraint_set.background_blur, background_blur_set_,
+              result->background_blur_intersection_, failed_constraint_name) &&
+          TryToApplyConstraint(constraint_set.eye_gaze_correction,
+                               eye_gaze_correction_set_,
+                               result->eye_gaze_correction_intersection_,
+                               failed_constraint_name) &&
+          TryToApplyConstraint(constraint_set.face_framing, face_framing_set_,
+                               result->face_framing_intersection_,
+                               failed_constraint_name))) {
+      result.reset();
+    }
+
+    return result;
+  }
+
+  void ApplyResult(const ApplyConstraintSetResult& result) {
+    if (result.torch_intersection_.has_value()) {
+      torch_set_ = *result.torch_intersection_;
+    }
+    if (result.background_blur_intersection_.has_value()) {
+      background_blur_set_ = *result.background_blur_intersection_;
+    }
+    if (result.eye_gaze_correction_intersection_.has_value()) {
+      eye_gaze_correction_set_ = *result.eye_gaze_correction_intersection_;
+    }
+    if (result.face_framing_intersection_.has_value()) {
+      face_framing_set_ = *result.face_framing_intersection_;
+    }
+  }
+
+  double Fitness(
+      const MediaTrackConstraintSetPlatform& basic_constraint_set) const {
+    return BoolSetFitness(basic_constraint_set.torch, torch_set_) +
+           BoolSetFitness(basic_constraint_set.background_blur,
+                          background_blur_set_) +
+           BoolSetFitness(basic_constraint_set.eye_gaze_correction,
+                          eye_gaze_correction_set_) +
+           BoolSetFitness(basic_constraint_set.face_framing, face_framing_set_);
+  }
+
+  absl::optional<ImageCaptureDeviceSettings> SelectSettings(
+      const MediaTrackConstraintSetPlatform& basic_constraint_set,
+      const PTZDeviceState& ptz_state) const {
+    absl::optional<ImageCaptureDeviceSettings> settings(absl::in_place);
+
+    settings->pan = ptz_state.SelectPan(basic_constraint_set);
+    settings->tilt = ptz_state.SelectTilt(basic_constraint_set);
+    settings->zoom = ptz_state.SelectZoom(basic_constraint_set);
+
+    settings->torch = SelectSetting(basic_constraint_set.torch, torch_set_);
+    settings->background_blur = SelectSetting(
+        basic_constraint_set.background_blur, background_blur_set_);
+    settings->eye_gaze_correction = SelectSetting(
+        basic_constraint_set.eye_gaze_correction, eye_gaze_correction_set_);
+    settings->face_framing =
+        SelectSetting(basic_constraint_set.face_framing, face_framing_set_);
+
+    if (!(settings->pan || settings->tilt || settings->zoom ||
+          settings->torch || settings->background_blur ||
+          settings->eye_gaze_correction || settings->face_framing)) {
+      settings.reset();
+    }
+
+    return settings;
+  }
+
+ private:
+  absl::optional<bool> SelectSetting(const BooleanConstraint& basic_constraint,
+                                     const BoolSet& set) const {
+    if (basic_constraint.HasIdeal()) {
+      auto ideal = basic_constraint.Ideal();
+      if (set.Contains(ideal)) {
+        return ideal;
+      }
+    }
+    if (set.is_universal()) {
+      return absl::nullopt;
+    }
+    return set.FirstElement();
+  }
+
+  bool TryToApplyConstraint(
+      const BooleanConstraint& constraint,
+      const BoolSet& current_set,
+      absl::optional<BoolSet>& intersection,
+      const char** failed_constraint_name = nullptr) const {
+    BoolSet set_from_constraint =
+        media_constraints::BoolSetFromConstraint(constraint);
+    if (set_from_constraint.is_universal()) {
+      return true;
+    }
+    intersection = current_set.Intersection(set_from_constraint);
+    if (intersection->IsEmpty()) {
+      UpdateFailedConstraintName(constraint, failed_constraint_name);
+      return false;
+    }
+    return true;
+  }
+
+  BoolSet torch_set_;
+  BoolSet background_blur_set_;
+  BoolSet eye_gaze_correction_set_;
+  BoolSet face_framing_set_;
 };
 
 // Returns true if |constraint_set| can be satisfied by |device|. Otherwise,
@@ -601,7 +775,7 @@ bool DeviceSatisfiesConstraintSet(
 // If |constraint| is not satisfied and |failed_constraint_name| is not null,
 // |failed_constraint_name| is set to |constraints|'s name.
 bool OptionalBoolSatisfiesConstraint(
-    const base::Optional<bool>& value,
+    const absl::optional<bool>& value,
     const BooleanConstraint& constraint,
     const char** failed_constraint_name = nullptr) {
   if (!constraint.HasExact())
@@ -629,15 +803,18 @@ double DeviceFitness(const DeviceInfo& device,
 // Based on https://w3c.github.io/mediacapture-main/#dfn-fitness-distance.
 // The track settings for |candidate| that correspond to the returned fitness
 // are returned in |track_settings|.
-double CandidateFitness(const DeviceInfo& device,
-                        const PTZDeviceState& ptz_state,
-                        const CandidateFormat& candidate_format,
-                        const base::Optional<bool>& noise_reduction,
-                        const MediaTrackConstraintSetPlatform& constraint_set,
-                        VideoTrackAdapterSettings* track_settings) {
+double CandidateFitness(
+    const DeviceInfo& device,
+    const PTZDeviceState& ptz_state,
+    const CandidateFormat& candidate_format,
+    const ImageCaptureDeviceState& image_capture_device_state,
+    const absl::optional<bool>& noise_reduction,
+    const MediaTrackConstraintSetPlatform& constraint_set,
+    VideoTrackAdapterSettings* track_settings) {
   return DeviceFitness(device, constraint_set) +
          ptz_state.Fitness(constraint_set, device.control_support) +
          candidate_format.Fitness(constraint_set, track_settings) +
+         image_capture_device_state.Fitness(constraint_set) +
          OptionalBoolFitness(noise_reduction,
                              constraint_set.goog_noise_reduction);
 }
@@ -651,7 +828,7 @@ double CandidateFitness(const DeviceInfo& device,
 void AppendDistancesFromDefault(
     const DeviceInfo& device,
     const CandidateFormat& candidate_format,
-    const base::Optional<bool>& noise_reduction,
+    const absl::optional<bool>& noise_reduction,
     const VideoDeviceCaptureCapabilities& capabilities,
     int default_width,
     int default_height,
@@ -693,7 +870,7 @@ VideoInputDeviceCapabilities::VideoInputDeviceCapabilities(
     String group_id,
     const media::VideoCaptureControlSupport& control_support,
     Vector<media::VideoCaptureFormat> formats,
-    media::VideoFacingMode facing_mode)
+    mojom::blink::FacingMode facing_mode)
     : device_id(std::move(device_id)),
       group_id(std::move(group_id)),
       control_support(control_support),
@@ -707,20 +884,14 @@ VideoInputDeviceCapabilities& VideoInputDeviceCapabilities::operator=(
 
 VideoInputDeviceCapabilities::~VideoInputDeviceCapabilities() = default;
 
-WebString GetVideoKindForFormat(const media::VideoCaptureFormat& format) {
-  return (format.pixel_format == media::PIXEL_FORMAT_Y16)
-             ? WebString::FromASCII(kVideoKindDepth)
-             : WebString::FromASCII(kVideoKindColor);
-}
-
 MediaStreamTrackPlatform::FacingMode ToPlatformFacingMode(
-    media::VideoFacingMode video_facing) {
+    mojom::blink::FacingMode video_facing) {
   switch (video_facing) {
-    case media::MEDIA_VIDEO_FACING_NONE:
+    case mojom::blink::FacingMode::kNone:
       return MediaStreamTrackPlatform::FacingMode::kNone;
-    case media::MEDIA_VIDEO_FACING_USER:
+    case mojom::blink::FacingMode::kUser:
       return MediaStreamTrackPlatform::FacingMode::kUser;
-    case media::MEDIA_VIDEO_FACING_ENVIRONMENT:
+    case mojom::blink::FacingMode::kEnvironment:
       return MediaStreamTrackPlatform::FacingMode::kEnvironment;
     default:
       return MediaStreamTrackPlatform::FacingMode::kNone;
@@ -734,6 +905,42 @@ VideoDeviceCaptureCapabilities::~VideoDeviceCaptureCapabilities() = default;
 VideoDeviceCaptureCapabilities& VideoDeviceCaptureCapabilities::operator=(
     VideoDeviceCaptureCapabilities&& other) = default;
 
+// Enables debug logging of capabilities processing when picking a video.
+// TODO(crbug.com/1275617): Remove this and calls once investigation is
+// complete.
+BASE_FEATURE(kMediaStreamCapabilitiesDebugLogging,
+             "MediaStreamCapabilitiesDebugLogging",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+// TODO(crbug.com/1275617): Remove this and calls once investigation is
+// complete.
+void MaybeLogDebugInfo(const std::string& message) {
+  if (base::FeatureList::IsEnabled(kMediaStreamCapabilitiesDebugLogging)) {
+    blink::WebRtcLogMessage("SelectSettingsVideoDeviceCapture(): " + message);
+  }
+}
+
+// TODO(crbug.com/1275617): Remove this and calls once investigation is
+// complete.
+void MaybeLogDeviceCapabilities(
+    const Vector<VideoInputDeviceCapabilities>& device_capabilities) {
+  if (base::FeatureList::IsEnabled(kMediaStreamCapabilitiesDebugLogging)) {
+    std::string devices_string;
+    for (auto& device : device_capabilities) {
+      std::string formats_string;
+      for (auto& format : device.formats) {
+        formats_string += media::VideoCaptureFormat::ToString(format);
+      }
+      devices_string += base::StringPrintf(
+          "{device_id:%s, formats:[%s], facing_mode:%s},",
+          device.device_id.Utf8().c_str(), formats_string.c_str(),
+          ToWebString(device.facing_mode).Utf8().c_str());
+    }
+    MaybeLogDebugInfo(
+        base::StringPrintf("Received devices %s", devices_string.c_str()));
+  }
+}
+
 VideoCaptureSettings SelectSettingsVideoDeviceCapture(
     const VideoDeviceCaptureCapabilities& capabilities,
     const MediaConstraints& constraints,
@@ -745,6 +952,11 @@ VideoCaptureSettings SelectSettingsVideoDeviceCapture(
   DCHECK_GE(default_frame_rate, 0.0);
   // This function works only if infinity is defined for the double type.
   static_assert(std::numeric_limits<double>::has_infinity, "Requires infinity");
+
+  // TODO(crbug.com/1275617): Remove once investigation is complete.
+  MaybeLogDebugInfo(base::StringPrintf("Media constraints %s",
+                                       constraints.ToString().Utf8().c_str()));
+  MaybeLogDeviceCapabilities(capabilities.device_capabilities);
 
   // A distance vector contains:
   // a) For each advanced constraint set, a 0/Infinity value indicating if the
@@ -767,6 +979,21 @@ VideoCaptureSettings SelectSettingsVideoDeviceCapture(
   for (auto& device : capabilities.device_capabilities) {
     if (!DeviceSatisfiesConstraintSet(device, constraints.Basic(),
                                       &failed_constraint_name)) {
+      MaybeLogDebugInfo(base::StringPrintf(
+          "Device %s rejected due to constraint %s",
+          device.device_id.Utf8().c_str(), failed_constraint_name));
+      continue;
+    }
+
+    ImageCaptureDeviceState image_capture_device_state(device);
+    if (auto image_capture_device_result =
+            image_capture_device_state.TryToApplyConstraintSet(
+                constraints.Basic(), &failed_constraint_name)) {
+      image_capture_device_state.ApplyResult(*image_capture_device_result);
+    } else {
+      MaybeLogDebugInfo(base::StringPrintf(
+          "Device %s rejected due to constraint %s",
+          device.device_id.Utf8().c_str(), failed_constraint_name));
       continue;
     }
 
@@ -779,8 +1006,16 @@ VideoCaptureSettings SelectSettingsVideoDeviceCapture(
     for (auto& format : device.formats) {
       PTZDeviceState ptz_state_for_format = ptz_device_state;
       CandidateFormat candidate_format(format);
-      if (!candidate_format.ApplyConstraintSet(constraints.Basic(),
-                                               &failed_constraint_name)) {
+      if (auto candidate_format_result =
+              candidate_format.TryToApplyConstraintSet(
+                  constraints.Basic(), &failed_constraint_name)) {
+        candidate_format.ApplyResult(*candidate_format_result);
+      } else {
+        MaybeLogDebugInfo(base::StringPrintf(
+            "Device %s format %s rejected due to constraint %s",
+            device.device_id.Utf8().c_str(),
+            media::VideoCaptureFormat::ToString(format).c_str(),
+            failed_constraint_name));
         continue;
       }
 
@@ -801,18 +1036,25 @@ VideoCaptureSettings SelectSettingsVideoDeviceCapture(
         for (const auto& advanced_set : constraints.Advanced()) {
           PTZDeviceState ptz_advanced_state =
               ptz_state_for_format.Intersection(advanced_set);
-          bool satisfies_advanced_set =
-              DeviceSatisfiesConstraintSet(device, advanced_set) &&
+          bool satisfies_advanced_set = false;
+
+          if (DeviceSatisfiesConstraintSet(device, advanced_set) &&
               !ptz_advanced_state.IsEmpty() &&
               OptionalBoolSatisfiesConstraint(
-                  noise_reduction, advanced_set.goog_noise_reduction) &&
-              // This must be the last in the condition since it is the only
-              // one that has side effects. It should be executed only if the
-              // previous two are true.
-              candidate_format.ApplyConstraintSet(advanced_set);
-
-          if (satisfies_advanced_set)
-            ptz_state_for_format = ptz_advanced_state;
+                  noise_reduction, advanced_set.goog_noise_reduction)) {
+            if (auto candidate_format_result =
+                    candidate_format.TryToApplyConstraintSet(advanced_set)) {
+              if (auto image_capture_device_result =
+                      image_capture_device_state.TryToApplyConstraintSet(
+                          advanced_set)) {
+                satisfies_advanced_set = true;
+                candidate_format.ApplyResult(*candidate_format_result);
+                image_capture_device_state.ApplyResult(
+                    *image_capture_device_result);
+                ptz_state_for_format = ptz_advanced_state;
+              }
+            }
+          }
 
           candidate_distance_vector.push_back(
               satisfies_advanced_set ? 0 : HUGE_VAL);
@@ -820,9 +1062,10 @@ VideoCaptureSettings SelectSettingsVideoDeviceCapture(
 
         VideoTrackAdapterSettings track_settings;
         // Second criterion is fitness distance.
-        candidate_distance_vector.push_back(CandidateFitness(
-            device, ptz_state_for_format, candidate_format, noise_reduction,
-            constraints.Basic(), &track_settings));
+        candidate_distance_vector.push_back(
+            CandidateFitness(device, ptz_state_for_format, candidate_format,
+                             image_capture_device_state, noise_reduction,
+                             constraints.Basic(), &track_settings));
 
         // Third criterion is native fitness distance.
         candidate_distance_vector.push_back(
@@ -835,7 +1078,10 @@ VideoCaptureSettings SelectSettingsVideoDeviceCapture(
                                    &candidate_distance_vector);
 
         DCHECK_EQ(best_distance.size(), candidate_distance_vector.size());
-        if (candidate_distance_vector < best_distance) {
+        if (std::lexicographical_compare(candidate_distance_vector.begin(),
+                                         candidate_distance_vector.end(),
+                                         best_distance.begin(),
+                                         best_distance.end())) {
           best_distance = candidate_distance_vector;
 
           media::VideoCaptureParams capture_params;
@@ -844,17 +1090,22 @@ VideoCaptureSettings SelectSettingsVideoDeviceCapture(
               device.device_id.Utf8(), capture_params, noise_reduction,
               track_settings, candidate_format.constrained_frame_rate().Min(),
               candidate_format.constrained_frame_rate().Max(),
-              ptz_state_for_format.SelectPan(constraints.Basic()),
-              ptz_state_for_format.SelectTilt(constraints.Basic()),
-              ptz_state_for_format.SelectZoom(constraints.Basic()));
+              image_capture_device_state.SelectSettings(constraints.Basic(),
+                                                        ptz_state_for_format));
         }
       }
     }
   }
 
-  if (!result.HasValue())
+  if (!result.HasValue()) {
+    MaybeLogDebugInfo(base::StringPrintf(
+        "No matching devices. Returning with failed constraint name %s",
+        failed_constraint_name));
     return VideoCaptureSettings(failed_constraint_name);
+  }
 
+  MaybeLogDebugInfo(base::StringPrintf("Returning best matching result %s",
+                                       failed_constraint_name));
   return result;
 }
 

@@ -1,4 +1,4 @@
-import QtQuick 2.0
+import QtQuick
 
 Item {
     property bool success: false
@@ -6,6 +6,7 @@ Item {
     property variant m1: Qt.matrix4x4(1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4)
     property variant m2: Qt.matrix4x4(5,5,5,5,6,6,6,6,7,7,7,7,8,8,8,8)
     property variant m3: Qt.matrix4x4(123,22,6,42,55,54,67,77,777,1,112,22,55,6696,77,777)
+    property matrix4x4 m4: PlanarTransform.fromAffineMatrix(1, 2, 3, 4, 5, 6)
     property variant v1: Qt.vector4d(1,2,3,4)
     property variant v2: Qt.vector3d(1,2,3)
     property real factor: 2.23
@@ -44,7 +45,14 @@ Item {
         m.rotate(180, Qt.vector3d(0, 0, 1));
         if (m !== Qt.matrix4x4())
             return false;
+        m.rotate(Qt.quaternion(0.5, 0.5, 0.5, -0.5));
+        if (m !== Qt.matrix4x4(0, 1, 0, 0,
+                               0, 0, -1, 0,
+                               -1, 0, 0, 0,
+                               0, 0, 0, 1))
+            return false;
 
+        m = Qt.matrix4x4();
         m.translate(Qt.vector3d(1, 2, 4));
         if (m !== Qt.matrix4x4(1, 0, 0, 1,
                                0, 1, 0, 2,
@@ -58,6 +66,20 @@ Item {
                                0, 1, 0, -2,
                                0, 0, 1, -4,
                                0, 0, 0, 1))
+            return false;
+
+        return true;
+    }
+
+    function testMatrixMapping()
+    {
+        let m = Qt.matrix4x4();
+        m.scale(1, 2, 3);
+
+        if (m.mapRect(Qt.rect(10, 15, 20, 20)) !== Qt.rect(10, 30, 20, 40))
+            return false;
+
+        if (m.map(Qt.point(10, 15)) !== Qt.point(10, 30))
             return false;
 
         return true;
@@ -80,6 +102,8 @@ Item {
         if (m1.transposed() != Qt.matrix4x4(1, 2, 3, 4, 1, 2, 3, 4, 1, 2, 3, 4, 1, 2, 3, 4)) success = false;
         if (m1.fuzzyEquals(m2)) success = false;
         if (!m1.fuzzyEquals(m2, 10)) success = false;
+        if (m4 != Qt.matrix4x4(1, 3, 0, 5,  2, 4, 0, 6,  0, 0, 1, 0,  0, 0, 0, 1)) success = false;
         if (!testTransformation()) success = false;
+        if (!testMatrixMapping()) success = false;
     }
 }

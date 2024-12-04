@@ -1,14 +1,15 @@
-// Copyright (c) 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/core/dom/text.h"
 
+#include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_testing.h"
 #include "third_party/blink/renderer/core/dom/range.h"
 #include "third_party/blink/renderer/core/editing/testing/editing_test_base.h"
 #include "third_party/blink/renderer/core/html/html_pre_element.h"
 #include "third_party/blink/renderer/core/layout/layout_text.h"
-#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 
 namespace blink {
 
@@ -19,7 +20,7 @@ TEST_F(TextTest, SetDataToChangeFirstLetterTextNode) {
       "<style>pre::first-letter {color:red;}</style><pre "
       "id=sample>a<span>b</span></pre>");
 
-  Node* sample = GetDocument().getElementById("sample");
+  Node* sample = GetDocument().getElementById(AtomicString("sample"));
   auto* text = To<Text>(sample->firstChild());
   text->setData(" ");
   UpdateAllLifecyclePhasesForTest();
@@ -30,7 +31,7 @@ TEST_F(TextTest, SetDataToChangeFirstLetterTextNode) {
 TEST_F(TextTest, RemoveFirstLetterPseudoElementWhenNoLetter) {
   SetBodyContent("<style>*::first-letter{font:icon;}</style><pre>AB\n</pre>");
 
-  Element* pre = GetDocument().QuerySelector("pre");
+  Element* pre = GetDocument().QuerySelector(AtomicString("pre"));
   auto* text = To<Text>(pre->firstChild());
 
   auto* range = MakeGarbageCollected<Range>(GetDocument(), text, 0, text, 2);
@@ -40,11 +41,27 @@ TEST_F(TextTest, RemoveFirstLetterPseudoElementWhenNoLetter) {
   EXPECT_FALSE(text->GetLayoutObject()->IsTextFragment());
 }
 
+TEST_F(TextTest, splitTextToEmpty) {
+  V8TestingScope scope;
+
+  SetBodyContent("<p id=sample>ab</p>");
+  const Element& sample = *GetElementById("sample");
+  Text& text = *To<Text>(sample.firstChild());
+  // |new_text| is after |text|.
+  Text& new_text = *text.splitText(0, ASSERT_NO_EXCEPTION);
+
+  UpdateAllLifecyclePhasesForTest();
+  EXPECT_EQ("", text.data());
+  EXPECT_FALSE(text.GetLayoutObject());
+  EXPECT_EQ("ab", new_text.data());
+  EXPECT_TRUE(new_text.GetLayoutObject());
+}
+
 TEST_F(TextTest, TextLayoutObjectIsNeeded_CannotHaveChildren) {
   SetBodyContent("<img id=image>");
   UpdateAllLifecyclePhasesForTest();
 
-  Element* img = GetDocument().getElementById("image");
+  Element* img = GetDocument().getElementById(AtomicString("image"));
   ASSERT_TRUE(img);
 
   LayoutObject* img_layout = img->GetLayoutObject();
@@ -65,7 +82,7 @@ TEST_F(TextTest, TextLayoutObjectIsNeeded_EditingText) {
   SetBodyContent("<span id=parent></span>");
   UpdateAllLifecyclePhasesForTest();
 
-  Element* parent = GetDocument().getElementById("parent");
+  Element* parent = GetDocument().getElementById(AtomicString("parent"));
   ASSERT_TRUE(parent);
 
   LayoutObject* parent_layout = parent->GetLayoutObject();
@@ -92,7 +109,7 @@ TEST_F(TextTest, TextLayoutObjectIsNeeded_Empty) {
   SetBodyContent("<span id=parent></span>");
   UpdateAllLifecyclePhasesForTest();
 
-  Element* parent = GetDocument().getElementById("parent");
+  Element* parent = GetDocument().getElementById(AtomicString("parent"));
   ASSERT_TRUE(parent);
 
   LayoutObject* parent_layout = parent->GetLayoutObject();
@@ -115,14 +132,19 @@ TEST_F(TextTest, TextLayoutObjectIsNeeded_Whitespace) {
   UpdateAllLifecyclePhasesForTest();
 
   LayoutObject* block =
-      GetDocument().getElementById("block")->GetLayoutObject();
+      GetDocument().getElementById(AtomicString("block"))->GetLayoutObject();
   LayoutObject* in_line =
-      GetDocument().getElementById("inline")->GetLayoutObject();
-  LayoutObject* space_at_end =
-      GetDocument().getElementById("block")->nextSibling()->GetLayoutObject();
-  LayoutObject* no_space =
-      GetDocument().getElementById("inline")->nextSibling()->GetLayoutObject();
-  LayoutObject* br = GetDocument().getElementById("br")->GetLayoutObject();
+      GetDocument().getElementById(AtomicString("inline"))->GetLayoutObject();
+  LayoutObject* space_at_end = GetDocument()
+                                   .getElementById(AtomicString("block"))
+                                   ->nextSibling()
+                                   ->GetLayoutObject();
+  LayoutObject* no_space = GetDocument()
+                               .getElementById(AtomicString("inline"))
+                               ->nextSibling()
+                               ->GetLayoutObject();
+  LayoutObject* br =
+      GetDocument().getElementById(AtomicString("br"))->GetLayoutObject();
   ASSERT_TRUE(block);
   ASSERT_TRUE(in_line);
   ASSERT_TRUE(space_at_end);
@@ -196,21 +218,21 @@ TEST_F(TextTest, TextLayoutObjectIsNeeded_PreserveNewLine) {
   Text* text = Text::Create(GetDocument(), " ");
   Node::AttachContext context;
 
-  Element* pre = GetDocument().getElementById("pre");
+  Element* pre = GetDocument().getElementById(AtomicString("pre"));
   ASSERT_TRUE(pre);
   context.parent = pre->GetLayoutObject();
   ASSERT_TRUE(context.parent);
   const ComputedStyle& pre_style = context.parent->StyleRef();
   EXPECT_TRUE(text->TextLayoutObjectIsNeeded(context, pre_style));
 
-  Element* pre_line = GetDocument().getElementById("pre-line");
+  Element* pre_line = GetDocument().getElementById(AtomicString("pre-line"));
   ASSERT_TRUE(pre_line);
   context.parent = pre_line->GetLayoutObject();
   ASSERT_TRUE(context.parent);
   const ComputedStyle& pre_line_style = context.parent->StyleRef();
   EXPECT_TRUE(text->TextLayoutObjectIsNeeded(context, pre_line_style));
 
-  Element* pre_wrap = GetDocument().getElementById("pre-wrap");
+  Element* pre_wrap = GetDocument().getElementById(AtomicString("pre-wrap"));
   ASSERT_TRUE(pre_wrap);
   context.parent = pre_wrap->GetLayoutObject();
   ASSERT_TRUE(context.parent);

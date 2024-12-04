@@ -34,7 +34,7 @@
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/mutation_observer.h"
 #include "third_party/blink/renderer/core/dom/node.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 
 namespace blink {
 
@@ -58,7 +58,7 @@ class ChildListMutationAccumulator final
   void ChildAdded(Node&);
   void WillRemoveChild(Node&);
 
-  bool HasObservers() const { return observers_; }
+  bool HasObservers() const { return observers_ != nullptr; }
 
   // Register and unregister mutation scopes that are using this mutation
   // accumulator.
@@ -73,10 +73,9 @@ class ChildListMutationAccumulator final
   bool IsAddedNodeInOrder(Node&);
   bool IsRemovedNodeInOrder(Node&);
 
-  Member<Node> target_;
-
   HeapVector<Member<Node>> removed_nodes_;
   HeapVector<Member<Node>> added_nodes_;
+  Member<Node> target_;
   Member<Node> previous_sibling_;
   Member<Node> next_sibling_;
   Member<Node> last_added_;

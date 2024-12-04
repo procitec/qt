@@ -24,21 +24,14 @@
 #define DECLARE_ALIGNED(n, typ, val) typ val
 #endif
 
-/* Indicates that the usage of the specified variable has been audited to assure
- * that it's safe to use uninitialized. Silences 'may be used uninitialized'
- * warnings on gcc.
- */
-#if defined(__GNUC__) && __GNUC__
-#define UNINITIALIZED_IS_SAFE(x) x = x
-#else
-#define UNINITIALIZED_IS_SAFE(x) x
-#endif
-
 #if HAVE_NEON && defined(_MSC_VER)
 #define __builtin_prefetch(x)
 #endif
 
-/* Shift down with rounding for use when n >= 0, value >= 0 */
+/* Shift down with rounding for use when n >= 0. Usually value >= 0, but the
+ * macro can be used with a negative value if the direction of rounding is
+ * acceptable.
+ */
 #define ROUND_POWER_OF_TWO(value, n) (((value) + (((1 << (n)) >> 1))) >> (n))
 
 /* Shift down with rounding for signed integers, for use when n >= 0 */
@@ -46,13 +39,21 @@
   (((value) < 0) ? -ROUND_POWER_OF_TWO(-(value), (n)) \
                  : ROUND_POWER_OF_TWO((value), (n)))
 
-/* Shift down with rounding for use when n >= 0, value >= 0 for (64 bit) */
+/* Shift down with rounding for use when n >= 0 (64-bit value). Usually
+ * value >= 0, but the macro can be used with a negative value if the direction
+ * of rounding is acceptable.
+ */
 #define ROUND_POWER_OF_TWO_64(value, n) \
   (((value) + ((((int64_t)1 << (n)) >> 1))) >> (n))
-/* Shift down with rounding for signed integers, for use when n >= 0 (64 bit) */
+/* Shift down with rounding for signed integers, for use when n >= 0 (64-bit
+ * value)
+ */
 #define ROUND_POWER_OF_TWO_SIGNED_64(value, n)           \
   (((value) < 0) ? -ROUND_POWER_OF_TWO_64(-(value), (n)) \
                  : ROUND_POWER_OF_TWO_64((value), (n)))
+
+/* Shift down with ceil() for use when n >= 0 and value >= 0.*/
+#define CEIL_POWER_OF_TWO(value, n) (((value) + (1 << (n)) - 1) >> (n))
 
 /* shift right or left depending on sign of n */
 #define RIGHT_SIGNED_SHIFT(value, n) \
@@ -60,6 +61,8 @@
 
 #define ALIGN_POWER_OF_TWO(value, n) \
   (((value) + ((1 << (n)) - 1)) & ~((1 << (n)) - 1))
+#define ALIGN_POWER_OF_TWO_UNSIGNED(value, n) \
+  (((value) + ((1u << (n)) - 1)) & ~((1u << (n)) - 1))
 
 #define DIVIDE_AND_ROUND(x, y) (((x) + ((y) >> 1)) / (y))
 

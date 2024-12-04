@@ -120,7 +120,7 @@ arbitrarily chosen value). Instead the recommended pattern is:
 
 * Chose a fully qualified name for the clock domain
   (e.g. `com.example.my_subsystem`)
-* Chose the clock ID as `(HASH("com.example.my_subsystem") + 128) & 0xFFFFFFF`
+* Chose the clock ID as `HASH("com.example.my_subsystem") | 0x80000000`
   where `HASH(x)` is the FNV-1a hash of the fully qualified clock domain name.
 
 ### {#clock_snapshot} The ClockSnapshot trace packet
@@ -238,6 +238,6 @@ and 3AM are ambiguous and could be resolved against two different
 `CLOCK_BOOTTIME` timestamps).
 
 [6756fb05]: https://android-review.googlesource.com/c/platform/external/perfetto/+/1101915/
-[clock_snapshot]: https://android.googlesource.com/platform/external/perfetto/+/refs/heads/master/protos/perfetto/trace/clock_snapshot.proto
+[clock_snapshot]: https://android.googlesource.com/platform/external/perfetto/+/refs/heads/main/protos/perfetto/trace/clock_snapshot.proto
 [timestamp_clock_id]: https://android.googlesource.com/platform/external/perfetto/+/3e7ca4f5893f7d762ec24a2eac9a47343b226c6c/protos/perfetto/trace/trace_packet.proto#68
 [builtin_clocks]: https://android.googlesource.com/platform/external/perfetto/+/3e7ca4f5893f7d762ec24a2eac9a47343b226c6c/protos/perfetto/trace/clock_snapshot.proto#25

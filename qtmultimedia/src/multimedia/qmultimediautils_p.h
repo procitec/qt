@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2021 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #ifndef QMULTIMEDIAUTILS_P_H
 #define QMULTIMEDIAUTILS_P_H
@@ -51,11 +15,74 @@
 // We mean it.
 //
 
-#include <QtMultimedia/qmultimedia.h>
+#include <QtMultimedia/qtmultimediaglobal.h>
+#include <QtMultimedia/private/qmaybe_p.h>
+#include <QtMultimedia/private/qvideotransformation_p.h>
+#include <QtCore/qsize.h>
+#include <QtCore/qurl.h>
+#include <QtGui/rhi/qrhi.h>
 
 QT_BEGIN_NAMESPACE
 
-Q_MULTIMEDIA_EXPORT void qt_real_to_fraction(qreal value, int *numerator, int *denominator);
+class QRhiSwapChain;
+class QVideoFrame;
+class QVideoFrameFormat;
+
+struct Fraction {
+    int numerator;
+    int denominator;
+};
+
+Q_MULTIMEDIA_EXPORT Fraction qRealToFraction(qreal value);
+
+Q_MULTIMEDIA_EXPORT QSize qCalculateFrameSize(QSize resolution, Fraction pixelAspectRatio);
+
+// TODO: after adding pixel aspect ratio to QVideoFrameFormat, the function should
+// consider PAR as well as rotation
+Q_MULTIMEDIA_EXPORT QSize qRotatedFrameSize(QSize size, int rotation);
+
+inline QSize qRotatedFrameSize(QSize size, QtVideo::Rotation rotation)
+{
+    return qRotatedFrameSize(size, qToUnderlying(rotation));
+}
+
+Q_MULTIMEDIA_EXPORT QSize qRotatedFramePresentationSize(const QVideoFrame &frame);
+
+Q_MULTIMEDIA_EXPORT QUrl qMediaFromUserInput(QUrl fileName);
+
+Q_MULTIMEDIA_EXPORT bool qIsAutoHdrEnabled();
+
+Q_MULTIMEDIA_EXPORT QRhiSwapChain::Format
+qGetRequiredSwapChainFormat(const QVideoFrameFormat &format);
+
+Q_MULTIMEDIA_EXPORT bool
+qShouldUpdateSwapChainFormat(QRhiSwapChain *swapChain,
+                             QRhiSwapChain::Format requiredSwapChainFormat);
+
+Q_MULTIMEDIA_EXPORT VideoTransformation
+qNormalizedSurfaceTransformation(const QVideoFrameFormat &format);
+
+Q_MULTIMEDIA_EXPORT VideoTransformation qNormalizedFrameTransformation(const QVideoFrame &frame,
+                                                                       int additionalRotaton = 0);
+
+Q_MULTIMEDIA_EXPORT QtVideo::Rotation
+qVideoRotationFromDegrees(int clockwiseDegrees);
+
+/* The function get mirroring and rotation from the specified QTransform.
+ *
+ * Matrix translation is not taken into consideration.
+ * Matrix negative scaling is interpreted as mirroring.
+ * Absolute X and Y scale values are not taken into consideration as
+ * QVideoFrame and QVideoFrameFormat don't support scaling transformations.
+ *
+ * Sheared matrixes are not supported,
+ * as shearing can make the transformation ambiguous
+ * (the same matrix can be reached by different angle,scaleX,scaleY,shearV,shearH).
+ *
+ * If the given matrix is invalid, or the scale sign is ambiguous,
+ * the function returns an empty optional value.
+ */
+Q_MULTIMEDIA_EXPORT VideoTransformationOpt qVideoTransformationFromMatrix(const QTransform &matrix);
 
 QT_END_NAMESPACE
 

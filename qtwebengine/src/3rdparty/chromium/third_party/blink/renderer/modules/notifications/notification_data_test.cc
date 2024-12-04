@@ -1,18 +1,19 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/modules/notifications/notification_data.h"
 
-#include "base/stl_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/common/notifications/notification_constants.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_testing.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_union_unsignedlong_unsignedlongsequence.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_notification_action.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_notification_options.h"
 #include "third_party/blink/renderer/modules/notifications/notification.h"
 #include "third_party/blink/renderer/modules/notifications/timestamp_trigger.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/wtf/hash_map.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
@@ -50,15 +51,17 @@ const unsigned kNotificationVibrationUnnormalized[] = {10, 1000000, 50, 42};
 const int kNotificationVibrationNormalized[] = {10, 10000, 50};
 
 TEST(NotificationDataTest, ReflectProperties) {
+  test::TaskEnvironment task_environment;
   const KURL base_url(kNotificationBaseUrl);
   V8TestingScope scope(base_url);
 
   Vector<unsigned> vibration_pattern;
-  for (size_t i = 0; i < base::size(kNotificationVibration); ++i)
+  for (size_t i = 0; i < std::size(kNotificationVibration); ++i)
     vibration_pattern.push_back(kNotificationVibration[i]);
 
-  UnsignedLongOrUnsignedLongSequence vibration_sequence;
-  vibration_sequence.SetUnsignedLongSequence(vibration_pattern);
+  auto* vibration_sequence =
+      MakeGarbageCollected<V8UnionUnsignedLongOrUnsignedLongSequence>(
+          vibration_pattern);
 
   HeapVector<Member<NotificationAction>> actions;
   for (size_t i = 0; i < Notification::maxActions(); ++i) {
@@ -72,8 +75,9 @@ TEST(NotificationDataTest, ReflectProperties) {
     actions.push_back(action);
   }
 
-  DOMTimeStamp showTimestamp = base::Time::Now().ToDoubleT() * 1000.0;
-  TimestampTrigger* showTrigger = TimestampTrigger::Create(showTimestamp);
+  const DOMTimeStamp show_timestamp =
+      base::Time::Now().InMillisecondsSinceUnixEpoch();
+  TimestampTrigger* showTrigger = TimestampTrigger::Create(show_timestamp);
 
   NotificationOptions* options =
       NotificationOptions::Create(scope.GetIsolate());
@@ -107,7 +111,8 @@ TEST(NotificationDataTest, ReflectProperties) {
   EXPECT_EQ(kNotificationLang, notification_data->lang);
   EXPECT_EQ(kNotificationBody, notification_data->body);
   EXPECT_EQ(kNotificationTag, notification_data->tag);
-  EXPECT_EQ(base::Time::FromJsTime(showTimestamp),
+  EXPECT_EQ(base::Time::FromMillisecondsSinceUnixEpoch(
+                static_cast<int64_t>(show_timestamp)),
             notification_data->show_trigger_timestamp);
 
   // URLs should be resolved against the base URL of the execution context.
@@ -138,14 +143,16 @@ TEST(NotificationDataTest, ReflectProperties) {
 }
 
 TEST(NotificationDataTest, SilentNotificationWithVibration) {
+  test::TaskEnvironment task_environment;
   V8TestingScope scope;
 
   Vector<unsigned> vibration_pattern;
-  for (size_t i = 0; i < base::size(kNotificationVibration); ++i)
+  for (size_t i = 0; i < std::size(kNotificationVibration); ++i)
     vibration_pattern.push_back(kNotificationVibration[i]);
 
-  UnsignedLongOrUnsignedLongSequence vibration_sequence;
-  vibration_sequence.SetUnsignedLongSequence(vibration_pattern);
+  auto* vibration_sequence =
+      MakeGarbageCollected<V8UnionUnsignedLongOrUnsignedLongSequence>(
+          std::move(vibration_pattern));
 
   NotificationOptions* options =
       NotificationOptions::Create(scope.GetIsolate());
@@ -163,6 +170,7 @@ TEST(NotificationDataTest, SilentNotificationWithVibration) {
 }
 
 TEST(NotificationDataTest, ActionTypeButtonWithPlaceholder) {
+  test::TaskEnvironment task_environment;
   V8TestingScope scope;
 
   HeapVector<Member<NotificationAction>> actions;
@@ -186,6 +194,7 @@ TEST(NotificationDataTest, ActionTypeButtonWithPlaceholder) {
 }
 
 TEST(NotificationDataTest, RenotifyWithEmptyTag) {
+  test::TaskEnvironment task_environment;
   V8TestingScope scope;
 
   NotificationOptions* options =
@@ -205,6 +214,7 @@ TEST(NotificationDataTest, RenotifyWithEmptyTag) {
 }
 
 TEST(NotificationDataTest, InvalidIconUrls) {
+  test::TaskEnvironment task_environment;
   V8TestingScope scope;
 
   HeapVector<Member<NotificationAction>> actions;
@@ -237,14 +247,16 @@ TEST(NotificationDataTest, InvalidIconUrls) {
 }
 
 TEST(NotificationDataTest, VibrationNormalization) {
+  test::TaskEnvironment task_environment;
   V8TestingScope scope;
 
   Vector<unsigned> unnormalized_pattern;
-  for (size_t i = 0; i < base::size(kNotificationVibrationUnnormalized); ++i)
+  for (size_t i = 0; i < std::size(kNotificationVibrationUnnormalized); ++i)
     unnormalized_pattern.push_back(kNotificationVibrationUnnormalized[i]);
 
-  UnsignedLongOrUnsignedLongSequence vibration_sequence;
-  vibration_sequence.SetUnsignedLongSequence(unnormalized_pattern);
+  auto* vibration_sequence =
+      MakeGarbageCollected<V8UnionUnsignedLongOrUnsignedLongSequence>(
+          unnormalized_pattern);
 
   NotificationOptions* options =
       NotificationOptions::Create(scope.GetIsolate());
@@ -257,7 +269,7 @@ TEST(NotificationDataTest, VibrationNormalization) {
   EXPECT_FALSE(exception_state.HadException());
 
   Vector<int> normalized_pattern;
-  for (size_t i = 0; i < base::size(kNotificationVibrationNormalized); ++i)
+  for (size_t i = 0; i < std::size(kNotificationVibrationNormalized); ++i)
     normalized_pattern.push_back(kNotificationVibrationNormalized[i]);
 
   ASSERT_EQ(normalized_pattern.size(),
@@ -269,6 +281,7 @@ TEST(NotificationDataTest, VibrationNormalization) {
 }
 
 TEST(NotificationDataTest, DefaultTimestampValue) {
+  test::TaskEnvironment task_environment;
   V8TestingScope scope;
 
   NotificationOptions* options =
@@ -284,10 +297,11 @@ TEST(NotificationDataTest, DefaultTimestampValue) {
   // wasn't supplied by the developer. "32" has no significance, but an equal
   // comparison of the value could lead to flaky failures.
   EXPECT_NEAR(notification_data->timestamp,
-              base::Time::Now().ToDoubleT() * 1000.0, 32);
+              base::Time::Now().InMillisecondsFSinceUnixEpoch(), 32);
 }
 
 TEST(NotificationDataTest, DirectionValues) {
+  test::TaskEnvironment task_environment;
   V8TestingScope scope;
 
   WTF::HashMap<String, mojom::blink::NotificationDirection> mappings;
@@ -311,6 +325,7 @@ TEST(NotificationDataTest, DirectionValues) {
 }
 
 TEST(NotificationDataTest, MaximumActionCount) {
+  test::TaskEnvironment task_environment;
   V8TestingScope scope;
 
   HeapVector<Member<NotificationAction>> actions;
@@ -342,13 +357,13 @@ TEST(NotificationDataTest, MaximumActionCount) {
 }
 
 TEST(NotificationDataTest, RejectsTriggerTimestampOverAYear) {
+  test::TaskEnvironment task_environment;
   V8TestingScope scope;
 
-  base::Time show_timestamp = base::Time::Now() +
-                              kMaxNotificationShowTriggerDelay +
-                              base::TimeDelta::FromDays(1);
+  base::Time show_timestamp =
+      base::Time::Now() + kMaxNotificationShowTriggerDelay + base::Days(1);
   TimestampTrigger* show_trigger =
-      TimestampTrigger::Create(show_timestamp.ToJsTime());
+      TimestampTrigger::Create(show_timestamp.InMillisecondsFSinceUnixEpoch());
 
   NotificationOptions* options =
       NotificationOptions::Create(scope.GetIsolate());

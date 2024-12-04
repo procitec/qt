@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,9 +13,10 @@
 
 #include <string>
 
+#include "base/component_export.h"
 #include "url/gurl.h"
 
-class GoogleServiceAuthError {
+class COMPONENT_EXPORT(GOOGLE_APIS) GoogleServiceAuthError {
  public:
   //
   // These enumerations are referenced by integer value in HTML login code and
@@ -78,8 +79,16 @@ class GoogleServiceAuthError {
     // The password is valid but web login is required to get a token.
     // WEB_LOGIN_REQUIRED = 13,
 
+    // Indicates the service responded with an error that is bound to the scopes
+    // that are in the request.
+    SCOPE_LIMITED_UNRECOVERABLE_ERROR = 14,
+
+    // Indicates the service responded with a challenge that should be signed
+    // with a binding key and sent back.
+    CHALLENGE_RESPONSE_REQUIRED = 15,
+
     // The number of known error states.
-    NUM_STATES = 14,
+    NUM_STATES = 16,
   };
 
   static constexpr size_t kDeprecatedStateCount = 6;
@@ -112,6 +121,7 @@ class GoogleServiceAuthError {
   GoogleServiceAuthError();
 
   GoogleServiceAuthError(const GoogleServiceAuthError& other);
+  GoogleServiceAuthError& operator=(const GoogleServiceAuthError& other);
 
   // Construct a GoogleServiceAuthError from a network error.
   // It will be created with CONNECTION_FAILED set.
@@ -119,6 +129,12 @@ class GoogleServiceAuthError {
 
   static GoogleServiceAuthError FromInvalidGaiaCredentialsReason(
       InvalidGaiaCredentialsReason reason);
+
+  static GoogleServiceAuthError FromServiceUnavailable(
+      const std::string& error_message);
+
+  static GoogleServiceAuthError FromScopeLimitedUnrecoverableError(
+      const std::string& error_message);
 
   // Construct a SERVICE_ERROR error, e.g. invalid client ID, with an
   // |error_message| which provides more information about the service error.
@@ -129,6 +145,11 @@ class GoogleServiceAuthError {
   // detailing the problems with the response.
   static GoogleServiceAuthError FromUnexpectedServiceResponse(
       const std::string& error_message);
+
+  // Construct a CHALLENGE_RESPONSE_REQUIRED error, with `challenge` containing
+  // an opaque string that should be signed with the binding key.
+  static GoogleServiceAuthError FromTokenBindingChallenge(
+      const std::string& challenge);
 
   // Provided for convenience for clients needing to reset an instance to NONE.
   // (avoids err_ = GoogleServiceAuthError(GoogleServiceAuthError::NONE), due
@@ -142,15 +163,31 @@ class GoogleServiceAuthError {
   int network_error() const;
   const std::string& error_message() const;
 
+  // Should only be used when the error state is CHALLENGE_RESPONSE_REQUIRED.
+  const std::string& GetTokenBindingChallenge() const;
+
   // Should only be used when the error state is INVALID_GAIA_CREDENTIALS.
   InvalidGaiaCredentialsReason GetInvalidGaiaCredentialsReason() const;
 
   // Returns a message describing the error.
   std::string ToString() const;
 
-  // Check if this is error may go away simply by trying again.  Except for the
-  // NONE case, these are mutually exclusive.
+  // In contrast to transient errors, errors in this category imply that
+  // authentication shouldn't simply be retried. The error can be:
+  // - User recoverable: persistent error that can be fixed by user action
+  // (e.g. Sign in).
+  // - Scope error: persistent error that is bound to the scopes in the access
+  // token request and can't be fixed by user action.
   bool IsPersistentError() const;
+
+  // Persistent error that is bound to the scopes in the access
+  // token request and can't be fixed by user action. Authentication should not
+  // be retried.
+  bool IsScopePersistentError() const;
+
+  // Check if this is error may go away simply by trying again.
+  // Except for the NONE case, errors are either transient or persistent but not
+  // both.
   bool IsTransientError() const;
 
  private:
@@ -162,6 +199,7 @@ class GoogleServiceAuthError {
   State state_;
   int network_error_;
   std::string error_message_;
+  std::string token_binding_challenge_;
   InvalidGaiaCredentialsReason invalid_gaia_credentials_reason_;
 };
 

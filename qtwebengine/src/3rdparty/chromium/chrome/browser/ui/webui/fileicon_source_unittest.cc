@@ -1,11 +1,10 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "chrome/browser/ui/webui/fileicon_source.h"
 
 #include "base/memory/ref_counted_memory.h"
-#include "base/stl_util.h"
 #include "base/strings/strcat.h"
 #include "build/build_config.h"
 #include "chrome/browser/icon_manager.h"
@@ -14,7 +13,7 @@
 #include "content/public/test/browser_task_environment.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "ui/base/layout.h"
+#include "ui/base/resource/resource_scale_factor.h"
 
 namespace {
 
@@ -29,11 +28,12 @@ class TestFileIconSource : public FileIconSource {
       content::URLDataSource::GotDataCallback callback) override {
     FetchFileIcon_(path, scale_factor, icon_size, callback);
   }
-  MOCK_METHOD4(FetchFileIcon_,
-               void(const base::FilePath& path,
-                    float scale_factor,
-                    IconLoader::IconSize icon_size,
-                    content::URLDataSource::GotDataCallback& callback));
+  MOCK_METHOD(void,
+              FetchFileIcon_,
+              (const base::FilePath& path,
+               float scale_factor,
+               IconLoader::IconSize icon_size,
+               content::URLDataSource::GotDataCallback& callback));
 
   ~TestFileIconSource() override {}
 };
@@ -73,7 +73,7 @@ const struct FetchFileIconExpectation {
      FILE_PATH_LITERAL("a?iconsize=small"), 1.0f, IconLoader::LARGE},
     {"?path=o%40%23%24%25%26*()%20%2B%3D%3F%2C%3A%3B%22.jpg",
      FILE_PATH_LITERAL("o@#$%&*() +=?,:;\".jpg"), 1.0f, IconLoader::NORMAL},
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
     {"?path=c%3A%2Ffoo%2Fbar%2Fbaz", FILE_PATH_LITERAL("c:\\foo\\bar\\baz"),
      1.0f, IconLoader::NORMAL},
     {"?path=%2Ffoo&bar=asdf&asdf", FILE_PATH_LITERAL("\\foo"), 1.0f,
@@ -82,9 +82,9 @@ const struct FetchFileIconExpectation {
      FILE_PATH_LITERAL("c:\\users\\foo user\\bar.txt"), 1.0f,
      IconLoader::NORMAL},
     {"?path=c%3A%2Fusers%2F%C2%A9%202000.pdf",
-     FILE_PATH_LITERAL("c:\\users\\\xa9 2000.pdf"), 1.0f, IconLoader::NORMAL},
+     FILE_PATH_LITERAL("c:\\users\\\u00a9 2000.pdf"), 1.0f, IconLoader::NORMAL},
     {"?path=%E0%B6%9A%E0%B6%BB%E0%B7%9D%E0%B6%B8%E0%B7%8A",
-     FILE_PATH_LITERAL("\x0d9a\x0dbb\x0ddd\x0db8\x0dca"), 1.0f,
+     FILE_PATH_LITERAL("\u0d9a\u0dbb\u0ddd\u0db8\u0dca"), 1.0f,
      IconLoader::NORMAL},
     {"?path=%2Ffoo%2Fbar", FILE_PATH_LITERAL("\\foo\\bar"), 1.0f,
      IconLoader::NORMAL},
@@ -95,8 +95,8 @@ const struct FetchFileIconExpectation {
      IconLoader::NORMAL},
     {"?path=%2Ffoo&bar", FILE_PATH_LITERAL("/foo"), 1.0f, IconLoader::NORMAL},
     {"?path=%2Ffoo%2f%E0%B6%9A%E0%B6%BB%E0%B7%9D%E0%B6%B8%E0%B7%8A",
-     FILE_PATH_LITERAL("/foo/\xe0\xb6\x9a\xe0\xb6\xbb\xe0\xb7\x9d")
-         FILE_PATH_LITERAL("\xe0\xb6\xb8\xe0\xb7\x8a"),
+     FILE_PATH_LITERAL("/foo/\u0d9a\u0dbb\u0ddd")
+         FILE_PATH_LITERAL("\u0db8\u0dca"),
      1.0f, IconLoader::NORMAL},
     {"?path=%2Ffoo%2Fbar", FILE_PATH_LITERAL("/foo/bar"), 1.0f,
      IconLoader::NORMAL},
@@ -113,13 +113,10 @@ MATCHER(CallbackIsNull, "") {
 }  // namespace
 
 TEST_F(FileIconSourceTest, FileIconSource_Parse) {
-  std::vector<ui::ScaleFactor> supported_scale_factors;
-  supported_scale_factors.push_back(ui::SCALE_FACTOR_100P);
-  supported_scale_factors.push_back(ui::SCALE_FACTOR_200P);
-  ui::test::ScopedSetSupportedScaleFactors scoped_supported(
-      supported_scale_factors);
+  ui::test::ScopedSetSupportedResourceScaleFactors scoped_supported(
+      {ui::k100Percent, ui::k200Percent});
 
-  for (unsigned i = 0; i < base::size(kBasicExpectations); i++) {
+  for (unsigned i = 0; i < std::size(kBasicExpectations); i++) {
     auto source = std::make_unique<TestFileIconSource>();
     content::URLDataSource::GotDataCallback callback;
     EXPECT_CALL(

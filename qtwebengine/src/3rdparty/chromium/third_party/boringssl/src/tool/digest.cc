@@ -115,7 +115,7 @@ static bool SumFile(std::string *out_hex, const EVP_MD *md,
   }
 
   static const size_t kBufSize = 8192;
-  std::unique_ptr<uint8_t[]> buf(new uint8_t[kBufSize]);
+  auto buf = std::make_unique<uint8_t[]>(kBufSize);
 
   bssl::ScopedEVP_MD_CTX ctx;
   if (!EVP_DigestInit_ex(ctx.get(), md, NULL)) {
@@ -226,7 +226,6 @@ static bool Check(const CheckModeArguments &args, const EVP_MD *md,
   unsigned bad_lines = 0;
   unsigned parsed_lines = 0;
   unsigned error_lines = 0;
-  unsigned bad_hash_lines = 0;
   unsigned line_no = 0;
   bool ok = true;
   bool draining_overlong_line = false;
@@ -297,7 +296,6 @@ static bool Check(const CheckModeArguments &args, const EVP_MD *md,
     }
 
     if (calculated_hex_digest != std::string(line, hex_size)) {
-      bad_hash_lines++;
       if (!args.status) {
         printf("%s: FAILED\n", target_filename.c_str());
       }

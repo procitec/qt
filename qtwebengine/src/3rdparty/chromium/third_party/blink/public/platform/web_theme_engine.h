@@ -31,15 +31,19 @@
 #ifndef THIRD_PARTY_BLINK_PUBLIC_PLATFORM_WEB_THEME_ENGINE_H_
 #define THIRD_PARTY_BLINK_PUBLIC_PLATFORM_WEB_THEME_ENGINE_H_
 
-#include "base/optional.h"
+#include <map>
 #include "base/time/time.h"
 #include "build/build_config.h"
-#include "third_party/blink/public/common/css/color_scheme.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "third_party/abseil-cpp/absl/types/variant.h"
 #include "third_party/blink/public/common/css/forced_colors.h"
-#include "third_party/blink/public/platform/web_rect.h"
+#include "third_party/blink/public/mojom/frame/color_scheme.mojom-shared.h"
 #include "third_party/blink/public/platform/web_scrollbar_overlay_color_theme.h"
-#include "third_party/blink/public/platform/web_size.h"
 #include "third_party/skia/include/core/SkColor.h"
+#include "ui/color/color_provider_utils.h"
+#include "ui/gfx/color_palette.h"
+#include "ui/gfx/geometry/rect.h"
+#include "ui/gfx/geometry/size.h"
 
 namespace cc {
 class PaintCanvas;
@@ -102,81 +106,114 @@ class WebThemeEngine {
   // Extra parameters for drawing the PartScrollbarHorizontalTrack and
   // PartScrollbarVerticalTrack.
   struct ScrollbarTrackExtraParams {
-    bool is_back;  // Whether this is the 'back' part or the 'forward' part.
+    bool is_back =
+        false;  // Whether this is the 'back' part or the 'forward' part.
 
     // The bounds of the entire track, as opposed to the part being painted.
-    int track_x;
-    int track_y;
-    int track_width;
-    int track_height;
+    int track_x = 0;
+    int track_y = 0;
+    int track_width = 0;
+    int track_height = 0;
+    absl::optional<SkColor> track_color;
   };
 
   // Extra parameters for PartCheckbox, PartPushButton and PartRadio.
   struct ButtonExtraParams {
-    bool checked;
-    bool indeterminate;  // Whether the button state is indeterminate.
-    bool has_border;
-    SkColor background_color;
-    float zoom;
+    bool checked = false;
+    bool indeterminate = false;  // Whether the button state is indeterminate.
+    bool has_border = false;
+    SkColor background_color = gfx::kPlaceholderColor;
+    float zoom = 0;
   };
 
   // Extra parameters for PartTextField
   struct TextFieldExtraParams {
-    bool is_text_area;
-    bool is_listbox;
-    SkColor background_color;
-    bool has_border;
-    bool auto_complete_active;
+    bool is_text_area = false;
+    bool is_listbox = false;
+    SkColor background_color = gfx::kPlaceholderColor;
+    bool has_border = false;
+    bool auto_complete_active = false;
+    float zoom = 0;
+  };
+
+  enum class ArrowDirection : int {
+    kDown,
+    kLeft,
+    kRight,
   };
 
   // Extra parameters for PartMenuList
   struct MenuListExtraParams {
-    bool has_border;
-    bool has_border_radius;
-    int arrow_x;
-    int arrow_y;
-    int arrow_size;
-    SkColor arrow_color;
-    SkColor background_color;
-    bool fill_content_area;
+    bool has_border = false;
+    bool has_border_radius = false;
+    int arrow_x = 0;
+    int arrow_y = 0;
+    int arrow_size = 0;
+    ArrowDirection arrow_direction = ArrowDirection::kDown;
+    SkColor arrow_color = gfx::kPlaceholderColor;
+    SkColor background_color = gfx::kPlaceholderColor;
+    bool fill_content_area = false;
+    float zoom = 0;
   };
 
   // Extra parameters for PartSliderTrack and PartSliderThumb
   struct SliderExtraParams {
-    bool vertical;
-    bool in_drag;
-    int thumb_x;
-    int thumb_y;
-    float zoom;
-    bool right_to_left;
+    bool vertical = false;
+    bool in_drag = false;
+    int thumb_x = 0;
+    int thumb_y = 0;
+    float zoom = 0;
+    bool right_to_left = false;
+  };
+
+  enum class SpinArrowsDirection : int {
+    kLeftRight,
+    kUpDown,
   };
 
   // Extra parameters for PartInnerSpinButton
   struct InnerSpinButtonExtraParams {
-    bool spin_up;
-    bool read_only;
+    bool spin_up = false;
+    bool read_only = false;
+    SpinArrowsDirection spin_arrows_direction = SpinArrowsDirection::kUpDown;
   };
 
   // Extra parameters for PartProgressBar
   struct ProgressBarExtraParams {
-    bool determinate;
-    int value_rect_x;
-    int value_rect_y;
-    int value_rect_width;
-    int value_rect_height;
+    bool determinate = false;
+    int value_rect_x = 0;
+    int value_rect_y = 0;
+    int value_rect_width = 0;
+    int value_rect_height = 0;
+    float zoom = 0;
+    bool is_horizontal = false;
   };
 
-  // Extra parameters for scrollbar thumb. Used only for overlay scrollbars.
+  // Extra parameters for scrollbar thumb.
   struct ScrollbarThumbExtraParams {
-    WebScrollbarOverlayColorTheme scrollbar_theme;
+    WebScrollbarOverlayColorTheme scrollbar_theme =
+        WebScrollbarOverlayColorTheme::kWebScrollbarOverlayColorThemeDark;
+    absl::optional<SkColor> thumb_color;
   };
 
   struct ScrollbarButtonExtraParams {
-    float zoom;
-    bool right_to_left;
+    // TODO(crbug.com/1493088): We should probably pass the border-radius
+    // instead.
+    float zoom = 0;
+    bool needs_rounded_corner = false;
+    bool right_to_left = false;
+    absl::optional<SkColor> thumb_color;
+    absl::optional<SkColor> track_color;
   };
 
-#if defined(OS_MAC)
+  // Represents ui::NativeTheme System Info
+  struct SystemColorInfoState {
+    bool is_dark_mode = false;
+    bool forced_colors = false;
+    std::map<SystemThemeColor, uint32_t> colors;
+  };
+
+#if BUILDFLAG(IS_MAC)
   enum ScrollbarOrientation {
     // Vertical scrollbar on the right side of content.
     kVerticalOnRight,
@@ -187,45 +224,47 @@ class WebThemeEngine {
   };
 
   struct ScrollbarExtraParams {
-    bool is_hovering;
-    bool is_overlay;
-    ColorScheme scrollbar_theme;
-    ScrollbarOrientation orientation;
+    bool is_hovering = false;
+    bool is_overlay = false;
+    mojom::ColorScheme scrollbar_theme = mojom::ColorScheme::kLight;
+    ScrollbarOrientation orientation = ScrollbarOrientation::kVerticalOnRight;
+    float scale_from_dip = 0;
+    absl::optional<SkColor> thumb_color;
+    absl::optional<SkColor> track_color;
   };
 #endif
 
-  union ExtraParams {
-    ScrollbarTrackExtraParams scrollbar_track;
-    ButtonExtraParams button;
-    TextFieldExtraParams text_field;
-    MenuListExtraParams menu_list;
-    SliderExtraParams slider;
-    InnerSpinButtonExtraParams inner_spin;
-    ProgressBarExtraParams progress_bar;
-    ScrollbarThumbExtraParams scrollbar_thumb;
-    ScrollbarButtonExtraParams scrollbar_button;
-#if defined(OS_MAC)
-    ScrollbarExtraParams scrollbar_extra;
+  using ExtraParams = absl::variant<ScrollbarTrackExtraParams,
+                                    ButtonExtraParams,
+                                    TextFieldExtraParams,
+                                    MenuListExtraParams,
+                                    SliderExtraParams,
+                                    InnerSpinButtonExtraParams,
+                                    ProgressBarExtraParams,
+                                    ScrollbarThumbExtraParams,
+#if BUILDFLAG(IS_MAC)
+                                    ScrollbarExtraParams,
 #endif
-  };
+                                    ScrollbarButtonExtraParams>;
 
   virtual ~WebThemeEngine() {}
 
   // Gets the size of the given theme part. For variable sized items
   // like vertical scrollbar thumbs, the width will be the required width of
   // the track while the height will be the minimum height.
-  virtual WebSize GetSize(Part) { return WebSize(); }
+  virtual gfx::Size GetSize(Part) { return gfx::Size(); }
 
   virtual bool SupportsNinePatch(Part) const { return false; }
-  virtual WebSize NinePatchCanvasSize(Part) const { return WebSize(); }
-  virtual WebRect NinePatchAperture(Part) const { return WebRect(); }
+  virtual gfx::Size NinePatchCanvasSize(Part) const { return gfx::Size(); }
+  virtual gfx::Rect NinePatchAperture(Part) const { return gfx::Rect(); }
 
   struct ScrollbarStyle {
     int thumb_thickness;
     int scrollbar_margin;
-    SkColor color;
+    SkColor4f color;
     base::TimeDelta fade_out_delay;
     base::TimeDelta fade_out_duration;
+    float idle_thickness_scale;
   };
 
   // Gets the overlay scrollbar style. Not used on Mac.
@@ -240,23 +279,51 @@ class WebThemeEngine {
     // NativeTheme so these fields are unused in non-Android WebThemeEngines.
   }
 
-  // Paint the given the given theme part.
-  virtual void Paint(cc::PaintCanvas*,
-                     Part,
-                     State,
-                     const WebRect&,
-                     const ExtraParams*,
-                     blink::ColorScheme) {}
+  virtual bool IsFluentOverlayScrollbarEnabled() const { return false; }
+  virtual int GetPaintedScrollbarTrackInset() const { return 0; }
 
-  virtual base::Optional<SkColor> GetSystemColor(
+  // Paint the given the given theme part.
+  virtual void Paint(
+      cc::PaintCanvas*,
+      Part,
+      State,
+      const gfx::Rect&,
+      const ExtraParams*,
+      blink::mojom::ColorScheme,
+      const ui::ColorProvider*,
+      const absl::optional<SkColor>& accent_color = absl::nullopt) {}
+
+  virtual absl::optional<SkColor> GetSystemColor(
       SystemThemeColor system_theme) const {
-    return base::nullopt;
+    return absl::nullopt;
+  }
+
+  virtual absl::optional<SkColor> GetAccentColor() const {
+    return absl::nullopt;
   }
 
   virtual ForcedColors GetForcedColors() const { return ForcedColors::kNone; }
+  virtual void OverrideForcedColorsTheme(bool is_dark_theme) {}
   virtual void SetForcedColors(const blink::ForcedColors forced_colors) {}
+  virtual void ResetToSystemColors(
+      SystemColorInfoState system_color_info_state) {}
+  virtual SystemColorInfoState GetSystemColorInfo() {
+    SystemColorInfoState state;
+    return state;
+  }
+  virtual void EmulateForcedColors(bool is_dark_theme, bool is_web_test) {}
+
+  // Updates the WebThemeEngine's global light, dark and forced colors
+  // ColorProvider instances using the RendererColorMaps provided. Returns true
+  // if new ColorProviders were created, returns false otherwise.
+  virtual bool UpdateColorProviders(
+      const ui::RendererColorMap& light_colors,
+      const ui::RendererColorMap& dark_colors,
+      const ui::RendererColorMap& forced_colors_map) {
+    return false;
+  }
 };
 
 }  // namespace blink
 
-#endif
+#endif  // THIRD_PARTY_BLINK_PUBLIC_PLATFORM_WEB_THEME_ENGINE_H_

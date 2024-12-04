@@ -1,4 +1,4 @@
-// Copyright (c) 2011 The Chromium Authors. All rights reserved.
+// Copyright 2011 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,16 +8,33 @@
 #include <stdint.h>
 #include <sys/time.h>
 
-#include "base/optional.h"
 #include "base/synchronization/lock.h"
 #include "base/threading/scoped_blocking_call.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
-#if defined(OS_ANDROID) && __ANDROID_API__ < 21
+#if BUILDFLAG(IS_APPLE)
+#include <atomic>
+
+#include "base/feature_list.h"
+#endif
+
+#if BUILDFLAG(IS_ANDROID) && __ANDROID_API__ < 21
 #define HAVE_PTHREAD_COND_TIMEDWAIT_MONOTONIC 1
 #endif
+
+namespace {
+#if BUILDFLAG(IS_APPLE)
+// Under this feature a hack that was introduced to avoid crashes is skipped.
+// Use to evaluate if the hack is still needed. See https://crbug.com/517681.
+BASE_FEATURE(kSkipConditionVariableWakeupHack,
+             "SkipConditionVariableWakeupHack",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+std::atomic_bool g_skip_wakeup_hack = false;
+#endif
+}  // namespace
 
 namespace base {
 
@@ -34,7 +51,7 @@ ConditionVariable::ConditionVariable(Lock* user_lock)
   // non-standard pthread_cond_timedwait_monotonic_np. Newer platform
   // versions have pthread_condattr_setclock.
   // Mac can use relative time deadlines.
-#if !defined(OS_APPLE) && !defined(OS_NACL) && \
+#if !BUILDFLAG(IS_APPLE) && !BUILDFLAG(IS_NACL) && \
     !defined(HAVE_PTHREAD_COND_TIMEDWAIT_MONOTONIC)
   pthread_condattr_t attrs;
   rv = pthread_condattr_init(&attrs);
@@ -49,10 +66,10 @@ ConditionVariable::ConditionVariable(Lock* user_lock)
 }
 
 ConditionVariable::~ConditionVariable() {
-#if defined(OS_APPLE)
+#if BUILDFLAG(IS_APPLE)
   // This hack is necessary to avoid a fatal pthreads subsystem bug in the
   // Darwin kernel. http://crbug.com/517681.
-  {
+  if (!g_skip_wakeup_hack.load(std::memory_order_relaxed)) {
     base::Lock lock;
     base::AutoLock l(lock);
     struct timespec ts;
@@ -67,8 +84,17 @@ ConditionVariable::~ConditionVariable() {
   DCHECK_EQ(0, rv);
 }
 
+#if BUILDFLAG(IS_APPLE)
+// static
+void ConditionVariable::InitializeFeatures() {
+  g_skip_wakeup_hack.store(
+      base::FeatureList::IsEnabled(kSkipConditionVariableWakeupHack),
+      std::memory_order_relaxed);
+}
+#endif
+
 void ConditionVariable::Wait() {
-  Optional<internal::ScopedBlockingCallWithBaseSyncPrimitives>
+  absl::optional<internal::ScopedBlockingCallWithBaseSyncPrimitives>
       scoped_blocking_call;
   if (waiting_is_blocking_)
     scoped_blocking_call.emplace(FROM_HERE, BlockingType::MAY_BLOCK);
@@ -84,14 +110,15 @@ void ConditionVariable::Wait() {
 }
 
 void ConditionVariable::TimedWait(const TimeDelta& max_time) {
-  Optional<internal::ScopedBlockingCallWithBaseSyncPrimitives>
+  absl::optional<internal::ScopedBlockingCallWithBaseSyncPrimitives>
       scoped_blocking_call;
   if (waiting_is_blocking_)
     scoped_blocking_call.emplace(FROM_HERE, BlockingType::MAY_BLOCK);
 
   int64_t usecs = max_time.InMicroseconds();
   struct timespec relative_time;
-  relative_time.tv_sec = usecs / Time::kMicrosecondsPerSecond;
+  relative_time.tv_sec =
+      static_cast<time_t>(usecs / Time::kMicrosecondsPerSecond);
   relative_time.tv_nsec =
       (usecs % Time::kMicrosecondsPerSecond) * Time::kNanosecondsPerMicrosecond;
 
@@ -99,13 +126,13 @@ void ConditionVariable::TimedWait(const TimeDelta& max_time) {
   user_lock_->CheckHeldAndUnmark();
 #endif
 
-#if defined(OS_APPLE)
+#if BUILDFLAG(IS_APPLE)
   int rv = pthread_cond_timedwait_relative_np(
       &condition_, user_mutex_, &relative_time);
 #else
   // The timeout argument to pthread_cond_timedwait is in absolute time.
   struct timespec absolute_time;
-#if defined(OS_NACL)
+#if BUILDFLAG(IS_NACL)
   // See comment in constructor for why this is different in NaCl.
   struct timeval now;
   gettimeofday(&now, NULL);
@@ -130,7 +157,7 @@ void ConditionVariable::TimedWait(const TimeDelta& max_time) {
 #else
   int rv = pthread_cond_timedwait(&condition_, user_mutex_, &absolute_time);
 #endif  // HAVE_PTHREAD_COND_TIMEDWAIT_MONOTONIC
-#endif  // OS_APPLE
+#endif  // BUILDFLAG(IS_APPLE)
 
   // On failure, we only expect the CV to timeout. Any other error value means
   // that we've unexpectedly woken up.

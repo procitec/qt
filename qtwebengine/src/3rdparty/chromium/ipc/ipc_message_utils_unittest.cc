@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -18,7 +18,7 @@
 #include "ipc/ipc_message.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 #include <windows.h>
 #endif
 
@@ -84,21 +84,23 @@ TEST(IPCMessageUtilsTest, ParameterValidation) {
   ASSERT_FALSE(ParamTraits<base::FilePath>::Read(&message, &iter, &bad_path));
 }
 
-
-TEST(IPCMessageUtilsTest, StackVector) {
-  static const size_t stack_capacity = 5;
-  base::StackVector<double, stack_capacity> stack_vector;
-  for (size_t i = 0; i < 2 * stack_capacity; i++)
-    stack_vector->push_back(i * 2.0);
+TEST(IPCMessageUtilsTest, InlinedVector) {
+  static constexpr size_t stack_capacity = 5;
+  absl::InlinedVector<double, stack_capacity> inlined_vector;
+  for (size_t i = 0; i < 2 * stack_capacity; i++) {
+    inlined_vector.push_back(i * 2.0);
+  }
 
   IPC::Message msg(1, 2, IPC::Message::PRIORITY_NORMAL);
-  IPC::WriteParam(&msg, stack_vector);
+  IPC::WriteParam(&msg, inlined_vector);
 
-  base::StackVector<double, stack_capacity> output;
+  absl::InlinedVector<double, stack_capacity> output;
   base::PickleIterator iter(msg);
   EXPECT_TRUE(IPC::ReadParam(&msg, &iter, &output));
-  for (size_t i = 0; i < 2 * stack_capacity; i++)
-    EXPECT_EQ(stack_vector[i], output[i]);
+  ASSERT_EQ(inlined_vector.size(), output.size());
+  for (size_t i = 0; i < 2 * stack_capacity; i++) {
+    EXPECT_EQ(inlined_vector[i], output[i]);
+  }
 }
 
 TEST(IPCMessageUtilsTest, MojoChannelHandle) {
@@ -115,7 +117,7 @@ TEST(IPCMessageUtilsTest, MojoChannelHandle) {
 }
 
 TEST(IPCMessageUtilsTest, OptionalUnset) {
-  base::Optional<int> opt;
+  std::optional<int> opt;
   base::Pickle pickle;
   IPC::WriteParam(&pickle, opt);
 
@@ -123,14 +125,14 @@ TEST(IPCMessageUtilsTest, OptionalUnset) {
   IPC::LogParam(opt, &log);
   EXPECT_EQ("(unset)", log);
 
-  base::Optional<int> unserialized_opt;
+  std::optional<int> unserialized_opt;
   base::PickleIterator iter(pickle);
   EXPECT_TRUE(IPC::ReadParam(&pickle, &iter, &unserialized_opt));
   EXPECT_FALSE(unserialized_opt);
 }
 
 TEST(IPCMessageUtilsTest, OptionalSet) {
-  base::Optional<int> opt(10);
+  std::optional<int> opt(10);
   base::Pickle pickle;
   IPC::WriteParam(&pickle, opt);
 
@@ -138,7 +140,7 @@ TEST(IPCMessageUtilsTest, OptionalSet) {
   IPC::LogParam(opt, &log);
   EXPECT_EQ("10", log);
 
-  base::Optional<int> unserialized_opt;
+  std::optional<int> unserialized_opt;
   base::PickleIterator iter(pickle);
   EXPECT_TRUE(IPC::ReadParam(&pickle, &iter, &unserialized_opt));
   EXPECT_TRUE(unserialized_opt);
@@ -156,9 +158,7 @@ TYPED_TEST_SUITE(SharedMemoryRegionTypedTest, AllSharedMemoryRegionTypes);
 
 TYPED_TEST(SharedMemoryRegionTypedTest, WriteAndRead) {
   const size_t size = 2314;
-  TypeParam pre_pickle;
-  base::WritableSharedMemoryMapping pre_mapping;
-  std::tie(pre_pickle, pre_mapping) = base::CreateMappedRegion<TypeParam>(size);
+  auto [pre_pickle, pre_mapping] = base::CreateMappedRegion<TypeParam>(size);
   const size_t pre_size = pre_pickle.GetSize();
 
   const std::string content = "Hello, world!";
@@ -222,7 +222,7 @@ TEST(IPCMessageUtilsTest, FlatMap) {
 }
 
 TEST(IPCMessageUtilsTest, StrongAlias) {
-  using TestType = util::StrongAlias<class Tag, int>;
+  using TestType = base::StrongAlias<class Tag, int>;
   TestType input(42);
 
   base::Pickle pickle;
@@ -235,7 +235,41 @@ TEST(IPCMessageUtilsTest, StrongAlias) {
   EXPECT_EQ(input, output);
 }
 
-#if defined(OS_WIN)
+TEST(IPCMessageUtilsTest, DictValueConversion) {
+  base::Value::Dict dict_value;
+  dict_value.Set("path1", 42);
+  dict_value.Set("path2", 84);
+  base::Value::List subvalue;
+  subvalue.Append(1234);
+  subvalue.Append(5678);
+  dict_value.Set("path3", std::move(subvalue));
+
+  IPC::Message message;
+  ParamTraits<base::Value::Dict>::Write(&message, dict_value);
+
+  base::PickleIterator iter(message);
+  base::Value::Dict read_value;
+  ASSERT_TRUE(
+      ParamTraits<base::Value::Dict>::Read(&message, &iter, &read_value));
+  EXPECT_EQ(dict_value, read_value);
+}
+
+TEST(IPCMessageUtilsTest, ListValueConversion) {
+  base::Value::List list_value;
+  list_value.Append(42);
+  list_value.Append(84);
+
+  IPC::Message message;
+  ParamTraits<base::Value::List>::Write(&message, list_value);
+
+  base::PickleIterator iter(message);
+  base::Value::List read_value;
+  ASSERT_TRUE(
+      ParamTraits<base::Value::List>::Read(&message, &iter, &read_value));
+  EXPECT_EQ(list_value, read_value);
+}
+
+#if BUILDFLAG(IS_WIN)
 TEST(IPCMessageUtilsTest, ScopedHandle) {
   HANDLE raw_dupe_handle;
   ASSERT_TRUE(::DuplicateHandle(::GetCurrentProcess(), ::GetCurrentProcess(),
@@ -251,7 +285,7 @@ TEST(IPCMessageUtilsTest, ScopedHandle) {
   EXPECT_TRUE(ReadParam(&message, &iter, &read_handle));
   EXPECT_TRUE(read_handle.IsValid());
 }
-#endif  // defined(OS_WIN)
+#endif  // BUILDFLAG(IS_WIN)
 
 }  // namespace
 }  // namespace IPC

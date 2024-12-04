@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,20 +13,24 @@
 #include "base/memory/ptr_util.h"
 #include "base/notreached.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/values.h"
+#include "build/build_config.h"
+#include "build/chromeos_buildflags.h"
+#include "components/cloud_devices/common/cloud_device_description.h"
 #include "components/cloud_devices/common/printer_description.h"
 #include "printing/backend/print_backend.h"
 #include "printing/mojom/print.mojom.h"
-
-#if defined(OS_CHROMEOS)
-#include "base/feature_list.h"
-#include "printing/printing_features.h"
-#endif  // defined(OS_CHROMEOS)
 
 namespace printer = cloud_devices::printer;
 
 namespace cloud_print {
 
 namespace {
+
+#if BUILDFLAG(IS_WIN)
+constexpr char kIdPageOutputQuality[] = "page_output_quality";
+constexpr char kDisplayNamePageOutputQuality[] = "Page output quality";
+#endif  // BUILDFLAG(IS_WIN)
 
 printer::DuplexType ToCloudDuplexType(printing::mojom::DuplexMode mode) {
   switch (mode) {
@@ -42,7 +46,7 @@ printer::DuplexType ToCloudDuplexType(printing::mojom::DuplexMode mode) {
   return printer::DuplexType::NO_DUPLEX;
 }
 
-#if defined(OS_CHROMEOS)
+#if BUILDFLAG(IS_CHROMEOS)
 printer::TypedValueVendorCapability::ValueType ToCloudValueType(
     printing::AdvancedCapability::Type type) {
   switch (type) {
@@ -59,17 +63,76 @@ printer::TypedValueVendorCapability::ValueType ToCloudValueType(
   }
   return printer::TypedValueVendorCapability::ValueType::STRING;
 }
-#endif  // defined(OS_CHROMEOS)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 printer::Media ConvertPaperToMedia(
     const printing::PrinterSemanticCapsAndDefaults::Paper& paper) {
-  gfx::Size paper_size = paper.size_um;
-  if (paper_size.width() > paper_size.height())
+  if (paper.SupportsCustomSize()) {
+    return printer::MediaBuilder()
+        .WithCustomName(paper.display_name(), paper.vendor_id())
+        .WithSizeAndDefaultPrintableArea(paper.size_um())
+        .WithMaxHeight(paper.max_height_um())
+        .Build();
+  }
+
+  gfx::Size paper_size = paper.size_um();
+  gfx::Rect paper_printable_area = paper.printable_area_um();
+  // When converting to Media, the size and printable area should have a larger
+  // height than width.
+  if (paper_size.width() > paper_size.height()) {
+    // When swapping the printable_area, we can't simply transpose the rect
+    // since the margins may not be the same on all sides.  A visualization may
+    // help.  Suppose we have a page with width of 127000 and height of 76200.
+    // Additionally, the left margin is 1000, right margin is 700, bottom margin
+    // is 500, and top margin is 200.
+    //
+    //        +---------- 127000 ---------+
+    //        |        200                |
+    //      76200      +-----------+      |
+    //        |        |           |      |
+    //        |  1000  |           |  700 |
+    //        |        |           |      |
+    //        |        +-----------+      |
+    //        |         500               |
+    //        +---------------------------+
+    //
+    // After swapping the page size and printable area (rotating 90 degrees
+    // clockwise), this should be the resulting sizes:
+    //
+    //        +---- 76200 ---+
+    //        |              |
+    //        |      1000    |
+    //        |             127000
+    //        |    +-----+   |
+    //        |    |     |   |
+    //        |    |     |   |
+    //        |500 |     |200|
+    //        |    |     |   |
+    //        |    |     |   |
+    //        |    +-----+   |
+    //        |              |
+    //        |      700     |
+    //        +--------------+
+    //
+    // Namely, the new x value for the printable area is: the old printable area
+    // y value.  The new y value for the printable area is: (the old width) -
+    // (the old printable area width) - (the old printable areay x value).  Note
+    // that if the top/bottom margins are equal and the left/right margins are
+    // equal, then a simple transpose does indeed work.
+
+    // Rotate clockwise by 90 degrees.
+    int new_x = paper_printable_area.y();
+    int new_y = paper_size.width() - paper_printable_area.width() -
+                paper_printable_area.x();
+    paper_printable_area.SetRect(new_x, new_y, paper_printable_area.height(),
+                                 paper_printable_area.width());
     paper_size.SetSize(paper_size.height(), paper_size.width());
-  printer::Media new_media(paper.display_name, paper.vendor_id,
-                           paper_size.width(), paper_size.height());
-  new_media.MatchBySize();
-  return new_media;
+  }
+  return printer::MediaBuilder()
+      .WithSizeAndPrintableArea(paper_size, paper_printable_area)
+      .WithNameMaybeBasedOnSize(paper.display_name(), paper.vendor_id())
+      .WithBorderlessVariant(paper.has_borderless_variant())
+      .Build();
 }
 
 printer::MediaCapability GetMediaCapabilities(
@@ -77,11 +140,16 @@ printer::MediaCapability GetMediaCapabilities(
   printer::MediaCapability media_capabilities;
   bool is_default_set = false;
 
-  printer::Media default_media(semantic_info.default_paper.display_name,
-                               semantic_info.default_paper.vendor_id,
-                               semantic_info.default_paper.size_um.width(),
-                               semantic_info.default_paper.size_um.height());
-  default_media.MatchBySize();
+  const printing::PrinterSemanticCapsAndDefaults::Paper& default_paper =
+      semantic_info.default_paper;
+  printer::Media default_media =
+      printer::MediaBuilder()
+          .WithSizeAndPrintableArea(default_paper.size_um(),
+                                    default_paper.printable_area_um())
+          .WithNameMaybeBasedOnSize(default_paper.display_name(),
+                                    default_paper.vendor_id())
+          .WithBorderlessVariant(default_paper.has_borderless_variant())
+          .Build();
 
   for (const auto& paper : semantic_info.papers) {
     printer::Media new_media = ConvertPaperToMedia(paper);
@@ -112,6 +180,29 @@ printer::MediaCapability GetMediaCapabilities(
   return media_capabilities;
 }
 
+printer::MediaTypeCapability GetMediaTypeCapabilities(
+    const printing::PrinterSemanticCapsAndDefaults& semantic_info) {
+  printer::MediaTypeCapability media_type_capabilities;
+
+  for (const auto& media_type : semantic_info.media_types) {
+    printer::MediaType new_media_type(media_type.vendor_id,
+                                      media_type.display_name);
+    if (!new_media_type.IsValid()) {
+      continue;
+    }
+
+    if (media_type_capabilities.Contains(new_media_type)) {
+      continue;
+    }
+
+    media_type_capabilities.AddDefaultOption(
+        new_media_type,
+        media_type.vendor_id == semantic_info.default_media_type.vendor_id);
+  }
+
+  return media_type_capabilities;
+}
+
 printer::DpiCapability GetDpiCapabilities(
     const printing::PrinterSemanticCapsAndDefaults& semantic_info) {
   printer::DpiCapability dpi_capabilities;
@@ -138,7 +229,7 @@ printer::DpiCapability GetDpiCapabilities(
   return dpi_capabilities;
 }
 
-#if defined(OS_CHROMEOS)
+#if BUILDFLAG(IS_CHROMEOS)
 printer::VendorCapabilities GetVendorCapabilities(
     const printing::PrinterSemanticCapsAndDefaults& semantic_info) {
   printer::VendorCapabilities vendor_capabilities;
@@ -168,7 +259,23 @@ printer::VendorCapabilities GetVendorCapabilities(
 
   return vendor_capabilities;
 }
-#endif  // defined(OS_CHROMEOS)
+#endif  // BUILDFLAG(IS_CHROMEOS)
+
+#if BUILDFLAG(IS_WIN)
+printer::SelectVendorCapability GetPageOutputQualityCapabilities(
+    const printing::PrinterSemanticCapsAndDefaults& semantic_info) {
+  printer::SelectVendorCapability page_output_quality_capabilities;
+  const absl::optional<printing::PageOutputQuality>& page_output_quality =
+      semantic_info.page_output_quality;
+  for (const auto& attribute : page_output_quality->qualities) {
+    page_output_quality_capabilities.AddDefaultOption(
+        printer::SelectVendorCapabilityOption(attribute.name,
+                                              attribute.display_name),
+        attribute.name == page_output_quality->default_quality);
+  }
+  return page_output_quality_capabilities;
+}
+#endif  // BUILDFLAG(IS_WIN)
 
 }  // namespace
 
@@ -223,6 +330,14 @@ base::Value PrinterSemanticCapsAndDefaultsToCdd(
     media.SaveTo(&description);
   }
 
+  // Only create this capability if more than one media type is supported.
+  if (semantic_info.media_types.size() > 1) {
+    printer::MediaTypeCapability media_type =
+        GetMediaTypeCapabilities(semantic_info);
+    DCHECK(media_type.IsValid());
+    media_type.SaveTo(&description);
+  }
+
   if (!semantic_info.dpis.empty()) {
     printer::DpiCapability dpi = GetDpiCapabilities(semantic_info);
     DCHECK(dpi.IsValid());
@@ -235,19 +350,27 @@ base::Value PrinterSemanticCapsAndDefaultsToCdd(
   orientation.AddOption(printer::OrientationType::AUTO_ORIENTATION);
   orientation.SaveTo(&description);
 
-#if defined(OS_CHROMEOS)
+#if BUILDFLAG(IS_CHROMEOS)
   printer::PinCapability pin;
   pin.set_value(semantic_info.pin_supported);
   pin.SaveTo(&description);
 
-  if (base::FeatureList::IsEnabled(
-          printing::features::kAdvancedPpdAttributes) &&
-      !semantic_info.advanced_capabilities.empty()) {
+  if (!semantic_info.advanced_capabilities.empty()) {
     printer::VendorCapabilities vendor_capabilities =
         GetVendorCapabilities(semantic_info);
     vendor_capabilities.SaveTo(&description);
   }
-#endif  // defined(OS_CHROMEOS)
+#endif  // BUILDFLAG(IS_CHROMEOS)
+
+#if BUILDFLAG(IS_WIN)
+  if (semantic_info.page_output_quality) {
+    printer::VendorCapabilities vendor_capabilities;
+    vendor_capabilities.AddOption(printer::VendorCapability(
+        kIdPageOutputQuality, kDisplayNamePageOutputQuality,
+        GetPageOutputQualityCapabilities(semantic_info)));
+    vendor_capabilities.SaveTo(&description);
+  }
+#endif  // BUILDFLAG(IS_WIN)
 
   return std::move(description).ToValue();
 }

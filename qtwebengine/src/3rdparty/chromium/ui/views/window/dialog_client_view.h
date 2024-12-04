@@ -1,23 +1,26 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef UI_VIEWS_WINDOW_DIALOG_CLIENT_VIEW_H_
 #define UI_VIEWS_WINDOW_DIALOG_CLIENT_VIEW_H_
 
+#include <memory>
+#include <utility>
+
 #include "base/gtest_prod_util.h"
-#include "base/macros.h"
-#include "base/time/time.h"
+#include "base/memory/raw_ptr.h"
+#include "ui/base/interaction/element_identifier.h"
 #include "ui/base/ui_base_types.h"
-#include "ui/views/controls/button/button.h"
 #include "ui/views/input_event_activation_protector.h"
+#include "ui/views/metadata/view_factory.h"
 #include "ui/views/window/client_view.h"
 #include "ui/views/window/dialog_observer.h"
 
 namespace views {
 
 class DialogDelegate;
-class LabelButton;
+class MdTextButton;
 class Widget;
 
 // DialogClientView provides adornments for a dialog's content view, including
@@ -34,18 +37,24 @@ class Widget;
 // You must not directly depend on or use DialogClientView; it is internal to
 // //ui/views. Access it through the public interfaces on DialogDelegate. It is
 // only VIEWS_EXPORT to make it available to views_unittests.
-class VIEWS_EXPORT DialogClientView : public ClientView,
-                                      public ButtonListener,
-                                      public DialogObserver {
+class VIEWS_EXPORT DialogClientView : public ClientView, public DialogObserver {
+  METADATA_HEADER(DialogClientView, ClientView)
+
  public:
-  METADATA_HEADER(DialogClientView);
+  DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kTopViewId);
+  DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kOkButtonElementId);
+  DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kCancelButtonElementId);
 
   DialogClientView(Widget* widget, View* contents_view);
+
+  DialogClientView(const DialogClientView&) = delete;
+  DialogClientView& operator=(const DialogClientView&) = delete;
+
   ~DialogClientView() override;
 
   // Accessors in case the user wishes to adjust these buttons.
-  LabelButton* ok_button() const { return ok_button_; }
-  LabelButton* cancel_button() const { return cancel_button_; }
+  MdTextButton* ok_button() const { return ok_button_; }
+  MdTextButton* cancel_button() const { return cancel_button_; }
   View* extra_view() const { return extra_view_; }
 
   void SetButtonRowInsets(const gfx::Insets& insets);
@@ -56,14 +65,27 @@ class VIEWS_EXPORT DialogClientView : public ClientView,
   gfx::Size GetMaximumSize() const override;
   void VisibilityChanged(View* starting_from, bool is_visible) override;
 
+  // Input protection is triggered upon prompt creation and updated on
+  // visibility changes. Other situations such as top window changes in certain
+  // situations should trigger the input protection manually by calling this
+  // method. Input protection protects against certain kinds of clickjacking.
+  // Essentially it prevents clicks that happen within a user's double click
+  // interval from when the protection is started as well as any following
+  // clicks that happen in shorter succession than the user's double click
+  // interval. Refer to InputEventActivationProtector for more information. If
+  // `force_early` is true, force to trigger even earlier (shortly before the
+  // this view is visible).
+  void TriggerInputProtection(bool force_early = false);
+
   void Layout() override;
   bool AcceleratorPressed(const ui::Accelerator& accelerator) override;
   void ViewHierarchyChanged(
       const ViewHierarchyChangedDetails& details) override;
   void OnThemeChanged() override;
 
-  // ButtonListener implementation:
-  void ButtonPressed(Button* sender, const ui::Event& event) override;
+  // Update the `view_shown_time_stamp_` of input protector. A short time
+  // from this point onward, input event will be ignored.
+  void UpdateInputProtectorTimeStamp();
 
   void set_minimum_size(const gfx::Size& size) { minimum_size_ = size; }
 
@@ -71,6 +93,15 @@ class VIEWS_EXPORT DialogClientView : public ClientView,
   // method if they use events that could be otherwise treated as unintended.
   // See IsPossiblyUnintendedInteraction().
   void ResetViewShownTimeStampForTesting();
+
+  // Override the internal input protector for testing; usually to inject a mock
+  // version whose return value can be controlled.
+  void SetInputProtectorForTesting(
+      std::unique_ptr<views::InputEventActivationProtector> input_protector) {
+    input_protector_ = std::move(input_protector);
+  }
+
+  bool IsPossiblyUnintendedInteraction(const ui::Event& event);
 
  private:
   enum {
@@ -82,20 +113,20 @@ class VIEWS_EXPORT DialogClientView : public ClientView,
   // Returns the DialogDelegate for the window.
   DialogDelegate* GetDialogDelegate() const;
 
-  // View implementation.
-  void ChildVisibilityChanged(View* child) override;
-
   // DialogObserver:
   void OnDialogChanged() override;
 
   // Update the dialog buttons to match the dialog's delegate.
   void UpdateDialogButtons();
+  void OnButtonVisibilityChanged(View* view);
 
-  // Creates, deletes, or updates the appearance of the button of type |type|
-  // (which must be pointed to by |member|).  Which action is chosen is based on
-  // whether DialogDelegate::GetDialogButtons() includes |type|, and whether
-  // |member| points to a button that already exists.
-  void UpdateDialogButton(LabelButton** member, ui::DialogButton type);
+  // Creates, deletes, or updates the appearance of the button of type `type`
+  // (which must be pointed to by `member`).  Which action is chosen is based on
+  // whether DialogDelegate::GetDialogButtons() includes `type`, and whether
+  // `member` points to a button that already exists.
+  void UpdateDialogButton(raw_ptr<MdTextButton>* member, ui::DialogButton type);
+
+  void ButtonPressed(ui::DialogButton type, const ui::Event& event);
 
   // Returns the spacing between the extra view and the ok/cancel buttons. 0 if
   // no extra view. Otherwise uses the default padding.
@@ -105,12 +136,21 @@ class VIEWS_EXPORT DialogClientView : public ClientView,
   // a View should not appear, it will be null.
   std::array<View*, kNumButtons> GetButtonRowViews();
 
-  // Installs and configures the LayoutManager for |button_row_container_|.
+  // Installs and configures the LayoutManager for `button_row_container_`.
   void SetupLayout();
 
   // Creates or deletes any buttons that are required. Updates data members.
   // After calling this, no button row Views will be in the view hierarchy.
-  void SetupViews();
+  void UpdateButtonsFromModel();
+
+  // Ask the delegate for a new extra view. If there is one, replace the
+  // existing extra view with it.
+  void UpdateExtraViewFromDelegate();
+
+  // Adds/Removes a filler view depending on whether the corresponding live view
+  // is present.
+  void AddFillerView(size_t view_index);
+  void RemoveFillerView(size_t view_index);
 
   // How much to inset the button row.
   gfx::Insets button_row_insets_;
@@ -120,24 +160,30 @@ class VIEWS_EXPORT DialogClientView : public ClientView,
   gfx::Size minimum_size_;
 
   // The dialog buttons.
-  LabelButton* ok_button_ = nullptr;
-  LabelButton* cancel_button_ = nullptr;
+  raw_ptr<MdTextButton> ok_button_ = nullptr;
+  raw_ptr<MdTextButton> cancel_button_ = nullptr;
 
-  // The extra view shown in the row of buttons; may be NULL.
-  View* extra_view_ = nullptr;
+  // The extra view shown in the row of buttons; may be nullptr.
+  raw_ptr<View> extra_view_ = nullptr;
 
   // Container view for the button row.
-  ButtonRowContainer* button_row_container_ = nullptr;
+  raw_ptr<ButtonRowContainer> button_row_container_ = nullptr;
+
+  // List of "filler" views used to keep columns in sync for TableLayout.
+  std::array<View*, kNumButtons> filler_views_ = {nullptr, nullptr, nullptr};
 
   // Used to prevent unnecessary or potentially harmful changes during
   // SetupLayout(). Everything will be manually updated afterwards.
   bool adding_or_removing_views_ = false;
 
-  InputEventActivationProtector input_protector_;
-
-  DISALLOW_COPY_AND_ASSIGN(DialogClientView);
+  std::unique_ptr<InputEventActivationProtector> input_protector_;
 };
 
+BEGIN_VIEW_BUILDER(VIEWS_EXPORT, DialogClientView, ClientView)
+END_VIEW_BUILDER
+
 }  // namespace views
+
+DEFINE_VIEW_BUILDER(VIEWS_EXPORT, DialogClientView)
 
 #endif  // UI_VIEWS_WINDOW_DIALOG_CLIENT_VIEW_H_

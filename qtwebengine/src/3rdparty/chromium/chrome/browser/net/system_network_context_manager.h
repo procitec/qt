@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,27 +6,33 @@
 #define CHROME_BROWSER_NET_SYSTEM_NETWORK_CONTEXT_MANAGER_H_
 
 #include <memory>
-#include <string>
+#include <optional>
 #include <vector>
 
 #include "base/gtest_prod_util.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
-#include "base/optional.h"
 #include "chrome/browser/net/proxy_config_monitor.h"
 #include "chrome/browser/net/stub_resolver_config_reader.h"
+#include "chrome/browser/ssl/ssl_config_service_manager.h"
+#include "chrome/common/buildflags.h"
 #include "components/prefs/pref_change_registrar.h"
 #include "components/prefs/pref_member.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
+#include "services/cert_verifier/public/mojom/cert_verifier_service_factory.mojom-forward.h"
 #include "services/network/public/mojom/host_resolver.mojom-forward.h"
 #include "services/network/public/mojom/network_context.mojom.h"
-#include "services/network/public/mojom/network_service.mojom-forward.h"
+#include "services/network/public/mojom/network_service.mojom.h"
 #include "services/network/public/mojom/ssl_config.mojom-forward.h"
+#include "services/network/public/mojom/url_loader_factory.mojom.h"
+
+#if BUILDFLAG(IS_WIN)
+#include "chrome/browser/net/cookie_encryption_provider_impl.h"
+#endif  // BUILDFLAG(IS_WIN)
 
 class PrefRegistrySimple;
 class PrefService;
-class SSLConfigServiceManager;
 
 namespace network {
 namespace mojom {
@@ -61,6 +67,10 @@ class NetLogProxySource;
 // to being compatible with the network service.
 class SystemNetworkContextManager {
  public:
+  SystemNetworkContextManager(const SystemNetworkContextManager&) = delete;
+  SystemNetworkContextManager& operator=(const SystemNetworkContextManager&) =
+      delete;
+
   ~SystemNetworkContextManager();
 
   // Creates the global instance of SystemNetworkContextManager. If an
@@ -106,9 +116,16 @@ class SystemNetworkContextManager {
   void DisableQuic();
 
   // Returns an mojo::PendingReceiver<SSLConfigClient> that can be passed as a
-  // NetorkContextParam.
+  // NetworkContextParam.
   mojo::PendingReceiver<network::mojom::SSLConfigClient>
   GetSSLConfigClientReceiver();
+
+#if BUILDFLAG(IS_WIN)
+  // Adds a CookieEncryptionManager mojo remote to the specified
+  // `network_context_params`.
+  void AddCookieEncryptionManagerToNetworkContextParams(
+      network::mojom::NetworkContextParams* network_context_params);
+#endif  // BUILDFLAG(IS_WIN)
 
   // Populates |initial_ssl_config| and |ssl_config_client_receiver| members of
   // |network_context_params|. As long as the SystemNetworkContextManager
@@ -119,9 +136,7 @@ class SystemNetworkContextManager {
 
   // Configures default set of parameters for configuring the network context.
   void ConfigureDefaultNetworkContextParams(
-      network::mojom::NetworkContextParams* network_context_params,
-      network::mojom::CertVerifierCreationParams*
-          cert_verifier_creation_params);
+      network::mojom::NetworkContextParams* network_context_params);
 
   // Performs the same function as ConfigureDefaultNetworkContextParams(), and
   // then returns a newly allocated network::mojom::NetworkContextParams with
@@ -135,6 +150,11 @@ class SystemNetworkContextManager {
   // It lives here so it can outlive chrome://net-export/ if the tab is closed
   // or destroyed, and so that it's destroyed before Mojo is shut down.
   net_log::NetExportFileWriter* GetNetExportFileWriter();
+
+  // Returns whether the network sandbox is enabled. This depends on policy but
+  // also feature status from sandbox. Called before there is an instance of
+  // SystemNetworkContextManager.
+  static bool IsNetworkSandboxEnabled();
 
   // Flushes all pending SSL configuration changes.
   void FlushSSLConfigManagerForTesting();
@@ -152,22 +172,55 @@ class SystemNetworkContextManager {
   GetHttpAuthDynamicParamsForTesting();
 
   // Enables Certificate Transparency and enforcing the Chrome Certificate
-  // Transparency Policy. For test use only. Use base::nullopt_t to reset to
+  // Transparency Policy. For test use only. Use std::nullopt_t to reset to
   // the default state.
   static void SetEnableCertificateTransparencyForTesting(
-      base::Optional<bool> enabled);
+      std::optional<bool> enabled);
+
+  // Reloads the static CT log lists but overriding the log list update time
+  // with the current time. For test use only.
+  void SetCTLogListTimelyForTesting();
+
+  static bool IsCertificateTransparencyEnabled();
 
   static void set_stub_resolver_config_reader_for_testing(
       StubResolverConfigReader* reader) {
     stub_resolver_config_reader_for_testing_ = reader;
   }
 
+#if BUILDFLAG(CHROME_ROOT_STORE_OPTIONAL)
+  static bool IsUsingChromeRootStore();
+#endif  // BUILDFLAG(CHROME_ROOT_STORE_OPTIONAL)
+
  private:
   FRIEND_TEST_ALL_PREFIXES(
-      SystemNetworkContextServiceCertVerifierBuiltinFeaturePolicyTest,
+      SystemNetworkContextServiceCertVerifierBuiltinPermissionsPolicyTest,
       Test);
 
   class URLLoaderFactoryForSystem;
+  class NetworkProcessLaunchWatcher;
+
+#if BUILDFLAG(IS_LINUX)
+  class GssapiLibraryLoadObserver
+      : public network::mojom::GssapiLibraryLoadObserver {
+   public:
+    explicit GssapiLibraryLoadObserver(SystemNetworkContextManager* owner);
+    GssapiLibraryLoadObserver(const GssapiLibraryLoadObserver&) = delete;
+    GssapiLibraryLoadObserver& operator=(const GssapiLibraryLoadObserver&) =
+        delete;
+    ~GssapiLibraryLoadObserver() override;
+
+    void Install(network::mojom::NetworkService* network_service);
+
+    // network::mojom::GssapiLibraryLoadObserver implementation:
+    void OnBeforeGssapiLibraryLoad() override;
+
+   private:
+    mojo::Receiver<network::mojom::GssapiLibraryLoadObserver>
+        gssapi_library_loader_observer_receiver_{this};
+    raw_ptr<SystemNetworkContextManager> owner_;
+  };
+#endif
 
   // Constructor. |pref_service| must out live this object.
   explicit SystemNetworkContextManager(PrefService* pref_service);
@@ -178,13 +231,26 @@ class SystemNetworkContextManager {
   // it initializes some class members.
   network::mojom::NetworkContextParamsPtr CreateNetworkContextParams();
 
+  // Send the current value of the net.explicitly_allowed_network_ports pref to
+  // the network process.
+  void UpdateExplicitlyAllowedNetworkPorts();
+
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || \
+    BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID)
+  // Applies the current value of the kEnforceLocalAnchorConstraintsEnabled
+  // pref to the enforcement state.
+  void UpdateEnforceLocalAnchorConstraintsEnabled();
+#endif
+
+  void UpdateIPv6ReachabilityOverrideEnabled();
+
   // The PrefService to retrieve all the pref values.
-  PrefService* local_state_;
+  raw_ptr<PrefService> local_state_;
 
   // This is an instance of the default SSLConfigServiceManager for the current
   // platform and it gets SSL preferences from the BrowserProcess's local_state
   // object. It's shared with other NetworkContexts.
-  std::unique_ptr<SSLConfigServiceManager> ssl_config_service_manager_;
+  SSLConfigServiceManager ssl_config_service_manager_;
 
   ProxyConfigMonitor proxy_config_monitor_;
 
@@ -211,10 +277,20 @@ class SystemNetworkContextManager {
   // Initialized on first access.
   std::unique_ptr<net_log::NetExportFileWriter> net_export_file_writer_;
 
+  std::unique_ptr<NetworkProcessLaunchWatcher> network_process_launch_watcher_;
+
   StubResolverConfigReader stub_resolver_config_reader_;
   static StubResolverConfigReader* stub_resolver_config_reader_for_testing_;
 
-  DISALLOW_COPY_AND_ASSIGN(SystemNetworkContextManager);
+  static std::optional<bool> certificate_transparency_enabled_for_testing_;
+
+#if BUILDFLAG(IS_LINUX)
+  GssapiLibraryLoadObserver gssapi_library_loader_observer_{this};
+#endif  // BUILDFLAG(IS_LINUX)
+
+#if BUILDFLAG(IS_WIN)
+  CookieEncryptionProviderImpl cookie_encryption_provider_;
+#endif  // BUILDFLAG(IS_WIN)
 };
 
 #endif  // CHROME_BROWSER_NET_SYSTEM_NETWORK_CONTEXT_MANAGER_H_

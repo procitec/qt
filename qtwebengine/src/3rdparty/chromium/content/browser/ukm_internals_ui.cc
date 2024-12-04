@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,10 +10,12 @@
 #include <string>
 #include <utility>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
+#include "base/memory/raw_ptr.h"
+#include "components/grit/ukm_resources.h"
+#include "components/grit/ukm_resources_map.h"
 #include "components/ukm/debug/ukm_debug_data_extractor.h"
 #include "components/ukm/ukm_service.h"
-#include "content/grit/content_resources.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/web_contents.h"
@@ -26,13 +28,12 @@
 namespace content {
 namespace {
 
-WebUIDataSource* CreateUkmHTMLSource() {
-  WebUIDataSource* source = WebUIDataSource::Create(kChromeUIUkmHost);
+void CreateAndAddUkmHTMLSource(BrowserContext* browser_context) {
+  WebUIDataSource* source =
+      WebUIDataSource::CreateAndAdd(browser_context, kChromeUIUkmHost);
 
-  source->AddResourcePath("ukm_internals.js", IDR_UKM_INTERNALS_JS);
-  source->AddResourcePath("ukm_internals.css", IDR_UKM_INTERNALS_CSS);
-  source->SetDefaultResource(IDR_UKM_INTERNALS_HTML);
-  return source;
+  source->AddResourcePaths(base::make_span(kUkmResources, kUkmResourcesSize));
+  source->SetDefaultResource(IDR_UKM_UKM_INTERNALS_HTML);
 }
 
 // This class receives javascript messages from the renderer.
@@ -41,17 +42,19 @@ WebUIDataSource* CreateUkmHTMLSource() {
 class UkmMessageHandler : public WebUIMessageHandler {
  public:
   explicit UkmMessageHandler(const ukm::UkmService* ukm_service);
+
+  UkmMessageHandler(const UkmMessageHandler&) = delete;
+  UkmMessageHandler& operator=(const UkmMessageHandler&) = delete;
+
   ~UkmMessageHandler() override;
 
   // WebUIMessageHandler:
   void RegisterMessages() override;
 
  private:
-  void HandleRequestUkmData(const base::ListValue* args);
+  void HandleRequestUkmData(const base::Value::List& args);
 
-  const ukm::UkmService* ukm_service_;
-
-  DISALLOW_COPY_AND_ASSIGN(UkmMessageHandler);
+  raw_ptr<const ukm::UkmService> ukm_service_;
 };
 
 UkmMessageHandler::UkmMessageHandler(const ukm::UkmService* ukm_service)
@@ -59,12 +62,14 @@ UkmMessageHandler::UkmMessageHandler(const ukm::UkmService* ukm_service)
 
 UkmMessageHandler::~UkmMessageHandler() {}
 
-void UkmMessageHandler::HandleRequestUkmData(const base::ListValue* args) {
+void UkmMessageHandler::HandleRequestUkmData(
+    const base::Value::List& args_list) {
   AllowJavascript();
 
   // Identifies the callback, used for when resolving.
   std::string callback_id;
-  args->GetString(0, &callback_id);
+  if (0u < args_list.size() && args_list[0].is_string())
+    callback_id = args_list[0].GetString();
 
   base::Value ukm_debug_data =
       ukm::debug::UkmDebugDataExtractor::GetStructuredData(ukm_service_);
@@ -87,15 +92,13 @@ void UkmMessageHandler::RegisterMessages() {
 }  // namespace
 
 // Changes to this class should be in sync with its iOS equivalent
-// ios/chrome/browser/ui/webui/ukm_internals_ui.cc
+// ios/chrome/browser/ui/webui/ukm_internals_ui.mm
 UkmInternalsUI::UkmInternalsUI(WebUI* web_ui) : WebUIController(web_ui) {
   ukm::UkmService* ukm_service = GetContentClient()->browser()->GetUkmService();
   web_ui->AddMessageHandler(std::make_unique<UkmMessageHandler>(ukm_service));
 
   // Set up the chrome://ukm/ source.
-  BrowserContext* browser_context =
-      web_ui->GetWebContents()->GetBrowserContext();
-  WebUIDataSource::Add(browser_context, CreateUkmHTMLSource());
+  CreateAndAddUkmHTMLSource(web_ui->GetWebContents()->GetBrowserContext());
 }
 
 }  // namespace content

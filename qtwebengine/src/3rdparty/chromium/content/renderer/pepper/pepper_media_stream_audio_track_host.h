@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,14 +7,12 @@
 
 #include <stdint.h>
 
-#include <memory>
-
-#include "base/compiler_specific.h"
 #include "base/containers/circular_deque.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/synchronization/lock.h"
 #include "base/threading/thread_checker.h"
+#include "base/time/time.h"
 #include "content/renderer/pepper/pepper_media_stream_track_host_base.h"
 #include "media/base/audio_parameters.h"
 #include "ppapi/host/host_message_context.h"
@@ -35,12 +33,21 @@ class PepperMediaStreamAudioTrackHost : public PepperMediaStreamTrackHostBase {
                                   PP_Resource resource,
                                   const blink::WebMediaStreamTrack& track);
 
+  PepperMediaStreamAudioTrackHost(const PepperMediaStreamAudioTrackHost&) =
+      delete;
+  PepperMediaStreamAudioTrackHost& operator=(
+      const PepperMediaStreamAudioTrackHost&) = delete;
+
  private:
   // A helper class for receiving audio samples in the audio thread.
   // This class is created and destroyed on the renderer main thread.
   class AudioSink : public blink::WebMediaStreamAudioSink {
    public:
     explicit AudioSink(PepperMediaStreamAudioTrackHost* host);
+
+    AudioSink(const AudioSink&) = delete;
+    AudioSink& operator=(const AudioSink&) = delete;
+
     ~AudioSink() override;
 
     // Enqueues a free buffer index into |buffers_| which will be used for
@@ -80,7 +87,7 @@ class PepperMediaStreamAudioTrackHost : public PepperMediaStreamTrackHostBase {
     // host_->buffer_manager() to read some buffer properties. It is safe
     // because the buffer_manager()'s properties will not be changed after
     // initialization.
-    PepperMediaStreamAudioTrackHost* host_;
+    raw_ptr<PepperMediaStreamAudioTrackHost, ExperimentalRenderer> host_;
 
     // The estimated capture time of the first sample frame of audio. This is
     // used as the timebase to compute the buffer timestamps.
@@ -137,8 +144,6 @@ class PepperMediaStreamAudioTrackHost : public PepperMediaStreamTrackHostBase {
     ppapi::host::ReplyMessageContext pending_configure_reply_;
 
     base::WeakPtrFactory<AudioSink> weak_factory_{this};
-
-    DISALLOW_COPY_AND_ASSIGN(AudioSink);
   };
 
   ~PepperMediaStreamAudioTrackHost() override;
@@ -169,8 +174,6 @@ class PepperMediaStreamAudioTrackHost : public PepperMediaStreamTrackHostBase {
   bool connected_;
 
   AudioSink audio_sink_;
-
-  DISALLOW_COPY_AND_ASSIGN(PepperMediaStreamAudioTrackHost);
 };
 
 }  // namespace content

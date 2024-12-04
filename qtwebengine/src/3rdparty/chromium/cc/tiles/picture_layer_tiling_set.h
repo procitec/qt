@@ -1,4 +1,4 @@
-// Copyright 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,6 +12,8 @@
 #include <set>
 #include <vector>
 
+#include "base/memory/raw_ptr.h"
+#include "base/memory/raw_ptr_exclusion.h"
 #include "cc/base/region.h"
 #include "cc/tiles/picture_layer_tiling.h"
 #include "ui/gfx/geometry/size.h"
@@ -55,10 +57,12 @@ class CC_EXPORT PictureLayerTilingSet {
 
   const PictureLayerTilingClient* client() const { return client_; }
 
-  void CleanUpTilings(float min_acceptable_high_res_scale_key,
-                      float max_acceptable_high_res_scale_key,
-                      const std::vector<PictureLayerTiling*>& needed_tilings,
-                      PictureLayerTilingSet* twin_set);
+  void CleanUpTilings(
+      float min_acceptable_high_res_scale_key,
+      float max_acceptable_high_res_scale_key,
+      const std::vector<raw_ptr<PictureLayerTiling, VectorExperimental>>&
+          needed_tilings,
+      PictureLayerTilingSet* twin_set);
   void RemoveNonIdealTilings();
 
   // This function is called on the active tree during activation.
@@ -93,14 +97,15 @@ class CC_EXPORT PictureLayerTilingSet {
   PictureLayerTiling* FindTilingWithScaleKey(float scale_key) const;
   PictureLayerTiling* FindTilingWithResolution(TileResolution resolution) const;
 
-  void MarkAllTilingsNonIdeal();
-
   // If a tiling exists whose scale is within |snap_to_existing_tiling_ratio|
-  // ratio of |start_scale|, then return that tiling's scale. Otherwise, return
-  // |start_scale|. If multiple tilings match the criteria, return the one with
-  // the least ratio to |start_scale|.
-  float GetSnappedContentsScaleKey(float start_scale,
-                                   float snap_to_existing_tiling_ratio) const;
+  // ratio of |start_scale|, then return that tiling. Otherwise, return null.
+  // If multiple tilings match the criteria, return the one with the least ratio
+  // to |start_scale|.
+  PictureLayerTiling* FindTilingWithNearestScaleKey(
+      float start_scale,
+      float snap_to_existing_tiling_ratio) const;
+
+  void MarkAllTilingsNonIdeal();
 
   // Returns the maximum contents scale of all tilings, or 0 if no tilings
   // exist. Note that this returns the maximum of x and y scales depending on
@@ -175,7 +180,9 @@ class CC_EXPORT PictureLayerTilingSet {
    private:
     size_t NextTiling() const;
 
-    const PictureLayerTilingSet* set_;
+    // RAW_PTR_EXCLUSION: Renderer performance: visible in sampling profiler
+    // stacks.
+    RAW_PTR_EXCLUSION const PictureLayerTilingSet* set_;
     float coverage_scale_;
     PictureLayerTiling::CoverageIterator tiling_iter_;
     size_t current_tiling_;
@@ -209,14 +216,18 @@ class CC_EXPORT PictureLayerTilingSet {
       ~AutoClear() { *state_to_clear_ = StateSinceLastTilePriorityUpdate(); }
 
      private:
-      StateSinceLastTilePriorityUpdate* state_to_clear_;
+      // RAW_PTR_EXCLUSION: Performance reasons: on-stack pointer + based on
+      // analysis of sampling profiler data
+      // (PictureLayerTilingSet::UpdateTilePriorities -> creates AutoClear
+      // on stack).
+      RAW_PTR_EXCLUSION StateSinceLastTilePriorityUpdate* state_to_clear_;
     };
 
-    StateSinceLastTilePriorityUpdate()
-        : invalidated(false), added_tilings(false) {}
+    StateSinceLastTilePriorityUpdate() = default;
 
-    bool invalidated;
-    bool added_tilings;
+    bool invalidated = false;
+    bool added_tilings = false;
+    bool tiling_needs_update = false;
   };
 
   explicit PictureLayerTilingSet(
@@ -251,7 +262,7 @@ class CC_EXPORT PictureLayerTilingSet {
   const float skewport_target_time_in_seconds_;
   const int skewport_extrapolation_limit_in_screen_pixels_;
   WhichTree tree_;
-  PictureLayerTilingClient* client_;
+  raw_ptr<PictureLayerTilingClient> client_;
   const float max_preraster_distance_;
   // State saved for computing velocities based on finite differences.
   // .front() of the deque refers to the most recent FrameVisibleRect.

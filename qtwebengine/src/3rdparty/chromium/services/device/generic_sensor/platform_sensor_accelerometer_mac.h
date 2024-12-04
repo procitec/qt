@@ -1,16 +1,15 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef SERVICES_DEVICE_GENERIC_SENSOR_PLATFORM_SENSOR_ACCELEROMETER_MAC_H_
 #define SERVICES_DEVICE_GENERIC_SENSOR_PLATFORM_SENSOR_ACCELEROMETER_MAC_H_
 
-#include <memory>
-
+#include "base/memory/weak_ptr.h"
+#include "base/threading/sequence_bound.h"
 #include "base/timer/timer.h"
 #include "services/device/generic_sensor/platform_sensor.h"
-
-class SuddenMotionSensor;
+#include "services/device/public/cpp/generic_sensor/sensor_reading.h"
 
 namespace device {
 
@@ -26,6 +25,11 @@ class PlatformSensorAccelerometerMac : public PlatformSensor {
   PlatformSensorAccelerometerMac(SensorReadingSharedBuffer* reading_buffer,
                                  PlatformSensorProvider* provider);
 
+  PlatformSensorAccelerometerMac(const PlatformSensorAccelerometerMac&) =
+      delete;
+  PlatformSensorAccelerometerMac& operator=(
+      const PlatformSensorAccelerometerMac&) = delete;
+
   mojom::ReportingMode GetReportingMode() override;
   // Can only be called once, the first time or after a StopSensor call.
   bool StartSensor(const PlatformSensorConfiguration& configuration) override;
@@ -38,16 +42,17 @@ class PlatformSensorAccelerometerMac : public PlatformSensor {
   PlatformSensorConfiguration GetDefaultConfiguration() override;
 
  private:
-  void PollForData();
+  class BlockingTaskRunnerHelper;
 
-  std::unique_ptr<SuddenMotionSensor> sudden_motion_sensor_;
+  void OnReadingAvailable(SensorReading reading);
+
+  base::SequenceBound<BlockingTaskRunnerHelper> blocking_task_helper_;
 
   SensorReading reading_;
 
-  // Repeating timer for data polling.
-  base::RepeatingTimer timer_;
+  bool is_reading_active_ = false;
 
-  DISALLOW_COPY_AND_ASSIGN(PlatformSensorAccelerometerMac);
+  base::WeakPtrFactory<PlatformSensorAccelerometerMac> weak_factory_{this};
 };
 
 }  // namespace device

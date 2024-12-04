@@ -1,5 +1,3 @@
-gbillock@chromium.org
-msw@chromium.org
-wittman@chromium.org
+file://ui/views/OWNERS
 
-# COMPONENT: Internals>Views
+wittman@chromium.org

@@ -1,11 +1,11 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <algorithm>
 #include <memory>
 #include <string>
 
+#include "base/containers/contains.h"
 #include "extensions/browser/service_worker/worker_id_set.h"
 #include "extensions/common/extension_id.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -29,6 +29,10 @@ class VectorWorkerIdListImpl {
  public:
   explicit VectorWorkerIdListImpl(const std::vector<WorkerId> worker_ids)
       : workers_(worker_ids) {}
+
+  VectorWorkerIdListImpl(const VectorWorkerIdListImpl&) = delete;
+  VectorWorkerIdListImpl& operator=(const VectorWorkerIdListImpl&) = delete;
+
   ~VectorWorkerIdListImpl() = default;
 
   std::vector<WorkerId> GetAllForExtension(const ExtensionId& extension_id,
@@ -44,14 +48,11 @@ class VectorWorkerIdListImpl {
   }
 
   bool Contains(const WorkerId& worker_id) const {
-    return std::find(workers_.begin(), workers_.end(), worker_id) !=
-           workers_.end();
+    return base::Contains(workers_, worker_id);
   }
 
  private:
   std::vector<WorkerId> workers_;
-
-  DISALLOW_COPY_AND_ASSIGN(VectorWorkerIdListImpl);
 };
 
 std::vector<WorkerId> GenerateWorkerIds(
@@ -85,7 +86,12 @@ std::unique_ptr<WorkerIdSet> CreateWorkerIdSet(
 
 class WorkerIdSetTest : public testing::Test {
  public:
-  WorkerIdSetTest() = default;
+  WorkerIdSetTest()
+      : allow_multiple_workers_per_extension_(
+            WorkerIdSet::AllowMultipleWorkersPerExtensionForTesting()) {}
+
+  WorkerIdSetTest(const WorkerIdSetTest&) = delete;
+  WorkerIdSetTest& operator=(const WorkerIdSetTest&) = delete;
 
   bool AreWorkerIdsEqual(const std::vector<WorkerId>& expected,
                          const std::vector<WorkerId>& actual) {
@@ -100,7 +106,7 @@ class WorkerIdSetTest : public testing::Test {
   }
 
  private:
-  DISALLOW_COPY_AND_ASSIGN(WorkerIdSetTest);
+  base::AutoReset<bool> allow_multiple_workers_per_extension_;
 };
 
 TEST_F(WorkerIdSetTest, GetAllForExtension) {

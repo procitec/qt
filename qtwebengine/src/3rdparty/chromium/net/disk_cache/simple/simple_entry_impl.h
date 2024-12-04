@@ -1,4 +1,4 @@
-// Copyright (c) 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,18 +12,21 @@
 
 #include "base/containers/queue.h"
 #include "base/files/file_path.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/sequence_checker.h"
+#include "base/time/time.h"
 #include "net/base/cache_type.h"
 #include "net/base/net_export.h"
 #include "net/base/request_priority.h"
 #include "net/disk_cache/disk_cache.h"
-#include "net/disk_cache/simple/post_doom_waiter.h"
+#include "net/disk_cache/simple/post_operation_waiter.h"
 #include "net/disk_cache/simple/simple_entry_format.h"
 #include "net/disk_cache/simple/simple_entry_operation.h"
 #include "net/disk_cache/simple/simple_synchronous_entry.h"
 #include "net/log/net_log_event_type.h"
 #include "net/log/net_log_with_source.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace base {
 class TaskRunner;
@@ -65,15 +68,17 @@ class NET_EXPORT_PRIVATE SimpleEntryImpl : public Entry,
     virtual ~ActiveEntryProxy() = 0;
   };
 
-  SimpleEntryImpl(net::CacheType cache_type,
-                  const base::FilePath& path,
-                  scoped_refptr<BackendCleanupTracker> cleanup_tracker,
-                  uint64_t entry_hash,
-                  OperationsMode operations_mode,
-                  SimpleBackendImpl* backend,
-                  SimpleFileTracker* file_tracker,
-                  net::NetLog* net_log,
-                  uint32_t entry_priority);
+  SimpleEntryImpl(
+      net::CacheType cache_type,
+      const base::FilePath& path,
+      scoped_refptr<BackendCleanupTracker> cleanup_tracker,
+      uint64_t entry_hash,
+      OperationsMode operations_mode,
+      SimpleBackendImpl* backend,
+      SimpleFileTracker* file_tracker,
+      scoped_refptr<BackendFileOperationsFactory> file_operations_factory,
+      net::NetLog* net_log,
+      uint32_t entry_priority);
 
   void SetActiveEntryProxy(
       std::unique_ptr<ActiveEntryProxy> active_entry_proxy);
@@ -91,7 +96,7 @@ class NET_EXPORT_PRIVATE SimpleEntryImpl : public Entry,
   // CompletionOnceCallback.
   net::Error DoomEntry(CompletionOnceCallback callback);
 
-  const std::string& key() const { return key_; }
+  const absl::optional<std::string>& key() const { return key_; }
   uint64_t entry_hash() const { return entry_hash_; }
 
   // The key is not a constructor parameter to the SimpleEntryImpl, because
@@ -109,6 +114,7 @@ class NET_EXPORT_PRIVATE SimpleEntryImpl : public Entry,
   // From Entry:
   void Doom() override;
   void Close() override;
+  // This is only used as a public API, not internally.
   std::string GetKey() const override;
   // GetLastUsed() should not be called in net::APP_CACHE mode since the times
   // are not updated.
@@ -134,17 +140,13 @@ class NET_EXPORT_PRIVATE SimpleEntryImpl : public Entry,
                       net::IOBuffer* buf,
                       int buf_len,
                       CompletionOnceCallback callback) override;
-  int GetAvailableRange(int64_t offset,
-                        int len,
-                        int64_t* start,
-                        CompletionOnceCallback callback) override;
+  RangeResult GetAvailableRange(int64_t offset,
+                                int len,
+                                RangeResultCallback callback) override;
   bool CouldBeSparse() const override;
   void CancelSparseIO() override;
   net::Error ReadyForSparseIO(CompletionOnceCallback callback) override;
   void SetLastUsedTimeForTest(base::Time time) override;
-
-  // Returns the estimate of dynamically allocated memory in bytes.
-  size_t EstimateMemoryUsage() const;
 
   // Changes the entry's priority in its TaskRunner.
   void SetPriority(uint32_t entry_priority);
@@ -182,15 +184,6 @@ class NET_EXPORT_PRIVATE SimpleEntryImpl : public Entry,
     // The disk has been updated. This corresponds to the state where we
     // are in neither |entries_pending_doom_| nor |active_entries_|.
     DOOM_COMPLETED,
-  };
-
-  // Used in histograms, please only add entries at the end.
-  enum CheckCrcResult {
-    CRC_CHECK_NEVER_READ_TO_END = 0,
-    CRC_CHECK_NOT_DONE = 1,
-    CRC_CHECK_DONE = 2,
-    CRC_CHECK_NEVER_READ_AT_ALL = 3,
-    CRC_CHECK_MAX = 4,
   };
 
   ~SimpleEntryImpl() override;
@@ -272,8 +265,7 @@ class NET_EXPORT_PRIVATE SimpleEntryImpl : public Entry,
 
   void GetAvailableRangeInternal(int64_t sparse_offset,
                                  int len,
-                                 int64_t* out_start,
-                                 CompletionOnceCallback callback);
+                                 RangeResultCallback callback);
 
   void DoomEntryInternal(CompletionOnceCallback callback);
 
@@ -293,6 +285,11 @@ class NET_EXPORT_PRIVATE SimpleEntryImpl : public Entry,
   // point it is.
   void CloseOperationComplete(
       std::unique_ptr<SimpleEntryCloseResults> in_results);
+
+  // Internal utility method used by other completion methods.
+  // Updaties state and dooms on errors.
+  void UpdateStateAfterOperationComplete(const SimpleEntryStat& entry_stat,
+                                         int result);
 
   // Internal utility method used by other completion methods. Calls
   // |completion_callback| after updating state and dooming on errors.
@@ -328,8 +325,8 @@ class NET_EXPORT_PRIVATE SimpleEntryImpl : public Entry,
                                     std::unique_ptr<int> result);
 
   void GetAvailableRangeOperationComplete(
-      CompletionOnceCallback completion_callback,
-      std::unique_ptr<int> result);
+      RangeResultCallback completion_callback,
+      std::unique_ptr<RangeResult> result);
 
   // Called after an asynchronous doom completes.
   void DoomOperationComplete(CompletionOnceCallback callback,
@@ -346,20 +343,21 @@ class NET_EXPORT_PRIVATE SimpleEntryImpl : public Entry,
   int64_t GetDiskUsage() const;
 
   // Completes a read from the stream data kept in memory, logging metrics
-  // and updating metadata. Returns the # of bytes read successfully.
-  // This asumes the caller has already range-checked offset and buf_len
-  // appropriately.
-  int ReadFromBuffer(net::GrowableIOBuffer* in_buf,
-                     int offset,
-                     int buf_len,
-                     net::IOBuffer* out_buf);
+  // and updating metadata. This assumes the caller has already range-checked
+  // offset and buf_len appropriately, and therefore always reads `buf_len`
+  // bytes.
+  void ReadFromBuffer(net::GrowableIOBuffer* in_buf,
+                      int offset,
+                      int buf_len,
+                      net::IOBuffer* out_buf);
 
   // Copies data from |buf| to the internal in-memory buffer for stream 0. If
   // |truncate| is set to true, the target buffer will be truncated at |offset|
   // + |buf_len| before being written.
-  int SetStream0Data(net::IOBuffer* buf,
-                     int offset, int buf_len,
-                     bool truncate);
+  void SetStream0Data(net::IOBuffer* buf,
+                      int offset,
+                      int buf_len,
+                      bool truncate);
 
   // We want all async I/O on entries to complete before recycling the dir.
   scoped_refptr<BackendCleanupTracker> cleanup_tracker_;
@@ -372,12 +370,13 @@ class NET_EXPORT_PRIVATE SimpleEntryImpl : public Entry,
   SEQUENCE_CHECKER(sequence_checker_);
 
   const base::WeakPtr<SimpleBackendImpl> backend_;
-  SimpleFileTracker* const file_tracker_;
+  const raw_ptr<SimpleFileTracker> file_tracker_;
+  const scoped_refptr<BackendFileOperationsFactory> file_operations_factory_;
   const net::CacheType cache_type_;
   const base::FilePath path_;
   const uint64_t entry_hash_;
   const bool use_optimistic_operations_;
-  std::string key_;
+  absl::optional<std::string> key_;
 
   // |last_used_|, |last_modified_| and |data_size_| are copied from the
   // synchronous entry at the completion of each item of asynchronous IO.
@@ -417,17 +416,13 @@ class NET_EXPORT_PRIVATE SimpleEntryImpl : public Entry,
   // contains stream |index|.
   bool have_written_[kSimpleEntryStreamCount];
 
-  // Reflects how much CRC checking has been done with the entry. This state is
-  // reported on closing each entry stream.
-  CheckCrcResult crc_check_state_[kSimpleEntryStreamCount];
-
   // The |synchronous_entry_| is the worker thread object that performs IO on
   // entries. It's owned by this SimpleEntryImpl whenever |executing_operation_|
   // is false (i.e. when an operation is not pending on the worker pool). When
   // an operation is being executed no one owns the synchronous entry. Therefore
   // SimpleEntryImpl should not be deleted while an operation is running as that
   // would leak the SimpleSynchronousEntry.
-  SimpleSynchronousEntry* synchronous_entry_ = nullptr;
+  raw_ptr<SimpleSynchronousEntry> synchronous_entry_ = nullptr;
 
   scoped_refptr<net::PrioritizedTaskRunner> prioritized_task_runner_;
 
@@ -452,7 +447,7 @@ class NET_EXPORT_PRIVATE SimpleEntryImpl : public Entry,
   scoped_refptr<net::GrowableIOBuffer> stream_1_prefetch_data_;
 
   // This is used only while a doom is pending.
-  scoped_refptr<SimplePostDoomWaiterTable> post_doom_waiting_;
+  scoped_refptr<SimplePostOperationWaiterTable> post_doom_waiting_;
 
   // Choosing uint32_t over uint64_t for space savings. Pages have in the
   // hundres to possibly thousands of resources. Wrapping every 4 billion

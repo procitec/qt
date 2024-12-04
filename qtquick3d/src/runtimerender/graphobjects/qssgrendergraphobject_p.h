@@ -1,35 +1,9 @@
-/****************************************************************************
-**
-** Copyright (C) 2008-2012 NVIDIA Corporation.
-** Copyright (C) 2019 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of Qt Quick 3D.
-**
-** $QT_BEGIN_LICENSE:GPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 3 or (at your option) any later version
-** approved by the KDE Free Qt Foundation. The licenses are as published by
-** the Free Software Foundation and appearing in the file LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2008-2012 NVIDIA Corporation.
+// Copyright (C) 2023 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
-#ifndef QSSG_RENDER_GRAPH_OBJECT_H
-#define QSSG_RENDER_GRAPH_OBJECT_H
+#ifndef QSSGRENDERGRAPHOBJECT_P_H
+#define QSSGRENDERGRAPHOBJECT_P_H
 
 //
 //  W A R N I N G
@@ -42,81 +16,63 @@
 // We mean it.
 //
 
-#include <QtQuick3DRuntimeRender/private/qtquick3druntimerenderglobal_p.h>
-#include <QtCore/QString>
+#include <ssg/qssgrendergraphobject.h>
 
-#define QSSG_DEBUG_ID 0
+#include <ssg/qssgrenderbasetypes.h>
 
-QT_BEGIN_NAMESPACE
+#include <QtQuick3DUtils/private/qssgassert_p.h>
 
-// Types should be setup on construction.  Change the type
-// at your own risk as the type is used for RTTI purposes.
-struct Q_QUICK3DRUNTIMERENDER_EXPORT QSSGRenderGraphObject
+namespace QSSGRenderGraphObjectUtils {
+constexpr QSSGResourceId getResourceId(const QSSGRenderGraphObject &o)
 {
-    enum class Type : quint8
-    {
-        Unknown = 0,
-        Presentation,
-        Scene,
-        Node,
-        Layer,
-        Light,
-        Camera,
-        Model,
-        DefaultMaterial,
-        PrincipledMaterial,
-        Image,
-        Effect,
-        CustomMaterial,
-        RenderPlugin,
-        Lightmaps,
-        Geometry,
-        Item2D,
-        LastKnownGraphObjectType,
-    };
+    QSSG_ASSERT(QSSGRenderGraphObject::isResource(o.type), return QSSGResourceId::Invalid);
+    return QSSGResourceId{ quintptr(&o) };
+}
 
-    QAtomicInt ref;
-    // Id's help debugging the object and are optionally set
-#if QSSG_DEBUG_ID
-    QByteArray id;
-#endif
-    // Type is used for RTTI purposes down the road.
-    Type type;
+template <typename T = QSSGRenderGraphObject>
+T *getResource(QSSGResourceId resId)
+{
+    return static_cast<T *>(reinterpret_cast<QSSGRenderGraphObject *>(resId));
+}
 
-    QSSGRenderGraphObject(QSSGRenderGraphObject::Type inType) : type(inType) {}
-    virtual ~QSSGRenderGraphObject();
+constexpr QSSGNodeId getNodeId(const QSSGRenderGraphObject &o)
+{
+    QSSG_ASSERT(QSSGRenderGraphObject::isNodeType(o.type), return QSSGNodeId::Invalid);
+    return QSSGNodeId{ quintptr(&o) };
+}
 
-    // If you change any detail of the scene graph, or even *breath* on a
-    // scene graph object, you need to bump this binary version so at least
-    // we know if we can load a file or not.
-    static quint32 getSceneGraphBinaryVersion() { return 1; }
+template <typename T = QSSGRenderGraphObject>
+T *getNode(QSSGNodeId nodeId)
+{
+    return static_cast<T *>(reinterpret_cast<QSSGRenderGraphObject *>(nodeId));
+}
 
-    inline bool isMaterialType() const Q_DECL_NOTHROW
-    {
-        return (type == Type::CustomMaterial || type == Type::DefaultMaterial || type == Type::PrincipledMaterial);
-    }
+constexpr QSSGCameraId getCameraId(const QSSGRenderGraphObject &o)
+{
+    QSSG_ASSERT(QSSGRenderGraphObject::isCamera(o.type), return QSSGCameraId::Invalid);
+    return QSSGCameraId{ quintptr(&o) };
+}
 
-    inline bool isLightmapType() const Q_DECL_NOTHROW
-    {
-        return (type == Type::Lightmaps || type == Type::DefaultMaterial || type == Type::PrincipledMaterial);
-    }
+template <typename T = QSSGRenderGraphObject>
+T *getCamera(QSSGCameraId cameraId)
+{
+    return static_cast<T *>(reinterpret_cast<QSSGRenderGraphObject *>(cameraId));
+}
 
-    inline bool isNodeType() const Q_DECL_NOTHROW
-    {
-        return (type == Type::Node ||
-                type == Type::Layer ||
-                type == Type::Light ||
-                type == Type::Camera ||
-                type == Type::Model);
-    }
+constexpr QSSGExtensionId getExtensionId(const QSSGRenderGraphObject &o)
+{
+    QSSG_ASSERT(QSSGRenderGraphObject::isExtension(o.type), return QSSGExtensionId::Invalid);
+    return QSSGExtensionId{ quintptr(&o) };
+}
 
-    inline bool isRenderableType() const Q_DECL_NOTHROW
-    {
-        return (type == Type::Model ||
-                type == Type::Item2D);
-    }
-};
+template <typename T = QSSGRenderGraphObject>
+T *getExtension(QSSGExtensionId extensionId)
+{
+    return static_cast<T *>(reinterpret_cast<QSSGRenderGraphObject *>(extensionId));
+}
 
-QT_END_NAMESPACE
+template <typename QSSGTypeId>
+constexpr bool isNull(QSSGTypeId id) { return (id == QSSGTypeId::Invalid); }
+}
 
-#endif
+#endif // QSSGRENDERGRAPHOBJECT_P_H

@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the config.tests of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #ifndef QWAYLANDWINDOW_H
 #define QWAYLANDWINDOW_H
@@ -56,15 +20,22 @@
 #include <QtCore/QReadWriteLock>
 
 #include <QtGui/QIcon>
+#include <QtGui/QEventPoint>
 #include <QtCore/QVariant>
 #include <QtCore/QLoggingCategory>
 #include <QtCore/QElapsedTimer>
+#include <QtCore/QList>
+#include <QtCore/QMap> // for QVariantMap
 
 #include <qpa/qplatformwindow.h>
+#include <qpa/qplatformwindow_p.h>
 
 #include <QtWaylandClient/private/qwayland-wayland.h>
 #include <QtWaylandClient/private/qwaylanddisplay_p.h>
 #include <QtWaylandClient/qtwaylandclientglobal.h>
+#include <QtWaylandClient/private/qwaylandshellsurface_p.h>
+
+#include <QtCore/qpointer.h>
 
 struct wl_egl_window;
 
@@ -81,11 +52,17 @@ class QWaylandSubSurface;
 class QWaylandAbstractDecoration;
 class QWaylandInputDevice;
 class QWaylandScreen;
+class QWaylandShellIntegration;
 class QWaylandShmBackingStore;
 class QWaylandPointerEvent;
+class QWaylandPointerGestureSwipeEvent;
+class QWaylandPointerGesturePinchEvent;
 class QWaylandSurface;
+class QWaylandFractionalScale;
+class QWaylandViewport;
 
-class Q_WAYLAND_CLIENT_EXPORT QWaylandWindow : public QObject, public QPlatformWindow
+class Q_WAYLANDCLIENT_EXPORT QWaylandWindow : public QNativeInterface::Private::QWaylandWindow,
+                                              public QPlatformWindow
 {
     Q_OBJECT
 public:
@@ -95,8 +72,20 @@ public:
         Vulkan
     };
 
+    enum ToplevelWindowTilingState {
+        WindowNoState = 0,
+        WindowTiledLeft = 1,
+        WindowTiledRight = 2,
+        WindowTiledTop = 4,
+        WindowTiledBottom = 8
+    };
+    Q_DECLARE_FLAGS(ToplevelWindowTilingStates, ToplevelWindowTilingState)
+
     QWaylandWindow(QWindow *window, QWaylandDisplay *display);
     ~QWaylandWindow() override;
+
+    // Keep Toplevels position on the top left corner of their screen
+    static inline bool fixedToplevelPositions = true;
 
     virtual WindowType windowType() const = 0;
     virtual void ensureSize();
@@ -104,6 +93,7 @@ public:
     void setVisible(bool visible) override;
     void setParent(const QPlatformWindow *parent) override;
 
+    QString windowTitle() const;
     void setWindowTitle(const QString &title) override;
 
     inline QIcon windowIcon() const;
@@ -111,6 +101,8 @@ public:
 
     void setGeometry(const QRect &rect) override;
     void resizeFromApplyConfigure(const QSize &sizeWithMargins, const QPoint &offset = {0, 0});
+    void repositionFromApplyConfigure(const QPoint &position);
+    void setGeometryFromApplyConfigure(const QPoint &globalPosition, const QSize &sizeWithMargins);
 
     void applyConfigureWhenPossible(); //rename to possible?
 
@@ -121,7 +113,6 @@ public:
     void damage(const QRect &rect);
 
     void safeCommit(QWaylandBuffer *buffer, const QRegion &damage);
-    void handleExpose(const QRegion &region);
     void commit(QWaylandBuffer *buffer, const QRegion &damage);
 
     void commit();
@@ -129,22 +120,35 @@ public:
     bool waitForFrameSync(int timeout);
 
     QMargins frameMargins() const override;
+    QMargins clientSideMargins() const;
+    void setCustomMargins(const QMargins &margins) override;
     QSize surfaceSize() const;
+    QMargins windowContentMargins() const;
     QRect windowContentGeometry() const;
     QPointF mapFromWlSurface(const QPointF &surfacePosition) const;
 
     QWaylandSurface *waylandSurface() const { return mSurface.data(); }
-    ::wl_surface *wlSurface();
+    ::wl_surface *wlSurface() const;
+    ::wl_surface *surface() const override
+    {
+        return wlSurface();
+    }
     static QWaylandWindow *fromWlSurface(::wl_surface *surface);
 
     QWaylandDisplay *display() const { return mDisplay; }
     QWaylandShellSurface *shellSurface() const;
+    std::any _surfaceRole() const override;
     QWaylandSubSurface *subSurfaceWindow() const;
     QWaylandScreen *waylandScreen() const;
 
     void handleContentOrientationChange(Qt::ScreenOrientation orientation) override;
+    void updateBufferTransform();
     void setOrientationMask(Qt::ScreenOrientations mask);
 
+    ToplevelWindowTilingStates toplevelWindowTilingStates() const;
+    void handleToplevelWindowTilingStatesChanged(ToplevelWindowTilingStates states);
+
+    Qt::WindowStates windowStates() const;
     void setWindowState(Qt::WindowStates states) override;
     void setWindowFlags(Qt::WindowFlags flags) override;
     void handleWindowStatesChanged(Qt::WindowStates states);
@@ -154,7 +158,10 @@ public:
 
     void setMask(const QRegion &region) override;
 
-    int scale() const;
+    void setAlertState(bool enabled) override;
+    bool isAlertState() const override;
+
+    qreal scale() const;
     qreal devicePixelRatio() const override;
 
     void requestActivateWindow() override;
@@ -164,9 +171,18 @@ public:
     QWaylandAbstractDecoration *decoration() const;
 
     void handleMouse(QWaylandInputDevice *inputDevice, const QWaylandPointerEvent &e);
+#ifndef QT_NO_GESTURES
+    void handleSwipeGesture(QWaylandInputDevice *inputDevice,
+                            const QWaylandPointerGestureSwipeEvent &e);
+    void handlePinchGesture(QWaylandInputDevice *inputDevice,
+                            const QWaylandPointerGesturePinchEvent &e);
+#endif
 
     bool touchDragDecoration(QWaylandInputDevice *inputDevice, const QPointF &local, const QPointF &global,
-                             Qt::TouchPointState state, Qt::KeyboardModifiers mods);
+                             QEventPoint::State state, Qt::KeyboardModifiers mods);
+    bool handleTabletEventDecoration(QWaylandInputDevice *inputDevice, const QPointF &local,
+                                     const QPointF &global, Qt::MouseButtons buttons,
+                                     Qt::KeyboardModifiers modifiers);
 
     bool createDecoration();
 
@@ -177,7 +193,6 @@ public:
 
     QWaylandWindow *transientParent() const;
 
-    QMutex *resizeMutex() { return &mResizeLock; }
     void doApplyConfigure();
     void setCanResize(bool canResize);
 
@@ -191,8 +206,15 @@ public:
     QVariant property(const QString &name);
     QVariant property(const QString &name, const QVariant &defaultValue);
 
+#ifdef QT_PLATFORM_WINDOW_HAS_VIRTUAL_SET_BACKING_STORE
+    void setBackingStore(QPlatformBackingStore *store) override;
+#else
     void setBackingStore(QWaylandShmBackingStore *backingStore) { mBackingStore = backingStore; }
+#endif
     QWaylandShmBackingStore *backingStore() const { return mBackingStore; }
+
+    void setShellIntegration(QWaylandShellIntegration *shellIntegration);
+    QWaylandShellIntegration *shellIntegration() const { return mShellIntegration; }
 
     bool setKeyboardGrabEnabled(bool) override { return false; }
     void propagateSizeHints() override;
@@ -206,38 +228,82 @@ public:
     void handleUpdate();
     void deliverUpdateRequest() override;
 
-public slots:
+    void setXdgActivationToken(const QString &token);
+    void requestXdgActivationToken(uint serial) override;
+
+    void beginFrame();
+    void endFrame();
+
+    void closeChildPopups();
+    void sendRecursiveExposeEvent();
+
+    virtual void reinit();
+    void reset();
+
+    bool windowEvent(QEvent *event) override;
+
+public Q_SLOTS:
     void applyConfigure();
 
-signals:
+Q_SIGNALS:
     void wlSurfaceCreated();
     void wlSurfaceDestroyed();
 
 protected:
+    virtual void doHandleFrameCallback();
+    virtual QRect defaultGeometry() const;
+    void sendExposeEvent(const QRect &rect);
+
     QWaylandDisplay *mDisplay = nullptr;
+
+    // mSurface can be written by the main thread. Other threads should claim a read lock for access
+    mutable QReadWriteLock mSurfaceLock;
     QScopedPointer<QWaylandSurface> mSurface;
+    QScopedPointer<QWaylandFractionalScale> mFractionalScale;
+    QScopedPointer<QWaylandViewport> mViewport;
+
+    QWaylandShellIntegration *mShellIntegration = nullptr;
     QWaylandShellSurface *mShellSurface = nullptr;
     QWaylandSubSurface *mSubSurfaceWindow = nullptr;
-    QVector<QWaylandSubSurface *> mChildren;
+    QList<QWaylandSubSurface *> mChildren;
 
     QWaylandAbstractDecoration *mWindowDecoration = nullptr;
+    bool mWindowDecorationEnabled = false;
     bool mMouseEventsInContentArea = false;
     Qt::MouseButtons mMousePressedInContentArea = Qt::NoButton;
 
+#ifndef QT_NO_GESTURES
+    enum GestureState {
+        GestureNotActive,
+        GestureActiveInContentArea,
+        GestureActiveInDecoration
+    };
+
+    // We want gestures started in the decoration area to be completely ignored even if the mouse
+    // pointer is later moved to content area. Likewise, gestures started in the content area should
+    // keep sending events even if the mouse pointer is moved over the decoration (consider that
+    // the events for that gesture will be sent to us even if it's moved outside the window).
+    // So we track the gesture state and accept or ignore events based on that. Note that
+    // concurrent gestures of different types are not allowed in the protocol, so single state is
+    // enough
+    GestureState mGestureState = GestureNotActive;
+#endif
+
     WId mWindowId;
-    bool mWaitingForFrameCallback = false;
     bool mFrameCallbackTimedOut = false; // Whether the frame callback has timed out
-    bool mWaitingForUpdateDelivery = false;
     int mFrameCallbackCheckIntervalTimerId = -1;
-    QElapsedTimer mFrameCallbackElapsedTimer;
-    struct ::wl_callback *mFrameCallback = nullptr;
-    QWaylandDisplay::FrameQueue mFrameQueue;
+    QAtomicInt mWaitingForUpdateDelivery = false;
+
+    bool mWaitingForFrameCallback = false; // Protected by mFrameSyncMutex
+    QElapsedTimer mFrameCallbackElapsedTimer; // Protected by mFrameSyncMutex
+    struct ::wl_callback *mFrameCallback = nullptr; // Protected by mFrameSyncMutex
+    QMutex mFrameSyncMutex;
     QWaitCondition mFrameSyncWait;
 
     // True when we have called deliverRequestUpdate, but the client has not yet attached a new buffer
     bool mWaitingForUpdate = false;
 
-    QMutex mResizeLock;
+    QRecursiveMutex mResizeLock;
     bool mWaitingToApplyConfigure = false;
     bool mCanResize = true;
     bool mResizeDirty = false;
@@ -247,19 +313,33 @@ protected:
 
     bool mSentInitialResize = false;
     QPoint mOffset;
-    int mScale = 1;
-    QPlatformScreen *mLastReportedScreen = nullptr;
+    std::optional<qreal> mScale = std::nullopt;
 
+    QString mWindowTitle;
     QIcon mWindowIcon;
 
     Qt::WindowFlags mFlags;
     QRegion mMask;
+
+    // Empty QRegion maps to "infinite" input region, needs a dedicated "deliberately empty" state.
+    QRegion mInputRegion;
+    bool mTransparentInputRegion = false;
+
     QRegion mOpaqueArea;
     Qt::WindowStates mLastReportedWindowStates = Qt::WindowNoState;
+    ToplevelWindowTilingStates mLastReportedToplevelWindowTilingStates = WindowNoState;
 
     QWaylandShmBackingStore *mBackingStore = nullptr;
-    QWaylandBuffer *mQueuedBuffer = nullptr;
-    QRegion mQueuedBufferDamage;
+
+    QMargins mCustomMargins;
+
+    QPointer<QWaylandWindow> mTransientParent;
+    QList<QPointer<QWaylandWindow>> mChildPopups;
+
+    Qt::ScreenOrientation mLastReportedContentOrientation = Qt::PrimaryOrientation;
+
+private Q_SLOTS:
+    void doApplyConfigureFromOtherThread();
 
 private:
     void setGeometry_helper(const QRect &rect);
@@ -267,30 +347,35 @@ private:
     void initializeWlSurface();
     bool shouldCreateShellSurface() const;
     bool shouldCreateSubSurface() const;
-    void reset();
-    void sendExposeEvent(const QRect &rect);
-    static void closePopups(QWaylandWindow *parent);
     QPlatformScreen *calculateScreenFromSurfaceEvents() const;
     void setOpaqueArea(const QRegion &opaqueArea);
     bool isOpaque() const;
+    void updateInputRegion();
+    void updateViewport();
 
     void handleMouseEventWithDecoration(QWaylandInputDevice *inputDevice, const QWaylandPointerEvent &e);
     void handleScreensChanged();
-    void sendRecursiveExposeEvent();
+    void updateScale();
+    void setScale(qreal newScale);
+
+    QWaylandWindow *guessTransientParent() const;
+    void addChildPopup(QWaylandWindow *child);
+    void removeChildPopup(QWaylandWindow *child);
 
     bool mInResizeFromApplyConfigure = false;
     bool lastVisible = false;
     QRect mLastExposeGeometry;
 
     static const wl_callback_listener callbackListener;
-    void handleFrameCallback();
+    void handleFrameCallback(struct ::wl_callback* callback);
 
     static QWaylandWindow *mMouseGrab;
-
-    mutable QReadWriteLock mSurfaceLock;
+    static QWaylandWindow *mTopPopup;
 
     friend class QWaylandSubSurface;
 };
+
+Q_DECLARE_OPERATORS_FOR_FLAGS(QWaylandWindow::ToplevelWindowTilingStates)
 
 inline QIcon QWaylandWindow::windowIcon() const
 {

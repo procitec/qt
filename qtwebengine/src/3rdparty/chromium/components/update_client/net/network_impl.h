@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,7 +10,7 @@
 #include <memory>
 #include <string>
 
-#include "base/macros.h"
+#include "base/functional/callback_forward.h"
 #include "base/memory/ref_counted.h"
 #include "components/update_client/net/network_chromium.h"
 #include "components/update_client/network.h"
@@ -28,6 +28,10 @@ class NetworkFetcherImpl : public NetworkFetcher {
   explicit NetworkFetcherImpl(
       scoped_refptr<network::SharedURLLoaderFactory> shared_url_network_factory,
       SendCookiesPredicate cookie_predicate);
+
+  NetworkFetcherImpl(const NetworkFetcherImpl&) = delete;
+  NetworkFetcherImpl& operator=(const NetworkFetcherImpl&) = delete;
+
   ~NetworkFetcherImpl() override;
 
   // NetworkFetcher overrides.
@@ -39,12 +43,13 @@ class NetworkFetcherImpl : public NetworkFetcher {
       ResponseStartedCallback response_started_callback,
       ProgressCallback progress_callback,
       PostRequestCompleteCallback post_request_complete_callback) override;
-  void DownloadToFile(const GURL& url,
-                      const base::FilePath& file_path,
-                      ResponseStartedCallback response_started_callback,
-                      ProgressCallback progress_callback,
-                      DownloadToFileCompleteCallback
-                          download_to_file_complete_callback) override;
+  base::OnceClosure DownloadToFile(
+      const GURL& url,
+      const base::FilePath& file_path,
+      ResponseStartedCallback response_started_callback,
+      ProgressCallback progress_callback,
+      DownloadToFileCompleteCallback download_to_file_complete_callback)
+      override;
 
  private:
   void OnResponseStartedCallback(
@@ -60,8 +65,6 @@ class NetworkFetcherImpl : public NetworkFetcher {
   scoped_refptr<network::SharedURLLoaderFactory> shared_url_network_factory_;
   std::unique_ptr<network::SimpleURLLoader> simple_url_loader_;
   SendCookiesPredicate cookie_predicate_;
-
-  DISALLOW_COPY_AND_ASSIGN(NetworkFetcherImpl);
 };
 
 }  // namespace update_client

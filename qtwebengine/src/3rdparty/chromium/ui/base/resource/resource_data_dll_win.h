@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,8 +8,9 @@
 #include <windows.h>
 #include <stdint.h>
 
-#include "base/compiler_specific.h"
-#include "base/macros.h"
+#include <memory>
+#include <vector>
+
 #include "ui/base/resource/resource_handle.h"
 
 namespace ui {
@@ -17,21 +18,27 @@ namespace ui {
 class ResourceDataDLL : public ResourceHandle {
  public:
   explicit ResourceDataDLL(HINSTANCE module);
+
+  ResourceDataDLL(const ResourceDataDLL&) = delete;
+  ResourceDataDLL& operator=(const ResourceDataDLL&) = delete;
+
   ~ResourceDataDLL() override;
 
   // ResourceHandle implementation:
   bool HasResource(uint16_t resource_id) const override;
-  bool GetStringPiece(uint16_t resource_id,
-                      base::StringPiece* data) const override;
+  absl::optional<base::StringPiece> GetStringPiece(
+      uint16_t resource_id) const override;
   base::RefCountedStaticMemory* GetStaticMemory(
       uint16_t resource_id) const override;
   TextEncodingType GetTextEncodingType() const override;
-  ScaleFactor GetScaleFactor() const override;
+  ResourceScaleFactor GetResourceScaleFactor() const override;
+#if DCHECK_IS_ON()
+  void CheckForDuplicateResources(
+      const std::vector<std::unique_ptr<ResourceHandle>>& packs) override {}
+#endif
 
  private:
   const HINSTANCE module_;
-
-  DISALLOW_COPY_AND_ASSIGN(ResourceDataDLL);
 };
 
 }  // namespace ui

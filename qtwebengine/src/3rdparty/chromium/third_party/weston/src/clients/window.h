@@ -40,6 +40,8 @@ struct widget;
 struct display;
 struct input;
 struct output;
+struct tablet;
+struct tablet_tool;
 
 struct task {
 	void (*run)(struct task *task, uint32_t events);
@@ -70,9 +72,6 @@ display_get_display(struct display *display);
 
 int
 display_has_subcompositor(struct display *display);
-
-cairo_device_t *
-display_get_cairo_device(struct display *display);
 
 struct wl_compositor *
 display_get_compositor(struct display *display);
@@ -114,28 +113,10 @@ display_set_output_configure_handler(struct display *display,
 struct wl_data_source *
 display_create_data_source(struct display *display);
 
-#ifdef EGL_NO_DISPLAY
-EGLDisplay
-display_get_egl_display(struct display *d);
-
-EGLConfig
-display_get_argb_egl_config(struct display *d);
-
-int
-display_acquire_window_surface(struct display *display,
-			       struct window *window,
-			       EGLContext ctx);
-void
-display_release_window_surface(struct display *display,
-			       struct window *window);
-#endif
-
 #define SURFACE_OPAQUE 0x01
 #define SURFACE_SHM    0x02
 
 #define SURFACE_HINT_RESIZE 0x10
-
-#define SURFACE_HINT_RGB565 0x100
 
 cairo_surface_t *
 display_create_surface(struct display *display,
@@ -286,6 +267,57 @@ typedef void (*widget_axis_handler_t)(struct widget *widget,
 				      uint32_t axis,
 				      wl_fixed_t value,
 				      void *data);
+typedef int (*widget_tablet_tool_motion_handler_t)(struct widget *widget,
+						   struct tablet_tool *tool,
+						   float x, float y,
+						   void *data);
+typedef void (*widget_tablet_tool_down_handler_t)(struct widget *widget,
+						  struct tablet_tool *tool,
+						  void *data);
+typedef void (*widget_tablet_tool_up_handler_t)(struct widget *widget,
+						struct tablet_tool *tool,
+						void *data);
+typedef void (*widget_tablet_tool_pressure_handler_t)(struct widget *widget,
+						      struct tablet_tool *tool,
+						      uint32_t pressure,
+						      void *data);
+typedef void (*widget_tablet_tool_distance_handler_t)(struct widget *widget,
+						      struct tablet_tool *tool,
+						      uint32_t distance,
+						      void *data);
+typedef void (*widget_tablet_tool_tilt_handler_t)(struct widget *widget,
+						  struct tablet_tool *tool,
+						  int32_t tilt_x, int32_t tilt_y,
+						  void *data);
+typedef void (*widget_tablet_tool_rotation_handler_t)(struct widget *widget,
+						      struct tablet_tool *tool,
+						      int32_t rotation,
+						      void *data);
+typedef void (*widget_tablet_tool_slider_handler_t)(struct widget *widget,
+						    struct tablet_tool *tool,
+						    int32_t slider,
+						    void *data);
+typedef void (*widget_tablet_tool_wheel_handler_t)(struct widget *widget,
+						   struct tablet_tool *tool,
+						   wl_fixed_t degrees,
+						   int32_t clicks,
+						   void *data);
+typedef void (*widget_tablet_tool_proximity_in_handler_t)(struct widget *widget,
+							  struct tablet_tool *tool,
+							  struct tablet *tablet,
+							  void *data);
+typedef void (*widget_tablet_tool_proximity_out_handler_t)(struct widget *widget,
+							   struct tablet_tool *tool,
+							   void *data);
+typedef void (*widget_tablet_tool_button_handler_t)(struct widget *widget,
+						    struct tablet_tool *tool,
+						    uint32_t button,
+						    uint32_t state,
+						    void *data);
+typedef void (*widget_tablet_tool_frame_handler_t)(struct widget *widget,
+						   struct tablet_tool *tool,
+						   uint32_t time,
+						   void *data);
 
 typedef void (*widget_pointer_frame_handler_t)(struct widget *widget,
 					       struct input *input,
@@ -418,7 +450,6 @@ struct wl_subsurface *
 widget_get_wl_subsurface(struct widget *widget);
 
 enum window_buffer_type {
-	WINDOW_BUFFER_TYPE_EGL_WINDOW,
 	WINDOW_BUFFER_TYPE_SHM,
 };
 
@@ -502,20 +533,17 @@ window_set_locked_pointer_motion_handler(
 void
 window_set_title(struct window *window, const char *title);
 
+void
+window_set_appid(struct window *window, const char *appid);
+
 const char *
 window_get_title(struct window *window);
 
+const char *
+window_get_appid(struct window *window);
+
 void
 window_set_text_cursor_position(struct window *window, int32_t x, int32_t y);
-
-enum preferred_format {
-	WINDOW_PREFERRED_FORMAT_NONE,
-	WINDOW_PREFERRED_FORMAT_RGB565
-};
-
-void
-window_set_preferred_format(struct window *window,
-			    enum preferred_format format);
 
 int
 widget_set_tooltip(struct widget *parent, char *entry, float x, float y);
@@ -530,6 +558,8 @@ void
 widget_destroy(struct widget *widget);
 void
 widget_set_default_cursor(struct widget *widget, int cursor);
+void
+widget_set_default_tablet_cursor(struct widget *widget, int cursor);
 void
 widget_get_allocation(struct widget *widget, struct rectangle *allocation);
 
@@ -603,6 +633,31 @@ widget_set_axis_handlers(struct widget *widget,
 			widget_axis_source_handler_t axis_source_handler,
 			widget_axis_stop_handler_t axis_stop_handler,
 			widget_axis_discrete_handler_t axis_discrete_handler);
+void
+widget_set_tablet_tool_axis_handlers(struct widget *widget,
+				     widget_tablet_tool_motion_handler_t motion,
+				     widget_tablet_tool_pressure_handler_t pressure,
+				     widget_tablet_tool_distance_handler_t distance,
+				     widget_tablet_tool_tilt_handler_t tilt,
+				     widget_tablet_tool_rotation_handler_t rotation,
+				     widget_tablet_tool_slider_handler_t slider,
+				     widget_tablet_tool_wheel_handler_t wheel);
+void
+widget_set_tablet_tool_up_handler(struct widget *widget,
+				  widget_tablet_tool_up_handler_t handler);
+void
+widget_set_tablet_tool_down_handler(struct widget *widget,
+				    widget_tablet_tool_down_handler_t handler);
+void
+widget_set_tablet_tool_proximity_handlers(struct widget *widget,
+					  widget_tablet_tool_proximity_in_handler_t in_handler,
+					  widget_tablet_tool_proximity_out_handler_t out_handler);
+void
+widget_set_tablet_tool_button_handler(struct widget *widget,
+				      widget_tablet_tool_button_handler_t handler);
+void
+widget_set_tablet_tool_frame_handler(struct widget *widget,
+				     widget_tablet_tool_frame_handler_t handler);
 
 void
 window_inhibit_redraw(struct window *window);
@@ -612,6 +667,14 @@ void
 widget_schedule_redraw(struct widget *widget);
 void
 widget_set_use_cairo(struct widget *widget, int use_cairo);
+
+/*
+ * Sets the viewport destination for the widget's surface
+ * return 0 on success and -1 on failure. Set width and height to
+ * -1 to reset the viewport.
+ */
+int
+widget_set_viewport_destination(struct widget *widget, int width, int height);
 
 struct widget *
 window_frame_create(struct window *window, void *data);
@@ -717,6 +780,18 @@ keysym_modifiers_add(struct wl_array *modifiers_map,
 xkb_mod_mask_t
 keysym_modifiers_get_mask(struct wl_array *modifiers_map,
 			  const char *name);
+
+uint32_t
+tablet_tool_get_type(struct tablet_tool *tool);
+
+uint64_t
+tablet_tool_get_serial(struct tablet_tool *tool);
+
+uint64_t
+tablet_tool_get_hwid(struct tablet_tool *tool);
+
+void
+tablet_tool_set_cursor_image(struct tablet_tool *tool, int cursor);
 
 struct toytimer;
 typedef void (*toytimer_cb)(struct toytimer *);

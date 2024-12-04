@@ -1,37 +1,11 @@
-/****************************************************************************
-**
-** Copyright (C) 2018 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the test suite of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:GPL-EXCEPT$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 3 as published by the Free Software
-** Foundation with exceptions as appearing in the file LICENSE.GPL3-EXCEPT
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2018 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
 #include "mockcompositor.h"
 
 #include <qwayland-server-wp-primary-selection-unstable-v1.h>
 
 #include <QtGui/QRasterWindow>
-#include <QtGui/QOpenGLWindow>
 #include <QtGui/QClipboard>
 #include <QtCore/private/qcore_unix_p.h>
 
@@ -140,7 +114,7 @@ public:
 
     PrimarySelectionDeviceManagerV1 *m_manager = nullptr;
     Seat *m_seat = nullptr;
-    QVector<PrimarySelectionOfferV1 *> m_sentSelectionOffers;
+    QList<PrimarySelectionOfferV1 *> m_sentSelectionOffers;
     PrimarySelectionSourceV1 *m_selectionSource = nullptr;
     uint m_serial = 0;
 
@@ -155,11 +129,6 @@ protected:
     {
         wl_resource_destroy(resource->handle);
     }
-    void zwp_primary_selection_device_v1_destroy_resource(Resource *resource) override
-    {
-        Q_UNUSED(resource);
-        delete this;
-    }
 };
 
 class PrimarySelectionDeviceManagerV1 : public Global, public QtWaylandServer::zwp_primary_selection_device_manager_v1
@@ -170,9 +139,13 @@ public:
         : QtWaylandServer::zwp_primary_selection_device_manager_v1(compositor->m_display, version)
         , m_version(version)
     {}
+    ~PrimarySelectionDeviceManagerV1() override
+    {
+        qDeleteAll(m_devices);
+    }
     bool isClean() override
     {
-        for (auto *device : qAsConst(m_devices)) {
+        for (auto *device : std::as_const(m_devices)) {
             // The client should not leak selection offers, i.e. if this fails, there is a missing
             // zwp_primary_selection_offer_v1.destroy request
             if (!device->m_sentSelectionOffers.empty())
@@ -194,7 +167,7 @@ public:
 
     int m_version = 1; // TODO: Remove on libwayland upgrade
     QMap<Seat *, PrimarySelectionDeviceV1 *> m_devices;
-    QVector<PrimarySelectionSourceV1 *> m_sources;
+    QList<PrimarySelectionSourceV1 *> m_sources;
 protected:
     void zwp_primary_selection_device_manager_v1_destroy(Resource *resource) override
     {
@@ -268,9 +241,6 @@ private slots:
 void tst_primaryselectionv1::initTestCase()
 {
     QCOMPOSITOR_TRY_VERIFY(pointer());
-    QCOMPOSITOR_TRY_VERIFY(!pointer()->resourceMap().empty());
-    QCOMPOSITOR_TRY_COMPARE(pointer()->resourceMap().first()->version(), 5);
-
     QCOMPOSITOR_TRY_VERIFY(keyboard());
 }
 
@@ -290,7 +260,7 @@ void tst_primaryselectionv1::createsPrimaryDevice()
 
 void tst_primaryselectionv1::createsPrimaryDeviceForNewSeats()
 {
-    exec([=] { add<Seat>(); });
+    exec([&] { add<Seat>(); });
     QCOMPOSITOR_TRY_VERIFY(primarySelectionDevice(1));
 }
 
@@ -320,13 +290,13 @@ void tst_primaryselectionv1::pasteAscii()
 
         auto *device = primarySelectionDevice();
         auto *offer = device->sendDataOffer({"text/plain"});
-        connect(offer, &PrimarySelectionOfferV1::receive, [](QString mimeType, int fd) {
+        connect(offer, &PrimarySelectionOfferV1::receive, offer, [](QString mimeType, int fd) {
             QFile file;
             file.open(fd, QIODevice::WriteOnly, QFile::FileHandleFlag::AutoCloseHandle);
             QCOMPARE(mimeType, "text/plain");
             file.write(QByteArray("normal ascii"));
             file.close();
-        });
+        }, Qt::DirectConnection);
         device->sendSelection(offer);
 
         pointer()->sendEnter(surface, {32, 32});
@@ -366,13 +336,13 @@ void tst_primaryselectionv1::pasteUtf8()
 
         auto *device = primarySelectionDevice();
         auto *offer = device->sendDataOffer({"text/plain", "text/plain;charset=utf-8"});
-        connect(offer, &PrimarySelectionOfferV1::receive, [](QString mimeType, int fd) {
+        connect(offer, &PrimarySelectionOfferV1::receive, offer, [](QString mimeType, int fd) {
             QFile file;
             file.open(fd, QIODevice::WriteOnly, QFile::FileHandleFlag::AutoCloseHandle);
             QCOMPARE(mimeType, "text/plain;charset=utf-8");
             file.write(QByteArray("face with tears of joy: 😂"));
             file.close();
-        });
+        }, Qt::DirectConnection);
         device->sendSelection(offer);
 
         pointer()->sendEnter(surface, {32, 32});
@@ -437,7 +407,7 @@ void tst_primaryselectionv1::destroysSelectionOnLeave()
         keyboard()->sendLeave(surface);
     });
 
-    QTRY_COMPARE(selectionChangedSpy.count(), 1);
+    QTRY_COMPARE(selectionChangedSpy.size(), 1);
     QVERIFY(!QGuiApplication::clipboard()->mimeData(QClipboard::Selection)->hasText());
 }
 
@@ -459,7 +429,7 @@ void tst_primaryselectionv1::copy()
     window.show();
 
     QCOMPOSITOR_TRY_VERIFY(xdgSurface() && xdgSurface()->m_committedConfigureSerial);
-    QVector<uint> mouseSerials;
+    QList<uint> mouseSerials;
     exec([&] {
         auto *surface = xdgSurface()->m_surface;
         keyboard()->sendEnter(surface); // Need to set keyboard focus according to protocol
@@ -494,7 +464,7 @@ void tst_primaryselectionv1::copy()
                     pastedBuf.append(buf, n);
                 }
             });
-        });
+        }, Qt::DirectConnection);
     });
 
     QCOMPOSITOR_TRY_VERIFY(pastedBuf.size()); // this assumes we got everything in one read

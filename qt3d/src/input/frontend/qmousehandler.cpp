@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2015 Klaralvdalens Datakonsult AB (KDAB).
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt3D module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2015 Klaralvdalens Datakonsult AB (KDAB).
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qmousehandler.h"
 #include "qmousehandler_p.h"
@@ -46,31 +10,34 @@
 
 QT_BEGIN_NAMESPACE
 
-using namespace Qt3DCore;
-
 namespace Qt3DInput {
+
+using namespace Qt3DCore;
+using namespace std::chrono_literals;
+
 /*! \internal */
 QMouseHandlerPrivate::QMouseHandlerPrivate()
     : QComponentPrivate()
     , m_mouseDevice(nullptr)
     , m_containsMouse(false)
-    , m_pressAndHoldTimer(new QTimer)
 {
     m_shareable = false;
-    m_pressAndHoldTimer->setSingleShot(true);
-    m_pressAndHoldTimer->setInterval(800);
-    QObject::connect(m_pressAndHoldTimer, &QTimer::timeout, [this] {
-        emit q_func()->pressAndHold(m_lastPressedEvent.data());
-    });
 }
 
 QMouseHandlerPrivate::~QMouseHandlerPrivate()
 {
 }
 
-void QMouseHandlerPrivate::init(QObject *parent)
+void QMouseHandlerPrivate::init()
 {
-    m_pressAndHoldTimer->setParent(parent);
+    Q_Q(QMouseHandler);
+
+    m_pressAndHoldTimer = new QTimer(q);
+    m_pressAndHoldTimer->setSingleShot(true);
+    m_pressAndHoldTimer->setInterval(800ms);
+    QObject::connect(m_pressAndHoldTimer, &QTimer::timeout, q, [this, q] {
+        emit q->pressAndHold(m_lastPressedEvent.data());
+    });
 }
 
 void QMouseHandlerPrivate::mouseEvent(const QMouseEventPtr &event)
@@ -106,7 +73,7 @@ void QMouseHandlerPrivate::mouseEvent(const QMouseEventPtr &event)
 
 /*!
  * \qmltype MouseHandler
- * \instantiates Qt3DInput::QMouseHandler
+ * \nativetype Qt3DInput::QMouseHandler
  * \inqmlmodule Qt3D.Input
  * \since 5.5
  * \brief Provides mouse event notification.
@@ -265,7 +232,7 @@ QMouseHandler::QMouseHandler(QNode *parent)
     : QComponent(*new QMouseHandlerPrivate, parent)
 {
     Q_D(QMouseHandler);
-    d->init(this);
+    d->init();
 }
 
 QMouseHandler::~QMouseHandler()
@@ -299,10 +266,6 @@ void QMouseHandler::setSourceDevice(QMouseDevice *mouseDevice)
     }
 }
 
-// TODO Unused remove in Qt6
-void QMouseHandler::sceneChangeEvent(const QSceneChangePtr &)
-{
-}
 
 /*!
  * \property Qt3DInput::QMouseHandler::sourceDevice
@@ -340,17 +303,8 @@ void QMouseHandler::setContainsMouse(bool contains)
     }
 }
 
-Qt3DCore::QNodeCreatedChangeBasePtr QMouseHandler::createNodeCreationChange() const
-{
-    auto creationChange = Qt3DCore::QNodeCreatedChangePtr<QMouseHandlerData>::create(this);
-    auto &data = creationChange->data;
-
-    Q_D(const QMouseHandler);
-    data.mouseDeviceId = qIdForNode(d->m_mouseDevice);
-
-    return creationChange;
-}
-
 } // namespace Qt3DInput
 
 QT_END_NAMESPACE
+
+#include "moc_qmousehandler.cpp"

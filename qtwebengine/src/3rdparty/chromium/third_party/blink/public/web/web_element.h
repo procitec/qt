@@ -33,11 +33,14 @@
 
 #include <vector>
 
+#include "third_party/blink/public/platform/web_common.h"
+#include "third_party/blink/public/platform/web_vector.h"
 #include "third_party/blink/public/web/web_node.h"
 #include "third_party/skia/include/core/SkBitmap.h"
-#include "v8/include/v8.h"
+#include "v8/include/v8-forward.h"
 
 namespace gfx {
+class Rect;
 class Size;
 }
 
@@ -45,7 +48,7 @@ namespace blink {
 
 class Element;
 class Image;
-struct WebRect;
+class WebLabelElement;
 
 // Provides access to some properties of a DOM element node.
 class BLINK_EXPORT WebElement : public WebNode {
@@ -54,7 +57,7 @@ class BLINK_EXPORT WebElement : public WebNode {
   WebElement(const WebElement& e) = default;
 
   // Returns the empty WebElement if the argument doesn't represent an Element.
-  static WebElement FromV8Value(v8::Local<v8::Value>);
+  static WebElement FromV8Value(v8::Isolate*, v8::Local<v8::Value>);
 
   WebElement& operator=(const WebElement& e) {
     WebNode::Assign(e);
@@ -68,6 +71,8 @@ class BLINK_EXPORT WebElement : public WebNode {
   bool IsEditable() const;
   // Returns the qualified name, which may contain a prefix and a colon.
   WebString TagName() const;
+  // Returns the id attribute.
+  WebString GetIdAttribute() const;
   // Check if this element has the specified local tag name, and the HTML
   // namespace. Tag name matching is case-insensitive.
   bool HasHTMLTagName(const WebString&) const;
@@ -75,17 +80,47 @@ class BLINK_EXPORT WebElement : public WebNode {
   WebString GetAttribute(const WebString&) const;
   void SetAttribute(const WebString& name, const WebString& value);
   WebString TextContent() const;
+  WebString TextContentAbridged(unsigned int max_length) const;
   WebString InnerHTML() const;
-  WebString AttributeLocalName(unsigned index) const;
-  WebString AttributeValue(unsigned index) const;
-  unsigned AttributeCount() const;
 
-  // Returns true if this is an autonomous custom element, regardless of
-  // Custom Elements V0 or V1.
+  // Returns true if the element's contenteditable attribute is in the true
+  // state or in the plaintext-only state:
+  // https://html.spec.whatwg.org/multipage/interaction.html#attr-contenteditable
+  bool IsContentEditable() const;
+
+  // Returns true if the frame's selection is inside this editable element.
+  bool ContainsFrameSelection() const;
+
+  // Returns the selected text if this element contains the selection.
+  // Otherwise returns the empty string.
+  WebString SelectedText() const;
+
+  // Simulates a paste of `text` event into `this` element.
+  //
+  // There are three different behaviors depending on `replace_all` and which
+  // text is currently selected:
+  // - If `replace_all`, the entire contents of the element is selected first,
+  //   so that the paste action replaces it.
+  // - If `!replace_all` and the selection is not currently in the element, an
+  //   empty range at the end of the element is selected, so that the paste
+  //   action appends to the element.
+  // - Otherwise, the current selection is unchanged, so that the paste replaces
+  //   the selected text.
+  //
+  // This is a no-op if the element is not editable.
+  void PasteText(const WebString& text, bool replace_all);
+
+  // Returns all <label> elements associated to this element.
+  WebVector<WebLabelElement> Labels() const;
+
+  // Returns true if this is an autonomous custom element.
   bool IsAutonomousCustomElement() const;
 
+  // Returns the owning shadow host for this element, if there is one.
+  WebElement OwnerShadowHost() const;
+
   // Returns an author ShadowRoot attached to this element, regardless
-  // of V0, V1 open, or V1 closed.  This returns null WebNode if this
+  // of open or closed.  This returns null WebNode if this
   // element has no ShadowRoot or has a UA ShadowRoot.
   WebNode ShadowRoot() const;
 
@@ -95,7 +130,7 @@ class BLINK_EXPORT WebElement : public WebNode {
   // Returns the bounds of the element in Visual Viewport. The bounds
   // have been adjusted to include any transformations, including page scale.
   // This function will update the layout if required.
-  WebRect BoundsInViewport() const;
+  gfx::Rect BoundsInWidget() const;
 
   // Returns the image contents of this element or a null SkBitmap
   // if there isn't any.
@@ -111,7 +146,11 @@ class BLINK_EXPORT WebElement : public WebNode {
   // Returns the original image size.
   gfx::Size GetImageSize();
 
-  void RequestFullscreen();
+  // Returns {clientWidth, clientHeight}.
+  gfx::Size GetClientSize() const;
+
+  // Returns {scrollWidth, scrollHeight}.
+  gfx::Size GetScrollSize() const;
 
   // ComputedStyle property values. The following exposure is of CSS property
   // values are part of the ComputedStyle set which is usually exposed through
@@ -136,4 +175,4 @@ DECLARE_WEB_NODE_TYPE_CASTS(WebElement);
 
 }  // namespace blink
 
-#endif
+#endif  // THIRD_PARTY_BLINK_PUBLIC_WEB_WEB_ELEMENT_H_

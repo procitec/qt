@@ -1,4 +1,4 @@
-// Copyright 2015 PDFium Authors. All rights reserved.
+// Copyright 2015 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,12 +7,14 @@
 #ifndef CORE_FXCODEC_JBIG2_JBIG2_TRDPROC_H_
 #define CORE_FXCODEC_JBIG2_JBIG2_TRDPROC_H_
 
+#include <stdint.h>
+
 #include <memory>
 #include <vector>
 
 #include "core/fxcodec/jbig2/JBig2_Image.h"
-#include "core/fxcrt/fx_system.h"
 #include "core/fxcrt/unowned_ptr.h"
+#include "core/fxcrt/unowned_ptr_exclusion.h"
 
 class CJBig2_ArithDecoder;
 class CJBig2_ArithIaidDecoder;
@@ -70,7 +72,7 @@ class CJBig2_TRDProc {
   uint32_t SBSTRIPS;
   uint32_t SBNUMSYMS;
   std::vector<JBig2HuffmanCode> SBSYMCODES;
-  CJBig2_Image** SBSYMS;
+  UNOWNED_PTR_EXCLUSION CJBig2_Image** SBSYMS;
   JBig2ComposeOp SBCOMBOP;
   JBig2Corner REFCORNER;
   UnownedPtr<const CJBig2_HuffmanTable> SBHUFFFS;

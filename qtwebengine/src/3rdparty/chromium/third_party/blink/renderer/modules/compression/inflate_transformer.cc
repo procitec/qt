@@ -1,24 +1,26 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/modules/compression/inflate_transformer.h"
 
-#include <string.h>
 #include <algorithm>
+#include <cstring>
 #include <limits>
 
-#include "third_party/blink/renderer/bindings/core/v8/array_buffer_or_array_buffer_view.h"
+#include "base/trace_event/typed_macros.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
+#include "third_party/blink/renderer/bindings/core/v8/to_v8_traits.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
-#include "third_party/blink/renderer/bindings/core/v8/v8_uint8_array.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_typedefs.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_union_arraybuffer_arraybufferview.h"
 #include "third_party/blink/renderer/core/streams/transform_stream_default_controller.h"
 #include "third_party/blink/renderer/core/streams/transform_stream_transformer.h"
 #include "third_party/blink/renderer/core/typed_arrays/array_buffer_view_helpers.h"
+#include "third_party/blink/renderer/core/typed_arrays/dom_array_piece.h"
 #include "third_party/blink/renderer/modules/compression/compression_format.h"
 #include "third_party/blink/renderer/modules/compression/zlib_partition_alloc.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
-#include "third_party/blink/renderer/platform/bindings/to_v8.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 #include "v8/include/v8.h"
@@ -40,6 +42,9 @@ InflateTransformer::InflateTransformer(ScriptState* script_state,
     case CompressionFormat::kGzip:
       err = inflateInit2(&stream_, kWindowBits + kUseGzip);
       break;
+    case CompressionFormat::kDeflateRaw:
+      err = inflateInit2(&stream_, -kWindowBits);
+      break;
   }
   DCHECK_EQ(Z_OK, err);
 }
@@ -54,40 +59,20 @@ ScriptPromise InflateTransformer::Transform(
     v8::Local<v8::Value> chunk,
     TransformStreamDefaultController* controller,
     ExceptionState& exception_state) {
-  // TODO(canonmukai): Support SharedArrayBuffer.
-  ArrayBufferOrArrayBufferView buffer_source;
-  V8ArrayBufferOrArrayBufferView::ToImpl(
-      script_state_->GetIsolate(), chunk, buffer_source,
-      UnionTypeConversionMode::kNotNullable, exception_state);
-  if (exception_state.HadException()) {
+  auto* buffer_source = V8BufferSource::Create(script_state_->GetIsolate(),
+                                               chunk, exception_state);
+  if (exception_state.HadException())
     return ScriptPromise();
-  }
-  if (buffer_source.IsArrayBufferView()) {
-    const auto* view = buffer_source.GetAsArrayBufferView().View();
-    const uint8_t* start = static_cast<const uint8_t*>(view->BaseAddress());
-    size_t length = view->byteLengthAsSizeT();
-    if (length > std::numeric_limits<wtf_size_t>::max()) {
-      exception_state.ThrowRangeError(
-          "Buffer size exceeds maximum heap object size.");
-      return ScriptPromise();
-    }
-    Inflate(start, static_cast<wtf_size_t>(length), IsFinished(false),
-            controller, exception_state);
-    return ScriptPromise::CastUndefined(script_state_);
-  }
-  DCHECK(buffer_source.IsArrayBuffer());
-  const auto* array_buffer = buffer_source.GetAsArrayBuffer();
-  const uint8_t* start = static_cast<const uint8_t*>(array_buffer->Data());
-  size_t length = array_buffer->ByteLengthAsSizeT();
-  if (length > std::numeric_limits<wtf_size_t>::max()) {
+  DOMArrayPiece array_piece(buffer_source);
+  if (array_piece.ByteLength() > std::numeric_limits<wtf_size_t>::max()) {
     exception_state.ThrowRangeError(
         "Buffer size exceeds maximum heap object size.");
     return ScriptPromise();
   }
-  Inflate(start, static_cast<wtf_size_t>(length), IsFinished(false), controller,
-          exception_state);
-
-  return ScriptPromise::CastUndefined(script_state_);
+  Inflate(array_piece.Bytes(),
+          static_cast<wtf_size_t>(array_piece.ByteLength()), IsFinished(false),
+          controller, exception_state);
+  return ScriptPromise::CastUndefined(script_state_.Get());
 }
 
 ScriptPromise InflateTransformer::Flush(
@@ -107,7 +92,7 @@ ScriptPromise InflateTransformer::Flush(
     exception_state.ThrowTypeError("Compressed input was truncated.");
   }
 
-  return ScriptPromise::CastUndefined(script_state_);
+  return ScriptPromise::CastUndefined(script_state_.Get());
 }
 
 void InflateTransformer::Inflate(const uint8_t* start,
@@ -115,6 +100,7 @@ void InflateTransformer::Inflate(const uint8_t* start,
                                  IsFinished finished,
                                  TransformStreamDefaultController* controller,
                                  ExceptionState& exception_state) {
+  TRACE_EVENT("blink,devtools.timeline", "DecompressionStream Inflate");
   if (reached_end_ && length != 0) {
     // zlib will ignore data after the end of the stream, so we have to
     // explicitly throw an error.

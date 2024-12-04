@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,8 +7,6 @@
 #include <stdint.h>
 #include <memory>
 
-#include "base/guid.h"
-#include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "content/browser/background_fetch/background_fetch_registration_id.h"
@@ -30,49 +28,27 @@ const char kExampleUniqueId2[] = "bb48a9fb-c21f-4c2d-a9ae-58bd48a9fb53";
 class BackgroundFetchEventDispatcherTest : public BackgroundFetchTestBase {
  public:
   BackgroundFetchEventDispatcherTest() = default;
+
+  BackgroundFetchEventDispatcherTest(
+      const BackgroundFetchEventDispatcherTest&) = delete;
+  BackgroundFetchEventDispatcherTest& operator=(
+      const BackgroundFetchEventDispatcherTest&) = delete;
+
   ~BackgroundFetchEventDispatcherTest() override = default;
 
   void SetUp() override {
     BackgroundFetchTestBase::SetUp();
     auto* background_fetch_context =
-        static_cast<StoragePartitionImpl*>(storage_partition())
-            ->GetBackgroundFetchContext();
+        storage_partition()->GetBackgroundFetchContext();
     event_dispatcher_ = std::make_unique<BackgroundFetchEventDispatcher>(
         background_fetch_context,
-        embedded_worker_test_helper()->context_wrapper(),
-        devtools_context().get());
+        embedded_worker_test_helper()->context_wrapper(), devtools_context());
   }
 
  protected:
   std::unique_ptr<BackgroundFetchEventDispatcher> event_dispatcher_;
   base::HistogramTester histogram_tester_;
-
-  DISALLOW_COPY_AND_ASSIGN(BackgroundFetchEventDispatcherTest);
 };
-
-TEST_F(BackgroundFetchEventDispatcherTest, DispatchInvalidRegistration) {
-  BackgroundFetchRegistrationId invalid_registration_id(
-      9042 /* random invalid SW id */, origin(), kExampleDeveloperId,
-      kExampleUniqueId);
-
-  base::RunLoop run_loop;
-  auto registration_data = CreateBackgroundFetchRegistrationData(
-      invalid_registration_id.developer_id(),
-      blink::mojom::BackgroundFetchResult::FAILURE,
-      blink::mojom::BackgroundFetchFailureReason::CANCELLED_BY_DEVELOPER);
-  event_dispatcher_->DispatchBackgroundFetchCompletionEvent(
-      invalid_registration_id, std::move(registration_data),
-      run_loop.QuitClosure());
-
-  run_loop.Run();
-
-  histogram_tester_.ExpectBucketCount(
-      "BackgroundFetch.EventDispatchResult.AbortEvent",
-      BackgroundFetchEventDispatcher::DISPATCH_RESULT_CANNOT_FIND_WORKER, 1);
-  histogram_tester_.ExpectBucketCount(
-      "BackgroundFetch.EventDispatchFailure.FindWorker.AbortEvent",
-      blink::ServiceWorkerStatusCode::kErrorNotFound, 1);
-}
 
 TEST_F(BackgroundFetchEventDispatcherTest, DispatchAbortEvent) {
   auto* worker =
@@ -89,9 +65,9 @@ TEST_F(BackgroundFetchEventDispatcherTest, DispatchAbortEvent) {
   fetch->response = blink::mojom::FetchAPIResponse::New();
   fetches.push_back(std::move(fetch));
 
-  BackgroundFetchRegistrationId registration_id(service_worker_registration_id,
-                                                origin(), kExampleDeveloperId,
-                                                kExampleUniqueId);
+  BackgroundFetchRegistrationId registration_id(
+      service_worker_registration_id, storage_key(), kExampleDeveloperId,
+      kExampleUniqueId);
 
   {
     base::RunLoop run_loop;
@@ -109,14 +85,10 @@ TEST_F(BackgroundFetchEventDispatcherTest, DispatchAbortEvent) {
   EXPECT_EQ(blink::mojom::BackgroundFetchFailureReason::CANCELLED_FROM_UI,
             worker->last_registration()->failure_reason);
 
-  histogram_tester_.ExpectUniqueSample(
-      "BackgroundFetch.EventDispatchResult.AbortEvent",
-      BackgroundFetchEventDispatcher::DISPATCH_RESULT_SUCCESS, 1);
-
   worker->set_fail_abort_event(true);
 
   BackgroundFetchRegistrationId second_registration_id(
-      service_worker_registration_id, origin(), kExampleDeveloperId2,
+      service_worker_registration_id, storage_key(), kExampleDeveloperId2,
       kExampleUniqueId2);
 
   {
@@ -133,16 +105,6 @@ TEST_F(BackgroundFetchEventDispatcherTest, DispatchAbortEvent) {
 
   ASSERT_TRUE(worker->last_registration());
   EXPECT_EQ(kExampleDeveloperId2, worker->last_registration()->developer_id);
-
-  histogram_tester_.ExpectBucketCount(
-      "BackgroundFetch.EventDispatchResult.AbortEvent",
-      BackgroundFetchEventDispatcher::DISPATCH_RESULT_SUCCESS, 1);
-  histogram_tester_.ExpectBucketCount(
-      "BackgroundFetch.EventDispatchResult.AbortEvent",
-      BackgroundFetchEventDispatcher::DISPATCH_RESULT_CANNOT_DISPATCH_EVENT, 1);
-  histogram_tester_.ExpectUniqueSample(
-      "BackgroundFetch.EventDispatchFailure.Dispatch.AbortEvent",
-      blink::ServiceWorkerStatusCode::kErrorEventWaitUntilRejected, 1);
 }
 
 TEST_F(BackgroundFetchEventDispatcherTest, DispatchClickEvent) {
@@ -154,9 +116,9 @@ TEST_F(BackgroundFetchEventDispatcherTest, DispatchClickEvent) {
   ASSERT_NE(blink::mojom::kInvalidServiceWorkerRegistrationId,
             service_worker_registration_id);
 
-  BackgroundFetchRegistrationId registration_id(service_worker_registration_id,
-                                                origin(), kExampleDeveloperId,
-                                                kExampleUniqueId);
+  BackgroundFetchRegistrationId registration_id(
+      service_worker_registration_id, storage_key(), kExampleDeveloperId,
+      kExampleUniqueId);
 
   {
     base::RunLoop run_loop;
@@ -174,14 +136,10 @@ TEST_F(BackgroundFetchEventDispatcherTest, DispatchClickEvent) {
   EXPECT_EQ(blink::mojom::BackgroundFetchResult::UNSET,
             worker->last_registration()->result);
 
-  histogram_tester_.ExpectUniqueSample(
-      "BackgroundFetch.EventDispatchResult.ClickEvent",
-      BackgroundFetchEventDispatcher::DISPATCH_RESULT_SUCCESS, 1);
-
   worker->set_fail_click_event(true);
 
   BackgroundFetchRegistrationId second_registration_id(
-      service_worker_registration_id, origin(), kExampleDeveloperId2,
+      service_worker_registration_id, storage_key(), kExampleDeveloperId2,
       kExampleUniqueId2);
 
   {
@@ -200,16 +158,6 @@ TEST_F(BackgroundFetchEventDispatcherTest, DispatchClickEvent) {
   EXPECT_EQ(kExampleDeveloperId2, worker->last_registration()->developer_id);
   EXPECT_EQ(blink::mojom::BackgroundFetchResult::FAILURE,
             worker->last_registration()->result);
-
-  histogram_tester_.ExpectBucketCount(
-      "BackgroundFetch.EventDispatchResult.ClickEvent",
-      BackgroundFetchEventDispatcher::DISPATCH_RESULT_SUCCESS, 1);
-  histogram_tester_.ExpectBucketCount(
-      "BackgroundFetch.EventDispatchResult.ClickEvent",
-      BackgroundFetchEventDispatcher::DISPATCH_RESULT_CANNOT_DISPATCH_EVENT, 1);
-  histogram_tester_.ExpectUniqueSample(
-      "BackgroundFetch.EventDispatchFailure.Dispatch.ClickEvent",
-      blink::ServiceWorkerStatusCode::kErrorEventWaitUntilRejected, 1);
 }
 
 TEST_F(BackgroundFetchEventDispatcherTest, DispatchFailEvent) {
@@ -221,9 +169,9 @@ TEST_F(BackgroundFetchEventDispatcherTest, DispatchFailEvent) {
   ASSERT_NE(blink::mojom::kInvalidServiceWorkerRegistrationId,
             service_worker_registration_id);
 
-  BackgroundFetchRegistrationId registration_id(service_worker_registration_id,
-                                                origin(), kExampleDeveloperId,
-                                                kExampleUniqueId);
+  BackgroundFetchRegistrationId registration_id(
+      service_worker_registration_id, storage_key(), kExampleDeveloperId,
+      kExampleUniqueId);
 
   {
     base::RunLoop run_loop;
@@ -239,14 +187,10 @@ TEST_F(BackgroundFetchEventDispatcherTest, DispatchFailEvent) {
   ASSERT_TRUE(worker->last_registration());
   EXPECT_EQ(kExampleDeveloperId, worker->last_registration()->developer_id);
 
-  histogram_tester_.ExpectUniqueSample(
-      "BackgroundFetch.EventDispatchResult.FailEvent",
-      BackgroundFetchEventDispatcher::DISPATCH_RESULT_SUCCESS, 1);
-
   worker->set_fail_fetch_fail_event(true);
 
   BackgroundFetchRegistrationId second_registration_id(
-      service_worker_registration_id, origin(), kExampleDeveloperId2,
+      service_worker_registration_id, storage_key(), kExampleDeveloperId2,
       kExampleUniqueId2);
 
   {
@@ -262,16 +206,6 @@ TEST_F(BackgroundFetchEventDispatcherTest, DispatchFailEvent) {
 
   ASSERT_TRUE(worker->last_registration());
   EXPECT_EQ(kExampleDeveloperId2, worker->last_registration()->developer_id);
-
-  histogram_tester_.ExpectBucketCount(
-      "BackgroundFetch.EventDispatchResult.FailEvent",
-      BackgroundFetchEventDispatcher::DISPATCH_RESULT_SUCCESS, 1);
-  histogram_tester_.ExpectBucketCount(
-      "BackgroundFetch.EventDispatchResult.FailEvent",
-      BackgroundFetchEventDispatcher::DISPATCH_RESULT_CANNOT_DISPATCH_EVENT, 1);
-  histogram_tester_.ExpectUniqueSample(
-      "BackgroundFetch.EventDispatchFailure.Dispatch.FailEvent",
-      blink::ServiceWorkerStatusCode::kErrorEventWaitUntilRejected, 1);
 }
 
 TEST_F(BackgroundFetchEventDispatcherTest, DispatchFetchSuccessEvent) {
@@ -283,9 +217,9 @@ TEST_F(BackgroundFetchEventDispatcherTest, DispatchFetchSuccessEvent) {
   ASSERT_NE(blink::mojom::kInvalidServiceWorkerRegistrationId,
             service_worker_registration_id);
 
-  BackgroundFetchRegistrationId registration_id(service_worker_registration_id,
-                                                origin(), kExampleDeveloperId,
-                                                kExampleUniqueId);
+  BackgroundFetchRegistrationId registration_id(
+      service_worker_registration_id, storage_key(), kExampleDeveloperId,
+      kExampleUniqueId);
 
   {
     base::RunLoop run_loop;
@@ -301,14 +235,10 @@ TEST_F(BackgroundFetchEventDispatcherTest, DispatchFetchSuccessEvent) {
   ASSERT_TRUE(worker->last_registration());
   EXPECT_EQ(kExampleDeveloperId, worker->last_registration()->developer_id);
 
-  histogram_tester_.ExpectUniqueSample(
-      "BackgroundFetch.EventDispatchResult.SuccessEvent",
-      BackgroundFetchEventDispatcher::DISPATCH_RESULT_SUCCESS, 1);
-
   worker->set_fail_fetched_event(true);
 
   BackgroundFetchRegistrationId second_registration_id(
-      service_worker_registration_id, origin(), kExampleDeveloperId2,
+      service_worker_registration_id, storage_key(), kExampleDeveloperId2,
       kExampleUniqueId2);
 
   {
@@ -325,16 +255,6 @@ TEST_F(BackgroundFetchEventDispatcherTest, DispatchFetchSuccessEvent) {
 
   ASSERT_TRUE(worker->last_registration());
   EXPECT_EQ(kExampleDeveloperId2, worker->last_registration()->developer_id);
-
-  histogram_tester_.ExpectBucketCount(
-      "BackgroundFetch.EventDispatchResult.SuccessEvent",
-      BackgroundFetchEventDispatcher::DISPATCH_RESULT_SUCCESS, 1);
-  histogram_tester_.ExpectBucketCount(
-      "BackgroundFetch.EventDispatchResult.SuccessEvent",
-      BackgroundFetchEventDispatcher::DISPATCH_RESULT_CANNOT_DISPATCH_EVENT, 1);
-  histogram_tester_.ExpectUniqueSample(
-      "BackgroundFetch.EventDispatchFailure.Dispatch.SuccessEvent",
-      blink::ServiceWorkerStatusCode::kErrorEventWaitUntilRejected, 1);
 }
 
 }  // namespace

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,6 +6,7 @@
 
 #include "base/android/jni_android.h"
 #include "base/android/scoped_java_ref.h"
+#include "base/memory/raw_ptr.h"
 #include "components/embedder_support/android/native_j_unittests_jni_headers/InputStreamUnittest_jni.h"
 #include "components/embedder_support/android/util/input_stream.h"
 #include "net/base/io_buffer.h"
@@ -18,6 +19,7 @@ using base::android::AttachCurrentThread;
 using base::android::ScopedJavaLocalRef;
 using embedder_support::InputStream;
 using net::IOBuffer;
+using net::IOBufferWithSize;
 using testing::_;
 using testing::DoAll;
 using testing::Ge;
@@ -48,13 +50,13 @@ class InputStreamTest : public Test {
 
     std::unique_ptr<InputStream> input_stream(
         new InputStream(counting_jstream));
-    auto buffer = base::MakeRefCounted<IOBuffer>(bytes_requested);
+    auto buffer = base::MakeRefCounted<IOBufferWithSize>(bytes_requested);
 
     EXPECT_TRUE(input_stream->Read(buffer.get(), bytes_requested, bytes_read));
     return buffer;
   }
 
-  JNIEnv* env_;
+  raw_ptr<JNIEnv> env_;
 };
 
 TEST_F(InputStreamTest, ReadEmptyStream) {
@@ -65,7 +67,7 @@ TEST_F(InputStreamTest, ReadEmptyStream) {
   std::unique_ptr<InputStream> input_stream(new InputStream(empty_jstream));
   const int bytes_requested = 10;
   int bytes_read = 0;
-  auto buffer = base::MakeRefCounted<IOBuffer>(bytes_requested);
+  auto buffer = base::MakeRefCounted<IOBufferWithSize>(bytes_requested);
 
   EXPECT_TRUE(input_stream->Read(buffer.get(), bytes_requested, &bytes_read));
   EXPECT_EQ(0, bytes_read);
@@ -132,7 +134,7 @@ TEST_F(InputStreamTest, DoesNotCrashWhenExceptionThrown) {
 
   const int bytes_requested = 10;
   int bytes_read = 0;
-  auto buffer = base::MakeRefCounted<IOBuffer>(bytes_requested);
+  auto buffer = base::MakeRefCounted<IOBufferWithSize>(bytes_requested);
   EXPECT_FALSE(input_stream->Read(buffer.get(), bytes_requested, &bytes_read));
   EXPECT_EQ(0, bytes_read);
 

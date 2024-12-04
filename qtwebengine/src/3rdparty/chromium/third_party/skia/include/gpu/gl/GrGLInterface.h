@@ -18,6 +18,7 @@ typedef void(*GrGLFuncPtr)();
 struct GrGLInterface;
 
 
+#if !defined(SK_DISABLE_LEGACY_GL_MAKE_NATIVE_INTERFACE)
 /**
  * Rather than depend on platform-specific GL headers and libraries, we require
  * the client to provide a struct of GL function pointers. This struct can be
@@ -31,8 +32,7 @@ struct GrGLInterface;
  * appropriate one to build.
  */
 SK_API sk_sp<const GrGLInterface> GrGLMakeNativeInterface();
-// Deprecated alternative to GrGLMakeNativeInterface().
-SK_API const GrGLInterface* GrGLCreateNativeInterface();
+#endif
 
 /**
  * GrContext uses the following interface to make all calls into OpenGL. When a
@@ -70,7 +70,7 @@ public:
     void suppressErrorLogging();
 #endif
 
-#if GR_TEST_UTILS
+#if defined(GR_TEST_UTILS)
     GrGLInterface(const GrGLInterface& that)
             : fStandard(that.fStandard)
             , fExtensions(that.fExtensions)
@@ -121,6 +121,7 @@ public:
         GrGLFunction<GrGLCompileShaderFn> fCompileShader;
         GrGLFunction<GrGLCompressedTexImage2DFn> fCompressedTexImage2D;
         GrGLFunction<GrGLCompressedTexSubImage2DFn> fCompressedTexSubImage2D;
+        GrGLFunction<GrGLCopyBufferSubDataFn> fCopyBufferSubData;
         GrGLFunction<GrGLCopyTexSubImage2DFn> fCopyTexSubImage2D;
         GrGLFunction<GrGLCreateProgramFn> fCreateProgram;
         GrGLFunction<GrGLCreateShaderFn> fCreateShader;
@@ -170,6 +171,7 @@ public:
         GrGLFunction<GrGLGetBufferParameterivFn> fGetBufferParameteriv;
         GrGLFunction<GrGLGetErrorFn> fGetError;
         GrGLFunction<GrGLGetFramebufferAttachmentParameterivFn> fGetFramebufferAttachmentParameteriv;
+        GrGLFunction<GrGLGetFloatvFn> fGetFloatv;
         GrGLFunction<GrGLGetIntegervFn> fGetIntegerv;
         GrGLFunction<GrGLGetMultisamplefvFn> fGetMultisamplefv;
         GrGLFunction<GrGLGetProgramBinaryFn> fGetProgramBinary;
@@ -248,6 +250,7 @@ public:
         GrGLFunction<GrGLBindUniformLocationFn> fBindUniformLocation;
 
         GrGLFunction<GrGLResolveMultisampleFramebufferFn> fResolveMultisampleFramebuffer;
+        GrGLFunction<GrGLSamplerParameterfFn> fSamplerParameterf;
         GrGLFunction<GrGLSamplerParameteriFn> fSamplerParameteri;
         GrGLFunction<GrGLSamplerParameterivFn> fSamplerParameteriv;
         GrGLFunction<GrGLScissorFn> fScissor;
@@ -303,38 +306,6 @@ public:
         GrGLFunction<GrGLVertexAttribPointerFn> fVertexAttribPointer;
         GrGLFunction<GrGLViewportFn> fViewport;
 
-        /* GL_NV_path_rendering */
-        GrGLFunction<GrGLMatrixLoadfFn> fMatrixLoadf;
-        GrGLFunction<GrGLMatrixLoadIdentityFn> fMatrixLoadIdentity;
-        GrGLFunction<GrGLGetProgramResourceLocationFn> fGetProgramResourceLocation;
-        GrGLFunction<GrGLPathCommandsFn> fPathCommands;
-        GrGLFunction<GrGLPathParameteriFn> fPathParameteri;
-        GrGLFunction<GrGLPathParameterfFn> fPathParameterf;
-        GrGLFunction<GrGLGenPathsFn> fGenPaths;
-        GrGLFunction<GrGLDeletePathsFn> fDeletePaths;
-        GrGLFunction<GrGLIsPathFn> fIsPath;
-        GrGLFunction<GrGLPathStencilFuncFn> fPathStencilFunc;
-        GrGLFunction<GrGLStencilFillPathFn> fStencilFillPath;
-        GrGLFunction<GrGLStencilStrokePathFn> fStencilStrokePath;
-        GrGLFunction<GrGLStencilFillPathInstancedFn> fStencilFillPathInstanced;
-        GrGLFunction<GrGLStencilStrokePathInstancedFn> fStencilStrokePathInstanced;
-        GrGLFunction<GrGLCoverFillPathFn> fCoverFillPath;
-        GrGLFunction<GrGLCoverStrokePathFn> fCoverStrokePath;
-        GrGLFunction<GrGLCoverFillPathInstancedFn> fCoverFillPathInstanced;
-        GrGLFunction<GrGLCoverStrokePathInstancedFn> fCoverStrokePathInstanced;
-        // NV_path_rendering v1.2
-        GrGLFunction<GrGLStencilThenCoverFillPathFn> fStencilThenCoverFillPath;
-        GrGLFunction<GrGLStencilThenCoverStrokePathFn> fStencilThenCoverStrokePath;
-        GrGLFunction<GrGLStencilThenCoverFillPathInstancedFn> fStencilThenCoverFillPathInstanced;
-        GrGLFunction<GrGLStencilThenCoverStrokePathInstancedFn> fStencilThenCoverStrokePathInstanced;
-        // NV_path_rendering v1.3
-        GrGLFunction<GrGLProgramPathFragmentInputGenFn> fProgramPathFragmentInputGen;
-        // CHROMIUM_path_rendering
-        GrGLFunction<GrGLBindFragmentInputLocationFn> fBindFragmentInputLocation;
-
-        /* NV_framebuffer_mixed_samples */
-        GrGLFunction<GrGLCoverageModulationFn> fCoverageModulation;
-
         /* ARB_sync */
         GrGLFunction<GrGLFenceSyncFn> fFenceSync;
         GrGLFunction<GrGLIsSyncFn> fIsSync;
@@ -362,7 +333,7 @@ public:
         GrGLFunction<GrGLEndTilingFn> fEndTiling;
     } fFunctions;
 
-#if GR_TEST_UTILS
+#if defined(GR_TEST_UTILS)
     // This exists for internal testing.
     virtual void abandon() const;
 #endif

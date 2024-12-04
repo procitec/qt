@@ -1,28 +1,53 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
-
-#include "chrome/browser/extensions/extension_apitest.h"
 
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/macros.h"
 #include "base/threading/thread_restrictions.h"
+#include "build/build_config.h"
+#include "chrome/browser/extensions/extension_apitest.h"
+#include "chrome/common/chrome_features.h"
+#include "components/version_info/version_info.h"
+#include "content/public/common/content_features.h"
 #include "content/public/test/browser_test.h"
-#include "extensions/common/scoped_worker_based_extensions_channel.h"
+#include "content/public/test/prerender_test_util.h"
+#include "extensions/browser/api/declarative_net_request/constants.h"
+#include "extensions/browser/api/declarative_net_request/utils.h"
+#include "extensions/common/extension_features.h"
+#include "extensions/test/extension_test_message_listener.h"
+#include "extensions/test/result_catcher.h"
 #include "net/dns/mock_host_resolver.h"
+#include "net/test/embedded_test_server/embedded_test_server.h"
+#include "third_party/blink/public/common/features.h"
 
 namespace {
 
 using ContextType = extensions::ExtensionApiTest::ContextType;
-using extensions::ScopedWorkerBasedExtensionsChannel;
+using extensions::ScopedCurrentChannel;
 
-class DeclarativeNetRequestAPItest
-    : public extensions::ExtensionApiTest,
-      public testing::WithParamInterface<ContextType> {
+class DeclarativeNetRequestApiTest : public extensions::ExtensionApiTest {
  public:
-  DeclarativeNetRequestAPItest() = default;
+  DeclarativeNetRequestApiTest() {
+    feature_list_.InitWithFeatures(
+        /*enabled_features=*/{},
+        // TODO(crbug.com/1394910): Use HTTPS URLs in tests to avoid having to
+        // disable this feature.
+        /*disabled_features=*/{features::kHttpsUpgrades});
+  }
+  explicit DeclarativeNetRequestApiTest(ContextType context_type)
+      : ExtensionApiTest(context_type) {
+    feature_list_.InitWithFeatures(
+        /*enabled_features=*/{},
+        // TODO(crbug.com/1394910): Use HTTPS URLs in tests to avoid having to
+        // disable this feature.
+        /*disabled_features=*/{features::kHttpsUpgrades});
+  }
+  ~DeclarativeNetRequestApiTest() override = default;
+  DeclarativeNetRequestApiTest(const DeclarativeNetRequestApiTest&) = delete;
+  DeclarativeNetRequestApiTest& operator=(const DeclarativeNetRequestApiTest&) =
+      delete;
 
  protected:
   // ExtensionApiTest override.
@@ -46,60 +71,176 @@ class DeclarativeNetRequestAPItest
 
     // Override the path used for loading the extension.
     test_data_dir_ = temp_dir_.GetPath().AppendASCII("declarative_net_request");
-
-    // Service Workers are currently only available on certain channels, so set
-    // the channel for those tests.
-    if (GetParam() == ContextType::kServiceWorker)
-      current_channel_ = std::make_unique<ScopedWorkerBasedExtensionsChannel>();
-  }
-
-  bool RunTest(const std::string& extension_path) {
-    if (GetParam() != ContextType::kServiceWorker) {
-      return RunExtensionTest(extension_path);
-    }
-    return RunExtensionTestWithFlags(
-        extension_path, kFlagRunAsServiceWorkerBasedExtension, kFlagNone);
   }
 
  private:
   base::ScopedTempDir temp_dir_;
-
-  std::unique_ptr<ScopedWorkerBasedExtensionsChannel> current_channel_;
+  base::test::ScopedFeatureList feature_list_;
 };
 
-using DeclarativeNetRequestLazyAPItest = DeclarativeNetRequestAPItest;
+class DeclarativeNetRequestLazyApiTest
+    : public DeclarativeNetRequestApiTest,
+      public testing::WithParamInterface<ContextType> {
+ public:
+  DeclarativeNetRequestLazyApiTest()
+      : DeclarativeNetRequestApiTest(GetParam()) {}
+};
 
 INSTANTIATE_TEST_SUITE_P(PersistentBackground,
-                         DeclarativeNetRequestAPItest,
+                         DeclarativeNetRequestLazyApiTest,
                          ::testing::Values(ContextType::kPersistentBackground));
 INSTANTIATE_TEST_SUITE_P(EventPage,
-                         DeclarativeNetRequestLazyAPItest,
+                         DeclarativeNetRequestLazyApiTest,
                          ::testing::Values(ContextType::kEventPage));
-// Flaky (https://crbug.com/1111240)
-INSTANTIATE_TEST_SUITE_P(DISABLED_ServiceWorker,
-                         DeclarativeNetRequestLazyAPItest,
+INSTANTIATE_TEST_SUITE_P(ServiceWorker,
+                         DeclarativeNetRequestLazyApiTest,
                          ::testing::Values(ContextType::kServiceWorker));
 
-IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestLazyAPItest, DynamicRules) {
-  ASSERT_TRUE(RunTest("dynamic_rules")) << message_;
+IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestLazyApiTest, DynamicRules) {
+  ASSERT_TRUE(RunExtensionTest("dynamic_rules")) << message_;
 }
 
-IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestLazyAPItest, OnRulesMatchedDebug) {
-  ASSERT_TRUE(RunTest("on_rules_matched_debug")) << message_;
+IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestLazyApiTest, RegexRuleMessage) {
+  // Ensure the error message for large RegEx rules is updated with the
+  // correct value for the memory limit.
+  std::string expected_amount = base::StringPrintf(
+      "%dKB", extensions::declarative_net_request::kRegexMaxMemKb);
+  EXPECT_THAT(extensions::declarative_net_request::kErrorRegexTooLarge,
+              testing::HasSubstr(expected_amount));
+}
+
+class DeclarativeNetRequestSafeRulesLazyApiTest
+    : public DeclarativeNetRequestLazyApiTest {
+ public:
+  DeclarativeNetRequestSafeRulesLazyApiTest() {
+    scoped_feature_list_.InitAndEnableFeature(
+        extensions_features::kDeclarativeNetRequestSafeRuleLimits);
+  }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
+
+INSTANTIATE_TEST_SUITE_P(PersistentBackground,
+                         DeclarativeNetRequestSafeRulesLazyApiTest,
+                         ::testing::Values(ContextType::kPersistentBackground));
+INSTANTIATE_TEST_SUITE_P(EventPage,
+                         DeclarativeNetRequestSafeRulesLazyApiTest,
+                         ::testing::Values(ContextType::kEventPage));
+INSTANTIATE_TEST_SUITE_P(ServiceWorker,
+                         DeclarativeNetRequestSafeRulesLazyApiTest,
+                         ::testing::Values(ContextType::kServiceWorker));
+
+// Flaky on ASAN/MSAN: https://crbug.com/1167168
+#if defined(ADDRESS_SANITIZER) || defined(MEMORY_SANITIZER)
+#define MAYBE_DynamicRulesLimits DISABLED_DynamicRulesLimits
+#else
+#define MAYBE_DynamicRulesLimits DynamicRulesLimits
+#endif
+IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestSafeRulesLazyApiTest,
+                       MAYBE_DynamicRulesLimits) {
+  ExtensionTestMessageListener listener("ready", ReplyBehavior::kWillReply);
+
+  // Set up overrides for rule limits and send them to the test extension. This
+  // is done because running the test with the actual rule limits will be very
+  // slow.
+  base::AutoReset<int> dynamic_rule_limit_override =
+      extensions::declarative_net_request::
+          CreateScopedDynamicRuleLimitOverrideForTesting(200);
+  base::AutoReset<int> unsafe_dynamic_rule_limit_override =
+      extensions::declarative_net_request::
+          CreateScopedUnsafeDynamicRuleLimitOverrideForTesting(50);
+  base::AutoReset<int> regex_rule_limit_override = extensions::
+      declarative_net_request::CreateScopedRegexRuleLimitOverrideForTesting(50);
+  std::string rule_limits = base::StringPrintf(
+      R"({"ruleLimit":%d,"unsafeRuleLimit":%d,"regexRuleLimit":%d})", 200, 50,
+      50);
+
+  const extensions::Extension* extension =
+      LoadExtension(test_data_dir_.AppendASCII("dynamic_rules_limits"));
+  ASSERT_TRUE(extension);
+  ASSERT_TRUE(listener.WaitUntilSatisfied());
+
+  extensions::ResultCatcher result_catcher;
+  listener.Reply(rule_limits);
+  EXPECT_TRUE(result_catcher.GetNextResult()) << result_catcher.message();
+}
+
+IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestLazyApiTest, OnRulesMatchedDebug) {
+  ASSERT_TRUE(RunExtensionTest("on_rules_matched_debug")) << message_;
 }
 
 // This test uses webRequest/webRequestBlocking, so it's not currently
 // supported for service workers.
-IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestAPItest, ModifyHeaders) {
-  ASSERT_TRUE(RunTest("modify_headers")) << message_;
+IN_PROC_BROWSER_TEST_F(DeclarativeNetRequestApiTest, ModifyHeaders) {
+  ASSERT_TRUE(RunExtensionTest("modify_headers")) << message_;
 }
 
-IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestLazyAPItest, GetMatchedRules) {
-  ASSERT_TRUE(RunTest("get_matched_rules")) << message_;
+IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestLazyApiTest, GetMatchedRules) {
+  ASSERT_TRUE(RunExtensionTest("get_matched_rules")) << message_;
 }
 
-IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestLazyAPItest, IsRegexSupported) {
-  ASSERT_TRUE(RunTest("is_regex_supported")) << message_;
+IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestLazyApiTest, IsRegexSupported) {
+  ASSERT_TRUE(RunExtensionTest("is_regex_supported")) << message_;
+}
+
+IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestLazyApiTest, TestMatchOutcome) {
+  ASSERT_TRUE(RunExtensionTest("test_match_outcome")) << message_;
+}
+
+IN_PROC_BROWSER_TEST_F(DeclarativeNetRequestApiTest, UpdateStaticRules) {
+  ASSERT_TRUE(RunExtensionTest("update_static_rules")) << message_;
+}
+
+class DeclarativeNetRequestApiFencedFrameTest
+    : public DeclarativeNetRequestApiTest {
+ protected:
+  DeclarativeNetRequestApiFencedFrameTest()
+      : DeclarativeNetRequestApiTest(ContextType::kPersistentBackground) {
+    feature_list_.InitWithFeaturesAndParameters(
+        {{blink::features::kFencedFrames, {{}}},
+         {features::kPrivacySandboxAdsAPIsOverride, {}}},
+        // TODO(crbug.com/1394910): Use HTTPS URLs in tests to avoid having to
+        // disable this feature.
+        /*disabled_features=*/{features::kHttpsUpgrades});
+    // Fenced frames are only allowed in secure contexts.
+    UseHttpsTestServer();
+  }
+
+  ~DeclarativeNetRequestApiFencedFrameTest() override = default;
+
+ private:
+  base::test::ScopedFeatureList feature_list_;
+};
+
+// TODO(crbug.com/1383550): Re-enable this test
+IN_PROC_BROWSER_TEST_F(DeclarativeNetRequestApiFencedFrameTest, DISABLED_Load) {
+  ASSERT_TRUE(RunExtensionTest("fenced_frames")) << message_;
+}
+
+class DeclarativeNetRequestApiPrerenderingTest
+    : public DeclarativeNetRequestLazyApiTest {
+ public:
+  DeclarativeNetRequestApiPrerenderingTest() = default;
+  ~DeclarativeNetRequestApiPrerenderingTest() override = default;
+
+ private:
+  content::test::ScopedPrerenderFeatureList scoped_feature_list_;
+};
+
+INSTANTIATE_TEST_SUITE_P(PersistentBackground,
+                         DeclarativeNetRequestApiPrerenderingTest,
+                         ::testing::Values(ContextType::kPersistentBackground));
+INSTANTIATE_TEST_SUITE_P(EventPage,
+                         DeclarativeNetRequestApiPrerenderingTest,
+                         ::testing::Values(ContextType::kEventPage));
+INSTANTIATE_TEST_SUITE_P(ServiceWorker,
+                         DeclarativeNetRequestApiPrerenderingTest,
+                         ::testing::Values(ContextType::kServiceWorker));
+
+IN_PROC_BROWSER_TEST_P(DeclarativeNetRequestApiPrerenderingTest,
+                       PrerenderedPageInterception) {
+  ASSERT_TRUE(RunExtensionTest("prerendering")) << message_;
 }
 
 }  // namespace

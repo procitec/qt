@@ -1,34 +1,28 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <ntstatus.h>
+#include <stdlib.h>
 #include <windows.h>
+#include <winternl.h>
 
 #include <memory>
 
-#include <stdlib.h>
-
-#include "base/process/process_metrics.h"
-#include "base/stl_util.h"
+#include "base/memory/page_size.h"
 #include "base/win/win_util.h"
 #include "sandbox/win/src/crosscall_client.h"
 #include "sandbox/win/src/filesystem_interception.h"
 #include "sandbox/win/src/ipc_tags.h"
-#include "sandbox/win/src/named_pipe_interception.h"
 #include "sandbox/win/src/policy_engine_processor.h"
 #include "sandbox/win/src/policy_low_level.h"
 #include "sandbox/win/src/policy_params.h"
 #include "sandbox/win/src/process_thread_interception.h"
-#include "sandbox/win/src/registry_interception.h"
 #include "sandbox/win/src/sandbox.h"
 #include "sandbox/win/src/sandbox_nt_util.h"
 #include "sandbox/win/src/sharedmem_ipc_client.h"
 #include "sandbox/win/tests/common/controller.h"
 #include "testing/gtest/include/gtest/gtest.h"
-
-#define BINDNTDLL(name)                                   \
-  name##Function name = reinterpret_cast<name##Function>( \
-      ::GetProcAddress(::GetModuleHandle(L"ntdll.dll"), #name));
 
 namespace sandbox {
 
@@ -38,9 +32,6 @@ enum TestId {
   TESTIPC_NTOPENFILE,
   TESTIPC_NTCREATEFILE,
   TESTIPC_CREATETHREAD,
-  TESTIPC_CREATENAMEDPIPEW,
-  TESTIPC_NTOPENKEY,
-  TESTIPC_NTCREATEKEY,
   TESTIPC_LAST
 };
 
@@ -53,84 +44,6 @@ PolicyGlobal* MakePolicyMemory() {
   PolicyGlobal* policy = reinterpret_cast<PolicyGlobal*>(mem);
   policy->data_size = kTotalPolicySz - sizeof(PolicyGlobal);
   return policy;
-}
-
-// NtOpenKey
-NTSTATUS WINAPI DummyNtOpenKey(PHANDLE key,
-                               ACCESS_MASK desired_access,
-                               POBJECT_ATTRIBUTES object_attributes) {
-  return STATUS_ACCESS_DENIED;
-}
-
-void TestNtOpenKey() {
-  NTSTATUS status;
-  UNICODE_STRING path_str;
-  HANDLE handle = INVALID_HANDLE_VALUE;
-  OBJECT_ATTRIBUTES attr;
-  BINDNTDLL(RtlInitUnicodeString);
-
-  RtlInitUnicodeString(&path_str, L"\\??\\leak");
-  InitializeObjectAttributes(&attr, &path_str, OBJ_CASE_INSENSITIVE, nullptr,
-                             nullptr);
-
-  status = TargetNtOpenKey(reinterpret_cast<NtOpenKeyFunction>(DummyNtOpenKey),
-                           &handle, KEY_READ, &attr);
-  if (NT_SUCCESS(status))
-    CloseHandle(handle);
-}
-
-// NtCreateKey
-NTSTATUS WINAPI DummyNtCreateKey(PHANDLE key,
-                                 ACCESS_MASK desired_access,
-                                 POBJECT_ATTRIBUTES object_attributes,
-                                 ULONG title_index,
-                                 PUNICODE_STRING class_name,
-                                 ULONG create_options,
-                                 PULONG disposition) {
-  return STATUS_ACCESS_DENIED;
-}
-
-void TestNtCreateKey() {
-  NTSTATUS status;
-  UNICODE_STRING path_str;
-  HANDLE handle = INVALID_HANDLE_VALUE;
-  OBJECT_ATTRIBUTES attr;
-  BINDNTDLL(RtlInitUnicodeString);
-
-  RtlInitUnicodeString(&path_str, L"\\Registry\\Machine\\BADBAD");
-  InitializeObjectAttributes(&attr, &path_str, OBJ_CASE_INSENSITIVE, nullptr,
-                             nullptr);
-
-  ULONG disposition;
-  status =
-      TargetNtCreateKey(reinterpret_cast<NtCreateKeyFunction>(DummyNtCreateKey),
-                        &handle, KEY_READ, &attr, 0, nullptr, 0, &disposition);
-  if (NT_SUCCESS(status))
-    CloseHandle(handle);
-}
-
-// CreateNamedPipeW
-HANDLE WINAPI DummyCreateNamedPipeW(LPCWSTR pipe_name,
-                                    DWORD open_mode,
-                                    DWORD pipe_mode,
-                                    DWORD max_instance,
-                                    DWORD out_buffer_size,
-                                    DWORD in_buffer_size,
-                                    DWORD default_timeout,
-                                    LPSECURITY_ATTRIBUTES security_attributes) {
-  return INVALID_HANDLE_VALUE;
-}
-
-void TestCreateNamedPipeW() {
-  HANDLE handle;
-
-  handle = TargetCreateNamedPipeW(
-      reinterpret_cast<CreateNamedPipeWFunction>(DummyCreateNamedPipeW),
-      L"\\??\\leak", PIPE_ACCESS_DUPLEX,
-      PIPE_TYPE_MESSAGE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS, 1, 0x1000,
-      0x1000, 100, nullptr);
-  if (handle != INVALID_HANDLE_VALUE)
-    CloseHandle(handle);
 }
 
 // NtCreateFile
@@ -153,7 +66,6 @@ void TestNtCreateFile() {
   OBJECT_ATTRIBUTES attr;
   IO_STATUS_BLOCK iosb;
   HANDLE handle = INVALID_HANDLE_VALUE;
-  BINDNTDLL(RtlInitUnicodeString);
   RtlInitUnicodeString(&path_str, L"\\??\\leak");
   InitializeObjectAttributes(&attr, &path_str, OBJ_CASE_INSENSITIVE, nullptr,
                              nullptr);
@@ -181,7 +93,6 @@ void TestNtOpenFile() {
   OBJECT_ATTRIBUTES attr;
   IO_STATUS_BLOCK iosb;
   HANDLE handle = INVALID_HANDLE_VALUE;
-  BINDNTDLL(RtlInitUnicodeString);
   RtlInitUnicodeString(&path_str, L"\\??\\leak");
   InitializeObjectAttributes(&attr, &path_str, OBJ_CASE_INSENSITIVE, nullptr,
                              nullptr);
@@ -264,7 +175,7 @@ SBOX_TESTS_COMMAND int IPC_Leak(int argc, wchar_t** argv) {
   // broker.
   PolicyGlobal* policy = GenerateBlankPolicy();
   PolicyGlobal* current_policy =
-      (PolicyGlobal*)sandbox::GetGlobalPolicyMemory();
+      (PolicyGlobal*)sandbox::GetGlobalPolicyMemoryForTesting();
   CopyPolicyToTarget(policy, policy->data_size + sizeof(PolicyGlobal),
                      current_policy);
 
@@ -286,15 +197,6 @@ SBOX_TESTS_COMMAND int IPC_Leak(int argc, wchar_t** argv) {
       break;
     case TESTIPC_CREATETHREAD:
       TestCreateThread();
-      break;
-    case TESTIPC_CREATENAMEDPIPEW:
-      TestCreateNamedPipeW();
-      break;
-    case TESTIPC_NTOPENKEY:
-      TestNtOpenKey();
-      break;
-    case TESTIPC_NTCREATEKEY:
-      TestNtCreateKey();
       break;
     case TESTIPC_LAST:
       NOTREACHED_NT();
@@ -333,18 +235,14 @@ TEST(IPCTest, IPCLeak) {
     HANDLE expected_result;
   } test_data[] = {{TESTIPC_NTOPENFILE, "TESTIPC_NTOPENFILE", nullptr},
                    {TESTIPC_NTCREATEFILE, "TESTIPC_NTCREATEFILE", nullptr},
-                   {TESTIPC_CREATETHREAD, "TESTIPC_CREATETHREAD", nullptr},
-                   {TESTIPC_CREATENAMEDPIPEW, "TESTIPC_CREATENAMEDPIPEW",
-                    INVALID_HANDLE_VALUE},
-                   {TESTIPC_NTOPENKEY, "TESTIPC_NTOPENKEY", nullptr},
-                   {TESTIPC_NTCREATEKEY, "TESTIPC_NTCREATEEY", nullptr}};
+                   {TESTIPC_CREATETHREAD, "TESTIPC_CREATETHREAD", nullptr}};
 
-  static_assert(base::size(test_data) == TESTIPC_LAST, "Not enough tests.");
+  static_assert(std::size(test_data) == TESTIPC_LAST, "Not enough tests.");
   for (auto test : test_data) {
     TestRunner runner;
-    EXPECT_TRUE(runner.AddRule(TargetPolicy::SUBSYS_REGISTRY,
-                               TargetPolicy::REG_ALLOW_READONLY,
-                               L"HKEY_LOCAL_MACHINE\\Software\\*"));
+    // There has to be a policy allocated for the child to have one to replace.
+    runner.AllowFileAccess(sandbox::FileSemantics::kAllowReadonly,
+                           L"c:\\Windows\\System32\\Nothing.txt");
     std::wstring command = std::wstring(L"IPC_Leak ");
     command += std::to_wstring(test.test_id);
     EXPECT_EQ(test.expected_result,

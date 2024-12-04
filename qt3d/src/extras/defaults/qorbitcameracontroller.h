@@ -1,38 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 Klaralvdalens Datakonsult AB (KDAB).
-** Contact: http://www.qt-project.org/legal
-**
-** This file is part of the Qt3D module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL3$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see http://www.qt.io/terms-conditions. For further
-** information use the contact form at http://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPLv3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or later as published by the Free
-** Software Foundation and appearing in the file LICENSE.GPL included in
-** the packaging of this file. Please review the following information to
-** ensure the GNU General Public License version 2.0 requirements will be
-** met: http://www.gnu.org/licenses/gpl-2.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 Klaralvdalens Datakonsult AB (KDAB).
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #ifndef QT3DEXTRAS_QORBITCAMERACONTROLLER_H
 #define QT3DEXTRAS_QORBITCAMERACONTROLLER_H
@@ -49,17 +16,42 @@ class Q_3DEXTRASSHARED_EXPORT QOrbitCameraController : public QAbstractCameraCon
 {
     Q_OBJECT
     Q_PROPERTY(float zoomInLimit READ zoomInLimit WRITE setZoomInLimit NOTIFY zoomInLimitChanged)
+    Q_PROPERTY(QVector3D upVector READ upVector WRITE setUpVector NOTIFY upVectorChanged REVISION(6, 7))
+    Q_PROPERTY(bool inverseXTranslate READ inverseXTranslate WRITE setInverseXTranslate NOTIFY inverseXTranslateChanged REVISION(6, 7))
+    Q_PROPERTY(bool inverseYTranslate READ inverseYTranslate WRITE setInverseYTranslate NOTIFY inverseYTranslateChanged REVISION(6, 7))
+    Q_PROPERTY(bool inversePan READ inversePan WRITE setInversePan NOTIFY inversePanChanged REVISION(6, 7))
+    Q_PROPERTY(bool inverseTilt READ inverseTilt WRITE setInverseTilt NOTIFY inverseTiltChanged REVISION(6, 7))
+    Q_PROPERTY(bool zoomTranslateViewCenter READ zoomTranslateViewCenter WRITE setZoomTranslateViewCenter NOTIFY zoomTranslateViewCenterChanged REVISION(6, 7))
 
 public:
     explicit QOrbitCameraController(Qt3DCore::QNode *parent = nullptr);
     ~QOrbitCameraController();
 
     float zoomInLimit() const;
+    QVector3D upVector() const;
+    bool inverseXTranslate() const;
+    bool inverseYTranslate() const;
+    bool inversePan() const;
+    bool inverseTilt() const;
+    bool zoomTranslateViewCenter() const;
 
+public Q_SLOTS:
     void setZoomInLimit(float zoomInLimit);
+    void setUpVector(const QVector3D& upVector);
+    void setInverseXTranslate(bool isInverse);
+    void setInverseYTranslate(bool isInverse);
+    void setInversePan(bool isInverse);
+    void setInverseTilt(bool isInverse);
+    void setZoomTranslateViewCenter(bool isTranslate);
 
 Q_SIGNALS:
     void zoomInLimitChanged();
+    void upVectorChanged(const QVector3D &upVector);
+    void inverseXTranslateChanged(bool isInverse);
+    void inverseYTranslateChanged(bool isInverse);
+    void inversePanChanged(bool isInverse);
+    void inverseTiltChanged(bool isInverse);
+    void zoomTranslateViewCenterChanged(bool isTranslate);
 
 protected:
     QOrbitCameraController(QOrbitCameraControllerPrivate &dd, Qt3DCore::QNode *parent = nullptr);
@@ -76,3 +68,4 @@ private:
 QT_END_NAMESPACE
 
 #endif // QT3DEXTRAS_QORBITCAMERACONTROLLER_H
+

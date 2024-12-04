@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-# Copyright 2020 The Chromium Authors. All rights reserved.
+# Copyright 2020 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 """Builds and runs a test by filename.
 
-This script finds the appropriate test suites for the specified test file or
-directory, builds it, then runs it with the (optionally) specified filter,
+This script finds the appropriate test suites for the specified test files or
+directories, builds it, then runs it with the (optionally) specified filter,
 passing any extra args on to the test runner.
 
 Examples:
@@ -17,8 +17,11 @@ autotest.py -C out/Desktop bit_cast_unittest.cc --gtest_filter=BitCastTest*
 # the test binary.
 autotest.py -C out/Android UrlUtilitiesUnitTest --fast-local-dev -v
 
-# Run all tests under base/strings
+# Run all tests under base/strings.
 autotest.py -C out/foo --run-all base/strings
+
+# Run tests in multiple files or directories.
+autotest.py -C out/foo base/strings base/pickle_unittest.cc
 
 # Run only the test on line 11. Useful when running autotest.py from your text
 # editor.
@@ -30,34 +33,44 @@ import locale
 import os
 import json
 import re
+import shlex
 import subprocess
 import sys
 
+from enum import Enum
 from pathlib import Path
 
 USE_PYTHON_3 = f'This script will only run under python3.'
 
 SRC_DIR = Path(__file__).parent.parent.resolve()
-DEPOT_TOOLS_DIR = SRC_DIR.joinpath('third_party', 'depot_tools')
-DEBUG = False
+sys.path.append(str(SRC_DIR / 'build'))
+import gn_helpers
 
-_TEST_TARGET_SUFFIXES = [
-    '_browsertests',
-    '_junit_tests',
-    '_perftests',
-    '_test_apk',
-    '_unittests',
-]
+sys.path.append(str(SRC_DIR / 'build' / 'android'))
+from pylib import constants
+
+DEPOT_TOOLS_DIR = SRC_DIR / 'third_party' / 'depot_tools'
+DEBUG = False
 
 # Some test suites use suffixes that would also match non-test-suite targets.
 # Those test suites should be manually added here.
-_OTHER_TEST_TARGETS = [
+_TEST_TARGET_ALLOWLIST = [
+    # Running ash_pixeltests requires the --no-try-android-wrappers flag.
+    '//ash:ash_pixeltests',
     '//chrome/test:browser_tests',
+    '//chrome/test:interactive_ui_tests',
     '//chrome/test:unit_tests',
 ]
 
+_TEST_TARGET_REGEX = re.compile(r'(_browsertests|_perftests|_wpr_tests)$')
+
 TEST_FILE_NAME_REGEX = re.compile(r'(.*Test\.java)|(.*_[a-z]*test\.cc)')
-GTEST_INCLUDE_REGEX = re.compile(r'#include.*gtest\.h"')
+
+# Some tests don't directly include gtest.h and instead include it via gmock.h
+# or a test_utils.h file, so make sure these cases are captured. Also include
+# files that use <...> for #includes instead of quotes.
+GTEST_INCLUDE_REGEX = re.compile(
+    r'#include.*(gtest|gmock|_test_utils|browser_test)\.h("|>)')
 
 
 def ExitWithMessage(*args):
@@ -65,20 +78,27 @@ def ExitWithMessage(*args):
   sys.exit(1)
 
 
+class TestValidity(Enum):
+  NOT_A_TEST = 0  # Does not match test file regex.
+  MAYBE_A_TEST = 1  # Matches test file regex, but doesn't include gtest files.
+  VALID_TEST = 2  # Matches test file regex and includes gtest files.
+
+
 def IsTestFile(file_path):
   if not TEST_FILE_NAME_REGEX.match(file_path):
-    return False
+    return TestValidity.NOT_A_TEST
   if file_path.endswith('.cc'):
     # Try a bit harder to remove non-test files for c++. Without this,
     # 'autotest.py base/' finds non-test files.
     try:
-      with open(file_path, 'r') as f:
+      with open(file_path, 'r', encoding='utf-8') as f:
         if GTEST_INCLUDE_REGEX.search(f.read()) is not None:
-          return True
+          return TestValidity.VALID_TEST
     except IOError:
       pass
-    return False
-  return True
+    # It may still be a test file, even if it doesn't include a gtest file.
+    return TestValidity.MAYBE_A_TEST
+  return TestValidity.VALID_TEST
 
 
 class CommandError(Exception):
@@ -115,16 +135,12 @@ def RunCommand(cmd, **kwargs):
     raise CommandError(e.cmd, e.returncode, e.output) from None
 
 
-def BuildTestTargetsWithNinja(out_dir, targets, dry_run):
+def BuildTestTargets(out_dir, targets, dry_run):
   """Builds the specified targets with ninja"""
-  # Use autoninja from PATH to match version used for manual builds.
-  ninja_path = 'autoninja'
-  if sys.platform.startswith('win32'):
-    ninja_path += '.bat'
-  cmd = [ninja_path, '-C', out_dir] + targets
-  print('Building: ' + ' '.join(cmd))
+  cmd = gn_helpers.CreateBuildCommand(out_dir) + targets
+  print('Building: ' + shlex.join(cmd))
   if (dry_run):
-    return
+    return True
   try:
     subprocess.check_call(cmd)
   except subprocess.CalledProcessError as e:
@@ -135,36 +151,49 @@ def BuildTestTargetsWithNinja(out_dir, targets, dry_run):
 def RecursiveMatchFilename(folder, filename):
   current_dir = os.path.split(folder)[-1]
   if current_dir.startswith('out') or current_dir.startswith('.'):
-    return []
-  matches = []
+    return [[], []]
+  exact = []
+  close = []
   with os.scandir(folder) as it:
     for entry in it:
       if (entry.is_symlink()):
         continue
       if (entry.is_file() and filename in entry.path and
           not os.path.basename(entry.path).startswith('.')):
-        if IsTestFile(entry.path):
-          matches.append(entry.path)
+        file_validity = IsTestFile(entry.path)
+        if file_validity is TestValidity.VALID_TEST:
+          exact.append(entry.path)
+        elif file_validity is TestValidity.MAYBE_A_TEST:
+          close.append(entry.path)
       if entry.is_dir():
         # On Windows, junctions are like a symlink that python interprets as a
         # directory, leading to exceptions being thrown. We can just catch and
         # ignore these exceptions like we would ignore symlinks.
         try:
-          matches += RecursiveMatchFilename(entry.path, filename)
+          matches = RecursiveMatchFilename(entry.path, filename)
+          exact += matches[0]
+          close += matches[1]
         except FileNotFoundError as e:
           if DEBUG:
             print(f'Failed to scan directory "{entry}" - junction?')
           pass
-  return matches
+  return [exact, close]
 
 
 def FindTestFilesInDirectory(directory):
   test_files = []
-  for root, dirs, files in os.walk(directory):
+  if DEBUG:
+    print('Test files:')
+  for root, _, files in os.walk(directory):
     for f in files:
       path = os.path.join(root, f)
-      if IsTestFile(path):
+      file_validity = IsTestFile(path)
+      if file_validity is TestValidity.VALID_TEST:
+        if DEBUG:
+          print(path)
         test_files.append(path)
+      elif DEBUG and file_validity is TestValidity.MAYBE_A_TEST:
+        print(path + ' matched but doesn\'t include gtest files, skipping.')
   return test_files
 
 
@@ -173,10 +202,20 @@ def FindMatchingTestFiles(target):
   if os.path.isfile(target):
     # If the target is a C++ implementation file, try to guess the test file.
     if target.endswith('.cc') or target.endswith('.h'):
-      if IsTestFile(target):
+      target_validity = IsTestFile(target)
+      if target_validity is TestValidity.VALID_TEST:
         return [target]
       alternate = f"{target.rsplit('.', 1)[0]}_unittest.cc"
-      if os.path.isfile(alternate) and IsTestFile(alternate):
+      alt_validity = TestValidity.NOT_A_TEST if not os.path.isfile(
+          alternate) else IsTestFile(alternate)
+      if alt_validity is TestValidity.VALID_TEST:
+        return [alternate]
+
+      # If neither the target nor its alternative were valid, check if they just
+      # didn't include the gtest files before deciding to exit.
+      if target_validity is TestValidity.MAYBE_A_TEST:
+        return [target]
+      if alt_validity is TestValidity.MAYBE_A_TEST:
         return [alternate]
       ExitWithMessage(f"{target} doesn't look like a test file")
     return [target]
@@ -195,25 +234,53 @@ def FindMatchingTestFiles(target):
     target = target.replace(os.path.altsep, os.path.sep)
   if DEBUG:
     print('Finding files with full path containing: ' + target)
-  results = RecursiveMatchFilename(SRC_DIR, target)
+
+  [exact, close] = RecursiveMatchFilename(SRC_DIR, target)
   if DEBUG:
-    print('Found matching file(s): ' + ' '.join(results))
-  if len(results) > 1:
-    # Arbitrarily capping at 10 results so we don't print the name of every file
-    # in the repo if the target is poorly specified.
-    results = results[:10]
-    ExitWithMessage(f'Target "{target}" is ambiguous. Matching files: '
-                    f'{results}')
-  if not results:
+    if exact:
+      print('Found exact matching file(s):')
+      print('\n'.join(exact))
+    if close:
+      print('Found possible matching file(s):')
+      print('\n'.join(close))
+
+  if len(exact) >= 1:
+    # Given "Foo", don't ask to disambiguate ModFoo.java vs Foo.java.
+    more_exact = [
+        p for p in exact if os.path.basename(p) in (target, f'{target}.java')
+    ]
+    if len(more_exact) == 1:
+      test_files = more_exact
+    else:
+      test_files = exact
+  else:
+    test_files = close
+
+  if len(test_files) > 1:
+    if len(test_files) < 10:
+      test_files = [HaveUserPickFile(test_files)]
+    else:
+      # Arbitrarily capping at 10 results so we don't print the name of every
+      # file in the repo if the target is poorly specified.
+      test_files = test_files[:10]
+      ExitWithMessage(f'Target "{target}" is ambiguous. Matching files: '
+                      f'{test_files}')
+  if not test_files:
     ExitWithMessage(f'Target "{target}" did not match any files.')
-  return results
+  return test_files
 
 
-def IsTestTarget(target):
-  for suffix in _TEST_TARGET_SUFFIXES:
-    if target.endswith(suffix):
-      return True
-  return target in _OTHER_TEST_TARGETS
+def HaveUserPickFile(paths):
+  paths = sorted(paths, key=lambda p: (len(p), p))
+  path_list = '\n'.join(f'{i}. {t}' for i, t in enumerate(paths))
+
+  while True:
+    user_input = input(f'Please choose the path you mean.\n{path_list}\n')
+    try:
+      value = int(user_input)
+      return paths[value]
+    except (ValueError, IndexError):
+      print('Try again')
 
 
 def HaveUserPickTarget(paths, targets):
@@ -264,6 +331,33 @@ class TargetCache:
     return self.GetBuildNinjaMtime() == self.gold_mtime
 
 
+def _TestTargetsFromGnRefs(targets):
+  # First apply allowlists:
+  ret = [t for t in targets if '__' not in t]
+  ret = [
+      t for t in ret
+      if _TEST_TARGET_REGEX.search(t) or t in _TEST_TARGET_ALLOWLIST
+  ]
+  if ret:
+    return ret
+
+  _SUBTARGET_SUFFIXES = (
+      '__java_binary',  # robolectric_binary()
+      '__test_runner_script',  # test() targets
+      '__test_apk',  # instrumentation_test_apk() targets
+  )
+  ret = []
+  for suffix in _SUBTARGET_SUFFIXES:
+    ret.extend(t[:-len(suffix)] for t in targets if t.endswith(suffix))
+
+  return ret
+
+
+# TODO(b/305968611) remove when goma is deprecated.
+def _IsGomaNotice(target):
+  return target.startswith('The gn arg use_goma=true will be deprecated')
+
+
 def FindTestTargets(target_cache, out_dir, paths, run_all):
   # Normalize paths, so they can be cached.
   paths = [os.path.realpath(p) for p in paths]
@@ -281,14 +375,21 @@ def FindTestTargets(target_cache, out_dir, paths, run_all):
 
     cmd = [gn_path, 'refs', out_dir, '--all'] + paths
     targets = RunCommand(cmd).splitlines()
-    targets = [t for t in targets if '__' not in t]
-    test_targets = [t for t in targets if IsTestTarget(t)]
+    test_targets = _TestTargetsFromGnRefs(targets)
+
+    # If not targets were identified as tests by looking at their names, ask GN
+    # if any are executables.
+    if not test_targets and targets:
+      test_targets = RunCommand(cmd + ['--type=executable']).splitlines()
 
   if not test_targets:
     ExitWithMessage(
-        f'Target(s) "{paths}" did not match any test targets. Consider adding'
-        f' one of the following targets to the top of this file: {targets}')
+        f'"{paths}" did not match any test targets. Consider adding'
+        f' one of the following targets to _TEST_TARGET_ALLOWLIST within '
+        f'{__file__}: \n' + '\n'.join(targets))
 
+  test_targets = [t for t in test_targets if not _IsGomaNotice(t)]
+  test_targets.sort()
   target_cache.Store(paths, test_targets)
   target_cache.Save()
 
@@ -302,26 +403,38 @@ def FindTestTargets(target_cache, out_dir, paths, run_all):
     else:
       test_targets = [HaveUserPickTarget(paths, test_targets)]
 
-  test_targets = list(set([t.split(':')[-1] for t in test_targets]))
+  # Remove the // prefix to turn GN label into ninja target.
+  test_targets = [t[2:] for t in test_targets]
 
   return (test_targets, used_cache)
 
 
-def RunTestTargets(out_dir, targets, gtest_filter, extra_args, dry_run):
+def RunTestTargets(out_dir, targets, gtest_filter, extra_args, dry_run,
+                   no_try_android_wrappers, no_fast_local_dev):
+
   for target in targets:
+    target_binary = target.split(':')[1]
+
     # Look for the Android wrapper script first.
-    path = os.path.join(out_dir, 'bin', f'run_{target}')
-    if not os.path.isfile(path):
-      # Otherwise, use the Desktop target which is an executable.
-      path = os.path.join(out_dir, target)
+    path = os.path.join(out_dir, 'bin', f'run_{target_binary}')
+    if no_try_android_wrappers or not os.path.isfile(path):
+      # If the wrapper is not found or disabled use the Desktop target
+      # which is an executable.
+      path = os.path.join(out_dir, target_binary)
+    elif not no_fast_local_dev:
+      # Usually want this flag when developing locally.
+      extra_args = extra_args + ['--fast-local-dev']
+
     cmd = [path, f'--gtest_filter={gtest_filter}'] + extra_args
-    print('Running test: ' + ' '.join(cmd))
+    print('Running test: ' + shlex.join(cmd))
     if not dry_run:
       StreamCommandOrExit(cmd)
 
 
 def BuildCppTestFilter(filenames, line):
-  make_filter_command = [os.path.join(SRC_DIR, 'tools', 'make-gtest-filter.py')]
+  make_filter_command = [
+      sys.executable, SRC_DIR / 'tools' / 'make_gtest_filter.py'
+  ]
   if line:
     make_filter_command += ['--line', str(line)]
   else:
@@ -351,6 +464,7 @@ def main():
   parser = argparse.ArgumentParser(
       description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
   parser.add_argument('--out-dir',
+                      '--output-directory',
                       '-C',
                       metavar='OUT_DIR',
                       help='output directory of the build')
@@ -361,29 +475,43 @@ def main():
   parser.add_argument('--line',
                       type=int,
                       help='run only the test on this line number. c++ only.')
-  parser.add_argument(
-      '--gtest_filter', '-f', metavar='FILTER', help='test filter')
+  parser.add_argument('--gtest_filter',
+                      '--gtest-filter',
+                      '-f',
+                      metavar='FILTER',
+                      help='test filter')
   parser.add_argument(
       '--dry-run',
       '-n',
       action='store_true',
       help='Print ninja and test run commands without executing them.')
-  parser.add_argument('file',
+  parser.add_argument(
+      '--no-try-android-wrappers',
+      action='store_true',
+      help='Do not try to use Android test wrappers to run tests.')
+  parser.add_argument('--no-fast-local-dev',
+                      action='store_true',
+                      help='Do not add --fast-local-dev for Android tests.')
+  parser.add_argument('files',
                       metavar='FILE_NAME',
+                      nargs="+",
                       help='test suite file (eg. FooTest.java)')
 
   args, _extras = parser.parse_known_args()
 
-  # Use CWD as out_dir when build.ninja exists.
-  if not args.out_dir and os.path.exists('build.ninja'):
-    args.out_dir = '.'
+  if args.out_dir:
+    constants.SetOutputDirectory(args.out_dir)
+  constants.CheckOutputDirectory()
+  out_dir: str = constants.GetOutDirectory()
 
-  if not os.path.isdir(args.out_dir):
-    parser.error(f'OUT_DIR "{args.out_dir}" does not exist.')
-  target_cache = TargetCache(args.out_dir)
-  filenames = FindMatchingTestFiles(args.file)
+  if not os.path.isdir(out_dir):
+    parser.error(f'OUT_DIR "{out_dir}" does not exist.')
+  target_cache = TargetCache(out_dir)
+  filenames = []
+  for file in args.files:
+    filenames.extend(FindMatchingTestFiles(file))
 
-  targets, used_cache = FindTestTargets(target_cache, args.out_dir, filenames,
+  targets, used_cache = FindTestTargets(target_cache, out_dir, filenames,
                                         args.run_all)
 
   gtest_filter = args.gtest_filter
@@ -394,26 +522,26 @@ def main():
     ExitWithMessage('Failed to derive a gtest filter')
 
   assert targets
-  build_ok = BuildTestTargetsWithNinja(args.out_dir, targets, args.dry_run)
+  build_ok = BuildTestTargets(out_dir, targets, args.dry_run)
 
   # If we used the target cache, it's possible we chose the wrong target because
   # a gn file was changed. The build step above will check for gn modifications
   # and update build.ninja. Use this opportunity the verify the cache is still
   # valid.
   if used_cache and not target_cache.IsStillValid():
-    target_cache = TargetCache(args.out_dir)
-    new_targets, _ = FindTestTargets(target_cache, args.out_dir, filenames,
+    target_cache = TargetCache(out_dir)
+    new_targets, _ = FindTestTargets(target_cache, out_dir, filenames,
                                      args.run_all)
     if targets != new_targets:
       # Note that this can happen, for example, if you rename a test target.
       print('gn config was changed, trying to build again', file=sys.stderr)
       targets = new_targets
-      if not BuildTestTargetsWithNinja(args.out_dir, targets, args.dry_run):
-        sys.exit(1)
-  else:  # cache still valid, quit if the build failed
-    if not build_ok: sys.exit(1)
+      build_ok = BuildTestTargets(out_dir, targets, args.dry_run)
 
-  RunTestTargets(args.out_dir, targets, gtest_filter, _extras, args.dry_run)
+  if not build_ok: sys.exit(1)
+
+  RunTestTargets(out_dir, targets, gtest_filter, _extras, args.dry_run,
+                 args.no_try_android_wrappers, args.no_fast_local_dev)
 
 
 if __name__ == '__main__':

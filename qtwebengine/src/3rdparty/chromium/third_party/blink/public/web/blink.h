@@ -31,15 +31,22 @@
 #ifndef THIRD_PARTY_BLINK_PUBLIC_WEB_BLINK_H_
 #define THIRD_PARTY_BLINK_PUBLIC_WEB_BLINK_H_
 
-#include "third_party/blink/public/platform/platform.h"
+#include "third_party/blink/public/platform/web_common.h"
 #include "third_party/blink/public/platform/web_string.h"
-#include "v8/include/v8.h"
+#include "third_party/blink/public/platform/web_vector.h"
+#include "v8/include/v8-isolate.h"
 
 namespace mojo {
 class BinderMap;
 }
 
 namespace blink {
+
+namespace scheduler {
+class WebThreadScheduler;
+}  // namespace scheduler
+
+class Platform;
 
 // Initialize the entire Blink (wtf, platform, core, modules and web).
 // If you just need wtf and platform, use Platform::Initialize instead.
@@ -55,12 +62,26 @@ BLINK_EXPORT void Initialize(
 // The same as above, but this only supports simple single-threaded execution
 // environment. The main thread WebThread object is owned by Platform when this
 // version is used. This version is mainly for tests and other components
-// requiring only the simple environment.
+// requiring only the simple environment. This does not create the
+// `v8::Isolate`, callers should call `CreateMainThreadIsolate` after calling
+// this method.
 //
 // When this version is used, your Platform implementation needs to follow
 // a certain convention on CurrentThread(); see the comments at
 // Platform::CreateMainThreadAndInitialize().
 BLINK_EXPORT void CreateMainThreadAndInitialize(Platform*, mojo::BinderMap*);
+
+// Performs initialization required for Blink (wtf, core, modules and
+// web), but without initializing the main thread isolate. This allows
+// for CreateMainThreadIsolate() below to be called.
+BLINK_EXPORT void InitializeWithoutIsolateForTesting(
+    Platform*,
+    mojo::BinderMap*,
+    scheduler::WebThreadScheduler* main_thread_scheduler);
+
+// Initializes and returns the Main Thread Isolate. InitializeCommon()
+// must be called before this.
+BLINK_EXPORT v8::Isolate* CreateMainThreadIsolate();
 
 // Get the V8 Isolate for the main thread.
 // initialize must have been called first.
@@ -69,6 +90,9 @@ BLINK_EXPORT v8::Isolate* MainThreadIsolate();
 // Alters the rendering of content to conform to a fixed set of rules.
 BLINK_EXPORT void SetWebTestMode(bool);
 BLINK_EXPORT bool WebTestMode();
+
+// Alters whether the browser can handle focus events while running web tests.
+BLINK_EXPORT void SetBrowserCanHandleFocusForWebTest(bool);
 
 // Alters the rendering of fonts for web tests.
 BLINK_EXPORT void SetFontAntialiasingEnabledForTest(bool);
@@ -83,12 +107,21 @@ BLINK_EXPORT void ResetPluginCache(bool reload_pages = false);
 // performance and memory usage.
 BLINK_EXPORT void DecommitFreeableMemory();
 
-// Send memory pressure notification to worker thread isolate.
-BLINK_EXPORT void MemoryPressureNotificationToWorkerThreadIsolates(
+// Send memory pressure notification to isolates.
+BLINK_EXPORT void MemoryPressureNotificationToAllIsolates(
     v8::MemoryPressureLevel);
 
-// Logs Runtime Call Stats table for Blink.
-BLINK_EXPORT void LogRuntimeCallStats();
+// Send a request to the all isolates to prioritize energy efficiency
+// because the embedder is running in battery saver mode.
+BLINK_EXPORT void SetBatterySaverModeForAllIsolates(
+    bool battery_saver_mode_enabled);
+
+// Send isolate background/foreground notification to worker thread isolates.
+BLINK_EXPORT void IsolateInBackgroundNotification();
+BLINK_EXPORT void IsolateInForegroundNotification();
+
+// Logs stats. Intended to be called during shutdown.
+BLINK_EXPORT void LogStatsDuringShutdown();
 
 // Allows disabling domain relaxation.
 BLINK_EXPORT void SetDomainRelaxationForbiddenForTest(bool forbidden,
@@ -113,6 +146,23 @@ BLINK_EXPORT void ForceNextDrawingBufferCreationToFailForTest();
 // This is called at most once. This is called earlier than any frame commit.
 BLINK_EXPORT void SetIsCrossOriginIsolated(bool value);
 
+// Allows disabling web security. One example of this is that it enables APIs
+// that would otherwise require cross-origin-isolated contexts.
+BLINK_EXPORT void SetIsWebSecurityDisabled(bool value);
+
+// Set whether this renderer process is allowed to use Isolated Context APIs.
+// Similarly to the `SetIsCrossOriginIsolated()` method above, this flag is
+// process global, and called at most once, prior to committing a frame.
+//
+// TODO(mkwst): We need a specification for this restriction.
+BLINK_EXPORT void SetIsIsolatedContext(bool value);
+BLINK_EXPORT bool IsIsolatedContext();
+
+// Set a list of CORS exempt headers. This list is used for fetching resources
+// from frames.
+BLINK_EXPORT void SetCorsExemptHeaderList(
+    const WebVector<WebString>& web_cors_exempt_header_list);
+
 }  // namespace blink
 
-#endif
+#endif  // THIRD_PARTY_BLINK_PUBLIC_WEB_BLINK_H_

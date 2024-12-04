@@ -1,24 +1,26 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "media/renderers/video_renderer_impl.h"
 
 #include <algorithm>
+#include <memory>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback.h"
-#include "base/callback_helpers.h"
 #include "base/feature_list.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
+#include "base/functional/callback_helpers.h"
 #include "base/location.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/numerics/safe_conversions.h"
-#include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
+#include "base/task/bind_post_task.h"
+#include "base/task/sequenced_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/time/default_tick_clock.h"
 #include "base/trace_event/trace_event.h"
-#include "media/base/bind_to_current_loop.h"
 #include "media/base/media_log.h"
 #include "media/base/media_switches.h"
 #include "media/base/pipeline_status.h"
@@ -41,24 +43,26 @@ constexpr int kAbsoluteMaxFrames = 24;
 
 bool ShouldUseLowDelayMode(DemuxerStream* stream) {
   return base::FeatureList::IsEnabled(kLowDelayVideoRenderingOnLiveStream) &&
-         stream->liveness() == DemuxerStream::LIVENESS_LIVE;
+         stream->liveness() == StreamLiveness::kLive;
 }
 
 }  // namespace
 
 VideoRendererImpl::VideoRendererImpl(
-    const scoped_refptr<base::SingleThreadTaskRunner>& media_task_runner,
+    const scoped_refptr<base::SequencedTaskRunner>& media_task_runner,
     VideoRendererSink* sink,
     const CreateVideoDecodersCB& create_video_decoders_cb,
     bool drop_frames,
     MediaLog* media_log,
-    std::unique_ptr<GpuMemoryBufferVideoFramePool> gmb_pool)
+    std::unique_ptr<GpuMemoryBufferVideoFramePool> gmb_pool,
+    MediaPlayerLoggingID media_player_id)
     : task_runner_(media_task_runner),
       sink_(sink),
       sink_started_(false),
       client_(nullptr),
       gpu_memory_buffer_pool_(std::move(gmb_pool)),
       media_log_(media_log),
+      player_id_(media_player_id),
       low_delay_(false),
       received_end_of_stream_(false),
       rendered_end_of_stream_(false),
@@ -79,7 +83,7 @@ VideoRendererImpl::VideoRendererImpl(
 }
 
 VideoRendererImpl::~VideoRendererImpl() {
-  DCHECK(task_runner_->BelongsToCurrentThread());
+  DCHECK(task_runner_->RunsTasksInCurrentSequence());
 
   if (init_cb_)
     FinishInitialization(PIPELINE_ERROR_ABORT);
@@ -93,7 +97,7 @@ VideoRendererImpl::~VideoRendererImpl() {
 
 void VideoRendererImpl::Flush(base::OnceClosure callback) {
   DVLOG(1) << __func__;
-  DCHECK(task_runner_->BelongsToCurrentThread());
+  DCHECK(task_runner_->RunsTasksInCurrentSequence());
 
   if (sink_started_)
     StopSink();
@@ -119,6 +123,7 @@ void VideoRendererImpl::Flush(base::OnceClosure callback) {
   if (gpu_memory_buffer_pool_)
     gpu_memory_buffer_pool_->Abort();
   cancel_on_flush_weak_factory_.InvalidateWeakPtrs();
+  paint_first_frame_cb_.Cancel();
   video_decoder_stream_->Reset(
       base::BindOnce(&VideoRendererImpl::OnVideoDecoderStreamResetDone,
                      weak_factory_.GetWeakPtr()));
@@ -140,7 +145,7 @@ void VideoRendererImpl::Flush(base::OnceClosure callback) {
 
 void VideoRendererImpl::StartPlayingFrom(base::TimeDelta timestamp) {
   DVLOG(1) << __func__ << "(" << timestamp.InMicroseconds() << ")";
-  DCHECK(task_runner_->BelongsToCurrentThread());
+  DCHECK(task_runner_->RunsTasksInCurrentSequence());
   base::AutoLock auto_lock(lock_);
   DCHECK_EQ(state_, kFlushed);
   DCHECK(!pending_read_);
@@ -160,8 +165,9 @@ void VideoRendererImpl::Initialize(
     RendererClient* client,
     const TimeSource::WallClockTimeCB& wall_clock_time_cb,
     PipelineStatusCallback init_cb) {
-  DCHECK(task_runner_->BelongsToCurrentThread());
-  TRACE_EVENT_ASYNC_BEGIN0("media", "VideoRendererImpl::Initialize", this);
+  DCHECK(task_runner_->RunsTasksInCurrentSequence());
+  TRACE_EVENT_NESTABLE_ASYNC_BEGIN0("media", "VideoRendererImpl::Initialize",
+                                    TRACE_ID_LOCAL(this));
 
   base::AutoLock auto_lock(lock_);
   DCHECK(stream);
@@ -174,11 +180,13 @@ void VideoRendererImpl::Initialize(
 
   demuxer_stream_ = stream;
 
-  video_decoder_stream_.reset(new VideoDecoderStream(
+  video_decoder_stream_ = std::make_unique<VideoDecoderStream>(
       std::make_unique<VideoDecoderStream::StreamTraits>(media_log_),
-      task_runner_, create_video_decoders_cb_, media_log_));
+      task_runner_, create_video_decoders_cb_, media_log_);
   video_decoder_stream_->set_config_change_observer(base::BindRepeating(
       &VideoRendererImpl::OnConfigChange, weak_factory_.GetWeakPtr()));
+  video_decoder_stream_->set_fallback_observer(base::BindRepeating(
+      &VideoRendererImpl::OnFallback, weak_factory_.GetWeakPtr()));
   if (gpu_memory_buffer_pool_) {
     video_decoder_stream_->SetPrepareCB(base::BindRepeating(
         &GpuMemoryBufferVideoFramePool::MaybeCreateHardwareFrame,
@@ -187,7 +195,6 @@ void VideoRendererImpl::Initialize(
   }
 
   low_delay_ = ShouldUseLowDelayMode(demuxer_stream_);
-  UMA_HISTOGRAM_BOOLEAN("Media.VideoRenderer.LowDelay", low_delay_);
   if (low_delay_) {
     MEDIA_LOG(DEBUG, media_log_) << "Video rendering in low delay mode.";
 
@@ -198,7 +205,7 @@ void VideoRendererImpl::Initialize(
 
   // Always post |init_cb_| because |this| could be destroyed if initialization
   // failed.
-  init_cb_ = BindToCurrentLoop(std::move(init_cb));
+  init_cb_ = base::BindPostTaskToCurrentDefault(std::move(init_cb));
 
   client_ = client;
   wall_clock_time_cb_ = wall_clock_time_cb;
@@ -221,9 +228,8 @@ void VideoRendererImpl::Initialize(
 scoped_refptr<VideoFrame> VideoRendererImpl::Render(
     base::TimeTicks deadline_min,
     base::TimeTicks deadline_max,
-    bool background_rendering) {
-  TRACE_EVENT_BEGIN1("media", "VideoRendererImpl::Render", "id",
-                     media_log_->id());
+    RenderingMode rendering_mode) {
+  TRACE_EVENT_BEGIN1("media", "VideoRendererImpl::Render", "id", player_id_);
   base::AutoLock auto_lock(lock_);
   DCHECK_EQ(state_, kPlaying);
   last_render_time_ = tick_clock_->NowTicks();
@@ -235,6 +241,9 @@ scoped_refptr<VideoFrame> VideoRendererImpl::Render(
   // Due to how the |algorithm_| holds frames, this should never be null if
   // we've had a proper startup sequence.
   DCHECK(result);
+
+  const bool background_rendering =
+      rendering_mode == RenderingMode::kBackground;
 
   // Declare HAVE_NOTHING if we reach a state where we can't progress playback
   // any further.  We don't want to do this if we've already done so, reached
@@ -286,7 +295,7 @@ base::TimeDelta VideoRendererImpl::GetPreferredRenderInterval() {
 }
 
 void VideoRendererImpl::OnVideoDecoderStreamInitialized(bool success) {
-  DCHECK(task_runner_->BelongsToCurrentThread());
+  DCHECK(task_runner_->RunsTasksInCurrentSequence());
   base::AutoLock auto_lock(lock_);
   DCHECK_EQ(state_, kInitializing);
 
@@ -300,7 +309,8 @@ void VideoRendererImpl::OnVideoDecoderStreamInitialized(bool success) {
   // frames yet.
   state_ = kFlushed;
 
-  algorithm_.reset(new VideoRendererAlgorithm(wall_clock_time_cb_, media_log_));
+  algorithm_ =
+      std::make_unique<VideoRendererAlgorithm>(wall_clock_time_cb_, media_log_);
   if (!drop_frames_)
     algorithm_->disable_frame_dropping();
 
@@ -309,24 +319,26 @@ void VideoRendererImpl::OnVideoDecoderStreamInitialized(bool success) {
 
 void VideoRendererImpl::FinishInitialization(PipelineStatus status) {
   DCHECK(init_cb_);
-  TRACE_EVENT_ASYNC_END1("media", "VideoRendererImpl::Initialize", this,
-                         "status", PipelineStatusToString(status));
+  TRACE_EVENT_NESTABLE_ASYNC_END1("media", "VideoRendererImpl::Initialize",
+                                  TRACE_ID_LOCAL(this), "status",
+                                  PipelineStatusToString(status));
   std::move(init_cb_).Run(status);
 }
 
 void VideoRendererImpl::FinishFlush() {
   DCHECK(flush_cb_);
-  TRACE_EVENT_ASYNC_END0("media", "VideoRendererImpl::Flush", this);
+  TRACE_EVENT_NESTABLE_ASYNC_END0("media", "VideoRendererImpl::Flush",
+                                  TRACE_ID_LOCAL(this));
   std::move(flush_cb_).Run();
 }
 
 void VideoRendererImpl::OnPlaybackError(PipelineStatus error) {
-  DCHECK(task_runner_->BelongsToCurrentThread());
+  DCHECK(task_runner_->RunsTasksInCurrentSequence());
   client_->OnError(error);
 }
 
 void VideoRendererImpl::OnPlaybackEnded() {
-  DCHECK(task_runner_->BelongsToCurrentThread());
+  DCHECK(task_runner_->RunsTasksInCurrentSequence());
   {
     // Send one last stats update so things like memory usage are correct.
     base::AutoLock auto_lock(lock_);
@@ -337,12 +349,12 @@ void VideoRendererImpl::OnPlaybackEnded() {
 }
 
 void VideoRendererImpl::OnStatisticsUpdate(const PipelineStatistics& stats) {
-  DCHECK(task_runner_->BelongsToCurrentThread());
+  DCHECK(task_runner_->RunsTasksInCurrentSequence());
   client_->OnStatisticsUpdate(stats);
 }
 
 void VideoRendererImpl::OnBufferingStateChange(BufferingState buffering_state) {
-  DCHECK(task_runner_->BelongsToCurrentThread());
+  DCHECK(task_runner_->RunsTasksInCurrentSequence());
 
   // "Underflow" is only possible when playing. This avoids noise like blaming
   // the decoder for an "underflow" that is really just a seek.
@@ -361,12 +373,12 @@ void VideoRendererImpl::OnBufferingStateChange(BufferingState buffering_state) {
 }
 
 void VideoRendererImpl::OnWaiting(WaitingReason reason) {
-  DCHECK(task_runner_->BelongsToCurrentThread());
+  DCHECK(task_runner_->RunsTasksInCurrentSequence());
   client_->OnWaiting(reason);
 }
 
 void VideoRendererImpl::OnConfigChange(const VideoDecoderConfig& config) {
-  DCHECK(task_runner_->BelongsToCurrentThread());
+  DCHECK(task_runner_->RunsTasksInCurrentSequence());
   DCHECK(config.IsValidConfig());
 
   // RendererClient only cares to know about config changes that differ from
@@ -377,13 +389,18 @@ void VideoRendererImpl::OnConfigChange(const VideoDecoderConfig& config) {
   }
 }
 
+void VideoRendererImpl::OnFallback(PipelineStatus status) {
+  DCHECK(task_runner_->RunsTasksInCurrentSequence());
+  client_->OnFallback(std::move(status).AddHere());
+}
+
 void VideoRendererImpl::SetTickClockForTesting(
     const base::TickClock* tick_clock) {
   tick_clock_ = tick_clock;
 }
 
 void VideoRendererImpl::OnTimeProgressing() {
-  DCHECK(task_runner_->BelongsToCurrentThread());
+  DCHECK(task_runner_->RunsTasksInCurrentSequence());
 
   // WARNING: Do not attempt to use |lock_| here as StartSink() may cause a
   // reentrant call.
@@ -409,7 +426,7 @@ void VideoRendererImpl::OnTimeProgressing() {
 }
 
 void VideoRendererImpl::OnTimeStopped() {
-  DCHECK(task_runner_->BelongsToCurrentThread());
+  DCHECK(task_runner_->RunsTasksInCurrentSequence());
 
   // WARNING: Do not attempt to use |lock_| here as StopSink() may cause a
   // reentrant call.
@@ -461,7 +478,7 @@ void VideoRendererImpl::OnTimeStopped() {
 }
 
 void VideoRendererImpl::SetLatencyHint(
-    base::Optional<base::TimeDelta> latency_hint) {
+    absl::optional<base::TimeDelta> latency_hint) {
   base::AutoLock auto_lock(lock_);
 
   latency_hint_ = latency_hint;
@@ -548,35 +565,51 @@ void VideoRendererImpl::UpdateLatencyHintBufferingCaps_Locked(
   }
 }
 
-void VideoRendererImpl::FrameReady(VideoDecoderStream::ReadStatus status,
-                                   scoped_refptr<VideoFrame> frame) {
-  DCHECK(task_runner_->BelongsToCurrentThread());
+void VideoRendererImpl::FrameReady(VideoDecoderStream::ReadResult result) {
+  DCHECK(task_runner_->RunsTasksInCurrentSequence());
   base::AutoLock auto_lock(lock_);
   DCHECK_EQ(state_, kPlaying);
   CHECK(pending_read_);
   pending_read_ = false;
 
-  if (status == VideoDecoderStream::DECODE_ERROR) {
-    DCHECK(!frame);
-    task_runner_->PostTask(
-        FROM_HERE,
-        base::BindOnce(&VideoRendererImpl::OnPlaybackError,
-                       weak_factory_.GetWeakPtr(), PIPELINE_ERROR_DECODE));
-    return;
+  // Can happen when demuxers are preparing for a new Seek().
+  switch (result.code()) {
+    case DecoderStatus::Codes::kOk:
+      break;
+    case DecoderStatus::Codes::kAborted:
+      // TODO(liberato): This used to check specifically for the value
+      // DEMUXER_READ_ABORTED, which was more specific than |kAborted|.
+      // However, since it's a dcheck, this seems okay.
+      return;
+    default:
+      // Anything other than `kOk` or `kAborted` is treated as an error.
+      DCHECK(!result.has_value());
+
+      PipelineStatus::Codes code =
+          result.code() == DecoderStatus::Codes::kDisconnected
+              ? PIPELINE_ERROR_DISCONNECTED
+              : PIPELINE_ERROR_DECODE;
+      PipelineStatus status = {code, std::move(result).error()};
+      task_runner_->PostTask(
+          FROM_HERE,
+          base::BindOnce(&VideoRendererImpl::OnPlaybackError,
+                         weak_factory_.GetWeakPtr(), std::move(status)));
+      return;
   }
 
-  // Can happen when demuxers are preparing for a new Seek().
-  if (!frame) {
-    DCHECK_EQ(status, VideoDecoderStream::DEMUXER_READ_ABORTED);
-    return;
-  }
+  DCHECK(result.has_value());
+  scoped_refptr<VideoFrame> frame = std::move(result).value();
+  DCHECK(frame);
 
   last_frame_ready_time_ = tick_clock_->NowTicks();
   last_decoder_stream_avg_duration_ = video_decoder_stream_->AverageDuration();
 
-  const bool is_eos = frame->metadata()->end_of_stream;
+  const bool is_eos = frame->metadata().end_of_stream;
   const bool is_before_start_time = !is_eos && IsBeforeStartTime(*frame);
   const bool cant_read = !video_decoder_stream_->CanReadWithoutStalling();
+  const bool has_best_first_frame = !is_eos && HasBestFirstFrame(*frame);
+  const auto format = frame->format();
+  const auto natural_size = frame->natural_size();
 
   if (is_eos) {
     DCHECK(!received_end_of_stream_);
@@ -606,8 +639,8 @@ void VideoRendererImpl::FrameReady(VideoDecoderStream::ReadStatus status,
     // RemoveFramesForUnderflowOrBackgroundRendering() below to actually expire
     // this frame if it's too far behind the current media time. Without this,
     // we may resume too soon after a track change in the low delay case.
-    if (!frame->metadata()->frame_duration.has_value())
-      frame->metadata()->frame_duration = last_decoder_stream_avg_duration_;
+    if (!frame->metadata().frame_duration.has_value())
+      frame->metadata().frame_duration = last_decoder_stream_avg_duration_;
 
     AddReadyFrame_Locked(std::move(frame));
   }
@@ -624,26 +657,31 @@ void VideoRendererImpl::FrameReady(VideoDecoderStream::ReadStatus status,
   // enough frames to know it's definitely the first frame or (2) there may be
   // no more frames coming (sometimes unless we paint one of them).
   //
-  // We have to check both effective_frames_queued() and |is_before_start_time|
+  // We have to check both effective_frames_queued() and |has_best_first_frame|
   // since prior to the clock starting effective_frames_queued() is a guess.
   //
   // NOTE: Do this before using algorithm_->average_frame_duration(). This
   // initial render will update the duration to be non-zero when provided by
   // frame metadata.
-  if (!sink_started_ && !painted_first_frame_ && algorithm_->frames_queued() &&
-      (received_end_of_stream_ || cant_read ||
-       (algorithm_->effective_frames_queued() && !is_before_start_time))) {
-    scoped_refptr<VideoFrame> first_frame =
-        algorithm_->Render(base::TimeTicks(), base::TimeTicks(), nullptr);
-    CheckForMetadataChanges(first_frame->format(), first_frame->natural_size());
-    sink_->PaintSingleFrame(first_frame);
-    painted_first_frame_ = true;
+  if (!sink_started_ && !painted_first_frame_ && algorithm_->frames_queued()) {
+    if (received_end_of_stream_ ||
+        (algorithm_->effective_frames_queued() && has_best_first_frame)) {
+      PaintFirstFrame();
+    } else if (cant_read) {
+      // `cant_read` isn't always reliable, so only paint after 250ms if we
+      // haven't gotten anything better. This resets for each frame received. We
+      // still kick off any metadata changes to avoid any layout shift though.
+      CheckForMetadataChanges(format, natural_size);
+      paint_first_frame_cb_.Reset(base::BindOnce(
+          &VideoRendererImpl::PaintFirstFrame, base::Unretained(this)));
+      task_runner_->PostDelayedTask(FROM_HERE, paint_first_frame_cb_.callback(),
+                                    base::Milliseconds(250));
+    }
   }
 
   // Update average frame duration.
   base::TimeDelta frame_duration = algorithm_->average_frame_duration();
-  if (frame_duration != kNoTimestamp &&
-      frame_duration != base::TimeDelta::FromSeconds(0)) {
+  if (frame_duration != kNoTimestamp && frame_duration != base::Seconds(0)) {
     fps_estimator_.AddSample(frame_duration);
   } else {
     fps_estimator_.Reset();
@@ -701,7 +739,7 @@ bool VideoRendererImpl::HaveEnoughData_Locked() const {
 
 void VideoRendererImpl::TransitionToHaveEnough_Locked() {
   DVLOG(3) << __func__;
-  DCHECK(task_runner_->BelongsToCurrentThread());
+  DCHECK(task_runner_->RunsTasksInCurrentSequence());
   DCHECK_EQ(buffering_state_, BUFFERING_HAVE_NOTHING);
   lock_.AssertAcquired();
 
@@ -713,7 +751,7 @@ void VideoRendererImpl::TransitionToHaveEnough_Locked() {
 
 void VideoRendererImpl::TransitionToHaveNothing() {
   DVLOG(3) << __func__;
-  DCHECK(task_runner_->BelongsToCurrentThread());
+  DCHECK(task_runner_->RunsTasksInCurrentSequence());
 
   base::AutoLock auto_lock(lock_);
   TransitionToHaveNothing_Locked();
@@ -721,7 +759,7 @@ void VideoRendererImpl::TransitionToHaveNothing() {
 
 void VideoRendererImpl::TransitionToHaveNothing_Locked() {
   DVLOG(3) << __func__;
-  DCHECK(task_runner_->BelongsToCurrentThread());
+  DCHECK(task_runner_->RunsTasksInCurrentSequence());
   lock_.AssertAcquired();
 
   if (buffering_state_ != BUFFERING_HAVE_ENOUGH || HaveEnoughData_Locked())
@@ -734,20 +772,20 @@ void VideoRendererImpl::TransitionToHaveNothing_Locked() {
 }
 
 void VideoRendererImpl::AddReadyFrame_Locked(scoped_refptr<VideoFrame> frame) {
-  DCHECK(task_runner_->BelongsToCurrentThread());
+  DCHECK(task_runner_->RunsTasksInCurrentSequence());
   lock_.AssertAcquired();
-  DCHECK(!frame->metadata()->end_of_stream);
+  DCHECK(!frame->metadata().end_of_stream);
 
   ++stats_.video_frames_decoded;
 
-  if (frame->metadata()->power_efficient)
+  if (frame->metadata().power_efficient)
     ++stats_.video_frames_decoded_power_efficient;
 
   algorithm_->EnqueueFrame(std::move(frame));
 }
 
 void VideoRendererImpl::AttemptRead_Locked() {
-  DCHECK(task_runner_->BelongsToCurrentThread());
+  DCHECK(task_runner_->RunsTasksInCurrentSequence());
   lock_.AssertAcquired();
 
   if (pending_read_ || received_end_of_stream_)
@@ -774,7 +812,7 @@ void VideoRendererImpl::AttemptRead_Locked() {
 void VideoRendererImpl::OnVideoDecoderStreamResetDone() {
   // We don't need to acquire the |lock_| here, because we can only get here
   // when Flush is in progress, so rendering and video sink must be stopped.
-  DCHECK(task_runner_->BelongsToCurrentThread());
+  DCHECK(task_runner_->RunsTasksInCurrentSequence());
   DCHECK(!sink_started_);
   DCHECK_EQ(kFlushing, state_);
   DCHECK(!received_end_of_stream_);
@@ -786,7 +824,7 @@ void VideoRendererImpl::OnVideoDecoderStreamResetDone() {
 }
 
 void VideoRendererImpl::UpdateStats_Locked(bool force_update) {
-  DCHECK(task_runner_->BelongsToCurrentThread());
+  DCHECK(task_runner_->RunsTasksInCurrentSequence());
   lock_.AssertAcquired();
 
   // No need to check for `stats_.video_frames_decoded_power_efficient` because
@@ -799,7 +837,7 @@ void VideoRendererImpl::UpdateStats_Locked(bool force_update) {
   if (stats_.video_frames_dropped) {
     TRACE_EVENT_INSTANT2("media", "VideoFramesDropped",
                          TRACE_EVENT_SCOPE_THREAD, "count",
-                         stats_.video_frames_dropped, "id", media_log_->id());
+                         stats_.video_frames_dropped, "id", player_id_);
   }
 
   const size_t memory_usage = algorithm_->GetMemoryUsage();
@@ -814,10 +852,10 @@ void VideoRendererImpl::UpdateStats_Locked(bool force_update) {
 }
 
 void VideoRendererImpl::ReportFrameRateIfNeeded_Locked() {
-  DCHECK(task_runner_->BelongsToCurrentThread());
+  DCHECK(task_runner_->RunsTasksInCurrentSequence());
   lock_.AssertAcquired();
 
-  base::Optional<int> current_fps = fps_estimator_.ComputeFPS();
+  absl::optional<int> current_fps = fps_estimator_.ComputeFPS();
   if (last_reported_fps_ && current_fps &&
       *last_reported_fps_ == *current_fps) {
     // Reported an FPS before, and it hasn't changed.
@@ -833,7 +871,7 @@ void VideoRendererImpl::ReportFrameRateIfNeeded_Locked() {
 }
 
 bool VideoRendererImpl::HaveReachedBufferingCap(size_t buffering_cap) const {
-  DCHECK(task_runner_->BelongsToCurrentThread());
+  DCHECK(task_runner_->RunsTasksInCurrentSequence());
 
   // When the display rate is less than the frame rate, the effective frames
   // queued may be much smaller than the actual number of frames queued.  Here
@@ -843,7 +881,7 @@ bool VideoRendererImpl::HaveReachedBufferingCap(size_t buffering_cap) const {
 }
 
 void VideoRendererImpl::StartSink() {
-  DCHECK(task_runner_->BelongsToCurrentThread());
+  DCHECK(task_runner_->RunsTasksInCurrentSequence());
   DCHECK_GT(algorithm_->frames_queued(), 0u);
   sink_started_ = true;
   was_background_rendering_ = false;
@@ -851,7 +889,7 @@ void VideoRendererImpl::StartSink() {
 }
 
 void VideoRendererImpl::StopSink() {
-  DCHECK(task_runner_->BelongsToCurrentThread());
+  DCHECK(task_runner_->RunsTasksInCurrentSequence());
   sink_->Stop();
   algorithm_->set_time_stopped();
   sink_started_ = false;
@@ -871,7 +909,7 @@ void VideoRendererImpl::MaybeFireEndedCallback_Locked(bool time_progressing) {
     return;
 
   const bool have_frames_after_start_time =
-      algorithm_->frames_queued() &&
+      algorithm_->frames_queued() > 1 &&
       !IsBeforeStartTime(algorithm_->last_frame());
 
   // Don't fire ended if time isn't moving and we have frames.
@@ -884,18 +922,21 @@ void VideoRendererImpl::MaybeFireEndedCallback_Locked(bool time_progressing) {
   base::TimeDelta ended_event_delay;
   bool should_render_end_of_stream = false;
   if (!algorithm_->effective_frames_queued()) {
+    // The best frame doesn't exist or was already rendered; end immediately.
     should_render_end_of_stream = true;
   } else if (algorithm_->frames_queued() == 1u &&
-             algorithm_->average_frame_duration().is_zero()) {
+             (algorithm_->average_frame_duration().is_zero() ||
+              algorithm_->render_interval().is_zero() || !time_progressing)) {
+    // We'll end up here if playback never started or there was only one frame.
     should_render_end_of_stream = true;
   } else if (algorithm_->frames_queued() == 1u &&
-             algorithm_->render_interval().is_zero()) {
-    should_render_end_of_stream = true;
-  } else if (algorithm_->frames_queued() == 1u &&
-             algorithm_->effective_frames_queued() == 1) {
+             algorithm_->effective_frames_queued() == 1 && time_progressing) {
     const auto end_delay =
         std::max(base::TimeDelta(),
                  algorithm_->last_frame_end_time() - tick_clock_->NowTicks());
+
+    // We should only be here if time is progressing, so only fire the ended
+    // event now if we have less than one render interval before our next check.
     if (end_delay < algorithm_->render_interval()) {
       should_render_end_of_stream = true;
       ended_event_delay = end_delay;
@@ -930,9 +971,18 @@ base::TimeTicks VideoRendererImpl::GetCurrentMediaTimeAsWallClockTime() {
 
 bool VideoRendererImpl::IsBeforeStartTime(const VideoFrame& frame) {
   // Prefer the actual frame duration over the average if available.
-  return frame.timestamp() + frame.metadata()->frame_duration.value_or(
+  return frame.timestamp() + frame.metadata().frame_duration.value_or(
                                  last_decoder_stream_avg_duration_) <
          start_timestamp_;
+}
+
+bool VideoRendererImpl::HasBestFirstFrame(const VideoFrame& frame) {
+  // We have the best first frame in the queue if our current frame has a
+  // timestamp after `start_timestamp_` or straddles `start_timestamp_`.
+  return frame.timestamp() >= start_timestamp_ ||
+         frame.timestamp() + frame.metadata().frame_duration.value_or(
+                                 last_decoder_stream_avg_duration_) >
+             start_timestamp_;
 }
 
 void VideoRendererImpl::RemoveFramesForUnderflowOrBackgroundRendering() {
@@ -964,6 +1014,7 @@ void VideoRendererImpl::RemoveFramesForUnderflowOrBackgroundRendering() {
     algorithm_->Reset(
         VideoRendererAlgorithm::ResetFlag::kPreserveNextFrameEstimates);
     painted_first_frame_ = false;
+    paint_first_frame_cb_.Cancel();
 
     // It's possible in the background rendering case for us to expire enough
     // frames that we need to transition from HAVE_ENOUGH => HAVE_NOTHING. Just
@@ -989,7 +1040,7 @@ void VideoRendererImpl::RemoveFramesForUnderflowOrBackgroundRendering() {
 
 void VideoRendererImpl::CheckForMetadataChanges(VideoPixelFormat pixel_format,
                                                 const gfx::Size& natural_size) {
-  DCHECK(task_runner_->BelongsToCurrentThread());
+  DCHECK(task_runner_->RunsTasksInCurrentSequence());
 
   // Notify client of size and opacity changes if this is the first frame
   // or if those have changed from the last frame.
@@ -1013,6 +1064,23 @@ void VideoRendererImpl::AttemptReadAndCheckForMetadataChanges(
   base::AutoLock auto_lock(lock_);
   CheckForMetadataChanges(pixel_format, natural_size);
   AttemptRead_Locked();
+}
+
+void VideoRendererImpl::PaintFirstFrame() {
+  DCHECK(task_runner_->RunsTasksInCurrentSequence());
+  if (painted_first_frame_ || sink_started_) {
+    return;
+  }
+
+  DCHECK(algorithm_->frames_queued());
+
+  auto first_frame =
+      algorithm_->Render(base::TimeTicks(), base::TimeTicks(), nullptr);
+  DCHECK(first_frame);
+  CheckForMetadataChanges(first_frame->format(), first_frame->natural_size());
+  sink_->PaintSingleFrame(first_frame);
+  painted_first_frame_ = true;
+  paint_first_frame_cb_.Cancel();
 }
 
 }  // namespace media

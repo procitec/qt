@@ -7,9 +7,17 @@
 
 #include "src/shaders/SkBitmapProcShader.h"
 
-#include "src/core/SkArenaAlloc.h"
+#include "include/core/SkColor.h"
+#include "include/core/SkMatrix.h"
+#include "include/core/SkPixmap.h"
+#include "include/private/base/SkAssert.h"
+#include "src/base/SkArenaAlloc.h"
 #include "src/core/SkBitmapProcState.h"
-#include "src/core/SkXfermodePriv.h"
+
+#include <algorithm>
+#include <cstdint>
+
+enum class SkTileMode;
 
 class BitmapProcShaderContext : public SkShaderBase::Context {
 public:
@@ -21,15 +29,6 @@ public:
     {
         if (fState->fPixmap.isOpaque() && (255 == this->getPaintAlpha())) {
             fFlags |= SkShaderBase::kOpaqueAlpha_Flag;
-        }
-
-        auto only_scale_and_translate = [](const SkMatrix& matrix) {
-            unsigned mask = SkMatrix::kTranslate_Mask | SkMatrix::kScale_Mask;
-            return (matrix.getType() & ~mask) == 0;
-        };
-
-        if (1 == fState->fPixmap.height() && only_scale_and_translate(this->getTotalInverse())) {
-            fFlags |= SkShaderBase::kConstInY32_Flag;
         }
     }
 
@@ -75,17 +74,17 @@ private:
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 SkShaderBase::Context* SkBitmapProcLegacyShader::MakeContext(
-    const SkShaderBase& shader, SkTileMode tmx, SkTileMode tmy,
+    const SkShaderBase& shader, SkTileMode tmx, SkTileMode tmy, const SkSamplingOptions& sampling,
     const SkImage_Base* image, const ContextRec& rec, SkArenaAlloc* alloc)
 {
     SkMatrix totalInverse;
     // Do this first, so we know the matrix can be inverted.
-    if (!shader.computeTotalInverse(*rec.fMatrix, rec.fLocalMatrix, &totalInverse)) {
+    if (!rec.fMatrixRec.totalInverse(&totalInverse)) {
         return nullptr;
     }
 
     SkBitmapProcState* state = alloc->make<SkBitmapProcState>(image, tmx, tmy);
-    if (!state->setup(totalInverse, *rec.fPaint)) {
+    if (!state->setup(totalInverse, rec.fPaintAlpha, sampling)) {
         return nullptr;
     }
     return alloc->make<BitmapProcShaderContext>(shader, rec, state);

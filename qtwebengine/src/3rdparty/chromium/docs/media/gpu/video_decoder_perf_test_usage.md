@@ -3,7 +3,7 @@ The video decoder performance tests are a set of tests used to measure the
 performance of various video decoder implementations. These tests run directly
 on top of the video decoder implementation, and don't require the full Chrome
 browser stack. They are build on top of the
-[GoogleTest](https://github.com/google/googletest/blob/master/README.md)
+[GoogleTest](https://github.com/google/googletest/blob/main/README.md)
 framework.
 
 [TOC]
@@ -13,15 +13,15 @@ The Tast framework provides an easy way to run the video decoder performance
 tests from a ChromeOS chroot. Test data is automatically deployed to the device
 being tested. To run all video decoder performance tests use:
 
-    tast run $HOST video.DecodeAccelPerf*
+    tast run $HOST video.ChromeStackDecoderPerf*
 
 Wildcards can be used to run specific sets of tests:
-* Run all VP8 performance tests: `tast run $HOST video.DecodeAccelPerfVP8*`
+* Run all VP8 performance tests: `tast run $HOST video.ChromeStackDecoderPerf.vp8*`
 * Run all 1080p 60fps performance tests:
-`tast run $HOST video.DecodeAccelPerf*1080P60FPS`
+`tast run $HOST video.ChromeStackDecoderPerf.*_1080p_60fps*`
 
 Check the
-[tast video folder](https://chromium.googlesource.com/chromiumos/platform/tast-tests/+/refs/heads/master/src/chromiumos/tast/local/bundles/cros/video/)
+[tast video folder](https://chromium.googlesource.com/chromiumos/platform/tast-tests/+/refs/heads/main/src/go.chromium.org/tast-tests/cros/local/bundles/cros/video/)
 for a list of all available tests.
 See the
 [Tast quickstart guide](https://chromium.googlesource.com/chromiumos/platform/tast/+/HEAD/docs/quickstart.md)
@@ -84,21 +84,32 @@ All performance metrics are written to _perf_metrics/<test_name>.json_.
 ## Command line options
 Multiple command line arguments can be given to the command:
 
-     -v                  enable verbose mode, e.g. -v=2.
-    --vmodule            enable verbose mode for the specified module,
-                         e.g. --vmodule=*media/gpu*=2.
-    --output_folder      overwrite the output folder used to store
-                         performance metrics, if not specified results
-                         will be stored in the current working directory.
-    --use_vd             use the new VD-based video decoders, instead of
-                         the default VDA-based video decoders.
-    --use_vd_vda         use the new VD-based video decoders with a wrapper
-                         that translates to the VDA interface, used to test
-                         interaction with older components expecting the VDA
-                         interface.
-    --gtest_help         display the gtest help and exit.
-    --help               display this help and exit.
+     -v                   enable verbose mode, e.g. -v=2.
+    --vmodule             enable verbose mode for the specified module,
+                          e.g. --vmodule=*media/gpu*=2.
+
+    --output_folder       overwrite the output folder used to store
+                          performance metrics, if not specified results
+                          will be stored in the current working directory.
+    --use-legacy          use the legacy VDA-based video decoders.
+    --use_vd_vda          use the new VD-based video decoders with a
+                          wrapper that translates to the VDA interface,
+                          used to test interaction with older components
+                          expecting the VDA interface.
+    --linear_output       use linear buffers as the final output of the
+                          decoder which may require the use of an image
+                          processor internally. This flag only works in
+                          conjunction with --use_vd_vda.
+                          Disabled by default.
+    --use-gl              specify which GPU backend to use, possible values
+                          include desktop (GLX), egl (GLES w/ ANGLE), and
+                          swiftshader (software rendering)
+    --ozone-platform      specify which Ozone platform to use, possible values
+                          depend on build configuration but normally include
+                          x11, drm, wayland, and headless
+
+    --gtest_help          display the gtest help and exit.
+    --help                display this help and exit.
 
 ## Source code
 See the video decoder performance tests [source code](https://cs.chromium.org/chromium/src/media/gpu/video_decode_accelerator_perf_tests.cc).
-

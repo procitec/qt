@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2020 Klaralvdalens Datakonsult AB (KDAB).
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt3D module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2020 Klaralvdalens Datakonsult AB (KDAB).
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qrendercapabilities.h"
 #include "qrendercapabilities_p.h"
@@ -106,7 +70,8 @@ namespace Qt3DRender {
 
 /*!
    \class Qt3DRender::QRenderCapabilities
-   \brief The QRenderCapabilities class holds settings related to available rendering engines
+   \inmodule Qt3DRender
+   \brief The QRenderCapabilities class holds settings related to available rendering engines.
 
 QRenderCapabilities provides details of graphical features that are available at runtime.
 It can be used to decide which code path to use for some algorithms, for example, depending
@@ -117,10 +82,10 @@ on whether compute shaders are available or not.
 
 /*!
    \qmltype RenderCapabilities
-   \brief The QRenderCapabilities class holds settings related to available rendering engines
+   \brief The QRenderCapabilities class holds settings related to available rendering engines.
    \since 5.15
    \inqmlmodule Qt3D.Render
-   \instantiates Qt3DRender::QRenderCapabilities
+   \nativetype Qt3DRender::QRenderCapabilities
 
 RenderCapabilities provides details of graphical features that are available at runtime.
 It can be used to decide which code path to use for some algorithms, for example, depending
@@ -260,7 +225,7 @@ true if the data is valid, otherwise Qt 3D failed to query the available hardwar
 \readonly
 */
 /*!
-\property QRenderCapabilities::valid
+\property Qt3DRender::QRenderCapabilities::valid
 
 true if the data is valid, otherwise Qt 3D failed to query the available hardware.
 
@@ -280,7 +245,7 @@ Returns which API is currently in use.
 \readonly
 */
 /*!
-\property QRenderCapabilities::api
+\property Qt3DRender::QRenderCapabilities::api
 
 Returns which API is currently in use.
 
@@ -300,7 +265,7 @@ Returns which profile (if applicable) is currently in use.
 \readonly
 */
 /*!
-\property QRenderCapabilities::profile
+\property Qt3DRender::QRenderCapabilities::profile
 
 Returns which profile (if applicable) is currently in use.
 
@@ -320,7 +285,7 @@ Returns the major version number currently in use.
 \readonly
 */
 /*!
-\property QRenderCapabilities::majorVersion
+\property Qt3DRender::QRenderCapabilities::majorVersion
 
 Returns the major version number currently in use.
 
@@ -340,7 +305,7 @@ Returns the minor version number currently in use.
 \readonly
 */
 /*!
-\property QRenderCapabilities::minorVersion
+\property Qt3DRender::QRenderCapabilities::minorVersion
 
 Returns the minor version number currently in use.
 
@@ -360,7 +325,7 @@ Returns the list of extensions currently available.
 \readonly
 */
 /*!
-\property QRenderCapabilities::extensions
+\property Qt3DRender::QRenderCapabilities::extensions
 
 Returns the list of extensions currently available.
 
@@ -380,7 +345,7 @@ Returns the vendor identification string.
 \readonly
 */
 /*!
-\property QRenderCapabilities::vendor
+\property Qt3DRender::QRenderCapabilities::vendor
 
 Returns the vendor identification string.
 
@@ -400,7 +365,7 @@ Returns the device identification string.
 \readonly
 */
 /*!
-\property QRenderCapabilities::renderer
+\property Qt3DRender::QRenderCapabilities::renderer
 
 Returns the device identification string.
 
@@ -420,7 +385,7 @@ Returns the driver version string.
 \readonly
 */
 /*!
-\property QRenderCapabilities::driverVersion
+\property Qt3DRender::QRenderCapabilities::driverVersion
 
 Returns the driver version string.
 
@@ -440,7 +405,7 @@ Returns the GLSL version string.
 \readonly
 */
 /*!
-\property QRenderCapabilities::glslVersion
+\property Qt3DRender::QRenderCapabilities::glslVersion
 
 Returns the GLSL version string.
 
@@ -460,7 +425,7 @@ Returns the maximum number of samples available for MSAA.
 \readonly
 */
 /*!
-\property QRenderCapabilities::maxSamples
+\property Qt3DRender::QRenderCapabilities::maxSamples
 
 Returns the maximum number of samples available for MSAA.
 
@@ -480,7 +445,7 @@ Returns the maximum size of textures.
 \readonly
 */
 /*!
-\property QRenderCapabilities::maxTextureSize
+\property Qt3DRender::QRenderCapabilities::maxTextureSize
 
 Returns the maximum size of textures.
 
@@ -500,7 +465,7 @@ Returns the number of available texture units.
 \readonly
 */
 /*!
-\property QRenderCapabilities::maxTextureUnits
+\property Qt3DRender::QRenderCapabilities::maxTextureUnits
 
 Returns the number of available texture units.
 
@@ -520,7 +485,7 @@ Returns the number of available texture layers.
 \readonly
 */
 /*!
-\property QRenderCapabilities::maxTextureLayers
+\property Qt3DRender::QRenderCapabilities::maxTextureLayers
 
 Returns the number of available texture layers.
 
@@ -540,7 +505,7 @@ Returns true if UBOs are supported.
 \readonly
 */
 /*!
-\property QRenderCapabilities::supportsUBO
+\property Qt3DRender::QRenderCapabilities::supportsUBO
 
 Returns true if UBOs are supported.
 
@@ -560,7 +525,7 @@ Returns the maximum size of UBOs, if supported.
 \readonly
 */
 /*!
-\property QRenderCapabilities::maxUBOSize
+\property Qt3DRender::QRenderCapabilities::maxUBOSize
 
 Returns the maximum size of UBOs, if supported.
 
@@ -580,7 +545,7 @@ Returns the maximum number of available UBO binding points, if supported.
 \readonly
 */
 /*!
-\property QRenderCapabilities::maxUBOBindings
+\property Qt3DRender::QRenderCapabilities::maxUBOBindings
 
 Returns the maximum number of available UBO binding points, if supported.
 
@@ -600,7 +565,7 @@ Returns true if SSBOs are supported.
 \readonly
 */
 /*!
-\property QRenderCapabilities::supportsSSBO
+\property Qt3DRender::QRenderCapabilities::supportsSSBO
 
 Returns true if SSBOs are supported.
 
@@ -620,7 +585,7 @@ Returns the maximum size of SSBOs, if available.
 \readonly
 */
 /*!
-\property QRenderCapabilities::maxSSBOSize
+\property Qt3DRender::QRenderCapabilities::maxSSBOSize
 
 Returns the maximum size of SSBOs, if available.
 
@@ -640,7 +605,7 @@ Returns the maximum number of available SSBO binding points, if supported.
 \readonly
 */
 /*!
-\property QRenderCapabilities::maxSSBOBindings
+\property Qt3DRender::QRenderCapabilities::maxSSBOBindings
 
 Returns the maximum number of available SSBO binding points, if supported.
 
@@ -660,7 +625,7 @@ Returns true if Image Store operations are supported.
 \readonly
 */
 /*!
-\property QRenderCapabilities::supportsImageStore
+\property Qt3DRender::QRenderCapabilities::supportsImageStore
 
 Returns true if Image Store operations are supported.
 
@@ -680,7 +645,7 @@ Returns the maximum number of available image units.
 \readonly
 */
 /*!
-\property QRenderCapabilities::maxImageUnits
+\property Qt3DRender::QRenderCapabilities::maxImageUnits
 
 Returns the maximum number of available image units.
 
@@ -700,7 +665,7 @@ Returns true if Compute Shaders are supported.
 \readonly
 */
 /*!
-\property QRenderCapabilities::supportsCompute
+\property Qt3DRender::QRenderCapabilities::supportsCompute
 
 Returns true if Compute Shaders are supported.
 
@@ -720,7 +685,7 @@ Returns the maximum number of available Compute Shader workgroups in the X axis.
 \readonly
 */
 /*!
-\property QRenderCapabilities::maxWorkGroupCountX
+\property Qt3DRender::QRenderCapabilities::maxWorkGroupCountX
 
 Returns the maximum number of available Compute Shader workgroups in the X axis.
 
@@ -740,7 +705,7 @@ Returns the maximum number of available Compute Shader workgroups in the Y axis.
 \readonly
 */
 /*!
-\property QRenderCapabilities::maxWorkGroupCountY
+\property Qt3DRender::QRenderCapabilities::maxWorkGroupCountY
 
 Returns the maximum number of available Compute Shader workgroups in the Y axis.
 
@@ -760,7 +725,7 @@ Returns the maximum number of available Compute Shader workgroups in the Z axis.
 \readonly
 */
 /*!
-\property QRenderCapabilities::maxWorkGroupCountZ
+\property Qt3DRender::QRenderCapabilities::maxWorkGroupCountZ
 
 Returns the maximum number of available Compute Shader workgroups in the Z axis.
 
@@ -780,7 +745,7 @@ Returns the maximum size of Compute Shader local workgroups in the X axis.
 \readonly
 */
 /*!
-\property QRenderCapabilities::maxWorkGroupSizeX
+\property Qt3DRender::QRenderCapabilities::maxWorkGroupSizeX
 
 Returns the maximum size of Compute Shader local workgroups in the X axis.
 
@@ -800,7 +765,7 @@ Returns the maximum size of Compute Shader local workgroups in the Y axis.
 \readonly
 */
 /*!
-\property QRenderCapabilities::maxWorkGroupSizeY
+\property Qt3DRender::QRenderCapabilities::maxWorkGroupSizeY
 
 Returns the maximum size of Compute Shader local workgroups in the Y axis.
 
@@ -820,7 +785,7 @@ Returns the maximum size of Compute Shader local workgroups in the Z axis.
 \readonly
 */
 /*!
-\property QRenderCapabilities::maxWorkGroupSizeZ
+\property Qt3DRender::QRenderCapabilities::maxWorkGroupSizeZ
 
 Returns the maximum size of Compute Shader local workgroups in the Z axis.
 
@@ -840,7 +805,7 @@ Returns the maximum number of Compute Shaders available.
 \readonly
 */
 /*!
-\property QRenderCapabilities::maxComputeInvocations
+\property Qt3DRender::QRenderCapabilities::maxComputeInvocations
 
 Returns the maximum number of Compute Shaders available.
 
@@ -860,7 +825,7 @@ Returns the maximum amount of shared memory available for Compute Shaders.
 \readonly
 */
 /*!
-\property QRenderCapabilities::maxComputeSharedMemorySize
+\property Qt3DRender::QRenderCapabilities::maxComputeSharedMemorySize
 
 Returns the maximum amount of shared memory available for Compute Shaders.
 
@@ -875,3 +840,5 @@ int QRenderCapabilities::maxComputeSharedMemorySize() const
 } // namespace Qt3Drender
 
 QT_END_NAMESPACE
+
+#include "moc_qrendercapabilities.cpp"

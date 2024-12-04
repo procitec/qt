@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,13 +9,14 @@
 #include <memory>
 
 #include "base/atomicops.h"
-#include "base/callback.h"
 #include "base/component_export.h"
+#include "base/functional/callback.h"
 #include "base/gtest_prod_util.h"
-#include "base/macros.h"
 #include "base/observer_list_threadsafe.h"
+#include "base/scoped_observation_traits.h"
 #include "base/sequence_checker.h"
 #include "base/synchronization/lock.h"
+#include "base/task/sequenced_task_runner.h"
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "services/network/public/mojom/network_change_manager.mojom.h"
 
@@ -59,6 +60,9 @@ class COMPONENT_EXPORT(NETWORK_CPP) NetworkConnectionTracker
   // before the network service.
   explicit NetworkConnectionTracker(BindingCallback callback);
 
+  NetworkConnectionTracker(const NetworkConnectionTracker&) = delete;
+  NetworkConnectionTracker& operator=(const NetworkConnectionTracker&) = delete;
+
   ~NetworkConnectionTracker() override;
 
   // If connection type can be retrieved synchronously, returns true and |type|
@@ -72,7 +76,7 @@ class COMPONENT_EXPORT(NETWORK_CPP) NetworkConnectionTracker
                                  ConnectionTypeCallback callback);
 
   // Returns true if the network is currently in an offline or unknown state.
-  bool IsOffline();
+  bool IsOffline() const;
 
   // Returns true if |type| is a cellular connection.
   // Returns false if |type| is CONNECTION_UNKNOWN, and thus, depending on the
@@ -153,10 +157,28 @@ class COMPONENT_EXPORT(NETWORK_CPP) NetworkConnectionTracker
   // Only the initialization and re-initialization of |this| are required to
   // be bound to the same sequence.
   SEQUENCE_CHECKER(sequence_checker_);
-
-  DISALLOW_COPY_AND_ASSIGN(NetworkConnectionTracker);
 };
 
 }  // namespace network
+
+namespace base {
+
+template <>
+struct ScopedObservationTraits<
+    network::NetworkConnectionTracker,
+    network::NetworkConnectionTracker::NetworkConnectionObserver> {
+  static void AddObserver(
+      network::NetworkConnectionTracker* source,
+      network::NetworkConnectionTracker::NetworkConnectionObserver* observer) {
+    source->AddNetworkConnectionObserver(observer);
+  }
+  static void RemoveObserver(
+      network::NetworkConnectionTracker* source,
+      network::NetworkConnectionTracker::NetworkConnectionObserver* observer) {
+    source->RemoveNetworkConnectionObserver(observer);
+  }
+};
+
+}  // namespace base
 
 #endif  // SERVICES_NETWORK_PUBLIC_CPP_NETWORK_CONNECTION_TRACKER_H_

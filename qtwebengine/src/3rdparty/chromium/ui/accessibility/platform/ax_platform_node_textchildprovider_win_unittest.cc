@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,6 +9,7 @@
 #include "ui/accessibility/platform/ax_platform_node_textchildprovider_win.h"
 #include "ui/accessibility/platform/ax_platform_node_textprovider_win.h"
 #include "ui/accessibility/platform/ax_platform_node_textrangeprovider_win.h"
+#include "ui/accessibility/test_ax_tree_update.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -30,56 +31,30 @@ class AXPlatformNodeTextChildProviderTest : public AXPlatformNodeWinTest {
   // character to allow the text pattern navigation to work with them too.
   // Because of that, a nontext leaf element is treated as a text element.
   void SetUp() override {
-    ui::AXNodeData root;
-    root.id = 1;
-    root.role = ax::mojom::Role::kRootWebArea;
+    TestAXTreeUpdate update(std::string(R"HTML(
+      ++1 kRootWebArea
+      ++++2 kGroup
+      ++++++3 kGroup
+      ++++++4 kStaticText
+      ++++++5 kButton
+      ++++6 kStaticText
+      ++++++7 kInlineTextBox
+    )HTML"));
 
-    ui::AXNodeData nontext_child_of_root;
-    nontext_child_of_root.id = 2;
-    nontext_child_of_root.role = ax::mojom::Role::kGroup;
-    nontext_child_of_root.SetName("non text child of root.");
-    root.child_ids.push_back(nontext_child_of_root.id);
-
-    ui::AXNodeData text_child_of_root;
-    text_child_of_root.id = 3;
-    text_child_of_root.role = ax::mojom::Role::kStaticText;
-    text_child_of_root.SetName("text child of root.");
-    root.child_ids.push_back(text_child_of_root.id);
-
-    ui::AXNodeData nontext_child_of_nontext;
-    nontext_child_of_nontext.id = 4;
-    nontext_child_of_nontext.role = ax::mojom::Role::kGroup;
-    nontext_child_of_nontext.SetName("nontext child of nontext.");
-    nontext_child_of_root.child_ids.push_back(nontext_child_of_nontext.id);
-
-    ui::AXNodeData text_child_of_nontext;
-    text_child_of_nontext.id = 5;
-    text_child_of_nontext.role = ax::mojom::Role::kStaticText;
-    text_child_of_nontext.SetName("text child of nontext.");
-    nontext_child_of_root.child_ids.push_back(text_child_of_nontext.id);
-
-    ui::AXNodeData text_child_of_text;
-    text_child_of_text.id = 6;
-    text_child_of_text.role = ax::mojom::Role::kInlineTextBox;
-    text_child_of_text.SetName("text child of text.");
-    text_child_of_root.child_ids.push_back(text_child_of_text.id);
-
-    ui::AXTreeUpdate update;
-    ui::AXTreeData tree_data;
-    tree_data.tree_id = ui::AXTreeID::CreateNewAXTreeID();
-    update.tree_data = tree_data;
-    update.has_tree_data = true;
-    update.root_id = root.id;
-    update.nodes = {root,
-                    nontext_child_of_root,
-                    text_child_of_root,
-                    nontext_child_of_nontext,
-                    text_child_of_nontext,
-                    text_child_of_text};
+    update.nodes[1].SetName("non text child of root.");
+    update.nodes[1].SetNameFrom(ax::mojom::NameFrom::kAttribute);
+    update.nodes[2].SetName("non text child of nontext.");
+    update.nodes[2].SetNameFrom(ax::mojom::NameFrom::kAttribute);
+    update.nodes[3].SetName("text child of nontext.");
+    update.nodes[3].SetNameFrom(ax::mojom::NameFrom::kContents);
+    update.nodes[5].SetName("text child of root.");
+    update.nodes[5].SetNameFrom(ax::mojom::NameFrom::kContents);
+    update.nodes[6].SetName("text child of text.");
+    update.nodes[6].SetNameFrom(ax::mojom::NameFrom::kContents);
 
     Init(update);
 
-    AXNode* root_node = GetRootAsAXNode();
+    AXNode* root_node = GetRoot();
     AXNode* nontext_child_of_root_node = root_node->children()[0];
     AXNode* text_child_of_root_node = root_node->children()[1];
     AXNode* nontext_child_of_nontext_node =
@@ -105,6 +80,7 @@ class AXPlatformNodeTextChildProviderTest : public AXPlatformNodeWinTest {
     InitITextChildProvider(text_child_of_text_node,
                            text_child_of_text_text_provider_raw_,
                            text_child_of_text_text_child_provider_);
+    AXPlatformNodeWinTest::SetUp();
   }
 
   void InitITextChildProvider(
@@ -127,6 +103,16 @@ class AXPlatformNodeTextChildProviderTest : public AXPlatformNodeWinTest {
           ui::AXPlatformNodeTextChildProviderWin::Create(platform_node);
       new_child_provider->QueryInterface(IID_PPV_ARGS(&text_child_provider));
     }
+  }
+
+  void SetOwner(AXPlatformNodeWin* owner,
+                ITextRangeProvider* destination_range) {
+    ComPtr<ITextRangeProvider> destination_provider = destination_range;
+    ComPtr<AXPlatformNodeTextRangeProviderWin> destination_provider_interal;
+
+    destination_provider->QueryInterface(
+        IID_PPV_ARGS(&destination_provider_interal));
+    destination_provider_interal->SetOwnerForTesting(owner);
   }
 
   ComPtr<IRawElementProviderSimple> root_provider_raw_;
@@ -267,14 +253,19 @@ TEST_F(AXPlatformNodeTextChildProviderTest,
       nontext_child_of_root_text_child_provider_->get_TextRange(
           &text_range_provider));
   ASSERT_NE(nullptr, text_range_provider.Get());
+  AXPlatformNodeWin* owner =
+      static_cast<AXPlatformNodeWin*>(AXPlatformNodeFromNode(GetRoot()));
+  ASSERT_NE(nullptr, owner);
+  SetOwner(owner, text_range_provider.Get());
 
   base::win::ScopedBstr text_content;
+  // By design, empty objects, such as the unlabelled image in this case, are
+  // placed in their own paragraph for easier screen reader navigation.
   EXPECT_HRESULT_SUCCEEDED(
       text_range_provider->GetText(-1, text_content.Receive()));
-  EXPECT_EQ(
-      0,
-      wcscmp(text_content.Get(),
-             (kEmbeddedCharacterAsString + L"text child of nontext.").c_str()));
+  EXPECT_EQ(base::WideToUTF16(text_content.Get()),
+            u"non text child of nontext.\ntext child of nontext.\n" +
+                kEmbeddedCharacterAsString);
 
   ComPtr<IRawElementProviderSimple> enclosing_element;
   text_range_provider->GetEnclosingElement(&enclosing_element);
@@ -288,6 +279,10 @@ TEST_F(AXPlatformNodeTextChildProviderTest,
       text_child_of_root_text_child_provider_->get_TextRange(
           &text_range_provider));
   ASSERT_NE(nullptr, text_range_provider.Get());
+  AXPlatformNodeWin* owner =
+      static_cast<AXPlatformNodeWin*>(AXPlatformNodeFromNode(GetRoot()));
+  ASSERT_NE(nullptr, owner);
+  SetOwner(owner, text_range_provider.Get());
 
   base::win::ScopedBstr text_content;
   EXPECT_HRESULT_SUCCEEDED(
@@ -307,11 +302,16 @@ TEST_F(AXPlatformNodeTextChildProviderTest,
       nontext_child_of_nontext_text_child_provider_->get_TextRange(
           &text_range_provider));
   ASSERT_NE(nullptr, text_range_provider.Get());
+  AXPlatformNodeWin* owner =
+      static_cast<AXPlatformNodeWin*>(AXPlatformNodeFromNode(GetRoot()));
+  ASSERT_NE(nullptr, owner);
+  SetOwner(owner, text_range_provider.Get());
 
   base::win::ScopedBstr text_content;
   EXPECT_HRESULT_SUCCEEDED(
       text_range_provider->GetText(-1, text_content.Receive()));
-  EXPECT_EQ(0, wcscmp(text_content.Get(), kEmbeddedCharacterAsString.c_str()));
+  EXPECT_EQ(base::WideToUTF16(text_content.Get()),
+            u"non text child of nontext.");
 
   ComPtr<IRawElementProviderSimple> enclosing_element;
   text_range_provider->GetEnclosingElement(&enclosing_element);
@@ -326,6 +326,10 @@ TEST_F(AXPlatformNodeTextChildProviderTest,
       text_child_of_nontext_text_child_provider_->get_TextRange(
           &text_range_provider));
   ASSERT_NE(nullptr, text_range_provider.Get());
+  AXPlatformNodeWin* owner =
+      static_cast<AXPlatformNodeWin*>(AXPlatformNodeFromNode(GetRoot()));
+  ASSERT_NE(nullptr, owner);
+  SetOwner(owner, text_range_provider.Get());
 
   base::win::ScopedBstr text_content;
   EXPECT_HRESULT_SUCCEEDED(
@@ -345,6 +349,10 @@ TEST_F(AXPlatformNodeTextChildProviderTest,
       text_child_of_text_text_child_provider_->get_TextRange(
           &text_range_provider));
   ASSERT_NE(nullptr, text_range_provider.Get());
+  AXPlatformNodeWin* owner =
+      static_cast<AXPlatformNodeWin*>(AXPlatformNodeFromNode(GetRoot()));
+  ASSERT_NE(nullptr, owner);
+  SetOwner(owner, text_range_provider.Get());
 
   base::win::ScopedBstr text_content;
   EXPECT_HRESULT_SUCCEEDED(

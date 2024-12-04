@@ -1,13 +1,11 @@
-// Copyright (c) 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef COMPONENTS_FAVICON_CORE_FAVICON_SERVICE_H_
 #define COMPONENTS_FAVICON_CORE_FAVICON_SERVICE_H_
 
-#include <vector>
-
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/task/cancelable_task_tracker.h"
 #include "components/favicon/core/core_favicon_service.h"
 #include "components/favicon_base/favicon_callback.h"
@@ -15,6 +13,10 @@
 #include "components/favicon_base/favicon_usage_data.h"
 
 class GURL;
+
+namespace history {
+class HistoryService;
+}
 
 namespace favicon {
 
@@ -81,7 +83,13 @@ class FaviconService : public CoreFaviconService {
       favicon_base::FaviconRawBitmapCallback callback,
       base::CancelableTaskTracker* tracker) = 0;
 
-  // See HistoryService::GetLargestFaviconForPageURL().
+  // This searches for icons by IconType. Each element of |icon_types| is a
+  // bitmask of IconTypes indicating the types to search for. If the largest
+  // icon of |icon_types[0]| is not larger than |minimum_size_in_pixel|, the
+  // next icon types of |icon_types| will be searched and so on. If no icon is
+  // larger than |minimum_size_in_pixel|, the largest one of all icon types in
+  // |icon_types| is returned. This feature is especially useful when some types
+  // of icon is preferred as long as its size is larger than a specific value.
   virtual base::CancelableTaskTracker::TaskId GetLargestRawFaviconForPageURL(
       const GURL& page_url,
       const std::vector<favicon_base::IconTypeSet>& icon_types,
@@ -116,13 +124,13 @@ class FaviconService : public CoreFaviconService {
   // See HistoryService::AddPageNoVisitForBookmark(). Adds an entry for the
   // specified url in the history service without creating a visit.
   virtual void AddPageNoVisitForBookmark(const GURL& url,
-                                         const base::string16& title) = 0;
+                                         const std::u16string& title) = 0;
 
   // Set the favicon for |page_url| for |icon_type| in the thumbnail database.
   // Unlike SetFavicons(), this method will not delete preexisting bitmap data
   // which is associated to |page_url| if at all possible. Use this method if
-  // the favicon bitmaps for any of ui::GetSupportedScaleFactors() are not
-  // known.
+  // the favicon bitmaps for any of ui::GetSupportedResourceScaleFactors() are
+  // not known.
   virtual void MergeFavicon(const GURL& page_url,
                             const GURL& icon_url,
                             favicon_base::IconType icon_type,
@@ -160,6 +168,10 @@ class FaviconService : public CoreFaviconService {
                                    favicon_base::IconType icon_type,
                                    const gfx::Image& image,
                                    base::OnceCallback<void(bool)> callback) = 0;
+#if BUILDFLAG(IS_QTWEBENGINE)
+  virtual history::HistoryService* HistoryService() const = 0;
+  virtual void SetHistoryService(history::HistoryService* history_service) = 0;
+#endif
 };
 
 }  // namespace favicon

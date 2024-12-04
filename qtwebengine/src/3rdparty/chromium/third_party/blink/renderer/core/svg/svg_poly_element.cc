@@ -23,7 +23,7 @@
 #include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/svg/svg_animated_point_list.h"
 #include "third_party/blink/renderer/platform/graphics/path.h"
-#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 
 namespace blink {
 
@@ -33,9 +33,7 @@ SVGPolyElement::SVGPolyElement(const QualifiedName& tag_name,
       points_(MakeGarbageCollected<SVGAnimatedPointList>(
           this,
           svg_names::kPointsAttr,
-          MakeGarbageCollected<SVGPointList>())) {
-  AddToPropertyMap(points_);
-}
+          MakeGarbageCollected<SVGPointList>())) {}
 
 SVGPointListTearOff* SVGPolyElement::pointsFromJavascript() {
   return points_->baseVal();
@@ -70,13 +68,29 @@ Path SVGPolyElement::AsPathFromPoints() const {
   return path;
 }
 
-void SVGPolyElement::SvgAttributeChanged(const QualifiedName& attr_name) {
-  if (attr_name == svg_names::kPointsAttr) {
+void SVGPolyElement::SvgAttributeChanged(
+    const SvgAttributeChangedParams& params) {
+  if (params.name == svg_names::kPointsAttr) {
     GeometryAttributeChanged();
     return;
   }
 
-  SVGGeometryElement::SvgAttributeChanged(attr_name);
+  SVGGeometryElement::SvgAttributeChanged(params);
+}
+
+SVGAnimatedPropertyBase* SVGPolyElement::PropertyFromAttribute(
+    const QualifiedName& attribute_name) const {
+  if (attribute_name == svg_names::kPointsAttr) {
+    return points_.Get();
+  } else {
+    return SVGGeometryElement::PropertyFromAttribute(attribute_name);
+  }
+}
+
+void SVGPolyElement::SynchronizeAllSVGAttributes() const {
+  SVGAnimatedPropertyBase* attrs[]{points_.Get()};
+  SynchronizeListOfSVGAttributes(attrs);
+  SVGGeometryElement::SynchronizeAllSVGAttributes();
 }
 
 }  // namespace blink

@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -42,8 +42,20 @@ struct StructTraits<viz::mojom::BeginFrameArgsDataView, viz::BeginFrameArgs> {
     return args.frame_id.source_id;
   }
 
+  static uint64_t frames_throttled_since_last(const viz::BeginFrameArgs& args) {
+    return args.frames_throttled_since_last;
+  }
+
   static int64_t trace_id(const viz::BeginFrameArgs& args) {
     return args.trace_id;
+  }
+
+  static base::TimeTicks dispatch_time(const viz::BeginFrameArgs& args) {
+    return args.dispatch_time;
+  }
+
+  static base::TimeTicks client_arrival_time(const viz::BeginFrameArgs& args) {
+    return args.client_arrival_time;
   }
 
   static viz::BeginFrameArgs::BeginFrameArgsType type(

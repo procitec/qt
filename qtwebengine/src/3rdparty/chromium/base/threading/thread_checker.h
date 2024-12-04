@@ -1,12 +1,13 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef BASE_THREADING_THREAD_CHECKER_H_
 #define BASE_THREADING_THREAD_CHECKER_H_
 
-#include "base/check.h"
-#include "base/compiler_specific.h"
+#include "base/base_export.h"
+#include "base/dcheck_is_on.h"
+#include "base/macros/uniquify.h"
 #include "base/strings/string_piece.h"
 #include "base/thread_annotations.h"
 #include "base/threading/thread_checker_impl.h"
@@ -33,6 +34,12 @@
 // what would need to change to turn that SingleThreadTaskRunner into a
 // SequencedTaskRunner for ease of scheduling as well as minimizes side-effects
 // if that change is made.
+//
+// Debugging:
+//   If ThreadChecker::EnableStackLogging() is called beforehand, then when
+//   ThreadChecker fails, in addition to crashing with a stack trace of where
+//   the violation occurred, it will also dump a stack trace of where the
+//   checker was bound to a thread.
 //
 // Usage:
 //   class MyClass {
@@ -70,16 +77,10 @@
 //     THREAD_CHECKER(thread_checker_);
 //   }
 
-#define THREAD_CHECKER_INTERNAL_CONCAT2(a, b) a##b
-#define THREAD_CHECKER_INTERNAL_CONCAT(a, b) \
-  THREAD_CHECKER_INTERNAL_CONCAT2(a, b)
-#define THREAD_CHECKER_INTERNAL_UID(prefix) \
-  THREAD_CHECKER_INTERNAL_CONCAT(prefix, __LINE__)
-
 #if DCHECK_IS_ON()
 #define THREAD_CHECKER(name) base::ThreadChecker name
-#define DCHECK_CALLED_ON_VALID_THREAD(name, ...)                 \
-  base::ScopedValidateThreadChecker THREAD_CHECKER_INTERNAL_UID( \
+#define DCHECK_CALLED_ON_VALID_THREAD(name, ...)   \
+  base::ScopedValidateThreadChecker BASE_UNIQUIFY( \
       scoped_validate_thread_checker_)(name, ##__VA_ARGS__);
 #define DETACH_FROM_THREAD(name) (name).DetachFromThread()
 #else  // DCHECK_IS_ON()
@@ -98,18 +99,23 @@ namespace base {
 // order to support thread_annotations.h.
 class LOCKABLE ThreadCheckerDoNothing {
  public:
+  static void EnableStackLogging() {}
+
   ThreadCheckerDoNothing() = default;
+
+  ThreadCheckerDoNothing(const ThreadCheckerDoNothing&) = delete;
+  ThreadCheckerDoNothing& operator=(const ThreadCheckerDoNothing&) = delete;
 
   // Moving between matching threads is allowed to help classes with
   // ThreadCheckers that want a default move-construct/assign.
   ThreadCheckerDoNothing(ThreadCheckerDoNothing&& other) = default;
   ThreadCheckerDoNothing& operator=(ThreadCheckerDoNothing&& other) = default;
 
-  bool CalledOnValidThread() const WARN_UNUSED_RESULT { return true; }
+  [[nodiscard]] bool CalledOnValidThread(
+      std::unique_ptr<void*> = nullptr) const {
+    return true;
+  }
   void DetachFromThread() {}
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(ThreadCheckerDoNothing);
 };
 
 // Note that ThreadCheckerImpl::CalledOnValidThread() returns false when called
@@ -124,24 +130,22 @@ class ThreadChecker : public ThreadCheckerDoNothing {
 };
 #endif  // DCHECK_IS_ON()
 
-class SCOPED_LOCKABLE ScopedValidateThreadChecker {
+#if DCHECK_IS_ON()
+class BASE_EXPORT SCOPED_LOCKABLE ScopedValidateThreadChecker {
  public:
   explicit ScopedValidateThreadChecker(const ThreadChecker& checker)
-      EXCLUSIVE_LOCK_FUNCTION(checker) {
-    DCHECK(checker.CalledOnValidThread());
-  }
+      EXCLUSIVE_LOCK_FUNCTION(checker);
+  ScopedValidateThreadChecker(const ThreadChecker& checker,
+                              const StringPiece& msg)
+      EXCLUSIVE_LOCK_FUNCTION(checker);
 
-  explicit ScopedValidateThreadChecker(const ThreadChecker& checker,
-                                       const StringPiece& msg)
-      EXCLUSIVE_LOCK_FUNCTION(checker) {
-    DCHECK(checker.CalledOnValidThread()) << msg;
-  }
+  ScopedValidateThreadChecker(const ScopedValidateThreadChecker&) = delete;
+  ScopedValidateThreadChecker& operator=(const ScopedValidateThreadChecker&) =
+      delete;
 
-  ~ScopedValidateThreadChecker() UNLOCK_FUNCTION() {}
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(ScopedValidateThreadChecker);
+  ~ScopedValidateThreadChecker() UNLOCK_FUNCTION();
 };
+#endif
 
 }  // namespace base
 

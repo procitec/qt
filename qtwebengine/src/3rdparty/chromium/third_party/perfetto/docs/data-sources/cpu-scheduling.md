@@ -6,7 +6,7 @@ infrastructure.
 
 This allows to get fine grained scheduling events such as:
 
-* Which threads were scheduling on which CPU cores at any point in time, with
+* Which threads were scheduled on which CPU core at any point in time, with
   nanosecond accuracy.
 * The reason why a running thread got descheduled (e.g. pre-emption, blocked on
   a mutex, blocking syscall or any other wait queue).
@@ -16,12 +16,7 @@ This allows to get fine grained scheduling events such as:
 
 ## UI
 
-When zoomed out, the UI shows a quantized view of CPU usage, which collapses the
-scheduling information:
-
-![](/docs/images/cpu-bar-graphs.png "Quantized view of CPU run queues")
-
-However, by zooming in, the individual scheduling events become visible:
+The UI represents individual scheduling events as slices:
 
 ![](/docs/images/cpu-zoomed.png "Detailed view of CPU run queues")
 
@@ -34,19 +29,6 @@ create one track for each thread, which allows to follow the evolution of the
 state of individual threads:
 
 ![](/docs/images/thread-states.png "States of individual threads")
-
-
-```protobuf
-data_sources {
-  config {
-    name: "linux.ftrace"
-    ftrace_config {
-      ftrace_events: "sched/sched_switch"
-      ftrace_events: "sched/sched_waking"
-    }
-  }
-}
-```
 
 ## SQL
 
@@ -73,25 +55,32 @@ ts | dur | cpu | end_state | priority | process.name, | thread.name
 
 ## TraceConfig
 
+To collect this data, include the following data sources:
+
 ```protobuf
+# Scheduling data from the kernel.
 data_sources: {
-    config {
-        name: "linux.ftrace"
-        ftrace_config {
-            ftrace_events: "sched/sched_switch"
-            ftrace_events: "sched/sched_process_exit"
-            ftrace_events: "sched/sched_process_free"
-            ftrace_events: "task/task_newtask"
-            ftrace_events: "task/task_rename"
-        }
+  config {
+    name: "linux.ftrace"
+    ftrace_config {
+      compact_sched: {
+        enabled: true
+      }
+      ftrace_events: "sched/sched_switch"
+      # optional: precise thread lifetime tracking:
+      ftrace_events: "sched/sched_process_exit"
+      ftrace_events: "sched/sched_process_free"
+      ftrace_events: "task/task_newtask"
+      ftrace_events: "task/task_rename"
     }
+  }
 }
 
-# This is to get full process name and thread<>process relationships.
+# Adds full process names and thread<>process relationships:
 data_sources: {
-    config {
-        name: "linux.process_stats"
-    }
+  config {
+    name: "linux.process_stats"
+  }
 }
 ```
 
@@ -137,13 +126,56 @@ costly both in terms of overhead and power.
 
 NOTE: `sched_waking` and `sched_wakeup` provide nearly the same information. The
       difference lies in wakeup events across CPUs, which involve
-      inter-processor interrupts. The former is emitted on the source (wakee)
-      CPU, the latter on the destination (waked) CPU. `sched_waking` is usually
-      sufficient for latency analysis, unless you are looking into breaking down
-      latency due to inter-processor signaling.
+      inter-processor interrupts. The former is always emitted on the source (wakee)
+      CPU, the latter may be executed on either the source or the destination (waked) CPU
+      depending on several factors. `sched_waking` is usually sufficient for latency
+      analysis, unless you are looking into breaking down latency due to
+      the scheduler's wake up path, such as inter-processor signaling.
 
 When enabling `sched_waking` events, the following will appear in the UI when
 selecting a CPU slice:
 
 ![](/docs/images/latency.png "Scheduling wake-up events in the UI")
+
+### Decoding `end_state`
+
+The [sched_slice](/docs/analysis/sql-tables.autogen#sched_slice) table contains
+information on scheduling activity of the system:
+
+```
+> select * from sched_slice limit 1
+id  type        ts          dur    cpu utid end_state priority
+0   sched_slice 70730062200 125364 0   1    S         130     
+```
+
+Each row of the table shows when a given thread (`utid`) began running
+(`ts`), on which core it ran (`cpu`), for how long it ran (`dur`), 
+and why it stopped running: `end_state`.
+
+`end_state` is encoded as one or more ascii characters. The UI uses
+the following translations to convert `end_state` into human readable
+text:
+
+| end_state  | Translation            |
+|------------|------------------------|
+| R          | Runnable               |
+| R+         | Runnable (Preempted)   |
+| S          | Sleeping               |
+| D          | Uninterruptible Sleep  |
+| T          | Stopped                |
+| t          | Traced                 |
+| X          | Exit (Dead)            |
+| Z          | Exit (Zombie)          |
+| x          | Task Dead              |
+| I          | Idle                   |
+| K          | Wake Kill              |
+| W          | Waking                 |
+| P          | Parked                 |
+| N          | No Load                |
+
+Not all combinations of characters are meaningful.
+
+If we do not know when the scheduling ended (for example because the
+trace ended while the thread was still running) `end_state` will be
+`NULL` and `dur` will be -1.
 

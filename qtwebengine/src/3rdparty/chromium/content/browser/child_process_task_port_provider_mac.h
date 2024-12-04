@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,9 +7,8 @@
 
 #include <map>
 
-#include "base/mac/dispatch_source_mach.h"
-#include "base/mac/scoped_mach_port.h"
-#include "base/macros.h"
+#include "base/apple/dispatch_source_mach.h"
+#include "base/apple/scoped_mach_port.h"
 #include "base/no_destructor.h"
 #include "base/process/port_provider_mac.h"
 #include "base/process/process_handle.h"
@@ -27,6 +26,10 @@ class CONTENT_EXPORT ChildProcessTaskPortProvider : public base::PortProvider {
  public:
   // Returns the singleton instance.
   static ChildProcessTaskPortProvider* GetInstance();
+
+  ChildProcessTaskPortProvider(const ChildProcessTaskPortProvider&) = delete;
+  ChildProcessTaskPortProvider& operator=(const ChildProcessTaskPortProvider&) =
+      delete;
 
   // Called by BrowserChildProcessHostImpl and RenderProcessHostImpl when
   // a new child has been created. This will invoke the GetTaskPort() method
@@ -49,6 +52,14 @@ class CONTENT_EXPORT ChildProcessTaskPortProvider : public base::PortProvider {
   ChildProcessTaskPortProvider();
   ~ChildProcessTaskPortProvider() override;
 
+  // Tests if the macOS system supports collecting task ports. Starting with
+  // macOS 12.3, running in the unsupported configuration with the
+  // amfi_get_out_of_my_way=1 kernel boot argument set, task ports are
+  // immovable. Trying to collect the task ports from child processes will
+  // result in the child process crashing in mach_msg(). See
+  // https://crbug.com/1291789 for details.
+  bool ShouldRequestTaskPorts() const;
+
   // Callback for mojom::ChildProcess::GetTaskPort reply.
   void OnTaskPortReceived(base::ProcessHandle pid,
                           mojo::PlatformHandle task_port);
@@ -62,18 +73,16 @@ class CONTENT_EXPORT ChildProcessTaskPortProvider : public base::PortProvider {
 
   // Maps a PID to the corresponding task port.
   using PidToTaskPortMap =
-      std::map<base::ProcessHandle, base::mac::ScopedMachSendRight>;
+      std::map<base::ProcessHandle, base::apple::ScopedMachSendRight>;
   PidToTaskPortMap pid_to_task_port_;
 
   // A Mach port that is used to register for dead name notifications from
   // the kernel. All the ports in |pid_to_task_port_| have a notification set
   // up to send to this port.
-  base::mac::ScopedMachReceiveRight notification_port_;
+  base::apple::ScopedMachReceiveRight notification_port_;
 
   // Dispatch source for |notification_port_|.
-  std::unique_ptr<base::DispatchSourceMach> notification_source_;
-
-  DISALLOW_COPY_AND_ASSIGN(ChildProcessTaskPortProvider);
+  std::unique_ptr<base::apple::DispatchSourceMach> notification_source_;
 };
 
 }  // namespace content

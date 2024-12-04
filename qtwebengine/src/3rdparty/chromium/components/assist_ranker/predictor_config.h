@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,6 +8,7 @@
 #include <string>
 
 #include "base/containers/flat_set.h"
+#include "base/memory/raw_ptr_exclusion.h"
 #include "base/metrics/field_trial_params.h"
 
 namespace assist_ranker {
@@ -18,8 +19,8 @@ enum LogType {
   LOG_UKM = 1,
 };
 
-// Empty feature whitelist used for testing.
-const base::flat_set<std::string>* GetEmptyWhitelist();
+// Empty feature allowlist used for testing.
+const base::flat_set<std::string>* GetEmptyAllowlist();
 
 // This struct holds the config options for logging, loading and field trial
 // for a predictor.
@@ -28,7 +29,7 @@ struct PredictorConfig {
                   const char* logging_name,
                   const char* uma_prefix,
                   const LogType log_type,
-                  const base::flat_set<std::string>* feature_whitelist,
+                  const base::flat_set<std::string>* feature_allowlist,
                   const base::Feature* field_trial,
                   const base::FeatureParam<std::string>* field_trial_url_param,
                   float field_trial_threshold_replacement_param)
@@ -36,7 +37,7 @@ struct PredictorConfig {
         logging_name(logging_name),
         uma_prefix(uma_prefix),
         log_type(log_type),
-        feature_whitelist(feature_whitelist),
+        feature_allowlist(feature_allowlist),
         field_trial(field_trial),
         field_trial_url_param(field_trial_url_param),
         field_trial_threshold_replacement_param(
@@ -45,9 +46,16 @@ struct PredictorConfig {
   const char* const logging_name;
   const char* const uma_prefix;
   const LogType log_type;
-  const base::flat_set<std::string>* feature_whitelist;
-  const base::Feature* field_trial;
-  const base::FeatureParam<std::string>* field_trial_url_param;
+  // This field is not a raw_ptr<> because it was filtered by the rewriter for:
+  // #global-scope
+  RAW_PTR_EXCLUSION const base::flat_set<std::string>* feature_allowlist;
+  // This field is not a raw_ptr<> because it was filtered by the rewriter for:
+  // #global-scope
+  RAW_PTR_EXCLUSION const base::Feature* field_trial;
+  // This field is not a raw_ptr<> because it was filtered by the rewriter for:
+  // #global-scope
+  RAW_PTR_EXCLUSION const base::FeatureParam<std::string>*
+      field_trial_url_param;
   const float field_trial_threshold_replacement_param;
 };
 

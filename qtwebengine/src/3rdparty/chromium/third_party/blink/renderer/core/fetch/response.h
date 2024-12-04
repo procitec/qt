@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,7 +16,7 @@
 #include "third_party/blink/renderer/core/fetch/headers.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
 #include "third_party/blink/renderer/platform/blob/blob_data.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
@@ -26,9 +26,7 @@ class ExceptionState;
 class ResponseInit;
 class ScriptState;
 
-class CORE_EXPORT Response final : public ScriptWrappable,
-                                   public ActiveScriptWrappable<Response>,
-                                   public Body {
+class CORE_EXPORT Response final : public ScriptWrappable, public Body {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -56,6 +54,10 @@ class CORE_EXPORT Response final : public ScriptWrappable,
                             const String& url,
                             uint16_t status,
                             ExceptionState&);
+  static Response* staticJson(ScriptState*,
+                              ScriptValue data,
+                              const ResponseInit*,
+                              ExceptionState&);
 
   static FetchResponseData* CreateUnfilteredFetchResponseDataWithoutBody(
       ScriptState*,
@@ -69,8 +71,10 @@ class CORE_EXPORT Response final : public ScriptWrappable,
   explicit Response(ExecutionContext*);
   Response(ExecutionContext*, FetchResponseData*);
   Response(ExecutionContext*, FetchResponseData*, Headers*);
+  Response(const Response&) = delete;
+  Response& operator=(const Response&) = delete;
 
-  const FetchResponseData* GetResponse() const { return response_; }
+  const FetchResponseData* GetResponse() const { return response_.Get(); }
 
   // From Response.idl:
   String type() const;
@@ -84,9 +88,6 @@ class CORE_EXPORT Response final : public ScriptWrappable,
   // From Response.idl:
   // This function must be called with entering an appropriate V8 context.
   Response* clone(ScriptState*, ExceptionState&);
-
-  // ScriptWrappable
-  bool HasPendingActivity() const final;
 
   // Does not contain the blob response body or any side data blob.
   // |request_url| is the current request URL that resulted in the response. It
@@ -128,7 +129,6 @@ class CORE_EXPORT Response final : public ScriptWrappable,
  private:
   const Member<FetchResponseData> response_;
   const Member<Headers> headers_;
-  DISALLOW_COPY_AND_ASSIGN(Response);
 };
 
 }  // namespace blink

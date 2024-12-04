@@ -8,264 +8,228 @@
 #ifndef SKSL_COMPILER
 #define SKSL_COMPILER
 
-#include <set>
-#include <unordered_set>
-#include <vector>
-#include "src/sksl/SkSLASTFile.h"
-#include "src/sksl/SkSLCFGGenerator.h"
-#include "src/sksl/SkSLContext.h"
+#include "include/core/SkSize.h"
+#include "include/core/SkTypes.h"
+#include "src/sksl/SkSLContext.h"  // IWYU pragma: keep
 #include "src/sksl/SkSLErrorReporter.h"
-#include "src/sksl/SkSLInliner.h"
-#include "src/sksl/SkSLLexer.h"
-#include "src/sksl/ir/SkSLProgram.h"
+#include "src/sksl/SkSLPosition.h"
+#include "src/sksl/ir/SkSLProgramElement.h"
 #include "src/sksl/ir/SkSLSymbolTable.h"
 
-#if !defined(SKSL_STANDALONE) && SK_SUPPORT_GPU
-#include "src/gpu/GrShaderVar.h"
-#endif
+#include <array>
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <string_view>
+#include <type_traits>
+#include <vector>
 
-#define SK_FRAGCOLOR_BUILTIN           10001
-#define SK_IN_BUILTIN                  10002
-#define SK_OUTCOLOR_BUILTIN            10004
-#define SK_OUT_BUILTIN                 10007
-#define SK_LASTFRAGCOLOR_BUILTIN       10008
-#define SK_MAIN_COORDS_BUILTIN         10009
-#define SK_WIDTH_BUILTIN               10011
-#define SK_HEIGHT_BUILTIN              10012
-#define SK_FRAGCOORD_BUILTIN              15
-#define SK_CLOCKWISE_BUILTIN              17
-#define SK_SAMPLEMASK_BUILTIN             20
-#define SK_VERTEXID_BUILTIN               42
-#define SK_INSTANCEID_BUILTIN             43
-#define SK_INVOCATIONID_BUILTIN            8
-#define SK_POSITION_BUILTIN                0
+constexpr int SK_FRAGCOLOR_BUILTIN =           10001;
+constexpr int SK_LASTFRAGCOLOR_BUILTIN =       10008;
+constexpr int SK_SECONDARYFRAGCOLOR_BUILTIN =  10012;
+constexpr int SK_FRAGCOORD_BUILTIN =              15;
+constexpr int SK_CLOCKWISE_BUILTIN =              17;
+constexpr int SK_SAMPLEMASKIN_BUILTIN =           20;
+constexpr int SK_SAMPLEMASK_BUILTIN =          10020;
+
+constexpr int SK_VERTEXID_BUILTIN =               42;
+constexpr int SK_INSTANCEID_BUILTIN =             43;
+constexpr int SK_POSITION_BUILTIN =                0;
+constexpr int SK_POINTSIZE_BUILTIN =               1;
+
+constexpr int SK_NUMWORKGROUPS_BUILTIN =          24;
+constexpr int SK_WORKGROUPID_BUILTIN =            26;
+constexpr int SK_LOCALINVOCATIONID_BUILTIN =      27;
+constexpr int SK_GLOBALINVOCATIONID_BUILTIN =     28;
+constexpr int SK_LOCALINVOCATIONINDEX_BUILTIN =   29;
 
 namespace SkSL {
 
-class ByteCode;
-class ExternalValue;
-class IRGenerator;
-class IRIntrinsicMap;
-struct PipelineStageArgs;
+class Inliner;
+class Pool;
+struct ProgramConfig;
+class ProgramUsage;
+enum class ProgramKind : int8_t;
+struct Program;
+struct ProgramSettings;
+
+struct Module {
+    const Module*                                fParent = nullptr;
+    std::unique_ptr<SymbolTable>                 fSymbols;
+    std::vector<std::unique_ptr<ProgramElement>> fElements;
+};
 
 /**
- * Main compiler entry point. This is a traditional compiler design which first parses the .sksl
- * file into an abstract syntax tree (a tree of ASTNodes), then performs semantic analysis to
- * produce a Program (a tree of IRNodes), then feeds the Program into a CodeGenerator to produce
- * compiled output.
+ * Main compiler entry point. The compiler parses the SkSL text directly into a tree of IRNodes,
+ * while performing basic optimizations such as constant-folding and dead-code elimination. Then the
+ * Program is passed into a CodeGenerator to produce compiled output.
  *
  * See the README for information about SkSL.
  */
-class SK_API Compiler : public ErrorReporter {
+class SK_API Compiler {
 public:
-    static constexpr const char* RTADJUST_NAME  = "sk_RTAdjust";
-    static constexpr const char* PERVERTEX_NAME = "sk_PerVertex";
+    inline static constexpr const char FRAGCOLOR_NAME[] = "sk_FragColor";
+    inline static constexpr const char RTADJUST_NAME[]  = "sk_RTAdjust";
+    inline static constexpr const char POSITION_NAME[]  = "sk_Position";
+    inline static constexpr const char POISON_TAG[]     = "<POISON>";
 
-    enum Flags {
-        kNone_Flags = 0,
-        // permits static if/switch statements to be used with non-constant tests. This is used when
-        // producing H and CPP code; the static tests don't have to have constant values *yet*, but
-        // the generated code will contain a static test which then does have to be a constant.
-        kPermitInvalidStaticTests_Flag = 1,
-    };
-
-    // An invalid (otherwise unused) character to mark where FormatArgs are inserted
-    static constexpr       char  kFormatArgPlaceholder    = '\001';
-    static constexpr const char* kFormatArgPlaceholderStr = "\001";
-
-    struct FormatArg {
-        enum class Kind {
-            kOutput,
-            kCoords,
-            kUniform,
-            kChildProcessor,
-            kChildProcessorWithMatrix,
-            kFunctionName
-        };
-
-        FormatArg(Kind kind)
-                : fKind(kind) {}
-
-        FormatArg(Kind kind, int index)
-                : fKind(kind)
-                , fIndex(index) {}
-
-        Kind fKind;
-        int fIndex;
-        String fCoords;
-    };
-
-#if !defined(SKSL_STANDALONE) && SK_SUPPORT_GPU
     /**
-     * Represents the arguments to GrGLSLShaderBuilder::emitFunction.
+     * Gets a float4 that adjusts the position from Skia device coords to normalized device coords,
+     * used to populate sk_RTAdjust.  Assuming the transformed position, pos, is a homogeneous
+     * float4, the vec, v, is applied as such:
+     * float4((pos.xy * v.xz) + sk_Position.ww * v.yw, 0, pos.w);
      */
-    struct GLSLFunction {
-        GrSLType fReturnType;
-        SkString fName;
-        std::vector<GrShaderVar> fParameters;
-        String fBody;
-        std::vector<Compiler::FormatArg> fFormatArgs;
-    };
-#endif
+    static std::array<float, 4> GetRTAdjustVector(SkISize rtDims, bool flipY) {
+        std::array<float, 4> result;
+        result[0] = 2.f/rtDims.width();
+        result[2] = 2.f/rtDims.height();
+        result[1] = -1.f;
+        result[3] = -1.f;
+        if (flipY) {
+            result[2] = -result[2];
+            result[3] = -result[3];
+        }
+        return result;
+    }
 
-    Compiler(Flags flags = kNone_Flags);
+    /**
+     * Uniform values used by the compiler to implement origin-neutral dFdy, sk_Clockwise, and
+     * sk_FragCoord.
+     */
+    static std::array<float, 2> GetRTFlipVector(int rtHeight, bool flipY) {
+        std::array<float, 2> result;
+        result[0] = flipY ? rtHeight : 0.f;
+        result[1] = flipY ?     -1.f : 1.f;
+        return result;
+    }
 
-    ~Compiler() override;
+    Compiler();
+    ~Compiler();
 
     Compiler(const Compiler&) = delete;
     Compiler& operator=(const Compiler&) = delete;
 
     /**
-     * If externalValues is supplied, those values are registered in the symbol table of the
-     * Program, but ownership is *not* transferred. It is up to the caller to keep them alive.
+     * Allows optimization settings to be unilaterally overridden. This is meant to allow tools like
+     * Viewer or Nanobench to override the compiler's ProgramSettings and ShaderCaps for debugging.
      */
-    std::unique_ptr<Program> convertProgram(
-            Program::Kind kind,
-            String text,
-            const Program::Settings& settings,
-            const std::vector<std::unique_ptr<ExternalValue>>* externalValues = nullptr);
+    enum class OverrideFlag {
+        kDefault,
+        kOff,
+        kOn,
+    };
+    static void EnableOptimizer(OverrideFlag flag) { sOptimizer = flag; }
+    static void EnableInliner(OverrideFlag flag) { sInliner = flag; }
 
-    bool toSPIRV(Program& program, OutputStream& out);
+    std::unique_ptr<Program> convertProgram(ProgramKind kind,
+                                            std::string programSource,
+                                            const ProgramSettings& settings);
 
-    bool toSPIRV(Program& program, String* out);
+    void handleError(std::string_view msg, Position pos);
 
-    bool toGLSL(Program& program, OutputStream& out);
+    std::string errorText(bool showCount = true);
 
-    bool toGLSL(Program& program, String* out);
+    ErrorReporter& errorReporter() { return *fContext->fErrors; }
 
-    bool toHLSL(Program& program, String* out);
-
-    bool toMetal(Program& program, OutputStream& out);
-
-    bool toMetal(Program& program, String* out);
-
-#if defined(SKSL_STANDALONE) || GR_TEST_UTILS
-    bool toCPP(Program& program, String name, OutputStream& out);
-
-    bool toH(Program& program, String name, OutputStream& out);
-#endif
-
-    std::unique_ptr<ByteCode> toByteCode(Program& program);
-
-#if !defined(SKSL_STANDALONE) && SK_SUPPORT_GPU
-    bool toPipelineStage(Program& program, PipelineStageArgs* outArgs);
-#endif
-
-    void error(int offset, String msg) override;
-
-    String errorText();
+    int errorCount() const { return fContext->fErrors->errorCount(); }
 
     void writeErrorCount();
 
-    int errorCount() override {
-        return fErrorCount;
+    void resetErrors() {
+        fErrorText.clear();
+        this->errorReporter().resetErrorCount();
     }
 
-    Context& context() {
+    Context& context() const {
         return *fContext;
     }
 
-    static const char* OperatorName(Token::Kind op);
+    SymbolTable* globalSymbols() {
+        return fGlobalSymbols.get();
+    }
 
-    // Returns true if op is '=' or any compound assignment operator ('+=', '-=', etc.)
-    static bool IsAssignment(Token::Kind op);
+    SymbolTable* symbolTable() {
+        return fContext->fSymbolTable;
+    }
 
-    // Given a compound assignment operator, returns the non-assignment version of the operator
-    // (e.g. '+=' becomes '+')
-    static Token::Kind RemoveAssignment(Token::Kind op);
+    std::unique_ptr<Module> compileModule(ProgramKind kind,
+                                          const char* moduleName,
+                                          std::string moduleSource,
+                                          const Module* parentModule,
+                                          bool shouldInline);
 
-    void processIncludeFile(Program::Kind kind, const char* path,
-                            std::shared_ptr<SymbolTable> base,
-                            std::vector<std::unique_ptr<ProgramElement>>* outElements,
-                            std::shared_ptr<SymbolTable>* outSymbolTable);
+    /** Optimize a module at minification time, before writing it out. */
+    bool optimizeModuleBeforeMinifying(ProgramKind kind, Module& module, bool shrinkSymbols);
+
+    const Module* moduleForProgramKind(ProgramKind kind);
+
+    /** Run the inliner on a program which was compiled earlier (with inlining turned off). */
+    void runInliner(Program& program);
 
 private:
-    void loadGeometryIntrinsics();
+    class CompilerErrorReporter : public ErrorReporter {
+    public:
+        CompilerErrorReporter(Compiler* compiler)
+            : fCompiler(*compiler) {}
 
-    void loadInterpreterIntrinsics();
+        void handleError(std::string_view msg, Position pos) override {
+            fCompiler.handleError(msg, pos);
+        }
 
-    void loadPipelineIntrinsics();
+    private:
+        Compiler& fCompiler;
+    };
 
-    void addDefinition(const Expression* lvalue, std::unique_ptr<Expression>* expr,
-                       DefinitionMap* definitions);
+    /** Updates ProgramSettings to eliminate contradictions and to honor the ProgramKind. */
+    static void FinalizeSettings(ProgramSettings* settings, ProgramKind kind);
 
-    void addDefinitions(const BasicBlock::Node& node, DefinitionMap* definitions);
+    /** Prepares the Context for compilation of a program or module. */
+    void initializeContext(const SkSL::Module* module,
+                           ProgramKind kind,
+                           ProgramSettings settings,
+                           std::string_view source,
+                           bool isModule);
 
-    void scanCFG(CFG* cfg, BlockId block, std::set<BlockId>* workList);
-
-    void computeDataFlow(CFG* cfg);
-
-    /**
-     * Simplifies the expression pointed to by iter (in both the IR and CFG structures), if
-     * possible.
-     */
-    void simplifyExpression(DefinitionMap& definitions,
-                            BasicBlock& b,
-                            std::vector<BasicBlock::Node>::iterator* iter,
-                            std::unordered_set<const Variable*>* undefinedVariables,
-                            bool* outUpdated,
-                            bool* outNeedsRescan);
-
-    /**
-     * Simplifies the statement pointed to by iter (in both the IR and CFG structures), if
-     * possible.
-     */
-    void simplifyStatement(DefinitionMap& definitions,
-                           BasicBlock& b,
-                           std::vector<BasicBlock::Node>::iterator* iter,
-                           std::unordered_set<const Variable*>* undefinedVariables,
-                           bool* outUpdated,
-                           bool* outNeedsRescan);
+    /** Cleans up the Context post-compilation. */
+    void cleanupContext();
 
     /**
-     * Optimizes a function based on control flow analysis. Returns true if changes were made.
+     * Returns all global elements (functions and global variables) as a self-contained Program.
+     * The optional source string is retained as the program's source.
      */
-    bool scanCFG(FunctionDefinition& f);
+    std::unique_ptr<SkSL::Program> releaseProgram(
+            std::unique_ptr<std::string> source,
+            std::vector<std::unique_ptr<SkSL::ProgramElement>> programElements);
 
-    /**
-     * Optimize every function in the program.
-     */
+    /** Optimize every function in the program. */
     bool optimize(Program& program);
 
-    Position position(int offset);
+    /** Performs final checks to confirm that a fully-assembled/optimized is valid. */
+    bool finalize(Program& program);
 
-    std::shared_ptr<SymbolTable> fRootSymbolTable;
+    /** Optimize a module at Skia runtime, after loading it. */
+    bool optimizeModuleAfterLoading(ProgramKind kind, Module& module);
 
-    std::shared_ptr<SymbolTable> fGpuSymbolTable;
-    std::unique_ptr<IRIntrinsicMap> fGPUIntrinsics;
-    std::shared_ptr<SymbolTable> fInterpreterSymbolTable;
-    std::unique_ptr<IRIntrinsicMap> fInterpreterIntrinsics;
+    /** Flattens out function calls when it is safe to do so. */
+    bool runInliner(Inliner* inliner,
+                    const std::vector<std::unique_ptr<ProgramElement>>& elements,
+                    SymbolTable* symbols,
+                    ProgramUsage* usage);
 
-    std::vector<std::unique_ptr<ProgramElement>> fVertexInclude;
-    std::shared_ptr<SymbolTable> fVertexSymbolTable;
-    std::vector<std::unique_ptr<ProgramElement>> fFragmentInclude;
-    std::shared_ptr<SymbolTable> fFragmentSymbolTable;
-    std::vector<std::unique_ptr<ProgramElement>> fGeometryInclude;
-    std::shared_ptr<SymbolTable> fGeometrySymbolTable;
-    std::vector<std::unique_ptr<ProgramElement>> fPipelineInclude;
-    std::shared_ptr<SymbolTable> fPipelineSymbolTable;
-
-    std::vector<std::unique_ptr<ProgramElement>> fFPInclude;
-    std::shared_ptr<SymbolTable> fFPSymbolTable;
-    std::unique_ptr<IRIntrinsicMap> fFPIntrinsics;
-
-    Inliner fInliner;
-    std::unique_ptr<IRGenerator> fIRGenerator;
-    int fFlags;
-
-    const String* fSource;
+    CompilerErrorReporter fErrorReporter;
     std::shared_ptr<Context> fContext;
-    int fErrorCount;
-    String fErrorText;
-};
+    std::unique_ptr<SymbolTable> fGlobalSymbols;
+    std::unique_ptr<ProgramConfig> fConfig;
+    std::unique_ptr<Pool> fPool;
 
-#if !defined(SKSL_STANDALONE) && SK_SUPPORT_GPU
-struct PipelineStageArgs {
-    String fCode;
-    std::vector<Compiler::FormatArg>    fFormatArgs;
-    std::vector<Compiler::GLSLFunction> fFunctions;
+    std::string fErrorText;
+
+    static OverrideFlag sOptimizer;
+    static OverrideFlag sInliner;
+
+    friend class Parser;
+    friend class ThreadContext;
 };
-#endif
 
 }  // namespace SkSL
 

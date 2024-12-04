@@ -1,5 +1,6 @@
 ﻿// © 2016 and later: Unicode, Inc. and others.
-// License & terms of use: http://www.unicode.org/copyright.html#License
+// License & terms of use: http://www.unicode.org/copyright.html
+// Generated using tools/cldr/cldr-to-icu/build-icu-data.xml
 fi{
     Currencies{
         ADP{
@@ -898,9 +899,13 @@ fi{
             "SKK",
             "Slovakian koruna",
         }
+        SLE{
+            "SLE",
+            "Sierra Leonen leone",
+        }
         SLL{
             "SLL",
-            "Sierra Leonen leone",
+            "Sierra Leonen leone (1964—2022)",
         }
         SOS{
             "SOS",
@@ -1119,7 +1124,7 @@ fi{
             "Ranskan UIC-frangi",
         }
         XOF{
-            "CFA",
+            "F CFA",
             "CFA-frangi BCEAO",
         }
         XPD{
@@ -1291,7 +1296,6 @@ fi{
         PYG{"PYG"}
         RON{"RON"}
         RUB{"₽"}
-        RUR{"RUR"}
         RWF{"RWF"}
         SBD{"SBD"}
         SEK{"SEK"}
@@ -2215,9 +2219,13 @@ fi{
             one{"Slovakian koruna"}
             other{"Slovakian korunaa"}
         }
-        SLL{
-            one{"Sierra Leonen leone"}
+        SLE{
+            one{"Sierra Leonen leonea"}
             other{"Sierra Leonen leonea"}
+        }
+        SLL{
+            one{"Sierra Leonen leone (1964—2022)"}
+            other{"Sierra Leonen leonea (1964—2022)"}
         }
         SOS{
             one{"Somalian šillinki"}
@@ -2536,5 +2544,4 @@ fi{
         one{"{0} {1}"}
         other{"{0} {1}"}
     }
-    Version{"37"}
 }

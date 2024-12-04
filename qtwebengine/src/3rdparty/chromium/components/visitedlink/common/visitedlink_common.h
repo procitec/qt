@@ -1,4 +1,4 @@
-// Copyright (c) 2006-2008 The Chromium Authors. All rights reserved.
+// Copyright 2006-2008 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,9 +8,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <string_view>
 #include <vector>
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 
 class GURL;
 
@@ -59,18 +60,21 @@ class VisitedLinkCommon {
   static const Hash null_hash_;
 
   VisitedLinkCommon();
+
+  VisitedLinkCommon(const VisitedLinkCommon&) = delete;
+  VisitedLinkCommon& operator=(const VisitedLinkCommon&) = delete;
+
   virtual ~VisitedLinkCommon();
 
   // Returns the fingerprint for the given URL.
-  Fingerprint ComputeURLFingerprint(const char* canonical_url,
-                                    size_t url_len) const {
-    return ComputeURLFingerprint(canonical_url, url_len, salt_);
+  Fingerprint ComputeURLFingerprint(std::string_view canonical_url) const {
+    return ComputeURLFingerprint(canonical_url, salt_);
   }
 
   // Looks up the given key in the table. The fingerprint for the URL is
   // computed if you call one with the string argument. Returns true if found.
   // Does not modify the hastable.
-  bool IsVisited(const char* canonical_url, size_t url_len) const;
+  bool IsVisited(const std::string_view canonical_url) const;
   bool IsVisited(const GURL& url) const;
   bool IsVisited(Fingerprint fingerprint) const;
 
@@ -92,7 +96,14 @@ class VisitedLinkCommon {
 
     // goes into salt_
     uint8_t salt[LINK_SALT_LENGTH];
+
+    // Padding to ensure the Fingerprint table is aligned. Without this, reading
+    // from the table causes unaligned reads.
+    uint8_t padding[4];
   };
+
+  static_assert(sizeof(SharedHeader) % alignof(Fingerprint) == 0,
+                "Fingerprint must be aligned when placed after SharedHeader");
 
   // Returns the fingerprint at the given index into the URL table. This
   // function should be called instead of accessing the table directly to
@@ -108,8 +119,7 @@ class VisitedLinkCommon {
   // pass the salt as a parameter. See the non-static version above if you
   // want to use the current class' salt.
   static Fingerprint ComputeURLFingerprint(
-      const char* canonical_url,
-      size_t url_len,
+      std::string_view canonical_url,
       const uint8_t salt[LINK_SALT_LENGTH]);
 
   // Computes the hash value of the given fingerprint, this is used as a lookup
@@ -125,16 +135,16 @@ class VisitedLinkCommon {
   }
 
   // pointer to the first item
-  VisitedLinkCommon::Fingerprint* hash_table_;
+  // May temporarily point to an old unmapped region during update.
+  raw_ptr<VisitedLinkCommon::Fingerprint,
+          DisableDanglingPtrDetection | AllowPtrArithmetic>
+      hash_table_ = nullptr;
 
   // the number of items in the hash table
-  int32_t table_length_;
+  int32_t table_length_ = 0;
 
   // salt used for each URL when computing the fingerprint
   uint8_t salt_[LINK_SALT_LENGTH];
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(VisitedLinkCommon);
 };
 
 }  // namespace visitedlink

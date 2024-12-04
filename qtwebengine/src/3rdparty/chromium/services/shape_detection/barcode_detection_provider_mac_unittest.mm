@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,10 +9,9 @@
 #include <memory>
 #include <string>
 
-#include "base/bind.h"
-#include "base/callback_forward.h"
+#include "base/functional/bind.h"
 #include "base/run_loop.h"
-#include "base/test/bind_test_util.h"
+#include "base/test/bind.h"
 #include "base/test/gmock_callback_support.h"
 #include "base/test/task_environment.h"
 #include "mojo/public/cpp/bindings/remote.h"
@@ -21,7 +20,6 @@
 #include "services/shape_detection/barcode_detection_impl_mac_vision.h"
 #include "services/shape_detection/barcode_detection_provider_mac.h"
 #include "services/shape_detection/public/mojom/barcodedetection_provider.mojom.h"
-#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 using base::test::RunClosure;
@@ -47,18 +45,21 @@ static const std::vector<mojom::BarcodeFormat>& MockVisionSupportedFormats = {
     mojom::BarcodeFormat::AZTEC, mojom::BarcodeFormat::DATA_MATRIX,
     mojom::BarcodeFormat::QR_CODE};
 
-// Use strings here because, while these will only be used on 10.13 or later
-// when the real symbols will be available, this array is constructed statically
-// on all OS versions.
 static NSArray<VNBarcodeSymbology>* MockVisionSupportedSymbologyStrings = @[
-  @"VNBarcodeSymbologyAztec", @"VNBarcodeSymbologyDataMatrix",
-  @"VNBarcodeSymbologyQR"
+  VNBarcodeSymbologyAztec, VNBarcodeSymbologyDataMatrix, VNBarcodeSymbologyQR
 ];
 
 class MockVisionAPI : public VisionAPIInterface {
  public:
-  MOCK_CONST_METHOD0(GetSupportedSymbologies,
-                     NSArray<VNBarcodeSymbology>*(void));
+  explicit MockVisionAPI(NSArray<VNBarcodeSymbology>* symbologies)
+      : symbologies_(symbologies) {}
+
+  NSArray<VNBarcodeSymbology>* GetSupportedSymbologies() const override {
+    return symbologies_;
+  }
+
+ private:
+  NSArray<VNBarcodeSymbology>* __strong symbologies_;
 };
 
 std::unique_ptr<mojom::BarcodeDetectionProvider> CreateBarcodeProviderMac(
@@ -76,11 +77,7 @@ std::unique_ptr<VisionAPIInterface> CreateVisionAPI() {
 
 std::unique_ptr<VisionAPIInterface> CreateMockVisionAPI(
     NSArray<VNBarcodeSymbology>* returned_symbologies) {
-  std::unique_ptr<NiceMock<MockVisionAPI>> mock_vision_api =
-      std::make_unique<NiceMock<MockVisionAPI>>();
-  ON_CALL(*mock_vision_api, GetSupportedSymbologies())
-      .WillByDefault(Return(returned_symbologies));
-  return mock_vision_api;
+  return std::make_unique<MockVisionAPI>(returned_symbologies);
 }
 
 using VisionAPIInterfaceFactory =
@@ -105,9 +102,7 @@ class BarcodeDetectionProviderMacTest
   ~BarcodeDetectionProviderMacTest() override = default;
 
   void SetUp() override {
-    if (@available(macOS 10.13, *))
-      is_vision_available_ = true;
-    ASSERT_EQ([MockVisionSupportedSymbologyStrings count],
+    ASSERT_EQ(MockVisionSupportedSymbologyStrings.count,
               MockVisionSupportedFormats.size());
   }
 
@@ -123,11 +118,10 @@ class BarcodeDetectionProviderMacTest
 
   std::unique_ptr<mojom::BarcodeDetectionProvider> provider_;
   base::test::SingleThreadTaskEnvironment task_environment_;
-  bool is_vision_available_ = false;
 };
 
 TEST_P(BarcodeDetectionProviderMacTest, EnumerateSupportedBarcodes) {
-  if (is_vision_available_ != GetParam().test_vision_api) {
+  if (!GetParam().test_vision_api) {
     LOG(WARNING) << "Barcode Detection for this (library, OS version) pair is "
                     "not supported, skipping test.";
     return;
@@ -150,16 +144,8 @@ INSTANTIATE_TEST_SUITE_P(,
                          ValuesIn(kTestParams));
 
 TEST_F(BarcodeDetectionProviderMacTest, EnumerateSupportedBarcodesCached) {
-  if (!is_vision_available_) {
-    LOG(WARNING) << "Barcode Detection with Vision not supported before 10.13, "
-                 << "skipping test.";
-    return;
-  }
-
-  auto mock_vision_api = std::make_unique<MockVisionAPI>();
-  ON_CALL(*mock_vision_api, GetSupportedSymbologies())
-      .WillByDefault(Return(MockVisionSupportedSymbologyStrings));
-  EXPECT_CALL(*mock_vision_api, GetSupportedSymbologies());
+  std::unique_ptr<VisionAPIInterface> mock_vision_api =
+      CreateMockVisionAPI(MockVisionSupportedSymbologyStrings);
 
   provider_ = CreateBarcodeProviderMac(std::move(mock_vision_api));
   provider_->EnumerateSupportedFormats(base::BindOnce(
@@ -174,12 +160,6 @@ TEST_F(BarcodeDetectionProviderMacTest, EnumerateSupportedBarcodesCached) {
 }
 
 TEST_F(BarcodeDetectionProviderMacTest, EnumerateSupportedBarcodesUnknown) {
-  if (!is_vision_available_) {
-    LOG(WARNING) << "Barcode Detection with Vision not supported before 10.13, "
-                 << "skipping test.";
-    return;
-  }
-
   NSMutableArray* mock_supported_symbologies =
       [NSMutableArray arrayWithArray:MockVisionSupportedSymbologyStrings];
   [mock_supported_symbologies addObject:@"FooSymbology"];
@@ -193,14 +173,8 @@ TEST_F(BarcodeDetectionProviderMacTest, EnumerateSupportedBarcodesUnknown) {
 }
 
 TEST_F(BarcodeDetectionProviderMacTest, EnumerateSupportedBarcodesErrored) {
-  if (!is_vision_available_) {
-    LOG(WARNING) << "Barcode Detection with Vision not supported before 10.13, "
-                 << "skipping test.";
-    return;
-  }
-
   std::unique_ptr<VisionAPIInterface> mock_vision_api =
-      CreateMockVisionAPI([NSArray array]);
+      CreateMockVisionAPI(@[]);
 
   provider_ = CreateBarcodeProviderMac(std::move(mock_vision_api));
   provider_->EnumerateSupportedFormats(base::BindOnce(
@@ -215,12 +189,6 @@ TEST_F(BarcodeDetectionProviderMacTest, EnumerateSupportedBarcodesErrored) {
 }
 
 TEST_F(BarcodeDetectionProviderMacTest, HintFormats) {
-  if (!is_vision_available_) {
-    LOG(WARNING) << "Barcode Detection with Vision not supported before 10.13, "
-                 << "skipping test.";
-    return;
-  }
-
   mojo::Remote<mojom::BarcodeDetectionProvider> provider_remote;
   mojo::MakeSelfOwnedReceiver(CreateBarcodeProviderMac(CreateVisionAPI()),
                               provider_remote.BindNewPipeAndPassReceiver());

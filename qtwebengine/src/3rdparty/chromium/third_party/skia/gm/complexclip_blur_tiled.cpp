@@ -18,7 +18,6 @@
 #include "include/core/SkString.h"
 #include "include/core/SkSurface.h"
 #include "include/effects/SkImageFilters.h"
-#include "src/core/SkClipOpPriv.h"
 #include "tools/ToolUtils.h"
 
 #define WIDTH 512
@@ -32,13 +31,9 @@ public:
     }
 
 protected:
-    SkString onShortName() override {
-        return SkString("complexclip_blur_tiled");
-    }
+    SkString getName() const override { return SkString("complexclip_blur_tiled"); }
 
-    SkISize onISize() override {
-        return SkISize::Make(WIDTH, HEIGHT);
-    }
+    SkISize getISize() override { return SkISize::Make(WIDTH, HEIGHT); }
 
     void onDraw(SkCanvas* canvas) override {
         SkPaint blurPaint;
@@ -57,7 +52,7 @@ protected:
                 SkRect rect = SkRect::MakeWH(WIDTH, HEIGHT);
                 tileCanvas->saveLayer(&rect, &blurPaint);
                 SkRRect rrect = SkRRect::MakeRectXY(rect.makeInset(20, 20), 25, 25);
-                tileCanvas->clipRRect(rrect, kDifference_SkClipOp, true);
+                tileCanvas->clipRRect(rrect, SkClipOp::kDifference, true);
                 SkPaint paint;
                 tileCanvas->drawRect(rect, paint);
                 tileCanvas->restore();

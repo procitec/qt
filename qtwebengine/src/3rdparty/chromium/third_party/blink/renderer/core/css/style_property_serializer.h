@@ -19,21 +19,23 @@
  * along with this library; see the file COPYING.LIB.  If not, write to
  * the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
  * Boston, MA 02110-1301, USA.
-*/
+ */
 
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_CSS_STYLE_PROPERTY_SERIALIZER_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_CSS_STYLE_PROPERTY_SERIALIZER_H_
 
 #include <bitset>
+#include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/css/css_property_value_set.h"
 #include "third_party/blink/renderer/core/css/css_value_list.h"
 
 namespace blink {
 
+class CSSPropertyName;
 class CSSPropertyValueSet;
 class StylePropertyShorthand;
 
-class StylePropertySerializer {
+class CORE_EXPORT StylePropertySerializer {
   STACK_ALLOCATED();
 
  public:
@@ -55,14 +57,36 @@ class StylePropertySerializer {
   String PageBreakPropertyValue(const StylePropertyShorthand&) const;
   String GetShorthandValue(const StylePropertyShorthand&,
                            String separator = " ") const;
+  String GetShorthandValueForColumnRule(const StylePropertyShorthand&) const;
+  String GetShorthandValueForColumns(const StylePropertyShorthand&) const;
+  // foo || bar || ... || baz
+  // https://drafts.csswg.org/css-values-4/#component-combinators
+  String GetShorthandValueForDoubleBarCombinator(
+      const StylePropertyShorthand&) const;
+  String GetShorthandValueForGrid(const StylePropertyShorthand&) const;
+  String GetShorthandValueForGridArea(const StylePropertyShorthand&) const;
+  String GetShorthandValueForGridLine(const StylePropertyShorthand&) const;
+  String GetShorthandValueForGridTemplate(const StylePropertyShorthand&) const;
+  String ContainerValue() const;
+  String TimelineValue(const StylePropertyShorthand&) const;
+  String ScrollTimelineValue() const;
+  String ViewTimelineValue() const;
+  String AlternativeViewTimelineWithInsetValue() const;
+  String AnimationDelayShorthandValue() const;
+  String AnimationRangeShorthandValue() const;
   String FontValue() const;
+  String FontSynthesisValue() const;
   String FontVariantValue() const;
   bool AppendFontLonghandValueIfNotNormal(const CSSProperty&,
                                           StringBuilder& result) const;
   String OffsetValue() const;
   String TextDecorationValue() const;
-  String BackgroundRepeatPropertyValue() const;
-  String GetPropertyText(const CSSProperty&,
+  String TextSpacingValue() const;
+  String ContainIntrinsicSizeValue() const;
+  String WhiteSpaceValue() const;
+  String ScrollStartValue() const;
+  String ScrollStartTargetValue() const;
+  String GetPropertyText(const CSSPropertyName&,
                          const String& value,
                          bool is_important,
                          bool is_not_first_decl) const;
@@ -88,24 +112,23 @@ class StylePropertySerializer {
     explicit PropertyValueForSerializer(
         CSSPropertyValueSet::PropertyReference property)
         : value_(&property.Value()),
-          property_(CSSProperty::Get(property.Id())),
+          name_(property.Name()),
           is_important_(property.IsImportant()) {}
 
     // TODO(sashab): Make this take a const CSSValue&.
-    PropertyValueForSerializer(const CSSProperty& property,
+    PropertyValueForSerializer(const CSSPropertyName& name,
                                const CSSValue* value,
                                bool is_important)
-        : value_(value), property_(property), is_important_(is_important) {}
+        : value_(value), name_(name), is_important_(is_important) {}
 
-    // TODO(crbug.com/980160): Remove this function.
-    const CSSProperty& Property() const { return property_; }
+    const CSSPropertyName& Name() const { return name_; }
     const CSSValue* Value() const { return value_; }
     bool IsImportant() const { return is_important_; }
     bool IsValid() const { return value_; }
 
    private:
     const CSSValue* value_;
-    const CSSProperty& property_;
+    CSSPropertyName name_;
     bool is_important_;
   };
 
@@ -132,10 +155,39 @@ class StylePropertySerializer {
       return HasAllProperty() && need_to_expand_all_;
     }
     bool HasAllProperty() const { return all_index_ != -1; }
-
+    bool IsIndexInPropertySet(unsigned index) const {
+      return index < property_set_->PropertyCount();
+    }
+    CSSPropertyID IndexToPropertyID(unsigned index) const {
+      // Iterating over "all"-expanded longhands is done using indices greater
+      // than, or equal to, the property set size. Map the index to the property
+      // ID based on the property set size.
+      //
+      // For this property set:
+      //
+      // div {
+      //   --foo: bar;
+      //   all: initial;
+      //   background-color: green;
+      // }
+      //
+      // We end up with indices (This method is supposed to do the mapping from
+      // index to property ID for the enumerated properties from color and
+      // onwards):
+      //
+      // 0: --foo
+      // 1: all
+      // 2: background-color
+      // 3: color (this is kIntFirstCSSProperty)
+      // 4: ...
+      //
+      DCHECK_GE(index, property_set_->PropertyCount());
+      return static_cast<CSSPropertyID>(index - property_set_->PropertyCount() +
+                                        kIntFirstCSSProperty);
+    }
     Member<const CSSPropertyValueSet> property_set_;
     int all_index_;
-    std::bitset<numCSSProperties> longhand_property_used_;
+    std::bitset<kNumCSSProperties> longhand_property_used_;
     bool need_to_expand_all_;
   };
 

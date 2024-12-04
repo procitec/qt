@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,8 +6,11 @@
 
 #include <mferror.h>
 
+#include "base/task/sequenced_task_runner.h"
+#include "media/audio/win/core_audio_util_win.h"
 #include "media/base/audio_decoder_config.h"
 #include "media/base/demuxer_stream.h"
+#include "media/base/media_log.h"
 #include "media/base/video_decoder_config.h"
 #include "media/base/win/mf_helpers.h"
 
@@ -18,6 +21,8 @@ using Microsoft::WRL::ComPtr;
 MediaFoundationSourceWrapper::MediaFoundationSourceWrapper() = default;
 
 MediaFoundationSourceWrapper::~MediaFoundationSourceWrapper() {
+  DVLOG_FUNC(1);
+
   if (!cdm_proxy_)
     return;
 
@@ -32,10 +37,11 @@ MediaFoundationSourceWrapper::~MediaFoundationSourceWrapper() {
 
 HRESULT MediaFoundationSourceWrapper::RuntimeClassInitialize(
     MediaResource* media_resource,
+    MediaLog* media_log,
     scoped_refptr<base::SequencedTaskRunner> task_runner) {
   DVLOG_FUNC(1);
 
-  if (media_resource->GetType() != MediaResource::Type::STREAM) {
+  if (media_resource->GetType() != MediaResource::Type::kStream) {
     DLOG(ERROR) << "MediaResource is not of Type STREAM";
     return E_INVALIDARG;
   }
@@ -44,11 +50,42 @@ HRESULT MediaFoundationSourceWrapper::RuntimeClassInitialize(
 
   auto demuxer_streams = media_resource->GetAllStreams();
 
+  bool has_video_stream = false;
+  for (DemuxerStream* demuxer_stream : demuxer_streams) {
+    if (demuxer_stream->type() == DemuxerStream::Type::VIDEO) {
+      has_video_stream = true;
+      break;
+    }
+  }
   int stream_id = 0;
   for (DemuxerStream* demuxer_stream : demuxer_streams) {
+    // TODO(crbug.com/1453682): MediaFoundationRenderer playback won't end
+    // after hitting the end of the video stream if no audio device. If any
+    // video stream is available but no audio device, do not create an instance
+    // of the MediaFoundationStreamWrapper so that the video playback can end
+    // properly at the end of the video stream. Remove this workaround once
+    // the permenent solution is implemented (i.e., a null sink for no audio
+    // device).
+    if (has_video_stream &&
+        demuxer_stream->type() == DemuxerStream::Type::AUDIO) {
+      auto default_audio_output_device_id =
+          media::CoreAudioUtil::GetDefaultOutputDeviceID();
+      DVLOG_FUNC(3) << "default_audio_output_device_id="
+                    << default_audio_output_device_id;
+
+      if (default_audio_output_device_id.empty()) {
+        DLOG(WARNING) << __func__
+                      << ": No default audio output device available! Not "
+                         "creating an instance of the "
+                         "MediaFoundationStreamWrapper for this audio stream.";
+        continue;
+      }
+    }
+
     ComPtr<MediaFoundationStreamWrapper> mf_stream;
     RETURN_IF_FAILED(MediaFoundationStreamWrapper::Create(
-        stream_id++, this, demuxer_stream, task_runner, &mf_stream));
+        stream_id++, this, demuxer_stream, media_log->Clone(), task_runner,
+        &mf_stream));
     media_streams_.push_back(mf_stream);
   }
 
@@ -334,6 +371,9 @@ HRESULT MediaFoundationSourceWrapper::GetInputTrustAuthority(
     IUnknown** object_out) {
   DVLOG_FUNC(1);
 
+  if (state_ == State::kShutdown)
+    return MF_E_SHUTDOWN;
+
   if (stream_id >= StreamCount())
     return E_INVALIDARG;
 
@@ -506,13 +546,14 @@ bool MediaFoundationSourceWrapper::HasEncryptedStream() const {
   return false;
 }
 
-void MediaFoundationSourceWrapper::SetCdmProxy(IMFCdmProxy* cdm_proxy) {
+void MediaFoundationSourceWrapper::SetCdmProxy(
+    scoped_refptr<MediaFoundationCdmProxy> cdm_proxy) {
   DVLOG_FUNC(2);
   DCHECK(task_runner_->RunsTasksInCurrentSequence());
 
   // cdm_proxy_ should never change.
   DCHECK(!cdm_proxy_);
-  cdm_proxy_ = cdm_proxy;
+  cdm_proxy_ = std::move(cdm_proxy);
 
   HRESULT hr = cdm_proxy_->RefreshTrustedInput();
   DLOG_IF(ERROR, FAILED(hr))

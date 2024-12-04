@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,6 +11,7 @@
 #include "third_party/blink/renderer/core/animation/interpolation_types_map.h"
 #include "third_party/blink/renderer/core/animation/primitive_interpolation.h"
 #include "third_party/blink/renderer/core/animation/typed_interpolation_value.h"
+#include "third_party/blink/renderer/core/core_export.h"
 
 namespace blink {
 
@@ -52,32 +53,34 @@ class CORE_EXPORT InvalidatableInterpolation : public Interpolation {
   bool IsInvalidatableInterpolation() const override { return true; }
 
   const TypedInterpolationValue* GetCachedValueForTesting() const {
-    return cached_value_.get();
+    return cached_value_.Get();
   }
 
   void Trace(Visitor* visitor) const override {
     visitor->Trace(start_keyframe_);
     visitor->Trace(end_keyframe_);
+    visitor->Trace(cached_pair_conversion_);
+    visitor->Trace(cached_value_);
     Interpolation::Trace(visitor);
   }
 
  private:
   using ConversionCheckers = InterpolationType::ConversionCheckers;
 
-  std::unique_ptr<TypedInterpolationValue> MaybeConvertUnderlyingValue(
+  TypedInterpolationValue* MaybeConvertUnderlyingValue(
       const InterpolationEnvironment&) const;
   const TypedInterpolationValue* EnsureValidConversion(
-      const InterpolationEnvironment&,
+      InterpolationEnvironment&,
       const UnderlyingValueOwner&) const;
-  void EnsureValidInterpolationTypes(const InterpolationEnvironment&) const;
-  void ClearConversionCache() const;
+  void EnsureValidInterpolationTypes(InterpolationEnvironment&) const;
+  void ClearConversionCache(InterpolationEnvironment& environment) const;
   bool IsConversionCacheValid(const InterpolationEnvironment&,
                               const UnderlyingValueOwner&) const;
   bool IsNeutralKeyframeActive() const;
-  std::unique_ptr<PairwisePrimitiveInterpolation> MaybeConvertPairwise(
+  PairwisePrimitiveInterpolation* MaybeConvertPairwise(
       const InterpolationEnvironment&,
       const UnderlyingValueOwner&) const;
-  std::unique_ptr<TypedInterpolationValue> ConvertSingleKeyframe(
+  TypedInterpolationValue* ConvertSingleKeyframe(
       const PropertySpecificKeyframe&,
       const InterpolationEnvironment&,
       const UnderlyingValueOwner&) const;
@@ -93,9 +96,9 @@ class CORE_EXPORT InvalidatableInterpolation : public Interpolation {
   Member<PropertySpecificKeyframe> end_keyframe_;
   double current_fraction_;
   mutable bool is_conversion_cached_;
-  mutable std::unique_ptr<PrimitiveInterpolation> cached_pair_conversion_;
+  mutable Member<PrimitiveInterpolation> cached_pair_conversion_;
   mutable ConversionCheckers conversion_checkers_;
-  mutable std::unique_ptr<TypedInterpolationValue> cached_value_;
+  mutable Member<TypedInterpolationValue> cached_value_;
 };
 
 template <>

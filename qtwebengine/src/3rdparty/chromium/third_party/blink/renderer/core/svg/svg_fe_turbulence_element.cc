@@ -25,21 +25,22 @@
 #include "third_party/blink/renderer/core/svg/svg_animated_number_optional_number.h"
 #include "third_party/blink/renderer/core/svg/svg_enumeration_map.h"
 #include "third_party/blink/renderer/core/svg_names.h"
-#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 
 namespace blink {
 
 template <>
-const SVGEnumerationMap& GetEnumerationMap<SVGStitchOptions>() {
+CORE_EXPORT const SVGEnumerationMap& GetEnumerationMap<SVGStitchOptions>() {
   static const SVGEnumerationMap::Entry enum_items[] = {
-      {kSvgStitchtypeStitch, "stitch"}, {kSvgStitchtypeNostitch, "noStitch"},
+      {kSvgStitchtypeStitch, "stitch"},
+      {kSvgStitchtypeNostitch, "noStitch"},
   };
   static const SVGEnumerationMap entries(enum_items);
   return entries;
 }
 
 template <>
-const SVGEnumerationMap& GetEnumerationMap<TurbulenceType>() {
+CORE_EXPORT const SVGEnumerationMap& GetEnumerationMap<TurbulenceType>() {
   static const SVGEnumerationMap::Entry enum_items[] = {
       {FETURBULENCE_TYPE_FRACTALNOISE, "fractalNoise"},
       {FETURBULENCE_TYPE_TURBULENCE, "turbulence"},
@@ -70,13 +71,7 @@ SVGFETurbulenceElement::SVGFETurbulenceElement(Document& document)
       num_octaves_(
           MakeGarbageCollected<SVGAnimatedInteger>(this,
                                                    svg_names::kNumOctavesAttr,
-                                                   1)) {
-  AddToPropertyMap(base_frequency_);
-  AddToPropertyMap(seed_);
-  AddToPropertyMap(stitch_tiles_);
-  AddToPropertyMap(type_);
-  AddToPropertyMap(num_octaves_);
-}
+                                                   1)) {}
 
 SVGAnimatedNumber* SVGFETurbulenceElement::baseFrequencyX() {
   return base_frequency_->FirstNumber();
@@ -122,7 +117,8 @@ bool SVGFETurbulenceElement::SetFilterEffectAttribute(
 }
 
 void SVGFETurbulenceElement::SvgAttributeChanged(
-    const QualifiedName& attr_name) {
+    const SvgAttributeChangedParams& params) {
+  const QualifiedName& attr_name = params.name;
   if (attr_name == svg_names::kBaseFrequencyAttr ||
       attr_name == svg_names::kNumOctavesAttr ||
       attr_name == svg_names::kSeedAttr ||
@@ -133,7 +129,7 @@ void SVGFETurbulenceElement::SvgAttributeChanged(
     return;
   }
 
-  SVGFilterPrimitiveStandardAttributes::SvgAttributeChanged(attr_name);
+  SVGFilterPrimitiveStandardAttributes::SvgAttributeChanged(params);
 }
 
 FilterEffect* SVGFETurbulenceElement::Build(SVGFilterBuilder*, Filter* filter) {
@@ -143,6 +139,32 @@ FilterEffect* SVGFETurbulenceElement::Build(SVGFilterBuilder*, Filter* filter) {
       baseFrequencyY()->CurrentValue()->Value(),
       num_octaves_->CurrentValue()->Value(), seed_->CurrentValue()->Value(),
       stitch_tiles_->CurrentEnumValue() == kSvgStitchtypeStitch);
+}
+
+SVGAnimatedPropertyBase* SVGFETurbulenceElement::PropertyFromAttribute(
+    const QualifiedName& attribute_name) const {
+  if (attribute_name == svg_names::kBaseFrequencyAttr) {
+    return base_frequency_.Get();
+  } else if (attribute_name == svg_names::kSeedAttr) {
+    return seed_.Get();
+  } else if (attribute_name == svg_names::kStitchTilesAttr) {
+    return stitch_tiles_.Get();
+  } else if (attribute_name == svg_names::kTypeAttr) {
+    return type_.Get();
+  } else if (attribute_name == svg_names::kNumOctavesAttr) {
+    return num_octaves_.Get();
+  } else {
+    return SVGFilterPrimitiveStandardAttributes::PropertyFromAttribute(
+        attribute_name);
+  }
+}
+
+void SVGFETurbulenceElement::SynchronizeAllSVGAttributes() const {
+  SVGAnimatedPropertyBase* attrs[]{base_frequency_.Get(), seed_.Get(),
+                                   stitch_tiles_.Get(), type_.Get(),
+                                   num_octaves_.Get()};
+  SynchronizeListOfSVGAttributes(attrs);
+  SVGFilterPrimitiveStandardAttributes::SynchronizeAllSVGAttributes();
 }
 
 }  // namespace blink

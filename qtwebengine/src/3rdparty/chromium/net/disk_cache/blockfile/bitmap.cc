@@ -1,12 +1,12 @@
-// Copyright (c) 2009 The Chromium Authors. All rights reserved.
+// Copyright 2009 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "net/disk_cache/blockfile/bitmap.h"
 
 #include <algorithm>
+#include <bit>
 
-#include "base/bits.h"
 #include "base/check_op.h"
 
 namespace {
@@ -17,18 +17,20 @@ int FindLSBNonEmpty(uint32_t word, bool value) {
   if (!value)
     word = ~word;
 
-  return base::bits::CountTrailingZeroBits(word);
+  return std::countr_zero(word);
 }
 
 }  // namespace
 
 namespace disk_cache {
 
+Bitmap::Bitmap() = default;
+
 Bitmap::Bitmap(int num_bits, bool clear_bits)
     : num_bits_(num_bits),
       array_size_(RequiredArraySize(num_bits)),
-      alloc_(true) {
-  map_ = new uint32_t[array_size_];
+      allocated_map_(std::make_unique<uint32_t[]>(array_size_)) {
+  map_ = allocated_map_.get();
 
   // Initialize all of the bits.
   if (clear_bits)
@@ -36,34 +38,28 @@ Bitmap::Bitmap(int num_bits, bool clear_bits)
 }
 
 Bitmap::Bitmap(uint32_t* map, int num_bits, int num_words)
-    : map_(map),
-      num_bits_(num_bits),
+    : num_bits_(num_bits),
       // If size is larger than necessary, trim because array_size_ is used
       // as a bound by various methods.
       array_size_(std::min(RequiredArraySize(num_bits), num_words)),
-      alloc_(false) {}
+      map_(map) {}
 
-Bitmap::~Bitmap() {
-  if (alloc_)
-    delete [] map_;
-}
+Bitmap::~Bitmap() = default;
 
 void Bitmap::Resize(int num_bits, bool clear_bits) {
-  DCHECK(alloc_ || !map_);
+  DCHECK(allocated_map_ || !map_);
   const int old_maxsize = num_bits_;
   const int old_array_size = array_size_;
   array_size_ = RequiredArraySize(num_bits);
 
   if (array_size_ != old_array_size) {
-    uint32_t* new_map = new uint32_t[array_size_];
+    auto new_map = std::make_unique<uint32_t[]>(array_size_);
     // Always clear the unused bits in the last word.
     new_map[array_size_ - 1] = 0;
-    memcpy(new_map, map_,
-           sizeof(*map_) * std::min(array_size_, old_array_size));
-    if (alloc_)
-      delete[] map_;  // No need to check for NULL.
-    map_ = new_map;
-    alloc_ = true;
+    std::copy(map_, map_ + std::min(array_size_, old_array_size),
+              new_map.get());
+    map_ = new_map.get();
+    allocated_map_ = std::move(new_map);
   }
 
   num_bits_ = num_bits;
@@ -112,7 +108,7 @@ uint32_t Bitmap::GetMapElement(int array_index) const {
 }
 
 void Bitmap::SetMap(const uint32_t* map, int size) {
-  memcpy(map_, map, std::min(size, array_size_) * sizeof(*map_));
+  std::copy(map, map + std::min(size, array_size_), map_);
 }
 
 void Bitmap::SetRange(int begin, int end, bool value) {

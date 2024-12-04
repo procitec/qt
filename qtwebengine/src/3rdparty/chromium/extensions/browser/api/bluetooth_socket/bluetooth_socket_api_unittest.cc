@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,6 +7,7 @@
 #include <memory>
 
 #include "base/strings/stringprintf.h"
+#include "build/build_config.h"
 #include "extensions/browser/api_test_utils.h"
 #include "extensions/browser/api_unittest.h"
 #include "extensions/common/extension_builder.h"
@@ -18,8 +19,9 @@ class BluetoothSocketApiUnittest : public ApiUnitTest {
  public:
   BluetoothSocketApiUnittest() = default;
 
- private:
-  DISALLOW_COPY_AND_ASSIGN(BluetoothSocketApiUnittest);
+  BluetoothSocketApiUnittest(const BluetoothSocketApiUnittest&) = delete;
+  BluetoothSocketApiUnittest& operator=(const BluetoothSocketApiUnittest&) =
+      delete;
 };
 
 // Tests that bluetoothSocket.create fails as expected when extension does not
@@ -33,26 +35,27 @@ TEST_F(BluetoothSocketApiUnittest, Permission) {
 
 // Tests bluetoothSocket.create() and bluetoothSocket.close().
 // Regression test for https://crbug.com/831651.
-TEST_F(BluetoothSocketApiUnittest, CreateThenClose) {
+// TODO(https://crbug.com/1251347): Port //device/bluetooth to Fuchsia to enable
+// bluetooth extensions.
+#if BUILDFLAG(IS_FUCHSIA)
+#define MAYBE_CreateThenClose DISABLED_CreateThenClose
+#else
+#define MAYBE_CreateThenClose CreateThenClose
+#endif
+TEST_F(BluetoothSocketApiUnittest, MAYBE_CreateThenClose) {
   scoped_refptr<const Extension> extension_with_socket_permitted =
       ExtensionBuilder()
           .SetManifest(
-              DictionaryBuilder()
+              base::Value::Dict()
                   .Set("name", "bluetooth app")
                   .Set("version", "1.0")
-                  .Set("bluetooth",
-                       DictionaryBuilder().Set("socket", true).Build())
-                  .Set("app",
-                       DictionaryBuilder()
-                           .Set("background",
-                                DictionaryBuilder()
-                                    .Set("scripts", ListBuilder()
-                                                        .Append("background.js")
-                                                        .Build())
-                                    .Build())
-                           .Build())
-                  .Build())
-          .SetLocation(Manifest::COMPONENT)
+                  .Set("bluetooth", base::Value::Dict().Set("socket", true))
+                  .Set("app", base::Value::Dict().Set(
+                                  "background",
+                                  base::Value::Dict().Set(
+                                      "scripts", base::Value::List().Append(
+                                                     "background.js")))))
+          .SetLocation(mojom::ManifestLocation::kComponent)
           .Build();
 
   ASSERT_TRUE(extension_with_socket_permitted);
@@ -60,15 +63,16 @@ TEST_F(BluetoothSocketApiUnittest, CreateThenClose) {
 
   auto create_function =
       base::MakeRefCounted<api::BluetoothSocketCreateFunction>();
-  std::unique_ptr<base::DictionaryValue> result =
-      RunFunctionAndReturnDictionary(create_function.get(), "[]");
+  std::optional<base::Value> result =
+      RunFunctionAndReturnValue(create_function.get(), "[]");
   ASSERT_TRUE(result);
+  ASSERT_TRUE(result->is_dict());
 
-  api::bluetooth_socket::CreateInfo create_info;
-  EXPECT_TRUE(
-      api::bluetooth_socket::CreateInfo::Populate(*result, &create_info));
+  auto create_info =
+      api::bluetooth_socket::CreateInfo::FromValue(result->GetDict());
+  EXPECT_TRUE(create_info);
 
-  const int socket_id = create_info.socket_id;
+  const int socket_id = create_info->socket_id;
   auto close_function =
       base::MakeRefCounted<api::BluetoothSocketCloseFunction>();
   RunFunction(close_function.get(), base::StringPrintf("[%d]", socket_id));

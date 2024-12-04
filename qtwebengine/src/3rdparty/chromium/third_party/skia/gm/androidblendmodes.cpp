@@ -19,6 +19,7 @@
 #include "include/core/SkTypeface.h"
 #include "include/utils/SkTextUtils.h"
 #include "tools/ToolUtils.h"
+#include "tools/fonts/FontToolUtils.h"
 
 #include <initializer_list>
 
@@ -32,11 +33,9 @@ public:
     }
 
 protected:
-    SkString onShortName() override {
-        return SkString("androidblendmodes");
-    }
+    SkString getName() const override { return SkString("androidblendmodes"); }
 
-    SkISize onISize() override {
+    SkISize getISize() override {
         return SkISize::Make(kNumCols * kBitmapSize, kNumRows * kBitmapSize);
     }
 
@@ -71,13 +70,13 @@ protected:
         canvas->saveLayer(nullptr, nullptr);
 
         SkPaint p;
-        canvas->drawBitmap(fCompositeDst, 0, 0, &p);
+        canvas->drawImage(fCompositeDst.asImage(), 0, 0, SkSamplingOptions(), &p);
         p.setBlendMode(mode);
-        canvas->drawBitmap(fCompositeSrc, 0, 0, &p);
+        canvas->drawImage(fCompositeSrc.asImage(), 0, 0, SkSamplingOptions(), &p);
     }
 
     void onDraw(SkCanvas* canvas) override {
-        SkFont font(ToolUtils::create_portable_typeface());
+        SkFont font = ToolUtils::DefaultPortableFont();
 
         ToolUtils::draw_checkerboard(canvas, kWhite, kGrey, 32);
 

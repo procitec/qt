@@ -1,8 +1,10 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "media/base/video_decoder.h"
+
+#include <algorithm>
 
 #include "base/command_line.h"
 #include "base/strings/string_number_conversions.h"
@@ -29,6 +31,10 @@ int VideoDecoder::GetMaxDecodeRequests() const {
   return 1;
 }
 
+bool VideoDecoder::FramesHoldExternalResources() const {
+  return false;
+}
+
 // static
 int VideoDecoder::GetRecommendedThreadCount(int desired_threads) {
   // If the thread count is specified on the command line, respect it so long as
@@ -52,9 +58,9 @@ int VideoDecoder::GetRecommendedThreadCount(int desired_threads) {
   // zero threads; I.e., decoding will execute on the calling thread. Therefore,
   // at least two threads are required to allow decoding to progress outside of
   // each Decode() call.
-  return std::min(std::max(desired_threads,
-                           static_cast<int>(limits::kMinVideoDecodeThreads)),
-                  static_cast<int>(limits::kMaxVideoDecodeThreads));
+  return std::clamp(desired_threads,
+                     static_cast<int>(limits::kMinVideoDecodeThreads),
+                     static_cast<int>(limits::kMaxVideoDecodeThreads));
 }
 
 }  // namespace media

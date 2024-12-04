@@ -1,32 +1,14 @@
-/*
- * Copyright (C) 2006 Apple Computer, Inc.
- * Copyright (C) 2009 Google, Inc.
- *
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Library General Public
- * License as published by the Free Software Foundation; either
- * version 2 of the License, or (at your option) any later version.
- *
- * This library is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Library General Public License for more details.
- *
- * You should have received a copy of the GNU Library General Public License
- * along with this library; see the file COPYING.LIB.  If not, write to
- * the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
- * Boston, MA 02110-1301, USA.
- */
+// Copyright 2022 The Chromium Authors
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
 
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_SVG_LAYOUT_SVG_FOREIGN_OBJECT_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_SVG_LAYOUT_SVG_FOREIGN_OBJECT_H_
 
+#include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_block.h"
-#include "third_party/blink/renderer/platform/wtf/casting.h"
 
 namespace blink {
-
-class SVGForeignObjectElement;
 
 // LayoutSVGForeignObject is the LayoutObject associated with <foreignobject>.
 // http://www.w3.org/TR/SVG/extend.html#ForeignObjectElement
@@ -34,7 +16,7 @@ class SVGForeignObjectElement;
 // Foreign object is a way of inserting arbitrary non-SVG content into SVG.
 // A good example of this is HTML in SVG. Because of this, CSS content has to
 // be aware of SVG: e.g. when determining containing blocks we stop at the
-// enclosing foreign object (see LayoutObject::canContainFixedPositionObjects).
+// enclosing foreign object (see LayoutObject::ComputeIsFixedContainer).
 //
 // Note that SVG is also allowed in HTML with the HTML5 parsing rules so SVG
 // content also has to be aware of CSS objects.
@@ -52,77 +34,54 @@ class SVGForeignObjectElement;
 // compatible with the expectations of the getBBox() DOM interface.
 class LayoutSVGForeignObject final : public LayoutSVGBlock {
  public:
-  explicit LayoutSVGForeignObject(SVGForeignObjectElement*);
-  ~LayoutSVGForeignObject() override;
+  explicit LayoutSVGForeignObject(Element* element);
 
-  const char* GetName() const override {
-    NOT_DESTROYED();
-    return "LayoutSVGForeignObject";
-  }
-
-  bool IsChildAllowed(LayoutObject*, const ComputedStyle&) const override;
-
-  void Paint(const PaintInfo&) const override;
-
-  void UpdateLayout() override;
-
-  FloatRect ObjectBoundingBox() const override {
-    NOT_DESTROYED();
-    return viewport_;
-  }
-  FloatRect StrokeBoundingBox() const override {
-    NOT_DESTROYED();
-    return ObjectBoundingBox();
-  }
-  FloatRect VisualRectInLocalSVGCoordinates() const override {
-    NOT_DESTROYED();
-    return FloatRect(FrameRect());
-  }
-  bool IsObjectBoundingBoxValid() const {
-    NOT_DESTROYED();
-    return !viewport_.IsEmpty();
-  }
-
-  bool NodeAtPoint(HitTestResult&,
-                   const HitTestLocation&,
-                   const PhysicalOffset&,
-                   HitTestAction) override;
+  bool IsObjectBoundingBoxValid() const;
 
   // A method to call when recursively hit testing from an SVG parent.
   // Since LayoutSVGRoot has a PaintLayer always, this will cause a
   // trampoline through PaintLayer::HitTest and back to a call to NodeAtPoint
   // on this object. This is why there are two methods.
-  bool NodeAtPointFromSVG(HitTestResult&,
-                          const HitTestLocation&,
-                          const PhysicalOffset&,
-                          HitTestAction);
-
-  bool IsOfType(LayoutObjectType type) const override {
-    NOT_DESTROYED();
-    return type == kLayoutObjectSVGForeignObject ||
-           LayoutSVGBlock::IsOfType(type);
-  }
-
-  PaintLayerType LayerTypeRequired() const override;
-
-  bool CreatesNewFormattingContext() const final {
-    NOT_DESTROYED();
-    // This is the root of a foreign object. Don't let anything inside it escape
-    // to our ancestors.
-    return true;
-  }
+  bool NodeAtPointFromSVG(HitTestResult& result,
+                          const HitTestLocation& hit_test_location,
+                          const PhysicalOffset& accumulated_offset,
+                          HitTestPhase phase);
 
  private:
-  void UpdateLogicalWidth() override;
-  void ComputeLogicalHeight(LayoutUnit logical_height,
-                            LayoutUnit logical_top,
-                            LogicalExtentComputedValues&) const override;
-  void StyleDidChange(StyleDifference, const ComputedStyle* old_style) override;
+  // LayoutObject override:
+  void UpdateLayout() override;
+  // Update LayoutObject state after layout has completed. Returns true if
+  // boundaries needs to be propagated (because of a change to the transform).
+  bool UpdateAfterSvgLayout(bool bounds_changed);
+  const char* GetName() const override;
+  bool IsSVGForeignObject() const final {
+    NOT_DESTROYED();
+    return true;
+  }
+  bool IsChildAllowed(LayoutObject* child,
+                      const ComputedStyle& style) const override;
+  gfx::RectF ObjectBoundingBox() const override;
+  gfx::RectF StrokeBoundingBox() const override;
+  gfx::RectF DecoratedBoundingBox() const override;
+  gfx::RectF VisualRectInLocalSVGCoordinates() const override;
   AffineTransform LocalToSVGParentTransform() const override;
+
+  // LayoutBox override:
+  LayoutPoint LocationInternal() const override;
+  PaintLayerType LayerTypeRequired() const override;
+  bool CreatesNewFormattingContext() const override;
+
+  // LayoutBlock override:
+  void StyleDidChange(StyleDifference, const ComputedStyle* old_style) override;
 
   // The resolved viewport in the regular SVG coordinate space (after any
   // 'transform' has been applied but without zoom-adjustment).
-  FloatRect viewport_;
+  gfx::RectF viewport_;
+
+  // Override of LayoutBox::frame_rect_.location_.
+  // A physical fragment for <foreignObject> doesn't have the owner
+  // PhysicalFragmentLink.
+  LayoutPoint overridden_location_;
 };
 
 template <>
@@ -134,4 +93,4 @@ struct DowncastTraits<LayoutSVGForeignObject> {
 
 }  // namespace blink
 
-#endif
+#endif  // THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_SVG_LAYOUT_SVG_FOREIGN_OBJECT_H_

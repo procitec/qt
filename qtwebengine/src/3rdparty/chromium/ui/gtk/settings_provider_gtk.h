@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,10 +9,10 @@
 #include <string>
 #include <vector>
 
-#include "base/macros.h"
-#include "ui/base/glib/glib_signal.h"
+#include "base/memory/raw_ptr.h"
+#include "ui/base/glib/scoped_gsignal.h"
 #include "ui/gtk/settings_provider.h"
-#include "ui/views/linux_ui/linux_ui.h"
+#include "ui/linux/linux_ui.h"
 
 typedef struct _GParamSpec GParamSpec;
 typedef struct _GtkSettings GtkSettings;
@@ -24,56 +24,47 @@ class GtkUi;
 class SettingsProviderGtk : public SettingsProvider {
  public:
   explicit SettingsProviderGtk(GtkUi* delegate);
+
+  SettingsProviderGtk(const SettingsProviderGtk&) = delete;
+  SettingsProviderGtk& operator=(const SettingsProviderGtk&) = delete;
+
   ~SettingsProviderGtk() override;
 
  private:
   class FrameActionSettingWatcher {
    public:
-    FrameActionSettingWatcher(
-        SettingsProviderGtk* settings_provider,
-        const std::string& setting_name,
-        views::LinuxUI::WindowFrameActionSource action_type,
-        views::LinuxUI::WindowFrameAction default_action);
+    FrameActionSettingWatcher(SettingsProviderGtk* settings_provider,
+                              const std::string& setting_name,
+                              ui::LinuxUi::WindowFrameActionSource action_type,
+                              ui::LinuxUi::WindowFrameAction default_action);
+
+    FrameActionSettingWatcher(const FrameActionSettingWatcher&) = delete;
+    FrameActionSettingWatcher& operator=(const FrameActionSettingWatcher&) =
+        delete;
+
     ~FrameActionSettingWatcher();
 
-    CHROMEG_CALLBACK_1(FrameActionSettingWatcher,
-                       void,
-                       OnSettingChanged,
-                       GtkSettings*,
-                       GParamSpec*);
+    void OnSettingChanged(GtkSettings* settings, GParamSpec* param);
 
    private:
-    SettingsProviderGtk* settings_provider_;
+    raw_ptr<SettingsProviderGtk> settings_provider_;
     std::string setting_name_;
-    views::LinuxUI::WindowFrameActionSource action_type_;
-    views::LinuxUI::WindowFrameAction default_action_;
-    unsigned long signal_id_;
-
-    DISALLOW_COPY_AND_ASSIGN(FrameActionSettingWatcher);
+    ui::LinuxUi::WindowFrameActionSource action_type_;
+    ui::LinuxUi::WindowFrameAction default_action_;
+    ScopedGSignal signal_;
   };
 
   void SetWindowButtonOrderingFromGtkLayout(const std::string& gtk_layout);
 
-  CHROMEG_CALLBACK_1(SettingsProviderGtk,
-                     void,
-                     OnDecorationButtonLayoutChanged,
-                     GtkSettings*,
-                     GParamSpec*);
+  void OnDecorationButtonLayoutChanged(GtkSettings* settings,
+                                       GParamSpec* param);
 
-  CHROMEG_CALLBACK_1(SettingsProviderGtk,
-                     void,
-                     OnThemeChanged,
-                     GtkSettings*,
-                     GParamSpec*);
+  raw_ptr<GtkUi> delegate_;
 
-  GtkUi* delegate_;
-
-  unsigned long signal_id_decoration_layout_;
+  ScopedGSignal signal_;
 
   std::vector<std::unique_ptr<FrameActionSettingWatcher>>
       frame_action_setting_watchers_;
-
-  DISALLOW_COPY_AND_ASSIGN(SettingsProviderGtk);
 };
 
 }  // namespace gtk

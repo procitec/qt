@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,7 +7,7 @@
 
 #include <string>
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "components/autofill/content/common/mojom/autofill_driver.mojom.h"
 #include "components/autofill/core/common/save_password_progress_logger.h"
 
@@ -25,6 +25,12 @@ class RendererSavePasswordProgressLogger : public SavePasswordProgressLogger {
   // The |password_manager_driver| needs to outlive the constructed logger.
   RendererSavePasswordProgressLogger(
       mojom::PasswordManagerDriver* password_manager_driver);
+
+  RendererSavePasswordProgressLogger(
+      const RendererSavePasswordProgressLogger&) = delete;
+  RendererSavePasswordProgressLogger& operator=(
+      const RendererSavePasswordProgressLogger&) = delete;
+
   ~RendererSavePasswordProgressLogger() override;
 
   void LogElementName(StringID label,
@@ -37,9 +43,8 @@ class RendererSavePasswordProgressLogger : public SavePasswordProgressLogger {
  private:
   // Used by SendLog to send the logs to the browser.
   // |password_manager_driver_| needs to outlive the logger.
-  mojom::PasswordManagerDriver* password_manager_driver_;
-
-  DISALLOW_COPY_AND_ASSIGN(RendererSavePasswordProgressLogger);
+  raw_ptr<mojom::PasswordManagerDriver, ExperimentalRenderer>
+      password_manager_driver_;
 };
 
 }  // namespace autofill

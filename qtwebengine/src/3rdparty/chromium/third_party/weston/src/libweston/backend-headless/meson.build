@@ -11,8 +11,13 @@ srcs_headless = [
 plugin_headless = shared_library(
 	'headless-backend',
 	srcs_headless,
-	include_directories: include_directories('../..', '../../shared'),
-	dependencies: dep_libweston,
+	include_directories: common_inc,
+	dependencies: [
+		dep_libweston_private,
+		dep_libdrm_headers,
+		dep_lib_cairo_shared,
+		dep_lib_gl_borders,
+	],
 	name_prefix: '',
 	install: true,
 	install_dir: dir_module_libweston,

@@ -1,9 +1,9 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 var utils = require('utils');
-var internalAPI = require('platformKeys.internalAPI');
+var internalAPI = getInternalApi('platformKeysInternal');
 var keyModule = require('platformKeys.Key');
 var getSpki = keyModule.getSpki;
 var KeyUsage = keyModule.KeyUsage;
@@ -12,7 +12,7 @@ var normalizeAlgorithm =
     requireNative('platform_keys_natives').NormalizeAlgorithm;
 
 // This error is thrown by the internal and public API's token functions and
-// must be rethrown by this custom binding. Keep this in sync with the C++ part
+// must be re-thrown by this custom binding. Keep this in sync with the C++ part
 // of this API.
 var errorInvalidToken = 'The token is not valid.';
 
@@ -24,10 +24,6 @@ function CreateNotSupportedError() {
 
 function CreateInvalidAccessError() {
   return new Error('The requested operation is not valid for the provided key');
-}
-
-function CreateDataError() {
-  return new Error('Data provided to an operation does not meet requirements');
 }
 
 function CreateSyntaxError() {
@@ -70,10 +66,13 @@ function isSupportedSignAlgorithm(normalizedAlgorithm) {
  * Implementation of WebCrypto.SubtleCrypto used in platformKeys and
  * enterprise.platformKeys.
  * @param {string} tokenId The id of the backing Token.
+ * @param {boolean} softwareBacked Whether the key operations should be executed
+ *     in software.
  * @constructor
  */
-function SubtleCryptoImpl(tokenId) {
+function SubtleCryptoImpl(tokenId, softwareBacked) {
   this.tokenId = tokenId;
+  this.softwareBacked = softwareBacked;
 }
 $Object.setPrototypeOf(SubtleCryptoImpl.prototype, null);
 
@@ -159,6 +158,6 @@ utils.expose(SubtleCrypto, SubtleCryptoImpl, {
   ],
 });
 
-// Required for subclassing.
+// Required for sub-classing.
 exports.$set('SubtleCryptoImpl', SubtleCryptoImpl);
 exports.$set('SubtleCrypto', SubtleCrypto);

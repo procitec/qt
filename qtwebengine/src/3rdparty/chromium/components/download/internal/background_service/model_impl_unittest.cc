@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,10 +7,10 @@
 #include <algorithm>
 #include <memory>
 
-#include "base/bind.h"
-#include "base/guid.h"
-#include "base/macros.h"
+#include "base/functional/bind.h"
+#include "base/memory/raw_ptr.h"
 #include "base/test/metrics/histogram_tester.h"
+#include "base/uuid.h"
 #include "components/download/internal/background_service/entry.h"
 #include "components/download/internal/background_service/stats.h"
 #include "components/download/internal/background_service/test/entry_utils.h"
@@ -31,6 +31,10 @@ class DownloadServiceModelImplTest : public testing::Test {
  public:
   DownloadServiceModelImplTest() : store_(nullptr) {}
 
+  DownloadServiceModelImplTest(const DownloadServiceModelImplTest&) = delete;
+  DownloadServiceModelImplTest& operator=(const DownloadServiceModelImplTest&) =
+      delete;
+
   ~DownloadServiceModelImplTest() override = default;
 
   void SetUp() override {
@@ -38,14 +42,12 @@ class DownloadServiceModelImplTest : public testing::Test {
     store_ = store.get();
     model_ = std::make_unique<ModelImpl>(std::move(store));
   }
+  void TearDown() override { store_ = nullptr; }
 
  protected:
   test::MockModelClient client_;
-  test::TestStore* store_;
+  raw_ptr<test::TestStore> store_;
   std::unique_ptr<ModelImpl> model_;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(DownloadServiceModelImplTest);
 };
 
 }  // namespace
@@ -267,7 +269,8 @@ TEST_F(DownloadServiceModelImplTest, Get) {
   store_->TriggerInit(true, std::make_unique<std::vector<Entry>>(entries));
 
   EXPECT_TRUE(test::CompareEntry(&entry, model_->Get(entry.guid)));
-  EXPECT_EQ(nullptr, model_->Get(base::GenerateGUID()));
+  EXPECT_EQ(nullptr,
+            model_->Get(base::Uuid::GenerateRandomV4().AsLowercaseString()));
 }
 
 TEST_F(DownloadServiceModelImplTest, PeekEntries) {

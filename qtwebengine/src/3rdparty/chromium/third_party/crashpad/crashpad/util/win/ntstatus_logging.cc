@@ -1,4 +1,4 @@
-// Copyright 2015 The Crashpad Authors. All rights reserved.
+// Copyright 2015 The Crashpad Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,9 +14,10 @@
 
 #include "util/win/ntstatus_logging.h"
 
+#include <iterator>
 #include <string>
 
-#include "base/stl_util.h"
+#include "base/immediate_crash.h"
 #include "base/strings/stringprintf.h"
 
 namespace {
@@ -30,7 +31,7 @@ std::string FormatNtstatus(DWORD ntstatus) {
       ntstatus,
       0,
       msgbuf,
-      static_cast<DWORD>(base::size(msgbuf)),
+      static_cast<DWORD>(std::size(msgbuf)),
       nullptr);
   if (len) {
     // Most system messages end in a period and a space. Remove the space if
@@ -68,8 +69,26 @@ NtstatusLogMessage::NtstatusLogMessage(
 }
 
 NtstatusLogMessage::~NtstatusLogMessage() {
+  AppendError();
+}
+
+void NtstatusLogMessage::AppendError() {
   stream() << ": " << FormatNtstatus(ntstatus_)
            << base::StringPrintf(" (0x%08lx)", ntstatus_);
 }
+
+#if defined(COMPILER_MSVC)
+// Ignore warning that ~NtStatusLogMessageFatal never returns.
+#pragma warning(push)
+#pragma warning(disable : 4722)
+#endif  // COMPILER_MSVC
+NtstatusLogMessageFatal::~NtstatusLogMessageFatal() {
+  AppendError();
+  Flush();
+  base::ImmediateCrash();
+}
+#if defined(COMPILER_MSVC)
+#pragma warning(pop)  // C4722
+#endif  // COMPILER_MSVC
 
 }  // namespace logging

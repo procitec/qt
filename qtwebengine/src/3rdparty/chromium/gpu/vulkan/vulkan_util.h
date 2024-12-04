@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -7,16 +7,24 @@
 #ifndef GPU_VULKAN_VULKAN_UTIL_H_
 #define GPU_VULKAN_VULKAN_UTIL_H_
 
-#include <vulkan/vulkan.h>
+#include <vulkan/vulkan_core.h>
 
 #include <memory>
 #include <vector>
 
 #include "base/component_export.h"
+#include "base/containers/flat_map.h"
 #include "base/containers/span.h"
 #include "gpu/vulkan/semaphore_handle.h"
+#include "gpu/vulkan/vulkan_device_queue.h"
 
 namespace gpu {
+
+constexpr uint32_t kVendorARM = 0x13b5;
+constexpr uint32_t kVendorQualcomm = 0x5143;
+constexpr uint32_t kVendorImagination = 0x1010;
+constexpr uint32_t kVendorGoogle = 0x1AE0;
+constexpr uint32_t kDeviceSwiftShader = 0xC0DE;
 
 struct GPUInfo;
 class VulkanInfo;
@@ -75,19 +83,78 @@ COMPONENT_EXPORT(VULKAN)
 std::string VkVersionToString(uint32_t version);
 
 COMPONENT_EXPORT(VULKAN)
-VKAPI_ATTR VkResult VKAPI_CALL QueueSubmitHook(VkQueue queue,
-                                               uint32_t submitCount,
-                                               const VkSubmitInfo* pSubmits,
-                                               VkFence fence);
+VKAPI_ATTR VkResult VKAPI_CALL
+CreateGraphicsPipelinesHook(VkDevice device,
+                            VkPipelineCache pipelineCache,
+                            uint32_t createInfoCount,
+                            const VkGraphicsPipelineCreateInfo* pCreateInfos,
+                            const VkAllocationCallbacks* pAllocator,
+                            VkPipeline* pPipelines);
+
+// Below vulkanQueue*Hook methods are used to ensure that Skia calls the correct
+// version of those methods which are made thread safe by using locks. See
+// vulkan_function_pointers.h vkQueue* method references for more details.
+COMPONENT_EXPORT(VULKAN)
+VKAPI_ATTR VkResult VKAPI_CALL
+VulkanQueueSubmitHook(VkQueue queue,
+                      uint32_t submitCount,
+                      const VkSubmitInfo* pSubmits,
+                      VkFence fence);
 
 COMPONENT_EXPORT(VULKAN)
-VKAPI_ATTR void RecordImportingVKSemaphoreIntoGL();
-
-COMPONENT_EXPORT(VULKAN) void ReportUMAPerSwapBuffers();
+VKAPI_ATTR VkResult VKAPI_CALL VulkanQueueWaitIdleHook(VkQueue queue);
 
 COMPONENT_EXPORT(VULKAN)
-bool CheckVulkanCompabilities(const VulkanInfo& vulkan_info,
-                              const GPUInfo& gpu_info);
+VKAPI_ATTR VkResult VKAPI_CALL
+VulkanQueuePresentKHRHook(VkQueue queue, const VkPresentInfoKHR* pPresentInfo);
+
+COMPONENT_EXPORT(VULKAN)
+bool CheckVulkanCompatibilities(const VulkanInfo& vulkan_info,
+                                const GPUInfo& gpu_info,
+                                const std::string& enable_by_device_name,
+                                bool disabled);
+
+COMPONENT_EXPORT(VULKAN)
+VkImageLayout GLImageLayoutToVkImageLayout(uint32_t layout);
+
+COMPONENT_EXPORT(VULKAN)
+uint32_t VkImageLayoutToGLImageLayout(VkImageLayout layout);
+
+COMPONENT_EXPORT(VULKAN)
+bool IsVkExternalSemaphoreHandleTypeSupported(
+    VulkanDeviceQueue* device_queue,
+    VkExternalSemaphoreHandleTypeFlagBits handle_type);
+
+COMPONENT_EXPORT(VULKAN)
+VkResult QueryVkExternalMemoryProperties(
+    VkPhysicalDevice physical_device,
+    VkFormat format,
+    VkImageType type,
+    VkImageTiling tiling,
+    VkImageUsageFlags usage,
+    VkImageCreateFlags flags,
+    VkExternalMemoryHandleTypeFlagBits handle_type,
+    VkExternalMemoryProperties* external_memory_properties);
+
+COMPONENT_EXPORT(VULKAN)
+bool IsVkOpaqueExternalSemaphoreSupported(VulkanDeviceQueue* device_queue);
+
+COMPONENT_EXPORT(VULKAN)
+VkSemaphore CreateVkOpaqueExternalSemaphore(VkDevice vk_device);
+
+COMPONENT_EXPORT(VULKAN)
+SemaphoreHandle ExportVkOpaqueExternalSemaphore(VkDevice vk_device,
+                                                VkSemaphore vk_semaphore);
+
+COMPONENT_EXPORT(VULKAN)
+std::vector<VkDrmFormatModifierPropertiesEXT>
+QueryVkDrmFormatModifierPropertiesEXT(VkPhysicalDevice physical_device,
+                                      VkFormat format);
+
+COMPONENT_EXPORT(VULKAN)
+void PopulateVkDrmFormatsAndModifiers(
+    VulkanDeviceQueue* device_queue,
+    base::flat_map<uint32_t, std::vector<uint64_t>>& drm_formats_and_modifiers);
 
 }  // namespace gpu
 

@@ -1,41 +1,7 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtQuick module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+
+#undef QT_NO_FOREACH // this file contains unported legacy Q_FOREACH uses
 
 #include "qquickparticlepainter_p.h"
 #include <QQuickWindow>
@@ -43,7 +9,7 @@
 QT_BEGIN_NAMESPACE
 /*!
     \qmltype ParticlePainter
-    \instantiates QQuickParticlePainter
+    \nativetype QQuickParticlePainter
     \inqmlmodule QtQuick.Particles
     \inherits Item
     \brief For specifying how to paint particles.
@@ -78,12 +44,16 @@ QQuickParticlePainter::QQuickParticlePainter(QQuickItem *parent)
 void QQuickParticlePainter::itemChange(ItemChange change, const ItemChangeData &data)
 {
     if (change == QQuickItem::ItemSceneChange) {
-        if (m_window)
-            disconnect(m_window, SIGNAL(sceneGraphInvalidated()), this, SLOT(sceneGraphInvalidated()));
+        if (m_window) {
+            disconnect(m_window, &QQuickWindow::sceneGraphInvalidated,
+                       this, &QQuickParticlePainter::sceneGraphInvalidated);
+        }
         m_window = data.window;
         m_windowChanged = true;
-        if (m_window)
-            connect(m_window, SIGNAL(sceneGraphInvalidated()), this, SLOT(sceneGraphInvalidated()), Qt::DirectConnection);
+        if (m_window) {
+            connect(m_window, &QQuickWindow::sceneGraphInvalidated,
+                    this, &QQuickParticlePainter::sceneGraphInvalidated, Qt::DirectConnection);
+        }
     }
     QQuickItem::itemChange(change, data);
 }
@@ -145,14 +115,14 @@ void QQuickParticlePainter::load(QQuickParticleData* d)
     initialize(d->groupId, d->index);
     if (m_pleaseReset)
         return;
-    m_pendingCommits << qMakePair<int, int>(d->groupId, d->index);
+    m_pendingCommits << qMakePair(d->groupId, d->index);
 }
 
 void QQuickParticlePainter::reload(QQuickParticleData* d)
 {
     if (m_pleaseReset)
         return;
-    m_pendingCommits << qMakePair<int, int>(d->groupId, d->index);
+    m_pendingCommits << qMakePair(d->groupId, d->index);
 }
 
 void QQuickParticlePainter::reset()

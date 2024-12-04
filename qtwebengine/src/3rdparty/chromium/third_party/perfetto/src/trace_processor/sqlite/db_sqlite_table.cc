@@ -15,27 +15,30 @@
  */
 
 #include "src/trace_processor/sqlite/db_sqlite_table.h"
+#include <optional>
 
+#include "perfetto/base/status.h"
+#include "perfetto/ext/base/small_vector.h"
 #include "perfetto/ext/base/string_writer.h"
+#include "src/trace_processor/containers/bit_vector.h"
 #include "src/trace_processor/sqlite/query_cache.h"
 #include "src/trace_processor/sqlite/sqlite_utils.h"
 #include "src/trace_processor/tp_metatrace.h"
+#include "src/trace_processor/util/regex.h"
 
 namespace perfetto {
 namespace trace_processor {
 
 namespace {
 
-base::Optional<FilterOp> SqliteOpToFilterOp(int sqlite_op) {
+std::optional<FilterOp> SqliteOpToFilterOp(int sqlite_op) {
   switch (sqlite_op) {
     case SQLITE_INDEX_CONSTRAINT_EQ:
-    case SQLITE_INDEX_CONSTRAINT_IS:
       return FilterOp::kEq;
     case SQLITE_INDEX_CONSTRAINT_GT:
       return FilterOp::kGt;
     case SQLITE_INDEX_CONSTRAINT_LT:
       return FilterOp::kLt;
-    case SQLITE_INDEX_CONSTRAINT_ISNOT:
     case SQLITE_INDEX_CONSTRAINT_NE:
       return FilterOp::kNe;
     case SQLITE_INDEX_CONSTRAINT_GE:
@@ -46,9 +49,20 @@ base::Optional<FilterOp> SqliteOpToFilterOp(int sqlite_op) {
       return FilterOp::kIsNull;
     case SQLITE_INDEX_CONSTRAINT_ISNOTNULL:
       return FilterOp::kIsNotNull;
-    case SQLITE_INDEX_CONSTRAINT_LIKE:
     case SQLITE_INDEX_CONSTRAINT_GLOB:
-      return base::nullopt;
+      return FilterOp::kGlob;
+    case SQLITE_INDEX_CONSTRAINT_REGEXP:
+      if constexpr (regex::IsRegexSupported()) {
+        return FilterOp::kRegex;
+      }
+      return std::nullopt;
+    case SQLITE_INDEX_CONSTRAINT_LIKE:
+    // TODO(lalitm): start supporting these constraints.
+    case SQLITE_INDEX_CONSTRAINT_LIMIT:
+    case SQLITE_INDEX_CONSTRAINT_OFFSET:
+    case SQLITE_INDEX_CONSTRAINT_IS:
+    case SQLITE_INDEX_CONSTRAINT_ISNOT:
+      return std::nullopt;
     default:
       PERFETTO_FATAL("Currently unsupported constraint");
   }
@@ -83,46 +97,68 @@ SqlValue SqliteValueToSqlValue(sqlite3_value* sqlite_val) {
   return value;
 }
 
+BitVector ColsUsedBitVector(uint64_t sqlite_cols_used, size_t col_count) {
+  return BitVector::Range(
+      0, static_cast<uint32_t>(col_count), [sqlite_cols_used](uint32_t idx) {
+        // If the lowest bit of |sqlite_cols_used| is set, the first column is
+        // used. The second lowest bit corresponds to the second column etc. If
+        // the most significant bit of |sqlite_cols_used| is set, that means
+        // that any column after the first 63 columns could be used.
+        return sqlite_cols_used & (1ull << std::min(idx, 63u));
+      });
+}
+
+class SafeStringWriter {
+ public:
+  SafeStringWriter() {}
+  ~SafeStringWriter() {}
+
+  void AppendString(const char* s) {
+    for (const char* c = s; *c; ++c) {
+      buffer_.emplace_back(*c);
+    }
+  }
+
+  void AppendString(const std::string& s) {
+    for (char c : s) {
+      buffer_.emplace_back(c);
+    }
+  }
+
+  base::StringView GetStringView() const {
+    return base::StringView(buffer_.data(), buffer_.size());
+  }
+
+ private:
+  base::SmallVector<char, 2048> buffer_;
+};
+
 }  // namespace
 
-DbSqliteTable::DbSqliteTable(sqlite3*, Context context)
-    : cache_(context.cache),
-      schema_(std::move(context.schema)),
-      computation_(context.computation),
-      static_table_(context.static_table),
-      generator_(std::move(context.generator)) {}
-DbSqliteTable::~DbSqliteTable() = default;
-
-void DbSqliteTable::RegisterTable(sqlite3* db,
-                                  QueryCache* cache,
-                                  Table::Schema schema,
-                                  const Table* table,
-                                  const std::string& name) {
-  Context context{cache, schema, TableComputation::kStatic, table, nullptr};
-  SqliteTable::Register<DbSqliteTable, Context>(db, std::move(context), name);
+DbSqliteTable::DbSqliteTable(sqlite3*, Context* context) : context_(context) {}
+DbSqliteTable::~DbSqliteTable() {
+  if (context_->computation == DbSqliteTableContext::Computation::kRuntime) {
+    context_->erase_runtime_table(name());
+  }
 }
 
-void DbSqliteTable::RegisterTable(
-    sqlite3* db,
-    QueryCache* cache,
-    std::unique_ptr<DynamicTableGenerator> generator) {
-  Table::Schema schema = generator->CreateSchema();
-  std::string name = generator->TableName();
-
-  // Figure out if the table needs explicit args (in the form of constraints
-  // on hidden columns) passed to it in order to make the query valid.
-  util::Status status = generator->ValidateConstraints({});
-  bool requires_args = !status.ok();
-
-  Context context{cache, std::move(schema), TableComputation::kDynamic, nullptr,
-                  std::move(generator)};
-  SqliteTable::Register<DbSqliteTable, Context>(db, std::move(context), name,
-                                                false, requires_args);
-}
-
-util::Status DbSqliteTable::Init(int, const char* const*, Schema* schema) {
+base::Status DbSqliteTable::Init(int, const char* const*, Schema* schema) {
+  switch (context_->computation) {
+    case TableComputation::kStatic:
+      schema_ = context_->static_table->ComputeSchema();
+      break;
+    case TableComputation::kRuntime:
+      runtime_table_ = context_->get_runtime_table(name());
+      PERFETTO_CHECK(runtime_table_);
+      PERFETTO_CHECK(!runtime_table_->columns().empty());
+      schema_ = runtime_table_->ComputeSchema();
+      break;
+    case TableComputation::kTableFunction:
+      schema_ = context_->generator->CreateSchema();
+      break;
+  }
   *schema = ComputeSchema(schema_, name().c_str());
-  return util::OkStatus();
+  return base::OkStatus();
 }
 
 SqliteTable::Schema DbSqliteTable::ComputeSchema(const Table::Schema& schema,
@@ -133,15 +169,12 @@ SqliteTable::Schema DbSqliteTable::ComputeSchema(const Table::Schema& schema,
     schema_cols.emplace_back(i, col.name, col.type, col.is_hidden);
   }
 
-  // TODO(lalitm): this is hardcoded to be the id column but change this to be
-  // more generic in the future.
-  auto it = std::find_if(
-      schema.columns.begin(), schema.columns.end(),
-      [](const Table::Schema::Column& c) { return c.name == "id"; });
+  auto it =
+      std::find_if(schema.columns.begin(), schema.columns.end(),
+                   [](const Table::Schema::Column& c) { return c.is_id; });
   if (it == schema.columns.end()) {
     PERFETTO_FATAL(
-        "id column not found in %s. Currently all db Tables need to contain an "
-        "id column; this constraint will be relaxed in the future.",
+        "id column not found in %s. All tables need to contain an id column;",
         table_name);
   }
 
@@ -151,15 +184,18 @@ SqliteTable::Schema DbSqliteTable::ComputeSchema(const Table::Schema& schema,
 }
 
 int DbSqliteTable::BestIndex(const QueryConstraints& qc, BestIndexInfo* info) {
-  switch (computation_) {
+  switch (context_->computation) {
     case TableComputation::kStatic:
-      BestIndex(schema_, static_table_->row_count(), qc, info);
+      BestIndex(schema_, context_->static_table->row_count(), qc, info);
       break;
-    case TableComputation::kDynamic:
-      util::Status status = generator_->ValidateConstraints(qc);
+    case TableComputation::kRuntime:
+      BestIndex(schema_, runtime_table_->row_count(), qc, info);
+      break;
+    case TableComputation::kTableFunction:
+      base::Status status = context_->generator->ValidateConstraints(qc);
       if (!status.ok())
         return SQLITE_CONSTRAINT;
-      BestIndex(schema_, generator_->EstimateRowCount(), qc, info);
+      BestIndex(schema_, context_->generator->EstimateRowCount(), qc, info);
       break;
   }
   return SQLITE_OK;
@@ -175,10 +211,10 @@ void DbSqliteTable::BestIndex(const Table::Schema& schema,
 
   const auto& cs = qc.constraints();
   for (uint32_t i = 0; i < cs.size(); ++i) {
-    // SqliteOpToFilterOp will return nullopt for any constraint which we don't
-    // support filtering ourselves. Only omit filtering by SQLite when we can
-    // handle filtering.
-    base::Optional<FilterOp> opt_op = SqliteOpToFilterOp(cs[i].op);
+    // SqliteOpToFilterOp will return std::nullopt for any constraint which we
+    // don't support filtering ourselves. Only omit filtering by SQLite when we
+    // can handle filtering.
+    std::optional<FilterOp> opt_op = SqliteOpToFilterOp(cs[i].op);
     info->sqlite_omit_constraint[i] = opt_op.has_value();
   }
 
@@ -186,9 +222,9 @@ void DbSqliteTable::BestIndex(const Table::Schema& schema,
   info->sqlite_omit_order_by = true;
 }
 
-int DbSqliteTable::ModifyConstraints(QueryConstraints* qc) {
+base::Status DbSqliteTable::ModifyConstraints(QueryConstraints* qc) {
   ModifyConstraints(schema_, qc);
-  return SQLITE_OK;
+  return base::OkStatus();
 }
 
 void DbSqliteTable::ModifyConstraints(const Table::Schema& schema,
@@ -206,13 +242,18 @@ void DbSqliteTable::ModifyConstraints(const Table::Schema& schema,
 
     // Id columns are always very cheap to filter on so try and get them
     // first.
-    if (a_col.is_id && !b_col.is_id)
-      return true;
+    if (a_col.is_id || b_col.is_id)
+      return a_col.is_id && !b_col.is_id;
+
+    // Set id columns are always very cheap to filter on so try and get them
+    // second.
+    if (a_col.is_set_id || b_col.is_set_id)
+      return a_col.is_set_id && !b_col.is_set_id;
 
     // Sorted columns are also quite cheap to filter so order them after
-    // any id columns.
-    if (a_col.is_sorted && !b_col.is_sorted)
-      return true;
+    // any id/set id columns.
+    if (a_col.is_sorted || b_col.is_sorted)
+      return a_col.is_sorted && !b_col.is_sorted;
 
     // TODO(lalitm): introduce more orderings here based on empirical data.
     return false;
@@ -278,9 +319,13 @@ DbSqliteTable::QueryCost DbSqliteTable::EstimateCost(
       break;
     const auto& col_schema = schema.columns[static_cast<uint32_t>(c.column)];
     if (sqlite_utils::IsOpEq(c.op) && col_schema.is_id) {
-      // If we have an id equality constraint, it's a bit expensive to find
-      // the exact row but it filters down to a single row.
-      filter_cost += 100;
+      // If we have an id equality constraint, we can very efficiently filter
+      // down to a single row in C++. However, if we're joining with another
+      // table, SQLite will do this once per row which can be extremely
+      // expensive because of all the virtual table (which is implemented using
+      // virtual function calls) machinery. Indicate this by saying that an
+      // entire filter call is ~10x the cost of iterating a single row.
+      filter_cost += 10;
       current_row_count = 1;
     } else if (sqlite_utils::IsOpEq(c.op)) {
       // If there is only a single equality constraint, we have special logic
@@ -291,12 +336,26 @@ DbSqliteTable::QueryCost DbSqliteTable::EstimateCost(
       // search logic so we have the same low cost (even better because we don't
       // have to sort at all).
       filter_cost += cs.size() == 1 || col_schema.is_sorted
-                         ? (2 * current_row_count) / log2(current_row_count)
+                         ? log2(current_row_count)
                          : current_row_count;
 
-      // We assume that an equalty constraint will cut down the number of rows
-      // by approximate log of the number of rows.
-      double estimated_rows = current_row_count / log2(current_row_count);
+      // As an extremely rough heuristic, assume that an equalty constraint will
+      // cut down the number of rows by approximately double log of the number
+      // of rows.
+      double estimated_rows = current_row_count / (2 * log2(current_row_count));
+      current_row_count = std::max(static_cast<uint32_t>(estimated_rows), 1u);
+    } else if (col_schema.is_sorted &&
+               (sqlite_utils::IsOpLe(c.op) || sqlite_utils::IsOpLt(c.op) ||
+                sqlite_utils::IsOpGt(c.op) || sqlite_utils::IsOpGe(c.op))) {
+      // On a sorted column, if we see any partition constraints, we can do this
+      // filter very efficiently. Model this using the log of the  number of
+      // rows as a good approximation.
+      filter_cost += log2(current_row_count);
+
+      // As an extremely rough heuristic, assume that an partition constraint
+      // will cut down the number of rows by approximately double log of the
+      // number of rows.
+      double estimated_rows = current_row_count / (2 * log2(current_row_count));
       current_row_count = std::max(static_cast<uint32_t>(estimated_rows), 1u);
     } else {
       // Otherwise, we will need to do a full table scan and we estimate we will
@@ -313,7 +372,7 @@ DbSqliteTable::QueryCost DbSqliteTable::EstimateCost(
       static_cast<double>(qc.order_by().size() * current_row_count) *
       log2(current_row_count);
 
-  // The cost of iterating rows is more expensive than filtering the rows
+  // The cost of iterating rows is more expensive than just filtering the rows
   // so multiply by an appropriate factor.
   double iteration_cost = current_row_count * 2.0;
 
@@ -323,14 +382,15 @@ DbSqliteTable::QueryCost DbSqliteTable::EstimateCost(
   return QueryCost{final_cost, current_row_count};
 }
 
-std::unique_ptr<SqliteTable::Cursor> DbSqliteTable::CreateCursor() {
-  return std::unique_ptr<Cursor>(new Cursor(this, cache_));
+std::unique_ptr<SqliteTable::BaseCursor> DbSqliteTable::CreateCursor() {
+  return std::unique_ptr<Cursor>(new Cursor(this, context_->cache));
 }
 
 DbSqliteTable::Cursor::Cursor(DbSqliteTable* sqlite_table, QueryCache* cache)
-    : SqliteTable::Cursor(sqlite_table),
+    : SqliteTable::BaseCursor(sqlite_table),
       db_sqlite_table_(sqlite_table),
       cache_(cache) {}
+DbSqliteTable::Cursor::~Cursor() = default;
 
 void DbSqliteTable::Cursor::TryCacheCreateSortedTable(
     const QueryConstraints& qc,
@@ -384,16 +444,12 @@ void DbSqliteTable::Cursor::TryCacheCreateSortedTable(
       });
 }
 
-int DbSqliteTable::Cursor::Filter(const QueryConstraints& qc,
-                                  sqlite3_value** argv,
-                                  FilterHistory history) {
-  PERFETTO_TP_TRACE("DB_TABLE_XFILTER", [this](metatrace::Record* r) {
-    r->AddArg("Table", db_sqlite_table_->name());
-  });
-
+base::Status DbSqliteTable::Cursor::Filter(const QueryConstraints& qc,
+                                           sqlite3_value** argv,
+                                           FilterHistory history) {
   // Clear out the iterator before filtering to ensure the destructor is run
   // before the table's destructor.
-  iterator_ = base::nullopt;
+  iterator_ = std::nullopt;
 
   // We reuse this vector to reduce memory allocations on nested subqueries.
   constraints_.resize(qc.constraints().size());
@@ -402,13 +458,23 @@ int DbSqliteTable::Cursor::Filter(const QueryConstraints& qc,
     const auto& cs = qc.constraints()[i];
     uint32_t col = static_cast<uint32_t>(cs.column);
 
-    // If we get a nullopt FilterOp, that means we should allow SQLite
+    // If we get a std::nullopt FilterOp, that means we should allow SQLite
     // to handle the constraint.
-    base::Optional<FilterOp> opt_op = SqliteOpToFilterOp(cs.op);
+    std::optional<FilterOp> opt_op = SqliteOpToFilterOp(cs.op);
     if (!opt_op)
       continue;
 
     SqlValue value = SqliteValueToSqlValue(argv[i]);
+    if constexpr (regex::IsRegexSupported()) {
+      if (*opt_op == FilterOp::kRegex) {
+        if (value.type != SqlValue::kString)
+          return base::ErrStatus("Value has to be a string");
+
+        if (auto regex_status = regex::Regex::Create(value.AsString());
+            !regex_status.ok())
+          return regex_status.status();
+      }
+    }
     constraints_[constraints_pos++] = Constraint{col, *opt_op, value};
   }
   constraints_.resize(constraints_pos);
@@ -422,97 +488,121 @@ int DbSqliteTable::Cursor::Filter(const QueryConstraints& qc,
   }
 
   // Setup the upstream table based on the computation state.
-  switch (db_sqlite_table_->computation_) {
+  switch (db_sqlite_table_->context_->computation) {
     case TableComputation::kStatic:
       // If we have a static table, just set the upstream table to be the static
       // table.
-      upstream_table_ = db_sqlite_table_->static_table_;
+      upstream_table_ = db_sqlite_table_->context_->static_table;
 
       // Tries to create a sorted cached table which can be used to speed up
       // filters below.
       TryCacheCreateSortedTable(qc, history);
       break;
-    case TableComputation::kDynamic: {
-      PERFETTO_TP_TRACE("DYNAMIC_TABLE_GENERATE", [this](metatrace::Record* r) {
-        r->AddArg("Table", db_sqlite_table_->name());
-      });
+    case TableComputation::kRuntime:
+      upstream_table_ = db_sqlite_table_->runtime_table_;
+
+      // Tries to create a sorted cached table which can be used to speed up
+      // filters below.
+      TryCacheCreateSortedTable(qc, history);
+      break;
+    case TableComputation::kTableFunction: {
+      PERFETTO_TP_TRACE(metatrace::Category::QUERY_DETAILED,
+                        "TABLE_FUNCTION_CALL", [this](metatrace::Record* r) {
+                          r->AddArg("Name", db_sqlite_table_->name());
+                        });
       // If we have a dynamically created table, regenerate the table based on
       // the new constraints.
-      dynamic_table_ =
-          db_sqlite_table_->generator_->ComputeTable(constraints_, orders_);
+      std::unique_ptr<Table> computed_table;
+      BitVector cols_used_bv = ColsUsedBitVector(
+          qc.cols_used(), db_sqlite_table_->schema_.columns.size());
+      auto status = db_sqlite_table_->context_->generator->ComputeTable(
+          constraints_, orders_, cols_used_bv, computed_table);
+
+      if (!status.ok()) {
+        return base::ErrStatus("%s: %s", db_sqlite_table_->name().c_str(),
+                               status.c_message());
+      }
+      PERFETTO_DCHECK(computed_table);
+      dynamic_table_ = std::move(computed_table);
       upstream_table_ = dynamic_table_.get();
-      if (!upstream_table_)
-        return SQLITE_CONSTRAINT;
       break;
     }
   }
 
-  PERFETTO_TP_TRACE("DB_TABLE_FILTER_AND_SORT", [this](metatrace::Record* r) {
-    const Table* source = SourceTable();
-    char buffer[2048];
-    for (const Constraint& c : constraints_) {
-      base::StringWriter writer(buffer, sizeof(buffer));
-      writer.AppendString(source->GetColumn(c.col_idx).name());
+  PERFETTO_TP_TRACE(
+      metatrace::Category::QUERY_DETAILED, "DB_TABLE_FILTER_AND_SORT",
+      [this](metatrace::Record* r) {
+        const Table* source = SourceTable();
+        r->AddArg("Table", db_sqlite_table_->name());
+        for (const Constraint& c : constraints_) {
+          SafeStringWriter writer;
+          writer.AppendString(source->GetColumn(c.col_idx).name());
 
-      writer.AppendChar(' ');
-      switch (c.op) {
-        case FilterOp::kEq:
-          writer.AppendString("=");
-          break;
-        case FilterOp::kGe:
-          writer.AppendString(">=");
-          break;
-        case FilterOp::kGt:
-          writer.AppendString(">");
-          break;
-        case FilterOp::kLe:
-          writer.AppendString("<=");
-          break;
-        case FilterOp::kLt:
-          writer.AppendString("<");
-          break;
-        case FilterOp::kNe:
-          writer.AppendString("!=");
-          break;
-        case FilterOp::kIsNull:
-          writer.AppendString("IS");
-          break;
-        case FilterOp::kIsNotNull:
-          writer.AppendString("IS NOT");
-          break;
-      }
-      writer.AppendChar(' ');
+          writer.AppendString(" ");
+          switch (c.op) {
+            case FilterOp::kEq:
+              writer.AppendString("=");
+              break;
+            case FilterOp::kGe:
+              writer.AppendString(">=");
+              break;
+            case FilterOp::kGt:
+              writer.AppendString(">");
+              break;
+            case FilterOp::kLe:
+              writer.AppendString("<=");
+              break;
+            case FilterOp::kLt:
+              writer.AppendString("<");
+              break;
+            case FilterOp::kNe:
+              writer.AppendString("!=");
+              break;
+            case FilterOp::kIsNull:
+              writer.AppendString("IS");
+              break;
+            case FilterOp::kIsNotNull:
+              writer.AppendString("IS NOT");
+              break;
+            case FilterOp::kGlob:
+              writer.AppendString("GLOB");
+              break;
+            case FilterOp::kRegex:
+              writer.AppendString("REGEXP");
+              break;
+          }
+          writer.AppendString(" ");
 
-      switch (c.value.type) {
-        case SqlValue::kString:
-          writer.AppendString(c.value.AsString());
-          break;
-        case SqlValue::kBytes:
-          writer.AppendString("<bytes>");
-          break;
-        case SqlValue::kNull:
-          writer.AppendString("<null>");
-          break;
-        case SqlValue::kDouble: {
-          writer.AppendDouble(c.value.AsDouble());
-          break;
+          switch (c.value.type) {
+            case SqlValue::kString:
+              writer.AppendString(c.value.AsString());
+              break;
+            case SqlValue::kBytes:
+              writer.AppendString("<bytes>");
+              break;
+            case SqlValue::kNull:
+              writer.AppendString("<null>");
+              break;
+            case SqlValue::kDouble: {
+              writer.AppendString(std::to_string(c.value.AsDouble()));
+              break;
+            }
+            case SqlValue::kLong: {
+              writer.AppendString(std::to_string(c.value.AsLong()));
+              break;
+            }
+          }
+          r->AddArg("Constraint", writer.GetStringView());
         }
-        case SqlValue::kLong: {
-          writer.AppendInt(c.value.AsLong());
-          break;
-        }
-      }
-      r->AddArg("Constraint", writer.GetStringView());
-    }
 
-    for (const auto& o : orders_) {
-      base::StringWriter writer(buffer, sizeof(buffer));
-      writer.AppendString(source->GetColumn(o.col_idx).name());
-      if (o.desc)
-        writer.AppendString(" desc");
-      r->AddArg("Order by", writer.GetStringView());
-    }
-  });
+        for (const auto& o : orders_) {
+          SafeStringWriter writer;
+          writer.AppendString(source->GetColumn(o.col_idx).name());
+          if (o.desc)
+            writer.AppendString(" desc");
+          r->AddArg("Order by", writer.GetStringView());
+        }
+      });
 
   // Attempt to filter into a RowMap first - weall figure out whether to apply
   // this to the table or we should use the RowMap directly. Also, if we are
@@ -536,9 +626,8 @@ int DbSqliteTable::Cursor::Filter(const QueryConstraints& qc,
     // TODO(lalitm): investigate some other criteria where it is beneficial
     // to have a fast path and expand to them.
     mode_ = Mode::kSingleRow;
-    single_row_ = filter_map.size() == 1
-                      ? base::make_optional(filter_map.Get(0))
-                      : base::nullopt;
+    single_row_ = filter_map.size() == 1 ? std::make_optional(filter_map.Get(0))
+                                         : std::nullopt;
     eof_ = !single_row_.has_value();
   } else {
     mode_ = Mode::kTable;
@@ -551,62 +640,61 @@ int DbSqliteTable::Cursor::Filter(const QueryConstraints& qc,
 
     eof_ = !*iterator_;
   }
-
-  return SQLITE_OK;
+  return base::OkStatus();
 }
 
-int DbSqliteTable::Cursor::Next() {
+base::Status DbSqliteTable::Cursor::Next() {
   if (mode_ == Mode::kSingleRow) {
     eof_ = true;
   } else {
     iterator_->Next();
     eof_ = !*iterator_;
   }
-  return SQLITE_OK;
+  return base::OkStatus();
 }
 
-int DbSqliteTable::Cursor::Eof() {
+bool DbSqliteTable::Cursor::Eof() {
   return eof_;
 }
 
-int DbSqliteTable::Cursor::Column(sqlite3_context* ctx, int raw_col) {
+base::Status DbSqliteTable::Cursor::Column(sqlite3_context* ctx, int raw_col) {
   uint32_t column = static_cast<uint32_t>(raw_col);
   SqlValue value = mode_ == Mode::kSingleRow
                        ? SourceTable()->GetColumn(column).Get(*single_row_)
                        : iterator_->Get(column);
-  switch (value.type) {
-    case SqlValue::Type::kLong:
-      sqlite3_result_int64(ctx, value.long_value);
-      break;
-    case SqlValue::Type::kDouble:
-      sqlite3_result_double(ctx, value.double_value);
-      break;
-    case SqlValue::Type::kString: {
-      // We can say kSqliteStatic here because all strings are expected to
-      // come from the string pool and thus will be valid for the lifetime
-      // of trace processor.
-      sqlite3_result_text(ctx, value.string_value, -1,
-                          sqlite_utils::kSqliteStatic);
-      break;
-    }
-    case SqlValue::Type::kBytes: {
-      // We can say kSqliteStatic here because for our iterator will hold
-      // onto the pointer as long as we don't call Next() but that only
-      // happens with Next() is called on the Cursor itself at which point
-      // SQLite no longer cares about the bytes pointer.
-      sqlite3_result_blob(ctx, value.bytes_value,
-                          static_cast<int>(value.bytes_count),
-                          sqlite_utils::kSqliteStatic);
-      break;
-    }
-    case SqlValue::Type::kNull:
-      sqlite3_result_null(ctx);
-      break;
-  }
-  return SQLITE_OK;
+  // We can say kSqliteStatic for strings  because all strings are expected to
+  // come from the string pool and thus will be valid for the lifetime
+  // of trace processor.
+  // Similarily for bytes we can also use kSqliteStatic because for our iterator
+  // will hold onto the pointer as long as we don't call Next() but that only
+  // happens with Next() is called on the Cursor itself at which point
+  // SQLite no longer cares about the bytes pointer.
+  sqlite_utils::ReportSqlValue(ctx, value, sqlite_utils::kSqliteStatic,
+                               sqlite_utils::kSqliteStatic);
+  return base::OkStatus();
 }
 
-DbSqliteTable::DynamicTableGenerator::~DynamicTableGenerator() = default;
+DbSqliteTableContext::DbSqliteTableContext(QueryCache* query_cache,
+                                           const Table* table)
+    : cache(query_cache),
+      computation(Computation::kStatic),
+      static_table(table) {}
+
+DbSqliteTableContext::DbSqliteTableContext(
+    QueryCache* query_cache,
+    std::function<RuntimeTable*(std::string)> get_table,
+    std::function<void(std::string)> erase_table)
+    : cache(query_cache),
+      computation(Computation::kRuntime),
+      get_runtime_table(get_table),
+      erase_runtime_table(erase_table) {}
+
+DbSqliteTableContext::DbSqliteTableContext(
+    QueryCache* query_cache,
+    std::unique_ptr<StaticTableFunction> table)
+    : cache(query_cache),
+      computation(Computation::kTableFunction),
+      generator(std::move(table)) {}
 
 }  // namespace trace_processor
 }  // namespace perfetto

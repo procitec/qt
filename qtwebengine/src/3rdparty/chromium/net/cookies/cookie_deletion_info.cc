@@ -1,10 +1,11 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "net/cookies/cookie_deletion_info.h"
 
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
+#include "net/cookies/canonical_cookie.h"
 #include "net/cookies/cookie_options.h"
 
 namespace net {
@@ -87,7 +88,7 @@ CookieDeletionInfo& CookieDeletionInfo::operator=(
     const CookieDeletionInfo& rhs) = default;
 
 bool CookieDeletionInfo::Matches(const CanonicalCookie& cookie,
-                                 CookieAccessSemantics access_semantics) const {
+                                 const CookieAccessParams& params) const {
   if (session_control != SessionControl::IGNORE_CONTROL &&
       (cookie.IsPersistent() !=
        (session_control == SessionControl::PERSISTENT_COOKIES))) {
@@ -115,18 +116,27 @@ bool CookieDeletionInfo::Matches(const CanonicalCookie& cookie,
   if (url.has_value() &&
       !cookie
            .IncludeForRequestURL(url.value(), CookieOptions::MakeAllInclusive(),
-                                 access_semantics)
+                                 params)
            .status.IsInclude()) {
     return false;
   }
 
-  if (!domains_and_ips_to_delete.empty() &&
-      !DomainMatchesDomains(cookie, domains_and_ips_to_delete)) {
+  if (domains_and_ips_to_delete.has_value() &&
+      !DomainMatchesDomains(cookie, *domains_and_ips_to_delete)) {
     return false;
   }
 
-  if (!domains_and_ips_to_ignore.empty() &&
-      DomainMatchesDomains(cookie, domains_and_ips_to_ignore)) {
+  if (domains_and_ips_to_ignore.has_value() &&
+      DomainMatchesDomains(cookie, *domains_and_ips_to_ignore)) {
+    return false;
+  }
+
+  if (cookie.IsPartitioned() &&
+      !cookie_partition_key_collection.Contains(*cookie.PartitionKey())) {
+    return false;
+  }
+
+  if (partitioned_state_only && !cookie.IsPartitioned()) {
     return false;
   }
 

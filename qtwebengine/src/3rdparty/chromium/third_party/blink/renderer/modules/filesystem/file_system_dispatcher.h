@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,10 +9,11 @@
 
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "third_party/blink/public/mojom/filesystem/file_system.mojom-blink.h"
+#include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/modules/filesystem/file_system_callbacks.h"
+#include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_map.h"
 #include "third_party/blink/renderer/platform/heap/disallow_new_wrapper.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
-#include "third_party/blink/renderer/platform/heap/heap_allocator.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/mojo/heap_mojo_remote.h"
 #include "third_party/blink/renderer/platform/mojo/heap_mojo_unique_receiver_set.h"
 #include "third_party/blink/renderer/platform/supplementable.h"
@@ -23,8 +24,9 @@ class String;
 
 namespace blink {
 
-class KURL;
+class Blob;
 class ExecutionContext;
+class KURL;
 class SecurityOrigin;
 
 // Sends messages via mojo to the blink::mojom::FileSystemManager service
@@ -124,13 +126,13 @@ class FileSystemDispatcher : public GarbageCollected<FileSystemDispatcher>,
   void TruncateSync(const KURL& path, int64_t offset, StatusCallback callback);
 
   void Write(const KURL& path,
-             const String& blob_id,
+             const Blob& blob,
              int64_t offset,
              int* request_id_out,
              const WriteCallback& success_callback,
              StatusCallback error_callback);
   void WriteSync(const KURL& path,
-                 const String& blob_id,
+                 const Blob& blob,
                  int64_t offset,
                  const WriteCallback& success_callback,
                  StatusCallback error_callback);

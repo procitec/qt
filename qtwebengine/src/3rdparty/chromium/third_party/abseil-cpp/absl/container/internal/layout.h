@@ -55,7 +55,7 @@
 // `Partial()` comes in handy when the array sizes are embedded into the
 // allocation.
 //
-//   // size_t[1] containing N, size_t[1] containing M, double[N], int[M].
+//   // size_t[0] containing N, size_t[1] containing M, double[N], int[M].
 //   using L = Layout<size_t, size_t, double, int>;
 //
 //   unsigned char* Allocate(size_t n, size_t m) {
@@ -172,6 +172,7 @@
 #include <utility>
 
 #include "absl/base/config.h"
+#include "absl/debugging/internal/demangle.h"
 #include "absl/meta/type_traits.h"
 #include "absl/strings/str_cat.h"
 #include "absl/types/span.h"
@@ -179,14 +180,6 @@
 
 #ifdef ABSL_HAVE_ADDRESS_SANITIZER
 #include <sanitizer/asan_interface.h>
-#endif
-
-#if defined(__GXX_RTTI)
-#define ABSL_INTERNAL_HAS_CXA_DEMANGLE
-#endif
-
-#ifdef ABSL_INTERNAL_HAS_CXA_DEMANGLE
-#include <cxxabi.h>
 #endif
 
 namespace absl {
@@ -294,19 +287,11 @@ constexpr size_t Max(size_t a, size_t b, Ts... rest) {
 template <class T>
 std::string TypeName() {
   std::string out;
-  int status = 0;
-  char* demangled = nullptr;
-#ifdef ABSL_INTERNAL_HAS_CXA_DEMANGLE
-  demangled = abi::__cxa_demangle(typeid(T).name(), nullptr, nullptr, &status);
+#if ABSL_INTERNAL_HAS_RTTI
+  absl::StrAppend(&out, "<",
+                  absl::debugging_internal::DemangleString(typeid(T).name()),
+                  ">");
 #endif
-  if (status == 0 && demangled != nullptr) {  // Demangling succeeded.
-    absl::StrAppend(&out, "<", demangled, ">");
-    free(demangled);
-  } else {
-#if defined(__GXX_RTTI) || defined(_CPPRTTI)
-    absl::StrAppend(&out, "<", typeid(T).name(), ">");
-#endif
-  }
   return out;
 }
 
@@ -404,7 +389,7 @@ class LayoutImpl<std::tuple<Elements...>, absl::index_sequence<SizeSeq...>,
   constexpr size_t Offset() const {
     static_assert(N < NumOffsets, "Index out of bounds");
     return adl_barrier::Align(
-        Offset<N - 1>() + SizeOf<ElementType<N - 1>>() * size_[N - 1],
+        Offset<N - 1>() + SizeOf<ElementType<N - 1>>::value * size_[N - 1],
         ElementAlignment<N>::value);
   }
 
@@ -597,7 +582,7 @@ class LayoutImpl<std::tuple<Elements...>, absl::index_sequence<SizeSeq...>,
   constexpr size_t AllocSize() const {
     static_assert(NumTypes == NumSizes, "You must specify sizes of all fields");
     return Offset<NumTypes - 1>() +
-           SizeOf<ElementType<NumTypes - 1>>() * size_[NumTypes - 1];
+        SizeOf<ElementType<NumTypes - 1>>::value * size_[NumTypes - 1];
   }
 
   // If built with --config=asan, poisons padding bytes (if any) in the
@@ -621,7 +606,7 @@ class LayoutImpl<std::tuple<Elements...>, absl::index_sequence<SizeSeq...>,
     // The `if` is an optimization. It doesn't affect the observable behaviour.
     if (ElementAlignment<N - 1>::value % ElementAlignment<N>::value) {
       size_t start =
-          Offset<N - 1>() + SizeOf<ElementType<N - 1>>() * size_[N - 1];
+          Offset<N - 1>() + SizeOf<ElementType<N - 1>>::value * size_[N - 1];
       ASAN_POISON_MEMORY_REGION(p + start, Offset<N>() - start);
     }
 #endif
@@ -645,7 +630,7 @@ class LayoutImpl<std::tuple<Elements...>, absl::index_sequence<SizeSeq...>,
   // produce "unsigned*" where another produces "unsigned int *".
   std::string DebugString() const {
     const auto offsets = Offsets();
-    const size_t sizes[] = {SizeOf<ElementType<OffsetSeq>>()...};
+    const size_t sizes[] = {SizeOf<ElementType<OffsetSeq>>::value...};
     const std::string types[] = {
         adl_barrier::TypeName<ElementType<OffsetSeq>>()...};
     std::string res = absl::StrCat("@0", types[0], "(", sizes[0], ")");

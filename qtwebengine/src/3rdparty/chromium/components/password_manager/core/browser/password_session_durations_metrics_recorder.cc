@@ -1,17 +1,18 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/password_manager/core/browser/password_session_durations_metrics_recorder.h"
 
 #include "base/metrics/histogram_functions.h"
-#include "components/password_manager/core/browser/password_manager_features_util.h"
+#include "base/time/time.h"
+#include "components/password_manager/core/browser/features/password_manager_features_util.h"
 
 namespace password_manager {
 
 namespace {
 
-void LogStateDuration(metrics_util::PasswordAccountStorageUserState user_state,
+void LogStateDuration(features_util::PasswordAccountStorageUserState user_state,
                       base::TimeDelta session_length) {
   std::string suffix =
       metrics_util::GetPasswordAccountStorageUserStateHistogramSuffix(
@@ -28,19 +29,13 @@ PasswordSessionDurationsMetricsRecorder::
                                             syncer::SyncService* sync_service)
     : pref_service_(pref_service),
       sync_service_(sync_service),
-      settings_watcher_(
-          pref_service_,
-          sync_service_,
-          base::BindRepeating(
-              &PasswordSessionDurationsMetricsRecorder::CheckForUserStateChange,
-              base::Unretained(this))),
       user_state_(features_util::ComputePasswordAccountStorageUserState(
           pref_service_,
           sync_service_)) {
   DCHECK(pref_service_);
   // |sync_service| can be null if sync is disabled by a command line flag.
   if (sync_service_)
-    sync_observer_.Add(sync_service_);
+    sync_observation_.Observe(sync_service_.get());
 }
 
 PasswordSessionDurationsMetricsRecorder::
@@ -59,6 +54,13 @@ void PasswordSessionDurationsMetricsRecorder::OnSessionEnded(
   // If there was no active session, just ignore this call.
   if (!total_session_timer_)
     return;
+
+  if (session_length.is_zero()) {
+    // During Profile teardown, this method is called with a |session_length|
+    // of zero.
+    session_length = total_session_timer_->Elapsed();
+  }
+
   DCHECK(user_state_session_timer_);
 
   // Record metrics for the just-ended session.
@@ -83,7 +85,7 @@ void PasswordSessionDurationsMetricsRecorder::OnStateChanged(
 }
 
 void PasswordSessionDurationsMetricsRecorder::CheckForUserStateChange() {
-  metrics_util::PasswordAccountStorageUserState new_user_state =
+  features_util::PasswordAccountStorageUserState new_user_state =
       features_util::ComputePasswordAccountStorageUserState(pref_service_,
                                                             sync_service_);
   // If the state is unchanged, nothing to do.

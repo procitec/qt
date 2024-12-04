@@ -5,10 +5,10 @@
 #ifndef V8_BASE_MACROS_H_
 #define V8_BASE_MACROS_H_
 
-#include <cstdint>
 #include <limits>
 #include <type_traits>
 
+#include "include/v8config.h"
 #include "src/base/compiler-specific.h"
 #include "src/base/logging.h"
 
@@ -18,12 +18,12 @@
 // This macro does nothing. That's all.
 #define NOTHING(...)
 
-// TODO(all) Replace all uses of this macro with C++'s offsetof. To do that, we
-// have to make sure that only standard-layout types and simple field
-// designators are used.
-#define OFFSET_OF(type, field) \
-  (reinterpret_cast<intptr_t>(&(reinterpret_cast<type*>(16)->field)) - 16)
+#define CONCAT_(a, b) a##b
+#define CONCAT(a, b) CONCAT_(a, b)
+// Creates an unique identifier. Useful for scopes to avoid shadowing names.
+#define UNIQUE_IDENTIFIER(base) CONCAT(base, __COUNTER__)
 
+#define OFFSET_OF(type, field) offsetof(type, field)
 
 // The arraysize(arr) macro returns the # of elements in an array arr.
 // The expression is a compile-time constant, and therefore can be
@@ -47,84 +47,57 @@ template <typename T, size_t N>
 char (&ArraySizeHelper(const T (&array)[N]))[N];
 #endif
 
-// bit_cast<Dest,Source> is a template function that implements the
-// equivalent of "*reinterpret_cast<Dest*>(&source)".  We need this in
-// very low-level functions like the protobuf library and fast math
-// support.
+// This is an equivalent to C++20's std::bit_cast<>(), but with additional
+// warnings. It morally does what `*reinterpret_cast<Dest*>(&source)` does, but
+// the cast/deref pair is undefined behavior, while bit_cast<>() isn't.
 //
-//   float f = 3.14159265358979;
-//   int i = bit_cast<int32>(f);
-//   // i = 0x40490fdb
-//
-// The classical address-casting method is:
-//
-//   // WRONG
-//   float f = 3.14159265358979;            // WRONG
-//   int i = * reinterpret_cast<int*>(&f);  // WRONG
-//
-// The address-casting method actually produces undefined behavior
-// according to ISO C++ specification section 3.10 -15 -.  Roughly, this
-// section says: if an object in memory has one type, and a program
-// accesses it with a different type, then the result is undefined
-// behavior for most values of "different type".
-//
-// This is true for any cast syntax, either *(int*)&f or
-// *reinterpret_cast<int*>(&f).  And it is particularly true for
-// conversions between integral lvalues and floating-point lvalues.
-//
-// The purpose of 3.10 -15- is to allow optimizing compilers to assume
-// that expressions with different types refer to different memory.  gcc
-// 4.0.1 has an optimizer that takes advantage of this.  So a
-// non-conforming program quietly produces wildly incorrect output.
-//
-// The problem is not the use of reinterpret_cast.  The problem is type
-// punning: holding an object in memory of one type and reading its bits
-// back using a different type.
-//
-// The C++ standard is more subtle and complex than this, but that
-// is the basic idea.
-//
-// Anyways ...
-//
-// bit_cast<> calls memcpy() which is blessed by the standard,
-// especially by the example in section 3.9 .  Also, of course,
-// bit_cast<> wraps up the nasty logic in one place.
-//
-// Fortunately memcpy() is very fast.  In optimized mode, with a
-// constant size, gcc 2.95.3, gcc 4.0.1, and msvc 7.1 produce inline
-// code with the minimal amount of data movement.  On a 32-bit system,
-// memcpy(d,s,4) compiles to one load and one store, and memcpy(d,s,8)
-// compiles to two loads and two stores.
-//
-// I tested this code with gcc 2.95.3, gcc 4.0.1, icc 8.1, and msvc 7.1.
-//
-// WARNING: if Dest or Source is a non-POD type, the result of the memcpy
-// is likely to surprise you.
+// This is not a magic "get out of UB free" card. This must only be used on
+// values, not on references or pointers. For pointers, use
+// reinterpret_cast<>(), or static_cast<>() when casting between void* and other
+// pointers, and then look at https://eel.is/c++draft/basic.lval#11 as that's
+// probably UB also.
+namespace v8::base {
+
 template <class Dest, class Source>
 V8_INLINE Dest bit_cast(Source const& source) {
-  static_assert(sizeof(Dest) == sizeof(Source),
-                "source and dest must be same size");
+  static_assert(!std::is_pointer_v<Source>,
+                "bit_cast must not be used on pointer types");
+  static_assert(!std::is_pointer_v<Dest>,
+                "bit_cast must not be used on pointer types");
+  static_assert(!std::is_reference_v<Dest>,
+                "bit_cast must not be used on reference types");
+  static_assert(
+      sizeof(Dest) == sizeof(Source),
+      "bit_cast requires source and destination types to be the same size");
+  static_assert(std::is_trivially_copyable_v<Source>,
+                "bit_cast requires the source type to be trivially copyable");
+  static_assert(
+      std::is_trivially_copyable_v<Dest>,
+      "bit_cast requires the destination type to be trivially copyable");
+
+#if V8_HAS_BUILTIN_BIT_CAST
+  return __builtin_bit_cast(Dest, source);
+#else
   Dest dest;
   memcpy(&dest, &source, sizeof(dest));
   return dest;
+#endif
 }
 
-// Explicitly declare the assignment operator as deleted.
-#define DISALLOW_ASSIGN(TypeName) TypeName& operator=(const TypeName&) = delete
+}  // namespace v8::base
 
-// Explicitly declare the copy constructor and assignment operator as deleted.
-// This also deletes the implicit move constructor and implicit move assignment
-// operator, but still allows to manually define them.
-#define DISALLOW_COPY_AND_ASSIGN(TypeName) \
-  TypeName(const TypeName&) = delete;      \
-  DISALLOW_ASSIGN(TypeName)
+// Explicitly declare the assignment operator as deleted.
+// Note: This macro is deprecated and will be removed soon. Please explicitly
+// delete the assignment operator instead.
+#define DISALLOW_ASSIGN(TypeName) TypeName& operator=(const TypeName&) = delete
 
 // Explicitly declare all implicit constructors as deleted, namely the
 // default constructor, copy constructor and operator= functions.
 // This is especially useful for classes containing only static methods.
 #define DISALLOW_IMPLICIT_CONSTRUCTORS(TypeName) \
   TypeName() = delete;                           \
-  DISALLOW_COPY_AND_ASSIGN(TypeName)
+  TypeName(const TypeName&) = delete;            \
+  DISALLOW_ASSIGN(TypeName)
 
 // Disallow copying a type, but provide default construction, move construction
 // and move assignment. Especially useful for move-only structs.
@@ -137,7 +110,8 @@ V8_INLINE Dest bit_cast(Source const& source) {
 #define MOVE_ONLY_NO_DEFAULT_CONSTRUCTOR(TypeName)       \
   TypeName(TypeName&&) V8_NOEXCEPT = default;            \
   TypeName& operator=(TypeName&&) V8_NOEXCEPT = default; \
-  DISALLOW_COPY_AND_ASSIGN(TypeName)
+  TypeName(const TypeName&) = delete;                    \
+  DISALLOW_ASSIGN(TypeName)
 
 // A macro to disallow the dynamic allocation.
 // This should be used in the private: declarations for a class
@@ -158,13 +132,6 @@ V8_INLINE Dest bit_cast(Source const& source) {
 #endif
 #endif
 
-// Define DISABLE_ASAN macro.
-#ifdef V8_USE_ADDRESS_SANITIZER
-#define DISABLE_ASAN __attribute__((no_sanitize_address))
-#else
-#define DISABLE_ASAN
-#endif
-
 // Define V8_USE_MEMORY_SANITIZER macro.
 #if defined(__has_feature)
 #if __has_feature(memory_sanitizer)
@@ -172,30 +139,30 @@ V8_INLINE Dest bit_cast(Source const& source) {
 #endif
 #endif
 
+// Define V8_USE_UNDEFINED_BEHAVIOR_SANITIZER macro.
+#if defined(__has_feature)
+#if __has_feature(undefined_behavior_sanitizer)
+#define V8_USE_UNDEFINED_BEHAVIOR_SANITIZER 1
+#endif
+#endif
+
 // DISABLE_CFI_PERF -- Disable Control Flow Integrity checks for Perf reasons.
 #define DISABLE_CFI_PERF V8_CLANG_NO_SANITIZE("cfi")
 
 // DISABLE_CFI_ICALL -- Disable Control Flow Integrity indirect call checks,
-// useful because calls into JITed code can not be CFI verified.
+// useful because calls into JITed code can not be CFI verified. Same for
+// UBSan's function pointer type checks.
 #ifdef V8_OS_WIN
 // On Windows, also needs __declspec(guard(nocf)) for CFG.
 #define DISABLE_CFI_ICALL           \
   V8_CLANG_NO_SANITIZE("cfi-icall") \
+  V8_CLANG_NO_SANITIZE("function")  \
   __declspec(guard(nocf))
 #else
-#define DISABLE_CFI_ICALL V8_CLANG_NO_SANITIZE("cfi-icall")
+#define DISABLE_CFI_ICALL           \
+  V8_CLANG_NO_SANITIZE("cfi-icall") \
+  V8_CLANG_NO_SANITIZE("function")
 #endif
-
-#if V8_CC_GNU
-#define V8_IMMEDIATE_CRASH() __builtin_trap()
-#else
-#define V8_IMMEDIATE_CRASH() ((void(*)())0)()
-#endif
-
-// A convenience wrapper around static_assert without a string message argument.
-// Once C++17 becomes the default, this macro can be removed in favor of the
-// new static_assert(condition) overload.
-#define STATIC_ASSERT(test) static_assert(test, #test)
 
 namespace v8 {
 namespace base {
@@ -247,19 +214,13 @@ struct is_trivially_copyable {
 // The arguments are guaranteed to be evaluated from left to right.
 struct Use {
   template <typename T>
-  Use(T&&) {}  // NOLINT(runtime/explicit)
+  constexpr Use(T&&) {}  // NOLINT(runtime/explicit)
 };
 #define USE(...)                                                   \
   do {                                                             \
     ::v8::base::Use unused_tmp_array_for_use_macro[]{__VA_ARGS__}; \
     (void)unused_tmp_array_for_use_macro;                          \
   } while (false)
-
-// Evaluate the instantiations of an expression with parameter packs.
-// Since USE has left-to-right evaluation order of it's arguments,
-// the parameter pack is iterated from left to right and side effects
-// have defined behavior.
-#define ITERATE_PACK(...) USE(0, ((__VA_ARGS__), 0)...)
 
 }  // namespace base
 }  // namespace v8
@@ -317,7 +278,7 @@ V8_INLINE A implicit_cast(A x) {
 #endif
 
 // Fix for Mac OS X defining uintptr_t as "unsigned long":
-#if V8_OS_MACOSX
+#if V8_OS_DARWIN
 #undef V8PRIxPTR
 #define V8PRIxPTR "lx"
 #undef V8PRIdPTR
@@ -334,28 +295,33 @@ inline uint64_t make_uint64(uint32_t high, uint32_t low) {
 // Return the largest multiple of m which is <= x.
 template <typename T>
 inline T RoundDown(T x, intptr_t m) {
-  STATIC_ASSERT(std::is_integral<T>::value);
+  static_assert(std::is_integral<T>::value);
   // m must be a power of two.
   DCHECK(m != 0 && ((m & (m - 1)) == 0));
   return x & static_cast<T>(-m);
 }
 template <intptr_t m, typename T>
 constexpr inline T RoundDown(T x) {
-  STATIC_ASSERT(std::is_integral<T>::value);
+  static_assert(std::is_integral<T>::value);
   // m must be a power of two.
-  STATIC_ASSERT(m != 0 && ((m & (m - 1)) == 0));
+  static_assert(m != 0 && ((m & (m - 1)) == 0));
   return x & static_cast<T>(-m);
 }
 
 // Return the smallest multiple of m which is >= x.
 template <typename T>
 inline T RoundUp(T x, intptr_t m) {
-  STATIC_ASSERT(std::is_integral<T>::value);
-  return RoundDown<T>(static_cast<T>(x + m - 1), m);
+  static_assert(std::is_integral<T>::value);
+  DCHECK_GE(x, 0);
+  DCHECK_GE(std::numeric_limits<T>::max() - x, m - 1);  // Overflow check.
+  return RoundDown<T>(static_cast<T>(x + (m - 1)), m);
 }
+
 template <intptr_t m, typename T>
 constexpr inline T RoundUp(T x) {
-  STATIC_ASSERT(std::is_integral<T>::value);
+  static_assert(std::is_integral<T>::value);
+  DCHECK_GE(x, 0);
+  DCHECK_GE(std::numeric_limits<T>::max() - x, m - 1);  // Overflow check.
   return RoundDown<m, T>(static_cast<T>(x + (m - 1)));
 }
 
@@ -365,10 +331,13 @@ constexpr inline bool IsAligned(T value, U alignment) {
 }
 
 inline void* AlignedAddress(void* address, size_t alignment) {
-  // The alignment must be a power of two.
-  DCHECK_EQ(alignment & (alignment - 1), 0u);
-  return reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(address) &
-                                 ~static_cast<uintptr_t>(alignment - 1));
+  return reinterpret_cast<void*>(
+      RoundDown(reinterpret_cast<uintptr_t>(address), alignment));
+}
+
+inline void* RoundUpAddress(void* address, size_t alignment) {
+  return reinterpret_cast<void*>(
+      RoundUp(reinterpret_cast<uintptr_t>(address), alignment));
 }
 
 // Bounds checks for float to integer conversions, which does truncation. Hence,
@@ -397,9 +366,10 @@ bool is_inbounds(float_t v) {
 #ifdef V8_OS_WIN
 
 // Setup for Windows shared library export.
-#ifdef BUILDING_V8_SHARED
+#define V8_EXPORT_ENUM
+#ifdef BUILDING_V8_SHARED_PRIVATE
 #define V8_EXPORT_PRIVATE __declspec(dllexport)
-#elif USING_V8_SHARED
+#elif USING_V8_SHARED_PRIVATE
 #define V8_EXPORT_PRIVATE __declspec(dllimport)
 #else
 #define V8_EXPORT_PRIVATE
@@ -409,15 +379,59 @@ bool is_inbounds(float_t v) {
 
 // Setup for Linux shared library export.
 #if V8_HAS_ATTRIBUTE_VISIBILITY
-#ifdef BUILDING_V8_SHARED
+#ifdef BUILDING_V8_SHARED_PRIVATE
 #define V8_EXPORT_PRIVATE __attribute__((visibility("default")))
+#define V8_EXPORT_ENUM V8_EXPORT_PRIVATE
 #else
 #define V8_EXPORT_PRIVATE
+#define V8_EXPORT_ENUM
 #endif
 #else
 #define V8_EXPORT_PRIVATE
+#define V8_EXPORT_ENUM
 #endif
 
 #endif  // V8_OS_WIN
+
+// Defines IF_WASM, to be used in macro lists for elements that should only be
+// there if WebAssembly is enabled.
+#if V8_ENABLE_WEBASSEMBLY
+// EXPAND is needed to work around MSVC's broken __VA_ARGS__ expansion.
+#define IF_WASM(V, ...) EXPAND(V(__VA_ARGS__))
+#else
+#define IF_WASM(V, ...)
+#endif  // V8_ENABLE_WEBASSEMBLY
+
+// Defines IF_TSAN, to be used in macro lists for elements that should only be
+// there if TSAN is enabled.
+#ifdef V8_IS_TSAN
+// EXPAND is needed to work around MSVC's broken __VA_ARGS__ expansion.
+#define IF_TSAN(V, ...) EXPAND(V(__VA_ARGS__))
+#else
+#define IF_TSAN(V, ...)
+#endif  // V8_IS_TSAN
+
+// Defines IF_INTL, to be used in macro lists for elements that should only be
+// there if INTL is enabled.
+#ifdef V8_INTL_SUPPORT
+// EXPAND is needed to work around MSVC's broken __VA_ARGS__ expansion.
+#define IF_INTL(V, ...) EXPAND(V(__VA_ARGS__))
+#else
+#define IF_INTL(V, ...)
+#endif  // V8_INTL_SUPPORT
+
+// Defines IF_TARGET_ARCH_64_BIT, to be used in macro lists for elements that
+// should only be there if the target architecture is a 64-bit one.
+#if V8_TARGET_ARCH_64_BIT
+// EXPAND is needed to work around MSVC's broken __VA_ARGS__ expansion.
+#define IF_TARGET_ARCH_64_BIT(V, ...) EXPAND(V(__VA_ARGS__))
+#else
+#define IF_TARGET_ARCH_64_BIT(V, ...)
+#endif
+
+#ifdef GOOGLE3
+// Disable FRIEND_TEST macro in Google3.
+#define FRIEND_TEST(test_case_name, test_name)
+#endif
 
 #endif  // V8_BASE_MACROS_H_

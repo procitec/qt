@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,9 +7,16 @@
 #include <algorithm>
 #include <iterator>
 
+#include "base/check_op.h"
+#include "base/ranges/algorithm.h"
+#include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace base {
+
+TEST(CheckedContiguousIterator, SatisfiesContiguousIteratorConcept) {
+  static_assert(std::contiguous_iterator<CheckedContiguousIterator<int>>);
+}
 
 // Checks that constexpr CheckedContiguousConstIterators can be compared at
 // compile time.
@@ -80,7 +87,8 @@ TEST(CheckedContiguousIterator, ConvertingComparisonOperators) {
   EXPECT_GE(cbegin, begin);
 }
 
-#if defined(_LIBCPP_VERSION)
+}  // namespace base
+
 namespace {
 
 // Helper template that wraps an iterator and disables its dereference and
@@ -89,71 +97,46 @@ template <typename Iterator>
 struct DisableDerefAndIncr : Iterator {
   using Iterator::Iterator;
 
+  // NOLINTNEXTLINE(google-explicit-constructor)
+  constexpr DisableDerefAndIncr(const Iterator& iter) : Iterator(iter) {}
+
   void operator*() = delete;
   void operator++() = delete;
   void operator++(int) = delete;
 };
 
-template <typename Iterator>
-auto __unwrap_iter(DisableDerefAndIncr<Iterator> iter) {
-  return __unwrap_iter(static_cast<Iterator>(iter));
-}
-
 }  // namespace
+
+// Inherit `pointer_traits` specialization from the base class.
+template <typename Iter>
+struct std::pointer_traits<DisableDerefAndIncr<Iter>>
+    : ::std::pointer_traits<Iter> {};
+
+namespace base {
 
 // Tests that using std::copy with CheckedContiguousIterator<int> results in an
 // optimized code-path that does not invoke the iterator's dereference and
-// increment operations. This would fail to compile if std::copy was not
-// optimized.
+// increment operations, as expected in libc++. This fails to compile if
+// std::copy is not optimized.
+// NOTE: This test relies on implementation details of the STL and thus might
+// break in the future during a libc++ roll. If this does happen, please reach
+// out to memory-safety-dev@chromium.org to reevaluate whether this test will
+// still be needed.
+#if defined(_LIBCPP_VERSION)
 TEST(CheckedContiguousIterator, OptimizedCopy) {
   using Iter = DisableDerefAndIncr<CheckedContiguousIterator<int>>;
-  static_assert(std::is_same<int*, decltype(__unwrap_iter(Iter()))>::value,
-                "Error: Iter should unwrap to int*");
 
   int arr_in[5] = {1, 2, 3, 4, 5};
   int arr_out[5];
 
-  Iter begin(std::begin(arr_in), std::end(arr_in));
-  Iter end(std::begin(arr_in), std::end(arr_in), std::end(arr_in));
-  std::copy(begin, end, arr_out);
-
-  EXPECT_TRUE(std::equal(std::begin(arr_in), std::end(arr_in),
-                         std::begin(arr_out), std::end(arr_out)));
-}
-
-TEST(CheckedContiguousIterator, UnwrapIter) {
-  static_assert(
-      std::is_same<int*, decltype(__unwrap_iter(
-                             CheckedContiguousIterator<int>()))>::value,
-      "Error: CCI<int> should unwrap to int*");
-
-  static_assert(
-      std::is_same<CheckedContiguousIterator<std::string>,
-                   decltype(__unwrap_iter(
-                       CheckedContiguousIterator<std::string>()))>::value,
-      "Error: CCI<std::string> should unwrap to CCI<std::string>");
-}
-
-// While the result of std::copying into a range via a CCI can't be
-// compared to other iterators, it should be possible to re-use it in another
-// std::copy expresson.
-TEST(CheckedContiguousIterator, ReuseCopyIter) {
-  using Iter = CheckedContiguousIterator<int>;
-
-  int arr_in[5] = {1, 2, 3, 4, 5};
-  int arr_out[5];
-
-  Iter begin(std::begin(arr_in), std::end(arr_in));
-  Iter end(std::begin(arr_in), std::end(arr_in), std::end(arr_in));
+  Iter in_begin(std::begin(arr_in), std::end(arr_in));
+  Iter in_end(std::begin(arr_in), std::end(arr_in), std::end(arr_in));
   Iter out_begin(std::begin(arr_out), std::end(arr_out));
+  Iter out_end = std::copy(in_begin, in_end, out_begin);
+  EXPECT_EQ(out_end, out_begin + (in_end - in_begin));
 
-  auto out_middle = std::copy_n(begin, 3, out_begin);
-  std::copy(begin + 3, end, out_middle);
-
-  EXPECT_TRUE(std::equal(std::begin(arr_in), std::end(arr_in),
-                         std::begin(arr_out), std::end(arr_out)));
+  EXPECT_TRUE(ranges::equal(arr_in, arr_out));
 }
-
-#endif
+#endif  // defined(_LIBCPP_VERSION)
 
 }  // namespace base

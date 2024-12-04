@@ -1,4 +1,4 @@
-// Copyright (c) 2011 The Chromium Authors. All rights reserved.
+// Copyright 2011 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,7 +7,8 @@
 #include <GLES2/gl2.h>
 #include <GLES2/gl2ext.h>
 
-#include "base/logging.h"
+#include "base/notreached.h"
+#include "base/task/single_thread_task_runner.h"
 #include "media/base/video_util.h"
 
 namespace media {
@@ -28,7 +29,7 @@ std::string VideoDecodeAccelerator::Config::AsHumanReadableString() const {
 }
 
 void VideoDecodeAccelerator::Client::NotifyInitializationComplete(
-    Status status) {
+    DecoderStatus status) {
   NOTREACHED() << "By default deferred initialization is not supported.";
 }
 
@@ -71,6 +72,11 @@ gpu::SharedImageStub* VideoDecodeAccelerator::Client::GetSharedImageStub()
   return nullptr;
 }
 
+CommandBufferHelper* VideoDecodeAccelerator::Client::GetCommandBufferHelper()
+    const {
+  return nullptr;
+}
+
 VideoDecodeAccelerator::~VideoDecodeAccelerator() = default;
 
 void VideoDecodeAccelerator::Decode(scoped_refptr<DecoderBuffer> buffer,
@@ -78,12 +84,12 @@ void VideoDecodeAccelerator::Decode(scoped_refptr<DecoderBuffer> buffer,
   NOTREACHED() << "By default DecoderBuffer is not supported.";
 }
 
-bool VideoDecodeAccelerator::TryToSetupDecodeOnSeparateThread(
+bool VideoDecodeAccelerator::TryToSetupDecodeOnSeparateSequence(
     const base::WeakPtr<Client>& decode_client,
-    const scoped_refptr<base::SingleThreadTaskRunner>& decode_task_runner) {
+    const scoped_refptr<base::SequencedTaskRunner>& decode_task_runner) {
   // Implementations in the process that VDA runs in must override this.
-  LOG(FATAL) << "This may only be called in the same process as VDA impl.";
-  return false;
+  NOTREACHED_NORETURN()
+      << "This may only be called in the same process as VDA impl.";
 }
 
 void VideoDecodeAccelerator::ImportBufferForPicture(
@@ -103,6 +109,16 @@ GLenum VideoDecodeAccelerator::GetSurfaceInternalFormat() const {
 
 bool VideoDecodeAccelerator::SupportsSharedImagePictureBuffers() const {
   return false;
+}
+
+VideoDecodeAccelerator::TextureAllocationMode
+VideoDecodeAccelerator::GetSharedImageTextureAllocationMode() const {
+#if BUILDFLAG(IS_APPLE)
+  return VideoDecodeAccelerator::TextureAllocationMode::
+      kDoNotAllocateGLTextures;
+#else
+  return VideoDecodeAccelerator::TextureAllocationMode::kAllocateGLTextures;
+#endif
 }
 
 VideoDecodeAccelerator::SupportedProfile::SupportedProfile()

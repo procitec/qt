@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,6 +10,7 @@
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/element.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
+#include "third_party/blink/renderer/core/html/custom/custom_element_construction_stack.h"
 #include "third_party/blink/renderer/core/html/custom/custom_element_registry.h"
 #include "third_party/blink/renderer/platform/bindings/dom_wrapper_world.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
@@ -53,15 +54,26 @@ void V8HTMLConstructor::HtmlConstructor(
   }
 
   LocalDOMWindow* window = LocalDOMWindow::From(script_state);
-  CustomElementRegistry* registry = window->customElements();
 
   // 3. Let definition be the entry in registry with constructor equal to
   // NewTarget.
   // If there is no such definition, then throw a TypeError and abort these
   // steps.
-  ScriptCustomElementDefinition* definition =
-      ScriptCustomElementDefinition::ForConstructor(script_state, registry,
-                                                    new_target);
+  v8::Local<v8::Object> constructor = new_target.As<v8::Object>();
+  CustomElementDefinition* definition = nullptr;
+  if (RuntimeEnabledFeatures::ScopedCustomElementRegistryEnabled()) {
+    // For scoped registries, we first check the construction stack for
+    // definition in a scoped registry.
+    CustomElementConstructionStack* construction_stack =
+        GetCustomElementConstructionStack(window, constructor);
+    if (construction_stack && construction_stack->size()) {
+      definition = construction_stack->back().definition;
+    }
+  }
+  if (!definition) {
+    definition =
+        window->customElements()->DefinitionForConstructor(constructor);
+  }
   if (!definition) {
     V8ThrowException::ThrowTypeError(isolate, "Illegal constructor");
     return;
@@ -83,7 +95,7 @@ void V8HTMLConstructor::HtmlConstructor(
   } else {
     // Customized built-in element
     // 5. If local name is not valid for interface, throw TypeError
-    if (htmlElementTypeForTag(local_name, window->document()) !=
+    if (HtmlElementTypeForTag(local_name, window->document()) !=
         element_interface_name) {
       V8ThrowException::ThrowTypeError(isolate,
                                        "Illegal constructor: localName does "
@@ -92,8 +104,9 @@ void V8HTMLConstructor::HtmlConstructor(
     }
   }
 
-  ExceptionState exception_state(isolate, ExceptionState::kConstructionContext,
-                                 "HTMLElement");
+  ExceptionState exception_state(
+      isolate, ExceptionContextType::kConstructorOperationInvoke,
+      "HTMLElement");
   // 6. Let prototype be Get(NewTarget, "prototype"). Rethrow any exceptions.
   v8::Local<v8::Value> prototype;
   v8::Local<v8::String> prototype_string = V8AtomicString(isolate, "prototype");
@@ -106,7 +119,7 @@ void V8HTMLConstructor::HtmlConstructor(
   // 7. If Type(prototype) is not Object, then: ...
   if (!prototype->IsObject()) {
     if (V8PerContextData* per_context_data = V8PerContextData::From(
-            new_target.As<v8::Object>()->CreationContext())) {
+            new_target.As<v8::Object>()->GetCreationContextChecked())) {
       prototype = per_context_data->PrototypeForType(&wrapper_type_info);
     } else {
       V8ThrowException::ThrowError(isolate, "The context has been destroyed");
@@ -116,14 +129,16 @@ void V8HTMLConstructor::HtmlConstructor(
 
   // 8. If definition's construction stack is empty...
   Element* element;
-  if (definition->GetConstructionStack().IsEmpty()) {
+  CustomElementConstructionStack* construction_stack =
+      GetCustomElementConstructionStack(window, constructor);
+  if (!construction_stack || construction_stack->empty()) {
     // This is an element being created with 'new' from script
     element = definition->CreateElementForConstructor(*window->document());
   } else {
-    element = definition->GetConstructionStack().back();
+    element = construction_stack->back().element;
     if (element) {
       // This is an element being upgraded that has called super
-      definition->GetConstructionStack().back().Clear();
+      construction_stack->back() = CustomElementConstructionStackEntry();
     } else {
       // During upgrade an element has invoked the same constructor
       // before calling 'super' and that invocation has poached the
@@ -140,8 +155,21 @@ void V8HTMLConstructor::HtmlConstructor(
   V8SetReturnValue(info, wrapper);
 
   // 11. Perform element.[[SetPrototypeOf]](prototype). Rethrow any exceptions.
-  // Note: I don't think this prototype set *can* throw exceptions.
-  wrapper->SetPrototype(script_state->GetContext(), prototype.As<v8::Object>())
-      .ToChecked();
+  // Note that SetPrototype doesn't actually return the exceptions, it just
+  // returns false or Nothing on exception. See crbug.com/1197894 for an
+  // example.
+  v8::Maybe<bool> maybe_result = wrapper->SetPrototype(
+      script_state->GetContext(), prototype.As<v8::Object>());
+  bool success;
+  if (!maybe_result.To(&success)) {
+    // Exception has already been thrown in this case.
+    return;
+  }
+  if (!success) {
+    // Likely, Reflect.preventExtensions() has been called on the element.
+    exception_state.ThrowTypeError(
+        "Unable to call SetPrototype on this element");
+    return;
+  }
 }
 }  // namespace blink

@@ -1,51 +1,33 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the test suite of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:GPL-EXCEPT$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 3 as published by the Free Software
-** Foundation with exceptions as appearing in the file LICENSE.GPL3-EXCEPT
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
-#include <qtest.h>
+// Copyright (C) 2020 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
+
+#include <QtTest/QtTest>
 #include <QtTest/QSignalSpy>
+#include <QtQuick/qquickview.h>
+#include <QtQuickTest/QtQuickTest>
 #include <QtGui/QStyleHints>
 #include <QtQml/qqmlengine.h>
 #include <QtQml/qqmlcomponent.h>
-#include <QtQuick/qquickview.h>
+#include <private/qguiapplication_p.h>
 #include <private/qquickflickable_p.h>
 #include <private/qquickflickable_p_p.h>
 #include <private/qquickmousearea_p.h>
 #include <private/qquicktransition_p.h>
 #include <private/qqmlvaluetype_p.h>
+#include <private/qquicktaphandler_p.h>
 #include <math.h>
-#include "../../shared/util.h"
-#include "../shared/geometrytestutil.h"
-#include "../shared/viewtestutil.h"
-#include "../shared/visualtestutil.h"
+#include <QtGui/qpa/qplatformintegration.h>
+#include <QtQuickTestUtils/private/qmlutils_p.h>
+#include <QtQuickTestUtils/private/geometrytestutils_p.h>
+#include <QtQuickTestUtils/private/viewtestutils_p.h>
+#include <QtQuickTestUtils/private/visualtestutils_p.h>
 
 #include <qpa/qwindowsysteminterface.h>
 
-using namespace QQuickViewTestUtil;
-using namespace QQuickVisualTestUtil;
+Q_LOGGING_CATEGORY(lcTests, "qt.quick.tests")
+
+using namespace QQuickViewTestUtils;
+using namespace QQuickVisualTestUtils;
 
 // an abstract Slider which only handles touch events
 class TouchDragArea : public QQuickItem
@@ -65,11 +47,7 @@ public:
         , ungrabs(0)
         , m_active(false)
     {
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
         setAcceptTouchEvents(true);
-#else
-        setAcceptedMouseButtons(Qt::LeftButton); // not really, but we want touch events
-#endif
     }
 
     QPointF pos() const { return m_pos; }
@@ -92,41 +70,41 @@ public:
     int touchUpdates;
     int touchReleases;
     int ungrabs;
-    QVector<Qt::TouchPointState> touchPointStates;
+    QVector<QEventPoint::State> touchPointStates;
 
 protected:
     void touchEvent(QTouchEvent *ev) override
     {
-        QCOMPARE(ev->touchPoints().count(), 1);
-        auto touchpoint = ev->touchPoints().first();
+        QCOMPARE(ev->points().size(), 1);
+        auto touchpoint = ev->points().first();
         switch (touchpoint.state()) {
-        case Qt::TouchPointPressed:
+        case QEventPoint::State::Pressed:
             QVERIFY(!m_active);
             m_active = true;
             emit activeChanged();
-            grabTouchPoints(QVector<int>() << touchpoint.id());
+            grabTouchPoints(QList<int>() << touchpoint.id());
             break;
-        case Qt::TouchPointMoved:
+        case QEventPoint::State::Updated:
             ++touchUpdates;
             break;
-        case Qt::TouchPointReleased:
+        case QEventPoint::State::Released:
             QVERIFY(m_active);
             m_active = false;
             ++touchReleases;
             emit activeChanged();
-        case Qt::TouchPointStationary:
+        case QEventPoint::State::Stationary:
+        case QEventPoint::State::Unknown:
             break;
         }
         touchPointStates << touchpoint.state();
         ++touchEvents;
-        m_pos = touchpoint.pos();
+        m_pos = touchpoint.position();
         emit posChanged();
     }
 
     void touchUngrabEvent() override
     {
         ++ungrabs;
-        QVERIFY(m_active);
         emit ungrabbed();
         m_active = false;
         emit activeChanged();
@@ -144,12 +122,38 @@ private:
     bool m_active;
 };
 
+class FlickableWithExtents : public QQuickFlickable
+{
+public:
+    qreal extent = 10;
+
+    qreal minXExtent() const override
+    {
+        return QQuickFlickable::minXExtent() + extent;
+    }
+
+    qreal maxXExtent() const override
+    {
+        return QQuickFlickable::maxXExtent() + extent;
+    }
+
+    qreal minYExtent() const override
+    {
+        return QQuickFlickable::minYExtent() + extent;
+    }
+
+    qreal maxYExtent() const override
+    {
+        return QQuickFlickable::maxYExtent() + extent;
+    }
+};
+
 class tst_qquickflickable : public QQmlDataTest
 {
     Q_OBJECT
 public:
     tst_qquickflickable()
-      : touchDevice(QTest::createTouchDevice())
+        : QQmlDataTest(QT_QMLTEST_DATADIR)
     {}
 
 private slots:
@@ -163,6 +167,7 @@ private slots:
     void rebound();
     void maximumFlickVelocity();
     void flickDeceleration();
+    void pressDelay_data();
     void pressDelay();
     void nestedPressDelay();
     void filterReplayedPress();
@@ -172,13 +177,17 @@ private slots:
     void returnToBounds();
     void returnToBounds_data();
     void wheel();
+    void wheelBackwards();
     void trackpad();
+    void nestedTrackpad();
+    void nestedSameDirectionTrackpad();
     void movingAndFlicking();
     void movingAndFlicking_data();
     void movingAndDragging();
     void movingAndDragging_data();
     void flickOnRelease();
     void pressWhileFlicking();
+    void dragWhileFlicking();
     void disabled();
     void flickVelocity();
     void margins();
@@ -191,6 +200,7 @@ private slots:
     void stopAtBounds();
     void stopAtBounds_data();
     void nestedMouseAreaUsingTouch();
+    void nestedMouseAreaPropagateComposedEvents();
     void nestedSliderUsingTouch();
     void nestedSliderUsingTouch_data();
     void pressDelayWithLoader();
@@ -206,16 +216,45 @@ private slots:
     void synchronousDrag_data();
     void synchronousDrag();
     void visibleAreaBinding();
+    void parallelTouch();
+    void ignoreNonLeftMouseButtons();
+    void ignoreNonLeftMouseButtons_data();
+    void receiveTapOutsideContentItem();
+    void flickWhenRotated_data();
+    void flickWhenRotated();
+    void flickAndReleaseOutsideBounds();
+    void scrollingWithFractionalExtentSize_data();
+    void scrollingWithFractionalExtentSize();
+    void setContentPositionWhileDragging_data();
+    void setContentPositionWhileDragging();
+    void coalescedMove();
+    void onlyOneMove();
+    void proportionalWheelScrolling();
+    void touchCancel();
+    void pixelAlignedEndPoints();
+    void nestedWheelEventPropagation_data();
+    void nestedWheelEventPropagation();
 
 private:
-    void flickWithTouch(QQuickWindow *window, const QPoint &from, const QPoint &to);
-    QTouchDevice *touchDevice;
+    QPointingDevice *touchDevice = QTest::createTouchDevice();
+    const QPointingDevice *mouseDevice = new QPointingDevice(
+            "test mouse", 1000, QInputDevice::DeviceType::Mouse, QPointingDevice::PointerType::Generic,
+            QInputDevice::Capability::Position | QInputDevice::Capability::Hover | QInputDevice::Capability::Scroll,
+            1, 5, QString(), QPointingDeviceUniqueId(), this);
+    QScopedPointer<QPointingDevice> touchpad = QScopedPointer<QPointingDevice>(
+            QTest::createTouchDevice(QInputDevice::DeviceType::TouchPad,
+                                     QInputDevice::Capability::Position | QInputDevice::Capability::PixelScroll));
 };
 
 void tst_qquickflickable::initTestCase()
 {
+#ifdef Q_OS_ANDROID
+    QSKIP("test crashes at unknown location in Android");
+#endif
     QQmlDataTest::initTestCase();
     qmlRegisterType<TouchDragArea>("Test",1,0,"TouchDragArea");
+    touchDevice->setParent(this); // avoid leak
+    QWindowSystemInterface::registerInputDevice(mouseDevice);
 }
 
 void tst_qquickflickable::cleanup()
@@ -336,38 +375,39 @@ void tst_qquickflickable::boundsBehavior()
 
     flickable->setBoundsBehavior(QQuickFlickable::DragAndOvershootBounds);
     QCOMPARE(flickable->boundsBehavior(), QQuickFlickable::DragAndOvershootBounds);
-    QCOMPARE(spy.count(),1);
+    QCOMPARE(spy.size(),1);
     flickable->setBoundsBehavior(QQuickFlickable::DragAndOvershootBounds);
-    QCOMPARE(spy.count(),1);
+    QCOMPARE(spy.size(),1);
 
     flickable->setBoundsBehavior(QQuickFlickable::DragOverBounds);
     QCOMPARE(flickable->boundsBehavior(), QQuickFlickable::DragOverBounds);
-    QCOMPARE(spy.count(),2);
+    QCOMPARE(spy.size(),2);
     flickable->setBoundsBehavior(QQuickFlickable::DragOverBounds);
-    QCOMPARE(spy.count(),2);
+    QCOMPARE(spy.size(),2);
 
     flickable->setBoundsBehavior(QQuickFlickable::StopAtBounds);
     QCOMPARE(flickable->boundsBehavior(), QQuickFlickable::StopAtBounds);
-    QCOMPARE(spy.count(),3);
+    QCOMPARE(spy.size(),3);
     flickable->setBoundsBehavior(QQuickFlickable::StopAtBounds);
-    QCOMPARE(spy.count(),3);
+    QCOMPARE(spy.size(),3);
 
     flickable->setBoundsBehavior(QQuickFlickable::OvershootBounds);
     QCOMPARE(flickable->boundsBehavior(), QQuickFlickable::OvershootBounds);
-    QCOMPARE(spy.count(),4);
+    QCOMPARE(spy.size(),4);
     flickable->setBoundsBehavior(QQuickFlickable::OvershootBounds);
-    QCOMPARE(spy.count(),4);
+    QCOMPARE(spy.size(),4);
 
     delete flickable;
 }
 
 void tst_qquickflickable::rebound()
 {
+    auto device = mouseDevice;
     QScopedPointer<QQuickView> window(new QQuickView);
     window->setSource(testFileUrl("rebound.qml"));
     QTRY_COMPARE(window->status(), QQuickView::Ready);
-    QQuickViewTestUtil::centerOnScreen(window.data());
-    QQuickViewTestUtil::moveMouseAway(window.data());
+    QQuickViewTestUtils::centerOnScreen(window.data());
+    QQuickViewTestUtils::moveMouseAway(window.data());
 
     window->show();
     QVERIFY(QTest::qWaitForWindowActive(window.data()));
@@ -386,26 +426,26 @@ void tst_qquickflickable::rebound()
     QSignalSpy hMoveSpy(flickable, SIGNAL(movingHorizontallyChanged()));
 
     // flick and test the transition is run
-    flick(window.data(), QPoint(20,20), QPoint(120,120), 200);
+    QQuickTest::pointerFlick(device, window.data(), 0, QPoint(20,20), QPoint(120,120), 200);
 
     QTRY_COMPARE(window->rootObject()->property("transitionsStarted").toInt(), 2);
-    QCOMPARE(hMoveSpy.count(), 1);
-    QCOMPARE(vMoveSpy.count(), 1);
-    QCOMPARE(movementStartedSpy.count(), 1);
-    QCOMPARE(movementEndedSpy.count(), 0);
+    QCOMPARE(hMoveSpy.size(), 1);
+    QCOMPARE(vMoveSpy.size(), 1);
+    QCOMPARE(movementStartedSpy.size(), 1);
+    QCOMPARE(movementEndedSpy.size(), 0);
     QVERIFY(rebound->running());
 
     QTRY_VERIFY(!flickable->isMoving());
     QCOMPARE(flickable->contentX(), 0.0);
     QCOMPARE(flickable->contentY(), 0.0);
 
-    QCOMPARE(hMoveSpy.count(), 2);
-    QCOMPARE(vMoveSpy.count(), 2);
-    QCOMPARE(movementStartedSpy.count(), 1);
-    QCOMPARE(movementEndedSpy.count(), 1);
+    QCOMPARE(hMoveSpy.size(), 2);
+    QCOMPARE(vMoveSpy.size(), 2);
+    QCOMPARE(movementStartedSpy.size(), 1);
+    QCOMPARE(movementEndedSpy.size(), 1);
     QCOMPARE(window->rootObject()->property("transitionsStarted").toInt(), 2);
     QVERIFY(!rebound->running());
-    QCOMPARE(reboundSpy.count(), 2);
+    QCOMPARE(reboundSpy.size(), 2);
 
     hMoveSpy.clear();
     vMoveSpy.clear();
@@ -416,24 +456,24 @@ void tst_qquickflickable::rebound()
 
     // flick and trigger the transition multiple times
     // (moving signals are emitted as soon as the first transition starts)
-    flick(window.data(), QPoint(20,20), QPoint(120,120), 50);     // both x and y will bounce back
-    flick(window.data(), QPoint(20,120), QPoint(120,20), 50);     // only x will bounce back
+    QQuickTest::pointerFlick(device, window.data(), 0, QPoint(20,20), QPoint(120,120), 50);     // both x and y will bounce back
+    QQuickTest::pointerFlick(device, window.data(), 0, QPoint(20,120), QPoint(120,20), 50);     // only x will bounce back
 
     QVERIFY(flickable->isMoving());
     QTRY_VERIFY(window->rootObject()->property("transitionsStarted").toInt() >= 1);
-    QCOMPARE(hMoveSpy.count(), 1);
-    QCOMPARE(vMoveSpy.count(), 1);
-    QCOMPARE(movementStartedSpy.count(), 1);
+    QCOMPARE(hMoveSpy.size(), 1);
+    QCOMPARE(vMoveSpy.size(), 1);
+    QCOMPARE(movementStartedSpy.size(), 1);
 
     QTRY_VERIFY(!flickable->isMoving());
     QCOMPARE(flickable->contentX(), 0.0);
 
     // moving started/stopped signals should only have been emitted once,
     // and when they are, all transitions should have finished
-    QCOMPARE(hMoveSpy.count(), 2);
-    QCOMPARE(vMoveSpy.count(), 2);
-    QCOMPARE(movementStartedSpy.count(), 1);
-    QCOMPARE(movementEndedSpy.count(), 1);
+    QCOMPARE(hMoveSpy.size(), 2);
+    QCOMPARE(vMoveSpy.size(), 2);
+    QCOMPARE(movementStartedSpy.size(), 1);
+    QCOMPARE(movementEndedSpy.size(), 1);
 
     hMoveSpy.clear();
     vMoveSpy.clear();
@@ -446,18 +486,18 @@ void tst_qquickflickable::rebound()
     // (i.e. moving but transition->running = false)
     window->rootObject()->setProperty("transitionEnabled", false);
 
-    flick(window.data(), QPoint(20,20), QPoint(120,120), 200);
+    QQuickTest::pointerFlick(device, window.data(), 0, QPoint(20,20), QPoint(120,120), 200);
     QCOMPARE(window->rootObject()->property("transitionsStarted").toInt(), 0);
-    QCOMPARE(hMoveSpy.count(), 1);
-    QCOMPARE(vMoveSpy.count(), 1);
-    QCOMPARE(movementStartedSpy.count(), 1);
-    QCOMPARE(movementEndedSpy.count(), 0);
+    QCOMPARE(hMoveSpy.size(), 1);
+    QCOMPARE(vMoveSpy.size(), 1);
+    QCOMPARE(movementStartedSpy.size(), 1);
+    QCOMPARE(movementEndedSpy.size(), 0);
 
     QTRY_VERIFY(!flickable->isMoving());
-    QCOMPARE(hMoveSpy.count(), 2);
-    QCOMPARE(vMoveSpy.count(), 2);
-    QCOMPARE(movementStartedSpy.count(), 1);
-    QCOMPARE(movementEndedSpy.count(), 1);
+    QCOMPARE(hMoveSpy.size(), 2);
+    QCOMPARE(vMoveSpy.size(), 2);
+    QCOMPARE(movementStartedSpy.size(), 1);
+    QCOMPARE(movementEndedSpy.size(), 1);
     QCOMPARE(window->rootObject()->property("transitionsStarted").toInt(), 0);
 }
 
@@ -474,9 +514,9 @@ void tst_qquickflickable::maximumFlickVelocity()
 
     flickable->setMaximumFlickVelocity(2.0);
     QCOMPARE(flickable->maximumFlickVelocity(), 2.0);
-    QCOMPARE(spy.count(),1);
+    QCOMPARE(spy.size(),1);
     flickable->setMaximumFlickVelocity(2.0);
-    QCOMPARE(spy.count(),1);
+    QCOMPARE(spy.size(),1);
 
     delete flickable;
 }
@@ -494,52 +534,61 @@ void tst_qquickflickable::flickDeceleration()
 
     flickable->setFlickDeceleration(2.0);
     QCOMPARE(flickable->flickDeceleration(), 2.0);
-    QCOMPARE(spy.count(),1);
+    QCOMPARE(spy.size(),1);
     flickable->setFlickDeceleration(2.0);
-    QCOMPARE(spy.count(),1);
+    QCOMPARE(spy.size(),1);
 
     delete flickable;
 }
 
+void tst_qquickflickable::pressDelay_data()
+{
+    QTest::addColumn<const QPointingDevice *>("device");
+    const QPointingDevice *constTouchDevice = touchDevice;
+
+    QTest::newRow("mouse") << mouseDevice;
+    QTest::newRow("touch") << constTouchDevice;
+}
+
 void tst_qquickflickable::pressDelay()
 {
-    QScopedPointer<QQuickView> window(new QQuickView);
-    window->setSource(testFileUrl("pressDelay.qml"));
-    QTRY_COMPARE(window->status(), QQuickView::Ready);
-    QQuickViewTestUtil::centerOnScreen(window.data());
-    QQuickViewTestUtil::moveMouseAway(window.data());
-    window->show();
-    QVERIFY(QTest::qWaitForWindowActive(window.data()));
-    QVERIFY(window->rootObject() != nullptr);
+    QFETCH(const QPointingDevice *, device);
 
-    QQuickFlickable *flickable = qobject_cast<QQuickFlickable*>(window->rootObject());
-    QSignalSpy spy(flickable, SIGNAL(pressDelayChanged()));
+    QQuickView window;
+    QVERIFY(QQuickTest::showView(window, testFileUrl("pressDelay.qml")));
 
+    QQuickFlickable *flickable = qobject_cast<QQuickFlickable*>(window.rootObject());
     QVERIFY(flickable);
-    QCOMPARE(flickable->pressDelay(), 100);
+    QQuickMouseArea *mouseArea = flickable->findChild<QQuickMouseArea*>();
+    QSignalSpy clickedSpy(mouseArea, &QQuickMouseArea::clicked);
 
+    // Test the pressDelay property itself
+    QSignalSpy pressDelayChangedSpy(flickable, &QQuickFlickable::pressDelayChanged);
+    QCOMPARE(flickable->pressDelay(), 100);
     flickable->setPressDelay(200);
     QCOMPARE(flickable->pressDelay(), 200);
-    QCOMPARE(spy.count(),1);
+    QCOMPARE(pressDelayChangedSpy.size(), 1);
     flickable->setPressDelay(200);
-    QCOMPARE(spy.count(),1);
+    QCOMPARE(pressDelayChangedSpy.size(), 1);
 
-    QQuickItem *mouseArea = window->rootObject()->findChild<QQuickItem*>("mouseArea");
-    QSignalSpy clickedSpy(mouseArea, SIGNAL(clicked(QQuickMouseEvent*)));
 
-    moveAndPress(window.data(), QPoint(150, 150));
+    // Test the press delay
+    QPoint p(150, 150);
+    if (device->type() == QInputDevice::DeviceType::Mouse)
+        QQuickTest::pointerMove(device, &window, 0, p);
+    QQuickTest::pointerPress(device, &window, 0, p);
 
     // The press should not occur immediately
-    QVERIFY(!mouseArea->property("pressed").toBool());
+    QCOMPARE(mouseArea->isPressed(), false);
 
     // But, it should occur eventually
-    QTRY_VERIFY(mouseArea->property("pressed").toBool());
+    QTRY_VERIFY(mouseArea->isPressed());
 
-    QCOMPARE(clickedSpy.count(),0);
+    QCOMPARE(clickedSpy.size(), 0);
 
     // On release the clicked signal should be emitted
-    QTest::mouseRelease(window.data(), Qt::LeftButton, Qt::NoModifier, QPoint(150, 150));
-    QCOMPARE(clickedSpy.count(),1);
+    QQuickTest::pointerRelease(device, &window, 0, p);
+    QCOMPARE(clickedSpy.size(), 1);
 
     // Press and release position should match
     QCOMPARE(flickable->property("pressX").toReal(), flickable->property("releaseX").toReal());
@@ -547,48 +596,55 @@ void tst_qquickflickable::pressDelay()
 
 
     // Test a quick tap within the pressDelay timeout
+    p = QPoint(180, 180);
     clickedSpy.clear();
-    moveAndPress(window.data(), QPoint(180, 180));
+    if (device->type() == QInputDevice::DeviceType::Mouse)
+        QQuickTest::pointerMove(device, &window, 0, p);
+    QQuickTest::pointerPress(device, &window, 0, p);
 
     // The press should not occur immediately
-    QVERIFY(!mouseArea->property("pressed").toBool());
+    QCOMPARE(mouseArea->isPressed(), false);
+    QCOMPARE(clickedSpy.size(), 0);
 
-    QCOMPARE(clickedSpy.count(),0);
-
-    // On release the press, release and clicked signal should be emitted
-    QTest::mouseRelease(window.data(), Qt::LeftButton, Qt::NoModifier, QPoint(180, 180));
-    QCOMPARE(clickedSpy.count(),1);
+    // On release, the press, release and clicked signal should be emitted
+    QQuickTest::pointerRelease(device, &window, 0, p);
+    QCOMPARE(clickedSpy.size(), 1);
 
     // Press and release position should match
     QCOMPARE(flickable->property("pressX").toReal(), flickable->property("releaseX").toReal());
     QCOMPARE(flickable->property("pressY").toReal(), flickable->property("releaseY").toReal());
 
 
-    // QTBUG-31168
-    moveAndPress(window.data(), QPoint(150, 110));
+    // Test flick after press (QTBUG-31168)
+    QPoint startPosition(150, 110);
+    p = QPoint(150, 190);
+    clickedSpy.clear();
+    if (device->type() == QInputDevice::DeviceType::Mouse)
+        QQuickTest::pointerMove(device, &window, 0, startPosition);
+    QQuickTest::pointerPress(device, &window, 0, startPosition);
 
     // The press should not occur immediately
-    QVERIFY(!mouseArea->property("pressed").toBool());
+    QCOMPARE(mouseArea->isPressed(), false);
+    QQuickTest::pointerMove(device, &window, 0, p);
 
-    QTest::mouseMove(window.data(), QPoint(150, 190));
+    // Since we moved past the drag threshold, we should never receive the press
+    QCOMPARE(mouseArea->isPressed(), false);
+    QTRY_COMPARE(mouseArea->isPressed(), false);
 
-    // As we moved pass the drag threshold, we should never receive the press
-    QVERIFY(!mouseArea->property("pressed").toBool());
-    QTRY_VERIFY(!mouseArea->property("pressed").toBool());
-
-    // On release the clicked signal should *not* be emitted
-    QTest::mouseRelease(window.data(), Qt::LeftButton, Qt::NoModifier, QPoint(150, 190));
-    QCOMPARE(clickedSpy.count(),1);
+    // On release, the clicked signal should *not* be emitted
+    QQuickTest::pointerRelease(device, &window, 0, p);
+    QCOMPARE(clickedSpy.size(), 0);
 }
 
 // QTBUG-17361
 void tst_qquickflickable::nestedPressDelay()
 {
+    auto device = mouseDevice;
     QScopedPointer<QQuickView> window(new QQuickView);
     window->setSource(testFileUrl("nestedPressDelay.qml"));
     QTRY_COMPARE(window->status(), QQuickView::Ready);
-    QQuickViewTestUtil::centerOnScreen(window.data());
-    QQuickViewTestUtil::moveMouseAway(window.data());
+    QQuickViewTestUtils::centerOnScreen(window.data());
+    QQuickViewTestUtils::moveMouseAway(window.data());
     window->show();
     QVERIFY(QTest::qWaitForWindowActive(window.data()));
     QVERIFY(window->rootObject() != nullptr);
@@ -599,7 +655,7 @@ void tst_qquickflickable::nestedPressDelay()
     QQuickFlickable *inner = window->rootObject()->findChild<QQuickFlickable*>("innerFlickable");
     QVERIFY(inner != nullptr);
 
-    moveAndPress(window.data(), QPoint(150, 150));
+    QQuickTest::pointerMoveAndPress(device, window.data(), 0, QPoint(150, 150));
     // the MouseArea is not pressed immediately
     QVERIFY(!outer->property("pressed").toBool());
     QVERIFY(!inner->property("pressed").toBool());
@@ -623,7 +679,7 @@ void tst_qquickflickable::nestedPressDelay()
     QTRY_VERIFY(!inner->property("moving").toBool());
 
     // Dragging inner Flickable should work
-    moveAndPress(window.data(), QPoint(80, 150));
+    QQuickTest::pointerMoveAndPress(device, window.data(), 0, QPoint(80, 150));
     // the MouseArea is not pressed immediately
     QVERIFY(!outer->property("pressed").toBool());
     QVERIFY(!inner->property("pressed").toBool());
@@ -643,7 +699,7 @@ void tst_qquickflickable::nestedPressDelay()
     QTRY_VERIFY(!inner->property("moving").toBool());
 
     // Dragging the MouseArea in the inner Flickable should move the inner Flickable
-    moveAndPress(window.data(), QPoint(150, 150));
+    QQuickTest::pointerMoveAndPress(device, window.data(), 0, QPoint(150, 150));
     // the MouseArea is not pressed immediately
     QVERIFY(!outer->property("pressed").toBool());
 
@@ -664,11 +720,12 @@ void tst_qquickflickable::nestedPressDelay()
 
 void tst_qquickflickable::filterReplayedPress()
 {
+    auto device = mouseDevice;
     QScopedPointer<QQuickView> window(new QQuickView);
     window->setSource(testFileUrl("nestedPressDelay.qml"));
     QTRY_COMPARE(window->status(), QQuickView::Ready);
-    QQuickViewTestUtil::centerOnScreen(window.data());
-    QQuickViewTestUtil::moveMouseAway(window.data());
+    QQuickViewTestUtils::centerOnScreen(window.data());
+    QQuickViewTestUtils::moveMouseAway(window.data());
     window->show();
     QVERIFY(QTest::qWaitForWindowActive(window.data()));
     QVERIFY(window->rootObject() != nullptr);
@@ -682,7 +739,7 @@ void tst_qquickflickable::filterReplayedPress()
     QQuickItem *filteringMouseArea = outer->findChild<QQuickItem *>("filteringMouseArea");
     QVERIFY(filteringMouseArea);
 
-    moveAndPress(window.data(), QPoint(150, 150));
+    QQuickTest::pointerMoveAndPress(device, window.data(), 0, QPoint(150, 150));
     // the MouseArea filtering the Flickable is pressed immediately.
     QCOMPARE(filteringMouseArea->property("pressed").toBool(), true);
 
@@ -707,11 +764,12 @@ void tst_qquickflickable::filterReplayedPress()
 // QTBUG-37316
 void tst_qquickflickable::nestedClickThenFlick()
 {
+    auto device = mouseDevice;
     QScopedPointer<QQuickView> window(new QQuickView);
     window->setSource(testFileUrl("nestedClickThenFlick.qml"));
     QTRY_COMPARE(window->status(), QQuickView::Ready);
-    QQuickViewTestUtil::centerOnScreen(window.data());
-    QQuickViewTestUtil::moveMouseAway(window.data());
+    QQuickViewTestUtils::centerOnScreen(window.data());
+    QQuickViewTestUtils::moveMouseAway(window.data());
     window->show();
     QVERIFY(QTest::qWaitForWindowActive(window.data()));
     QVERIFY(window->rootObject() != nullptr);
@@ -722,7 +780,7 @@ void tst_qquickflickable::nestedClickThenFlick()
     QQuickFlickable *inner = window->rootObject()->findChild<QQuickFlickable*>("innerFlickable");
     QVERIFY(inner != nullptr);
 
-    moveAndPress(window.data(), QPoint(150, 150));
+    QQuickTest::pointerMoveAndPress(device, window.data(), 0, QPoint(150, 150));
 
     // the MouseArea is not pressed immediately
     QVERIFY(!outer->property("pressed").toBool());
@@ -733,7 +791,7 @@ void tst_qquickflickable::nestedClickThenFlick()
     QVERIFY(!outer->property("pressed").toBool());
 
     // Dragging inner Flickable should work
-    moveAndPress(window.data(), QPoint(80, 150));
+    QQuickTest::pointerMoveAndPress(device, window.data(), 0, QPoint(80, 150));
     // the MouseArea is not pressed immediately
 
     QVERIFY(!outer->property("pressed").toBool());
@@ -762,19 +820,19 @@ void tst_qquickflickable::flickableDirection()
 
     flickable->setFlickableDirection(QQuickFlickable::HorizontalAndVerticalFlick);
     QCOMPARE(flickable->flickableDirection(), QQuickFlickable::HorizontalAndVerticalFlick);
-    QCOMPARE(spy.count(),1);
+    QCOMPARE(spy.size(),1);
 
     flickable->setFlickableDirection(QQuickFlickable::AutoFlickDirection);
     QCOMPARE(flickable->flickableDirection(), QQuickFlickable::AutoFlickDirection);
-    QCOMPARE(spy.count(),2);
+    QCOMPARE(spy.size(),2);
 
     flickable->setFlickableDirection(QQuickFlickable::HorizontalFlick);
     QCOMPARE(flickable->flickableDirection(), QQuickFlickable::HorizontalFlick);
-    QCOMPARE(spy.count(),3);
+    QCOMPARE(spy.size(),3);
 
     flickable->setFlickableDirection(QQuickFlickable::HorizontalFlick);
     QCOMPARE(flickable->flickableDirection(), QQuickFlickable::HorizontalFlick);
-    QCOMPARE(spy.count(),3);
+    QCOMPARE(spy.size(),3);
 
     delete flickable;
 }
@@ -797,7 +855,7 @@ void tst_qquickflickable::resizeContent()
     QSizeChangeListener sizeListener(fp->contentItem);
 
     QMetaObject::invokeMethod(root, "resizeContent");
-    for (const QSize sizeOnGeometryChanged : sizeListener) {
+    for (const QSize &sizeOnGeometryChanged : sizeListener) {
         // Check that we have the correct size on all signals
         QCOMPARE(sizeOnGeometryChanged, QSize(600, 600));
     }
@@ -847,7 +905,7 @@ void tst_qquickflickable::returnToBounds()
     QTRY_COMPARE(obj->contentY(), 0.);
 
     QVERIFY(!rebound->running());
-    QCOMPARE(reboundSpy.count(), setRebound ? 2 : 0);
+    QCOMPARE(reboundSpy.size(), setRebound ? 2 : 0);
 }
 
 void tst_qquickflickable::returnToBounds_data()
@@ -885,7 +943,7 @@ void tst_qquickflickable::wheel()
     QTRY_VERIFY(flick->contentY() > 0);
     QCOMPARE(flick->contentX(), qreal(0));
 
-    QTRY_COMPARE(moveEndSpy.count(), 1);
+    QTRY_COMPARE(moveEndSpy.size(), 1);
     QCOMPARE(fp->velocityTimeline.isActive(), false);
     QCOMPARE(fp->timeline.isActive(), false);
     QTest::qWait(50); // make sure that onContentYChanged won't sneak in again
@@ -910,11 +968,52 @@ void tst_qquickflickable::wheel()
 
     QTRY_VERIFY(flick->contentX() > 0);
     QCOMPARE(flick->contentY(), qreal(0));
-    QTRY_COMPARE(moveEndSpy.count(), 2);
+    QTRY_COMPARE(moveEndSpy.size(), 2);
     QCOMPARE(fp->velocityTimeline.isActive(), false);
     QCOMPARE(fp->timeline.isActive(), false);
     QTest::qWait(50); // make sure that onContentXChanged won't sneak in again
     QCOMPARE(flick->property("movementsAfterEnd").value<int>(), 0); // QTBUG-55886
+}
+
+void tst_qquickflickable::wheelBackwards() // (QTBUG-121349)
+{
+    QQuickView window;
+    QVERIFY(QQuickTest::showView(window, testFileUrl("wheel.qml")));
+    QQuickFlickable *flick = window.rootObject()->findChild<QQuickFlickable*>("flick");
+    QVERIFY(flick);
+    QSignalSpy moveEndSpy(flick, SIGNAL(movementEnded()));
+    quint64 timestamp = 10;
+    const QPoint pos(200, 200);
+
+    // attempting to scroll vertically "backwards" beyond extents does not initiate overshoot
+    {
+        QWheelEvent event(pos, window.mapToGlobal(pos), QPoint(), QPoint(0, 120),
+                          Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+        event.setAccepted(false);
+        event.setTimestamp(timestamp++);
+        QGuiApplication::sendEvent(&window, &event);
+    }
+    QCOMPARE(flick->contentY(), qreal(0));
+    QCOMPARE(flick->isMoving(), false);
+    QCOMPARE(moveEndSpy.size(), 0);
+
+    // get ready to test horizontal wheel
+    flick->setContentY(0); // which triggers movementEnded again
+    flick->setProperty("movementsAfterEnd", 0);
+    flick->setProperty("ended", false);
+    QCOMPARE(flick->contentY(), qreal(0));
+
+    // attempting to scroll horizontally "backwards" beyond extents does not initiate overshoot
+    {
+        QWheelEvent event(pos, window.mapToGlobal(pos), QPoint(), QPoint(120, 0),
+                          Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+        event.setAccepted(false);
+        event.setTimestamp(timestamp);
+        QGuiApplication::sendEvent(&window, &event);
+    }
+    QCOMPARE(flick->contentX(), qreal(0));
+    QCOMPARE(flick->isMoving(), false);
+    QCOMPARE(moveEndSpy.size(), 0);
 }
 
 void tst_qquickflickable::trackpad()
@@ -964,8 +1063,110 @@ void tst_qquickflickable::trackpad()
         QGuiApplication::sendEvent(window.data(), &event);
     }
 
-    QTRY_COMPARE(moveEndSpy.count(), 1); // QTBUG-55871
+    QTRY_COMPARE(moveEndSpy.size(), 1); // QTBUG-55871
     QCOMPARE(flick->property("movementsAfterEnd").value<int>(), 0); // QTBUG-55886
+}
+
+void tst_qquickflickable::nestedTrackpad()
+{
+    QQuickView window;
+    QVERIFY(QQuickTest::showView(window, testFileUrl("nested.qml")));
+
+    QQuickFlickable *rootFlickable = qmlobject_cast<QQuickFlickable *>(window.rootObject());
+    QVERIFY(rootFlickable);
+    QQuickFlickable *innerFlickable = rootFlickable->findChild<QQuickFlickable*>();
+    QVERIFY(innerFlickable);
+    QSignalSpy outerMoveEndSpy(rootFlickable, SIGNAL(movementEnded()));
+    QSignalSpy innerMoveEndSpy(innerFlickable, SIGNAL(movementEnded()));
+    QPoint pos = innerFlickable->mapToScene(QPoint(50, 50)).toPoint();
+    quint64 timestamp = 10;
+
+    // Scroll horizontally
+    for (int i = 0; i < 10 && qFuzzyIsNull(innerFlickable->contentX()); ++i) {
+        QWheelEvent event(pos, window.mapToGlobal(pos), QPoint(-10,4), QPoint(-20,8),
+                          Qt::NoButton, Qt::NoModifier, i ? Qt::ScrollUpdate : Qt::ScrollBegin, false,
+                          Qt::MouseEventSynthesizedBySystem, touchpad.get());
+        event.setAccepted(false);
+        event.setTimestamp(timestamp++);
+        QGuiApplication::sendEvent(&window, &event);
+    }
+    QVERIFY(innerFlickable->contentX() > 0);
+    QCOMPARE(innerFlickable->contentY(), qreal(0));
+    {
+        QWheelEvent event(pos, window.mapToGlobal(pos), QPoint(0,0), QPoint(0,0),
+                          Qt::NoButton, Qt::NoModifier, Qt::ScrollEnd, false,
+                          Qt::MouseEventSynthesizedBySystem, touchpad.get());
+        event.setAccepted(false);
+        event.setTimestamp(timestamp++);
+        QGuiApplication::sendEvent(&window, &event);
+    }
+    QTRY_COMPARE(innerMoveEndSpy.size(), 1);
+
+    innerFlickable->setContentX(0);
+    QCOMPARE(innerFlickable->contentX(), qreal(0));
+
+    // Scroll vertically
+    for (int i = 0; i < 10 && qFuzzyIsNull(innerFlickable->contentY()); ++i) {
+        QWheelEvent event(pos, window.mapToGlobal(pos), QPoint(4,-10), QPoint(8,-20),
+                          Qt::NoButton, Qt::NoModifier, i ? Qt::ScrollUpdate : Qt::ScrollBegin, false,
+                          Qt::MouseEventSynthesizedBySystem, touchpad.get());
+        event.setAccepted(false);
+        event.setTimestamp(timestamp++);
+        QGuiApplication::sendEvent(&window, &event);
+    }
+    QVERIFY(rootFlickable->contentY() > 0);
+    QCOMPARE(rootFlickable->contentX(), qreal(0));
+    {
+        QWheelEvent event(pos, window.mapToGlobal(pos), QPoint(0,0), QPoint(0,0),
+                          Qt::NoButton, Qt::NoModifier, Qt::ScrollEnd, false,
+                          Qt::MouseEventSynthesizedBySystem, touchpad.get());
+        event.setAccepted(false);
+        event.setTimestamp(timestamp++);
+        QGuiApplication::sendEvent(&window, &event);
+    }
+    QTRY_COMPARE(outerMoveEndSpy.size(), 1);
+}
+
+void tst_qquickflickable::nestedSameDirectionTrackpad() // QTBUG-124478
+{
+    QQuickView window;
+    QVERIFY(QQuickTest::showView(window, testFileUrl("nestedSameDirection.qml")));
+    QQuickFlickable *rootFlickable = qmlobject_cast<QQuickFlickable *>(window.rootObject());
+    QVERIFY(rootFlickable);
+    QQuickFlickable *flickable1 = rootFlickable->findChild<QQuickFlickable *>("nested1");
+    QVERIFY(flickable1);
+    QQuickFlickable *flickable2 = rootFlickable->findChild<QQuickFlickable *>("nested2");
+    QVERIFY(flickable2);
+
+    QVERIFY(rootFlickable->isAtYBeginning());
+    const QPoint pixelDelta(0, -100);
+    const QPointF pos(50, 50);
+    const int interval = 20;
+    quint64 timestamp = 1000;
+
+    auto sendTrackpadScroll = [pixelDelta, pos, &timestamp, &window, this](Qt::ScrollPhase phase) {
+        QWheelEvent ev(pos, window.mapToGlobal(pos), pixelDelta, pixelDelta, Qt::NoButton, Qt::NoModifier,
+                       phase, false, Qt::MouseEventSynthesizedBySystem, touchpad.get());
+        ev.setTimestamp(timestamp);
+        QGuiApplication::sendEvent(&window, &ev);
+        timestamp += interval; // for next time
+    };
+
+    // Send enough pixelDelta wheel events for flickable1 to reach its end.
+    sendTrackpadScroll(Qt::ScrollBegin);
+
+    for (int i = 1; i < 50; ++i) {
+        if (lcTests().isDebugEnabled())
+            QTest::qWait(interval);
+        sendTrackpadScroll(Qt::ScrollUpdate);
+    }
+
+    // We expect that the rootFlickable has moved, due to receiving some of the
+    // wheel events that were sent after flickable1 reached its end.
+    // Then flickable2 began to move as well, after it got under the mouse position.
+    QTRY_VERIFY(flickable1->isAtYEnd());
+    QCOMPARE(rootFlickable->isAtYBeginning(), false);
+    QCOMPARE(flickable2->isAtYBeginning(), false);
 }
 
 void tst_qquickflickable::movingAndFlicking_data()
@@ -997,14 +1198,15 @@ void tst_qquickflickable::movingAndFlicking()
     QFETCH(bool, horizontalEnabled);
     QFETCH(QPoint, flickToWithoutSnapBack);
     QFETCH(QPoint, flickToWithSnapBack);
+    auto device = mouseDevice;
 
     const QPoint flickFrom(50, 200);   // centre
 
     QScopedPointer<QQuickView> window(new QQuickView);
     window->setSource(testFileUrl("flickable03.qml"));
     QTRY_COMPARE(window->status(), QQuickView::Ready);
-    QQuickViewTestUtil::centerOnScreen(window.data());
-    QQuickViewTestUtil::moveMouseAway(window.data());
+    QQuickViewTestUtils::centerOnScreen(window.data());
+    QQuickViewTestUtils::moveMouseAway(window.data());
     window->show();
     QVERIFY(QTest::qWaitForWindowActive(window.data()));
     QVERIFY(window->rootObject() != nullptr);
@@ -1025,7 +1227,7 @@ void tst_qquickflickable::movingAndFlicking()
     QSignalSpy flickEndSpy(flickable, SIGNAL(flickEnded()));
 
     // do a flick that keeps the view within the bounds
-    flick(window.data(), flickFrom, flickToWithoutSnapBack, 200);
+    QQuickTest::pointerFlick(device, window.data(), 0, flickFrom, flickToWithoutSnapBack, 200);
 
     QTRY_VERIFY(flickable->isMoving());
     QCOMPARE(flickable->isMovingHorizontally(), horizontalEnabled);
@@ -1037,15 +1239,15 @@ void tst_qquickflickable::movingAndFlicking()
     QCOMPARE(flickable->property("movingInContentX").value<bool>(), true);
     QCOMPARE(flickable->property("movingInContentY").value<bool>(), true);
 
-    QCOMPARE(moveSpy.count(), 1);
-    QCOMPARE(vMoveSpy.count(), verticalEnabled ? 1 : 0);
-    QCOMPARE(hMoveSpy.count(), horizontalEnabled ? 1 : 0);
-    QCOMPARE(flickSpy.count(), 1);
-    QCOMPARE(vFlickSpy.count(), verticalEnabled ? 1 : 0);
-    QCOMPARE(hFlickSpy.count(), horizontalEnabled ? 1 : 0);
+    QCOMPARE(moveSpy.size(), 1);
+    QCOMPARE(vMoveSpy.size(), verticalEnabled ? 1 : 0);
+    QCOMPARE(hMoveSpy.size(), horizontalEnabled ? 1 : 0);
+    QCOMPARE(flickSpy.size(), 1);
+    QCOMPARE(vFlickSpy.size(), verticalEnabled ? 1 : 0);
+    QCOMPARE(hFlickSpy.size(), horizontalEnabled ? 1 : 0);
 
-    QCOMPARE(moveStartSpy.count(), 1);
-    QCOMPARE(flickStartSpy.count(), 1);
+    QCOMPARE(moveStartSpy.size(), 1);
+    QCOMPARE(flickStartSpy.size(), 1);
 
     // wait for any motion to end
     QTRY_VERIFY(!flickable->isMoving());
@@ -1056,17 +1258,17 @@ void tst_qquickflickable::movingAndFlicking()
     QVERIFY(!flickable->isFlickingHorizontally());
     QVERIFY(!flickable->isFlickingVertically());
 
-    QCOMPARE(moveSpy.count(), 2);
-    QCOMPARE(vMoveSpy.count(), verticalEnabled ? 2 : 0);
-    QCOMPARE(hMoveSpy.count(), horizontalEnabled ? 2 : 0);
-    QCOMPARE(flickSpy.count(), 2);
-    QCOMPARE(vFlickSpy.count(), verticalEnabled ? 2 : 0);
-    QCOMPARE(hFlickSpy.count(), horizontalEnabled ? 2 : 0);
+    QCOMPARE(moveSpy.size(), 2);
+    QCOMPARE(vMoveSpy.size(), verticalEnabled ? 2 : 0);
+    QCOMPARE(hMoveSpy.size(), horizontalEnabled ? 2 : 0);
+    QCOMPARE(flickSpy.size(), 2);
+    QCOMPARE(vFlickSpy.size(), verticalEnabled ? 2 : 0);
+    QCOMPARE(hFlickSpy.size(), horizontalEnabled ? 2 : 0);
 
-    QCOMPARE(moveStartSpy.count(), 1);
-    QCOMPARE(moveEndSpy.count(), 1);
-    QCOMPARE(flickStartSpy.count(), 1);
-    QCOMPARE(flickEndSpy.count(), 1);
+    QCOMPARE(moveStartSpy.size(), 1);
+    QCOMPARE(moveEndSpy.size(), 1);
+    QCOMPARE(flickStartSpy.size(), 1);
+    QCOMPARE(flickEndSpy.size(), 1);
 
     // Stop on a full pixel after user interaction
     if (verticalEnabled)
@@ -1084,7 +1286,7 @@ void tst_qquickflickable::movingAndFlicking()
     flickable->setContentX(0);
     flickable->setContentY(0);
     QTRY_VERIFY(!flickable->isMoving());
-    flick(window.data(), flickFrom, flickToWithSnapBack, 10);
+    QQuickTest::pointerFlick(device, window.data(), 0, flickFrom, flickToWithSnapBack, 10);
 
     QTRY_VERIFY(flickable->isMoving());
     QCOMPARE(flickable->isMovingHorizontally(), horizontalEnabled);
@@ -1093,17 +1295,17 @@ void tst_qquickflickable::movingAndFlicking()
     QCOMPARE(flickable->isFlickingHorizontally(), horizontalEnabled);
     QCOMPARE(flickable->isFlickingVertically(), verticalEnabled);
 
-    QCOMPARE(moveSpy.count(), 1);
-    QCOMPARE(vMoveSpy.count(), verticalEnabled ? 1 : 0);
-    QCOMPARE(hMoveSpy.count(), horizontalEnabled ? 1 : 0);
-    QCOMPARE(flickSpy.count(), 1);
-    QCOMPARE(vFlickSpy.count(), verticalEnabled ? 1 : 0);
-    QCOMPARE(hFlickSpy.count(), horizontalEnabled ? 1 : 0);
+    QCOMPARE(moveSpy.size(), 1);
+    QCOMPARE(vMoveSpy.size(), verticalEnabled ? 1 : 0);
+    QCOMPARE(hMoveSpy.size(), horizontalEnabled ? 1 : 0);
+    QCOMPARE(flickSpy.size(), 1);
+    QCOMPARE(vFlickSpy.size(), verticalEnabled ? 1 : 0);
+    QCOMPARE(hFlickSpy.size(), horizontalEnabled ? 1 : 0);
 
-    QCOMPARE(moveStartSpy.count(), 1);
-    QCOMPARE(moveEndSpy.count(), 0);
-    QCOMPARE(flickStartSpy.count(), 1);
-    QCOMPARE(flickEndSpy.count(), 0);
+    QCOMPARE(moveStartSpy.size(), 1);
+    QCOMPARE(moveEndSpy.size(), 0);
+    QCOMPARE(flickStartSpy.size(), 1);
+    QCOMPARE(flickEndSpy.size(), 0);
 
     // wait for any motion to end
     QTRY_VERIFY(!flickable->isMoving());
@@ -1114,17 +1316,17 @@ void tst_qquickflickable::movingAndFlicking()
     QVERIFY(!flickable->isFlickingHorizontally());
     QVERIFY(!flickable->isFlickingVertically());
 
-    QCOMPARE(moveSpy.count(), 2);
-    QCOMPARE(vMoveSpy.count(), verticalEnabled ? 2 : 0);
-    QCOMPARE(hMoveSpy.count(), horizontalEnabled ? 2 : 0);
-    QCOMPARE(flickSpy.count(), 2);
-    QCOMPARE(vFlickSpy.count(), verticalEnabled ? 2 : 0);
-    QCOMPARE(hFlickSpy.count(), horizontalEnabled ? 2 : 0);
+    QCOMPARE(moveSpy.size(), 2);
+    QCOMPARE(vMoveSpy.size(), verticalEnabled ? 2 : 0);
+    QCOMPARE(hMoveSpy.size(), horizontalEnabled ? 2 : 0);
+    QCOMPARE(flickSpy.size(), 2);
+    QCOMPARE(vFlickSpy.size(), verticalEnabled ? 2 : 0);
+    QCOMPARE(hFlickSpy.size(), horizontalEnabled ? 2 : 0);
 
-    QCOMPARE(moveStartSpy.count(), 1);
-    QCOMPARE(moveEndSpy.count(), 1);
-    QCOMPARE(flickStartSpy.count(), 1);
-    QCOMPARE(flickEndSpy.count(), 1);
+    QCOMPARE(moveStartSpy.size(), 1);
+    QCOMPARE(moveEndSpy.size(), 1);
+    QCOMPARE(flickStartSpy.size(), 1);
+    QCOMPARE(flickEndSpy.size(), 1);
 
     QCOMPARE(flickable->contentX(), 0.0);
     QCOMPARE(flickable->contentY(), 0.0);
@@ -1160,14 +1362,15 @@ void tst_qquickflickable::movingAndDragging()
     QFETCH(bool, horizontalEnabled);
     QFETCH(QPoint, moveByWithoutSnapBack);
     QFETCH(QPoint, moveByWithSnapBack);
+    auto device = mouseDevice;
 
     const QPoint moveFrom(50, 200);   // centre
 
     QScopedPointer<QQuickView> window(new QQuickView);
     window->setSource(testFileUrl("flickable03.qml"));
     QTRY_COMPARE(window->status(), QQuickView::Ready);
-    QQuickViewTestUtil::centerOnScreen(window.data());
-    QQuickViewTestUtil::moveMouseAway(window.data());
+    QQuickViewTestUtils::centerOnScreen(window.data());
+    QQuickViewTestUtils::moveMouseAway(window.data());
     window->show();
     QVERIFY(QTest::qWaitForWindowActive(window.data()));
     QVERIFY(window->rootObject() != nullptr);
@@ -1188,7 +1391,7 @@ void tst_qquickflickable::movingAndDragging()
     QSignalSpy moveEndSpy(flickable, SIGNAL(movementEnded()));
 
     // start the drag
-    moveAndPress(window.data(), moveFrom);
+    QQuickTest::pointerMoveAndPress(device, window.data(), 0, moveFrom);
     QTest::mouseMove(window.data(), moveFrom + moveByWithoutSnapBack);
     QTest::mouseMove(window.data(), moveFrom + moveByWithoutSnapBack*2);
     QTest::mouseMove(window.data(), moveFrom + moveByWithoutSnapBack*3);
@@ -1205,26 +1408,26 @@ void tst_qquickflickable::movingAndDragging()
     QCOMPARE(flickable->property("draggingInContentX").value<bool>(), true);
     QCOMPARE(flickable->property("draggingInContentY").value<bool>(), true);
 
-    QCOMPARE(moveSpy.count(), 1);
-    QCOMPARE(vMoveSpy.count(), verticalEnabled ? 1 : 0);
-    QCOMPARE(hMoveSpy.count(), horizontalEnabled ? 1 : 0);
-    QCOMPARE(dragSpy.count(), 1);
-    QCOMPARE(vDragSpy.count(), verticalEnabled ? 1 : 0);
-    QCOMPARE(hDragSpy.count(), horizontalEnabled ? 1 : 0);
+    QCOMPARE(moveSpy.size(), 1);
+    QCOMPARE(vMoveSpy.size(), verticalEnabled ? 1 : 0);
+    QCOMPARE(hMoveSpy.size(), horizontalEnabled ? 1 : 0);
+    QCOMPARE(dragSpy.size(), 1);
+    QCOMPARE(vDragSpy.size(), verticalEnabled ? 1 : 0);
+    QCOMPARE(hDragSpy.size(), horizontalEnabled ? 1 : 0);
 
-    QCOMPARE(moveStartSpy.count(), 1);
-    QCOMPARE(dragStartSpy.count(), 1);
+    QCOMPARE(moveStartSpy.size(), 1);
+    QCOMPARE(dragStartSpy.size(), 1);
 
     QTest::mouseRelease(window.data(), Qt::LeftButton, Qt::NoModifier, moveFrom + moveByWithoutSnapBack*3);
 
     QVERIFY(!flickable->isDragging());
     QVERIFY(!flickable->isDraggingHorizontally());
     QVERIFY(!flickable->isDraggingVertically());
-    QCOMPARE(dragSpy.count(), 2);
-    QCOMPARE(vDragSpy.count(), verticalEnabled ? 2 : 0);
-    QCOMPARE(hDragSpy.count(), horizontalEnabled ? 2 : 0);
-    QCOMPARE(dragStartSpy.count(), 1);
-    QCOMPARE(dragEndSpy.count(), 1);
+    QCOMPARE(dragSpy.size(), 2);
+    QCOMPARE(vDragSpy.size(), verticalEnabled ? 2 : 0);
+    QCOMPARE(hDragSpy.size(), horizontalEnabled ? 2 : 0);
+    QCOMPARE(dragStartSpy.size(), 1);
+    QCOMPARE(dragEndSpy.size(), 1);
     // Don't test whether moving finished because a flick could occur
 
     // wait for any motion to end
@@ -1236,17 +1439,17 @@ void tst_qquickflickable::movingAndDragging()
     QVERIFY(!flickable->isDraggingHorizontally());
     QVERIFY(!flickable->isDraggingVertically());
 
-    QCOMPARE(dragSpy.count(), 2);
-    QCOMPARE(vDragSpy.count(), verticalEnabled ? 2 : 0);
-    QCOMPARE(hDragSpy.count(), horizontalEnabled ? 2 : 0);
-    QCOMPARE(moveSpy.count(), 2);
-    QCOMPARE(vMoveSpy.count(), verticalEnabled ? 2 : 0);
-    QCOMPARE(hMoveSpy.count(), horizontalEnabled ? 2 : 0);
+    QCOMPARE(dragSpy.size(), 2);
+    QCOMPARE(vDragSpy.size(), verticalEnabled ? 2 : 0);
+    QCOMPARE(hDragSpy.size(), horizontalEnabled ? 2 : 0);
+    QCOMPARE(moveSpy.size(), 2);
+    QCOMPARE(vMoveSpy.size(), verticalEnabled ? 2 : 0);
+    QCOMPARE(hMoveSpy.size(), horizontalEnabled ? 2 : 0);
 
-    QCOMPARE(dragStartSpy.count(), 1);
-    QCOMPARE(dragEndSpy.count(), 1);
-    QCOMPARE(moveStartSpy.count(), 1);
-    QCOMPARE(moveEndSpy.count(), 1);
+    QCOMPARE(dragStartSpy.size(), 1);
+    QCOMPARE(dragEndSpy.size(), 1);
+    QCOMPARE(moveStartSpy.size(), 1);
+    QCOMPARE(moveEndSpy.size(), 1);
 
     // Stop on a full pixel after user interaction
     if (verticalEnabled)
@@ -1264,7 +1467,7 @@ void tst_qquickflickable::movingAndDragging()
      flickable->setContentX(0);
      flickable->setContentY(0);
      QTRY_VERIFY(!flickable->isMoving());
-     moveAndPress(window.data(), moveFrom);
+     QQuickTest::pointerMoveAndPress(device, window.data(), 0, moveFrom);
      QTest::mouseMove(window.data(), moveFrom + moveByWithSnapBack);
      QTest::mouseMove(window.data(), moveFrom + moveByWithSnapBack*2);
      QTest::mouseMove(window.data(), moveFrom + moveByWithSnapBack*3);
@@ -1276,17 +1479,17 @@ void tst_qquickflickable::movingAndDragging()
      QCOMPARE(flickable->isDraggingHorizontally(), horizontalEnabled);
      QCOMPARE(flickable->isDraggingVertically(), verticalEnabled);
 
-     QCOMPARE(moveSpy.count(), 1);
-     QCOMPARE(vMoveSpy.count(), verticalEnabled ? 1 : 0);
-     QCOMPARE(hMoveSpy.count(), horizontalEnabled ? 1 : 0);
-     QCOMPARE(dragSpy.count(), 1);
-     QCOMPARE(vDragSpy.count(), verticalEnabled ? 1 : 0);
-     QCOMPARE(hDragSpy.count(), horizontalEnabled ? 1 : 0);
+     QCOMPARE(moveSpy.size(), 1);
+     QCOMPARE(vMoveSpy.size(), verticalEnabled ? 1 : 0);
+     QCOMPARE(hMoveSpy.size(), horizontalEnabled ? 1 : 0);
+     QCOMPARE(dragSpy.size(), 1);
+     QCOMPARE(vDragSpy.size(), verticalEnabled ? 1 : 0);
+     QCOMPARE(hDragSpy.size(), horizontalEnabled ? 1 : 0);
 
-     QCOMPARE(moveStartSpy.count(), 1);
-     QCOMPARE(moveEndSpy.count(), 0);
-     QCOMPARE(dragStartSpy.count(), 1);
-     QCOMPARE(dragEndSpy.count(), 0);
+     QCOMPARE(moveStartSpy.size(), 1);
+     QCOMPARE(moveEndSpy.size(), 0);
+     QCOMPARE(dragStartSpy.size(), 1);
+     QCOMPARE(dragEndSpy.size(), 0);
 
      QTest::mouseRelease(window.data(), Qt::LeftButton, Qt::NoModifier, moveFrom + moveByWithSnapBack*3);
 
@@ -1298,15 +1501,15 @@ void tst_qquickflickable::movingAndDragging()
      QVERIFY(!flickable->isDraggingHorizontally());
      QVERIFY(!flickable->isDraggingVertically());
 
-     QCOMPARE(moveSpy.count(), 1);
-     QCOMPARE(vMoveSpy.count(), verticalEnabled ? 1 : 0);
-     QCOMPARE(hMoveSpy.count(), horizontalEnabled ? 1 : 0);
-     QCOMPARE(dragSpy.count(), 2);
-     QCOMPARE(vDragSpy.count(), verticalEnabled ? 2 : 0);
-     QCOMPARE(hDragSpy.count(), horizontalEnabled ? 2 : 0);
+     QCOMPARE(moveSpy.size(), 1);
+     QCOMPARE(vMoveSpy.size(), verticalEnabled ? 1 : 0);
+     QCOMPARE(hMoveSpy.size(), horizontalEnabled ? 1 : 0);
+     QCOMPARE(dragSpy.size(), 2);
+     QCOMPARE(vDragSpy.size(), verticalEnabled ? 2 : 0);
+     QCOMPARE(hDragSpy.size(), horizontalEnabled ? 2 : 0);
 
-     QCOMPARE(moveStartSpy.count(), 1);
-     QCOMPARE(moveEndSpy.count(), 0);
+     QCOMPARE(moveStartSpy.size(), 1);
+     QCOMPARE(moveEndSpy.size(), 0);
 
      // wait for any motion to end
      QTRY_VERIFY(!flickable->isMoving());
@@ -1317,17 +1520,17 @@ void tst_qquickflickable::movingAndDragging()
      QVERIFY(!flickable->isDraggingHorizontally());
      QVERIFY(!flickable->isDraggingVertically());
 
-     QCOMPARE(moveSpy.count(), 2);
-     QCOMPARE(vMoveSpy.count(), verticalEnabled ? 2 : 0);
-     QCOMPARE(hMoveSpy.count(), horizontalEnabled ? 2 : 0);
-     QCOMPARE(dragSpy.count(), 2);
-     QCOMPARE(vDragSpy.count(), verticalEnabled ? 2 : 0);
-     QCOMPARE(hDragSpy.count(), horizontalEnabled ? 2 : 0);
+     QCOMPARE(moveSpy.size(), 2);
+     QCOMPARE(vMoveSpy.size(), verticalEnabled ? 2 : 0);
+     QCOMPARE(hMoveSpy.size(), horizontalEnabled ? 2 : 0);
+     QCOMPARE(dragSpy.size(), 2);
+     QCOMPARE(vDragSpy.size(), verticalEnabled ? 2 : 0);
+     QCOMPARE(hDragSpy.size(), horizontalEnabled ? 2 : 0);
 
-     QCOMPARE(moveStartSpy.count(), 1);
-     QCOMPARE(moveEndSpy.count(), 1);
-     QCOMPARE(dragStartSpy.count(), 1);
-     QCOMPARE(dragEndSpy.count(), 1);
+     QCOMPARE(moveStartSpy.size(), 1);
+     QCOMPARE(moveEndSpy.size(), 1);
+     QCOMPARE(dragStartSpy.size(), 1);
+     QCOMPARE(dragEndSpy.size(), 1);
 
      QCOMPARE(flickable->contentX(), 0.0);
      QCOMPARE(flickable->contentY(), 0.0);
@@ -1335,6 +1538,7 @@ void tst_qquickflickable::movingAndDragging()
 
 void tst_qquickflickable::flickOnRelease()
 {
+    auto device = mouseDevice;
     QScopedPointer<QQuickView> window(new QQuickView);
     window->setSource(testFileUrl("flickable03.qml"));
     window->show();
@@ -1351,11 +1555,11 @@ void tst_qquickflickable::flickOnRelease()
     // underlying drivers will hopefully provide a pre-calculated velocity
     // (based on more data than what the UI gets), thus making this use case
     // working even with small movements.
-    moveAndPress(window.data(), QPoint(50, 300));
+    QQuickTest::pointerMoveAndPress(device, window.data(), 0, QPoint(50, 300));
     QTest::mouseMove(window.data(), QPoint(50, 10), 10);
     QTest::mouseRelease(window.data(), Qt::LeftButton, Qt::NoModifier, QPoint(50, 10), 10);
 
-    QCOMPARE(vFlickSpy.count(), 1);
+    QCOMPARE(vFlickSpy.size(), 1);
 
     // wait for any motion to end
     QTRY_VERIFY(!flickable->isMoving());
@@ -1366,11 +1570,12 @@ void tst_qquickflickable::flickOnRelease()
 
 void tst_qquickflickable::pressWhileFlicking()
 {
+    auto device = mouseDevice;
     QScopedPointer<QQuickView> window(new QQuickView);
     window->setSource(testFileUrl("flickable03.qml"));
     QTRY_COMPARE(window->status(), QQuickView::Ready);
-    QQuickViewTestUtil::centerOnScreen(window.data());
-    QQuickViewTestUtil::moveMouseAway(window.data());
+    QQuickViewTestUtils::centerOnScreen(window.data());
+    QQuickViewTestUtils::moveMouseAway(window.data());
     window->show();
     QVERIFY(QTest::qWaitForWindowActive(window.data()));
     QVERIFY(window->rootObject() != nullptr);
@@ -1384,10 +1589,12 @@ void tst_qquickflickable::pressWhileFlicking()
     QSignalSpy hFlickSpy(flickable, SIGNAL(flickingHorizontallyChanged()));
     QSignalSpy vFlickSpy(flickable, SIGNAL(flickingVerticallyChanged()));
     QSignalSpy flickSpy(flickable, SIGNAL(flickingChanged()));
+    QSignalSpy flickStartSpy(flickable, &QQuickFlickable::flickStarted);
+    QSignalSpy flickEndSpy(flickable, &QQuickFlickable::flickEnded);
 
     // flick then press while it is still moving
     // flicking == false, moving == true;
-    flick(window.data(), QPoint(20,190), QPoint(20, 50), 200);
+    QQuickTest::pointerFlick(device, window.data(), 0, QPoint(20,190), QPoint(20, 50), 200);
     QVERIFY(flickable->verticalVelocity() > 0.0);
     QTRY_VERIFY(flickable->isFlicking());
     QVERIFY(flickable->isFlickingVertically());
@@ -1395,12 +1602,14 @@ void tst_qquickflickable::pressWhileFlicking()
     QVERIFY(flickable->isMoving());
     QVERIFY(flickable->isMovingVertically());
     QVERIFY(!flickable->isMovingHorizontally());
-    QCOMPARE(vMoveSpy.count(), 1);
-    QCOMPARE(hMoveSpy.count(), 0);
-    QCOMPARE(moveSpy.count(), 1);
-    QCOMPARE(vFlickSpy.count(), 1);
-    QCOMPARE(hFlickSpy.count(), 0);
-    QCOMPARE(flickSpy.count(), 1);
+    QCOMPARE(vMoveSpy.size(), 1);
+    QCOMPARE(hMoveSpy.size(), 0);
+    QCOMPARE(moveSpy.size(), 1);
+    QCOMPARE(vFlickSpy.size(), 1);
+    QCOMPARE(hFlickSpy.size(), 0);
+    QCOMPARE(flickSpy.size(), 1);
+    QCOMPARE(flickStartSpy.size(), 1);
+    QCOMPARE(flickEndSpy.size(), 0);
 
     QTest::mousePress(window.data(), Qt::LeftButton, Qt::NoModifier, QPoint(20, 50));
     QTRY_VERIFY(!flickable->isFlicking());
@@ -1413,12 +1622,84 @@ void tst_qquickflickable::pressWhileFlicking()
     QVERIFY(!flickable->isFlickingVertically());
     QTRY_VERIFY(!flickable->isMoving());
     QVERIFY(!flickable->isMovingVertically());
+    QCOMPARE(flickStartSpy.size(), 1);
+    QCOMPARE(flickEndSpy.size(), 1);
+    // Stop on a full pixel after user interaction
+    QCOMPARE(flickable->contentX(), (qreal)qRound(flickable->contentX()));
+}
+
+void tst_qquickflickable::dragWhileFlicking()
+{
+    auto device = mouseDevice;
+    QQuickView window;
+    QVERIFY(QQuickTest::showView(window, testFileUrl("flickable03.qml")));
+
+    QQuickFlickable *flickable = qobject_cast<QQuickFlickable*>(window.rootObject());
+    QVERIFY(flickable != nullptr);
+
+    QSignalSpy vMoveSpy(flickable, &QQuickFlickable::movingVerticallyChanged);
+    QSignalSpy hMoveSpy(flickable, &QQuickFlickable::movingHorizontallyChanged);
+    QSignalSpy moveSpy(flickable, &QQuickFlickable::movingChanged);
+    QSignalSpy hFlickSpy(flickable, &QQuickFlickable::flickingHorizontallyChanged);
+    QSignalSpy vFlickSpy(flickable, &QQuickFlickable::flickingVerticallyChanged);
+    QSignalSpy flickSpy(flickable, &QQuickFlickable::flickingChanged);
+    QSignalSpy flickStartSpy(flickable, &QQuickFlickable::flickStarted);
+    QSignalSpy flickEndSpy(flickable, &QQuickFlickable::flickEnded);
+
+    // flick first, let it keep moving
+    QQuickTest::pointerFlick(device, &window, 0, QPoint(20,190), QPoint(20, 50), 200);
+    QVERIFY(flickable->verticalVelocity() > 0.0);
+    QTRY_VERIFY(flickable->isFlicking());
+    QVERIFY(flickable->isFlickingVertically());
+    QCOMPARE(flickable->isFlickingHorizontally(), false);
+    QVERIFY(flickable->isMoving());
+    QVERIFY(flickable->isMovingVertically());
+    QCOMPARE(flickable->isMovingHorizontally(), false);
+    QCOMPARE(vMoveSpy.size(), 1);
+    QCOMPARE(hMoveSpy.size(), 0);
+    QCOMPARE(moveSpy.size(), 1);
+    QCOMPARE(vFlickSpy.size(), 1);
+    QCOMPARE(hFlickSpy.size(), 0);
+    QCOMPARE(flickSpy.size(), 1);
+    QCOMPARE(flickStartSpy.size(), 1);
+    QCOMPARE(flickEndSpy.size(), 0);
+
+    // then drag slowly while it's still flicking and moving
+    const int dragStepDelay = 100;
+    QQuickTest::pointerPress(device, &window, 0, QPoint(20, 70), Qt::LeftButton, Qt::NoModifier, 500);
+    QTRY_COMPARE(flickable->isFlicking(), false);
+    QCOMPARE(flickable->isFlickingVertically(), false);
+    QVERIFY(flickable->isMoving());
+    QVERIFY(flickable->isMovingVertically());
+
+    for (int y = 70; y > 50; y -= 5) {
+        QQuickTest::pointerMove(device, &window, 0, QPoint(20, y), dragStepDelay);
+        QVERIFY(flickable->isMoving());
+        QVERIFY(flickable->isMovingVertically());
+        // Flickable's timeline is real-time, so spoofing timestamps isn't enough
+        QTest::qWait(dragStepDelay);
+    }
+
+    QQuickTest::pointerRelease(device, &window, 0, QPoint(20, 50), Qt::LeftButton, Qt::NoModifier, dragStepDelay);
+
+    QCOMPARE(flickable->isFlicking(), false);
+    QCOMPARE(flickable->isFlickingVertically(), false);
+    QTRY_COMPARE(flickable->isMoving(), false);
+    QCOMPARE(flickable->isMovingVertically(), false);
+    QCOMPARE(flickStartSpy.size(), 1);
+    QCOMPARE(flickEndSpy.size(), 1);
+    QCOMPARE(vMoveSpy.size(), 2);
+    QCOMPARE(hMoveSpy.size(), 0);
+    QCOMPARE(moveSpy.size(), 2);
+    QCOMPARE(vFlickSpy.size(), 2);
+    QCOMPARE(hFlickSpy.size(), 0);
     // Stop on a full pixel after user interaction
     QCOMPARE(flickable->contentX(), (qreal)qRound(flickable->contentX()));
 }
 
 void tst_qquickflickable::disabled()
 {
+    auto device = mouseDevice;
     QScopedPointer<QQuickView> window(new QQuickView);
     window->setSource(testFileUrl("disabled.qml"));
     window->show();
@@ -1428,7 +1709,7 @@ void tst_qquickflickable::disabled()
     QQuickFlickable *flick = window->rootObject()->findChild<QQuickFlickable*>("flickable");
     QVERIFY(flick != nullptr);
 
-    moveAndPress(window.data(), QPoint(50, 90));
+    QQuickTest::pointerMoveAndPress(device, window.data(), 0, QPoint(50, 90));
 
     QTest::mouseMove(window.data(), QPoint(50, 80));
     QTest::mouseMove(window.data(), QPoint(50, 70));
@@ -1439,7 +1720,7 @@ void tst_qquickflickable::disabled()
     QTest::mouseRelease(window.data(), Qt::LeftButton, Qt::NoModifier, QPoint(50, 60));
 
     // verify that mouse clicks on other elements still work (QTBUG-20584)
-    moveAndPress(window.data(), QPoint(50, 10));
+    QQuickTest::pointerMoveAndPress(device, window.data(), 0, QPoint(50, 10));
     QTest::mouseRelease(window.data(), Qt::LeftButton, Qt::NoModifier, QPoint(50, 10));
 
     QTRY_VERIFY(window->rootObject()->property("clicked").toBool());
@@ -1447,11 +1728,12 @@ void tst_qquickflickable::disabled()
 
 void tst_qquickflickable::flickVelocity()
 {
+    auto device = mouseDevice;
     QScopedPointer<QQuickView> window(new QQuickView);
     window->setSource(testFileUrl("flickable03.qml"));
     QTRY_COMPARE(window->status(), QQuickView::Ready);
-    QQuickViewTestUtil::centerOnScreen(window.data());
-    QQuickViewTestUtil::moveMouseAway(window.data());
+    QQuickViewTestUtils::centerOnScreen(window.data());
+    QQuickViewTestUtils::moveMouseAway(window.data());
     window->show();
     QVERIFY(QTest::qWaitForWindowActive(window.data()));
     QVERIFY(window->rootObject() != nullptr);
@@ -1460,16 +1742,16 @@ void tst_qquickflickable::flickVelocity()
     QVERIFY(flickable != nullptr);
 
     // flick up
-    flick(window.data(), QPoint(20,190), QPoint(20, 50), 200);
+    QQuickTest::pointerFlick(device, window.data(), 0, QPoint(20,190), QPoint(20, 50), 200);
     QVERIFY(flickable->verticalVelocity() > 0.0);
     QTRY_COMPARE(flickable->verticalVelocity(), 0.0);
 
     // flick down
-    flick(window.data(), QPoint(20,10), QPoint(20, 140), 200);
+    QQuickTest::pointerFlick(device, window.data(), 0, QPoint(20,10), QPoint(20, 140), 200);
     QTRY_VERIFY(flickable->verticalVelocity() < 0.0);
     QTRY_COMPARE(flickable->verticalVelocity(), 0.0);
 
-#ifdef Q_OS_MAC
+#ifdef Q_OS_MACOS
     QSKIP("boost doesn't work on OS X");
     return;
 #endif
@@ -1478,13 +1760,13 @@ void tst_qquickflickable::flickVelocity()
     QQuickFlickablePrivate *fp = QQuickFlickablePrivate::get(flickable);
     bool boosted = false;
     for (int i = 0; i < 6; ++i) {
-        flick(window.data(), QPoint(20,390), QPoint(20, 50), 100);
+        QQuickTest::pointerFlick(device, window.data(), 0, QPoint(20,390), QPoint(20, 50), 100);
         boosted |= fp->flickBoost > 1.0;
     }
     QVERIFY(boosted);
 
     // Flick in opposite direction -> boost cancelled.
-    flick(window.data(), QPoint(20,10), QPoint(20, 340), 200);
+    QQuickTest::pointerFlick(device, window.data(), 0, QPoint(20,10), QPoint(20, 340), 200);
     QTRY_VERIFY(flickable->verticalVelocity() < 0.0);
     QCOMPARE(fp->flickBoost, 1.0);
 }
@@ -1494,8 +1776,8 @@ void tst_qquickflickable::margins()
     QScopedPointer<QQuickView> window(new QQuickView);
     window->setSource(testFileUrl("margins.qml"));
     QTRY_COMPARE(window->status(), QQuickView::Ready);
-    QQuickViewTestUtil::centerOnScreen(window.data());
-    QQuickViewTestUtil::moveMouseAway(window.data());
+    QQuickViewTestUtils::centerOnScreen(window.data());
+    QQuickViewTestUtils::moveMouseAway(window.data());
     window->setTitle(QTest::currentTestFunction());
     window->show();
     QVERIFY(QTest::qWaitForWindowActive(window.data()));
@@ -1558,8 +1840,8 @@ void tst_qquickflickable::cancelOnHide()
     QScopedPointer<QQuickView> window(new QQuickView);
     window->setSource(testFileUrl("hide.qml"));
     QTRY_COMPARE(window->status(), QQuickView::Ready);
-    QQuickViewTestUtil::centerOnScreen(window.data());
-    QQuickViewTestUtil::moveMouseAway(window.data());
+    QQuickViewTestUtils::centerOnScreen(window.data());
+    QQuickViewTestUtils::moveMouseAway(window.data());
     window->show();
     QVERIFY(QTest::qWaitForWindowActive(window.data()));
     QVERIFY(window->rootObject());
@@ -1574,11 +1856,12 @@ void tst_qquickflickable::cancelOnHide()
 
 void tst_qquickflickable::cancelOnMouseGrab()
 {
+    auto device = mouseDevice;
     QScopedPointer<QQuickView> window(new QQuickView);
     window->setSource(testFileUrl("cancel.qml"));
     QTRY_COMPARE(window->status(), QQuickView::Ready);
-    QQuickViewTestUtil::centerOnScreen(window.data());
-    QQuickViewTestUtil::moveMouseAway(window.data());
+    QQuickViewTestUtils::centerOnScreen(window.data());
+    QQuickViewTestUtils::moveMouseAway(window.data());
     window->show();
     QVERIFY(QTest::qWaitForWindowActive(window.data()));
     QVERIFY(window->rootObject() != nullptr);
@@ -1586,7 +1869,7 @@ void tst_qquickflickable::cancelOnMouseGrab()
     QQuickFlickable *flickable = qobject_cast<QQuickFlickable*>(window->rootObject());
     QVERIFY(flickable != nullptr);
 
-    moveAndPress(window.data(), QPoint(10, 10));
+    QQuickTest::pointerMoveAndPress(device, window.data(), 0, QPoint(10, 10));
     // drag out of bounds
     QTest::mouseMove(window.data(), QPoint(50, 50));
     QTest::mouseMove(window.data(), QPoint(100, 100));
@@ -1599,24 +1882,28 @@ void tst_qquickflickable::cancelOnMouseGrab()
 
     // grabbing mouse will cancel flickable interaction.
     QQuickItem *item = window->rootObject()->findChild<QQuickItem*>("row");
-    item->grabMouse();
+    auto mouse = QPointingDevice::primaryPointingDevice();
+    auto mousePriv = QPointingDevicePrivate::get(const_cast<QPointingDevice *>(mouse));
+    QMouseEvent fakeMouseEv(QEvent::MouseMove, QPoint(130, 100), QPoint(130, 100),
+                            Qt::NoButton, Qt::LeftButton, Qt::NoModifier, mouse);
+    mousePriv->setExclusiveGrabber(&fakeMouseEv, fakeMouseEv.points().first(), item);
 
     QTRY_COMPARE(flickable->contentX(), 0.);
     QTRY_COMPARE(flickable->contentY(), 0.);
     QTRY_VERIFY(!flickable->isMoving());
     QTRY_VERIFY(!flickable->isDragging());
 
-    moveAndRelease(window.data(), QPoint(50, 10));
-
+    QQuickTest::pointerMoveAndRelease(device, window.data(), 0, QPoint(50, 10));
 }
 
 void tst_qquickflickable::clickAndDragWhenTransformed()
 {
+    auto device = mouseDevice;
     QScopedPointer<QQuickView> view(new QQuickView);
     view->setSource(testFileUrl("transformedFlickable.qml"));
     QTRY_COMPARE(view->status(), QQuickView::Ready);
-    QQuickViewTestUtil::centerOnScreen(view.data());
-    QQuickViewTestUtil::moveMouseAway(view.data());
+    QQuickVisualTestUtils::centerOnScreen(view.data());
+    QQuickVisualTestUtils::moveMouseAway(view.data());
     view->show();
     QVERIFY(QTest::qWaitForWindowActive(view.data()));
     QVERIFY(view->rootObject() != nullptr);
@@ -1625,34 +1912,43 @@ void tst_qquickflickable::clickAndDragWhenTransformed()
     QVERIFY(flickable != nullptr);
 
     // click outside child rect
-    moveAndPress(view.data(), QPoint(190, 190));
+    QQuickTest::pointerMoveAndPress(device, view.data(), 0, QPoint(190, 190));
     QTRY_COMPARE(flickable->property("itemPressed").toBool(), false);
     QTest::mouseRelease(view.data(), Qt::LeftButton, Qt::NoModifier, QPoint(190, 190));
 
     // click inside child rect
-    moveAndPress(view.data(), QPoint(200, 200));
+    QQuickTest::pointerMoveAndPress(device, view.data(), 0, QPoint(200, 200));
     QTRY_COMPARE(flickable->property("itemPressed").toBool(), true);
     QTest::mouseRelease(view.data(), Qt::LeftButton, Qt::NoModifier, QPoint(200, 200));
 
-    const int threshold = qApp->styleHints()->startDragDistance();
+    // drag threshold is scaled according to the scene scaling
+    const int threshold = qApp->styleHints()->startDragDistance() * flickable->parentItem()->scale();
 
     // drag outside bounds
-    moveAndPress(view.data(), QPoint(160, 160));
+    QQuickTest::pointerMoveAndPress(device, view.data(), 0, QPoint(160, 160));
     QTest::qWait(10);
     QTest::mouseMove(view.data(), QPoint(160 + threshold * 2, 160));
     QTest::mouseMove(view.data(), QPoint(160 + threshold * 3, 160));
     QCOMPARE(flickable->isDragging(), false);
     QCOMPARE(flickable->property("itemPressed").toBool(), false);
-    moveAndRelease(view.data(), QPoint(180, 160));
+    QQuickTest::pointerMoveAndRelease(device, view.data(), 0, QPoint(180, 160));
 
     // drag inside bounds
-    moveAndPress(view.data(), QPoint(200, 140));
+    QQuickTest::pointerMoveAndPress(device, view.data(), 0, QPoint(200, 140));
+    QCOMPARE(flickable->keepMouseGrab(), false);
     QTest::qWait(10);
+    // Flickable should get interested in dragging when the drag is beyond the
+    // threshold distance along the hypoteneuse of the 45° rotation
+    const int deltaPastRotatedThreshold = threshold * 1.414 + 1;
+    QTest::mouseMove(view.data(), QPoint(200 + deltaPastRotatedThreshold, 140));
+    qCDebug(lcTests) << "transformed flickable dragging yet?" << flickable->isDragging() <<
+            "after dragging by" << deltaPastRotatedThreshold << "past scaled threshold" << threshold;
+    QCOMPARE(flickable->isDragging(), false);   // Flickable never grabs on the first drag past the threshold
+    QCOMPARE(flickable->keepMouseGrab(), true); // but it plans to do it next time!
     QTest::mouseMove(view.data(), QPoint(200 + threshold * 2, 140));
-    QTest::mouseMove(view.data(), QPoint(200 + threshold * 3, 140));
-    QCOMPARE(flickable->isDragging(), true);
+    QCOMPARE(flickable->isDragging(), true);    // it grabs only during the second drag past the threshold
     QCOMPARE(flickable->property("itemPressed").toBool(), false);
-    moveAndRelease(view.data(), QPoint(220, 140));
+    QQuickTest::pointerMoveAndRelease(device, view.data(), 0, QPoint(220, 140));
 }
 
 void tst_qquickflickable::flickTwiceUsingTouches()
@@ -1660,8 +1956,8 @@ void tst_qquickflickable::flickTwiceUsingTouches()
     QScopedPointer<QQuickView> window(new QQuickView);
     window->setSource(testFileUrl("longList.qml"));
     QTRY_COMPARE(window->status(), QQuickView::Ready);
-    QQuickViewTestUtil::centerOnScreen(window.data());
-    QQuickViewTestUtil::moveMouseAway(window.data());
+    QQuickViewTestUtils::centerOnScreen(window.data());
+    QQuickViewTestUtils::moveMouseAway(window.data());
     window->show();
     QVERIFY(window->rootObject() != nullptr);
     QVERIFY(QTest::qWaitForWindowActive(window.data()));
@@ -1670,7 +1966,8 @@ void tst_qquickflickable::flickTwiceUsingTouches()
     QVERIFY(flickable != nullptr);
 
     QCOMPARE(flickable->contentY(), 0.0f);
-    flickWithTouch(window.data(), QPoint(100, 400), QPoint(100, 240));
+
+    QQuickTest::pointerFlick(touchDevice, window.data(), 1, QPoint(100, 400), QPoint(100, 240), 100);
 
     qreal contentYAfterFirstFlick = flickable->contentY();
     qDebug() << "contentYAfterFirstFlick " << contentYAfterFirstFlick;
@@ -1678,26 +1975,12 @@ void tst_qquickflickable::flickTwiceUsingTouches()
     // Wait until view stops moving
     QTRY_VERIFY(!flickable->isMoving());
 
-    flickWithTouch(window.data(), QPoint(100, 400), QPoint(100, 240));
+    QQuickTest::pointerFlick(touchDevice, window.data(), 1, QPoint(100, 400), QPoint(100, 240), 100);
 
     // In the original bug, that second flick would cause Flickable to halt immediately
     qreal contentYAfterSecondFlick = flickable->contentY();
     qDebug() << "contentYAfterSecondFlick " << contentYAfterSecondFlick;
     QTRY_VERIFY(contentYAfterSecondFlick > (contentYAfterFirstFlick + 80.0f));
-}
-
-void tst_qquickflickable::flickWithTouch(QQuickWindow *window, const QPoint &from, const QPoint &to)
-{
-    QTest::touchEvent(window, touchDevice).press(0, from, window);
-    QQuickTouchUtils::flush(window);
-
-    QPoint diff = to - from;
-    for (int i = 1; i <= 8; ++i) {
-        QTest::touchEvent(window, touchDevice).move(0, from + i*diff/8, window);
-        QQuickTouchUtils::flush(window);
-    }
-    QTest::touchEvent(window, touchDevice).release(0, to, window);
-    QQuickTouchUtils::flush(window);
 }
 
 void tst_qquickflickable::nestedStopAtBounds_data()
@@ -1737,12 +2020,13 @@ void tst_qquickflickable::nestedStopAtBounds()
     QFETCH(bool, innerFiltering);
     QFETCH(int, pressDelay);
     QFETCH(bool, waitForPressDelay);
+    auto device = mouseDevice;
 
     QQuickView view;
     view.setSource(testFileUrl("nestedStopAtBounds.qml"));
     QTRY_COMPARE(view.status(), QQuickView::Ready);
-    QQuickViewTestUtil::centerOnScreen(&view);
-    QQuickViewTestUtil::moveMouseAway(&view);
+    QQuickVisualTestUtils::centerOnScreen(&view);
+    QQuickVisualTestUtils::moveMouseAway(&view);
     view.show();
     view.requestActivate();
     QVERIFY(QTest::qWaitForWindowActive(&view));
@@ -1781,10 +2065,10 @@ void tst_qquickflickable::nestedStopAtBounds()
     int &axis = transpose ? position.ry() : position.rx();
 
     // drag toward the aligned boundary.  Outer flickable dragged.
-    moveAndPress(&view, position);
+    QQuickTest::pointerMoveAndPress(device, &view, 0, position);
     if (waitForPressDelay) {
         QVERIFY(innerFiltering);    // isPressed will never be true if the mouse area isn't enabled.
-        QTRY_VERIFY(mouseArea->pressed());
+        QTRY_VERIFY(mouseArea->isPressed());
     }
 
     axis += invert ? threshold * 2 : -threshold * 2;
@@ -1807,8 +2091,7 @@ void tst_qquickflickable::nestedStopAtBounds()
     outer->setContentY(50);
 
     // drag away from the aligned boundary.  Inner flickable dragged.
-    moveAndPress(&view, position);
-    QTest::qWait(10);
+    QQuickTest::pointerMoveAndPress(device, &view, 0, position);
     axis += invert ? -threshold * 2 : threshold * 2;
     QTest::mouseMove(&view, position);
     axis += invert ? -threshold : threshold;
@@ -1831,8 +2114,7 @@ void tst_qquickflickable::nestedStopAtBounds()
     inner->setContentHeight(inner->height() - margin);
 
     // Drag inner with equal size and contentSize
-    moveAndPress(&view, position);
-    QTest::qWait(10);
+    QQuickTest::pointerMoveAndPress(device, &view, 0, position);
     axis += invert ? -threshold * 2 : threshold * 2;
     QTest::mouseMove(&view, position);
     axis += invert ? -threshold : threshold;
@@ -1855,8 +2137,7 @@ void tst_qquickflickable::nestedStopAtBounds()
     inner->setContentHeight(inner->height() - 100);
 
     // Drag inner with size greater than contentSize
-    moveAndPress(&view, position);
-    QTest::qWait(10);
+    QQuickTest::pointerMoveAndPress(device, &view, 0, position);
     axis += invert ? -threshold * 2 : threshold * 2;
     QTest::mouseMove(&view, position);
     axis += invert ? -threshold : threshold;
@@ -1894,12 +2175,13 @@ void tst_qquickflickable::stopAtBounds()
     QFETCH(bool, transpose);
     QFETCH(bool, invert);
     QFETCH(bool, pixelAligned);
+    auto device = mouseDevice;
 
     QQuickView view;
     view.setSource(testFileUrl("stopAtBounds.qml"));
     QTRY_COMPARE(view.status(), QQuickView::Ready);
-    QQuickViewTestUtil::centerOnScreen(&view);
-    QQuickViewTestUtil::moveMouseAway(&view);
+    QQuickVisualTestUtils::centerOnScreen(&view);
+    QQuickVisualTestUtils::moveMouseAway(&view);
     view.show();
     view.requestActivate();
     QVERIFY(QTest::qWaitForWindowActive(&view));
@@ -1920,7 +2202,7 @@ void tst_qquickflickable::stopAtBounds()
     int &axis = transpose ? position.ry() : position.rx();
 
     // drag away from the aligned boundary. View should not move
-    moveAndPress(&view, position);
+    QQuickTest::pointerMoveAndPress(device, &view, 0, position);
     QTest::qWait(10);
     for (int i = 0; i < 3; ++i) {
         axis += invert ? -threshold : threshold;
@@ -1947,10 +2229,10 @@ void tst_qquickflickable::stopAtBounds()
     else
         QCOMPARE(transpose ? flickable->isAtYBeginning() : flickable->isAtXBeginning(), false);
 
-    QCOMPARE(atXBeginningChangedSpy.count(), (!transpose && !invert) ? 1 : 0);
-    QCOMPARE(atYBeginningChangedSpy.count(), ( transpose && !invert) ? 1 : 0);
-    QCOMPARE(atXEndChangedSpy.count(),       (!transpose &&  invert) ? 1 : 0);
-    QCOMPARE(atYEndChangedSpy.count(),       ( transpose &&  invert) ? 1 : 0);
+    QCOMPARE(atXBeginningChangedSpy.size(), (!transpose && !invert) ? 1 : 0);
+    QCOMPARE(atYBeginningChangedSpy.size(), ( transpose && !invert) ? 1 : 0);
+    QCOMPARE(atXEndChangedSpy.size(),       (!transpose &&  invert) ? 1 : 0);
+    QCOMPARE(atYEndChangedSpy.size(),       ( transpose &&  invert) ? 1 : 0);
 
     // Drag away from the aligned boundary again.
     // None of the mouse movements will position the view at the boundary exactly,
@@ -1980,11 +2262,11 @@ void tst_qquickflickable::stopAtBounds()
 
     QSignalSpy flickSignal(flickable, SIGNAL(flickingChanged()));
     if (invert)
-        flick(&view, QPoint(20,20), QPoint(120,120), 100);
+        QQuickTest::pointerFlick(device, &view, 0, QPoint(20,20), QPoint(120,120), 100);
     else
-        flick(&view, QPoint(120,120), QPoint(20,20), 100);
+        QQuickTest::pointerFlick(device, &view, 0, QPoint(120,120), QPoint(20,20), 100);
 
-    QVERIFY(flickSignal.count() > 0);
+    QVERIFY(flickSignal.size() > 0);
     if (transpose) {
         if (invert)
             QTRY_COMPARE(flickable->isAtYBeginning(), true);
@@ -2003,8 +2285,8 @@ void tst_qquickflickable::nestedMouseAreaUsingTouch()
     QScopedPointer<QQuickView> window(new QQuickView);
     window->setSource(testFileUrl("nestedmousearea.qml"));
     QTRY_COMPARE(window->status(), QQuickView::Ready);
-    QQuickViewTestUtil::centerOnScreen(window.data());
-    QQuickViewTestUtil::moveMouseAway(window.data());
+    QQuickViewTestUtils::centerOnScreen(window.data());
+    QQuickViewTestUtils::moveMouseAway(window.data());
     window->show();
     QVERIFY(window->rootObject() != nullptr);
     QVERIFY(QTest::qWaitForWindowActive(window.data()));
@@ -2013,7 +2295,7 @@ void tst_qquickflickable::nestedMouseAreaUsingTouch()
     QVERIFY(flickable != nullptr);
 
     QCOMPARE(flickable->contentY(), 50.0f);
-    flickWithTouch(window.data(), QPoint(100, 300), QPoint(100, 200));
+    QQuickTest::pointerFlick(touchDevice, window.data(), 1, QPoint(100, 300), QPoint(100, 200), 100);
 
     // flickable should not have moved
     QCOMPARE(flickable->contentY(), 50.0);
@@ -2021,6 +2303,27 @@ void tst_qquickflickable::nestedMouseAreaUsingTouch()
     // draggable item should have moved up
     QQuickItem *nested = window->rootObject()->findChild<QQuickItem*>("nested");
     QVERIFY(nested->y() < 100.0);
+}
+
+void tst_qquickflickable::nestedMouseAreaPropagateComposedEvents()
+{
+    QScopedPointer<QQuickView> window(new QQuickView);
+    window->setSource(testFileUrl("nestedmouseareapce.qml"));
+    QTRY_COMPARE(window->status(), QQuickView::Ready);
+    QQuickViewTestUtils::centerOnScreen(window.data());
+    QQuickViewTestUtils::moveMouseAway(window.data());
+    window->show();
+    QVERIFY(window->rootObject() != nullptr);
+    QVERIFY(QTest::qWaitForWindowActive(window.data()));
+
+    QQuickFlickable *flickable = qobject_cast<QQuickFlickable*>(window->rootObject());
+    QVERIFY(flickable != nullptr);
+
+    QCOMPARE(flickable->contentY(), 50.0f);
+    QQuickTest::pointerFlick(touchDevice, window.data(), 1, QPoint(100, 300), QPoint(100, 200), 100);
+
+    // flickable should have moved
+    QVERIFY(!qFuzzyCompare(flickable->contentY(), 50.0));
 }
 
 void tst_qquickflickable::nestedSliderUsingTouch_data()
@@ -2031,10 +2334,10 @@ void tst_qquickflickable::nestedSliderUsingTouch_data()
     QTest::addColumn<int>("releases");
     QTest::addColumn<int>("ungrabs");
 
-    QTest::newRow("keepBoth") << true << true << 8 << 1 << 0;
-    QTest::newRow("keepMouse") << true << false << 8 << 1 << 0;
-    QTest::newRow("keepTouch") << false << true << 8 << 1 << 0;
-    QTest::newRow("keepNeither") << false << false << 5 << 0 << 1;
+    QTest::newRow("keepBoth") << true << true << 8 << 1 << 1;
+    QTest::newRow("keepMouse") << true << false << 8 << 1 << 1;
+    QTest::newRow("keepTouch") << false << true << 8 << 1 << 1;
+    QTest::newRow("keepNeither") << false << false << 4 << 0 << 1;
 }
 
 void tst_qquickflickable::nestedSliderUsingTouch()
@@ -2049,8 +2352,8 @@ void tst_qquickflickable::nestedSliderUsingTouch()
     QScopedPointer<QQuickView> windowPtr(window);
     windowPtr->setSource(testFileUrl("nestedSlider.qml"));
     QTRY_COMPARE(window->status(), QQuickView::Ready);
-    QQuickViewTestUtil::centerOnScreen(window);
-    QQuickViewTestUtil::moveMouseAway(window);
+    QQuickVisualTestUtils::centerOnScreen(window);
+    QQuickVisualTestUtils::moveMouseAway(window);
     window->show();
     QVERIFY(QTest::qWaitForWindowActive(window));
     QVERIFY(window->rootObject() != nullptr);
@@ -2073,10 +2376,10 @@ void tst_qquickflickable::nestedSliderUsingTouch()
         QTest::touchEvent(window, touchDevice).move(0, p0, window);
         QQuickTouchUtils::flush(window);
     }
-    QCOMPARE(tda->active(), !ungrabs);
+    QCOMPARE(tda->active(), keepMouseGrab || keepTouchGrab);
     QTest::touchEvent(window, touchDevice).release(0, p0, window);
     QQuickTouchUtils::flush(window);
-    QTRY_COMPARE(tda->touchPointStates.first(), Qt::TouchPointPressed);
+    QTRY_COMPARE(tda->touchPointStates.first(), QEventPoint::State::Pressed);
     QTRY_VERIFY(tda->touchUpdates >= minUpdates);
     QTRY_COMPARE(tda->touchReleases, releases);
     QTRY_COMPARE(tda->ungrabs, ungrabs);
@@ -2085,17 +2388,18 @@ void tst_qquickflickable::nestedSliderUsingTouch()
 // QTBUG-31328
 void tst_qquickflickable::pressDelayWithLoader()
 {
+    auto device = mouseDevice;
     QScopedPointer<QQuickView> window(new QQuickView);
     window->setSource(testFileUrl("pressDelayWithLoader.qml"));
     QTRY_COMPARE(window->status(), QQuickView::Ready);
-    QQuickViewTestUtil::centerOnScreen(window.data());
-    QQuickViewTestUtil::moveMouseAway(window.data());
+    QQuickViewTestUtils::centerOnScreen(window.data());
+    QQuickViewTestUtils::moveMouseAway(window.data());
     window->show();
     QVERIFY(QTest::qWaitForWindowActive(window.data()));
     QVERIFY(window->rootObject() != nullptr);
 
     // do not crash
-    moveAndPress(window.data(), QPoint(150, 150));
+    QQuickTest::pointerMoveAndPress(device, window.data(), 0, QPoint(150, 150));
     QTest::mouseRelease(window.data(), Qt::LeftButton, Qt::NoModifier, QPoint(150, 150));
 }
 
@@ -2105,8 +2409,8 @@ void tst_qquickflickable::movementFromProgrammaticFlick()
     QScopedPointer<QQuickView> window(new QQuickView);
     window->setSource(testFileUrl("movementSignals.qml"));
     QTRY_COMPARE(window->status(), QQuickView::Ready);
-    QQuickViewTestUtil::centerOnScreen(window.data());
-    QQuickViewTestUtil::moveMouseAway(window.data());
+    QQuickViewTestUtils::centerOnScreen(window.data());
+    QQuickViewTestUtils::moveMouseAway(window.data());
     window->show();
     QVERIFY(QTest::qWaitForWindowActive(window.data()));
 
@@ -2134,22 +2438,22 @@ void tst_qquickflickable::contentSize()
     flickable.setWidth(100);
     QCOMPARE(flickable.width(), qreal(100));
     QCOMPARE(flickable.contentWidth(), qreal(-1.0));
-    QCOMPARE(cwspy.count(), 0);
+    QCOMPARE(cwspy.size(), 0);
 
     flickable.setContentWidth(10);
     QCOMPARE(flickable.width(), qreal(100));
     QCOMPARE(flickable.contentWidth(), qreal(10));
-    QCOMPARE(cwspy.count(), 1);
+    QCOMPARE(cwspy.size(), 1);
 
     flickable.setHeight(100);
     QCOMPARE(flickable.height(), qreal(100));
     QCOMPARE(flickable.contentHeight(), qreal(-1.0));
-    QCOMPARE(chspy.count(), 0);
+    QCOMPARE(chspy.size(), 0);
 
     flickable.setContentHeight(10);
     QCOMPARE(flickable.height(), qreal(100));
     QCOMPARE(flickable.contentHeight(), qreal(10));
-    QCOMPARE(chspy.count(), 1);
+    QCOMPARE(chspy.size(), 1);
 }
 
 // QTBUG-53726
@@ -2158,8 +2462,8 @@ void tst_qquickflickable::ratios_smallContent()
     QScopedPointer<QQuickView> window(new QQuickView);
     window->setSource(testFileUrl("ratios_smallContent.qml"));
     QTRY_COMPARE(window->status(), QQuickView::Ready);
-    QQuickViewTestUtil::centerOnScreen(window.data());
-    QQuickViewTestUtil::moveMouseAway(window.data());
+    QQuickViewTestUtils::centerOnScreen(window.data());
+    QQuickViewTestUtils::moveMouseAway(window.data());
     window->setTitle(QTest::currentTestFunction());
     window->show();
     QVERIFY(QTest::qWaitForWindowExposed(window.data()));
@@ -2181,11 +2485,12 @@ void tst_qquickflickable::ratios_smallContent()
 // QTBUG-48018
 void tst_qquickflickable::contentXYNotTruncatedToInt()
 {
+    auto device = mouseDevice;
     QScopedPointer<QQuickView> window(new QQuickView);
     window->setSource(testFileUrl("contentXY.qml"));
     QTRY_COMPARE(window->status(), QQuickView::Ready);
-    QQuickViewTestUtil::centerOnScreen(window.data());
-    QQuickViewTestUtil::moveMouseAway(window.data());
+    QQuickViewTestUtils::centerOnScreen(window.data());
+    QQuickViewTestUtils::moveMouseAway(window.data());
     window->show();
     QVERIFY(QTest::qWaitForWindowActive(window.data()));
 
@@ -2193,7 +2498,7 @@ void tst_qquickflickable::contentXYNotTruncatedToInt()
     QVERIFY(flickable);
 
     flickable->setContentX(1e10);
-    flick(window.data(), QPoint(200, 100), QPoint(100, 100), 50);
+    QQuickTest::pointerFlick(device, window.data(), 0, QPoint(200, 100), QPoint(100, 100), 50);
 
     // make sure we are not clipped at 2^31
     QVERIFY(flickable->contentX() > qreal(1e10));
@@ -2201,11 +2506,12 @@ void tst_qquickflickable::contentXYNotTruncatedToInt()
 
 void tst_qquickflickable::keepGrab()
 {
+    auto device = mouseDevice;
     QScopedPointer<QQuickView> window(new QQuickView);
     window->setSource(testFileUrl("keepGrab.qml"));
     QTRY_COMPARE(window->status(), QQuickView::Ready);
-    QQuickViewTestUtil::centerOnScreen(window.data());
-    QQuickViewTestUtil::moveMouseAway(window.data());
+    QQuickViewTestUtils::centerOnScreen(window.data());
+    QQuickViewTestUtils::moveMouseAway(window.data());
     window->show();
     QVERIFY(QTest::qWaitForWindowActive(window.data()));
 
@@ -2217,7 +2523,7 @@ void tst_qquickflickable::keepGrab()
     ma->setPreventStealing(true);
 
     QPoint pos(250, 250);
-    moveAndPress(window.data(), pos);
+    QQuickTest::pointerMoveAndPress(device, window.data(), 0, pos);
     for (int i = 0; i < 6; ++i) {
         pos += QPoint(10, 10);
         QTest::mouseMove(window.data(), pos);
@@ -2232,7 +2538,7 @@ void tst_qquickflickable::keepGrab()
     ma->setPreventStealing(false);
 
     pos = QPoint(250, 250);
-    moveAndPress(window.data(), pos);
+    QQuickTest::pointerMoveAndPress(device, window.data(), 0, pos);
     for (int i = 0; i < 6; ++i) {
         pos += QPoint(10, 10);
         QTest::mouseMove(window.data(), pos);
@@ -2251,6 +2557,8 @@ void tst_qquickflickable::overshoot()
 {
     QFETCH(QQuickFlickable::BoundsBehavior, boundsBehavior);
     QFETCH(int, boundsMovement);
+    QFETCH(bool, pixelAligned);
+    auto device = mouseDevice;
 
     QScopedPointer<QQuickView> window(new QQuickView);
     window->setSource(testFileUrl("overshoot.qml"));
@@ -2260,6 +2568,7 @@ void tst_qquickflickable::overshoot()
 
     QQuickFlickable *flickable = qobject_cast<QQuickFlickable*>(window->rootObject());
     QVERIFY(flickable);
+    flickable->setPixelAligned(pixelAligned);
 
     QCOMPARE(flickable->width(), 200.0);
     QCOMPARE(flickable->height(), 200.0);
@@ -2306,7 +2615,7 @@ void tst_qquickflickable::overshoot()
     QMetaObject::invokeMethod(flickable, "reset");
 
     // flick past the beginning
-    flick(window.data(), QPoint(10, 10), QPoint(50, 50), 100);
+    QQuickTest::pointerFlick(device, window.data(), 0, QPoint(10, 10), QPoint(50, 50), 50);
     QTRY_VERIFY(!flickable->property("flicking").toBool());
 
     if ((boundsMovement == QQuickFlickable::FollowBoundsBehavior) && (boundsBehavior & QQuickFlickable::OvershootBounds)) {
@@ -2375,7 +2684,7 @@ void tst_qquickflickable::overshoot()
     QMetaObject::invokeMethod(flickable, "reset");
 
     // flick past the end
-    flick(window.data(), QPoint(50, 50), QPoint(10, 10), 100);
+    QQuickTest::pointerFlick(device, window.data(), 0, QPoint(50, 50), QPoint(10, 10), 50);
     QTRY_VERIFY(!flickable->property("flicking").toBool());
 
     if ((boundsMovement == QQuickFlickable::FollowBoundsBehavior) && (boundsBehavior & QQuickFlickable::OvershootBounds)) {
@@ -2408,29 +2717,53 @@ void tst_qquickflickable::overshoot_data()
 {
     QTest::addColumn<QQuickFlickable::BoundsBehavior>("boundsBehavior");
     QTest::addColumn<int>("boundsMovement");
+    QTest::addColumn<bool>("pixelAligned");
 
     QTest::newRow("StopAtBounds,FollowBoundsBehavior")
             << QQuickFlickable::BoundsBehavior(QQuickFlickable::StopAtBounds)
-            << int(QQuickFlickable::FollowBoundsBehavior);
+            << int(QQuickFlickable::FollowBoundsBehavior) << false;
     QTest::newRow("DragOverBounds,FollowBoundsBehavior")
             << QQuickFlickable::BoundsBehavior(QQuickFlickable::DragOverBounds)
-            << int(QQuickFlickable::FollowBoundsBehavior);
+            << int(QQuickFlickable::FollowBoundsBehavior) << false;
     QTest::newRow("OvershootBounds,FollowBoundsBehavior")
             << QQuickFlickable::BoundsBehavior(QQuickFlickable::OvershootBounds)
-            << int(QQuickFlickable::FollowBoundsBehavior);
+            << int(QQuickFlickable::FollowBoundsBehavior) << false;
     QTest::newRow("DragAndOvershootBounds,FollowBoundsBehavior")
             << QQuickFlickable::BoundsBehavior(QQuickFlickable::DragAndOvershootBounds)
-            << int(QQuickFlickable::FollowBoundsBehavior);
+            << int(QQuickFlickable::FollowBoundsBehavior) << false;
 
     QTest::newRow("DragOverBounds,StopAtBounds")
             << QQuickFlickable::BoundsBehavior(QQuickFlickable::DragOverBounds)
-            << int(QQuickFlickable::StopAtBounds);
+            << int(QQuickFlickable::StopAtBounds) << false;
     QTest::newRow("OvershootBounds,StopAtBounds")
             << QQuickFlickable::BoundsBehavior(QQuickFlickable::OvershootBounds)
-            << int(QQuickFlickable::StopAtBounds);
+            << int(QQuickFlickable::StopAtBounds) << false;
     QTest::newRow("DragAndOvershootBounds,StopAtBounds")
             << QQuickFlickable::BoundsBehavior(QQuickFlickable::DragAndOvershootBounds)
-            << int(QQuickFlickable::StopAtBounds);
+            << int(QQuickFlickable::StopAtBounds) << false;
+
+    QTest::newRow("StopAtBounds,FollowBoundsBehavior,pixelAligned")
+            << QQuickFlickable::BoundsBehavior(QQuickFlickable::StopAtBounds)
+            << int(QQuickFlickable::FollowBoundsBehavior) << true;
+    QTest::newRow("DragOverBounds,FollowBoundsBehavior,pixelAligned")
+            << QQuickFlickable::BoundsBehavior(QQuickFlickable::DragOverBounds)
+            << int(QQuickFlickable::FollowBoundsBehavior) << true;
+    QTest::newRow("OvershootBounds,FollowBoundsBehavior,pixelAligned")
+            << QQuickFlickable::BoundsBehavior(QQuickFlickable::OvershootBounds)
+            << int(QQuickFlickable::FollowBoundsBehavior) << true;
+    QTest::newRow("DragAndOvershootBounds,FollowBoundsBehavior,pixelAligned")
+            << QQuickFlickable::BoundsBehavior(QQuickFlickable::DragAndOvershootBounds)
+            << int(QQuickFlickable::FollowBoundsBehavior) << true;
+
+    QTest::newRow("DragOverBounds,StopAtBounds,pixelAligned")
+            << QQuickFlickable::BoundsBehavior(QQuickFlickable::DragOverBounds)
+            << int(QQuickFlickable::StopAtBounds) << true;
+    QTest::newRow("OvershootBounds,StopAtBounds,pixelAligned")
+            << QQuickFlickable::BoundsBehavior(QQuickFlickable::OvershootBounds)
+            << int(QQuickFlickable::StopAtBounds) << true;
+    QTest::newRow("DragAndOvershootBounds,StopAtBounds,pixelAligned")
+            << QQuickFlickable::BoundsBehavior(QQuickFlickable::DragAndOvershootBounds)
+            << int(QQuickFlickable::StopAtBounds) << true;
 }
 
 void tst_qquickflickable::overshoot_reentrant()
@@ -2494,13 +2827,14 @@ void tst_qquickflickable::synchronousDrag_data()
 void tst_qquickflickable::synchronousDrag()
 {
     QFETCH(bool, synchronousDrag);
+    auto device = mouseDevice;
 
     QScopedPointer<QQuickView> scopedWindow(new QQuickView);
     QQuickView *window = scopedWindow.data();
     window->setSource(testFileUrl("longList.qml"));
     QTRY_COMPARE(window->status(), QQuickView::Ready);
-    QQuickViewTestUtil::centerOnScreen(window);
-    QQuickViewTestUtil::moveMouseAway(window);
+    QQuickVisualTestUtils::centerOnScreen(window);
+    QQuickVisualTestUtils::moveMouseAway(window);
     window->show();
     QVERIFY(window->rootObject() != nullptr);
     QVERIFY(QTest::qWaitForWindowActive(window));
@@ -2518,7 +2852,7 @@ void tst_qquickflickable::synchronousDrag()
     QCOMPARE(flickable->contentY(), 0.0f);
 
     // Drag via mouse
-    moveAndPress(window, p1);
+    QQuickTest::pointerMoveAndPress(device, window, 0, p1);
     QTest::mouseMove(window, p2);
     QTest::mouseMove(window, p3);
     QTest::mouseMove(window, p4);
@@ -2556,6 +2890,671 @@ void tst_qquickflickable::visibleAreaBinding()
     window->setSource(testFileUrl("visibleAreaBinding.qml"));
     QTRY_COMPARE(window->status(), QQuickView::Ready);
     // Shouldn't crash.
+}
+
+void tst_qquickflickable::parallelTouch() // QTBUG-30840
+{
+    const int threshold = qApp->styleHints()->startDragDistance();
+    QQuickView view;
+    view.setSource(testFileUrl("parallel.qml"));
+    view.show();
+    view.requestActivate();
+    QVERIFY(QTest::qWaitForWindowActive(&view));
+    QVERIFY(view.rootObject());
+    QQuickFlickable *flickable1 = view.rootObject()->findChild<QQuickFlickable*>("fl1");
+    QVERIFY(flickable1);
+    QQuickFlickable *flickable2 = view.rootObject()->findChild<QQuickFlickable*>("fl2");
+    QVERIFY(flickable2);
+
+    // Drag both in parallel via touch, opposite directions
+    QPoint p0(80, 240);
+    QPoint p1(240, 240);
+    QTest::touchEvent(&view, touchDevice).press(0, p0, &view).press(1, p1, &view);
+    int began1After = -1;
+    int began2After = -1;
+    for (int i = 0; i < 8; ++i) {
+        p0 += QPoint(0, threshold);
+        p1 -= QPoint(0, threshold);
+        QTest::touchEvent(&view, touchDevice).move(0, p0, &view).move(1, p1, &view);
+        QQuickTouchUtils::flush(&view);
+        if (began1After < 0 && flickable1->isDragging())
+            began1After = i;
+        if (began2After < 0 && flickable2->isDragging())
+            began2After = i;
+    }
+    qCDebug(lcTests, "flickables began dragging after %d and %d events respectively", began1After, began2After);
+    QVERIFY(flickable1->isDraggingVertically());
+    QVERIFY(flickable2->isDraggingVertically());
+    QCOMPARE(began1After, 2);
+    QCOMPARE(began2After, 2);
+    QTest::touchEvent(&view, touchDevice).release(0, p0, &view).release(1, p1, &view);
+    QTRY_VERIFY(!flickable1->isMoving());
+    QTRY_VERIFY(!flickable2->isMoving());
+}
+
+void tst_qquickflickable::ignoreNonLeftMouseButtons() // QTBUG-96909
+{
+    QFETCH(Qt::MouseButton, otherButton);
+    auto device = mouseDevice;
+    const int threshold = qApp->styleHints()->startDragDistance();
+    QQuickView view;
+    view.setSource(testFileUrl("dragon.qml"));
+    view.show();
+    view.requestActivate();
+    QQuickFlickable *flickable = static_cast<QQuickFlickable *>(view.rootObject());
+    QSignalSpy dragSpy(flickable, &QQuickFlickable::draggingChanged);
+
+    // Drag with left button
+    QPoint p1(100, 100);
+    QQuickTest::pointerMoveAndPress(device, &view, 0, p1);
+    for (int i = 0; i < 8; ++i) {
+        p1 -= QPoint(threshold, threshold);
+        QQuickTest::pointerMove(device, &view, 0, p1, 50);
+    }
+    QVERIFY(flickable->isDragging());
+    QCOMPARE(dragSpy.size(), 1);
+
+    // Press other button too, then release left button: dragging changes to false
+    QQuickTest::pointerPress(device, &view, 0, p1, otherButton);
+    QQuickTest::pointerRelease(device, &view, 0, p1, Qt::LeftButton);
+    QTRY_COMPARE(flickable->isDragging(), false);
+    QCOMPARE(dragSpy.size(), 2);
+
+    // Drag further with the other button held: Flickable ignores it
+    for (int i = 0; i < 8; ++i) {
+        p1 -= QPoint(threshold, threshold);
+        QQuickTest::pointerMove(device, &view, 0, p1, 50);
+    }
+    QCOMPARE(flickable->isDragging(), false);
+    QCOMPARE(dragSpy.size(), 2);
+
+    // Release other button: nothing happens
+    QQuickTest::pointerRelease(device, &view, 0, p1, otherButton);
+    QCOMPARE(dragSpy.size(), 2);
+}
+
+void tst_qquickflickable::ignoreNonLeftMouseButtons_data()
+{
+    QTest::addColumn<Qt::MouseButton>("otherButton");
+
+    QTest::newRow("right") << Qt::RightButton;
+    QTest::newRow("middle") << Qt::MiddleButton;
+}
+
+void tst_qquickflickable::receiveTapOutsideContentItem()
+{
+    // Check that if we add a TapHandler handler to a flickable, we
+    // can tap on the whole flickable area inside it, which includes
+    // the extents in addition to the content item.
+    QQuickView window;
+    window.resize(200, 200);
+    FlickableWithExtents flickable;
+    flickable.setParentItem(window.contentItem());
+    flickable.setWidth(200);
+    flickable.setHeight(200);
+    flickable.setContentWidth(100);
+    flickable.setContentHeight(100);
+
+    window.show();
+    QVERIFY(QTest::qWaitForWindowActive(&window));
+
+    QQuickTapHandler tapHandler(&flickable);
+    QSignalSpy clickedSpy(&tapHandler, SIGNAL(tapped(QEventPoint,Qt::MouseButton)));
+
+    // Tap outside the content item in the top-left corner
+    QTest::mouseClick(&window, Qt::LeftButton, {}, QPoint(5, 5));
+    QCOMPARE(clickedSpy.size(), 1);
+
+    // Tap outside the content item in the bottom-right corner
+    const QPoint bottomRight(flickable.contentItem()->width() + 5, flickable.contentItem()->height() + 5);
+    QTest::mouseClick(&window, Qt::LeftButton, {}, bottomRight);
+    QCOMPARE(clickedSpy.size(), 2);
+}
+
+void tst_qquickflickable::flickWhenRotated_data()
+{
+    QTest::addColumn<qreal>("rootRotation");
+    QTest::addColumn<qreal>("flickableRotation");
+    QTest::addColumn<qreal>("scale");
+
+    static constexpr qreal rotations[] = { 0, 30, 90, 180, 270 };
+    static constexpr qreal scales[] = { 0.3, 1, 1.5 };
+
+    for (const auto pr : rotations) {
+        for (const auto fr : rotations) {
+            if (pr <= 90) {
+                for (const auto s : scales)
+                    QTest::addRow("parent: %g, flickable: %g, scale: %g", pr, fr, s) << pr << fr << s;
+            } else {
+                // don't bother trying every scale with every set of rotations, to save time
+                QTest::addRow("parent: %g, flickable: %g, scale: 1", pr, fr) << pr << fr << qreal(1);
+            }
+        }
+    }
+}
+
+void tst_qquickflickable::flickWhenRotated() // QTBUG-99639
+{
+    QFETCH(qreal, rootRotation);
+    QFETCH(qreal, flickableRotation);
+    QFETCH(qreal, scale);
+    auto device = mouseDevice;
+
+    QQuickView window;
+    QVERIFY(QQuickTest::showView(window, testFileUrl("rotatedFlickable.qml")));
+    QQuickItem *rootItem = window.rootObject();
+    QVERIFY(rootItem);
+    QQuickFlickable *flickable = rootItem->findChild<QQuickFlickable*>();
+    QVERIFY(flickable);
+
+    rootItem->setRotation(rootRotation);
+    flickable->setRotation(flickableRotation);
+    rootItem->setScale(scale);
+    QVERIFY(flickable->isAtYBeginning());
+
+    // Flick in Y direction in Flickable's coordinate system and check how much it moved
+    const QPointF startPoint = flickable->mapToGlobal(QPoint(20, 180));
+    const QPointF endPoint = flickable->mapToGlobal(QPoint(20, 40));
+    QQuickTest::pointerFlick(device, &window, 0, window.mapFromGlobal(startPoint).toPoint(), window.mapFromGlobal(endPoint).toPoint(), 100);
+    QTRY_VERIFY(flickable->isMoving());
+    QTRY_VERIFY(!flickable->isMoving());
+    qCDebug(lcTests) << "flicking from" << startPoint << "to" << endPoint << ": ended at contentY" << flickable->contentY();
+    // usually flickable->contentY() is at 275 or very close
+    QVERIFY(!flickable->isAtYBeginning());
+}
+
+void tst_qquickflickable::flickAndReleaseOutsideBounds() // QTBUG-104987
+{
+    // Check that flicking works when the mouse release happens
+    // outside the bounds of the flickable (and the flick started on top
+    // of a TapHandler that has a passive grab).
+    QQuickView window;
+    QVERIFY(QQuickTest::showView(window, testFileUrl("flickableWithTapHandler.qml")));
+    QQuickItem *rootItem = window.rootObject();
+    QVERIFY(rootItem);
+    QQuickFlickable *flickable = rootItem->findChild<QQuickFlickable*>();
+    QVERIFY(flickable);
+    QQuickItem *childItem = flickable->findChild<QQuickItem*>("childItem");
+    QVERIFY(childItem);
+
+    QVERIFY(flickable->isAtYBeginning());
+
+    // Startpoint is on top of the tapHandler, while the endpoint is outside the flickable
+    const QPointF startPos = childItem->mapToGlobal(QPoint(10, 10));
+    const QPointF endPos = flickable->mapToGlobal(QPoint(10, -10));
+    const QPoint globalStartPos = window.mapFromGlobal(startPos).toPoint();
+    const QPoint globalEndPos = window.mapFromGlobal(endPos).toPoint();
+    const qreal dragDistance = 20;
+
+    // Note: here we need to initiate a flick using raw events, rather than
+    // flickable.flick(), since we're testing if the mouse events takes the
+    // correct path to starts a flick (among passive and exclusive grabbers, combined
+    // with childMouseEventFilter()).
+    QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, globalStartPos);
+    QTest::mouseMove(&window, globalStartPos - QPoint(0, dragDistance / 2));
+    QTest::mouseMove(&window, globalStartPos - QPoint(0, dragDistance));
+    QTest::mouseMove(&window, globalEndPos);
+    QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, globalEndPos);
+
+    // Ensure that the content item ends up being moved more than what we dragged
+    QTRY_VERIFY(flickable->contentY() > dragDistance * 2);
+}
+
+void tst_qquickflickable::scrollingWithFractionalExtentSize_data()
+{
+    QTest::addColumn<QByteArray>("property");
+    QTest::addColumn<bool>("isYAxis");
+    QTest::addColumn<bool>("atBeginning");
+    QTest::addColumn<QQuickFlickable::BoundsBehaviorFlag>("boundsBehaviour");
+
+    QTest::newRow("minyextent") << QByteArray("topMargin") << true << true << QQuickFlickable::StopAtBounds;
+    QTest::newRow("maxyextent") << QByteArray("bottomMargin") << true << false << QQuickFlickable::StopAtBounds;
+    QTest::newRow("minxextent") << QByteArray("leftMargin") << false << true << QQuickFlickable::StopAtBounds;
+    QTest::newRow("maxxextent") << QByteArray("rightMargin") << false << false << QQuickFlickable::StopAtBounds;
+
+    QTest::newRow("minyextent") << QByteArray("topMargin") << true << true << QQuickFlickable::DragAndOvershootBounds;
+    QTest::newRow("maxyextent") << QByteArray("bottomMargin") << true << false << QQuickFlickable::DragAndOvershootBounds;
+    QTest::newRow("minxextent") << QByteArray("leftMargin") << false << true << QQuickFlickable::DragAndOvershootBounds;
+    QTest::newRow("maxxextent") << QByteArray("rightMargin") << false << false << QQuickFlickable::DragAndOvershootBounds;
+}
+
+void tst_qquickflickable::scrollingWithFractionalExtentSize() // QTBUG-101268
+{
+    QFETCH(QByteArray, property);
+    QFETCH(bool, isYAxis);
+    QFETCH(bool, atBeginning);
+    QFETCH(QQuickFlickable::BoundsBehaviorFlag, boundsBehaviour);
+
+    QQuickView window;
+    QVERIFY(QQuickTest::showView(window, testFileUrl("fractionalExtent.qml")));
+    QQuickItem *rootItem = window.rootObject();
+    QVERIFY(rootItem);
+    QQuickFlickable *flickable = qobject_cast<QQuickFlickable *>(rootItem);
+    QVERIFY(flickable);
+    flickable->setBoundsBehavior(boundsBehaviour);
+
+    qreal value = 100.5;
+    flickable->setProperty(property.constData(), 100.5);
+    if (isYAxis)
+        flickable->setContentY(atBeginning ? -value : value + qAbs(flickable->height() - flickable->contentHeight()));
+    else
+        flickable->setContentX(atBeginning ? -value : value + qAbs(flickable->width() - flickable->contentWidth()));
+
+    if (isYAxis) {
+        QVERIFY(atBeginning ? flickable->isAtYBeginning() : flickable->isAtYEnd());
+        QVERIFY(!flickable->isMovingVertically());
+    } else {
+        QVERIFY(atBeginning ? flickable->isAtXBeginning() : flickable->isAtXEnd());
+        QVERIFY(!flickable->isMovingHorizontally());
+    }
+
+    QPointF pos(flickable->x() + flickable->width() / 2, flickable->y() + flickable->height() / 2);
+    QPoint angleDelta(isYAxis ? 0 : (atBeginning ? -50 : 50), isYAxis ? (atBeginning ? -50 : 50) : 0);
+
+    QWheelEvent wheelEvent1(pos, window.mapToGlobal(pos), QPoint(), angleDelta,
+                               Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+
+    QGuiApplication::sendEvent(&window, &wheelEvent1);
+    qApp->processEvents();
+    if (isYAxis) {
+        QVERIFY(flickable->isMovingVertically());
+        QTRY_VERIFY(!flickable->isMovingVertically());
+        QVERIFY(!(atBeginning ? flickable->isAtYBeginning() : flickable->isAtYEnd()));
+    } else {
+        QVERIFY(flickable->isMovingHorizontally());
+        QTRY_VERIFY(!flickable->isMovingHorizontally());
+        QVERIFY(!(atBeginning ? flickable->isAtXBeginning() : flickable->isAtXEnd()));
+    }
+
+    QWheelEvent wheelEvent2(pos, window.mapToGlobal(pos), QPoint(), -angleDelta,
+                               Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+    wheelEvent2.setTimestamp(wheelEvent1.timestamp() + 10);
+
+    QGuiApplication::sendEvent(&window, &wheelEvent2);
+    qApp->processEvents();
+
+    if (isYAxis) {
+        QVERIFY(flickable->isMovingVertically());
+        QTRY_VERIFY(!flickable->isMovingVertically());
+        QVERIFY(atBeginning ? flickable->isAtYBeginning() : flickable->isAtYEnd());
+    } else {
+        QVERIFY(flickable->isMovingHorizontally());
+        QTRY_VERIFY(!flickable->isMovingHorizontally());
+        QVERIFY(atBeginning ? flickable->isAtXBeginning() : flickable->isAtXEnd());
+    }
+}
+
+void tst_qquickflickable::setContentPositionWhileDragging_data()
+{
+    QTest::addColumn<bool>("isHorizontal");
+    QTest::addColumn<int>("newPos");
+    QTest::addColumn<int>("newExtent");
+    QTest::newRow("horizontal, setContentX") << true << 0 << -1;
+    QTest::newRow("vertical, setContentY") << false << 0 << -1;
+    QTest::newRow("horizontal, setContentWidth") << true << -1 << 200;
+    QTest::newRow("vertical, setContentHeight") << false << -1 << 200;
+}
+
+void tst_qquickflickable::setContentPositionWhileDragging() // QTBUG-104966
+{
+    QFETCH(bool, isHorizontal);
+    QFETCH(int, newPos);
+    QFETCH(int, newExtent);
+    auto device = mouseDevice;
+
+    QQuickView window;
+    QVERIFY(QQuickTest::showView(window, testFileUrl("contentPosWhileDragging.qml")));
+    QQuickViewTestUtils::centerOnScreen(&window);
+    QVERIFY(window.isVisible());
+    QQuickItem *rootItem = window.rootObject();
+    QVERIFY(rootItem);
+    QQuickFlickable *flickable = rootItem->findChild<QQuickFlickable *>();
+    QVERIFY(flickable);
+
+    const auto contentPos = [flickable]() -> QPoint {
+        return QPoint(flickable->contentX(), flickable->contentY());
+    };
+    const qreal threshold =
+            qApp->styleHints()->startDragDistance() * flickable->parentItem()->scale();
+    const QPoint thresholdPnt(qRound(threshold), qRound(threshold));
+    const auto flickableCenterPos = flickable->mapToScene({flickable->width() / 2, flickable->height() / 2}).toPoint();
+
+    // Drag the mouse until we have surpassed the mouse drag threshold and a drag is initiated
+    // by checking for  flickable->isDragging()
+    QPoint pos = flickableCenterPos;
+    QQuickTest::pointerMoveAndPress(device, &window, 0, pos);
+    int j = 1;
+    QVERIFY(!flickable->isDragging());
+    while (!flickable->isDragging()) {
+        pos = flickableCenterPos - QPoint(j, j);
+        QTest::mouseMove(&window, pos);
+        j++;
+    }
+
+    // Now we have entered the drag state
+    QVERIFY(flickable->isDragging());
+    QCOMPARE(flickable->contentX(), 0);
+    QCOMPARE(flickable->contentY(), 0);
+    QVERIFY(flickable->width() > 0);
+    QVERIFY(flickable->height() > 0);
+
+
+    const int moveLength = 50;
+    const QPoint unitDelta(isHorizontal ? 1 : 0, isHorizontal ? 0 : 1);
+    const QPoint moveDelta = unitDelta * moveLength;
+
+    pos -= 3*moveDelta;
+    QTest::mouseMove(&window, pos);
+    // Should be positive because we drag in the opposite direction
+    QCOMPARE(contentPos(), 3 * moveDelta);
+    QPoint expectedContentPos;
+
+    // Set the content item position back to zero *while dragging* (!!)
+    if (newPos >= 0) {
+        if (isHorizontal) {
+            flickable->setContentX(newPos);
+        } else {
+            flickable->setContentY(newPos);
+        }
+        // Continue dragging
+        pos -= moveDelta;
+        expectedContentPos = moveDelta;
+    } else if (newExtent >= 0) {
+        // ...or reduce the content size be be less than current (contentX, contentY) position
+        // This forces the content item to move.
+        // contentY: 150
+        // 320 - 150 = 170 pixels down to bottom
+        // Now reduce contentHeight to 200
+        // since we are at the bottom, and the flickable is 100 pixels tall, contentY must land
+        // at newExtent - 100.
+
+        if (isHorizontal) {
+            flickable->setContentWidth(newExtent);
+        } else {
+            flickable->setContentHeight(newExtent);
+        }
+        // Assumption is that the contentItem is aligned to the bottom of the flickable
+        // We therefore cannot scroll/flick it further down. Drag it up towards the top instead
+        // (by moving mouse down).
+        pos += moveDelta;
+        expectedContentPos = unitDelta * (newExtent - (isHorizontal ? flickable->width() : flickable->height()));
+    }
+
+    QTest::mouseMove(&window, pos);
+
+    // Make sure that the contentItem was only dragged the delta in mouse movement since the last
+    // setContentX/Y() call.
+    QCOMPARE(contentPos(), expectedContentPos);
+    QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, pos);
+    QVERIFY(!flickable->isDragging());
+}
+
+void tst_qquickflickable::coalescedMove()
+{
+    QQuickView *window = new QQuickView;
+    QScopedPointer<QQuickView> windowPtr(window);
+    windowPtr->setSource(testFileUrl("flickable03.qml"));
+    QTRY_COMPARE(window->status(), QQuickView::Ready);
+    QQuickVisualTestUtils::centerOnScreen(window);
+    QQuickVisualTestUtils::moveMouseAway(window);
+    window->show();
+    QVERIFY(QTest::qWaitForWindowActive(window));
+    QVERIFY(window->rootObject() != nullptr);
+
+    QQuickFlickable *flickable = qobject_cast<QQuickFlickable*>(window->rootObject());
+    QVERIFY(flickable != nullptr);
+
+    QSignalSpy movementStartedSpy(flickable, SIGNAL(movementStarted()));
+    QSignalSpy movementEndedSpy(flickable, SIGNAL(movementEnded()));
+    QSignalSpy flickStartedSpy(flickable, SIGNAL(flickStarted()));
+    QSignalSpy flickEndedSpy(flickable, SIGNAL(flickEnded()));
+
+    QTest::touchEvent(window, touchDevice).press(0, {10, 10}).commit();
+
+    QTest::touchEvent(window, touchDevice).move(0, {10, 40}).commit();
+
+    QTest::touchEvent(window, touchDevice).move(0, {10, 100}).commit();
+
+    QTest::touchEvent(window, touchDevice).release(0, {10, 150}).commit();
+    QQuickTouchUtils::flush(window);
+
+    QTRY_VERIFY(!flickable->isMoving());
+
+    QCOMPARE(movementStartedSpy.size(), 1);
+    QCOMPARE(flickStartedSpy.size(), 1);
+    QCOMPARE(movementEndedSpy.size(), 1);
+    QCOMPARE(flickEndedSpy.size(), 1);
+}
+
+void tst_qquickflickable::onlyOneMove()
+{
+    QQuickView *window = new QQuickView;
+    QScopedPointer<QQuickView> windowPtr(window);
+    windowPtr->setSource(testFileUrl("flickable03.qml"));
+    QTRY_COMPARE(window->status(), QQuickView::Ready);
+    QQuickVisualTestUtils::centerOnScreen(window);
+    QQuickVisualTestUtils::moveMouseAway(window);
+    window->show();
+    QVERIFY(QTest::qWaitForWindowActive(window));
+    QVERIFY(window->rootObject() != nullptr);
+
+    QQuickFlickable *flickable = qobject_cast<QQuickFlickable*>(window->rootObject());
+    QVERIFY(flickable != nullptr);
+
+    QSignalSpy movementStartedSpy(flickable, SIGNAL(movementStarted()));
+    QSignalSpy movementEndedSpy(flickable, SIGNAL(movementEnded()));
+    QSignalSpy flickStartedSpy(flickable, SIGNAL(flickStarted()));
+    QSignalSpy flickEndedSpy(flickable, SIGNAL(flickEnded()));
+
+    QTest::touchEvent(window, touchDevice).press(0, {10, 10}).commit();
+    QQuickTouchUtils::flush(window);
+
+    QTest::touchEvent(window, touchDevice).move(0, {10, 100}).commit();
+    QQuickTouchUtils::flush(window);
+
+    QTest::touchEvent(window, touchDevice).release(0, {10, 200}).commit();
+    QQuickTouchUtils::flush(window);
+
+    QTRY_VERIFY(!flickable->isMoving());
+
+    QCOMPARE(movementStartedSpy.size(), 1);
+    QCOMPARE(flickStartedSpy.size(), 1);
+    QCOMPARE(movementEndedSpy.size(), 1);
+    QCOMPARE(flickEndedSpy.size(), 1);
+}
+
+void tst_qquickflickable::proportionalWheelScrolling() // QTBUG-106338 etc.
+{
+    QQuickView window;
+    QVERIFY(QQuickTest::showView(window, testFileUrl("wheel.qml")));
+    QQuickViewTestUtils::centerOnScreen(&window);
+    QVERIFY(window.isVisible());
+    QQuickItem *rootItem = window.rootObject();
+    QVERIFY(rootItem);
+    QQuickFlickable *flickable = rootItem->findChild<QQuickFlickable *>();
+    QVERIFY(flickable);
+
+    QVERIFY(!flickable->property("ended").value<bool>());
+
+    QPointF pos(flickable->x() + flickable->width() / 2, flickable->y() + flickable->height() / 2);
+    QPoint angleDelta(0, -120);
+    QWheelEvent wheelEvent(pos, window.mapToGlobal(pos), QPoint(), angleDelta,
+                               Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+
+    QGuiApplication::sendEvent(&window, &wheelEvent);
+    qApp->processEvents();
+
+    // Verify that scrolling is proportional to the wheel delta
+    QVERIFY(flickable->isMovingVertically());
+    QTRY_VERIFY(!flickable->isMovingVertically());
+
+    // The current movement formula being used is: delta / 120 * wheelScrollLines * 24
+    const int defaultWheelDecel = 15000;
+    bool wheelDecelerationEnvSet = false;
+    const int wheelDecelerationEnv = qEnvironmentVariableIntValue("QT_QUICK_FLICKABLE_WHEEL_DECELERATION", &wheelDecelerationEnvSet);
+    const qreal wheelDecel = wheelDecelerationEnvSet ? wheelDecelerationEnv : defaultWheelDecel;
+    const bool proportionalWheel = wheelDecel >= 15000;
+    qCDebug(lcTests) << "platform wheel decel" << defaultWheelDecel
+                     << "env wheel decel" << wheelDecelerationEnv
+                     << "expect proportional scrolling?" << proportionalWheel;
+    const qreal expectedMovementFromWheelClick = qAbs(angleDelta.y()) / 120 * qApp->styleHints()->wheelScrollLines() * 24;
+
+    if (proportionalWheel)
+        QCOMPARE(flickable->contentY(), expectedMovementFromWheelClick);
+
+    QVERIFY(flickable->property("ended").value<bool>());
+    QCOMPARE(flickable->property("movementsAfterEnd").value<int>(), 0);
+
+    flickable->setProperty("ended", QVariant::fromValue(false));
+    flickable->setContentY(0);
+
+    // Verify that multiple wheel events in a row won't accumulate the scroll distance, before the timeline completes
+    wheelEvent.setTimestamp(wheelEvent.timestamp() + 2000);
+    QGuiApplication::sendEvent(&window, &wheelEvent);
+
+    wheelEvent.setTimestamp(wheelEvent.timestamp() + 10);
+    QGuiApplication::sendEvent(&window, &wheelEvent);
+
+    wheelEvent.setTimestamp(wheelEvent.timestamp() + 10);
+    QGuiApplication::sendEvent(&window, &wheelEvent);
+
+    qApp->processEvents();
+
+    QVERIFY(flickable->isMovingVertically());
+    QTRY_VERIFY(!flickable->isMovingVertically());
+
+    if (proportionalWheel) {
+        QVERIFY2(flickable->contentY() >= expectedMovementFromWheelClick, "The contentItem moved shorter than expected from a wheelEvent");
+        QCOMPARE_LT(flickable->contentY(), expectedMovementFromWheelClick * 3);
+    }
+
+    QVERIFY(flickable->property("ended").value<bool>());
+    QCOMPARE(flickable->property("movementsAfterEnd").value<int>(), 0);
+}
+
+void tst_qquickflickable::touchCancel()
+{
+    QQuickView window;
+    QVERIFY(QQuickTest::showView(window, testFileUrl("flickable03.qml")));
+    QQuickViewTestUtils::centerOnScreen(&window);
+    QVERIFY(window.isVisible());
+
+    QQuickFlickable *flickable = qobject_cast<QQuickFlickable*>(window.rootObject());
+    QVERIFY(flickable != nullptr);
+
+    QSignalSpy movementStartedSpy(flickable, SIGNAL(movementStarted()));
+    QSignalSpy movementEndedSpy(flickable, SIGNAL(movementEnded()));
+
+    int touchPosY = 10;
+    QTest::touchEvent(&window, touchDevice).press(0, {10, touchPosY}).commit();
+    QQuickTouchUtils::flush(&window);
+
+    for (int i = 0; i < 3; ++i) {
+        touchPosY += qApp->styleHints()->startDragDistance();
+        QTest::touchEvent(&window, touchDevice).move(0, {10, touchPosY}).commit();
+        QQuickTouchUtils::flush(&window);
+    }
+
+    QTRY_COMPARE(movementStartedSpy.size(), 1);
+    QWindowSystemInterface::handleTouchCancelEvent(nullptr, touchDevice);
+    QTRY_COMPARE(movementEndedSpy.size(), 1);
+}
+
+void tst_qquickflickable::pixelAlignedEndPoints()
+{
+    QQuickView window;
+    QVERIFY(QQuickTest::showView(window, testFileUrl("endpoints.qml")));
+    QQuickViewTestUtils::centerOnScreen(&window);
+    QVERIFY(window.isVisible());
+    QQuickItem *rootItem = window.rootObject();
+    QVERIFY(rootItem);
+    QQuickFlickable *flickable = qobject_cast<QQuickFlickable*>(rootItem);
+    QVERIFY(flickable);
+    flickable->setPixelAligned(true);
+    QVERIFY(flickable->isAtYBeginning());
+
+    QSignalSpy isAtEndSpy(flickable, &QQuickFlickable::atYEndChanged);
+    QSignalSpy isAtBeginningSpy(flickable, &QQuickFlickable::atYBeginningChanged);
+
+    flickable->setContentY(199.99);
+    QCOMPARE(flickable->contentY(), 200);
+    QVERIFY(!flickable->isAtYBeginning());
+    QVERIFY(flickable->isAtYEnd());
+    QCOMPARE(isAtEndSpy.count(), 1);
+    QCOMPARE(isAtBeginningSpy.count(), 1);
+
+    flickable->setContentY(0.01);
+    QCOMPARE(flickable->contentY(), 0);
+    QVERIFY(flickable->isAtYBeginning());
+    QVERIFY(!flickable->isAtYEnd());
+    QCOMPARE(isAtEndSpy.count(), 2);
+    QCOMPARE(isAtBeginningSpy.count(), 2);}
+
+void tst_qquickflickable::nestedWheelEventPropagation_data()
+{
+    QTest::addColumn<bool>("isHorizontal");
+    QTest::addColumn<bool>("isInverted");
+    QTest::addColumn<bool>("offsetStart");
+    QTest::newRow("top") << false << false << false;
+    QTest::newRow("bottom") << false << true << false;
+    QTest::newRow("left") << true << false << false;
+    QTest::newRow("right") << true << true << false;
+    QTest::newRow("top with offset") << false << false << true;
+    QTest::newRow("bottom with offset") << false << true << true;
+    QTest::newRow("left with offset") << true << false << true;
+    QTest::newRow("right with offset") << true << true << true;
+}
+
+void tst_qquickflickable::nestedWheelEventPropagation()
+{
+    // Arrange
+    QFETCH(bool, isHorizontal);
+    QFETCH(bool, isInverted);
+    QFETCH(bool, offsetStart);
+
+    QQuickView view;
+    view.setSource(testFileUrl("nestedWheel.qml"));
+    QTRY_COMPARE(view.status(), QQuickView::Ready);
+    QQuickVisualTestUtils::centerOnScreen(&view);
+    QQuickVisualTestUtils::moveMouseAway(&view);
+    view.show();
+    view.requestActivate();
+    QVERIFY(QTest::qWaitForWindowActive(&view));
+    QVERIFY(view.rootObject());
+
+    QQuickMouseArea *outer = qobject_cast<QQuickMouseArea *>(view.rootObject());
+    QVERIFY(outer);
+
+    QQuickFlickable *inner = outer->findChild<QQuickFlickable *>("innerFlickable");
+    QVERIFY(inner);
+    inner->setFlickableDirection(isHorizontal ? QQuickFlickable::HorizontalFlick
+                                              : QQuickFlickable::VerticalFlick);
+
+    // Setting isInverted property moves the Flickable viewable area to the opposite corner
+    inner->setProperty("isInverted", isInverted);
+    QCOMPARE(inner->contentX(), isInverted ? 100 : 0);
+    QCOMPARE(inner->contentY(), isInverted ? 100 : 0);
+
+    if (offsetStart) {
+        // Set starting position slightly away from the bound
+        inner->setContentX(isInverted ? 99.0 : 1.0);
+        inner->setContentY(isInverted ? 99.0 : 1.0);
+    }
+
+    QSignalSpy propagateSpy(outer, &QQuickMouseArea::wheel);
+
+    // Act
+    QPoint position(50, 50);
+    QWheelEvent event(position, view.mapToGlobal(position), QPoint(),
+                      QPoint(isHorizontal ? (isInverted ? -120 : 120) : 0,
+                             !isHorizontal ? (isInverted ? -120 : 120) : 0),
+                      Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+    event.setAccepted(false);
+    QGuiApplication::sendEvent(&view, &event);
+
+    // Assert
+    QCOMPARE(inner->isMoving(), offsetStart);
+    QCOMPARE(propagateSpy.count(), 1);
 }
 
 QTEST_MAIN(tst_qquickflickable)

@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -29,20 +29,20 @@ class WebNodeTest : public PageTestBase {
 
 TEST_F(WebNodeTest, QuerySelectorMatches) {
   SetInnerHTML("<div id=x><span class=a></span></div>");
-  WebElement element = Root().QuerySelector(".a");
+  WebElement element = Root().QuerySelector(AtomicString(".a"));
   EXPECT_FALSE(element.IsNull());
   EXPECT_TRUE(element.HasHTMLTagName("span"));
 }
 
 TEST_F(WebNodeTest, QuerySelectorDoesNotMatch) {
   SetInnerHTML("<div id=x><span class=a></span></div>");
-  WebElement element = Root().QuerySelector("section");
+  WebElement element = Root().QuerySelector(AtomicString("section"));
   EXPECT_TRUE(element.IsNull());
 }
 
 TEST_F(WebNodeTest, QuerySelectorError) {
   SetInnerHTML("<div></div>");
-  WebElement element = Root().QuerySelector("@invalid-selector");
+  WebElement element = Root().QuerySelector(AtomicString("@invalid-selector"));
   EXPECT_TRUE(element.IsNull());
 }
 
@@ -67,7 +67,7 @@ TEST_F(WebNodeSimTest, IsFocused) {
                                      "text/css");
 
   LoadURL("https://example.com/test.html");
-  WebView().MainFrameWidget()->Resize(WebSize(800, 600));
+  WebView().MainFrameViewWidget()->Resize(gfx::Size(800, 600));
 
   main_resource.Write(R"HTML(
     <!DOCTYPE html>
@@ -77,21 +77,35 @@ TEST_F(WebNodeSimTest, IsFocused) {
 
   css_resource.Start();
 
-  WebNode input_node(GetDocument().getElementById("focusable"));
+  WebNode input_node(GetDocument().getElementById(AtomicString("focusable")));
   EXPECT_FALSE(input_node.IsFocusable());
-  EXPECT_EQ(!RuntimeEnabledFeatures::BlockHTMLParserOnStyleSheetsEnabled(),
-            GetDocument().GetStyleEngine().HasPendingRenderBlockingSheets());
+  EXPECT_FALSE(GetDocument().HaveRenderBlockingStylesheetsLoaded());
 
   main_resource.Finish();
   css_resource.Complete("dummy {}");
   test::RunPendingTasks();
-
-  if (RuntimeEnabledFeatures::BlockHTMLParserOnStyleSheetsEnabled()) {
-    // Need to re-initialize the WebNode since it was null on construction.
-    EXPECT_TRUE(input_node.IsNull());
-    input_node = GetDocument().getElementById("focusable");
-  }
   EXPECT_TRUE(input_node.IsFocusable());
+}
+
+TEST_F(WebNodeTest, CannotFindTextInElementThatIsNotAContainer) {
+  SetInnerHTML(R"HTML(
+    <div><br class="not-a-container"/> Hello world! </div>
+  )HTML");
+  WebElement element = Root().QuerySelector(AtomicString(".not-a-container"));
+
+  EXPECT_FALSE(element.IsNull());
+  EXPECT_TRUE(element.FindTextInElementWith("Hello world").IsEmpty());
+}
+
+TEST_F(WebNodeTest, CanFindTextInElementThatIsAContainer) {
+  SetInnerHTML(R"HTML(
+    <body class="container"><div> Hello world! </div></body>
+  )HTML");
+  WebElement element = Root().QuerySelector(AtomicString(".container"));
+
+  EXPECT_FALSE(element.IsNull());
+  EXPECT_EQ(WebString(" Hello world! "),
+            element.FindTextInElementWith("Hello world"));
 }
 
 }  // namespace blink

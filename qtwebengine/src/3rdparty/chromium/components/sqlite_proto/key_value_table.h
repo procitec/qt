@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "base/memory/weak_ptr.h"
 #include "sql/statement.h"
 
 namespace google {
@@ -52,7 +53,7 @@ std::string GetDeleteAllSql(const std::string& table_name);
 // relative to the related classes. Making KeyValueTable<T> stateless instead
 // could be a better way to resolve these lifetime issues in the long run.
 template <typename T>
-class KeyValueTable : public base::SupportsWeakPtr<KeyValueTable<T>> {
+class KeyValueTable {
  public:
   explicit KeyValueTable(const std::string& table_name);
   // Virtual for testing.
@@ -70,8 +71,13 @@ class KeyValueTable : public base::SupportsWeakPtr<KeyValueTable<T>> {
                           sql::Database* db);
   virtual void DeleteAllData(sql::Database* db);
 
+  base::WeakPtr<KeyValueTable<T>> AsWeakPtr() {
+    return weak_ptr_factory_.GetWeakPtr();
+  }
+
  private:
   const std::string table_name_;
+  base::WeakPtrFactory<KeyValueTable<T>> weak_ptr_factory_{this};
 };
 
 template <typename T>
@@ -85,12 +91,8 @@ void KeyValueTable<T>::GetAllData(std::map<std::string, T>* data_map,
       ::sqlite_proto::internal::GetSelectAllSql(table_name_).c_str()));
   while (reader.Step()) {
     auto it = data_map->emplace(reader.ColumnString(0), T()).first;
-    int size = reader.ColumnByteLength(1);
-    const void* blob = reader.ColumnBlob(1);
-    // Annoyingly, a nullptr result means either that an error occurred or that
-    // the blob was empty; partially disambiguate based on the length.
-    DCHECK(size && blob || !size && !blob) << !!size << !!blob;
-    it->second.ParseFromArray(blob, size);
+    base::span<const uint8_t> blob = reader.ColumnBlob(1);
+    it->second.ParseFromArray(blob.data(), blob.size());
   }
 }
 

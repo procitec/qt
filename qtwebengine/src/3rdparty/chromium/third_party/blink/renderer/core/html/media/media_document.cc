@@ -25,8 +25,6 @@
 
 #include "third_party/blink/renderer/core/html/media/media_document.h"
 
-#include "base/macros.h"
-#include "third_party/blink/renderer/bindings/core/v8/add_event_listener_options_or_boolean.h"
 #include "third_party/blink/renderer/core/dom/element_traversal.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
 #include "third_party/blink/renderer/core/dom/events/event_listener.h"
@@ -46,7 +44,7 @@
 #include "third_party/blink/renderer/core/loader/document_loader.h"
 #include "third_party/blink/renderer/core/loader/frame_loader.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
-#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 #include "third_party/blink/renderer/platform/keyboard_codes.h"
 
@@ -76,6 +74,7 @@ void MediaDocumentParser::CreateDocumentStructure() {
   did_build_document_structure_ = true;
 
   DCHECK(GetDocument());
+  GetDocument()->SetOverrideSiteForCookiesForCSPMedia(true);
   auto* root_element = MakeGarbageCollected<HTMLHtmlElement>(*GetDocument());
   GetDocument()->AppendChild(root_element);
   root_element->InsertedByParser();
@@ -84,15 +83,17 @@ void MediaDocumentParser::CreateDocumentStructure() {
     return;  // runScriptsAtDocumentElementAvailable can detach the frame.
 
   auto* head = MakeGarbageCollected<HTMLHeadElement>(*GetDocument());
-  auto* meta = MakeGarbageCollected<HTMLMetaElement>(*GetDocument());
-  meta->setAttribute(html_names::kNameAttr, "viewport");
-  meta->setAttribute(html_names::kContentAttr, "width=device-width");
+  auto* meta = MakeGarbageCollected<HTMLMetaElement>(*GetDocument(),
+                                                     CreateElementFlags());
+  meta->setAttribute(html_names::kNameAttr, AtomicString("viewport"));
+  meta->setAttribute(html_names::kContentAttr,
+                     AtomicString("width=device-width"));
   head->AppendChild(meta);
 
   auto* media = MakeGarbageCollected<HTMLVideoElement>(*GetDocument());
-  media->setAttribute(html_names::kControlsAttr, "");
-  media->setAttribute(html_names::kAutoplayAttr, "");
-  media->setAttribute(html_names::kNameAttr, "media");
+  media->setAttribute(html_names::kControlsAttr, g_empty_atom);
+  media->setAttribute(html_names::kAutoplayAttr, g_empty_atom);
+  media->setAttribute(html_names::kNameAttr, AtomicString("media"));
 
   auto* source = MakeGarbageCollected<HTMLSourceElement>(*GetDocument());
   source->setAttribute(html_names::kSrcAttr,
@@ -120,12 +121,12 @@ void MediaDocumentParser::Finish() {
 }
 
 MediaDocument::MediaDocument(const DocumentInit& initializer)
-    : HTMLDocument(initializer, kMediaDocumentClass) {
+    : HTMLDocument(initializer, {DocumentClass::kMedia}) {
   SetCompatibilityMode(kNoQuirksMode);
   LockCompatibilityMode();
 
   // Set the autoplay policy to kNoUserGestureRequired.
-  if (GetSettings() && IsInMainFrame()) {
+  if (GetSettings() && IsInOutermostMainFrame()) {
     GetSettings()->SetAutoplayPolicy(
         AutoplayPolicy::Type::kNoUserGestureRequired);
   }
@@ -152,7 +153,11 @@ void MediaDocument::DefaultEventHandler(Event& event) {
       // space or media key (play/pause)
       video->TogglePlayState();
       event.SetDefaultHandled();
+      return;
     }
+    // Route the keyboard events directly to the media element
+    video->DispatchEvent(event);
+    return;
   }
 }
 

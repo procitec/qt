@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,6 +7,14 @@
 #include <memory>
 #include <utility>
 
+#include "base/memory/raw_ptr.h"
+#include "base/run_loop.h"
+#include "base/test/scoped_feature_list.h"
+#include "base/time/time.h"
+#include "ui/base/ui_base_features.h"
+#include "ui/compositor/layer.h"
+#include "ui/events/event.h"
+#include "ui/events/test/event_generator.h"
 #include "ui/views/animation/slide_out_controller_delegate.h"
 #include "ui/views/test/views_test_base.h"
 #include "ui/views/view.h"
@@ -16,6 +24,7 @@ namespace views {
 namespace {
 constexpr int kSwipeControlWidth = 30;  // px
 constexpr int kTargetWidth = 200;       // px
+constexpr int kScrollOffsetThreshold = 20;
 }  // namespace
 
 class TestSlideOutControllerDelegate : public SlideOutControllerDelegate {
@@ -40,16 +49,16 @@ class TestSlideOutControllerDelegate : public SlideOutControllerDelegate {
     slide_started_count_ = 0;
     slide_changed_count_ = 0;
     slide_out_count_ = 0;
-    slide_changed_last_value_ = base::nullopt;
+    slide_changed_last_value_ = absl::nullopt;
   }
 
-  base::Optional<bool> slide_changed_last_value_;
+  absl::optional<bool> slide_changed_last_value_;
   int slide_started_count_ = 0;
   int slide_changed_count_ = 0;
   int slide_out_count_ = 0;
 
  private:
-  View* const target_;
+  const raw_ptr<View> target_;
 };
 
 class SlideOutControllerTest : public ViewsTestBase {
@@ -97,7 +106,7 @@ class SlideOutControllerTest : public ViewsTestBase {
 
   void PostSequentialGestureEvent(const ui::GestureEventDetails& details) {
     // Set the timestamp ahead one microsecond.
-    sequential_event_timestamp_ += base::TimeDelta::FromMicroseconds(1);
+    sequential_event_timestamp_ += base::Microseconds(1);
 
     ui::GestureEvent gesture_event(
         0, 0, ui::EF_NONE, base::TimeTicks() + sequential_event_timestamp_,
@@ -112,6 +121,13 @@ class SlideOutControllerTest : public ViewsTestBase {
         ui::GestureEventDetails(ui::ET_GESTURE_SCROLL_UPDATE, swipe_amount, 0));
     PostSequentialGestureEvent(
         ui::GestureEventDetails(ui::ET_GESTURE_SCROLL_END));
+  }
+
+  void PostTrackPadSwipeEvent(int swipe_amount, int finger_count) {
+    auto scroll_event = ui::ScrollEvent(ui::ET_SCROLL, gfx::PointF(),
+                                        gfx::PointF(), base::TimeTicks(), 0,
+                                        swipe_amount, 0, 0, 0, finger_count);
+    slide_out_controller()->OnScrollEvent(&scroll_event);
   }
 
  private:
@@ -237,7 +253,30 @@ TEST_F(SlideOutControllerTest, SlideLittleAmountAndNotClose) {
   EXPECT_EQ(0, delegate()->slide_out_count_);
 }
 
-TEST_F(SlideOutControllerTest, SetSwipeControlWidth_SwipeLessThanControlWidth) {
+class SwipeControlTest
+    : public SlideOutControllerTest,
+      public testing::WithParamInterface<SlideOutController::SlideMode> {
+ public:
+  SwipeControlTest() = default;
+
+  SwipeControlTest(const SwipeControlTest&) = delete;
+  SwipeControlTest& operator=(const SwipeControlTest&) = delete;
+
+  ~SwipeControlTest() override = default;
+
+  void SetUp() override {
+    SlideOutControllerTest::SetUp();
+    slide_out_controller()->set_slide_mode(GetParam());
+  }
+};
+
+INSTANTIATE_TEST_SUITE_P(
+    All,
+    SwipeControlTest,
+    ::testing::Values(SlideOutController::SlideMode::kFull,
+                      SlideOutController::SlideMode::kPartial));
+
+TEST_P(SwipeControlTest, SetSwipeControlWidth_SwipeLessThanControlWidth) {
   // Set the width of swipe control.
   slide_out_controller()->SetSwipeControlWidth(kSwipeControlWidth);
 
@@ -283,7 +322,7 @@ TEST_F(SlideOutControllerTest, SetSwipeControlWidth_SwipeLessThanControlWidth) {
   EXPECT_EQ(0, delegate()->slide_out_count_);
 }
 
-TEST_F(SlideOutControllerTest, SwipeControlWidth_SwipeMoreThanControlWidth) {
+TEST_P(SwipeControlTest, SwipeControlWidth_SwipeMoreThanControlWidth) {
   // Set the width of swipe control.
   slide_out_controller()->SetSwipeControlWidth(kSwipeControlWidth);
 
@@ -330,7 +369,10 @@ TEST_F(SlideOutControllerTest, SwipeControlWidth_SwipeMoreThanControlWidth) {
   EXPECT_EQ(0, delegate()->slide_out_count_);
 }
 
-TEST_F(SlideOutControllerTest, SetSwipeControlWidth_SwipeOut) {
+TEST_P(SwipeControlTest, SetSwipeControlWidth_SwipeOut) {
+  const bool swipe_out_supported =
+      slide_out_controller()->mode() == SlideOutController::SlideMode::kFull;
+
   // Set the width of swipe control.
   slide_out_controller()->SetSwipeControlWidth(kSwipeControlWidth);
 
@@ -360,12 +402,13 @@ TEST_F(SlideOutControllerTest, SetSwipeControlWidth_SwipeOut) {
   PostSequentialGestureEvent(
       ui::GestureEventDetails(ui::ET_GESTURE_SCROLL_END));
 
-  // ... and it is automatically slided out.
+  // ... and it is automatically slided out if |swipe_out_supported|.
   EXPECT_EQ(0, delegate()->slide_started_count_);
   EXPECT_TRUE(delegate()->IsOnSlideChangedCalled());
-  EXPECT_FALSE(delegate()->slide_changed_last_value_.value());
+  EXPECT_EQ(delegate()->slide_changed_last_value_.value(),
+            !swipe_out_supported);
   EXPECT_EQ(0, delegate()->slide_out_count_);
-  EXPECT_EQ(kTargetWidth,
+  EXPECT_EQ(swipe_out_supported ? kTargetWidth : kSwipeControlWidth,
             delegate()->GetSlideOutLayer()->transform().To2dTranslation().x());
 
   delegate()->reset();
@@ -373,10 +416,13 @@ TEST_F(SlideOutControllerTest, SetSwipeControlWidth_SwipeOut) {
   // Ensure a deferred SlideOut handler is called once.
   base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(delegate()->IsOnSlideChangedCalled());
-  EXPECT_EQ(1, delegate()->slide_out_count_);
+  EXPECT_EQ(swipe_out_supported ? 1 : 0, delegate()->slide_out_count_);
 }
 
-TEST_F(SlideOutControllerTest, SwipeControlWidth_SnapAndSwipeOut) {
+TEST_P(SwipeControlTest, SwipeControlWidth_SnapAndSwipeOut) {
+  const bool swipe_out_supported =
+      slide_out_controller()->mode() == SlideOutController::SlideMode::kFull;
+
   // Set the width of swipe control.
   slide_out_controller()->SetSwipeControlWidth(kSwipeControlWidth);
 
@@ -404,12 +450,13 @@ TEST_F(SlideOutControllerTest, SwipeControlWidth_SnapAndSwipeOut) {
   PostSequentialGestureEvent(
       ui::GestureEventDetails(ui::ET_GESTURE_SCROLL_END));
 
-  // ... and it is automatically slided out.
+  // ... and it is automatically slided out if if |swipe_out_supported|.
   EXPECT_EQ(1, delegate()->slide_started_count_);
   EXPECT_TRUE(delegate()->IsOnSlideChangedCalled());
-  EXPECT_FALSE(delegate()->slide_changed_last_value_.value());
+  EXPECT_EQ(delegate()->slide_changed_last_value_.value(),
+            !swipe_out_supported);
   EXPECT_EQ(0, delegate()->slide_out_count_);
-  EXPECT_EQ(kTargetWidth,
+  EXPECT_EQ(swipe_out_supported ? kTargetWidth : kSwipeControlWidth,
             delegate()->GetSlideOutLayer()->transform().To2dTranslation().x());
 
   delegate()->reset();
@@ -417,10 +464,10 @@ TEST_F(SlideOutControllerTest, SwipeControlWidth_SnapAndSwipeOut) {
   // Ensure a deferred OnSlideOut handler is called.
   base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(delegate()->IsOnSlideChangedCalled());
-  EXPECT_EQ(1, delegate()->slide_out_count_);
+  EXPECT_EQ(swipe_out_supported ? 1 : 0, delegate()->slide_out_count_);
 }
 
-TEST_F(SlideOutControllerTest, SwipeControlWidth_SnapAndSnapToControl) {
+TEST_P(SwipeControlTest, SwipeControlWidth_SnapAndSnapToControl) {
   // Set the width of swipe control.
   slide_out_controller()->SetSwipeControlWidth(kSwipeControlWidth);
 
@@ -454,7 +501,7 @@ TEST_F(SlideOutControllerTest, SwipeControlWidth_SnapAndSnapToControl) {
   EXPECT_EQ(0, delegate()->slide_out_count_);
 }
 
-TEST_F(SlideOutControllerTest, SwipeControlWidth_SnapAndBackToOrigin) {
+TEST_P(SwipeControlTest, SwipeControlWidth_SnapAndBackToOrigin) {
   // Set the width of swipe control.
   slide_out_controller()->SetSwipeControlWidth(kSwipeControlWidth);
 
@@ -488,7 +535,7 @@ TEST_F(SlideOutControllerTest, SwipeControlWidth_SnapAndBackToOrigin) {
   EXPECT_EQ(0, delegate()->slide_out_count_);
 }
 
-TEST_F(SlideOutControllerTest, SwipeControlWidth_NotSnapAndBackToOrigin) {
+TEST_P(SwipeControlTest, SwipeControlWidth_NotSnapAndBackToOrigin) {
   // Set the width of swipe control.
   slide_out_controller()->SetSwipeControlWidth(kSwipeControlWidth);
 
@@ -508,6 +555,41 @@ TEST_F(SlideOutControllerTest, SwipeControlWidth_NotSnapAndBackToOrigin) {
   base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(delegate()->IsOnSlideChangedCalled());
   EXPECT_EQ(0, delegate()->slide_out_count_);
+}
+
+// Test class for making sure trackpad gestures work to trigger slide out
+// events.
+class TrackPadGestureTest : public SlideOutControllerTest {
+ public:
+  TrackPadGestureTest() = default;
+
+  explicit TrackPadGestureTest(const SwipeControlTest&) = delete;
+  TrackPadGestureTest& operator=(const TrackPadGestureTest&) = delete;
+
+  ~TrackPadGestureTest() override = default;
+
+  void SetUp() override {
+    SlideOutControllerTest::SetUp();
+    slide_out_controller()->set_trackpad_gestures_enabled(true);
+  }
+};
+
+TEST_F(TrackPadGestureTest, SlideOut) {
+  // A slide out should not be triggered if the scroll offset is below
+  // `kScrollOffsetThreshold`.
+  PostTrackPadSwipeEvent(kScrollOffsetThreshold - 1, /*finger_count=*/2);
+  EXPECT_EQ(0, delegate()->slide_out_count_);
+
+  // A slide out should not be triggered if the finger count is not equal to 2.
+  PostTrackPadSwipeEvent(kScrollOffsetThreshold,
+                         /*finger_count=*/3);
+  EXPECT_EQ(0, delegate()->slide_out_count_);
+
+  // A slide out should be triggered with both of the conditions above being
+  // met.
+  PostTrackPadSwipeEvent(kScrollOffsetThreshold,
+                         /*finger_count=*/2);
+  EXPECT_EQ(1, delegate()->slide_out_count_);
 }
 
 }  // namespace views

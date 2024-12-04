@@ -29,27 +29,33 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_FRAME_SCREEN_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_FRAME_SCREEN_H_
 
-#include "base/optional.h"
 #include "third_party/blink/renderer/core/core_export.h"
+#include "third_party/blink/renderer/core/dom/events/event_target.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_observer.h"
-#include "third_party/blink/renderer/core/frame/web_feature_forward.h"
-#include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/supplementable.h"
-#include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
-#include "ui/display/mojom/display.mojom-blink.h"
+#include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
+#include "ui/gfx/geometry/rect.h"
+
+namespace display {
+struct ScreenInfo;
+}
 
 namespace blink {
 
-class LocalFrame;
+class LocalDOMWindow;
 
-class CORE_EXPORT Screen final : public ScriptWrappable,
-                                 public ExecutionContextClient,
-                                 public Supplementable<Screen> {
+class CORE_EXPORT Screen : public EventTarget,
+                           public ExecutionContextClient,
+                           public Supplementable<Screen> {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  explicit Screen(LocalFrame*);
+  Screen(LocalDOMWindow*, int64_t display_id);
+
+  static bool AreWebExposedScreenPropertiesEqual(
+      const display::ScreenInfo& prev,
+      const display::ScreenInfo& current);
 
   int height() const;
   int width() const;
@@ -62,41 +68,29 @@ class CORE_EXPORT Screen final : public ScriptWrappable,
 
   void Trace(Visitor*) const override;
 
-  // TODO(crbug.com/1116528): Use a dictionary, not the Screen interface, for
-  // proposed multi-screen info: https://github.com/webscreens/window-placement
-  Screen(display::mojom::blink::DisplayPtr display,
-         bool internal,
-         bool primary,
-         const String& id);
-  int left() const;
-  int top() const;
-  bool internal() const;
-  bool primary() const;
-  float scaleFactor() const;
-  const String id() const;
-  bool touchSupport() const;
+  // EventTarget:
+  const WTF::AtomicString& InterfaceName() const override;
+  ExecutionContext* GetExecutionContext() const override;
+
+  // Whether the device’s visual output extends over multiple screens.
+  // https://w3c.github.io/window-placement/
+  bool isExtended() const;
+  // Fired when the window’s screen or that screen's attributes change.
+  // https://w3c.github.io/window-placement/
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(change, kChange)
 
   // Not web-exposed; for internal usage only.
   static constexpr int64_t kInvalidDisplayId = -1;
-  int64_t DisplayId() const;
+  int64_t DisplayId() const { return display_id_; }
+  void UpdateDisplayId(int64_t display_id) { display_id_ = display_id; }
 
- private:
-  // A static snapshot of the display's information, provided upon construction.
-  // This member is only non-null for Screen objects obtained via the
-  // experimental Window Placement API.
-  const display::mojom::blink::DisplayPtr display_;
-  // True if this is an internal display of the device; it is a static value
-  // provided upon construction. This member is only valid for Screen objects
-  // obtained via the experimental Window Placement API.
-  const base::Optional<bool> internal_;
-  // True if this is the primary screen of the operating system; it is a static
-  // value provided upon construction. This member is only valid for Screen
-  // objects obtained via the experimental Window Placement API.
-  const base::Optional<bool> primary_;
-  // A web-exposed device id; it is a static value provided upon construction.
-  // This member is only valid for Screen objects obtained via the experimental
-  // Window Placement API.
-  const String id_;
+ protected:
+  // Helpers to access screen information.
+  gfx::Rect GetRect(bool available) const;
+  const display::ScreenInfo& GetScreenInfo() const;
+
+  // The internal id of the underlying display, to support multi-screen devices.
+  int64_t display_id_;
 };
 
 }  // namespace blink

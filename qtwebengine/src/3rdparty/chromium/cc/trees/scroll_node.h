@@ -1,10 +1,11 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef CC_TREES_SCROLL_NODE_H_
 #define CC_TREES_SCROLL_NODE_H_
 
+#include <optional>
 #include "cc/base/region.h"
 #include "cc/cc_export.h"
 #include "cc/input/overscroll_behavior.h"
@@ -35,6 +36,9 @@ struct CC_EXPORT ScrollNode {
 
   // Size of the container area that the contents scrolls in, not including
   // non-overlay scrollbars. Overlay scrollbars do not affect these bounds.
+  // Note, use the ScrollTree::container_bounds function for the viewport
+  // scroll nodes to include the current bounds change due to top controls
+  // hiding / showing.
   gfx::Size container_bounds;
 
   // Size of the content that is scrolled within the container bounds.
@@ -61,7 +65,7 @@ struct CC_EXPORT ScrollNode {
 
   OverscrollBehavior overscroll_behavior;
 
-  base::Optional<SnapContainerData> snap_container_data;
+  std::optional<SnapContainerData> snap_container_data;
 
   bool is_composited : 1;
 

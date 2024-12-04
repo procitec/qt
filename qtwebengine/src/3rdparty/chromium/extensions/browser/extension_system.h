@@ -1,15 +1,14 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef EXTENSIONS_BROWSER_EXTENSION_SYSTEM_H_
 #define EXTENSIONS_BROWSER_EXTENSION_SYSTEM_H_
 
+#include <optional>
 #include <string>
-
-#include "base/callback.h"
-#include "base/memory/ref_counted.h"
-#include "base/optional.h"
+#include "base/functional/callback.h"
+#include "base/memory/scoped_refptr.h"
 #include "build/build_config.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "extensions/browser/install/crx_install_error.h"
@@ -28,6 +27,10 @@ namespace content {
 class BrowserContext;
 }
 
+namespace value_store {
+class ValueStoreFactory;
+}
+
 namespace extensions {
 
 class AppSorting;
@@ -35,14 +38,11 @@ class ContentVerifier;
 class Extension;
 class ExtensionService;
 class ExtensionSet;
-class InfoMap;
 class ManagementPolicy;
 class QuotaService;
-class RuntimeData;
 class ServiceWorkerManager;
-class SharedUserScriptManager;
 class StateStore;
-class ValueStoreFactory;
+class UserScriptManager;
 enum class UnloadedExtensionReason;
 
 // ExtensionSystem manages the lifetime of many of the services used by the
@@ -53,7 +53,7 @@ class ExtensionSystem : public KeyedService {
  public:
   // A callback to be executed when InstallUpdate finishes.
   using InstallUpdateCallback =
-      base::OnceCallback<void(const base::Optional<CrxInstallError>& result)>;
+      base::OnceCallback<void(const std::optional<CrxInstallError>& result)>;
 
   ExtensionSystem();
   ~ExtensionSystem() override;
@@ -73,10 +73,6 @@ class ExtensionSystem : public KeyedService {
   // defined in Chrome.
   virtual ExtensionService* extension_service() = 0;
 
-  // Per-extension data that can change during the life of the process but
-  // does not persist across restarts. Lives on UI thread. Created at startup.
-  virtual RuntimeData* runtime_data() = 0;
-
   // The class controlling whether users are permitted to perform certain
   // actions on extensions (install, uninstall, disable, etc.).
   // The ManagementPolicy is created at startup.
@@ -85,8 +81,8 @@ class ExtensionSystem : public KeyedService {
   // The ServiceWorkerManager is created at startup.
   virtual ServiceWorkerManager* service_worker_manager() = 0;
 
-  // The SharedUserScriptManager is created at startup.
-  virtual SharedUserScriptManager* shared_user_script_manager() = 0;
+  // The UserScriptManager is created at startup.
+  virtual UserScriptManager* user_script_manager() = 0;
 
   // The StateStore is created at startup.
   virtual StateStore* state_store() = 0;
@@ -94,11 +90,11 @@ class ExtensionSystem : public KeyedService {
   // The rules store is created at startup.
   virtual StateStore* rules_store() = 0;
 
-  // Returns the |ValueStore| factory created at startup.
-  virtual scoped_refptr<ValueStoreFactory> store_factory() = 0;
+  // The dynamic user scripts store is created at startup.
+  virtual StateStore* dynamic_user_scripts_store() = 0;
 
-  // Returns the IO-thread-accessible extension data.
-  virtual InfoMap* info_map() = 0;
+  // Returns the |ValueStore| factory created at startup.
+  virtual scoped_refptr<value_store::ValueStoreFactory> store_factory() = 0;
 
   // Returns the QuotaService that limits calls to certain extension functions.
   // Lives on the UI thread. Created at startup.
@@ -106,23 +102,6 @@ class ExtensionSystem : public KeyedService {
 
   // Returns the AppSorting which provides an ordering for all installed apps.
   virtual AppSorting* app_sorting() = 0;
-
-  // Called by the ExtensionService that lives in this system. Gives the
-  // info map a chance to react to the load event before the EXTENSION_LOADED
-  // notification has fired. The purpose for handling this event first is to
-  // avoid race conditions by making sure URLRequestContexts learn about new
-  // extensions before anything else needs them to know. This operation happens
-  // asynchronously. |callback| is run on the calling thread once completed.
-  virtual void RegisterExtensionWithRequestContexts(
-      const Extension* extension,
-      base::OnceClosure callback) {}
-
-  // Called by the ExtensionService that lives in this system. Lets the
-  // info map clean up its RequestContexts once all the listeners to the
-  // EXTENSION_UNLOADED notification have finished running.
-  virtual void UnregisterExtensionWithRequestContexts(
-      const std::string& extension_id,
-      const UnloadedExtensionReason reason) {}
 
   // Signaled when the extension system has completed its startup tasks.
   virtual const base::OneShotEvent& ready() const = 0;
@@ -139,7 +118,7 @@ class ExtensionSystem : public KeyedService {
   virtual std::unique_ptr<ExtensionSet> GetDependentExtensions(
       const Extension* extension) = 0;
 
-#if !defined(TOOLKIT_QT)
+#if !BUILDFLAG(IS_QTWEBENGINE)
   // Install an updated version of |extension_id| with the version given in
   // |unpacked_dir|. If |install_immediately| is true, the system will install
   // the given extension immediately instead of waiting until idle. Ownership
@@ -155,7 +134,7 @@ class ExtensionSystem : public KeyedService {
   // Perform various actions depending on the Omaga attributes on the extension.
   virtual void PerformActionBasedOnOmahaAttributes(
       const std::string& extension_id,
-      const base::Value& attributes) = 0;
+      const base::Value::Dict& attributes) = 0;
 
   // Attempts finishing installation of an update for an extension with the
   // specified id, when installation of that extension was previously delayed.

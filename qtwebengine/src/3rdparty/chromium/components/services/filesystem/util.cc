@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -15,7 +15,7 @@
 #include "base/strings/string_util.h"
 #include "build/build_config.h"
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 #include "base/strings/utf_string_conversions.h"
 #endif
 
@@ -84,9 +84,9 @@ mojom::FileInformationPtr MakeFileInformation(const base::File::Info& info) {
                                       : mojom::FsFileType::REGULAR_FILE;
   file_info->size = info.size;
 
-  file_info->atime = info.last_accessed.ToDoubleT();
-  file_info->mtime = info.last_modified.ToDoubleT();
-  file_info->ctime = info.creation_time.ToDoubleT();
+  file_info->atime = info.last_accessed.InSecondsFSinceUnixEpoch();
+  file_info->mtime = info.last_modified.InSecondsFSinceUnixEpoch();
+  file_info->ctime = info.creation_time.InSecondsFSinceUnixEpoch();
 
   return file_info;
 }
@@ -97,9 +97,9 @@ base::File::Error ValidatePath(const std::string& raw_path,
   if (!base::IsStringUTF8(raw_path))
     return base::File::Error::FILE_ERROR_INVALID_OPERATION;
 
-#if defined(OS_WIN)
-  base::FilePath::StringType path = base::UTF8ToUTF16(raw_path);
-#elif defined(OS_POSIX) || defined(OS_FUCHSIA)
+#if BUILDFLAG(IS_WIN)
+  base::FilePath::StringType path = base::UTF8ToWide(raw_path);
+#elif BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
   base::FilePath::StringType path = raw_path;
 #endif
 

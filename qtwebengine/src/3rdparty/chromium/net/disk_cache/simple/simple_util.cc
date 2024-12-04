@@ -1,8 +1,10 @@
-// Copyright (c) 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "net/disk_cache/simple/simple_util.h"
+
+#include <string.h>
 
 #include <limits>
 
@@ -25,9 +27,7 @@ const size_t kEntryHashKeyAsHexStringSize = 2 * sizeof(uint64_t);
 
 }  // namespace
 
-namespace disk_cache {
-
-namespace simple_util {
+namespace disk_cache::simple_util {
 
 std::string ConvertEntryHashKeyToHexString(uint64_t hash_key) {
   const std::string hash_key_str = base::StringPrintf("%016" PRIx64, hash_key);
@@ -42,7 +42,7 @@ std::string GetEntryHashKeyAsHexString(const std::string& key) {
   return hash_key_str;
 }
 
-bool GetEntryHashKeyFromHexString(const base::StringPiece& hash_key,
+bool GetEntryHashKeyFromHexString(base::StringPiece hash_key,
                                   uint64_t* hash_key_out) {
   if (hash_key.size() != kEntryHashKeyAsHexStringSize) {
     return false;
@@ -51,13 +51,13 @@ bool GetEntryHashKeyFromHexString(const base::StringPiece& hash_key,
 }
 
 uint64_t GetEntryHashKey(const std::string& key) {
-  union {
-    unsigned char sha_hash[base::kSHA1Length];
-    uint64_t key_hash;
-  } u;
+  unsigned char sha_hash[base::kSHA1Length];
+
   base::SHA1HashBytes(reinterpret_cast<const unsigned char*>(key.data()),
-                      key.size(), u.sha_hash);
-  return u.key_hash;
+                      key.size(), sha_hash);
+  uint64_t as_uint64;
+  memcpy(&as_uint64, sha_hash, sizeof(as_uint64));
+  return as_uint64;
 }
 
 std::string GetFilenameFromEntryFileKeyAndFileIndex(
@@ -104,15 +104,6 @@ int GetFileIndexFromStreamIndex(int stream_index) {
   return (stream_index == 2) ? 1 : 0;
 }
 
-bool GetMTime(const base::FilePath& path, base::Time* out_mtime) {
-  DCHECK(out_mtime);
-  base::File::Info file_info;
-  if (!base::GetFileInfo(path, &file_info))
-    return false;
-  *out_mtime = file_info.last_modified;
-  return true;
-}
-
 uint32_t Crc32(const char* data, int length) {
   uint32_t empty_crc = crc32(0, Z_NULL, 0);
   if (length == 0)
@@ -124,6 +115,4 @@ uint32_t IncrementalCrc32(uint32_t previous_crc, const char* data, int length) {
   return crc32(previous_crc, reinterpret_cast<const Bytef*>(data), length);
 }
 
-}  // namespace simple_util
-
-}  // namespace disk_cache
+}  // namespace disk_cache::simple_util

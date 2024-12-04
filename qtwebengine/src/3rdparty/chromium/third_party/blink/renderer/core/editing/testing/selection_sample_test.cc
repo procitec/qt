@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -29,7 +29,6 @@ TEST_F(SelectionSampleTest, GetSelectionTextFlatTree) {
       "  </template>"
       "  <b slot=two>tw|o</b><b slot=one>one</b>"
       "</p>");
-  GetDocument().body()->UpdateDistributionForFlatTreeTraversal();
   EXPECT_EQ(
       "<p>"
       "    ze^ro <slot name=\"one\"><b slot=\"one\">one</b></slot> <slot "
@@ -53,7 +52,8 @@ TEST_F(SelectionSampleTest, SetCommentInBody) {
 TEST_F(SelectionSampleTest, SetCommentInElement) {
   const SelectionInDOMTree& selection = SelectionSample::SetSelectionText(
       GetDocument().body(), "<span id=sample><!--^-->foo<!--|--></span>");
-  const Element* const sample = GetDocument().body()->getElementById("sample");
+  const Element* const sample =
+      GetDocument().body()->getElementById(AtomicString("sample"));
   EXPECT_EQ("<span id=\"sample\">foo</span>",
             GetDocument().body()->innerHTML());
   EXPECT_EQ(SelectionInDOMTree::Builder()
@@ -88,7 +88,7 @@ TEST_F(SelectionSampleTest, SetEmpty2) {
 TEST_F(SelectionSampleTest, SetElement) {
   const SelectionInDOMTree& selection = SelectionSample::SetSelectionText(
       GetDocument().body(), "<p>^<a>0</a>|<b>1</b></p>");
-  const Element* const sample = GetDocument().QuerySelector("p");
+  const Element* const sample = GetDocument().QuerySelector(AtomicString("p"));
   EXPECT_EQ(2u, sample->CountChildren())
       << "We should remove Text node for '^' and '|'.";
   EXPECT_EQ(SelectionInDOMTree::Builder()
@@ -261,10 +261,10 @@ TEST_F(SelectionSampleTest, ConvertTemplatesToShadowRoots) {
         "</template>"
       "</div>");
   Element* body = GetDocument().body();
-  Element* host = body->getElementById("host");
+  Element* host = body->getElementById(AtomicString("host"));
   SelectionSample::ConvertTemplatesToShadowRootsForTesring(
       *(To<HTMLElement>(host)));
-  ShadowRoot* shadow_root = host->ShadowRootIfV1();
+  ShadowRoot* shadow_root = host->GetShadowRoot();
   ASSERT_TRUE(shadow_root->IsShadowRoot());
   EXPECT_EQ("<div>shadow_first</div><div>shadow_second</div>",
             shadow_root->innerHTML());
@@ -277,10 +277,10 @@ TEST_F(SelectionSampleTest, ConvertTemplatesToShadowRootsNoTemplates) {
         "<div>second</div>"
       "</div>");
   Element* body = GetDocument().body();
-  Element* host = body->getElementById("host");
+  Element* host = body->getElementById(AtomicString("host"));
   SelectionSample::ConvertTemplatesToShadowRootsForTesring(
       *(To<HTMLElement>(host)));
-  EXPECT_FALSE(host->ShadowRootIfV1());
+  EXPECT_FALSE(host->GetShadowRoot());
   EXPECT_EQ("<div>first</div><div>second</div>", host->innerHTML());
 }
 
@@ -299,12 +299,12 @@ TEST_F(SelectionSampleTest, ConvertTemplatesToShadowRootsMultipleTemplates) {
         "</template>"
       "</div>");
   Element* body = GetDocument().body();
-  Element* host1 = body->getElementById("host1");
-  Element* host2 = body->getElementById("host2");
+  Element* host1 = body->getElementById(AtomicString("host1"));
+  Element* host2 = body->getElementById(AtomicString("host2"));
   SelectionSample::ConvertTemplatesToShadowRootsForTesring(
       *(To<HTMLElement>(body)));
-  ShadowRoot* shadow_root_1 = host1->ShadowRootIfV1();
-  ShadowRoot* shadow_root_2 = host2->ShadowRootIfV1();
+  ShadowRoot* shadow_root_1 = host1->GetShadowRoot();
+  ShadowRoot* shadow_root_2 = host2->GetShadowRoot();
 
   EXPECT_TRUE(shadow_root_1->IsShadowRoot());
   EXPECT_EQ("<div>shadow_first</div><div>shadow_second</div>",
@@ -326,18 +326,24 @@ TEST_F(SelectionSampleTest, TraverseShadowContent) {
       SelectionSample::SetSelectionText(body, content);
   EXPECT_EQ("<div id=\"host\"></div>", body->innerHTML());
 
-  Element* host = body->getElementById("host");
-  ShadowRoot* shadow_root = host->ShadowRootIfV1();
+  Element* host = body->getElementById(AtomicString("host"));
+  ShadowRoot* shadow_root = host->GetShadowRoot();
   EXPECT_TRUE(shadow_root->IsShadowRoot());
   EXPECT_EQ(
       "<div id=\"shadow1\">shadow_first</div>"
       "<div id=\"shadow2\">shadow_second</div>",
       shadow_root->innerHTML());
 
-  EXPECT_EQ(Position(shadow_root->getElementById("shadow1")->firstChild(), 0),
-            selection.Base());
-  EXPECT_EQ(Position(shadow_root->getElementById("shadow2")->firstChild(), 13),
-            selection.Extent());
+  EXPECT_EQ(
+      Position(
+          shadow_root->getElementById(AtomicString("shadow1"))->firstChild(),
+          0),
+      selection.Base());
+  EXPECT_EQ(
+      Position(
+          shadow_root->getElementById(AtomicString("shadow2"))->firstChild(),
+          13),
+      selection.Extent());
 }
 
 TEST_F(SelectionSampleTest, TraverseShadowContentWithSlot) {
@@ -355,8 +361,8 @@ TEST_F(SelectionSampleTest, TraverseShadowContentWithSlot) {
   EXPECT_EQ("<div id=\"host\">foo<span slot=\"slot1\">bar</span></div>",
             body->innerHTML());
 
-  Element* host = body->getElementById("host");
-  ShadowRoot* shadow_root = host->ShadowRootIfV1();
+  Element* host = body->getElementById(AtomicString("host"));
+  ShadowRoot* shadow_root = host->GetShadowRoot();
   EXPECT_TRUE(shadow_root->IsShadowRoot());
   EXPECT_EQ(
       "<div id=\"shadow1\">shadow_first</div>"
@@ -364,11 +370,14 @@ TEST_F(SelectionSampleTest, TraverseShadowContentWithSlot) {
       "<div id=\"shadow2\">shadow_second</div>",
       shadow_root->innerHTML());
 
-  EXPECT_EQ(Position(GetDocument().getElementById("host")->firstChild(), 0),
-            selection.Base());
   EXPECT_EQ(
-      Position(shadow_root->QuerySelector("[name=slot1]")->firstChild(), 4),
-      selection.Extent());
+      Position(GetDocument().getElementById(AtomicString("host"))->firstChild(),
+               0),
+      selection.Base());
+  EXPECT_EQ(Position(shadow_root->QuerySelector(AtomicString("[name=slot1]"))
+                         ->firstChild(),
+                     4),
+            selection.Extent());
 }
 
 TEST_F(SelectionSampleTest, TraverseMultipleShadowContents) {
@@ -390,10 +399,10 @@ TEST_F(SelectionSampleTest, TraverseMultipleShadowContents) {
   EXPECT_EQ("<div id=\"host1\"></div><div id=\"host2\"></div>",
             body->innerHTML());
 
-  Element* host1 = body->getElementById("host1");
-  ShadowRoot* shadow_root1 = host1->ShadowRootIfV1();
-  Element* host2 = body->getElementById("host2");
-  ShadowRoot* shadow_root2 = host2->ShadowRootIfV1();
+  Element* host1 = body->getElementById(AtomicString("host1"));
+  ShadowRoot* shadow_root1 = host1->GetShadowRoot();
+  Element* host2 = body->getElementById(AtomicString("host2"));
+  ShadowRoot* shadow_root2 = host2->GetShadowRoot();
   EXPECT_TRUE(shadow_root1->IsShadowRoot());
   EXPECT_TRUE(shadow_root2->IsShadowRoot());
   EXPECT_EQ(
@@ -405,10 +414,15 @@ TEST_F(SelectionSampleTest, TraverseMultipleShadowContents) {
       "<div id=\"shadow4\">shadow_forth</div>",
       shadow_root2->innerHTML());
 
-  EXPECT_EQ(Position(shadow_root1->getElementById("shadow1")->firstChild(), 0),
-            selection.Base());
   EXPECT_EQ(
-      Position(shadow_root2->getElementById("shadow4")->firstChild(), 12),
+      Position(
+          shadow_root1->getElementById(AtomicString("shadow1"))->firstChild(),
+          0),
+      selection.Base());
+  EXPECT_EQ(
+      Position(
+          shadow_root2->getElementById(AtomicString("shadow4"))->firstChild(),
+          12),
       selection.Extent());
 }
 

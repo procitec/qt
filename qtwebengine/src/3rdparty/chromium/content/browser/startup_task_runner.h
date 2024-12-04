@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,10 +7,11 @@
 
 #include <list>
 
-#include "base/callback.h"
-#include "base/macros.h"
-#include "base/single_thread_task_runner.h"
+#include "base/functional/callback.h"
+#include "base/task/single_thread_task_runner.h"
+#include "content/common/content_export.h"
 
+#include "base/task/single_thread_task_runner.h"
 #include "build/build_config.h"
 
 #include "content/public/browser/browser_main_runner.h"
@@ -40,6 +41,9 @@ class CONTENT_EXPORT StartupTaskRunner {
   StartupTaskRunner(base::OnceCallback<void(int)> startup_complete_callback,
                     scoped_refptr<base::SingleThreadTaskRunner> proxy);
 
+  StartupTaskRunner(const StartupTaskRunner&) = delete;
+  StartupTaskRunner& operator=(const StartupTaskRunner&) = delete;
+
   ~StartupTaskRunner();
 
   // Add a task to the queue of startup tasks to be run.
@@ -59,8 +63,6 @@ class CONTENT_EXPORT StartupTaskRunner {
 
   base::OnceCallback<void(int)> startup_complete_callback_;
   scoped_refptr<base::SingleThreadTaskRunner> proxy_;
-
-  DISALLOW_COPY_AND_ASSIGN(StartupTaskRunner);
 };
 
 }  // namespace content

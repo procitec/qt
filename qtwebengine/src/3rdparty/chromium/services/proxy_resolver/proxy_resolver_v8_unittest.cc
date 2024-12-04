@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,12 +7,12 @@
 #include "base/compiler_specific.h"
 #include "base/files/file_util.h"
 #include "base/path_service.h"
-#include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/task_environment.h"
 #include "net/base/net_errors.h"
+#include "net/base/proxy_string_util.h"
 #include "net/proxy_resolution/pac_file_data.h"
 #include "net/proxy_resolution/proxy_info.h"
 #include "net/test/gtest_util.h"
@@ -37,7 +37,7 @@ class MockJSBindings : public ProxyResolverV8::JSBindings {
         my_ip_address_ex_count(0),
         should_terminate(false) {}
 
-  void Alert(const base::string16& message) override {
+  void Alert(const std::u16string& message) override {
     VLOG(1) << "PAC-alert: " << message;  // Helpful when debugging.
     alerts.push_back(base::UTF16ToUTF8(message));
   }
@@ -76,7 +76,7 @@ class MockJSBindings : public ProxyResolverV8::JSBindings {
     return false;
   }
 
-  void OnError(int line_number, const base::string16& message) override {
+  void OnError(int line_number, const std::u16string& message) override {
     // Helpful when debugging.
     VLOG(1) << "PAC-error: [" << line_number << "] " << message;
 
@@ -109,7 +109,7 @@ class ProxyResolverV8Test : public testing::Test {
   // called more than once, the previous ProxyResolverV8 is deleted.
   int CreateResolver(const char* filename) {
     base::FilePath path;
-    base::PathService::Get(base::DIR_SOURCE_ROOT, &path);
+    base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &path);
     path = path.AppendASCII("services");
     path = path.AppendASCII("proxy_resolver");
     path = path.AppendASCII("test");
@@ -184,8 +184,8 @@ TEST_F(ProxyResolverV8Test, Basic) {
     int result = resolver().GetProxyForURL(GURL("http://query.com/path"),
                                            &proxy_info, bindings());
     EXPECT_THAT(result, IsOk());
-    EXPECT_EQ("http.query.com.path.query.com:80",
-              proxy_info.proxy_server().ToURI());
+    EXPECT_EQ("[http.query.com.path.query.com:80]",
+              proxy_info.proxy_chain().ToDebugString());
   }
   {
     net::ProxyInfo proxy_info;
@@ -194,8 +194,8 @@ TEST_F(ProxyResolverV8Test, Basic) {
     EXPECT_THAT(result, IsOk());
     // Note that FindProxyForURL(url, host) does not expect |host| to contain
     // the port number.
-    EXPECT_EQ("ftp.query.com.90.path.query.com:80",
-              proxy_info.proxy_server().ToURI());
+    EXPECT_EQ("[ftp.query.com.90.path.query.com:80]",
+              proxy_info.proxy_chain().ToDebugString());
 
     EXPECT_EQ(0U, bindings()->alerts.size());
     EXPECT_EQ(0U, bindings()->errors.size());
@@ -212,7 +212,7 @@ TEST_F(ProxyResolverV8Test, BadReturnType) {
       // TODO(eroman): Should 'null' be considered equivalent to "DIRECT" ?
       "return_null.js"};
 
-  for (size_t i = 0; i < base::size(filenames); ++i) {
+  for (size_t i = 0; i < std::size(filenames); ++i) {
     ASSERT_THAT(CreateResolver(filenames[i]), IsOk());
 
     MockJSBindings bindings;
@@ -265,8 +265,8 @@ TEST_F(ProxyResolverV8Test, SideEffects) {
     int result = resolver().GetProxyForURL(GURL("http://www.google.com"),
                                            &proxy_info, bindings());
     EXPECT_THAT(result, IsOk());
-    EXPECT_EQ(base::StringPrintf("sideffect_%d:80", i),
-              proxy_info.proxy_server().ToURI());
+    EXPECT_EQ(base::StringPrintf("[sideffect_%d:80]", i),
+              proxy_info.proxy_chain().ToDebugString());
   }
 
   // Reload the script -- the javascript environment should be reset, hence
@@ -278,8 +278,8 @@ TEST_F(ProxyResolverV8Test, SideEffects) {
     int result = resolver().GetProxyForURL(GURL("http://www.google.com"),
                                            &proxy_info, bindings());
     EXPECT_THAT(result, IsOk());
-    EXPECT_EQ(base::StringPrintf("sideffect_%d:80", i),
-              proxy_info.proxy_server().ToURI());
+    EXPECT_EQ(base::StringPrintf("[sideffect_%d:80]", i),
+              proxy_info.proxy_chain().ToDebugString());
   }
 }
 
@@ -360,7 +360,7 @@ TEST_F(ProxyResolverV8Test, JavascriptLibrary) {
   EXPECT_THAT(bindings()->errors, IsEmpty());
 
   ASSERT_THAT(result, IsOk());
-  EXPECT_EQ("success:80", proxy_info.proxy_server().ToURI());
+  EXPECT_EQ("[success:80]", proxy_info.proxy_chain().ToDebugString());
 }
 
 // Test marshalling/un-marshalling of values between C++/V8.
@@ -417,7 +417,7 @@ TEST_F(ProxyResolverV8Test, BindingCalledDuringInitialization) {
 
   EXPECT_THAT(result, IsOk());
   EXPECT_FALSE(proxy_info.is_direct());
-  EXPECT_EQ("127.0.0.1:80", proxy_info.proxy_server().ToURI());
+  EXPECT_EQ("[127.0.0.1:80]", proxy_info.proxy_chain().ToDebugString());
 
   // Check that no other bindings were called.
   EXPECT_EQ(0U, bindings()->errors.size());
@@ -440,7 +440,7 @@ TEST_F(ProxyResolverV8Test, EndsWithCommentNoNewline) {
 
   EXPECT_THAT(result, IsOk());
   EXPECT_FALSE(proxy_info.is_direct());
-  EXPECT_EQ("success:80", proxy_info.proxy_server().ToURI());
+  EXPECT_EQ("[success:80]", proxy_info.proxy_chain().ToDebugString());
 }
 
 // Try loading a PAC script that ends with a statement and has no terminal
@@ -456,7 +456,7 @@ TEST_F(ProxyResolverV8Test, EndsWithStatementNoNewline) {
 
   EXPECT_THAT(result, IsOk());
   EXPECT_FALSE(proxy_info.is_direct());
-  EXPECT_EQ("success:3", proxy_info.proxy_server().ToURI());
+  EXPECT_EQ("[success:3]", proxy_info.proxy_chain().ToDebugString());
 }
 
 // Test the return values from myIpAddress(), myIpAddressEx(), dnsResolve(),
@@ -472,7 +472,7 @@ TEST_F(ProxyResolverV8Test, DNSResolutionFailure) {
 
   EXPECT_THAT(result, IsOk());
   EXPECT_FALSE(proxy_info.is_direct());
-  EXPECT_EQ("success:80", proxy_info.proxy_server().ToURI());
+  EXPECT_EQ("[success:80]", proxy_info.proxy_chain().ToDebugString());
 }
 
 TEST_F(ProxyResolverV8Test, DNSResolutionOfInternationDomainName) {
@@ -551,7 +551,7 @@ TEST_F(ProxyResolverV8Test, Terminate) {
 
   EXPECT_THAT(result, IsOk());
   EXPECT_EQ(0u, bindings()->errors.size());
-  EXPECT_EQ("kittens:88", proxy_info.proxy_server().ToURI());
+  EXPECT_EQ("[kittens:88]", proxy_info.proxy_chain().ToDebugString());
 }
 
 }  // namespace

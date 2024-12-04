@@ -1,4 +1,4 @@
-// Copyright (c) 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -15,7 +15,7 @@ namespace cc {
 // Client/ServiceRawMemoryTransferCacheEntry implement a transfer cache entry
 // backed by raw memory, with no conversion during serialization or
 // deserialization.
-class CC_PAINT_EXPORT ClientRawMemoryTransferCacheEntry
+class CC_PAINT_EXPORT ClientRawMemoryTransferCacheEntry final
     : public ClientTransferCacheEntryBase<TransferCacheEntryType::kRawMemory> {
  public:
   explicit ClientRawMemoryTransferCacheEntry(std::vector<uint8_t> data);
@@ -30,13 +30,14 @@ class CC_PAINT_EXPORT ClientRawMemoryTransferCacheEntry
   static base::AtomicSequenceNumber s_next_id_;
 };
 
-class CC_PAINT_EXPORT ServiceRawMemoryTransferCacheEntry
+class CC_PAINT_EXPORT ServiceRawMemoryTransferCacheEntry final
     : public ServiceTransferCacheEntryBase<TransferCacheEntryType::kRawMemory> {
  public:
   ServiceRawMemoryTransferCacheEntry();
   ~ServiceRawMemoryTransferCacheEntry() final;
   size_t CachedSize() const final;
   bool Deserialize(GrDirectContext* context,
+                   skgpu::graphite::Recorder* graphite_recorder,
                    base::span<const uint8_t> data) final;
   const std::vector<uint8_t>& data() { return data_; }
 

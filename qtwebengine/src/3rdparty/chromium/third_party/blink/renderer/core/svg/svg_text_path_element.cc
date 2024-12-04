@@ -24,7 +24,7 @@
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_text_path.h"
 #include "third_party/blink/renderer/core/svg/svg_animated_length.h"
 #include "third_party/blink/renderer/core/svg/svg_enumeration_map.h"
-#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 
 namespace blink {
 
@@ -41,7 +41,8 @@ const SVGEnumerationMap& GetEnumerationMap<SVGTextPathMethodType>() {
 template <>
 const SVGEnumerationMap& GetEnumerationMap<SVGTextPathSpacingType>() {
   static const SVGEnumerationMap::Entry enum_items[] = {
-      {kSVGTextPathSpacingAuto, "auto"}, {kSVGTextPathSpacingExact, "exact"},
+      {kSVGTextPathSpacingAuto, "auto"},
+      {kSVGTextPathSpacingExact, "exact"},
   };
   static const SVGEnumerationMap entries(enum_items);
   return entries;
@@ -64,11 +65,7 @@ SVGTextPathElement::SVGTextPathElement(Document& document)
           MakeGarbageCollected<SVGAnimatedEnumeration<SVGTextPathSpacingType>>(
               this,
               svg_names::kSpacingAttr,
-              kSVGTextPathSpacingExact)) {
-  AddToPropertyMap(start_offset_);
-  AddToPropertyMap(method_);
-  AddToPropertyMap(spacing_);
-}
+              kSVGTextPathSpacingExact)) {}
 
 SVGTextPathElement::~SVGTextPathElement() = default;
 
@@ -86,7 +83,9 @@ void SVGTextPathElement::ClearResourceReferences() {
   RemoveAllOutgoingReferences();
 }
 
-void SVGTextPathElement::SvgAttributeChanged(const QualifiedName& attr_name) {
+void SVGTextPathElement::SvgAttributeChanged(
+    const SvgAttributeChangedParams& params) {
+  const QualifiedName& attr_name = params.name;
   if (SVGURIReference::IsKnownAttribute(attr_name)) {
     SVGElement::InvalidationGuard invalidation_guard(this);
     BuildPendingResource();
@@ -106,16 +105,14 @@ void SVGTextPathElement::SvgAttributeChanged(const QualifiedName& attr_name) {
     return;
   }
 
-  SVGTextContentElement::SvgAttributeChanged(attr_name);
+  SVGTextContentElement::SvgAttributeChanged(params);
 }
 
-LayoutObject* SVGTextPathElement::CreateLayoutObject(const ComputedStyle&,
-                                                     LegacyLayout) {
-  return new LayoutSVGTextPath(this);
+LayoutObject* SVGTextPathElement::CreateLayoutObject(const ComputedStyle&) {
+  return MakeGarbageCollected<LayoutSVGTextPath>(this);
 }
 
-bool SVGTextPathElement::LayoutObjectIsNeeded(
-    const ComputedStyle& style) const {
+bool SVGTextPathElement::LayoutObjectIsNeeded(const DisplayStyle& style) const {
   if (parentNode() &&
       (IsA<SVGAElement>(*parentNode()) || IsA<SVGTextElement>(*parentNode())))
     return SVGElement::LayoutObjectIsNeeded(style);
@@ -155,6 +152,33 @@ void SVGTextPathElement::RemovedFrom(ContainerNode& root_parent) {
 bool SVGTextPathElement::SelfHasRelativeLengths() const {
   return start_offset_->CurrentValue()->IsRelative() ||
          SVGTextContentElement::SelfHasRelativeLengths();
+}
+
+SVGAnimatedPropertyBase* SVGTextPathElement::PropertyFromAttribute(
+    const QualifiedName& attribute_name) const {
+  if (attribute_name == svg_names::kStartOffsetAttr) {
+    return start_offset_.Get();
+  } else if (attribute_name == svg_names::kMethodAttr) {
+    return method_.Get();
+  } else if (attribute_name == svg_names::kSpacingAttr) {
+    return spacing_.Get();
+  } else {
+    SVGAnimatedPropertyBase* ret =
+        SVGURIReference::PropertyFromAttribute(attribute_name);
+    if (ret) {
+      return ret;
+    } else {
+      return SVGTextContentElement::PropertyFromAttribute(attribute_name);
+    }
+  }
+}
+
+void SVGTextPathElement::SynchronizeAllSVGAttributes() const {
+  SVGAnimatedPropertyBase* attrs[]{start_offset_.Get(), method_.Get(),
+                                   spacing_.Get()};
+  SynchronizeListOfSVGAttributes(attrs);
+  SVGURIReference::SynchronizeAllSVGAttributes();
+  SVGTextContentElement::SynchronizeAllSVGAttributes();
 }
 
 }  // namespace blink

@@ -1,11 +1,11 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "chrome/browser/prefs/incognito_mode_prefs.h"
 
 #include "base/test/gtest_util.h"
-#include "chrome/common/pref_names.h"
+#include "components/policy/core/common/policy_pref_names.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -19,17 +19,17 @@ class IncognitoModePrefsTest : public testing::Test {
 };
 
 TEST_F(IncognitoModePrefsTest, IntToAvailability) {
-  ASSERT_EQ(0, IncognitoModePrefs::ENABLED);
-  ASSERT_EQ(1, IncognitoModePrefs::DISABLED);
-  ASSERT_EQ(2, IncognitoModePrefs::FORCED);
+  ASSERT_EQ(0, static_cast<int>(policy::IncognitoModeAvailability::kEnabled));
+  ASSERT_EQ(1, static_cast<int>(policy::IncognitoModeAvailability::kDisabled));
+  ASSERT_EQ(2, static_cast<int>(policy::IncognitoModeAvailability::kForced));
 
-  IncognitoModePrefs::Availability incognito;
+  policy::IncognitoModeAvailability incognito;
   EXPECT_TRUE(IncognitoModePrefs::IntToAvailability(0, &incognito));
-  EXPECT_EQ(IncognitoModePrefs::ENABLED, incognito);
+  EXPECT_EQ(policy::IncognitoModeAvailability::kEnabled, incognito);
   EXPECT_TRUE(IncognitoModePrefs::IntToAvailability(1, &incognito));
-  EXPECT_EQ(IncognitoModePrefs::DISABLED, incognito);
+  EXPECT_EQ(policy::IncognitoModeAvailability::kDisabled, incognito);
   EXPECT_TRUE(IncognitoModePrefs::IntToAvailability(2, &incognito));
-  EXPECT_EQ(IncognitoModePrefs::FORCED, incognito);
+  EXPECT_EQ(policy::IncognitoModeAvailability::kForced, incognito);
 
   EXPECT_FALSE(IncognitoModePrefs::IntToAvailability(10, &incognito));
   EXPECT_EQ(IncognitoModePrefs::kDefaultAvailability, incognito);
@@ -38,32 +38,38 @@ TEST_F(IncognitoModePrefsTest, IntToAvailability) {
 }
 
 TEST_F(IncognitoModePrefsTest, GetAvailability) {
-  prefs_.SetUserPref(
-      prefs::kIncognitoModeAvailability,
-      std::make_unique<base::Value>(IncognitoModePrefs::ENABLED));
-  EXPECT_EQ(IncognitoModePrefs::ENABLED,
+  prefs_.SetUserPref(policy::policy_prefs::kIncognitoModeAvailability,
+                     std::make_unique<base::Value>(static_cast<int>(
+                         policy::IncognitoModeAvailability::kEnabled)));
+  EXPECT_EQ(policy::IncognitoModeAvailability::kEnabled,
             IncognitoModePrefs::GetAvailability(&prefs_));
 
-  prefs_.SetUserPref(
-      prefs::kIncognitoModeAvailability,
-      std::make_unique<base::Value>(IncognitoModePrefs::DISABLED));
-  EXPECT_EQ(IncognitoModePrefs::DISABLED,
+  prefs_.SetUserPref(policy::policy_prefs::kIncognitoModeAvailability,
+                     std::make_unique<base::Value>(static_cast<int>(
+                         policy::IncognitoModeAvailability::kDisabled)));
+  EXPECT_EQ(policy::IncognitoModeAvailability::kDisabled,
             IncognitoModePrefs::GetAvailability(&prefs_));
 
-  prefs_.SetUserPref(prefs::kIncognitoModeAvailability,
-                     std::make_unique<base::Value>(IncognitoModePrefs::FORCED));
-  EXPECT_EQ(IncognitoModePrefs::FORCED,
+  prefs_.SetUserPref(policy::policy_prefs::kIncognitoModeAvailability,
+                     std::make_unique<base::Value>(static_cast<int>(
+                         policy::IncognitoModeAvailability::kForced)));
+  EXPECT_EQ(policy::IncognitoModeAvailability::kForced,
             IncognitoModePrefs::GetAvailability(&prefs_));
 }
 
 typedef IncognitoModePrefsTest IncognitoModePrefsDeathTest;
 
-TEST_F(IncognitoModePrefsDeathTest, GetAvailabilityBadValue) {
-  prefs_.SetUserPref(prefs::kIncognitoModeAvailability,
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN)
+#define MAYBE_GetAvailabilityBadValue DISABLED_GetAvailabilityBadValue
+#else
+#define MAYBE_GetAvailabilityBadValue GetAvailabilityBadValue
+#endif
+TEST_F(IncognitoModePrefsDeathTest, MAYBE_GetAvailabilityBadValue) {
+  prefs_.SetUserPref(policy::policy_prefs::kIncognitoModeAvailability,
                      std::make_unique<base::Value>(-1));
   EXPECT_DCHECK_DEATH({
-    IncognitoModePrefs::Availability availability =
+    policy::IncognitoModeAvailability availability =
         IncognitoModePrefs::GetAvailability(&prefs_);
-    EXPECT_EQ(IncognitoModePrefs::ENABLED, availability);
+    EXPECT_EQ(policy::IncognitoModeAvailability::kEnabled, availability);
   });
 }

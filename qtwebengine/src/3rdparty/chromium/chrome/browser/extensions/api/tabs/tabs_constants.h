@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -22,6 +22,7 @@ extern const char kFileKey[];
 extern const char kFocusedKey[];
 extern const char kFormatKey[];
 extern const char kFromIndexKey[];
+extern const char kGroupIdKey[];
 extern const char kHeightKey[];
 extern const char kHighlightedKey[];
 extern const char kIdKey[];
@@ -77,6 +78,7 @@ extern const char kWindowTypeValueDevTools[];
 
 // Error messages.
 extern const char kCannotZoomDisabledTabError[];
+extern const char kFileUrlsNotAllowedInExtensionNavigations[];
 extern const char kFrameNotFoundError[];
 extern const char kNoCrashBrowserError[];
 extern const char kNoCurrentWindowError[];
@@ -88,8 +90,12 @@ extern const char kTabIndexNotFoundError[];
 extern const char kNotFoundNextPageError[];
 extern const char kTabNotFoundError[];
 extern const char kCannotDiscardTab[];
+extern const char kCannotDuplicateTab[];
 extern const char kCannotFindTabToDiscard[];
+extern const char kSavedTabGroupNotEditableError[];
 extern const char kTabStripNotEditableError[];
+extern const char kTabStripNotEditableQueryError[];
+extern const char kTabStripDoesNotSupportTabGroupsError[];
 extern const char kNoHighlightedTabError[];
 extern const char kNoSelectedTabError[];
 extern const char kIncognitoModeIsDisabled[];
@@ -100,13 +106,20 @@ extern const char kNotImplementedError[];
 extern const char kSupportedInWindowsOnlyError[];
 extern const char kInvalidWindowTypeError[];
 extern const char kInvalidWindowStateError[];
+extern const char kInvalidWindowBoundsError[];
 extern const char kScreenshotsDisabled[];
+extern const char kScreenshotsDisabledByDlp[];
 extern const char kCannotUpdateMuteCaptured[];
 extern const char kCannotDetermineLanguageOfUnloadedTab[];
 extern const char kMissingLockWindowFullscreenPrivatePermission[];
-extern const char kJavaScriptUrlsNotAllowedInTabsUpdate[];
+extern const char kJavaScriptUrlsNotAllowedInExtensionNavigations[];
 extern const char kBrowserWindowNotAllowed[];
 extern const char kLockedFullscreenModeNewTabError[];
+extern const char kGroupParamsError[];
+extern const char kCannotNavigateToDevtools[];
+extern const char kCannotNavigateToChromeUntrusted[];
+extern const char kCannotHighlightTabs[];
+extern const char kNotAllowedForDevToolsError[];
 
 }  // namespace tabs_constants
 }  // namespace extensions

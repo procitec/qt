@@ -1,10 +1,11 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_CSS_CSS_MATH_FUNCTION_VALUE_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_CSS_CSS_MATH_FUNCTION_VALUE_H_
 
+#include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/css/css_math_expression_node.h"
 #include "third_party/blink/renderer/core/css/css_primitive_value.h"
 
@@ -17,31 +18,33 @@ class CORE_EXPORT CSSMathFunctionValue : public CSSPrimitiveValue {
  public:
   static CSSMathFunctionValue* Create(const Length&, float zoom);
   static CSSMathFunctionValue* Create(const CSSMathExpressionNode*,
-                                      ValueRange = kValueRangeAll);
+                                      ValueRange = ValueRange::kAll);
 
   CSSMathFunctionValue(const CSSMathExpressionNode* expression,
                        ValueRange range);
 
-  const CSSMathExpressionNode* ExpressionNode() const { return expression_; }
+  const CSSMathExpressionNode* ExpressionNode() const {
+    return expression_.Get();
+  }
 
-  scoped_refptr<CalculationValue> ToCalcValue(
-      const CSSToLengthConversionData& conversion_data) const;
+  scoped_refptr<const CalculationValue> ToCalcValue(
+      const CSSLengthResolver&) const;
 
   bool MayHaveRelativeUnit() const;
 
-  CalculationCategory Category() const { return expression_->Category(); }
+  CalculationResultCategory Category() const { return expression_->Category(); }
+
   bool IsAngle() const { return Category() == kCalcAngle; }
   bool IsLength() const { return Category() == kCalcLength; }
   bool IsNumber() const { return Category() == kCalcNumber; }
   bool IsPercentage() const { return Category() == kCalcPercent; }
   bool IsTime() const { return Category() == kCalcTime; }
+  bool IsResolution() const { return Category() == kCalcResolution; }
 
   bool IsPx() const;
 
-  bool IsInt() const { return expression_->IsInteger(); }
-  bool IsNegative() const { return expression_->DoubleValue() < 0; }
   ValueRange PermittedValueRange() const {
-    return IsNonNegative() ? kValueRangeNonNegative : kValueRangeAll;
+    return value_range_in_target_context_;
   }
 
   // When |false|, comparisons between percentage values can be resolved without
@@ -66,20 +69,21 @@ class CORE_EXPORT CSSMathFunctionValue : public CSSPrimitiveValue {
 
   // TODO(crbug.com/979895): The semantics of this function is still not very
   // clear. Do not add new callers before further refactoring and cleanups.
-  // |DoubleValue()| can be called only when the the math expression can be
+  // |DoubleValue()| can be called only when the math expression can be
   // resolved into a single numeric value *without any type conversion* (e.g.,
   // between px and em). Otherwise, it hits a DCHECK.
   double DoubleValue() const;
 
   double ComputeSeconds() const;
   double ComputeDegrees() const;
-  double ComputeLengthPx(
-      const CSSToLengthConversionData& conversion_data) const;
+  double ComputeLengthPx(const CSSLengthResolver&) const;
+  double ComputeDotsPerPixel() const;
+  int ComputeInteger(const CSSLengthResolver&) const;
+  double ComputeNumber(const CSSLengthResolver&) const;
 
   bool AccumulateLengthArray(CSSLengthArray& length_array,
                              double multiplier) const;
-  Length ConvertToLength(
-      const CSSToLengthConversionData& conversion_data) const;
+  Length ConvertToLength(const CSSLengthResolver&) const;
 
   void AccumulateLengthUnitTypes(LengthTypeFlags& types) const {
     expression_->AccumulateLengthUnitTypes(types);
@@ -89,15 +93,19 @@ class CORE_EXPORT CSSMathFunctionValue : public CSSPrimitiveValue {
   bool Equals(const CSSMathFunctionValue& other) const;
 
   bool HasComparisons() const { return expression_->HasComparisons(); }
+  bool InvolvesAnchorQueries() const {
+    return expression_->InvolvesAnchorQueries();
+  }
+
+  const CSSValue& PopulateWithTreeScope(const TreeScope*) const;
 
   void TraceAfterDispatch(blink::Visitor* visitor) const;
 
  private:
-  bool IsNonNegative() const { return is_non_negative_math_function_; }
-
   double ClampToPermittedRange(double) const;
 
   Member<const CSSMathExpressionNode> expression_;
+  ValueRange value_range_in_target_context_;
 };
 
 template <>

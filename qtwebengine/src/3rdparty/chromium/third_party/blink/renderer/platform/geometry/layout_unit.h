@@ -35,14 +35,17 @@
 #include <iosfwd>
 #include <limits>
 
+#include "base/check_op.h"
 #include "base/compiler_specific.h"
+#include "base/dcheck_is_on.h"
+#include "base/logging.h"
 #include "base/numerics/clamped_math.h"
 #include "base/numerics/safe_conversions.h"
 #include "build/build_config.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
-#include "third_party/blink/renderer/platform/wtf/assertions.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
+#include "third_party/blink/renderer/platform/wtf/vector_traits.h"
 
 namespace blink {
 
@@ -61,7 +64,7 @@ const int kIntMaxForLayoutUnit = INT_MAX / kFixedPointDenominator;
 const int kIntMinForLayoutUnit = INT_MIN / kFixedPointDenominator;
 
 #if defined(ARCH_CPU_ARM_FAMILY) && defined(ARCH_CPU_32_BITS) && \
-    defined(COMPILER_GCC) && !defined(OS_NACL) && __OPTIMIZE__
+    defined(COMPILER_GCC) && !BUILDFLAG(IS_NACL) && __OPTIMIZE__
 inline int GetMaxSaturatedSetResultForTesting() {
   // For ARM Asm version the set function maxes out to the biggest
   // possible integer part with the fractional part zero'd out.
@@ -88,13 +91,22 @@ ALWAYS_INLINE int GetMinSaturatedSetResultForTesting() {
 class PLATFORM_EXPORT LayoutUnit;
 constexpr bool operator<(const LayoutUnit&, const LayoutUnit&);
 
+// LayoutUnit is a fixed-point math class, storing multiples of 1/64 of a pixel.
+// See: https://trac.webkit.org/wiki/LayoutUnit
 class LayoutUnit {
   DISALLOW_NEW();
 
  public:
   constexpr LayoutUnit() : value_(0) {}
+  // Creates a LayoutUnit with the specified integer value.
+  // If the specified value is smaller than LayoutUnit::Min(), the new
+  // LayoutUnit is equivalent to LayoutUnit::Min().
+  // If the specified value is greater than the maximum integer value which
+  // LayoutUnit can represent, the new LayoutUnit is equivalent to
+  // LayoutUnit(kIntMaxForLayoutUnit) in 32-bit Arm, or is equivalent to
+  // LayoutUnit::Max() otherwise.
   template <typename IntegerType>
-  constexpr explicit LayoutUnit(IntegerType value) {
+  constexpr explicit LayoutUnit(IntegerType value) : value_(0) {
     if (std::is_signed<IntegerType>::value)
       SaturatedSet(static_cast<int>(value));
     else
@@ -102,17 +114,26 @@ class LayoutUnit {
   }
   constexpr explicit LayoutUnit(uint64_t value)
       : value_(base::saturated_cast<int>(value * kFixedPointDenominator)) {}
+  // The specified `value` is truncated to a multiple of 1/64 near 0, and
+  // is clamped by Min() and Max().
+  // A NaN `value` produces LayoutUnit(0).
   constexpr explicit LayoutUnit(float value)
       : value_(base::saturated_cast<int>(value * kFixedPointDenominator)) {}
   constexpr explicit LayoutUnit(double value)
       : value_(base::saturated_cast<int>(value * kFixedPointDenominator)) {}
 
+  // The specified `value` is rounded up to a multiple of 1/64, and
+  // is clamped by Min() and Max().
+  // A NaN `value` produces LayoutUnit(0).
   static LayoutUnit FromFloatCeil(float value) {
     LayoutUnit v;
     v.value_ = base::saturated_cast<int>(ceilf(value * kFixedPointDenominator));
     return v;
   }
 
+  // The specified `value` is truncated to a multiple of 1/64, and is clamped
+  // by Min() and Max().
+  // A NaN `value` produces LayoutUnit(0).
   static LayoutUnit FromFloatFloor(float value) {
     LayoutUnit v;
     v.value_ =
@@ -120,6 +141,9 @@ class LayoutUnit {
     return v;
   }
 
+  // The specified `value` is rounded to a multiple of 1/64, and
+  // is clamped by Min() and Max().
+  // A NaN `value` produces LayoutUnit(0).
   static LayoutUnit FromFloatRound(float value) {
     LayoutUnit v;
     v.value_ =
@@ -208,6 +232,15 @@ class LayoutUnit {
     return value_ > 0 ? LayoutUnit() : *this;
   }
 
+  LayoutUnit ClampIndefiniteToZero() const {
+    // We compare to |kFixedPointDenominator| here instead of |kIndefiniteSize|
+    // as the operator== for LayoutUnit is inlined below.
+    if (value_ == -kFixedPointDenominator)
+      return LayoutUnit();
+    DCHECK_GE(value_, 0);
+    return *this;
+  }
+
   constexpr bool HasFraction() const {
     return RawValue() % kFixedPointDenominator;
   }
@@ -225,7 +258,7 @@ class LayoutUnit {
            RawValue() == std::numeric_limits<int>::min();
   }
 
-  static float Epsilon() { return 1.0f / kFixedPointDenominator; }
+  static constexpr float Epsilon() { return 1.0f / kFixedPointDenominator; }
 
   LayoutUnit AddEpsilon() const {
     LayoutUnit return_value;
@@ -247,18 +280,23 @@ class LayoutUnit {
 
   // Versions of max/min that are slightly smaller/larger than max/min() to
   // allow for roinding without overflowing.
-  static const LayoutUnit NearlyMax() {
+  static constexpr LayoutUnit NearlyMax() {
     LayoutUnit m;
     m.value_ = std::numeric_limits<int>::max() - kFixedPointDenominator / 2;
     return m;
   }
-  static const LayoutUnit NearlyMin() {
+  static constexpr LayoutUnit NearlyMin() {
     LayoutUnit m;
     m.value_ = std::numeric_limits<int>::min() + kFixedPointDenominator / 2;
     return m;
   }
 
   static LayoutUnit Clamp(double value) { return FromFloatFloor(value); }
+
+  // Multiply by |m| and divide by |d| as a single ("fused") operation, avoiding
+  // any saturation of the intermediate result. Rounding matches that of the
+  // regular operations (i.e the result of the divide is rounded towards zero).
+  LayoutUnit MulDiv(LayoutUnit m, LayoutUnit d) const;
 
   String ToString() const;
 
@@ -277,10 +315,17 @@ class LayoutUnit {
   }
 
 #if defined(ARCH_CPU_ARM_FAMILY) && defined(ARCH_CPU_32_BITS) && \
-    defined(COMPILER_GCC) && !defined(OS_NACL) && __OPTIMIZE__
+    defined(COMPILER_GCC) && !BUILDFLAG(IS_NACL) && __OPTIMIZE__
   // If we're building ARM 32-bit on GCC we replace the C++ versions with some
   // native ARM assembly for speed.
-  inline void SaturatedSet(int value) {
+  constexpr inline void SaturatedSet(int value) {
+    if (IsConstantEvaluated())
+      SaturatedSetNonAsm(value);
+    else
+      SaturatedSetAsm(value);
+  }
+
+  inline void SaturatedSetAsm(int value) {
     // Figure out how many bits are left for storing the integer part of
     // the fixed point number, and saturate our input to that
     enum { Saturate = 32 - kLayoutUnitFractionalBits };
@@ -305,7 +350,14 @@ class LayoutUnit {
     value_ = result;
   }
 
-  inline void SaturatedSet(unsigned value) {
+  constexpr inline void SaturatedSet(unsigned value) {
+    if (IsConstantEvaluated())
+      SaturatedSetNonAsm(value);
+    else
+      SaturatedSetAsm(value);
+  }
+
+  inline void SaturatedSetAsm(unsigned value) {
     // Here we are being passed an unsigned value to saturate,
     // even though the result is returned as a signed integer. The ARM
     // instruction for unsigned saturation therefore needs to be given one
@@ -331,8 +383,17 @@ class LayoutUnit {
 
     value_ = result;
   }
-#else
-  ALWAYS_INLINE void SaturatedSet(int value) {
+#else  // end of 32-bit ARM GCC
+  ALWAYS_INLINE constexpr void SaturatedSet(int value) {
+    SaturatedSetNonAsm(value);
+  }
+
+  ALWAYS_INLINE constexpr void SaturatedSet(unsigned value) {
+    SaturatedSetNonAsm(value);
+  }
+#endif
+
+  ALWAYS_INLINE constexpr void SaturatedSetNonAsm(int value) {
     if (value > kIntMaxForLayoutUnit)
       value_ = std::numeric_limits<int>::max();
     else if (value < kIntMinForLayoutUnit)
@@ -341,16 +402,24 @@ class LayoutUnit {
       value_ = static_cast<unsigned>(value) << kLayoutUnitFractionalBits;
   }
 
-  ALWAYS_INLINE void SaturatedSet(unsigned value) {
-    if (value >= (unsigned)kIntMaxForLayoutUnit)
+  ALWAYS_INLINE constexpr void SaturatedSetNonAsm(unsigned value) {
+    if (value >= static_cast<unsigned>(kIntMaxForLayoutUnit))
       value_ = std::numeric_limits<int>::max();
     else
       value_ = value << kLayoutUnitFractionalBits;
   }
-#endif  // CPU(ARM) && COMPILER(GCC)
 
   int value_;
 };
+
+// kIndefiniteSize is a special value used within layout code. It is typical
+// within layout to have sizes which are only allowed to be non-negative or
+// "indefinite". We use the value of "-1" to represent these indefinite values.
+//
+// It is common to clamp these indefinite values to zero.
+// |LayoutUnit::ClampIndefiniteToZero| provides this functionality, and
+// additionally DCHECKs that it isn't some other negative value.
+constexpr LayoutUnit kIndefiniteSize(-1);
 
 constexpr bool operator<=(const LayoutUnit& a, const LayoutUnit& b) {
   return a.RawValue() <= b.RawValue();
@@ -538,6 +607,12 @@ inline LayoutUnit operator/(const LayoutUnit& a, const LayoutUnit& b) {
   return return_val;
 }
 
+inline LayoutUnit LayoutUnit::MulDiv(LayoutUnit m, LayoutUnit d) const {
+  int64_t n = static_cast<int64_t>(RawValue()) * m.RawValue();
+  int64_t q = n / d.RawValue();
+  return FromRawValue(base::saturated_cast<int>(q));
+}
+
 constexpr float operator/(const LayoutUnit& a, float b) {
   return a.ToFloat() / b;
 }
@@ -639,22 +714,6 @@ inline LayoutUnit IntMod(const LayoutUnit& a, const LayoutUnit& b) {
   return return_val;
 }
 
-// Returns the remainder after a division with LayoutUnit results.
-// This calculates the modulo so that: a = (a / b) * b + LayoutMod(a, b).
-inline LayoutUnit LayoutMod(const LayoutUnit& a, const LayoutUnit& b) {
-  LayoutUnit return_val;
-  int64_t raw_val =
-      (static_cast<int64_t>(kFixedPointDenominator) * a.RawValue()) %
-      b.RawValue();
-  return_val.SetRawValue(raw_val / kFixedPointDenominator);
-  return return_val;
-}
-
-template <typename IntegerType>
-inline LayoutUnit LayoutMod(const LayoutUnit& a, IntegerType b) {
-  return LayoutMod(a, LayoutUnit(b));
-}
-
 inline LayoutUnit& operator+=(LayoutUnit& a, const LayoutUnit& b) {
   a.SetRawValue(base::ClampAdd(a.RawValue(), b.RawValue()).RawValue());
   return a;
@@ -730,8 +789,7 @@ inline float& operator/=(float& a, const LayoutUnit& b) {
 inline int SnapSizeToPixel(LayoutUnit size, LayoutUnit location) {
   LayoutUnit fraction = location.Fraction();
   int result = (fraction + size).Round() - fraction.Round();
-  if (UNLIKELY(result == 0 &&
-               std::abs(size.ToFloat()) > LayoutUnit::Epsilon() * 4)) {
+  if (UNLIKELY(result == 0 && (size.RawValue() > 4 || size.RawValue() < -4))) {
     return size > 0 ? 1 : -1;
   }
   return result;
@@ -750,6 +808,10 @@ inline int FloorToInt(LayoutUnit value) {
   return value.Floor();
 }
 
+inline int CeilToInt(LayoutUnit value) {
+  return value.Ceil();
+}
+
 inline LayoutUnit AbsoluteValue(const LayoutUnit& value) {
   return value.Abs();
 }
@@ -763,5 +825,7 @@ PLATFORM_EXPORT WTF::TextStream& operator<<(WTF::TextStream&,
                                             const LayoutUnit&);
 
 }  // namespace blink
+
+WTF_ALLOW_MOVE_INIT_AND_COMPARE_WITH_MEM_FUNCTIONS(blink::LayoutUnit)
 
 #endif  // THIRD_PARTY_BLINK_RENDERER_PLATFORM_GEOMETRY_LAYOUT_UNIT_H_

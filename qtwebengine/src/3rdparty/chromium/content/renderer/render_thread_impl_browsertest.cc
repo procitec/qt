@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,28 +10,30 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback.h"
+#include "base/base_switches.h"
 #include "base/command_line.h"
 #include "base/debug/leak_annotations.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/location.h"
-#include "base/macros.h"
 #include "base/memory/discardable_memory.h"
+#include "base/memory/raw_ptr.h"
 #include "base/metrics/field_trial.h"
 #include "base/run_loop.h"
-#include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/task/sequenced_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/task/thread_pool/thread_pool_instance.h"
 #include "base/test/test_switches.h"
-#include "base/threading/sequenced_task_runner_handle.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "cc/base/switches.h"
 #include "content/app/mojo/mojo_init.h"
 #include "content/common/in_process_child_thread_params.h"
+#include "content/common/pseudonymization_salt.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/child_process_host.h"
+#include "content/public/browser/child_process_host_delegate.h"
 #include "content/public/browser/content_browser_client.h"
-#include "content/public/common/child_process_host.h"
-#include "content/public/common/child_process_host_delegate.h"
 #include "content/public/common/content_client.h"
 #include "content/public/common/content_features.h"
 #include "content/public/common/content_switches.h"
@@ -40,6 +42,7 @@
 #include "content/public/test/browser_test.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
+#include "content/public/test/content_test_suite_base.h"
 #include "content/public/test/test_content_client_initializer.h"
 #include "content/public/test/test_launcher.h"
 #include "content/renderer/render_process_impl.h"
@@ -58,17 +61,21 @@
 
 // IPC messages for testing ----------------------------------------------------
 
+#if BUILDFLAG(CONTENT_ENABLE_LEGACY_IPC)
 // TODO(mdempsky): Fix properly by moving into a separate
 // browsertest_message_generator.cc file.
 #undef IPC_IPC_MESSAGE_MACROS_H_
 #undef IPC_MESSAGE_EXTRA
 #define IPC_MESSAGE_IMPL
 #include "ipc/ipc_message_macros.h"
+#include "ipc/ipc_message_start.h"
 #include "ipc/ipc_message_templates_impl.h"
 
 #undef IPC_MESSAGE_START
 #define IPC_MESSAGE_START TestMsgStart
 IPC_MESSAGE_CONTROL0(TestMsg_QuitRunLoop)
+
+#endif
 
 // -----------------------------------------------------------------------------
 
@@ -118,6 +125,7 @@ class TestTaskCounter : public base::SingleThreadTaskRunner {
   int count_;
 };
 
+#if BUILDFLAG(CONTENT_ENABLE_LEGACY_IPC)
 class QuitOnTestMsgFilter : public IPC::MessageFilter {
  public:
   explicit QuitOnTestMsgFilter(base::OnceClosure quit_closure)
@@ -143,18 +151,23 @@ class QuitOnTestMsgFilter : public IPC::MessageFilter {
   scoped_refptr<base::SequencedTaskRunner> origin_task_runner_;
   base::OnceClosure quit_closure_;
 };
+#endif
 
 class RenderThreadImplBrowserTest : public testing::Test,
                                     public ChildProcessHostDelegate {
  public:
   RenderThreadImplBrowserTest() {}
 
+  RenderThreadImplBrowserTest(const RenderThreadImplBrowserTest&) = delete;
+  RenderThreadImplBrowserTest& operator=(const RenderThreadImplBrowserTest&) =
+      delete;
+
   void SetUp() override {
-    content_renderer_client_.reset(new ContentRendererClient());
+    content_renderer_client_ = std::make_unique<ContentRendererClient>();
     SetRendererClientForTesting(content_renderer_client_.get());
 
-    browser_threads_.reset(
-        new BrowserTaskEnvironment(BrowserTaskEnvironment::REAL_IO_THREAD));
+    browser_threads_ = std::make_unique<BrowserTaskEnvironment>(
+        BrowserTaskEnvironment::REAL_IO_THREAD);
     scoped_refptr<base::SingleThreadTaskRunner> io_task_runner =
         GetIOThreadTaskRunner({});
 
@@ -163,7 +176,8 @@ class RenderThreadImplBrowserTest : public testing::Test,
         ChildProcessHost::Create(this, ChildProcessHost::IpcMode::kNormal);
     process_host_->CreateChannelMojo();
 
-    process_.reset(new RenderProcess);
+    CHECK(!process_.get());
+    process_ = std::make_unique<RenderProcess>();
     test_task_counter_ = base::MakeRefCounted<TestTaskCounter>();
 
     // RenderThreadImpl expects the browser to pass these flags.
@@ -172,12 +186,14 @@ class RenderThreadImplBrowserTest : public testing::Test,
 
     cmd->AppendSwitchASCII(switches::kLang, "en-US");
 
-    cmd->AppendSwitchASCII(switches::kNumRasterThreads, "1");
+    cmd->AppendSwitchASCII(cc::switches::kNumRasterThreads, "1");
 
     // To avoid creating a GPU channel to query if
     // accelerated_video_decode is blocklisted on older Android system
     // in RenderThreadImpl::Init().
     cmd->AppendSwitch(switches::kIgnoreGpuBlocklist);
+
+    ContentTestSuiteBase::InitializeResourceBundle();
 
     blink::Platform::InitializeBlink();
     auto main_thread_scheduler =
@@ -185,8 +201,9 @@ class RenderThreadImplBrowserTest : public testing::Test,
     scoped_refptr<base::SingleThreadTaskRunner> test_task_counter(
         test_task_counter_.get());
 
-    base::FieldTrialList::CreateTrialsFromCommandLine(
-        *cmd, switches::kFieldTrialHandle, -1);
+    // This handles the --force-fieldtrials flag passed to content_browsertests.
+    base::FieldTrialList::CreateTrialsFromString(
+        cmd->GetSwitchValueASCII(::switches::kForceFieldTrials));
     thread_ = new RenderThreadImpl(
         InProcessChildThreadParams(io_task_runner,
                                    &process_host_->GetMojoInvitation().value()),
@@ -194,9 +211,11 @@ class RenderThreadImplBrowserTest : public testing::Test,
     cmd->InitFromArgv(old_argv);
 
     run_loop_ = std::make_unique<base::RunLoop>();
+#if BUILDFLAG(CONTENT_ENABLE_LEGACY_IPC)
     test_msg_filter_ = base::MakeRefCounted<QuitOnTestMsgFilter>(
         run_loop_->QuitWhenIdleClosure());
     thread_->AddFilter(test_msg_filter_.get());
+#endif
 
     main_thread_scheduler_ =
         static_cast<blink::scheduler::WebMockThreadScheduler*>(
@@ -204,14 +223,31 @@ class RenderThreadImplBrowserTest : public testing::Test,
   }
 
   void TearDown() override {
-    if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-            switches::kSingleProcessTests)) {
-      // In a single-process mode, we need to avoid destructing process_
-      // because it will call _exit(0) and kill the process before the browser
-      // side is ready to exit.
-      ANNOTATE_LEAKING_OBJECT_PTR(process_.get());
-      process_.release();
-    }
+    SetRendererClientForTesting(nullptr);
+    CHECK(base::CommandLine::ForCurrentProcess()->HasSwitch(
+        switches::kSingleProcessTests));
+    // In a single-process mode, we need to avoid destructing `process_`
+    // because it will call _exit(0) and kill the process before the browser
+    // side is ready to exit.
+    ANNOTATE_LEAKING_OBJECT_PTR(process_.get());
+    // TODO(crbug.com/1219038): `StopIOThreadForTesting()` is a stop-gap
+    // solution to fix flaky tests (see crbug.com/1126157). The underlying
+    // reason for this issue is that the `RenderThreadImpl` created in `SetUp()`
+    // above actually shares its main thread with the browser's, which is
+    // inconsistent with how in-process renderers work in production and other
+    // tests. Despite sharing its main thread with the browser, it still has its
+    // own IO thread (owned and created by `ChildProcess`). In these tests, the
+    // `BrowserTaskEnvironment` has no idea about this separate renderer IO
+    // thread, which can post tasks back to the browser's main thread. During
+    // `BrowserTaskEnvironment` shutdown, it CHECK()s that after the threads are
+    // stopped and flushed, no other tasks exist on its SequenceManager's task
+    // queues. However if we don't stop the IO thread here, then it may continue
+    // to post tasks to the `BrowserTaskEnvironment`'s main thread, causing the
+    // CHECK() to get hit. We should really fix the above tests to create a
+    // `RenderThreadImpl` on its own thread the traditional route, but this fix
+    // will work until we have the time to explore that option.
+    process_->StopIOThreadForTesting();
+    process_.release();
   }
 
   // ChildProcessHostDelegate implementation:
@@ -251,33 +287,22 @@ class RenderThreadImplBrowserTest : public testing::Test,
   std::unique_ptr<ChildProcessHost> process_host_;
 
   std::unique_ptr<RenderProcess> process_;
+#if BUILDFLAG(CONTENT_ENABLE_LEGACY_IPC)
   scoped_refptr<QuitOnTestMsgFilter> test_msg_filter_;
+#endif
 
-  blink::scheduler::WebMockThreadScheduler* main_thread_scheduler_;
+  raw_ptr<blink::scheduler::WebMockThreadScheduler, ExperimentalRenderer>
+      main_thread_scheduler_;
 
   // RenderThreadImpl doesn't currently support a proper shutdown sequence
   // and it's okay when we're running in multi-process mode because renderers
   // get killed by the OS. Memory leaks aren't nice but it's test-only.
-  RenderThreadImpl* thread_;
+  raw_ptr<RenderThreadImpl, ExperimentalRenderer> thread_;
 
   std::unique_ptr<base::RunLoop> run_loop_;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(RenderThreadImplBrowserTest);
 };
 
-// Check that InputHandlerManager outlives compositor thread because it uses
-// raw pointers to post tasks.
-// Disabled under LeakSanitizer due to memory leaks. http://crbug.com/348994
-// Disabled on Windows due to flakiness: http://crbug.com/728034.
-#if defined(OS_WIN)
-#define MAYBE_InputHandlerManagerDestroyedAfterCompositorThread \
-  DISABLED_InputHandlerManagerDestroyedAfterCompositorThread
-#else
-#define MAYBE_InputHandlerManagerDestroyedAfterCompositorThread \
-  InputHandlerManagerDestroyedAfterCompositorThread
-#endif
-
+#if BUILDFLAG(CONTENT_ENABLE_LEGACY_IPC)
 // Disabled under LeakSanitizer due to memory leaks.
 TEST_F(RenderThreadImplBrowserTest,
        WILL_LEAK(NonResourceDispatchIPCTasksDontGoThroughScheduler)) {
@@ -288,10 +313,17 @@ TEST_F(RenderThreadImplBrowserTest,
   // unimportant.
   sender()->Send(new TestMsg_QuitRunLoop());
 
+  // In-process RenderThreadImpl does not start a browser loop so the random
+  // browser seed is never generated. To allow the ChildProcessHost to correctly
+  // send a seed to the ChildProcess without hitting a DCHECK, set the seed to
+  // an arbitrary non-zero value.
+  SetPseudonymizationSalt(0xDEADBEEF);
+
   run_loop_->Run();
 
   EXPECT_EQ(0, test_task_counter_->NumTasksPosted());
 }
+#endif
 
 TEST_F(RenderThreadImplBrowserTest, RendererIsBackgrounded) {
   SetBackgroundState(mojom::RenderProcessBackgroundState::kBackgrounded);
@@ -404,6 +436,12 @@ class RenderThreadImplGpuMemoryBufferBrowserTest
           ::testing::tuple<NativeBufferFlag, gfx::BufferFormat>> {
  public:
   RenderThreadImplGpuMemoryBufferBrowserTest() {}
+
+  RenderThreadImplGpuMemoryBufferBrowserTest(
+      const RenderThreadImplGpuMemoryBufferBrowserTest&) = delete;
+  RenderThreadImplGpuMemoryBufferBrowserTest& operator=(
+      const RenderThreadImplGpuMemoryBufferBrowserTest&) = delete;
+
   ~RenderThreadImplGpuMemoryBufferBrowserTest() override {}
 
   gpu::GpuMemoryBufferManager* memory_buffer_manager() {
@@ -432,9 +470,8 @@ class RenderThreadImplGpuMemoryBufferBrowserTest
         base::Unretained(this)));
   }
 
-  gpu::GpuMemoryBufferManager* memory_buffer_manager_ = nullptr;
-
-  DISALLOW_COPY_AND_ASSIGN(RenderThreadImplGpuMemoryBufferBrowserTest);
+  raw_ptr<gpu::GpuMemoryBufferManager, ExperimentalRenderer>
+      memory_buffer_manager_ = nullptr;
 };
 
 // https://crbug.com/652531
@@ -446,7 +483,7 @@ IN_PROC_BROWSER_TEST_P(RenderThreadImplGpuMemoryBufferBrowserTest,
   std::unique_ptr<gfx::GpuMemoryBuffer> buffer =
       memory_buffer_manager()->CreateGpuMemoryBuffer(
           buffer_size, format, gfx::BufferUsage::GPU_READ_CPU_READ_WRITE,
-          gpu::kNullSurfaceHandle);
+          gpu::kNullSurfaceHandle, nullptr);
   ASSERT_TRUE(buffer);
   EXPECT_EQ(format, buffer->GetFormat());
 

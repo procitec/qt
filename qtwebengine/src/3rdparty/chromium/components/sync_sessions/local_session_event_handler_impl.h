@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,7 +9,7 @@
 #include <set>
 #include <string>
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/time/time.h"
 #include "components/sessions/core/session_id.h"
 #include "components/sessions/core/session_types.h"
@@ -35,13 +35,14 @@ class LocalSessionEventHandlerImpl : public LocalSessionEventHandler {
   class WriteBatch {
    public:
     WriteBatch();
+
+    WriteBatch(const WriteBatch&) = delete;
+    WriteBatch& operator=(const WriteBatch&) = delete;
+
     virtual ~WriteBatch();
     virtual void Delete(int tab_node_id) = 0;
     virtual void Put(std::unique_ptr<sync_pb::SessionSpecifics> specifics) = 0;
     virtual void Commit() = 0;
-
-   private:
-    DISALLOW_COPY_AND_ASSIGN(WriteBatch);
   };
 
   class Delegate {
@@ -61,6 +62,11 @@ class LocalSessionEventHandlerImpl : public LocalSessionEventHandler {
   LocalSessionEventHandlerImpl(Delegate* delegate,
                                SyncSessionsClient* sessions_client,
                                SyncedSessionTracker* session_tracker);
+
+  LocalSessionEventHandlerImpl(const LocalSessionEventHandlerImpl&) = delete;
+  LocalSessionEventHandlerImpl& operator=(const LocalSessionEventHandlerImpl&) =
+      delete;
+
   ~LocalSessionEventHandlerImpl() override;
 
   // LocalSessionEventHandler implementation.
@@ -69,7 +75,7 @@ class LocalSessionEventHandlerImpl : public LocalSessionEventHandler {
 
   // Returns tab specifics from |tab_delegate|. Exposed publicly for testing.
   sync_pb::SessionTab GetTabSpecificsFromDelegateForTest(
-      const SyncedTabDelegate& tab_delegate) const;
+      SyncedTabDelegate& tab_delegate) const;
 
  private:
   enum ReloadTabsOption { RELOAD_TABS, DONT_RELOAD_TABS };
@@ -77,30 +83,27 @@ class LocalSessionEventHandlerImpl : public LocalSessionEventHandler {
   void CleanupLocalTabs(WriteBatch* batch);
 
   void AssociateWindows(ReloadTabsOption option,
-                        WriteBatch* batch);
+                        WriteBatch* batch,
+                        bool is_session_restore);
 
   // Loads and reassociates the local tab referenced in |tab|.
   // |batch| must not be null. This function will append necessary
   // changes for processing later.
-  void AssociateTab(SyncedTabDelegate* const tab,
-                    WriteBatch* batch);
+  void AssociateTab(SyncedTabDelegate* const tab, WriteBatch* batch);
 
   // Set |session_tab| from |tab_delegate|.
   sync_pb::SessionTab GetTabSpecificsFromDelegate(
-      const SyncedTabDelegate& tab_delegate) const;
+      SyncedTabDelegate& tab_delegate) const;
 
-  // Update |tab_specifics| with the corresponding task ids.
-  static void WriteTasksIntoSpecifics(sync_pb::SessionTab* tab_specifics,
-                                      SyncedTabDelegate* tab_delegate);
+  bool AssociatePlaceholderTab(std::unique_ptr<SyncedTabDelegate> snapshot,
+                               WriteBatch* batch);
 
   // Injected dependencies (not owned).
-  Delegate* const delegate_;
-  SyncSessionsClient* const sessions_client_;
-  SyncedSessionTracker* const session_tracker_;
+  const raw_ptr<Delegate> delegate_;
+  const raw_ptr<SyncSessionsClient> sessions_client_;
+  const raw_ptr<SyncedSessionTracker> session_tracker_;
 
   std::string current_session_tag_;
-
-  DISALLOW_COPY_AND_ASSIGN(LocalSessionEventHandlerImpl);
 };
 
 }  // namespace sync_sessions

@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -54,7 +54,7 @@ void StopTracing() {
   // did happen, that would mean one or more CPU cores are continuously spending
   // most of their time executing the TraceLoggingPlatform methods, yet those
   // methods are supposed to be super-cheap and take near-zero time to execute!
-  int iters = 0;
+  [[maybe_unused]] int iters = 0;
   while (g_use_count.load(std::memory_order_relaxed) != 0) {
     assert(iters < 1024);
     std::this_thread::yield();

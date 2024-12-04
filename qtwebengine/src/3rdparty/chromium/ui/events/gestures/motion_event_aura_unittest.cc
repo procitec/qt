@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -44,7 +44,7 @@ ui::TouchEvent TouchWithTapParams(ui::EventType type,
 }
 
 base::TimeTicks MsToTicks(int ms) {
-  return base::TimeTicks() + base::TimeDelta::FromMilliseconds(ms);
+  return base::TimeTicks() + base::Milliseconds(ms);
 }
 
 ui::TouchEvent TouchWithTime(ui::EventType type, int id, int ms) {
@@ -446,12 +446,12 @@ TEST(MotionEventAuraTest, Flags) {
   MotionEventAura event;
 
   TouchEvent press0 = TouchWithType(ET_TOUCH_PRESSED, ids[0]);
-  press0.set_flags(EF_CONTROL_DOWN);
+  press0.SetFlags(EF_CONTROL_DOWN);
   EXPECT_TRUE(event.OnTouch(press0));
   EXPECT_EQ(EF_CONTROL_DOWN, event.GetFlags());
 
   TouchEvent press1 = TouchWithType(ET_TOUCH_PRESSED, ids[1]);
-  press1.set_flags(EF_CONTROL_DOWN | EF_CAPS_LOCK_ON);
+  press1.SetFlags(EF_CONTROL_DOWN | EF_CAPS_LOCK_ON);
   EXPECT_TRUE(event.OnTouch(press1));
   EXPECT_EQ(EF_CONTROL_DOWN | EF_CAPS_LOCK_ON, event.GetFlags());
 }

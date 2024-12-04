@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,24 +9,27 @@
 #include <string>
 #include <vector>
 
-#include "base/callback_forward.h"
+#include "base/functional/callback_forward.h"
 #include "base/gtest_prod_util.h"
-#include "base/macros.h"
-#include "base/strings/string16.h"
+#include "base/memory/raw_ptr.h"
 #include "components/account_id/account_id.h"
 #include "components/user_manager/user_image/user_image.h"
 #include "components/user_manager/user_info.h"
 #include "components/user_manager/user_manager_export.h"
 #include "components/user_manager/user_type.h"
 
-namespace chromeos {
+class PrefService;
+
+namespace ash {
 class ChromeUserManagerImpl;
 class FakeChromeUserManager;
-class MockUserManager;
-class SupervisedUserManagerImpl;
 class UserAddingScreenTest;
-class UserImageManagerImpl;
 class UserSessionManager;
+class UserImageManagerImpl;
+}  // namespace ash
+
+namespace chromeos {
+class SupervisedUserManagerImpl;
 }
 
 namespace gfx {
@@ -61,6 +64,7 @@ class USER_MANAGER_EXPORT User : public UserInfo {
     OAUTH2_TOKEN_STATUS_VALID = 4,
   } OAuthTokenStatus;
 
+  // TODO(jasontt): Explore adding a new value for image taken from camera.
   // These special values are used instead of actual default image indices.
   typedef enum {
     USER_IMAGE_INVALID = -3,
@@ -76,21 +80,26 @@ class USER_MANAGER_EXPORT User : public UserInfo {
   // Returns true if user type has gaia account.
   static bool TypeHasGaiaAccount(UserType user_type);
 
-  explicit User(const AccountId& account_id);
+  // Returns true if user represents any type of the kiosk.
+  static bool TypeIsKiosk(UserType user_type);
+
+  User(const User&) = delete;
+  User& operator=(const User&) = delete;
+
   ~User() override;
 
   // UserInfo
   std::string GetDisplayEmail() const override;
-  base::string16 GetDisplayName() const override;
-  base::string16 GetGivenName() const override;
+  std::u16string GetDisplayName() const override;
+  std::u16string GetGivenName() const override;
   const gfx::ImageSkia& GetImage() const override;
   const AccountId& GetAccountId() const override;
 
   // Returns the user type.
-  virtual UserType GetType() const = 0;
+  UserType GetType() const { return type_; }
 
   // Will LOG(FATAL) unless overridden.
-  virtual void UpdateType(UserType user_type);
+  void UpdateType(UserType new_type);
 
   // Returns true if user has gaia account. True for users of types
   // USER_TYPE_REGULAR and USER_TYPE_CHILD.
@@ -99,20 +108,20 @@ class USER_MANAGER_EXPORT User : public UserInfo {
   // Returns true if it's Active Directory user.
   virtual bool IsActiveDirectoryUser() const;
 
-  // Returns true if user is supervised.
-  virtual bool IsSupervised() const;
-
   // Returns true if user is child.
   virtual bool IsChild() const;
-
-  // True if user image can be synced.
-  virtual bool CanSyncImage() const;
 
   // The displayed (non-canonical) user email.
   virtual std::string display_email() const;
 
-  // True if the user is affiliated to the device.
+  // True if the user is affiliated to the device. Returns false if the
+  // affiliation is not known. Use IsAffiliatedAsync if it's possible the call
+  // is done before affiliation is established.
   virtual bool IsAffiliated() const;
+
+  // Runs the callback immediately if the affiliation is known, otherwise later
+  // when the affiliation is established.
+  void IsAffiliatedAsync(base::OnceCallback<void(bool)> is_affiliated_callback);
 
   // True if the user is a device local account user.
   virtual bool IsDeviceLocalAccount() const;
@@ -120,8 +129,14 @@ class USER_MANAGER_EXPORT User : public UserInfo {
   // True if the user is a kiosk.
   bool IsKioskType() const;
 
+  // Returns PrefService of the Profile corresponding this User.
+  // If Profile and its PrefService is not yet ready, or it is already
+  // destroyed, this API returns nullptr.
+  PrefService* GetProfilePrefs() { return profile_prefs_.get(); }
+  const PrefService* GetProfilePrefs() const { return profile_prefs_.get(); }
+
   // The displayed user name.
-  base::string16 display_name() const { return display_name_; }
+  std::u16string display_name() const { return display_name_; }
 
   // If the user has to use SAML to log in.
   bool using_saml() const { return using_saml_; }
@@ -171,7 +186,7 @@ class USER_MANAGER_EXPORT User : public UserInfo {
   bool can_lock() const;
 
   // Returns empty string when home dir hasn't been mounted yet.
-  std::string username_hash() const;
+  const std::string& username_hash() const;
 
   // True if current user is logged in.
   bool is_logged_in() const;
@@ -204,16 +219,15 @@ class USER_MANAGER_EXPORT User : public UserInfo {
 
  protected:
   friend class UserManagerBase;
-  friend class chromeos::ChromeUserManagerImpl;
+  friend class ash::ChromeUserManagerImpl;
   friend class chromeos::SupervisedUserManagerImpl;
-  friend class chromeos::UserImageManagerImpl;
-  friend class chromeos::UserSessionManager;
+  friend class ash::UserImageManagerImpl;
+  friend class ash::UserSessionManager;
 
   // For testing:
   friend class FakeUserManager;
-  friend class chromeos::FakeChromeUserManager;
-  friend class chromeos::MockUserManager;
-  friend class chromeos::UserAddingScreenTest;
+  friend class ash::FakeChromeUserManager;
+  friend class ash::UserAddingScreenTest;
   friend class policy::ProfilePolicyConnectorTest;
   FRIEND_TEST_ALL_PREFIXES(UserTest, DeviceLocalAccountAffiliation);
   FRIEND_TEST_ALL_PREFIXES(UserTest, UserSessionInitialized);
@@ -225,9 +239,10 @@ class USER_MANAGER_EXPORT User : public UserInfo {
   static User* CreateKioskAppUser(const AccountId& kiosk_app_account_id);
   static User* CreateArcKioskAppUser(const AccountId& arc_kiosk_account_id);
   static User* CreateWebKioskAppUser(const AccountId& web_kiosk_account_id);
-  static User* CreateSupervisedUser(const AccountId& account_id);
   static User* CreatePublicAccountUser(const AccountId& account_id,
                                        bool is_using_saml = false);
+
+  User(const AccountId& account_id, UserType type);
 
   const std::string* GetAccountLocale() const { return account_locale_.get(); }
 
@@ -245,11 +260,11 @@ class USER_MANAGER_EXPORT User : public UserInfo {
                     int image_index,
                     bool is_loading);
 
-  void set_display_name(const base::string16& display_name) {
+  void set_display_name(const std::u16string& display_name) {
     display_name_ = display_name;
   }
 
-  void set_given_name(const base::string16& given_name) {
+  void set_given_name(const std::u16string& given_name) {
     given_name_ = given_name;
   }
 
@@ -281,12 +296,15 @@ class USER_MANAGER_EXPORT User : public UserInfo {
 
   void SetProfileIsCreated();
 
+  void SetProfilePrefs(PrefService* prefs) { profile_prefs_ = prefs; }
+
   virtual void SetAffiliation(bool is_affiliated);
 
  private:
   AccountId account_id_;
-  base::string16 display_name_;
-  base::string16 given_name_;
+  UserType type_;
+  std::u16string display_name_;
+  std::u16string given_name_;
   // User email for display, which may include capitals and non-significant
   // periods. For example, "John.Steinbeck@gmail.com" is a display email, but
   // "johnsteinbeck@gmail.com" is the canonical form. Defaults to
@@ -328,16 +346,19 @@ class USER_MANAGER_EXPORT User : public UserInfo {
   // True if user Profile is created
   bool profile_is_created_ = false;
 
+  // Owned by Profile.
+  raw_ptr<PrefService> profile_prefs_ = nullptr;
+
   // True if the user is affiliated to the device.
-  bool is_affiliated_ = false;
+  absl::optional<bool> is_affiliated_;
 
   std::vector<base::OnceClosure> on_profile_created_observers_;
-
-  DISALLOW_COPY_AND_ASSIGN(User);
+  std::vector<base::OnceCallback<void(bool is_affiliated)>>
+      on_affiliation_set_callbacks_;
 };
 
 // List of known users.
-using UserList = std::vector<User*>;
+using UserList = std::vector<raw_ptr<User, VectorExperimental>>;
 
 }  // namespace user_manager
 

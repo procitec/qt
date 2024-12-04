@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -27,11 +27,11 @@ std::vector<uint8_t> Materialize(base::span<const uint8_t> span) {
   return std::vector<uint8_t>(span.begin(), span.end());
 }
 
-base::Optional<std::vector<uint8_t>> MaterializeOrNull(
-    base::Optional<base::span<const uint8_t>> span) {
+absl::optional<std::vector<uint8_t>> MaterializeOrNull(
+    absl::optional<base::span<const uint8_t>> span) {
   if (span)
     return Materialize(*span);
-  return base::nullopt;
+  return absl::nullopt;
 }
 
 void Append(std::vector<uint8_t>* target, base::span<const uint8_t> in_values) {
@@ -59,9 +59,7 @@ std::vector<uint8_t> ExtractSuffix(base::span<const uint8_t> span, size_t pos) {
 
 base::span<const uint8_t> ExtractSuffixSpan(base::span<const uint8_t> span,
                                             size_t pos) {
-  if (pos > span.size())
-    return std::vector<uint8_t>();
-  return span.subspan(pos);
+  return span.subspan(std::min(pos, span.size()));
 }
 
 std::vector<base::span<const uint8_t>> SplitSpan(base::span<const uint8_t> span,
@@ -80,13 +78,13 @@ std::vector<base::span<const uint8_t>> SplitSpan(base::span<const uint8_t> span,
 }
 
 std::array<uint8_t, crypto::kSHA256Length> CreateSHA256Hash(
-    base::StringPiece data) {
+    std::string_view data) {
   std::array<uint8_t, crypto::kSHA256Length> hashed_data;
   crypto::SHA256HashString(data, hashed_data.data(), hashed_data.size());
   return hashed_data;
 }
 
-base::StringPiece ConvertToStringPiece(base::span<const uint8_t> data) {
+std::string_view ConvertToStringView(base::span<const uint8_t> data) {
   return {reinterpret_cast<const char*>(data.data()), data.size()};
 }
 

@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-#include "base/stl_util.h"
+#include "base/containers/contains.h"
 #include "build/build_config.h"
 
 // Include once to get the type definitions
@@ -34,7 +34,13 @@ static msginfo msgtable[] = {
 #include "tools/ipc_fuzzer/message_lib/all_messages.h"
 };
 #define MSGTABLE_SIZE (sizeof(msgtable)/sizeof(msgtable[0]))
+
+#if !BUILDFLAG(ENABLE_NACL) && !BUILDFLAG(ENABLE_PPAPI) && \
+    !BUILDFLAG(ENABLE_EXTENSIONS_LEGACY_IPC)
+static_assert(MSGTABLE_SIZE == 0, "There should be no messages");
+#else
 static_assert(MSGTABLE_SIZE, "check your headers for an extra semicolon");
+#endif
 
 static bool check_msgtable() {
   bool result = true;
@@ -47,28 +53,29 @@ static bool check_msgtable() {
   // Exclude test and other non-browser files from consideration.  Do not
   // include message files used inside the actual chrome browser in this list.
   exemptions.push_back(TestMsgStart);
-  exemptions.push_back(WebTestMsgStart);
   exemptions.push_back(WorkerMsgStart);    // Now only used by tests.
-  exemptions.push_back(ChromeUtilityPrintingMsgStart);  // BUILDFLAGS, sigh.
 
 #if !BUILDFLAG(ENABLE_NACL)
   exemptions.push_back(NaClMsgStart);
+  exemptions.push_back(NaClHostMsgStart);
 #endif  // !BUILDFLAG(ENABLE_NACL)
 
 #if !BUILDFLAG(ENABLE_WEBRTC)
   exemptions.push_back(WebRtcLoggingMsgStart);
 #endif
 
-#if !defined(OS_ANDROID)
-  exemptions.push_back(EncryptedMediaMsgStart);
-  exemptions.push_back(GinJavaBridgeMsgStart);
-  exemptions.push_back(AndroidWebViewMsgStart);
-  exemptions.push_back(ExtensionWorkerMsgStart);
-#endif  // !defined(OS_ANDROID)
+#if !BUILDFLAG(ENABLE_EXTENSIONS_LEGACY_IPC)
+  exemptions.push_back(ExtensionMsgStart);
+#endif  // !BUILDFLAG(ENABLE_EXTENSIONS_LEGACY_IPC)
 
-#if !defined(USE_OZONE)
-  exemptions.push_back(OzoneGpuMsgStart);
-#endif  // !defined(USE_OZONE)
+#if !BUILDFLAG(ENABLE_PPAPI)
+  exemptions.push_back(PpapiMsgStart);
+#endif  // !BUILDFLAG(ENABLE_PPAPI)
+
+#if !BUILDFLAG(IS_ANDROID)
+  exemptions.push_back(GinJavaBridgeMsgStart);
+  exemptions.push_back(ExtensionWorkerMsgStart);
+#endif  // !BUILDFLAG(IS_ANDROID)
 
   for (size_t i = 0; i < MSGTABLE_SIZE; ++i) {
     int class_id = IPC_MESSAGE_ID_CLASS(msgtable[i].id);

@@ -1,13 +1,16 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/web_package/web_bundle_parser_factory.h"
 
-#include "base/bind_helpers.h"
+#include "base/functional/callback_helpers.h"
 #include "components/web_package/web_bundle_parser.h"
 #include "mojo/public/cpp/bindings/remote.h"
+#include "mojo/public/cpp/bindings/self_owned_receiver.h"
 #include "net/http/http_util.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "url/gurl.h"
 
 namespace web_package {
 
@@ -15,12 +18,10 @@ namespace {
 
 class FileDataSource final : public mojom::BundleDataSource {
  public:
-  FileDataSource(mojo::PendingReceiver<mojom::BundleDataSource> receiver,
-                 base::File file)
-      : receiver_(this, std::move(receiver)), file_(std::move(file)) {
-    receiver_.set_disconnect_handler(base::BindOnce(
-        &base::DeletePointer<FileDataSource>, base::Unretained(this)));
-  }
+  explicit FileDataSource(base::File file) : file_(std::move(file)) {}
+
+  FileDataSource(const FileDataSource&) = delete;
+  FileDataSource& operator=(const FileDataSource&) = delete;
 
  private:
   // Implements mojom::BundleDataSource.
@@ -31,14 +32,25 @@ class FileDataSource final : public mojom::BundleDataSource {
       buf.resize(bytes);
       std::move(callback).Run(std::move(buf));
     } else {
-      std::move(callback).Run(base::nullopt);
+      std::move(callback).Run(absl::nullopt);
     }
   }
 
-  mojo::Receiver<mojom::BundleDataSource> receiver_;
-  base::File file_;
+  void Length(LengthCallback callback) override {
+    const int64_t length = file_.GetLength();
+    std::move(callback).Run(length);
+  }
 
-  DISALLOW_COPY_AND_ASSIGN(FileDataSource);
+  void IsRandomAccessContext(IsRandomAccessContextCallback callback) override {
+    std::move(callback).Run(true);
+  }
+
+  void Close(CloseCallback callback) override {
+    file_.Close();
+    std::move(callback).Run();
+  }
+
+  base::File file_;
 };
 
 }  // namespace
@@ -48,32 +60,27 @@ WebBundleParserFactory::WebBundleParserFactory() = default;
 WebBundleParserFactory::~WebBundleParserFactory() = default;
 
 std::unique_ptr<mojom::BundleDataSource>
-WebBundleParserFactory::CreateFileDataSourceForTesting(
-    mojo::PendingReceiver<mojom::BundleDataSource> receiver,
-    base::File file) {
-  return std::make_unique<FileDataSource>(std::move(receiver), std::move(file));
-}
-
-void WebBundleParserFactory::GetParserForFile(
-    mojo::PendingReceiver<mojom::WebBundleParser> receiver,
-    base::File file) {
-  mojo::PendingRemote<mojom::BundleDataSource> remote_data_source;
-  auto data_source = std::make_unique<FileDataSource>(
-      remote_data_source.InitWithNewPipeAndPassReceiver(), std::move(file));
-  GetParserForDataSource(std::move(receiver), std::move(remote_data_source));
-
-  // |data_source| will be destructed on |remote_data_source| destruction.
-  data_source.release();
+WebBundleParserFactory::CreateFileDataSourceForTesting(base::File file) {
+  return std::make_unique<FileDataSource>(std::move(file));
 }
 
 void WebBundleParserFactory::GetParserForDataSource(
     mojo::PendingReceiver<mojom::WebBundleParser> receiver,
+    const absl::optional<GURL>& base_url,
     mojo::PendingRemote<mojom::BundleDataSource> data_source) {
-  auto parser = std::make_unique<WebBundleParser>(std::move(receiver),
-                                                  std::move(data_source));
+  // TODO(crbug.com/1247939): WebBundleParserFactory doesn't support |base_url|.
+  // For features::kWebBundlesFromNetwork should support |base_url|.
+  mojo::MakeSelfOwnedReceiver(
+      std::make_unique<WebBundleParser>(std::move(data_source),
+                                        base_url.value_or(GURL())),
+      std::move(receiver));
+}
 
-  // |parser| will be destructed on remote mojo ends' disconnection.
-  parser.release();
+void WebBundleParserFactory::BindFileDataSource(
+    mojo::PendingReceiver<mojom::BundleDataSource> data_source_pending_receiver,
+    base::File file) {
+  mojo::MakeSelfOwnedReceiver(std::make_unique<FileDataSource>(std::move(file)),
+                              std::move(data_source_pending_receiver));
 }
 
 }  // namespace web_package

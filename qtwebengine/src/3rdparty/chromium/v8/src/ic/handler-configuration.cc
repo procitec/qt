@@ -16,18 +16,18 @@ namespace internal {
 namespace {
 
 template <typename BitField>
-Handle<Smi> SetBitFieldValue(Isolate* isolate, Handle<Smi> smi_handler,
+Tagged<Smi> SetBitFieldValue(Isolate* isolate, Tagged<Smi> smi_handler,
                              typename BitField::FieldType value) {
-  int config = smi_handler->value();
+  int config = smi_handler.value();
   config = BitField::update(config, true);
-  return handle(Smi::FromInt(config), isolate);
+  return Smi::FromInt(config);
 }
 
 // TODO(ishell): Remove templatezation once we move common bits from
 // Load/StoreHandler to the base class.
 template <typename ICHandler, bool fill_handler = true>
 int InitPrototypeChecksImpl(Isolate* isolate, Handle<ICHandler> handler,
-                            Handle<Smi>* smi_handler,
+                            Tagged<Smi>* smi_handler,
                             Handle<Map> lookup_start_object_map,
                             MaybeObjectHandle data1,
                             MaybeObjectHandle maybe_data2) {
@@ -35,12 +35,12 @@ int InitPrototypeChecksImpl(Isolate* isolate, Handle<ICHandler> handler,
   // Holder-is-receiver case itself does not add entries unless there is an
   // optional data2 value provided.
 
-  DCHECK_IMPLIES(lookup_start_object_map->IsJSGlobalObjectMap(),
+  DCHECK_IMPLIES(IsJSGlobalObjectMap(*lookup_start_object_map),
                  lookup_start_object_map->is_prototype_map());
 
-  if (lookup_start_object_map->IsPrimitiveMap() ||
+  if (IsPrimitiveMap(*lookup_start_object_map) ||
       lookup_start_object_map->is_access_check_needed()) {
-    DCHECK(!lookup_start_object_map->IsJSGlobalObjectMap());
+    DCHECK(!IsJSGlobalObjectMap(*lookup_start_object_map));
     // The validity cell check for primitive and global proxy receivers does
     // not guarantee that certain native context ever had access to other
     // native context. However, a handler created for one native context could
@@ -58,7 +58,7 @@ int InitPrototypeChecksImpl(Isolate* isolate, Handle<ICHandler> handler,
     }
     data_size++;
   } else if (lookup_start_object_map->is_dictionary_map() &&
-             !lookup_start_object_map->IsJSGlobalObjectMap()) {
+             !IsJSGlobalObjectMap(*lookup_start_object_map)) {
     if (!fill_handler) {
       // Enable lookup on lookup start object.
       *smi_handler =
@@ -90,7 +90,7 @@ int InitPrototypeChecksImpl(Isolate* isolate, Handle<ICHandler> handler,
 // If the |holder| is an empty handle then the full prototype chain is
 // checked.
 template <typename ICHandler>
-int GetHandlerDataSize(Isolate* isolate, Handle<Smi>* smi_handler,
+int GetHandlerDataSize(Isolate* isolate, Tagged<Smi>* smi_handler,
                        Handle<Map> lookup_start_object_map,
                        MaybeObjectHandle data1,
                        MaybeObjectHandle maybe_data2 = MaybeObjectHandle()) {
@@ -114,7 +114,7 @@ void InitPrototypeChecks(Isolate* isolate, Handle<ICHandler> handler,
 // static
 Handle<Object> LoadHandler::LoadFromPrototype(
     Isolate* isolate, Handle<Map> lookup_start_object_map,
-    Handle<JSReceiver> holder, Handle<Smi> smi_handler,
+    Handle<JSReceiver> holder, Tagged<Smi> smi_handler,
     MaybeObjectHandle maybe_data1, MaybeObjectHandle maybe_data2) {
   MaybeObjectHandle data1;
   if (maybe_data1.is_null()) {
@@ -131,7 +131,7 @@ Handle<Object> LoadHandler::LoadFromPrototype(
 
   Handle<LoadHandler> handler = isolate->factory()->NewLoadHandler(data_size);
 
-  handler->set_smi_handler(*smi_handler);
+  handler->set_smi_handler(smi_handler);
   handler->set_validity_cell(*validity_cell);
   InitPrototypeChecks(isolate, handler, lookup_start_object_map, data1,
                       maybe_data2);
@@ -142,25 +142,26 @@ Handle<Object> LoadHandler::LoadFromPrototype(
 Handle<Object> LoadHandler::LoadFullChain(Isolate* isolate,
                                           Handle<Map> lookup_start_object_map,
                                           const MaybeObjectHandle& holder,
-                                          Handle<Smi> smi_handler) {
+                                          Handle<Smi> smi_handler_handle) {
+  Tagged<Smi> smi_handler = *smi_handler_handle;
   MaybeObjectHandle data1 = holder;
   int data_size = GetHandlerDataSize<LoadHandler>(
       isolate, &smi_handler, lookup_start_object_map, data1);
 
   Handle<Object> validity_cell = Map::GetOrCreatePrototypeChainValidityCell(
       lookup_start_object_map, isolate);
-  if (validity_cell->IsSmi()) {
+  if (IsSmi(*validity_cell)) {
     DCHECK_EQ(1, data_size);
     // Lookup on lookup start object isn't supported in case of a simple smi
     // handler.
-    if (!LookupOnLookupStartObjectBits::decode(smi_handler->value())) {
-      return smi_handler;
+    if (!LookupOnLookupStartObjectBits::decode(smi_handler.value())) {
+      return smi_handler_handle;
     }
   }
 
   Handle<LoadHandler> handler = isolate->factory()->NewLoadHandler(data_size);
 
-  handler->set_smi_handler(*smi_handler);
+  handler->set_smi_handler(smi_handler);
   handler->set_validity_cell(*validity_cell);
   InitPrototypeChecks(isolate, handler, lookup_start_object_map, data1);
   return handler;
@@ -168,67 +169,112 @@ Handle<Object> LoadHandler::LoadFullChain(Isolate* isolate,
 
 // static
 KeyedAccessLoadMode LoadHandler::GetKeyedAccessLoadMode(MaybeObject handler) {
-  DisallowHeapAllocation no_gc;
-  if (handler->IsSmi()) {
+  DisallowGarbageCollection no_gc;
+  if (IsSmi(handler)) {
     int const raw_handler = handler.ToSmi().value();
     Kind const kind = KindBits::decode(raw_handler);
-    if ((kind == kElement || kind == kIndexedString) &&
+    if ((kind == Kind::kElement || kind == Kind::kIndexedString) &&
         AllowOutOfBoundsBits::decode(raw_handler)) {
-      return LOAD_IGNORE_OUT_OF_BOUNDS;
+      return KeyedAccessLoadMode::kHandleOOB;
     }
   }
-  return STANDARD_LOAD;
+  return KeyedAccessLoadMode::kInBounds;
+}
+
+// static
+bool LoadHandler::GetConvertHole(MaybeObject handler) {
+  DisallowGarbageCollection no_gc;
+  if (IsSmi(handler)) {
+    int const raw_handler = handler.ToSmi().value();
+    return ConvertHoleBits::decode(raw_handler);
+  }
+  return false;
 }
 
 // static
 KeyedAccessStoreMode StoreHandler::GetKeyedAccessStoreMode(
     MaybeObject handler) {
-  DisallowHeapAllocation no_gc;
-  if (handler->IsSmi()) {
+  DisallowGarbageCollection no_gc;
+  if (IsSmi(handler)) {
     int const raw_handler = handler.ToSmi().value();
     Kind const kind = KindBits::decode(raw_handler);
     // All the handlers except the Slow Handler that use the
     // KeyedAccessStoreMode, compute it using KeyedAccessStoreModeForBuiltin
     // method. Hence if any other Handler get to this path, just return
-    // STANDARD_STORE.
-    if (kind != kSlow) {
-      return STANDARD_STORE;
+    // KeyedAccessStoreMode::kInBounds.
+    if (kind != Kind::kSlow) {
+      return KeyedAccessStoreMode::kInBounds;
     }
     KeyedAccessStoreMode store_mode =
         KeyedAccessStoreModeBits::decode(raw_handler);
     return store_mode;
   }
-  return STANDARD_STORE;
+  return KeyedAccessStoreMode::kInBounds;
 }
 
 // static
 Handle<Object> StoreHandler::StoreElementTransition(
     Isolate* isolate, Handle<Map> receiver_map, Handle<Map> transition,
     KeyedAccessStoreMode store_mode, MaybeHandle<Object> prev_validity_cell) {
-  Handle<Code> stub =
-      CodeFactory::ElementsTransitionAndStore(isolate, store_mode).code();
+  Handle<Object> code = ElementsTransitionAndStoreBuiltin(isolate, store_mode);
   Handle<Object> validity_cell;
   if (!prev_validity_cell.ToHandle(&validity_cell)) {
     validity_cell =
         Map::GetOrCreatePrototypeChainValidityCell(receiver_map, isolate);
   }
   Handle<StoreHandler> handler = isolate->factory()->NewStoreHandler(1);
-  handler->set_smi_handler(*stub);
+  handler->set_smi_handler(*code);
   handler->set_validity_cell(*validity_cell);
   handler->set_data1(HeapObjectReference::Weak(*transition));
   return handler;
 }
 
+// static
+MaybeObjectHandle StoreHandler::StoreOwnTransition(Isolate* isolate,
+                                                   Handle<Map> transition_map) {
+  bool is_dictionary_map = transition_map->is_dictionary_map();
+#ifdef DEBUG
+  if (!is_dictionary_map) {
+    InternalIndex descriptor = transition_map->LastAdded();
+    Handle<DescriptorArray> descriptors(
+        transition_map->instance_descriptors(isolate), isolate);
+    PropertyDetails details = descriptors->GetDetails(descriptor);
+    if (descriptors->GetKey(descriptor)->IsPrivate()) {
+      DCHECK_EQ(DONT_ENUM, details.attributes());
+    } else {
+      DCHECK_EQ(NONE, details.attributes());
+    }
+    Representation representation = details.representation();
+    DCHECK(!representation.IsNone());
+  }
+#endif
+  // Declarative handlers don't support access checks.
+  DCHECK(!transition_map->is_access_check_needed());
+
+  // StoreOwnTransition does not involve any prototype checks.
+  if (is_dictionary_map) {
+    DCHECK(!IsJSGlobalObjectMap(*transition_map));
+    int config = KindBits::encode(Kind::kNormal);
+    return MaybeObjectHandle(Smi::FromInt(config), isolate);
+
+  } else {
+    return MaybeObjectHandle::Weak(transition_map);
+  }
+}
+
+// static
 MaybeObjectHandle StoreHandler::StoreTransition(Isolate* isolate,
                                                 Handle<Map> transition_map) {
   bool is_dictionary_map = transition_map->is_dictionary_map();
 #ifdef DEBUG
   if (!is_dictionary_map) {
     InternalIndex descriptor = transition_map->LastAdded();
-    Handle<DescriptorArray> descriptors(transition_map->instance_descriptors(),
-                                        isolate);
+    Handle<DescriptorArray> descriptors(
+        transition_map->instance_descriptors(isolate), isolate);
+    // Private fields must be added via StoreOwnTransition handler.
+    DCHECK(!descriptors->GetKey(descriptor)->IsPrivateName());
     PropertyDetails details = descriptors->GetDetails(descriptor);
-    if (descriptors->GetKey(descriptor).IsPrivate()) {
+    if (descriptors->GetKey(descriptor)->IsPrivate()) {
       DCHECK_EQ(DONT_ENUM, details.attributes());
     } else {
       DCHECK_EQ(NONE, details.attributes());
@@ -248,11 +294,11 @@ MaybeObjectHandle StoreHandler::StoreTransition(Isolate* isolate,
   }
 
   if (is_dictionary_map) {
-    DCHECK(!transition_map->IsJSGlobalObjectMap());
+    DCHECK(!IsJSGlobalObjectMap(*transition_map));
     Handle<StoreHandler> handler = isolate->factory()->NewStoreHandler(0);
     // Store normal with enabled lookup on receiver.
-    int config =
-        KindBits::encode(kNormal) | LookupOnLookupStartObjectBits::encode(true);
+    int config = KindBits::encode(Kind::kNormal) |
+                 LookupOnLookupStartObjectBits::encode(true);
     handler->set_smi_handler(Smi::FromInt(config));
     handler->set_validity_cell(*validity_cell);
     return MaybeObjectHandle(handler);
@@ -260,7 +306,8 @@ MaybeObjectHandle StoreHandler::StoreTransition(Isolate* isolate,
   } else {
     // Ensure the transition map contains a valid prototype validity cell.
     if (!validity_cell.is_null()) {
-      transition_map->set_prototype_validity_cell(*validity_cell);
+      transition_map->set_prototype_validity_cell(*validity_cell,
+                                                  kRelaxedStore);
     }
     return MaybeObjectHandle::Weak(transition_map);
   }
@@ -269,7 +316,7 @@ MaybeObjectHandle StoreHandler::StoreTransition(Isolate* isolate,
 // static
 Handle<Object> StoreHandler::StoreThroughPrototype(
     Isolate* isolate, Handle<Map> receiver_map, Handle<JSReceiver> holder,
-    Handle<Smi> smi_handler, MaybeObjectHandle maybe_data1,
+    Tagged<Smi> smi_handler, MaybeObjectHandle maybe_data1,
     MaybeObjectHandle maybe_data2) {
   MaybeObjectHandle data1;
   if (maybe_data1.is_null()) {
@@ -286,7 +333,7 @@ Handle<Object> StoreHandler::StoreThroughPrototype(
 
   Handle<StoreHandler> handler = isolate->factory()->NewStoreHandler(data_size);
 
-  handler->set_smi_handler(*smi_handler);
+  handler->set_smi_handler(smi_handler);
   handler->set_validity_cell(*validity_cell);
   InitPrototypeChecks(isolate, handler, receiver_map, data1, maybe_data2);
   return handler;
@@ -304,8 +351,17 @@ Handle<Object> StoreHandler::StoreProxy(Isolate* isolate,
                                         Handle<JSReceiver> receiver) {
   Handle<Smi> smi_handler = StoreProxy(isolate);
   if (receiver.is_identical_to(proxy)) return smi_handler;
-  return StoreThroughPrototype(isolate, receiver_map, proxy, smi_handler,
+  return StoreThroughPrototype(isolate, receiver_map, proxy, *smi_handler,
                                MaybeObjectHandle::Weak(proxy));
+}
+
+bool LoadHandler::CanHandleHolderNotLookupStart(Tagged<Object> handler) {
+  if (IsSmi(handler)) {
+    auto kind = LoadHandler::KindBits::decode(handler.ToSmi().value());
+    return kind == LoadHandler::Kind::kSlow ||
+           kind == LoadHandler::Kind::kNonExistent;
+  }
+  return IsLoadHandler(handler);
 }
 
 #if defined(OBJECT_PRINT)
@@ -315,14 +371,22 @@ void PrintSmiLoadHandler(int raw_handler, std::ostream& os) {
   os << "kind = ";
   switch (kind) {
     case LoadHandler::Kind::kElement:
-      os << "kElement, allow out of bounds = "
-         << LoadHandler::AllowOutOfBoundsBits::decode(raw_handler)
-         << ", is JSArray = " << LoadHandler::IsJsArrayBits::decode(raw_handler)
-         << ", convert hole = "
-         << LoadHandler::ConvertHoleBits::decode(raw_handler)
-         << ", elements kind = "
-         << ElementsKindToString(
-                LoadHandler::ElementsKindBits::decode(raw_handler));
+      os << "kElement, ";
+      if (LoadHandler::IsWasmArrayBits::decode(raw_handler)) {
+        os << "WasmArray, "
+           << LoadHandler::WasmArrayTypeBits::decode(raw_handler);
+
+      } else {
+        os << "allow out of bounds = "
+           << LoadHandler::AllowOutOfBoundsBits::decode(raw_handler)
+           << ", is JSArray = "
+           << LoadHandler::IsJsArrayBits::decode(raw_handler)
+           << ", convert hole = "
+           << LoadHandler::ConvertHoleBits::decode(raw_handler)
+           << ", elements kind = "
+           << ElementsKindToString(
+                  LoadHandler::ElementsKindBits::decode(raw_handler));
+      }
       break;
     case LoadHandler::Kind::kIndexedString:
       os << "kIndexedString, allow out of bounds = "
@@ -335,27 +399,25 @@ void PrintSmiLoadHandler(int raw_handler, std::ostream& os) {
       os << "kGlobal";
       break;
     case LoadHandler::Kind::kField: {
-      CompactElementsKind compact_elements_kind =
-          LoadHandler::CompactElementsKindBits::decode(raw_handler);
-      os << "kField, is in object = "
-         << LoadHandler::IsInobjectBits::decode(raw_handler)
-         << ", is double = " << LoadHandler::IsDoubleBits::decode(raw_handler)
-         << ", field index = "
-         << LoadHandler::FieldIndexBits::decode(raw_handler)
-         << ", elements kind = "
-         << CompactElementsKindToString(compact_elements_kind);
+      if (LoadHandler::IsWasmStructBits::decode(raw_handler)) {
+        os << "kField, WasmStruct, type = "
+           << LoadHandler::WasmFieldTypeBits::decode(raw_handler)
+           << ", field offset = "
+           << LoadHandler::WasmFieldOffsetBits::decode(raw_handler);
+      } else {
+        os << "kField, is in object = "
+           << LoadHandler::IsInobjectBits::decode(raw_handler)
+           << ", is double = " << LoadHandler::IsDoubleBits::decode(raw_handler)
+           << ", field index = "
+           << LoadHandler::FieldIndexBits::decode(raw_handler);
+      }
       break;
     }
-    case LoadHandler::Kind::kConstantFromPrototype: {
-      CompactElementsKind compact_elements_kind =
-          LoadHandler::CompactElementsKindBits::decode(raw_handler);
-      os << "kConstantFromPrototype, elements kind = "
-         << CompactElementsKindToString(compact_elements_kind);
+    case LoadHandler::Kind::kConstantFromPrototype:
+      os << "kConstantFromPrototype";
       break;
-    }
-    case LoadHandler::Kind::kAccessor:
-      os << "kAccessor, descriptor = "
-         << LoadHandler::DescriptorBits::decode(raw_handler);
+    case LoadHandler::Kind::kAccessorFromPrototype:
+      os << "kAccessorFromPrototype";
       break;
     case LoadHandler::Kind::kNativeDataProperty:
       os << "kNativeDataProperty, descriptor = "
@@ -384,22 +446,9 @@ void PrintSmiLoadHandler(int raw_handler, std::ostream& os) {
          << LoadHandler::ExportsIndexBits::decode(raw_handler);
       break;
     default:
-      UNREACHABLE();
+      os << "<invalid value " << static_cast<int>(kind) << ">";
+      break;
   }
-}
-
-const char* KeyedAccessStoreModeToString(KeyedAccessStoreMode mode) {
-  switch (mode) {
-    case STANDARD_STORE:
-      return "STANDARD_STORE";
-    case STORE_AND_GROW_HANDLE_COW:
-      return "STORE_AND_GROW_HANDLE_COW";
-    case STORE_IGNORE_OUT_OF_BOUNDS:
-      return "STORE_IGNORE_OUT_OF_BOUNDS";
-    case STORE_HANDLE_COW:
-      return "STORE_HANDLE_COW";
-  }
-  UNREACHABLE();
 }
 
 void PrintSmiStoreHandler(int raw_handler, std::ostream& os) {
@@ -449,14 +498,16 @@ void PrintSmiStoreHandler(int raw_handler, std::ostream& os) {
     case StoreHandler::Kind::kSlow: {
       KeyedAccessStoreMode keyed_access_store_mode =
           StoreHandler::KeyedAccessStoreModeBits::decode(raw_handler);
-      os << "kSlow, keyed access store mode = "
-         << KeyedAccessStoreModeToString(keyed_access_store_mode);
+      os << "kSlow, keyed access store mode = " << keyed_access_store_mode;
       break;
     }
     case StoreHandler::Kind::kProxy:
       os << "kProxy";
       break;
-    default:
+    case StoreHandler::Kind::kSharedStructField:
+      os << "kSharedStructField";
+      break;
+    case StoreHandler::Kind::kKindsNumber:
       UNREACHABLE();
   }
 }
@@ -464,76 +515,95 @@ void PrintSmiStoreHandler(int raw_handler, std::ostream& os) {
 }  // namespace
 
 // static
-void LoadHandler::PrintHandler(Object handler, std::ostream& os) {
-  DisallowHeapAllocation no_gc;
-  if (handler.IsSmi()) {
+void LoadHandler::PrintHandler(Tagged<Object> handler, std::ostream& os) {
+  DisallowGarbageCollection no_gc;
+  if (IsSmi(handler)) {
     int raw_handler = handler.ToSmi().value();
     os << "LoadHandler(Smi)(";
     PrintSmiLoadHandler(raw_handler, os);
-    os << ")" << std::endl;
-  } else {
-    LoadHandler load_handler = LoadHandler::cast(handler);
-    int raw_handler = load_handler.smi_handler().ToSmi().value();
+    os << ")";
+  } else if (IsCode(handler)) {
+    os << "LoadHandler(Code)("
+       << Builtins::name(Code::cast(handler)->builtin_id()) << ")";
+  } else if (IsSymbol(handler)) {
+    os << "LoadHandler(Symbol)(" << Brief(Symbol::cast(handler)) << ")";
+  } else if (IsLoadHandler(handler)) {
+    Tagged<LoadHandler> load_handler = LoadHandler::cast(handler);
+    int raw_handler = Smi::cast(load_handler->smi_handler()).value();
     os << "LoadHandler(do access check on lookup start object = "
        << DoAccessCheckOnLookupStartObjectBits::decode(raw_handler)
        << ", lookup on lookup start object = "
        << LookupOnLookupStartObjectBits::decode(raw_handler) << ", ";
     PrintSmiLoadHandler(raw_handler, os);
-    DCHECK_GE(load_handler.data_field_count(), 1);
-    os << ", data1 = ";
-    load_handler.data1().ShortPrint(os);
-    if (load_handler.data_field_count() >= 2) {
-      os << ", data2 = ";
-      load_handler.data2().ShortPrint(os);
+    if (load_handler->data_field_count() >= 1) {
+      os << ", data1 = ";
+      ShortPrint(load_handler->data1(), os);
     }
-    if (load_handler.data_field_count() >= 3) {
+    if (load_handler->data_field_count() >= 2) {
+      os << ", data2 = ";
+      ShortPrint(load_handler->data2(), os);
+    }
+    if (load_handler->data_field_count() >= 3) {
       os << ", data3 = ";
-      load_handler.data3().ShortPrint(os);
+      ShortPrint(load_handler->data3(), os);
     }
     os << ", validity cell = ";
-    load_handler.validity_cell().ShortPrint(os);
-    os << ")" << std::endl;
+    ShortPrint(load_handler->validity_cell(), os);
+    os << ")";
+  } else {
+    os << "LoadHandler(<unexpected>)(" << Brief(handler) << ")";
   }
 }
 
-void StoreHandler::PrintHandler(Object handler, std::ostream& os) {
-  DisallowHeapAllocation no_gc;
-  if (handler.IsSmi()) {
+void StoreHandler::PrintHandler(Tagged<Object> handler, std::ostream& os) {
+  DisallowGarbageCollection no_gc;
+  if (IsSmi(handler)) {
     int raw_handler = handler.ToSmi().value();
     os << "StoreHandler(Smi)(";
     PrintSmiStoreHandler(raw_handler, os);
     os << ")" << std::endl;
-  } else {
+  } else if (IsStoreHandler(handler)) {
     os << "StoreHandler(";
-    StoreHandler store_handler = StoreHandler::cast(handler);
-    if (store_handler.smi_handler().IsCode()) {
-      Code code = Code::cast(store_handler.smi_handler());
+    Tagged<StoreHandler> store_handler = StoreHandler::cast(handler);
+    if (IsCode(store_handler->smi_handler())) {
+      Tagged<Code> code = Code::cast(store_handler->smi_handler());
       os << "builtin = ";
-      code.ShortPrint(os);
+      ShortPrint(code, os);
     } else {
-      int raw_handler = store_handler.smi_handler().ToSmi().value();
+      int raw_handler = Smi::cast(store_handler->smi_handler()).value();
       os << "do access check on lookup start object = "
          << DoAccessCheckOnLookupStartObjectBits::decode(raw_handler)
          << ", lookup on lookup start object = "
          << LookupOnLookupStartObjectBits::decode(raw_handler) << ", ";
       PrintSmiStoreHandler(raw_handler, os);
     }
-    DCHECK_GE(store_handler.data_field_count(), 1);
-    os << ", data1 = ";
-    store_handler.data1().ShortPrint(os);
-    if (store_handler.data_field_count() >= 2) {
-      os << ", data2 = ";
-      store_handler.data2().ShortPrint(os);
+    if (store_handler->data_field_count() >= 1) {
+      os << ", data1 = ";
+      ShortPrint(store_handler->data1(), os);
     }
-    if (store_handler.data_field_count() >= 3) {
+    if (store_handler->data_field_count() >= 2) {
+      os << ", data2 = ";
+      ShortPrint(store_handler->data2(), os);
+    }
+    if (store_handler->data_field_count() >= 3) {
       os << ", data3 = ";
-      store_handler.data3().ShortPrint(os);
+      ShortPrint(store_handler->data3(), os);
     }
     os << ", validity cell = ";
-    store_handler.validity_cell().ShortPrint(os);
+    ShortPrint(store_handler->validity_cell(), os);
     os << ")" << std::endl;
+  } else if (IsMap(handler)) {
+    os << "StoreHandler(field transition to " << Brief(handler) << ")"
+       << std::endl;
+  } else {
+    os << "StoreHandler(<unexpected>)(" << Brief(handler) << ")" << std::endl;
   }
 }
+
+std::ostream& operator<<(std::ostream& os, WasmValueType type) {
+  return os << WasmValueType2String(type);
+}
+
 #endif  // defined(OBJECT_PRINT)
 
 }  // namespace internal

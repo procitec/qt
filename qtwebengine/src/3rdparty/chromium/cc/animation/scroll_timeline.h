@@ -1,11 +1,12 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef CC_ANIMATION_SCROLL_TIMELINE_H_
 #define CC_ANIMATION_SCROLL_TIMELINE_H_
 
-#include "base/optional.h"
+#include <optional>
+#include <vector>
 #include "base/time/time.h"
 #include "cc/animation/animation_export.h"
 #include "cc/animation/animation_timeline.h"
@@ -34,17 +35,62 @@ class CC_ANIMATION_EXPORT ScrollTimeline : public AnimationTimeline {
     ScrollRight,
   };
 
-  ScrollTimeline(base::Optional<ElementId> scroller_id,
+  struct ScrollOffsets {
+    ScrollOffsets() = default;
+    ScrollOffsets(double start_offset, double end_offset) {
+      start = start_offset;
+      end = end_offset;
+    }
+    bool operator==(const ScrollOffsets& other) const {
+      return start == other.start && end == other.end;
+    }
+    bool operator!=(const ScrollOffsets& other) const {
+      return !(*this == other);
+    }
+
+    double start = 0;
+    double end = 0;
+  };
+
+  // Fixed time scale converting from pixels to microseconds.
+  // The value is derived from error analysis of the quantization of pixels in
+  // LayoutUnits.  The quantization is 1/64 of a pixel, and maximum possible
+  // error in current time calculations is 4 times that amount as shown below.
+  //
+  // progress = (scroll - start) / (end - start)
+  // Positions are subject to imprecision based on quantization.
+  // For worst case analysis, we compute the difference between the maximum
+  // and minimum progress based on the allowable error:
+  // progress = ((current offset +/- delta) - (start +/- delta) /
+  //            ((end +/- delta) - (start +/- delta))
+  // where delta = kLengthPrecision = 1 / kFixedPointDenominator = 1 / 64
+  //
+  // To minimum, we take the smallest possible numerator and largest possible
+  // denominator, which means minimizing current offset and maximizing cover
+  // end time.  The cover start time appears in both the numerator and
+  // denominator, but has a large impact on the numerator. Thus,
+  //
+  // min = ((current offset - delta) - (start + delta)) /
+  //       ((end + delta) - (start + delta))
+  //     = (current offset - start - 2 * delta) / range
+  // max = ((current offset + delta) - (start + delta)) /
+  //       ((end - delta) - (start + delta))
+  //     = (current offset - start + 2 * delta) / range;
+  // max error = max - min = 4 * delta / range
+  // duration = 1 [microsecond] / error
+  //          = range / (4 / 64)
+  //          = 16 range
+  static constexpr double kScrollTimelineMicrosecondsPerPixel = 16;
+
+  ScrollTimeline(std::optional<ElementId> scroller_id,
                  ScrollDirection direction,
-                 const std::vector<double> scroll_offsets,
-                 double time_range,
+                 std::optional<ScrollOffsets> scroll_offsets,
                  int animation_timeline_id);
 
   static scoped_refptr<ScrollTimeline> Create(
-      base::Optional<ElementId> scroller_id,
+      std::optional<ElementId> scroller_id,
       ScrollDirection direction,
-      const std::vector<double> scroll_offsets,
-      double time_range);
+      std::optional<ScrollOffsets> scroll_offsets);
 
   // Create a copy of this ScrollTimeline intended for the impl thread in the
   // compositor.
@@ -56,16 +102,19 @@ class CC_ANIMATION_EXPORT ScrollTimeline : public AnimationTimeline {
                         bool is_active_tree) const;
 
   // Calculate the current time of the ScrollTimeline. This is either a
-  // base::TimeTicks value or base::nullopt if the current time is unresolved.
+  // base::TimeTicks value or std::nullopt if the current time is unresolved.
   // The internal calculations are performed using doubles and the result is
   // converted to base::TimeTicks. This limits the precision to 1us.
-  virtual base::Optional<base::TimeTicks> CurrentTime(
+  virtual std::optional<base::TimeTicks> CurrentTime(
       const ScrollTree& scroll_tree,
       bool is_active_tree) const;
 
+  virtual std::optional<base::TimeTicks> Duration(const ScrollTree& scroll_tree,
+                                                  bool is_active_tree) const;
+
   void UpdateScrollerIdAndScrollOffsets(
-      base::Optional<ElementId> scroller_id,
-      const std::vector<double> scroll_offsets);
+      std::optional<ElementId> scroller_id,
+      std::optional<ScrollOffsets> scroll_offsets);
 
   void PushPropertiesTo(AnimationTimeline* impl_timeline) override;
   void ActivateTimeline() override;
@@ -75,45 +124,63 @@ class CC_ANIMATION_EXPORT ScrollTimeline : public AnimationTimeline {
       const ScrollTree& scroll_tree,
       bool is_active_tree) override;
 
-  base::Optional<ElementId> GetActiveIdForTest() const { return active_id_; }
-  base::Optional<ElementId> GetPendingIdForTest() const { return pending_id_; }
-  ScrollDirection GetDirectionForTest() const { return direction_; }
-  base::Optional<double> GetStartScrollOffsetForTest() const {
-    if (scroll_offsets_.empty())
-      return base::nullopt;
-    return scroll_offsets_[0];
+  std::optional<ElementId> GetActiveIdForTest() const { return active_id(); }
+  std::optional<ElementId> GetPendingIdForTest() const { return pending_id(); }
+  ScrollDirection GetDirectionForTest() const { return direction(); }
+  std::optional<double> GetStartScrollOffsetForTest() const {
+    std::optional<ScrollOffsets> offsets = pending_offsets();
+    if (offsets) {
+      return offsets->start;
+    }
+    return std::nullopt;
   }
-  base::Optional<double> GetEndScrollOffsetForTest() const {
-    if (scroll_offsets_.empty())
-      return base::nullopt;
-    return scroll_offsets_[1];
+  std::optional<double> GetEndScrollOffsetForTest() const {
+    std::optional<ScrollOffsets> offsets = pending_offsets();
+    if (offsets) {
+      return offsets->end;
+    }
+    return std::nullopt;
   }
-  double GetTimeRangeForTest() const { return time_range_; }
 
   bool IsScrollTimeline() const override;
+  bool IsLinkedToScroller(ElementId scroller) const override;
 
  protected:
   ~ScrollTimeline() override;
 
  private:
+  const std::optional<ElementId>& active_id() const {
+    return active_id_.Read(*this);
+  }
+
+  const std::optional<ElementId>& pending_id() const {
+    return pending_id_.Read(*this);
+  }
+
+  const ScrollDirection& direction() const { return direction_.Read(*this); }
+
+  const std::optional<ScrollOffsets>& active_offsets() const {
+    return active_offsets_.Read(*this);
+  }
+
+  const std::optional<ScrollOffsets>& pending_offsets() const {
+    return pending_offsets_.Read(*this);
+  }
+
   // The scroller which this ScrollTimeline is based on. The same underlying
   // scroll source may have different ids in the pending and active tree (see
   // http://crbug.com/847588).
-  base::Optional<ElementId> active_id_;
-  base::Optional<ElementId> pending_id_;
+
+  // Only the impl thread can set active properties.
+  ProtectedSequenceForbidden<std::optional<ElementId>> active_id_;
+  ProtectedSequenceWritable<std::optional<ElementId>> pending_id_;
 
   // The direction of the ScrollTimeline indicates which axis of the scroller
   // it should base its current time on, and where the origin point is.
-  ScrollDirection direction_;
+  ProtectedSequenceReadable<ScrollDirection> direction_;
 
-  // This defines scroll ranges of the scroller that the ScrollTimeline is
-  // active within. If no ranges are defined the timeline is inactive.
-  std::vector<double> scroll_offsets_;
-
-  // A ScrollTimeline maps from the scroll offset in the scroller to a time
-  // value based on a 'time range'. See the implementation of CurrentTime or the
-  // spec for details.
-  double time_range_;
+  ProtectedSequenceForbidden<std::optional<ScrollOffsets>> active_offsets_;
+  ProtectedSequenceWritable<std::optional<ScrollOffsets>> pending_offsets_;
 };
 
 inline ScrollTimeline* ToScrollTimeline(AnimationTimeline* timeline) {
@@ -121,23 +188,10 @@ inline ScrollTimeline* ToScrollTimeline(AnimationTimeline* timeline) {
   return static_cast<ScrollTimeline*>(timeline);
 }
 
-template <typename T>
-double ComputeProgress(double current_offset, const T& resolved_offsets) {
-  DCHECK_GE(resolved_offsets.size(), 2u);
-  DCHECK(current_offset < resolved_offsets[resolved_offsets.size() - 1]);
-  // Look for scroll offset that contains the current offset.
-  unsigned int offset_id;
-  for (offset_id = 1; offset_id < resolved_offsets.size() &&
-                      resolved_offsets[offset_id] <= current_offset;
-       offset_id++) {
-  }
-  DCHECK(offset_id < resolved_offsets.size());
-  // Weight of each offset within time range is distributed equally.
-  double offset_distance = 1.0 / (resolved_offsets.size() - 1);
-  // Progress of the current offset within its offset range.
-  double p = (current_offset - resolved_offsets[offset_id - 1]) /
-             (resolved_offsets[offset_id] - resolved_offsets[offset_id - 1]);
-  return (offset_id - 1 + p) * offset_distance;
+inline const ScrollTimeline* ToScrollTimeline(
+    const AnimationTimeline* timeline) {
+  DCHECK(timeline->IsScrollTimeline());
+  return static_cast<const ScrollTimeline*>(timeline);
 }
 
 }  // namespace cc

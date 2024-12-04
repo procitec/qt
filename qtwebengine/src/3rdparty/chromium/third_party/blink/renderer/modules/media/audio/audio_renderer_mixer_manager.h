@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,8 +10,9 @@
 #include <memory>
 #include <string>
 
+#include "base/check_op.h"
 #include "base/containers/flat_map.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/synchronization/lock.h"
 #include "base/unguessable_token.h"
 #include "media/audio/audio_device_description.h"
@@ -40,15 +41,22 @@ namespace blink {
 //
 // There should only be one instance of AudioRendererMixerManager per render
 // thread.
-class BLINK_MODULES_EXPORT AudioRendererMixerManager
+class BLINK_MODULES_EXPORT AudioRendererMixerManager final
     : public media::AudioRendererMixerPool {
  public:
+  // Callback which will be used to create sinks. See AudioDeviceFactory for
+  // more details on the parameters.
+  using CreateSinkCB =
+      base::RepeatingCallback<scoped_refptr<media::AudioRendererSink>(
+          const blink::LocalFrameToken& source_frame_token,
+          const media::AudioSinkParameters& params)>;
+
+  explicit AudioRendererMixerManager(CreateSinkCB create_sink_cb);
   ~AudioRendererMixerManager() final;
 
-  // AudioRendererMixerManager instance which manages renderer side mixer
-  // instances shared based on configured audio parameters. Lazily created on
-  // first call.
-  static AudioRendererMixerManager& GetInstance();
+  AudioRendererMixerManager(const AudioRendererMixerManager&) = delete;
+  AudioRendererMixerManager& operator=(const AudioRendererMixerManager&) =
+      delete;
 
   // Creates an AudioRendererMixerInput with the proper callbacks necessary to
   // retrieve an AudioRendererMixer instance from AudioRendererMixerManager.
@@ -62,7 +70,7 @@ class BLINK_MODULES_EXPORT AudioRendererMixerManager
       const blink::LocalFrameToken& source_frame_token,
       const base::UnguessableToken& session_id,
       const std::string& device_id,
-      media::AudioLatency::LatencyType latency);
+      media::AudioLatency::Type latency);
 
   // media::AudioRendererMixerPool implementation. The rest of the
   // implementation is kept private (see comment below).
@@ -73,22 +81,12 @@ class BLINK_MODULES_EXPORT AudioRendererMixerManager
   media::AudioRendererMixer* GetMixer(
       const blink::LocalFrameToken& source_frame_token,
       const media::AudioParameters& input_params,
-      media::AudioLatency::LatencyType latency,
+      media::AudioLatency::Type latency,
       const media::OutputDeviceInfo& sink_info,
       scoped_refptr<media::AudioRendererSink> sink);
   scoped_refptr<media::AudioRendererSink> GetSink(
       const blink::LocalFrameToken& source_frame_token,
       const std::string& device_id);
-
- protected:
-  // Callback which will be used to create sinks. See AudioDeviceFactory for
-  // more details on the parameters.
-  using CreateSinkCB =
-      base::RepeatingCallback<scoped_refptr<media::AudioRendererSink>(
-          const blink::LocalFrameToken& source_frame_token,
-          const media::AudioSinkParameters& params)>;
-
-  explicit AudioRendererMixerManager(CreateSinkCB create_sink_cb);
 
  private:
   friend class AudioRendererMixerManagerTest;
@@ -99,7 +97,7 @@ class BLINK_MODULES_EXPORT AudioRendererMixerManager
   media::AudioRendererMixer* GetMixer(
       const base::UnguessableToken& source_frame_token,
       const media::AudioParameters& input_params,
-      media::AudioLatency::LatencyType latency,
+      media::AudioLatency::Type latency,
       const media::OutputDeviceInfo& sink_info,
       scoped_refptr<media::AudioRendererSink> sink) final;
   scoped_refptr<media::AudioRendererSink> GetSink(
@@ -111,13 +109,13 @@ class BLINK_MODULES_EXPORT AudioRendererMixerManager
   struct MixerKey {
     MixerKey(const blink::LocalFrameToken& source_frame_token,
              const media::AudioParameters& params,
-             media::AudioLatency::LatencyType latency,
+             media::AudioLatency::Type latency,
              const std::string& device_id);
     MixerKey(const MixerKey& other);
     ~MixerKey();
     blink::LocalFrameToken source_frame_token;
     media::AudioParameters params;
-    media::AudioLatency::LatencyType latency;
+    media::AudioLatency::Type latency;
     std::string device_id;
   };
 
@@ -133,9 +131,9 @@ class BLINK_MODULES_EXPORT AudioRendererMixerManager
       if (a.latency != b.latency)
         return a.latency < b.latency;
 
-      // TODO(olka) add buffer duration comparison for LATENCY_EXACT_MS when
+      // TODO(olka) add buffer duration comparison for kLatencyExactMS when
       // adding support for it.
-      DCHECK_NE(media::AudioLatency::LATENCY_EXACT_MS, a.latency);
+      DCHECK_NE(media::AudioLatency::Type::kExactMS, a.latency);
 
       // Ignore format(), and frames_per_buffer(), these parameters do not
       // affect mixer reuse.  All AudioRendererMixer units disable FIFO, so
@@ -162,7 +160,7 @@ class BLINK_MODULES_EXPORT AudioRendererMixerManager
   // AudioRendererMixerManager to keep track explicitly (v.s. RefCounted which
   // is implicit) of the number of outstanding AudioRendererMixers.
   struct AudioRendererMixerReference {
-    media::AudioRendererMixer* mixer;
+    raw_ptr<media::AudioRendererMixer, DanglingUntriaged> mixer;
     size_t ref_count;
   };
 
@@ -172,8 +170,6 @@ class BLINK_MODULES_EXPORT AudioRendererMixerManager
   // Active mixers.
   AudioRendererMixerMap mixers_;
   base::Lock mixers_lock_;
-
-  DISALLOW_COPY_AND_ASSIGN(AudioRendererMixerManager);
 };
 
 }  // namespace blink

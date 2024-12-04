@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2014 Klaralvdalens Datakonsult AB (KDAB).
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt3D module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2014 Klaralvdalens Datakonsult AB (KDAB).
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qrendertargetoutput.h"
 #include "qrendertargetoutput_p.h"
@@ -56,6 +20,9 @@ namespace Qt3DRender {
     that is attached to render target. In addition to the attachment point, texture
     miplevel, layer and cubemap face can be specified. The texture attached to the
     QRenderTargetOutput must be compatible with the given parameters.
+
+    \note Left and Right attachment points are special values. They do not refer to
+    render target objects to be either of the back buffers used for stereo rendering.
  */
 
 /*!
@@ -65,16 +32,19 @@ namespace Qt3DRender {
     \since 5.7
     \inqmlmodule Qt3D.Render
     \inherits Node
-    \instantiates Qt3DRender::QRenderTargetOutput
+    \nativetype Qt3DRender::QRenderTargetOutput
 
     A RenderTargetOutput specifies the attachment point and parameters for texture
     that is attached to render target. In addition to the attachment point, texture
     miplevel, layer and cubemap face can be specified. The texture attached to the
     RenderTargetOutput must be compatible with the given parameters.
+
+    \note Left and Right attachment points are special values. They do not refer to
+    render target objects, but rather to either of the back buffers used for stereo rendering.
  */
 
 /*!
-    \enum QRenderTargetOutput::AttachmentPoint
+    \enum Qt3DRender::QRenderTargetOutput::AttachmentPoint
 
     This enumeration specifies the values for the attachment point.
 
@@ -97,6 +67,8 @@ namespace Qt3DRender {
     \value Depth Depth attachment point
     \value Stencil Stencil attachment point
     \value DepthStencil DepthStencil attachment point
+    \value Left Back Left Draw Buffer
+    \value Right Back Right Draw Buffer
 */
 
 /*!
@@ -122,6 +94,8 @@ namespace Qt3DRender {
     \li RenderTargetOutput.Depth
     \li RenderTargetOutput.Stencil
     \li RenderTargetOutput.DepthStencil
+    \li RenderTargetOutput.Left
+    \li RenderTargetOutput.Right
     \endlist
 
     \sa Qt3DRender::QRenderTargetOutput::AttachmentPoint
@@ -157,27 +131,29 @@ namespace Qt3DRender {
 */
 
 /*!
-    \property QRenderTargetOutput::attachmentPoint
+    \property Qt3DRender::QRenderTargetOutput::attachmentPoint
     Holds the attachment point of the QRenderTargetOutput.
+
+
 */
 
 /*!
-    \property QRenderTargetOutput::texture
+    \property Qt3DRender::QRenderTargetOutput::texture
     Holds the texture attached to the attachment point.
 */
 
 /*!
-    \property QRenderTargetOutput::mipLevel
+    \property Qt3DRender::QRenderTargetOutput::mipLevel
     Holds the miplevel of the attached texture the rendering is directed to.
 */
 
 /*!
-    \property QRenderTargetOutput::layer
+    \property Qt3DRender::QRenderTargetOutput::layer
     Holds the layer of the attached texture the rendering is directed to.
 */
 
 /*!
-    \property QRenderTargetOutput::face
+    \property Qt3DRender::QRenderTargetOutput::face
     Holds the face of the attached cubemap texture the rendering is directed to.
 */
 
@@ -300,19 +276,8 @@ QAbstractTexture::CubeMapFace QRenderTargetOutput::face() const
     return d->m_face;
 }
 
-Qt3DCore::QNodeCreatedChangeBasePtr QRenderTargetOutput::createNodeCreationChange() const
-{
-    auto creationChange = Qt3DCore::QNodeCreatedChangePtr<QRenderTargetOutputData>::create(this);
-    auto &data = creationChange->data;
-    Q_D(const QRenderTargetOutput);
-    data.textureId = qIdForNode(texture());
-    data.attachmentPoint = d->m_attachmentPoint;
-    data.mipLevel = d->m_mipLevel;
-    data.layer = d->m_layer;
-    data.face = d->m_face;
-    return creationChange;
-}
-
 } // namespace Qt3DRender
 
 QT_END_NAMESPACE
+
+#include "moc_qrendertargetoutput.cpp"

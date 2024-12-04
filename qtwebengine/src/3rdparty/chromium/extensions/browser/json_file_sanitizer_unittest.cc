@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,9 +6,9 @@
 
 #include <memory>
 
-#include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/functional/bind.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "content/public/test/browser_task_environment.h"
@@ -25,6 +25,9 @@ class JsonFileSanitizerTest : public testing::Test {
  public:
   JsonFileSanitizerTest() {}
 
+  JsonFileSanitizerTest(const JsonFileSanitizerTest&) = delete;
+  JsonFileSanitizerTest& operator=(const JsonFileSanitizerTest&) = delete;
+
  protected:
   base::FilePath CreateFilePath(const base::FilePath::StringType& file_name) {
     return temp_dir_.GetPath().Append(file_name);
@@ -32,14 +35,12 @@ class JsonFileSanitizerTest : public testing::Test {
 
   void CreateValidJsonFile(const base::FilePath& path) {
     std::string kJson = "{\"hello\":\"bonjour\"}";
-    ASSERT_EQ(static_cast<int>(kJson.size()),
-              base::WriteFile(path, kJson.data(), kJson.size()));
+    ASSERT_TRUE(base::WriteFile(path, kJson));
   }
 
   void CreateInvalidJsonFile(const base::FilePath& path) {
     std::string kJson = "sjkdsk;'<?js";
-    ASSERT_EQ(static_cast<int>(kJson.size()),
-              base::WriteFile(path, kJson.data(), kJson.size()));
+    ASSERT_TRUE(base::WriteFile(path, kJson));
   }
 
   const base::FilePath& GetJsonFilePath() const { return temp_dir_.GetPath(); }
@@ -84,8 +85,6 @@ class JsonFileSanitizerTest : public testing::Test {
   base::OnceClosure done_callback_;
   std::unique_ptr<JsonFileSanitizer> sanitizer_;
   base::ScopedTempDir temp_dir_;
-
-  DISALLOW_COPY_AND_ASSIGN(JsonFileSanitizerTest);
 };
 
 }  // namespace

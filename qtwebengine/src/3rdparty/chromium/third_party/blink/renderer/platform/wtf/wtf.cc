@@ -31,31 +31,54 @@
 #include "third_party/blink/renderer/platform/wtf/wtf.h"
 
 #include "base/third_party/double_conversion/double-conversion/double-conversion.h"
+#include "build/build_config.h"
+#include "third_party/abseil-cpp/absl/base/attributes.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/partitions.h"
-#include "third_party/blink/renderer/platform/wtf/assertions.h"
 #include "third_party/blink/renderer/platform/wtf/date_math.h"
 #include "third_party/blink/renderer/platform/wtf/dtoa.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 #include "third_party/blink/renderer/platform/wtf/stack_util.h"
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
+#include "third_party/blink/renderer/platform/wtf/text/copy_lchars_from_uchar_source.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_statics.h"
 #include "third_party/blink/renderer/platform/wtf/thread_specific.h"
 #include "third_party/blink/renderer/platform/wtf/threading.h"
 
 namespace WTF {
 
-bool g_initialized;
+namespace {
+
+bool g_initialized = false;
+
+#if defined(COMPONENT_BUILD) && BUILDFLAG(IS_WIN)
+ABSL_CONST_INIT thread_local bool g_is_main_thread = false;
+#endif
+
+}  // namespace
+
 base::PlatformThreadId g_main_thread_identifier;
 
+#if BUILDFLAG(IS_ANDROID)
+// On Android going through libc (gettid) is faster than runtime-lib emulation.
 bool IsMainThread() {
   return CurrentThread() == g_main_thread_identifier;
 }
+#elif defined(COMPONENT_BUILD) && BUILDFLAG(IS_WIN)
+bool IsMainThread() {
+  return g_is_main_thread;
+}
+#else
+ABSL_CONST_INIT thread_local bool g_is_main_thread = false;
+#endif
 
 void Initialize() {
   // WTF, and Blink in general, cannot handle being re-initialized.
   // Make that explicit here.
   CHECK(!g_initialized);
   g_initialized = true;
+#if !BUILDFLAG(IS_ANDROID)
+  g_is_main_thread = true;
+#endif
   g_main_thread_identifier = CurrentThread();
 
   Threading::Initialize();

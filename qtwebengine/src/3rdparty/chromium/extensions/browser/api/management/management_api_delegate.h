@@ -1,11 +1,11 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef EXTENSIONS_BROWSER_API_MANAGEMENT_MANAGEMENT_API_DELEGATE_H_
 #define EXTENSIONS_BROWSER_API_MANAGEMENT_MANAGEMENT_API_DELEGATE_H_
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "extensions/browser/disable_reason.h"
 #include "extensions/browser/uninstall_reason.h"
 #include "extensions/common/api/management.h"
@@ -25,7 +25,6 @@ class Extension;
 class ExtensionPrefs;
 class ManagementCreateAppShortcutFunction;
 class ManagementGenerateAppForLinkFunction;
-class ManagementGetPermissionWarningsByManifestFunction;
 class ManagementUninstallFunctionBase;
 
 // Manages the lifetime of the install prompt.
@@ -54,9 +53,6 @@ class ManagementAPIDelegate {
  public:
   virtual ~ManagementAPIDelegate() {}
 
-  using AndroidAppInstallStatusCallback = base::OnceCallback<void(bool)>;
-  using InstallAndroidAppCallback = base::OnceCallback<void(bool)>;
-
   enum class InstallOrLaunchWebAppResult {
     kSuccess,
     kInvalidWebApp,
@@ -65,8 +61,9 @@ class ManagementAPIDelegate {
   using InstallOrLaunchWebAppCallback =
       base::OnceCallback<void(InstallOrLaunchWebAppResult)>;
 
-  // Launches the app |extension|.
-  virtual void LaunchAppFunctionDelegate(
+  // Launches the app |extension|. Returns `false` if the launch was blocked due
+  // to chrome apps deprecation, and `true` if it succeeded.
+  virtual bool LaunchAppFunctionDelegate(
       const Extension* extension,
       content::BrowserContext* context) const = 0;
 
@@ -77,19 +74,13 @@ class ManagementAPIDelegate {
   virtual LaunchType GetLaunchType(const ExtensionPrefs* prefs,
                                    const Extension* extension) const = 0;
 
-  // Parses the manifest and calls back the
-  // ManagementGetPermissionWarningsByManifestFunction.
-  virtual void GetPermissionWarningsByManifestFunctionDelegate(
-      ManagementGetPermissionWarningsByManifestFunction* function,
-      const std::string& manifest_str) const = 0;
-
   // Used to show a dialog prompt in chrome when management.setEnabled extension
   // function is called.
   virtual std::unique_ptr<InstallPromptDelegate> SetEnabledFunctionDelegate(
       content::WebContents* web_contents,
       content::BrowserContext* browser_context,
       const Extension* extension,
-      const base::Callback<void(bool)>& callback) const = 0;
+      base::OnceCallback<void(bool)> callback) const = 0;
 
   // Enables the extension identified by |extension_id|.
   virtual void EnableExtension(content::BrowserContext* context,
@@ -113,7 +104,7 @@ class ManagementAPIDelegate {
   virtual bool UninstallExtension(content::BrowserContext* context,
                                   const std::string& transient_extension_id,
                                   UninstallReason reason,
-                                  base::string16* error) const = 0;
+                                  std::u16string* error) const = 0;
 
   // Creates an app shortcut.
   virtual bool CreateAppShortcutFunctionDelegate(
@@ -144,25 +135,16 @@ class ManagementAPIDelegate {
       const GURL& web_app_url,
       InstallOrLaunchWebAppCallback callback) const = 0;
 
-  // Returns whether arc apps can be installed in the given |context|.
-  virtual bool CanContextInstallAndroidApps(
-      content::BrowserContext* context) const = 0;
-
-  // Checks the installation status of |package_name|.
-  virtual void CheckAndroidAppInstallStatus(
-      const std::string& package_name,
-      AndroidAppInstallStatusCallback callback) const = 0;
-
-  // Installs an Arc app for |package_name|.
-  virtual void InstallReplacementAndroidApp(
-      const std::string& package_name,
-      InstallAndroidAppCallback callback) const = 0;
-
   // Forwards the call to ExtensionIconSource::GetIconURL in chrome.
   virtual GURL GetIconURL(const Extension* extension,
                           int icon_size,
                           ExtensionIconSet::MatchType match,
                           bool grayscale) const = 0;
+
+  // Returns effective update URL from ExtensionManagement.
+  virtual GURL GetEffectiveUpdateURL(
+      const Extension& extension,
+      content::BrowserContext* context) const = 0;
 };
 
 }  // namespace extensions

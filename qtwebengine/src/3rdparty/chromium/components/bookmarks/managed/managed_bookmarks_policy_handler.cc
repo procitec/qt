@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,6 +10,7 @@
 #include "components/bookmarks/common/bookmark_pref_names.h"
 #include "components/bookmarks/managed/managed_bookmarks_tracker.h"
 #include "components/policy/core/browser/policy_error_map.h"
+#include "components/policy/core/common/policy_logger.h"
 #include "components/policy/core/common/policy_map.h"
 #include "components/policy/policy_constants.h"
 #include "components/prefs/pref_value_map.h"
@@ -33,76 +34,88 @@ void ManagedBookmarksPolicyHandler::ApplyPolicySettings(
     const policy::PolicyMap& policies,
     PrefValueMap* prefs) {
   std::unique_ptr<base::Value> value;
-  if (!CheckAndGetValue(policies, nullptr, &value))
+  if (!CheckAndGetValue(policies, nullptr, &value)) {
+    LOG_POLICY(ERROR, POLICY_PROCESSING)
+        << "Failed to validate bookmarks policy schema.";
+    return;
+  }
+
+  if (!value || !value->is_list())
     return;
 
-  base::ListValue* list = nullptr;
-  if (!value || !value->GetAsList(&list))
-    return;
-
-  prefs->SetString(prefs::kManagedBookmarksFolderName, GetFolderName(*list));
-  FilterBookmarks(list);
-  prefs->SetValue(prefs::kManagedBookmarks,
-                  base::Value::FromUniquePtrValue(std::move(value)));
+  prefs->SetString(prefs::kManagedBookmarksFolderName,
+                   GetFolderName(value->GetList()));
+  base::Value::List filtered(FilterBookmarks(std::move(*value).TakeList()));
+  prefs->SetValue(prefs::kManagedBookmarks, base::Value(std::move(filtered)));
 }
 
 std::string ManagedBookmarksPolicyHandler::GetFolderName(
-    const base::ListValue& list) {
+    const base::Value::List& list) {
   // Iterate over the list, and try to find the FolderName.
   for (const auto& el : list) {
-    const base::DictionaryValue* dict = nullptr;
-    if (!el.GetAsDictionary(&dict))
+    if (!el.is_dict())
       continue;
 
-    std::string name;
-    if (dict->GetString(ManagedBookmarksTracker::kFolderName, &name)) {
-      return name;
-    }
+    const std::string* name =
+        el.GetDict().FindString(ManagedBookmarksTracker::kFolderName);
+    if (name)
+      return *name;
   }
+  LOG_POLICY(WARNING, POLICY_PROCESSING)
+      << "Bookmarks policy has no top_level name";
 
   // FolderName not present.
   return std::string();
 }
 
-void ManagedBookmarksPolicyHandler::FilterBookmarks(base::ListValue* list) {
-  // Remove any non-conforming values found.
-  auto it = list->begin();
-  while (it != list->end()) {
-    base::DictionaryValue* dict = nullptr;
-    if (!it->GetAsDictionary(&dict)) {
-      it = list->Erase(it, nullptr);
-      continue;
-    }
+base::Value::List ManagedBookmarksPolicyHandler::FilterBookmarks(
+    base::Value::List list) {
+  // Move over conforming values found.
+  base::Value::List out;
 
-    std::string name;
-    std::string url;
-    base::ListValue* children = nullptr;
-    // Every bookmark must have a name, and then either a URL of a list of
+  for (base::Value& item : list) {
+    if (!item.is_dict())
+      continue;
+
+    base::Value::Dict& dict = item.GetDict();
+    const std::string* name = dict.FindString(ManagedBookmarksTracker::kName);
+    const std::string* url = dict.FindString(ManagedBookmarksTracker::kUrl);
+    base::Value::List* children =
+        dict.FindList(ManagedBookmarksTracker::kChildren);
+    // Every bookmark must have a name, and then either a URL or a list of
     // child bookmarks.
-    if (!dict->GetString(ManagedBookmarksTracker::kName, &name) ||
-        (!dict->GetList(ManagedBookmarksTracker::kChildren, &children) &&
-         !dict->GetString(ManagedBookmarksTracker::kUrl, &url))) {
-      it = list->Erase(it, nullptr);
+    if (!name || (!url && !children)) {
+      // Do not log error for the {"top_level name": "value"} dictionary
+      if (!dict.contains(ManagedBookmarksTracker::kFolderName)) {
+        LOG_POLICY(ERROR, POLICY_PROCESSING)
+            << "Error in bookmark policy item: " << dict.DebugString()
+            << ". Item must have a name and a URL or a list of child "
+               "bookmarks.";
+      }
       continue;
     }
 
     if (children) {
-      // Ignore the URL if this bookmark has child nodes.
-      dict->Remove(ManagedBookmarksTracker::kUrl, nullptr);
-      FilterBookmarks(children);
+      *children = FilterBookmarks(std::move(*children));
+      // Ignore the URL if this bookmark has child nodes. Note that this needs
+      // to be after `children` is overwritten, in case removing an entry from
+      // the dictionary invalidates its pointers.
+      dict.Remove(ManagedBookmarksTracker::kUrl);
     } else {
       // Make sure the URL is valid before passing a bookmark to the pref.
-      dict->Remove(ManagedBookmarksTracker::kChildren, nullptr);
-      GURL gurl = url_formatter::FixupURL(url, std::string());
+      dict.Remove(ManagedBookmarksTracker::kChildren);
+      GURL gurl = url_formatter::FixupURL(*url, std::string());
       if (!gurl.is_valid()) {
-        it = list->Erase(it, nullptr);
+        LOG_POLICY(ERROR, POLICY_PROCESSING)
+            << "Invalid bookmark URL: " << *url;
         continue;
       }
-      dict->SetString(ManagedBookmarksTracker::kUrl, gurl.spec());
+      dict.Set(ManagedBookmarksTracker::kUrl, gurl.spec());
     }
 
-    ++it;
+    out.Append(std::move(item));
   }
+  return out;
 }
 
 }  // namespace bookmarks

@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,7 +13,6 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/path_service.h"
@@ -38,11 +37,14 @@ class IndexedRulesetPerftest : public testing::Test {
  public:
   IndexedRulesetPerftest() {}
 
+  IndexedRulesetPerftest(const IndexedRulesetPerftest&) = delete;
+  IndexedRulesetPerftest& operator=(const IndexedRulesetPerftest&) = delete;
+
   ~IndexedRulesetPerftest() override {}
 
   void SetUp() override {
     base::FilePath dir_path;
-    base::PathService::Get(base::DIR_SOURCE_ROOT, &dir_path);
+    base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &dir_path);
 
     // The file contains the subresource URLs of the top-100 Alexa landing
     // pages.
@@ -93,7 +95,6 @@ class IndexedRulesetPerftest : public testing::Test {
   std::ofstream output_;
 
   std::unique_ptr<FilterTool> filter_tool_;
-  DISALLOW_COPY_AND_ASSIGN(IndexedRulesetPerftest);
 };
 
 TEST_F(IndexedRulesetPerftest, IndexRuleset) {

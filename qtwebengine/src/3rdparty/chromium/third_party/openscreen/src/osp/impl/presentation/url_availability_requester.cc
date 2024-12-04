@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,15 +7,17 @@
 #include <algorithm>
 #include <chrono>
 #include <memory>
+#include <utility>
+#include <vector>
 
 #include "osp/impl/presentation/presentation_common.h"
 #include "osp/public/network_service_manager.h"
+#include "util/chrono_helpers.h"
 #include "util/osp_logging.h"
 
 using std::chrono::seconds;
 
-namespace openscreen {
-namespace osp {
+namespace openscreen::osp {
 namespace {
 
 static constexpr Clock::duration kWatchDuration = seconds(20);
@@ -204,9 +206,9 @@ void UrlAvailabilityRequester::ReceiverRequester::RequestUrlAvailabilities(
     std::vector<std::string> urls) {
   if (urls.empty())
     return;
-  const uint64_t request_id = GetNextRequestId(endpoint_id);
+  const uint64_t request_id = GetNextRequestId(endpoint_id_);
   ErrorOr<uint64_t> watch_id_or_error(0);
-  if (!connection || (watch_id_or_error = SendRequest(request_id, urls))) {
+  if (!connection_ || (watch_id_or_error = SendRequest(request_id, urls))) {
     request_by_id.emplace(request_id,
                           Request{watch_id_or_error.value(), std::move(urls)});
   } else {
@@ -224,20 +226,21 @@ ErrorOr<uint64_t> UrlAvailabilityRequester::ReceiverRequester::SendRequest(
   cbor_request.request_id = request_id;
   cbor_request.urls = urls;
   cbor_request.watch_id = watch_id;
+  cbor_request.watch_duration = to_microseconds(kWatchDuration).count();
 
   msgs::CborEncodeBuffer buffer;
   if (msgs::EncodePresentationUrlAvailabilityRequest(cbor_request, &buffer)) {
     OSP_VLOG << "writing presentation-url-availability-request";
-    connection->Write(buffer.data(), buffer.size());
+    connection_->Write(buffer.data(), buffer.size());
     watch_by_id.emplace(
         watch_id, Watch{listener->now_function_() + kWatchDuration, urls});
     if (!event_watch) {
       event_watch = GetClientDemuxer()->WatchMessageType(
-          endpoint_id, msgs::Type::kPresentationUrlAvailabilityEvent, this);
+          endpoint_id_, msgs::Type::kPresentationUrlAvailabilityEvent, this);
     }
     if (!response_watch) {
       response_watch = GetClientDemuxer()->WatchMessageType(
-          endpoint_id, msgs::Type::kPresentationUrlAvailabilityResponse, this);
+          endpoint_id_, msgs::Type::kPresentationUrlAvailabilityResponse, this);
     }
     return watch_id;
   }
@@ -317,17 +320,17 @@ void UrlAvailabilityRequester::ReceiverRequester::RemoveUnobservedRequests(
     if (split == request.urls.end())
       continue;
     MoveVectorSegment(request.urls.begin(), split, &still_observed_urls);
-    if (connection)
+    if (connection_)
       watch_by_id.erase(request.watch_id);
   }
   if (!still_observed_urls.empty()) {
-    const uint64_t new_request_id = GetNextRequestId(endpoint_id);
+    const uint64_t new_request_id = GetNextRequestId(endpoint_id_);
     ErrorOr<uint64_t> watch_id_or_error(0);
     std::vector<std::string> urls;
     urls.reserve(still_observed_urls.size());
     for (auto& url : still_observed_urls)
       urls.emplace_back(std::move(url));
-    if (!connection ||
+    if (!connection_ ||
         (watch_id_or_error = SendRequest(new_request_id, urls))) {
       new_requests.emplace(new_request_id,
                            Request{watch_id_or_error.value(), std::move(urls)});
@@ -386,8 +389,8 @@ void UrlAvailabilityRequester::ReceiverRequester::OnConnectionOpened(
   connect_request.MarkComplete();
   // TODO(btolsch): This is one place where we need to make sure the QUIC
   // connection stays alive, even without constant traffic.
-  endpoint_id = connection->endpoint_id();
-  this->connection = std::move(connection);
+  endpoint_id_ = connection->endpoint_id();
+  connection_ = std::move(connection);
   ErrorOr<uint64_t> watch_id_or_error(0);
   for (auto entry = request_by_id.begin(); entry != request_by_id.end();) {
     if ((watch_id_or_error = SendRequest(entry->first, entry->second.urls))) {
@@ -457,7 +460,7 @@ ErrorOr<size_t> UrlAvailabilityRequester::ReceiverRequester::OnStreamMessage(
           StopWatching(&response_watch);
         return result;
       }
-    } break;
+    }
     case msgs::Type::kPresentationUrlAvailabilityEvent: {
       msgs::PresentationUrlAvailabilityEvent event;
       ssize_t result = msgs::DecodePresentationUrlAvailabilityEvent(
@@ -479,12 +482,11 @@ ErrorOr<size_t> UrlAvailabilityRequester::ReceiverRequester::OnStreamMessage(
         }
         return result;
       }
-    } break;
+    }
     default:
       break;
   }
   return Error::Code::kCborParsing;
 }
 
-}  // namespace osp
-}  // namespace openscreen
+}  // namespace openscreen::osp

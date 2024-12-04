@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,18 +7,17 @@
 
 #include <string>
 
-#include "base/macros.h"
-#include "components/password_manager/core/browser/password_form_forward.h"
-
 namespace password_manager {
 
-class PasswordFormManager;
+struct PasswordForm;
 
 // This interface is used to filter credentials during saving, retrieval from
 // PasswordStore, etc.
 class CredentialsFilter {
  public:
   CredentialsFilter() = default;
+  CredentialsFilter(const CredentialsFilter&) = delete;
+  CredentialsFilter& operator=(const CredentialsFilter&) = delete;
   virtual ~CredentialsFilter() = default;
 
   // Should |form| be offered to be saved?
@@ -35,18 +34,10 @@ class CredentialsFilter {
   virtual bool ShouldSaveEnterprisePasswordHash(
       const PasswordForm& form) const = 0;
 
-  // Call this if the form associated with |form_manager| was filled, and the
-  // subsequent sign-in looked like a success.
-  virtual void ReportFormLoginSuccess(
-      const PasswordFormManager& form_manager) const {}
-
   // If |username| matches Chrome sync account email. For incognito profile,
   // it matches |username| against the sync account email used in its original
   // profile.
   virtual bool IsSyncAccountEmail(const std::string& username) const = 0;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(CredentialsFilter);
 };
 
 }  // namespace password_manager

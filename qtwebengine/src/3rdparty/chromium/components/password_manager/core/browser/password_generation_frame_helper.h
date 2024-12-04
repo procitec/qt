@@ -1,20 +1,20 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef COMPONENTS_PASSWORD_MANAGER_CORE_BROWSER_PASSWORD_GENERATION_FRAME_HELPER_H_
 #define COMPONENTS_PASSWORD_MANAGER_CORE_BROWSER_PASSWORD_GENERATION_FRAME_HELPER_H_
 
+#include <string>
 #include <vector>
 
-#include "base/macros.h"
-#include "base/strings/string16.h"
+#include "base/containers/flat_map.h"
+#include "base/memory/raw_ptr.h"
+#include "components/autofill/core/browser/autofill_type.h"
 #include "components/autofill/core/common/signatures.h"
-#include "url/gurl.h"
+#include "components/autofill/core/common/unique_ids.h"
 
-namespace autofill {
-class FormStructure;
-}
+class GURL;
 
 namespace password_manager {
 
@@ -33,53 +33,61 @@ class PasswordGenerationFrameHelper {
  public:
   PasswordGenerationFrameHelper(PasswordManagerClient* client,
                                 PasswordManagerDriver* driver);
+
+  PasswordGenerationFrameHelper(const PasswordGenerationFrameHelper&) = delete;
+  PasswordGenerationFrameHelper& operator=(
+      const PasswordGenerationFrameHelper&) = delete;
+
   virtual ~PasswordGenerationFrameHelper();
 
   // Instructs the PasswordRequirementsService to fetch requirements for
-  // |origin|. This needs to be called to enable domain-wide password
+  // `origin`. This needs to be called to enable domain-wide password
   // requirements overrides.
   void PrefetchSpec(const GURL& origin);
 
   // Stores password requirements received from the autofill server for the
-  // |forms| and fetches domain-wide requirements.
+  // `form` and fetches domain-wide requirements.
   void ProcessPasswordRequirements(
-      const std::vector<autofill::FormStructure*>& forms);
+      const autofill::FormData& form,
+      const base::flat_map<autofill::FieldGlobalId,
+                           autofill::AutofillType::ServerPrediction>&
+          predictions);
 
   // Determines current state of password generation
-  // |log_debug_data| determines whether log entries are sent to the
+  // `log_debug_data` determines whether log entries are sent to the
   // autofill::SavePasswordProgressLogger.
-  bool IsGenerationEnabled(bool log_debug_data) const;
+  //
+  // Virtual for testing
+  virtual bool IsGenerationEnabled(bool log_debug_data) const;
 
   // Returns a randomly generated password that should (but is not guaranteed
   // to) match the requirements of the site.
-  // |last_committed_url| refers to the main frame URL and may impact the
+  // `last_committed_url` refers to the main frame URL and may impact the
   // password generation rules that are imposed by the site.
-  // |form_signature| and |field_signature| identify the field for which a
+  // `form_signature` and `field_signature` identify the field for which a
   // password shall be generated.
-  // |max_length| refers to the maximum allowed length according to the site and
+  // `max_length` refers to the maximum allowed length according to the site and
   // may be 0 if unset.
   //
   // Virtual for testing
   //
   // TODO(crbug.com/855595): Add a stub for this class to facilitate testing.
-  virtual base::string16 GeneratePassword(
+  virtual std::u16string GeneratePassword(
       const GURL& last_committed_url,
       autofill::FormSignature form_signature,
       autofill::FieldSignature field_signature,
-      uint32_t max_length);
+      uint64_t max_length);
 
  private:
   friend class PasswordGenerationFrameHelperTest;
 
   // The PasswordManagerClient instance associated with this instance. Must
   // outlive this instance.
-  PasswordManagerClient* client_;
+  const raw_ptr<PasswordManagerClient> client_;
 
   // The PasswordManagerDriver instance associated with this instance. Must
   // outlive this instance.
-  PasswordManagerDriver* driver_;
-
-  DISALLOW_COPY_AND_ASSIGN(PasswordGenerationFrameHelper);
+  const raw_ptr<PasswordManagerDriver> driver_;
 };
 
 }  // namespace password_manager

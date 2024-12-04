@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,6 +7,8 @@
 #include "base/run_loop.h"
 #include "base/test/task_environment.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
+#include "net/url_request/url_request_context.h"
+#include "net/url_request/url_request_context_builder.h"
 #include "net/url_request/url_request_test_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
@@ -34,13 +36,13 @@ TEST(TrafficStatsAndroidTest, BasicsTest) {
   EXPECT_GE(rx_bytes_before_request, 0);
 
   TestDelegate test_delegate;
-  TestURLRequestContext context(false);
+  auto context = CreateTestURLRequestContextBuilder()->Build();
 
   std::unique_ptr<URLRequest> request(
-      context.CreateRequest(embedded_test_server.GetURL("/echo.html"),
-                            DEFAULT_PRIORITY, &test_delegate));
+      context->CreateRequest(embedded_test_server.GetURL("/echo.html"),
+                             DEFAULT_PRIORITY, &test_delegate));
   request->Start();
-  base::RunLoop().Run();
+  test_delegate.RunUntilComplete();
 
   // Bytes should increase because of the network traffic.
   int64_t tx_bytes_after_request = -1;
@@ -70,13 +72,13 @@ TEST(TrafficStatsAndroidTest, UIDBasicsTest) {
   EXPECT_GE(rx_bytes_before_request, 0);
 
   TestDelegate test_delegate;
-  TestURLRequestContext context(false);
+  auto context = CreateTestURLRequestContextBuilder()->Build();
 
   std::unique_ptr<URLRequest> request(
-      context.CreateRequest(embedded_test_server.GetURL("/echo.html"),
-                            DEFAULT_PRIORITY, &test_delegate));
+      context->CreateRequest(embedded_test_server.GetURL("/echo.html"),
+                             DEFAULT_PRIORITY, &test_delegate));
   request->Start();
-  base::RunLoop().Run();
+  test_delegate.RunUntilComplete();
 
   // Bytes should increase because of the network traffic.
   int64_t tx_bytes_after_request = -1;

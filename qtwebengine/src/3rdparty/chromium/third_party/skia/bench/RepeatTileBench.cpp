@@ -11,6 +11,7 @@
 #include "include/core/SkPaint.h"
 #include "include/core/SkShader.h"
 #include "include/core/SkString.h"
+#include "include/core/SkTileMode.h"
 #include "tools/ToolUtils.h"
 
 static void draw_into_bitmap(const SkBitmap& bm) {
@@ -59,7 +60,8 @@ protected:
 
         draw_into_bitmap(fBitmap);
 
-        fPaint.setShader(fBitmap.makeShader(SkTileMode::kRepeat, SkTileMode::kRepeat));
+        fPaint.setShader(fBitmap.makeShader(SkTileMode::kRepeat, SkTileMode::kRepeat,
+                                            SkSamplingOptions()));
     }
 
 

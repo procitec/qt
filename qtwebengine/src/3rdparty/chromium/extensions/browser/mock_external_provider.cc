@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,6 +6,7 @@
 
 #include <memory>
 
+#include "base/containers/contains.h"
 #include "base/version.h"
 #include "extensions/browser/external_install_info.h"
 #include "extensions/common/extension.h"
@@ -13,10 +14,10 @@
 namespace extensions {
 
 MockExternalProvider::MockExternalProvider(VisitorInterface* visitor,
-                                           Manifest::Location location)
+                                           mojom::ManifestLocation location)
     : location_(location), visitor_(visitor), visit_count_(0) {}
 
-MockExternalProvider::~MockExternalProvider() {}
+MockExternalProvider::~MockExternalProvider() = default;
 
 void MockExternalProvider::UpdateOrAddExtension(const ExtensionId& id,
                                                 const std::string& version_str,
@@ -30,14 +31,14 @@ void MockExternalProvider::UpdateOrAddExtension(const ExtensionId& id,
 void MockExternalProvider::UpdateOrAddExtension(
     std::unique_ptr<ExternalInstallInfoFile> info) {
   const std::string& id = info->extension_id;
-  CHECK(url_extension_map_.find(id) == url_extension_map_.end());
+  CHECK(!base::Contains(url_extension_map_, id));
   file_extension_map_[id] = std::move(info);
 }
 
 void MockExternalProvider::UpdateOrAddExtension(
     std::unique_ptr<ExternalInstallInfoUpdateUrl> info) {
   const std::string& id = info->extension_id;
-  CHECK(file_extension_map_.find(id) == file_extension_map_.end());
+  CHECK(!base::Contains(file_extension_map_, id));
   url_extension_map_[id] = std::move(info);
 }
 
@@ -52,18 +53,26 @@ void MockExternalProvider::VisitRegisteredExtension() {
     visitor_->OnExternalExtensionFileFound(*extension_kv.second);
   for (const auto& extension_kv : url_extension_map_)
     visitor_->OnExternalExtensionUpdateUrlFound(*extension_kv.second,
-                                                true /* is_initial_load */);
+                                                true /* force_update */);
   visitor_->OnExternalProviderReady(this);
 }
 
+void MockExternalProvider::TriggerOnExternalExtensionFound() {
+  for (const auto& extension_kv : file_extension_map_)
+    visitor_->OnExternalExtensionFileFound(*extension_kv.second);
+  for (const auto& extension_kv : url_extension_map_)
+    visitor_->OnExternalExtensionUpdateUrlFound(*extension_kv.second,
+                                                false /* force_update */);
+}
+
 bool MockExternalProvider::HasExtension(const std::string& id) const {
-  return file_extension_map_.find(id) != file_extension_map_.end() ||
-         url_extension_map_.find(id) != url_extension_map_.end();
+  return base::Contains(file_extension_map_, id) ||
+         base::Contains(url_extension_map_, id);
 }
 
 bool MockExternalProvider::GetExtensionDetails(
     const std::string& id,
-    Manifest::Location* location,
+    mojom::ManifestLocation* location,
     std::unique_ptr<base::Version>* version) const {
   auto it1 = file_extension_map_.find(id);
   auto it2 = url_extension_map_.find(id);
@@ -74,7 +83,7 @@ bool MockExternalProvider::GetExtensionDetails(
 
   // Only ExternalInstallInfoFile has version.
   if (version && it1 != file_extension_map_.end())
-    version->reset(new base::Version(it1->second->version));
+    *version = std::make_unique<base::Version>(it1->second->version);
 
   if (location)
     *location = location_;

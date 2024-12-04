@@ -24,10 +24,13 @@
 #include "third_party/blink/renderer/core/style/style_svg_resource.h"
 #include "third_party/blink/renderer/core/svg/svg_resource.h"
 #include "third_party/blink/renderer/core/svg/svg_resource_client.h"
+#include "third_party/blink/renderer/core/svg/svg_unit_types.h"
 
 namespace blink {
 
-class SVGResourcesCycleSolver;
+class SVGLength;
+class SVGLengthConversionData;
+class SVGViewportResolver;
 
 enum LayoutSVGResourceType {
   kMaskerResourceType,
@@ -46,6 +49,10 @@ class LayoutSVGResourceContainer : public LayoutSVGHiddenContainer {
 
   virtual void RemoveAllClientsFromCache() = 0;
 
+  // Like RemoveAllClientsFromCache(), but predicated on if layout has been
+  // performed at all.
+  void InvalidateCache();
+
   // Remove any cached data for the |client|, and return true if so.
   virtual bool RemoveClientFromCache(SVGResourceClient&) {
     NOT_DESTROYED();
@@ -53,10 +60,9 @@ class LayoutSVGResourceContainer : public LayoutSVGHiddenContainer {
   }
 
   void UpdateLayout() override;
-  bool IsOfType(LayoutObjectType type) const override {
+  bool IsSVGResourceContainer() const final {
     NOT_DESTROYED();
-    return type == kLayoutObjectSVGResourceContainer ||
-           LayoutSVGHiddenContainer::IsOfType(type);
+    return true;
   }
 
   virtual LayoutSVGResourceType ResourceType() const = 0;
@@ -69,41 +75,89 @@ class LayoutSVGResourceContainer : public LayoutSVGHiddenContainer {
            resource_type == kRadialGradientResourceType;
   }
 
-  void InvalidateCacheAndMarkForLayout(LayoutInvalidationReasonForTracing,
-                                       SubtreeLayoutScope* = nullptr);
-  void InvalidateCacheAndMarkForLayout(SubtreeLayoutScope* = nullptr);
+  bool FindCycle() const;
 
-  bool FindCycle(SVGResourcesCycleSolver&) const;
-
+  static void InvalidateDependentElements(LayoutObject&, bool needs_layout);
+  static void InvalidateAncestorChainResources(LayoutObject&,
+                                               bool needs_layout);
   static void MarkForLayoutAndParentResourceInvalidation(
       LayoutObject&,
       bool needs_layout = true);
-  static void MarkClientForInvalidation(LayoutObject&, InvalidationModeMask);
+  static void StyleChanged(LayoutObject&, StyleDifference);
 
   void ClearInvalidationMask() {
     NOT_DESTROYED();
     completed_invalidations_mask_ = 0;
   }
 
+  // Resolve the rectangle defined by `x`, `y`, `width` and `height` in the
+  // unit space defined by `type` into user units.
+  static gfx::RectF ResolveRectangle(const SVGViewportResolver&,
+                                     const SVGLengthConversionData&,
+                                     SVGUnitTypes::SVGUnitType type,
+                                     const gfx::RectF& reference_box,
+                                     const SVGLength& x,
+                                     const SVGLength& y,
+                                     const SVGLength& width,
+                                     const SVGLength& height);
+  static gfx::RectF ResolveRectangle(const SVGElement& context,
+                                     SVGUnitTypes::SVGUnitType type,
+                                     const gfx::RectF& reference_box,
+                                     const SVGLength& x,
+                                     const SVGLength& y,
+                                     const SVGLength& width,
+                                     const SVGLength& height);
+  // Like the above, but pass `x()`, `y()`, `width()` and `height()` from the
+  // context element for the corresponding arguments.
+  template <typename T>
+  static gfx::RectF ResolveRectangle(const T& context,
+                                     SVGUnitTypes::SVGUnitType type,
+                                     const gfx::RectF& reference_box) {
+    return ResolveRectangle(
+        context, type, reference_box, *context.x()->CurrentValue(),
+        *context.y()->CurrentValue(), *context.width()->CurrentValue(),
+        *context.height()->CurrentValue());
+  }
+
+  gfx::RectF ResolveRectangle(SVGUnitTypes::SVGUnitType type,
+                              const gfx::RectF& reference_box,
+                              const SVGLength& x,
+                              const SVGLength& y,
+                              const SVGLength& width,
+                              const SVGLength& height) const;
+
  protected:
+  typedef unsigned InvalidationModeMask;
+
+  // When adding modes, make sure we don't overflow
+  // |completed_invalidation_mask_|.
+  enum InvalidationMode {
+    kLayoutInvalidation = 1 << 0,
+    kBoundariesInvalidation = 1 << 1,
+    kPaintInvalidation = 1 << 2,
+    kPaintPropertiesInvalidation = 1 << 3,
+    kClipCacheInvalidation = 1 << 4,
+    kFilterCacheInvalidation = 1 << 5,
+    kInvalidateAll = kLayoutInvalidation | kBoundariesInvalidation |
+                     kPaintInvalidation | kPaintPropertiesInvalidation |
+                     kClipCacheInvalidation | kFilterCacheInvalidation,
+  };
+
   // Used from RemoveAllClientsFromCache methods.
   void MarkAllClientsForInvalidation(InvalidationModeMask);
 
-  virtual bool FindCycleFromSelf(SVGResourcesCycleSolver&) const;
-  static bool FindCycleInDescendants(SVGResourcesCycleSolver&,
-                                     const LayoutObject& root);
-  static bool FindCycleInResources(SVGResourcesCycleSolver&,
-                                   const LayoutObject& object);
-  static bool FindCycleInSubtree(SVGResourcesCycleSolver&,
-                                 const LayoutObject& root);
+  virtual bool FindCycleFromSelf() const;
+  static bool FindCycleInDescendants(const LayoutObject& root);
+  static bool FindCycleInResources(const LayoutObject& object);
+  static bool FindCycleInSubtree(const LayoutObject& root);
 
   void StyleDidChange(StyleDifference, const ComputedStyle* old_style) override;
   void WillBeDestroyed() override;
 
-  bool is_in_layout_;
-
  private:
-  // Track global (markAllClientsForInvalidation) invalidations to avoid
+  void InvalidateClientsIfActiveResource();
+
+  // Track global (MarkAllClientsForInvalidation) invalidations to avoid
   // redundant crawls.
   unsigned completed_invalidations_mask_ : 8;
 
@@ -111,38 +165,33 @@ class LayoutSVGResourceContainer : public LayoutSVGHiddenContainer {
   // 23 padding bits available
 };
 
-DEFINE_LAYOUT_OBJECT_TYPE_CASTS(LayoutSVGResourceContainer,
-                                IsSVGResourceContainer());
-
-#define DEFINE_LAYOUT_SVG_RESOURCE_TYPE_CASTS(thisType, typeName)   \
-  DEFINE_TYPE_CASTS(thisType, LayoutSVGResourceContainer, resource, \
-                    resource->ResourceType() == typeName,           \
-                    resource.ResourceType() == typeName)
-
-template <typename ContainerType>
-inline bool IsResourceOfType(const LayoutSVGResourceContainer* container) {
-  return container->ResourceType() == ContainerType::kResourceType;
-}
-
-template <typename ContainerType>
-inline ContainerType* GetSVGResourceAsType(const SVGResource* resource) {
-  if (!resource)
-    return nullptr;
-  if (LayoutSVGResourceContainer* container = resource->ResourceContainer()) {
-    if (IsResourceOfType<ContainerType>(container))
-      return static_cast<ContainerType*>(container);
+template <>
+struct DowncastTraits<LayoutSVGResourceContainer> {
+  static bool AllowFrom(const LayoutObject& object) {
+    return object.IsSVGResourceContainer();
   }
-  return nullptr;
+};
+
+template <typename ContainerType>
+inline ContainerType* GetSVGResourceAsType(SVGResourceClient& client,
+                                           const SVGResource* resource) {
+  if (!resource) {
+    return nullptr;
+  }
+  return DynamicTo<ContainerType>(resource->ResourceContainer(client));
 }
 
 template <typename ContainerType>
 inline ContainerType* GetSVGResourceAsType(
+    SVGResourceClient& client,
     const StyleSVGResource* style_resource) {
-  if (!style_resource)
+  if (!style_resource) {
     return nullptr;
-  return GetSVGResourceAsType<ContainerType>(style_resource->Resource());
+  }
+  return GetSVGResourceAsType<ContainerType>(client,
+                                             style_resource->Resource());
 }
 
 }  // namespace blink
 
-#endif
+#endif  // THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_SVG_LAYOUT_SVG_RESOURCE_CONTAINER_H_

@@ -1,4 +1,4 @@
-# Copyright 2020 The Chromium Authors. All rights reserved.
+# Copyright 2020 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -12,6 +12,10 @@ import("//build/util/generate_wrapper.gni")
 # set to the wrapper output path.
 #
 # Arguments:
+#
+# clones
+#   (optional) number of ios simulator clones to execute tests on
+#   in parallel
 #
 # data
 #   (optional, default [ "//ios/build/bots/scripts/" ]) list of files or
@@ -30,8 +34,9 @@ import("//build/util/generate_wrapper.gni")
 #   (optional, default 3) number of retry attempts
 #
 # shards
-#   (optional, default 1) number of shards to execute tests in parallel. not
-#   the same as swarming shards.
+#   (optional) number of ios simulator clones to execute tests in parallel. not
+#   the same as swarming shards. Only used if clones is not provided. Will be
+#   deprecated.
 #
 # wrapper_output_name
 #   (optional, default "run_${target_name}") name of the wrapper script
@@ -61,6 +66,8 @@ template("ios_test_runner_wrapper") {
 
     _rebased_mac_toolchain = rebase_path("//mac_toolchain", root_build_dir)
     _rebased_xcode_path = rebase_path("//Xcode.app", root_build_dir)
+    _rebased_ios_runtime_cache_prefix =
+        rebase_path("//Runtime-ios-", root_build_dir)
 
     # --out-dir argument is specified in gn_isolate_map.pyl because
     # ${ISOLATED_OUTDIR} doesn't get resolved through this wrapper.
@@ -69,6 +76,8 @@ template("ios_test_runner_wrapper") {
       "@WrappedPath(${_rebased_xcode_path})",
       "--mac-toolchain-cmd",
       "@WrappedPath(${_rebased_mac_toolchain})",
+      "--runtime-cache-prefix",
+      "@WrappedPath(${_rebased_ios_runtime_cache_prefix})",
     ]
 
     # Default retries to 3
@@ -80,22 +89,28 @@ template("ios_test_runner_wrapper") {
       "${retries}",
     ]
 
-    # Default shards to 1
-    if (!defined(shards)) {
-      shards = 1
+    # Clones is not required by test runner so only pass if defined.
+    if (defined(clones)) {
+      executable_args += [
+        "--clones",
+        "${clones}",
+      ]
     }
-    executable_args += [
-      "--shards",
-      "${shards}",
-    ]
 
-    data_deps = []
+    if (xcode_version_int >= 1400) {
+      executable_args += [
+        "--readline-timeout",
+        "600",
+      ]
+    }
+
+    data_deps = [ "//testing:test_scripts_shared" ]
     if (defined(invoker.data_deps)) {
       data_deps += invoker.data_deps
     }
 
-    # test runner relies on iossim if use_ios_simulator (defined in ios_sdk.gni)
-    if (use_ios_simulator) {
+    # test runner relies on iossim for simulator builds.
+    if (target_environment == "simulator") {
       _rebased_root_build_dir = rebase_path("${root_build_dir}", root_build_dir)
       data_deps += [ "//testing/iossim" ]
 
@@ -120,20 +135,21 @@ template("ios_test_runner_wrapper") {
       _wrapper_output_name = wrapper_output_name
     }
 
-    # Test targets may attempt to generate multiple wrappers for a suite with
-    # multiple different toolchains when running with additional_target_cpus.
-    # Generate the wrapper script into root_out_dir rather than root_build_dir
-    # to ensure those wrappers are distinct.
-    wrapper_script = "${root_out_dir}/bin/${_wrapper_output_name}"
+    wrapper_script = "${root_build_dir}/bin/${_wrapper_output_name}"
 
     data = []
     if (defined(invoker.data)) {
       data += invoker.data
     }
     data += [
-      "//testing/test_env.py",
-      "//.vpython",
       "//ios/build/bots/scripts/",
+      "//ios/build/bots/scripts/plugin",
+
+      # gRPC interface for iOS test plugin
+      "//ios/testing/plugin",
+
+      # Variations test utilities used by variations_runner script.
+      "//testing/scripts/variations_seed_access_helper.py",
       "//testing/test_env.py",
     ]
   }

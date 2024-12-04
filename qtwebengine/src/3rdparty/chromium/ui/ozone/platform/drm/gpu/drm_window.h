@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,7 +8,7 @@
 #include <memory>
 #include <vector>
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/timer/timer.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/rect.h"
@@ -21,6 +21,10 @@
 #include "ui/ozone/public/swap_completion_callback.h"
 
 class SkBitmap;
+
+namespace base {
+class TimeDelta;
+}  // namespace base
 
 namespace gfx {
 class Point;
@@ -49,6 +53,9 @@ class DrmWindow {
             DrmDeviceManager* device_manager,
             ScreenManager* screen_manager);
 
+  DrmWindow(const DrmWindow&) = delete;
+  DrmWindow& operator=(const DrmWindow&) = delete;
+
   ~DrmWindow();
 
   gfx::Rect bounds() const { return bounds_; }
@@ -69,11 +76,11 @@ class DrmWindow {
   // Called when the window is resized/moved.
   void SetBounds(const gfx::Rect& bounds);
 
-  // Update the HW cursor bitmap & move to specified location. If
-  // the bitmap is empty, the cursor is hidden.
+  // Update the HW cursor bitmap & move to the location if specified.
+  // If the bitmap is empty, the cursor is hidden.
   void SetCursor(const std::vector<SkBitmap>& bitmaps,
-                 const gfx::Point& location,
-                 int frame_delay_ms);
+                 const absl::optional<gfx::Point>& location,
+                 base::TimeDelta frame_delay);
 
   // Move the HW cursor to the specified location.
   void MoveCursor(const gfx::Point& location);
@@ -84,8 +91,9 @@ class DrmWindow {
   OverlayStatusList TestPageFlip(
       const OverlaySurfaceCandidateList& overlay_params);
 
-  // Returns the last buffer associated with this window.
-  const DrmOverlayPlane* GetLastModesetBuffer() const;
+  const DrmOverlayPlaneList& last_submitted_planes() const {
+    return last_submitted_planes_;
+  }
 
  private:
   // Draw next frame in an animated cursor.
@@ -99,28 +107,25 @@ class DrmWindow {
 
   const gfx::AcceleratedWidget widget_;
 
-  DrmDeviceManager* const device_manager_;  // Not owned.
-  ScreenManager* const screen_manager_;     // Not owned.
+  const raw_ptr<DrmDeviceManager> device_manager_;  // Not owned.
+  const raw_ptr<ScreenManager> screen_manager_;     // Not owned.
 
   // The current bounds of the window.
   gfx::Rect bounds_;
 
   // The controller associated with the current window. This may be nullptr if
   // the window isn't over an active display.
-  HardwareDisplayController* controller_ = nullptr;
+  raw_ptr<HardwareDisplayController, DanglingUntriaged> controller_ = nullptr;
   std::unique_ptr<DrmOverlayValidator> overlay_validator_;
 
   base::RepeatingTimer cursor_timer_;
   std::vector<SkBitmap> cursor_bitmaps_;
   gfx::Point cursor_location_;
   int cursor_frame_ = 0;
-  int cursor_frame_delay_ms_ = 0;
 
   DrmOverlayPlaneList last_submitted_planes_;
 
   bool force_buffer_reallocation_ = false;
-
-  DISALLOW_COPY_AND_ASSIGN(DrmWindow);
 };
 
 }  // namespace ui

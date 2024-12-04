@@ -25,6 +25,7 @@
 
 #include "third_party/blink/renderer/core/html/forms/color_chooser_ui_controller.h"
 
+#include "build/build_config.h"
 #include "third_party/blink/public/common/browser_interface_broker_proxy.h"
 #include "third_party/blink/public/web/web_local_frame_client.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
@@ -38,21 +39,30 @@ namespace blink {
 ColorChooserUIController::ColorChooserUIController(
     LocalFrame* frame,
     blink::ColorChooserClient* client)
-    : client_(client),
+    : chooser_(frame->DomWindow()->GetExecutionContext()),
+      client_(client),
       frame_(frame),
+      color_chooser_factory_(frame->DomWindow()->GetExecutionContext()),
       receiver_(this, frame->DomWindow()->GetExecutionContext()) {}
 
 ColorChooserUIController::~ColorChooserUIController() = default;
 
 void ColorChooserUIController::Trace(Visitor* visitor) const {
+  visitor->Trace(color_chooser_factory_);
   visitor->Trace(receiver_);
   visitor->Trace(frame_);
+  visitor->Trace(chooser_);
   visitor->Trace(client_);
   ColorChooser::Trace(visitor);
 }
 
 void ColorChooserUIController::OpenUI() {
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS) || defined(TOOLKIT_QT)
   OpenColorChooser();
+#else
+  NOTREACHED()
+      << "ColorChooserUIController should only be used on Android or iOS";
+#endif
 }
 
 void ColorChooserUIController::SetSelectedColor(const Color& color) {
@@ -66,26 +76,29 @@ void ColorChooserUIController::EndChooser() {
   client_->DidEndChooser();
 }
 
-AXObject* ColorChooserUIController::RootAXObject() {
+AXObject* ColorChooserUIController::RootAXObject(Element* popup_owner) {
   return nullptr;
 }
 
 void ColorChooserUIController::DidChooseColor(uint32_t color) {
-  client_->DidChooseColor(color);
+  client_->DidChooseColor(Color::FromRGBA32(color));
 }
 
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_APPLE) || defined(TOOLKIT_QT)
 void ColorChooserUIController::OpenColorChooser() {
   DCHECK(!chooser_);
+  scoped_refptr<base::SequencedTaskRunner> runner =
+      frame_->DomWindow()->GetExecutionContext()->GetTaskRunner(
+          TaskType::kUserInteraction);
   frame_->GetBrowserInterfaceBroker().GetInterface(
-      color_chooser_factory_.BindNewPipeAndPassReceiver());
+      color_chooser_factory_.BindNewPipeAndPassReceiver(runner));
   color_chooser_factory_->OpenColorChooser(
-      chooser_.BindNewPipeAndPassReceiver(),
-      receiver_.BindNewPipeAndPassRemote(
-          frame_->DomWindow()->GetExecutionContext()->GetTaskRunner(
-              TaskType::kUserInteraction)),
-      client_->CurrentColor().Rgb(), client_->Suggestions());
-  receiver_.set_disconnect_handler(WTF::Bind(
+      chooser_.BindNewPipeAndPassReceiver(runner),
+      receiver_.BindNewPipeAndPassRemote(runner), client_->CurrentColor().Rgb(),
+      client_->Suggestions());
+  receiver_.set_disconnect_handler(WTF::BindOnce(
       &ColorChooserUIController::EndChooser, WrapWeakPersistent(this)));
 }
+#endif
 
 }  // namespace blink

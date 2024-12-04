@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,10 +7,6 @@
 
 #include "components/guest_view/browser/guest_view_manager_delegate.h"
 
-namespace content {
-class BrowserContext;
-}  // namespace content
-
 namespace extensions {
 
 // ExtensionsGuestViewManagerDelegate implements GuestViewManager functionality
@@ -18,21 +14,26 @@ namespace extensions {
 class ExtensionsGuestViewManagerDelegate
     : public guest_view::GuestViewManagerDelegate {
  public:
-  explicit ExtensionsGuestViewManagerDelegate(content::BrowserContext* context);
+  static bool IsGuestAvailableToContextWithFeature(
+      const guest_view::GuestViewBase* guest,
+      const std::string& feature_name);
+
+  ExtensionsGuestViewManagerDelegate();
   ~ExtensionsGuestViewManagerDelegate() override;
 
   // GuestViewManagerDelegate implementation.
   void OnGuestAdded(content::WebContents* guest_web_contents) const override;
   void DispatchEvent(const std::string& event_name,
-                     std::unique_ptr<base::DictionaryValue> args,
+                     base::Value::Dict args,
                      guest_view::GuestViewBase* guest,
                      int instance_id) override;
-  bool IsGuestAvailableToContext(guest_view::GuestViewBase* guest) override;
-  bool IsOwnedByExtension(guest_view::GuestViewBase* guest) override;
-  void RegisterAdditionalGuestViewTypes() override;
-
- private:
-  content::BrowserContext* const context_;
+  bool IsGuestAvailableToContext(
+      const guest_view::GuestViewBase* guest) const override;
+  bool IsOwnedByExtension(const guest_view::GuestViewBase* guest) override;
+  bool IsOwnedByControlledFrameEmbedder(
+      const guest_view::GuestViewBase* guest) override;
+  void RegisterAdditionalGuestViewTypes(
+      guest_view::GuestViewManager* manager) override;
 };
 
 }  // namespace extensions

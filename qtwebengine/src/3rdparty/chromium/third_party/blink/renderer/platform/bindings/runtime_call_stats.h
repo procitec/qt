@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,14 +8,15 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_BINDINGS_RUNTIME_CALL_STATS_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_BINDINGS_RUNTIME_CALL_STATS_H_
 
-#include "base/optional.h"
+#include "base/check_op.h"
+#include "base/memory/raw_ptr.h"
 #include "base/time/time.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/renderer/platform/bindings/buildflags.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
-
 #include "v8/include/v8.h"
 
 #if BUILDFLAG(RCS_COUNT_EVERYTHING)
@@ -128,7 +129,7 @@ class PLATFORM_EXPORT RuntimeCallTimer {
   }
 
 #define RUNTIME_CALL_TIMER_SCOPE_WITH_RCS(runtime_call_stats, counterId)  \
-  base::Optional<RuntimeCallTimerScope> rcs_scope;                        \
+  absl::optional<RuntimeCallTimerScope> rcs_scope;                        \
   if (UNLIKELY(RuntimeEnabledFeatures::BlinkRuntimeCallStatsEnabled())) { \
     rcs_scope.emplace(runtime_call_stats, counterId);                     \
   }
@@ -153,7 +154,7 @@ class PLATFORM_EXPORT RuntimeCallTimer {
   RUNTIME_CALL_TIMER_SCOPE_WITH_RCS(RuntimeCallStats::From(isolate), counterId)
 
 #define RUNTIME_CALL_TIMER_SCOPE_IF_ISOLATE_EXISTS(isolate, counterId) \
-  base::Optional<RuntimeCallTimerScope> rcs_scope;                     \
+  absl::optional<RuntimeCallTimerScope> rcs_scope;                     \
   if (isolate) {                                                       \
     RUNTIME_CALL_TIMER_SCOPE_WITH_OPTIONAL_RCS(                        \
         rcs_scope, RuntimeCallStats::From(isolate), counterId)         \
@@ -333,12 +334,12 @@ class PLATFORM_EXPORT RuntimeCallStats {
   const base::TickClock* clock() const { return clock_; }
 
  private:
-  RuntimeCallTimer* current_timer_ = nullptr;
+  raw_ptr<RuntimeCallTimer, ExperimentalRenderer> current_timer_ = nullptr;
   bool in_use_ = false;
   RuntimeCallCounter counters_[static_cast<int>(CounterId::kNumberOfCounters)];
   static const int number_of_counters_ =
       static_cast<int>(CounterId::kNumberOfCounters);
-  const base::TickClock* clock_ = nullptr;
+  raw_ptr<const base::TickClock, ExperimentalRenderer> clock_ = nullptr;
 
 #if BUILDFLAG(RCS_COUNT_EVERYTHING)
   typedef HashMap<const char*, std::unique_ptr<RuntimeCallCounter>> CounterMap;
@@ -403,6 +404,8 @@ class PLATFORM_EXPORT RuntimeCallStatsScopedTracer {
 
   RuntimeCallStats* stats_ = nullptr;
 };
+
+PLATFORM_EXPORT void LogRuntimeCallStats(v8::Isolate* isolate);
 
 }  // namespace blink
 

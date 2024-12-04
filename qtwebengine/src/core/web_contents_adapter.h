@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtWebEngine module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 //
 //  W A R N I N G
@@ -51,17 +15,24 @@
 #ifndef WEB_CONTENTS_ADAPTER_H
 #define WEB_CONTENTS_ADAPTER_H
 
-#include "qtwebenginecoreglobal_p.h"
-#include "web_contents_adapter_client.h"
-#include <memory>
+#include <QtCore/QSharedPointer>
+#include <QtCore/QMap>
+#include <QtCore/QString>
+#include <QtCore/QUrl>
+#include <QtCore/QVariant>
+#include <QtCore/QPointer>
 #include <QtGui/qtgui-config.h>
+#include <QtWebEngineCore/private/qtwebenginecoreglobal_p.h>
+#include <QtWebEngineCore/qwebenginecontextmenurequest.h>
 #include <QtWebEngineCore/qwebenginehttprequest.h>
+#include <QtWebEngineCore/qwebengineframe.h>
+#include <QtWebEngineCore/qwebenginepermission.h>
 
-#include <QScopedPointer>
-#include <QSharedPointer>
-#include <QString>
-#include <QUrl>
-#include <QPointer>
+#include "web_contents_adapter_client.h"
+
+#include <functional>
+#include <memory>
+#include <optional>
 
 namespace blink {
 namespace web_pref {
@@ -69,10 +40,14 @@ struct WebPreferences;
 }
 }
 
+namespace base {
+class Value;
+}
+
 namespace content {
 class WebContents;
-struct OpenURLParams;
 class SiteInstance;
+class RenderFrameHost;
 }
 
 QT_BEGIN_NAMESPACE
@@ -82,7 +57,7 @@ class QDragMoveEvent;
 class QDropEvent;
 class QMimeData;
 class QPageLayout;
-class QString;
+class QPageRanges;
 class QTemporaryDir;
 class QWebChannel;
 class QWebEngineUrlRequestInterceptor;
@@ -91,16 +66,18 @@ QT_END_NAMESPACE
 namespace QtWebEngineCore {
 
 class DevToolsFrontendQt;
-class FaviconManager;
 class FindTextHelper;
-class MessagePassingInterface;
 class ProfileQt;
 class WebEnginePageHost;
 class WebChannelIPCTransportHost;
-class WebEngineContext;
 
-class Q_WEBENGINECORE_PRIVATE_EXPORT WebContentsAdapter : public QEnableSharedFromThis<WebContentsAdapter> {
+class Q_WEBENGINECORE_EXPORT WebContentsAdapter : public QEnableSharedFromThis<WebContentsAdapter> {
 public:
+    // Sentinel to indicate that a behavior should happen on the main frame
+    static constexpr quint64 kUseMainFrameId = -2;
+    // Sentinel to indicate a frame doesn't exist, for example with `findFrameByName`
+    static constexpr quint64 kInvalidFrameId = -3;
+
     static QSharedPointer<WebContentsAdapter> createFromSerializedNavigationHistory(QDataStream &input, WebContentsAdapterClient *adapterClient);
     WebContentsAdapter();
     WebContentsAdapter(std::unique_ptr<content::WebContents> webContents);
@@ -137,6 +114,7 @@ public:
     QString pageTitle() const;
     QString selectedText() const;
     QUrl iconUrl() const;
+    QIcon icon() const;
 
     void undo();
     void redo();
@@ -162,8 +140,10 @@ public:
     void serializeNavigationHistory(QDataStream &output);
     void setZoomFactor(qreal);
     qreal currentZoomFactor() const;
-    void runJavaScript(const QString &javaScript, quint32 worldId);
-    quint64 runJavaScriptCallbackResult(const QString &javaScript, quint32 worldId);
+    void runJavaScript(const QString &javaScript, quint32 worldId, quint64 frameId,
+                       const std::function<void(const QVariant &)> &callback);
+    void didRunJavaScript(quint64 requestId, const base::Value &result);
+    void clearJavaScriptCallbacks();
     quint64 fetchDocumentMarkup();
     quint64 fetchDocumentInnerText();
     void updateWebPreferences(const blink::web_pref::WebPreferences &webPreferences);
@@ -197,11 +177,14 @@ public:
     void openDevToolsFrontend(QSharedPointer<WebContentsAdapter> devtoolsFrontend);
     void closeDevToolsFrontend();
     void devToolsFrontendDestroyed(DevToolsFrontendQt *frontend);
+    QString devToolsId();
 
-    void grantMediaAccessPermission(const QUrl &securityOrigin, WebContentsAdapterClient::MediaRequestFlags flags);
-    void grantMouseLockPermission(const QUrl &securityOrigin, bool granted);
+    void setPermission(const QUrl &origin, QWebEnginePermission::PermissionType permissionType, QWebEnginePermission::State state);
+    QWebEnginePermission::State getPermissionState(const QUrl &origin, QWebEnginePermission::PermissionType permissionType);
+
+    void grantMediaAccessPermission(const QUrl &origin, WebContentsAdapterClient::MediaRequestFlags flags);
+    void grantMouseLockPermission(const QUrl &origin, bool granted);
     void handlePendingMouseLockPermission();
-    void grantFeaturePermission(const QUrl &securityOrigin, ProfileAdapter::PermissionType feature, ProfileAdapter::PermissionState allowed);
 
     void setBackgroundColor(const QColor &color);
     QAccessibleInterface *browserAccessible();
@@ -210,8 +193,8 @@ public:
 #if QT_CONFIG(webengine_webchannel)
     QWebChannel *webChannel() const;
     void setWebChannel(QWebChannel *, uint worldId);
+    WebChannelIPCTransportHost *webChannelTransport() { return m_webChannelTransport.get(); }
 #endif
-    FaviconManager *faviconManager();
     FindTextHelper *findTextHelper();
 
     QPointF lastScrollOffset() const;
@@ -222,14 +205,15 @@ public:
                        Qt::DropActions allowedActions, const QPixmap &pixmap, const QPoint &offset);
     void enterDrag(QDragEnterEvent *e, const QPointF &screenPos);
     Qt::DropAction updateDragPosition(QDragMoveEvent *e, const QPointF &screenPos);
-    void updateDragAction(int action);
+    void updateDragAction(int action, bool documentIsHandlingDrag);
     void endDragging(QDropEvent *e, const QPointF &screenPos);
     void leaveDrag();
 #endif // QT_CONFIG(draganddrop)
-    void printToPDF(const QPageLayout&, const QString&);
-    quint64 printToPDFCallbackResult(const QPageLayout &,
-                                     bool colorMode = true,
-                                     bool useCustomMargins = true);
+    void printToPDF(const QPageLayout &, const QPageRanges &, const QString &, quint64 frameId);
+    void printToPDFCallbackResult(std::function<void(QSharedPointer<QByteArray>)> &&,
+                                  const QPageLayout &, const QPageRanges &, bool colorMode,
+                                  bool useCustomMargins, quint64 frameId);
+    void didPrintPage(quint64 requestId, QSharedPointer<QByteArray> result);
 
     void replaceMisspelling(const QString &word);
     void viewSource();
@@ -238,10 +222,23 @@ public:
     bool isFindTextInProgress() const;
     bool hasFocusedFrame() const;
     void resetSelection();
+    void resetTouchSelectionController();
+    void changeTextDirection(bool leftToRight);
+
+    quint64 mainFrameId() const;
+    QString frameName(quint64 id) const;
+    QString frameHtmlName(quint64 id) const;
+    QList<quint64> frameChildren(quint64 id) const;
+    QUrl frameUrl(quint64 id) const;
+    QSizeF frameSize(quint64 id) const;
+    std::optional<quint64> findFrameIdByName(const QString &name) const;
+    bool hasFrame(quint64 id) const;
 
     // meant to be used within WebEngineCore only
     void initialize(content::SiteInstance *site);
     content::WebContents *webContents() const;
+    content::WebContents *guestWebContents() const;
+    WebContentsAdapterClient *adapterClient();
     void updateRecommendedState();
     void setRequestInterceptor(QWebEngineUrlRequestInterceptor *interceptor);
     QWebEngineUrlRequestInterceptor* requestInterceptor() const;
@@ -250,6 +247,7 @@ private:
     Q_DISABLE_COPY(WebContentsAdapter)
     void waitForUpdateDragActionCalled();
     bool handleDropDataFileContents(const content::DropData &dropData, QMimeData *mimeData);
+    content::RenderFrameHost *renderFrameHostFromFrameId(quint64 frameId) const;
 
     void wasShown();
     void wasHidden();
@@ -275,6 +273,8 @@ private:
     WebContentsAdapterClient *m_adapterClient;
     quint64 m_nextRequestId;
     QMap<QUrl, bool> m_pendingMouseLockPermissions;
+    QMap<quint64, std::function<void(const QVariant &)>> m_javaScriptCallbacks;
+    std::map<quint64, std::function<void(QSharedPointer<QByteArray>)>> m_printCallbacks;
     std::unique_ptr<content::DropData> m_currentDropData;
     uint m_currentDropAction;
     bool m_updateDragActionCalled;
@@ -285,6 +285,7 @@ private:
     LifecycleState m_lifecycleState = LifecycleState::Active;
     LifecycleState m_recommendedState = LifecycleState::Active;
     bool m_inspector = false;
+    bool m_documentIsHandlingDrag = false;
     QPointer<QWebEngineUrlRequestInterceptor> m_requestInterceptor;
 };
 

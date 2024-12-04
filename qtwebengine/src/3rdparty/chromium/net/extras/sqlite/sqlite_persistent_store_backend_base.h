@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,14 +8,13 @@
 #include <memory>
 #include <string>
 
-#include "base/callback.h"
-#include "base/callback_forward.h"
 #include "base/files/file_path.h"
-#include "base/macros.h"
+#include "base/functional/callback.h"
+#include "base/functional/callback_forward.h"
 #include "base/memory/ref_counted.h"
-#include "base/optional.h"
 #include "base/thread_annotations.h"
 #include "sql/meta_table.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace base {
 class Location;
@@ -50,6 +49,11 @@ namespace net {
 class SQLitePersistentStoreBackendBase
     : public base::RefCountedThreadSafe<SQLitePersistentStoreBackendBase> {
  public:
+  SQLitePersistentStoreBackendBase(const SQLitePersistentStoreBackendBase&) =
+      delete;
+  SQLitePersistentStoreBackendBase& operator=(
+      const SQLitePersistentStoreBackendBase&) = delete;
+
   // Posts a task to flush pending operations to the database in the background.
   // |callback| is run in the foreground when it is done.
   void Flush(base::OnceClosure callback);
@@ -66,14 +70,16 @@ class SQLitePersistentStoreBackendBase
 
   // |current_version_number| and |compatible_version_number| must be greater
   // than 0, as per //sql/meta_table.h. |background_task_runner| should be
-  // non-null.
+  // non-null. If |enable_exclusive_access| is true then the sqlite3 database
+  // will be opened with exclusive flag.
   SQLitePersistentStoreBackendBase(
       const base::FilePath& path,
       std::string histogram_tag,
       const int current_version_number,
       const int compatible_version_number,
       scoped_refptr<base::SequencedTaskRunner> background_task_runner,
-      scoped_refptr<base::SequencedTaskRunner> client_task_runner);
+      scoped_refptr<base::SequencedTaskRunner> client_task_runner,
+      bool enable_exclusive_access);
 
   virtual ~SQLitePersistentStoreBackendBase();
 
@@ -84,18 +90,15 @@ class SQLitePersistentStoreBackendBase
 
   // Record metrics on various errors/events that may occur during
   // initialization.
-  virtual void RecordPathDoesNotExistProblem() {}
   virtual void RecordOpenDBProblem() {}
   virtual void RecordDBMigrationProblem() {}
-  virtual void RecordNewDBFile() {}
-  virtual void RecordDBLoaded() {}
 
   // Embedder-specific database upgrade statements. Returns the version number
   // that the database ends up at, or returns nullopt on error. This is called
   // during MigrateDatabaseSchema() which is called during InitializeDatabase(),
-  // and returning |base::nullopt| will cause the initialization process to fail
+  // and returning |absl::nullopt| will cause the initialization process to fail
   // and stop.
-  virtual base::Optional<int> DoMigrateDatabaseSchema() = 0;
+  virtual absl::optional<int> DoMigrateDatabaseSchema() = 0;
 
   // Initializes the desired table(s) of the database, e.g. by creating them or
   // checking that they already exist. Returns whether the tables exist.
@@ -170,10 +173,10 @@ class SQLitePersistentStoreBackendBase
   const std::string histogram_tag_;
 
   // Whether the database has been initialized.
-  bool initialized_;
+  bool initialized_ = false;
 
   // Whether the KillDatabase callback has been scheduled.
-  bool corruption_detected_;
+  bool corruption_detected_ = false;
 
   // Current version number of the database. Must be greater than 0.
   const int current_version_number_;
@@ -185,13 +188,15 @@ class SQLitePersistentStoreBackendBase
   const scoped_refptr<base::SequencedTaskRunner> background_task_runner_;
   const scoped_refptr<base::SequencedTaskRunner> client_task_runner_;
 
+  // If true, then sqlite will be requested to open the file with exclusive
+  // access.
+  const bool enable_exclusive_access_;
+
   // Callback to be run before Commit.
   base::RepeatingClosure before_commit_callback_
       GUARDED_BY(before_commit_callback_lock_);
   // Guards |before_commit_callback_|.
   base::Lock before_commit_callback_lock_;
-
-  DISALLOW_COPY_AND_ASSIGN(SQLitePersistentStoreBackendBase);
 };
 
 }  // namespace net

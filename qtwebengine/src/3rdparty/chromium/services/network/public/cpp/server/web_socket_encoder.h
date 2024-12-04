@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,9 +7,10 @@
 
 #include <memory>
 #include <string>
+#include <string_view>
+#include <vector>
 
-#include "base/macros.h"
-#include "base/strings/string_piece.h"
+#include "base/component_export.h"
 #include "net/websockets/websocket_deflater.h"
 #include "net/websockets/websocket_inflater.h"
 #include "services/network/public/cpp/server/web_socket.h"
@@ -23,9 +24,12 @@ namespace network {
 
 namespace server {
 
-class WebSocketEncoder final {
+class COMPONENT_EXPORT(NETWORK_CPP) WebSocketEncoder final {
  public:
   static const char kClientExtensions[];
+
+  WebSocketEncoder(const WebSocketEncoder&) = delete;
+  WebSocketEncoder& operator=(const WebSocketEncoder&) = delete;
 
   ~WebSocketEncoder();
 
@@ -40,12 +44,15 @@ class WebSocketEncoder final {
   static std::unique_ptr<WebSocketEncoder> CreateClient(
       const std::string& response_extensions);
 
-  WebSocket::ParseResult DecodeFrame(const base::StringPiece& frame,
+  WebSocket::ParseResult DecodeFrame(std::string_view frame,
                                      int* bytes_consumed,
                                      std::string* output);
-  void EncodeFrame(base::StringPiece frame,
-                   int masking_key,
-                   std::string* output);
+  void EncodeTextFrame(std::string_view frame,
+                       int masking_key,
+                       std::string* output);
+  void EncodePongFrame(std::string_view frame,
+                       int masking_key,
+                       std::string* output);
 
   bool deflate_enabled() const { return !!deflater_; }
 
@@ -59,14 +66,15 @@ class WebSocketEncoder final {
                    std::unique_ptr<net::WebSocketDeflater> deflater,
                    std::unique_ptr<net::WebSocketInflater> inflater);
 
+  std::vector<std::string> continuation_message_frames_;
+  bool is_current_message_compressed_ = false;
+
   bool Inflate(std::string* message);
-  bool Deflate(base::StringPiece message, std::string* output);
+  bool Deflate(std::string_view message, std::string* output);
 
   Type type_;
   std::unique_ptr<net::WebSocketDeflater> deflater_;
   std::unique_ptr<net::WebSocketInflater> inflater_;
-
-  DISALLOW_COPY_AND_ASSIGN(WebSocketEncoder);
 };
 
 }  // namespace server

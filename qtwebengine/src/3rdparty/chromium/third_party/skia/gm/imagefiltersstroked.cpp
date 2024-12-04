@@ -8,7 +8,6 @@
 #include "gm/gm.h"
 #include "include/core/SkCanvas.h"
 #include "include/core/SkColor.h"
-#include "include/core/SkFilterQuality.h"
 #include "include/core/SkImageFilter.h"
 #include "include/core/SkMatrix.h"
 #include "include/core/SkPaint.h"
@@ -32,14 +31,9 @@ public:
     }
 
 protected:
+    SkString getName() const override { return SkString("imagefiltersstroked"); }
 
-    SkString onShortName() override {
-        return SkString("imagefiltersstroked");
-    }
-
-    SkISize onISize() override {
-        return SkISize::Make(860, 500);
-    }
+    SkISize getISize() override { return SkISize::Make(860, 500); }
 
     static void draw_circle(SkCanvas* canvas, const SkRect& r, const SkPaint& paint) {
         canvas->drawCircle(r.centerX(), r.centerY(),
@@ -68,7 +62,7 @@ protected:
             SkImageFilters::Blur(5, 5, nullptr),
             SkImageFilters::DropShadow(10, 10, 3, 3, SK_ColorGREEN, nullptr),
             SkImageFilters::Offset(-16, 32, nullptr),
-            SkImageFilters::MatrixTransform(resizeMatrix, kNone_SkFilterQuality, nullptr),
+            SkImageFilters::MatrixTransform(resizeMatrix, SkSamplingOptions(), nullptr),
         };
 
         SkRect r = SkRect::MakeWH(64, 64);
@@ -79,10 +73,10 @@ protected:
         paint.setStrokeWidth(10);
         paint.setStyle(SkPaint::kStroke_Style);
 
-        for (size_t i = 0; i < SK_ARRAY_COUNT(drawProc); ++i) {
+        for (size_t i = 0; i < std::size(drawProc); ++i) {
             canvas->translate(0, margin);
             canvas->save();
-            for (size_t j = 0; j < SK_ARRAY_COUNT(filters); ++j) {
+            for (size_t j = 0; j < std::size(filters); ++j) {
                 canvas->translate(margin, 0);
                 canvas->save();
                 if (2 == j) {

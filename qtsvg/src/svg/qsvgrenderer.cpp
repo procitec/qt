@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt SVG module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qsvgrenderer.h"
 
@@ -98,7 +62,7 @@ QT_BEGIN_NAMESPACE
     Finally, the QSvgRenderer class provides the repaintNeeded() signal which is emitted
     whenever the rendering of the document needs to be updated.
 
-    \sa QSvgWidget, {Qt SVG C++ Classes}, {SVG Viewer Example}, QPicture
+    \sa QSvgWidget, {Qt SVG C++ Classes}, QPicture
 */
 
 class QSvgRendererPrivate : public QObjectPrivate
@@ -109,18 +73,53 @@ public:
         : QObjectPrivate(),
           render(0), timer(0),
           fps(30)
-    {}
+    {
+        options = defaultOptions();
+    }
+
     ~QSvgRendererPrivate()
     {
         delete render;
     }
 
+    void startOrStopTimer()
+    {
+        if (animationEnabled && render && render->animated() && fps > 0) {
+            ensureTimerCreated();
+            timer->start(1000 / fps);
+        } else if (timer) {
+            timer->stop();
+        }
+    }
+
+    void ensureTimerCreated()
+    {
+        Q_Q(QSvgRenderer);
+        if (!timer) {
+            timer = new QTimer(q);
+            q->connect(timer, &QTimer::timeout, q, &QSvgRenderer::repaintNeeded);
+        }
+    }
+
     static void callRepaintNeeded(QSvgRenderer *const q);
+
+    static QtSvg::Options defaultOptions()
+    {
+        static bool envOk = false;
+        static QtSvg::Options envOpts = QtSvg::Options::fromInt(
+                qEnvironmentVariableIntValue("QT_SVG_DEFAULT_OPTIONS", &envOk));
+        return envOk ? envOpts : appDefaultOptions;
+    }
 
     QSvgTinyDocument *render;
     QTimer *timer;
     int fps;
+    QtSvg::Options options;
+    static QtSvg::Options appDefaultOptions;
+    bool animationEnabled = true;
 };
+
+QtSvg::Options QSvgRendererPrivate::appDefaultOptions;
 
 /*!
     Constructs a new renderer with the given \a parent.
@@ -233,6 +232,34 @@ bool QSvgRenderer::animated() const
 }
 
 /*!
+    \property QSvgRenderer::animationEnabled
+    \brief whether the animation should run, if the SVG is animated
+
+    Setting the property to false stops the animation timer.
+    Setting the property to true starts the animation timer,
+    provided that the SVG contains animated elements.
+
+    If the SVG is not animated, the property will have no effect.
+    Otherwise, the property defaults to true.
+
+    \sa animated()
+
+    \since 6.7
+*/
+bool QSvgRenderer::isAnimationEnabled() const
+{
+    Q_D(const QSvgRenderer);
+    return d->animationEnabled;
+}
+
+void QSvgRenderer::setAnimationEnabled(bool enable)
+{
+    Q_D(QSvgRenderer);
+    d->animationEnabled = enable;
+    d->startOrStopTimer();
+}
+
+/*!
     \property QSvgRenderer::framesPerSecond
     \brief the number of frames per second to be shown
 
@@ -254,6 +281,7 @@ void QSvgRenderer::setFramesPerSecond(int num)
         return;
     }
     d->fps = num;
+    d->startOrStopTimer();
 }
 
 /*!
@@ -289,6 +317,44 @@ void QSvgRenderer::setAspectRatioMode(Qt::AspectRatioMode mode)
         else if (mode == Qt::IgnoreAspectRatio)
             d->render->setPreserveAspectRatio(false);
     }
+}
+
+/*!
+    \property QSvgRenderer::options
+    \since 6.7
+
+    This property holds a set of QtSvg::Option flags that can be used
+    to enable or disable various features of the parsing and rendering of SVG files.
+
+    In order to take effect, this property must be set \c before load() is executed. Note that the
+    constructors taking an SVG source parameter will perform loading during construction.
+
+    \sa setDefaultOptions
+ */
+QtSvg::Options QSvgRenderer::options() const
+{
+    Q_D(const QSvgRenderer);
+    return d->options;
+}
+
+void QSvgRenderer::setOptions(QtSvg::Options flags)
+{
+    Q_D(QSvgRenderer);
+    d->options = flags;
+}
+
+/*!
+    Sets the option flags that renderers will be created with to \a flags.
+    By default, no flags are set.
+
+    At runtime, this can be overridden by the QT_SVG_DEFAULT_OPTIONS environment variable.
+
+    \since 6.8
+*/
+
+void QSvgRenderer::setDefaultOptions(QtSvg::Options flags)
+{
+    QSvgRendererPrivate::appDefaultOptions = flags;
 }
 
 /*!
@@ -349,22 +415,12 @@ static bool loadDocument(QSvgRenderer *const q,
                          const TInputType &in)
 {
     delete d->render;
-    d->render = QSvgTinyDocument::load(in);
+    d->render = QSvgTinyDocument::load(in, d->options);
     if (d->render && !d->render->size().isValid()) {
         delete d->render;
         d->render = nullptr;
     }
-    if (d->render && d->render->animated() && d->fps > 0) {
-        if (!d->timer)
-            d->timer = new QTimer(q);
-        else
-            d->timer->stop();
-        q->connect(d->timer, SIGNAL(timeout()),
-                   q, SIGNAL(repaintNeeded()));
-        d->timer->start(1000/d->fps);
-    } else if (d->timer) {
-        d->timer->stop();
-    }
+    d->startOrStopTimer();
 
     //force first update
     QSvgRendererPrivate::callRepaintNeeded(q);
@@ -510,33 +566,6 @@ bool QSvgRenderer::elementExists(const QString &id) const
         exists = d->render->elementExists(id);
     return exists;
 }
-
-#if QT_DEPRECATED_SINCE(5, 15)
-QT_WARNING_PUSH
-QT_WARNING_DISABLE_DEPRECATED
-/*!
-    \since 4.2
-    \deprecated
-
-    Use transformForElement() instead.
-
-
-    Returns the transformation matrix for the element
-    with the given \a id. The matrix is a product of
-    the transformation of the element's parents. The transformation of
-    the element itself is not included.
-
-    To find the bounding rectangle of the element in logical coordinates,
-    you can apply the matrix on the rectangle returned from boundsOnElement().
-
-    \sa boundsOnElement()
-*/
-QMatrix QSvgRenderer::matrixForElement(const QString &id) const
-{
-    return transformForElement(id).toAffine();
-}
-QT_WARNING_POP
-#endif // QT_DEPRECATED_SINCE(5, 15)
 
 /*!
     \since 5.15

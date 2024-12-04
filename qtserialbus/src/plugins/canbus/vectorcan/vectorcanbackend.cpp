@@ -1,38 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2017 Denis Shienkov <denis.shienkov@gmail.com>
-** Contact: http://www.qt.io/licensing/
-**
-** This file is part of the QtSerialBus module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL3$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see http://www.qt.io/terms-conditions. For further
-** information use the contact form at http://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPLv3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or later as published by the Free
-** Software Foundation and appearing in the file LICENSE.GPL included in
-** the packaging of this file. Please review the following information to
-** ensure the GNU General Public License version 2.0 requirements will be
-** met: http://www.gnu.org/licenses/gpl-2.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2017 Denis Shienkov <denis.shienkov@gmail.com>
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "vectorcanbackend.h"
 #include "vectorcanbackend_p.h"
@@ -86,6 +53,8 @@ QList<QCanBusDeviceInfo> VectorCanBackend::interfaces()
     for (uint i = 0; i < config.channelCount; ++i) {
         if (config.channel[i].hwType == XL_HWTYPE_NONE)
             continue;
+        if (!(config.channel[i].channelBusCapabilities & XL_BUS_ACTIVE_CAP_CAN))
+            continue;
 
         const bool isVirtual = config.channel[i].hwType == XL_HWTYPE_VIRTUAL;
         const bool isFd = config.channel[i].channelCapabilities & XL_CHANNEL_FLAG_CANFD_SUPPORT;
@@ -93,8 +62,9 @@ QList<QCanBusDeviceInfo> VectorCanBackend::interfaces()
         const QString name = QStringLiteral("can") + QString::number(i);
         const QString serial = QString::number(config.channel[i].serialNumber);
         const QString description = QLatin1String(config.channel[i].name);
-        result.append(std::move(createDeviceInfo(name, serial, description, channel,
-                                                 isVirtual, isFd)));
+        result.append(createDeviceInfo(QStringLiteral("vectorcan"), name,
+                                       serial, description, QString(),
+                                       channel, isVirtual, isFd));
     }
 
     VectorCanBackendPrivate::cleanupDriver();
@@ -112,16 +82,10 @@ public:
         , dptr(d)
     {
         setHandle(dptr->readHandle);
-    }
 
-protected:
-    bool event(QEvent *e) override
-    {
-        if (e->type() == QEvent::WinEventAct) {
+        connect(this, &QWinEventNotifier::activated, this, [this]() {
             dptr->startRead();
-            return true;
-        }
-        return QWinEventNotifier::event(e);
+        });
     }
 
 private:
@@ -153,6 +117,79 @@ private:
     VectorCanBackendPrivate * const dptr;
 };
 
+XLcanFdConf xlCanFdConfInit(int arbitrationBitRate, int dataBitRate)
+{
+    XLcanFdConf conf = {};
+    const int minArbitrationBitRate = 5000;
+    if (arbitrationBitRate < minArbitrationBitRate) {
+        qCWarning(QT_CANBUS_PLUGINS_VECTORCAN,
+                  "Arbitration bit rate %d is to low (Minimum: %d)",
+                  arbitrationBitRate, minArbitrationBitRate);
+        return conf;
+    }
+    if (dataBitRate < arbitrationBitRate) {
+        qCWarning(QT_CANBUS_PLUGINS_VECTORCAN,
+                  "Data bit rate %d must not be lower than arbitration bit rate %d",
+                  dataBitRate, arbitrationBitRate);
+        return conf;
+    }
+
+    int prescalerArbitration = 1;
+    switch (arbitrationBitRate) {
+    case 5000: prescalerArbitration = 50; break;
+    case 10000: prescalerArbitration = 25; break;
+    case 20000: prescalerArbitration = 20; break;
+    case 33333: prescalerArbitration = 8; break;
+    case 50000: prescalerArbitration = 5; break;
+    case 83333: prescalerArbitration = 3; break;
+    case 100000: prescalerArbitration = 4; break;
+    case 125000: prescalerArbitration = 2; break;
+    }
+    conf.arbitrationBitRate = arbitrationBitRate;
+    const int clock = 80000000;
+    double samplePoint = 0.75;
+    const int btlCyclesAbr = clock / conf.arbitrationBitRate / prescalerArbitration;
+    conf.tseg1Abr = (btlCyclesAbr * samplePoint) - 1;
+    conf.tseg2Abr = btlCyclesAbr * (1 - samplePoint);
+    conf.sjwAbr = conf.tseg2Abr;
+
+    int prescalerData = 1;
+    switch (dataBitRate) {
+    case 25000: prescalerData = 20; break;
+    case 50000: prescalerData = 10; break;
+    case 83333: prescalerData = 6; break;
+    case 100000: prescalerData = 5; break;
+    case 125000: prescalerData = 4; break;
+    case 250000: prescalerData = 2; break;
+    case 8000000: samplePoint = 0.70; break;
+    }
+    conf.dataBitRate = dataBitRate;
+    const int btlCyclesDbr = clock / conf.dataBitRate / prescalerData;
+    conf.tseg1Dbr = (btlCyclesDbr * samplePoint) - 1;
+    conf.tseg2Dbr = btlCyclesDbr * (1 - samplePoint);
+    conf.sjwDbr = conf.tseg2Dbr;
+
+    return conf;
+}
+
+static qsizetype getDlcFromPayloadSize(const qsizetype size)
+{
+    if (size <= 8)
+        return size;
+    if (size <= 12)
+        return 9;
+    if (size <= 16)
+        return 10;
+    if (size <= 20)
+        return 11;
+    if (size <= 24)
+        return 12;
+    if (size <= 32)
+        return 13;
+    if (size <= 48)
+        return 14;
+    return 15;
+}
 
 VectorCanBackendPrivate::VectorCanBackendPrivate(VectorCanBackend *q)
     : q_ptr(q)
@@ -189,16 +226,29 @@ bool VectorCanBackendPrivate::open()
             portHandle = XL_INVALID_PORTHANDLE;
             return false;
         }
-    }
-    if (usesCanFd && arbBitRate != 0) {
-        XLcanFdConf xlfdconf = {};
-        xlfdconf.dataBitRate = (dataBitRate != 0) ? dataBitRate : arbBitRate;
-        xlfdconf.arbitrationBitRate = arbBitRate;
+        if (usesCanFd && arbBitRate != 0) {
+            if (permissionMask != 0) {
+                XLcanFdConf xlfdconf = xlCanFdConfInit(arbBitRate, dataBitRate);
 
-        const XLstatus status = ::xlCanFdSetConfiguration(portHandle, channelMask, &xlfdconf);
-        if (Q_UNLIKELY(status != XL_SUCCESS))
-            qCWarning(QT_CANBUS_PLUGINS_VECTORCAN,
-                      "Unable to change the configuration for an open channel");
+                const XLstatus statusFd = ::xlCanFdSetConfiguration(portHandle, channelMask, &xlfdconf);
+                if (Q_UNLIKELY(statusFd != XL_SUCCESS)) {
+                    const QString errorString = systemErrorString(statusFd);
+                    if (statusFd == XL_ERR_INVALID_ACCESS) {
+                        qCWarning(QT_CANBUS_PLUGINS_VECTORCAN, "Unable to change the configuration: %ls.",
+                                  qUtf16Printable(errorString));
+                        q->setError(errorString, QCanBusDevice::CanBusError::ConfigurationError);
+                    } else {
+                        qCWarning(QT_CANBUS_PLUGINS_VECTORCAN, "Connection error: %ls.",
+                                  qUtf16Printable(errorString));
+                        q->setError(errorString, QCanBusDevice::CanBusError::ConnectionError);
+                        return false;
+                    }
+                }
+            } else {
+                qCWarning(QT_CANBUS_PLUGINS_VECTORCAN, "No init access for channel %d! "
+                                                       "Using existing configuration!", channelIndex);
+            }
+        }
     }
 
     {
@@ -259,7 +309,8 @@ void VectorCanBackendPrivate::close()
     portHandle = XL_INVALID_PORTHANDLE;
 }
 
-bool VectorCanBackendPrivate::setConfigurationParameter(int key, const QVariant &value)
+bool VectorCanBackendPrivate::setConfigurationParameter(QCanBusDevice::ConfigurationKey key,
+                                                        const QVariant &value)
 {
     Q_Q(VectorCanBackend);
 
@@ -289,7 +340,7 @@ bool VectorCanBackendPrivate::setConfigurationParameter(int key, const QVariant 
         return true;
     }
     default:
-        q->setError(VectorCanBackend::tr("Unsupported configuration key"),
+        q->setError(VectorCanBackend::tr("Unsupported configuration key: %1").arg(key),
                     QCanBusDevice::ConfigurationError);
         return false;
     }
@@ -299,7 +350,7 @@ void VectorCanBackendPrivate::setupChannel(const QString &interfaceName)
 {
     Q_Q(VectorCanBackend);
     if (Q_LIKELY(interfaceName.startsWith(QStringLiteral("can")))) {
-        const QStringRef ref = interfaceName.midRef(3);
+        const QStringView ref = QStringView{interfaceName}.mid(3);
         bool ok = false;
         channelIndex = ref.toInt(&ok);
         if (ok && (channelIndex >= 0 && channelIndex < XL_CONFIG_MAX_CHANNELS)) {
@@ -342,6 +393,7 @@ void VectorCanBackendPrivate::startWrite()
 
     const QCanBusFrame frame = q->dequeueOutgoingFrame();
     const QByteArray payload = frame.payload();
+    const qsizetype payloadSize = payload.size();
 
     quint32 eventCount = 1;
     XLstatus status = XL_ERROR;
@@ -355,13 +407,15 @@ void VectorCanBackendPrivate::startWrite()
         if (frame.hasExtendedFrameFormat())
             msg.id |= XL_CAN_EXT_MSG_ID;
 
-        msg.dlc = payload.size();
+        msg.dlc = static_cast<quint8>(getDlcFromPayloadSize(payloadSize));
         if (frame.hasFlexibleDataRateFormat())
             msg.flags = XL_CAN_TXMSG_FLAG_EDL;
+        if (frame.hasBitrateSwitch())
+            msg.flags |= XL_CAN_TXMSG_FLAG_BRS;
         if (frame.frameType() == QCanBusFrame::RemoteRequestFrame)
             msg.flags |= XL_CAN_TXMSG_FLAG_RTR; // we do not care about the payload
         else
-            ::memcpy(msg.data, payload.constData(), sizeof(msg.data));
+            ::memcpy(msg.data, payload.constData(), payloadSize);
 
         status = ::xlCanTransmitEx(portHandle, channelMask, eventCount, &eventCount, &event);
     } else {
@@ -373,14 +427,14 @@ void VectorCanBackendPrivate::startWrite()
         if (frame.hasExtendedFrameFormat())
             msg.id |= XL_CAN_EXT_MSG_ID;
 
-        msg.dlc = payload.size();
+        msg.dlc = payloadSize;
 
         if (frame.frameType() == QCanBusFrame::RemoteRequestFrame)
             msg.flags |= XL_CAN_MSG_FLAG_REMOTE_FRAME; // we do not care about the payload
         else if (frame.frameType() == QCanBusFrame::ErrorFrame)
             msg.flags |= XL_CAN_MSG_FLAG_ERROR_FRAME; // we do not care about the payload
         else
-            ::memcpy(msg.data, payload.constData(), sizeof(msg.data));
+            ::memcpy(msg.data, payload.constData(), payloadSize);
 
         status = ::xlCanTransmit(portHandle, channelMask, &eventCount, &event);
     }
@@ -399,7 +453,7 @@ void VectorCanBackendPrivate::startRead()
 {
     Q_Q(VectorCanBackend);
 
-    QVector<QCanBusFrame> newFrames;
+    QList<QCanBusFrame> newFrames;
 
     for (;;) {
         quint32 eventCount = 1;
@@ -418,10 +472,22 @@ void VectorCanBackendPrivate::startRead()
 
             const XL_CAN_EV_RX_MSG &msg = event.tagData.canRxOkMsg;
 
+            int dataLength = msg.dlc;
+            switch (msg.dlc) {
+            case 9: dataLength = 12; break;
+            case 10: dataLength = 16; break;
+            case 11: dataLength = 20; break;
+            case 12: dataLength = 24; break;
+            case 13: dataLength = 32; break;
+            case 14: dataLength = 48; break;
+            case 15: dataLength = 64; break;
+            }
+
             QCanBusFrame frame(msg.id & ~XL_CAN_EXT_MSG_ID,
-                QByteArray(reinterpret_cast<const char *>(msg.data), int(msg.dlc)));
+                QByteArray(reinterpret_cast<const char *>(msg.data), dataLength));
             frame.setTimeStamp(QCanBusFrame::TimeStamp::fromMicroSeconds(event.timeStamp / 1000));
-            frame.setExtendedFrameFormat(msg.id & XL_CAN_RXMSG_FLAG_EDL);
+            frame.setExtendedFrameFormat(msg.id & XL_CAN_EXT_MSG_ID);
+            frame.setBitrateSwitch(msg.flags & XL_CAN_RXMSG_FLAG_BRS);
             frame.setFrameType((msg.flags & XL_CAN_RXMSG_FLAG_RTR)
                                 ? QCanBusFrame::RemoteRequestFrame
                                 : (msg.flags & XL_CAN_RXMSG_FLAG_EF)
@@ -552,9 +618,6 @@ VectorCanBackend::VectorCanBackend(const QString &name, QObject *parent)
 
     d->setupChannel(name);
     d->setupDefaultConfigurations();
-
-    std::function<CanBusStatus()> g = std::bind(&VectorCanBackend::busStatus, this);
-    setCanBusStatusGetter(g);
 }
 
 VectorCanBackend::~VectorCanBackend()
@@ -575,7 +638,7 @@ bool VectorCanBackend::open()
     }
 
     const auto keys = configurationKeys();
-    for (int key : keys) {
+    for (ConfigurationKey key : keys) {
         const QVariant param = configurationParameter(key);
         const bool success = d->setConfigurationParameter(key, param);
         if (!success) {
@@ -597,7 +660,7 @@ void VectorCanBackend::close()
     setState(QCanBusDevice::UnconnectedState);
 }
 
-void VectorCanBackend::setConfigurationParameter(int key, const QVariant &value)
+void VectorCanBackend::setConfigurationParameter(ConfigurationKey key, const QVariant &value)
 {
     Q_D(VectorCanBackend);
 
@@ -646,6 +709,11 @@ QString VectorCanBackend::interpretErrorFrame(const QCanBusFrame &errorFrame)
     Q_UNUSED(errorFrame);
 
     return QString();
+}
+
+bool VectorCanBackend::hasBusStatus() const
+{
+    return true;
 }
 
 QCanBusDevice::CanBusStatus VectorCanBackend::busStatus()
@@ -707,6 +775,25 @@ QCanBusDevice::CanBusStatus VectorCanBackend::busStatus()
 
     qCWarning(QT_CANBUS_PLUGINS_VECTORCAN, "Unknown CAN bus status: %u", busStatus);
     return QCanBusDevice::CanBusStatus::Unknown;
+}
+
+QCanBusDeviceInfo VectorCanBackend::deviceInfo() const
+{
+    const QList<QCanBusDeviceInfo> availableDevices = interfaces();
+    const int index = d_ptr->channelIndex;
+    const QString name = QStringLiteral("can%1").arg(index);
+
+    const auto deviceInfo = std::find_if(availableDevices.constBegin(),
+                                         availableDevices.constEnd(),
+                                         [name](const QCanBusDeviceInfo &info) {
+        return name == info.name();
+    });
+
+    if (Q_LIKELY(deviceInfo != availableDevices.constEnd()))
+        return *deviceInfo;
+
+    qWarning("%s: Cannot get device info for index %d.", Q_FUNC_INFO, index);
+    return QCanBusDevice::deviceInfo();
 }
 
 QT_END_NAMESPACE

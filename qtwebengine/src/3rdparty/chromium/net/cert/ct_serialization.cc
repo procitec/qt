@@ -1,19 +1,20 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "net/cert/ct_serialization.h"
 
+#include <string_view>
+
 #include "base/logging.h"
+#include "base/numerics/checked_math.h"
 #include "crypto/sha2.h"
 #include "net/cert/merkle_tree_leaf.h"
 #include "net/cert/signed_certificate_timestamp.h"
 #include "net/cert/signed_tree_head.h"
 #include "third_party/boringssl/src/include/openssl/bytestring.h"
 
-namespace net {
-
-namespace ct {
+namespace net::ct {
 
 namespace {
 
@@ -29,8 +30,8 @@ enum SignatureType {
 // |max_list_length| contains the overall length of the encoded list.
 // |max_item_length| contains the maximum length of a single item.
 // On success, returns true and updates |*out| with the encoded list.
-bool ReadSCTList(CBS* in, std::vector<base::StringPiece>* out) {
-  std::vector<base::StringPiece> result;
+bool ReadSCTList(CBS* in, std::vector<std::string_view>* out) {
+  std::vector<std::string_view> result;
 
   CBS sct_list_data;
 
@@ -39,12 +40,8 @@ bool ReadSCTList(CBS* in, std::vector<base::StringPiece>* out) {
 
   while (CBS_len(&sct_list_data) != 0) {
     CBS sct_list_item;
-    if (!CBS_get_u16_length_prefixed(&sct_list_data, &sct_list_item)) {
-      DVLOG(1) << "Failed to read item in list.";
-      return false;
-    }
-    if (CBS_len(&sct_list_item) == 0) {
-      DVLOG(1) << "Empty item in list";
+    if (!CBS_get_u16_length_prefixed(&sct_list_data, &sct_list_item) ||
+        CBS_len(&sct_list_item) == 0) {
       return false;
     }
 
@@ -168,14 +165,11 @@ bool DecodeDigitallySigned(CBS* input, DigitallySigned* output) {
   }
 
   DigitallySigned result;
-  if (!ConvertHashAlgorithm(hash_algo, &result.hash_algorithm)) {
-    DVLOG(1) << "Invalid hash algorithm " << hash_algo;
+  if (!ConvertHashAlgorithm(hash_algo, &result.hash_algorithm) ||
+      !ConvertSignatureAlgorithm(sig_algo, &result.signature_algorithm)) {
     return false;
   }
-  if (!ConvertSignatureAlgorithm(sig_algo, &result.signature_algorithm)) {
-    DVLOG(1) << "Invalid signature algorithm " << sig_algo;
-    return false;
-  }
+
   result.signature_data.assign(
       reinterpret_cast<const char*>(CBS_data(&sig_data)), CBS_len(&sig_data));
 
@@ -183,7 +177,7 @@ bool DecodeDigitallySigned(CBS* input, DigitallySigned* output) {
   return true;
 }
 
-bool DecodeDigitallySigned(base::StringPiece* input, DigitallySigned* output) {
+bool DecodeDigitallySigned(std::string_view* input, DigitallySigned* output) {
   CBS input_cbs;
   CBS_init(&input_cbs, reinterpret_cast<const uint8_t*>(input->data()),
            input->size());
@@ -227,14 +221,11 @@ static bool ReadTimeSinceEpoch(CBS* input, base::Time* output) {
   base::CheckedNumeric<int64_t> time_since_epoch_signed = time_since_epoch;
 
   if (!time_since_epoch_signed.IsValid()) {
-    DVLOG(1) << "Timestamp value too big to cast to int64_t: "
-             << time_since_epoch;
     return false;
   }
 
-  *output =
-      base::Time::UnixEpoch() +
-      base::TimeDelta::FromMilliseconds(time_since_epoch_signed.ValueOrDie());
+  *output = base::Time::UnixEpoch() +
+            base::Milliseconds(int64_t{time_since_epoch_signed.ValueOrDie()});
 
   return true;
 }
@@ -311,9 +302,9 @@ bool EncodeTreeHeadSignature(const SignedTreeHead& signed_tree_head,
   return true;
 }
 
-bool DecodeSCTList(base::StringPiece input,
-                   std::vector<base::StringPiece>* output) {
-  std::vector<base::StringPiece> result;
+bool DecodeSCTList(std::string_view input,
+                   std::vector<std::string_view>* output) {
+  std::vector<std::string_view> result;
   CBS input_cbs;
   CBS_init(&input_cbs, reinterpret_cast<const uint8_t*>(input.data()),
            input.size());
@@ -327,18 +318,15 @@ bool DecodeSCTList(base::StringPiece input,
 }
 
 bool DecodeSignedCertificateTimestamp(
-    base::StringPiece* input,
+    std::string_view* input,
     scoped_refptr<SignedCertificateTimestamp>* output) {
-  scoped_refptr<SignedCertificateTimestamp> result(
-      new SignedCertificateTimestamp());
+  auto result = base::MakeRefCounted<SignedCertificateTimestamp>();
   uint8_t version;
   CBS input_cbs;
   CBS_init(&input_cbs, reinterpret_cast<const uint8_t*>(input->data()),
            input->size());
-  if (!CBS_get_u8(&input_cbs, &version))
-    return false;
-  if (version != SignedCertificateTimestamp::V1) {
-    DVLOG(1) << "Unsupported/invalid version " << version;
+  if (!CBS_get_u8(&input_cbs, &version) ||
+      version != SignedCertificateTimestamp::V1) {
     return false;
   }
 
@@ -390,28 +378,36 @@ bool EncodeSignedCertificateTimestamp(
   return true;
 }
 
-bool EncodeSCTListForTesting(const base::StringPiece& sct,
+bool EncodeSCTListForTesting(const std::vector<std::string>& scts,
                              std::string* output) {
-  bssl::ScopedCBB encoded_sct, output_cbb;
-  CBB encoded_sct_child, output_child;
-  if (!CBB_init(encoded_sct.get(), 64) || !CBB_init(output_cbb.get(), 64) ||
-      !CBB_add_u16_length_prefixed(encoded_sct.get(), &encoded_sct_child) ||
-      !CBB_add_bytes(&encoded_sct_child,
-                     reinterpret_cast<const uint8_t*>(sct.data()),
-                     sct.size()) ||
-      !CBB_flush(encoded_sct.get()) ||
-      !CBB_add_u16_length_prefixed(output_cbb.get(), &output_child) ||
-      !CBB_add_bytes(&output_child, CBB_data(encoded_sct.get()),
-                     CBB_len(encoded_sct.get())) ||
-      !CBB_flush(output_cbb.get())) {
+  bssl::ScopedCBB output_cbb;
+  CBB output_child;
+  if (!CBB_init(output_cbb.get(), 64) ||
+      !CBB_add_u16_length_prefixed(output_cbb.get(), &output_child)) {
     return false;
   }
 
+  for (const std::string& sct : scts) {
+    bssl::ScopedCBB encoded_sct;
+    CBB encoded_sct_child;
+    if (!CBB_init(encoded_sct.get(), 64) ||
+        !CBB_add_u16_length_prefixed(encoded_sct.get(), &encoded_sct_child) ||
+        !CBB_add_bytes(&encoded_sct_child,
+                       reinterpret_cast<const uint8_t*>(sct.data()),
+                       sct.size()) ||
+        !CBB_flush(encoded_sct.get()) ||
+        !CBB_add_bytes(&output_child, CBB_data(encoded_sct.get()),
+                       CBB_len(encoded_sct.get()))) {
+      return false;
+    }
+  }
+
+  if (!CBB_flush(output_cbb.get())) {
+    return false;
+  }
   output->append(reinterpret_cast<const char*>(CBB_data(output_cbb.get())),
                  CBB_len(output_cbb.get()));
   return true;
 }
 
-}  // namespace ct
-
-}  // namespace net
+}  // namespace net::ct

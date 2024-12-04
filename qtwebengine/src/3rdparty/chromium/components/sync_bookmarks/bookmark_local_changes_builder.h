@@ -1,20 +1,16 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef COMPONENTS_SYNC_BOOKMARKS_BOOKMARK_LOCAL_CHANGES_BUILDER_H_
 #define COMPONENTS_SYNC_BOOKMARKS_BOOKMARK_LOCAL_CHANGES_BUILDER_H_
 
-#include <vector>
-
-#include "components/sync/engine/non_blocking_sync_common.h"
-
-namespace bookmarks {
-class BookmarkModel;
-}
+#include "base/memory/raw_ptr.h"
+#include "components/sync/engine/commit_and_get_updates_types.h"
 
 namespace sync_bookmarks {
 
+class BookmarkModelView;
 class SyncedBookmarkTracker;
 
 class BookmarkLocalChangesBuilder {
@@ -22,15 +18,18 @@ class BookmarkLocalChangesBuilder {
   // |bookmark_tracker| and |bookmark_model| must not be null and must outlive
   // this object.
   BookmarkLocalChangesBuilder(SyncedBookmarkTracker* bookmark_tracker,
-                              bookmarks::BookmarkModel* bookmark_model);
+                              BookmarkModelView* bookmark_model);
+
+  BookmarkLocalChangesBuilder(const BookmarkLocalChangesBuilder&) = delete;
+  BookmarkLocalChangesBuilder& operator=(const BookmarkLocalChangesBuilder&) =
+      delete;
+
   // Builds the commit requests list.
   syncer::CommitRequestDataList BuildCommitRequests(size_t max_entries) const;
 
  private:
-  SyncedBookmarkTracker* const bookmark_tracker_;
-  bookmarks::BookmarkModel* const bookmark_model_;
-
-  DISALLOW_COPY_AND_ASSIGN(BookmarkLocalChangesBuilder);
+  const raw_ptr<SyncedBookmarkTracker> bookmark_tracker_;
+  const raw_ptr<BookmarkModelView> bookmark_model_;
 };
 
 }  // namespace sync_bookmarks

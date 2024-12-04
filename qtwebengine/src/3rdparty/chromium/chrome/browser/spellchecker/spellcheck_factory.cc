@@ -1,17 +1,14 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "chrome/browser/spellchecker/spellcheck_factory.h"
 
-#ifndef TOOLKIT_QT
-#include "chrome/browser/profiles/incognito_helpers.h"
-#endif
+#include "build/build_config.h"
 #include "chrome/browser/spellchecker/spellcheck_service.h"
-#ifndef TOOLKIT_QT
+#if !BUILDFLAG(IS_QTWEBENGINE)
 #include "chrome/grit/locale_settings.h"
 #endif
-#include "components/keyed_service/content/browser_context_dependency_manager.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/pref_service.h"
 #include "components/spellcheck/browser/pref_names.h"
@@ -29,25 +26,30 @@ SpellcheckService* SpellcheckServiceFactory::GetForContext(
 
 // static
 SpellcheckServiceFactory* SpellcheckServiceFactory::GetInstance() {
-  return base::Singleton<SpellcheckServiceFactory>::get();
+  static base::NoDestructor<SpellcheckServiceFactory> instance;
+  return instance.get();
 }
 
 SpellcheckServiceFactory::SpellcheckServiceFactory()
-    : BrowserContextKeyedServiceFactory(
-        "SpellcheckService",
-        BrowserContextDependencyManager::GetInstance()) {
+    : ProfileKeyedServiceFactory(
+          "SpellcheckService",
+          ProfileSelections::Builder()
+              .WithRegular(ProfileSelection::kRedirectedToOriginal)
+              // TODO(crbug.com/1418376): Check if this service is needed in
+              // Guest mode.
+              .WithGuest(ProfileSelection::kRedirectedToOriginal)
+              .Build()) {
   // TODO(erg): Uncomment these as they are initialized.
   // DependsOn(RequestContextFactory::GetInstance());
 }
 
-SpellcheckServiceFactory::~SpellcheckServiceFactory() {}
+SpellcheckServiceFactory::~SpellcheckServiceFactory() = default;
 
-KeyedService* SpellcheckServiceFactory::BuildServiceInstanceFor(
+std::unique_ptr<KeyedService>
+SpellcheckServiceFactory::BuildServiceInstanceForBrowserContext(
     content::BrowserContext* context) const {
   // Many variables are initialized from the |context| in the SpellcheckService.
-  SpellcheckService* spellcheck = new SpellcheckService(context);
-
-  return spellcheck;
+  return std::make_unique<SpellcheckService>(context);
 }
 
 void SpellcheckServiceFactory::RegisterProfilePrefs(
@@ -59,29 +61,20 @@ void SpellcheckServiceFactory::RegisterProfilePrefs(
       spellcheck::prefs::kSpellCheckBlocklistedDictionaries);
   // Continue registering kSpellCheckDictionary for preference migration.
   // TODO(estade): remove: crbug.com/751275
-#ifndef TOOLKIT_QT
+#if !BUILDFLAG(IS_QTWEBENGINE)
   user_prefs->RegisterStringPref(
       spellcheck::prefs::kSpellCheckDictionary,
       l10n_util::GetStringUTF8(IDS_SPELLCHECK_DICTIONARY));
 #endif
   user_prefs->RegisterBooleanPref(
       spellcheck::prefs::kSpellCheckUseSpellingService, false);
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
   uint32_t flags = PrefRegistry::NO_REGISTRATION_FLAGS;
 #else
   uint32_t flags = user_prefs::PrefRegistrySyncable::SYNCABLE_PREF;
 #endif
   user_prefs->RegisterBooleanPref(spellcheck::prefs::kSpellCheckEnable, true,
                                   flags);
-}
-
-content::BrowserContext* SpellcheckServiceFactory::GetBrowserContextToUse(
-    content::BrowserContext* context) const {
-#ifndef TOOLKIT_QT
-  return chrome::GetBrowserContextRedirectedInIncognito(context);
-#else
-  return context;
-#endif
 }
 
 bool SpellcheckServiceFactory::ServiceIsNULLWhileTesting() const {

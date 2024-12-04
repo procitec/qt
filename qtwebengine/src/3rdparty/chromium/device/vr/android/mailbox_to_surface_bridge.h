@@ -1,13 +1,19 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef DEVICE_VR_ANDROID_MAILBOX_TO_SURFACE_BRIDGE_H_
 #define DEVICE_VR_ANDROID_MAILBOX_TO_SURFACE_BRIDGE_H_
 
+#include "base/functional/callback_forward.h"
+
 namespace gfx {
+enum class BufferFormat : uint8_t;
 class ColorSpace;
 class GpuFence;
+struct GpuMemoryBufferHandle;
+class Size;
+class Transform;
 }  // namespace gfx
 
 namespace gl {
@@ -15,7 +21,7 @@ class SurfaceTexture;
 }  // namespace gl
 
 namespace gpu {
-class GpuMemoryBufferImplAndroidHardwareBuffer;
+class ClientSharedImage;
 struct MailboxHolder;
 struct SyncToken;
 }  // namespace gpu
@@ -53,7 +59,8 @@ class MailboxToSurfaceBridge {
   // context isn't ready for use yet, in that case the caller
   // won't get a new frame on the SurfaceTexture.
   virtual bool CopyMailboxToSurfaceAndSwap(
-      const gpu::MailboxHolder& mailbox) = 0;
+      const gpu::MailboxHolder& mailbox,
+      const gfx::Transform& uv_transform) = 0;
 
   virtual void GenSyncToken(gpu::SyncToken* out_sync_token) = 0;
 
@@ -61,7 +68,7 @@ class MailboxToSurfaceBridge {
 
   // Copies a GpuFence from the local context to the GPU process,
   // and issues a server wait for it.
-  virtual void WaitForClientGpuFence(gfx::GpuFence*) = 0;
+  virtual void WaitForClientGpuFence(gfx::GpuFence&) = 0;
 
   // Creates a GpuFence in the GPU process after the supplied sync_token
   // completes, and copies it for use in the local context. This is
@@ -70,19 +77,24 @@ class MailboxToSurfaceBridge {
       const gpu::SyncToken& sync_token,
       base::OnceCallback<void(std::unique_ptr<gfx::GpuFence>)> callback) = 0;
 
-  // Creates a shared image bound to |buffer|. Returns a mailbox holder that
-  // references the shared image with a sync token representing a point after
-  // the creation. Caller must call DestroySharedImage to free the shared image.
-  // Does not take ownership of |buffer| or retain any references to it.
-  virtual gpu::MailboxHolder CreateSharedImage(
-      gpu::GpuMemoryBufferImplAndroidHardwareBuffer* buffer,
+  // Creates a shared image bound to |buffer_handle|. Returns the shared image
+  // and populates |sync_token|.
+  // Caller must call DestroySharedImage to free the shared image. Backing keeps
+  // reference to the |buffer_handle|.
+  virtual scoped_refptr<gpu::ClientSharedImage> CreateSharedImage(
+      gfx::GpuMemoryBufferHandle buffer_handle,
+      gfx::BufferFormat buffer_format,
+      const gfx::Size& size,
       const gfx::ColorSpace& color_space,
-      uint32_t usage) = 0;
+      uint32_t usage,
+      gpu::SyncToken& sync_token) = 0;
 
-  // Destroys a shared image created by CreateSharedImage. The mailbox_holder's
-  // sync_token must have been updated to a sync token after the last use of the
+  // Destroys a shared image created by CreateSharedImage. The sync_token
+  // argument must have been updated to a sync token after the last use of the
   // shared image.
-  virtual void DestroySharedImage(const gpu::MailboxHolder& mailbox_holder) = 0;
+  virtual void DestroySharedImage(
+      const gpu::SyncToken& sync_token,
+      scoped_refptr<gpu::ClientSharedImage> shared_image) = 0;
 };
 
 class MailboxToSurfaceBridgeFactory {

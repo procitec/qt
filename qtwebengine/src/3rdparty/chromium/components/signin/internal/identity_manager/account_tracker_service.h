@@ -1,38 +1,36 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef COMPONENTS_SIGNIN_INTERNAL_IDENTITY_MANAGER_ACCOUNT_TRACKER_SERVICE_H_
 #define COMPONENTS_SIGNIN_INTERNAL_IDENTITY_MANAGER_ACCOUNT_TRACKER_SERVICE_H_
 
-#include <list>
 #include <map>
 #include <string>
 #include <vector>
 
-#include "base/callback.h"
 #include "base/files/file_path.h"
-#include "base/macros.h"
+#include "base/functional/callback.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
-#include "base/observer_list.h"
 #include "base/sequence_checker.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/timer/timer.h"
+#include "base/values.h"
 #include "build/build_config.h"
 #include "components/prefs/scoped_user_pref_update.h"
+#include "components/signin/public/base/signin_metrics.h"
 #include "components/signin/public/identity_manager/account_info.h"
 #include "google_apis/gaia/core_account_id.h"
 #include "google_apis/gaia/gaia_auth_util.h"
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
 #include "base/android/scoped_java_ref.h"
 #endif
 
+class AccountCapabilities;
 class PrefRegistrySimple;
 class PrefService;
-
-namespace base {
-class DictionaryValue;
-}
 
 namespace gfx {
 class Image;
@@ -61,6 +59,7 @@ class AccountTrackerService {
   typedef base::RepeatingCallback<void(const AccountInfo& info)>
       AccountInfoCallback;
 
+#if BUILDFLAG(IS_CHROMEOS_ASH)
   // Possible values for the kAccountIdMigrationState preference.
   // Keep in sync with OAuth2LoginAccountRevokedMigrationState histogram enum.
   // These values are persisted to logs. Entries should not be renumbered and
@@ -71,14 +70,17 @@ class AccountTrackerService {
     MIGRATION_DONE = 2,
     NUM_MIGRATION_STATES
   };
+#endif
 
   AccountTrackerService();
+
+  AccountTrackerService(const AccountTrackerService&) = delete;
+  AccountTrackerService& operator=(const AccountTrackerService&) = delete;
+
   ~AccountTrackerService();
 
   // Registers the preferences used by AccountTrackerService.
   static void RegisterPrefs(PrefRegistrySimple* registry);
-
-  void Shutdown();
 
   // Initializes the list of accounts from |pref_service| and load images from
   // |user_data_dir|. If |user_data_dir| is empty, images will not be saved to
@@ -96,20 +98,26 @@ class AccountTrackerService {
   // migration state.
   CoreAccountId PickAccountIdForAccount(const std::string& gaia,
                                         const std::string& email) const;
-  static CoreAccountId PickAccountIdForAccount(const PrefService* pref_service,
-                                               const std::string& gaia,
-                                               const std::string& email);
 
   // Seeds the account whose account_id is given by PickAccountIdForAccount()
   // with its corresponding gaia id and email address.  Returns the same
   // value PickAccountIdForAccount() when given the same arguments.
-  CoreAccountId SeedAccountInfo(const std::string& gaia,
-                                const std::string& email);
+  CoreAccountId SeedAccountInfo(
+      const std::string& gaia,
+      const std::string& email,
+      signin_metrics::AccessPoint access_point =
+          signin_metrics::AccessPoint::ACCESS_POINT_UNKNOWN);
 
   // Seeds the account represented by |info|. If the account is already tracked
   // and compatible, the empty fields will be updated with values from |info|.
   // If after the update IsValid() is true, OnAccountUpdated will be fired.
   CoreAccountId SeedAccountInfo(AccountInfo info);
+
+  // Seeds the accounts with |core_account_infos|. The primary account id is
+  // passed to keep it from getting removed.
+  void SeedAccountsInfo(const std::vector<CoreAccountInfo>& core_account_infos,
+                        const absl::optional<CoreAccountId>& primary_account_id,
+                        bool should_remove_stale_accounts);
 
   // Sets whether the account is a Unicorn account.
   void SetIsChildAccount(const CoreAccountId& account_id,
@@ -121,27 +129,19 @@ class AccountTrackerService {
 
   void RemoveAccount(const CoreAccountId& account_id);
 
-  // Is migration of the account id from normalized email to gaia id supported
-  // on the current platform?
-  static bool IsMigrationSupported();
-
+#if BUILDFLAG(IS_CHROMEOS_ASH)
   AccountIdMigrationState GetMigrationState() const;
   void SetMigrationDone();
+#endif
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
   // Returns a reference to the corresponding Java AccountTrackerService object.
   base::android::ScopedJavaLocalRef<jobject> GetJavaObject();
 
-  // Seeds the accounts with |gaiaIds| and |accountNames|.
-  void SeedAccountsInfo(
+  // Seeds the accounts with |core_account_infos|.
+  void LegacySeedAccountsInfo(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobjectArray>& gaiaIds,
-      const base::android::JavaParamRef<jobjectArray>& accountNames);
-
-  // Checks whether all the accounts with |accountNames| are seeded.
-  jboolean AreAccountsSeeded(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobjectArray>& accountNames) const;
+      const base::android::JavaParamRef<jobjectArray>& core_account_infos);
 #endif
 
   // If set, this callback will be invoked whenever the details of a tracked
@@ -156,10 +156,14 @@ class AccountTrackerService {
   // this function does not block on disk IO.
   void CommitPendingAccountChanges();
 
+  // Only used in tests to simulate a restart of the service. Accounts are
+  // reloaded.
+  void ResetForTesting();
+
  protected:
   // Available to be called in tests.
   void SetAccountInfoFromUserInfo(const CoreAccountId& account_id,
-                                  const base::DictionaryValue* user_info);
+                                  const base::Value::Dict& user_info);
 
   // Updates the account image. Does nothing if |account_id| does not exist in
   // |accounts_|.
@@ -167,8 +171,14 @@ class AccountTrackerService {
                        const std::string& image_url_with_size,
                        const gfx::Image& image);
 
+  // Updates the account capabilities in AccountInfo for |account_id|. Does
+  // nothing if |account_id| does not exist in |accounts_|.
+  void SetAccountCapabilities(const CoreAccountId& account_id,
+                              const AccountCapabilities& account_capabilities);
+
  private:
   friend class AccountFetcherService;
+  friend class AccountTrackerServiceTest;
   friend void signin::SimulateSuccessfulFetchOfAccountInfo(
       signin::IdentityManager*,
       const CoreAccountId&,
@@ -187,7 +197,9 @@ class AccountTrackerService {
   void NotifyAccountUpdated(const AccountInfo& account_info);
   void NotifyAccountRemoved(const AccountInfo& account_info);
 
+  // Start tracking `account_id` (`account_id` must not be empty).
   void StartTrackingAccount(const CoreAccountId& account_id);
+  bool IsTrackingAccount(const CoreAccountId& account_id);
   void StopTrackingAccount(const CoreAccountId& account_id);
 
   // Load the current state of the account info from the preferences file.
@@ -207,13 +219,14 @@ class AccountTrackerService {
                              bool success);
   void RemoveAccountImageFromDisk(const CoreAccountId& account_id);
 
+  // Returns whether the accounts are all keyed by gaia id. This should
+  // be the case when the migration state is set to MIGRATION_DONE.
+  bool AreAllAccountsMigrated() const;
+
+#if BUILDFLAG(IS_CHROMEOS_ASH)
   // Migrate accounts to be keyed by gaia id instead of normalized email.
   // Requires that the migration state is set to MIGRATION_IN_PROGRESS.
   void MigrateToGaiaId();
-
-  // Returns whether the accounts are all keyed by gaia id. This should
-  // be the case when the migration state is set to MIGRATION_DONE.
-  bool IsMigrationDone() const;
 
   // Computes the new migration state. The state is saved to preference
   // before performing the migration in order to support resuming the
@@ -226,8 +239,16 @@ class AccountTrackerService {
   // Returns the saved migration state in the preferences.
   static AccountIdMigrationState GetMigrationState(
       const PrefService* pref_service);
+#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
-  PrefService* pref_service_ = nullptr;  // Not owned.
+  // Update the child status on the provided account.
+  // This does not notify observers, or persist updates to disk - the caller
+  // is responsible for doing so.
+  // Returns true if the child status was modified, false otherwise.
+  bool UpdateAccountInfoChildStatus(AccountInfo& account_info,
+                                    bool is_child_account);
+
+  raw_ptr<PrefService> pref_service_ = nullptr;  // Not owned.
   std::map<CoreAccountId, AccountInfo> accounts_;
   base::FilePath user_data_dir_;
 
@@ -237,7 +258,7 @@ class AccountTrackerService {
   // Task runner used for file operations on avatar images.
   scoped_refptr<base::SequencedTaskRunner> image_storage_task_runner_;
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
   // A reference to the Java counterpart of this object.
   base::android::ScopedJavaGlobalRef<jobject> java_ref_;
 #endif
@@ -247,8 +268,6 @@ class AccountTrackerService {
   // Used to pass weak pointers of |this| to tasks created by
   // |image_storage_task_runner_|.
   base::WeakPtrFactory<AccountTrackerService> weak_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(AccountTrackerService);
 };
 
 #endif  // COMPONENTS_SIGNIN_INTERNAL_IDENTITY_MANAGER_ACCOUNT_TRACKER_SERVICE_H_

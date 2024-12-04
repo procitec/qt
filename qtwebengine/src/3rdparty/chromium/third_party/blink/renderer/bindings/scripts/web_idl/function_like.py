@@ -1,4 +1,4 @@
-# Copyright 2019 The Chromium Authors. All rights reserved.
+# Copyright 2019 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -71,8 +71,9 @@ class FunctionLike(WithIdentifier):
     def num_of_required_arguments(self):
         """Returns the number of required arguments."""
         return len(
-            filter(lambda arg: not (arg.is_optional or arg.is_variadic),
-                   self.arguments))
+            list(
+                filter(lambda arg: not (arg.is_optional or arg.is_variadic),
+                       self.arguments)))
 
 
 class OverloadGroup(WithIdentifier):
@@ -100,7 +101,7 @@ class OverloadGroup(WithIdentifier):
     class EffectiveOverloadItem(object):
         """
         Represents an item in an effective overload set.
-        https://heycam.github.io/webidl/#dfn-effective-overload-set
+        https://webidl.spec.whatwg.org/#dfn-effective-overload-set
         """
 
         def __init__(self, function_like, type_list, opt_list):
@@ -169,10 +170,9 @@ class OverloadGroup(WithIdentifier):
     def effective_overload_set(self, argument_count=None):
         """
         Returns the effective overload set.
-        https://heycam.github.io/webidl/#compute-the-effective-overload-set
+        https://webidl.spec.whatwg.org/#compute-the-effective-overload-set
         """
-        assert argument_count is None or isinstance(argument_count,
-                                                    (int, long))
+        assert argument_count is None or isinstance(argument_count, int)
 
         N = argument_count
         S = []
@@ -188,21 +188,21 @@ class OverloadGroup(WithIdentifier):
 
             S.append(
                 OverloadGroup.EffectiveOverloadItem(
-                    X, map(lambda arg: arg.idl_type, X.arguments),
-                    map(lambda arg: arg.optionality, X.arguments)))
+                    X, list(map(lambda arg: arg.idl_type, X.arguments)),
+                    list(map(lambda arg: arg.optionality, X.arguments))))
 
             if X.is_variadic:
-                for i in xrange(n, max(maxarg, N)):
-                    t = map(lambda arg: arg.idl_type, X.arguments)
-                    o = map(lambda arg: arg.optionality, X.arguments)
-                    for _ in xrange(n, i + 1):
+                for i in range(n, max(maxarg, N)):
+                    t = list(map(lambda arg: arg.idl_type, X.arguments))
+                    o = list(map(lambda arg: arg.optionality, X.arguments))
+                    for _ in range(n, i + 1):
                         t.append(X.arguments[-1].idl_type)
                         o.append(X.arguments[-1].optionality)
                     S.append(OverloadGroup.EffectiveOverloadItem(X, t, o))
 
-            t = map(lambda arg: arg.idl_type, X.arguments)
-            o = map(lambda arg: arg.optionality, X.arguments)
-            for i in xrange(n - 1, -1, -1):
+            t = list(map(lambda arg: arg.idl_type, X.arguments))
+            o = list(map(lambda arg: arg.optionality, X.arguments))
+            for i in range(n - 1, -1, -1):
                 if X.arguments[i].optionality == IdlType.Optionality.REQUIRED:
                     break
                 S.append(OverloadGroup.EffectiveOverloadItem(X, t[:i], o[:i]))
@@ -213,7 +213,7 @@ class OverloadGroup(WithIdentifier):
     def distinguishing_argument_index(items_of_effective_overload_set):
         """
         Returns the distinguishing argument index.
-        https://heycam.github.io/webidl/#dfn-distinguishing-argument-index
+        https://webidl.spec.whatwg.org/#dfn-distinguishing-argument-index
         """
         items = items_of_effective_overload_set
         assert isinstance(items, (list, tuple))
@@ -222,7 +222,7 @@ class OverloadGroup(WithIdentifier):
             for item in items)
         assert len(items) > 1
 
-        for index in xrange(len(items[0].type_list)):
+        for index in range(len(items[0].type_list)):
             # Assume that the given items are valid, and we only need to test
             # the two types.
             if OverloadGroup.are_distinguishable_types(
@@ -234,7 +234,7 @@ class OverloadGroup(WithIdentifier):
     def are_distinguishable_types(idl_type1, idl_type2):
         """
         Returns True if the two given types are distinguishable.
-        https://heycam.github.io/webidl/#dfn-distinguishable
+        https://webidl.spec.whatwg.org/#dfn-distinguishable
         """
         assert isinstance(idl_type1, IdlType)
         assert isinstance(idl_type2, IdlType)
@@ -284,21 +284,29 @@ class OverloadGroup(WithIdentifier):
         def is_sequence_like(idl_type):
             return idl_type.is_sequence or idl_type.is_frozen_array
 
-        if not (type2.is_boolean or type2.is_numeric or type2.is_string
-                or type2.is_object or type2.is_symbol
-                or is_interface_like(type2) or type2.is_callback_function
-                or is_dictionary_like(type2) or is_sequence_like(type2)):
+        if not (type2.is_undefined or type2.is_boolean or type2.is_numeric
+                or type2.is_bigint or type2.is_string or type2.is_object
+                or type2.is_symbol or is_interface_like(type2)
+                or type2.is_callback_function or is_dictionary_like(type2)
+                or is_sequence_like(type2)):
             return False  # Out of the table
 
+        if type1.is_undefined:
+            return not (type2.is_undefined or is_dictionary_like(type2))
         if type1.is_boolean:
             return not type2.is_boolean
-        if type1.is_numeric:
-            return not type2.is_numeric
+        if type1.is_numeric or type1.is_bigint:
+            # The spec distinguishes numeric types from bigint, but there is no
+            # good use case yet. Also note that it's quite confusing and
+            # problematic to abuse this distinguishment. Thus, we don't
+            # distinguish them for now.
+            return not (type2.is_numeric or type2.is_bigint)
         if is_string_type(type1):
             return not is_string_type(type2)
         if type1.is_object:
-            return (type2.is_boolean or type2.is_numeric
-                    or is_string_type(type2) or type2.is_symbol)
+            return (type2.is_undefined or type2.is_boolean or type2.is_numeric
+                    or type2.is_bigint or is_string_type(type2)
+                    or type2.is_symbol)
         if type1.is_symbol:
             return not type2.is_symbol
         if is_interface_like(type1):
@@ -309,7 +317,7 @@ class OverloadGroup(WithIdentifier):
             # Additional requirements: The two identified interface-like types
             # are not the same, and no single platform object implements both
             # interface-like types.
-            if type1.keyword_typename or type2.keyword_typename:
+            if type1.is_buffer_source_type or type2.is_buffer_source_type:
                 return type1.keyword_typename != type2.keyword_typename
             interface1 = type1.type_definition_object
             interface2 = type2.type_definition_object
@@ -317,11 +325,26 @@ class OverloadGroup(WithIdentifier):
                 interface1 in interface2.inclusive_inherited_interfaces
                 or interface2 in interface1.inclusive_inherited_interfaces)
         if type1.is_callback_function:
-            return not (type2.is_object or type2.is_callback_function
-                        or is_dictionary_like(type2))
+            if type2.is_object or type2.is_callback_function:
+                return False
+            if not is_dictionary_like(type2):
+                return True
+            # Additional requirements: A callback function that does not have
+            # [LegacyTreatNonObjectAsNull] extended attribute is
+            # distinguishable from a type in the dictionary-like category.
+            return ("LegacyTreatNonObjectAsNull"
+                    not in type1.type_definition_object.extended_attributes)
         if is_dictionary_like(type1):
-            return not (type2.is_object or type2.is_callback_function
-                        or is_dictionary_like(type2))
+            if (type2.is_undefined or type2.is_object
+                    or is_dictionary_like(type2)):
+                return False
+            if not type2.is_callback_function:
+                return True
+            # Additional requirements: A callback function that does not have
+            # [LegacyTreatNonObjectAsNull] extended attribute is
+            # distinguishable from a type in the dictionary-like category.
+            return ("LegacyTreatNonObjectAsNull"
+                    not in type2.type_definition_object.extended_attributes)
         if is_sequence_like(type1):
             return not (type2.is_object or is_sequence_like(type2))
         return False  # Out of the table

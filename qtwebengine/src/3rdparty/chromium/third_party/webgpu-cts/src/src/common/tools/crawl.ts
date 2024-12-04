@@ -5,55 +5,163 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
-import { SpecFile } from '../framework/file_loader.js';
-import { TestSuiteListingEntry, TestSuiteListing } from '../framework/test_suite_listing.js';
-import { assert, unreachable } from '../framework/util/util.js';
+import { loadMetadataForSuite } from '../framework/metadata.js';
+import { SpecFile } from '../internal/file_loader.js';
+import { TestQueryMultiCase, TestQueryMultiFile } from '../internal/query/query.js';
+import { validQueryPart } from '../internal/query/validQueryPart.js';
+import { TestSuiteListingEntry, TestSuiteListing } from '../internal/test_suite_listing.js';
+import { assert, unreachable } from '../util/util.js';
 
-const fg = require('fast-glob');
+const specFileSuffix = __filename.endsWith('.ts') ? '.spec.ts' : '.spec.js';
 
-const specFileSuffix = '.spec.ts';
+async function crawlFilesRecursively(dir: string): Promise<string[]> {
+  const subpathInfo = await Promise.all(
+    (await fs.promises.readdir(dir)).map(async d => {
+      const p = path.join(dir, d);
+      const stats = await fs.promises.stat(p);
+      return {
+        path: p,
+        isDirectory: stats.isDirectory(),
+        isFile: stats.isFile(),
+      };
+    })
+  );
 
-export async function crawl(suite: string): Promise<TestSuiteListingEntry[]> {
-  const suiteDir = 'src/' + suite;
+  const files = subpathInfo
+    .filter(
+      i =>
+        i.isFile &&
+        (i.path.endsWith(specFileSuffix) ||
+          i.path.endsWith(`${path.sep}README.txt`) ||
+          i.path === 'README.txt')
+    )
+    .map(i => i.path);
+
+  return files.concat(
+    await subpathInfo
+      .filter(i => i.isDirectory)
+      .map(i => crawlFilesRecursively(i.path))
+      .reduce(async (a, b) => (await a).concat(await b), Promise.resolve([]))
+  );
+}
+
+export async function crawl(suiteDir: string, validate: boolean): Promise<TestSuiteListingEntry[]> {
   if (!fs.existsSync(suiteDir)) {
-    console.error(`Could not find ${suiteDir}`);
-    process.exit(1);
+    throw new Error(`Could not find suite: ${suiteDir}`);
   }
 
-  const glob = `${suiteDir}/**/{README.txt,*${specFileSuffix}}`;
-  const filesToEnumerate: string[] = await fg(glob, { onlyFiles: true });
-  filesToEnumerate.sort();
+  let validateTimingsEntries;
+  if (validate) {
+    const metadata = loadMetadataForSuite(suiteDir);
+    if (metadata) {
+      validateTimingsEntries = {
+        metadata,
+        testsFoundInFiles: new Set<string>(),
+      };
+    }
+  }
+
+  // Crawl files and convert paths to be POSIX-style, relative to suiteDir.
+  const filesToEnumerate = (await crawlFilesRecursively(suiteDir))
+    .map(f => path.relative(suiteDir, f).replace(/\\/g, '/'))
+    .sort();
 
   const entries: TestSuiteListingEntry[] = [];
   for (const file of filesToEnumerate) {
-    const f = file.substring((suiteDir + '/').length); // Suite-relative file path
-    if (f.endsWith(specFileSuffix)) {
-      const filepathWithoutExtension = f.substring(0, f.length - specFileSuffix.length);
-      const filename = `../../../${suiteDir}/${filepathWithoutExtension}.spec.js`;
+    // |file| is the suite-relative file path.
+    if (file.endsWith(specFileSuffix)) {
+      const filepathWithoutExtension = file.substring(0, file.length - specFileSuffix.length);
+      const pathSegments = filepathWithoutExtension.split('/');
 
-      const mod = (await import(filename)) as SpecFile;
-      assert(mod.description !== undefined, 'Test spec file missing description: ' + filename);
-      assert(mod.g !== undefined, 'Test spec file missing TestGroup definition: ' + filename);
+      const suite = path.basename(suiteDir);
 
-      mod.g.checkCaseNamesAndDuplicates();
+      if (validate) {
+        const filename = `../../${suite}/${filepathWithoutExtension}.spec.js`;
 
-      const path = filepathWithoutExtension.split('/');
-      entries.push({ file: path, description: mod.description.trim() });
+        assert(!process.env.STANDALONE_DEV_SERVER);
+        const mod = (await import(filename)) as SpecFile;
+        assert(mod.description !== undefined, 'Test spec file missing description: ' + filename);
+        assert(mod.g !== undefined, 'Test spec file missing TestGroup definition: ' + filename);
+
+        mod.g.validate(new TestQueryMultiFile(suite, pathSegments));
+
+        for (const { testPath } of mod.g.collectNonEmptyTests()) {
+          const testQuery = new TestQueryMultiCase(suite, pathSegments, testPath, {}).toString();
+          if (validateTimingsEntries) {
+            validateTimingsEntries.testsFoundInFiles.add(testQuery);
+          }
+        }
+      }
+
+      for (const p of pathSegments) {
+        assert(validQueryPart.test(p), `Invalid directory name ${p}; must match ${validQueryPart}`);
+      }
+      entries.push({ file: pathSegments });
     } else if (path.basename(file) === 'README.txt') {
-      const filepathWithoutExtension = f.substring(0, f.length - '/README.txt'.length);
-      const readme = fs.readFileSync(file, 'utf8').trim();
+      const dirname = path.dirname(file);
+      const readme = fs.readFileSync(path.join(suiteDir, file), 'utf8').trim();
 
-      const path = filepathWithoutExtension ? filepathWithoutExtension.split('/') : [];
-      entries.push({ file: path, readme });
+      const pathSegments = dirname !== '.' ? dirname.split('/') : [];
+      entries.push({ file: pathSegments, readme });
     } else {
-      unreachable(`glob ${glob} matched an unrecognized filename ${file}`);
+      unreachable(`Matched an unrecognized filename ${file}`);
     }
+  }
+
+  if (validateTimingsEntries) {
+    let failed = false;
+
+    const zeroEntries = [];
+    const staleEntries = [];
+    for (const [metadataKey, metadataValue] of Object.entries(validateTimingsEntries.metadata)) {
+      if (metadataKey.startsWith('_')) {
+        // Ignore json "_comments".
+        continue;
+      }
+      if (metadataValue.subcaseMS <= 0) {
+        zeroEntries.push(metadataKey);
+      }
+      if (!validateTimingsEntries.testsFoundInFiles.has(metadataKey)) {
+        staleEntries.push(metadataKey);
+      }
+    }
+    if (zeroEntries.length) {
+      console.warn('WARNING: subcaseMS≤0 found in listing_meta.json (allowed, but try to avoid):');
+      for (const metadataKey of zeroEntries) {
+        console.warn(`  ${metadataKey}`);
+      }
+    }
+    if (staleEntries.length) {
+      console.error('ERROR: Non-existent tests found in listing_meta.json:');
+      for (const metadataKey of staleEntries) {
+        console.error(`  ${metadataKey}`);
+      }
+      failed = true;
+    }
+
+    const missingEntries = [];
+    for (const metadataKey of validateTimingsEntries.testsFoundInFiles) {
+      if (!(metadataKey in validateTimingsEntries.metadata)) {
+        missingEntries.push(metadataKey);
+      }
+    }
+    if (missingEntries.length) {
+      console.error(
+        'ERROR: Tests missing from listing_meta.json. Please add the new tests (See docs/adding_timing_metadata.md):'
+      );
+      for (const metadataKey of missingEntries) {
+        console.error(`  ${metadataKey}`);
+        failed = true;
+      }
+    }
+    assert(!failed);
   }
 
   return entries;
 }
 
 export function makeListing(filename: string): Promise<TestSuiteListing> {
-  const suite = path.basename(path.dirname(filename));
-  return crawl(suite);
+  // Don't validate. This path is only used for the dev server and running tests with Node.
+  // Validation is done for listing generation and presubmit.
+  return crawl(path.dirname(filename), false);
 }

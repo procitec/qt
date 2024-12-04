@@ -28,36 +28,35 @@
 
 namespace blink {
 
-// Must follow css_value_keywords.json5 order
 // kAutoPart is never returned by ComputedStyle::EffectiveAppearance()
 enum ControlPart {
   kNoControlPart,
   kAutoPart,
   kCheckboxPart,
   kRadioPart,
-  kPushButtonPart,
-  kSquareButtonPart,
   kButtonPart,
-  kInnerSpinButtonPart,
   kListboxPart,
-  kMediaSliderPart,
-  kMediaSliderThumbPart,
-  kMediaVolumeSliderPart,
-  kMediaVolumeSliderThumbPart,
   kMediaControlPart,
   kMenulistPart,
   kMenulistButtonPart,
   kMeterPart,
   kProgressBarPart,
-  kSliderHorizontalPart,
-  kSliderVerticalPart,
-  kSliderThumbHorizontalPart,
-  kSliderThumbVerticalPart,
   kSearchFieldPart,
-  kSearchFieldCancelButtonPart,
   kTextFieldPart,
   kTextAreaPart,
+  kInnerSpinButtonPart,
+  kMediaSliderPart,
+  kMediaSliderThumbPart,
+  kMediaVolumeSliderPart,
+  kMediaVolumeSliderThumbPart,
+  kPushButtonPart,
+  kSquareButtonPart,
+  kSliderHorizontalPart,
+  kSliderThumbHorizontalPart,
+  kSliderThumbVerticalPart,
+  kSearchFieldCancelButtonPart,
+  kSliderVerticalPart,
 };
 
 }  // namespace blink
-#endif
+#endif  // THIRD_PARTY_BLINK_RENDERER_PLATFORM_THEME_TYPES_H_

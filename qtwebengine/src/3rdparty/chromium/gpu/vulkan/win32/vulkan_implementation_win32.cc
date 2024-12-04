@@ -1,4 +1,4 @@
-// Copyright (c) 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -26,28 +26,16 @@ VulkanImplementationWin32::~VulkanImplementationWin32() = default;
 
 bool VulkanImplementationWin32::InitializeVulkanInstance(bool using_surface) {
   DCHECK(using_surface);
+
+  base::FilePath loader_path(use_swiftshader() ? L"vk_swiftshader.dll"
+                                               : L"vulkan-1.dll");
   std::vector<const char*> required_extensions = {
       VK_KHR_EXTERNAL_MEMORY_CAPABILITIES_EXTENSION_NAME,
       VK_KHR_EXTERNAL_SEMAPHORE_CAPABILITIES_EXTENSION_NAME,
       VK_KHR_SURFACE_EXTENSION_NAME,
       VK_KHR_WIN32_SURFACE_EXTENSION_NAME,
   };
-
-  VulkanFunctionPointers* vulkan_function_pointers =
-      gpu::GetVulkanFunctionPointers();
-
-  base::FilePath path(use_swiftshader() ? L"vk_swiftshader.dll"
-                                        : L"vulkan-1.dll");
-
-  base::NativeLibraryLoadError native_library_load_error;
-  vulkan_function_pointers->vulkan_loader_library =
-      base::LoadNativeLibrary(path, &native_library_load_error);
-  if (!vulkan_function_pointers->vulkan_loader_library)
-    return false;
-
-  if (!vulkan_instance_.Initialize(required_extensions, {}))
-    return false;
-  return true;
+  return vulkan_instance_.Initialize(loader_path, required_extensions, {});
 }
 
 VulkanInstance* VulkanImplementationWin32::GetVulkanInstance() {
@@ -97,32 +85,13 @@ VulkanImplementationWin32::ExportVkFenceToGpuFence(VkDevice vk_device,
   return nullptr;
 }
 
-VkSemaphore VulkanImplementationWin32::CreateExternalSemaphore(
-    VkDevice vk_device) {
-  return CreateExternalVkSemaphore(
-      vk_device, VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_WIN32_BIT);
-}
-
-VkSemaphore VulkanImplementationWin32::ImportSemaphoreHandle(
-    VkDevice vk_device,
-    SemaphoreHandle handle) {
-  return ImportVkSemaphoreHandle(vk_device, std::move(handle));
-}
-
-SemaphoreHandle VulkanImplementationWin32::GetSemaphoreHandle(
-    VkDevice vk_device,
-    VkSemaphore vk_semaphore) {
-  return GetVkSemaphoreHandle(
-      vk_device, vk_semaphore,
-      VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_WIN32_BIT);
-}
-
-VkExternalMemoryHandleTypeFlagBits
-VulkanImplementationWin32::GetExternalImageHandleType() {
-  return VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_BIT;
+VkExternalSemaphoreHandleTypeFlagBits
+VulkanImplementationWin32::GetExternalSemaphoreHandleType() {
+  return VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_WIN32_BIT;
 }
 
 bool VulkanImplementationWin32::CanImportGpuMemoryBuffer(
+    VulkanDeviceQueue* device_queue,
     gfx::GpuMemoryBufferType memory_buffer_type) {
   return false;
 }
@@ -132,7 +101,8 @@ VulkanImplementationWin32::CreateImageFromGpuMemoryHandle(
     VulkanDeviceQueue* device_queue,
     gfx::GpuMemoryBufferHandle gmb_handle,
     gfx::Size size,
-    VkFormat vk_formae) {
+    VkFormat vk_format,
+    const gfx::ColorSpace& color_space) {
   NOTIMPLEMENTED();
   return nullptr;
 }

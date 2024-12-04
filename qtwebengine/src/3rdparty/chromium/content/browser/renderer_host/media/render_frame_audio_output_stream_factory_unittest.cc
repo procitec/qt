@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,11 +6,11 @@
 
 #include <memory>
 #include <string>
+#include <tuple>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/bind_helpers.h"
-#include "base/macros.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/run_loop.h"
 #include "base/test/mock_callback.h"
 #include "base/test/task_environment.h"
@@ -28,12 +28,12 @@
 #include "media/audio/test_audio_thread.h"
 #include "media/base/audio_parameters.h"
 #include "media/mojo/mojom/audio_output_stream.mojom.h"
+#include "media/mojo/mojom/audio_stream_factory.mojom.h"
 #include "mojo/public/cpp/bindings/pending_associated_remote.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "services/audio/public/cpp/fake_stream_factory.h"
-#include "services/audio/public/mojom/stream_factory.mojom.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -53,8 +53,7 @@ class RenderFrameAudioOutputStreamFactoryTest
                        &log_factory_),
         audio_system_(media::AudioSystemImpl::CreateInstance()),
         media_stream_manager_(
-            std::make_unique<MediaStreamManager>(audio_system_.get(),
-                                                 GetUIThreadTaskRunner({}))) {}
+            std::make_unique<MediaStreamManager>(audio_system_.get())) {}
 
   ~RenderFrameAudioOutputStreamFactoryTest() override {}
 
@@ -63,7 +62,7 @@ class RenderFrameAudioOutputStreamFactoryTest
     RenderFrameHostTester::For(main_rfh())->InitializeRenderFrameIfNeeded();
 
     // Set up the ForwardingAudioStreamFactory.
-    ForwardingAudioStreamFactory::OverrideStreamFactoryBinderForTesting(
+    ForwardingAudioStreamFactory::OverrideAudioStreamFactoryBinderForTesting(
         base::BindRepeating(
             &RenderFrameAudioOutputStreamFactoryTest::BindFactory,
             base::Unretained(this)));
@@ -72,14 +71,14 @@ class RenderFrameAudioOutputStreamFactoryTest
   }
 
   void TearDown() override {
-    ForwardingAudioStreamFactory::OverrideStreamFactoryBinderForTesting(
+    ForwardingAudioStreamFactory::OverrideAudioStreamFactoryBinderForTesting(
         base::NullCallback());
     audio_manager_.Shutdown();
     RenderViewHostTestHarness::TearDown();
   }
 
   void BindFactory(
-      mojo::PendingReceiver<audio::mojom::StreamFactory> receiver) {
+      mojo::PendingReceiver<media::mojom::AudioStreamFactory> receiver) {
     audio_service_stream_factory_.receiver_.Bind(std::move(receiver));
   }
 
@@ -137,7 +136,7 @@ TEST_F(RenderFrameAudioOutputStreamFactoryTest,
   mojo::Remote<media::mojom::AudioOutputStreamProvider> provider_remote;
   MockAuthorizationCallback mock_callback;
   factory_remote->RequestDeviceAuthorization(
-      provider_remote.BindNewPipeAndPassReceiver(), base::nullopt,
+      provider_remote.BindNewPipeAndPassReceiver(), std::nullopt,
       kDefaultDeviceId, mock_callback.Get());
 
   EXPECT_CALL(mock_callback,
@@ -159,7 +158,7 @@ TEST_F(
   mojo::Remote<media::mojom::AudioOutputStreamProvider> provider_remote;
   MockAuthorizationCallback mock_callback;
   factory_remote->RequestDeviceAuthorization(
-      provider_remote.BindNewPipeAndPassReceiver(), base::nullopt,
+      provider_remote.BindNewPipeAndPassReceiver(), std::nullopt,
       kDefaultDeviceId, mock_callback.Get());
   provider_remote.reset();
 
@@ -182,7 +181,7 @@ TEST_F(
   mojo::Remote<media::mojom::AudioOutputStreamProvider> provider_remote;
   MockAuthorizationCallback mock_callback;
   factory_remote->RequestDeviceAuthorization(
-      provider_remote.BindNewPipeAndPassReceiver(), base::nullopt, kDeviceId,
+      provider_remote.BindNewPipeAndPassReceiver(), std::nullopt, kDeviceId,
       mock_callback.Get());
 
   EXPECT_CALL(mock_callback,
@@ -203,15 +202,15 @@ TEST_F(RenderFrameAudioOutputStreamFactoryTest,
   mojo::Remote<media::mojom::AudioOutputStreamProvider> provider_remote;
   MockAuthorizationCallback mock_callback;
   factory_remote->RequestDeviceAuthorization(
-      provider_remote.BindNewPipeAndPassReceiver(), base::nullopt,
+      provider_remote.BindNewPipeAndPassReceiver(), std::nullopt,
       kDefaultDeviceId, mock_callback.Get());
   {
     mojo::PendingRemote<media::mojom::AudioOutputStreamProviderClient> client;
-    ignore_result(client.InitWithNewPipeAndPassReceiver());
+    std::ignore = client.InitWithNewPipeAndPassReceiver();
     provider_remote->Acquire(kParams, std::move(client));
   }
 
-  audio::mojom::StreamFactory::CreateOutputStreamCallback created_callback;
+  media::mojom::AudioStreamFactory::CreateOutputStreamCallback created_callback;
   EXPECT_CALL(mock_callback,
               Run(media::OUTPUT_DEVICE_STATUS_OK, _, std::string()));
 
@@ -233,10 +232,11 @@ TEST_F(RenderFrameAudioOutputStreamFactoryTest,
         factory_remote.BindNewPipeAndPassReceiver());
 
     factory_remote->RequestDeviceAuthorization(
-        provider_remote.BindNewPipeAndPassReceiver(), base::nullopt,
+        provider_remote.BindNewPipeAndPassReceiver(), std::nullopt,
         kDefaultDeviceId, mock_callback.Get());
 
-    audio::mojom::StreamFactory::CreateOutputStreamCallback created_callback;
+    media::mojom::AudioStreamFactory::CreateOutputStreamCallback
+        created_callback;
     EXPECT_CALL(mock_callback,
                 Run(media::OUTPUT_DEVICE_STATUS_OK, _, std::string()));
     base::RunLoop().RunUntilIdle();
@@ -244,7 +244,7 @@ TEST_F(RenderFrameAudioOutputStreamFactoryTest,
   // Now factory is destructed. Trying to create a stream should fail.
   {
     mojo::PendingRemote<media::mojom::AudioOutputStreamProviderClient> client;
-    ignore_result(client.InitWithNewPipeAndPassReceiver());
+    std::ignore = client.InitWithNewPipeAndPassReceiver();
     provider_remote->Acquire(kParams, std::move(client));
   }
 

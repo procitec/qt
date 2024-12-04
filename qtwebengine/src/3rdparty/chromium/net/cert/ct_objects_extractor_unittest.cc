@@ -1,8 +1,10 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "net/cert/ct_objects_extractor.h"
+
+#include <string_view>
 
 #include "base/files/file_path.h"
 #include "net/cert/ct_log_verifier.h"
@@ -14,9 +16,7 @@
 #include "net/test/test_data_directory.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-namespace net {
-
-namespace ct {
+namespace net::ct {
 
 class CTObjectsExtractorTest : public ::testing::Test {
  public:
@@ -28,8 +28,8 @@ class CTObjectsExtractorTest : public ::testing::Test {
     ASSERT_EQ(2u, precert_chain_.size());
 
     std::string der_test_cert(ct::GetDerEncodedX509Cert());
-    test_cert_ = X509Certificate::CreateFromBytes(der_test_cert.data(),
-                                                  der_test_cert.length());
+    test_cert_ =
+        X509Certificate::CreateFromBytes(base::as_byte_span(der_test_cert));
     ASSERT_TRUE(test_cert_);
 
     log_ = CTLogVerifier::Create(ct::GetTestPublicKey(), "testlog");
@@ -41,7 +41,7 @@ class CTObjectsExtractorTest : public ::testing::Test {
     std::string sct_list;
     ASSERT_TRUE(ExtractEmbeddedSCTList(cert->cert_buffer(), &sct_list));
 
-    std::vector<base::StringPiece> parsed_scts;
+    std::vector<std::string_view> parsed_scts;
     // Make sure the SCT list can be decoded properly
     ASSERT_TRUE(DecodeSCTList(sct_list, &parsed_scts));
     ASSERT_EQ(1u, parsed_scts.size());
@@ -57,16 +57,33 @@ class CTObjectsExtractorTest : public ::testing::Test {
 // Test that an SCT can be extracted and the extracted SCT contains the
 // expected data.
 TEST_F(CTObjectsExtractorTest, ExtractEmbeddedSCT) {
-  scoped_refptr<ct::SignedCertificateTimestamp> sct(
-      new ct::SignedCertificateTimestamp());
+  auto sct = base::MakeRefCounted<ct::SignedCertificateTimestamp>();
   ExtractEmbeddedSCT(precert_chain_[0], &sct);
 
   EXPECT_EQ(sct->version, SignedCertificateTimestamp::V1);
   EXPECT_EQ(ct::GetTestPublicKeyId(), sct->log_id);
 
   base::Time expected_timestamp =
-      base::Time::UnixEpoch() +
-      base::TimeDelta::FromMilliseconds(1365181456275);
+      base::Time::UnixEpoch() + base::Milliseconds(1365181456275);
+  EXPECT_EQ(expected_timestamp, sct->timestamp);
+}
+
+// Test that the extractor correctly skips over issuerUniqueID and
+// subjectUniqueID fields. See https://crbug.com/1199744.
+TEST_F(CTObjectsExtractorTest, ExtractEmbeddedSCTListWithUIDs) {
+  CertificateList certs = CreateCertificateListFromFile(
+      GetTestCertsDirectory(), "ct-test-embedded-with-uids.pem",
+      X509Certificate::FORMAT_PEM_CERT_SEQUENCE);
+  ASSERT_EQ(1u, certs.size());
+
+  auto sct = base::MakeRefCounted<ct::SignedCertificateTimestamp>();
+  ExtractEmbeddedSCT(certs[0], &sct);
+
+  EXPECT_EQ(sct->version, SignedCertificateTimestamp::V1);
+  EXPECT_EQ(ct::GetTestPublicKeyId(), sct->log_id);
+
+  base::Time expected_timestamp =
+      base::Time::UnixEpoch() + base::Milliseconds(1365181456275);
   EXPECT_EQ(expected_timestamp, sct->timestamp);
 }
 
@@ -97,8 +114,7 @@ TEST_F(CTObjectsExtractorTest, ExtractOrdinaryX509Cert) {
 
 // Test that the embedded SCT verifies
 TEST_F(CTObjectsExtractorTest, ExtractedSCTVerifies) {
-  scoped_refptr<ct::SignedCertificateTimestamp> sct(
-      new ct::SignedCertificateTimestamp());
+  auto sct = base::MakeRefCounted<ct::SignedCertificateTimestamp>();
   ExtractEmbeddedSCT(precert_chain_[0], &sct);
 
   SignedEntryData entry;
@@ -111,8 +127,7 @@ TEST_F(CTObjectsExtractorTest, ExtractedSCTVerifies) {
 // Test that an externally-provided SCT verifies over the SignedEntryData
 // of a regular X.509 Certificate
 TEST_F(CTObjectsExtractorTest, ComplementarySCTVerifies) {
-  scoped_refptr<ct::SignedCertificateTimestamp> sct(
-      new ct::SignedCertificateTimestamp());
+  auto sct = base::MakeRefCounted<ct::SignedCertificateTimestamp>();
   GetX509CertSCT(&sct);
 
   SignedEntryData entry;
@@ -125,13 +140,11 @@ TEST_F(CTObjectsExtractorTest, ComplementarySCTVerifies) {
 TEST_F(CTObjectsExtractorTest, ExtractSCTListFromOCSPResponse) {
   std::string der_subject_cert(ct::GetDerEncodedFakeOCSPResponseCert());
   scoped_refptr<X509Certificate> subject_cert =
-      X509Certificate::CreateFromBytes(der_subject_cert.data(),
-                                       der_subject_cert.length());
+      X509Certificate::CreateFromBytes(base::as_byte_span(der_subject_cert));
   ASSERT_TRUE(subject_cert);
   std::string der_issuer_cert(ct::GetDerEncodedFakeOCSPResponseIssuerCert());
   scoped_refptr<X509Certificate> issuer_cert =
-      X509Certificate::CreateFromBytes(der_issuer_cert.data(),
-                                       der_issuer_cert.length());
+      X509Certificate::CreateFromBytes(base::as_byte_span(der_issuer_cert));
   ASSERT_TRUE(issuer_cert);
 
   std::string fake_sct_list = ct::GetFakeOCSPExtensionValue();
@@ -149,8 +162,7 @@ TEST_F(CTObjectsExtractorTest, ExtractSCTListFromOCSPResponse) {
 TEST_F(CTObjectsExtractorTest, ExtractSCTListFromOCSPResponseMatchesSerial) {
   std::string der_issuer_cert(ct::GetDerEncodedFakeOCSPResponseIssuerCert());
   scoped_refptr<X509Certificate> issuer_cert =
-      X509Certificate::CreateFromBytes(der_issuer_cert.data(),
-                                       der_issuer_cert.length());
+      X509Certificate::CreateFromBytes(base::as_byte_span(der_issuer_cert));
   ASSERT_TRUE(issuer_cert);
 
   std::string ocsp_response = ct::GetDerEncodedFakeOCSPResponse();
@@ -165,8 +177,7 @@ TEST_F(CTObjectsExtractorTest, ExtractSCTListFromOCSPResponseMatchesSerial) {
 TEST_F(CTObjectsExtractorTest, ExtractSCTListFromOCSPResponseMatchesIssuer) {
   std::string der_subject_cert(ct::GetDerEncodedFakeOCSPResponseCert());
   scoped_refptr<X509Certificate> subject_cert =
-      X509Certificate::CreateFromBytes(der_subject_cert.data(),
-                                       der_subject_cert.length());
+      X509Certificate::CreateFromBytes(base::as_byte_span(der_subject_cert));
   ASSERT_TRUE(subject_cert);
 
   std::string ocsp_response = ct::GetDerEncodedFakeOCSPResponse();
@@ -178,6 +189,4 @@ TEST_F(CTObjectsExtractorTest, ExtractSCTListFromOCSPResponseMatchesIssuer) {
       &extracted_sct_list));
 }
 
-}  // namespace ct
-
-}  // namespace net
+}  // namespace net::ct

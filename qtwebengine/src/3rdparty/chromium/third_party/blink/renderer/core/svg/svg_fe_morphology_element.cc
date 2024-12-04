@@ -24,7 +24,7 @@
 #include "third_party/blink/renderer/core/svg/svg_animated_string.h"
 #include "third_party/blink/renderer/core/svg/svg_enumeration_map.h"
 #include "third_party/blink/renderer/core/svg_names.h"
-#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 
 namespace blink {
 
@@ -50,11 +50,7 @@ SVGFEMorphologyElement::SVGFEMorphologyElement(Document& document)
           MakeGarbageCollected<SVGAnimatedEnumeration<MorphologyOperatorType>>(
               this,
               svg_names::kOperatorAttr,
-              FEMORPHOLOGY_OPERATOR_ERODE)) {
-  AddToPropertyMap(radius_);
-  AddToPropertyMap(in1_);
-  AddToPropertyMap(svg_operator_);
-}
+              FEMORPHOLOGY_OPERATOR_ERODE)) {}
 
 SVGAnimatedNumber* SVGFEMorphologyElement::radiusX() {
   return radius_->FirstNumber();
@@ -90,7 +86,8 @@ bool SVGFEMorphologyElement::SetFilterEffectAttribute(
 }
 
 void SVGFEMorphologyElement::SvgAttributeChanged(
-    const QualifiedName& attr_name) {
+    const SvgAttributeChangedParams& params) {
+  const QualifiedName& attr_name = params.name;
   if (attr_name == svg_names::kOperatorAttr ||
       attr_name == svg_names::kRadiusAttr) {
     SVGElement::InvalidationGuard invalidation_guard(this);
@@ -104,7 +101,7 @@ void SVGFEMorphologyElement::SvgAttributeChanged(
     return;
   }
 
-  SVGFilterPrimitiveStandardAttributes::SvgAttributeChanged(attr_name);
+  SVGFilterPrimitiveStandardAttributes::SvgAttributeChanged(params);
 }
 
 FilterEffect* SVGFEMorphologyElement::Build(SVGFilterBuilder* filter_builder,
@@ -126,6 +123,27 @@ FilterEffect* SVGFEMorphologyElement::Build(SVGFilterBuilder* filter_builder,
       filter, svg_operator_->CurrentEnumValue(), x_radius, y_radius);
   effect->InputEffects().push_back(input1);
   return effect;
+}
+
+SVGAnimatedPropertyBase* SVGFEMorphologyElement::PropertyFromAttribute(
+    const QualifiedName& attribute_name) const {
+  if (attribute_name == svg_names::kRadiusAttr) {
+    return radius_.Get();
+  } else if (attribute_name == svg_names::kInAttr) {
+    return in1_.Get();
+  } else if (attribute_name == svg_names::kOperatorAttr) {
+    return svg_operator_.Get();
+  } else {
+    return SVGFilterPrimitiveStandardAttributes::PropertyFromAttribute(
+        attribute_name);
+  }
+}
+
+void SVGFEMorphologyElement::SynchronizeAllSVGAttributes() const {
+  SVGAnimatedPropertyBase* attrs[]{radius_.Get(), in1_.Get(),
+                                   svg_operator_.Get()};
+  SynchronizeListOfSVGAttributes(attrs);
+  SVGFilterPrimitiveStandardAttributes::SynchronizeAllSVGAttributes();
 }
 
 }  // namespace blink

@@ -1,31 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2017 Klarälvdalens Datakonsult AB, a KDAB Group company, info@kdab.com
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtWaylandCompositor module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:GPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 3 or (at your option) any later version
-** approved by the KDE Free Qt Foundation. The licenses are as published by
-** the Free Software Foundation and appearing in the file LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2017 Klarälvdalens Datakonsult AB, a KDAB Group company, info@kdab.com
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
 #include "qwaylandinputmethodcontrol.h"
 #include "qwaylandinputmethodcontrol_p.h"
@@ -35,6 +9,8 @@
 #include "qwaylandsurface.h"
 #include "qwaylandview.h"
 #include "qwaylandtextinput.h"
+#include "qwaylandtextinputv3.h"
+#include "qwaylandqttextinputmethod.h"
 
 #include <QtGui/QInputMethodEvent>
 
@@ -43,11 +19,21 @@ QWaylandInputMethodControl::QWaylandInputMethodControl(QWaylandSurface *surface)
 {
     connect(d_func()->compositor, &QWaylandCompositor::defaultSeatChanged,
             this, &QWaylandInputMethodControl::defaultSeatChanged);
-    QWaylandTextInput *textInput = d_func()->textInput();
-    if (textInput) {
-        connect(textInput, &QWaylandTextInput::surfaceEnabled, this, &QWaylandInputMethodControl::surfaceEnabled);
-        connect(textInput, &QWaylandTextInput::surfaceDisabled, this, &QWaylandInputMethodControl::surfaceDisabled);
-        connect(textInput, &QWaylandTextInput::updateInputMethod, this, &QWaylandInputMethodControl::updateInputMethod);
+
+    updateTextInput();
+
+    QWaylandTextInputV3 *textInputV3 = d_func()->textInputV3();
+    if (textInputV3) {
+        connect(textInputV3, &QWaylandTextInputV3::surfaceEnabled, this, &QWaylandInputMethodControl::surfaceEnabled);
+        connect(textInputV3, &QWaylandTextInputV3::surfaceDisabled, this, &QWaylandInputMethodControl::surfaceDisabled);
+        connect(textInputV3, &QWaylandTextInputV3::updateInputMethod, this, &QWaylandInputMethodControl::updateInputMethod);
+    }
+
+    QWaylandQtTextInputMethod *textInputMethod = d_func()->textInputMethod();
+    if (textInputMethod) {
+        connect(textInputMethod, &QWaylandQtTextInputMethod::surfaceEnabled, this, &QWaylandInputMethodControl::surfaceEnabled);
+        connect(textInputMethod, &QWaylandQtTextInputMethod::surfaceDisabled, this, &QWaylandInputMethodControl::surfaceDisabled);
+        connect(textInputMethod, &QWaylandQtTextInputMethod::updateInputMethod, this, &QWaylandInputMethodControl::updateInputMethod);
     }
 }
 
@@ -56,10 +42,16 @@ QVariant QWaylandInputMethodControl::inputMethodQuery(Qt::InputMethodQuery query
     Q_D(const QWaylandInputMethodControl);
 
     QWaylandTextInput *textInput = d->textInput();
-
-    if (textInput && textInput->focus() == d->surface) {
+    if (textInput != nullptr && textInput->focus() == d->surface)
         return textInput->inputMethodQuery(query, argument);
-    }
+
+    QWaylandTextInputV3 *textInputV3 = d->textInputV3();
+    if (textInputV3 != nullptr && textInputV3->focus() == d->surface)
+        return textInputV3->inputMethodQuery(query, argument);
+
+    QWaylandQtTextInputMethod *textInputMethod = d_func()->textInputMethod();
+    if (textInputMethod && textInputMethod->focusedSurface() == d->surface)
+        return textInputMethod->inputMethodQuery(query, argument);
 
     return QVariant();
 }
@@ -68,9 +60,12 @@ void QWaylandInputMethodControl::inputMethodEvent(QInputMethodEvent *event)
 {
     Q_D(QWaylandInputMethodControl);
 
-    QWaylandTextInput *textInput = d->textInput();
-    if (textInput) {
+    if (QWaylandTextInput *textInput = d->textInput()) {
         textInput->sendInputMethodEvent(event);
+    } else if (QWaylandTextInputV3 *textInputV3 = d->textInputV3()) {
+        textInputV3->sendInputMethodEvent(event);
+    } else if (QWaylandQtTextInputMethod *textInputMethod = d->textInputMethod()) {
+        textInputMethod->sendInputMethodEvent(event);
     } else {
         event->ignore();
     }
@@ -121,7 +116,22 @@ void QWaylandInputMethodControl::setSurface(QWaylandSurface *surface)
     d->surface = surface;
 
     QWaylandTextInput *textInput = d->textInput();
-    setEnabled(textInput && textInput->isSurfaceEnabled(d->surface));
+    QWaylandTextInputV3 *textInputV3 = d->textInputV3();
+    QWaylandQtTextInputMethod *textInputMethod = d->textInputMethod();
+    setEnabled((textInput && textInput->isSurfaceEnabled(d->surface))
+               || (textInputV3 && textInputV3->isSurfaceEnabled(d->surface))
+               || (textInputMethod && textInputMethod->isSurfaceEnabled(d->surface)));
+}
+
+void QWaylandInputMethodControl::updateTextInput()
+{
+    QWaylandTextInput *textInput = d_func()->textInput();
+
+    if (textInput) {
+        connect(textInput, &QWaylandTextInput::surfaceEnabled, this, &QWaylandInputMethodControl::surfaceEnabled, Qt::UniqueConnection);
+        connect(textInput, &QWaylandTextInput::surfaceDisabled, this, &QWaylandInputMethodControl::surfaceDisabled, Qt::UniqueConnection);
+        connect(textInput, &QWaylandTextInput::updateInputMethod, this, &QWaylandInputMethodControl::updateInputMethod, Qt::UniqueConnection);
+    }
 }
 
 void QWaylandInputMethodControl::defaultSeatChanged()
@@ -129,14 +139,32 @@ void QWaylandInputMethodControl::defaultSeatChanged()
     Q_D(QWaylandInputMethodControl);
 
     disconnect(d->textInput(), nullptr, this, nullptr);
+    disconnect(d->textInputV3(), nullptr, this, nullptr);
+    disconnect(d->textInputMethod(), nullptr, this, nullptr);
 
     d->seat = d->compositor->defaultSeat();
     QWaylandTextInput *textInput = d->textInput();
+    QWaylandTextInputV3 *textInputV3 = d->textInputV3();
+    QWaylandQtTextInputMethod *textInputMethod = d->textInputMethod();
 
-    connect(textInput, &QWaylandTextInput::surfaceEnabled, this, &QWaylandInputMethodControl::surfaceEnabled);
-    connect(textInput, &QWaylandTextInput::surfaceDisabled, this, &QWaylandInputMethodControl::surfaceDisabled);
+    if (textInput) {
+        connect(textInput, &QWaylandTextInput::surfaceEnabled, this, &QWaylandInputMethodControl::surfaceEnabled);
+        connect(textInput, &QWaylandTextInput::surfaceDisabled, this, &QWaylandInputMethodControl::surfaceDisabled);
+    }
 
-    setEnabled(textInput && textInput->isSurfaceEnabled(d->surface));
+    if (textInputV3) {
+        connect(textInputV3, &QWaylandTextInputV3::surfaceEnabled, this, &QWaylandInputMethodControl::surfaceEnabled);
+        connect(textInputV3, &QWaylandTextInputV3::surfaceDisabled, this, &QWaylandInputMethodControl::surfaceDisabled);
+    }
+
+    if (textInputMethod) {
+        connect(textInputMethod, &QWaylandQtTextInputMethod::surfaceEnabled, this, &QWaylandInputMethodControl::surfaceEnabled);
+        connect(textInputMethod, &QWaylandQtTextInputMethod::surfaceDisabled, this, &QWaylandInputMethodControl::surfaceDisabled);
+    }
+
+    setEnabled((textInput && textInput->isSurfaceEnabled(d->surface))
+               || (textInputV3 && textInputV3->isSurfaceEnabled(d->surface))
+               || (textInputMethod && textInputMethod->isSurfaceEnabled(d->surface)));
 }
 
 QWaylandInputMethodControlPrivate::QWaylandInputMethodControlPrivate(QWaylandSurface *surface)
@@ -146,7 +174,23 @@ QWaylandInputMethodControlPrivate::QWaylandInputMethodControlPrivate(QWaylandSur
 {
 }
 
+QWaylandQtTextInputMethod *QWaylandInputMethodControlPrivate::textInputMethod() const
+{
+    if (!surface->client() || !surface->client()->textInputProtocols().testFlag(QWaylandClient::TextInputProtocol::QtTextInputMethodV1))
+        return nullptr;
+    return QWaylandQtTextInputMethod::findIn(seat);
+}
+
 QWaylandTextInput *QWaylandInputMethodControlPrivate::textInput() const
 {
+    if (!surface->client() || !surface->client()->textInputProtocols().testFlag(QWaylandClient::TextInputProtocol::TextInputV2))
+        return nullptr;
     return QWaylandTextInput::findIn(seat);
 }
+
+QWaylandTextInputV3 *QWaylandInputMethodControlPrivate::textInputV3() const
+{
+    return QWaylandTextInputV3::findIn(seat);
+}
+
+#include "moc_qwaylandinputmethodcontrol.cpp"

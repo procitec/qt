@@ -1,41 +1,16 @@
-/*
- * Copyright (C) 2013 Google Inc. All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are
- * met:
- *
- *     * Redistributions of source code must retain the above copyright
- * notice, this list of conditions and the following disclaimer.
- *     * Redistributions in binary form must reproduce the above
- * copyright notice, this list of conditions and the following disclaimer
- * in the documentation and/or other materials provided with the
- * distribution.
- *     * Neither the name of Google Inc. nor the names of its
- * contributors may be used to endorse or promote products derived from
- * this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- */
+// Copyright 2013 The Chromium Authors
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
 
 #include "third_party/blink/renderer/platform/image-decoders/webp/webp_image_decoder.h"
 
 #include <memory>
 
-#include "base/stl_util.h"
+#include "base/metrics/histogram_base.h"
+#include "base/test/metrics/histogram_tester.h"
+#include "base/time/time.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/platform/web_data.h"
-#include "third_party/blink/public/platform/web_size.h"
 #include "third_party/blink/renderer/platform/image-decoders/image_decoder_test_helpers.h"
 #include "third_party/blink/renderer/platform/wtf/shared_buffer.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
@@ -55,7 +30,7 @@ struct AnimParam {
 std::unique_ptr<ImageDecoder> CreateWEBPDecoder(
     ImageDecoder::AlphaOption alpha_option) {
   return std::make_unique<WEBPImageDecoder>(
-      alpha_option, ColorBehavior::TransformToSRGB(),
+      alpha_option, ColorBehavior::kTransformToSRGB,
       ImageDecoder::kNoDecodedImageByteLimit);
 }
 
@@ -84,6 +59,13 @@ void TestInvalidImage(const char* webp_file, bool parse_error_expected) {
   }
   EXPECT_EQ(kAnimationLoopOnce, decoder->RepetitionCount());
   EXPECT_TRUE(decoder->Failed());
+}
+
+void TestWebPBppHistogram(const char* image_name,
+                          const char* histogram_name = nullptr,
+                          base::HistogramBase::Sample sample = 0) {
+  TestBppHistogram(CreateWEBPDecoder, "WebP", image_name, histogram_name,
+                   sample);
 }
 
 }  // anonymous namespace
@@ -117,25 +99,22 @@ TEST(AnimatedWebPTests, verifyAnimationParametersTransparentImage) {
   const int kCanvasHeight = 29;
   const AnimParam kFrameParameters[] = {
       {0, 0, 11, 29, ImageFrame::kDisposeKeep,
-       ImageFrame::kBlendAtopPreviousFrame,
-       base::TimeDelta::FromMilliseconds(1000), true},
+       ImageFrame::kBlendAtopPreviousFrame, base::Milliseconds(1000), true},
       {2, 10, 7, 17, ImageFrame::kDisposeKeep,
-       ImageFrame::kBlendAtopPreviousFrame,
-       base::TimeDelta::FromMilliseconds(500), true},
+       ImageFrame::kBlendAtopPreviousFrame, base::Milliseconds(500), true},
       {2, 2, 7, 16, ImageFrame::kDisposeKeep,
-       ImageFrame::kBlendAtopPreviousFrame,
-       base::TimeDelta::FromMilliseconds(1000), true},
+       ImageFrame::kBlendAtopPreviousFrame, base::Milliseconds(1000), true},
   };
 
-  for (size_t i = 0; i < base::size(kFrameParameters); ++i) {
+  for (size_t i = 0; i < std::size(kFrameParameters); ++i) {
     const ImageFrame* const frame = decoder->DecodeFrameBufferAtIndex(i);
     EXPECT_EQ(ImageFrame::kFrameComplete, frame->GetStatus());
     EXPECT_EQ(kCanvasWidth, frame->Bitmap().width());
     EXPECT_EQ(kCanvasHeight, frame->Bitmap().height());
-    EXPECT_EQ(kFrameParameters[i].x_offset, frame->OriginalFrameRect().X());
-    EXPECT_EQ(kFrameParameters[i].y_offset, frame->OriginalFrameRect().Y());
-    EXPECT_EQ(kFrameParameters[i].width, frame->OriginalFrameRect().Width());
-    EXPECT_EQ(kFrameParameters[i].height, frame->OriginalFrameRect().Height());
+    EXPECT_EQ(kFrameParameters[i].x_offset, frame->OriginalFrameRect().x());
+    EXPECT_EQ(kFrameParameters[i].y_offset, frame->OriginalFrameRect().y());
+    EXPECT_EQ(kFrameParameters[i].width, frame->OriginalFrameRect().width());
+    EXPECT_EQ(kFrameParameters[i].height, frame->OriginalFrameRect().height());
     EXPECT_EQ(kFrameParameters[i].disposal_method, frame->GetDisposalMethod());
     EXPECT_EQ(kFrameParameters[i].alpha_blend_source,
               frame->GetAlphaBlendSource());
@@ -143,7 +122,7 @@ TEST(AnimatedWebPTests, verifyAnimationParametersTransparentImage) {
     EXPECT_EQ(kFrameParameters[i].has_alpha, frame->HasAlpha());
   }
 
-  EXPECT_EQ(base::size(kFrameParameters), decoder->FrameCount());
+  EXPECT_EQ(std::size(kFrameParameters), decoder->FrameCount());
   EXPECT_EQ(kAnimationLoopInfinite, decoder->RepetitionCount());
 }
 
@@ -161,28 +140,24 @@ TEST(AnimatedWebPTests,
   const int kCanvasHeight = 87;
   const AnimParam kFrameParameters[] = {
       {4, 10, 33, 32, ImageFrame::kDisposeOverwriteBgcolor,
-       ImageFrame::kBlendAtopPreviousFrame,
-       base::TimeDelta::FromMilliseconds(1000), true},
+       ImageFrame::kBlendAtopPreviousFrame, base::Milliseconds(1000), true},
       {34, 30, 33, 32, ImageFrame::kDisposeOverwriteBgcolor,
-       ImageFrame::kBlendAtopPreviousFrame,
-       base::TimeDelta::FromMilliseconds(1000), true},
+       ImageFrame::kBlendAtopPreviousFrame, base::Milliseconds(1000), true},
       {62, 50, 32, 32, ImageFrame::kDisposeOverwriteBgcolor,
-       ImageFrame::kBlendAtopPreviousFrame,
-       base::TimeDelta::FromMilliseconds(1000), true},
+       ImageFrame::kBlendAtopPreviousFrame, base::Milliseconds(1000), true},
       {10, 54, 32, 33, ImageFrame::kDisposeOverwriteBgcolor,
-       ImageFrame::kBlendAtopPreviousFrame,
-       base::TimeDelta::FromMilliseconds(1000), true},
+       ImageFrame::kBlendAtopPreviousFrame, base::Milliseconds(1000), true},
   };
 
-  for (size_t i = 0; i < base::size(kFrameParameters); ++i) {
+  for (size_t i = 0; i < std::size(kFrameParameters); ++i) {
     const ImageFrame* const frame = decoder->DecodeFrameBufferAtIndex(i);
     EXPECT_EQ(ImageFrame::kFrameComplete, frame->GetStatus());
     EXPECT_EQ(kCanvasWidth, frame->Bitmap().width());
     EXPECT_EQ(kCanvasHeight, frame->Bitmap().height());
-    EXPECT_EQ(kFrameParameters[i].x_offset, frame->OriginalFrameRect().X());
-    EXPECT_EQ(kFrameParameters[i].y_offset, frame->OriginalFrameRect().Y());
-    EXPECT_EQ(kFrameParameters[i].width, frame->OriginalFrameRect().Width());
-    EXPECT_EQ(kFrameParameters[i].height, frame->OriginalFrameRect().Height());
+    EXPECT_EQ(kFrameParameters[i].x_offset, frame->OriginalFrameRect().x());
+    EXPECT_EQ(kFrameParameters[i].y_offset, frame->OriginalFrameRect().y());
+    EXPECT_EQ(kFrameParameters[i].width, frame->OriginalFrameRect().width());
+    EXPECT_EQ(kFrameParameters[i].height, frame->OriginalFrameRect().height());
     EXPECT_EQ(kFrameParameters[i].disposal_method, frame->GetDisposalMethod());
     EXPECT_EQ(kFrameParameters[i].alpha_blend_source,
               frame->GetAlphaBlendSource());
@@ -190,7 +165,7 @@ TEST(AnimatedWebPTests,
     EXPECT_EQ(kFrameParameters[i].has_alpha, frame->HasAlpha());
   }
 
-  EXPECT_EQ(base::size(kFrameParameters), decoder->FrameCount());
+  EXPECT_EQ(std::size(kFrameParameters), decoder->FrameCount());
   EXPECT_EQ(kAnimationLoopInfinite, decoder->RepetitionCount());
 }
 
@@ -207,28 +182,24 @@ TEST(AnimatedWebPTests, verifyAnimationParametersBlendOverwrite) {
   const int kCanvasHeight = 87;
   const AnimParam kFrameParameters[] = {
       {4, 10, 33, 32, ImageFrame::kDisposeOverwriteBgcolor,
-       ImageFrame::kBlendAtopBgcolor, base::TimeDelta::FromMilliseconds(1000),
-       true},
+       ImageFrame::kBlendAtopBgcolor, base::Milliseconds(1000), true},
       {34, 30, 33, 32, ImageFrame::kDisposeOverwriteBgcolor,
-       ImageFrame::kBlendAtopBgcolor, base::TimeDelta::FromMilliseconds(1000),
-       true},
+       ImageFrame::kBlendAtopBgcolor, base::Milliseconds(1000), true},
       {62, 50, 32, 32, ImageFrame::kDisposeOverwriteBgcolor,
-       ImageFrame::kBlendAtopBgcolor, base::TimeDelta::FromMilliseconds(1000),
-       true},
+       ImageFrame::kBlendAtopBgcolor, base::Milliseconds(1000), true},
       {10, 54, 32, 33, ImageFrame::kDisposeOverwriteBgcolor,
-       ImageFrame::kBlendAtopBgcolor, base::TimeDelta::FromMilliseconds(1000),
-       true},
+       ImageFrame::kBlendAtopBgcolor, base::Milliseconds(1000), true},
   };
 
-  for (size_t i = 0; i < base::size(kFrameParameters); ++i) {
+  for (size_t i = 0; i < std::size(kFrameParameters); ++i) {
     const ImageFrame* const frame = decoder->DecodeFrameBufferAtIndex(i);
     EXPECT_EQ(ImageFrame::kFrameComplete, frame->GetStatus());
     EXPECT_EQ(kCanvasWidth, frame->Bitmap().width());
     EXPECT_EQ(kCanvasHeight, frame->Bitmap().height());
-    EXPECT_EQ(kFrameParameters[i].x_offset, frame->OriginalFrameRect().X());
-    EXPECT_EQ(kFrameParameters[i].y_offset, frame->OriginalFrameRect().Y());
-    EXPECT_EQ(kFrameParameters[i].width, frame->OriginalFrameRect().Width());
-    EXPECT_EQ(kFrameParameters[i].height, frame->OriginalFrameRect().Height());
+    EXPECT_EQ(kFrameParameters[i].x_offset, frame->OriginalFrameRect().x());
+    EXPECT_EQ(kFrameParameters[i].y_offset, frame->OriginalFrameRect().y());
+    EXPECT_EQ(kFrameParameters[i].width, frame->OriginalFrameRect().width());
+    EXPECT_EQ(kFrameParameters[i].height, frame->OriginalFrameRect().height());
     EXPECT_EQ(kFrameParameters[i].disposal_method, frame->GetDisposalMethod());
     EXPECT_EQ(kFrameParameters[i].alpha_blend_source,
               frame->GetAlphaBlendSource());
@@ -236,7 +207,7 @@ TEST(AnimatedWebPTests, verifyAnimationParametersBlendOverwrite) {
     EXPECT_EQ(kFrameParameters[i].has_alpha, frame->HasAlpha());
   }
 
-  EXPECT_EQ(base::size(kFrameParameters), decoder->FrameCount());
+  EXPECT_EQ(std::size(kFrameParameters), decoder->FrameCount());
   EXPECT_EQ(kAnimationLoopInfinite, decoder->RepetitionCount());
 }
 
@@ -351,23 +322,18 @@ TEST(AnimatedWebPTests, frameIsCompleteAndDuration) {
   EXPECT_EQ(2u, decoder->FrameCount());
   EXPECT_FALSE(decoder->Failed());
   EXPECT_TRUE(decoder->FrameIsReceivedAtIndex(0));
-  EXPECT_EQ(base::TimeDelta::FromMilliseconds(1000),
-            decoder->FrameDurationAtIndex(0));
+  EXPECT_EQ(base::Milliseconds(1000), decoder->FrameDurationAtIndex(0));
   EXPECT_TRUE(decoder->FrameIsReceivedAtIndex(1));
-  EXPECT_EQ(base::TimeDelta::FromMilliseconds(500),
-            decoder->FrameDurationAtIndex(1));
+  EXPECT_EQ(base::Milliseconds(500), decoder->FrameDurationAtIndex(1));
 
   decoder->SetData(data_buffer.get(), true);
   EXPECT_EQ(3u, decoder->FrameCount());
   EXPECT_TRUE(decoder->FrameIsReceivedAtIndex(0));
-  EXPECT_EQ(base::TimeDelta::FromMilliseconds(1000),
-            decoder->FrameDurationAtIndex(0));
+  EXPECT_EQ(base::Milliseconds(1000), decoder->FrameDurationAtIndex(0));
   EXPECT_TRUE(decoder->FrameIsReceivedAtIndex(1));
-  EXPECT_EQ(base::TimeDelta::FromMilliseconds(500),
-            decoder->FrameDurationAtIndex(1));
+  EXPECT_EQ(base::Milliseconds(500), decoder->FrameDurationAtIndex(1));
   EXPECT_TRUE(decoder->FrameIsReceivedAtIndex(2));
-  EXPECT_EQ(base::TimeDelta::FromMilliseconds(1000),
-            decoder->FrameDurationAtIndex(2));
+  EXPECT_EQ(base::Milliseconds(1000), decoder->FrameDurationAtIndex(2));
 }
 
 TEST(AnimatedWebPTests, updateRequiredPreviousFrameAfterFirstDecode) {
@@ -395,12 +361,6 @@ TEST(AnimatedWebPTests, randomDecodeAfterClearFrameBufferCache) {
       &CreateWEBPDecoder, "/images/resources/webp-animated-large.webp");
   TestRandomDecodeAfterClearFrameBufferCache(
       &CreateWEBPDecoder, "/images/resources/webp-animated-icc-xmp.webp");
-}
-
-TEST(AnimatedWebPTests,
-     resumePartialDecodeAfterClearFrameBufferCache) {
-  TestResumePartialDecodeAfterClearFrameBufferCache(
-      &CreateWEBPDecoder, "/images/resources/webp-animated-large.webp");
 }
 
 TEST(AnimatedWebPTests, decodeAfterReallocatingData) {
@@ -521,6 +481,9 @@ TEST(StaticWebPTests, incrementalDecode) {
   TestByteByByteDecode(&CreateWEBPDecoder,
                        "/images/resources/crbug.364830.webp", 1u,
                        kAnimationNone);
+  TestByteByByteDecode(&CreateWEBPDecoder,
+                       "/images/resources/size-failure.b186640109.webp", 1u,
+                       kAnimationNone);
 }
 
 TEST(StaticWebPTests, isSizeAvailable) {
@@ -529,6 +492,9 @@ TEST(StaticWebPTests, isSizeAvailable) {
                               520u, true, kAnimationNone);
   TestByteByByteSizeAvailable(&CreateWEBPDecoder, "/images/resources/test.webp",
                               30u, false, kAnimationNone);
+  TestByteByByteSizeAvailable(&CreateWEBPDecoder,
+                              "/images/resources/size-failure.b186640109.webp",
+                              25u, false, kAnimationNone);
 }
 
 TEST(StaticWebPTests, notAnimated) {
@@ -539,6 +505,99 @@ TEST(StaticWebPTests, notAnimated) {
   decoder->SetData(data.get(), true);
   EXPECT_EQ(1u, decoder->FrameCount());
   EXPECT_EQ(kAnimationNone, decoder->RepetitionCount());
+}
+
+TEST(StaticWebPTests, bppHistogramSmall) {
+  constexpr int kImageArea = 800 * 800;  // = 640000
+  constexpr int kFileSize = 19436;
+  constexpr int kSample =
+      (kFileSize * 100 * 8 + kImageArea / 2) / kImageArea;  // = 24
+  TestWebPBppHistogram("/images/resources/webp-color-profile-lossy.webp",
+                       "Blink.DecodedImage.WebPDensity.Count.0.7MP", kSample);
+}
+
+TEST(StaticWebPTests, bppHistogramSmall3x3) {
+  // The centi bpp = 68 * 100 * 8 / (3 * 3) ~= 6044, which is greater than the
+  // histogram's max value (1000), so this sample goes into the overflow bucket.
+  constexpr int kSample = 1000;
+  TestWebPBppHistogram("/images/resources/red3x3-lossy.webp",
+                       "Blink.DecodedImage.WebPDensity.Count.0.1MP", kSample);
+}
+
+TEST(StaticWebPTests, bppHistogramSmall900000) {
+  constexpr int kImageArea = 1200 * 750;  // = 900000
+  constexpr int kFileSize = 11180;
+  constexpr int kSample =
+      (kFileSize * 100 * 8 + kImageArea / 2) / kImageArea;  // = 10
+  TestWebPBppHistogram("/images/resources/peach_900000.webp",
+                       "Blink.DecodedImage.WebPDensity.Count.0.9MP", kSample);
+}
+
+TEST(StaticWebPTests, bppHistogramBig) {
+  constexpr int kImageArea = 3024 * 4032;  // = 12192768
+  constexpr int kFileSize = 87822;
+  constexpr int kSample =
+      (kFileSize * 100 * 8 + kImageArea / 2) / kImageArea;  // = 6
+  TestWebPBppHistogram("/images/resources/bee.webp",
+                       "Blink.DecodedImage.WebPDensity.Count.13MP", kSample);
+}
+
+TEST(StaticWebPTests, bppHistogramBig13000000) {
+  constexpr int kImageArea = 4000 * 3250;  // = 13000000
+  constexpr int kFileSize = 58402;
+  constexpr int kSample =
+      (kFileSize * 100 * 8 + kImageArea / 2) / kImageArea;  // = 4
+  TestWebPBppHistogram("/images/resources/peach_13000000.webp",
+                       "Blink.DecodedImage.WebPDensity.Count.13MP", kSample);
+}
+
+TEST(StaticWebPTests, bppHistogramHuge) {
+  constexpr int kImageArea = 4624 * 3472;  // = 16054528
+  constexpr int kFileSize = 66594;
+  constexpr int kSample =
+      (kFileSize * 100 * 8 + kImageArea / 2) / kImageArea;  // = 3
+  TestWebPBppHistogram("/images/resources/peach.webp",
+                       "Blink.DecodedImage.WebPDensity.Count.14+MP", kSample);
+}
+
+TEST(StaticWebPTests, bppHistogramHuge13000002) {
+  constexpr int kImageArea = 3961 * 3282;  // = 13000002
+  constexpr int kFileSize = 53968;
+  constexpr int kSample =
+      (kFileSize * 100 * 8 + kImageArea / 2) / kImageArea;  // = 3
+  TestWebPBppHistogram("/images/resources/peach_13000002.webp",
+                       "Blink.DecodedImage.WebPDensity.Count.14+MP", kSample);
+}
+
+// Although parsing of the image succeeds, decoding of the image fails, so the
+// test should not emit to any bpp histogram.
+TEST(StaticWebPTests, bppHistogramInvalid) {
+  base::HistogramTester histogram_tester;
+  std::unique_ptr<ImageDecoder> decoder = CreateWEBPDecoder();
+  decoder->SetData(ReadFile("/images/resources/truncated.webp"), true);
+  ASSERT_TRUE(decoder->IsSizeAvailable());
+  EXPECT_FALSE(decoder->Failed());
+  EXPECT_EQ(decoder->FrameCount(), 1u);
+  ImageFrame* frame = decoder->DecodeFrameBufferAtIndex(0);
+  ASSERT_TRUE(frame);
+  EXPECT_NE(ImageFrame::kFrameComplete, frame->GetStatus());
+  EXPECT_TRUE(decoder->Failed());
+  const base::HistogramTester::CountsMap empty_counts;
+  EXPECT_THAT(histogram_tester.GetTotalCountsForPrefix(
+                  "Blink.DecodedImage.WebPDensity.Count."),
+              testing::ContainerEq(empty_counts));
+}
+
+TEST(StaticWebPTests, bppHistogramLossless) {
+  TestWebPBppHistogram("/images/resources/red3x3-lossless.webp");
+}
+
+TEST(StaticWebPTests, bppHistogramAlpha) {
+  TestWebPBppHistogram("/images/resources/webp-color-profile-lossy-alpha.webp");
+}
+
+TEST(StaticWebPTests, bppHistogramAnimated) {
+  TestWebPBppHistogram("/images/resources/webp-animated-opaque.webp");
 }
 
 }  // namespace blink

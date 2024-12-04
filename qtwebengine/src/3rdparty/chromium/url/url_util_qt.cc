@@ -52,6 +52,8 @@ std::string ToString(const CustomScheme& cs)
     serialized += 'C';
   if (cs.flags & CustomScheme::CorsEnabled)
     serialized += 'F';
+  if (cs.flags & CustomScheme::FetchApiAllowed)
+    serialized += 'G';
 
   return serialized;
 }
@@ -95,6 +97,7 @@ private:
     case 'V': cs.flags |= CustomScheme::ViewSourceAllowed; break;
     case 'C': cs.flags |= CustomScheme::ContentSecurityPolicyIgnored; break;
     case 'F': cs.flags |= CustomScheme::CorsEnabled; break;
+    case 'G': cs.flags |= CustomScheme::FetchApiAllowed; break;
     case ';': Flush(); state = NAME; break;
     default: CHECK(false) << "Unexpected character '" << ch << "'.";
     }
@@ -157,10 +160,10 @@ void CustomScheme::AddScheme(const CustomScheme& cs)
   GetMutableSchemes().push_back(cs);
 }
 
-const CustomScheme* CustomScheme::FindScheme(base::StringPiece name)
+const CustomScheme* CustomScheme::FindScheme(std::string_view name)
 {
   for (const CustomScheme& cs : GetSchemes())
-    if (base::LowerCaseEqualsASCII(name, cs.name))
+    if (base::EqualsCaseInsensitiveASCII(name, cs.name))
       return &cs;
   return nullptr;
 }

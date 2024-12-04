@@ -1,8 +1,9 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/security_interstitials/content/security_interstitial_tab_helper.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/strings/string_number_conversions.h"
 #include "components/security_interstitials/content/security_interstitial_page.h"
 #include "components/security_interstitials/core/controller_client.h"
@@ -14,7 +15,8 @@ SecurityInterstitialTabHelper::~SecurityInterstitialTabHelper() {}
 
 void SecurityInterstitialTabHelper::DidFinishNavigation(
     content::NavigationHandle* navigation_handle) {
-  if (navigation_handle->IsSameDocument()) {
+  if (navigation_handle->IsSameDocument() ||
+      !navigation_handle->IsInPrimaryMainFrame()) {
     return;
   }
 
@@ -23,6 +25,8 @@ void SecurityInterstitialTabHelper::DidFinishNavigation(
 
   if (navigation_handle->HasCommitted()) {
     if (blocking_page_for_currently_committed_navigation_) {
+      base::UmaHistogramEnumeration("interstitial.CloseReason",
+                                    InterstitialCloseReason::NAVIGATE_AWAY);
       blocking_page_for_currently_committed_navigation_
           ->OnInterstitialClosing();
     }
@@ -31,6 +35,12 @@ void SecurityInterstitialTabHelper::DidFinishNavigation(
       blocking_page_for_currently_committed_navigation_.reset();
     } else {
       blocking_page_for_currently_committed_navigation_ = std::move(it->second);
+      // According to `IsDisplayingInterstitial`,  inserting a value into
+      // `blocking_page_for_currently_committed_navigation_` means an
+      // interstitial is displaying, so log the INTERSTITIAL_SHOWN bucket here.
+      base::UmaHistogramEnumeration(
+          "interstitial.CloseReason",
+          InterstitialCloseReason::INTERSTITIAL_SHOWN);
     }
   }
 
@@ -44,23 +54,45 @@ void SecurityInterstitialTabHelper::DidFinishNavigation(
 
 void SecurityInterstitialTabHelper::WebContentsDestroyed() {
   if (blocking_page_for_currently_committed_navigation_) {
+    base::UmaHistogramEnumeration("interstitial.CloseReason",
+                                  InterstitialCloseReason::CLOSE_TAB);
     blocking_page_for_currently_committed_navigation_->OnInterstitialClosing();
   }
 }
 
 // static
 void SecurityInterstitialTabHelper::AssociateBlockingPage(
-    content::WebContents* web_contents,
-    int64_t navigation_id,
+    content::NavigationHandle* navigation_handle,
     std::unique_ptr<security_interstitials::SecurityInterstitialPage>
         blocking_page) {
-  // CreateForWebContents() creates a tab helper if it doesn't exist for
-  // |web_contents| yet.
+  // An interstitial should not be shown in a prerendered page or in a fenced
+  // frame. The prerender should just be canceled.
+  DCHECK(navigation_handle->IsInPrimaryMainFrame());
+
+  // CreateForWebContents() creates a tab helper if it doesn't yet exist for the
+  // WebContents provided by |navigation_handle|.
+  auto* web_contents = navigation_handle->GetWebContents();
   SecurityInterstitialTabHelper::CreateForWebContents(web_contents);
 
   SecurityInterstitialTabHelper* helper =
       SecurityInterstitialTabHelper::FromWebContents(web_contents);
-  helper->SetBlockingPage(navigation_id, std::move(blocking_page));
+  helper->SetBlockingPage(navigation_handle->GetNavigationId(),
+                          std::move(blocking_page));
+}
+
+// static
+void SecurityInterstitialTabHelper::BindInterstitialCommands(
+    mojo::PendingAssociatedReceiver<
+        security_interstitials::mojom::InterstitialCommands> receiver,
+    content::RenderFrameHost* rfh) {
+  auto* web_contents = content::WebContents::FromRenderFrameHost(rfh);
+  if (!web_contents)
+    return;
+  auto* tab_helper =
+      SecurityInterstitialTabHelper::FromWebContents(web_contents);
+  if (!tab_helper)
+    return;
+  tab_helper->receivers_.Bind(rfh, std::move(receiver));
 }
 
 bool SecurityInterstitialTabHelper::ShouldDisplayURL() const {
@@ -70,6 +102,10 @@ bool SecurityInterstitialTabHelper::ShouldDisplayURL() const {
 
 bool SecurityInterstitialTabHelper::IsDisplayingInterstitial() const {
   return blocking_page_for_currently_committed_navigation_ != nullptr;
+}
+
+bool SecurityInterstitialTabHelper::HasPendingOrActiveInterstitial() const {
+  return !blocking_pages_for_navigations_.empty() || IsDisplayingInterstitial();
 }
 
 bool SecurityInterstitialTabHelper::IsInterstitialPendingForNavigation(
@@ -86,7 +122,10 @@ SecurityInterstitialTabHelper::
 
 SecurityInterstitialTabHelper::SecurityInterstitialTabHelper(
     content::WebContents* web_contents)
-    : WebContentsObserver(web_contents), receiver_(web_contents, this) {}
+    : WebContentsObserver(web_contents),
+      content::WebContentsUserData<SecurityInterstitialTabHelper>(
+          *web_contents),
+      receivers_(web_contents, this) {}
 
 void SecurityInterstitialTabHelper::SetBlockingPage(
     int64_t navigation_id,
@@ -177,6 +216,6 @@ void SecurityInterstitialTabHelper::OpenEnhancedProtectionSettings() {
                     CMD_OPEN_ENHANCED_PROTECTION_SETTINGS);
 }
 
-WEB_CONTENTS_USER_DATA_KEY_IMPL(SecurityInterstitialTabHelper)
+WEB_CONTENTS_USER_DATA_KEY_IMPL(SecurityInterstitialTabHelper);
 
 }  //  namespace security_interstitials

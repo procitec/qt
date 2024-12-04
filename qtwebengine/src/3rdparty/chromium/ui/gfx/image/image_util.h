@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,6 +9,7 @@
 
 #include <vector>
 
+#include "ui/gfx/geometry/size.h"
 #include "ui/gfx/gfx_export.h"
 
 namespace gfx {
@@ -37,6 +38,14 @@ bool JPEG1xEncodedDataFromSkiaRepresentation(const Image& image,
                                              int quality,
                                              std::vector<unsigned char>* dst);
 
+// Fills the |dst| vector with WebP-encoded bytes of the the given image.
+// Returns true if the image was encoded (lossy) successfully.
+// |quality| determines the visual quality, 0 == lowest, 100 == highest.
+// Returns true if the Image was encoded successfully.
+GFX_EXPORT bool WebpEncodedDataFromImage(const Image& image,
+                                         int quality,
+                                         std::vector<unsigned char>* dst);
+
 // Computes the width of any nearly-transparent regions at the sides of the
 // image and returns them in |left| and |right|.  This checks each column of
 // pixels from the outsides in, looking for anything with alpha above a
@@ -47,12 +56,28 @@ GFX_EXPORT void GetVisibleMargins(const ImageSkia& image,
                                   int* left,
                                   int* right);
 
+// Returns a resized Image from the provided Image.
+// The resizing operation uses skia::ImageOperations::RESIZE_GOOD quality.
+// This function is safe to use with any valid Image and gfx::Size objects.
+// Returns:
+// - If the provided image has a scale other than 1.0f, or if it already has the
+//   requested size, the function returns the original Image object unchanged.
+// - Otherwise, it returns a new Image object containing a resized version of
+//   the original.
+GFX_EXPORT Image ResizedImage(const Image& image, const gfx::Size& size);
+
 // Downsizes the image if its area exceeds kSearchByImageMaxImageArea AND
 // (either its width exceeds kSearchByImageMaxImageWidth OR its height exceeds
 // kSearchByImageMaxImageHeight) in preparation for searching.
 GFX_EXPORT Image ResizedImageForSearchByImage(const Image& image);
 
-Image ResizedImageForSearchByImageSkiaRepresentation(const Image& image);
+// Downsizes the image if its area exceeds the max_area defined AND (either its
+// width exceeds the max_width defined OR its height exceeds the max_height
+// defined).
+GFX_EXPORT Image ResizedImageForMaxDimensions(const Image& image,
+                                              int max_width,
+                                              int max_height,
+                                              int max_area);
 
 }  // namespace gfx
 

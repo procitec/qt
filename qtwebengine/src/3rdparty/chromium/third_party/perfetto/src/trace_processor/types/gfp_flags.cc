@@ -208,14 +208,14 @@ const FlagArray* GetBitmaskVersion(VersionNumber version = VersionNumber{4,
   } else if (version >= VersionNumber{4, 4} && version < VersionNumber{4, 14}) {
     return &v4_4;
   } else {  // version >= 4.14
-    // TODO(taylori): Add newer kernel versions once we have access to them.
+    // TODO(hjd): Add newer kernel versions once we have access to them.
     return &v4_14;
   }
 }
 }  // namespace
 
 void WriteGfpFlag(uint64_t value,
-                  base::Optional<VersionNumber> version,
+                  std::optional<VersionNumber> version,
                   base::StringWriter* writer) {
   // On all kernel versions if this flag is not set, return GFP_NOWAIT.
   if (value == 0) {

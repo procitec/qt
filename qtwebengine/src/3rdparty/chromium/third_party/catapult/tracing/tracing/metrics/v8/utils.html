@@ -41,10 +41,10 @@ tr.exportTo('tr.metrics.v8.utils', function() {
     'V8.GCFinalizeMC': 'v8-gc-latency-mark-compactor',
     'V8.GCFinalizeMCReduceMemory': 'v8-gc-memory-mark-compactor',
     'V8.GCIncrementalMarking': 'v8-gc-incremental-step',
-    'V8.GCIncrementalMarkingFinalize': 'v8-gc-incremental-finalize',
     'V8.GCIncrementalMarkingStart': 'v8-gc-incremental-start',
     'V8.GCPhantomHandleProcessingCallback': 'v8-gc-phantom-handle-callback',
-    'V8.GCScavenger': 'v8-gc-scavenger'
+    'V8.GCScavenger': 'v8-gc-scavenger',
+    'V8.GCMinorMS': 'v8-gc-minor-mark-sweeper'
   };
 
   const MARK_COMPACTOR_EVENTS = new Set([
@@ -52,7 +52,6 @@ tr.exportTo('tr.metrics.v8.utils', function() {
     'V8.GCFinalizeMC',
     'V8.GCFinalizeMCReduceMemory',
     'V8.GCIncrementalMarking',
-    'V8.GCIncrementalMarkingFinalize',
     'V8.GCIncrementalMarkingStart',
     'V8.GCPhantomHandleProcessingCallback'
   ]);
@@ -240,6 +239,7 @@ tr.exportTo('tr.metrics.v8.utils', function() {
       threads = threads.concat(rendererHelper.dedicatedWorkerThreads);
       threads = threads.concat(rendererHelper.serviceWorkerThreads);
       threads = threads.concat(rendererHelper.foregroundWorkerThreads);
+      threads = threads.concat(rendererHelper.utilityWorkerThreads);
     }
     return threads;
   }

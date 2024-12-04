@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,9 +8,13 @@
 
 #include <algorithm>
 #include <limits>
+#include <string>
+#include <utility>
 
+#include <optional>
 #include "base/rand_util.h"
 #include "base/values.h"
+#include "cc/base/math_util.h"
 #include "cc/layers/layer.h"
 #include "cc/layers/picture_layer.h"
 #include "cc/trees/draw_property_utils.h"
@@ -26,27 +30,23 @@ const char* kDefaultInvalidationMode = "viewport";
 }  // namespace
 
 InvalidationBenchmark::InvalidationBenchmark(
-    std::unique_ptr<base::Value> value,
+    base::Value::Dict settings,
     MicroBenchmark::DoneCallback callback)
-    : MicroBenchmark(std::move(callback)), seed_(0) {
-  base::DictionaryValue* settings = nullptr;
-  value->GetAsDictionary(&settings);
-  if (!settings)
-    return;
-
+    : MicroBenchmark(std::move(callback)) {
   std::string mode_string = kDefaultInvalidationMode;
 
-  if (settings->HasKey("mode"))
-    settings->GetString("mode", &mode_string);
+  auto* mode_string_from_settings = settings.FindString("mode");
+  if (mode_string_from_settings)
+    mode_string = *mode_string_from_settings;
 
   if (mode_string == "fixed_size") {
     mode_ = FIXED_SIZE;
-    CHECK(settings->HasKey("width"))
-        << "Must provide a width for fixed_size mode.";
-    CHECK(settings->HasKey("height"))
-        << "Must provide a height for fixed_size mode.";
-    settings->GetInteger("width", &width_);
-    settings->GetInteger("height", &height_);
+    auto width = settings.FindInt("width");
+    auto height = settings.FindInt("height");
+    CHECK(width.has_value()) << "Must provide a width for fixed_size mode.";
+    CHECK(height.has_value()) << "Must provide a height for fixed_size mode.";
+    width_ = *width;
+    height_ = *height;
   } else if (mode_string == "layer") {
     mode_ = LAYER;
   } else if (mode_string == "random") {
@@ -68,10 +68,8 @@ void InvalidationBenchmark::DidUpdateLayers(LayerTreeHost* layer_tree_host) {
 
 void InvalidationBenchmark::RunOnLayer(PictureLayer* layer) {
   gfx::Rect visible_layer_rect = gfx::Rect(layer->bounds());
-  gfx::Transform from_screen;
-  bool invertible = layer->ScreenSpaceTransform().GetInverse(&from_screen);
-  if (!invertible)
-    from_screen = gfx::Transform();
+  gfx::Transform from_screen =
+      layer->ScreenSpaceTransform().InverseOrIdentity();
   gfx::Rect viewport_rect = MathUtil::ProjectEnclosingClippedRect(
       from_screen, layer->layer_tree_host()->device_viewport_rect());
   visible_layer_rect.Intersect(viewport_rect);
@@ -111,17 +109,12 @@ void InvalidationBenchmark::RunOnLayer(PictureLayer* layer) {
   }
 }
 
-bool InvalidationBenchmark::ProcessMessage(std::unique_ptr<base::Value> value) {
-  base::DictionaryValue* message = nullptr;
-  value->GetAsDictionary(&message);
-  if (!message)
-    return false;
-
-  bool notify_done;
-  if (message->HasKey("notify_done")) {
-    message->GetBoolean("notify_done", &notify_done);
-    if (notify_done)
-      NotifyDone(std::make_unique<base::Value>());
+bool InvalidationBenchmark::ProcessMessage(base::Value::Dict message) {
+  auto notify_done = message.FindBool("notify_done");
+  if (notify_done.has_value()) {
+    if (notify_done.value()) {
+      NotifyDone(base::Value::Dict());
+    }
     return true;
   }
   return false;
@@ -131,10 +124,11 @@ bool InvalidationBenchmark::ProcessMessage(std::unique_ptr<base::Value> value) {
 // high quality, but they need to be identical in each run. Therefore, we use a
 // LCG and keep the state locally in the benchmark.
 float InvalidationBenchmark::LCGRandom() {
-  const uint32_t a = 1664525;
-  const uint32_t c = 1013904223;
+  constexpr uint32_t a = 1664525;
+  constexpr uint32_t c = 1013904223;
   seed_ = a * seed_ + c;
-  return static_cast<float>(seed_) / std::numeric_limits<uint32_t>::max();
+  return static_cast<float>(seed_) /
+         static_cast<float>(std::numeric_limits<uint32_t>::max());
 }
 
 }  // namespace cc

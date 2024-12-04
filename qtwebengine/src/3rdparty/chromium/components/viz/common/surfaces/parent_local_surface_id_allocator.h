@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,7 +7,6 @@
 
 #include <stdint.h>
 
-#include "base/macros.h"
 #include "base/unguessable_token.h"
 #include "components/viz/common/surfaces/local_surface_id.h"
 #include "components/viz/common/surfaces/surface_id.h"
@@ -24,6 +23,10 @@ class VIZ_COMMON_EXPORT ParentLocalSurfaceIdAllocator {
  public:
   ParentLocalSurfaceIdAllocator();
 
+  ParentLocalSurfaceIdAllocator(const ParentLocalSurfaceIdAllocator&) = delete;
+  ParentLocalSurfaceIdAllocator& operator=(
+      const ParentLocalSurfaceIdAllocator&) = delete;
+
   ~ParentLocalSurfaceIdAllocator() = default;
 
   // When a child-allocated LocalSurfaceId arrives in the parent, the parent
@@ -34,8 +37,9 @@ class VIZ_COMMON_EXPORT ParentLocalSurfaceIdAllocator {
 
   // Marks the last known LocalSurfaceId as invalid until the next call to
   // GenerateId. This is used to defer commits until some LocalSurfaceId is
-  // provided from an external source.
-  void Invalidate();
+  // provided from an external source. If `also_invalidate_allocation_group` is
+  // set to true, the allocation group is also invalidated.
+  void Invalidate(bool also_invalidate_allocation_group = false);
 
   void GenerateId();
 
@@ -60,8 +64,6 @@ class VIZ_COMMON_EXPORT ParentLocalSurfaceIdAllocator {
   bool is_allocation_suppressed_ = false;
 
   friend class ScopedSurfaceIdAllocator;
-
-  DISALLOW_COPY_AND_ASSIGN(ParentLocalSurfaceIdAllocator);
 };
 
 }  // namespace viz

@@ -1,16 +1,12 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef NET_SOCKET_SOCKET_NET_LOG_PARAMS_H_
 #define NET_SOCKET_SOCKET_NET_LOG_PARAMS_H_
 
-#include "net/base/sys_addrinfo.h"
+#include "base/values.h"
 #include "net/log/net_log_event_type.h"
-
-namespace base {
-class Value;
-}
 
 namespace net {
 
@@ -25,14 +21,17 @@ void NetLogSocketError(const NetLogWithSource& net_log,
                        int os_error);
 
 // Creates a NetLog parameters for a HostPortPair.
-base::Value CreateNetLogHostPortPairParams(const HostPortPair* host_and_port);
+base::Value::Dict CreateNetLogHostPortPairParams(
+    const HostPortPair* host_and_port);
 
 // Creates a NetLog parameters for an IPEndPoint.
-base::Value CreateNetLogIPEndPointParams(const IPEndPoint* address);
+base::Value::Dict CreateNetLogIPEndPointParams(const IPEndPoint* address);
 
-// Creates a NetLog parameters for the source sockaddr on connect events.
-base::Value CreateNetLogSourceAddressParams(const struct sockaddr* net_address,
-                                            socklen_t address_len);
+// Creates a NetLog parameters for the local and remote IPEndPoints on connect
+// events.
+base::Value::Dict CreateNetLogAddressPairParams(
+    const net::IPEndPoint& local_address,
+    const net::IPEndPoint& remote_address);
 
 }  // namespace net
 

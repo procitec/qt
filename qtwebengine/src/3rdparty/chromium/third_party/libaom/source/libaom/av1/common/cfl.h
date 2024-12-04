@@ -18,7 +18,7 @@
 // Can we use CfL for the current block?
 static INLINE CFL_ALLOWED_TYPE is_cfl_allowed(const MACROBLOCKD *xd) {
   const MB_MODE_INFO *mbmi = xd->mi[0];
-  const BLOCK_SIZE bsize = mbmi->sb_type;
+  const BLOCK_SIZE bsize = mbmi->bsize;
   assert(bsize < BLOCK_SIZES_ALL);
   if (xd->lossless[mbmi->segment_id]) {
     // In lossless, CfL is available when the partition size is equal to the
@@ -39,7 +39,7 @@ static INLINE CFL_ALLOWED_TYPE store_cfl_required(const AV1_COMMON *cm,
                                                   const MACROBLOCKD *xd) {
   const MB_MODE_INFO *mbmi = xd->mi[0];
 
-  if (cm->seq_params.monochrome) return CFL_DISALLOWED;
+  if (cm->seq_params->monochrome) return CFL_DISALLOWED;
 
   if (!xd->is_chroma_ref) {
     // For non-chroma-reference blocks, we should always store the luma pixels,
@@ -61,13 +61,19 @@ static INLINE int get_scaled_luma_q0(int alpha_q3, int16_t pred_buf_q3) {
   return ROUND_POWER_OF_TWO_SIGNED(scaled_luma_q6, 6);
 }
 
-static INLINE CFL_PRED_TYPE get_cfl_pred_type(PLANE_TYPE plane) {
+static INLINE CFL_PRED_TYPE get_cfl_pred_type(int plane) {
   assert(plane > 0);
   return (CFL_PRED_TYPE)(plane - 1);
 }
 
-void cfl_predict_block(MACROBLOCKD *const xd, uint8_t *dst, int dst_stride,
-                       TX_SIZE tx_size, int plane);
+static INLINE void clear_cfl_dc_pred_cache_flags(CFL_CTX *cfl) {
+  cfl->use_dc_pred_cache = false;
+  cfl->dc_pred_is_cached[CFL_PRED_U] = false;
+  cfl->dc_pred_is_cached[CFL_PRED_V] = false;
+}
+
+void av1_cfl_predict_block(MACROBLOCKD *const xd, uint8_t *dst, int dst_stride,
+                           TX_SIZE tx_size, int plane);
 
 void cfl_store_block(MACROBLOCKD *const xd, BLOCK_SIZE bsize, TX_SIZE tx_size);
 

@@ -1,4 +1,4 @@
-// Copyright (c) 2011 The Chromium Authors. All rights reserved.
+// Copyright 2011 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,21 +6,20 @@
 
 #include <algorithm>
 #include <memory>
+#include <string>
 
-#include "base/bind.h"
-#include "base/bind_helpers.h"
-#include "base/callback.h"
 #include "base/compiler_specific.h"
 #include "base/containers/flat_map.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
+#include "base/functional/callback_helpers.h"
 #include "base/no_destructor.h"
-#include "base/numerics/ranges.h"
 #include "base/numerics/safe_conversions.h"
-#include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "ui/accessibility/ax_enums.mojom.h"
-#include "ui/accessibility/ax_node_data.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/events/event.h"
 #include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/gfx/canvas.h"
@@ -89,10 +88,6 @@ int ScrollBar::GetPosition() const {
 ///////////////////////////////////////////////////////////////////////////////
 // ScrollBar, View implementation:
 
-void ScrollBar::GetAccessibleNodeData(ui::AXNodeData* node_data) {
-  node_data->role = ax::mojom::Role::kScrollBar;
-}
-
 bool ScrollBar::OnMousePressed(const ui::MouseEvent& event) {
   if (event.IsOnlyLeftMouseButton())
     ProcessPressEvent(event);
@@ -147,13 +142,32 @@ void ScrollBar::OnGestureEvent(ui::GestureEvent* event) {
     return;
   }
 
-  if (event->type() == ui::ET_GESTURE_SCROLL_BEGIN ||
-      event->type() == ui::ET_GESTURE_SCROLL_END) {
+  if (event->type() == ui::ET_GESTURE_SCROLL_BEGIN) {
+    scroll_status_ = ScrollStatus::kScrollStarted;
     event->SetHandled();
     return;
   }
 
+  if (event->type() == ui::ET_GESTURE_SCROLL_END) {
+    scroll_status_ = ScrollStatus::kScrollEnded;
+    controller()->OnScrollEnded();
+    event->SetHandled();
+    return;
+  }
+
+  // Update the |scroll_status_| to |kScrollEnded| in case the gesture sequence
+  // ends incorrectly.
+  if (event->type() == ui::ET_GESTURE_END &&
+      scroll_status_ != ScrollStatus::kScrollInEnding &&
+      scroll_status_ != ScrollStatus::kScrollEnded) {
+    scroll_status_ = ScrollStatus::kScrollEnded;
+    controller()->OnScrollEnded();
+  }
+
   if (event->type() == ui::ET_GESTURE_SCROLL_UPDATE) {
+    if (scroll_status_ == ScrollStatus::kScrollStarted)
+      scroll_status_ = ScrollStatus::kScrollInProgress;
+
     float scroll_amount_f;
     int scroll_amount;
     if (IsHorizontal()) {
@@ -171,9 +185,8 @@ void ScrollBar::OnGestureEvent(ui::GestureEvent* event) {
   }
 
   if (event->type() == ui::ET_SCROLL_FLING_START) {
-    if (!scroll_animator_)
-      scroll_animator_ = std::make_unique<ScrollAnimator>(this);
-    scroll_animator_->Start(
+    scroll_status_ = ScrollStatus::kScrollInEnding;
+    GetOrCreateScrollAnimator()->Start(
         IsHorizontal() ? event->details().velocity_x() : 0.f,
         IsHorizontal() ? 0.f : event->details().velocity_y());
     event->SetHandled();
@@ -186,6 +199,11 @@ void ScrollBar::OnGestureEvent(ui::GestureEvent* event) {
 bool ScrollBar::OnScroll(float dx, float dy) {
   return IsHorizontal() ? ScrollByContentsOffset(dx)
                         : ScrollByContentsOffset(dy);
+}
+
+void ScrollBar::OnFlingScrollEnded() {
+  scroll_status_ = ScrollStatus::kScrollEnded;
+  controller()->OnScrollEnded();
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -331,19 +349,59 @@ int ScrollBar::GetScrollIncrement(bool is_page, bool is_positive) {
   return controller()->GetScrollIncrement(this, is_page, is_positive);
 }
 
-void ScrollBar::ObserveScrollEvent(const ui::ScrollEvent& event) {}
+void ScrollBar::ObserveScrollEvent(const ui::ScrollEvent& event) {
+  switch (event.type()) {
+    case ui::ET_SCROLL_FLING_CANCEL:
+      scroll_status_ = ScrollStatus::kScrollStarted;
+      break;
+    case ui::ET_SCROLL:
+      if (scroll_status_ == ScrollStatus::kScrollStarted)
+        scroll_status_ = ScrollStatus::kScrollInProgress;
+      break;
+    case ui::ET_SCROLL_FLING_START:
+      scroll_status_ = ScrollStatus::kScrollEnded;
+      controller()->OnScrollEnded();
+      break;
+    case ui::ET_GESTURE_END:
+      if (scroll_status_ != ScrollStatus::kScrollEnded) {
+        scroll_status_ = ScrollStatus::kScrollEnded;
+        controller()->OnScrollEnded();
+      }
+      break;
+    default:
+      break;
+  }
+}
+
+ScrollAnimator* ScrollBar::GetOrCreateScrollAnimator() {
+  if (!scroll_animator_) {
+    scroll_animator_ = std::make_unique<ScrollAnimator>(this);
+    scroll_animator_->set_velocity_multiplier(fling_multiplier_);
+  }
+  return scroll_animator_.get();
+}
+
+void ScrollBar::SetFlingMultiplier(float fling_multiplier) {
+  fling_multiplier_ = fling_multiplier;
+  // `scroll_animator_` is lazily created when needed.
+  if (!scroll_animator_)
+    return;
+
+  GetOrCreateScrollAnimator()->set_velocity_multiplier(fling_multiplier_);
+}
 
 ScrollBar::ScrollBar(bool is_horiz)
     : is_horiz_(is_horiz),
       repeater_(base::BindRepeating(&ScrollBar::TrackClicked,
                                     base::Unretained(this))) {
   set_context_menu_controller(this);
+  SetAccessibilityProperties(ax::mojom::Role::kScrollBar);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 // ScrollBar, private:
 
-#if !defined(OS_APPLE)
+#if !BUILDFLAG(IS_MAC)
 // static
 base::RetainingOneShotTimer* ScrollBar::GetHideTimerForTesting(
     ScrollBar* scroll_bar) {
@@ -351,8 +409,8 @@ base::RetainingOneShotTimer* ScrollBar::GetHideTimerForTesting(
 }
 #endif
 
-int ScrollBar::GetThumbSizeForTesting() {
-  return thumb_->GetSize();
+int ScrollBar::GetThumbLengthForTesting() {
+  return thumb_->GetLength();
 }
 
 void ScrollBar::ProcessPressEvent(const ui::LocatedEvent& event) {
@@ -392,16 +450,22 @@ int ScrollBar::CalculateThumbPosition(int contents_scroll_offset) const {
   // In some combination of viewport_size and contents_size_, the result of
   // simple division can be rounded and there could be 1 pixel gap even when the
   // contents scroll down to the bottom. See crbug.com/244671.
-  int thumb_max = GetTrackSize() - thumb_->GetSize();
-  if (contents_scroll_offset + viewport_size_ == contents_size_)
+  int thumb_max = GetTrackSize() - thumb_->GetLength();
+  if (contents_scroll_offset + viewport_size_ == contents_size_) {
     return thumb_max;
+  }
+  // Avoid dividing by zero if contents and viewport are the same size. See
+  // crbug.com/1447967.
+  if (viewport_size_ == contents_size_) {
+    return 0;
+  }
   return (contents_scroll_offset * thumb_max) /
          (contents_size_ - viewport_size_);
 }
 
 int ScrollBar::CalculateContentsOffset(float thumb_position,
                                        bool scroll_to_middle) const {
-  float thumb_size = static_cast<float>(thumb_->GetSize());
+  float thumb_size = static_cast<float>(thumb_->GetLength());
   int track_size = GetTrackSize();
   if (track_size == thumb_size)
     return 0;
@@ -413,8 +477,8 @@ int ScrollBar::CalculateContentsOffset(float thumb_position,
 }
 
 void ScrollBar::SetContentsScrollOffset(int contents_scroll_offset) {
-  contents_scroll_offset_ = base::ClampToRange(
-      contents_scroll_offset, GetMinPosition(), GetMaxPosition());
+  contents_scroll_offset_ =
+      std::clamp(contents_scroll_offset, GetMinPosition(), GetMaxPosition());
 }
 
 ScrollBar::ScrollAmount ScrollBar::DetermineScrollAmountByKeyCode(
@@ -441,7 +505,7 @@ ScrollBar::ScrollAmount ScrollBar::DetermineScrollAmountByKeyCode(
   return (i == kMap->end()) ? ScrollAmount::kNone : i->second;
 }
 
-base::Optional<int> ScrollBar::GetDesiredScrollOffset(ScrollAmount amount) {
+absl::optional<int> ScrollBar::GetDesiredScrollOffset(ScrollAmount amount) {
   switch (amount) {
     case ScrollAmount::kStart:
       return GetMinPosition();
@@ -456,11 +520,11 @@ base::Optional<int> ScrollBar::GetDesiredScrollOffset(ScrollAmount amount) {
     case ScrollAmount::kNextPage:
       return contents_scroll_offset_ + GetScrollIncrement(true, true);
     default:
-      return base::nullopt;
+      return absl::nullopt;
   }
 }
 
-BEGIN_METADATA(ScrollBar, View)
+BEGIN_METADATA(ScrollBar)
 ADD_READONLY_PROPERTY_METADATA(int, MaxPosition)
 ADD_READONLY_PROPERTY_METADATA(int, MinPosition)
 ADD_READONLY_PROPERTY_METADATA(int, Position)

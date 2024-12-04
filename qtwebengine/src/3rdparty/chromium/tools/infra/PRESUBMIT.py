@@ -1,4 +1,4 @@
-# Copyright 2019 The Chromium Authors. All rights reserved.
+# Copyright 2019 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -9,9 +9,11 @@ for more details on the presubmit API built into depot_tools.
 """
 
 
+
 def _CommonChecks(input_api, output_api):
   results = []
-  results.extend(input_api.canned_checks.RunPylint(input_api, output_api))
+  results.extend(
+      input_api.canned_checks.RunPylint(input_api, output_api, version='2.6'))
 
   commands = []
   commands.extend(

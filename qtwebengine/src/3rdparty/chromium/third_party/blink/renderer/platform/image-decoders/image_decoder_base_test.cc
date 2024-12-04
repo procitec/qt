@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,6 +12,7 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/hash/md5.h"
+#include "base/logging.h"
 #include "base/path_service.h"
 #include "base/strings/pattern.h"
 #include "base/strings/string_util.h"
@@ -31,8 +32,9 @@ const int kFirstFrameIndex = 0;
 bool ShouldSkipFile(const base::FilePath& path,
                     blink::ImageDecoderBaseTest::FileSelection file_selection,
                     const int64_t threshold) {
-  if (file_selection == blink::ImageDecoderBaseTest::FileSelection::kAll)
+  if (file_selection == blink::ImageDecoderBaseTest::FileSelection::kAll) {
     return false;
+  }
 
   int64_t image_size = 0;
   base::GetFileSize(path, &image_size);
@@ -58,9 +60,9 @@ void SaveMD5Sum(const base::FilePath& path, blink::ImageFrame* frame_buffer) {
                bitmap.width() * bitmap.height() * sizeof(uint32_t), &digest);
 
   // Write sum to disk.
-  int bytes_written = base::WriteFile(
-      path, reinterpret_cast<const char*>(&digest), sizeof digest);
-  ASSERT_EQ(sizeof digest, size_t{bytes_written});
+  ASSERT_TRUE(base::WriteFile(
+      path,
+      base::as_bytes(base::make_span(&digest, 1)));
 }
 #endif
 
@@ -104,7 +106,7 @@ namespace blink {
 
 void ImageDecoderBaseTest::SetUp() {
   base::FilePath data_dir;
-  ASSERT_TRUE(base::PathService::Get(base::DIR_SOURCE_ROOT, &data_dir));
+  ASSERT_TRUE(base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &data_dir));
   data_dir_ = data_dir.AppendASCII("webkit").AppendASCII("data").AppendASCII(
       format_.Utf8() + "_decoder");
   if (!base::PathExists(data_dir_)) {
@@ -131,13 +133,10 @@ Vector<base::FilePath> ImageDecoderBaseTest::GetImageFiles() const {
   for (base::FilePath next_file_name = enumerator.Next();
        !next_file_name.empty(); next_file_name = enumerator.Next()) {
     base::FilePath base_name = next_file_name.BaseName();
-#if defined(OS_WIN)
-    std::string base_name_ascii = base::UTF16ToASCII(base_name.value());
-#else
-    std::string base_name_ascii = base_name.value();
-#endif
-    if (base::MatchPattern(base_name_ascii, pattern))
+    std::string base_name_ascii = base_name.MaybeAsASCII();
+    if (base::MatchPattern(base_name_ascii, pattern)) {
       image_files.push_back(next_file_name);
+    }
   }
 
   return image_files;
@@ -154,13 +153,15 @@ bool ImageDecoderBaseTest::ShouldImageFail(const base::FilePath& path) const {
 void ImageDecoderBaseTest::TestDecoding(
     blink::ImageDecoderBaseTest::FileSelection file_selection,
     const int64_t threshold) {
-  if (data_dir_.empty())
+  if (data_dir_.empty()) {
     return;
+  }
   const Vector<base::FilePath> image_files(GetImageFiles());
   for (Vector<base::FilePath>::const_iterator i = image_files.begin();
        i != image_files.end(); ++i) {
-    if (!ShouldSkipFile(*i, file_selection, threshold))
+    if (!ShouldSkipFile(*i, file_selection, threshold)) {
       TestImageDecoder(*i, GetMD5SumPath(*i), kFirstFrameIndex);
+    }
   }
 }
 
@@ -169,8 +170,9 @@ void ImageDecoderBaseTest::TestImageDecoder(const base::FilePath& image_path,
                                             int desired_frame_index) const {
 #if defined(CALCULATE_MD5_SUMS)
   // If we're just calculating the MD5 sums, skip failing images quickly.
-  if (ShouldImageFail(image_path))
+  if (ShouldImageFail(image_path)) {
     return;
+  }
 #endif
 
   Vector<char> image_contents;

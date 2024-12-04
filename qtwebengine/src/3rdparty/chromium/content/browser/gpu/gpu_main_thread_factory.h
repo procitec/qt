@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,8 +6,6 @@
 #define CONTENT_BROWSER_GPU_GPU_MAIN_THREAD_FACTORY_H_
 
 #include "content/common/content_export.h"
-
-#include <memory>
 
 namespace base {
 class Thread;
@@ -20,12 +18,7 @@ struct GpuPreferences;
 namespace content {
 class InProcessChildThreadParams;
 
-class CONTENT_EXPORT GpuThreadController {
-public:
-    virtual ~GpuThreadController() {}
-};
-
-typedef std::unique_ptr<GpuThreadController> (*GpuMainThreadFactoryFunction)(
+typedef base::Thread* (*GpuMainThreadFactoryFunction)(
     const InProcessChildThreadParams&,
     const gpu::GpuPreferences&);
 

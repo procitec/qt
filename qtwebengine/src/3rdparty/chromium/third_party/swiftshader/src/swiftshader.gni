@@ -21,6 +21,10 @@ declare_args() {
   # By default, build SwiftShader with optimizations enabled in debug
   # for performance reasons. Set to false to build as unoptimized.
   swiftshader_optimized_debug_build = true
+
+  # If enabled, debug builds on Windows will pop up a dialog when the
+  # SwiftShader DLL gets loaded, to facilitate attaching a debugger.
+  swiftshader_startup_dialog = false
 }
 
 configs_to_add = []
@@ -43,6 +47,14 @@ configs_to_add += [
 
 template("swiftshader_source_set") {
   source_set(target_name) {
+    if (is_apple) {
+      # If a "build with ARC" config is present, remove it.
+      if (filter_include(configs, [ "//build/config/compiler:enable_arc" ]) !=
+          []) {
+        configs_to_delete += [ "//build/config/compiler:enable_arc" ]
+      }
+    }
+
     configs -= configs_to_delete
     configs += configs_to_add
     forward_variables_from(invoker, "*", [ "configs" ])

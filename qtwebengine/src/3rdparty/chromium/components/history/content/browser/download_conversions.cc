@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -71,10 +71,12 @@ download::DownloadDangerType ToContentDownloadDangerType(
       return download::DOWNLOAD_DANGER_TYPE_DANGEROUS_HOST;
     case DownloadDangerType::POTENTIALLY_UNWANTED:
       return download::DOWNLOAD_DANGER_TYPE_POTENTIALLY_UNWANTED;
-    case DownloadDangerType::WHITELISTED_BY_POLICY:
-      return download::DOWNLOAD_DANGER_TYPE_WHITELISTED_BY_POLICY;
+    case DownloadDangerType::ALLOWLISTED_BY_POLICY:
+      return download::DOWNLOAD_DANGER_TYPE_ALLOWLISTED_BY_POLICY;
     case DownloadDangerType::ASYNC_SCANNING:
       return download::DOWNLOAD_DANGER_TYPE_ASYNC_SCANNING;
+    case DownloadDangerType::ASYNC_LOCAL_PASSWORD_SCANNING:
+      return download::DOWNLOAD_DANGER_TYPE_ASYNC_LOCAL_PASSWORD_SCANNING;
     case DownloadDangerType::BLOCKED_PASSWORD_PROTECTED:
       return download::DOWNLOAD_DANGER_TYPE_BLOCKED_PASSWORD_PROTECTED;
     case DownloadDangerType::BLOCKED_TOO_LARGE:
@@ -91,12 +93,16 @@ download::DownloadDangerType ToContentDownloadDangerType(
       return download::DOWNLOAD_DANGER_TYPE_PROMPT_FOR_SCANNING;
     case DownloadDangerType::BLOCKED_UNSUPPORTED_FILETYPE:
       return download::DOWNLOAD_DANGER_TYPE_BLOCKED_UNSUPPORTED_FILETYPE;
+    case DownloadDangerType::DANGEROUS_ACCOUNT_COMRPOMISE:
+      return download::DOWNLOAD_DANGER_TYPE_DANGEROUS_ACCOUNT_COMPROMISE;
+    case DownloadDangerType::DEEP_SCANNED_FAILED:
+      return download::DOWNLOAD_DANGER_TYPE_DEEP_SCANNED_FAILED;
+    case DownloadDangerType::PROMPT_FOR_LOCAL_PASSWORD_SCANNING:
+      return download::DOWNLOAD_DANGER_TYPE_PROMPT_FOR_LOCAL_PASSWORD_SCANNING;
     case DownloadDangerType::INVALID:
       NOTREACHED();
       return download::DOWNLOAD_DANGER_TYPE_MAX;
   }
-  NOTREACHED();
-  return download::DOWNLOAD_DANGER_TYPE_MAX;
 }
 
 DownloadDangerType ToHistoryDownloadDangerType(
@@ -120,8 +126,8 @@ DownloadDangerType ToHistoryDownloadDangerType(
       return DownloadDangerType::DANGEROUS_HOST;
     case download::DOWNLOAD_DANGER_TYPE_POTENTIALLY_UNWANTED:
       return DownloadDangerType::POTENTIALLY_UNWANTED;
-    case download::DOWNLOAD_DANGER_TYPE_WHITELISTED_BY_POLICY:
-      return DownloadDangerType::WHITELISTED_BY_POLICY;
+    case download::DOWNLOAD_DANGER_TYPE_ALLOWLISTED_BY_POLICY:
+      return DownloadDangerType::ALLOWLISTED_BY_POLICY;
     case download::DOWNLOAD_DANGER_TYPE_ASYNC_SCANNING:
       return DownloadDangerType::ASYNC_SCANNING;
     case download::DOWNLOAD_DANGER_TYPE_BLOCKED_PASSWORD_PROTECTED:
@@ -140,8 +146,15 @@ DownloadDangerType ToHistoryDownloadDangerType(
       return DownloadDangerType::PROMPT_FOR_SCANNING;
     case download::DOWNLOAD_DANGER_TYPE_BLOCKED_UNSUPPORTED_FILETYPE:
       return DownloadDangerType::BLOCKED_UNSUPPORTED_FILETYPE;
-
-    default:
+    case download::DOWNLOAD_DANGER_TYPE_DANGEROUS_ACCOUNT_COMPROMISE:
+      return DownloadDangerType::DANGEROUS_ACCOUNT_COMRPOMISE;
+    case download::DOWNLOAD_DANGER_TYPE_DEEP_SCANNED_FAILED:
+      return DownloadDangerType::DEEP_SCANNED_FAILED;
+    case download::DOWNLOAD_DANGER_TYPE_PROMPT_FOR_LOCAL_PASSWORD_SCANNING:
+      return DownloadDangerType::PROMPT_FOR_LOCAL_PASSWORD_SCANNING;
+    case download::DOWNLOAD_DANGER_TYPE_ASYNC_LOCAL_PASSWORD_SCANNING:
+      return DownloadDangerType::ASYNC_LOCAL_PASSWORD_SCANNING;
+    case download::DOWNLOAD_DANGER_TYPE_MAX:
       NOTREACHED();
       return DownloadDangerType::INVALID;
   }

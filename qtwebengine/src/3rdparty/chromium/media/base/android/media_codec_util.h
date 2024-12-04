@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,20 +6,22 @@
 #define MEDIA_BASE_ANDROID_MEDIA_CODEC_UTIL_H_
 
 #include <jni.h>
+
 #include <set>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "base/compiler_specific.h"
-#include "base/macros.h"
 #include "media/base/android/media_codec_direction.h"
 #include "media/base/audio_codecs.h"
 #include "media/base/media_export.h"
+#include "media/base/sample_format.h"
 #include "media/base/video_codecs.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "ui/gfx/geometry/size.h"
 
 namespace media {
-
-class MediaCodecBridge;
 
 // WARNING: Not all methods on this class can be used in the renderer process,
 // only those which do not attempt to use MediaCodec or MediaCodecList.
@@ -29,25 +31,9 @@ class MediaCodecBridge;
 class MEDIA_EXPORT MediaCodecUtil {
  public:
   static std::string CodecToAndroidMimeType(AudioCodec codec);
+  static std::string CodecToAndroidMimeType(AudioCodec codec,
+                                            SampleFormat sample_format);
   static std::string CodecToAndroidMimeType(VideoCodec codec);
-
-  // Returns true if MediaCodec is available on the device.
-  // All other static methods check IsAvailable() internally. There's no need
-  // to check IsAvailable() explicitly before calling them.
-  static bool IsMediaCodecAvailable();
-
-  // Returns true if MediaCodec is available, with |sdk| as the sdk version and
-  // |model| as the model.  This is provided for unit tests; you probably want
-  // IsMediaCodecAvailable() otherwise.
-  // TODO(liberato): merge this with IsMediaCodecAvailable, and provide a way
-  // to mock BuildInfo instead.
-  static bool IsMediaCodecAvailableFor(int sdk, const char* model);
-
-  // Returns true if MediaCodec.setParameters() is available on the device.
-  static bool SupportsSetParameters();
-
-  // Returns true if MediaCodec supports CBCS Encryption.
-  static bool PlatformSupportsCbcsEncryption(int sdk);
 
   // Indicates if the vp8 decoder or encoder is available on this device.
   static bool IsVp8DecoderAvailable();
@@ -69,6 +55,9 @@ class MEDIA_EXPORT MediaCodecUtil {
   static bool IsHEVCDecoderAvailable();
 #endif
 
+  // Indicates if the AAC encoder is available on this device.
+  static bool IsAACEncoderAvailable();
+
   // Indicates if SurfaceView and MediaCodec work well together on this device.
   static bool IsSurfaceViewOutputSupported();
 
@@ -78,6 +67,17 @@ class MEDIA_EXPORT MediaCodecUtil {
   // Return true if the compressed audio |codec| will pass through the media
   // pipelines without decompression.
   static bool IsPassthroughAudioFormat(AudioCodec codec);
+
+  // Returns a known alignment which can be used to translate visible size into
+  // coded size. E.g., a size of (1, 1) means no alignment while a size of
+  // (64, 1) would mean visible width should be rounded up to the nearest
+  // multiple of 64 and height should be left untouched.
+  //
+  // Returns absl::nullopt if the decoder isn't recognized. `host_sdk_int` may
+  // be set for testing purposes.
+  static absl::optional<gfx::Size> LookupCodedSizeAlignment(
+      std::string_view name,
+      absl::optional<int> host_sdk_int = absl::nullopt);
 
   //
   // ***************************************************************
@@ -95,16 +95,15 @@ class MEDIA_EXPORT MediaCodecUtil {
 
   // Indicates if the h264 encoder is available on this device.
   //
-  // WARNING: If |use_codec_list| is true, this can't be used from the renderer
-  // process since it attempts to access MediaCodecList (which requires
-  // permissions).
-  static bool IsH264EncoderAvailable(bool use_codec_list = true);
+  // This can't be used from the renderer process since it attempts to
+  // access MediaCodecList (which requires permissions).
+  static bool IsH264EncoderAvailable();
 
   // Returns a vector of supported codecs profiles and levels.
   //
   // WARNING: This can't be used from the renderer process since it attempts to
   // access MediaCodecList (which requires permissions).
-  static bool AddSupportedCodecProfileLevels(
+  static void AddSupportedCodecProfileLevels(
       std::vector<CodecProfileLevel>* out);
 
   // Get a list of encoder supported color formats for |mime_type|.
@@ -122,15 +121,6 @@ class MEDIA_EXPORT MediaCodecUtil {
   // create a MediaCodec (which requires permissions) to get the codec name.
   static bool IsKnownUnaccelerated(VideoCodec codec,
                                    MediaCodecDirection direction);
-
-  // Indicates if the decoder is known to fail when flushed. (b/8125974,
-  // b/8347958)
-  // When true, the client should work around the issue by releasing the
-  // decoder and instantiating a new one rather than flushing the current one.
-  //
-  // WARNING: This can't be used from the renderer process since it attempts to
-  // create a MediaCodec (which requires permissions) to get the codec name.
-  static bool CodecNeedsFlushWorkaround(MediaCodecBridge* codec);
 };
 
 }  // namespace media

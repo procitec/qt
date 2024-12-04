@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,9 +11,9 @@
 #include <bitset>
 #include <memory>
 
-#include "base/callback.h"
 #include "base/component_export.h"
-#include "base/macros.h"
+#include "base/functional/callback.h"
+#include "base/functional/callback_forward.h"
 #include "ui/events/ozone/evdev/cursor_delegate_evdev.h"
 #include "ui/events/ozone/evdev/event_device_util.h"
 #include "ui/events/ozone/evdev/event_dispatch_callback.h"
@@ -46,6 +46,12 @@ class COMPONENT_EXPORT(EVDEV) GestureInterpreterLibevdevCros
                                  CursorDelegateEvdev* cursor,
                                  GesturePropertyProvider* property_provider,
                                  DeviceEventDispatcherEvdev* dispatcher);
+
+  GestureInterpreterLibevdevCros(const GestureInterpreterLibevdevCros&) =
+      delete;
+  GestureInterpreterLibevdevCros& operator=(
+      const GestureInterpreterLibevdevCros&) = delete;
+
   ~GestureInterpreterLibevdevCros() override;
 
   // Overriden from ui::EventReaderLibevdevCros::Delegate
@@ -54,6 +60,13 @@ class COMPONENT_EXPORT(EVDEV) GestureInterpreterLibevdevCros
                            EventStateRec* evstate,
                            const timeval& time) override;
   void OnLibEvdevCrosStopped(Evdev* evdev, EventStateRec* state) override;
+  void SetupHapticButtonGeneration(
+      const base::RepeatingCallback<void(bool)>& callback) override;
+  void SetReceivedValidKeyboardInputCallback(
+      base::RepeatingCallback<void(uint64_t)> callback) override;
+
+  void SetReceivedValidMouseInputCallback(
+      base::RepeatingCallback<void(int)> callback) override;
 
   // Handler for gesture events generated from libgestures.
   void OnGestureReady(const Gesture* gesture);
@@ -99,6 +112,7 @@ class COMPONENT_EXPORT(EVDEV) GestureInterpreterLibevdevCros
   // True if the device may be regarded as a mouse. This includes normal mice
   // and multi-touch mice.
   bool is_mouse_ = false;
+  bool is_pointing_stick_ = false;
 
   // Shared cursor state.
   CursorDelegateEvdev* cursor_;
@@ -128,9 +142,16 @@ class COMPONENT_EXPORT(EVDEV) GestureInterpreterLibevdevCros
   // The number of pixels to count as one "tick" on a multitouch mouse.
   static const int kMultitouchMousePixelsPerTick = 50;
 
-  DISALLOW_COPY_AND_ASSIGN(GestureInterpreterLibevdevCros);
+  // Callback for physical button clicks.
+  base::RepeatingCallback<void(bool)> click_callback_;
+
+  // Callback for when a keyboard key press is registered.
+  base::RepeatingCallback<void(uint64_t)> received_keyboard_input_;
+
+  // Callback for when a mouse rel event is registered.
+  base::RepeatingCallback<void(int)> received_mouse_input_;
 };
 
-}  // namspace ui
+}  // namespace ui
 
 #endif  // UI_EVENTS_OZONE_EVDEV_LIBGESTURES_GLUE_GESTURE_INTERPRETER_LIBEVDEV_CROS_H_

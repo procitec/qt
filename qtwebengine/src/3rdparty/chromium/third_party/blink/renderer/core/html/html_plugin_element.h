@@ -35,12 +35,8 @@ namespace blink {
 class HTMLImageLoader;
 class LayoutEmbeddedContent;
 class LayoutEmbeddedObject;
+enum class NamedPropertySetterResult;
 class WebPluginContainerImpl;
-
-enum PreferPlugInsForImagesOption {
-  kShouldPreferPlugInsForImages,
-  kShouldNotPreferPlugInsForImages
-};
 
 class PluginParameters {
  public:
@@ -72,18 +68,6 @@ class CORE_EXPORT HTMLPlugInElement
 
   void SetFocused(bool, mojom::blink::FocusType) override;
   void ResetInstance();
-  // TODO(dcheng): Consider removing this, since HTMLEmbedElementLegacyCall
-  // and HTMLObjectElementLegacyCall usage is extremely low.
-  v8::Local<v8::Object> PluginWrapper();
-  // TODO(joelhockey): Clean up PluginEmbeddedContentView and
-  // OwnedEmbeddedContentView (maybe also PluginWrapper).  It would be good to
-  // remove and/or rename some of these. PluginEmbeddedContentView and
-  // OwnedPlugin both return the plugin that is stored as
-  // HTMLFrameOwnerElement::embedded_content_view_.  However
-  // PluginEmbeddedContentView will synchronously create the plugin if required
-  // by calling LayoutEmbeddedContentForJSBindings. Possibly the
-  // PluginEmbeddedContentView code can be inlined into PluginWrapper.
-  WebPluginContainerImpl* PluginEmbeddedContentView() const;
   WebPluginContainerImpl* OwnedPlugin() const;
   bool CanProcessDrag() const;
   const String& Url() const { return url_; }
@@ -97,18 +81,24 @@ class CORE_EXPORT HTMLPlugInElement
 
   bool ShouldAccelerate() const;
 
-  ParsedFeaturePolicy ConstructContainerPolicy() const override;
+  ParsedPermissionsPolicy ConstructContainerPolicy() const override;
 
   bool IsImageType() const;
   HTMLImageLoader* ImageLoader() const { return image_loader_.Get(); }
+  virtual bool UseFallbackContent() const;
+
+  ScriptValue AnonymousNamedGetter(const AtomicString&);
+  NamedPropertySetterResult AnonymousNamedSetter(const AtomicString&,
+                                                 const ScriptValue&);
 
  protected:
   HTMLPlugInElement(const QualifiedName& tag_name,
                     Document&,
-                    const CreateElementFlags,
-                    PreferPlugInsForImagesOption);
+                    const CreateElementFlags);
 
   // Node functions:
+  InsertionNotificationRequest InsertedInto(
+      ContainerNode& insertion_point) override;
   void RemovedFrom(ContainerNode& insertion_point) override;
   void DidMoveToNewDocument(Document& old_document) override;
   void AttachLayoutTree(AttachContext&) override;
@@ -121,7 +111,6 @@ class CORE_EXPORT HTMLPlugInElement
       MutableCSSPropertyValueSet*) override;
 
   virtual bool HasFallbackContent() const;
-  virtual bool UseFallbackContent() const;
   // Create or update the LayoutEmbeddedContent and return it, triggering layout
   // if necessary.
   virtual LayoutEmbeddedContent* LayoutEmbeddedContentForJSBindings() const;
@@ -167,12 +156,15 @@ class CORE_EXPORT HTMLPlugInElement
   void FinishParsingChildren() final;
 
   // Element overrides:
-  LayoutObject* CreateLayoutObject(const ComputedStyle&, LegacyLayout) override;
-  bool SupportsFocus() const final { return true; }
-  bool IsFocusableStyle() const final;
-  bool IsKeyboardFocusable() const final;
+  LayoutObject* CreateLayoutObject(const ComputedStyle&) override;
+  bool SupportsFocus(UpdateBehavior) const final { return true; }
+  bool IsFocusableStyle(UpdateBehavior update_behavior =
+                            UpdateBehavior::kStyleAndLayout) const final;
+  bool IsKeyboardFocusable(UpdateBehavior update_behavior =
+                               UpdateBehavior::kStyleAndLayout) const final;
   void DidAddUserAgentShadowRoot(ShadowRoot&) final;
-  scoped_refptr<ComputedStyle> CustomStyleForLayoutObject() final;
+  const ComputedStyle* CustomStyleForLayoutObject(
+      const StyleRecalcContext&) final;
 
   // HTMLElement overrides:
   bool HasCustomFocusLogic() const override;
@@ -181,6 +173,21 @@ class CORE_EXPORT HTMLPlugInElement
   // HTMLFrameOwnerElement overrides:
   void DisconnectContentFrame() override;
   void IntrinsicSizingInfoChanged() final;
+
+  // TODO(dcheng): Consider removing this, since HTMLEmbedElementLegacyCall
+  // and HTMLObjectElementLegacyCall usage is extremely low.
+  v8::Local<v8::Object> PluginWrapper();
+  // TODO(joelhockey): Clean up PluginEmbeddedContentView and
+  // OwnedEmbeddedContentView (maybe also PluginWrapper).  It would be good to
+  // remove and/or rename some of these. PluginEmbeddedContentView and
+  // OwnedPlugin both return the plugin that is stored as
+  // HTMLFrameOwnerElement::embedded_content_view_.  However
+  // PluginEmbeddedContentView will synchronously create the plugin if required
+  // by calling LayoutEmbeddedContentForJSBindings.  This can cause
+  // navigations, and it also means that two successive calls to
+  // PluginEmbeddedContentView might not return the same result.  Possibly the
+  // PluginEmbeddedContentView code can be inlined into PluginWrapper.
+  WebPluginContainerImpl* PluginEmbeddedContentView() const;
 
   // Return any existing LayoutEmbeddedContent without triggering relayout, or 0
   // if it doesn't yet exist.
@@ -192,8 +199,8 @@ class CORE_EXPORT HTMLPlugInElement
                   const PluginParameters& plugin_params,
                   bool use_fallback);
   // Perform checks after we have determined that a plugin will be used to
-  // show the object (i.e after allowedToLoadObject).
-  bool AllowedToLoadPlugin(const KURL&, const String& mime_type);
+  // show the object (i.e after `AllowedToLoadObject()`).
+  bool AllowedToLoadPlugin(const KURL&);
   // Perform checks based on the URL and MIME-type of the object to load.
   bool AllowedToLoadObject(const KURL&, const String& mime_type);
   void RemovePluginFromFrameView(WebPluginContainerImpl* plugin);
@@ -213,7 +220,6 @@ class CORE_EXPORT HTMLPlugInElement
 
   v8::Global<v8::Object> plugin_wrapper_;
   bool needs_plugin_update_;
-  bool should_prefer_plug_ins_for_images_;
   // Represents |layoutObject() && layoutObject()->isEmbeddedObject() &&
   // !layoutEmbeddedItem().showsUnavailablePluginIndicator()|.  We want to
   // avoid accessing |layoutObject()| in layoutObjectIsFocusable().

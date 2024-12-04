@@ -1,11 +1,11 @@
-// Copyright (c) 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef COMPONENTS_SYNC_PREFERENCES_TESTING_PREF_SERVICE_SYNCABLE_H_
 #define COMPONENTS_SYNC_PREFERENCES_TESTING_PREF_SERVICE_SYNCABLE_H_
 
-#include "base/macros.h"
+#include "base/memory/scoped_refptr.h"
 #include "components/prefs/testing_pref_service.h"
 #include "components/sync_preferences/pref_service_syncable.h"
 
@@ -33,22 +33,26 @@ class TestingPrefServiceSyncable
                                     user_prefs::PrefRegistrySyncable> {
  public:
   TestingPrefServiceSyncable();
-  TestingPrefServiceSyncable(TestingPrefStore* managed_prefs,
-                             TestingPrefStore* supervised_user_prefs,
-                             TestingPrefStore* extension_prefs,
-                             TestingPrefStore* user_prefs,
-                             TestingPrefStore* recommended_prefs,
-                             user_prefs::PrefRegistrySyncable* pref_registry,
-                             PrefNotifierImpl* pref_notifier);
+  TestingPrefServiceSyncable(
+      scoped_refptr<TestingPrefStore> managed_prefs,
+      scoped_refptr<TestingPrefStore> supervised_user_prefs,
+      scoped_refptr<TestingPrefStore> extension_prefs,
+      scoped_refptr<TestingPrefStore> standalone_browser_prefs,
+      scoped_refptr<TestingPrefStore> user_prefs,
+      scoped_refptr<TestingPrefStore> recommended_prefs,
+      scoped_refptr<user_prefs::PrefRegistrySyncable> pref_registry,
+      std::unique_ptr<PrefNotifierImpl> pref_notifier);
+
+  TestingPrefServiceSyncable(const TestingPrefServiceSyncable&) = delete;
+  TestingPrefServiceSyncable& operator=(const TestingPrefServiceSyncable&) =
+      delete;
+
   ~TestingPrefServiceSyncable() override;
 
   // This is provided as a convenience; on a production PrefService
   // you would do all registrations before constructing it, passing it
   // a PrefRegistry via its constructor (or via e.g. PrefServiceFactory).
   user_prefs::PrefRegistrySyncable* registry();
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(TestingPrefServiceSyncable);
 };
 
 }  // namespace sync_preferences
@@ -56,12 +60,14 @@ class TestingPrefServiceSyncable
 template <>
 TestingPrefServiceBase<sync_preferences::PrefServiceSyncable,
                        user_prefs::PrefRegistrySyncable>::
-    TestingPrefServiceBase(TestingPrefStore* managed_prefs,
-                           TestingPrefStore* supervised_user_prefs,
-                           TestingPrefStore* extension_prefs,
-                           TestingPrefStore* user_prefs,
-                           TestingPrefStore* recommended_prefs,
-                           user_prefs::PrefRegistrySyncable* pref_registry,
-                           PrefNotifierImpl* pref_notifier);
+    TestingPrefServiceBase(
+        scoped_refptr<TestingPrefStore> managed_prefs,
+        scoped_refptr<TestingPrefStore> supervised_user_prefs,
+        scoped_refptr<TestingPrefStore> extension_prefs,
+        scoped_refptr<TestingPrefStore> standalone_browser_prefs,
+        scoped_refptr<TestingPrefStore> user_prefs,
+        scoped_refptr<TestingPrefStore> recommended_prefs,
+        scoped_refptr<user_prefs::PrefRegistrySyncable> pref_registry,
+        PrefNotifierImpl* pref_notifier);
 
 #endif  // COMPONENTS_SYNC_PREFERENCES_TESTING_PREF_SERVICE_SYNCABLE_H_

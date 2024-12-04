@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -18,8 +18,7 @@ GPUPipelineLayout* GPUPipelineLayout::Create(
   DCHECK(device);
   DCHECK(webgpu_desc);
 
-  uint32_t bind_group_layout_count =
-      static_cast<uint32_t>(webgpu_desc->bindGroupLayouts().size());
+  size_t bind_group_layout_count = webgpu_desc->bindGroupLayouts().size();
 
   std::unique_ptr<WGPUBindGroupLayout[]> bind_group_layouts =
       bind_group_layout_count != 0 ? AsDawnType(webgpu_desc->bindGroupLayouts())
@@ -35,20 +34,16 @@ GPUPipelineLayout* GPUPipelineLayout::Create(
     dawn_desc.label = label.c_str();
   }
 
-  return MakeGarbageCollected<GPUPipelineLayout>(
+  GPUPipelineLayout* layout = MakeGarbageCollected<GPUPipelineLayout>(
       device, device->GetProcs().deviceCreatePipelineLayout(device->GetHandle(),
                                                             &dawn_desc));
+  if (webgpu_desc->hasLabel())
+    layout->setLabel(webgpu_desc->label());
+  return layout;
 }
 
 GPUPipelineLayout::GPUPipelineLayout(GPUDevice* device,
                                      WGPUPipelineLayout pipeline_layout)
     : DawnObject<WGPUPipelineLayout>(device, pipeline_layout) {}
-
-GPUPipelineLayout::~GPUPipelineLayout() {
-  if (IsDawnControlClientDestroyed()) {
-    return;
-  }
-  GetProcs().pipelineLayoutRelease(GetHandle());
-}
 
 }  // namespace blink

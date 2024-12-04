@@ -1,10 +1,11 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/public/common/frame/user_activation_state.h"
-#include "third_party/blink/public/mojom/frame/user_activation_notification_type.mojom-blink.h"
+#include "third_party/blink/public/mojom/frame/user_activation_notification_type.mojom.h"
 
+#include "base/time/time.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace blink {
@@ -17,7 +18,7 @@ class UserActivationStateTest : public testing::Test {
   }
 
   static base::TimeTicks Now() {
-    now_ticks_ += base::TimeDelta::FromMilliseconds(1);
+    now_ticks_ += base::Microseconds(1);
     return now_ticks_;
   }
 
@@ -43,8 +44,7 @@ TEST_F(UserActivationStateTest, ConsumptionTest) {
   EXPECT_FALSE(user_activation_state.ConsumeIfActive());
   EXPECT_FALSE(user_activation_state.ConsumeIfActive());
 
-  user_activation_state.Activate(
-      mojom::blink::UserActivationNotificationType::kTest);
+  user_activation_state.Activate(mojom::UserActivationNotificationType::kTest);
 
   // After activation, both sticky and transient bits are set, and consumption
   // attempt succeeds once.
@@ -61,28 +61,32 @@ TEST_F(UserActivationStateTest, ConsumptionTest) {
   EXPECT_FALSE(user_activation_state.ConsumeIfActive());
 }
 
+// MSan changes the timing of user activations, so skip this test.  We could
+// memorize the changes, but they're arbitrary and not worth enforcing.  We
+// could also move the timeouts into a header, but there's value in having
+// them hardcoded here in case of accidental changes to the timeout.
+#if !defined(MEMORY_SANITIZER)
 TEST_F(UserActivationStateTest, ExpirationTest) {
   UserActivationState user_activation_state;
 
-  user_activation_state.Activate(
-      mojom::blink::UserActivationNotificationType::kTest);
+  user_activation_state.Activate(mojom::UserActivationNotificationType::kTest);
 
   // Right before activation expiry, both bits remain set.
-  AdvanceClock(base::TimeDelta::FromMilliseconds(4995));
+  AdvanceClock(base::Milliseconds(4995));
   EXPECT_TRUE(user_activation_state.HasBeenActive());
   EXPECT_TRUE(user_activation_state.IsActive());
 
   // Right after activation expiry, only the transient bit gets reset.
-  AdvanceClock(base::TimeDelta::FromMilliseconds(10));
+  AdvanceClock(base::Milliseconds(10));
   EXPECT_TRUE(user_activation_state.HasBeenActive());
   EXPECT_FALSE(user_activation_state.IsActive());
 }
+#endif  // !MEMORY_SANITIZER
 
 TEST_F(UserActivationStateTest, ClearingTest) {
   UserActivationState user_activation_state;
 
-  user_activation_state.Activate(
-      mojom::blink::UserActivationNotificationType::kTest);
+  user_activation_state.Activate(mojom::UserActivationNotificationType::kTest);
 
   EXPECT_TRUE(user_activation_state.HasBeenActive());
   EXPECT_TRUE(user_activation_state.IsActive());
@@ -93,38 +97,38 @@ TEST_F(UserActivationStateTest, ClearingTest) {
   EXPECT_FALSE(user_activation_state.IsActive());
 }
 
+// MSan changes the timing of user activations, so skip this test.  We could
+// memorize the changes, but they're arbitrary and not worth enforcing.  We
+// could also move the timeouts into a header, but there's value in having
+// them hardcoded here in case of accidental changes to the timeout.
+#if !defined(MEMORY_SANITIZER)
 TEST_F(UserActivationStateTest, ConsumptionPlusExpirationTest) {
   UserActivationState user_activation_state;
 
   // An activation is consumable before expiry.
-  user_activation_state.Activate(
-      mojom::blink::UserActivationNotificationType::kTest);
-  AdvanceClock(base::TimeDelta::FromMilliseconds(900));
+  user_activation_state.Activate(mojom::UserActivationNotificationType::kTest);
+  AdvanceClock(base::Milliseconds(900));
   EXPECT_TRUE(user_activation_state.ConsumeIfActive());
 
   // An activation is not consumable after expiry.
-  user_activation_state.Activate(
-      mojom::blink::UserActivationNotificationType::kTest);
-  AdvanceClock(base::TimeDelta::FromSeconds(5));
+  user_activation_state.Activate(mojom::UserActivationNotificationType::kTest);
+  AdvanceClock(base::Seconds(5));
   EXPECT_FALSE(user_activation_state.ConsumeIfActive());
 
   // Consecutive activations within expiry is consumable only once.
-  user_activation_state.Activate(
-      mojom::blink::UserActivationNotificationType::kTest);
-  AdvanceClock(base::TimeDelta::FromMilliseconds(900));
-  user_activation_state.Activate(
-      mojom::blink::UserActivationNotificationType::kTest);
+  user_activation_state.Activate(mojom::UserActivationNotificationType::kTest);
+  AdvanceClock(base::Milliseconds(900));
+  user_activation_state.Activate(mojom::UserActivationNotificationType::kTest);
   EXPECT_TRUE(user_activation_state.ConsumeIfActive());
   EXPECT_FALSE(user_activation_state.ConsumeIfActive());
 
   // Non-consecutive activations within expiry is consumable separately.
-  user_activation_state.Activate(
-      mojom::blink::UserActivationNotificationType::kTest);
+  user_activation_state.Activate(mojom::UserActivationNotificationType::kTest);
   EXPECT_TRUE(user_activation_state.ConsumeIfActive());
-  AdvanceClock(base::TimeDelta::FromSeconds(900));
-  user_activation_state.Activate(
-      mojom::blink::UserActivationNotificationType::kTest);
+  AdvanceClock(base::Seconds(900));
+  user_activation_state.Activate(mojom::UserActivationNotificationType::kTest);
   EXPECT_TRUE(user_activation_state.ConsumeIfActive());
 }
+#endif  // !MEMORY_SANITIZER
 
 }  // namespace blink

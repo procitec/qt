@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,17 +9,16 @@
 #include <utility>
 
 #include "base/at_exit.h"
-#include "base/bind.h"
 #include "base/cancelable_callback.h"
 #include "base/command_line.h"
 #include "base/files/file_util.h"
+#include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/message_loop/message_pump_type.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
-#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/current_thread.h"
 #include "base/task/single_thread_task_executor.h"
@@ -27,8 +26,8 @@
 #include "build/build_config.h"
 #include "components/wifi/wifi_service.h"
 
-#if defined(OS_APPLE)
-#include "base/mac/scoped_nsautorelease_pool.h"
+#if BUILDFLAG(IS_APPLE)
+#include "base/apple/scoped_nsautorelease_pool.h"
 #endif
 
 namespace wifi {
@@ -55,13 +54,13 @@ class WiFiTest {
     DCHECK_NE(RESULT_PENDING, result);
     result_ = result;
     if (base::CurrentThread::Get())
-      base::RunLoop::QuitCurrentWhenIdleDeprecated();
+      loop_.QuitWhenIdle();
   }
 
   void OnNetworksChanged(
       const WiFiService::NetworkGuidList& network_guid_list) {
     VLOG(0) << "Networks Changed: " << network_guid_list[0];
-    base::DictionaryValue properties;
+    base::Value::Dict properties;
     std::string error;
     wifi_service_->GetProperties(network_guid_list[0], &properties, &error);
     VLOG(0) << error << ":\n" << properties;
@@ -72,17 +71,13 @@ class WiFiTest {
     VLOG(0) << "Network List Changed: " << network_guid_list.size();
   }
 
-#if defined(OS_APPLE)
-  // Without this there will be a mem leak on osx.
-  base::mac::ScopedNSAutoreleasePool scoped_pool_;
-#endif
-
   std::unique_ptr<WiFiService> wifi_service_;
 
   // Need AtExitManager to support AsWeakPtr (in NetLog).
   base::AtExitManager exit_manager_;
 
   Result result_;
+  base::RunLoop loop_;
 };
 
 WiFiTest::Result WiFiTest::Main(int argc, const char* argv[]) {
@@ -123,14 +118,14 @@ bool WiFiTest::ParseCommandLine(int argc, const char* argv[]) {
       parsed_command_line.GetSwitchValueASCII("security");
 
   if (parsed_command_line.GetArgs().size() == 1) {
-#if defined(OS_WIN)
-    network_guid = base::UTF16ToASCII(parsed_command_line.GetArgs()[0]);
+#if BUILDFLAG(IS_WIN)
+    network_guid = base::WideToASCII(parsed_command_line.GetArgs()[0]);
 #else
     network_guid = parsed_command_line.GetArgs()[0];
 #endif
   }
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   if (parsed_command_line.HasSwitch("debug"))
     MessageBoxA(nullptr, __FUNCTION__, "Debug Me!", MB_OK);
 #endif
@@ -141,15 +136,16 @@ bool WiFiTest::ParseCommandLine(int argc, const char* argv[]) {
   wifi_service_->Initialize(executor.task_runner());
 
   if (parsed_command_line.HasSwitch("list")) {
-    base::ListValue network_list;
-    wifi_service_->GetVisibleNetworks(std::string(), &network_list, true);
+    base::Value::List network_list;
+    wifi_service_->GetVisibleNetworks(std::string(), /*include_details=*/true,
+                                      &network_list);
     VLOG(0) << network_list;
     return true;
   }
 
   if (parsed_command_line.HasSwitch("get_properties")) {
     if (network_guid.length() > 0) {
-      base::DictionaryValue properties;
+      base::Value::Dict properties;
       std::string error;
       wifi_service_->GetProperties(network_guid, &properties, &error);
       VLOG(0) << error << ":\n" << properties;
@@ -158,29 +154,28 @@ bool WiFiTest::ParseCommandLine(int argc, const char* argv[]) {
   }
 
   // Optional properties (frequency, password) to use for connect or create.
-  std::unique_ptr<base::DictionaryValue> properties(
-      new base::DictionaryValue());
+  base::Value::Dict properties;
 
   if (!frequency.empty()) {
     int value = 0;
     if (base::StringToInt(frequency, &value)) {
-      properties->SetInteger("WiFi.Frequency", value);
+      properties.Set("WiFi.Frequency", value);
       // fall through to connect.
     }
   }
 
   if (!password.empty())
-    properties->SetString("WiFi.Passphrase", password);
+    properties.Set("WiFi.Passphrase", password);
 
   if (!security.empty())
-    properties->SetString("WiFi.Security", security);
+    properties.Set("WiFi.Security", security);
 
   if (parsed_command_line.HasSwitch("create")) {
     if (!network_guid.empty()) {
       std::string error;
       std::string new_network_guid;
-      properties->SetString("WiFi.SSID", network_guid);
-      VLOG(0) << "Creating Network: " << *properties;
+      properties.Set("WiFi.SSID", network_guid);
+      VLOG(0) << "Creating Network: " << properties;
       wifi_service_->CreateNetwork(false, std::move(properties),
                                    &new_network_guid, &error);
       VLOG(0) << error << ":\n" << new_network_guid;
@@ -191,8 +186,8 @@ bool WiFiTest::ParseCommandLine(int argc, const char* argv[]) {
   if (parsed_command_line.HasSwitch("connect")) {
     if (!network_guid.empty()) {
       std::string error;
-      if (!properties->empty()) {
-        VLOG(0) << "Using connect properties: " << *properties;
+      if (!properties.empty()) {
+        VLOG(0) << "Using connect properties: " << properties;
         wifi_service_->SetProperties(network_guid, std::move(properties),
                                      &error);
       }
@@ -207,7 +202,7 @@ bool WiFiTest::ParseCommandLine(int argc, const char* argv[]) {
       wifi_service_->StartConnect(network_guid, &error);
       VLOG(0) << error;
       if (error.empty())
-        base::RunLoop().Run();
+        loop_.Run();
       return true;
     }
   }
@@ -239,7 +234,7 @@ bool WiFiTest::ParseCommandLine(int argc, const char* argv[]) {
         base::BindRepeating(&WiFiTest::OnNetworkListChanged,
                             base::Unretained(this)));
     wifi_service_->RequestNetworkScan();
-    base::RunLoop().Run();
+    loop_.Run();
     return true;
   }
 
@@ -265,6 +260,11 @@ int main(int argc, const char* argv[]) {
   settings.logging_dest =
       logging::LOG_TO_SYSTEM_DEBUG_LOG | logging::LOG_TO_STDERR;
   logging::InitLogging(settings);
+
+#if BUILDFLAG(IS_APPLE)
+  // Without this there will be a memory leak on the Mac.
+  base::apple::ScopedNSAutoreleasePool pool;
+#endif
 
   wifi::WiFiTest wifi_test;
   return wifi_test.Main(argc, argv);

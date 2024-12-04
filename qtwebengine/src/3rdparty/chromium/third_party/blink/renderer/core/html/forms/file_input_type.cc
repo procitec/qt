@@ -24,6 +24,7 @@
 
 #include "third_party/blink/public/platform/file_path_conversion.h"
 #include "third_party/blink/public/strings/grit/blink_strings.h"
+#include "third_party/blink/renderer/core/accessibility/ax_object_cache.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
 #include "third_party/blink/renderer/core/dom/shadow_root.h"
 #include "third_party/blink/renderer/core/events/keyboard_event.h"
@@ -37,14 +38,14 @@
 #include "third_party/blink/renderer/core/html_names.h"
 #include "third_party/blink/renderer/core/input_type_names.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
-#include "third_party/blink/renderer/core/layout/layout_block_flow.h"
-#include "third_party/blink/renderer/core/layout/layout_object_factory.h"
+#include "third_party/blink/renderer/core/keywords.h"
+#include "third_party/blink/renderer/core/layout/layout_ng_block_flow.h"
 #include "third_party/blink/renderer/core/page/chrome_client.h"
 #include "third_party/blink/renderer/core/page/drag_data.h"
 #include "third_party/blink/renderer/core/probe/core_probes.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/file_metadata.h"
-#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/text/platform_locale.h"
@@ -62,7 +63,7 @@ Vector<String> CollectAcceptTypes(const HTMLInputElement& input) {
   Vector<String> extensions = input.AcceptFileExtensions();
 
   Vector<String> accept_types;
-  accept_types.ReserveCapacity(mime_types.size() + extensions.size());
+  accept_types.reserve(mime_types.size() + extensions.size());
   accept_types.AppendVector(mime_types);
   accept_types.AppendVector(extensions);
   return accept_types;
@@ -71,7 +72,7 @@ Vector<String> CollectAcceptTypes(const HTMLInputElement& input) {
 }  // namespace
 
 FileInputType::FileInputType(HTMLInputElement& element)
-    : InputType(element),
+    : InputType(Type::kFile, element),
       KeyboardClickableInputTypeView(element),
       file_list_(MakeGarbageCollected<FileList>()) {}
 
@@ -97,18 +98,29 @@ VectorType CreateFilesFrom(const FormControlState& state,
   return files;
 }
 
+template <typename ItemType, typename VectorType>
+VectorType CreateFilesFrom(const FormControlState& state,
+                           ExecutionContext* execution_context,
+                           ItemType (*factory)(ExecutionContext*,
+                                               const FormControlState&,
+                                               wtf_size_t&)) {
+  VectorType files;
+  files.ReserveInitialCapacity(state.ValueSize() / 3);
+  for (wtf_size_t i = 0; i < state.ValueSize();) {
+    files.push_back(factory(execution_context, state, i));
+  }
+  return files;
+}
+
 Vector<String> FileInputType::FilesFromFormControlState(
     const FormControlState& state) {
   return CreateFilesFrom<String, Vector<String>>(state,
                                                  &File::PathFromControlState);
 }
 
-const AtomicString& FileInputType::FormControlType() const {
-  return input_type_names::kFile;
-}
-
 FormControlState FileInputType::SaveFormControlState() const {
-  if (file_list_->IsEmpty())
+  if (file_list_->IsEmpty() ||
+      GetElement().GetDocument().GetFormController().DropReferencedFilePaths())
     return FormControlState();
   FormControlState state;
   unsigned num_files = file_list_->length();
@@ -120,21 +132,23 @@ FormControlState FileInputType::SaveFormControlState() const {
 void FileInputType::RestoreFormControlState(const FormControlState& state) {
   if (state.ValueSize() % 3)
     return;
+  ExecutionContext* execution_context = GetElement().GetExecutionContext();
   HeapVector<Member<File>> file_vector =
       CreateFilesFrom<File*, HeapVector<Member<File>>>(
-          state, &File::CreateFromControlState);
+          state, execution_context, &File::CreateFromControlState);
   auto* file_list = MakeGarbageCollected<FileList>();
   for (const auto& file : file_vector)
     file_list->Append(file);
-  SetFilesAndDispatchEvents(file_list);
+  SetFiles(file_list);
 }
 
 void FileInputType::AppendToFormData(FormData& form_data) const {
   FileList* file_list = GetElement().files();
   unsigned num_files = file_list->length();
+  ExecutionContext* context = GetElement().GetExecutionContext();
   if (num_files == 0) {
     form_data.AppendFromElement(GetElement().GetName(),
-                                MakeGarbageCollected<File>(""));
+                                MakeGarbageCollected<File>(context, ""));
     return;
   }
 
@@ -144,7 +158,7 @@ void FileInputType::AppendToFormData(FormData& form_data) const {
 }
 
 bool FileInputType::ValueMissing(const String& value) const {
-  return GetElement().IsRequired() && value.IsEmpty();
+  return GetElement().IsRequired() && value.empty();
 }
 
 String FileInputType::ValueMissingText() const {
@@ -169,10 +183,18 @@ void FileInputType::HandleDOMActivateEvent(Event& event) {
     return;
   }
 
+  OpenPopupView();
+  event.SetDefaultHandled();
+}
+
+void FileInputType::OpenPopupView() {
+  HTMLInputElement& input = GetElement();
+  Document& document = input.GetDocument();
+
   bool intercepted = false;
-  probe::FileChooserOpened(document.GetFrame(), &input, &intercepted);
+  probe::FileChooserOpened(document.GetFrame(), &input, input.Multiple(),
+                           &intercepted);
   if (intercepted) {
-    event.SetDefaultHandled();
     return;
   }
 
@@ -200,17 +222,14 @@ void FileInputType::HandleDOMActivateEvent(Event& event) {
                       : WebFeature::kInputTypeFileInsecureOriginOpenChooser);
     chrome_client->OpenFileChooser(document.GetFrame(), NewFileChooser(params));
   }
-  event.SetDefaultHandled();
 }
 
-void FileInputType::CustomStyleForLayoutObject(ComputedStyle& style) {
-  style.SetShouldIgnoreOverflowPropertyForInlineBlockBaseline();
+void FileInputType::AdjustStyle(ComputedStyleBuilder& builder) {
+  builder.SetShouldIgnoreOverflowPropertyForInlineBlockBaseline();
 }
 
-LayoutObject* FileInputType::CreateLayoutObject(const ComputedStyle& style,
-                                                LegacyLayout legacy) const {
-  return LayoutObjectFactory::CreateFileUploadControl(GetElement(), style,
-                                                      legacy);
+LayoutObject* FileInputType::CreateLayoutObject(const ComputedStyle&) const {
+  return MakeGarbageCollected<LayoutNGBlockFlow>(&GetElement());
 }
 
 InputType::ValueMode FileInputType::GetValueMode() const {
@@ -231,7 +250,7 @@ bool FileInputType::CanSetValue(const String& value) {
   // the value attribute isn't applicable to the file upload control at all, but
   // for now we are keeping this behavior to avoid breaking existing websites
   // that may be relying on this.
-  return value.IsEmpty();
+  return value.empty();
 }
 
 String FileInputType::ValueInFilenameValueMode() const {
@@ -259,7 +278,8 @@ void FileInputType::SetValue(const String&,
   UpdateView();
 }
 
-FileList* FileInputType::CreateFileList(const FileChooserFileInfoList& files,
+FileList* FileInputType::CreateFileList(ExecutionContext& context,
+                                        const FileChooserFileInfoList& files,
                                         const base::FilePath& base_dir) {
   auto* file_list(MakeGarbageCollected<FileList>());
   wtf_size_t size = files.size();
@@ -287,7 +307,7 @@ FileList* FileInputType::CreateFileList(const FileChooserFileInfoList& files,
       String relative_path =
           string_path.Substring(root_length).Replace('\\', '/');
       file_list->Append(
-          File::CreateWithRelativePath(string_path, relative_path));
+          File::CreateWithRelativePath(&context, string_path, relative_path));
     }
     return file_list;
   }
@@ -295,7 +315,7 @@ FileList* FileInputType::CreateFileList(const FileChooserFileInfoList& files,
   for (const auto& file : files) {
     if (file->is_native_file()) {
       file_list->Append(File::CreateForUserProvidedFile(
-          FilePathToString(file->get_native_file()->file_path),
+          &context, FilePathToString(file->get_native_file()->file_path),
           file->get_native_file()->display_name));
     } else {
       const auto& fs_info = file->get_file_system();
@@ -304,8 +324,8 @@ FileList* FileInputType::CreateFileList(const FileChooserFileInfoList& files,
           NullableTimeToOptionalTime(fs_info->modification_time);
       metadata.length = fs_info->length;
       metadata.type = FileMetadata::kTypeFile;
-      file_list->Append(File::CreateForFileSystemFile(fs_info->url, metadata,
-                                                      File::kIsUserVisible));
+      file_list->Append(File::CreateForFileSystemFile(
+          context, fs_info->url, metadata, File::kIsUserVisible));
     }
   }
   return file_list;
@@ -323,39 +343,40 @@ void FileInputType::CreateShadowSubtree() {
   DCHECK(IsShadowHost(GetElement()));
   Document& document = GetElement().GetDocument();
 
-  auto* button =
-      MakeGarbageCollected<HTMLInputElement>(document, CreateElementFlags());
+  auto* button = MakeGarbageCollected<HTMLInputElement>(document);
   button->setType(input_type_names::kButton);
   button->setAttribute(
       html_names::kValueAttr,
       AtomicString(GetLocale().QueryString(
           GetElement().Multiple() ? IDS_FORM_MULTIPLE_FILES_BUTTON_LABEL
                                   : IDS_FORM_FILE_BUTTON_LABEL)));
-  button->SetShadowPseudoId(AtomicString("-webkit-file-upload-button"));
+  button->SetShadowPseudoId(shadow_element_names::kPseudoFileUploadButton);
   button->setAttribute(html_names::kIdAttr,
                        shadow_element_names::kIdFileUploadButton);
   button->SetActive(GetElement().CanReceiveDroppedFiles());
   GetElement().UserAgentShadowRoot()->AppendChild(button);
 
-  // The following element is used only in LayoutNG.
-  // See LayoutFileUploadControl::IsChildAllowed().
   auto* span = document.CreateRawElement(html_names::kSpanTag);
-  // This element is hidden from AX trees for a historical reason.
-  span->setAttribute(html_names::kAriaHiddenAttr, "true");
   GetElement().UserAgentShadowRoot()->AppendChild(span);
+
+  // The file input element is presented to AX as one node with the role button,
+  // instead of the individual button and text nodes. That's the reason we hide
+  // the shadow root elements of the file input in the AX tree.
+  button->setAttribute(html_names::kAriaHiddenAttr, keywords::kTrue);
+  span->setAttribute(html_names::kAriaHiddenAttr, keywords::kTrue);
 
   UpdateView();
 }
 
 HTMLInputElement* FileInputType::UploadButton() const {
-  Element* element = GetElement().UserAgentShadowRoot()->getElementById(
+  Element* element = GetElement().EnsureShadowSubtree()->getElementById(
       shadow_element_names::kIdFileUploadButton);
   CHECK(!element || IsA<HTMLInputElement>(element));
   return To<HTMLInputElement>(element);
 }
 
 Node* FileInputType::FileStatusElement() const {
-  return GetElement().UserAgentShadowRoot()->lastChild();
+  return GetElement().EnsureShadowSubtree()->lastChild();
 }
 
 void FileInputType::DisabledAttributeChanged() {
@@ -408,8 +429,11 @@ void FileInputType::SetFilesAndDispatchEvents(FileList* files) {
     GetElement().DispatchInputEvent();
     GetElement().DispatchChangeEvent();
     if (AXObjectCache* cache =
-            GetElement().GetDocument().ExistingAXObjectCache())
+            GetElement().GetDocument().ExistingAXObjectCache()) {
       cache->HandleValueChanged(&GetElement());
+    }
+  } else {
+    GetElement().DispatchCancelEvent();
   }
 }
 
@@ -419,15 +443,17 @@ void FileInputType::FilesChosen(FileChooserFileInfoList files,
     // Drop files of which names can not be converted to WTF String. We
     // can't expose such files via File API.
     if (files[i]->is_native_file() &&
-        FilePathToString(files[i]->get_native_file()->file_path).IsEmpty()) {
+        FilePathToString(files[i]->get_native_file()->file_path).empty()) {
       files.EraseAt(i);
       // Do not increment |i|.
       continue;
     }
     ++i;
   }
-  if (!will_be_destroyed_)
-    SetFilesAndDispatchEvents(CreateFileList(files, base_dir));
+  if (!will_be_destroyed_) {
+    SetFilesAndDispatchEvents(
+        CreateFileList(*GetElement().GetExecutionContext(), files, base_dir));
+  }
   if (HasConnectedFileChooser())
     DisconnectFileChooser();
 }
@@ -447,7 +473,7 @@ void FileInputType::SetFilesFromDirectory(const String& path) {
 }
 
 void FileInputType::SetFilesFromPaths(const Vector<String>& paths) {
-  if (paths.IsEmpty())
+  if (paths.empty())
     return;
 
   HTMLInputElement& input = GetElement();
@@ -472,7 +498,7 @@ void FileInputType::SetFilesFromPaths(const Vector<String>& paths) {
 bool FileInputType::ReceiveDroppedFiles(const DragData* drag_data) {
   Vector<String> paths;
   drag_data->AsFilePaths(paths);
-  if (paths.IsEmpty())
+  if (paths.empty())
     return false;
 
   if (!GetElement().FastHasAttribute(html_names::kWebkitdirectoryAttr)) {
@@ -557,10 +583,6 @@ String FileInputType::FileStatusText() const {
 }
 
 void FileInputType::UpdateView() {
-  auto* layout_object = GetElement().GetLayoutObject();
-  if (layout_object && layout_object->IsFileUploadControl())
-    layout_object->SetShouldDoFullPaintInvalidation();
-
   if (auto* span = FileStatusElement())
     span->setTextContent(FileStatusText());
 }

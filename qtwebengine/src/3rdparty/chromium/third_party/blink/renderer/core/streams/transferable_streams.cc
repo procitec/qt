@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,10 +7,11 @@
 
 #include "third_party/blink/renderer/core/streams/transferable_streams.h"
 
-#include "base/stl_util.h"
-#include "third_party/blink/renderer/bindings/core/v8/to_v8_for_core.h"
+#include "third_party/blink/renderer/bindings/core/v8/script_function.h"
+#include "third_party/blink/renderer/bindings/core/v8/to_v8_traits.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_dom_exception.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_post_message_options.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_readable_stream_default_controller.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_throw_dom_exception.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
 #include "third_party/blink/renderer/core/dom/events/native_event_listener.h"
@@ -18,18 +19,23 @@
 #include "third_party/blink/renderer/core/messaging/message_port.h"
 #include "third_party/blink/renderer/core/streams/miscellaneous_operations.h"
 #include "third_party/blink/renderer/core/streams/promise_handler.h"
+#include "third_party/blink/renderer/core/streams/read_request.h"
 #include "third_party/blink/renderer/core/streams/readable_stream.h"
 #include "third_party/blink/renderer/core/streams/readable_stream_default_controller.h"
+#include "third_party/blink/renderer/core/streams/readable_stream_default_controller_with_script_scope.h"
+#include "third_party/blink/renderer/core/streams/readable_stream_transferring_optimizer.h"
 #include "third_party/blink/renderer/core/streams/stream_algorithms.h"
 #include "third_party/blink/renderer/core/streams/stream_promise_resolver.h"
+#include "third_party/blink/renderer/core/streams/underlying_source_base.h"
 #include "third_party/blink/renderer/core/streams/writable_stream.h"
 #include "third_party/blink/renderer/core/streams/writable_stream_default_controller.h"
+#include "third_party/blink/renderer/core/streams/writable_stream_transferring_optimizer.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
 #include "third_party/blink/renderer/platform/bindings/v8_binding.h"
-#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/bindings/v8_throw_exception.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/heap/visitor.h"
-#include "third_party/blink/renderer/platform/wtf/assertions.h"
 #include "v8/include/v8.h"
 
 // See the design doc at
@@ -50,6 +56,12 @@ namespace blink {
 
 namespace {
 
+template <typename T, typename... Args>
+ScriptFunction* CreateFunction(ScriptState* script_state, Args&&... args) {
+  return MakeGarbageCollected<ScriptFunction>(
+      script_state, MakeGarbageCollected<T>(std::forward<Args>(args)...));
+}
+
 // These are the types of messages that are sent between peers.
 enum class MessageType { kPull, kChunk, kClose, kError };
 
@@ -64,10 +76,10 @@ v8::Local<v8::Object> CreateKeyValueObject(v8::Isolate* isolate,
   v8::Local<v8::Name> names[] = {V8AtomicString(isolate, key1),
                                  V8AtomicString(isolate, key2)};
   v8::Local<v8::Value> values[] = {value1, value2};
-  static_assert(base::size(names) == base::size(values),
+  static_assert(std::size(names) == std::size(values),
                 "names and values arrays must be the same size");
   return v8::Object::New(isolate, v8::Null(isolate), names, values,
-                         base::size(names));
+                         std::size(names));
 }
 
 // Unpacks an object created by CreateKeyValueObject(). |value1| and |value2|
@@ -98,9 +110,11 @@ void PackAndPostMessage(ScriptState* script_state,
                         MessagePort* port,
                         MessageType type,
                         v8::Local<v8::Value> value,
+                        AllowPerChunkTransferring allow_per_chunk_transferring,
                         ExceptionState& exception_state) {
   DVLOG(3) << "PackAndPostMessage sending message type "
            << static_cast<int>(type);
+  v8::Context::Scope v8_context_scope(script_state->GetContext());
   auto* isolate = script_state->GetIsolate();
 
   // https://streams.spec.whatwg.org/#abstract-opdef-packandpostmessage
@@ -111,13 +125,23 @@ void PackAndPostMessage(ScriptState* script_state,
       isolate, "t", v8::Number::New(isolate, static_cast<int>(type)), "v",
       value);
 
+  // 5. Let options be «[ "transfer" → « » ]».
+  PostMessageOptions* options = PostMessageOptions::Create();
+  if (allow_per_chunk_transferring && type == MessageType::kChunk) {
+    // Here we set a non-empty transfer list: This is a non-standardized and
+    // non-default behavior, and the one who set `allow_per_chunk_transferring`
+    // to true must guarantee the validity.
+    HeapVector<ScriptValue> transfer;
+    transfer.push_back(ScriptValue(isolate, value));
+    options->setTransfer(transfer);
+  }
+
   // 4. Let targetPort be the port with which port is entangled, if any;
   //    otherwise let it be null.
-  // 5. Let options be «[ "transfer" → « » ]».
   // 6. Run the message port post message steps providing targetPort, message,
   //    and options.
-  port->postMessage(script_state, ScriptValue(isolate, packed),
-                    PostMessageOptions::Create(), exception_state);
+  port->postMessage(script_state, ScriptValue(isolate, packed), options,
+                    exception_state);
 }
 
 // Sends a kError message to the remote side, disregarding failure.
@@ -125,12 +149,12 @@ void CrossRealmTransformSendError(ScriptState* script_state,
                                   MessagePort* port,
                                   v8::Local<v8::Value> error) {
   ExceptionState exception_state(script_state->GetIsolate(),
-                                 ExceptionState::kUnknownContext, "", "");
+                                 ExceptionContextType::kUnknown, "", "");
 
   // https://streams.spec.whatwg.org/#abstract-opdef-crossrealmtransformsenderror
   // 1. Perform PackAndPostMessage(port, "error", error), discarding the result.
   PackAndPostMessage(script_state, port, MessageType::kError, error,
-                     exception_state);
+                     AllowPerChunkTransferring(false), exception_state);
   if (exception_state.HadException()) {
     DLOG(WARNING) << "Disregarding exception while sending error";
     exception_state.ClearException();
@@ -145,17 +169,20 @@ void CrossRealmTransformSendError(ScriptState* script_state,
 // verbosity at the calling sites. The function returns true for a normal
 // completion and false for an abrupt completion.When there's an abrupt
 // completion result.[[Value]] is stored into |error|.
-bool PackAndPostMessageHandlingError(ScriptState* script_state,
-                                     MessagePort* port,
-                                     MessageType type,
-                                     v8::Local<v8::Value> value,
-                                     v8::Local<v8::Value>* error) {
+bool PackAndPostMessageHandlingError(
+    ScriptState* script_state,
+    MessagePort* port,
+    MessageType type,
+    v8::Local<v8::Value> value,
+    AllowPerChunkTransferring allow_per_chunk_transferring,
+    v8::Local<v8::Value>* error) {
   ExceptionState exception_state(script_state->GetIsolate(),
-                                 ExceptionState::kUnknownContext, "", "");
+                                 ExceptionContextType::kUnknown, "", "");
 
   // https://streams.spec.whatwg.org/#abstract-opdef-packandpostmessagehandlingerror
   // 1. Let result be PackAndPostMessage(port, type, value).
-  PackAndPostMessage(script_state, port, type, value, exception_state);
+  PackAndPostMessage(script_state, port, type, value,
+                     allow_per_chunk_transferring, exception_state);
 
   // 2. If result is an abrupt completion,
   if (exception_state.HadException()) {
@@ -168,6 +195,15 @@ bool PackAndPostMessageHandlingError(ScriptState* script_state,
   }
 
   return true;
+}
+
+bool PackAndPostMessageHandlingError(ScriptState* script_state,
+                                     MessagePort* port,
+                                     MessageType type,
+                                     v8::Local<v8::Value> value,
+                                     v8::Local<v8::Value>* error) {
+  return PackAndPostMessageHandlingError(
+      script_state, port, type, value, AllowPerChunkTransferring(false), error);
 }
 
 // Base class for CrossRealmTransformWritable and CrossRealmTransformReadable.
@@ -298,16 +334,20 @@ class CrossRealmTransformErrorListener final : public NativeEventListener {
 // stream.
 class CrossRealmTransformWritable final : public CrossRealmTransformStream {
  public:
-  CrossRealmTransformWritable(ScriptState* script_state, MessagePort* port)
+  CrossRealmTransformWritable(
+      ScriptState* script_state,
+      MessagePort* port,
+      AllowPerChunkTransferring allow_per_chunk_transferring)
       : script_state_(script_state),
         message_port_(port),
         backpressure_promise_(
-            MakeGarbageCollected<StreamPromiseResolver>(script_state)) {}
+            MakeGarbageCollected<StreamPromiseResolver>(script_state)),
+        allow_per_chunk_transferring_(allow_per_chunk_transferring) {}
 
   WritableStream* CreateWritableStream(ExceptionState&);
 
-  ScriptState* GetScriptState() const override { return script_state_; }
-  MessagePort* GetMessagePort() const override { return message_port_; }
+  ScriptState* GetScriptState() const override { return script_state_.Get(); }
+  MessagePort* GetMessagePort() const override { return message_port_.Get(); }
   void HandleMessage(MessageType type, v8::Local<v8::Value> value) override;
   void HandleError(v8::Local<v8::Value> error) override;
 
@@ -328,6 +368,7 @@ class CrossRealmTransformWritable final : public CrossRealmTransformStream {
   const Member<MessagePort> message_port_;
   Member<StreamPromiseResolver> backpressure_promise_;
   Member<WritableStreamDefaultController> controller_;
+  const AllowPerChunkTransferring allow_per_chunk_transferring_;
 };
 
 class CrossRealmTransformWritable::WriteAlgorithm final
@@ -361,10 +402,13 @@ class CrossRealmTransformWritable::WriteAlgorithm final
 
     // 2. Return the result of reacting to backpressurePromise with the
     //    following fulfillment steps:
+
     return StreamThenPromise(
         script_state->GetContext(),
         writable_->backpressure_promise_->V8Promise(isolate),
-        MakeGarbageCollected<DoWriteOnResolve>(script_state, chunk, this));
+        MakeGarbageCollected<ScriptFunction>(
+            script_state,
+            MakeGarbageCollected<DoWriteOnResolve>(script_state, chunk, this)));
   }
 
   void Trace(Visitor* visitor) const override {
@@ -379,14 +423,12 @@ class CrossRealmTransformWritable::WriteAlgorithm final
     DoWriteOnResolve(ScriptState* script_state,
                      v8::Local<v8::Value> chunk,
                      WriteAlgorithm* target)
-        : PromiseHandlerWithValue(script_state),
-          chunk_(script_state->GetIsolate(), chunk),
-          target_(target) {}
+        : chunk_(script_state->GetIsolate(), chunk), target_(target) {}
 
-    v8::Local<v8::Value> CallWithLocal(v8::Local<v8::Value>) override {
-      ScriptState* script_state = GetScriptState();
+    v8::Local<v8::Value> CallWithLocal(ScriptState* script_state,
+                                       v8::Local<v8::Value>) override {
       return target_->DoWrite(script_state,
-                              chunk_.NewLocal(script_state->GetIsolate()));
+                              chunk_.Get(script_state->GetIsolate()));
     }
 
     void Trace(Visitor* visitor) const override {
@@ -415,9 +457,9 @@ class CrossRealmTransformWritable::WriteAlgorithm final
 
     //     2. Let result be PackAndPostMessageHandlingError(port, "chunk",
     //        chunk).
-    bool success =
-        PackAndPostMessageHandlingError(script_state, writable_->message_port_,
-                                        MessageType::kChunk, chunk, &error);
+    bool success = PackAndPostMessageHandlingError(
+        script_state, writable_->message_port_, MessageType::kChunk, chunk,
+        writable_->allow_per_chunk_transferring_, &error);
     //     3. If result is an abrupt completion,
     if (!success) {
       //     1. Disentangle port.
@@ -625,8 +667,8 @@ class CrossRealmTransformReadable final : public CrossRealmTransformStream {
 
   ReadableStream* CreateReadableStream(ExceptionState&);
 
-  ScriptState* GetScriptState() const override { return script_state_; }
-  MessagePort* GetMessagePort() const override { return message_port_; }
+  ScriptState* GetScriptState() const override { return script_state_.Get(); }
+  MessagePort* GetMessagePort() const override { return message_port_.Get(); }
   void HandleMessage(MessageType type, v8::Local<v8::Value> value) override;
   void HandleError(v8::Local<v8::Value> error) override;
 
@@ -737,6 +779,173 @@ class CrossRealmTransformReadable::CancelAlgorithm final
   const Member<CrossRealmTransformReadable> readable_;
 };
 
+class ConcatenatingUnderlyingSource final : public UnderlyingSourceBase {
+ public:
+  class PullSource2 final : public ScriptFunction::Callable {
+   public:
+    explicit PullSource2(ConcatenatingUnderlyingSource* source,
+                         const ExceptionContext& exception_context)
+        : source_(source), exception_context_(exception_context) {}
+
+    ScriptValue Call(ScriptState* script_state, ScriptValue value) override {
+      ExceptionState exception_state(script_state->GetIsolate(),
+                                     exception_context_);
+      return source_->source2_->Pull(script_state, exception_state)
+          .AsScriptValue();
+    }
+    void Trace(Visitor* visitor) const override {
+      visitor->Trace(source_);
+      ScriptFunction::Callable::Trace(visitor);
+    }
+
+   private:
+    const Member<ConcatenatingUnderlyingSource> source_;
+    const ExceptionContext exception_context_;
+  };
+
+  class ConcatenatingUnderlyingSourceReadRequest final : public ReadRequest {
+   public:
+    explicit ConcatenatingUnderlyingSourceReadRequest(
+        ConcatenatingUnderlyingSource* source,
+        StreamPromiseResolver* resolver)
+        : source_(source), resolver_(resolver) {}
+
+    void ChunkSteps(ScriptState* script_state,
+                    v8::Local<v8::Value> chunk,
+                    ExceptionState&) const override {
+      source_->Controller()->Enqueue(chunk);
+      resolver_->ResolveWithUndefined(script_state);
+    }
+
+    void CloseSteps(ScriptState* script_state) const override {
+      // We've finished reading `source1_`. Let's start reading `source2_`.
+      source_->has_finished_reading_stream1_ = true;
+      ReadableStreamDefaultController* controller =
+          source_->Controller()->GetOriginalController();
+      auto* isolate = script_state->GetIsolate();
+      if (controller) {
+        ExceptionState exception_state(script_state->GetIsolate(),
+                                       ExceptionContextType::kUnknown, "", "");
+        resolver_->Resolve(
+            script_state,
+            source_->source2_
+                ->StartWrapper(script_state, controller, exception_state)
+                .Then(CreateFunction<PullSource2>(script_state, source_,
+                                                  exception_state.GetContext()))
+                .V8Value());
+      } else {
+        // TODO(crbug.com/1418910): Investigate how to handle cases when the
+        // controller is cleared.
+        resolver_->Reject(script_state,
+                          v8::Exception::TypeError(V8String(
+                              isolate,
+                              "The readable stream controller has been cleared "
+                              "and cannot be used to start reading the second "
+                              "stream.")));
+      }
+    }
+
+    void ErrorSteps(ScriptState* script_state,
+                    v8::Local<v8::Value> e) const override {
+      ReadableStream* dummy_stream =
+          ReadableStream::CreateWithCountQueueingStrategy(
+              script_state, source_->source2_,
+              /*high_water_mark=*/0);
+
+      ExceptionState exception_state(script_state->GetIsolate(),
+                                     ExceptionContextType::kUnknown, "", "");
+      dummy_stream->cancel(
+          script_state,
+          ScriptValue(script_state->GetIsolate(),
+                      v8::Undefined(script_state->GetIsolate())),
+          exception_state);
+      // We don't care about the result of the cancellation, including
+      // exceptions.
+      exception_state.ClearException();
+      resolver_->Reject(script_state, e);
+    }
+
+    void Trace(Visitor* visitor) const override {
+      visitor->Trace(source_);
+      visitor->Trace(resolver_);
+      ReadRequest::Trace(visitor);
+    }
+
+   private:
+    Member<ConcatenatingUnderlyingSource> source_;
+    Member<StreamPromiseResolver> resolver_;
+  };
+
+  ConcatenatingUnderlyingSource(ScriptState* script_state,
+                                ReadableStream* stream1,
+                                UnderlyingSourceBase* source2)
+      : UnderlyingSourceBase(script_state),
+        stream1_(stream1),
+        source2_(source2) {}
+
+  ScriptPromise Start(ScriptState* script_state,
+                      ExceptionState& exception_state) override {
+    reader_for_stream1_ = ReadableStream::AcquireDefaultReader(
+        script_state, stream1_, exception_state);
+    if (exception_state.HadException()) {
+      return ScriptPromise::Reject(script_state, exception_state);
+    }
+    DCHECK(reader_for_stream1_);
+    return ScriptPromise::CastUndefined(script_state);
+  }
+
+  ScriptPromise Pull(ScriptState* script_state,
+                     ExceptionState& exception_state) override {
+    if (has_finished_reading_stream1_) {
+      return source2_->Pull(script_state, exception_state);
+    }
+    auto* promise = MakeGarbageCollected<StreamPromiseResolver>(script_state);
+    auto* read_request =
+        MakeGarbageCollected<ConcatenatingUnderlyingSourceReadRequest>(this,
+                                                                       promise);
+    ReadableStreamDefaultReader::Read(script_state, reader_for_stream1_,
+                                      read_request, exception_state);
+    return promise->GetScriptPromise(script_state);
+  }
+
+  ScriptPromise Cancel(ScriptState* script_state,
+                       ScriptValue reason,
+                       ExceptionState& exception_state) override {
+    if (has_finished_reading_stream1_) {
+      return source2_->Cancel(script_state, reason, exception_state);
+    }
+    ScriptPromise cancel_promise1 =
+        reader_for_stream1_->cancel(script_state, reason, exception_state);
+    if (exception_state.HadException()) {
+      cancel_promise1 = ScriptPromise::Reject(script_state, exception_state);
+    }
+
+    ReadableStream* dummy_stream =
+        ReadableStream::CreateWithCountQueueingStrategy(script_state, source2_,
+                                                        /*high_water_mark=*/0);
+    ScriptPromise cancel_promise2 =
+        dummy_stream->cancel(script_state, reason, exception_state);
+    if (exception_state.HadException()) {
+      cancel_promise2 = ScriptPromise::Reject(script_state, exception_state);
+    }
+
+    return ScriptPromise::All(script_state, {cancel_promise1, cancel_promise2});
+  }
+
+  void Trace(Visitor* visitor) const override {
+    visitor->Trace(stream1_);
+    visitor->Trace(reader_for_stream1_);
+    visitor->Trace(source2_);
+    UnderlyingSourceBase::Trace(visitor);
+  }
+
+ private:
+  Member<ReadableStream> stream1_;
+  Member<ReadableStreamDefaultReader> reader_for_stream1_;
+  bool has_finished_reading_stream1_ = false;
+  Member<UnderlyingSourceBase> source2_;
+};
+
 ReadableStream* CrossRealmTransformReadable::CreateReadableStream(
     ExceptionState& exception_state) {
   DCHECK(!controller_) << "CreateReadableStream can only be called once";
@@ -770,7 +979,10 @@ ReadableStream* CrossRealmTransformReadable::CreateReadableStream(
     return nullptr;
   }
 
-  controller_ = stream->GetController();
+  // The stream is created right above, and the type of the source is not given,
+  // hence it is guaranteed that the controller is a
+  // ReadableStreamDefaultController.
+  controller_ = To<ReadableStreamDefaultController>(stream->GetController());
   return stream;
 }
 
@@ -839,17 +1051,68 @@ void CrossRealmTransformReadable::HandleError(v8::Local<v8::Value> error) {
 CORE_EXPORT WritableStream* CreateCrossRealmTransformWritable(
     ScriptState* script_state,
     MessagePort* port,
+    AllowPerChunkTransferring allow_per_chunk_transferring,
+    std::unique_ptr<WritableStreamTransferringOptimizer> optimizer,
     ExceptionState& exception_state) {
-  return MakeGarbageCollected<CrossRealmTransformWritable>(script_state, port)
-      ->CreateWritableStream(exception_state);
+  WritableStream* stream = MakeGarbageCollected<CrossRealmTransformWritable>(
+                               script_state, port, allow_per_chunk_transferring)
+                               ->CreateWritableStream(exception_state);
+  if (exception_state.HadException()) {
+    return nullptr;
+  }
+  if (!optimizer) {
+    return stream;
+  }
+  UnderlyingSinkBase* sink =
+      optimizer->PerformInProcessOptimization(script_state);
+  if (!sink) {
+    return stream;
+  }
+  stream->close(script_state, exception_state);
+  if (exception_state.HadException()) {
+    return nullptr;
+  }
+
+  return WritableStream::CreateWithCountQueueingStrategy(script_state, sink,
+                                                         /*high_water_mark=*/1);
 }
 
 CORE_EXPORT ReadableStream* CreateCrossRealmTransformReadable(
     ScriptState* script_state,
     MessagePort* port,
+    std::unique_ptr<ReadableStreamTransferringOptimizer> optimizer,
     ExceptionState& exception_state) {
-  return MakeGarbageCollected<CrossRealmTransformReadable>(script_state, port)
-      ->CreateReadableStream(exception_state);
+  ReadableStream* stream =
+      MakeGarbageCollected<CrossRealmTransformReadable>(script_state, port)
+          ->CreateReadableStream(exception_state);
+  if (!optimizer) {
+    return stream;
+  }
+  UnderlyingSourceBase* source2 =
+      optimizer->PerformInProcessOptimization(script_state);
+  if (!source2) {
+    return stream;
+  }
+
+  return ReadableStream::CreateWithCountQueueingStrategy(
+      script_state,
+      MakeGarbageCollected<ConcatenatingUnderlyingSource>(script_state, stream,
+                                                          source2),
+      /*high_water_mark=*/0);
+}
+
+ReadableStream* CreateConcatenatedReadableStream(
+    ScriptState* script_state,
+    UnderlyingSourceBase* source1,
+    UnderlyingSourceBase* source2) {
+  auto* const stream1 =
+      ReadableStream::CreateWithCountQueueingStrategy(script_state, source1,
+                                                      /*high_water_mark=*/0);
+  return ReadableStream::CreateWithCountQueueingStrategy(
+      script_state,
+      MakeGarbageCollected<ConcatenatingUnderlyingSource>(script_state, stream1,
+                                                          source2),
+      /*high_water_mark=*/0);
 }
 
 }  // namespace blink

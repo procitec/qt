@@ -1,4 +1,4 @@
-// Copyright 2020 The Crashpad Authors. All rights reserved.
+// Copyright 2020 The Crashpad Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,6 +15,7 @@
 #include <dlfcn.h>
 #include <pthread.h>
 
+#include "base/check.h"
 #include "base/logging.h"
 #include "client/crashpad_client.h"
 #include "util/misc/no_cfi_icall.h"
@@ -31,10 +32,11 @@ struct StartParams {
 void* InitializeSignalStackAndStart(StartParams* params) {
   crashpad::CrashpadClient::InitializeSignalStackForThread();
 
-  StartParams local_params = *params;
+  crashpad::NoCfiIcall<StartRoutineType> start_routine(params->start_routine);
+  void* arg = params->arg;
   delete params;
 
-  return local_params.start_routine(local_params.arg);
+  return start_routine(arg);
 }
 
 }  // namespace

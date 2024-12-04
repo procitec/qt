@@ -1,28 +1,31 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "media/base/supported_types.h"
 
+#include "base/command_line.h"
 #include "base/feature_list.h"
 #include "base/logging.h"
 #include "base/no_destructor.h"
 #include "base/notreached.h"
 #include "build/build_config.h"
+#include "build/chromeos_buildflags.h"
 #include "media/base/media.h"
 #include "media/base/media_client.h"
 #include "media/base/media_switches.h"
 #include "media/media_buildflags.h"
 #include "ui/display/display_switches.h"
+#include "ui/gfx/hdr_metadata.h"
 
 #if BUILDFLAG(ENABLE_LIBVPX)
 // TODO(dalecurtis): This technically should not be allowed in media/base. See
 // TODO below about moving outside of base.
-#include "third_party/libvpx/source/libvpx/vpx/vp8dx.h"
-#include "third_party/libvpx/source/libvpx/vpx/vpx_codec.h"
+#include "third_party/libvpx/source/libvpx/vpx/vp8dx.h"      // nogncheck
+#include "third_party/libvpx/source/libvpx/vpx/vpx_codec.h"  // nogncheck
 #endif
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
 #include "base/android/build_info.h"
 
 // TODO(dalecurtis): This include is not allowed by media/base since
@@ -31,41 +34,58 @@
 #include "media/base/android/media_codec_util.h"  // nogncheck
 #endif
 
+#if BUILDFLAG(IS_WIN)
+#include "base/win/windows_version.h"
+#endif
+
 namespace media {
 
 namespace {
 
-bool IsSupportedHdrMetadata(const gl::HdrMetadataType& hdr_metadata_type) {
-  switch (hdr_metadata_type) {
-    case gl::HdrMetadataType::kNone:
-      return true;
-
-    case gl::HdrMetadataType::kSmpteSt2086:
-    case gl::HdrMetadataType::kSmpteSt2094_10:
-    case gl::HdrMetadataType::kSmpteSt2094_40:
-      return false;
+template <typename T>
+class SupplementalProfileCache {
+ public:
+  void UpdateCache(const base::flat_set<T>& profiles) {
+    base::AutoLock lock(profiles_lock_);
+    profiles_ = profiles;
+  }
+  bool IsProfileSupported(T profile) {
+    base::AutoLock lock(profiles_lock_);
+    return profiles_.find(profile) != profiles_.end();
   }
 
-  NOTREACHED();
-  return false;
+ private:
+  base::Lock profiles_lock_;
+  base::flat_set<T> profiles_ GUARDED_BY(profiles_lock_);
+};
+
+SupplementalProfileCache<VideoCodecProfile>* GetSupplementalProfileCache() {
+  static base::NoDestructor<SupplementalProfileCache<VideoCodecProfile>> cache;
+  return cache.get();
 }
 
-}  // namespace
-
-bool IsSupportedAudioType(const AudioType& type) {
-  MediaClient* media_client = GetMediaClient();
-  if (media_client)
-    return media_client->IsSupportedAudioType(type);
-
-  return IsDefaultSupportedAudioType(type);
+SupplementalProfileCache<AudioType>* GetSupplementalAudioTypeCache() {
+  static base::NoDestructor<SupplementalProfileCache<AudioType>> cache;
+  return cache.get();
 }
 
-bool IsSupportedVideoType(const VideoType& type) {
-  MediaClient* media_client = GetMediaClient();
-  if (media_client)
-    return media_client->IsSupportedVideoType(type);
+bool IsSupportedHdrMetadata(const VideoType& type) {
+  switch (type.hdr_metadata_type) {
+    case gfx::HdrMetadataType::kNone:
+      return true;
 
-  return IsDefaultSupportedVideoType(type);
+    case gfx::HdrMetadataType::kSmpteSt2086:
+      // HDR metadata is currently only used with the PQ transfer function.
+      // See gfx::ColorTransform for more details.
+      return type.color_space.transfer ==
+             VideoColorSpace::TransferID::SMPTEST2084;
+
+    // 2094-10 SEI metadata is not the same as Dolby Vision RPU metadata, Dolby
+    // Vision decoders on each platform only support Dolby Vision RPU metadata.
+    case gfx::HdrMetadataType::kSmpteSt2094_10:
+    case gfx::HdrMetadataType::kSmpteSt2094_40:
+      return false;
+  }
 }
 
 bool IsColorSpaceSupported(const VideoColorSpace& color_space) {
@@ -150,17 +170,103 @@ bool IsColorSpaceSupported(const VideoColorSpace& color_space) {
   return true;
 }
 
-bool IsVp9ProfileSupported(VideoCodecProfile profile) {
+#if !BUILDFLAG(USE_PROPRIETARY_CODECS)
+bool IsVideoCodecProprietary(VideoCodec codec) {
+  switch (codec) {
+    case VideoCodec::kVC1:
+    case VideoCodec::kH264:
+    case VideoCodec::kMPEG2:
+    case VideoCodec::kMPEG4:
+    case VideoCodec::kHEVC:
+    case VideoCodec::kDolbyVision:
+      return true;
+    case VideoCodec::kUnknown:
+    case VideoCodec::kTheora:
+    case VideoCodec::kVP8:
+    case VideoCodec::kVP9:
+    case VideoCodec::kAV1:
+      return false;
+  }
+}
+
+bool IsAudioCodecProprietary(AudioCodec codec) {
+  switch (codec) {
+    case AudioCodec::kAAC:
+    case AudioCodec::kAC3:
+    case AudioCodec::kEAC3:
+    case AudioCodec::kAMR_NB:
+    case AudioCodec::kAMR_WB:
+    case AudioCodec::kGSM_MS:
+    case AudioCodec::kALAC:
+    case AudioCodec::kMpegHAudio:
+    case AudioCodec::kDTS:
+    case AudioCodec::kDTSXP2:
+    case AudioCodec::kDTSE:
+    case AudioCodec::kAC4:
+      return true;
+
+    case AudioCodec::kFLAC:
+    case AudioCodec::kIAMF:
+    case AudioCodec::kMP3:
+    case AudioCodec::kOpus:
+    case AudioCodec::kVorbis:
+    case AudioCodec::kPCM:
+    case AudioCodec::kPCM_MULAW:
+    case AudioCodec::kPCM_S16BE:
+    case AudioCodec::kPCM_S24BE:
+    case AudioCodec::kPCM_ALAW:
+    case AudioCodec::kUnknown:
+      return false;
+  }
+}
+#endif  // !BUILDFLAG(USE_PROPRIETARY_CODECS)
+
+bool IsHevcProfileSupported(const VideoType& type) {
+  if (!IsColorSpaceSupported(type.color_space))
+    return false;
+
+#if BUILDFLAG(ENABLE_PLATFORM_HEVC)
+#if BUILDFLAG(PLATFORM_HAS_OPTIONAL_HEVC_SUPPORT)
+#if BUILDFLAG(IS_CHROMEOS_LACROS)
+  // TODO(b/171813538): For Lacros, the supplemental profile cache will be
+  // asking lacros-gpu, but we will be doing decoding in ash-gpu. Until the
+  // codec detection is plumbed through to ash-gpu we can do this extra check
+  // for HEVC support.
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kLacrosEnablePlatformHevc)) {
+    return true;
+  }
+#endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+  if (!base::FeatureList::IsEnabled(kPlatformHEVCDecoderSupport)) {
+    return false;
+  }
+#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+  return GetSupplementalProfileCache()->IsProfileSupported(type.profile);
+#else
+  return true;
+#endif  // BUIDFLAG(PLATFORM_HAS_OPTIONAL_HEVC_SUPPORT)
+#else
+  return false;
+#endif  // BUILDFLAG(ENABLE_PLATFORM_HEVC)
+}
+
+bool IsVp9ProfileSupported(const VideoType& type) {
 #if BUILDFLAG(ENABLE_LIBVPX)
   // High bit depth capabilities may be toggled via LibVPX config flags.
   static const bool vpx_supports_hbd = (vpx_codec_get_caps(vpx_codec_vp9_dx()) &
                                         VPX_CODEC_CAP_HIGHBITDEPTH) != 0;
-  switch (profile) {
+
+  // Color management required for HDR to not look terrible.
+  if (!IsColorSpaceSupported(type.color_space))
+    return false;
+
+  switch (type.profile) {
     // LibVPX always supports Profiles 0 and 1.
     case VP9PROFILE_PROFILE0:
     case VP9PROFILE_PROFILE1:
       return true;
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
     case VP9PROFILE_PROFILE2:
       return vpx_supports_hbd ||
              MediaCodecUtil::IsVp9Profile2DecoderAvailable();
@@ -171,41 +277,107 @@ bool IsVp9ProfileSupported(VideoCodecProfile profile) {
     case VP9PROFILE_PROFILE2:
     case VP9PROFILE_PROFILE3:
       return vpx_supports_hbd;
-#endif
+#endif  // BUILDFLAG(IS_ANDROID)
     default:
       NOTREACHED();
   }
-#endif
+#endif  // BUILDFLAG(ENABLE_LIBVPX)
   return false;
 }
 
-bool IsAudioCodecProprietary(AudioCodec codec) {
-  switch (codec) {
-    case kCodecAAC:
-    case kCodecAC3:
-    case kCodecEAC3:
-    case kCodecAMR_NB:
-    case kCodecAMR_WB:
-    case kCodecGSM_MS:
-    case kCodecALAC:
-    case kCodecMpegHAudio:
-      return true;
+bool IsAV1Supported(const VideoType& type) {
+  // If the AV1 decoder is enabled, or if we're on Q or later, yes.
+#if BUILDFLAG(ENABLE_AV1_DECODER)
+  return IsColorSpaceSupported(type.color_space);
+#elif BUILDFLAG(IS_ANDROID)
+  return base::android::BuildInfo::GetInstance()->sdk_int() >=
+             base::android::SDK_VERSION_Q &&
+         IsColorSpaceSupported(type.color_space);
+#else
+  return false;
+#endif
+}
 
-    case kCodecFLAC:
-    case kCodecMP3:
-    case kCodecOpus:
-    case kCodecVorbis:
-    case kCodecPCM:
-    case kCodecPCM_MULAW:
-    case kCodecPCM_S16BE:
-    case kCodecPCM_S24BE:
-    case kCodecPCM_ALAW:
-    case kUnknownAudioCodec:
-      return false;
+bool IsMPEG4Supported() {
+#if BUILDFLAG(IS_CHROMEOS) && BUILDFLAG(USE_PROPRIETARY_CODECS)
+  return base::FeatureList::IsEnabled(kCrOSLegacyMediaFormats);
+#else
+  return false;
+#endif
+}
+
+bool IsAACSupported(const AudioType& type) {
+  if (type.profile != AudioCodecProfile::kXHE_AAC)
+    return true;
+#if BUILDFLAG(IS_ANDROID)
+  return base::android::BuildInfo::GetInstance()->sdk_int() >=
+         base::android::SDK_VERSION_P;
+#elif BUILDFLAG(IS_MAC)
+  return true;
+#elif BUILDFLAG(IS_WIN)
+  return base::win::GetVersion() >= base::win::Version::WIN11_22H2;
+#else
+  return false;
+#endif
+}
+
+bool IsDolbyVisionProfileSupported(const VideoType& type) {
+#if BUILDFLAG(ENABLE_PLATFORM_HEVC) &&               \
+    BUILDFLAG(PLATFORM_HAS_OPTIONAL_HEVC_SUPPORT) && \
+    BUILDFLAG(ENABLE_PLATFORM_DOLBY_VISION)
+  return GetSupplementalProfileCache()->IsProfileSupported(type.profile);
+#else
+  return false;
+#endif
+}
+
+}  // namespace
+
+bool IsSupportedAudioType(const AudioType& type) {
+  if (auto* media_client = GetMediaClient())
+    return media_client->IsSupportedAudioType(type);
+  return IsDefaultSupportedAudioType(type);
+}
+
+bool IsSupportedVideoType(const VideoType& type) {
+  if (auto* media_client = GetMediaClient())
+    return media_client->IsSupportedVideoType(type);
+  return IsDefaultSupportedVideoType(type);
+}
+
+// TODO(chcunningham): Add platform specific logic for Android (move from
+// MimeUtilInternal).
+bool IsDefaultSupportedVideoType(const VideoType& type) {
+  if (!IsSupportedHdrMetadata(type)) {
+    return false;
   }
 
-  NOTREACHED();
-  return false;
+#if !BUILDFLAG(USE_PROPRIETARY_CODECS)
+  if (IsVideoCodecProprietary(type.codec))
+    return false;
+#endif
+
+  switch (type.codec) {
+    case VideoCodec::kTheora:
+      return IsBuiltInVideoCodec(type.codec);
+    case VideoCodec::kH264:
+    case VideoCodec::kVP8:
+      return true;
+    case VideoCodec::kAV1:
+      return IsAV1Supported(type);
+    case VideoCodec::kVP9:
+      return IsVp9ProfileSupported(type);
+    case VideoCodec::kHEVC:
+      return IsHevcProfileSupported(type);
+    case VideoCodec::kMPEG4:
+      return IsMPEG4Supported();
+    case VideoCodec::kDolbyVision:
+      return IsDolbyVisionProfileSupported(type);
+    case VideoCodec::kUnknown:
+    case VideoCodec::kVC1:
+    case VideoCodec::kMPEG2:
+      return false;
+  }
 }
 
 bool IsDefaultSupportedAudioType(const AudioType& type) {
@@ -218,121 +390,67 @@ bool IsDefaultSupportedAudioType(const AudioType& type) {
 #endif
 
   switch (type.codec) {
-    case kCodecAAC:
-      if (type.profile != AudioCodecProfile::kXHE_AAC)
-        return true;
-#if defined(OS_ANDROID)
-      return base::android::BuildInfo::GetInstance()->sdk_int() >=
-             base::android::SDK_VERSION_P;
-#else
-      return false;
-#endif
-
-    case kCodecFLAC:
-    case kCodecMP3:
-    case kCodecOpus:
-    case kCodecPCM:
-    case kCodecPCM_MULAW:
-    case kCodecPCM_S16BE:
-    case kCodecPCM_S24BE:
-    case kCodecPCM_ALAW:
-    case kCodecVorbis:
+    case AudioCodec::kAAC:
+      return IsAACSupported(type);
+    case AudioCodec::kFLAC:
+    case AudioCodec::kMP3:
+    case AudioCodec::kOpus:
+    case AudioCodec::kPCM:
+    case AudioCodec::kPCM_MULAW:
+    case AudioCodec::kPCM_S16BE:
+    case AudioCodec::kPCM_S24BE:
+    case AudioCodec::kPCM_ALAW:
+    case AudioCodec::kVorbis:
       return true;
-
-    case kCodecAMR_NB:
-    case kCodecAMR_WB:
-    case kCodecGSM_MS:
-#if defined(OS_CHROMEOS)
-      return true;
-#else
+    case AudioCodec::kAMR_NB:
+    case AudioCodec::kAMR_WB:
+    case AudioCodec::kGSM_MS:
+    case AudioCodec::kALAC:
+    case AudioCodec::kMpegHAudio:
+    case AudioCodec::kIAMF:
+    case AudioCodec::kUnknown:
       return false;
-#endif
-
-    case kCodecEAC3:
-    case kCodecALAC:
-    case kCodecAC3:
-    case kCodecMpegHAudio:
-    case kUnknownAudioCodec:
-      return false;
+    case AudioCodec::kDTS:
+    case AudioCodec::kDTSXP2:
+    case AudioCodec::kDTSE:
+      return BUILDFLAG(ENABLE_PLATFORM_DTS_AUDIO);
+    case AudioCodec::kAC3:
+    case AudioCodec::kEAC3:
+      return BUILDFLAG(ENABLE_PLATFORM_AC3_EAC3_AUDIO);
+    case AudioCodec::kAC4:
+      return BUILDFLAG(ENABLE_PLATFORM_AC4_AUDIO);
   }
-
-  NOTREACHED();
-  return false;
 }
 
-bool IsVideoCodecProprietary(VideoCodec codec) {
-  switch (codec) {
-    case kCodecVC1:
-    case kCodecH264:
-    case kCodecMPEG2:
-    case kCodecMPEG4:
-    case kCodecHEVC:
-    case kCodecDolbyVision:
-      return true;
-    case kUnknownVideoCodec:
-    case kCodecTheora:
-    case kCodecVP8:
-    case kCodecVP9:
-    case kCodecAV1:
-      return false;
-  }
-
-  NOTREACHED();
-  return false;
-}
-
-// TODO(chcunningham): Add platform specific logic for Android (move from
-// MimeUtilIntenral).
-bool IsDefaultSupportedVideoType(const VideoType& type) {
-  if (!IsSupportedHdrMetadata(type.hdr_metadata_type))
-    return false;
-
-#if !BUILDFLAG(USE_PROPRIETARY_CODECS)
-  if (IsVideoCodecProprietary(type.codec))
-    return false;
-#endif
-
-  switch (type.codec) {
-    case kCodecAV1:
-      // If the AV1 decoder is enabled, or if we're on Q or later, yes.
+bool IsBuiltInVideoCodec(VideoCodec codec) {
+#if BUILDFLAG(ENABLE_FFMPEG_VIDEO_DECODERS)
+  if (codec == VideoCodec::kTheora)
+    return base::FeatureList::IsEnabled(kTheoraVideoCodec);
+  if (codec == VideoCodec::kVP8)
+    return true;
+#if BUILDFLAG(USE_PROPRIETARY_CODECS)
+  if (codec == VideoCodec::kH264)
+    return true;
+#endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
+#endif  // BUILDFLAG(ENABLE_FFMPEG_VIDEO_DECODERS)
+#if BUILDFLAG(ENABLE_LIBVPX)
+  if (codec == VideoCodec::kVP8 || codec == VideoCodec::kVP9)
+    return true;
+#endif  // BUILDFLAG(ENABLE_LIBVPX)
 #if BUILDFLAG(ENABLE_AV1_DECODER)
-      return IsColorSpaceSupported(type.color_space);
-#else
-#if defined(OS_ANDROID)
-      if (base::android::BuildInfo::GetInstance()->is_at_least_q() &&
-          IsColorSpaceSupported(type.color_space)) {
-        return true;
-      }
-#endif
-      return false;
-#endif
-
-    case kCodecVP9:
-      // Color management required for HDR to not look terrible.
-      return IsColorSpaceSupported(type.color_space) &&
-             IsVp9ProfileSupported(type.profile);
-    case kCodecH264:
-    case kCodecVP8:
-    case kCodecTheora:
-      return true;
-
-    case kUnknownVideoCodec:
-    case kCodecVC1:
-    case kCodecMPEG2:
-    case kCodecHEVC:
-    case kCodecDolbyVision:
-      return false;
-
-    case kCodecMPEG4:
-#if defined(OS_CHROMEOS)
-      return true;
-#else
-      return false;
-#endif
-  }
-
-  NOTREACHED();
+  if (codec == VideoCodec::kAV1)
+    return true;
+#endif  // BUILDFLAG(ENABLE_AV1_DECODER)
   return false;
+}
+
+void UpdateDefaultSupportedVideoProfiles(
+    const base::flat_set<media::VideoCodecProfile>& profiles) {
+  GetSupplementalProfileCache()->UpdateCache(profiles);
+}
+
+void UpdateDefaultSupportedAudioTypes(const base::flat_set<AudioType>& types) {
+  GetSupplementalAudioTypeCache()->UpdateCache(types);
 }
 
 }  // namespace media

@@ -1,15 +1,16 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/modules/eventsource/event_source_parser.h"
 
+#include <string.h>
+
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/modules/eventsource/event_source.h"
 #include "third_party/blink/renderer/platform/heap/persistent.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "third_party/blink/renderer/platform/wtf/text/character_names.h"
-
-#include <string.h>
 
 namespace blink {
 
@@ -107,6 +108,7 @@ class EventSourceParserTest : public testing::Test {
 
   EventSourceParser* Parser() { return parser_; }
 
+  test::TaskEnvironment task_environment_;
   Persistent<Client> client_;
   Persistent<EventSourceParser> parser_;
 };
@@ -130,7 +132,8 @@ TEST_F(EventSourceParserTest, DispatchSimpleMessageEvent) {
 }
 
 TEST_F(EventSourceParserTest, ConstructWithLastEventId) {
-  parser_ = MakeGarbageCollected<EventSourceParser>("hoge", client_);
+  parser_ =
+      MakeGarbageCollected<EventSourceParser>(AtomicString("hoge"), client_);
   EXPECT_EQ("hoge", Parser()->LastEventId());
 
   Enqueue("data:hello\n\n");
@@ -372,13 +375,14 @@ TEST_F(EventSourceParserTest, InvalidUTF8Sequence) {
 }
 
 TEST(EventSourceParserStoppingTest, StopWhileParsing) {
+  test::TaskEnvironment task_environment;
   StoppingClient* client = MakeGarbageCollected<StoppingClient>();
   EventSourceParser* parser =
       MakeGarbageCollected<EventSourceParser>(AtomicString(), client);
   client->SetParser(parser);
 
   const char kInput[] = "data:hello\nid:99\n\nid:44\ndata:bye\n\n";
-  parser->AddBytes(kInput, strlen(kInput));
+  parser->AddBytes(kInput, static_cast<uint32_t>(strlen(kInput)));
 
   const auto& events = client->Events();
 

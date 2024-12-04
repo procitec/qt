@@ -69,7 +69,7 @@ private:
             }
         }
 
-        canvas->drawBitmap(bm, 0, 0);
+        canvas->drawImage(bm.asImage(), 0, 0);
     }
 
 public:
@@ -79,11 +79,9 @@ public:
     , fTotalFrames (-1) {}
 
 private:
-    SkString onShortName() override {
-        return SkString("animatedGif");
-    }
+    SkString getName() const override { return SkString("animatedGif"); }
 
-    SkISize onISize() override {
+    SkISize getISize() override {
         if (this->initCodec()) {
             SkISize dim = fCodec->getInfo().dimensions();
             // Wide enough to display all the frames.
@@ -174,8 +172,7 @@ private:
         return true;
     }
 };
-DEF_GM(return new AnimatedGifGM);
-
+DEF_GM(return new AnimatedGifGM;)
 
 static std::unique_ptr<SkCodec> load_codec(const char filename[]) {
     return SkCodec::MakeFromData(SkData::MakeFromFileName(filename));
@@ -202,18 +199,14 @@ public:
     }
 
 private:
-    SkString onShortName() override {
-        return SkString("AnimCodecPlayer");
-    }
+    SkString getName() const override { return SkString("AnimCodecPlayer"); }
 
-    SkISize onISize() override {
-        return { 1024, 768 };
-    }
+    SkISize getISize() override { return {1024, 768}; }
 
     void onDraw(SkCanvas* canvas) override {
         canvas->scale(0.25f, 0.25f);
         for (auto& p : fPlayers) {
-            canvas->drawImage(p->getFrame(), 0, 0, nullptr);
+            canvas->drawImage(p->getFrame(), 0, 0);
             canvas->translate(p->dimensions().width(), 0);
         }
     }
@@ -228,4 +221,76 @@ private:
         return true;
     }
 };
-DEF_GM(return new AnimCodecPlayerGM);
+DEF_GM(return new AnimCodecPlayerGM;)
+
+class AnimCodecPlayerExifGM : public skiagm::GM {
+    const char* fPath;
+    SkISize fSize = SkISize::MakeEmpty();
+    std::unique_ptr<SkAnimCodecPlayer> fPlayer;
+    std::vector<SkCodec::FrameInfo> fFrameInfos;
+
+    void init() {
+        if (!fPlayer) {
+            auto data = GetResourceAsData(fPath);
+            if (!data) return;
+
+            auto codec = SkCodec::MakeFromData(std::move(data));
+            fFrameInfos = codec->getFrameInfo();
+            fPlayer = std::make_unique<SkAnimCodecPlayer>(std::move(codec));
+            if (!fPlayer) return;
+
+            // We'll draw one of each frame, so make it big enough to hold them all
+            // in a grid. The grid will be roughly square, with "factor" frames per
+            // row and up to "factor" rows.
+            const size_t count = fFrameInfos.size();
+            const float root = sqrt((float) count);
+            const int factor = sk_float_ceil2int(root);
+
+            auto imageSize = fPlayer->dimensions();
+            fSize.fWidth  = imageSize.fWidth  * factor;
+            fSize.fHeight = imageSize.fHeight * sk_float_ceil2int((float) count / (float) factor);
+        }
+    }
+
+    SkString getName() const override {
+        return SkStringPrintf("AnimCodecPlayerExif_%s", strrchr(fPath, '/') + 1);
+    }
+
+    SkISize getISize() override {
+        this->init();
+        return fSize;
+    }
+
+    void onDraw(SkCanvas* canvas) override {
+        this->init();
+        if (!fPlayer) return;
+
+        const float root = sqrt((float) fFrameInfos.size());
+        const int factor = sk_float_ceil2int(root);
+        auto dimensions = fPlayer->dimensions();
+
+        uint32_t duration = 0;
+        for (int frame = 0; duration < fPlayer->duration(); frame++) {
+            SkAutoCanvasRestore acr(canvas, true);
+            const int xTranslate = (frame % factor) * dimensions.width();
+            const int yTranslate = (frame / factor) * dimensions.height();
+            canvas->translate(SkIntToScalar(xTranslate), SkIntToScalar(yTranslate));
+
+
+            auto image = fPlayer->getFrame();
+            canvas->drawImage(image, 0, 0);
+            duration += fFrameInfos[frame].fDuration;
+            fPlayer->seek(duration);
+        }
+    }
+public:
+    AnimCodecPlayerExifGM(const char* path)
+        : fPath(path)
+    {}
+
+    ~AnimCodecPlayerExifGM() override = default;
+};
+
+DEF_GM(return new AnimCodecPlayerExifGM("images/required.webp");)
+DEF_GM(return new AnimCodecPlayerExifGM("images/required.gif");)
+DEF_GM(return new AnimCodecPlayerExifGM("images/stoplight_h.webp");)

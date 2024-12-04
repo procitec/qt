@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -20,6 +20,7 @@ class MediaFoundationVideoStream : public MediaFoundationStreamWrapper {
   static HRESULT Create(int stream_id,
                         IMFMediaSource* parent_source,
                         DemuxerStream* demuxer_stream,
+                        std::unique_ptr<MediaLog> media_log,
                         MediaFoundationStreamWrapper** stream_out);
 
   bool IsEncrypted() const override;
@@ -41,6 +42,7 @@ class MediaFoundationH264VideoStream : public MediaFoundationVideoStream {
 // The HEVC specific video stream.
 class MediaFoundationHEVCVideoStream : public MediaFoundationVideoStream {
  protected:
+  HRESULT GetMediaType(IMFMediaType** media_type_out) override;
   bool AreFormatChangesEnabled() override;
 };
 #endif  // BUILDFLAG(ENABLE_PLATFORM_HEVC) ||

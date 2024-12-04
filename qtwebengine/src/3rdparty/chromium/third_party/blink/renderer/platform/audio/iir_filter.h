@@ -1,10 +1,11 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_AUDIO_IIR_FILTER_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_AUDIO_IIR_FILTER_H_
 
+#include "base/memory/raw_ptr.h"
 #include "third_party/blink/renderer/platform/audio/audio_array.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
 
@@ -32,7 +33,9 @@ class PLATFORM_EXPORT IIRFilter final {
                             float* phase_response);
 
   // Compute the tail time of the IIR filter
-  double TailTime(double sample_rate, bool is_filter_stable);
+  double TailTime(double sample_rate,
+                  bool is_filter_stable,
+                  unsigned render_quantum_frames);
 
   // Reset the internal state of the IIR filter to the initial state.
   void ResetState();
@@ -61,8 +64,8 @@ class PLATFORM_EXPORT IIRFilter final {
 
   // Coefficients of the IIR filter.  To minimize storage, these point to the
   // arrays given in the constructor.
-  const AudioDoubleArray* feedback_;
-  const AudioDoubleArray* feedforward_;
+  raw_ptr<const AudioDoubleArray, ExperimentalRenderer> feedback_;
+  raw_ptr<const AudioDoubleArray, ExperimentalRenderer> feedforward_;
 };
 
 }  // namespace blink

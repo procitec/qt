@@ -25,6 +25,7 @@
 
 #include "perfetto/base/export.h"
 #include "perfetto/ext/tracing/core/basic_types.h"
+#include "perfetto/ext/tracing/core/shared_memory_abi.h"
 #include "perfetto/ext/tracing/core/tracing_service.h"
 #include "perfetto/tracing/buffer_exhausted_policy.h"
 
@@ -39,8 +40,10 @@ class TraceWriter;
 
 // Used by the Producer-side of the transport layer to vend TraceWriters
 // from the SharedMemory it receives from the Service-side.
-class PERFETTO_EXPORT SharedMemoryArbiter {
+class PERFETTO_EXPORT_COMPONENT SharedMemoryArbiter {
  public:
+  using ShmemMode = SharedMemoryABI::ShmemMode;
+
   virtual ~SharedMemoryArbiter();
 
   // Creates a new TraceWriter and assigns it a new WriterID. The WriterID is
@@ -48,8 +51,8 @@ class PERFETTO_EXPORT SharedMemoryArbiter {
   // the Service to reconstruct TracePackets written by the same TraceWriter.
   // Returns null impl of TraceWriter if all WriterID slots are exhausted. The
   // writer will commit to the provided |target_buffer|. If the arbiter was
-  // created via CreateUnbound(), only BufferExhaustedPolicy::kDrop is
-  // supported.
+  // created via CreateUnbound() or CreateStartupTraceWriter() is later used,
+  // only BufferExhaustedPolicy::kDrop is supported.
   virtual std::unique_ptr<TraceWriter> CreateTraceWriter(
       BufferID target_buffer,
       BufferExhaustedPolicy buffer_exhausted_policy =
@@ -58,9 +61,10 @@ class PERFETTO_EXPORT SharedMemoryArbiter {
   // Creates a TraceWriter that will commit to the target buffer with the given
   // reservation ID (creating a new reservation for this ID if none exists yet).
   // The buffer reservation should be bound to an actual BufferID via
-  // BindStartupTargetBuffer() once the actual BufferID is known. Only supported
-  // if the arbiter was created using CreateUnbound(), and may be called while
-  // the arbiter is unbound.
+  // BindStartupTargetBuffer() once the actual BufferID is known. Calling this
+  // method may transition the arbiter into unbound state (see state diagram in
+  // SharedMemoryArbiterImpl's class comment) and requires that all (past and
+  // future) TraceWriters are created with BufferExhaustedPolicy::kDrop.
   //
   // While any unbound buffer reservation exists, all commits will be buffered
   // until all reservations were bound. Thus, until all reservations are bound,
@@ -79,7 +83,7 @@ class PERFETTO_EXPORT SharedMemoryArbiter {
   // in the meantime), and increments the reservation ID between sessions.
   // Similarly, if more than a single target buffer per session is required
   // (e.g. for two different data sources), different reservation IDs should be
-  // chosen for different targets buffers.
+  // chosen for different target buffers.
   virtual std::unique_ptr<TraceWriter> CreateStartupTraceWriter(
       uint16_t target_buffer_reservation_id) = 0;
 
@@ -138,11 +142,35 @@ class PERFETTO_EXPORT SharedMemoryArbiter {
   // DataSourceDescriptor.will_notify_on_stop=true).
   virtual void SetBatchCommitsDuration(uint32_t batch_commits_duration_ms) = 0;
 
+  // Called to enable direct producer-side patching of chunks that have not yet
+  // been committed to the service. The return value indicates whether direct
+  // patching was successfully enabled. It will be true if
+  // SharedMemoryArbiter::SetDirectSMBPatchingSupportedByService has been called
+  // and false otherwise.
+  virtual bool EnableDirectSMBPatching() = 0;
+
+  // When the producer and service live in separate processes, this method
+  // should be called if the producer receives an
+  // InitializeConnectionResponse.direct_smb_patching_supported set to true by
+  // the service (see producer_port.proto) .
+  //
+  // In the in-process case, the service will always support direct SMB patching
+  // and this method should always be called.
+  virtual void SetDirectSMBPatchingSupportedByService() = 0;
+
   // Forces an immediate commit of the completed packets, without waiting for
   // the next task or for a batching period to end. Should only be called while
   // bound.
   virtual void FlushPendingCommitDataRequests(
       std::function<void()> callback = {}) = 0;
+
+  // Attempts to shut down this arbiter. This function prevents new trace
+  // writers from being created for this this arbiter, but if there are any
+  // existing trace writers, the shutdown cannot proceed and this funtion
+  // returns false. The caller should not delete the arbiter before all of its
+  // associated trace writers have been destroyed and this function returns
+  // true.
+  virtual bool TryShutdown() = 0;
 
   // Create a bound arbiter instance. Args:
   // |SharedMemory|: the shared memory buffer to use.
@@ -157,6 +185,7 @@ class PERFETTO_EXPORT SharedMemoryArbiter {
   static std::unique_ptr<SharedMemoryArbiter> CreateInstance(
       SharedMemory*,
       size_t page_size,
+      ShmemMode,
       TracingService::ProducerEndpoint*,
       base::TaskRunner*);
 
@@ -177,9 +206,8 @@ class PERFETTO_EXPORT SharedMemoryArbiter {
   //
   // Implemented in src/core/shared_memory_arbiter_impl.cc. See CreateInstance()
   // for comments about the arguments.
-  static std::unique_ptr<SharedMemoryArbiter> CreateUnboundInstance(
-      SharedMemory*,
-      size_t page_size);
+  static std::unique_ptr<SharedMemoryArbiter>
+  CreateUnboundInstance(SharedMemory*, size_t page_size, ShmemMode mode);
 };
 
 }  // namespace perfetto

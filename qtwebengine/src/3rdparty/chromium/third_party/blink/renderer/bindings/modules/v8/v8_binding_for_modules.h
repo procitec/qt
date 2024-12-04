@@ -1,10 +1,11 @@
-// Copyright (c) 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef THIRD_PARTY_BLINK_RENDERER_BINDINGS_MODULES_V8_V8_BINDING_FOR_MODULES_H_
 #define THIRD_PARTY_BLINK_RENDERER_BINDINGS_MODULES_V8_V8_BINDING_FOR_MODULES_H_
 
+#include "base/dcheck_is_on.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
 #include "third_party/blink/renderer/modules/webdatabase/sqlite/sql_value.h"
@@ -19,10 +20,13 @@ class SerializedScriptValue;
 class WebBlobInfo;
 
 // Exposed for unit testing:
-MODULES_EXPORT v8::Local<v8::Value> DeserializeIDBValue(
-    v8::Isolate*,
-    v8::Local<v8::Object> creation_context,
-    const IDBValue*);
+MODULES_EXPORT v8::Local<v8::Value> DeserializeIDBValue(ScriptState*,
+                                                        const IDBValue*);
+
+v8::Local<v8::Value> DeserializeIDBValueArray(
+    ScriptState*,
+    const Vector<std::unique_ptr<IDBValue>>&);
+
 MODULES_EXPORT bool InjectV8KeyIntoV8Value(v8::Isolate*,
                                            v8::Local<v8::Value> key,
                                            v8::Local<v8::Value>,

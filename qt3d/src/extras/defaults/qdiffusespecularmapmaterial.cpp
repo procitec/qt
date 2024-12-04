@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2014 Klaralvdalens Datakonsult AB (KDAB).
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt3D module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2014 Klaralvdalens Datakonsult AB (KDAB).
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qdiffusespecularmapmaterial.h"
 #include "qdiffusespecularmapmaterial_p.h"
@@ -56,9 +20,9 @@
 
 QT_BEGIN_NAMESPACE
 
-using namespace Qt3DRender;
-
 namespace Qt3DExtras {
+
+using namespace Qt3DRender;
 
 QDiffuseSpecularMapMaterialPrivate::QDiffuseSpecularMapMaterialPrivate()
     : QMaterialPrivate()
@@ -130,7 +94,7 @@ void QDiffuseSpecularMapMaterialPrivate::init()
                                                                QStringLiteral("specularTexture"),
                                                                QStringLiteral("normal")});
 
-    m_diffuseSpecularMapRHIShader->setVertexShaderCode(QShaderProgram::loadSource(QUrl(QStringLiteral("qrc:/shaders/rhi/default.vert"))));
+    m_diffuseSpecularMapRHIShader->setVertexShaderCode(QShaderProgram::loadSource(QUrl(QStringLiteral("qrc:/shaders/rhi/default_pos_norm_tex.vert"))));
     m_diffuseSpecularMapRHIShaderBuilder->setParent(q);
     m_diffuseSpecularMapRHIShaderBuilder->setShaderProgram(m_diffuseSpecularMapRHIShader);
     m_diffuseSpecularMapRHIShaderBuilder->setFragmentShaderGraph(QUrl(QStringLiteral("qrc:/shaders/graphs/phong.frag.json")));
@@ -264,7 +228,7 @@ QDiffuseSpecularMapMaterial::~QDiffuseSpecularMapMaterial()
 }
 
 /*!
-    \property QDiffuseSpecularMapMaterial::ambient
+    \property Qt3DExtras::QDiffuseSpecularMapMaterial::ambient
 
     Holds the current ambient color that is emitted by an object without any
     other light source.
@@ -276,7 +240,7 @@ QColor QDiffuseSpecularMapMaterial::ambient() const
 }
 
 /*!
-    \property QDiffuseSpecularMapMaterial::diffuse
+    \property Qt3DExtras::QDiffuseSpecularMapMaterial::diffuse
 
     Holds the current diffuse map texture.
 
@@ -296,7 +260,7 @@ QAbstractTexture *QDiffuseSpecularMapMaterial::diffuse() const
 }
 
 /*!
-    \property QDiffuseSpecularMapMaterial::specular
+    \property Qt3DExtras::QDiffuseSpecularMapMaterial::specular
 
     Holds the current specular map texture.
 
@@ -316,7 +280,7 @@ QAbstractTexture *QDiffuseSpecularMapMaterial::specular() const
 }
 
 /*!
-    \property QDiffuseSpecularMapMaterial::shininess
+    \property Qt3DExtras::QDiffuseSpecularMapMaterial::shininess
 
     Holds the current shininess as a float value. Higher values of shininess result in
     a smaller and brighter highlight.
@@ -330,7 +294,7 @@ float QDiffuseSpecularMapMaterial::shininess() const
 }
 
 /*!
-    \property QDiffuseSpecularMapMaterial::textureScale
+    \property Qt3DExtras::QDiffuseSpecularMapMaterial::textureScale
 
     Holds the current texture scale. It is applied as a multiplier to texture
     coordinates at render time. Defaults to 1.0.
@@ -378,3 +342,5 @@ void QDiffuseSpecularMapMaterial::setTextureScale(float textureScale)
 } // namespace Qt3DExtras
 
 QT_END_NAMESPACE
+
+#include "moc_qdiffusespecularmapmaterial.cpp"

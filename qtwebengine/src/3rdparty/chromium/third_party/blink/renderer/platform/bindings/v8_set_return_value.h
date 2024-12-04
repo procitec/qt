@@ -1,13 +1,15 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_BINDINGS_V8_SET_RETURN_VALUE_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_BINDINGS_V8_SET_RETURN_VALUE_H_
 
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/platform/web_string.h"
 #include "third_party/blink/renderer/platform/bindings/dom_data_store.h"
 #include "third_party/blink/renderer/platform/bindings/dom_wrapper_world.h"
+#include "third_party/blink/renderer/platform/bindings/enumeration_base.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
 #include "third_party/blink/renderer/platform/bindings/v8_binding.h"
 #include "third_party/blink/renderer/platform/bindings/v8_per_isolate_data.h"
@@ -38,44 +40,42 @@ struct V8ReturnValue {
   enum NonNullable { kNonNullable };
   enum Nullable { kNullable };
 
-  // FrozenArray or not (the integrity level = frozen or not)
-  enum Frozen { kFrozen };
-
   // Main world or not
   enum MainWorld { kMainWorld };
 
-  // Returns the interface object of the given type.
-  enum InterfaceObject { kInterfaceObject };
+  // The return value can be a cross origin object.
+  enum MaybeCrossOrigin { kMaybeCrossOrigin };
 
-  // Selects the appropriate creation context.
-  static v8::Local<v8::Object> CreationContext(
+  // Returns the exposed object of the given type.
+  enum InterfaceObject { kInterfaceObject };
+  enum NamespaceObject { kNamespaceObject };
+
+  // Selects the appropriate receiver from which e.g. the creation context can
+  // be retrieved.
+  static v8::Local<v8::Object> GetReceiver(
       const v8::FunctionCallbackInfo<v8::Value>& info) {
     return info.This();
   }
-  static v8::Local<v8::Object> CreationContext(
+  static v8::Local<v8::Object> GetReceiver(
       const v8::PropertyCallbackInfo<v8::Value>& info) {
     return info.Holder();
+  }
+  // Helper function for ScriptWrappable
+  template <typename CallbackInfo>
+  static void SetWrapper(const CallbackInfo& info,
+                         ScriptWrappable* wrappable,
+                         v8::Local<v8::Context> creation_context) {
+    v8::Local<v8::Value> wrapper =
+        wrappable->Wrap(ScriptState::From(creation_context));
+    info.GetReturnValue().SetNonEmpty(wrapper);
   }
 };
 
 // V8 handle types
-template <typename CallbackInfo, typename S>
-void V8SetReturnValue(const CallbackInfo& info, const v8::Local<S> value) {
-  info.GetReturnValue().Set(value);
-}
-
-template <typename CallbackInfo, typename S>
+template <typename CallbackInfo, typename S, typename... ExtraArgs>
 void V8SetReturnValue(const CallbackInfo& info,
                       const v8::Local<S> value,
-                      V8ReturnValue::Frozen) {
-  if (value->IsObject()) {
-    bool result =
-        value.template As<v8::Object>()
-            ->SetIntegrityLevel(info.GetIsolate()->GetCurrentContext(),
-                                v8::IntegrityLevel::kFrozen)
-            .ToChecked();
-    CHECK(result);
-  }
+                      ExtraArgs... extra_args) {
   info.GetReturnValue().Set(value);
 }
 
@@ -84,9 +84,9 @@ PLATFORM_EXPORT v8::Local<v8::Object> CreatePropertyDescriptorObject(
     v8::Isolate* isolate,
     const v8::PropertyDescriptor& desc);
 
-PLATFORM_EXPORT inline void V8SetReturnValue(
-    const v8::PropertyCallbackInfo<v8::Value>& info,
-    const v8::PropertyDescriptor& value) {
+template <typename CallbackInfo>
+void V8SetReturnValue(const CallbackInfo& info,
+                      const v8::PropertyDescriptor& value) {
   info.GetReturnValue().Set(
       CreatePropertyDescriptorObject(info.GetIsolate(), value));
 }
@@ -152,6 +152,16 @@ void V8SetReturnValue(const CallbackInfo& info, std::nullptr_t) {
 // Primitive types
 template <typename CallbackInfo>
 void V8SetReturnValue(const CallbackInfo& info, bool value) {
+  info.GetReturnValue().Set(value);
+}
+
+template <typename CallbackInfo>
+void V8SetReturnValue(const CallbackInfo& info, int16_t value) {
+  info.GetReturnValue().Set(value);
+}
+
+template <typename CallbackInfo>
+void V8SetReturnValue(const CallbackInfo& info, uint16_t value) {
   info.GetReturnValue().Set(value);
 }
 
@@ -279,14 +289,14 @@ void V8SetReturnValue(const CallbackInfo& info,
   DCHECK(DOMWrapperWorld::Current(info.GetIsolate()).IsMainWorld());
   if (UNLIKELY(!value))
     return info.GetReturnValue().SetNull();
-
   ScriptWrappable* wrappable = const_cast<ScriptWrappable*>(value);
-  if (DOMDataStore::SetReturnValueForMainWorld(info.GetReturnValue(),
-                                               wrappable))
+  if (DOMDataStore::SetReturnValueFromInlineStorage(info.GetReturnValue(),
+                                                    wrappable)) {
     return;
-
-  info.GetReturnValue().Set(
-      wrappable->Wrap(info.GetIsolate(), V8ReturnValue::CreationContext(info)));
+  }
+  V8ReturnValue::SetWrapper(
+      info, wrappable,
+      V8ReturnValue::GetReceiver(info)->GetCreationContextChecked());
 }
 
 template <typename CallbackInfo>
@@ -295,12 +305,13 @@ void V8SetReturnValue(const CallbackInfo& info,
                       V8ReturnValue::MainWorld) {
   DCHECK(DOMWrapperWorld::Current(info.GetIsolate()).IsMainWorld());
   ScriptWrappable* wrappable = const_cast<ScriptWrappable*>(&value);
-  if (DOMDataStore::SetReturnValueForMainWorld(info.GetReturnValue(),
-                                               wrappable))
+  if (DOMDataStore::SetReturnValueFromInlineStorage(info.GetReturnValue(),
+                                                    wrappable)) {
     return;
-
-  info.GetReturnValue().Set(
-      wrappable->Wrap(info.GetIsolate(), V8ReturnValue::CreationContext(info)));
+  }
+  V8ReturnValue::SetWrapper(
+      info, wrappable,
+      V8ReturnValue::GetReceiver(info)->GetCreationContextChecked());
 }
 
 template <typename CallbackInfo>
@@ -309,16 +320,15 @@ void V8SetReturnValue(const CallbackInfo& info,
                       const ScriptWrappable* receiver) {
   if (UNLIKELY(!value))
     return info.GetReturnValue().SetNull();
-
   ScriptWrappable* wrappable = const_cast<ScriptWrappable*>(value);
   if (DOMDataStore::SetReturnValueFast(info.GetReturnValue(), wrappable,
-                                       V8ReturnValue::CreationContext(info),
+                                       V8ReturnValue::GetReceiver(info),
                                        receiver)) {
     return;
   }
-
-  info.GetReturnValue().Set(
-      wrappable->Wrap(info.GetIsolate(), V8ReturnValue::CreationContext(info)));
+  V8ReturnValue::SetWrapper(
+      info, wrappable,
+      V8ReturnValue::GetReceiver(info)->GetCreationContextChecked());
 }
 
 template <typename CallbackInfo>
@@ -327,13 +337,75 @@ void V8SetReturnValue(const CallbackInfo& info,
                       const ScriptWrappable* receiver) {
   ScriptWrappable* wrappable = const_cast<ScriptWrappable*>(&value);
   if (DOMDataStore::SetReturnValueFast(info.GetReturnValue(), wrappable,
-                                       V8ReturnValue::CreationContext(info),
+                                       V8ReturnValue::GetReceiver(info),
                                        receiver)) {
     return;
   }
+  V8ReturnValue::SetWrapper(
+      info, wrappable,
+      V8ReturnValue::GetReceiver(info)->GetCreationContextChecked());
+}
 
-  info.GetReturnValue().Set(
-      wrappable->Wrap(info.GetIsolate(), V8ReturnValue::CreationContext(info)));
+template <typename CallbackInfo>
+void V8SetReturnValue(const CallbackInfo& info,
+                      const ScriptWrappable* value,
+                      const ScriptWrappable* receiver,
+                      V8ReturnValue::MaybeCrossOrigin) {
+  if (UNLIKELY(!value))
+    return info.GetReturnValue().SetNull();
+  ScriptWrappable* wrappable = const_cast<ScriptWrappable*>(value);
+  if (DOMDataStore::SetReturnValueFast(info.GetReturnValue(), wrappable,
+                                       V8ReturnValue::GetReceiver(info),
+                                       receiver)) {
+    return;
+  }
+  // Check whether the creation context is available, and if not, use the
+  // current context. When a cross-origin Window is associated with a
+  // v8::Context::NewRemoteContext(), there is no creation context in the usual
+  // sense. It's ok to use the current context in that case because:
+  // 1) The Window objects must have their own creation context and must never
+  //    need a creation context to be specified.
+  // 2) Even though a v8::Context is not necessary in case
+  //    of Window objects, v8::Isolate and DOMWrapperWorld are still necessary
+  //    to create an appropriate wrapper object, and the ScriptState associated
+  //    with the current context will still have the correct v8::Isolate and
+  //    DOMWrapperWorld.
+  v8::Local<v8::Context> context;
+  if (!V8ReturnValue::GetReceiver(info)->GetCreationContext().ToLocal(
+          &context)) {
+    context = info.GetIsolate()->GetCurrentContext();
+  }
+  V8ReturnValue::SetWrapper(info, wrappable, context);
+}
+
+template <typename CallbackInfo>
+void V8SetReturnValue(const CallbackInfo& info,
+                      const ScriptWrappable& value,
+                      const ScriptWrappable* receiver,
+                      V8ReturnValue::MaybeCrossOrigin) {
+  ScriptWrappable* wrappable = const_cast<ScriptWrappable*>(&value);
+  if (DOMDataStore::SetReturnValueFast(info.GetReturnValue(), wrappable,
+                                       V8ReturnValue::GetReceiver(info),
+                                       receiver)) {
+    return;
+  }
+  // Check whether the creation context is available, and if not, use the
+  // current context. When a cross-origin Window is associated with a
+  // v8::Context::NewRemoteContext(), there is no creation context in the usual
+  // sense. It's ok to use the current context in that case because:
+  // 1) The Window objects must have their own creation context and must never
+  //    need a creation context to be specified.
+  // 2) Even though a v8::Context is not necessary in case
+  //    of Window objects, v8::Isolate and DOMWrapperWorld are still necessary
+  //    to create an appropriate wrapper object, and the ScriptState associated
+  //    with the current context will still have the correct v8::Isolate and
+  //    DOMWrapperWorld.
+  v8::Local<v8::Context> context;
+  if (!V8ReturnValue::GetReceiver(info)->GetCreationContext().ToLocal(
+          &context)) {
+    context = info.GetIsolate()->GetCurrentContext();
+  }
+  V8ReturnValue::SetWrapper(info, wrappable, context);
 }
 
 template <typename CallbackInfo>
@@ -342,13 +414,10 @@ void V8SetReturnValue(const CallbackInfo& info,
                       v8::Local<v8::Context> creation_context) {
   if (UNLIKELY(!value))
     return info.GetReturnValue().SetNull();
-
   ScriptWrappable* wrappable = const_cast<ScriptWrappable*>(value);
   if (DOMDataStore::SetReturnValue(info.GetReturnValue(), wrappable))
     return;
-
-  info.GetReturnValue().Set(
-      wrappable->Wrap(info.GetIsolate(), creation_context->Global()));
+  V8ReturnValue::SetWrapper(info, wrappable, creation_context);
 }
 
 template <typename CallbackInfo>
@@ -358,28 +427,23 @@ void V8SetReturnValue(const CallbackInfo& info,
   ScriptWrappable* wrappable = const_cast<ScriptWrappable*>(&value);
   if (DOMDataStore::SetReturnValue(info.GetReturnValue(), wrappable))
     return;
-
-  info.GetReturnValue().Set(
-      wrappable->Wrap(info.GetIsolate(), creation_context->Global()));
+  V8ReturnValue::SetWrapper(info, wrappable, creation_context);
 }
 
-// Interface object
-PLATFORM_EXPORT v8::Local<v8::Value> GetInterfaceObjectExposedOnGlobal(
-    v8::Isolate* isolate,
-    v8::Local<v8::Object> creation_context,
-    const WrapperTypeInfo* wrapper_type_info);
-
-inline void V8SetReturnValue(const v8::PropertyCallbackInfo<v8::Value>& info,
-                             const WrapperTypeInfo* wrapper_type_info,
-                             V8ReturnValue::InterfaceObject) {
-  info.GetReturnValue().Set(GetInterfaceObjectExposedOnGlobal(
-      info.GetIsolate(), info.Holder(), wrapper_type_info));
+// EnumerationBase
+template <typename CallbackInfo, typename... ExtraArgs>
+void V8SetReturnValue(const CallbackInfo& info,
+                      const bindings::EnumerationBase& value,
+                      v8::Isolate* isolate,
+                      ExtraArgs... extra_args) {
+  V8PerIsolateData::From(isolate)->GetStringCache()->SetReturnValueFromString(
+      info.GetReturnValue(), value.AsString().Impl());
 }
 
 // Nullable types
 template <typename CallbackInfo, typename T, typename... ExtraArgs>
 void V8SetReturnValue(const CallbackInfo& info,
-                      base::Optional<T> value,
+                      absl::optional<T> value,
                       ExtraArgs... extra_args) {
   if (value.has_value()) {
     V8SetReturnValue(info, value.value(),
@@ -387,6 +451,31 @@ void V8SetReturnValue(const CallbackInfo& info,
   } else {
     info.GetReturnValue().SetNull();
   }
+}
+
+// Exposed objects
+PLATFORM_EXPORT v8::Local<v8::Value> GetExposedInterfaceObject(
+    v8::Isolate* isolate,
+    v8::Local<v8::Object> creation_context,
+    const WrapperTypeInfo* wrapper_type_info);
+
+PLATFORM_EXPORT v8::Local<v8::Value> GetExposedNamespaceObject(
+    v8::Isolate* isolate,
+    v8::Local<v8::Object> creation_context,
+    const WrapperTypeInfo* wrapper_type_info);
+
+inline void V8SetReturnValue(const v8::PropertyCallbackInfo<v8::Value>& info,
+                             const WrapperTypeInfo* wrapper_type_info,
+                             V8ReturnValue::InterfaceObject) {
+  info.GetReturnValue().Set(GetExposedInterfaceObject(
+      info.GetIsolate(), info.Holder(), wrapper_type_info));
+}
+
+inline void V8SetReturnValue(const v8::PropertyCallbackInfo<v8::Value>& info,
+                             const WrapperTypeInfo* wrapper_type_info,
+                             V8ReturnValue::NamespaceObject) {
+  info.GetReturnValue().Set(GetExposedNamespaceObject(
+      info.GetIsolate(), info.Holder(), wrapper_type_info));
 }
 
 }  // namespace bindings

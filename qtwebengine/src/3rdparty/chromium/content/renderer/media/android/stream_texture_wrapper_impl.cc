@@ -1,26 +1,28 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "content/renderer/media/android/stream_texture_wrapper_impl.h"
 
-#include "base/bind.h"
-#include "base/bind_helpers.h"
-#include "base/callback.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
+#include "base/functional/callback_helpers.h"
 #include "base/logging.h"
+#include "base/task/bind_post_task.h"
+#include "base/task/single_thread_task_runner.h"
 #include "cc/layers/video_frame_provider.h"
 #include "gpu/GLES2/gl2extchromium.h"
+#include "gpu/command_buffer/client/client_shared_image.h"
 #include "gpu/command_buffer/client/shared_image_interface.h"
 #include "gpu/command_buffer/common/shared_image_usage.h"
-#include "media/base/bind_to_current_loop.h"
 
 namespace {
 // Non-member function to allow it to run even after this class is deleted.
 void OnReleaseVideoFrame(scoped_refptr<content::StreamTextureFactory> factories,
-                         gpu::Mailbox mailbox,
+                         scoped_refptr<gpu::ClientSharedImage> shared_image,
                          const gpu::SyncToken& sync_token) {
   gpu::SharedImageInterface* sii = factories->SharedImageInterface();
-  sii->DestroySharedImage(sync_token, mailbox);
+  sii->DestroySharedImage(sync_token, std::move(shared_image));
   sii->Flush();
 }
 }
@@ -37,6 +39,12 @@ StreamTextureWrapperImpl::StreamTextureWrapperImpl(
 
 StreamTextureWrapperImpl::~StreamTextureWrapperImpl() {
   DCHECK(main_task_runner_->BelongsToCurrentThread());
+
+  // Clears create video frame callback so it couldn't be called from compositor
+  // thread after |this| is being destroyed.
+  if (stream_texture_proxy_)
+    stream_texture_proxy_->ClearCreateVideoFrameCB();
+
   SetCurrentFrameInternal(nullptr);
 }
 
@@ -57,7 +65,7 @@ void StreamTextureWrapperImpl::CreateVideoFrame(
     const gpu::Mailbox& mailbox,
     const gfx::Size& coded_size,
     const gfx::Rect& visible_rect,
-    const base::Optional<gpu::VulkanYCbCrInfo>& ycbcr_info) {
+    const std::optional<gpu::VulkanYCbCrInfo>& ycbcr_info) {
   // This message comes from GPU process when the SharedImage is already
   // created, so we don't need to wait on any synctoken, mailbox is ready to
   // use.
@@ -65,30 +73,33 @@ void StreamTextureWrapperImpl::CreateVideoFrame(
       gpu::MailboxHolder(mailbox, gpu::SyncToken(), GL_TEXTURE_EXTERNAL_OES)};
 
   gpu::SharedImageInterface* sii = factory_->SharedImageInterface();
-  sii->NotifyMailboxAdded(mailbox, gpu::SHARED_IMAGE_USAGE_DISPLAY |
-                                       gpu::SHARED_IMAGE_USAGE_GLES2 |
-                                       gpu::SHARED_IMAGE_USAGE_RASTER);
+  // The SI backing this VideoFrame will be read by the display compositor and
+  // raster. The latter will be over GL if not using OOP-R. NOTE: GL usage can
+  // be eliminated once OOP-R ships definitively.
+  auto shared_image = sii->NotifyMailboxAdded(
+      mailbox, gpu::SHARED_IMAGE_USAGE_DISPLAY_READ |
+                   gpu::SHARED_IMAGE_USAGE_GLES2_READ |
+                   gpu::SHARED_IMAGE_USAGE_RASTER_READ |
+                   gpu::SHARED_IMAGE_USAGE_RASTER_WRITE);
 
   // The pixel format doesn't matter here as long as it's valid for texture
   // frames. But SkiaRenderer wants to ensure that the format of the resource
   // used here which will eventually create a promise image must match the
-  // format of the resource(SharedImageVideo) used to create fulfill image.
-  // crbug.com/1028746. Since we create all the textures/abstract textures as
-  // well as shared images for video to be of format RGBA, we need to use the
-  // pixel format as ABGR here(which corresponds to 32bpp RGBA).
+  // format of the resource(AndroidVideoImageBacking) used to create fulfill
+  // image. crbug.com/1028746. Since we create all the textures/abstract
+  // textures as well as shared images for video to be of format RGBA, we need
+  // to use the pixel format as ABGR here(which corresponds to 32bpp RGBA).
   scoped_refptr<media::VideoFrame> new_frame =
       media::VideoFrame::WrapNativeTextures(
           media::PIXEL_FORMAT_ABGR, holders,
-          media::BindToLoop(
-              main_task_runner_,
-              base::BindOnce(&OnReleaseVideoFrame, factory_, mailbox)),
+          base::BindPostTask(main_task_runner_,
+                             base::BindOnce(&OnReleaseVideoFrame, factory_,
+                                            std::move(shared_image))),
           coded_size, visible_rect, visible_rect.size(), base::TimeDelta());
   new_frame->set_ycbcr_info(ycbcr_info);
 
-  if (enable_texture_copy_) {
-    new_frame->metadata()->copy_mode =
-        media::VideoFrameMetadata::CopyMode::kCopyToNewTexture;
-  }
+  if (enable_texture_copy_)
+    new_frame->metadata().copy_required = true;
 
   SetCurrentFrameInternal(new_frame);
 }
@@ -143,7 +154,7 @@ void StreamTextureWrapperImpl::Initialize(
       FROM_HERE,
       base::BindOnce(&StreamTextureWrapperImpl::InitializeOnMainThread,
                      weak_factory_.GetWeakPtr(), received_frame_cb,
-                     media::BindToCurrentLoop(std::move(init_cb))));
+                     base::BindPostTaskToCurrentDefault(std::move(init_cb))));
 }
 
 void StreamTextureWrapperImpl::InitializeOnMainThread(

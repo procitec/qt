@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,8 +7,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "base/callback.h"
 #include "base/check.h"
+#include "base/functional/callback.h"
 #include "base/memory/ptr_util.h"
 #include "base/notreached.h"
 #include "sandbox/win/src/crosscall_params.h"
@@ -17,6 +17,7 @@
 #include "sandbox/win/src/sandbox.h"
 #include "sandbox/win/src/sandbox_types.h"
 #include "sandbox/win/src/sharedmem_ipc_client.h"
+#include "sandbox/win/src/threadpool.h"
 
 namespace {
 // This handle must not be closed.
@@ -31,10 +32,10 @@ SharedMemIPCServer::ServerControl::~ServerControl() {}
 
 SharedMemIPCServer::SharedMemIPCServer(HANDLE target_process,
                                        DWORD target_process_id,
-                                       ThreadProvider* thread_provider,
+                                       ThreadPool* thread_pool,
                                        Dispatcher* dispatcher)
     : client_control_(nullptr),
-      thread_provider_(thread_provider),
+      thread_pool_(thread_pool),
       target_process_(target_process),
       target_process_id_(target_process_id),
       call_dispatcher_(dispatcher) {
@@ -55,7 +56,7 @@ SharedMemIPCServer::SharedMemIPCServer(HANDLE target_process,
 
 SharedMemIPCServer::~SharedMemIPCServer() {
   // Free the wait handles associated with the thread pool.
-  if (!thread_provider_->UnRegisterWaits(this)) {
+  if (!thread_pool_->UnRegisterWaits(this)) {
     // Better to leak than to crash.
     return;
   }
@@ -127,8 +128,8 @@ bool SharedMemIPCServer::Init(void* shared_mem,
     // Advance to the next channel.
     base_start += channel_size;
     // Register the ping event with the threadpool.
-    thread_provider_->RegisterWait(this, service_context->ping_event.Get(),
-                                   ThreadPingEventReady, service_context);
+    thread_pool_->RegisterWait(this, service_context->ping_event.get(),
+                               ThreadPingEventReady, service_context);
   }
   if (!::DuplicateHandle(::GetCurrentProcess(), g_alive_mutex, target_process_,
                          &client_control_->server_alive,
@@ -316,7 +317,7 @@ void __stdcall SharedMemIPCServer::ThreadPingEventReady(void* context,
   CrossCallParams* call_params = reinterpret_cast<CrossCallParams*>(buffer);
   memcpy(call_params->GetCallReturn(), &call_result, sizeof(call_result));
   ::InterlockedExchange(&service_context->channel->state, kAckChannel);
-  ::SetEvent(service_context->pong_event.Get());
+  ::SetEvent(service_context->pong_event.get());
 }
 
 bool SharedMemIPCServer::MakeEvents(base::win::ScopedHandle* server_ping,
@@ -329,14 +330,14 @@ bool SharedMemIPCServer::MakeEvents(base::win::ScopedHandle* server_ping,
 
   // The events are auto reset, and start not signaled.
   server_ping->Set(::CreateEventW(nullptr, false, false, nullptr));
-  if (!::DuplicateHandle(::GetCurrentProcess(), server_ping->Get(),
+  if (!::DuplicateHandle(::GetCurrentProcess(), server_ping->get(),
                          target_process_, client_ping, kDesiredAccess, false,
                          0)) {
     return false;
   }
 
   server_pong->Set(::CreateEventW(nullptr, false, false, nullptr));
-  if (!::DuplicateHandle(::GetCurrentProcess(), server_pong->Get(),
+  if (!::DuplicateHandle(::GetCurrentProcess(), server_pong->get(),
                          target_process_, client_pong, kDesiredAccess, false,
                          0)) {
     return false;

@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2017 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtQml module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2017 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 #ifndef QV4CODEGEN_P_H
 #define QV4CODEGEN_P_H
 
@@ -60,6 +24,9 @@
 #include <private/qv4bytecodegenerator_p.h>
 #include <private/qv4calldata_p.h>
 
+#include <QtCore/qsharedpointer.h>
+#include <stack>
+
 QT_BEGIN_NAMESPACE
 
 namespace QV4 {
@@ -78,14 +45,30 @@ struct ControlFlow;
 struct ControlFlowCatch;
 struct ControlFlowFinally;
 
-class Q_QMLCOMPILER_PRIVATE_EXPORT Codegen: protected QQmlJS::AST::Visitor
+class Q_QML_COMPILER_EXPORT CodegenWarningInterface
+{
+public:
+    virtual void reportVarUsedBeforeDeclaration(const QString &name, const QString &fileName,
+                                                QQmlJS::SourceLocation declarationLocation,
+                                                QQmlJS::SourceLocation accessLocation);
+    virtual ~CodegenWarningInterface() = default;
+};
+
+inline CodegenWarningInterface *defaultCodegenWarningInterface()
+{
+    static CodegenWarningInterface iface;
+    return &iface;
+}
+
+class Q_QML_COMPILER_EXPORT Codegen: protected QQmlJS::AST::Visitor
 {
 protected:
     using BytecodeGenerator = QV4::Moth::BytecodeGenerator;
     using Instruction = QV4::Moth::Instruction;
 public:
-    Codegen(QV4::Compiler::JSUnitGenerator *jsUnitGenerator, bool strict);
-
+    Codegen(QV4::Compiler::JSUnitGenerator *jsUnitGenerator, bool strict,
+            CodegenWarningInterface *iface = defaultCodegenWarningInterface(),
+            bool storeSourceLocations = false);
 
     void generateFromProgram(const QString &fileName,
                              const QString &finalUrl,
@@ -105,15 +88,15 @@ public:
     class VolatileMemoryLocations {
         friend VolatileMemoryLocationScanner;
         bool allVolatile = false;
-        QVector<QStringView> specificLocations;
+        QList<QStringView> specificLocations;
     public:
-        bool isVolatile(const QStringView &name) {
+        bool isVolatile(QStringView name) {
             if (allVolatile)
                 return true;
             return specificLocations.contains(name);
         }
 
-        void add(const QStringRef &name) { if (!allVolatile) specificLocations.append(name); }
+        void add(QStringView name) { if (!allVolatile) specificLocations.append(name); }
         void setAllVolatile() { allVolatile = true; }
     };
     class RValue {
@@ -206,7 +189,11 @@ public:
             stackSlotIsLocalOrArgument(false),
             isVolatile(false),
             global(false),
-            qmlGlobal(false)
+            qmlGlobal(false),
+            throwsReferenceError(false),
+            subscriptLoadedForCall(false),
+            isOptional(false),
+            hasSavedCallBaseSlot(false)
         {}
 
         Reference(const Reference &) = default;
@@ -253,14 +240,6 @@ public:
             r.stackSlotIsLocalOrArgument = isLocal;
             return r;
         }
-        static Reference fromArgument(Codegen *cg, int index, bool isVolatile) {
-            Reference r(cg, StackSlot);
-            r.theStackSlot = Moth::StackSlot::createRegister(
-                    index + sizeof(CallData) / sizeof(StaticValue) - 1);
-            r.stackSlotIsLocalOrArgument = true;
-            r.isVolatile = isVolatile;
-            return r;
-        }
         static Reference fromScopedLocal(Codegen *cg, int index, int scope) {
             Reference r(cg, ScopedLocal);
             r.index = index;
@@ -277,11 +256,20 @@ public:
             r.name = name;
             return r;
         }
-        static Reference fromMember(const Reference &baseRef, const QString &name) {
+        static Reference
+        fromMember(const Reference &baseRef, const QString &name,
+                   QQmlJS::SourceLocation sourceLocation = QQmlJS::SourceLocation(),
+                   bool isOptional = false,
+                   std::vector<Moth::BytecodeGenerator::Jump> *optionalChainJumpsToPatch = nullptr)
+        {
+            Q_ASSERT(baseRef.isValid());
             Reference r(baseRef.codegen, Member);
             r.propertyBase = baseRef.asRValue();
             r.propertyNameIndex = r.codegen->registerString(name);
             r.requiresTDZCheck = baseRef.requiresTDZCheck;
+            r.sourceLocation = sourceLocation;
+            r.optionalChainJumpsToPatch = optionalChainJumpsToPatch;
+            r.isOptional = isOptional;
             return r;
         }
         static Reference fromSuperProperty(const Reference &property) {
@@ -345,6 +333,14 @@ public:
             return theStackSlot;
         }
 
+        void tdzCheck() const
+        {
+            if (isAccumulator())
+                tdzCheck(requiresTDZCheck, throwsReferenceError);
+            else if (isStackSlot())
+                tdzCheckStackSlot(stackSlot(), requiresTDZCheck, throwsReferenceError);
+        }
+
         union {
             Moth::StackSlot theStackSlot;
             QV4::ReturnedValue constant;
@@ -358,7 +354,10 @@ public:
             };
             struct {
                 Moth::StackSlot elementBase;
-                RValue elementSubscript;
+                union {
+                    RValue elementSubscript;
+                    Moth::StackSlot element;
+                };
             };
             Moth::StackSlot property; // super property
         };
@@ -374,10 +373,21 @@ public:
         quint32 isVolatile:1;
         quint32 global:1;
         quint32 qmlGlobal:1;
+        quint32 throwsReferenceError:1;
+        quint32 subscriptLoadedForCall:1;
+        quint32 isOptional: 1;
+        quint32 hasSavedCallBaseSlot: 1;
+        QQmlJS::SourceLocation sourceLocation = QQmlJS::SourceLocation();
+        std::vector<Moth::BytecodeGenerator::Jump> *optionalChainJumpsToPatch = nullptr;
+        int savedCallBaseSlot = -1;
+        int savedCallPropertyNameIndex = -1;
 
     private:
         void storeAccumulator() const;
         Reference doStoreOnStack(int tempIndex) const;
+        void tdzCheck(bool requiresCheck, bool throwsReferenceError) const;
+        void tdzCheckStackSlot(
+                Moth::StackSlot slot, bool requiresCheck, bool throwsReferenceError) const;
     };
 
     struct RegisterScope {
@@ -511,11 +521,26 @@ public:
     int registerString(const QString &name) {
         return jsUnitGenerator->registerString(name);
     }
-    int registerConstant(QV4::ReturnedValue v) { return jsUnitGenerator->registerConstant(v); }
-    int registerGetterLookup(int nameIndex) { return jsUnitGenerator->registerGetterLookup(nameIndex); }
-    int registerSetterLookup(int nameIndex) { return jsUnitGenerator->registerSetterLookup(nameIndex); }
-    int registerGlobalGetterLookup(int nameIndex) { return jsUnitGenerator->registerGlobalGetterLookup(nameIndex); }
-    int registerQmlContextPropertyGetterLookup(int nameIndex) { return jsUnitGenerator->registerQmlContextPropertyGetterLookup(nameIndex); }
+    int registerConstant(QV4::ReturnedValue v)
+    {
+        return jsUnitGenerator->registerConstant(v);
+    }
+    int registerGetterLookup(int nameIndex, JSUnitGenerator::LookupMode mode)
+    {
+        return jsUnitGenerator->registerGetterLookup(nameIndex, mode);
+    }
+    int registerSetterLookup(int nameIndex)
+    {
+        return jsUnitGenerator->registerSetterLookup(nameIndex);
+    }
+    int registerGlobalGetterLookup(int nameIndex, JSUnitGenerator::LookupMode mode)
+    {
+        return jsUnitGenerator->registerGlobalGetterLookup(nameIndex, mode);
+    }
+    int registerQmlContextPropertyGetterLookup(int nameIndex, JSUnitGenerator::LookupMode mode)
+    {
+        return jsUnitGenerator->registerQmlContextPropertyGetterLookup(nameIndex, mode);
+    }
 
     // Returns index in _module->functions
     virtual int defineFunction(const QString &name, QQmlJS::AST::Node *ast,
@@ -575,6 +600,7 @@ protected:
     bool visit(QQmlJS::AST::UiArrayMemberList *ast) override;
     bool visit(QQmlJS::AST::UiImport *ast) override;
     bool visit(QQmlJS::AST::UiHeaderItemList *ast) override;
+    bool visit(QQmlJS::AST::UiPragmaValueList *ast) override;
     bool visit(QQmlJS::AST::UiPragma *ast) override;
     bool visit(QQmlJS::AST::UiObjectInitializer *ast) override;
     bool visit(QQmlJS::AST::UiObjectMemberList *ast) override;
@@ -598,11 +624,14 @@ protected:
     bool visit(QQmlJS::AST::ArrayMemberExpression *ast) override;
     bool visit(QQmlJS::AST::BinaryExpression *ast) override;
     bool visit(QQmlJS::AST::CallExpression *ast) override;
+    void endVisit(QQmlJS::AST::CallExpression *ast) override;
     bool visit(QQmlJS::AST::ConditionalExpression *ast) override;
     bool visit(QQmlJS::AST::DeleteExpression *ast) override;
+    void endVisit(QQmlJS::AST::DeleteExpression *ast) override;
     bool visit(QQmlJS::AST::FalseLiteral *ast) override;
     bool visit(QQmlJS::AST::SuperLiteral *ast) override;
     bool visit(QQmlJS::AST::FieldMemberExpression *ast) override;
+    void endVisit(QQmlJS::AST::FieldMemberExpression *ast) override;
     bool visit(QQmlJS::AST::TaggedTemplate *ast) override;
     bool visit(QQmlJS::AST::FunctionExpression *ast) override;
     bool visit(QQmlJS::AST::IdentifierExpression *ast) override;
@@ -682,11 +711,12 @@ public:
     QQmlJS::DiagnosticMessage error() const;
     QUrl url() const;
 
-    Reference binopHelper(QSOperator::Op oper, Reference &left, Reference &right);
+    Reference binopHelper(QQmlJS::AST::BinaryExpression *ast, QSOperator::Op oper, Reference &left,
+                          Reference &right);
     Reference jumpBinop(QSOperator::Op oper, Reference &left, Reference &right);
     struct Arguments { int argc; int argv; bool hasSpread; };
     Arguments pushArgs(QQmlJS::AST::ArgumentList *args);
-    void handleCall(Reference &base, Arguments calldata, int slotForFunction, int slotForThisObject);
+    void handleCall(Reference &base, Arguments calldata, int slotForFunction, int slotForThisObject, bool optional = false);
 
     Arguments pushTemplateArgs(QQmlJS::AST::TemplateLiteral *args);
     bool handleTaggedTemplate(Reference base, QQmlJS::AST::TaggedTemplate *ast);
@@ -702,8 +732,9 @@ public:
             const QString &name, bool lhs,
             const QQmlJS::SourceLocation &accessLocation = QQmlJS::SourceLocation());
 
-    QV4::CompiledData::CompilationUnit generateCompilationUnit(bool generateUnitData = true);
-    static QV4::CompiledData::CompilationUnit compileModule(
+    QQmlRefPointer<QV4::CompiledData::CompilationUnit> generateCompilationUnit(
+            bool generateUnitData = true);
+    static QQmlRefPointer<QV4::CompiledData::CompilationUnit> compileModule(
             bool debugMode, const QString &url, const QString &sourceCode,
             const QDateTime &sourceTimeStamp, QList<QQmlJS::DiagnosticMessage> *diagnostics);
 
@@ -775,13 +806,24 @@ protected:
     bool inFormalParameterList = false;
     bool functionEndsWithReturn = false;
     bool _tailCallsAreAllowed = true;
+    bool storeSourceLocations = false;
     QSet<QString> m_globalNames;
+
+    struct OptionalChainState
+    {
+        QQmlJS::AST::Node *tailNodeOfChain = nullptr;
+        std::vector<Moth::BytecodeGenerator::Jump> jumpsToPatch;
+        bool actuallyHasOptionals = false;
+    };
+    QSet<QQmlJS::AST::Node*> m_seenOptionalChainNodes;
+    std::stack<OptionalChainState> m_optionalChainsStates;
 
     ControlFlow *controlFlow = nullptr;
 
     bool _fileNameIsUrl;
     ErrorType _errorType = NoError;
     QQmlJS::DiagnosticMessage _error;
+    CodegenWarningInterface *_interface;
 
     class TailCallBlocker
     {
@@ -808,10 +850,16 @@ protected:
     };
 
 private:
+    Q_DISABLE_COPY(Codegen)
     VolatileMemoryLocations scanVolatileMemoryLocations(QQmlJS::AST::Node *ast);
     void handleConstruct(const Reference &base, QQmlJS::AST::ArgumentList *args);
     void throwError(ErrorType errorType, const QQmlJS::SourceLocation &loc,
                     const QString &detail);
+    bool traverseOptionalChain(QQmlJS::AST::Node *node);
+    void optionalChainFinalizer(const Reference &expressionResult, bool tailOfChain,
+                                bool isDeleteExpression = false);
+    Reference loadSubscriptForCall(const Reference &base);
+    void generateThrowException(const QString &type, const QString &text = QString());
 };
 
 }

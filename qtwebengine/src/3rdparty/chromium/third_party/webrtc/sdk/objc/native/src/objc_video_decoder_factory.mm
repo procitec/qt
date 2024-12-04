@@ -37,26 +37,25 @@ class ObjCVideoDecoder : public VideoDecoder {
   ObjCVideoDecoder(id<RTC_OBJC_TYPE(RTCVideoDecoder)> decoder)
       : decoder_(decoder), implementation_name_([decoder implementationName].stdString) {}
 
-  int32_t InitDecode(const VideoCodec *codec_settings, int32_t number_of_cores) override {
-    return [decoder_ startDecodeWithNumberOfCores:number_of_cores];
+  bool Configure(const Settings &settings) override {
+    return
+        [decoder_ startDecodeWithNumberOfCores:settings.number_of_cores()] == WEBRTC_VIDEO_CODEC_OK;
   }
 
   int32_t Decode(const EncodedImage &input_image,
-                 bool missing_frames,
                  int64_t render_time_ms = -1) override {
     RTC_OBJC_TYPE(RTCEncodedImage) *encodedImage =
         [[RTC_OBJC_TYPE(RTCEncodedImage) alloc] initWithNativeEncodedImage:input_image];
 
     return [decoder_ decode:encodedImage
-              missingFrames:missing_frames
+              missingFrames:false
           codecSpecificInfo:nil
                renderTimeMs:render_time_ms];
   }
 
   int32_t RegisterDecodeCompleteCallback(DecodedImageCallback *callback) override {
     [decoder_ setCallback:^(RTC_OBJC_TYPE(RTCVideoFrame) * frame) {
-      const rtc::scoped_refptr<VideoFrameBuffer> buffer =
-          new rtc::RefCountedObject<ObjCFrameBuffer>(frame.buffer);
+      const auto buffer = rtc::make_ref_counted<ObjCFrameBuffer>(frame.buffer);
       VideoFrame videoFrame =
           VideoFrame::Builder()
               .set_video_frame_buffer(buffer)

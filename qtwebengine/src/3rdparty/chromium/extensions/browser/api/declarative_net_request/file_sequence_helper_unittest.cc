@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,16 +8,19 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
 #include "base/files/file_util.h"
+#include "base/format_macros.h"
+#include "base/functional/bind.h"
 #include "base/run_loop.h"
-#include "base/task/post_task.h"
+#include "base/strings/stringprintf.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/threading/thread_restrictions.h"
+#include "base/version.h"
 #include "components/crx_file/id_util.h"
 #include "extensions/browser/api/declarative_net_request/constants.h"
+#include "extensions/browser/api/declarative_net_request/file_backed_ruleset_source.h"
 #include "extensions/browser/api/declarative_net_request/parse_info.h"
-#include "extensions/browser/api/declarative_net_request/ruleset_source.h"
+#include "extensions/browser/api/declarative_net_request/rule_counts.h"
 #include "extensions/browser/api/declarative_net_request/test_utils.h"
 #include "extensions/browser/api/declarative_net_request/utils.h"
 #include "extensions/browser/extension_file_task_runner.h"
@@ -33,27 +36,23 @@ namespace declarative_net_request {
 namespace {
 
 api::declarative_net_request::Rule GetAPIRule(const TestRule& rule) {
-  std::unique_ptr<base::DictionaryValue> value = rule.ToValue();
-  EXPECT_TRUE(value);
-  api::declarative_net_request::Rule result;
-  base::string16 error;
-  EXPECT_TRUE(
-      api::declarative_net_request::Rule::Populate(*value, &result, &error))
-      << error;
-  EXPECT_TRUE(error.empty()) << error;
-  return result;
+  std::u16string error;
+  auto result = api::declarative_net_request::Rule::FromValue(rule.ToValue());
+  EXPECT_TRUE(result.has_value()) << result.error();
+  return std::move(result).value_or(api::declarative_net_request::Rule());
 }
 
 struct TestLoadRulesetInfo {
   bool has_new_checksum = false;
-  base::Optional<bool> reindexing_successful;
-  base::Optional<LoadRulesetResult> load_result;
+  std::optional<bool> indexing_successful;
+  std::optional<LoadRulesetResult> load_result;
 };
 
 struct TestCase {
-  explicit TestCase(RulesetSource source) : source(std::move(source)) {}
+  explicit TestCase(FileBackedRulesetSource source)
+      : source(std::move(source)) {}
   int checksum;
-  RulesetSource source;
+  FileBackedRulesetSource source;
   TestLoadRulesetInfo expected_result;
 };
 
@@ -64,6 +63,9 @@ ExtensionId GenerateDummyExtensionID() {
 class FileSequenceHelperTest : public ExtensionsTest {
  public:
   FileSequenceHelperTest() = default;
+
+  FileSequenceHelperTest(const FileSequenceHelperTest&) = delete;
+  FileSequenceHelperTest& operator=(const FileSequenceHelperTest&) = delete;
 
   // ExtensionsTest overrides:
   void SetUp() override {
@@ -77,17 +79,17 @@ class FileSequenceHelperTest : public ExtensionsTest {
   }
 
   void TestAddDynamicRules(
-      RulesetSource source,
+      FileBackedRulesetSource source,
       std::vector<api::declarative_net_request::Rule> rules_to_add,
       ReadJSONRulesResult::Status expected_read_status,
       UpdateDynamicRulesStatus expected_update_status,
-      base::Optional<std::string> expected_error,
+      std::optional<std::string> expected_error,
       bool expected_did_load_successfully) {
     base::RunLoop run_loop;
     auto add_rules_callback = base::BindOnce(
         [](base::RunLoop* run_loop, bool expected_did_load_successfully,
-           base::Optional<std::string> expected_error, LoadRequestData data,
-           base::Optional<std::string> error) {
+           std::optional<std::string> expected_error, LoadRequestData data,
+           std::optional<std::string> error) {
           EXPECT_EQ(1u, data.rulesets.size());
           EXPECT_EQ(expected_error, error) << error.value_or("no actual error");
           EXPECT_EQ(expected_did_load_successfully,
@@ -97,15 +99,17 @@ class FileSequenceHelperTest : public ExtensionsTest {
         &run_loop, expected_did_load_successfully, expected_error);
 
     ExtensionId extension_id = crx_file::id_util::GenerateId("dummy_extension");
-    LoadRequestData data(extension_id);
+    LoadRequestData data(extension_id, base::Version("1.0"));
     data.rulesets.emplace_back(std::move(source));
 
     // Unretained is safe because |helper_| outlives the |add_rules_task|.
-    auto add_rules_task =
-        base::BindOnce(&FileSequenceHelper::UpdateDynamicRules,
-                       base::Unretained(helper_.get()), std::move(data),
-                       /* rule_ids_to_remove */ std::vector<int>(),
-                       std::move(rules_to_add), std::move(add_rules_callback));
+    auto add_rules_task = base::BindOnce(
+        &FileSequenceHelper::UpdateDynamicRules,
+        base::Unretained(helper_.get()), std::move(data),
+        /* rule_ids_to_remove */ std::vector<int>(), std::move(rules_to_add),
+        RuleCounts(GetDynamicRuleLimit(), GetUnsafeDynamicRuleLimit(),
+                   GetRegexRuleLimit()),
+        std::move(add_rules_callback));
 
     base::HistogramTester tester;
     GetExtensionFileTaskRunner()->PostTask(FROM_HERE,
@@ -118,7 +122,7 @@ class FileSequenceHelperTest : public ExtensionsTest {
   }
 
   void TestLoadRulesets(const std::vector<TestCase>& test_cases) {
-    LoadRequestData data(GenerateDummyExtensionID());
+    LoadRequestData data(GenerateDummyExtensionID(), base::Version("1.0"));
     for (const auto& test_case : test_cases) {
       data.rulesets.emplace_back(test_case.source.Clone());
       data.rulesets.back().set_expected_checksum(test_case.checksum);
@@ -139,8 +143,8 @@ class FileSequenceHelperTest : public ExtensionsTest {
 
             EXPECT_EQ(expected_result.has_new_checksum,
                       ruleset.new_checksum().has_value());
-            EXPECT_EQ(expected_result.reindexing_successful,
-                      ruleset.reindexing_successful());
+            EXPECT_EQ(expected_result.indexing_successful,
+                      ruleset.indexing_successful());
             ASSERT_TRUE(ruleset.load_ruleset_result());
             EXPECT_EQ(expected_result.load_result,
                       ruleset.load_ruleset_result())
@@ -161,7 +165,7 @@ class FileSequenceHelperTest : public ExtensionsTest {
   }
 
   void TestNoRulesetsToLoad() {
-    LoadRequestData data(GenerateDummyExtensionID());
+    LoadRequestData data(GenerateDummyExtensionID(), base::Version("1.0"));
 
     base::RunLoop run_loop;
     auto load_ruleset_callback = base::BindOnce(
@@ -202,8 +206,6 @@ class FileSequenceHelperTest : public ExtensionsTest {
 
   // Required to use DataDecoder's JSON parsing for re-indexing.
   data_decoder::test::InProcessDataDecoder in_process_data_decoder_;
-
-  DISALLOW_COPY_AND_ASSIGN(FileSequenceHelperTest);
 };
 
 TEST_F(FileSequenceHelperTest, NoRulesetsToLoad) {
@@ -220,8 +222,8 @@ TEST_F(FileSequenceHelperTest, IndexedRulesetDeleted) {
   // re-index.
   base::DeleteFile(test_cases[0].source.indexed_path());
   base::DeleteFile(test_cases[2].source.indexed_path());
-  test_cases[0].expected_result.reindexing_successful = true;
-  test_cases[2].expected_result.reindexing_successful = true;
+  test_cases[0].expected_result.indexing_successful = true;
+  test_cases[2].expected_result.indexing_successful = true;
 
   TestLoadRulesets(test_cases);
 
@@ -244,8 +246,8 @@ TEST_F(FileSequenceHelperTest, ChecksumMismatch) {
       LoadRulesetResult::kErrorChecksumMismatch;
   test_cases[2].expected_result.load_result =
       LoadRulesetResult::kErrorChecksumMismatch;
-  test_cases[1].expected_result.reindexing_successful = false;
-  test_cases[2].expected_result.reindexing_successful = false;
+  test_cases[1].expected_result.indexing_successful = false;
+  test_cases[2].expected_result.indexing_successful = false;
 
   TestLoadRulesets(test_cases);
 }
@@ -260,9 +262,9 @@ TEST_F(FileSequenceHelperTest, RulesetFormatVersionMismatch) {
   ScopedIncrementRulesetVersion scoped_version_change =
       CreateScopedIncrementRulesetVersionForTesting();
 
-  // Version mismatch will cause reindexing and updated checksums.
+  // Version mismatch will cause re-indexing and updated checksums.
   for (auto& test_case : test_cases) {
-    test_case.expected_result.reindexing_successful = true;
+    test_case.expected_result.indexing_successful = true;
     test_case.expected_result.has_new_checksum = true;
     test_case.expected_result.load_result = LoadRulesetResult::kSuccess;
   }
@@ -281,9 +283,9 @@ TEST_F(FileSequenceHelperTest, JSONAndIndexedRulesetDeleted) {
   base::DeleteFile(test_cases[0].source.indexed_path());
   base::DeleteFile(test_cases[1].source.indexed_path());
 
-  // Reindexing will fail since the JSON ruleset is now deleted.
-  test_cases[0].expected_result.reindexing_successful = false;
-  test_cases[1].expected_result.reindexing_successful = false;
+  // Re-indexing will fail since the JSON ruleset is now deleted.
+  test_cases[0].expected_result.indexing_successful = false;
+  test_cases[1].expected_result.indexing_successful = false;
 
   test_cases[0].expected_result.load_result =
       LoadRulesetResult::kErrorInvalidPath;
@@ -298,7 +300,7 @@ TEST_F(FileSequenceHelperTest, JSONAndIndexedRulesetDeleted) {
 TEST_F(FileSequenceHelperTest, UpdateDynamicRules) {
   // Simulate adding rules for the first time i.e. with no JSON and indexed
   // ruleset files.
-  RulesetSource source = CreateTemporarySource();
+  FileBackedRulesetSource source = CreateTemporarySource();
   base::DeleteFile(source.json_path());
   base::DeleteFile(source.indexed_path());
 
@@ -310,11 +312,11 @@ TEST_F(FileSequenceHelperTest, UpdateDynamicRules) {
     TestAddDynamicRules(source.Clone(), std::move(api_rules),
                         ReadJSONRulesResult::Status::kFileDoesNotExist,
                         UpdateDynamicRulesStatus::kSuccess,
-                        base::nullopt /* expected_error */,
+                        std::nullopt /* expected_error */,
                         true /* expected_did_load_successfully*/);
   }
 
-  // Test adding an invalid rule, e.g. a redirect rule without priority.
+  // Test adding an invalid rule, e.g. a rule with invalid priority.
   {
     SCOPED_TRACE("Test adding an invalid rule");
     TestRule rule = CreateGenericRule();
@@ -322,12 +324,12 @@ TEST_F(FileSequenceHelperTest, UpdateDynamicRules) {
     rule.action->type = std::string("redirect");
     rule.action->redirect.emplace();
     rule.action->redirect->url = std::string("http://google.com");
-    rule.priority.reset();
+    rule.priority = kMinValidPriority - 1;
     api_rules.clear();
     api_rules.push_back(GetAPIRule(rule));
 
     int rule_id = kMinValidID + 1;
-    ParseInfo info(ParseResult::ERROR_EMPTY_RULE_PRIORITY, &rule_id);
+    ParseInfo info(ParseResult::ERROR_INVALID_RULE_PRIORITY, rule_id);
     TestAddDynamicRules(source.Clone(), std::move(api_rules),
                         ReadJSONRulesResult::Status::kSuccess,
                         UpdateDynamicRulesStatus::kErrorInvalidRules,
@@ -339,8 +341,7 @@ TEST_F(FileSequenceHelperTest, UpdateDynamicRules) {
   {
     base::ScopedAllowBlockingForTesting allow_blocking_for_testing;
     std::string data = "Invalid JSON";
-    ASSERT_EQ(data.size(), static_cast<size_t>(base::WriteFile(
-                               source.json_path(), data.c_str(), data.size())));
+    ASSERT_TRUE(base::WriteFile(source.json_path(), data));
   }
 
   {
@@ -352,7 +353,7 @@ TEST_F(FileSequenceHelperTest, UpdateDynamicRules) {
     TestAddDynamicRules(source.Clone(), std::move(api_rules),
                         ReadJSONRulesResult::Status::kJSONParseError,
                         UpdateDynamicRulesStatus::kSuccess,
-                        base::nullopt /* expected_error */,
+                        std::nullopt /* expected_error */,
                         true /* expected_did_load_successfully*/);
   }
 }

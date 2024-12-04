@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,9 +6,10 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
+#include "base/memory/raw_ptr.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/test/task_environment.h"
-#include "base/threading/sequenced_task_runner_handle.h"
 #include "media/learning/common/learning_task_controller.h"
 #include "media/learning/impl/learning_session_impl.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -19,8 +20,10 @@ namespace learning {
 class LearningSessionImplTest : public testing::Test {
  public:
   class FakeLearningTaskController;
-  using ControllerVector = std::vector<FakeLearningTaskController*>;
-  using TaskRunnerVector = std::vector<base::SequencedTaskRunner*>;
+  using ControllerVector =
+      std::vector<raw_ptr<FakeLearningTaskController, VectorExperimental>>;
+  using TaskRunnerVector =
+      std::vector<raw_ptr<base::SequencedTaskRunner, VectorExperimental>>;
 
   class FakeLearningTaskController : public LearningTaskController {
    public:
@@ -34,17 +37,16 @@ class LearningSessionImplTest : public testing::Test {
       // As a complete hack, call the only public method on fp so that
       // we can verify that it was given to us by the session.
       if (!feature_provider_.is_null()) {
-        feature_provider_.Post(FROM_HERE, &FeatureProvider::AddFeatures,
-                               FeatureVector(),
-                               FeatureProvider::FeatureVectorCB());
+        feature_provider_.AsyncCall(&FeatureProvider::AddFeatures)
+            .WithArgs(FeatureVector(), FeatureProvider::FeatureVectorCB());
       }
     }
 
     void BeginObservation(
         base::UnguessableToken id,
         const FeatureVector& features,
-        const base::Optional<TargetValue>& default_target,
-        const base::Optional<ukm::SourceId>& source_id) override {
+        const absl::optional<TargetValue>& default_target,
+        const absl::optional<ukm::SourceId>& source_id) override {
       id_ = id;
       observation_features_ = features;
       default_target_ = default_target;
@@ -65,16 +67,13 @@ class LearningSessionImplTest : public testing::Test {
 
     void UpdateDefaultTarget(
         base::UnguessableToken id,
-        const base::Optional<TargetValue>& default_target) override {
+        const absl::optional<TargetValue>& default_target) override {
       // Should not be called, since LearningTaskControllerImpl doesn't support
       // default values.
       updated_id_ = id;
     }
 
-    const LearningTask& GetLearningTask() override {
-      NOTREACHED();
-      return LearningTask::Empty();
-    }
+    const LearningTask& GetLearningTask() override { NOTREACHED_NORETURN(); }
 
     void PredictDistribution(const FeatureVector& features,
                              PredictionCB callback) override {
@@ -87,15 +86,15 @@ class LearningSessionImplTest : public testing::Test {
     FeatureVector observation_features_;
     FeatureVector predict_features_;
     PredictionCB predict_cb_;
-    base::Optional<TargetValue> default_target_;
-    base::Optional<ukm::SourceId> source_id_;
+    absl::optional<TargetValue> default_target_;
+    absl::optional<ukm::SourceId> source_id_;
     LabelledExample example_;
 
     // Most recently cancelled id.
     base::UnguessableToken cancelled_id_;
 
     // Id of most recently changed default target value.
-    base::Optional<base::UnguessableToken> updated_id_;
+    absl::optional<base::UnguessableToken> updated_id_;
   };
 
   class FakeFeatureProvider : public FeatureProvider {
@@ -108,11 +107,11 @@ class LearningSessionImplTest : public testing::Test {
       *flag_ptr_ = true;
     }
 
-    bool* flag_ptr_ = nullptr;
+    raw_ptr<bool> flag_ptr_ = nullptr;
   };
 
   LearningSessionImplTest() {
-    task_runner_ = base::SequencedTaskRunnerHandle::Get();
+    task_runner_ = base::SequencedTaskRunner::GetCurrentDefault();
     session_ = std::make_unique<LearningSessionImpl>(task_runner_);
     session_->SetTaskControllerFactoryCBForTesting(base::BindRepeating(
         [](ControllerVector* controllers, TaskRunnerVector* task_runners,
@@ -192,7 +191,7 @@ TEST_F(LearningSessionImplTest, ExamplesAreForwardedToCorrectTask) {
   std::unique_ptr<LearningTaskController> ltc_0 =
       session_->GetController(task_0_.name);
   ukm::SourceId source_id(123);
-  ltc_0->BeginObservation(id, example_0.features, base::nullopt, source_id);
+  ltc_0->BeginObservation(id, example_0.features, absl::nullopt, source_id);
   ltc_0->CompleteObservation(
       id, ObservationCompletion(example_0.target_value, example_0.weight));
 
@@ -291,7 +290,7 @@ TEST_F(LearningSessionImplTest, ChangeDefaultTargetToValue) {
 
   // Start an observation without a default, then add one.
   base::UnguessableToken id = base::UnguessableToken::Create();
-  controller->BeginObservation(id, FeatureVector(), base::nullopt);
+  controller->BeginObservation(id, FeatureVector(), absl::nullopt);
   TargetValue default_target(123);
   controller->UpdateDefaultTarget(id, default_target);
   task_environment_.RunUntilIdle();
@@ -317,7 +316,7 @@ TEST_F(LearningSessionImplTest, ChangeDefaultTargetToNoValue) {
   base::UnguessableToken id = base::UnguessableToken::Create();
   TargetValue default_target(123);
   controller->BeginObservation(id, FeatureVector(), default_target);
-  controller->UpdateDefaultTarget(id, base::nullopt);
+  controller->UpdateDefaultTarget(id, absl::nullopt);
   task_environment_.RunUntilIdle();
   EXPECT_EQ(task_controllers_[0]->id_, id);
 
@@ -342,7 +341,7 @@ TEST_F(LearningSessionImplTest, PredictDistribution) {
   controller->PredictDistribution(
       features, base::BindOnce(
                     [](TargetHistogram* test_storage,
-                       const base::Optional<TargetHistogram>& predicted) {
+                       const absl::optional<TargetHistogram>& predicted) {
                       *test_storage = *predicted;
                     },
                     &observed_prediction));

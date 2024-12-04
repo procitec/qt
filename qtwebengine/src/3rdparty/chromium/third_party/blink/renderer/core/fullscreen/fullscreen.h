@@ -36,6 +36,7 @@
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/element.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_observer.h"
+#include "third_party/blink/renderer/core/execution_context/security_context.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/fullscreen/fullscreen_request_type.h"
 #include "third_party/blink/renderer/platform/geometry/layout_rect.h"
@@ -60,12 +61,18 @@ class CORE_EXPORT Fullscreen final : public GarbageCollected<Fullscreen>,
   static const char kSupplementName[];
 
   explicit Fullscreen(LocalDOMWindow&);
-  virtual ~Fullscreen();
+  ~Fullscreen() override;
 
   static Element* FullscreenElementFrom(Document&);
   static Element* FullscreenElementForBindingFrom(TreeScope&);
+  // Returns true if the Element is the topmost element in its document's top
+  // layer whose fullscreen flag is set.
   static bool IsFullscreenElement(const Element&);
   static bool IsInFullscreenElementStack(const Element&);
+  static bool HasFullscreenElements();
+  // Returns true if the Element's fullscreen flag is set. A Document may have
+  // multiple elements with the fullscreen flag set.
+  static bool IsFullscreenFlagSetFor(const Element&);
 
   static void RequestFullscreen(Element&);
   static ScriptPromise RequestFullscreen(
@@ -81,7 +88,9 @@ class CORE_EXPORT Fullscreen final : public GarbageCollected<Fullscreen>,
                                       ExceptionState* exception_state = nullptr,
                                       bool ua_originated = false);
 
-  static bool FullscreenEnabled(Document&);
+  static bool FullscreenEnabled(
+      Document&,
+      ReportOptions report_on_failure = ReportOptions::kDoNotReport);
 
   // Called by FullscreenController to notify that we've entered or exited
   // fullscreen. All frames are notified, so there may be no pending request.
@@ -103,8 +112,9 @@ class CORE_EXPORT Fullscreen final : public GarbageCollected<Fullscreen>,
   static void ContinueRequestFullscreen(Document&,
                                         Element&,
                                         FullscreenRequestType,
+                                        const FullscreenOptions*,
                                         ScriptPromiseResolver* resolver,
-                                        bool error);
+                                        const char* error);
 
   static void ContinueExitFullscreen(Document*,
                                      ScriptPromiseResolver* resolver,
@@ -120,20 +130,23 @@ class CORE_EXPORT Fullscreen final : public GarbageCollected<Fullscreen>,
    public:
     PendingRequest(Element* element,
                    FullscreenRequestType type,
+                   const FullscreenOptions* options,
                    ScriptPromiseResolver* resolver);
+    PendingRequest(const PendingRequest&) = delete;
+    PendingRequest& operator=(const PendingRequest&) = delete;
     virtual ~PendingRequest();
     virtual void Trace(Visitor* visitor) const;
 
-    Element* element() { return element_; }
+    Element* element() { return element_.Get(); }
     FullscreenRequestType type() { return type_; }
-    ScriptPromiseResolver* resolver() { return resolver_; }
+    const FullscreenOptions* options() { return options_.Get(); }
+    ScriptPromiseResolver* resolver() { return resolver_.Get(); }
 
    private:
     Member<Element> element_;
     FullscreenRequestType type_;
+    Member<const FullscreenOptions> options_;
     Member<ScriptPromiseResolver> resolver_;
-
-    DISALLOW_COPY_AND_ASSIGN(PendingRequest);
   };
   using PendingRequests = HeapVector<Member<PendingRequest>>;
   PendingRequests pending_requests_;
@@ -144,7 +157,8 @@ class CORE_EXPORT Fullscreen final : public GarbageCollected<Fullscreen>,
 };
 
 inline bool Fullscreen::IsFullscreenElement(const Element& element) {
-  return FullscreenElementFrom(element.GetDocument()) == &element;
+  return UNLIKELY(HasFullscreenElements()) &&
+         FullscreenElementFrom(element.GetDocument()) == &element;
 }
 
 }  // namespace blink

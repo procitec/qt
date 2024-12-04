@@ -1,11 +1,10 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef NET_CERT_CERT_VERIFY_PROC_ANDROID_H_
 #define NET_CERT_CERT_VERIFY_PROC_ANDROID_H_
 
-#include "base/macros.h"
 #include "net/base/net_export.h"
 #include "net/cert/cert_verify_proc.h"
 
@@ -17,9 +16,11 @@ class CertNetFetcher;
 // TrustManager through JNI.
 class NET_EXPORT CertVerifyProcAndroid : public CertVerifyProc {
  public:
-  explicit CertVerifyProcAndroid(scoped_refptr<CertNetFetcher> net_fetcher);
+  explicit CertVerifyProcAndroid(scoped_refptr<CertNetFetcher> net_fetcher,
+                                 scoped_refptr<CRLSet> crl_set);
 
-  bool SupportsAdditionalTrustAnchors() const override;
+  CertVerifyProcAndroid(const CertVerifyProcAndroid&) = delete;
+  CertVerifyProcAndroid& operator=(const CertVerifyProcAndroid&) = delete;
 
  protected:
   ~CertVerifyProcAndroid() override;
@@ -30,14 +31,10 @@ class NET_EXPORT CertVerifyProcAndroid : public CertVerifyProc {
                      const std::string& ocsp_response,
                      const std::string& sct_list,
                      int flags,
-                     CRLSet* crl_set,
-                     const CertificateList& additional_trust_anchors,
                      CertVerifyResult* verify_result,
                      const NetLogWithSource& net_log) override;
 
   scoped_refptr<CertNetFetcher> cert_net_fetcher_;
-
-  DISALLOW_COPY_AND_ASSIGN(CertVerifyProcAndroid);
 };
 
 }  // namespace net

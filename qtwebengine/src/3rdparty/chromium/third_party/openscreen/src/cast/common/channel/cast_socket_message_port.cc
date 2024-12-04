@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,10 +9,8 @@
 #include "cast/common/channel/message_util.h"
 #include "cast/common/channel/proto/cast_channel.pb.h"
 #include "cast/common/channel/virtual_connection.h"
-#include "cast/common/channel/virtual_connection_manager.h"
 
-namespace openscreen {
-namespace cast {
+namespace openscreen::cast {
 
 CastSocketMessagePort::CastSocketMessagePort(VirtualConnectionRouter* router)
     : router_(router) {}
@@ -35,13 +33,12 @@ int CastSocketMessagePort::GetSocketId() {
   return ToCastSocketId(socket_.get());
 }
 
-void CastSocketMessagePort::SetClient(MessagePort::Client* client,
-                                      std::string client_sender_id) {
+void CastSocketMessagePort::SetClient(MessagePort::Client& client) {
   ResetClient();
 
-  client_ = client;
-  client_sender_id_ = std::move(client_sender_id);
-  router_->AddHandlerForLocalId(client_sender_id_, this);
+  client_ = &client;
+  source_id_ = client.source_id();
+  router_->AddHandlerForLocalId(source_id_, this);
 }
 
 void CastSocketMessagePort::ResetClient() {
@@ -50,10 +47,9 @@ void CastSocketMessagePort::ResetClient() {
   }
 
   client_ = nullptr;
-  router_->RemoveHandlerForLocalId(client_sender_id_);
-  router_->manager()->RemoveConnectionsByLocalId(
-      client_sender_id_, VirtualConnection::CloseReason::kClosedBySelf);
-  client_sender_id_.clear();
+  router_->RemoveHandlerForLocalId(source_id_);
+  router_->RemoveConnectionsByLocalId(source_id_);
+  source_id_.clear();
 }
 
 void CastSocketMessagePort::PostMessage(
@@ -70,11 +66,10 @@ void CastSocketMessagePort::PostMessage(
     return;
   }
 
-  VirtualConnection connection{client_sender_id_, destination_sender_id,
+  VirtualConnection connection{source_id_, destination_sender_id,
                                socket_->socket_id()};
-  if (!router_->manager()->GetConnectionData(connection)) {
-    router_->manager()->AddConnection(connection,
-                                      VirtualConnection::AssociatedData{});
+  if (!router_->GetConnectionData(connection)) {
+    router_->AddConnection(connection, VirtualConnection::AssociatedData{});
   }
 
   const Error send_error = router_->Send(
@@ -88,16 +83,26 @@ void CastSocketMessagePort::OnMessage(VirtualConnectionRouter* router,
                                       CastSocket* socket,
                                       ::cast::channel::CastMessage message) {
   OSP_DCHECK(router == router_);
-  OSP_DCHECK(socket_.get() == socket);
-  OSP_DVLOG << "Received a cast socket message";
+  OSP_DCHECK(!socket || socket_.get() == socket);
+
+  // Message ports are for specific virtual connections, and do not pass-through
+  // broadcasts.
+  if (message.destination_id() == kBroadcastId) {
+    return;
+  }
+
   if (!client_) {
     OSP_DLOG_WARN << "Dropping message due to nullptr client_";
     return;
   }
 
+  if (message.payload_type() != ::cast::channel::CastMessage::STRING) {
+    OSP_DLOG_WARN << __func__ << ": received an unsupported binary message.";
+    return;
+  }
+
   client_->OnMessage(message.source_id(), message.namespace_(),
-                     message.payload_utf8());
+                     GetPayload(message));
 }
 
-}  // namespace cast
-}  // namespace openscreen
+}  // namespace openscreen::cast

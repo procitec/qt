@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -51,8 +51,12 @@ MojoCreateDataPipeResult* Mojo::createDataPipe(
     const MojoCreateDataPipeOptions* options_dict) {
   MojoCreateDataPipeResult* result_dict = MojoCreateDataPipeResult::Create();
 
+  // NOTE: CreateDataPipe below validates options, but its inputs are unsigned.
+  // The inputs here may be negative, hence this additional validation.
   if (!options_dict->hasElementNumBytes() ||
-      !options_dict->hasCapacityNumBytes()) {
+      !options_dict->hasCapacityNumBytes() ||
+      options_dict->capacityNumBytes() < 1 ||
+      options_dict->elementNumBytes() < 1) {
     result_dict->setResult(MOJO_RESULT_INVALID_ARGUMENT);
     return result_dict;
   }
@@ -65,7 +69,7 @@ MojoCreateDataPipeResult* Mojo::createDataPipe(
 
   mojo::ScopedDataPipeProducerHandle producer;
   mojo::ScopedDataPipeConsumerHandle consumer;
-  MojoResult result = mojo::CreateDataPipe(&options, &producer, &consumer);
+  MojoResult result = mojo::CreateDataPipe(&options, producer, consumer);
   result_dict->setResult(result);
   if (result == MOJO_RESULT_OK) {
     result_dict->setProducer(MakeGarbageCollected<MojoHandle>(
@@ -97,10 +101,27 @@ MojoCreateSharedBufferResult* Mojo::createSharedBuffer(unsigned num_bytes) {
 void Mojo::bindInterface(ScriptState* script_state,
                          const String& interface_name,
                          MojoHandle* request_handle,
-                         const String& scope) {
+                         const String& scope,
+                         ExceptionState& exception_state) {
   std::string name = interface_name.Utf8();
   auto handle =
       mojo::ScopedMessagePipeHandle::From(request_handle->TakeHandle());
+
+  auto* context = ExecutionContext::From(script_state);
+
+  // If MojoJS broker is enabled, it must be used to handle bindInterface
+  // calls.
+  if (context->use_mojo_js_interface_broker()) {
+    if (scope == "context") {
+      context->GetMojoJSInterfaceBroker().GetInterface(name, std::move(handle));
+    } else {
+      exception_state.ThrowDOMException(
+          DOMExceptionCode::kNotAllowedError,
+          String::FromUTF8("MojoJS interface broker is specified, can't use "
+                           "scopes other than 'context'"));
+    }
+    return;
+  }
 
   if (scope == "process") {
     Platform::Current()->GetBrowserInterfaceBroker()->GetInterface(
@@ -108,9 +129,7 @@ void Mojo::bindInterface(ScriptState* script_state,
     return;
   }
 
-  ExecutionContext::From(script_state)
-      ->GetBrowserInterfaceBroker()
-      .GetInterface(name, std::move(handle));
+  context->GetBrowserInterfaceBroker().GetInterface(name, std::move(handle));
 }
 
 }  // namespace blink

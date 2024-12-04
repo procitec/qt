@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,18 +8,18 @@
 #include <xf86drm.h>
 #include <xf86drmMode.h>
 
-#include "base/files/scoped_file.h"
 #include "base/logging.h"
 #include "base/trace_event/trace_event.h"
+#include "third_party/perfetto/include/perfetto/tracing/traced_value.h"
+#include "ui/display/types/display_color_management.h"
 #include "ui/display/types/gamma_ramp_rgb_entry.h"
-#include "ui/ozone/platform/drm/gpu/drm_device.h"
 
 namespace ui {
 
-bool GetDrmPropertyForName(DrmDevice* drm,
+bool GetDrmPropertyForName(DrmWrapper* drm,
                            drmModeObjectProperties* properties,
                            const std::string& name,
-                           DrmDevice::Property* property) {
+                           DrmWrapper::Property* property) {
   for (uint32_t i = 0; i < properties->count_props; ++i) {
     ScopedDrmPropertyPtr drm_property(drm->GetProperty(properties->props[i]));
     if (name != drm_property->name)
@@ -36,7 +36,7 @@ bool GetDrmPropertyForName(DrmDevice* drm,
 
 bool AddPropertyIfValid(drmModeAtomicReq* property_set,
                         uint32_t object_id,
-                        const DrmDevice::Property& property) {
+                        const DrmWrapper::Property& property) {
   if (!property.id)
     return true;
 
@@ -52,92 +52,91 @@ bool AddPropertyIfValid(drmModeAtomicReq* property_set,
   return true;
 }
 
-ScopedDrmColorLutPtr CreateLutBlob(
-    const std::vector<display::GammaRampRGBEntry>& source) {
+ScopedDrmColorLutPtr CreateLutBlob(const display::GammaCurve& source,
+                                   size_t size) {
   TRACE_EVENT0("drm", "CreateLutBlob");
-  if (source.empty())
+  if (source.IsDefaultIdentity()) {
     return nullptr;
+  }
 
-  ScopedDrmColorLutPtr lut(static_cast<drm_color_lut*>(
-      malloc(sizeof(drm_color_lut) * source.size())));
+  ScopedDrmColorLutPtr lut(
+      static_cast<drm_color_lut*>(malloc(sizeof(drm_color_lut) * size)));
   drm_color_lut* p = lut.get();
-  for (size_t i = 0; i < source.size(); ++i) {
-    p[i].red = source[i].r;
-    p[i].green = source[i].g;
-    p[i].blue = source[i].b;
+  for (size_t i = 0; i < size; ++i) {
+    // Be robust to `size` being 1, since some tests do this.
+    source.Evaluate(i / std::max(size - 1.f, 1.f), p[i].red, p[i].green,
+                    p[i].blue);
   }
   return lut;
 }
 
 ScopedDrmColorCtmPtr CreateCTMBlob(const std::vector<float>& color_matrix) {
-  if (color_matrix.empty())
-    return nullptr;
+  skcms_Matrix3x3 m = {{
+      {1.0f, 0.0f, 0.0f},
+      {0.0f, 1.0f, 0.0f},
+      {0.0f, 0.0f, 1.0f},
+  }};
+  if (color_matrix.size() == 9) {
+    for (size_t i = 0; i < 9; ++i) {
+      m.vals[i / 3][i % 3] = color_matrix[i];
+    }
+  }
+  return CreateCTMBlob(m);
+}
 
+ScopedDrmColorCtmPtr CreateCTMBlob(const skcms_Matrix3x3& color_matrix) {
   ScopedDrmColorCtmPtr ctm(
       static_cast<drm_color_ctm*>(malloc(sizeof(drm_color_ctm))));
-  DCHECK_EQ(color_matrix.size(), base::size(ctm->matrix));
-  for (size_t i = 0; i < base::size(ctm->matrix); ++i) {
-    if (color_matrix[i] < 0) {
-      ctm->matrix[i] = static_cast<uint64_t>(-color_matrix[i] * (1ull << 32));
+  for (size_t i = 0; i < 9; ++i) {
+    float value = color_matrix.vals[i / 3][i % 3];
+    if (value < 0) {
+      ctm->matrix[i] = static_cast<uint64_t>(-value * (1ull << 32));
       ctm->matrix[i] |= static_cast<uint64_t>(1) << 63;
     } else {
-      ctm->matrix[i] = static_cast<uint64_t>(color_matrix[i] * (1ull << 32));
+      ctm->matrix[i] = static_cast<uint64_t>(value * (1ull << 32));
     }
   }
   return ctm;
 }
 
-std::vector<display::GammaRampRGBEntry> ResampleLut(
-    const std::vector<display::GammaRampRGBEntry>& lut_in,
-    size_t desired_size) {
-  TRACE_EVENT1("drm", "ResampleLut", "desired_size", desired_size);
-  if (lut_in.empty())
-    return std::vector<display::GammaRampRGBEntry>();
-
-  if (lut_in.size() == desired_size)
-    return lut_in;
-
-  std::vector<display::GammaRampRGBEntry> result;
-  result.resize(desired_size);
-
-  for (size_t i = 0; i < desired_size; ++i) {
-    size_t base_index = lut_in.size() * i / desired_size;
-    size_t remaining = lut_in.size() * i % desired_size;
-    if (base_index < lut_in.size() - 1) {
-      result[i].r = lut_in[base_index].r +
-                    (lut_in[base_index + 1].r - lut_in[base_index].r) *
-                        remaining / desired_size;
-      result[i].g = lut_in[base_index].g +
-                    (lut_in[base_index + 1].g - lut_in[base_index].g) *
-                        remaining / desired_size;
-      result[i].b = lut_in[base_index].b +
-                    (lut_in[base_index + 1].b - lut_in[base_index].b) *
-                        remaining / desired_size;
-    } else {
-      result[i] = lut_in.back();
-    }
+ScopedDrmModeRectPtr CreateDCBlob(const gfx::Rect& rect) {
+  // Damage rect can be empty, but sending empty or negative rects can result in
+  // artifacting and black screens. Filter them out here.
+  if (rect.width() <= 0 || rect.height() <= 0 || rect.x() < 0 || rect.y() < 0) {
+    return nullptr;
   }
 
-  return result;
+  ScopedDrmModeRectPtr dmg_rect(
+      static_cast<drm_mode_rect*>(malloc(sizeof(drm_mode_rect))));
+  dmg_rect->x1 = rect.x();
+  dmg_rect->y1 = rect.y();
+  dmg_rect->x2 = rect.right();
+  dmg_rect->y2 = rect.bottom();
+  return dmg_rect;
 }
 
-bool IsDriverName(const char* device_file_name, const char* driver) {
-  base::ScopedFD fd(open(device_file_name, O_RDWR));
-  if (!fd.is_valid()) {
-    LOG(ERROR) << "Failed to open DRM device " << device_file_name;
-    return false;
+HardwareDisplayControllerInfoList GetDisplayInfosAndUpdateCrtcs(
+    DrmWrapper& drm) {
+  auto [displays, invalid_crtcs] = GetDisplayInfosAndInvalidCrtcs(drm);
+  // Disable invalid CRTCs to allow the preferred CRTCs to be enabled later
+  // instead.
+  for (uint32_t crtc : invalid_crtcs) {
+    drm.DisableCrtc(crtc);
+    VLOG(1) << "Disabled undesired CRTC " << crtc;
   }
+  return std::move(displays);
+}
 
-  ScopedDrmVersionPtr version(drmGetVersion(fd.get()));
-  if (!version) {
-    LOG(ERROR) << "Failed to query DRM version " << device_file_name;
-    return false;
-  }
+void DrmWriteIntoTraceHelper(const drmModeModeInfo& mode_info,
+                             perfetto::TracedValue context) {
+  auto dict = std::move(context).WriteDictionary();
 
-  if (strncmp(driver, version->name, version->name_len) == 0)
-    return true;
-
-  return false;
+  dict.Add("name", mode_info.name);
+  dict.Add("type", mode_info.type);
+  dict.Add("flags", mode_info.flags);
+  dict.Add("clock", mode_info.clock);
+  dict.Add("hdisplay", mode_info.hdisplay);
+  dict.Add("vdisplay", mode_info.vdisplay);
 }
 
 }  // namespace ui

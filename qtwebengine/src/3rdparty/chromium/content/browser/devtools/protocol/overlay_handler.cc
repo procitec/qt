@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -39,7 +39,7 @@ Response OverlayHandler::SetInspectMode(
 }
 
 Response OverlayHandler::SetPausedInDebuggerMessage(Maybe<String> message) {
-  paused_message_ = message.fromMaybe(std::string());
+  paused_message_ = message.value_or(std::string());
   UpdateCaptureInputEvents();
   return Response::FallThrough();
 }
@@ -54,8 +54,7 @@ Response OverlayHandler::Disable() {
 void OverlayHandler::UpdateCaptureInputEvents() {
   if (!host_)
     return;
-  auto* web_contents =
-      WebContentsImpl::FromFrameTreeNode(host_->frame_tree_node());
+  auto* web_contents = WebContentsImpl::FromRenderFrameHostImpl(host_);
   if (!web_contents)
     return;
   bool capture_input =

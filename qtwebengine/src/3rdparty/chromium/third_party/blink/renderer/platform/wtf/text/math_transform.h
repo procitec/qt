@@ -1,11 +1,11 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_WTF_TEXT_MATH_TRANSFORM_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_WTF_TEXT_MATH_TRANSFORM_H_
 
-#include "third_party/blink/renderer/platform/wtf/text/unicode.h"
+#include "third_party/blink/renderer/platform/wtf/text/wtf_uchar.h"
 #include "third_party/blink/renderer/platform/wtf/wtf_export.h"
 #include "third_party/blink/renderer/platform/wtf/wtf_size_t.h"
 
@@ -25,11 +25,11 @@ namespace unicode {
 // https://unicode.org/cldr/utility/character.jsp.
 // TODO(https://crbug.com/1076420): this needs to handle all mathvariants, not
 // just italics.
-WTF_EXPORT UChar32 MathVariant(UChar32 code_point);
+WTF_EXPORT UChar32 ItalicMathVariant(UChar32 code_point);
 
 }  // namespace unicode
 }  // namespace WTF
 
-using WTF::unicode::MathVariant;
+using WTF::unicode::ItalicMathVariant;
 
 #endif  // THIRD_PARTY_BLINK_RENDERER_PLATFORM_WTF_TEXT_MATH_TRANSFORM_H_

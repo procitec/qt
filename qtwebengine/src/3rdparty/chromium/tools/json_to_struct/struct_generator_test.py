@@ -1,5 +1,5 @@
-#!/usr/bin/env python
-# Copyright (c) 2012 The Chromium Authors. All rights reserved.
+#!/usr/bin/env python3
+# Copyright 2012 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -17,8 +17,11 @@ class StructGeneratorTest(unittest.TestCase):
         GenerateField({'type': 'string', 'field': 'bar_foo'}))
 
   def testGenerateString16Field(self):
-    self.assertEquals('const wchar_t* const foo_bar',
-        GenerateField({'type': 'string16', 'field': 'foo_bar'}))
+    self.assertEquals('const char16_t* const foo_bar',
+                      GenerateField({
+                          'type': 'string16',
+                          'field': 'foo_bar'
+                      }))
 
   def testGenerateEnumField(self):
     self.assertEquals('const MyEnumType foo_foo',
@@ -34,10 +37,13 @@ class StructGeneratorTest(unittest.TestCase):
                        'contents': {'type': 'int'}}))
 
   def testGenerateClassField(self):
-    self.assertEquals('const base::Optional<bool> bar',
-        GenerateField({'type': 'class',
-                       'field': 'bar',
-                       'ctype': 'base::Optional<bool>'}))
+    self.assertEquals(
+        'const std::optional<bool> bar',
+        GenerateField({
+            'type': 'class',
+            'field': 'bar',
+            'ctype': 'std::optional<bool>'
+        }))
 
   def testGenerateStruct(self):
     schema = [

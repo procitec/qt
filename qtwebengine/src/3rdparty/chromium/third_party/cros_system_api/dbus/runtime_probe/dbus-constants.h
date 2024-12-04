@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium OS Authors. All rights reserved.
+// Copyright 2018 The ChromiumOS Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,9 +12,7 @@ const char kRuntimeProbeServiceName[] = "org.chromium.RuntimeProbe";
 
 // Methods
 const char kProbeCategoriesMethod[] = "ProbeCategories";
-
-// Constants
-const auto kTypeWireless = "wireless";
+const char kGetKnownComponentsMethod[] = "GetKnownComponents";
 
 }  // namespace runtime_probe
 

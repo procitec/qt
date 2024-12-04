@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,8 +16,8 @@
 
 #include <string>
 
-#include "third_party/base/compiler_specific.h"
-#include "third_party/base/logging.h"
+#include "third_party/base/check_op.h"
+#include "third_party/base/notreached.h"
 
 #ifdef USE_SYSTEM_ZLIB
 #include <zlib.h>
@@ -28,7 +28,7 @@
 #ifdef USE_SYSTEM_LIBPNG
 #include <png.h>
 #else
-#include "third_party/libpng16/png.h"
+#include "third_party/libpng/png.h"
 #endif
 
 namespace image_diff_png {
@@ -254,8 +254,7 @@ void DecodeInfoCallback(png_struct* png_ptr, png_info* info_ptr) {
         state->output_channels = 1;
         break;
       default:
-        NOTREACHED();
-        break;
+        NOTREACHED_NORETURN();
     }
   } else if (channels == 4) {
     switch (state->output_format) {
@@ -272,12 +271,10 @@ void DecodeInfoCallback(png_struct* png_ptr, png_info* info_ptr) {
         state->output_channels = 4;
         break;
       default:
-        NOTREACHED();
-        break;
+        NOTREACHED_NORETURN();
     }
   } else {
-    NOTREACHED();
-    longjmp(png_jmpbuf(png_ptr), 1);
+    NOTREACHED_NORETURN();
   }
 
   state->output->resize(state->width * state->output_channels * state->height);
@@ -289,11 +286,7 @@ void DecodeRowCallback(png_struct* png_ptr,
                        int pass) {
   PngDecoderState* state =
       static_cast<PngDecoderState*>(png_get_progressive_ptr(png_ptr));
-
-  if (static_cast<int>(row_num) > state->height) {
-    NOTREACHED();
-    return;
-  }
+  CHECK_LE(static_cast<int>(row_num), state->height);
 
   uint8_t* base = nullptr;
   base = &state->output->front();
@@ -428,7 +421,7 @@ void ConvertBGRAtoRGB(const uint8_t* bgra,
 #ifdef PNG_TEXT_SUPPORTED
 
 inline char* strdup(const char* str) {
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   return _strdup(str);
 #else
   return ::strdup(str);
@@ -461,11 +454,11 @@ class CommentWriter {
   void AddComment(size_t pos, const Comment& comment) {
     png_text_[pos].compression = PNG_TEXT_COMPRESSION_NONE;
     // A PNG comment's key can only be 79 characters long.
-    if (comment.key.length() > 79)
+    if (comment.key.size() > 79)
       return;
     png_text_[pos].key = strdup(comment.key.substr(0, 78).c_str());
     png_text_[pos].text = strdup(comment.text.c_str());
-    png_text_[pos].text_length = comment.text.length();
+    png_text_[pos].text_length = comment.text.size();
 #ifdef PNG_iTXt_SUPPORTED
     png_text_[pos].itxt_length = 0;
     png_text_[pos].lang = 0;
@@ -571,7 +564,7 @@ std::vector<uint8_t> EncodeWithCompressionLevel(
   switch (format) {
     case FORMAT_BGR:
       converter = ConvertBGRtoRGB;
-      FALLTHROUGH;
+      [[fallthrough]];
 
     case FORMAT_RGB:
       input_color_components = 3;
@@ -610,10 +603,6 @@ std::vector<uint8_t> EncodeWithCompressionLevel(
       output_color_components = 1;
       png_output_color_type = PNG_COLOR_TYPE_GRAY;
       break;
-
-    default:
-      NOTREACHED();
-      return output;
   }
 
   // Row stride should be at least as long as the length of the data.

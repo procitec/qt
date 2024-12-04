@@ -1,14 +1,11 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef CHROME_BROWSER_EXTENSIONS_API_PERMISSIONS_PERMISSIONS_API_H_
 #define CHROME_BROWSER_EXTENSIONS_API_PERMISSIONS_PERMISSIONS_API_H_
 
-#include <string>
-
-#include "base/compiler_specific.h"
-#include "base/macros.h"
+#include "base/auto_reset.h"
 #include "chrome/browser/extensions/extension_install_prompt.h"
 #include "extensions/browser/extension_function.h"
 #include "extensions/common/permissions/permission_set.h"
@@ -54,13 +51,32 @@ class PermissionsRemoveFunction : public ExtensionFunction {
 // chrome.permissions.request
 class PermissionsRequestFunction : public ExtensionFunction {
  public:
+  // An action to take for a permissions prompt, if any. This allows tests to
+  // override prompt behavior.
+  enum class DialogAction {
+    // The dialog will show normally.
+    kDefault,
+    // The dialog will not show and the grant will be auto-accepted.
+    kAutoConfirm,
+    // The dialog will not show and the grant will be auto-rejected.
+    kAutoReject,
+    // The dialog will not show and the grant can be resolved via
+    // the `ResolvePendingDialogForTests()` method.
+    kProgrammatic,
+  };
+
   DECLARE_EXTENSION_FUNCTION("permissions.request", PERMISSIONS_REQUEST)
 
   PermissionsRequestFunction();
 
+  PermissionsRequestFunction(const PermissionsRequestFunction&) = delete;
+  PermissionsRequestFunction& operator=(const PermissionsRequestFunction&) =
+      delete;
+
   // FOR TESTS ONLY to bypass the confirmation UI.
-  static void SetAutoConfirmForTests(bool should_proceed);
-  static void ResetAutoConfirmForTests();
+  [[nodiscard]] static base::AutoReset<DialogAction> SetDialogActionForTests(
+      DialogAction dialog_action);
+  static void ResolvePendingDialogForTests(bool accept_dialog);
   static void SetIgnoreUserGestureForTests(bool ignore);
 
   // Returns the set of permissions that the user was prompted for, if any.
@@ -71,9 +87,10 @@ class PermissionsRequestFunction : public ExtensionFunction {
 
   // ExtensionFunction:
   ResponseAction Run() override;
+  bool ShouldKeepWorkerAliveIndefinitely() override;
 
  private:
-  void OnInstallPromptDone(ExtensionInstallPrompt::Result result);
+  void OnInstallPromptDone(ExtensionInstallPrompt::DoneCallbackPayload payload);
   void OnRuntimePermissionsGranted();
   void OnOptionalPermissionsGranted();
   void RespondIfRequestsFinished();
@@ -92,8 +109,6 @@ class PermissionsRequestFunction : public ExtensionFunction {
   // be recorded if and only if the prompt is being bypassed for a test (see
   // also SetAutoConfirmForTests()).
   std::unique_ptr<const PermissionSet> prompted_permissions_for_testing_;
-
-  DISALLOW_COPY_AND_ASSIGN(PermissionsRequestFunction);
 };
 
 }  // namespace extensions

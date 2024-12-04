@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,12 +7,12 @@
 
 #include <memory>
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "third_party/blink/public/mojom/presentation/presentation.mojom-blink.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
 #include "third_party/blink/renderer/modules/presentation/presentation_availability_callbacks.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
-#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
 namespace blink {
@@ -32,6 +32,11 @@ class MODULES_EXPORT PresentationAvailabilityState final
     : public GarbageCollected<PresentationAvailabilityState> {
  public:
   explicit PresentationAvailabilityState(mojom::blink::PresentationService*);
+
+  PresentationAvailabilityState(const PresentationAvailabilityState&) = delete;
+  PresentationAvailabilityState& operator=(
+      const PresentationAvailabilityState&) = delete;
+
   ~PresentationAvailabilityState();
 
   // Requests availability for the given URLs and invokes the given callbacks
@@ -52,9 +57,9 @@ class MODULES_EXPORT PresentationAvailabilityState final
 
  private:
   enum class ListeningState {
-    INACTIVE,
-    WAITING,
-    ACTIVE,
+    kInactive,
+    kWaiting,
+    kActive,
   };
 
   // Tracks listeners of presentation displays availability for
@@ -64,6 +69,10 @@ class MODULES_EXPORT PresentationAvailabilityState final
       : public GarbageCollected<AvailabilityListener> {
    public:
     explicit AvailabilityListener(const Vector<KURL>& availability_urls);
+
+    AvailabilityListener(const AvailabilityListener&) = delete;
+    AvailabilityListener& operator=(const AvailabilityListener&) = delete;
+
     ~AvailabilityListener();
 
     const Vector<KURL> urls;
@@ -72,9 +81,6 @@ class MODULES_EXPORT PresentationAvailabilityState final
     HeapVector<Member<PresentationAvailabilityObserver>> availability_observers;
 
     void Trace(Visitor*) const;
-
-   private:
-    DISALLOW_COPY_AND_ASSIGN(AvailabilityListener);
   };
 
   // Tracks listening status and screen availability of |availability_url|.
@@ -124,9 +130,8 @@ class MODULES_EXPORT PresentationAvailabilityState final
   HeapVector<Member<AvailabilityListener>> availability_listeners_;
 
   // A pointer to PresentationService owned by PresentationController.
-  mojom::blink::PresentationService* const presentation_service_;
-
-  DISALLOW_COPY_AND_ASSIGN(PresentationAvailabilityState);
+  const raw_ptr<mojom::blink::PresentationService, ExperimentalRenderer>
+      presentation_service_;
 };
 
 }  // namespace blink

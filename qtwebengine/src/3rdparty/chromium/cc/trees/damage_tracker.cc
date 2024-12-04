@@ -1,4 +1,4 @@
-// Copyright 2011 The Chromium Authors. All rights reserved.
+// Copyright 2011 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,8 +7,8 @@
 #include <stddef.h>
 
 #include <algorithm>
-#include <utility>
 
+#include "base/containers/contains.h"
 #include "base/memory/ptr_util.h"
 #include "cc/base/math_util.h"
 #include "cc/layers/heads_up_display_layer_impl.h"
@@ -17,7 +17,9 @@
 #include "cc/paint/filter_operations.h"
 #include "cc/trees/effect_node.h"
 #include "cc/trees/layer_tree_impl.h"
+#include "components/viz/common/viz_utils.h"
 #include "ui/gfx/geometry/rect_conversions.h"
+#include "ui/gfx/geometry/skia_conversions.h"
 
 namespace cc {
 
@@ -102,17 +104,12 @@ void DamageTracker::UpdateDamageTracking(LayerTreeImpl* layer_tree_impl) {
   //         erased from map.
   //
 
-  for (auto* render_surface : layer_tree_impl->GetRenderSurfaceList()) {
-    render_surface->damage_tracker()->PrepareForUpdate();
-  }
+  ViewTransitionElementResourceIdToRenderSurfaceMap id_to_render_surface_map;
+  InitializeUpdateDamageTracking(layer_tree_impl, id_to_render_surface_map);
 
-  // Surfaces with backdrop blur filter that might be potentially optimized with
-  // caching, paired with each's surface rect in target space.
-  std::vector<std::pair<RenderSurfaceImpl*, gfx::Rect>>
-      surfaces_with_backdrop_blur_filter;
-
-  EffectTree& effect_tree = layer_tree_impl->property_trees()->effect_tree;
-  int current_target_effect_id = EffectTree::kContentsRootNodeId;
+  EffectTree& effect_tree =
+      layer_tree_impl->property_trees()->effect_tree_mutable();
+  int current_target_effect_id = kContentsRootPropertyNodeId;
   DCHECK(effect_tree.GetRenderSurface(current_target_effect_id));
   for (LayerImpl* layer : *layer_tree_impl) {
     if (!layer->contributes_to_drawn_render_surface())
@@ -131,11 +128,10 @@ void DamageTracker::UpdateDamageTracking(LayerTreeImpl* layer_tree_impl) {
         // in draw order.
         RenderSurfaceImpl* current_target =
             effect_tree.GetRenderSurface(current_target_effect_id);
-        current_target->damage_tracker()->ComputeSurfaceDamage(
-            current_target, surfaces_with_backdrop_blur_filter);
+        current_target->damage_tracker()->ComputeSurfaceDamage(current_target);
         RenderSurfaceImpl* parent_target = current_target->render_target();
         parent_target->damage_tracker()->AccumulateDamageFromRenderSurface(
-            current_target, surfaces_with_backdrop_blur_filter);
+            current_target);
         current_target_effect_id =
             effect_tree.Node(current_target_effect_id)->target_id;
       }
@@ -148,31 +144,46 @@ void DamageTracker::UpdateDamageTracking(LayerTreeImpl* layer_tree_impl) {
     // whole frame and (b) we don't want HUD layer damage to be shown by the
     // HUD damage rect visualization.
     if (layer != layer_tree_impl->hud_layer()) {
-      target_surface->damage_tracker()->AccumulateDamageFromLayer(layer);
+      target_surface->damage_tracker()->AccumulateDamageFromLayer(
+          layer, id_to_render_surface_map);
     }
   }
 
-  DCHECK_GE(current_target_effect_id, EffectTree::kContentsRootNodeId);
+  DCHECK_GE(current_target_effect_id, kContentsRootPropertyNodeId);
   RenderSurfaceImpl* current_target =
       effect_tree.GetRenderSurface(current_target_effect_id);
   while (true) {
-    current_target->damage_tracker()->ComputeSurfaceDamage(
-        current_target, surfaces_with_backdrop_blur_filter);
-    if (current_target->EffectTreeIndex() == EffectTree::kContentsRootNodeId)
+    current_target->damage_tracker()->ComputeSurfaceDamage(current_target);
+    if (current_target->EffectTreeIndex() == kContentsRootPropertyNodeId)
       break;
     RenderSurfaceImpl* next_target = current_target->render_target();
     next_target->damage_tracker()->AccumulateDamageFromRenderSurface(
-        current_target, surfaces_with_backdrop_blur_filter);
+        current_target);
     current_target = next_target;
   }
-
-  DCHECK(surfaces_with_backdrop_blur_filter.empty());
 }
 
-void DamageTracker::ComputeSurfaceDamage(
-    RenderSurfaceImpl* render_surface,
-    std::vector<std::pair<RenderSurfaceImpl*, gfx::Rect>>&
-        surfaces_with_backdrop_blur_filter) {
+void DamageTracker::InitializeUpdateDamageTracking(
+    LayerTreeImpl* layer_tree_impl,
+    ViewTransitionElementResourceIdToRenderSurfaceMap&
+        id_to_render_surface_map) {
+  for (RenderSurfaceImpl* render_surface :
+       layer_tree_impl->GetRenderSurfaceList()) {
+    render_surface->damage_tracker()->PrepareForUpdate();
+
+    // Build ViewTransitionElementResourceId to RenderSurface Map. This will be
+    // used for ViewTransitionContentLayerImpl.
+    auto resource_id =
+        render_surface->OwningEffectNode()->view_transition_element_resource_id;
+
+    if (resource_id.IsValid()) {
+      DCHECK(!base::Contains(id_to_render_surface_map, resource_id));
+      id_to_render_surface_map.emplace(resource_id, render_surface);
+    }
+  }
+}
+
+void DamageTracker::ComputeSurfaceDamage(RenderSurfaceImpl* render_surface) {
   // All damage from contributing layers and surfaces must already have been
   // added to damage_for_this_update_ through calls to AccumulateDamageFromLayer
   // and AccumulateDamageFromRenderSurface.
@@ -185,11 +196,39 @@ void DamageTracker::ComputeSurfaceDamage(
   has_damage_from_contributing_content_ |=
       !damage_from_leftover_rects.IsEmpty();
 
-  if (render_surface->SurfacePropertyChangedOnlyFromDescendant()) {
+  gfx::Rect expanded_damage_rect;
+  bool valid = damage_from_leftover_rects.GetAsRect(&expanded_damage_rect);
+  bool expanded = false;
+  // Iterate through the surfaces rendering to the current target back to
+  // front, intersect their surface rects with the damage from leftover rects.
+  // Update surfaces' |intersects_damage_under| flags accordingly and expand the
+  // damage by surface rects for surfaces with pixel-moving backdrop filters
+  // when appropriate.
+  for (auto& contributing_surface : contributing_surfaces_) {
+    RenderSurfaceImpl* surface = contributing_surface.render_surface;
+    bool has_pixel_moving_backdrop_filters =
+        surface->BackdropFilters().HasFilterThatMovesPixels();
+    if (!surface->intersects_damage_under() ||
+        has_pixel_moving_backdrop_filters) {
+      if (!valid || contributing_surface.rect_in_target_space.Intersects(
+                        expanded_damage_rect)) {
+        surface->set_intersects_damage_under(true);
+        if (has_pixel_moving_backdrop_filters) {
+          expanded_damage_rect.Union(contributing_surface.rect_in_target_space);
+          expanded = true;
+        }
+      }
+    }
+  }
+  if (expanded)
+    damage_for_this_update_.Union(expanded_damage_rect);
+
+  contributing_surfaces_.clear();
+
+  if (render_surface->SurfacePropertyChanged() &&
+      !render_surface->AncestorPropertyChanged()) {
     damage_for_this_update_ = DamageAccumulator();
     damage_for_this_update_.Union(render_surface->content_rect());
-    // True if there is surface property change from descendant.
-    has_damage_from_contributing_content_ |= !damage_for_this_update_.IsEmpty();
   } else {
     // TODO(shawnsingh): can we clamp this damage to the surface's content rect?
     // (affects performance, but not correctness)
@@ -199,32 +238,22 @@ void DamageTracker::ComputeSurfaceDamage(
     bool is_rect_valid = damage_for_this_update_.GetAsRect(&damage_rect);
     if (is_rect_valid && !damage_rect.IsEmpty()) {
       damage_rect = render_surface->Filters().MapRect(
-          damage_rect, SkMatrix(render_surface->SurfaceScale().matrix()));
+          damage_rect,
+          gfx::TransformToFlattenedSkMatrix(render_surface->SurfaceScale()));
       damage_for_this_update_ = DamageAccumulator();
       damage_for_this_update_.Union(damage_rect);
     }
   }
 
+  // True if there is surface property change from descendant (clip_rect or
+  // content_rect).
+  if (render_surface->SurfacePropertyChanged()) {
+    has_damage_from_contributing_content_ |= !damage_for_this_update_.IsEmpty();
+  }
+
   // Damage accumulates until we are notified that we actually did draw on that
   // frame.
   current_damage_.Union(damage_for_this_update_);
-
-  if (!surfaces_with_backdrop_blur_filter.empty()) {
-    gfx::Rect leftover_damage_rect;
-    bool valid = damage_from_leftover_rects.GetAsRect(&leftover_damage_rect);
-    std::vector<std::pair<RenderSurfaceImpl*, gfx::Rect>>::iterator it =
-        surfaces_with_backdrop_blur_filter.begin();
-    while (it != surfaces_with_backdrop_blur_filter.end()) {
-      RenderSurfaceImpl* surface = it->first;
-      if (surface->render_target() == render_surface) {
-        surface->set_can_use_cached_backdrop_filtered_result(
-            !it->second.Intersects(leftover_damage_rect) && valid);
-        it = surfaces_with_backdrop_blur_filter.erase(it);
-      } else {
-        ++it;
-      }
-    }
-  }
 }
 
 bool DamageTracker::GetDamageRectIfValid(gfx::Rect* rect) {
@@ -248,7 +277,7 @@ DamageTracker::LayerRectMapData& DamageTracker::RectDataForLayer(
 }
 
 DamageTracker::SurfaceRectMapData& DamageTracker::RectDataForSurface(
-    uint64_t surface_id,
+    ElementId surface_id,
     bool* surface_is_new) {
   SurfaceRectMapData data(surface_id);
 
@@ -264,9 +293,13 @@ DamageTracker::SurfaceRectMapData& DamageTracker::RectDataForSurface(
 }
 
 void DamageTracker::PrepareForUpdate() {
-  mailboxId_++;
+  mailbox_id_++;
   damage_for_this_update_ = DamageAccumulator();
   has_damage_from_contributing_content_ = false;
+  contributing_surfaces_.clear();
+  current_view_transition_content_surfaces_by_id_.swap(
+      previous_view_transition_content_surfaces_by_id_);
+  current_view_transition_content_surfaces_by_id_.clear();
 }
 
 DamageTracker::DamageAccumulator DamageTracker::TrackDamageFromLeftoverRects() {
@@ -289,7 +322,7 @@ DamageTracker::DamageAccumulator DamageTracker::TrackDamageFromLeftoverRects() {
   // If there are no deleted elements then copy_pos iterator is in sync with
   // cur_pos and no copy happens.
   while (layer_cur_pos < rect_history_for_layers_.end()) {
-    if (layer_cur_pos->mailboxId_ == mailboxId_) {
+    if (layer_cur_pos->mailbox_id_ == mailbox_id_) {
       if (layer_cur_pos != layer_copy_pos)
         *layer_copy_pos = *layer_cur_pos;
 
@@ -302,7 +335,7 @@ DamageTracker::DamageAccumulator DamageTracker::TrackDamageFromLeftoverRects() {
   }
 
   while (surface_cur_pos < rect_history_for_surfaces_.end()) {
-    if (surface_cur_pos->mailboxId_ == mailboxId_) {
+    if (surface_cur_pos->mailbox_id_ == mailbox_id_) {
       if (surface_cur_pos != surface_copy_pos)
         *surface_copy_pos = *surface_cur_pos;
 
@@ -333,7 +366,10 @@ DamageTracker::DamageAccumulator DamageTracker::TrackDamageFromLeftoverRects() {
   return damage;
 }
 
-void DamageTracker::AccumulateDamageFromLayer(LayerImpl* layer) {
+void DamageTracker::AccumulateDamageFromLayer(
+    LayerImpl* layer,
+    ViewTransitionElementResourceIdToRenderSurfaceMap&
+        id_to_render_surface_map) {
   // There are two ways that a layer can damage a region of the target surface:
   //   1. Property change (e.g. opacity, position, transforms):
   //        - the entire region of the layer itself damages the surface.
@@ -354,11 +390,21 @@ void DamageTracker::AccumulateDamageFromLayer(LayerImpl* layer) {
   // instead.
   bool layer_is_new = false;
   LayerRectMapData& data = RectDataForLayer(layer->id(), &layer_is_new);
-  gfx::Rect old_rect_in_target_space = data.rect_;
+  gfx::Rect old_visible_rect_in_target_space = data.rect_;
 
   gfx::Rect visible_rect_in_target_space =
-      layer->visible_drawable_content_rect();
-  data.Update(visible_rect_in_target_space, mailboxId_);
+      layer->GetEnclosingVisibleRectInTargetSpace();
+  data.Update(visible_rect_in_target_space, mailbox_id_);
+
+  gfx::Rect view_transition_content_surface_damage_rect;
+  if (layer->ViewTransitionResourceId().IsValid()) {
+    // Always call this function for view transition so the view transition
+    // content surface with vt id can be tracked at
+    // |current_view_transition_content_surfaces_by_id_|.
+    view_transition_content_surface_damage_rect =
+        GetViewTransitionContentSurfaceDamageInSharedElementLayerSpace(
+            layer, id_to_render_surface_map);
+  }
 
   if (layer_is_new || layer->LayerPropertyChanged()) {
     // If a layer is new or has changed, then its entire layer rect affects the
@@ -366,19 +412,25 @@ void DamageTracker::AccumulateDamageFromLayer(LayerImpl* layer) {
     damage_for_this_update_.Union(visible_rect_in_target_space);
 
     // The layer's old region is now exposed on the target surface, too.
-    // Note old_rect_in_target_space is already in target space.
-    damage_for_this_update_.Union(old_rect_in_target_space);
+    // Note old_visible_rect_in_target_space is already in target space.
+    damage_for_this_update_.Union(old_visible_rect_in_target_space);
   } else {
     // If the layer properties haven't changed, then the the target surface is
     // only affected by the layer's damaged area, which could be empty.
     gfx::Rect damage_rect =
         gfx::UnionRects(layer->update_rect(), layer->GetDamageRect());
+    // if this is a view transition layer, the damage from the corresponding
+    // live content surface should propagate to the layer's parent surface.
+    // |view_transition_content_surface_damage_rect| is in the layer's space.
+    damage_rect.Union(view_transition_content_surface_damage_rect);
+
     damage_rect.Intersect(gfx::Rect(layer->bounds()));
 
     if (!damage_rect.IsEmpty()) {
-      gfx::Rect damage_rect_in_target_space = MathUtil::MapEnclosingClippedRect(
-          layer->DrawTransform(), damage_rect);
-      damage_for_this_update_.Union(damage_rect_in_target_space);
+      gfx::Rect damage_visible_rect_in_target_space =
+          MathUtil::MapEnclosingClippedRect(layer->DrawTransform(),
+                                            damage_rect);
+      damage_for_this_update_.Union(damage_visible_rect_in_target_space);
     }
   }
 
@@ -392,8 +444,9 @@ void DamageTracker::AccumulateDamageFromLayer(LayerImpl* layer) {
   bool property_change_on_non_target_node = false;
   if (layer->LayerPropertyChangedFromPropertyTrees()) {
     auto effect_id = layer->render_target()->EffectTreeIndex();
-    auto* effect_node =
-        layer->layer_tree_impl()->property_trees()->effect_tree.Node(effect_id);
+    const auto* effect_node =
+        layer->layer_tree_impl()->property_trees()->effect_tree().Node(
+            effect_id);
     auto transform_id = effect_node->transform_id;
     property_change_on_non_target_node =
         layer->effect_tree_index() != effect_id ||
@@ -402,15 +455,14 @@ void DamageTracker::AccumulateDamageFromLayer(LayerImpl* layer) {
 
   if (layer_is_new || !layer->update_rect().IsEmpty() ||
       layer->LayerPropertyChangedNotFromPropertyTrees() ||
-      !layer->GetDamageRect().IsEmpty() || property_change_on_non_target_node) {
+      !layer->GetDamageRect().IsEmpty() || property_change_on_non_target_node ||
+      !view_transition_content_surface_damage_rect.IsEmpty()) {
     has_damage_from_contributing_content_ |= !damage_for_this_update_.IsEmpty();
   }
 }
 
 void DamageTracker::AccumulateDamageFromRenderSurface(
-    RenderSurfaceImpl* render_surface,
-    std::vector<std::pair<RenderSurfaceImpl*, gfx::Rect>>&
-        surfaces_with_backdrop_blur_filter) {
+    RenderSurfaceImpl* render_surface) {
   // There are two ways a "descendant surface" can damage regions of the "target
   // surface":
   //   1. Property change:
@@ -433,14 +485,30 @@ void DamageTracker::AccumulateDamageFromRenderSurface(
 
   gfx::Rect surface_rect_in_target_space =
       gfx::ToEnclosingRect(render_surface->DrawableContentRect());
-  data.Update(surface_rect_in_target_space, mailboxId_);
+  data.Update(surface_rect_in_target_space, mailbox_id_);
+  contributing_surfaces_.emplace_back(render_surface,
+                                      surface_rect_in_target_space);
 
-  if (surface_is_new || render_surface->SurfacePropertyChanged()) {
+  // If the render surface has pixel-moving backdrop filters and the surface
+  // rect intersects current accumulated damage, expand the damage by surface
+  // rect.
+  gfx::Rect damage_on_target;
+  bool valid = damage_for_this_update_.GetAsRect(&damage_on_target);
+  bool intersects_damage_under =
+      !valid || damage_on_target.Intersects(surface_rect_in_target_space);
+  if (render_surface->BackdropFilters().HasFilterThatMovesPixels() &&
+      intersects_damage_under) {
+    damage_for_this_update_.Union(surface_rect_in_target_space);
+  }
+
+  if (surface_is_new || render_surface->SurfacePropertyChanged() ||
+      render_surface->AncestorPropertyChanged()) {
     // The entire surface contributes damage.
     damage_for_this_update_.Union(surface_rect_in_target_space);
 
     // The surface's old region is now exposed on the target surface, too.
     damage_for_this_update_.Union(old_surface_rect);
+    intersects_damage_under = true;
   } else {
     // Only the surface's damage_rect will damage the target surface.
     gfx::Rect damage_rect_in_local_space;
@@ -450,31 +518,17 @@ void DamageTracker::AccumulateDamageFromRenderSurface(
       // If there was damage, transform it to target space, and possibly
       // contribute its reflection if needed.
       const gfx::Transform& draw_transform = render_surface->draw_transform();
+
       gfx::Rect damage_rect_in_target_space = MathUtil::MapEnclosingClippedRect(
           draw_transform, damage_rect_in_local_space);
-      damage_rect_in_target_space.Intersect(
-          gfx::ToEnclosingRect(render_surface->DrawableContentRect()));
+      damage_rect_in_target_space.Intersect(surface_rect_in_target_space);
       damage_for_this_update_.Union(damage_rect_in_target_space);
     } else if (!is_valid_rect) {
       damage_for_this_update_.Union(surface_rect_in_target_space);
     }
   }
 
-  const FilterOperations& backdrop_filters = render_surface->BackdropFilters();
-  if (!surface_is_new &&
-      backdrop_filters.HasFilterOfType(FilterOperation::BLUR)) {
-    gfx::Rect damage_on_target;
-    bool valid = damage_for_this_update_.GetAsRect(&damage_on_target);
-    if (!valid || damage_on_target.Intersects(surface_rect_in_target_space)) {
-      render_surface->set_can_use_cached_backdrop_filtered_result(false);
-    } else {
-      surfaces_with_backdrop_blur_filter.push_back(
-          std::make_pair(render_surface, surface_rect_in_target_space));
-    }
-  } else {
-    render_surface->set_can_use_cached_backdrop_filtered_result(false);
-  }
-
+  render_surface->set_intersects_damage_under(intersects_damage_under);
   // True if any changes from contributing render surface.
   has_damage_from_contributing_content_ |= !damage_for_this_update_.IsEmpty();
 }
@@ -497,6 +551,116 @@ bool DamageTracker::DamageAccumulator::GetAsRect(gfx::Rect* rect) {
   rect->set_width(width.ValueOrDie());
   rect->set_height(height.ValueOrDie());
   return true;
+}
+
+gfx::Rect
+DamageTracker::GetViewTransitionContentSurfaceDamageInSharedElementLayerSpace(
+    LayerImpl* layer,
+    ViewTransitionElementResourceIdToRenderSurfaceMap&
+        id_to_render_surface_map) {
+  DCHECK(layer->ViewTransitionResourceId().IsValid());
+
+  auto vt_resource_id = layer->ViewTransitionResourceId();
+
+  // Get the corrosponding view transition content surface with the same view
+  // transition element resource id.
+  RenderSurfaceImpl* view_transition_content_surface = nullptr;
+  auto shared_surface_it = id_to_render_surface_map.find(vt_resource_id);
+  if (shared_surface_it != id_to_render_surface_map.end()) {
+    view_transition_content_surface = shared_surface_it->second;
+
+    // A live content surface is found. Add this id to the current id list.
+    // Don't add this id if no surface is found.
+    DCHECK(!base::Contains(current_view_transition_content_surfaces_by_id_,
+                           vt_resource_id));
+    current_view_transition_content_surfaces_by_id_.push_back(vt_resource_id);
+  }
+
+  // In the case of missing a content surface, the damage will be added as
+  // follows:
+  // At the very first frame where the live content surface is missing, the
+  // whole layer should be damaged. But after the second frame, mark no damage
+  // on the layer since it's still missing, no change from the previous frame.
+  // When the live content surface shows up again, it becomes a new surface and
+  // new surface will cause full damage.
+
+  // In the case of the view transition layer appearing/disappearing, it should
+  // be sufficiently handled by the logic in AccumulateDamageFromLayer
+  // and ComputeSurfaceDamage.
+
+  // The start and end of view transition will need to damage the original
+  // location of the content surface, but that should already be done because
+  // the topology of the render surfaces changes.
+
+  //
+  // Check the render surface itself without considering view transition id for
+  // full damage.
+  //
+  gfx::Rect layer_drawable_bounds = gfx::Rect(layer->bounds());
+  if (view_transition_content_surface) {
+    bool surface_is_new = false;
+    auto& data = RectDataForSurface(view_transition_content_surface->id(),
+                                    &surface_is_new);
+    data.Update(layer_drawable_bounds, mailbox_id_);
+    if (surface_is_new ||
+        view_transition_content_surface->SurfacePropertyChanged() ||
+        view_transition_content_surface->AncestorPropertyChanged()) {
+      // The whole view transition layer is considered damaged.
+      return layer_drawable_bounds;
+    }
+  }
+
+  //
+  // Check the new/missing status of view_transition_content_surface with
+  // vt_resource_id for full damage.
+  //
+
+  // (1) If this is a new content surface with vt_resource_id.
+  // (2) If the content surface with vt_resource_id was there in the previous
+  // frame but missing in the current frame.
+  if (base::Contains(previous_view_transition_content_surfaces_by_id_,
+                     vt_resource_id) !=
+      base::Contains(current_view_transition_content_surfaces_by_id_,
+                     vt_resource_id)) {
+    // The whole view transition layer is considered damaged.
+    return layer_drawable_bounds;
+  }
+
+  //
+  // No damage if no corresponding content render surface.
+  //
+  if (!view_transition_content_surface) {
+    // If we had this content surface in the previous frame but missing in this
+    // frame, it's already handled above. If there is no corrosponding content
+    // surface in the current frame, same as the previous frame, consider no
+    // damage for this render surface.
+    return gfx::Rect();
+  }
+
+  //
+  // Calculate the damage propagated from view_transition_content_surface to
+  // this vt layer.
+  //
+  gfx::Rect damage_rect_in_local_space;
+  bool is_valid_rect =
+      view_transition_content_surface->damage_tracker()->GetDamageRectIfValid(
+          &damage_rect_in_local_space);
+  if (!is_valid_rect) {
+    // The whole view transition layer is considered damaged.
+    return layer_drawable_bounds;
+  } else if (damage_rect_in_local_space.IsEmpty()) {
+    return gfx::Rect();
+  } else {
+    gfx::Rect render_surface_content_rect =
+        view_transition_content_surface->content_rect();
+    gfx::Transform view_transition_transform = viz::GetViewTransitionTransform(
+        layer_drawable_bounds, render_surface_content_rect);
+
+    // Convert the damage from the view transition content surface space to the
+    // shared element layer space.
+    return MathUtil::MapEnclosingClippedRect(view_transition_transform,
+                                             damage_rect_in_local_space);
+  }
 }
 
 }  // namespace cc

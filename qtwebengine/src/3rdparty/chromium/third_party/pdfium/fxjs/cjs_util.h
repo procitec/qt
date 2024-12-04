@@ -1,4 +1,4 @@
-// Copyright 2014 PDFium Authors. All rights reserved.
+// Copyright 2014 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,15 +12,19 @@
 #include "core/fxcrt/widestring.h"
 #include "fxjs/cjs_object.h"
 #include "fxjs/js_define.h"
-
-// Return values for ParseDataType() below.
-#define UTIL_INT 0
-#define UTIL_DOUBLE 1
-#define UTIL_STRING 2
+#include "third_party/base/containers/span.h"
+#include "v8/include/v8-forward.h"
 
 class CJS_Util final : public CJS_Object {
  public:
-  static int GetObjDefnID();
+  enum class DataType {
+    kInvalid = -1,
+    kInt = 0,
+    kDouble = 1,
+    kString = 2,
+  };
+
+  static uint32_t GetObjDefnID();
   static void DefineJSObjects(CFXJS_Engine* pEngine);
 
   CJS_Util(v8::Local<v8::Object> pObject, CJS_Runtime* pRuntime);
@@ -33,7 +37,7 @@ class CJS_Util final : public CJS_Object {
   // byte-by-byte.
   //
   // Exposed for testing.
-  static int ParseDataType(WideString* sFormat);
+  static DataType ParseDataType(WideString* sFormat);
 
   // Exposed for testing.
   static WideString StringPrintx(const WideString& cFormat,
@@ -46,20 +50,20 @@ class CJS_Util final : public CJS_Object {
   JS_STATIC_METHOD(byteToChar, CJS_Util)
 
  private:
-  static int ObjDefnID;
+  static uint32_t ObjDefnID;
   static const char kName[];
   static const JSMethodSpec MethodSpecs[];
 
   CJS_Result printd(CJS_Runtime* pRuntime,
-                    const std::vector<v8::Local<v8::Value>>& params);
+                    pdfium::span<v8::Local<v8::Value>> params);
   CJS_Result printf(CJS_Runtime* pRuntime,
-                    const std::vector<v8::Local<v8::Value>>& params);
+                    pdfium::span<v8::Local<v8::Value>> params);
   CJS_Result printx(CJS_Runtime* pRuntime,
-                    const std::vector<v8::Local<v8::Value>>& params);
+                    pdfium::span<v8::Local<v8::Value>> params);
   CJS_Result scand(CJS_Runtime* pRuntime,
-                   const std::vector<v8::Local<v8::Value>>& params);
+                   pdfium::span<v8::Local<v8::Value>> params);
   CJS_Result byteToChar(CJS_Runtime* pRuntime,
-                        const std::vector<v8::Local<v8::Value>>& params);
+                        pdfium::span<v8::Local<v8::Value>> params);
 };
 
 #endif  // FXJS_CJS_UTIL_H_

@@ -1,39 +1,14 @@
-/*
- * Copyright (c) 2008, 2009, Google Inc. All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are
- * met:
- *
- *     * Redistributions of source code must retain the above copyright
- * notice, this list of conditions and the following disclaimer.
- *     * Redistributions in binary form must reproduce the above
- * copyright notice, this list of conditions and the following disclaimer
- * in the documentation and/or other materials provided with the
- * distribution.
- *     * Neither the name of Google Inc. nor the names of its
- * contributors may be used to endorse or promote products derived from
- * this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- */
+// Copyright 2008 The Chromium Authors
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
 
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_IMAGE_DECODERS_BMP_BMP_IMAGE_READER_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_IMAGE_DECODERS_BMP_BMP_IMAGE_READER_H_
 
 #include <stdint.h>
+#include <string.h>
 
-#include "base/macros.h"
+#include "base/notreached.h"
 #include "third_party/blink/renderer/platform/image-decoders/fast_shared_buffer_reader.h"
 #include "third_party/blink/renderer/platform/image-decoders/image_decoder.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
@@ -49,11 +24,15 @@ class PLATFORM_EXPORT BMPImageReader final {
   // Read a value from |buffer|, converting to an int assuming little
   // endianness
   static inline uint16_t ReadUint16(const char* buffer) {
-    return *reinterpret_cast<const uint16_t*>(buffer);
+    uint16_t v;
+    memcpy(&v, buffer, sizeof(v));
+    return v;
   }
 
   static inline uint32_t ReadUint32(const char* buffer) {
-    return *reinterpret_cast<const uint32_t*>(buffer);
+    uint32_t v;
+    memcpy(&v, buffer, sizeof(v));
+    return v;
   }
 
   // |parent| is the decoder that owns us.
@@ -61,13 +40,15 @@ class PLATFORM_EXPORT BMPImageReader final {
   // |buffer| points at an empty ImageFrame that we'll initialize and
   // fill with decoded data.
   BMPImageReader(ImageDecoder* parent,
-                 size_t decoded_and_header_offset,
-                 size_t img_data_offset,
+                 wtf_size_t decoded_and_header_offset,
+                 wtf_size_t img_data_offset,
                  bool is_in_ico);
+  BMPImageReader(const BMPImageReader&) = delete;
+  BMPImageReader& operator=(const BMPImageReader&) = delete;
   ~BMPImageReader();
 
   void SetBuffer(ImageFrame* buffer) { buffer_ = buffer; }
-  void SetData(SegmentReader* data);
+  void SetData(scoped_refptr<SegmentReader> data);
 
   // Does the actual decoding.  If |only_size| is true, decoding only
   // progresses as far as necessary to get the image size.  Returns
@@ -119,7 +100,7 @@ class PLATFORM_EXPORT BMPImageReader final {
     uint8_t rgb_red;
   };
 
-  inline uint8_t ReadUint8(size_t offset) const {
+  inline uint8_t ReadUint8(wtf_size_t offset) const {
     return fast_reader_.GetOneByte(decoded_offset_ + offset);
   }
 
@@ -223,8 +204,8 @@ class PLATFORM_EXPORT BMPImageReader final {
   // the end of the image.  Here "plus" means "toward the end of the
   // image", so downwards for is_top_down_ images and upwards otherwise.
   inline bool PastEndOfImage(int num_rows) {
-    return is_top_down_ ? ((coord_.Y() + num_rows) >= parent_->Size().Height())
-                        : ((coord_.Y() - num_rows) < 0);
+    return is_top_down_ ? ((coord_.y() + num_rows) >= parent_->Size().height())
+                        : ((coord_.y() - num_rows) < 0);
   }
 
   // Returns the pixel data for the current |decoded_offset_| in a uint32_t.
@@ -285,8 +266,8 @@ class PLATFORM_EXPORT BMPImageReader final {
                       unsigned green,
                       unsigned blue,
                       unsigned alpha) {
-    buffer_->SetRGBA(coord_.X(), coord_.Y(), red, green, blue, alpha);
-    coord_.Move(1, 0);
+    buffer_->SetRGBA(coord_.x(), coord_.y(), red, green, blue, alpha);
+    coord_.Offset(1, 0);
   }
 
   // Fills pixels from the current X-coordinate up to, but not including,
@@ -298,8 +279,9 @@ class PLATFORM_EXPORT BMPImageReader final {
                        unsigned green,
                        unsigned blue,
                        unsigned alpha) {
-    while (coord_.X() < end_coord)
+    while (coord_.x() < end_coord) {
       SetRGBA(red, green, blue, alpha);
+    }
   }
 
   // Resets the relevant local variables to start drawing at the left edge of
@@ -312,26 +294,26 @@ class PLATFORM_EXPORT BMPImageReader final {
   void ColorCorrectCurrentRow();
 
   // The decoder that owns us.
-  ImageDecoder* parent_;
+  raw_ptr<ImageDecoder> parent_;
 
   // The destination for the pixel data.
-  ImageFrame* buffer_ = nullptr;
+  raw_ptr<ImageFrame> buffer_ = nullptr;
 
   // The file to decode.
   scoped_refptr<SegmentReader> data_;
   FastSharedBufferReader fast_reader_{nullptr};
 
   // An index into |data_| representing how much we've already decoded.
-  size_t decoded_offset_;
+  wtf_size_t decoded_offset_;
 
   // The file offset at which the BMP info header starts.
-  size_t header_offset_;
+  wtf_size_t header_offset_;
 
   // The file offset at which the actual image bits start.  When decoding
   // ICO files, this is set to 0, since it's not stored anywhere in a
   // header; the reader functions expect the image data to start
   // immediately after the header and (if necessary) color table.
-  size_t img_data_offset_;
+  wtf_size_t img_data_offset_;
 
   // The BMP info header.
   BitmapInfoHeader info_header_;
@@ -378,7 +360,7 @@ class PLATFORM_EXPORT BMPImageReader final {
   Vector<RGBTriple> color_table_;
 
   // The coordinate to which we've decoded the image.
-  IntPoint coord_;
+  gfx::Point coord_;
 
   // Variables that track whether we've seen pixels with alpha values != 0
   // and == 0, respectively.  See comments in ProcessNonRLEData() on how
@@ -395,10 +377,8 @@ class PLATFORM_EXPORT BMPImageReader final {
   // header, thus doubling it). If |is_in_ico_| is true, this variable tracks
   // whether we've begun decoding this mask yet.
   bool decoding_and_mask_ = false;
-
-  DISALLOW_COPY_AND_ASSIGN(BMPImageReader);
 };
 
 }  // namespace blink
 
-#endif
+#endif  // THIRD_PARTY_BLINK_RENDERER_PLATFORM_IMAGE_DECODERS_BMP_BMP_IMAGE_READER_H_

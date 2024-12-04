@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,7 +8,8 @@
 #include <set>
 #include <string>
 
-#include "base/macros.h"
+#include "base/dcheck_is_on.h"
+#include "base/memory/raw_ptr.h"
 #include "components/keyed_service/core/dependency_graph.h"
 #include "components/keyed_service/core/keyed_service_export.h"
 
@@ -27,6 +28,9 @@ class PrefRegistrySyncable;
 // a safe order based on the stated dependencies.
 class KEYED_SERVICE_EXPORT DependencyManager {
  public:
+  DependencyManager(const DependencyManager&) = delete;
+  DependencyManager& operator=(const DependencyManager&) = delete;
+
   // Shuts down all keyed services managed by two
   // DependencyManagers (DMs), then destroys them. The order of execution is:
   // - Shutdown services in DM1
@@ -38,6 +42,17 @@ class KEYED_SERVICE_EXPORT DependencyManager {
       void* context1,
       DependencyManager* dependency_manager2,
       void* context2);
+
+  // Returns the dependency graph for Keyed Services Factory testing purposes.
+  DependencyGraph& GetDependencyGraphForTesting();
+
+  // After this function is called, any KeyedServiceFactory trying to register
+  // itself will cause a DCHECK. It should have been registered in the
+  // appropriate `EnsureBrowserContextKeyedServiceFactoriesBuilt()` function.
+  // `registration_function_name` param is used to display the right
+  // registration method in the error message.
+  void DisallowKeyedServiceFactoryRegistration(
+      const std::string& registration_function_name_error_message);
 
  protected:
   DependencyManager();
@@ -72,8 +87,8 @@ class KEYED_SERVICE_EXPORT DependencyManager {
   void DestroyContextServices(void* context);
 
   // Runtime assertion called as a part of GetServiceForContext() to check if
-  // |context| is considered stale. This will NOTREACHED() or
-  // base::debug::DumpWithoutCrashing() depending on the DCHECK_IS_ON() value.
+  // |context| is considered stale. This will CHECK(false) to avoid a potential
+  // use-after-free from services created after context destruction.
   void AssertContextWasntDestroyed(void* context) const;
 
   // Marks |context| as live (i.e., not stale). This method can be called as a
@@ -103,11 +118,14 @@ class KEYED_SERVICE_EXPORT DependencyManager {
   virtual void DumpContextDependencies(void* context) const = 0;
 #endif  // NDEBUG
 
-  std::vector<DependencyNode*> GetDestructionOrder();
-  static void ShutdownFactoriesInOrder(void* context,
-                                       std::vector<DependencyNode*>& order);
-  static void DestroyFactoriesInOrder(void* context,
-                                      std::vector<DependencyNode*>& order);
+  std::vector<raw_ptr<DependencyNode, VectorExperimental>>
+  GetDestructionOrder();
+  static void ShutdownFactoriesInOrder(
+      void* context,
+      std::vector<raw_ptr<DependencyNode, VectorExperimental>>& order);
+  static void DestroyFactoriesInOrder(
+      void* context,
+      std::vector<raw_ptr<DependencyNode, VectorExperimental>>& order);
 
   DependencyGraph dependency_graph_;
 
@@ -117,7 +135,11 @@ class KEYED_SERVICE_EXPORT DependencyManager {
   // with them.
   std::set<void*> dead_context_pointers_;
 
-  DISALLOW_COPY_AND_ASSIGN(DependencyManager);
+#if DCHECK_IS_ON()
+  bool context_services_created_ = false;
+#endif
+  bool disallow_factory_registration_ = false;
+  std::string registration_function_name_error_message_;
 };
 
 #endif  // COMPONENTS_KEYED_SERVICE_CORE_DEPENDENCY_MANAGER_H_

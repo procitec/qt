@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,11 +7,18 @@
 #include <string>
 
 #include "base/check.h"
+#include "base/check_op.h"
+#include "base/feature_list.h"
+#include "base/functional/callback_helpers.h"
+#include "build/chromeos_buildflags.h"
 #include "components/prefs/pref_service.h"
 #include "components/signin/internal/identity_manager/account_tracker_service.h"
 #include "components/signin/internal/identity_manager/primary_account_manager.h"
+#include "components/signin/public/base/signin_buildflags.h"
+#include "components/signin/public/base/signin_client.h"
 #include "components/signin/public/base/signin_metrics.h"
 #include "components/signin/public/base/signin_pref_names.h"
+#include "components/signin/public/base/signin_switches.h"
 #include "google_apis/gaia/core_account_id.h"
 
 namespace signin {
@@ -19,84 +26,123 @@ namespace signin {
 PrimaryAccountMutatorImpl::PrimaryAccountMutatorImpl(
     AccountTrackerService* account_tracker,
     PrimaryAccountManager* primary_account_manager,
-    PrefService* pref_service)
+    PrefService* pref_service,
+    SigninClient* signin_client)
     : account_tracker_(account_tracker),
       primary_account_manager_(primary_account_manager),
-      pref_service_(pref_service) {
+      pref_service_(pref_service),
+      signin_client_(signin_client) {
   DCHECK(account_tracker_);
   DCHECK(primary_account_manager_);
   DCHECK(pref_service_);
+  DCHECK(signin_client_);
 }
 
 PrimaryAccountMutatorImpl::~PrimaryAccountMutatorImpl() {}
 
-bool PrimaryAccountMutatorImpl::SetPrimaryAccount(
-    const CoreAccountId& account_id) {
-  AccountInfo account_info = account_tracker_->GetAccountInfo(account_id);
-
-#if !defined(OS_CHROMEOS)
-  if (!pref_service_->GetBoolean(prefs::kSigninAllowed))
-    return false;
-
-  if (primary_account_manager_->IsAuthenticated())
-    return false;
-
-  if (account_info.account_id != account_id || account_info.email.empty())
-    return false;
-
-  // TODO(crbug.com/889899): should check that the account email is allowed.
-#endif
-
-  primary_account_manager_->SignIn(account_info.email);
-  return true;
-}
-
-void PrimaryAccountMutatorImpl::SetUnconsentedPrimaryAccount(
-    const CoreAccountId& account_id) {
-#if defined(OS_CHROMEOS)
-  // On Chrome OS the UPA can only be set once and never removed or changed.
+PrimaryAccountMutator::PrimaryAccountError
+PrimaryAccountMutatorImpl::SetPrimaryAccount(
+    const CoreAccountId& account_id,
+    ConsentLevel consent_level,
+    signin_metrics::AccessPoint access_point,
+    base::OnceClosure prefs_committed_callback) {
   DCHECK(!account_id.empty());
-  DCHECK(!primary_account_manager_->HasUnconsentedPrimaryAccount());
+  AccountInfo account_info = account_tracker_->GetAccountInfo(account_id);
+  if (account_info.IsEmpty())
+    return PrimaryAccountError::kAccountInfoEmpty;
+
+  DCHECK_EQ(account_info.account_id, account_id);
+  DCHECK(!account_info.email.empty());
+  DCHECK(!account_info.gaia.empty());
+
+#if !BUILDFLAG(IS_CHROMEOS_ASH)
+  bool is_signin_allowed = pref_service_->GetBoolean(prefs::kSigninAllowed);
+#if BUILDFLAG(IS_CHROMEOS_LACROS)
+  // Check that `prefs::kSigninAllowed` has not been set to false in a context
+  // where Lacros wants to set a Primary Account. Lacros doesn't offer account
+  // inconsistency - just like Ash.
+  DCHECK(is_signin_allowed);
 #endif
-  AccountInfo account_info;
-  if (!account_id.empty()) {
-    account_info = account_tracker_->GetAccountInfo(account_id);
-    DCHECK(!account_info.IsEmpty());
+  if (!is_signin_allowed)
+    return PrimaryAccountError::kSigninNotAllowed;
+#endif
+
+  switch (consent_level) {
+    case ConsentLevel::kSync:
+#if !BUILDFLAG(IS_CHROMEOS_ASH)
+      // TODO(crbug.com/1462858): Replace with NOTREACHED on iOS after all flows
+      //     have been migrated away from kSync. See ConsentLevel::kSync
+      //     documentation for details.
+      if (primary_account_manager_->HasPrimaryAccount(ConsentLevel::kSync))
+        return PrimaryAccountError::kSyncConsentAlreadySet;
+#endif
+      break;
+    case ConsentLevel::kSignin:
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+      // On Chrome OS the UPA can only be set once and never removed or changed.
+      DCHECK(
+          !primary_account_manager_->HasPrimaryAccount(ConsentLevel::kSignin));
+#endif
+      // TODO(crbug.com/1462978): Delete this when ConsentLevel::kSync is
+      //     deleted. See ConsentLevel::kSync documentation for details.
+      DCHECK(!primary_account_manager_->HasPrimaryAccount(ConsentLevel::kSync));
+      break;
+  }
+  if (primary_account_manager_->HasPrimaryAccount(
+          signin::ConsentLevel::kSignin) &&
+      account_info.account_id != primary_account_manager_->GetPrimaryAccountId(
+                                     signin::ConsentLevel::kSignin) &&
+      !signin_client_->IsClearPrimaryAccountAllowed(
+          /*has_sync_account=*/false)) {
+    DVLOG(1) << "Changing the primary account is not allowed.";
+    return PrimaryAccountError::kPrimaryAccountChangeNotAllowed;
   }
 
-  primary_account_manager_->SetUnconsentedPrimaryAccountInfo(account_info);
+  primary_account_manager_->SetPrimaryAccountInfo(
+      account_info, consent_level, access_point,
+      std::move(prefs_committed_callback));
+  return PrimaryAccountError::kNoError;
 }
 
-#if defined(OS_CHROMEOS)
-void PrimaryAccountMutatorImpl::RevokeSyncConsent() {
-  primary_account_manager_->RevokeSyncConsent();
-}
-#endif
-
-#if !defined(OS_CHROMEOS)
-bool PrimaryAccountMutatorImpl::ClearPrimaryAccount(
-    ClearAccountsAction action,
+#if !BUILDFLAG(IS_CHROMEOS_ASH)
+// Users cannot revoke the Sync consent on Ash. They can only turn off all Sync
+// data types if they want. Revoking sync consent can lead to breakages in
+// IdentityManager dependencies like `chrome.identity` extension API - that
+// assume that an account will always be available at sync consent level in Ash.
+void PrimaryAccountMutatorImpl::RevokeSyncConsent(
     signin_metrics::ProfileSignout source_metric,
     signin_metrics::SignoutDelete delete_metric) {
-  if (!primary_account_manager_->HasUnconsentedPrimaryAccount())
+  // TODO(crbug.com/1462552): `RevokeSyncConsent` shouldn't be available on iOS
+  //     when kSync is no longer used. See ConsentLevel::kSync documentation for
+  //     details.
+  DCHECK(primary_account_manager_->HasPrimaryAccount(ConsentLevel::kSync));
+  primary_account_manager_->RevokeSyncConsent(source_metric, delete_metric);
+}
+
+bool PrimaryAccountMutatorImpl::ClearPrimaryAccount(
+    signin_metrics::ProfileSignout source_metric,
+    signin_metrics::SignoutDelete delete_metric) {
+  if (!primary_account_manager_->HasPrimaryAccount(ConsentLevel::kSignin))
     return false;
 
-  switch (action) {
-    case PrimaryAccountMutator::ClearAccountsAction::kDefault:
-      primary_account_manager_->SignOut(source_metric, delete_metric);
-      break;
-    case PrimaryAccountMutator::ClearAccountsAction::kKeepAll:
-      primary_account_manager_->SignOutAndKeepAllAccounts(source_metric,
-                                                          delete_metric);
-      break;
-    case PrimaryAccountMutator::ClearAccountsAction::kRemoveAll:
-      primary_account_manager_->SignOutAndRemoveAllAccounts(source_metric,
-                                                            delete_metric);
-      break;
-  }
-
+  primary_account_manager_->ClearPrimaryAccount(source_metric, delete_metric);
   return true;
 }
-#endif
+
+bool PrimaryAccountMutatorImpl::RemovePrimaryAccountButKeepTokens(
+    signin_metrics::ProfileSignout source_metric,
+    signin_metrics::SignoutDelete delete_metric) {
+  CHECK_EQ(
+      source_metric,
+      signin_metrics::ProfileSignout::kCancelSyncConfirmationOnWebOnlySignedIn);
+  if (!primary_account_manager_->HasPrimaryAccount(ConsentLevel::kSignin)) {
+    return false;
+  }
+
+  primary_account_manager_->RemovePrimaryAccountButKeepTokens(source_metric,
+                                                              delete_metric);
+  return true;
+}
+#endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
 
 }  // namespace signin

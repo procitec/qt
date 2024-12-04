@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,7 +7,6 @@
 #include <utility>
 
 #include "base/containers/flat_map.h"
-#include "base/macros.h"
 #import "ios/web/public/navigation/navigation_context.h"
 #import "ios/web/public/web_state.h"
 #include "ios/web/public/web_state_observer.h"
@@ -15,10 +14,6 @@
 #include "services/metrics/public/cpp/delegating_ukm_recorder.h"
 #include "services/metrics/public/cpp/ukm_source_id.h"
 #include "url/gurl.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace ukm {
 
@@ -32,6 +27,11 @@ class SourceUrlRecorderWebStateObserver
     : public web::WebStateObserver,
       public web::WebStateUserData<SourceUrlRecorderWebStateObserver> {
  public:
+  SourceUrlRecorderWebStateObserver(const SourceUrlRecorderWebStateObserver&) =
+      delete;
+  SourceUrlRecorderWebStateObserver& operator=(
+      const SourceUrlRecorderWebStateObserver&) = delete;
+
   ~SourceUrlRecorderWebStateObserver() override;
 
   // web::WebStateObserver
@@ -56,8 +56,6 @@ class SourceUrlRecorderWebStateObserver
   SourceId last_committed_source_id_;
 
   WEB_STATE_USER_DATA_KEY_DECL();
-
-  DISALLOW_COPY_AND_ASSIGN(SourceUrlRecorderWebStateObserver);
 };
 
 WEB_STATE_USER_DATA_KEY_IMPL(SourceUrlRecorderWebStateObserver)

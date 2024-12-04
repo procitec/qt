@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,9 +7,10 @@
 
 #include <stddef.h>
 
-#include <cstddef>
 #include <utility>
 #include <vector>
+
+#include "base/memory/raw_ptr.h"
 
 namespace bookmarks {
 
@@ -37,13 +38,16 @@ struct TitledUrlMatch {
       const std::vector<size_t>& offsets);
 
   // The matching node of a query.
-  const TitledUrlNode* node;
+  raw_ptr<const TitledUrlNode> node;
 
   // Location of the matching words in the title of the node.
   MatchPositions title_match_positions;
 
   // Location of the matching words in the URL of the node.
   MatchPositions url_match_positions;
+
+  // Whether there was at least 1 match in the titles of ancestors of the node.
+  bool has_ancestor_match;
 };
 
 }  // namespace bookmarks

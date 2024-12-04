@@ -1,3 +1,3 @@
-sergeyu@chromium.org
-
-# COMPONENT: Platform>Extensions>API
+# For security review.
+per-file message_service_bindings.*=set noparent
+per-file message_service_bindings.*=file://ipc/SECURITY_OWNERS

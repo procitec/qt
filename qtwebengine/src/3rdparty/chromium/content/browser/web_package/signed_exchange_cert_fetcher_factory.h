@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,9 +6,10 @@
 #define CONTENT_BROWSER_WEB_PACKAGE_SIGNED_EXCHANGE_CERT_FETCHER_FACTORY_H_
 
 #include <memory>
+#include <optional>
 #include <vector>
 
-#include "base/callback_forward.h"
+#include "base/functional/callback_forward.h"
 #include "base/unguessable_token.h"
 #include "content/browser/web_package/signed_exchange_cert_fetcher.h"
 #include "content/common/content_export.h"
@@ -44,7 +45,7 @@ class CONTENT_EXPORT SignedExchangeCertFetcherFactory {
   static std::unique_ptr<SignedExchangeCertFetcherFactory> Create(
       scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
       URLLoaderThrottlesGetter url_loader_throttles_getter,
-      const base::Optional<base::UnguessableToken>& throttling_profile_id,
+      const std::optional<base::UnguessableToken>& throttling_profile_id,
       net::IsolationInfo isolation_info);
 };
 

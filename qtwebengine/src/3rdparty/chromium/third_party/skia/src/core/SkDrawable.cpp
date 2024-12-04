@@ -4,17 +4,27 @@
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
  */
+#include "include/core/SkDrawable.h"
 
 #include "include/core/SkCanvas.h"
-#include "include/core/SkDrawable.h"
+#include "include/core/SkMatrix.h"
+#include "include/core/SkPaint.h"
+#include "include/core/SkPicture.h"  // IWYU pragma: keep
+#include "include/core/SkPictureRecorder.h"
+#include "include/core/SkRect.h"
+#include "include/core/SkRefCnt.h"
+#include "include/core/SkScalar.h"
+
 #include <atomic>
+#include <cstddef>
+#include <cstdint>
 
 static int32_t next_generation_id() {
     static std::atomic<int32_t> nextID{1};
 
     int32_t id;
     do {
-        id = nextID++;
+        id = nextID.fetch_add(1, std::memory_order_relaxed);
     } while (id == 0);
     return id;
 }
@@ -37,7 +47,7 @@ void SkDrawable::draw(SkCanvas* canvas, const SkMatrix* matrix) {
     }
     this->onDraw(canvas);
 
-    if (false) {
+    if ((false)) {
         draw_bbox(canvas, this->getBounds());
     }
 }
@@ -47,8 +57,8 @@ void SkDrawable::draw(SkCanvas* canvas, SkScalar x, SkScalar y) {
     this->draw(canvas, &matrix);
 }
 
-SkPicture* SkDrawable::newPictureSnapshot() {
-    return this->onNewPictureSnapshot();
+sk_sp<SkPicture> SkDrawable::makePictureSnapshot() {
+    return this->onMakePictureSnapshot();
 }
 
 uint32_t SkDrawable::getGenerationID() {
@@ -62,22 +72,27 @@ SkRect SkDrawable::getBounds() {
     return this->onGetBounds();
 }
 
+size_t SkDrawable::approximateBytesUsed() {
+    return this->onApproximateBytesUsed();
+}
+size_t SkDrawable::onApproximateBytesUsed() {
+    return 0;
+}
+
 void SkDrawable::notifyDrawingChanged() {
     fGenerationID = 0;
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////
 
-#include "include/core/SkPictureRecorder.h"
-
-SkPicture* SkDrawable::onNewPictureSnapshot() {
+sk_sp<SkPicture> SkDrawable::onMakePictureSnapshot() {
     SkPictureRecorder recorder;
 
     const SkRect bounds = this->getBounds();
     SkCanvas* canvas = recorder.beginRecording(bounds);
     this->draw(canvas);
-    if (false) {
+    if ((false)) {
         draw_bbox(canvas, bounds);
     }
-    return recorder.finishRecordingAsPicture().release();
+    return recorder.finishRecordingAsPicture();
 }

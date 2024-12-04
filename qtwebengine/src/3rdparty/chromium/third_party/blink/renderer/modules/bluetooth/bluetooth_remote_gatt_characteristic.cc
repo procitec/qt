@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,6 +13,7 @@
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
+#include "third_party/blink/renderer/core/execution_context/agent.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
 #include "third_party/blink/renderer/modules/bluetooth/bluetooth.h"
 #include "third_party/blink/renderer/modules/bluetooth/bluetooth_characteristic_properties.h"
@@ -23,7 +24,8 @@
 #include "third_party/blink/renderer/modules/bluetooth/bluetooth_remote_gatt_utils.h"
 #include "third_party/blink/renderer/modules/bluetooth/bluetooth_uuid.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
-#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
+#include "third_party/blink/renderer/platform/scheduler/public/event_loop.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 
 namespace blink {
@@ -33,7 +35,8 @@ BluetoothRemoteGATTCharacteristic::BluetoothRemoteGATTCharacteristic(
     mojom::blink::WebBluetoothRemoteGATTCharacteristicPtr characteristic,
     BluetoothRemoteGATTService* service,
     BluetoothDevice* device)
-    : ExecutionContextLifecycleObserver(context),
+    : ActiveScriptWrappable<BluetoothRemoteGATTCharacteristic>({}),
+      ExecutionContextLifecycleObserver(context),
       characteristic_(std::move(characteristic)),
       service_(service),
       device_(device),
@@ -50,8 +53,17 @@ void BluetoothRemoteGATTCharacteristic::RemoteCharacteristicValueChanged(
     const Vector<uint8_t>& value) {
   if (!GetGatt()->connected())
     return;
-  this->SetValue(BluetoothRemoteGATTUtils::ConvertWTFVectorToDataView(value));
-  DispatchEvent(*Event::Create(event_type_names::kCharacteristicvaluechanged));
+  SetValue(BluetoothRemoteGATTUtils::ConvertWTFVectorToDataView(value));
+  if (notification_registration_in_progress()) {
+    // Save event and value to be dispatched after notification is registered.
+    deferred_value_change_data_.push_back(
+        MakeGarbageCollected<DeferredValueChange>(
+            Event::Create(event_type_names::kCharacteristicvaluechanged),
+            value_, /*promise=*/nullptr));
+  } else {
+    DispatchEvent(
+        *Event::Create(event_type_names::kCharacteristicvaluechanged));
+  }
 }
 
 const WTF::AtomicString& BluetoothRemoteGATTCharacteristic::InterfaceName()
@@ -74,14 +86,13 @@ bool BluetoothRemoteGATTCharacteristic::HasPendingActivity() const {
 void BluetoothRemoteGATTCharacteristic::AddedEventListener(
     const AtomicString& event_type,
     RegisteredEventListener& registered_listener) {
-  EventTargetWithInlineData::AddedEventListener(event_type,
-                                                registered_listener);
+  EventTarget::AddedEventListener(event_type, registered_listener);
 }
 
 void BluetoothRemoteGATTCharacteristic::ReadValueCallback(
     ScriptPromiseResolver* resolver,
     mojom::blink::WebBluetoothResult result,
-    const base::Optional<Vector<uint8_t>>& value) {
+    const absl::optional<Vector<uint8_t>>& value) {
   if (!resolver->GetExecutionContext() ||
       resolver->GetExecutionContext()->IsContextDestroyed())
     return;
@@ -98,9 +109,17 @@ void BluetoothRemoteGATTCharacteristic::ReadValueCallback(
     DOMDataView* dom_data_view =
         BluetoothRemoteGATTUtils::ConvertWTFVectorToDataView(value.value());
     SetValue(dom_data_view);
-    DispatchEvent(
-        *Event::Create(event_type_names::kCharacteristicvaluechanged));
-    resolver->Resolve(dom_data_view);
+    if (notification_registration_in_progress()) {
+      // Save event to be dispatched after notification is registered.
+      deferred_value_change_data_.push_back(
+          MakeGarbageCollected<DeferredValueChange>(
+              Event::Create(event_type_names::kCharacteristicvaluechanged),
+              dom_data_view, resolver));
+    } else {
+      DispatchEvent(
+          *Event::Create(event_type_names::kCharacteristicvaluechanged));
+      resolver->Resolve(dom_data_view);
+    }
   } else {
     resolver->Reject(BluetoothError::CreateDOMException(result));
   }
@@ -109,7 +128,7 @@ void BluetoothRemoteGATTCharacteristic::ReadValueCallback(
 ScriptPromise BluetoothRemoteGATTCharacteristic::readValue(
     ScriptState* script_state,
     ExceptionState& exception_state) {
-  if (!GetGatt()->connected()) {
+  if (!GetGatt()->connected() || !GetBluetooth()->IsServiceBound()) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kNetworkError,
         BluetoothError::CreateNotConnectedExceptionMessage(
@@ -125,16 +144,16 @@ ScriptPromise BluetoothRemoteGATTCharacteristic::readValue(
     return ScriptPromise();
   }
 
-  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
+  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(
+      script_state, exception_state.GetContext());
   ScriptPromise promise = resolver->Promise();
   GetGatt()->AddToActiveAlgorithms(resolver);
 
-  mojom::blink::WebBluetoothService* service =
-      device_->GetBluetooth()->Service();
+  mojom::blink::WebBluetoothService* service = GetBluetooth()->Service();
   service->RemoteCharacteristicReadValue(
       characteristic_->instance_id,
-      WTF::Bind(&BluetoothRemoteGATTCharacteristic::ReadValueCallback,
-                WrapPersistent(this), WrapPersistent(resolver)));
+      WTF::BindOnce(&BluetoothRemoteGATTCharacteristic::ReadValueCallback,
+                    WrapPersistent(this), WrapPersistent(resolver)));
 
   return promise;
 }
@@ -167,7 +186,7 @@ ScriptPromise BluetoothRemoteGATTCharacteristic::WriteCharacteristicValue(
     const DOMArrayPiece& value,
     mojom::blink::WebBluetoothWriteType write_type,
     ExceptionState& exception_state) {
-  if (!GetGatt()->connected()) {
+  if (!GetGatt()->connected() || !GetBluetooth()->IsServiceBound()) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kNetworkError,
         BluetoothError::CreateNotConnectedExceptionMessage(
@@ -195,7 +214,7 @@ ScriptPromise BluetoothRemoteGATTCharacteristic::WriteCharacteristicValue(
   // If bytes is more than 512 bytes long (the maximum length of an attribute
   // value, per Long Attribute Values) return a promise rejected with an
   // InvalidModificationError and abort.
-  if (value.ByteLengthAsSizeT() > 512) {
+  if (value.ByteLength() > 512) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kInvalidModificationError,
         "Value can't exceed 512 bytes.");
@@ -205,18 +224,19 @@ ScriptPromise BluetoothRemoteGATTCharacteristic::WriteCharacteristicValue(
   // Let valueVector be a copy of the bytes held by value.
   Vector<uint8_t> value_vector;
   value_vector.Append(value.Bytes(),
-                      static_cast<wtf_size_t>(value.ByteLengthAsSizeT()));
+                      static_cast<wtf_size_t>(value.ByteLength()));
 
-  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
+  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(
+      script_state, exception_state.GetContext());
   ScriptPromise promise = resolver->Promise();
   GetGatt()->AddToActiveAlgorithms(resolver);
 
-  mojom::blink::WebBluetoothService* service =
-      device_->GetBluetooth()->Service();
+  mojom::blink::WebBluetoothService* service = GetBluetooth()->Service();
   service->RemoteCharacteristicWriteValue(
       characteristic_->instance_id, value_vector, write_type,
-      WTF::Bind(&BluetoothRemoteGATTCharacteristic::WriteValueCallback,
-                WrapPersistent(this), WrapPersistent(resolver), value_vector));
+      WTF::BindOnce(&BluetoothRemoteGATTCharacteristic::WriteValueCallback,
+                    WrapPersistent(this), WrapPersistent(resolver),
+                    value_vector));
 
   return promise;
 }
@@ -252,10 +272,16 @@ ScriptPromise BluetoothRemoteGATTCharacteristic::writeValueWithoutResponse(
 
 void BluetoothRemoteGATTCharacteristic::NotificationsCallback(
     ScriptPromiseResolver* resolver,
+    bool started,
     mojom::blink::WebBluetoothResult result) {
+  if (started) {
+    DCHECK_NE(num_in_flight_notification_registrations_, 0U);
+    num_in_flight_notification_registrations_--;
+  }
   if (!resolver->GetExecutionContext() ||
-      resolver->GetExecutionContext()->IsContextDestroyed())
+      resolver->GetExecutionContext()->IsContextDestroyed()) {
     return;
+  }
 
   // If the device is disconnected, reject.
   if (!GetGatt()->RemoveFromActiveAlgorithms(resolver)) {
@@ -264,17 +290,39 @@ void BluetoothRemoteGATTCharacteristic::NotificationsCallback(
     return;
   }
 
+  // Store the agent as the `resolver`'s execution context may
+  // start destruction with promise resolution.
+  Agent* agent = resolver->GetExecutionContext()->GetAgent();
   if (result == mojom::blink::WebBluetoothResult::SUCCESS) {
     resolver->Resolve(this);
   } else {
     resolver->Reject(BluetoothError::CreateDOMException(result));
+  }
+
+  if (started && !notification_registration_in_progress() &&
+      !deferred_value_change_data_.empty()) {
+    // Ensure promises are resolved before dispatching events allows them
+    // to add listeners.
+    agent->event_loop()->PerformMicrotaskCheckpoint();
+    // Dispatch deferred characteristicvaluechanged events created during the
+    // registration of notifications.
+    auto deferred_value_change_data = std::move(deferred_value_change_data_);
+    deferred_value_change_data_.clear();
+    for (const auto& value_changed_data : deferred_value_change_data) {
+      auto prior_value = value_;
+      value_ = value_changed_data->dom_data_view;
+      DispatchEvent(*value_changed_data->event);
+      if (value_changed_data->resolver)
+        value_changed_data->resolver->Resolve(value_);
+      value_ = prior_value;
+    }
   }
 }
 
 ScriptPromise BluetoothRemoteGATTCharacteristic::startNotifications(
     ScriptState* script_state,
     ExceptionState& exception_state) {
-  if (!GetGatt()->connected()) {
+  if (!GetGatt()->connected() || !GetBluetooth()->IsServiceBound()) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kNetworkError,
         BluetoothError::CreateNotConnectedExceptionMessage(
@@ -290,12 +338,12 @@ ScriptPromise BluetoothRemoteGATTCharacteristic::startNotifications(
     return ScriptPromise();
   }
 
-  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
+  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(
+      script_state, exception_state.GetContext());
   ScriptPromise promise = resolver->Promise();
   GetGatt()->AddToActiveAlgorithms(resolver);
 
-  mojom::blink::WebBluetoothService* service =
-      device_->GetBluetooth()->Service();
+  mojom::blink::WebBluetoothService* service = GetBluetooth()->Service();
   mojo::PendingAssociatedRemote<mojom::blink::WebBluetoothCharacteristicClient>
       client;
   // See https://bit.ly/2S0zRAS for task types.
@@ -303,10 +351,12 @@ ScriptPromise BluetoothRemoteGATTCharacteristic::startNotifications(
       client.InitWithNewEndpointAndPassReceiver(),
       GetExecutionContext()->GetTaskRunner(TaskType::kMiscPlatformAPI));
 
+  num_in_flight_notification_registrations_++;
   service->RemoteCharacteristicStartNotifications(
       characteristic_->instance_id, std::move(client),
-      WTF::Bind(&BluetoothRemoteGATTCharacteristic::NotificationsCallback,
-                WrapPersistent(this), WrapPersistent(resolver)));
+      WTF::BindOnce(&BluetoothRemoteGATTCharacteristic::NotificationsCallback,
+                    WrapPersistent(this), WrapPersistent(resolver),
+                    /*starting=*/true));
 
   return promise;
 }
@@ -314,7 +364,7 @@ ScriptPromise BluetoothRemoteGATTCharacteristic::startNotifications(
 ScriptPromise BluetoothRemoteGATTCharacteristic::stopNotifications(
     ScriptState* script_state,
     ExceptionState& exception_state) {
-  if (!GetGatt()->connected()) {
+  if (!GetGatt()->connected() || !GetBluetooth()->IsServiceBound()) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kNetworkError,
         BluetoothError::CreateNotConnectedExceptionMessage(
@@ -330,23 +380,24 @@ ScriptPromise BluetoothRemoteGATTCharacteristic::stopNotifications(
     return ScriptPromise();
   }
 
-  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
+  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(
+      script_state, exception_state.GetContext());
   ScriptPromise promise = resolver->Promise();
   GetGatt()->AddToActiveAlgorithms(resolver);
 
-  mojom::blink::WebBluetoothService* service =
-      device_->GetBluetooth()->Service();
+  mojom::blink::WebBluetoothService* service = GetBluetooth()->Service();
   service->RemoteCharacteristicStopNotifications(
       characteristic_->instance_id,
-      WTF::Bind(&BluetoothRemoteGATTCharacteristic::NotificationsCallback,
-                WrapPersistent(this), WrapPersistent(resolver),
-                mojom::blink::WebBluetoothResult::SUCCESS));
+      WTF::BindOnce(&BluetoothRemoteGATTCharacteristic::NotificationsCallback,
+                    WrapPersistent(this), WrapPersistent(resolver),
+                    /*starting=*/false,
+                    mojom::blink::WebBluetoothResult::SUCCESS));
   return promise;
 }
 
 ScriptPromise BluetoothRemoteGATTCharacteristic::getDescriptor(
     ScriptState* script_state,
-    const StringOrUnsignedLong& descriptor_uuid,
+    const V8BluetoothDescriptorUUID* descriptor_uuid,
     ExceptionState& exception_state) {
   String descriptor =
       BluetoothUUID::getDescriptor(descriptor_uuid, exception_state);
@@ -368,7 +419,7 @@ ScriptPromise BluetoothRemoteGATTCharacteristic::getDescriptors(
 
 ScriptPromise BluetoothRemoteGATTCharacteristic::getDescriptors(
     ScriptState* script_state,
-    const StringOrUnsignedLong& descriptor_uuid,
+    const V8BluetoothDescriptorUUID* descriptor_uuid,
     ExceptionState& exception_state) {
   String descriptor =
       BluetoothUUID::getDescriptor(descriptor_uuid, exception_state);
@@ -385,7 +436,7 @@ ScriptPromise BluetoothRemoteGATTCharacteristic::GetDescriptorsImpl(
     ExceptionState& exception_state,
     mojom::blink::WebBluetoothGATTQueryQuantity quantity,
     const String& descriptors_uuid) {
-  if (!GetGatt()->connected()) {
+  if (!GetGatt()->connected() || !GetBluetooth()->IsServiceBound()) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kNetworkError,
         BluetoothError::CreateNotConnectedExceptionMessage(
@@ -401,18 +452,18 @@ ScriptPromise BluetoothRemoteGATTCharacteristic::GetDescriptorsImpl(
     return ScriptPromise();
   }
 
-  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
+  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(
+      script_state, exception_state.GetContext());
   ScriptPromise promise = resolver->Promise();
   GetGatt()->AddToActiveAlgorithms(resolver);
 
-  mojom::blink::WebBluetoothService* service =
-      device_->GetBluetooth()->Service();
+  mojom::blink::WebBluetoothService* service = GetBluetooth()->Service();
   service->RemoteCharacteristicGetDescriptors(
       characteristic_->instance_id, quantity, descriptors_uuid,
-      WTF::Bind(&BluetoothRemoteGATTCharacteristic::GetDescriptorsCallback,
-                WrapPersistent(this), descriptors_uuid,
-                characteristic_->instance_id, quantity,
-                WrapPersistent(resolver)));
+      WTF::BindOnce(&BluetoothRemoteGATTCharacteristic::GetDescriptorsCallback,
+                    WrapPersistent(this), descriptors_uuid,
+                    characteristic_->instance_id, quantity,
+                    WrapPersistent(resolver)));
 
   return promise;
 }
@@ -425,7 +476,7 @@ void BluetoothRemoteGATTCharacteristic::GetDescriptorsCallback(
     mojom::blink::WebBluetoothGATTQueryQuantity quantity,
     ScriptPromiseResolver* resolver,
     mojom::blink::WebBluetoothResult result,
-    base::Optional<Vector<mojom::blink::WebBluetoothRemoteGATTDescriptorPtr>>
+    absl::optional<Vector<mojom::blink::WebBluetoothRemoteGATTDescriptorPtr>>
         descriptors) {
   if (!resolver->GetExecutionContext() ||
       resolver->GetExecutionContext()->IsContextDestroyed())
@@ -482,8 +533,18 @@ void BluetoothRemoteGATTCharacteristic::Trace(Visitor* visitor) const {
   visitor->Trace(value_);
   visitor->Trace(device_);
   visitor->Trace(receivers_);
-  EventTargetWithInlineData::Trace(visitor);
+  visitor->Trace(deferred_value_change_data_);
+
+  EventTarget::Trace(visitor);
   ExecutionContextLifecycleObserver::Trace(visitor);
+}
+
+void BluetoothRemoteGATTCharacteristic::DeferredValueChange::Trace(
+    Visitor* visitor) const {
+  visitor->Trace(event);
+  visitor->Trace(dom_data_view);
+  if (resolver)
+    visitor->Trace(resolver);
 }
 
 }  // namespace blink

@@ -27,7 +27,7 @@
 #include "third_party/blink/renderer/core/svg/svg_animated_length.h"
 #include "third_party/blink/renderer/core/svg/svg_resource.h"
 #include "third_party/blink/renderer/core/svg/svg_tree_scope_resources.h"
-#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 
 namespace blink {
 
@@ -67,14 +67,7 @@ SVGFilterElement::SVGFilterElement(Document& document)
                        SVGAnimatedEnumeration<SVGUnitTypes::SVGUnitType>>(
           this,
           svg_names::kPrimitiveUnitsAttr,
-          SVGUnitTypes::kSvgUnitTypeUserspaceonuse)) {
-  AddToPropertyMap(x_);
-  AddToPropertyMap(y_);
-  AddToPropertyMap(width_);
-  AddToPropertyMap(height_);
-  AddToPropertyMap(filter_units_);
-  AddToPropertyMap(primitive_units_);
-}
+          SVGUnitTypes::kSvgUnitTypeUserspaceonuse)) {}
 
 SVGFilterElement::~SVGFilterElement() = default;
 
@@ -89,7 +82,9 @@ void SVGFilterElement::Trace(Visitor* visitor) const {
   SVGURIReference::Trace(visitor);
 }
 
-void SVGFilterElement::SvgAttributeChanged(const QualifiedName& attr_name) {
+void SVGFilterElement::SvgAttributeChanged(
+    const SvgAttributeChangedParams& params) {
+  const QualifiedName& attr_name = params.name;
   bool is_xywh =
       attr_name == svg_names::kXAttr || attr_name == svg_names::kYAttr ||
       attr_name == svg_names::kWidthAttr || attr_name == svg_names::kHeightAttr;
@@ -103,7 +98,7 @@ void SVGFilterElement::SvgAttributeChanged(const QualifiedName& attr_name) {
     return;
   }
 
-  SVGElement::SvgAttributeChanged(attr_name);
+  SVGElement::SvgAttributeChanged(params);
 }
 
 LocalSVGResource* SVGFilterElement::AssociatedResource() const {
@@ -119,34 +114,64 @@ void SVGFilterElement::PrimitiveAttributeChanged(
 }
 
 void SVGFilterElement::InvalidateFilterChain() {
-  if (LocalSVGResource* resource = AssociatedResource()) {
-    resource->NotifyContentChanged(SVGResourceClient::kLayoutInvalidation |
-                                   SVGResourceClient::kBoundariesInvalidation);
-  }
+  if (LocalSVGResource* resource = AssociatedResource())
+    resource->NotifyContentChanged();
 }
 
 void SVGFilterElement::ChildrenChanged(const ChildrenChange& change) {
   SVGElement::ChildrenChanged(change);
 
-  if (change.ByParser())
+  if (change.ByParser() && !AssociatedResource())
     return;
 
-  if (LayoutObject* object = GetLayoutObject()) {
-    object->SetNeedsLayoutAndFullPaintInvalidation(
-        layout_invalidation_reason::kChildChanged);
-  }
   InvalidateFilterChain();
 }
 
-LayoutObject* SVGFilterElement::CreateLayoutObject(const ComputedStyle&,
-                                                   LegacyLayout) {
-  return new LayoutSVGResourceFilter(this);
+LayoutObject* SVGFilterElement::CreateLayoutObject(const ComputedStyle&) {
+  return MakeGarbageCollected<LayoutSVGResourceFilter>(this);
 }
 
 bool SVGFilterElement::SelfHasRelativeLengths() const {
   return x_->CurrentValue()->IsRelative() || y_->CurrentValue()->IsRelative() ||
          width_->CurrentValue()->IsRelative() ||
          height_->CurrentValue()->IsRelative();
+}
+
+SVGAnimatedPropertyBase* SVGFilterElement::PropertyFromAttribute(
+    const QualifiedName& attribute_name) const {
+  if (attribute_name == svg_names::kXAttr) {
+    return x_.Get();
+  } else if (attribute_name == svg_names::kYAttr) {
+    return y_.Get();
+  } else if (attribute_name == svg_names::kWidthAttr) {
+    return width_.Get();
+  } else if (attribute_name == svg_names::kHeightAttr) {
+    return height_.Get();
+  } else if (attribute_name == svg_names::kFilterUnitsAttr) {
+    return filter_units_.Get();
+  } else if (attribute_name == svg_names::kPrimitiveUnitsAttr) {
+    return primitive_units_.Get();
+  } else {
+    SVGAnimatedPropertyBase* ret =
+        SVGURIReference::PropertyFromAttribute(attribute_name);
+    if (ret) {
+      return ret;
+    } else {
+      return SVGElement::PropertyFromAttribute(attribute_name);
+    }
+  }
+}
+
+void SVGFilterElement::SynchronizeAllSVGAttributes() const {
+  SVGAnimatedPropertyBase* attrs[]{x_.Get(),
+                                   y_.Get(),
+                                   width_.Get(),
+                                   height_.Get(),
+                                   filter_units_.Get(),
+                                   primitive_units_.Get()};
+  SynchronizeListOfSVGAttributes(attrs);
+  SVGURIReference::SynchronizeAllSVGAttributes();
+  SVGElement::SynchronizeAllSVGAttributes();
 }
 
 }  // namespace blink

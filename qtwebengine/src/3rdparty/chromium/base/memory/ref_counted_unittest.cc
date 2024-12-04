@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,6 +7,7 @@
 #include <type_traits>
 #include <utility>
 
+#include "base/memory/raw_ptr.h"
 #include "base/test/gtest_util.h"
 #include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -173,16 +174,7 @@ class CheckRefptrNull : public base::RefCounted<CheckRefptrNull> {
  private:
   friend class base::RefCounted<CheckRefptrNull>;
 
-  scoped_refptr<CheckRefptrNull>* ptr_ = nullptr;
-};
-
-class Overflow : public base::RefCounted<Overflow> {
- public:
-  Overflow() = default;
-
- private:
-  friend class base::RefCounted<Overflow>;
-  ~Overflow() = default;
+  raw_ptr<scoped_refptr<CheckRefptrNull>> ptr_ = nullptr;
 };
 
 }  // namespace
@@ -258,10 +250,38 @@ TEST(RefCountedUnitTest, Equality) {
   scoped_refptr<SelfAssign> p2(new SelfAssign);
 
   EXPECT_EQ(p1, p1);
+  EXPECT_EQ(p1.get(), p1);
+  EXPECT_EQ(p1, p1.get());
+
   EXPECT_EQ(p2, p2);
+  EXPECT_EQ(p2.get(), p2);
+  EXPECT_EQ(p2, p2.get());
 
   EXPECT_NE(p1, p2);
+  EXPECT_NE(p1.get(), p2);
+  EXPECT_NE(p1, p2.get());
+
   EXPECT_NE(p2, p1);
+  EXPECT_NE(p2.get(), p1);
+  EXPECT_NE(p2, p1.get());
+}
+
+TEST(RefCountedUnitTest, Ordering) {
+  scoped_refptr<SelfAssign> p1(new SelfAssign);
+  scoped_refptr<SelfAssign> p2(new SelfAssign);
+  EXPECT_NE(p1, p2);
+
+  if (p1.get() > p2.get()) {
+    p1.swap(p2);
+  }
+
+  EXPECT_LT(p1, p2);
+  EXPECT_LT(p1.get(), p2);
+  EXPECT_LT(p1, p2.get());
+
+  EXPECT_GT(p2, p1);
+  EXPECT_GT(p2.get(), p1);
+  EXPECT_GT(p2, p1.get());
 }
 
 TEST(RefCountedUnitTest, NullptrEquality) {
@@ -272,6 +292,13 @@ TEST(RefCountedUnitTest, NullptrEquality) {
   EXPECT_NE(ptr_to_an_instance, nullptr);
   EXPECT_EQ(nullptr, ptr_to_nullptr);
   EXPECT_EQ(ptr_to_nullptr, nullptr);
+}
+
+TEST(RefCountedUnitTest, NullptrOrdering) {
+  scoped_refptr<SelfAssign> ptr_to_an_instance(new SelfAssign);
+
+  EXPECT_LT(nullptr, ptr_to_an_instance);
+  EXPECT_GT(ptr_to_an_instance, nullptr);
 }
 
 TEST(RefCountedUnitTest, ConvertibleEquality) {
@@ -692,12 +719,88 @@ TEST(RefCountedDeathTest, TestAdoptRef) {
 }
 
 #if defined(ARCH_CPU_64_BITS)
-TEST(RefCountedDeathTest, TestOverflowCheck) {
-  EXPECT_DCHECK_DEATH({
-    auto p = base::MakeRefCounted<Overflow>();
-    p->ref_count_ = std::numeric_limits<uint32_t>::max();
-    p->AddRef();
-  });
+class RefCountedOverflowTest : public ::testing::Test {
+ public:
+  static uint32_t& GetMutableRefCount(RefCountedBase* ref_counted) {
+    return ref_counted->ref_count_;
+  }
+
+  static std::atomic_int& GetMutableRefCount(
+      RefCountedThreadSafeBase* ref_counted) {
+    return ref_counted->ref_count_.ref_count_;
+  }
+};
+
+TEST_F(RefCountedOverflowTest, NonThreadSafeStartFromZero) {
+  class Overflow : public base::RefCounted<Overflow> {
+   public:
+    Overflow() { EXPECT_FALSE(HasOneRef()); }
+
+   private:
+    friend class base::RefCounted<Overflow>;
+    ~Overflow() = default;
+  };
+
+  auto p = base::MakeRefCounted<Overflow>();
+  GetMutableRefCount(p.get()) = std::numeric_limits<uint32_t>::max();
+  EXPECT_CHECK_DEATH(p->AddRef());
+  // Ensure `p` doesn't leak and fail lsan builds.
+  GetMutableRefCount(p.get()) = 1;
+}
+
+TEST_F(RefCountedOverflowTest, NonThreadSafeStartFromOne) {
+  class Overflow : public base::RefCounted<Overflow> {
+   public:
+    REQUIRE_ADOPTION_FOR_REFCOUNTED_TYPE();
+
+    Overflow() { EXPECT_TRUE(HasOneRef()); }
+
+   private:
+    friend class base::RefCounted<Overflow>;
+    ~Overflow() = default;
+  };
+
+  auto p = base::MakeRefCounted<Overflow>();
+  GetMutableRefCount(p.get()) = std::numeric_limits<uint32_t>::max();
+  EXPECT_CHECK_DEATH(p->AddRef());
+  // Ensure `p` doesn't leak and fail lsan builds.
+  GetMutableRefCount(p.get()) = 1;
+}
+
+TEST_F(RefCountedOverflowTest, ThreadSafeStartFromZero) {
+  class Overflow : public base::RefCountedThreadSafe<Overflow> {
+   public:
+    Overflow() { EXPECT_FALSE(HasOneRef()); }
+
+   private:
+    friend class base::RefCountedThreadSafe<Overflow>;
+    ~Overflow() = default;
+  };
+
+  auto p = base::MakeRefCounted<Overflow>();
+  GetMutableRefCount(p.get()) = std::numeric_limits<int>::max();
+  EXPECT_CHECK_DEATH(p->AddRef());
+  // Ensure `p` doesn't leak and fail lsan builds.
+  GetMutableRefCount(p.get()) = 1;
+}
+
+TEST_F(RefCountedOverflowTest, ThreadSafeStartFromOne) {
+  class Overflow : public base::RefCountedThreadSafe<Overflow> {
+   public:
+    REQUIRE_ADOPTION_FOR_REFCOUNTED_TYPE();
+
+    Overflow() { EXPECT_TRUE(HasOneRef()); }
+
+   private:
+    friend class base::RefCountedThreadSafe<Overflow>;
+    ~Overflow() = default;
+  };
+
+  auto p = base::MakeRefCounted<Overflow>();
+  GetMutableRefCount(p.get()) = std::numeric_limits<int>::max();
+  EXPECT_CHECK_DEATH(p->AddRef());
+  // Ensure `p` doesn't leak and fail lsan builds.
+  GetMutableRefCount(p.get()) = 1;
 }
 #endif
 

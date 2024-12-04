@@ -1,13 +1,14 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "net/http/http_basic_state.h"
 
+#include <set>
 #include <utility>
 
 #include "base/check_op.h"
-#include "base/stl_util.h"
+#include "base/no_destructor.h"
 #include "net/base/io_buffer.h"
 #include "net/http/http_request_info.h"
 #include "net/http/http_response_body_drainer.h"
@@ -19,10 +20,10 @@
 namespace net {
 
 HttpBasicState::HttpBasicState(std::unique_ptr<ClientSocketHandle> connection,
-                               bool using_proxy)
+                               bool is_for_get_to_http_proxy)
     : read_buf_(base::MakeRefCounted<GrowableIOBuffer>()),
       connection_(std::move(connection)),
-      using_proxy_(using_proxy) {
+      is_for_get_to_http_proxy_(is_for_get_to_http_proxy) {
   CHECK(connection_) << "ClientSocketHandle passed to HttpBasicState must "
                         "not be NULL. See crbug.com/790776";
 }
@@ -53,9 +54,10 @@ void HttpBasicState::DeleteParser() { parser_.reset(); }
 
 std::string HttpBasicState::GenerateRequestLine() const {
   static const char kSuffix[] = " HTTP/1.1\r\n";
-  const size_t kSuffixLen = base::size(kSuffix) - 1;
-  const std::string path =
-      using_proxy_ ? HttpUtil::SpecForRequest(url_) : url_.PathForRequest();
+  const size_t kSuffixLen = std::size(kSuffix) - 1;
+  const std::string path = is_for_get_to_http_proxy_
+                               ? HttpUtil::SpecForRequest(url_)
+                               : url_.PathForRequest();
   // Don't use StringPrintf for concatenation because it is very inefficient.
   std::string request_line;
   const size_t expected_size =
@@ -72,6 +74,13 @@ std::string HttpBasicState::GenerateRequestLine() const {
 bool HttpBasicState::IsConnectionReused() const {
   return connection_->is_reused() ||
          connection_->reuse_type() == ClientSocketHandle::UNUSED_IDLE;
+}
+
+const std::set<std::string>& HttpBasicState::GetDnsAliases() const {
+  static const base::NoDestructor<std::set<std::string>> emptyset_result;
+  return (connection_ && connection_->socket())
+             ? connection_->socket()->GetDnsAliases()
+             : *emptyset_result;
 }
 
 }  // namespace net

@@ -1,9 +1,10 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "base/sync_socket.h"
 
+#include "base/memory/raw_ptr.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/threading/platform_thread.h"
 #include "base/threading/simple_thread.h"
@@ -14,7 +15,7 @@ namespace base {
 
 namespace {
 
-constexpr TimeDelta kReceiveTimeout = base::TimeDelta::FromMilliseconds(750);
+constexpr TimeDelta kReceiveTimeout = base::Milliseconds(750);
 
 class HangingReceiveThread : public DelegateSimpleThread::Delegate {
  public:
@@ -57,7 +58,7 @@ class HangingReceiveThread : public DelegateSimpleThread::Delegate {
   WaitableEvent* done_event() { return &done_event_; }
 
  private:
-  SyncSocket* socket_;
+  raw_ptr<SyncSocket> socket_;
   DelegateSimpleThread thread_;
   bool with_timeout_;
   WaitableEvent started_event_;
@@ -77,9 +78,11 @@ void SendReceivePeek(SyncSocket* socket_a, SyncSocket* socket_b) {
 
   // Verify |socket_a| can send to |socket_a| and |socket_a| can Receive from
   // |socket_a|.
-  ASSERT_EQ(sizeof(kSending), socket_a->Send(&kSending, sizeof(kSending)));
+  ASSERT_EQ(sizeof(kSending),
+            socket_a->Send(as_bytes(make_span(&kSending, 1u))));
   ASSERT_EQ(sizeof(kSending), socket_b->Peek());
-  ASSERT_EQ(sizeof(kSending), socket_b->Receive(&received, sizeof(kSending)));
+  ASSERT_EQ(sizeof(kSending),
+            socket_b->Receive(as_writable_bytes(make_span(&received, 1u))));
   ASSERT_EQ(kSending, received);
 
   ASSERT_EQ(0u, socket_a->Peek());
@@ -87,9 +90,11 @@ void SendReceivePeek(SyncSocket* socket_a, SyncSocket* socket_b) {
 
   // Now verify the reverse.
   received = 0;
-  ASSERT_EQ(sizeof(kSending), socket_b->Send(&kSending, sizeof(kSending)));
+  ASSERT_EQ(sizeof(kSending),
+            socket_b->Send(as_bytes(make_span(&kSending, 1u))));
   ASSERT_EQ(sizeof(kSending), socket_a->Peek());
-  ASSERT_EQ(sizeof(kSending), socket_a->Receive(&received, sizeof(kSending)));
+  ASSERT_EQ(sizeof(kSending),
+            socket_a->Receive(as_writable_bytes(make_span(&received, 1u))));
   ASSERT_EQ(kSending, received);
 
   ASSERT_EQ(0u, socket_a->Peek());
@@ -172,7 +177,7 @@ TEST_F(CancelableSyncSocketTest, ShutdownCancelsReceiveWithTimeout) {
 TEST_F(CancelableSyncSocketTest, ReceiveAfterShutdown) {
   socket_a_.Shutdown();
   int data = 0;
-  EXPECT_EQ(0u, socket_a_.Receive(&data, sizeof(data)));
+  EXPECT_EQ(0u, socket_a_.Receive(as_writable_bytes(make_span(&data, 1u))));
 }
 
 TEST_F(CancelableSyncSocketTest, ReceiveWithTimeoutAfterShutdown) {

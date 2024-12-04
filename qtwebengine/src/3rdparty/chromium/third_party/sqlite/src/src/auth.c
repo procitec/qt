@@ -175,10 +175,10 @@ void sqlite3AuthRead(
 
   if( iCol>=0 ){
     assert( iCol<pTab->nCol );
-    zCol = pTab->aCol[iCol].zName;
+    zCol = pTab->aCol[iCol].zCnName;
   }else if( pTab->iPKey>=0 ){
     assert( pTab->iPKey<pTab->nCol );
-    zCol = pTab->aCol[pTab->iPKey].zName;
+    zCol = pTab->aCol[pTab->iPKey].zCnName;
   }else{
     zCol = "ROWID";
   }
@@ -204,7 +204,7 @@ int sqlite3AuthCheck(
   sqlite3 *db = pParse->db;
   int rc;
 
-  /* Don't do any authorization checks if the database is initialising
+  /* Don't do any authorization checks if the database is initializing
   ** or if the parser is being invoked from within sqlite3_declare_vtab.
   */
   assert( !IN_RENAME_OBJECT || db->xAuth==0 );

@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,8 +11,7 @@
 #include "gtest/gtest.h"
 #include "platform/base/ip_address.h"
 
-namespace openscreen {
-namespace discovery {
+namespace openscreen::discovery {
 namespace {
 
 IPAddress GetAddressV4(const DnsSdInstanceEndpoint endpoint) {
@@ -98,15 +97,13 @@ class DnsDataGraphTests : public testing::Test {
   }
 
   void StartTracking(const DomainName& domain) {
-    graph_->StartTracking(domain, [this](const DomainName& domain) {
-      callbacks_.OnStartTracking(domain);
-    });
+    graph_->StartTracking(
+        domain, [this](const DomainName& d) { callbacks_.OnStartTracking(d); });
   }
 
   void StopTracking(const DomainName& domain) {
-    graph_->StopTracking(domain, [this](const DomainName& domain) {
-      callbacks_.OnStopTracking(domain);
-    });
+    graph_->StopTracking(
+        domain, [this](const DomainName& d) { callbacks_.OnStopTracking(d); });
   }
 
   StrictMock<DomainChangeImpl> callbacks_;
@@ -234,6 +231,21 @@ TEST_F(DnsDataGraphTests, DeleteFailsForNonExistingRecord) {
   auto result = ApplyDataRecordChange(srv, RecordChangedEvent::kExpired);
   EXPECT_FALSE(result.ok());
   EXPECT_EQ(graph_->GetTrackedDomainCount(), size_t{2});
+}
+
+TEST_F(DnsDataGraphTests, DeleteSucceedsForRecordWithDifferentTtl) {
+  const MdnsRecord ptr = GetFakePtrRecord(primary_domain_);
+  TriggerRecordCreationWithCallback(ptr, primary_domain_);
+
+  EXPECT_CALL(callbacks_, OnStopTracking(primary_domain_));
+  const MdnsRecord new_ptr(ptr.name(), ptr.dns_type(), ptr.dns_class(),
+                           ptr.record_type(),
+                           ptr.ttl() + std::chrono::seconds(10), ptr.rdata());
+  const auto result =
+      ApplyDataRecordChange(new_ptr, RecordChangedEvent::kExpired);
+
+  EXPECT_TRUE(result.ok());
+  EXPECT_EQ(graph_->GetTrackedDomainCount(), size_t{1});
 }
 
 TEST_F(DnsDataGraphTests, UpdateEndpointsWorksAsExpected) {
@@ -465,5 +477,4 @@ TEST_F(DnsDataGraphTests, FailedConversionOnlyFailsSingleEndpointCreation) {
   ExpectDomainEqual(endpoint, primary_domain_);
 }
 
-}  // namespace discovery
-}  // namespace openscreen
+}  // namespace openscreen::discovery

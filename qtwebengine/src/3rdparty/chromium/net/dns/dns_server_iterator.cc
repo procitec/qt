@@ -1,10 +1,11 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "net/dns/dns_server_iterator.h"
 
-#include "base/optional.h"
+#include <optional>
+
 #include "base/time/time.h"
 #include "net/dns/dns_session.h"
 #include "net/dns/resolve_context.h"
@@ -34,7 +35,7 @@ size_t DohDnsServerIterator::GetNextAttemptIndex() {
 
   // Check if the next index is available and hasn't hit its failure limit. If
   // not, try the next one and so on until we've tried them all.
-  base::Optional<size_t> least_recently_failed_index;
+  std::optional<size_t> least_recently_failed_index;
   base::TimeTicks least_recently_failed_time;
 
   size_t previous_index = next_index_;
@@ -108,7 +109,7 @@ size_t ClassicDnsServerIterator::GetNextAttemptIndex() {
 
   // Check if the next index is available and hasn't hit its failure limit. If
   // not, try the next one and so on until we've tried them all.
-  base::Optional<size_t> least_recently_failed_index;
+  std::optional<size_t> least_recently_failed_index;
   base::TimeTicks least_recently_failed_time;
 
   size_t previous_index = next_index_;

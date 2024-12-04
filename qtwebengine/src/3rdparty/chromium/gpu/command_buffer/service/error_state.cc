@@ -1,4 +1,4 @@
-// Copyright (c) 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,7 +8,7 @@
 
 #include <string>
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "gpu/command_buffer/common/gles2_cmd_utils.h"
@@ -17,10 +17,25 @@
 
 namespace gpu {
 namespace gles2 {
+namespace {
+GLenum GetErrorHelper() {
+  // Skip calling glGetError if no context is bound - this should only happen
+  // when GL is not used e.g. with Graphite.
+  if (gl::g_current_gl_driver) {
+    gl::GLApi* const api = gl::g_current_gl_context;
+    return api->glGetErrorFn();
+  }
+  return GL_NO_ERROR;
+}
+}  // namespace
 
 class ErrorStateImpl : public ErrorState {
  public:
   explicit ErrorStateImpl(ErrorStateClient* client, Logger* logger);
+
+  ErrorStateImpl(const ErrorStateImpl&) = delete;
+  ErrorStateImpl& operator=(const ErrorStateImpl&) = delete;
+
   ~ErrorStateImpl() override;
 
   uint32_t GetGLError() override;
@@ -68,10 +83,8 @@ class ErrorStateImpl : public ErrorState {
   // Current GL error bits.
   uint32_t error_bits_;
 
-  ErrorStateClient* client_;
-  Logger* logger_;
-
-  DISALLOW_COPY_AND_ASSIGN(ErrorStateImpl);
+  raw_ptr<ErrorStateClient> client_;
+  raw_ptr<Logger> logger_;
 };
 
 ErrorState::ErrorState() = default;
@@ -107,7 +120,7 @@ uint32_t ErrorStateImpl::GetGLError() {
 }
 
 GLenum ErrorStateImpl::GetErrorHandleContextLoss() {
-  GLenum error = glGetError();
+  GLenum error = GetErrorHelper();
   if (error == GL_CONTEXT_LOST_KHR) {
     client_->OnContextLostError();
     // Do not expose GL_CONTEXT_LOST_KHR, as the version of the robustness
@@ -204,7 +217,7 @@ void ErrorStateImpl::ClearRealGLErrors(
     const char* filename, int line, const char* function_name) {
   // Clears and logs all current gl errors.
   GLenum error;
-  while ((error = glGetError()) != GL_NO_ERROR) {
+  while ((error = GetErrorHelper()) != GL_NO_ERROR) {
     if (error != GL_CONTEXT_LOST_KHR && error != GL_OUT_OF_MEMORY) {
       // GL_OUT_OF_MEMORY can legally happen on lost device.
       logger_->LogMessage(
@@ -219,4 +232,3 @@ void ErrorStateImpl::ClearRealGLErrors(
 
 }  // namespace gles2
 }  // namespace gpu
-

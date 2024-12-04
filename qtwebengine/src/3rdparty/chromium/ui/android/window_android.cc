@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,12 +13,12 @@
 #include "base/android/jni_weak_ref.h"
 #include "base/android/scoped_java_ref.h"
 #include "base/observer_list.h"
-#include "base/stl_util.h"
 #include "ui/android/display_android_manager.h"
 #include "ui/android/ui_android_jni_headers/WindowAndroid_jni.h"
 #include "ui/android/window_android_compositor.h"
 #include "ui/android/window_android_observer.h"
 #include "ui/base/ui_base_features.h"
+#include "ui/gfx/display_color_spaces.h"
 
 namespace ui {
 
@@ -47,6 +47,15 @@ WindowAndroid::ScopedSelectionHandles::~ScopedSelectionHandles() {
     Java_WindowAndroid_onSelectionHandlesStateChanged(
         env, window_->GetJavaObject(), false /* active */);
   }
+}
+
+WindowAndroid::ScopedWindowAndroidForTesting::ScopedWindowAndroidForTesting(
+    WindowAndroid* window)
+    : window_(window) {}
+
+WindowAndroid::ScopedWindowAndroidForTesting::~ScopedWindowAndroidForTesting() {
+  JNIEnv* env = AttachCurrentThread();
+  Java_WindowAndroid_destroy(env, window_->GetJavaObject());
 }
 
 // static
@@ -88,15 +97,12 @@ WindowAndroid::~WindowAndroid() {
   Java_WindowAndroid_clearNativePointer(AttachCurrentThread(), GetJavaObject());
 }
 
-WindowAndroid* WindowAndroid::CreateForTesting() {
+std::unique_ptr<WindowAndroid::ScopedWindowAndroidForTesting>
+WindowAndroid::CreateForTesting() {
   JNIEnv* env = AttachCurrentThread();
   long native_pointer = Java_WindowAndroid_createForTesting(env);
-  return reinterpret_cast<WindowAndroid*>(native_pointer);
-}
-
-void WindowAndroid::OnCompositingDidCommit() {
-  for (WindowAndroidObserver& observer : observer_list_)
-    observer.OnCompositingDidCommit();
+  return std::make_unique<ScopedWindowAndroidForTesting>(
+      reinterpret_cast<WindowAndroid*>(native_pointer));
 }
 
 void WindowAndroid::AddObserver(WindowAndroidObserver* observer) {
@@ -120,15 +126,21 @@ void WindowAndroid::AttachCompositor(WindowAndroidCompositor* compositor) {
 }
 
 void WindowAndroid::DetachCompositor() {
-  compositor_ = nullptr;
   for (WindowAndroidObserver& observer : observer_list_)
     observer.OnDetachCompositor();
   observer_list_.Clear();
+  compositor_ = nullptr;
 }
 
 float WindowAndroid::GetRefreshRate() {
   JNIEnv* env = AttachCurrentThread();
   return Java_WindowAndroid_getRefreshRate(env, GetJavaObject());
+}
+
+gfx::OverlayTransform WindowAndroid::GetOverlayTransform() {
+  JNIEnv* env = AttachCurrentThread();
+  return static_cast<gfx::OverlayTransform>(
+      Java_WindowAndroid_getOverlayTransform(env, GetJavaObject()));
 }
 
 std::vector<float> WindowAndroid::GetSupportedRefreshRates() {
@@ -147,9 +159,6 @@ std::vector<float> WindowAndroid::GetSupportedRefreshRates() {
 }
 
 void WindowAndroid::SetPreferredRefreshRate(float refresh_rate) {
-  if (force_60hz_refresh_rate_)
-    return;
-
   if (test_hooks_) {
     test_hooks_->SetPreferredRate(refresh_rate);
     return;
@@ -204,7 +213,6 @@ void WindowAndroid::OnUpdateRefreshRate(
     float refresh_rate) {
   if (compositor_)
     compositor_->OnUpdateRefreshRate(refresh_rate);
-  Force60HzRefreshRateIfNeeded();
 }
 
 void WindowAndroid::OnSupportedRefreshRatesUpdated(
@@ -218,35 +226,27 @@ void WindowAndroid::OnSupportedRefreshRatesUpdated(
   }
   if (compositor_)
     compositor_->OnUpdateSupportedRefreshRates(supported_refresh_rates);
+}
 
-  Force60HzRefreshRateIfNeeded();
+void WindowAndroid::OnOverlayTransformUpdated(
+    JNIEnv* env,
+    const base::android::JavaParamRef<jobject>& obj) {
+  if (compositor_)
+    compositor_->OnUpdateOverlayTransform();
+}
+
+void WindowAndroid::SendUnfoldLatencyBeginTimestamp(JNIEnv* env,
+                                                    jlong begin_time) {
+  base::TimeTicks begin_timestamp =
+      base::TimeTicks::FromUptimeMillis(begin_time);
+  for (WindowAndroidObserver& observer : observer_list_) {
+    observer.OnUnfoldStarted(begin_timestamp);
+  }
 }
 
 void WindowAndroid::SetWideColorEnabled(bool enabled) {
   JNIEnv* env = AttachCurrentThread();
   Java_WindowAndroid_setWideColorEnabled(env, GetJavaObject(), enabled);
-}
-
-void WindowAndroid::SetForce60HzRefreshRate() {
-  if (force_60hz_refresh_rate_)
-    return;
-
-  force_60hz_refresh_rate_ = true;
-  Force60HzRefreshRateIfNeeded();
-}
-
-void WindowAndroid::Force60HzRefreshRateIfNeeded() {
-  if (!force_60hz_refresh_rate_)
-    return;
-
-  JNIEnv* env = AttachCurrentThread();
-  Java_WindowAndroid_setPreferredRefreshRate(env, GetJavaObject(), 60.f);
-}
-
-bool WindowAndroid::ApplyDisableSurfaceControlWorkaround() {
-  JNIEnv* env = AttachCurrentThread();
-  return Java_WindowAndroid_applyDisableSurfaceControlWorkaround(
-      env, GetJavaObject());
 }
 
 bool WindowAndroid::HasPermission(const std::string& permission) {
@@ -268,18 +268,15 @@ WindowAndroid* WindowAndroid::GetWindowAndroid() const {
   return const_cast<WindowAndroid*>(this);
 }
 
-ScopedJavaLocalRef<jobject> WindowAndroid::GetWindowToken() {
-  JNIEnv* env = AttachCurrentThread();
-  return Java_WindowAndroid_getWindowToken(env, GetJavaObject());
-}
-
 display::Display WindowAndroid::GetDisplayWithWindowColorSpace() {
   display::Display display =
       display::Screen::GetScreen()->GetDisplayNearestWindow(this);
   DisplayAndroidManager::DoUpdateDisplay(
       &display, display.GetSizeInPixel(), display.device_scale_factor(),
       display.RotationAsDegree(), display.color_depth(),
-      display.depth_per_component(), window_is_wide_color_gamut_);
+      display.depth_per_component(), window_is_wide_color_gamut_,
+      display.GetColorSpaces().SupportsHDR(),
+      display.GetColorSpaces().GetHDRMaxLuminanceRelative());
   return display;
 }
 

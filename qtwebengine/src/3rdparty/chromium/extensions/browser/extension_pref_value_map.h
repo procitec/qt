@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,10 +10,9 @@
 #include <set>
 #include <string>
 
-#include "base/macros.h"
 #include "base/observer_list.h"
 #include "components/keyed_service/core/keyed_service.h"
-#include "extensions/browser/extension_prefs_scope.h"
+#include "extensions/common/api/types.h"
 
 class PrefValueMap;
 
@@ -61,6 +60,8 @@ class Value;
 // Extension B has higher precedence than A.
 class ExtensionPrefValueMap : public KeyedService {
  public:
+  using ChromeSettingScope = extensions::api::types::ChromeSettingScope;
+
   // Observer interface for monitoring ExtensionPrefValueMap.
   class Observer {
    public:
@@ -79,6 +80,10 @@ class ExtensionPrefValueMap : public KeyedService {
   };
 
   ExtensionPrefValueMap();
+
+  ExtensionPrefValueMap(const ExtensionPrefValueMap&) = delete;
+  ExtensionPrefValueMap& operator=(const ExtensionPrefValueMap&) = delete;
+
   ~ExtensionPrefValueMap() override;
 
   // KeyedService implementation.
@@ -90,14 +95,14 @@ class ExtensionPrefValueMap : public KeyedService {
   // Precondition: the extension must be registered.
   void SetExtensionPref(const std::string& ext_id,
                         const std::string& key,
-                        extensions::ExtensionPrefsScope scope,
+                        ChromeSettingScope scope,
                         base::Value value);
 
   // Remove the extension preference value for |key| of extension |ext_id|.
   // Precondition: the extension must be registered.
   void RemoveExtensionPref(const std::string& ext_id,
                            const std::string& key,
-                           extensions::ExtensionPrefsScope scope);
+                           ChromeSettingScope scope);
 
   // Returns true if currently no extension with higher precedence controls the
   // preference. If |incognito| is true and the extension does not have
@@ -166,13 +171,11 @@ class ExtensionPrefValueMap : public KeyedService {
   typedef std::map<std::string, std::unique_ptr<ExtensionEntry>>
       ExtensionEntryMap;
 
-  const PrefValueMap* GetExtensionPrefValueMap(
-      const std::string& ext_id,
-      extensions::ExtensionPrefsScope scope) const;
+  const PrefValueMap* GetExtensionPrefValueMap(const std::string& ext_id,
+                                               ChromeSettingScope scope) const;
 
-  PrefValueMap* GetExtensionPrefValueMap(
-      const std::string& ext_id,
-      extensions::ExtensionPrefsScope scope);
+  PrefValueMap* GetExtensionPrefValueMap(const std::string& ext_id,
+                                         ChromeSettingScope scope);
 
   // Returns all keys of pref values that are set by the extension of |entry|,
   // regardless whether they are set for incognito or regular pref values.
@@ -204,8 +207,6 @@ class ExtensionPrefValueMap : public KeyedService {
   bool destroyed_;
 
   base::ObserverList<Observer, true>::Unchecked observers_;
-
-  DISALLOW_COPY_AND_ASSIGN(ExtensionPrefValueMap);
 };
 
 #endif  // EXTENSIONS_BROWSER_EXTENSION_PREF_VALUE_MAP_H_

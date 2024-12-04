@@ -20,68 +20,32 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_SVG_LAYOUT_SVG_RESOURCE_PAINT_SERVER_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_SVG_LAYOUT_SVG_RESOURCE_PAINT_SERVER_H_
 
+#include "cc/paint/paint_flags.h"
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_resource_container.h"
-#include "third_party/blink/renderer/platform/graphics/color.h"
-#include "third_party/blink/renderer/platform/graphics/gradient.h"
-#include "third_party/blink/renderer/platform/graphics/pattern.h"
-#include "third_party/blink/renderer/platform/transforms/affine_transform.h"
-#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 
 namespace blink {
 
-enum LayoutSVGResourceMode {
-  kApplyToFillMode,
-  kApplyToStrokeMode,
-};
-
-class LayoutObject;
-class ComputedStyle;
-
-class SVGPaintServer {
-  STACK_ALLOCATED();
-
- public:
-  explicit SVGPaintServer(Color);
-  SVGPaintServer(scoped_refptr<Gradient>, const AffineTransform&);
-  SVGPaintServer(scoped_refptr<Pattern>, const AffineTransform&);
-
-  static SVGPaintServer RequestForLayoutObject(const LayoutObject&,
-                                               const ComputedStyle&,
-                                               LayoutSVGResourceMode);
-
-  void ApplyToPaintFlags(PaintFlags&, float alpha);
-
-  static SVGPaintServer Invalid() {
-    return SVGPaintServer(Color(Color::kTransparent));
-  }
-  bool IsValid() const { return color_ != Color::kTransparent; }
-
-  bool IsTransformDependent() const { return gradient_ || pattern_; }
-  void PrependTransform(const AffineTransform&);
-
- private:
-  scoped_refptr<Gradient> gradient_;
-  scoped_refptr<Pattern> pattern_;
-  AffineTransform transform_;  // Used for gradient/pattern shaders.
-  Color color_;
-};
+struct AutoDarkMode;
 
 class LayoutSVGResourcePaintServer : public LayoutSVGResourceContainer {
  public:
-  LayoutSVGResourcePaintServer(SVGElement*);
-  ~LayoutSVGResourcePaintServer() override;
+  explicit LayoutSVGResourcePaintServer(SVGElement* element)
+      : LayoutSVGResourceContainer(element) {}
 
-  virtual SVGPaintServer PreparePaintServer(
-      const SVGResourceClient&,
-      const FloatRect& object_bounding_box) = 0;
+  virtual bool ApplyShader(const SVGResourceClient&,
+                           const gfx::RectF& reference_box,
+                           const AffineTransform* additional_transform,
+                           const AutoDarkMode& auto_dark_mode,
+                           cc::PaintFlags&) = 0;
 };
 
 template <>
-inline bool IsResourceOfType<LayoutSVGResourcePaintServer>(
-    const LayoutSVGResourceContainer* container) {
-  return container->IsSVGPaintServer();
-}
+struct DowncastTraits<LayoutSVGResourcePaintServer> {
+  static bool AllowFrom(const LayoutSVGResourceContainer& container) {
+    return container.IsSVGPaintServer();
+  }
+};
 
 }  // namespace blink
 
-#endif
+#endif  // THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_SVG_LAYOUT_SVG_RESOURCE_PAINT_SERVER_H_

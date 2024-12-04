@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,11 +9,9 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
 #include "base/files/file_util.h"
+#include "base/functional/bind.h"
 #include "base/memory/weak_ptr.h"
-#include "base/optional.h"
-#include "base/strings/utf_string_conversions.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/time/time.h"
 #include "components/offline_pages/core/client_namespace_constants.h"
@@ -21,8 +19,8 @@
 #include "components/offline_pages/core/model/offline_page_model_utils.h"
 #include "components/offline_pages/core/offline_clock.h"
 #include "components/offline_pages/core/offline_page_types.h"
-#include "components/offline_pages/core/offline_store_types.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/gurl.h"
 
 namespace offline_pages {
@@ -32,25 +30,12 @@ namespace {
 const char kTestNamespace[] = "default";
 const ClientId kTestClientIdNoMatch(kTestNamespace, "20170905");
 
-// TODO(https://crbug.com/1042727): Fix test GURL scoping and remove this getter
-// function.
-GURL TestUrl1() {
-  return GURL("http://example.com");
-}
-GURL TestUrl2() {
-  return GURL("http://other.page.com");
-}
-
-GURL OriginalUrl() {
-  return GURL("http://original.com");
-}
-
 }  // namespace
 
 class DeletePageTaskTest : public ModelTaskTestBase {
  public:
-  DeletePageTaskTest();
-  ~DeletePageTaskTest() override;
+  DeletePageTaskTest() = default;
+  ~DeletePageTaskTest() override = default;
 
   void SetUp() override;
 
@@ -62,7 +47,7 @@ class DeletePageTaskTest : public ModelTaskTestBase {
   DeletePageTask::DeletePageTaskCallback delete_page_callback();
 
   base::HistogramTester* histogram_tester() { return histogram_tester_.get(); }
-  const base::Optional<DeletePageResult>& last_delete_page_result() {
+  const absl::optional<DeletePageResult>& last_delete_page_result() {
     return last_delete_page_result_;
   }
   const std::vector<OfflinePageItem>& last_deleted_page_items() {
@@ -72,13 +57,10 @@ class DeletePageTaskTest : public ModelTaskTestBase {
  private:
   std::unique_ptr<base::HistogramTester> histogram_tester_;
 
-  base::Optional<DeletePageResult> last_delete_page_result_;
+  absl::optional<DeletePageResult> last_delete_page_result_;
   std::vector<OfflinePageItem> last_deleted_page_items_;
+  base::WeakPtrFactory<DeletePageTaskTest> weak_ptr_factory_{this};
 };
-
-DeletePageTaskTest::DeletePageTaskTest() {}
-
-DeletePageTaskTest::~DeletePageTaskTest() {}
 
 void DeletePageTaskTest::SetUp() {
   ModelTaskTestBase::SetUp();
@@ -95,7 +77,7 @@ void DeletePageTaskTest::OnDeletePageDone(
 DeletePageTask::DeletePageTaskCallback
 DeletePageTaskTest::delete_page_callback() {
   return base::BindOnce(&DeletePageTaskTest::OnDeletePageDone,
-                        base::AsWeakPtr(this));
+                        weak_ptr_factory_.GetWeakPtr());
 }
 
 bool DeletePageTaskTest::CheckPageDeleted(const OfflinePageItem& page) {
@@ -105,10 +87,11 @@ bool DeletePageTaskTest::CheckPageDeleted(const OfflinePageItem& page) {
 
 // Delete a page and verify all the information in deleted_pages is accurate.
 TEST_F(DeletePageTaskTest, OfflinePageItemIsPopulated) {
+  const GURL kOriginalUrl("http://original.com");
   generator()->SetNamespace(kTestNamespace);
   OfflinePageItem page1 = generator()->CreateItemWithTempFile();
-  page1.url = TestUrl1();
-  page1.original_url_if_different = OriginalUrl();
+  page1.url = GURL("http://example.com");
+  page1.original_url_if_different = kOriginalUrl;
   page1.request_origin = "test-origin";
   page1.system_download_id = 1234;
   store_test_util()->InsertItem(page1);
@@ -130,18 +113,19 @@ TEST_F(DeletePageTaskTest, OfflinePageItemIsPopulated) {
   EXPECT_EQ(page1.request_origin, item.request_origin);
   EXPECT_EQ(page1.system_download_id, item.system_download_id);
   EXPECT_EQ(page1.offline_id, item.offline_id);
-  EXPECT_EQ(OriginalUrl(), item.original_url_if_different);
-  EXPECT_EQ(OriginalUrl(), item.GetOriginalUrl());
+  EXPECT_EQ(kOriginalUrl, item.original_url_if_different);
+  EXPECT_EQ(kOriginalUrl, item.GetOriginalUrl());
 }
 
 TEST_F(DeletePageTaskTest, DeletePageByUrlPredicate) {
   // Add 3 pages and try to delete 2 of them using url predicate.
+  const std::string kExample = "example.com";
   generator()->SetNamespace(kTestNamespace);
-  generator()->SetUrl(TestUrl1());
+  generator()->SetUrl(GURL("http://" + kExample));
   OfflinePageItem page1 = generator()->CreateItemWithTempFile();
   generator()->SetAccessCount(200);
   OfflinePageItem page2 = generator()->CreateItemWithTempFile();
-  generator()->SetUrl(TestUrl2());
+  generator()->SetUrl(GURL("http://other.page.com"));
   OfflinePageItem page3 = generator()->CreateItemWithTempFile();
 
   store_test_util()->InsertItem(page1);
@@ -153,10 +137,12 @@ TEST_F(DeletePageTaskTest, DeletePageByUrlPredicate) {
   EXPECT_TRUE(base::PathExists(page2.file_path));
   EXPECT_TRUE(base::PathExists(page3.file_path));
 
-  // Delete all pages with url contains example.com, which are with TestUrl1().
-  UrlPredicate predicate = base::BindRepeating([](const GURL& url) -> bool {
-    return url.spec().find("example.com") != std::string::npos;
-  });
+  // Delete all pages with url contains kExample.
+  UrlPredicate predicate = base::BindRepeating(
+      [](const std::string& to_find, const GURL& url) -> bool {
+        return url.spec().find(to_find) != std::string::npos;
+      },
+      kExample);
 
   auto task = DeletePageTask::CreateTaskMatchingUrlPredicateForCachedPages(
       store(), delete_page_callback(), predicate);
@@ -167,31 +153,15 @@ TEST_F(DeletePageTaskTest, DeletePageByUrlPredicate) {
   EXPECT_EQ(predicate.Run(page1.url), CheckPageDeleted(page1));
   EXPECT_EQ(predicate.Run(page2.url), CheckPageDeleted(page2));
   EXPECT_EQ(predicate.Run(page3.url), CheckPageDeleted(page3));
-  histogram_tester()->ExpectTotalCount(
-      model_utils::AddHistogramSuffix(page1.client_id.name_space,
-                                      "OfflinePages.PageLifetime"),
-      2);
-  histogram_tester()->ExpectTotalCount(
-      model_utils::AddHistogramSuffix(page1.client_id.name_space,
-                                      "OfflinePages.AccessCount"),
-      2);
-  histogram_tester()->ExpectBucketCount(
-      model_utils::AddHistogramSuffix(page1.client_id.name_space,
-                                      "OfflinePages.AccessCount"),
-      0, 1);
-  histogram_tester()->ExpectBucketCount(
-      model_utils::AddHistogramSuffix(page1.client_id.name_space,
-                                      "OfflinePages.AccessCount"),
-      200, 1);
 }
 
 TEST_F(DeletePageTaskTest, DeletePageByUrlPredicateNotFound) {
   // Add 3 pages and try to delete 2 of them using url predicate.
   generator()->SetNamespace(kTestNamespace);
-  generator()->SetUrl(TestUrl1());
+  generator()->SetUrl(GURL("http://example.com"));
   OfflinePageItem page1 = generator()->CreateItemWithTempFile();
   OfflinePageItem page2 = generator()->CreateItemWithTempFile();
-  generator()->SetUrl(TestUrl2());
+  generator()->SetUrl(GURL("http://other.page.com"));
   OfflinePageItem page3 = generator()->CreateItemWithTempFile();
 
   store_test_util()->InsertItem(page1);
@@ -216,28 +186,20 @@ TEST_F(DeletePageTaskTest, DeletePageByUrlPredicateNotFound) {
   EXPECT_FALSE(CheckPageDeleted(page1));
   EXPECT_FALSE(CheckPageDeleted(page2));
   EXPECT_FALSE(CheckPageDeleted(page3));
-  histogram_tester()->ExpectTotalCount(
-      model_utils::AddHistogramSuffix(page1.client_id.name_space,
-                                      "OfflinePages.PageLifetime"),
-      0);
-  histogram_tester()->ExpectTotalCount(
-      model_utils::AddHistogramSuffix(page1.client_id.name_space,
-                                      "OfflinePages.AccessCount"),
-      0);
 }
 
 TEST_F(DeletePageTaskTest, DeletePageForPageLimit) {
   // Add 3 pages, the kTestNamespace has a limit of 1 for page per url.
   generator()->SetNamespace(kTestNamespace);
-  generator()->SetUrl(TestUrl1());
+  generator()->SetUrl(GURL("http://example.com"));
   // Guarantees that page1 will be deleted by making it older.
   base::Time now = OfflineTimeNow();
-  generator()->SetLastAccessTime(now - base::TimeDelta::FromMinutes(5));
+  generator()->SetLastAccessTime(now - base::Minutes(5));
   OfflinePageItem page1 = generator()->CreateItemWithTempFile();
   generator()->SetLastAccessTime(now);
   OfflinePageItem page2 = generator()->CreateItemWithTempFile();
   OfflinePageItem page = generator()->CreateItem();
-  generator()->SetUrl(TestUrl2());
+  generator()->SetUrl(GURL("http://other.page.com"));
   OfflinePageItem page3 = generator()->CreateItemWithTempFile();
 
   store_test_util()->InsertItem(page1);
@@ -258,24 +220,16 @@ TEST_F(DeletePageTaskTest, DeletePageForPageLimit) {
   EXPECT_TRUE(CheckPageDeleted(page1));
   EXPECT_FALSE(CheckPageDeleted(page2));
   EXPECT_FALSE(CheckPageDeleted(page3));
-  histogram_tester()->ExpectTotalCount(
-      model_utils::AddHistogramSuffix(page1.client_id.name_space,
-                                      "OfflinePages.PageLifetime"),
-      1);
-  histogram_tester()->ExpectUniqueSample(
-      model_utils::AddHistogramSuffix(page1.client_id.name_space,
-                                      "OfflinePages.AccessCount"),
-      0, 1);
 }
 
 TEST_F(DeletePageTaskTest, DeletePageForPageLimit_UnlimitedNamespace) {
   // Add 3 pages, the kTestNamespace has a limit of 1 for page per url.
   generator()->SetNamespace(kDownloadNamespace);
-  generator()->SetUrl(TestUrl1());
+  generator()->SetUrl(GURL("http://example.com"));
   OfflinePageItem page1 = generator()->CreateItemWithTempFile();
   OfflinePageItem page2 = generator()->CreateItemWithTempFile();
   OfflinePageItem page = generator()->CreateItem();
-  generator()->SetUrl(TestUrl2());
+  generator()->SetUrl(GURL("http://other.page.com"));
   OfflinePageItem page3 = generator()->CreateItemWithTempFile();
 
   store_test_util()->InsertItem(page1);
@@ -295,14 +249,6 @@ TEST_F(DeletePageTaskTest, DeletePageForPageLimit_UnlimitedNamespace) {
   // should be success with no page deleted.
   EXPECT_EQ(DeletePageResult::SUCCESS, last_delete_page_result());
   EXPECT_EQ(0UL, last_deleted_page_items().size());
-  histogram_tester()->ExpectTotalCount(
-      model_utils::AddHistogramSuffix(page1.client_id.name_space,
-                                      "OfflinePages.PageLifetime"),
-      0);
-  histogram_tester()->ExpectTotalCount(
-      model_utils::AddHistogramSuffix(page1.client_id.name_space,
-                                      "OfflinePages.AccessCount"),
-      0);
 }
 
 }  // namespace offline_pages

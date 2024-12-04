@@ -1,30 +1,32 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "cast/sender/public/cast_app_discovery_service.h"
 
-namespace openscreen {
-namespace cast {
+namespace openscreen::cast {
 
 CastAppDiscoveryService::Subscription::Subscription(
     CastAppDiscoveryService* discovery_service,
     uint32_t id)
     : discovery_service_(discovery_service), id_(id) {}
 
-CastAppDiscoveryService::Subscription::Subscription(Subscription&& other)
+CastAppDiscoveryService::Subscription::Subscription(
+    Subscription&& other) noexcept
     : discovery_service_(other.discovery_service_), id_(other.id_) {
   other.discovery_service_ = nullptr;
 }
 
-CastAppDiscoveryService::Subscription::~Subscription() {
-  Reset();
+CastAppDiscoveryService::Subscription&
+CastAppDiscoveryService::Subscription::operator=(Subscription&& other) {
+  id_ = other.id_;
+  discovery_service_ = other.discovery_service_;
+  other.discovery_service_ = nullptr;
+  return *this;
 }
 
-CastAppDiscoveryService::Subscription& CastAppDiscoveryService::Subscription::
-operator=(Subscription other) {
-  Swap(other);
-  return *this;
+CastAppDiscoveryService::Subscription::~Subscription() {
+  Reset();
 }
 
 void CastAppDiscoveryService::Subscription::Reset() {
@@ -44,5 +46,4 @@ void CastAppDiscoveryService::Subscription::Swap(Subscription& other) {
   id_ = id;
 }
 
-}  // namespace cast
-}  // namespace openscreen
+}  // namespace openscreen::cast

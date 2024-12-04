@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -129,6 +129,14 @@ namespace system.display {
     long yearOfManufacture;
   };
 
+  // An enum to tell if the display is detected and used by the
+  // system. The display is considered 'inactive', if it is not
+  // detected by the system (maybe disconnected, or considered
+  // disconnected due to sleep mode, etc). This state is used to keep
+  // existing display when the all displays are disconnected, for
+  // example.
+  enum ActiveState { active, inactive };
+
   dictionary DisplayUnitInfo {
     // The unique identifier of the display.
     DOMString id;
@@ -159,16 +167,18 @@ namespace system.display {
     // True if this display is enabled.
     boolean isEnabled;
 
+    // Active if the display is detected and used by the system.
+    ActiveState activeState;
+
     // True for all displays when in unified desktop mode. See documentation
     // for $(ref:enableUnifiedDesktop).
     boolean isUnified;
 
-    // True when the device is in a tablet physical state (e.g. device is
-    // flipped or detached), which is independent from the state of the UI which
-    // maybe in tablet or clamshell modes.
+    // True when the auto-rotation is allowed. It happens when the device is in
+    // a tablet physical state or kSupportsClamshellAutoRotation is set.
     // Provided for ChromeOS Settings UI only. TODO(stevenjb): Remove when
     // Settings switches to a mojo API.
-    [nodoc] boolean? isInTabletPhysicalState;
+    [nodoc] boolean? isAutoRotationAllowed;
 
     // The number of pixels per inch along the x-axis.
     double dpiX;
@@ -283,14 +293,16 @@ namespace system.display {
   // Mirror mode, i.e. different ways of how a display is mirrored to other
   // displays.
   enum MirrorMode {
-    // Use the default mode (extended or unified desktop).
+    // Specifies the default mode (extended or unified desktop).
     off,
 
-    // The default source display will be mirrored to all other displays.
+    // Specifies that the default source display will be mirrored to all other
+    // displays.
     normal,
 
-    // The specified source display will be mirrored to the provided
-    // destination displays. All other connected displays will be extended.
+    // Specifies that the specified source display will be mirrored to the
+    // provided destination displays. All other connected displays will be
+    //  extended.
     mixed
   };
 
@@ -317,13 +329,14 @@ namespace system.display {
     // Requests the information for all attached display devices.
     // |flags|: Options affecting how the information is returned.
     // |callback|: The callback to invoke with the results.
-    static void getInfo(optional GetInfoFlags flags,
-                        DisplayInfoCallback callback);
+    [supportsPromises] static void getInfo(optional GetInfoFlags flags,
+                                           DisplayInfoCallback callback);
 
     // Requests the layout info for all displays.
     // NOTE: This is only available to Chrome OS Kiosk apps and Web UI.
     // |callback|: The callback to invoke with the results.
-    static void getDisplayLayout(DisplayLayoutCallback callback);
+    [supportsPromises] static void getDisplayLayout(
+        DisplayLayoutCallback callback);
 
     // Updates the properties for the display specified by |id|, according to
     // the information provided in |info|. On failure, $(ref:runtime.lastError)
@@ -336,7 +349,7 @@ namespace system.display {
     // |callback|: Empty function called when the function finishes. To find out
     //     whether the function succeeded, $(ref:runtime.lastError) should be
     //     queried.
-    static void setDisplayProperties(
+    [supportsPromises] static void setDisplayProperties(
         DOMString id,
         DisplayProperties info,
         optional SetDisplayUnitInfoCallback callback);
@@ -351,8 +364,9 @@ namespace system.display {
     // |callback|: Empty function called when the function finishes. To find out
     //     whether the function succeeded, $(ref:runtime.lastError) should be
     //     queried.
-    static void setDisplayLayout(DisplayLayout[] layouts,
-                                 optional SetDisplayLayoutCallback callback);
+    [supportsPromises] static void setDisplayLayout(
+        DisplayLayout[] layouts,
+        optional SetDisplayLayoutCallback callback);
 
     // Enables/disables the unified desktop feature. If enabled while mirroring
     // is active, the desktop mode will not change until mirroring is turned
@@ -394,8 +408,9 @@ namespace system.display {
     // |callback|: Optional callback to inform the caller that the touch
     //      calibration has ended. The argument of the callback informs if the
     //      calibration was a success or not.
-    static void showNativeTouchCalibration(
-        DOMString id, optional NativeTouchCalibrationCallback callback);
+    [supportsPromises] static void showNativeTouchCalibration(
+        DOMString id,
+        optional NativeTouchCalibrationCallback callback);
 
     // Starts custom touch calibration for a display. This should be called when
     // using a custom UX for collecting calibration data. If another touch
@@ -429,8 +444,9 @@ namespace system.display {
     // |callback|: Empty function called when the function finishes. To find out
     //     whether the function succeeded, $(ref:runtime.lastError) should be
     //     queried.
-    static void setMirrorMode(MirrorModeInfo info,
-                              optional SetMirrorModeCallback callback);
+    [supportsPromises] static void setMirrorMode(
+        MirrorModeInfo info,
+        optional SetMirrorModeCallback callback);
   };
 
   interface Events {

@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,8 +8,10 @@
 
 #include <memory>
 
+#include "base/memory/raw_ptr.h"
 #include "components/exo/surface_observer.h"
 #include "components/exo/wayland/server_util.h"
+#include "ui/gfx/geometry/size_f.h"
 
 namespace exo {
 namespace wayland {
@@ -32,11 +34,15 @@ class Viewport : public SurfaceObserver {
     surface_->AddSurfaceObserver(this);
     surface_->SetProperty(kSurfaceHasViewportKey, true);
   }
+
+  Viewport(const Viewport&) = delete;
+  Viewport& operator=(const Viewport&) = delete;
+
   ~Viewport() override {
     if (surface_) {
       surface_->RemoveSurfaceObserver(this);
       surface_->SetCrop(gfx::RectF());
-      surface_->SetViewport(gfx::Size());
+      surface_->SetViewport(gfx::SizeF());
       surface_->SetProperty(kSurfaceHasViewportKey, false);
     }
   }
@@ -48,7 +54,7 @@ class Viewport : public SurfaceObserver {
 
   void SetDestination(const gfx::Size& size) {
     if (surface_)
-      surface_->SetViewport(size);
+      surface_->SetViewport(gfx::SizeF(size));
   }
 
   // Overridden from SurfaceObserver:
@@ -58,9 +64,7 @@ class Viewport : public SurfaceObserver {
   }
 
  private:
-  Surface* surface_;
-
-  DISALLOW_COPY_AND_ASSIGN(Viewport);
+  raw_ptr<Surface> surface_;
 };
 
 void viewport_destroy(wl_client* client, wl_resource* resource) {

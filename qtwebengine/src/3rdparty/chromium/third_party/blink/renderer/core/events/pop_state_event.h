@@ -29,8 +29,9 @@
 
 #include "third_party/blink/renderer/bindings/core/v8/v8_pop_state_event_init.h"
 #include "third_party/blink/renderer/bindings/core/v8/world_safe_v8_reference.h"
+#include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 
 namespace blink {
 
@@ -58,6 +59,7 @@ class CORE_EXPORT PopStateEvent final : public Event {
   ~PopStateEvent() override = default;
 
   ScriptValue state(ScriptState* script_state, ExceptionState& exception_state);
+  bool hasUAVisualTransition() const { return has_ua_visual_transition_; }
   bool IsStateDirty() const { return false; }
 
   const AtomicString& InterfaceName() const override;
@@ -68,6 +70,7 @@ class CORE_EXPORT PopStateEvent final : public Event {
   WorldSafeV8Reference<v8::Value> state_;
   scoped_refptr<SerializedScriptValue> serialized_state_;
   Member<History> history_;
+  const bool has_ua_visual_transition_ = false;
 };
 
 }  // namespace blink

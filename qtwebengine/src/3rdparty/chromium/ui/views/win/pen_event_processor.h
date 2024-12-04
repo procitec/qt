@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,11 +9,13 @@
 
 #include <memory>
 
-#include "base/optional.h"
+#include "base/memory/raw_ptr.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/events/event.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/sequential_id_generator.h"
 #include "ui/views/views_export.h"
+#include "ui/views/win/pen_id_handler.h"
 
 namespace views {
 
@@ -25,6 +27,10 @@ class VIEWS_EXPORT PenEventProcessor {
   // |id_generator| must outlive this object's lifecycle.
   PenEventProcessor(ui::SequentialIDGenerator* id_generator,
                     bool direct_manipulation_enabled);
+
+  PenEventProcessor(const PenEventProcessor&) = delete;
+  PenEventProcessor& operator=(const PenEventProcessor&) = delete;
+
   ~PenEventProcessor();
 
   // Generate an appropriate ui::Event for a given pen pointer.
@@ -41,26 +47,28 @@ class VIEWS_EXPORT PenEventProcessor {
       UINT32 pointer_id,
       const POINTER_INFO& pointer_info,
       const gfx::Point& point,
-      const ui::PointerDetails& pointer_details);
+      const ui::PointerDetails& pointer_details,
+      int32_t device_id);
   std::unique_ptr<ui::Event> GenerateTouchEvent(
       UINT message,
       UINT32 pointer_id,
       const POINTER_INFO& pointer_info,
       const gfx::Point& point,
-      const ui::PointerDetails& pointer_details);
+      const ui::PointerDetails& pointer_details,
+      int32_t device_id);
 
-  ui::SequentialIDGenerator* id_generator_;
+  raw_ptr<ui::SequentialIDGenerator> id_generator_;
   bool direct_manipulation_enabled_;
-  bool pen_in_contact_ = false;
-  bool send_touch_for_pen_ = false;
+  base::flat_map<UINT32, bool> pen_in_contact_;
+  base::flat_map<UINT32, bool> send_touch_for_pen_;
 
   // There may be more than one pen used at the same time.
   base::flat_map<UINT32, bool> sent_mouse_down_;
   base::flat_map<UINT32, bool> sent_touch_start_;
 
-  base::Optional<unsigned int> eraser_pointer_id_;
+  absl::optional<ui::PointerId> eraser_pointer_id_;
 
-  DISALLOW_COPY_AND_ASSIGN(PenEventProcessor);
+  PenIdHandler pen_id_handler_;
 };
 
 }  // namespace views

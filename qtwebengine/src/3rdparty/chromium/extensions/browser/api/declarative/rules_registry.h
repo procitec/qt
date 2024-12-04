@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,14 +13,12 @@
 #include <string>
 #include <vector>
 
-#include "base/callback_forward.h"
 #include "base/compiler_specific.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/one_shot_event.h"
+#include "base/time/time.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/browser/notification_observer.h"
-#include "content/public/browser/notification_registrar.h"
 #include "extensions/common/api/events.h"
 #include "extensions/common/extension_id.h"
 
@@ -51,9 +49,11 @@ class RulesRegistry : public base::RefCountedThreadSafe<RulesRegistry> {
   // object created).
   RulesRegistry(content::BrowserContext* browser_context,
                 const std::string& event_name,
-                content::BrowserThread::ID owner_thread,
                 RulesCacheDelegate* cache_delegate,
                 int id);
+
+  RulesRegistry(const RulesRegistry&) = delete;
+  RulesRegistry& operator=(const RulesRegistry&) = delete;
 
   const base::OneShotEvent& ready() const { return ready_; }
 
@@ -108,6 +108,10 @@ class RulesRegistry : public base::RefCountedThreadSafe<RulesRegistry> {
   void GetAllRules(const std::string& extension_id,
                    std::vector<const api::events::Rule*>* out);
 
+  // Called to notify the RulesRegistry that the registry service is being
+  // shut down.
+  void OnShutdown();
+
   // Called to notify the RulesRegistry that the extension availability has
   // changed, so that the registry can update which rules are active.
   void OnExtensionUnloaded(const Extension* extension);
@@ -125,10 +129,6 @@ class RulesRegistry : public base::RefCountedThreadSafe<RulesRegistry> {
 
   // Returns the context where the rules registry lives.
   content::BrowserContext* browser_context() const { return browser_context_; }
-
-  // Returns the ID of the thread on which the rules registry lives.
-  // It is safe to call this function from any thread.
-  content::BrowserThread::ID owner_thread() const { return owner_thread_; }
 
   // The name of the event with which rules are registered.
   const std::string& event_name() const { return event_name_; }
@@ -226,12 +226,12 @@ class RulesRegistry : public base::RefCountedThreadSafe<RulesRegistry> {
   std::string RemoveAllRulesNoStoreUpdate(const std::string& extension_id,
                                           bool remove_manifest_rules);
 
-  void MarkReady(base::Time storage_init_time);
+  void MarkReady();
 
   // Deserialize the rules from the given Value object and add them to the
   // RulesRegistry.
   void DeserializeAndAddRules(const std::string& extension_id,
-                              std::unique_ptr<base::Value> rules);
+                              std::optional<base::Value> rules);
 
   // Reports an internal error with the specified params to the extensions
   // client.
@@ -239,10 +239,7 @@ class RulesRegistry : public base::RefCountedThreadSafe<RulesRegistry> {
                            const std::string& error);
 
   // The context to which this rules registry belongs.
-  content::BrowserContext* browser_context_;
-
-  // The ID of the thread on which the rules registry lives.
-  const content::BrowserThread::ID owner_thread_;
+  raw_ptr<content::BrowserContext> browser_context_;
 
   // The name of the event with which rules are registered.
   const std::string event_name_;
@@ -300,8 +297,6 @@ class RulesRegistry : public base::RefCountedThreadSafe<RulesRegistry> {
   base::WeakPtr<RulesCacheDelegate> cache_delegate_;
 
   base::WeakPtrFactory<RulesRegistry> weak_ptr_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(RulesRegistry);
 };
 
 }  // namespace extensions

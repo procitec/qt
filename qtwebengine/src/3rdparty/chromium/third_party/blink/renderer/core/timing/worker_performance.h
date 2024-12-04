@@ -33,7 +33,7 @@
 
 #include "third_party/blink/renderer/core/timing/performance.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
 
 namespace blink {
@@ -46,8 +46,9 @@ class WorkerPerformance final : public Performance {
   explicit WorkerPerformance(WorkerGlobalScope*);
 
   ExecutionContext* GetExecutionContext() const override {
-    return execution_context_;
+    return execution_context_.Get();
   }
+  uint64_t interactionCount() const override { return 0; }
 
   void Trace(Visitor*) const override;
 

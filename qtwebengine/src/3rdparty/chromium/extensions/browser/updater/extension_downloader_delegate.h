@@ -1,17 +1,17 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef EXTENSIONS_BROWSER_UPDATER_EXTENSION_DOWNLOADER_DELEGATE_H_
 #define EXTENSIONS_BROWSER_UPDATER_EXTENSION_DOWNLOADER_DELEGATE_H_
 
+#include <optional>
 #include <set>
 #include <string>
-
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/time/time.h"
 #include "extensions/browser/crx_file_info.h"
-#include "extensions/browser/updater/manifest_fetch_data.h"
+#include "extensions/browser/updater/extension_downloader_types.h"
 #include "extensions/browser/updater/safe_manifest_parser.h"
 #include "extensions/common/extension_id.h"
 
@@ -48,6 +48,8 @@ class ExtensionDownloaderDelegate {
     // There was an update for this extension but the download of the crx
     // failed.
     CRX_FETCH_FAILED,
+
+    kMaxValue = CRX_FETCH_FAILED,
   };
 
   // Passed as an argument to OnExtensionDownloadStageChanged() to detail how
@@ -107,9 +109,14 @@ class ExtensionDownloaderDelegate {
 
   // Passes as an argument to OnExtensionDownloadCacheStatusRetrieved to inform
   // delegate about cache status.
-  // Note: enum used for UMA. Do NOT reorder or remove entries. Don't forget to
-  // update enums.xml (name: ExtensionInstallationCacheStatus) when adding new
+  // Note: enum used for UMA. Do NOT reorder or remove entries.
+  // 1) Don't forget to update enums.xml (name:
+  // ExtensionInstallationDownloadingCacheStatus) when adding new entries.
+  // 2) Don't forget to update device_management_backend.proto (name:
+  // ExtensionInstallReportLogEvent::DownloadCacheStatus) when adding new
   // entries.
+  // 3) Don't forget to update ConvertDownloadCacheStatusToProto method in
+  // ExtensionInstallEventLogCollector.
   enum class CacheStatus {
     // No information about cache status. This is never reported by
     // ExtensionDownloader, but may be used later in statistics.
@@ -136,6 +143,17 @@ class ExtensionDownloaderDelegate {
     kMaxValue = CACHE_HIT_ON_MANIFEST_FETCH_FAILURE,
   };
 
+  // Enum that holds possible result values of RequestRollback().
+  enum class RequestRollbackResult {
+    // Rollback is not allowed.
+    kDisallowed,
+    // Can not rollback immediately, but cache invalidation is scheduled for the
+    // next run and rollback will be possible after cache invalidation.
+    kScheduledForNextRun,
+    // Cache was successfully invalidated and rollback is allowed now.
+    kAllowed,
+  };
+
   // Passed as an argument to the completion callbacks to signal whether
   // the extension update sent a ping.
   struct PingResult {
@@ -156,9 +174,12 @@ class ExtensionDownloaderDelegate {
   struct FailureData {
     FailureData();
     FailureData(const FailureData& other);
+    static FailureData CreateFromNetworkResponse(int net_error,
+                                                 int response_code,
+                                                 int failure_count);
     FailureData(const int net_error_code, const int fetch_attempts);
     FailureData(const int net_error_code,
-                const base::Optional<int> response,
+                const std::optional<int> response,
                 const int fetch_attempts);
     explicit FailureData(ManifestInvalidError manifest_invalid_error);
     FailureData(ManifestInvalidError manifest_invalid_error,
@@ -167,23 +188,23 @@ class ExtensionDownloaderDelegate {
     ~FailureData();
 
     // Network error code in case of CRX_FETCH_FAILED or MANIFEST_FETCH_FAILED.
-    const base::Optional<int> network_error_code;
+    const std::optional<int> network_error_code;
     // Response code in case of CRX_FETCH_FAILED or MANIFEST_FETCH_FAILED.
-    const base::Optional<int> response_code;
+    const std::optional<int> response_code;
     // Number of fetch attempts made in case of CRX_FETCH_FAILED or
     // MANIFEST_FETCH_FAILED.
-    const base::Optional<int> fetch_tries;
+    const std::optional<int> fetch_tries;
     // Type of error occurred when fetched manifest was invalid. This includes
     // errors occurred while parsing the update manifest and the errors in the
     // internal details of the parsed manifest.
-    const base::Optional<ManifestInvalidError> manifest_invalid_error;
+    const std::optional<ManifestInvalidError> manifest_invalid_error;
     // Info field in the update manifest returned by the server. Currently it is
     // only set when no update is available and install fails with the error
     // CRX_FETCH_URL_EMPTY.
-    const base::Optional<std::string> additional_info;
+    const std::optional<std::string> additional_info;
     // Type of app status error returned by update server on fetching the update
     // manifest.
-    const base::Optional<std::string> app_status_error;
+    const std::optional<std::string> app_status_error;
   };
 
   // A callback that is called to indicate if ExtensionDownloader should ignore
@@ -208,6 +229,12 @@ class ExtensionDownloaderDelegate {
   virtual void OnExtensionDownloadStageChanged(const ExtensionId& id,
                                                Stage stage);
 
+  // Invoked when an update is found for an extension, but before any attempt
+  // to download it is made.
+  virtual void OnExtensionUpdateFound(const ExtensionId& id,
+                                      const std::set<int>& request_ids,
+                                      const base::Version& version);
+
   // Invoked once during downloading, after fetching and parsing update
   // manifest, |cache_status| contains information about what have we found in
   // local cache about the extension.
@@ -222,6 +249,11 @@ class ExtensionDownloaderDelegate {
                                          const PingResult& ping_result,
                                          const std::set<int>& request_ids,
                                          const FailureData& data);
+
+  // Invoked when an manifest or CRX of extension fails to download, but a retry
+  // is triggered.
+  virtual void OnExtensionDownloadRetry(const ExtensionId& id,
+                                        const FailureData& data);
 
   // Invoked if the extension had an update available and its crx was
   // successfully downloaded to |path|. |ownership_passed| is true if delegate
@@ -256,11 +288,7 @@ class ExtensionDownloaderDelegate {
   // if PingData should not be included for this extension's update check
   // (this is the default).
   virtual bool GetPingDataForExtension(const ExtensionId& id,
-                                       ManifestFetchData::PingData* ping);
-
-  // Invoked to get the update url data for this extension's update url, if
-  // there is any. The default implementation returns an empty string.
-  virtual std::string GetUpdateUrlData(const ExtensionId& id);
+                                       DownloadPingData* ping);
 
   // Invoked to determine whether extension |id| is currently
   // pending installation.
@@ -270,6 +298,12 @@ class ExtensionDownloaderDelegate {
   // that extension is not installed.
   virtual bool GetExtensionExistingVersion(const ExtensionId& id,
                                            std::string* version) = 0;
+
+  // Invoked if update manifest specifies a lower version than existing.
+  // Returns RequestRollbackResult value that indicates whether higher version
+  // cache was successfully invalidated and rollback is allowed. Default
+  // implementation always disallows rollback.
+  virtual RequestRollbackResult RequestRollback(const ExtensionId& id);
 };
 
 }  // namespace extensions

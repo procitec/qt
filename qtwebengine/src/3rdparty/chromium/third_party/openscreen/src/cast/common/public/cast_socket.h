@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -18,8 +18,7 @@ class CastMessage;
 }  // namespace channel
 }  // namespace cast
 
-namespace openscreen {
-namespace cast {
+namespace openscreen::cast {
 
 // Represents a simple message-oriented socket for communicating with the Cast
 // V2 protocol.  It isn't thread-safe, so it should only be used on the same
@@ -28,13 +27,15 @@ class CastSocket : public TlsConnection::Client {
  public:
   class Client {
    public:
-    virtual ~Client() = default;
 
     // Called when a terminal error on |socket| has occurred.
     virtual void OnError(CastSocket* socket, Error error) = 0;
 
     virtual void OnMessage(CastSocket* socket,
                            ::cast::channel::CastMessage message) = 0;
+
+   protected:
+    virtual ~Client();
   };
 
   CastSocket(std::unique_ptr<TlsConnection> connection, Client* client);
@@ -44,6 +45,11 @@ class CastSocket : public TlsConnection::Client {
   // write-blocked, in which case |message| will be queued.  An error will be
   // returned if |message| cannot be serialized for any reason, even while
   // write-blocked.
+  //
+  // NOTE: Send() does not validate that |message| is well-formed or
+  // semantically correct according to the Cast protocol.  Callers should use
+  // the functions in {sender,receiver}/channel/message_util.h to construct a
+  // valid CastMessage to pass into Send().
   [[nodiscard]] Error Send(const ::cast::channel::CastMessage& message);
 
   void SetClient(Client* client);
@@ -80,11 +86,10 @@ class CastSocket : public TlsConnection::Client {
 };
 
 // Returns socket->socket_id() if |socket| is not null, otherwise 0.
-inline int ToCastSocketId(CastSocket* socket) {
+constexpr int ToCastSocketId(CastSocket* socket) {
   return socket ? socket->socket_id() : 0;
 }
 
-}  // namespace cast
-}  // namespace openscreen
+}  // namespace openscreen::cast
 
 #endif  // CAST_COMMON_PUBLIC_CAST_SOCKET_H_

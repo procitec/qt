@@ -24,9 +24,11 @@
 
 #include "third_party/blink/renderer/core/css/css_origin_clean.h"
 #include "third_party/blink/renderer/core/css/style_rule.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
+#include "third_party/blink/renderer/platform/heap/prefinalizer.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_client.h"
 #include "third_party/blink/renderer/platform/wtf/casting.h"
+#include "third_party/blink/renderer/platform/wtf/text/text_position.h"
 
 namespace blink {
 
@@ -38,11 +40,16 @@ class StyleRuleImport : public StyleRuleBase {
 
  public:
   StyleRuleImport(const String& href,
-                  scoped_refptr<MediaQuerySet>,
+                  LayerName&& layer,
+                  bool supported,
+                  String&& supports,
+                  const MediaQuerySet*,
                   OriginClean origin_clean);
   ~StyleRuleImport();
 
-  StyleSheetContents* ParentStyleSheet() const { return parent_style_sheet_; }
+  StyleSheetContents* ParentStyleSheet() const {
+    return parent_style_sheet_.Get();
+  }
   void SetParentStyleSheet(StyleSheetContents* sheet) {
     DCHECK(sheet);
     parent_style_sheet_ = sheet;
@@ -53,9 +60,23 @@ class StyleRuleImport : public StyleRuleBase {
   StyleSheetContents* GetStyleSheet() const { return style_sheet_.Get(); }
 
   bool IsLoading() const;
-  MediaQuerySet* MediaQueries() { return media_queries_.get(); }
 
+  const MediaQuerySet* MediaQueries() const { return media_queries_.Get(); }
+  void SetMediaQueries(const MediaQuerySet* media_queries) {
+    media_queries_ = media_queries;
+  }
+
+  void SetPositionHint(const TextPosition& position_hint) {
+    position_hint_ = position_hint;
+  }
   void RequestStyleSheet();
+
+  bool IsLayered() const { return layer_.size(); }
+  const LayerName& GetLayerName() const { return layer_; }
+  String GetLayerNameAsString() const;
+
+  bool IsSupported() const { return supported_; }
+  String GetSupportsString() const { return supports_string_; }
 
   void TraceAfterDispatch(blink::Visitor*) const;
 
@@ -95,12 +116,20 @@ class StyleRuleImport : public StyleRuleBase {
 
   Member<ImportedStyleSheetClient> style_sheet_client_;
   String str_href_;
-  scoped_refptr<MediaQuerySet> media_queries_;
+  LayerName layer_;
+  String supports_string_;
+  Member<const MediaQuerySet> media_queries_;
   Member<StyleSheetContents> style_sheet_;
   bool loading_;
+  bool supported_;
   // Whether the style sheet that has this import rule is origin-clean:
   // https://drafts.csswg.org/cssom-1/#concept-css-style-sheet-origin-clean-flag
   const OriginClean origin_clean_;
+
+  // If set, this holds the position of the import rule (start of the `@import`)
+  // in the stylesheet text. The position is used to encode accurate initiator
+  // info on the stylesheet request in order to report accurate failures.
+  absl::optional<TextPosition> position_hint_;
 };
 
 template <>
@@ -112,4 +141,4 @@ struct DowncastTraits<StyleRuleImport> {
 
 }  // namespace blink
 
-#endif
+#endif  // THIRD_PARTY_BLINK_RENDERER_CORE_CSS_STYLE_RULE_IMPORT_H_

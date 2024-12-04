@@ -1,4 +1,4 @@
-# Copyright 2014 The Chromium Authors. All rights reserved.
+# Copyright 2014 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -9,7 +9,7 @@ import("//components/vector_icons/vector_icons.gni")
 import("//testing/test.gni")
 import("//ui/base/ui_features.gni")
 
-aggregate_vector_icons2("message_center_vector_icons") {
+aggregate_vector_icons("message_center_vector_icons") {
   icon_directory = "vector_icons"
 
   sources = [
@@ -27,6 +27,7 @@ aggregate_vector_icons2("message_center_vector_icons") {
 jumbo_component("message_center") {
   deps = [
     "//base",
+    "//build:chromeos_buildflags",
     "//ui/base",
     "//ui/strings",
     "//url",
@@ -73,6 +74,7 @@ jumbo_component("message_center") {
       "notification_blocker.h",
       "notification_list.cc",
       "notification_list.h",
+      "notification_view_controller.h",
       "popup_timer.cc",
       "popup_timer.h",
       "popup_timers_controller.cc",
@@ -89,25 +91,36 @@ jumbo_component("message_center") {
     }
 
     if (toolkit_views) {
+      # TODO(b/257291597): Skip the sources that are unused on is_chromeos_ash
+      # (e.g. notification_view.cc). This will require refactoring to break
+      # dependencies (e.g. MessagePopupCollection must become an interface).
       sources += [
         "views/desktop_message_popup_collection.cc",
         "views/desktop_message_popup_collection.h",
+        "views/large_image_view.cc",
+        "views/large_image_view.h",
         "views/message_popup_collection.cc",
         "views/message_popup_collection.h",
         "views/message_popup_view.cc",
         "views/message_popup_view.h",
         "views/message_view.cc",
         "views/message_view.h",
-        "views/message_view_factory.cc",
-        "views/message_view_factory.h",
         "views/notification_background_painter.cc",
         "views/notification_background_painter.h",
+        "views/notification_control_button_factory.cc",
+        "views/notification_control_button_factory.h",
         "views/notification_control_buttons_view.cc",
         "views/notification_control_buttons_view.h",
         "views/notification_header_view.cc",
         "views/notification_header_view.h",
-        "views/notification_view_md.cc",
-        "views/notification_view_md.h",
+        "views/notification_input_container.cc",
+        "views/notification_input_container.h",
+        "views/notification_view.cc",
+        "views/notification_view.h",
+        "views/notification_view_base.cc",
+        "views/notification_view_base.h",
+        "views/notification_view_util.cc",
+        "views/notification_view_util.h",
         "views/padded_button.cc",
         "views/padded_button.h",
         "views/proportional_image_view.cc",
@@ -119,6 +132,7 @@ jumbo_component("message_center") {
         sources += [ "views/message_popup_view_mac.mm" ]
       }
       deps += [
+        "//ui/color",
         "//ui/compositor",
         "//ui/events",
         "//ui/views",
@@ -126,6 +140,12 @@ jumbo_component("message_center") {
       if (is_mac) {
         frameworks = [ "Foundation.framework" ]
       }
+      if (is_chromeos) {
+        deps += [ "//chromeos/constants:constants" ]
+      }
+    }
+    if (is_chromeos_ash) {
+      deps += [ "//ash/constants" ]
     }
   } else {
     # Notification service disabled.
@@ -163,6 +183,7 @@ if (enable_message_center) {
 
     sources = [
       "message_center_impl_unittest.cc",
+      "notification_blocker_unittest.cc",
       "notification_list_unittest.cc",
       "public/cpp/notification_delegate_unittest.cc",
       "test/run_all_unittests.cc",
@@ -173,10 +194,12 @@ if (enable_message_center) {
       ":test_support",
       "//base",
       "//base/test:test_support",
+      "//build:chromeos_buildflags",
       "//mojo/core/embedder",
       "//skia",
       "//testing/gmock",
       "//testing/gtest",
+      "//ui/accessibility:test_support",
       "//ui/base",
       "//ui/base:test_support",
       "//ui/events",
@@ -187,6 +210,7 @@ if (enable_message_center) {
       "//ui/gl",
       "//ui/gl:test_support",
       "//ui/message_center/public/cpp",
+      "//ui/native_theme",
       "//ui/resources",
       "//ui/resources:ui_test_pak",
       "//url",
@@ -197,19 +221,43 @@ if (enable_message_center) {
       "//ui/resources:ui_test_pak_data",
     ]
 
+    if (is_chromeos_ash) {
+      deps += [ "//ash/constants" ]
+    }
+
     if (toolkit_views) {
       sources += [
+        "views/large_image_view_unittest.cc",
         "views/message_popup_collection_unittest.cc",
         "views/notification_control_buttons_unittest.cc",
         "views/notification_header_view_unittest.cc",
-        "views/notification_view_md_unittest.cc",
+        "views/notification_view_base_unittest.cc",
         "views/relative_time_formatter_unittest.cc",
       ]
+
+      # ChromeOS/Ash uses AshNotificationView, not NotificationView.
+      if (!is_chromeos_ash) {
+        sources += [ "views/notification_view_unittest.cc" ]
+      }
+
       deps += [
+        "//ui/color",
         "//ui/display",
         "//ui/strings",
         "//ui/views",
         "//ui/views:test_support",
+      ]
+
+      if (is_chromeos) {
+        deps += [ "//chromeos/constants:constants" ]
+      }
+    }
+
+    if (is_fuchsia) {
+      additional_manifest_fragments = [
+        "//build/config/fuchsia/test/fonts.shard.test-cml",
+        "//build/config/fuchsia/test/present_view.shard.test-cml",
+        "//third_party/fuchsia-sdk/sdk/pkg/vulkan/client.shard.cml",
       ]
     }
   }

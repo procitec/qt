@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,7 +9,7 @@
 #include <memory>
 
 #include "base/check_op.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/numerics/safe_math.h"
 
 namespace base {
@@ -35,11 +35,14 @@ struct OptionalHeaderTraits<IMAGE_OPTIONAL_HEADER64> {
 template <class OPTIONAL_HEADER_TYPE>
 class PeImageReader::OptionalHeaderImpl : public PeImageReader::OptionalHeader {
  public:
-  typedef OptionalHeaderTraits<OPTIONAL_HEADER_TYPE> TraitsType;
+  using TraitsType = OptionalHeaderTraits<OPTIONAL_HEADER_TYPE>;
 
   explicit OptionalHeaderImpl(const uint8_t* optional_header_start)
       : optional_header_(reinterpret_cast<const OPTIONAL_HEADER_TYPE*>(
             optional_header_start)) {}
+
+  OptionalHeaderImpl(const OptionalHeaderImpl&) = delete;
+  OptionalHeaderImpl& operator=(const OptionalHeaderImpl&) = delete;
 
   WordSize GetWordSize() override { return TraitsType::word_size; }
 
@@ -58,20 +61,17 @@ class PeImageReader::OptionalHeaderImpl : public PeImageReader::OptionalHeader {
   DWORD GetSizeOfImage() override { return optional_header_->SizeOfImage; }
 
  private:
-  const OPTIONAL_HEADER_TYPE* optional_header_;
-  DISALLOW_COPY_AND_ASSIGN(OptionalHeaderImpl);
+  raw_ptr<const OPTIONAL_HEADER_TYPE> optional_header_;
 };
 
-PeImageReader::PeImageReader()
-    : image_data_(), image_size_(), validation_state_() {}
+PeImageReader::PeImageReader() {}
 
 PeImageReader::~PeImageReader() {
   Clear();
 }
 
-bool PeImageReader::Initialize(const uint8_t* image_data, size_t image_size) {
+bool PeImageReader::Initialize(span<const uint8_t> image_data) {
   image_data_ = image_data;
-  image_size_ = image_size;
 
   if (!ValidateDosHeader() || !ValidatePeSignature() ||
       !ValidateCoffFileHeader() || !ValidateOptionalHeader() ||
@@ -89,19 +89,20 @@ PeImageReader::WordSize PeImageReader::GetWordSize() {
 
 const IMAGE_DOS_HEADER* PeImageReader::GetDosHeader() {
   DCHECK_NE((validation_state_ & VALID_DOS_HEADER), 0U);
-  return reinterpret_cast<const IMAGE_DOS_HEADER*>(image_data_);
+  return reinterpret_cast<const IMAGE_DOS_HEADER*>(image_data_.data());
 }
 
 const IMAGE_FILE_HEADER* PeImageReader::GetCoffFileHeader() {
   DCHECK_NE((validation_state_ & VALID_COFF_FILE_HEADER), 0U);
   return reinterpret_cast<const IMAGE_FILE_HEADER*>(
-      image_data_ + GetDosHeader()->e_lfanew + sizeof(DWORD));
+      image_data_
+          .subspan(checked_cast<size_t>(GetDosHeader()->e_lfanew) +
+                   sizeof(DWORD))
+          .data());
 }
 
-const uint8_t* PeImageReader::GetOptionalHeaderData(
-    size_t* optional_header_size) {
-  *optional_header_size = GetOptionalHeaderSize();
-  return GetOptionalHeaderStart();
+span<const uint8_t> PeImageReader::GetOptionalHeaderData() {
+  return make_span(GetOptionalHeaderStart(), GetOptionalHeaderSize());
 }
 
 size_t PeImageReader::GetNumberOfSections() {
@@ -116,61 +117,54 @@ const IMAGE_SECTION_HEADER* PeImageReader::GetSectionHeaderAt(size_t index) {
       (sizeof(IMAGE_SECTION_HEADER) * index));
 }
 
-const uint8_t* PeImageReader::GetExportSection(size_t* section_size) {
-  size_t data_size = 0;
-  const uint8_t* data = GetImageData(IMAGE_DIRECTORY_ENTRY_EXPORT, &data_size);
+span<const uint8_t> PeImageReader::GetExportSection() {
+  span<const uint8_t> data = GetImageData(IMAGE_DIRECTORY_ENTRY_EXPORT);
 
   // The export section data must be big enough for the export directory.
-  if (!data || data_size < sizeof(IMAGE_EXPORT_DIRECTORY))
-    return nullptr;
+  if (data.size() < sizeof(IMAGE_EXPORT_DIRECTORY)) {
+    return span<const uint8_t>();
+  }
 
-  *section_size = data_size;
   return data;
 }
 
 size_t PeImageReader::GetNumberOfDebugEntries() {
-  size_t data_size = 0;
-  const uint8_t* data = GetImageData(IMAGE_DIRECTORY_ENTRY_DEBUG, &data_size);
-  return data ? (data_size / sizeof(IMAGE_DEBUG_DIRECTORY)) : 0;
+  return GetImageData(IMAGE_DIRECTORY_ENTRY_DEBUG).size() /
+         sizeof(IMAGE_DEBUG_DIRECTORY);
 }
 
 const IMAGE_DEBUG_DIRECTORY* PeImageReader::GetDebugEntry(
     size_t index,
-    const uint8_t** raw_data,
-    size_t* raw_data_size) {
+    span<const uint8_t>& raw_data) {
   DCHECK_LT(index, GetNumberOfDebugEntries());
 
   // Get the debug directory.
-  size_t debug_directory_size = 0;
-  const IMAGE_DEBUG_DIRECTORY* entries =
-      reinterpret_cast<const IMAGE_DEBUG_DIRECTORY*>(
-          GetImageData(IMAGE_DIRECTORY_ENTRY_DEBUG, &debug_directory_size));
-  if (!entries)
+  span<const uint8_t> debug_directory_data =
+      GetImageData(IMAGE_DIRECTORY_ENTRY_DEBUG);
+  if (debug_directory_data.empty()) {
     return nullptr;
+  }
 
-  const IMAGE_DEBUG_DIRECTORY& entry = entries[index];
+  const IMAGE_DEBUG_DIRECTORY& entry =
+      reinterpret_cast<const IMAGE_DEBUG_DIRECTORY&>(
+          debug_directory_data[index * sizeof(IMAGE_DEBUG_DIRECTORY)]);
   const uint8_t* debug_data = nullptr;
   if (GetStructureAt(entry.PointerToRawData, entry.SizeOfData, &debug_data)) {
-    *raw_data = debug_data;
-    *raw_data_size = entry.SizeOfData;
+    raw_data = make_span(debug_data, entry.SizeOfData);
   }
   return &entry;
 }
 
 bool PeImageReader::EnumCertificates(EnumCertificatesCallback callback,
                                      void* context) {
-  size_t data_size = 0;
-  const uint8_t* data =
-      GetImageData(IMAGE_DIRECTORY_ENTRY_SECURITY, &data_size);
-  if (!data)
-    return false;  // Certificate table is out of bounds.
+  span<const uint8_t> data = GetImageData(IMAGE_DIRECTORY_ENTRY_SECURITY);
   const size_t kWinCertificateSize = offsetof(WIN_CERTIFICATE, bCertificate);
-  while (data_size) {
+  while (!data.empty()) {
     const WIN_CERTIFICATE* win_certificate =
-        reinterpret_cast<const WIN_CERTIFICATE*>(data);
-    if (kWinCertificateSize > data_size ||
+        reinterpret_cast<const WIN_CERTIFICATE*>(data.data());
+    if (kWinCertificateSize > data.size() ||
         kWinCertificateSize > win_certificate->dwLength ||
-        win_certificate->dwLength > data_size) {
+        win_certificate->dwLength > data.size()) {
       return false;
     }
     if (!(*callback)(
@@ -179,12 +173,11 @@ bool PeImageReader::EnumCertificates(EnumCertificatesCallback callback,
             win_certificate->dwLength - kWinCertificateSize, context)) {
       return false;
     }
-    size_t padded_length = (win_certificate->dwLength + 7) & ~0x7;
-    // Don't overflow when recalculating data_size, since padded_length can be
-    // attacker controlled.
-    if (!CheckSub(data_size, padded_length).AssignIfValid(&data_size))
+    size_t padded_length = (win_certificate->dwLength + 7) & ~0x7u;
+    if (padded_length > data.size()) {
       return false;
-    data += padded_length;
+    }
+    data = data.subspan(padded_length);
   }
   return true;
 }
@@ -194,8 +187,7 @@ DWORD PeImageReader::GetSizeOfImage() {
 }
 
 void PeImageReader::Clear() {
-  image_data_ = nullptr;
-  image_size_ = 0;
+  image_data_ = raw_span<const uint8_t>();
   validation_state_ = 0;
   optional_header_.reset();
 }
@@ -213,7 +205,8 @@ bool PeImageReader::ValidateDosHeader() {
 
 bool PeImageReader::ValidatePeSignature() {
   const DWORD* signature = nullptr;
-  if (!GetStructureAt(GetDosHeader()->e_lfanew, &signature) ||
+  if (!GetStructureAt(static_cast<size_t>(GetDosHeader()->e_lfanew),
+                      &signature) ||
       *signature != IMAGE_NT_SIGNATURE) {
     return false;
   }
@@ -225,9 +218,9 @@ bool PeImageReader::ValidatePeSignature() {
 bool PeImageReader::ValidateCoffFileHeader() {
   DCHECK_NE((validation_state_ & VALID_PE_SIGNATURE), 0U);
   const IMAGE_FILE_HEADER* file_header = nullptr;
-  if (!GetStructureAt(
-          GetDosHeader()->e_lfanew + offsetof(IMAGE_NT_HEADERS32, FileHeader),
-          &file_header)) {
+  if (!GetStructureAt(static_cast<size_t>(GetDosHeader()->e_lfanew) +
+                          offsetof(IMAGE_NT_HEADERS32, FileHeader),
+                      &file_header)) {
     return false;
   }
 
@@ -238,7 +231,8 @@ bool PeImageReader::ValidateCoffFileHeader() {
 bool PeImageReader::ValidateOptionalHeader() {
   const IMAGE_FILE_HEADER* file_header = GetCoffFileHeader();
   const size_t optional_header_offset =
-      GetDosHeader()->e_lfanew + offsetof(IMAGE_NT_HEADERS32, OptionalHeader);
+      static_cast<size_t>(GetDosHeader()->e_lfanew) +
+      offsetof(IMAGE_NT_HEADERS32, OptionalHeader);
   const size_t optional_header_size = file_header->SizeOfOptionalHeader;
   const WORD* optional_header_magic = nullptr;
 
@@ -249,18 +243,21 @@ bool PeImageReader::ValidateOptionalHeader() {
 
   std::unique_ptr<OptionalHeader> optional_header;
   if (*optional_header_magic == IMAGE_NT_OPTIONAL_HDR32_MAGIC) {
-    optional_header.reset(new OptionalHeaderImpl<IMAGE_OPTIONAL_HEADER32>(
-        image_data_ + optional_header_offset));
+    optional_header =
+        std::make_unique<OptionalHeaderImpl<IMAGE_OPTIONAL_HEADER32>>(
+            image_data_.subspan(optional_header_offset).data());
   } else if (*optional_header_magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC) {
-    optional_header.reset(new OptionalHeaderImpl<IMAGE_OPTIONAL_HEADER64>(
-        image_data_ + optional_header_offset));
+    optional_header =
+        std::make_unique<OptionalHeaderImpl<IMAGE_OPTIONAL_HEADER64>>(
+            image_data_.subspan(optional_header_offset).data());
   } else {
     return false;
   }
 
   // Does all of the claimed optional header fit in the image?
-  if (optional_header_size > image_size_ - optional_header_offset)
+  if (optional_header_size > image_data_.size() - optional_header_offset) {
     return false;
+  }
 
   // Is the claimed optional header big enough for everything but the dir?
   if (optional_header->GetDataDirectoryOffset() > optional_header_size)
@@ -284,9 +281,10 @@ bool PeImageReader::ValidateSectionHeaders() {
   const size_t number_of_sections = GetNumberOfSections();
 
   // Do all section headers fit in the image?
-  if (!GetStructureAt(first_section_header - image_data_,
-                      number_of_sections * sizeof(IMAGE_SECTION_HEADER),
-                      &first_section_header)) {
+  if (!GetStructureAt(
+          static_cast<size_t>(first_section_header - image_data_.data()),
+          number_of_sections * sizeof(IMAGE_SECTION_HEADER),
+          &first_section_header)) {
     return false;
   }
 
@@ -296,8 +294,10 @@ bool PeImageReader::ValidateSectionHeaders() {
 
 const uint8_t* PeImageReader::GetOptionalHeaderStart() {
   DCHECK_NE((validation_state_ & VALID_OPTIONAL_HEADER), 0U);
-  return (image_data_ + GetDosHeader()->e_lfanew +
-          offsetof(IMAGE_NT_HEADERS32, OptionalHeader));
+  return image_data_
+      .subspan(checked_cast<size_t>(GetDosHeader()->e_lfanew) +
+               offsetof(IMAGE_NT_HEADERS32, OptionalHeader))
+      .data();
 }
 
 size_t PeImageReader::GetOptionalHeaderSize() {
@@ -337,43 +337,42 @@ const IMAGE_SECTION_HEADER* PeImageReader::FindSectionFromRva(
   return nullptr;
 }
 
-const uint8_t* PeImageReader::GetImageData(size_t index, size_t* data_length) {
+span<const uint8_t> PeImageReader::GetImageData(size_t index) {
   // Get the requested directory entry.
   const IMAGE_DATA_DIRECTORY* entry = GetDataDirectoryEntryAt(index);
   if (!entry)
-    return nullptr;
+    return span<const uint8_t>();
 
   // The entry for the certificate table is special in that its address is a
   // file pointer rather than an RVA.
   if (index == IMAGE_DIRECTORY_ENTRY_SECURITY) {
     // Does the data fit within the file.
-    if (entry->VirtualAddress > image_size_ ||
-        image_size_ - entry->VirtualAddress < entry->Size) {
-      return nullptr;
+    if (entry->VirtualAddress > image_data_.size() ||
+        image_data_.size() - entry->VirtualAddress < entry->Size) {
+      return span<const uint8_t>();
     }
-    *data_length = entry->Size;
-    return image_data_ + entry->VirtualAddress;
+    return image_data_.subspan(entry->VirtualAddress, entry->Size);
   }
 
   // Find the section containing the data.
   const IMAGE_SECTION_HEADER* header =
       FindSectionFromRva(entry->VirtualAddress);
   if (!header)
-    return nullptr;
+    return span<const uint8_t>();
 
   // Does the data fit within the section when mapped?
   size_t data_offset = entry->VirtualAddress - header->VirtualAddress;
   if (entry->Size > (header->Misc.VirtualSize - data_offset))
-    return nullptr;
+    return span<const uint8_t>();
 
   // Is the data entirely present on disk (if not it's zeroed out when loaded)?
   if (data_offset >= header->SizeOfRawData ||
       header->SizeOfRawData - data_offset < entry->Size) {
-    return nullptr;
+    return span<const uint8_t>();
   }
 
-  *data_length = entry->Size;
-  return image_data_ + header->PointerToRawData + data_offset;
+  return image_data_.subspan(header->PointerToRawData + data_offset,
+                             entry->Size);
 }
 
 }  // namespace win

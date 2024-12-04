@@ -1,4 +1,4 @@
-# Copyright 2017 The Chromium Authors. All rights reserved.
+# Copyright 2017 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -12,16 +12,13 @@ def _RunMakeDafsaTests(input_api, output_api):
            'tools/media_engagement_preload/make_dafsa_unittest.py')
   if not any(f in input_api.LocalPaths() for f in files):
     return []
-  test_path = input_api.os_path.join(input_api.PresubmitLocalPath(),
-                                     'make_dafsa_unittest.py')
-  cmd_name = 'make_dafsa_unittest'
-  cmd = [input_api.python_executable, test_path]
-  test_cmd = input_api.Command(
-    name=cmd_name,
-    cmd=cmd,
-    kwargs={},
-    message=output_api.PresubmitPromptWarning)
-  return input_api.RunTests([test_cmd])
+
+  return input_api.RunTests(
+      input_api.canned_checks.RunUnitTestsInDirectory(
+          input_api,
+          output_api,
+          input_api.PresubmitLocalPath(),
+          files_to_check=['.*test\.py$']))
 
 
 def CheckChangeOnUpload(input_api, output_api):

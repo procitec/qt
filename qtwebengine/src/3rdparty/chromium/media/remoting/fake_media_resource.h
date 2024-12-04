@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,6 +8,7 @@
 #include <memory>
 
 #include "base/containers/circular_deque.h"
+#include "base/memory/raw_ptr.h"
 #include "media/base/audio_decoder_config.h"
 #include "media/base/demuxer_stream.h"
 #include "media/base/media_resource.h"
@@ -20,15 +21,19 @@ namespace remoting {
 class FakeDemuxerStream : public DemuxerStream {
  public:
   explicit FakeDemuxerStream(bool is_audio);
+
+  FakeDemuxerStream(const FakeDemuxerStream&) = delete;
+  FakeDemuxerStream& operator=(const FakeDemuxerStream&) = delete;
+
   ~FakeDemuxerStream() override;
 
   // DemuxerStream implementation.
-  MOCK_METHOD1(Read, void(ReadCB read_cb));
-  void FakeRead(ReadCB read_cb);
+  MOCK_METHOD2(Read, void(uint32_t count, ReadCB read_cb));
+  void FakeRead(uint32_t count, ReadCB read_cb);
   AudioDecoderConfig audio_decoder_config() override;
   VideoDecoderConfig video_decoder_config() override;
   Type type() const override;
-  Liveness liveness() const override;
+  StreamLiveness liveness() const override;
   void EnableBitstreamConverter() override {}
   bool SupportsConfigChanges() override;
 
@@ -41,24 +46,25 @@ class FakeDemuxerStream : public DemuxerStream {
   Type type_;
   AudioDecoderConfig audio_config_;
   VideoDecoderConfig video_config_;
-
-  DISALLOW_COPY_AND_ASSIGN(FakeDemuxerStream);
 };
 
 // Audio only demuxer stream provider
-class FakeMediaResource : public MediaResource {
+class FakeMediaResource final : public MediaResource {
  public:
   FakeMediaResource();
-  ~FakeMediaResource() final;
+
+  FakeMediaResource(const FakeMediaResource&) = delete;
+  FakeMediaResource& operator=(const FakeMediaResource&) = delete;
+
+  ~FakeMediaResource() override;
 
   // MediaResource implementation.
-  std::vector<DemuxerStream*> GetAllStreams() override;
+  std::vector<raw_ptr<DemuxerStream, VectorExperimental>> GetAllStreams()
+      override;
 
  private:
   std::unique_ptr<FakeDemuxerStream> audio_stream_;
   std::unique_ptr<FakeDemuxerStream> video_stream_;
-
-  DISALLOW_COPY_AND_ASSIGN(FakeMediaResource);
 };
 
 }  // namespace remoting

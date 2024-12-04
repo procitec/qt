@@ -30,7 +30,8 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_DOM_TEXT_LINK_COLORS_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_DOM_TEXT_LINK_COLORS_H_
 
-#include "third_party/blink/public/common/css/color_scheme.h"
+#include "third_party/blink/public/mojom/frame/color_scheme.mojom-blink-forward.h"
+#include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/platform/graphics/color.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 
@@ -38,7 +39,7 @@ namespace blink {
 
 class CSSValue;
 
-class TextLinkColors {
+class CORE_EXPORT TextLinkColors {
   DISALLOW_NEW();
 
  public:
@@ -46,21 +47,25 @@ class TextLinkColors {
   TextLinkColors(const TextLinkColors&) = delete;
   TextLinkColors& operator=(const TextLinkColors&) = delete;
 
-  void SetTextColor(const Color& color) { text_color_ = color; }
-  Color TextColor() const { return text_color_; }
+  void SetTextColor(const Color& color);
+  Color TextColor() const;
+  Color TextColor(mojom::blink::ColorScheme color_scheme) const;
 
-  const Color& LinkColor() const { return link_color_; }
-  const Color& VisitedLinkColor() const { return visited_link_color_; }
-  const Color& ActiveLinkColor() const { return active_link_color_; }
-  void SetLinkColor(const Color& color) { link_color_ = color; }
-  void SetVisitedLinkColor(const Color& color) { visited_link_color_ = color; }
-  void SetActiveLinkColor(const Color& color) { active_link_color_ = color; }
-  void ResetLinkColor();
-  void ResetVisitedLinkColor();
-  void ResetActiveLinkColor();
+  const Color& LinkColor() const;
+  const Color& LinkColor(mojom::blink::ColorScheme color_scheme) const;
+  const Color& VisitedLinkColor() const;
+  const Color& VisitedLinkColor(mojom::blink::ColorScheme color_scheme) const;
+  const Color& ActiveLinkColor() const;
+  const Color& ActiveLinkColor(mojom::blink::ColorScheme color_scheme) const;
+  void SetLinkColor(const Color& color);
+  void SetVisitedLinkColor(const Color& color);
+  void SetActiveLinkColor(const Color& color);
+  void ResetLinkColor() { has_custom_link_color_ = false; }
+  void ResetVisitedLinkColor() { has_custom_visited_link_color_ = false; }
+  void ResetActiveLinkColor() { has_custom_active_link_color_ = false; }
   Color ColorFromCSSValue(const CSSValue&,
                           Color current_color,
-                          ColorScheme color_scheme,
+                          mojom::blink::ColorScheme color_scheme,
                           bool for_visited_link = false) const;
 
  private:
@@ -68,8 +73,13 @@ class TextLinkColors {
   Color link_color_;
   Color visited_link_color_;
   Color active_link_color_;
+
+  bool has_custom_text_color_{false};
+  bool has_custom_link_color_{false};
+  bool has_custom_visited_link_color_{false};
+  bool has_custom_active_link_color_{false};
 };
 
 }  // namespace blink
 
-#endif
+#endif  // THIRD_PARTY_BLINK_RENDERER_CORE_DOM_TEXT_LINK_COLORS_H_

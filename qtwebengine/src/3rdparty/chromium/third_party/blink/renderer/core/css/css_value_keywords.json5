@@ -1,7 +1,8 @@
 {
   // The mode argument is used to limit the keyword to be used only for certain
   // CSSParserModes. Values that have the prefix -internal- are only allowed by
-  // CSSParserModes listed in allowInternalPropertyAndValue()
+  // CSSParserModes listed in CSSValueKeywordsWriter, which feeds the generated
+  // code for isValueAllowedInMode.
 
   parameters: {
     mode: {},
@@ -101,13 +102,28 @@
     "ordinal",
     "slashed-zero",
 
+    // font-variant-alternates
+    "stylistic",
+    "historical-forms",
+    "styleset",
+    "character-variant",
+    "swash",
+    "ornaments",
+    "annotation",
+
     //
-    // font-weigth
+    // font-weight
     //
     "normal",
     "bold",
     "bolder",
     "lighter",
+
+    // font-synthesis
+    // none
+    // style
+    // small-caps
+    "weight",
 
     //
     // font-stretch
@@ -138,14 +154,29 @@
     // math
 
     //
+    // font-size-adjust
+    //
+    //none
+    "ex-height",
+    "cap-height",
+    "ch-width",
+    "ic-width",
+    // from-font
+
+    //
     // font-family (<generic-family> in CSS 2.1)
     //
+    // If you modify this list, please make sure you update css_parsing_utils's
+    // ConsumeGenericFamily, ComputedStyleUtils::IdentifierForFamily and
+    // FontFamily::InferredTypeFor accordingly.
     "serif",
     "sans-serif",
     "cursive",
     "fantasy",
     "monospace",
+    "system-ui",
     "-webkit-body",
+    "math",
 
     //
     // font-display
@@ -155,6 +186,15 @@
     "swap",
     "fallback",
     "optional",
+
+    // https://drafts.csswg.org/css-conditional-5/#typedef-supports-font-tech-fn
+    "font-tech",
+    "font-format",
+
+    //
+    // font-palette animation
+    //
+    "palette-mix",
 
     //
     // *-color
@@ -179,11 +219,14 @@
     "transparent",
     "-webkit-link",
     "-webkit-activelink",
+    "accentcolor",
+    "accentcolortext",
     "activeborder",
     "activecaption",
     "activetext",
     "appworkspace",
     "background",
+    "buttonborder",
     "buttonface",
     "buttonhighlight",
     "buttonshadow",
@@ -202,7 +245,11 @@
     "infobackground",
     "infotext",
     "linktext",
+    "mark",
+    "marktext",
     "menutext",
+    "selecteditem",
+    "selecteditemtext",
     "scrollbar",
     "threeddarkshadow",
     "threedface",
@@ -227,6 +274,11 @@
     // Value used to implement the behavior in:
     // https://quirks.spec.whatwg.org/#the-tables-inherit-color-from-body-quirk
     "-internal-quirk-inherit",
+    //
+    // css-text-decor
+    // <https://github.com/w3c/csswg-drafts/issues/7522>
+    "-internal-spelling-error-color",
+    "-internal-grammar-error-color",
 
     //
     // "Extended" named colors
@@ -387,6 +439,15 @@
     "xor",
     // highlight
     "plus-lighter",
+
+    //
+    // mask-composite
+    //
+    // "add",
+    "subtract",
+    "intersect",
+    "exclude",
+
     //
     // vertical-align
     //
@@ -402,13 +463,12 @@
     "-webkit-baseline-middle",
     //
     // text-align
-    // The order of this enum must match the order found in CSSParserFastPaths::IsValidKeywordPropertyAndValue().
+    // The order and contents this block MUST match the kTextAlign[Last] cases
+    // of CSSParserFastPaths::IsValidKeywordPropertyAndValue().
     //
     "-webkit-auto",
     "left",
     "right",
-    "inline-start",
-    "inline-end",
     "center",
     "justify",
     "-webkit-left",
@@ -417,12 +477,10 @@
     "-webkit-match-parent",
     "-internal-center",
     //
-    // text-justify
+    // float, clear, etc.
     //
-    //auto
-    //none
-    "inter-word",
-    "distribute",
+    "inline-start",
+    "inline-end",
     //
     // list-style-position
     //
@@ -430,63 +488,13 @@
     "inside",
     //
     // list-style-type
-    // The order of this enum must match the order found in CSSParserFastPaths::IsValidKeywordPropertyAndValue().
     //
     "disc",
     "circle",
     "square",
+    "disclosure-open",
+    "disclosure-closed",
     "decimal",
-    "decimal-leading-zero",
-    "arabic-indic",
-    "bengali",
-    "cambodian",
-    "khmer",
-    "devanagari",
-    "gujarati",
-    "gurmukhi",
-    "kannada",
-    "lao",
-    "malayalam",
-    "mongolian",
-    "myanmar",
-    "oriya",
-    "persian",
-    "urdu",
-    "telugu",
-    "tibetan",
-    "thai",
-    "lower-roman",
-    "upper-roman",
-    "lower-greek",
-    "lower-alpha",
-    "lower-latin",
-    "upper-alpha",
-    "upper-latin",
-    "cjk-earthly-branch",
-    "cjk-heavenly-stem",
-    "ethiopic-halehame",
-    "ethiopic-halehame-am",
-    "ethiopic-halehame-ti-er",
-    "ethiopic-halehame-ti-et",
-    "hangul",
-    "hangul-consonant",
-    "korean-hangul-formal",
-    "korean-hanja-formal",
-    "korean-hanja-informal",
-    "hebrew",
-    "armenian",
-    "lower-armenian",
-    "upper-armenian",
-    "georgian",
-    "cjk-ideographic",
-    "simp-chinese-formal",
-    "simp-chinese-informal",
-    "trad-chinese-formal",
-    "trad-chinese-informal",
-    "hiragana",
-    "katakana",
-    "hiragana-iroha",
-    "katakana-iroha",
     //none
     //
     // The order must match the order found in IsDisplayOutside().
@@ -494,10 +502,12 @@
     "block",
     // The order must match the order found in IsDisplayInside().
     "flow-root",
+    "flow",
     "table",
     "flex",
     "grid",
-    "math",
+    //"math",
+    //"ruby",
     // The order must match the order found in IsDisplayBox().
     "contents",
     //none
@@ -510,6 +520,7 @@
     "table-column",
     "table-cell",
     "table-caption",
+    "ruby-text",
     // The order must match the order found in IsDisplayLegacy().
     "inline-block",
     "inline-table",
@@ -586,6 +597,13 @@
     //hidden
     "collapse",
     //
+    // white-space and its longhands (white-space-collapse and text-wrap)
+    // https://w3c.github.io/csswg-drafts/css-text-4/#white-space-property
+    //
+    "preserve",
+    "preserve-breaks",
+    "pretty",
+    //
     // Unordered rest
     //
     "a3",
@@ -639,8 +657,8 @@
     "thick",
     "thin",
     "underline",
+    "view",
     "wavy",
-    "-webkit-nowrap",
 
     // math-shift
     // normal
@@ -699,6 +717,7 @@
     // last baseline,
     // first baseline,
     // stretch
+    "anchor-center",
 
     // justify-content
     // start
@@ -751,10 +770,22 @@
     "fit-content",
 
     //
+    // text-autospace
+    //
+    // normal
+    "no-autospace",
+
+    //
     // text-overflow
     //
     "clip",
     "ellipsis",
+
+    //
+    // text-decoration-line
+    //
+    "spelling-error",
+    "grammar-error",
 
     //
     // text-decoration-skip-ink
@@ -768,6 +799,14 @@
     // auto
     "from-font",
 
+    //
+    // text-spacing-trim
+    //
+    // normal
+    "space-all",
+    "space-first",
+    "trim-start",
+
     // text-underline-position
     // auto
     // "from-font",
@@ -780,6 +819,7 @@
     //
     "break-all",
     "keep-all",
+    "auto-phrase",
 
     //
     // word-wrap
@@ -805,35 +845,33 @@
     "manual",
 
     // -webkit-appearance
-    // The order here must match the order in the ControlPart enum in
-    // theme_types.h.
-    // All appearance values that should be accepted by the parser should be
-    // listed between 'checkbox' and 'textarea'.
     "checkbox",
     "radio",
-    "push-button",
-    "square-button",
     "button",
-    "inner-spin-button",
     "listbox",
-    "media-slider",
-    "media-sliderthumb",
-    "media-volume-slider",
-    "media-volume-sliderthumb",
     "-internal-media-control",
     "menulist",
     "menulist-button",
     "meter",
     "progress-bar",
-    "slider-horizontal",
-    "slider-vertical",
-    "sliderthumb-horizontal",
-    "sliderthumb-vertical",
     "searchfield",
-    "searchfield-cancel-button",
     "textfield",
     "textarea",
-
+    // TODO(crbug/924486) All appearance values that should not be accepted by the parser (high usage).
+    "inner-spin-button",
+    "push-button",
+    "square-button",
+    "slider-horizontal",
+    "searchfield-cancel-button",
+    // TODO(crbug/924486) All appearance values that should not be accepted by the parser (low usage).
+    "media-slider",
+    "media-sliderthumb",
+    "media-volume-slider",
+    "media-volume-sliderthumb",
+    "sliderthumb-horizontal",
+    "sliderthumb-vertical",
+    // TODO(crbug/1426629) All appearance values that should not be accepted by the parser (special case).
+    "slider-vertical",
     //
     // border-image
     //
@@ -857,6 +895,9 @@
     // CSS 3 SHAPES
     "margin-box",
 
+    // https://drafts.fxtf.org/css-masking/#valdef-mask-clip-no-clip
+    "no-clip",
+
     //
     // background-size
     //
@@ -868,6 +909,12 @@
     //
     "logical",
     "visual",
+
+    //
+    // animation-composition
+    //
+    "replace",
+    "accumulate",
 
     //
     // animation-direction
@@ -999,7 +1046,7 @@
     "after",
     "before",
 
-    // -webkit-text-emphasis-position
+    // text-emphasis-position
     "over",
     "under",
     //right
@@ -1060,10 +1107,26 @@
     "alphabetic",
 
     // (display-mode:) media feature
+    "borderless",
     "fullscreen",
     "standalone",
     "minimal-ui",
     "browser",
+    "window-controls-overlay",
+    "tabbed",
+
+    // (display-state:) media feature
+    // normal
+    // fullscreen
+    "minimized",
+    "maximized",
+
+    // (overflow-block:) media feature
+    "paged",
+
+    // (update:) media feature
+    "slow",
+    "fast",
 
     // position
     "sticky",
@@ -1111,10 +1174,7 @@
 
     // grid-template-{columns|rows}
     "minmax",
-
-    // text-indent
-    "each-line",
-    "hanging",
+    "subgrid",
 
     // (scan:) media feature
     "progressive",
@@ -1131,6 +1191,11 @@
     // mask-type
     "alpha",
     "luminance",
+
+    // mask-mode
+    // alpha
+    // luminance
+    "match-source",
 
     // color-interpolation / color-interpolation-filters
     // auto
@@ -1157,7 +1222,7 @@
     "text-before-edge",
     "text-after-edge",
     "ideographic",
-    // hanging
+    "hanging",
     "mathematical",
 
     // dominant-baseline
@@ -1213,6 +1278,7 @@
     // right
     // unsafe
     // safe
+    // anchor-center
     "legacy",
 
     // scroll-behavior
@@ -1228,6 +1294,7 @@
     // initial
     // inherit
     "revert",
+    "revert-layer",
     "unset",
 
     // background-image, etc.
@@ -1238,6 +1305,7 @@
     "repeating-radial-gradient",
     "repeating-conic-gradient",
     "paint",
+    "cross-fade",
     "-webkit-cross-fade",
     "-webkit-gradient",
     "-webkit-linear-gradient",
@@ -1245,9 +1313,11 @@
     "-webkit-repeating-linear-gradient",
     "-webkit-repeating-radial-gradient",
     "-webkit-image-set",
+    "image-set",
+    "type",
 
     // deprecated gradients
-    "from",
+    // "from", now part of relative color syntax
     "to",
     "color-stop",
     "radial",
@@ -1265,6 +1335,25 @@
 
     // @font-face src
     "format",
+    "collection",
+    "embedded-opentype",
+    "opentype",
+    "svg",
+    "truetype",
+    "woff",
+    "woff2",
+    "tech",
+    "features-opentype",
+    "features-aat",
+    "features-graphite",
+    "color-COLRv0",
+    "color-COLRv1",
+    "color-SVG",
+    "color-sbix",
+    "color-CBDT",
+    "variations",
+    "palettes",
+    "incremental",
 
     // (-webkit-)filter
     "invert",
@@ -1284,7 +1373,53 @@
     "rgba",
     "hsl",
     "hsla",
+    "hwb",
+    "lab",
+    "oklab",
+    "lch",
+    "oklch",
+    // "color",
     "-internal-light-dark",
+
+    // color spaces
+    // "srgb", included in color-interpolation
+    // "rec2020", included in color-gamut
+    "srgb-linear",
+    "display-p3",
+    "a98-rgb",
+    "prophoto-rgb",
+    "xyz",
+    "xyz-d50",
+    "xyz-d65",
+    // hue interpolation methods
+    "shorter",
+    "longer",
+    "decreasing",
+    "increasing",
+
+    // For gradient interpolations in certain color spaces
+    "in",
+    // The color-mix function https://www.w3.org/TR/css-color-5/#color-mix
+    "color-mix",
+
+    // relative color syntax
+    "from",
+    // RCS channel keywords.
+    // r, g, b for rgb(), rgba() and color()
+    // x, y, z are already defined for "scale"
+    // h, s, l for hsl()
+    // h, w, b for hwb()
+    // l, a, b for lab() and oklab()
+    // l, c, h for lch() and oklch()
+    "r",
+    "g",
+    "b",
+    "h",
+    "s",
+    "l",
+    "w",
+    "a",
+    "c",
 
     // transform
     "matrix",
@@ -1319,6 +1454,9 @@
     "ray",
     "sides",
 
+    // coord-box
+    "stroke-box",
+
     // math functions
     // https://drafts.csswg.org/css-values-4/#math
     "calc",
@@ -1326,6 +1464,41 @@
     "min",
     "max",
     "clamp",
+
+    // Trigonometic functions
+    "sin",
+    "cos",
+    // "tan" - already declared for color value
+    "asin",
+    "atan",
+    "atan2",
+    "acos",
+
+    // Stepped value functions
+    "mod",
+    "rem",
+    "up",
+    "down",
+    "to-zero",
+
+    // Sign related functions
+    "sign",
+    "abs",
+
+    // Exponential functions
+    "pow",
+    "sqrt",
+    "hypot",
+    "log",
+    "exp",
+
+    //<calc-constant>
+    //https://drafts.csswg.org/css-values/#calc-syntax
+    "infinity",
+    "-infinity",
+    "nan",
+    "pi",
+    "e",
 
     // scroll-snap-type
     // none
@@ -1347,12 +1520,26 @@
     // normal
     // always
 
-
     // containment
     // paint
     "style",
     // layout
     "size",
+    "block-size",
+    "inline-size",
+
+    // @container
+    // size
+    // style
+    "scroll-state",
+    // top
+    // left
+    // right
+    // bottom
+    "inset-block-start",
+    "inset-block-end",
+    "inset-inline-start",
+    "inset-inline-end",
 
     // grid auto-repeat
     "auto-fill",
@@ -1409,18 +1596,21 @@
 
     // (prefers-reduced-motion:) media feature
     // (prefers-reduced-data:) media feature
+    // (prefers-reduced-transparency:) media feature
     "reduce",
 
     // (forced-colors:) media feature
     // none
     "active",
 
+    // forced-color-adjust
+    // auto
+    // none
+    "preserve-parent-color",
+
     // (navigation-controls) media feature
     // none
     "back-button",
-
-    // content-visibility
-    "hidden-matchable",
 
     // -internal-empty-line-height
     // none
@@ -1430,16 +1620,170 @@
     // https://drafts.csswg.org/css-conditional-4/#typedef-supports-selector-fn
     "selector",
 
-    // (screen-spanning) media feature
-    // none
-    "single-fold-vertical",
-    "single-fold-horizontal",
+    // (device-posture) media feature
+    "continuous",
+    "folded",
 
     // scrollbar-gutter
     // auto
     "stable",
-    // always
+    "both-edges",
+
+    // (prefers-contrast:) media feature
+    // no-preference
+    "more",
+    "less",
+    "custom",
+
+    // @counter-style system
+    "cyclic",
+    // fixed,
+    "symbolic",
+    // alphabetic,
+    "numeric",
+    "additive",
+    "extends",
+    // Predefined counter styles that don't use the above systems
+    "-internal-simp-chinese-informal",
+    "-internal-simp-chinese-formal",
+    "-internal-trad-chinese-informal",
+    "-internal-trad-chinese-formal",
+    "-internal-korean-hangul-formal",
+    "-internal-korean-hanja-informal",
+    "-internal-korean-hanja-formal",
+    "-internal-hebrew",
+    "-internal-lower-armenian",
+    "-internal-upper-armenian",
+    "-internal-ethiopic-numeric",
+
+    // @counter-style range
+    // infinite,
+
+    // @counter-style speak-as
+    // auto
+    "bullets",
+    "numbers",
+    "words",
+
+    // ([video]-dynamic-range) media feature, and dynamic-range-limit property
+    "standard",
+    "high",
+    "constrained-high",
+    "dynamic-range-limit-mix",
+
+    // Layered @import rule
+    "layer",
+
+    // supports in import rule: @import supports()
+    "supports",
+
+    // color-contrast()
+    "color-contrast",
+    "vs",
+    "AA",
+    "AA-large",
+    "AAA",
+    "AAA-large",
+
+    // initial-letter
+    "drop",
+    "raise",
+
+    // basic-shape functions.
+    "xywh",
+
+    // anchor positioning
+    "anchor",
+    // auto,
+    "auto-same",
+    // top,
+    // left,
+    // right,
+    // bottom,
+    // start,
+    // end,
+    // self-start,
+    // self-end,
+    // center,
+    "anchor-size",
+    "width",
+    "height",
+    // block,
+    // inline,
+    "self-block",
+    "self-inline",
+
+    // anchor-default
+    "implicit",
+    // none,
+
+    // position-fallback-bounds
+    // normal,
+
+    // animation-[end-]delay
+    // contain
+    // cover
+    "entry",
+    "exit",
+    "entry-crossing",
+    "exit-crossing",
+
+    // scroll()
+    "root",
+    "nearest",
+    "self",
+
+    // transition-behavior
+    "allow-discrete",
+
+    // (inverted-colors:) media feature
+    "inverted",
+    // none
+
+    // @view-transition navigation
+    // auto
+    // none
+
+    // container-type
+    // inline-size,
+    // normal,
+    // size,
+    // scroll-state,
+
+    // (scripting:) media feature
+    "enabled",
+    "initial-only",
+    // none
+
+    // inset-area
+    // none,
+    // all,
+    // center,
+    // start,
+    // end,
+    // self-start,
+    // self-end,
+    // top,
+    // bottom,
+    // left,
+    // right,
+    "x-start",
+    "x-end",
+    "y-start",
+    "y-end",
+    "x-self-start",
+    "x-self-end",
+    "y-self-start",
+    "y-self-end",
+
+    // resize
+    // none
     // both
-    "force",
+    // horizontal
+    // vertical
+    // block
+    // inline
+    // auto (legacy version of -internal-textarea-auto)
+    "-internal-textarea-auto",
   ],
 }

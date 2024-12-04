@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,8 +7,8 @@
 #include "components/storage_monitor/transient_device_ids.h"
 
 #include "base/check.h"
-#include "base/guid.h"
-#include "base/stl_util.h"
+#include "base/containers/contains.h"
+#include "base/uuid.h"
 #include "components/storage_monitor/storage_info.h"
 
 namespace storage_monitor {
@@ -24,7 +24,7 @@ std::string TransientDeviceIds::GetTransientIdForDeviceId(
   if (!base::Contains(device_id_map_, device_id)) {
     std::string transient_id;
     do {
-      transient_id = base::GenerateGUID();
+      transient_id = base::Uuid::GenerateRandomV4().AsLowercaseString();
     } while (base::Contains(transient_id_map_, transient_id));
 
     device_id_map_[device_id] = transient_id;

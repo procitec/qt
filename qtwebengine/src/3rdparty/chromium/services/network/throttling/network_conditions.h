@@ -1,15 +1,11 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef SERVICES_NETWORK_THROTTLING_NETWORK_CONDITIONS_H_
 #define SERVICES_NETWORK_THROTTLING_NETWORK_CONDITIONS_H_
 
-#include <string>
-#include <vector>
-
 #include "base/component_export.h"
-#include "base/macros.h"
 
 namespace network {
 
@@ -17,6 +13,10 @@ namespace network {
 class COMPONENT_EXPORT(NETWORK_SERVICE) NetworkConditions {
  public:
   NetworkConditions();
+
+  NetworkConditions(const NetworkConditions&);
+  NetworkConditions& operator=(const NetworkConditions&);
+
   ~NetworkConditions();
 
   explicit NetworkConditions(bool offline);
@@ -28,17 +28,17 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) NetworkConditions {
   bool IsThrottling() const;
 
   bool offline() const { return offline_; }
+
+  // These are 0 if the corresponding throttle is disabled, >0 otherwise.
   double latency() const { return latency_; }
   double download_throughput() const { return download_throughput_; }
   double upload_throughput() const { return upload_throughput_; }
 
  private:
-  const bool offline_;
-  const double latency_;
-  const double download_throughput_;
-  const double upload_throughput_;
-
-  DISALLOW_COPY_AND_ASSIGN(NetworkConditions);
+  bool offline_;
+  double latency_;
+  double download_throughput_;
+  double upload_throughput_;
 };
 
 }  // namespace network

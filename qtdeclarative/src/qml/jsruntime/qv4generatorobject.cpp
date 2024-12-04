@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2018 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtQml module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2018 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include <qv4generatorobject_p.h>
 #include <qv4symbol_p.h>
@@ -49,9 +13,9 @@ DEFINE_OBJECT_VTABLE(GeneratorFunctionCtor);
 DEFINE_OBJECT_VTABLE(GeneratorFunction);
 DEFINE_OBJECT_VTABLE(GeneratorObject);
 
-void Heap::GeneratorFunctionCtor::init(QV4::ExecutionContext *scope)
+void Heap::GeneratorFunctionCtor::init(QV4::ExecutionEngine *engine)
 {
-    Heap::FunctionObject::init(scope, QStringLiteral("GeneratorFunction"));
+    Heap::FunctionObject::init(engine, QStringLiteral("GeneratorFunction"));
 }
 
 ReturnedValue GeneratorFunctionCtor::virtualCallAsConstructor(const FunctionObject *f, const Value *argv, int argc, const Value *newTarget)
@@ -62,7 +26,7 @@ ReturnedValue GeneratorFunctionCtor::virtualCallAsConstructor(const FunctionObje
     if (engine->hasException)
         return Encode::undefined();
 
-    Function *vmf = compilationUnit->linkToEngine(engine);
+    Function *vmf = compilationUnit->rootFunction();
     ExecutionContext *global = engine->scriptContext();
     ReturnedValue o = Encode(GeneratorFunction::create(global, vmf));
 
@@ -98,29 +62,32 @@ ReturnedValue GeneratorFunction::virtualCall(const FunctionObject *f, const Valu
     ExecutionEngine *engine = gf->engine();
 
     Scope scope(gf);
-    Scoped<GeneratorObject> g(scope, engine->memoryManager->allocManaged<GeneratorObject>(sizeof(GeneratorObject::Data), engine->classes[EngineBase::Class_GeneratorObject]));
+    Scoped<GeneratorObject> g(scope, engine->memoryManager->allocManaged<GeneratorObject>(engine->classes[EngineBase::Class_GeneratorObject]));
     g->setPrototypeOf(ScopedObject(scope, gf->get(scope.engine->id_prototype())));
 
     // We need to set up a separate JSFrame for the generator, as it's being re-entered
     Heap::GeneratorObject *gp = g->d();
     gp->values.set(engine, engine->newArrayObject(argc));
-    gp->jsFrame.set(engine, engine->newArrayObject(CppStackFrame::requiredJSStackFrameSize(function)));
+    gp->jsFrame.set(engine, engine->newArrayObject(
+                        JSTypesStackFrame::requiredJSStackFrameSize(function)));
 
     // copy original arguments
     for (int i = 0; i < argc; i++)
         gp->values->arrayData->setArrayData(engine, i, argv[i]);
 
-    gp->cppFrame.init(engine, function, gp->values->arrayData->values.values, argc);
+    gp->cppFrame.init(function, gp->values->arrayData->values.values, argc);
     gp->cppFrame.setupJSFrame(gp->jsFrame->arrayData->values.values, *gf, gf->scope(),
                               thisObject ? *thisObject : Value::undefinedValue(),
                               Value::undefinedValue());
 
-    gp->cppFrame.push();
+    gp->cppFrame.push(engine);
 
+    CHECK_STACK_LIMITS(scope.engine)
     Moth::VME::interpret(&gp->cppFrame, engine, function->codeData);
+
     gp->state = GeneratorState::SuspendedStart;
 
-    gp->cppFrame.pop();
+    gp->cppFrame.pop(engine);
     return g->asReturnedValue();
 }
 
@@ -166,7 +133,7 @@ ReturnedValue GeneratorPrototype::method_next(const FunctionObject *f, const Val
     if (gp->state == GeneratorState::Completed)
         return IteratorPrototype::createIterResultObject(engine, Value::undefinedValue(), true);
 
-    return g->resume(engine, argc ? argv[0] : Value::undefinedValue());
+    return g->resume(engine, argc ? argv[0] : Value::undefinedValue(), {});
 }
 
 ReturnedValue GeneratorPrototype::method_return(const FunctionObject *f, const Value *thisObject, const Value *argv, int argc)
@@ -184,11 +151,7 @@ ReturnedValue GeneratorPrototype::method_return(const FunctionObject *f, const V
     if (gp->state == GeneratorState::Completed)
         return IteratorPrototype::createIterResultObject(engine, argc ? argv[0] : Value::undefinedValue(), true);
 
-    // the bytecode interpreter interprets an exception with empty value as
-    // a yield called with return()
-    engine->throwError(Value::emptyValue());
-
-    return g->resume(engine, argc ? argv[0]: Value::undefinedValue());
+    return g->resume(engine, argc ? argv[0] : Value::undefinedValue(), Value::emptyValue());
 }
 
 ReturnedValue GeneratorPrototype::method_throw(const FunctionObject *f, const Value *thisObject, const Value *argv, int argc)
@@ -200,39 +163,52 @@ ReturnedValue GeneratorPrototype::method_throw(const FunctionObject *f, const Va
 
     Heap::GeneratorObject *gp = g->d();
 
-    engine->throwError(argc ? argv[0]: Value::undefinedValue());
 
     if (gp->state == GeneratorState::SuspendedStart || gp->state == GeneratorState::Completed) {
         gp->state = GeneratorState::Completed;
+        engine->throwError(argc ? argv[0] : Value::undefinedValue());
         return Encode::undefined();
     }
 
-    return g->resume(engine, Value::undefinedValue());
+    return g->resume(engine, Value::undefinedValue(), argc ? argv[0] : Value::undefinedValue());
 }
 
-ReturnedValue GeneratorObject::resume(ExecutionEngine *engine, const Value &arg) const
+ReturnedValue GeneratorObject::resume(ExecutionEngine *engine, const Value &arg, std::optional<Value> exception) const
 {
     Heap::GeneratorObject *gp = d();
     gp->state = GeneratorState::Executing;
-    gp->cppFrame.parent = engine->currentStackFrame;
+    gp->cppFrame.setParentFrame(engine->currentStackFrame);
     engine->currentStackFrame = &gp->cppFrame;
 
-    Q_ASSERT(gp->cppFrame.yield != nullptr);
-    const char *code = gp->cppFrame.yield;
-    gp->cppFrame.yield = nullptr;
+    Q_ASSERT(gp->cppFrame.yield() != nullptr);
+    const char *code = gp->cppFrame.yield();
+    gp->cppFrame.setYield(nullptr);
     gp->cppFrame.jsFrame->accumulator = arg;
-    gp->cppFrame.yieldIsIterator = false;
+    gp->cppFrame.setYieldIsIterator(false);
 
     Scope scope(engine);
+
+    CHECK_STACK_LIMITS(scope.engine)
+
+    // A value to be thrown will be passed in by `method_throw` or
+    // `method_return` when they need to resume the generator.
+    // For `method_throw` this will be the value that was passed to
+    // `throw` itself.
+    // For `method_return` this will be an `emptyValue`.
+    // The empty value will be used as a signal that `return` was
+    // called and managed in the execution of a `Resume` instruction
+    // during `interpret`.
+    if (exception)
+        engine->throwError(*exception);
     ScopedValue result(scope, Moth::VME::interpret(&gp->cppFrame, engine, code));
 
-    engine->currentStackFrame = gp->cppFrame.parent;
+    engine->currentStackFrame = gp->cppFrame.parentFrame();
 
-    bool done = (gp->cppFrame.yield == nullptr);
+    bool done = (gp->cppFrame.yield() == nullptr);
     gp->state = done ? GeneratorState::Completed : GeneratorState::SuspendedYield;
     if (engine->hasException)
         return Encode::undefined();
-    if (gp->cppFrame.yieldIsIterator)
+    if (gp->cppFrame.yieldIsIterator())
         return result->asReturnedValue();
     return IteratorPrototype::createIterResultObject(engine, result, done);
 }

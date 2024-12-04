@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2017 Klaralvdalens Datakonsult AB (KDAB).
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt3D module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2017 Klaralvdalens Datakonsult AB (KDAB).
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qdiffusespecularmaterial.h"
 #include "qdiffusespecularmaterial_p.h"
@@ -60,9 +24,9 @@
 
 QT_BEGIN_NAMESPACE
 
-using namespace Qt3DRender;
-
 namespace Qt3DExtras {
+
+using namespace Qt3DRender;
 
 QDiffuseSpecularMaterialPrivate::QDiffuseSpecularMaterialPrivate()
     : QMaterialPrivate()
@@ -131,7 +95,7 @@ void QDiffuseSpecularMaterialPrivate::init()
                                                   QStringLiteral("specular"),
                                                   QStringLiteral("normal")});
 
-    m_rhiShader->setVertexShaderCode(QShaderProgram::loadSource(QUrl(QStringLiteral("qrc:/shaders/rhi/default.vert"))));
+    m_rhiShader->setVertexShaderCode(QShaderProgram::loadSource(QUrl(QStringLiteral("qrc:/shaders/rhi/default_pos_norm.vert"))));
     m_rhiShaderBuilder->setParent(q);
     m_rhiShaderBuilder->setShaderProgram(m_rhiShader);
     m_rhiShaderBuilder->setFragmentShaderGraph(QUrl(QStringLiteral("qrc:/shaders/graphs/phong.frag.json")));
@@ -267,7 +231,7 @@ void QDiffuseSpecularMaterialPrivate::handleTextureScaleChanged(const QVariant &
     of the phong lighting effect.
     \since 5.10
     \inqmlmodule Qt3D.Extras
-    \instantiates Qt3DExtras::QDiffuseSpecularMaterial
+    \nativetype Qt3DExtras::QDiffuseSpecularMaterial
 
     The phong lighting effect is based on the combination of 3 lighting
     components ambient, diffuse and specular. The relative strengths of these
@@ -307,7 +271,7 @@ QDiffuseSpecularMaterial::~QDiffuseSpecularMaterial()
 }
 
 /*!
-    \property QDiffuseSpecularMaterial::ambient
+    \property Qt3DExtras::QDiffuseSpecularMaterial::ambient
 
     Holds the ambient color that is emitted by an object without any other
     light source.
@@ -325,7 +289,7 @@ QColor QDiffuseSpecularMaterial::ambient() const
 }
 
 /*!
-    \property QDiffuseSpecularMaterial::diffuse
+    \property Qt3DExtras::QDiffuseSpecularMaterial::diffuse
 
     Holds the diffuse color of the material that is emitted for rough surface
     reflections with the lights. This can be either a plain color value or a
@@ -345,7 +309,7 @@ QVariant QDiffuseSpecularMaterial::diffuse() const
 }
 
 /*!
-    \property QDiffuseSpecularMaterial::specular
+    \property Qt3DExtras::QDiffuseSpecularMaterial::specular
 
     Holds the specular color of the material that is emitted for shiny surface
     reflections with the lights. This can be either a plain color value or a
@@ -365,7 +329,7 @@ QVariant QDiffuseSpecularMaterial::specular() const
 }
 
 /*!
-    \property QDiffuseSpecularMaterial::shininess
+    \property Qt3DExtras::QDiffuseSpecularMaterial::shininess
 
     Holds the shininess exponent. Higher values of shininess result in
     a smaller and brighter highlight.
@@ -387,7 +351,7 @@ float QDiffuseSpecularMaterial::shininess() const
 }
 
 /*!
-    \property QDiffuseSpecularMaterial::normal
+    \property Qt3DExtras::QDiffuseSpecularMaterial::normal
 
     Holds the current normal map texture of the material. This can only be a
     texture, otherwise it is ignored. By default this map is not set.
@@ -405,7 +369,7 @@ QVariant QDiffuseSpecularMaterial::normal() const
 }
 
 /*!
-    \property QDiffuseSpecularMaterial::textureScale
+    \property Qt3DExtras::QDiffuseSpecularMaterial::textureScale
 
     Holds the current texture scale. It is applied as a multiplier to texture
     coordinates at render time. Defaults to 1.0.
@@ -431,7 +395,7 @@ float QDiffuseSpecularMaterial::textureScale() const
 }
 
 /*!
-    \property QDiffuseSpecularMaterial::alphaBlending
+    \property Qt3DExtras::QDiffuseSpecularMaterial::alphaBlending
 
     Indicates if the alpha information coming from the diffuse property will
     be taken into account during rendering. Defaults to false.
@@ -539,3 +503,5 @@ void QDiffuseSpecularMaterial::setAlphaBlendingEnabled(bool enabled)
 } // namespace Qt3DExtras
 
 QT_END_NAMESPACE
+
+#include "moc_qdiffusespecularmaterial.cpp"

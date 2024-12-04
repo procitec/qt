@@ -429,6 +429,24 @@ check_gcc_machine_options() {
   fi
 }
 
+check_neon_sve_bridge_compiles() {
+  if enabled sve; then
+    check_cc -march=armv8.2-a+dotprod+i8mm+sve <<EOF
+#ifndef __ARM_NEON_SVE_BRIDGE
+#error 1
+#endif
+#include <arm_sve.h>
+#include <arm_neon_sve_bridge.h>
+EOF
+    compile_result=$?
+    if [ ${compile_result} -ne 0 ]; then
+      log_echo "  disabling sve: arm_neon_sve_bridge.h not supported by compiler"
+      disable_feature sve
+      RTCD_OPTIONS="${RTCD_OPTIONS}--disable-sve "
+    fi
+  fi
+}
+
 check_gcc_avx512_compiles() {
   if disabled gcc; then
     return
@@ -447,6 +465,17 @@ EOF
     disable_feature avx512
     RTCD_OPTIONS="${RTCD_OPTIONS}--disable-avx512 "
   fi
+}
+
+check_inline_asm() {
+  log check_inline_asm "$@"
+  name="$1"
+  code="$2"
+  shift 2
+  disable_feature $name
+  check_cc "$@" <<EOF && enable_feature $name
+void foo(void) { __asm__ volatile($code); }
+EOF
 }
 
 write_common_config_banner() {
@@ -510,6 +539,7 @@ AS_SFX    = ${AS_SFX:-.asm}
 EXE_SFX   = ${EXE_SFX}
 VCPROJ_SFX = ${VCPROJ_SFX}
 RTCD_OPTIONS = ${RTCD_OPTIONS}
+LIBWEBM_CXXFLAGS = ${LIBWEBM_CXXFLAGS}
 LIBYUV_CXXFLAGS = ${LIBYUV_CXXFLAGS}
 EOF
 
@@ -766,6 +796,12 @@ process_common_toolchain() {
       *mips32el*)
         tgt_isa=mips32
         ;;
+      loongarch32*)
+        tgt_isa=loongarch32
+        ;;
+      loongarch64*)
+        tgt_isa=loongarch64
+        ;;
     esac
 
     # detect tgt_os
@@ -773,6 +809,10 @@ process_common_toolchain() {
       *darwin1[0-9]*)
         tgt_isa=x86_64
         tgt_os=`echo $gcctarget | sed 's/.*\(darwin1[0-9]\).*/\1/'`
+        ;;
+      *darwin2[0-3]*)
+        tgt_isa=`uname -m`
+        tgt_os=`echo $gcctarget | sed 's/.*\(darwin2[0-9]\).*/\1/'`
         ;;
       x86_64*mingw32*)
         tgt_os=win64
@@ -821,6 +861,10 @@ process_common_toolchain() {
 
   # Enable the architecture family
   case ${tgt_isa} in
+    arm64 | armv8)
+      enable_feature arm
+      enable_feature aarch64
+      ;;
     arm*)
       enable_feature arm
       ;;
@@ -830,10 +874,21 @@ process_common_toolchain() {
     ppc*)
       enable_feature ppc
       ;;
+    loongarch*)
+      soft_enable lsx
+      soft_enable lasx
+      enable_feature loongarch
+      ;;
   esac
 
-  # PIC is probably what we want when building shared libs
+  # Position independent code (PIC) is probably what we want when building
+  # shared libs or position independent executable (PIE) targets.
   enabled shared && soft_enable pic
+  check_cpp << EOF || soft_enable pic
+#if !(__pie__ || __PIE__)
+#error Neither __pie__ or __PIE__ are set
+#endif
+EOF
 
   # Minimum iOS version for all target platforms (darwin and iphonesimulator).
   # Shared library framework builds are only possible on iOS 8 and later.
@@ -848,7 +903,7 @@ process_common_toolchain() {
   # Handle darwin variants. Newer SDKs allow targeting older
   # platforms, so use the newest one available.
   case ${toolchain} in
-    arm*-darwin*)
+    arm*-darwin-*)
       add_cflags "-miphoneos-version-min=${IOS_VERSION_MIN}"
       iphoneos_sdk_dir="$(show_darwin_sdk_path iphoneos)"
       if [ -d "${iphoneos_sdk_dir}" ]; then
@@ -856,7 +911,7 @@ process_common_toolchain() {
         add_ldflags "-isysroot ${iphoneos_sdk_dir}"
       fi
       ;;
-    x86*-darwin*)
+    *-darwin*)
       osx_sdk_dir="$(show_darwin_sdk_path macosx)"
       if [ -d "${osx_sdk_dir}" ]; then
         add_cflags  "-isysroot ${osx_sdk_dir}"
@@ -914,6 +969,10 @@ process_common_toolchain() {
       add_cflags  "-mmacosx-version-min=10.15"
       add_ldflags "-mmacosx-version-min=10.15"
       ;;
+    *-darwin2[0-3]-*)
+      add_cflags  "-arch ${toolchain%%-*}"
+      add_ldflags "-arch ${toolchain%%-*}"
+      ;;
     *-iphonesimulator-*)
       add_cflags  "-miphoneos-version-min=${IOS_VERSION_MIN}"
       add_ldflags "-miphoneos-version-min=${IOS_VERSION_MIN}"
@@ -935,13 +994,27 @@ process_common_toolchain() {
       ;;
   esac
 
-  # Process ARM architecture variants
+  # Process architecture variants
   case ${toolchain} in
     arm*)
-      # on arm, isa versions are supersets
+      soft_enable runtime_cpu_detect
+      # Arm ISA extensions are treated as supersets.
       case ${tgt_isa} in
         arm64|armv8)
-          soft_enable neon
+          for ext in ${ARCH_EXT_LIST_AARCH64}; do
+            # Disable higher order extensions to simplify dependencies.
+            if [ "$disable_exts" = "yes" ]; then
+              if ! disabled $ext; then
+                RTCD_OPTIONS="${RTCD_OPTIONS}--disable-${ext} "
+                disable_feature $ext
+              fi
+            elif disabled $ext; then
+              disable_exts="yes"
+            else
+              soft_enable $ext
+            fi
+          done
+          check_neon_sve_bridge_compiles
           ;;
         armv7|armv7s)
           soft_enable neon
@@ -1036,8 +1109,11 @@ EOF
                     enable_feature win_arm64_neon_h_workaround
               else
                 # If a probe is not possible, assume this is the pure Windows
-                # SDK and so the workaround is necessary.
-                enable_feature win_arm64_neon_h_workaround
+                # SDK and so the workaround is necessary when using Visual
+                # Studio < 2019.
+                if [ ${tgt_cc##vs} -lt 16 ]; then
+                  enable_feature win_arm64_neon_h_workaround
+                fi
               fi
             fi
           fi
@@ -1087,7 +1163,7 @@ EOF
           soft_enable unit_tests
           ;;
 
-        darwin*)
+        darwin)
           if ! enabled external_build; then
             XCRUN_FIND="xcrun --sdk iphoneos --find"
             CXX="$(${XCRUN_FIND} clang++)"
@@ -1288,10 +1364,6 @@ EOF
           enabled optimizations && disabled gprof && check_add_cflags -fomit-frame-pointer
           ;;
         vs*)
-          # When building with Microsoft Visual Studio the assembler is
-          # invoked directly. Checking at configure time is unnecessary.
-          # Skip the check by setting AS arbitrarily
-          AS=msvs
           msvs_arch_dir=x86-msvs
           case ${tgt_cc##vs} in
             14)
@@ -1415,6 +1487,15 @@ EOF
           ;;
       esac
       ;;
+    loongarch*)
+      link_with_cc=gcc
+      setup_gnu_toolchain
+
+      enabled lsx && check_inline_asm lsx '"vadd.b $vr0, $vr1, $vr1"'
+      enabled lsx && soft_enable runtime_cpu_detect
+      enabled lasx && check_inline_asm lasx '"xvadd.b $xr0, $xr1, $xr1"'
+      enabled lasx && soft_enable runtime_cpu_detect
+      ;;
     *-gcc|generic-gnu)
       link_with_cc=gcc
       enable_feature gcc
@@ -1476,7 +1557,7 @@ EOF
 
     # Try to find which inline keywords are supported
     check_cc <<EOF && INLINE="inline"
-static inline function() {}
+static inline int function(void) {}
 EOF
 
   # Almost every platform uses pthreads.
@@ -1512,6 +1593,22 @@ EOF
         if enabled mmi; then
           echo "mmi optimizations are available only for little endian platforms"
           disable_feature mmi
+        fi
+      fi
+      ;;
+  esac
+
+  # only for LOONGARCH platforms
+  case ${toolchain} in
+    loongarch*)
+      if enabled big_endian; then
+        if enabled lsx; then
+          echo "lsx optimizations are available only for little endian platforms"
+          disable_feature lsx
+        fi
+        if enabled lasx; then
+          echo "lasx optimizations are available only for little endian platforms"
+          disable_feature lasx
         fi
       fi
       ;;

@@ -22,7 +22,7 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_SVG_SVG_TEXT_POSITIONING_ELEMENT_H_
 
 #include "third_party/blink/renderer/core/svg/svg_text_content_element.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 
 namespace blink {
 
@@ -34,18 +34,27 @@ class SVGTextPositioningElement : public SVGTextContentElement {
 
  public:
   SVGAnimatedLengthList* x() { return x_.Get(); }
+  const SVGAnimatedLengthList* x() const { return x_.Get(); }
   SVGAnimatedLengthList* y() { return y_.Get(); }
+  const SVGAnimatedLengthList* y() const { return y_.Get(); }
   SVGAnimatedLengthList* dx() { return dx_.Get(); }
+  const SVGAnimatedLengthList* dx() const { return dx_.Get(); }
   SVGAnimatedLengthList* dy() { return dy_.Get(); }
+  const SVGAnimatedLengthList* dy() const { return dy_.Get(); }
   SVGAnimatedNumberList* rotate() { return rotate_.Get(); }
+  const SVGAnimatedNumberList* rotate() const { return rotate_.Get(); }
 
   void Trace(Visitor*) const override;
 
  protected:
   SVGTextPositioningElement(const QualifiedName&, Document&);
 
-  void SvgAttributeChanged(const QualifiedName&) final;
+  void SvgAttributeChanged(const SvgAttributeChangedParams&) final;
   bool IsTextPositioning() const final { return true; }
+
+  SVGAnimatedPropertyBase* PropertyFromAttribute(
+      const QualifiedName& attribute_name) const override;
+  void SynchronizeAllSVGAttributes() const override;
 
   Member<SVGAnimatedLengthList> x_;
   Member<SVGAnimatedLengthList> y_;

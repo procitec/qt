@@ -1,7 +1,7 @@
 ﻿// © 2016 and later: Unicode, Inc. and others.
-// License & terms of use: http://www.unicode.org/copyright.html#License
+// License & terms of use: http://www.unicode.org/copyright.html
+// Generated using tools/cldr/cldr-to-icu/build-icu-data.xml
 kea{
-    Version{"37"}
     durationUnits{
         hm{"h:mm"}
         hms{"h:mm:ss"}
@@ -45,6 +45,10 @@ kea{
                 dnam{"ákri"}
                 other{"{0} ákri"}
             }
+            dunam{
+                dnam{"dunam"}
+                other{"{0} dunam"}
+            }
             hectare{
                 dnam{"ektar"}
                 other{"{0} ektar"}
@@ -84,7 +88,41 @@ kea{
             }
         }
         compound{
+            10p-1{"desi{0}"}
+            10p-12{"piko{0}"}
+            10p-15{"femto{0}"}
+            10p-18{"atto{0}"}
+            10p-2{"senti{0}"}
+            10p-21{"zepto{0}"}
+            10p-24{"yocto{0}"}
+            10p-3{"mili{0}"}
+            10p-6{"mikro{0}"}
+            10p-9{"nano{0}"}
+            10p1{"deka{0}"}
+            10p12{"tera{0}"}
+            10p15{"peta{0}"}
+            10p18{"exa{0}"}
+            10p2{"ekto{0}"}
+            10p21{"zetta{0}"}
+            10p24{"yotta{0}"}
+            10p3{"kilo{0}"}
+            10p6{"mega{0}"}
+            10p9{"jiga{0}"}
             per{"{0} pur {1}"}
+            power2{
+                other{
+                    _{
+                        _{"{0} kuadradu"}
+                    }
+                }
+            }
+            power3{
+                other{
+                    _{
+                        _{"{0} kúbiku"}
+                    }
+                }
+            }
             times{"{0}-{1}"}
         }
         concentr{
@@ -92,13 +130,17 @@ kea{
                 dnam{"kilati"}
                 other{"{0} kilati"}
             }
-            milligram-per-deciliter{
+            milligram-ofglucose-per-deciliter{
                 dnam{"miligrama pur desilitru"}
                 other{"{0} miligrama pur desilitru"}
             }
             millimole-per-liter{
                 dnam{"milimol pur litru"}
                 other{"{0} milimol pur litru"}
+            }
+            mole{
+                dnam{"mol"}
+                other{"{0} mol"}
             }
             percent{
                 dnam{"pursentu"}
@@ -131,8 +173,8 @@ kea{
                 other{"{0} milha pur galãu"}
             }
             mile-per-gallon-imperial{
-                dnam{"milha pur galãu imperial"}
-                other{"{0} milha pur galãu imperial"}
+                dnam{"milha pur galãu britániku"}
+                other{"{0} milha pur galãu britániku"}
             }
         }
         coordinate{
@@ -255,9 +297,11 @@ kea{
                 other{"{0} miliamper"}
             }
             ohm{
+                dnam{"ohm"}
                 other{"{0} ohm"}
             }
             volt{
+                dnam{"volt"}
                 other{"{0} volt"}
             }
         }
@@ -279,6 +323,7 @@ kea{
                 other{"{0} Kaloria"}
             }
             joule{
+                dnam{"J"}
                 other{"{0} joule"}
             }
             kilocalorie{
@@ -327,6 +372,10 @@ kea{
             }
         }
         graphics{
+            dot{
+                dnam{"pontu"}
+                other{"{0} pontu"}
+            }
             dot-per-centimeter{
                 dnam{"pontu pur sentímeru"}
                 other{"{0} pontu pur sentímetru"}
@@ -369,6 +418,10 @@ kea{
             decimeter{
                 dnam{"desímetru"}
                 other{"{0} desímetru"}
+            }
+            earth-radius{
+                dnam{"raiu di Tera"}
+                other{"{0} raiu di Tera"}
             }
             foot{
                 dnam{"pe"}
@@ -426,10 +479,6 @@ kea{
                 dnam{"pikómetru"}
                 other{"{0} pikómetru"}
             }
-            point{
-                dnam{"pontu"}
-                other{"{0} pontu"}
-            }
             solar-radius{
                 dnam{"raiu solar"}
                 other{"{0} raiu solar"}
@@ -440,6 +489,14 @@ kea{
             }
         }
         light{
+            candela{
+                dnam{"kandela"}
+                other{"{0} kandela"}
+            }
+            lumen{
+                dnam{"lumen"}
+                other{"{0} lumen"}
+            }
             lux{
                 dnam{"lux"}
                 other{"{0} lux"}
@@ -462,6 +519,10 @@ kea{
                 dnam{"masa di Tera"}
                 other{"{0} masa di Tera"}
             }
+            grain{
+                dnam{"grãu"}
+                other{"{0} grãu"}
+            }
             gram{
                 dnam{"grama"}
                 other{"{0} grama"}
@@ -471,10 +532,6 @@ kea{
                 dnam{"kilograma"}
                 other{"{0} kilograma"}
                 per{"{0} pur kilograma"}
-            }
-            metric-ton{
-                dnam{"tonelada métriku"}
-                other{"{0} tonelada métriku"}
             }
             microgram{
                 dnam{"mikrograma"}
@@ -505,6 +562,10 @@ kea{
             ton{
                 dnam{"tonelada"}
                 other{"{0} tonelada"}
+            }
+            tonne{
+                dnam{"tonelada métriku"}
+                other{"{0} tonelada métriku"}
             }
         }
         power{
@@ -602,6 +663,10 @@ kea{
                 dnam{"grau Fahrenheit"}
                 other{"{0} grau Fahrenheit"}
             }
+            generic{
+                dnam{"°"}
+                other{"{0}°"}
+            }
             kelvin{
                 dnam{"kelvin"}
                 other{"{0} kelvin"}
@@ -672,13 +737,29 @@ kea{
                 dnam{"desilitru"}
                 other{"{0} desilitru"}
             }
+            dessert-spoon{
+                dnam{"kudjer di subrimeza"}
+                other{"{0} kudjer di subrimeza"}
+            }
+            dessert-spoon-imperial{
+                dnam{"kudjer di subrimeza britániku"}
+                other{"{0} kudjer di subrimeza britániku"}
+            }
+            dram{
+                dnam{"drakma fluídu"}
+                other{"{0} drakma fluídu"}
+            }
+            drop{
+                dnam{"gota"}
+                other{"{0} gota"}
+            }
             fluid-ounce{
                 dnam{"ónsa fluídu"}
                 other{"{0} ónsa fluídu"}
             }
             fluid-ounce-imperial{
-                dnam{"ónsa fluídu imperial"}
-                other{"{0} ónsa fluídu imperial"}
+                dnam{"ónsa fluídu britániku"}
+                other{"{0} ónsa fluídu britániku"}
             }
             gallon{
                 dnam{"galãu"}
@@ -686,13 +767,17 @@ kea{
                 per{"{0} pur galãu"}
             }
             gallon-imperial{
-                dnam{"galãu imperial"}
-                other{"{0} galãu imperial"}
-                per{"{0} pur galãu imperial"}
+                dnam{"galãu britániku"}
+                other{"{0} galãu britániku"}
+                per{"{0} pur galãu britániku"}
             }
             hectoliter{
                 dnam{"ektolitru"}
                 other{"{0} ektolitru"}
+            }
+            jigger{
+                dnam{"kopu di xot"}
+                other{"{0} kopu di xot"}
             }
             liter{
                 dnam{"litru"}
@@ -707,6 +792,10 @@ kea{
                 dnam{"mililitru"}
                 other{"{0} mililitru"}
             }
+            pinch{
+                dnam{"pitada"}
+                other{"{0} pitada"}
+            }
             pint{
                 dnam{"pint"}
                 other{"{0} pint"}
@@ -719,6 +808,10 @@ kea{
                 dnam{"kuart"}
                 other{"{0} kuart"}
             }
+            quart-imperial{
+                dnam{"kuart britániku"}
+                other{"{0} kuart britániku"}
+            }
             tablespoon{
                 dnam{"kudjer di sopa"}
                 other{"{0} kudjer di sopa"}
@@ -730,6 +823,50 @@ kea{
         }
     }
     unitsNarrow{
+        compound{
+            10p-1{"d{0}"}
+            10p-12{"p{0}"}
+            10p-15{"f{0}"}
+            10p-18{"a{0}"}
+            10p-2{"c{0}"}
+            10p-21{"z{0}"}
+            10p-24{"y{0}"}
+            10p-3{"m{0}"}
+            10p-6{"μ{0}"}
+            10p-9{"n{0}"}
+            10p1{"da{0}"}
+            10p12{"T{0}"}
+            10p15{"P{0}"}
+            10p18{"E{0}"}
+            10p2{"h{0}"}
+            10p21{"Z{0}"}
+            10p24{"Y{0}"}
+            10p3{"k{0}"}
+            10p6{"M{0}"}
+            10p9{"G{0}"}
+            per{"{0}/{1}"}
+            power2{
+                other{
+                    _{
+                        _{"{0}²"}
+                    }
+                }
+            }
+            power3{
+                other{
+                    _{
+                        _{"{0}³"}
+                    }
+                }
+            }
+            times{"{0}⋅{1}"}
+        }
+        concentr{
+            percent{
+                dnam{"%"}
+                other{"{0}%"}
+            }
+        }
         consumption{
             liter-per-100-kilometer{
                 dnam{"l/100km"}
@@ -738,6 +875,10 @@ kea{
         }
         coordinate{
             dnam{"direson"}
+            east{"{0} E"}
+            north{"{0} N"}
+            south{"{0} S"}
+            west{"{0} W"}
         }
         duration{
             day{
@@ -794,8 +935,10 @@ kea{
         mass{
             gram{
                 dnam{"g"}
+                other{"{0} g"}
             }
             kilogram{
+                dnam{"kg"}
                 other{"{0}kg"}
             }
         }
@@ -803,6 +946,12 @@ kea{
             kilometer-per-hour{
                 dnam{"km/h"}
                 other{"{0} km/h"}
+            }
+        }
+        temperature{
+            celsius{
+                dnam{"°C"}
+                other{"{0} °C"}
             }
         }
         volume{
@@ -888,7 +1037,7 @@ kea{
                 dnam{"kt"}
                 other{"{0} kt"}
             }
-            milligram-per-deciliter{
+            milligram-ofglucose-per-deciliter{
                 dnam{"mg/dl"}
                 other{"{0} mg/dl"}
             }
@@ -915,8 +1064,8 @@ kea{
                 other{"{0} mpg"}
             }
             mile-per-gallon-imperial{
-                dnam{"milha/gal imp."}
-                other{"{0} mpg imp."}
+                dnam{"milha/gal brit."}
+                other{"{0} mpg brit."}
             }
         }
         coordinate{
@@ -1090,6 +1239,20 @@ kea{
                 other{"{0} MHz"}
             }
         }
+        graphics{
+            dot{
+                dnam{"px"}
+                other{"{0} px"}
+            }
+            dot-per-centimeter{
+                dnam{"ppcm"}
+                other{"{0} ppcm"}
+            }
+            dot-per-inch{
+                dnam{"ppi"}
+                other{"{0} ppi"}
+            }
+        }
         length{
             astronomical-unit{
                 dnam{"ua"}
@@ -1129,8 +1292,8 @@ kea{
                 per{"{0}/m"}
             }
             micrometer{
-                dnam{"µm"}
-                other{"{0} µm"}
+                dnam{"μm"}
+                other{"{0} μm"}
             }
             mile{
                 dnam{"mi"}
@@ -1161,11 +1324,7 @@ kea{
                 other{"{0} pm"}
             }
             point{
-                dnam{"pontu"}
                 other{"{0} pt"}
-            }
-            solar-radius{
-                dnam{"raiu solar"}
             }
             yard{
                 dnam{"yd"}
@@ -1182,6 +1341,10 @@ kea{
             carat{
                 dnam{"kt"}
                 other{"{0} kt"}
+            }
+            grain{
+                dnam{"grãu"}
+                other{"{0} grãu"}
             }
             gram{
                 dnam{"g"}
@@ -1246,13 +1409,25 @@ kea{
                 dnam{"dl"}
                 other{"{0} dl"}
             }
+            dessert-spoon-imperial{
+                dnam{"dstspn brit."}
+                other{"{0} dstspn brit."}
+            }
+            dram{
+                dnam{"drakma fl."}
+                other{"{0} drakma fl."}
+            }
+            drop{
+                dnam{"gota"}
+                other{"{0} gota"}
+            }
             fluid-ounce{
                 dnam{"fl oz"}
                 other{"{0} fl oz"}
             }
             fluid-ounce-imperial{
-                dnam{"fl oz imp."}
-                other{"{0} fl oz imp."}
+                dnam{"fl oz brit."}
+                other{"{0} fl oz brit."}
             }
             gallon{
                 dnam{"gal"}
@@ -1260,13 +1435,17 @@ kea{
                 per{"{0}/gal"}
             }
             gallon-imperial{
-                dnam{"gal imp."}
-                other{"{0} gal imp."}
-                per{"{0}/gal imp."}
+                dnam{"gal brit."}
+                other{"{0} gal brit."}
+                per{"{0}/gal brit."}
             }
             hectoliter{
                 dnam{"hl"}
                 other{"{0} hl"}
+            }
+            jigger{
+                dnam{"kopu x."}
+                other{"{0} kopu x."}
             }
             liter{
                 dnam{"l"}
@@ -1279,6 +1458,10 @@ kea{
                 dnam{"ml"}
                 other{"{0} ml"}
             }
+            pinch{
+                dnam{"pit."}
+                other{"{0} pit."}
+            }
             pint{
                 dnam{"pt"}
                 other{"{0} pt"}
@@ -1290,6 +1473,10 @@ kea{
             quart{
                 dnam{"qt"}
                 other{"{0} qt"}
+            }
+            quart-imperial{
+                dnam{"qt brit."}
+                other{"{0} qt brit."}
             }
             tablespoon{
                 dnam{"ks"}

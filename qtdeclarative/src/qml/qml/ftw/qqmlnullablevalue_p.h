@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtQml module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2021 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #ifndef QQMLNULLABLEVALUE_P_H
 #define QQMLNULLABLEVALUE_P_H
@@ -51,27 +15,76 @@
 // We mean it.
 //
 
+#include <QtCore/private/qglobal_p.h>
+
 QT_BEGIN_NAMESPACE
 
 template<typename T>
 struct QQmlNullableValue
 {
-    QQmlNullableValue()
-    : value(T()) {}
-    QQmlNullableValue(const QQmlNullableValue<T> &o)
-    : isNull(o.isNull), value(o.value) {}
-    QQmlNullableValue(const T &t)
-    : isNull(false), value(t) {}
-    QQmlNullableValue<T> &operator=(const T &t)
-    { isNull = false; value = t; return *this; }
-    QQmlNullableValue<T> &operator=(const QQmlNullableValue<T> &o)
-    { isNull = o.isNull; value = o.value; return *this; }
-    operator T() const { return value; }
+    QQmlNullableValue() = default;
 
-    void invalidate() { isNull = true; }
-    bool isValid() const { return !isNull; }
-    bool isNull = true;
-    T value;
+    QQmlNullableValue(const QQmlNullableValue<T> &o)
+        : m_value(o.m_value)
+        , m_isNull(o.m_isNull)
+    {}
+
+    QQmlNullableValue(QQmlNullableValue<T> &&o) noexcept
+        : m_value(std::move(o.m_value))
+        , m_isNull(std::exchange(o.m_isNull, true))
+    {}
+
+    QQmlNullableValue(const T &t)
+        : m_value(t)
+        , m_isNull(false)
+    {}
+
+    QQmlNullableValue(T &&t) noexcept
+        : m_value(std::move(t))
+        , m_isNull(false)
+    {}
+
+    QQmlNullableValue<T> &operator=(const QQmlNullableValue<T> &o)
+    {
+        if (&o != this) {
+            m_value = o.m_value;
+            m_isNull = o.m_isNull;
+        }
+        return *this;
+    }
+
+    QQmlNullableValue<T> &operator=(QQmlNullableValue<T> &&o) noexcept
+    {
+        if (&o != this) {
+            m_value = std::move(o.m_value);
+            m_isNull = std::exchange(o.m_isNull, true);
+        }
+        return *this;
+    }
+
+    QQmlNullableValue<T> &operator=(const T &t)
+    {
+        m_value = t;
+        m_isNull = false;
+        return *this;
+    }
+
+    QQmlNullableValue<T> &operator=(T &&t) noexcept
+    {
+        m_value = std::move(t);
+        m_isNull = false;
+        return *this;
+    }
+
+    const T &value() const { return m_value; }
+    operator T() const { return m_value; }
+
+    void invalidate() { m_isNull = true; }
+    bool isValid() const { return !m_isNull; }
+
+private:
+    T m_value = T();
+    bool m_isNull = true;
 };
 
 QT_END_NAMESPACE

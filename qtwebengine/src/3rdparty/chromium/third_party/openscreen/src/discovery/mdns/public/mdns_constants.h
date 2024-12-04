@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -23,8 +23,7 @@
 #include "platform/base/ip_address.h"
 #include "util/osp_logging.h"
 
-namespace openscreen {
-namespace discovery {
+namespace openscreen::discovery {
 
 // ============================================================================
 // Networking
@@ -40,20 +39,24 @@ namespace discovery {
 // See RFC 6762, Section 2
 constexpr uint16_t kDefaultMulticastPort = 5353;
 
-// IPv4 group address for joining mDNS multicast group, given as byte array in
+// IPv4 group address for sending mDNS messages, given as byte array in
 // network-order. This is a link-local multicast address, so messages will not
 // be forwarded outside local network. See RFC 6762, section 3.
-const IPAddress kDefaultMulticastGroupIPv4{224, 0, 0, 251};
-const IPEndpoint kDefaultMulticastGroupIPv4Endpoint{{}, kDefaultMulticastPort};
+constexpr IPAddress kDefaultMulticastGroupIPv4{224, 0, 0, 251};
 
-// IPv6 group address for joining mDNS multicast group. This is a link-local
+// IPv6 group address for sending mDNS messages. This is a link-local
 // multicast address, so messages will not be forwarded outside local network.
 // See RFC 6762, section 3.
-const IPAddress kDefaultMulticastGroupIPv6{
+constexpr IPAddress kDefaultMulticastGroupIPv6{
     0xFF02, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x00FB,
 };
-const IPEndpoint kDefaultMulticastGroupIPv6Endpoint{{0, 0, 0, 0, 0, 0, 0, 0},
-                                                    kDefaultMulticastPort};
+
+// The send address for multicast mDNS should be the any address (0.*) on the
+// default mDNS multicast port.
+constexpr IPEndpoint kMulticastSendIPv4Endpoint{kDefaultMulticastGroupIPv4,
+                                                kDefaultMulticastPort};
+constexpr IPEndpoint kMulticastSendIPv6Endpoint{kDefaultMulticastGroupIPv6,
+                                                kDefaultMulticastPort};
 
 // IPv4 group address for joining cast-specific site-local mDNS multicast group,
 // given as byte array in network-order. This is a site-local multicast address,
@@ -71,9 +74,9 @@ const IPEndpoint kDefaultMulticastGroupIPv6Endpoint{{0, 0, 0, 0, 0, 0, 0, 0},
 
 // NOTE: For now the group address is the same group address used for SSDP
 // discovery, albeit using the MDNS port rather than SSDP port.
-const IPAddress kDefaultSiteLocalGroupIPv4{239, 255, 255, 250};
-const IPEndpoint kDefaultSiteLocalGroupIPv4Endpoint{kDefaultSiteLocalGroupIPv4,
-                                                    kDefaultMulticastPort};
+constexpr IPAddress kDefaultSiteLocalGroupIPv4{239, 255, 255, 250};
+constexpr IPEndpoint kDefaultSiteLocalGroupIPv4Endpoint{
+    kDefaultSiteLocalGroupIPv4, kDefaultMulticastPort};
 
 // IPv6 group address for joining cast-specific site-local mDNS multicast group,
 // give as byte array in network-order. See comments for IPv4 group address for
@@ -81,11 +84,11 @@ const IPEndpoint kDefaultSiteLocalGroupIPv4Endpoint{kDefaultSiteLocalGroupIPv4,
 // 0xFF05 is site-local. See RFC 7346.
 // FF0X:0:0:0:0:0:0:C is variable scope multicast addresses for SSDP. See
 // https://www.iana.org/assignments/ipv6-multicast-addresses
-const IPAddress kDefaultSiteLocalGroupIPv6{
+constexpr IPAddress kDefaultSiteLocalGroupIPv6{
     0xFF05, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x000C,
 };
-const IPEndpoint kDefaultSiteLocalGroupIPv6Endpoint{kDefaultSiteLocalGroupIPv6,
-                                                    kDefaultMulticastPort};
+constexpr IPEndpoint kDefaultSiteLocalGroupIPv6Endpoint{
+    kDefaultSiteLocalGroupIPv6, kDefaultMulticastPort};
 
 // Maximum MTU size (1500) minus the UDP header size (8) and IP header size
 // (20). If any packets are larger than this size, the responder or sender
@@ -308,6 +311,7 @@ enum class DnsType : uint16_t {
   kANY = 255,  // Only allowed for QTYPE
 };
 
+// TODO(mfoltz): Move definition so we don't have to inline.
 inline std::ostream& operator<<(std::ostream& output, DnsType type) {
   switch (type) {
     case DnsType::kA:
@@ -326,10 +330,9 @@ inline std::ostream& operator<<(std::ostream& output, DnsType type) {
       return output << "NSEC";
     case DnsType::kANY:
       return output << "ANY";
+    default:
+      return output << "OTHER";
   }
-
-  OSP_NOTREACHED();
-  return output;
 }
 
 constexpr std::array<DnsType, 7> kSupportedDnsTypes = {
@@ -458,7 +461,6 @@ constexpr int kVersionShift = 16;
 constexpr uint32_t kDnssecOkBitMask = 0x00008000;
 constexpr uint8_t kVersionBadvers = 0x10;
 
-}  // namespace discovery
-}  // namespace openscreen
+}  // namespace openscreen::discovery
 
 #endif  // DISCOVERY_MDNS_PUBLIC_MDNS_CONSTANTS_H_

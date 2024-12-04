@@ -1,9 +1,11 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef CC_LAYERS_SOLID_COLOR_SCROLLBAR_LAYER_H_
 #define CC_LAYERS_SOLID_COLOR_SCROLLBAR_LAYER_H_
+
+#include <memory>
 
 #include "cc/cc_export.h"
 #include "cc/layers/layer.h"
@@ -15,7 +17,8 @@ namespace cc {
 // practice, this is used for overlay scrollbars on Android.
 class CC_EXPORT SolidColorScrollbarLayer : public ScrollbarLayerBase {
  public:
-  std::unique_ptr<LayerImpl> CreateLayerImpl(LayerTreeImpl* tree_impl) override;
+  std::unique_ptr<LayerImpl> CreateLayerImpl(
+      LayerTreeImpl* tree_impl) const override;
 
   static scoped_refptr<SolidColorScrollbarLayer> CreateOrReuse(
       scoped_refptr<Scrollbar>,
@@ -34,10 +37,16 @@ class CC_EXPORT SolidColorScrollbarLayer : public ScrollbarLayerBase {
   bool OpacityCanAnimateOnImplThread() const override;
   void SetOpacity(float opacity) override;
   void SetNeedsDisplayRect(const gfx::Rect& rect) override;
-  bool HitTestable() const override;
+  void SetLayerTreeHost(LayerTreeHost* host) override;
+  void PushPropertiesTo(LayerImpl* layer,
+                        const CommitState& commit_state,
+                        const ThreadUnsafeCommitState& unsafe_state) override;
 
   int thumb_thickness() const { return thumb_thickness_; }
   int track_start() const { return track_start_; }
+
+  void SetColor(SkColor4f color);
+  SkColor4f color() const { return color_.Read(*this); }
 
   ScrollbarLayerType GetScrollbarLayerType() const override;
 
@@ -50,6 +59,7 @@ class CC_EXPORT SolidColorScrollbarLayer : public ScrollbarLayerBase {
 
   int thumb_thickness_;
   int track_start_;
+  ProtectedSequenceReadable<SkColor4f> color_;
 };
 
 }  // namespace cc

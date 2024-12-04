@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -39,7 +39,7 @@ base::TimeDelta ConvertFromNtpDiff(uint32_t ntp_delay) {
   delay_us >>= 16;
   delay_us +=
       ((ntp_delay & 0xffff0000) >> 16) * base::Time::kMicrosecondsPerSecond;
-  return base::TimeDelta::FromMicroseconds(delay_us);
+  return base::Microseconds(delay_us);
 }
 
 // A receiver frame event is identified by frame RTP timestamp, event timestamp
@@ -92,22 +92,22 @@ void SenderRtcpSession::WillSendFrame(FrameId frame_id) {
   }
 }
 
-bool SenderRtcpSession::IncomingRtcpPacket(const uint8_t* data, size_t length) {
+bool SenderRtcpSession::IncomingRtcpPacket(base::span<const uint8_t> data) {
   // Check if this is a valid RTCP packet.
-  if (!IsRtcpPacket(data, length)) {
+  if (!IsRtcpPacket(data)) {
     VLOG(1) << "Rtcp@" << this << "::IncomingRtcpPacket() -- "
             << "Received an invalid (non-RTCP?) packet.";
     return false;
   }
 
   // Check if this packet is to us.
-  uint32_t ssrc_of_sender = GetSsrcOfSender(data, length);
+  uint32_t ssrc_of_sender = GetSsrcOfSender(data);
   if (ssrc_of_sender != remote_ssrc_) {
     return false;
   }
 
   // Parse this packet.
-  base::BigEndianReader reader(reinterpret_cast<const char*>(data), length);
+  base::BigEndianReader reader(data);
   if (parser_.Parse(&reader)) {
     if (parser_.has_picture_loss_indicator())
       rtcp_observer_->OnReceivedPli();
@@ -159,7 +159,7 @@ void SenderRtcpSession::OnReceivedDelaySinceLastReport(
   // such a level of precision cannot be measured with our approach; and 1 ms is
   // good enough to represent "under 1 ms" for our use cases.
   current_round_trip_time_ =
-      std::max(current_round_trip_time_, base::TimeDelta::FromMilliseconds(1));
+      std::max(current_round_trip_time_, base::Milliseconds(1));
 
   rtcp_observer_->OnReceivedRtt(current_round_trip_time_);
 }
@@ -178,7 +178,7 @@ void SenderRtcpSession::SaveLastSentNtpTime(const base::TimeTicks& now,
   last_reports_sent_queue_.push(std::make_pair(last_report, now));
 
   const base::TimeTicks timeout =
-      now - base::TimeDelta::FromMilliseconds(kStatsHistoryWindowMs);
+      now - base::Milliseconds(kStatsHistoryWindowMs);
 
   // Cleanup old statistics older than |timeout|.
   while (!last_reports_sent_queue_.empty()) {

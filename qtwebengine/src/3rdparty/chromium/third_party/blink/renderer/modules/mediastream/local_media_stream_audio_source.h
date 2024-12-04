@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,7 +9,9 @@
 
 #include <string>
 
+#include "base/task/single_thread_task_runner.h"
 #include "media/base/audio_capturer_source.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
 
 namespace blink {
@@ -22,7 +24,7 @@ class LocalFrame;
 // using the parameters and session ID found in MediaStreamDevice, just before
 // the first track is connected. Audio data is transported directly to the
 // tracks (i.e., there is no audio processing).
-class MODULES_EXPORT LocalMediaStreamAudioSource
+class MODULES_EXPORT LocalMediaStreamAudioSource final
     : public MediaStreamAudioSource,
       public media::AudioCapturerSource::CaptureCallback {
  public:
@@ -30,20 +32,27 @@ class MODULES_EXPORT LocalMediaStreamAudioSource
   // audio data. Audio parameters and (optionally) a pre-existing audio session
   // ID are read from |device_info|. |requested_buffer_size| is the desired
   // buffer size for the audio hardware, a nullptr means to use the default.
+  // |enable_system_echo_cancellation| specifies whether to apply system echo
+  // cancellation, and may only be enabled if supported by the device.
   LocalMediaStreamAudioSource(
       LocalFrame* consumer_frame,
       const MediaStreamDevice& device,
       const int* requested_buffer_size,
       bool disable_local_echo,
+      bool enable_system_echo_cancellation,
       ConstraintsRepeatingCallback started_callback,
       scoped_refptr<base::SingleThreadTaskRunner> task_runner);
+
+  LocalMediaStreamAudioSource(const LocalMediaStreamAudioSource&) = delete;
+  LocalMediaStreamAudioSource& operator=(const LocalMediaStreamAudioSource&) =
+      delete;
 
   ~LocalMediaStreamAudioSource() final;
 
   // MediaStreamAudioSource implementation.
   void ChangeSourceImpl(const MediaStreamDevice& new_device) final;
 
-  base::Optional<AudioProcessingProperties> GetAudioProcessingProperties()
+  absl::optional<AudioProcessingProperties> GetAudioProcessingProperties()
       const final;
 
  private:
@@ -57,7 +66,8 @@ class MODULES_EXPORT LocalMediaStreamAudioSource
                base::TimeTicks audio_capture_time,
                double volume,
                bool key_pressed) final;
-  void OnCaptureError(const std::string& message) final;
+  void OnCaptureError(media::AudioCapturerSource::ErrorCode code,
+                      const std::string& message) final;
   void OnCaptureMuted(bool is_muted) final;
 
   // The LocalFrame that will consume the audio data. Used when creating
@@ -77,8 +87,6 @@ class MODULES_EXPORT LocalMediaStreamAudioSource
   // In debug builds, check that all methods that could cause object graph
   // or data flow changes are being called on the main thread.
   THREAD_CHECKER(thread_checker_);
-
-  DISALLOW_COPY_AND_ASSIGN(LocalMediaStreamAudioSource);
 };
 
 }  // namespace blink

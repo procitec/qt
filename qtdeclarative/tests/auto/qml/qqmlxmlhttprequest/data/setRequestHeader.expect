@@ -1,9 +1,10 @@
 GET /testdocument.html HTTP/1.1
-Accept-Language: en-US
-Test-header: value
-Test-header2: value,value2
-Connection: Keep-Alive
-Accept-Encoding: gzip, deflate
-User-Agent: Mozilla/5.0
-Host: {{ServerHostUrl}}
+accept-language: {{Ignore}}
+test-header: value
+test-header2: value,value2
+connection: Keep-Alive{{Ignore}}
+http2-settings: {{Ignore}}
+accept-encoding: {{Ignore}}
+user-agent: Mozilla/5.0
+host: {{ServerHostUrl}}
 

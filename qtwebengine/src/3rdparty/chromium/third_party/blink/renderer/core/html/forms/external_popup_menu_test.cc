@@ -1,4 +1,4 @@
-// Copyright (c) 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,10 +6,10 @@
 
 #include <memory>
 
+#include "content/test/test_blink_web_unit_test_support.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/common/browser_interface_broker_proxy.h"
 #include "third_party/blink/public/mojom/choosers/popup_menu.mojom-blink.h"
-#include "third_party/blink/public/platform/web_url_loader_mock_factory.h"
 #include "third_party/blink/public/web/web_popup_menu_info.h"
 #include "third_party/blink/public/web/web_settings.h"
 #include "third_party/blink/renderer/core/frame/frame_test_helpers.h"
@@ -23,8 +23,10 @@
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/core/testing/fake_local_frame_host.h"
 #include "third_party/blink/renderer/core/testing/page_test_base.h"
-#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
+#include "third_party/blink/renderer/platform/testing/url_loader_mock_factory.h"
 #include "third_party/blink/renderer/platform/testing/url_test_helpers.h"
 
 namespace blink {
@@ -75,6 +77,73 @@ TEST_F(ExternalPopupMenuDisplayNoneItemsTest, IndexMappingTest) {
   EXPECT_EQ(-1, ExternalPopupMenu::ToPopupMenuItemIndex(8, *owner_element_));
 }
 
+class ExternalPopupMenuHrElementItemsTest : public PageTestBase {
+ public:
+  ExternalPopupMenuHrElementItemsTest() = default;
+
+ protected:
+  void SetUp() override {
+    PageTestBase::SetUp();
+    auto* element = MakeGarbageCollected<HTMLSelectElement>(GetDocument());
+    element->setInnerHTML(R"HTML(
+      <option>zero</option>
+      <option>one</option>
+      <hr>
+      <option>two or three</option>
+    )HTML");
+    GetDocument().body()->AppendChild(element, ASSERT_NO_EXCEPTION);
+    owner_element_ = element;
+    GetDocument().UpdateStyleAndLayout(DocumentUpdateReason::kTest);
+  }
+
+  Persistent<HTMLSelectElement> owner_element_;
+};
+
+TEST_F(ExternalPopupMenuHrElementItemsTest, PopupMenuInfoSizeTest) {
+  int32_t item_height;
+  double font_size;
+  int32_t selected_item;
+  Vector<mojom::blink::MenuItemPtr> menu_items;
+  bool right_aligned;
+  bool allow_multiple_selection;
+  ExternalPopupMenu::GetPopupMenuInfo(
+      *owner_element_, &item_height, &font_size, &selected_item, &menu_items,
+      &right_aligned, &allow_multiple_selection);
+#if BUILDFLAG(IS_ANDROID)
+  EXPECT_EQ(3U, menu_items.size());
+#else
+  EXPECT_EQ(4U, menu_items.size());
+#endif
+}
+
+TEST_F(ExternalPopupMenuHrElementItemsTest, IndexMappingTest) {
+  EXPECT_EQ(
+      0, ExternalPopupMenu::ToExternalPopupMenuItemIndex(0, *owner_element_));
+  EXPECT_EQ(
+      1, ExternalPopupMenu::ToExternalPopupMenuItemIndex(1, *owner_element_));
+#if BUILDFLAG(IS_ANDROID)
+  EXPECT_EQ(
+      -1, ExternalPopupMenu::ToExternalPopupMenuItemIndex(2, *owner_element_));
+  EXPECT_EQ(
+      2, ExternalPopupMenu::ToExternalPopupMenuItemIndex(3, *owner_element_));
+#else
+  EXPECT_EQ(
+      2, ExternalPopupMenu::ToExternalPopupMenuItemIndex(2, *owner_element_));
+  EXPECT_EQ(
+      3, ExternalPopupMenu::ToExternalPopupMenuItemIndex(3, *owner_element_));
+#endif
+
+  EXPECT_EQ(0, ExternalPopupMenu::ToPopupMenuItemIndex(0, *owner_element_));
+  EXPECT_EQ(1, ExternalPopupMenu::ToPopupMenuItemIndex(1, *owner_element_));
+#if BUILDFLAG(IS_ANDROID)
+  EXPECT_EQ(3, ExternalPopupMenu::ToPopupMenuItemIndex(2, *owner_element_));
+  EXPECT_EQ(-1, ExternalPopupMenu::ToPopupMenuItemIndex(3, *owner_element_));
+#else
+  EXPECT_EQ(2, ExternalPopupMenu::ToPopupMenuItemIndex(2, *owner_element_));
+  EXPECT_EQ(3, ExternalPopupMenu::ToPopupMenuItemIndex(3, *owner_element_));
+#endif
+}
+
 class TestLocalFrameExternalPopupClient : public FakeLocalFrameHost {
  public:
   void ShowPopupMenu(
@@ -92,8 +161,8 @@ class TestLocalFrameExternalPopupClient : public FakeLocalFrameHost {
     selected_item_ = selected_item;
     menu_items_ = std::move(menu_items);
     popup_client_.Bind(std::move(popup_client));
-    popup_client_.set_disconnect_handler(base::BindOnce(
-        &TestLocalFrameExternalPopupClient::Reset, base::Unretained(this)));
+    popup_client_.set_disconnect_handler(WTF::BindOnce(
+        &TestLocalFrameExternalPopupClient::Reset, WTF::Unretained(this)));
     std::move(showed_callback_).Run();
   }
 
@@ -153,7 +222,7 @@ class ExternalPopupMenuTest : public testing::Test {
 
   void LoadFrame(const std::string& file_name) {
     frame_test_helpers::LoadFrame(MainFrame(), base_url_ + file_name);
-    WebView()->MainFrameWidget()->Resize(WebSize(800, 600));
+    WebView()->MainFrameViewWidget()->Resize(gfx::Size(800, 600));
     WebView()->MainFrameWidget()->UpdateAllLifecyclePhases(
         DocumentUpdateReason::kTest);
   }
@@ -179,6 +248,7 @@ class ExternalPopupMenuTest : public testing::Test {
   WebLocalFrameImpl* MainFrame() const { return helper_.LocalMainFrame(); }
 
  private:
+  test::TaskEnvironment task_environment_;
   TestLocalFrameExternalPopupClient frame_host_;
   frame_test_helpers::TestWebFrameClient web_frame_client_;
   std::string base_url_;
@@ -189,26 +259,27 @@ TEST_F(ExternalPopupMenuTest, PopupAccountsForVisualViewportTransform) {
   RegisterMockedURLLoad("select_mid_screen.html");
   LoadFrame("select_mid_screen.html");
 
-  WebView()->MainFrameWidget()->Resize(WebSize(100, 100));
+  WebView()->MainFrameViewWidget()->Resize(gfx::Size(100, 100));
   WebView()->MainFrameWidget()->UpdateAllLifecyclePhases(
       DocumentUpdateReason::kTest);
 
   auto* select = To<HTMLSelectElement>(
-      MainFrame()->GetFrame()->GetDocument()->getElementById("select"));
+      MainFrame()->GetFrame()->GetDocument()->getElementById(
+          AtomicString("select")));
   auto* layout_object = select->GetLayoutObject();
   ASSERT_TRUE(layout_object);
 
   VisualViewport& visual_viewport = WebView()->GetPage()->GetVisualViewport();
 
-  IntRect rect_in_document = layout_object->AbsoluteBoundingBoxRect();
+  gfx::Rect rect_in_document = layout_object->AbsoluteBoundingBoxRect();
 
   constexpr int kScaleFactor = 2;
   ScrollOffset scroll_delta(20, 30);
 
   const int expected_x =
-      (rect_in_document.X() - scroll_delta.Width()) * kScaleFactor;
+      (rect_in_document.x() - scroll_delta.x()) * kScaleFactor;
   const int expected_y =
-      (rect_in_document.Y() - scroll_delta.Height()) * kScaleFactor;
+      (rect_in_document.y() - scroll_delta.y()) * kScaleFactor;
 
   WebView()->SetPageScaleFactor(kScaleFactor);
   visual_viewport.Move(scroll_delta);
@@ -219,12 +290,45 @@ TEST_F(ExternalPopupMenuTest, PopupAccountsForVisualViewportTransform) {
   EXPECT_EQ(expected_y, ShownBounds().y());
 }
 
+// Android doesn't use this position data and we don't adjust it for DPR there..
+#ifdef OS_ANDROID
+#define MAYBE_PopupAccountsForDeviceScaleFactor \
+  DISABLED_PopupAccountsForDeviceScaleFactor
+#else
+#define MAYBE_PopupAccountsForDeviceScaleFactor \
+  PopupAccountsForDeviceScaleFactor
+#endif
+
+TEST_F(ExternalPopupMenuTest, MAYBE_PopupAccountsForDeviceScaleFactor) {
+  RegisterMockedURLLoad("select_mid_screen.html");
+  LoadFrame("select_mid_screen.html");
+
+  constexpr float kScaleFactor = 2.0f;
+  WebView()->MainFrameWidget()->SetDeviceScaleFactorForTesting(kScaleFactor);
+  WebView()->MainFrameWidget()->UpdateAllLifecyclePhases(
+      DocumentUpdateReason::kTest);
+
+  auto* select = To<HTMLSelectElement>(
+      MainFrame()->GetFrame()->GetDocument()->getElementById(
+          AtomicString("select")));
+  auto* layout_object = select->GetLayoutObject();
+  ASSERT_TRUE(layout_object);
+
+  select->ShowPopup();
+  WaitUntilShowedPopup();
+
+  // The test file has no body margins but 50px of padding.
+  EXPECT_EQ(50, ShownBounds().x());
+  EXPECT_EQ(50, ShownBounds().y());
+}
+
 TEST_F(ExternalPopupMenuTest, DidAcceptIndex) {
   RegisterMockedURLLoad("select.html");
   LoadFrame("select.html");
 
   auto* select = To<HTMLSelectElement>(
-      MainFrame()->GetFrame()->GetDocument()->getElementById("select"));
+      MainFrame()->GetFrame()->GetDocument()->getElementById(
+          AtomicString("select")));
   auto* layout_object = select->GetLayoutObject();
   ASSERT_TRUE(layout_object);
 
@@ -246,7 +350,8 @@ TEST_F(ExternalPopupMenuTest, DidAcceptIndices) {
   LoadFrame("select.html");
 
   auto* select = To<HTMLSelectElement>(
-      MainFrame()->GetFrame()->GetDocument()->getElementById("select"));
+      MainFrame()->GetFrame()->GetDocument()->getElementById(
+          AtomicString("select")));
   auto* layout_object = select->GetLayoutObject();
   ASSERT_TRUE(layout_object);
 
@@ -268,7 +373,8 @@ TEST_F(ExternalPopupMenuTest, DidAcceptIndicesClearSelect) {
   LoadFrame("select.html");
 
   auto* select = To<HTMLSelectElement>(
-      MainFrame()->GetFrame()->GetDocument()->getElementById("select"));
+      MainFrame()->GetFrame()->GetDocument()->getElementById(
+          AtomicString("select")));
   auto* layout_object = select->GetLayoutObject();
   ASSERT_TRUE(layout_object);
 
@@ -290,7 +396,8 @@ TEST_F(ExternalPopupMenuTest, NormalCase) {
 
   // Show the popup-menu.
   auto* select = To<HTMLSelectElement>(
-      MainFrame()->GetFrame()->GetDocument()->getElementById("select"));
+      MainFrame()->GetFrame()->GetDocument()->getElementById(
+          AtomicString("select")));
   auto* layout_object = select->GetLayoutObject();
   ASSERT_TRUE(layout_object);
 
@@ -329,7 +436,8 @@ TEST_F(ExternalPopupMenuTest, ShowPopupThenNavigate) {
 
   // Show the popup-menu.
   auto* document = MainFrame()->GetFrame()->GetDocument();
-  auto* select = To<HTMLSelectElement>(document->getElementById("select"));
+  auto* select =
+      To<HTMLSelectElement>(document->getElementById(AtomicString("select")));
   auto* layout_object = select->GetLayoutObject();
   ASSERT_TRUE(layout_object);
 
@@ -342,7 +450,8 @@ TEST_F(ExternalPopupMenuTest, ShowPopupThenNavigate) {
   base::RunLoop().RunUntilIdle();
 
   // Now HTMLSelectElement should be nullptr and mojo is disconnected.
-  select = To<HTMLSelectElement>(document->getElementById("select"));
+  select =
+      To<HTMLSelectElement>(document->getElementById(AtomicString("select")));
   EXPECT_FALSE(select);
   EXPECT_FALSE(IsBound());
 }
@@ -354,7 +463,8 @@ TEST_F(ExternalPopupMenuTest, EmptySelect) {
   LoadFrame("select.html");
 
   auto* select = To<HTMLSelectElement>(
-      MainFrame()->GetFrame()->GetDocument()->getElementById("emptySelect"));
+      MainFrame()->GetFrame()->GetDocument()->getElementById(
+          AtomicString("emptySelect")));
   EXPECT_TRUE(select);
   select->click();
 }
@@ -367,7 +477,8 @@ TEST_F(ExternalPopupMenuTest, RemoveOnChange) {
 
   // Show the popup-menu.
   auto* document = MainFrame()->GetFrame()->GetDocument();
-  auto* select = To<HTMLSelectElement>(document->getElementById("s"));
+  auto* select =
+      To<HTMLSelectElement>(document->getElementById(AtomicString("s")));
   auto* layout_object = select->GetLayoutObject();
   ASSERT_TRUE(layout_object);
 
@@ -380,7 +491,7 @@ TEST_F(ExternalPopupMenuTest, RemoveOnChange) {
 
   // Just to check the soundness of the test.
   // It should return nullptr as the select has been removed.
-  select = To<HTMLSelectElement>(document->getElementById("s"));
+  select = To<HTMLSelectElement>(document->getElementById(AtomicString("s")));
   EXPECT_FALSE(select);
 }
 
@@ -391,9 +502,10 @@ TEST_F(ExternalPopupMenuTest, RemoveFrameOnChange) {
 
   // Open a popup.
   auto* iframe = To<HTMLIFrameElement>(
-      MainFrame()->GetFrame()->GetDocument()->QuerySelector("iframe"));
-  auto* select =
-      To<HTMLSelectElement>(iframe->contentDocument()->QuerySelector("select"));
+      MainFrame()->GetFrame()->GetDocument()->QuerySelector(
+          AtomicString("iframe")));
+  auto* select = To<HTMLSelectElement>(
+      iframe->contentDocument()->QuerySelector(AtomicString("select")));
   auto* layout_object = select->GetLayoutObject();
   ASSERT_TRUE(layout_object);
 

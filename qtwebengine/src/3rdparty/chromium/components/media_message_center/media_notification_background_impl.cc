@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,13 +7,25 @@
 #include <algorithm>
 #include <vector>
 
+#include "base/i18n/rtl.h"
+#include "cc/paint/paint_shader.h"
 #include "skia/ext/image_operations.h"
+#include "third_party/skia/include/core/SkBitmap.h"
+#include "third_party/skia/include/core/SkColor.h"
+#include "third_party/skia/include/core/SkPath.h"
+#include "third_party/skia/include/core/SkPathTypes.h"
+#include "third_party/skia/include/core/SkPoint.h"
+#include "third_party/skia/include/core/SkScalar.h"
+#include "third_party/skia/include/core/SkTileMode.h"
+#include "ui/color/color_id.h"
+#include "ui/color/color_provider.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/color_analysis.h"
 #include "ui/gfx/color_utils.h"
+#include "ui/gfx/geometry/skia_conversions.h"
 #include "ui/gfx/scoped_canvas.h"
-#include "ui/native_theme/native_theme.h"
 #include "ui/views/style/typography.h"
+#include "ui/views/style/typography_provider.h"
 #include "ui/views/view.h"
 
 namespace media_message_center {
@@ -67,20 +79,20 @@ bool IsForegroundColorSwatchAllowed(const SkColor& background,
   return diff > 10 && diff < 350;
 }
 
-base::Optional<SkColor> GetNotificationBackgroundColor(const SkBitmap* source) {
+absl::optional<SkColor> GetNotificationBackgroundColor(const SkBitmap* source) {
   if (!source || source->empty() || source->isNull())
-    return base::nullopt;
+    return absl::nullopt;
 
   std::vector<color_utils::Swatch> swatches =
       color_utils::CalculateColorSwatches(
           *source, 16, gfx::Rect(source->width() / 2, source->height()),
-          base::nullopt);
+          absl::nullopt);
 
   if (swatches.empty())
-    return base::nullopt;
+    return absl::nullopt;
 
-  base::Optional<color_utils::Swatch> most_popular;
-  base::Optional<color_utils::Swatch> non_white_black;
+  absl::optional<color_utils::Swatch> most_popular;
+  absl::optional<color_utils::Swatch> non_white_black;
 
   // Find the most popular color with the most weight and the color which
   // is the color with the most weight that is not white or black.
@@ -138,18 +150,18 @@ color_utils::Swatch SelectMutedSwatch(const color_utils::Swatch& muted,
              : more_muted;
 }
 
-base::Optional<SkColor> GetNotificationForegroundColor(
-    const base::Optional<SkColor>& background_color,
+absl::optional<SkColor> GetNotificationForegroundColor(
+    const absl::optional<SkColor>& background_color,
     const SkBitmap* source) {
   if (!background_color || !source || source->empty() || source->isNull())
-    return base::nullopt;
+    return absl::nullopt;
 
   const bool is_light =
       color_utils::GetRelativeLuminance(*background_color) > 0.5;
   const SkColor fallback_color = is_light ? SK_ColorBLACK : SK_ColorWHITE;
 
   gfx::Rect bitmap_area(source->width(), source->height());
-  bitmap_area.Inset(source->width() * 0.4, 0, 0, 0);
+  bitmap_area.Inset(gfx::Insets::TLBR(0, source->width() * 0.4, 0, 0));
 
   // If the background color is dark we want to look for colors that are darker
   // and vice versa.
@@ -197,7 +209,7 @@ base::Optional<SkColor> GetNotificationForegroundColor(
   // the most popular color and then either white/black. Any swatch has to be
   // above a minimum population threshold to be determined significant enough in
   // the artwork to be used.
-  base::Optional<color_utils::Swatch> swatch;
+  absl::optional<color_utils::Swatch> swatch;
   if (more_vibrant.population > population_min &&
       vibrant.population > population_min) {
     swatch = SelectVibrantSwatch(more_vibrant, vibrant);
@@ -289,8 +301,10 @@ void MediaNotificationBackgroundImpl::Paint(gfx::Canvas* canvas,
     // Draw a gradient to fade the color background and the image together.
     gfx::Rect draw_bounds = GetGradientBounds(*view);
 
-    const SkColor colors[2] = {
-        background_color, SkColorSetA(background_color, SK_AlphaTRANSPARENT)};
+    // TODO(crbug/1308932): Remove FromColor and make all SkColor4f.
+    const SkColor4f colors[2] = {SkColor4f::FromColor(background_color),
+                                 SkColor4f::FromColor(SkColorSetA(
+                                     background_color, SK_AlphaTRANSPARENT))};
     const SkPoint points[2] = {GetGradientStartPoint(draw_bounds),
                                GetGradientEndPoint(draw_bounds)};
 
@@ -303,13 +317,15 @@ void MediaNotificationBackgroundImpl::Paint(gfx::Canvas* canvas,
     canvas->DrawRect(draw_bounds, flags);
   }
 
-  if (audio_device_selector_availability_) {
+  if (audio_device_selector_visible_) {
     // Draw a gradient to fade the color background of the audio device picker
     // and the image together.
     gfx::Rect draw_bounds = GetBottomGradientBounds(*view);
 
-    const SkColor colors[2] = {
-        background_color, SkColorSetA(background_color, SK_AlphaTRANSPARENT)};
+    // TODO(crbug/1308932): Remove FromColor and make all SkColor4f.
+    const SkColor4f colors[2] = {SkColor4f::FromColor(background_color),
+                                 SkColor4f::FromColor(SkColorSetA(
+                                     background_color, SK_AlphaTRANSPARENT))};
     const SkPoint points[2] = {gfx::PointToSkPoint(draw_bounds.bottom_center()),
                                gfx::PointToSkPoint(draw_bounds.top_center())};
 
@@ -365,12 +381,9 @@ void MediaNotificationBackgroundImpl::UpdateFavicon(
   UpdateColorsInternal();
 }
 
-void MediaNotificationBackgroundImpl::UpdateDeviceSelectorAvailability(
-    bool availability) {
-  if (audio_device_selector_availability_ == availability)
-    return;
-
-  audio_device_selector_availability_ = availability;
+void MediaNotificationBackgroundImpl::UpdateDeviceSelectorVisibility(
+    bool visible) {
+  audio_device_selector_visible_ = visible;
 }
 
 SkColor MediaNotificationBackgroundImpl::GetBackgroundColor(
@@ -383,12 +396,11 @@ SkColor MediaNotificationBackgroundImpl::GetBackgroundColor(
 SkColor MediaNotificationBackgroundImpl::GetForegroundColor(
     const views::View& owner) const {
   const SkColor foreground =
-      foreground_color_.has_value()
-          ? *foreground_color_
-          : views::style::GetColor(owner, views::style::CONTEXT_LABEL,
-                                   views::style::STYLE_PRIMARY);
+      foreground_color_.value_or(owner.GetColorProvider()->GetColor(
+          views::TypographyProvider::Get().GetColorId(
+              views::style::CONTEXT_LABEL, views::style::STYLE_PRIMARY)));
   return color_utils::BlendForMinContrast(
-             foreground, GetBackgroundColor(owner), base::nullopt,
+             foreground, GetBackgroundColor(owner), absl::nullopt,
              kMediaNotificationMinimumContrastRatio)
       .color;
 }
@@ -434,7 +446,8 @@ gfx::Rect MediaNotificationBackgroundImpl::GetFilledBackgroundBounds(
   // taken up by the artwork.
   const gfx::Rect& view_bounds = owner.GetContentsBounds();
   gfx::Rect bounds = gfx::Rect(view_bounds);
-  bounds.Inset(0, 0, GetArtworkVisibleWidth(view_bounds.size()), 0);
+  bounds.Inset(
+      gfx::Insets().set_right(GetArtworkVisibleWidth(view_bounds.size())));
   return owner.GetMirroredRect(bounds);
 }
 
@@ -478,8 +491,7 @@ SkPoint MediaNotificationBackgroundImpl::GetGradientEndPoint(
 
 SkColor MediaNotificationBackgroundImpl::GetDefaultBackgroundColor(
     const views::View& owner) const {
-  return owner.GetNativeTheme()->GetSystemColor(
-      ui::NativeTheme::kColorId_BubbleBackground);
+  return owner.GetColorProvider()->GetColor(ui::kColorBubbleBackground);
 }
 
 void MediaNotificationBackgroundImpl::UpdateColorsInternal() {

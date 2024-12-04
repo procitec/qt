@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,8 +11,9 @@
 #include <memory>
 #include <unordered_map>
 
-#include "base/bind.h"
 #include "base/check.h"
+#include "base/functional/bind.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/notreached.h"
 #include "base/run_loop.h"
@@ -20,6 +21,7 @@
 #include "base/test/task_environment.h"
 #include "base/values.h"
 #include "content/renderer/pepper/resource_converter.h"
+#include "gin/public/isolate_holder.h"
 #include "ppapi/c/pp_bool.h"
 #include "ppapi/c/pp_var.h"
 #include "ppapi/shared_impl/array_var.h"
@@ -32,7 +34,15 @@
 #include "ppapi/shared_impl/var.h"
 #include "ppapi/shared_impl/var_tracker.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "v8/include/v8.h"
+#include "v8/include/v8-container.h"
+#include "v8/include/v8-context.h"
+#include "v8/include/v8-isolate.h"
+#include "v8/include/v8-microtask-queue.h"
+#include "v8/include/v8-object.h"
+#include "v8/include/v8-persistent-handle.h"
+#include "v8/include/v8-primitive.h"
+#include "v8/include/v8-script.h"
+#include "v8/include/v8-template.h"
 
 using ppapi::ArrayBufferVar;
 using ppapi::ArrayVar;
@@ -79,6 +89,7 @@ typedef std::unordered_map<int64_t, v8::Local<v8::Value>> VarHandleMap;
 
 bool Equals(const PP_Var& var,
             v8::Local<v8::Value> val,
+            v8::Isolate* isolate,
             VarHandleMap* visited_ids) {
   if (ppapi::VarTracker::IsVarTypeRefcounted(var.type)) {
     auto it = visited_ids->find(var.value.as_id);
@@ -87,7 +98,6 @@ bool Equals(const PP_Var& var,
     (*visited_ids)[var.value.as_id] = val;
   }
 
-  v8::Isolate* isolate = v8::Isolate::GetCurrent();
   v8::Local<v8::Context> context = isolate->GetCurrentContext();
   if (val->IsUndefined()) {
     return var.type == PP_VARTYPE_UNDEFINED;
@@ -121,8 +131,10 @@ bool Equals(const PP_Var& var,
     for (uint32_t i = 0; i < v8_array->Length(); ++i) {
       v8::Local<v8::Value> child_v8 =
           v8_array->Get(context, i).ToLocalChecked();
-      if (!Equals(array_var->elements()[i].get(), child_v8, visited_ids))
+      if (!Equals(array_var->elements()[i].get(), child_v8, isolate,
+                  visited_ids)) {
         return false;
+      }
     }
     return true;
   } else if (val->IsObject()) {
@@ -157,8 +169,9 @@ bool Equals(const PP_Var& var,
           return false;
         ScopedPPVar release_value(ScopedPPVar::PassRef(),
                                   dict_var->Get(release_key.get()));
-        if (!Equals(release_value.get(), child_v8, visited_ids))
+        if (!Equals(release_value.get(), child_v8, isolate, visited_ids)) {
           return false;
+        }
       }
       return true;
     }
@@ -166,18 +179,21 @@ bool Equals(const PP_Var& var,
   return false;
 }
 
-bool Equals(const PP_Var& var, v8::Local<v8::Value> val) {
+bool Equals(const PP_Var& var, v8::Local<v8::Value> val, v8::Isolate* isolate) {
   VarHandleMap var_handle_map;
-  return Equals(var, val, &var_handle_map);
+  return Equals(var, val, isolate, &var_handle_map);
 }
 
 class V8VarConverterTest : public testing::Test {
  public:
   V8VarConverterTest()
-      : isolate_(v8::Isolate::GetCurrent()) {
+      : isolate_holder_(task_environment_.GetMainThreadTaskRunner(),
+                        gin::IsolateHolder::IsolateType::kTest),
+        isolate_scope_(isolate_holder_.isolate()) {
+    isolate_ = isolate_holder_.isolate();
     PP_Instance dummy = 1234;
-    converter_.reset(new V8VarConverter(
-        dummy, std::unique_ptr<ResourceConverter>(new MockResourceConverter)));
+    converter_ = std::make_unique<V8VarConverter>(
+        dummy, std::unique_ptr<ResourceConverter>(new MockResourceConverter));
   }
   ~V8VarConverterTest() override {}
 
@@ -189,6 +205,7 @@ class V8VarConverterTest : public testing::Test {
     context_.Reset(isolate_, v8::Context::New(isolate_, nullptr, global));
   }
   void TearDown() override {
+    isolate_ = nullptr;
     context_.Reset();
     ASSERT_TRUE(PpapiGlobals::Get()->GetVarTracker()->GetLiveVars().empty());
     ProxyLock::Release();
@@ -212,11 +229,14 @@ class V8VarConverterTest : public testing::Test {
     v8::Local<v8::Context> context =
         v8::Local<v8::Context>::New(isolate_, context_);
     v8::Context::Scope context_scope(context);
+    v8::MicrotasksScope microtasks(context,
+                                   v8::MicrotasksScope::kDoNotRunMicrotasks);
     v8::Local<v8::Value> v8_result;
     if (!converter_->ToV8Value(var, context, &v8_result))
       return false;
-    if (!Equals(var, v8_result))
+    if (!Equals(var, v8_result, isolate_)) {
       return false;
+    }
     if (!FromV8ValueSync(v8_result, context, result))
       return false;
     return true;
@@ -232,7 +252,7 @@ class V8VarConverterTest : public testing::Test {
     return TestEqual(expected.get(), actual.get(), false);
   }
 
-  v8::Isolate* isolate_;
+  raw_ptr<v8::Isolate> isolate_;
 
   // Context for the JavaScript in the test.
   v8::Persistent<v8::Context> context_;
@@ -242,6 +262,8 @@ class V8VarConverterTest : public testing::Test {
  private:
   // Required to receive callbacks.
   base::test::TaskEnvironment task_environment_;
+  gin::IsolateHolder isolate_holder_;
+  v8::Isolate::Scope isolate_scope_;
 
   TestGlobals globals_;
 };
@@ -339,6 +361,8 @@ TEST_F(V8VarConverterTest, Cycles) {
   v8::Local<v8::Context> context =
       v8::Local<v8::Context>::New(isolate_, context_);
   v8::Context::Scope context_scope(context);
+  v8::MicrotasksScope microtasks(context,
+                                 v8::MicrotasksScope::kDoNotRunMicrotasks);
 
   // Var->V8 conversion.
   {
@@ -412,8 +436,8 @@ TEST_F(V8VarConverterTest, StrangeDictionaryKeyTest) {
     v8::Local<v8::Context> context =
         v8::Local<v8::Context>::New(isolate_, context_);
     v8::Context::Scope context_scope(context);
-    v8::MicrotasksScope microtasks(
-        isolate_, v8::MicrotasksScope::kDoNotRunMicrotasks);
+    v8::MicrotasksScope microtasks(context,
+                                   v8::MicrotasksScope::kDoNotRunMicrotasks);
 
     const char* source =
         "(function() {"

@@ -1,7 +1,7 @@
 ﻿// © 2016 and later: Unicode, Inc. and others.
-// License & terms of use: http://www.unicode.org/copyright.html#License
+// License & terms of use: http://www.unicode.org/copyright.html
+// Generated using tools/cldr/cldr-to-icu/build-icu-data.xml
 jv{
-    Version{"37"}
     zoneStrings{
         "Africa:Abidjan"{
             ec{"Abidjan"}
@@ -257,6 +257,9 @@ jv{
         }
         "America:Chihuahua"{
             ec{"Chihuahua"}
+        }
+        "America:Ciudad_Juarez"{
+            ec{"Ciudad Juáres"}
         }
         "America:Coral_Harbour"{
             ec{"Atikokan"}
@@ -1876,6 +1879,9 @@ jv{
             ld{"Wektu Ketigo Yekaterinburg"}
             lg{"Wektu Yekaterinburg"}
             ls{"Wektu Standar Yekaterinburg"}
+        }
+        "meta:Yukon"{
+            ls{"Wektu Yukon"}
         }
         fallbackFormat{"{1} ({0})"}
         gmtFormat{"GMT{0}"}

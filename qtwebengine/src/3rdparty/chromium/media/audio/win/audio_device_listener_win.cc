@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -22,7 +22,7 @@ static std::string FlowToString(EDataFlow flow) {
   return flow == eRender ? "eRender" : "eCapture";
 }
 
-static std::string RoleToString(ERole role) {
+static std::string RoleToStringADLW(ERole role) {
   switch (role) {
     case eConsole:
       return "eConsole";
@@ -153,7 +153,7 @@ HRESULT AudioDeviceListenerWin::OnDefaultDeviceChanged(
                    ? CoreAudioUtil::GetFriendlyName(new_device_id, flow, role)
                    : "no device")
            << ", flow: " << FlowToString(flow)
-           << ", role: " << RoleToString(role)
+           << ", role: " << RoleToStringADLW(role)
            << ", notified manager: " << (did_run_listener_cb ? "Yes" : "No");
 
   return S_OK;

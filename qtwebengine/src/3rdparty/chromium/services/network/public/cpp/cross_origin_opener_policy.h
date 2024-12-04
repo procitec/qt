@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,8 +9,11 @@
 
 #include "base/component_export.h"
 #include "services/network/public/mojom/cross_origin_opener_policy.mojom-shared.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "url/origin.h"
 
 namespace network {
+struct CrossOriginEmbedderPolicy;
 
 // This corresponds to network::mojom::CrossOriginOpenerPolicy.
 // See the comments there.
@@ -23,12 +26,20 @@ struct COMPONENT_EXPORT(NETWORK_CPP_BASE) CrossOriginOpenerPolicy final {
   CrossOriginOpenerPolicy& operator=(CrossOriginOpenerPolicy&&);
   bool operator==(const CrossOriginOpenerPolicy&) const;
 
+  bool IsEqualExcludingOrigin(const CrossOriginOpenerPolicy& other) const;
+
   mojom::CrossOriginOpenerPolicyValue value =
       mojom::CrossOriginOpenerPolicyValue::kUnsafeNone;
-  base::Optional<std::string> reporting_endpoint;
+  absl::optional<std::string> reporting_endpoint;
   mojom::CrossOriginOpenerPolicyValue report_only_value =
       mojom::CrossOriginOpenerPolicyValue::kUnsafeNone;
-  base::Optional<std::string> report_only_reporting_endpoint;
+  absl::optional<std::string> report_only_reporting_endpoint;
+  mojom::CrossOriginOpenerPolicyValue soap_by_default_value =
+      mojom::CrossOriginOpenerPolicyValue::kUnsafeNone;
+
+  // The origin that sets this policy.  May stay nullopt until sandbox flags
+  // are ready so we can calculate the sandboxed origin.
+  absl::optional<url::Origin> origin;
 };
 
 COMPONENT_EXPORT(NETWORK_CPP_BASE)
@@ -36,6 +47,14 @@ bool IsAccessFromCoopPage(mojom::CoopAccessReportType);
 
 COMPONENT_EXPORT(NETWORK_CPP_BASE)
 const char* CoopAccessReportTypeToString(mojom::CoopAccessReportType type);
+
+COMPONENT_EXPORT(NETWORK_CPP_BASE)
+void AugmentCoopWithCoep(CrossOriginOpenerPolicy* coop,
+                         const CrossOriginEmbedderPolicy& coep);
+
+COMPONENT_EXPORT(NETWORK_CPP_BASE)
+bool IsRelatedToCoopRestrictProperties(
+    mojom::CrossOriginOpenerPolicyValue value);
 
 }  // namespace network
 

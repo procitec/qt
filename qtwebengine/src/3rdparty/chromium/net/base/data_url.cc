@@ -1,17 +1,19 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 // NOTE: based loosely on mozilla's nsDataChannel.cpp
 
-#include <algorithm>
-
 #include "net/base/data_url.h"
 
+#include <string>
+#include <string_view>
+
 #include "base/base64.h"
-#include "base/stl_util.h"
+#include "base/feature_list.h"
+#include "base/features.h"
+#include "base/ranges/algorithm.h"
 #include "base/strings/escape.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "net/base/mime_util.h"
@@ -20,6 +22,26 @@
 #include "url/gurl.h"
 
 namespace net {
+namespace {
+
+// https://infra.spec.whatwg.org/#ascii-whitespace, which is referenced by
+// https://infra.spec.whatwg.org/#forgiving-base64, does not include \v in the
+// set of ASCII whitespace characters the way Unicode does.
+bool IsBase64Whitespace(char c) {
+  return c != '\v' && base::IsAsciiWhitespace(c);
+}
+
+// A data URL is ready for decode if it:
+//   - Doesn't need any extra padding.
+//   - Does not have any escaped characters.
+//   - Does not have any whitespace.
+bool IsDataURLReadyForDecode(std::string_view body) {
+  return (body.length() % 4) == 0 && base::ranges::none_of(body, [](char c) {
+           return c == '%' || IsBase64Whitespace(c);
+         });
+}
+
+}  // namespace
 
 bool DataURL::Parse(const GURL& url,
                     std::string* mime_type,
@@ -32,18 +54,22 @@ bool DataURL::Parse(const GURL& url,
   DCHECK(charset->empty());
   DCHECK(!data || data->empty());
 
-  std::string content = url.GetContent();
+  std::string_view content;
+  std::string content_string;
+  if (base::FeatureList::IsEnabled(base::features::kOptimizeDataUrls)) {
+    // Avoid copying the URL content which can be expensive for large URLs.
+    content = url.GetContentPiece();
+  } else {
+    content_string = url.GetContent();
+    content = content_string;
+  }
 
-  std::string::const_iterator begin = content.begin();
-  std::string::const_iterator end = content.end();
-
-  std::string::const_iterator comma = std::find(begin, end, ',');
-
-  if (comma == end)
+  std::string_view::const_iterator comma = base::ranges::find(content, ',');
+  if (comma == content.end())
     return false;
 
-  std::vector<base::StringPiece> meta_data =
-      base::SplitStringPiece(base::StringPiece(begin, comma), ";",
+  std::vector<std::string_view> meta_data =
+      base::SplitStringPiece(base::MakeStringPiece(content.begin(), comma), ";",
                              base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
 
   // These are moved to |mime_type| and |charset| on success.
@@ -55,8 +81,8 @@ bool DataURL::Parse(const GURL& url,
     ++iter;
   }
 
-  static constexpr base::StringPiece kBase64Tag("base64");
-  static constexpr base::StringPiece kCharsetTag("charset=");
+  static constexpr std::string_view kBase64Tag("base64");
+  static constexpr std::string_view kCharsetTag("charset=");
 
   bool base64_encoded = false;
   for (; iter != meta_data.cend(); ++iter) {
@@ -66,7 +92,7 @@ bool DataURL::Parse(const GURL& url,
     } else if (charset_value.empty() &&
                base::StartsWith(*iter, kCharsetTag,
                                 base::CompareCase::INSENSITIVE_ASCII)) {
-      charset_value = iter->substr(kCharsetTag.size()).as_string();
+      charset_value = std::string(iter->substr(kCharsetTag.size()));
       // The grammar for charset is not specially defined in RFC2045 and
       // RFC2397. It just needs to be a token.
       if (!HttpUtil::IsToken(charset_value))
@@ -104,41 +130,34 @@ bool DataURL::Parse(const GURL& url,
     // spaces itself, anyways. Should we just trim leading spaces instead?
     // Allowing random intermediary spaces seems unnecessary.
 
-    base::StringPiece raw_body(comma + 1, end);
+    auto raw_body = base::MakeStringPiece(comma + 1, content.end());
 
     // For base64, we may have url-escaped whitespace which is not part
     // of the data, and should be stripped. Otherwise, the escaped whitespace
     // could be part of the payload, so don't strip it.
     if (base64_encoded) {
-      std::string unescaped_body = UnescapeBinaryURLComponent(raw_body);
-
-      // Strip spaces, which aren't allowed in Base64 encoding.
-      base::EraseIf(unescaped_body, base::IsAsciiWhitespace<char>);
-
-      size_t length = unescaped_body.length();
-      size_t padding_needed = 4 - (length % 4);
-      // If the input wasn't padded, then we pad it as necessary until we have a
-      // length that is a multiple of 4 as required by our decoder. We don't
-      // correct if the input was incorrectly padded. If |padding_needed| == 3,
-      // then the input isn't well formed and decoding will fail with or without
-      // padding.
-      if ((padding_needed == 1 || padding_needed == 2) &&
-          unescaped_body[length - 1] != '=') {
-        unescaped_body.resize(length + padding_needed, '=');
+      // If the data URL is well formed, we can decode it immediately.
+      if (base::FeatureList::IsEnabled(base::features::kOptimizeDataUrls) &&
+          IsDataURLReadyForDecode(raw_body)) {
+        if (!base::Base64Decode(raw_body, data))
+          return false;
+      } else {
+        std::string unescaped_body = base::UnescapeBinaryURLComponent(raw_body);
+        if (!base::Base64Decode(unescaped_body, data,
+                                base::Base64DecodePolicy::kForgiving))
+          return false;
       }
-      if (!base::Base64Decode(unescaped_body, data))
-        return false;
     } else {
       // Strip whitespace for non-text MIME types.
       std::string temp;
       if (!(mime_type_value.compare(0, 5, "text/") == 0 ||
             mime_type_value.find("xml") != std::string::npos)) {
-        temp = raw_body.as_string();
-        base::EraseIf(temp, base::IsAsciiWhitespace<char>);
+        temp = std::string(raw_body);
+        std::erase_if(temp, base::IsAsciiWhitespace<char>);
         raw_body = temp;
       }
 
-      *data = UnescapeBinaryURLComponent(raw_body);
+      *data = base::UnescapeBinaryURLComponent(raw_body);
     }
   }
 
@@ -148,7 +167,7 @@ bool DataURL::Parse(const GURL& url,
 }
 
 Error DataURL::BuildResponse(const GURL& url,
-                             base::StringPiece method,
+                             std::string_view method,
                              std::string* mime_type,
                              std::string* charset,
                              std::string* data,

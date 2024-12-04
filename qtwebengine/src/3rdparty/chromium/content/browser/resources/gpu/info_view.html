@@ -1,135 +1,121 @@
 <!--
-Copyright (c) 2012 The Chromium Authors. All rights reserved.
+Copyright 2012 The Chromium Authors
 Use of this source code is governed by a BSD-style license that can be
 found in the LICENSE file.
 -->
-<div id="info-view">
-  <div>
-    <input type="button" id="copy-to-clipboard" value="Copy Report to Clipboard">
-  </div>
-  <div>
-    <h3>Graphics Feature Status</h3>
-    <ul class="feature-status-list">
-    </ul>
-  </div>
+<style>
+  :host {
+    --green: #080;
+    --yellow: #880;
+    --red: #f00;
+    --gray: #888;
+    --bg-yellow: #ff0;
 
-  <div class='workarounds-div'>
-    <h3>Driver Bug Workarounds</h3>
-    <ul class="workarounds-list">
-    </ul>
-  </div>
+    display: block;
+    flex: 1;
+    overflow: auto;
+    padding: 10px;
+  }
 
-  <div class='problems-div'>
-    <h3>Problems Detected</h3>
-    <ul class="problems-list">
-    </ul>
-  </div>
+  @media (prefers-color-scheme: dark) {
+    :host {
+      --green: #0F0;
+      --yellow: #FF0;
+      --red: #f00;
+      --gray: #888;
+      --bg-yellow: #880;
+    }
+  }
 
-  <div class='angle-features-div'>
-    <h3>ANGLE Features</h3>
-    <ul class="angle-features-list">
-    </ul>
-  </div>
+  :host * {
+    user-select: text;
+  }
 
-  <div>
-    <h3>Version Information</h3>
-    <div id="client-info"></div>
-  </div>
+  :host([selected]) {
+    display: flex;
+    flex-direction: column;
+  }
 
-  <div>
-    <h3>Driver Information</h3>
-    <div id="basic-info"></div>
-  </div>
+  h3,
+  ul {
+    margin-bottom: 0;
+    margin-top: 0;
+  }
 
-  <div>
-    <h3>Compositor Information</h3>
-    <div id="compositor-info"></div>
-  </div>
+  #content > div,
+  #download-to-file {
+    margin-bottom: 1em;
+  }
 
-  <div>
-    <h3>GpuMemoryBuffers Status</h3>
-    <div id="gpu-memory-buffer-info"></div>
-  </div>
+  .feature-green {
+    color: var(--green);
+  }
 
-  <div>
-    <h3>Display(s) Information</h3>
-    <div id="display-info"></div>
-  </div>
+  .feature-yellow {
+    color: var(--yellow);
+  }
 
-  <div>
-    <h3>Video Acceleration Information</h3>
-    <div id="video-acceleration-info"></div>
-  </div>
+  .feature-red {
+    color: var(--red);
+  }
 
-  <div>
-    <h3>Vulkan Information</h3>
-    <div id="vulkan-info"></div>
-  </div>
+  .feature-gray {
+    color: var(--gray);
+  }
 
-  <div>
-    <h3>Device Performance Information</h3>
-    <div id="device-perf-info"></div>
-  </div>
+  .bg-yellow {
+    background-color: var(--bg-yellow);
+  }
 
-  <div class="diagnostics">
-    <h3>Diagnostics</h3>
-    <div class="diagnostics-loading">... loading ...</div>
-    <div id="diagnostics-table">None</div>
-  </div>
+  #vulkan-info-value {
+    white-space: pre;
+  }
 
-  <div class='basic-info-for-hardware-gpu-div'>
-    <h3>Driver Information for Hardware GPU</h3>
-    <div id="basic-info-for-hardware-gpu"></div>
-  </div>
+  #download-to-file {
+    font: inherit;
+    min-height: 2em;
+    user-select: none;
+  }
 
-  <div class='feature-status-for-hardware-gpu-div'>
-    <h3>Graphics Feature Status for Hardware GPU</h3>
-    <ul class="feature-status-for-hardware-gpu-list">
-    </ul>
-  </div>
+  h4.dawn-info-header {
+    color: var(--yellow);
+    margin-bottom: 2px;
+    margin-top: 10px;
+  }
+  
+  table.info-table {
+    border-collapse: collapse;
+    table-layout: fixed;
+    width: 100%;
+  }
+  .info-table td {
+    border: 1px solid #777;
+    vertical-align: top;
+    overflow-x: auto;
+  }
+  .info-table td:nth-child(1) {
+    font-weight: bold;
+    width: 25%;
+  }
+  .info-table td:nth-child(2) {
+    font-weight: bold;
+    width: 75%;
+  }
 
-  <div class='workarounds-for-hardware-gpu-div'>
-    <h3>Driver Bug Workarounds for Hardware GPU</h3>
-    <ul class="workarounds-for-hardware-gpu-list">
-    </ul>
-  </div>
-
-  <div class='problems-for-hardware-gpu-div'>
-    <h3>Problems Detected for Hardware GPU</h3>
-    <ul class="problems-for-hardware-gpu-list">
-    </ul>
-  </div>
-
-  <div id="log-messages" jsdisplay="values.length">
-    <h3>Log Messages</h3>
-    <ul>
-      <li jsselect="values">
-        <span jscontent="header"></span>: <span jscontent="message"></span>
-      </li>
-    </ul>
-  </div>
-
-  <!-- templates -->
-  <div style="display:none">
-    <div id="info-view-table-template">
-      <table id="info-view-table">
-        <colgroup>
-          <col style="width: 25%" />
-          <col style="width: 75%" />
-        </colgroup>
-        <tr jsselect="value">
-          <td jsdisplay="!(value instanceof Array)">
-            <span class="row-title" jscontent="description">title</span>
-          </td>
-          <td jsdisplay="!(value instanceof Array)">
-            <span jscontent="value" jsvalues=".id:id">value</span>
-          </td>
-          <td jsdisplay="value instanceof Array" colspan=2>
-            <span jscontent="description" class="row-title"></span>
-            <div transclude="info-view-table-template"></div>
-          </td>
-        </tr>
-      </table>
-    </div>
-  </div>
+  /*
+  This class is used to show text that is only available
+  when the user copies text or downloads the report to a file.
+  We insert extra but hidden text to make plain text formatting
+  look better, at copy/download time we make the text visible
+  */
+  .copy {
+    display: none;
+  }
+</style>
+<style id="dynamic-style"></style>
+<div>
+  <button id="download-to-file">Download Report to File</button>
+</div>
+<div id="content">
+  <script type="not-js" id="used-only-by-test">GPU Info</script>
 </div>

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -87,9 +87,9 @@ bool PpapiHost::OnMessageReceived(const IPC::Message& msg) {
 
 void PpapiHost::SendReply(const ReplyMessageContext& context,
                           const IPC::Message& msg) {
-  TRACE_EVENT2("ppapi proxy", "PpapiHost::SendReply",
-               "Class", IPC_MESSAGE_ID_CLASS(msg.type()),
-               "Line", IPC_MESSAGE_ID_LINE(msg.type()));
+  TRACE_EVENT2("ppapi_proxy", "PpapiHost::SendReply", "Class",
+               IPC_MESSAGE_ID_CLASS(msg.type()), "Line",
+               IPC_MESSAGE_ID_LINE(msg.type()));
   if (context.sync_reply_msg) {
     PpapiHostMsg_ResourceSyncCall::WriteReplyParams(context.sync_reply_msg,
                                                     context.params, msg);
@@ -115,10 +115,14 @@ void PpapiHost::SendUnsolicitedReplyWithHandles(
     PP_Resource resource,
     const IPC::Message& msg,
     std::vector<SerializedHandle>* handles) {
-  TRACE_EVENT2("ppapi proxy", "PpapiHost::SendUnsolicitedReplyWithHandles",
-               "Class", IPC_MESSAGE_ID_CLASS(msg.type()),
-               "Line", IPC_MESSAGE_ID_LINE(msg.type()));
-  DCHECK(resource);  // If this fails, host is probably pending.
+  TRACE_EVENT2("ppapi_proxy", "PpapiHost::SendUnsolicitedReplyWithHandles",
+               "Class", IPC_MESSAGE_ID_CLASS(msg.type()), "Line",
+               IPC_MESSAGE_ID_LINE(msg.type()));
+  if (!resource) {
+    // Host probably still in a pending state, nothing we can do.
+    return;
+  }
+
   proxy::ResourceMessageReplyParams params(resource, 0);
   for (auto& handle : *handles)
     params.AppendHandle(std::move(handle));
@@ -170,9 +174,9 @@ void PpapiHost::AddInstanceMessageFilter(
 void PpapiHost::OnHostMsgResourceCall(
     const proxy::ResourceMessageCallParams& params,
     const IPC::Message& nested_msg) {
-  TRACE_EVENT2("ppapi proxy", "PpapiHost::OnHostMsgResourceCall",
-               "Class", IPC_MESSAGE_ID_CLASS(nested_msg.type()),
-               "Line", IPC_MESSAGE_ID_LINE(nested_msg.type()));
+  TRACE_EVENT2("ppapi_proxy", "PpapiHost::OnHostMsgResourceCall", "Class",
+               IPC_MESSAGE_ID_CLASS(nested_msg.type()), "Line",
+               IPC_MESSAGE_ID_LINE(nested_msg.type()));
   HostMessageContext context(params);
   HandleResourceCall(params, nested_msg, &context);
 }
@@ -181,9 +185,9 @@ void PpapiHost::OnHostMsgInProcessResourceCall(
     int routing_id,
     const proxy::ResourceMessageCallParams& params,
     const IPC::Message& nested_msg) {
-  TRACE_EVENT2("ppapi proxy", "PpapiHost::OnHostMsgInProcessResourceCall",
-               "Class", IPC_MESSAGE_ID_CLASS(nested_msg.type()),
-               "Line", IPC_MESSAGE_ID_LINE(nested_msg.type()));
+  TRACE_EVENT2("ppapi_proxy", "PpapiHost::OnHostMsgInProcessResourceCall",
+               "Class", IPC_MESSAGE_ID_CLASS(nested_msg.type()), "Line",
+               IPC_MESSAGE_ID_LINE(nested_msg.type()));
   HostMessageContext context(routing_id, params);
   HandleResourceCall(params, nested_msg, &context);
 }
@@ -192,12 +196,16 @@ void PpapiHost::OnHostMsgResourceSyncCall(
     const proxy::ResourceMessageCallParams& params,
     const IPC::Message& nested_msg,
     IPC::Message* reply_msg) {
-  TRACE_EVENT2("ppapi proxy", "PpapiHost::OnHostMsgResourceSyncCall",
-               "Class", IPC_MESSAGE_ID_CLASS(nested_msg.type()),
-               "Line", IPC_MESSAGE_ID_LINE(nested_msg.type()));
+  TRACE_EVENT2("ppapi_proxy", "PpapiHost::OnHostMsgResourceSyncCall", "Class",
+               IPC_MESSAGE_ID_CLASS(nested_msg.type()), "Line",
+               IPC_MESSAGE_ID_LINE(nested_msg.type()));
   // Sync messages should always have callback set because they always expect
   // a reply from the host.
-  DCHECK(params.has_callback());
+  if (!params.has_callback()) {
+    DLOG(WARNING) << "Expected callback for sync message.";
+    return;
+  }
+
   // Stash the |reply_msg| in the context so that it can be used to reply
   // to the sync message.
   HostMessageContext context(params, reply_msg);
@@ -225,9 +233,9 @@ void PpapiHost::OnHostMsgResourceCreated(
     const proxy::ResourceMessageCallParams& params,
     PP_Instance instance,
     const IPC::Message& nested_msg) {
-  TRACE_EVENT2("ppapi proxy", "PpapiHost::OnHostMsgResourceCreated",
-               "Class", IPC_MESSAGE_ID_CLASS(nested_msg.type()),
-               "Line", IPC_MESSAGE_ID_LINE(nested_msg.type()));
+  TRACE_EVENT2("ppapi_proxy", "PpapiHost::OnHostMsgResourceCreated", "Class",
+               IPC_MESSAGE_ID_CLASS(nested_msg.type()), "Line",
+               IPC_MESSAGE_ID_LINE(nested_msg.type()));
 
   if (pending_resource_hosts_.size() + resources_.size()
       >= kMaxResourcesPerPlugin) {
@@ -239,13 +247,7 @@ void PpapiHost::OnHostMsgResourceCreated(
       CreateResourceHost(params.pp_resource(), instance, nested_msg);
 
   if (!resource_host.get()) {
-#ifndef TOOLKIT_QT
-    NOTREACHED();
-#else
-    LOG(INFO) << "Failed to create PPAPI resource host - "
-              << "Class: " << IPC_MESSAGE_ID_CLASS(nested_msg.type())
-              << "Line: " << IPC_MESSAGE_ID_LINE(nested_msg.type());
-#endif
+    DLOG(WARNING) << "Resource host creation failed.";
     return;
   }
 
@@ -261,11 +263,7 @@ void PpapiHost::OnHostMsgAttachToPendingHost(PP_Resource pp_resource,
       pending_resource_hosts_.find(pending_host_id);
   if (found == pending_resource_hosts_.end()) {
     // Plugin sent a bad ID.
-#ifndef TOOLKIT_QT
-    NOTREACHED();
-#else
-    LOG(INFO) << "Did not find resource host for id: " << pending_host_id;
-#endif
+    DLOG(WARNING) << "Bad pending host ID = " << pending_host_id;
     return;
   }
   found->second->SetPPResourceForPendingHost(pp_resource);
@@ -276,11 +274,7 @@ void PpapiHost::OnHostMsgAttachToPendingHost(PP_Resource pp_resource,
 void PpapiHost::OnHostMsgResourceDestroyed(PP_Resource resource) {
   ResourceMap::iterator found = resources_.find(resource);
   if (found == resources_.end()) {
-#ifndef TOOLKIT_QT
-    NOTREACHED();
-#else
-    LOG(INFO) << "Failed to find PPAPI resource: " << resource;
-#endif
+    DLOG(WARNING) << "Unknown resource ID " << resource;
     return;
   }
   // Invoking the HostResource destructor might result in looking up the

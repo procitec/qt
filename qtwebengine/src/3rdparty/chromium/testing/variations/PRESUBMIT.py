@@ -1,4 +1,4 @@
-# Copyright 2015 The Chromium Authors. All rights reserved.
+# Copyright 2015 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 """Presubmit script validating field trial configs.
@@ -8,7 +8,9 @@ for more details on the presubmit API built into depot_tools.
 """
 
 import copy
+import io
 import json
+import re
 import sys
 
 from collections import OrderedDict
@@ -21,15 +23,8 @@ VALID_EXPERIMENT_KEYS = [
 
 FIELDTRIAL_CONFIG_FILE_NAME = 'fieldtrial_testing_config.json'
 
-FIELDTRIAL_CONFIG_TOO_LONG_ERROR_MSG = \
-  "Contents of %s result in command-line flags that exceed Windows' 32767 "\
-  "character limit. To add a new entry, please remove existing obsolete "\
-  "entries. To check if an entry is obsolete, do a code search for its "\
-  "'enable_features' and 'disable_features' strings and verify there are "\
-  "no results other than the files related to the testing config. "\
-  "Automating this is tracked under crbug.com/1053702." % \
-  FIELDTRIAL_CONFIG_FILE_NAME
-
+BASE_FEATURE_PATTERN = r"BASE_FEATURE\((.*?),(.*?),(.*?)\);"
+BASE_FEATURE_RE = re.compile(BASE_FEATURE_PATTERN, flags=re.MULTILINE+re.DOTALL)
 
 def PrettyPrint(contents):
   """Pretty prints a fieldtrial configuration.
@@ -77,7 +72,7 @@ def PrettyPrint(contents):
                                                ('experiments', [])])
       for experiment in experiment_config['experiments']:
         ordered_experiment = OrderedDict()
-        for index in xrange(0, 10):
+        for index in range(0, 10):
           comment_key = '//' + str(index)
           if comment_key in experiment:
             ordered_experiment[comment_key] = experiment[comment_key]
@@ -102,12 +97,10 @@ def PrettyPrint(contents):
       ordered_config, sort_keys=False, indent=4, separators=(',', ': ')) + '\n'
 
 
-def ValidateData(input_api, json_data, file_path, message_type):
+def ValidateData(json_data, file_path, message_type):
   """Validates the format of a fieldtrial configuration.
 
   Args:
-    input_api: An instance passed to presubmit scripts telling info about the
-      changes.
     json_data: Parsed JSON object representing the fieldtrial config.
     file_path: String representing the path to the JSON file.
     message_type: Type of message from |output_api| to return in the case of
@@ -122,12 +115,9 @@ def ValidateData(input_api, json_data, file_path, message_type):
     return _CreateMalformedConfigMessage(message_type, file_path,
                                          message_format, *args)
 
-  if not _IsFieldTrialSizeBelowLimitOnWindows(input_api, file_path):
-    return [message_type(FIELDTRIAL_CONFIG_TOO_LONG_ERROR_MSG)]
-
   if not isinstance(json_data, dict):
     return _CreateMessage('Expecting dict')
-  for (study, experiment_configs) in json_data.iteritems():
+  for (study, experiment_configs) in iter(json_data.items()):
     warnings = _ValidateEntry(study, experiment_configs, _CreateMessage)
     if warnings:
       return warnings
@@ -137,7 +127,7 @@ def ValidateData(input_api, json_data, file_path, message_type):
 
 def _ValidateEntry(study, experiment_configs, create_message_fn):
   """Validates one entry of the field trial configuration."""
-  if not isinstance(study, unicode):
+  if not isinstance(study, str):
     return create_message_fn('Expecting keys to be string, got %s', type(study))
   if not isinstance(experiment_configs, list):
     return create_message_fn('Expecting list for study %s', study)
@@ -171,8 +161,8 @@ def _ValidateExperimentConfig(experiment_config, create_message_fn):
   if not isinstance(experiment_config['platforms'], list):
     return create_message_fn('Expecting list for platforms')
   supported_platforms = [
-      'android', 'android_weblayer', 'android_webview', 'chromeos', 'ios',
-          'linux', 'mac', 'windows'
+      'android', 'android_weblayer', 'android_webview', 'chromeos',
+      'chromeos_lacros', 'fuchsia', 'ios', 'linux', 'mac', 'windows'
   ]
   experiment_platforms = experiment_config['platforms']
   unsupported_platforms = list(
@@ -185,7 +175,7 @@ def _ValidateExperimentConfig(experiment_config, create_message_fn):
 def _ValidateExperimentGroup(experiment_group, create_message_fn):
   """Validates one group of one config in a configuration entry."""
   name = experiment_group.get('name', '')
-  if not name or not isinstance(name, unicode):
+  if not name or not isinstance(name, str):
     return create_message_fn('Missing valid name for experiment')
 
   # Add context to other messages.
@@ -197,8 +187,8 @@ def _ValidateExperimentGroup(experiment_group, create_message_fn):
     params = experiment_group['params']
     if not isinstance(params, dict):
       return _CreateGroupMessage('Expected dict for params')
-    for (key, value) in params.iteritems():
-      if not isinstance(key, unicode) or not isinstance(value, unicode):
+    for (key, value) in iter(params.items()):
+      if not isinstance(key, str) or not isinstance(value, str):
         return _CreateGroupMessage('Invalid param (%s: %s)', key, value)
   for key in experiment_group.keys():
     if key not in VALID_EXPERIMENT_KEYS:
@@ -243,36 +233,181 @@ def CheckPretty(contents, file_path, message_type):
   if contents != pretty:
     return [
         message_type('Pretty printing error: Run '
-                     'python testing/variations/PRESUBMIT.py %s' % file_path)
+                     'python3 testing/variations/PRESUBMIT.py %s' % file_path)
     ]
   return []
 
+def _GetStudyConfigFeatures(study_config):
+  """Gets the set of features overridden in a study config."""
+  features = set()
+  for experiment in study_config.get("experiments", []):
+    features.update(experiment.get("enable_features", []))
+    features.update(experiment.get("disable_features", []))
+  return features
 
-def _IsFieldTrialSizeBelowLimitOnWindows(input_api, file_path):
-  """Checks whether the fieldtrial parameters exceeded the Windows cmd limit.
+def _GetDuplicatedFeatures(study1, study2):
+  """Gets the set of features that are overridden in two overlapping studies."""
+  duplicated_features = set()
+  for study_config1 in study1:
+    features = _GetStudyConfigFeatures(study_config1)
+    platforms = set(study_config1.get("platforms", []))
+    for study_config2 in study2:
+      # If the study configs do not specify any common platform, they do not
+      # overlap, so we can skip them.
+      if platforms.isdisjoint(set(study_config2.get("platforms", []))):
+        continue
 
-  When launching chrome, the fieldtrial related parameters take more than
-  30,000 characters. Windows has a limit of 32767 characters on command
-  line and thus it raises parameter error when the parameters are too long.
-  Before we have a valid fix, we need to limit the number of fieldtrias in
-  fieldtrial_testing_config.json to 31,500, from the fact that the
-  non-fieldtrial parameters take roughly 1450 characters.
-  See crbug.com/1045530 for more details.
+      common_features = features & _GetStudyConfigFeatures(study_config2)
+      duplicated_features.update(common_features)
+
+  return duplicated_features
+
+def CheckDuplicatedFeatures(new_json_data, old_json_data, message_type):
+  """Validates that features are not specified in multiple studies.
+
+  Note that a feature may be specified in different studies that do not overlap.
+  For example, if they specify different platforms. In such a case, this will
+  not give a warning/error. However, it is possible that this incorrectly
+  gives an error, as it is possible for studies to have complex filters (e.g.,
+  if they make use of additional filters such as form_factors,
+  is_low_end_device, etc.). In those cases, the PRESUBMIT check can be bypassed.
+  Since this will only check for studies that were changed in this particular
+  commit, bypassing the PRESUBMIT check will not block future commits.
 
   Args:
-    input_api: An instance passed to presubmit scripts telling info about the
-      changes.
-    file_path: the absolute path to the json file with the fieldtrial configs.
-  """
-  sys.path.append(input_api.os_path.join(
-      input_api.PresubmitLocalPath(), '..', '..', 'tools', 'variations'))
-  import fieldtrial_util
+    new_json_data: Parsed JSON object representing the new fieldtrial config.
+    old_json_data: Parsed JSON object representing the old fieldtrial config.
+    message_type: Type of message from |output_api| to return in the case of
+      errors/warnings.
 
-  args = fieldtrial_util.GenerateArgs(file_path, 'windows')
-  total_length = 0
-  for arg in args:
-    total_length += len(arg)
-  return total_length < 31500
+  Returns:
+    A list of |message_type| messages. In the case of all tests passing with no
+    warnings/errors, this will return [].
+  """
+  # Get list of studies that changed.
+  changed_studies = []
+  for study_name in new_json_data:
+    if (study_name not in old_json_data or
+          new_json_data[study_name] != old_json_data[study_name]):
+      changed_studies.append(study_name)
+
+  # A map between a feature name and the name of studies that use it. E.g.,
+  # duplicated_features_to_studies_map["FeatureA"] = {"StudyA", "StudyB"}.
+  # Only features that are defined in multiple studies are added to this map.
+  duplicated_features_to_studies_map = dict()
+
+  # Compare the changed studies against all studies defined.
+  for changed_study_name in changed_studies:
+    for study_name in new_json_data:
+      if changed_study_name == study_name:
+        continue
+
+      duplicated_features = _GetDuplicatedFeatures(
+          new_json_data[changed_study_name], new_json_data[study_name])
+
+      for feature in duplicated_features:
+        if feature not in duplicated_features_to_studies_map:
+          duplicated_features_to_studies_map[feature] = set()
+        duplicated_features_to_studies_map[feature].update(
+            [changed_study_name, study_name])
+
+  if len(duplicated_features_to_studies_map) == 0:
+    return []
+
+  duplicated_features_strings = [
+      "%s (in studies %s)" % (feature, ', '.join(studies))
+      for feature, studies in duplicated_features_to_studies_map.items()
+  ]
+
+  return [
+    message_type('The following feature(s) were specified in multiple '
+                  'studies: %s' % ', '.join(duplicated_features_strings))
+  ]
+
+
+def CheckUndeclaredFeatures(input_api, output_api, json_data, changed_lines):
+  """Checks that feature names are all valid declared features.
+
+  There have been more than one instance of developers accidentally mistyping
+  a feature name in the fieldtrial_testing_config.json file, which leads
+  to the config silently doing nothing.
+
+  This check aims to catch these errors by validating that the feature name
+  is defined somewhere in the Chrome source code.
+
+  Args:
+    input_api: Presubmit InputApi
+    output_api: Presubmit OutputApi
+    json_data: The parsed fieldtrial_testing_config.json
+    changed_lines: The AffectedFile.ChangedContents() of the json file
+
+  Returns:
+    List of validation messages - empty if there are no errors.
+  """
+
+  declared_features = set()
+  # I was unable to figure out how to do a proper top-level include that did
+  # not depend on getting the path from input_api. I found this pattern
+  # elsewhere in the code base. Please change to a top-level include if you
+  # know how.
+  old_sys_path = sys.path[:]
+  try:
+    sys.path.append(input_api.os_path.join(
+            input_api.PresubmitLocalPath(), 'presubmit'))
+    # pylint: disable=import-outside-toplevel
+    import find_features
+    # pylint: enable=import-outside-toplevel
+    declared_features = find_features.FindDeclaredFeatures(input_api)
+  finally:
+    sys.path = old_sys_path
+
+  if not declared_features:
+    return [message_type("Presubmit unable to find any declared flags "
+                         "in source. Please check PRESUBMIT.py for errors.")]
+
+  messages = []
+  # Join all changed lines into a single string. This will be used to check
+  # if feature names are present in the changed lines by substring search.
+  changed_contents = " ".join([x[1].strip() for x in changed_lines])
+  for study_name in json_data:
+    study = json_data[study_name]
+    for config in study:
+      features = set(_GetStudyConfigFeatures(config))
+      # Determine if a study has been touched by the current change by checking
+      # if any of the features are part of the changed lines of the file.
+      # This limits the noise from old configs that are no longer valid.
+      probably_affected = False
+      for feature in features:
+        if feature in changed_contents:
+          probably_affected = True
+          break
+
+      if probably_affected and not declared_features.issuperset(features):
+        missing_features = features - declared_features
+        # CrOS has external feature declarations starting with this prefix
+        # (checked by build tools in base/BUILD.gn).
+        # Warn, but don't break, if they are present in the CL
+        cros_late_boot_features = {s for s in missing_features if
+                                          s.startswith("CrOSLateBoot")}
+        missing_features = missing_features - cros_late_boot_features
+        if cros_late_boot_features:
+          msg = ("CrOSLateBoot features added to "
+                 "study %s are not checked by presubmit."
+                 "\nPlease manually check that they exist in the code base."
+                ) % study_name
+          messages.append(output_api.PresubmitResult(msg,
+                                                     cros_late_boot_features))
+
+        if missing_features:
+          msg = ("Presubmit was unable to verify existence of features in "
+                  "study %s.\nThis happens most commonly if the feature is "
+                  "defined by code generation.\n"
+                  "Please verify that the feature names have been spelled "
+                  "correctly before submitting. The affected features are:"
+              ) % study_name
+          messages.append(output_api.PresubmitResult(msg, missing_features))
+
+  return messages
 
 
 def CommonChecks(input_api, output_api):
@@ -292,14 +427,23 @@ def CommonChecks(input_api, output_api):
     try:
       json_data = input_api.json.loads(contents)
       result = ValidateData(
-          input_api,
           json_data,
           f.AbsoluteLocalPath(),
           output_api.PresubmitError)
-      if len(result):
+      if result:
         return result
       result = CheckPretty(contents, f.LocalPath(), output_api.PresubmitError)
-      if len(result):
+      if result:
+        return result
+      result = CheckDuplicatedFeatures(
+          json_data,
+          input_api.json.loads('\n'.join(f.OldContents())),
+          output_api.PresubmitError)
+      if result:
+        return result
+      result = CheckUndeclaredFeatures(input_api, output_api, json_data,
+                                       f.ChangedContents())
+      if result:
         return result
     except ValueError:
       return [
@@ -317,9 +461,10 @@ def CheckChangeOnCommit(input_api, output_api):
 
 
 def main(argv):
-  content = open(argv[1]).read()
+  with io.open(argv[1], encoding='utf-8') as f:
+    content = f.read()
   pretty = PrettyPrint(content)
-  open(argv[1], 'wb').write(pretty)
+  io.open(argv[1], 'wb').write(pretty.encode('utf-8'))
 
 
 if __name__ == '__main__':

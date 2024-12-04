@@ -303,6 +303,8 @@ void ResetReorderingPictureBuffers (PPictReoderingStatus pPictReoderingStatus, P
       pPictInfo[i].bLastGOP = false;
       pPictInfo[i].iPOC = IMinInt32;
     }
+    pPictInfo->sBufferInfo.iBufferStatus = 0;
+		pPictReoderingStatus->bHasBSlice = false;
   }
 }
 
@@ -438,8 +440,10 @@ static inline int32_t GetTargetRefListSize (PWelsDecoderContext pCtx) {
     iNumRefFrames = MAX_REF_PIC_COUNT + 2;
   } else {
     iNumRefFrames = pCtx->pSps->iNumRefFrames + 2;
-    if (GetThreadCount (pCtx) > 1) {
-      iNumRefFrames = MAX_REF_PIC_COUNT + 1;
+    int32_t  iThreadCount = GetThreadCount (pCtx);
+    if (iThreadCount > 1) {
+      //due to thread and reordering buffering, it needs more dpb space
+      iNumRefFrames = MAX_DPB_COUNT + iThreadCount;
     }
   }
 
@@ -1165,6 +1169,14 @@ void InitPredFunc (PWelsDecoderContext pCtx, uint32_t uiCpuFlag) {
     pCtx->pGetI4x4LumaPredFunc[I4_PRED_H]     = WelsDecoderI4x4LumaPredH_mmi;
   }
 #endif//HAVE_MMI
+
+#if defined(HAVE_LSX)
+  if (uiCpuFlag & WELS_CPU_LSX) {
+    pCtx->pIdctResAddPredFunc   = IdctResAddPred_lsx;
+    pCtx->pIdctFourResAddPredFunc = IdctFourResAddPred_<IdctResAddPred_lsx>;
+    pCtx->pIdctResAddPredFunc8x8  = IdctResAddPred8x8_lsx;
+  }
+#endif
 }
 
 //reset decoder number related statistics info

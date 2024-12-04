@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,24 +7,52 @@
 #include <memory>
 
 #include "base/android/scoped_hardware_buffer_fence_sync.h"
-#include "base/bind.h"
 #include "base/check_op.h"
 #include "base/debug/alias.h"
 #include "base/debug/dump_without_crashing.h"
+#include "base/functional/bind.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/notreached.h"
 #include "base/synchronization/waitable_event.h"
-#include "base/threading/thread_task_runner_handle.h"
-#include "gpu/command_buffer/service/abstract_texture.h"
+#include "gpu/command_buffer/service/abstract_texture_android.h"
+#include "gpu/config/gpu_finch_features.h"
 #include "ui/gl/scoped_binders.h"
 #include "ui/gl/scoped_make_current.h"
+#include "ui/gl/scoped_restore_texture.h"
 
 namespace gpu {
+namespace {
+
+// Makes |texture_owner|'s context current if it isn't already.
+std::unique_ptr<ui::ScopedMakeCurrent> MakeCurrentIfNeeded(
+    gpu::TextureOwner* texture_owner) {
+  gl::GLContext* context = texture_owner->GetContext();
+  // Note: this works for virtual contexts too, because IsCurrent() returns true
+  // if their shared platform context is current, regardless of which virtual
+  // context is current.
+  if (context->IsCurrent(nullptr))
+    return nullptr;
+
+  auto scoped_current = std::make_unique<ui::ScopedMakeCurrent>(
+      context, texture_owner->GetSurface());
+  // Log an error if ScopedMakeCurrent failed for debugging
+  // https://crbug.com/878042.
+  // TODO(ericrk): Remove this once debugging is completed.
+  if (!context->IsCurrent(nullptr)) {
+    LOG(ERROR) << "Failed to make context current in CodecImage. Subsequent "
+                  "UpdateTexImage may fail.";
+  }
+  return scoped_current;
+}
+}  // namespace
 
 SurfaceTextureGLOwner::SurfaceTextureGLOwner(
-    std::unique_ptr<gles2::AbstractTexture> texture)
-    : TextureOwner(true /*binds_texture_on_update */, std::move(texture)),
+    std::unique_ptr<AbstractTextureAndroid> texture,
+    scoped_refptr<SharedContextState> context_state)
+    : TextureOwner(true /*binds_texture_on_update */,
+                   std::move(texture),
+                   std::move(context_state)),
       surface_texture_(gl::SurfaceTexture::Create(GetTextureId())),
       context_(gl::GLContext::GetCurrent()),
       surface_(gl::GLSurface::GetCurrent()) {
@@ -35,16 +63,17 @@ SurfaceTextureGLOwner::SurfaceTextureGLOwner(
 SurfaceTextureGLOwner::~SurfaceTextureGLOwner() {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
-  // Clear the texture before we return, so that it can OnTextureDestroyed() if
-  // it hasn't already.
-  ClearAbstractTexture();
+  // Do ReleaseResources() if it hasn't already. This will do nothing if it
+  // has already been destroyed.
+  ReleaseResources();
 }
 
-void SurfaceTextureGLOwner::OnTextureDestroyed(gles2::AbstractTexture*) {
+void SurfaceTextureGLOwner::ReleaseResources() {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
   // Make sure that the SurfaceTexture isn't using the GL objects.
   surface_texture_ = nullptr;
+  last_coded_size_for_memory_dumps_.reset();
 }
 
 void SurfaceTextureGLOwner::SetFrameAvailableCallback(
@@ -57,6 +86,12 @@ void SurfaceTextureGLOwner::SetFrameAvailableCallback(
   surface_texture_->SetFrameAvailableCallbackOnAnyThread(frame_available_cb);
 }
 
+void SurfaceTextureGLOwner::RunWhenBufferIsAvailable(
+    base::OnceClosure callback) {
+  // SurfaceTexture can always render to front buffer.
+  std::move(callback).Run();
+}
+
 gl::ScopedJavaSurface SurfaceTextureGLOwner::CreateJavaSurface() const {
   // |surface_texture_| might be null, but that's okay.
   return gl::ScopedJavaSurface(surface_texture_.get());
@@ -64,18 +99,28 @@ gl::ScopedJavaSurface SurfaceTextureGLOwner::CreateJavaSurface() const {
 
 void SurfaceTextureGLOwner::UpdateTexImage() {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
-  if (surface_texture_)
-    surface_texture_->UpdateTexImage();
-}
+  if (surface_texture_) {
+    // UpdateTexImage bounds texture to the SurfaceTexture context, so make it
+    // current.
+    auto scoped_make_current = MakeCurrentIfNeeded(this);
+    if (scoped_make_current && !scoped_make_current->IsContextCurrent())
+      return;
 
-void SurfaceTextureGLOwner::EnsureTexImageBound() {
-  NOTREACHED();
+    // UpdateTexImage might change gl binding and we never should alter gl
+    // binding without updating state tracking, which we can't do here, so
+    // restore previous after we done.
+    gl::ScopedRestoreTexture scoped_restore_texture(gl::g_current_gl_context,
+                                                    GL_TEXTURE_EXTERNAL_OES);
+    surface_texture_->UpdateTexImage();
+  }
 }
 
 void SurfaceTextureGLOwner::ReleaseBackBuffers() {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
-  if (surface_texture_)
+  if (surface_texture_) {
     surface_texture_->ReleaseBackBuffers();
+  }
+  last_coded_size_for_memory_dumps_.reset();
 }
 
 gl::GLContext* SurfaceTextureGLOwner::GetContext() const {
@@ -139,6 +184,8 @@ bool SurfaceTextureGLOwner::GetCodedSizeAndVisibleRect(
 
     base::debug::DumpWithoutCrashing();
   }
+
+  last_coded_size_for_memory_dumps_ = *coded_size;
 
   return true;
 }
@@ -242,6 +289,37 @@ bool SurfaceTextureGLOwner::DecomposeTransform(float mtx[16],
     if (visible_rect->x() >= 0 && visible_rect->y() >= 0) {
       break;
     }
+  }
+  return true;
+}
+
+bool SurfaceTextureGLOwner::OnMemoryDump(
+    const base::trace_event::MemoryDumpArgs& args,
+    base::trace_event::ProcessMemoryDump* pmd) {
+  auto dump_name =
+      base::StringPrintf("gpu/media_texture_owner_%d", tracing_id());
+
+  // We don't know the exact format of the image so we use NV12 as approximation
+  // as the most popular format.
+  constexpr auto format = viz::MultiPlaneFormat::kNV12;
+  size_t total_size = 0;
+
+  if (last_coded_size_for_memory_dumps_) {
+    total_size =
+        format.EstimatedSizeInBytes(last_coded_size_for_memory_dumps_.value());
+  }
+
+  base::trace_event::MemoryAllocatorDump* dump =
+      pmd->CreateAllocatorDump(dump_name);
+  dump->AddScalar(base::trace_event::MemoryAllocatorDump::kNameSize,
+                  base::trace_event::MemoryAllocatorDump::kUnitsBytes,
+                  total_size);
+
+  if (args.level_of_detail !=
+      base::trace_event::MemoryDumpLevelOfDetail::kBackground) {
+    dump->AddString(
+        "dimensions", "",
+        last_coded_size_for_memory_dumps_.value_or(gfx::Size()).ToString());
   }
   return true;
 }

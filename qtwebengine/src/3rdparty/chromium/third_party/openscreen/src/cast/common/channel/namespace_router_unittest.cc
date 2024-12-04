@@ -1,20 +1,20 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "cast/common/channel/namespace_router.h"
 
+#include <utility>
+
 #include "cast/common/channel/cast_message_handler.h"
 #include "cast/common/channel/proto/cast_channel.pb.h"
 #include "cast/common/channel/testing/fake_cast_socket.h"
 #include "cast/common/channel/testing/mock_cast_message_handler.h"
-#include "cast/common/channel/virtual_connection_manager.h"
 #include "cast/common/channel/virtual_connection_router.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 
-namespace openscreen {
-namespace cast {
+namespace openscreen::cast {
 namespace {
 
 using ::cast::channel::CastMessage;
@@ -27,8 +27,7 @@ class NamespaceRouterTest : public ::testing::Test {
   CastSocket* socket() { return &fake_socket_.socket; }
 
   FakeCastSocket fake_socket_;
-  VirtualConnectionManager vc_manager_;
-  VirtualConnectionRouter vc_router_{&vc_manager_};
+  VirtualConnectionRouter vc_router_;
   NamespaceRouter router_;
 };
 
@@ -94,5 +93,4 @@ TEST_F(NamespaceRouterTest, RemoveHandler) {
   router_.OnMessage(&vc_router_, socket(), std::move(message2));
 }
 
-}  // namespace cast
-}  // namespace openscreen
+}  // namespace openscreen::cast

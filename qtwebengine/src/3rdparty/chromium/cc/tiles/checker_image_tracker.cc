@@ -1,14 +1,19 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "cc/tiles/checker_image_tracker.h"
 
+#include <algorithm>
+#include <limits>
 #include <sstream>
+#include <string>
+#include <utility>
 
-#include "base/bind.h"
+#include "base/containers/contains.h"
+#include "base/functional/bind.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/stl_util.h"
+#include "base/notreached.h"
 #include "base/trace_event/trace_event.h"
 
 namespace cc {
@@ -50,11 +55,11 @@ CheckerImagingDecision GetAnimationDecision(const PaintImage& image) {
     return CheckerImagingDecision::kVetoedMultipartImage;
 
   switch (image.animation_type()) {
-    case PaintImage::AnimationType::ANIMATED:
+    case PaintImage::AnimationType::kAnimated:
       return CheckerImagingDecision::kVetoedAnimatedImage;
-    case PaintImage::AnimationType::VIDEO:
+    case PaintImage::AnimationType::kVideo:
       return CheckerImagingDecision::kVetoedVideoFrame;
-    case PaintImage::AnimationType::STATIC:
+    case PaintImage::AnimationType::kStatic:
       return CheckerImagingDecision::kCanChecker;
   }
 
@@ -64,9 +69,9 @@ CheckerImagingDecision GetAnimationDecision(const PaintImage& image) {
 
 CheckerImagingDecision GetLoadDecision(const PaintImage& image) {
   switch (image.completion_state()) {
-    case PaintImage::CompletionState::DONE:
+    case PaintImage::CompletionState::kDone:
       return CheckerImagingDecision::kCanChecker;
-    case PaintImage::CompletionState::PARTIALLY_DONE:
+    case PaintImage::CompletionState::kPartiallyDone:
       return CheckerImagingDecision::kVetoedPartiallyLoadedImage;
   }
 
@@ -285,8 +290,7 @@ bool CheckerImageTracker::ShouldCheckerImage(const DrawImage& draw_image,
 
   // If the image is pending invalidation, continue checkering it. All tiles
   // for these images will be invalidated on the next pending tree.
-  if (images_pending_invalidation_.find(image_id) !=
-      images_pending_invalidation_.end()) {
+  if (base::Contains(images_pending_invalidation_, image_id)) {
     return true;
   }
 
@@ -369,9 +373,10 @@ void CheckerImageTracker::UpdateDecodeState(const DrawImage& draw_image,
   decode_state->scale = SkSize::Make(
       std::max(decode_state->scale.fWidth, draw_image.scale().fWidth),
       std::max(decode_state->scale.fHeight, draw_image.scale().fHeight));
+  decode_state->use_dark_mode = draw_image.use_dark_mode();
   decode_state->filter_quality =
       std::max(decode_state->filter_quality, draw_image.filter_quality());
-  decode_state->color_space = draw_image.target_color_space();
+  decode_state->target_color_params = draw_image.target_color_params();
   decode_state->frame_index = draw_image.frame_index();
 }
 
@@ -407,10 +412,11 @@ void CheckerImageTracker::ScheduleNextImageDecode() {
       continue;
 
     draw_image = DrawImage(
-        candidate, SkIRect::MakeWH(candidate.width(), candidate.height()),
+        candidate, it->second.use_dark_mode,
+        SkIRect::MakeWH(candidate.width(), candidate.height()),
         it->second.filter_quality,
-        SkMatrix::Scale(it->second.scale.width(), it->second.scale.height()),
-        it->second.frame_index, it->second.color_space);
+        SkM44::Scale(it->second.scale.width(), it->second.scale.height()),
+        it->second.frame_index, it->second.target_color_params);
     outstanding_image_decode_.emplace(candidate);
     break;
   }

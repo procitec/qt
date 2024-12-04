@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,19 +11,21 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
-#include "base/bind_helpers.h"
 #include "base/command_line.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/discardable_memory.h"
 #include "base/memory/discardable_memory_allocator.h"
 #include "base/memory/madv_free_discardable_memory_allocator_posix.h"
 #include "base/memory/madv_free_discardable_memory_posix.h"
 #include "base/memory/memory_pressure_listener.h"
-#include "base/test/bind_test_util.h"
+#include "base/test/bind.h"
+#include "base/test/run_until.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "components/discardable_memory/client/client_discardable_shared_memory_manager.h"
 #include "components/discardable_memory/service/discardable_shared_memory_manager.h"
+#include "content/public/common/content_features.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/content_browser_test.h"
@@ -55,6 +57,29 @@ class RenderThreadImplDiscardableMemoryBrowserTest : public ContentBrowserTest {
         base::Unretained(this)));
   }
 
+  std::unique_ptr<base::DiscardableMemory> AllocateLockedDiscardableMemory(
+      size_t size) {
+    std::unique_ptr<base::DiscardableMemory> rv;
+    PostTaskToInProcessRendererAndWait(base::BindLambdaForTesting([&] {
+      rv =
+          discardable_memory_allocator()->AllocateLockedDiscardableMemory(size);
+    }));
+    return rv;
+  }
+
+  std::unique_ptr<base::DiscardableMemory>
+  AllocateLockedDiscardableMemoryWithRetryOrDie(
+      size_t size,
+      base::OnceClosure on_no_memory) {
+    std::unique_ptr<base::DiscardableMemory> rv;
+    PostTaskToInProcessRendererAndWait(base::BindLambdaForTesting([&] {
+      rv = discardable_memory_allocator()
+               ->AllocateLockedDiscardableMemoryWithRetryOrDie(
+                   size, std::move(on_no_memory));
+    }));
+    return rv;
+  }
+
   base::DiscardableMemoryAllocator* discardable_memory_allocator() {
     return discardable_memory_allocator_;
   }
@@ -73,7 +98,7 @@ IN_PROC_BROWSER_TEST_F(RenderThreadImplDiscardableMemoryBrowserTest,
   const size_t kSize = 1024 * 1024;  // 1MiB.
 
   std::unique_ptr<base::DiscardableMemory> memory =
-      discardable_memory_allocator()->AllocateLockedDiscardableMemory(kSize);
+      AllocateLockedDiscardableMemory(kSize);
 
   ASSERT_TRUE(memory);
   void* addr = memory->data();
@@ -94,9 +119,10 @@ IN_PROC_BROWSER_TEST_F(RenderThreadImplDiscardableMemoryBrowserTest,
 //
 // Disable the test for the Android asan build.
 // See http://crbug.com/667837 for detail.
-#if !(defined(OS_ANDROID) && defined(ADDRESS_SANITIZER))
+#if !(BUILDFLAG(IS_ANDROID) && defined(ADDRESS_SANITIZER))
 IN_PROC_BROWSER_TEST_F(RenderThreadImplDiscardableMemoryBrowserTest,
-                       DiscardableMemoryAddressSpace) {
+                       // TODO(crbug.com/1065493): Re-enable this test
+                       DISABLED_DiscardableMemoryAddressSpace) {
   const size_t kLargeSize = 4 * 1024 * 1024;   // 4MiB.
   const size_t kNumberOfInstances = 1024 + 1;  // >4GiB total.
 
@@ -113,8 +139,7 @@ IN_PROC_BROWSER_TEST_F(RenderThreadImplDiscardableMemoryBrowserTest,
   std::vector<std::unique_ptr<base::DiscardableMemory>> instances;
   for (size_t i = 0; i < kNumberOfInstances; ++i) {
     std::unique_ptr<base::DiscardableMemory> memory =
-        discardable_memory_allocator()->AllocateLockedDiscardableMemory(
-            kLargeSize);
+        AllocateLockedDiscardableMemory(kLargeSize);
     ASSERT_TRUE(memory);
     void* addr = memory->data();
     ASSERT_NE(nullptr, addr);
@@ -125,21 +150,24 @@ IN_PROC_BROWSER_TEST_F(RenderThreadImplDiscardableMemoryBrowserTest,
 #endif
 
 IN_PROC_BROWSER_TEST_F(RenderThreadImplDiscardableMemoryBrowserTest,
-                       ReleaseFreeDiscardableMemory) {
+                       ReleaseFreeDiscardableMemory_Explicitly) {
   const size_t kSize = 1024 * 1024;  // 1MiB.
 
   base::DiscardableMemoryBacking impl = base::GetDiscardableMemoryBacking();
 
   std::unique_ptr<base::DiscardableMemory> memory =
-      discardable_memory_allocator()->AllocateLockedDiscardableMemory(kSize);
+      AllocateLockedDiscardableMemory(kSize);
 
   EXPECT_TRUE(memory);
   EXPECT_GE(discardable_memory_allocator()->GetBytesAllocated(), kSize);
-  memory.reset();
 
+  memory.reset();
   EXPECT_EQ(discardable_memory_allocator()->GetBytesAllocated(), 0U);
-  if (impl != base::DiscardableMemoryBacking::kSharedMemory)
+
+  if (impl != base::DiscardableMemoryBacking::kSharedMemory) {
+    LOG(INFO) << "Not using shared-memory backing. Skipping test.";
     return;
+  }
 
   EXPECT_GE(discardable_memory::DiscardableSharedMemoryManager::Get()
                 ->GetBytesAllocated(),
@@ -149,39 +177,48 @@ IN_PROC_BROWSER_TEST_F(RenderThreadImplDiscardableMemoryBrowserTest,
       discardable_memory_allocator())
       ->ReleaseFreeMemory();
 
-  // Busy wait for host memory usage to be reduced.
-  base::TimeTicks end =
-      base::TimeTicks::Now() + base::TimeDelta::FromSeconds(5);
-  while (base::TimeTicks::Now() < end) {
-    if (!discardable_memory::DiscardableSharedMemoryManager::Get()
-             ->GetBytesAllocated())
-      break;
-  }
-
-  EXPECT_LT(base::TimeTicks::Now(), end);
+  // ReleaseFreeMemory() should result in the allocated bytes dropping to zero
+  // within a shorter time than the RunLoop timeout.
+  EXPECT_TRUE(base::test::RunUntil([]() {
+    return discardable_memory::DiscardableSharedMemoryManager::Get()
+               ->GetBytesAllocated() == 0;
+  }));
 }
 
-// TODO(crbug.com/974850): Flaky on all platforms.
 IN_PROC_BROWSER_TEST_F(RenderThreadImplDiscardableMemoryBrowserTest,
-                       DISABLED_ReleaseFreeMemory) {
+                       ReleaseFreeDiscardableMemory_ByCriticalPressure) {
   const size_t kSize = 1024 * 1024;  // 1MiB.
 
+  base::DiscardableMemoryBacking impl = base::GetDiscardableMemoryBacking();
+
   std::unique_ptr<base::DiscardableMemory> memory =
-      discardable_memory_allocator()->AllocateLockedDiscardableMemory(kSize);
+      AllocateLockedDiscardableMemory(kSize);
 
   EXPECT_TRUE(memory);
-  memory.reset();
-
   EXPECT_GE(discardable_memory_allocator()->GetBytesAllocated(), kSize);
 
+  memory.reset();
+  EXPECT_EQ(discardable_memory_allocator()->GetBytesAllocated(), 0U);
+
+  if (impl != base::DiscardableMemoryBacking::kSharedMemory) {
+    LOG(INFO) << "Not using shared-memory backing. Skipping test.";
+    return;
+  }
+
+  EXPECT_GE(discardable_memory::DiscardableSharedMemoryManager::Get()
+                ->GetBytesAllocated(),
+            kSize);
+
   // Call RenderThreadImpl::ReleaseFreeMemory through a fake memory pressure
-  // notification.
+  // notification. The pressure notification will be handled on the test
+  // main thread, so it is sufficient to RunAllTasksUntilIdle(), after which
+  // the manager should report that the memory has been freed.
   base::MemoryPressureListener::SimulatePressureNotification(
       base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_CRITICAL);
-  base::RunLoop().RunUntilIdle();
-  RunAllTasksUntilIdle();
 
-  EXPECT_EQ(0U, discardable_memory_allocator()->GetBytesAllocated());
+  RunAllTasksUntilIdle();
+  EXPECT_EQ(0u, discardable_memory::DiscardableSharedMemoryManager::Get()
+                    ->GetBytesAllocated());
 }
 
 IN_PROC_BROWSER_TEST_F(RenderThreadImplDiscardableMemoryBrowserTest,
@@ -197,12 +234,12 @@ IN_PROC_BROWSER_TEST_F(RenderThreadImplDiscardableMemoryBrowserTest,
 
   // Allocate the maximum amount of memory.
   for (size_t i = 0; i < kMaxRegions; i++) {
-    auto region = allocator->AllocateLockedDiscardableMemoryWithRetryOrDie(
+    auto region = AllocateLockedDiscardableMemoryWithRetryOrDie(
         kRegionSize, base::DoNothing());
     all_memory.push_back(std::move(region));
   }
 
-  auto region = allocator->AllocateLockedDiscardableMemoryWithRetryOrDie(
+  auto region = AllocateLockedDiscardableMemoryWithRetryOrDie(
       kRegionSize, base::BindLambdaForTesting([&]() { all_memory.clear(); }));
 
   // Checks that the memory reclaim callback was called, and that the allocation

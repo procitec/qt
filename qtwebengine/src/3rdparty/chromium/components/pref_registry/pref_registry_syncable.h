@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,8 +9,8 @@
 
 #include <string>
 
-#include "base/callback.h"
-#include "base/macros.h"
+#include "base/functional/callback.h"
+#include "build/chromeos_buildflags.h"
 #include "components/prefs/pref_registry_simple.h"
 
 // TODO(tfarina): Change this namespace to pref_registry.
@@ -37,6 +37,11 @@ class PrefRegistrySyncable : public PrefRegistrySimple {
   // should ever be specified.
   //
   // Note: These must NOT overlap with PrefRegistry::PrefRegistrationFlags.
+  //
+  // Note: If adding a new pref with these flags, add the same to the syncable
+  // prefs database as well. Refer to components/sync_preferences/README.md for
+  // more details about syncable prefs, and chrome/browser/prefs/README.md for
+  // details about prefs in general.
   enum PrefRegistrationFlags : uint32_t {
     // The pref will be synced.
     SYNCABLE_PREF = 1 << 0,
@@ -49,7 +54,7 @@ class PrefRegistrySyncable : public PrefRegistrySimple {
     // -- they are preferred for receiving server-provided data.
     SYNCABLE_PRIORITY_PREF = 1 << 1,
 
-#if defined(OS_CHROMEOS)
+#if BUILDFLAG(IS_CHROMEOS_ASH)
     // As above, but the pref is for an OS settings (e.g. keyboard layout).
     // This distinction allows OS pref sync to be controlled independently from
     // browser pref sync in the UI.
@@ -62,6 +67,9 @@ class PrefRegistrySyncable : public PrefRegistrySimple {
       base::RepeatingCallback<void(const std::string& path, uint32_t flags)>;
 
   PrefRegistrySyncable();
+
+  PrefRegistrySyncable(const PrefRegistrySyncable&) = delete;
+  PrefRegistrySyncable& operator=(const PrefRegistrySyncable&) = delete;
 
   // Exactly one callback can be set for the event of a syncable
   // preference being registered. It will be fired after the
@@ -84,8 +92,6 @@ class PrefRegistrySyncable : public PrefRegistrySimple {
                         uint32_t flags) override;
 
   SyncableRegistrationCallback callback_;
-
-  DISALLOW_COPY_AND_ASSIGN(PrefRegistrySyncable);
 };
 
 }  // namespace user_prefs

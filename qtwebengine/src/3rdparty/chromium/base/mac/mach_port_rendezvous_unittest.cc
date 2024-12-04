@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,12 +8,14 @@
 
 #include <utility>
 
+#include "base/apple/foundation_util.h"
+#include "base/apple/mach_logging.h"
 #include "base/at_exit.h"
-#include "base/mac/foundation_util.h"
-#include "base/mac/mach_logging.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/multiprocess_test.h"
 #include "base/test/test_timeouts.h"
+#include "base/threading/platform_thread.h"
+#include "base/time/time.h"
 #include "testing/multiprocess_func_list.h"
 
 namespace base {
@@ -42,7 +44,7 @@ MULTIPROCESS_TEST_MAIN(TakeSendRight) {
 
   CHECK_EQ(1u, rendezvous_client->GetPortCount());
 
-  mac::ScopedMachSendRight port =
+  apple::ScopedMachSendRight port =
       rendezvous_client->TakeSendRight(kTestPortKey);
   CHECK(port.is_valid());
 
@@ -64,10 +66,10 @@ TEST_F(MachPortRendezvousServerTest, SendRight) {
   auto* server = MachPortRendezvousServer::GetInstance();
   ASSERT_TRUE(server);
 
-  mac::ScopedMachReceiveRight port;
+  apple::ScopedMachReceiveRight port;
   kern_return_t kr =
       mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE,
-                         mac::ScopedMachReceiveRight::Receiver(port).get());
+                         apple::ScopedMachReceiveRight::Receiver(port).get());
   ASSERT_EQ(kr, KERN_SUCCESS);
 
   MachRendezvousPort rendezvous_port(port.get(), MACH_MSG_TYPE_MAKE_SEND);
@@ -125,10 +127,10 @@ TEST_F(MachPortRendezvousServerTest, CleanupIfNoRendezvous) {
   auto* server = MachPortRendezvousServer::GetInstance();
   ASSERT_TRUE(server);
 
-  mac::ScopedMachReceiveRight port;
+  apple::ScopedMachReceiveRight port;
   kern_return_t kr =
       mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE,
-                         mac::ScopedMachReceiveRight::Receiver(port).get());
+                         apple::ScopedMachReceiveRight::Receiver(port).get());
   ASSERT_EQ(kr, KERN_SUCCESS);
 
   MachRendezvousPort rendezvous_port(port.get(), MACH_MSG_TYPE_MAKE_SEND);
@@ -148,6 +150,18 @@ TEST_F(MachPortRendezvousServerTest, CleanupIfNoRendezvous) {
       child, TestTimeouts::action_timeout(), &exit_code));
 
   EXPECT_EQ(42, exit_code);
+
+  // There is no way to synchronize the test code with the asynchronous
+  // delivery of the dispatch process-exit notification. Loop for a short
+  // while for it to be delivered.
+  auto start = TimeTicks::Now();
+  do {
+    if (client_data().size() == 0)
+      break;
+    // Sleep is fine because dispatch will process the notification on one of
+    // its workers.
+    PlatformThread::Sleep(Milliseconds(10));
+  } while ((TimeTicks::Now() - start) < TestTimeouts::action_timeout());
 
   EXPECT_EQ(0u, client_data().size());
 }
@@ -174,7 +188,7 @@ TEST_F(MachPortRendezvousServerTest, DestroyRight) {
       // insert_right MAKE_SEND_ONCE.
   };
 
-  for (size_t i = 0; i < base::size(kCases); ++i) {
+  for (size_t i = 0; i < std::size(kCases); ++i) {
     SCOPED_TRACE(base::StringPrintf("case %zu", i).c_str());
     const auto& test = kCases[i];
 
@@ -210,7 +224,7 @@ TEST_F(MachPortRendezvousServerTest, DestroyRight) {
 MULTIPROCESS_TEST_MAIN(FailToRendezvous) {
   // The rendezvous system uses the BaseBundleID to construct the bootstrap
   // server name, so changing it will result in a failure to look it up.
-  base::mac::SetBaseBundleID("org.chromium.totallyfake");
+  base::apple::SetBaseBundleID("org.chromium.totallyfake");
   CHECK_EQ(nullptr, base::MachPortRendezvousClient::GetInstance());
   return 0;
 }

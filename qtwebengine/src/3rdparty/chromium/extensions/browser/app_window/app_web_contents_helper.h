@@ -1,12 +1,13 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef EXTENSIONS_BROWSER_APP_WINDOW_APP_WEB_CONTENTS_HELPER_H_
 #define EXTENSIONS_BROWSER_APP_WINDOW_APP_WEB_CONTENTS_HELPER_H_
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "content/public/browser/media_stream_request.h"
+#include "extensions/common/extension_id.h"
 #include "third_party/blink/public/common/mediastream/media_stream_request.h"
 
 namespace blink {
@@ -34,6 +35,9 @@ class AppWebContentsHelper {
                        content::WebContents* web_contents,
                        AppDelegate* app_delegate);
 
+  AppWebContentsHelper(const AppWebContentsHelper&) = delete;
+  AppWebContentsHelper& operator=(const AppWebContentsHelper&) = delete;
+
   // Returns true if the given |event| should not be handled by the renderer.
   static bool ShouldSuppressGestureEvent(const blink::WebGestureEvent& event);
 
@@ -53,7 +57,7 @@ class AppWebContentsHelper {
   // Checks permission to use the camera or microphone. See
   // WebContentsDelegate.
   bool CheckMediaAccessPermission(content::RenderFrameHost* render_frame_host,
-                                  const GURL& security_origin,
+                                  const url::Origin& security_origin,
                                   blink::mojom::MediaStreamType type) const;
 
  private:
@@ -61,15 +65,13 @@ class AppWebContentsHelper {
 
   // The browser context with which this window is associated.
   // AppWindowWebContentsDelegate does not own this object.
-  content::BrowserContext* browser_context_;
+  raw_ptr<content::BrowserContext> browser_context_;
 
-  const std::string extension_id_;
+  const ExtensionId extension_id_;
 
-  content::WebContents* web_contents_;
+  raw_ptr<content::WebContents> web_contents_;
 
-  AppDelegate* app_delegate_;
-
-  DISALLOW_COPY_AND_ASSIGN(AppWebContentsHelper);
+  raw_ptr<AppDelegate> app_delegate_;
 };
 
 }  // namespace extensions

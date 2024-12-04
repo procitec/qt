@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,11 +6,11 @@
 
 #include <stddef.h>
 
-#include "base/bind.h"
-#include "base/bind_helpers.h"
-#include "base/macros.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
+#include "base/task/single_thread_task_runner.h"
 #include "content/web_test/renderer/web_test_grammar_checker.h"
-#include "third_party/blink/public/web/blink.h"
+#include "third_party/blink/public/platform/scheduler/web_agent_group_scheduler.h"
 #include "third_party/blink/public/web/web_local_frame.h"
 #include "third_party/blink/public/web/web_text_checking_completion.h"
 #include "third_party/blink/public/web/web_text_checking_result.h"
@@ -91,7 +91,7 @@ void SpellCheckClient::FinishLastTextCheck() {
   size_t offset = 0;
   if (!spell_checker_.IsMultiWordMisspelling(last_requested_text_check_string_,
                                              &results)) {
-    base::string16 text = last_requested_text_check_string_.Utf16();
+    std::u16string text = last_requested_text_check_string_.Utf16();
     while (text.length()) {
       size_t misspelled_position = 0;
       size_t misspelled_length = 0;
@@ -120,7 +120,8 @@ void SpellCheckClient::FinishLastTextCheck() {
 
 void SpellCheckClient::SetSpellCheckResolvedCallback(
     v8::Local<v8::Function> callback) {
-  resolved_callback_.Reset(blink::MainThreadIsolate(), callback);
+  resolved_callback_.Reset(frame_->GetAgentGroupScheduler()->Isolate(),
+                           callback);
 }
 
 void SpellCheckClient::RemoveSpellCheckResolvedCallback() {
@@ -131,7 +132,7 @@ void SpellCheckClient::RequestResolved() {
   if (resolved_callback_.IsEmpty())
     return;
 
-  v8::Isolate* isolate = blink::MainThreadIsolate();
+  v8::Isolate* isolate = frame_->GetAgentGroupScheduler()->Isolate();
   v8::HandleScope handle_scope(isolate);
 
   v8::Local<v8::Context> context = frame_->MainWorldScriptContext();

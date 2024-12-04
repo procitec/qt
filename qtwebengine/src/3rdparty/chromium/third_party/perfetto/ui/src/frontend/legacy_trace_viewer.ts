@@ -12,10 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import * as m from 'mithril';
+import m from 'mithril';
 import {inflate} from 'pako';
+
 import {assertTrue} from '../base/logging';
-import {showModal} from './modal';
+import {isString} from '../base/object_utils';
+import {showModal} from '../widgets/modal';
+
+import {globals} from './globals';
 
 const CTRACE_HEADER = 'TRACE:\n';
 
@@ -42,11 +46,11 @@ function readText(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {
-      if (typeof reader.result === 'string') {
+      if (isString(reader.result)) {
         return resolve(reader.result);
       }
     };
-    reader.onerror = err => {
+    reader.onerror = (err) => {
       reject(err);
     };
     reader.readAsText(blob);
@@ -96,7 +100,7 @@ export async function openFileWithLegacyTraceViewer(file: File) {
       return openBufferWithLegacyTraceViewer(file.name, str, str.length);
     }
   };
-  reader.onerror = err => {
+  reader.onerror = (err) => {
     console.error(err);
   };
   if (file.name.endsWith('.gz') || file.name.endsWith('.zip') ||
@@ -126,10 +130,8 @@ export function openBufferWithLegacyTraceViewer(
 
   // The location.pathname mangling is to make this code work also when hosted
   // in a non-root sub-directory, for the case of CI artifacts.
-  const urlParts = location.pathname.split('/');
-  urlParts[urlParts.length - 1] = 'assets/catapult_trace_viewer.html';
-  const catapultUrl = urlParts.join('/');
-  const newWin = window.open(catapultUrl) as Window;
+  const catapultUrl = globals.root + 'assets/catapult_trace_viewer.html';
+  const newWin = window.open(catapultUrl);
   if (newWin) {
     // Popup succeedeed.
     newWin.addEventListener('load', (e: Event) => {
@@ -150,7 +152,6 @@ export function openBufferWithLegacyTraceViewer(
     buttons: [{
       text: 'Open legacy UI',
       primary: true,
-      id: 'open_legacy',
       action: () => openBufferWithLegacyTraceViewer(name, data, size),
     }],
   });

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,6 +13,7 @@
 
 #include "base/compiler_specific.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "media/base/audio_codecs.h"
 #include "media/base/channel_layout.h"
 #include "media/base/encryption_scheme.h"
@@ -29,6 +30,10 @@ extern "C" {
 #include <libavformat/avformat.h>
 #include <libavformat/avio.h>
 #include <libavutil/avutil.h>
+#include <libavutil/channel_layout.h>
+#if BUILDFLAG(ENABLE_PLATFORM_DOLBY_VISION)
+#include <libavutil/dovi_meta.h>
+#endif  // BUILDFLAG(ENABLE_PLATFORM_DOLBY_VISION)
 #include <libavutil/imgutils.h>
 #include <libavutil/log.h>
 #include <libavutil/mastering_display_metadata.h>
@@ -39,6 +44,14 @@ extern "C" {
 namespace media {
 
 constexpr int64_t kNoFFmpegTimestamp = static_cast<int64_t>(AV_NOPTS_VALUE);
+
+// Alignment requirement by FFmpeg for input and output buffers. This need to
+// be updated to match FFmpeg when it changes.
+#if defined(ARCH_CPU_ARM_FAMILY)
+constexpr inline int kFFmpegBufferAddressAlignment = 16;
+#else
+constexpr inline int kFFmpegBufferAddressAlignment = 32;
+#endif
 
 class AudioDecoderConfig;
 class VideoDecoderConfig;
@@ -53,8 +66,7 @@ inline void ScopedPtrAVFree::operator()(void* x) const {
 
 inline void ScopedPtrAVFreePacket::operator()(void* x) const {
   AVPacket* packet = static_cast<AVPacket*>(x);
-  av_packet_unref(packet);
-  delete packet;
+  av_packet_free(&packet);
 }
 
 inline void ScopedPtrAVFreeContext::operator()(void* x) const {
@@ -131,9 +143,6 @@ AVSampleFormatToSampleFormat(AVSampleFormat sample_format, AVCodecID codec_id);
 // Converts FFmpeg's pixel formats to its corresponding supported video format.
 MEDIA_EXPORT VideoPixelFormat
 AVPixelFormatToVideoPixelFormat(AVPixelFormat pixel_format);
-
-VideoColorSpace AVColorSpaceToColorSpace(AVColorSpace color_space,
-                                         AVColorRange color_range);
 
 // Converts an AVERROR error number to a description.
 std::string AVErrorToString(int errnum);

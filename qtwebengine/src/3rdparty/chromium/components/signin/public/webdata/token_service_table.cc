@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,7 +9,7 @@
 
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
-#include "components/os_crypt/os_crypt.h"
+#include "components/os_crypt/sync/os_crypt.h"
 #include "components/webdata/common/web_database.h"
 #include "sql/statement.h"
 
@@ -53,10 +53,6 @@ bool TokenServiceTable::CreateTablesIfNecessary() {
   return true;
 }
 
-bool TokenServiceTable::IsSyncable() {
-  return true;
-}
-
 bool TokenServiceTable::MigrateToVersion(int version,
                                          bool* update_compatible_version) {
   return true;
@@ -96,8 +92,7 @@ bool TokenServiceTable::SetTokenForService(const std::string& service,
       db_->GetUniqueStatement("INSERT OR REPLACE INTO token_service "
                               "(service, encrypted_token) VALUES (?, ?)"));
   s.BindString(0, service);
-  s.BindBlob(1, encrypted_token.data(),
-             static_cast<int>(encrypted_token.length()));
+  s.BindBlob(1, encrypted_token);
 
   bool result = s.Run();
   LOG_IF(ERROR, !result) << "Failed to insert or replace token for " << service;

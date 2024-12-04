@@ -1,4 +1,4 @@
-// Copyright (c) 2011 The Chromium Authors. All rights reserved.
+// Copyright 2011 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,8 +9,7 @@
 #include <memory>
 #include <string>
 
-#include "base/macros.h"
-#include "net/base/proxy_server.h"
+#include "net/base/proxy_chain.h"
 #include "net/socket/client_socket_pool_manager.h"
 #include "net/socket/client_socket_pool_manager_impl.h"
 
@@ -21,29 +20,29 @@ class ClientSocketPool;
 class MockClientSocketPoolManager : public ClientSocketPoolManager {
  public:
   MockClientSocketPoolManager();
+
+  MockClientSocketPoolManager(const MockClientSocketPoolManager&) = delete;
+  MockClientSocketPoolManager& operator=(const MockClientSocketPoolManager&) =
+      delete;
+
   ~MockClientSocketPoolManager() override;
 
-  // Sets socket pool that gets used for the specified ProxyServer.
-  void SetSocketPool(const ProxyServer& proxy_server,
+  // Sets socket pool that gets used for the specified ProxyChain.
+  void SetSocketPool(const ProxyChain& proxy_chain,
                      std::unique_ptr<ClientSocketPool> pool);
 
   // ClientSocketPoolManager methods:
   void FlushSocketPoolsWithError(int error,
                                  const char* net_log_reason_utf8) override;
   void CloseIdleSockets(const char* net_log_reason_utf8) override;
-  ClientSocketPool* GetSocketPool(const ProxyServer& proxy_server) override;
-  std::unique_ptr<base::Value> SocketPoolInfoToValue() const override;
-  void DumpMemoryStats(
-      base::trace_event::ProcessMemoryDump* pmd,
-      const std::string& parent_dump_absolute_name) const override;
+  ClientSocketPool* GetSocketPool(const ProxyChain& proxy_chain) override;
+  base::Value SocketPoolInfoToValue() const override;
 
  private:
   using ClientSocketPoolMap =
-      std::map<ProxyServer, std::unique_ptr<ClientSocketPool>>;
+      std::map<ProxyChain, std::unique_ptr<ClientSocketPool>>;
 
   ClientSocketPoolMap socket_pools_;
-
-  DISALLOW_COPY_AND_ASSIGN(MockClientSocketPoolManager);
 };
 
 }  // namespace net

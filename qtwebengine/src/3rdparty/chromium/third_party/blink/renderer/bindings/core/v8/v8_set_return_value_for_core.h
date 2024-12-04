@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,6 +7,7 @@
 
 #include "third_party/blink/renderer/bindings/core/v8/js_event_handler.h"
 #include "third_party/blink/renderer/bindings/core/v8/native_value_traits_impl.h"
+#include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_value.h"
 #include "third_party/blink/renderer/platform/bindings/v8_set_return_value.h"
 
@@ -14,34 +15,16 @@ namespace blink {
 
 namespace bindings {
 
-class NativeValueTraitsStringAdapter;
-
 // ScriptValue
-template <typename CallbackInfo, typename... ExtraArgs>
-void V8SetReturnValue(const CallbackInfo& info,
-                      const ScriptValue& value,
-                      ExtraArgs... extra_args) {
-  // Ignore all |extra_args| given as inputs for optimization.
+template <typename CallbackInfo>
+void V8SetReturnValue(const CallbackInfo& info, const ScriptValue& value) {
   V8SetReturnValue(info, value.V8Value());
 }
 
-// String types
+// ScriptPromise
 template <typename CallbackInfo>
-void V8SetReturnValue(const CallbackInfo& info,
-                      const NativeValueTraitsStringAdapter& value,
-                      v8::Isolate* isolate,
-                      V8ReturnValue::NonNullable) {
-  V8SetReturnValue(info, static_cast<String>(value), isolate,
-                   V8ReturnValue::kNonNullable);
-}
-
-template <typename CallbackInfo>
-void V8SetReturnValue(const CallbackInfo& info,
-                      const NativeValueTraitsStringAdapter& value,
-                      v8::Isolate* isolate,
-                      V8ReturnValue::Nullable) {
-  V8SetReturnValue(info, static_cast<String>(value), isolate,
-                   V8ReturnValue::kNullable);
+void V8SetReturnValue(const CallbackInfo& info, const ScriptPromise& value) {
+  V8SetReturnValue(info, value.V8Value());
 }
 
 // EventListener

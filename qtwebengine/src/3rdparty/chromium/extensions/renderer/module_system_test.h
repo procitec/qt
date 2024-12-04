@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,16 +7,17 @@
 
 #include <set>
 
-#include "base/macros.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/raw_ptr.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/test/task_environment.h"
 #include "extensions/renderer/module_system.h"
 #include "extensions/renderer/script_context.h"
 #include "extensions/renderer/script_context_set.h"
 #include "extensions/renderer/test_extensions_renderer_client.h"
 #include "gin/public/context_holder.h"
+#include "gin/public/isolate_holder.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "v8/include/v8.h"
+#include "v8/include/v8-forward.h"
 
 namespace extensions {
 class Extension;
@@ -30,6 +31,11 @@ class ModuleSystemTestEnvironment {
   ModuleSystemTestEnvironment(v8::Isolate* isolate,
                               ScriptContextSet* context_set,
                               scoped_refptr<const Extension> extension);
+
+  ModuleSystemTestEnvironment(const ModuleSystemTestEnvironment&) = delete;
+  ModuleSystemTestEnvironment& operator=(const ModuleSystemTestEnvironment&) =
+      delete;
+
   ~ModuleSystemTestEnvironment();
 
   // Register a named JS module in the module system.
@@ -53,6 +59,12 @@ class ModuleSystemTestEnvironment {
   // Create an empty object in the global scope with name |name|.
   v8::Local<v8::Object> CreateGlobal(const std::string& name);
 
+  // Registers a native field in the ModuleSystem.
+  void SetLazyField(v8::Local<v8::Object> object,
+                    const std::string& field,
+                    const std::string& module_name,
+                    const std::string& module_field);
+
   void ShutdownGin();
 
   void ShutdownModuleSystem();
@@ -68,19 +80,17 @@ class ModuleSystemTestEnvironment {
   AssertNatives* assert_natives() { return assert_natives_; }
 
  private:
-  v8::Isolate* isolate_;
+  raw_ptr<v8::Isolate, ExperimentalRenderer> isolate_;
   std::unique_ptr<gin::ContextHolder> context_holder_;
   v8::HandleScope handle_scope_;
 
   scoped_refptr<const Extension> extension_;
-  ScriptContextSet* context_set_;
-  ScriptContext* context_;
-  AssertNatives* assert_natives_;
+  raw_ptr<ScriptContextSet, ExperimentalRenderer> context_set_;
+  raw_ptr<ScriptContext> context_;
+  raw_ptr<AssertNatives> assert_natives_;
   std::unique_ptr<StringSourceMap> source_map_;
 
   std::unique_ptr<NativeExtensionBindingsSystem> bindings_system_;
-
-  DISALLOW_COPY_AND_ASSIGN(ModuleSystemTestEnvironment);
 };
 
 // Test fixture for testing JS that makes use of the module system.
@@ -98,6 +108,10 @@ class ModuleSystemTestEnvironment {
 class ModuleSystemTest : public testing::Test {
  public:
   ModuleSystemTest();
+
+  ModuleSystemTest(const ModuleSystemTest&) = delete;
+  ModuleSystemTest& operator=(const ModuleSystemTest&) = delete;
+
   ~ModuleSystemTest() override;
 
   void SetUp() override;
@@ -122,8 +136,9 @@ class ModuleSystemTest : public testing::Test {
 
  private:
   base::test::TaskEnvironment task_environment_;
+  gin::IsolateHolder isolate_holder_;
 
-  v8::Isolate* isolate_;
+  raw_ptr<v8::Isolate, ExperimentalRenderer> isolate_;
 
   std::set<std::string> extension_ids_;
   ScriptContextSet context_set_;
@@ -132,9 +147,6 @@ class ModuleSystemTest : public testing::Test {
 
   std::unique_ptr<ModuleSystemTestEnvironment> env_;
   bool should_assertions_be_made_;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(ModuleSystemTest);
 };
 
 }  // namespace extensions

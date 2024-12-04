@@ -1,4 +1,4 @@
-// Copyright (c) 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,11 +6,13 @@
 #define COMPONENTS_SERVICES_STORAGE_INDEXED_DB_TRANSACTIONAL_LEVELDB_TRANSACTIONAL_LEVELDB_ITERATOR_H_
 
 #include <memory>
+#include <string_view>
 #include <tuple>
 #include <vector>
 
+#include "base/memory/raw_ptr.h"
+#include "base/memory/raw_ref.h"
 #include "base/memory/weak_ptr.h"
-#include "base/strings/string_piece.h"
 #include "third_party/leveldatabase/src/include/leveldb/status.h"
 
 namespace leveldb {
@@ -29,24 +31,28 @@ class LevelDBSnapshot;
 //   method is called for every change, and
 // * detaching itself (unloading it's leveldb::Iterator) to reduce memory when
 //   EvictLevelDBIterator is called.
-// Note: the returned base::StringPiece from Key or Value can become
+// Note: the returned std::string_view from Key or Value can become
 // invalidated when EvictLevelDBIterator, OnDatabaseKeyModified, or
 // OnDatabaseRangeModified are called.
 class TransactionalLevelDBIterator {
  public:
+  TransactionalLevelDBIterator(const TransactionalLevelDBIterator&) = delete;
+  TransactionalLevelDBIterator& operator=(const TransactionalLevelDBIterator&) =
+      delete;
+
   virtual ~TransactionalLevelDBIterator();
 
   virtual bool IsValid() const;
   virtual leveldb::Status SeekToLast();
-  virtual leveldb::Status Seek(const base::StringPiece& target);
+  virtual leveldb::Status Seek(std::string_view target);
   virtual leveldb::Status Next();
   virtual leveldb::Status Prev();
-  // The returned base::StringPiece can be invalidated when
+  // The returned std::string_view can be invalidated when
   // EvictLevelDBIterator is called.
-  virtual base::StringPiece Key() const;
-  // The returned base::StringPiece can be invalidated when
+  virtual std::string_view Key() const;
+  // The returned std::string_view can be invalidated when
   // EvictLevelDBIterator is called.
-  virtual base::StringPiece Value() const;
+  virtual std::string_view Value() const;
 
   // Evicts the internal leveldb::Iterator, which helps save memory at the
   // performance expense of reloading and seeking later if the iterator is
@@ -67,16 +73,16 @@ class TransactionalLevelDBIterator {
   enum class Direction { kNext, kPrev };
   enum class IteratorState { kActive, kEvictedAndValid, kEvictedAndInvalid };
 
-  leveldb::Status WrappedIteratorStatus() WARN_UNUSED_RESULT;
+  [[nodiscard]] leveldb::Status WrappedIteratorStatus();
 
   // Notifies the database of iterator usage and recreates iterator if needed.
   // If the iterator was previously evicted, this method returns the key that
   // was used, the status of reloading the iterator.
-  std::tuple<std::string, leveldb::Status> WillUseDBIterator(bool perform_seek)
-      WARN_UNUSED_RESULT;
+  [[nodiscard]] std::tuple<std::string, leveldb::Status> WillUseDBIterator(
+      bool perform_seek);
 
   // If this method fails, then iterator_ will be nullptr.
-  leveldb::Status ReloadIterator() WARN_UNUSED_RESULT;
+  [[nodiscard]] leveldb::Status ReloadIterator();
 
   void NextPastScopesMetadata();
   void PrevPastScopesMetadata();
@@ -86,7 +92,7 @@ class TransactionalLevelDBIterator {
   // WeakPtr to allow lazy destruction order. This is assumed to be valid for
   // all other Iterator operations.
   base::WeakPtr<TransactionalLevelDBDatabase> db_;
-  const std::vector<uint8_t>& scopes_metadata_prefix_;
+  const raw_ref<const std::vector<uint8_t>> scopes_metadata_prefix_;
   base::WeakPtr<TransactionalLevelDBTransaction> txn_;
 
   // State used to facilitate memory purging.
@@ -100,9 +106,7 @@ class TransactionalLevelDBIterator {
   // Non-null iff |iterator_state_| is kActive.
   std::unique_ptr<LevelDBSnapshot> snapshot_;
 
-  const leveldb::Comparator* const comparator_;
-
-  DISALLOW_COPY_AND_ASSIGN(TransactionalLevelDBIterator);
+  const raw_ptr<const leveldb::Comparator> comparator_;
 };
 
 }  // namespace content

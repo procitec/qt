@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,12 +7,13 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <cstring>
 #include <limits>
 #include <utility>
 
 #include "base/check_op.h"
+#include "base/memory/aligned_memory.h"
 #include "base/memory/ptr_util.h"
+#include "base/memory/raw_ptr.h"
 #include "base/notreached.h"
 #include "base/numerics/safe_conversions.h"
 #include "media/base/audio_parameters.h"
@@ -20,11 +21,6 @@
 #include "media/base/vector_math.h"
 
 namespace media {
-
-static bool IsAligned(void* ptr) {
-  return (reinterpret_cast<uintptr_t>(ptr) &
-          (AudioBus::kChannelAlignment - 1)) == 0U;
-}
 
 // In order to guarantee that the memory block for each channel starts at an
 // aligned address when splitting a contiguous block of memory into one block
@@ -64,8 +60,7 @@ void AudioBus::CheckOverflow(int start_frame, int frames, int total_frames) {
 }
 
 AudioBus::AudioBus(int channels, int frames)
-    : frames_(frames),
-      can_set_channel_data_(false) {
+    : frames_(frames), is_wrapper_(false) {
   ValidateConfig(channels, frames_);
 
   int aligned_frames = 0;
@@ -78,8 +73,7 @@ AudioBus::AudioBus(int channels, int frames)
 }
 
 AudioBus::AudioBus(int channels, int frames, float* data)
-    : frames_(frames),
-      can_set_channel_data_(false) {
+    : frames_(frames), is_wrapper_(false) {
   // Since |data| may have come from an external source, ensure it's valid.
   CHECK(data);
   ValidateConfig(channels, frames_);
@@ -91,9 +85,7 @@ AudioBus::AudioBus(int channels, int frames, float* data)
 }
 
 AudioBus::AudioBus(int frames, const std::vector<float*>& channel_data)
-    : channel_data_(channel_data),
-      frames_(frames),
-      can_set_channel_data_(false) {
+    : channel_data_(channel_data), frames_(frames), is_wrapper_(false) {
   ValidateConfig(
       base::checked_cast<int>(channel_data_.size()), frames_);
 
@@ -103,15 +95,16 @@ AudioBus::AudioBus(int frames, const std::vector<float*>& channel_data)
 }
 
 AudioBus::AudioBus(int channels)
-    : channel_data_(channels),
-      frames_(0),
-      can_set_channel_data_(true) {
+    : channel_data_(channels), frames_(0), is_wrapper_(true) {
   CHECK_GT(channels, 0);
   for (size_t i = 0; i < channel_data_.size(); ++i)
-    channel_data_[i] = NULL;
+    channel_data_[i] = nullptr;
 }
 
-AudioBus::~AudioBus() = default;
+AudioBus::~AudioBus() {
+  if (wrapped_data_deleter_cb_)
+    std::move(wrapped_data_deleter_cb_).Run();
+}
 
 std::unique_ptr<AudioBus> AudioBus::Create(int channels, int frames) {
   return base::WrapUnique(new AudioBus(channels, frames));
@@ -171,7 +164,7 @@ std::unique_ptr<const AudioBus> AudioBus::WrapReadOnlyMemory(
 }
 
 void AudioBus::SetChannelData(int channel, float* data) {
-  CHECK(can_set_channel_data_);
+  CHECK(is_wrapper_);
   CHECK(data);
   CHECK_GE(channel, 0);
   CHECK_LT(static_cast<size_t>(channel), channel_data_.size());
@@ -180,9 +173,15 @@ void AudioBus::SetChannelData(int channel, float* data) {
 }
 
 void AudioBus::set_frames(int frames) {
-  CHECK(can_set_channel_data_);
+  CHECK(is_wrapper_);
   ValidateConfig(static_cast<int>(channel_data_.size()), frames);
   frames_ = frames;
+}
+
+void AudioBus::SetWrappedDataDeleter(base::OnceClosure deleter) {
+  CHECK(is_wrapper_);
+  DCHECK(!wrapped_data_deleter_cb_);
+  wrapped_data_deleter_cb_ = std::move(deleter);
 }
 
 size_t AudioBus::GetBitstreamDataSize() const {
@@ -245,22 +244,30 @@ void AudioBus::Zero() {
 
 bool AudioBus::AreFramesZero() const {
   DCHECK(!is_bitstream_format_);
-  for (size_t i = 0; i < channel_data_.size(); ++i) {
+  for (const auto* channel : channel_data_) {
     for (int j = 0; j < frames_; ++j) {
-      if (channel_data_[i][j])
+      if (channel[j]) {
         return false;
+      }
     }
   }
   return true;
 }
 
+// static
 int AudioBus::CalculateMemorySize(const AudioParameters& params) {
   return CalculateMemorySizeInternal(
       params.channels(), params.frames_per_buffer(), NULL);
 }
 
+// static
 int AudioBus::CalculateMemorySize(int channels, int frames) {
   return CalculateMemorySizeInternal(channels, frames, NULL);
+}
+
+// static
+bool AudioBus::IsAligned(void* ptr) {
+  return base::IsAligned(ptr, kChannelAlignment);
 }
 
 void AudioBus::BuildChannelData(int channels, int aligned_frames, float* data) {
@@ -271,81 +278,6 @@ void AudioBus::BuildChannelData(int channels, int aligned_frames, float* data) {
   channel_data_.reserve(channels);
   for (int i = 0; i < channels; ++i)
     channel_data_.push_back(data + i * aligned_frames);
-}
-
-// Forwards to non-deprecated version.
-void AudioBus::FromInterleaved(const void* source,
-                               int frames,
-                               int bytes_per_sample) {
-  DCHECK(!is_bitstream_format_);
-  switch (bytes_per_sample) {
-    case 1:
-      FromInterleaved<UnsignedInt8SampleTypeTraits>(
-          reinterpret_cast<const uint8_t*>(source), frames);
-      break;
-    case 2:
-      FromInterleaved<SignedInt16SampleTypeTraits>(
-          reinterpret_cast<const int16_t*>(source), frames);
-      break;
-    case 4:
-      FromInterleaved<SignedInt32SampleTypeTraits>(
-          reinterpret_cast<const int32_t*>(source), frames);
-      break;
-    default:
-      NOTREACHED() << "Unsupported bytes per sample encountered: "
-                   << bytes_per_sample;
-      ZeroFrames(frames);
-  }
-}
-
-// Forwards to non-deprecated version.
-void AudioBus::FromInterleavedPartial(const void* source,
-                                      int start_frame,
-                                      int frames,
-                                      int bytes_per_sample) {
-  DCHECK(!is_bitstream_format_);
-  switch (bytes_per_sample) {
-    case 1:
-      FromInterleavedPartial<UnsignedInt8SampleTypeTraits>(
-          reinterpret_cast<const uint8_t*>(source), start_frame, frames);
-      break;
-    case 2:
-      FromInterleavedPartial<SignedInt16SampleTypeTraits>(
-          reinterpret_cast<const int16_t*>(source), start_frame, frames);
-      break;
-    case 4:
-      FromInterleavedPartial<SignedInt32SampleTypeTraits>(
-          reinterpret_cast<const int32_t*>(source), start_frame, frames);
-      break;
-    default:
-      NOTREACHED() << "Unsupported bytes per sample encountered: "
-                   << bytes_per_sample;
-      ZeroFramesPartial(start_frame, frames);
-  }
-}
-
-// Forwards to non-deprecated version.
-void AudioBus::ToInterleaved(int frames,
-                             int bytes_per_sample,
-                             void* dest) const {
-  DCHECK(!is_bitstream_format_);
-  switch (bytes_per_sample) {
-    case 1:
-      ToInterleaved<UnsignedInt8SampleTypeTraits>(
-          frames, reinterpret_cast<uint8_t*>(dest));
-      break;
-    case 2:
-      ToInterleaved<SignedInt16SampleTypeTraits>(
-          frames, reinterpret_cast<int16_t*>(dest));
-      break;
-    case 4:
-      ToInterleaved<SignedInt32SampleTypeTraits>(
-          frames, reinterpret_cast<int32_t*>(dest));
-      break;
-    default:
-      NOTREACHED() << "Unsupported bytes per sample encountered: "
-                   << bytes_per_sample;
-  }
 }
 
 void AudioBus::CopyTo(AudioBus* dest) const {

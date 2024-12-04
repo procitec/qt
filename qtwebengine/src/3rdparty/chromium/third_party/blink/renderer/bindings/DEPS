@@ -1,5 +1,4 @@
 include_rules = [
-    "+base/logging.h",
     "+base/memory/scoped_refptr.h",
     "+base/process/process_metrics.h",
     "+gin/public",
@@ -8,3 +7,11 @@ include_rules = [
     "+third_party/blink/renderer/modules",
     "+web/api",
 ]
+
+specific_include_rules = {
+    # Additional allowed includes for tests.
+    ".*_test(_.*)?\.(cc|h|mm)" : [
+        # For base::RunLoop()
+        "+base/run_loop.h",
+    ]
+}

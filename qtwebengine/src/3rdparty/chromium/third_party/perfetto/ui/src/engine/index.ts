@@ -12,32 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import * as init_trace_processor from '../gen/trace_processor';
+import {WasmBridge} from './wasm_bridge';
 
-import {WasmBridge, WasmBridgeRequest} from './wasm_bridge';
+const selfWorker = self as {} as Worker;
+const wasmBridge = new WasmBridge();
 
-// tslint:disable no-any
-// Proxy all messages to WasmBridge#callWasm.
-const anySelf = (self as any);
+// There are two message handlers here:
+// 1. The Worker (self.onmessage) handler.
+// 2. The MessagePort handler.
+// The sequence of actions is the following:
+// 1. The frontend does one postMessage({port: MessagePort}) on the Worker
+//    scope. This message transfers the MessagePort.
+//    This is the only postMessage we'll ever receive here.
+// 2. All the other messages (i.e. the TraceProcessor RPC binary pipe) will be
+//    received on the MessagePort.
 
-// Messages can arrive before we are initialized, queue these for later.
-const msgQueue: MessageEvent[] = [];
-anySelf.onmessage = (msg: MessageEvent) => {
-  msgQueue.push(msg);
+// Receives the boostrap message from the frontend with the MessagePort.
+selfWorker.onmessage = (msg: MessageEvent) => {
+  const port = msg.data as MessagePort;
+  wasmBridge.initialize(port);
 };
-
-const bridge = new WasmBridge(init_trace_processor);
-bridge.whenInitialized.then(() => {
-  const handleMsg = (msg: MessageEvent) => {
-    const request: WasmBridgeRequest = msg.data;
-    anySelf.postMessage(bridge.callWasm(request));
-  };
-
-  // Dispatch queued messages.
-  let msg;
-  while (msg = msgQueue.shift()) {
-    handleMsg(msg);
-  }
-
-  anySelf.onmessage = handleMsg;
-});

@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,6 +11,7 @@
 
 #include "base/containers/queue.h"
 #include "base/hash/hash.h"
+#include "base/memory/raw_ptr.h"
 #include "base/time/time.h"
 #include "media/cast/net/cast_transport.h"
 #include "media/cast/net/pacing/paced_sender.h"
@@ -48,6 +49,9 @@ class SenderRtcpSession : public RtcpSession {
                     uint32_t local_ssrc,
                     uint32_t remote_ssrc);
 
+  SenderRtcpSession(const SenderRtcpSession&) = delete;
+  SenderRtcpSession& operator=(const SenderRtcpSession&) = delete;
+
   ~SenderRtcpSession() override;
 
   // If greater than zero, this is the last measured network round trip time.
@@ -74,7 +78,7 @@ class SenderRtcpSession : public RtcpSession {
   // Handle incoming RTCP packet.
   // Returns false if it is not a RTCP packet or it is not directed to
   // this session, e.g. SSRC doesn't match.
-  bool IncomingRtcpPacket(const uint8_t* data, size_t length) override;
+  bool IncomingRtcpPacket(base::span<const uint8_t> data) override;
 
  private:
   // Received last report information from RTP receiver which helps compute
@@ -99,11 +103,11 @@ class SenderRtcpSession : public RtcpSession {
                            uint32_t last_ntp_seconds,
                            uint32_t last_ntp_fraction);
 
-  const base::TickClock* const clock_;  // Not owned.
-  PacedPacketSender* packet_sender_;    // Not owned.
+  const raw_ptr<const base::TickClock> clock_;  // Not owned.
+  raw_ptr<PacedPacketSender> packet_sender_;    // Not owned.
   const uint32_t local_ssrc_;
   const uint32_t remote_ssrc_;
-  RtcpObserver* const rtcp_observer_;  // Owned by |CastTransportImpl|.
+  const raw_ptr<RtcpObserver> rtcp_observer_;  // Owned by |CastTransportImpl|.
 
   // Computed from RTCP RRTR report.
   base::TimeTicks largest_seen_timestamp_;
@@ -128,8 +132,6 @@ class SenderRtcpSession : public RtcpSession {
   // when last report is received from RTP receiver.
   RtcpSendTimeMap last_reports_sent_map_;
   RtcpSendTimeQueue last_reports_sent_queue_;
-
-  DISALLOW_COPY_AND_ASSIGN(SenderRtcpSession);
 };
 
 }  // namespace cast

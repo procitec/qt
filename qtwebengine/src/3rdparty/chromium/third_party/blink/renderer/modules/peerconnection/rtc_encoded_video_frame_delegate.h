@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,17 +9,18 @@
 
 #include <memory>
 
+#include "base/synchronization/lock.h"
 #include "third_party/blink/renderer/bindings/core/v8/serialization/serialized_script_value.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 #include "third_party/blink/renderer/platform/wtf/thread_safe_ref_counted.h"
-#include "third_party/blink/renderer/platform/wtf/threading_primitives.h"
 #include "third_party/webrtc/api/frame_transformer_interface.h"
 #include "third_party/webrtc/api/video/video_frame_metadata.h"
 
 namespace blink {
 
 class DOMArrayBuffer;
+class ExceptionState;
 
 // This class wraps a WebRTC video frame and allows making shallow
 // copies. Its purpose is to support making RTCEncodedVideoFrames
@@ -31,18 +32,22 @@ class RTCEncodedVideoFrameDelegate
       std::unique_ptr<webrtc::TransformableVideoFrameInterface> webrtc_frame);
 
   String Type() const;
-  uint64_t Timestamp() const;
+  uint32_t RtpTimestamp() const;
+  void SetRtpTimestamp(uint32_t timestamp, ExceptionState& exception_state);
+  absl::optional<webrtc::Timestamp> PresentationTimestamp() const;
   DOMArrayBuffer* CreateDataBuffer() const;
   void SetData(const DOMArrayBuffer* data);
-  DOMArrayBuffer* CreateAdditionalDataBuffer() const;
-  uint32_t Ssrc() const;
-  const webrtc::VideoFrameMetadata* GetMetadata() const;
+  absl::optional<uint8_t> PayloadType() const;
+  absl::optional<std::string> MimeType() const;
+  absl::optional<webrtc::VideoFrameMetadata> GetMetadata() const;
+  void SetMetadata(const webrtc::VideoFrameMetadata& metadata);
   std::unique_ptr<webrtc::TransformableVideoFrameInterface> PassWebRtcFrame();
+  std::unique_ptr<webrtc::TransformableVideoFrameInterface> CloneWebRtcFrame();
 
  private:
-  mutable Mutex mutex_;
+  mutable base::Lock lock_;
   std::unique_ptr<webrtc::TransformableVideoFrameInterface> webrtc_frame_
-      GUARDED_BY(mutex_);
+      GUARDED_BY(lock_);
 };
 
 class MODULES_EXPORT RTCEncodedVideoFramesAttachment
@@ -53,7 +58,7 @@ class MODULES_EXPORT RTCEncodedVideoFramesAttachment
   ~RTCEncodedVideoFramesAttachment() override = default;
 
   bool IsLockedToAgentCluster() const override {
-    return !encoded_video_frames_.IsEmpty();
+    return !encoded_video_frames_.empty();
   }
 
   Vector<scoped_refptr<RTCEncodedVideoFrameDelegate>>& EncodedVideoFrames() {

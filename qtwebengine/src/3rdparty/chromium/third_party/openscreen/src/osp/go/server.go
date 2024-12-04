@@ -1,10 +1,10 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 package osp
 
-// TODO(pthatcher):
+// TODO(jophba):
 // - Write messages as well
 
 import (
@@ -14,7 +14,7 @@ import (
 )
 
 func ReadMessagesAsServer(ctx context.Context, instanceName string, port int, cert tls.Certificate, messages chan<- interface{}) error {
-	// TODO(pthatcher): log error if it fails
+	// TODO(jophba): log error if it fails
 	go RunMdnsServer(ctx, instanceName, port)
 	streams := make(chan io.ReadWriteCloser)
 	go RunQuicServer(ctx, port, cert, streams)

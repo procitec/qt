@@ -1,18 +1,13 @@
-// Copyright (c) 2011 The Chromium Authors. All rights reserved.
+// Copyright 2011 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef UI_GFX_SCOPED_NS_GRAPHICS_CONTEXT_SAVE_GSTATE_MAC_H_
 #define UI_GFX_SCOPED_NS_GRAPHICS_CONTEXT_SAVE_GSTATE_MAC_H_
 
-#include "base/macros.h"
-#include "ui/gfx/gfx_export.h"
+#include <memory>
 
-#if defined(__OBJC__)
-@class NSGraphicsContext;
-#else
-class NSGraphicsContext;
-#endif
+#include "ui/gfx/gfx_export.h"
 
 namespace gfx {
 
@@ -20,12 +15,17 @@ namespace gfx {
 class GFX_EXPORT ScopedNSGraphicsContextSaveGState {
  public:
   ScopedNSGraphicsContextSaveGState();
+
+  ScopedNSGraphicsContextSaveGState(const ScopedNSGraphicsContextSaveGState&) =
+      delete;
+  ScopedNSGraphicsContextSaveGState& operator=(
+      const ScopedNSGraphicsContextSaveGState&) = delete;
+
   ~ScopedNSGraphicsContextSaveGState();
 
  private:
-  NSGraphicsContext* context_;  // weak
-
-  DISALLOW_COPY_AND_ASSIGN(ScopedNSGraphicsContextSaveGState);
+  struct ObjCStorage;
+  std::unique_ptr<ObjCStorage> objc_storage_;
 };
 
 }  // namespace gfx

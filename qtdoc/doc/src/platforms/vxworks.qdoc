@@ -1,30 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2015 The Qt Company Ltd.
-** Contact: http://www.qt.io/licensing/
-**
-** This file is part of the documentation of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:FDL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Free Documentation License Usage
-** Alternatively, this file may be used under the terms of the GNU Free
-** Documentation License version 1.3 as published by the Free Software
-** Foundation and appearing in the file included in the packaging of
-** this file. Please review the following information to ensure
-** the GNU Free Documentation License version 1.3 requirements
-** will be met: https://www.gnu.org/licenses/fdl-1.3.html.
-** $QT_END_LICENSE$
-**
-****************************************************************************/
-
+// Copyright (C) 2023 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GFDL-1.3-no-invariants-only
 /*!
   \page vxworks.html
   \title Qt for VxWorks
@@ -32,48 +7,39 @@
   \keyword VxWorks
   \ingroup supportedplatform
 
-  Qt for VxWorks is available only under a commercial license.
-
   Contact The Qt Company for more information:
   \l {https://www.qt.io/contact-us/}
 
+  \section1 Qt for VxWorks Licensing
+
+    Qt for VxWorks is available under the Qt for Device Creation Professional
+    (DCP) license. For more information, see \l{Qt Pricing}.
+
   \section1 Supported Architectures and VxWorks Releases
 
+  Qt 6.8 is verified on VxWorks 24.03.
+
+  Supported architectures:
   \list
-    \li Qt 5.5 was verified on VxWorks 7 release SR0480 2016-09-16.
-    Supported architecture is ARM-v7.
-    \note Qt 5.5 is no longer supported.
-    \li Qt 5.9 LTS was verified on VxWorks 7 SR0541.
-    \note Support for Qt 5.9 ends May 2020.
-    \li 5.12 LTS is verified on VxWorks 7 SR0541 for gcc and SR650 for clang. Qt 5.12 is supported until
-    December 2021.
+    \li ARM-v7—Tested on BD-SL-i.MX6. BSP used: fsl_imx6
+    \li x86_64—Tested on Intel NUC6i3SYH. BSP used: itl_generic
   \endlist
 
-  If you are interested in later Qt releases, please \l {https://www.qt.io/contact-us/}{contact} Qt professional services.
-
-  \section1 Qt for VxWorks Source Package
-
-  Qt for VxWorks is delivered via the \l {Qt Account}, under the name
-  \b {Qt 5.5.1} > \b {Qt VxWorks Platform Source Package}.
-  \note Qt 5.5 is no longer supported.
-
-  Source packages for up-to-date and supported Qt releases on VxWorks are
-  available through Qt Professional Services.
+  If you are interested in later Qt releases, please \l {https://www.qt.io/contact-us/}{contact} Qt
+  professional services.
 
   \section1 Requirements for VxWorks
 
-  \section2 QtWidget Applications
+  \section2 Qt Widgets Applications
 
   \list
-  \li Framebuffer device (FBDEV)
-  \li Evdev support (compatibility mode)
   \li POSIX support
-  \li C++11 support
+  \li C++17 support
   \endlist
 
   \section2 Qt Quick 2 Applications
 
-  All features which are required for QtWidget applications, and in addition the following:
+  All features which are required for Qt Widgets applications, and in addition the following:
 
   \list
   \li GPU device (GPUDEV) for OpenGL ES 2.0
@@ -81,80 +47,105 @@
 
   \section1 Supported Modules
 
-  Almost all essential \l{All Modules}{Qt modules} and some add-on modules supported.
+  Most essential \l{All Modules}{Qt modules} and some add-on modules are supported.
 
-  \section2 Limitations for Essential modules
+  \section2 Supported Essential modules
 
   \table 80%
   \header
       \li Qt Module
       \li Supported Features
       \li Notes
-
   \row
-      \li \l {Qt Multimedia}
-      \li Audio
-      \li \l [QML] {QtMultimedia::SoundEffect}{SoundEffect},
-          \l [QtMultimedia] {QSound},
-          \l [QtMultimedia] {QSoundEffect} and
-          \l [QtMultimedia] {QAudioOutput}
-
-  \row
-      \li \l {Qt Multimedia Widgets}
-      \li Not supported
+      \li \l {Qt Core}
       \li
-
+      \li No support for \l{QProcess}. \l{QLocalSocket} and \l{QLocalServer} support only SOCK_SEQPACKET.
   \row
-      \li Qt WebKit
-      \li Not supported
+      \li \l {Qt GUI}
       \li
-
+      \li
   \row
-      \li Qt WebKit Widgets
-      \li Not supported
+      \li \l {Qt Network}
       \li
-
+      \li
+  \row
+      \li \l {Qt Qml}
+      \li
+      \li
+  \row
+      \li \l {Qt Quick}
+      \li
+      \li
+  \row
+      \li \l {Qt Quick Controls}
+      \li
+      \li
+  \row
+      \li \l {Qt Quick Dialogs}
+      \li
+      \li
+  \row
+      \li \l {Qt Quick Layouts}
+      \li
+      \li
+  \row
+      \li \l {Qt Quick Test}
+      \li
+      \li
+  \row
+      \li \l {Qt Test}
+      \li
+      \li
+  \row
+      \li \l {Qt Widgets}
+      \li
+      \li
   \endtable
 
-  \section2 Supported Add-ons
+  \section2 Supported Add-Ons
 
   \table 80%
   \header
-      \li Qt Add-on
+      \li Qt Add-Ons
       \li Notes
-  \row
-      \li \l {Qt Charts}
-      \li Version 2.0.1
-  \row
-      \li \l {Qt Data Visualization}
-      \li Version 1.2.1
-  \row
-      \li \l {Qt Virtual Keyboard}
-      \li Version 2.0
-  \row
-      \li \l {Qt Quick Compiler}
-      \li Version 3.0
   \row
       \li \l {Qt Concurrent}
       \li
   \row
-      \li \l {Qt Graphical Effects}
+      \li \l {Qt GRPC}{Qt GRPC/Protobuf}
+      \li
+  \row
+      \li \l {Qt Graphs}
       \li
   \row
       \li \l {Qt Image Formats}
       \li
   \row
-      \li \l {Qt OpenGL}
-      \li Only OpenGL ES 2 \note Provided to ease porting from Qt 4.x.
-      Use the QOpenGL classes in \l{Qt GUI} for new code
+      \li \l {Qt Multimedia}
+      \li
   \row
-      \li \l {Qt Platform Headers}
+      \li \l {Native Interfaces}{Qt Native Interfaces}
+      \li
+  \row
+      \li \l {Qt OpenGL}
+      \li
+  \row
+      \li \l {Qt Quick 3D}
+      \li
+  \row
+      \li \l {Qt Quick Compiler}
+      \li
+  \row
+      \li \l {Qt Quick Effects}
+      \li
+  \row
+      \li \l {Qt SQL}
       \li
   \row
       \li \l {Qt SVG}
       \li
   \row
-      \li \l {Qt XML Patterns}
+      \li \l {Qt Virtual Keyboard}
       \li
   \endtable
 
@@ -167,394 +158,957 @@
   implementation: QWS is no longer a supported platform. For single-process use
   cases, the \l{Qt Platform Abstraction} is a superior solution.
 
-  There are two platform plugins that are usable on VxWorks: EGLFS and VxWorksFB.
-  The availability of these plugins depends on the configuration of Qt. The default
-  platform plugin is also device-specific. For instance, on many boards \c eglfs will be
-  chosen as the default one. If the default is not suitable, the \c QT_QPA_PLATFORM
-  environment variable parameter can be used to request another plugin.
-  Alternatively, for quick tests, the \c -platform command-line option can be used
-  with the same syntax.
+  There is one plugin that is usable on VxWorks: EGLFS. The availability of this
+  plugins depends on the configuration of Qt.
 
   \section1 Configuring for a Specific Device
 
-  Building Qt for a given device requires a toolchain and a
-  sysroot. Additionally, some devices require vendor specific adaptation code
-  for EGL and OpenGL ES 2.0 support. This is not relevant for non-accelerated
-  platforms, for example the ones using the VxWorksFB plugin, however neither
-  OpenGL nor Qt Quick 2 will be functional in such a setup.
+  Prepare your environment by installing VxWorks SDK and obtaining WindRiver
+  license which is needed by installer and for building VxWorks images.
+  Search for appropriate installer in
+  {https://gallery.windriver.com/portal/products}.
 
-  The directory \e qtbase/mkspecs/devices contains configuration and graphics
-  adaptation code for a number of devices. For example, \c vxworks-imx6
-  contains build settings, such as the optimal compiler and linker flags, for
-  the \l {http://en.wikipedia.org/wiki/I.MX#i.MX6x_series}{Freescale iMX6 series},
-  and either an implementation of the eglfs hooks (vendor-specific adaptation code),
-  or a reference to a suitable eglfs device integration plugin. The device is
-  selected through the \l{Qt Configure Options}{configure} tool's \c -device
-  parameter. The name that follows after this argument must, at least partially,
-  match one of the subdirectories under \e devices.
+  Building Qt for a given device requires a Qt 6 installation for compilation
+  host, a toolchain and a sysroot. Additionally, some devices require vendor
+  specific adaptation code for EGL and OpenGL 2.0 support.
 
-  Before running configure and building Qt 5 it is required to open \e {VxWorks 7
-  Development Shell} in command prompt.
+  \section2 VxWorks Image Requirements
+
+  Qt for VxWorks requires certain VxWorks image bundles and components to be
+  embedded in base software to make Qt compile and work properly. The
+  list is by no means complete as it depends on hardware, software and system
+  requirements of your project. However, the following table contains those
+  that are mandatory for certain functionalities to work (including touchscreen support).
+  Note also that these might change with VxWorks versions.
+
+  \section3 Example VSB configuration for the fsl_imx6 and itl_generic BSPs
+
+  You need to add the following features to VSB for Qt to work properly. For
+  more details please check WindRiver VxWorks Documentation.
+
+  \table 80%
+    \header
+        \li Feature
+        \li Notes
+
+    \row
+        \li \c DSI_DSI_KERNEL
+        \li
+
+    \row
+        \li \c IPNET_COREIP
+        \li
+
+    \row
+        \li \c IPNET_DHCPC
+        \li
+
+    \row
+        \li \c SDMMC_DEVICE
+        \li
+
+    \row
+        \li \c SDMMC_HOST
+        \li
+
+    \row
+        \li \c SDMMC_SDHC
+        \li
+
+    \row
+        \li \c SDMMC_STORAGE
+        \li
+
+    \row
+        \li \c SERVICE_UN
+        \li
+
+    \row
+        \li \c SOCKET
+        \li
+
+    \row
+        \li \c USB_EHCI
+        \li
+
+    \row
+        \li \c USB_KEYBOARD
+        \li
+
+    \row
+        \li \c USB_MOUSE
+        \li
+
+    \row
+        \li \c USB_STORAGE
+        \li
+
+    \row
+        \li \c USB_TOUCHSCREEN
+        \li
+
+    \row
+        \li \c EVDEV
+        \li
+
+    \row
+        \li \c EVDEV_LIB
+        \li
+
+    \row
+        \li \c EVDEV_TI_TSC2004_TS
+        \li
+
+    \row
+        \li \c EVDEV_EETI_EXC7200_TS
+        \li
+
+    \row
+        \li \c AUDIO
+        \li
+
+    \row
+        \li \c GPUDEV_FSLVIVGPU
+        \li fsl_imx6 specific
+
+    \row
+        \li \c HASH
+        \li
+
+    \row
+        \li \c OPENSSL
+        \li
+
+    \row
+        \li \c RANDOM_ENTROPY_INJECT
+        \li
+
+    \row
+        \li \c IPNET_SSH
+        \li
+
+    \row
+        \li \c USER_MANAGEMENT
+        \li
+
+    \row
+        \li \c ICU
+        \li
+
+    \row
+        \li \c DRM
+        \li itl_generic specific
+
+    \row
+        \li \c ITLI915
+        \li itl_generic specific
+
+    \row
+        \li \c LIBDRM
+        \li itl_generic specific
+
+    \row
+        \li \c MESA
+        \li itl_generic specific
+
+  \endtable
+
+  The following config variables are added implicitly and you need to remove them:
+
+  \table 80%
+    \header
+        \li Variable
+        \li Notes
+
+    \row
+        \li \c _WRS_CONFIG_EVDEV_OPTIMIZED_MODE
+        \li
+
+    \row
+        \li \c _WRS_CONFIG_EVDEV_DISPLAY_POINT_TRANSLATE
+        \li
+
+    \row
+        \li \c _WRS_CONFIG_MESA_MANGLE
+        \li itl_generic specific
+
+  \endtable
+
+  You need to add the following variables to the config:
+
+  \table 80%
+    \header
+        \li Variable
+        \li Value
+        \li Notes
+
+    \row
+        \li \c _WRS_CONFIG_RTP_SSP
+        \li \c y
+        \li
+
+    \row
+        \li \c _WRS_CONFIG_RTP_STACK_PROTECTOR
+        \li \c y
+        \li
+
+    \row
+        \li \c _WRS_CONFIG_MESA_GPUDEV_INTEL_GEN90
+        \li \c y
+        \li itl_generic specific
+
+    \row
+        \li \c _WRS_CONFIG_EVDEV_COMPATIBLE_MODE
+        \li \c y
+        \li Needed in order for Qt to work properly with a touchscreen.
+
+  \endtable
+
+  \section3 Example VIP configuration for fsl_imx6 and itl_generic BSPs
+  For more details please check WindRiver VxWorks Documentation.
+
+  \table 80%
+    \header
+        \li Bundle
+        \li Notes
+    \row
+        \li \c BUNDLE_POSIX
+        \li This bundle is necessary for compatibility with POSIX-related
+        functionalities which Qt requires.
+    \row
+        \li \c BUNDLE_RTP_DEPLOY
+        \li
+    \row
+        \li \c BUNDLE_RTP_DEVELOP
+        \li
+    \row
+        \li \c BUNDLE_STANDALONE_SHELL
+        \li
+  \endtable
+
+  \table 80%
+    \header
+        \li Component
+        \li Notes
+
+    \row
+        \li \c INCLUDE_TMP_DIR
+            \c INCLUDE_RAM_DISK_FORMAT_HRFS
+        \li Including these two components is necessary if you want to
+            use \l {QTemporaryFile}. Note that you should also consider setting
+            \c TMP_DIR_SIZE to appropriate value
+
+    \row
+        \li \c DRV_AUDIO_FSL_SSI
+        \li
+
+    \row
+        \li \c DRV_AUDIO_FSL_SGTL5000
+        \li
+
+    \row
+        \li \c DRV_FSL_SDHC_CTRL
+        \li
+
+    \row
+        \li \c DRV_IMX_SDHC_CTRL
+        \li
+
+    \row
+        \li \c INCLUDE_EHCI_INIT
+        \li
+
+    \row
+        \li \c INCLUDE_FSL_IMX6Q_SABRELITE
+        \li
+
+    \row
+        \li \c DRV_MMCSTORAGE_CARD
+        \li
+
+    \row
+        \li \c DRV_SDSTORAGE_CARD
+        \li
+
+    \row
+        \li \c INCLUDE_AUDIO_LIB_CORE
+        \li
+
+    \row
+        \li \c INCLUDE_AUDIO_LIB_WAV
+        \li
+
+    \row
+        \li \c INCLUDE_CUSTOM_ENTROPY_ADD
+        \li
+
+    \row
+        \li \c INCLUDE_DEBUG_AGENT_START
+        \li
+
+    \row
+        \li \c INCLUDE_DEFAULT_TIMEZONE
+        \li
+
+    \row
+        \li \c INCLUDE_DISK_UTIL
+        \li
+
+    \row
+        \li \c INCLUDE_DOSFS
+        \li
+
+    \row
+        \li \c INCLUDE_DSAPARAM_CMD
+        \li
+
+    \row
+        \li \c INCLUDE_END
+        \li
+
+    \row
+        \li \c INCLUDE_EVDEV_LIB_CORE
+        \li
+
+    \row
+        \li \c INCLUDE_EVDEV_LIB_KBD
+        \li
+
+    \row
+        \li \c INCLUDE_EVDEV_LIB_KBD_MAP_US
+        \li
+
+    \row
+        \li \c INCLUDE_EVDEV_LIB_PTR
+        \li
+
+    \row
+        \li \c INCLUDE_EVDEV_LIB_TS
+        \li
+
+    \row
+        \li \c INCLUDE_GENDSA_CMD
+        \li
+
+    \row
+        \li \c INCLUDE_GENRSA_CMD
+        \li
+
+    \row
+        \li \c INCLUDE_GETADDRINFO
+        \li
+
+    \row
+        \li \c INCLUDE_GETNAMEINFO
+        \li
+
+    \row
+        \li \c INCLUDE_HRFS
+        \li
+
+    \row
+        \li \c INCLUDE_HRFS_ACCESS_TIMESTAMP
+        \li
+
+    \row
+        \li \c INCLUDE_HRFS_FORMAT
+        \li
+
+    \row
+        \li \c INCLUDE_HRFS_HISPEED_WRITE_MODE
+        \li
+
+    \row
+        \li \c INCLUDE_IFCONFIG
+        \li
+
+    \row
+        \li \c INCLUDE_IO_REALPATH
+        \li This component is needed to enable the use of the realpath function needed for \c QFileInfo
+
+    \row
+        \li \c INCLUDE_IPATTACH
+        \li
+
+    \row
+        \li \c INCLUDE_IPCOM_SYSLOGD_CMD
+        \li
+
+    \row
+        \li \c INCLUDE_IPCOM_SYSVAR_CMD
+        \li
+
+    \row
+        \li \c INCLUDE_IPCOM_USE_RAM_DISK
+        \li
+
+    \row
+        \li \c INCLUDE_IPCOM_USE_TIME_CMD
+        \li
+
+    \row
+        \li \c INCLUDE_IPDHCPC
+        \li
+
+    \row
+        \li \c INCLUDE_IPDNSC
+        \li
+
+    \row
+        \li \c INCLUDE_IPD_CMD
+        \li
+
+    \row
+        \li \c INCLUDE_IPFTPC
+        \li
+
+    \row
+        \li \c INCLUDE_IPFTP_CMD
+        \li
+
+    \row
+        \li \c INCLUDE_IPIFCONFIG_CMD
+        \li
+
+    \row
+        \li \c INCLUDE_IPNETSTAT_CMD
+        \li
+
+    \row
+        \li \c INCLUDE_IPNSLOOKUP_CMD
+        \li
+
+    \row
+        \li \c INCLUDE_IPPING_CMD
+        \li
+
+    \row
+        \li \c INCLUDE_IPROUTE_CMD
+        \li
+
+    \row
+        \li \c INCLUDE_IPTRACE_ROUTE_CMD
+        \li
+
+    \row
+        \li \c INCLUDE_IPWRAP_GETHOSTBYADDR
+        \li
+
+    \row
+        \li \c INCLUDE_IPWRAP_GETHOSTBYNAME
+        \li
+
+    \row
+        \li \c INCLUDE_IPWRAP_GETNAMEINFO
+        \li
+
+    \row
+        \li \c INCLUDE_IPWRAP_IFNAME
+        \li
+
+    \row
+        \li \c INCLUDE_IPWRAP_ROUTECMD
+        \li
+
+    \row
+        \li \c INCLUDE_MMAP
+        \li
+
+    \row
+        \li \c INCLUDE_PING
+        \li
+
+    \row
+        \li \c INCLUDE_PIPES
+        \li
+
+    \row
+        \li \c INCLUDE_POSIX_MAPPED_FILES
+        \li
+
+    \row
+        \li \c INCLUDE_POSIX_PIPES
+        \li
+
+    \row
+        \li \c INCLUDE_POSIX_PTHREAD_SCHEDULER
+        \li
+
+    \row
+        \li \c INCLUDE_POSIX_SHM
+        \li
+
+    \row
+        \li \c INCLUDE_RAM_DISK
+        \li
+
+    \row
+        \li \c INCLUDE_RAM_DISK_FORMAT_HRFS
+        \li
+
+    \row
+        \li \c INCLUDE_RANDOM_NUM_GEN
+        \li
+
+    \row
+        \li \c INCLUDE_ROMFS
+        \li
+
+    \row
+        \li \c INCLUDE_ROUTECMD
+        \li
+
+    \row
+        \li \c INCLUDE_SC_PIPE
+        \li
+
+    \row
+        \li \c INCLUDE_SC_POSIX_PIPE
+        \li
+
+    \row
+        \li \c INCLUDE_SD_BUS
+        \li
+
+    \row
+        \li \c INCLUDE_SECURITY
+        \li
+
+    \row
+        \li \c INCLUDE_SEC_KEY_STORE_CMD
+        \li
+
+    \row
+        \li \c INCLUDE_SHELL
+        \li
+
+    \row
+        \li \c INCLUDE_SSH
+        \li
+
+    \row
+        \li \c INCLUDE_STANDALONE_SYM_TBL
+        \li
+
+    \row
+        \li \c INCLUDE_STARTUP_SCRIPT
+        \li
+
+    \row
+        \li \c INCLUDE_TMP_DIR
+        \li
+
+    \row
+        \li \c INCLUDE_UN_COMP
+        \li
+
+    \row
+        \li \c INCLUDE_USB_GEN2_KEYBOARD
+        \li
+
+    \row
+        \li \c INCLUDE_USB_GEN2_MOUSE
+        \li
+
+    \row
+        \li \c INCLUDE_USB_GEN2_STORAGE_INIT
+        \li
+
+    \row
+        \li \c INCLUDE_USB_TOUCH_SCREEN
+        \li
+
+    \row
+        \li \c INCLUDE_USB_TOUCH_SCREEN_INIT
+        \li
+
+    \row
+        \li \c INCLUDE_USER_DATABASE
+        \li
+
+    \row
+        \li \c INCLUDE_USER_IDENTIFICATION
+        \li
+
+    \row
+        \li \c INCLUDE_VRFS
+        \li
+
+    \row
+        \li \c INCLUDE_VXBUS_SHOW
+        \li
+
+    \row
+        \li \c DRV_TOUCH_SCREEN_TI_TSC2004
+        \li
+
+    \row
+        \li \c DRV_TOUCH_SCREEN_EETI_EXC7200
+        \li
+
+    \row
+        \li \c INCLUDE_FBDEV_FSLIPU_0
+        \li fsl_imx6 specific
+
+    \row
+        \li \c INCLUDE_FBDEV_SPLASH
+        \li
+
+    \row
+        \li \c INCLUDE_GPUDEV_FSLVIV_API
+        \li fsl_imx6 specific
+
+    \row
+        \li \c INCLUDE_GPUDEV_FSLVIV_API_INIT
+        \li fsl_imx6 specific
+
+    \row
+        \li \c INCLUDE_GPUDEV_ITLGMC_2
+        \li itl_generic specific
+    \row
+        \li \c INCLUDE_I915
+        \li itl_generic specific
+    \row
+        \li \c INCLUDE_MESA_FBDEV
+        \li itl_generic specific
+    \row
+        \li \c INCLUDE_MESA_GPUDEV_DRI
+        \li itl_generic specific
+    \row
+        \li \c INCLUDE_MESA_GPUDEV_DRI_I965
+        \li itl_generic specific
+  \endtable
+
+  The following components are added implicitly and you need to remove them:
+
+  \table 80%
+    \header
+        \li Layer
+        \li Notes
+
+    \row
+        \li \c INCLUDE_FTP
+        \li
+
+    \row
+        \li \c INCLUDE_SHELL_SECURITY
+        \li
+
+  \endtable
+
+  \section4 VIP Parameters
+
+  You need to add the following parameters for Qt to run properly on VxWorks:
+
+  \table 80%
+    \header
+        \li Parameter
+        \li Example value
+        \li Notes
+
+    \row
+        \li \c SEC_VAULT_KEY_ENCRYPTING_PW
+        \li \c '"vxTarget"'
+        \li Example value
+
+    \row
+        \li \c UDB_STORAGE_PATH
+        \li \c '"/ram/vxUserDB.txt"'
+        \li Example value
+
+    \row
+        \li \c UDB_HASH_KEY
+        \li \c '"123456789"'
+        \li Example value
+
+    \row
+        \li \c UDB_HASH_KEY_LEN
+        \li \c 9
+        \li Example value, see previous
+
+    \row
+        \li \c FSLVIV_RTP_COMMAND_BUFFER_QUEUE
+        \li \c 32
+        \li For 'arm' architecture
+
+    \row
+        \li \c SYS_CLK_RATE
+        \li \c 100
+        \li
+
+    \row
+        \li \c RTP_PTHREAD_STACK_SIZE_DEFAULT
+        \li \c 262144
+        \li Required to make qtquick3d examples work. Can be overridden with the PTHREAD_STACK_SIZE_DEFAULT env variable.
+
+    \row
+        \li \c TMP_DIR_SIZE
+        \li \c 614400
+        \li Minimum value for passing Qt internal tests
+
+    \row
+        \li \c NUM_FILES
+        \li \c 300
+        \li
+
+    \row
+        \li \c RTP_FD_NUM_MAX
+        \li \c 300
+        \li
+
+    \row
+        \li \c HRFS_DEFAULT_MAX_FILES
+        \li \c 300
+        \li
+
+    \row
+        \li \c ITLGMC_FBDEV_RESOLUTION_2
+        \li \c '"1024x768-32"'
+        \li Example value for the Xenarc 706TSA touchscreen connected over HDMI.
+
+
+  \endtable
+
+  \section1 Building Qt 6 for VxWorks
+
+  \section2 Building Qt 6 for Host
+
+  When cross-building Qt 6 for VxWorks, it's best practice to use host tools
+  that use the same source code as cross-build does. This requires building Qt 6
+  for host first, but only with limited subset of submodules:
+    \list
+    \li qtbase
+    \li qtdeclarative
+    \li qtquick3d
+    \li qtshadertools
+    \endlist
+
+  Make sure to have all necessary prerequisites for building Qt 6 for host. Check
+  details in \l{Building Qt Sources}.
+
+  \section3 Running the Configure Script
+
+  The commands to configure, build, and install Qt 6 for host are the following:
+
+  \badcode
+    ./configure \
+        -cmake-generator "Ninja" \
+        -extprefix <path/to/Qt6/host/installation/dir> \
+        -submodules qtbase,qtdeclarative,qtquick3d,qtshadertools \
+        -nomake tests \
+        -nomake examples \
+        -- \
+        -B <host/build/directory>
+    cd <host/build/directory>
+    ninja
+    ninja install
+  \endcode
+
+  These commands install Qt 6 for the host in
+  \c {<path_to_Qt 6_host_installation_dir>}.
+
+  \section2 Building Qt 6 for the Target
+
+  \section3 Setting Up the Build Environment
+
+  Before you run configure and build Qt 6, you must open \e {VxWorks Development Shell} in command
+  prompt.
 
   \list
   \li Linux:
   \badcode
-  cd <VxWorks 7 installation directory>
-  ./wrenv.sh -p vxworks-7
+  cd <VxWorks installation directory>
+  ./wrenv.sh -p vxworks
+  export WIND_CC_SYSROOT=<path to VxWorks VSB directory>
   \endcode
 
   \li Windows:
   \badcode
-  cd <VxWorks 7 installation directory>
-  wrenv -p vxworks-7
+  cd <VxWorks installation directory>
+  wrenv -p vxworks
+  export WIND_CC_SYSROOT=<path to VxWorks VSB directory>
   \endcode
   \endlist
 
-  To build Qt 5 as shared libraries, add \c -shared option for configure.
-  To build Qt 5 statically, add \c -static option for configure.
+  \section3 Preparing the Custom CMake Toolchain File
 
-  Since support for llvm/clang toolchain in newer 5.12 has been added, there are two
-  types of default devices depending on the VxWorks 7 version used.
-
-  \list
-  \li \c vxworks-imx6-g++ for SR0541
-  \li \c vxworks-imx6-clang for SR0650
-  \endlist
-
-  Below is an example configuration for the BD-SL-i.MX6 when using VxWorks 7 SR0541.
+  To include graphics libraries from the BSP, you need to first create a CMake toolchain file.
+  An example CMake toolchain file for BD-SL-i.MX6 device:
 
   \badcode
-    ./configure -commercial -shared -confirm-license -device vxworks-imx6-g++ -device-option CROSS_COMPILE=arm -prefix /sd1:1/qt5rtp -sysroot <path_to_vxworks_vsb_dir>/fsl_imx6_1_1_11_0_VSB -no-gcc-sysroot -extprefix <path_to_host_dir>/qt5rtp -hostprefix <path_to_host_dir>/qt5rtp -no-openssl -nomake tools -nomake examples
+  # Copyright (C) 2024 The Qt Company Ltd.
+  # SPDX-License-Identifier: BSD-3-Clause
+
+  if(QT_VXWORKS_TOOLCHAIN_FILE)
+      set(_original_toolchain_file "${QT_VXWORKS_TOOLCHAIN_FILE}")
+  elseif(DEFINED ENV{QT_VXWORKS_TOOLCHAIN_FILE})
+      set(_original_toolchain_file "$ENV{QT_VXWORKS_TOOLCHAIN_FILE}")
+  else()
+      message(FATAL_ERROR "QT_VXWORKS_TOOLCHAIN_FILE is not set.")
+  endif()
+
+  if(NOT EXISTS "${_original_toolchain_file}")
+      message(FATAL_ERORR "${_original_toolchain_file} doesn't exists.")
+  endif()
+
+  include("${_original_toolchain_file}")
+  unset(_original_toolchain_file)
+
+  list(APPEND CMAKE_TRY_COMPILE_PLATFORM_VARIABLES QT_VXWORKS_TOOLCHAIN_FILE)
+
+  set(_common_lib_path "${CMAKE_SYSROOT}/usr/lib/common")
+  set(EGL_INCLUDE_DIR ${CMAKE_SYSROOT}/usr/h/public CACHE PATH "Path to EGL include directory" FORCE)
+  set(EGL_LIBRARY ${_common_lib_path}/libgfxFslVivEGL.so CACHE PATH "Path to EGL lib" FORCE)
+  set(GLESv2_INCLUDE_DIR ${CMAKE_SYSROOT}/usr/h/public CACHE PATH "Path to GLES include directory" FORCE)
+  set(GLESv2_LIBRARY ${_common_lib_path}/libgfxFslVivGLESv2.so CACHE PATH "Path to GLES lib" FORCE)
+
+  set(VxWorksPlatformGraphics_DEFINES "-D_FSLVIV")
+  set(VxWorksPlatformGraphics_LIBRARIES_PACK
+      "${_common_lib_path}/libgfxFslVivGAL.so"
+      "${_common_lib_path}/libgfxFslVivGLSLC.so"
+      "${_common_lib_path}/libgfxFslVivVDK.so"
+      "${_common_lib_path}/libxml.so"
+  )
+
+  set(VxWorksPlatformGraphics_REQUIRED_LIBRARIES
+      ${VxWorksPlatformGraphics_LIBRARIES_PACK}
+      ${EGL_LIBRARY}
+      ${GLESv2_LIBRARY}
+  )
+  unset(_common_lib_path)
   \endcode
 
-  Below is an example configuration for the BD-SL-i.MX6 when using VxWorks 7 SR0650.
+  An example for Intel NUC6i3SYH:
 
   \badcode
-    ./configure -commercial -shared -confirm-license -device vxworks-imx6-clang -prefix /sd1:1/qt5rtp -sysroot <path_to_vxworks_vsb_dir>/fsl_imx6_1_1_11_0_VSB -extprefix <path_to_host_dir>/qt5rtp -hostprefix <path_to_host_dir>/qt5rtp -no-openssl -nomake tools -nomake examples
+  # Copyright (C) 2024 The Qt Company Ltd.
+  # SPDX-License-Identifier: BSD-3-Clause
+
+  if(QT_VXWORKS_TOOLCHAIN_FILE)
+      set(_original_toolchain_file "${QT_VXWORKS_TOOLCHAIN_FILE}")
+  elseif(DEFINED ENV{QT_VXWORKS_TOOLCHAIN_FILE})
+      set(_original_toolchain_file "$ENV{QT_VXWORKS_TOOLCHAIN_FILE}")
+  else()
+      message(FATAL_ERROR "QT_VXWORKS_TOOLCHAIN_FILE is not set.")
+  endif()
+
+  if(NOT EXISTS "${_original_toolchain_file}")
+      message(FATAL_ERORR "${_original_toolchain_file} doesn't exists.")
+  endif()
+
+  include("${_original_toolchain_file}")
+  unset(_original_toolchain_file)
+
+  list(APPEND CMAKE_TRY_COMPILE_PLATFORM_VARIABLES QT_VXWORKS_TOOLCHAIN_FILE)
+
+  set(_common_lib_path "${CMAKE_SYSROOT}/usr/lib/common")
+  set(EGL_INCLUDE_DIR ${CMAKE_SYSROOT}/usr/h/public CACHE PATH "Path to EGL include directory" FORCE)
+  set(EGL_LIBRARY ${_common_lib_path}/libgfxMesaEGL.so CACHE PATH "Path to EGL lib" FORCE)
+  set(GLESv2_INCLUDE_DIR ${CMAKE_SYSROOT}/usr/h/public CACHE PATH "Path to GLES include directory" FORCE)
+  set(GLESv2_LIBRARY ${_common_lib_path}/libgfxMesaGL.so CACHE PATH "Path to GLES lib" FORCE)
+
+  set(VxWorksPlatformGraphics_DEFINES "-D__vxworks -D__VXWORKS")
+  set(VxWorksPlatformGraphics_LIBRARIES_PACK
+      "${_common_lib_path}/libgfxMesaSw.so"
+      "${_common_lib_path}/libgfxMesa.so"
+      "${_common_lib_path}/libgfxMesaDriI965.so"
+      "${_common_lib_path}/libgfxLibDRM.so"
+      "${_common_lib_path}/libxml.so"
+  )
+
+  set(VxWorksPlatformGraphics_REQUIRED_LIBRARIES
+      ${VxWorksPlatformGraphics_LIBRARIES_PACK}
+      ${EGL_LIBRARY}
+      ${GLESv2_LIBRARY}
+  )
+  unset(_common_lib_path)
+
   \endcode
 
-  The most important parameters are \c -device, \c -device-option CROSS_COMPILE=<arch>,
-  \c -sysroot and \c -no-gcc-sysroot. By specifying \c -sysroot, the include
-  files and libraries used by \c {configure}'s feature detection tests, as well
-  as Qt itself, will be taken from the specified location, instead of the host
-  PC's standard locations. This means that installing development packages on the
-  host machine has no relevance. Instead, the headers and the libraries for the
-  target architecture (e.g. ARM) have to be present in the sysroot.
+  \section3 Running Qt 6 Configure for the Target
 
-  It is recommended to build Qt 5 using a \e{shadow build}. See \l {Qt Configure Options}
+  Below is an example build configuration for the BD-SL-i.MX6. For most VxWorks boards
+  the configure command looks very similar. By default, Qt 6 is configured to
+  use shared libraries. To build Qt 6 statically, add \c -static option to configure.
+
+  Make sure that {WIND_CC_SYSROOT} environment variable is set to VxWorks VSB root
+  directory.
+
+  \badcode
+    ./configure \
+        -cmake-generator "Ninja" \
+        -icu \
+        -eglfs \
+        -qpa eglfs \
+        -submodules "qtbase,qtdeclarative,qtmultimedia,qtquick3d,qtgraphs,qtimageformats,qtsvg,qtshadertools,qtvirtualkeyboard" \
+        -- \
+        -B <target/build/directory> \
+        -DQT_VXWORKS_TOOLCHAIN_FILE=<path/to/BDP/toolchain.cmake> \
+        -DFEATURE_vulkan=OFF \
+        -DQT_QMAKE_TARGET_MKSPEC=vxworks-clang \
+        -DQT_HOST_PATH=<path/to/Qt6/host/installation/dir> \
+        -DCMAKE_STAGING_PREFIX:PATH=<path/to/Qt6/target/installation/dir> \
+        -DCMAKE_TOOLCHAIN_FILE=<path/to/cmake/for/graphics/file/created/above> \
+  \endcode
+
+  In case of building for DKM rather than RTP, use \c -static option and change the
+  \c CMAKE_TOOLCHAIN_FILE value to \c {"$WIND_CC_SYSROOT/mk/dkm.toolchain.cmake"}
+
+  It is recommended to build Qt 6 using a \e{shadow build}. See \l {Qt Configure Options}
   for more information.
 
-  \section1 Building and Installing Qt 5
+  After configuration, build and install Qt 6 for VxWorks with these commands:
 
   \badcode
-  make -j<N>
-  make install
+  cd <host build directory>
+  ninja
+  ninja install
   \endcode
 
   \section1 Platform Plugins for VxWorks Devices
 
-  \section2 EGLFS
+  Qt for VxWorks supports EGLFS platform plugin for a \e {native window} substitution.
+  Read more about its configuration in \l{embedded eglfs}{EGLFS}.
 
-  \l {http://www.khronos.org/egl}{EGL} is an interface between OpenGL and the
-  native windowing system. Qt can use EGL for context and surface management,
-  however the API contains no platform specifics: The creation of a \e {native
-  window} (which will not necessarily be an actual window on the screen) must
-  still be done by platform-specific means. Hence the need for the board or GPU
-  specific adaptation code. Such adaptations are provided either as \e {eglfs
-  hooks}, a single source file compiled in to the platform plugin, or as
-  dynamically loaded \e {EGL device integration} plugins.
+  \section1 Building Qt Applications
 
-  EGLFS is a platform plugin for running Qt 5 applications on top of EGL and
-  OpenGL ES 2.0 without an actual windowing system (like X11 or Wayland). In
-  addition to Qt Quick 2 and native OpenGL applications it supports
-  software-rendered windows (for example QWidget) too. In the latter case the
-  widgets' contents are rendered using the CPU into images which are then
-  uploaded into textures and composited by the plugin.
+  To build a Qt application, you must set the QT_VXWORKS_TOOLCHAIN_FILE as an environment variable
+  or as a define.
 
-  This is the recommended plugin for modern VxWorks devices that include
-  a GPU.
-
-  EGLFS forces the first top-level window (be it either a QWidget or a
-  QQuickView) to become fullscreen. This window is also chosen to be the \e root
-  widget window into which all other top-level widgets (for example dialogs,
-  popup menus or combobox dropdowns) are composited. This is necessary because
-  with EGLFS there is always exactly one native window and EGL window surface,
-  and these belong to the widget or window that is created first. This approach
-  works well when there is a main window that exists for the entire lifetime of
-  the application and all other widgets are either non top-levels or are created
-  afterwards, once the main window is shown.
-
-  There are further restrictions for OpenGL-based windows. As of Qt 5.3, eglfs
-  supports a single, fullscreen GL window (for example, an OpenGL-based QWindow,
-  a QQuickView or a QGLWidget). Opening additional OpenGL windows or mixing such
-  windows with QWidget-based content is not supported and will terminate the
-  application with an error message.
-
-  If necessary, eglfs can be configured via environment variables:
-
-  \list
-
-  \li \c {QT_QPA_EGLFS_FB} - Overrides the framebuffer device. The default is
-  \c /dev/fb0. On most embedded platforms this is not very relevant because the
-  framebuffer is used only for querying settings like the display dimensions.
-  On certain devices however this parameter provides the ability to specify
-  which display to use in multiple display setups, similarly to the \c fb
-  parameter in VxWorksFB.
-
-  \li \c {QT_QPA_EGLFS_WIDTH} and \c {QT_QPA_EGLFS_HEIGHT} - Contain the screen
-  width and height in pixels. While eglfs will try to determine the dimensions
-  from the framebuffer device \e{/dev/fb0}, this will not always work and
-  manually specifying the sizes may become necessary.
-
-  \li \c {QT_QPA_EGLFS_PHYSICAL_WIDTH} and \c {QT_QPA_EGLFS_PHYSICAL_HEIGHT} -
-  Physical screen width and height in millimeters. On platforms where the
-  framebuffer device \e{/dev/fb0} is not available or the query is not
-  successful, the values are calculated based on a default DPI of 100. This
-  variable can be used to override any such defaults.
-
-  \li \c {QT_QPA_EGLFS_DEPTH} - Overrides the color depth for the screen. On
-  platforms where the framebuffer device \e{/dev/fb0} is not available or the
-  query is not successful, the default of 32 is used. This variable can be used
-  to override any such defaults. Note that this affects only the color depth
-  value reported by QScreen. It has no connection to EGL configurations and the
-  color depth used for OpenGL rendering.
-
-  \li \c {QT_QPA_EGLFS_SWAPINTERVAL} - By default a swap interval of \c 1 will
-  be requested. This enables synchronizing to the displays vertical refresh. The
-  value can be overridden with this environment variable. For instance, passing
-  0 will disable blocking on swap, resulting in running as fast as possible
-  without any synchronization.
-
-  \li \c {QT_QPA_EGLFS_FORCE888} - When set, the red, green and blue color
-  channel sizes are ignored whenever creating a new context, window or offscreen
-  surface. Instead, the plugin will request a configuration with 8 bits per
-  channel. This can be helpful on devices where configurations with less than 32
-  or 24 bits per pixel are chosen by default but are known not to be suitable,
-  for example, due to banding effects. Instead of changing all the applications,
-  this variable provides an easier shortcut to force 24/32 bpp configurations
-  for a given device.
-
-  \li \c {QT_QPA_EGLFS_DEBUG} - When set, some debugging information is printed
-  on the debug output. For example, the input QSurfaceFormat and the properties
-  of the chosen EGL configuration are printed whenever creating a new
-  context. Together with Qt Quick's \c {QSG_INFO} variable, this can provide
-  useful information for troubleshooting issues related to the EGL
-  configuration.
-
-  \li \c {QT_QPA_EGLFS_INTEGRATION} - In addition to the compiled-in \e hooks,
-  it is also possible to provide device or vendor-specific adaptation in the
-  form of dynamically loaded plugins. This environment variable enforces a
-  specific plugin. For example, setting it to \e{eglfs_kms} will use the KMS/DRM
-  backend. This is only an option when no static, compiled-in hooks were
-  specified in the device makespecs. In practice the traditional compiled-in
-  hooks are rarely used, almost all backends are now migrated to plugins. The
-  device makespecs still contain a relevant \c EGLFS_DEVICE_INTEGRATION entry:
-  the name of the preferred backend for that particular device. This is
-  optional, but very useful to avoid the need to set this environment variable
-  in case there are more than one plugins present in the target system. In a
-  desktop environment the KMS or the X11 backends are prioritized, depending on
-  the presence of the \c DISPLAY environment variable.
-
-  \endlist
-
-  In addition to \c {QT_QPA_EGLFS_DEBUG}, eglfs also supports the more modern
-  categorized logging system of Qt. The following logging categories are
-  available:
-
-  \list
-
-    \li \c qt.qpa.egldeviceintegration – Enables logging for dynamically loaded
-    backends. Very useful to check what backend is in use.
-
-    \li \c qt.qpa.input – Enables debug output from the evdev input handler.
-    Very useful to check if a given input device was correctly recognized and
-    opened.
-
-  \endlist
-
-  \section2 Qt Quick Scene Graph Rendering Thread
-
-  The scene graph is a graphical representation of the Item scene. It
-  can be thought of as a graphical deep copy, an independent structure
-  that contains enough information to render all the items.
-
-  On many platforms, the \l{Qt Quick Scene Graph}{scene graph} will even be
-  rendered on a dedicated render thread while the GUI thread is preparing the
-  next frame's state.
-
-  In some cases when application is complex e.g. it's scene graph contains
-  lot's of Items, scene graph can consume more stack memory than what is
-  available by default for the render thread. Default stack memory size is
-  64KB. Using the environment variable QSG_RENDERTHREAD_STACK_SIZE, it is possible
-  to increase the stack size available for the scene graph render thread.
-
-  \section2 VxWorksFB
-
-  This plugin writes directly to the framebuffer. Only software-rendered content
-  is supported. Note that on some setups the display performance is expected to
-  be limited.
-
-  The \c vxworksfb plugin allows specifying additional settings by passing them
-  in the \c QT_QPA_PLATFORM environment variable or \c -platform command-line
-  option. For example, \c {QT_QPA_PLATFORM=vxworksfb:fb=/dev/fb1} specifies that
-  the framebuffer device \c /dev/fb1 should be used instead of the default
-  \c fb0. Multiple settings can be specfified by separating them with a colon.
-
-  \list
-
-  \li \c {fb=/dev/fbN} - Specifies the framebuffer devices. On multiple display
-  setups this will typically allow running the application on different
-  displays. For the time being there is no way to use multiple framebuffers from
-  one Qt application.
-
-  \li \c{size=}\e{<width>}\c{x}\e{<height>} - Specifies the screen size in
-  pixels. The plugin will try to query the display dimensions, both physical and
-  logical, from the framebuffer device. This may not always lead to proper
-  results however, and therefore it may become necessary to explicitly specify
-  the values.
-
-  \li \c{mmSize=}\e{<width>}\c{x}\e{<height>} - Physical width and height in
-  millimeters.
-
-  \li \c{offset=}\e{<width>}\c{x}\e{<height>} - Offset in pixels specifying the
-  top-left corner of the screen. The default position is at \c{(0, 0)}.
-
-  \endlist
-
-  \section1 Input
-
-  When no windowing system is present, the mouse, keyboard and touch input are
-  read directly via \c evdev. Note that this requires that devices nodes
-  \c {/input/event*} are readable by the user. eglfs and vxworksfb has all
-  the evdev input handling code built-in.
-
-  \section2 Input on eglfs and vxworksfb
-
-  Parameters like the device node name can be set in the environment variables
-  \c QT_QPA_EVDEV_MOUSE_PARAMETERS, \c QT_QPA_EVDEV_KEYBOARD_PARAMETERS and
-  \c QT_QPA_EVDEV_TOUCHSCREEN_PARAMETERS. Additionally, the built-in input handlers
-  can be disabled by setting \c QT_QPA_EGLFS_DISABLE_INPUT or
-  \c QT_QPA_FB_DISABLE_INPUT to \c 1. On some touch screens the coordinates will
-  need to be rotated. This can be enabled by setting
-  \c QT_QPA_EVDEV_TOUCHSCREEN_PARAMETERS to \c {rotate=180}.
-
-  \section2 Mouse
-
-  The mouse cursor will show up whenever \c QT_QPA_EGLFS_HIDECURSOR (for eglfs)
-  or \c QT_QPA_FB_HIDECURSOR (for vxworksfb) is not set, the mouse cursor will
-  always show up unless explicitly disabled via the environment variable.
-
-  Hot plugging is not supported.
-
-  \section2 Keyboard
-
-  The evdev keyboard handler supports the following extra parameters:
-
-  \list
-
-  \li \c {/input/...} - Specifies the name of the input device. When not
-  given, Qt will look for a suitable device by walking through the available
-  nodes.
-  \endlist
-
-  If the default, built-in keymap is not sufficient, a different one can be
-  specified either via the \c keymap parameter or by using the eglfs-specific
-  \l{QEglFSFunctions::loadKeymap()}{loadKeymap()} function. The latter allows
-  switching the keymap at runtime. Note however that this requires using eglfs'
-  built-in keyboard handler; it is not supported when the keyboard handler is
-  loaded via the \c -plugin command-line parameter.
-
-  \section2 Touch
-
-  Both single and multitouch devices are supported and require that VxWorks
-  has been properly configured to support touch devices.
-
-  \section2 Debugging Input Devices
-
-  It is possible to print some information to the debug output by enabling
-  the \c qt.qpa.input logging rule, for example by setting the \c QT_LOGGING_RULES
-  environment variable to \c{qt.qpa.input=true}. This is useful for detecting
-  which device is being used, or to troubleshoot device discovery issues.
-
-  \section2 Using Custom Mouse Cursor Images
-
-  eglfs comes with its own set of 32x32 sized mouse cursor images. If these are
-  not sufficient, a custom cursor atlas can be provided by setting the \c
-  QT_QPA_EGLFS_CURSOR environment variable to the name of a JSON file. The file
-  can also be embedded into the application via Qt's resource system.
-
-  For example, an embedded cursor atlas with 8 cursor images per row can be
-  specified like the following:
-
+  An example to build the clocks Qt demo:
   \badcode
-    {
-      "image": ":/cursor-atlas.png",
-      "cursorsPerRow": 8,
-      "hotSpots": [
-          [7, 2],
-          [12, 3],
-          [12, 12],
-          ...
-      ]
-    }
+  export WIND_CC_SYSROOT=<path/to/VxWorks/VSB/directory>
+  export QT_VXWORKS_TOOLCHAIN_FILE=<path/to/the/BSP/toolchain.cmake>
+  <path/to/Qt6/target/installation/dir>/bin/qt-cmake -G Ninja -S ~/Qt/Examples/Qt-6.8.0/demos/clocks -B <path/to/build/directory>
+  cd <path/to/build/directory>
+  ninja
   \endcode
-
-  Note that the images are expected to be tightly packed in the atlas: the
-  width and height of the cursors are decided based on the total image size and
-  the \c cursorsPerRow setting. Atlases have to provide an image for all the
-  supported cursors.
-
-  \section1 QML Component Loader Thread
-
-  In some cases, a complex application (for example, using a lot of custom
-  QML components) may cause the QML loader thread to consume stack memory
-  more than the 32 KB available by default. Using the environment variable
-  \c QML_LOADERTHREAD_STACK_SIZE, it is possible to increase the stack
-  size available for the QML loader thread.
-
-  \section1  Preventing Timeouts in QEventDispatcher
-
-  Default system clock rate (SYS_CLK_RATE) for VxWorks 7 is 1/60s or ~16,67ms.
-  In some cases this may cause a drop in the application frame rate;
-  in QEventDispatcher, the select function is blocking for the entire system
-  clock interval because a timeout is used. By defining an environment variable
-  \c QT_FORCE_SELECT_NOTIMEOUT=1, the select function returns immediately
-  if no new events are available and the resolution of the system clock is higher
-  than 10ms, which is true with default value.
 
   \section1 Running Qt Applications
 
-  Following example shows how to start an application when Qt 5 is built using
-  shared libraries. With a statically build Qt 5, there is no need to use the
-  LD_LIBRARY_PATH environment variable. This variable is only needed to point
-  the location of VxWorks shared libraries (for example libc and OpenGL ES 2.0).
-  It is not needed for Qt 5 shared libraries.
+  The following example shows how to start an application when Qt 6 is built using
+  shared libraries. With a statically built Qt 6, you don't need to use the
+  \c LD_LIBRARY_PATH environment variable for the Qt libraries, but it needs to point
+  to the location of VxWorks shared libraries (for example libc and OpenGL ES 2.0).
+  It is not needed for Qt 6 static libraries.
 
   \badcode
   putenv "LD_LIBRARY_PATH=/sd0:1/lib"
   cd "/sd0:1"
-  rtpSp("<Qt5_app>", 200, 0x100000, 0, 0x01000000)
+  rtpSp("<Qt 6_app>", 200, 0x100000, 0, 0x01000000)
   \endcode
 
   \section1 Limitations
-
-  \section2 OpenSSL Support
-  Qt 5 does not support OpenSSL for VxWorks as it does not support using OpenSSL
-  in RTP mode.
 
   \section2 Video Memory
 
   Systems with a fixed amount of dedicated video memory may need extra care
   before running Qt application based on Qt Quick or classes like
-  QOpenGLWidget. The default setting may be insufficient for such applications,
+  \l{QOpenGLWidget}. The default setting might be insufficient for such applications,
   especially when they are displayed on a high resolution (for example, full HD)
-  screen. In this case they may start failing in unexpected ways. It is
+  screen. In this case they might start failing in unexpected ways. It is
   therefore recommended to ensure that there is at least 128 MB of GPU memory
   available. For systems that do not have a fixed amount of memory reserved for
   the GPU this is not an issue.
-
-  \section2 vxworksfb
-
-  Use the \c fb plugin parameter to specify the framebuffer device to use.
 
 */

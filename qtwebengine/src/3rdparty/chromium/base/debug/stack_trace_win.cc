@@ -1,23 +1,24 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "base/debug/stack_trace.h"
 
 #include <windows.h>
+
 #include <dbghelp.h>
 #include <stddef.h>
 
 #include <algorithm>
 #include <iostream>
+#include <iterator>
 #include <memory>
 
 #include "base/files/file_path.h"
 #include "base/logging.h"
 #include "base/memory/singleton.h"
-#include "base/stl_util.h"
+#include "base/strings/strcat_win.h"
 #include "base/strings/string_util.h"
-#include "base/strings/stringprintf.h"
 #include "base/synchronization/lock.h"
 #include "build/build_config.h"
 
@@ -32,6 +33,10 @@ LPTOP_LEVEL_EXCEPTION_FILTER g_previous_filter = NULL;
 
 bool g_initialized_symbols = false;
 DWORD g_init_error = ERROR_SUCCESS;
+// STATUS_INFO_LENGTH_MISMATCH is declared in <ntstatus.h>, but including that
+// header creates a conflict with base/win/windows_types.h, so re-declaring it
+// here.
+DWORD g_status_info_length_mismatch = 0xC0000004;
 
 // Prints the exception call stack.
 // This is the unit tests exception filter.
@@ -118,12 +123,32 @@ FilePath GetExePath() {
   return FilePath(system_buffer);
 }
 
+constexpr size_t kSymInitializeRetryCount = 3;
+
+// A wrapper for SymInitialize. SymInitialize seems to occasionally fail
+// because of an internal race condition. So  wrap it and retry a finite
+// number of times.
+// See crbug.com/1339753
+bool SymInitializeWrapper(HANDLE handle, BOOL invade_process) {
+  for (size_t i = 0; i < kSymInitializeRetryCount; ++i) {
+    if (SymInitialize(handle, nullptr, invade_process))
+      return true;
+
+    g_init_error = GetLastError();
+    if (g_init_error != g_status_info_length_mismatch)
+      return false;
+  }
+  DLOG(ERROR) << "SymInitialize failed repeatedly.";
+  return false;
+}
+
 bool SymInitializeCurrentProc() {
   const HANDLE current_process = GetCurrentProcess();
-  if (SymInitialize(current_process, nullptr, TRUE))
+  if (SymInitializeWrapper(current_process, TRUE))
     return true;
 
-  g_init_error = GetLastError();
+  // g_init_error is updated by SymInitializeWrapper.
+  // No need to do "g_init_error = GetLastError()" here.
   if (g_init_error != ERROR_INVALID_PARAMETER)
     return false;
 
@@ -133,10 +158,9 @@ bool SymInitializeCurrentProc() {
   // almost immediately after startup. In such a case, try to reinit to see if
   // that succeeds.
   SymCleanup(current_process);
-  if (SymInitialize(current_process, nullptr, TRUE))
+  if (SymInitializeWrapper(current_process, TRUE))
     return true;
 
-  g_init_error = GetLastError();
   return false;
 }
 
@@ -177,8 +201,8 @@ bool InitializeSymbols() {
     return false;
   }
 
-  std::wstring new_path = StringPrintf(L"%ls;%ls", symbols_path,
-                                       GetExePath().DirName().value().c_str());
+  std::wstring new_path =
+      StrCat({symbols_path, L";", GetExePath().DirName().value()});
   if (!SymSetSearchPathW(GetCurrentProcess(), new_path.c_str())) {
     g_init_error = GetLastError();
     DLOG(WARNING) << "SymSetSearchPath failed." << g_init_error;
@@ -212,6 +236,9 @@ class SymbolContext {
     return
       Singleton<SymbolContext, LeakySingletonTraits<SymbolContext> >::get();
   }
+
+  SymbolContext(const SymbolContext&) = delete;
+  SymbolContext& operator=(const SymbolContext&) = delete;
 
   // For the given trace, attempts to resolve the symbols, and output a trace
   // to the ostream os.  The format for each line of the backtrace is:
@@ -282,7 +309,6 @@ class SymbolContext {
   }
 
   Lock lock_;
-  DISALLOW_COPY_AND_ASSIGN(SymbolContext);
 };
 
 }  // namespace
@@ -298,9 +324,9 @@ bool EnableInProcessStackDumping() {
   return InitializeSymbols();
 }
 
-NOINLINE size_t CollectStackTrace(void** trace, size_t count) {
+NOINLINE size_t CollectStackTrace(const void** trace, size_t count) {
   // When walking our own stack, use CaptureStackBackTrace().
-  return CaptureStackBackTrace(0, count, trace, NULL);
+  return CaptureStackBackTrace(0, count, const_cast<void**>(trace), NULL);
 }
 
 StackTrace::StackTrace(EXCEPTION_POINTERS* exception_pointers) {
@@ -326,17 +352,17 @@ void StackTrace::InitTrace(const CONTEXT* context_record) {
   STACKFRAME64 stack_frame;
   memset(&stack_frame, 0, sizeof(stack_frame));
 #if defined(ARCH_CPU_X86_64)
-  int machine_type = IMAGE_FILE_MACHINE_AMD64;
+  DWORD machine_type = IMAGE_FILE_MACHINE_AMD64;
   stack_frame.AddrPC.Offset = context_record->Rip;
   stack_frame.AddrFrame.Offset = context_record->Rbp;
   stack_frame.AddrStack.Offset = context_record->Rsp;
 #elif defined(ARCH_CPU_ARM64)
-  int machine_type = IMAGE_FILE_MACHINE_ARM64;
+  DWORD machine_type = IMAGE_FILE_MACHINE_ARM64;
   stack_frame.AddrPC.Offset = context_record->Pc;
   stack_frame.AddrFrame.Offset = context_record->Fp;
   stack_frame.AddrStack.Offset = context_record->Sp;
 #elif defined(ARCH_CPU_X86)
-  int machine_type = IMAGE_FILE_MACHINE_I386;
+  DWORD machine_type = IMAGE_FILE_MACHINE_I386;
   stack_frame.AddrPC.Offset = context_record->Eip;
   stack_frame.AddrFrame.Offset = context_record->Ebp;
   stack_frame.AddrStack.Offset = context_record->Esp;
@@ -349,11 +375,11 @@ void StackTrace::InitTrace(const CONTEXT* context_record) {
   while (StackWalk64(machine_type, GetCurrentProcess(), GetCurrentThread(),
                      &stack_frame, &context_copy, NULL,
                      &SymFunctionTableAccess64, &SymGetModuleBase64, NULL) &&
-         count_ < size(trace_)) {
+         count_ < std::size(trace_)) {
     trace_[count_++] = reinterpret_cast<void*>(stack_frame.AddrPC.Offset);
   }
 
-  for (size_t i = count_; i < size(trace_); ++i)
+  for (size_t i = count_; i < std::size(trace_); ++i)
     trace_[i] = NULL;
 }
 
@@ -373,7 +399,6 @@ void StackTrace::OutputToStreamWithPrefix(std::ostream* os,
       (*os) << "\t" << trace_[i] << "\n";
     }
   } else {
-    (*os) << "Backtrace:\n";
     context->OutputTraceToStream(trace_, count_, os, prefix_string);
   }
 }

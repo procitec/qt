@@ -1,9 +1,11 @@
-// Copyright (c) 2010 The Chromium Authors. All rights reserved.
+// Copyright 2010 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/safe_browsing/content/renderer/phishing_classifier/features.h"
 
+#include "base/feature_list.h"
+#include "base/metrics/field_trial_params.h"
 #include "base/metrics/histogram_macros.h"
 
 namespace safe_browsing {
@@ -23,13 +25,11 @@ bool FeatureMap::AddRealFeature(const std::string& name, double value) {
     // too small, or there is a bug causing too many features to be added.
     // In this case, we'll log to a histogram so we can see that this is
     // happening, and make phishing classification fail silently.
-    UMA_HISTOGRAM_COUNTS_1M("SBClientPhishing.TooManyFeatures", 1);
     return false;
   }
   // We only expect features in the range [0.0, 1.0], so fail if the feature is
   // outside this range.
   if (value < 0.0 || value > 1.0) {
-    UMA_HISTOGRAM_COUNTS_1M("SBClientPhishing.IllegalFeatureValue", 1);
     return false;
   }
 
@@ -40,6 +40,14 @@ bool FeatureMap::AddRealFeature(const std::string& name, double value) {
 void FeatureMap::Clear() {
   features_.clear();
 }
+
+BASE_FEATURE(kClientSideDetectionRetryLimit,
+             "ClientSideDetectionRetryLimit",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+constexpr base::FeatureParam<int> kClientSideDetectionRetryLimitTime{
+    &kClientSideDetectionRetryLimit, /*name=*/"RetryTimeMax",
+    /*default_value=*/15};
 
 namespace features {
 // URL host features

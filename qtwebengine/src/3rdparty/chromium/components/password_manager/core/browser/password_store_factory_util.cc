@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,114 +7,73 @@
 #include <memory>
 #include <utility>
 
-#include "base/task/post_task.h"
-#include "base/task/thread_pool.h"
-#include "components/password_manager/core/browser/android_affiliation/affiliated_match_helper.h"
-#include "components/password_manager/core/browser/android_affiliation/affiliation_utils.h"
-#include "components/password_manager/core/browser/android_affiliation/android_affiliation_service.h"
+#include "build/blink_buildflags.h"
+#include "components/password_manager/core/browser/affiliation/affiliated_match_helper.h"
+#include "components/password_manager/core/browser/affiliation/affiliation_utils.h"
+#include "components/password_manager/core/browser/credentials_cleaner.h"
+#include "components/password_manager/core/browser/credentials_cleaner_runner.h"
+#include "components/password_manager/core/browser/http_credentials_cleaner.h"
+#include "components/password_manager/core/browser/old_google_credentials_cleaner.h"
 #include "components/password_manager/core/browser/password_manager_constants.h"
-#include "components/sync/base/user_selectable_type.h"
-#include "components/sync/driver/sync_service.h"
-#include "components/sync/driver/sync_user_settings.h"
-#include "services/network/public/cpp/shared_url_loader_factory.h"
+#include "components/password_manager/core/browser/password_store/login_database.h"
+#include "components/password_manager/core/browser/password_store/password_store_interface.h"
+#include "components/password_manager/core/common/password_manager_pref_names.h"
 
 namespace password_manager {
 
-namespace {
-
-void ActivateAffiliationBasedMatching(
-    PasswordStore* password_store,
-    scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
-    network::NetworkConnectionTracker* network_connection_tracker,
-    const base::FilePath& db_path) {
-  // Subsequent instances of the AndroidAffiliationService must use the same
-  // sequenced task runner for their backends. This guarantees that the backend
-  // of the first instance will have closed the affiliation database before the
-  // second instance attempts to open it again. See: https://crbug.com/786157.
-  //
-  // Task priority is USER_VISIBLE, because AndroidAffiliationService-related
-  // tasks block obtaining credentials from PasswordStore, hence password
-  // autofill.
-  static auto backend_task_runner = base::ThreadPool::CreateSequencedTaskRunner(
-      {base::MayBlock(), base::TaskPriority::USER_VISIBLE});
-
-  // The PasswordStore is so far the only consumer of the
-  // AndroidAffiliationService, therefore the service is owned by the
-  // AffiliatedMatchHelper, which in turn is owned by the PasswordStore.
-  std::unique_ptr<AndroidAffiliationService> affiliation_service(
-      new AndroidAffiliationService(backend_task_runner));
-  affiliation_service->Initialize(std::move(url_loader_factory),
-                                  network_connection_tracker, db_path);
-  std::unique_ptr<AffiliatedMatchHelper> affiliated_match_helper(
-      new AffiliatedMatchHelper(password_store,
-                                std::move(affiliation_service)));
-  affiliated_match_helper->Initialize();
-  password_store->SetAffiliatedMatchHelper(std::move(affiliated_match_helper));
-}
-
-base::FilePath GetAffiliationDatabasePath(const base::FilePath& profile_path) {
-  return profile_path.Append(kAffiliationDatabaseFileName);
-}
-
-}  // namespace
-
-void ToggleAffiliationBasedMatchingBasedOnPasswordSyncedState(
-    PasswordStore* password_store,
-    syncer::SyncService* sync_service,
-    scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
-    network::NetworkConnectionTracker* network_connection_tracker,
-    const base::FilePath& profile_path) {
-  DCHECK(password_store);
-
-  const bool matching_should_be_active =
-      ShouldAffiliationBasedMatchingBeActive(sync_service);
-  const bool matching_is_active =
-      password_store->affiliated_match_helper() != nullptr;
-
-  if (matching_should_be_active && !matching_is_active) {
-    ActivateAffiliationBasedMatching(
-        password_store, std::move(url_loader_factory),
-        network_connection_tracker, GetAffiliationDatabasePath(profile_path));
-  } else if (!matching_should_be_active && matching_is_active) {
-    password_store->SetAffiliatedMatchHelper(nullptr);
-  }
-}
-
 std::unique_ptr<LoginDatabase> CreateLoginDatabaseForProfileStorage(
-    const base::FilePath& profile_path) {
+    const base::FilePath& db_directory,
+    const base::RepeatingCallback<void(bool)>& is_empty_cb) {
   base::FilePath login_db_file_path =
-      profile_path.Append(kLoginDataForProfileFileName);
+      db_directory.Append(kLoginDataForProfileFileName);
   return std::make_unique<LoginDatabase>(login_db_file_path,
-                                         IsAccountStore(false));
+                                         IsAccountStore(false), is_empty_cb);
 }
 
 std::unique_ptr<LoginDatabase> CreateLoginDatabaseForAccountStorage(
-    const base::FilePath& profile_path) {
+    const base::FilePath& db_directory) {
   base::FilePath login_db_file_path =
-      profile_path.Append(kLoginDataForAccountFileName);
+      db_directory.Append(kLoginDataForAccountFileName);
   return std::make_unique<LoginDatabase>(login_db_file_path,
                                          IsAccountStore(true));
 }
 
-void DeleteLoginDatabaseForAccountStorageFiles(
-    const base::FilePath& profile_path) {
-  base::FilePath login_db_file_path =
-      profile_path.Append(kLoginDataForAccountFileName);
-  base::ThreadPool::PostTask(
-      FROM_HERE, {base::MayBlock()},
-      base::BindOnce(&LoginDatabase::DeleteDatabaseFile, login_db_file_path));
-}
+// TODO(http://crbug.com/890318): Add unitests to check cleaners are correctly
+// created.
+void RemoveUselessCredentials(
+    password_manager::CredentialsCleanerRunner* cleaning_tasks_runner,
+    scoped_refptr<password_manager::PasswordStoreInterface> store,
+    PrefService* prefs,
+    base::TimeDelta delay,
+    base::RepeatingCallback<network::mojom::NetworkContext*()>
+        network_context_getter) {
+  DCHECK(cleaning_tasks_runner);
 
-base::FilePath GetLoginDatabaseForAccountStoragePathForTesting(
-    const base::FilePath& profile_path) {
-  return profile_path.Append(kLoginDataForAccountFileName);
-}
+#if BUILDFLAG(USE_BLINK)
+  // Can be null for some unittests.
+  if (!network_context_getter.is_null()) {
+    cleaning_tasks_runner->MaybeAddCleaningTask(
+        std::make_unique<password_manager::HttpCredentialCleaner>(
+            store, network_context_getter, prefs));
+  }
+#endif  // BUILDFLAG(USE_BLINK)
 
-bool ShouldAffiliationBasedMatchingBeActive(syncer::SyncService* sync_service) {
-  return sync_service && sync_service->IsSyncFeatureActive() &&
-         sync_service->GetUserSettings()->GetSelectedTypes().Has(
-             syncer::UserSelectableType::kPasswords) &&
-         !sync_service->GetUserSettings()->IsUsingSecondaryPassphrase();
+  // TODO(crbug.com/450621): Remove this when enough number of clients switch
+  // to the new version of Chrome.
+  cleaning_tasks_runner->MaybeAddCleaningTask(
+      std::make_unique<password_manager::OldGoogleCredentialCleaner>(store,
+                                                                     prefs));
+
+  if (cleaning_tasks_runner->HasPendingTasks()) {
+    // The runner will delete itself once the clearing tasks are done, thus we
+    // are releasing ownership here.
+    base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
+        FROM_HERE,
+        base::BindOnce(
+            &password_manager::CredentialsCleanerRunner::StartCleaning,
+            cleaning_tasks_runner->GetWeakPtr()),
+        delay);
+  }
 }
 
 }  // namespace password_manager

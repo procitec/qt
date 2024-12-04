@@ -1,9 +1,11 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef COMPONENTS_VIZ_COMMON_FRAME_SINKS_COPY_OUTPUT_UTIL_H_
 #define COMPONENTS_VIZ_COMMON_FRAME_SINKS_COPY_OUTPUT_UTIL_H_
+
+#include <string>
 
 #include "components/viz/common/viz_common_export.h"
 
@@ -11,6 +13,7 @@
 #include "ui/gfx/geometry/vector2d.h"
 
 namespace viz {
+
 namespace copy_output {
 
 // Returns the pixels in the scaled result coordinate space that are affected by
@@ -42,6 +45,8 @@ struct VIZ_COMMON_EXPORT RenderPassGeometry {
 
   RenderPassGeometry();
   ~RenderPassGeometry();
+
+  std::string ToString() const;
 };
 
 }  // namespace copy_output

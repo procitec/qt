@@ -1,11 +1,9 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef BASE_PATH_SERVICE_H_
 #define BASE_PATH_SERVICE_H_
-
-#include <string>
 
 #include "base/base_export.h"
 #include "base/base_paths.h"
@@ -59,6 +57,9 @@ class BASE_EXPORT PathService {
                                         bool is_absolute,
                                         bool create);
 
+  // Returns whether an override is present for a special directory or file.
+  static bool IsOverriddenForTesting(int key);
+
   // To extend the set of supported keys, you can register a path provider,
   // which is just a function mirroring PathService::Get.  The ProviderFunc
   // returns false if it cannot provide a non-empty path for the given key.
@@ -84,8 +85,7 @@ class BASE_EXPORT PathService {
 
   // Removes an override for a special directory or file. Returns true if there
   // was an override to remove or false if none was present.
-  // NOTE: This function is intended to be used by tests only!
-  static bool RemoveOverride(int key);
+  static bool RemoveOverrideForTests(int key);
 };
 
 }  // namespace base

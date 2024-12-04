@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,8 +8,9 @@
 #include "base/android/jni_android.h"
 #include "base/android/jni_weak_ref.h"
 #include "base/android/scoped_java_ref.h"
-#include "base/macros.h"
+#include "content/common/gin_java_bridge.mojom-forward.h"
 #include "content/public/browser/web_contents_user_data.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
 
 namespace content {
 
@@ -22,6 +23,10 @@ class JavascriptInjector : public WebContentsUserData<JavascriptInjector> {
       const base::android::JavaParamRef<jobject>& obj,
       const base::android::JavaParamRef<jobject>& retained_objects,
       WebContents* web_contents);
+
+  JavascriptInjector(const JavascriptInjector&) = delete;
+  JavascriptInjector& operator=(const JavascriptInjector&) = delete;
+
   ~JavascriptInjector() override;
 
   void SetAllowInspection(JNIEnv* env,
@@ -38,7 +43,6 @@ class JavascriptInjector : public WebContentsUserData<JavascriptInjector> {
   void RemoveInterface(JNIEnv* env,
                        const base::android::JavaParamRef<jobject>& /* obj */,
                        const base::android::JavaParamRef<jstring>& name);
-
  private:
   friend class content::WebContentsUserData<JavascriptInjector>;
   // A weak reference to the Java JavascriptInjectorImpl object.
@@ -48,8 +52,6 @@ class JavascriptInjector : public WebContentsUserData<JavascriptInjector> {
   scoped_refptr<GinJavaBridgeDispatcherHost> java_bridge_dispatcher_host_;
 
   WEB_CONTENTS_USER_DATA_KEY_DECL();
-
-  DISALLOW_COPY_AND_ASSIGN(JavascriptInjector);
 };
 
 }  // namespace content

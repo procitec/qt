@@ -1,40 +1,61 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef COMPONENTS_PASSWORD_MANAGER_CORE_COMMON_PASSWORD_MANAGER_FEATURES_H_
 #define COMPONENTS_PASSWORD_MANAGER_CORE_COMMON_PASSWORD_MANAGER_FEATURES_H_
 
-// This file defines all the base::FeatureList features for the Password Manager
-// module.
+// DON'T ADD NEW FEATURES here.
+// If the feature belongs logically to the browser process, put it into
+// components/password_manager/core/browser/features/password_features.h.
 
 #include "base/feature_list.h"
+#include "base/metrics/field_trial_params.h"
+#include "build/build_config.h"
 
-namespace password_manager {
-
-namespace features {
+namespace password_manager::features {
 
 // All features in alphabetical order. The features should be documented
 // alongside the definition of their values in the .cc file.
+BASE_DECLARE_FEATURE(kEnableOverwritingPlaceholderUsernames);
 
-extern const base::Feature kBiometricTouchToFill;
-extern const base::Feature kChangePasswordAffiliationInfo;
-extern const base::Feature kCompromisedPasswordsReengagement;
-extern const base::Feature kEditPasswordsInSettings;
-extern const base::Feature kEnableOverwritingPlaceholderUsernames;
-extern const base::Feature kEnablePasswordsAccountStorage;
-extern const base::Feature KEnablePasswordGenerationForClearTextFields;
-extern const base::Feature kFillingPasswordsFromAnyOrigin;
-extern const base::Feature kFillOnAccountSelect;
-extern const base::Feature kPasswordChange;
-extern const base::Feature kPasswordChangeInSettings;
-extern const base::Feature kPasswordCheck;
-extern const base::Feature kPasswordImport;
-extern const base::Feature kPasswordScriptsFetching;
-extern const base::Feature kPasswordsWeaknessCheck;
-extern const base::Feature kRecoverFromNeverSaveAndroid;
-extern const base::Feature kUsernameFirstFlow;
-extern const base::Feature kWellKnownChangePassword;
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+BASE_DECLARE_FEATURE(kForceInitialSyncWhenDecryptionFails);
+#endif
+BASE_DECLARE_FEATURE(kForgotPasswordFormSupport);
+#if BUILDFLAG(IS_IOS)
+BASE_DECLARE_FEATURE(kIOSPasswordBottomSheet);
+BASE_DECLARE_FEATURE(kIOSPasswordBottomSheetAutofocus);
+BASE_DECLARE_FEATURE(kIOSPasswordSettingsBulkUploadLocalPasswords);
+#endif  // IS_IOS
+BASE_DECLARE_FEATURE(kPasswordIssuesInSpecificsMetadata);
+BASE_DECLARE_FEATURE(kSendPasswords);
+BASE_DECLARE_FEATURE(kShadowDomSupport);
+BASE_DECLARE_FEATURE(kPasswordChangeWellKnown);
+BASE_DECLARE_FEATURE(kPasswordReuseDetectionEnabled);
+BASE_DECLARE_FEATURE(kRecoverFromNeverSaveAndroid);
+
+#if BUILDFLAG(IS_ANDROID)
+BASE_DECLARE_FEATURE(kPasskeyManagementUsingAccountSettingsAndroid);
+BASE_DECLARE_FEATURE(kPasswordGenerationBottomSheet);
+BASE_DECLARE_FEATURE(kPasswordSuggestionBottomSheetV2);
+BASE_DECLARE_FEATURE(kUnifiedPasswordManagerLocalPasswordsMigrationWarning);
+BASE_DECLARE_FEATURE(kUnifiedPasswordManagerSyncUsingAndroidBackendOnly);
+#endif
+
+// All features parameters are in alphabetical order.
+
+#if BUILDFLAG(IS_ANDROID)
+extern const base::FeatureParam<int> kSaveUpdatePromptSyncingStringVersion;
+
+// Whether to ignore the 1 month timeout in between migration warning prompts.
+// Used for manual testing.
+inline constexpr base::FeatureParam<bool> kIgnoreMigrationWarningTimeout = {
+    &kUnifiedPasswordManagerLocalPasswordsMigrationWarning,
+    "ignore_migration_warning_timeout", false};
+
+extern const base::FeatureParam<int> kLocalPasswordMigrationWarningPrefsVersion;
+#endif
 
 // Field trial and corresponding parameters.
 // To manually override this, start Chrome with the following parameters:
@@ -48,17 +69,17 @@ extern const char kGenerationRequirementsVersion[];
 extern const char kGenerationRequirementsPrefixLength[];
 extern const char kGenerationRequirementsTimeout[];
 
-// Password change feature variations.
-extern const char
-    kPasswordChangeWithForcedDialogAfterEverySuccessfulSubmission[];
-extern const char kPasswordChangeInSettingsWithForcedWarningForEverySite[];
+#if BUILDFLAG(IS_ANDROID)
+// Touch To Fill submission feature's variations.
+extern const char kTouchToFillPasswordSubmissionWithConservativeHeuristics[];
+#endif  // IS_ANDROID
 
-// |kEnablePasswordAccountStorage| variations.
-extern const char kMaxMoveToAccountOffersForNonOptedInUser[];
-extern const int kMaxMoveToAccountOffersForNonOptedInUserDefaultValue;
+#if BUILDFLAG(IS_IOS)
+// Helper function returning the status of
+// `kIOSPasswordSettingsBulkUploadLocalPasswords`.
+bool IsBulkUploadLocalPasswordsEnabled();
+#endif  // IS_IOS
 
-}  // namespace features
-
-}  // namespace password_manager
+}  // namespace password_manager::features
 
 #endif  // COMPONENTS_PASSWORD_MANAGER_CORE_COMMON_PASSWORD_MANAGER_FEATURES_H_

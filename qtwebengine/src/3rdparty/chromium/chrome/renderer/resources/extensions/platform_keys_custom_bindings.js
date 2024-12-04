@@ -1,14 +1,14 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// Custom binding for the platformKeys API.
+// Custom bindings for the platformKeys API.
 
 var SubtleCrypto = require('platformKeys.SubtleCrypto').SubtleCrypto;
 var publicKeyUtil = require('platformKeys.getPublicKeyUtil');
 var getPublicKey = publicKeyUtil.getPublicKey;
 var getPublicKeyBySpki = publicKeyUtil.getPublicKeyBySpki;
-var internalAPI = require('platformKeys.internalAPI');
+var internalAPI = getInternalApi('platformKeysInternal');
 
 var keyModule = require('platformKeys.Key');
 var Key = keyModule.Key;
@@ -16,18 +16,20 @@ var KeyType = keyModule.KeyType;
 var KeyUsage = keyModule.KeyUsage;
 
 function createPublicKey(publicKeySpki, algorithm) {
-  return new Key(KeyType.public, publicKeySpki, algorithm, [KeyUsage.verify],
-                 true /* extractable */);
+  return new Key(
+      KeyType.public, publicKeySpki, algorithm, [KeyUsage.verify],
+      /*extractable=*/ true);
 }
 
 function createPrivateKey(publicKeySpki, algorithm) {
-  return new Key(KeyType.private, publicKeySpki, algorithm, [KeyUsage.sign],
-                 false /* not extractable */);
+  return new Key(
+      KeyType.private, publicKeySpki, algorithm, [KeyUsage.sign],
+      /*extractable=*/ false);
 }
 
 apiBridge.registerCustomHook(function(api) {
   var apiFunctions = api.apiFunctions;
-  var subtleCrypto = new SubtleCrypto('' /* tokenId */);
+  var subtleCrypto = new SubtleCrypto(/*tokenId=*/ '');
 
   apiFunctions.setHandleRequest(
       'selectClientCertificates', function(details, callback) {

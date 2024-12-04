@@ -1,14 +1,19 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "extensions/browser/api/web_request/web_request_permissions.h"
 
+#include <string_view>
+
+#include "base/debug/crash_logging.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/stl_util.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
-#include "base/strings/stringprintf.h"
+#include "build/chromeos_buildflags.h"
+#if !BUILDFLAG(IS_QTWEBENGINE)
+#include "components/safe_browsing/core/browser/hashprefix_realtime/hash_realtime_utils.h"
+#include "components/safe_browsing/core/common/features.h"
+#endif
 #include "content/public/browser/child_process_security_policy.h"
 #include "content/public/common/url_constants.h"
 #include "extensions/browser/api/extensions_api_client.h"
@@ -25,12 +30,11 @@
 #include "extensions/common/extension_urls.h"
 #include "extensions/common/manifest_handlers/incognito_info.h"
 #include "extensions/common/permissions/permissions_data.h"
+#include "services/network/public/mojom/fetch_api.mojom-shared.h"
+#include "third_party/abseil-cpp/absl/strings/ascii.h"
 #include "third_party/blink/public/common/loader/resource_type_util.h"
 #include "url/gurl.h"
-
-#if defined(OS_CHROMEOS)
-#include "chromeos/login/login_state/login_state.h"
-#endif  // defined(OS_CHROMEOS)
+#include "url/origin.h"
 
 using extensions::PermissionsData;
 
@@ -47,10 +51,9 @@ bool HasWebRequestScheme(const GURL& url) {
   return (url.SchemeIs(url::kAboutScheme) || url.SchemeIs(url::kFileScheme) ||
           url.SchemeIs(url::kFileSystemScheme) ||
           url.SchemeIs(url::kFtpScheme) || url.SchemeIsHTTPOrHTTPS() ||
-          url.SchemeIs(extensions::kExtensionScheme) || url.SchemeIsWSOrWSS());
+          url.SchemeIs(extensions::kExtensionScheme) || url.SchemeIsWSOrWSS() ||
+          url.SchemeIs(url::kUuidInPackageScheme));
 }
-
-bool g_allow_all_extension_locations_in_public_session = false;
 
 PermissionsData::PageAccess GetHostAccessForURL(
     const extensions::Extension& extension,
@@ -67,6 +70,12 @@ PermissionsData::PageAccess GetHostAccessForURL(
                                                      nullptr /*error*/);
 }
 
+bool IsWebRequestResourceTypeFrame(
+    extensions::WebRequestResourceType web_request_type) {
+  return web_request_type == extensions::WebRequestResourceType::MAIN_FRAME ||
+         web_request_type == extensions::WebRequestResourceType::SUB_FRAME;
+}
+
 PermissionsData::PageAccess CanExtensionAccessURLInternal(
     extensions::PermissionHelper* permission_helper,
     const std::string& extension_id,
@@ -74,8 +83,8 @@ PermissionsData::PageAccess CanExtensionAccessURLInternal(
     int tab_id,
     bool crosses_incognito,
     WebRequestPermissions::HostPermissionsCheck host_permissions_check,
-    const base::Optional<url::Origin>& initiator,
-    const base::Optional<blink::mojom::ResourceType>& resource_type) {
+    const std::optional<url::Origin>& initiator,
+    const std::optional<extensions::WebRequestResourceType>& web_request_type) {
   const extensions::Extension* extension =
       permission_helper->extension_registry()->enabled_extensions().GetByID(
           extension_id);
@@ -85,23 +94,9 @@ PermissionsData::PageAccess CanExtensionAccessURLInternal(
   // Prevent viewing / modifying requests initiated by a host protected by
   // policy.
   if (initiator &&
-      extension->permissions_data()->IsPolicyBlockedHost(initiator->GetURL()))
+      extension->permissions_data()->IsPolicyBlockedHost(initiator->GetURL())) {
     return PermissionsData::PageAccess::kDenied;
-
-// When restrictions are enabled in Public Session, allow all URLs for
-// webRequests initiated by a regular extension (but don't allow chrome://
-// URLs).
-#if defined(OS_CHROMEOS)
-  if (chromeos::LoginState::IsInitialized() &&
-      chromeos::LoginState::Get()->ArePublicSessionRestrictionsEnabled() &&
-      extension->is_extension() && !url.SchemeIs("chrome")) {
-    // Make sure that the extension is truly installed by policy (the assumption
-    // in Public Session is that all extensions are installed by policy).
-    CHECK(g_allow_all_extension_locations_in_public_session ||
-          extensions::Manifest::IsPolicyLocation(extension->location()));
-    return PermissionsData::PageAccess::kAllowed;
   }
-#endif
 
   // Check if this event crosses incognito boundaries when it shouldn't.
   if (crosses_incognito && !permission_helper->CanCrossIncognito(extension))
@@ -115,7 +110,7 @@ PermissionsData::PageAccess CanExtensionAccessURLInternal(
           GetHostAccessForURL(*extension, url, tab_id);
 
       bool is_navigation_request =
-          resource_type && blink::IsResourceTypeFrame(*resource_type);
+          web_request_type && IsWebRequestResourceTypeFrame(*web_request_type);
 
       // For sub-resource (non-navigation) requests, if access to the host was
       // withheld, check if the extension has access to the initiator. If it
@@ -137,7 +132,7 @@ PermissionsData::PageAccess CanExtensionAccessURLInternal(
           GetHostAccessForURL(*extension, url, tab_id);
 
       bool is_navigation_request =
-          resource_type && blink::IsResourceTypeFrame(*resource_type);
+          web_request_type && IsWebRequestResourceTypeFrame(*web_request_type);
 
       // Only require access to the initiator for sub-resource (non-navigation)
       // requests. See crbug.com/918137.
@@ -175,7 +170,9 @@ PermissionsData::PageAccess CanExtensionAccessURLInternal(
       return GetHostAccessForURL(*extension, initiator->GetURL(), tab_id);
     }
     case WebRequestPermissions::REQUIRE_ALL_URLS:
-      return extension->permissions_data()->HasEffectiveAccessToAllHosts()
+      return extension->permissions_data()
+                     ->active_permissions()
+                     .HasEffectiveAccessToAllHosts()
                  ? PermissionsData::PageAccess::kAllowed
                  : PermissionsData::PageAccess::kDenied;
   }
@@ -192,13 +189,13 @@ bool IsSensitiveGoogleClientUrl(const extensions::WebRequestInfo& request) {
   // PermissionsData::CanAccessPage into one function.
   static constexpr char kGoogleCom[] = "google.com";
   static constexpr char kClient[] = "clients";
-  constexpr size_t kGoogleComLength = base::size(kGoogleCom) - 1;
-  constexpr size_t kClientLength = base::size(kClient) - 1;
+  constexpr size_t kGoogleComLength = std::size(kGoogleCom) - 1;
+  constexpr size_t kClientLength = std::size(kClient) - 1;
 
   if (!url.DomainIs(kGoogleCom))
     return false;
 
-  base::StringPiece host = url.host_piece();
+  std::string_view host = url.host_piece();
 
   while (base::EndsWith(host, "."))
     host.remove_suffix(1u);
@@ -211,22 +208,30 @@ bool IsSensitiveGoogleClientUrl(const extensions::WebRequestInfo& request) {
   // These URLs are only protected for requests from the browser, and not for
   // requests from common renderers, because clients*.google.com are also used
   // by websites.
-  base::StringPiece::size_type pos = host.rfind(kClient);
-  if (pos == base::StringPiece::npos)
+  std::string_view::size_type pos = host.rfind(kClient);
+  if (pos == std::string_view::npos) {
     return false;
+  }
 
   if (pos > 0 && host[pos - 1] != '.')
     return false;
 
-  for (base::StringPiece::const_iterator
+  for (std::string_view::const_iterator
            i = host.begin() + pos + kClientLength,
            end = host.end() - (kGoogleComLength + 1);
        i != end; ++i) {
-    if (!isdigit(*i))
+    if (!absl::ascii_isdigit(static_cast<unsigned char>(*i))) {
       return false;
+    }
   }
 
   return true;
+}
+
+bool IsMainFrameNavigationRequest(const extensions::WebRequestInfo& request) {
+  return request.is_navigation_request &&
+         request.web_request_type ==
+             extensions::WebRequestResourceType::MAIN_FRAME;
 }
 
 }  // namespace
@@ -248,8 +253,8 @@ bool WebRequestPermissions::HideRequest(
     // Browser initiated service worker script requests (e.g., for update check)
     // are not hidden.
     if (request.is_service_worker_script) {
-      DCHECK(request.type == blink::mojom::ResourceType::kServiceWorker ||
-             request.type == blink::mojom::ResourceType::kScript);
+      DCHECK(request.web_request_type ==
+             extensions::WebRequestResourceType::SCRIPT);
       return false;
     }
 
@@ -257,18 +262,19 @@ bool WebRequestPermissions::HideRequest(
     if (!request.is_navigation_request)
       return true;
 
-    DCHECK(request.type == blink::mojom::ResourceType::kMainFrame ||
-           request.type == blink::mojom::ResourceType::kSubFrame ||
-           request.type ==
-               blink::mojom::ResourceType::kNavigationPreloadMainFrame ||
-           request.type ==
-               blink::mojom::ResourceType::kNavigationPreloadSubFrame);
+    DCHECK(request.web_request_type ==
+               extensions::WebRequestResourceType::MAIN_FRAME ||
+           request.web_request_type ==
+               extensions::WebRequestResourceType::SUB_FRAME ||
+           request.web_request_type ==
+               extensions::WebRequestResourceType::OBJECT);
 
     // Hide sub-frame requests to clientsX.google.com.
     // TODO(crbug.com/890006): Determine if the code here can be cleaned up
     // since browser initiated non-navigation requests are now hidden from
     // extensions.
-    if (request.type != blink::mojom::ResourceType::kMainFrame &&
+    if (request.web_request_type !=
+            extensions::WebRequestResourceType::MAIN_FRAME &&
         IsSensitiveGoogleClientUrl(request)) {
       return true;
     }
@@ -279,6 +285,17 @@ bool WebRequestPermissions::HideRequest(
       permission_helper->process_map()->Contains(extensions::kWebStoreAppId,
                                                  request.render_process_id)) {
     return true;
+  }
+
+  // Hide requests initiated by the new Webstore domain, including requests that
+  // may be on subframes which have an opaque origin.
+  if (request.initiator) {
+    const auto& request_tuple_or_precursor_tuple =
+        request.initiator->GetTupleOrPrecursorTupleIfOpaque();
+    if (request_tuple_or_precursor_tuple ==
+        url::SchemeHostPort(extension_urls::GetNewWebstoreLaunchURL())) {
+      return true;
+    }
   }
 
   const GURL& url = request.url;
@@ -311,13 +328,22 @@ bool WebRequestPermissions::HideRequest(
     return true;
   }
 
-  // Treat requests from chrome-untrusted:// as sensitive to ensure that the
-  // Web Request API doesn't see them. Note that Extensions are never allowed to
-  // request permission for chrome-untrusted:// URLs so this is check is here
-  // just in case.
+  // Requests from chrome-untrusted:// are generally sensitive (because they
+  // are considered part of browser UI).
+  //
+  // Main frame navigations from chrome-untrusted:// to non-WebUI origins are an
+  // exception: These requests are inspectable by the Web Request API (e.g. by a
+  // content filtering extension) and therefore allowlisted.
   if (request.initiator.has_value() &&
       request.initiator->scheme() == content::kChromeUIUntrustedScheme) {
-    return true;
+    // The call to `HasWebRequestScheme()` with an early exit at the top already
+    // ensures that request.url does not point to a chrome-untrusted:// URL.
+    // Therefore, it's not necessary to check the scheme of request.url again.
+    bool allowlist = IsMainFrameNavigationRequest(request);
+
+    if (!allowlist) {
+      return true;
+    }
   }
 
   // Allow the extension embedder to hide the request.
@@ -326,23 +352,31 @@ bool WebRequestPermissions::HideRequest(
 
   // Safebrowsing and Chrome Webstore URLs are always protected, i.e. also
   // for requests from common renderers.
+  // TODO(crbug.com/1355623): it would be nice to be able to just use
+  // extension_urls::IsWebstoreDomain for the last two checks here, but the old
+  // webstore check specifically requires the path to be checked, not just the
+  // domain. However once the old webstore is turned down we can change it over
+  // during that cleanup.
   if (extension_urls::IsWebstoreUpdateUrl(url) ||
-      extension_urls::IsBlacklistUpdateUrl(url) ||
+      extension_urls::IsBlocklistUpdateUrl(url) ||
       extension_urls::IsSafeBrowsingUrl(url::Origin::Create(url),
                                         url.path_piece()) ||
+      // TODO(crbug.com/1476651): The following check should ideally be within
+      // IsSafeBrowsingUrl. This will be possible if hash_realtime_utils is
+      // moved to live within /content instead of /browser.
+#if !BUILDFLAG(IS_QTWEBENGINE)
+      (safe_browsing::hash_realtime_utils::
+           IsHashRealTimeLookupEligibleInSession() &&
+       url == safe_browsing::kHashPrefixRealTimeLookupsRelayUrl.Get()) ||
+#endif
       (url.DomainIs("chrome.google.com") &&
        base::StartsWith(url.path_piece(), "/webstore",
-                        base::CompareCase::SENSITIVE))) {
+                        base::CompareCase::SENSITIVE)) ||
+      url.DomainIs(extension_urls::GetNewWebstoreLaunchURL().host())) {
     return true;
   }
 
   return false;
-}
-
-// static
-void WebRequestPermissions::
-     AllowAllExtensionLocationsInPublicSessionForTesting(bool value) {
-  g_allow_all_extension_locations_in_public_session = value;
 }
 
 // static
@@ -353,18 +387,18 @@ PermissionsData::PageAccess WebRequestPermissions::CanExtensionAccessURL(
     int tab_id,
     bool crosses_incognito,
     HostPermissionsCheck host_permissions_check,
-    const base::Optional<url::Origin>& initiator,
-    blink::mojom::ResourceType resource_type) {
+    const std::optional<url::Origin>& initiator,
+    extensions::WebRequestResourceType web_request_type) {
   return CanExtensionAccessURLInternal(
       permission_helper, extension_id, url, tab_id, crosses_incognito,
-      host_permissions_check, initiator, resource_type);
+      host_permissions_check, initiator, web_request_type);
 }
 
 // static
 bool WebRequestPermissions::CanExtensionAccessInitiator(
     extensions::PermissionHelper* permission_helper,
     const extensions::ExtensionId extension_id,
-    const base::Optional<url::Origin>& initiator,
+    const std::optional<url::Origin>& initiator,
     int tab_id,
     bool crosses_incognito) {
   if (!initiator)
@@ -374,7 +408,6 @@ bool WebRequestPermissions::CanExtensionAccessInitiator(
              permission_helper, extension_id, initiator->GetURL(), tab_id,
              crosses_incognito,
              WebRequestPermissions::REQUIRE_HOST_PERMISSION_FOR_URL,
-             base::nullopt /* initiator */,
-             base::nullopt /* resource_type */) ==
+             std::nullopt /* initiator */, std::nullopt /* resource_type */) ==
          PermissionsData::PageAccess::kAllowed;
 }

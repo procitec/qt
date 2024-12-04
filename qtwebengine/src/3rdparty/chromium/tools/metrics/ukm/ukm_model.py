@@ -1,4 +1,4 @@
-# Copyright 2017 The Chromium Authors. All rights reserved.
+# Copyright 2017 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 # """Model objects for ukm.xml contents."""
@@ -39,15 +39,16 @@ _INDEX_TYPE = models.ObjectNodeType(
     ],
     single_line=True)
 
-_STATISTICS_TYPE =  models.ObjectNodeType(
+_STATISTICS_TYPE = models.ObjectNodeType(
     'statistics',
     attributes=[
-      ('export', str, r'^(?i)(|true|false)$'),
+        ('export', str, r'(?i)^(|true|false)$'),
     ],
     children=[
         models.ChildType(_QUANTILES_TYPE.tag, _QUANTILES_TYPE, multiple=False),
-        models.ChildType(
-            _ENUMERATION_TYPE.tag, _ENUMERATION_TYPE, multiple=False),
+        models.ChildType(_ENUMERATION_TYPE.tag,
+                         _ENUMERATION_TYPE,
+                         multiple=False),
     ])
 
 _HISTORY_TYPE =  models.ObjectNodeType(
@@ -72,7 +73,7 @@ _AGGREGATION_TYPE =  models.ObjectNodeType(
 _METRIC_TYPE =  models.ObjectNodeType(
     'metric',
     attributes=[
-      ('name', str, r'^[A-Za-z0-9_.]+$'),
+      ('name', str, r'^[A-Za-z][A-Za-z0-9_.]*$'),
       ('semantic_type', str, None),
       ('enum', str, None),
     ],
@@ -90,11 +91,14 @@ _METRIC_TYPE =  models.ObjectNodeType(
             _AGGREGATION_TYPE.tag, _AGGREGATION_TYPE, multiple=True),
     ])
 
-_EVENT_TYPE =  models.ObjectNodeType(
+_EVENT_TYPE = models.ObjectNodeType(
     'event',
     attributes=[
-      ('name', str, r'^[A-Za-z0-9.]+$'),
-      ('singular', str, r'^(?i)(|true|false)$'),
+        ('name', str, r'^[A-Za-z][A-Za-z0-9.]*$'),
+        ('singular', str, r'(?i)^(|true|false)$'),
+        # This event will be omitted from the generated readable_event.proto
+        # file if skip_proto_reason is a non-empty string.
+        ('skip_proto_reason', str, None),
     ],
     alphabetization=[
         (_OBSOLETE_TYPE.tag, _KEEP_ORDER),

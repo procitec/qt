@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -15,8 +15,8 @@
 namespace openscreen {
 
 // static
-ErrorOr<SimpleFraction> SimpleFraction::FromString(absl::string_view value) {
-  std::vector<absl::string_view> fields = absl::StrSplit(value, '/');
+ErrorOr<SimpleFraction> SimpleFraction::FromString(std::string_view value) {
+  std::vector<std::string_view> fields = absl::StrSplit(value, '/');
   if (fields.size() != 1 && fields.size() != 2) {
     return Error::Code::kParameterInvalid;
   }
@@ -33,37 +33,14 @@ ErrorOr<SimpleFraction> SimpleFraction::FromString(absl::string_view value) {
     }
   }
 
-  return SimpleFraction{numerator, denominator};
+  return SimpleFraction(numerator, denominator);
 }
 
 std::string SimpleFraction::ToString() const {
-  if (denominator == 1) {
-    return std::to_string(numerator);
+  if (denominator_ == 1) {
+    return std::to_string(numerator_);
   }
-  return absl::StrCat(numerator, "/", denominator);
-}
-
-bool SimpleFraction::operator==(const SimpleFraction& other) const {
-  return numerator == other.numerator && denominator == other.denominator;
-}
-
-bool SimpleFraction::operator!=(const SimpleFraction& other) const {
-  return !(*this == other);
-}
-
-bool SimpleFraction::is_defined() const {
-  return denominator != 0;
-}
-
-bool SimpleFraction::is_positive() const {
-  return is_defined() && (numerator >= 0) && (denominator > 0);
-}
-
-SimpleFraction::operator double() const {
-  if (denominator == 0) {
-    return nan("");
-  }
-  return static_cast<double>(numerator) / static_cast<double>(denominator);
+  return absl::StrCat(numerator_, "/", denominator_);
 }
 
 }  // namespace openscreen

@@ -1,10 +1,11 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_GRAPHICS_VIDEO_FRAME_RESOURCE_PROVIDER_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_GRAPHICS_VIDEO_FRAME_RESOURCE_PROVIDER_H_
 
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "cc/trees/layer_tree_settings.h"
 #include "components/viz/client/client_resource_provider.h"
@@ -44,7 +45,7 @@ class PLATFORM_EXPORT VideoFrameResourceProvider {
                           viz::SharedBitmapReporter* shared_bitmap_reporter);
   virtual void AppendQuads(viz::CompositorRenderPass*,
                            scoped_refptr<media::VideoFrame>,
-                           media::VideoRotation,
+                           media::VideoTransformation,
                            bool is_opaque);
   virtual void ReleaseFrameResources();
 
@@ -58,12 +59,12 @@ class PLATFORM_EXPORT VideoFrameResourceProvider {
       const WebVector<viz::ResourceId>& resource_ids,
       WebVector<viz::TransferableResource>* transferable_resources);
   virtual void ReceiveReturnsFromParent(
-      const Vector<viz::ReturnedResource>& transferable_resources);
+      Vector<viz::ReturnedResource> transferable_resources);
 
  private:
   const cc::LayerTreeSettings settings_;
 
-  viz::RasterContextProvider* context_provider_;
+  raw_ptr<viz::RasterContextProvider, ExperimentalRenderer> context_provider_;
   std::unique_ptr<viz::ClientResourceProvider> resource_provider_;
   std::unique_ptr<media::VideoResourceUpdater> resource_updater_;
   bool use_sync_primitives_ = false;

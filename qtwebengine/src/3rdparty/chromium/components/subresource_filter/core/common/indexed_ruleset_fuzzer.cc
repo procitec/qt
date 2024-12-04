@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -64,12 +64,11 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     return 0;
 
   CHECK(subresource_filter::IndexedRulesetMatcher::Verify(
-      indexer.data(), indexer.size(), indexer.GetChecksum()));
+      indexer.data(), indexer.GetChecksum()));
 
   // Lastly, read into the indexed ruleset by matching the URL from the
   // beginning of the fuzzed data.
-  subresource_filter::IndexedRulesetMatcher matcher(indexer.data(),
-                                                    indexer.size());
+  subresource_filter::IndexedRulesetMatcher matcher(indexer.data());
   // TODO(csharrison): Consider fuzzing things like the parent origin, the
   // activation type, and the element type.
   matcher.ShouldDisableFilteringForDocument(

@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,6 +6,7 @@
 
 #include <memory>
 
+#include "base/memory/raw_ptr.h"
 #include "base/values.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "v8/include/v8.h"
@@ -23,7 +24,7 @@ class ActivityLogConverterStrategyTest : public testing::Test {
  protected:
   void SetUp() override {
     converter_ = content::V8ValueConverter::Create();
-    strategy_.reset(new ActivityLogConverterStrategy());
+    strategy_ = std::make_unique<ActivityLogConverterStrategy>();
     converter_->SetFunctionAllowed(true);
     converter_->SetStrategy(strategy_.get());
   }
@@ -38,40 +39,36 @@ class ActivityLogConverterStrategyTest : public testing::Test {
 
   testing::AssertionResult VerifyBoolean(v8::Local<v8::Value> v8_value,
                                          bool expected) {
-    bool out;
     std::unique_ptr<base::Value> value(
         converter_->FromV8Value(v8_value, context()));
-    if (value->is_bool() && value->GetAsBoolean(&out) && out == expected)
+    if (value->is_bool() && value->GetBool() == expected)
       return testing::AssertionSuccess();
     return testing::AssertionFailure();
   }
 
   testing::AssertionResult VerifyInteger(v8::Local<v8::Value> v8_value,
                                          int expected) {
-    int out;
     std::unique_ptr<base::Value> value(
         converter_->FromV8Value(v8_value, context()));
-    if (value->is_int() && value->GetAsInteger(&out) && out == expected)
+    if (value->is_int() && value->GetInt() == expected)
       return testing::AssertionSuccess();
     return testing::AssertionFailure();
   }
 
   testing::AssertionResult VerifyDouble(v8::Local<v8::Value> v8_value,
                                         double expected) {
-    double out;
     std::unique_ptr<base::Value> value(
         converter_->FromV8Value(v8_value, context()));
-    if (value->is_double() && value->GetAsDouble(&out) && out == expected)
+    if (value->is_double() && value->GetDouble() == expected)
       return testing::AssertionSuccess();
     return testing::AssertionFailure();
   }
 
   testing::AssertionResult VerifyString(v8::Local<v8::Value> v8_value,
                                         const std::string& expected) {
-    std::string out;
     std::unique_ptr<base::Value> value(
         converter_->FromV8Value(v8_value, context()));
-    if (value->is_string() && value->GetAsString(&out) && out == expected)
+    if (value->is_string() && value->GetString() == expected)
       return testing::AssertionSuccess();
     return testing::AssertionFailure();
   }
@@ -80,7 +77,7 @@ class ActivityLogConverterStrategyTest : public testing::Test {
     return v8::Local<v8::Context>::New(isolate_, context_);
   }
 
-  v8::Isolate* isolate_;
+  raw_ptr<v8::Isolate, ExperimentalRenderer> isolate_;
   v8::HandleScope handle_scope_;
   v8::Global<v8::Context> context_;
   v8::Context::Scope context_scope_;
@@ -114,9 +111,9 @@ TEST_F(ActivityLogConverterStrategyTest, ConversionTest) {
       "};"
       "})();";
 
-  v8::MicrotasksScope microtasks(
-      isolate_, v8::MicrotasksScope::kDoNotRunMicrotasks);
   v8::Local<v8::Context> context = context_.Get(isolate_);
+  v8::MicrotasksScope microtasks(context,
+                                 v8::MicrotasksScope::kDoNotRunMicrotasks);
   v8::Local<v8::Script> script(
       v8::Script::Compile(
           context, v8::String::NewFromUtf8(isolate_, source,

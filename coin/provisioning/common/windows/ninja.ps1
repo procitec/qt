@@ -1,13 +1,63 @@
 . "$PSScriptRoot\helpers.ps1"
 
-$zip = Get-DownloadLocation "ninja-1.6.0-win-x86.zip"
+$cpu_arch = Get-CpuArchitecture
+switch ($cpu_arch) {
+    arm64 {
+        $arch = "arm64"
+        $version = "1.12.0"
+        $longPathFixed = $true # fixed https://github.com/ninja-build/ninja/pull/2225 in 1.12.0
+        $zip = Get-DownloadLocation "ninja-$version-win-$arch.zip"
+        $internalUrl = "https://ci-files01-hki.ci.qt.io/input/ninja/v$version/ninja-win$arch.zip"
+        $externalUrl = "https://github.com/ninja-build/ninja/releases/download/v$version/ninja-win$arch.zip"
+        $sha1 = "51bf1bac149ae1e3d1572fa9fa87d6431dbddc8b"
+        Break
+    }
+    x64 {
+        $arch = "amd64"
+        $version = "1.10.2"
+        $longPathFixed = $false
+        $zip = Get-DownloadLocation "ninja-$version-win-x86.zip"
+        # TODO: Fix this QTQAINFRA-6296
+        $internalUrl = "http://master.qt.io/development_releases/prebuilt/ninja/v$version/ninja-win-x86.zip"
+        $externalUrl = "\\ci-files01-hki.ci.qt.io\provisioning\ninja\ninja-$version-win-really-x86.zip"
+        $sha1 = "1a22ee9269df8ed69c4600d7ee4ccd8841bb99ca"
+        Break
+    }
+    default {
+        throw "Unknown architecture $cpu_arch"
+    }
+}
 
-Download https://github.com/ninja-build/ninja/releases/download/v1.6.0/ninja-win.zip \\ci-files01-hki.intra.qt.io\provisioning\ninja\ninja-1.6.0-win-x86.zip $zip
-Verify-Checksum $zip "E01093F6533818425F8EFB0843CED7DCAABEA3B2"
-
+Download  $internalUrl $externalUrl $zip
+Verify-Checksum $zip $sha1
 Extract-7Zip $zip C:\Utils\Ninja
-Remove-Item -Path $zip
+Remove "$zip"
 
 Add-Path "C:\Utils\Ninja"
 
-Write-Output "Ninja = 1.6.0" >> ~/versions.txt
+Write-Output "Ninja ($arch) = $version" >> ~/versions.txt
+
+if ( -Not $longPathFixed ) {
+
+$manifest = @"
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1">
+  <application>
+    <windowsSettings>
+      <activeCodePage xmlns="http://schemas.microsoft.com/SMI/2019/WindowsSettings">UTF-8</activeCodePage>
+      <longPathAware  xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">true</longPathAware>
+    </windowsSettings>
+  </application>
+</assembly>
+"@
+
+
+$vs2019 = [System.IO.File]::Exists("C:\Program Files (x86)\Microsoft Visual Studio\2019\Professional\VC\Auxiliary\Build\vcvarsall.bat")
+
+if($vs2019) {
+Invoke-MtCommand "C:\Program Files (x86)\Microsoft Visual Studio\2019\Professional\VC\Auxiliary\Build\vcvarsall.bat" amd64 $manifest "C:\Utils\Ninja\ninja.exe"
+} else {
+Invoke-MtCommand "C:\Program Files (x86)\Microsoft Visual Studio\2022\Professional\VC\Auxiliary\Build\vcvarsall.bat" amd64 $manifest "C:\Utils\Ninja\ninja.exe"
+}
+
+}

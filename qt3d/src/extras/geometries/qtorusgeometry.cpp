@@ -1,48 +1,11 @@
-/****************************************************************************
-**
-** Copyright (C) 2015 Klaralvdalens Datakonsult AB (KDAB).
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt3D module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2015 Klaralvdalens Datakonsult AB (KDAB).
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qtorusgeometry.h"
 #include "qtorusgeometry_p.h"
 
-#include <Qt3DRender/qbuffer.h>
-#include <Qt3DRender/qbufferdatagenerator.h>
-#include <Qt3DRender/qattribute.h>
+#include <Qt3DCore/qbuffer.h>
+#include <Qt3DCore/qattribute.h>
 #include <QtGui/QVector3D>
 #include <QtGui/QVector4D>
 
@@ -50,9 +13,10 @@
 
 QT_BEGIN_NAMESPACE
 
-using namespace Qt3DRender;
 
 namespace  Qt3DExtras {
+
+using namespace Qt3DCore;
 
 namespace {
 
@@ -128,7 +92,7 @@ QByteArray createTorusIndexData(int requestedRings, int requestedSlices)
 {
     const int slices = requestedSlices + 1;
     int triangles = triangleCount(requestedRings, requestedSlices);
-    int indices = triangles * 3;
+    qsizetype indices = triangles * 3;
     Q_ASSERT(indices < 65536);
     QByteArray indexBytes;
     indexBytes.resize(indices * sizeof(quint16));
@@ -152,72 +116,6 @@ QByteArray createTorusIndexData(int requestedRings, int requestedSlices)
 }
 
 } // anonymous
-
-class TorusVertexDataFunctor : public QBufferDataGenerator
-{
-public:
-    TorusVertexDataFunctor(int rings, int slices, float radius, float minorRadius)
-        : m_rings(rings)
-        , m_slices(slices)
-        , m_radius(radius)
-        , m_minorRadius(minorRadius)
-    {
-    }
-
-    QByteArray operator ()() override
-    {
-        return createTorusVertexData(m_radius, m_minorRadius, m_rings, m_slices);
-    }
-
-    bool operator ==(const QBufferDataGenerator &other) const override
-    {
-        const TorusVertexDataFunctor *otherFunctor = functor_cast<TorusVertexDataFunctor>(&other);
-        if (otherFunctor != nullptr)
-            return (otherFunctor->m_rings == m_rings &&
-                    otherFunctor->m_slices == m_slices &&
-                    otherFunctor->m_radius == m_radius &&
-                    otherFunctor->m_minorRadius == m_minorRadius);
-        return false;
-    }
-
-    QT3D_FUNCTOR(TorusVertexDataFunctor)
-
-private:
-    int m_rings;
-    int m_slices;
-    float m_radius;
-    float m_minorRadius;
-};
-
-class TorusIndexDataFunctor : public QBufferDataGenerator
-{
-public:
-    TorusIndexDataFunctor(int rings, int slices)
-        : m_rings(rings)
-        , m_slices(slices)
-    {
-    }
-
-    QByteArray operator ()() override
-    {
-        return createTorusIndexData(m_rings, m_slices);
-    }
-
-    bool operator ==(const QBufferDataGenerator &other) const override
-    {
-        const TorusIndexDataFunctor *otherFunctor = functor_cast<TorusIndexDataFunctor>(&other);
-        if (otherFunctor != nullptr)
-            return (otherFunctor->m_rings == m_rings &&
-                    otherFunctor->m_slices == m_slices);
-        return false;
-    }
-
-    QT3D_FUNCTOR(TorusIndexDataFunctor)
-
-private:
-    int m_rings;
-    int m_slices;
-};
 
 QTorusGeometryPrivate::QTorusGeometryPrivate()
     : QGeometryPrivate()
@@ -243,8 +141,8 @@ void QTorusGeometryPrivate::init()
     m_texCoordAttribute = new QAttribute(q);
     m_tangentAttribute = new QAttribute(q);
     m_indexAttribute = new QAttribute(q);
-    m_vertexBuffer = new Qt3DRender::QBuffer(q);
-    m_indexBuffer = new Qt3DRender::QBuffer(q);
+    m_vertexBuffer = new Qt3DCore::QBuffer(q);
+    m_indexBuffer = new Qt3DCore::QBuffer(q);
     // vec3 pos, vec2 tex, vec3 normal, vec4 tangent
     const quint32 elementSize = 3 + 2 + 3 + 4;
     const quint32 stride = elementSize * sizeof(float);
@@ -292,8 +190,8 @@ void QTorusGeometryPrivate::init()
 
     m_indexAttribute->setCount(triangles * 3);
 
-    m_vertexBuffer->setDataGenerator(QSharedPointer<TorusVertexDataFunctor>::create(m_rings, m_slices, m_radius, m_minorRadius));
-    m_indexBuffer->setDataGenerator(QSharedPointer<TorusIndexDataFunctor>::create(m_rings, m_slices));
+    m_vertexBuffer->setData(generateVertexData());
+    m_indexBuffer->setData(generateIndexData());
 
     q->addAttribute(m_positionAttribute);
     q->addAttribute(m_texCoordAttribute);
@@ -302,9 +200,19 @@ void QTorusGeometryPrivate::init()
     q->addAttribute(m_indexAttribute);
 }
 
+QByteArray QTorusGeometryPrivate::generateVertexData() const
+{
+    return createTorusVertexData(m_radius, m_minorRadius, m_rings, m_slices);
+}
+
+QByteArray QTorusGeometryPrivate::generateIndexData() const
+{
+    return createTorusIndexData(m_rings, m_slices);
+}
+
 /*!
  * \qmltype TorusGeometry
- * \instantiates Qt3DExtras::QTorusGeometry
+ * \nativetype Qt3DExtras::QTorusGeometry
  * \inqmlmodule Qt3D.Extras
  * \brief TorusGeometry allows creation of a torus in 3D space.
  *
@@ -362,13 +270,13 @@ void QTorusGeometryPrivate::init()
 
 /*!
  * \class Qt3DExtras::QTorusGeometry
-   \ingroup qt3d-extras-geometries
+ * \ingroup qt3d-extras-geometries
  * \inheaderfile Qt3DExtras/QTorusGeometry
  * \inmodule Qt3DExtras
  * \brief The QTorusGeometry class allows creation of a torus in 3D space.
  * \since 5.7
  * \ingroup geometries
- * \inherits Qt3DRender::QGeometry
+ * \inherits Qt3DCore::QGeometry
  *
  * The QTorusGeometry class is most commonly used internally by the QTorusMesh
  * but can also be used in custom Qt3DRender::QGeometryRenderer subclasses.
@@ -411,7 +319,7 @@ void QTorusGeometry::updateVertices()
     d->m_positionAttribute->setCount(nVerts);
     d->m_texCoordAttribute->setCount(nVerts);
     d->m_normalAttribute->setCount(nVerts);
-    d->m_vertexBuffer->setDataGenerator(QSharedPointer<TorusVertexDataFunctor>::create(d->m_rings, d->m_slices, d->m_radius, d->m_minorRadius));
+    d->m_vertexBuffer->setData(d->generateVertexData());
 }
 
 /*!
@@ -422,7 +330,7 @@ void QTorusGeometry::updateIndices()
     Q_D(QTorusGeometry);
     const int triangles = triangleCount(d->m_rings, d->m_slices);
     d->m_indexAttribute->setCount(triangles * 3);
-    d->m_indexBuffer->setDataGenerator(QSharedPointer<TorusIndexDataFunctor>::create(d->m_rings, d->m_slices));
+    d->m_indexBuffer->setData(d->generateIndexData());
 }
 
 void QTorusGeometry::setRings(int rings)
@@ -468,7 +376,7 @@ void QTorusGeometry::setMinorRadius(float minorRadius)
 }
 
 /*!
- * \property QTorusGeometry::rings
+ * \property Qt3DExtras::QTorusGeometry::rings
  *
  * Holds the number of rings in the torus.
  */
@@ -479,7 +387,7 @@ int QTorusGeometry::rings() const
 }
 
 /*!
- * \property QTorusGeometry::slices
+ * \property Qt3DExtras::QTorusGeometry::slices
  *
  * Holds the number of slices in the torus.
  */
@@ -490,7 +398,7 @@ int QTorusGeometry::slices() const
 }
 
 /*!
- * \property QTorusGeometry::radius
+ * \property Qt3DExtras::QTorusGeometry::radius
  *
  * Holds the outer radius of the torus.
  */
@@ -501,7 +409,7 @@ float QTorusGeometry::radius() const
 }
 
 /*!
- * \property QTorusGeometry::minorRadius
+ * \property Qt3DExtras::QTorusGeometry::minorRadius
  *
  * Holds the inner radius of the torus.
  */
@@ -512,7 +420,7 @@ float QTorusGeometry::minorRadius() const
 }
 
 /*!
- * \property QTorusGeometry::positionAttribute
+ * \property Qt3DExtras::QTorusGeometry::positionAttribute
  *
  * Holds the geometry position attribute.
  */
@@ -523,7 +431,7 @@ QAttribute *QTorusGeometry::positionAttribute() const
 }
 
 /*!
- * \property QTorusGeometry::normalAttribute
+ * \property Qt3DExtras::QTorusGeometry::normalAttribute
  *
  * Holds the geometry normal attribute.
  */
@@ -534,7 +442,7 @@ QAttribute *QTorusGeometry::normalAttribute() const
 }
 
 /*!
- * \property QTorusGeometry::texCoordAttribute
+ * \property Qt3DExtras::QTorusGeometry::texCoordAttribute
  *
  * Holds the geometry texture coordinate attribute.
  */
@@ -545,7 +453,7 @@ QAttribute *QTorusGeometry::texCoordAttribute() const
 }
 
 /*!
- * \property QTorusGeometry::indexAttribute
+ * \property Qt3DExtras::QTorusGeometry::indexAttribute
  *
  * Holds the geometry index attribute.
  */
@@ -558,3 +466,5 @@ QAttribute *QTorusGeometry::indexAttribute() const
 } //  Qt3DExtras
 
 QT_END_NAMESPACE
+
+#include "moc_qtorusgeometry.cpp"

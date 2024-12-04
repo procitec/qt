@@ -1,7 +1,9 @@
-chlily@chromium.org
-estark@chromium.org
-mkwst@chromium.org
-mmenke@chromium.org
-morlovich@chromium.org
+# Please prefer sending reviews to chromium-cookie-reviews@google.com instead of
+# specific reviewers.
+chromium-cookie-reviews@google.com
 
-# COMPONENT: Internals>Network>Cookies
+bingler@chromium.org
+cfredric@chromium.org
+dylancutler@google.com
+mkwst@chromium.org
+morlovich@chromium.org

@@ -1,8 +1,9 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "base/run_loop.h"
+#include "build/build_config.h"
 #include "chrome/browser/devtools/device/adb/adb_device_provider.h"
 #include "chrome/browser/devtools/device/adb/mock_adb_server.h"
 #include "chrome/browser/devtools/device/devtools_android_bridge.h"
@@ -27,21 +28,22 @@ class AdbClientSocketTest : public InProcessBrowserTest,
                             public DevToolsAndroidBridge::DeviceListListener {
 
  public:
-  void StartTest() {
+  void StartTest(base::RunLoop* loop) {
     Profile* profile = browser()->profile();
     android_bridge_ = DevToolsAndroidBridge::Factory::GetForProfile(profile);
     AndroidDeviceManager::DeviceProviders device_providers;
     device_providers.push_back(new AdbDeviceProvider());
     android_bridge_->set_device_providers_for_test(device_providers);
     android_bridge_->AddDeviceListListener(this);
-    content::RunMessageLoop();
+    loop_ = loop;
+    loop_->Run();
   }
 
   void DeviceListChanged(
       const DevToolsAndroidBridge::RemoteDevices& devices) override {
     devices_ = devices;
     android_bridge_->RemoveDeviceListListener(this);
-    base::RunLoop::QuitCurrentWhenIdleDeprecated();
+    loop_->QuitWhenIdle();
   }
 
   void CheckDevices() {
@@ -142,23 +144,32 @@ class AdbClientSocketTest : public InProcessBrowserTest,
  private:
   DevToolsAndroidBridge* android_bridge_;
   DevToolsAndroidBridge::RemoteDevices devices_;
+  // base::RunLoop used to require kNestableTaskAllowed
+  base::RunLoop* loop_;
 };
 
 // Combine all tests into one. Splitting up into multiple tests can be flaky
 // due to failure to bind a hardcoded port. crbug.com/566057
-IN_PROC_BROWSER_TEST_F(AdbClientSocketTest, TestCombined) {
+// The tests seems to be stable on Windows bots only:
+#if BUILDFLAG(IS_WIN)
+#define MAYBE_TestCombined TestCombined
+#else
+#define MAYBE_TestCombined DISABLED_TestCombined
+#endif
+IN_PROC_BROWSER_TEST_F(AdbClientSocketTest, MAYBE_TestCombined) {
+  base::RunLoop loop1, loop2, loop3;
   StartMockAdbServer(FlushWithoutSize);
-  StartTest();
+  StartTest(&loop1);
   CheckDevices();
   StopMockAdbServer();
 
   StartMockAdbServer(FlushWithSize);
-  StartTest();
+  StartTest(&loop2);
   CheckDevices();
   StopMockAdbServer();
 
   StartMockAdbServer(FlushWithData);
-  StartTest();
+  StartTest(&loop3);
   CheckDevices();
   StopMockAdbServer();
 }

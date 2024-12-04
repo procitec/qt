@@ -12,7 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import * as m from 'mithril';
+import m from 'mithril';
+
+import {raf} from '../core/raf_scheduler';
 
 import {globals} from './globals';
 
@@ -21,10 +23,15 @@ const COOKIE_ACK_KEY = 'cookieAck';
 export class CookieConsent implements m.ClassComponent {
   private showCookieConsent = true;
 
-  view() {
-    if (this.showCookieConsent) {
-      this.showCookieConsent = localStorage.getItem(COOKIE_ACK_KEY) === null;
+  oninit() {
+    this.showCookieConsent = true;
+    if (!globals.logging.isEnabled() ||
+        localStorage.getItem(COOKIE_ACK_KEY) === 'true') {
+      this.showCookieConsent = false;
     }
+  }
+
+  view() {
     if (!this.showCookieConsent) return;
     return m(
         '.cookie-consent',
@@ -36,7 +43,7 @@ export class CookieConsent implements m.ClassComponent {
             m('a',
               {
                 href: 'https://policies.google.com/technologies/cookies',
-                target: '_blank'
+                target: '_blank',
               },
               'More details')),
           m('button',
@@ -44,8 +51,8 @@ export class CookieConsent implements m.ClassComponent {
               onclick: () => {
                 this.showCookieConsent = false;
                 localStorage.setItem(COOKIE_ACK_KEY, 'true');
-                globals.rafScheduler.scheduleFullRedraw();
-              }
+                raf.scheduleFullRedraw();
+              },
             },
             'OK')),
     );

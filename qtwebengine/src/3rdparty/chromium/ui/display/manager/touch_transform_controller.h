@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,16 +9,16 @@
 #include <memory>
 #include <vector>
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "ui/display/manager/display_manager_export.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/geometry/size_f.h"
-#include "ui/gfx/transform.h"
+#include "ui/gfx/geometry/transform.h"
 
 namespace ui {
 struct TouchscreenDevice;
 struct TouchDeviceTransform;
-}
+}  // namespace ui
 
 namespace display {
 
@@ -29,7 +29,7 @@ class TouchTransformSetter;
 namespace test {
 class TouchTransformControllerTest;
 class TouchTransformControllerTestApi;
-}
+}  // namespace test
 
 // TouchTransformController matches touchscreen displays with touch
 // input-devices and computes the coordinate transforms between display space
@@ -38,6 +38,10 @@ class DISPLAY_MANAGER_EXPORT TouchTransformController {
  public:
   TouchTransformController(DisplayManager* display_manager,
                            std::unique_ptr<TouchTransformSetter> setter);
+
+  TouchTransformController(const TouchTransformController&) = delete;
+  TouchTransformController& operator=(const TouchTransformController&) = delete;
+
   ~TouchTransformController();
 
   // Updates the transform for touch input-devices and pushes the new transforms
@@ -101,13 +105,11 @@ class DISPLAY_MANAGER_EXPORT TouchTransformController {
                             UpdateData* update_data) const;
 
   // |display_manager_| are not owned and must outlive TouchTransformController.
-  DisplayManager* display_manager_;
+  raw_ptr<DisplayManager> display_manager_;
 
   bool is_calibrating_ = false;
 
   std::unique_ptr<TouchTransformSetter> touch_transform_setter_;
-
-  DISALLOW_COPY_AND_ASSIGN(TouchTransformController);
 };
 
 }  // namespace display

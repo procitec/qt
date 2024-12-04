@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,8 +13,7 @@
 #include "components/download/internal/common/save_package_download_job.h"
 #include "components/download/public/common/download_features.h"
 #include "components/download/public/common/download_item.h"
-#include "components/download/public/common/download_stats.h"
-#include "net/http/http_response_info.h"
+#include "net/http/http_connection_info.h"
 
 namespace download {
 
@@ -27,16 +26,15 @@ enum class ConnectionType {
   kUnknown,
 };
 
-ConnectionType GetConnectionType(
-    net::HttpResponseInfo::ConnectionInfo connection_info) {
-  switch (net::HttpResponseInfo::ConnectionInfoToCoarse(connection_info)) {
-    case net::HttpResponseInfo::CONNECTION_INFO_COARSE_HTTP1:
+ConnectionType GetConnectionType(net::HttpConnectionInfo connection_info) {
+  switch (net::HttpConnectionInfoToCoarse(connection_info)) {
+    case net::HttpConnectionInfoCoarse::kHTTP1:
       return ConnectionType::kHTTP;
-    case net::HttpResponseInfo::CONNECTION_INFO_COARSE_HTTP2:
+    case net::HttpConnectionInfoCoarse::kHTTP2:
       return ConnectionType::kHTTP2;
-    case net::HttpResponseInfo::CONNECTION_INFO_COARSE_QUIC:
+    case net::HttpConnectionInfoCoarse::kQUIC:
       return ConnectionType::kQUIC;
-    case net::HttpResponseInfo::CONNECTION_INFO_COARSE_OTHER:
+    case net::HttpConnectionInfoCoarse::kOTHER:
       return ConnectionType::kUnknown;
   }
   NOTREACHED();
@@ -67,8 +65,7 @@ bool IsParallelizableDownload(const DownloadCreateInfo& create_info,
       create_info.total_bytes >= GetMinSliceSizeConfig();
   ConnectionType type = GetConnectionType(create_info.connection_info);
   bool satisfy_connection_type =
-      (create_info.connection_info ==
-       net::HttpResponseInfo::CONNECTION_INFO_HTTP1_1) ||
+      (create_info.connection_info == net::HttpConnectionInfo::kHTTP1_1) ||
       (type == ConnectionType::kHTTP2 &&
        base::FeatureList::IsEnabled(features::kUseParallelRequestsForHTTP2)) ||
       (type == ConnectionType::kQUIC &&
@@ -85,54 +82,19 @@ bool IsParallelizableDownload(const DownloadCreateInfo& create_info,
 
   bool range_support_allowed =
       create_info.accept_range == RangeRequestSupportType::kSupport ||
-      (base::FeatureList::IsEnabled(
-           features::kUseParallelRequestsForUnknwonRangeSupport) &&
-       create_info.accept_range == RangeRequestSupportType::kUnknown);
+      create_info.accept_range == RangeRequestSupportType::kUnknown;
+
   bool is_parallelizable = has_strong_validator && range_support_allowed &&
                            has_content_length && satisfy_min_file_size &&
                            satisfy_connection_type && http_get_method &&
                            can_support_parallel_requests;
 
-  if (!IsParallelDownloadEnabled())
-    return is_parallelizable;
+  // Don't use parallel download if the caller wants to fetch with range
+  // request explicitly.
+  bool arbitrary_range_request =
+      create_info.save_info && create_info.save_info->IsArbitraryRangeRequest();
+  is_parallelizable = is_parallelizable && !arbitrary_range_request;
 
-  RecordParallelDownloadCreationEvent(
-      is_parallelizable
-          ? ParallelDownloadCreationEvent::STARTED_PARALLEL_DOWNLOAD
-          : ParallelDownloadCreationEvent::FELL_BACK_TO_NORMAL_DOWNLOAD);
-  if (!has_strong_validator) {
-    RecordParallelDownloadCreationEvent(
-        ParallelDownloadCreationEvent::FALLBACK_REASON_STRONG_VALIDATORS);
-  }
-  if (!range_support_allowed) {
-    RecordParallelDownloadCreationEvent(
-        ParallelDownloadCreationEvent::FALLBACK_REASON_ACCEPT_RANGE_HEADER);
-    if (create_info.accept_range == RangeRequestSupportType::kUnknown) {
-      RecordParallelDownloadCreationEvent(
-          ParallelDownloadCreationEvent::FALLBACK_REASON_UNKNOWN_RANGE_SUPPORT);
-    }
-  }
-  if (!has_content_length) {
-    RecordParallelDownloadCreationEvent(
-        ParallelDownloadCreationEvent::FALLBACK_REASON_CONTENT_LENGTH_HEADER);
-  }
-  if (!satisfy_min_file_size) {
-    RecordParallelDownloadCreationEvent(
-        ParallelDownloadCreationEvent::FALLBACK_REASON_FILE_SIZE);
-  }
-  if (!satisfy_connection_type) {
-    RecordParallelDownloadCreationEvent(
-        ParallelDownloadCreationEvent::FALLBACK_REASON_CONNECTION_TYPE);
-  }
-  if (!http_get_method) {
-    RecordParallelDownloadCreationEvent(
-        ParallelDownloadCreationEvent::FALLBACK_REASON_HTTP_METHOD);
-  }
-  if (!can_support_parallel_requests) {
-    RecordParallelDownloadCreationEvent(
-        ParallelDownloadCreationEvent::
-            FALLBACK_REASON_RESUMPTION_WITHOUT_SLICES);
-  }
   return is_parallelizable;
 }
 

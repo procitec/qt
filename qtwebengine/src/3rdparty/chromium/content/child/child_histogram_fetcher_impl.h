@@ -1,16 +1,16 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef CONTENT_CHILD_CHILD_HISTOGRAM_FETCHER_IMPL_H
-#define CONTENT_CHILD_CHILD_HISTOGRAM_FETCHER_IMPL_H
+#ifndef CONTENT_CHILD_CHILD_HISTOGRAM_FETCHER_IMPL_H_
+#define CONTENT_CHILD_CHILD_HISTOGRAM_FETCHER_IMPL_H_
 
 #include <memory>
 #include <string>
 #include <vector>
 
-#include "base/macros.h"
 #include "base/memory/writable_shared_memory_region.h"
+#include "content/common/histogram_fetcher.mojom-shared.h"
 #include "content/common/histogram_fetcher.mojom.h"
 #include "ipc/message_filter.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
@@ -39,6 +39,11 @@ class ChildHistogramFetcherFactoryImpl
 class ChildHistogramFetcherImpl : public content::mojom::ChildHistogramFetcher {
  public:
   ChildHistogramFetcherImpl();
+
+  ChildHistogramFetcherImpl(const ChildHistogramFetcherImpl&) = delete;
+  ChildHistogramFetcherImpl& operator=(const ChildHistogramFetcherImpl&) =
+      delete;
+
   ~ChildHistogramFetcherImpl() override;
 
  private:
@@ -51,6 +56,9 @@ class ChildHistogramFetcherImpl : public content::mojom::ChildHistogramFetcher {
   void GetChildNonPersistentHistogramData(
       HistogramDataCallback callback) override;
 
+  void Ping(mojom::UmaPingCallSource call_source,
+            PingCallback callback) override;
+
   // Extract snapshot data and then send it off to the Browser process.
   // Send only a delta to what we have already sent.
   void UploadAllHistograms(int64_t sequence_number);
@@ -58,10 +66,8 @@ class ChildHistogramFetcherImpl : public content::mojom::ChildHistogramFetcher {
   // Prepares histogram deltas for transmission.
   std::unique_ptr<base::HistogramDeltaSerialization>
       histogram_delta_serialization_;
-
-  DISALLOW_COPY_AND_ASSIGN(ChildHistogramFetcherImpl);
 };
 
 }  // namespace content
 
-#endif  // CONTENT_CHILD_CHILD_HISTOGRAM_FETCHER_IMPL_H
+#endif  // CONTENT_CHILD_CHILD_HISTOGRAM_FETCHER_IMPL_H_

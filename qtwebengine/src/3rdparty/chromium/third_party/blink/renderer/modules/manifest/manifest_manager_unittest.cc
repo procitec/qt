@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,6 +16,7 @@
 #include "third_party/blink/renderer/core/html/html_link_element.h"
 #include "third_party/blink/renderer/core/testing/page_test_base.h"
 #include "third_party/blink/renderer/modules/manifest/manifest_change_notifier.h"
+#include "third_party/blink/renderer/platform/heap/thread_state.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 #include "third_party/blink/renderer/platform/testing/url_test_helpers.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
@@ -51,9 +52,7 @@ class MockManifestChangeNotifier : public ManifestChangeNotifier {
 class ManifestManagerTest : public PageTestBase {
  protected:
   ManifestManagerTest() : base_url_("http://internal.test/") {}
-  void SetUp() override {
-    PageTestBase::SetUp(IntSize());
-  }
+  void SetUp() override { PageTestBase::SetUp(gfx::Size()); }
 
   void TearDown() override {
     ThreadState::Current()->CollectAllGarbageForTesting();
@@ -73,7 +72,8 @@ TEST_F(ManifestManagerTest, ManifestURL) {
   // Check that we use the first manifest with <link rel=manifest>
   auto* link_manifest = MakeGarbageCollected<HTMLLinkElement>(
       GetDocument(), CreateElementFlags());
-  link_manifest->setAttribute(blink::html_names::kRelAttr, "manifest");
+  link_manifest->setAttribute(blink::html_names::kRelAttr,
+                              AtomicString("manifest"));
   GetDocument().head()->AppendChild(link_manifest);
   EXPECT_EQ(link_manifest, GetDocument().LinkManifest());
 
@@ -82,11 +82,12 @@ TEST_F(ManifestManagerTest, ManifestURL) {
 
   // Set to some absolute url.
   link_manifest->setAttribute(html_names::kHrefAttr,
-                              "http://example.com/manifest.json");
+                              AtomicString("http://example.com/manifest.json"));
   ASSERT_EQ(link_manifest->Href(), GetManifestManager()->ManifestURL());
 
   // Set to some relative url.
-  link_manifest->setAttribute(html_names::kHrefAttr, "static/manifest.json");
+  link_manifest->setAttribute(html_names::kHrefAttr,
+                              AtomicString("static/manifest.json"));
   ASSERT_EQ(link_manifest->Href(), GetManifestManager()->ManifestURL());
 }
 
@@ -97,7 +98,8 @@ TEST_F(ManifestManagerTest, ManifestUseCredentials) {
   // Check that we use the first manifest with <link rel=manifest>
   auto* link_manifest = MakeGarbageCollected<HTMLLinkElement>(
       GetDocument(), CreateElementFlags());
-  link_manifest->setAttribute(blink::html_names::kRelAttr, "manifest");
+  link_manifest->setAttribute(blink::html_names::kRelAttr,
+                              AtomicString("manifest"));
   GetDocument().head()->AppendChild(link_manifest);
 
   // No crossorigin attribute was set so credentials shouldn't be used.
@@ -105,15 +107,18 @@ TEST_F(ManifestManagerTest, ManifestUseCredentials) {
   ASSERT_FALSE(GetManifestManager()->ManifestUseCredentials());
 
   // Crossorigin set to a random string shouldn't trigger using credentials.
-  link_manifest->setAttribute(html_names::kCrossoriginAttr, "foobar");
+  link_manifest->setAttribute(html_names::kCrossoriginAttr,
+                              AtomicString("foobar"));
   ASSERT_FALSE(GetManifestManager()->ManifestUseCredentials());
 
   // Crossorigin set to 'anonymous' shouldn't trigger using credentials.
-  link_manifest->setAttribute(html_names::kCrossoriginAttr, "anonymous");
+  link_manifest->setAttribute(html_names::kCrossoriginAttr,
+                              AtomicString("anonymous"));
   ASSERT_FALSE(GetManifestManager()->ManifestUseCredentials());
 
   // Crossorigin set to 'use-credentials' should trigger using credentials.
-  link_manifest->setAttribute(html_names::kCrossoriginAttr, "use-credentials");
+  link_manifest->setAttribute(html_names::kCrossoriginAttr,
+                              AtomicString("use-credentials"));
   ASSERT_TRUE(GetManifestManager()->ManifestUseCredentials());
 }
 

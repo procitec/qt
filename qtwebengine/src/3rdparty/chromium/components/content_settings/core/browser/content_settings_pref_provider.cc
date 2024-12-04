@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,10 +11,10 @@
 #include <string>
 #include <utility>
 
-#include "base/auto_reset.h"
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/time/default_clock.h"
+#include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "components/content_settings/core/browser/content_settings_info.h"
@@ -22,43 +22,40 @@
 #include "components/content_settings/core/browser/content_settings_registry.h"
 #include "components/content_settings/core/browser/content_settings_rule.h"
 #include "components/content_settings/core/browser/content_settings_utils.h"
-#include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "components/content_settings/core/browser/website_settings_registry.h"
-#include "components/content_settings/core/common/content_settings.h"
+#include "components/content_settings/core/common/content_settings_metadata.h"
+#include "components/content_settings/core/common/content_settings_partition_key.h"
 #include "components/content_settings/core/common/content_settings_pattern.h"
+#include "components/content_settings/core/common/content_settings_types.h"
+#include "components/content_settings/core/common/content_settings_utils.h"
 #include "components/content_settings/core/common/pref_names.h"
 #include "components/pref_registry/pref_registry_syncable.h"
+#include "components/prefs/pref_change_registrar.h"
 #include "components/prefs/pref_registry.h"
 #include "components/prefs/pref_service.h"
-#include "components/prefs/scoped_user_pref_update.h"
 #include "services/preferences/public/cpp/dictionary_value_update.h"
 #include "services/preferences/public/cpp/scoped_pref_update.h"
+#include "services/tracing/public/cpp/perfetto/macros.h"
+#include "third_party/perfetto/protos/perfetto/trace/track_event/chrome_content_settings_event_info.pbzero.h"
 
 namespace content_settings {
 
 namespace {
 
 // These settings are no longer used, and should be deleted on profile startup.
-const char kObsoleteDomainToOriginMigrationStatus[] =
-    "profile.content_settings.domain_to_origin_migration_status";
 
-#if !defined(OS_IOS)
-const char kObsoleteFullscreenExceptionsPref[] =
-    "profile.content_settings.exceptions.fullscreen";
-#if !defined(OS_ANDROID)
-const char kObsoleteMouseLockExceptionsPref[] =
-    "profile.content_settings.exceptions.mouselock";
-#endif  // !defined(OS_ANDROID)
-#endif  // !defined(OS_IOS)
-
-// These settings were renamed, and should be migrated on profile startup.
-// Deprecated 8/2020
-#if !defined(OS_ANDROID)
-const char kDeprecatedNativeFileSystemReadGuardPref[] =
-    "profile.content_settings.exceptions.native_file_system_read_guard";
-const char kDeprecatedNativeFileSystemWriteGuardPref[] =
-    "profile.content_settings.exceptions.native_file_system_write_guard";
-#endif  // !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_IOS) && !BUILDFLAG(IS_ANDROID)
+const char kObsoleteInstalledWebAppMetadataExceptionsPref[] =
+    "profile.content_settings.exceptions.installed_web_app_metadata";
+const char kObsoletePpapiBrokerExceptionsPref[] =
+    "profile.content_settings.exceptions.ppapi_broker";
+#endif  // !BUILDFLAG(IS_IOS) && !BUILDFLAG(IS_ANDROID)
+const char
+    kObsoleteGetDisplayMediaSetAutoSelectAllScreensAllowedForUrlsExceptionsPref
+        [] = "profile.content_settings.exceptions.get_display_media_set_select_"
+             "all_screens";
+constexpr char kObsoleteFederatedIdentityActiveSesssionExceptionsPref[] =
+    "profile.content_settings.exceptions.fedcm_active_session";
 
 }  // namespace
 
@@ -72,11 +69,14 @@ void PrefProvider::RegisterProfilePrefs(
   registry->RegisterIntegerPref(
       prefs::kContentSettingsVersion,
       ContentSettingsPattern::kContentSettingsPatternVersion);
+  registry->RegisterBooleanPref(prefs::kInContextCookieControlsOpened, false);
 
   WebsiteSettingsRegistry* website_settings =
       WebsiteSettingsRegistry::GetInstance();
   for (const WebsiteSettingsInfo* info : *website_settings) {
     registry->RegisterDictionaryPref(info->pref_name(),
+                                     info->GetPrefRegistrationFlags());
+    registry->RegisterDictionaryPref(info->partitioned_pref_name(),
                                      info->GetPrefRegistrationFlags());
   }
 
@@ -84,22 +84,15 @@ void PrefProvider::RegisterProfilePrefs(
 
   // These prefs have been removed, but need to be registered so they can
   // be deleted on startup.
-  registry->RegisterIntegerPref(kObsoleteDomainToOriginMigrationStatus, 0);
-#if !defined(OS_IOS)
+#if !BUILDFLAG(IS_IOS) && !BUILDFLAG(IS_ANDROID)
   registry->RegisterDictionaryPref(
-      kObsoleteFullscreenExceptionsPref,
-      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
-#if !defined(OS_ANDROID)
-  registry->RegisterDictionaryPref(
-      kObsoleteMouseLockExceptionsPref,
-      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
-#endif  // !defined(OS_ANDROID)
-#endif  // !defined(OS_IOS)
-
-#if !defined(OS_ANDROID)
-  registry->RegisterDictionaryPref(kDeprecatedNativeFileSystemReadGuardPref);
-  registry->RegisterDictionaryPref(kDeprecatedNativeFileSystemWriteGuardPref);
-#endif  // !defined(OS_ANDROID)
+      kObsoleteInstalledWebAppMetadataExceptionsPref);
+  registry->RegisterDictionaryPref(kObsoletePpapiBrokerExceptionsPref);
+#endif  // !BUILDFLAG(IS_IOS) && !BUILDFLAG(IS_ANDROID)
+  registry->RegisterListPref(
+      kObsoleteGetDisplayMediaSetAutoSelectAllScreensAllowedForUrlsExceptionsPref);
+  registry->RegisterListPref(
+      kObsoleteFederatedIdentityActiveSesssionExceptionsPref);
 }
 
 PrefProvider::PrefProvider(PrefService* prefs,
@@ -110,7 +103,7 @@ PrefProvider::PrefProvider(PrefService* prefs,
       off_the_record_(off_the_record),
       store_last_modified_(store_last_modified),
       clock_(base::DefaultClock::GetInstance()) {
-  TRACE_EVENT_BEGIN0("startup", "PrefProvider::PrefProvider");
+  TRACE_EVENT_BEGIN("startup", "PrefProvider::PrefProvider");
   DCHECK(prefs_);
   // Verify preferences version.
   if (!prefs_->HasPrefPath(prefs::kContentSettingsVersion)) {
@@ -119,52 +112,43 @@ PrefProvider::PrefProvider(PrefService* prefs,
   }
   if (prefs_->GetInteger(prefs::kContentSettingsVersion) >
       ContentSettingsPattern::kContentSettingsPatternVersion) {
-    TRACE_EVENT_END0("startup", "PrefProvider::PrefProvider");
+    TRACE_EVENT_END("startup");  // PrefProvider::PrefProvider.
     return;
   }
 
   DiscardOrMigrateObsoletePreferences();
 
-  pref_change_registrar_.Init(prefs_);
+  pref_change_registrar_ = std::make_unique<PrefChangeRegistrar>();
+  pref_change_registrar_->Init(prefs_);
 
-  ContentSettingsRegistry* content_settings =
-      ContentSettingsRegistry::GetInstance();
   WebsiteSettingsRegistry* website_settings =
       WebsiteSettingsRegistry::GetInstance();
   for (const WebsiteSettingsInfo* info : *website_settings) {
-    const ContentSettingsInfo* content_type_info =
-        content_settings->Get(info->type());
-    // If it's not a content setting, or it's persistent, handle it in this
-    // class.
-    if (!content_type_info || content_type_info->storage_behavior() ==
-                                  ContentSettingsInfo::PERSISTENT) {
-      content_settings_prefs_.insert(std::make_pair(
-          info->type(), std::make_unique<ContentSettingsPref>(
-                            info->type(), prefs_, &pref_change_registrar_,
-                            info->pref_name(), off_the_record_, restore_session,
-                            base::BindRepeating(&PrefProvider::Notify,
-                                                base::Unretained(this)))));
-    } else if (info->type() == ContentSettingsType::PLUGINS) {
-      // TODO(https://crbug.com/850062): Remove after M71, two milestones after
-      // migration of the Flash permissions to ephemeral provider.
-      flash_content_settings_pref_ = std::make_unique<ContentSettingsPref>(
-          info->type(), prefs_, &pref_change_registrar_, info->pref_name(),
-          off_the_record_, restore_session,
-          base::BindRepeating(&PrefProvider::Notify, base::Unretained(this)));
-    }
+    content_settings_prefs_.insert(std::make_pair(
+        info->type(), std::make_unique<ContentSettingsPref>(
+                          info->type(), prefs_, pref_change_registrar_.get(),
+                          info->pref_name(), info->partitioned_pref_name(),
+                          off_the_record_, restore_session,
+                          base::BindRepeating(&PrefProvider::Notify,
+                                              base::Unretained(this)))));
   }
 
   size_t num_exceptions = 0;
   if (!off_the_record_) {
-    for (const auto& pref : content_settings_prefs_)
+    for (const auto& pref : content_settings_prefs_) {
       num_exceptions += pref.second->GetNumExceptions();
+    }
 
     UMA_HISTOGRAM_COUNTS_1M("ContentSettings.NumberOfExceptions",
                             num_exceptions);
   }
 
-  TRACE_EVENT_END1("startup", "PrefProvider::PrefProvider",
-                   "NumberOfExceptions", num_exceptions);
+  TRACE_EVENT_END("startup", [num_exceptions](perfetto::EventContext ctx) {
+    perfetto::protos::pbzero::ChromeContentSettingsEventInfo* event_args =
+        ctx.event()->set_chrome_content_settings_event_info();
+    event_args->set_number_of_exceptions(
+        num_exceptions);  // PrefProvider::PrefProvider.
+  });
 }
 
 PrefProvider::~PrefProvider() {
@@ -173,27 +157,43 @@ PrefProvider::~PrefProvider() {
 
 std::unique_ptr<RuleIterator> PrefProvider::GetRuleIterator(
     ContentSettingsType content_type,
-    const ResourceIdentifier& resource_identifier,
-    bool off_the_record) const {
-  if (!supports_type(content_type))
+    bool off_the_record,
+    const PartitionKey& partition_key) const {
+  if (!supports_type(content_type)) {
     return nullptr;
+  }
 
-  return GetPref(content_type)
-      ->GetRuleIterator(resource_identifier, off_the_record);
+  return GetPref(content_type)->GetRuleIterator(off_the_record, partition_key);
 }
 
+std::unique_ptr<Rule> PrefProvider::GetRule(
+    const GURL& primary_url,
+    const GURL& secondary_url,
+    ContentSettingsType content_type,
+    bool off_the_record,
+    const PartitionKey& partition_key) const {
+  if (!supports_type(content_type)) {
+    return nullptr;
+  }
+
+  return GetPref(content_type)
+      ->GetRule(primary_url, secondary_url, off_the_record, partition_key);
+}
+
+// TODO(b/307193732): handle the PartitionKey in all relevant methods.
 bool PrefProvider::SetWebsiteSetting(
     const ContentSettingsPattern& primary_pattern,
     const ContentSettingsPattern& secondary_pattern,
     ContentSettingsType content_type,
-    const ResourceIdentifier& resource_identifier,
-    std::unique_ptr<base::Value>&& in_value,
-    const ContentSettingConstraints& constraints) {
+    base::Value&& in_value,
+    const ContentSettingConstraints& constraints,
+    const PartitionKey& partition_key) {
   DCHECK(CalledOnValidThread());
   DCHECK(prefs_);
 
-  if (!supports_type(content_type))
+  if (!supports_type(content_type)) {
     return false;
+  }
 
   // Default settings are set using a wildcard pattern for both
   // |primary_pattern| and |secondary_pattern|. Don't store default settings in
@@ -201,51 +201,192 @@ bool PrefProvider::SetWebsiteSetting(
   // sites/origins defined by the |primary_pattern| and the |secondary_pattern|.
   // Default settings are handled by the |DefaultProvider|.
   if (primary_pattern == ContentSettingsPattern::Wildcard() &&
-      secondary_pattern == ContentSettingsPattern::Wildcard() &&
-      resource_identifier.empty()) {
+      secondary_pattern == ContentSettingsPattern::Wildcard()) {
     return false;
   }
 
   base::Time modified_time =
       store_last_modified_ ? clock_->Now() : base::Time();
 
-  return GetPref(content_type)
+  DCHECK(!constraints.track_last_visit_for_autoexpiration() ||
+         content_settings::CanTrackLastVisit(content_type));
+  // Last visit timestamps can only be tracked for host-specific pattern.
+  DCHECK(!constraints.track_last_visit_for_autoexpiration() ||
+         !primary_pattern.GetHost().empty());
+
+  base::Time last_visited = constraints.track_last_visit_for_autoexpiration()
+                                ? GetCoarseVisitedTime(clock_->Now())
+                                : base::Time();
+
+  // If SessionModel is OneTime, we know for sure that a one time permission
+  // has been set by the One Time Provider, therefore we reset a potentially
+  // existing Allow Always setting.
+  if (constraints.session_model() == SessionModel::OneTime) {
+    DCHECK(content_type == ContentSettingsType::GEOLOCATION ||
+           content_type == ContentSettingsType::MEDIASTREAM_MIC ||
+           content_type == ContentSettingsType::MEDIASTREAM_CAMERA);
+    in_value = base::Value();
+  }
+
+  RuleMetaData metadata;
+  metadata.set_last_modified(modified_time);
+  metadata.set_last_visited(last_visited);
+  metadata.SetFromConstraints(constraints);
+  GetPref(content_type)
       ->SetWebsiteSetting(primary_pattern, secondary_pattern,
-                          resource_identifier, modified_time,
-                          std::move(in_value), constraints);
+                          std::move(in_value), metadata, partition_key);
+  return true;
 }
 
-base::Time PrefProvider::GetWebsiteSettingLastModified(
+bool PrefProvider::SetLastVisitTime(
     const ContentSettingsPattern& primary_pattern,
     const ContentSettingsPattern& secondary_pattern,
     ContentSettingsType content_type,
-    const ResourceIdentifier& resource_identifier) {
-  DCHECK(CalledOnValidThread());
-  DCHECK(prefs_);
+    const base::Time time,
+    const PartitionKey& partition_key) {
+  return UpdateSetting(
+      content_type,
+      [&](const Rule& rule) -> bool {
+        return rule.primary_pattern == primary_pattern &&
+               rule.secondary_pattern == secondary_pattern;
+      },
+      [&](Rule& rule) -> bool {
+        // This should only be updated for settings that are
+        // already tracked.
+        DCHECK_NE(rule.metadata.last_visited(), base::Time());
 
-  if (!supports_type(content_type))
-    return base::Time();
+        rule.metadata.set_last_visited(time);
 
-  return GetPref(content_type)
-      ->GetWebsiteSettingLastModified(primary_pattern, secondary_pattern,
-                                      resource_identifier);
+        return true;
+      },
+      partition_key);
+}
+
+bool PrefProvider::UpdateSetting(ContentSettingsType content_type,
+                                 base::FunctionRef<bool(const Rule&)> is_match,
+                                 base::FunctionRef<bool(Rule&)> perform_update,
+                                 const PartitionKey& partition_key) {
+  if (!supports_type(content_type)) {
+    return false;
+  }
+
+  auto it = GetRuleIterator(content_type, off_the_record_,
+                            PartitionKey::WipGetDefault());
+  if (!it) {
+    return false;
+  }
+
+  while (it->HasNext()) {
+    std::unique_ptr<Rule> rule = it->Next();
+    if (!is_match(*rule)) {
+      continue;
+    }
+
+    bool updated = perform_update(*rule);
+    if (!updated) {
+      return false;
+    }
+    base::Value value = std::move(rule->value);
+    RuleMetaData metadata = std::move(rule->metadata);
+    ContentSettingsPattern primary_pattern = std::move(rule->primary_pattern);
+    ContentSettingsPattern secondary_pattern =
+        std::move(rule->secondary_pattern);
+
+    // Reset iterator and rule to release lock before updating setting.
+    it.reset();
+    rule.reset();
+
+    GetPref(content_type)
+        ->SetWebsiteSetting(std::move(primary_pattern),
+                            std::move(secondary_pattern), std::move(value),
+                            std::move(metadata), partition_key);
+    return true;
+  }
+  return false;
+}
+
+bool PrefProvider::UpdateLastUsedTime(const GURL& primary_url,
+                                      const GURL& secondary_url,
+                                      ContentSettingsType content_type,
+                                      const base::Time time,
+                                      const PartitionKey& partition_key) {
+  return UpdateSetting(
+      content_type,
+      [&](const Rule& rule) -> bool {
+        return rule.primary_pattern.Matches(primary_url) &&
+               rule.secondary_pattern.Matches(secondary_url);
+      },
+      [&](Rule& rule) -> bool {
+        rule.metadata.set_last_used(time);
+        return true;
+      },
+      partition_key);
+}
+
+bool PrefProvider::ResetLastVisitTime(
+    const ContentSettingsPattern& primary_pattern,
+    const ContentSettingsPattern& secondary_pattern,
+    ContentSettingsType content_type,
+    const PartitionKey& partition_key) {
+  return SetLastVisitTime(primary_pattern, secondary_pattern, content_type,
+                          base::Time(), partition_key);
+}
+
+bool PrefProvider::UpdateLastVisitTime(
+    const ContentSettingsPattern& primary_pattern,
+    const ContentSettingsPattern& secondary_pattern,
+    ContentSettingsType content_type,
+    const PartitionKey& partition_key) {
+  return SetLastVisitTime(primary_pattern, secondary_pattern, content_type,
+                          GetCoarseVisitedTime(clock_->Now()), partition_key);
+}
+
+absl::optional<base::TimeDelta> PrefProvider::RenewContentSetting(
+    const GURL& primary_url,
+    const GURL& secondary_url,
+    ContentSettingsType content_type,
+    absl::optional<ContentSetting> setting_to_match,
+    const PartitionKey& partition_key) {
+  absl::optional<base::TimeDelta> delta_to_expiration;
+  UpdateSetting(
+      content_type,
+      [&](const Rule& rule) -> bool {
+        return rule.primary_pattern.Matches(primary_url) &&
+               rule.secondary_pattern.Matches(secondary_url) &&
+               (!setting_to_match.has_value() ||
+                setting_to_match.value() ==
+                    content_settings::ValueToContentSetting(rule.value));
+      },
+      [&](Rule& rule) -> bool {
+        // Only settings whose lifetimes are non-zero can be
+        // renewed.
+        if (rule.metadata.lifetime().is_zero()) {
+          return false;
+        }
+
+        if (rule.metadata.expiration() < clock_->Now()) {
+          return false;
+        }
+
+        base::TimeDelta lifetime = rule.metadata.lifetime();
+        delta_to_expiration = rule.metadata.expiration() - clock_->Now();
+        rule.metadata.SetExpirationAndLifetime(clock_->Now() + lifetime,
+                                               lifetime);
+
+        return true;
+      },
+      partition_key);
+  return delta_to_expiration;
 }
 
 void PrefProvider::ClearAllContentSettingsRules(
-    ContentSettingsType content_type) {
+    ContentSettingsType content_type,
+    const PartitionKey& partition_key) {
   DCHECK(CalledOnValidThread());
   DCHECK(prefs_);
 
-  if (supports_type(content_type))
-    GetPref(content_type)->ClearAllContentSettingsRules();
-
-  // TODO(https://crbug.com/850062): Remove after M71, two milestones after
-  // migration of the Flash permissions to ephemeral provider.
-  // |flash_content_settings_pref_| is not null only if Flash permissions are
-  // ephemeral and handled in EphemeralProvider.
-  if (content_type == ContentSettingsType::PLUGINS &&
-      flash_content_settings_pref_) {
-    flash_content_settings_pref_->ClearAllContentSettingsRules();
+  if (supports_type(content_type)) {
+    GetPref(content_type)->ClearAllContentSettingsRules(partition_key);
   }
 }
 
@@ -253,16 +394,11 @@ void PrefProvider::ShutdownOnUIThread() {
   DCHECK(CalledOnValidThread());
   DCHECK(prefs_);
   RemoveAllObservers();
-  pref_change_registrar_.RemoveAll();
+  for (const auto& pref : content_settings_prefs_) {
+    pref.second->OnShutdown();
+  }
+  pref_change_registrar_.reset();
   prefs_ = nullptr;
-}
-
-void PrefProvider::ClearPrefs() {
-  DCHECK(CalledOnValidThread());
-  DCHECK(prefs_);
-
-  for (const auto& pref : content_settings_prefs_)
-    pref.second->ClearPref();
 }
 
 ContentSettingsPref* PrefProvider::GetPref(ContentSettingsType type) const {
@@ -271,57 +407,28 @@ ContentSettingsPref* PrefProvider::GetPref(ContentSettingsType type) const {
   return it->second.get();
 }
 
-void PrefProvider::Notify(
-    const ContentSettingsPattern& primary_pattern,
-    const ContentSettingsPattern& secondary_pattern,
-    ContentSettingsType content_type,
-    const std::string& resource_identifier) {
-  NotifyObservers(primary_pattern,
-                  secondary_pattern,
-                  content_type,
-                  resource_identifier);
+void PrefProvider::Notify(const ContentSettingsPattern& primary_pattern,
+                          const ContentSettingsPattern& secondary_pattern,
+                          ContentSettingsType content_type,
+                          const PartitionKey* partition_key) {
+  NotifyObservers(primary_pattern, secondary_pattern, content_type,
+                  partition_key);
 }
 
 void PrefProvider::DiscardOrMigrateObsoletePreferences() {
-  if (off_the_record_)
+  if (off_the_record_) {
     return;
-
-  prefs_->ClearPref(kObsoleteDomainToOriginMigrationStatus);
+  }
 
   // These prefs were never stored on iOS/Android so they don't need to be
   // deleted.
-#if !defined(OS_IOS)
-  prefs_->ClearPref(kObsoleteFullscreenExceptionsPref);
-#if !defined(OS_ANDROID)
-  prefs_->ClearPref(kObsoleteMouseLockExceptionsPref);
-#endif  // !defined(OS_ANDROID)
-#endif  // !defined(OS_IOS)
-
-#if !defined(OS_ANDROID)
-  // TODO(https://crbug.com/1111559): Remove this migration logic in M90.
-  WebsiteSettingsRegistry* website_settings =
-      WebsiteSettingsRegistry::GetInstance();
-
-  const PrefService::Preference* deprecated_nfs_read_guard_pref =
-      prefs_->FindPreference(kDeprecatedNativeFileSystemReadGuardPref);
-  if (!deprecated_nfs_read_guard_pref->IsDefaultValue()) {
-    prefs_->Set(
-        website_settings->Get(ContentSettingsType::FILE_SYSTEM_READ_GUARD)
-            ->pref_name(),
-        *deprecated_nfs_read_guard_pref->GetValue());
-  }
-  prefs_->ClearPref(kDeprecatedNativeFileSystemReadGuardPref);
-
-  const PrefService::Preference* deprecated_nfs_write_guard_pref =
-      prefs_->FindPreference(kDeprecatedNativeFileSystemWriteGuardPref);
-  if (!deprecated_nfs_write_guard_pref->IsDefaultValue()) {
-    prefs_->Set(
-        website_settings->Get(ContentSettingsType::FILE_SYSTEM_WRITE_GUARD)
-            ->pref_name(),
-        *deprecated_nfs_write_guard_pref->GetValue());
-  }
-  prefs_->ClearPref(kDeprecatedNativeFileSystemWriteGuardPref);
-#endif  // !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_IOS) && !BUILDFLAG(IS_ANDROID)
+  prefs_->ClearPref(kObsoleteInstalledWebAppMetadataExceptionsPref);
+  prefs_->ClearPref(kObsoletePpapiBrokerExceptionsPref);
+#endif  // !BUILDFLAG(IS_IOS) && !BUILDFLAG(IS_ANDROID)
+  prefs_->ClearPref(
+      kObsoleteGetDisplayMediaSetAutoSelectAllScreensAllowedForUrlsExceptionsPref);
+  prefs_->ClearPref(kObsoleteFederatedIdentityActiveSesssionExceptionsPref);
 }
 
 void PrefProvider::SetClockForTesting(base::Clock* clock) {

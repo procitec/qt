@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -31,20 +31,23 @@ Node* LayoutShiftAttribution::node() const {
   return Performance::CanExposeNode(node_) ? node_ : nullptr;
 }
 
+Node* LayoutShiftAttribution::rawNodeForInspector() const {
+  return node_.Get();
+}
+
 DOMRectReadOnly* LayoutShiftAttribution::previousRect() const {
-  return previous_rect_;
+  return previous_rect_.Get();
 }
 
 DOMRectReadOnly* LayoutShiftAttribution::currentRect() const {
-  return current_rect_;
+  return current_rect_.Get();
 }
 
 ScriptValue LayoutShiftAttribution::toJSONForBinding(
     ScriptState* script_state) const {
   V8ObjectBuilder builder(script_state);
-  builder.Add("node", node());
-  builder.Add("previousRect", previous_rect_);
-  builder.Add("currentRect", current_rect_);
+  builder.Add("previousRect", previous_rect_.Get());
+  builder.Add("currentRect", current_rect_.Get());
   return builder.GetScriptValue();
 }
 

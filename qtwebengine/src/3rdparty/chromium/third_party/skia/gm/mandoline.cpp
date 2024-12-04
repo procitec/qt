@@ -15,7 +15,7 @@
 #include "include/core/SkSize.h"
 #include "include/core/SkString.h"
 #include "include/core/SkTypes.h"
-#include "include/utils/SkRandom.h"
+#include "src/base/SkRandom.h"
 #include "src/core/SkGeometry.h"
 
 #include <math.h>
@@ -25,7 +25,7 @@ namespace skiagm {
 // Slices paths into sliver-size contours shaped like ice cream cones.
 class MandolineSlicer {
 public:
-    static constexpr int kDefaultSubdivisions = 10;
+    inline static constexpr int kDefaultSubdivisions = 10;
 
     MandolineSlicer(SkPoint anchorPt) {
         fPath.setFillType(SkPathFillType::kEvenOdd);
@@ -142,13 +142,9 @@ public:
     }
 
 protected:
-    SkString onShortName() override {
-        return SkString("mandoline");
-    }
+    SkString getName() const override { return SkString("mandoline"); }
 
-    SkISize onISize() override {
-        return SkISize::Make(560, 475);
-    }
+    SkISize getISize() override { return SkISize::Make(560, 475); }
 
     void onDraw(SkCanvas* canvas) override {
         SkPaint paint;

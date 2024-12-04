@@ -17,14 +17,18 @@ struct SkV2;
 namespace skjson {
 
 class ObjectValue;
+class StringValue;
 
 } // namespace skjson
 
 namespace skottie {
+
+class SlotManager;
+
 namespace internal {
 
 class AnimationBuilder;
-class KeyframeAnimatorBuilder;
+class AnimatorBuilder;
 
 class Animator : public SkRefCnt {
 public:
@@ -60,9 +64,10 @@ public:
                             const skjson::ObjectValue* jobject,
                             SkV2* v, float* orientation);
 
-    bool isStatic() const { return fAnimators.empty(); }
+    bool isStatic() const { return fAnimators.empty() && !fHasSlotID; }
 
 protected:
+    friend class skottie::SlotManager;
     virtual void onSync() = 0;
 
     void shrink_to_fit();
@@ -72,10 +77,11 @@ protected:
 private:
     StateChanged onSeek(float) final;
 
-    bool bindImpl(const AnimationBuilder&, const skjson::ObjectValue*, KeyframeAnimatorBuilder&);
+    bool bindImpl(const AnimationBuilder&, const skjson::ObjectValue*, AnimatorBuilder&);
 
     std::vector<sk_sp<Animator>> fAnimators;
     bool                         fHasSynced = false;
+    bool                         fHasSlotID = false;
 };
 
 } // namespace internal

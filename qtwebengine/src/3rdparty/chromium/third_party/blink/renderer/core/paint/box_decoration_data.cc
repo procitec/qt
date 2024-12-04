@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -21,7 +21,8 @@ bool BoxDecorationData::BorderObscuresBackgroundEdge() const {
 }
 
 BackgroundBleedAvoidance BoxDecorationData::ComputeBleedAvoidance() const {
-  if (!should_paint_background_ || is_painting_scrolling_background_ ||
+  if (!should_paint_background_ ||
+      paint_info_.IsPaintingBackgroundInContentsSpace() ||
       layout_box_.IsDocumentElement())
     return kBackgroundBleedNone;
 
@@ -39,7 +40,7 @@ BackgroundBleedAvoidance BoxDecorationData::ComputeBleedAvoidance() const {
       // behind the top layer.  But only if we need to draw something
       // underneath.
       const FillLayer& fill_layer = style_.BackgroundLayers();
-      if ((BackgroundColor().Alpha() || fill_layer.Next()) &&
+      if ((!BackgroundColor().IsFullyTransparent() || fill_layer.Next()) &&
           !fill_layer.ImageOccludesNextLayers(layout_box_.GetDocument(),
                                               style_)) {
         return kBackgroundBleedClipLayer;

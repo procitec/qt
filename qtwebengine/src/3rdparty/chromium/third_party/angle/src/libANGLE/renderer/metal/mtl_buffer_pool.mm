@@ -20,10 +20,8 @@ namespace mtl
 
 // BufferPool implementation.
 BufferPool::BufferPool() : BufferPool(false) {}
+
 BufferPool::BufferPool(bool alwaysAllocNewBuffer)
-    : BufferPool(alwaysAllocNewBuffer, BufferPoolMemPolicy::Auto)
-{}
-BufferPool::BufferPool(bool alwaysAllocNewBuffer, BufferPoolMemPolicy policy)
     : mInitialSize(0),
       mBuffer(nullptr),
       mNextAllocationOffset(0),
@@ -32,9 +30,7 @@ BufferPool::BufferPool(bool alwaysAllocNewBuffer, BufferPoolMemPolicy policy)
       mAlignment(1),
       mBuffersAllocated(0),
       mMaxBuffers(0),
-      mMemPolicy(policy),
       mAlwaysAllocateNewBuffer(alwaysAllocNewBuffer)
-
 {}
 
 angle::Result BufferPool::reset(ContextMtl *contextMtl,
@@ -65,8 +61,7 @@ angle::Result BufferPool::reset(ContextMtl *contextMtl,
                 // If buffer is not used by GPU, re-use it immediately.
                 continue;
             }
-            bool useSharedMem = shouldAllocateInSharedMem(contextMtl);
-            if (IsError(buffer->resetWithSharedMemOpt(contextMtl, useSharedMem, mSize, nullptr)))
+            if (IsError(buffer->reset(contextMtl, storageMode(contextMtl), mSize, nullptr)))
             {
                 mBufferFreeList.clear();
                 mBuffersAllocated = 0;
@@ -110,17 +105,15 @@ void BufferPool::initialize(Context *context,
 
 BufferPool::~BufferPool() {}
 
-bool BufferPool::shouldAllocateInSharedMem(ContextMtl *contextMtl) const
+MTLStorageMode BufferPool::storageMode(ContextMtl *contextMtl) const
 {
-    switch (mMemPolicy)
+#if TARGET_OS_OSX || TARGET_OS_MACCATALYST
+    if (mSize > kSharedMemBufferMaxBufSizeHint)
     {
-        case BufferPoolMemPolicy::AlwaysSharedMem:
-            return true;
-        case BufferPoolMemPolicy::AlwaysGPUMem:
-            return false;
-        default:
-            return mSize <= kSharedMemBufferMaxBufSizeHint;
+        return MTLStorageModeManaged;
     }
+#endif
+    return Buffer::getStorageModeForSharedBuffer(contextMtl);
 }
 
 angle::Result BufferPool::allocateNewBuffer(ContextMtl *contextMtl)
@@ -142,7 +135,7 @@ angle::Result BufferPool::allocateNewBuffer(ContextMtl *contextMtl)
         // Reuse the buffer in free list:
         if (mBufferFreeList.front()->isBeingUsedByGPU(contextMtl))
         {
-            contextMtl->flushCommandBufer();
+            contextMtl->flushCommandBuffer(mtl::NoWait);
             // Force the GPU to finish its rendering and make the old buffer available.
             contextMtl->cmdQueue().ensureResourceReadyForCPU(mBufferFreeList.front());
         }
@@ -153,9 +146,8 @@ angle::Result BufferPool::allocateNewBuffer(ContextMtl *contextMtl)
         return angle::Result::Continue;
     }
 
-    bool useSharedMem = shouldAllocateInSharedMem(contextMtl);
-    ANGLE_TRY(
-        Buffer::MakeBufferWithSharedMemOpt(contextMtl, useSharedMem, mSize, nullptr, &mBuffer));
+    ANGLE_TRY(Buffer::MakeBufferWithStorageMode(contextMtl, storageMode(contextMtl), mSize, nullptr,
+                                                &mBuffer));
 
     ASSERT(mBuffer);
 
@@ -245,11 +237,18 @@ angle::Result BufferPool::allocate(ContextMtl *contextMtl,
     return angle::Result::Continue;
 }
 
-angle::Result BufferPool::commit(ContextMtl *contextMtl)
+angle::Result BufferPool::commit(ContextMtl *contextMtl, bool flushEntireBuffer)
 {
     if (mBuffer && mNextAllocationOffset > mLastFlushOffset)
     {
-        mBuffer->flush(contextMtl, mLastFlushOffset, mNextAllocationOffset - mLastFlushOffset);
+        if (flushEntireBuffer)
+        {
+            mBuffer->flush(contextMtl, 0, mLastFlushOffset);
+        }
+        else
+        {
+            mBuffer->flush(contextMtl, mLastFlushOffset, mNextAllocationOffset - mLastFlushOffset);
+        }
         mLastFlushOffset = mNextAllocationOffset;
     }
     return angle::Result::Continue;
@@ -281,16 +280,33 @@ void BufferPool::releaseInFlightBuffers(ContextMtl *contextMtl)
         if (toRelease->size() < mSize
 #if TARGET_OS_OSX || TARGET_OS_MACCATALYST
             // Also release buffer if it was allocated in different policy
-            || toRelease->useSharedMem() != shouldAllocateInSharedMem(contextMtl)
+            || toRelease->storageMode() != storageMode(contextMtl)
 #endif
         )
         {
             toRelease = nullptr;
             mBuffersAllocated--;
         }
-        else
+
+        // Need to maintain the requirement of the free list that buffers in use
+        // by the GPU are stored in FIFO order and that after the first in-use
+        // buffer, the rest of the free list is in-use as well. To achieve this
+        // in-use buffers are appended to the end of the free list and free buffers
+        // are prepended to the beginning of the free list to maintain the following:
+        //
+        //  +------+------+-------+-------+-------+
+        //  | Free | Free | Inuse |  ...  | Inuse |
+        //  +------+------+-------+-------+-------+
+        //  ^             ^               ^-------- Youngest, in-use buffer
+        //  |             +------------------------ Oldest, in-use buffer
+        //  +-------------------------------------- First, free buffer
+        else if (toRelease->isBeingUsedByGPU(contextMtl))
         {
             mBufferFreeList.push_back(toRelease);
+        }
+        else
+        {
+            mBufferFreeList.push_front(toRelease);
         }
     }
 
@@ -342,5 +358,5 @@ void BufferPool::reset()
     mAlwaysAllocateNewBuffer = false;
     mBuffersAllocated        = 0;
 }
-}
-}
+}  // namespace mtl
+}  // namespace rx

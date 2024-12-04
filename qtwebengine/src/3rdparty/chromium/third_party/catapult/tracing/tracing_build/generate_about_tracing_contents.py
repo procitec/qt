@@ -16,7 +16,7 @@ def Main(args):
   parser = argparse.ArgumentParser(usage='%(prog)s --outdir=<directory>')
   parser.add_argument('--outdir', dest='out_dir',
                       help='Where to place generated content')
-  parser.add_argument('--no-min', default=True, action='store_true',
+  parser.add_argument('--no-min', default=False, action='store_true',
                       help='Skip minification')
   args = parser.parse_args(args)
 

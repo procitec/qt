@@ -1,13 +1,14 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef CONTENT_BROWSER_WEB_PACKAGE_SIGNED_EXCHANGE_UTILS_H_
 #define CONTENT_BROWSER_WEB_PACKAGE_SIGNED_EXCHANGE_UTILS_H_
 
+#include <optional>
 #include <string>
 
-#include "base/optional.h"
+#include "base/strings/string_piece.h"
 #include "content/browser/web_package/signed_exchange_consts.h"
 #include "content/browser/web_package/signed_exchange_error.h"
 #include "content/browser/web_package/signed_exchange_signature_verifier.h"
@@ -33,17 +34,19 @@ struct URLWithRawString {
   std::string raw_string;
   URLWithRawString() = default;
   URLWithRawString(base::StringPiece url_string)
-      : url(url_string), raw_string(url_string.as_string()) {}
+      : url(url_string), raw_string(url_string) {}
 };
+
+// Records SignedExchange.LoadResult2 UMA histogram.
+void RecordLoadResultHistogram(SignedExchangeLoadResult result);
 
 // Utility method to call SignedExchangeDevToolsProxy::ReportError() and
 // TRACE_EVENT_INSTANT1 to report the error to both DevTools and about:tracing.
 // If |devtools_proxy| is nullptr, it just calls TRACE_EVENT_INSTANT1().
-void ReportErrorAndTraceEvent(
-    SignedExchangeDevToolsProxy* devtools_proxy,
-    const std::string& error_message,
-    base::Optional<SignedExchangeError::FieldIndexPair> error_field =
-        base::nullopt);
+void ReportErrorAndTraceEvent(SignedExchangeDevToolsProxy* devtools_proxy,
+                              const std::string& error_message,
+                              std::optional<SignedExchangeError::FieldIndexPair>
+                                  error_field = std::nullopt);
 
 // Returns true when SignedHTTPExchange feature is enabled. This must be called
 // on the UI thread.
@@ -59,15 +62,12 @@ bool ShouldHandleAsSignedHTTPExchange(
     const GURL& request_url,
     const network::mojom::URLResponseHead& head);
 
-// Returns true if |response| has "X-Content-Type-Options: nosniff" header.
-bool HasNoSniffHeader(const network::mojom::URLResponseHead& response);
-
 // Extracts the signed exchange version [1] from |content_type|, and converts it
 // to SignedExchanveVersion. Returns nullopt if the mime type is not a variant
 // of application/signed-exchange. Returns SignedExchangeVersion::kUnknown if an
 // unsupported signed exchange version is found.
 // [1] https://wicg.github.io/webpackage/loading.html#signed-exchange-version
-CONTENT_EXPORT base::Optional<SignedExchangeVersion> GetSignedExchangeVersion(
+CONTENT_EXPORT std::optional<SignedExchangeVersion> GetSignedExchangeVersion(
     const std::string& content_type);
 
 // Returns the matching SignedExchangeLoadResult for the verifier's result.
@@ -101,7 +101,9 @@ base::Time GetVerificationTime();
 
 // Override the time which is used for verifying signed exchange.
 CONTENT_EXPORT void SetVerificationTimeForTesting(
-    base::Optional<base::Time> verification_time_for_testing);
+    std::optional<base::Time> verification_time_for_testing);
+
+bool IsCookielessOnlyExchange(const net::HttpResponseHeaders& inner_headers);
 
 }  // namespace signed_exchange_utils
 }  // namespace content

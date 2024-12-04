@@ -1,16 +1,21 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef THIRD_PARTY_BLINK_RENDERER_MODULES_XR_XR_BOUNDED_REFERENCE_SPACE_H_
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_XR_XR_BOUNDED_REFERENCE_SPACE_H_
 
-#include "base/optional.h"
+#include <memory>
+
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/renderer/core/geometry/dom_point_read_only.h"
 #include "third_party/blink/renderer/modules/xr/xr_reference_space.h"
-#include "third_party/blink/renderer/platform/transforms/transformation_matrix.h"
+#include "ui/gfx/geometry/transform.h"
 
 namespace blink {
+
+template <typename IDLType>
+class FrozenArray;
 
 class XRBoundedReferenceSpace final : public XRReferenceSpace {
   DEFINE_WRAPPERTYPEINFO();
@@ -20,9 +25,9 @@ class XRBoundedReferenceSpace final : public XRReferenceSpace {
   XRBoundedReferenceSpace(XRSession*, XRRigidTransform*);
   ~XRBoundedReferenceSpace() override;
 
-  base::Optional<TransformationMatrix> MojoFromNative() override;
+  absl::optional<gfx::Transform> MojoFromNative() const override;
 
-  HeapVector<Member<DOMPointReadOnly>> boundsGeometry();
+  const FrozenArray<DOMPointReadOnly>& boundsGeometry() const;
 
   void Trace(Visitor*) const override;
 
@@ -30,13 +35,13 @@ class XRBoundedReferenceSpace final : public XRReferenceSpace {
 
  private:
   XRBoundedReferenceSpace* cloneWithOriginOffset(
-      XRRigidTransform* origin_offset) override;
+      XRRigidTransform* origin_offset) const override;
 
-  void EnsureUpdated();
+  void EnsureUpdated() const;
 
-  HeapVector<Member<DOMPointReadOnly>> offset_bounds_geometry_;
-  std::unique_ptr<TransformationMatrix> mojo_from_bounded_native_;
-  unsigned int stage_parameters_id_ = 0;
+  mutable Member<FrozenArray<DOMPointReadOnly>> offset_bounds_geometry_;
+  mutable std::unique_ptr<gfx::Transform> mojo_from_bounded_native_;
+  mutable uint32_t stage_parameters_id_ = 0;
 };
 
 }  // namespace blink

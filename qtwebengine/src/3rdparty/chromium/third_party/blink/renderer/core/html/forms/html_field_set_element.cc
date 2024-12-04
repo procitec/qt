@@ -26,20 +26,50 @@
 
 #include "third_party/blink/renderer/core/dom/element_traversal.h"
 #include "third_party/blink/renderer/core/dom/events/event_dispatch_forbidden_scope.h"
+#include "third_party/blink/renderer/core/dom/layout_tree_builder_traversal.h"
+#include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/dom/node_lists_node_data.h"
 #include "third_party/blink/renderer/core/html/custom/element_internals.h"
 #include "third_party/blink/renderer/core/html/forms/html_legend_element.h"
 #include "third_party/blink/renderer/core/html/html_collection.h"
 #include "third_party/blink/renderer/core/html_names.h"
+#include "third_party/blink/renderer/core/layout/forms/layout_fieldset.h"
 #include "third_party/blink/renderer/core/layout/layout_block.h"
-#include "third_party/blink/renderer/core/layout/layout_object_factory.h"
-#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
 
 namespace blink {
 
+using mojom::blink::FormControlType;
+
+namespace {
+
+bool WillReattachChildLayoutObject(const Element& parent) {
+  for (const Node* child = LayoutTreeBuilderTraversal::FirstChild(parent);
+       child; child = LayoutTreeBuilderTraversal::NextSibling(*child)) {
+    if (child->NeedsReattachLayoutTree()) {
+      return true;
+    }
+    const auto* element = DynamicTo<Element>(child);
+    if (!element || !element->ChildNeedsReattachLayoutTree()) {
+      continue;
+    }
+    if (const ComputedStyle* style = element->GetComputedStyle()) {
+      if (style->Display() == EDisplay::kContents &&
+          WillReattachChildLayoutObject(*element)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+}  // namespace
+
 HTMLFieldSetElement::HTMLFieldSetElement(Document& document)
-    : HTMLFormControlElement(html_names::kFieldsetTag, document) {}
+    : HTMLFormControlElement(html_names::kFieldsetTag, document) {
+  // This class has DidRecalcStyle().
+  SetHasCustomStyleCallbacks();
+}
 
 bool HTMLFieldSetElement::MatchesValidityPseudoClasses() const {
   return true;
@@ -94,6 +124,14 @@ void HTMLFieldSetElement::DisabledAttributeChanged() {
     focused_element->blur();
 }
 
+void HTMLFieldSetElement::AncestorDisabledStateWasChanged() {
+  ancestor_disabled_state_ = AncestorDisabledState::kUnknown;
+  // Do not re-enter HTMLFieldSetElement::DisabledAttributeChanged(), so that
+  // we only invalidate this element's own disabled state and do not traverse
+  // the descendants.
+  HTMLFormControlElement::DisabledAttributeChanged();
+}
+
 void HTMLFieldSetElement::ChildrenChanged(const ChildrenChange& change) {
   HTMLFormControlElement::ChildrenChanged(change);
   Element* focused_element = nullptr;
@@ -110,33 +148,35 @@ void HTMLFieldSetElement::ChildrenChanged(const ChildrenChange& change) {
     focused_element->blur();
 }
 
-bool HTMLFieldSetElement::SupportsFocus() const {
-  return HTMLElement::SupportsFocus() && !IsDisabledFormControl();
+bool HTMLFieldSetElement::SupportsFocus(UpdateBehavior update_behavior) const {
+  return HTMLElement::SupportsFocus(update_behavior) &&
+         !IsDisabledFormControl();
 }
 
-const AtomicString& HTMLFieldSetElement::FormControlType() const {
+FormControlType HTMLFieldSetElement::FormControlType() const {
+  return FormControlType::kFieldset;
+}
+
+const AtomicString& HTMLFieldSetElement::FormControlTypeAsString() const {
   DEFINE_STATIC_LOCAL(const AtomicString, fieldset, ("fieldset"));
   return fieldset;
 }
 
-LayoutObject* HTMLFieldSetElement::CreateLayoutObject(
-    const ComputedStyle& style,
-    LegacyLayout legacy) {
-  return LayoutObjectFactory::CreateFieldset(*this, style, legacy);
+LayoutObject* HTMLFieldSetElement::CreateLayoutObject(const ComputedStyle&) {
+  return MakeGarbageCollected<LayoutFieldset>(this);
 }
 
 LayoutBox* HTMLFieldSetElement::GetLayoutBoxForScrolling() const {
-  auto* layout_box = GetLayoutBox();
-  if (!layout_box || !layout_box->IsLayoutNGFieldset())
-    return HTMLFormControlElement::GetLayoutBoxForScrolling();
-  LayoutObject* child = layout_box->SlowFirstChild();
-  if (child && child->IsAnonymous())
-    return ToLayoutBox(child);
+  if (const auto* ng_fieldset = DynamicTo<LayoutFieldset>(GetLayoutBox())) {
+    if (auto* content = ng_fieldset->FindAnonymousFieldsetContentBox())
+      return content;
+  }
   return HTMLFormControlElement::GetLayoutBoxForScrolling();
 }
 
-bool HTMLFieldSetElement::TypeShouldForceLegacyLayout() const {
-  return !RuntimeEnabledFeatures::LayoutNGFieldsetEnabled();
+void HTMLFieldSetElement::DidRecalcStyle(const StyleRecalcChange change) {
+  if (ChildNeedsReattachLayoutTree() && WillReattachChildLayoutObject(*this))
+    SetNeedsReattachLayoutTree();
 }
 
 HTMLLegendElement* HTMLFieldSetElement::Legend() const {
@@ -145,6 +185,21 @@ HTMLLegendElement* HTMLFieldSetElement::Legend() const {
 
 HTMLCollection* HTMLFieldSetElement::elements() {
   return EnsureCachedCollection<HTMLCollection>(kFormControls);
+}
+
+bool HTMLFieldSetElement::IsDisabledFormControl() const {
+  // The fieldset element itself should never be considered disabled, it is
+  // only supposed to affect its descendants:
+  // https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#concept-fe-disabled
+  return false;
+}
+
+// <fieldset> should never be considered disabled, but should still match the
+// :enabled or :disabled pseudo-classes according to whether the attribute is
+// set or not. See here for context:
+// https://github.com/whatwg/html/issues/5886#issuecomment-1582410112
+bool HTMLFieldSetElement::MatchesEnabledPseudoClass() const {
+  return !IsActuallyDisabled();
 }
 
 }  // namespace blink

@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -37,15 +37,16 @@
 #include <stddef.h>
 
 #include <algorithm>
+#include <memory>
 #include <utility>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/memory/free_deleter.h"
-#include "base/stl_util.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/metrics/histogram_macros.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/time/default_tick_clock.h"
-#include "base/trace_event/trace_event.h"
+#include "base/trace_event/typed_macros.h"
 #include "media/audio/alsa/alsa_util.h"
 #include "media/audio/alsa/alsa_wrapper.h"
 #include "media/audio/alsa/audio_manager_alsa.h"
@@ -132,8 +133,8 @@ std::ostream& operator<<(std::ostream& os,
   return os;
 }
 
-static const SampleFormat kSampleFormat = kSampleFormatS16;
-static const snd_pcm_format_t kAlsaSampleFormat = SND_PCM_FORMAT_S16;
+static const SampleFormat kSampleFormatAO = kSampleFormatS16;
+static const snd_pcm_format_t kAlsaSampleFormatAO = SND_PCM_FORMAT_S16;
 
 const char AlsaPcmOutputStream::kDefaultDevice[] = "default";
 const char AlsaPcmOutputStream::kAutoSelectDevice[] = "";
@@ -148,15 +149,15 @@ AlsaPcmOutputStream::AlsaPcmOutputStream(const std::string& device_name,
                                          AlsaWrapper* wrapper,
                                          AudioManagerBase* manager)
     : requested_device_name_(device_name),
-      pcm_format_(kAlsaSampleFormat),
+      pcm_format_(kAlsaSampleFormatAO),
       channels_(params.channels()),
       channel_layout_(params.channel_layout()),
       sample_rate_(params.sample_rate()),
-      bytes_per_sample_(SampleFormatToBytesPerChannel(kSampleFormat)),
-      bytes_per_frame_(params.GetBytesPerFrame(kSampleFormat)),
-      packet_size_(params.GetBytesPerBuffer(kSampleFormat)),
+      bytes_per_sample_(SampleFormatToBytesPerChannel(kSampleFormatAO)),
+      bytes_per_frame_(params.GetBytesPerFrame(kSampleFormatAO)),
+      packet_size_(params.GetBytesPerBuffer(kSampleFormatAO)),
       latency_(std::max(
-          base::TimeDelta::FromMicroseconds(kMinLatencyMicros),
+          base::Microseconds(kMinLatencyMicros),
           AudioTimestampHelper::FramesToTime(params.frames_per_buffer() * 2,
                                              sample_rate_))),
       bytes_per_output_frame_(bytes_per_frame_),
@@ -164,7 +165,7 @@ AlsaPcmOutputStream::AlsaPcmOutputStream(const std::string& device_name,
       stop_stream_(false),
       wrapper_(wrapper),
       manager_(manager),
-      task_runner_(base::ThreadTaskRunnerHandle::Get()),
+      task_runner_(base::SingleThreadTaskRunner::GetCurrentDefault()),
       playback_handle_(nullptr),
       frames_per_packet_(packet_size_ / bytes_per_frame_),
       state_(kCreated),
@@ -230,7 +231,7 @@ bool AlsaPcmOutputStream::Open() {
       channel_mixer_ ? mixed_audio_bus_->channels() * bytes_per_sample_
                      : bytes_per_frame_;
   uint32_t output_packet_size = frames_per_packet_ * bytes_per_output_frame_;
-  buffer_.reset(new SeekableBuffer(0, output_packet_size));
+  buffer_ = std::make_unique<SeekableBuffer>(0, output_packet_size);
 
   // Get alsa buffer size.
   snd_pcm_uframes_t buffer_size;
@@ -257,10 +258,11 @@ void AlsaPcmOutputStream::Close() {
 
   // Shutdown the audio device.
   if (playback_handle_) {
-    if (alsa_util::CloseDevice(wrapper_, playback_handle_) < 0) {
+    int res =
+        alsa_util::CloseDevice(wrapper_, playback_handle_.ExtractAsDangling());
+    if (res < 0) {
       LOG(WARNING) << "Unable to close audio device. Leaking handle.";
     }
-    playback_handle_ = nullptr;
 
     // Release the buffer.
     buffer_.reset();
@@ -360,6 +362,14 @@ void AlsaPcmOutputStream::SetTickClockForTesting(
 
 void AlsaPcmOutputStream::BufferPacket(bool* source_exhausted) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  TRACE_EVENT("audio", "AlsaPcmOutputStream::BufferPacket",
+              [&](perfetto::EventContext ctx) {
+                auto* event =
+                    ctx.event<perfetto::protos::pbzero::ChromeTrackEvent>();
+                auto* data = event->set_linux_alsa_output();
+                data->set_forward_bytes(buffer_->forward_bytes());
+                data->set_sample_rate(sample_rate_);
+              });
 
   // If stopped, simulate a 0-length packet.
   if (stop_stream_) {
@@ -434,6 +444,7 @@ void AlsaPcmOutputStream::BufferPacket(bool* source_exhausted) {
 
 void AlsaPcmOutputStream::WritePacket() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  TRACE_EVENT("audio", "AlsaPcmOutputStream::WritePacket");
 
   // If the device is in error, just eat the bytes.
   if (stop_stream_) {
@@ -493,6 +504,7 @@ void AlsaPcmOutputStream::WritePacket() {
 
 void AlsaPcmOutputStream::WriteTask() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  TRACE_EVENT("audio", "AlsaPcmOutputStream::WriteTask");
 
   if (stop_stream_)
     return;
@@ -525,7 +537,7 @@ void AlsaPcmOutputStream::ScheduleNextWrite(bool source_exhausted) {
     // Polling in this manner allows us to ensure a more consistent callback
     // schedule.  In testing this yields a variance of +/- 5ms versus the non-
     // polling strategy which is around +/- 30ms and bimodal.
-    next_fill_time = base::TimeDelta::FromMilliseconds(5);
+    next_fill_time = base::Milliseconds(5);
   } else if (available_frames < kTargetFramesAvailable) {
     // Schedule the next write for the moment when the available buffer of the
     // sound card hits |kTargetFramesAvailable|.
@@ -538,13 +550,16 @@ void AlsaPcmOutputStream::ScheduleNextWrite(bool source_exhausted) {
   } else {
     // The sound card has frames available, but our source is exhausted, so
     // avoid busy looping by delaying a bit.
-    next_fill_time = base::TimeDelta::FromMilliseconds(10);
+    next_fill_time = base::Milliseconds(10);
   }
 
-  task_runner_->PostDelayedTask(FROM_HERE,
-                                base::BindOnce(&AlsaPcmOutputStream::WriteTask,
-                                               weak_factory_.GetWeakPtr()),
-                                next_fill_time);
+  task_runner_->PostDelayedTaskAt(
+      base::subtle::PostDelayedTaskPassKey(), FROM_HERE,
+      base::BindOnce(&AlsaPcmOutputStream::WriteTask,
+                     weak_factory_.GetWeakPtr()),
+      next_fill_time.is_zero() ? base::TimeTicks()
+                               : base::TimeTicks::Now() + next_fill_time,
+      base::subtle::DelayPolicy::kPrecise);
 }
 
 std::string AlsaPcmOutputStream::FindDeviceForChannels(uint32_t channels) {
@@ -595,6 +610,12 @@ std::string AlsaPcmOutputStream::FindDeviceForChannels(uint32_t channels) {
 }
 
 snd_pcm_sframes_t AlsaPcmOutputStream::GetCurrentDelay() {
+  TRACE_EVENT_BEGIN(TRACE_DISABLED_BY_DEFAULT("audio"),
+                    "AlsaPcmOutputStream::GetCurrentDelay");
+  // Intermediate values saved for tracing.
+  absl::optional<snd_pcm_sframes_t> pcm_delay;
+  absl::optional<snd_pcm_sframes_t> available_frames;
+
   snd_pcm_sframes_t delay = -1;
   // Don't query ALSA's delay if we have underrun since it'll be jammed at some
   // non-zero value and potentially even negative!
@@ -615,6 +636,7 @@ snd_pcm_sframes_t AlsaPcmOutputStream::GetCurrentDelay() {
         LOG(ERROR) << "Failed querying delay: " << wrapper_->StrError(error);
       }
     }
+    pcm_delay = delay;
   }
 
   // snd_pcm_delay() sometimes returns crazy values.  In this case return delay
@@ -624,13 +646,26 @@ snd_pcm_sframes_t AlsaPcmOutputStream::GetCurrentDelay() {
   // clip if delay is truly crazy (> 10x expected).
   if (delay < 0 ||
       static_cast<snd_pcm_uframes_t>(delay) > alsa_buffer_frames_ * 10) {
-    delay = alsa_buffer_frames_ - GetAvailableFrames();
+    available_frames = GetAvailableFrames();
+    delay = alsa_buffer_frames_ - *available_frames;
   }
 
   if (delay < 0) {
     delay = 0;
   }
-
+  TRACE_EVENT_END(
+      TRACE_DISABLED_BY_DEFAULT("audio"), [&](perfetto::EventContext ctx) {
+        auto* event = ctx.event<perfetto::protos::pbzero::ChromeTrackEvent>();
+        auto* data = event->set_linux_alsa_output();
+        data->set_getcurrentdelay_alsa_buffer_frames(alsa_buffer_frames_);
+        data->set_getcurrentdelay_final_delay_frames(delay);
+        if (pcm_delay) {
+          data->set_getcurrentdelay_pcm_delay_frames(*pcm_delay);
+        }
+        if (available_frames) {
+          data->set_getcurrentdelay_available_frames(*available_frames);
+        }
+      });
   return delay;
 }
 
@@ -710,8 +745,8 @@ snd_pcm_t* AlsaPcmOutputStream::AutoSelectDevice(unsigned int latency) {
   // downmixing.
   uint32_t default_channels = channels_;
   if (default_channels > 2) {
-    channel_mixer_.reset(
-        new ChannelMixer(channel_layout_, kDefaultOutputChannelLayout));
+    channel_mixer_ = std::make_unique<ChannelMixer>(
+        channel_layout_, kDefaultOutputChannelLayout);
     default_channels = 2;
     mixed_audio_bus_ = AudioBus::Create(
         default_channels, audio_bus_->frames());
@@ -784,10 +819,20 @@ AlsaPcmOutputStream::InternalState AlsaPcmOutputStream::state() {
 int AlsaPcmOutputStream::RunDataCallback(base::TimeDelta delay,
                                          base::TimeTicks delay_timestamp,
                                          AudioBus* audio_bus) {
-  TRACE_EVENT0("audio", "AlsaPcmOutputStream::RunDataCallback");
+  TRACE_EVENT(
+      "audio", "AlsaPcmOutputStream::RunDataCallback",
+      [&](perfetto::EventContext ctx) {
+        auto* event = ctx.event<perfetto::protos::pbzero::ChromeTrackEvent>();
+        auto* data = event->set_linux_alsa_output();
+        data->set_source_request_playout_delay_us(delay.InMicroseconds());
+      });
 
-  if (source_callback_)
-    return source_callback_->OnMoreData(delay, delay_timestamp, 0, audio_bus);
+  if (source_callback_) {
+    UMA_HISTOGRAM_COUNTS_1000("Media.Audio.Render.SystemDelay",
+                              delay.InMilliseconds());
+    return source_callback_->OnMoreData(BoundedDelay(delay), delay_timestamp,
+                                        {}, audio_bus);
+  }
 
   return 0;
 }

@@ -1,4 +1,4 @@
-# Copyright 2019 The Chromium Authors. All rights reserved.
+# Copyright 2019 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -6,7 +6,9 @@ import re
 """Presubmit for build/util"""
 
 
-def _GetBlacklist(input_api):
+
+
+def _GetFilesToSkip(input_api):
   files_to_skip = []
   affected_files = input_api.change.AffectedFiles()
   version_script_change = next(
@@ -30,7 +32,7 @@ def _GetBlacklist(input_api):
 
 def _GetPythonUnitTests(input_api, output_api):
   # No need to test if files are unchanged
-  files_to_skip = _GetBlacklist(input_api)
+  files_to_skip = _GetFilesToSkip(input_api)
 
   return input_api.canned_checks.GetUnitTestsRecursively(
       input_api,

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,8 +7,8 @@
 
 #include <stdint.h>
 
-#include "base/compiler_specific.h"
-#include "base/macros.h"
+#include "base/functional/callback.h"
+#include "content/common/content_export.h"
 #include "ppapi/thunk/resource_creation_api.h"
 
 namespace content {
@@ -19,9 +19,14 @@ class PepperPluginInstanceImpl;
 // "old-style" resources are handled here. See
 // content/renderer/pepper/pepper_in_process_resource_creation.h for functions
 // that implement "new-style" resources.
-class ResourceCreationImpl : public ppapi::thunk::ResourceCreationAPI {
+class CONTENT_EXPORT ResourceCreationImpl
+    : public ppapi::thunk::ResourceCreationAPI {
  public:
   explicit ResourceCreationImpl(PepperPluginInstanceImpl* instance);
+
+  ResourceCreationImpl(const ResourceCreationImpl&) = delete;
+  ResourceCreationImpl& operator=(const ResourceCreationImpl&) = delete;
+
   ~ResourceCreationImpl() override;
 
   // ResourceCreationAPI implementation.
@@ -33,32 +38,23 @@ class ResourceCreationImpl : public ppapi::thunk::ResourceCreationAPI {
                           PP_Resource config_id,
                           PPB_Audio_Callback audio_callback,
                           void* user_data) override;
-  PP_Resource CreateAudioEncoder(PP_Instance instance) override;
   PP_Resource CreateAudioTrusted(PP_Instance instance) override;
   PP_Resource CreateAudioConfig(PP_Instance instance,
                                 PP_AudioSampleRate sample_rate,
                                 uint32_t sample_frame_count) override;
   PP_Resource CreateAudioInput(PP_Instance instance) override;
   PP_Resource CreateAudioOutput(PP_Instance instance) override;
-  PP_Resource CreateBroker(PP_Instance instance) override;
   PP_Resource CreateBuffer(PP_Instance instance, uint32_t size) override;
   PP_Resource CreateCameraDevicePrivate(PP_Instance instance) override;
-  PP_Resource CreateFlashDRM(PP_Instance instance) override;
-  PP_Resource CreateFlashFontFile(
-      PP_Instance instance,
-      const PP_BrowserFont_Trusted_Description* description,
-      PP_PrivateFontCharset charset) override;
-  PP_Resource CreateFlashMenu(PP_Instance instance,
-                              const PP_Flash_Menu* menu_data) override;
-  PP_Resource CreateFlashMessageLoop(PP_Instance instance) override;
   PP_Resource CreateGraphics3D(PP_Instance instance,
                                PP_Resource share_context,
                                const int32_t* attrib_list) override;
   PP_Resource CreateGraphics3DRaw(
       PP_Instance instance,
       PP_Resource share_context,
-      const gpu::ContextCreationAttribs& attrib_helper,
+      const ppapi::Graphics3DContextAttribs& context_attribs,
       gpu::Capabilities* capabilities,
+      gpu::GLCapabilities* gl_capabilities,
       const base::UnsafeSharedMemoryRegion** shared_state,
       gpu::CommandBufferId* command_buffer_id) override;
   PP_Resource CreateHostResolver(PP_Instance instance) override;
@@ -136,9 +132,6 @@ class ResourceCreationImpl : public ppapi::thunk::ResourceCreationAPI {
                                     const PP_FloatPoint* wheel_ticks,
                                     PP_Bool scroll_by_page) override;
   PP_Resource CreateX509CertificatePrivate(PP_Instance instance) override;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(ResourceCreationImpl);
 };
 
 }  // namespace content

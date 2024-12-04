@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,12 +7,11 @@
 
 #import <CoreBluetooth/CoreBluetooth.h>
 
-#include "base/mac/scoped_nsobject.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "build/build_config.h"
 #include "device/bluetooth/bluetooth_device.h"
 
-#if !defined(OS_IOS)
+#if !BUILDFLAG(IS_IOS)
 #import <IOBluetooth/IOBluetooth.h>
 #endif
 
@@ -30,8 +29,13 @@ class BluetoothLowEnergyDiscoveryManagerMac {
                                         int rssi) = 0;
 
    protected:
-    virtual ~Observer() {}
+    virtual ~Observer() = default;
   };
+
+  BluetoothLowEnergyDiscoveryManagerMac(
+      const BluetoothLowEnergyDiscoveryManagerMac&) = delete;
+  BluetoothLowEnergyDiscoveryManagerMac& operator=(
+      const BluetoothLowEnergyDiscoveryManagerMac&) = delete;
 
   virtual ~BluetoothLowEnergyDiscoveryManagerMac();
 
@@ -71,7 +75,7 @@ class BluetoothLowEnergyDiscoveryManagerMac {
   friend class BluetoothLowEnergyCentralManagerBridge;
 
   // Observer interested in notifications from us.
-  Observer* observer_;
+  raw_ptr<Observer> observer_;
 
   // Underlying CoreBluetooth central manager, owned by |observer_|.
   CBCentralManager* central_manager_ = nil;
@@ -85,8 +89,6 @@ class BluetoothLowEnergyDiscoveryManagerMac {
 
   // List of service UUIDs to scan.
   BluetoothDevice::UUIDList services_uuids_;
-
-  DISALLOW_COPY_AND_ASSIGN(BluetoothLowEnergyDiscoveryManagerMac);
 };
 
 }  // namespace device

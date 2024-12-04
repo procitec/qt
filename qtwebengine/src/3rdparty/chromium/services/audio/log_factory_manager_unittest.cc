@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "base/memory/ptr_util.h"
+#include "base/memory/raw_ptr.h"
 #include "base/test/task_environment.h"
 #include "media/mojo/mojom/audio_logging.mojom.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
@@ -52,6 +53,9 @@ class MockAudioLogFactory : public media::mojom::AudioLogFactory {
       mock_logs_.push_back(new MockAudioLog());
   }
 
+  MockAudioLogFactory(const MockAudioLogFactory&) = delete;
+  MockAudioLogFactory& operator=(const MockAudioLogFactory&) = delete;
+
   MOCK_METHOD2(MockCreateAudioLog,
                void(media::mojom::AudioLogComponent, int32_t));
 
@@ -61,7 +65,7 @@ class MockAudioLogFactory : public media::mojom::AudioLogFactory {
                           audio_log_receiver) override {
     MockCreateAudioLog(component, component_id);
     mojo::MakeSelfOwnedReceiver(
-        base::WrapUnique(mock_logs_[current_mock_log_++]),
+        base::WrapUnique(mock_logs_[current_mock_log_++].get()),
         std::move(audio_log_receiver));
   }
 
@@ -70,8 +74,7 @@ class MockAudioLogFactory : public media::mojom::AudioLogFactory {
  private:
   mojo::Receiver<media::mojom::AudioLogFactory> receiver_;
   size_t current_mock_log_ = 0;
-  std::vector<MockAudioLog*> mock_logs_;
-  DISALLOW_COPY_AND_ASSIGN(MockAudioLogFactory);
+  std::vector<raw_ptr<MockAudioLog, VectorExperimental>> mock_logs_;
 };
 
 }  // namespace
@@ -79,6 +82,9 @@ class MockAudioLogFactory : public media::mojom::AudioLogFactory {
 class LogFactoryManagerTest : public ::testing::Test {
  public:
   LogFactoryManagerTest() = default;
+
+  LogFactoryManagerTest(const LogFactoryManagerTest&) = delete;
+  LogFactoryManagerTest& operator=(const LogFactoryManagerTest&) = delete;
 
  protected:
   void CreateLogFactoryManager() {
@@ -95,10 +101,6 @@ class LogFactoryManagerTest : public ::testing::Test {
   base::test::TaskEnvironment task_environment_;
   mojo::Remote<mojom::LogFactoryManager> remote_log_factory_manager_;
   std::unique_ptr<LogFactoryManager> log_factory_manager_;
-
- private:
-
-  DISALLOW_COPY_AND_ASSIGN(LogFactoryManagerTest);
 };
 
 TEST_F(LogFactoryManagerTest, LogFactoryManagerQueuesRequestsAndSetsFactory) {
@@ -109,7 +111,8 @@ TEST_F(LogFactoryManagerTest, LogFactoryManagerQueuesRequestsAndSetsFactory) {
   const double kVolume1 = 0.5;
   media::AudioLogFactory* log_factory = log_factory_manager_->GetLogFactory();
   std::unique_ptr<media::AudioLog> log1 = log_factory->CreateAudioLog(
-      media::AudioLogFactory::AUDIO_OUTPUT_STREAM, kComponentId1);
+      media::AudioLogFactory::AudioComponent::kAudioOutputStream,
+      kComponentId1);
   log1->OnStarted();
   log1->OnSetVolume(kVolume1);
   log1->OnStopped();
@@ -147,7 +150,7 @@ TEST_F(LogFactoryManagerTest, LogFactoryManagerQueuesRequestsAndSetsFactory) {
   EXPECT_CALL(*mock_log2, OnClosed());
 
   std::unique_ptr<media::AudioLog> log2 = log_factory->CreateAudioLog(
-      media::AudioLogFactory::AUDIO_INPUT_CONTROLLER, 2);
+      media::AudioLogFactory::AudioComponent::kAudioInputController, 2);
   log2->OnStarted();
   log2->OnSetVolume(kVolume2);
   log2->OnStopped();
