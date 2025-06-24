@@ -100,6 +100,7 @@ macro(_qt_internal_find_tool_dependencies target target_dep_list)
         find_package(${__qt_${target}_pkg}
             ${__qt_${target}_version}
             ${__qt_${target}_find_package_args}
+            NO_DEFAULT_PATH
             PATHS
                 "${CMAKE_CURRENT_LIST_DIR}/.."
                 "${_qt_cmake_dir}"
